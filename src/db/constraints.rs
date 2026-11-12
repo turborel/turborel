@@ -8,9 +8,9 @@
 
 use super::State;
 use crate::ast::{
-    Check, ColumnConstraintKind, ColumnDefinition, Literal, NamedTable, QuerySpecification, References, SelectItem, SelectList,
-    SelectSublist, TableConstraint, TableConstraintKind, TableElement, TableExpression, TableName, TableReference, ValueExpression,
-    ValueSpecification,
+    Check, ColumnConstraintKind, ColumnDefinition, ColumnGeneration, Literal, NamedTable, QuerySpecification, References, SelectItem,
+    SelectList, SelectSublist, TableConstraint, TableConstraintKind, TableElement, TableExpression, TableName, TableReference,
+    ValueExpression, ValueSpecification,
 };
 use crate::binder::{self, Context, Purpose, Referencing, Uses, bind_select, qualify};
 use crate::catalog::{
@@ -201,6 +201,13 @@ impl<'a> Described<'a> {
             };
             added.or_at(c.at)?;
         }
+        // [ISO/IEC 9075-2:2023 §11.4 SR16b] an identity column NOT NULL NOT
+        // DEFERRABLE, unless one is written.
+        let written = self.constraints.iter().any(|c| c.kind == ConstraintKind::NotNull(at) && !c.attributes.deferrable);
+        if matches!(def.generated.as_deref(), Some(ColumnGeneration::Identity { .. })) && !written {
+            self.attributes = ConstraintAttributes::default();
+            self.add(None, "NOTNULL", ConstraintKind::NotNull(at))?;
+        }
         Ok(())
     }
 
@@ -366,6 +373,7 @@ impl State {
             ))
             .or_at(p.at));
         }
+        super::generated::generated_referencing(child, &p.columns, r, (&p.name, p.at))?;
         // [ISO/IEC 9075-2:2023 §9.15 SR4a] the same collation.
         for (&c, &k) in p.columns.iter().zip(&referenced) {
             let of = |t: &TableDesc, at: usize| t.columns.get(at).map_or(Ok(None), |column| self.column_collation(column));

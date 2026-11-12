@@ -7,11 +7,10 @@ use std::sync::Arc;
 
 use super::alter::Made;
 use super::constraints::{self, Pending, Within};
-use super::defaults::default_of;
 use super::indexes::IndexSpec;
 use super::sequences::Epochs;
 use super::{Completion, Database, State, api};
-use crate::ast::{Action, PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
+use crate::ast::{Action, ColumnDefinition, PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
 use crate::binder::{no_column, qualify};
 use crate::catalog::{Actions, Catalog, ColumnDesc, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, TemporaryKind, applicable, merged};
 use crate::engine::rows::ROW_STORE;
@@ -158,6 +157,26 @@ impl State {
         self.settings.get(CATALOG_NAME).to_string().trim_end().to_owned()
     }
 
+    /// That `name` may name a new schema.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it is MODULE, or a schema of that name exists.
+    fn unused_schema_name(&self, name: &str) -> Result<()> {
+        // [ISO/IEC 9075:1992 §5.4] MODULE qualifies a declared local
+        // temporary table (`db/declared.rs`).
+        if name == crate::lexer::kw::MODULE {
+            return rule(
+                "[DESIGN] MODULE names a session's declared local temporary tables, not a schema [ISO/IEC 9075:1992 §5.4]".to_owned(),
+            );
+        }
+        // [ISO/IEC 9075:1992 §21.2.1, §21.3.2] System tables' schemas are ours.
+        if self.catalog.schema_exists(name) || self.system.keys().any(|t| t.auth == name) {
+            return rule(format!("[X3.135-1986 §6.1 SR1; ISO/IEC 9075:1992 §11.1 SR3, §21.2.1, §21.3.2] a schema {name} already exists"));
+        }
+        Ok(())
+    }
+
     /// [X3.135-1986 §6.1] A `<schema>`. Every rule is checked before anything
     /// changes, so a failing `<schema>` has no effect [X3.135-1986 §3.3].
     /// Its owner is its AUTHORIZATION, or, naming none, `implicit`, the
@@ -183,28 +202,15 @@ impl State {
                     .to_owned(),
             );
         };
-        // [ISO/IEC 9075:1992 §5.4] MODULE qualifies a declared local
-        // temporary table (`db/declared.rs`).
-        if s.name == crate::lexer::kw::MODULE {
-            return rule(
-                "[DESIGN] MODULE names a session's declared local temporary tables, not a schema [ISO/IEC 9075:1992 §5.4]".to_owned(),
-            );
-        }
-        // [ISO/IEC 9075:1992 §21.2.1, §21.3.2] The schemas of the system
-        // tables are the database's.
-        if self.catalog.schema_exists(&s.name) || self.system.keys().any(|t| t.auth == s.name) {
-            return rule(format!(
-                "[X3.135-1986 §6.1 SR1; ISO/IEC 9075:1992 §11.1 SR3, §21.2.1, §21.3.2] a schema {} already exists",
-                s.name
-            ));
-        }
+        self.unused_schema_name(&s.name)?;
         self.schema_domains(&s, (&owner, zone), epochs)?;
         let (mut descs, mut pending): (Vec<TableDesc>, Vec<Vec<Pending>>) = (Vec::new(), Vec::new());
         for table in &s.tables {
             // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the table it defines.
             let about = (s.name.clone(), table.name.ident.clone());
             let described = self.describe_table((&s.name, &s.name, zone, Within::SchemaDefinition), table, &descs, &pending);
-            let (desc, keys) = described.map_err(|e| e.or_about_table(about)).or_at(table.name.at)?;
+            let (mut desc, keys) = described.map_err(|e| e.or_about_table(about)).or_at(table.name.at)?;
+            self.give_epochs(&mut desc, epochs)?;
             descs.push(desc);
             pending.push(keys);
         }
@@ -274,21 +280,20 @@ impl State {
         if earlier.iter().any(|d| d.name.ident == t.name.ident) {
             return rule(format!("[X3.135-1986 §6.2 SR2] table {} is defined twice", t.name.ident));
         }
+        let name = QualifiedName { auth: auth.to_owned(), ident: t.name.ident.clone() };
+        let defs: Vec<&ColumnDefinition> =
+            t.elements.iter().filter_map(|el| if let TableElement::Column(c) = el { Some(c) } else { None }).collect();
         let mut columns: Vec<ColumnDesc> = Vec::new();
-        for c in t.elements.iter().filter_map(|el| if let TableElement::Column(c) = el { Some(c) } else { None }) {
+        for c in &defs {
             if columns.iter().any(|x| x.name == c.name) {
                 return rule(format!("[X3.135-1986 §6.3 SR1] column {} is defined twice in {}", c.name, t.name.ident)).or_at(c.at);
             }
-            // [ISO/IEC 9075:1992 §11.4 SR5, AR1] its data type, or its domain's.
-            let (data_type, domain) = self.column_type(names, &c.data_type).or_at(c.at)?;
-            let default = c.default.as_ref().map(|o| default_of(data_type, o, zone)).transpose().or_at(c.at)?;
-            let collation = self.declared_collation(names, (data_type, domain.as_ref()), c.collate.as_ref()).or_at(c.at)?;
-            columns.push(ColumnDesc { name: c.name.clone(), data_type, not_null: false, default, domain, collation });
+            columns.push(self.column_of((&name, names, zone), c).or_at(c.at)?);
         }
         if columns.is_empty() {
             return rule(format!("[ISO/IEC 9075:1992 §11.3 SR5] table {} has no column", t.name.ident));
         }
-        let name = QualifiedName { auth: auth.to_owned(), ident: t.name.ident.clone() };
+        let columns = self.typed_columns(&name, columns, &defs)?;
         let taken = earlier
             .iter()
             .flat_map(|d| d.constraints.iter().map(|c| c.name.clone()))
@@ -530,6 +535,7 @@ mod tests {
             default: None,
             domain: None,
             collation: None,
+            generated: None,
         };
         let name = QualifiedName { auth: "A".into(), ident: "T".into() };
         let key = ConstraintDesc {

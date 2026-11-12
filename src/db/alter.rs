@@ -23,6 +23,7 @@
 
 mod columns;
 mod constraints;
+mod identity;
 mod storage;
 
 pub(super) use storage::value_of;
@@ -33,6 +34,7 @@ use std::sync::Arc;
 
 use super::ddl::Dropped;
 use super::schema::constraint_index_name;
+use super::sequences::Epochs;
 use super::{State, api, rule};
 use crate::ast::{AlterAction, DropBehavior};
 use crate::binder::view_degree;
@@ -119,8 +121,9 @@ impl State {
     /// the names `action` writes without a schema of schema `names` [§5.4
     /// SR8], a datetime it writes without a displacement of `zone`'s [§5.3
     /// SR18]: its descriptor, indexes, views and privileges, and a new generation
-    /// of its storage, `made`'s if given, else new. What it took away, what
-    /// it made, and how its rows change.
+    /// of its storage, `made`'s if given, else new; the epoch of an identity
+    /// column's generator it adds or restarts from `epochs`. What it took
+    /// away, what it made, and how its rows change.
     ///
     /// # Errors
     ///
@@ -129,15 +132,15 @@ impl State {
         &mut self,
         (qn, names, zone): (&QualifiedName, &str, i16),
         action: &AlterAction,
-        (made, tx): (Option<&Made>, Option<&Txn>),
+        (made, tx, epochs): (Option<&Made>, Option<&Txn>, &mut Epochs),
     ) -> Result<(Dropped, Made, Option<Reshape>)> {
         match action {
             AlterAction::AddColumn(_) | AlterAction::DropColumn { .. } => {
-                let (dropped, built, reshape) = self.alter_columns((qn, names, zone), action, made)?;
+                let (dropped, built, reshape) = self.alter_columns((qn, names, zone), action, (made, epochs))?;
                 Ok((dropped, built, Some(reshape)))
             }
-            AlterAction::AlterColumn { column, at, default } => {
-                self.alter_column((qn, zone), column, default.as_ref()).or_at(*at)?;
+            AlterAction::AlterColumn { column, at, action } => {
+                self.alter_column((qn, zone), (column, *at), (action, epochs)).or_at(*at)?;
                 Ok((Dropped::default(), Made::default(), None))
             }
             AlterAction::AddConstraint(c) => Ok((Dropped::default(), self.add_constraint((qn, names), c, (made, tx)).or_at(c.at)?, None)),
@@ -173,11 +176,15 @@ impl State {
         &mut self,
         (qn, names, zone): (&QualifiedName, &str, i16),
         action: &AlterAction,
-        made: Option<&Made>,
+        (made, epochs): (Option<&Made>, &mut Epochs),
     ) -> Result<(Dropped, Made, Reshape)> {
         let desc = self.base_table(qn)?;
         let (next, reshape, others) = match action {
-            AlterAction::AddColumn(def) => (self.add_column((&desc, names, zone), def).or_at(def.at)?, Reshape::Append, Vec::new()),
+            AlterAction::AddColumn(def) => {
+                let mut next = self.add_column((&desc, names, zone), def).or_at(def.at)?;
+                self.give_epochs(&mut next, epochs)?;
+                (next, Reshape::Append, Vec::new())
+            }
             AlterAction::DropColumn { column, at, behavior } => self.drop_column(&desc, column, *behavior).or_at(*at)?,
             AlterAction::AlterColumn { .. }
             | AlterAction::AddConstraint(_)

@@ -37,6 +37,7 @@ pub use datetime::{function_type as datetime_function_type, literal_value as dat
 pub use interval::{displacement_of, is_displacement};
 mod expression;
 mod from;
+mod generated;
 mod greatest;
 mod natural;
 mod predicates;
@@ -56,8 +57,10 @@ mod views;
 pub use cursor::bind_cursor;
 use cursor::sort_keys;
 use from::FromItem;
+pub use generated::{bind_generation, generations};
 use query::bind_query_specification;
 pub use set_operations::{ObjectColumn, bind_insert_query};
+pub(crate) use statements::assignable;
 pub use statements::{
     AssignRule, BoundWrite, INSERT_RULE, UPDATE_POSITIONED_RULE, UPDATE_SEARCHED_RULE, WriteKind, bind_select, bind_write,
     check_assignment, updatable, updatable_in,

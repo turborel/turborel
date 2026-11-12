@@ -55,6 +55,7 @@ impl State {
                 default: None,
                 domain: None,
                 collation: c.collation.clone(),
+                generated: None,
             })
             .collect();
         if v.check_option.is_some() && updates.is_none() {

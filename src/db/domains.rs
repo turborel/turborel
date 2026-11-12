@@ -16,6 +16,7 @@ use super::collations::is_made;
 use super::ddl::Dropped;
 use super::defaults::default_of;
 use super::definitions::Defined;
+use super::generated::Named;
 use super::sequences::Epochs;
 use super::{State, rule};
 use crate::ast::{AlterDomain, AlterDomainAction, DomainDefinition, Schema, TableConstraint, TableConstraintKind, TypeName};
@@ -312,7 +313,15 @@ impl State {
     /// This state with a table of `domain`'s schema made for its constraints:
     /// of one column VALUE, of `data_type`; and that table's name.
     fn with_value(&self, domain: &QualifiedName, data_type: DataType) -> (State, QualifiedName) {
-        let column = ColumnDesc { name: VALUE_COLUMN.to_owned(), data_type, not_null: false, default: None, domain: None, collation: None };
+        let column = ColumnDesc {
+            name: VALUE_COLUMN.to_owned(),
+            data_type,
+            not_null: false,
+            default: None,
+            domain: None,
+            collation: None,
+            generated: None,
+        };
         let probe = QualifiedName { auth: domain.auth.clone(), ident: format!("{} VALUE", domain.ident) };
         let desc = TableDesc {
             name: probe.clone(),
@@ -471,12 +480,14 @@ impl State {
     /// constraint of its table, where the domain's owner could add it, and
     /// goes otherwise [GR1c]; with CASCADE, the views, constraints and
     /// assertions that CAST to it go, as the revoke of USAGE on it takes
-    /// them [GR2; §11.37 SR13–SR15, GR5].
+    /// them [GR2; §11.37 SR13–SR15, GR5], the generated columns that do
+    /// gone already (`db/generated/named.rs`).
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if there is no such domain [SR1], or, not `cascade`, a
-    /// column, view, constraint or assertion uses it [SR2].
+    /// column, view, constraint, assertion or generated column uses it
+    /// [SR2]; -910 if, with `cascade`, a generated column still does.
     pub(super) fn drop_domain(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         let domain =
             self.catalog.domain(qn).cloned().ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.27 SR1] there is no domain {qn}")))?;
@@ -484,6 +495,7 @@ impl State {
         if let (Some(first), false) = (users.first(), cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.27 SR2] domain {qn} is used by {first}, so it is dropped only with CASCADE")));
         }
+        self.generations_gone(Named::Domain(qn))?;
         let owner = owner_of(&*self.catalog, &qn.auth).to_owned();
         let mut dropped = Dropped::default();
         let mut catalog = self.catalog.duplicate();
@@ -526,9 +538,10 @@ impl State {
         Ok(dropped)
     }
 
-    /// What uses domain `qn` [ISO/IEC 9075:1992 §11.27 SR2]: each column of
-    /// it, and each view, constraint and assertion that CASTs to it, as
-    /// named.
+    /// What uses domain `qn` [ISO/IEC 9075:1992 §11.27 SR2; ISO/IEC
+    /// 9075-2:2023 §11.40 SR2a]: each column of it, each view, constraint
+    /// and assertion that CASTs to it, and each generated column whose
+    /// generation expression does, as named.
     fn domain_users(&self, qn: &QualifiedName) -> Vec<String> {
         let mut users = Vec::new();
         for t in self.catalog.tables() {
@@ -540,6 +553,8 @@ impl State {
             users.extend(d.constraints.iter().filter(|c| casts_check(c, qn)).map(|c| format!("constraint {}", c.name)));
         }
         users.extend(self.catalog.assertions().into_iter().filter(|a| casts_check(a, qn)).map(|a| format!("assertion {}", a.name)));
+        let naming = self.generations_naming(Named::Domain(qn), &|_| true);
+        users.extend(naming.into_iter().map(|(t, c)| format!("generated column {t}.{c}")));
         users
     }
 }

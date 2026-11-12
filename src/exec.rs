@@ -446,7 +446,8 @@ mod tests {
             st.work = areas(Some(Arc::new(Held { broken })), usize::MAX);
             let name = QualifiedName { auth: "A".into(), ident: "N".into() };
             let data_type = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
-            let column = ColumnDesc { name: "K".into(), data_type, not_null: false, default: None, domain: None, collation: None };
+            let column =
+                ColumnDesc { name: "K".into(), data_type, not_null: false, default: None, domain: None, collation: None, generated: None };
             let desc = TableDesc { name: name.clone(), columns: vec![column], ..state_desc() };
             let table = RowStore::in_memory(TableOptions::default()).create_table(&desc).unwrap();
             for k in 0..ROWS {

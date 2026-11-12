@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use super::definitions::Defined;
 use super::domains::{casts_check, casts_to};
+use super::generated::{Column, Named};
 use super::revoke::Abandoned;
 use super::{Completion, State, rule};
 use crate::ast::{Action, DropBehavior, PrivilegeDefinition, RevokeStatement};
@@ -29,6 +30,19 @@ fn holds(usage: &[UsageDesc], who: &str, (owner, owners): (&str, bool)) -> (bool
         return (true, owners);
     }
     usage.iter().filter(|u| u.grantee.as_deref().is_none_or(|g| g == who)).fold((false, false), |(_, g), u| (true, g || u.grantable))
+}
+
+/// A domain's USAGE as a REVOKE leaves it.
+struct DomainRevoked {
+    /// Its descriptor, the grants revoked and those they took gone.
+    domain: DomainDesc,
+    /// A grantee named held no grant of it from the revoker [ISO/IEC
+    /// 9075:1992 §11.37 GR8, GR9].
+    warned: bool,
+    /// Grants not named that went with those that were [SR7].
+    lost: usize,
+    /// What it abandons [SR13–SR16].
+    abandoned: Abandoned,
 }
 
 /// The position of column `column` of table or view `table`.
@@ -119,14 +133,48 @@ impl State {
     /// their grant option alone, gone; with CASCADE, what that abandons
     /// [SR7–SR17] gone too: the grants of those left with no grant option,
     /// and the views, CHECKs, domain constraints and assertions of those
-    /// left with no USAGE that CAST to it. A warning if `auth` granted it
-    /// to one it names not [GR8, GR9].
+    /// left with no USAGE that CAST to it, their generated columns that do
+    /// gone already (`db/generated/named.rs`). A warning if `auth` granted
+    /// it to one it names not [GR8, GR9].
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if it revokes other than USAGE [SR1], there is no such
     /// domain, or, with RESTRICT, it abandons any [SR18].
     pub(super) fn revoke_usage(&mut self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Result<Defined> {
+        let revoked = self.domain_revoked((auth, schema), r)?;
+        if r.behavior == DropBehavior::Restrict && (revoked.lost > 0 || !revoked.abandoned.is_empty()) {
+            let what = if revoked.abandoned.is_empty() { "a grant of it".to_owned() } else { revoked.abandoned.first() };
+            return Err(rule(format!(
+                "[ISO/IEC 9075:1992 §11.37 SR18] revoking USAGE on {} abandons {what}: revoke it with CASCADE",
+                revoked.domain.name
+            )));
+        }
+        let mut catalog = self.catalog.duplicate();
+        catalog.put_domain(revoked.domain);
+        self.catalog = Arc::from(catalog);
+        let (dropped, locks) = self.destroy(Arc::clone(&self.catalog), &revoked.abandoned)?;
+        let mut defined = Defined { dropped, locks, ..Defined::default() };
+        if revoked.warned {
+            defined.completion = Completion::Warning(SqlState::PRIVILEGE_NOT_REVOKED);
+        }
+        Ok(defined)
+    }
+
+    /// The generated columns REVOKE USAGE ON DOMAIN `r` by `auth`, its
+    /// names in schema `schema`, loses: those that CAST to it of the tables
+    /// of each schema whose owner it leaves with no USAGE.
+    ///
+    /// # Errors
+    ///
+    /// As `revoke_usage`, but for RESTRICT's.
+    pub(super) fn domain_generations_revoked(&self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Result<Vec<Column>> {
+        Ok(self.domain_revoked((auth, schema), r)?.abandoned.columns)
+    }
+
+    /// Domain `r` names as REVOKE `r` by `auth` leaves it, its names in
+    /// schema `schema`, and what that abandons.
+    fn domain_revoked(&self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Result<DomainRevoked> {
         usage_alone(r.actions.as_deref())?;
         let (mut domain, owner) = self.domain_named(&qualify(&r.table, schema))?;
         let named = |u: &UsageDesc| u.grantor == auth && r.grantees.contains(&u.grantee);
@@ -149,28 +197,14 @@ impl State {
         }
         let abandoned = self.casting_without_usage(&domain, &owner);
         let lost = before.iter().filter(|u| !named(u) && !domain.usage.contains(u)).count();
-        if r.behavior == DropBehavior::Restrict && (lost > 0 || !abandoned.is_empty()) {
-            let what = if abandoned.is_empty() { "a grant of it".to_owned() } else { abandoned.first() };
-            return Err(rule(format!(
-                "[ISO/IEC 9075:1992 §11.37 SR18] revoking USAGE on {} abandons {what}: revoke it with CASCADE",
-                domain.name
-            )));
-        }
-        let mut catalog = self.catalog.duplicate();
-        catalog.put_domain(domain);
-        self.catalog = Arc::from(catalog);
-        let (dropped, locks) = self.destroy(Arc::clone(&self.catalog), &abandoned)?;
-        let mut defined = Defined { dropped, locks, ..Defined::default() };
-        if warned {
-            defined.completion = Completion::Warning(SqlState::PRIVILEGE_NOT_REVOKED);
-        }
-        Ok(defined)
+        Ok(DomainRevoked { domain, warned, lost, abandoned })
     }
 
     /// What CASTs to `domain` in a schema whose owner holds no USAGE on
     /// it: abandoned [ISO/IEC 9075:1992 §11.37 SR13-SR16]. Its views, and
     /// its tables' CHECKs, other domains' constraints and assertions; a
-    /// copy of a domain constraint on a column goes with the domain's.
+    /// copy of a domain constraint on a column goes with the domain's; and
+    /// its tables' generated columns that CAST to it are lost.
     fn casting_without_usage(&self, domain: &DomainDesc, owner: &str) -> Abandoned {
         let unheld = |schema: &str| !holds(&domain.usage, owner_of(&*self.catalog, schema), (owner, true)).0;
         let casts = |c: &ConstraintDesc| casts_check(c, &domain.name);
@@ -191,6 +225,7 @@ impl State {
         }
         abandoned.assertions =
             self.catalog.assertions().into_iter().filter(|a| unheld(&a.name.auth) && casts(a)).map(|a| a.name.clone()).collect();
+        abandoned.columns = self.generations_naming(Named::Domain(&domain.name), &unheld);
         abandoned
     }
 }

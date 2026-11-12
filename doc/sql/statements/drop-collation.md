@@ -24,8 +24,10 @@ table whose foreign key references one reverted after it is checked again,
 so a key holds by the collation its referenced columns end with. The tables
 reverted may be anyone's.
 
-With RESTRICT it is refused while a view or constraint names the collation.
-With CASCADE they go too.
+With RESTRICT it is refused while a view, a constraint or a generated
+column's generation expression names the collation. With CASCADE the views
+and constraints go too, and each such generated column is dropped first, as
+ALTER TABLE DROP COLUMN with CASCADE drops it.
 
 ## RULES
 
@@ -39,7 +41,7 @@ Its schema's owner.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | No such collation, or, with RESTRICT, a view or constraint names it |
+| 2A000 | -103 | No such collation, or, with RESTRICT, a view, constraint or generation expression names it |
 | 2A000 | -104 | Its user does not own the collation's schema |
 | 23000 | -201 | A constraint no longer holds of a table's rows |
 
@@ -62,7 +64,7 @@ OK
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): a view or constraint names collation ANN.TIGHT, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.44 SR4] (at character 15)
+turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.V names collation ANN.TIGHT, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.44 SR4] (at character 15)
 OK
 
 ----------------------

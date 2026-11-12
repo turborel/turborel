@@ -61,7 +61,7 @@ pub const COLLATIONS: [Mutation; 14] = [
         package: Package::Core,
         breaks: "DROP COLLATION: a refusal comes after its columns are reverted",
         file: "src/db/drop.rs",
-        original: "            State::clone(st).drop_object(&target, cascade).or_at(object.at())?;\n",
+        original: "            State::clone(st).drop_object(target, cascade)?;\n",
         replacement: "",
         integration: &["collations::a_drop_collation_refused_leaves_no_effect"],
         unit: &[],

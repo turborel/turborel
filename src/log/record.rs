@@ -24,7 +24,7 @@
 //!              assertion, 6 collation, 7 sequence generator) | its name,
 //!              or the schema's | cascade u8
 //! alter table (12): table | the `<alter table action>` text | default
-//!              schema | zone
+//!              schema | zone | epochs
 //! setting (13): name | value, null for its default again
 //! alter index (14): name | options
 //! stale (15):  checkpoint's position u64 | index | row id u64 | key row
@@ -64,7 +64,7 @@ mod definitions;
 mod kinds;
 
 pub use definitions::DropTarget;
-use definitions::{defined, dropped, put_defined, put_dropped, put_schema, put_sequence, schema, sequence};
+use definitions::{defined, dropped, put_altered, put_defined, put_dropped, put_schema, put_sequence, schema, sequence};
 
 use kinds::{
     ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, OWNER, RECONFIGURATION,
@@ -202,6 +202,9 @@ pub enum Change {
         /// The displacement, in minutes, of a datetime it writes without
         /// one: the session's [ISO/IEC 9075:1992 §5.3 SR18].
         zone: i16,
+        /// \[DESIGN\] The epochs of the counters of the identity column
+        /// it added or restarted, in order (RULES.md D62, D63).
+        epochs: Vec<u64>,
     },
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.2, §11.18, §11.20, §11.27,
     /// §11.35] A table, view, schema, domain or assertion dropped by its
@@ -327,12 +330,7 @@ impl Record {
             }
             Change::DropIndex { name } | Change::Owner { name } | Change::Reconfiguration { members: name } => out.put_str(name),
             Change::Drop { object, cascade } => put_dropped(&mut out, object, *cascade),
-            Change::AlterTable { table, action, schema, zone } => {
-                put_table(&mut out, table);
-                out.put_str(action);
-                out.put_str(schema);
-                out.put_i128(i128::from(*zone));
-            }
+            Change::AlterTable { table, action, schema, zone, epochs } => put_altered(&mut out, (table, action, schema, *zone), epochs),
             Change::Setting { name, value } => {
                 out.put_str(name);
                 put_value(&mut out, value.as_ref().unwrap_or(&Value::Null));
@@ -387,7 +385,10 @@ impl Record {
             ALTER_INDEX => Change::AlterIndex { name: r.str()?, options: options(&mut r)? },
             DROP_INDEX => Change::DropIndex { name: r.str()? },
             DROP => Change::Drop { object: dropped(&mut r)?, cascade: r.u8()? != 0 },
-            ALTER_TABLE => Change::AlterTable { table: table(&mut r)?, action: r.str()?, schema: r.str()?, zone: zone(&mut r)? },
+            ALTER_TABLE => {
+                let (table, action, schema, zone) = (table(&mut r)?, r.str()?, r.str()?, zone(&mut r)?);
+                Change::AlterTable { table, action, schema, zone, epochs: definitions::epochs(&mut r)? }
+            }
             // No setting takes the null value: it stands for the default.
             SETTING => Change::Setting { name: r.str()?, value: Some(value(&mut r)?).filter(|v| !v.is_null()) },
             USER => user(&mut r)?,

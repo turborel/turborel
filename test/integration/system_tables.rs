@@ -126,6 +126,7 @@ impl SystemTable for Readers {
             default: None,
             domain: None,
             collation: None,
+            generated: None,
         }]
     }
     fn rows(&self, seen: &Seen<'_>) -> Result<Vec<Row>> {

@@ -43,8 +43,17 @@ fn table_desc(auth: &str, ident: &str, engine: &str) -> TableDesc {
             default: None,
             domain: None,
             collation: None,
+            generated: None,
         },
-        ColumnDesc { name: "S".into(), data_type: DataType::character(3), not_null: false, default: None, domain: None, collation: None },
+        ColumnDesc {
+            name: "S".into(),
+            data_type: DataType::character(3),
+            not_null: false,
+            default: None,
+            domain: None,
+            collation: None,
+            generated: None,
+        },
     ];
     TableDesc {
         name: QualifiedName { auth: auth.into(), ident: ident.into() },

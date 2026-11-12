@@ -327,7 +327,10 @@ pub enum TableElement {
 /// \[`<default clause>`\] \[`<column constraint definition>`...\] [ISO/IEC
 /// 9075:1992 §11.4]
 ///
-/// \[`<collate clause>`\] [ISO/IEC 9075-2:2023 §10.7, Feature F692].
+/// \[`<collate clause>`\] [ISO/IEC 9075-2:2023 §10.7, Feature F692]; an
+/// `<identity column specification>` or a `<generation clause>` in place
+/// of the `<default clause>`, and no type with a `<generation clause>`
+/// [ISO/IEC 9075-2:2023 §11.4].
 #[derive(Debug)]
 pub struct ColumnDefinition {
     /// The `<column name>`.
@@ -335,10 +338,15 @@ pub struct ColumnDefinition {
     /// Where it begins in the statement: a character offset, for the
     /// positions of errors (`SqlError::or_at`).
     pub at: usize,
-    /// Its `<data type>` or `<domain name>`.
-    pub data_type: TypeName,
+    /// Its `<data type>` or `<domain name>`, which only a column with a
+    /// `<generation clause>` may not write [ISO/IEC 9075-2:2023 §11.4
+    /// SR11].
+    pub data_type: Option<TypeName>,
     /// The `<default option>` of its `<default clause>`, if written.
     pub default: Option<DefaultOption>,
+    /// [ISO/IEC 9075-2:2023 §11.4] Its `<identity column specification>`
+    /// or `<generation clause>`, if written.
+    pub generated: Option<Box<super::ColumnGeneration>>,
     /// The `<column constraint definition>`s, in order.
     pub constraints: Vec<ColumnConstraint>,
     /// The `<collation name>` of its `<collate clause>`, if written.

@@ -111,6 +111,7 @@ impl SystemTable for Table {
             default: None,
             domain: None,
             collation: None,
+            generated: None,
         }]
     }
     fn rows(&self, _: &Seen<'_>) -> Result<Vec<Row>> {

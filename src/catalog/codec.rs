@@ -11,7 +11,9 @@
 //! default:    0 none | 1 value | 2 the user | 3 a datetime value function,
 //!             0 date, 1 time or 2 timestamp u8, precision u32
 //! column:     name (str), type, not null u8, default, domain (0, or 1, a
-//!             name and its default)
+//!             name and its default), collation (0, or 1 and a name),
+//!             generated (0 none; 1 identity, always u8, a sequence
+//!             generator; 2 generation expression, text (str), names (str))
 //! table:      name, columns (count u32, each a column), constraints (count
 //!             u32, each a constraint), engine (str), options (count u32,
 //!             each str and value), generation u32, temporary u8 (0
@@ -28,7 +30,8 @@
 //! domain:     name, type, default, constraints (count u32, each a
 //!             constraint), usage (count u32, each grantor (str), grantee
 //!             (0 PUBLIC, or 1 and str), grantable u8)
-//! collation and sequence generator: catalog/codec/objects.rs
+//! collation and sequence generator: catalog/codec/objects.rs; the column
+//!             is written in catalog/codec/columns.rs
 //! view:       name, columns, query (str), names (str), check option u8 (0
 //!             none, 1 cascaded, 2 local), grouped u8, updates (0, or 1, a
 //!             name and positions), reads (count u32, names), horizon,
@@ -45,17 +48,18 @@
 use std::collections::BTreeSet;
 
 use super::{
-    Actions, CheckLevels, ColumnDefault, ColumnDesc, ColumnDomain, ConstraintAttributes, ConstraintDesc, ConstraintKind, DomainDesc,
-    ForeignKey, Horizon, IndexDesc, MatchType, PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind,
-    Underlying, UsageDesc, ViewDesc,
+    Actions, CheckLevels, ConstraintAttributes, ConstraintDesc, ConstraintKind, DomainDesc, ForeignKey, Horizon, IndexDesc, MatchType,
+    PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind, Underlying, UsageDesc, ViewDesc,
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::codec::{put_value, value};
-use crate::value::datetime::Moment;
 
+mod columns;
 mod objects;
 mod types;
+use columns::{collation_name, column, put_collation_name, put_column};
+pub(crate) use columns::{default, put_default};
 pub(crate) use objects::{collation, put_collation, put_sequence, sequence};
 use types::{data_type, put_type};
 
@@ -109,85 +113,6 @@ fn flag(r: &mut Reader<'_>) -> Result<bool> {
         1 => Ok(true),
         _ => Err(r.corrupt("a flag is neither 0 nor 1")),
     }
-}
-
-fn put_column(out: &mut Vec<u8>, column: &ColumnDesc) {
-    out.put_str(&column.name);
-    put_type(out, column.data_type);
-    put_flag(out, column.not_null);
-    put_default(out, column.default.as_ref());
-    // Its domain, 1 then its name and default, or 0 for none.
-    match &column.domain {
-        None => out.put_u8(0),
-        Some(ColumnDomain { name, default }) => {
-            out.put_u8(1);
-            put_name(out, name);
-            put_default(out, default.as_ref());
-        }
-    }
-    put_collation_name(out, column.collation.as_ref());
-}
-
-/// A declared type collation: 0 for none, or 1 then its name.
-fn put_collation_name(out: &mut Vec<u8>, name: Option<&QualifiedName>) {
-    put_flag(out, name.is_some());
-    if let Some(name) = name {
-        put_name(out, name);
-    }
-}
-
-/// The name `put_collation_name` wrote.
-fn collation_name(r: &mut Reader<'_>) -> Result<Option<QualifiedName>> {
-    if flag(r)? { qualified(r).map(Some) } else { Ok(None) }
-}
-
-/// A default: 0 for none, 1 and a value, 2 for a user's, or 3 for a
-/// datetime value function's: 0 CURRENT_DATE, 1 CURRENT_TIME or 2
-/// CURRENT_TIMESTAMP, and its precision.
-pub(crate) fn put_default(out: &mut Vec<u8>, default: Option<&ColumnDefault>) {
-    match default {
-        None => out.put_u8(0),
-        Some(ColumnDefault::Value(v)) => {
-            out.put_u8(1);
-            put_value(out, v);
-        }
-        Some(ColumnDefault::User) => out.put_u8(2),
-        Some(ColumnDefault::Datetime(moment, precision)) => {
-            out.put_u8(3);
-            out.put_u8(match moment {
-                Moment::Date => 0,
-                Moment::Time => 1,
-                Moment::Timestamp => 2,
-            });
-            out.put_u32(*precision);
-        }
-    }
-}
-
-/// The default `put_default` wrote.
-pub(crate) fn default(r: &mut Reader<'_>) -> Result<Option<ColumnDefault>> {
-    Ok(match r.u8()? {
-        0 => None,
-        1 => Some(ColumnDefault::Value(value(r)?)),
-        2 => Some(ColumnDefault::User),
-        3 => {
-            let moment = match r.u8()? {
-                0 => Moment::Date,
-                1 => Moment::Time,
-                2 => Moment::Timestamp,
-                _ => return Err(r.corrupt("not a datetime value function")),
-            };
-            Some(ColumnDefault::Datetime(moment, r.u32()?))
-        }
-        _ => return Err(r.corrupt("not a column default")),
-    })
-}
-
-fn column(r: &mut Reader<'_>) -> Result<ColumnDesc> {
-    let (name, data_type, not_null) = (r.str()?, data_type(r)?, flag(r)?);
-    let own = default(r)?;
-    let domain = if flag(r)? { Some(ColumnDomain { name: qualified(r)?, default: default(r)? }) } else { None };
-    Ok(ColumnDesc { name, data_type, not_null, default: own, domain, collation: collation_name(r)? })
 }
 
 fn put_horizon(out: &mut Vec<u8>, horizon: &Horizon) {
@@ -490,6 +415,7 @@ pub(crate) fn privilege(r: &mut Reader<'_>) -> Result<PrivilegeDesc> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::{ColumnDesc, Generated, Generation, Identity, SequenceDesc};
     use crate::error::Code;
     use crate::value::{DataType, Spelled};
 
@@ -522,11 +448,11 @@ mod tests {
                     put_type(out, DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric });
                     put_flag(out, false);
                 },
-                &[tag, 0, 0],
+                &[tag, 0, 0, 0],
             )
         };
         assert_eq!(refused(&column_with(9), column), corrupt, "a default");
-        assert!(column(&mut Reader::new(&column_with(0), "column")).is_ok(), "no default, of no domain or collation");
+        assert!(column(&mut Reader::new(&column_with(0), "column")).is_ok(), "no default, of no domain, collation or generation");
         let foreign_key = |action: u8| {
             bytes(
                 |out| {
@@ -551,6 +477,40 @@ mod tests {
             )
         };
         assert_eq!(refused(&view_with(9), view), corrupt, "a check option");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D25, D63: how a column's values are
+    /// generated reads back as written, of an identity column with its
+    /// sequence generator and of a generated column; another tag is
+    /// SQLCODE -916.
+    #[test]
+    fn a_columns_generation_reads_back() {
+        let t = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
+        let sequence = SequenceDesc {
+            name: QualifiedName { auth: "A".into(), ident: "T".into() },
+            data_type: t,
+            start: 1,
+            minimum: 1,
+            maximum: 99,
+            increment: 2,
+            cycle: true,
+            epoch: 7,
+            origin: 5,
+            usage: Vec::new(),
+        };
+        let identity = Generated::Identity(Identity { always: true, sequence });
+        let expression = Generated::Expression(Generation { text: "K + 1".into(), names: "A".into() });
+        for generated in [None, Some(identity), Some(expression)] {
+            let c = ColumnDesc { name: "C".into(), data_type: t, not_null: true, default: None, domain: None, collation: None, generated };
+            let mut out = Vec::new();
+            put_column(&mut out, &c);
+            assert_eq!(column(&mut Reader::new(&out, "column")).unwrap().generated, c.generated);
+            let mut bad = out.clone();
+            if let Some(tag) = bad.iter_mut().rev().find(|_| c.generated.is_none()) {
+                *tag = 3;
+                assert_eq!(refused(&bad, column), Some(Code::Corrupt));
+            }
+        }
     }
 
     /// Verifies: [DESIGN] RULES.md D25: a table's kind reads back as written,

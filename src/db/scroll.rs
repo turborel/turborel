@@ -259,6 +259,7 @@ mod tests {
             default: None,
             domain: None,
             collation: None,
+            generated: None,
         };
         let desc = TableDesc {
             name: QualifiedName { auth: "A".into(), ident: "T".into() },

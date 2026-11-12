@@ -4,6 +4,7 @@
 //! §8.5, §8.11, §8.12], with the assignment rules they share.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use super::views::{Source, ViewCheck, write_target};
 use super::{Binder, Bound, Context, FromItem, Scope, bind_query_specification, no_column, qualify, require, rule};
@@ -11,7 +12,7 @@ use crate::ast::{
     CursorSpecification, QuerySpecification, SearchCondition, SetClause, TableExpression, TableName, TableReference, UpdateSource,
 };
 use crate::catalog::Actions;
-use crate::catalog::{Catalog, QualifiedName, TableDesc};
+use crate::catalog::{Catalog, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlError};
 use crate::logical::{Expr, LogicalPlan, and_all};
 use crate::params::ParameterType;
@@ -96,7 +97,7 @@ pub const UPDATE_POSITIONED_RULE: AssignRule = AssignRule { rule: "§13.9 SR10" 
 /// # Errors
 ///
 /// SQLCODE -103 citing `r` if it cannot.
-pub fn check_assignment(col: &crate::catalog::ColumnDesc, t: DataType, r: AssignRule) -> Result<()> {
+pub fn check_assignment(col: &ColumnDesc, t: DataType, r: AssignRule) -> Result<()> {
     if assignable(&col.data_type, &t) {
         return Ok(());
     }
@@ -181,6 +182,9 @@ pub struct BoundWrite {
     /// default of its referential actions may be [ISO/IEC 9075:1992 §11.5
     /// GR1c].
     pub auth: String,
+    /// [ISO/IEC 9075-2:2023 §15.14 GR9] Each generated column of the object
+    /// table, by its position, its generation expression bound over the row.
+    pub generated: Vec<(usize, Expr)>,
 }
 
 impl BoundWrite {
@@ -236,6 +240,16 @@ fn bind_set_clause(binder: &Binder<'_>, sc: &SetClause, rules: &SetRules, done: 
     if done.iter().any(|(j, _)| *j == position) {
         return Err(rule(format!("[X3.135-1986 {}] column {} is set twice", rules.column, sc.column)));
     }
+    let base = match &item.source {
+        Source::Base(vb) => vb.base.columns.get(position),
+        Source::Table | Source::Derived(_) | Source::Common | Source::System(_) => Some(col),
+    };
+    // [ISO/IEC 9075-2:2023 §14.15 SR5] a generated column, or an identity
+    // column always generated, set only to DEFAULT.
+    if base.is_some_and(ColumnDesc::always_generated) && !matches!(sc.value, UpdateSource::Default) {
+        let msg = format!("[ISO/IEC 9075-2:2023 §14.15 SR5] column {} is generated always, so it is set only to DEFAULT", sc.column);
+        return Err(rule(msg));
+    }
     let value = match &sc.value {
         // NULL: SQL-86 refuses it for a NOT NULL column [X3.135-1986 §8.11
         // SR8a, §8.12 SR6a]; SQL-92 has no such rule, NOT NULL being a CHECK
@@ -244,13 +258,13 @@ fn bind_set_clause(binder: &Binder<'_>, sc: &SetClause, rules: &SetRules, done: 
         UpdateSource::Null => None,
         // [ISO/IEC 9075:1992 §13.9 GR5] DEFAULT: the default of the column,
         // of the base table if it is a view's [§11.5 GR2].
-        UpdateSource::Default => {
-            let base = match &item.source {
-                Source::Base(vb) => vb.base.columns.get(position),
-                Source::Table | Source::Derived(_) | Source::Common | Source::System(_) => Some(col),
-            };
-            Some(Expr::Const(base.map_or(Value::Null, |c| c.default_value(binder.user, binder.now))))
-        }
+        // [ISO/IEC 9075-2:2023 §11.5 GR3a] of an identity column, unassigned,
+        // so given its generator's next value [§15.14 GR7a]; of a generated
+        // column, its expression's value [GR9].
+        UpdateSource::Default => match base.and_then(ColumnDesc::identity) {
+            Some(identity) => Some(Expr::NextValue(Arc::new(identity.sequence.clone()))),
+            None => Some(Expr::Const(base.map_or(Value::Null, |c| c.default_value(binder.user, binder.now)))),
+        },
         UpdateSource::Value(v) => {
             // [ISO/IEC 9075:1992 §17.6 GR5w] a `?` takes its object column's type.
             let (e, t) = binder.typed(v, ParameterType::Of(col.data_type), Scope::Rows(rules.set_function))?;
@@ -306,6 +320,7 @@ pub fn bind_write(
     // [ISO/IEC 9075-2:2023 §6.14 SR1e] an <update source> draws values.
     let bound_set = binder.drawing(true, || bind_set_clauses(&binder, kind, set))?;
     let base = target.base;
+    let generated = super::generations(db, &base)?;
     let mut rows = LogicalPlan::Scan { table: base.name.clone(), names, needed: (0..base.columns.len()).collect() };
     if let Some(cond) = and_all(target.cond.into_iter().chain(cond).collect()) {
         rows = LogicalPlan::Filter { cond, input: Box::new(rows) };
@@ -318,5 +333,6 @@ pub fn bind_write(
         rows,
         checks: target.checks,
         auth: auth.to_string(),
+        generated,
     })
 }

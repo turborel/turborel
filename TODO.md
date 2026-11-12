@@ -32,10 +32,6 @@ each group.
 
 ### Tables and schemas
 
-- Identity columns (T174, T178) and generated columns (T175) [§4.17.12,
-  §4.17.13, §11.4], with ALTER TABLE changing or dropping them (F384 to
-  F386) [§11.20, §11.22]. An identity column draws from a sequence
-  generator of its own (RULES.md D62).
 - TRUNCATE TABLE (F200, F202) [§14.10]. It removes every row at once
   rather than one by one, and RESTART IDENTITY needs identity columns.
 - CREATE TABLE AS (T172) and CREATE TABLE LIKE (T171, T173) [§11.3]. LIKE

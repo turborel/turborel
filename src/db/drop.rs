@@ -259,13 +259,27 @@ impl State {
 
 impl Session {
     /// [ISO/IEC 9075:1992 §11.2, §11.18, §11.20, §11.27, §11.35] DROP
-    /// SCHEMA, TABLE, VIEW, DOMAIN or ASSERTION, in transaction `tx`: made
-    /// once the locks of all it drops or changes are held, on the
-    /// definitions then.
+    /// SCHEMA, TABLE, VIEW, DOMAIN, ASSERTION, COLLATION or SEQUENCE, in
+    /// transaction `tx`. With CASCADE, the generated columns that name a
+    /// domain or collation it drops go first.
     pub(super) fn drop_object(&self, st: &Arc<State>, tx: &Txn, object: &DropObject, behavior: DropBehavior) -> Result<Completion> {
         let target = self.drop_target(st, object)?;
         let cascade = behavior == DropBehavior::Cascade;
-        let reverting: Vec<(QualifiedName, Vec<QualifiedName>)> = match &target {
+        // The generated columns that name what goes, with CASCADE, dropped
+        // first (`db/generated/named.rs`).
+        let lost = if cascade { st.generations_dropped(&target) } else { Vec::new() };
+        self.dropping_generations(tx, &lost, || {
+            let fresh = if lost.is_empty() { Arc::clone(st) } else { self.definitions(self.db.snapshot()?)? };
+            self.drop_reverted(&fresh, tx, &target, cascade).or_at(object.at())
+        })
+    }
+
+    /// DROP of `target`, with `cascade` or not, in transaction `tx`, on
+    /// definitions `st`: the columns of a collation it drops reverted
+    /// first, then made once the locks of all it drops or changes are
+    /// held, on the definitions then.
+    fn drop_reverted(&self, st: &Arc<State>, tx: &Txn, target: &DropTarget, cascade: bool) -> Result<Completion> {
+        let reverting: Vec<(QualifiedName, Vec<QualifiedName>)> = match target {
             DropTarget::Collation(qn) => vec![(qn.clone(), st.tables_of_collation(qn, None))],
             // [§11.2 GR5] Its own tables go, those of other schemas revert.
             DropTarget::Schema(auth) => {
@@ -278,23 +292,23 @@ impl Session {
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
             // back its rows, not a table's new definition.
-            State::clone(st).drop_object(&target, cascade).or_at(object.at())?;
+            State::clone(st).drop_object(target, cascade)?;
             for (qn, tables) in reverting {
                 // No table of it defined meanwhile (`collations/revert.rs`).
                 self.prepare_change(st, tx, &qn)?;
-                self.revert_columns(tx, &qn, &tables).or_at(object.at())?;
+                self.revert_columns(tx, &qn, &tables)?;
             }
         }
         let mut held: Vec<QualifiedName> = Vec::new();
         loop {
             let fresh = self.definitions(self.db.snapshot()?)?;
             let mut next = State::clone(&fresh);
-            let dropped = next.drop_object(&target, cascade).or_at(object.at())?;
+            let dropped = next.drop_object(target, cascade)?;
             let mut wanted: Vec<QualifiedName> = dropped.names.into_iter().filter(|n| !held.contains(n)).collect();
             wanted.sort();
             wanted.dedup();
             if wanted.is_empty() {
-                let change = Change::Drop { object: target, cascade };
+                let change = Change::Drop { object: target.clone(), cascade };
                 self.stage(&fresh, tx, Changed { next: Arc::new(next), change, made: None })?;
                 return Ok(Completion::Success);
             }

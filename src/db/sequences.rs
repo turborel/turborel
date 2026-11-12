@@ -54,12 +54,12 @@ impl Epochs {
     }
 
     /// Whether they are given anew, as a session's statement is made.
-    fn are_fresh(&self) -> bool {
+    pub(super) fn are_fresh(&self) -> bool {
         self.logged.is_none()
     }
 
     /// The next epoch, noted given in `counters`.
-    fn next(&mut self, counters: &Counters) -> Result<u64> {
+    pub(super) fn next(&mut self, counters: &Counters) -> Result<u64> {
         let epoch = match &mut self.logged {
             None => counters.epoch()?,
             Some(logged) => {
@@ -115,17 +115,9 @@ impl State {
                 .or_at(at));
             }
         };
-        let o = &d.options;
-        let increment = o.increment.map_or(Ok(1), |n| integer(n, data_type))?;
-        let values = bounds(o, increment, data_type, None).or_at(d.name.at)?;
-        let start = match o.start {
-            Some(n) => integer(n, data_type)?,
-            None if increment > 0 => values.minimum,
-            None => values.maximum,
-        };
-        within(start, &values, "§9.36 SR12", "start").or_at(o.start.map_or(d.name.at, |n| n.at))?;
-        let epoch = epochs.next(&self.sequences)?;
-        self.put_sequence(SequenceDesc { data_type, start, epoch, origin: start, ..described(qn.clone(), &values) });
+        let mut desc = generator(qn.clone(), data_type, &d.options, d.name.at)?;
+        desc.epoch = epochs.next(&self.sequences)?;
+        self.put_sequence(desc);
         Ok(Defined { locks: vec![(QualifiedName::of_schema(&qn.auth), LockMode::Shared)], ..Defined::default() })
     }
 
@@ -148,10 +140,7 @@ impl State {
     }
 
     /// [ISO/IEC 9075-2:2023 §11.73] ALTER SEQUENCE `a`, its name in schema
-    /// `schema` if it names none; restarted, its new epoch from `epochs`.
-    /// Not restarted, its current base value is kept, which a session's
-    /// statement checks is within its new bounds \[§9.37 SR12\]: a record
-    /// made again, checked as it was made, is not.
+    /// `schema` if it names none, as `altered` alters it.
     ///
     /// # Errors
     ///
@@ -160,32 +149,39 @@ impl State {
     pub(super) fn alter_sequence(&mut self, schema: &str, a: &AlterSequence, epochs: &mut Epochs) -> Result<Defined> {
         let qn = qualify(&a.name, schema);
         let seq = self.sequence_named(&qn, "§11.73 SR2").or_at(a.name.at)?;
-        let o = &a.options;
+        let altered = self.altered(seq, &a.options, (a.name.at, epochs))?;
+        self.put_sequence(altered);
+        Ok(Defined::default())
+    }
+
+    /// [ISO/IEC 9075-2:2023 §9.37] `seq` altered as `o` says, its name
+    /// written at `at`; restarted, its new epoch from `epochs`. Not
+    /// restarted, its current base value is kept, which a session's
+    /// statement checks is within its new bounds \[SR12\]: a record made
+    /// again, checked as it was made, is not.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if the options break §9.37's Syntax Rules.
+    pub(super) fn altered(&self, seq: SequenceDesc, o: &SequenceOptions, (at, epochs): (usize, &mut Epochs)) -> Result<SequenceDesc> {
         let increment = o.increment.map_or(Ok(seq.increment), |n| integer(n, seq.data_type))?;
-        let values = bounds(o, increment, seq.data_type, Some(&seq)).or_at(a.name.at)?;
+        let values = bounds(o, increment, seq.data_type, Some(&seq)).or_at(at)?;
         let restarted = match o.restart {
             None => None,
-            Some(None) => Some((seq.start, a.name.at)),
+            Some(None) => Some((seq.start, at)),
             Some(Some(n)) => Some((integer(n, seq.data_type)?, n.at)),
         };
-        let (epoch, origin) = if let Some((value, at)) = restarted {
-            within(value, &values, "§9.37 SR12", "restart").or_at(at)?;
+        let (epoch, origin) = if let Some((value, written)) = restarted {
+            within(value, &values, "§9.37 SR12", "restart").or_at(written)?;
             (epochs.next(&self.sequences)?, value)
         } else {
             if epochs.are_fresh() {
-                self.keeps_base(&seq, &values).or_at(a.name.at)?;
+                self.keeps_base(&seq, &values).or_at(at)?;
             }
             (seq.epoch, seq.origin)
         };
-        self.put_sequence(SequenceDesc {
-            data_type: seq.data_type,
-            start: seq.start,
-            epoch,
-            origin,
-            usage: seq.usage,
-            ..described(qn, &values)
-        });
-        Ok(Defined::default())
+        let name = seq.name.clone();
+        Ok(SequenceDesc { data_type: seq.data_type, start: seq.start, epoch, origin, usage: seq.usage, ..described(name, &values) })
     }
 
     /// [ISO/IEC 9075-2:2023 §9.37 SR12] That `seq`'s current base value is
@@ -240,13 +236,23 @@ impl State {
 
     /// \[DESIGN\] RULES.md D62: as a database opens, with no transaction
     /// open, drops each counter none of its sequence generators draws from,
-    /// one dropped, restarted, or made by a transaction that did not commit.
+    /// one dropped, restarted, or made by a transaction that did not commit:
+    /// an identity column's too.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if a thread panicked holding the counters.
     pub(super) fn prune_counters(&self) -> Result<()> {
-        self.sequences.prune(&|name, epoch| self.catalog.sequence(name).is_some_and(|s| s.epoch == epoch))
+        let generators = self.generators();
+        self.sequences.prune(&|name, epoch| generators.iter().any(|s| s.name == *name && s.epoch == epoch))
+    }
+
+    /// Every sequence generator whose counter a statement may draw from:
+    /// each a definition made, and each identity column's \[§11.4 GR4\],
+    /// named as its table is (RULES.md D63).
+    pub(super) fn generators(&self) -> Vec<&SequenceDesc> {
+        let identities = self.catalog.tables().into_iter().flat_map(|t| t.columns.iter().filter_map(|c| c.identity()));
+        self.catalog.sequences().into_iter().chain(identities.map(|i| &i.sequence)).collect()
     }
 
     /// `desc`, recorded.
@@ -276,6 +282,26 @@ impl State {
         let logged: Option<&dyn Fn(i128) -> Result<()>> = if self.log.is_some() { Some(&reserve) } else { None };
         Ok(Value::Exact(Decimal::new(self.sequences.next(seq, logged)?, 0)))
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §9.36] The descriptor of a sequence generator
+/// `name` of type `t`, an exact numeric type of scale 0, its options `o`,
+/// written at `at`: its epoch still to be given. A generator a definition
+/// makes [§11.72 GR1], or an identity column's [§11.4 SR16c, GR4].
+///
+/// # Errors
+///
+/// SQLCODE -103 if its options break §9.36's Syntax Rules.
+pub(super) fn generator(name: QualifiedName, t: DataType, o: &SequenceOptions, at: usize) -> Result<SequenceDesc> {
+    let increment = o.increment.map_or(Ok(1), |n| integer(n, t))?;
+    let values = bounds(o, increment, t, None).or_at(at)?;
+    let start = match o.start {
+        Some(n) => integer(n, t)?,
+        None if increment > 0 => values.minimum,
+        None => values.maximum,
+    };
+    within(start, &values, "§9.36 SR12", "start").or_at(o.start.map_or(at, |n| n.at))?;
+    Ok(SequenceDesc { data_type: t, start, origin: start, ..described(name, &values) })
 }
 
 /// The descriptor of `name` of `values`, the rest to be given.

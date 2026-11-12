@@ -78,4 +78,10 @@ take them, and after USING in CHAR_LENGTH, POSITION and SUBSTRING, and
 after a character string type's length. FORMAT, which SQL:2023 does not
 reserve either, is read only after a CAST's target.
 
+GENERATED, ALWAYS, EXPRESSION and OVERRIDING, which SQL:2023 does not
+reserve, and SYSTEM, which it does, are key words only in a column's
+identity or generation, in ALTER COLUMN and in an INSERT's override
+clause. GENERATED begins a column's identity or generation only where
+ALWAYS or BY follows it, so a column may be of a domain named GENERATED.
+
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

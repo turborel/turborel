@@ -30,6 +30,7 @@ mod cursor;
 mod diagnostics;
 mod dynamic;
 mod expression;
+mod generated;
 mod query;
 mod schema;
 mod sequences;
@@ -45,6 +46,7 @@ pub use expression::{
     CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, SetArg, SetFunctionSpecification, Sign, Subquery,
     TruthValue, ValueExpression, WhenOperand,
 };
+pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use query::{
     Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable,
     QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn,
@@ -73,6 +75,8 @@ pub struct InsertStatement {
     pub table: TableName,
     /// The `<insert column list>`, if written.
     pub columns: Option<Vec<ColumnName>>,
+    /// [ISO/IEC 9075-2:2023 §14.11] The `<override clause>`, if written.
+    pub overriding: Option<Overriding>,
     /// The rows inserted.
     pub source: InsertSource,
 }
@@ -397,15 +401,14 @@ pub enum AlterAction {
         behavior: DropBehavior,
     },
     /// [ISO/IEC 9075:1992 §11.12] `<alter column definition>` ::= ALTER
-    /// \[COLUMN\] `<column name>` {SET `<default clause>` | DROP DEFAULT}
-    /// [§11.13, §11.14]
+    /// \[COLUMN\] `<column name>` `<alter column action>`
     AlterColumn {
         /// The `<column name>`.
         column: String,
         /// Where it begins in the statement, for the positions of errors.
         at: usize,
-        /// The `<default option>` set, or none for DROP DEFAULT.
-        default: Option<DefaultOption>,
+        /// The `<alter column action>`.
+        action: AlterColumnAction,
     },
     /// [ISO/IEC 9075:1992 §11.16] `<add table constraint definition>` ::=
     /// ADD `<table constraint definition>`

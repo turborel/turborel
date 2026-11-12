@@ -27,18 +27,22 @@ use std::sync::Arc;
 use super::alter::{Made, Reshape};
 use super::collations::added_collation;
 use super::defaults::default_value;
+use super::generated::{Column, Generating};
 use super::integrity::Effects;
+use super::sequences::Epochs;
 use super::{Database, Session, State, api};
-use crate::ast::{AlterAction, TableName};
+use crate::ast::{AlterAction, DropBehavior, TableName};
 use crate::binder::qualify;
 use crate::catalog::{QualifiedName, Temporary, TemporaryKind};
 use crate::db::Completion;
 use crate::error::{At, Code, Result, SqlError, fail};
+use crate::exec::NoSubqueries;
 use crate::index::Index;
 use crate::log::record::Change;
 use crate::parser::Parser;
 use crate::storage::TableStorage;
 use crate::txn::{LockMode, Timestamp, Txn};
+use crate::value::Value;
 
 /// The definitions a transaction changed, not yet published.
 pub(super) struct Staged {
@@ -104,9 +108,9 @@ impl State {
     pub(super) fn apply_change(&mut self, change: &Change, made: Option<&Made>) -> Result<Dropped> {
         match change {
             Change::Drop { object, cascade } => self.drop_object(object, *cascade),
-            Change::AlterTable { table, action, schema, zone } => {
+            Change::AlterTable { table, action, schema, zone, epochs } => {
                 let action = Parser::new(action)?.of_definition().alter_table_action()?;
-                Ok(self.alter_table((table, schema, *zone), &action, (made, None))?.0)
+                Ok(self.alter_table((table, schema, *zone), &action, (made, None, &mut Epochs::logged(epochs)))?.0)
             }
             Change::Defined { auth, schema, zone, sql, placed, epochs } => {
                 self.redefine((auth, schema, *zone), sql, (placed.as_ref(), made, epochs))
@@ -230,7 +234,22 @@ impl Session {
                 format!("[ISO/IEC 9075:1992 §11.10 SR5] {qn} is a declared local temporary table: it is not altered"),
             );
         }
-        self.alter_base_table(st, tx, (&qn, action, text), temporary)
+        // [ISO/IEC 9075-2:2023 §11.23 GR3] the generated columns on a column
+        // dropped with CASCADE dropped first; the transaction only rolls
+        // back if the drop then fails.
+        let AlterAction::DropColumn { column, behavior: DropBehavior::Cascade, .. } = action else {
+            return self.alter_base_table(st, tx, (&qn, action, text), temporary);
+        };
+        let desc = st.base_table(&qn).or_at(table.at)?;
+        let on = match desc.column(column) {
+            Some(at) => st.generated_on(&desc, at)?,
+            None => Vec::new(),
+        };
+        let lost: Vec<Column> = on.into_iter().map(|name| (qn.clone(), name)).collect();
+        self.dropping_generations(tx, &lost, || {
+            let fresh = if lost.is_empty() { Arc::clone(st) } else { self.definitions(self.db.snapshot()?)? };
+            self.alter_base_table(&fresh, tx, (&qn, action, text), temporary)
+        })
     }
 
     /// `alter_table` of table `qn`, temporary as `temporary` says, without
@@ -253,7 +272,8 @@ impl Session {
         }
         let mut next = State::clone(st);
         let zone = self.now.get().zone;
-        let (_, made, reshape) = next.alter_table((qn, &schema, zone), action, (None, Some(tx)))?;
+        let mut epochs = Epochs::fresh();
+        let (_, made, reshape) = next.alter_table((qn, &schema, zone), action, (None, Some(tx), &mut epochs))?;
         // A column added of a collation made holds its name shared, so no
         // REVOKE or DROP of it reverts the columns meanwhile.
         if let Some(Err(e)) = added_collation(&next, qn, action).map(|c| st.acquire_name(tx, &c, LockMode::Shared)) {
@@ -282,7 +302,7 @@ impl Session {
             made.discard();
             return Err(e);
         }
-        let change = Change::AlterTable { table: qn.clone(), action: text.to_owned(), schema, zone };
+        let change = Change::AlterTable { table: qn.clone(), action: text.to_owned(), schema, zone, epochs: epochs.given() };
         self.stage(st, tx, Changed { next, change, made: Some(made) })?;
         Ok(super::long_texts::warned(Completion::Success, text, || super::long_texts::of_alter(action)))
     }
@@ -376,18 +396,25 @@ pub(super) fn copy_rows(
         | AlterAction::Storage(_) => None,
     };
     let fill = added.as_ref().map(|c| default_value(c, effects.user(), effects.now)).transpose()?;
+    // [ISO/IEC 9075-2:2023 §11.11 GR2a, GR2b] or, of an identity column,
+    // its generator's next value, of a generated column, its expression's.
+    let generating = match next.catalog.table(table).filter(|_| added.is_some()) {
+        Some(desc) => Generating::of_column(next, desc, desc.columns.len().saturating_sub(1))?,
+        None => Generating::default(),
+    };
     for read in Arc::clone(st.storage_of(table)?).scan(tx.id, &columns) {
         let (_, row) = read?;
         let mut new = reshape.row(row);
         if let (Some(c), Some(value)) = (&added, &fill) {
-            if c.not_null && value.is_null() {
+            if let Some(slot) = new.last_mut() {
+                *slot = value.clone();
+            }
+            generating.give(next, &mut new, &NoSubqueries)?;
+            if c.not_null && new.last().is_none_or(Value::is_null) {
                 return fail(
                     Code::Constraint,
                     format!("[ISO/IEC 9075:1992 §11.11 GR2] {table} has rows, in which NOT NULL column {} would be null", c.name),
                 );
-            }
-            if let Some(slot) = new.last_mut() {
-                *slot = value.clone();
             }
         }
         effects.inserted(table, next.insert_row(tx, table, &new)?)?;

@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use super::super::definitions::Defined;
+use super::super::generated::Column;
 use super::super::revoke::Abandoned;
 use super::super::usage::usage_alone;
 use super::super::{Completion, State, api};
@@ -114,6 +115,18 @@ impl State {
         let mut tables = self.tables_of_collation(&after.qn, None);
         tables.retain(|t| after.loses(self, &t.auth));
         Ok((after.qn, tables))
+    }
+
+    /// The generated columns REVOKE USAGE `r` on a collation by `auth`
+    /// loses: those that name it of the tables of each schema whose owner it
+    /// leaves with no USAGE (`db/generated/named.rs`).
+    ///
+    /// # Errors
+    ///
+    /// As `usage_after`.
+    pub(in crate::db) fn collation_generations_revoked(&self, auth: &str, r: &RevokeStatement) -> Result<Vec<Column>> {
+        let after = self.usage_after(auth, r)?;
+        Ok(self.naming_collation(&after.qn, &|schema| after.loses(self, schema)).columns)
     }
 
     /// [ISO/IEC 9075:1992 §11.37; ISO/IEC 9075-2:2023 §12.7] REVOKE USAGE `r`

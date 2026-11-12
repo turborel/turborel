@@ -242,7 +242,7 @@ pub(crate) fn count(n: u64) -> Value {
 /// A column of counts, named `name`.
 pub(crate) fn counted(name: &str) -> ColumnDesc {
     let data_type = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
-    ColumnDesc { name: name.to_owned(), data_type, not_null: true, default: None, domain: None, collation: None }
+    ColumnDesc { name: name.to_owned(), data_type, not_null: true, default: None, domain: None, collation: None, generated: None }
 }
 
 /// A column of counts, named `name`, which may be null.
@@ -259,6 +259,7 @@ pub(crate) fn text(name: &str, length: u32, not_null: bool) -> ColumnDesc {
         default: None,
         domain: None,
         collation: None,
+        generated: None,
     }
 }
 

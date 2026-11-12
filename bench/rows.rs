@@ -104,6 +104,7 @@ fn table(bench: &Bench, long: usize) -> (RowStore, Arc<dyn TableStorage>) {
                 default: None,
                 domain: None,
                 collation: None,
+                generated: None,
             })
             .collect(),
         constraints: vec![],

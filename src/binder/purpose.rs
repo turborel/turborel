@@ -15,12 +15,17 @@ pub enum Purpose {
     /// contains" what the view's query does \[SR5, SR6\]: bound as its
     /// owner's, as a view always is.
     UnderConstraint,
+    /// [ISO/IEC 9075-2:2023 §11.4 SR10] A generation expression, bound
+    /// over the columns of its row: not possibly non-deterministic
+    /// \[SR10d\], as a constraint's condition is not, and needing no
+    /// privilege, as it reads no table but its own.
+    Generation,
 }
 
 impl Purpose {
     /// Whether the query is part of a constraint [§11.9 SR5, SR6].
     pub(super) fn constrains(self) -> bool {
-        matches!(self, Purpose::Constraint | Purpose::UnderConstraint)
+        matches!(self, Purpose::Constraint | Purpose::UnderConstraint | Purpose::Generation)
     }
 
     /// The purpose of a view the query reads.

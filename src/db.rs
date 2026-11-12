@@ -89,6 +89,7 @@ mod export;
 mod files;
 mod formats;
 mod functions;
+mod generated;
 mod image;
 mod index_statements;
 mod indexes;

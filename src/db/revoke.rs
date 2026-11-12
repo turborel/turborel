@@ -26,8 +26,9 @@ use std::sync::Arc;
 
 use super::ddl::Dropped;
 use super::definitions::Defined;
+use super::generated::Column;
 use super::schema::granted_actions;
-use super::{Completion, State, rule};
+use super::{Completion, State, api, rule};
 use crate::ast::{AlterDomain, AlterDomainAction, DropBehavior, PrivilegeObject, RevokeStatement, TableName};
 use crate::binder::qualify;
 use crate::catalog::{
@@ -109,6 +110,9 @@ pub(super) struct Abandoned {
     /// Domain constraints, each with its domain [SR16].
     pub(super) domain_constraints: Vec<(QualifiedName, QualifiedName)>,
     pub(super) assertions: Vec<QualifiedName>,
+    /// \[DESIGN\] Generated columns whose generation expressions name the
+    /// object, each with its table, lost (`db/generated/named.rs`).
+    pub(super) columns: Vec<Column>,
 }
 
 impl Abandoned {
@@ -119,6 +123,7 @@ impl Abandoned {
             && self.constraints.is_empty()
             && self.domain_constraints.is_empty()
             && self.assertions.is_empty()
+            && self.columns.is_empty()
     }
 
     /// The first of them, named for a refusal.
@@ -139,7 +144,10 @@ impl Abandoned {
         if let Some((d, c)) = self.domain_constraints.first() {
             return format!("constraint {c} of domain {d}");
         }
-        self.assertions.first().map(|a| format!("assertion {a}")).unwrap_or_default()
+        if let Some(a) = self.assertions.first() {
+            return format!("assertion {a}");
+        }
+        self.columns.first().map(|(t, c)| format!("generated column {t}.{c}")).unwrap_or_default()
     }
 }
 
@@ -290,7 +298,16 @@ impl State {
     /// Makes `after` the catalog, the views, constraints and assertions
     /// `abandoned` dropped with CASCADE [ISO/IEC 9075:1992 §11.37 GR3-GR6]: what that
     /// took away, and the locks it needs.
+    ///
+    /// # Errors
+    ///
+    /// As each drop's; SQLCODE -910 if it abandons a generated column,
+    /// which goes first.
     pub(super) fn destroy(&mut self, after: Arc<dyn Catalog>, abandoned: &Abandoned) -> Result<(Dropped, Vec<(QualifiedName, LockMode)>)> {
+        // Dropped first, as their rows are copied (`db/generated/named.rs`).
+        if let Some((t, c)) = abandoned.columns.first() {
+            return Err(api(format!("[DESIGN] generated column {t}.{c} is lost, and was not dropped first")));
+        }
         self.catalog = after;
         let mut locks = Vec::new();
         let mut catalog = self.catalog.duplicate();

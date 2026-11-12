@@ -76,6 +76,7 @@ pub(super) fn kept_desc(name: QualifiedName, generation: u32) -> TableDesc {
         default: None,
         domain: None,
         collation: None,
+        generated: None,
     };
     let columns = vec![
         column("FORM", integer),

@@ -334,7 +334,8 @@ fn float_up_to_24_digits_is_real_and_rounds_on_assignment_5_5() {
 fn catalog_with_table(engine: &str) -> MemoryCatalog {
     let name = QualifiedName { auth: "A".into(), ident: "T".into() };
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric };
-    let column = ColumnDesc { name: "K".into(), data_type: integer, not_null: true, default: None, domain: None, collation: None };
+    let column =
+        ColumnDesc { name: "K".into(), data_type: integer, not_null: true, default: None, domain: None, collation: None, generated: None };
     let constraint = ConstraintDesc {
         name: QualifiedName { auth: "A".into(), ident: "T_UNIQUE1".into() },
         kind: ConstraintKind::Unique { columns: vec![0], primary: false },

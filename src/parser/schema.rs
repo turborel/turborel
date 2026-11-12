@@ -295,17 +295,19 @@ impl Parser {
     pub(super) fn column_definition(&mut self) -> Result<ColumnDefinition> {
         let at = self.here();
         let name = self.identifier()?;
-        let data_type = self.type_name()?;
+        // [ISO/IEC 9075-2:2023 §11.4] none, before a <generation clause>.
+        let data_type = if self.at_generation() { None } else { Some(self.type_name()?) };
         // [ISO/IEC 9075-2:2023 §6.1] of its <predefined type>.
-        let of_type = self.collate_clause()?;
+        let of_type = if data_type.is_some() { self.collate_clause()? } else { None };
         let default = if self.accept_kw(kw::DEFAULT) { Some(self.default_option()?) } else { None };
+        let generated = if default.is_none() { self.column_generation()? } else { None };
         let mut constraints = Vec::new();
         while self.at_column_constraint() {
             constraints.push(self.column_constraint()?);
         }
         // [ISO/IEC 9075:1992 §11.4] [<collate clause>]
         let collate = self.collate_after(of_type)?;
-        Ok(ColumnDefinition { name, at, data_type, default, constraints, collate })
+        Ok(ColumnDefinition { name, at, data_type, default, generated: generated.map(Box::new), constraints, collate })
     }
 
     /// [ISO/IEC 9075:1992 §11.5] `<default option>` ::= `<literal>` |

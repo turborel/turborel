@@ -441,20 +441,20 @@ fn views(seen: &Seen<'_>) -> Vec<Row> {
 }
 
 fn columns_columns() -> Vec<ColumnDesc> {
-    Columns::of()
+    let columns = Columns::of()
         .ids("TABLE", true)
         .id("COLUMN_NAME", true)
         .number("ORDINAL_POSITION", true)
         .ids("DOMAIN", false)
         .data("COLUMN_DEFAULT", false)
-        .data("IS_NULLABLE", false)
-        .done()
+        .data("IS_NULLABLE", false);
+    sequences::generation_columns(columns).done()
 }
 
 /// Each column of each table, at its position, from 1, with its domain;
 /// its own default as its `<default option>` would be written [§11.5],
 /// none if it has its domain's alone; nullable unless constrained NOT
-/// NULL.
+/// NULL; its identity and generation (`sequences::generation_values`).
 fn columns(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
@@ -462,8 +462,8 @@ fn columns(seen: &Seen<'_>) -> Result<Vec<Row>> {
         for (at, c) in o.columns.iter().enumerate() {
             let null = || vec![Value::Null, Value::Null, Value::Null];
             let domain = c.domain.as_ref().map_or_else(null, |d| ids(&catalog, &d.name).to_vec());
-            let row = [vec![text(&c.name), number(at.saturating_add(1))], domain, vec![default_text(c.default.as_ref()), yes(!c.not_null)]]
-                .concat();
+            let own = vec![default_text(c.default.as_ref()), yes(!c.not_null)];
+            let row = [vec![text(&c.name), number(at.saturating_add(1))], domain, own, sequences::generation_values(c)].concat();
             rows.push([ids(&catalog, &o.name).to_vec(), row].concat());
         }
     }

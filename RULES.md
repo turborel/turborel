@@ -100,6 +100,7 @@ verification approach DO-178C expects (§8).
 | D60 | Collations are sort keys, and a collation never changes |
 | D61 | Regular expressions are XQuery's, by a matcher of our own |
 | D62 | A sequence generator's place is logged apart from transactions |
+| D63 | Identity and generated columns are given their values as rows are written |
 
 ### The project
 
@@ -430,9 +431,38 @@ A checkpoint settles every counter. It records each base in the image, with
 the last epoch given, and drops what each reserved, so the next draw logs a
 record after the checkpoint's start. A block reserved across the settling is
 given up, as its record may be before the start. The image keeps a counter of
-a name no descriptor has, or of the descriptor's epoch or a later one, as an
-open transaction may yet commit it. A database opened forgets every counter no
-descriptor names.
+a name no descriptor has, of a descriptor's own epoch, or of an epoch later
+than every descriptor's of its name, as an open transaction may yet commit it.
+A database opened forgets every counter no descriptor names. An identity
+column's generator is a descriptor here too (D63).
+
+#### D63. Identity and generated columns are given their values as rows are written
+
+An identity column's sequence generator is part of its column's descriptor
+[ISO/IEC 9075-2:2023 §11.4 GR4], named as its table is. Its epoch and counter
+are a sequence generator's (D62). CREATE TABLE and ADD COLUMN give the epoch,
+and so does ALTER COLUMN with RESTART. The ALTER TABLE record logs the epochs
+it gave, as a schema statement's does. A user's sequence generator may share
+the table's name, so a checkpoint keeps each counter of a published
+generator's own epoch, whatever another of its name holds.
+
+A generated column's values are stored with the row. Each statement that
+writes a table binds its generation expressions once, from the text the
+descriptor keeps, and computes them of each row after its other values, the
+identity column's among them [§15.11 GR6a, §15.14 GR9]. Reads then need no
+expression, and indexes and constraints take the values as any column's. A
+column computed as it is read would save the space, but every read path
+would bind expressions, and the standard defines no such column.
+
+DROP COLUMN CASCADE of a column a generation expression references first
+drops those generated columns, each as an ALTER TABLE of its own, logged
+apart, so a replay takes the same steps (`db/generated.rs`). DROP DOMAIN,
+DROP COLLATION, DROP SCHEMA and REVOKE USAGE with CASCADE do the same for
+the generated columns whose expressions name a domain or collation they
+take away (`db/generated/named.rs`). The statement's own change then finds
+none, and refuses if it does. Dropping a column copies rows, which a
+change of definitions alone cannot, and an expression left naming what is
+gone would no longer bind.
 
 #### D33. Schema changes are transactional
 

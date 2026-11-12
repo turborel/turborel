@@ -84,7 +84,7 @@ impl Parser {
     /// One option of a sequence generator, if one is next, added to
     /// `options`: START WITH of a definition, RESTART of an alteration
     /// (`altering`). Whether one was.
-    fn sequence_option(&mut self, options: &mut SequenceOptions, altering: bool) -> Result<bool> {
+    pub(super) fn sequence_option(&mut self, options: &mut SequenceOptions, altering: bool) -> Result<bool> {
         let at = self.here();
         let Some((opt, negated)) = self.sequence_word(altering) else { return Ok(false) };
         let seen = match opt {

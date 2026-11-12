@@ -14,13 +14,28 @@ ALTER TABLE: change a base table
 
 <alter table action> ::=
       ADD [ COLUMN ] <column definition>
-    | ALTER [ COLUMN ] <column name> { SET DEFAULT <default option> | DROP DEFAULT }
+    | ALTER [ COLUMN ] <column name> <alter column action>
     | DROP [ COLUMN ] <column name> <drop behavior>
     | ADD <table constraint definition>
     | DROP CONSTRAINT <constraint name> <drop behavior>
     | SET ( <table option> [ { , <table option> }... ] )
     | USING <engine name> [ WITH ( <table option> [ { , <table option> }... ] ) ]
     | RESEAL
+
+<alter column action> ::=
+      SET DEFAULT <default option>
+    | DROP DEFAULT
+    | <alter identity column option>...
+    | SET GENERATED { ALWAYS | BY DEFAULT } [ <alter identity column option>... ]
+    | DROP IDENTITY
+    | DROP EXPRESSION
+
+<alter identity column option> ::=
+      RESTART [ WITH <signed numeric literal> ]
+    | SET INCREMENT BY <signed numeric literal>
+    | SET MAXVALUE <signed numeric literal> | SET NO MAXVALUE
+    | SET MINVALUE <signed numeric literal> | SET NO MINVALUE
+    | SET CYCLE | SET NO CYCLE
 
 <drop behavior> ::= CASCADE | RESTRICT
 ```
@@ -33,7 +48,9 @@ definition>` and `<table option>` are those of
 
 ALTER TABLE changes the definition of a base table.
 
-**ADD COLUMN** adds a column, last. Each row has its default in it. It
+**ADD COLUMN** adds a column, last. Each row has its default in it, or,
+of an identity column, its generator's next value, or, of a generated
+column, its expression's value. It
 takes the constraints written in its definition, and those of its
 domain. Each privilege held on the whole table, of SELECT, INSERT,
 UPDATE or REFERENCES, is held on the new column too, by the same
@@ -42,11 +59,24 @@ grantee, with the same grant option.
 **ALTER COLUMN** sets the column's default, or drops it. No row changes;
 the new default is taken by the rows inserted later.
 
+Of an identity column, ALTER COLUMN changes its generator's options as
+[ALTER SEQUENCE](alter-sequence.md) does, and SET GENERATED changes
+whether its values are always generated. RESTART starts the generator
+again at its start, or at the value written. A changed increment goes on
+from the generator's current base value. DROP IDENTITY makes it a column
+that takes values of its own, of no default, and drops its generator. Its
+NOT NULL constraint stays. Of a generated column, DROP EXPRESSION makes it
+a column that takes values of its own, keeping those it holds. No row
+changes.
+
 **DROP COLUMN** removes the column and its values; the columns after it
 move up one place. A table constraint that reads that column alone goes
 with it. RESTRICT refuses the drop if a view, an assertion, a foreign
 key of another table, or a constraint that reads other columns too
-refers to the column; CASCADE drops them with it. The privileges on the
+refers to the column; CASCADE drops them with it. RESTRICT refuses it too
+if a generated column's expression references the column; CASCADE first
+drops each such generated column, as DROP COLUMN CASCADE would. If the drop
+then fails, the transaction can only roll back. The privileges on the
 column go.
 
 **ADD CONSTRAINT** adds a table constraint, checked of the rows there
@@ -88,7 +118,12 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
 2. ADD COLUMN: no column of the table has the name. If its definition is
    NOT NULL and the table has rows, the column has a default.
 3. ALTER COLUMN and DROP COLUMN: the table has the column. DROP DEFAULT:
-   the column has a default of its own.
+   the column has a default of its own. SET DEFAULT and DROP DEFAULT are
+   not of an identity column, and SET DEFAULT is not of a generated
+   column. SET GENERATED, the generator's options and DROP IDENTITY are of
+   an identity column alone, and DROP EXPRESSION of a generated column
+   alone. The options follow the rules of [ALTER SEQUENCE](alter-sequence.md).
+   ADD COLUMN adds no second identity column.
 4. DROP COLUMN: the column is not the table's only one, nor one a table
    option names, such as COLUMNSTORE.ORDER *(extension)*: the option is
    changed first.
@@ -177,6 +212,29 @@ OK
 turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.PAY is not defined [X3.135-1986 §5.4 SR5] (at character 14)
 ```
 
+An identity column added to a table of rows numbers them, and is then
+restarted:
+
+```sql
+ALTER TABLE STAFF ADD COLUMN BADGE INTEGER GENERATED ALWAYS AS IDENTITY (START WITH 500);
+ALTER TABLE STAFF ALTER COLUMN BADGE RESTART WITH 900;
+INSERT INTO STAFF (ID, NAME) VALUES (4, 'Barbara');
+SELECT ID, BADGE FROM STAFF ORDER BY ID;
+```
+
+```
+OK
+OK
+OK
+           ID |        BADGE
+--------------+--------------
+            1 |          500
+            2 |          501
+            3 |          502
+            4 |          900
+(4 rows)
+```
+
 Its storage *(extension)*:
 
 ```sql
@@ -228,11 +286,14 @@ turborel: SQLCODE -102 (SQLSTATE 2A000): expected CASCADE or RESTRICT, found end
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.10 to §11.17. A column dropped takes a table
-constraint that reads it alone, even with RESTRICT [§11.15 SR4]. SET,
+constraint that reads it alone, even with RESTRICT [§11.15 SR4]. The
+actions of an identity column and DROP EXPRESSION are ISO/IEC 9075-2:2023
+§11.20 to §11.22, Features T178, F384, F385 and F386, and the drop of a
+column a generation expression references is §11.23 SR7f and GR3. SET,
 USING and RESEAL are extensions. SQL-86 has no ALTER TABLE.
 
 ## SEE ALSO
 
 [CREATE TABLE](create-table.md), [DROP TABLE](drop-table.md),
-[ALTER DOMAIN](alter-domain.md), [CREATE VIEW](create-view.md),
+[ALTER DOMAIN](alter-domain.md), [ALTER SEQUENCE](alter-sequence.md), [CREATE VIEW](create-view.md),
 [Temporary Tables](../../user/09-temporary-tables.md)

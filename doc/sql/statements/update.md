@@ -33,6 +33,11 @@ the statement leaves them, so a change may pass through a value another
 row holds, as SET ID = ID + 1 on a key does. An UPDATE that changes no
 row completes with no data.
 
+A generated column is computed again from each row as changed. An
+identity column set to DEFAULT takes its generator's next value. A
+generated column, or an identity column GENERATED ALWAYS, is set only to
+DEFAULT.
+
 The positioned form, WHERE CURRENT OF a cursor, of a cursor named by
 an extended name too ([ALLOCATE CURSOR](allocate-cursor.md)), runs only
 in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
@@ -47,6 +52,8 @@ in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
 4. Each row as changed satisfies the table's constraints, and, through a
    view WITH CHECK OPTION, is a row of the view.
 5. The transaction is not READ ONLY, but for a temporary table.
+6. A generated column, or an identity column GENERATED ALWAYS, is set
+   only to DEFAULT.
 
 ## PRIVILEGES
 
@@ -96,6 +103,28 @@ OK
 no data
 ```
 
+Of the table TICKETS as the examples of [INSERT](insert.md) leave it:
+
+```sql
+UPDATE TICKETS SET SEAT = 'F01' WHERE TICKET = 1;
+UPDATE TICKETS SET TICKET = DEFAULT WHERE TICKET = 2;
+UPDATE TICKETS SET TICKET = 7 WHERE TICKET = 3;
+SELECT * FROM TICKETS ORDER BY TICKET;
+```
+
+```
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): column TICKET is generated always, so it is set only to DEFAULT [ISO/IEC 9075-2:2023 §14.15 SR5] (at character 19)
+       TICKET | SEAT | ROW_NO
+--------------+------+--------
+            1 | F01  | F
+            3 | C01  | C
+            4 | B07  | B
+           50 | D02  | D
+(4 rows)
+```
+
 Changes refused:
 
 ```sql
@@ -112,7 +141,9 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): a value of a SET clause contains no set
 
 ISO/IEC 9075:1992 §13.10, the `<update statement: searched>`, and
 X3.135-1986 §8.12. NULL and DEFAULT as an `<update source>` are SQL-92's
-[§13.9]. TB911 is this implementation's own.
+[§13.9]. The values identity columns and generated columns take are
+ISO/IEC 9075-2:2023 §14.15 SR5 and §15.14. TB911 is this implementation's
+own.
 
 ## SEE ALSO
 

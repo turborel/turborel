@@ -4,6 +4,7 @@
 //! position or by name and are brought to the result's types [§9.3].
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use super::case::set_type;
 use super::collation::{any_of, of_column};
@@ -13,7 +14,7 @@ use super::query::{Nesting, bind_query};
 use super::statements::{INSERT_RULE, check_assignment};
 use super::{Binder, Bound, Context, OutColumn, Scope, nondeterministic, rule};
 use crate::ast::{Correspondence, QueryExpression, RowElement, SetOperation, SetOperator, ValueExpression, ValuesRow};
-use crate::catalog::{ColumnDesc, QualifiedName};
+use crate::catalog::{ColumnDesc, QualifiedName, SequenceDesc};
 use crate::error::{At, Result};
 use crate::logical::{Expr, LogicalPlan, SetOp};
 use crate::params::ParameterType;
@@ -29,6 +30,10 @@ pub struct ObjectColumn {
     pub desc: ColumnDesc,
     /// Its default value [ISO/IEC 9075:1992 §11.5].
     pub default: Value,
+    /// [ISO/IEC 9075-2:2023 §11.5 GR3a, §15.11 GR3a] Of an identity column
+    /// whose values the INSERT gives, the sequence generator whose next
+    /// value DEFAULT is.
+    pub draws: Option<Arc<SequenceDesc>>,
 }
 
 /// [ISO/IEC 9075:1992 §7.10] A `<query expression>`, bound as `nesting`
@@ -244,7 +249,8 @@ impl Binder<'_> {
                     if object.is_some_and(|o| o.desc.default_reads_instant()) {
                         self.now.note();
                     }
-                    ((Expr::Const(object.map_or(Value::Null, |o| o.default.clone())), None), *at)
+                    let drawn = object.and_then(|o| o.draws.clone()).map(Expr::NextValue);
+                    ((drawn.unwrap_or_else(|| Expr::Const(object.map_or(Value::Null, |o| o.default.clone()))), None), *at)
                 }
             };
             if bound.1.is_none() && objects.is_none() {

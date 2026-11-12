@@ -15,12 +15,11 @@ use std::fmt;
 
 pub use crate::ast::{CheckLevels, Temporary, TemporaryKind};
 use crate::hash::murmur::MurmurMap;
-use crate::value::datetime::{Clocked, Moment};
-use crate::value::types::datetime::current;
 use crate::value::{DataType, Value};
 
 pub(crate) mod codec;
 mod collations;
+mod columns;
 mod constraints;
 mod domains;
 mod keys;
@@ -29,6 +28,7 @@ mod sequences;
 
 use crate::value::collation::CollationRef;
 pub use collations::CollationDesc;
+pub use columns::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, Identity};
 pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, MatchType, ReferentialAction};
 pub use domains::{DomainDesc, UsageDesc};
 pub use keys::KeyShape;
@@ -66,78 +66,6 @@ impl fmt::Display for QualifiedName {
             return write!(f, "schema {}", self.auth);
         }
         write!(f, "{}.{}", self.auth, self.ident)
-    }
-}
-
-/// [X3.135-1986 §4.3] a column's description is its name, data type, and nullability.
-#[derive(Debug, Clone)]
-pub struct ColumnDesc {
-    /// The `<column name>`.
-    pub name: String,
-    /// The column's `<data type>`.
-    pub data_type: DataType,
-    /// Whether it holds no nulls: a NOT NULL constraint is on it, or it is
-    /// in the PRIMARY KEY (`TableDesc::refresh_not_null`).
-    pub not_null: bool,
-    /// [ISO/IEC 9075:1992 §11.5 GR1] The default value it includes, if its
-    /// definition has a `<default clause>`.
-    pub default: Option<ColumnDefault>,
-    /// [ISO/IEC 9075:1992 §11.4 GR5] The domain it is of, if its definition
-    /// names one, with that domain's default, kept with it as the domain
-    /// changes (`db/domains.rs`).
-    pub domain: Option<ColumnDomain>,
-    /// [ISO/IEC 9075-2:2023 §6.1 SR3] The declared type collation, if not
-    /// that of the character set.
-    pub collation: Option<QualifiedName>,
-}
-
-/// [ISO/IEC 9075:1992 §11.4 GR5] The domain a column is of.
-#[derive(Debug, Clone)]
-pub struct ColumnDomain {
-    /// The `<domain name>`.
-    pub name: QualifiedName,
-    /// The domain's default, which is the column's if it has none of its
-    /// own [§11.5 GR2b].
-    pub default: Option<ColumnDefault>,
-}
-
-/// [ISO/IEC 9075:1992 §11.5 GR1] The default value of a column descriptor,
-/// derived from a `<default option>`.
-#[derive(Debug, Clone)]
-pub enum ColumnDefault {
-    /// That of a `<literal>`, or the null value \[GR1a, b\].
-    Value(Value),
-    /// CURRENT_USER, SESSION_USER or SYSTEM_USER, whichever it is when the
-    /// default is taken \[GR1c\]: in this implementation, the authorization
-    /// identifier the statement runs under, each.
-    User,
-    /// [ISO/IEC 9075:1992 §6.8] CURRENT_DATE, CURRENT_TIME or
-    /// CURRENT_TIMESTAMP, of `precision`: the instant of the statement that
-    /// takes the default \[GR1d\].
-    Datetime(Moment, u32),
-}
-
-impl ColumnDesc {
-    /// [ISO/IEC 9075:1992 §11.5 GR2] Its default value, for a statement run
-    /// under the authorization identifier `auth` at `now`, whose instant
-    /// only a datetime default reads: before store assignment pads a
-    /// fixed-length string \[GR1b iii, GR1c ii\].
-    pub fn default_value(&self, auth: &str, now: Clocked<'_>) -> Value {
-        // [GR2a] its own; [GR2b] its domain's; [GR2c] null.
-        let of_domain = self.domain.as_ref().and_then(|d| d.default.as_ref());
-        match self.default.as_ref().or(of_domain) {
-            Some(ColumnDefault::Value(v)) => v.clone(),
-            Some(ColumnDefault::User) => Value::Char(auth.to_string()),
-            Some(ColumnDefault::Datetime(moment, precision)) => current(*moment, *precision, now.instant()),
-            None => Value::Null,
-        }
-    }
-
-    /// Whether its default, its own or its domain's, is the statement's
-    /// instant: CURRENT_DATE, CURRENT_TIME or CURRENT_TIMESTAMP.
-    pub fn default_reads_instant(&self) -> bool {
-        let of_domain = self.domain.as_ref().and_then(|d| d.default.as_ref());
-        matches!(self.default.as_ref().or(of_domain), Some(ColumnDefault::Datetime(..)))
     }
 }
 

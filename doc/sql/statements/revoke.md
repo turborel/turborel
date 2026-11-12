@@ -32,6 +32,12 @@ grantee's that needs the privilege. RESTRICT refuses the revoke if
 anything would be abandoned; CASCADE destroys what is abandoned, and
 what that abandons in turn.
 
+A generated column whose generation expression names a domain or a
+collation is lost when its table's schema's owner loses USAGE on it.
+RESTRICT refuses the revoke, and CASCADE drops the column first, as ALTER
+TABLE DROP COLUMN with CASCADE drops it. If the revoke then fails, the
+transaction can only roll back.
+
 USAGE taken on a collation leaves some schemas' owners without it. A
 column or domain of such a schema that is of the collation is impacted:
 RESTRICT refuses the revoke (SQLSTATE 2B000), and CASCADE makes it of the
@@ -143,7 +149,10 @@ N compares by the default collation now, so 'bob' is not Bob.
 
 ISO/IEC 9075:1992 §11.37. Of a collation, ISO/IEC 9075-2:2023 §12.7,
 as SQL-92 has no rule for a column of one; of a sequence generator, which
-SQL-92 lacks, the same. SQL-86 has no REVOKE.
+SQL-92 lacks, the same. SQL-86 has no REVOKE. ISO/IEC 9075-2:2023 §12.7
+GR12h loses a generated column only when its generation expression loses
+EXECUTE on a routine. Losing it over USAGE on a domain or collation is
+turborel's reading, as the expression would no longer bind.
 
 ## SEE ALSO
 

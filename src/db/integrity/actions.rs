@@ -26,9 +26,10 @@ use super::{Effect, Effects};
 use crate::bytes::{Put, Reader};
 use crate::catalog::{ForeignKey, MatchType, QualifiedName, ReferentialAction, TableDesc};
 use crate::db::defaults::default_row;
+use crate::db::generated::Generating;
 use crate::db::{State, api};
 use crate::error::{Code, Result, SqlError, SqlState, Subject};
-use crate::exec::HeldRows;
+use crate::exec::{HeldRows, NoSubqueries};
 use crate::spill::ListSpace;
 use crate::spill::map::SpillMap;
 use crate::storage::{Row, RowId, project};
@@ -71,6 +72,10 @@ struct Action<'a> {
     key: Vec<Value>,
     new_key: Option<Vec<Value>>,
     defaults: Row,
+    /// [ISO/IEC 9075-2:2023 §15.14 GR7a, GR9] What each row it changes is
+    /// given: each generated column's value; and its identity column's next
+    /// value if SET DEFAULT sets it.
+    generating: Generating,
 }
 
 impl State {
@@ -142,7 +147,10 @@ impl State {
         let defaults = if action == ReferentialAction::SetDefault { default_row(child, &effects.user, effects.now)? } else { Vec::new() };
         // None the statement deleted: the transaction reads its own changes.
         let matching = self.matching_rows(tx, (child, fk), &key, effects.space.clone())?;
-        let done = Action { child, name, fk, change, rule: action, key, new_key, defaults };
+        let draws = action == ReferentialAction::SetDefault
+            && fk.columns.iter().any(|&c| child.columns.get(c).is_some_and(|c| c.identity().is_some()));
+        let generating = Generating::of(self, child, draws)?;
+        let done = Action { child, name, fk, change, rule: action, key, new_key, defaults, generating };
         for found in matching {
             self.act_on(tx, &done, found?, (effects, acting))?;
         }
@@ -183,7 +191,10 @@ impl State {
         {
             self.check_cascade(tx, (done.name, child, fk, change.parent), (rows, effects), (&done.key, done.new_key.as_deref()))?;
         }
-        let (next, columns) = acted((fk, done.rule, &done.defaults), &row, (change.old, done.new_key.as_deref(), updated));
+        let (mut next, mut columns) = acted((fk, done.rule, &done.defaults), &row, (change.old, done.new_key.as_deref(), updated));
+        done.generating.give(self, &mut next, &NoSubqueries)?;
+        let given: Vec<usize> = done.generating.columns().filter(|c| !columns.contains(c)).collect();
+        columns.extend(given);
         acting.give((done.name, child, row_id), &next, &columns)?;
         self.update_row(tx, child, row_id, &next)?;
         effects.updated(child, row_id, row, &columns)

@@ -143,6 +143,7 @@ fn described(columns: &[OutColumn]) -> Vec<ColumnDesc> {
         default: None,
         domain: None,
         collation: c.collation.clone(),
+        generated: None,
     };
     columns.iter().map(column).collect()
 }

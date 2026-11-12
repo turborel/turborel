@@ -1,12 +1,13 @@
 //! \[EXTENSION\] Column defaults [ISO/IEC 9075:1992 §11.5]: the default
 //! value a `<default clause>` puts in a column descriptor, the rows of a
 //! table filled with them, and ALTER COLUMN, which sets or drops one
-//! [§11.12-§11.14].
+//! [§11.12-§11.14], or alters an identity column or a generated column.
 
 use std::sync::Arc;
 
+use super::sequences::Epochs;
 use super::{State, rule};
-use crate::ast::{DefaultOption, Literal};
+use crate::ast::{AlterColumnAction, DefaultOption, Literal};
 use crate::catalog::{ColumnDefault, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::Result;
 use crate::storage::Row;
@@ -192,29 +193,56 @@ pub(super) fn default_value(c: &ColumnDesc, auth: &str, now: Now) -> Result<Valu
 }
 
 impl State {
-    /// [ISO/IEC 9075:1992 §11.12] Column `column` of base table `qn` given
-    /// the default `option` [§11.13 GR2], or, with none, its default dropped
-    /// [§11.14 GR1]: its descriptor alone changes.
+    /// [ISO/IEC 9075:1992 §11.12] Column `column` of base table `qn`,
+    /// written at `at`, altered as `action` says: given a default [§11.13
+    /// GR2], or its default dropped [§11.14 GR1], or altered as an identity
+    /// column or a generated column is (`db/alter/identity.rs`), a
+    /// restart's epoch from `epochs`. Its descriptor alone changes.
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if the table has no such column [§11.12 SR3], the
-    /// default does not suit it [§11.5 SR3], or it has none to drop
-    /// [§11.14 SR2].
-    pub(super) fn alter_column(&mut self, (qn, zone): (&QualifiedName, i16), column: &str, option: Option<&DefaultOption>) -> Result<()> {
+    /// default does not suit it [§11.5 SR3], it has none to drop [§11.14
+    /// SR2], or the action is not of the column [ISO/IEC 9075-2:2023 §11.12
+    /// SR6 to SR9].
+    pub(super) fn alter_column(
+        &mut self,
+        (qn, zone): (&QualifiedName, i16),
+        (column, at): (&str, usize),
+        (action, epochs): (&AlterColumnAction, &mut Epochs),
+    ) -> Result<()> {
         let mut desc = self.base_table(qn)?;
         let c = desc
             .columns
             .iter_mut()
             .find(|c| c.name == column)
             .ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.12 SR3] {qn} has no column {column}")))?;
-        c.default = match (option, &c.default) {
-            (Some(o), _) => Some(default_of(c.data_type, o, zone)?),
-            (None, Some(_)) => None,
-            (None, None) => {
-                return Err(rule(format!("[ISO/IEC 9075:1992 §11.14 SR2] column {column} of {qn} has no default to drop")));
+        let defaulted = matches!(action, AlterColumnAction::SetDefault(_) | AlterColumnAction::DropDefault);
+        // [ISO/IEC 9075-2:2023 §11.12 SR6] an identity column's identity alone.
+        if defaulted && c.identity().is_some() {
+            let msg = format!("[ISO/IEC 9075-2:2023 §11.12 SR6] column {column} of {qn} is an identity column, so it has no default");
+            return Err(rule(msg).or_at(at));
+        }
+        match action {
+            AlterColumnAction::SetDefault(o) => {
+                // [ISO/IEC 9075-2:2023 §11.12 SR9] no generated column's.
+                if c.generation().is_some() {
+                    let msg =
+                        format!("[ISO/IEC 9075-2:2023 §11.12 SR9] column {column} of {qn} is a generated column, so it has no default");
+                    return Err(rule(msg));
+                }
+                c.default = Some(default_of(c.data_type, o, zone)?);
             }
-        };
+            AlterColumnAction::DropDefault => {
+                if c.default.is_none() {
+                    return Err(rule(format!("[ISO/IEC 9075:1992 §11.14 SR2] column {column} of {qn} has no default to drop")));
+                }
+                c.default = None;
+            }
+            AlterColumnAction::Identity { .. } | AlterColumnAction::DropIdentity | AlterColumnAction::DropExpression => {
+                self.alter_generation((qn, c), (action, at), epochs)?;
+            }
+        }
         let mut catalog = self.catalog.duplicate();
         catalog.replace_table(desc);
         self.catalog = Arc::from(catalog);

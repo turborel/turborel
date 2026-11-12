@@ -428,6 +428,7 @@ mod tests {
             default: None,
             domain: None,
             collation: None,
+            generated: None,
         };
         TableDesc {
             name: QualifiedName { auth: "A".into(), ident: "T".into() },

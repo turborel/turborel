@@ -33,7 +33,7 @@ The views of SQL-92, each with the columns the standard gives it:
 | SCHEMATA | schema the user owns |
 | TABLES | table and view, its TABLE_TYPE BASE TABLE, VIEW, GLOBAL TEMPORARY or LOCAL TEMPORARY |
 | VIEWS | view: its definition, CHECK OPTION, whether updatable |
-| COLUMNS | column of a table or view: its position, type, default, nullability, domain |
+| COLUMNS | column of a table or view: its position, type, default, nullability, domain, identity and generation |
 | DOMAINS | domain: its type and default |
 | DOMAIN_CONSTRAINTS | constraint of a domain |
 | TABLE_CONSTRAINTS | constraint of a table: its kind, PRIMARY KEY, UNIQUE, FOREIGN KEY or CHECK, and whether deferrable |
@@ -53,6 +53,15 @@ The views of SQL-92, each with the columns the standard gives it:
 | COLLATIONS | the built-in collations, and those CREATE COLLATION made |
 | TRANSLATIONS | translation: none |
 | SQL_LANGUAGES | standard conformance is claimed to: ISO 9075 of 1987, SQL-86, at Level 2, by direct invocation |
+
+COLUMNS has nine more columns *(extension)*, named as ISO/IEC 9075-11
+names them. IS_IDENTITY is YES of an identity column. Of one,
+IDENTITY_GENERATION is ALWAYS or BY DEFAULT, and IDENTITY_START,
+IDENTITY_INCREMENT, IDENTITY_MAXIMUM and IDENTITY_MINIMUM are its
+generator's options, each as text, and IDENTITY_CYCLE is YES if it cycles.
+Of another column the six are null. IS_GENERATED is ALWAYS of a generated
+column and NEVER of another, and GENERATION_EXPRESSION is a generated
+column's expression as written. COLUMN_DEFAULT is null of both kinds.
 
 NOT NULL is shown as a CHECK constraint, `C IS NOT NULL`. A constraint
 given no name has one made for it: the table's name, its kind and a

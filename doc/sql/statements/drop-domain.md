@@ -17,22 +17,24 @@ DROP DOMAIN: drop a domain
 ## DESCRIPTION
 
 DROP DOMAIN drops a domain, and the USAGE privileges on it. RESTRICT
-refuses the drop if a column is of the domain, or a view or a
-constraint CASTs to it.
+refuses the drop if a column is of the domain, or a view, a constraint
+or a generated column's generation expression CASTs to it.
 
 CASCADE drops it all the same. Each column of the domain keeps its data
 type, and the domain's default, if it has none of its own; and each of
 the domain's constraints is kept on it, as a constraint of its table.
 The views, constraints and assertions that CAST to the domain are
-dropped.
+dropped. Each generated column whose generation expression CASTs to it
+is dropped first, as ALTER TABLE DROP COLUMN with CASCADE drops it. If
+the drop then fails, the transaction can only roll back.
 
 DROP DOMAIN runs within the session's transaction: ROLLBACK undoes it.
 
 ## RULES
 
 1. The domain exists, and its user owns the domain's schema.
-2. RESTRICT: no column is of the domain, and no view or constraint CASTs
-   to it.
+2. RESTRICT: no column is of the domain, and no view, constraint or
+   generation expression CASTs to it.
 3. The transaction is not READ ONLY.
 
 ## PRIVILEGES
@@ -79,7 +81,10 @@ AMOUNT kept the domain's default and its constraint.
 
 ## STANDARD
 
-ISO/IEC 9075:1992 §11.27. SQL-86 has no domains.
+ISO/IEC 9075:1992 §11.27. SQL-86 has no domains. A generation
+expression that CASTs to the domain refuses RESTRICT, as ISO/IEC
+9075-2:2023 §11.40 SR2a says. That CASCADE drops its generated column is
+turborel's reading, as the standard does not say.
 
 ## SEE ALSO
 

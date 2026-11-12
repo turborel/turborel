@@ -11,7 +11,7 @@ use crate::binder::{OutColumn, ViewCheck};
 use crate::catalog::CheckLevels;
 use crate::error::{At, Code, Result, SqlError, SqlState, Subject, fail_with};
 use crate::exec::{Drawn, Subqueries, eval, eval_cond};
-use crate::logical::{Cond, Truth};
+use crate::logical::{Cond, Truth, expr_columns};
 use crate::params::Params;
 use crate::storage::Row;
 use crate::value::cast::cast;
@@ -58,9 +58,19 @@ fn check_row(check: &ViewCheck, row: &Row, rule: &str, subqueries: &dyn Subqueri
     Err(SqlError::new(Code::Constraint, msg).with_state(SqlState::WITH_CHECK_OPTION_VIOLATION).about(Subject::table(view.parts())))
 }
 
-/// The columns the `<set clause>`s of `w` give values to.
+/// The columns the `<set clause>`s of `w` give values to, and each
+/// generated column whose expression references one [ISO/IEC 9075-2:2023
+/// §15.14 GR4a].
 pub(super) fn set_columns(w: &Written) -> Vec<usize> {
-    w.set().iter().map(|(c, _)| *c).collect()
+    let mut columns: Vec<usize> = w.set().iter().map(|(c, _)| *c).collect();
+    for (at, e) in &w.bound.generated {
+        let mut used = Vec::new();
+        expr_columns(e, &mut used);
+        if used.iter().any(|u| columns.contains(u)) && !columns.contains(at) {
+            columns.push(*at);
+        }
+    }
+    columns
 }
 
 /// [X3.135-1986 §8.11 GR3-GR4, §8.12 GR2-GR3] the candidate row: a copy of the
@@ -81,6 +91,14 @@ pub(super) fn candidate(w: &Written, old: &Row, (assign_rule, subqueries): (&str
             return Err(api(format!("[DESIGN] {} has no column {i}", desc.name)));
         };
         *slot = assign(v, &column.data_type, assign_rule)?;
+    }
+    // [ISO/IEC 9075-2:2023 §15.14 GR9] each generated column's value, of the
+    // row so made.
+    let missing = |at: usize| api(format!("[DESIGN] {} has no column {at}", desc.name));
+    for (at, e) in &w.bound.generated {
+        let column = desc.columns.get(*at).ok_or_else(|| missing(*at))?;
+        let v = assign(eval(e, &new, subqueries)?, &column.data_type, "ISO/IEC 9075-2:2023 §15.14 GR9")?;
+        *new.get_mut(*at).ok_or_else(|| missing(*at))? = v;
     }
     Ok(new)
 }
@@ -242,7 +260,7 @@ mod tests {
     use crate::catalog::{ColumnDesc, QualifiedName, TableDesc};
     use crate::engine::rows::ROW_STORE;
     use crate::exec::NoSubqueries;
-    use crate::logical::LogicalPlan;
+    use crate::logical::{Expr, LogicalPlan};
     use crate::value::Spelled;
 
     /// Verifies: [X3.135-1986 §7.3 SR3] an undeclared target parameter is a
@@ -252,10 +270,9 @@ mod tests {
         assert_eq!(declared_type(&Params::new(), "NOPE").err().map(|e| e.code), Some(Code::SyntaxRule));
     }
 
-    /// Verifies: [DESIGN] a SET of a column the table does not have is
-    /// reported, not a panic.
-    #[test]
-    fn a_candidate_row_needs_its_columns() {
+    /// An UPDATE of a table of one column, setting `set`, its generated
+    /// columns `generated`.
+    fn write_of(set: Vec<(usize, Option<Expr>)>, generated: Vec<(usize, Expr)>) -> Written {
         let name = QualifiedName { auth: "A".into(), ident: "T".into() };
         let column = ColumnDesc {
             name: "K".into(),
@@ -264,6 +281,7 @@ mod tests {
             default: None,
             domain: None,
             collation: None,
+            generated: None,
         };
         let desc = TableDesc {
             name: name.clone(),
@@ -279,11 +297,32 @@ mod tests {
             named: name.clone(),
             table: name,
             desc,
-            set: vec![(3, None)],
+            set,
             rows,
             checks: Vec::new(),
             auth: "A".into(),
+            generated,
         };
-        assert_eq!(candidate(&Written::of(write), &vec![Value::Null], ("§8.12 GR6", &NoSubqueries)).err().map(|e| e.code), Some(Code::Api));
+        Written::of(write)
+    }
+
+    /// Verifies: [DESIGN] a SET of a column the table does not have is
+    /// reported, not a panic.
+    #[test]
+    fn a_candidate_row_needs_its_columns() {
+        let write = write_of(vec![(3, None)], Vec::new());
+        assert_eq!(candidate(&write, &vec![Value::Null], ("§8.12 GR6", &NoSubqueries)).err().map(|e| e.code), Some(Code::Api));
+    }
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §15.14 GR4a] the columns an UPDATE
+    /// changes are those it sets and each generated column that depends on
+    /// one, once. MC/DC of the two conditions: column 3, on column 0 and not
+    /// set, is added; column 2, on column 0 and set, is not added again;
+    /// column 4, on no column set, is not added.
+    #[test]
+    fn the_columns_changed_add_generated_ones_once() {
+        let generated = vec![(2, Expr::Column(0)), (3, Expr::Column(0)), (4, Expr::Column(1))];
+        let write = write_of(vec![(0, None), (2, None)], generated);
+        assert_eq!(set_columns(&write), [0, 2, 3]);
     }
 }

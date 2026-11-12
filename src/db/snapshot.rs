@@ -30,7 +30,9 @@ use crate::catalog::codec::{
     collation, constraint, domain, index, privilege, put_collation, put_constraint, put_domain, put_index, put_name, put_privilege,
     put_sequence, put_table, put_view, qualified, sequence, table, view,
 };
-use crate::catalog::{CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, SequenceDesc, TableDesc, ViewDesc};
+use crate::catalog::{
+    CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, TableDesc, ViewDesc,
+};
 use crate::error::Result;
 use crate::settings;
 use crate::value::Value;
@@ -89,7 +91,14 @@ impl Snapshot {
         let assertions = st.catalog.assertions().into_iter().cloned().collect();
         let sequences: Vec<SequenceDesc> = st.catalog.sequences().into_iter().cloned().collect();
         let (epochs, mut counters) = st.sequences.settle()?;
-        counters.retain(|(name, epoch, _)| sequences.iter().all(|s| s.name != *name || s.epoch <= *epoch));
+        // [DESIGN] RULES.md D63: a generator's counter of its own epoch
+        // kept, though another of its name, of a schema or a table, is of
+        // a later one.
+        let published = st.generators();
+        let kept = |name: &QualifiedName, epoch: u64| {
+            published.iter().any(|s| s.name == *name && s.epoch == epoch) || published.iter().all(|s| s.name != *name || s.epoch <= epoch)
+        };
+        counters.retain(|(name, epoch, _)| kept(name, *epoch));
         Ok(Snapshot {
             schemas,
             domains,

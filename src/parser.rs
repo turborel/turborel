@@ -32,6 +32,7 @@ mod diagnostics;
 mod domains;
 mod dynamic;
 mod expression;
+mod generated;
 mod interval;
 mod literal;
 mod names;
@@ -384,8 +385,9 @@ impl Parser {
     // [X3.135-1986 §8.7] <insert statement>
     // =====================================================================
 
-    /// INSERT INTO `<table name>` {\[(`<insert column list>`)\] `<query
-    /// expression>` | DEFAULT VALUES} [ISO/IEC 9075:1992 §13.8]
+    /// INSERT INTO `<table name>` {\[(`<insert column list>`)\] \[`<override
+    /// clause>`\] `<query expression>` | DEFAULT VALUES} [ISO/IEC 9075:1992
+    /// §13.8; ISO/IEC 9075-2:2023 §14.11]
     ///
     /// # Errors
     ///
@@ -405,16 +407,17 @@ impl Parser {
             self.expect_delim(delim::RIGHT_PAREN)?;
             columns = Some(list);
         }
-
+        // [ISO/IEC 9075-2:2023 §14.11] [<override clause>]
+        let overriding = self.override_clause()?;
         // [ISO/IEC 9075:1992 §13.8] DEFAULT VALUES, with no column list.
-        if columns.is_none() && self.accept_kw(kw::DEFAULT) {
+        if columns.is_none() && overriding.is_none() && self.accept_kw(kw::DEFAULT) {
             self.expect_kw(kw::VALUES)?;
             self.end()?;
-            return Ok(InsertStatement { table, columns, source: InsertSource::DefaultValues });
+            return Ok(InsertStatement { table, columns, overriding, source: InsertSource::DefaultValues });
         }
         let query = self.query_expression()?;
         self.end()?;
-        Ok(InsertStatement { table, columns, source: InsertSource::Query(Box::new(query)) })
+        Ok(InsertStatement { table, columns, overriding, source: InsertSource::Query(Box::new(query)) })
     }
 
     /// A `<column name>`, with where it is written.

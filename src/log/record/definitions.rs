@@ -81,6 +81,16 @@ pub(super) fn put_defined(
     put_epochs(out, epochs);
 }
 
+/// An ALTER TABLE's table, action as written, default schema,
+/// displacement, and the epochs it gave.
+pub(super) fn put_altered(out: &mut Vec<u8>, (table, action, schema, zone): (&QualifiedName, &str, &str, i16), epochs: &[u64]) {
+    put_table(out, table);
+    out.put_str(action);
+    out.put_str(schema);
+    out.put_i128(i128::from(zone));
+    put_epochs(out, epochs);
+}
+
 /// What `put_defined` wrote, as a change.
 pub(super) fn defined(r: &mut Reader<'_>) -> Result<Change> {
     let (auth, schema, sql) = (r.str()?, r.str()?, r.str()?);
@@ -89,7 +99,7 @@ pub(super) fn defined(r: &mut Reader<'_>) -> Result<Change> {
 }
 
 /// The epochs of sequence generators' counters: a count u32, and each.
-fn put_epochs(out: &mut Vec<u8>, epochs: &[u64]) {
+pub(super) fn put_epochs(out: &mut Vec<u8>, epochs: &[u64]) {
     out.put_u32(u32::try_from(epochs.len()).unwrap_or(u32::MAX));
     for e in epochs {
         out.put_u64(*e);
@@ -97,7 +107,7 @@ fn put_epochs(out: &mut Vec<u8>, epochs: &[u64]) {
 }
 
 /// What `put_epochs` wrote.
-fn epochs(r: &mut Reader<'_>) -> Result<Vec<u64>> {
+pub(super) fn epochs(r: &mut Reader<'_>) -> Result<Vec<u64>> {
     let count = r.u32()?;
     let mut epochs = Vec::new();
     for _ in 0..count {

@@ -287,7 +287,15 @@ mod tests {
     /// collation.
     fn state(unique: bool) -> State {
         let mut catalog = MemoryCatalog::default();
-        let column = |n: &str| ColumnDesc { name: n.into(), data_type: INT, not_null: true, default: None, domain: None, collation: None };
+        let column = |n: &str| ColumnDesc {
+            name: n.into(),
+            data_type: INT,
+            not_null: true,
+            default: None,
+            domain: None,
+            collation: None,
+            generated: None,
+        };
         let desc = TableDesc {
             name: table(),
             columns: vec![column("K"), column("L")],

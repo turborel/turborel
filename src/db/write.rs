@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use super::assignment::{candidate, check_option};
 use super::defaults::default_row;
+use super::generated::{Generating, check_override};
 use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
 use super::{Session, State, StatementContext, plan, rule, set_columns};
@@ -15,7 +16,7 @@ use crate::ast::{ColumnName, InsertSource, InsertStatement, QueryExpression, Row
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
 use crate::catalog::{Actions, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{At, Result};
-use crate::exec::{HeldRows, Runner, eval_cond, execute, row_entries};
+use crate::exec::{HeldRows, Runner, Subqueries, eval_cond, execute, row_entries};
 use crate::logical::{Expr, LogicalPlan, Truth, filled, filled_cond, filled_expr};
 use crate::params::Params;
 use crate::physical::{Plan, filled_plan};
@@ -39,6 +40,9 @@ pub(super) struct Target {
     /// [ISO/IEC 9075:1992 §13.8 GR4b i] the default of each column of the
     /// base table.
     defaults: Row,
+    /// [ISO/IEC 9075-2:2023 §15.11 GR3a, GR6a] what each row is given of
+    /// the identity column, if no value is, and of each generated column.
+    generating: Generating,
 }
 
 impl Target {
@@ -60,8 +64,10 @@ impl Target {
     /// [X3.135-1986 §8.7 GR1a, b, GR5, GR7] the candidate row for the
     /// insert values `values`: each column's default [ISO/IEC 9075:1992
     /// §13.8 GR4b i], null if it has none, but for the object columns, each
-    /// set to its value [GR4b ii].
-    fn candidate(&self, values: Row) -> Result<Row> {
+    /// set to its value [GR4b ii]; then its identity column's next value,
+    /// if it takes it, and each generated column's value [ISO/IEC
+    /// 9075-2:2023 §15.11 GR3a, GR6a], by `st`, warnings to `subqueries`.
+    fn candidate(&self, st: &State, values: Row, subqueries: &dyn Subqueries) -> Result<Row> {
         let mut row = self.defaults.clone();
         for (v, &c) in values.into_iter().zip(&self.object) {
             // The object columns are columns of T [X3.135-1986 §8.7 SR3], so both lookups succeed.
@@ -70,6 +76,7 @@ impl Target {
             };
             *slot = assign(v, &col.data_type, "ISO/IEC 9075:1992 §13.8 GR4b iii")?;
         }
+        self.generating.give(st, &mut row, subqueries)?;
         Ok(row)
     }
 }
@@ -164,9 +171,9 @@ impl Session {
             query_rows(cx, &target, logical)?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
-            // column its default.
+            // column its default, or its generated value.
             let mut one = HeldRows::new(st.list_space());
-            one.push(target.defaults.clone())?;
+            one.push(target.candidate(st, Row::new(), &Runner::new(st, tx.id))?)?;
             one
         };
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted.
@@ -243,9 +250,14 @@ impl Session {
         let needed = Actions { insert: object.iter().copied().collect(), ..Actions::default() };
         binder::require(st, auth, desc, &needed, "§8.7 SR1").or_at(stmt.table.at)?;
         // [X3.135-1986 §8.7 GR1a] the candidate row is one of the base table.
-        let object = object.iter().filter_map(|&i| target.map.get(i).copied()).collect();
+        let object: Vec<usize> = object.iter().filter_map(|&i| target.map.get(i).copied()).collect();
         let defaults = default_row(&target.base, auth, self.now.get())?;
-        Ok(Target { name: target.base.name.clone(), desc: target.base, object, checks: target.checks, defaults })
+        // [ISO/IEC 9075-2:2023 §14.11 SR12, SR13] its identity column and
+        // generated columns given values only as its override says.
+        let draws = check_override(&target.base, &object, (&stmt.source, stmt.overriding)).or_at(stmt.table.at)?;
+        let generating = Generating::of(st, &target.base, draws)?;
+        let table = target.base.name.clone();
+        Ok(Target { name: table, desc: target.base, object, checks: target.checks, defaults, generating })
     }
 
     /// [X3.135-1986 §8.7 SR5, SR6] The `<query expression>` `query` of an
@@ -255,7 +267,11 @@ impl Session {
         let objects: Vec<ObjectColumn> = target
             .columns()
             .zip(&target.object)
-            .map(|(col, &c)| ObjectColumn { desc: col.clone(), default: target.defaults.get(c).cloned().unwrap_or(Value::Null) })
+            .map(|(col, &c)| ObjectColumn {
+                desc: col.clone(),
+                default: target.defaults.get(c).cloned().unwrap_or(Value::Null),
+                draws: col.identity().filter(|_| !target.generating.draws()).map(|i| Arc::new(i.sequence.clone())),
+            })
             .collect();
         self.bound(st, params, |bound| binder::bind_insert_query(bound, query, &objects))
     }
@@ -307,8 +323,9 @@ fn query_rows(cx: StatementContext<'_>, target: &Target, logical: LogicalPlan) -
     }
     // Held up to MEMORY.WORK_BYTES, the rest spilled (RULES.md D38).
     let mut rows = HeldRows::new(st.list_space());
+    let runner = Runner::new(st, tx.id);
     for values in execute(physical, st, tx.id) {
-        rows.push(target.candidate(values?)?)?;
+        rows.push(target.candidate(st, values?, &runner)?)?;
     }
     Ok(rows)
 }

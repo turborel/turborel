@@ -99,7 +99,15 @@ fn corresponding(
     let nullable = (matches!(kind, JoinKind::Right | JoinKind::Full | JoinKind::Union) && null1)
         || (matches!(kind, JoinKind::Left | JoinKind::Full | JoinKind::Union) && null2);
     let shared = c1.collation.clone().filter(|_| c1.collation == c2.collation);
-    let desc = ColumnDesc { name: c1.name.clone(), data_type: common, not_null: !nullable, default: None, domain: None, collation: shared };
+    let desc = ColumnDesc {
+        name: c1.name.clone(),
+        data_type: common,
+        not_null: !nullable,
+        default: None,
+        domain: None,
+        collation: shared,
+        generated: None,
+    };
     // [ISO/IEC 9075-2:2023 §9.15] by their collation.
     let collation = of_join_columns(db, session, c1.collation.as_ref(), c2.collation.as_ref())?;
     let compared =

@@ -324,6 +324,7 @@ fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
             default: None,
             domain: None,
             collation: c.collation.clone(),
+            generated: None,
         })
         .collect();
     if let Some(names) = &d.columns {

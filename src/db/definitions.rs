@@ -25,7 +25,9 @@ use super::constraints::Within;
 use super::ddl::{Changed, Dropped, validate_rows};
 use super::sequences::Epochs;
 use super::{Completion, Session, State, api, long_texts, rule};
-use crate::ast::{PrivilegeDefinition, PrivilegeObject, SchemaStatement, SqlStatement, TableDefinition, TableName, ViewDefinition};
+use crate::ast::{
+    DropBehavior, PrivilegeDefinition, PrivilegeObject, SchemaStatement, SqlStatement, TableDefinition, TableName, ViewDefinition,
+};
 use crate::binder::qualify;
 use crate::catalog::{ConstraintKind, QualifiedName, TableDesc, merged, owner_of};
 use crate::error::{At, Code, Result, SqlError, SqlState};
@@ -61,13 +63,33 @@ impl Session {
     /// with the transaction's.
     pub(super) fn schema_statement(&self, st: &Arc<State>, tx: &Txn, statement: &SchemaStatement, text: &str) -> Result<Completion> {
         let schema = self.default_schema();
-        // [ISO/IEC 9075:1992 §5.3 SR18] the displacement of a datetime it
-        // writes without one, logged with it.
-        let zone = self.now.get().zone;
         let object = self.object_of(st, statement, &schema)?;
         self.refuse_declared(st, statement, (&object, &schema))?;
         st.acquire_name(tx, &object, LockMode::Exclusive)?;
-        self.revert_impacted(tx, statement)?;
+        // The generated columns a REVOKE with CASCADE loses dropped first
+        // (`db/generated/named.rs`).
+        let mut lost = Vec::new();
+        if let SchemaStatement::Revoke(r) = statement
+            && r.behavior == DropBehavior::Cascade
+        {
+            let fresh = self.definitions(self.db.snapshot()?)?;
+            lost = fresh.generations_revoked((&self.auth(), &schema), r).or_at(r.table.at)?;
+        }
+        self.dropping_generations(tx, &lost, || {
+            self.revert_impacted(tx, statement)?;
+            self.staged_statement(tx, statement, (text, object))
+        })
+    }
+
+    /// `statement`, written `text`, staged with transaction `tx`'s changes
+    /// once the locks of all it defines or changes are held, the lock of
+    /// `object` held already: made again, on the definitions then, each
+    /// time it needs one more.
+    fn staged_statement(&self, tx: &Txn, statement: &SchemaStatement, (text, object): (&str, QualifiedName)) -> Result<Completion> {
+        let schema = self.default_schema();
+        // [ISO/IEC 9075:1992 §5.3 SR18] the displacement of a datetime it
+        // writes without one, logged with it.
+        let zone = self.now.get().zone;
         let mut held = vec![(object, LockMode::Exclusive)];
         loop {
             let fresh = self.definitions(self.db.snapshot()?)?;
@@ -177,7 +199,7 @@ impl State {
         (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &mut Epochs),
     ) -> Result<Defined> {
         match statement {
-            SchemaStatement::Table(t) => self.create_table((schema, zone), t, (placed, made)),
+            SchemaStatement::Table(t) => self.create_table((schema, zone), t, (placed, made, epochs)),
             SchemaStatement::View(v) => self.create_view(schema, v),
             SchemaStatement::Grant(p) => self.grant(auth, schema, p),
             SchemaStatement::Revoke(r) => self.revoke((auth, schema), r),
@@ -209,18 +231,20 @@ impl State {
         Ok(self.define((auth, schema, zone), &statement, (placed, made, &mut Epochs::logged(epochs)))?.dropped)
     }
 
-    /// [ISO/IEC 9075:1992 §11.3] Creates base table `t` in schema `schema`.
+    /// [ISO/IEC 9075:1992 §11.3] Creates base table `t` in schema `schema`,
+    /// the generator of its identity column given its epoch from `epochs`.
     fn create_table(
         &mut self,
         (schema, zone): (&str, i16),
         t: &TableDefinition,
-        (placed, made): (Option<&(String, u32)>, Option<&Made>),
+        (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &mut Epochs),
     ) -> Result<Defined> {
         let qn = qualify(&t.name, schema);
         if let Some((engine, _)) = placed {
             self.placement.insert(qn.clone(), engine.clone());
         }
-        let desc = self.table_described((schema, zone), t, placed)?;
+        let mut desc = self.table_described((schema, zone), t, placed)?;
+        self.give_epochs(&mut desc, epochs)?;
         let mut catalog = self.catalog.duplicate();
         catalog.add_table(desc.clone());
         let built = self.place_table(&mut *catalog, &desc, made)?;

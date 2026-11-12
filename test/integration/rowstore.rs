@@ -144,6 +144,7 @@ fn table(store: &RowStore, name: &str, length: u32) -> Arc<dyn TableStorage> {
             default: None,
             domain: None,
             collation: None,
+            generated: None,
         },
         ColumnDesc {
             name: "S".into(),
@@ -152,6 +153,7 @@ fn table(store: &RowStore, name: &str, length: u32) -> Arc<dyn TableStorage> {
             default: None,
             domain: None,
             collation: None,
+            generated: None,
         },
     ];
     let desc = TableDesc {

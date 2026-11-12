@@ -195,19 +195,11 @@ impl Parser {
             return Ok(AlterAction::AddColumn(self.column_definition()?));
         }
         if self.accept_kw(kw::ALTER) {
-            // [§11.12] ALTER [COLUMN] <column name> {SET <default clause> | DROP DEFAULT}
+            // [§11.12] ALTER [COLUMN] <column name> <alter column action>
             self.accept_kw(kw::COLUMN);
             let at = self.here();
             let column = self.identifier()?;
-            let default = if self.accept_kw(kw::SET) {
-                self.expect_kw(kw::DEFAULT)?;
-                Some(self.default_option()?)
-            } else {
-                self.expect_kw(kw::DROP)?;
-                self.expect_kw(kw::DEFAULT)?;
-                None
-            };
-            return Ok(AlterAction::AlterColumn { column, at, default });
+            return Ok(AlterAction::AlterColumn { column, at, action: self.alter_column_action()? });
         }
         self.expect_kw(kw::DROP)?;
         if self.accept_kw(kw::CONSTRAINT) {

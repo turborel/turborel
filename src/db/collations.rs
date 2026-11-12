@@ -14,6 +14,7 @@ pub(super) use revert::{added_collation, is_made};
 
 use super::ddl::Dropped;
 use super::definitions::Defined;
+use super::generated::Named;
 use super::revoke::Abandoned;
 use super::{Session, State};
 use crate::ast::{CollationDefinition, TableName, ValueSpecification};
@@ -222,19 +223,20 @@ impl State {
     /// [ISO/IEC 9075-2:2023 §11.44] Drops collation `qn`, whose columns are
     /// reverted already (`Session::revert_columns`): domains of it revert
     /// too \[GR2\], and with `cascade`, the views and constraints that name
-    /// it go \[GR3\].
+    /// it go \[GR3\], the generated columns that do gone already
+    /// (`db/generated/named.rs`).
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if there is no such collation \[SR2\], or, not `cascade`,
-    /// a view or constraint names it \[SR4\].
+    /// a view, constraint or generated column names it \[SR4\].
     pub(super) fn drop_collation(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         self.made_collation(qn)?;
         let abandoned = self.naming_collation(qn, &|_| true);
         if !cascade && !abandoned.is_empty() {
             return Err(SqlError::new(
                 Code::SyntaxRule,
-                format!("[ISO/IEC 9075-2:2023 §11.44 SR4] a view or constraint names collation {qn}, so it is dropped only with CASCADE"),
+                format!("[ISO/IEC 9075-2:2023 §11.44 SR4] {} names collation {qn}, so it is dropped only with CASCADE", abandoned.first()),
             ));
         }
         let (dropped, _) = self.destroy(Arc::clone(&self.catalog), &abandoned)?;
@@ -253,7 +255,8 @@ impl State {
 
     /// What names collation `qn` in its text, of a schema `within` takes:
     /// a view by its own, a table's or domain's constraint by the table's
-    /// or domain's, an assertion by its own.
+    /// or domain's, an assertion by its own, a generated column by its
+    /// table's (`db/generated/named.rs`).
     fn naming_collation(&self, qn: &QualifiedName, within: &dyn Fn(&str) -> bool) -> Abandoned {
         let names = |c: &ConstraintDesc| matches!(&c.kind, ConstraintKind::Check { text, .. } if collates(text, qn));
         let mut abandoned = Abandoned::default();
@@ -269,6 +272,7 @@ impl State {
         }
         let assertions = self.catalog.assertions().into_iter().filter(|a| within(&a.name.auth) && names(a));
         abandoned.assertions = assertions.map(|a| a.name.clone()).collect();
+        abandoned.columns = self.generations_naming(Named::Collation(qn), within);
         abandoned
     }
 
@@ -357,7 +361,7 @@ fn changed_collation<'u>(kept: &[(String, String)], now: &[(String, String)], us
 
 /// Whether the search condition or query `text` has a `<collate clause>`
 /// naming `qn` by its schema, as a collation a definition made is named.
-fn collates(text: &str, qn: &QualifiedName) -> bool {
+pub(super) fn collates(text: &str, qn: &QualifiedName) -> bool {
     let Ok(tokens) = lex(text) else { return false };
     tokens.windows(4).any(|w| {
         let [collate, schema, period, name] = w else { return false };

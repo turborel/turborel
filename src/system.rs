@@ -247,6 +247,7 @@ pub(crate) fn text_column((name, length): (&str, u32), not_null: bool) -> Column
         default: None,
         domain: None,
         collation: None,
+        generated: None,
     }
 }
 
@@ -266,6 +267,7 @@ pub(crate) fn cardinal(name: &str, not_null: bool) -> ColumnDesc {
         default: None,
         domain: None,
         collation: None,
+        generated: None,
     }
 }
 

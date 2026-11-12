@@ -5,10 +5,9 @@ use std::sync::Arc;
 
 use super::Reshape;
 use crate::ast::{ColumnDefinition, DropBehavior};
-use crate::catalog::{ColumnDesc, ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
+use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::db::constraints::{Described, Within};
-use crate::db::defaults::default_of;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::cond_columns;
 use crate::settings::Kind;
@@ -26,17 +25,18 @@ impl State {
     /// # Errors
     ///
     /// SQLCODE -103 for a rule it breaks: its name is a column's [§11.4
-    /// SR1], or a constraint's; -104 for a foreign key it may not make.
+    /// SR1], or a constraint's, or it is a second identity column [ISO/IEC
+    /// 9075-2:2023 §11.11 SR3]; -104 for a foreign key it may not make.
     pub(in crate::db) fn add_column(&self, (desc, names, zone): (&TableDesc, &str, i16), def: &ColumnDefinition) -> Result<TableDesc> {
         if desc.column(&def.name).is_some() {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.4 SR1] {} already has a column {}", desc.name, def.name)));
         }
         let mut next = desc.clone();
-        // [ISO/IEC 9075:1992 §11.4 SR5, AR1] its data type, or its domain's.
-        let (data_type, domain) = self.column_type(names, &def.data_type)?;
-        let default = def.default.as_ref().map(|o| default_of(data_type, o, zone)).transpose()?;
-        let collation = self.declared_collation(names, (data_type, domain.as_ref()), def.collate.as_ref())?;
-        next.columns.push(ColumnDesc { name: def.name.clone(), data_type, not_null: false, default, domain, collation });
+        next.columns.push(self.column_of((&desc.name, names, zone), def)?);
+        // [ISO/IEC 9075-2:2023 §11.11 SR3] no second identity column; its
+        // generation expression over the table's columns.
+        Self::one_identity(&next)?;
+        self.typed_generations(&mut next, std::iter::once((desc.columns.len(), def)))?;
         let taken = self.all_constraint_names();
         let mut added = Described::new((&desc.name, names, Within::Session), &next.columns, taken);
         added.reserve(def.constraints.iter().filter_map(|c| c.name.as_ref()));
@@ -69,7 +69,9 @@ impl State {
     ///
     /// SQLCODE -103 if the column is not one of the table, or its only one
     /// [SR3], or a constraint refers to it and other columns and
-    /// `behavior` is RESTRICT [SR4], or a table option names it.
+    /// `behavior` is RESTRICT [SR4], or a table option names it, or a
+    /// generated column's expression references it [ISO/IEC 9075-2:2023
+    /// §11.23 SR7f].
     pub(in crate::db) fn drop_column(
         &self,
         desc: &TableDesc,
@@ -81,6 +83,9 @@ impl State {
         if desc.columns.len() == 1 {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.15 SR3] {column} is the only column of {}", desc.name)));
         }
+        // With CASCADE, its generated columns are dropped first
+        // (`Session::alter_table`).
+        self.no_generated_on(desc, (at, column))?;
         let reshape = Reshape::Remove(at);
         let refused = |c: &ConstraintDesc| {
             rule(format!(

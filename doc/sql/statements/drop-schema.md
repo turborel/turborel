@@ -30,6 +30,10 @@ collations go last, as DROP COLLATION CASCADE drops them, so a column of
 one in another schema's table is made of the default collation, its rows
 copied, and that can fail if a constraint no longer holds.
 
+Before all that, CASCADE drops each generated column of another schema's
+table whose generation expression names one of the schema's domains or
+collations, as ALTER TABLE DROP COLUMN with CASCADE drops it.
+
 DROP SCHEMA runs within the session's transaction: ROLLBACK undoes it,
 as it does not undo a [CREATE SCHEMA](create-schema.md).
 
