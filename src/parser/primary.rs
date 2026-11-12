@@ -10,7 +10,7 @@ use crate::ast::{
     CaseExpression, Predicate, SearchCondition, SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification, WhenOperand,
 };
 use crate::error::Result;
-use crate::functions::{EVERY, GREATEST, LEAST};
+use crate::functions::{EVERY, GREATEST, LEAST, LPAD, RPAD, TRIMS_AND_PADS};
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
@@ -91,6 +91,12 @@ impl Parser {
         let extreme = if let Tok::Identifier(name) = self.peek() { [GREATEST, LEAST].into_iter().find(|f| name == f) } else { None };
         if let Some(name) = extreme.filter(|_| matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))) {
             return self.greatest_or_least(name);
+        }
+        // [ISO/IEC 9075-2:2023 §6.33] LTRIM, RTRIM, BTRIM, LPAD and RPAD,
+        // no key words of SQL-92, before "(" the functions.
+        let trim = if let Tok::Identifier(name) = self.peek() { TRIMS_AND_PADS.into_iter().find(|f| name == f) } else { None };
+        if let Some(name) = trim.filter(|_| matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))) {
+            return self.trim_or_pad(name);
         }
         // An <identifier> followed by "(" never occurs in SQL-86.
         if matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
@@ -310,6 +316,26 @@ impl Parser {
         Ok(ValueExpression::Function { name, args, at })
     }
 
+    /// [ISO/IEC 9075-2:2023 §6.33] `<multi-character trim function>` ::=
+    /// { BTRIM | LTRIM | RTRIM } ( `<trim source>` \[ , `<trim character>`
+    /// \] ), the character ' ' if none is written \[SR15b.ii\]; or `<pad
+    /// function>` ::= { LPAD | RPAD } ( `<pad source>` , `<total pad
+    /// length>` \[ , `<padding character value expression>` \] ), the
+    /// padding ' ' if none is written \[SR16a\]: `name` the function.
+    fn trim_or_pad(&mut self, name: &'static str) -> Result<ValueExpression> {
+        let at = self.here();
+        self.advance();
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut args = vec![self.common_value_expression()?];
+        if name == LPAD || name == RPAD {
+            self.expect_delim(delim::COMMA)?;
+            args.push(self.common_value_expression()?);
+        }
+        args.push(if self.accept_delim(delim::COMMA) { self.common_value_expression()? } else { space() });
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::Function { name, args, at })
+    }
+
     /// \[EXTENSION\] `<identifier>` ( \[`<value expression>` \[{, `<value expression>`}...\]\] )
     fn function_call(&mut self) -> Result<ValueExpression> {
         let at = self.here();
@@ -325,6 +351,11 @@ impl Parser {
         }
         Ok(ValueExpression::Call { name, args, at })
     }
+}
+
+/// A space, the trim character or padding none is written gives.
+fn space() -> ValueExpression {
+    ValueExpression::Value(ValueSpecification::Literal(crate::ast::Literal::Character(" ".to_owned())))
 }
 
 /// [ISO/IEC 9075-2:2023 §6.12 SR2c] Of a simple CASE's `whens`, each

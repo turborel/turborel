@@ -6,8 +6,9 @@
 //! MATCH [§8.10], and IS TRUE, FALSE, UNKNOWN [§8.12].
 
 use turborel::error::Code;
+use turborel::value::{Decimal, Value};
 
-use crate::common::{code, expected, rows, setup};
+use crate::common::{code, exec, expected, rows, setup};
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.9 SR1-SR7, GR1, GR2]: a
 /// searched CASE gives the result of its first WHEN true, else its ELSE,
@@ -57,7 +58,7 @@ fn when_operand_lists_6_12() {
     let q = "SELECT ID, CASE AMT WHEN -3, 10.5 THEN 'SOME' ELSE 'NONE' END FROM T ORDER BY ID";
     assert_eq!(rows(&s, q), expected(&["1,SOME", "2,SOME", "3,NONE"]), "a null case operand");
     let p = s.prepare("SELECT ID FROM T WHERE CASE ID WHEN 1, ? THEN 1 ELSE 0 END = 1").unwrap();
-    let mut opened = s.open_prepared(&p, &[turborel::value::Value::Char("3".into())]).unwrap();
+    let mut opened = s.open_prepared(&p, &[Value::Char("3".into())]).unwrap();
     let mut found = Vec::new();
     while let Some(row) = opened.fetch().unwrap() {
         found.push(row.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
@@ -144,7 +145,7 @@ fn greatest_and_least_6_15() {
     let described = "SELECT DATA_TYPE, NUMERIC_PRECISION, NUMERIC_SCALE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'V'";
     assert_eq!(rows(&s, described), expected(&["NUMERIC,12,2"]), "the type of all [§9.5]");
     let p = s.prepare("SELECT GREATEST(ID, ?) FROM T WHERE ID = 1").unwrap();
-    let mut opened = s.open_prepared(&p, &[turborel::value::Value::Char("7".into())]).unwrap();
+    let mut opened = s.open_prepared(&p, &[Value::Char("7".into())]).unwrap();
     assert_eq!(opened.fetch().unwrap().map(|r| r.iter().map(ToString::to_string).collect::<Vec<_>>()), Some(vec!["7".to_owned()]));
     drop(opened);
     assert_eq!(code(&s, "SELECT GREATEST(1, 'A') FROM T"), Code::SyntaxRule, "SR4");
@@ -198,6 +199,59 @@ fn string_functions_6_7() {
     let state = |sql: &str| s.open_cursor(sql).and_then(|mut c| c.fetch()).map(|_| ()).map_err(|e| e.sqlstate().as_str().to_owned());
     assert_eq!(state("SELECT SUBSTRING(NAME FROM 1 FOR -1) FROM T WHERE ID = 1"), Err("22011".into()));
     assert_eq!(state("SELECT TRIM('xy' FROM NAME) FROM T WHERE ID = 1"), Err("22027".into()));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.33 SR15, GR13] LTRIM,
+/// RTRIM and BTRIM remove each character of a set from the start, the end
+/// or both, a space if none is written; the source as it is if it or the
+/// set is empty; null if either is null; a number refused; varying, as long
+/// as the source; LTRIM still a column's name.
+#[test]
+fn multi_character_trims_6_33() {
+    let db = setup();
+    let s = db.session("APP");
+    let q = "SELECT LTRIM('xyaxy', 'yx'), RTRIM('xyaxy', 'yx'), BTRIM('xyaxy', 'yx'), BTRIM('  a  ') || '-', RTRIM(NAME) || '-', LTRIM(NAME, 'A') FROM T WHERE ID = 1";
+    assert_eq!(rows(&s, q), expected(&["axy,xya,a,a-,ANN-,NN   "]));
+    let q = "SELECT LTRIM('', 'x') || '-', RTRIM('ab', '') || '-', BTRIM('xxx', 'x') || '-', LTRIM('a b', ' b') FROM T WHERE ID = 1";
+    assert_eq!(rows(&s, q), expected(&["-,ab-,-,a b"]));
+    let q = "SELECT LTRIM(NAME), RTRIM('a', NAME), BTRIM(CAST(NULL AS CHAR(1)), 'a') FROM T WHERE ID = 3";
+    assert_eq!(rows(&s, q), expected(&["NULL,NULL,NULL"]));
+    assert_eq!(code(&s, "SELECT LTRIM(ID) FROM T"), Code::SyntaxRule);
+    assert_eq!(code(&s, "SELECT BTRIM(NAME, ID) FROM T"), Code::SyntaxRule);
+    exec(&s, "CREATE TABLE TRIMS (LTRIM INTEGER, S VARCHAR(4))").unwrap();
+    exec(&s, "INSERT INTO TRIMS VALUES (7, 'abc')").unwrap();
+    exec(&s, "CREATE VIEW TRIMMED (R) AS SELECT RTRIM(S, 'c') FROM TRIMS").unwrap();
+    assert_eq!(rows(&s, "SELECT LTRIM, R FROM TRIMS, TRIMMED"), expected(&["7,ab"]));
+    let q = "SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'TRIMMED'";
+    assert_eq!(rows(&s, q), expected(&["4"]));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.33 SR16, GR14] LPAD and
+/// RPAD pad with the padding, repeated and cut, to the total length, a
+/// space if none is written; cut a longer source; '' of a length less than
+/// 1, even of a null padding; the source of an empty padding; at most
+/// 32,767 characters; null of a null source, length or padding; a length
+/// of a scale or a type not 0 refused; a `?` of a length NUMERIC.
+#[test]
+fn pads_6_33() {
+    let db = setup();
+    let s = db.session("APP");
+    let q = "SELECT LPAD('abc', 8, 'xy'), RPAD('abc', 8, 'xy'), RPAD('ab', 4) || '-', LPAD('abcd', 2), RPAD(TRIM(NAME), 3, 'z'), LPAD('a', 3, '') FROM T WHERE ID = 1";
+    assert_eq!(rows(&s, q), expected(&["xyxyxabc,abcxyxyx,ab  -,ab,ANN,a"]));
+    let null = "CAST(NULL AS VARCHAR(1))";
+    let q = format!(
+        "SELECT LPAD('a', 0, 'x') || '-', RPAD('a', -5) || '-', RPAD('a', 0, {null}) || '-', CHAR_LENGTH(RPAD('a', 40000, 'bc')) FROM T WHERE ID = 1"
+    );
+    assert_eq!(rows(&s, &q), expected(&["-,-,-,32767"]));
+    let q = format!("SELECT RPAD('a', 2, {null}), LPAD(NAME, 2), RPAD('a', CAST(NULL AS INTEGER)) FROM T WHERE ID = 3");
+    assert_eq!(rows(&s, &q), expected(&["NULL,NULL,NULL"]));
+    assert_eq!(code(&s, "SELECT LPAD(NAME, 2.5) FROM T"), Code::SyntaxRule);
+    assert_eq!(code(&s, "SELECT RPAD(NAME, '2') FROM T"), Code::SyntaxRule);
+    assert_eq!(code(&s, "SELECT RPAD(NAME, 2, ID) FROM T"), Code::SyntaxRule);
+    assert_eq!(code(&s, "SELECT RPAD(ID, 2) FROM T"), Code::SyntaxRule);
+    let p = s.prepare("SELECT RPAD('ab', ?, '.') FROM T WHERE ID = 1").unwrap();
+    let mut c = s.open_prepared(&p, &[Value::Exact(Decimal::new(5, 0))]).unwrap();
+    assert_eq!(c.fetch().unwrap().map(|r| r[0].to_string()), Some("ab...".into()));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.11 GR2; §7.11 SR1, GR1; §8.2 GR7;

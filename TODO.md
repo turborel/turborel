@@ -34,8 +34,6 @@ each group.
 
 ### Expressions and functions
 
-- LPAD and RPAD (T055), and LTRIM, RTRIM and BTRIM of several characters
-  (T056) [§6.33]. TRIM removes one character today.
 - Regular expressions (F841 to F847). LIKE_REGEX [§8.7], OCCURRENCES_REGEX
   and POSITION_REGEX [§6.31], SUBSTRING_REGEX and TRANSLATE_REGEX [§6.33],
   in XQuery's syntax, by a matcher of our own (D3). The JSON path's

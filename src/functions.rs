@@ -35,10 +35,12 @@ pub use greatest::{GREATEST, GreatestOrLeast, LEAST};
 mod ints;
 mod strings;
 mod sum;
+mod trim;
 mod truths;
 use sum::{AvgAcc, SumAcc};
 
 pub use strings::CONCATENATION;
+pub use trim::{BTRIM, LPAD, LTRIM, RPAD, RTRIM, TRIMS_AND_PADS, Trim, source_of, trim_named};
 pub use truths::EVERY;
 use truths::Truths;
 
@@ -286,7 +288,7 @@ impl Registry {
             AggregateRef(Arc::new(Sum)),
             AggregateRef(Arc::new(Avg)),
         ];
-        let scalars = strings::functions().into_iter().map(|f| (f.name().to_string(), ScalarRef(f))).collect();
+        let scalars = strings::functions().into_iter().chain(trim::functions()).map(|f| (f.name().to_string(), ScalarRef(f))).collect();
         let truths = [Truths::EVERY, Truths::ANY, Truths::SOME].map(|t| AggregateRef(Arc::new(t)));
         let aggregates = standard.iter().chain(&truths).map(|f| (f.0.name().to_string(), f.clone())).collect();
         Registry { scalars, aggregates, standard }

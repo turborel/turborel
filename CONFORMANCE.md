@@ -586,6 +586,25 @@ first value's type, as one among COALESCE's does [92 §17.6 GR5j], which
 key words of SQL-92, so both stay identifiers, functions before a
 parenthesis.
 
+### Trims and pads
+
+Features T055 (string padding functions) and T056 (multi-character TRIM
+function). LTRIM, RTRIM and BTRIM remove each character of a set from
+the start, the end or both of a string [§6.33 GR13], a space if no set
+is written [SR15b]. LPAD and RPAD bring a string to a total length,
+cutting it or adding the padding before or after it, repeated and cut,
+a space if none is written [GR14, SR16a]. A total length is an exact
+number of scale 0 [SR16b], else SQLCODE -103. A pad is CHARACTER
+VARYING of 32,767 characters [SR16c] (IL046), and a trim varying, as
+long as its string at most [SR15a]. A trim compares characters under
+the collation of its string, TRIM of one character too, and a trim or
+pad is of that collation [SR14d, SR15c, SR16e], whatever that of its
+other strings. A dynamic parameter as a total length is NUMERIC(P, 0),
+P the greatest precision, as SUBSTRING's length is [92 §17.6 GR5c],
+which §20 leaves unsaid; this is marked [EXTENSION]. The five names are
+no key words of SQL-92, so each stays an identifier, a function before
+a parenthesis.
+
 ### Optional maximum lengths
 
 Feature T081 (optional string types maximum length). CHARACTER VARYING,
@@ -791,6 +810,7 @@ topic. The Where column names the file that implements each.
 | 2023 §5.3 SR20, IV191, the type of a `<binary string literal>` | BINARY of its octets | `binder/values.rs` |
 | 2023 §6.32 SR6a, IL003 and IL007, the longest fixed and varying binary strings | 32,767 octets each | `value.rs` |
 | 2023 §6.1 SR6, SR7, IL007 and ID069, the maximum length of a varying string type written without one | 32,767 octets of a binary string, 32,767 characters of a character string | `parser/data_type.rs` |
+| 2023 §6.33 SR16c, IL046, the maximum length of LPAD and RPAD | 32,767 characters | `functions/trim.rs` |
 | §9.1 GR3k, §9.2 GR3k a number stored or retrieved into an exact type | An exact number's extra fraction digits are truncated. An approximate number is rounded to the scale. | `value/types/exact.rs`, `value/types/approximate.rs` |
 | 2023 §6.1 SR23, IA021, the greatest precision of DECFLOAT | 34 | `value.rs` |
 | 2023 §6.1 SR22, ID062, the precision of DECFLOAT written without one | 34 | `value.rs`, `parser/data_type.rs` |

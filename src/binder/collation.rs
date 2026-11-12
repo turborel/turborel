@@ -22,7 +22,7 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::{Escape, like_escape};
-use crate::functions::{ScalarFunction, ScalarRef};
+use crate::functions::{ScalarFunction, ScalarRef, source_of};
 use crate::logical::{Cond, Expr, LogicalPlan, SortKey, Subquery};
 use crate::system::INFORMATION_SCHEMA;
 use crate::value::collation::{CollationRef, SQL_TEXT};
@@ -208,7 +208,12 @@ impl Binder<'_> {
             ValueExpression::Column(cs) => self.column_derived(cs)?,
             ValueExpression::Nested(x) | ValueExpression::Monadic(_, x) => self.derived(x)?,
             ValueExpression::Collated(_, name) => Derived::Explicit(self.db.collation_of(name, self.auth)?),
-            ValueExpression::Function { args, .. } => self.all_derived(args.iter())?,
+            // [ISO/IEC 9075-2:2023 §6.33 SR14d, SR15c, SR16e] a trim's or
+            // pad's, its source's.
+            ValueExpression::Function { name, args, .. } => match source_of(name).and_then(|i| args.get(i)) {
+                Some(source) => self.derived(source)?,
+                None => self.all_derived(args.iter())?,
+            },
             ValueExpression::Case(case) => self.case_derived(case)?,
             ValueExpression::Subquery(s) => self.subquery_derived(s).into_iter().next().unwrap_or(Derived::Yielding),
             ValueExpression::SetFunction(f) => match &f.arg {

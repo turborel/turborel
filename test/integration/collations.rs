@@ -336,6 +336,28 @@ fn collation_for_6_4() {
     assert_eq!(a.open_cursor("SELECT COLLATION FOR (AGE) FROM P").err().map(|e| e.code), Some(Code::SyntaxRule));
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.33 SR14d, SR15c, SR16e,
+/// GR12, GR13] a trim removes characters equal under its source's
+/// collation, the column's, the session's or one written; the trim
+/// character's own collation neither counts nor conflicts; a trim or pad
+/// is of its source's collation; a source of none compares by scalar value.
+#[test]
+fn trims_follow_the_source_collation_6_33() {
+    let db = collated();
+    let a = db.session("A");
+    let q =
+        "SELECT TRIM('b' FROM NAME), LTRIM(NAME, 'B'), LTRIM(NAME, 'BO') || '-', RTRIM(NAME, 'b' COLLATE UCS_BASIC) FROM P WHERE AGE = 30";
+    assert_eq!(query(&a, q), ["o,ob,-,Bo"]);
+    let q = "SELECT LTRIM(S, 'Z'), BTRIM(S COLLATE CASE_INSENSITIVE, 'EZA'), LTRIM(S, 'z') FROM N WHERE S = 'Zebra'";
+    assert_eq!(query(&a, q), ["ebra,br,Zebra"]);
+    let q = "SELECT COLLATION FOR (LPAD(NAME, 5, 'x' COLLATE UCS_BASIC)), COLLATION FOR (BTRIM(S, NAME)) FROM P, N WHERE AGE = 30 AND S = 'apple'";
+    assert_eq!(query(&a, q), ["CASE_INSENSITIVE,SQL_TEXT"]);
+    let q = "SELECT BTRIM(S, NAME) FROM P, N WHERE AGE = 30 AND S = 'Zebra'";
+    assert_eq!(query(&a, q), ["Zebra"]);
+    a.run("SET COLLATION 'CASE_INSENSITIVE'").unwrap();
+    assert_eq!(query(&a, "SELECT TRIM('a' FROM S), RTRIM(S, 'A') FROM N WHERE S = 'Zebra'"), ["Zebr,Zebr"]);
+}
+
 /// Verifies: [EXTENSION] RULES.md R-ERR-5, [ISO/IEC 9075-2:2023 §11.44 SR4] a
 /// DROP COLLATION refused leaves no effect, in the transaction that goes on:
 /// its table's rows and collation are as they were, for a statement after

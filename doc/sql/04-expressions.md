@@ -108,15 +108,26 @@ keep their first ones if the rest are X'00', else are refused (SQLSTATE
 | SUBSTRING(s FROM start [FOR length]) | the characters of s from start, counting from 1, length of them or the rest; of a binary string, its octets |
 | UPPER(s), LOWER(s) | s in upper or lower case |
 | TRIM([[LEADING \| TRAILING \| BOTH] [c] FROM] s) | s without the character c, a space if not written, at its start, end or both, the default |
+| LTRIM(s [, set]), RTRIM(s [, set]), BTRIM(s [, set]) | s without any of the characters of set, a space if not written, at its start, its end or both |
+| LPAD(s, n [, pad]), RPAD(s, n [, pad]) | s brought to n characters, cut if longer, else with pad, a space if not written, repeated before it or after it; '' if n is less than 1 |
 
 A function of a CHARACTER VARYING string is CHARACTER VARYING, and
-SUBSTRING of a binary string BINARY VARYING. UPPER, LOWER and TRIM take
-character strings alone.
+SUBSTRING of a binary string BINARY VARYING. UPPER, LOWER, the trims and
+the pads take character strings alone. A trim is as long as its string
+at most. A pad is CHARACTER VARYING(32767), and gives at most 32,767
+characters, so cast it to a shorter type to show or store it narrow. A
+trim compares characters under the collation of its string, so under
+CASE_INSENSITIVE `TRIM('b' FROM 'Bob')` is `o`. A trim or pad is of its
+string's collation, whatever that of its other strings. LTRIM, RTRIM,
+BTRIM, LPAD and RPAD are not reserved, so a column may be named any of
+them.
 
 ```sql
 VALUES ('Ada' || ' ' || 'Lovelace', SUBSTRING('Lovelace' FROM 1 FOR 4), UPPER('ada'),
         POSITION('ve' IN 'Lovelace'), CHAR_LENGTH('Ada'));
 VALUES ('[' || TRIM('  x  ') || ']', TRIM(LEADING '0' FROM '007'), OCTET_LENGTH('é'), BIT_LENGTH('A'));
+VALUES (LTRIM('xxyAda', 'xy'), RTRIM('Ada...', '.'), '[' || BTRIM('  Ada  ') || ']', CAST(LPAD('42', 6, '0') AS CHAR(6)),
+        CAST(RPAD('Ada', 8, '.-') AS CHAR(8)), CAST(LPAD('Lovelace', 4) AS CHAR(4)));
 ```
 
 ```
@@ -127,6 +138,10 @@ VALUES ('[' || TRIM('  x  ') || ']', TRIM(LEADING '0' FROM '007'), OCTET_LENGTH(
          |     |                      |
 ---------+-----+----------------------+----------------------
  [x]     | 7   |                    2 |                    8
+(1 row)
+        |        |           |        |          |
+--------+--------+-----------+--------+----------+------
+ Ada    | Ada    | [Ada]     | 000042 | Ada.-.-. | Love
 (1 row)
 ```
 

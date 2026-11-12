@@ -49,6 +49,7 @@ mod set_functions;
 mod set_operations;
 mod statements;
 mod subquery;
+mod trim;
 mod underlying;
 mod values;
 mod views;

@@ -4,8 +4,10 @@
 //! as a set function can. The parser reads each with its own syntax and
 //! calls it with its operands in order (`parser/expression.rs`).
 //!
+//! The trims and pads are in `functions/trim.rs`.
+//!
 //! A result is of the type its Syntax Rules give: CHARACTER VARYING of
-//! SUBSTRING and TRIM [§6.7 SR2a, SR6e], the string's type of UPPER and
+//! SUBSTRING [§6.7 SR2a], the string's type of UPPER and
 //! LOWER [§6.7 SR3a], and of `||` fixed or varying as its operands are
 //! [§6.13 SR3a]. Of binary strings [ISO/IEC 9075-2:2023 §4.4], `||`,
 //! SUBSTRING, POSITION and OCTET_LENGTH take them too, as SQL:2023's rules
@@ -31,7 +33,6 @@ pub fn functions() -> Vec<Arc<dyn ScalarFunction>> {
         Arc::new(Substring),
         Arc::new(Fold { upper: true }),
         Arc::new(Fold { upper: false }),
-        Arc::new(Trim),
         Arc::new(Position),
         Arc::new(Length { name: kw::CHAR_LENGTH, unit: Unit::Characters }),
         Arc::new(Length { name: kw::OCTET_LENGTH, unit: Unit::Octets }),
@@ -45,7 +46,7 @@ const COUNTED: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scal
 
 /// The length of `t`, a character string type, its maximum length if it
 /// is varying, or a Syntax Rule error.
-fn character(name: &str, t: &DataType) -> Result<u32> {
+pub(super) fn character(name: &str, t: &DataType) -> Result<u32> {
     match t {
         DataType::Character { length } | DataType::Varying { length } => Ok(*length),
         DataType::Exact { .. }
@@ -108,7 +109,7 @@ fn integer(name: &str, t: &DataType) -> Result<()> {
 }
 
 /// The string of `v`, if it is one; none if it is null.
-fn text(v: &Value) -> Result<Option<&str>> {
+pub(super) fn text(v: &Value) -> Result<Option<&str>> {
     match v {
         Value::Null => Ok(None),
         Value::Char(s) => Ok(Some(s)),
@@ -124,7 +125,7 @@ fn text(v: &Value) -> Result<Option<&str>> {
 }
 
 /// The integer of `v`, if it is one; none if it is null.
-fn whole(v: Option<&Value>) -> Result<Option<i128>> {
+pub(super) fn whole(v: Option<&Value>) -> Result<Option<i128>> {
     let not_integer = || fail(Code::Api, "[DESIGN] a string function was given a position that is not an integer");
     match v {
         None | Some(Value::Null) => Ok(None),
@@ -336,40 +337,6 @@ impl ScalarFunction for Fold {
     fn call(&self, args: &[Value]) -> Result<Value> {
         let [s] = args else { return fail(Code::Api, "[DESIGN] UPPER and LOWER take one string") };
         Ok(text(s)?.map_or(Value::Null, |s| Value::Char(if self.upper { s.to_ascii_uppercase() } else { s.to_ascii_lowercase() })))
-    }
-}
-
-/// [§6.7] `<trim function>`: TRIM(\[spec\] \[SC\] FROM S), called with
-/// 'BOTH', 'LEADING' or 'TRAILING', SC (' ' if none is written \[SR6c\]) and
-/// S.
-struct Trim;
-
-impl ScalarFunction for Trim {
-    fn name(&self) -> &'static str {
-        kw::TRIM
-    }
-    fn return_type(&self, args: &[DataType]) -> Result<DataType> {
-        let [_, sc, s] = args else { return fail(Code::Api, "[DESIGN] TRIM takes a specification, a character and a string") };
-        // [SR6f] the character comparable with the string.
-        character(kw::TRIM, sc)?;
-        // [SR6e] varying, as long as the string at most.
-        Ok(DataType::Varying { length: character(kw::TRIM, s)? })
-    }
-    fn call(&self, args: &[Value]) -> Result<Value> {
-        let [spec, sc, s] = args else { return fail(Code::Api, "[DESIGN] TRIM takes a specification, a character and a string") };
-        let (Some(spec), Some(sc), Some(s)) = (text(spec)?, text(sc)?, text(s)?) else { return Ok(Value::Null) };
-        let mut chars = sc.chars();
-        let (Some(c), None) = (chars.next(), chars.next()) else {
-            return fail_with(Code::Data, SqlState::TRIM_ERROR, "[ISO/IEC 9075:1992 §6.7 GR5d] the trim character is not one character");
-        };
-        Ok(Value::Char(
-            match spec {
-                "LEADING" => s.trim_start_matches(c),
-                "TRAILING" => s.trim_end_matches(c),
-                _ => s.trim_matches(c),
-            }
-            .to_owned(),
-        ))
     }
 }
 
