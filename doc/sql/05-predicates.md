@@ -104,6 +104,45 @@ collation. So `WORD LIKE 'å%'` finds `åka` but not `apa` under UNICODE_SV,
 and under UNICODE_JA, which ignores punctuation and the kana's script,
 `'かな'` matches `カ-ナ`.
 
+## LIKE_REGEX
+
+`s LIKE_REGEX pattern [FLAG flag]` is true if some part of s matches an
+XQuery regular expression; `NOT LIKE_REGEX` if none does. Unlike LIKE,
+the pattern need not match the whole string: `^` and `$` anchor it at
+the ends. The flag is letters, each turning an option on: `i` ignores
+case, `s` lets `.` match a newline, `m` makes `^` and `$` match at each
+line, `x` ignores white space in the pattern, and `q` takes every
+character of the pattern as itself. The pattern and flag may come from
+columns or parameters. It is unknown if any operand is null.
+
+```sql
+SELECT ID FROM STAFF WHERE NAME LIKE_REGEX '^[AE]' ORDER BY ID;
+SELECT ID FROM STAFF WHERE NAME LIKE_REGEX 'a$' FLAG 'i'
+  AND NAME NOT LIKE_REGEX '(.)\1' ORDER BY ID;
+SELECT ID FROM STAFF WHERE NAME LIKE_REGEX '(';
+```
+
+```
+           ID
+--------------
+            1
+            3
+(2 rows)
+           ID
+--------------
+            1
+            4
+(2 rows)
+turborel: SQLCODE -301 (SQLSTATE 2201S): the pattern is not an XQuery regular expression: a '(' is not closed (at character 1) [ISO/IEC 9075-2:2023 §9.28 GR4]
+```
+
+A pattern that is no regular expression is SQLSTATE 2201S, a flag of
+any other letter 2201T. Matching takes no account of a collation, so a
+CASE_INSENSITIVE column needs the flag `i`. A newline is any of LF, VT,
+FF, CR, NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR and CRLF, which counts
+as one. [Limits](../appendix/d-limits.md) gives the size a pattern may
+have.
+
 ## NULL
 
 `x IS NULL` is true if x is null; `IS NOT NULL` if it is not. It is

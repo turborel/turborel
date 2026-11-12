@@ -17,6 +17,8 @@ mod pad;
 mod reorder;
 mod rules;
 mod table;
+#[cfg(test)]
+pub(crate) use table::fnv;
 mod tailored;
 mod unicode;
 

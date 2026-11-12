@@ -3,7 +3,8 @@
 //! scalar comparisons the standard defines them by [§8.2 GR7, §8.3, §8.4],
 //! so the planner sees, and an index can answer, plain comparisons; those
 //! with a `<table subquery>` as a comparison with its rows
-//! (`Cond::Quantified`).
+//! (`Cond::Quantified`); LIKE_REGEX as a BOOLEAN [ISO/IEC 9075-2:2023
+//! §8.7].
 
 use std::sync::Arc;
 
@@ -11,8 +12,9 @@ use super::collation::like_under;
 use super::expression::dynamic_of;
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
-use crate::ast::{Predicate, RowValue, Subquery, ValueExpression};
+use crate::ast::{Literal, Predicate, RowValue, Subquery, ValueExpression, ValueSpecification};
 use crate::error::{At, Result};
+use crate::functions::{LikeRegex, ScalarRef};
 use crate::logical::{Cond, Expr, Quantifier, Truth, and_all};
 use crate::params::ParameterType;
 use crate::value::{CompOp, DataType};
@@ -106,6 +108,7 @@ impl Binder<'_> {
                 self.quantified(value, (*op, quantifier), subquery, scope)?
             }
             Predicate::Like { value, pattern, escape, not } => self.like([value, pattern], escape.as_deref(), *not, scope)?,
+            Predicate::LikeRegex { value, pattern, flag, not } => self.like_regex([value, pattern], flag.as_deref(), *not, scope)?,
             Predicate::Null { value, not } => self.null(value, *not, scope)?,
             Predicate::Exists(s) => Cond::Exists(self.subquery(s, scope, Use::Exists)?.0),
             Predicate::Unique(s) => {
@@ -290,6 +293,29 @@ impl Binder<'_> {
             return Err(rule("[ISO/IEC 9075:1992 §8.5 F] LIKE has a match value and a pattern"));
         };
         Ok(negated(Cond::Like(matched, against, bound.next()), not))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §8.7] "CVE LIKE_REGEX PAT FLAG FL", the flag
+    /// the empty string if none is written [SR2], judged as the BOOLEAN
+    /// `LikeRegex` gives; with NOT, "NOT (CVE LIKE_REGEX PAT FLAG FL)"
+    /// [SR3]. Matching takes no account of collations [F&O 3.1 §5.6.3].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if an operand is no character string [SR1].
+    fn like_regex(
+        &self,
+        [value, pattern]: [&ValueExpression; 2],
+        flag: Option<&ValueExpression>,
+        not: bool,
+        scope: Scope<'_>,
+    ) -> Result<Cond> {
+        let implicit = ValueExpression::Value(ValueSpecification::Literal(Literal::Character(String::new())));
+        let operands = [value.clone(), pattern.clone(), flag.unwrap_or(&implicit).clone()];
+        let f = ScalarRef(Arc::new(LikeRegex::default()));
+        let (exprs, types) = self.arguments(&*f.0, &operands, scope)?;
+        f.0.return_type(&types)?;
+        Ok(negated(Cond::Value(Expr::Call(f, exprs)), not))
     }
 
     /// [ISO/IEC 9075:1992 §8.6] "R IS NULL": all of R null [GR2]; "R IS

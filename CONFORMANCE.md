@@ -568,9 +568,10 @@ and is true if any is, as `WHEN (CO EWO1) OR ... OR (CO EWOm)` [SR2i].
 | OVERLAPS | SR2c | Every `<when operand>` of a CASE is OVERLAPS or none is, else SQLCODE -103. |
 
 The case operand is evaluated once for each operand it is compared with,
-as the equivalent searched CASE does. The predicates turborel has not,
-SIMILAR, LIKE_REGEX, IS DISTINCT FROM, IS NORMALIZED, MEMBER, SUBMULTISET,
-IS A SET and IS OF, are no `<when operand>`s either.
+as the equivalent searched CASE does. LIKE_REGEX is a `<when operand>`
+too, with NOT or without. The predicates turborel has not, SIMILAR, IS
+DISTINCT FROM, IS NORMALIZED, MEMBER, SUBMULTISET, IS A SET and IS OF,
+are no `<when operand>`s either.
 
 ### GREATEST and LEAST
 
@@ -643,6 +644,40 @@ identifier, read as a data type where a data type is. A column or a
 domain may be named DECFLOAT, and DECFLOAT as a column's type is still
 the type. SQL:2023 has no infinities or NaN of DECFLOAT, and neither has
 turborel.
+
+### Regular expressions
+
+Features F841 (LIKE_REGEX predicate) and F847 (nonconstant regular
+expression). `CVE LIKE_REGEX PAT FLAG FL` is true if a substring of CVE
+matches the XQuery regular expression PAT under the option flag FL
+[§8.7 GR1b], the empty string if no flag is written [SR2]. It is unknown
+if any of the three is null [GR1a], and NOT LIKE_REGEX is its negation
+[SR3]. Each is a character string [SR1], CVE a value and not a row, else
+SQLCODE -103. A pattern and flag may be any character expressions, a
+column's or a parameter's included. A `?` pattern or flag is CHARACTER
+VARYING when the other of the two is not a `?`, the implicit flag
+counting [§20.7 GR5a xxxvi], and a `?` value is refused.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| The pattern | §9.28 GR4, GR9a; F&O 3.1 §5.6.1 | XSD 1.1 Part 2's `regExp` with F&O's additions: `^` and `$`, reluctant quantifiers, back-references and non-capturing groups. Anything else is SQLSTATE 2201S. |
+| The flag | §9.28 GR5; F&O 3.1 §5.6.2 | `s`, `m`, `i`, `x` and `q`, in any order, repeated or not. Any other character is 2201T. An invalid pattern is reported first [GR4]. |
+| Newlines | §9.28 GR9a i | LF, VT, FF, CR, NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR and CRLF [UTS #18 RL1.6]. `.` matches none but under `s`, which takes CRLF as one character. `^` and `$` under `m` are at each line's ends, never between CR and LF. |
+| `\s` and `\S` | §9.28 GR9a ii, iii | `\s` matches a space, a tab or a newline sequence, CRLF one. `\S` matches one character `\s` does not. |
+| Case | F&O 3.1 §5.6.2 | Under `i` a character matches its case variants, from Unicode 13.0's full case mappings, and a range those of each character in it. A back-reference compares case-blind. A category does not change. |
+| Collations | F&O 3.1 §5.6.3 | Ignored. A CASE_INSENSITIVE column matches case and all unless the flag is `i`. |
+| Where it is written | §8.7, §6.12 SR2f ii | A search condition, a value, a CHECK constraint, and a simple CASE's `<when operand>`. |
+
+Several choices are turborel's own (RULES.md D61). Categories, blocks and
+case variants are Unicode 13.0's, the version the collations have. `\i`
+and `\c` are the name characters of XML 1.0 Fifth Edition. A block may
+also be named by Unicode 3.1's superseded names, Greek,
+CombiningMarksforSymbols and PrivateUse, which XSD lists; an unknown block
+is 2201S [F&O 3.1 §5.6.1.5]. A range whose first character follows its
+last is 2201S, as XSD 1.0 Second Edition, the one F&O 3.1 names, has it,
+where XSD 1.1 would take it as empty. IA068 and IV093 do not
+arise, as every string is in UCS. LIKE_REGEX and FLAG are no key words of
+SQL-92, so each stays an identifier.
 
 ---
 
@@ -981,6 +1016,8 @@ SQLCODE -900 (RULES.md D18).
 | `<unsigned integer>` | 4,294,967,295 | 86 §5.2 sets no maximum. | `parser.rs` |
 | A sum of SUM or AVG on the way to its total | 128 bits, past some 10^20 exact values of 18 digits, or 10^18 intervals of 9 digits of days | §6.5 GR2b iv judges only the total against the range of the result, so whether a sum raises does not depend on the order of its rows (RULES.md D15). Each sum before it is kept wider than the result, but not without bound. | `functions/sum.rs` |
 | SQL descriptor areas | 64 at once, of a session | §17.2 GR3 leaves the number to the implementation, and names no exception past it. Direct SQL allocates them, a server's clients among it. | `db/dynamic/areas.rs` |
+| Regular expression size | 8,192 instructions compiled, about as many characters and quantified repeats, and groups 64 deep | §9.28 sets no limit. A counted repeat is compiled once for each count, so `a{9000}` passes it. | `regex/compile.rs`, `regex/parse.rs` |
+| Regular expression steps | 10,000,000, of a search with back-references | A back-reference matches no automaton, so its search goes back and can take time exponential in the string. One without any takes time linear in it, with no limit. | `regex/backtrack.rs` |
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
 
 An index entry is an encoded key plus an 8-byte row id, and has its own limit.

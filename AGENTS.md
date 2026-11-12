@@ -92,6 +92,7 @@ its submodules in `foo/`.
 | `hash.rs` | hash functions (`HashFunction`) |
 | `value.rs` | data types, values, arithmetic, comparison |
 | `functions.rs` | scalar and aggregate functions |
+| `regex.rs` | XQuery regular expressions, the matcher LIKE_REGEX uses (D61) |
 | `settings.rs` | the settings registry (D36) |
 | `memory.rs` | the memory budget (D38) |
 | `diagnostics.rs` | typed events to a pluggable sink (D40) |

@@ -126,6 +126,12 @@ impl SqlState {
     pub const SUBSTRING_ERROR: SqlState = SqlState("22011");
     /// Data exception: trim error [ISO/IEC 9075:1992 §6.7 GR5d].
     pub const TRIM_ERROR: SqlState = SqlState("22027");
+    /// Data exception: invalid XQuery regular expression [ISO/IEC
+    /// 9075-2:2023 §9.28 GR4].
+    pub const INVALID_XQUERY_REGULAR_EXPRESSION: SqlState = SqlState("2201S");
+    /// Data exception: invalid XQuery option flag [ISO/IEC 9075-2:2023
+    /// §9.28 GR5].
+    pub const INVALID_XQUERY_OPTION_FLAG: SqlState = SqlState("2201T");
     /// Data exception: indicator overflow.
     pub const INDICATOR_OVERFLOW: SqlState = SqlState("22022");
     /// Data exception: invalid escape sequence.

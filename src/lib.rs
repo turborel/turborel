@@ -51,6 +51,7 @@ pub mod optimizer;
 pub mod params;
 pub mod parser;
 pub mod physical;
+pub mod regex;
 pub mod settings;
 pub mod spill;
 pub mod stats;

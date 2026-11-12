@@ -130,6 +130,7 @@ mod random_queries;
 mod read_ahead;
 mod recovery;
 mod refusals;
+mod regular_expressions;
 mod rekeying;
 mod reopen;
 mod replicated_state;

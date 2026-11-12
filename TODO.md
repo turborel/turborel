@@ -34,10 +34,10 @@ each group.
 
 ### Expressions and functions
 
-- Regular expressions (F841 to F847). LIKE_REGEX [§8.7], OCCURRENCES_REGEX
-  and POSITION_REGEX [§6.31], SUBSTRING_REGEX and TRANSLATE_REGEX [§6.33],
-  in XQuery's syntax, by a matcher of our own (D3). The JSON path's
-  like_regex (T837) uses the same one.
+- The regular expression functions (F842 to F846). OCCURRENCES_REGEX and
+  POSITION_REGEX [§6.31], SUBSTRING_REGEX and TRANSLATE_REGEX [§6.33], by
+  the matcher LIKE_REGEX has (D61), and their octet forms (F846). The JSON
+  path's like_regex (T837) uses the same one.
 - Formatted CAST of datetimes to and from strings (T839) [§6.13], as
   `CAST(d AS VARCHAR(10) FORMAT 'YYYY-MM-DD')`. Only the standard's own
   format is read and written today.

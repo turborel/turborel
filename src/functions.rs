@@ -33,12 +33,14 @@ mod floats;
 mod greatest;
 pub use greatest::{GREATEST, GreatestOrLeast, LEAST};
 mod ints;
+mod regex;
 mod strings;
 mod sum;
 mod trim;
 mod truths;
 use sum::{AvgAcc, SumAcc};
 
+pub use regex::{FLAG, LIKE_REGEX, LikeRegex};
 pub use strings::CONCATENATION;
 pub use trim::{BTRIM, LPAD, LTRIM, RPAD, RTRIM, TRIMS_AND_PADS, Trim, source_of, trim_named};
 pub use truths::EVERY;

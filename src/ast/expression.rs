@@ -116,6 +116,19 @@ pub enum Predicate {
         /// NOT LIKE was written.
         not: bool,
     },
+    /// [ISO/IEC 9075-2:2023 §8.7] `<regex like predicate>` ::= `<row value
+    /// predicand>` \[NOT\] LIKE_REGEX `<XQuery pattern>` \[FLAG `<XQuery
+    /// option flag>`\], each a `<character value expression>`
+    LikeRegex {
+        /// The value matched, CVE.
+        value: Box<ValueExpression>,
+        /// The `<XQuery pattern>`.
+        pattern: Box<ValueExpression>,
+        /// The `<XQuery option flag>`, if one was given.
+        flag: Option<Box<ValueExpression>>,
+        /// NOT LIKE_REGEX was written.
+        not: bool,
+    },
     /// [§8.6] `<null predicate>` ::= `<row value constructor>` IS \[NOT\] NULL
     Null {
         /// The row tested.
@@ -501,10 +514,10 @@ impl Predicate {
             Predicate::Comparison(a, _, b) | Predicate::Overlaps(a, b) => a.iter().chain(b).for_each(f),
             Predicate::Between { value, low, high, .. } => value.iter().chain(low).chain(high).for_each(f),
             Predicate::InList { value, list, .. } => value.iter().chain(list).for_each(f),
-            Predicate::Like { value, pattern, escape, .. } => {
+            Predicate::Like { value, pattern, escape: third, .. } | Predicate::LikeRegex { value, pattern, flag: third, .. } => {
                 f(value);
                 f(pattern);
-                if let Some(e) = escape {
+                if let Some(e) = third {
                     f(e);
                 }
             }
@@ -531,6 +544,7 @@ impl Predicate {
             | Predicate::Between { .. }
             | Predicate::InList { .. }
             | Predicate::Like { .. }
+            | Predicate::LikeRegex { .. }
             | Predicate::Null { .. } => None,
         }
     }

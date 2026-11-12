@@ -52,7 +52,7 @@ only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
 SQL:2023 reserves BINARY, BOOLEAN, BTRIM, DECFLOAT, EVERY, GREATEST,
-LEAST, LPAD, LTRIM, RPAD, RTRIM and VARBINARY, which SQL-92 does not, so
+LEAST, LIKE_REGEX, LPAD, LTRIM, RPAD, RTRIM and VARBINARY, which SQL-92 does not, so
 a column of an older database may be named any of them. They stay identifiers here, key words only where
 they are read. BINARY, BOOLEAN, DECFLOAT and VARBINARY are data types
 where a data type is written, so a domain cannot be named BINARY,
@@ -60,6 +60,8 @@ BOOLEAN or VARBINARY, and one named DECFLOAT is never the type a column
 of DECFLOAT is. BTRIM, EVERY, GREATEST, LEAST, LPAD, LTRIM, RPAD and
 RTRIM are functions before a parenthesis, so a table's column of one of
 those names is written in double quotes, `"LPAD"` say, only where a
-parenthesis follows it.
+parenthesis follows it. LIKE_REGEX is a predicate after a value, and
+FLAG, which SQL:2023 does not reserve, is read only after its pattern, so
+`LIKE_REGEX LIKE_REGEX 'a' FLAG FLAG` compares two columns of those names.
 
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

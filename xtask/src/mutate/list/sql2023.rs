@@ -5,12 +5,13 @@
 //! literals; binary strings, their literals, keys, assignment and CAST;
 //! decimal floating point, its rounding, range, keys and comparison;
 //! varying strings of no written maximum length; a simple CASE's lists
-//! of WHEN operands, and predicates among them; GREATEST and LEAST.
+//! of WHEN operands, and predicates among them; GREATEST and LEAST;
+//! trims and pads; XQuery regular expressions and LIKE_REGEX.
 
 use super::{Mutation, Package};
 
 /// The mutations of SQL:2023's additions, in the order they run.
-pub const SQL2023: [Mutation; 38] = [
+pub const SQL2023: [Mutation; 53] = [
     Mutation {
         name: "boolean-predicand-untyped",
         package: Package::Core,
@@ -389,6 +390,163 @@ pub const SQL2023: [Mutation; 38] = [
         original: "return Ok(Value::Char(ps.chars().take(mrl).collect()));",
         replacement: "return Ok(Value::Char(ps.to_owned()));",
         integration: &["expressions::pads_6_33"],
+        unit: &[],
+    },
+    Mutation {
+        name: "regex-dot-all-splits-crlf",
+        package: Package::Core,
+        breaks: "under the flag s a dot matches a CR before an LF alone, so a..b matches a, CR, LF and b",
+        file: "src/regex/compile.rs",
+        original: "Inst::AnyButCrlf => !(c == '\\r' && char_at(text, at.saturating_add(1)) == Some('\\n')),",
+        replacement: "Inst::AnyButCrlf => true,",
+        integration: &[],
+        unit: &["regex::tests::newlines_9_28"],
+    },
+    Mutation {
+        name: "regex-line-start-within-crlf",
+        package: Package::Core,
+        breaks: "under the flag m a ^ matches between a CR and its LF, which are one newline",
+        file: "src/regex/compile.rs",
+        original: "multiline && after_newline && at < text.len() && !within_crlf(text, at)",
+        replacement: "multiline && after_newline && at < text.len()",
+        integration: &[],
+        unit: &["regex::tests::newlines_9_28"],
+    },
+    Mutation {
+        name: "regex-line-start-at-end",
+        package: Package::Core,
+        breaks: "under the flag m a ^ matches at the string's end after a final newline, where no line begins",
+        file: "src/regex/compile.rs",
+        original: "multiline && after_newline && at < text.len() && !within_crlf(text, at)",
+        replacement: "multiline && after_newline && !within_crlf(text, at)",
+        integration: &[],
+        unit: &["regex::tests::newlines_9_28"],
+    },
+    Mutation {
+        name: "regex-line-end-after-final-newline",
+        package: Package::Core,
+        breaks: "under the flag m a $ matches at the string's end after a final newline too",
+        file: "src/regex/compile.rs",
+        original: "before_newline || (at == text.len() && !ends_in_newline)",
+        replacement: "before_newline || (at == text.len() && (ends_in_newline || !ends_in_newline))",
+        integration: &[],
+        unit: &["regex::tests::newlines_9_28"],
+    },
+    Mutation {
+        name: "regex-space-splits-crlf",
+        package: Package::Core,
+        breaks: "\\s matches a CR before an LF alone, so ^\\s$ is false of CRLF",
+        file: "src/regex/compile.rs",
+        original: "Node::Space => self.crlf_or(Inst::Set(fixed_escape('s').unwrap_or_default()))?,",
+        replacement: "Node::Space => self.set(&fixed_escape('s').unwrap_or_default())?,",
+        integration: &[],
+        unit: &["regex::tests::spaces_9_28"],
+    },
+    Mutation {
+        name: "regex-caseless-without-variants",
+        package: Package::Core,
+        breaks: "the flag i adds no case variants, so z does not match Z",
+        file: "src/regex/parse.rs",
+        original: "        if !self.caseless {
+            return set;",
+        replacement: "        if true {
+            return set;",
+        integration: &["regular_expressions::matching_9_28"],
+        unit: &["regex::tests::case_insensitive_matching", "regex::tests::the_examples_of_the_flags"],
+    },
+    Mutation {
+        name: "regex-back-reference-case-exact",
+        package: Package::Core,
+        breaks: "under the flag i a back-reference matches only what its group captured exactly, so ^([md])[aeiou]\\1$ is false of Mum",
+        file: "src/regex/backtrack.rs",
+        original: "self.caseless.map_or(a == b, |table| table.alike(a, b))",
+        replacement: "a == b",
+        integration: &[],
+        unit: &["regex::tests::case_insensitive_matching"],
+    },
+    Mutation {
+        name: "regex-back-reference-digits-greedy",
+        package: Package::Core,
+        breaks: "a back-reference takes every digit after it, so (a)\\10 refers to a tenth group and is refused",
+        file: "src/regex/parse.rs",
+        original: "let Some(l) = longer.filter(|l| *l <= opened) else { break };",
+        replacement: "let Some(l) = longer else { break };",
+        integration: &[],
+        unit: &["regex::tests::back_references"],
+    },
+    Mutation {
+        name: "regex-empty-loop-repeated",
+        package: Package::Core,
+        breaks: "the matcher with back-references repeats a loop that matched nothing, so (x*)*\\1 runs past its steps",
+        file: "src/regex/backtrack.rs",
+        original: "held(self.slots.get(self.program.slots.saturating_add(*k)).copied().flatten() != Some(at))",
+        replacement: "held(true)",
+        integration: &[],
+        unit: &["regex::tests::back_references"],
+    },
+    Mutation {
+        name: "regex-match-not-leftmost-preferred",
+        package: Package::Core,
+        breaks: "the linear matcher keeps a less preferred thread's match, so a+? of baaa matches aaa",
+        file: "src/regex/pike.rs",
+        original: "                break;
+            }
+            if one(inst, text, at) {",
+        replacement: "                continue;
+            }
+            if one(inst, text, at) {",
+        integration: &[],
+        unit: &["regex::tests::captures_9_28"],
+    },
+    Mutation {
+        name: "regex-unknown-block-taken",
+        package: Package::Core,
+        breaks: "\\p{IsNoSuchBlock} is taken as an empty class, not SQLSTATE 2201S",
+        file: "src/regex/parse.rs",
+        original: "Some(self.table.block(block).ok_or_else(|| self.invalid(&format!(\"'{block}' is no block of Unicode 13.0\"))))",
+        replacement: "Some(Ok(self.table.block(block).unwrap_or_default()))",
+        integration: &["regular_expressions::bad_patterns_and_flags_9_28"],
+        unit: &["regex::tests::patterns_that_are_none_9_28"],
+    },
+    Mutation {
+        name: "regex-literal-keeps-other-flags",
+        package: Package::Core,
+        breaks: "the flag q leaves m, s and x in effect, so a b under xq matches ab",
+        file: "src/regex/flags.rs",
+        original: "self.0 & Flags::bit(flag) != 0 && !ignored",
+        replacement: "self.0 & Flags::bit(flag) != 0 && (ignored || !ignored)",
+        integration: &[],
+        unit: &["regex::flags::tests::flags_9_28"],
+    },
+    Mutation {
+        name: "regex-flag-judged-first",
+        package: Package::Core,
+        breaks: "an invalid flag is reported before an invalid pattern, against GR4 coming before GR5",
+        file: "src/regex.rs",
+        original: "                parse(pattern, Flags::default(), &table)?;
+",
+        replacement: "",
+        integration: &["regular_expressions::bad_patterns_and_flags_9_28"],
+        unit: &["regex::tests::a_pattern_is_judged_before_its_flag_9_28"],
+    },
+    Mutation {
+        name: "like-regex-null-false",
+        package: Package::Core,
+        breaks: "LIKE_REGEX of a null operand is false, not unknown",
+        file: "src/functions/regex.rs",
+        original: "else { return Ok(Value::Null) };",
+        replacement: "else { return Ok(Value::Bool(false)) };",
+        integration: &["regular_expressions::like_regex_8_7"],
+        unit: &[],
+    },
+    Mutation {
+        name: "like-regex-parameter-untyped",
+        package: Package::Core,
+        breaks: "a ? pattern or flag beside a pattern or flag not a ? has no type, so it is refused",
+        file: "src/functions/regex.rs",
+        original: "other.and_then(Option::as_ref).map(|_| ParameterType::Varying)",
+        replacement: "other.and_then(Option::as_ref).and(None)",
+        integration: &["regular_expressions::operands_8_7"],
         unit: &[],
     },
 ];

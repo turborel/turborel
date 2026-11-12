@@ -98,6 +98,7 @@ verification approach DO-178C expects (§8).
 | D46 | The command-line client |
 | D59 | Import is rows from a pluggable source, over a connection |
 | D60 | Collations are sort keys, and a collation never changes |
+| D61 | Regular expressions are XQuery's, by a matcher of our own |
 
 ### The project
 
@@ -133,7 +134,9 @@ it from Unicode's own files, the build holds it to a digest, and
 `cargo xtask unicode-check` runs Unicode's conformance file against it (D60).
 `src/value/collation/cldr38.rules` and `cldr38.groups` can be read, but
 `cargo xtask cldr` makes them from CLDR's files all the same, and the build
-holds the rules to a digest too.
+holds the rules to a digest too. `src/regex/unicode13.bin`, the General
+Categories, blocks and case variants regular expressions read (D61), comes
+from the same `cargo xtask unicode`, and the build holds it to a digest too.
 
 #### D6. Production code only
 
@@ -379,6 +382,27 @@ columns end with. The reverts need no Access Rule, as the statements the
 standard effectively executes run without one, so a table of another owner is
 reverted too. A definition of a column or domain of a collation made holds the
 collation's name shared to its end, which a revert holds exclusive.
+
+#### D61. Regular expressions are XQuery's, by a matcher of our own
+
+LIKE_REGEX and the functions after it read a pattern as XQuery reads it
+[ISO/IEC 9075-2:2023 §9.28], so F&O 3.1 §5.6 and the grammar of XSD 1.1 Part
+2 Appendix G define what it matches, with the standard's changes for UTS #18's
+newlines [GR9a]. No library reads that dialect without changes, and D3 keeps
+one out anyway, so `src/regex.rs` reads, compiles and matches it.
+
+A pattern compiles to a program for a Pike VM, which runs every way at once
+and takes time linear in the string. A back-reference matches no automaton,
+so a program with one runs on a backtracker, which counts its steps and gives
+SQLCODE -900 past `MAX_STEPS` (D18) rather than run for ever. A program past
+`MAX_INSTRUCTIONS`, or groups nested past `MAX_NESTING`, is refused the same
+way. Categories, blocks and case variants come from Unicode 13.0, the version
+the collations have, in a table made by `cargo xtask unicode` (D3). Matching
+takes no account of a collation [F&O 3.1 §5.6.3], so a CASE_INSENSITIVE column
+needs the flag `i`.
+
+A constant pattern is compiled once for a statement. A pattern from a column
+or a parameter is compiled again each time it changes, which is Feature F847.
 
 #### D33. Schema changes are transactional
 

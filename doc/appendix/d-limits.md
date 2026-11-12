@@ -26,6 +26,13 @@ A statement is at most 64 levels deep as it is read: about 30 nested
 parentheses, 60 `AND`, `OR`, `+` or `UNION` in a row, or 60 tables in a
 FROM clause. A deeper one is refused rather than run out of stack.
 
+A regular expression compiles to at most 8,192 instructions, about as
+many characters, each counted repeat as many times as its count, so
+`a{9000}` is refused. Its groups nest at most 64 deep. A search of a
+pattern with a back-reference goes back to try each way and stops past
+10,000,000 steps; one without any takes time linear in the string, with
+no limit. Each is SQLCODE -900.
+
 ## Sizes
 
 | What | Limit |

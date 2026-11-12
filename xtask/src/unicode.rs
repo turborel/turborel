@@ -1,6 +1,7 @@
 //! `cargo xtask unicode --from DIR`: generates the table the collation
-//! UNICODE reads, `src/value/collation/unicode13.bin`, from the Unicode
-//! Character Database files in DIR (RULES.md D60). It reads local files and
+//! UNICODE reads, `src/value/collation/unicode13.bin`, and the one regular
+//! expressions read (`unicode/regex.rs`), from the Unicode Character
+//! Database files in DIR (RULES.md D60, D61). It reads local files and
 //! uses no network (R-TEST-5), and only std (R-TOOL-2).
 //!
 //! The layout is the one `src/value/collation/table.rs` reads: a magic, the
@@ -12,6 +13,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::{Error, Result};
+
+mod regex;
 
 /// The table's path, from the workspace root.
 const TABLE: &str = "src/value/collation/unicode13.bin";
@@ -76,7 +79,7 @@ pub fn generate(root: &Path, from: &Path) -> Result<()> {
     let path = root.join(TABLE);
     fs::write(&path, &bytes).map_err(|e| Error::new(format!("cannot write {}: {e}", path.display())))?;
     println!("unicode: wrote {} bytes to {TABLE}", bytes.len());
-    Ok(())
+    regex::generate(root, from)
 }
 
 /// The weights of `allkeys.txt` in `from`.

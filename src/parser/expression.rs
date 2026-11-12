@@ -7,7 +7,7 @@ use super::{Parser, furthest};
 use crate::ast::{Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression, WhenOperand};
 use crate::catalog::MatchType;
 use crate::error::Result;
-use crate::functions::CONCATENATION;
+use crate::functions::{CONCATENATION, FLAG, LIKE_REGEX};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::{ArithOp, CompOp};
 
@@ -155,15 +155,16 @@ impl Parser {
     }
 
     /// Whether what follows a row value makes it a predicate's: MATCH,
-    /// NOT, BETWEEN, IN, LIKE, OVERLAPS or a `<comp op>`.
+    /// NOT, BETWEEN, IN, LIKE, LIKE_REGEX, OVERLAPS or a `<comp op>`.
     fn at_predicate_operator(&self) -> bool {
         match self.peek() {
+            // [ISO/IEC 9075-2:2023 §8.7] LIKE_REGEX, no key word of SQL-92.
+            Tok::Identifier(name) => name == LIKE_REGEX,
             Tok::KeyWord(word) => [kw::MATCH, kw::NOT, kw::BETWEEN, kw::IN, kw::LIKE, kw::OVERLAPS].contains(word),
             Tok::Delimiter(d) => {
                 [delim::EQUALS, delim::NOT_EQUALS, delim::LESS, delim::GREATER, delim::LESS_OR_EQUAL, delim::GREATER_OR_EQUAL].contains(d)
             }
-            Tok::Identifier(_)
-            | Tok::ExactNumeric(_)
+            Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
             | Tok::BinaryString(_)
@@ -194,8 +195,11 @@ impl Parser {
         if self.accept_kw(kw::LIKE) {
             return self.like(value, not);
         }
+        if self.accept_word(LIKE_REGEX) {
+            return self.like_regex(value, not);
+        }
         if not {
-            return Err(self.syntax("expected BETWEEN, IN or LIKE after NOT"));
+            return Err(self.syntax("expected BETWEEN, IN, LIKE or LIKE_REGEX after NOT"));
         }
         // [§8.11] <overlaps predicate>
         if self.accept_kw(kw::OVERLAPS) {
@@ -384,6 +388,18 @@ impl Parser {
         let pattern = Box::new(self.common_value_expression()?);
         let escape = if self.accept_kw(kw::ESCAPE) { Some(Box::new(self.common_value_expression()?)) } else { None };
         Ok(Predicate::Like { value: Box::new(value), pattern, escape, not })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §8.7] the rest of a `<regex like predicate>`,
+    /// after \[NOT\] LIKE_REGEX: `<XQuery pattern>` \[FLAG `<XQuery option
+    /// flag>`\], and the value matched, of one value [SR1].
+    fn like_regex(&mut self, mut values: RowValue, not: bool) -> Result<Predicate> {
+        let (Some(value), None) = (values.pop(), values.pop()) else {
+            return Err(self.rule("[ISO/IEC 9075-2:2023 §8.7 SR1] the value LIKE_REGEX matches is one value, not a row"));
+        };
+        let pattern = Box::new(self.common_value_expression()?);
+        let flag = if self.accept_word(FLAG) { Some(Box::new(self.common_value_expression()?)) } else { None };
+        Ok(Predicate::LikeRegex { value: Box::new(value), pattern, flag, not })
     }
 
     // =====================================================================
