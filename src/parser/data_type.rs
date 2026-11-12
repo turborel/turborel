@@ -136,15 +136,19 @@ impl Parser {
     /// `<character string type>` ::= CHARACTER \[(`<length>`)\] | CHAR \[(`<length>`)\]
     /// [ISO/IEC 9075:1992 §6.1] `<character string type>`: CHARACTER or
     /// CHAR \[(length)\]; CHARACTER VARYING, CHAR VARYING or VARCHAR
-    /// (length), its length written. Of a `<national character string
-    /// type>`, after NATIONAL, or NCHAR \[VARYING\], the same [SR1, SR2].
+    /// \[(length)\], of this implementation's longest string if none is
+    /// written [ISO/IEC 9075-2:2023 §6.1 SR7, Feature T081] (ID069). Of a
+    /// `<national character string type>`, after NATIONAL, or NCHAR
+    /// \[VARYING\], the same [SR1, SR2].
     fn character_string_type(&mut self) -> Result<DataType> {
         let varchar = *self.peek() == Tok::KeyWord(kw::VARCHAR);
         self.advance();
         if varchar || self.accept_kw(kw::VARYING) {
-            self.expect_delim(delim::LEFT_PAREN)?;
-            let length = self.string_length()?;
-            self.expect_delim(delim::RIGHT_PAREN)?;
+            let mut length = MAX_CHARACTER_LENGTH;
+            if self.accept_delim(delim::LEFT_PAREN) {
+                length = self.string_length()?;
+                self.expect_delim(delim::RIGHT_PAREN)?;
+            }
             return Ok(DataType::Varying { length });
         }
         let mut length = 1; // [X3.135-1986 §5.5 SR3] omitted <length> is 1
@@ -174,16 +178,19 @@ impl Parser {
     }
 
     /// [ISO/IEC 9075-2:2023 §6.1] `<binary string type>` ::= BINARY
-    /// \[(`<length>`)\] | BINARY VARYING (`<maximum length>`) | VARBINARY
-    /// (`<maximum length>`), the same [SR1]; an omitted length 1 [SR5]. A
-    /// maximum length is written, as without Feature T081 [SR26].
+    /// \[(`<length>`)\] | BINARY VARYING \[(`<maximum length>`)\] |
+    /// VARBINARY \[(`<maximum length>`)\], the same [SR1]; an omitted length
+    /// 1 [SR5], an omitted maximum length this implementation's longest
+    /// binary string [SR6, Feature T081] (IL007).
     fn binary_string_type(&mut self) -> Result<DataType> {
         let varbinary = matches!(self.peek(), Tok::Identifier(name) if name == VARBINARY_NAME);
         self.advance();
         if varbinary || self.accept_kw(kw::VARYING) {
-            self.expect_delim(delim::LEFT_PAREN)?;
-            let length = self.binary_length()?;
-            self.expect_delim(delim::RIGHT_PAREN)?;
+            let mut length = MAX_BINARY_LENGTH;
+            if self.accept_delim(delim::LEFT_PAREN) {
+                length = self.binary_length()?;
+                self.expect_delim(delim::RIGHT_PAREN)?;
+            }
             return Ok(DataType::VarBinary { length });
         }
         let mut length = 1;

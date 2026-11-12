@@ -20,10 +20,10 @@ or two unsigned integers it takes; so may a domain.
 | Type | Holds | Written |
 |---|---|---|
 | CHARACTER(n) | n characters, padded with spaces | CHAR(n); CHAR is CHAR(1) |
-| CHARACTER VARYING(n) | up to n characters | CHAR VARYING(n), VARCHAR(n) |
+| CHARACTER VARYING(n) | up to n characters | CHAR VARYING(n), VARCHAR(n); VARCHAR is VARCHAR(32767) |
 | NATIONAL CHARACTER(n) | as CHARACTER | NCHAR(n), NATIONAL CHAR(n), and VARYING |
 | BINARY(n) | n octets, padded with X'00' | BINARY is BINARY(1) |
-| BINARY VARYING(n) | up to n octets | VARBINARY(n) |
+| BINARY VARYING(n) | up to n octets | VARBINARY(n); VARBINARY is VARBINARY(32767) |
 | BOOLEAN | TRUE or FALSE, and UNKNOWN as its null | |
 | NUMERIC(p, s), DECIMAL(p, s) | exact numbers of p digits, s after the point | DEC(p, s); (p) is (p, 0); no precision is 18 |
 | INTEGER | NUMERIC(10, 0) | INT |
@@ -46,8 +46,10 @@ The [Limits](../appendix/d-limits.md) appendix lists them all.
 
 A character string is a sequence of Unicode characters. CHARACTER(n)
 holds exactly n: a shorter value is padded with spaces as it is stored.
-CHARACTER VARYING(n) holds the value as written, up to n characters;
-its length must be written. Strings are compared as if the shorter were
+CHARACTER VARYING(n) holds the value as written, up to n characters.
+Written without a length, it holds the longest string, 32,767
+characters, as `CAST(x AS VARCHAR)` does. A value is stored at its own
+length, so a longer maximum costs nothing. Strings are compared as if the shorter were
 padded with spaces, so `'ab'` equals `'ab   '`, and ordered by Unicode
 scalar value.
 
@@ -113,7 +115,8 @@ lines are one literal, as a character string's are. A literal is
 BINARY of its octets. A value of BINARY(n) has exactly n octets: one
 shorter is padded with X'00' octets, and one longer is cut if the octets
 past n are all X'00', else refused. BINARY VARYING(n), or VARBINARY(n),
-holds up to n, cut the same way. Its length must be written.
+holds up to n, cut the same way. Written without a length, it holds the
+longest binary string, 32,767 octets.
 
 Binary strings compare octet by octet, and a string is less than a
 longer one it begins, so `X'01'` is less than `X'0100'`. `||` joins

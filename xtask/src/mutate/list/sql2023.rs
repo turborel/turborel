@@ -3,12 +3,13 @@
 //! of truth values, an index on a BOOLEAN probed, and a dynamic parameter
 //! counted once however often the parser reads it; underscores in numeric
 //! literals; binary strings, their literals, keys, assignment and CAST;
-//! decimal floating point, its rounding, range, keys and comparison.
+//! decimal floating point, its rounding, range, keys and comparison;
+//! varying strings of no written maximum length.
 
 use super::{Mutation, Package};
 
 /// The mutations of SQL:2023's additions, in the order they run.
-pub const SQL2023: [Mutation; 23] = [
+pub const SQL2023: [Mutation; 25] = [
     Mutation {
         name: "boolean-predicand-untyped",
         package: Package::Core,
@@ -237,6 +238,26 @@ pub const SQL2023: [Mutation; 23] = [
         original: "        | (DataType::DecFloat { .. }, Value::DecFloat(_))\n",
         replacement: "",
         integration: &["decfloat::a_decfloat_index_is_probed_d34"],
+        unit: &[],
+    },
+    Mutation {
+        name: "varchar-unwritten-length-one",
+        package: Package::Core,
+        breaks: "VARCHAR written without a length holds one character, not the longest string",
+        file: "src/parser/data_type.rs",
+        original: "            let mut length = MAX_CHARACTER_LENGTH;",
+        replacement: "            let mut length = 1;",
+        integration: &["varying::the_names_of_varying_strings_6_1", "varying::varying_strings_of_no_written_length_t081"],
+        unit: &[],
+    },
+    Mutation {
+        name: "varbinary-unwritten-length-one",
+        package: Package::Core,
+        breaks: "VARBINARY written without a length holds one octet, not the longest binary string",
+        file: "src/parser/data_type.rs",
+        original: "            let mut length = MAX_BINARY_LENGTH;",
+        replacement: "            let mut length = 1;",
+        integration: &["binary::the_binary_string_types_6_1", "varying::varying_strings_of_no_written_length_t081"],
         unit: &[],
     },
 ];

@@ -289,8 +289,9 @@ in a program that embeds turborel, since its targets are parameters.
 
 ### Data types
 
-**CHARACTER VARYING** [§6.1], with CHAR VARYING and VARCHAR, takes a length
-written.
+**CHARACTER VARYING** [§6.1], with CHAR VARYING and VARCHAR, takes a length.
+Written without one, as SQL:2023 allows (Feature T081), it is of the
+longest string, 32,767 characters.
 
 | Use | Behaviour | Rules |
 |---|---|---|
@@ -526,7 +527,7 @@ Feature T022 SUBSTRING on binary strings.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
-| BINARY(n), BINARY VARYING(n), VARBINARY(n) | §4.4, §6.1 SR1, SR4, SR5, SR19-SR21 | Strings of octets. BINARY is BINARY(1), and VARBINARY is BINARY VARYING. A maximum length is written, as without Feature T081 [SR26]. |
+| BINARY(n), BINARY VARYING(n), VARBINARY(n) | §4.4, §6.1 SR1, SR4, SR5, SR19-SR21 | Strings of octets. BINARY is BINARY(1), and VARBINARY is BINARY VARYING. A maximum length not written is the longest, 32,767 octets [SR6] (IL007), as Feature T081 allows. |
 | `<binary string literal>` | §5.3 SR4-SR7, SR20 | X, in either case, then quoted pairs of hexits, spaces among them passed over. Parts separated by a newline are one literal. An odd number of hexits, or a character neither a hexit nor a space, is a lexical error (SQLCODE -101). Its type is BINARY of its octets (IV191). |
 | Assignment | §9.2 GR3b viii-xii | BINARY(n) takes n octets, a shorter value padded with X'00', a longer one cut if the octets past n are all X'00', else 22001. BINARY VARYING(n) takes at most n, cut the same way. Only a binary string is assigned to one [SR3]. |
 | Retrieved into a parameter | §9.1 GR5a, GR7h-GR7l | Cut to fit with 01004, the indicator its length, or a BINARY one padded with X'00' octets. |
@@ -551,6 +552,17 @@ implemented.
 
 A collation's sort keys are binary strings, and an index on a collated
 column keys them as BINARY VARYING (RULES.md D60).
+
+### Optional maximum lengths
+
+Feature T081 (optional string types maximum length). CHARACTER VARYING,
+CHAR VARYING, VARCHAR, their national forms, BINARY VARYING and
+VARBINARY may be written without a maximum length, and are then of the
+longest string of their kind, 32,767 characters [§6.1 SR7] (ID069) or
+32,767 octets [SR6] (IL007). That holds wherever a data type is written,
+a column, a domain, a CAST's target. A varying value is stored at its own
+length, so the longest maximum costs no space. SQL-92 required the
+length [92 §6.1], and SQL:2023 wins here (RULES.md D32).
 
 ### Decimal floating point
 
@@ -745,6 +757,7 @@ topic. The Where column names the file that implements each.
 | 2023 §8.2 GR5, IA219, a binary string beginning another, the rest X'00' | Less than it | `value/binary.rs` |
 | 2023 §5.3 SR20, IV191, the type of a `<binary string literal>` | BINARY of its octets | `binder/values.rs` |
 | 2023 §6.32 SR6a, IL003 and IL007, the longest fixed and varying binary strings | 32,767 octets each | `value.rs` |
+| 2023 §6.1 SR6, SR7, IL007 and ID069, the maximum length of a varying string type written without one | 32,767 octets of a binary string, 32,767 characters of a character string | `parser/data_type.rs` |
 | §9.1 GR3k, §9.2 GR3k a number stored or retrieved into an exact type | An exact number's extra fraction digits are truncated. An approximate number is rounded to the scale. | `value/types/exact.rs`, `value/types/approximate.rs` |
 | 2023 §6.1 SR23, IA021, the greatest precision of DECFLOAT | 34 | `value.rs` |
 | 2023 §6.1 SR22, ID062, the precision of DECFLOAT written without one | 34 | `value.rs`, `parser/data_type.rs` |

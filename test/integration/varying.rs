@@ -14,10 +14,11 @@ fn varying() -> Database {
     db
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.1] CHARACTER VARYING, CHAR
-/// VARYING and VARCHAR name the type, of a length written, more than 0;
-/// one longer than this implementation's longest string is valid but not
-/// processed (SQLCODE -900, RULES.md D18).
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.1; ISO/IEC 9075-2:2023
+/// §6.1 SR7] CHARACTER VARYING, CHAR VARYING and VARCHAR name the type, of
+/// a length more than 0, or if none is written, as with Feature T081, of
+/// this implementation's longest string, 32,767 (ID069); one longer than
+/// that is valid but not processed (SQLCODE -900, RULES.md D18).
 #[test]
 fn the_names_of_varying_strings_6_1() {
     let db = varying();
@@ -27,7 +28,12 @@ fn the_names_of_varying_strings_6_1() {
         "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'U' ORDER BY 1";
     let squeezed: Vec<String> = rows(&a, described).unwrap().iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
     assert_eq!(squeezed, ["A,CHARACTER VARYING,3", "B,CHARACTER VARYING,4", "D,CHARACTER VARYING,6"]);
-    assert_eq!(exec(&a, "CREATE TABLE W (A VARCHAR)").err(), Some(Code::Syntax), "its length written");
+    a.run("CREATE TABLE X (A VARCHAR, B CHAR VARYING, C CHARACTER VARYING, D NCHAR VARYING, E NATIONAL CHARACTER VARYING)").unwrap();
+    let longest = |table: &str| {
+        let sql = format!("SELECT DISTINCT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{table}'");
+        rows(&a, &sql).unwrap()
+    };
+    assert_eq!(longest("X"), ["32767"], "each of the longest string's length");
     assert_eq!(exec(&a, "CREATE TABLE W (A VARCHAR(0))").err(), Some(Code::SyntaxRule), "more than 0");
     assert_eq!(exec(&a, "CREATE TABLE W (A VARCHAR(40000))").err(), Some(Code::Unsupported), "too long here");
     a.commit().unwrap();
@@ -176,4 +182,29 @@ fn national_character_strings_6_1() {
     assert_eq!(rows(&a, "SELECT N 'x' FROM U").err(), Some(Code::Syntax), "N apart: the column N, then a string");
     assert_eq!(exec(&a, "CREATE TABLE W (A NATIONAL VARCHAR(3))").err(), Some(Code::Syntax), "NATIONAL CHARACTER or CHAR");
     a.commit().unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.1 SR6, SR7, §6.13 GR11,
+/// GR13] a varying string type written without a maximum length, as with
+/// Feature T081, is of the longest: CAST to VARCHAR keeps a number's whole
+/// text, to VARBINARY a binary string's octets; a domain may be of one; a
+/// column of one keeps a value of 32,767 characters and refuses one
+/// longer (SQLSTATE 22001) unless what is past it is spaces.
+#[test]
+fn varying_strings_of_no_written_length_t081() {
+    let db = varying();
+    let a = db.session("A");
+    a.run("INSERT INTO T VALUES ('ab', 'cd')").unwrap();
+    let cast = "SELECT CAST(123456789012345678 AS VARCHAR), CAST(V AS CHAR VARYING) || 'x', CAST(X'0A0B' AS VARBINARY) FROM T";
+    assert_eq!(rows(&a, cast).unwrap(), ["123456789012345678,abx,0A0B"]);
+    a.run("CREATE DOMAIN NOTE AS VARCHAR CHECK (VALUE <> '')").unwrap();
+    a.run("CREATE TABLE L (N NOTE, B VARBINARY)").unwrap();
+    let long = "x".repeat(32_767);
+    a.run(&format!("INSERT INTO L (N) VALUES ('{long}'), ('{long}   ')")).unwrap();
+    assert_eq!(rows(&a, "SELECT DISTINCT CHAR_LENGTH(N) FROM L").unwrap(), ["32767"], "its trailing spaces past the length cut");
+    assert_eq!(exec(&a, &format!("INSERT INTO L (N) VALUES ('{long}y')")).err(), Some(Code::Data), "22001");
+    assert_eq!(exec(&a, "INSERT INTO L (N) VALUES ('')").err(), Some(Code::Constraint), "the domain's check");
+    a.run(&format!("INSERT INTO L (B) VALUES (X'{}')", "AB".repeat(32_767))).unwrap();
+    assert_eq!(rows(&a, "SELECT OCTET_LENGTH(B) FROM L WHERE B IS NOT NULL").unwrap(), ["32767"]);
+    a.rollback().unwrap();
 }

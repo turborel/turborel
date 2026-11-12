@@ -32,12 +32,6 @@ D and the clauses that define them, so a bare `§` here is SQL:2023. The
 groups run in the order they build on each other, and so do the items in
 each group.
 
-### Types and literals
-
-- VARCHAR and VARBINARY without a maximum length (T081) [§6.1]. The length
-  is the implementation's limit. JSON results and string functions of
-  unknown size want it.
-
 ### Expressions and functions
 
 - Comma-separated WHEN operands in a simple CASE (F263) [§6.12], as

@@ -19,11 +19,12 @@ fn squeezed(s: &turborel::db::Session, sql: &str) -> Vec<String> {
     rows(s, sql).unwrap().iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect()
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.1 SR1, SR4, SR5, SR26]
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.1 SR1, SR4-SR6]
 /// BINARY, of a length 1 if none is written, and BINARY VARYING or
-/// VARBINARY, the same type, of a maximum length written, as without
-/// Feature T081, more than 0; one longer than this implementation's
-/// longest binary string is valid but not processed (SQLCODE -900,
+/// VARBINARY, the same type, of a maximum length more than 0, or if none
+/// is written, as with Feature T081, of this implementation's longest
+/// binary string, 32,767 octets [SR6] (IL007); one longer than that is
+/// valid but not processed (SQLCODE -900,
 /// RULES.md D18). BIT and BIT VARYING, which SQL:2023 has not, are no data
 /// types (SQLCODE -104), and BINARY and VARBINARY are no key words, so a
 /// column keeps either name.
@@ -35,8 +36,9 @@ fn the_binary_string_types_6_1() {
     let described = "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH FROM INFORMATION_SCHEMA.COLUMNS \
                      WHERE TABLE_NAME = 'U' ORDER BY 1";
     assert_eq!(squeezed(&a, described), ["A,BINARY,1,1", "B,BINARY,10,10", "C,BINARY VARYING,12,12", "D,BINARY VARYING,5,5"]);
-    assert_eq!(exec(&a, "CREATE TABLE W (A VARBINARY)").err(), Some(Code::Syntax), "its maximum length written");
-    assert_eq!(exec(&a, "CREATE TABLE W (A BINARY VARYING)").err(), Some(Code::Syntax), "its maximum length written");
+    a.run("CREATE TABLE X (A VARBINARY, B BINARY VARYING)").unwrap();
+    let longest = "SELECT DISTINCT CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'X'";
+    assert_eq!(squeezed(&a, longest), ["32767,32767"], "the longest binary string's length");
     assert_eq!(exec(&a, "CREATE TABLE W (A BINARY(0))").err(), Some(Code::SyntaxRule), "more than 0");
     assert_eq!(exec(&a, "CREATE TABLE W (A VARBINARY(40000))").err(), Some(Code::Unsupported), "too long here");
     assert_eq!(exec(&a, "CREATE TABLE W (A BIT(4))").err(), Some(Code::Syntax), "no BIT");
