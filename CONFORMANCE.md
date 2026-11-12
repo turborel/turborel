@@ -835,6 +835,34 @@ that part names them, the generator's options as text. GENERATED, ALWAYS,
 EXPRESSION and OVERRIDING are non-reserved words, and SYSTEM, which
 SQL:2023 reserves and SQL-92 does not, stays an identifier too.
 
+### TRUNCATE TABLE
+
+Features F200 (TRUNCATE TABLE statement) and F202 (TRUNCATE TABLE: identity
+column restart option). TRUNCATE TABLE deletes every row of a base table
+without a triggered action [§14.10].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| The table | §14.10 SR2 to SR4, AR2 | A base table of a schema the session owns, which no foreign key references, its own included. A view, a declared local temporary table or a table referenced is SQLCODE -103, another's schema -104. |
+| Its rows | GR5, GR7 | Every row goes, of a temporary table the session's alone. Of no row, the statement completes with no data. |
+| Its identity column | SR5, GR8 | CONTINUE IDENTITY, written or not, leaves the generator. RESTART IDENTITY restarts it at its start value, with the rows, as ALTER COLUMN RESTART WITH would. A start value beyond the generator's bounds refuses it, SQLCODE -103. |
+| READ ONLY | GR1 | A persistent table is refused, SQLSTATE 25006. A temporary one is not. |
+| Cursors | GR2, GR3, GR6 | A cursor of the transaction that reads the table, directly or through a view, refuses the statement, SQLSTATE 36002. |
+
+A persistent table's rows go at once, its storage replaced by an empty
+generation as ALTER TABLE replaces it (RULES.md D64). A transaction that
+began before the truncation committed is refused at its next use of the
+table (SQLCODE -911). The read that tells whether the table had a row is
+checked at commit at every isolation level, so a row another transaction
+committed meanwhile fails the commit. Each CHECK with a subquery, and each
+assertion, that reads the table is checked whole.
+
+The rows ALTER TABLE copies to a new generation, or checks against a
+constraint added, are no rows added either, so an assertion that reads its
+table is checked whole after it too. TRUNCATE, which SQL:2023 reserves and SQL-92 does not, stays an
+identifier, a key word only where TABLE follows it at the start of a
+statement. RESTART is a non-reserved word.
+
 ---
 
 ## Extensions
@@ -1045,6 +1073,7 @@ topic. The Where column names the file that implements each.
 | 86 §4.12 a row inserted at a cursor's position | No effect. A cursor covers only the rows its table had at OPEN. | `db/cursor.rs` |
 | 86 §4.12 an error in a statement naming an open cursor | The cursor's state and position are unchanged. A FETCH failing to assign a value [86 §8.6 GR6] leaves the cursor on the row it fetched, the targets assigned before keeping their values. A failed OPEN leaves it closed. | `db/cursor.rs`, `db/assignment.rs` |
 | 86 §8.6 GR5 the order targets are assigned in | The order of the `<fetch target list>`, stopping at the first that fails | `db/assignment.rs` |
+| 2023 §14.10 GR2b, IA233, whether TRUNCATE TABLE's change is visible to a sensitive cursor held into a later transaction | No cursor of the transaction that reads the table may be open, so none sees it. The statement is refused, SQLSTATE 36002. | `db/truncate.rs` |
 
 ### Evaluation
 
@@ -1134,6 +1163,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §14.1 SR2 default isolation level | READ COMMITTED, where the standard says SERIALIZABLE, following PostgreSQL. TRANSACTION.ISOLATION = SERIALIZABLE conforms. | `db/session.rs` |
 | §14.1 GR5 isolation level | SERIALIZABLE as itself. REPEATABLE READ as snapshot isolation. READ COMMITTED and READ UNCOMMITTED with a snapshot for each statement, kept while a cursor is open. Each as SERIALIZABLE on an engine that does not read below it. | `db/session.rs`, `txn.rs` |
 | §4.30 the initial default schema | The session's authorization identifier, for every statement the session binds | `db/session.rs` |
+| 2023 §14.10 GR4, IA234, the changes TRUNCATE TABLE disallows that are not significant | Any other transaction's write of the table until the truncating one ends, and any use of the table by a transaction or statement that began before it committed (SQLCODE -911) | `db/truncate.rs`, `txn/locks.rs` |
 
 ### Schemas and the catalog
 

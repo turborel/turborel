@@ -268,6 +268,16 @@ fn the_reference_manuals_examples_run_as_printed() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D64: the examples of TRUNCATE
+/// TABLE run as printed, as ANN.
+#[test]
+fn the_truncate_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/statements/truncate-table.md") > 0, "it shows its examples' output");
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D36: the Operator's Guide's
 /// examples of settings and of the server's connections run as printed, by
 /// the database's owner, ANN.

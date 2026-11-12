@@ -42,6 +42,7 @@ mod regex;
 mod schema;
 mod sequences;
 mod served;
+pub(crate) use data_statements::{TRUNCATE, begins_truncate};
 pub(crate) use served::CANCEL;
 mod session;
 mod users;
@@ -507,9 +508,9 @@ impl Parser {
     /// The text is not an `<SQL statement>`, or is a `<declare cursor>`, which
     /// belongs to the module.
     pub fn sql_statement(&mut self) -> Result<SqlStatement> {
-        // \[EXTENSION\] CANCEL is no key word: a word, matched as one.
-        if self.at_cancel_connection() {
-            return self.served_statement().and_then(|stmt| self.end().map(|()| stmt));
+        // \[EXTENSION\] CANCEL is no key word, nor TRUNCATE: words.
+        if let Some(stmt) = self.word_statement()? {
+            return Ok(stmt);
         }
         let stmt = match self.peek() {
             Tok::KeyWord(kw::CLOSE | kw::OPEN) => self.open_or_close()?,

@@ -126,6 +126,7 @@ impl Session {
             SqlStatement::UpdatePositioned { table, .. } => (!temporary(table), "§13.9 GR1"),
             SqlStatement::DeleteSearched { table, .. } => (!temporary(table), "§13.7 GR1"),
             SqlStatement::DeletePositioned { table, .. } => (!temporary(table), "§13.6 GR1"),
+            SqlStatement::Truncate { table, .. } => (!temporary(table), "§14.10 GR1"),
             SqlStatement::Drop { .. } | SqlStatement::AlterTable { .. } | SqlStatement::Schema { .. } => (true, "§12.3 GR6c v"),
             SqlStatement::Open(_)
             | SqlStatement::Fetch { .. }
@@ -152,6 +153,11 @@ impl Session {
             SqlStatement::Dynamic(d) => super::dynamic::changed_table(d).map_or((false, ""), |(table, rule)| (!temporary(table), rule)),
         };
         if changes && self.mode.get().access == AccessMode::ReadOnly {
+            // Of SQL:2023's subclass, which TRUNCATE TABLE names.
+            if let SqlStatement::Truncate { .. } = stmt {
+                let msg = format!("[ISO/IEC 9075-2:2023 {rule}] the transaction is READ ONLY");
+                return Err(SqlError::new(Code::TransactionState, msg).with_state(SqlState::READ_ONLY_TRANSACTION));
+            }
             return fail(Code::TransactionState, format!("[ISO/IEC 9075:1992 {rule}] the transaction is READ ONLY"));
         }
         Ok(())

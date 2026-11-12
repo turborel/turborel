@@ -186,6 +186,7 @@ impl Session {
             | SqlStatement::DeleteSearched { .. }
             | SqlStatement::UpdatePositioned { .. }
             | SqlStatement::DeletePositioned { .. }
+            | SqlStatement::Truncate { .. }
             | SqlStatement::Open(_)
             | SqlStatement::Fetch { .. }
             | SqlStatement::Close(_)
@@ -255,6 +256,7 @@ impl Session {
             SqlStatement::DeletePositioned { table, cursor } => {
                 self.positioned(cx, (table, &[]), (WriteKind::DeletePositioned, cursor, Self::delete_positioned), (params, keeping))
             }
+            SqlStatement::Truncate { table, restart } => self.truncate_table(cx, (table, *restart), params),
             SqlStatement::Open(name) => self.open(cx, &Name::plain(name), params),
             SqlStatement::Fetch { cursor, orientation, targets } => self.fetch(cx, &Name::plain(cursor), (orientation, targets), params),
             SqlStatement::Close(name) => self.close(&Name::plain(name)),
@@ -297,28 +299,15 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::DeleteSearched { table, .. }
         | SqlStatement::UpdatePositioned { table, .. }
         | SqlStatement::DeletePositioned { table, .. }
+        | SqlStatement::Truncate { table, .. }
         | SqlStatement::AlterTable { table, .. }
         | SqlStatement::Index(IndexStatement::Create { table, .. })
         | SqlStatement::Drop { object: DropObject::Table(table), .. }
-        | SqlStatement::Drop { object: DropObject::View(table), .. }
-        | SqlStatement::Schema {
-            statement: SchemaStatement::Grant(PrivilegeDefinition { table, object: PrivilegeObject::Table, .. }),
-            ..
-        }
-        | SqlStatement::Schema {
-            statement: SchemaStatement::Revoke(RevokeStatement { table, object: PrivilegeObject::Table, .. }), ..
-        } => Some(table),
-        SqlStatement::Schema { statement: SchemaStatement::Table(t), .. } | SqlStatement::DeclareTable(t) => Some(&t.name),
-        SqlStatement::Schema { statement: SchemaStatement::View(v), .. } => Some(&v.name),
+        | SqlStatement::Drop { object: DropObject::View(table), .. } => Some(table),
+        SqlStatement::Schema { statement, .. } => schema_target(statement),
+        SqlStatement::DeclareTable(t) => Some(&t.name),
         SqlStatement::Dynamic(d) => dynamic::changed_table(d).map(|(table, _)| table),
-        SqlStatement::Schema { statement: SchemaStatement::Grant(_), .. }
-        | SqlStatement::Schema { statement: SchemaStatement::Revoke(_), .. }
-        | SqlStatement::Schema { statement: SchemaStatement::Domain(_), .. }
-        | SqlStatement::Schema { statement: SchemaStatement::AlterDomain(_), .. }
-        | SqlStatement::Schema { statement: SchemaStatement::Assertion(_), .. }
-        | SqlStatement::Schema { statement: SchemaStatement::Collation(_), .. }
-        | SqlStatement::Schema { statement: SchemaStatement::Sequence(_) | SchemaStatement::AlterSequence(_), .. }
-        | SqlStatement::Drop { .. }
+        SqlStatement::Drop { .. }
         | SqlStatement::Index(_)
         | SqlStatement::Close(_)
         | SqlStatement::Commit
@@ -340,6 +329,25 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::User(_)
         | SqlStatement::Execute(_)
         | SqlStatement::SetConstraints { .. } => None,
+    }
+}
+
+/// The table or view schema statement `s` defines, or grants or revokes
+/// privileges on (`target_of`).
+fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
+    match s {
+        SchemaStatement::Grant(PrivilegeDefinition { table, object: PrivilegeObject::Table, .. })
+        | SchemaStatement::Revoke(RevokeStatement { table, object: PrivilegeObject::Table, .. }) => Some(table),
+        SchemaStatement::Table(t) => Some(&t.name),
+        SchemaStatement::View(v) => Some(&v.name),
+        SchemaStatement::Grant(_)
+        | SchemaStatement::Revoke(_)
+        | SchemaStatement::Domain(_)
+        | SchemaStatement::AlterDomain(_)
+        | SchemaStatement::Assertion(_)
+        | SchemaStatement::Collation(_)
+        | SchemaStatement::Sequence(_)
+        | SchemaStatement::AlterSequence(_) => None,
     }
 }
 
@@ -390,6 +398,7 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::Commit => "COMMIT WORK",
         SqlStatement::DeletePositioned { .. } => "DELETE CURSOR",
         SqlStatement::DeleteSearched { .. } => "DELETE WHERE",
+        SqlStatement::Truncate { .. } => "TRUNCATE TABLE",
         SqlStatement::AlterTable { .. } => "ALTER TABLE",
         SqlStatement::Drop { object: DropObject::Table(_), .. } => "DROP TABLE",
         SqlStatement::Drop { object: DropObject::View(_), .. } => "DROP VIEW",

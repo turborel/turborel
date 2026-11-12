@@ -161,6 +161,12 @@ impl SqlState {
     pub const INVALID_CURSOR_STATE: SqlState = SqlState("24000");
     /// Invalid transaction state.
     pub const INVALID_TRANSACTION_STATE: SqlState = SqlState("25000");
+    /// Invalid transaction state: read-only SQL-transaction [ISO/IEC
+    /// 9075-2:2023 §14.10 GR1].
+    pub const READ_ONLY_TRANSACTION: SqlState = SqlState("25006");
+    /// Cursor sensitivity exception: request failed [ISO/IEC 9075-2:2023
+    /// §14.10 GR2, GR3].
+    pub const CURSOR_SENSITIVITY_FAILED: SqlState = SqlState("36002");
     /// Invalid condition number.
     pub const INVALID_CONDITION_NUMBER: SqlState = SqlState("35000");
     /// Invalid catalog name.

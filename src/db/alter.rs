@@ -25,6 +25,7 @@ mod columns;
 mod constraints;
 mod identity;
 mod storage;
+mod truncate;
 
 pub(super) use storage::value_of;
 
@@ -149,6 +150,7 @@ impl State {
             }
             AlterAction::Storage(_) => self.alter_storage(qn, action, (made, tx)),
             AlterAction::RevertCollation(name) => self.revert_collation(qn, name, (action, made)),
+            AlterAction::Truncate { restart } => self.truncate_rows(qn, *restart, (action, made, epochs)),
         }
     }
 
@@ -190,6 +192,7 @@ impl State {
             | AlterAction::AddConstraint(_)
             | AlterAction::DropConstraint { .. }
             | AlterAction::RevertCollation(_)
+            | AlterAction::Truncate { .. }
             | AlterAction::Storage(_) => {
                 return Err(api("[DESIGN] not a column action"));
             }
@@ -386,7 +389,8 @@ impl State {
                 | AlterAction::AddConstraint(_)
                 | AlterAction::DropConstraint { .. }
                 | AlterAction::RevertCollation(_)
-                | AlterAction::Storage(_) => api("[DESIGN] a default, a constraint or the storage changes no view"),
+                | AlterAction::Truncate { .. }
+                | AlterAction::Storage(_) => api("[DESIGN] a default, a constraint, the storage or its rows change no view"),
             });
         };
         let mut gone: Vec<QualifiedName> = broken.clone();

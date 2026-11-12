@@ -65,6 +65,7 @@ One reference page for each statement, in alphabetical order.
 - [SET SESSION AUTHORIZATION](set-session-authorization.md): set the session's authorization identifier
 - [SET TIME ZONE](set-time-zone.md): set the session's time zone
 - [SET TRANSACTION](set-transaction.md): set the next transaction's modes
+- [TRUNCATE TABLE](truncate-table.md): delete every row of a table at once
 - [UPDATE](update.md): update rows
 
 ## Valid SQL not processed

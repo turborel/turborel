@@ -7,7 +7,7 @@ use super::{Completion, Direct, Session};
 use crate::ast::AccessMode;
 use crate::error::{Code, Result, fail};
 use crate::lexer::{Tok, lex};
-use crate::parser::{CANCEL, Parser};
+use crate::parser::{CANCEL, Parser, begins_truncate};
 
 impl Session {
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1, §20.2] A `<direct SQL
@@ -30,9 +30,10 @@ impl Session {
         // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
         // name too, MODULE's: no other statement begins so, but
         // \[EXTENSION\] CANCEL CONNECTION, whose CONNECTION, reserved, no
-        // table's name is followed by.
+        // table's name is followed by, and TRUNCATE TABLE [ISO/IEC
+        // 9075-2:2023 §14.10] alike.
         let named_cancel = if let Some(Tok::Identifier(w)) = first { w == CANCEL } else { false };
-        let cancel = named_cancel && matches!(second, Some(Tok::KeyWord("CONNECTION")));
+        let cancel = (named_cancel && matches!(second, Some(Tok::KeyWord("CONNECTION")))) || begins_truncate(first, second);
         let joined = (matches!(first, Some(Tok::Identifier(_) | Tok::Introducer(_))) && !cancel)
             || matches!((first, second), (Some(Tok::KeyWord("MODULE")), Some(Tok::Delimiter("."))));
         if joined || matches!(first, Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE") | Tok::Delimiter("("))) {

@@ -84,4 +84,9 @@ identity or generation, in ALTER COLUMN and in an INSERT's override
 clause. GENERATED begins a column's identity or generation only where
 ALWAYS or BY follows it, so a column may be of a domain named GENERATED.
 
+TRUNCATE, which SQL:2023 reserves and SQL-92 does not, begins TRUNCATE
+TABLE only where TABLE follows it at the start of a statement, so a table
+or a column may be named TRUNCATE. RESTART is read after its table's name
+too, before IDENTITY.
+
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

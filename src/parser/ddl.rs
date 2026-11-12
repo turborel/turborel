@@ -176,6 +176,14 @@ impl Parser {
             let auth = at.auth.ok_or_else(|| self.syntax("a collation reverted names its schema"))?;
             return Ok(AlterAction::RevertCollation(QualifiedName { auth, ident: at.ident }));
         }
+        // Of the log alone too: as TRUNCATE TABLE writes it.
+        if matches!(self.catalogs, super::Catalogs::Kept) && self.accept_word(super::TRUNCATE) {
+            let restart = self.accept_word(super::generated::RESTART);
+            if restart {
+                self.expect_kw(kw::IDENTITY)?;
+            }
+            return Ok(AlterAction::Truncate { restart });
+        }
         if self.accept_kw(kw::SET) {
             return Ok(AlterAction::Storage(TableStorage { engine: None, options: self.table_options()? }));
         }

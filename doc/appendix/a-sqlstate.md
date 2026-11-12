@@ -71,6 +71,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 23000 | Integrity constraint violation |
 | 24000 | Invalid cursor state |
 | 25000 | Invalid transaction state |
+| 25006 | Invalid transaction state: read-only SQL-transaction, of TRUNCATE TABLE |
 | 26000 | Invalid SQL statement name |
 | 27000 | Triggered data change violation: a row changed twice by referential actions |
 | 28000 | Invalid authorization specification |
@@ -81,6 +82,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 33000 | Invalid SQL descriptor name |
 | 34000 | Invalid cursor name: of a cursor allocated, or a positioned statement prepared |
 | 35000 | Invalid condition number |
+| 36002 | Cursor sensitivity exception: request failed, of TRUNCATE TABLE while a cursor of the transaction reads the table |
 | 37000 | Syntax error or access rule violation in a dynamic SQL statement |
 | 3C000 | Ambiguous cursor name: a cursor declared and one allocated, of one name |
 | 3D000 | Invalid catalog name |

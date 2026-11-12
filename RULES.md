@@ -101,6 +101,7 @@ verification approach DO-178C expects (§8).
 | D61 | Regular expressions are XQuery's, by a matcher of our own |
 | D62 | A sequence generator's place is logged apart from transactions |
 | D63 | Identity and generated columns are given their values as rows are written |
+| D64 | TRUNCATE TABLE replaces a table's storage |
 
 ### The project
 
@@ -463,6 +464,32 @@ take away (`db/generated/named.rs`). The statement's own change then finds
 none, and refuses if it does. Dropping a column copies rows, which a
 change of definitions alone cannot, and an expression left naming what is
 gone would no longer bind.
+
+#### D64. TRUNCATE TABLE replaces a table's storage
+
+TRUNCATE TABLE [ISO/IEC 9075-2:2023 §14.10] gives a persistent table a new
+generation of its storage, empty, as ALTER TABLE gives it one, with empty
+indexes (`db/alter/truncate.rs`). The change is staged with the
+transaction, logged as an ALTER TABLE record of a word no statement writes,
+and published at commit, so recovery makes it as it makes ALTER TABLE.
+RESTART IDENTITY restarts the identity column's generator in the same
+change, its epoch logged with it (D62). No row is deleted one by one,
+logged, or taken from an index, so the statement costs the same whatever
+the table holds.
+
+The cost is concurrency. The table's exclusive lock is held to the end of
+the transaction, and a transaction that began before the truncation
+committed is refused at its next use of the table, as after ALTER TABLE
+[GR4, IA234]. The read that tells whether the table had a row is checked at
+commit at every isolation level, so a row committed after the snapshot
+fails the commit instead of going unseen. A temporary table's rows are each
+session's (D49), so the session's own are deleted as a DELETE deletes them.
+
+No row the statement did tells an assertion its change, and rows ALTER TABLE
+copies or checks are none added. So each CHECK with a subquery and each
+assertion that reads such a table is checked whole, and the totals an
+assertion keeps are put right as that check is made (D51,
+`db/integrity/rewritten.rs`).
 
 #### D33. Schema changes are transactional
 

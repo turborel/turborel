@@ -16,6 +16,7 @@ mod shadow;
 mod sql2023;
 mod stats;
 mod tailorings;
+mod truncate;
 mod vr;
 mod waits;
 mod zones;
@@ -34,12 +35,11 @@ pub use vr::VR;
 pub use waits::WAITS;
 pub use zones::ZONES;
 
-/// Every mutation, in the order they run: the core's, its kept plans', the read-only path's, reads', collations', tailorings',
-/// SQL:2023's, regular expressions', shadow files', sequence generators', identity and generated columns', reads near the last, zeros filled ahead of the log,
-/// zone maintenance, sampled statistics, row waits, replication's, the server's.
+/// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 9] = [&MUTATIONS, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let rest: [&[Mutation]; 9] = [&sequences::SEQUENCES, &generated::GENERATED, &near::NEAR, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER];
+    let rest: [&[Mutation]; 10] =
+        [&sequences::SEQUENCES, &generated::GENERATED, &truncate::TRUNCATE, &near::NEAR, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER];
     core.into_iter().chain(rest).flatten().copied().collect()
 }
 

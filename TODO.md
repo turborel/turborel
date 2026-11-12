@@ -32,8 +32,6 @@ each group.
 
 ### Tables and schemas
 
-- TRUNCATE TABLE (F200, F202) [§14.10]. It removes every row at once
-  rather than one by one, and RESTART IDENTITY needs identity columns.
 - CREATE TABLE AS (T172) and CREATE TABLE LIKE (T171, T173) [§11.3]. LIKE
   copies identity, generation and defaults when asked, so it follows them.
   The query of CREATE TABLE AS may draw NEXT VALUE FOR [§6.14 SR1a ii].

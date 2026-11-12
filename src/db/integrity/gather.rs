@@ -48,6 +48,13 @@ impl State {
                 (None, _) | (_, None) => Ok(()),
             }
         })?;
+        // [§11.6 GR3, §11.34 GR2] a table whose rows it wrote again whole,
+        // or took away at once, is one written.
+        for table in effects.rewritten_tables() {
+            if !changed.contains(table) {
+                changed.push(table.clone());
+            }
+        }
         self.unique_checks(effects, &changed, &mut out)?;
         for desc in self.catalog.tables() {
             for c in &desc.constraints {

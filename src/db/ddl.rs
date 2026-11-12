@@ -291,6 +291,12 @@ impl Session {
             // [§11.12 GR1] a default changes no row, nor does an option
             // changed in place.
             (None, AlterAction::AlterColumn { .. } | AlterAction::Storage(_)) => Ok(()),
+            // [ISO/IEC 9075-2:2023 §14.10 GR5] Of a temporary table, the
+            // session's rows deleted already (`db/truncate.rs`).
+            (None, AlterAction::Truncate { .. }) => match temporary {
+                Some(_) => Ok(()),
+                None => emptied_rows(&next, tx, qn, self.effects(&next)),
+            },
             // [DESIGN] Of a temporary table, each session's rows, as it sees
             // them (`db/temporary/reshape.rs`).
             (None, _) => match temporary {
@@ -393,9 +399,11 @@ pub(super) fn copy_rows(
         | AlterAction::AddConstraint(_)
         | AlterAction::DropConstraint { .. }
         | AlterAction::RevertCollation(_)
+        | AlterAction::Truncate { .. }
         | AlterAction::Storage(_) => None,
     };
     let fill = added.as_ref().map(|c| default_value(c, effects.user(), effects.now)).transpose()?;
+    effects.rewritten(table);
     // [ISO/IEC 9075-2:2023 §11.11 GR2a, GR2b] or, of an identity column,
     // its generator's next value, of a generated column, its expression's.
     let generating = match next.catalog.table(table).filter(|_| added.is_some()) {
@@ -432,9 +440,22 @@ pub(super) fn validate_rows(next: &Arc<State>, tx: &Txn, table: &QualifiedName, 
     next.read_lock(tx, table)?;
     let desc = next.catalog.table(table).cloned().ok_or_else(|| api(format!("[DESIGN] no table {table}")))?;
     let columns: Vec<usize> = (0..desc.columns.len()).collect();
+    effects.rewritten(table);
     for read in Arc::clone(next.storage_of(table)?).scan(tx.id, &columns) {
         let (id, _) = read?;
         effects.inserted(table, id)?;
     }
+    next.end_statement(tx, effects)
+}
+
+/// [ISO/IEC 9075-2:2023 §14.10 GR5] The end of TRUNCATE TABLE of `table`,
+/// its new generation in `next` of no row, in transaction `tx`: each CHECK
+/// with a subquery, and each assertion, that reads it checked, whole.
+///
+/// # Errors
+///
+/// SQLCODE -201 for a constraint it breaks.
+fn emptied_rows(next: &Arc<State>, tx: &Txn, table: &QualifiedName, mut effects: Effects<'_>) -> Result<()> {
+    effects.rewritten(table);
     next.end_statement(tx, effects)
 }

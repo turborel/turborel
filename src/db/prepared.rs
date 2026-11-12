@@ -30,6 +30,7 @@ use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::{ParameterType, Params};
+use crate::parser::begins_truncate;
 use crate::settings::FUNCTION_CALLS;
 use crate::value::Value;
 
@@ -192,9 +193,14 @@ fn dynamic(state: SqlState, msg: String) -> SqlError {
 /// What `tokens` are, by the first, as `Session::direct` tells.
 fn kind_of(tokens: &[Token]) -> Kind {
     let mut words = tokens.iter().map(|t| &t.tok);
-    match (words.next(), words.next()) {
+    let (first, second) = (words.next(), words.next());
+    if begins_truncate(first, second) {
+        return Kind::Statement;
+    }
+    match (first, second) {
         // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
-        // name too, MODULE's: no other statement begins so.
+        // name too, MODULE's: no other statement begins so, but TRUNCATE
+        // TABLE [ISO/IEC 9075-2:2023 §14.10].
         (Some(Tok::KeyWord(kw::SELECT | kw::VALUES | kw::TABLE) | Tok::Delimiter("(") | Tok::Identifier(_) | Tok::Introducer(_)), _)
         | (Some(Tok::KeyWord(kw::MODULE)), Some(Tok::Delimiter("."))) => Kind::Query,
         (Some(Tok::KeyWord(kw::CREATE)), Some(Tok::KeyWord(kw::SCHEMA))) => Kind::Schema,
@@ -333,6 +339,7 @@ impl Session {
             | SqlStatement::Drop { .. }
             | SqlStatement::AlterTable { .. }
             | SqlStatement::Schema { .. }
+            | SqlStatement::Truncate { .. }
             | SqlStatement::Index(_)
             | SqlStatement::User(_)
             | SqlStatement::SetCollation(None)

@@ -118,6 +118,7 @@ mod stores;
 mod stream;
 mod temporary;
 mod time_zone;
+mod truncate;
 mod types;
 mod unnamed;
 mod usage;

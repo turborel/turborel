@@ -31,13 +31,16 @@ mod before;
 mod gather;
 mod held;
 mod keys;
+mod modes;
 mod references;
+mod rewritten;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use self::keys::KeyCheck;
+pub(super) use self::modes::{Deferral, Whole};
 use super::assertions::Asserted;
 use super::{State, api, plan};
 use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, ReferentialAction, TableDesc};
@@ -86,6 +89,9 @@ pub(super) struct Effects<'a> {
     pub(super) now: crate::value::datetime::Now,
     deferral: &'a RefCell<Deferral>,
     pub(super) cursors: Cursored<'a>,
+    /// The tables whose rows it wrote again whole, or took away at once
+    /// (`integrity/rewritten.rs`).
+    rewritten: Vec<QualifiedName>,
 }
 
 /// [ISO/IEC 9075:1992 §11.8 GR8] The rows a session changed through each
@@ -113,7 +119,7 @@ impl<'a> Effects<'a> {
     /// what it did held in `space`.
     pub(super) fn new(user: &str, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>, space: ListSpace) -> Effects<'a> {
         let now = crate::value::datetime::Now::default();
-        Effects { done: HeldRows::new(space.clone()), space, user: user.to_string(), now, deferral, cursors }
+        Effects { done: HeldRows::new(space.clone()), space, user: user.to_string(), now, deferral, cursors, rewritten: Vec::new() }
     }
 
     /// The authorization identifier the statement runs under.
@@ -228,80 +234,6 @@ impl Check {
     }
 }
 
-/// A check over all a constraint reads (`Check::whole`): its table, none of
-/// an assertion's, and the constraint.
-pub(super) type Whole = (Option<QualifiedName>, QualifiedName);
-
-/// [ISO/IEC 9075:1992 §4.28, §14.2] The constraint mode of each constraint
-/// in a session's transaction, as SET CONSTRAINTS left it, and the checks
-/// of deferred constraints not yet made, held as a list that spills, until
-/// they are made or the transaction ends (RULES.md D38).
-pub(super) struct Deferral {
-    /// The mode SET CONSTRAINTS ALL gave every deferrable constraint, last:
-    /// deferred or not.
-    pub(super) all: Option<bool>,
-    /// The mode SET CONSTRAINTS gave each constraint it named since.
-    pub(super) named: HashMap<QualifiedName, bool>,
-    /// The checks waiting: a check over all a constraint reads only once.
-    pub(super) pending: HeldRows<Check>,
-    /// Which checks over all a constraint reads are waiting, so a statement
-    /// that asks for one again adds none.
-    pub(super) wholes: HashSet<Whole>,
-}
-
-impl Default for Deferral {
-    /// None waiting, and no mode set: as a transaction begins.
-    fn default() -> Deferral {
-        Deferral { all: None, named: HashMap::new(), pending: HeldRows::new(ListSpace::default()), wholes: HashSet::new() }
-    }
-}
-
-impl Deferral {
-    /// Whether no check waits: none is pending, and none over all a
-    /// constraint reads.
-    pub(super) fn nothing_waits(&self) -> bool {
-        self.pending.is_empty() && self.wholes.is_empty()
-    }
-
-    /// [§10.6 GR1, GR2; §14.2 GR2, GR3] Whether constraint `c` is deferred:
-    /// deferrable, and so set, or initially deferred.
-    pub(super) fn deferred(&self, c: &ConstraintDesc) -> bool {
-        c.attributes.deferrable && self.named.get(mode_name(c)).copied().or(self.all).unwrap_or(c.attributes.initially_deferred)
-    }
-
-    /// Whether `check` is one over all a constraint reads, waiting already.
-    pub(super) fn waits(&self, check: &Check) -> bool {
-        check.whole().is_some_and(|w| self.wholes.contains(&w))
-    }
-
-    /// `more` checks to wait, after those waiting; `wholes`, those of them
-    /// over all a constraint reads, none waiting already.
-    pub(super) fn defer(&mut self, more: HeldRows<Check>, wholes: Vec<Whole>) {
-        self.wholes.extend(wholes);
-        if self.pending.is_empty() {
-            self.pending = more;
-        } else {
-            self.pending.append(more);
-        }
-    }
-
-    /// Forgets the checks waiting of constraint `name`, made again and
-    /// checked whole as it is made, the rows they wait for among what it
-    /// checked (`db/assertions/kept.rs`); the rest kept, in a list of
-    /// `space`.
-    ///
-    /// # Errors
-    ///
-    /// The spill area's, reading back the checks waiting.
-    pub(super) fn forget(&mut self, name: &QualifiedName, space: ListSpace) -> Result<()> {
-        let mut kept = HeldRows::new(space);
-        self.pending.visit(&mut |c| if c.constraint() == name { Ok(()) } else { kept.push(c.clone()) })?;
-        self.pending = kept;
-        self.wholes.retain(|(_, constraint)| constraint != name);
-        Ok(())
-    }
-}
-
 /// What the checks of a statement, or those made at once, keep as they
 /// are made: each CHECK condition bound once, the check of the rows of
 /// one UNIQUE constraint, given one after another, and how each deferred
@@ -388,6 +320,7 @@ impl State {
     /// `end_statement`'s work, its reads checked.
     fn checked(self: &Arc<Self>, tx: &Txn, mut effects: Effects<'_>) -> Result<()> {
         self.referential_actions(tx, &mut effects)?;
+        let whole = effects.whole_assertions(self)?;
         let checks = self.checks(&mut effects)?;
         let (mut deferred, mut wholes) = (HeldRows::new(effects.space.clone()), Vec::new());
         let modes = effects.deferral;
@@ -406,7 +339,7 @@ impl State {
                 // A deferred assertion of no row passing waits as the rows
                 // it may break.
                 let by_rows = if let (Check::Assertion { constraint }, true) = (&check, deferred_now) {
-                    self.defer_asserted_rows(constraint, &mut effects, &mut deferred)?
+                    !whole.contains(constraint) && self.defer_asserted_rows(constraint, &mut effects, &mut deferred)?
                 } else {
                     false
                 };
@@ -418,7 +351,7 @@ impl State {
                     deferred.push(check)?;
                 } else if let Check::Assertion { constraint } = &check {
                     // Immediate, so it held as the statement began.
-                    let checked = self.check_assertion_after(tx, constraint, &mut effects);
+                    let checked = self.assertion_after(tx, (constraint, whole.contains(constraint)), &mut effects);
                     checked.map_err(|e| self.of_modified(e, constraint, &mut effects))?;
                 } else {
                     self.check(tx, &check, &mut checking)?;
@@ -452,7 +385,7 @@ impl State {
         if let Check::AssertedRow { table, constraint, id, before } = check {
             return self.check_asserted_row(tx, (table, constraint, *id, before.as_ref()), &mut checking.asserted);
         }
-        let Some(table) = check.table() else { return self.check_assertion(tx, check.constraint()) };
+        let Some(table) = check.table() else { return self.check_assertion_whole(tx, check.constraint()) };
         let (Some(c), Some(desc)) = (self.constraint_of(check), self.catalog.table(table)) else { return Ok(()) };
         let broken = |e: SqlError| {
             if e.code == Code::Constraint && e.subject.is_none() {
@@ -488,7 +421,7 @@ impl State {
                 let ConstraintKind::ForeignKey(fk) = &c.kind else { return Ok(()) };
                 self.check_referenced(tx, (desc, &c.name, fk), old, *id)
             }
-            Check::Assertion { constraint } => self.check_assertion(tx, constraint),
+            Check::Assertion { constraint } => self.check_assertion_whole(tx, constraint),
             Check::AssertedRow { table, constraint, id, before } => {
                 self.check_asserted_row(tx, (table, constraint, *id, before.as_ref()), &mut checking.asserted)
             }

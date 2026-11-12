@@ -218,8 +218,8 @@ impl TableLock {
         self.changed_at.load(Ordering::SeqCst) > generation
     }
 
-    /// Records that ALTER TABLE published generation `generation` of its
-    /// storage, by a transaction that committed at `at`.
+    /// Records that ALTER TABLE or TRUNCATE TABLE published generation
+    /// `generation` of its storage, by a transaction that committed at `at`.
     pub(crate) fn replaced(&self, generation: u32, at: Timestamp) {
         self.generation.fetch_max(u64::from(generation), Ordering::SeqCst);
         self.replaced_at.fetch_max(at, Ordering::SeqCst);
@@ -235,12 +235,14 @@ impl TableLock {
     /// SQLCODE -911, naming `table`.
     pub(crate) fn check_generation(&self, table: &QualifiedName, generation: u32, tx: &Txn) -> Result<()> {
         if u64::from(generation) < self.generation.load(Ordering::SeqCst) {
-            return Err(refused(&format!("{table} was altered after the statement began; run it again")));
+            return Err(refused(&format!("{table} was altered or truncated after the statement began; run it again")));
         }
         if tx.snapshot() < self.replaced_at.load(Ordering::SeqCst) {
             return Err(SqlError::new(
                 Code::Conflict,
-                format!("[DESIGN] {table} was altered or defined after this transaction began: roll back and run the transaction again"),
+                format!(
+                    "[DESIGN] {table} was altered, truncated or defined after this transaction began: roll back and run the transaction again"
+                ),
             ));
         }
         Ok(())

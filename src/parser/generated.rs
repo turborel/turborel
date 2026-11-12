@@ -23,8 +23,8 @@ const OVERRIDING: &str = "OVERRIDING";
 /// The word of OVERRIDING SYSTEM VALUE, which only SQL:2023 reserves.
 const SYSTEM: &str = "SYSTEM";
 /// The `<non-reserved word>` of an `<alter sequence generator restart
-/// option>`.
-const RESTART: &str = "RESTART";
+/// option>`, and of RESTART IDENTITY.
+pub(super) const RESTART: &str = "RESTART";
 /// The `<non-reserved word>` of START WITH, no `<basic sequence generator
 /// option>`.
 const START: &str = "START";

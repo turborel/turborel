@@ -142,6 +142,22 @@ impl State {
         Ok(())
     }
 
+    /// [ISO/IEC 9075:1992 §11.34 GR2] That assertion `name` is not false,
+    /// checked whole, as a check of it waiting whole, or of a table whose
+    /// rows a statement wrote again whole or took away at once, checks it
+    /// (`db/integrity/rewritten.rs`); and the totals it keeps put right of
+    /// its tables as transaction `tx` sees them, as no row written since it
+    /// began to wait, nor such a statement, tells their change.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -201, SQLSTATE 23000, about the assertion, if it is false;
+    /// reading the tables', or writing the totals'.
+    pub(in crate::db) fn check_assertion_whole(self: &Arc<Self>, tx: &Txn, name: &QualifiedName) -> Result<()> {
+        self.check_assertion(tx, name)?;
+        self.rebuild_totals(tx, name)
+    }
+
     /// The totals assertion `name` keeps put right, of a change past what
     /// a deferred check held: each form's of its table whole, less what is
     /// kept, every row of the form read recorded.

@@ -87,6 +87,7 @@ pub(super) fn of_alter(a: &AlterAction) -> Option<SqlState> {
         | AlterAction::AlterColumn { .. }
         | AlterAction::DropConstraint { .. }
         | AlterAction::RevertCollation(_)
+        | AlterAction::Truncate { .. }
         | AlterAction::Storage(_) => None,
     }
 }

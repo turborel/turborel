@@ -239,6 +239,14 @@ pub enum SqlStatement {
         /// The `<search condition>`, if written.
         where_clause: Option<SearchCondition>,
     },
+    /// [ISO/IEC 9075-2:2023 §14.10] `<truncate table statement>` ::=
+    ///     TRUNCATE TABLE `<target table>` \[CONTINUE IDENTITY | RESTART IDENTITY\]
+    Truncate {
+        /// The `<table name>` of the `<target table>`.
+        table: TableName,
+        /// Whether RESTART IDENTITY is written \[SR5\].
+        restart: bool,
+    },
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.10] `<alter table statement>` ::=
     ///     ALTER TABLE `<table name>` `<alter table action>`
     AlterTable {
@@ -417,6 +425,13 @@ pub enum AlterAction {
     /// dropped made of the character set's: read only from the log, as
     /// DROP COLLATION writes it.
     RevertCollation(QualifiedName),
+    /// \[DESIGN\] [ISO/IEC 9075-2:2023 §14.10 GR5, GR8] Every row of the
+    /// table gone, at once, and its identity column's generator restarted
+    /// if `restart`: read only from the log, as TRUNCATE TABLE writes it.
+    Truncate {
+        /// Whether RESTART IDENTITY was written.
+        restart: bool,
+    },
     /// [ISO/IEC 9075:1992 §11.17] `<drop table constraint definition>` ::=
     /// DROP CONSTRAINT `<constraint name>` `<drop behavior>`
     DropConstraint {

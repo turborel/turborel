@@ -176,6 +176,7 @@ mod timestamps;
 mod transaction_memory;
 mod transactions;
 mod trees;
+mod truncate;
 mod type_contract;
 mod typed_vectors;
 mod unique_checks;
