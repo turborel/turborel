@@ -12,7 +12,7 @@ use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
 use crate::ast::{Literal, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
-use crate::functions::{AggregateRef, CollatedExtreme, GREATEST, LEAST, trim_named};
+use crate::functions::{AggregateRef, CollatedExtreme, GREATEST, LEAST, ScalarRef, regex_function, trim_named};
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
@@ -192,7 +192,12 @@ impl Binder<'_> {
         if let Some(trim) = trim_named(name) {
             return self.trim(trim, args, scope);
         }
-        let f = self.db.functions.scalar(name).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {name} is not registered")))?;
+        // [ISO/IEC 9075-2:2023 §6.31, §6.33] a regular expression
+        // function, each call its own, keeping its last pattern compiled.
+        let f = match regex_function(name) {
+            Some(f) => ScalarRef(f),
+            None => self.db.functions.scalar(name).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {name} is not registered")))?,
+        };
         let (exprs, types) = self.arguments(&*f.0, args, scope)?;
         let t = f.0.return_type(&types)?;
         Ok((Expr::Call(f, exprs), t))

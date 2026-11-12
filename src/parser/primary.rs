@@ -10,7 +10,7 @@ use crate::ast::{
     CaseExpression, Predicate, SearchCondition, SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification, WhenOperand,
 };
 use crate::error::Result;
-use crate::functions::{EVERY, GREATEST, LEAST, LPAD, RPAD, TRIMS_AND_PADS};
+use crate::functions::{EVERY, GREATEST, LEAST, LPAD, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS};
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
@@ -97,6 +97,13 @@ impl Parser {
         let trim = if let Tok::Identifier(name) = self.peek() { TRIMS_AND_PADS.into_iter().find(|f| name == f) } else { None };
         if let Some(name) = trim.filter(|_| matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))) {
             return self.trim_or_pad(name);
+        }
+        // [ISO/IEC 9075-2:2023 §6.31, §6.33] OCCURRENCES_REGEX,
+        // POSITION_REGEX, SUBSTRING_REGEX and TRANSLATE_REGEX, no key words
+        // of SQL-92, before "(" the functions.
+        let regex = if let Tok::Identifier(name) = self.peek() { REGEX_FUNCTIONS.into_iter().find(|f| name == f) } else { None };
+        if let Some(name) = regex.filter(|_| matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))) {
+            return self.regex_function(name);
         }
         // An <identifier> followed by "(" never occurs in SQL-86.
         if matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {

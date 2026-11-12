@@ -132,6 +132,12 @@ impl SqlState {
     /// Data exception: invalid XQuery option flag [ISO/IEC 9075-2:2023
     /// §9.28 GR5].
     pub const INVALID_XQUERY_OPTION_FLAG: SqlState = SqlState("2201T");
+    /// Data exception: attempt to replace a zero-length string [ISO/IEC
+    /// 9075-2:2023 §9.29 GR3].
+    pub const ATTEMPT_TO_REPLACE_A_ZERO_LENGTH_STRING: SqlState = SqlState("2201U");
+    /// Data exception: invalid XQuery replacement string [ISO/IEC
+    /// 9075-2:2023 §9.29 GR5].
+    pub const INVALID_XQUERY_REPLACEMENT_STRING: SqlState = SqlState("2201V");
     /// Data exception: indicator overflow.
     pub const INDICATOR_OVERFLOW: SqlState = SqlState("22022");
     /// Data exception: invalid escape sequence.

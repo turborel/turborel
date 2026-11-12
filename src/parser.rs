@@ -37,6 +37,7 @@ mod literal;
 mod names;
 mod primary;
 mod query;
+mod regex;
 mod schema;
 mod served;
 pub(crate) use served::CANCEL;

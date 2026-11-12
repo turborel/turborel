@@ -23,12 +23,15 @@ mod compile;
 mod flags;
 mod parse;
 mod pike;
+mod replace;
 mod unicode;
 
 use compile::{Program, compile};
 use flags::{Flag, Flags};
 use parse::parse;
 use unicode::Table;
+
+pub(crate) use replace::zero_length;
 
 use crate::error::{Code, Result, SqlError, SqlState};
 
@@ -51,6 +54,7 @@ pub struct Regex {
     groups: usize,
     back_references: bool,
     caseless: bool,
+    literal: bool,
     table: Table,
 }
 
@@ -89,7 +93,14 @@ impl Regex {
         };
         let parsed = parse(pattern, flags, &table)?;
         let program = compile(&parsed, flags)?;
-        Ok(Regex { program, groups: parsed.groups, back_references: parsed.back_references, caseless: flags.has(Flag::Caseless), table })
+        Ok(Regex {
+            program,
+            groups: parsed.groups,
+            back_references: parsed.back_references,
+            caseless: flags.has(Flag::Caseless),
+            literal: flags.has(Flag::Literal),
+            table,
+        })
     }
 
     /// How many groups capture [§9.28 GR8].
@@ -117,6 +128,25 @@ impl Regex {
         let Some(slots) = self.search(text, from, true)? else { return Ok(None) };
         let spans = slots.chunks(2).map(|pair| if let [Some(a), Some(b)] = pair { Some((*a, *b)) } else { None }).collect();
         Ok(Some(Captures { spans }))
+    }
+
+    /// [§9.28 GR11] The match vectors of `text` from character `from`, at
+    /// most `most`: each the first match beginning after the one before
+    /// it begins, and not before it ends.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`.
+    pub fn list(&self, text: &[char], from: usize, most: usize) -> Result<Vec<Captures>> {
+        let mut found = Vec::new();
+        let mut at = from;
+        while found.len() < most && at <= text.len() {
+            let Some(next) = self.find_at(text, at)? else { break };
+            let (start, end) = next.get(0).unwrap_or((at, at));
+            at = end.max(start.saturating_add(1));
+            found.push(next);
+        }
+        Ok(found)
     }
 
     fn search(&self, text: &[char], from: usize, capture: bool) -> Result<Option<pike::Slots>> {

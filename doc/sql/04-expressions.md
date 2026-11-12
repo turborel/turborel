@@ -159,6 +159,57 @@ VALUES (POSITION(X'0B' IN X'0A0B0C'), SUBSTRING(X'0A0B0C' FROM 2), X'0A' || X'0B
 CONVERT and TRANSLATE, of character sets other than SQL_TEXT, are valid
 SQL turborel does not process: SQLCODE -900.
 
+### Regular expressions
+
+Four functions search a string for the matches of an XQuery regular
+expression, read as [LIKE_REGEX](05-predicates.md#like_regex) reads it,
+with a flag after FLAG if one is written. Matches are counted from the
+start position after FROM, 1 if none is written, and each begins after
+the one before it ends.
+
+| Function | Value |
+|---|---|
+| OCCURRENCES_REGEX(pattern [FLAG f] IN s [FROM start] [USING units]) | how many matches there are; -1 if start is not a position of s |
+| POSITION_REGEX([START \| AFTER] pattern [FLAG f] IN s [FROM start] [USING units] [OCCURRENCE n] [GROUP g]) | where the nth match, or its group g, begins, or with AFTER the position after it ends; 0 if there is none |
+| SUBSTRING_REGEX(pattern [FLAG f] IN s [FROM start] [USING units] [OCCURRENCE n] [GROUP g]) | what the nth match, or its group g, matched; null if there is none |
+| TRANSLATE_REGEX(pattern [FLAG f] IN s [WITH r] [FROM start] [USING units] [OCCURRENCE n \| ALL]) | s with every match, or the nth, replaced by r, '' if not written |
+
+The nth match is the first if OCCURRENCE is not written, and group 0 is
+the whole match. In the replacement, `$1` stands for what the first
+group matched, `$0` for the whole match, and `\$` and `\\` for `$` and
+`\`. USING OCTETS counts positions in octets of the string as UTF-8,
+USING CHARACTERS, the default, in characters. A function's value is null
+if an operand is.
+
+```sql
+SELECT ID, OCCURRENCES_REGEX('a' FLAG 'i' IN NAME), POSITION_REGEX('[aeiou]' IN NAME OCCURRENCE 2),
+       SUBSTRING_REGEX('r.' IN NAME), CAST(TRANSLATE_REGEX('([aeiou])' IN NAME WITH '<$1>') AS VARCHAR(20))
+  FROM STAFF ORDER BY ID;
+VALUES (POSITION_REGEX(AFTER 'é' IN 'café crème' USING OCTETS), SUBSTRING_REGEX('(\w+)@(\w+)' IN 'ada@example' GROUP 2),
+        CAST(TRANSLATE_REGEX('a' IN 'banana' WITH 'o' OCCURRENCE 2) AS CHAR(6)));
+```
+
+```
+           ID |                      |                      |                                |
+--------------+----------------------+----------------------+--------------------------------+----------------------
+            1 |                    2 |                    0 | NULL                           | Ad<a>
+            2 |                    1 |                    5 | ra                             | Gr<a>c<e>
+            3 |                    0 |                    0 | NULL                           | Edsg<e>r
+            4 |                    3 |                    5 | rb                             | B<a>rb<a>r<a>
+(4 rows)
+                      |             |
+----------------------+-------------+--------
+                    6 | example     | banona
+(1 row)
+```
+
+SUBSTRING_REGEX is as long as its string at most, and TRANSLATE_REGEX
+too with no replacement, else CHARACTER VARYING(32767), so cast it to
+show it narrow. Both are of their string's collation. A replacement of
+a match of no characters is SQLSTATE 2201U, and a `$` before no digit
+or a `\` before neither `$` nor `\` is 2201V. The four names are not
+reserved, so a column may be named any of them.
+
 ## Datetime and interval expressions
 
 A datetime plus or minus an interval of its fields; an interval plus

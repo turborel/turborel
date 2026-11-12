@@ -42,14 +42,15 @@ pub fn functions() -> Vec<Arc<dyn ScalarFunction>> {
 }
 
 /// Which argument of the function `name` is its source, whose collation
-/// is its result's \[SR14d, SR15c, SR16e\]; none if it is no trim or pad.
+/// is its result's \[SR14d, SR15c, SR16e\], a regular expression
+/// function's its subject \[SR8f ii, SR12f ii\]; none if it has none.
 pub fn source_of(name: &str) -> Option<usize> {
     if name == kw::TRIM {
         Some(2)
     } else if [LTRIM, RTRIM, BTRIM, LPAD, RPAD].contains(&name) {
         Some(0)
     } else {
-        None
+        super::regex::subject_of(name)
     }
 }
 

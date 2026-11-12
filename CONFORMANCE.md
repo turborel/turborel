@@ -675,9 +675,38 @@ also be named by Unicode 3.1's superseded names, Greek,
 CombiningMarksforSymbols and PrivateUse, which XSD lists; an unknown block
 is 2201S [F&O 3.1 §5.6.1.5]. A range whose first character follows its
 last is 2201S, as XSD 1.0 Second Edition, the one F&O 3.1 names, has it,
-where XSD 1.1 would take it as empty. IA068 and IV093 do not
-arise, as every string is in UCS. LIKE_REGEX and FLAG are no key words of
-SQL-92, so each stays an identifier.
+where XSD 1.1 would take it as empty. IA068, IA069, IV093 and IV094 do
+not arise, as every string is in UCS. LIKE_REGEX and FLAG are no key
+words of SQL-92, so each stays an identifier.
+
+Features F842 (OCCURRENCES_REGEX function), F843 (POSITION_REGEX
+function), F844 (SUBSTRING_REGEX), F845 (TRANSLATE_REGEX) and F846 (octet
+support in regular expression operators). Each searches its subject from
+a start position, 1 if none is written, for the match vectors of §9.28
+GR11, each match beginning after the one before begins and not before
+it ends, so empty matches count too.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| OCCURRENCES_REGEX | §6.31 SR3, GR18 | How many matches there are. -1 if the start position is less than 1 or past the string, so -1 of any empty string. |
+| POSITION_REGEX | §6.31 SR4, GR19 | Where the occurrence-th match, 1 if none is written, or its group, 0 if none, begins, or with AFTER the position after it ends. 0 if there is no such match, the group matched nothing, the occurrence is less than 1, the group is none of the pattern's or the start position is not of the string. |
+| SUBSTRING_REGEX | §6.33 SR8, GR4 | What that match or group matched, null where POSITION_REGEX would give 0. CHARACTER VARYING as long as its subject at most, of its collation. |
+| TRANSLATE_REGEX | §6.33 SR12, GR9, §9.29 | Every match, or the occurrence-th, replaced from the last as fn:replace replaces it, `$N` a group. The subject itself if there is no such occurrence. As long as its subject at most if the replacement is not written or is the empty string, else CHARACTER VARYING of 32,767 characters (IL047), and a longer result is 22001. Of its subject's collation. A match of no characters is 2201U, and a replacement no XQuery replacement string 2201V, each only once a match is replaced. |
+| USING CHARACTERS, USING OCTETS | §6.31 SR3d, SR4e, §6.33 SR8b, SR12b | Positions, lengths and the start position counted in characters, the default, or in octets of the string as UTF-8. A start position within a character names the next character (UV074). |
+| Operands | §6.31 SR1, SR3, SR4, §6.33 SR3 | The pattern, flag, subject and replacement character strings, the start position, occurrence and group exact numbers of scale 0, else SQLCODE -103. A count or position is NUMERIC(18) (IV137). |
+| Dynamic parameters | §20.7 GR5a xxxvi, xxxvii | A `?` string is CHARACTER VARYING when another of the four is not a `?`, an implicit flag or replacement counting. A `?` number is NUMERIC(18). |
+
+Three readings fill gaps in the rules. A null start position makes the
+result null, as a null of any other operand does, which GR18b and GR19b
+leave unsaid. fn:replace refuses a pattern that matches the zero-length
+string [F&O 3.1 §5.6.4], which §9.29 maps to no exception, so it is
+2201U. POSITION_REGEX and SUBSTRING_REGEX compare the group with the
+pattern's groups before the start position with the string [GR19b iii,
+iv], so a pattern no regular expression is 2201S there, even with a
+start position past the string. The four names are no key words of
+SQL-92, so each stays an identifier, a function before a parenthesis.
+START or AFTER is the word of POSITION_REGEX unless IN or FLAG follows
+it, so a column of either name may be its pattern.
 
 ---
 
@@ -846,6 +875,8 @@ topic. The Where column names the file that implements each.
 | 2023 §6.32 SR6a, IL003 and IL007, the longest fixed and varying binary strings | 32,767 octets each | `value.rs` |
 | 2023 §6.1 SR6, SR7, IL007 and ID069, the maximum length of a varying string type written without one | 32,767 octets of a binary string, 32,767 characters of a character string | `parser/data_type.rs` |
 | 2023 §6.33 SR16c, IL046, the maximum length of LPAD and RPAD | 32,767 characters | `functions/trim.rs` |
+| 2023 §6.33 SR12f, IL047, the maximum length of TRANSLATE_REGEX with a replacement | 32,767 characters | `functions/regex/translate.rs` |
+| 2023 §6.31 SR1, IV137, the type of OCCURRENCES_REGEX and POSITION_REGEX | NUMERIC(18) | `functions/regex.rs` |
 | §9.1 GR3k, §9.2 GR3k a number stored or retrieved into an exact type | An exact number's extra fraction digits are truncated. An approximate number is rounded to the scale. | `value/types/exact.rs`, `value/types/approximate.rs` |
 | 2023 §6.1 SR23, IA021, the greatest precision of DECFLOAT | 34 | `value.rs` |
 | 2023 §6.1 SR22, ID062, the precision of DECFLOAT written without one | 34 | `value.rs`, `parser/data_type.rs` |

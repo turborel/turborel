@@ -34,13 +34,13 @@ each group.
 
 ### Expressions and functions
 
-- The regular expression functions (F842 to F846). OCCURRENCES_REGEX and
-  POSITION_REGEX [§6.31], SUBSTRING_REGEX and TRANSLATE_REGEX [§6.33], by
-  the matcher LIKE_REGEX has (D61), and their octet forms (F846). The JSON
-  path's like_regex (T837) uses the same one.
 - Formatted CAST of datetimes to and from strings (T839) [§6.13], as
   `CAST(d AS VARCHAR(10) FORMAT 'YYYY-MM-DD')`. Only the standard's own
   format is read and written today.
+- Character length units (T062). `USING CHARACTERS` and `USING OCTETS` on
+  CHAR_LENGTH, POSITION and SUBSTRING [§6.31, §6.33], and a
+  length in octets in a data type, `VARCHAR(10 OCTETS)` [§6.1]. The
+  regular expression functions take them already (F846).
 
 ### Tables and schemas
 

@@ -60,8 +60,10 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22015 | Interval field overflow |
 | 22018 | Invalid character value for cast |
 | 22019 | Invalid escape character |
-| 2201S | Invalid XQuery regular expression: a LIKE_REGEX pattern no XQuery regular expression |
-| 2201T | Invalid XQuery option flag: a LIKE_REGEX flag of a character none of s, m, i, x and q |
+| 2201S | Invalid XQuery regular expression: a pattern no XQuery regular expression |
+| 2201T | Invalid XQuery option flag: a flag of a character none of s, m, i, x and q |
+| 2201U | Attempt to replace a zero-length string: TRANSLATE_REGEX of a match of no characters, or of a pattern that matches the empty string |
+| 2201V | Invalid XQuery replacement string: a `$` before no digit, or a `\` before neither `$` nor `\` |
 | 22022 | Indicator overflow |
 | 22025 | Invalid escape sequence |
 | 22027 | Trim error |

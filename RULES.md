@@ -385,7 +385,8 @@ collation's name shared to its end, which a revert holds exclusive.
 
 #### D61. Regular expressions are XQuery's, by a matcher of our own
 
-LIKE_REGEX and the functions after it read a pattern as XQuery reads it
+LIKE_REGEX, OCCURRENCES_REGEX, POSITION_REGEX, SUBSTRING_REGEX and
+TRANSLATE_REGEX read a pattern as XQuery reads it
 [ISO/IEC 9075-2:2023 §9.28], so F&O 3.1 §5.6 and the grammar of XSD 1.1 Part
 2 Appendix G define what it matches, with the standard's changes for UTS #18's
 newlines [GR9a]. No library reads that dialect without changes, and D3 keeps
@@ -403,6 +404,9 @@ needs the flag `i`.
 
 A constant pattern is compiled once for a statement. A pattern from a column
 or a parameter is compiled again each time it changes, which is Feature F847.
+So the binder makes each call its own function, keeping its last pattern, and
+none is registered. TRANSLATE_REGEX replaces as fn:replace does, matching the
+pattern again within each match [§9.29 GR9a].
 
 #### D33. Schema changes are transactional
 
