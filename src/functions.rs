@@ -24,7 +24,7 @@ use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::storage::{Floats, Ints, Texts};
 use crate::value::Spelled;
-use crate::value::{DOUBLE_PRECISION, DataType, Decimal, MAX_EXACT_PRECISION, Value};
+use crate::value::{DOUBLE_PRECISION, DataType, Decimal, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
 
 mod extremes;
 pub use extremes::CollatedExtreme;
@@ -358,7 +358,7 @@ impl Registry {
 pub const AVG_EXTRA_SCALE: u32 = 2;
 
 fn not_character(name: &str, arg: Option<DataType>) -> Result<DataType> {
-    match arg.filter(|t| matches!(t, DataType::Exact { .. } | DataType::Approximate { .. } | DataType::Interval(_))) {
+    match arg.filter(|t| t.is_numeric() || matches!(t, DataType::Interval(_))) {
         Some(t) => Ok(t),
         None => fail(
             Code::SyntaxRule,
@@ -444,6 +444,8 @@ impl AggregateFunction for Sum {
             DataType::Exact { scale, .. } => DataType::Exact { precision: MAX_EXACT_PRECISION, scale, spelled: Spelled::Numeric },
             // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
             DataType::Interval(q) => DataType::Interval(q),
+            // [ISO/IEC 9075-2:2023 §10.9 SR7g v] DECFLOAT of 34 digits (IV170).
+            DataType::DecFloat { .. } => DataType::DecFloat { precision: MAX_DECFLOAT_PRECISION },
             // [X3.135-1986 §5.8 SR9d]; `not_character` has refused the types not
             // numbers or intervals.
             DataType::Approximate { .. }
@@ -480,6 +482,8 @@ impl AggregateFunction for Avg {
             },
             // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
             DataType::Interval(q) => DataType::Interval(q),
+            // [ISO/IEC 9075-2:2023 §10.9 SR7g v] DECFLOAT of 34 digits (IV170).
+            DataType::DecFloat { .. } => DataType::DecFloat { precision: MAX_DECFLOAT_PRECISION },
             // `not_character` has refused the types not numbers or intervals.
             DataType::Approximate { .. }
             | DataType::Character { .. }

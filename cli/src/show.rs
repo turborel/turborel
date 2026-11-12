@@ -33,6 +33,9 @@ struct Shape {
 const DATE_WIDTH: usize = 10;
 /// See [`DATE_WIDTH`].
 const TIME_WIDTH: usize = 8;
+/// The positions of a DECFLOAT value beside its digits: a sign, a 0 and a
+/// point, then six zeros before them (IV110).
+const DECFLOAT_EXTRA: usize = 9;
 /// See [`DATE_WIDTH`].
 const TIMESTAMP_WIDTH: usize = 19;
 /// See [`DATE_WIDTH`]: of a displacement, ±HH:MM.
@@ -56,6 +59,9 @@ fn shape(name: &str, t: &DataType) -> Shape {
         // A sign and a point beside the digits.
         DataType::Exact { precision, .. } => (usize::try_from(*precision).unwrap_or(MAX_WIDTH).saturating_add(2), true),
         DataType::Approximate { .. } => (APPROXIMATE_WIDTH, true),
+        // Its digits, and a sign, a point and six zeros, or a sign, a
+        // point and an exponent of five.
+        DataType::DecFloat { precision } => (usize::try_from(*precision).unwrap_or(MAX_WIDTH).saturating_add(DECFLOAT_EXTRA), true),
         DataType::Boolean => (BOOLEAN_WIDTH, false),
         // [ISO/IEC 9075:1992 §6.1 SR27] its length in positions.
         DataType::Date => (DATE_WIDTH, false),
@@ -132,6 +138,7 @@ impl Sink for Table<'_> {
                     Value::Char(_)
                     | Value::Exact(_)
                     | Value::Approx(_)
+                    | Value::DecFloat(_)
                     | Value::Binary(_)
                     | Value::Bool(_)
                     | Value::Datetime(_)

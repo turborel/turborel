@@ -63,7 +63,7 @@ fn literal_value(literal: &Literal, subject: DataType, zone: i16) -> Result<Valu
     match literal {
         Literal::Character(s) => character_default(s, subject).unwrap_or_else(|| Err(not_of())),
         Literal::Exact(d) => match subject {
-            DataType::Exact { .. } | DataType::Approximate { .. } => exact_default(*d, subject),
+            DataType::Exact { .. } | DataType::Approximate { .. } | DataType::DecFloat { .. } => exact_default(*d, subject),
             DataType::Character { .. }
             | DataType::Varying { .. }
             | DataType::Binary { .. }
@@ -75,7 +75,11 @@ fn literal_value(literal: &Literal, subject: DataType, zone: i16) -> Result<Valu
             | DataType::Interval(_)
             | DataType::Extension(_) => Err(not_of()),
         },
-        Literal::Approximate(f) => matches!(subject, DataType::Approximate { .. }).then_some(Value::Approx(*f)).ok_or_else(not_of),
+        // [ISO/IEC 9075-2:2023 §11.5 SR4a iv] of an approximate type;
+        // \[EXTENSION\] of DECFLOAT too, of which SR4a says nothing.
+        Literal::Approximate(f) => {
+            matches!(subject, DataType::Approximate { .. } | DataType::DecFloat { .. }).then_some(Value::Approx(*f)).ok_or_else(not_of)
+        }
         // [ISO/IEC 9075-2:2023 §11.5 SR4a vii] a <boolean literal> of a
         // Boolean column; UNKNOWN the null value [§4.6.1].
         Literal::Boolean(b) => (subject == DataType::Boolean).then(|| b.map_or(Value::Null, Value::Bool)).ok_or_else(not_of),
@@ -124,7 +128,7 @@ fn literal_value(literal: &Literal, subject: DataType, zone: i16) -> Result<Valu
 /// SQLCODE -103 if an exact type would lose a digit.
 fn exact_default(d: Decimal, subject: DataType) -> Result<Value> {
     let exact = Value::Exact(d);
-    if !subject.is_numeric() || matches!(subject, DataType::Approximate { .. }) {
+    if !subject.is_numeric() || matches!(subject, DataType::Approximate { .. } | DataType::DecFloat { .. }) {
         return Ok(exact);
     }
     let kept = assign(exact.clone(), &subject, "ISO/IEC 9075:1992 §11.5 SR3a iii")
@@ -152,6 +156,7 @@ fn character_default(s: &str, subject: DataType) -> Option<Result<Value>> {
         DataType::Extension(e) => Some(e.kind.cast(Value::Char(s.to_owned()), &subject)),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean

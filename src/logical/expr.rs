@@ -74,6 +74,7 @@ impl Truth {
             | Value::Char(_)
             | Value::Exact(_)
             | Value::Approx(_)
+            | Value::DecFloat(_)
             | Value::Binary(_)
             | Value::Datetime(_)
             | Value::Interval(_)

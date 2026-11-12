@@ -120,12 +120,35 @@ fn digits_of(t: &str) -> Option<String> {
     (placed && t.chars().all(|c| c.is_ascii_digit() || c == '_')).then(|| t.replace('_', ""))
 }
 
-/// [ISO/IEC 9075:1992 §5.3] The value of `s` if it is a `<signed numeric
+/// [ISO/IEC 9075:1992 §5.3] A `<signed numeric literal>`, read: its
+/// sign, its digits, whole and fraction together without underscores, how
+/// many are of the fraction, and its exponent, if it is approximate,
+/// saturated past the range of an `i64`.
+pub(crate) struct NumericLiteral {
+    /// Whether it is negative.
+    pub negative: bool,
+    /// Its digits.
+    pub digits: String,
+    /// How many of them are after the period.
+    pub fraction: usize,
+    /// Its exponent, if it is an approximate numeric literal.
+    pub exponent: Option<i64>,
+}
+
+/// The value of an `<exponent>`'s digits `unsigned`, of the sign
+/// `negative` says, saturated past an `i64`.
+fn exponent_value(negative: bool, unsigned: &str) -> i64 {
+    let magnitude =
+        unsigned.trim_start_matches('0').parse::<i64>().unwrap_or(if unsigned.trim_start_matches('0').is_empty() { 0 } else { i64::MAX });
+    if negative { magnitude.saturating_neg() } else { magnitude }
+}
+
+/// [ISO/IEC 9075:1992 §5.3] `s` read, if it is a `<signed numeric
 /// literal>`: an exact one, [+|-] digits with a period among or before
 /// them, or an approximate one, that followed by E and a signed integer;
 /// its digits perhaps with underscores [ISO/IEC 9075-2:2023 §5.3,
-/// §6.13 GR8b, GR9b].
-fn literal_value(s: &str) -> Option<Value> {
+/// §6.13 GR8b, GR9b, GR10b].
+pub(crate) fn numeric_parts(s: &str) -> Option<NumericLiteral> {
     let (negative, body) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, s.strip_prefix('+').unwrap_or(s)),
@@ -139,16 +162,30 @@ fn literal_value(s: &str) -> Option<Value> {
     if whole.is_empty() && fraction.is_empty() {
         return None;
     }
-    if let Some(e) = exponent {
-        let e = e.strip_prefix('+').unwrap_or(e);
-        let (sign, unsigned) = e.strip_prefix('-').map_or(("", e), |u| ("-", u));
-        let unsigned = digits_of(unsigned).filter(|u| !u.is_empty())?;
-        let x: f64 = format!("{whole}.{fraction}E{sign}{unsigned}").parse().ok()?;
-        return Some(Value::Approx(if negative { -x } else { x }));
+    let exponent = match exponent {
+        Some(e) => {
+            let e = e.strip_prefix('+').unwrap_or(e);
+            let (minus, unsigned) = e.strip_prefix('-').map_or((false, e), |u| (true, u));
+            Some(exponent_value(minus, &digits_of(unsigned).filter(|u| !u.is_empty())?))
+        }
+        None => None,
+    };
+    Some(NumericLiteral { negative, fraction: fraction.len(), digits: format!("{whole}{fraction}"), exponent })
+}
+
+/// [ISO/IEC 9075:1992 §5.3] The value of `s` if it is a `<signed numeric
+/// literal>` (`numeric_parts`): of an exact one exact, of an approximate
+/// one approximate.
+fn literal_value(s: &str) -> Option<Value> {
+    let lit = numeric_parts(s)?;
+    let (whole, fraction) = lit.digits.split_at(lit.digits.len().checked_sub(lit.fraction)?);
+    if let Some(e) = lit.exponent {
+        let x: f64 = format!("{whole}.{fraction}E{e}").parse().ok()?;
+        return Some(Value::Approx(if lit.negative { -x } else { x }));
     }
-    let scale = u32::try_from(fraction.len()).ok()?;
-    let units: i128 = format!("{whole}{fraction}").parse().ok()?;
-    Some(Value::Exact(Decimal::new(if negative { units.checked_neg()? } else { units }, scale)))
+    let scale = u32::try_from(lit.fraction).ok()?;
+    let units: i128 = lit.digits.parse().ok()?;
+    Some(Value::Exact(Decimal::new(if lit.negative { units.checked_neg()? } else { units }, scale)))
 }
 
 // Unit tests: the literals a cast reads and writes (RULES.md R-TEST-1).

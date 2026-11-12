@@ -42,6 +42,7 @@ undefined. Setting TYPE makes the other fields undefined but these:
 | BOOLEAN | nothing |
 | NUMERIC, DECIMAL | PRECISION 18, SCALE 0 |
 | FLOAT | PRECISION 53 |
+| DECFLOAT | PRECISION 34 |
 | a datetime | PRECISION 0 |
 | INTERVAL | DATETIME_INTERVAL_PRECISION 2 |
 
@@ -51,7 +52,7 @@ PRECISION 6 if it ends in SECOND, else 0.
 
 DATA is of the type the item describes, exactly: a NUMERIC or DECIMAL of
 its PRECISION and SCALE, an INTEGER, SMALLINT, REAL or DOUBLE PRECISION
-of that type, a FLOAT of its PRECISION; a string of its LENGTH, a
+of that type, a FLOAT or a DECFLOAT of its PRECISION; a string of its LENGTH, a
 CHARACTER of CHARACTER, a CHARACTER VARYING of CHARACTER VARYING; a
 datetime or interval of its type.
 
@@ -123,7 +124,8 @@ turborel: SQLCODE -921 (SQLSTATE 33000): no SQL descriptor area 'STAFF' is alloc
 ISO/IEC 9075:1992 §17.5, of the descriptor areas of §17.1. SQL-92 makes
 it no `<directly executable statement>` [§20.1]: direct SQL takes it as
 a statement of this implementation's. SQL-86 has no dynamic SQL. TYPE
-set to 60, BINARY, sets LENGTH 1 [ISO/IEC 9075-2:2023 §20.5 GR4c iii 3].
+set to 60, BINARY, sets LENGTH 1 [ISO/IEC 9075-2:2023 §20.5 GR4c iii 3],
+and set to 26, DECFLOAT, PRECISION 34 [GR4c iii 8].
 
 ## SEE ALSO
 

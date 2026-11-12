@@ -119,6 +119,19 @@ impl SqlType for Exact {
                 }
             }
             Value::Approx(x) => approximate_to_exact(x, (precision, scale), rule),
+            // [ISO/IEC 9075-2:2023 §9.2 GR3b xv] its digits past the scale
+            // truncated, as an exact number's (IA002).
+            Value::DecFloat(d) => match d.to_decimal(scale).filter(|out| out.fits(precision, scale)) {
+                Some(out) => Ok(Value::Exact(out)),
+                None => fail_with(
+                    Code::Data,
+                    SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
+                    format!(
+                        "[{}] {d} does not fit {t} without losing leading digits",
+                        assignment_rule(rule, "ISO/IEC 9075-2:2023 §9.2 GR3b xv 3")
+                    ),
+                ),
+            },
             Value::Null
             | Value::Char(_)
             | Value::Binary(_)
@@ -140,6 +153,7 @@ impl SqlType for Exact {
             Value::Char(s) => self.cast(numeric_literal(&s)?, t),
             Value::Exact(_) => self.assign(v, t, "ISO/IEC 9075:1992 §6.10 GR3a"),
             Value::Approx(x) => approximate_to_exact(x, shape(t), "ISO/IEC 9075:1992 §6.10 GR3a ii"),
+            Value::DecFloat(_) => self.assign(v, t, "ISO/IEC 9075-2:2023 §6.13 GR8a"),
             // [GR3c] an interval of one field, as a number of it.
             Value::Interval(i) => self.assign(Value::Exact(super::interval::as_number(&i)), t, "ISO/IEC 9075:1992 §6.10 GR3c"),
             Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_) => uncastable(&v, t),

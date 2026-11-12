@@ -15,7 +15,8 @@
 //!          displacement in minutes u32, microseconds in UTC u64 |
 //!        9 (interval) its fields' ranks, then its precisions, each u32,
 //!          then its units i128 |
-//!        11 (truth value) 0 for False, 1 for True u8
+//!        11 (truth value) 0 for False, 1 for True u8 |
+//!        12 (decimal floating point) coefficient i128, exponent i32
 //! row:   values u32, then each value
 //! ```
 
@@ -45,6 +46,8 @@ const INTERVAL: u8 = 9;
 const EXACT_WORD: u8 = 10;
 /// A truth value: its byte.
 const BOOL: u8 = 11;
+/// A decimal floating-point number: its coefficient, then its exponent.
+const DECFLOAT: u8 = 12;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -62,6 +65,7 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
         Value::Char(_) => CHARACTER,
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
+        Value::DecFloat(_) => DECFLOAT,
         Value::Binary(_) => BINARY,
         Value::Bool(_) => BOOL,
         Value::Datetime(d) => match d.moment {
@@ -95,6 +99,7 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         CHARACTER => &types::CHARACTER,
         EXACT => &types::EXACT,
         APPROXIMATE => &types::APPROXIMATE,
+        DECFLOAT => &types::DECFLOAT,
         BINARY => &types::BINARY_VARYING,
         BOOL => &types::BOOLEAN,
         DATE => &types::DATE,

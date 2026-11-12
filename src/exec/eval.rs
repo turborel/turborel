@@ -358,6 +358,7 @@ pub(crate) fn like_escape(escape: Option<&Value>) -> Result<Escape> {
         Some(
             Value::Exact(_)
             | Value::Approx(_)
+            | Value::DecFloat(_)
             | Value::Binary(_)
             | Value::Bool(_)
             | Value::Datetime(_)

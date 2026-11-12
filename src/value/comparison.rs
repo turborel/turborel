@@ -6,7 +6,7 @@
 use std::cmp::Ordering;
 
 use super::types::{BINARY_VARYING, SqlType};
-use super::{Decimal, Value};
+use super::{DecFloat, Decimal, Value};
 
 /// [X3.135-1986 §5.11 GR5] compare character strings after padding the shorter with spaces.
 /// The collating sequence is implementor-defined [X3.135-1986 §5.11 GR6]: Unicode scalar order.
@@ -31,21 +31,46 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
         // another kind.
         (Value::Null, _)
         | (_, Value::Null)
-        | (Value::Char(_), Value::Exact(_))
-        | (Value::Char(_), Value::Approx(_))
-        | (Value::Exact(_), Value::Char(_))
-        | (Value::Approx(_), Value::Char(_))
-        | (Value::Binary(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_))
-        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_), Value::Binary(_))
-        | (Value::Datetime(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_))
-        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_), Value::Datetime(_))
-        | (Value::Interval(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Binary(_) | Value::Datetime(_))
-        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Binary(_) | Value::Datetime(_), Value::Interval(_))
+        | (Value::Char(_), Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_))
+        | (Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_), Value::Char(_))
+        | (Value::Binary(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) | Value::Datetime(_))
+        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) | Value::Datetime(_), Value::Binary(_))
+        | (Value::Datetime(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_))
+        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_), Value::Datetime(_))
+        | (
+            Value::Interval(_),
+            Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) | Value::Binary(_) | Value::Datetime(_),
+        )
+        | (
+            Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) | Value::Binary(_) | Value::Datetime(_),
+            Value::Interval(_),
+        )
         // [ISO/IEC 9075-2:2023 §4.6.2] a truth value with truth values alone.
-        | (Value::Bool(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Binary(_) | Value::Datetime(_) | Value::Interval(_))
-        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Binary(_) | Value::Datetime(_) | Value::Interval(_), Value::Bool(_)) => None,
+        | (
+            Value::Bool(_),
+            Value::Char(_)
+            | Value::Exact(_)
+            | Value::Approx(_)
+            | Value::DecFloat(_)
+            | Value::Binary(_)
+            | Value::Datetime(_)
+            | Value::Interval(_),
+        )
+        | (
+            Value::Char(_)
+            | Value::Exact(_)
+            | Value::Approx(_)
+            | Value::DecFloat(_)
+            | Value::Binary(_)
+            | Value::Datetime(_)
+            | Value::Interval(_),
+            Value::Bool(_),
+        ) => None,
         (Value::Char(x), Value::Char(y)) => Some(compare_strings(x, y)),
-        (Value::Exact(_) | Value::Approx(_), Value::Exact(_) | Value::Approx(_)) => compare_numbers(a, b),
+        // [ISO/IEC 9075-2:2023 §4.5.1] any two numbers are comparable.
+        (Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_), Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_)) => {
+            compare_numbers(a, b)
+        }
         // [ISO/IEC 9075-2:2023 §8.2 GR5] octet by octet.
         (Value::Binary(x), Value::Binary(y)) => Some(x.cmp(y)),
         // [ISO/IEC 9075-2:2023 §4.6.2] True is greater than False.
@@ -69,6 +94,11 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
         (Value::Exact(x), Value::Approx(y)) => compare_exact_approximate(x, *y),
         (Value::Approx(x), Value::Exact(y)) => compare_exact_approximate(y, *x).map(Ordering::reverse),
         (Value::Approx(x), Value::Approx(y)) => x.partial_cmp(y),
+        (Value::DecFloat(x), Value::DecFloat(y)) => Some(x.cmp(y)),
+        (Value::DecFloat(x), Value::Exact(y)) => Some(x.cmp(&DecFloat::of_decimal(y)?)),
+        (Value::Exact(x), Value::DecFloat(y)) => Some(DecFloat::of_decimal(x)?.cmp(y)),
+        (Value::DecFloat(x), Value::Approx(y)) => compare_decfloat_approximate(x, *y),
+        (Value::Approx(x), Value::DecFloat(y)) => compare_decfloat_approximate(y, *x).map(Ordering::reverse),
         (
             Value::Null
             | Value::Char(_)
@@ -125,7 +155,7 @@ pub fn bucket(v: &Value) -> Option<Bucket> {
     match v {
         Value::Null => None,
         Value::Char(s) => Some(Bucket::Char(s.trim_end_matches(' ').to_owned())),
-        Value::Exact(_) | Value::Approx(_) => number_bucket(v),
+        Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) => number_bucket(v),
         Value::Binary(_) => BINARY_VARYING.bucket(v),
         Value::Bool(b) => Some(Bucket::Bool(*b)),
         Value::Datetime(d) => Some(Bucket::Instant(d.utc)),
@@ -140,6 +170,7 @@ pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
     let f = match v {
         Value::Exact(d) => d.nearest(),
         Value::Approx(f) => *f,
+        Value::DecFloat(d) => d.to_f64(),
         Value::Null
         | Value::Char(_)
         | Value::Binary(_)
@@ -166,6 +197,20 @@ const F64_EXACT_FRACTION_DIGITS: usize = 1074;
 fn compare_exact_approximate(exact: &Decimal, approx: f64) -> Option<Ordering> {
     match exact.nearest().partial_cmp(&approx)? {
         Ordering::Equal => Some(compare_numerals(&exact.to_string(), &format!("{approx:.F64_EXACT_FRACTION_DIGITS$}"))),
+        Ordering::Less => Some(Ordering::Less),
+        Ordering::Greater => Some(Ordering::Greater),
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §8.2 GR3] Compares a DECFLOAT and an approximate
+/// number by value, as `compare_exact_approximate` does: by their `f64`s,
+/// and if those are one, by their digits.
+fn compare_decfloat_approximate(d: &DecFloat, approx: f64) -> Option<Ordering> {
+    if approx.is_infinite() {
+        return Some(if approx > 0.0_f64 { Ordering::Less } else { Ordering::Greater });
+    }
+    match d.to_f64().partial_cmp(&approx)? {
+        Ordering::Equal => Some(compare_numerals(&d.numeral(), &format!("{approx:.F64_EXACT_FRACTION_DIGITS$}"))),
         Ordering::Less => Some(Ordering::Less),
         Ordering::Greater => Some(Ordering::Greater),
     }

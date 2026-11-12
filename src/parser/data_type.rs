@@ -1,6 +1,7 @@
 //! The `<data type>` grammar [X3.135-1986 §5.5], with SQL-92's national
 //! character, datetime and interval types [ISO/IEC 9075:1992 §6.1],
-//! SQL:2023's Boolean and binary string types [ISO/IEC 9075-2:2023 §6.1],
+//! SQL:2023's Boolean, binary string and decimal floating-point types
+//! [ISO/IEC 9075-2:2023 §6.1],
 //! the implementor-defined precisions and the \[DESIGN\] limits it
 //! applies.
 
@@ -8,10 +9,10 @@ use super::Parser;
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::Spelled;
-use crate::value::types::{BINARY_NAME, BOOLEAN_NAME, VARBINARY_NAME};
+use crate::value::types::{BINARY_NAME, BOOLEAN_NAME, DECFLOAT_NAME, VARBINARY_NAME};
 use crate::value::{
-    DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION,
-    REAL_PRECISION, SMALLINT_PRECISION,
+    DEFAULT_DECFLOAT_PRECISION, DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_BINARY_LENGTH,
+    MAX_CHARACTER_LENGTH, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, REAL_PRECISION, SMALLINT_PRECISION,
 };
 
 impl Parser {
@@ -73,8 +74,9 @@ impl Parser {
         }
     }
 
-    /// [ISO/IEC 9075-2:2023 §6.1] A `<boolean type>` or a `<binary string
-    /// type>`, if one is next, of names no key words of SQL-92.
+    /// [ISO/IEC 9075-2:2023 §6.1] A `<boolean type>`, a `<binary string
+    /// type>` or a `<decimal floating-point type>`, if one is next, of
+    /// names no key words of SQL-92.
     fn named_type(&mut self) -> Result<Option<DataType>> {
         if self.at_boolean_type() {
             self.advance();
@@ -83,7 +85,39 @@ impl Parser {
         if self.at_binary_type() {
             return self.binary_string_type().map(Some);
         }
+        if self.at_decfloat_type() {
+            return self.decfloat_type().map(Some);
+        }
         Ok(None)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] Whether a `<decimal floating-point
+    /// type>` is next, DECFLOAT, read as an identifier as BOOLEAN is.
+    pub(super) fn at_decfloat_type(&self) -> bool {
+        matches!(self.peek(), Tok::Identifier(name) if name == DECFLOAT_NAME)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] `<decimal floating-point type>` ::=
+    /// DECFLOAT \[(`<precision>`)\]: of 34 digits if none is written
+    /// (ID062), of 1 to 34 (IA021) [SR23].
+    fn decfloat_type(&mut self) -> Result<DataType> {
+        let at = self.here();
+        self.advance();
+        let mut precision = DEFAULT_DECFLOAT_PRECISION;
+        if self.accept_delim(delim::LEFT_PAREN) {
+            precision = self.positive("precision")?;
+            self.expect_delim(delim::RIGHT_PAREN)?;
+        }
+        if precision > MAX_DECFLOAT_PRECISION {
+            return Err(SqlError::at(
+                Code::Unsupported,
+                at,
+                format!(
+                    "[ISO/IEC 9075-2:2023 §6.1 SR23] DECFLOAT({precision}) exceeds this implementation's maximum of {MAX_DECFLOAT_PRECISION} digits"
+                ),
+            ));
+        }
+        Ok(DataType::DecFloat { precision })
     }
 
     /// [ISO/IEC 9075-2:2023 §6.1] Whether `<boolean type>` ::= BOOLEAN is

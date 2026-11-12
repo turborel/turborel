@@ -492,6 +492,7 @@ pub fn count(db: &Database, name: &str) -> usize {
         Some(Value::Exact(d)) => usize::try_from(d.units).unwrap_or(usize::MAX),
         Some(
             Value::Approx(_)
+            | Value::DecFloat(_)
             | Value::Char(_)
             | Value::Null
             | Value::Binary(_)
@@ -520,6 +521,7 @@ pub fn text(db: &Database, name: &str) -> String {
         Some(
             Value::Exact(_)
             | Value::Approx(_)
+            | Value::DecFloat(_)
             | Value::Null
             | Value::Binary(_)
             | Value::Bool(_)

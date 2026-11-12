@@ -57,6 +57,8 @@ const SPAN_TAG: u8 = 7;
 const INTEGER_TAG: u8 = 8;
 /// The tag of a truth value, then its byte.
 const BOOL_TAG: u8 = 9;
+/// The tag of a DECFLOAT number, then its key (`DecFloat::put_key`).
+const DECFLOAT_TAG: u8 = 10;
 
 /// Appends `v`'s normalized key to `out`: the bytes `norm_key` gives of
 /// `v.norm()`, made without making it.
@@ -66,6 +68,10 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
         Value::Char(s) => put_norm_text(s, out),
         Value::Exact(d) => put_norm_exact(d.units, d.scale, out),
         Value::Approx(f) => put_norm_approx(*f, out),
+        Value::DecFloat(d) => {
+            out.push(DECFLOAT_TAG);
+            d.put_key(out);
+        }
         Value::Binary(b) => {
             out.push(BITS_TAG);
             b.put_key(out);
@@ -152,6 +158,10 @@ pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
             NormKey::Approx(bits) => {
                 out.push(APPROX_TAG);
                 out.extend_from_slice(&bits.to_le_bytes());
+            }
+            NormKey::DecFloat(d) => {
+                out.push(DECFLOAT_TAG);
+                d.put_key(&mut out);
             }
             NormKey::Binary(b) => {
                 out.push(BITS_TAG);

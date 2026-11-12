@@ -89,6 +89,7 @@ pub(super) fn shown(e: Expr, from: DataType, now: Clocked<'_>) -> Expr {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean
@@ -147,6 +148,7 @@ fn castable(from: &DataType, to: &DataType) -> bool {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean
@@ -245,6 +247,7 @@ fn fields(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean

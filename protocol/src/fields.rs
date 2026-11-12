@@ -38,6 +38,8 @@ const TIMESTAMP_ZONED: u8 = 12;
 const INTERVAL: u8 = 13;
 /// BOOLEAN, as a type and a value.
 const BOOLEAN: u8 = 14;
+/// DECFLOAT, as a type and a value.
+const DECFLOAT: u8 = 15;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -100,6 +102,7 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
         DataType::Interval(_) => b.put_u8(INTERVAL),
         DataType::Exact { .. } => b.put_u8(EXACT),
         DataType::Approximate { .. } => b.put_u8(APPROXIMATE),
+        DataType::DecFloat { .. } => b.put_u8(DECFLOAT),
         DataType::Extension(e) => {
             b.put_u8(EXTENSION);
             b.put_str(e.kind.name());
@@ -124,6 +127,7 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         CHARACTER => Some(&types::CHARACTER),
         EXACT => Some(&types::EXACT),
         APPROXIMATE => Some(&types::APPROXIMATE),
+        DECFLOAT => Some(&types::DECFLOAT),
         VARYING => Some(&types::VARYING),
         BINARY => Some(&types::BINARY),
         BINARY_VARYING => Some(&types::BINARY_VARYING),
@@ -188,6 +192,7 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
         Value::Char(_) => CHARACTER,
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
+        Value::DecFloat(_) => DECFLOAT,
         Value::Binary(_) => BINARY,
         Value::Bool(_) => BOOLEAN,
         Value::Datetime(d) => match d.moment {
@@ -235,7 +240,8 @@ pub fn row_size(row: &Row) -> usize {
     let values = row.iter().map(|v| match v {
         Value::Null => 1_usize,
         Value::Char(s) => s.len().saturating_add(5),
-        Value::Exact(_) => 21,
+        // Its tag, its units or coefficient, and its scale or exponent.
+        Value::Exact(_) | Value::DecFloat(_) => 21,
         Value::Approx(_) => 9,
         // Its tag and its byte.
         Value::Bool(_) => 2,

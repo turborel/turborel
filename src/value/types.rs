@@ -25,6 +25,7 @@ mod binary;
 mod boolean;
 mod character;
 pub(crate) mod datetime;
+mod decfloat;
 mod exact;
 pub(crate) mod interval;
 mod unregistered;
@@ -36,6 +37,8 @@ pub(crate) use boolean::as_text as boolean_text;
 pub use boolean::{BOOLEAN, BOOLEAN_NAME, Boolean};
 pub use character::{CHARACTER, Character};
 pub use datetime::{Chronon, DATE, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED};
+pub(crate) use decfloat::arith as decfloat_arith;
+pub use decfloat::{DECFLOAT, DECFLOAT_NAME, DecFloatKind};
 pub use exact::{EXACT, Exact};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
 pub use unregistered::{UNREGISTERED, UNREGISTERED_KIND, Unregistered, parts, unregistered};
@@ -405,6 +408,7 @@ impl DataType {
             DataType::Interval(q) => interval::kind_of(*q),
             DataType::Exact { .. } => &EXACT,
             DataType::Approximate { .. } => &APPROXIMATE,
+            DataType::DecFloat { .. } => &DECFLOAT,
             DataType::Extension(e) => *e.kind,
         }
     }
@@ -429,6 +433,7 @@ impl DataType {
             }
             DataType::Exact { .. } => EXACT.encode_record(v, self),
             DataType::Approximate { .. } => APPROXIMATE.encode_record(v, self),
+            DataType::DecFloat { .. } => DECFLOAT.encode_record(v, self),
             DataType::Extension(e) => e.kind.encode_record(v, self),
         }
     }
@@ -445,6 +450,7 @@ impl DataType {
             }
             DataType::Exact { .. } => EXACT.decode_record(field, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_record(field, self),
+            DataType::DecFloat { .. } => DECFLOAT.decode_record(field, self),
             DataType::Extension(e) => e.kind.decode_record(field, self),
         }
     }
@@ -465,6 +471,7 @@ impl DataType {
             }
             DataType::Exact { .. } => EXACT.encode_key(v, self, out),
             DataType::Approximate { .. } => APPROXIMATE.encode_key(v, self, out),
+            DataType::DecFloat { .. } => DECFLOAT.encode_key(v, self, out),
             DataType::Extension(e) => e.kind.encode_key(v, self, out),
         }
     }
@@ -485,6 +492,7 @@ impl DataType {
             }
             DataType::Exact { .. } => EXACT.decode_key(rest, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_key(rest, self),
+            DataType::DecFloat { .. } => DECFLOAT.decode_key(rest, self),
             DataType::Extension(e) => e.kind.decode_key(rest, self),
         }
     }
@@ -499,6 +507,7 @@ impl Value {
             Value::Char(_) => Some(&CHARACTER),
             Value::Exact(_) => Some(&EXACT),
             Value::Approx(_) => Some(&APPROXIMATE),
+            Value::DecFloat(_) => Some(&DECFLOAT),
             Value::Binary(_) => Some(&BINARY_VARYING),
             Value::Bool(_) => Some(&BOOLEAN),
             Value::Datetime(d) => Some(datetime::kind_of(d)),

@@ -552,6 +552,34 @@ implemented.
 A collation's sort keys are binary strings, and an index on a collated
 column keys them as BINARY VARYING (RULES.md D60).
 
+### Decimal floating point
+
+Feature T076 (DECFLOAT data type).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| DECFLOAT(p), DECFLOAT | §4.5.2, §6.1 SR22, SR23, SR35, SR36 | Decimal floating point of p digits, p from 1 to 34 (IA021), 34 if none is written (ID062). A precision above 34 is SQLCODE -900, of 0 SQLCODE -103. The adjusted exponent, that of the leading digit, is from -6143 to 6144 (IL054). A value has one form, so 1.5 and 1.50 are one value. It is 20 bytes in a row and 19 in a key, 1 of zero. |
+| Rounding | §4.5.2, §9.2 GR3b xv | Half to even (IA192). A value past the range is 22003. |
+| Arithmetic | §6.30 SR1a, GR4, GR7 | With a DECFLOAT operand the result is DECFLOAT(34) (IV134), the value of 34 digits nearest the exact one. An exact or approximate operand is taken as DECFLOAT, an approximate one from its exact binary value. A divisor of 0 is 22012, a result past the range 22003. An interval times or divided by a DECFLOAT is an interval [§6.44 GR5]. |
+| Comparison, keys, uniqueness | §4.5.1, §8.2 GR3 | With any number, by value, an approximate one by its exact binary value. A key orders as the values compare, so an index on DECFLOAT is probed by DECFLOAT and by exact values. |
+| Assignment | §9.2 GR3b xv | A number rounded to the precision. To an exact type, a DECFLOAT value is truncated to the scale (IA002), 22003 if it loses a leading digit. To an approximate type, its nearest, 22003 past the range. Only a number is assigned to one [SR3]. |
+| Retrieved into a parameter | §9.1 GR5o | As assignment, rounded to a DECFLOAT parameter's precision. |
+| CAST | §6.13 SR6, GR10-GR12 | A character string's `<signed numeric literal>`, its spaces trimmed, else 22018. To a string, plainly or in E notation (IV110), 22001 if too long. A number to and from DECFLOAT as assignment does. No datetime, interval, binary string or truth value casts to or from it (SQLCODE -103). |
+| SUM, AVG | §10.9 SR7f, SR7g v | DECFLOAT(34) (IV170). The sum on the way is rounded to 34 digits at each row and judged against the range only once, as finished (RULES.md D15). MAX and MIN keep the argument's type. |
+| CASE, set operations | §9.5 SR3c ii 1 | DECFLOAT of the greatest precision if any is DECFLOAT and all are numbers. |
+| Defaults | §11.5 SR4a | A numeric literal, exact or approximate, rounded to the precision. |
+| Descriptor areas | §20.1 Table 30, §20.5 GR4c iii 8, §20.10 GR7d v | TYPE 26, PRECISION the precision, 34 when TYPE is set (IA235). |
+| Information Schema | 92 §21 | DATA_TYPE 'DECFLOAT', NUMERIC_PRECISION the precision, NUMERIC_PRECISION_RADIX 10, NUMERIC_SCALE null. |
+
+DECFLOAT has no literal of its own. An `<approximate numeric literal>`
+is approximate, not DECFLOAT (IV119), so a value is written as a numeric
+literal, or `CAST('...' AS DECFLOAT)` where its type must show.
+SQL:2023 reserves DECFLOAT [§5.2], and SQL-92 does not, so it stays an
+identifier, read as a data type where a data type is. A column or a
+domain may be named DECFLOAT, and DECFLOAT as a column's type is still
+the type. SQL:2023 has no infinities or NaN of DECFLOAT, and neither has
+turborel.
+
 ---
 
 ## Extensions
@@ -718,6 +746,16 @@ topic. The Where column names the file that implements each.
 | 2023 §5.3 SR20, IV191, the type of a `<binary string literal>` | BINARY of its octets | `binder/values.rs` |
 | 2023 §6.32 SR6a, IL003 and IL007, the longest fixed and varying binary strings | 32,767 octets each | `value.rs` |
 | §9.1 GR3k, §9.2 GR3k a number stored or retrieved into an exact type | An exact number's extra fraction digits are truncated. An approximate number is rounded to the scale. | `value/types/exact.rs`, `value/types/approximate.rs` |
+| 2023 §6.1 SR23, IA021, the greatest precision of DECFLOAT | 34 | `value.rs` |
+| 2023 §6.1 SR22, ID062, the precision of DECFLOAT written without one | 34 | `value.rs`, `parser/data_type.rs` |
+| 2023 §6.1 SR36, IL054, the range of DECFLOAT | Adjusted exponents from -6143 to 6144 | `value/decfloat.rs` |
+| 2023 §4.5.2, IA192, how a DECFLOAT value is rounded | Half to even | `value/decfloat.rs` |
+| 2023 §4.5.2, IV119, the type of an `<approximate numeric literal>` | Approximate numeric, never DECFLOAT | `binder/values.rs` |
+| 2023 §6.30 SR1a, IV134, the precision of an arithmetic result with a DECFLOAT operand | 34 | `value/types/decfloat.rs`, `binder/expression.rs` |
+| 2023 §10.9 SR7g v, IV170, the precision of SUM and AVG of DECFLOAT | 34 | `functions.rs` |
+| 2023 §6.13 GR11c, GR12c, IV110, a DECFLOAT value as a character string | Plain if its adjusted exponent is from -6 to 33, else one digit, a point, the others, E and the exponent | `value/decfloat.rs` |
+| 2023 §4.5.2, IA195, and §6.13 GR8a i, IA002, a DECFLOAT value assigned or cast to an exact type of a smaller scale | Truncated toward zero | `value/types/exact.rs` |
+| 2023 §20.5 GR4c iii 8, IA235, PRECISION set with TYPE 26 | 34 | `db/dynamic/areas.rs` |
 
 ### Datetimes and intervals
 

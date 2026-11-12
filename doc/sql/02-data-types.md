@@ -13,6 +13,7 @@ or two unsigned integers it takes; so may a domain.
       <character string type> | <national character string type>
     | <binary string type> | <boolean type>
     | <exact numeric type> | <approximate numeric type>
+    | <decimal floating-point type>
     | <datetime type> | <interval type>
 ```
 
@@ -29,13 +30,15 @@ or two unsigned integers it takes; so may a domain.
 | SMALLINT | NUMERIC(5, 0) | |
 | REAL | approximate numbers of 24 binary digits | FLOAT(p) for p up to 24 |
 | DOUBLE PRECISION | approximate numbers of 53 binary digits | FLOAT, FLOAT(p) for p from 25 to 53 |
+| DECFLOAT(p) | decimal floating point of p digits | DECFLOAT is DECFLOAT(34) |
 | DATE | year, month, day | |
 | TIME(p) | hour, minute, second of p fraction digits | TIME is TIME(0); WITH TIME ZONE |
 | TIMESTAMP(p) | a date and a time | TIMESTAMP is TIMESTAMP(6); WITH TIME ZONE |
 | INTERVAL q | a span of time, of the fields its qualifier names | INTERVAL '3' DAY |
 
 The longest string is 32,767 characters, the longest binary string 32,767
-octets, and an exact number holds at most 18 digits. A type past a limit
+octets, an exact number holds at most 18 digits and a DECFLOAT at most
+34. A type past a limit
 is valid SQL turborel does not process: SQLCODE -900, SQLSTATE 0A000.
 The [Limits](../appendix/d-limits.md) appendix lists them all.
 
@@ -246,6 +249,55 @@ of a sum or a literal, as NUMERIC or FLOAT. The name is no part of the
 type: INTEGER and NUMERIC(10, 0) are one type, so a foreign key of one
 references the other.
 
+DECFLOAT(p) is decimal floating point. A value has at most p digits, p
+from 1 to 34, with a decimal exponent, so it keeps decimal fractions
+exactly as an exact number does yet is not held to one scale. DECFLOAT
+alone is DECFLOAT(34). Its values range from 1E-6143 to
+9.999999999999999999999999999999999E6144, of either sign, and 0. A
+value with more digits than its type holds is rounded half to even, so
+1.25 at two digits is 1.2 and 1.35 is 1.4. 1.5 and 1.50 are one value,
+shown as 1.5.
+
+A sum, difference, product or quotient with a DECFLOAT operand is
+DECFLOAT(34), the value of 34 digits nearest the exact result, so
+0.1 + 0.2 is exactly 0.3. An exact or approximate operand is taken as
+DECFLOAT first, an approximate one from its binary value, so 0.1E0 is
+0.1000000000000000055511151231257827. SUM and AVG of DECFLOAT values are
+DECFLOAT(34) too. A DECFLOAT compares with any number by value. A
+result past the exponent's range is refused (SQLSTATE 22003), and so is
+a divisor of 0 (22012).
+
+A DECFLOAT value is shown plainly unless it has more than 34 digits
+before the point or more than 6 zeros after it, and then in E notation.
+DECFLOAT has no literal of its own. A numeric literal, or a CAST of a
+string, gives its value. DECFLOAT is not reserved, so a column may be
+named DECFLOAT.
+
+```sql
+CREATE TABLE PRICE (ITEM INTEGER, AMOUNT DECFLOAT, RATE DECFLOAT(4));
+INSERT INTO PRICE VALUES (1, 0.1, 1.23456), (2, 0.2, 2.5);
+SELECT SUM(AMOUNT), AVG(AMOUNT), MAX(RATE) FROM PRICE;
+SELECT AMOUNT / 3, AMOUNT * 1E30, AMOUNT / 1E10, CAST(AMOUNT AS DOUBLE PRECISION) FROM PRICE WHERE ITEM = 1;
+SELECT AMOUNT / 0 FROM PRICE;
+```
+
+```
+OK
+OK
+                                             |                                             |
+---------------------------------------------+---------------------------------------------+---------------
+                                         0.3 |                                        0.15 |           2.5
+(1 row)
+                                             |                                             |                                             |
+---------------------------------------------+---------------------------------------------+---------------------------------------------+--------------------------
+       0.03333333333333333333333333333333333 |            100000000000000001988462483865.6 |                                       1E-11 |                     1E-1
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22012): a divisor shall not be 0 [ISO/IEC 9075-2:2023 §6.30 GR4]
+```
+
+1.23456 was rounded to RATE's four digits, 1.235. 1E30 is approximate,
+so its binary value, 1000000000000000019884624838656, is the factor.
+
 ## Datetimes
 
 DATE holds a date of the years 1 to 9999; TIME(p) a time of day, its
@@ -349,18 +401,20 @@ than a BINARY parameter is padded with X'00' octets, with no warning.
 **CAST** ( *value* AS *type* ) gives the value in another type, or a
 domain's, checking the domain's constraints:
 
-| From \ To | Character | Binary | Exact | Approximate | Datetime | Interval |
-|---|---|---|---|---|---|---|
-| Character | yes | no | its literal | its literal | its literal | its literal |
-| Binary | no | yes | no | no | no | no |
-| Exact | yes | no | yes | yes | no | of one field |
-| Approximate | yes | no | yes | yes | no | no |
-| Datetime | yes | no | no | no | yes, of its fields | no |
-| Interval | yes | no | of one field | no | no | of its class |
+| From \ To | Character | Binary | Exact | Approximate | DECFLOAT | Datetime | Interval |
+|---|---|---|---|---|---|---|---|
+| Character | yes | no | its literal | its literal | its literal | its literal | its literal |
+| Binary | no | yes | no | no | no | no | no |
+| Exact | yes | no | yes | yes | yes | no | of one field |
+| Approximate | yes | no | yes | yes | yes | no | no |
+| DECFLOAT | yes | no | yes | yes | yes | no | no |
+| Datetime | yes | no | no | no | no | yes, of its fields | no |
+| Interval | yes | no | of one field | no | no | no | of its class |
 
 A character string is CAST to a number, datetime or interval by reading
 it as a literal of that type, its leading and trailing spaces dropped.
-A number CAST to an exact type is truncated to its scale.
+A number CAST to an exact type is truncated to its scale, and to
+DECFLOAT rounded half to even to its precision.
 
 ```sql
 VALUES (CAST('42' AS INTEGER), CAST(3.99 AS INTEGER), '[' || CAST(12 AS CHAR(4)) || ']',
@@ -415,5 +469,6 @@ VALUES CAST(X'01' AS BINARY(3));
 The standard: ISO/IEC 9075:1992 §4.2–§4.5 and §6.1 the types, §6.10
 CAST, §9.1 and §9.2 assignment, §10.1 the interval qualifier; ISO/IEC
 9075-2:2023 §4.4, §4.6 and §6.1 the binary string and Boolean types,
-§6.13 their CAST, §9.1 and §9.2 their assignment; X3.135-1986 §5.5,
+§6.13 their CAST, §9.1 and §9.2 their assignment, §4.5 and §6.30 the
+decimal floating-point type and its arithmetic; X3.135-1986 §5.5,
 whose types are CHARACTER and the numbers.

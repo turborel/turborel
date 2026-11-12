@@ -15,9 +15,14 @@ choices:
 | NUMERIC and DECIMAL of no precision | 18 digits |
 | DECIMAL; INTEGER; SMALLINT | as written; NUMERIC(10, 0); NUMERIC(5, 0) |
 | FLOAT, REAL, DOUBLE PRECISION | 24 binary digits for FLOAT(p) of p up to 24, else 53; REAL 24; DOUBLE PRECISION and FLOAT 53 |
-| The precision of COUNT and SUM; the scale of AVG | 18; the argument's and 2 more |
+| DECFLOAT of no precision; the greatest precision | 34 digits; 34 |
+| The range of DECFLOAT | an exponent of its leading digit from -6143 to 6144 |
+| Rounding to DECFLOAT | half to even |
+| An arithmetic result with a DECFLOAT operand | DECFLOAT(34) |
+| A DECFLOAT value as text | plain, unless it has more than 34 digits before the point or 6 zeros after it, then in E notation |
+| The precision of COUNT and SUM; the scale of AVG | 18; the argument's and 2 more; of DECFLOAT, DECFLOAT(34) |
 | A quotient of exact numbers | 18 digits, at the largest scale that fits, truncated |
-| A number stored in an exact type of a smaller scale | an exact one truncated; an approximate one rounded |
+| A number stored in an exact type of a smaller scale | an exact one or a DECFLOAT truncated; an approximate one rounded |
 | Where nulls sort | after every value: last ascending, first descending |
 | The national character set | SQL_TEXT: NATIONAL CHARACTER is CHARACTER |
 | The longest fraction of a second | 6 digits, microseconds |

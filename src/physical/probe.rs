@@ -13,7 +13,7 @@ use crate::catalog::IndexDesc;
 use crate::index::Probe;
 use crate::logical::{Cond, Expr, Slot, and_all, compared_with_constant, disjuncts, filled_expr, like_bounds, render_cond, split_and};
 use crate::value::collation::CollationRef;
-use crate::value::{CompOp, DataType, Decimal, Value, compare};
+use crate::value::{CompOp, DataType, DecFloat, Decimal, Value, compare};
 
 /// A comparison of a column with a constant an index may answer: of the
 /// conjunct `at`, answering it `exact`ly, or else only bounding the rows it
@@ -346,7 +346,11 @@ pub(super) fn coerce(op: CompOp, value: &Value, column: &DataType) -> Option<Vec
         | (DataType::Binary { .. } | DataType::VarBinary { .. }, Value::Binary(_))
         | (DataType::Boolean, Value::Bool(_))
         | (DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. }, Value::Datetime(_))
+        | (DataType::DecFloat { .. }, Value::DecFloat(_))
         | (DataType::Interval(_), Value::Interval(_)) => Placed::At(value.clone()),
+        // [ISO/IEC 9075-2:2023 §4.5.2] A DECFLOAT value holds an exact
+        // one's digits exactly, so it is that value among the column's.
+        (DataType::DecFloat { .. }, Value::Exact(d)) => Placed::At(Value::DecFloat(DecFloat::of_decimal(d)?)),
         (DataType::Approximate { .. }, Value::Exact(d)) => approximate_place(d)?,
         (DataType::Exact { scale, .. }, Value::Approx(f)) => exact_place(*f, *scale)?,
         _ => return None,

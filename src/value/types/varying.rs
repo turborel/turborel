@@ -183,6 +183,8 @@ impl SqlType for Varying {
             Value::Null => Ok((Value::Null, None)),
             Value::Exact(d) => within(d.to_string(), t).map(unwarned),
             Value::Approx(x) => within(approximate_literal(x), t).map(unwarned),
+            // [ISO/IEC 9075-2:2023 §6.13 GR12c] its literal (IV110).
+            Value::DecFloat(d) => within(d.to_string(), t).map(unwarned),
             Value::Char(s) => Ok(cut_to(&s)),
             Value::Binary(_) => uncastable(&v, t).map(unwarned),
             Value::Bool(b) => super::boolean_text(b, t).map(unwarned),

@@ -50,6 +50,7 @@ fn character(name: &str, t: &DataType) -> Result<u32> {
         DataType::Character { length } | DataType::Varying { length } => Ok(*length),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean
@@ -73,6 +74,7 @@ fn binary_string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -90,6 +92,7 @@ fn integer(name: &str, t: &DataType) -> Result<()> {
         | DataType::Character { .. }
         | DataType::Varying { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean
@@ -111,6 +114,7 @@ fn text(v: &Value) -> Result<Option<&str>> {
         Value::Char(s) => Ok(Some(s)),
         Value::Exact(_)
         | Value::Approx(_)
+        | Value::DecFloat(_)
         | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)
@@ -134,6 +138,7 @@ fn whole(v: Option<&Value>) -> Result<Option<i128>> {
         Some(
             Value::Char(_)
             | Value::Approx(_)
+            | Value::DecFloat(_)
             | Value::Binary(_)
             | Value::Bool(_)
             | Value::Datetime(_)
@@ -457,7 +462,13 @@ impl ScalarFunction for Length {
                 }
             }
             Value::Null => return Ok(Value::Null),
-            Value::Exact(_) | Value::Approx(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
+            Value::Exact(_)
+            | Value::Approx(_)
+            | Value::DecFloat(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Extension(_) => {
                 return text(s).map(|_| Value::Null);
             }
         };

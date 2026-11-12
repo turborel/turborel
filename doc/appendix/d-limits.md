@@ -15,6 +15,7 @@ SQLSTATE 0A000.
 | BINARY and BINARY VARYING | 32,767 octets |
 | NUMERIC, DECIMAL and an exact literal | 18 digits |
 | FLOAT | 53 binary digits; an approximate literal within the range of DOUBLE PRECISION |
+| DECFLOAT | 34 digits; an exponent of its leading digit from -6143 to 6144 |
 | A datetime's fraction of a second | 6 digits |
 | An interval's leading field | 9 digits; its fraction of a second 6 |
 | An unsigned integer, as a length | 4,294,967,295 |

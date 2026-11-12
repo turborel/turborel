@@ -34,8 +34,6 @@ each group.
 
 ### Types and literals
 
-- DECFLOAT (T076) [§4.4, §6.1]. Decimal floating point, for amounts that
-  must round as decimals do yet outgrow a fixed scale.
 - VARCHAR and VARBINARY without a maximum length (T081) [§6.1]. The length
   is the implementation's limit. JSON results and string functions of
   unknown size want it.

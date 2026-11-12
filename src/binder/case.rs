@@ -47,19 +47,8 @@ fn boolean_set_type(types: &[DataType], clause: &str) -> Result<DataType> {
 /// values, or a value of a type beyond the standard among values of
 /// another type.
 pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
-    // \[EXTENSION\] Values of a type beyond the standard come together
-    // only with values of the same type (RULES.md D53).
-    if let Some(e) = types.iter().find(|t| matches!(t, DataType::Extension(_))) {
-        return extension_set_type(*e, types, clause);
-    }
-    if types.contains(&DataType::Boolean) {
-        return boolean_set_type(types, clause);
-    }
-    if let Some(first) = types.iter().find(|t| t.is_datetime()) {
-        return datetime_set_type(*first, types, clause);
-    }
-    if let Some(DataType::Interval(first)) = types.iter().find(|t| t.is_interval()) {
-        return interval_set_type(*first, types, clause);
+    if let Some(t) = apart_set_type(types, clause) {
+        return t;
     }
     let characters = types.iter().filter(|t| t.is_character()).count();
     if characters != 0 && characters != types.len() {
@@ -69,8 +58,11 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     if binaries != 0 && binaries != types.len() {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.5 SR3b] {clause}: binary strings and other values are brought together")));
     }
-    let (mut length, mut varying) = (0_u32, false);
-    let (mut whole, mut scale, mut exact) = (0_u32, 0_u32, true);
+    // [ISO/IEC 9075-2:2023 §9.5 SR3c ii 1] DECFLOAT, the greatest precision.
+    if let Some(precision) = types.iter().filter_map(decfloat_precision).max() {
+        return Ok(DataType::DecFloat { precision });
+    }
+    let (mut length, mut varying, mut whole, mut scale, mut exact) = (0_u32, false, 0_u32, 0_u32, true);
     for t in types {
         match t {
             DataType::Character { length: n } | DataType::Binary { length: n } => length = length.max(*n),
@@ -80,7 +72,8 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
                 scale = scale.max(*s);
             }
             DataType::Approximate { .. } => exact = false,
-            DataType::Boolean
+            DataType::DecFloat { .. }
+            | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
@@ -100,6 +93,32 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
         _ if varying => DataType::Varying { length },
         _ => DataType::Character { length },
     })
+}
+
+/// The result type of `types` if any is of a type that comes together
+/// only with its own kind: beyond the standard, a truth value, a
+/// datetime, an interval.
+fn apart_set_type(types: &[DataType], clause: &str) -> Option<Result<DataType>> {
+    // \[EXTENSION\] Values of a type beyond the standard come together
+    // only with values of the same type (RULES.md D53).
+    if let Some(e) = types.iter().find(|t| matches!(t, DataType::Extension(_))) {
+        return Some(extension_set_type(*e, types, clause));
+    }
+    if types.contains(&DataType::Boolean) {
+        return Some(boolean_set_type(types, clause));
+    }
+    if let Some(first) = types.iter().find(|t| t.is_datetime()) {
+        return Some(datetime_set_type(*first, types, clause));
+    }
+    if let Some(DataType::Interval(first)) = types.iter().find(|t| t.is_interval()) {
+        return Some(interval_set_type(*first, types, clause));
+    }
+    None
+}
+
+/// The precision of `t`, if a DECFLOAT type.
+fn decfloat_precision(t: &DataType) -> Option<u32> {
+    if let DataType::DecFloat { precision } = t { Some(*precision) } else { None }
 }
 
 /// [§9.3 SR3e] The result type of datetimes of `types`, `first` among them:

@@ -60,6 +60,7 @@ fn returned(item: &mut Item, v: &Value) {
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)
+        | Value::DecFloat(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

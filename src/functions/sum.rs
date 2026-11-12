@@ -5,7 +5,8 @@
 //! (`Total`) and judged once, as it is finished: exact numbers in the 128
 //! bits of `Decimal::units`, not `MAX_EXACT_PRECISION` digits; approximate
 //! ones scaled (`floats::Wide`); intervals in 128 bits of units, not their
-//! leading field's digits. GR2b ii sets no range for AVG's sum, so AVG
+//! leading field's digits; DECFLOAT ones each sum rounded to 34 digits
+//! but of any exponent. GR2b ii sets no range for AVG's sum, so AVG
 //! judges its mean alone.
 
 use super::floats::{self, Wide};
@@ -15,7 +16,7 @@ use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::storage::{Floats, Ints};
 use crate::value::codec::{put_value, value};
 use crate::value::interval::{Interval, MAX_LEADING_PRECISION};
-use crate::value::{ArithOp, DataType, Decimal, Value, arith};
+use crate::value::{ArithOp, DataType, DecFloat, Decimal, Value, arith};
 
 /// A sum so far.
 #[derive(Debug, Clone)]
@@ -28,6 +29,9 @@ enum Total {
     Approx(Wide),
     /// Of intervals, of any units 128 bits hold, in the fields of all.
     Interval(Interval),
+    /// [ISO/IEC 9075-2:2023 §6.30 GR7] Of DECFLOAT numbers, each sum of
+    /// 34 digits, of any adjusted exponent.
+    DecFloat(DecFloat),
     /// Of values of another type, as `arith` adds them, which raises of
     /// what it cannot add.
     Other(Value),
@@ -45,7 +49,10 @@ impl Total {
     /// The sum with `v` added; a null adds nothing.
     fn plus(&self, v: &Value) -> Result<Total> {
         Ok(match (self, v) {
-            (Total::Empty | Total::Exact(_) | Total::Approx(_) | Total::Interval(_) | Total::Other(_), Value::Null) => self.clone(),
+            (
+                Total::Empty | Total::Exact(_) | Total::Approx(_) | Total::Interval(_) | Total::DecFloat(_) | Total::Other(_),
+                Value::Null,
+            ) => self.clone(),
             (Total::Empty, Value::Exact(d)) => Total::Exact(*d),
             (Total::Exact(s), Value::Exact(d)) => Total::Exact(s.wide_add(*d).map_or_else(beyond, Ok)?),
             (Total::Empty, Value::Approx(f)) => Total::Approx(Wide::EMPTY.with(*f)),
@@ -57,10 +64,12 @@ impl Total {
                 let units = s.units.checked_add(i.units).map_or_else(beyond, Ok)?;
                 Total::Interval(Interval { units, qualifier: s.qualifier.joined(&i.qualifier, MAX_LEADING_PRECISION) })
             }
+            (Total::Empty, Value::DecFloat(d)) => Total::DecFloat(*d),
+            (Total::DecFloat(s), Value::DecFloat(d)) => Total::DecFloat(s.plus_unbounded(*d).map_or_else(beyond, Ok)?),
             (Total::Empty, Value::Char(_) | Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_)) => {
                 Total::Other(v.clone())
             }
-            (Total::Exact(_) | Total::Approx(_) | Total::Interval(_) | Total::Other(_), _) => {
+            (Total::Exact(_) | Total::Approx(_) | Total::Interval(_) | Total::DecFloat(_) | Total::Other(_), _) => {
                 Total::Other(arith(ArithOp::Add, &self.value(), v)?)
             }
         })
@@ -73,6 +82,7 @@ impl Total {
             Total::Exact(d) => Value::Exact(*d),
             Total::Approx(w) => Value::Approx(w.total()),
             Total::Interval(i) => Value::Interval(*i),
+            Total::DecFloat(d) => Value::DecFloat(*d),
             Total::Other(v) => v.clone(),
         }
     }
@@ -117,7 +127,7 @@ impl Accumulator for SumAcc {
         let start = match &self.total {
             Total::Empty => Some(0),
             Total::Exact(d) => (d.scale == ints.scale).then_some(d.units),
-            Total::Approx(_) | Total::Interval(_) | Total::Other(_) => None,
+            Total::Approx(_) | Total::Interval(_) | Total::DecFloat(_) | Total::Other(_) => None,
         };
         match start.and_then(|s| ints::sum_from(s, ints, rows)) {
             Some((total, true)) => self.total = Total::Exact(Decimal::new(total, ints.scale)),
@@ -131,7 +141,7 @@ impl Accumulator for SumAcc {
         let mut sum = match &self.total {
             Total::Empty => Wide::EMPTY,
             Total::Approx(w) => *w,
-            Total::Exact(_) | Total::Interval(_) | Total::Other(_) => return self.update_many(floats.values(), rows),
+            Total::Exact(_) | Total::Interval(_) | Total::DecFloat(_) | Total::Other(_) => return self.update_many(floats.values(), rows),
         };
         if floats::sum_into(&mut sum, floats, rows) {
             self.total = Total::Approx(sum);
@@ -140,10 +150,10 @@ impl Accumulator for SumAcc {
     }
     /// \[DESIGN\] RULES.md D53: of an exact or interval result, the total
     /// so far, unjudged, as the value codec writes it, null of none; none
-    /// of an approximate one, whose total depends on the order it is added
-    /// in.
+    /// of an approximate or a DECFLOAT one, whose total depends on the
+    /// order it is added in, and a DECFLOAT's may be out of range.
     fn write_state(&self, out: &mut Vec<u8>) -> bool {
-        if matches!(self.result, DataType::Approximate { .. }) {
+        if matches!(self.result, DataType::Approximate { .. } | DataType::DecFloat { .. }) {
             return false;
         }
         put_value(out, &self.total.value());
@@ -164,6 +174,7 @@ impl Accumulator for SumAcc {
         match &self.total {
             Total::Exact(d) => Ok(Value::Exact(d.checked()?)),
             Total::Approx(w) => finite(w.total()),
+            Total::DecFloat(d) => in_range(d.within()),
             Total::Interval(i) => in_fields(Value::Interval(*i), self.result).or_else(|_| {
                 fail_with(
                     Code::Data,
@@ -192,6 +203,24 @@ fn finite(f: f64) -> Result<Value> {
             "[ISO/IEC 9075:1992 §6.5 GR2b iv] the approximate sum is outside the range of this implementation's approximate numbers",
         )
     }
+}
+
+/// The DECFLOAT sum or mean `d`, if it is in range.
+///
+/// # Errors
+///
+/// SQLSTATE 22003 if it is not [ISO/IEC 9075:1992 §6.5 GR2b iv].
+fn in_range(d: Option<DecFloat>) -> Result<Value> {
+    d.map(Value::DecFloat).map_or_else(
+        || {
+            fail_with(
+                Code::Data,
+                SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
+                "[ISO/IEC 9075:1992 §6.5 GR2b iv] the DECFLOAT sum is outside the range of DECFLOAT",
+            )
+        },
+        Ok,
+    )
 }
 
 /// `v`, if an interval and `t` an interval type, in `t`'s fields.
@@ -268,6 +297,9 @@ impl Accumulator for AvgAcc {
             (Total::Empty, _) => Ok(Value::Null),
             (Total::Exact(d), DataType::Exact { scale, .. }) => Ok(Value::Exact(d.quotient_at(Decimal::new(self.count, 0), scale)?)),
             (Total::Approx(w), _) => finite(w.over(Decimal::new(self.count, 0).to_f64())),
+            (Total::DecFloat(d), _) => {
+                in_range(DecFloat::new(self.count, 0, crate::value::MAX_DECFLOAT_PRECISION).and_then(|n| d.over_unbounded(n)?.within()))
+            }
             // An interval's mean is an interval in its fields.
             (sum, _) => in_fields(arith(ArithOp::Div, &sum.value(), &count)?, self.result),
         }

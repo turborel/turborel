@@ -19,6 +19,7 @@ fn ordering(f: f64, constant: &Value) -> Option<Ordering> {
         Value::Null
         | Value::Char(_)
         | Value::Exact(_)
+        | Value::DecFloat(_)
         | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)

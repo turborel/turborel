@@ -126,6 +126,8 @@ impl SqlType for Character {
             Value::Null => Ok((Value::Null, None)),
             Value::Exact(d) => padded(&d.to_string(), length).map(unwarned),
             Value::Approx(x) => padded(&approximate_literal(x), length).map(unwarned),
+            // [ISO/IEC 9075-2:2023 §6.13 GR11c] its literal (IV110).
+            Value::DecFloat(d) => padded(&d.to_string(), length).map(unwarned),
             // A value of a kind beyond the standard, as its kind shows it.
             Value::Extension(ref e) => padded(&e.kind.text(&v), length).map(unwarned),
             Value::Char(s) => {

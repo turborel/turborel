@@ -42,6 +42,8 @@ pub(super) mod code {
     pub(in crate::db::dynamic) const VARYING: i64 = 12;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BOOLEAN.
     pub(in crate::db::dynamic) const BOOLEAN: i64 = 16;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] DECFLOAT.
+    pub(in crate::db::dynamic) const DECFLOAT: i64 = 26;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY.
     pub(in crate::db::dynamic) const BINARY: i64 = 60;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY VARYING.
@@ -213,7 +215,10 @@ impl Item {
                 self.set_number(DescriptorItem::Precision, i64::from(precision));
                 self.set_number(DescriptorItem::Scale, i64::from(scale));
             }
-            DataType::Approximate { precision, .. } => self.set_number(DescriptorItem::Precision, i64::from(precision)),
+            // [ISO/IEC 9075-2:2023 §20.10 GR7d iv, v] PRECISION its precision.
+            DataType::Approximate { precision, .. } | DataType::DecFloat { precision } => {
+                self.set_number(DescriptorItem::Precision, i64::from(precision));
+            }
             DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } => {
                 let (code, positions, precision) = datetime_shape(t);
                 self.set_number(DescriptorItem::Length, positions);
@@ -255,6 +260,8 @@ impl Item {
             code::FLOAT => format!("FLOAT({precision})"),
             code::REAL => "REAL".to_owned(),
             code::DOUBLE_PRECISION => "DOUBLE PRECISION".to_owned(),
+            // [ISO/IEC 9075-2:2023 §20.1 SR6h, SR7l] DECFLOAT(PRECISION).
+            code::DECFLOAT => format!("{}({precision})", crate::value::types::DECFLOAT_NAME),
             code::BINARY => format!("BINARY({length})"),
             code::BINARY_VARYING => format!("BINARY VARYING({length})"),
             code::BOOLEAN => crate::value::types::BOOLEAN_NAME.to_owned(),
@@ -317,6 +324,7 @@ fn type_code(t: DataType) -> i64 {
             Spelled::DoublePrecision => code::DOUBLE_PRECISION,
             Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint => code::FLOAT,
         },
+        DataType::DecFloat { .. } => code::DECFLOAT,
         DataType::Binary { .. } => code::BINARY,
         DataType::VarBinary { .. } => code::BINARY_VARYING,
         DataType::Boolean => code::BOOLEAN,
@@ -343,6 +351,7 @@ fn datetime_shape(t: DataType) -> (i64, i64, i64) {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean

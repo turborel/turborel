@@ -11,6 +11,7 @@ pub(crate) mod codec;
 pub mod collation;
 pub(crate) mod comparison;
 pub mod datetime;
+pub mod decfloat;
 mod decimal;
 pub mod interval;
 mod like;
@@ -21,6 +22,7 @@ pub use binary::{BYTE_BITS, Binary};
 pub use cast::{cast, cast_warned};
 pub use comparison::{Bucket, bucket, compare, compare_strings};
 pub use datetime::Datetime;
+pub use decfloat::DecFloat;
 pub use decimal::{Decimal, pow10};
 pub use like::{LikePattern, LikePatterns, collated as like_collated, constant_pattern, constant_prefix, like};
 pub use operators::{ArithOp, CompOp};
@@ -42,6 +44,11 @@ pub const DEFAULT_EXACT_PRECISION: u32 = 18;
 pub const REAL_PRECISION: u32 = 24;
 /// [X3.135-1986 §5.5 SR12] DOUBLE PRECISION, in binary digits (IEEE double).
 pub const DOUBLE_PRECISION: u32 = 53;
+/// [ISO/IEC 9075-2:2023 §6.1 SR23] The precisions of DECFLOAT, 1 to this
+/// (IA021): decimal128's digits, the precision of its arithmetic (IV134).
+pub const MAX_DECFLOAT_PRECISION: u32 = 34;
+/// [ISO/IEC 9075-2:2023 §6.1 SR22] DECFLOAT's precision when omitted (ID062).
+pub const DEFAULT_DECFLOAT_PRECISION: u32 = 34;
 /// [X3.135-1986 §8.3 GR3b vii] "The order of the null value relative to nonnull values is
 /// implementor-defined, but shall be either greater than or less than all
 /// nonnull values." We choose greater.
@@ -104,6 +111,7 @@ pub fn spelling(t: &DataType) -> Spelled {
         | DataType::Varying { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::DecFloat { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -149,6 +157,12 @@ pub enum DataType {
         precision: u32,
         /// How it was written.
         spelled: Spelled,
+    },
+    /// [ISO/IEC 9075-2:2023 §6.1] DECFLOAT(precision): decimal floating
+    /// point.
+    DecFloat {
+        /// Decimal digits of the coefficient.
+        precision: u32,
     },
     /// [ISO/IEC 9075-2:2023 §6.1] BINARY(length): a binary string of
     /// fixed length.
@@ -205,7 +219,7 @@ impl DataType {
     }
     /// Whether this is a numeric type.
     pub fn is_numeric(&self) -> bool {
-        matches!(self, DataType::Exact { .. } | DataType::Approximate { .. })
+        matches!(self, DataType::Exact { .. } | DataType::Approximate { .. } | DataType::DecFloat { .. })
     }
     /// [X3.135-1986 §4.2] Whether its values compare with those of `other`,
     /// as its kind says.
@@ -237,6 +251,8 @@ pub enum Value {
     Exact(Decimal),
     /// An approximate number.
     Approx(f64),
+    /// [ISO/IEC 9075-2:2023 §4.5.2] A decimal floating-point number.
+    DecFloat(DecFloat),
     /// [ISO/IEC 9075-2:2023 §4.4.1] A binary string.
     Binary(Binary),
     /// [ISO/IEC 9075-2:2023 §4.6] A truth value, True or False; Unknown is
@@ -261,6 +277,7 @@ impl Value {
         match self {
             Value::Exact(d) => Some(d.to_f64()),
             Value::Approx(f) => Some(*f),
+            Value::DecFloat(d) => Some(d.to_f64()),
             Value::Null
             | Value::Char(_)
             | Value::Binary(_)
@@ -277,6 +294,7 @@ impl Value {
         match self {
             Value::Exact(d) => Value::Exact(d.negated()),
             Value::Approx(f) => Value::Approx(-f),
+            Value::DecFloat(d) => Value::DecFloat(d.negated()),
             Value::Interval(i) => Value::Interval(interval::Interval { units: i.units.saturating_neg(), ..*i }),
             Value::Null | Value::Char(_) | Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_) => self.clone(),
         }
@@ -301,6 +319,7 @@ impl Value {
                 NormKey::Exact(u, s)
             }
             Value::Approx(f) => NormKey::Approx(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }),
+            Value::DecFloat(d) => NormKey::DecFloat(*d),
             Value::Binary(b) => NormKey::Binary(b.clone()),
             Value::Bool(b) => NormKey::Bool(*b),
             Value::Datetime(d) => NormKey::Instant(d.utc),
@@ -320,6 +339,7 @@ impl fmt::Display for Value {
             Value::Exact(d) => write!(f, "{d}"),
             // Written as an <approximate numeric literal>: <mantissa>E<exponent>.
             Value::Approx(x) => write!(f, "{x:E}"),
+            Value::DecFloat(d) => write!(f, "{d}"),
             Value::Binary(b) => write!(f, "{b}"),
             // [ISO/IEC 9075-2:2023 §5.3] Written as a <boolean literal>.
             Value::Bool(b) => f.write_str(if *b { crate::lexer::kw::TRUE } else { crate::lexer::kw::FALSE }),
@@ -342,6 +362,8 @@ pub enum NormKey {
     Exact(i128, u32),
     /// The bits of an `f64`, with -0 as +0.
     Approx(u64),
+    /// A decimal floating-point number, in its one form.
+    DecFloat(DecFloat),
     /// A binary string.
     Binary(Binary),
     /// A truth value.
@@ -373,10 +395,13 @@ pub fn arith(op: ArithOp, a: &Value, b: &Value) -> Result<Value> {
             ArithOp::Mul => x.checked_mul(*y)?,
             ArithOp::Div => x.checked_div(*y)?,
         })),
+        // [ISO/IEC 9075-2:2023 §6.30 SR1a] DECFLOAT if either is.
+        (Value::DecFloat(_), Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_))
+        | (Value::Exact(_) | Value::Approx(_), Value::DecFloat(_)) => types::decfloat_arith(op, a, b),
         // [ISO/IEC 9075:1992 §6.14, §6.15] of intervals and datetimes.
         (Value::Interval(x), Value::Interval(y)) => interval::add(x, y, op == ArithOp::Sub),
-        (Value::Interval(x), Value::Exact(_) | Value::Approx(_)) => interval::scale(x, op, b),
-        (Value::Exact(_) | Value::Approx(_), Value::Interval(y)) => interval::scale(y, op, a),
+        (Value::Interval(x), Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_)) => interval::scale(x, op, b),
+        (Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_), Value::Interval(y)) => interval::scale(y, op, a),
         (Value::Datetime(d), Value::Interval(i)) => interval::shift(d, i, op == ArithOp::Sub),
         (Value::Interval(i), Value::Datetime(d)) => interval::shift(d, i, false),
         // [X3.135-1986 §5.9 SR5] if either operand is approximate, the result is approximate.

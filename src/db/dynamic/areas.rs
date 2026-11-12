@@ -9,7 +9,7 @@ use crate::db::assignment::declared_type;
 use crate::db::{Completion, Session};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::params::Params;
-use crate::value::{DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, Value, assign};
+use crate::value::{DEFAULT_DECFLOAT_PRECISION, DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, Value, assign};
 
 /// [ISO/IEC 9075:1992 §17.2 SR2] The `<occurrences>` of an SQL descriptor
 /// area allocated without WITH MAX: implementation-defined, greater than 0.
@@ -106,6 +106,7 @@ fn of_field_type(f: DescriptorItem, t: DataType, target: bool) -> bool {
         DataType::Character { length } | DataType::Varying { length } => !target || length >= NAME_LENGTH,
         DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean
@@ -336,6 +337,9 @@ fn set_type(item: &mut Item, catalog: &str) {
         }
         // [§17.5 GR5g] FLOAT's precision when it is written without one.
         code::FLOAT => item.set_number(DescriptorItem::Precision, i64::from(DOUBLE_PRECISION)),
+        // [ISO/IEC 9075-2:2023 §20.5 GR4c iii 8] DECFLOAT's when written
+        // without one (IA235).
+        code::DECFLOAT => item.set_number(DescriptorItem::Precision, i64::from(DEFAULT_DECFLOAT_PRECISION)),
         _ => {}
     }
 }

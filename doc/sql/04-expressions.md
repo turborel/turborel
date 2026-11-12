@@ -60,7 +60,8 @@ a value inserted, a SET, a DEFAULT, or `CAST(NULL AS INTEGER)`.
 `+`, `-`, `*` and `/` on numbers, and a sign, `-x`. `*` and `/` bind
 tighter than `+` and `-`; parentheses group. An expression of exact
 numbers is exact, of 18 digits at most; one of an approximate number is
-approximate. A quotient of exact numbers is at the largest scale that
+approximate; one of a DECFLOAT is DECFLOAT(34), rounded to 34 digits.
+A quotient of exact numbers is at the largest scale that
 fits, so 10 / 4 is 2.5; a product's scale is its operands' scales
 summed. Division by zero is refused, and so is a result past 18 digits.
 
@@ -190,7 +191,7 @@ a query reads, or of each group of its GROUP BY.
 |---|---|
 | COUNT(*) | the rows |
 | COUNT(x) | the rows where x is not null |
-| SUM(x), AVG(x) | the sum and mean of x; of exact numbers, AVG of the scale 2 more; of intervals too |
+| SUM(x), AVG(x) | the sum and mean of x; of exact numbers, AVG of the scale 2 more; of DECFLOAT, DECFLOAT(34); of intervals too |
 | MIN(x), MAX(x) | the least and greatest x |
 | EVERY(x) | of a BOOLEAN x, TRUE if each x is TRUE, else FALSE |
 | ANY(x), SOME(x) | of a BOOLEAN x, TRUE if an x is TRUE, else FALSE |
@@ -204,9 +205,12 @@ null.
 
 SUM is refused, SQLSTATE 22003, only if its total does not fit its
 type, whatever order the rows are read in: past 18 digits of exact
-numbers, the range of approximate ones, or an interval's leading field.
+numbers, the range of approximate ones or of DECFLOAT, or an interval's
+leading field.
 So 999999999999999999, 1 and -1 sum to 999999999999999999. AVG is
-refused only if the mean does not fit.
+refused only if the mean does not fit. A SUM of DECFLOAT values is
+rounded to 34 digits after each row, so of values whose total needs
+more its last digit may depend on that order.
 
 ```sql
 SELECT COUNT(*), COUNT(DEPT), COUNT(DISTINCT DEPT), SUM(SALARY), AVG(SALARY), MIN(NAME), MAX(SALARY) FROM STAFF;

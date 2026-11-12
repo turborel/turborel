@@ -100,6 +100,7 @@ fn heap(v: &Value) -> usize {
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)
+        | Value::DecFloat(_)
         | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)

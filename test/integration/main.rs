@@ -69,6 +69,7 @@ mod cursors;
 mod damage;
 mod datetimes;
 mod ddl;
+mod decfloat;
 mod defaults;
 mod deferred;
 mod descriptor_types;

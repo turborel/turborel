@@ -21,7 +21,8 @@ fn field(s: &Session, n: i64, field: &str, target: &str, p: &mut Params) -> Stri
 /// Tables 18-20] a row of every standard type is put into an area DESCRIBE
 /// set, each item's type valid: a value cast to it, INDICATOR 0, DATA the
 /// value; DATA is got into targets of the item's type, a number's of its
-/// name and precision, a fixed string's of its length, a varying one's of
+/// name and precision, a DECFLOAT's code 26 [ISO/IEC 9075-2:2023 §20.1
+/// Table 30], a fixed string's of its length, a varying one's of
 /// no shorter length, a datetime's and an interval's of its type.
 #[test]
 fn a_row_of_every_type_into_a_descriptor_17_9() {
@@ -31,14 +32,14 @@ fn a_row_of_every_type_into_a_descriptor_17_9() {
         "CREATE TABLE W (A CHAR(4), B VARCHAR(7), C NUMERIC(5,2), D DECIMAL(4), E INTEGER, F SMALLINT, G FLOAT(30), H REAL, \
          I DOUBLE PRECISION, J BINARY(3), L VARBINARY(9), M DATE, O TIME(3), Q TIMESTAMP(2) WITH TIME ZONE, \
          R INTERVAL DAY(3) TO SECOND(4), S INTERVAL YEAR TO MONTH, X TIME WITH TIME ZONE, Y TIMESTAMP, Z INTERVAL SECOND(2,3), \
-         V INTERVAL DAY)",
+         V INTERVAL DAY, T DECFLOAT(16))",
     )
     .unwrap();
     s.run(
         "INSERT INTO W VALUES ('ab', 'abc', 1.25, 12, 7, 3, 1.5E0, 2.5E0, 3.5E0, X'0A0B0C', X'01020304', DATE '2026-10-30', \
          TIME '12:34:56.789', TIMESTAMP '2026-10-30 01:02:03.45+01:00', INTERVAL '1 02:03:04.5' DAY TO SECOND, \
          INTERVAL '1-2' YEAR TO MONTH, TIME '01:02:03+00:00', TIMESTAMP '2026-10-30 04:05:06', INTERVAL '5.25' SECOND, \
-         INTERVAL '9' DAY)",
+         INTERVAL '9' DAY, 0.125)",
     )
     .unwrap();
     let mut p = dynamic_host()
@@ -48,19 +49,22 @@ fn a_row_of_every_type_into_a_descriptor_17_9() {
         .declare("FL", DataType::Approximate { precision: 53, spelled: Spelled::Float }, Value::Null)
         .declare("RE", DataType::Approximate { precision: 24, spelled: Spelled::Real }, Value::Null)
         .declare("BI", DataType::Binary { length: 3 }, Value::Null)
-        .declare("DA", DataType::Date, Value::Null);
+        .declare("DA", DataType::Date, Value::Null)
+        .declare("DF", DataType::DecFloat { precision: 16 }, Value::Null);
     text(&mut p, "SELECT * FROM W");
     run(&s, "PREPARE Q FROM TEXT", &mut p).unwrap();
-    run(&s, "ALLOCATE DESCRIPTOR 'D' WITH MAX 20", &mut p).unwrap();
+    run(&s, "ALLOCATE DESCRIPTOR 'D' WITH MAX 21", &mut p).unwrap();
     run(&s, "DESCRIBE Q USING SQL DESCRIPTOR 'D'", &mut p).unwrap();
     s.declare_cursor("DECLARE R CURSOR FOR Q").unwrap();
     run(&s, "OPEN R", &mut p).unwrap();
     assert_eq!(run(&s, "FETCH R INTO SQL DESCRIPTOR 'D'", &mut p), Ok(Completion::Success));
-    let indicators: Vec<String> = (1..=20).map(|n| field(&s, n, "INDICATOR", "N", &mut p)).collect();
+    let indicators: Vec<String> = (1..=21).map(|n| field(&s, n, "INDICATOR", "N", &mut p)).collect();
     assert!(indicators.iter().all(|i| i == "0"), "{indicators:?}");
-    let got = [(1, "CH"), (2, "VA"), (3, "NU"), (5, "K"), (7, "FL"), (8, "RE"), (10, "BI"), (12, "DA")];
+    let got = [(1, "CH"), (2, "VA"), (3, "NU"), (5, "K"), (7, "FL"), (8, "RE"), (10, "BI"), (12, "DA"), (21, "DF")];
     let values: Vec<String> = got.iter().map(|(n, target)| field(&s, *n, "DATA", target, &mut p)).collect();
-    assert_eq!(values, ["ab  ", "abc", "1.25", "7", "1.5E0", "2.5E0", "0A0B0C", "2026-10-30"]);
+    assert_eq!(values, ["ab  ", "abc", "1.25", "7", "1.5E0", "2.5E0", "0A0B0C", "2026-10-30", "0.125"]);
+    assert_eq!(field(&s, 21, "TYPE", "N", &mut p), "26", "DECFLOAT");
+    assert_eq!(field(&s, 21, "PRECISION", "N", &mut p), "16");
     assert_eq!(field(&s, 11, "RETURNED_LENGTH", "N", &mut p), "4", "of a BINARY VARYING, in octets");
     assert_eq!(field(&s, 11, "RETURNED_OCTET_LENGTH", "N", &mut p), "4");
     assert_eq!(field(&s, 19, "PRECISION", "N", &mut p), "3");

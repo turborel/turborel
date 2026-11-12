@@ -8,7 +8,7 @@ use turborel::bytes::Reader;
 use turborel::value::Spelled;
 use turborel::value::datetime::{Datetime, Field, Moment, parse};
 use turborel::value::interval::{self, Interval, Qualifier};
-use turborel::value::{Binary, DataType, Decimal, SqlType, Value, assign, bucket, compare};
+use turborel::value::{Binary, DataType, DecFloat, Decimal, SqlType, Value, assign, bucket, compare};
 
 /// Checks the contract of `t`'s kind on `t` and `values`, which are
 /// assigned to `t` first.
@@ -94,6 +94,21 @@ fn binary_keeps_the_type_contract() {
 fn binary_varying_keeps_the_type_contract() {
     let strings = ["", "00", "01", "0000", "0001", "FF", "FF00", "FF0000", "FFFF", "00FF", "A5A5A5A5"];
     type_contract(DataType::VarBinary { length: 12 }, &octets(strings));
+}
+
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D53; [ISO/IEC 9075-2:2023 §4.5.2,
+/// §8.2 GR3] DECFLOAT keeps the `SqlType` contract: on 0, either sign, of
+/// 34 digits, at the least and greatest exponents, and an exact number
+/// assigned, which compares equal to the DECFLOAT value it gives.
+#[test]
+fn decfloat_keeps_the_type_contract() {
+    let mut values: Vec<Value> = [(0, 0), (15, -1), (-15, -1), (1, -6143), (-1, -6143), (1, 6144), (i128::from(i64::MAX), 3)]
+        .iter()
+        .map(|&(c, e)| Value::DecFloat(DecFloat::new(c, e, 34).unwrap()))
+        .collect();
+    values.push(Value::DecFloat(DecFloat::new(9_999_999_999_999_999_999_999_999_999_999_999, 6111, 34).unwrap()));
+    values.push(Value::Exact(Decimal::new(-12_345, 2)));
+    type_contract(DataType::DecFloat { precision: 34 }, &values);
 }
 
 /// The datetimes `texts` write, of `moment`, each of its own displacement

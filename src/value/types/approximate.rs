@@ -9,10 +9,10 @@ use std::cmp::Ordering;
 
 use super::{Descriptor, NUMBER_BYTES, SIGN, SqlType, take};
 use crate::bytes::{Put, Reader};
-use crate::error::{Code, Result, SqlError};
+use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::{at_precision, numeric_literal, uncastable};
 use crate::value::comparison::{compare_numbers, number_bucket};
-use crate::value::{Bucket, DOUBLE_PRECISION, DataType, REAL_PRECISION, Value, unassignable};
+use crate::value::{Bucket, DOUBLE_PRECISION, DataType, REAL_PRECISION, Value, assignment_rule, unassignable};
 use crate::value::{Spelled, spelling};
 
 /// The kind of FLOAT(precision).
@@ -28,6 +28,20 @@ const BINARY_RADIX: u32 = 2;
 /// The precision of `t`, an approximate numeric type.
 fn precision_of(t: &DataType) -> u32 {
     if let DataType::Approximate { precision, .. } = t { *precision } else { DOUBLE_PRECISION }
+}
+
+/// `x`, the nearest `f64` of `v`, approximated in `t`.
+///
+/// # Errors
+///
+/// SQLSTATE 22003, as the rule `rule` says, if it is past the range of
+/// `t`.
+fn approximated(v: &Value, x: f64, t: &DataType, rule: &str) -> Result<Value> {
+    let y = at_precision(x, precision_of(t));
+    if y.is_finite() {
+        return Ok(Value::Approx(y));
+    }
+    fail_with(Code::Data, SqlState::NUMERIC_VALUE_OUT_OF_RANGE, format!("[{rule}] {v} is outside the range of {t}"))
 }
 
 /// A value not of a column of `t`'s type.
@@ -65,10 +79,11 @@ impl SqlType for Approximate {
     }
 
     /// [ISO/IEC 9075:1992 §9.2 GR3k] A number approximated in the type: a
-    /// REAL's rounded to single precision [X3.135-1986 §8.7 GR7d].
+    /// REAL's rounded to single precision [X3.135-1986 §8.7 GR7d]; one past
+    /// its range none [ISO/IEC 9075-2:2023 §9.2 GR3b xv 3].
     fn assign(&self, v: Value, t: &DataType, rule: &str) -> Result<Value> {
         match v.as_f64() {
-            Some(x) => Ok(Value::Approx(at_precision(x, precision_of(t)))),
+            Some(x) => approximated(&v, x, t, &assignment_rule(rule, "ISO/IEC 9075-2:2023 §9.2 GR3b xv 3")),
             None => unassignable(&v, t, rule),
         }
     }
@@ -80,7 +95,8 @@ impl SqlType for Approximate {
             Value::Null => Ok(Value::Null),
             Value::Char(s) => self.cast(numeric_literal(&s)?, t),
             Value::Exact(d) => Ok(Value::Approx(at_precision(d.to_f64(), precision_of(t)))),
-            Value::Approx(x) => Ok(Value::Approx(at_precision(x, precision_of(t)))),
+            Value::Approx(x) => approximated(&v, x, t, "ISO/IEC 9075-2:2023 §6.13 GR9a ii"),
+            Value::DecFloat(d) => approximated(&v, d.to_f64(), t, "ISO/IEC 9075-2:2023 §6.13 GR9a ii"),
             Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => uncastable(&v, t),
         }
     }

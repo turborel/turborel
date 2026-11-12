@@ -67,7 +67,7 @@ The codes of TYPE:
 | 5 | SMALLINT | 60 | BINARY |
 | 6 | FLOAT | 61 | BINARY VARYING |
 | 7 | REAL | -1 | a type of a plug-in |
-| 8 | DOUBLE PRECISION | | |
+| 8 | DOUBLE PRECISION | 26 | DECFLOAT |
 
 The codes of DATETIME_INTERVAL_CODE, of a datetime: 1 DATE, 2 TIME, 3
 TIMESTAMP, 4 TIME WITH TIME ZONE, 5 TIMESTAMP WITH TIME ZONE; of an
@@ -136,7 +136,8 @@ ISO/IEC 9075:1992 §17.4, of the descriptor areas of §17.1, Tables 17 to
 20. SQL-92 makes it no `<directly executable statement>` [§20.1]. SQL-86
 has no dynamic SQL. The codes 60 and 61 of BINARY and BINARY VARYING, and
 their lengths in octets, are ISO/IEC 9075-2:2023's [§20.1 Table 30,
-§20.10 GR7d ii].
+§20.10 GR7d ii], and so is the code 26 of DECFLOAT, its PRECISION its
+precision [§20.10 GR7d v].
 
 ## SEE ALSO
 

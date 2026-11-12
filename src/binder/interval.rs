@@ -31,6 +31,7 @@ fn fits(t: &DataType, q: Qualifier) -> bool {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean
@@ -106,6 +107,7 @@ fn zoned(t: DataType) -> DataType {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean

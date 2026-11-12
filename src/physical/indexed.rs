@@ -384,9 +384,10 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
 
 /// Whether values of type `a` are placed among the keys of a column of
 /// type `b` (`engine/key.rs` `anchor`): of one kind, character strings of
-/// either length, and binary strings, alike.
+/// either length, and binary strings, alike; an exact number among
+/// DECFLOAT keys too, which hold it exactly.
 fn alike(a: &DataType, b: &DataType) -> bool {
-    family(a) == family(b)
+    family(a) == family(b) || (matches!(a, DataType::Exact { .. }) && matches!(b, DataType::DecFloat { .. }))
 }
 
 /// The name of the kind of `t`, the same of fixed and varying strings.
@@ -401,6 +402,7 @@ fn family(t: &DataType) -> &'static str {
         | DataType::Interval(_)
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Extension(_) => t.kind().name(),
     }
 }
@@ -413,6 +415,7 @@ fn sample(t: &DataType) -> Option<Value> {
     match t {
         DataType::Exact { .. } => Some(Value::Exact(Decimal::new(0, 0))),
         DataType::Approximate { .. } => Some(Value::Approx(0.0_f64)),
+        DataType::DecFloat { .. } => Some(Value::DecFloat(crate::value::DecFloat::ZERO)),
         DataType::Character { .. } | DataType::Varying { .. } => Some(Value::Char(String::new())),
         DataType::Binary { .. } | DataType::VarBinary { .. } => Some(Value::Binary(Binary::new(vec![0]))),
         DataType::Boolean => Some(Value::Bool(false)),

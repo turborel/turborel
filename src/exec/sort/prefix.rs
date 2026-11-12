@@ -162,8 +162,9 @@ pub(super) fn prefix_of(value: &Value, descending: bool) -> Option<Prefix> {
             (Kind::Binary, bits, held)
         }
         // Truth values are compared whole, and two keys of them seldom
-        // tie past one byte, so a prefix would save little.
-        Value::Bool(_) | Value::Extension(_) => return None,
+        // tie past one byte, so a prefix would save little; a DECFLOAT
+        // number is compared whole.
+        Value::Bool(_) | Value::DecFloat(_) | Value::Extension(_) => return None,
     };
     Some(finished((kind, bits, held), descending))
 }

@@ -149,6 +149,7 @@ fn bytes(value: &Value, default: usize) -> usize {
     match value {
         Value::Exact(d) => usize::try_from(d.units).unwrap_or(usize::MAX),
         Value::Approx(_)
+        | Value::DecFloat(_)
         | Value::Char(_)
         | Value::Null
         | Value::Binary(_)

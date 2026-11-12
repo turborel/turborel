@@ -2,12 +2,13 @@
 //! BOOLEAN's truth values read as values and conditions, the set functions
 //! of truth values, an index on a BOOLEAN probed, and a dynamic parameter
 //! counted once however often the parser reads it; underscores in numeric
-//! literals; binary strings, their literals, keys, assignment and CAST.
+//! literals; binary strings, their literals, keys, assignment and CAST;
+//! decimal floating point, its rounding, range, keys and comparison.
 
 use super::{Mutation, Package};
 
 /// The mutations of SQL:2023's additions, in the order they run.
-pub const SQL2023: [Mutation; 15] = [
+pub const SQL2023: [Mutation; 23] = [
     Mutation {
         name: "boolean-predicand-untyped",
         package: Package::Core,
@@ -156,6 +157,86 @@ pub const SQL2023: [Mutation; 15] = [
         original: "    beyond || from.is_binary() == to.is_binary()",
         replacement: "    beyond || true",
         integration: &["binary::binary_strings_are_cast_6_13"],
+        unit: &[],
+    },
+    Mutation {
+        name: "decfloat-tie-up",
+        package: Package::Core,
+        breaks: "a DECFLOAT tie rounds up, not to the even digit, so 1.25 at 2 digits is 1.3",
+        file: "src/value/decfloat.rs",
+        original: "        if dropped > HALF || (dropped == HALF && (sticky || odd)) {",
+        replacement: "        if dropped >= HALF {",
+        integration: &["decfloat::decfloat_values_are_cast_6_13"],
+        unit: &["value::decfloat::tests::values_round_half_to_even"],
+    },
+    Mutation {
+        name: "decfloat-sticky-lost",
+        package: Package::Core,
+        breaks: "digits below the rounding digit are forgotten, so 2.6650001 at 3 digits is 2.66, as a tie",
+        file: "src/value/decfloat.rs",
+        original: "        if dropped > HALF || (dropped == HALF && (sticky || odd)) {",
+        replacement: "        if dropped > HALF || (dropped == HALF && odd) {",
+        integration: &["decfloat::decfloat_values_are_cast_6_13"],
+        unit: &["value::decfloat::tests::values_round_half_to_even"],
+    },
+    Mutation {
+        name: "decfloat-key-uninverted",
+        package: Package::Core,
+        breaks: "a negative DECFLOAT's key is not inverted, so -2 sorts after -1 in an index",
+        file: "src/value/decfloat.rs",
+        original: "        if self.coefficient < 0 {\n            for b in &mut body {",
+        replacement: "        if false {\n            for b in &mut body {",
+        integration: &["decfloat::a_decfloat_index_is_probed_d34"],
+        unit: &["value::decfloat::tests::keys_order_as_values_compare"],
+    },
+    Mutation {
+        name: "decfloat-exponent-unbounded",
+        package: Package::Core,
+        breaks: "a DECFLOAT value past the exponent's range is kept, not refused with 22003",
+        file: "src/value/decfloat.rs",
+        original: "        (self.is_zero() || (MIN_EXPONENT..=MAX_EXPONENT).contains(&self.adjusted())).then_some(self)",
+        replacement: "        Some(self)",
+        integration: &["decfloat::decfloat_values_are_assigned_9_2", "decfloat::decfloat_arithmetic_6_30"],
+        unit: &["value::decfloat::tests::values_have_one_form_and_a_range"],
+    },
+    Mutation {
+        name: "decfloat-double-compared-rounded",
+        package: Package::Core,
+        breaks: "a DECFLOAT and a double compare equal when the double nearest the DECFLOAT is it, so 0.1 equals 0.1E0",
+        file: "src/value/comparison.rs",
+        original: "        Ordering::Equal => Some(compare_numerals(&d.numeral(), &format!(\"{approx:.F64_EXACT_FRACTION_DIGITS$}\"))),",
+        replacement: "        Ordering::Equal => Some(Ordering::Equal),",
+        integration: &["decfloat::decfloat_values_compare_8_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "decfloat-sum-refused",
+        package: Package::Core,
+        breaks: "SUM and AVG of DECFLOAT values are refused as of no number",
+        file: "src/functions.rs",
+        original: "    match arg.filter(|t| t.is_numeric() || matches!(t, DataType::Interval(_))) {",
+        replacement: "    match arg.filter(|t| matches!(t, DataType::Exact { .. } | DataType::Approximate { .. } | DataType::Interval(_))) {",
+        integration: &["decfloat::decfloat_set_functions_and_set_types_10_9"],
+        unit: &[],
+    },
+    Mutation {
+        name: "decfloat-running-sum-judged",
+        package: Package::Core,
+        breaks: "a DECFLOAT sum on the way is judged against the range, so whether SUM raises depends on row order (RULES.md D15)",
+        file: "src/functions/sum.rs",
+        original: "s.plus_unbounded(*d)",
+        replacement: "s.plus(*d)",
+        integration: &[],
+        unit: &["functions::sum::tests::a_decfloat_sum_is_judged_as_a_total"],
+    },
+    Mutation {
+        name: "decfloat-probe-unplaced",
+        package: Package::Core,
+        breaks: "a DECFLOAT value is not placed among a DECFLOAT column's values, so an index on one is never probed",
+        file: "src/physical/probe.rs",
+        original: "        | (DataType::DecFloat { .. }, Value::DecFloat(_))\n",
+        replacement: "",
+        integration: &["decfloat::a_decfloat_index_is_probed_d34"],
         unit: &[],
     },
 ];

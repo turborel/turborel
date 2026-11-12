@@ -34,6 +34,7 @@ fn finished(function: &dyn AggregateFunction, result: DataType, values: &[Value]
             Value::Exact(d) => i64::try_from(d.units).ok().filter(|_| d.scale == 0),
             Value::Null
             | Value::Approx(_)
+            | Value::DecFloat(_)
             | Value::Char(_)
             | Value::Binary(_)
             | Value::Bool(_)
@@ -202,4 +203,33 @@ fn other_values_are_summed_by_arith() {
     let mut empty = Sum.accumulator(WHOLE);
     empty.update_ints(&Ints::new(Vec::new(), 0, None), None).unwrap();
     assert!(empty.finish().unwrap().is_null());
+}
+
+/// Verifies: [DESIGN] RULES.md D15 [ISO/IEC 9075:1992 §6.5 GR2b iv,
+/// ISO/IEC 9075-2:2023 §10.9 SR7g v]: SUM of DECFLOAT values 9E6144,
+/// 9E6144 and -9E6144, whose total is in range, gives it in every order,
+/// as AVG its mean 3E6144; of 9E6144 twice and 0 it is 22003 in every
+/// order; AVG of 9E6144 twice, its sum past the range, is its mean. A
+/// DECFLOAT sum keeps no state to merge, as its total depends on order.
+#[test]
+fn a_decfloat_sum_is_judged_as_a_total() {
+    let result = DataType::DecFloat { precision: crate::value::MAX_DECFLOAT_PRECISION };
+    let most = |sign: i128| Value::DecFloat(DecFloat::new(sign * 9, 6144, 34).unwrap());
+    let fits = [most(1), most(1), most(-1)];
+    let past = [most(1), most(1), Value::DecFloat(DecFloat::ZERO)];
+    for order in ORDERS {
+        for got in finished(&Sum, result, &fits, order) {
+            assert_eq!(got, "Ok(\"9E6144\")", "SUM in {order:?}");
+        }
+        for got in finished(&Avg, result, &fits, order) {
+            assert_eq!(got, "Ok(\"3E6144\")", "AVG in {order:?}");
+        }
+        for got in finished(&Sum, result, &past, order) {
+            assert_eq!(got, "Err(\"22003\")", "SUM past the range in {order:?}");
+        }
+    }
+    let mut mean = Avg.accumulator(result);
+    [most(1), most(1)].iter().try_for_each(|v| mean.update(v)).unwrap();
+    assert_eq!(mean.finish().unwrap().to_string(), "9E6144");
+    assert!(!mean.write_state(&mut Vec::new()), "no state of a DECFLOAT mean");
 }

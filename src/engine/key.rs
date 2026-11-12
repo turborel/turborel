@@ -39,7 +39,8 @@ use crate::value::{DataType, Value};
 /// \[DESIGN\] Whether a value of type `t` is the same value decoded from
 /// its key (`decode_key`), so an index-only scan may give it for the
 /// column's (RULES.md D34): an exact number at its column's scale; a
-/// character string padded to its column's length; a binary string; a truth
+/// character string padded to its column's length; a binary string; a
+/// DECFLOAT number, of one form; a truth
 /// value; a date,
 /// a time or a timestamp of no time zone; an interval. Not a varying
 /// string, whose key leaves out its trailing spaces; an approximate
@@ -49,6 +50,7 @@ pub fn restores(t: &DataType) -> bool {
     match t {
         DataType::Character { .. }
         | DataType::Exact { .. }
+        | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
         | DataType::Boolean

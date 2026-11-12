@@ -56,6 +56,18 @@ pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> 
     let result = Qualifier { leading: u8::try_from(MAX_LEADING_PRECISION).unwrap_or(9), ..interval.qualifier };
     let exact = match factor {
         Value::Approx(x) => approximate_to_exact(*x, (MAX_EXACT_PRECISION, FACTOR_SCALE), "ISO/IEC 9075:1992 §6.15 GR4")?,
+        // [ISO/IEC 9075-2:2023 §6.44 GR5] its digits past the factor's
+        // scale truncated.
+        Value::DecFloat(d) => match d.to_decimal(FACTOR_SCALE).filter(|n| n.fits(MAX_EXACT_PRECISION, FACTOR_SCALE)) {
+            Some(n) => Value::Exact(n),
+            None => {
+                return fail_with(
+                    Code::Data,
+                    SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
+                    format!("[ISO/IEC 9075-2:2023 §6.44 GR5] {d} is too large a factor of an interval"),
+                );
+            }
+        },
         Value::Null
         | Value::Char(_)
         | Value::Exact(_)

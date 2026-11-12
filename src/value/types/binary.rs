@@ -42,6 +42,7 @@ fn length_of(t: &DataType) -> u32 {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -151,6 +152,7 @@ impl SqlType for BinaryKind {
             Value::Char(_)
             | Value::Exact(_)
             | Value::Approx(_)
+            | Value::DecFloat(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)

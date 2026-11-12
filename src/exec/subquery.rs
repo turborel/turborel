@@ -162,6 +162,7 @@ fn exact_norm(v: &Value) -> NormKey {
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)
+        | Value::DecFloat(_)
         | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)

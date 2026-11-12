@@ -6,7 +6,7 @@ use turborel::lexer::MAX_IDENTIFIER_LENGTH;
 use turborel::parser::MAX_NESTING_DEPTH;
 use turborel::value::MAX_EXACT_PRECISION;
 
-use crate::common::{code, rows, setup};
+use crate::common::{code, exec, rows, setup};
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.2 SR10, SR11, SR13, SR15],
 /// which take priority over X3.135-1986 §5.3: a key word is one in any case,
@@ -257,6 +257,23 @@ fn approximate_overflow_is_a_data_exception_5_9() {
     let db = setup();
     let s = db.session("APP");
     assert_eq!(code(&s, "SELECT 1E300 * 1E300 FROM T WHERE ID = 1"), Code::Data);
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.2 GR3b xv 3, §6.13 GR9a ii] a number
+/// past the range of REAL, assigned or cast to it, is a data exception
+/// (SQLSTATE 22003); one within it is kept.
+///
+/// Regression test: 1E300 assigned to a REAL column was kept as infinity.
+#[test]
+fn a_number_past_real_is_a_data_exception_9_2() {
+    let db = setup();
+    let s = db.session("APP");
+    s.run("CREATE TABLE R (X REAL)").unwrap();
+    assert_eq!(exec(&s, "INSERT INTO R VALUES (1E300)").err(), Some(Code::Data));
+    assert_eq!(exec(&s, "INSERT INTO R VALUES (-1E39)").err(), Some(Code::Data));
+    assert_eq!(code(&s, "SELECT CAST(1E300 AS REAL) FROM T WHERE ID = 1"), Code::Data);
+    s.run("INSERT INTO R VALUES (3E38)").unwrap();
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM R"), Ok(vec!["1".to_owned()]));
 }
 
 /// Verifies: [X3.135-1986 §5.11 GR5] strings compare as if the shorter were padded with spaces.
