@@ -36,6 +36,84 @@ fn case_expressions_6_9() {
     assert_eq!(code(&s, "SELECT COALESCE(ID) FROM T"), Code::Syntax);
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.12 SR2e-SR2i, GR2] a
+/// simple CASE's WHEN takes a list of operands, as with Feature F263, and
+/// is true if the operand equals any of them: the first such WHEN gives
+/// the result. A null operand in the list equals nothing, yet the others
+/// decide; a null case operand matches no WHEN. Each operand is comparable
+/// with the case operand, else SQLCODE -103, and a dynamic parameter
+/// among them is of the first's type; an empty operand is a syntax error
+/// (SQLCODE -104).
+#[test]
+fn when_operand_lists_6_12() {
+    let db = setup();
+    let s = db.session("APP");
+    let q = "SELECT ID, CASE ID WHEN 1, 3 THEN 'ODD' WHEN 2, 4, 6 THEN 'EVEN' END FROM T ORDER BY ID";
+    assert_eq!(rows(&s, q), expected(&["1,ODD ", "2,EVEN", "3,ODD "]));
+    let q = "SELECT ID, CASE ID WHEN 5, 2 THEN 'A' WHEN 2, 3 THEN 'B' ELSE 'C' END FROM T ORDER BY ID";
+    assert_eq!(rows(&s, q), expected(&["1,C", "2,A", "3,B"]), "the first WHEN true");
+    let q = "SELECT ID, CASE ID WHEN NULLIF(1, 1), 1 THEN 'ONE' ELSE 'NOT' END FROM T ORDER BY ID";
+    assert_eq!(rows(&s, q), expected(&["1,ONE", "2,NOT", "3,NOT"]), "a null operand in the list");
+    let q = "SELECT ID, CASE AMT WHEN -3, 10.5 THEN 'SOME' ELSE 'NONE' END FROM T ORDER BY ID";
+    assert_eq!(rows(&s, q), expected(&["1,SOME", "2,SOME", "3,NONE"]), "a null case operand");
+    let p = s.prepare("SELECT ID FROM T WHERE CASE ID WHEN 1, ? THEN 1 ELSE 0 END = 1").unwrap();
+    let mut opened = s.open_prepared(&p, &[turborel::value::Value::Char("3".into())]).unwrap();
+    let mut found = Vec::new();
+    while let Some(row) = opened.fetch().unwrap() {
+        found.push(row.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+    }
+    found.sort();
+    assert_eq!(found, ["1", "3"], "a ? of the first operand's type [§17.6 GR5k]");
+    assert_eq!(code(&s, "SELECT CASE ID WHEN 1, 'A' THEN 1 END FROM T"), Code::SyntaxRule, "SR2i, §8.2 SR2");
+    assert_eq!(code(&s, "SELECT CASE ID WHEN 1, THEN 1 END FROM T"), Code::Syntax);
+    assert_eq!(code(&s, "SELECT CASE WHEN ID = 1, ID = 2 THEN 1 END FROM T"), Code::Syntax, "a searched CASE takes one condition");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.12 SR2c, SR2f, SR2i,
+/// Feature F262] a simple CASE's `<when operand>` may be a predicate's
+/// second part, the case operand its first: a comparison, BETWEEN, IN of a
+/// list or a subquery, LIKE, IS NULL, each with NOT where it takes one, a
+/// quantified comparison and MATCH; values and predicates mix in one list.
+/// The case operand may be a row, compared with rows, and a pair whose
+/// operands are OVERLAPS each. A predicate the case operand cannot begin
+/// is refused (SQLCODE -103), and so is OVERLAPS beside other operands;
+/// NOT before no predicate's operator is a syntax error (SQLCODE -104).
+#[test]
+fn predicates_as_when_operands_6_12() {
+    let db = setup();
+    let s = db.session("APP");
+    let case = |cases: &str| rows(&s, &format!("SELECT ID, CASE {cases} END FROM T ORDER BY ID"));
+    assert_eq!(case("AMT WHEN < 0 THEN 'NEG' WHEN >= 10 THEN 'BIG' WHEN IS NULL THEN 'NONE'"), expected(&["1,BIG ", "2,NEG ", "3,NONE"]));
+    assert_eq!(case("ID WHEN BETWEEN 1 AND 2 THEN 'LOW' WHEN NOT BETWEEN 1 AND 2 THEN 'HIGH'"), expected(&["1,LOW ", "2,LOW ", "3,HIGH"]));
+    assert_eq!(
+        case("ID WHEN IN (SELECT ID FROM U) THEN 'U' WHEN NOT IN (2, 4) THEN 'NOT' ELSE 'ELSE'"),
+        expected(&["1,U   ", "2,ELSE", "3,NOT "])
+    );
+    assert_eq!(
+        case("NAME WHEN LIKE 'A%' THEN 'A' WHEN NOT LIKE 'A%' THEN 'NOT' WHEN IS NOT NULL THEN 'NO'"),
+        expected(&["1,A  ", "2,NOT", "3,NULL"])
+    );
+    assert_eq!(
+        case("ID WHEN > ALL (SELECT ID FROM U) THEN 'ABOVE' WHEN = ANY (SELECT ID FROM U) THEN 'IN'"),
+        expected(&["1,IN   ", "2,ABOVE", "3,ABOVE"])
+    );
+    assert_eq!(case("ID WHEN 1, > 2 THEN 'X' ELSE 'Y'"), expected(&["1,X", "2,Y", "3,X"]), "a value and a predicate");
+    assert_eq!(
+        case("(ID, ID) WHEN (1, 1) THEN 'ONE' WHEN (2, 3), (3, 3) THEN 'SAME' ELSE 'NO'"),
+        expected(&["1,ONE ", "2,NO  ", "3,SAME"])
+    );
+    assert_eq!(case("(ID, 'A') WHEN MATCH (SELECT ID, CODE FROM U) THEN 'M' ELSE 'N'"), expected(&["1,M", "2,N", "3,N"]));
+    let pair = "(DATE '2026-01-01', DATE '2026-02-01')";
+    let q = format!("SELECT CASE {pair} WHEN OVERLAPS (DATE '2026-01-15', DATE '2026-03-01') THEN 'O' ELSE 'N' END FROM T WHERE ID = 1");
+    assert_eq!(rows(&s, &q), expected(&["O"]));
+    let mixed = format!("SELECT CASE {pair} WHEN OVERLAPS {pair}, {pair} THEN 1 END FROM T");
+    assert_eq!(code(&s, &mixed), Code::SyntaxRule, "SR2c");
+    assert_eq!(code(&s, "SELECT CASE ID WHEN LIKE 'A%' THEN 1 END FROM T"), Code::SyntaxRule, "LIKE of a number");
+    assert_eq!(code(&s, "SELECT CASE ID WHEN (1, 2) THEN 1 END FROM T"), Code::SyntaxRule, "rows of two degrees");
+    assert_eq!(code(&s, "SELECT CASE ID WHEN NOT 1 THEN 1 END FROM T"), Code::Syntax);
+    assert_eq!(code(&s, "SELECT CASE ID WHEN IS TRUE THEN 1 END FROM T"), Code::Syntax, "no <boolean test>'s part");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.10 GR2-GR5]: CAST among
 /// numbers and strings, NULL staying null; a number's literal padded to a
 /// string's length, refused if longer; a string truncated or padded; a

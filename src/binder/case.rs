@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::expression::dynamic_of;
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
-use crate::ast::{CaseExpression, Subquery, TypeName, ValueExpression};
+use crate::ast::{CaseExpression, Predicate, RowValue, SearchCondition, Subquery, TypeName, ValueExpression, WhenOperand};
 use crate::error::Result;
 use crate::logical::{Cond, DomainChecks, Expr};
 use crate::params::ParameterType;
@@ -227,12 +227,7 @@ impl Binder<'_> {
                 Some(last)
             }
             CaseExpression::Simple { operand, whens: simple, otherwise } => {
-                // [§17.6 GR5k] a `?` <when operand> takes the first one's
-                // type; the first none [GR4h].
-                let first = simple.first().map(|(v, _)| self.value_expression(v, scope)).transpose()?.map(|(_, t)| t);
-                for (value, result) in simple {
-                    whens.push((self.equal(operand, value, first, scope)?.0, result.as_ref()));
-                }
+                whens = self.simple_whens(operand, simple, scope)?;
                 otherwise.as_ref()
             }
             CaseExpression::Searched { whens: searched, otherwise } => {
@@ -243,6 +238,56 @@ impl Binder<'_> {
             }
         };
         self.results(whens, (otherwise, taken), scope)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.12 SR2e-SR2i] A simple CASE's WHENs, each
+    /// the condition (CO EWO1) OR ... OR (CO EWOm) of its `<when operand
+    /// list>`, `operand` CO: "CO = WO" of a `<row value predicand>` WO,
+    /// else the predicate WO completes.
+    fn simple_whens<'c>(
+        &self,
+        operand: &'c RowValue,
+        simple: &'c [(Vec<WhenOperand>, Option<ValueExpression>)],
+        scope: Scope<'_>,
+    ) -> Result<Vec<(Cond, Option<&'c ValueExpression>)>> {
+        let lone = |row: &'c RowValue| if let [v] = row.as_slice() { Some(v) } else { None };
+        let co = lone(operand);
+        // [ISO/IEC 9075:1992 §17.6 GR5k] a `?` <when operand> takes the
+        // first one's type; the first none [GR4h].
+        let first = match simple.first().and_then(|(list, _)| list.first()) {
+            Some(WhenOperand::Value(row, _)) => {
+                lone(row).zip(co).map(|(v, _)| self.value_expression(v, scope)).transpose()?.map(|(_, t)| t)
+            }
+            Some(WhenOperand::Condition(_)) | None => None,
+        };
+        let mut whens = Vec::new();
+        for (list, result) in simple {
+            let mut any = None;
+            for when in list {
+                let condition = match (when, co) {
+                    (WhenOperand::Value(row, at), Some(co)) => match lone(row) {
+                        Some(value) => self.equal(co, value, first, scope)?.0,
+                        None => self.row_equal(operand, row, *at, scope)?,
+                    },
+                    (WhenOperand::Value(row, at), None) => self.row_equal(operand, row, *at, scope)?,
+                    (WhenOperand::Condition(c), _) => self.search_condition(c, scope)?,
+                };
+                any = Some(match any {
+                    Some(a) => Cond::Or(Box::new(a), Box::new(condition)),
+                    None => condition,
+                });
+            }
+            let any = any.ok_or_else(|| rule("[ISO/IEC 9075-2:2023 §6.12] a <when operand list> has a <when operand>"))?;
+            whens.push((any, result.as_ref()));
+        }
+        Ok(whens)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.12 SR2f i] "CO = WO" of rows, a comparison
+    /// predicate written at `at`.
+    fn row_equal(&self, operand: &RowValue, row: &RowValue, at: usize, scope: Scope<'_>) -> Result<Cond> {
+        let comparison = Predicate::Comparison(operand.clone(), CompOp::Eq, row.clone());
+        self.search_condition(&SearchCondition::Predicate(Box::new(comparison), at), scope)
     }
 
     /// `v` bound, a `?` taking the type `taken`, if any [§17.6 GR5j, k, l].

@@ -295,13 +295,15 @@ pub enum CaseExpression {
     NullIf(ValueExpression, ValueExpression),
     /// COALESCE (V1, V2, ...) \[SR2, SR3\].
     Coalesce(Vec<ValueExpression>),
-    /// `<simple case>`: CASE `<case operand>` WHEN `<when operand>` THEN
-    /// `<result>` ... \[ELSE `<result>`\] END.
+    /// `<simple case>`: CASE `<case operand>` WHEN `<when operand list>`
+    /// THEN `<result>` ... \[ELSE `<result>`\] END.
     Simple {
-        /// The `<case operand>`.
-        operand: ValueExpression,
-        /// Each `<when operand>` and its `<result>`.
-        whens: Vec<(ValueExpression, Option<ValueExpression>)>,
+        /// The `<case operand>`, a `<row value predicand>` [ISO/IEC
+        /// 9075-2:2023 §6.12, Feature F262].
+        operand: RowValue,
+        /// Each `<when operand list>`, one `<when operand>` at least
+        /// [ISO/IEC 9075-2:2023 §6.12, Feature F263], and its `<result>`.
+        whens: Vec<(Vec<WhenOperand>, Option<ValueExpression>)>,
         /// The `<result>` of the `<else clause>`.
         otherwise: Option<ValueExpression>,
     },
@@ -313,6 +315,18 @@ pub enum CaseExpression {
         /// The `<result>` of the `<else clause>`.
         otherwise: Option<ValueExpression>,
     },
+}
+
+/// [ISO/IEC 9075-2:2023 §6.12] A `<when operand>` of a `<simple case>`.
+#[derive(Debug, Clone)]
+pub enum WhenOperand {
+    /// A `<row value predicand>`, which the case operand equals for the
+    /// WHEN to be true [SR2f i], and where it begins.
+    Value(RowValue, usize),
+    /// A predicate's second part, as `> 5` or `IS NULL` [Feature F262],
+    /// read as the whole predicate, the case operand its first part
+    /// [SR2f ii, SR2i].
+    Condition(SearchCondition),
 }
 
 /// The sign of a `<factor>` [X3.135-1986 §5.9].
@@ -412,9 +426,14 @@ impl CaseExpression {
             }
             CaseExpression::Coalesce(values) => values.iter().for_each(f),
             CaseExpression::Simple { operand, whens, otherwise } => {
-                f(operand);
-                for (w, r) in whens {
-                    f(w);
+                operand.iter().for_each(&mut *f);
+                for (list, r) in whens {
+                    for when in list {
+                        match when {
+                            WhenOperand::Value(row, _) => row.iter().for_each(&mut *f),
+                            WhenOperand::Condition(c) => c.for_each_value(f),
+                        }
+                    }
                     if let Some(x) = r {
                         f(x);
                     }

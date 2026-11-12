@@ -42,7 +42,7 @@ pub use dynamic::{
 };
 pub use expression::{
     CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, SetArg, SetFunctionSpecification, Sign, Subquery,
-    TruthValue, ValueExpression,
+    TruthValue, ValueExpression, WhenOperand,
 };
 pub use query::{
     Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable,

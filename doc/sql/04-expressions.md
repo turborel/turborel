@@ -158,7 +158,8 @@ what is refused.
 
 A searched CASE gives the result of the first WHEN whose condition is
 true, else of its ELSE, else null; a simple CASE compares one value with
-each WHEN's. NULLIF(a, b) is null if a equals b, else a. COALESCE(a, b,
+each WHEN's. A simple CASE's WHEN may list several values, separated by
+commas, and is true if any of them equals the value. NULLIF(a, b) is null if a equals b, else a. COALESCE(a, b,
 ...) is the first of its values not null. Their results are of a type
 that holds each result's: strings of the longest, numbers of the most
 digits; values of types that do not mix are refused.
@@ -166,7 +167,7 @@ digits; values of types that do not mix are refused.
 ```sql
 SELECT ID,
        CASE WHEN SALARY > 7000 THEN 'high' WHEN SALARY IS NULL THEN 'unknown' ELSE 'low' END AS BAND,
-       CASE DEPT WHEN 'ENG' THEN 'Engineering' END AS DEPT_NAME,
+       CASE DEPT WHEN 'ENG' THEN 'Engineering' WHEN 'OPS', 'SUP' THEN 'Operations' END AS DEPT_NAME,
        NULLIF(DEPT, 'ENG') AS NOT_ENG,
        COALESCE(DEPT, '---') AS SHOWN
   FROM STAFF ORDER BY ID;
@@ -177,8 +178,32 @@ SELECT ID,
 --------------+---------+-------------+---------+-------
             1 | high    | Engineering | NULL    | ENG
             2 | high    | Engineering | NULL    | ENG
-            3 | low     | NULL        | OPS     | OPS
+            3 | low     | Operations  | OPS     | OPS
             4 | unknown | NULL        | NULL    | ---
+(4 rows)
+```
+
+A simple CASE's WHEN may also be the second part of a predicate, its
+first part the CASE's value: a comparison such as `> 8000`, BETWEEN, IN,
+LIKE, IS NULL, a quantified comparison or MATCH, with NOT where the
+predicate takes one. Values and predicates mix in one list. The CASE's
+value may be a row, such as `(A, B)`, compared with rows, and a pair of
+datetimes is compared by OVERLAPS, every WHEN then being OVERLAPS.
+
+```sql
+SELECT ID,
+       CASE SALARY WHEN > 8000 THEN 'top' WHEN BETWEEN 5000 AND 8000 THEN 'mid' WHEN IS NULL THEN 'unpaid' END AS PAY,
+       CASE NAME WHEN LIKE 'A%', LIKE 'B%' THEN 'early' ELSE 'late' END AS ALPHABET
+  FROM STAFF ORDER BY ID;
+```
+
+```
+           ID | PAY    | ALPHABET
+--------------+--------+----------
+            1 | mid    | early
+            2 | top    | late
+            3 | mid    | late
+            4 | unpaid | early
 (4 rows)
 ```
 

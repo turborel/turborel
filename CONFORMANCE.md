@@ -553,6 +553,25 @@ implemented.
 A collation's sort keys are binary strings, and an index on a collated
 column keys them as BINARY VARYING (RULES.md D60).
 
+### Simple CASE
+
+Features F262 (extended CASE expression) and F263 (comma-separated
+predicates in simple CASE expression). A simple CASE's WHEN takes a
+`<when operand list>`, its `<when operand>`s separated by commas [§6.12],
+and is true if any is, as `WHEN (CO EWO1) OR ... OR (CO EWOm)` [SR2i].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| `<case operand>` | §6.12 SR2c, CR1 | A `<row value predicand>`, a value or a row, or an `<overlaps predicate part 1>`. |
+| A `<row value predicand>` as a `<when operand>` | SR2f i | True if the case operand equals it. A dynamic parameter among them takes the type of the first WHEN's first operand [92 §17.6 GR5k]. |
+| A predicate's second part as a `<when operand>` | SR2f ii, CR2 | A comparison, BETWEEN, IN of a list or a subquery, LIKE, IS NULL, each with NOT where it takes one, a quantified comparison, MATCH and OVERLAPS, the case operand its first part. |
+| OVERLAPS | SR2c | Every `<when operand>` of a CASE is OVERLAPS or none is, else SQLCODE -103. |
+
+The case operand is evaluated once for each operand it is compared with,
+as the equivalent searched CASE does. The predicates turborel has not,
+SIMILAR, LIKE_REGEX, IS DISTINCT FROM, IS NORMALIZED, MEMBER, SUBMULTISET,
+IS A SET and IS OF, are no `<when operand>`s either.
+
 ### Optional maximum lengths
 
 Feature T081 (optional string types maximum length). CHARACTER VARYING,

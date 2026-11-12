@@ -4,12 +4,13 @@
 //! counted once however often the parser reads it; underscores in numeric
 //! literals; binary strings, their literals, keys, assignment and CAST;
 //! decimal floating point, its rounding, range, keys and comparison;
-//! varying strings of no written maximum length.
+//! varying strings of no written maximum length; a simple CASE's lists
+//! of WHEN operands, and predicates among them.
 
 use super::{Mutation, Package};
 
 /// The mutations of SQL:2023's additions, in the order they run.
-pub const SQL2023: [Mutation; 25] = [
+pub const SQL2023: [Mutation; 28] = [
     Mutation {
         name: "boolean-predicand-untyped",
         package: Package::Core,
@@ -258,6 +259,36 @@ pub const SQL2023: [Mutation; 25] = [
         original: "            let mut length = MAX_BINARY_LENGTH;",
         replacement: "            let mut length = 1;",
         integration: &["binary::the_binary_string_types_6_1", "varying::varying_strings_of_no_written_length_t081"],
+        unit: &[],
+    },
+    Mutation {
+        name: "when-operand-list-first-only",
+        package: Package::Core,
+        breaks: "a simple CASE's WHEN compares its operand with the first of its list alone, so WHEN 1, 3 misses 3",
+        file: "src/binder/case.rs",
+        original: "                    Some(a) => Cond::Or(Box::new(a), Box::new(condition)),",
+        replacement: "                    Some(a) => a,",
+        integration: &["expressions::when_operand_lists_6_12"],
+        unit: &[],
+    },
+    Mutation {
+        name: "when-operand-predicate-unread",
+        package: Package::Core,
+        breaks: "a predicate's second part is not read as a simple CASE's WHEN operand, so WHEN < 0 is a syntax error",
+        file: "src/parser/expression.rs",
+        original: "        if self.at_predicate_operator() {\n            return self.predicate_rest(operand.clone()).map(predicate);",
+        replacement: "        if false {\n            return self.predicate_rest(operand.clone()).map(predicate);",
+        integration: &["expressions::predicates_as_when_operands_6_12"],
+        unit: &[],
+    },
+    Mutation {
+        name: "when-operand-overlaps-mixed",
+        package: Package::Core,
+        breaks: "a simple CASE's OVERLAPS operands mix with others, which SR2c forbids",
+        file: "src/parser/primary.rs",
+        original: "    if some && !all {",
+        replacement: "    if false {",
+        integration: &["expressions::predicates_as_when_operands_6_12"],
         unit: &[],
     },
 ];

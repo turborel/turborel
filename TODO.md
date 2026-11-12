@@ -34,8 +34,6 @@ each group.
 
 ### Expressions and functions
 
-- Comma-separated WHEN operands in a simple CASE (F263) [§6.12], as
-  `CASE x WHEN 1, 2 THEN …`. Only one value follows each WHEN today.
 - GREATEST and LEAST (T054) [§6.15].
 - LPAD and RPAD (T055), and LTRIM, RTRIM and BTRIM of several characters
   (T056) [§6.33]. TRIM removes one character today.

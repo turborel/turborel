@@ -4,7 +4,7 @@
 //! primaries (`parser/primary.rs`).
 
 use super::{Parser, furthest};
-use crate::ast::{Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression};
+use crate::ast::{Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression, WhenOperand};
 use crate::catalog::MatchType;
 use crate::error::Result;
 use crate::functions::CONCATENATION;
@@ -120,6 +120,31 @@ impl Parser {
             (false | true, Err(row)) => row,
         };
         self.predicate_rest(row).map(predicate)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.12] A `<when operand>` of a simple CASE
+    /// whose `<case operand>` is `operand`: a predicate's second part
+    /// [Feature F262], read as the predicate with `operand` its first
+    /// [SR2f ii]; else a `<row value predicand>` [SR2f i].
+    pub(super) fn when_operand(&mut self, operand: &RowValue) -> Result<WhenOperand> {
+        let at = self.here();
+        let predicate = |p: Predicate| WhenOperand::Condition(SearchCondition::Predicate(Box::new(p), at));
+        if self.at_null_test() {
+            self.advance();
+            let not = self.accept_kw(kw::NOT);
+            self.expect_kw(kw::NULL)?;
+            return Ok(predicate(Predicate::Null { value: operand.clone(), not }));
+        }
+        if self.at_predicate_operator() {
+            return self.predicate_rest(operand.clone()).map(predicate);
+        }
+        Ok(WhenOperand::Value(self.row_value()?, at))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.12] A `<case operand>`: a `<row value
+    /// predicand>`, or an `<overlaps predicate part 1>`, which is one too.
+    pub(super) fn case_operand(&mut self) -> Result<RowValue> {
+        self.row_value()
     }
 
     /// Whether IS \[NOT\] NULL is next, IS \[NOT\] TRUE, FALSE or UNKNOWN
