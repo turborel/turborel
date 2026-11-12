@@ -91,6 +91,7 @@ mod failures;
 mod faults;
 mod file_manager;
 mod following;
+mod formatted_casts;
 mod functions;
 mod get_diagnostics;
 mod hybrid_layout;

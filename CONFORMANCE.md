@@ -708,6 +708,33 @@ SQL-92, so each stays an identifier, a function before a parenthesis.
 START or AFTER is the word of POSITION_REGEX unless IN or FLAG follows
 it, so a column of either name may be its pattern.
 
+### Formatted CAST
+
+Feature T839 (formatted cast of datetimes to/from character strings).
+`CAST(v AS t FORMAT 'template')` writes a datetime as a character string
+the template describes, or reads one back [§6.13 SR4]. The template is a
+`<character string literal>`, read and checked as the statement is
+bound. One of the two types is a datetime type and the other a character
+string type, else SQLCODE -103, so NULL and a `?` take no FORMAT, a `?`
+being of the target's type.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| The template | §9.52 SR2-SR15 | YYYY, YYY, YY, Y, RRRR, RR, MM, DD, DDD, HH, HH12, HH24, MI, SS, SSSSS, FF1 to FF9, A.M., P.M., TZH and TZM, written in upper case, and the delimiters `- . / , ' ; :` and space, each field the longest written at its place. Two delimiters in a row, a field twice, fields that do not go together and a field the datetime type has not are SQLCODE -103. |
+| Its length | §9.50 SR3, §9.51 SR3, §9.52 SR16-SR19 | The string type is no shorter than the template's minimum length, else SQLCODE -103. A delimited field counts 1, TZH 2. |
+| Datetime to string | §6.13 GR5e, GR6e, §9.50 | Each field its digits, the year its last ones, the time zone hour signed. A value without time zone is written in the session's displacement. The fraction is truncated to the template's digits (IA074). CHARACTER is padded with spaces, and a longer result is 22001. |
+| String to datetime | §6.13 GR14-GR18, §9.51 | The template's regular expression matched against the whole string, its spaces kept. A delimited field takes 1 digit to its length, one not delimited exactly its length. No match is 22007, and so are fields that write no date or time. |
+| Fields not written | §9.51 GR5-GR11 | The year and month the current, the day 1, the time and displacement 0. A year of fewer than four digits takes the current year's first ones. RR is read as YY (IV096). The fraction is truncated to the target's precision. |
+
+Some readings fill gaps in the rules. A day of the year is read in the
+year the template gives, as it is written of it, where GR7a iv names the
+current year. A displacement is 22007 past -12:59 or +13:00, as any field
+out of range is [GR12]. A digit of another script that `\p{Nd}` matches
+is no `<unsigned integer>`, so it is 22007 too. Templates are upper case,
+as §9.52 writes its key words, so `yyyy` is SQLCODE -103. A template is
+not a key word, and FORMAT is no key word of SQL-92, so it stays an
+identifier.
+
 ---
 
 ## Extensions
@@ -902,6 +929,8 @@ topic. The Where column names the file that implements each.
 | §6.8 GR3 when a statement's datetime value functions are evaluated | As it begins, from the database's clock, the system's unless a host sets another (`Database::set_clock`) | `db/clock.rs`, `clock.rs` |
 | §6.6 SR4 the precision of EXTRACT's result | Of a datetime 5 digits, of an interval 9, and of SECOND the scale of its fraction more | `binder/datetime.rs` |
 | §9.2 GR3l, §4.6 a datetime's fraction stored in a type of fewer digits | Truncated | `value/datetime.rs` |
+| §9.50 GR4 (IA074) whether the seconds a template writes are truncated or rounded to its fractional precision | Truncated | `functions/formatted/format.rs` |
+| §9.51 GR6b iv (IV096) the year RR's digits are read in | The current year, so RR is read as YY | `functions/formatted/parse.rs` |
 
 ### Cursors
 

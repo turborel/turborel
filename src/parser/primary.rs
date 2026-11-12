@@ -10,7 +10,7 @@ use crate::ast::{
     CaseExpression, Predicate, SearchCondition, SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification, WhenOperand,
 };
 use crate::error::Result;
-use crate::functions::{EVERY, GREATEST, LEAST, LPAD, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS};
+use crate::functions::{EVERY, FORMAT, GREATEST, LEAST, LPAD, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS};
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
@@ -218,9 +218,11 @@ impl Parser {
         if self.accept_kw(kw::ELSE) { self.result() } else { Ok(None) }
     }
 
-    /// [ISO/IEC 9075:1992 §6.10] `<cast specification>` ::= CAST (`<cast
-    /// operand>` AS `<cast target>`), the operand a `<value expression>`
-    /// or NULL, the target a `<data type>` or a `<domain name>`.
+    /// [ISO/IEC 9075-2:2023 §6.13] `<cast specification>` ::= CAST
+    /// (`<cast operand>` AS `<cast target>` \[FORMAT `<cast template>`\]),
+    /// the operand a `<value expression>` or NULL, the target a `<data
+    /// type>` or a `<domain name>`, the template a `<character string
+    /// literal>`.
     fn cast_specification(&mut self) -> Result<ValueExpression> {
         let at = self.here();
         self.expect_kw(kw::CAST)?;
@@ -228,8 +230,17 @@ impl Parser {
         let operand = if self.accept_kw(kw::NULL) { None } else { Some(Box::new(self.value_expression()?)) };
         self.expect_kw(kw::AS)?;
         let target = self.type_name()?;
+        let format = if self.accept_word(FORMAT) {
+            let Tok::CharacterString(template) = self.peek().clone() else {
+                return Err(self.syntax("expected a <cast template>, a <character string literal>, after FORMAT"));
+            };
+            self.advance();
+            Some(template)
+        } else {
+            None
+        };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(ValueExpression::Cast { operand, target, at })
+        Ok(ValueExpression::Cast { operand, target, format, at })
     }
 
     /// [ISO/IEC 9075:1992 §6.6, §6.7] A string function, called with its

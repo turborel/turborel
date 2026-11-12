@@ -6,12 +6,13 @@
 //! decimal floating point, its rounding, range, keys and comparison;
 //! varying strings of no written maximum length; a simple CASE's lists
 //! of WHEN operands, and predicates among them; GREATEST and LEAST;
-//! trims and pads. Regular expressions' are in `regex.rs`.
+//! trims and pads; CAST with FORMAT. Regular expressions' are in
+//! `regex.rs`.
 
 use super::{Mutation, Package};
 
 /// The mutations of SQL:2023's additions, in the order they run.
-pub const SQL2023: [Mutation; 38] = [
+pub const SQL2023: [Mutation; 49] = [
     Mutation {
         name: "boolean-predicand-untyped",
         package: Package::Core,
@@ -390,6 +391,116 @@ pub const SQL2023: [Mutation; 38] = [
         original: "return Ok(Value::Char(ps.chars().take(mrl).collect()));",
         replacement: "return Ok(Value::Char(ps.to_owned()));",
         integration: &["expressions::pads_6_33"],
+        unit: &[],
+    },
+    Mutation {
+        name: "format-year-whole",
+        package: Package::Core,
+        breaks: "YY writes the year's four digits, not its last two",
+        file: "src/functions/formatted/format.rs",
+        original: "Field::Year(n) | Field::RoundedYear(n) => digits(field(Of::Year), n.min(YEAR_DIGITS)),",
+        replacement: "Field::Year(_) | Field::RoundedYear(_) => digits(field(Of::Year), YEAR_DIGITS),",
+        integration: &[],
+        unit: &["functions::formatted::format::tests::fields_are_formatted_9_50"],
+    },
+    Mutation {
+        name: "format-midnight-zero",
+        package: Package::Core,
+        breaks: "HH12 writes midnight as 00, not 12",
+        file: "src/functions/formatted/format.rs",
+        original: "    if h == 0 {",
+        replacement: "    if h == 24 {",
+        integration: &[],
+        unit: &["functions::formatted::format::tests::fields_are_formatted_9_50"],
+    },
+    Mutation {
+        name: "format-shown-in-utc",
+        package: Package::Core,
+        breaks: "a timestamp without time zone is written in UTC, not the session's displacement",
+        file: "src/functions/formatted.rs",
+        original: "let d: Datetime = shown(d, Now { utc: 0, zone: self.zone });",
+        replacement: "let d: Datetime = *d;",
+        integration: &["formatted_casts::datetimes_are_formatted_9_50"],
+        unit: &[],
+    },
+    Mutation {
+        name: "template-hour12-alone",
+        package: Package::Core,
+        breaks: "HH12 is taken without A.M. or P.M.",
+        file: "src/functions/formatted/template.rs",
+        original: "(hour12 != am_pm, \"SR8, SR9\",",
+        replacement: "(false, \"SR8, SR9\",",
+        integration: &["formatted_casts::formats_refused_6_13"],
+        unit: &["functions::formatted::template::tests::templates_refused_9_52"],
+    },
+    Mutation {
+        name: "template-shorter-string",
+        package: Package::Core,
+        breaks: "a string type shorter than the template's minimum length is taken",
+        file: "src/functions/formatted.rs",
+        original: "if usize::try_from(length).is_ok_and(|n| n < least) {",
+        replacement: "if usize::try_from(length).is_ok_and(|_| false) {",
+        integration: &["formatted_casts::formats_refused_6_13"],
+        unit: &[],
+    },
+    Mutation {
+        name: "parse-undelimited-fewer",
+        package: Package::Core,
+        breaks: "a field not delimited matches fewer digits than its length, as a delimited one does",
+        file: "src/functions/formatted/parse.rs",
+        original: "if self.delimited(i) { format!(",
+        replacement: "if true { format!(",
+        integration: &[],
+        unit: &["functions::formatted::parse::tests::templates_define_expressions_9_51"],
+    },
+    Mutation {
+        name: "parse-year-unprefixed",
+        package: Package::Core,
+        breaks: "a short year is read as written, not after the current year's first digits",
+        file: "src/functions/formatted/parse.rs",
+        original: "cylit.chars().take(YEAR_DIGITS.saturating_sub(s.chars().count())).collect();",
+        replacement: "cylit.chars().take(0).collect();",
+        integration: &["formatted_casts::strings_are_read_9_51"],
+        unit: &["functions::formatted::parse::tests::strings_are_read_9_51"],
+    },
+    Mutation {
+        name: "parse-twelve-not-zero",
+        package: Package::Core,
+        breaks: "12 on a 12-hour clock is read as 12, not 0, so 12:30 A.M. is past noon",
+        file: "src/functions/formatted/parse.rs",
+        original: "let temp = if h12 == HALF_DAY_HOURS { 0 } else { h12 };",
+        replacement: "let temp = h12;",
+        integration: &["formatted_casts::strings_are_read_9_51"],
+        unit: &["functions::formatted::parse::tests::strings_are_read_9_51"],
+    },
+    Mutation {
+        name: "parse-zone-unsigned",
+        package: Package::Core,
+        breaks: "a displacement's minus sign is dropped",
+        file: "src/functions/formatted/parse.rs",
+        original: "let negative = tzh.starts_with('-');",
+        replacement: "let negative = false;",
+        integration: &[],
+        unit: &["functions::formatted::parse::tests::strings_are_read_9_51"],
+    },
+    Mutation {
+        name: "parse-fraction-unscaled",
+        package: Package::Core,
+        breaks: "a fraction of fewer than six digits is read as microseconds, so .5 is 5 of them",
+        file: "src/functions/formatted/parse.rs",
+        original: "Ok(unsigned(&six)?.saturating_mul(unit))",
+        replacement: "Ok(unsigned(&six)?)",
+        integration: &["formatted_casts::strings_are_read_9_51"],
+        unit: &[],
+    },
+    Mutation {
+        name: "parse-clock-unread",
+        package: Package::Core,
+        breaks: "a template without a whole year reads the year 0001, not the current",
+        file: "src/functions/formatted.rs",
+        original: "let now = if template.needs_now(datetime.0) { now.instant() } else {",
+        replacement: "let now = if false { now.instant() } else {",
+        integration: &["formatted_casts::strings_are_read_9_51"],
         unit: &[],
     },
 ];

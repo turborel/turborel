@@ -203,12 +203,15 @@ pub enum ValueExpression {
     CollationFor(Box<ValueExpression>),
     /// [ISO/IEC 9075:1992 §6.9] A `<case expression>`.
     Case(Box<CaseExpression>),
-    /// [ISO/IEC 9075:1992 §6.10] CAST (`<cast operand>` AS `<cast target>`).
+    /// [ISO/IEC 9075-2:2023 §6.13] CAST (`<cast operand>` AS `<cast
+    /// target>` \[FORMAT `<cast template>`\]).
     Cast {
         /// The `<value expression>`, or none for NULL.
         operand: Option<Box<ValueExpression>>,
         /// The `<cast target>`: a `<data type>`, or a `<domain name>`.
         target: TypeName,
+        /// The `<cast template>`'s string, if written [Feature T839].
+        format: Option<String>,
         /// Where it begins in the statement.
         at: usize,
     },

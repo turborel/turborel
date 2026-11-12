@@ -169,7 +169,9 @@ impl Binder<'_> {
             ValueExpression::Call { name, args, at } => self.call(name, args, scope).or_at(*at),
             ValueExpression::Function { name, args, at } => self.function(name, args, scope).or_at(*at),
             ValueExpression::Case(case) => self.case(case, scope),
-            ValueExpression::Cast { operand, target, at } => self.cast(operand.as_deref(), target, scope).or_at(*at),
+            ValueExpression::Cast { operand, target, format, at } => {
+                self.cast(operand.as_deref(), target, format.as_deref(), scope).or_at(*at)
+            }
             ValueExpression::Subquery(s) => self.scalar_subquery(s, scope),
             // [ISO/IEC 9075-2:2023 §6.46 SR1] A truth value, of type BOOLEAN.
             ValueExpression::Boolean(c) => Ok((Expr::Truth(Box::new(self.search_condition(c, scope)?)), DataType::Boolean)),

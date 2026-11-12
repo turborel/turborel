@@ -9,6 +9,7 @@ use super::subquery::Use;
 use super::{Binder, Scope, rule};
 use crate::ast::{CaseExpression, Predicate, RowValue, SearchCondition, Subquery, TypeName, ValueExpression, WhenOperand};
 use crate::error::Result;
+use crate::functions::{ScalarRef, formatted_cast};
 use crate::logical::{Cond, DomainChecks, Expr};
 use crate::params::ParameterType;
 use crate::value::Spelled;
@@ -347,10 +348,19 @@ impl Binder<'_> {
 
     /// [ISO/IEC 9075:1992 §6.10] CAST (`operand` AS `target`): NULL, or a
     /// value of any of these types, cast to any [SR4].
-    pub(super) fn cast(&self, operand: Option<&ValueExpression>, named: &TypeName, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+    pub(super) fn cast(
+        &self,
+        operand: Option<&ValueExpression>,
+        named: &TypeName,
+        format: Option<&str>,
+        scope: Scope<'_>,
+    ) -> Result<(Expr, DataType)> {
         // [§6.10 SR1, AR1] a domain's data type, if USAGE on it is held.
         let (target, domain) = self.db.resolve_type(named, (self.schema, self.auth))?;
-        let (e, t) = self.cast_to(operand, target, scope)?;
+        let (e, t) = match format {
+            Some(template) => self.formatted(operand, target, template, scope)?,
+            None => self.cast_to(operand, target, scope)?,
+        };
         let Some(d) = domain.filter(|d| !d.constraints.is_empty()) else { return Ok((e, t)) };
         // [GR13] its constraints checked of the value.
         let checks = DomainChecks { domain: d.name.clone(), checks: self.db.cast_checks(d)? };
@@ -370,6 +380,18 @@ impl Binder<'_> {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR7] CAST of {t} to {target} is not valid")));
         }
         Ok((Expr::Cast(Box::new(e), target), target))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.13 SR4] CAST of `operand` to `target` FORMAT
+    /// `template` [Feature T839]: of a datetime to a character string or
+    /// back, so not of NULL, nor of a `?`, which takes the target's type.
+    fn formatted(&self, operand: Option<&ValueExpression>, target: DataType, template: &str, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let Some(v) = operand else {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR4] CAST of NULL to {target} has no FORMAT, NULL being of no type")));
+        };
+        let (e, t) = self.typed(v, ParameterType::Of(target), scope)?;
+        let f = formatted_cast(&t, &target, template, self.now)?;
+        Ok((Expr::Call(ScalarRef(f), vec![e]), target))
     }
 
     /// [ISO/IEC 9075:1992 §7.11] A `<scalar subquery>`: of degree one [SR1].

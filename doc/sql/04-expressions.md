@@ -383,6 +383,43 @@ of its own is written in parentheses, `(A = 1) = (B = 2)`.
 CAST(*value* AS *type*) gives a value in another type, or a domain's:
 [Data Types](02-data-types.md) shows which types CAST takes to which.
 
+CAST(*value* AS *type* FORMAT '*template*') writes a datetime as a
+character string the template describes, or reads such a string back
+as a datetime. The template is a string literal of these fields, in
+upper case, and the delimiters `- . / , ' ; :` and space.
+
+| Field | Means |
+|---|---|
+| YYYY, YYY, YY, Y | the year's last digits; read, the current year's first digits before them |
+| RRRR, RR | read as YYYY and YY |
+| MM, DD, DDD | the month, the day of the month, the day of the year |
+| HH24, HH12 or HH, A.M. or P.M. | the hour on a 24-hour clock, or on a 12-hour one beside A.M. or P.M. |
+| MI, SS, SSSSS | the minute, the second, the second of the day |
+| FF1 to FF9 | so many digits of the second's fraction, truncated |
+| TZH, TZM | the time zone's hour, signed, and minute |
+
+```sql
+VALUES (CAST(DATE '2024-03-05' AS VARCHAR(10) FORMAT 'DD/MM/YYYY'), CAST(TIMESTAMP '2024-03-05 14:07:09' AS VARCHAR(10) FORMAT 'HH12:MI P.M.'),
+        CAST('5/3/2024' AS DATE FORMAT 'DD/MM/YYYY'), CAST('2024 065 +05:30' AS TIMESTAMP(0) WITH TIME ZONE FORMAT 'YYYY DDD TZH:TZM'));
+```
+
+```
+            |            |            |
+------------+------------+------------+---------------------------
+ 05/03/2024 | 02:07 P.M. | 2024-03-05 | 2024-03-05 00:00:00+05:30
+(1 row)
+```
+
+A field between delimiters may be written with fewer digits, so
+`'5/3/2024'` reads as above, and one beside another field takes all its
+digits. A field not written is read as the current year or month, day 1,
+or 0. The string is read whole, its spaces kept, and a string the
+template does not describe, or that writes no date or time, is SQLSTATE
+22007. A datetime without time zone is written and read in the session's
+time zone. A template that is not valid for the types, or a string type
+shorter than the template's least length, is refused as the statement
+is prepared (SQLCODE -103).
+
 The standard: ISO/IEC 9075:1992 §6.2–§6.15 and §7.11; X3.135-1986 §5.6–§5.9;
 ISO/IEC 9075-2:2023 §6.29, §6.46 and §10.9 for truth values, §6.31–§6.33
-for binary strings.
+for binary strings, §6.13 and §9.50–§9.52 for FORMAT.
