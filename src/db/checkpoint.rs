@@ -367,20 +367,24 @@ impl State {
         };
         self.capture_engines(through)?;
         let counted = self.tx.logged.load(Ordering::Relaxed);
-        let image = self.image_of(clean, (through, self.tx.oldest_logged().map_or(through, |first| first.min(through))));
+        let image = self.image_of(clean, (through, self.tx.oldest_logged().map_or(through, |first| first.min(through))))?;
         Ok((image, counted))
     }
 
     /// The image of a checkpoint holding every change before `through`,
     /// recovery reading the log from `start`, closed if `clean`, but for
     /// the tables' locators.
-    fn image_of(&self, clean: bool, (through, start): (Lsn, Lsn)) -> Image {
-        Image {
+    ///
+    /// # Errors
+    ///
+    /// `Snapshot::of`'s.
+    fn image_of(&self, clean: bool, (through, start): (Lsn, Lsn)) -> Result<Image> {
+        Ok(Image {
             clean,
             through,
             start,
             highest: self.tx.highest(),
-            snapshot: Snapshot::of(self),
+            snapshot: Snapshot::of(self)?,
             tables: Vec::new(),
             // Those of the catalog: not one whose build failed (`Database::create_index`).
             indexes: self
@@ -389,7 +393,7 @@ impl State {
                 .filter(|(name, _)| self.catalog.index(name).is_some())
                 .map(|(name, index)| (name.clone(), self.index_generation(name), index.locator()))
                 .collect(),
-        }
+        })
     }
 
     /// Every engine's capture through `through`, what the plug-ins'

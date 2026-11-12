@@ -233,9 +233,11 @@ fn fold_expr(e: &Expr) -> Option<Expr> {
 
 /// Whether `e`, not a constant, can be computed now: an operation on
 /// constants alone, calling only a deterministic function, its condition,
-/// if a truth value's, of no subquery.
+/// if a truth value's, of no subquery; and no NEXT VALUE FOR, which draws
+/// a value each row [ISO/IEC 9075-2:2023 §6.14 GR1].
 fn computable(e: &Expr) -> bool {
-    let mut constant = !matches!(e, Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Subquery(..));
+    let mut constant =
+        !matches!(e, Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Subquery(..) | Expr::NextValue(_));
     if let Expr::Call(func, _) = e {
         constant = constant && func.0.deterministic();
     }
@@ -551,7 +553,8 @@ impl Rule for RemoveRedundantDistinct {
                 | Expr::SortKey(..)
                 | Expr::Domain(..)
                 | Expr::Subquery(..)
-                | Expr::Truth(_) => None,
+                | Expr::Truth(_)
+                | Expr::NextValue(_) => None,
             })
             .collect();
         // A UNIQUE column may be null [ISO/IEC 9075:1992 §8.9], and rows

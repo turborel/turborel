@@ -2,31 +2,35 @@
 //! image records of them, so a database is opened from them, each table
 //! and index reopened by its locator, and only the definitions logged since
 //! replayed; not from every definition ever made. The schemas, domains,
-//! assertions, tables with their generations, views, indexes and
-//! privileges of the catalog, the database's settings, in the forms of
-//! `catalog/codec.rs`; and its users and owner (`db/users.rs`).
+//! assertions, tables with their generations, views, indexes, sequence
+//! generators and privileges of the catalog, the database's settings, in
+//! the forms of `catalog/codec.rs`; its users and owner (`db/users.rs`);
+//! and the counters of its sequence generators, settled, with the last
+//! epoch given (`db/sequences/counters.rs`, RULES.md D62).
 //!
 //! ```text
 //! snapshot: schemas (count u32, each its name and its owner, str),
 //!           domains (count u32, each a domain), collations (count u32,
 //!           each a collation), collation versions (count u32, each a name
-//!           and version), assertions (count u32,
-//!           each a constraint), tables (count u32, each a
-//!           table), views (likewise), indexes (likewise), privileges
+//!           and version), assertions (count u32, each a constraint),
+//!           tables (count u32, each a table), views (likewise), indexes
+//!           (likewise), privileges (likewise), sequence generators
 //!           (likewise), settings (count u32, each str and value), users
 //!           (count u32, each str and verifier bytes), owner (u8 1 and
-//!           str, or u8 0 for none)
+//!           str, or u8 0 for none), the last epoch given (u64), counters
+//!           (count u32, each a name, its epoch u64 and its base i128)
 //! ```
 
 use std::sync::Arc;
 
+use super::sequences::Settled;
 use super::{State, api};
 use crate::bytes::{Put, Reader};
 use crate::catalog::codec::{
-    collation, constraint, domain, index, privilege, put_collation, put_constraint, put_domain, put_index, put_privilege, put_table,
-    put_view, table, view,
+    collation, constraint, domain, index, privilege, put_collation, put_constraint, put_domain, put_index, put_name, put_privilege,
+    put_sequence, put_table, put_view, qualified, sequence, table, view,
 };
-use crate::catalog::{CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, TableDesc, ViewDesc};
+use crate::catalog::{CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, SequenceDesc, TableDesc, ViewDesc};
 use crate::error::Result;
 use crate::settings;
 use crate::value::Value;
@@ -47,15 +51,26 @@ pub(super) struct Snapshot {
     views: Vec<ViewDesc>,
     indexes: Vec<IndexDesc>,
     privileges: Vec<PrivilegeDesc>,
+    sequences: Vec<SequenceDesc>,
     settings: Vec<(String, Value)>,
     users: Vec<(String, Vec<u8>)>,
     owner: Option<String>,
+    /// The last epoch of a sequence generator's counter given.
+    epochs: u64,
+    /// The counters, settled: each but one of a generator's earlier epoch,
+    /// which no statement draws from once the database reopens.
+    counters: Vec<Settled>,
 }
 
 impl Snapshot {
     /// The definitions of `st`, in an order that does not depend on how
-    /// they are held: each kind by name.
-    pub(super) fn of(st: &State) -> Snapshot {
+    /// they are held: each kind by name. The counters of its sequence
+    /// generators settled.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a thread panicked holding the counters.
+    pub(super) fn of(st: &State) -> Result<Snapshot> {
         let mut tables: Vec<TableDesc> = st.catalog.tables().into_iter().cloned().collect();
         tables.sort_by_key(|t| t.name.to_string());
         let mut views: Vec<ViewDesc> = st.catalog.views().into_iter().cloned().collect();
@@ -72,7 +87,10 @@ impl Snapshot {
         let collations = st.catalog.collations().into_iter().cloned().collect();
         let collation_versions = st.collation_versions();
         let assertions = st.catalog.assertions().into_iter().cloned().collect();
-        Snapshot {
+        let sequences: Vec<SequenceDesc> = st.catalog.sequences().into_iter().cloned().collect();
+        let (epochs, mut counters) = st.sequences.settle()?;
+        counters.retain(|(name, epoch, _)| sequences.iter().all(|s| s.name != *name || s.epoch <= *epoch));
+        Ok(Snapshot {
             schemas,
             domains,
             collations,
@@ -82,10 +100,13 @@ impl Snapshot {
             views,
             indexes,
             privileges,
+            sequences,
             settings: st.settings.database_values(),
             users,
             owner,
-        }
+            epochs,
+            counters,
+        })
     }
 
     /// The database's value of the setting `name`, if it set one.
@@ -120,6 +141,8 @@ impl Snapshot {
         self.indexes.iter().for_each(|i| put_index(out, i));
         out.put_u32(count(self.privileges.len()));
         self.privileges.iter().for_each(|p| put_privilege(out, p));
+        out.put_u32(count(self.sequences.len()));
+        self.sequences.iter().for_each(|s| put_sequence(out, s));
         out.put_u32(count(self.settings.len()));
         for (name, v) in &self.settings {
             out.put_str(name);
@@ -133,6 +156,13 @@ impl Snapshot {
         out.put_u8(u8::from(self.owner.is_some()));
         if let Some(owner) = &self.owner {
             out.put_str(owner);
+        }
+        out.put_u64(self.epochs);
+        out.put_u32(count(self.counters.len()));
+        for (name, epoch, base) in &self.counters {
+            put_name(out, name);
+            out.put_u64(*epoch);
+            out.put_i128(*base);
         }
     }
 
@@ -151,9 +181,12 @@ impl Snapshot {
         let views = (0..r.u32()?).map(|_| view(r)).collect::<Result<_>>()?;
         let indexes = (0..r.u32()?).map(|_| index(r)).collect::<Result<_>>()?;
         let privileges = (0..r.u32()?).map(|_| privilege(r)).collect::<Result<_>>()?;
+        let sequences = (0..r.u32()?).map(|_| sequence(r)).collect::<Result<_>>()?;
         let settings = (0..r.u32()?).map(|_| Ok((r.str()?, value(r)?))).collect::<Result<_>>()?;
         let users = (0..r.u32()?).map(|_| Ok((r.str()?, r.bytes()?.to_vec()))).collect::<Result<_>>()?;
         let owner = if r.u8()? == 0 { None } else { Some(r.str()?) };
+        let epochs = r.u64()?;
+        let counters = (0..r.u32()?).map(|_| Ok((qualified(r)?, r.u64()?, r.i128()?))).collect::<Result<_>>()?;
         Ok(Snapshot {
             schemas,
             domains,
@@ -164,9 +197,12 @@ impl Snapshot {
             views,
             indexes,
             privileges,
+            sequences,
             settings,
             users,
             owner,
+            epochs,
+            counters,
         })
     }
 }
@@ -189,6 +225,8 @@ impl State {
         }
         snapshot.domains.iter().cloned().for_each(|d| catalog.put_domain(d));
         snapshot.collations.iter().cloned().for_each(|c| catalog.put_collation(c));
+        snapshot.sequences.iter().cloned().for_each(|s| catalog.put_sequence(s));
+        self.install_counters(snapshot)?;
         // Before the indexes, whose keys are by them.
         self.catalog = Arc::from(catalog.duplicate());
         snapshot.assertions.iter().cloned().for_each(|a| catalog.put_assertion(a));
@@ -235,17 +273,32 @@ impl State {
         self.catalog = Arc::from(catalog);
         Ok(())
     }
+    /// The counters of `snapshot`'s sequence generators, each set at its
+    /// base, and the epochs past its last (RULES.md D62).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a thread panicked holding the counters.
+    fn install_counters(&self, snapshot: &Snapshot) -> Result<()> {
+        self.sequences.advance_past(snapshot.epochs)?;
+        for (name, epoch, base) in &snapshot.counters {
+            self.sequences.replay(name, *epoch, *base)?;
+        }
+        Ok(())
+    }
 }
 
 // Unit tests: a snapshot reads back as written (RULES.md R-TEST-1).
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::QualifiedName;
     use crate::db::Database;
 
-    /// Verifies: [DESIGN] RULES.md D25, D43, a snapshot of the definitions:
-    /// of every kind of table, column, constraint, view, index, privilege,
-    /// setting, user and owner there is, it reads back exactly as written.
+    /// Verifies: [DESIGN] RULES.md D25, D43, D62, a snapshot of the
+    /// definitions: of every kind of table, column, constraint, view, index,
+    /// sequence generator, privilege, setting, user and owner there is, and
+    /// of the counters, it reads back exactly as written.
     #[test]
     fn a_snapshot_reads_back_as_written() {
         let db = Database::new();
@@ -259,17 +312,24 @@ mod tests {
                CREATE VIEW W (K) AS SELECT K FROM C WHERE V > 1 WITH CHECK OPTION
                CREATE VIEW G (K, N) AS SELECT K, COUNT(*) FROM C GROUP BY K
                GRANT SELECT, UPDATE (V) ON C TO B WITH GRANT OPTION
-               GRANT REFERENCES (K) ON P TO PUBLIC",
+               GRANT REFERENCES (K) ON P TO PUBLIC
+               CREATE SEQUENCE Q AS SMALLINT START WITH 5 INCREMENT BY -2 MINVALUE -9 MAXVALUE 9 CYCLE
+               GRANT USAGE ON SEQUENCE Q TO B",
         )
         .unwrap();
+        let a = db.session("A");
+        let mut drawn = a.open_cursor("SELECT NEXT VALUE FOR Q FROM (VALUES (0)) AS X (Z)").unwrap();
+        assert!(drawn.fetch().unwrap().is_some());
         db.create_index("C_V", "A.C", &["V", "K"], "hash").unwrap();
         db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(crate::value::Decimal::new(1 << 20, 0))).unwrap();
         db.create_user("ANN", &[0, 255, 7]).unwrap();
         db.create_user("bob", &[]).unwrap();
         db.set_owner("ANN").unwrap();
-        let snapshot = Snapshot::of(&db.snapshot().unwrap());
+        let snapshot = Snapshot::of(&db.snapshot().unwrap()).unwrap();
         assert!(!snapshot.tables.is_empty() && snapshot.views.len() == 2 && snapshot.privileges.len() >= 2);
         assert_eq!((snapshot.users.len(), snapshot.owner.as_deref()), (2, Some("ANN")));
+        let q = QualifiedName { auth: "A".into(), ident: "Q".into() };
+        assert_eq!((snapshot.sequences.len(), snapshot.counters.clone()), (1, vec![(q, snapshot.epochs, 3)]));
         let mut bytes = Vec::new();
         snapshot.put(&mut bytes);
         let mut r = Reader::new(&bytes, "snapshot");

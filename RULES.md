@@ -99,6 +99,7 @@ verification approach DO-178C expects (§8).
 | D59 | Import is rows from a pluggable source, over a connection |
 | D60 | Collations are sort keys, and a collation never changes |
 | D61 | Regular expressions are XQuery's, by a matcher of our own |
+| D62 | A sequence generator's place is logged apart from transactions |
 
 ### The project
 
@@ -407,6 +408,31 @@ or a parameter is compiled again each time it changes, which is Feature F847.
 So the binder makes each call its own function, keeping its last pattern, and
 none is registered. TRANSLATE_REGEX replaces as fn:replace does, matching the
 pattern again within each match [§9.29 GR9a].
+
+#### D62. A sequence generator's place is logged apart from transactions
+
+A sequence generator's descriptor is a definition, made, changed and dropped
+in a transaction (D33). Its current base value is not, as no transaction
+controls it [ISO/IEC 9075-2:2023 §4.29.1], and a value given out is never
+given again. So the place is a counter in `db/sequences/counters.rs`, shared
+by every snapshot, keyed by the generator's name and an epoch its descriptor
+holds. CREATE SEQUENCE gives a new epoch, and so does ALTER with RESTART. The
+schema statement's record logs the epochs it gave, so a replay makes the same
+ones, and a descriptor rolled back never meets a counter of another's.
+
+Before it gives out a value, a counter appends a record, of no transaction, of
+where to go on after a crash, and syncs it. The record reserves a block of
+values ahead, 32 at first, doubling up to 1024, so a long run of draws syncs
+rarely and a crash skips at most 1024 values. The log is a plug-in, so no lock
+is held across it (R-ERR-4). One draw reserves while the others wait.
+
+A checkpoint settles every counter. It records each base in the image, with
+the last epoch given, and drops what each reserved, so the next draw logs a
+record after the checkpoint's start. A block reserved across the settling is
+given up, as its record may be before the start. The image keeps a counter of
+a name no descriptor has, or of the descriptor's epoch or a later one, as an
+open transaction may yet commit it. A database opened forgets every counter no
+descriptor names.
 
 #### D33. Schema changes are transactional
 

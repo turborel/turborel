@@ -32,17 +32,19 @@ pub const RESEAL: &str = "RESEAL";
 pub const REVERT_COLLATION: &str = "REVERT_COLLATION";
 
 impl Parser {
-    /// An SQL-schema statement: CREATE TABLE, VIEW, DOMAIN, ASSERTION or COLLATION,
-    /// CREATE GLOBAL or LOCAL TEMPORARY TABLE, or ALTER DOMAIN
-    /// (`parser/schema.rs`); ALTER TABLE; DROP SCHEMA, TABLE, VIEW, DOMAIN,
-    /// ASSERTION or COLLATION; CREATE or DROP of a character set or translation,
+    /// An SQL-schema statement: CREATE TABLE, VIEW, DOMAIN, ASSERTION,
+    /// COLLATION or SEQUENCE, CREATE GLOBAL or LOCAL TEMPORARY TABLE, or
+    /// ALTER DOMAIN or SEQUENCE (`parser/schema.rs`); ALTER TABLE; DROP
+    /// SCHEMA, TABLE, VIEW, DOMAIN, ASSERTION, COLLATION or SEQUENCE; CREATE
+    /// or DROP of a character set or translation,
     /// read then refused (`parser/charsets.rs`); or, of this implementation,
     /// CREATE, DROP or ALTER INDEX, CREATE, ALTER or DROP USER, and ALTER
     /// DATABASE (`parser/users.rs`).
     pub(super) fn schema_manipulation(&mut self) -> Result<SqlStatement> {
         let defines =
             [kw::TABLE, kw::VIEW, kw::GLOBAL, kw::LOCAL, kw::DOMAIN, kw::ASSERTION, kw::COLLATION].iter().any(|w| self.next_is_kw(w));
-        if (self.is_kw(kw::CREATE) && defines) || (self.is_kw(kw::ALTER) && self.next_is_kw(kw::DOMAIN)) {
+        let altered = self.next_is_kw(kw::DOMAIN) || self.next_is_sequence();
+        if (self.is_kw(kw::CREATE) && (defines || self.next_is_sequence())) || (self.is_kw(kw::ALTER) && altered) {
             return self.schema_statement();
         }
         if self.accept_kw(kw::CREATE) {
@@ -69,6 +71,12 @@ impl Parser {
         }
         if !alter && self.accept_kw(kw::COLLATION) {
             let object = DropObject::Collation(self.table_name()?);
+            return Ok(SqlStatement::Drop { object, behavior: self.drop_behavior()? });
+        }
+        // [ISO/IEC 9075-2:2023 §11.74] DROP SEQUENCE <sequence generator
+        // name> <drop behavior>
+        if !alter && self.accept_word(super::sequences::SEQUENCE) {
+            let object = DropObject::Sequence(self.table_name()?);
             return Ok(SqlStatement::Drop { object, behavior: self.drop_behavior()? });
         }
         if self.accept_word("INDEX") {

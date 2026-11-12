@@ -303,7 +303,8 @@ pub fn bind_write(
         })
         .transpose()?;
 
-    let bound_set = bind_set_clauses(&binder, kind, set)?;
+    // [ISO/IEC 9075-2:2023 §6.14 SR1e] an <update source> draws values.
+    let bound_set = binder.drawing(true, || bind_set_clauses(&binder, kind, set))?;
     let base = target.base;
     let mut rows = LogicalPlan::Scan { table: base.name.clone(), names, needed: (0..base.columns.len()).collect() };
     if let Some(cond) = and_all(target.cond.into_iter().chain(cond).collect()) {

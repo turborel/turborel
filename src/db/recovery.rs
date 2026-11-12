@@ -187,6 +187,7 @@ impl Analysis {
             | Change::User { .. }
             | Change::Owner { .. }
             | Change::Reconfiguration { .. }
+            | Change::Sequence { .. }
             | Change::Checkpoint
             | Change::Stale { .. } => {}
         }
@@ -229,6 +230,7 @@ impl Database {
         }
         let (report, _) = self.replay(&mut log.read_from(Lsn(0)), Definitions::All)?;
         self.change(State::rebuild_indexes)?;
+        self.snapshot()?.prune_counters()?;
         self.set_log(log)?;
         self.apply_settings()?;
         Ok(report)
@@ -317,6 +319,7 @@ impl Database {
             | Change::Setting { .. }
             | Change::User { .. }
             | Change::Owner { .. }
+            | Change::Sequence { .. }
             | Change::Reconfiguration { .. }) => {
                 self.definition_at((lsn, tx), definition, replaying, report)?;
                 None
@@ -393,7 +396,7 @@ impl Database {
     pub(super) fn replay_definition(&self, change: &Change) -> Result<()> {
         self.change(|st| {
             match change {
-                Change::Schema { sql, owner, engines, zone } => st.reschema((sql, owner, *zone), engines, None)?.discard(),
+                Change::Schema { sql, owner, engines, zone, epochs } => st.reschema((sql, owner, *zone), engines, None, epochs)?.discard(),
                 Change::CreateIndex { name, table, columns, method, options } => {
                     let spec = IndexSpec {
                         name: name.clone(),
@@ -414,6 +417,8 @@ impl Database {
                 Change::Owner { name } => st.users.replay_owner(name),
                 // The group's, not the database's: the replica knows it.
                 Change::Reconfiguration { .. } => {}
+                // [DESIGN] RULES.md D62: its counter goes on from there.
+                Change::Sequence { name, epoch, resume } => st.sequences.replay(name, *epoch, *resume)?,
                 Change::Drop { .. } | Change::AlterTable { .. } | Change::Defined { .. } => st.apply_change(change, None)?.discard(),
                 Change::Insert { .. }
                 | Change::Update { .. }

@@ -108,8 +108,10 @@ impl State {
                 let action = Parser::new(action)?.of_definition().alter_table_action()?;
                 Ok(self.alter_table((table, schema, *zone), &action, (made, None))?.0)
             }
-            Change::Defined { auth, schema, zone, sql, placed } => self.redefine((auth, schema, *zone), sql, placed.as_ref(), made),
-            Change::Schema { sql, owner, engines, zone } => self.reschema((sql, owner, *zone), engines, made),
+            Change::Defined { auth, schema, zone, sql, placed, epochs } => {
+                self.redefine((auth, schema, *zone), sql, (placed.as_ref(), made, epochs))
+            }
+            Change::Schema { sql, owner, engines, zone, epochs } => self.reschema((sql, owner, *zone), engines, made, epochs),
             Change::Insert { .. }
             | Change::Update { .. }
             | Change::Delete { .. }
@@ -124,6 +126,7 @@ impl State {
             | Change::Setting { .. }
             | Change::User { .. }
             | Change::Owner { .. }
+            | Change::Sequence { .. }
             | Change::Reconfiguration { .. } => Err(api(format!("[DESIGN] {change:?} is not a change a transaction makes"))),
         }
     }
@@ -160,6 +163,7 @@ impl State {
                 | Change::Setting { .. }
                 | Change::User { .. }
                 | Change::Owner { .. }
+                | Change::Sequence { .. }
                 | Change::Reconfiguration { .. } => Vec::new(),
             };
             for table in renewed {

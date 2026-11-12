@@ -386,6 +386,32 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): a <set function specification> is in a 
 The mean is found by a subquery: `WHERE SALARY > (SELECT AVG(SALARY)
 FROM STAFF)`.
 
+## NEXT VALUE FOR
+
+NEXT VALUE FOR *generator* takes the next value of a sequence generator
+[CREATE SEQUENCE](statements/create-sequence.md) made, of its type. Each row
+takes one value, however many times the row names the generator, and no
+value is ever taken twice, even by a transaction rolled back.
+
+```sql
+CREATE SEQUENCE BADGE START WITH 100 INCREMENT BY 10;
+SELECT NEXT VALUE FOR BADGE, NEXT VALUE FOR BADGE + 1, NAME FROM STAFF WHERE DEPT = 'ENG';
+```
+
+```
+OK
+                      |                      | NAME
+----------------------+----------------------+--------------------------------
+                  100 |                  101 | Ada
+                  110 |                  111 | Grace
+(2 rows)
+```
+
+It is written in a select list of a cursor's query, a SELECT INTO or an
+INSERT's query, in an INSERT's VALUES, or in an UPDATE's SET, and in no
+CASE, condition, set function, grouped or DISTINCT query or subquery, where
+a row might take a value it never shows.
+
 ## Conditions as values
 
 A [condition](05-predicates.md), such as `SALARY > 6000` or `DEPT IS
@@ -439,4 +465,5 @@ is prepared (SQLCODE -103).
 
 The standard: ISO/IEC 9075:1992 §6.2–§6.15 and §7.11; X3.135-1986 §5.6–§5.9;
 ISO/IEC 9075-2:2023 §6.29, §6.46 and §10.9 for truth values, §6.31–§6.33
-for binary strings, §6.13 and §9.50–§9.52 for FORMAT.
+for binary strings, §6.13 and §9.50–§9.52 for FORMAT, §6.14 and §9.35 for
+NEXT VALUE FOR.

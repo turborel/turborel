@@ -222,7 +222,8 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         | Expr::Subquery(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
-        | Expr::Truth(_) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),
+        | Expr::Truth(_)
+        | Expr::NextValue(_) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),
     };
     let at = match (probe, s.place) {
         (Probe::Compare { value: first, .. }, Place::Key(n)) => (n == 0).then_some(first),

@@ -104,6 +104,7 @@ mod revoke;
 mod schema;
 mod scroll;
 mod sealing;
+mod sequences;
 mod served;
 mod session;
 mod settings;

@@ -759,6 +759,37 @@ as §9.52 writes its key words, so `yyyy` is SQLCODE -103. A template is
 not a key word, and FORMAT is no key word of SQL-92, so it stays an
 identifier.
 
+### Sequence generators
+
+Features T176 (sequence generator support) and T177 (simple restart
+option). CREATE, ALTER and DROP SEQUENCE define, change and drop a sequence
+generator [§11.72-§11.74], in the session's transaction as other definitions
+are, and NEXT VALUE FOR takes its next value [§6.14].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Definition | §9.36, §11.72 | Each option at most once. The type exact numeric of scale 0, NUMERIC(18) by default (ID157). Each value whole and held by the type, the increment not 0, the maximum above the minimum, the start within them, else SQLCODE -103. Of NO MAXVALUE, the type's greatest value ascending and -1 descending (ID112); of NO MINVALUE, 1 ascending and the type's least value descending (ID113). |
+| Values | §9.35 | The first of the current base value plus a multiple of the increment within the bounds. Past them, 2200H of NO CYCLE, else the minimum ascending, the maximum descending. |
+| Alteration | §9.37, §11.73 | RESTART goes on from the start, RESTART WITH from its value, and neither from the current base value, which is checked to be within the new bounds. |
+| Drop | §11.74 | Nothing can depend on a generator, so RESTRICT and CASCADE are alike. USAGE on it goes with it. |
+| Placement | §6.14 SR1, SR2 | In a select list of a cursor's query, a SELECT INTO's and an INSERT's, in an INSERT's VALUES and an UPDATE's SET; elsewhere SQLCODE -103. ORDER BY and a default take no value expression, so there it is a syntax error. |
+| One value a row | §6.14 GR1, §4.29.1 | Every NEXT VALUE FOR of one generator in a row gives the row's one value. |
+| USAGE | §6.14 AR1, §11.72 GR2, §12.2, §12.7 | The schema's owner holds it grantably. GRANT and REVOKE ON SEQUENCE give and take it, and REVOKE with RESTRICT is 2B000 while a grant made by it would be abandoned [§12.7 GR12q]. INFORMATION_SCHEMA.USAGE_PRIVILEGES shows it, of OBJECT_TYPE SEQUENCE. |
+
+A value is never given twice [§4.29.1]. The current base value is outside
+every transaction, so a rollback keeps the values taken (RULES.md D62). Before
+it gives out a value, a generator logs where to go on after a crash, a block
+of values ahead, so a crash skips at most 1024 values and repeats none.
+
+Some readings fill gaps in the rules. An ALTER without RESTART of a
+generator that has given its last value is taken, whatever its bounds, as
+its current base value is then past them by the generator's own doing. The
+Information Schema of SQL:2023 is in ISO/IEC 9075-11, which this repository
+does not hold, so INFORMATION_SCHEMA.SEQUENCES is an extension, its values
+as text. SEQUENCE, INCREMENT, MAXVALUE, MINVALUE and RESTART are no key words
+of SQL-92, so each stays an identifier, as do CYCLE and START, which
+SQL:2023 reserves.
+
 ---
 
 ## Extensions
@@ -929,6 +960,9 @@ topic. The Where column names the file that implements each.
 | 2023 §6.33 SR16c, IL046, the maximum length of LPAD and RPAD | 32,767 characters | `functions/trim.rs` |
 | 2023 §6.33 SR12f, IL047, the maximum length of TRANSLATE_REGEX with a replacement | 32,767 characters | `functions/regex/translate.rs` |
 | 2023 §6.31 SR1, IV137, the type of OCCURRENCES_REGEX and POSITION_REGEX | NUMERIC(18) | `functions/regex.rs` |
+| 2023 §11.72 SR6, ID157, the type of a sequence generator that names none | NUMERIC(18) | `db/sequences.rs` |
+| 2023 §9.36 SR7, §9.37 SR7, ID112, the maximum of NO MAXVALUE | The type's greatest value ascending, -1 descending | `db/sequences.rs` |
+| 2023 §9.36 SR8, §9.37 SR8, ID113, the minimum of NO MINVALUE | 1 ascending, the type's least value descending | `db/sequences.rs` |
 | §9.1 GR3k, §9.2 GR3k a number stored or retrieved into an exact type | An exact number's extra fraction digits are truncated. An approximate number is rounded to the scale. | `value/types/exact.rs`, `value/types/approximate.rs` |
 | 2023 §6.1 SR23, IA021, the greatest precision of DECFLOAT | 34 | `value.rs` |
 | 2023 §6.1 SR22, ID062, the precision of DECFLOAT written without one | 34 | `value.rs`, `parser/data_type.rs` |

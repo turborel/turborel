@@ -1,5 +1,6 @@
 //! The catalog: descriptions of schemas, tables, views, columns,
-//! constraints, domains, assertions, indexes and privileges.
+//! constraints, domains, assertions, collations, sequence generators,
+//! indexes and privileges.
 //!
 //! [X3.135-1986 §4.6] a `<schema>` is a "persistent object" created by implementor-defined
 //! mechanisms, so where descriptions live is up to us. The `Catalog` trait is
@@ -24,6 +25,7 @@ mod constraints;
 mod domains;
 mod keys;
 mod privileges;
+mod sequences;
 
 use crate::value::collation::CollationRef;
 pub use collations::CollationDesc;
@@ -31,6 +33,7 @@ pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, Fore
 pub use domains::{DomainDesc, UsageDesc};
 pub use keys::KeyShape;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, applicable, merged};
+pub use sequences::SequenceDesc;
 
 /// A `<table name>` with its `<authorization identifier>` made explicit.
 /// [X3.135-1986 §5.4 SR3] two table names are equal iff both parts are equal.
@@ -312,7 +315,8 @@ pub struct IndexDesc {
 /// * After `put_domain`, `domain` returns it by name, and `domains` among
 ///   every domain in a stable order; after `remove_domain`, neither does.
 ///   So too `put_collation`, `collation`, `collations` and
-///   `remove_collation`.
+///   `remove_collation`; and `put_sequence`, `sequence`, `sequences` and
+///   `remove_sequence`.
 ///   So too `put_assertion`, `assertion`, `assertions` and
 ///   `remove_assertion`.
 /// * `duplicate` returns an independent copy: changing either leaves the
@@ -403,6 +407,14 @@ pub trait Catalog: Send + Sync {
     fn collations(&self) -> Vec<&CollationDesc>;
     /// Forget the collation of this name.
     fn remove_collation(&mut self, name: &QualifiedName);
+    /// Record a sequence generator, in place of one of its name.
+    fn put_sequence(&mut self, sequence: SequenceDesc);
+    /// The sequence generator of this name, if any.
+    fn sequence(&self, name: &QualifiedName) -> Option<&SequenceDesc>;
+    /// Every sequence generator, in a stable order.
+    fn sequences(&self) -> Vec<&SequenceDesc>;
+    /// Forget the sequence generator of this name.
+    fn remove_sequence(&mut self, name: &QualifiedName);
     /// Forget the domain with this name: one dropped [§11.27 GR3].
     fn remove_domain(&mut self, name: &QualifiedName);
     /// Record the assertion `assertion`, a CHECK of no table, in place of
@@ -437,6 +449,7 @@ pub struct MemoryCatalog {
     privileges: Vec<PrivilegeDesc>,
     domains: HashMap<QualifiedName, DomainDesc>,
     collations: HashMap<QualifiedName, CollationDesc>,
+    sequences: HashMap<QualifiedName, SequenceDesc>,
     assertions: HashMap<QualifiedName, ConstraintDesc>,
 }
 
@@ -547,6 +560,20 @@ impl Catalog for MemoryCatalog {
     }
     fn remove_collation(&mut self, name: &QualifiedName) {
         self.collations.remove(name);
+    }
+    fn put_sequence(&mut self, sequence: SequenceDesc) {
+        self.sequences.insert(sequence.name.clone(), sequence);
+    }
+    fn sequence(&self, name: &QualifiedName) -> Option<&SequenceDesc> {
+        self.sequences.get(name)
+    }
+    fn sequences(&self) -> Vec<&SequenceDesc> {
+        let mut sequences: Vec<&SequenceDesc> = self.sequences.values().collect();
+        sequences.sort_by_key(|s| s.name.to_string());
+        sequences
+    }
+    fn remove_sequence(&mut self, name: &QualifiedName) {
+        self.sequences.remove(name);
     }
     fn remove_domain(&mut self, name: &QualifiedName) {
         self.domains.remove(name);

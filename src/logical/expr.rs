@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use super::{InSet, Subquery};
-use crate::catalog::{MatchType, QualifiedName};
+use crate::catalog::{MatchType, QualifiedName, SequenceDesc};
 use crate::functions::ScalarRef;
 use crate::value::collation::CollationRef;
 use crate::value::{ArithOp, CompOp, DataType, Value, constant_prefix};
@@ -129,6 +129,10 @@ pub enum Expr {
     /// [ISO/IEC 9075-2:2023 §6.46] A `<boolean value expression>` as a
     /// value: True, False, or the null value for Unknown [§4.6.1].
     Truth(Box<Cond>),
+    /// [ISO/IEC 9075-2:2023 §6.14] NEXT VALUE FOR the sequence generator
+    /// its statement saw: a value drawn from its counter for each row, the
+    /// same for every one of the generator in the row \[GR1\].
+    NextValue(Arc<SequenceDesc>),
 }
 
 /// A bound `<search condition>` [X3.135-1986 §5.18].
@@ -204,7 +208,7 @@ impl Expr {
     #[must_use]
     pub fn map_children(self, f: &mut dyn FnMut(Expr) -> Expr) -> Expr {
         match self {
-            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) => self,
+            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::NextValue(_) => self,
             Expr::Neg(x) => Expr::Neg(Box::new(f(*x))),
             Expr::Arith(a, op, b) => {
                 let a = f(*a);
@@ -227,7 +231,7 @@ impl Expr {
     /// reaches them.
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a Expr)) {
         match self {
-            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) => {}
+            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::NextValue(_) => {}
             Expr::Neg(x) | Expr::Cast(x, _) | Expr::Domain(x, _) | Expr::SortKey(x, _) => f(x),
             Expr::Arith(a, _, b) => {
                 f(a);
@@ -246,6 +250,15 @@ impl Expr {
         }
     }
 
+    /// [ISO/IEC 9075-2:2023 §6.14] Whether it, or an expression it is made
+    /// of, draws a value of a sequence generator: evaluated once for each
+    /// row, as its statement's rows are made, never moved nor folded.
+    pub fn draws(&self) -> bool {
+        let mut draws = matches!(self, Expr::NextValue(_));
+        self.for_each_child(&mut |e| draws = draws || e.draws());
+        draws
+    }
+
     /// `e`'s sort key under `collation`: of a constant, the constant key, so
     /// a probe or IN list can use it.
     pub fn sort_key(e: Expr, collation: &CollationRef) -> Expr {
@@ -257,14 +270,15 @@ impl Expr {
 
     /// Whether evaluating this expression can raise a run-time error.
     /// Arithmetic can ([X3.135-1986 §5.9 GR5, GR6]), and so can a function,
-    /// a CAST [ISO/IEC 9075:1992 §6.10], to a domain too, and a scalar subquery with more
-    /// than one row [§7.11 GR1]; a column, a constant, a sort key and monadic minus
+    /// a CAST [ISO/IEC 9075:1992 §6.10], to a domain too, a scalar subquery with more
+    /// than one row [§7.11 GR1], and NEXT VALUE FOR a generator exhausted
+    /// [ISO/IEC 9075-2:2023 §9.35 GR3a]; a column, a constant, a sort key and monadic minus
     /// cannot (exact values never exceed `MAX_EXACT_PRECISION` digits, so
     /// negation cannot overflow), and CASE only through its parts, as a
     /// truth value only through its condition.
     pub fn can_raise(&self) -> bool {
         match self {
-            Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => true,
+            Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) => true,
             Expr::Truth(c) => c.can_raise(),
             Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::Case(..) | Expr::SortKey(..) => {
                 let mut raises = false;

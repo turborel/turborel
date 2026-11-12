@@ -77,7 +77,9 @@ impl Session {
             SchemaStatement::Domain(_)
             | SchemaStatement::Assertion(_)
             | SchemaStatement::AlterDomain(_)
-            | SchemaStatement::Collation(_) => Ok(()),
+            | SchemaStatement::Collation(_)
+            | SchemaStatement::Sequence(_)
+            | SchemaStatement::AlterSequence(_) => Ok(()),
         }
     }
 

@@ -9,6 +9,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER DATABASE](alter-database.md): hand the database on to another owner, or change the replica group's members
 - [ALTER DOMAIN](alter-domain.md): change a domain's default or constraints
 - [ALTER INDEX](alter-index.md): change an index's options
+- [ALTER SEQUENCE](alter-sequence.md): change a sequence generator
 - [ALTER TABLE](alter-table.md): change a base table
 - [ALTER USER](alter-user.md): change a user's password
 - [CANCEL CONNECTION](cancel-connection.md): cancel what a connection of the server runs
@@ -20,6 +21,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE DOMAIN](create-domain.md): define a domain
 - [CREATE INDEX](create-index.md): define an index
 - [CREATE SCHEMA](create-schema.md): define a schema
+- [CREATE SEQUENCE](create-sequence.md): define a sequence generator
 - [CREATE TABLE](create-table.md): define a base table
 - [CREATE USER](create-user.md): define a user
 - [CREATE VIEW](create-view.md): define a viewed table
@@ -35,6 +37,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP DOMAIN](drop-domain.md): drop a domain
 - [DROP INDEX](drop-index.md): drop an index
 - [DROP SCHEMA](drop-schema.md): drop a schema
+- [DROP SEQUENCE](drop-sequence.md): drop a sequence generator
 - [DROP TABLE](drop-table.md): drop a base table
 - [DROP USER](drop-user.md): drop a user
 - [DROP VIEW](drop-view.md): drop a view

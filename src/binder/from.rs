@@ -311,7 +311,8 @@ fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
         Some(outer) => Nesting::Subquery { outer, result: None },
         None => Nesting::Query,
     };
-    let bound = bind_query_expression(b.cx, &d.query.query, &nesting)?;
+    // [ISO/IEC 9075-2:2023 §6.14 SR1] none of its rows draws a value.
+    let bound = bind_query_expression(Context { draws: false, ..b.cx }, &d.query.query, &nesting)?;
     let mut columns: Vec<ColumnDesc> = bound
         .columns
         .iter()

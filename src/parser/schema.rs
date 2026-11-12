@@ -47,7 +47,7 @@ impl Parser {
         //     | <grant statement> | <assertion definition> | <character set definition>
         //     | <collation definition> | <translation definition>
         let (mut domains, mut tables, mut views, mut privileges) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let mut collations = Vec::new();
+        let (mut collations, mut sequences) = (Vec::new(), Vec::new());
         let mut assertions = Vec::new();
         loop {
             if self.is_kw(kw::GRANT) {
@@ -60,7 +60,9 @@ impl Parser {
             if self.character_set_element(&mut collations)? {
                 continue;
             }
-            if matches!(self.peek_at(1), Tok::KeyWord(kw::VIEW)) {
+            if self.next_is_sequence() {
+                sequences.push(self.sequence_definition()?);
+            } else if matches!(self.peek_at(1), Tok::KeyWord(kw::VIEW)) {
                 views.push(self.view_definition()?);
             } else if matches!(self.peek_at(1), Tok::KeyWord(kw::DOMAIN)) {
                 domains.push(self.domain_definition()?);
@@ -71,7 +73,7 @@ impl Parser {
             }
         }
         self.end()?;
-        Ok(Schema { catalog, name, auth, collations, domains, assertions, tables, views, privileges })
+        Ok(Schema { catalog, name, auth, collations, sequences, domains, assertions, tables, views, privileges })
     }
 
     /// [ISO/IEC 9075:1992 §5.4] `<schema name>` ::= \[`<catalog name>` .\]
@@ -126,6 +128,10 @@ impl Parser {
             self.advance();
             self.advance();
             SchemaStatement::Collation(self.collation_definition()?)
+        } else if self.next_is_sequence() && self.is_kw(kw::ALTER) {
+            SchemaStatement::AlterSequence(self.alter_sequence()?)
+        } else if self.next_is_sequence() {
+            SchemaStatement::Sequence(self.sequence_definition()?)
         } else {
             SchemaStatement::Table(self.table_definition()?)
         };
@@ -385,7 +391,8 @@ impl Parser {
 
     /// ON `<object name>`: [ISO/IEC 9075:1992 §11.36] `<object name>` ::=
     /// \[TABLE\] `<table name>` | DOMAIN `<domain name>` | COLLATION
-    /// `<collation name>`, of those implemented: the name, and what it
+    /// `<collation name>` | SEQUENCE `<sequence generator name>` [ISO/IEC
+    /// 9075-2:2023 §12.3], of those implemented: the name, and what it
     /// names. A character set or translation is read, its name left empty.
     fn object_name(&mut self) -> Result<(TableName, PrivilegeObject)> {
         self.expect_kw(kw::ON)?;
@@ -399,6 +406,9 @@ impl Parser {
         }
         if self.accept_kw(kw::COLLATION) {
             return Ok((self.table_name()?, PrivilegeObject::Collation));
+        }
+        if self.accept_word(super::sequences::SEQUENCE) {
+            return Ok((self.table_name()?, PrivilegeObject::Sequence));
         }
         self.accept_kw(kw::TABLE);
         Ok((self.table_name()?, PrivilegeObject::Table))

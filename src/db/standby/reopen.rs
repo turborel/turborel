@@ -142,6 +142,8 @@ impl Database {
             let fresh = State {
                 generation: current.generation.saturating_add(1),
                 tx: Arc::new(Transactions::default()),
+                // Its counters as the log replayed anew sets them.
+                sequences: Arc::default(),
                 // The system tables registered since it was first opened
                 // (a replica's REPLICAS) are the handle's, kept.
                 system: current.system.clone(),

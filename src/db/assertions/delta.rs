@@ -209,7 +209,8 @@ impl State {
                 | Expr::SortKey(..)
                 | Expr::Domain(..)
                 | Expr::Subquery(..)
-                | Expr::Truth(_) => None,
+                | Expr::Truth(_)
+                | Expr::NextValue(_) => None,
             })
             .collect()
     }

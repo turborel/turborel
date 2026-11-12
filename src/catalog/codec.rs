@@ -28,6 +28,7 @@
 //! domain:     name, type, default, constraints (count u32, each a
 //!             constraint), usage (count u32, each grantor (str), grantee
 //!             (0 PUBLIC, or 1 and str), grantable u8)
+//! collation and sequence generator: catalog/codec/objects.rs
 //! view:       name, columns, query (str), names (str), check option u8 (0
 //!             none, 1 cascaded, 2 local), grouped u8, updates (0, or 1, a
 //!             name and positions), reads (count u32, names), horizon,
@@ -43,19 +44,19 @@
 
 use std::collections::BTreeSet;
 
-use crate::value::collation::Pad;
-
 use super::{
-    Actions, CheckLevels, CollationDesc, ColumnDefault, ColumnDesc, ColumnDomain, ConstraintAttributes, ConstraintDesc, ConstraintKind,
-    DomainDesc, ForeignKey, Horizon, IndexDesc, MatchType, PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary,
-    TemporaryKind, Underlying, UsageDesc, ViewDesc,
+    Actions, CheckLevels, ColumnDefault, ColumnDesc, ColumnDomain, ConstraintAttributes, ConstraintDesc, ConstraintKind, DomainDesc,
+    ForeignKey, Horizon, IndexDesc, MatchType, PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind,
+    Underlying, UsageDesc, ViewDesc,
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::codec::{put_value, value};
 use crate::value::datetime::Moment;
 
+mod objects;
 mod types;
+pub(crate) use objects::{collation, put_collation, put_sequence, sequence};
 use types::{data_type, put_type};
 
 /// A count, or a position, as a u32.
@@ -81,12 +82,12 @@ fn get_all<T>(r: &mut Reader<'_>, mut get: impl FnMut(&mut Reader<'_>) -> Result
     (0..r.u32()?).map(|_| get(r)).collect()
 }
 
-fn put_name(out: &mut Vec<u8>, name: &QualifiedName) {
+pub(crate) fn put_name(out: &mut Vec<u8>, name: &QualifiedName) {
     out.put_str(&name.auth);
     out.put_str(&name.ident);
 }
 
-fn qualified(r: &mut Reader<'_>) -> Result<QualifiedName> {
+pub(crate) fn qualified(r: &mut Reader<'_>) -> Result<QualifiedName> {
     Ok(QualifiedName { auth: r.str()?, ident: r.str()? })
 }
 
@@ -339,22 +340,6 @@ pub(crate) fn put_domain(out: &mut Vec<u8>, domain: &DomainDesc) {
     put_all(out, domain.constraints.iter(), put_constraint);
     put_usage(out, &domain.usage);
     put_collation_name(out, domain.collation.as_ref());
-}
-
-/// [ISO/IEC 9075-2:2023 §11.43] `collation` in bytes: its name, base, pad
-/// (0 PAD SPACE, 1 NO PAD) and USAGE grants, as a domain's.
-pub(crate) fn put_collation(out: &mut Vec<u8>, collation: &CollationDesc) {
-    put_name(out, &collation.name);
-    out.put_str(&collation.base);
-    put_flag(out, collation.pad == Pad::None);
-    put_usage(out, &collation.usage);
-}
-
-/// The collation `put_collation` wrote.
-pub(crate) fn collation(r: &mut Reader<'_>) -> Result<CollationDesc> {
-    let (name, base) = (qualified(r)?, r.str()?);
-    let pad = if flag(r)? { Pad::None } else { Pad::Space };
-    Ok(CollationDesc { name, base, pad, usage: usage(r)? })
 }
 
 /// The domain `put_domain` wrote.

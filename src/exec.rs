@@ -36,7 +36,7 @@ use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Entries as IndexEntries, KeyOrder, Probe};
-use crate::logical::{Cond, SortKey, Truth, pushed_conjuncts};
+use crate::logical::{Cond, Expr, SortKey, Truth, pushed_conjuncts};
 use crate::physical::Plan;
 use crate::storage::{Condition, Conjunction, Row, TableStorage};
 use crate::system::SystemRead;
@@ -55,7 +55,7 @@ pub use sort::compare_rows;
 pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State, tx: TxId) -> RowIter {
     sort::sort(keys, rows, db, tx)
 }
-pub use subquery::{DEFAULT_DECORRELATE_AFTER, NoSubqueries, Runner, Subqueries, SubqueryRows};
+pub use subquery::{DEFAULT_DECORRELATE_AFTER, Drawn, NoSubqueries, Runner, Subqueries, SubqueryRows};
 
 /// The rows a plan produces, each read or computed when it is pulled. The
 /// iterator owns what it reads (the state, through an `Arc`, and the
@@ -347,6 +347,13 @@ fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     }
     let Plan::Project { exprs, input, .. } = plan else { return failed(broken("a projection is not one")) };
     let (input, runner) = (execute(*input, db, tx), Runner::new(db, tx));
+    // [ISO/IEC 9075-2:2023 §4.29.1] a row's draws of one generator are one.
+    if exprs.iter().any(Expr::draws) {
+        return Box::new(input.map(move |r| {
+            let drawn = Drawn::new(&runner);
+            r.and_then(|row| exprs.iter().map(|e| eval(e, &row, &drawn)).collect())
+        }));
+    }
     Box::new(input.map(move |r| r.and_then(|row| exprs.iter().map(|e| eval(e, &row, &runner)).collect())))
 }
 
@@ -388,7 +395,7 @@ mod tests {
 
     /// A plan of the one row `row`, a table value constructor of its values.
     fn one_row(row: Row) -> Plan {
-        Plan::Values { rows: vec![row.into_iter().map(crate::logical::Expr::Const).collect()], detail: String::new() }
+        Plan::Values { rows: vec![row.into_iter().map(Expr::Const).collect()], detail: String::new() }
     }
 
     fn code(rows: RowIter) -> Option<Code> {
@@ -485,11 +492,8 @@ mod tests {
     fn columns_outside_the_row_are_reported() {
         let st = Arc::new(state());
         let row = vec![Value::Null];
-        assert_eq!(eval(&crate::logical::Expr::Column(1), &row, &NoSubqueries).err().map(|e| e.code), Some(Code::Api));
-        assert_eq!(
-            eval_cond(&Cond::IsNull(crate::logical::Expr::Column(1), false), &row, &NoSubqueries).err().map(|e| e.code),
-            Some(Code::Api)
-        );
+        assert_eq!(eval(&Expr::Column(1), &row, &NoSubqueries).err().map(|e| e.code), Some(Code::Api));
+        assert_eq!(eval_cond(&Cond::IsNull(Expr::Column(1), false), &row, &NoSubqueries).err().map(|e| e.code), Some(Code::Api));
         let aggregate = Plan::Aggregate {
             groups: vec![1],
             collations: vec![],

@@ -38,7 +38,8 @@ pub(super) enum Place {
 /// reference, in it or in the conditions of a CASE in it.
 fn plain(e: &Expr) -> bool {
     let own = match e {
-        Expr::Subquery(..) | Expr::Outer(..) | Expr::Dynamic(_) => false,
+        // A value drawn for each row, in the row's order [ISO/IEC 9075-2:2023 §6.14 GR1].
+        Expr::Subquery(..) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::NextValue(_) => false,
         Expr::Case(whens, _) => whens.iter().all(|(c, _)| c.subqueries().is_empty()),
         Expr::Truth(c) => c.subqueries().is_empty(),
         Expr::Column(_)
@@ -75,7 +76,8 @@ pub(super) fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
         | Expr::SortKey(..)
         | Expr::Domain(..)
         | Expr::Subquery(..)
-        | Expr::Truth(_) => {
+        | Expr::Truth(_)
+        | Expr::NextValue(_) => {
             if !plain(e) {
                 return None;
             }

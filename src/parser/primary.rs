@@ -2,8 +2,8 @@
 //! 9075:1992 §6.11]: value specifications, columns, set functions [§6.5],
 //! CASE [§6.9], CAST [§6.10], scalar subqueries [§7.11], the string
 //! functions [§6.6, §6.7], EXTRACT [§6.6], the datetime value functions
-//! [§6.8], VALUE of a domain constraint [§6.2], and the \[EXTENSION\]
-//! function call.
+//! [§6.8], VALUE of a domain constraint [§6.2], NEXT VALUE FOR [ISO/IEC
+//! 9075-2:2023 §6.14], and the \[EXTENSION\] function call.
 
 use super::Parser;
 use crate::ast::{
@@ -35,9 +35,7 @@ impl Parser {
             Tok::KeyWord(kw::COUNT | kw::AVG | kw::MAX | kw::MIN | kw::SUM | kw::ANY | kw::SOME) => {
                 Ok(ValueExpression::SetFunction(self.set_function_specification()?))
             }
-            Tok::KeyWord(kw::CASE) | Tok::KeyWord(kw::NULLIF) | Tok::KeyWord(kw::COALESCE) => {
-                Ok(ValueExpression::Case(Box::new(self.case_expression()?)))
-            }
+            Tok::KeyWord(kw::CASE | kw::NULLIF | kw::COALESCE) => Ok(ValueExpression::Case(Box::new(self.case_expression()?))),
             Tok::KeyWord(kw::CAST) => self.cast_specification(),
             Tok::KeyWord(kw::COLLATION) => self.collation_for(),
             Tok::KeyWord(kw::CURRENT_DATE | kw::CURRENT_TIME | kw::CURRENT_TIMESTAMP) => {
@@ -72,6 +70,7 @@ impl Parser {
             // local temporary table.
             Tok::KeyWord(kw::MODULE) => Ok(ValueExpression::Column(self.column_specification()?)),
             Tok::KeyWord(kw::VALUE) => self.value_reference(),
+            Tok::KeyWord(kw::NEXT) => self.next_value_expression(),
             Tok::KeyWord(_) => self.string_function(),
             Tok::Delimiter(_) | Tok::End => Err(self.syntax("expected a <value expression>")),
         }

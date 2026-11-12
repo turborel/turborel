@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use super::alter::Made;
 use super::ddl::{Changed, Dropped};
+use super::sequences::Epochs;
 use super::{Completion, Database, Session, State, long_texts};
 use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlState};
@@ -37,7 +38,8 @@ impl Session {
         let fresh = self.definitions(self.db.snapshot()?)?;
         let mut next = State::clone(&fresh);
         let zone = self.now.get().zone;
-        let (owner, engines, warned, asserted, made) = next.schema(sql, (Some(&self.auth()), zone), None)?;
+        let mut epochs = Epochs::fresh();
+        let (owner, engines, warned, asserted, made) = next.schema(sql, (Some(&self.auth()), zone), (None, &mut epochs))?;
         let next = Arc::new(next);
         let checked = |a: &QualifiedName| {
             next.check_assertion(tx, a)?;
@@ -49,7 +51,7 @@ impl Session {
             made.discard();
             return Err(e);
         }
-        let change = Change::Schema { sql: sql.to_owned(), owner, engines, zone };
+        let change = Change::Schema { sql: sql.to_owned(), owner, engines, zone, epochs: epochs.given() };
         self.stage(&fresh, tx, Changed { next, change, made: Some(made) })?;
         let done = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success };
         let schema = || Parser::new(sql).and_then(|p| p.of_definition().schema()).ok().as_ref().and_then(long_texts::of_schema);
@@ -73,11 +75,12 @@ impl Database {
         let _gate = current.tx.gate.enter();
         self.noted(self.change(|st| {
             let zone = zone.unwrap_or_else(|| st.now(&crate::settings::NONE).zone);
-            let (owner, engines, warned, asserted, _) = st.schema(sql, (implicit, zone), None)?;
+            let mut epochs = Epochs::fresh();
+            let (owner, engines, warned, asserted, _) = st.schema(sql, (implicit, zone), (None, &mut epochs))?;
             let checked = st.check_new_assertions(&asserted)?;
             // Logged before it is published (RULES.md D25), and before the
             // totals its assertions keep, whose tables it makes.
-            let logged = st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines, zone });
+            let logged = st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines, zone, epochs: epochs.given() });
             if let Some((probe, tx)) = checked {
                 if logged.is_ok() { probe.commit(&tx)? } else { probe.rollback(&tx)? }
             }
@@ -93,18 +96,20 @@ impl State {
     /// Makes the `<schema definition>` `sql` again, as `owner` made it, its
     /// datetimes of `zone`: each table placed in the engine `engines`
     /// gives it, and given what `made` holds for it, if given, so a
-    /// transaction's rows written in it are kept.
+    /// transaction's rows written in it are kept; each sequence generator
+    /// of the epoch `epochs` logged.
     pub(super) fn reschema(
         &mut self,
         (sql, owner, zone): (&str, &str, i16),
         engines: &[(String, String)],
         made: Option<&Made>,
+        epochs: &[u64],
     ) -> Result<Dropped> {
         let schema = Parser::new(sql)?.of_definition().schema()?.name;
         for (ident, engine) in engines {
             self.placement.insert(QualifiedName { auth: schema.clone(), ident: ident.clone() }, engine.clone());
         }
-        self.schema(sql, (Some(owner), zone), made)?;
+        self.schema(sql, (Some(owner), zone), (made, &mut Epochs::logged(epochs)))?;
         Ok(Dropped::default())
     }
 }

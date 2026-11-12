@@ -317,6 +317,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::Schema { statement: SchemaStatement::AlterDomain(_), .. }
         | SqlStatement::Schema { statement: SchemaStatement::Assertion(_), .. }
         | SqlStatement::Schema { statement: SchemaStatement::Collation(_), .. }
+        | SqlStatement::Schema { statement: SchemaStatement::Sequence(_) | SchemaStatement::AlterSequence(_), .. }
         | SqlStatement::Drop { .. }
         | SqlStatement::Index(_)
         | SqlStatement::Close(_)
@@ -374,6 +375,8 @@ fn schema_command(s: &SchemaStatement) -> &'static str {
         SchemaStatement::View(_) => "CREATE VIEW",
         SchemaStatement::Grant(_) => "GRANT",
         SchemaStatement::Revoke(_) => "REVOKE",
+        SchemaStatement::Sequence(_) => "CREATE SEQUENCE",
+        SchemaStatement::AlterSequence(_) => "ALTER SEQUENCE",
     }
 }
 
@@ -394,6 +397,7 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::Drop { object: DropObject::Domain(_), .. } => "DROP DOMAIN",
         SqlStatement::Drop { object: DropObject::Assertion(_), .. } => "DROP ASSERTION",
         SqlStatement::Drop { object: DropObject::Collation(_), .. } => "DROP COLLATION",
+        SqlStatement::Drop { object: DropObject::Sequence(_), .. } => "DROP SEQUENCE",
         SqlStatement::Fetch { .. } => "FETCH",
         SqlStatement::GetDiagnostics(_) => "GET DIAGNOSTICS",
         SqlStatement::Dynamic(d) => dynamic::command(d),

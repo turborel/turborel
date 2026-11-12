@@ -62,7 +62,7 @@ None: a user revokes only what it granted.
 |---|---|---|
 | 2A000 | -102 | No `<drop behavior>` is written, or the statement is not written as the synopsis shows |
 | 2A000 | -103 | A rule above is broken |
-| 2B000 | -103 | RESTRICT, and a column or domain of a schema left without USAGE is of the collation |
+| 2B000 | -103 | RESTRICT, and a column or domain of a schema left without USAGE is of the collation, or a grant of USAGE on the sequence generator would be abandoned |
 | 23000 | -201 | A constraint no longer holds of the rows of a table reverted |
 | 25000 | -917 | The transaction is READ ONLY |
 | 01006 | 0 | Not an error: a privilege named was not granted, and is not taken |
@@ -142,7 +142,8 @@ N compares by the default collation now, so 'bob' is not Bob.
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.37. Of a collation, ISO/IEC 9075-2:2023 §12.7,
-as SQL-92 has no rule for a column of one. SQL-86 has no REVOKE.
+as SQL-92 has no rule for a column of one; of a sequence generator, which
+SQL-92 lacks, the same. SQL-86 has no REVOKE.
 
 ## SEE ALSO
 

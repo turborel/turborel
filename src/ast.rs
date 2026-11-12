@@ -32,6 +32,7 @@ mod dynamic;
 mod expression;
 mod query;
 mod schema;
+mod sequences;
 mod users;
 
 pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
@@ -56,6 +57,7 @@ pub use schema::{
     PrivilegeDefinition, PrivilegeObject, References, ReferentialAction, RevokeStatement, Schema, SchemaStatement, TableConstraint,
     TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage, Temporary, TemporaryKind, TypeName, ViewDefinition,
 };
+pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
 pub use users::UserStatement;
 
 // ---------------------------------------------------------------------------
@@ -471,6 +473,8 @@ pub enum DropObject {
     Assertion(TableName),
     /// A collation [ISO/IEC 9075-2:2023 §11.44].
     Collation(TableName),
+    /// A sequence generator [ISO/IEC 9075-2:2023 §11.74].
+    Sequence(TableName),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
     /// schema name>` [§5.4].
     Schema {
@@ -488,6 +492,7 @@ impl DropObject {
     pub fn at(&self) -> usize {
         match self {
             DropObject::Collation(name)
+            | DropObject::Sequence(name)
             | DropObject::Table(name)
             | DropObject::View(name)
             | DropObject::Domain(name)

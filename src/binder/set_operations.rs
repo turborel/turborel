@@ -52,7 +52,10 @@ pub(super) fn bind_query_expression(cx: Context<'_>, q: &QueryExpression, nestin
 /// It breaks a rule of its query.
 pub fn bind_insert_query(cx: Context<'_>, query: &QueryExpression, columns: &[ObjectColumn]) -> Result<Bound> {
     let now = cx.now;
-    let bound = bind_query_expression(cx, query, &Nesting::Source { columns })?;
+    // [ISO/IEC 9075-2:2023 §6.14 SR1a iii, SR1c] the select list of its
+    // <from subquery>, or the rows of its <from constructor>, draw values.
+    let draws = matches!(query, QueryExpression::Values(_)) || query.spec().is_some();
+    let bound = bind_query_expression(Context { draws, ..cx }, query, &Nesting::Source { columns })?;
     // A time or timestamp without time zone, of the session's displacement
     // as a column WITH TIME ZONE takes it [§6.1 GR5].
     let wanted =
@@ -84,6 +87,8 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
         Nesting::Subquery { outer, .. } => (Some(*outer), None),
     };
     let binder = Binder::new(cx, outer, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
+    // [ISO/IEC 9075-2:2023 §6.14 SR1c] an INSERT's rows draw values.
+    binder.drawing.set(binder.draws);
     let taken = binder.dynamic_types(rows, objects)?;
     let mut bound: Vec<BoundRow> = Vec::new();
     for row in rows {

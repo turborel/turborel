@@ -7,10 +7,8 @@ Finished work leaves this file, and git keeps its history.
 
 Code never cites this file (R-DOC-5).
 
-[Next](#next) · [SQL](#sql) · [Types and literals](#types-and-literals) ·
-[Expressions and functions](#expressions-and-functions) ·
-[Tables and schemas](#tables-and-schemas) · [Queries](#queries) ·
-[Changing data](#changing-data) ·
+[Next](#next) · [SQL](#sql) · [Tables and schemas](#tables-and-schemas) ·
+[Queries](#queries) · [Changing data](#changing-data) ·
 [Triggers, routines and roles](#triggers-routines-and-roles) ·
 [Periods and temporal tables](#periods-and-temporal-tables) · [JSON](#json) ·
 [Query processing](#query-processing) ·
@@ -34,18 +32,15 @@ each group.
 
 ### Tables and schemas
 
-- Sequence generators (T176, T177) [§4.29, §6.14, §11.72 to §11.74]. CREATE,
-  ALTER and DROP SEQUENCE and NEXT VALUE FOR. A value given out is never
-  given again, even by a transaction rolled back, so a sequence's state is
-  logged apart from the transaction that asked.
 - Identity columns (T174, T178) and generated columns (T175) [§4.17.12,
   §4.17.13, §11.4], with ALTER TABLE changing or dropping them (F384 to
   F386) [§11.20, §11.22]. An identity column draws from a sequence
-  generator of its own, so sequences come first.
+  generator of its own (RULES.md D62).
 - TRUNCATE TABLE (F200, F202) [§14.10]. It removes every row at once
   rather than one by one, and RESTART IDENTITY needs identity columns.
 - CREATE TABLE AS (T172) and CREATE TABLE LIKE (T171, T173) [§11.3]. LIKE
   copies identity, generation and defaults when asked, so it follows them.
+  The query of CREATE TABLE AS may draw NEXT VALUE FOR [§6.14 SR1a ii].
 - UNIQUE NULLS DISTINCT and NULLS NOT DISTINCT (F292) [§8.11, §11.7]. Nulls
   are always distinct today, so a key cannot refuse a second null.
 

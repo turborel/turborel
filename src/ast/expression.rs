@@ -201,6 +201,14 @@ pub enum ValueExpression {
     /// [ISO/IEC 9075-2:2023 §6.4] `<current collation specification>` ::=
     /// COLLATION FOR ( `<string value expression>` ).
     CollationFor(Box<ValueExpression>),
+    /// [ISO/IEC 9075-2:2023 §6.14] `<next value expression>` ::= NEXT
+    /// VALUE FOR `<sequence generator name>`.
+    NextValue {
+        /// The `<sequence generator name>`.
+        name: TableName,
+        /// Where it begins in the statement.
+        at: usize,
+    },
     /// [ISO/IEC 9075:1992 §6.9] A `<case expression>`.
     Case(Box<CaseExpression>),
     /// [ISO/IEC 9075-2:2023 §6.13] CAST (`<cast operand>` AS `<cast
@@ -372,7 +380,11 @@ impl ValueExpression {
     /// values its conditions compare; not those of a subquery.
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         match self {
-            ValueExpression::Value(_) | ValueExpression::Column(_) | ValueExpression::Subquery(_) | ValueExpression::Datetime(_) => {}
+            ValueExpression::Value(_)
+            | ValueExpression::Column(_)
+            | ValueExpression::Subquery(_)
+            | ValueExpression::Datetime(_)
+            | ValueExpression::NextValue { .. } => {}
             ValueExpression::Extract { source, .. } => f(source),
             ValueExpression::Difference { minuend, subtrahend, .. } => {
                 f(minuend);

@@ -39,6 +39,7 @@ mod primary;
 mod query;
 mod regex;
 mod schema;
+mod sequences;
 mod served;
 pub(crate) use served::CANCEL;
 mod session;

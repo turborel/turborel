@@ -165,16 +165,25 @@ impl Binder<'_> {
             ValueExpression::Collated(inner, _) => self.collated_value(inner, scope),
             ValueExpression::Monadic(sign, inner) => self.monadic(*sign, inner, scope),
             ValueExpression::Dyadic(left, op, right) => self.dyadic(left, *op, right, scope),
-            ValueExpression::SetFunction(sf) => self.set_function(sf, scope).or_at(sf.at),
-            ValueExpression::Call { name, args, at } => self.call(name, args, scope).or_at(*at),
+            // [ISO/IEC 9075-2:2023 §6.14 SR2] none draws a value in a set
+            // function, a CASE or a search condition.
+            ValueExpression::SetFunction(sf) => self.drawing(false, || self.set_function(sf, scope)).or_at(sf.at),
+            ValueExpression::Call { name, args, at } => {
+                let aggregate = self.db.functions.aggregate(name).is_some();
+                self.drawing(self.drawing.get() && !aggregate, || self.call(name, args, scope)).or_at(*at)
+            }
             ValueExpression::Function { name, args, at } => self.function(name, args, scope).or_at(*at),
-            ValueExpression::Case(case) => self.case(case, scope),
+            ValueExpression::Case(case) => self.drawing(false, || self.case(case, scope)),
             ValueExpression::Cast { operand, target, format, at } => {
                 self.cast(operand.as_deref(), target, format.as_deref(), scope).or_at(*at)
             }
             ValueExpression::Subquery(s) => self.scalar_subquery(s, scope),
             // [ISO/IEC 9075-2:2023 §6.46 SR1] A truth value, of type BOOLEAN.
-            ValueExpression::Boolean(c) => Ok((Expr::Truth(Box::new(self.search_condition(c, scope)?)), DataType::Boolean)),
+            ValueExpression::Boolean(c) => {
+                let cond = self.drawing(false, || self.search_condition(c, scope))?;
+                Ok((Expr::Truth(Box::new(cond)), DataType::Boolean))
+            }
+            ValueExpression::NextValue { name, at } => self.next_value(name).or_at(*at),
             ValueExpression::Datetime(f) => self.datetime_function(*f),
             ValueExpression::Extract { field, source, at } => self.extract(*field, source, scope).or_at(*at),
             ValueExpression::Difference { minuend, subtrahend, qualifier, at } => {

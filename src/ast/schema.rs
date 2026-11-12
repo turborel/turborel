@@ -1,7 +1,9 @@
 //! Abstract syntax of the schema definition language [X3.135-1986 §6;
 //! ISO/IEC 9075:1992 §11].
 
-use super::{DatetimeFunction, DropBehavior, Literal, QueryExpression, SearchCondition, TableName, UserFunction};
+use super::{
+    AlterSequence, DatetimeFunction, DropBehavior, Literal, QueryExpression, SearchCondition, SequenceDefinition, TableName, UserFunction,
+};
 use crate::value::DataType;
 use crate::value::collation::Pad;
 
@@ -11,7 +13,8 @@ use crate::value::collation::Pad;
 /// authorization identifier>` | `<schema name>` AUTHORIZATION `<schema
 /// authorization identifier>`
 /// `<schema element>` ::= `<domain definition>` | `<table definition>` | `<view definition>`
-///   | `<grant statement>` | `<assertion definition>` | `<collation definition>`; a character set
+///   | `<grant statement>` | `<assertion definition>` | `<collation definition>`
+///   | `<sequence generator definition>`; a character set
 ///   or translation definition is read, then refused.
 #[derive(Debug)]
 pub struct Schema {
@@ -25,6 +28,9 @@ pub struct Schema {
     pub auth: Option<String>,
     /// The `<collation definition>`s, in order [ISO/IEC 9075-2:2023 §11.43].
     pub collations: Vec<CollationDefinition>,
+    /// The `<sequence generator definition>`s, in order [ISO/IEC
+    /// 9075-2:2023 §11.72].
+    pub sequences: Vec<SequenceDefinition>,
     /// The `<domain definition>`s, in order [ISO/IEC 9075:1992 §11.21].
     pub domains: Vec<DomainDefinition>,
     /// The `<assertion definition>`s, in order [§11.34].
@@ -61,6 +67,11 @@ pub enum SchemaStatement {
     Assertion(AssertionDefinition),
     /// A `<collation definition>` [ISO/IEC 9075-2:2023 §11.43].
     Collation(CollationDefinition),
+    /// A `<sequence generator definition>` [ISO/IEC 9075-2:2023 §11.72].
+    Sequence(SequenceDefinition),
+    /// An `<alter sequence generator statement>` [ISO/IEC 9075-2:2023
+    /// §11.73].
+    AlterSequence(AlterSequence),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION
@@ -85,6 +96,8 @@ pub enum PrivilegeObject {
     Domain,
     /// A collation [ISO/IEC 9075-2:2023 §11.43].
     Collation,
+    /// A sequence generator [ISO/IEC 9075-2:2023 §11.72].
+    Sequence,
 }
 
 /// [ISO/IEC 9075:1992 §11.34] `<assertion definition>` ::= CREATE ASSERTION

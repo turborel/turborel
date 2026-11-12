@@ -16,10 +16,10 @@ use std::sync::Arc;
 use super::batch::{Keyed, KeyedBatches, keyed, whole_width};
 use super::partition::{Partitioner, merge_all, numbered, unnumbered};
 use super::work::{Bag, ENTRY_BYTES, Work};
-use super::{RowIter, Runner, batched, broken, eval, execute, failed};
+use super::{Drawn, RowIter, Runner, batched, broken, eval, execute, failed};
 use crate::db::State;
 use crate::error::Result;
-use crate::logical::SetOp;
+use crate::logical::{Expr, SetOp};
 use crate::physical::Plan;
 use crate::spill::{Records, SpillRun, norm_row};
 use crate::storage::Row;
@@ -33,7 +33,12 @@ use crate::txn::TxId;
 pub(super) fn values(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::Values { rows, .. } = plan else { return failed(broken("a table value constructor is not one")) };
     let (empty, runner) = (Vec::new(), Runner::new(db, tx));
-    match rows.iter().map(|r| r.iter().map(|e| eval(e, &empty, &runner)).collect::<Result<Row>>()).collect::<Result<Vec<Row>>>() {
+    // [ISO/IEC 9075-2:2023 §4.29.1] a row's draws of one generator are one.
+    let row = |r: &Vec<Expr>| {
+        let drawn = Drawn::new(&runner);
+        r.iter().map(|e| eval(e, &empty, &drawn)).collect::<Result<Row>>()
+    };
+    match rows.iter().map(row).collect::<Result<Vec<Row>>>() {
         Ok(found) => Box::new(found.into_iter().map(Ok)),
         Err(e) => failed(e),
     }

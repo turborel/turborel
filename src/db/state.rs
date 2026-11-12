@@ -117,6 +117,9 @@ pub struct State {
     /// The sessions' instances of its temporary tables, shared by every
     /// snapshot (`db/temporary.rs`).
     pub(crate) temporaries: Arc<super::temporary::Uses>,
+    /// The counters of its sequence generators, shared by every snapshot
+    /// (`db/sequences/counters.rs`, RULES.md D62).
+    pub(crate) sequences: Arc<super::sequences::Counters>,
     /// Where its operators spill, shared by every snapshot (`spill.rs`).
     pub(crate) work: Arc<WorkAreas>,
     /// Its background work's jobs, shared by every snapshot (`threads.rs`,
@@ -175,6 +178,7 @@ impl State {
             memory: Arc::clone(&memory),
             pages: MemoryPages::new(crate::db::POOL_BYTES),
             temporaries: Arc::default(),
+            sequences: Arc::default(),
             work: Arc::new(WorkAreas::new(Arc::clone(&memory))),
             jobs: Arc::default(),
             ahead: crate::disk::buffer::AheadReader::new(),
@@ -452,7 +456,12 @@ mod tests {
     /// open transaction, which is returned.
     fn with_open_insert() -> (State, Txn, QualifiedName) {
         let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
-        st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0), None).unwrap();
+        st.schema(
+            "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)",
+            (None, 0),
+            (None, &mut crate::db::sequences::Epochs::fresh()),
+        )
+        .unwrap();
         let name = QualifiedName { auth: "A".into(), ident: "T".into() };
         let tx = st.begin();
         st.insert_row(&tx, &name, &vec![Value::Exact(Decimal::new(1, 0))]).unwrap();

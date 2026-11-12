@@ -25,7 +25,10 @@
 //! its key and entry, and one that spilled as its area's bytes; a
 //! subquery's with no outer references always, as it is its only run.
 
+mod drawn;
 mod quantified;
+
+pub use drawn::Drawn;
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::cmp::Ordering;
@@ -35,6 +38,7 @@ use std::sync::{Arc, Mutex};
 use super::join::{Built, Full, Rescanned, Right};
 use super::work::{Bag, ENTRY_BYTES, Work};
 use super::{RowIter, broken, execute};
+use crate::catalog::SequenceDesc;
 use crate::db::State;
 use crate::error::{Result, Warnings};
 use crate::logical::{Decorrelated, LogicalPlan, Subquery};
@@ -138,6 +142,17 @@ pub trait Subqueries {
     /// As `value::like`.
     fn like(&self, value: &str, pattern: &str, escape: Option<char>) -> Result<bool> {
         crate::value::like(value, pattern, escape)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.14 GR1, §9.35] The next value of `seq`: a
+    /// runner's drawn from its counter; by default none, as no value is
+    /// drawn where no statement runs.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 by default; a runner's, as `State::next_value`.
+    fn next_value(&self, seq: &SequenceDesc) -> Result<Value> {
+        Err(broken(&format!("NEXT VALUE FOR {} where no value is drawn", seq.name)))
     }
 }
 
@@ -349,6 +364,11 @@ impl Subqueries for Runner {
             Ok(mut patterns) => patterns.matches(value, pattern, escape),
             Err(_) => crate::value::like(value, pattern, escape),
         }
+    }
+
+    /// Drawn from its counter, which every snapshot shares.
+    fn next_value(&self, seq: &SequenceDesc) -> Result<Value> {
+        self.db.next_value(seq)
     }
 }
 

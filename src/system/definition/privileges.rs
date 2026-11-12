@@ -178,8 +178,11 @@ fn usage_privileges_columns() -> Vec<ColumnDesc> {
 }
 
 /// USAGE on the character set and collation SQL_TEXT (`definition::usage`);
-/// and on each domain, its owner's, grantable as [§11.21 GR4] says
-/// (`State::owner_grantable`), and each granted.
+/// on each domain, its owner's, grantable as [§11.21 GR4] says
+/// (`State::owner_grantable`), and each granted; on each collation, its
+/// owner's [ISO/IEC 9075-2:2023 §11.43 GR2], and each granted; and on each
+/// sequence generator, its owner's, grantable [§11.72 GR2], and each
+/// granted.
 ///
 /// # Errors
 ///
@@ -192,9 +195,11 @@ fn usage_privileges(seen: &Seen<'_>) -> Result<Vec<Row>> {
             [vec![text(SYSTEM_GRANTOR), text(PUBLIC)], ids(&catalog, &sql_text()).to_vec(), vec![text(kind), yes(grantable)]].concat()
         })
         .collect();
-    let collation = |name: &QualifiedName, grantor: &str, grantee: &str, grantable: bool| {
-        [vec![text(grantor), text(grantee)], ids(&catalog, name).to_vec(), vec![text("COLLATION"), yes(grantable)]].concat()
+    let object = |(name, kind): (&QualifiedName, &str), grantor: &str, grantee: &str, grantable: bool| {
+        [vec![text(grantor), text(grantee)], ids(&catalog, name).to_vec(), vec![text(kind), yes(grantable)]].concat()
     };
+    let collation =
+        |name: &QualifiedName, grantor: &str, grantee: &str, grantable: bool| object((name, "COLLATION"), grantor, grantee, grantable);
     // The built-ins, as SQL_TEXT, PUBLIC's.
     for name in seen.state.collations.keys().filter(|n| **n != sql_text().ident) {
         let built = QualifiedName { auth: sql_text().auth, ident: name.clone() };
@@ -203,6 +208,11 @@ fn usage_privileges(seen: &Seen<'_>) -> Result<Vec<Row>> {
     for c in seen.state.catalog.collations() {
         rows.push(collation(&c.name, SYSTEM_GRANTOR, owner_of(&*seen.state.catalog, &c.name.auth), true));
         rows.extend(c.usage.iter().map(|u| collation(&c.name, &u.grantor, u.grantee.as_deref().unwrap_or(PUBLIC), u.grantable)));
+    }
+    for s in seen.state.catalog.sequences() {
+        let named = (&s.name, "SEQUENCE");
+        rows.push(object(named, SYSTEM_GRANTOR, owner_of(&*seen.state.catalog, &s.name.auth), true));
+        rows.extend(s.usage.iter().map(|u| object(named, &u.grantor, u.grantee.as_deref().unwrap_or(PUBLIC), u.grantable)));
     }
     for d in seen.state.catalog.domains() {
         let row = |grantor: &str, grantee: &str, grantable: bool| {

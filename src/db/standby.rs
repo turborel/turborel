@@ -186,6 +186,7 @@ fn scope(record: &Record) -> Scope {
         | Change::User { .. }
         | Change::Owner { .. }
         | Change::Reconfiguration { .. }
+        | Change::Sequence { .. }
         | Change::Checkpoint
         | Change::Stale { .. } => false,
     };

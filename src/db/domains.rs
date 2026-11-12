@@ -16,6 +16,7 @@ use super::collations::is_made;
 use super::ddl::Dropped;
 use super::defaults::default_of;
 use super::definitions::Defined;
+use super::sequences::Epochs;
 use super::{State, rule};
 use crate::ast::{AlterDomain, AlterDomainAction, DomainDefinition, Schema, TableConstraint, TableConstraintKind, TypeName};
 use crate::binder::qualify;
@@ -554,13 +555,14 @@ fn casts_any(t: &TableDesc, qn: &QualifiedName) -> bool {
 }
 
 impl State {
-    /// [ISO/IEC 9075:1992 §11.21; ISO/IEC 9075-2:2023 §11.43] The collations
-    /// and domains of `<schema>` `s`, owned by `owner`, its datetimes of
-    /// `zone` where they write no displacement, made first, which its
-    /// tables' columns may be of: a failing `<schema>` is discarded whole
-    /// (`Database::change`).
-    pub(super) fn schema_domains(&mut self, s: &Schema, owner: &str, zone: i16) -> Result<()> {
-        if s.domains.is_empty() && s.collations.is_empty() {
+    /// [ISO/IEC 9075:1992 §11.21; ISO/IEC 9075-2:2023 §11.43, §11.72] The
+    /// collations, sequence generators and domains of `<schema>` `s`, owned
+    /// by `owner`, its datetimes of `zone` where they write no
+    /// displacement, made first, which its tables' columns may be of; each
+    /// sequence generator's epoch from `epochs`: a failing `<schema>` is
+    /// discarded whole (`Database::change`).
+    pub(super) fn schema_domains(&mut self, s: &Schema, (owner, zone): (&str, i16), epochs: &mut Epochs) -> Result<()> {
+        if s.domains.is_empty() && s.collations.is_empty() && s.sequences.is_empty() {
             return Ok(());
         }
         let mut catalog = self.catalog.duplicate();
@@ -568,6 +570,9 @@ impl State {
         self.catalog = Arc::from(catalog);
         for c in &s.collations {
             self.create_collation((owner, &s.name), c)?;
+        }
+        for d in &s.sequences {
+            self.schema_sequence(&s.name, d, epochs)?;
         }
         for d in &s.domains {
             self.make_domain((&s.name, zone), d, false)?;

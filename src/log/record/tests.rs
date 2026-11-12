@@ -26,7 +26,7 @@ fn edge_row() -> Row {
 
 /// One record of every kind.
 fn every_kind() -> Vec<Record> {
-    let change = [
+    let changes = [
         Change::Insert { table: table(), generation: 0, row: 7, after: edge_row() },
         Change::Update { table: table(), generation: u32::MAX, row: u64::MAX, before: vec![], after: edge_row() },
         Change::Delete { table: table(), generation: 7, row: 0, before: edge_row() },
@@ -35,20 +35,6 @@ fn every_kind() -> Vec<Record> {
         Change::Checkpoint,
         Change::StatementUndone { from: Lsn(u64::MAX) },
         Change::Stale { through: Lsn(9), index: "I".into(), row: u64::MAX, key: edge_row() },
-        Change::Schema {
-            sql: "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)".into(),
-            owner: "A".into(),
-            engines: vec![("T".into(), "rowstore".into())],
-            zone: -330,
-        },
-        Change::Defined {
-            auth: "A".into(),
-            schema: "B".into(),
-            zone: 780,
-            sql: "CREATE TABLE T (K INTEGER)".into(),
-            placed: Some(("rowstore".into(), u32::MAX)),
-        },
-        Change::Defined { auth: String::new(), schema: String::new(), zone: 0, sql: "GRANT SELECT ON T TO B".into(), placed: None },
         Change::CreateIndex {
             name: "I".into(),
             table: table(),
@@ -63,6 +49,8 @@ fn every_kind() -> Vec<Record> {
         Change::Drop { object: DropTarget::Schema("AUTH".into()), cascade: true },
         Change::Drop { object: DropTarget::Domain(table()), cascade: false },
         Change::Drop { object: DropTarget::Assertion(table()), cascade: true },
+        Change::Drop { object: DropTarget::Collation(table()), cascade: false },
+        Change::Drop { object: DropTarget::Sequence(table()), cascade: true },
         Change::AlterTable { table: table(), action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(), schema: "S".into(), zone: -779 },
         Change::Setting { name: "LOCKS.WAIT".into(), value: Some(Value::Char("ON".into())) },
         Change::Setting { name: "OPTIMIZER.MAX_PASSES".into(), value: None },
@@ -71,8 +59,41 @@ fn every_kind() -> Vec<Record> {
         Change::User { name: "ANN".into(), verifier: None },
         Change::Owner { name: "ANN".into() },
         Change::Reconfiguration { members: "1=db1:7423,2=db2:7423".into() },
+        Change::Sequence { name: table(), epoch: u64::MAX, resume: i128::MIN },
+        Change::Sequence { name: table(), epoch: 1, resume: i128::MAX },
     ];
-    change.into_iter().enumerate().map(|(n, change)| Record { tx: u64::try_from(n).unwrap().checked_add(1).unwrap(), change }).collect()
+    let all = changes.into_iter().chain(definitions());
+    all.enumerate().map(|(n, change)| Record { tx: u64::try_from(n).unwrap().checked_add(1).unwrap(), change }).collect()
+}
+
+/// One record of each schema definition: a `<schema>`, and statements of
+/// a transaction, with the epochs of sequence generators they gave.
+fn definitions() -> Vec<Change> {
+    vec![
+        Change::Schema {
+            sql: "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)".into(),
+            owner: "A".into(),
+            engines: vec![("T".into(), "rowstore".into())],
+            zone: -330,
+            epochs: vec![1, u64::MAX],
+        },
+        Change::Defined {
+            auth: "A".into(),
+            schema: "B".into(),
+            zone: 780,
+            sql: "CREATE TABLE T (K INTEGER)".into(),
+            placed: Some(("rowstore".into(), u32::MAX)),
+            epochs: vec![7],
+        },
+        Change::Defined {
+            auth: String::new(),
+            schema: String::new(),
+            zone: 0,
+            sql: "GRANT SELECT ON T TO B".into(),
+            placed: None,
+            epochs: vec![],
+        },
+    ]
 }
 
 /// Verifies: [DESIGN] RULES.md D25, log records: every kind of record,
@@ -129,7 +150,9 @@ fn what_is_not_a_record_is_refused() {
     let tag = insert.len() - 1;
     insert[tag] = 77;
     assert_eq!(corrupt(&insert), Some(Code::Corrupt), "an unknown kind of value");
-    let schema = Record { tx: 1, change: Change::Schema { sql: "ab".into(), owner: String::new(), engines: vec![], zone: 0 } }.encode();
+    let schema =
+        Record { tx: 1, change: Change::Schema { sql: "ab".into(), owner: String::new(), engines: vec![], zone: 0, epochs: vec![] } }
+            .encode();
     let mut not_utf8 = schema.clone();
     // "ab", then its engines' count, then its displacement.
     let last = not_utf8.len() - 5 - 16;

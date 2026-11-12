@@ -215,7 +215,8 @@ fn expr_subqueries<'e>(e: &'e Expr, out: &mut Vec<&'e Subquery>) {
         | Expr::Outer(..)
         | Expr::Dynamic(_)
         | Expr::Cast(..)
-        | Expr::SortKey(..) => {}
+        | Expr::SortKey(..)
+        | Expr::NextValue(_) => {}
     }
     e.for_each_child(&mut |child| expr_subqueries(child, out));
 }

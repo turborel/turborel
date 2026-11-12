@@ -9,6 +9,7 @@ use super::alter::Made;
 use super::constraints::{self, Pending, Within};
 use super::defaults::default_of;
 use super::indexes::IndexSpec;
+use super::sequences::Epochs;
 use super::{Completion, Database, State, api};
 use crate::ast::{Action, PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
 use crate::binder::{no_column, qualify};
@@ -164,7 +165,12 @@ impl State {
     /// Returns its owner, and each table it created, with the engine it was
     /// placed in, for the log (RULES.md D25); and whether a privilege it
     /// would grant was not [ISO/IEC 9075:1992 §11.36 GR14, GR15].
-    pub(super) fn schema(&mut self, sql: &str, (implicit, zone): (Option<&str>, i16), made: Option<&Made>) -> Result<SchemaMade> {
+    pub(super) fn schema(
+        &mut self,
+        sql: &str,
+        (implicit, zone): (Option<&str>, i16),
+        (made, epochs): (Option<&Made>, &mut Epochs),
+    ) -> Result<SchemaMade> {
         let ours = self.catalog_name();
         let s = Parser::new(sql)?.in_catalog(&ours).schema()?;
         if let Some(other) = s.catalog.as_ref().filter(|c| **c != ours) {
@@ -192,7 +198,7 @@ impl State {
                 s.name
             ));
         }
-        self.schema_domains(&s, &owner, zone)?;
+        self.schema_domains(&s, (&owner, zone), epochs)?;
         let (mut descs, mut pending): (Vec<TableDesc>, Vec<Vec<Pending>>) = (Vec::new(), Vec::new());
         for table in &s.tables {
             // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the table it defines.
@@ -227,23 +233,24 @@ impl State {
     }
 
     /// The grants of `<schema>` `s`, by its owner `owner`: each table's
-    /// privileges granted, and whether any was not; USAGE on a domain is
-    /// granted in its descriptor [§11.36].
+    /// privileges granted, and whether any was not; USAGE on a domain,
+    /// collation or sequence generator is granted in its descriptor
+    /// [§11.36].
     fn schema_grants(&mut self, s: &Schema, owner: &str) -> Result<Vec<(Vec<PrivilegeDesc>, bool)>> {
         let mut granted = Vec::new();
         for p in &s.privileges {
-            if p.object == PrivilegeObject::Table {
-                // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the table it names.
-                let about = qualify(&p.table, &s.name).parts();
-                granted.push(self.describe_grant((owner, &s.name), p).map_err(|e| e.or_about_table(about)).or_at(p.table.at)?);
-            } else {
-                let done = if p.object == PrivilegeObject::Domain {
-                    self.grant_usage(owner, &s.name, p)
-                } else {
-                    self.grant_collation_usage(owner, p)
-                };
-                granted.push((Vec::new(), done.or_at(p.table.at)?.completion != Completion::Success));
-            }
+            let done = match p.object {
+                PrivilegeObject::Table => {
+                    // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the table it names.
+                    let about = qualify(&p.table, &s.name).parts();
+                    granted.push(self.describe_grant((owner, &s.name), p).map_err(|e| e.or_about_table(about)).or_at(p.table.at)?);
+                    continue;
+                }
+                PrivilegeObject::Domain => self.grant_usage(owner, &s.name, p),
+                PrivilegeObject::Collation => self.grant_collation_usage(owner, p),
+                PrivilegeObject::Sequence => self.grant_sequence_usage(owner, &s.name, p),
+            };
+            granted.push((Vec::new(), done.or_at(p.table.at)?.completion != Completion::Success));
         }
         Ok(granted)
     }
@@ -552,7 +559,9 @@ mod tests {
         st.settings.set("TABLES.UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
         assert_eq!(st.check_new_objects(&[table(ROW_STORE, true)]).err().map(|e| e.code), Some(Code::Api));
         assert_eq!(
-            st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0), None).err().map(|e| e.code),
+            st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0), (None, &mut Epochs::fresh()))
+                .err()
+                .map(|e| e.code),
             Some(Code::Api)
         );
         assert!(!st.catalog.schema_exists("A"), "the refused <schema> left no trace");

@@ -14,15 +14,15 @@
 //! commit (4):  commit timestamp u64
 //! abort (5):   (nothing)
 //! schema (6):  owner | the `<schema>` text | tables (count u32, each:
-//!              identifier, engine) | zone
+//!              identifier, engine) | zone | epochs
 //! create index (7): name | table | columns (count u32, names) | method |
 //!              options
 //! undone (8):  position u64 of the statement's first change
 //! checkpoint (9): (nothing)
 //! drop index (10): name
-//! drop (11):   object u8 (1 table, 2 view, 3 schema, 4 domain, 5 assertion)
-//!              | table, view, domain or assertion, or the schema's name |
-//!              cascade u8
+//! drop (11):   object u8 (1 table, 2 view, 3 schema, 4 domain, 5
+//!              assertion, 6 collation, 7 sequence generator) | its name,
+//!              or the schema's | cascade u8
 //! alter table (12): table | the `<alter table action>` text | default
 //!              schema | zone
 //! setting (13): name | value, null for its default again
@@ -32,11 +32,13 @@
 //! owner (17):  authorization identifier
 //! defined (18): authorization identifier | default schema | the
 //!              statement's text | placed u8, 1 for a table created, then
-//!              its engine and its storage's generation u32 | zone
+//!              its engine and its storage's generation u32 | zone | epochs
 //! reconfiguration (19): members
+//! sequence (20): sequence generator, as a table | epoch u64 | resume i128
 //! table:   authorization identifier | identifier
 //! options: count u32, each: name | value
 //! zone:    time zone displacement in minutes, i128
+//! epochs:  count u32, each u64 (RULES.md D62)
 //! ```
 //!
 //! A row change's generation is that of its table's storage
@@ -58,38 +60,17 @@ use crate::value::types::TypeRegistry;
 /// The version of the format this code writes and reads.
 pub const RECORD_VERSION: u8 = 1;
 
+mod definitions;
 mod kinds;
+
+pub use definitions::DropTarget;
+use definitions::{defined, dropped, put_defined, put_dropped, put_schema, put_sequence, schema, sequence};
 
 use kinds::{
     ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, OWNER, RECONFIGURATION,
-    SCHEMA, SETTING, STALE, STATEMENT_UNDONE, UPDATE, USER,
+    SCHEMA, SEQUENCE, SETTING, STALE, STATEMENT_UNDONE, UPDATE, USER,
 };
 pub use kinds::{KINDS, REPLICATED};
-
-/// The tags of the kinds of object a drop record names.
-const DROPPED_TABLE: u8 = 1;
-const DROPPED_VIEW: u8 = 2;
-const DROPPED_SCHEMA: u8 = 3;
-const DROPPED_DOMAIN: u8 = 4;
-const DROPPED_ASSERTION: u8 = 5;
-const DROPPED_COLLATION: u8 = 6;
-
-/// \[EXTENSION\] What a `Change::Drop` drops.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DropTarget {
-    /// A base table [ISO/IEC 9075:1992 §11.18].
-    Table(QualifiedName),
-    /// A view [§11.20].
-    View(QualifiedName),
-    /// A schema, by its name [§11.2].
-    Schema(String),
-    /// A domain [§11.27].
-    Domain(QualifiedName),
-    /// An assertion [§11.35].
-    Assertion(QualifiedName),
-    /// A collation [ISO/IEC 9075-2:2023 §11.44].
-    Collation(QualifiedName),
-}
 
 /// What a transaction did, as a log record.
 #[derive(Debug, Clone)]
@@ -178,6 +159,9 @@ pub enum Change {
         /// without one [ISO/IEC 9075:1992 §5.3 SR18]: the session's, or of
         /// the operator's, the database's.
         zone: i16,
+        /// \[DESIGN\] The epochs of the counters of the sequence generators
+        /// it defined, in order (RULES.md D62).
+        epochs: Vec<u64>,
     },
     /// \[EXTENSION\] An index created.
     CreateIndex {
@@ -247,6 +231,20 @@ pub enum Change {
         /// generation of its storage: what replaying the text alone would
         /// not know (RULES.md D25).
         placed: Option<(String, u32)>,
+        /// \[DESIGN\] The epochs of the counters of the sequence generators
+        /// it defined or restarted, in order (RULES.md D62).
+        epochs: Vec<u64>,
+    },
+    /// \[DESIGN\] RULES.md D62: where the counter of a sequence generator
+    /// goes on after a crash, logged before the values it reserves are
+    /// given out, outside any transaction [ISO/IEC 9075-2:2023 §4.29.1].
+    Sequence {
+        /// The sequence generator.
+        name: QualifiedName,
+        /// Its counter's epoch.
+        epoch: u64,
+        /// The current base value its counter goes on from.
+        resume: i128,
     },
     /// \[DESIGN\] RULES.md D36: a database setting set, outside any
     /// transaction.
@@ -311,8 +309,11 @@ impl Record {
                 out.put_u64(*row);
                 put_row(&mut out, key);
             }
-            Change::Schema { sql, owner, engines, zone } => put_schema(&mut out, (owner, sql, *zone), engines),
-            Change::Defined { auth, schema, zone, sql, placed } => put_defined(&mut out, (auth, schema, sql, *zone), placed.as_ref()),
+            Change::Schema { sql, owner, engines, zone, epochs } => put_schema(&mut out, (owner, sql, *zone), engines, epochs),
+            Change::Defined { auth, schema, zone, sql, placed, epochs } => {
+                put_defined(&mut out, (auth, schema, sql, *zone), placed.as_ref(), epochs);
+            }
+            Change::Sequence { name, epoch, resume } => put_sequence(&mut out, name, *epoch, *resume),
             Change::CreateIndex { name, table, columns, method, options } => {
                 out.put_str(name);
                 put_table(&mut out, table);
@@ -370,12 +371,9 @@ impl Record {
             CHECKPOINT => Change::Checkpoint,
             STATEMENT_UNDONE => Change::StatementUndone { from: Lsn(r.u64()?) },
             STALE => Change::Stale { through: Lsn(r.u64()?), index: r.str()?, row: r.u64()?, key: row(&mut r)? },
-            SCHEMA => {
-                let owner = r.str()?;
-                let (sql, engines) = schema(&mut r)?;
-                Change::Schema { sql, owner, engines, zone: zone(&mut r)? }
-            }
+            SCHEMA => schema(&mut r)?,
             DEFINED => defined(&mut r)?,
+            SEQUENCE => sequence(&mut r)?,
             CREATE_INDEX => {
                 let name = r.str()?;
                 let table = table(&mut r)?;
@@ -402,53 +400,8 @@ impl Record {
     }
 }
 
-/// A schema's text, the engine of each table it created, and its
-/// displacement.
-fn put_schema(out: &mut Vec<u8>, (owner, sql, zone): (&str, &str, i16), engines: &[(String, String)]) {
-    out.put_str(owner);
-    out.put_str(sql);
-    out.put_u32(u32::try_from(engines.len()).unwrap_or(u32::MAX));
-    for (table, engine) in engines {
-        out.put_str(table);
-        out.put_str(engine);
-    }
-    out.put_i128(i128::from(zone));
-}
-
-/// What `put_schema` wrote after the owner: the text, and the engines.
-fn schema(r: &mut Reader<'_>) -> Result<(String, Vec<(String, String)>)> {
-    let sql = r.str()?;
-    let count = r.u32()?;
-    let mut engines = Vec::new();
-    for _ in 0..count {
-        engines.push((r.str()?, r.str()?));
-    }
-    Ok((sql, engines))
-}
-
-/// A schema statement's authorizer, default schema, text, created table's
-/// engine and generation, and displacement.
-fn put_defined(out: &mut Vec<u8>, (auth, schema, sql, zone): (&str, &str, &str, i16), placed: Option<&(String, u32)>) {
-    out.put_str(auth);
-    out.put_str(schema);
-    out.put_str(sql);
-    out.put_u8(u8::from(placed.is_some()));
-    if let Some((engine, generation)) = placed {
-        out.put_str(engine);
-        out.put_u32(*generation);
-    }
-    out.put_i128(i128::from(zone));
-}
-
-/// What `put_defined` wrote, as a change.
-fn defined(r: &mut Reader<'_>) -> Result<Change> {
-    let (auth, schema, sql) = (r.str()?, r.str()?, r.str()?);
-    let placed = if r.u8()? == 0 { None } else { Some((r.str()?, r.u32()?)) };
-    Ok(Change::Defined { auth, schema, zone: zone(r)?, sql, placed })
-}
-
 /// A time zone displacement, in minutes, as `put_i128` wrote it.
-fn zone(r: &mut Reader<'_>) -> Result<i16> {
+pub(super) fn zone(r: &mut Reader<'_>) -> Result<i16> {
     let minutes = r.i128()?;
     i16::try_from(minutes).map_err(|_| r.corrupt("a time zone displacement is out of range"))
 }
@@ -506,58 +459,13 @@ fn put_row_change(out: &mut Vec<u8>, (table, generation, row): (&QualifiedName, 
     }
 }
 
-fn put_table(out: &mut Vec<u8>, table: &QualifiedName) {
+pub(super) fn put_table(out: &mut Vec<u8>, table: &QualifiedName) {
     out.put_str(&table.auth);
     out.put_str(&table.ident);
 }
 
-fn table(r: &mut Reader<'_>) -> Result<QualifiedName> {
+pub(super) fn table(r: &mut Reader<'_>) -> Result<QualifiedName> {
     Ok(QualifiedName { auth: r.str()?, ident: r.str()? })
-}
-
-/// What a drop dropped, its kind's tag then its name, and whether with
-/// CASCADE.
-fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool) {
-    match object {
-        DropTarget::Table(table) => {
-            out.put_u8(DROPPED_TABLE);
-            put_table(out, table);
-        }
-        DropTarget::View(view) => {
-            out.put_u8(DROPPED_VIEW);
-            put_table(out, view);
-        }
-        DropTarget::Schema(schema) => {
-            out.put_u8(DROPPED_SCHEMA);
-            out.put_str(schema);
-        }
-        DropTarget::Domain(domain) => {
-            out.put_u8(DROPPED_DOMAIN);
-            put_table(out, domain);
-        }
-        DropTarget::Assertion(assertion) => {
-            out.put_u8(DROPPED_ASSERTION);
-            put_table(out, assertion);
-        }
-        DropTarget::Collation(collation) => {
-            out.put_u8(DROPPED_COLLATION);
-            put_table(out, collation);
-        }
-    }
-    out.put_u8(u8::from(cascade));
-}
-
-/// What `put_dropped` wrote, before its CASCADE.
-fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
-    match r.u8()? {
-        DROPPED_TABLE => Ok(DropTarget::Table(table(r)?)),
-        DROPPED_VIEW => Ok(DropTarget::View(table(r)?)),
-        DROPPED_SCHEMA => Ok(DropTarget::Schema(r.str()?)),
-        DROPPED_DOMAIN => Ok(DropTarget::Domain(table(r)?)),
-        DROPPED_ASSERTION => Ok(DropTarget::Assertion(table(r)?)),
-        DROPPED_COLLATION => Ok(DropTarget::Collation(table(r)?)),
-        other => Err(SqlError::new(Code::Corrupt, format!("[DESIGN] a log record drops an unknown kind of object, {other}"))),
-    }
 }
 
 // Unit tests: every kind of record read back as written, and what is not a

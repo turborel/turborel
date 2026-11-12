@@ -41,6 +41,7 @@ pub fn render_expr(e: &Expr, names: &[String]) -> String {
         }
         Expr::Subquery(_, column) => format!("(<subquery>).{}", column.saturating_add(1)),
         Expr::Truth(c) => format!("({})", render_cond(c, names)),
+        Expr::NextValue(seq) => format!("NEXT VALUE FOR {}", seq.name),
     }
 }
 

@@ -10,7 +10,7 @@ use crate::ast::ParameterSpecification;
 use crate::binder::{OutColumn, ViewCheck};
 use crate::catalog::CheckLevels;
 use crate::error::{At, Code, Result, SqlError, SqlState, Subject, fail_with};
-use crate::exec::{Subqueries, eval, eval_cond};
+use crate::exec::{Drawn, Subqueries, eval, eval_cond};
 use crate::logical::{Cond, Truth};
 use crate::params::Params;
 use crate::storage::Row;
@@ -68,6 +68,8 @@ pub(super) fn set_columns(w: &Written) -> Vec<usize> {
 /// "before any value of the object row is updated", its subqueries run by
 /// `subqueries`.
 pub(super) fn candidate(w: &Written, old: &Row, (assign_rule, subqueries): (&str, &dyn Subqueries)) -> Result<Row> {
+    // [ISO/IEC 9075-2:2023 §4.29.1] the row's draws of one generator are one.
+    let subqueries = &Drawn::new(subqueries);
     let mut new = old.clone();
     let desc = &w.bound.desc;
     for (i, value) in w.set() {

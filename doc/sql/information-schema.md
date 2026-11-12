@@ -43,7 +43,7 @@ The views of SQL-92, each with the columns the standard gives it:
 | ASSERTIONS | assertion: whether deferrable |
 | TABLE_PRIVILEGES | privilege on a table |
 | COLUMN_PRIVILEGES | privilege on a column |
-| USAGE_PRIVILEGES | USAGE on a domain, a character set or a collation |
+| USAGE_PRIVILEGES | USAGE on a domain, a character set, a collation or a sequence generator, its OBJECT_TYPE SEQUENCE |
 | VIEW_TABLE_USAGE | table a view reads |
 | VIEW_COLUMN_USAGE | column a view reads |
 | CONSTRAINT_TABLE_USAGE | table a constraint refers to |
@@ -71,6 +71,7 @@ string as CHARACTER, its octet length four octets a character.
 |---|---|---|
 | TABLE_OPTIONS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ENGINE_NAME, OPTION_NAME, DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, CHANGED_BY, DESCRIPTION | option of a table's storage engine, its value set or its default |
 | INDEXES | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, IS_UNIQUE, COLUMN_NAMES | index, a UNIQUE or PRIMARY KEY constraint's among them |
+| SEQUENCES | SEQUENCE_CATALOG, SEQUENCE_SCHEMA, SEQUENCE_NAME, DATA_TYPE, NUMERIC_PRECISION, NUMERIC_PRECISION_RADIX, NUMERIC_SCALE, START_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, INCREMENT, CYCLE_OPTION | sequence generator the user holds USAGE on: its type, and its start, bounds and increment, each as text, and YES if it cycles ([CREATE SEQUENCE](statements/create-sequence.md)) |
 | INDEX_OPTIONS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, OPTION_NAME, DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, CHANGED_BY, DESCRIPTION | option of an index |
 | SETTINGS | SETTING_NAME, SETTING_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, IS_SESSION_SETTABLE, TAKES_EFFECT, DESCRIPTION, STARTED_VALUE, IS_PENDING | setting, its value for the session; of one taken at the next start, the value it started with, or null, and whether the value set waits for a restart |
 | USERS | USER_NAME, IS_OWNER | user: to the owner every one, to another user itself |

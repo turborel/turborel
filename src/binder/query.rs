@@ -66,7 +66,8 @@ pub(super) fn bind_query(
     let From { items, trees, used } = bind_from(Bounds { cx, clause, outer }, &te.from)?;
     let visible = From::visible_of(&trees, &items);
     let names = items.iter().flat_map(FromItem::row_names).collect();
-    let binder = Binder::new(cx, outer, (items, names, visible), used);
+    // [ISO/IEC 9075-2:2023 §6.14 SR2] none of DISTINCT draws a value.
+    let binder = Binder::new(Context { draws: cx.draws && !spec.distinct, ..cx }, outer, (items, names, visible), used);
     let selected = match result {
         Some(r) => vec![r],
         None => select_items(&binder, &spec.select_list)?,
@@ -178,7 +179,10 @@ fn bind_selected(
     } else {
         None
     };
-    let first = bind_select_list(binder, selected, select_scope(grouping.as_ref(), grouped));
+    // [ISO/IEC 9075-2:2023 §6.14 SR1a, SR2] its items draw values, if it
+    // may and is not grouped.
+    let draws = binder.draws && grouping.is_none();
+    let first = binder.drawing(draws, || bind_select_list(binder, selected, select_scope(grouping.as_ref(), grouped)));
     if first.is_ok() || grouping.is_some() || !binder.aggregated.get() {
         return first.map(|(exprs, columns)| (grouping, exprs, columns));
     }
@@ -243,7 +247,8 @@ fn bind_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_>
             | ValueExpression::Difference { .. }
             | ValueExpression::AtZone { .. }
             | ValueExpression::Boolean(_)
-            | ValueExpression::Subquery(_) => (None, false, None),
+            | ValueExpression::Subquery(_)
+            | ValueExpression::NextValue { .. } => (None, false, None),
         };
         exprs.push(e);
         let collation = if data_type.is_character() { binder.result_collation(v) } else { None };

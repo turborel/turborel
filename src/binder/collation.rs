@@ -229,7 +229,8 @@ impl Binder<'_> {
             | ValueExpression::Datetime(_)
             | ValueExpression::Extract { .. }
             | ValueExpression::Difference { .. }
-            | ValueExpression::AtZone { .. } => Derived::Yielding,
+            | ValueExpression::AtZone { .. }
+            | ValueExpression::NextValue { .. } => Derived::Yielding,
         })
     }
 

@@ -54,6 +54,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22005 | Error in assignment |
 | 22007 | Invalid datetime format |
 | 22008 | Datetime field overflow |
+| 2200H | Sequence generator limit exceeded: NEXT VALUE FOR of a generator of NO CYCLE past its last value |
 | 22009 | Invalid time zone displacement value |
 | 22011 | Substring error |
 | 22012 | Division by zero |

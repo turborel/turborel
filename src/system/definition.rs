@@ -24,12 +24,13 @@
 //! and its collation [§21.3.23, §21.3.24]. The constraint tables are in
 //! `definition/constraints.rs`, the privilege tables and USERS in
 //! `definition/privileges.rs`, and \[EXTENSION\] the tables of table and
-//! index options and of indexes in `definition/options.rs` (RULES.md
-//! R-SIZE-2).
+//! index options and of indexes in `definition/options.rs`, and of sequence
+//! generators in `definition/sequences.rs` (RULES.md R-SIZE-2).
 
 mod constraints;
 mod options;
 mod privileges;
+mod sequences;
 #[cfg(test)]
 mod tests;
 
@@ -83,6 +84,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(constraints::tables());
     tables.extend(privileges::tables());
     tables.extend(options::tables());
+    tables.extend(sequences::tables());
     tables
 }
 

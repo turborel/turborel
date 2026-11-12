@@ -64,7 +64,7 @@ impl Database {
         let counted = st.tx.logged.load(std::sync::atomic::Ordering::Relaxed);
         st.capture_engines(through)?;
         let held = lock_builtin(&st.tx.followed).values().filter_map(FollowedRecords::first).min();
-        let image = st.image_of(false, (through, held.map_or(through, |first| first.min(through))));
+        let image = st.image_of(false, (through, held.map_or(through, |first| first.min(through))))?;
         let image = st.record_image(files, image)?;
         st.tx.checkpointed(counted);
         // The group's log before what the image holds may go, as the

@@ -70,7 +70,11 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         }
         // [§11.34 GR4]
         SchemaStatement::Assertion(a) => condition(&a.check.text),
-        SchemaStatement::Grant(_) | SchemaStatement::Revoke(_) | SchemaStatement::Collation(_) => None,
+        SchemaStatement::Grant(_)
+        | SchemaStatement::Revoke(_)
+        | SchemaStatement::Collation(_)
+        | SchemaStatement::Sequence(_)
+        | SchemaStatement::AlterSequence(_) => None,
     }
 }
 

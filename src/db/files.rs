@@ -409,7 +409,7 @@ impl Database {
                 };
                 let (report, _) = self.replay(&mut records, Definitions::All)?;
                 self.change(State::rebuild_indexes)?;
-                let defined = Snapshot::of(&*self.snapshot()?);
+                let defined = Snapshot::of(&*self.snapshot()?)?;
                 (
                     Image { through: mode.end(log), start: mode.end(log), snapshot: defined, ..Image::default() },
                     Opened::Recovered(RecoveryReport { cut, ..report }),
@@ -427,6 +427,9 @@ impl Database {
     fn opened(&self, given: &[(String, Value)], mode: Mode) -> Result<()> {
         self.change(|st| {
             st.created = true;
+            if matches!(mode, Mode::Serve) {
+                st.prune_counters()?;
+            }
             Ok(())
         })?;
         for (name, value) in given {
@@ -489,7 +492,7 @@ impl Database {
         self.attach_pager(place, Pagers::Create)?;
         place.shadows.commit()?;
         let log = self.log_storage(&place.log_options()).create(&place.store())?;
-        let snapshot = Snapshot::of(&*self.snapshot()?);
+        let snapshot = Snapshot::of(&*self.snapshot()?)?;
         catalog.record(
             &Image { through: mode.end(&*log), start: mode.end(&*log), snapshot, ..Image::default() }.encode(),
             self.snapshot()?.compact_after(),

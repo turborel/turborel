@@ -138,6 +138,9 @@ impl SqlState {
     /// Data exception: invalid XQuery replacement string [ISO/IEC
     /// 9075-2:2023 §9.29 GR5].
     pub const INVALID_XQUERY_REPLACEMENT_STRING: SqlState = SqlState("2201V");
+    /// Data exception: sequence generator limit exceeded [ISO/IEC
+    /// 9075-2:2023 §9.35 GR3a].
+    pub const SEQUENCE_GENERATOR_LIMIT_EXCEEDED: SqlState = SqlState("2200H");
     /// Data exception: indicator overflow.
     pub const INDICATOR_OVERFLOW: SqlState = SqlState("22022");
     /// Data exception: invalid escape sequence.

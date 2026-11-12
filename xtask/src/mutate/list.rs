@@ -1,7 +1,6 @@
-//! The mutations `cargo xtask mutate` applies (RULES.md R-TEST-9): each breaks one mechanism of the core,
-//! of replication (`vr.rs`) or of the server (`server.rs`), and names tests, by their full paths, that each
-//! fail when it is broken. A mechanism a change adds gets one here; a change to a quoted snippet brings its
-//! mutation up to date (`verify` refuses one that no longer applies).
+//! The mutations `cargo xtask mutate` applies (RULES.md R-TEST-9): each breaks one mechanism of the core, of replication (`vr.rs`) or of
+//! the server (`server.rs`), and names tests, by their full paths, that each fail when it is broken. A mechanism a change adds gets one
+//! here; a change to a quoted snippet brings its mutation up to date (`verify` refuses one that no longer applies).
 
 mod collations;
 mod fill;
@@ -10,6 +9,7 @@ mod near;
 mod readers;
 mod reads;
 mod regex;
+mod sequences;
 mod server;
 mod shadow;
 mod sql2023;
@@ -33,12 +33,12 @@ pub use vr::VR;
 pub use waits::WAITS;
 pub use zones::ZONES;
 
-/// Every mutation, in the order they run: the core's, its kept plans', the read-only path's, reads',
-/// collations', tailorings', SQL:2023's, regular expressions', shadow files', reads near the last, zeros
-/// filled ahead of the log, zone maintenance, sampled statistics, row waits, replication's, the server's.
+/// Every mutation, in the order they run: the core's, its kept plans', the read-only path's, reads', collations', tailorings',
+/// SQL:2023's, regular expressions', shadow files', sequence generators', reads near the last, zeros filled ahead of the log,
+/// zone maintenance, sampled statistics, row waits, replication's, the server's.
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 9] = [&MUTATIONS, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let rest: [&[Mutation]; 7] = [&near::NEAR, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER];
+    let rest: [&[Mutation]; 8] = [&sequences::SEQUENCES, &near::NEAR, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER];
     core.into_iter().chain(rest).flatten().copied().collect()
 }
 

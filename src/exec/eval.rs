@@ -81,6 +81,8 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
         Expr::SortKey(x, c) => Ok(c.sort_key(&eval(x, row, subqueries)?)),
         // [ISO/IEC 9075-2:2023 §6.46] a condition's truth value as a value.
         Expr::Truth(c) => Ok(eval_cond(c, row, subqueries)?.value()),
+        // [ISO/IEC 9075-2:2023 §6.14 GR1] drawn for the row.
+        Expr::NextValue(seq) => subqueries.next_value(seq),
         // [ISO/IEC 9075:1992 §7.11 GR1, §6.11 GR2] the value of its one row, null
         // if it has no row.
         Expr::Subquery(s, at) => {

@@ -15,13 +15,11 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
-use crate::ast::{
-    ColumnSpecification, CursorSpecification, SearchCondition, SortColumn, SortSpecification, TableName, TruthValue, ValueExpression,
-};
+use crate::ast::{ColumnSpecification, SearchCondition, TableName, TruthValue, ValueExpression};
 use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc, WHOLE, applicable};
 use crate::db::State;
 use crate::error::{At, Code, Result, SqlError, Subject};
-use crate::logical::{AggCall, Cond, Expr, LogicalPlan, SortKey, Truth};
+use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Truth};
 use crate::params::Params;
 use crate::settings::{self, Own};
 use crate::value::DataType;
@@ -31,7 +29,7 @@ use crate::value::datetime::Clocked;
 mod arguments;
 mod case;
 mod collation;
-use collation::{sort_collations, with_sort};
+mod cursor;
 mod datetime;
 mod interval;
 pub(crate) use datetime::cast_is_valid;
@@ -45,6 +43,7 @@ mod predicates;
 mod purpose;
 mod query;
 mod referencing;
+mod sequences;
 mod set_functions;
 mod set_operations;
 mod statements;
@@ -54,9 +53,10 @@ mod underlying;
 mod values;
 mod views;
 
+pub use cursor::bind_cursor;
+use cursor::sort_keys;
 use from::FromItem;
-use query::{Nesting, bind_query_specification};
-use set_operations::bind_query_expression;
+use query::bind_query_specification;
 pub use set_operations::{ObjectColumn, bind_insert_query};
 pub use statements::{
     AssignRule, BoundWrite, INSERT_RULE, UPDATE_POSITIONED_RULE, UPDATE_SEARCHED_RULE, WriteKind, bind_select, bind_write,
@@ -143,6 +143,12 @@ pub struct Context<'a> {
     /// [ISO/IEC 9075:1992 §6.8 GR3, §4.5.1] The instant its statement runs
     /// at, and its SQL-session's time zone displacement.
     pub now: Clocked<'a>,
+    /// [ISO/IEC 9075-2:2023 §6.14 SR1a, SR1c] Whether the select list of
+    /// its `<query specification>`, or the rows of its `<table value
+    /// constructor>`, may draw values of sequence generators: of the whole
+    /// query of a cursor, of a SELECT INTO, or of an INSERT. Not of its
+    /// subqueries.
+    pub draws: bool,
 }
 
 pub use purpose::Purpose;
@@ -175,6 +181,7 @@ impl<'a> Context<'a> {
             uses: None,
             selected: None,
             referencing: None,
+            draws: false,
         }
     }
 }
@@ -249,61 +256,6 @@ pub(crate) fn no_column(table: &QualifiedName, message: String, column: &str) ->
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.3] <cursor specification>
 // ---------------------------------------------------------------------------
-
-/// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] A `<cursor
-/// specification>`: its query, then ORDER BY.
-///
-/// # Errors
-///
-/// Any Syntax Rule the query or its ORDER BY breaks, or a missing privilege.
-pub fn bind_cursor(cx: Context<'_>, c: &CursorSpecification) -> Result<Bound> {
-    // A single <query specification> can resolve ORDER BY column
-    // specifications against its own FROM clause.
-    if let Some(spec) = c.query.spec() {
-        return bind_query_specification(cx, spec, &c.order_by);
-    }
-    let (db, auth, session) = (cx.db, cx.auth, cx.collation);
-    let bound = bind_query_expression(cx, &c.query, &Nesting::Query)?;
-    let keys = sort_keys(&c.order_by, &bound.columns, |cs| result_column(&bound.columns, cs).or_at(cs.at))?;
-    let collations = sort_collations((db, auth, session), &c.order_by, &keys, &bound.columns)?;
-    Ok(with_sort(bound, (keys, collations)))
-}
-
-/// [ISO/IEC 9075:1992 §13.1 SR10a] The column of a `<query expression>`'s
-/// result that a `<sort key>` names: the one column of that name.
-fn result_column(columns: &[OutColumn], cs: &ColumnSpecification) -> Result<usize> {
-    if cs.qualifier.is_some() {
-        return Err(rule(format!("[ISO/IEC 9075:1992 §13.1 SR10a] ORDER BY {} names a column of the result, unqualified", cs.column)));
-    }
-    let matches: Vec<usize> = columns.iter().enumerate().filter(|(_, c)| c.name.as_deref() == Some(&cs.column)).map(|(i, _)| i).collect();
-    match matches.as_slice() {
-        [i] => Ok(*i),
-        [] => Err(rule(format!("[ISO/IEC 9075:1992 §13.1 SR10a] the result has no column {}", cs.column))),
-        [_, _, ..] => Err(rule(format!("[ISO/IEC 9075:1992 §13.1 SR10a] the result has more than one column {}", cs.column))),
-    }
-}
-
-/// [X3.135-1986 §8.3 SR6] and GR3b viii: each `<sort specification>` names a column of T.
-fn sort_keys(
-    order_by: &[SortSpecification],
-    columns: &[OutColumn],
-    by_column: impl Fn(&ColumnSpecification) -> Result<usize>,
-) -> Result<Vec<SortKey>> {
-    order_by
-        .iter()
-        .map(|s| {
-            let column = match &s.key {
-                SortColumn::Position(n) => usize::try_from(*n)
-                    .ok()
-                    .and_then(|n| n.checked_sub(1))
-                    .filter(|&i| i < columns.len())
-                    .ok_or_else(|| rule(format!("[X3.135-1986 §8.3 SR6] ORDER BY {n} must be between 1 and {}", columns.len())))?,
-                SortColumn::Column(cs) => by_column(cs)?,
-            };
-            Ok(SortKey { column, descending: s.descending })
-        })
-        .collect()
-}
 
 // ---------------------------------------------------------------------------
 // Scopes
@@ -380,6 +332,14 @@ struct Binder<'a> {
     aggregated: Cell<bool>,
     /// Its statement's instant and time zone (`Context::now`).
     now: Clocked<'a>,
+    /// Whether its select list, or its rows, may draw values of sequence
+    /// generators (`Context::draws`).
+    draws: bool,
+    /// Whether what it binds now may draw them: an item of that select
+    /// list, a row of those, or the source of a SET clause, not in a CASE,
+    /// a search condition or a set function [ISO/IEC 9075-2:2023 §6.14
+    /// SR1, SR2] (`binder/sequences.rs`).
+    drawing: Cell<bool>,
 }
 
 /// The FROM row a binder sees: its items, the display names of its
@@ -390,8 +350,23 @@ impl<'a> Binder<'a> {
     /// A binder of a query bound with `cx`, a subquery of `outer`'s if one
     /// is given, over the FROM row `row`, whose columns `used` it reads.
     fn new(cx: Context<'a>, outer: Option<&'a Outer<'a>>, (items, names, visible): Row, used: BTreeSet<usize>) -> Binder<'a> {
-        let Context { db, auth, schema, user, params, purpose, collation, horizon, own, definitions, uses, selected, referencing, now } =
-            cx;
+        let Context {
+            db,
+            auth,
+            schema,
+            user,
+            params,
+            purpose,
+            collation,
+            horizon,
+            own,
+            definitions,
+            uses,
+            selected,
+            referencing,
+            now,
+            draws,
+        } = cx;
         let (used, aggregated) = (RefCell::new(used), Cell::new(false));
         Binder {
             db,
@@ -415,6 +390,8 @@ impl<'a> Binder<'a> {
             referencing,
             aggregated,
             now,
+            draws: draws && !purpose.constrains(),
+            drawing: Cell::new(false),
         }
     }
 
@@ -438,6 +415,7 @@ impl<'a> Binder<'a> {
             selected: None,
             referencing,
             now,
+            draws: false,
         }
     }
 }

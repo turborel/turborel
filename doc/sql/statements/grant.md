@@ -27,14 +27,15 @@ GRANT: give privileges
       [ TABLE ] <table name>
     | DOMAIN <domain name>
     | COLLATION <collation name>
+    | SEQUENCE <sequence generator name>
 
 <grantee> ::= PUBLIC | <authorization identifier>
 ```
 
 ## DESCRIPTION
 
-GRANT gives each grantee privileges on a table, a view, a domain or a
-collation CREATE COLLATION made:
+GRANT gives each grantee privileges on a table, a view, a domain, a
+collation CREATE COLLATION made, or a sequence generator:
 
 | Privilege | Lets its holder |
 |---|---|
@@ -43,7 +44,7 @@ collation CREATE COLLATION made:
 | UPDATE | update the table; on columns, set only those columns |
 | DELETE | delete rows |
 | REFERENCES | name the table, or the columns, in a constraint: a foreign key that references them, a CHECK or an assertion that reads them |
-| USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE |
+| USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR |
 
 INSERT, UPDATE or REFERENCES without columns is the privilege on the
 table and on each of its columns, and on each column added to it later.
@@ -65,8 +66,8 @@ USAGE_PRIVILEGES show the privileges.
 
 1. The object exists. A table named without a schema is of the
    session's default schema.
-2. Of a domain or a collation, USAGE alone is granted; of a table,
-   USAGE is not.
+2. Of a domain, a collation or a sequence generator, USAGE alone is
+   granted; of a table, USAGE is not.
 3. Each column named is the table's.
 4. Of a temporary table, ALL PRIVILEGES alone is granted.
 5. The transaction is not READ ONLY.
@@ -154,7 +155,8 @@ turborel: SQLCODE -102 (SQLSTATE 2A000): expected ON, found "(" (at character 13
 ISO/IEC 9075:1992 §11.36, and X3.135-1986 §6.6 (the `<privilege
 definition>` of a `<schema>`), whose privileges are on tables, with
 UPDATE alone of a column list. Outside a `<schema definition>`, GRANT is
-SQL-92's `<SQL schema statement>` [§20.1].
+SQL-92's `<SQL schema statement>` [§20.1]. Of a collation or a sequence
+generator, ISO/IEC 9075-2:2023 §12.2 and §12.3.
 
 ## SEE ALSO
 

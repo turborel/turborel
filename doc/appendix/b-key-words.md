@@ -51,7 +51,7 @@ follows it, beginning a statement. DATABASE is that statement's
 only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
-SQL:2023 reserves BINARY, BOOLEAN, BTRIM, DECFLOAT, EVERY, GREATEST,
+SQL:2023 reserves BINARY, BOOLEAN, BTRIM, CYCLE, DECFLOAT, EVERY, GREATEST,
 LEAST, LIKE_REGEX, LPAD, LTRIM, OCCURRENCES_REGEX, POSITION_REGEX, RPAD,
 RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX and VARBINARY, which SQL-92 does not, so
 a column of an older database may be named any of them. They stay identifiers here, key words only where
@@ -68,6 +68,11 @@ OCCURRENCES_REGEX, POSITION_REGEX, SUBSTRING_REGEX and TRANSLATE_REGEX are
 functions before a parenthesis, as the trims are. Within POSITION_REGEX,
 START and AFTER are words unless IN or FLAG follows, so
 `POSITION_REGEX(START IN S)` searches S for the value of a column START.
+
+SEQUENCE, INCREMENT, MAXVALUE, MINVALUE and RESTART, which SQL:2023 does
+not reserve, and CYCLE and START are key words only in CREATE, ALTER and
+DROP SEQUENCE, GRANT and REVOKE ON SEQUENCE, so a table may have columns of
+those names. NEXT, which SQL-92 reserves, begins NEXT VALUE FOR.
 OCCURRENCE, CHARACTERS and OCTETS are read only where those functions
 take them, and after USING in CHAR_LENGTH, POSITION and SUBSTRING, and
 after a character string type's length. FORMAT, which SQL:2023 does not

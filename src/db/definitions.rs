@@ -3,7 +3,8 @@
 //! TABLE [§11.3], CREATE VIEW [§11.19], CREATE and ALTER DOMAIN [§11.21,
 //! §11.22] (`db/domains.rs`), CREATE ASSERTION [§11.34]
 //! (`db/assertions.rs`), GRANT [§11.36] and REVOKE [§11.37]
-//! (`db/revoke.rs`).
+//! (`db/revoke.rs`), and of ISO/IEC 9075-2:2023, CREATE COLLATION
+//! (`db/collations.rs`) and CREATE and ALTER SEQUENCE (`db/sequences.rs`).
 //!
 //! An object is defined by the owner of its schema, its own name and the
 //! names in it written without a schema qualified by the session's default
@@ -22,6 +23,7 @@ use super::alter::Made;
 use super::collations::is_made;
 use super::constraints::Within;
 use super::ddl::{Changed, Dropped, validate_rows};
+use super::sequences::Epochs;
 use super::{Completion, Session, State, api, long_texts, rule};
 use crate::ast::{PrivilegeDefinition, PrivilegeObject, SchemaStatement, SqlStatement, TableDefinition, TableName, ViewDefinition};
 use crate::binder::qualify;
@@ -70,7 +72,8 @@ impl Session {
         loop {
             let fresh = self.definitions(self.db.snapshot()?)?;
             let mut next = State::clone(&fresh);
-            let defined = next.define((&self.auth(), &schema, zone), statement, (None, None))?;
+            let mut epochs = Epochs::fresh();
+            let defined = next.define((&self.auth(), &schema, zone), statement, (None, None, &mut epochs))?;
             let wanted: Vec<(QualifiedName, LockMode)> = defined.locks.iter().filter(|l| !held.contains(l)).cloned().collect();
             if wanted.is_empty() {
                 let next = Arc::new(next);
@@ -83,7 +86,8 @@ impl Session {
                     // Checked whole, so not again of rows written before.
                     self.deferral.borrow_mut().forget(a, next.list_space())?;
                 }
-                let change = Change::Defined { auth: self.auth().clone(), schema, zone, sql: text.to_owned(), placed: defined.placed };
+                let (auth, sql, placed, epochs) = (self.auth().clone(), text.to_owned(), defined.placed, epochs.given());
+                let change = Change::Defined { auth, schema, zone, sql, placed, epochs };
                 self.stage(&fresh, tx, Changed { next, change, made: defined.made })?;
                 return Ok(long_texts::warned(defined.completion, text, || long_texts::of_statement(statement)));
             }
@@ -112,6 +116,18 @@ impl Session {
             SchemaStatement::Domain(d) => self.own_object(st, &d.name, (schema, "§11.21 AR1")),
             SchemaStatement::Assertion(a) => self.own_object(st, &a.name, (schema, "§11.34 AR1")),
             SchemaStatement::Collation(c) => self.own_object(st, &c.name, (schema, "§11.43 SR1")),
+            SchemaStatement::Sequence(d) => self.own_object(st, &d.name, (schema, "§11.72 SR4")),
+            SchemaStatement::AlterSequence(a) => {
+                let qn = qualify(&a.name, schema);
+                // [ISO/IEC 9075-2:2023 §11.73 AR1] only the owner of its
+                // schema alters a sequence generator.
+                if !self.owns_schema(st, &qn.auth) {
+                    let msg =
+                        format!("[ISO/IEC 9075-2:2023 §11.73 AR1] sequence generator {qn} is in a schema {} does not own", self.auth());
+                    return Err(SqlError::new(Code::Privilege, msg).or_at(a.name.at));
+                }
+                Ok(qn)
+            }
             SchemaStatement::AlterDomain(a) => {
                 let qn = qualify(&a.name, schema);
                 // [§11.22 AR1] only the owner of its schema alters a domain.
@@ -152,12 +168,13 @@ impl Session {
 impl State {
     /// Makes `statement` of `auth`, its names in schema `schema`; a table
     /// it creates given `placed`'s engine and generation and `made`'s
-    /// storage, if given.
+    /// storage, if given; a sequence generator it defines or restarts its
+    /// epoch from `epochs`.
     pub(super) fn define(
         &mut self,
         (auth, schema, zone): (&str, &str, i16),
         statement: &SchemaStatement,
-        (placed, made): (Option<&(String, u32)>, Option<&Made>),
+        (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &mut Epochs),
     ) -> Result<Defined> {
         match statement {
             SchemaStatement::Table(t) => self.create_table((schema, zone), t, (placed, made)),
@@ -168,11 +185,14 @@ impl State {
             SchemaStatement::Assertion(a) => self.create_assertion(schema, a, made),
             SchemaStatement::Collation(c) => self.create_collation((auth, schema), c),
             SchemaStatement::AlterDomain(a) => self.alter_domain((schema, zone), a),
+            SchemaStatement::Sequence(d) => self.create_sequence(schema, d, epochs),
+            SchemaStatement::AlterSequence(a) => self.alter_sequence(schema, a, epochs),
         }
     }
 
     /// Makes the definition `sql`, a schema statement logged
-    /// (`Change::Defined`), again: what it took away.
+    /// (`Change::Defined`), again, with the epochs it logged: what it took
+    /// away.
     ///
     /// # Errors
     ///
@@ -181,13 +201,12 @@ impl State {
         &mut self,
         (auth, schema, zone): (&str, &str, i16),
         sql: &str,
-        placed: Option<&(String, u32)>,
-        made: Option<&Made>,
+        (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &[u64]),
     ) -> Result<Dropped> {
         let SqlStatement::Schema { statement, .. } = Parser::new(sql)?.of_definition().sql_statement()? else {
             return Err(api(format!("[DESIGN] {sql} is not a schema statement")));
         };
-        Ok(self.define((auth, schema, zone), &statement, (placed, made))?.dropped)
+        Ok(self.define((auth, schema, zone), &statement, (placed, made, &mut Epochs::logged(epochs)))?.dropped)
     }
 
     /// [ISO/IEC 9075:1992 §11.3] Creates base table `t` in schema `schema`.
@@ -271,6 +290,9 @@ impl State {
         }
         if p.object == PrivilegeObject::Domain {
             return self.grant_usage(auth, schema, p).or_at(p.table.at);
+        }
+        if p.object == PrivilegeObject::Sequence {
+            return self.grant_sequence_usage(auth, schema, p).or_at(p.table.at);
         }
         let (granted, warned) = self.describe_grant((auth, schema), p).or_at(p.table.at)?;
         let name = qualify(&p.table, schema);

@@ -36,7 +36,8 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, db: &State) -> bool {
         | ValueExpression::Difference { .. }
         | ValueExpression::AtZone { .. }
         | ValueExpression::Boolean(_)
-        | ValueExpression::Function { .. } => false,
+        | ValueExpression::Function { .. }
+        | ValueExpression::NextValue { .. } => false,
     }
 }
 
@@ -77,6 +78,7 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::Difference { .. }
         | ValueExpression::AtZone { .. }
         | ValueExpression::Boolean(_)
-        | ValueExpression::Function { .. } => None,
+        | ValueExpression::Function { .. }
+        | ValueExpression::NextValue { .. } => None,
     }
 }
