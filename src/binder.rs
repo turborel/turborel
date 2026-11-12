@@ -68,7 +68,7 @@ pub use statements::{
 use subquery::Outer;
 pub use underlying::underlying;
 pub use values::{value_specification, value_specification_as};
-pub use views::{BoundView, ViewCheck, WriteTarget, bind_view, view_degree, write_target};
+pub use views::{BoundView, ViewCheck, WriteTarget, bind_view, table_columns, view_degree, write_target};
 pub(crate) use views::{once_each, system_view_columns, view_uses};
 
 /// A column of a cursor's result.

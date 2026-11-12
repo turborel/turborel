@@ -32,9 +32,6 @@ each group.
 
 ### Tables and schemas
 
-- CREATE TABLE AS (T172) and CREATE TABLE LIKE (T171, T173) [§11.3]. LIKE
-  copies identity, generation and defaults when asked, so it follows them.
-  The query of CREATE TABLE AS may draw NEXT VALUE FOR [§6.14 SR1a ii].
 - UNIQUE NULLS DISTINCT and NULLS NOT DISTINCT (F292) [§8.11, §11.7]. Nulls
   are always distinct today, so a key cannot refuse a second null.
 

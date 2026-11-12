@@ -89,4 +89,9 @@ TABLE only where TABLE follows it at the start of a statement, so a table
 or a column may be named TRUNCATE. RESTART is read after its table's name
 too, before IDENTITY.
 
+INCLUDING, EXCLUDING, DEFAULTS and DATA, which SQL:2023 does not reserve,
+are key words only in a LIKE clause of CREATE TABLE and in its WITH DATA
+and WITH NO DATA. GENERATED is read there too, after INCLUDING or
+EXCLUDING.
+
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

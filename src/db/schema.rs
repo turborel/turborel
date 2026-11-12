@@ -7,12 +7,13 @@ use std::sync::Arc;
 
 use super::alter::Made;
 use super::constraints::{self, Pending, Within};
+use super::contents::Element;
 use super::indexes::IndexSpec;
 use super::sequences::Epochs;
 use super::{Completion, Database, State, api};
-use crate::ast::{Action, ColumnDefinition, PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
+use crate::ast::{Action, PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
 use crate::binder::{no_column, qualify};
-use crate::catalog::{Actions, Catalog, ColumnDesc, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, TemporaryKind, applicable, merged};
+use crate::catalog::{Actions, Catalog, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, TemporaryKind, applicable, merged};
 use crate::engine::rows::ROW_STORE;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::index::Index;
@@ -208,7 +209,7 @@ impl State {
         for table in &s.tables {
             // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the table it defines.
             let about = (s.name.clone(), table.name.ident.clone());
-            let described = self.describe_table((&s.name, &s.name, zone, Within::SchemaDefinition), table, &descs, &pending);
+            let described = self.describe_table((&s.name, &owner, &s.name, zone, Within::SchemaDefinition), table, &descs, &pending);
             let (mut desc, keys) = described.map_err(|e| e.or_about_table(about)).or_at(table.name.at)?;
             self.give_epochs(&mut desc, epochs)?;
             descs.push(desc);
@@ -262,14 +263,15 @@ impl State {
     }
 
     /// [X3.135-1986 §6.2, §6.3; ISO/IEC 9075:1992 §11.3, §11.4] The
-    /// description of one `<table definition>` of the schema `auth`, its
-    /// names of schema `names` [§5.4 SR8], after the tables `earlier` in the
-    /// same schema, with the foreign keys `keys` of each: with its
-    /// constraints, and its foreign keys to resolve once the schema's tables
-    /// are known.
+    /// description of one `<table definition>` of the schema `auth`, owned
+    /// by `owner`, its names of schema `names` [§5.4 SR8], after the tables
+    /// `earlier` in the same schema, with the foreign keys `keys` of each:
+    /// with its constraints, and its foreign keys to resolve once the
+    /// schema's tables are known. [ISO/IEC 9075-2:2023 §11.3] Its `<like
+    /// clause>`s and `<as subquery clause>` replaced (`db/contents.rs`).
     pub(super) fn describe_table(
         &self,
-        (auth, names, zone, within): (&str, &str, i16, Within),
+        (auth, owner, names, zone, within): (&str, &str, &str, i16, Within),
         t: &TableDefinition,
         earlier: &[TableDesc],
         keys: &[Vec<Pending>],
@@ -281,18 +283,9 @@ impl State {
             return rule(format!("[X3.135-1986 §6.2 SR2] table {} is defined twice", t.name.ident));
         }
         let name = QualifiedName { auth: auth.to_owned(), ident: t.name.ident.clone() };
-        let defs: Vec<&ColumnDefinition> =
-            t.elements.iter().filter_map(|el| if let TableElement::Column(c) = el { Some(c) } else { None }).collect();
-        let mut columns: Vec<ColumnDesc> = Vec::new();
-        for c in &defs {
-            if columns.iter().any(|x| x.name == c.name) {
-                return rule(format!("[X3.135-1986 §6.3 SR1] column {} is defined twice in {}", c.name, t.name.ident)).or_at(c.at);
-            }
-            columns.push(self.column_of((&name, names, zone), c).or_at(c.at)?);
-        }
-        if columns.is_empty() {
-            return rule(format!("[ISO/IEC 9075:1992 §11.3 SR5] table {} has no column", t.name.ident));
-        }
+        let effective = self.effective_elements((&name, owner, names, within), t, earlier)?;
+        let elements: Vec<&TableElement> = effective.iter().map(Element::element).collect();
+        let (columns, defs) = self.described_columns((&name, names, zone), &effective)?;
         let columns = self.typed_columns(&name, columns, &defs)?;
         let taken = earlier
             .iter()
@@ -300,7 +293,7 @@ impl State {
             .chain(keys.iter().flatten().map(|p| p.name.clone()))
             .chain(self.all_constraint_names())
             .collect();
-        let (mut constraints, pending) = constraints::describe((&name, names, within), &columns, &t.elements, taken)?;
+        let (mut constraints, pending) = constraints::describe((&name, names, within), &columns, &elements, taken)?;
         // [§11.21 GR5, GR6] its domains' constraints, on their columns.
         constraints.extend(self.domain_checks(&name, &columns));
         // [ISO/IEC 9075:1992 §4.9] A temporary table's rows are each
@@ -517,7 +510,7 @@ pub(super) fn constraint_index_name(table: &QualifiedName, k: usize) -> String {
 mod tests {
     use super::*;
     use crate::catalog::Catalog;
-    use crate::catalog::{ConstraintDesc, ConstraintKind, MemoryCatalog};
+    use crate::catalog::{ColumnDesc, ConstraintDesc, ConstraintKind, MemoryCatalog};
     use crate::engine::rows::ROW_STORE;
     use crate::index::BTREE_METHOD;
     use crate::value::DataType;

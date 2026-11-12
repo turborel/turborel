@@ -276,13 +276,15 @@ fn word(primary: bool) -> &'static str {
 pub(super) fn describe(
     (table, names, within): (&QualifiedName, &str, Within),
     columns: &[crate::catalog::ColumnDesc],
-    elements: &[TableElement],
+    elements: &[&TableElement],
     taken: Vec<QualifiedName>,
 ) -> Result<(Vec<ConstraintDesc>, Vec<Pending>)> {
     let mut d = Described::new((table, names, within), columns, taken);
     d.reserve(elements.iter().flat_map(|el| match el {
         TableElement::Column(def) => def.constraints.iter().filter_map(|c| c.name.as_ref()).collect::<Vec<_>>(),
         TableElement::Constraint(c) => c.name.iter().collect(),
+        // Replaced by the columns it copies (`db/contents.rs`).
+        TableElement::Like(_) => Vec::new(),
     }));
     let mut at = 0_usize;
     for el in elements {
@@ -292,6 +294,7 @@ pub(super) fn describe(
                 at = at.saturating_add(1);
             }
             TableElement::Constraint(c) => d.table_constraint(c)?,
+            TableElement::Like(_) => {}
         }
     }
     let probe = TableDesc {

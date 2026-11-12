@@ -47,6 +47,7 @@ fn of_table(t: &TableDefinition) -> Option<SqlState> {
     t.elements.iter().find_map(|e| match e {
         TableElement::Column(c) => of_column(c),
         TableElement::Constraint(c) => of_constraint(c),
+        TableElement::Like(_) => None,
     })
 }
 

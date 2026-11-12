@@ -39,7 +39,8 @@ impl Session {
         // [§5.4 SR6, SR8b] Its names without a schema's are of the session's
         // default schema; MODULE.T names a declared table.
         let names = self.default_schema();
-        let (mut desc, pending) = next.describe_table((kw::MODULE, &names, self.now.get().zone, Within::Declared), t, &[], &[])?;
+        let zone = self.now.get().zone;
+        let (mut desc, pending) = next.describe_table((kw::MODULE, &self.auth(), &names, zone, Within::Declared), t, &[], &[])?;
         // [DESIGN] RULES.md D63: of an identity column, a generator of an
         // epoch no record replays, as none replays the table.
         next.give_epochs(&mut desc, &mut super::sequences::Epochs::fresh())?;

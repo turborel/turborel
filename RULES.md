@@ -102,6 +102,7 @@ verification approach DO-178C expects (§8).
 | D62 | A sequence generator's place is logged apart from transactions |
 | D63 | Identity and generated columns are given their values as rows are written |
 | D64 | TRUNCATE TABLE replaces a table's storage |
+| D65 | LIKE and AS are found again from what they read |
 
 ### The project
 
@@ -490,6 +491,29 @@ copies or checks are none added. So each CHECK with a subquery and each
 assertion that reads such a table is checked whole, and the totals an
 assertion keeps are put right as that check is made (D51,
 `db/integrity/rewritten.rs`).
+
+#### D65. LIKE and AS are found again from what they read
+
+A `<like clause>` and an `<as subquery clause>` stand for the column
+definitions of what they read [ISO/IEC 9075-2:2023 §11.3 SR9b, SR10]. The
+definition is logged as its text, as every schema statement's is (D33), and
+made again from it at commit and by recovery, which find the columns again
+(`db/contents.rs`). Logging the columns instead would need every type,
+collation and generation written back as text, plug-in types among them.
+
+So what was read must read alike then. The table LIKE names, and the
+tables, views and sequence generators the query names, are held shared to
+the end of the transaction, so no other alters or drops one before the
+commit, and the log replays changes in the order they committed. Neither
+names a session's declared local temporary table, which no log keeps, but
+in a declared table's own definition, which none replays.
+
+WITH DATA inserts the query's rows into the new table's storage before
+the definition is staged, as ALTER TABLE copies rows (D33), so a failure
+leaves no table. Its rows are logged before the definition, and recovery
+redoes them after it, by the table's name and generation. A `<schema
+definition>` run apart from a session has no transaction to insert in, so
+AS is refused in a CREATE SCHEMA.
 
 #### D33. Schema changes are transactional
 

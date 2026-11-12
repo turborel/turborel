@@ -72,6 +72,7 @@ mod compiled;
 mod completion;
 mod configured;
 mod constraints;
+mod contents;
 mod cursor;
 mod database;
 mod ddl;

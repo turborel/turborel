@@ -3,6 +3,7 @@
 //! here; a change to a quoted snippet brings its mutation up to date (`verify` refuses one that no longer applies).
 
 mod collations;
+mod contents;
 mod fill;
 mod generated;
 mod kept;
@@ -38,9 +39,8 @@ pub use zones::ZONES;
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 9] = [&MUTATIONS, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let rest: [&[Mutation]; 10] =
-        [&sequences::SEQUENCES, &generated::GENERATED, &truncate::TRUNCATE, &near::NEAR, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER];
-    core.into_iter().chain(rest).flatten().copied().collect()
+    let areas: [&[Mutation]; 5] = [&sequences::SEQUENCES, &generated::GENERATED, &truncate::TRUNCATE, &contents::CONTENTS, &near::NEAR];
+    core.into_iter().chain(areas).chain([FILL.as_slice(), &ZONES, &STATS, &WAITS, &VR, &SERVER]).flatten().copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints, assertions, the hash index.

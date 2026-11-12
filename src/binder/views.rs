@@ -120,6 +120,25 @@ pub(super) fn named(db: &State, name: &QualifiedName, reader: Reader<'_>) -> Res
     Ok(Named { desc, source: expand(db, view, reader)? })
 }
 
+/// [ISO/IEC 9075-2:2023 §11.3 SR9b iii] The descriptor of the table or
+/// view `name`, system table, or view of the Information Schema, whose
+/// columns a `<like clause>` copies, as `user` reads it: of a view, its
+/// columns alone.
+///
+/// # Errors
+///
+/// As a `<table reference>` that names it.
+pub fn table_columns(db: &State, name: &QualifiedName, user: &str) -> Result<TableDesc> {
+    let reader = Reader {
+        purpose: Purpose::Query,
+        own: &settings::NONE,
+        user,
+        definitions: false,
+        now: Clocked::new(db.now(&settings::NONE), None),
+    };
+    Ok(named(db, name, reader)?.desc)
+}
+
 /// The description of a view `name`, its columns yet to be given: with no
 /// constraint or engine.
 pub(super) fn unconstrained(name: &QualifiedName) -> TableDesc {

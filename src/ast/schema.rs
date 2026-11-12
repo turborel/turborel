@@ -267,6 +267,9 @@ pub enum Action {
 ///     CREATE \[{GLOBAL | LOCAL} TEMPORARY\] TABLE `<table name>`
 ///     (`<table element>` \[{,`<table element>`}...\]) \[ON COMMIT {DELETE |
 ///     PRESERVE} ROWS\]
+///
+/// [ISO/IEC 9075-2:2023 §11.3] Its `<table contents source>`, a `<table
+/// element list>` or an `<as subquery clause>`.
 #[derive(Debug)]
 pub struct TableDefinition {
     /// The `<table name>`.
@@ -274,8 +277,11 @@ pub struct TableDefinition {
     /// Of a temporary table, its kind and ON COMMIT, DELETE ROWS if none
     /// is written \[SR4\].
     pub temporary: Option<Temporary>,
-    /// The `<table element>`s, in order.
+    /// The `<table element>`s, in order: none of an `<as subquery
+    /// clause>`.
     pub elements: Vec<TableElement>,
+    /// Its `<as subquery clause>`, if written.
+    pub subquery: Option<Box<super::AsSubquery>>,
     /// \[EXTENSION\] Its engine and options, if written.
     pub storage: TableStorage,
 }
@@ -314,13 +320,16 @@ pub enum OptionValue {
 }
 
 /// [X3.135-1986 §6.2] `<table element>` ::= `<column definition>` |
-/// `<table constraint definition>` [ISO/IEC 9075:1992 §11.3]
+/// `<table constraint definition>` [ISO/IEC 9075:1992 §11.3] | `<like
+/// clause>` [ISO/IEC 9075-2:2023 §11.3]
 #[derive(Debug)]
 pub enum TableElement {
     /// A `<column definition>`.
     Column(ColumnDefinition),
     /// A `<table constraint definition>`.
     Constraint(TableConstraint),
+    /// A `<like clause>`.
+    Like(super::LikeClause),
 }
 
 /// [X3.135-1986 §6.3] `<column definition>` ::= `<column name>` {`<data type>` | `<domain name>`}

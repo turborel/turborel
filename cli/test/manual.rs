@@ -278,6 +278,16 @@ fn the_truncate_examples_run_as_printed() {
     assert!(ann.page("sql/statements/truncate-table.md") > 0, "it shows its examples' output");
 }
 
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D65: the examples of CREATE
+/// TABLE run as printed, as ANN, those of LIKE and AS among them.
+#[test]
+fn the_create_table_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/statements/create-table.md") > 0, "it shows its examples' output");
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D36: the Operator's Guide's
 /// examples of settings and of the server's connections run as printed, by
 /// the database's owner, ANN.

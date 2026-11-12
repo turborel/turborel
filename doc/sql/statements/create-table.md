@@ -10,13 +10,20 @@ CREATE TABLE: define a base table
 
 ```
 <table definition> ::=
-    CREATE [ { GLOBAL | LOCAL } TEMPORARY ] TABLE <table name>
-    ( <table element> [ { , <table element> }... ] )
+    CREATE [ { GLOBAL | LOCAL } TEMPORARY ] TABLE <table name> <table contents source>
     [ ON COMMIT { DELETE | PRESERVE } ROWS ]
     [ USING <engine name> ]
     [ WITH ( <table option> [ { , <table option> }... ] ) ]
 
-<table element> ::= <column definition> | <table constraint definition>
+<table contents source> ::=
+      ( <table element> [ { , <table element> }... ] )
+    | [ ( <column name> [ { , <column name> }... ] ) ] AS ( <query expression> ) WITH [ NO ] DATA
+
+<table element> ::= <column definition> | <table constraint definition> | <like clause>
+
+<like clause> ::= LIKE <table name> [ <like option>... ]
+
+<like option> ::= { INCLUDING | EXCLUDING } { IDENTITY | DEFAULTS | GENERATED }
 
 <column definition> ::=
     <column name> [ <data type> | <domain name> ]
@@ -72,7 +79,8 @@ CREATE TABLE: define a base table
 
 A column has a data type or a domain unless it has a generation clause.
 GENERATED, ALWAYS and EXPRESSION are non-reserved words, so a domain may
-be named GENERATED. ON UPDATE and ON DELETE may be written in either order, each once. The
+be named GENERATED. INCLUDING, EXCLUDING, DEFAULTS and DATA are
+non-reserved words too. ON UPDATE and ON DELETE may be written in either order, each once. The
 data types are in [Data Types](../02-data-types.md); a column may also
 be of a type a plug-in registers *(extension)*, written by its name and,
 in parentheses, one or two unsigned integers it takes.
@@ -154,6 +162,29 @@ fetched by key, and changed, in the row store. Its rows, and what queries
 of it give, are the same in either; see [Appendix
 G](../../appendix/g-table-options.md).
 
+LIKE copies the columns of another table, or of a view, in its place
+among the table's other elements. Each column copied has the name and
+the data type of the one it copies, its collation with it, and NOT NULL
+if that column can hold no null value. Nothing else is copied unless an
+option says so. INCLUDING IDENTITY makes the identity column one again,
+with the same options, as a sequence generator of the new table's own
+that starts at the start value. INCLUDING DEFAULTS copies each column's
+default, and INCLUDING GENERATED each generation expression, the other
+table's name in it replaced by the new table's. EXCLUDING, the default,
+copies none. No constraint but NOT NULL is copied, no domain and no row.
+
+AS defines the table from a query. Each column of the query becomes a
+column of the table, named as the query names it or as the column names
+written before AS do, of the query column's type and collation, and NOT
+NULL if the query column can hold no null value. WITH DATA inserts the
+query's rows, in the same statement, and WITH NO DATA leaves the table
+empty. The query may draw values of a sequence generator with NEXT VALUE
+FOR. If inserting the rows fails, no table is defined.
+
+The table named by LIKE, and the tables and views the query reads, are
+held shared until the transaction ends, so no other transaction alters
+or drops one meanwhile. The table keeps no tie to them after that.
+
 CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
 
 ## RULES
@@ -194,13 +225,23 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
     assignable to the column's.
 14. A foreign key whose referencing columns include a generated column
     has no SET NULL or SET DEFAULT action and no ON UPDATE CASCADE.
+15. LIKE names a table or view that exists, and writes each of its
+    options once. Of a view, it writes none. It names no declared local
+    temporary table, but in [DECLARE LOCAL TEMPORARY
+    TABLE](declare-local-temporary-table.md).
+16. Of AS, each column of the query has a name, and no two have the same
+    one, unless column names are written: as many as the query's
+    columns, no two the same. The query has no dynamic parameter and
+    reads no declared local temporary table. AS is not written in a
+    [CREATE SCHEMA](create-schema.md).
 
 ## PRIVILEGES
 
 The table's schema is its user's. REFERENCES on each column a foreign
 key references, and, for a CHECK, on each column it reads of another
 table, or, if it names none, on one column of each table it reads.
-USAGE on each domain a column is of.
+USAGE on each domain a column is of. SELECT on the table or view LIKE
+names. The privileges the query of AS needs to be run.
 
 ## ERRORS
 
@@ -212,6 +253,10 @@ USAGE on each domain a column is of.
 | 25000 | -917 | The transaction is READ ONLY |
 | 0A000 | -900 | A CHARACTER SET clause of another character set |
 | 2A000 | -103 | A COLLATE clause of no collation, or of a column not of a character string |
+| 02000 | 100 | Not an error: the query of AS ... WITH DATA had no row |
+
+Any error running the query of AS ... WITH DATA, or inserting its rows,
+is the statement's.
 
 ## EXAMPLES
 
@@ -291,6 +336,44 @@ OK
 (2 rows)
 ```
 
+A table that copies another's columns, its identity column and its
+defaults, and one defined from a query:
+
+```sql
+CREATE TABLE TICKETS (
+    ID INTEGER GENERATED ALWAYS AS IDENTITY (START WITH 10),
+    NAME VARCHAR(20) DEFAULT 'none' NOT NULL,
+    PRICE DECIMAL(7,2) CHECK (PRICE > 0));
+INSERT INTO TICKETS (NAME, PRICE) VALUES ('first', 5), ('second', 7.50);
+CREATE TABLE ARCHIVE (LIKE TICKETS INCLUDING IDENTITY INCLUDING DEFAULTS, MOVED DATE);
+INSERT INTO ARCHIVE (PRICE) VALUES (-1);
+SELECT * FROM ARCHIVE;
+CREATE TABLE DEAR (NAME, DOUBLED) AS (SELECT NAME, PRICE * 2 FROM TICKETS WHERE PRICE > 6) WITH DATA;
+SELECT * FROM DEAR;
+CREATE TABLE NOT_YET AS (SELECT NAME FROM TICKETS WHERE PRICE > 100) WITH DATA;
+```
+
+```
+OK
+OK
+OK
+OK
+           ID | NAME                 |     PRICE | MOVED
+--------------+----------------------+-----------+------------
+           10 | none                 |     -1.00 | NULL
+(1 row)
+OK
+ NAME                 |              DOUBLED
+----------------------+----------------------
+ second               |                15.00
+(1 row)
+no data
+```
+
+The CHECK of TICKETS is not copied, so ARCHIVE takes a price of -1, and
+its generator starts at 10, as that of TICKETS did. No row of TICKETS
+costs more than 100, so the last table is defined with no data.
+
 Tables refused:
 
 ```sql
@@ -301,6 +384,8 @@ CREATE TABLE T7 (A INTEGER) WITH (COLUMNSTORE.GROUP_ROWS = 4096);
 CREATE TABLE T8 (A INTEGER) USING columnstore WITH (COLUMNSTORE.ORDER = 'B');
 CREATE TABLE T10 (A REAL GENERATED ALWAYS AS IDENTITY);
 CREATE TABLE T11 (A INTEGER, B GENERATED ALWAYS AS (A + (SELECT COUNT(*) FROM ORDERS)));
+CREATE TABLE T12 (LIKE ORDERS INCLUDING DEFAULTS EXCLUDING DEFAULTS);
+CREATE TABLE T13 AS (SELECT QUANTITY * PRICE FROM ORDERS) WITH NO DATA;
 ```
 
 ```
@@ -311,6 +396,8 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): rowstore takes no option COLUMNSTORE.GR
 turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.T8 has no column B, for the table option COLUMNSTORE.ORDER (at character 13)
 turborel: SQLCODE -103 (SQLSTATE 2A000): an identity column is of an exact numeric type of scale 0, not REAL [ISO/IEC 9075-2:2023 §11.4 SR16a] (at character 25)
 turborel: SQLCODE -103 (SQLSTATE 2A000): the generation expression of column B of ANN.T11: it contains no <query expression> [ISO/IEC 9075-2:2023 §11.4 SR10f] (at character 29)
+turborel: SQLCODE -103 (SQLSTATE 2A000): a <like clause> writes its <column default option> once [ISO/IEC 9075-2:2023 §11.3 SR9b iv 1] (at character 49)
+turborel: SQLCODE -103 (SQLSTATE 2A000): column 1 of the query has no name, so a <column name list> names it [ISO/IEC 9075-2:2023 §11.3 SR10b] (at character 17)
 ```
 
 ## STANDARD
@@ -318,7 +405,11 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): the generation expression of column B o
 ISO/IEC 9075:1992 §11.3 to §11.9, and §10.6 for constraint names and
 attributes; X3.135-1986 §6.2 to §6.4, whose tables have NOT NULL and
 UNIQUE only. Identity columns and generated columns are ISO/IEC
-9075-2:2023 §4.17.12, §4.17.13 and §11.4, Features T174 and T175. Outside a `<schema definition>`, CREATE TABLE is SQL-92's
+9075-2:2023 §4.17.12, §4.17.13 and §11.4, Features T174 and T175. LIKE
+is ISO/IEC 9075-2:2023 §11.3, Feature T171, and its options Feature
+T173; AS is Feature T172. That AS is not written in a CREATE SCHEMA, and
+that neither names a declared local temporary table, are this
+implementation's own. Outside a `<schema definition>`, CREATE TABLE is SQL-92's
 `<SQL schema statement>` [§20.1], and a constraint's name written without
 a schema is of the default schema [§5.4 SR8b]. USING and WITH are
 extensions.

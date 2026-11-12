@@ -207,16 +207,18 @@ impl State {
         let mut catalog = self.catalog.duplicate();
         catalog.remove_sequence(qn);
         self.catalog = Arc::from(catalog);
-        Ok(Dropped::default())
+        // Held exclusive, so no definition that draws from it is pending.
+        Ok(Dropped { names: vec![qn.clone()], ..Dropped::default() })
     }
 
     /// [ISO/IEC 9075-2:2023 §11.2 GR3] The sequence generators of schema
     /// `auth`, which is being dropped, each dropped.
     pub(super) fn drop_schema_sequences(&mut self, auth: &str) -> Result<Dropped> {
+        let mut dropped = Dropped::default();
         for qn in self.schema_sequences(auth) {
-            self.drop_sequence(&qn)?;
+            dropped.absorb(self.drop_sequence(&qn)?);
         }
-        Ok(Dropped::default())
+        Ok(dropped)
     }
 
     /// The sequence generators of schema `auth`.

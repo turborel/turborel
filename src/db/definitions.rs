@@ -22,6 +22,7 @@ use std::sync::Arc;
 use super::alter::Made;
 use super::collations::is_made;
 use super::constraints::Within;
+use super::contents::contents_read;
 use super::ddl::{Changed, Dropped, validate_rows};
 use super::sequences::Epochs;
 use super::{Completion, Session, State, api, long_texts, rule};
@@ -99,6 +100,19 @@ impl Session {
             let wanted: Vec<(QualifiedName, LockMode)> = defined.locks.iter().filter(|l| !held.contains(l)).cloned().collect();
             if wanted.is_empty() {
                 let next = Arc::new(next);
+                // [ISO/IEC 9075-2:2023 §11.3 GR10] the rows of its query, of
+                // a table created WITH DATA, inserted before it is staged.
+                let mut filled = Ok(None);
+                if let SchemaStatement::Table(t) = statement {
+                    filled = self.inserted_data(&next, tx, t);
+                }
+                let filled = match filled {
+                    Ok(filled) => filled,
+                    Err(e) => {
+                        defined.made.iter().for_each(Made::discard);
+                        return Err(e);
+                    }
+                };
                 for table in &defined.validate {
                     validate_rows(&next, tx, table, self.effects(&next))?;
                 }
@@ -111,7 +125,9 @@ impl Session {
                 let (auth, sql, placed, epochs) = (self.auth().clone(), text.to_owned(), defined.placed, epochs.given());
                 let change = Change::Defined { auth, schema, zone, sql, placed, epochs };
                 self.stage(&fresh, tx, Changed { next, change, made: defined.made })?;
-                return Ok(long_texts::warned(defined.completion, text, || long_texts::of_statement(statement)));
+                // [§14.11 GR3] no row inserted is no data.
+                let completion = if filled == Some(0) { Completion::NoData } else { defined.completion };
+                return Ok(long_texts::warned(completion, text, || long_texts::of_statement(statement)));
             }
             // Made again once the locks are held, on the definitions then.
             defined.made.iter().for_each(Made::discard);
@@ -249,7 +265,15 @@ impl State {
         catalog.add_table(desc.clone());
         let built = self.place_table(&mut *catalog, &desc, made)?;
         self.catalog = Arc::from(catalog);
-        let locks = in_schema(&qn, read_by(&desc));
+        let mut reads = read_by(&desc);
+        // [ISO/IEC 9075-2:2023 §11.3] what its columns were found from, so
+        // they are found alike at commit (`db/contents.rs`).
+        for name in contents_read(t, schema) {
+            if name != qn && !reads.contains(&name) {
+                reads.push(name);
+            }
+        }
+        let locks = in_schema(&qn, reads);
         Ok(Defined { made: Some(built), placed: Some((desc.engine, desc.generation)), locks, ..Defined::default() })
     }
 
@@ -266,7 +290,9 @@ impl State {
         self.new_object(&qn, "§11.3 SR2").or_at(t.name.at)?;
         let earlier: Vec<TableDesc> = self.catalog.tables().into_iter().filter(|d| d.name.auth == qn.auth).cloned().collect();
         let keys: Vec<Vec<_>> = earlier.iter().map(|_| Vec::new()).collect();
-        let (mut desc, pending) = self.describe_table((&qn.auth, schema, zone, Within::Session), t, &earlier, &keys).or_at(t.name.at)?;
+        let owner = owner_of(&*self.catalog, &qn.auth).to_owned();
+        let (mut desc, pending) =
+            self.describe_table((&qn.auth, &owner, schema, zone, Within::Session), t, &earlier, &keys).or_at(t.name.at)?;
         self.constraint_schemas(&qn, (&desc.constraints, &pending)).or_at(t.name.at)?;
         // Another table of the name, dropped, had a generation of its own.
         desc.generation = placed.map_or_else(|| self.retired.get(&qn).map_or(0, |g| g.saturating_add(1)), |(_, g)| *g);

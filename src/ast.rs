@@ -26,6 +26,7 @@ pub struct TableName {
 }
 
 mod connection;
+mod contents;
 mod cursor;
 mod diagnostics;
 mod dynamic;
@@ -37,6 +38,7 @@ mod sequences;
 mod users;
 
 pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
+pub use contents::{AsSubquery, LikeClause};
 pub use cursor::{DeclareCursor, FetchOrientation};
 pub use diagnostics::{ConditionItem, GetDiagnostics, StatementItem};
 pub use dynamic::{

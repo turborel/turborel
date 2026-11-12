@@ -863,6 +863,31 @@ table is checked whole after it too. TRUNCATE, which SQL:2023 reserves and SQL-9
 identifier, a key word only where TABLE follows it at the start of a
 statement. RESTART is a non-reserved word.
 
+### LIKE and AS in CREATE TABLE
+
+Features T171 (LIKE clause in table definition), T172 (AS subquery clause
+in table definition) and T173 (extended LIKE clause in table definition).
+A `<like clause>` copies another table's columns, and an `<as subquery
+clause>` defines a table from a query [§11.3].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| LIKE | §11.3 SR9b iii, v, AR2 | Each column of the table or view named, in the clause's place, with its name, its data type and collation, and NOT NULL if known not nullable. No other constraint, no domain and no row. SELECT on what it names, else SQLCODE -104. In a CREATE SCHEMA, a table defined before in it may be named. LIKE in DECLARE LOCAL TEMPORARY TABLE is taken too. |
+| Its options | SR9b ii, iv | Each written once. None of a viewed table. EXCLUDING by default. INCLUDING IDENTITY makes a generator of the new table's own, of the same options, from the start value. INCLUDING DEFAULTS copies each column's own default. INCLUDING GENERATED copies each generation expression, each `<column reference>`'s table name replaced by the new table's. |
+| AS | SR4, SR10 | Each column of the query, named as it or the `<column name list>` names it, of its declared type and collation, NOT NULL if known not nullable. A column unnamed, two of a name, a list of another length or of a name twice, or a dynamic parameter, is SQLCODE -103. NEXT VALUE FOR may be in its select list [§6.14 SR1a ii]. |
+| WITH DATA | GR10 | The query's rows inserted in the same statement, before the definition is staged, so a failure defines no table. No row completes with no data. WITH NO DATA inserts none. |
+
+A definition is logged as its text and made again from it at commit and
+by recovery (RULES.md D65). So the table a LIKE names, and the tables,
+views and sequence generators the query names, are held shared to the end
+of the transaction, and neither names a session's declared local temporary
+table, which no log keeps, but in a declared table's definition. For the
+same reason, and as its rows are inserted in a transaction, which a
+`<schema definition>` run apart from a session has none of, an `<as
+subquery clause>` is refused in a CREATE SCHEMA, SQLCODE -103. Both are
+this implementation's own. INCLUDING, EXCLUDING, DEFAULTS and DATA are
+non-reserved words.
+
 ---
 
 ## Extensions

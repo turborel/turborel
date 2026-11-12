@@ -23,6 +23,7 @@ use crate::lexer::{Tok, Token, delim, kw, lex};
 mod charsets;
 mod connections;
 mod constraints;
+mod contents;
 mod cursor;
 mod data_statements;
 mod data_type;

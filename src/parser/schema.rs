@@ -198,7 +198,8 @@ impl Parser {
     }
 
     /// [X3.135-1986 §6.2] `<table definition>` ::= CREATE TABLE `<table name>`
-    ///                            (`<table element>` \[{,`<table element>`}...\])
+    ///                            (`<table element>` \[{,`<table element>`}...\]),
+    /// or of ISO/IEC 9075-2:2023 §11.3 with an `<as subquery clause>`.
     fn table_definition(&mut self) -> Result<TableDefinition> {
         self.expect_kw(kw::CREATE)?;
         // [ISO/IEC 9075:1992 §11.3] [{GLOBAL | LOCAL} TEMPORARY]
@@ -214,7 +215,7 @@ impl Parser {
         }
         self.expect_kw(kw::TABLE)?;
         let name = self.table_name()?;
-        let elements = self.table_element_list()?;
+        let (elements, subquery) = self.table_contents()?;
         let on_commit = self.on_commit()?;
         // [§11.3 SR3] ON COMMIT only of a temporary table; [SR4] DELETE
         // ROWS if not written.
@@ -230,7 +231,7 @@ impl Parser {
         if self.accept_kw(kw::WITH) {
             storage.options = self.table_options()?;
         }
-        Ok(TableDefinition { name, temporary, elements, storage })
+        Ok(TableDefinition { name, temporary, elements, subquery, storage })
     }
 
     /// [ISO/IEC 9075:1992 §13.11] `<temporary table declaration>` ::=
@@ -249,7 +250,7 @@ impl Parser {
         let elements = self.table_element_list()?;
         let delete_rows = self.on_commit()?.unwrap_or(true);
         let temporary = Some(Temporary { kind: TemporaryKind::Declared, delete_rows });
-        Ok(TableDefinition { name, temporary, elements, storage: TableStorage::default() })
+        Ok(TableDefinition { name, temporary, elements, subquery: None, storage: TableStorage::default() })
     }
 
     /// [ISO/IEC 9075:1992 §11.3] `<table element list>` ::= ( `<table
@@ -281,8 +282,13 @@ impl Parser {
 
     /// [ISO/IEC 9075:1992 §11.3] `<table element>` ::= `<column definition>`
     /// | `<table constraint definition>`; SQL-86's `<unique constraint
-    /// definition>` [X3.135-1986 §6.4] is one of the latter.
+    /// definition>` [X3.135-1986 §6.4] is one of the latter. [ISO/IEC
+    /// 9075-2:2023 §11.3] | `<like clause>`.
     fn table_element(&mut self) -> Result<TableElement> {
+        let at = self.here();
+        if self.accept_kw(kw::LIKE) {
+            return self.like_clause(at);
+        }
         if self.at_table_constraint() {
             return Ok(TableElement::Constraint(self.table_constraint()?));
         }

@@ -15,7 +15,8 @@ DECLARE LOCAL TEMPORARY TABLE: declare a table of the session's own
     [ ON COMMIT { DELETE | PRESERVE } ROWS ]
 ```
 
-The `<table element>`s are those of [CREATE TABLE](create-table.md).
+The `<table element>`s are those of [CREATE TABLE](create-table.md),
+LIKE among them, which may copy another declared table's columns.
 
 ## DESCRIPTION
 
