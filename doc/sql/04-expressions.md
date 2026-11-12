@@ -207,6 +207,32 @@ SELECT ID,
 (4 rows)
 ```
 
+## GREATEST and LEAST
+
+GREATEST(a, b, ...) is the greatest of two values or more, LEAST(a, b,
+...) the least. Each value is first taken to a type that holds them all,
+as a CASE's results are, and the values must be comparable. If any is
+null, the result is null. Strings are ordered by their collation, and of
+two it holds equal the first is the result. GREATEST and LEAST are not
+reserved, so a column may be named either.
+
+```sql
+SELECT ID, GREATEST(SALARY, 6000) AS FLOOR_PAY, LEAST(SALARY, 8000) AS CAPPED, LEAST(NAME, 'Bob') AS FIRST_NAME
+  FROM STAFF ORDER BY ID;
+VALUES GREATEST(1, 'one');
+```
+
+```
+           ID |   FLOOR_PAY |      CAPPED | FIRST_NAME
+--------------+-------------+-------------+--------------------------------
+            1 |     7200.00 |     7200.00 | Ada
+            2 |     8100.00 |     8000.00 | Bob
+            3 |     6000.00 |     5400.00 | Bob
+            4 |        NULL |        NULL | Barbara
+(4 rows)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the arguments of GREATEST are each comparable with each, not NUMERIC(1,0), CHARACTER(3) [ISO/IEC 9075-2:2023 §6.15 SR4] (at character 7)
+```
+
 ## Set functions
 
 A set function computes one value of a set of rows: of the whole table

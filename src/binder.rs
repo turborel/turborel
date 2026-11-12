@@ -39,6 +39,7 @@ pub use datetime::{function_type as datetime_function_type, literal_value as dat
 pub use interval::{displacement_of, is_displacement};
 mod expression;
 mod from;
+mod greatest;
 mod natural;
 mod predicates;
 mod purpose;

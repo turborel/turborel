@@ -30,6 +30,8 @@ mod extremes;
 pub use extremes::CollatedExtreme;
 use extremes::Extreme;
 mod floats;
+mod greatest;
+pub use greatest::{GREATEST, GreatestOrLeast, LEAST};
 mod ints;
 mod strings;
 mod sum;

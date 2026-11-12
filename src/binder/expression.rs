@@ -12,7 +12,7 @@ use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
 use crate::ast::{Literal, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
-use crate::functions::{AggregateRef, CollatedExtreme};
+use crate::functions::{AggregateRef, CollatedExtreme, GREATEST, LEAST};
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
@@ -186,6 +186,9 @@ impl Binder<'_> {
     /// concatenation: the function registered under `name`, its operands'
     /// types checked by it.
     fn function(&self, name: &str, args: &[ValueExpression], scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        if name == GREATEST || name == LEAST {
+            return self.greatest_or_least(name == GREATEST, args, scope);
+        }
         let f = self.db.functions.scalar(name).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {name} is not registered")))?;
         let (exprs, types) = self.arguments(&*f.0, args, scope)?;
         let t = f.0.return_type(&types)?;

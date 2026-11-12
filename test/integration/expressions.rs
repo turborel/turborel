@@ -114,6 +114,46 @@ fn predicates_as_when_operands_6_12() {
     assert_eq!(code(&s, "SELECT CASE ID WHEN IS TRUE THEN 1 END FROM T"), Code::Syntax, "no <boolean test>'s part");
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.15, Feature T054]
+/// GREATEST and LEAST of two values or more: the greatest or the least, of
+/// the type of all [SR6], each cast to it [SR7]; null if any is null
+/// [GR1]; of numbers, strings padded with spaces, datetimes and truth
+/// values; under the collation of all, the first of two it holds equal
+/// [GR3]. Values not comparable are refused (SQLCODE -103) [SR4], one value
+/// is a syntax error (SQLCODE -104); a `?` takes the first's type. Neither
+/// is a key word, so a column keeps either name.
+#[test]
+fn greatest_and_least_6_15() {
+    let db = setup();
+    let s = db.session("APP");
+    let one = |e: &str| rows(&s, &format!("SELECT {e} FROM T WHERE ID = 1"));
+    assert_eq!(one("GREATEST(1, 2.5, -3), LEAST(1, 2.5, -3), GREATEST(2, 1E0)"), expected(&["2.5,-3.0,2E0"]));
+    assert_eq!(
+        rows(&s, "SELECT ID, GREATEST(ID, AMT), LEAST(NAME, 'BOB') FROM T ORDER BY ID"),
+        expected(&["1,10.50,ANN   ", "2,2.00,BOB   ", "3,NULL,NULL"])
+    );
+    assert_eq!(
+        one("GREATEST('ab', 'ab  ', 'a'), LEAST(DATE '2026-01-01', DATE '2025-12-31'), GREATEST(TRUE, FALSE, FALSE)"),
+        expected(&["ab  ,2025-12-31,TRUE"])
+    );
+    assert_eq!(
+        one("GREATEST('a' COLLATE CASE_INSENSITIVE, 'A'), LEAST('B' COLLATE CASE_INSENSITIVE, 'a'), LEAST('B', 'a')"),
+        expected(&["a,a,B"])
+    );
+    s.run("CREATE VIEW V (G) AS SELECT GREATEST(ID, AMT) FROM T").unwrap();
+    let described = "SELECT DATA_TYPE, NUMERIC_PRECISION, NUMERIC_SCALE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'V'";
+    assert_eq!(rows(&s, described), expected(&["NUMERIC,12,2"]), "the type of all [§9.5]");
+    let p = s.prepare("SELECT GREATEST(ID, ?) FROM T WHERE ID = 1").unwrap();
+    let mut opened = s.open_prepared(&p, &[turborel::value::Value::Char("7".into())]).unwrap();
+    assert_eq!(opened.fetch().unwrap().map(|r| r.iter().map(ToString::to_string).collect::<Vec<_>>()), Some(vec!["7".to_owned()]));
+    drop(opened);
+    assert_eq!(code(&s, "SELECT GREATEST(1, 'A') FROM T"), Code::SyntaxRule, "SR4");
+    assert_eq!(code(&s, "SELECT LEAST(DATE '2026-01-01', 1) FROM T"), Code::SyntaxRule, "SR4");
+    assert_eq!(code(&s, "SELECT GREATEST(1) FROM T"), Code::Syntax, "two values at least");
+    s.run("CREATE TABLE G (GREATEST INTEGER, LEAST INTEGER)").unwrap();
+    assert_eq!(rows(&s, "SELECT GREATEST, LEAST FROM G"), expected(&[]), "names of columns");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.10 GR2-GR5]: CAST among
 /// numbers and strings, NULL staying null; a number's literal padded to a
 /// string's length, refused if longer; a string truncated or padded; a

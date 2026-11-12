@@ -34,7 +34,6 @@ each group.
 
 ### Expressions and functions
 
-- GREATEST and LEAST (T054) [§6.15].
 - LPAD and RPAD (T055), and LTRIM, RTRIM and BTRIM of several characters
   (T056) [§6.33]. TRIM removes one character today.
 - Regular expressions (F841 to F847). LIKE_REGEX [§8.7], OCCURRENCES_REGEX

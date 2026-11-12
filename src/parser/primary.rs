@@ -10,7 +10,7 @@ use crate::ast::{
     CaseExpression, Predicate, SearchCondition, SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification, WhenOperand,
 };
 use crate::error::Result;
-use crate::functions::EVERY;
+use crate::functions::{EVERY, GREATEST, LEAST};
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
@@ -85,6 +85,12 @@ impl Parser {
         let every = matches!(self.peek(), Tok::Identifier(name) if name == EVERY);
         if every && matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
             return Ok(ValueExpression::SetFunction(self.set_function_specification()?));
+        }
+        // [ISO/IEC 9075-2:2023 §6.15] GREATEST and LEAST, no key words of
+        // SQL-92, before "(" the functions.
+        let extreme = if let Tok::Identifier(name) = self.peek() { [GREATEST, LEAST].into_iter().find(|f| name == f) } else { None };
+        if let Some(name) = extreme.filter(|_| matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))) {
+            return self.greatest_or_least(name);
         }
         // An <identifier> followed by "(" never occurs in SQL-86.
         if matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
@@ -285,6 +291,23 @@ impl Parser {
             return Ok(vec![literal(kw::BOTH), first, self.common_value_expression()?]);
         }
         Ok(vec![literal(kw::BOTH), literal(" "), first])
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.15] `<greatest or least function>` ::=
+    /// `<greatest or least>` ( `<value expression>` { , `<value
+    /// expression>` }... ): two values at least, `name` the function.
+    fn greatest_or_least(&mut self, name: &'static str) -> Result<ValueExpression> {
+        let at = self.here();
+        self.advance();
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut args = vec![self.value_expression()?];
+        self.expect_delim(delim::COMMA)?;
+        args.push(self.value_expression()?);
+        while self.accept_delim(delim::COMMA) {
+            args.push(self.value_expression()?);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::Function { name, args, at })
     }
 
     /// \[EXTENSION\] `<identifier>` ( \[`<value expression>` \[{, `<value expression>`}...\]\] )

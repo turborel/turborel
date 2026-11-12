@@ -572,6 +572,20 @@ as the equivalent searched CASE does. The predicates turborel has not,
 SIMILAR, LIKE_REGEX, IS DISTINCT FROM, IS NORMALIZED, MEMBER, SUBMULTISET,
 IS A SET and IS OF, are no `<when operand>`s either.
 
+### GREATEST and LEAST
+
+Feature T054 (GREATEST and LEAST). GREATEST and LEAST take two values or
+more [§6.15], each comparable with each, else SQLCODE -103 [SR4]. Their
+type is the values' [SR6, §9.5], and each is cast to it [SR7]. The result
+is null if any value is [GR1], else the first value that is greater or
+less than or equal to every other [GR3], so of two a collation holds
+equal the first. Strings are ordered under the collation of all of
+them [§9.14 SR1h, §9.15]. A dynamic parameter among the values takes the
+first value's type, as one among COALESCE's does [92 §17.6 GR5j], which
+§20 leaves unsaid; this is marked [EXTENSION]. GREATEST and LEAST are no
+key words of SQL-92, so both stay identifiers, functions before a
+parenthesis.
+
 ### Optional maximum lengths
 
 Feature T081 (optional string types maximum length). CHARACTER VARYING,

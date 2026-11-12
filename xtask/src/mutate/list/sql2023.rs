@@ -5,12 +5,12 @@
 //! literals; binary strings, their literals, keys, assignment and CAST;
 //! decimal floating point, its rounding, range, keys and comparison;
 //! varying strings of no written maximum length; a simple CASE's lists
-//! of WHEN operands, and predicates among them.
+//! of WHEN operands, and predicates among them; GREATEST and LEAST.
 
 use super::{Mutation, Package};
 
 /// The mutations of SQL:2023's additions, in the order they run.
-pub const SQL2023: [Mutation; 28] = [
+pub const SQL2023: [Mutation; 31] = [
     Mutation {
         name: "boolean-predicand-untyped",
         package: Package::Core,
@@ -289,6 +289,36 @@ pub const SQL2023: [Mutation; 28] = [
         original: "    if some && !all {",
         replacement: "    if false {",
         integration: &["expressions::predicates_as_when_operands_6_12"],
+        unit: &[],
+    },
+    Mutation {
+        name: "greatest-last-of-ties",
+        package: Package::Core,
+        breaks: "GREATEST of two values its collation holds equal gives the later, so the result is not R of the first such",
+        file: "src/functions/greatest.rs",
+        original: "Some(if o == wanted { (v, key) } else { (was, was_key) })",
+        replacement: "Some(if o == wanted.reverse() { (was, was_key) } else { (v, key) })",
+        integration: &["expressions::greatest_and_least_6_15"],
+        unit: &[],
+    },
+    Mutation {
+        name: "greatest-collation-ignored",
+        package: Package::Core,
+        breaks: "GREATEST and LEAST of strings order them by scalar value, whatever their collation",
+        file: "src/binder/greatest.rs",
+        original: "        let collation = if result.is_character() {",
+        replacement: "        let collation = if false {",
+        integration: &["expressions::greatest_and_least_6_15"],
+        unit: &[],
+    },
+    Mutation {
+        name: "greatest-arguments-uncast",
+        package: Package::Core,
+        breaks: "GREATEST's arguments are not cast to the type of all, so LEAST(1, 2.5, -3) is -3, of no scale",
+        file: "src/binder/greatest.rs",
+        original: ".map(|(e, t)| brought(e, t, result))",
+        replacement: ".map(|(e, _)| e)",
+        integration: &["expressions::greatest_and_least_6_15"],
         unit: &[],
     },
 ];
