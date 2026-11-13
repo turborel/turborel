@@ -63,7 +63,7 @@ a row not yet given all its fields. A field's NAME, which DESCRIBE sets, has
 no part in the type the items describe.
 
 DATA is of the type the item describes, exactly: a NUMERIC or DECIMAL of
-its PRECISION and SCALE, an INTEGER, SMALLINT, REAL or DOUBLE PRECISION
+its PRECISION and SCALE, an INTEGER, SMALLINT, BIGINT, REAL or DOUBLE PRECISION
 of that type, a FLOAT or a DECFLOAT of its PRECISION; a string of its LENGTH, a
 CHARACTER of CHARACTER, a CHARACTER VARYING of CHARACTER VARYING; a
 datetime or interval of its type.

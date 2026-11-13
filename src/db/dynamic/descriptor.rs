@@ -43,6 +43,8 @@ pub(super) mod code {
     pub(in crate::db::dynamic) const VARYING: i64 = 12;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BOOLEAN.
     pub(in crate::db::dynamic) const BOOLEAN: i64 = 16;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BIGINT.
+    pub(in crate::db::dynamic) const BIGINT: i64 = 25;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] DECFLOAT.
     pub(in crate::db::dynamic) const DECFLOAT: i64 = 26;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY.
@@ -290,6 +292,8 @@ impl Item {
             code::DECIMAL => format!("DECIMAL({precision}, {scale})"),
             code::INTEGER => "INTEGER".to_owned(),
             code::SMALLINT => "SMALLINT".to_owned(),
+            // [ISO/IEC 9075-2:2023 §20.1 SR6g, SR7k] BIGINT.
+            code::BIGINT => crate::value::types::BIGINT_NAME.to_owned(),
             code::FLOAT => format!("FLOAT({precision})"),
             code::REAL => "REAL".to_owned(),
             code::DOUBLE_PRECISION => "DOUBLE PRECISION".to_owned(),
@@ -356,12 +360,13 @@ fn type_code(t: &DataType) -> i64 {
             Spelled::Decimal => code::DECIMAL,
             Spelled::Integer => code::INTEGER,
             Spelled::Smallint => code::SMALLINT,
+            Spelled::Bigint => code::BIGINT,
             Spelled::Numeric | Spelled::Float | Spelled::Real | Spelled::DoublePrecision => code::NUMERIC,
         },
         DataType::Approximate { .. } => match spelling(t) {
             Spelled::Real => code::REAL,
             Spelled::DoublePrecision => code::DOUBLE_PRECISION,
-            Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint => code::FLOAT,
+            Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint | Spelled::Bigint => code::FLOAT,
         },
         DataType::DecFloat { .. } => code::DECFLOAT,
         DataType::Binary { .. } => code::BINARY,
@@ -436,7 +441,9 @@ fn matches_at(described: &DataType, t: &DataType, target: bool, depth: usize) ->
     let named = std::mem::discriminant(&spelling(described)) == std::mem::discriminant(&spelling(t));
     match (described.clone(), t.clone()) {
         (DataType::Exact { precision, scale, .. }, DataType::Exact { precision: its_precision, scale: its_scale, .. }) => {
-            named && (matches!(spelling(t), Spelled::Integer | Spelled::Smallint) || (precision, scale) == (its_precision, its_scale))
+            named
+                && (matches!(spelling(t), Spelled::Integer | Spelled::Smallint | Spelled::Bigint)
+                    || (precision, scale) == (its_precision, its_scale))
         }
         (DataType::Approximate { precision, .. }, DataType::Approximate { precision: its_precision, .. }) => {
             named && (!matches!(spelling(t), Spelled::Float) || precision == its_precision)

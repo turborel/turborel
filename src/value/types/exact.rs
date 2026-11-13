@@ -1,5 +1,6 @@
 //! [X3.135-1986 §5.5] NUMERIC(precision, scale), and DECIMAL, INTEGER and
-//! SMALLINT, which are exact numbers of it.
+//! SMALLINT, which are exact numbers of it, as is SQL:2023's BIGINT
+//! [ISO/IEC 9075-2:2023 §6.1 SR30].
 //!
 //! Its record bytes and its key are the units at the column's scale, a
 //! 64-bit integer, which holds `MAX_EXACT_PRECISION` (18) digits: little-
@@ -22,6 +23,10 @@ pub struct Exact;
 
 /// The one value of it.
 pub static EXACT: Exact = Exact;
+
+/// [ISO/IEC 9075-2:2023 §6.1] BIGINT, no key word of SQL-92, so read as
+/// an identifier where a data type is.
+pub const BIGINT_NAME: &str = "BIGINT";
 
 /// [§21.3.5 Description 3] The radix of its precision: decimal digits.
 const DECIMAL_RADIX: u32 = 10;
@@ -73,12 +78,14 @@ impl SqlType for Exact {
         "NUMERIC"
     }
 
-    /// As written: INTEGER, SMALLINT, DECIMAL(p,s), else NUMERIC(p,s).
+    /// As written: INTEGER, SMALLINT, BIGINT, DECIMAL(p,s), else
+    /// NUMERIC(p,s).
     fn written(&self, t: &DataType) -> String {
         let (precision, scale) = shape(t);
         match spelling(t) {
             Spelled::Integer => "INTEGER".to_owned(),
             Spelled::Smallint => "SMALLINT".to_owned(),
+            Spelled::Bigint => BIGINT_NAME.to_owned(),
             Spelled::Decimal => format!("DECIMAL({precision},{scale})"),
             Spelled::Numeric | Spelled::Float | Spelled::Real | Spelled::DoublePrecision => format!("NUMERIC({precision},{scale})"),
         }
@@ -178,12 +185,14 @@ impl SqlType for Exact {
 
     /// NUMERIC, of decimal precision [ISO/IEC 9075:1992 §6.1 SR17].
     /// [ISO/IEC 9075:1992 §21.3.5] Of the name it was written with:
-    /// INTEGER, SMALLINT, DECIMAL or NUMERIC.
+    /// INTEGER, SMALLINT, DECIMAL or NUMERIC, or BIGINT [ISO/IEC
+    /// 9075-2:2023 §6.1].
     fn descriptor(&self, t: &DataType) -> Descriptor {
         let (precision, scale) = shape(t);
         let name = match spelling(t) {
             Spelled::Integer => "INTEGER",
             Spelled::Smallint => "SMALLINT",
+            Spelled::Bigint => BIGINT_NAME,
             Spelled::Decimal => "DECIMAL",
             Spelled::Numeric | Spelled::Float | Spelled::Real | Spelled::DoublePrecision => self.name(),
         };

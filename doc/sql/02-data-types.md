@@ -31,6 +31,7 @@ integers it takes; so may a domain.
 | NUMERIC(p, s), DECIMAL(p, s) | exact numbers of p digits, s after the point | DEC(p, s); (p) is (p, 0); no precision is 18 |
 | INTEGER | NUMERIC(10, 0) | INT |
 | SMALLINT | NUMERIC(5, 0) | |
+| BIGINT | NUMERIC(18, 0) | |
 | REAL | approximate numbers of 24 binary digits | FLOAT(p) for p up to 24 |
 | DOUBLE PRECISION | approximate numbers of 53 binary digits | FLOAT, FLOAT(p) for p from 25 to 53 |
 | DECFLOAT(p) | decimal floating point of p digits | DECFLOAT is DECFLOAT(34) |
@@ -238,7 +239,8 @@ The warning is SQLSTATE 01003, a null left out of a set function.
 
 **Exact numbers** are decimal: NUMERIC(p, s) and DECIMAL(p, s) hold p
 digits, s of them after the decimal point, and are the same type.
-INTEGER is NUMERIC(10, 0), SMALLINT NUMERIC(5, 0). A value with more
+INTEGER is NUMERIC(10, 0), SMALLINT NUMERIC(5, 0) and BIGINT
+NUMERIC(18, 0). A value with more
 fraction digits than its column's scale is truncated to fit; one with
 more digits before the point than the column holds is refused.
 
@@ -282,6 +284,11 @@ the name it was written with, INTEGER or DECIMAL(5,2); a type computed,
 of a sum or a literal, as NUMERIC or FLOAT. The name is no part of the
 type: INTEGER and NUMERIC(10, 0) are one type, so a foreign key of one
 references the other.
+
+BIGINT holds every number of 18 digits, from -999999999999999999 to
+999999999999999999. That is the most digits an exact value holds here,
+so a 64-bit integer past them, as 9223372036854775807 is, does not fit
+and is refused. BIGINT is no key word, so a column may be named BIGINT.
 
 DECFLOAT(p) is decimal floating point. A value has at most p digits, p
 from 1 to 34, with a decimal exponent, so it keeps decimal fractions

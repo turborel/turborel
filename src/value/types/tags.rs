@@ -45,6 +45,8 @@ const ROW_TYPE: u8 = 21;
 /// A distinct type: its schema's name and its own, then its source type
 /// (RULES.md D69).
 const DISTINCT_TYPE: u8 = 22;
+/// An exact type written BIGINT [ISO/IEC 9075-2:2023 §6.1].
+const BIGINT_TYPE: u8 = 23;
 
 /// Appends `data_type`'s bytes to `out`.
 pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
@@ -80,6 +82,7 @@ fn number_tag(spelled: Spelled) -> u8 {
         Spelled::Decimal => DECIMAL_TYPE,
         Spelled::Integer => INTEGER_TYPE,
         Spelled::Smallint => SMALLINT_TYPE,
+        Spelled::Bigint => BIGINT_TYPE,
         Spelled::Float => APPROXIMATE_TYPE,
         Spelled::Real => REAL_TYPE,
         Spelled::DoublePrecision => DOUBLE_PRECISION_TYPE,
@@ -121,13 +124,14 @@ pub(crate) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         DECIMAL_TYPE => Some(Spelled::Decimal),
         INTEGER_TYPE => Some(Spelled::Integer),
         SMALLINT_TYPE => Some(Spelled::Smallint),
+        BIGINT_TYPE => Some(Spelled::Bigint),
         REAL_TYPE => Some(Spelled::Real),
         DOUBLE_PRECISION_TYPE => Some(Spelled::DoublePrecision),
         _ => None,
     };
     let kind: &dyn SqlType = match tag {
         CHARACTER_TYPE => &CHARACTER,
-        EXACT_TYPE | DECIMAL_TYPE | INTEGER_TYPE | SMALLINT_TYPE => &EXACT,
+        EXACT_TYPE | DECIMAL_TYPE | INTEGER_TYPE | SMALLINT_TYPE | BIGINT_TYPE => &EXACT,
         APPROXIMATE_TYPE | REAL_TYPE | DOUBLE_PRECISION_TYPE => &APPROXIMATE,
         VARYING_TYPE => &VARYING,
         BINARY_TYPE => &BINARY,
@@ -181,6 +185,7 @@ mod tests {
             exact(Spelled::Decimal),
             exact(Spelled::Integer),
             exact(Spelled::Smallint),
+            exact(Spelled::Bigint),
             approximate(Spelled::Float),
             approximate(Spelled::Real),
             approximate(Spelled::DoublePrecision),

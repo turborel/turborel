@@ -1,6 +1,7 @@
 //! The mutations `cargo xtask mutate` applies (RULES.md R-TEST-9), each breaking one mechanism and naming tests, by their full paths,
 //! that fail when it is broken. A new mechanism adds one; a change to a quoted snippet updates its mutation (`verify` refuses a stale one).
 
+mod bigint;
 mod collations;
 mod composite;
 mod contents;
@@ -45,7 +46,7 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 9] = [
+    let areas: [&[Mutation]; 10] = [
         &sequences::SEQUENCES,
         &generated::GENERATED,
         &truncate::TRUNCATE,
@@ -55,6 +56,7 @@ pub fn all() -> Vec<Mutation> {
         &search_cycle::SEARCH_CYCLE,
         &composite::COMPOSITE,
         &distinct::DISTINCT,
+        &bigint::BIGINT,
     ];
     core.into_iter().chain(areas).chain([near::NEAR.as_slice(), &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER]).flatten().copied().collect()
 }

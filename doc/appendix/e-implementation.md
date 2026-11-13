@@ -13,7 +13,7 @@ choices:
 | LIKE under a collation | by each character's folding; under UNICODE and the collations of languages, each run of the pattern's characters matches a part of the value equal to it |
 | The end of a line | `\n` or `\r\n` |
 | NUMERIC and DECIMAL of no precision | 18 digits |
-| DECIMAL; INTEGER; SMALLINT | as written; NUMERIC(10, 0); NUMERIC(5, 0) |
+| DECIMAL; INTEGER; SMALLINT; BIGINT | as written; NUMERIC(10, 0); NUMERIC(5, 0); NUMERIC(18, 0) |
 | FLOAT, REAL, DOUBLE PRECISION | 24 binary digits for FLOAT(p) of p up to 24, else 53; REAL 24; DOUBLE PRECISION and FLOAT 53 |
 | DECFLOAT of no precision; the greatest precision | 34 digits; 34 |
 | The range of DECFLOAT | an exponent of its leading digit from -6143 to 6144 |

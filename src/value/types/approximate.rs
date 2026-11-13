@@ -59,7 +59,7 @@ impl SqlType for Approximate {
         match spelling(t) {
             Spelled::Real => "REAL".to_owned(),
             Spelled::DoublePrecision => "DOUBLE PRECISION".to_owned(),
-            Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint => {
+            Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint | Spelled::Bigint => {
                 format!("FLOAT({})", precision_of(t))
             }
         }
@@ -127,7 +127,7 @@ impl SqlType for Approximate {
         let name = match spelling(t) {
             Spelled::Real => "REAL",
             Spelled::DoublePrecision => "DOUBLE PRECISION",
-            Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint => "FLOAT",
+            Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint | Spelled::Bigint => "FLOAT",
         };
         Descriptor { precision: Some(bits), radix: Some(BINARY_RADIX), ..Descriptor::of(name) }
     }

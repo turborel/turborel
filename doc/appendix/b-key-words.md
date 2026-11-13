@@ -51,14 +51,14 @@ follows it, beginning a statement. DATABASE is that statement's
 only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
-SQL:2023 reserves BINARY, BOOLEAN, BTRIM, CYCLE, DECFLOAT, EVERY, GREATEST,
+SQL:2023 reserves BIGINT, BINARY, BOOLEAN, BTRIM, CYCLE, DECFLOAT, EVERY, GREATEST,
 LEAST, LIKE_REGEX, LPAD, LTRIM, OCCURRENCES_REGEX, POSITION_REGEX, RPAD,
 RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX and VARBINARY, which SQL-92 does not, so
 a column of an older database may be named any of them. They stay identifiers here, key words only where
-they are read. BINARY, BOOLEAN, DECFLOAT and VARBINARY are data types
+they are read. BIGINT, BINARY, BOOLEAN, DECFLOAT and VARBINARY are data types
 where a data type is written, so a domain cannot be named BINARY,
-BOOLEAN or VARBINARY, and one named DECFLOAT is never the type a column
-of DECFLOAT is. BTRIM, EVERY, GREATEST, LEAST, LPAD, LTRIM, RPAD and
+BOOLEAN or VARBINARY, and one named BIGINT or DECFLOAT is never the type
+a column of that type is. BTRIM, EVERY, GREATEST, LEAST, LPAD, LTRIM, RPAD and
 RTRIM are functions before a parenthesis, so a table's column of one of
 those names is written in double quotes, `"LPAD"` say, only where a
 parenthesis follows it. LIKE_REGEX is a predicate after a value, and

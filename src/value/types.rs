@@ -47,7 +47,7 @@ pub use datetime::{Chronon, DATE, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED};
 pub(crate) use decfloat::arith as decfloat_arith;
 pub use decfloat::{DECFLOAT, DECFLOAT_NAME, DecFloatKind};
 pub use distinct::{DISTINCT, DistinctKind, DistinctType, USER_DEFINED_NAME};
-pub use exact::{EXACT, Exact};
+pub use exact::{BIGINT_NAME, EXACT, Exact};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
 pub use row::{Field, ROW, ROW_NAME, RowKind, RowType};
 pub use unregistered::{UNREGISTERED, UNREGISTERED_KIND, Unregistered, parts, unregistered};

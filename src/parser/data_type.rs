@@ -10,10 +10,10 @@ use crate::error::{Code, Result, SqlError};
 use crate::functions::{CHARACTERS, OCTETS};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::Spelled;
-use crate::value::types::{BINARY_NAME, BOOLEAN_NAME, DECFLOAT_NAME, VARBINARY_NAME};
+use crate::value::types::{BIGINT_NAME, BINARY_NAME, BOOLEAN_NAME, DECFLOAT_NAME, VARBINARY_NAME};
 use crate::value::{
-    CharUnits, DEFAULT_DECFLOAT_PRECISION, DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_BINARY_LENGTH,
-    MAX_CHARACTER_LENGTH, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, REAL_PRECISION, SMALLINT_PRECISION,
+    BIGINT_PRECISION, CharUnits, DEFAULT_DECFLOAT_PRECISION, DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION,
+    MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, REAL_PRECISION, SMALLINT_PRECISION,
 };
 
 impl Parser {
@@ -76,12 +76,18 @@ impl Parser {
     }
 
     /// [ISO/IEC 9075-2:2023 §6.1] A `<boolean type>`, a `<binary string
-    /// type>` or a `<decimal floating-point type>`, if one is next, of
-    /// names no key words of SQL-92.
+    /// type>`, a `<decimal floating-point type>` or BIGINT, if one is
+    /// next, of names no key words of SQL-92.
     fn named_type(&mut self) -> Result<Option<DataType>> {
         if self.at_boolean_type() {
             self.advance();
             return Ok(Some(DataType::Boolean));
+        }
+        // [SR30] BIGINT, exact of scale 0 and of a precision no smaller
+        // than INTEGER's.
+        if self.at_bigint_type() {
+            self.advance();
+            return Ok(Some(DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Bigint }));
         }
         if self.at_binary_type() {
             return self.binary_string_type().map(Some);
@@ -126,6 +132,12 @@ impl Parser {
     /// identifier, and a domain cannot be named BOOLEAN.
     pub(super) fn at_boolean_type(&self) -> bool {
         matches!(self.peek(), Tok::Identifier(name) if name == BOOLEAN_NAME)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] Whether the `<exact numeric type>`
+    /// BIGINT is next, read as an identifier as BOOLEAN is.
+    pub(super) fn at_bigint_type(&self) -> bool {
+        matches!(self.peek(), Tok::Identifier(name) if name == BIGINT_NAME)
     }
 
     /// [ISO/IEC 9075-2:2023 §6.1] Whether a `<binary string type>` is

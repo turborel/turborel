@@ -55,6 +55,7 @@ mod assertion_totals;
 mod assertions;
 mod batch_joins;
 mod batches;
+mod bigint;
 mod binary;
 mod blocks;
 mod booleans;

@@ -42,6 +42,10 @@ pub const MAX_EXACT_PRECISION: u32 = 18;
 pub const INTEGER_PRECISION: u32 = 10;
 /// [X3.135-1986 §5.5 SR9] SMALLINT precision is not larger than INTEGER's.
 pub const SMALLINT_PRECISION: u32 = 5;
+/// [ISO/IEC 9075-2:2023 §6.1 SR30] BIGINT's precision is not smaller than
+/// INTEGER's, and decimal as theirs is (IV032): the most digits an exact
+/// value holds, which a row keeps in 64 bits.
+pub const BIGINT_PRECISION: u32 = MAX_EXACT_PRECISION;
 /// [X3.135-1986 §5.5 SR3] precision of NUMERIC / DECIMAL when omitted.
 pub const DEFAULT_EXACT_PRECISION: u32 = 18;
 /// [X3.135-1986 §5.5 SR11] REAL precision, in binary digits (IEEE single).
@@ -99,6 +103,8 @@ pub enum Spelled {
     Integer,
     /// SMALLINT.
     Smallint,
+    /// BIGINT [ISO/IEC 9075-2:2023 §6.1, Feature T071].
+    Bigint,
     /// FLOAT, or an approximate type computed.
     Float,
     /// REAL.

@@ -134,7 +134,12 @@ impl Parser {
             };
             return Ok(TypeName::Data(DataType::row(fields.into_iter().filter_map(data).collect())));
         }
-        if !matches!(self.peek(), Tok::Identifier(_)) || self.at_boolean_type() || self.at_binary_type() || self.at_decfloat_type() {
+        if !matches!(self.peek(), Tok::Identifier(_))
+            || self.at_boolean_type()
+            || self.at_binary_type()
+            || self.at_decfloat_type()
+            || self.at_bigint_type()
+        {
             return Ok(TypeName::Data(self.predefined_type()?));
         }
         let name = self.table_name()?;

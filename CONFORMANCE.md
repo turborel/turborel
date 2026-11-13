@@ -617,6 +617,23 @@ a column, a domain, a CAST's target. A varying value is stored at its own
 length, so the longest maximum costs no space. SQL-92 required the
 length [92 §6.1], and SQL:2023 wins here (RULES.md D32).
 
+### BIGINT
+
+Feature T071 (BIGINT data type).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| BIGINT | §4.5.2, §6.1 SR30 | Exact numeric of scale 0 and decimal precision 18 (IV032), no less than INTEGER's 10. It is NUMERIC(18, 0), one type with it whatever the name, so it compares, is assigned, cast and summed as any exact number, and a value past 18 digits is SQLSTATE 22003. A 64-bit integer of 19 digits does not fit. |
+| Its name | §4.5.2 | Kept as written, in messages, the catalog and the Information Schema's DATA_TYPE 'BIGINT', NUMERIC_PRECISION 18, NUMERIC_PRECISION_RADIX 10, NUMERIC_SCALE 0. |
+| Identity columns and sequences | §11.4 SR13, §11.72 SR4 | Of BIGINT, counting to 999999999999999999 if no maximum is written. |
+| Descriptor areas | §20.1 Table 30, SR6g, SR7k, §20.10 GR7d | TYPE 25, PRECISION 18 and SCALE 0 as DESCRIBE sets them. An item of TYPE 25 takes a BIGINT value and gives one to a BIGINT target alone, else 22005. |
+
+SQL:2023 reserves BIGINT [§5.2], and SQL-92 does not, so it stays an
+identifier, read as a data type where a data type is. A column or a
+domain may be named BIGINT, and BIGINT as a column's type is still the
+type. A distinct type's source of BIGINT is NUMERIC(18, 0), its function
+to the source named NUMERIC, as of any exact type (IV223).
+
 ### Decimal floating point
 
 Feature T076 (DECFLOAT data type).
@@ -1175,6 +1192,7 @@ topic. The Where column names the file that implements each.
 | 86 §5.5 SR3 precision of NUMERIC and DECIMAL when omitted | 18 | `value.rs` |
 | 2023 §6.1 GR3 (IA227) a length in octets as characters | The same number, the most characters so many octets hold | `value/types/character.rs` |
 | 86 §5.5 SR7–SR9 precision of DECIMAL, INTEGER, SMALLINT | As specified, 10, 5 | `value.rs` |
+| 2023 §6.1 SR30 (IV032) the radix and precision of BIGINT | Decimal, as INTEGER's and SMALLINT's, of 18 digits, the most an exact value holds | `value.rs` |
 | 86 §5.5 SR10–SR12 FLOAT, REAL, DOUBLE PRECISION | 24 bits if p ≤ 24, else 53. REAL 24, DOUBLE PRECISION 53, FLOAT with no precision 53. | `parser/data_type.rs`, `value.rs` |
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |
@@ -1334,7 +1352,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §21.2.2 the catalog's name | The setting CATALOG.NAME, `TURBOREL` by default | `settings.rs`, `system.rs` |
 | §21.2.27, §21.2.28 L and ML, the lengths of SQL_IDENTIFIER and CHARACTER_DATA | CHARACTER VARYING(128) and CHARACTER VARYING(32767), the longest identifier and character string. A longer text, as a view's definition may be, is shown as null [§21.3.9 Description 3], its definition completing with a warning, 01009 of a search condition, 0100A of a query expression [§11.9 GR2, §11.19 GR13, §11.34 GR4]. This implementation's own system tables are of CHARACTER VARYING too. | `system.rs`, `system/definition.rs` |
 | §21.3.23, §21.3.24 the character set SQL_TEXT | Form-of-use UTF-8, 1,112,064 characters (every Unicode scalar value), PAD SPACE | `system/definition.rs` |
-| §21.3.5 how data types are described | A number's by the name it was written with, INTEGER, SMALLINT, DECIMAL or NUMERIC, radix 10, or REAL, DOUBLE PRECISION or FLOAT, radix 2, of the binary precision it holds values of, 24 or 53. A type computed is NUMERIC or FLOAT. The name is no part of the type, so INTEGER and NUMERIC(10,0) are one type. A character string's octet length is 4n. | `value.rs`, `value/types/exact.rs`, `value/types/approximate.rs` |
+| §21.3.5 how data types are described | A number's by the name it was written with, INTEGER, SMALLINT, BIGINT, DECIMAL or NUMERIC, radix 10, or REAL, DOUBLE PRECISION or FLOAT, radix 2, of the binary precision it holds values of, 24 or 53. A type computed is NUMERIC or FLOAT. The name is no part of the type, so INTEGER and NUMERIC(10,0) are one type. A character string's octet length is 4n. | `value.rs`, `value/types/exact.rs`, `value/types/approximate.rs` |
 | §21.3.13 names of unnamed constraints | The table's name, the constraint's kind and a number, as `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |
 | ID106, ISO/IEC 9075-2:2023 §8.11 SR3, §11.7 SR5 the `<unique null treatment>` not written | NULLS DISTINCT, as every key and UNIQUE predicate was before one could be written | `ast/schema.rs` |
 | IA201, ISO/IEC 9075-2:2023 §4.25.3.2 whether two rows all null are unique with nulls not distinct | Not: under NULLS NOT DISTINCT they are the same, a key refusing the second and UNIQUE false of them | `db/integrity/keys.rs`, `exec/eval.rs` |

@@ -74,6 +74,7 @@ The codes of TYPE:
 | 7 | REAL | -1 | a type of a plug-in |
 | 8 | DOUBLE PRECISION | 26 | DECFLOAT |
 | 19 | ROW | 50 | ARRAY |
+| 25 | BIGINT | | |
 
 The codes of DATETIME_INTERVAL_CODE, of a datetime: 1 DATE, 2 TIME, 3
 TIMESTAMP, 4 TIME WITH TIME ZONE, 5 TIMESTAMP WITH TIME ZONE; of an
