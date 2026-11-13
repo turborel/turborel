@@ -105,6 +105,7 @@ verification approach DO-178C expects (§8).
 | D65 | LIKE and AS are found again from what they read |
 | D66 | A key of NULLS NOT DISTINCT holds its nulls in its index |
 | D67 | A recursive query is iterated over held work tables, bounded by a setting |
+| D68 | Arrays and rows are values of shared parts, nested to a bound |
 
 ### The project
 
@@ -559,8 +560,46 @@ rules say. A recursive operand's column takes its anchor's type [SR19 b ii
 A recursion may have no finite fixpoint [NOTE 322], so the session setting
 EXECUTOR.MAX_ITERATIONS refuses one past its count of iterations (SQLCODE
 -918), and a work table is read only while its statement is not cancelled
-(D44). SEARCH and CYCLE [§7.18] wait for ARRAY and ROW types, which their
-columns are of.
+(D44). SEARCH and CYCLE [§7.18] are not yet taken.
+
+#### D68. Arrays and rows are values of shared parts, nested to a bound
+
+An array type and a row type [ISO/IEC 9075-2:2023 §4.10, §4.12.2] are
+data types like any other, two kinds of the `SqlType` contract (D53,
+`value/types/array.rs`, `value/types/row.rs`). A value of either holds its
+elements or fields behind one shared pointer, and a type holds its element
+type or fields the same way, so a copy of either costs a count, and a value
+of a scalar type is no larger than before. A data type is cloned, not
+copied, so a scalar one still costs a few bytes to copy and no allocation.
+
+A type may hold another, so every walk of one recurses. Types nest at most
+`MAX_TYPE_NESTING` deep, 16, checked as a type is read from SQL text, from
+the catalog and from the protocol, so every walk is bounded (R-CF-6). An
+array's maximum cardinality is at most `MAX_ARRAY_CARDINALITY`, which is
+also the maximum of one written without it [IL008].
+
+Arrays take part in equality alone [§9.11]. The binder refuses an array
+wherever values are ordered or grouped [§9.12 SR3, §9.14 SR3], keys and
+indexes among them, so no array is ever keyed and its kind gives no key
+bytes. A row is ordered field by field, and its key is each field's null
+flag and key in turn. Equality is three valued at every depth [§8.2 GR1b],
+so arrays of different cardinalities are unequal, and a pair of parts known
+unequal decides though another is unknown.
+
+UNNEST [§7.6] reads the FROM items before it. It is planned as one
+operator over the plan of those items, giving each of their rows the rows
+of its arrays, so it costs one pass over them and no join. When it stands
+in a RIGHT or FULL join and reads an item outside that join, no such plan
+keeps the outer join's rows, so the query is refused as unsupported
+(SQLCODE -900) rather than evaluated otherwise.
+
+A dynamic descriptor area holds the items of a composite type's parts after
+it, in preorder, each with its LEVEL [§20.1]. COUNT counts every item and
+TOP_LEVEL_COUNT those of LEVEL 0, so the area's limit of occurrences bounds
+both. In the Information Schema a column's or domain's data type descriptor
+is identified by its ordinal position, or 1 for a domain, and each part's
+by its parent's, a point and its place, so ELEMENT_TYPES and FIELDS join
+them without a counter of their own.
 
 #### D33. Schema changes are transactional
 

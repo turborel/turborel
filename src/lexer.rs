@@ -77,49 +77,11 @@ key_words! {
     ZONE
 }
 
-/// [X3.135-1986 §5.3] The `<delimiter token>`s other than `<character string
-/// literal>`, one constant each.
-pub mod delim {
-    /// The not equals operator.
-    pub const NOT_EQUALS: &str = "<>";
-    /// The greater than or equals operator.
-    pub const GREATER_OR_EQUAL: &str = ">=";
-    /// The less than or equals operator.
-    pub const LESS_OR_EQUAL: &str = "<=";
-    /// Comma.
-    pub const COMMA: &str = ",";
-    /// Left parenthesis.
-    pub const LEFT_PAREN: &str = "(";
-    /// Right parenthesis.
-    pub const RIGHT_PAREN: &str = ")";
-    /// The less than operator.
-    pub const LESS: &str = "<";
-    /// The greater than operator.
-    pub const GREATER: &str = ">";
-    /// Period.
-    pub const PERIOD: &str = ".";
-    /// Colon.
-    pub const COLON: &str = ":";
-    /// The equals operator.
-    pub const EQUALS: &str = "=";
-    /// Asterisk.
-    pub const ASTERISK: &str = "*";
-    /// Plus sign.
-    pub const PLUS: &str = "+";
-    /// Minus sign.
-    pub const MINUS: &str = "-";
-    /// Solidus.
-    pub const SOLIDUS: &str = "/";
-    /// [ISO/IEC 9075:1992 §5.2] The concatenation operator.
-    pub const CONCATENATION: &str = "||";
-    /// [ISO/IEC 9075:1992 §5.1] The question mark: an `<SQL special
-    /// character>`, so a `<delimiter token>` [§5.2], and the `<dynamic
-    /// parameter specification>` [§6.2].
-    pub const QUESTION: &str = "?";
-    /// [ISO/IEC 9075:1992 §5.1, §20.1] The semicolon: after a direct SQL
-    /// statement.
-    pub const SEMICOLON: &str = ";";
-}
+pub mod delim;
+
+/// [ISO/IEC 9075-2:2023 §5.1] `<left bracket trigraph>` and `<right
+/// bracket trigraph>`, each the bracket it stands for.
+const TRIGRAPHS: [(&str, &str); 2] = [("??(", delim::LEFT_BRACKET), ("??)", delim::RIGHT_BRACKET)];
 
 /// Every `<delimiter token>` but `<character string literal>`, longest first
 /// so that "<>" wins over "<".
@@ -142,6 +104,8 @@ const DELIMITERS: &[&str] = &[
     delim::SOLIDUS,
     delim::QUESTION,
     delim::SEMICOLON,
+    delim::LEFT_BRACKET,
+    delim::RIGHT_BRACKET,
 ];
 
 /// The quote that delimits a `<character string literal>` [X3.135-1986 §5.2].
@@ -299,8 +263,12 @@ impl Scanner {
         }
     }
 
-    fn delimiter(&self) -> Option<&'static str> {
-        DELIMITERS.iter().copied().find(|d| d.chars().enumerate().all(|(k, dc)| self.peek(k) == Some(dc)))
+    /// The `<delimiter token>` that begins here, and its length: a
+    /// trigraph the bracket it stands for.
+    fn delimiter(&self) -> Option<(&'static str, usize)> {
+        let begins = |text: &str| text.chars().enumerate().all(|(k, c)| self.peek(k) == Some(c));
+        let trigraph = TRIGRAPHS.iter().find(|(t, _)| begins(t)).map(|&(t, d)| (d, t.chars().count()));
+        trigraph.or_else(|| DELIMITERS.iter().copied().find(|d| begins(d)).map(|d| (d, d.chars().count())))
     }
 
     /// Skips one part of a `<separator>` ::= {`<comment>` | `<space>` |
@@ -351,8 +319,8 @@ impl Scanner {
             self.character_string()
         } else if first == DOUBLE_QUOTE {
             self.delimited_identifier()
-        } else if let Some(d) = self.delimiter() {
-            self.advance(d.chars().count());
+        } else if let Some((d, length)) = self.delimiter() {
+            self.advance(length);
             Ok(Tok::Delimiter(d))
         } else {
             Err(error(Code::Lexical, self.at, format!("[X3.135-1986 §5.3 F] character {first:?} cannot start a <token>")))

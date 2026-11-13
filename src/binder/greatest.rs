@@ -25,8 +25,8 @@ impl Binder<'_> {
     pub(super) fn greatest_or_least(&self, greatest: bool, args: &[ValueExpression], scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let name = if greatest { GREATEST } else { LEAST };
         let first = args.first().map(|v| self.value_expression(v, scope)).transpose()?.map(|(_, t)| t);
-        let bound = args.iter().map(|v| self.typed_by(v, first, scope)).collect::<Result<Vec<_>>>()?;
-        let types: Vec<DataType> = bound.iter().map(|(_, t)| *t).collect();
+        let bound = args.iter().map(|v| self.typed_by(v, first.clone(), scope)).collect::<Result<Vec<_>>>()?;
+        let types: Vec<DataType> = bound.iter().map(|(_, t)| t.clone()).collect();
         let result = set_type(&types, "§9.3").map_err(|_| {
             let written: Vec<String> = types.iter().map(ToString::to_string).collect();
             rule(format!(
@@ -34,14 +34,16 @@ impl Binder<'_> {
                 written.join(", ")
             ))
         })?;
+        // [SR5] each an operand of an ordering operation [§9.14].
+        types.iter().try_for_each(|t| super::composite::ordering_operand(t, name))?;
         let collation = if result.is_character() {
             let derived = args.iter().map(|v| self.derived(v)).collect::<Result<Vec<_>>>()?;
             self.collation_of(&derived)?
         } else {
             None
         };
-        let exprs = bound.into_iter().map(|(e, t)| brought(e, t, result)).collect();
-        let function = GreatestOrLeast { greatest, result, collation };
+        let exprs = bound.into_iter().map(|(e, t)| brought(e, &t, result.clone())).collect();
+        let function = GreatestOrLeast { greatest, result: result.clone(), collation };
         Ok((Expr::Call(ScalarRef(Arc::new(function)), exprs), result))
     }
 }

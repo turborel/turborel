@@ -21,13 +21,15 @@
 //! The objects described are the base tables and views of the catalog,
 //! the system tables but the Definition Schema's own, and the views of the
 //! Information Schema; and the one character set, SQL_TEXT [§10.4 SR3],
-//! and its collation [§21.3.23, §21.3.24]. The constraint tables are in
+//! and its collation [§21.3.23, §21.3.24]. The data type descriptors are
+//! in `definition/descriptors.rs`, the constraint tables in
 //! `definition/constraints.rs`, the privilege tables and USERS in
 //! `definition/privileges.rs`, and \[EXTENSION\] the tables of table and
 //! index options and of indexes in `definition/options.rs`, and of sequence
 //! generators in `definition/sequences.rs` (RULES.md R-SIZE-2).
 
 mod constraints;
+mod descriptors;
 mod options;
 mod privileges;
 mod sequences;
@@ -44,9 +46,9 @@ use crate::binder::{system_view_columns, view_uses};
 use crate::catalog::{CheckLevels, ColumnDefault, ColumnDesc, ConstraintDesc, QualifiedName, TemporaryKind, owner_of};
 use crate::error::Result;
 use crate::storage::Row;
+use crate::value::Value;
 use crate::value::collation::{Pad, default_pad};
 use crate::value::datetime::Moment;
-use crate::value::{DataType, Value};
 
 /// [ISO/IEC 9075:1992 §21.2.28] ML, the length of CHARACTER_DATA: the
 /// longest character string.
@@ -67,7 +69,6 @@ const NUMBER_OF_CHARACTERS: usize = 1_112_064;
 pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     let mut tables = vec![
         defined("SCHEMATA", schemata_columns, Rows::Infallible(schemata)),
-        defined("DATA_TYPE_DESCRIPTOR", data_type_columns, Rows::Fallible(data_types)),
         defined("DOMAINS", domains_columns, Rows::Infallible(domains)),
         defined("DOMAIN_CONSTRAINTS", domain_constraints_columns, Rows::Infallible(domain_constraints)),
         defined("TABLES", tables_columns, Rows::Fallible(described_tables)),
@@ -81,6 +82,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
         defined("TRANSLATIONS", translations_columns, Rows::Infallible(none)),
         defined("SQL_LANGUAGES", languages_columns, Rows::Infallible(languages)),
     ];
+    tables.extend(descriptors::tables());
     tables.extend(constraints::tables());
     tables.extend(privileges::tables());
     tables.extend(options::tables());
@@ -154,11 +156,6 @@ pub(super) fn information(ident: &str) -> QualifiedName {
 /// `s` in a column of CHARACTER_DATA: the null value if it is longer.
 pub(super) fn long(s: &str) -> Value {
     if s.chars().count() > usize::try_from(LONG).unwrap_or(usize::MAX) { Value::Null } else { text(s) }
-}
-
-/// A whole number of a CARDINAL_NUMBER column.
-fn count(n: u32) -> Value {
-    number(usize::try_from(n).unwrap_or(usize::MAX))
 }
 
 // ---------------------------------------------------------------------------
@@ -249,57 +246,6 @@ fn schemata(seen: &Seen<'_>) -> Vec<Row> {
     let set = ids(&catalog, &information(SQL_TEXT));
     let owner = |s: &str| text(owner_of(&*seen.state.catalog, s));
     schemas(seen).iter().map(|s| [vec![catalog.clone(), text(s), owner(s)], set.to_vec()].concat()).collect()
-}
-
-// ---------------------------------------------------------------------------
-// [§21.3.5] DATA_TYPE_DESCRIPTOR
-// ---------------------------------------------------------------------------
-
-fn data_type_columns() -> Vec<ColumnDesc> {
-    Columns::of()
-        .ids("TABLE_OR_DOMAIN", true)
-        .id("COLUMN_NAME", true)
-        .data("DATA_TYPE", true)
-        .number("CHARACTER_MAXIMUM_LENGTH", false)
-        .number("CHARACTER_OCTET_LENGTH", false)
-        .ids("COLLATION", false)
-        .number("NUMERIC_PRECISION", false)
-        .number("NUMERIC_PRECISION_RADIX", false)
-        .number("NUMERIC_SCALE", false)
-        .number("DATETIME_PRECISION", false)
-        .done()
-}
-
-/// One row for each domain, its column name empty, and one for each
-/// column of each table that is of no domain [§21.3.5].
-fn data_types(seen: &Seen<'_>) -> Result<Vec<Row>> {
-    let catalog = catalog_name(seen);
-    let mut rows = Vec::new();
-    for d in seen.state.catalog.domains() {
-        rows.push([ids(&catalog, &d.name).to_vec(), vec![text("")], data_type(&catalog, d.data_type, d.collation.as_ref())].concat());
-    }
-    for o in objects(seen)? {
-        for c in o.columns.iter().filter(|c| c.domain.is_none()) {
-            rows.push(
-                [ids(&catalog, &o.name).to_vec(), vec![text(&c.name)], data_type(&catalog, c.data_type, c.collation.as_ref())].concat(),
-            );
-        }
-    }
-    Ok(rows)
-}
-
-/// [§21.3.5 Description 3] The data type `t`, from DATA_TYPE on, as its
-/// kind describes it (`SqlType::descriptor`): a character string's
-/// collation `named`, else the character set's, SQL_TEXT.
-fn data_type(catalog: &Value, t: DataType, named: Option<&QualifiedName>) -> Vec<Value> {
-    let d = t.kind().descriptor(&t);
-    let optional = |n: Option<u32>| n.map_or(Value::Null, count);
-    let default = information(SQL_TEXT);
-    let collation = if d.collated { ids(catalog, named.unwrap_or(&default)).to_vec() } else { vec![Value::Null, Value::Null, Value::Null] };
-    let octets = d.octets.map_or(Value::Null, number);
-    let head = vec![text(&d.name), optional(d.length), octets];
-    let tail = vec![optional(d.precision), optional(d.radix), optional(d.scale), optional(d.datetime_precision)];
-    [head, collation, tail].concat()
 }
 
 // ---------------------------------------------------------------------------

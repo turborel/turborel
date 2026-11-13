@@ -28,6 +28,8 @@ fn got(v: Value) -> Got {
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Row(_)
         | Value::Extension(_)) => panic!("{other:?}"),
     }
 }

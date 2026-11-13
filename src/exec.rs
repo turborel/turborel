@@ -28,6 +28,7 @@ mod recursive;
 mod set;
 mod sort;
 mod subquery;
+mod unnest;
 mod work;
 
 use std::sync::Arc;
@@ -103,6 +104,8 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         // [ISO/IEC 9075-2:2023 §7.17 GR2c ii] its fixpoint is found as the cursor opens.
         Plan::Recursive { .. } => recursive::recursive(plan, db, tx),
         Plan::WorkTable { .. } => recursive::work_table(plan, db, tx),
+        // [ISO/IEC 9075-2:2023 §7.6 SR8] each row of its input with its collections' elements.
+        Plan::Unnest(..) => unnest::unnested(plan, db, tx),
     }
 }
 
@@ -166,6 +169,7 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Sort { .. }
         | Plan::Distinct { .. }
         | Plan::Recursive { .. }
+        | Plan::Unnest(..)
         | Plan::WorkTable { .. } => failed(broken("a join is not one")),
     }
 }

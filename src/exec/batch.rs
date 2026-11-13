@@ -261,7 +261,7 @@ fn put_cell(cell: Cell<'_>, slot: &mut Value) {
 /// The finished set functions `aggs` of the rows of `batches`, as `read`
 /// says, their warnings heard by `runner`.
 fn read_all(read: &Read, aggs: &[AggCall], batches: Batches, runner: &Runner) -> Result<Vec<Value>> {
-    let mut states: Vec<Box<dyn Accumulator>> = aggs.iter().map(|a| a.func.0.accumulator(a.result)).collect();
+    let mut states: Vec<Box<dyn Accumulator>> = aggs.iter().map(|a| a.func.0.accumulator(a.result.clone())).collect();
     for kept in batches {
         let (batch, rows) = kept?;
         fed(&batch, (&read.taken, runner), rows.as_deref(), &mut states)?;

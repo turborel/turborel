@@ -93,6 +93,15 @@ impl SqlState {
     pub const INVALID_DESCRIPTOR_COUNT: SqlState = SqlState("07008");
     /// Dynamic SQL error: invalid descriptor index.
     pub const INVALID_DESCRIPTOR_INDEX: SqlState = SqlState("07009");
+    /// [ISO/IEC 9075-2:2023 §20.4 GR5a, GR5b] Dynamic SQL error: undefined
+    /// DATA value.
+    pub const UNDEFINED_DATA_VALUE: SqlState = SqlState("0700C");
+    /// [ISO/IEC 9075-2:2023 §20.5 GR4a] Dynamic SQL error: invalid DATA
+    /// target.
+    pub const INVALID_DATA_TARGET: SqlState = SqlState("0700D");
+    /// [ISO/IEC 9075-2:2023 §20.5 GR4b] Dynamic SQL error: invalid LEVEL
+    /// value.
+    pub const INVALID_LEVEL_VALUE: SqlState = SqlState("0700E");
     /// Warning: insufficient item descriptor areas.
     pub const INSUFFICIENT_ITEM_DESCRIPTOR_AREAS: SqlState = SqlState("01005");
     /// Invalid SQL statement name.
@@ -141,6 +150,15 @@ impl SqlState {
     /// Data exception: sequence generator limit exceeded [ISO/IEC
     /// 9075-2:2023 §9.35 GR3a].
     pub const SEQUENCE_GENERATOR_LIMIT_EXCEEDED: SqlState = SqlState("2200H");
+    /// Data exception: array element error [ISO/IEC 9075-2:2023 §6.25
+    /// GR2b].
+    pub const ARRAY_ELEMENT_ERROR: SqlState = SqlState("2202E");
+    /// Data exception: array data, right truncation [ISO/IEC 9075-2:2023
+    /// §9.2 GR3b xxii 2B].
+    pub const ARRAY_DATA_RIGHT_TRUNCATION: SqlState = SqlState("2202F");
+    /// Data exception: null value in array target [ISO/IEC 9075-2:2023
+    /// §15.5 GR3b i 1].
+    pub const NULL_VALUE_IN_ARRAY_TARGET: SqlState = SqlState("2200E");
     /// Data exception: indicator overflow.
     pub const INDICATOR_OVERFLOW: SqlState = SqlState("22022");
     /// Data exception: invalid escape sequence.

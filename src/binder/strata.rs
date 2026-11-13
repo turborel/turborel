@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use super::rule;
 use super::set_functions::is_aggregate_call;
 use crate::ast::{
-    Correspondence, JoinKind, JoinSpecification, QueryExpression, QuerySpecification, RowElement, SearchCondition, SelectList,
+    Correspondence, JoinKind, JoinSpecification, QueryExpression, QuerySpecification, RowElement, SearchCondition, SelectItem, SelectList,
     SelectSublist, SetOperator, Subquery, TableReference, ValueExpression, WithElement, WithQuery,
 };
 use crate::db::State;
@@ -160,6 +160,13 @@ impl<'w> Rules<'w> {
                 usize::from(named && self.names.contains(&t.table.ident.as_str()))
             }
             TableReference::Derived(d) => self.refs(&d.query.query, scope),
+            TableReference::Unnest(u) => {
+                let mut n = 0_usize;
+                for v in &u.collections {
+                    v.for_each_subquery(&mut |s| n = n.saturating_add(self.refs(&s.query, scope)));
+                }
+                n
+            }
             TableReference::Joined(j) => {
                 let mut n = self.reference_refs(&j.left, scope).saturating_add(self.reference_refs(&j.right, scope));
                 if let Some(JoinSpecification::On(c)) = &j.on {
@@ -273,6 +280,13 @@ impl<'w> Rules<'w> {
             TableReference::Derived(d) => {
                 let inner = if place == Place::Body { Place::Derived } else { Place::Elsewhere };
                 self.query(&d.query.query, (inner, scope))
+            }
+            TableReference::Unnest(u) => {
+                let mut subqueries = Vec::new();
+                for v in &u.collections {
+                    v.for_each_subquery(&mut |s| subqueries.push(s));
+                }
+                self.elsewhere(subqueries, scope)
             }
             TableReference::Joined(j) => {
                 let (left, right) = (self.reference_refs(&j.left, scope), self.reference_refs(&j.right, scope));
@@ -439,6 +453,11 @@ fn any_query(q: &QueryExpression, pred: &dyn Fn(&QueryExpression) -> bool) -> bo
                 match r {
                     TableReference::Table(_) => {}
                     TableReference::Derived(d) => nested.push(&d.query.query),
+                    TableReference::Unnest(u) => {
+                        for v in &u.collections {
+                            v.for_each_subquery(&mut |s| nested.push(&s.query));
+                        }
+                    }
                     TableReference::Joined(j) => refs.extend([&j.left, &j.right]),
                 }
             }
@@ -454,7 +473,7 @@ fn selected(spec: &QuerySpecification) -> Vec<&ValueExpression> {
         SelectList::Values(items) => items
             .iter()
             .filter_map(|i| match i {
-                SelectSublist::Derived(d) => Some(&d.value),
+                SelectSublist::Derived(SelectItem { value, .. }) | SelectSublist::Fields { value, .. } => Some(value),
                 SelectSublist::All(_) => None,
             })
             .collect(),

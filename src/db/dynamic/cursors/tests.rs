@@ -30,11 +30,10 @@ fn cursor_for(text: &str) -> (Database, Session, Params) {
     }
     s.commit().unwrap();
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
-    let mut p = Params::new().declare("TEXT", DataType::varying(100), Value::Char(text.to_owned())).declare("V", integer, int(0)).declare(
-        "FK",
-        integer,
-        int(0),
-    );
+    let mut p = Params::new()
+        .declare("TEXT", DataType::varying(100), Value::Char(text.to_owned()))
+        .declare("V", integer.clone(), int(0))
+        .declare("FK", integer, int(0));
     s.execute("PREPARE S FROM TEXT", &mut p).unwrap();
     s.declare_cursor("DECLARE C CURSOR FOR S").unwrap();
     (db, s, p)

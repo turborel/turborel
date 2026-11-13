@@ -27,7 +27,15 @@ fn before() -> Before {
     rows.push((1000_u64, vec![int(1), Value::Null])).unwrap();
     rows.push((1001_u64, vec![Value::Null, int(7)])).unwrap();
     let name = QualifiedName { auth: "A".to_owned(), ident: "Q".to_owned() };
-    Before { table: name, rows, types: vec![integer, integer], lookups: Vec::new(), map: SpillMap::new(space.clone()), places: NONE, space }
+    Before {
+        table: name,
+        rows,
+        types: vec![integer.clone(), integer],
+        lookups: Vec::new(),
+        map: SpillMap::new(space.clone()),
+        places: NONE,
+        space,
+    }
 }
 
 /// The rows of `before` that `values` matched, sorted, and the rows of it

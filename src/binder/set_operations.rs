@@ -64,8 +64,8 @@ pub fn bind_insert_query(cx: Context<'_>, query: &QueryExpression, columns: &[Ob
     let bound = bind_query_expression(Context { draws, ..cx }, query, &Nesting::Source { columns })?;
     // A time or timestamp without time zone, of the session's displacement
     // as a column WITH TIME ZONE takes it [§6.1 GR5].
-    let wanted =
-        columns.len() == bound.columns.len() && bound.columns.iter().zip(columns).any(|(c, o)| takes_zone(c.data_type, o.desc.data_type));
+    let wanted = columns.len() == bound.columns.len()
+        && bound.columns.iter().zip(columns).any(|(c, o)| takes_zone(&c.data_type.clone(), &o.desc.data_type.clone()));
     if !wanted {
         return Ok(bound);
     }
@@ -74,7 +74,7 @@ pub fn bind_insert_query(cx: Context<'_>, query: &QueryExpression, columns: &[Ob
         .iter()
         .zip(columns)
         .enumerate()
-        .map(|(i, (c, o))| stored(Expr::Column(i), c.data_type, o.desc.data_type, now))
+        .map(|(i, (c, o))| stored(Expr::Column(i), c.data_type.clone(), &o.desc.data_type.clone(), now))
         .collect();
     Ok(Bound { plan: LogicalPlan::Project { exprs, input: Box::new(bound.plan) }, columns: bound.columns })
 }
@@ -111,8 +111,8 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
     let degree = bound.first().map_or(0, Vec::len);
     let mut columns = Vec::new();
     for k in 0..degree {
-        let mut types: Vec<DataType> = bound.iter().filter_map(|r| r.get(k).and_then(|e| e.1)).collect();
-        let object = objects.and_then(|o| o.get(k)).map(|o| o.desc.data_type);
+        let mut types: Vec<DataType> = bound.iter().filter_map(|r| r.get(k).and_then(|e| e.1.clone())).collect();
+        let object = objects.and_then(|o| o.get(k)).map(|o| o.desc.data_type.clone());
         // [EXTENSION] Into a column of a type beyond the standard, its
         // type, each value having been found assignable to it, a character
         // string too (RULES.md D53), which §9.3 would not bring together
@@ -125,15 +125,16 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
         };
         columns.push(OutColumn { name: None, collation: None, data_type, not_null: false, origin: None });
     }
-    let exprs = bound.into_iter().map(|r| r.into_iter().zip(&columns).map(|((e, t), c)| conformed(e, t, c.data_type)).collect()).collect();
-    let types = columns.iter().map(|c| c.data_type).collect();
+    let exprs =
+        bound.into_iter().map(|r| r.into_iter().zip(&columns).map(|((e, t), c)| conformed(e, t, c.data_type.clone())).collect()).collect();
+    let types = columns.iter().map(|c| c.data_type.clone()).collect();
     Ok(Bound { plan: LogicalPlan::Values { rows: exprs, types }, columns })
 }
 
 /// `e`, of type `t` if it has one, cast to `to` if that is another.
 fn conformed(e: Expr, t: Option<DataType>, to: DataType) -> Expr {
     match t {
-        Some(t) => super::case::brought(e, t, to),
+        Some(t) => super::case::brought(e, &t, to),
         None => e,
     }
 }
@@ -212,7 +213,7 @@ impl Binder<'_> {
                 continue;
             }
             let by_row = deciding(rows, k).map(|v| self.value_expression(v, scope)).transpose()?.map(|(_, t)| t);
-            taken.push(by_row.or_else(|| objects.and_then(|o| o.get(k)).map(|o| o.desc.data_type)));
+            taken.push(by_row.or_else(|| objects.and_then(|o| o.get(k)).map(|o| o.desc.data_type.clone())));
         }
         Ok(taken)
     }
@@ -234,13 +235,16 @@ impl Binder<'_> {
             let object = objects.and_then(|o| o.get(k));
             let (bound, at) = match element {
                 RowElement::Value(v, at) => {
-                    let (e, t) = match taken.get(k).copied().flatten() {
+                    // [ISO/IEC 9075-2:2023 §6.5 SR1] ARRAY[] of its object
+                    // column's type.
+                    let contextual = || object.filter(|_| super::composite::is_empty_array(v)).map(|o| o.desc.data_type.clone());
+                    let (e, t) = match taken.get(k).cloned().flatten().or_else(contextual) {
                         Some(t) => self.typed(v, ParameterType::Of(t), scope),
                         None => self.value_expression(v, scope),
                     }
                     .or_at(*at)?;
                     if let Some(o) = object {
-                        check_assignment(&o.desc, t, INSERT_RULE).or_at(*at)?;
+                        check_assignment(&o.desc, &t.clone(), INSERT_RULE).or_at(*at)?;
                     }
                     ((e, Some(t)), *at)
                 }
@@ -287,7 +291,7 @@ fn combined(cx: Context<'_>, s: &SetOperation, left: Bound, right: Bound) -> Res
     let clause = if s.op == SetOperator::Intersect { "§7.10 SR10b ii" } else { "§7.10 SR12b ii" };
     let mut columns = Vec::new();
     for (a, b) in left.columns.iter().zip(&right.columns) {
-        let data_type = set_type(&[a.data_type, b.data_type], clause)?;
+        let data_type = set_type(&[a.data_type.clone(), b.data_type.clone()], clause)?;
         let name = a.name.clone().filter(|_| a.name == b.name);
         let collation = result_collation(a, b);
         columns.push(OutColumn { name, collation, data_type, not_null: a.not_null && b.not_null, origin: None });
@@ -302,6 +306,17 @@ pub(super) fn aligned(cx: &Context<'_>, s: &SetOperation, (left, right): (Bound,
     let character = left.columns.iter().chain(&right.columns).any(|c| c.data_type.is_character());
     if cx.purpose.constrains() && character && !(s.op == SetOperator::Union && s.all) {
         return Err(nondeterministic("§7.10 SR15", "UNION, EXCEPT or INTERSECT, not UNION ALL, of a character string column"));
+    }
+    // [ISO/IEC 9075-2:2023 §9.12 SR1e-g, SR2f-h] each column of UNION
+    // DISTINCT, EXCEPT and INTERSECT an operand of a grouping operation.
+    if !(s.op == SetOperator::Union && s.all) {
+        let what = match s.op {
+            SetOperator::Union => "UNION",
+            SetOperator::Except => "EXCEPT",
+            SetOperator::Intersect => "INTERSECT",
+        };
+        let mut columns = left.columns.iter().chain(&right.columns);
+        columns.try_for_each(|c| super::composite::grouping_operand(&c.data_type, what))?;
     }
     Ok(match &s.corresponding {
         Correspondence::Position => {
@@ -342,7 +357,7 @@ pub(super) fn conform(bound: Bound, columns: &[OutColumn]) -> LogicalPlan {
         .iter()
         .zip(columns)
         .enumerate()
-        .map(|(i, (a, b))| conformed(Expr::Column(i), Some(a.data_type), b.data_type))
+        .map(|(i, (a, b))| conformed(Expr::Column(i), Some(a.data_type.clone()), b.data_type.clone()))
         .collect();
     LogicalPlan::Project { exprs, input: Box::new(bound.plan) }
 }

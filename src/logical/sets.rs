@@ -62,6 +62,8 @@ impl InSet {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_) => None,
         };
         let texts =

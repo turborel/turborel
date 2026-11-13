@@ -15,6 +15,7 @@ or two unsigned integers it takes; so may a domain.
     | <exact numeric type> | <approximate numeric type>
     | <decimal floating-point type>
     | <datetime type> | <interval type>
+    | <row type> | <array type>
 ```
 
 | Type | Holds | Written |
@@ -35,6 +36,8 @@ or two unsigned integers it takes; so may a domain.
 | TIME(p) | hour, minute, second of p fraction digits | TIME is TIME(0); WITH TIME ZONE |
 | TIMESTAMP(p) | a date and a time | TIMESTAMP is TIMESTAMP(6); WITH TIME ZONE |
 | INTERVAL q | a span of time, of the fields its qualifier names | INTERVAL '3' DAY |
+| ROW(f t, ...) | a value of each field f, of type t | |
+| t ARRAY[n] | up to n values of type t, in order | t ARRAY is t ARRAY[65535] |
 
 The longest string is 32,767 characters, the longest binary string 32,767
 octets, an exact number holds at most 18 digits and a DECFLOAT at most
@@ -414,6 +417,32 @@ A month added keeps the day, so January 31 plus a month would be
 February 31, which is no date: SQL-92 refuses it, rather than moving to
 another day.
 
+## Arrays and rows
+
+An array holds elements of one type, in order, from none to its
+maximum cardinality: `INTEGER ARRAY[3]` holds up to three integers. Any
+type of the standard may be an element's, an array or a row among them,
+so `INTEGER ARRAY[2] ARRAY[4]` is an array of arrays. An element may be
+null, and so may the array itself, which differs from an array of no
+elements. A row type holds a value of each of its fields, each named
+and of its own type: `ROW(X INTEGER, Y INTEGER)`.
+
+```sql
+CREATE TABLE ROUTES (ID INTEGER PRIMARY KEY, STOPS VARCHAR(20) ARRAY[10],
+                     START ROW(X DECIMAL(9,6), Y DECIMAL(9,6)));
+```
+
+Arrays are compared for equality alone, element by element. Two arrays
+are equal if they have as many elements and each pair is equal. They are
+never ordered or grouped, so no array is in ORDER BY, GROUP BY, DISTINCT,
+UNION, a key or an index. Rows are compared field by field, the first
+unequal field deciding which is the less, and may be ordered and grouped.
+Types nest at most 16 deep.
+
+[Value Expressions](04-expressions.md#arrays-and-rows) makes and reads
+them, and UNNEST in [Query Expressions](06-queries.md#unnest) gives an
+array's elements as rows.
+
 ## Assignment and CAST
 
 **Assignment** stores a value in a column, or a parameter: INSERT,
@@ -439,6 +468,13 @@ domain's, checking the domain's constraints:
 | DECFLOAT | yes | no | yes | yes | yes | no | no |
 | Datetime | yes | no | no | no | no | yes, of its fields | no |
 | Interval | yes | no | of one field | no | no | no | of its class |
+
+An array is assigned and CAST element by element to its target's element
+type, and a row field by field to its target's fields, in order, whatever
+their names. An array of more elements than its target's maximum
+cardinality is refused, SQLSTATE 2202F, but on assignment its nulls past
+the maximum are dropped. Nothing else is assigned or CAST to or from an
+array or a row.
 
 A character string is CAST to a number, datetime or interval by reading
 it as a literal of that type, its leading and trailing spaces dropped.

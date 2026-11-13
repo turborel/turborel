@@ -6,18 +6,22 @@
 
 use std::sync::Arc;
 
+use super::composite::{grouping_operand, ordering_operand};
 use super::interval::assumed;
-use super::set_functions::column_specifications;
+use super::set_functions::column_references;
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
-use crate::ast::{Literal, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
+use crate::ast::{Composite, Literal, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
-use crate::functions::{AggregateRef, CollatedExtreme, GREATEST, LEAST, ScalarRef, regex_function, trim_named};
+use crate::functions::{
+    ARRAY_AGG, AggregateRef, ArrayAggregate, CONCATENATION, CollatedExtreme, GREATEST, LEAST, ScalarRef, regex_function, trim_named,
+};
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
 use crate::value::Spelled;
 use crate::value::collation::CollationRef;
+use crate::value::types::composite::row_ordered;
 use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
 
 /// [X3.135-1986 §5.9 SR4] The type of an operation on two exact numbers. Its
@@ -64,11 +68,16 @@ impl Binder<'_> {
     /// [ISO/IEC 9075:1992 §17.6 GR5] `e` bound, a `<dynamic parameter
     /// specification>` taking the type `taken` its context gives it.
     pub(super) fn typed(&self, e: &ValueExpression, taken: ParameterType, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        // [ISO/IEC 9075-2:2023 §6.5 SR1] ARRAY[] of the array type its
+        // context gives, an empty array.
+        if let (true, ParameterType::Of(t @ DataType::Array(_))) = (super::composite::is_empty_array(e), &taken) {
+            return Ok((Expr::Const(Value::Array(Vec::new().into())), t.clone()));
+        }
         if let Some((index, at)) = dynamic_of(e) {
             let (value, t) = self.params.dynamic_typed(index, Some(taken)).or_at(at)?;
             // Of a statement to be kept, a slot its value fills as each
             // execution begins (RULES.md D45).
-            let bound = if self.params.slots() { Expr::Dynamic(Slot { index, data_type: t, at }) } else { Expr::Const(value) };
+            let bound = if self.params.slots() { Expr::Dynamic(Slot { index, data_type: t.clone(), at }) } else { Expr::Const(value) };
             return Ok((bound, t));
         }
         self.value_expression(e, scope)
@@ -81,11 +90,11 @@ impl Binder<'_> {
         match (dynamic_of(a), dynamic_of(b)) {
             (Some(_), None) => {
                 let y = self.value_expression(b, scope)?;
-                Ok([self.typed(a, ParameterType::Of(y.1), scope)?, y])
+                Ok([self.typed(a, ParameterType::Of(y.1.clone()), scope)?, y])
             }
             (None, Some(_)) => {
                 let x = self.value_expression(a, scope)?;
-                let y = self.typed(b, ParameterType::Of(x.1), scope)?;
+                let y = self.typed(b, ParameterType::Of(x.1.clone()), scope)?;
                 Ok([x, y])
             }
             (Some(_), Some(_)) | (None, None) => Ok([self.value_expression(a, scope)?, self.value_expression(b, scope)?]),
@@ -99,11 +108,11 @@ impl Binder<'_> {
         match (dynamic_of(a), dynamic_of(b)) {
             (Some(_), None) => {
                 let y = self.value_expression(b, scope)?;
-                Ok([self.typed(a, ParameterType::Of(assumed(op, y.1, true)), scope)?, y])
+                Ok([self.typed(a, ParameterType::Of(assumed(op, y.1.clone(), true)), scope)?, y])
             }
             (None, Some(_)) => {
                 let x = self.value_expression(a, scope)?;
-                let y = self.typed(b, ParameterType::Of(assumed(op, x.1, false)), scope)?;
+                let y = self.typed(b, ParameterType::Of(assumed(op, x.1.clone(), false)), scope)?;
                 Ok([x, y])
             }
             (Some(_), Some(_)) | (None, None) => self.pair((a, b), scope),
@@ -190,6 +199,7 @@ impl Binder<'_> {
                 self.difference((minuend, subtrahend), *qualifier, scope).or_at(*at)
             }
             ValueExpression::AtZone { source, zone, at } => self.at_zone(source, zone.as_deref(), scope).or_at(*at),
+            ValueExpression::Composite(c, at) => self.composite((c, *at), scope).or_at(*at),
         }
     }
 
@@ -197,6 +207,12 @@ impl Binder<'_> {
     /// concatenation: the function registered under `name`, its operands'
     /// types checked by it.
     fn function(&self, name: &str, args: &[ValueExpression], scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        if let Some(bound) = self.array_function(name, args, scope) {
+            return bound;
+        }
+        if name == CONCATENATION {
+            return self.concatenation(args, scope);
+        }
         if name == GREATEST || name == LEAST {
             return self.greatest_or_least(name == GREATEST, args, scope);
         }
@@ -210,6 +226,36 @@ impl Binder<'_> {
             None => self.db.functions.scalar(name).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {name} is not registered")))?,
         };
         let (exprs, types) = self.arguments(&*f.0, args, scope)?;
+        let t = f.0.return_type(&types)?;
+        Ok((Expr::Call(f, exprs), t))
+    }
+
+    /// [ISO/IEC 9075:1992 §6.13] `<concatenation>` of character or binary
+    /// strings, the function registered under its name; [ISO/IEC
+    /// 9075-2:2023 §6.47] `<array concatenation>`, if an operand is an
+    /// array, a `?` taking its type [§9.5].
+    fn concatenation(&self, args: &[ValueExpression], scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let bound = self.prebound(args, scope)?;
+        let array = bound.iter().flatten().find(|(_, t)| matches!(t, DataType::Array(_))).map(|(_, t)| t.clone());
+        if let Some(array) = array {
+            let typed = |(b, a): (Option<(Expr, DataType)>, &ValueExpression)| match b {
+                Some(done) => Ok(done),
+                None => self.typed(a, ParameterType::Of(array.clone()), scope),
+            };
+            let pair = bound.into_iter().zip(args).map(typed).collect::<Result<Vec<_>>>()?;
+            let concatenated = if let [left, right] = pair.as_slice() { Self::array_concatenation((left, right)) } else { None };
+            return concatenated.unwrap_or_else(|| {
+                Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §6.47 SR2] an array is concatenated with an array, not with a value of another type than {array}"
+                )))
+            });
+        }
+        let f = self
+            .db
+            .functions
+            .scalar(CONCATENATION)
+            .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {CONCATENATION} is not registered")))?;
+        let (exprs, types) = self.arguments_of(&*f.0, args, bound, scope)?;
         let t = f.0.return_type(&types)?;
         Ok((Expr::Call(f, exprs), t))
     }
@@ -269,6 +315,9 @@ impl Binder<'_> {
 
     /// [X3.135-1986 §5.8] a `<set function specification>`.
     pub(super) fn set_function(&self, sf: &SetFunctionSpecification, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        if sf.name == ARRAY_AGG {
+            return self.array_aggregate(sf, scope);
+        }
         let func: AggregateRef = self
             .db
             .functions
@@ -279,6 +328,27 @@ impl Binder<'_> {
             SetArg::Distinct(argument) => self.aggregate(func, Some(argument), true, scope),
             SetArg::All(argument) => self.aggregate(func, Some(argument), false, scope),
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §10.9] ARRAY_AGG ( V ORDER BY K1, ... ): the
+    /// aggregate of the row ( V, K1, ... ), so a null V is kept \[NOTE
+    /// 528\], ordered by its keys, each as its collation orders it [§9.15]
+    /// and an operand of an ordering operation [§9.14 SR2f].
+    fn array_aggregate(&self, sf: &SetFunctionSpecification, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let (SetArg::All(value) | SetArg::Distinct(value)) = &sf.arg else {
+            return Err(SqlError::new(Code::Api, "[DESIGN] ARRAY_AGG is read with an argument"));
+        };
+        let mut parts = vec![(**value).clone()];
+        let mut collations = Vec::new();
+        for key in &sf.order_by {
+            // A key not a character string is its own sort key.
+            collations.push(self.collation_of(&[self.derived(&key.key)?])?);
+            parts.push(key.key.clone());
+        }
+        let row = ValueExpression::Composite(Box::new(Composite::Row(parts)), sf.at);
+        let descending = sf.order_by.iter().map(|k| k.descending).collect();
+        let func = AggregateRef(Arc::new(ArrayAggregate { descending, collations, by_query: false }));
+        self.aggregate(func, Some(&row), false, scope)
     }
 
     /// \[EXTENSION\] A call by name of a registered scalar or aggregate function.
@@ -297,6 +367,25 @@ impl Binder<'_> {
         self.aggregate(f, Some(arg), false, scope)
     }
 
+    /// [X3.135-1986 §5.23 GR3] The set function `func` of `arg`, if `arg`
+    /// is an outer reference: the enclosing query's (`binder/subquery.rs`).
+    /// None if it is not.
+    fn outer_set_function(&self, func: &AggregateRef, arg: Option<&ValueExpression>, distinct: bool) -> Result<Option<(Expr, DataType)>> {
+        let (Some(v), Some(outer)) = (arg, self.outer) else { return Ok(None) };
+        if !self.is_outer_argument(v)? {
+            return Ok(None);
+        }
+        // [ISO/IEC 9075:1992 §6.5 SR4] the outer reference alone:
+        // SQL-86's rule of no operators [X3.135-1986 §5.8 SR4] is Entry
+        // SQL's [§6.5, Leveling Rules].
+        let mut columns = Vec::new();
+        column_references(v, &mut columns);
+        if columns.len() > 1 {
+            return Err(rule("[ISO/IEC 9075:1992 §6.5 SR4] an outer reference in a set function's argument is its only column reference"));
+        }
+        subquery::outer_aggregate(outer, func.clone(), v, distinct).map(Some)
+    }
+
     /// Bind a set function [X3.135-1986 §5.8] or extension aggregate and register it with the grouping.
     pub(super) fn aggregate(
         &self,
@@ -305,22 +394,8 @@ impl Binder<'_> {
         distinct: bool,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        // [X3.135-1986 §5.23 GR3] over an outer reference, it is the
-        // enclosing query's (`binder/subquery.rs`).
-        if let (Some(v), Some(outer)) = (arg, self.outer)
-            && self.is_outer_argument(v)?
-        {
-            // [ISO/IEC 9075:1992 §6.5 SR4] the outer reference alone:
-            // SQL-86's rule of no operators [X3.135-1986 §5.8 SR4] is
-            // Entry SQL's [§6.5, Leveling Rules].
-            let mut columns = Vec::new();
-            column_specifications(v, &mut columns);
-            if columns.len() > 1 {
-                return Err(rule(
-                    "[ISO/IEC 9075:1992 §6.5 SR4] an outer reference in a set function's argument is its only column reference",
-                ));
-            }
-            return subquery::outer_aggregate(outer, func, v, distinct);
+        if let Some(outer) = self.outer_set_function(&func, arg, distinct)? {
+            return Ok(outer);
         }
         let g = match scope {
             Scope::Groups(g, _) => g,
@@ -345,15 +420,21 @@ impl Binder<'_> {
             }
         };
         let extreme = func.0.name() == kw::MAX || func.0.name() == kw::MIN;
-        if self.purpose.constrains() && extreme && arg_type.is_some_and(|t| t.is_character()) {
+        if let Some(t) = &arg_type {
+            operand_rules(t, func.0.name(), (extreme, distinct))?;
+        }
+        if self.purpose.constrains() && extreme && arg_type.clone().is_some_and(|t| t.is_character()) {
             return Err(nondeterministic("§7.8 SR3a, §7.9 SR13c i", "MAX or MIN of a character string"));
         }
-        let (func, arg, named) = self.collated_call((func, arg, arg_type), arg_of, (extreme, distinct))?;
+        let (func, arg, named) = self.collated_call((func, arg, arg_type.clone()), arg_of, (extreme, distinct))?;
         let result = func.0.result_type(arg_type)?;
         let collated = named.map_or_else(String::new, |c| format!(" COLLATE {}", c.collation.name()));
         let label = match &arg {
             None => format!("{}(*)", func.0.name()),
-            Some(e) => format!("{}({}{}{collated})", func.0.name(), if distinct { "DISTINCT " } else { "" }, render_expr(e, &self.names)),
+            Some(e) => {
+                let (name, suffix) = (func.0.name(), func.0.label_suffix());
+                format!("{name}({}{}{collated}{suffix})", if distinct { "DISTINCT " } else { "" }, render_expr(e, &self.names))
+            }
         };
         // The same set function written twice (say in SELECT and HAVING) is
         // computed once: the label names the function, argument and DISTINCT.
@@ -361,11 +442,31 @@ impl Binder<'_> {
         let k = if let Some(k) = aggs.iter().position(|a| a.label == label) {
             k
         } else {
-            aggs.push(AggCall { func, arg, distinct, result, label });
+            aggs.push(AggCall { func, arg, distinct, result: result.clone(), label });
             aggs.len().saturating_sub(1)
         };
         Ok((Expr::Column(g.columns.len().saturating_add(k)), result))
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §10.9 SR7c, SR7d] The argument of set function
+/// `name`, of type `t`: an operand of a grouping operation under DISTINCT
+/// [§9.12]; of MAX or MIN, if `extreme`, of an ordering operation [§9.14],
+/// and not row-ordered \[SR7d ii\].
+fn operand_rules(t: &DataType, name: &str, (extreme, distinct): (bool, bool)) -> Result<()> {
+    if distinct {
+        grouping_operand(t, &format!("{name}(DISTINCT ...)"))?;
+    }
+    if !extreme {
+        return Ok(());
+    }
+    ordering_operand(t, name)?;
+    if row_ordered(t) {
+        return Err(rule(format!(
+            "[ISO/IEC 9075-2:2023 §10.9 SR7d ii] {name} of {t}: rows are not totally ordered, (1, NULL) and (NULL, 1) neither before the other"
+        )));
+    }
+    Ok(())
 }
 
 // Unit tests: the exact result types of [X3.135-1986 §5.9 SR4] (RULES.md R-TEST-1).

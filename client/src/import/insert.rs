@@ -190,7 +190,7 @@ fn column_name(heading: &Heading) -> String {
 /// as it is, for the server to cast.
 fn assigned(values: &[Value], types: &[ParameterType]) -> Result<Vec<Value>, Failure> {
     let each = values.iter().zip(types).map(|(v, t)| {
-        let to = t.data_type();
+        let to = t.clone().data_type();
         let string = matches!(v, Value::Char(_)) && to.is_character();
         if string { assign(v.clone(), &to, INSERT_ASSIGNS).map_err(|e| Failure::from(&e)) } else { Ok(v.clone()) }
     });

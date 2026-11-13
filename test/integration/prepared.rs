@@ -57,8 +57,8 @@ const INT: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelle
 fn a_prepared_query_is_described_and_opened_with_values() {
     let (_db, s) = session();
     let p = s.prepare("SELECT K, N, A FROM T WHERE K = ? OR A > ? ORDER BY K").unwrap();
-    let types: Vec<DataType> = p.parameters().iter().map(|t| t.data_type()).collect();
-    assert_eq!((types[0], types[0].to_string().as_str()), (INT, "INTEGER"), "the column's type, as written");
+    let types: Vec<DataType> = p.parameters().iter().map(|t| t.clone().data_type()).collect();
+    assert_eq!((types[0].clone(), types[0].to_string().as_str()), (INT, "INTEGER"), "the column's type, as written");
     assert_eq!(types[1].to_string(), DataType::Exact { precision: 5, scale: 2, spelled: Spelled::Decimal }.to_string());
     let named: Vec<Option<&str>> = p.columns().iter().map(|c| c.name.as_deref()).collect();
     assert_eq!(named, [Some("K"), Some("N"), Some("A")]);
@@ -99,7 +99,7 @@ fn a_parameter_takes_its_type_from_where_it_stands() {
 
 /// The types the parameters of `sql` are described with.
 fn described(s: &Session, sql: &str) -> Vec<String> {
-    s.prepare(sql).unwrap().parameters().iter().map(|t| t.data_type().to_string()).collect()
+    s.prepare(sql).unwrap().parameters().iter().map(|t| t.clone().data_type().to_string()).collect()
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR5f, g, n; §6.14, §6.15,
@@ -169,7 +169,7 @@ fn a_function_gives_its_parameters_their_types() {
 #[test]
 fn prepared_writes_take_their_columns_types() {
     let (db, s) = session();
-    let shown = |p: &turborel::db::Prepared| p.parameters().iter().map(|t| t.data_type().to_string()).collect::<Vec<_>>();
+    let shown = |p: &turborel::db::Prepared| p.parameters().iter().map(|t| t.clone().data_type().to_string()).collect::<Vec<_>>();
     let insert = s.prepare("INSERT INTO T VALUES (?, ?, ?), (5, 'EVE', ?)").unwrap();
     assert_eq!(shown(&insert), ["NUMERIC(1,0)", "CHARACTER(3)", "DECIMAL(5,2)", "DECIMAL(5,2)"], "[o], and [p] for the third");
     let all_dynamic = s.prepare("INSERT INTO T VALUES (?, ?, ?)").unwrap();

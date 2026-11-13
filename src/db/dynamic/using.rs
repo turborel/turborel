@@ -1,9 +1,11 @@
 //! [ISO/IEC 9075:1992 §17.9 GR5-GR7] `<using clause>`s: the values a
 //! prepared statement's `<dynamic parameter specification>`s take, of
 //! arguments or of an SQL descriptor area; and where the values of a row
-//! go, to targets or to an SQL descriptor area's items.
+//! go, to targets or to an SQL descriptor area's items: [ISO/IEC
+//! 9075-2:2023 §20.11, §20.12] each value of an item of LEVEL 0 and those
+//! subordinate to it (`nested.rs`).
 
-use super::descriptor::{Descriptor, Item, exact};
+use super::descriptor::{Descriptor, Item, exact, number};
 use super::{Name, dynamic_error};
 use crate::ast::{DescriptorItem, ParameterSpecification, UsingClause};
 use crate::binder::{OutColumn, cast_is_valid};
@@ -19,13 +21,14 @@ pub(super) enum Targets<'a> {
     /// value's and the assignment's.
     Arguments(&'a [ParameterSpecification], (&'static str, &'static str)),
     /// To the SQL descriptor area of this name, as it is, each value cast
-    /// to the type of its item [GR7b].
-    Descriptor(Name, Descriptor, Vec<DataType>),
+    /// to the type of its item of LEVEL 0 [GR7b], of these numbers, in
+    /// the catalog of this name.
+    Descriptor(Name, Descriptor, Vec<(i64, DataType)>, String),
 }
 
 /// [ISO/IEC 9075:1992 §17.9 GR5e, GR7c] A value of `from` is not cast to
 /// `to` (SQLSTATE 07006).
-fn restricted(rule: &str, from: DataType, to: DataType) -> SqlError {
+fn restricted(rule: &str, from: &DataType, to: &DataType) -> SqlError {
     dynamic_error(SqlState::RESTRICTED_DATA_TYPE, format!("[ISO/IEC 9075:1992 {rule}, §6.10 SR4] CAST of {from} to {to} is not valid"))
 }
 
@@ -64,6 +67,8 @@ fn returned(item: &mut Item, v: &Value) {
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Row(_)
         | Value::Extension(_) => {
             return;
         }
@@ -73,8 +78,30 @@ fn returned(item: &mut Item, v: &Value) {
 }
 
 /// Whether `t` is CHARACTER VARYING or BINARY VARYING.
-fn varying(t: DataType) -> bool {
+fn varying(t: &DataType) -> bool {
     matches!(t, DataType::Varying { .. } | DataType::VarBinary { .. })
+}
+
+/// [ISO/IEC 9075:1992 §17.9 GR7e-g; ISO/IEC 9075-2:2023 §20.12 GR5e i 2]
+/// `item`, of a type `t` not a row type, set to reflect `tv`, cast from
+/// `sv` of type `sdt`: INDICATOR -1 of the null value, else 0 and DATA
+/// `tv`, RETURNED_LENGTH and RETURNED_OCTET_LENGTH of a varying string's,
+/// and RETURNED_CARDINALITY of an array's.
+pub(super) fn reflected(item: &mut Item, (tv, t): (&Value, &DataType), (sv, sdt): (&Value, &DataType)) {
+    if tv.is_null() {
+        item.set(DescriptorItem::Indicator, exact(-1));
+        return;
+    }
+    item.set(DescriptorItem::Indicator, exact(0));
+    item.set(DescriptorItem::Data, tv.clone());
+    if varying(t) {
+        returned(item, tv);
+    } else if varying(sdt) {
+        returned(item, sv);
+    }
+    if let Value::Array(a) = tv {
+        item.set(DescriptorItem::ReturnedCardinality, exact(number(a.len())));
+    }
 }
 
 impl Session {
@@ -118,40 +145,25 @@ impl Session {
         given
             .into_iter()
             .zip(types)
-            .map(|((value, from), to)| if cast_is_valid(&from, to) { Ok(value) } else { Err(restricted("§17.9 GR5e", from, *to)) })
+            .map(|((value, from), to)| if cast_is_valid(&from, to) { Ok(value) } else { Err(restricted("§17.9 GR5e", &from, &to.clone())) })
             .collect()
     }
 
-    /// [ISO/IEC 9075:1992 §17.9 GR5b, GR5d i] The values of the first `d`
-    /// item descriptor areas of the area `name` names, and their types.
+    /// [ISO/IEC 9075:1992 §17.9 GR5b, GR5d i; ISO/IEC 9075-2:2023 §20.11
+    /// GR5, GR6b i] The values of the `d` items of LEVEL 0 of the area
+    /// `name` names, each with those subordinate to it, and their types.
     fn descriptor_values(&self, name: &crate::ast::ExtendedName, d: usize, params: &Params) -> Result<Vec<(Value, DataType)>> {
         let (_, area) = self.descriptor(name, params, "§17.9 GR2")?;
         check_count(area.count, area.occurrences, "§17.9 GR5b i")?;
-        if usize::try_from(area.count).ok() != Some(d) {
-            return Err(parameters_mismatch(
-                "§17.9 GR5b ii",
-                &format!("COUNT is {} for {d} <dynamic parameter specification>s", area.count),
-            ));
-        }
         let catalog = self.catalog_now()?;
-        (1..=area.count)
-            .map(|n| {
-                let item = area.item(n);
-                let Some(t) = item.data_type(&catalog) else {
-                    return Err(parameters_mismatch("§17.9 GR5b iii, §17.1 SR3", &format!("item {n} describes no valid type")));
-                };
-                if item.number(DescriptorItem::Indicator) < 0 {
-                    return Ok((Value::Null, t));
-                }
-                // DATA set is of the item's type [§17.5 GR5], and undefined
-                // once another field is set [GR4]: defined, it is valid.
-                let data = item.get(DescriptorItem::Data);
-                if data.is_null() {
-                    return Err(parameters_mismatch("§17.9 GR5b iv", &format!("the DATA of item {n} is undefined")));
-                }
-                Ok((data, t))
-            })
-            .collect()
+        let Some(tops) = area.tops(&catalog) else {
+            return Err(parameters_mismatch("§17.9 GR5b iii, §17.1 SR3", "an item of the first COUNT describes no valid type"));
+        };
+        if tops.len() != d {
+            let msg = format!("{} items of LEVEL 0 for {d} <dynamic parameter specification>s", tops.len());
+            return Err(parameters_mismatch("§17.9 GR5b ii", &msg));
+        }
+        tops.into_iter().map(|(n, t)| Ok((area.associated(n, &t, &catalog)?, t))).collect()
     }
 
     /// [ISO/IEC 9075:1992 §17.9 GR6] Where the values of a row of `columns`
@@ -187,51 +199,37 @@ impl Session {
         };
         let (key, area) = self.descriptor(name, params, "§17.9 GR2")?;
         check_count(area.count, area.occurrences, "§17.9 GR6b i")?;
-        if usize::try_from(area.count).ok() != Some(d) {
-            return Err(targets_mismatch("§17.9 GR6b ii", &format!("COUNT is {} for {d} columns", area.count)));
-        }
         let catalog = self.catalog_now()?;
-        let mut types = Vec::with_capacity(d);
-        for (n, column) in (1..).zip(columns) {
-            let Some(t) = area.item(n).data_type(&catalog) else {
-                return Err(targets_mismatch("§17.9 GR6b iii, §17.1 SR3", &format!("item {n} describes no valid type")));
-            };
-            if !cast_is_valid(&column.data_type, &t) {
-                return Err(restricted("§17.9 GR7c", column.data_type, t));
-            }
-            types.push(t);
+        let Some(tops) = area.tops(&catalog) else {
+            return Err(targets_mismatch("§17.9 GR6b iii, §17.1 SR3", "an item of the first COUNT describes no valid type"));
+        };
+        if tops.len() != d {
+            return Err(targets_mismatch("§17.9 GR6b ii", &format!("{} items of LEVEL 0 for {d} columns", tops.len())));
         }
-        Ok(Targets::Descriptor(key, area, types))
+        for ((_, t), column) in tops.iter().zip(columns) {
+            if !cast_is_valid(&column.data_type, t) {
+                return Err(restricted("§17.9 GR7c", &column.data_type.clone(), t));
+            }
+        }
+        Ok(Targets::Descriptor(key, area, tops, catalog))
     }
 
-    /// [ISO/IEC 9075:1992 §17.9 GR7] The values `row` of `columns` put where
-    /// `targets` says: assigned to the arguments; or each cast to its item's
-    /// type, INDICATOR -1 of the null value, else 0 and DATA the value, and
-    /// RETURNED_LENGTH and RETURNED_OCTET_LENGTH of a varying string's.
+    /// [ISO/IEC 9075:1992 §17.9 GR7; ISO/IEC 9075-2:2023 §20.12 GR5] The
+    /// values `row` of `columns` put where `targets` says: assigned to the
+    /// arguments; or each cast to the type of its item of LEVEL 0, which,
+    /// with those subordinate to it, is set to reflect it (`nested.rs`).
     ///
     /// # Errors
     ///
     /// Those of the assignment, or of CAST [GR7d].
     pub(super) fn put_row(&self, targets: &Targets<'_>, columns: &[OutColumn], row: &[Value], params: &mut Params) -> Result<Completion> {
-        let (key, mut area, types) = match targets {
+        let (key, mut area, tops, catalog) = match targets {
             Targets::Arguments(targets, (null_rule, assign_rule)) => return assign_targets(row, targets, params, null_rule, assign_rule),
-            Targets::Descriptor(key, area, types) => (key, area.clone(), types),
+            Targets::Descriptor(key, area, tops, catalog) => (key, area.clone(), tops, catalog),
         };
-        for ((n, (sv, t)), column) in (1..).zip(row.iter().zip(types)).zip(columns) {
+        for (((n, t), sv), column) in tops.iter().zip(row).zip(columns) {
             let tv = cast(sv.clone(), t)?;
-            let mut item = area.item(n);
-            if tv.is_null() {
-                item.set(DescriptorItem::Indicator, exact(-1));
-            } else {
-                item.set(DescriptorItem::Indicator, exact(0));
-                item.set(DescriptorItem::Data, tv.clone());
-                if varying(*t) {
-                    returned(&mut item, &tv);
-                } else if varying(column.data_type) {
-                    returned(&mut item, sv);
-                }
-            }
-            area.items.insert(n, item);
+            area.reflect(*n, (t, catalog), &tv, (sv, &column.data_type));
         }
         self.put_descriptor(key.clone(), area);
         Ok(Completion::Success)

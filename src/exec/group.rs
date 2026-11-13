@@ -205,7 +205,7 @@ impl Grouper {
 
 /// The set functions of a new group, fed nothing.
 fn fresh(spec: &Spec) -> Vec<Box<dyn Accumulator>> {
-    spec.aggs.iter().map(|a| a.func.0.accumulator(a.result)).collect()
+    spec.aggs.iter().map(|a| a.func.0.accumulator(a.result.clone())).collect()
 }
 
 /// Feeds each set function of `group`, of grouping key `key`, its

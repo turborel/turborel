@@ -196,6 +196,8 @@ pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Optio
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_),
         ) => {
             return None;
@@ -211,6 +213,8 @@ pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Optio
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Row(_)
         | Value::Extension(_) => None,
     }
 }

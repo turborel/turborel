@@ -221,7 +221,7 @@ impl State {
         let columns = titles.into_iter().zip(&bound.columns).map(|((name, at), c)| {
             let desc = ColumnDesc {
                 name,
-                data_type: c.data_type,
+                data_type: c.data_type.clone(),
                 not_null: c.not_null,
                 default: None,
                 domain: None,
@@ -325,7 +325,7 @@ fn defined(c: &ColumnDesc, at: usize) -> ColumnDefinition {
     ColumnDefinition {
         name: c.name.clone(),
         at,
-        data_type: Some(TypeName::Data(c.data_type)),
+        data_type: Some(TypeName::Data(c.data_type.clone())),
         default: None,
         generated: None,
         constraints: if c.not_null { vec![not_null] } else { Vec::new() },

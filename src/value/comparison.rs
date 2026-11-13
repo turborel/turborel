@@ -5,6 +5,7 @@
 
 use std::cmp::Ordering;
 
+use super::types::composite::{bucket_parts, compare_parts};
 use super::types::{BINARY_VARYING, SqlType};
 use super::{DecFloat, Decimal, Value};
 
@@ -24,6 +25,7 @@ fn padded(s: &str, length: usize) -> impl Iterator<Item = char> + '_ {
 /// because one side is null ([X3.135-1986 §5.11 GR2]), or the values are not comparable.
 pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     match (a, b) {
+        (Value::Array(_) | Value::Row(_), _) | (_, Value::Array(_) | Value::Row(_)) => compare_composites(a, b),
         // A null makes the comparison unknown [X3.135-1986 §5.11 GR2]; a character
         // string and a number are not comparable [X3.135-1986 §5.11 SR1], nor a
         // binary string with either: binary strings are with each other
@@ -85,6 +87,19 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     }
 }
 
+/// [ISO/IEC 9075-2:2023 §8.2 GR1b] Two arrays pair by pair, their
+/// cardinalities first \[GR1b ii\]; two rows of one degree likewise
+/// \[GR1b i\]; none if either is null, or of another kind [§4.10,
+/// §4.12.4].
+fn compare_composites(a: &Value, b: &Value) -> Option<Ordering> {
+    if let (Value::Array(x), Value::Array(y)) | (Value::Row(x), Value::Row(y)) = (a, b)
+        && (matches!(a, Value::Array(_)) || x.len() == y.len())
+    {
+        return compare_parts(x, y);
+    }
+    None
+}
+
 /// [X3.135-1986 §5.11 GR4] Two numbers compared by algebraic value, also
 /// when one is exact and the other approximate; none if either is no
 /// number.
@@ -106,6 +121,8 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_),
             _,
         )
@@ -117,6 +134,8 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_),
         ) => None,
     }
@@ -147,6 +166,8 @@ pub enum Bucket {
     /// A value of a type beyond the standard, as its kind buckets it: boxed,
     /// so a bucket of the standard's types stays small.
     Extension(Box<[u8]>),
+    /// An array's or a row's parts, each's bucket.
+    Composite(Box<[Bucket]>),
 }
 
 /// The bucket of `v`, or none for the null value, which equals nothing
@@ -160,6 +181,7 @@ pub fn bucket(v: &Value) -> Option<Bucket> {
         Value::Bool(b) => Some(Bucket::Bool(*b)),
         Value::Datetime(d) => Some(Bucket::Instant(d.utc)),
         Value::Interval(i) => Some(Bucket::Span(i.units)),
+        Value::Array(p) | Value::Row(p) => bucket_parts(p),
         Value::Extension(e) => e.kind.bucket(v),
     }
 }
@@ -177,6 +199,8 @@ pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Row(_)
         | Value::Extension(_) => {
             return None;
         }

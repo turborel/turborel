@@ -153,7 +153,7 @@ impl Before {
 fn key_of<'v>(types: &[DataType], columns: &[usize], values: impl Iterator<Item = &'v Value>) -> Option<Vec<u8>> {
     let mut key = Vec::new();
     for (c, v) in columns.iter().zip(values) {
-        let at = anchor(v, *types.get(*c)?)?;
+        let at = anchor(v, types.get(*c)?)?;
         if !at.exact {
             return None;
         }
@@ -218,7 +218,7 @@ impl State {
                 (true, None) | (false, _) => Ok(()),
             }
         })?;
-        let types = self.catalog.table(table).map(|t| t.columns.iter().map(|c| c.data_type).collect()).unwrap_or_default();
+        let types = self.catalog.table(table).map(|t| t.columns.iter().map(|c| c.data_type.clone()).collect()).unwrap_or_default();
         let (map, space) = (SpillMap::new(space.clone()), space.clone());
         Ok(Before { table: table.clone(), rows, types, lookups: Vec::new(), map, places: NONE, space })
     }

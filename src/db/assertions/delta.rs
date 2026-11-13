@@ -188,7 +188,7 @@ impl State {
 
     /// The types of `table`'s columns.
     fn column_types(&self, table: &QualifiedName) -> Vec<DataType> {
-        self.catalog.table(table).map(|d| d.columns.iter().map(|c| c.data_type).collect()).unwrap_or_default()
+        self.catalog.table(table).map(|d| d.columns.iter().map(|c| c.data_type.clone()).collect()).unwrap_or_default()
     }
 
     /// The types of a grouping's `keys`, expressions over `table`'s row,
@@ -197,7 +197,7 @@ impl State {
         let types = self.column_types(table);
         keys.iter()
             .map(|k| match k {
-                Expr::Column(at) => types.get(*at).copied(),
+                Expr::Column(at) => types.get(*at).cloned(),
                 Expr::Const(_)
                 | Expr::Outer(..)
                 | Expr::Dynamic(_)

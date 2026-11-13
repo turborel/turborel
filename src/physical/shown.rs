@@ -93,6 +93,13 @@ impl Plan {
             Plan::Sort { detail, .. } => writeln!(out, "{pad}Sort {detail}"),
             Plan::Recursive { member, fixpoint } => writeln!(out, "{pad}Recursive member {member} ({})", fixpoint.word()),
             Plan::WorkTable { member, .. } => writeln!(out, "{pad}WorkTable of member {member}"),
+            Plan::Unnest(u) => writeln!(
+                out,
+                "{pad}{}Unnest of {} collections{}",
+                if u.outer.is_some() { "LeftOuter" } else { "" },
+                u.collections.len(),
+                if u.ordinality { " with ordinality" } else { "" }
+            ),
         };
         self.write_inputs(out, depth.saturating_add(1));
     }
@@ -121,6 +128,7 @@ impl Plan {
             | Plan::Distinct { input }
             | Plan::Sort { input, .. }
             | Plan::IndexJoin { left: input, .. } => input.write(out, depth),
+            Plan::Unnest(u) => u.input.write(out, depth),
         }
     }
 }

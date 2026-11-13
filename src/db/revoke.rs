@@ -242,7 +242,7 @@ impl State {
         for d in self.catalog.domains() {
             for c in &d.constraints {
                 let ConstraintKind::Check { text, names, .. } = &c.kind else { continue };
-                if lost(bound.bound_on_value(&d.name, d.data_type, (text, names)).map(|_| ())) {
+                if lost(bound.bound_on_value(&d.name, d.data_type.clone(), (text, names)).map(|_| ())) {
                     abandoned.domain_constraints.push((d.name.clone(), c.name.clone()));
                 }
             }

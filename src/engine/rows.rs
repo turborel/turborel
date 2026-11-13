@@ -167,7 +167,7 @@ impl StorageEngine for RowStore {
     }
     fn create_table(&self, desc: &TableDesc) -> Result<Box<dyn TableStorage>> {
         let options = options::resolved(desc, lock_builtin(&self.tables).get(&desc.name).copied().unwrap_or(self.defaults));
-        let types: Vec<DataType> = desc.columns.iter().map(|c| c.data_type).collect();
+        let types: Vec<DataType> = desc.columns.iter().map(|c| c.data_type.clone()).collect();
         Ok(Box::new(RowTable::create(&self.files()?, &types, options)?.sealed(self.sealing(desc))))
     }
 
@@ -176,7 +176,7 @@ impl StorageEngine for RowStore {
     fn open_table(&self, desc: &TableDesc, locator: &[u8]) -> Result<Option<Box<dyn TableStorage>>> {
         let (meta, durable) = parse_locator(locator).ok_or_else(|| corrupt("a table's locator is not the row store's"))?;
         let options = options::resolved(desc, lock_builtin(&self.tables).get(&desc.name).copied().unwrap_or(self.defaults));
-        let types: Vec<DataType> = desc.columns.iter().map(|c| c.data_type).collect();
+        let types: Vec<DataType> = desc.columns.iter().map(|c| c.data_type.clone()).collect();
         let files = self.files()?;
         files.durable.fetch_max(durable, Ordering::AcqRel);
         Ok(Some(Box::new(RowTable::open_with(&files, (meta, &types), options, self.sealing(desc))?)))

@@ -25,6 +25,7 @@ pub struct TableName {
     pub at: usize,
 }
 
+mod composite;
 mod connection;
 mod contents;
 mod cursor;
@@ -37,12 +38,14 @@ mod schema;
 mod sequences;
 mod users;
 
+pub use composite::{Composite, ValueOrder};
 pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
 pub use contents::{AsSubquery, LikeClause};
 pub use cursor::{DeclareCursor, FetchOrientation};
 pub use diagnostics::{ConditionItem, GetDiagnostics, StatementItem};
 pub use dynamic::{
-    DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, Scope, SetDescriptor, UsingClause,
+    DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, HeaderItem, Scope, SetDescriptor,
+    UsingClause,
 };
 pub use expression::{
     CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, SetArg, SetFunctionSpecification, Sign, Subquery,
@@ -52,7 +55,7 @@ pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use query::{
     Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable,
     QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn,
-    SortSpecification, TableExpression, TableReference, Updatability, ValuesRow, WithElement, WithQuery,
+    SortSpecification, TableExpression, TableReference, UnnestTable, Updatability, ValuesRow, WithElement, WithQuery,
 };
 
 pub use schema::{
@@ -537,6 +540,9 @@ pub enum DropBehavior {
 pub struct SetClause {
     /// The `<object column>`.
     pub column: String,
+    /// [ISO/IEC 9075-2:2023 §14.15] The `<simple value specification>` of
+    /// an `<update target>` that is an array's element, if written.
+    pub element: Option<ValueExpression>,
     /// The `<update source>`.
     pub value: UpdateSource,
     /// Where it begins in the statement: a character offset, for the

@@ -183,7 +183,7 @@ fn booleans_are_described_and_given_20_1() {
     let a = db.session("A");
     a.run("INSERT INTO T VALUES (1, TRUE), (2, FALSE)").unwrap();
     let p = a.prepare("SELECT K FROM T WHERE B = ?").unwrap();
-    assert_eq!(p.parameters().iter().map(|t| t.data_type()).collect::<Vec<_>>(), [DataType::Boolean]);
+    assert_eq!(p.parameters().iter().map(|t| t.clone().data_type()).collect::<Vec<_>>(), [DataType::Boolean]);
     let mut opened = a.open_prepared(&p, &[Value::Bool(false)]).unwrap();
     assert_eq!(opened.fetch().unwrap().map(|r| r[0].to_string()), Some("2".to_owned()));
     drop(opened);

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use turborel::catalog::TableDesc;
 use turborel::db::{Completion, Database, Session};
 use turborel::diagnostics::{Diagnostics, Event, Level};
-use turborel::error::Code;
+use turborel::error::{Code, SqlError};
 use turborel::log::FileLogOptions;
 use turborel::params::Params;
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
@@ -67,6 +67,22 @@ pub fn expected(list: &[&str]) -> Result<Vec<String>, Code> {
 /// The error code of `sql`, which must fail.
 pub fn code(s: &Session, sql: &str) -> Code {
     rows(s, sql).expect_err(sql)
+}
+
+/// The query `sql` run to its last row: how many rows it has.
+pub fn fetched(s: &Session, sql: &str) -> Result<usize, SqlError> {
+    let mut cursor = s.open_cursor(sql)?;
+    let mut n: usize = 0;
+    while cursor.fetch()?.is_some() {
+        n = n.saturating_add(1);
+    }
+    Ok(n)
+}
+
+/// The SQLCODE class and SQLSTATE of the error `result` must be.
+pub fn failure<T: std::fmt::Debug>(result: Result<T, SqlError>) -> (Code, String) {
+    let e = result.expect_err("a failure");
+    (e.code, e.sqlstate().as_str().to_owned())
 }
 
 /// Makes `db`'s transactions SERIALIZABLE unless they say otherwise, for a

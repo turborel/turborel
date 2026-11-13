@@ -9,6 +9,7 @@ use crate::error::{Code, Result, SqlError, SqlState, Subject, Warnings, fail, fa
 use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Subquery, Truth};
 use crate::spill::norm_row;
 use crate::storage::Row;
+use crate::value::types::rows_hold;
 use crate::value::{CompOp, Value, arith, cast_warned, compare};
 
 /// Where no subquery can be, as `NoSubqueries`, the warnings raised heard
@@ -178,9 +179,18 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
     })
 }
 
-/// [X3.135-1986 §5.11 GR2, GR3] "x op y".
+/// [X3.135-1986 §5.11 GR2, GR3] "x op y"; of two rows, as their fields
+/// compare [ISO/IEC 9075-2:2023 §8.2 GR7].
 pub(super) fn compared(x: &Value, op: CompOp, y: &Value) -> Truth {
+    if let (Value::Row(a), Value::Row(b)) = (x, y) {
+        return known(rows_hold(a, op, b));
+    }
     compare(x, y).map_or(Truth::Unknown, |ord| truth(op.holds(ord)))
+}
+
+/// The truth value of `t`, unknown if none.
+fn known(t: Option<bool>) -> Truth {
+    t.map_or(Truth::Unknown, truth)
 }
 
 /// [ISO/IEC 9075:1992 §8.2 GR7] "Rx op Ry", for rows of values of the same
@@ -189,29 +199,7 @@ pub(super) fn compared(x: &Value, op: CompOp, y: &Value) -> Truth {
 /// Rx >= Ry is true; and so on; else unknown. For one value it is "x op y"
 /// \[GR1\].
 pub fn compare_rows(xs: &[Value], op: CompOp, ys: &[Value]) -> Truth {
-    let pairs = || xs.iter().zip(ys).map(|(x, y)| compare(x, y));
-    let unequal = pairs().any(|o| o.is_some_and(std::cmp::Ordering::is_ne));
-    let equal = pairs().all(|o| o.is_some_and(std::cmp::Ordering::is_eq));
-    // Ordered at the first pair not equal, unless a null comes before it.
-    let mut first = Some(std::cmp::Ordering::Equal);
-    for o in pairs() {
-        match o {
-            None => {
-                first = None;
-                break;
-            }
-            Some(std::cmp::Ordering::Equal) => {}
-            Some(decided) => {
-                first = Some(decided);
-                break;
-            }
-        }
-    }
-    match op {
-        CompOp::Eq => decided((equal, unequal)),
-        CompOp::Ne => decided((unequal, equal)),
-        CompOp::Lt | CompOp::Gt | CompOp::Le | CompOp::Ge => first.map_or(Truth::Unknown, |ord| truth(op.holds(ord))),
-    }
+    known(rows_hold(xs, op, ys))
 }
 
 /// True if `holds`, false if `fails`, else unknown.
@@ -371,6 +359,8 @@ pub(crate) fn like_escape(escape: Option<&Value>) -> Result<Escape> {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_),
         ) => {
             return fail_with(

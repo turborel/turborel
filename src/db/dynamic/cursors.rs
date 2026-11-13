@@ -127,7 +127,7 @@ impl Session {
         // A query: PREPARE refuses another of a declared cursor's name
         // [§17.6 GR9b ii], ALLOCATE CURSOR one for another [§17.13 GR2].
         let prepared = self.prepared_as(&statement, "§17.14 GR1")?;
-        let types: Vec<DataType> = prepared.parameters().iter().map(|t| t.data_type()).collect();
+        let types: Vec<DataType> = prepared.parameters().iter().map(|t| t.clone().data_type()).collect();
         let values = self.using_values(using, &types, params, "§17.14 GR3")?;
         // [§17.6 GR10] its specification and plan as the statement keeps
         // them while what they were made with holds (RULES.md D45).

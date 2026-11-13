@@ -318,6 +318,7 @@ impl Rule for ConstantFolding {
             | LogicalPlan::System { .. }
             | LogicalPlan::Sort { .. }
             | LogicalPlan::Recursive { .. }
+            | LogicalPlan::Unnest(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }
@@ -529,6 +530,7 @@ fn base_table(plan: &LogicalPlan) -> Option<&LogicalPlan> {
         | LogicalPlan::System { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::Recursive { .. }
+        | LogicalPlan::Unnest(..)
         | LogicalPlan::WorkTable { .. } => None,
     }
 }

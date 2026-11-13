@@ -14,6 +14,23 @@ use crate::functions::{EVERY, FORMAT, GREATEST, LEAST, LPAD, REGEX_FUNCTIONS, RP
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
+    /// A `<primary>` in parentheses: a `<scalar subquery>`, a `<row value
+    /// constructor>` of two or more elements [ISO/IEC 9075-2:2023 §7.1],
+    /// or a `<value expression>` nested.
+    fn parenthesized_primary(&mut self) -> Result<ValueExpression> {
+        if self.at_subquery() {
+            return Ok(ValueExpression::Subquery(Box::new(self.subquery()?)));
+        }
+        let at = self.here();
+        self.advance();
+        let e = self.value_expression()?;
+        if self.is_delim(delim::COMMA) {
+            return self.row_constructor(e, at);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::Nested(Box::new(e)))
+    }
+
     /// `<primary>` ::= `<value specification>` | `<column specification>`
     ///   | `<set function specification>` | (`<value expression>`), a
     ///   truth value among them [ISO/IEC 9075-2:2023 §6.3]
@@ -22,15 +39,7 @@ impl Parser {
     ///   | `<datetime value function>` [ISO/IEC 9075:1992 §6.11]
     pub(super) fn primary(&mut self) -> Result<ValueExpression> {
         match self.peek() {
-            Tok::Delimiter(delim::LEFT_PAREN) => {
-                if self.at_subquery() {
-                    return Ok(ValueExpression::Subquery(Box::new(self.subquery()?)));
-                }
-                self.advance();
-                let e = self.value_expression()?;
-                self.expect_delim(delim::RIGHT_PAREN)?;
-                Ok(ValueExpression::Nested(Box::new(e)))
-            }
+            Tok::Delimiter(delim::LEFT_PAREN) => self.parenthesized_primary(),
             Tok::Identifier(_) => self.identifier_primary(),
             Tok::KeyWord(kw::COUNT | kw::AVG | kw::MAX | kw::MIN | kw::SUM | kw::ANY | kw::SOME) => {
                 Ok(ValueExpression::SetFunction(self.set_function_specification()?))
@@ -79,6 +88,9 @@ impl Parser {
     /// A `<primary>` that starts with an `<identifier>`: a function call, a
     /// `<parameter specification>`, or a `<column specification>`.
     fn identifier_primary(&mut self) -> Result<ValueExpression> {
+        if let Some(composite) = self.composite_primary()? {
+            return Ok(composite);
+        }
         // [ISO/IEC 9075-2:2023 §10.9] EVERY, no key word of SQL-92, before
         // "(" the set function.
         let every = matches!(self.peek(), Tok::Identifier(name) if name == EVERY);
@@ -116,7 +128,7 @@ impl Parser {
         if self.at_parameter() {
             return Ok(ValueExpression::Value(ValueSpecification::Parameter(self.parameter_specification()?)));
         }
-        Ok(ValueExpression::Column(self.column_specification()?))
+        self.identifier_chain()
     }
 
     /// [ISO/IEC 9075:1992 §6.5] `<set function specification>` ::= COUNT(*)
@@ -148,7 +160,7 @@ impl Parser {
             SetArg::All(Box::new(self.value_expression()?))
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name, arg, at })
+        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), at })
     }
 
     /// [ISO/IEC 9075:1992 §6.9] `<case expression>`: NULLIF, COALESCE, or

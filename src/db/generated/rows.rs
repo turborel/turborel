@@ -36,10 +36,10 @@ impl Generating {
     ///
     /// A generation expression binds no more.
     pub(in crate::db) fn of(st: &State, desc: &TableDesc, draw: bool) -> Result<Generating> {
-        let typed = |at: usize| desc.columns.get(at).map(|c| c.data_type);
+        let typed = |at: usize| desc.columns.get(at).map(|c| c.data_type.clone());
         let exprs = generations(st, desc)?.into_iter().filter_map(|(at, e)| Some((at, typed(at)?, e))).collect();
         let identity =
-            desc.columns.iter().enumerate().find_map(|(at, c)| Some((at, c.data_type, Arc::new(c.identity()?.sequence.clone()))));
+            desc.columns.iter().enumerate().find_map(|(at, c)| Some((at, c.data_type.clone(), Arc::new(c.identity()?.sequence.clone()))));
         Ok(Generating { draw: identity.filter(|_| draw), exprs })
     }
 

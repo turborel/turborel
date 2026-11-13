@@ -137,7 +137,7 @@ impl RecordFormat {
         let mut variable = 0_usize;
         let places = types
             .iter()
-            .map(|&t| {
+            .map(|t| {
                 if let Some(width) = fixed_width(t) {
                     let place = Place::Fixed(fixed, width);
                     fixed = fixed.saturating_add(width);
@@ -207,7 +207,7 @@ impl RecordFormat {
         let lengths = row
             .iter()
             .zip(self.types.iter().zip(&self.places))
-            .map(|(value, (&data_type, place))| match (place, value.is_null()) {
+            .map(|(value, (data_type, place))| match (place, value.is_null()) {
                 (Place::Variable(_), false) => encode_value(value, data_type).map(|bytes| Some(bytes.len())),
                 (Place::Variable(_), true) | (Place::Fixed(..), _) => Ok(None),
             })
@@ -252,7 +252,7 @@ impl RecordFormat {
             *header = HEADER;
         }
         let mut variable: Vec<u8> = Vec::new();
-        for (i, (value, (&data_type, &place))) in row.iter().zip(self.types.iter().zip(&self.places)).enumerate() {
+        for (i, (value, (data_type, &place))) in row.iter().zip(self.types.iter().zip(&self.places)).enumerate() {
             let mut flag = 0;
             if value.is_null() {
                 let (at, mask) = null_bit(i);
@@ -345,7 +345,7 @@ impl RecordFormat {
     ///
     /// As `decode_with`.
     pub fn column_with(&self, bytes: &[u8], i: usize, fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>) -> Result<Value> {
-        let data_type = self.types.get(i).copied().ok_or_else(|| corrupt(&format!("it has no column {i}")))?;
+        let data_type = self.types.get(i).ok_or_else(|| corrupt(&format!("it has no column {i}")))?;
         let Some(field) = self.bytes_with(bytes, i, fetch)? else { return Ok(Value::Null) };
         decode_value(&field, data_type).ok_or_else(|| corrupt(&format!("column {i} is not a value of its type")))
     }
@@ -466,12 +466,12 @@ fn put(record: &mut [u8], at: usize, bytes: &[u8]) {
 
 /// The bytes of non-null `value` in a column of `data_type`, as its kind
 /// encodes them.
-fn encode_value(value: &Value, data_type: DataType) -> Result<Vec<u8>> {
+fn encode_value(value: &Value, data_type: &DataType) -> Result<Vec<u8>> {
     data_type.encode_record(value)
 }
 
 /// The value `field` holds in a column of `data_type`, if it is one.
-fn decode_value(field: &[u8], data_type: DataType) -> Option<Value> {
+fn decode_value(field: &[u8], data_type: &DataType) -> Option<Value> {
     data_type.decode_record(field)
 }
 

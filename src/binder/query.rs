@@ -63,7 +63,7 @@ pub(super) fn bind_query(
     };
     // [X3.135-1986 §5.24 SR1, §5.25 SR1] SELECT on each table.
     let clause = if outer.is_some() { "§5.24 SR1" } else { "§5.25 SR1" };
-    let From { items, trees, used } = bind_from(Bounds { cx, clause, outer }, &te.from)?;
+    let From { items, trees, used, .. } = bind_from(Bounds { cx, clause, outer }, &te.from)?;
     let visible = From::visible_of(&trees, &items);
     let names = items.iter().flat_map(FromItem::row_names).collect();
     // [ISO/IEC 9075-2:2023 §6.14 SR2] none of DISTINCT draws a value.
@@ -106,6 +106,9 @@ pub(super) fn bind_query(
     // [X3.135-1986 §5.25 GR2]
     plan = LogicalPlan::Project { exprs, input: Box::new(plan) };
     if spec.distinct {
+        // [ISO/IEC 9075-2:2023 §9.12 SR2e] each column an operand of a
+        // grouping operation.
+        columns.iter().try_for_each(|c| super::composite::grouping_operand(&c.data_type, "DISTINCT"))?;
         plan = distinct(plan, (binder.db, binder.session_collation), &columns);
     }
     let session = binder.session_collation;
@@ -137,7 +140,7 @@ fn select_items(binder: &Binder<'_>, list: &SelectList) -> Result<Vec<SelectItem
             Some(c) => TableName { auth: None, ident: c.clone(), at },
             None => TableName { auth: Some(it.table.auth.clone()), ident: it.table.ident.clone(), at },
         };
-        let column = ColumnSpecification { qualifier: Some(qualifier), column: it.desc.columns.get(k)?.name.clone(), at };
+        let column = ColumnSpecification { qualifier: Some(qualifier), column: it.desc.columns.get(k)?.name.clone(), catalog: None, at };
         Some(SelectItem { value: ValueExpression::Column(column), alias: None, at })
     };
     let SelectList::Values(sublists) = list else {
@@ -147,8 +150,16 @@ fn select_items(binder: &Binder<'_>, list: &SelectList) -> Result<Vec<SelectItem
     for sublist in sublists {
         match sublist {
             SelectSublist::Derived(item) => items.push(item.clone()),
+            SelectSublist::Fields { value, names, at } => items.extend(binder.all_fields(value, names.as_deref(), *at)?),
             SelectSublist::All(q) => {
-                let i = binder.items.iter().position(|it| it.designated_by(q, binder.schema)).ok_or_else(|| {
+                let table = binder.items.iter().position(|it| it.designated_by(q, binder.schema));
+                // [ISO/IEC 9075-2:2023 §7.16 SR10f iv, vii, SR10g ii] else
+                // a column of a row type its correlation name qualifies.
+                if let Some(fields) = binder.row_asterisk(q, table.is_some())? {
+                    items.extend(fields);
+                    continue;
+                }
+                let i = table.ok_or_else(|| {
                     rule(format!("[ISO/IEC 9075:1992 §7.9 SR4, §6.4 SR2] no table or correlation name {} is in scope", q.ident)).or_at(q.at)
                 })?;
                 let (width, common) = binder.items.get(i).map_or((0, &[][..]), |it| (it.desc.columns.len(), it.common.as_slice()));
@@ -173,6 +184,11 @@ fn bind_selected(
     let grouping = if grouped || selected.iter().any(|i| binder.has_own_aggregate(&i.value)) {
         // [X3.135-1986 §5.22 SR2] each grouping column references a column of T.
         let columns = te.group_by.iter().map(|g| binder.resolve(&g.column).map(|(p, _)| p)).collect::<Result<Vec<_>>>()?;
+        // [ISO/IEC 9075-2:2023 §9.12 SR2a] each an operand of a grouping
+        // operation.
+        for g in &te.group_by {
+            super::composite::grouping_operand(&binder.resolve(&g.column)?.1, "GROUP BY").or_at(g.column.at)?;
+        }
         // [ISO/IEC 9075-2:2023 §9.15] each by its collation.
         let collations = te.group_by.iter().map(|g| binder.grouped_by(g)).collect::<Result<Vec<_>>>()?;
         Some(Grouping { columns, collations: any_of(collations), aggs: RefCell::new(Vec::new()) })
@@ -248,6 +264,7 @@ fn bind_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_>
             | ValueExpression::AtZone { .. }
             | ValueExpression::Boolean(_)
             | ValueExpression::Subquery(_)
+            | ValueExpression::Composite(..)
             | ValueExpression::NextValue { .. } => (None, false, None),
         };
         exprs.push(e);

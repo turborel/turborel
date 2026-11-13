@@ -19,12 +19,16 @@ SQLSTATE 0A000.
 | A datetime's fraction of a second | 6 digits |
 | An interval's leading field | 9 digits; its fraction of a second 6 |
 | An unsigned integer, as a length | 4,294,967,295 |
+| An array's maximum cardinality | 65,535 elements, also the maximum of an array type written without one |
 
 ## Nesting
 
 A statement is at most 64 levels deep as it is read: about 30 nested
 parentheses, 60 `AND`, `OR`, `+` or `UNION` in a row, or 60 tables in a
 FROM clause. A deeper one is refused rather than run out of stack.
+
+Array and row types nest at most 16 deep, an array of rows of arrays
+counting three. A deeper type is refused as it is read.
 
 A regular expression compiles to at most 8,192 instructions, about as
 many characters, each counted repeat as many times as its count, so

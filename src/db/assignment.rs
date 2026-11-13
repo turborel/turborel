@@ -249,7 +249,7 @@ fn indicator_of(m: usize) -> Result<i64> {
 pub(super) fn declared_type(params: &Params, name: &str) -> Result<DataType> {
     params
         .get(name)
-        .map(|p| p.data_type)
+        .map(|p| p.data_type.clone())
         .ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[X3.135-1986 §7.3 SR3] parameter {name} is not declared")))
 }
 

@@ -103,7 +103,12 @@ impl Parser {
     ///     [ <left paren> <unsigned integer> [ <comma> <unsigned integer> ] <right paren> ]
     /// ```
     pub(super) fn type_name(&mut self) -> Result<TypeName> {
-        if !matches!(self.peek(), Tok::Identifier(_)) || self.at_boolean_type() || self.at_binary_type() || self.at_decfloat_type() {
+        if !matches!(self.peek(), Tok::Identifier(_))
+            || self.at_boolean_type()
+            || self.at_binary_type()
+            || self.at_decfloat_type()
+            || self.at_row_type()
+        {
             return Ok(TypeName::Data(self.data_type()?));
         }
         let name = self.table_name()?;
@@ -126,6 +131,6 @@ impl Parser {
             return Err(self.rule("[ISO/IEC 9075:1992 §6.2 SR5] VALUE is of a domain constraint alone"));
         }
         self.expect_kw(kw::VALUE)?;
-        Ok(ValueExpression::Column(ColumnSpecification { qualifier: None, column: VALUE_COLUMN.to_owned(), at }))
+        Ok(ValueExpression::Column(ColumnSpecification { qualifier: None, column: VALUE_COLUMN.to_owned(), catalog: None, at }))
     }
 }

@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use super::collation::like_under;
+use super::composite::{grouping_operand, ordering_operand, spread};
 use super::expression::dynamic_of;
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
@@ -39,7 +40,7 @@ fn is_row_subquery(values: &RowValue) -> bool {
 
 /// The types of a bound row.
 fn types(row: &BoundRow) -> Vec<DataType> {
-    row.iter().map(|(_, t)| *t).collect()
+    row.iter().map(|(_, t)| t.clone()).collect()
 }
 
 /// The expressions of a bound row.
@@ -59,6 +60,27 @@ fn comparable(x: &[(Expr, DataType)], y: &[DataType], clause: &str) -> Result<()
         }
     }
     Ok(())
+}
+
+/// [ISO/IEC 9075-2:2023 §9.14 SR1a, SR1b, SR3] The fields of `x`, compared
+/// by `op` in `what`, are not array-ordered unless `op` is = or <>, an
+/// equality operation [§9.11].
+fn ordered(x: &[(Expr, DataType)], op: CompOp, what: &str) -> Result<()> {
+    if matches!(op, CompOp::Eq | CompOp::Ne) {
+        return Ok(());
+    }
+    x.iter().try_for_each(|(_, t)| ordering_operand(t, what))
+}
+
+/// `row`, compared with a row of `degree` values: a lone value of a row
+/// type spread into its fields, if that degree is not one [ISO/IEC
+/// 9075-2:2023 §7.2, `<row value special case>`].
+fn special(row: BoundRow, degree: usize) -> BoundRow {
+    match <[(Expr, DataType); 1]>::try_from(row) {
+        Ok([lone]) if degree != 1 && matches!(lone.1, DataType::Row(_)) => spread(lone),
+        Ok([lone]) => vec![lone],
+        Err(row) => row,
+    }
 }
 
 /// [ISO/IEC 9075:1992 §8.2 GR7] "Rx op Ry", rows of one degree, as scalar
@@ -92,7 +114,8 @@ impl Binder<'_> {
         Ok(match p {
             Predicate::Comparison(left, op, right) => {
                 let (x, y) = self.rows_paired(left, right, scope)?;
-                comparable(&x, &y.iter().map(|(_, t)| *t).collect::<Vec<_>>(), "§8.2 SR1, SR3")?;
+                comparable(&x, &y.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), "§8.2 SR1, SR3")?;
+                ordered(&x, *op, "the comparison")?;
                 let (x, y) = self.keyed_rows((left, right), &x, &y)?;
                 compare_rows(&exprs(&x), *op, &exprs(&y))
             }
@@ -113,6 +136,9 @@ impl Binder<'_> {
             Predicate::Exists(s) => Cond::Exists(self.subquery(s, scope, Use::Exists)?.0),
             Predicate::Unique { subquery: s, nulls_distinct } => {
                 let (bound, types) = self.subquery(s, scope, Use::Rows)?;
+                // [ISO/IEC 9075-2:2023 §9.12 SR2i] each column an operand
+                // of a grouping operation.
+                types.iter().try_for_each(|t| grouping_operand(t, "UNIQUE")).or_at(s.at)?;
                 Cond::Unique(self.keyed_rows_of(s, &types, &bound)?, *nulls_distinct)
             }
             Predicate::Match { value, unique, match_type, subquery } => {
@@ -144,11 +170,12 @@ impl Binder<'_> {
     pub(super) fn rows_paired(&self, left: &RowValue, right: &RowValue, scope: Scope<'_>) -> Result<(BoundRow, BoundRow)> {
         if is_row_subquery(right) {
             let y = self.row(right, scope)?;
-            return Ok((self.row_as(left, &types(&y), scope)?, y));
+            return Ok((special(self.row_as(left, &types(&y), scope)?, y.len()), y));
         }
         if is_row_subquery(left) || left.len() != right.len() {
-            let x = self.row(left, scope)?;
-            return Ok((x.clone(), self.row_as(right, &types(&x), scope)?));
+            let x = special(self.row(left, scope)?, right.len());
+            let y = special(self.row_as(right, &types(&x), scope)?, x.len());
+            return Ok((x, y));
         }
         let (mut x, mut y) = (Vec::new(), Vec::new());
         for (a, b) in left.iter().zip(right) {
@@ -166,7 +193,7 @@ impl Binder<'_> {
             return self.row(values, scope);
         }
         let typed = |(i, v): (usize, &ValueExpression)| match taken.get(i) {
-            Some(t) => self.typed(v, ParameterType::Of(*t), scope),
+            Some(t) => self.typed(v, ParameterType::Of(t.clone()), scope),
             None => self.value_expression(v, scope),
         };
         values.iter().enumerate().map(typed).collect()
@@ -177,8 +204,9 @@ impl Binder<'_> {
     fn quantified(&self, value: &RowValue, (op, quantifier): (CompOp, Quantifier), s: &Subquery, scope: Scope<'_>) -> Result<Cond> {
         // [§17.6 GR5q, t] a `?` takes its subquery column's type.
         let (bound, types) = self.subquery(s, scope, Use::Rows)?;
-        let x = self.row_as(value, &types, scope)?;
+        let x = special(self.row_as(value, &types, scope)?, types.len());
         comparable(&x, &types, "§8.7 SR1, SR2").or_at(s.at)?;
+        ordered(&x, op, "the quantified comparison").or_at(s.at)?;
         let (x, keyed) = self.keyed_subquery((value, s), (&x, &types), &bound)?;
         Ok(Cond::Quantified(exprs(&x), op, quantifier, keyed))
     }
@@ -190,8 +218,9 @@ impl Binder<'_> {
         let [value, low, high] = rows;
         let (x, y, z) = self.between_rows([value, low, high], scope)?;
         for other in [&y, &z] {
-            comparable(&x, &other.iter().map(|(_, t)| *t).collect::<Vec<_>>(), "§8.3")?;
+            comparable(&x, &other.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), "§8.3")?;
         }
+        ordered(&x, CompOp::Ge, "BETWEEN")?;
         let (from, y) = self.keyed_rows((value, low), &x, &y)?;
         let (to, z) = self.keyed_rows((value, high), &x, &z)?;
         let at_least = compare_rows(&exprs(&from), CompOp::Ge, &exprs(&y));
@@ -206,21 +235,22 @@ impl Binder<'_> {
     fn between_rows(&self, [value, low, high]: [&RowValue; 3], scope: Scope<'_>) -> Result<(BoundRow, BoundRow, BoundRow)> {
         let same = !is_row_subquery(value) && value.len() == low.len() && value.len() == high.len();
         if !same {
-            let bound = self.row(value, scope)?;
-            return Ok((bound.clone(), self.row_as(low, &types(&bound), scope)?, self.row_as(high, &types(&bound), scope)?));
+            let bound = special(self.row(value, scope)?, low.len().max(high.len()));
+            let (from, to) = (self.row_as(low, &types(&bound), scope)?, self.row_as(high, &types(&bound), scope)?);
+            return Ok((bound.clone(), special(from, bound.len()), special(to, bound.len())));
         }
         let (mut values, mut lows, mut highs) = (Vec::new(), Vec::new(), Vec::new());
         for ((a, b), c) in value.iter().zip(low).zip(high) {
             let by_low = dynamic_of(a).is_some() && dynamic_of(b).is_none() && dynamic_of(c).is_none();
             let (tested, from) = if by_low {
                 let from = self.value_expression(b, scope)?;
-                (self.typed(a, ParameterType::Of(from.1), scope)?, from)
+                (self.typed(a, ParameterType::Of(from.1.clone()), scope)?, from)
             } else {
                 let tested = self.value_expression(a, scope)?;
-                let from = self.typed(b, ParameterType::Of(tested.1), scope)?;
+                let from = self.typed(b, ParameterType::Of(tested.1.clone()), scope)?;
                 (tested, from)
             };
-            highs.push(self.typed(c, ParameterType::Of(tested.1), scope)?);
+            highs.push(self.typed(c, ParameterType::Of(tested.1.clone()), scope)?);
             values.push(tested);
             lows.push(from);
         }
@@ -244,17 +274,18 @@ impl Binder<'_> {
             (Some(_), None) | (None, _) => self.row(value, scope)?,
         };
         let d = match x.as_slice() {
-            [(_, t)] => Some(*t),
+            [(_, t)] => Some(t.clone()),
             _ => None,
         };
         let mut any = Vec::new();
         for v in list {
-            let (e, t) = match d {
-                Some(d) => self.typed(v, ParameterType::Of(d), scope)?,
+            let (e, t) = match &d {
+                Some(d) => self.typed(v, ParameterType::Of(d.clone()), scope)?,
                 None => self.value_expression(v, scope)?,
             };
-            comparable(&x, &[t], "§8.4 SR1, SR4; §8.7 SR1, SR2")?;
-            let (keyed, other) = self.keyed_rows((value, std::slice::from_ref(v)), &x, &vec![(e, t)])?;
+            let other = special(vec![(e, t)], x.len());
+            comparable(&x, &types(&other), "§8.4 SR1, SR4; §8.7 SR1, SR2")?;
+            let (keyed, other) = self.keyed_rows((value, std::slice::from_ref(v)), &x, &other)?;
             any.push(compare_rows(&exprs(&keyed), CompOp::Eq, &exprs(&other)));
         }
         Ok(negated(or_all(any), not))

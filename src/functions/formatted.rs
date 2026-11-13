@@ -42,6 +42,8 @@ fn target(t: &DataType) -> Option<Target> {
         | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -62,6 +64,8 @@ fn string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -85,13 +89,13 @@ pub fn formatted_cast(from: &DataType, to: &DataType, template: &str, now: Clock
     // [SR4a]
     if let (Some(datetime), Some((length, fixed))) = (target(from), string(to)) {
         let template = read(template, datetime, length, "§9.50 SR3")?;
-        return Ok(Arc::new(Formatted { template, to: *to, length, fixed, zone: now.zone() }));
+        return Ok(Arc::new(Formatted { template, to: to.clone(), length, fixed, zone: now.zone() }));
     }
     // [SR4b]
     if let (Some((length, _)), Some(datetime)) = (string(from), target(to)) {
         let template = read(template, datetime, length, "§9.51 SR3")?;
         let now = if template.needs_now(datetime.0) { now.instant() } else { Now { utc: 0, zone: now.zone() } };
-        return Ok(Arc::new(Parsed { pattern: template.pattern()?, to: *to, target: datetime, now }));
+        return Ok(Arc::new(Parsed { pattern: template.pattern()?, to: to.clone(), target: datetime, now }));
     }
     Err(refused("§6.13 SR4", &format!("CAST of {from} to {to} has a FORMAT only from a datetime to a character string, or back")))
 }
@@ -126,7 +130,7 @@ impl ScalarFunction for Formatted {
         "CAST"
     }
     fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
-        Ok(self.to)
+        Ok(self.to.clone())
     }
     /// [§6.13 GR5e, GR6e] Null of null; else the datetime as the template
     /// writes it, fitted to the type.
@@ -149,6 +153,8 @@ impl ScalarFunction for Formatted {
                 | Value::Binary(_)
                 | Value::Bool(_)
                 | Value::Interval(_)
+                | Value::Array(_)
+                | Value::Row(_)
                 | Value::Extension(_)),
             ) => fail(Code::Api, format!("[DESIGN] a formatted CAST of a datetime was given {v:?}")),
         }
@@ -169,7 +175,7 @@ impl ScalarFunction for Parsed {
         "CAST"
     }
     fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
-        Ok(self.to)
+        Ok(self.to.clone())
     }
     /// [§6.13 GR14a i, GR15a i, GR16a i, GR17a i, GR18a i] Null of null
     /// [§9.51 GR2]; else the string, untrimmed, as the template reads it.

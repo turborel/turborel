@@ -59,6 +59,7 @@ fn row_condition(plan: &LogicalPlan) -> Option<Cond> {
             | LogicalPlan::Values { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Recursive { .. }
+            | LogicalPlan::Unnest(..)
             | LogicalPlan::WorkTable { .. } => break,
         }
     }
@@ -180,6 +181,8 @@ fn how_far(j: &ValueSpecification, auth: &str, params: &Params) -> Result<i128> 
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Row(_)
         | Value::Extension(_) => Err(not_exact()),
     }
 }

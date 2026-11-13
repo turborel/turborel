@@ -422,14 +422,17 @@ pub fn row_bytes(row: &Row) -> usize {
 }
 
 /// The bytes `v` holds apart from itself: a string's characters, a bit
-/// string's bytes, a plug-in's value's bytes (counted by every value that
-/// shares them, so never too few). The others hold all they have in
-/// themselves.
+/// string's bytes, a plug-in's value's bytes, an array's or a row's parts
+/// (counted by every value that shares them, so never too few). The
+/// others hold all they have in themselves.
 pub fn heap_bytes(v: &Value) -> usize {
     match v {
         Value::Char(s) => s.len(),
         Value::Binary(b) => b.bytes().len(),
         Value::Extension(e) => e.bytes.len(),
+        Value::Array(parts) | Value::Row(parts) => {
+            parts.iter().fold(size_of_val::<[Value]>(parts), |sum, p| sum.saturating_add(heap_bytes(p)))
+        }
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)

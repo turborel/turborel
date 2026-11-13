@@ -183,6 +183,70 @@ pub enum LogicalPlan {
         /// Its columns' display names.
         names: Vec<String>,
     },
+    /// [ISO/IEC 9075-2:2023 §7.6 SR8] A `<collection derived table>`
+    /// laterally over `input`: for each of its rows, that row and the
+    /// elements of its collections side by side, a row for each ordinal
+    /// up to the greatest cardinality, an element past a collection's
+    /// cardinality null.
+    Unnest(Box<Unnest<LogicalPlan>>),
+}
+
+/// [ISO/IEC 9075-2:2023 §7.6 SR8] A `<collection derived table>` over the
+/// rows of `input`, of plans `P`: each row of it is a row of `input`, then
+/// one column for each element, or one for each field of an element of
+/// row type, then the ordinal if WITH ORDINALITY is written.
+#[derive(Debug, Clone)]
+pub struct Unnest<P> {
+    /// The `<collection value expression>`s, over the columns of `input`.
+    pub collections: Vec<Expr>,
+    /// Of each collection, the degree of its element type if it is a row
+    /// type, whose fields are columns of their own [SR8m ii, SR8n].
+    pub spread: Vec<Option<usize>>,
+    /// WITH ORDINALITY: the ordinal is a column after the elements.
+    pub ordinality: bool,
+    /// [ISO/IEC 9075-2:2023 §7.10 GR1d] Of the second operand of a LEFT
+    /// join, its `<join condition>`, over the columns of its rows: a row of
+    /// `input` that none of them makes true is kept, its own columns null.
+    pub outer: Option<Cond>,
+    /// Its own columns' display names, after `input`'s.
+    pub names: Vec<String>,
+    /// The rows each gives the rows of its collections.
+    pub input: P,
+}
+
+impl<P> Unnest<P> {
+    /// It apart from its input, and its input.
+    pub fn split(self) -> (Unnest<()>, P) {
+        let Unnest { collections, spread, ordinality, outer, names, input } = self;
+        (Unnest { collections, spread, ordinality, outer, names, input: () }, input)
+    }
+
+    /// It over `f` of its input, the rest copied.
+    pub fn with_input<Q>(&self, f: impl FnOnce(&P) -> Q) -> Unnest<Q> {
+        Unnest {
+            collections: self.collections.clone(),
+            spread: self.spread.clone(),
+            ordinality: self.ordinality,
+            outer: self.outer.clone(),
+            names: self.names.clone(),
+            input: f(&self.input),
+        }
+    }
+
+    /// The number of its own columns: those of the elements, and the
+    /// ordinal's.
+    pub fn width(&self) -> usize {
+        let elements = self.spread.iter().map(|s| s.unwrap_or(1)).sum::<usize>();
+        elements.saturating_add(usize::from(self.ordinality))
+    }
+}
+
+impl Unnest<()> {
+    /// The same collection derived table over `input`.
+    pub fn over<Q>(self, input: Q) -> Unnest<Q> {
+        let Unnest { collections, spread, ordinality, outer, names, input: () } = self;
+        Unnest { collections, spread, ordinality, outer, names, input }
+    }
 }
 
 /// [ISO/IEC 9075:1992 §7.10] A set operator.
@@ -303,6 +367,10 @@ impl LogicalPlan {
             LogicalPlan::Project { exprs, .. } => exprs.iter().for_each(|e| expr_subqueries(e, &mut out)),
             LogicalPlan::Aggregate { aggs, .. } => aggs.iter().filter_map(|a| a.arg.as_ref()).for_each(|e| expr_subqueries(e, &mut out)),
             LogicalPlan::Values { rows, .. } => rows.iter().flatten().for_each(|e| expr_subqueries(e, &mut out)),
+            LogicalPlan::Unnest(u) => {
+                u.collections.iter().for_each(|e| expr_subqueries(e, &mut out));
+                out.extend(u.outer.iter().flat_map(cond_subqueries));
+            }
             LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Product { .. }
@@ -332,6 +400,7 @@ impl LogicalPlan {
             | LogicalPlan::Project { input, .. }
             | LogicalPlan::Distinct { input }
             | LogicalPlan::Sort { input, .. } => (Some(input), None, &[]),
+            LogicalPlan::Unnest(u) => (Some(&u.input), None, &[]),
             LogicalPlan::Recursive { fixpoint, .. } => fixpoint.plans(),
         };
         first.into_iter().chain(second).chain(rest)
@@ -360,6 +429,11 @@ impl LogicalPlan {
                 exprs.iter().map(|e| render_expr(e, &inner)).collect()
             }
             LogicalPlan::SetOp { left, .. } => left.names(),
+            LogicalPlan::Unnest(u) => {
+                let mut n = u.input.names();
+                n.extend(u.names.iter().cloned());
+                n
+            }
             LogicalPlan::Values { types, .. } => (0..types.len()).map(|i| column_name(&[], i)).collect(),
             LogicalPlan::Filter { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => input.names(),
         }
@@ -418,6 +492,10 @@ impl LogicalPlan {
                 LogicalPlan::SetOp { op, all, compared, left, right: g(right) }
             }
             LogicalPlan::Sort { keys, input } => LogicalPlan::Sort { keys, input: g(input) },
+            LogicalPlan::Unnest(u) => {
+                let (u, input) = u.split();
+                LogicalPlan::Unnest(Box::new(u.over(f(input))))
+            }
         }
     }
 
@@ -463,6 +541,12 @@ impl LogicalPlan {
             LogicalPlan::Sort { keys, input } => writeln!(out, "{pad}Sort {}", render_keys(keys, &inner(input))),
             LogicalPlan::Recursive { member, fixpoint, .. } => writeln!(out, "{pad}Recursive member {member} {}", fixpoint.word()),
             LogicalPlan::WorkTable { member, .. } => writeln!(out, "{pad}Work table of member {member}"),
+            LogicalPlan::Unnest(u) => {
+                let n = inner(&u.input);
+                let c: Vec<String> = u.collections.iter().map(|e| render_expr(e, &n)).collect();
+                let left = if u.outer.is_some() { "Left unnest" } else { "Unnest" };
+                writeln!(out, "{pad}{left} {}{}", c.join(", "), if u.ordinality { " with ordinality" } else { "" })
+            }
         };
         for input in self.inputs() {
             input.write(out, depth.saturating_add(1));

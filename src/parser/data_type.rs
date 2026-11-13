@@ -17,8 +17,8 @@ use crate::value::{
 };
 
 impl Parser {
-    /// [X3.135-1986 §5.5] `<data type>`
-    pub(super) fn data_type(&mut self) -> Result<DataType> {
+    /// [X3.135-1986 §5.5] `<predefined type>` [ISO/IEC 9075-2:2023 §6.1].
+    pub(super) fn predefined_type(&mut self) -> Result<DataType> {
         if let Some(t) = self.named_type()? {
             return Ok(t);
         }

@@ -65,12 +65,12 @@ impl State {
             (None, Some(ColumnGeneration::Identity { at, .. })) => return Err(untyped().or_at(*at)),
             (None, None) => return Err(untyped().or_at(def.at)),
         };
-        let default = def.default.as_ref().map(|o| super::defaults::default_of(data_type, o, zone)).transpose()?;
+        let default = def.default.as_ref().map(|o| super::defaults::default_of(&data_type.clone(), o, zone)).transpose()?;
         let collation = match &def.data_type {
-            Some(_) => self.declared_collation(names, (data_type, domain.as_ref()), def.collate.as_ref())?,
+            Some(_) => self.declared_collation(names, (data_type.clone(), domain.as_ref()), def.collate.as_ref())?,
             None => None,
         };
-        let generated = def.generated.as_ref().map(|g| generated_of(table, (names, data_type), g)).transpose()?;
+        let generated = def.generated.as_ref().map(|g| generated_of(table, (names, data_type.clone()), g)).transpose()?;
         Ok(ColumnDesc { name: def.name.clone(), data_type, not_null: false, default, domain, collation, generated })
     }
 
@@ -94,7 +94,7 @@ impl State {
             let (_, t) = generation_type(self, desc, at).or_at(def.at)?;
             let Some(column) = desc.columns.get_mut(at) else { continue };
             if def.data_type.is_none() {
-                column.data_type = t;
+                column.data_type = t.clone();
                 column.collation = self.declared_collation(schema, (t, None), def.collate.as_ref()).or_at(def.at)?;
             } else if !assignable(&column.data_type, &t) {
                 let msg = format!(

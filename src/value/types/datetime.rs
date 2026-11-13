@@ -68,6 +68,8 @@ fn shape(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -177,6 +179,8 @@ pub fn cast_at(v: Value, t: &DataType, now: Now) -> Result<Value> {
         | Value::Binary(_)
         | Value::Bool(_)
         | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Row(_)
         | Value::Extension(_) => uncastable(&v, t),
     }
 }

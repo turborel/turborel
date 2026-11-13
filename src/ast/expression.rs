@@ -6,7 +6,7 @@
 //! `ValueExpression::for_each_child` and `SearchCondition::for_each_value`,
 //! which stop at a subquery, a query of its own.
 
-use super::{DatetimeFunction, ExtractField, QueryExpression, TableName, TypeName, ValueSpecification};
+use super::{Composite, DatetimeFunction, ExtractField, QueryExpression, TableName, TypeName, ValueOrder, ValueSpecification};
 use crate::catalog::MatchType;
 use crate::value::interval::Qualifier;
 use crate::value::{ArithOp, CompOp};
@@ -277,6 +277,9 @@ pub enum ValueExpression {
         /// Where it begins in the statement.
         at: usize,
     },
+    /// [ISO/IEC 9075-2:2023 §6.16, §6.25, §6.49, §7.1] An expression of
+    /// arrays and rows, and where it begins in the statement.
+    Composite(Box<Composite>, usize),
     /// \[EXTENSION\] accepted only when a session enables it:
     /// `<identifier>` ( \[`<value expression>` \[{, `<value expression>`}...\]\] )
     Call {
@@ -298,6 +301,9 @@ pub struct SetFunctionSpecification {
     pub name: &'static str,
     /// What the function is applied to.
     pub arg: SetArg,
+    /// [ISO/IEC 9075-2:2023 §10.9] The `<sort specification list>` of an
+    /// ARRAY_AGG, if written; of every other function, none.
+    pub order_by: Vec<ValueOrder>,
     /// Where it begins in the statement: a character offset, for the
     /// positions of errors (`SqlError::or_at`).
     pub at: usize,
@@ -376,6 +382,12 @@ pub struct ColumnSpecification {
     pub qualifier: Option<TableName>,
     /// The `<column name>`.
     pub column: String,
+    /// The `<catalog name>` written before the qualifier, if one is. Of a
+    /// value, it may instead name a table whose column of a row type the
+    /// qualifier's schema part names, the qualifier's table part and the
+    /// column name that column's fields [ISO/IEC 9075-2:2023 §6.6 SR9b iv
+    /// 2], as the binder decides \[SR9c\].
+    pub catalog: Option<String>,
     /// Where it begins in the statement: a character offset, for the
     /// positions of errors (`SqlError::or_at`).
     pub at: usize,
@@ -411,14 +423,18 @@ impl ValueExpression {
             | ValueExpression::Nested(x)
             | ValueExpression::Collated(x, _)
             | ValueExpression::CollationFor(x) => f(x),
-            ValueExpression::SetFunction(sf) => match &sf.arg {
-                SetArg::CountStar => {}
-                SetArg::Distinct(x) | SetArg::All(x) => f(x),
-            },
+            ValueExpression::SetFunction(sf) => {
+                match &sf.arg {
+                    SetArg::CountStar => {}
+                    SetArg::Distinct(x) | SetArg::All(x) => f(x),
+                }
+                sf.order_by.iter().for_each(|o| f(&o.key));
+            }
             ValueExpression::Cast { operand, .. } => operand.iter().for_each(|x| f(x)),
             ValueExpression::Function { args, .. } | ValueExpression::Call { args, .. } => args.iter().for_each(f),
             ValueExpression::Case(case) => case.for_each_child(f),
             ValueExpression::Boolean(c) => c.for_each_value(f),
+            ValueExpression::Composite(c, _) => c.for_each_child(f),
         }
     }
 
@@ -426,6 +442,11 @@ impl ValueExpression {
     /// scalar subqueries, and those of the conditions of its CASEs.
     pub fn for_each_subquery<'a>(&'a self, f: &mut dyn FnMut(&'a Subquery)) {
         if let ValueExpression::Subquery(s) = self {
+            f(s);
+        }
+        if let ValueExpression::Composite(c, _) = self
+            && let Some(s) = c.subquery()
+        {
             f(s);
         }
         if let ValueExpression::Case(case) = self

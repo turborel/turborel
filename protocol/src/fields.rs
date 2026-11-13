@@ -7,7 +7,7 @@ use turborel::error::Result;
 use turborel::params::ParameterType;
 use turborel::storage::Row;
 use turborel::value::datetime::Moment;
-use turborel::value::types::{ExtensionType, TypeParams};
+use turborel::value::types::{ExtensionType, Field, TypeParams};
 use turborel::value::{DataType, SqlType, Value, types};
 
 use crate::{Column, Failure};
@@ -40,6 +40,12 @@ const INTERVAL: u8 = 13;
 const BOOLEAN: u8 = 14;
 /// DECFLOAT, as a type and a value.
 const DECFLOAT: u8 = 15;
+/// An array type, its maximum cardinality and then its element type; an
+/// array, its elements' count and then each element's value.
+const ARRAY: u8 = 16;
+/// A row type, its degree and then each field's name and type; a row, its
+/// fields' count and then each field's value.
+const ROW: u8 = 17;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -103,6 +109,21 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
         DataType::Exact { .. } => b.put_u8(EXACT),
         DataType::Approximate { .. } => b.put_u8(APPROXIMATE),
         DataType::DecFloat { .. } => b.put_u8(DECFLOAT),
+        DataType::Array(a) => {
+            b.put_u8(ARRAY);
+            b.put_u32(a.max);
+            put_type(b, &a.element);
+            return;
+        }
+        DataType::Row(row) => {
+            b.put_u8(ROW);
+            put_count(b, row.fields.len());
+            for f in &row.fields {
+                b.put_str(&f.name);
+                put_type(b, &f.data_type);
+            }
+            return;
+        }
         DataType::Extension(e) => {
             b.put_u8(EXTENSION);
             b.put_str(e.kind.name());
@@ -144,6 +165,11 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
 
 fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
     let tag = r.u8()?;
+    match tag {
+        ARRAY => return r.nested(array_type),
+        ROW => return r.nested(row_type),
+        _ => {}
+    }
     if tag == EXTENSION {
         let name = r.str()?;
         let params = counted(r, param)?;
@@ -154,6 +180,29 @@ fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         return Ok(DataType::Extension(ExtensionType { kind, params }));
     }
     kind_of(tag).ok_or_else(|| r.corrupt("no data type has this tag"))?.params(r)
+}
+
+/// An array type's maximum cardinality and element type.
+fn array_type(r: &mut Reader<'_>) -> Result<DataType> {
+    let max = r.u32()?;
+    if !(1..=types::MAX_ARRAY_CARDINALITY).contains(&max) {
+        return Err(r.corrupt("an array type's maximum cardinality is out of range"));
+    }
+    Ok(DataType::array(data_type(r)?, max))
+}
+
+/// A row type's fields, one or more.
+fn row_type(r: &mut Reader<'_>) -> Result<DataType> {
+    let fields = counted(r, field)?;
+    if fields.is_empty() {
+        return Err(r.corrupt("a row type has no fields"));
+    }
+    Ok(DataType::row(fields))
+}
+
+/// A field's name and type.
+fn field(r: &mut Reader<'_>) -> Result<Field> {
+    Ok(Field { name: r.str()?, data_type: data_type(r)?, unnamed: false })
 }
 
 pub(crate) fn put_column(b: &mut Vec<u8>, c: &Column) {
@@ -174,7 +223,7 @@ pub(crate) fn column(r: &mut Reader<'_>) -> Result<Column> {
 /// VARYING, of the longest length, flagged.
 pub(crate) fn put_parameter(b: &mut Vec<u8>, p: &ParameterType) {
     put_flag(b, *p == ParameterType::Varying);
-    put_type(b, &p.data_type());
+    put_type(b, &p.clone().data_type());
 }
 
 pub(crate) fn parameter(r: &mut Reader<'_>) -> Result<ParameterType> {
@@ -201,6 +250,11 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
             Moment::Timestamp => TIMESTAMP,
         },
         Value::Interval(_) => INTERVAL,
+        Value::Array(parts) | Value::Row(parts) => {
+            b.put_u8(if matches!(v, Value::Array(_)) { ARRAY } else { ROW });
+            put_row(b, parts);
+            return;
+        }
         Value::Extension(e) => {
             b.put_u8(EXTENSION);
             // One received unregistered goes back as it came.
@@ -231,6 +285,8 @@ fn value(r: &mut Reader<'_>) -> Result<Value> {
                 None => Ok(types::unregistered(&name, &text, bytes)),
             }
         }
+        ARRAY => r.nested(|r| Ok(Value::Array(counted(r, value)?.into()))),
+        ROW => r.nested(|r| Ok(Value::Row(counted(r, value)?.into()))),
         tag => kind_of(tag).ok_or_else(|| r.corrupt("no value has this tag"))?.value(r),
     }
 }
@@ -252,7 +308,7 @@ pub fn row_size(row: &Row) -> usize {
         Value::Datetime(_) => 15,
         // Its tag, its qualifier's four words, and its units.
         Value::Interval(_) => 33,
-        Value::Extension(_) => {
+        Value::Array(_) | Value::Row(_) | Value::Extension(_) => {
             let mut b = Vec::new();
             put_value(&mut b, v);
             b.len()

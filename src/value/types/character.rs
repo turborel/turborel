@@ -171,7 +171,9 @@ impl SqlType for Character {
             // [GR5e] its literal's string, as it shows, padded.
             Value::Datetime(d) => super::datetime::as_string(&d, length, true).map(unwarned),
             Value::Interval(i) => super::datetime::fitted(i.to_string(), length, true).map(unwarned),
-            Value::Binary(_) => uncastable(&v, t).map(unwarned),
+            // [ISO/IEC 9075-2:2023 §6.13 SR7] Neither a binary string, an
+            // array nor a row.
+            Value::Binary(_) | Value::Array(_) | Value::Row(_) => uncastable(&v, t).map(unwarned),
             Value::Bool(b) => super::boolean_text(b, t).map(unwarned),
         }
     }

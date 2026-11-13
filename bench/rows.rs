@@ -97,9 +97,9 @@ fn table(bench: &Bench, long: usize) -> (RowStore, Arc<dyn TableStorage>) {
         name: QualifiedName { auth: "A".into(), ident: "T".into() },
         columns: columns
             .iter()
-            .map(|&(name, data_type)| ColumnDesc {
-                name: name.into(),
-                data_type,
+            .map(|(name, data_type)| ColumnDesc {
+                name: (*name).into(),
+                data_type: data_type.clone(),
                 not_null: false,
                 default: None,
                 domain: None,

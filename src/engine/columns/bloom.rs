@@ -34,6 +34,7 @@ const INSTANT_TAG: u8 = 4;
 const SPAN_TAG: u8 = 5;
 const EXTENSION_TAG: u8 = 6;
 const BOOL_TAG: u8 = 7;
+const COMPOSITE_TAG: u8 = 8;
 
 /// The two halves of the hash of `v`'s bucket; none for the null value,
 /// which equals nothing.
@@ -67,6 +68,10 @@ pub fn hashed(v: &Value) -> Option<(u64, u64)> {
         Bucket::Extension(b) => {
             key.push(EXTENSION_TAG);
             key.extend_from_slice(&b);
+        }
+        Bucket::Composite(parts) => {
+            key.push(COMPOSITE_TAG);
+            key.extend_from_slice(&crate::spill::bucket_key(&parts));
         }
     }
     Some(murmur3_x64_128(&key, 0))

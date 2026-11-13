@@ -21,17 +21,23 @@ use crate::bytes::Reader;
 use crate::error::{Code, Result, SqlError, SqlState};
 
 mod approximate;
+pub(crate) mod array;
 mod binary;
 mod boolean;
 mod character;
+pub(crate) mod composite;
+pub(crate) use composite::rows_hold;
 pub(crate) mod datetime;
 mod decfloat;
 mod exact;
 pub(crate) mod interval;
+mod row;
+pub(crate) mod tags;
 mod unregistered;
 mod varying;
 
 pub use approximate::{APPROXIMATE, Approximate};
+pub use array::{ARRAY, ARRAY_NAME, ArrayKind, ArrayType, MAX_ARRAY_CARDINALITY};
 pub use binary::{BINARY, BINARY_NAME, BINARY_VARYING, BinaryKind, VARBINARY_NAME};
 pub(crate) use boolean::as_text as boolean_text;
 pub use boolean::{BOOLEAN, BOOLEAN_NAME, Boolean};
@@ -41,8 +47,13 @@ pub(crate) use decfloat::arith as decfloat_arith;
 pub use decfloat::{DECFLOAT, DECFLOAT_NAME, DecFloatKind};
 pub use exact::{EXACT, Exact};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
+pub use row::{Field, ROW, ROW_NAME, RowKind, RowType};
 pub use unregistered::{UNREGISTERED, UNREGISTERED_KIND, Unregistered, parts, unregistered};
 pub use varying::{VARYING, Varying};
+
+/// \[DESIGN\] How deep arrays and rows may be nested within a type, as
+/// it is written and as its bytes or a value's are read (RULES.md R-CF-6).
+pub const MAX_TYPE_NESTING: usize = 16;
 
 /// Bytes of a number in a record or a key: a 64-bit word.
 pub(crate) const NUMBER_BYTES: usize = 8;
@@ -373,6 +384,8 @@ pub struct Descriptor {
     pub scale: Option<u32>,
     /// DATETIME_PRECISION, of a datetime or interval.
     pub datetime_precision: Option<u32>,
+    /// MAXIMUM_CARDINALITY, of an array [ISO/IEC 9075-2:2023 §4.12.1].
+    pub cardinality: Option<u32>,
 }
 
 impl Descriptor {
@@ -387,6 +400,7 @@ impl Descriptor {
             radix: None,
             scale: None,
             datetime_precision: None,
+            cardinality: None,
         }
     }
 }
@@ -409,6 +423,8 @@ impl DataType {
             DataType::Exact { .. } => &EXACT,
             DataType::Approximate { .. } => &APPROXIMATE,
             DataType::DecFloat { .. } => &DECFLOAT,
+            DataType::Array(_) => &ARRAY,
+            DataType::Row(_) => &ROW,
             DataType::Extension(e) => *e.kind,
         }
     }
@@ -428,9 +444,13 @@ impl DataType {
             DataType::Varying { .. } => VARYING.encode_record(v, self),
             DataType::Binary { .. } => BINARY.encode_record(v, self),
             DataType::VarBinary { .. } => BINARY_VARYING.encode_record(v, self),
-            DataType::Boolean | DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
-                self.kind().encode_record(v, self)
-            }
+            DataType::Boolean
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. }
+            | DataType::Interval(_)
+            | DataType::Array(_)
+            | DataType::Row(_) => self.kind().encode_record(v, self),
             DataType::Exact { .. } => EXACT.encode_record(v, self),
             DataType::Approximate { .. } => APPROXIMATE.encode_record(v, self),
             DataType::DecFloat { .. } => DECFLOAT.encode_record(v, self),
@@ -445,9 +465,13 @@ impl DataType {
             DataType::Varying { .. } => VARYING.decode_record(field, self),
             DataType::Binary { .. } => BINARY.decode_record(field, self),
             DataType::VarBinary { .. } => BINARY_VARYING.decode_record(field, self),
-            DataType::Boolean | DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
-                self.kind().decode_record(field, self)
-            }
+            DataType::Boolean
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. }
+            | DataType::Interval(_)
+            | DataType::Array(_)
+            | DataType::Row(_) => self.kind().decode_record(field, self),
             DataType::Exact { .. } => EXACT.decode_record(field, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_record(field, self),
             DataType::DecFloat { .. } => DECFLOAT.decode_record(field, self),
@@ -466,9 +490,13 @@ impl DataType {
             DataType::Varying { .. } => VARYING.encode_key(v, self, out),
             DataType::Binary { .. } => BINARY.encode_key(v, self, out),
             DataType::VarBinary { .. } => BINARY_VARYING.encode_key(v, self, out),
-            DataType::Boolean | DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
-                self.kind().encode_key(v, self, out)
-            }
+            DataType::Boolean
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. }
+            | DataType::Interval(_)
+            | DataType::Array(_)
+            | DataType::Row(_) => self.kind().encode_key(v, self, out),
             DataType::Exact { .. } => EXACT.encode_key(v, self, out),
             DataType::Approximate { .. } => APPROXIMATE.encode_key(v, self, out),
             DataType::DecFloat { .. } => DECFLOAT.encode_key(v, self, out),
@@ -487,9 +515,13 @@ impl DataType {
             DataType::Varying { .. } => VARYING.decode_key(rest, self),
             DataType::Binary { .. } => BINARY.decode_key(rest, self),
             DataType::VarBinary { .. } => BINARY_VARYING.decode_key(rest, self),
-            DataType::Boolean | DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
-                self.kind().decode_key(rest, self)
-            }
+            DataType::Boolean
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. }
+            | DataType::Interval(_)
+            | DataType::Array(_)
+            | DataType::Row(_) => self.kind().decode_key(rest, self),
             DataType::Exact { .. } => EXACT.decode_key(rest, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_key(rest, self),
             DataType::DecFloat { .. } => DECFLOAT.decode_key(rest, self),
@@ -512,6 +544,8 @@ impl Value {
             Value::Bool(_) => Some(&BOOLEAN),
             Value::Datetime(d) => Some(datetime::kind_of(d)),
             Value::Interval(i) => Some(interval::kind_of(i.qualifier)),
+            Value::Array(_) => Some(&ARRAY),
+            Value::Row(_) => Some(&ROW),
             Value::Extension(e) => Some(e.kind),
         }
     }

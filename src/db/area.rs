@@ -290,6 +290,8 @@ fn condition_number(n: &ValueSpecification, auth: &str, params: &Params) -> Resu
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Row(_)
         | Value::Extension(_) => Err(not_exact()),
     }
 }

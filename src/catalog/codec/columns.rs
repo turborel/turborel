@@ -12,7 +12,7 @@ use crate::value::datetime::Moment;
 /// `column` in bytes, as the module of `catalog/codec.rs` lays it out.
 pub(super) fn put_column(out: &mut Vec<u8>, column: &ColumnDesc) {
     out.put_str(&column.name);
-    put_type(out, column.data_type);
+    put_type(out, &column.data_type.clone());
     put_flag(out, column.not_null);
     put_default(out, column.default.as_ref());
     // Its domain, 1 then its name and default, or 0 for none.

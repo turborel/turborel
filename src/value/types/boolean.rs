@@ -98,6 +98,8 @@ pub(crate) fn as_text(b: bool, t: &DataType) -> Result<Value> {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => return uncastable(&Value::Bool(b), t),
     };
     let rule = if fixed { "GR11f iii" } else { "GR12f iii" };
@@ -145,6 +147,8 @@ impl SqlType for Boolean {
             | Value::Binary(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_) => unassignable(&v, t, rule),
         }
     }
@@ -162,6 +166,8 @@ impl SqlType for Boolean {
             | Value::Binary(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_) => uncastable(&v, t),
         }
     }

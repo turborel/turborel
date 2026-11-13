@@ -85,15 +85,15 @@ fn corresponding(
     let (first, second) = (items.get(left_item).ok_or_else(lost)?, items.get(right_item).ok_or_else(lost)?);
     let (c1, c2) = (first.desc.columns.get(left_column).ok_or_else(lost)?, second.desc.columns.get(right_column).ok_or_else(lost)?);
     // [SR6c] comparable.
-    let common = set_type(&[c1.data_type, c2.data_type], "§7.5 SR6c")?;
+    let common = set_type(&[c1.data_type.clone(), c2.data_type.clone()], "§7.5 SR6c")?;
     let at1 = first.offset.saturating_add(first.position(left_column));
     let at2 = second.offset.saturating_add(second.position(right_column));
     let (local1, local2) = (at1.saturating_sub(start), at2.saturating_sub(start));
-    let cast = |e: Expr, own| super::case::brought(e, own, common);
+    let cast = |e: Expr, own| super::case::brought(e, own, common.clone());
     // [SR6d] COALESCE (TA.C, TB.C).
     let coalesced = Expr::Case(
-        vec![(Cond::IsNull(Expr::Column(local1), true), cast(Expr::Column(local1), c1.data_type))],
-        Box::new(cast(Expr::Column(local2), c2.data_type)),
+        vec![(Cond::IsNull(Expr::Column(local1), true), cast(Expr::Column(local1), &c1.data_type.clone()))],
+        Box::new(cast(Expr::Column(local2), &c2.data_type.clone())),
     );
     // [SR9] possibly nullable only if an outer join may null it on the side it is.
     let (null1, null2) = (!c1.not_null || first.nullable, !c2.not_null || second.nullable);
@@ -102,7 +102,7 @@ fn corresponding(
     let shared = c1.collation.clone().filter(|_| c1.collation == c2.collation);
     let desc = ColumnDesc {
         name: c1.name.clone(),
-        data_type: common,
+        data_type: common.clone(),
         not_null: !nullable,
         default: None,
         domain: None,

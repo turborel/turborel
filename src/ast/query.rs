@@ -169,31 +169,47 @@ impl QueryExpression {
             }
         };
         let te = &spec.table_expression;
-        let mut refs: Vec<&TableReference> = te.from.iter().rev().collect();
-        while let Some(r) = refs.pop() {
-            match r {
-                TableReference::Table(t) => each(t, t.table.auth.is_none() && scope.contains(&t.table.ident.as_str())),
-                TableReference::Derived(d) => subqueries.push(&*d.query),
-                TableReference::Joined(j) => {
-                    refs.extend([&j.right, &j.left]);
-                    if let Some(JoinSpecification::On(c)) = &j.on {
-                        c.for_each_subquery(&mut |s| subqueries.push(s));
-                    }
-                }
-            }
-        }
+        named_in_from(&te.from, scope, each, &mut subqueries);
         for c in te.where_clause.iter().chain(&te.having) {
             c.for_each_subquery(&mut |s| subqueries.push(s));
         }
         if let SelectList::Values(items) = &spec.select_list {
             for item in items {
-                if let SelectSublist::Derived(d) = item {
-                    d.value.for_each_subquery(&mut |s| subqueries.push(s));
+                match item {
+                    SelectSublist::Derived(SelectItem { value, .. }) | SelectSublist::Fields { value, .. } => {
+                        value.for_each_subquery(&mut |s| subqueries.push(s));
+                    }
+                    SelectSublist::All(_) => {}
                 }
             }
         }
         for s in subqueries {
             s.query.named_in(scope, each);
+        }
+    }
+}
+
+/// The tables of `from` [ISO/IEC 9075-2:2023 §7.5], each to `each` with
+/// whether a query name of `scope` names it, and its subqueries to
+/// `subqueries`.
+fn named_in_from<'a>(
+    from: &'a [TableReference],
+    scope: &[&'a str],
+    each: &mut dyn FnMut(&'a NamedTable, bool),
+    subqueries: &mut Vec<&'a Subquery>,
+) {
+    let mut refs: Vec<&TableReference> = from.iter().rev().collect();
+    while let Some(r) = refs.pop() {
+        match r {
+            TableReference::Table(t) => each(t, t.table.auth.is_none() && scope.contains(&t.table.ident.as_str())),
+            TableReference::Derived(d) => subqueries.push(&*d.query),
+            TableReference::Unnest(u) => u.collections.iter().for_each(|v| v.for_each_subquery(&mut |s| subqueries.push(s))),
+            TableReference::Joined(j) => {
+                refs.extend([&j.right, &j.left]);
+                if let Some(JoinSpecification::On(c)) = &j.on {
+                    c.for_each_subquery(&mut |s| subqueries.push(s));
+                }
+            }
         }
     }
 }
@@ -314,6 +330,7 @@ impl SelectList {
             SelectList::Values(vs) => vs.iter().all(|v| match v {
                 SelectSublist::Derived(item) => matches!(item.value, ValueExpression::Column(_)),
                 SelectSublist::All(_) => true,
+                SelectSublist::Fields { .. } => false,
             }),
         }
     }
@@ -325,8 +342,20 @@ impl SelectList {
 pub enum SelectSublist {
     /// A `<derived column>`.
     Derived(SelectItem),
-    /// `<qualifier>`.*: the columns of the table it designates \[SR4\].
+    /// `<qualifier>`.*: the columns of the table it designates \[SR4\];
+    /// or [ISO/IEC 9075-2:2023 §7.16] the fields of the column of row type
+    /// it names, an `<all fields reference>`.
     All(TableName),
+    /// [ISO/IEC 9075-2:2023 §7.16] `<all fields reference>` ::= `<value
+    /// expression primary>` . * \[AS ( `<all fields column name list>` )\].
+    Fields {
+        /// The `<value expression primary>`, of a row type.
+        value: ValueExpression,
+        /// The `<all fields column name list>`, if written [Feature T053].
+        names: Option<Vec<String>>,
+        /// Where it begins in the statement.
+        at: usize,
+    },
 }
 
 /// [ISO/IEC 9075:1992 §7.9] `<derived column>` ::= `<value expression>`
@@ -368,6 +397,9 @@ pub enum TableReference {
     Derived(DerivedTable),
     /// `<joined table>` [§7.5].
     Joined(Box<JoinedTable>),
+    /// [ISO/IEC 9075-2:2023 §7.6] `<collection derived table>`
+    /// `<correlation or recognition>`.
+    Unnest(UnnestTable),
 }
 
 impl TableReference {
@@ -399,6 +431,23 @@ pub struct DerivedTable {
     pub correlation: String,
     /// The `<derived column list>`, if written \[SR7\].
     pub columns: Option<Vec<String>>,
+}
+
+/// [ISO/IEC 9075-2:2023 §7.6] `<collection derived table>` ::= UNNEST (
+/// `<collection value expression>` \[, ...\] ) \[WITH ORDINALITY\] \[AS\]
+/// `<correlation name>` \[(`<derived column list>`)\].
+#[derive(Debug, Clone)]
+pub struct UnnestTable {
+    /// The `<collection value expression>`s, in order.
+    pub collections: Vec<ValueExpression>,
+    /// Whether WITH ORDINALITY was written.
+    pub ordinality: bool,
+    /// The `<correlation name>`.
+    pub correlation: String,
+    /// The `<derived column list>`, if written \[SR8m i\].
+    pub columns: Option<Vec<String>>,
+    /// Where it begins in the statement.
+    pub at: usize,
 }
 
 /// [ISO/IEC 9075:1992 §7.5] `<joined table>` ::= `<cross join>` |

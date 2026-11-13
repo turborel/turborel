@@ -23,12 +23,13 @@ use super::natural::natural;
 use super::query::Nesting;
 use super::set_operations::bind_query_expression;
 use super::subquery::Outer;
+use super::unnest::{Placed, not_lateral, placed, unnest_item};
 use super::views::{Named, Reader, Source, ViewBase, named};
 use super::{Binder, Context, OutColumn, Purpose, Scope, qualify, require, rule, with};
 use crate::ast::{DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, SearchCondition, TableReference};
 use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc, Underlying};
 use crate::error::{At, Code, Result, SqlError};
-use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, Truth, cond_columns};
+use crate::logical::{Cond, Expr, LogicalPlan, cond_columns};
 use crate::system::SystemRead;
 
 /// A table, view or derived table of a `<from clause>`, or the common
@@ -77,7 +78,7 @@ impl FromItem {
     pub(super) fn width(&self) -> usize {
         match &self.source {
             Source::Base(vb) => vb.base.columns.len(),
-            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) => self.desc.columns.len(),
+            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) => self.desc.columns.len(),
         }
     }
 
@@ -86,7 +87,7 @@ impl FromItem {
     pub(super) fn position(&self, i: usize) -> usize {
         match &self.source {
             Source::Base(vb) => vb.map.get(i).copied().unwrap_or(i),
-            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) => i,
+            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) => i,
         }
     }
 
@@ -104,7 +105,7 @@ impl FromItem {
                     vb.map.iter().position(|&m| m == b).and_then(named).unwrap_or_else(|| format!("{}.{}", vb.base.name.ident, c.name))
                 })
                 .collect(),
-            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) => {
+            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) => {
                 (0..self.desc.columns.len()).filter_map(named).collect()
             }
         }
@@ -130,15 +131,18 @@ pub(super) enum Tree {
 
 /// [ISO/IEC 9075:1992 §7.5] A joined table, bound.
 pub(super) struct Join {
-    kind: JoinKind,
-    left: Tree,
-    right: Tree,
+    /// Its `<join type>`.
+    pub(super) kind: JoinKind,
+    /// Its first operand.
+    pub(super) left: Tree,
+    /// Its second operand.
+    pub(super) right: Tree,
     /// Its condition, over its operands' columns side by side; none if
     /// every pair of rows is a row of it.
-    cond: Option<Cond>,
+    pub(super) cond: Option<Cond>,
     /// For NATURAL or USING: the item of its common columns, and the
     /// expression of each over its operands' columns [SR6d].
-    common: Option<(usize, Vec<Expr>)>,
+    pub(super) common: Option<(usize, Vec<Expr>)>,
 }
 
 /// A bound `<from clause>`: its items, its table references, and the
@@ -147,6 +151,11 @@ pub(super) struct From {
     pub(super) items: Vec<FromItem>,
     pub(super) trees: Vec<Tree>,
     pub(super) used: BTreeSet<usize>,
+    /// As a joined table's second operand is bound, the columns the
+    /// results of the first operands of the joined tables it is in give,
+    /// which a collection derived table in it sees unqualified too
+    /// [ISO/IEC 9075-2:2023 §7.6 SR20a].
+    pub(super) lateral: Vec<(usize, usize)>,
 }
 
 impl From {
@@ -183,7 +192,7 @@ pub(super) fn column_name(items: &[FromItem], i: usize, c: usize) -> &str {
 }
 
 /// The items of `tree`, its common columns' among them.
-fn tree_items(tree: &Tree, out: &mut Vec<usize>) {
+pub(super) fn tree_items(tree: &Tree, out: &mut Vec<usize>) {
     match tree {
         Tree::Item(i) => out.push(*i),
         Tree::Join(j) => {
@@ -215,7 +224,7 @@ pub(super) struct Bounds<'a> {
 /// `<from clause>`, bound one after another in the FROM row, no two
 /// exposing the same name [§6.3 SR3, SR4].
 pub(super) fn bind_from(b: Bounds<'_>, refs: &[TableReference]) -> Result<From> {
-    let mut from = From { items: Vec::new(), trees: Vec::new(), used: BTreeSet::new() };
+    let mut from = From { items: Vec::new(), trees: Vec::new(), used: BTreeSet::new(), lateral: Vec::new() };
     let mut start = 0_usize;
     for r in refs {
         let tree = bind_reference(b, r, start, &mut from)?;
@@ -237,6 +246,7 @@ fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, from: &mut Fr
         TableReference::Table(t) => from_item(b, t, start).or_at(t.table.at)?,
         TableReference::Derived(d) => derived(b, d, start).or_at(d.query.at)?,
         TableReference::Joined(j) => return bind_join(b, j, start, from).or_at(j.at),
+        TableReference::Unnest(u) => unnest_item(b, u, start, from).or_at(u.at)?,
     };
     from.items.push(item);
     Ok(Tree::Item(from.items.len().saturating_sub(1)))
@@ -356,7 +366,7 @@ fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
 pub(super) fn column_of(k: usize, c: &OutColumn) -> ColumnDesc {
     ColumnDesc {
         name: c.name.clone().unwrap_or_else(|| format!("#{}", k.saturating_add(1))),
-        data_type: c.data_type,
+        data_type: c.data_type.clone(),
         not_null: c.not_null,
         default: None,
         domain: None,
@@ -371,7 +381,14 @@ pub(super) fn column_of(k: usize, c: &OutColumn) -> ColumnDesc {
 fn bind_join(b: Bounds<'_>, j: &JoinedTable, start: usize, from: &mut From) -> Result<Tree> {
     let left = bind_reference(b, &j.left, start, from)?;
     let lw = width(&left, &from.items);
-    let right = bind_reference(b, &j.right, start.saturating_add(lw), from)?;
+    let seen = from.lateral.len();
+    from.lateral.extend(columns(&left, &from.items));
+    let right = bind_reference(b, &j.right, start.saturating_add(lw), from);
+    from.lateral.truncate(seen);
+    let right = right?;
+    if matches!(j.kind, JoinKind::Right | JoinKind::Full | JoinKind::Union) {
+        not_lateral(&right, &from.items, start..start.saturating_add(lw))?;
+    }
     let rw = width(&right, &from.items);
     let (mut cond, mut common) = (None, None);
     match (&j.on, j.natural) {
@@ -453,50 +470,19 @@ fn exposure_conflict(a: &FromItem, b: &FromItem) -> Option<SqlError> {
 }
 
 /// [X3.135-1986 §5.20; ISO/IEC 9075:1992 §7.4 GR1] The plan of the table
-/// references `trees`: their product, in FROM order. Each scan is told
-/// which of its columns the query uses.
+/// references `trees`: their product, in FROM order, each collection
+/// derived table over the rows it reads (`binder/unnest.rs`). Each scan is
+/// told which of its columns the query uses.
 pub(super) fn from_plan(binder: &Binder<'_>, trees: &[Tree]) -> Result<LogicalPlan> {
-    let mut plan: Option<LogicalPlan> = None;
+    let mut plan: Option<Placed> = None;
     for tree in trees {
-        let next = tree_plan(binder, tree)?;
-        plan = Some(match plan {
-            None => next,
-            Some(left) => LogicalPlan::Product { left: Box::new(left), right: Box::new(next) },
-        });
+        plan = Some(placed(binder, tree, plan)?);
     }
-    plan.ok_or_else(|| rule("[X3.135-1986 §5.20 F] a <from clause> has at least one <table reference>"))
-}
-
-/// The plan of `tree` [ISO/IEC 9075:1992 §7.5 GR1, GR5, GR6].
-fn tree_plan(binder: &Binder<'_>, tree: &Tree) -> Result<LogicalPlan> {
-    let j = match tree {
-        Tree::Item(i) => {
-            return leaf(binder, binder.items.get(*i).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a FROM item is gone"))?);
-        }
-        Tree::Join(j) => j,
-    };
-    let (left, right) = (Box::new(tree_plan(binder, &j.left)?), Box::new(tree_plan(binder, &j.right)?));
-    let outer = match j.kind {
-        JoinKind::Cross | JoinKind::Inner => None,
-        JoinKind::Left => Some((OuterJoin::Left, j.cond.clone())),
-        JoinKind::Right => Some((OuterJoin::Right, j.cond.clone())),
-        JoinKind::Full => Some((OuterJoin::Full, j.cond.clone())),
-        // [GR1a, GR5e] UNION: no pair of rows is a row of it.
-        JoinKind::Union => Some((OuterJoin::Full, Some(Cond::Const(Truth::False)))),
-    };
-    let joined = match (outer, j.cond.clone()) {
-        (Some((kind, cond)), _) => LogicalPlan::OuterJoin { kind, cond: cond.unwrap_or(Cond::Const(Truth::True)), left, right },
-        (None, Some(cond)) => LogicalPlan::Filter { cond, input: Box::new(LogicalPlan::Product { left, right }) },
-        (None, None) => LogicalPlan::Product { left, right },
-    };
-    let Some((_, coalesced)) = &j.common else { return Ok(joined) };
-    // [GR6a] SELECT SLCC, SLT1, SLT2: here, every column, and SLCC after.
-    let exprs = (0..joined.width()).map(Expr::Column).chain(coalesced.iter().cloned()).collect();
-    Ok(LogicalPlan::Project { exprs, input: Box::new(joined) })
+    plan.map(|p| p.plan).ok_or_else(|| rule("[X3.135-1986 §5.20 F] a <from clause> has at least one <table reference>"))
 }
 
 /// The plan of a table, view or derived table `it`.
-fn leaf(binder: &Binder<'_>, it: &FromItem) -> Result<LogicalPlan> {
+pub(super) fn leaf(binder: &Binder<'_>, it: &FromItem) -> Result<LogicalPlan> {
     let used = binder.used.borrow();
     let end = it.offset.saturating_add(it.width());
     let item_names =
@@ -519,6 +505,7 @@ fn leaf(binder: &Binder<'_>, it: &FromItem) -> Result<LogicalPlan> {
         }
         Source::Derived(view) => view.clone(),
         Source::Common => return Err(SqlError::new(Code::Api, "[DESIGN] common columns are a join's, not a table's")),
+        Source::Unnest(_) => return Err(SqlError::new(Code::Api, "[DESIGN] a collection derived table is planned over its input")),
         Source::System(table) => {
             let read = SystemRead { table: Arc::clone(table), user: binder.user.to_owned(), own: binder.own.clone() };
             LogicalPlan::System { read, names: item_names.to_vec() }

@@ -1,13 +1,15 @@
-//! \[DESIGN\] A data type in the catalog's bytes: a tag of its kind, then
-//! its parameters; a number type's tag says the name it was written with
-//! [ISO/IEC 9075:1992 §21.3.5].
+//! \[DESIGN\] A data type's bytes, as the catalog and the log keep it: a
+//! tag of its kind, then its parameters; a number type's tag says the name
+//! it was written with [ISO/IEC 9075:1992 §21.3.5]. An array type's
+//! parameters hold its element type's bytes, and a row type's its fields'
+//! (RULES.md D68).
 
+use super::{
+    APPROXIMATE, ARRAY, BINARY, BINARY_VARYING, BOOLEAN, CHARACTER, DATE, DECFLOAT, EXACT, INTERVAL_DAY_TIME, ROW, TIME, TIME_ZONED,
+    TIMESTAMP, TIMESTAMP_ZONED, VARYING,
+};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
-use crate::value::types::INTERVAL_DAY_TIME;
-use crate::value::types::{
-    APPROXIMATE, BINARY, BINARY_VARYING, BOOLEAN, CHARACTER, DATE, DECFLOAT, EXACT, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING,
-};
 use crate::value::{DataType, Spelled, SqlType};
 
 /// The tag of each built-in kind of type, before its parameters.
@@ -35,8 +37,13 @@ const REAL_TYPE: u8 = 16;
 const DOUBLE_PRECISION_TYPE: u8 = 17;
 const BOOLEAN_TYPE: u8 = 18;
 const DECFLOAT_TYPE: u8 = 19;
+/// An array type: its maximum cardinality, then its element type.
+const ARRAY_TYPE: u8 = 20;
+/// A row type: its fields, each its name and then its type.
+const ROW_TYPE: u8 = 21;
 
-pub(super) fn put_type(out: &mut Vec<u8>, data_type: DataType) {
+/// Appends `data_type`'s bytes to `out`.
+pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
     match data_type {
         DataType::Character { .. } => out.put_u8(CHARACTER_TYPE),
         DataType::Varying { .. } => out.put_u8(VARYING_TYPE),
@@ -50,13 +57,15 @@ pub(super) fn put_type(out: &mut Vec<u8>, data_type: DataType) {
         DataType::Timestamp { zoned: false, .. } => out.put_u8(TIMESTAMP_TYPE),
         DataType::Timestamp { zoned: true, .. } => out.put_u8(TIMESTAMP_ZONED_TYPE),
         DataType::Interval(_) => out.put_u8(INTERVAL_TYPE),
-        DataType::Exact { spelled, .. } | DataType::Approximate { spelled, .. } => out.put_u8(number_tag(spelled)),
+        DataType::Exact { spelled, .. } | DataType::Approximate { spelled, .. } => out.put_u8(number_tag(*spelled)),
+        DataType::Array(_) => out.put_u8(ARRAY_TYPE),
+        DataType::Row(_) => out.put_u8(ROW_TYPE),
         DataType::Extension(e) => {
             out.put_u8(EXTENSION_TYPE);
             out.put_str(e.kind.name());
         }
     }
-    data_type.kind().put_params(&data_type, out);
+    data_type.kind().put_params(data_type, out);
 }
 
 /// The tag of a number type written as `spelled`.
@@ -87,11 +96,20 @@ fn spelled_as(t: DataType, spelled: Spelled) -> DataType {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => t,
     }
 }
 
-pub(super) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
+/// Reads a type `put_type` wrote: of a kind beyond the standard, found
+/// among the reader's types (`Reader::with_types`).
+///
+/// # Errors
+///
+/// SQLCODE -916 if the bytes are not a type; -910 if they name a kind no
+/// plug-in registered.
+pub(crate) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
     let tag = r.u8()?;
     let spelled = match tag {
         DECIMAL_TYPE => Some(Spelled::Decimal),
@@ -116,6 +134,8 @@ pub(super) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         TIMESTAMP_TYPE => &TIMESTAMP,
         TIMESTAMP_ZONED_TYPE => &TIMESTAMP_ZONED,
         INTERVAL_TYPE => &INTERVAL_DAY_TIME,
+        ARRAY_TYPE => &ARRAY,
+        ROW_TYPE => &ROW,
         EXTENSION_TYPE => {
             let name = r.str()?;
             r.kind(&name)?
@@ -123,7 +143,10 @@ pub(super) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         _ => return Err(r.corrupt("not a data type")),
     };
     let t = kind.params(r)?;
-    Ok(spelled.map_or(t, |s| spelled_as(t, s)))
+    Ok(match spelled {
+        Some(s) => spelled_as(t, s),
+        None => t,
+    })
 }
 
 // Unit tests: each number type's name read back as written, and an image
@@ -131,10 +154,9 @@ pub(super) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytes::Reader;
 
     /// `t` written and read back.
-    fn again(t: DataType) -> DataType {
+    fn again(t: &DataType) -> DataType {
         let mut out = Vec::new();
         put_type(&mut out, t);
         data_type(&mut Reader::new(&out, "type")).unwrap()
@@ -156,9 +178,9 @@ mod tests {
             approximate(Spelled::Real),
             approximate(Spelled::DoublePrecision),
         ] {
-            assert_eq!(again(t).to_string(), t.to_string());
+            assert_eq!(again(&t).to_string(), t.to_string());
         }
-        assert_eq!(again(exact(Spelled::Integer)), exact(Spelled::Numeric), "one type, whatever its name");
+        assert_eq!(again(&exact(Spelled::Integer)), exact(Spelled::Numeric), "one type, whatever its name");
         let mut before = vec![EXACT_TYPE];
         before.put_u32(10);
         before.put_u32(0);

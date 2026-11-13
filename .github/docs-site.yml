@@ -1,0 +1,24 @@
+name: Rebuild docs site
+
+on:
+  push:
+    branches: [main]
+    paths: ["doc/**"]
+  release:
+    types: [published, edited, deleted]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Signal turborel.github.io
+        env:
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/turborel/turborel.github.io/dispatches \
+            -f event_type=docs-updated \
+            -f "client_payload[ref]=${GITHUB_REF}" \
+            -f "client_payload[sha]=${GITHUB_SHA}"

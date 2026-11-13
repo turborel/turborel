@@ -50,7 +50,7 @@ impl State {
             .zip(&bound.columns)
             .map(|(column, c)| ColumnDesc {
                 name: column,
-                data_type: c.data_type,
+                data_type: c.data_type.clone(),
                 not_null: c.not_null,
                 default: None,
                 domain: None,

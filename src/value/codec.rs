@@ -16,7 +16,8 @@
 //!        9 (interval) its fields' ranks, then its precisions, each u32,
 //!          then its units i128 |
 //!        11 (truth value) 0 for False, 1 for True u8 |
-//!        12 (decimal floating point) coefficient i128, exponent i32
+//!        12 (decimal floating point) coefficient i128, exponent i32 |
+//!        13 (array) | 14 (row): its parts u32, then each part's value
 //! row:   values u32, then each value
 //! ```
 
@@ -48,6 +49,9 @@ const EXACT_WORD: u8 = 10;
 const BOOL: u8 = 11;
 /// A decimal floating-point number: its coefficient, then its exponent.
 const DECFLOAT: u8 = 12;
+/// An array and a row: their parts (`types::composite`).
+const ARRAY: u8 = 13;
+const ROW: u8 = 14;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -74,6 +78,8 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
             Moment::Timestamp => TIMESTAMP,
         },
         Value::Interval(_) => INTERVAL,
+        Value::Array(_) => ARRAY,
+        Value::Row(_) => ROW,
         Value::Extension(e) => {
             out.put_u8(EXTENSION);
             out.put_str(e.kind.name());
@@ -106,6 +112,8 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         TIME => &types::TIME,
         TIMESTAMP => &types::TIMESTAMP,
         INTERVAL => &types::INTERVAL_DAY_TIME,
+        ARRAY => &types::ARRAY,
+        ROW => &types::ROW,
         EXTENSION => {
             let name = reader.str()?;
             reader.kind(&name)?

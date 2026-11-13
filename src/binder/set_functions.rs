@@ -3,16 +3,19 @@
 //! names outside its set functions, and whether it calls one.
 
 use super::Binder;
-use crate::ast::{ColumnSpecification, SetArg, ValueExpression};
+use crate::ast::{Composite, SetArg, ValueExpression};
 use crate::db::State;
 
-/// Adds to `out` the `<column specification>`s of `v`, not those inside a
-/// set function, whose argument source is its own, nor a subquery's.
-pub(super) fn column_specifications<'v>(v: &'v ValueExpression, out: &mut Vec<&'v ColumnSpecification>) {
-    if let ValueExpression::Column(cs) = v {
-        out.push(cs);
+/// Adds to `out` the column references of `v`, each a `<column
+/// specification>` or an `<identifier chain>` of a column of a row type
+/// and its fields [ISO/IEC 9075-2:2023 §6.6]; not those inside a set
+/// function, whose argument source is its own, nor a subquery's.
+pub(super) fn column_references<'v>(v: &'v ValueExpression, out: &mut Vec<&'v ValueExpression>) {
+    let chain = matches!(v, ValueExpression::Composite(c, _) if matches!(**c, Composite::Chain(_)));
+    if chain || matches!(v, ValueExpression::Column(_)) {
+        out.push(v);
     } else if !matches!(v, ValueExpression::SetFunction(_)) {
-        v.for_each_child(&mut |child| column_specifications(child, out));
+        v.for_each_child(&mut |child| column_references(child, out));
     }
 }
 
@@ -37,6 +40,7 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, db: &State) -> bool {
         | ValueExpression::AtZone { .. }
         | ValueExpression::Boolean(_)
         | ValueExpression::Function { .. }
+        | ValueExpression::Composite(..)
         | ValueExpression::NextValue { .. } => false,
     }
 }
@@ -79,6 +83,7 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::AtZone { .. }
         | ValueExpression::Boolean(_)
         | ValueExpression::Function { .. }
+        | ValueExpression::Composite(..)
         | ValueExpression::NextValue { .. } => None,
     }
 }

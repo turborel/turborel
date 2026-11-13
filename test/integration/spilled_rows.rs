@@ -163,7 +163,7 @@ fn an_updatable_cursor_sorts_its_rows_by_spilling() {
         if small {
             db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
         }
-        let mut p = target().declare("G_OUT", integer, Value::Null);
+        let mut p = target().declare("G_OUT", integer.clone(), Value::Null);
         s.execute("OPEN C", &mut p).unwrap();
         assert_eq!(counted.taken() > 0, small, "sorted by spilling");
         let order: Vec<Option<(String, String)>> = (0..ROWS).map(|_| next(&mut p)).collect();

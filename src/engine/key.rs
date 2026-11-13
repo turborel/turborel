@@ -57,7 +57,7 @@ pub fn restores(t: &DataType) -> bool {
         | DataType::Date
         | DataType::Interval(_) => true,
         DataType::Time { zoned, .. } | DataType::Timestamp { zoned, .. } => !zoned,
-        DataType::Varying { .. } | DataType::Approximate { .. } | DataType::Extension(_) => false,
+        DataType::Varying { .. } | DataType::Approximate { .. } | DataType::Array(_) | DataType::Row(_) | DataType::Extension(_) => false,
     }
 }
 
@@ -89,14 +89,14 @@ pub fn encode_key(values: &[Value], types: &[DataType], out: &mut Vec<u8>) -> Re
     if values.len() != types.len() {
         return Err(SqlError::new(Code::Api, format!("[DESIGN] a key of {} values for an index on {} columns", values.len(), types.len())));
     }
-    for (value, &data_type) in values.iter().zip(types) {
+    for (value, data_type) in values.iter().zip(types) {
         encode_column(value, data_type, out)?;
     }
     Ok(())
 }
 
 /// The key of one column: its kind's, after a tag.
-fn encode_column(value: &Value, data_type: DataType, out: &mut Vec<u8>) -> Result<()> {
+fn encode_column(value: &Value, data_type: &DataType, out: &mut Vec<u8>) -> Result<()> {
     if value.is_null() {
         out.push(NULL);
         return Ok(());
@@ -113,12 +113,12 @@ fn encode_column(value: &Value, data_type: DataType, out: &mut Vec<u8>) -> Resul
 /// SQLCODE -916 if `bytes` is not a key of columns of `types`.
 pub fn decode_key(bytes: &[u8], types: &[DataType]) -> Result<Vec<Value>> {
     let mut rest = bytes;
-    let values = types.iter().map(|&t| decode_column(&mut rest, t)).collect::<Result<Vec<_>>>()?;
+    let values = types.iter().map(|t| decode_column(&mut rest, t)).collect::<Result<Vec<_>>>()?;
     if rest.is_empty() { Ok(values) } else { Err(malformed()) }
 }
 
 /// The value of one column, from the start of `rest`.
-fn decode_column(rest: &mut &[u8], data_type: DataType) -> Result<Value> {
+fn decode_column(rest: &mut &[u8], data_type: &DataType) -> Result<Value> {
     match take(rest, 1)? {
         [NULL] => Ok(Value::Null),
         [PRESENT] => data_type.decode_key(rest),
@@ -142,11 +142,11 @@ pub struct Anchor {
 /// column's scale, within 64 bits; for a string, of it cut to the column's
 /// length. None for NULL or a value of another kind, which every key must
 /// be compared with.
-pub fn anchor(value: &Value, data_type: DataType) -> Option<Anchor> {
+pub fn anchor(value: &Value, data_type: &DataType) -> Option<Anchor> {
     if value.is_null() {
         return None;
     }
-    let (anchored, exact) = data_type.kind().anchor(value, &data_type)?;
+    let (anchored, exact) = data_type.kind().anchor(value, data_type)?;
     let mut key = Vec::with_capacity(ANCHOR_BYTES);
     encode_column(&anchored, data_type, &mut key).ok()?;
     Some(Anchor { key, exact })
@@ -172,11 +172,12 @@ mod tests {
 
     /// Checks that every pair of `values`, of a column of `data_type`, has
     /// keys in the order SQL compares them, equal keys for equal values.
-    fn keys_sort_as_values(data_type: DataType, values: &[Value]) {
+    fn keys_sort_as_values(data_type: &DataType, values: &[Value]) {
         for a in values {
             for b in values {
                 let sql = compare(a, b).unwrap();
-                let bytes = key(std::slice::from_ref(a), &[data_type]).cmp(&key(std::slice::from_ref(b), &[data_type]));
+                let bytes = key(std::slice::from_ref(a), std::slice::from_ref(data_type))
+                    .cmp(&key(std::slice::from_ref(b), std::slice::from_ref(data_type)));
                 assert_eq!(bytes, sql, "{a:?} against {b:?}");
             }
         }
@@ -202,7 +203,7 @@ mod tests {
             exact(2, 0),
             exact(999_999_999_999_999_999, 2),
         ];
-        keys_sort_as_values(DataType::Exact { precision: 18, scale: 2, spelled: Spelled::Numeric }, &values);
+        keys_sort_as_values(&DataType::Exact { precision: 18, scale: 2, spelled: Spelled::Numeric }, &values);
     }
 
     /// Verifies: [X3.135-1986 §5.11]; [DESIGN] RULES.md D31, key encoding:
@@ -212,7 +213,7 @@ mod tests {
     fn approximate_keys_sort_as_numbers() {
         let values: [f64; 10] =
             [f64::NEG_INFINITY, -1e300, -2.5, -f64::MIN_POSITIVE, -0.0, 0.0, f64::MIN_POSITIVE, 1.0, 1e300, f64::INFINITY];
-        keys_sort_as_values(DataType::Approximate { precision: 53, spelled: Spelled::Float }, &values.map(Value::Approx));
+        keys_sort_as_values(&DataType::Approximate { precision: 53, spelled: Spelled::Float }, &values.map(Value::Approx));
     }
 
     /// Verifies: [X3.135-1986 §5.11 GR5, GR6]; [DESIGN] RULES.md D31, key
@@ -223,7 +224,7 @@ mod tests {
     #[test]
     fn character_keys_sort_as_padded_strings() {
         let values = ["", " ", "a", "a ", "a\u{1}", "a b", "ab", "abcd", "b", "é", "€", "\u{10FFFF}"];
-        keys_sort_as_values(DataType::character(4), &values.map(|s| Value::Char(s.into())));
+        keys_sort_as_values(&DataType::character(4), &values.map(|s| Value::Char(s.into())));
     }
 
     /// Verifies: [DESIGN] RULES.md D31, key encoding: NULL sorts before every
@@ -292,7 +293,10 @@ mod tests {
         ];
         for (t, value) in restored {
             assert!(restores(&t), "{t:?}");
-            assert_eq!(format!("{:?}", decode_key(&key(std::slice::from_ref(&value), &[t]), &[t]).unwrap()), format!("{:?}", [value]));
+            assert_eq!(
+                format!("{:?}", decode_key(&key(std::slice::from_ref(&value), std::slice::from_ref(&t)), &[t]).unwrap()),
+                format!("{:?}", [value])
+            );
         }
         let zoned = Value::Datetime(Datetime { moment: Moment::Time, utc: 0, zone: 60, zoned: true, precision: 2 });
         let lost = [
@@ -302,7 +306,10 @@ mod tests {
         ];
         for (t, value) in lost {
             assert!(!restores(&t), "{t:?}");
-            assert_ne!(format!("{:?}", decode_key(&key(std::slice::from_ref(&value), &[t]), &[t]).unwrap()), format!("{:?}", [value]));
+            assert_ne!(
+                format!("{:?}", decode_key(&key(std::slice::from_ref(&value), std::slice::from_ref(&t)), &[t]).unwrap()),
+                format!("{:?}", [value])
+            );
         }
     }
 
@@ -313,10 +320,10 @@ mod tests {
     /// of another kind have none.
     #[test]
     fn anchors_order_keys_as_their_values() {
-        let check = |data_type: DataType, keys: &[Value], probes: &[Value]| {
+        let check = |data_type: &DataType, keys: &[Value], probes: &[Value]| {
             for (k, probe) in probes.iter().flat_map(|p| keys.iter().map(move |k| (k, p))) {
                 let at = anchor(probe, data_type).unwrap();
-                let bytes = key(std::slice::from_ref(k), &[data_type]);
+                let bytes = key(std::slice::from_ref(k), std::slice::from_ref(data_type));
                 // Only an inexact anchor's own key may compare otherwise.
                 if bytes != at.key || at.exact {
                     assert_eq!(bytes.cmp(&at.key), compare(k, probe).unwrap(), "{k:?} against {probe:?}");
@@ -326,7 +333,7 @@ mod tests {
         let money = DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric };
         let keys: Vec<Value> = [-1_001, -1_000, -999, -1, 0, 1, 155, 156, 1_000].map(|u| exact(u, 2)).to_vec();
         check(
-            money,
+            &money,
             &keys,
             &[
                 exact(1_555, 3),
@@ -341,15 +348,18 @@ mod tests {
                 exact(15_500, 4),
             ],
         );
-        let exactness = |value: &Value, data_type| anchor(value, data_type).map(|a| a.exact);
-        assert_eq!((exactness(&exact(15_500, 4), money), exactness(&exact(15_501, 4), money)), (Some(true), Some(false)));
+        let exactness = |value: &Value, data_type: &DataType| anchor(value, data_type).map(|a| a.exact);
+        assert_eq!((exactness(&exact(15_500, 4), &money), exactness(&exact(15_501, 4), &money)), (Some(true), Some(false)));
         let short = DataType::character(3);
         let words: Vec<Value> = ["ab", "abc", "abd", "b"].map(|s| Value::Char(s.into())).to_vec();
-        check(short, &words, &["abcd", "abc   ", "aaaa", "zzzz", "ab", "abc"].map(|s| Value::Char(s.into())));
+        check(&short, &words, &["abcd", "abc   ", "aaaa", "zzzz", "ab", "abc"].map(|s| Value::Char(s.into())));
         let real = DataType::Approximate { precision: 53, spelled: Spelled::Float };
-        assert_eq!(anchor(&Value::Approx(1.5), real), Some(Anchor { key: key(&[Value::Approx(1.5)], &[real]), exact: true }));
+        assert_eq!(
+            anchor(&Value::Approx(1.5), &real),
+            Some(Anchor { key: key(&[Value::Approx(1.5)], std::slice::from_ref(&real)), exact: true })
+        );
         for (value, data_type) in
-            [(Value::Null, money), (Value::Approx(1.0), money), (exact(1, 0), short), (Value::Char("a".into()), money)]
+            [(Value::Null, &money), (Value::Approx(1.0), &money), (exact(1, 0), &short), (Value::Char("a".into()), &money)]
         {
             assert_eq!(anchor(&value, data_type), None, "{value:?}");
         }

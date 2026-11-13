@@ -66,9 +66,16 @@ impl Total {
             }
             (Total::Empty, Value::DecFloat(d)) => Total::DecFloat(*d),
             (Total::DecFloat(s), Value::DecFloat(d)) => Total::DecFloat(s.plus_unbounded(*d).map_or_else(beyond, Ok)?),
-            (Total::Empty, Value::Char(_) | Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_)) => {
-                Total::Other(v.clone())
-            }
+            (
+                Total::Empty,
+                Value::Char(_)
+                | Value::Binary(_)
+                | Value::Bool(_)
+                | Value::Datetime(_)
+                | Value::Array(_)
+                | Value::Row(_)
+                | Value::Extension(_),
+            ) => Total::Other(v.clone()),
             (Total::Exact(_) | Total::Approx(_) | Total::Interval(_) | Total::DecFloat(_) | Total::Other(_), _) => {
                 Total::Other(arith(ArithOp::Add, &self.value(), v)?)
             }
@@ -175,14 +182,14 @@ impl Accumulator for SumAcc {
             Total::Exact(d) => Ok(Value::Exact(d.checked()?)),
             Total::Approx(w) => finite(w.total()),
             Total::DecFloat(d) => in_range(d.within()),
-            Total::Interval(i) => in_fields(Value::Interval(*i), self.result).or_else(|_| {
+            Total::Interval(i) => in_fields(Value::Interval(*i), self.result.clone()).or_else(|_| {
                 fail_with(
                     Code::Data,
                     SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
                     format!("[ISO/IEC 9075:1992 §6.5 GR2b iv] the sum {i} is not within the range of {}", self.result),
                 )
             }),
-            Total::Empty | Total::Other(_) => in_fields(self.total.value(), self.result),
+            Total::Empty | Total::Other(_) => in_fields(self.total.value(), self.result.clone()),
         }
     }
 }
@@ -246,7 +253,7 @@ pub(super) struct AvgAcc {
 impl AvgAcc {
     /// No value yet, of a result of type `result`.
     pub(super) fn new(result: DataType) -> AvgAcc {
-        AvgAcc { sum: SumAcc::new(result), count: 0, result }
+        AvgAcc { sum: SumAcc::new(result.clone()), count: 0, result }
     }
 }
 
@@ -293,7 +300,7 @@ impl Accumulator for AvgAcc {
     /// divided by the count, of an exact result at its scale.
     fn finish(&self) -> Result<Value> {
         let count = Value::Exact(Decimal::new(self.count, 0));
-        match (&self.sum.total, self.result) {
+        match (&self.sum.total, self.result.clone()) {
             (Total::Empty, _) => Ok(Value::Null),
             (Total::Exact(d), DataType::Exact { scale, .. }) => Ok(Value::Exact(d.quotient_at(Decimal::new(self.count, 0), scale)?)),
             (Total::Approx(w), _) => finite(w.over(Decimal::new(self.count, 0).to_f64())),
@@ -301,7 +308,7 @@ impl Accumulator for AvgAcc {
                 in_range(DecFloat::new(self.count, 0, crate::value::MAX_DECFLOAT_PRECISION).and_then(|n| d.over_unbounded(n)?.within()))
             }
             // An interval's mean is an interval in its fields.
-            (sum, _) => in_fields(arith(ArithOp::Div, &sum.value(), &count)?, self.result),
+            (sum, _) => in_fields(arith(ArithOp::Div, &sum.value(), &count)?, self.result.clone()),
         }
     }
 }

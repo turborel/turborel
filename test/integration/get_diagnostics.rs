@@ -33,7 +33,7 @@ fn diagnosed() -> Database {
 fn targets() -> Params {
     let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
     Params::new()
-        .declare("NUM", exact, Value::Null)
+        .declare("NUM", exact.clone(), Value::Null)
         .declare("TXT", DataType::character(128), Value::Null)
         .declare("J", exact, Value::Exact(Decimal::new(1, 0)))
         .declare("Q", DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, Value::Null)

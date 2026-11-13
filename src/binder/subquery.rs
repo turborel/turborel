@@ -9,14 +9,22 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use super::collation::sort_collations;
+use super::composite::anonymous;
+use super::composite::field_of;
+use super::cursor::{result_column, sort_keys};
 use super::query::Nesting;
-use super::set_functions::column_specifications;
+use super::set_functions::column_references;
 use super::set_operations::bind_query_expression;
 use super::{Binder, NOT_AGGREGATED, Scope, rule};
-use crate::ast::{self, ColumnSpecification, Literal, SelectItem, SelectList, ValueExpression, ValueSpecification};
-use crate::error::{At, Result};
-use crate::functions::AggregateRef;
-use crate::logical::{Expr, Subquery};
+use crate::ast::{
+    self, ColumnSpecification, Composite, Literal, SelectItem, SelectList, SortSpecification, TableName, ValueExpression,
+    ValueSpecification,
+};
+use crate::error::{At, Result, SqlState};
+use crate::functions::{AggregateFunction, AggregateRef, ArrayAggregate, RowOf, ScalarRef};
+use crate::logical::{AggCall, Expr, LogicalPlan, Subquery, render_expr};
+use crate::value::types::{Field, MAX_ARRAY_CARDINALITY};
 use crate::value::{DataType, Decimal};
 
 /// The query a subquery is bound in, as its subquery sees it: the binder,
@@ -129,7 +137,7 @@ impl Binder<'_> {
             Some(q) => self.qualified(q, &cs.column)?,
             None => self.unqualified(&cs.column)?,
         };
-        Ok(Some((self.note(item, i)?, col.data_type, col.not_null && !item.nullable)))
+        Ok(Some((self.note(item, i)?, col.data_type.clone(), col.not_null && !item.nullable)))
     }
 
     /// [X3.135-1986 §5.7] `<column specification>` `cs` where `scope` says:
@@ -143,13 +151,19 @@ impl Binder<'_> {
 
     /// `column_expr`, its errors not yet placed.
     fn column_at(&self, cs: &ColumnSpecification, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        if let Some(field) = self.catalog_chain(cs, scope)? {
+            return Ok(field);
+        }
+        if let Some(field) = self.field_chain(cs, scope)? {
+            return Ok(field);
+        }
         if let Some((pos, t, _)) = self.local(cs)? {
-            return Ok((Expr::Column(self.column_in(pos, t, scope)?), t));
+            return Ok((Expr::Column(self.column_in(pos, &t.clone(), scope)?), t));
         }
         let Some(outer) = self.outer else {
             // In no scope at all: the error the lookup gives.
             let (pos, t) = self.resolve(cs)?;
-            return Ok((Expr::Column(self.column_in(pos, t, scope)?), t));
+            return Ok((Expr::Column(self.column_in(pos, &t.clone(), scope)?), t));
         };
         let (e, t) = outer.binder.column_expr(cs, outer.scope)?;
         Ok((capture(outer, e, written(cs)), t))
@@ -159,13 +173,100 @@ impl Binder<'_> {
     /// column of no table of this query's FROM clause.
     pub(super) fn is_outer_argument(&self, v: &ValueExpression) -> Result<bool> {
         let mut columns = Vec::new();
-        column_specifications(v, &mut columns);
-        for cs in columns {
-            if self.local(cs)?.is_none() {
+        column_references(v, &mut columns);
+        for r in columns {
+            if !self.is_local(r)? {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Whether the column reference `r` references a column of a table of
+    /// this query's FROM clause: as a column, or as the basis of the chain
+    /// of a column of a row type and its fields [ISO/IEC 9075-2:2023 §6.6
+    /// SR9b iv 2].
+    fn is_local(&self, r: &ValueExpression) -> Result<bool> {
+        if let ValueExpression::Column(cs) = r {
+            return Ok(self.local(cs)?.is_some() || self.chain_basis(cs).is_some());
+        }
+        if let ValueExpression::Composite(c, at) = r
+            && let Composite::Chain(parts) = &**c
+            && let (Some(first), Some(second)) = (parts.first(), parts.get(1))
+        {
+            return Ok(self.row_basis((first, second), *at).is_some());
+        }
+        Ok(false)
+    }
+
+    /// The basis of `cs` if its first two `<identifier>`s name a column
+    /// of a row type of a table of this query, and the rest that column's
+    /// fields [ISO/IEC 9075-2:2023 §6.6 SR9b iv 2]: of three, or of four
+    /// whose first may be the catalog's name.
+    fn chain_basis(&self, cs: &ColumnSpecification) -> Option<ColumnSpecification> {
+        let Some(TableName { auth: Some(second), ident: third, .. }) = &cs.qualifier else { return None };
+        match &cs.catalog {
+            Some(first) => self.row_basis((first, second), cs.at),
+            None => self.row_basis((second, third), cs.at),
+        }
+    }
+
+    /// The column `first`.`second`, written at `at`, if it is a column of
+    /// a row type of a table of this query.
+    pub(super) fn row_basis(&self, (first, second): (&str, &str), at: usize) -> Option<ColumnSpecification> {
+        let qualifier = Some(TableName { auth: None, ident: first.to_owned(), at });
+        let basis = ColumnSpecification { qualifier, column: second.to_owned(), catalog: None, at };
+        matches!(self.local(&basis), Ok(Some((_, DataType::Row(_), _)))).then_some(basis)
+    }
+
+    /// The column `basis` of a row type, then each of its `fields` in turn
+    /// [ISO/IEC 9075-2:2023 §6.6 SR11, §6.16].
+    pub(super) fn fields_of(&self, basis: &ColumnSpecification, fields: &[String], scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let bound = self.column_expr(basis, scope)?;
+        fields.iter().try_fold(bound, |b, f| field_of(b, f).or_at(basis.at))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.6 SR9b iv 2, v, SR9c] `cs` of four
+    /// `<identifier>`s whose first may be the catalog's name: if instead
+    /// its first two name a column of a row type of a table of this query,
+    /// that column's fields the other two; none if they do not, so it is a
+    /// column's. Exactly one of the two is its basis.
+    fn catalog_chain(&self, cs: &ColumnSpecification, scope: Scope<'_>) -> Result<Option<(Expr, DataType)>> {
+        let (Some(first), Some(TableName { auth: Some(second), ident: third, .. })) = (&cs.catalog, &cs.qualifier) else { return Ok(None) };
+        let Some(basis) = self.row_basis((first, second), cs.at) else { return Ok(None) };
+        if matches!(self.local(cs), Ok(Some(_))) {
+            let column = &cs.column;
+            let msg = format!(
+                "[ISO/IEC 9075-2:2023 §6.6 SR9c] {first}.{second}.{third}.{column} is both a column of table {second}.{third} and a field of column {first}.{second}"
+            );
+            return Err(rule(msg));
+        }
+        self.fields_of(&basis, &[third.clone(), cs.column.clone()], scope).map(Some)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.6 SR9b iv 2, SR9c, SR11] The `<identifier
+    /// chain>` `parts`, four or more, at `at`, whose first is not the
+    /// catalog's name: the second a column of a row type of the table the
+    /// first names, found in this query or, outward, in those containing
+    /// it, the rest its fields in turn.
+    pub(super) fn chain(&self, parts: &[String], at: usize, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let (Some(first), Some(second)) = (parts.first(), parts.get(1)) else {
+            return Err(rule("[ISO/IEC 9075-2:2023 §6.6] an identifier chain of a field reference has a column and a field"));
+        };
+        if let Some(basis) = self.row_basis((first, second), at) {
+            return self.fields_of(&basis, parts.get(2..).unwrap_or_default(), scope);
+        }
+        let Some(outer) = self.outer else {
+            let written = parts.join(".");
+            let msg = format!(
+                "[ISO/IEC 9075-2:2023 §6.6 SR9c] {written} has no basis: no table {first} in scope has a column {second} of a row type"
+            );
+            // Of four, its first is not the catalog's name either [ISO/IEC
+            // 9075:1992 §5.4 SR20].
+            return Err(if parts.len() == 4 { rule(msg).with_state(SqlState::INVALID_CATALOG_NAME) } else { rule(msg) });
+        };
+        let (e, t) = outer.binder.chain(parts, at, outer.scope)?;
+        Ok((capture(outer, e, parts.join(".")), t))
     }
 
     /// [X3.135-1986 §5.24; ISO/IEC 9075:1992 §7.11] `<subquery>` `s` in
@@ -190,9 +291,40 @@ impl Binder<'_> {
         let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
         let nesting = Nesting::Subquery { outer: &outer, result };
         let bound = bind_query_expression(cx, &s.query, &nesting)?;
-        let types = bound.columns.iter().map(|c| c.data_type).collect();
+        let types = bound.columns.iter().map(|c| c.data_type.clone()).collect();
         self.note_subquery(s, &bound.columns);
         let subquery = Subquery { plan: bound.plan, outer: outer.captured.into_inner() };
         Ok((Arc::new(subquery), types))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.49 SR3, GR3] `<array value constructor by
+    /// query>`: its query of degree one \[SR3a\], aggregated as ARRAY_AGG
+    /// aggregates, ordered by the `<order by clause>` it ends with, each
+    /// `<sort key>` its one column [§7.17, NOTE 207]; of no rows, an empty
+    /// array.
+    pub(super) fn array_query(&self, s: &ast::Subquery, order_by: &[SortSpecification], scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let cx = self.context();
+        let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
+        let nesting = Nesting::Subquery { outer: &outer, result: None };
+        let bound = bind_query_expression(cx, &s.query, &nesting).or_at(s.at)?;
+        self.note_subquery(s, &bound.columns);
+        let [column] = bound.columns.as_slice() else {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.49 SR3a] the query of ARRAY is of degree one, not {}", bound.columns.len())));
+        };
+        let keys = sort_keys(order_by, &bound.columns, |cs| result_column(&bound.columns, cs).or_at(cs.at))?;
+        super::composite::ordering_operand(&column.data_type, "ORDER BY")?;
+        let collations = sort_collations((cx.db, cx.auth, cx.collation), order_by, &keys, &bound.columns)?;
+        let element = column.data_type.clone();
+        let parts = keys.len().saturating_add(1);
+        let fields = (0..parts).map(|i| Field { name: anonymous(i), data_type: element.clone(), unnamed: true }).collect();
+        let arg = Expr::Call(ScalarRef(Arc::new(RowOf(DataType::row(fields)))), vec![Expr::Column(0); parts]);
+        let descending = keys.iter().map(|k| k.descending).collect();
+        let func = ArrayAggregate { descending, collations, by_query: true };
+        let result = super::composite::bounded(DataType::array(element, MAX_ARRAY_CARDINALITY))?;
+        let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
+        let agg = AggCall { func: AggregateRef(Arc::new(func)), arg: Some(arg), distinct: false, result: result.clone(), label };
+        let plan = LogicalPlan::Aggregate { groups: Vec::new(), collations: Vec::new(), aggs: vec![agg], input: Box::new(bound.plan) };
+        let subquery = Subquery { plan, outer: outer.captured.into_inner() };
+        Ok((Expr::Subquery(Arc::new(subquery), 0), result))
     }
 }

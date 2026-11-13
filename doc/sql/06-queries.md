@@ -77,6 +77,47 @@ SELECT * FROM (SELECT DEPT, COUNT(*) FROM STAFF GROUP BY DEPT) AS C (D, N) WHERE
 (1 row)
 ```
 
+## UNNEST
+
+UNNEST in the FROM clause gives the elements of arrays as rows, a row of
+each place from the first to the last of the longest array, each column
+an array's element there, null past its last. WITH ORDINALITY adds a
+column of the place, from 1, of type INTEGER. An array of rows gives a
+column of each field. UNNEST reads the tables before it in the FROM
+clause, each of their rows giving its own rows, so a table's array column
+is unnested row by row; a LEFT join keeps a row whose array gives none.
+
+```sql
+CREATE TABLE TEAMS (DEPT CHAR(3) PRIMARY KEY, MEMBERS VARCHAR(30) ARRAY[5]);
+INSERT INTO TEAMS VALUES ('ENG', ARRAY['Ada', 'Grace']), ('OPS', ARRAY['Edsger']), ('HR', ARRAY[]);
+SELECT T.DEPT, M.WHO, M.N FROM TEAMS T, UNNEST(T.MEMBERS) WITH ORDINALITY AS M (WHO, N) ORDER BY T.DEPT, M.N;
+SELECT T.DEPT, M.WHO FROM TEAMS T LEFT JOIN UNNEST(T.MEMBERS) AS M (WHO) ON TRUE ORDER BY T.DEPT, M.WHO;
+SELECT * FROM UNNEST(ARRAY[1, 2], ARRAY['a']) AS U (N, L);
+```
+
+```
+OK
+OK
+ DEPT | WHO                            |            N
+------+--------------------------------+--------------
+ ENG  | Ada                            |            1
+ ENG  | Grace                          |            2
+ OPS  | Edsger                         |            1
+(3 rows)
+ DEPT | WHO
+------+--------------------------------
+ ENG  | Ada
+ ENG  | Grace
+ HR   | NULL
+ OPS  | Edsger
+(4 rows)
+   N | L
+-----+---
+   1 | a
+   2 | NULL
+(2 rows)
+```
+
 ## The WHERE, GROUP BY and HAVING clauses
 
 **WHERE** keeps the rows its condition is true of.
@@ -136,6 +177,20 @@ SELECT NAME AS WHO, SALARY / 12 AS MONTHLY FROM STAFF WHERE ID = 1;
 
 ORDER BY sorts by columns of the result alone, named or by position: a
 column the query does not select is not a sort key.
+
+`R.*` of a value R of a row type gives a column of each of its fields,
+named as the fields are, and `R.* AS (A, B)` names them.
+
+```sql
+SELECT P.* AS (WHO_ID, WHO) FROM (SELECT ROW(ID, NAME) AS P FROM STAFF WHERE ID = 1) AS D;
+```
+
+```
+       WHO_ID | WHO
+--------------+--------------------------------
+            1 | Ada
+(1 row)
+```
 
 ## Set operations
 

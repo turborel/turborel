@@ -47,6 +47,7 @@ SELECT: read rows
 
 <select sublist> ::=
       <qualifier> . *
+    | <value expression> . * [ AS ( <column name> [ { , <column name> }... ] ) ]
     | <value expression> [ [ AS ] <column name> ]
 
 <table expression> ::=
@@ -234,7 +235,9 @@ ISO/IEC 9075:1992 §20.1, the `<direct select statement: multiple
 rows>`, and its query expression [§7.10], query specification [§7.9] and
 table expression [§7.3]; X3.135-1986 §5.25 and §8.3. WITH and WITH
 RECURSIVE are the `<with clause>` of ISO/IEC 9075-2:2023 §7.17, Features
-T121, T122, T131 and T132. SELECT ... INTO is
+T121, T122, T131 and T132. The fields of a row, `R.*`, are its `<all
+fields reference>` [§7.16], and UNNEST its `<collection derived table>`
+[§7.6]. SELECT ... INTO is
 the `<select statement: single row>` [§13.5; X3.135-1986 §8.10]. FOR
 READ ONLY, of a `<cursor specification>` [§13.1], is taken in a direct
 SELECT too. Where the null value sorts is implementation-defined

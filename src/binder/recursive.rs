@@ -263,7 +263,7 @@ fn anchor_columns(
             columns.push(OutColumn { not_null: false, origin: None, ..f.clone() });
             continue;
         }
-        let data_type = set_type(&[a.data_type, b.data_type], "§7.17 SR19b ii 2 B")?;
+        let data_type = set_type(&[a.data_type.clone(), b.data_type.clone()], "§7.17 SR19b ii 2 B")?;
         columns.push(OutColumn { name: None, collation: result_collation(a, b), data_type, not_null: false, origin: None });
     }
     Ok(columns)
@@ -380,6 +380,8 @@ fn distributes(plan: &LogicalPlan, distinct: bool) -> bool {
         LogicalPlan::Filter { input, .. } | LogicalPlan::Project { input, .. } | LogicalPlan::Sort { input, .. } => {
             distributes(input, distinct)
         }
+        // Its rows are found of each row of its input alone.
+        LogicalPlan::Unnest(u) => distributes(&u.input, distinct),
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => one_side(left, right, distinct),
         LogicalPlan::SetOp { op: SetOp::Union, all, left, right, .. } => {
             (*all || distinct) && distributes(left, distinct) && distributes(right, distinct)
@@ -422,6 +424,7 @@ fn reads_work(plan: &LogicalPlan) -> bool {
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }
+        | LogicalPlan::Unnest(..)
         | LogicalPlan::Sort { .. } => plan.inputs().any(reads_work),
     }
 }

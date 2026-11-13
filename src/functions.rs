@@ -26,6 +26,11 @@ use crate::storage::{Floats, Ints, Texts};
 use crate::value::Spelled;
 use crate::value::{DOUBLE_PRECISION, DataType, Decimal, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
 
+mod arrays;
+pub use arrays::{
+    ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf, ElementOf,
+    TRIM_ARRAY, TrimArrayOf,
+};
 mod extremes;
 pub use extremes::CollatedExtreme;
 use extremes::Extreme;
@@ -36,6 +41,8 @@ mod greatest;
 pub use greatest::{GREATEST, GreatestOrLeast, LEAST};
 mod ints;
 mod regex;
+mod rows;
+pub use rows::{FieldOf, RowOf};
 mod strings;
 mod sum;
 mod trim;
@@ -144,6 +151,12 @@ pub trait AggregateFunction: Send + Sync {
     fn result_type(&self, arg: Option<DataType>) -> Result<DataType>;
     /// A fresh accumulator for one group, whose result has type `result`.
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator>;
+    /// \[DESIGN\] What the label of its call shows after its argument, so
+    /// two calls of it of one argument that differ otherwise, as by the
+    /// directions of their sort keys, are computed apart. Default: nothing.
+    fn label_suffix(&self) -> String {
+        String::new()
+    }
 }
 
 /// The running state of a set function over one group.
@@ -468,6 +481,8 @@ impl AggregateFunction for Sum {
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
+            | DataType::Array(_)
+            | DataType::Row(_)
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         })
     }
@@ -505,6 +520,8 @@ impl AggregateFunction for Avg {
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
+            | DataType::Array(_)
+            | DataType::Row(_)
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         })
     }

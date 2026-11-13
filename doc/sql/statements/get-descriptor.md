@@ -11,7 +11,7 @@ GET DESCRIPTOR: read fields of an SQL descriptor area *(in a program)*
 ```
 <get descriptor statement> ::=
     GET DESCRIPTOR <descriptor name>
-    { <parameter name> = COUNT
+    { <parameter name> = { COUNT | TOP_LEVEL_COUNT }
     | VALUE <item number> <get item information> [ { , <get item information> }... ] }
 
 <get item information> ::= <parameter name> = <descriptor item name>
@@ -22,6 +22,7 @@ GET DESCRIPTOR: read fields of an SQL descriptor area *(in a program)*
       TYPE | LENGTH | OCTET_LENGTH | RETURNED_LENGTH | RETURNED_OCTET_LENGTH
     | PRECISION | SCALE | DATETIME_INTERVAL_CODE | DATETIME_INTERVAL_PRECISION
     | NULLABLE | INDICATOR | DATA | NAME | UNNAMED
+    | LEVEL | DEGREE | CARDINALITY | RETURNED_CARDINALITY
     | COLLATION_CATALOG | COLLATION_SCHEMA | COLLATION_NAME
     | CHARACTER_SET_CATALOG | CHARACTER_SET_SCHEMA | CHARACTER_SET_NAME
 ```
@@ -30,7 +31,7 @@ The `<descriptor name>` is [ALLOCATE DESCRIPTOR](allocate-descriptor.md)'s.
 
 ## DESCRIPTION
 
-GET DESCRIPTOR copies COUNT, or fields of the item descriptor area of
+GET DESCRIPTOR copies COUNT, TOP_LEVEL_COUNT, or fields of the item descriptor area of
 the number given, from 1, into parameters. An item beyond COUNT is no
 data, SQLSTATE 02000, its targets unchanged. A field never set reads as
 0, or the empty string, and DATA as the null value.
@@ -53,6 +54,10 @@ The fields of an item, of a dynamic parameter or a column, as
 | DATA | the item's type | The value |
 | NAME | character | A column's name; empty of an unnamed column and of a dynamic parameter |
 | UNNAMED | exact | 1 of an unnamed column and of a dynamic parameter, else 0 |
+| LEVEL | exact | 0 of a column or parameter; of an item of a part of one, one more than the item it is a part of |
+| DEGREE | exact | A row's number of fields |
+| CARDINALITY | exact | An array's maximum cardinality |
+| RETURNED_CARDINALITY | exact | Of an array fetched, its cardinality |
 | CHARACTER_SET_CATALOG, _SCHEMA, _NAME | character | A string's character set: the catalog, INFORMATION_SCHEMA, SQL_TEXT |
 | COLLATION_CATALOG, _SCHEMA, _NAME | character | A string's collation, named as its character set |
 
@@ -68,6 +73,7 @@ The codes of TYPE:
 | 6 | FLOAT | 61 | BINARY VARYING |
 | 7 | REAL | -1 | a type of a plug-in |
 | 8 | DOUBLE PRECISION | 26 | DECFLOAT |
+| 19 | ROW | 50 | ARRAY |
 
 The codes of DATETIME_INTERVAL_CODE, of a datetime: 1 DATE, 2 TIME, 3
 TIMESTAMP, 4 TIME WITH TIME ZONE, 5 TIMESTAMP WITH TIME ZONE; of an
@@ -84,10 +90,12 @@ none of.
 1. An area of the name is allocated.
 2. The item number is exact numeric with scale 0, from 1 to the area's
    occurrences.
-3. COUNT's target and a numeric field's are exact numeric with scale 0;
+3. COUNT's and TOP_LEVEL_COUNT's target and a numeric field's are exact numeric with scale 0;
    a name's field's a character string of 128 characters or more; DATA's
    of the item's type, a varying string's of its length or longer.
 4. DATA of a negative INDICATOR is got with INDICATOR.
+5. DATA is not got of an item of TYPE ROW, nor of an item that is part of
+   an array's element.
 
 ## PRIVILEGES
 
@@ -101,6 +109,7 @@ None.
 | 2A000 | -103 | The item number or a target not of its type (rules 2, 3) |
 | 07009 | -921 | The item number is not from 1 to the occurrences (rule 2) |
 | 22005 | -301 | DATA's target is not of the item's type (rule 3) |
+| 0700C | -921 | DATA of a row or of an array's element (rule 5) |
 | 22002 | -301 | DATA of a negative INDICATOR, without INDICATOR (rule 4); with it, DATA's target is left as it is |
 | 02000 | 100 | Not an error: no data, the item is beyond COUNT |
 
@@ -137,7 +146,9 @@ ISO/IEC 9075:1992 §17.4, of the descriptor areas of §17.1, Tables 17 to
 has no dynamic SQL. The codes 60 and 61 of BINARY and BINARY VARYING, and
 their lengths in octets, are ISO/IEC 9075-2:2023's [§20.1 Table 30,
 §20.10 GR7d ii], and so is the code 26 of DECFLOAT, its PRECISION its
-precision [§20.10 GR7d v].
+precision [§20.10 GR7d v]. So are TOP_LEVEL_COUNT, LEVEL, DEGREE,
+CARDINALITY and RETURNED_CARDINALITY, and the codes 19 and 50 of ROW and
+ARRAY [§20.1 SR3 to SR6, §20.4 GR5].
 
 ## SEE ALSO
 

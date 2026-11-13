@@ -24,9 +24,9 @@ fn bits(acc: &dyn Accumulator) -> Option<u64> {
 /// where all are exact of scale 0.
 fn finished(function: &dyn AggregateFunction, result: DataType, values: &[Value], order: [usize; 3]) -> Vec<String> {
     let ordered: Vec<Value> = order.iter().filter_map(|&n| values.get(n).cloned()).collect();
-    let mut one = function.accumulator(result);
+    let mut one = function.accumulator(result.clone());
     let mut ways = vec![ordered.iter().try_for_each(|v| one.update(v)).and_then(|()| one.finish())];
-    let mut many = function.accumulator(result);
+    let mut many = function.accumulator(result.clone());
     ways.push(many.update_many(&ordered, None).and_then(|()| many.finish()));
     let units: Option<Vec<i64>> = ordered
         .iter()
@@ -40,11 +40,13 @@ fn finished(function: &dyn AggregateFunction, result: DataType, values: &[Value]
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_) => None,
         })
         .collect();
     if let Some(units) = units {
-        let mut ints = function.accumulator(result);
+        let mut ints = function.accumulator(result.clone());
         ways.push(ints.update_ints(&Ints::new(units, 0, None), None).and_then(|()| ints.finish()));
     }
     let floats: Option<Vec<f64>> = ordered.iter().map(|v| if let Value::Approx(f) = v { Some(*f) } else { None }).collect();
@@ -71,7 +73,7 @@ fn an_exact_sum_is_judged_as_a_total() {
         for got in finished(&Sum, WHOLE, &fits, order) {
             assert_eq!(got, "Ok(\"999999999999999999\")", "SUM in {order:?}");
         }
-        for got in finished(&Avg, mean, &[exact(10_i128), exact(1_i128), exact(-1_i128)], order) {
+        for got in finished(&Avg, mean.clone(), &[exact(10_i128), exact(1_i128), exact(-1_i128)], order) {
             assert_eq!(got, "Ok(\"3.33\")", "AVG in {order:?}");
         }
         for got in finished(&Sum, WHOLE, &past, order) {
@@ -218,13 +220,13 @@ fn a_decfloat_sum_is_judged_as_a_total() {
     let fits = [most(1), most(1), most(-1)];
     let past = [most(1), most(1), Value::DecFloat(DecFloat::ZERO)];
     for order in ORDERS {
-        for got in finished(&Sum, result, &fits, order) {
+        for got in finished(&Sum, result.clone(), &fits, order) {
             assert_eq!(got, "Ok(\"9E6144\")", "SUM in {order:?}");
         }
-        for got in finished(&Avg, result, &fits, order) {
+        for got in finished(&Avg, result.clone(), &fits, order) {
             assert_eq!(got, "Ok(\"3E6144\")", "AVG in {order:?}");
         }
-        for got in finished(&Sum, result, &past, order) {
+        for got in finished(&Sum, result.clone(), &past, order) {
             assert_eq!(got, "Err(\"22003\")", "SUM past the range in {order:?}");
         }
     }

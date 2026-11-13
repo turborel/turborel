@@ -546,19 +546,19 @@ fn parameters_are_checked_when_used_5_6() {
     let short = DataType::character(2);
     let insert = |p: &mut Params, sql: &str| s.execute(sql, p).map_err(|e| e.code);
     // §5.6 SR2: an indicator parameter is exact numeric with scale 0.
-    let mut p = Params::new().declare("N", short, Value::Char("AB".into())).declare("NI", short, Value::Char("X".into()));
+    let mut p = Params::new().declare("N", short.clone(), Value::Char("AB".into())).declare("NI", short.clone(), Value::Char("X".into()));
     assert_eq!(insert(&mut p, "INSERT INTO T (ID, NAME) VALUES (9, N INDICATOR NI)"), Err(Code::SyntaxRule));
     // §5.6 GR1: a null argument needs a negative indicator.
-    let mut p = Params::new().declare("N", short, Value::Null);
+    let mut p = Params::new().declare("N", short.clone(), Value::Null);
     assert_eq!(insert(&mut p, "INSERT INTO T (ID, NAME) VALUES (9, N)"), Err(Code::Api));
     // [DESIGN] an argument that does not fit its declared type is refused.
     let mut p = Params::new().declare("N", short, Value::Char("ABCDE".into()));
     assert_eq!(insert(&mut p, "INSERT INTO T (ID, NAME) VALUES (9, N)"), Err(Code::Api));
-    let mut p = Params::new().declare("K", exact, Value::Approx(9.0_f64));
+    let mut p = Params::new().declare("K", exact.clone(), Value::Approx(9.0_f64));
     assert_eq!(insert(&mut p, "INSERT INTO T (ID) VALUES (K)"), Err(Code::Api));
     // §5.4: a parameter name is one <identifier>, not a key word or two words.
     for name in ["SELECT", "A B"] {
-        let mut p = Params::new().declare(name, exact, Value::Null);
+        let mut p = Params::new().declare(name, exact.clone(), Value::Null);
         assert_eq!(insert(&mut p, "COMMIT WORK"), Err(Code::Api), "{name}");
     }
     // The normal case: an exact argument for an approximate parameter fits.
@@ -579,16 +579,16 @@ fn parameters_of_every_standard_type_5_6() {
     let s = db.session("APP");
     s.run("CREATE TABLE W (D DATE, B VARBINARY(8), I INTERVAL DAY)").unwrap();
     s.run("INSERT INTO W VALUES (DATE '2026-10-30', X'0A00', INTERVAL '3' DAY)").unwrap();
-    let types: Vec<DataType> = s.prepare("SELECT D, B, I FROM W").unwrap().columns().iter().map(|c| c.data_type).collect();
+    let types: Vec<DataType> = s.prepare("SELECT D, B, I FROM W").unwrap().columns().iter().map(|c| c.data_type.clone()).collect();
     let mut cursor = s.open_cursor("SELECT D, B, I FROM W").unwrap();
     let row = cursor.fetch().unwrap().unwrap();
     drop(cursor);
     let mut p = Params::new();
-    for ((name, data_type), value) in ["PD", "PB", "PI"].into_iter().zip(types.iter().copied()).zip(row.iter().cloned()) {
+    for ((name, data_type), value) in ["PD", "PB", "PI"].into_iter().zip(types.iter().cloned()).zip(row.iter().cloned()) {
         p = p.declare(name, data_type, value);
     }
     s.execute("INSERT INTO W VALUES (PD, PB, PI)", &mut p).unwrap();
     assert_eq!(count(&s, "SELECT * FROM W WHERE D = DATE '2026-10-30' AND B = X'0A00' AND I = INTERVAL '3' DAY"), 2);
-    let mut wrong = Params::new().declare("PD", types[0], Value::Char("2026-10-30".into()));
+    let mut wrong = Params::new().declare("PD", types[0].clone(), Value::Char("2026-10-30".into()));
     assert_eq!(s.execute("INSERT INTO W (D) VALUES (PD)", &mut wrong).err().map(|e| e.code), Some(Code::Api), "a string for a date");
 }

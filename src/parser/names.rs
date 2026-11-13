@@ -3,7 +3,7 @@
 //! so, by a schema and the one catalog.
 
 use super::{Catalogs, Parser};
-use crate::ast::{ColumnSpecification, TableName};
+use crate::ast::{ColumnSpecification, Composite, TableName, ValueExpression};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, delim, kw};
 
@@ -56,11 +56,11 @@ impl Parser {
         let at = self.here();
         let a = self.qualifier()?;
         if !self.accept_delim(delim::PERIOD) {
-            return Ok(ColumnSpecification { qualifier: None, column: a, at });
+            return Ok(ColumnSpecification { qualifier: None, column: a, catalog: None, at });
         }
         let b = self.identifier()?;
         if !self.accept_delim(delim::PERIOD) {
-            return Ok(ColumnSpecification { qualifier: Some(TableName { auth: None, ident: a, at }), column: b, at });
+            return Ok(ColumnSpecification { qualifier: Some(TableName { auth: None, ident: a, at }), column: b, catalog: None, at });
         }
         let c = self.identifier()?;
         // [ISO/IEC 9075:1992 §6.4] a <column reference> of a <qualifier>
@@ -68,9 +68,40 @@ impl Parser {
         if self.accept_delim(delim::PERIOD) {
             self.catalog_named(&a, at)?;
             let d = self.identifier()?;
-            return Ok(ColumnSpecification { qualifier: Some(TableName { auth: Some(b), ident: c, at }), column: d, at });
+            return Ok(ColumnSpecification { qualifier: Some(TableName { auth: Some(b), ident: c, at }), column: d, catalog: Some(a), at });
         }
-        Ok(ColumnSpecification { qualifier: Some(TableName { auth: Some(a), ident: b, at }), column: c, at })
+        Ok(ColumnSpecification { qualifier: Some(TableName { auth: Some(a), ident: b, at }), column: c, catalog: None, at })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.6] A `<column reference>` as a value: its
+    /// `<identifier chain>`. Of three `<identifier>`s at most, or of four
+    /// whose first may be the catalog's name, a `<column specification>`
+    /// (`column_specification`). The first of four may be the catalog's
+    /// name if it is this one's, or if the text is a definition's, checked
+    /// when it was defined; a parser told of no catalog refuses it there.
+    /// Otherwise, of four or more, the chain of a column of a row type and
+    /// its fields [SR9b iv 2], which the binder resolves.
+    pub(super) fn identifier_chain(&mut self) -> Result<ValueExpression> {
+        let mut n: usize = 1;
+        while matches!(self.peek_at(n.saturating_mul(2).saturating_sub(1)), Tok::Delimiter(delim::PERIOD))
+            && matches!(self.peek_at(n.saturating_mul(2)), Tok::Identifier(_))
+        {
+            n = n.saturating_add(1);
+        }
+        let catalog = match (&self.catalogs, self.peek()) {
+            (Catalogs::Refused | Catalogs::Kept, _) => true,
+            (Catalogs::Of(ours), Tok::Identifier(first)) => first == ours,
+            (Catalogs::Of(_), _) => false,
+        };
+        if n <= 3 || (n == 4 && catalog) {
+            return Ok(ValueExpression::Column(self.column_specification()?));
+        }
+        let at = self.here();
+        let mut parts = vec![self.qualifier()?];
+        while parts.len() < n && self.accept_delim(delim::PERIOD) {
+            parts.push(self.identifier()?);
+        }
+        Ok(ValueExpression::Composite(Box::new(Composite::Chain(parts)), at))
     }
 
     /// The `<catalog name>` `catalog`, written at `at` in a name [ISO/IEC

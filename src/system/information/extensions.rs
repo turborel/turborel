@@ -1,0 +1,72 @@
+//! \[EXTENSION\] The views of the Information Schema that ISO/IEC 9075
+//! does not define, each over the Definition Schema's tables of its kind
+//! [ISO/IEC 9075:1992 §21.1].
+
+use super::SystemView;
+
+/// The views, after the standard's.
+pub(super) const VIEWS: &[SystemView] = &[
+    // [EXTENSION] [ISO/IEC 9075:1992 §21.1] TABLE_OPTIONS (RULES.md D41): the
+    // options of the tables the current user has a privilege on, as TABLES
+    // [§21.2.7] chooses them.
+    SystemView {
+        name: "TABLE_OPTIONS",
+        query: r"SELECT
+       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ENGINE_NAME, OPTION_NAME,
+       DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, CHANGED_BY,
+       DESCRIPTION
+     FROM DEFINITION_SCHEMA.TABLE_OPTIONS
+         WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
+           IN (
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
+                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+               UNION
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
+                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+         AND TABLE_CATALOG
+           = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
+    },
+    // [EXTENSION] [ISO/IEC 9075:1992 §21.1] INDEXES (RULES.md D34): the
+    // indexes of the tables the current user has a privilege on.
+    SystemView {
+        name: "INDEXES",
+        query: r"SELECT
+       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME,
+       IS_UNIQUE, COLUMN_NAMES
+     FROM DEFINITION_SCHEMA.INDEXES
+         WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
+           IN (
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
+                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+               UNION
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
+                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+         AND TABLE_CATALOG
+           = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
+    },
+    // [EXTENSION] [ISO/IEC 9075:1992 §21.1] INDEX_OPTIONS (RULES.md D41): the
+    // options of those indexes.
+    SystemView {
+        name: "INDEX_OPTIONS",
+        query: r"SELECT
+       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME,
+       OPTION_NAME, DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND,
+       CHANGED_BY, DESCRIPTION
+     FROM DEFINITION_SCHEMA.INDEX_OPTIONS
+         WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
+           IN (
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
+                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+               UNION
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
+                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+         AND TABLE_CATALOG
+           = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
+    },
+];

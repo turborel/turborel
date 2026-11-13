@@ -107,7 +107,7 @@ impl Parser {
     }
 
     /// Whether the `<non-reserved word>` `word` is next.
-    fn is_word(&self, word: &str) -> bool {
+    pub(super) fn is_word(&self, word: &str) -> bool {
         matches!(self.peek(), Tok::Identifier(s) if s == word)
     }
 
@@ -230,11 +230,12 @@ impl Parser {
             self.expect_delim(delim::RIGHT_PAREN)?;
             // [SR2] "(V)" is a list, unless an operator after it makes it
             // the start of one element, or an <interval qualifier> the
-            // difference of two datetimes [§6.15].
+            // difference of two datetimes [§6.15], or an element or field
+            // reference of it [ISO/IEC 9075-2:2023 §6.16, §6.25].
             let fields = [kw::YEAR, kw::MONTH, kw::DAY, kw::HOUR, kw::MINUTE, kw::SECOND];
-            let operator =
-                [delim::PLUS, delim::MINUS, delim::ASTERISK, delim::SOLIDUS, delim::CONCATENATION].iter().any(|d| self.is_delim(d))
-                    || fields.iter().any(|f| self.is_kw(f));
+            let follows =
+                [delim::PLUS, delim::MINUS, delim::ASTERISK, delim::SOLIDUS, delim::CONCATENATION, delim::LEFT_BRACKET, delim::PERIOD];
+            let operator = follows.iter().any(|d| self.is_delim(d)) || fields.iter().any(|f| self.is_kw(f));
             if !(operator && elements.len() == 1) {
                 return Ok(ValuesRow { elements, at });
             }
@@ -270,7 +271,8 @@ impl Parser {
     }
 
     /// [ISO/IEC 9075:1992 §7.9] `<select sublist>` ::= `<qualifier>`.* |
-    /// `<value expression>` \[\[AS\] `<column name>`\]
+    /// `<value expression>` \[\[AS\] `<column name>`\]; [ISO/IEC
+    /// 9075-2:2023 §7.16] or an `<all fields reference>`.
     fn select_sublist(&mut self) -> Result<SelectSublist> {
         let star_after = |p: &Self, n: usize| matches!(p.peek_at(n), Tok::Delimiter(delim::ASTERISK));
         let period_at = |p: &Self, n: usize| matches!(p.peek_at(n), Tok::Delimiter(delim::PERIOD));
@@ -302,10 +304,13 @@ impl Parser {
                 TableName { auth: None, ident: first, at }
             };
             self.expect_delim(delim::ASTERISK)?;
-            return Ok(SelectSublist::All(qualifier));
+            return self.all_fields_names(qualifier);
         }
         let at = self.here();
         let value = self.value_expression()?;
+        if self.is_delim(delim::PERIOD) && matches!(self.peek_at(1), Tok::Delimiter(delim::ASTERISK)) {
+            return self.all_fields(value, at);
+        }
         let alias = self.correlation()?;
         Ok(SelectSublist::Derived(SelectItem { value, alias, at }))
     }
@@ -477,6 +482,9 @@ impl Parser {
             }
             return Ok(inner);
         }
+        if self.at_unnest() {
+            return self.collection_derived_table();
+        }
         let table = self.table_name()?;
         let correlation = self.correlation()?;
         let columns = if correlation.is_some() { self.derived_columns()? } else { None };
@@ -484,7 +492,7 @@ impl Parser {
     }
 
     /// \[\[AS\] `<correlation name>`\], if written.
-    fn correlation(&mut self) -> Result<Option<String>> {
+    pub(super) fn correlation(&mut self) -> Result<Option<String>> {
         if self.accept_kw(kw::AS) {
             return self.identifier().map(Some);
         }
@@ -502,7 +510,7 @@ impl Parser {
     }
 
     /// \[(`<derived column list>`)\], if written.
-    fn derived_columns(&mut self) -> Result<Option<Vec<String>>> {
+    pub(super) fn derived_columns(&mut self) -> Result<Option<Vec<String>>> {
         if self.is_delim(delim::LEFT_PAREN) { self.name_list().map(Some) } else { Ok(None) }
     }
 }

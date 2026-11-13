@@ -6,7 +6,7 @@
 //! connection failure (-919, SQLSTATE 08006), never a panic.
 
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::value::types::{SqlType, TypeRegistry};
+use crate::value::types::{MAX_TYPE_NESTING, SqlType, TypeRegistry};
 
 /// Appends fields to a buffer.
 pub trait Put {
@@ -57,17 +57,19 @@ pub struct Reader<'a> {
     /// The kinds of type beyond the standard a value or type read may be
     /// of, by name, if any (`value::types`).
     types: Option<&'a TypeRegistry>,
+    /// How deep within arrays and rows it reads (`nested`).
+    depth: usize,
 }
 
 impl<'a> Reader<'a> {
     /// A reader of `bytes`, which hold a `what`.
     pub fn new(bytes: &'a [u8], what: &'static str) -> Reader<'a> {
-        Reader { bytes, at: 0, what, received: false, types: None }
+        Reader { bytes, at: 0, what, received: false, types: None, depth: 0 }
     }
 
     /// A reader of `bytes` received from a connection, which hold a `what`.
     pub fn received(bytes: &'a [u8], what: &'static str) -> Reader<'a> {
-        Reader { bytes, at: 0, what, received: true, types: None }
+        Reader { bytes, at: 0, what, received: true, types: None, depth: 0 }
     }
 
     /// This reader, a value or type of a kind beyond the standard it reads
@@ -97,6 +99,23 @@ impl<'a> Reader<'a> {
                 format!("[DESIGN] {} names the type {name}, which no plug-in registered: register it before opening", self.what),
             )
         })
+    }
+
+    /// `read` of a part nested within what it reads: an array's element
+    /// or a row's field, of a value or of a type.
+    ///
+    /// # Errors
+    ///
+    /// `corrupt`'s if parts are nested more than `MAX_TYPE_NESTING` deep;
+    /// `read`'s.
+    pub fn nested<T>(&mut self, read: impl FnOnce(&mut Reader<'a>) -> Result<T>) -> Result<T> {
+        if self.depth >= MAX_TYPE_NESTING {
+            return Err(self.corrupt("its arrays and rows are nested too deep"));
+        }
+        self.depth = self.depth.saturating_add(1);
+        let read = read(self);
+        self.depth = self.depth.saturating_sub(1);
+        read
     }
 
     /// The error for a malformed `what`, at the current offset.

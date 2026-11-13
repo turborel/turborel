@@ -278,7 +278,7 @@ fn decfloat_values_are_retrieved_9_1() {
         (DataType::Exact { precision: 1, scale: 0, spelled: Spelled::Numeric }, Err(Code::Data)),
     ];
     for (target, expected) in cases {
-        let mut p = Params::new().declare("OUT", target, Value::Null);
+        let mut p = Params::new().declare("OUT", target.clone(), Value::Null);
         let got = a.execute("SELECT D INTO OUT FROM T", &mut p).map(|_| p.value("OUT").to_string()).map_err(|e| e.code);
         assert_eq!(got, expected, "into {target}");
     }

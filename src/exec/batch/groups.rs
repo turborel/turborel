@@ -77,7 +77,7 @@ impl Numbers<'_> {
 /// writes its state.
 pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>, TxId), batches: Batches) -> Result<RowIter> {
     let (mut work, runner) = (Work::of(db, tx), Runner::new(db, tx));
-    let partial = aggs.iter().all(|a| a.func.0.accumulator(a.result).write_state(&mut Vec::new()));
+    let partial = aggs.iter().all(|a| a.func.0.accumulator(a.result.clone()).write_state(&mut Vec::new()));
     let how = Grouping { read, aggs, runner: &runner, partial };
     // Rows past the work area are written by batch, the cheapest to read
     // back once; groups are made partly only of a partition that outgrows
@@ -495,6 +495,6 @@ fn table_in<'t>((held, partial): (&'t mut Table, &'t mut Option<Table>), target:
 /// A new group, the `number`th row its first, of grouping values `values`,
 /// its set functions those of `how`, fed nothing.
 fn fresh(number: u64, values: Row, how: Grouping<'_>) -> Held {
-    let states: Vec<Box<dyn Accumulator>> = how.aggs.iter().map(|a| a.func.0.accumulator(a.result)).collect();
+    let states: Vec<Box<dyn Accumulator>> = how.aggs.iter().map(|a| a.func.0.accumulator(a.result.clone())).collect();
     (number, values, states)
 }

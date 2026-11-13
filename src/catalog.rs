@@ -110,7 +110,7 @@ impl TableDesc {
     /// The types of the columns at `positions`, if the table has them all:
     /// those of an index's key.
     pub fn types(&self, positions: &[usize]) -> Option<Vec<DataType>> {
-        positions.iter().map(|&p| self.columns.get(p).map(|c| c.data_type)).collect()
+        positions.iter().map(|&p| self.columns.get(p).map(|c| c.data_type.clone())).collect()
     }
 }
 

@@ -7,6 +7,11 @@
 //! row; its domains [§21.2.27-§21.2.29] are not defined as domains: its
 //! columns are of their types (`system.rs`).
 
+mod composites;
+mod extensions;
+
+use std::sync::OnceLock;
+
 use super::{INFORMATION_SCHEMA, Seen, SystemTable, catalog_name, identifier};
 use crate::catalog::{ColumnDesc, QualifiedName};
 use crate::error::Result;
@@ -30,7 +35,7 @@ impl SystemTable for CatalogName {
 
 /// A view of the Information Schema: its name, and its `<query
 /// expression>`, which reads the Definition Schema.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct SystemView {
     /// Its name, in INFORMATION_SCHEMA.
     pub name: &'static str,
@@ -40,16 +45,19 @@ pub struct SystemView {
 
 /// The Information Schema view `name`, if there is one.
 pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
-    VIEWS.iter().find(|v| name.auth == INFORMATION_SCHEMA && v.name == name.ident)
+    views().iter().find(|v| name.auth == INFORMATION_SCHEMA && v.name == name.ident)
 }
 
 /// The views of the Information Schema, in the standard's order, then this
-/// implementation's.
+/// implementation's: those of ISO/IEC 9075:1992, those of arrays and
+/// row types (`information/composites.rs`), then the extensions
+/// (`information/extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
-    VIEWS
+    static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
+    ALL.get_or_init(|| [VIEWS, composites::VIEWS, extensions::VIEWS].concat())
 }
 
-/// The views [§21.2.4-§21.2.26], then this implementation's.
+/// The views of ISO/IEC 9075:1992 [§21.2.4-§21.2.26].
 const VIEWS: &[SystemView] = &[
     // [ISO/IEC 9075:1992 §21.2.4] SCHEMATA.
     SystemView {
@@ -63,7 +71,9 @@ const VIEWS: &[SystemView] = &[
          AND CATALOG_NAME
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
-    // [ISO/IEC 9075:1992 §21.2.5] DOMAINS.
+    // [ISO/IEC 9075:1992 §21.2.5] DOMAINS; with each domain's maximum
+    // cardinality and the identifier of its data type descriptor, as
+    // ISO/IEC 9075-11 adds them.
     SystemView {
         name: "DOMAINS",
         query: r"SELECT DISTINCT
@@ -72,7 +82,8 @@ const VIEWS: &[SystemView] = &[
        COLLATION_CATALOG, COLLATION_SCHEMA,COLLATION_NAME,
        CHARACTER_SET_CATALOG, CHARACTER_SET_SCHEMA, CHARACTER_SET_NAME,
        NUMERIC_PRECISION, NUMERIC_PRECISION_RADIX, NUMERIC_SCALE,
-       DATETIME_PRECISION, DOMAIN_DEFAULT
+       DATETIME_PRECISION, DOMAIN_DEFAULT,
+       MAXIMUM_CARDINALITY, DTD_IDENTIFIER
      FROM DEFINITION_SCHEMA.DOMAINS
           JOIN
             DEFINITION_SCHEMA.DATA_TYPE_DESCRIPTOR AS D
@@ -152,7 +163,9 @@ const VIEWS: &[SystemView] = &[
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
     // [ISO/IEC 9075:1992 §21.2.9] COLUMNS; [EXTENSION] with each column's
-    // identity and generation.
+    // identity and generation; with its maximum cardinality and, of a
+    // column of no domain, the identifier of its data type descriptor, as
+    // ISO/IEC 9075-11 adds them.
     SystemView {
         name: "COLUMNS",
         query: r"SELECT DISTINCT
@@ -194,7 +207,10 @@ const VIEWS: &[SystemView] = &[
        DOMAIN_CATALOG, DOMAIN_SCHEMA, DOMAIN_NAME,
        IS_IDENTITY, IDENTITY_GENERATION, IDENTITY_START, IDENTITY_INCREMENT,
        IDENTITY_MAXIMUM, IDENTITY_MINIMUM, IDENTITY_CYCLE,
-       IS_GENERATED, GENERATION_EXPRESSION
+       IS_GENERATED, GENERATION_EXPRESSION,
+       COALESCE (D1.MAXIMUM_CARDINALITY, D2.MAXIMUM_CARDINALITY)
+                    AS MAXIMUM_CARDINALITY,
+       D1.DTD_IDENTIFIER
      FROM DEFINITION_SCHEMA.COLUMNS AS C
          LEFT JOIN
            DEFINITION_SCHEMA.DATA_TYPE_DESCRIPTOR AS D1
@@ -525,68 +541,5 @@ const VIEWS: &[SystemView] = &[
          SQL_LANGUAGE_INTEGRITY, SQL_LANGUAGE_IMPLEMENTATION,
          SQL_LANGUAGE_BINDING_STYLE, SQL_LANGUAGE_PROGRAMMING_LANGUAGE
      FROM DEFINITION_SCHEMA.SQL_LANGUAGES",
-    },
-    // [EXTENSION] [ISO/IEC 9075:1992 §21.1] TABLE_OPTIONS (RULES.md D41): the
-    // options of the tables the current user has a privilege on, as TABLES
-    // [§21.2.7] chooses them.
-    SystemView {
-        name: "TABLE_OPTIONS",
-        query: r"SELECT
-       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ENGINE_NAME, OPTION_NAME,
-       DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, CHANGED_BY,
-       DESCRIPTION
-     FROM DEFINITION_SCHEMA.TABLE_OPTIONS
-         WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
-           IN (
-               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
-                FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER )
-               UNION
-               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
-                FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
-         AND TABLE_CATALOG
-           = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
-    },
-    // [EXTENSION] [ISO/IEC 9075:1992 §21.1] INDEXES (RULES.md D34): the
-    // indexes of the tables the current user has a privilege on.
-    SystemView {
-        name: "INDEXES",
-        query: r"SELECT
-       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME,
-       IS_UNIQUE, COLUMN_NAMES
-     FROM DEFINITION_SCHEMA.INDEXES
-         WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
-           IN (
-               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
-                FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER )
-               UNION
-               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
-                FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
-         AND TABLE_CATALOG
-           = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
-    },
-    // [EXTENSION] [ISO/IEC 9075:1992 §21.1] INDEX_OPTIONS (RULES.md D41): the
-    // options of those indexes.
-    SystemView {
-        name: "INDEX_OPTIONS",
-        query: r"SELECT
-       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME,
-       OPTION_NAME, DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND,
-       CHANGED_BY, DESCRIPTION
-     FROM DEFINITION_SCHEMA.INDEX_OPTIONS
-         WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
-           IN (
-               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
-                FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER )
-               UNION
-               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
-                FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
-         AND TABLE_CATALOG
-           = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
 ];

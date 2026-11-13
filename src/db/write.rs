@@ -300,7 +300,7 @@ impl Session {
         };
         if !matches!(query.body(), QueryExpression::Values(_)) {
             for (n, (out, col)) in bound.columns.iter().zip(target.columns()).enumerate() {
-                let checked = binder::check_assignment(col, out.data_type, INSERT_RULE);
+                let checked = binder::check_assignment(col, &out.data_type.clone(), INSERT_RULE);
                 match written.get(n) {
                     Some(&at) => checked.or_at(at)?,
                     None => checked?,

@@ -263,7 +263,7 @@ impl HashIndex {
             return Lookup::Nothing;
         }
         let (mut key, mut checked) = (Vec::new(), false);
-        for (value, &data_type) in values.iter().zip(&self.types) {
+        for (value, data_type) in values.iter().zip(&self.types) {
             let Some(at) = anchor(value, data_type) else { return Lookup::Every };
             checked |= !at.exact;
             key.extend(at.key);

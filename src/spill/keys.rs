@@ -35,6 +35,11 @@ pub fn bucket_key(key: &[Bucket]) -> Vec<u8> {
                 out.extend_from_slice(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
                 out.extend_from_slice(bytes);
             }
+            Bucket::Composite(parts) => {
+                out.push(COMPOSITE_BUCKET);
+                out.extend_from_slice(&u64::try_from(parts.len()).unwrap_or(u64::MAX).to_le_bytes());
+                out.extend_from_slice(&bucket_key(parts));
+            }
         }
     }
     out
@@ -42,6 +47,9 @@ pub fn bucket_key(key: &[Bucket]) -> Vec<u8> {
 
 /// The tag of a truth value's bucket in a key of buckets (`bucket_key`).
 const BOOL_BUCKET: u8 = 6;
+/// The tag of an array's or a row's bucket, then its parts' count and
+/// their keys, each of which ends where it says.
+const COMPOSITE_BUCKET: u8 = 7;
 
 /// The tags of a normalized key's values (`norm_key`).
 const NULL_TAG: u8 = 0;
@@ -59,6 +67,8 @@ const INTEGER_TAG: u8 = 8;
 const BOOL_TAG: u8 = 9;
 /// The tag of a DECFLOAT number, then its key (`DecFloat::put_key`).
 const DECFLOAT_TAG: u8 = 10;
+/// The tag of an array or a row, then its parts' count and their keys.
+const COMPOSITE_TAG: u8 = 11;
 
 /// Appends `v`'s normalized key to `out`: the bytes `norm_key` gives of
 /// `v.norm()`, made without making it.
@@ -92,6 +102,11 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
             text(out, EXTENSION_TAG, e.kind.name());
             out.extend_from_slice(&u64::try_from(e.bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
             out.extend_from_slice(&e.bytes);
+        }
+        Value::Array(parts) | Value::Row(parts) => {
+            out.push(COMPOSITE_TAG);
+            out.extend_from_slice(&u64::try_from(parts.len()).unwrap_or(u64::MAX).to_le_bytes());
+            parts.iter().for_each(|p| put_norm(p, out));
         }
     }
 }
@@ -184,6 +199,11 @@ pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
                 text(&mut out, EXTENSION_TAG, name);
                 out.extend_from_slice(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
                 out.extend_from_slice(bytes);
+            }
+            NormKey::Composite(parts) => {
+                out.push(COMPOSITE_TAG);
+                out.extend_from_slice(&u64::try_from(parts.len()).unwrap_or(u64::MAX).to_le_bytes());
+                out.extend_from_slice(&norm_key(parts));
             }
         }
     }

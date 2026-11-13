@@ -104,7 +104,7 @@ fn index_contract(method: &dyn IndexMethod) {
 /// answers it, in key order if the method is ordered.
 fn prefix_contract(method: &dyn IndexMethod) {
     let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    let index: Arc<dyn Index> = Arc::from(method.create(&[exact, exact]).unwrap());
+    let index: Arc<dyn Index> = Arc::from(method.create(&[exact.clone(), exact]).unwrap());
     let keys: Vec<Key> = (0..4).flat_map(|a| (0..4).map(move |b| Key(vec![number(a), number(b)]))).collect();
     for (id, k) in (1..).zip(&keys) {
         index.insert(k.clone(), id).unwrap();
@@ -135,7 +135,7 @@ fn prefix_contract(method: &dyn IndexMethod) {
 /// exactly the entries whose key answers it, in key order.
 fn range_contract(method: &dyn IndexMethod) {
     let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    let index: Arc<dyn Index> = Arc::from(method.create(&[exact, exact]).unwrap());
+    let index: Arc<dyn Index> = Arc::from(method.create(&[exact.clone(), exact]).unwrap());
     let keys: Vec<Key> = (0..4).flat_map(|a| (0..6).map(move |b| Key(vec![number(a), number(b)]))).collect();
     for (id, k) in (1..).zip(&keys) {
         index.insert(k.clone(), id).unwrap();
@@ -192,7 +192,7 @@ fn nulls_contract(method: &dyn IndexMethod) {
         .flat_map(|op| (0..4).map(move |v| Probe::Compare { op, value: number(v) }))
         .chain([Probe::All])
         .collect();
-    answered(method, (&[exact], &ones), &compared);
+    answered(method, (std::slice::from_ref(&exact), &ones), &compared);
     let pairs = [(None, None), (None, Some(1)), (Some(1), None), (Some(1), Some(2)), (Some(2), Some(1)), (Some(2), None)];
     let twos: Vec<Key> = pairs.iter().map(|(a, b)| Key(vec![some(*a), some(*b)])).collect();
     let mut probes = vec![Probe::All];
@@ -207,7 +207,7 @@ fn nulls_contract(method: &dyn IndexMethod) {
     if method.supports_range(2, 0) {
         probes.push(Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, number(0))), high: Box::new((CompOp::Le, number(1))) });
     }
-    answered(method, (&[exact, exact], &twos), &probes);
+    answered(method, (&[exact.clone(), exact], &twos), &probes);
 }
 
 /// Verifies: [EXTENSION] `IndexMethod` and `Index` contracts, for the built-in

@@ -97,7 +97,13 @@ impl SqlType for Approximate {
             Value::Exact(d) => Ok(Value::Approx(at_precision(d.to_f64(), precision_of(t)))),
             Value::Approx(x) => approximated(&v, x, t, "ISO/IEC 9075-2:2023 §6.13 GR9a ii"),
             Value::DecFloat(d) => approximated(&v, d.to_f64(), t, "ISO/IEC 9075-2:2023 §6.13 GR9a ii"),
-            Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => uncastable(&v, t),
+            Value::Binary(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
+            | Value::Extension(_) => uncastable(&v, t),
         }
     }
 

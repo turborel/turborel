@@ -69,7 +69,7 @@ impl ScalarFunction for Folded {
         self.0.collation.name()
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
-        Ok(args.first().copied().unwrap_or(DataType::Varying { length: 0, units: CharUnits::Characters }))
+        Ok(args.first().cloned().unwrap_or(DataType::Varying { length: 0, units: CharUnits::Characters }))
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let Some(Value::Char(text)) = args.first() else { return Ok(args.first().cloned().unwrap_or(Value::Null)) };
@@ -230,7 +230,10 @@ impl Binder<'_> {
             | ValueExpression::Extract { .. }
             | ValueExpression::Difference { .. }
             | ValueExpression::AtZone { .. }
-            | ValueExpression::NextValue { .. } => Derived::Yielding,
+            | ValueExpression::NextValue { .. }
+            // An element's or field's, as arrays and rows keep none of
+            // their parts'.
+            | ValueExpression::Composite(..) => Derived::Yielding,
         })
     }
 

@@ -84,6 +84,8 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
+            | DataType::Array(_)
+            | DataType::Row(_)
             | DataType::Extension(_) => {}
         }
     }
@@ -123,6 +125,8 @@ fn string_set_type(types: &[DataType]) -> Option<DataType> {
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
+            | DataType::Array(_)
+            | DataType::Row(_)
             | DataType::Extension(_) => {}
         }
     }
@@ -139,16 +143,19 @@ fn string_set_type(types: &[DataType]) -> Option<DataType> {
 /// only with its own kind: beyond the standard, a truth value, a
 /// datetime, an interval.
 fn apart_set_type(types: &[DataType], clause: &str) -> Option<Result<DataType>> {
+    if let Some(t) = super::composite::composite_set_type(types, clause) {
+        return Some(t);
+    }
     // \[EXTENSION\] Values of a type beyond the standard come together
     // only with values of the same type (RULES.md D53).
     if let Some(e) = types.iter().find(|t| matches!(t, DataType::Extension(_))) {
-        return Some(extension_set_type(*e, types, clause));
+        return Some(extension_set_type(e.clone(), types, clause));
     }
     if types.contains(&DataType::Boolean) {
         return Some(boolean_set_type(types, clause));
     }
     if let Some(first) = types.iter().find(|t| t.is_datetime()) {
-        return Some(datetime_set_type(*first, types, clause));
+        return Some(datetime_set_type(&first.clone(), types, clause));
     }
     if let Some(DataType::Interval(first)) = types.iter().find(|t| t.is_interval()) {
         return Some(interval_set_type(*first, types, clause));
@@ -167,7 +174,7 @@ fn decfloat_precision(t: &DataType) -> Option<u32> {
 /// # Errors
 ///
 /// SQLCODE -103 if one is not of `first`'s fields.
-fn datetime_set_type(first: DataType, types: &[DataType], clause: &str) -> Result<DataType> {
+fn datetime_set_type(first: &DataType, types: &[DataType], clause: &str) -> Result<DataType> {
     if !types.iter().all(|t| first.comparable(t)) {
         return Err(rule(format!(
             "[ISO/IEC 9075:1992 {clause}, §9.3 SR3e] values of {first} are brought together with values of another type"
@@ -229,8 +236,8 @@ fn datetime_precision(t: &DataType) -> u32 {
 /// result's type alone and a cast to a fixed length would extend it with
 /// X'00' octets [§6.13 GR13a iii]; and a
 /// datetime too, of its own instant, as one type holds both [SR3e].
-pub(super) fn brought(e: Expr, from: DataType, to: DataType) -> Expr {
-    let kept = from == to || (from.is_binary() && to.is_binary()) || (from.is_datetime() && to.is_datetime());
+pub(super) fn brought(e: Expr, from: &DataType, to: DataType) -> Expr {
+    let kept = *from == to || (from.is_binary() && to.is_binary()) || (from.is_datetime() && to.is_datetime());
     if kept { e } else { Expr::Cast(Box::new(e), to) }
 }
 
@@ -259,9 +266,9 @@ impl Binder<'_> {
                 // [§17.6 GR5j] a `?` takes the first operand's type; the
                 // first none [GR4h].
                 let first = values.first().map(|v| self.value_expression(v, scope)).transpose()?.map(|(_, t)| t);
-                taken = first;
+                taken.clone_from(&first);
                 for v in rest {
-                    let (e, _) = self.typed_by(v, first, scope)?;
+                    let (e, _) = self.typed_by(v, first.clone(), scope)?;
                     whens.push((Cond::IsNull(e, true), Some(v)));
                 }
                 Some(last)
@@ -306,7 +313,7 @@ impl Binder<'_> {
             for when in list {
                 let condition = match (when, co) {
                     (WhenOperand::Value(row, at), Some(co)) => match lone(row) {
-                        Some(value) => self.equal(co, value, first, scope)?.0,
+                        Some(value) => self.equal(co, value, first.clone(), scope)?.0,
                         None => self.row_equal(operand, row, *at, scope)?,
                     },
                     (WhenOperand::Value(row, at), None) => self.row_equal(operand, row, *at, scope)?,
@@ -345,7 +352,7 @@ impl Binder<'_> {
         let [(x, xt), (y, yt)] = match (b_taken, dynamic_of(b)) {
             (Some(t), Some(_)) => {
                 let y = self.typed(b, ParameterType::Of(t), scope)?;
-                [self.typed(a, ParameterType::Of(y.1), scope)?, y]
+                [self.typed(a, ParameterType::Of(y.1.clone()), scope)?, y]
             }
             (Some(_), None) | (None, _) => self.pair((a, b), scope)?,
         };
@@ -369,15 +376,15 @@ impl Binder<'_> {
     ) -> Result<(Expr, DataType)> {
         let mut bound = Vec::new();
         for result in whens.iter().map(|(_, r)| *r).chain(std::iter::once(otherwise)) {
-            bound.push(result.map(|v| self.typed_by(v, taken, scope)).transpose()?);
+            bound.push(result.map(|v| self.typed_by(v, taken.clone(), scope)).transpose()?);
         }
-        let types: Vec<DataType> = bound.iter().flatten().map(|(_, t)| *t).collect();
+        let types: Vec<DataType> = bound.iter().flatten().map(|(_, t)| t.clone()).collect();
         if types.is_empty() {
             return Err(rule("[ISO/IEC 9075:1992 §6.9 SR5] at least one result of a CASE is not NULL"));
         }
         let t = set_type(&types, "§6.9 SR7")?;
         let mut results = bound.into_iter().map(|r| match r {
-            Some((e, et)) => brought(e, et, t),
+            Some((e, et)) => brought(e, &et, t.clone()),
             None => Expr::Const(Value::Null),
         });
         let arms: Vec<(Cond, Expr)> = whens.into_iter().map(|(c, _)| (c, results.next().unwrap_or(Expr::Const(Value::Null)))).collect();
@@ -411,14 +418,17 @@ impl Binder<'_> {
     fn cast_to(&self, operand: Option<&ValueExpression>, target: DataType, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let Some(v) = operand else { return Ok((Expr::Const(Value::Null), target)) };
         // [§17.6 GR5i] a `?` takes the target's type.
-        let (e, t) = self.typed(v, ParameterType::Of(target), scope)?;
+        let (e, t) = self.typed(v, ParameterType::Of(target.clone()), scope)?;
+        if !super::composite::castable(&t, &target) {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR5, SR6, SR7, SR8] CAST of {t} to {target} is not valid")));
+        }
         if t.is_datetime() || target.is_datetime() || t.is_interval() || target.is_interval() {
-            return Ok((self.datetime_cast(e, t, target)?, target));
+            return Ok((self.datetime_cast(e, &t, target.clone())?, target));
         }
         if !super::datetime::binary_castable(&t, &target) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR7] CAST of {t} to {target} is not valid")));
         }
-        Ok((Expr::Cast(Box::new(e), target), target))
+        Ok((Expr::Cast(Box::new(e), target.clone()), target))
     }
 
     /// [ISO/IEC 9075-2:2023 §6.13 SR4] CAST of `operand` to `target` FORMAT
@@ -428,7 +438,7 @@ impl Binder<'_> {
         let Some(v) = operand else {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR4] CAST of NULL to {target} has no FORMAT, NULL being of no type")));
         };
-        let (e, t) = self.typed(v, ParameterType::Of(target), scope)?;
+        let (e, t) = self.typed(v, ParameterType::Of(target.clone()), scope)?;
         let f = formatted_cast(&t, &target, template, self.now)?;
         Ok((Expr::Call(ScalarRef(f), vec![e]), target))
     }
@@ -439,6 +449,6 @@ impl Binder<'_> {
         let [t] = types.as_slice() else {
             return Err(rule(format!("[ISO/IEC 9075:1992 §7.11 SR1] a <scalar subquery> is of degree one, not {}", types.len())));
         };
-        Ok((Expr::Subquery(bound, 0), *t))
+        Ok((Expr::Subquery(bound, 0), t.clone()))
     }
 }

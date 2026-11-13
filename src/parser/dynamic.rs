@@ -12,8 +12,8 @@
 
 use super::Parser;
 use crate::ast::{
-    DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, FetchOrientation, GetDescriptor, ParameterSpecification,
-    Scope, SetDescriptor, SqlStatement, TableName, UsingClause, ValueSpecification,
+    DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, FetchOrientation, GetDescriptor, HeaderItem,
+    ParameterSpecification, Scope, SetDescriptor, SqlStatement, TableName, UsingClause, ValueSpecification,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -22,10 +22,11 @@ use crate::lexer::{Tok, delim, kw};
 /// USING; the clause; and where it begins.
 type Using = (bool, UsingClause, usize);
 
-/// [ISO/IEC 9075:1992 §17.5 SR3] The `<descriptor item name>`s a `<set
-/// descriptor statement>` shall not set.
-const NOT_SET: [DescriptorItem; 9] = [
+/// [ISO/IEC 9075:1992 §17.5 SR3; ISO/IEC 9075-2:2023 §20.5 SR3a] The
+/// `<descriptor item name>`s a `<set descriptor statement>` shall not set.
+const NOT_SET: [DescriptorItem; 10] = [
     DescriptorItem::ReturnedLength,
+    DescriptorItem::ReturnedCardinality,
     DescriptorItem::ReturnedOctetLength,
     DescriptorItem::OctetLength,
     DescriptorItem::Nullable,
@@ -35,6 +36,13 @@ const NOT_SET: [DescriptorItem; 9] = [
     DescriptorItem::Name,
     DescriptorItem::Unnamed,
 ];
+
+/// [ISO/IEC 9075-2:2023 §20.4] TOP_LEVEL_COUNT, a `<header item name>`.
+const TOP_LEVEL_COUNT: &str = "TOP_LEVEL_COUNT";
+/// [ISO/IEC 9075-2:2023 §20.10] NESTING, of a `<nesting option>`.
+const NESTING: &str = "NESTING";
+/// [ISO/IEC 9075-2:2023 §20.10] WITHOUT, of a `<nesting option>`.
+const WITHOUT: &str = "WITHOUT";
 
 /// A dynamic statement, as the parser gives it.
 fn dynamic(statement: DynamicStatement) -> SqlStatement {
@@ -206,17 +214,30 @@ impl Parser {
     }
 
     /// [§17.4] GET DESCRIPTOR `<descriptor name>` {`<simple target
-    /// specification 1>` = COUNT | VALUE `<item number>` `<simple target
-    /// specification 2>` = `<descriptor item name>` \[{, ...}...\]}, after
-    /// GET.
+    /// specification 1>` = `<header item name>` \[{, ...}...\] | VALUE
+    /// `<item number>` `<simple target specification 2>` = `<descriptor
+    /// item name>` \[{, ...}...\]}, after GET; [ISO/IEC 9075-2:2023 §20.4]
+    /// a `<header item name>` COUNT or TOP_LEVEL_COUNT.
     pub(super) fn get_descriptor(&mut self) -> Result<SqlStatement> {
         self.expect_kw(kw::DESCRIPTOR)?;
         let name = self.extended_name()?;
         if !self.accept_kw(kw::VALUE) {
-            let target = self.simple_target()?;
-            self.expect_delim(delim::EQUALS)?;
-            self.expect_kw(kw::COUNT)?;
-            return Ok(dynamic(DynamicStatement::GetDescriptor { name, info: GetDescriptor::Count(target) }));
+            let mut header = Vec::new();
+            loop {
+                let target = self.simple_target()?;
+                self.expect_delim(delim::EQUALS)?;
+                let item = if self.accept_word(TOP_LEVEL_COUNT) {
+                    HeaderItem::TopLevelCount
+                } else {
+                    self.expect_kw(kw::COUNT)?;
+                    HeaderItem::Count
+                };
+                header.push((target, item));
+                if !self.accept_delim(delim::COMMA) {
+                    break;
+                }
+            }
+            return Ok(dynamic(DynamicStatement::GetDescriptor { name, info: GetDescriptor::Header(header) }));
         }
         let number = self.simple_value()?;
         let mut items = Vec::new();
@@ -239,6 +260,10 @@ impl Parser {
         self.expect_kw(kw::DESCRIPTOR)?;
         let name = self.extended_name()?;
         if !self.accept_kw(kw::VALUE) {
+            let at = self.here();
+            if self.accept_word(TOP_LEVEL_COUNT) {
+                return Err(Self::rule_at(at, "[ISO/IEC 9075-2:2023 §20.5 SR2] TOP_LEVEL_COUNT is not set".to_owned()));
+            }
             self.expect_kw(kw::COUNT)?;
             self.expect_delim(delim::EQUALS)?;
             return Ok(dynamic(DynamicStatement::SetDescriptor { name, info: SetDescriptor::Count(self.simple_value()?) }));
@@ -290,7 +315,8 @@ impl Parser {
         Ok(SqlStatement::Execute(Box::new(execute)))
     }
 
-    /// [§17.8] The rest of a `<describe statement>`, after DESCRIBE.
+    /// [§17.8] The rest of a `<describe statement>`, after DESCRIBE, and
+    /// [ISO/IEC 9075-2:2023 §20.10] its `<nesting option>`.
     fn describe(&mut self) -> Result<SqlStatement> {
         let input = self.accept_kw(kw::INPUT);
         if !input {
@@ -309,7 +335,19 @@ impl Parser {
             let msg = "[ISO/IEC 9075:1992 §17.9 SR1] INTO is of a <dynamic fetch statement> or a <result using clause> alone";
             return Err(Self::rule_at(at, msg.to_owned()));
         }
-        Ok(dynamic(DynamicStatement::Describe { input, name, descriptor }))
+        // [ISO/IEC 9075-2:2023 §20.10] `<nesting option>` ::= WITH NESTING |
+        // WITHOUT NESTING, WITHOUT implicit [SR2].
+        let nesting = if self.accept_kw(kw::WITH) {
+            true
+        } else if self.accept_word(WITHOUT) {
+            false
+        } else {
+            return Ok(dynamic(DynamicStatement::Describe { input, nesting: false, name, descriptor }));
+        };
+        if !self.accept_word(NESTING) {
+            return Err(self.syntax("expected NESTING"));
+        }
+        Ok(dynamic(DynamicStatement::Describe { input, nesting, name, descriptor }))
     }
 
     /// [§17.10] \[`<result using clause>`\] \[`<parameter using clause>`\]:

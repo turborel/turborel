@@ -294,7 +294,7 @@ impl BLinkIndex {
             return None;
         }
         let (mut prefix, mut checked) = (Vec::new(), false);
-        for (value, &data_type) in equal.iter().zip(&self.types) {
+        for (value, data_type) in equal.iter().zip(&self.types) {
             let Some(at) = anchor(value, data_type) else { return Some(Range::all(true)) };
             checked |= !at.exact;
             // The first anchor's key is the prefix so far, not copied.
@@ -305,7 +305,7 @@ impl BLinkIndex {
             }
         }
         let Some((op, value)) = then else { return Some(within(prefix, checked)) };
-        let Some(at) = self.types.get(equal.len()).and_then(|&t| anchor(value, t)) else { return Some(within(prefix, true)) };
+        let Some(at) = self.types.get(equal.len()).and_then(|t| anchor(value, t)) else { return Some(within(prefix, true)) };
         let exact = at.exact;
         let key = if prefix.is_empty() { at.key } else { [prefix.as_slice(), &at.key].concat() };
         let (lower, upper) = match op {

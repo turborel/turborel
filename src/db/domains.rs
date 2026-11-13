@@ -194,14 +194,14 @@ impl State {
             );
         }
         let data_type = self.domain_type(&d.data_type, schema)?;
-        let default = d.default.as_ref().map(|o| default_of(data_type, o, zone)).transpose().or_at(d.name.at)?;
+        let default = d.default.as_ref().map(|o| default_of(&data_type.clone(), o, zone)).transpose().or_at(d.name.at)?;
         let mut constraints = Vec::new();
         for c in &d.constraints {
-            let made = self.domain_constraint((&qn, schema), data_type, (c, &constraints), bound)?;
+            let made = self.domain_constraint((&qn, schema), data_type.clone(), (c, &constraints), bound)?;
             constraints.push(made);
         }
         self.not_in_own_usage(&qn, &constraints).or_at(d.name.at)?;
-        let collation = self.declared_collation(schema, (data_type, None), d.collate.as_ref()).or_at(d.name.at)?;
+        let collation = self.declared_collation(schema, (data_type.clone(), None), d.collate.as_ref()).or_at(d.name.at)?;
         // Its collation made, not reverted meanwhile (`db/collations/revert.rs`).
         let reads = constraints.iter().flat_map(|c| reads_of(c).to_vec()).chain(collation.clone().filter(is_made)).collect::<Vec<_>>();
         let mut catalog = self.catalog.duplicate();
@@ -284,7 +284,7 @@ impl State {
         let mut out = Vec::new();
         for c in &domain.constraints {
             let ConstraintKind::Check { text, names, .. } = &c.kind else { continue };
-            out.push((c.name.clone(), self.on_value(&domain.name, domain.data_type, (text, names))?.0));
+            out.push((c.name.clone(), self.on_value(&domain.name, domain.data_type.clone(), (text, names))?.0));
         }
         Ok(out)
     }
@@ -306,7 +306,7 @@ impl State {
     ///
     /// The condition no longer binds.
     pub(super) fn domain_constraint_uses(&self, domain: &DomainDesc, (text, names): (&str, &str)) -> Result<Vec<(QualifiedName, String)>> {
-        let (staged, probe) = self.with_value(&domain.name, domain.data_type);
+        let (staged, probe) = self.with_value(&domain.name, domain.data_type.clone());
         staged.value_uses(&probe, (&on_column(text, VALUE_COLUMN), names, &Horizon(vec![(probe.clone(), 1)])))
     }
 
@@ -351,7 +351,7 @@ impl State {
         for d in &mut domains {
             for c in &mut d.constraints {
                 let ConstraintKind::Check { text, names, reads, .. } = &mut c.kind else { continue };
-                *reads = self.bound_on_value(&d.name, d.data_type, (text, names))?;
+                *reads = self.bound_on_value(&d.name, d.data_type.clone(), (text, names))?;
             }
         }
         let mut catalog = self.catalog.duplicate();
@@ -392,7 +392,7 @@ impl State {
         let mut validate = Vec::new();
         match &a.action {
             AlterDomainAction::SetDefault(o) => {
-                domain.default = Some(default_of(domain.data_type, o, zone).or_at(a.name.at)?);
+                domain.default = Some(default_of(&domain.data_type.clone(), o, zone).or_at(a.name.at)?);
                 columns_of(&mut tables, &qn).for_each(|c| set_domain_default(c, domain.default.clone()));
             }
             AlterDomainAction::DropDefault => {
@@ -441,7 +441,7 @@ impl State {
         c: &TableConstraint,
     ) -> Result<Vec<QualifiedName>> {
         let qn = domain.name.clone();
-        let made = self.domain_constraint((&qn, schema), domain.data_type, (c, &domain.constraints), true)?;
+        let made = self.domain_constraint((&qn, schema), domain.data_type.clone(), (c, &domain.constraints), true)?;
         self.not_in_own_usage(&qn, std::slice::from_ref(&made)).or_at(c.at)?;
         let mut validate = Vec::new();
         for t in tables {

@@ -200,6 +200,7 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         | Plan::Project { input, .. }
         | Plan::Distinct { input }
         | Plan::Sort { input, .. } => give(input, work),
+        Plan::Unnest(u) => give(&mut u.input, work),
         Plan::Product { left, right }
         | Plan::HashJoin { left, right, .. }
         | Plan::OuterJoin { left, right, .. }

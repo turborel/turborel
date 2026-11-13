@@ -300,7 +300,7 @@ fn binary_strings_are_retrieved_9_1() {
         ("V", DataType::VarBinary { length: 2 }, "0102", 3, Completion::Warning(SqlState::STRING_TRUNCATED)),
     ];
     for (column, target, value, indicator, done) in cases {
-        let mut p = Params::new().declare("OUT", target, Value::Null).indicator("IND", -9);
+        let mut p = Params::new().declare("OUT", target.clone(), Value::Null).indicator("IND", -9);
         let completion = a.execute(&format!("SELECT {column} INTO OUT INDICATOR IND FROM T"), &mut p).unwrap();
         assert_eq!(
             (completion, p.value("OUT").to_string(), p.indicator_value("IND")),

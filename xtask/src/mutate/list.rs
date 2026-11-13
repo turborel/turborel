@@ -2,6 +2,7 @@
 //! that fail when it is broken. A new mechanism adds one; a change to a quoted snippet updates its mutation (`verify` refuses a stale one).
 
 mod collations;
+mod composite;
 mod contents;
 mod fill;
 mod generated;
@@ -42,8 +43,15 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 6] =
-        [&sequences::SEQUENCES, &generated::GENERATED, &truncate::TRUNCATE, &contents::CONTENTS, &nulls::NULLS, &with::WITH];
+    let areas: [&[Mutation]; 7] = [
+        &sequences::SEQUENCES,
+        &generated::GENERATED,
+        &truncate::TRUNCATE,
+        &contents::CONTENTS,
+        &nulls::NULLS,
+        &with::WITH,
+        &composite::COMPOSITE,
+    ];
     core.into_iter().chain(areas).chain([near::NEAR.as_slice(), &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER]).flatten().copied().collect()
 }
 

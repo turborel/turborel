@@ -57,6 +57,11 @@ pub fn map_plan_exprs(plan: LogicalPlan, f: &mut dyn FnMut(Expr) -> Expr) -> Log
         LogicalPlan::Values { rows, types } => {
             LogicalPlan::Values { rows: rows.into_iter().map(|r| r.into_iter().map(&mut *f).collect()).collect(), types }
         }
+        LogicalPlan::Unnest(mut u) => {
+            u.collections = std::mem::take(&mut u.collections).into_iter().map(&mut *f).collect();
+            u.outer = u.outer.take().map(|c| c.map_exprs(f));
+            LogicalPlan::Unnest(u)
+        }
         other @ (LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Product { .. }
@@ -77,6 +82,7 @@ fn plan_can_raise(plan: &LogicalPlan) -> bool {
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(Expr::can_raise),
         LogicalPlan::Aggregate { aggs, .. } => !aggs.is_empty(),
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
+        LogicalPlan::Unnest(u) => u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(Cond::can_raise),
         // Past EXECUTOR.MAX_ITERATIONS, its iteration is refused.
         LogicalPlan::Recursive { .. } => true,
         LogicalPlan::Scan { .. }
@@ -146,6 +152,7 @@ pub fn plan_has_outer(plan: &LogicalPlan) -> bool {
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(expr_has_outer),
         LogicalPlan::Aggregate { aggs, .. } => aggs.iter().any(|a| a.arg.as_ref().is_some_and(expr_has_outer)),
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(expr_has_outer),
+        LogicalPlan::Unnest(u) => u.collections.iter().any(expr_has_outer) || u.outer.as_ref().is_some_and(cond_has_outer),
         LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Product { .. }

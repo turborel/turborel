@@ -157,6 +157,9 @@ fn reference_leaves(cx: Context<'_>, r: &TableReference, leaves: &mut Vec<Qualif
     match r {
         TableReference::Table(t) => add_new(leaves, named_leaves(cx, &t.table)),
         TableReference::Derived(d) => query_leaves(cx, &d.query.query, leaves),
+        // Its collections are value expressions, their subqueries not its
+        // operands.
+        TableReference::Unnest(_) => {}
         TableReference::Joined(j) => {
             reference_leaves(cx, &j.left, leaves);
             reference_leaves(cx, &j.right, leaves);

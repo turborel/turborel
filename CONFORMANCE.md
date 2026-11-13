@@ -921,8 +921,7 @@ query expression that follows it [§7.17].
 | Evaluation | GR2c | To a fixpoint, as the General Rules say, or of a single query over only the rows each iteration adds where that gives the same rows (RULES.md D67). The order of the rows is implementation-dependent (US036) without ORDER BY. |
 | Runaway recursion | GR2c ii 4, NOTE 322 | Refused past the session's EXECUTOR.MAX_ITERATIONS iterations, a million by default, 0 for no limit (SQLCODE -918, SQLSTATE TB918). This implementation's own, as the standard's loop does not end. A cancel or STATEMENT.TIMEOUT_MS stops it (SQLCODE -920). |
 
-SEARCH and CYCLE (T133) [§7.18], whose columns are of ARRAY and ROW
-types, are not supported (SQLCODE -900). Neither is an anchor operand of
+SEARCH and CYCLE (T133) [§7.18] are not supported (SQLCODE -900). Neither is an anchor operand of
 UNION CORRESPONDING without BY, nor a recursive query whose anchor UNION
 is within its `<query expression body>` rather than all of it, as `A
 UNION ALL B UNION ALL C` of two recursive operands. A query of a WITH is not
@@ -932,6 +931,47 @@ SEARCH and CYCLE only after a query of the list.
 A CHECK constraint whose subquery reads no table, such as one of a WITH of
 VALUES, is checked of each row written, as one that reads a table is;
 before, it was refused at its first check with SQLCODE -910.
+
+### Arrays and row types
+
+Features S090 (Minimal array support), S099 (Array expressions), S301
+(Enhanced UNNEST), S403 (ARRAY_MAX_CARDINALITY), S404 (TRIM_ARRAY), T051
+(Row types) and T053 (Explicit aliases for all-fields reference). An
+array is an ordered collection of elements of one type, at most its
+maximum cardinality of them [§4.12.2]; a row is a sequence of fields, each
+of a name and a type [§4.10].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Array types | §6.1 SR43 to SR47 | `<data type> ARRAY [n]`, of any data type of the standard, rows and arrays among them, n from 1 to 65,535 (SQLCODE -900 past it), 65,535 if not written. No type of an extension is an element's. |
+| Row types | §6.1 SR35 to SR42 | `ROW (name type, ...)`, no field named twice (SQLCODE -103). A column, a domain, a CAST's target and a dynamic parameter's type may be either. |
+| Constructors | §6.49, §7.1 | `ARRAY[...]`, `ARRAY[]` where its type is known, `ARRAY(query)` of one column ordered by the query's ORDER BY, and `ROW(...)`, its fields named F1, F2 and so on. An empty array's type is its target's, so `ARRAY[]` alone is SQLCODE -103. |
+| Element reference | §6.25 | `A[i]`, null of a null array or index, SQLSTATE 2202E for an index not of 1 to the cardinality. |
+| Field reference | §6.16, §6.6 SR9b, SR11 | `R.F`, `(expr).F` and identifier chains. A chain of three is a column first, then a column's field. One of four names a catalog first, refused (SQLCODE -103) when it may also be a correlation name's fields. A longer one is fields of a column. A chain of four of no basis is SQLSTATE 3D000. |
+| All fields | §7.16 SR2c, T053 | `R.*` in a select list is each field, and `R.* AS (a, b)` names them, as many names as fields. |
+| CARDINALITY, ARRAY_MAX_CARDINALITY, TRIM_ARRAY | §6.31, §6.48 | CARDINALITY of a null array is null; ARRAY_MAX_CARDINALITY of one is its type's maximum [GR1a]. TRIM_ARRAY of a negative count or one past the cardinality is SQLSTATE 2202E. |
+| Concatenation | §6.47 | `A \|\| B` of two arrays, of the greatest maximum of both summed, 65,535 at most; past it, SQLSTATE 2202F. |
+| ARRAY_AGG | §10.9 SR7 | `ARRAY_AGG(x ORDER BY ...)` of each row's value, nulls among them, null of no rows; past 65,535 elements, SQLSTATE 2202F. Its grammar has no DISTINCT, so one written is SQLCODE -102. |
+| Comparison | §8.2 GR1b, §9.11 | Arrays are compared for equality alone, of the same cardinality, element by element, three valued, so a pair known unequal makes them unequal though another is unknown. Rows are compared field by field and ordered by their first unequal field. A value of a row type is spread into its fields wherever a row value constructor is [§7.2]. |
+| Ordering and grouping | §9.12 SR3, §9.14 SR3 | An array in ORDER BY, GROUP BY, DISTINCT, UNION but UNION ALL, EXCEPT, INTERSECT, MAX, MIN, a key, an index or `<`, `<=`, `>`, `>=`, BETWEEN, GREATEST or LEAST is SQLCODE -103. A named columns join (NATURAL or USING) of array columns is valid, its columns compared for equality (F402). Rows are ordered and grouped field by field. |
+| Assignment and CAST | §9.2, §6.13 | Element by element and field by field, an array of more non-null elements than its target's maximum SQLSTATE 2202F. Nothing else is assigned or cast to or from an array or a row. |
+| `SET A[i] = v` | §14.15 GR10b | Past the cardinality the array is extended with nulls; index 0 or past the maximum is SQLSTATE 2202E, a null array SQLSTATE 2200E. |
+| UNNEST | §7.6 SR8, §7.10 | `UNNEST(a, ...) [WITH ORDINALITY] AS t [(names)]` of the rows of its arrays' elements, padded with nulls to the longest, each array of rows spread into its fields. The ordinality column is INTEGER (IV158). It reads the FROM items before it, after a comma or as the second operand of CROSS, INNER and LEFT joins; as that of a RIGHT or FULL join it may read none of the first (SQLCODE -103). |
+| Dynamic SQL | §20.1, §20.9 to §20.12 | An item of a composite type is followed by items of its parts, of LEVEL one greater, with DEGREE, CARDINALITY and RETURNED_CARDINALITY. TOP_LEVEL_COUNT counts the items of LEVEL 0. DESCRIBE takes WITH NESTING and WITHOUT NESTING. DATA of an item of a row or of an array's element is SQLSTATE 0700C to get and 0700D to set; a LEVEL set out of order SQLSTATE 0700E. |
+| Its description | ISO/IEC 9075-11 | COLUMNS and DOMAINS give MAXIMUM_CARDINALITY and DTD_IDENTIFIER, and ELEMENT_TYPES and FIELDS describe the parts. A column's DTD_IDENTIFIER is its ordinal position, a domain's 1, and a part's its parent's, a point, and its field's place, or 1 for an element. |
+
+An array's elements and a row's fields are kept in the row of their
+table, and an array of a row type is unnested into the fields (RULES.md
+D68). A collection derived table in a RIGHT or FULL join that reads a
+table reference outside the join, or nested in a LEFT join's second
+operand and reading its first, is valid SQL not supported (SQLCODE -900).
+S091 (Basic array support) implies S093 (Arrays of distinct types), and
+turborel has no distinct types, so it is not claimed. S095 (Array
+constructors by query), S096 (Optional array bounds) and S098 (ARRAY_AGG)
+are processed as the table says, but each implies S091 [Annex D], so none
+is claimed either. S097 (Array element assignment) needs a host target
+element, which turborel does not take. ARRAY, ROW, UNNEST and the functions are key words only
+where they are read (Appendix B).
 
 ---
 

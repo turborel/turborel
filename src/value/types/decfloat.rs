@@ -62,6 +62,8 @@ fn decfloat_of(v: &Value, precision: u32) -> Option<DecFloat> {
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Row(_)
         | Value::Extension(_) => None,
     }
 }
@@ -162,7 +164,13 @@ impl SqlType for DecFloatKind {
             }
             Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) => decfloat_of(&v, precision)
                 .map_or_else(|| out_of_range(&v, t, "ISO/IEC 9075-2:2023 §6.13 GR10a ii"), |d| Ok(Value::DecFloat(d))),
-            Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => uncastable(&v, t),
+            Value::Binary(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
+            | Value::Extension(_) => uncastable(&v, t),
         }
     }
 
@@ -245,6 +253,8 @@ impl SqlType for DecFloatKind {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_) => None,
         }
     }

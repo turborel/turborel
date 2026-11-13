@@ -14,6 +14,7 @@
 use super::query::Nesting;
 use super::set_operations::bind_query_expression;
 use super::statements::updatable_query;
+use super::unnest::Unnested;
 use super::{Bound, Context, OutColumn, Purpose, Uses, qualify, rule};
 use crate::ast::{QueryExpression, QuerySpecification, SelectItem, SelectList, SelectSublist, TableReference, ValueExpression};
 use crate::catalog::{CheckLevels, ColumnDesc, QualifiedName, TableDesc, ViewDesc, owner_of};
@@ -58,6 +59,9 @@ pub(super) enum Source {
     /// A system table, of INFORMATION_SCHEMA or DEFINITION_SCHEMA, its rows made as it is read
     /// (`system.rs`).
     System(Arc<dyn SystemTable>),
+    /// [ISO/IEC 9075-2:2023 §7.6 SR8] A collection derived table
+    /// (`binder/unnest.rs`).
+    Unnest(Box<Unnested>),
 }
 
 /// A table or view by name: its description (a view's columns, with no
@@ -157,7 +161,7 @@ pub(super) fn unconstrained(name: &QualifiedName) -> TableDesc {
 fn described(columns: &[OutColumn]) -> Vec<ColumnDesc> {
     let column = |c: &OutColumn| ColumnDesc {
         name: c.name.clone().unwrap_or_default(),
-        data_type: c.data_type,
+        data_type: c.data_type.clone(),
         not_null: c.not_null,
         default: None,
         domain: None,
@@ -302,6 +306,7 @@ fn collapse(db: &State, plan: LogicalPlan, has_where: bool) -> Result<ViewBase> 
             | LogicalPlan::System { .. }
             | LogicalPlan::Sort { .. }
             | LogicalPlan::Recursive { .. }
+            | LogicalPlan::Unnest(..)
             | LogicalPlan::WorkTable { .. }) => return Err(broken(&format!("an updatable view reads {}", other.explain()))),
         }
     };
@@ -366,7 +371,9 @@ pub fn write_target(db: &State, name: &QualifiedName, (read_only, user): (&str, 
             let (base, map, cond) = (vb.base.clone(), vb.map.clone(), vb.cond.clone());
             Ok(WriteTarget { named: desc, base, map, checks, cond, source })
         }
-        Source::Derived(_) | Source::Common => Err(rule(format!("[X3.135-1986 {read_only}, §4.4] {name} is a read-only table"))),
+        Source::Derived(_) | Source::Common | Source::Unnest(_) => {
+            Err(rule(format!("[X3.135-1986 {read_only}, §4.4] {name} is a read-only table")))
+        }
         Source::System(_) => Err(SqlError::new(
             Code::Privilege,
             format!("[ISO/IEC 9075:1992 §21.1] only SELECT is granted on {name}, so it cannot be updated"),
@@ -460,7 +467,7 @@ fn updates(cx: Context<'_>, spec: &QuerySpecification, reads: &[QualifiedName]) 
     let leaf = match &source {
         Source::Table => &name,
         Source::Base(vb) => &vb.base.name,
-        Source::Derived(_) | Source::Common | Source::System(_) => return Ok(None),
+        Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) => return Ok(None),
     };
     if reads.contains(leaf) {
         return Ok(None);
@@ -472,7 +479,9 @@ fn updates(cx: Context<'_>, spec: &QuerySpecification, reads: &[QualifiedName]) 
             .iter()
             .map(|v| match v {
                 SelectSublist::Derived(SelectItem { value: ValueExpression::Column(cs), .. }) => desc.column(&cs.column).map(|c| vec![c]),
-                SelectSublist::Derived(_) => None,
+                // [ISO/IEC 9075-2:2023 §11.32 SR] no column of the leaf is
+                // a field of a row, so neither is updatable through it.
+                SelectSublist::Derived(_) | SelectSublist::Fields { .. } => None,
                 SelectSublist::All(_) => Some(all()),
             })
             .collect::<Option<Vec<_>>>()

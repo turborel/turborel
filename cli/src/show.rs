@@ -6,6 +6,7 @@
 use std::io::{self, Write};
 
 use turborel::storage::Row;
+use turborel::value::types::MAX_TYPE_NESTING;
 use turborel::value::{DataType, Value};
 use turborel_client::Column;
 use turborel_client::connection::Sink;
@@ -50,6 +51,25 @@ fn positions(base: usize, precision: u32, zoned: bool) -> usize {
 
 /// What a column of `t`'s values needs, named `name`.
 fn shape(name: &str, t: &DataType) -> Shape {
+    let (width, right) = measured(t, 0);
+    Shape { width: width.min(MAX_WIDTH).max(name.chars().count()), right }
+}
+
+/// The characters of an array's text beside its elements: `ARRAY[]`.
+const ARRAY_EXTRA: usize = 7;
+/// The characters of a row's text beside its fields: `ROW()`.
+const ROW_EXTRA: usize = 5;
+/// The characters each element or field of a composite's text takes beside
+/// its own: the `, ` between them, or a string's quotes.
+const PART_EXTRA: usize = 2;
+
+/// The width of `t`'s values, at most `MAX_WIDTH`, nested `depth` in
+/// composite types (at most `MAX_TYPE_NESTING`, as the types are; RULES.md
+/// R-CF-6), and whether they align right.
+fn measured(t: &DataType, depth: usize) -> (usize, bool) {
+    let part = |inner: &DataType| {
+        if depth >= MAX_TYPE_NESTING { MAX_WIDTH } else { measured(inner, depth.saturating_add(1)).0.saturating_add(PART_EXTRA) }
+    };
     let (width, right) = match t {
         DataType::Character { length, .. } | DataType::Varying { length, .. } => (usize::try_from(*length).unwrap_or(MAX_WIDTH), false),
         // A binary string as its hexits, two to an octet.
@@ -69,10 +89,16 @@ fn shape(name: &str, t: &DataType) -> Shape {
         DataType::Timestamp { precision, zoned } => (positions(TIMESTAMP_WIDTH, *precision, *zoned), false),
         // [ISO/IEC 9075:1992 §10.1 GR5] its positions, and its sign.
         DataType::Interval(q) => (usize::try_from(q.positions()).unwrap_or(MAX_WIDTH).saturating_add(1), true),
+        // [ISO/IEC 9075-2:2023 §6.49, §7.1] its text, each element or field
+        // as its literal.
+        DataType::Array(a) => {
+            (part(&a.element).saturating_mul(usize::try_from(a.max).unwrap_or(MAX_WIDTH)).saturating_add(ARRAY_EXTRA), false)
+        }
+        DataType::Row(r) => (r.fields.iter().map(|f| part(&f.data_type)).fold(ROW_EXTRA, usize::saturating_add), false),
         // A type beyond the standard, shown as its text, as wide as it is.
         DataType::Extension(_) => (MAX_WIDTH, false),
     };
-    Shape { width: width.min(MAX_WIDTH).max(name.chars().count()), right }
+    (width.min(MAX_WIDTH), right)
 }
 
 /// A table written to `out` as rows come, nulls shown as `null`.
@@ -143,6 +169,8 @@ impl Sink for Table<'_> {
                     | Value::Bool(_)
                     | Value::Datetime(_)
                     | Value::Interval(_)
+                    | Value::Array(_)
+                    | Value::Row(_)
                     | Value::Extension(_) => v.to_string(),
                 })
                 .collect();

@@ -36,7 +36,7 @@ pub fn bind_cursor(cx: Context<'_>, c: &CursorSpecification) -> Result<Bound> {
 
 /// [ISO/IEC 9075:1992 §13.1 SR10a] The column of a `<query expression>`'s
 /// result that a `<sort key>` names: the one column of that name.
-fn result_column(columns: &[OutColumn], cs: &ColumnSpecification) -> Result<usize> {
+pub(super) fn result_column(columns: &[OutColumn], cs: &ColumnSpecification) -> Result<usize> {
     if cs.qualifier.is_some() {
         return Err(rule(format!("[ISO/IEC 9075:1992 §13.1 SR10a] ORDER BY {} names a column of the result, unqualified", cs.column)));
     }
@@ -48,7 +48,8 @@ fn result_column(columns: &[OutColumn], cs: &ColumnSpecification) -> Result<usiz
     }
 }
 
-/// [X3.135-1986 §8.3 SR6] and GR3b viii: each `<sort specification>` names a column of T.
+/// [X3.135-1986 §8.3 SR6] and GR3b viii: each `<sort specification>` names
+/// a column of T, not array-ordered [ISO/IEC 9075-2:2023 §9.14 SR3].
 pub(super) fn sort_keys(
     order_by: &[SortSpecification],
     columns: &[OutColumn],
@@ -65,6 +66,11 @@ pub(super) fn sort_keys(
                     .ok_or_else(|| rule(format!("[X3.135-1986 §8.3 SR6] ORDER BY {n} must be between 1 and {}", columns.len())))?,
                 SortColumn::Column(cs) => by_column(cs)?,
             };
+            // [ISO/IEC 9075-2:2023 §9.14 SR2f] an operand of an ordering
+            // operation.
+            if let Some(c) = columns.get(column) {
+                super::composite::ordering_operand(&c.data_type, "ORDER BY")?;
+            }
             Ok(SortKey { column, descending: s.descending })
         })
         .collect()

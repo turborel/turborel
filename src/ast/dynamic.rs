@@ -96,10 +96,21 @@ pub enum DescriptorItem {
     CharacterSetSchema,
     /// CHARACTER_SET_NAME.
     CharacterSetName,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] LEVEL: how deep it is among
+    /// the items that describe a row's fields and an array's element.
+    Level,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] DEGREE, of a row type.
+    Degree,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] CARDINALITY, an array type's
+    /// maximum.
+    Cardinality,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] RETURNED_CARDINALITY, of an
+    /// array put in DATA.
+    ReturnedCardinality,
 }
 
 /// [ISO/IEC 9075:1992 §17.4] Each `<descriptor item name>`, as written.
-const ITEM_NAMES: [(&str, DescriptorItem); 20] = [
+const ITEM_NAMES: [(&str, DescriptorItem); 24] = [
     ("TYPE", DescriptorItem::Type),
     ("LENGTH", DescriptorItem::Length),
     ("OCTET_LENGTH", DescriptorItem::OctetLength),
@@ -120,6 +131,10 @@ const ITEM_NAMES: [(&str, DescriptorItem); 20] = [
     ("CHARACTER_SET_CATALOG", DescriptorItem::CharacterSetCatalog),
     ("CHARACTER_SET_SCHEMA", DescriptorItem::CharacterSetSchema),
     ("CHARACTER_SET_NAME", DescriptorItem::CharacterSetName),
+    ("LEVEL", DescriptorItem::Level),
+    ("DEGREE", DescriptorItem::Degree),
+    ("CARDINALITY", DescriptorItem::Cardinality),
+    ("RETURNED_CARDINALITY", DescriptorItem::ReturnedCardinality),
 ];
 
 impl DescriptorItem {
@@ -134,11 +149,23 @@ impl DescriptorItem {
     }
 }
 
+/// [ISO/IEC 9075-2:2023 §20.4] A `<header item name>` of the header of an
+/// SQL descriptor area [§20.1, Table 28].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderItem {
+    /// COUNT: of every item descriptor area set.
+    Count,
+    /// TOP_LEVEL_COUNT: of those of LEVEL 0.
+    TopLevelCount,
+}
+
 /// [ISO/IEC 9075:1992 §17.4] `<get descriptor information>`.
 #[derive(Debug, Clone)]
 pub enum GetDescriptor {
-    /// `<get count>` ::= `<simple target specification 1>` = COUNT.
-    Count(ParameterSpecification),
+    /// [ISO/IEC 9075-2:2023 §20.4] `<get header information>` \[{,
+    /// `<get header information>`}...\]: each `<simple target
+    /// specification>` = `<header item name>`.
+    Header(Vec<(ParameterSpecification, HeaderItem)>),
     /// VALUE `<item number>` `<get item information>` \[{, ...}...\].
     Value {
         /// The `<item number>`.
@@ -223,10 +250,14 @@ pub enum DynamicStatement {
     /// [§17.7] DEALLOCATE PREPARE `<SQL statement name>`.
     DeallocatePrepare(DynamicName),
     /// [§17.8] DESCRIBE \[INPUT | OUTPUT\] `<SQL statement name>` `<using
-    /// descriptor>`.
+    /// descriptor>` [ISO/IEC 9075-2:2023 §20.10] \[`<nesting option>`\].
     Describe {
         /// INPUT, rather than OUTPUT, written or implicit.
         input: bool,
+        /// WITH NESTING, rather than WITHOUT NESTING, written or implicit
+        /// \[SR2\]: the items of a row's fields and an array's element
+        /// described too.
+        nesting: bool,
         /// The `<SQL statement name>`.
         name: DynamicName,
         /// The `<descriptor name>` of its `<using descriptor>`.

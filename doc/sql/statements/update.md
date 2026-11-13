@@ -14,7 +14,9 @@ UPDATE: update rows
     SET <set clause> [ { , <set clause> }... ]
     [ WHERE <search condition> ]
 
-<set clause> ::= <column name> = <update source>
+<set clause> ::= <update target> = <update source>
+
+<update target> ::= <column name> | <column name> [ <simple value specification> ]
 
 <update source> ::= <value expression> | NULL | DEFAULT
 ```
@@ -25,6 +27,11 @@ UPDATE changes the rows of a table, or through an updatable view of the
 table it is drawn from, for which the search condition is true; every
 row, without WHERE. Each SET clause gives a column its new value: a
 value, the null value, or its default.
+
+`SET A[i] = v` of an array column sets its element i alone, from 1. Past
+the array's last element, the array is first extended with nulls to i.
+The index is a literal or a parameter. The column is set once in the
+statement, whole or by one element.
 
 Each value is computed from the row as it was before the statement: SET
 A = B, B = A exchanges the two. The search condition is evaluated for
@@ -54,6 +61,8 @@ in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
 5. The transaction is not READ ONLY, but for a temporary table.
 6. A generated column, or an identity column GENERATED ALWAYS, is set
    only to DEFAULT.
+7. An element is set of an array column, at an index from 1 to its
+   maximum cardinality, of an array not null.
 
 ## PRIVILEGES
 
@@ -70,6 +79,8 @@ privilege beyond UPDATE.
 | 23000 | -201 | A row as changed breaks a constraint |
 | 44000 | -201 | A row changed through a view WITH CHECK OPTION is no longer a row of the view |
 | 22xxx | -301 | A data exception as a value is computed or assigned |
+| 2202E | -301 | An element set at an index not from 1 to the maximum cardinality (rule 7) |
+| 2200E | -301 | An element set of a null array (rule 7) |
 | TB911 | -911 | A row was written by another transaction, not committed under LOCKS.WAIT OFF, or committed after this one's snapshot at REPEATABLE READ or SERIALIZABLE; or a wait for it would deadlock or passed LOCKS.TIMEOUT_MS: the statement is undone, and may be run again |
 | 25000 | -917 | The transaction is READ ONLY |
 | 02000 | 100 | Not an error: no row was changed |
@@ -125,6 +136,31 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): column TICKET is generated always, so i
 (4 rows)
 ```
 
+Of a table of arrays:
+
+```sql
+CREATE TABLE SHIFTS (ID INTEGER PRIMARY KEY, DAYS CHAR(3) ARRAY[7]);
+INSERT INTO SHIFTS VALUES (1, ARRAY['MON', 'TUE']), (2, NULL);
+UPDATE SHIFTS SET DAYS[4] = 'FRI' WHERE ID = 1;
+SELECT DAYS FROM SHIFTS WHERE ID = 1;
+UPDATE SHIFTS SET DAYS[8] = 'SUN' WHERE ID = 1;
+UPDATE SHIFTS SET DAYS[1] = 'SUN' WHERE ID = 2;
+UPDATE SHIFTS SET DAYS[2] = 'WED', DAYS[3] = 'THU' WHERE ID = 1;
+```
+
+```
+OK
+OK
+OK
+ DAYS
+--------------------------------------------
+ ARRAY['MON', 'TUE', NULL, 'FRI']
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2202E): element 8 of an array of maximum cardinality 7 is assigned [ISO/IEC 9075-2:2023 §15.5 GR3b i 4]
+turborel: SQLCODE -301 (SQLSTATE 2200E): an element of a null array is assigned [ISO/IEC 9075-2:2023 §15.5 GR3b i 1]
+turborel: SQLCODE -103 (SQLSTATE 2A000): column DAYS is set twice [X3.135-1986 §8.12 SR4] (at character 35)
+```
+
 Changes refused:
 
 ```sql
@@ -142,8 +178,9 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): a value of a SET clause contains no set
 ISO/IEC 9075:1992 §13.10, the `<update statement: searched>`, and
 X3.135-1986 §8.12. NULL and DEFAULT as an `<update source>` are SQL-92's
 [§13.9]. The values identity columns and generated columns take are
-ISO/IEC 9075-2:2023 §14.15 SR5 and §15.14. TB911 is this implementation's
-own.
+ISO/IEC 9075-2:2023 §14.15 SR5 and §15.14. An `<update target>` of an
+element is ISO/IEC 9075-2:2023's [§14.15 SR11, GR10b, §15.5 GR3b].
+TB911 is this implementation's own.
 
 ## SEE ALSO
 

@@ -20,8 +20,8 @@ fn session() -> Now {
 }
 
 /// `v` CAST to `t` in `session()`, as its string.
-fn cast(v: Value, t: DataType) -> String {
-    cast_at(v, &t, session()).unwrap().to_string()
+fn cast(v: Value, t: &DataType) -> String {
+    cast_at(v, t, session()).unwrap().to_string()
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.10 GR9-GR11] in a session:
@@ -31,14 +31,14 @@ fn cast(v: Value, t: DataType) -> String {
 #[test]
 fn casts_in_a_session() {
     let zoned = of(Moment::Timestamp, "2024-01-02 03:04:05.678+05:00");
-    assert_eq!(cast(zoned.clone(), DataType::Timestamp { precision: 1, zoned: true }), "2024-01-02 03:04:05.6+05:00");
-    assert_eq!(cast(zoned.clone(), DataType::Timestamp { precision: 0, zoned: false }), "2024-01-01 23:04:05");
-    assert_eq!(cast(zoned.clone(), DataType::Time { precision: 0, zoned: true }), "03:04:05+05:00");
-    assert_eq!(cast(zoned.clone(), DataType::Time { precision: 0, zoned: false }), "23:04:05");
-    assert_eq!(cast(zoned.clone(), DataType::Date), "2024-01-02", "as shown");
+    assert_eq!(cast(zoned.clone(), &DataType::Timestamp { precision: 1, zoned: true }), "2024-01-02 03:04:05.6+05:00");
+    assert_eq!(cast(zoned.clone(), &DataType::Timestamp { precision: 0, zoned: false }), "2024-01-01 23:04:05");
+    assert_eq!(cast(zoned.clone(), &DataType::Time { precision: 0, zoned: true }), "03:04:05+05:00");
+    assert_eq!(cast(zoned.clone(), &DataType::Time { precision: 0, zoned: false }), "23:04:05");
+    assert_eq!(cast(zoned.clone(), &DataType::Date), "2024-01-02", "as shown");
     let time = of(Moment::Time, "22:00:00+02:00");
-    assert_eq!(cast(time.clone(), DataType::Timestamp { precision: 0, zoned: true }), "2024-03-01 22:00:00+02:00", "the session's date");
-    assert_eq!(cast(time, DataType::Time { precision: 0, zoned: false }), "21:00:00");
+    assert_eq!(cast(time.clone(), &DataType::Timestamp { precision: 0, zoned: true }), "2024-03-01 22:00:00+02:00", "the session's date");
+    assert_eq!(cast(time, &DataType::Time { precision: 0, zoned: false }), "21:00:00");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.10 GR5e, GR6e, GR9-GR11,
@@ -51,13 +51,13 @@ fn casts_in_a_session() {
 #[test]
 fn more_casts_in_a_session() {
     let date = of(Moment::Date, "2024-05-06");
-    assert_eq!(cast(date.clone(), DataType::Timestamp { precision: 0, zoned: true }), "2024-05-06 00:00:00+01:00");
-    assert_eq!(cast(date.clone(), DataType::Date), "2024-05-06");
-    assert_eq!(cast(Value::Char("10:00:00-03:00".into()), DataType::Time { precision: 0, zoned: false }), "14:00:00", "its instant");
-    assert_eq!(cast(Value::Char("10:00:00".into()), DataType::Time { precision: 0, zoned: true }), "10:00:00+01:00");
-    assert_eq!(cast(Value::Null, DataType::Date), "NULL");
-    assert_eq!(cast(date.clone(), DataType::varying(10)), "2024-05-06");
-    assert_eq!(cast(Value::Exact(crate::value::Decimal::new(1, 0)), DataType::character(3)), "1  ", "not a datetime: as the type casts");
+    assert_eq!(cast(date.clone(), &DataType::Timestamp { precision: 0, zoned: true }), "2024-05-06 00:00:00+01:00");
+    assert_eq!(cast(date.clone(), &DataType::Date), "2024-05-06");
+    assert_eq!(cast(Value::Char("10:00:00-03:00".into()), &DataType::Time { precision: 0, zoned: false }), "14:00:00", "its instant");
+    assert_eq!(cast(Value::Char("10:00:00".into()), &DataType::Time { precision: 0, zoned: true }), "10:00:00+01:00");
+    assert_eq!(cast(Value::Null, &DataType::Date), "NULL");
+    assert_eq!(cast(date.clone(), &DataType::varying(10)), "2024-05-06");
+    assert_eq!(cast(Value::Exact(crate::value::Decimal::new(1, 0)), &DataType::character(3)), "1  ", "not a datetime: as the type casts");
     for (v, t) in [
         (date, DataType::Time { precision: 0, zoned: false }),
         (of(Moment::Time, "01:00:00"), DataType::Date),

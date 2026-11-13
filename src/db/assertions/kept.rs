@@ -79,11 +79,11 @@ pub(super) fn kept_desc(name: QualifiedName, generation: u32) -> TableDesc {
         generated: None,
     };
     let columns = vec![
-        column("FORM", integer),
-        column("COUNTED", count),
+        column("FORM", integer.clone()),
+        column("COUNTED", count.clone()),
         column("NULLED", count),
         column("UNITS", DataType::Varying { length: 40, units: CharUnits::Characters }),
-        column("SCALE", integer),
+        column("SCALE", integer.clone()),
         column("MOVE", integer),
     ];
     TableDesc { name, columns, constraints: Vec::new(), engine: ROW_STORE.into(), options: Vec::new(), generation, temporary: None }
@@ -271,6 +271,8 @@ pub(super) fn row_totals(form: &Form, row: &Row, tx: &Txn) -> Result<Totals> {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_)) => {
                 return Err(SqlError::new(Code::Api, format!("[DESIGN] {other:?} is no exact number of a SUM or AVG kept")));
             }
@@ -295,7 +297,7 @@ pub(super) fn judged(t: &Totalled, after: &Totals, tx: &Txn) -> Result<Truth> {
         state.extend_from_slice(&after.counted.to_le_bytes());
     }
     put_value(&mut state, &Value::Exact(after.sum.unwrap_or(Decimal::new(0, 0))));
-    let mut accumulator = t.agg.func.0.accumulator(t.agg.result);
+    let mut accumulator = t.agg.func.0.accumulator(t.agg.result.clone());
     accumulator.merge(&state)?;
     compared(accumulator.finish()?, t.op, &t.k, tx)
 }

@@ -2,8 +2,9 @@
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::sync::Arc;
 
-use crate::error::{Code, Result, SqlState, fail, fail_with};
+use crate::error::{Code, Result, SqlState, fail_with};
 
 mod binary;
 pub(crate) mod cast;
@@ -27,7 +28,7 @@ pub use datetime::Datetime;
 pub use decfloat::DecFloat;
 pub use decimal::{Decimal, pow10};
 pub use like::{LikePattern, LikePatterns, collated as like_collated, constant_pattern, constant_prefix, like};
-pub use operators::{ArithOp, CompOp};
+pub use operators::{ArithOp, CompOp, arith};
 pub use types::{Descriptor, SqlType};
 
 // ---------------------------------------------------------------------------
@@ -119,6 +120,8 @@ pub fn spelling(t: &DataType) -> Spelled {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => Spelled::Numeric,
     }
 }
@@ -131,7 +134,7 @@ impl PartialEq for Spelled {
 }
 
 /// A `<data type>` [X3.135-1986 §5.5].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DataType {
     /// CHARACTER(length)
     Character {
@@ -202,6 +205,10 @@ pub enum DataType {
     },
     /// [ISO/IEC 9075:1992 §6.1] INTERVAL `<interval qualifier>`.
     Interval(interval::Qualifier),
+    /// [ISO/IEC 9075-2:2023 §6.1] `<data type>` ARRAY\[n\], an array type.
+    Array(Arc<types::ArrayType>),
+    /// [ISO/IEC 9075-2:2023 §6.1] ROW(field type, ...): a row type.
+    Row(Arc<types::RowType>),
     /// A type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionType),
 }
@@ -236,8 +243,15 @@ impl DataType {
         matches!(self, DataType::Exact { .. } | DataType::Approximate { .. } | DataType::DecFloat { .. })
     }
     /// [X3.135-1986 §4.2] Whether its values compare with those of `other`,
-    /// as its kind says.
+    /// as its kind says: arrays whose element types do [ISO/IEC 9075-2:2023
+    /// §4.12.4], rows of one degree whose fields do [§4.10].
     pub fn comparable(&self, other: &DataType) -> bool {
+        if let (DataType::Array(a), DataType::Array(b)) = (self, other) {
+            return a.element.comparable(&b.element);
+        }
+        if let (DataType::Row(a), DataType::Row(b)) = (self, other) {
+            return a.fields.len() == b.fields.len() && a.fields.iter().zip(&b.fields).all(|(x, y)| x.data_type.comparable(&y.data_type));
+        }
         self.kind().comparable(other)
     }
 }
@@ -276,6 +290,10 @@ pub enum Value {
     Datetime(Datetime),
     /// [ISO/IEC 9075:1992 §4.5.2] An interval.
     Interval(interval::Interval),
+    /// [ISO/IEC 9075-2:2023 §4.12.2] An array: its elements, in order.
+    Array(Arc<[Value]>),
+    /// [ISO/IEC 9075-2:2023 §4.10] A row: its fields' values, in order.
+    Row(Arc<[Value]>),
     /// A value of a type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionValue),
 }
@@ -298,6 +316,8 @@ impl Value {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_) => None,
         }
     }
@@ -310,7 +330,14 @@ impl Value {
             Value::Approx(f) => Value::Approx(-f),
             Value::DecFloat(d) => Value::DecFloat(d.negated()),
             Value::Interval(i) => Value::Interval(interval::Interval { units: i.units.saturating_neg(), ..*i }),
-            Value::Null | Value::Char(_) | Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_) => self.clone(),
+            Value::Null
+            | Value::Char(_)
+            | Value::Binary(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Array(_)
+            | Value::Row(_)
+            | Value::Extension(_) => self.clone(),
         }
     }
 
@@ -338,6 +365,7 @@ impl Value {
             Value::Bool(b) => NormKey::Bool(*b),
             Value::Datetime(d) => NormKey::Instant(d.utc),
             Value::Interval(i) => NormKey::Span(i.units),
+            Value::Array(p) | Value::Row(p) => types::composite::norm_parts(p),
             // Equal values of a kind beyond the standard have the same bytes
             // (`SqlType`'s contract).
             Value::Extension(e) => NormKey::Extension(Box::new((e.kind.name().to_owned(), e.bytes.to_vec()))),
@@ -359,6 +387,7 @@ impl fmt::Display for Value {
             Value::Bool(b) => f.write_str(if *b { crate::lexer::kw::TRUE } else { crate::lexer::kw::FALSE }),
             Value::Datetime(d) => write!(f, "{d}"),
             Value::Interval(i) => write!(f, "{i}"),
+            Value::Array(_) | Value::Row(_) => f.write_str(&self.to_literal()),
             Value::Extension(e) => f.write_str(&e.kind.text(self)),
         }
     }
@@ -389,64 +418,8 @@ pub enum NormKey {
     /// A kind beyond the standard's name, and the value's bytes: boxed, so
     /// a key of the standard's types stays small.
     Extension(Box<(String, Vec<u8>)>),
-}
-
-/// [X3.135-1986 §5.9] apply a dyadic operator.
-///
-/// # Errors
-///
-/// SQLCODE -301 for a zero divisor [X3.135-1986 §5.9 GR5], a result out of
-/// range [X3.135-1986 §5.9 GR6], or a character string operand; of
-/// intervals and datetimes, as `interval::add`, `scale` and `shift` say.
-pub fn arith(op: ArithOp, a: &Value, b: &Value) -> Result<Value> {
-    match (a, b) {
-        // [X3.135-1986 §5.9 GR1] if any <primary> is null, the result is null.
-        (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
-        // [X3.135-1986 §5.9 SR4] exact op exact is exact.
-        (Value::Exact(x), Value::Exact(y)) => Ok(Value::Exact(match op {
-            ArithOp::Add => x.checked_add(*y)?,
-            ArithOp::Sub => x.checked_sub(*y)?,
-            ArithOp::Mul => x.checked_mul(*y)?,
-            ArithOp::Div => x.checked_div(*y)?,
-        })),
-        // [ISO/IEC 9075-2:2023 §6.30 SR1a] DECFLOAT if either is.
-        (Value::DecFloat(_), Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_))
-        | (Value::Exact(_) | Value::Approx(_), Value::DecFloat(_)) => types::decfloat_arith(op, a, b),
-        // [ISO/IEC 9075:1992 §6.14, §6.15] of intervals and datetimes.
-        (Value::Interval(x), Value::Interval(y)) => interval::add(x, y, op == ArithOp::Sub),
-        (Value::Interval(x), Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_)) => interval::scale(x, op, b),
-        (Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_), Value::Interval(y)) => interval::scale(y, op, a),
-        (Value::Datetime(d), Value::Interval(i)) => interval::shift(d, i, op == ArithOp::Sub),
-        (Value::Interval(i), Value::Datetime(d)) => interval::shift(d, i, false),
-        // [X3.135-1986 §5.9 SR5] if either operand is approximate, the result is approximate.
-        _ => match (a.as_f64(), b.as_f64()) {
-            (Some(x), Some(y)) => approximate(op, x, y),
-            // The binder refuses this; a plug-in function's value may not.
-            _ => fail(Code::Data, "[X3.135-1986 §5.9 SR3] character string values cannot be used with arithmetic operators"),
-        },
-    }
-}
-
-/// [X3.135-1986 §5.9 SR5] an operator applied to approximate operands.
-fn approximate(op: ArithOp, x: f64, y: f64) -> Result<Value> {
-    if op == ArithOp::Div && y == 0.0_f64 {
-        return fail_with(Code::Data, SqlState::DIVISION_BY_ZERO, "[X3.135-1986 §5.9 GR5] a divisor shall not be 0");
-    }
-    let r = match op {
-        ArithOp::Add => x + y,
-        ArithOp::Sub => x - y,
-        ArithOp::Mul => x * y,
-        ArithOp::Div => x / y,
-    };
-    if r.is_finite() {
-        Ok(Value::Approx(r))
-    } else {
-        fail_with(
-            Code::Data,
-            SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
-            "[X3.135-1986 §5.9 SR5] the approximate result is outside the range of this implementation's approximate numbers",
-        )
-    }
+    /// An array's or a row's parts, each's form.
+    Composite(Vec<NormKey>),
 }
 
 /// [ISO/IEC 9075:1992 §9.2 GR2, GR3] Store assignment of `v` to a column,
@@ -531,7 +504,14 @@ pub fn sort_cmp(a: &Value, b: &Value) -> Ordering {
                 Ordering::Greater
             }
         }
-        (false, false) => compare(a, b).unwrap_or(Ordering::Equal),
+        (false, false) => match (a, b) {
+            // [ISO/IEC 9075-2:2023 §10.10 GR2] Rows field by field, each
+            // null placed as a value is.
+            (Value::Row(x), Value::Row(y)) | (Value::Array(x), Value::Array(y)) => {
+                x.iter().zip(y.iter()).map(|(p, q)| sort_cmp(p, q)).find(|o| o.is_ne()).unwrap_or_else(|| x.len().cmp(&y.len()))
+            }
+            _ => compare(a, b).unwrap_or(Ordering::Equal),
+        },
     }
 }
 

@@ -47,6 +47,10 @@ choices:
 | A recursive query with no fixpoint | refused after EXECUTOR.MAX_ITERATIONS iterations, a million unless the session sets another, 0 for no limit |
 | How a recursive query is evaluated | over every row each iteration, as the standard says, or over only the rows the last iteration added where that gives the same rows |
 | The order of a recursive query's rows | as they are found, unless ORDER BY orders them |
+| An array type's maximum cardinality written without one; the greatest | 65,535; 65,535 |
+| The names of a row's fields made of values, as by ROW(...) | F1, F2 and so on, by place, described as UNNAMED |
+| UNNEST's ordinality column | INTEGER |
+| The order of ARRAY_AGG's elements without ORDER BY | as the rows are read |
 | Which identifiers are users | any, of a program's own session; of a server's client, the users the database keeps |
 
 [CONFORMANCE.md](../../CONFORMANCE.md) lists each choice with the rule

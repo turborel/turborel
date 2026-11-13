@@ -201,7 +201,7 @@ fn kept(t: &DataType) -> bool {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_) => true,
-        DataType::Binary { .. } | DataType::VarBinary { .. } | DataType::Extension(_) => false,
+        DataType::Binary { .. } | DataType::VarBinary { .. } | DataType::Array(_) | DataType::Row(_) | DataType::Extension(_) => false,
     }
 }
 
@@ -255,7 +255,7 @@ impl Zones {
     pub(super) fn new(types: &[DataType], keeping: bool, place: Option<Place>) -> Zones {
         let kept_columns: Vec<usize> =
             if keeping { types.iter().enumerate().filter(|(_, t)| kept(t)).map(|(c, _)| c).collect() } else { Vec::new() };
-        let kept_types: Vec<DataType> = kept_columns.iter().filter_map(|&c| types.get(c).copied()).collect();
+        let kept_types: Vec<DataType> = kept_columns.iter().filter_map(|&c| types.get(c).cloned()).collect();
         let place = place.filter(|_| !kept_columns.is_empty());
         Zones {
             kept: kept_columns,

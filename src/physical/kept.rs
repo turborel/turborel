@@ -123,7 +123,7 @@ fn slot_equal(conds: &[Cond], column: usize, data_type: &DataType) -> Option<(Sl
             | Cond::Match { .. }
             | Cond::Value(_) => return None,
         };
-        placed_as_is(&slot.data_type, data_type).then_some((*slot, at))
+        placed_as_is(&slot.data_type, data_type).then_some((slot.clone(), at))
     })
 }
 
@@ -150,6 +150,7 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
         | Plan::Append { .. }
         | Plan::Sort { .. }
         | Plan::Recursive { .. }
+        | Plan::Unnest(..)
         | Plan::WorkTable { .. } => false,
     }
 }
@@ -192,6 +193,7 @@ pub(crate) fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
         | Plan::System { .. }
         | Plan::Values { .. }
         | Plan::Recursive { .. }
+        | Plan::Unnest(..)
         | Plan::WorkTable { .. } => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
     }
 }
@@ -213,7 +215,7 @@ fn filled_scan(mut plan: Plan, values: &[Value]) -> Result<Plan> {
 ///
 /// As `logical::filled`; SQLCODE -910 if the probe has no such place.
 fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
-    let value = match filled_expr(Expr::Dynamic(s.slot), values)? {
+    let value = match filled_expr(Expr::Dynamic(s.slot.clone()), values)? {
         Expr::Const(value) => value,
         Expr::Column(_)
         | Expr::Dynamic(_)

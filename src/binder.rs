@@ -29,6 +29,8 @@ use crate::value::datetime::Clocked;
 mod arguments;
 mod case;
 mod collation;
+mod composite;
+pub(crate) use composite::grouping_operand;
 mod cursor;
 mod datetime;
 mod interval;
@@ -53,6 +55,7 @@ mod strata;
 mod subquery;
 mod trim;
 mod underlying;
+mod unnest;
 mod values;
 mod views;
 mod with;
@@ -450,7 +453,7 @@ impl Binder<'_> {
             Some(q) => self.qualified(q, &cs.column)?,
             None => self.unqualified(&cs.column)?,
         };
-        Ok((self.note(item, i)?, col.data_type, col.not_null && !item.nullable))
+        Ok((self.note(item, i)?, col.data_type.clone(), col.not_null && !item.nullable))
     }
 
     /// Whether `c` is a column the FROM clause's results have.
@@ -533,7 +536,7 @@ impl Binder<'_> {
     /// `scope` sees. In a group it must be a grouping column [X3.135-1986
     /// §5.25 SR7, §5.23 SR1]; in a constraint, a grouping column not a
     /// character string one [ISO/IEC 9075:1992 §11.9 SR6, §7.8 SR3b, §7.9 SR13c ii].
-    fn column_in(&self, pos: usize, t: DataType, scope: Scope<'_>) -> Result<usize> {
+    fn column_in(&self, pos: usize, t: &DataType, scope: Scope<'_>) -> Result<usize> {
         let Scope::Groups(g, why) = scope else { return Ok(pos) };
         let at = g
             .columns

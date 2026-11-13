@@ -4,7 +4,7 @@
 //! primaries (`parser/primary.rs`).
 
 use super::{Parser, furthest};
-use crate::ast::{Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression, WhenOperand};
+use crate::ast::{Composite, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression, WhenOperand};
 use crate::catalog::MatchType;
 use crate::error::Result;
 use crate::functions::{CONCATENATION, FLAG, LIKE_REGEX};
@@ -119,7 +119,13 @@ impl Parser {
         let row = match (self.at_predicate_operator(), <[ValueExpression; 1]>::try_from(value)) {
             (false, Ok([v])) => return Ok(SearchCondition::Predicand(Box::new(v), at)),
             (true, Ok(one)) => Vec::from(one),
-            (false | true, Err(row)) => row,
+            // [ISO/IEC 9075-2:2023 §7.1] a row value constructor of no
+            // predicate: a value of a row type.
+            (false, Err(row)) => {
+                let constructed = ValueExpression::Composite(Box::new(Composite::Row(row)), at);
+                return Ok(SearchCondition::Predicand(Box::new(constructed), at));
+            }
+            (true, Err(row)) => row,
         };
         self.predicate_rest(row).map(predicate)
     }
@@ -524,6 +530,7 @@ impl Parser {
     fn qualified_primary(&mut self) -> Result<ValueExpression> {
         let at = self.here();
         let primary = self.primary()?;
+        let primary = self.postfixed(primary)?;
         self.qualified(primary, at)
     }
 }

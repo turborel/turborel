@@ -21,7 +21,7 @@ fn five_rows() -> Database {
 /// K_OUT, the target, and J, a number.
 fn params(j: Value) -> Params {
     let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    Params::new().declare("K_OUT", integer, Value::Null).declare("J", integer, j)
+    Params::new().declare("K_OUT", integer.clone(), Value::Null).declare("J", integer, j)
 }
 
 /// The K that `FETCH how FROM C` gives, none for no data.

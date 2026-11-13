@@ -21,6 +21,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, Token, delim, kw, lex};
 
 mod charsets;
+mod composite;
 mod connections;
 mod constraints;
 mod contents;

@@ -31,7 +31,7 @@ impl ScalarFunction for Assigned {
         "ASSIGN"
     }
     fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
-        Ok(self.to)
+        Ok(self.to.clone())
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         assign(args.first().cloned().unwrap_or(Value::Null), &self.to, ARGUMENT_RULE)
@@ -54,11 +54,25 @@ impl Binder<'_> {
         args: &[ValueExpression],
         scope: Scope<'_>,
     ) -> Result<(Vec<Expr>, Vec<DataType>)> {
-        let mut bound = Vec::new();
-        for a in args {
-            bound.push(if dynamic_of(a).is_some() { None } else { Some(self.value_expression(a, scope)?) });
-        }
-        let known: Vec<Option<DataType>> = bound.iter().map(|b| b.as_ref().map(|(_, t)| *t)).collect();
+        let bound = self.prebound(args, scope)?;
+        self.arguments_of(f, args, bound, scope)
+    }
+
+    /// `args` bound, each but a `<dynamic parameter specification>`, which
+    /// takes its type from the others.
+    pub(super) fn prebound(&self, args: &[ValueExpression], scope: Scope<'_>) -> Result<Vec<Option<(Expr, DataType)>>> {
+        args.iter().map(|a| if dynamic_of(a).is_some() { Ok(None) } else { self.value_expression(a, scope).map(Some) }).collect()
+    }
+
+    /// `arguments`, of `args` bound as `prebound` binds them.
+    pub(super) fn arguments_of(
+        &self,
+        f: &dyn ScalarFunction,
+        args: &[ValueExpression],
+        bound: Vec<Option<(Expr, DataType)>>,
+        scope: Scope<'_>,
+    ) -> Result<(Vec<Expr>, Vec<DataType>)> {
+        let known: Vec<Option<DataType>> = bound.iter().map(|b| b.as_ref().map(|(_, t)| t.clone())).collect();
         let mut out = Vec::new();
         for (position, (slot, a)) in bound.into_iter().zip(args).enumerate() {
             let given = match (slot, f.parameter_type(position, &known)) {
@@ -95,7 +109,7 @@ impl Binder<'_> {
                 f.name()
             )));
         }
-        let stored = datetime::stored(e, t, to, self.now);
-        Ok((Expr::Call(ScalarRef(Arc::new(Assigned { to })), vec![stored]), to))
+        let stored = datetime::stored(e, t, &to.clone(), self.now);
+        Ok((Expr::Call(ScalarRef(Arc::new(Assigned { to: to.clone() })), vec![stored]), to))
     }
 }

@@ -37,6 +37,9 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 07007 | Dynamic SQL error: an INTO clause is needed for the columns |
 | 07008 | Dynamic SQL error: invalid descriptor count: COUNT less than 0 or more than the occurrences |
 | 07009 | Dynamic SQL error: invalid descriptor index: an item number not of the occurrences |
+| 0700C | Dynamic SQL error: undefined DATA value: DATA got of an item of a row, or of an array's element |
+| 0700D | Dynamic SQL error: invalid DATA target: DATA set of an item of a row, or of an array's element |
+| 0700E | Dynamic SQL error: invalid LEVEL value: a LEVEL set out of order with the items before it |
 | 08000 | Connection exception |
 | 08001 | Connection exception: the client cannot connect |
 | 08002 | Connection exception: connection name in use |
@@ -54,6 +57,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22005 | Error in assignment |
 | 22007 | Invalid datetime format |
 | 22008 | Datetime field overflow |
+| 2200E | Null value in array target: an element assigned of a null array |
 | 2200H | Sequence generator limit exceeded: NEXT VALUE FOR of a generator of NO CYCLE past its last value |
 | 22009 | Invalid time zone displacement value |
 | 22011 | Substring error |
@@ -68,6 +72,8 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22022 | Indicator overflow |
 | 22025 | Invalid escape sequence |
 | 22027 | Trim error |
+| 2202E | Array element error: an element referenced not of the array, or an array trimmed of more elements than it has |
+| 2202F | Array data, right truncation: an array of more elements than its target's maximum cardinality |
 | 23000 | Integrity constraint violation |
 | 24000 | Invalid cursor state |
 | 25000 | Invalid transaction state |
@@ -85,7 +91,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 36002 | Cursor sensitivity exception: request failed, of TRUNCATE TABLE while a cursor of the transaction reads the table |
 | 37000 | Syntax error or access rule violation in a dynamic SQL statement |
 | 3C000 | Ambiguous cursor name: a cursor declared and one allocated, of one name |
-| 3D000 | Invalid catalog name |
+| 3D000 | Invalid catalog name: an identifier chain of four or more that names no catalog, column or field |
 | 3F000 | Invalid schema name |
 | 40000 | Transaction rollback |
 | 40001 | Transaction rollback: serialization failure |

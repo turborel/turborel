@@ -21,6 +21,7 @@ use crate::ast::ParameterSpecification;
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, lex};
 use crate::value::Spelled;
+use crate::value::types::MAX_TYPE_NESTING;
 use crate::value::{DataType, Decimal, INDICATOR_PRECISION, MAX_CHARACTER_LENGTH, Value, assign};
 
 /// A `<parameter declaration>` [X3.135-1986 §7.3] with its argument.
@@ -127,7 +128,7 @@ impl Params {
 
     /// [X3.135-1986 §5.6 SR2] an indicator parameter is exact numeric with scale 0.
     pub(crate) fn check_indicator(&self, name: &str) -> Result<()> {
-        match self.get(name).map(|p| p.data_type) {
+        match self.get(name).map(|p| p.data_type.clone()) {
             Some(DataType::Exact { scale: 0, .. }) => Ok(()),
             _ => Err(SqlError::new(
                 Code::SyntaxRule,
@@ -145,7 +146,7 @@ impl Params {
         if let Some(ind) = &spec.indicator {
             self.check_indicator(ind)?;
             if self.indicator_value(ind).unwrap_or(0) < 0 {
-                return Ok((Value::Null, p.data_type));
+                return Ok((Value::Null, p.data_type.clone()));
             }
         }
         if p.value.is_null() {
@@ -154,25 +155,39 @@ impl Params {
                 p.name
             )));
         }
-        if !argument_fits(&p.value, p.data_type) {
+        if !argument_fits(&p.value, &p.data_type, 0) {
             return Err(api(format!(
                 "[DESIGN] the argument {} of parameter {} does not fit its declared type {}",
                 p.value, p.name, p.data_type
             )));
         }
-        Ok((assign(p.value.clone(), &p.data_type, "X3.135-1986 §5.6 GR1")?, p.data_type))
+        Ok((assign(p.value.clone(), &p.data_type, "X3.135-1986 §5.6 GR1")?, p.data_type.clone()))
     }
 }
 
 /// \[DESIGN\] Whether a host program's argument `value` suits a parameter of
-/// type `data_type`: a string no longer than the length, an exact number for an
-/// exact parameter, any number for an approximate one; a binary string, a
-/// truth value, a datetime, an interval or a plug-in type's value for a parameter of its
-/// kind, its length, fields and precision then as its assignment checks
-/// them.
-fn argument_fits(value: &Value, data_type: DataType) -> bool {
+/// type `data_type`, `depth` levels inside a composite argument. A string
+/// suits one no longer than its length, an exact number an exact
+/// parameter, any number an approximate one. A binary string, a truth
+/// value, a datetime, an interval or a plug-in type's value suits a
+/// parameter of its kind, its length, fields and precision then as its
+/// assignment checks them. An array suits an array type whose maximum
+/// cardinality it is within, each element null or suiting the element
+/// type. A row suits a row type of its degree, each field null or suiting
+/// the field's type. A type is nested at most `MAX_TYPE_NESTING` deep.
+fn argument_fits(value: &Value, data_type: &DataType, depth: usize) -> bool {
     if let (Value::Char(s), DataType::Character { length, units } | DataType::Varying { length, units }) = (value, data_type) {
-        return usize::try_from(length).is_ok_and(|l| units.count(s) <= l);
+        return usize::try_from(*length).is_ok_and(|l| units.count(s) <= l);
+    }
+    if let (Value::Array(elements), DataType::Array(a)) = (value, data_type) {
+        return depth < MAX_TYPE_NESTING
+            && usize::try_from(a.max).is_ok_and(|max| elements.len() <= max)
+            && elements.iter().all(|e| e.is_null() || argument_fits(e, &a.element, depth.saturating_add(1)));
+    }
+    if let (Value::Row(fields), DataType::Row(r)) = (value, data_type) {
+        return depth < MAX_TYPE_NESTING
+            && fields.len() == r.fields.len()
+            && fields.iter().zip(&r.fields).all(|(v, f)| v.is_null() || argument_fits(v, &f.data_type, depth.saturating_add(1)));
     }
     matches!(
         (value, data_type),

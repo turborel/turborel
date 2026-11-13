@@ -48,6 +48,8 @@ fn length_of(t: &DataType) -> u32 {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => 0,
     }
 }
@@ -156,6 +158,8 @@ impl SqlType for BinaryKind {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_) => uncastable(&v, t).map(|cast| (cast, None)),
         }
     }

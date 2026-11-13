@@ -36,6 +36,8 @@ fn fits(t: &DataType, q: Qualifier) -> bool {
         | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => false,
     };
     q.fields().all(has)
@@ -75,7 +77,7 @@ impl ScalarFunction for AtZone {
         "AT TIME ZONE"
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
-        Ok(args.first().copied().unwrap_or(DataType::Date))
+        Ok(args.first().cloned().unwrap_or(DataType::Date))
     }
     /// [GR2] null of a null displacement; [GR4b] 22009 of one out of
     /// -12:59 to +13:00.
@@ -112,6 +114,8 @@ fn zoned(t: DataType) -> DataType {
         | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => t,
     }
 }
@@ -220,11 +224,11 @@ impl Binder<'_> {
         let arith = |x: Expr, y: Expr| Expr::Arith(Box::new(x), op, Box::new(y));
         if ta.is_datetime() && additive {
             let q = qualifier(&tb).ok_or_else(|| not_interval(&tb))?;
-            return if dynamic || fits(&ta, q) { Ok((arith(shown(a, ta, self.now), b), ta)) } else { Err(not_added(&ta, q)) };
+            return if dynamic || fits(&ta, q) { Ok((arith(shown(a, ta.clone(), self.now), b), ta)) } else { Err(not_added(&ta, q)) };
         }
         if tb.is_datetime() && op == ArithOp::Add {
             let q = qualifier(&ta).ok_or_else(|| not_interval(&ta))?;
-            return if dynamic || fits(&tb, q) { Ok((arith(a, shown(b, tb, self.now)), tb)) } else { Err(not_added(&tb, q)) };
+            return if dynamic || fits(&tb, q) { Ok((arith(a, shown(b, tb.clone(), self.now)), tb)) } else { Err(not_added(&tb, q)) };
         }
         let refused = || rule(format!("[ISO/IEC 9075:1992 §6.14, §6.15] {ta} {} {tb} is no datetime or interval arithmetic", op.symbol()));
         let number = |t: &DataType| t.is_numeric();
@@ -282,7 +286,7 @@ impl Binder<'_> {
         if !matches!(t, DataType::Time { .. } | DataType::Timestamp { .. }) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §6.14 SR1, SR5a] {t} has no time zone")));
         }
-        let mut args = vec![shown(e, t, self.now)];
+        let mut args = vec![shown(e, t.clone(), self.now)];
         if let Some(z) = zone {
             let (ze, zt) = self.value_expression(z, scope)?;
             if !is_displacement(&zt) {
@@ -303,16 +307,16 @@ impl Binder<'_> {
         let ((d1, e1, type1), (d2, e2, type2)) = match (dynamic(left), dynamic(right)) {
             (true, false) => {
                 let later = self.period(right, None, scope)?;
-                (self.period(left, Some(later.2), scope)?, later)
+                (self.period(left, Some(later.2.clone()), scope)?, later)
             }
             (false, true) => {
                 let earlier = self.period(left, None, scope)?;
-                let later = self.period(right, Some(earlier.2), scope)?;
+                let later = self.period(right, Some(earlier.2.clone()), scope)?;
                 (earlier, later)
             }
             (both, _) => {
                 let zoned = both.then_some(DataType::Timestamp { precision: MAX_TIME_PRECISION, zoned: true });
-                (self.period(left, zoned, scope)?, self.period(right, zoned, scope)?)
+                (self.period(left, zoned.clone(), scope)?, self.period(right, zoned, scope)?)
             }
         };
         if !type1.comparable(&type2) {
@@ -345,7 +349,7 @@ impl Binder<'_> {
         if !fits(&td, q) {
             return Err(not_added(&td, q));
         }
-        let end = Expr::Arith(Box::new(shown(d.clone(), td, self.now)), ArithOp::Add, Box::new(x));
+        let end = Expr::Arith(Box::new(shown(d.clone(), td.clone(), self.now)), ArithOp::Add, Box::new(x));
         Ok((d, end, td))
     }
 }

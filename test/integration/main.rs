@@ -32,6 +32,7 @@ mod collated_indexes;
 mod collation_usage;
 mod collations;
 mod common;
+mod composite_columns;
 mod concepts;
 /// The fixtures over a database and the suites every log passes, written
 /// once in `support/` for the tests of the replicated log too (RULES.md
@@ -46,6 +47,7 @@ mod ident;
 #[path = "../../support/src/logs.rs"]
 mod logs;
 
+mod arrays;
 mod assertion_changes;
 mod assertion_forms;
 mod assertion_queries;
@@ -72,6 +74,7 @@ mod ddl;
 mod decfloat;
 mod defaults;
 mod deferred;
+mod descriptor_nesting;
 mod descriptor_types;
 mod descriptors;
 mod diagnostics;
@@ -142,6 +145,7 @@ mod reopen;
 mod replicated_state;
 mod revoke;
 mod row_waits;
+mod rows;
 mod rowstore;
 mod rule_settings;
 mod schema_statements;
@@ -182,6 +186,7 @@ mod type_contract;
 mod typed_vectors;
 mod unique_checks;
 mod unique_nulls;
+mod unnest;
 mod users;
 mod varying;
 mod vector_operators;

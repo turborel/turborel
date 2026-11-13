@@ -9,9 +9,11 @@
 //! begins a transaction is the prepared statement's to say [§4.22.6].
 
 use super::descriptor::Item;
+use super::nested::described;
 use super::using::Targets;
 use super::{Name, dynamic_error, value_of};
 use crate::ast::{DynamicName, ExecuteStatement, ExtendedName, UsingClause, ValueSpecification};
+use crate::binder::OutColumn;
 use crate::db::prepared::{Preparer, in_dynamic};
 use crate::db::{Completion, Prepared, Session, State, cursor_error};
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -116,20 +118,35 @@ impl Session {
 
     /// [ISO/IEC 9075:1992 §17.8] DESCRIBE: the SQL descriptor area set as
     /// §17.9 GR3 or GR4 says, of the statement's `<select list>` columns,
-    /// OUTPUT, or of its `<dynamic parameter specification>`s, INPUT.
+    /// OUTPUT, or of its `<dynamic parameter specification>`s, INPUT;
+    /// [ISO/IEC 9075-2:2023 §20.10] WITH NESTING, each of a row type or an
+    /// array type followed by its subordinate items.
     ///
     /// # Errors
     ///
     /// SQLSTATE 26000 if no statement of the name is prepared \[GR1\]; 33000
     /// if no area of the descriptor's name is allocated [§17.9 GR2].
-    pub(super) fn describe(&self, input: bool, name: &DynamicName, descriptor: &ExtendedName, params: &Params) -> Result<Completion> {
+    pub(super) fn describe(
+        &self,
+        (input, nesting): (bool, bool),
+        name: &DynamicName,
+        descriptor: &ExtendedName,
+        params: &Params,
+    ) -> Result<Completion> {
         let key = self.statement_key(name, params, "§17.8 GR1")?;
         let prepared = self.prepared_as(&key, "§17.8 GR1")?;
         let catalog = self.catalog_now()?;
+        // [ISO/IEC 9075-2:2023 §20.10 GR5, GR6f] WITH NESTING, each item's
+        // subordinate items after it.
         let items: Vec<Item> = if input {
-            prepared.parameters().iter().map(|t| Item::described(t.data_type(), None, true, &catalog)).collect()
+            let item = |t: DataType| described(&t.clone(), Item::described(t, None, true, &catalog), nesting, &catalog);
+            prepared.parameters().iter().flat_map(|p| item(p.clone().data_type())).collect()
         } else {
-            prepared.columns().iter().map(|c| Item::described(c.data_type, c.name.as_deref(), !c.not_null, &catalog)).collect()
+            let item = |c: &OutColumn| {
+                let top = Item::described(c.data_type.clone(), c.name.as_deref(), !c.not_null, &catalog);
+                described(&c.data_type, top, nesting, &catalog)
+            };
+            prepared.columns().iter().flat_map(item).collect()
         };
         self.describe_into(descriptor, params, items)
     }
@@ -173,7 +190,7 @@ impl Session {
     ) -> Result<Completion> {
         let key = self.statement_key(name, params, "§17.10 GR1")?;
         let prepared = self.prepared_as(&key, "§17.10 GR1")?;
-        let types: Vec<DataType> = prepared.parameters().iter().map(|t| t.data_type()).collect();
+        let types: Vec<DataType> = prepared.parameters().iter().map(|t| t.clone().data_type()).collect();
         if !prepared.is_query() {
             // [§17.9 GR6] a statement of no row: of degree 0.
             if let Some(result) = result {

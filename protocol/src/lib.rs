@@ -145,7 +145,7 @@ pub struct Column {
 
 impl From<&OutColumn> for Column {
     fn from(c: &OutColumn) -> Column {
-        Column { name: c.name.clone(), data_type: c.data_type, not_null: c.not_null }
+        Column { name: c.name.clone(), data_type: c.data_type.clone(), not_null: c.not_null }
     }
 }
 

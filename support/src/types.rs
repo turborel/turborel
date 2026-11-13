@@ -96,7 +96,9 @@ impl SqlType for Ident {
             | Value::Binary(_)
             | Value::Bool(_)
             | Value::Datetime(_)
-            | Value::Interval(_) => Err(mismatch(&v)),
+            | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_) => Err(mismatch(&v)),
         }
     }
 

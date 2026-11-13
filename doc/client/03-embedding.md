@@ -322,7 +322,7 @@ impl ScalarFunction for Twice {
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         match args {
-            [exact @ DataType::Exact { .. }] => Ok(*exact),
+            [exact @ DataType::Exact { .. }] => Ok(exact.clone()),
             _ => fail(Code::SyntaxRule, "TWICE takes one exact number"),
         }
     }

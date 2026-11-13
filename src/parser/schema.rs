@@ -318,10 +318,14 @@ impl Parser {
 
     /// [ISO/IEC 9075:1992 §11.5] `<default option>` ::= `<literal>` |
     /// `<datetime value function>` | USER | CURRENT_USER | SESSION_USER |
-    /// SYSTEM_USER | NULL, after DEFAULT.
+    /// SYSTEM_USER | NULL, after DEFAULT; or [ISO/IEC 9075-2:2023 §11.5]
+    /// an `<empty specification>`.
     pub(super) fn default_option(&mut self) -> Result<DefaultOption> {
         if self.accept_kw(kw::NULL) {
             return Ok(DefaultOption::Null);
+        }
+        if self.empty_specification() {
+            return Ok(DefaultOption::Empty);
         }
         if let Some(user) = self.user_function() {
             return Ok(DefaultOption::User(user));

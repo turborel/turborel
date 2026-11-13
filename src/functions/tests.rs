@@ -25,7 +25,7 @@ fn approximate_average() {
 /// The results of `function`'s accumulator of `result` fed `values`, at
 /// `rows` or all, a value at a time and a vector at a time.
 fn both_ways(function: &dyn AggregateFunction, result: DataType, (values, rows): (&[Value], Option<&[usize]>)) -> (String, String) {
-    let mut one = function.accumulator(result);
+    let mut one = function.accumulator(result.clone());
     let picked: Vec<&Value> = match rows {
         Some(rows) => rows.iter().filter_map(|&r| values.get(r)).collect(),
         None => values.iter().collect(),
@@ -47,19 +47,24 @@ fn set_functions_fed_vectors_total_as_values() {
     let mixed = vec![exact(15, 1), Value::Null, exact(-3, 0), exact(250, 2), Value::Approx(0.5_f64), exact(7, 0), Value::Null];
     let numbers = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 2, spelled: Spelled::Numeric };
     let approx = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float };
-    let functions: [(&dyn AggregateFunction, DataType); 5] =
-        [(&Count, numbers), (&Sum, approx), (&Avg, approx), (&Extreme { max: true }, numbers), (&Extreme { max: false }, numbers)];
+    let functions: [(&dyn AggregateFunction, DataType); 5] = [
+        (&Count, numbers.clone()),
+        (&Sum, approx.clone()),
+        (&Avg, approx),
+        (&Extreme { max: true }, numbers.clone()),
+        (&Extreme { max: false }, numbers.clone()),
+    ];
     let exacts: Vec<Value> = mixed.iter().filter(|v| !matches!(v, Value::Approx(_))).cloned().collect();
     for (function, result) in functions {
         for values in [&mixed, &exacts] {
             for rows in [None, Some(&[0_usize, 2, 3, 6][..]), Some(&[][..])] {
-                let (one, many) = both_ways(function, result, (values, rows));
+                let (one, many) = both_ways(function, result.clone(), (values, rows));
                 assert_eq!(one, many, "{} of {values:?} at {rows:?}", function.name());
             }
         }
     }
     let huge = vec![exact(i128::from(u64::MAX).checked_mul(1_000_000_000_000_000_000).unwrap(), 0); 3];
-    let (one, many) = both_ways(&Sum, numbers, (&huge, None));
+    let (one, many) = both_ways(&Sum, numbers.clone(), (&huge, None));
     assert!(one.contains("Err") && one == many, "out of range alike: {many}");
     let mut count = Count.accumulator(numbers);
     count.update_rows(4).unwrap();
@@ -107,17 +112,17 @@ fn set_functions_fed_floats_total_as_values() {
     let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
     for function in functions {
         for rows in [None, Some(&[0_usize, 2, 3, 4][..]), Some(&[1_usize, 6][..])] {
-            let mut by_values = function.accumulator(approx);
+            let mut by_values = function.accumulator(approx.clone());
             by_values.update(&Value::Approx(10.0_f64)).unwrap();
             by_values.update_many(floats.values(), rows).unwrap();
-            let mut by_floats = function.accumulator(approx);
+            let mut by_floats = function.accumulator(approx.clone());
             by_floats.update(&Value::Approx(10.0_f64)).unwrap();
             by_floats.update_floats(&floats, rows).unwrap();
             assert_eq!(format!("{:?}", by_values.finish()), format!("{:?}", by_floats.finish()), "{} at {rows:?}", function.name());
         }
     }
     let huge = Floats::new(vec![f64::MAX, f64::MAX], None);
-    let mut sum = Sum.accumulator(approx);
+    let mut sum = Sum.accumulator(approx.clone());
     sum.update_floats(&huge, None).unwrap();
     let mut by_values = Sum.accumulator(approx);
     by_values.update_many(huge.values(), None).unwrap();
@@ -130,7 +135,8 @@ fn set_functions_fed_floats_total_as_values() {
 /// and of one fed those before `at` that merged the state of one fed the
 /// rest.
 fn merged(function: &dyn AggregateFunction, result: DataType, values: &[Value], at: usize) -> (String, String) {
-    let (mut all, mut before, mut after) = (function.accumulator(result), function.accumulator(result), function.accumulator(result));
+    let (mut all, mut before, mut after) =
+        (function.accumulator(result.clone()), function.accumulator(result.clone()), function.accumulator(result));
     all.update_many(values, None).unwrap();
     before.update_many(&values[..at], None).unwrap();
     after.update_many(&values[at..], None).unwrap();
@@ -161,12 +167,12 @@ fn set_functions_merge_their_states_as_their_values() {
     let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
     for function in functions {
         for at in 0..=numbers.len() {
-            let (all, split) = merged(function, money, &numbers, at);
+            let (all, split) = merged(function, money.clone(), &numbers, at);
             assert_eq!(all, split, "{} split at {at}", function.name());
         }
     }
     let past = [exact(most), exact(most)];
-    assert_eq!(merged(&Sum, money, &past, 1_usize).1, merged(&Sum, money, &past, 0_usize).0, "judged as finished");
+    assert_eq!(merged(&Sum, money.clone(), &past, 1_usize).1, merged(&Sum, money.clone(), &past, 0_usize).0, "judged as finished");
     let q = Qualifier::new(Field::Day, Field::Day, 9, 0);
     let days = |n: i128| Value::Interval(Interval { units: n * unit(Field::Day), qualifier: q });
     let intervals = [days(999_999_999_i128), days(1_i128), days(-1_i128)];
@@ -180,14 +186,14 @@ fn set_functions_merge_their_states_as_their_values() {
     assert_eq!(merged(&Extreme { max: true }, text, &ties, 1_usize).1, "Ok(Char(\"a\"))");
     let double = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float };
     let mut none = Vec::new();
-    assert!(!Sum.accumulator(double).write_state(&mut none) && !Avg.accumulator(double).write_state(&mut none));
+    assert!(!Sum.accumulator(double.clone()).write_state(&mut none) && !Avg.accumulator(double).write_state(&mut none));
     let point = DataType::Extension(ExtensionType { kind: &UNREGISTERED_KIND, params: TypeParams::default() });
     assert!(!Extreme { max: true }.accumulator(point).write_state(&mut none));
     assert!(!Listed(Vec::new()).write_state(&mut none));
     assert_eq!(none.len(), 0_usize, "nothing written");
     assert_eq!(Listed(Vec::new()).merge(&[]).err().map(|e| e.code), Some(Code::Corrupt));
     for function in functions {
-        let refused = function.accumulator(money).merge(&[0xff_u8]).err().map(|e| e.code);
+        let refused = function.accumulator(money.clone()).merge(&[0xff_u8]).err().map(|e| e.code);
         assert_eq!(refused, Some(Code::Corrupt), "{}", function.name());
     }
 }
@@ -203,7 +209,7 @@ fn set_functions_fed_runs_total_as_each() {
     let units: Vec<i64> = [-4, -4, 2, 2, 2, 9].to_vec();
     let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
     let fed = |function: &dyn AggregateFunction, ints: &Ints, rows: Option<&[usize]>| {
-        let mut accumulator = function.accumulator(numbers);
+        let mut accumulator = function.accumulator(numbers.clone());
         format!("{:?}", accumulator.update_ints(ints, rows).and_then(|()| accumulator.finish()))
     };
     for nulls in [None, Some(vec![true, false, false, true, false, true])] {

@@ -328,6 +328,7 @@ a query reads, or of each group of its GROUP BY.
 | SUM(x), AVG(x) | the sum and mean of x; of exact numbers, AVG of the scale 2 more; of DECFLOAT, DECFLOAT(34); of intervals too |
 | MIN(x), MAX(x) | the least and greatest x |
 | EVERY(x) | of a BOOLEAN x, TRUE if each x is TRUE, else FALSE |
+| ARRAY_AGG(x ORDER BY ...) | an array of every x, nulls among them, in the order ORDER BY gives; null of no rows |
 | ANY(x), SOME(x) | of a BOOLEAN x, TRUE if an x is TRUE, else FALSE |
 
 Each but COUNT(*) leaves out the nulls of x, and with DISTINCT counts
@@ -411,6 +412,51 @@ It is written in a select list of a cursor's query, a SELECT INTO or an
 INSERT's query, in an INSERT's VALUES, or in an UPDATE's SET, and in no
 CASE, condition, set function, grouped or DISTINCT query or subquery, where
 a row might take a value it never shows.
+
+## Arrays and rows
+
+An array is made of its elements, `ARRAY[1, 2, 3]`, or of the rows of a
+query of one column, `ARRAY(SELECT ID FROM STAFF ORDER BY ID)`, in the
+order its ORDER BY gives. `ARRAY[]` is an array of no elements, written
+where its type is known, as an INSERT's value or in a CAST. A row is
+made of its fields, `ROW(1, 'Ada')`, named F1, F2 and so on.
+
+| Expression | Value |
+|---|---|
+| a[i] | element i of the array a, from 1; null if a or i is null |
+| CARDINALITY(a) | the elements of a |
+| ARRAY_MAX_CARDINALITY(a) | the maximum cardinality of a's type |
+| TRIM_ARRAY(a, n) | a without its last n elements |
+| a \|\| b | the elements of a, then those of b |
+| r.f, (r).f | the field f of the row r; null if r is null |
+
+An element reference past the cardinality, or TRIM_ARRAY of more
+elements than there are, is refused, SQLSTATE 2202E. A column's field is
+written after the column, `T.C.F` or `C.F`, as far as its rows nest.
+
+```sql
+SELECT ID, ARRAY[ID, ID * 10] AS PAIR, ROW(ID, NAME) AS PERSON FROM STAFF WHERE ID < 3 ORDER BY ID;
+SELECT ARRAY_AGG(NAME ORDER BY SALARY DESC) AS BY_PAY FROM STAFF WHERE SALARY IS NOT NULL;
+VALUES (CARDINALITY(ARRAY[1, 2, 3]), TRIM_ARRAY(ARRAY[1, 2, 3], 1), ARRAY[1] || ARRAY[2, 3], (ROW(1, 'Ada')).F2);
+VALUES (ARRAY[1, 2, 3])[4];
+```
+
+```
+           ID | PAIR                                                | PERSON
+--------------+-----------------------------------------------------+-----------------------------------------------------
+            1 | ARRAY[1, 10]                                        | ROW(1, 'Ada')
+            2 | ARRAY[2, 20]                                        | ROW(2, 'Grace')
+(2 rows)
+ BY_PAY
+--------------------------------------------------------------
+ ARRAY['Grace', 'Ada', 'Edsger']
+(1 row)
+              |                        |                        |
+--------------+------------------------+------------------------+-----
+            3 | ARRAY[1, 2]            | ARRAY[1, 2, 3]         | Ada
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2202E): no element 4 is in an array of 3 elements [ISO/IEC 9075-2:2023 §6.25 GR2b]
+```
 
 ## Conditions as values
 

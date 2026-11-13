@@ -54,6 +54,14 @@ The views of SQL-92, each with the columns the standard gives it:
 | TRANSLATIONS | translation: none |
 | SQL_LANGUAGES | standard conformance is claimed to: ISO 9075 of 1987, SQL-86, at Level 2, by direct invocation |
 
+Two views of ISO/IEC 9075-11 describe the parts of array and row types
+*(extension)*, of the tables and domains the views above show:
+
+| View | One row of each |
+|---|---|
+| ELEMENT_TYPES | array type of a column, a domain or a part of either, with its OBJECT_TYPE TABLE or DOMAIN, COLLECTION_TYPE_IDENTIFIER the array type's DTD_IDENTIFIER, and its element type, as COLUMNS gives a type |
+| FIELDS | field of a row type of a column, a domain or a part of either, with ROW_IDENTIFIER the row type's DTD_IDENTIFIER, FIELD_NAME, ORDINAL_POSITION, and the field's type |
+
 COLUMNS has nine more columns *(extension)*, named as ISO/IEC 9075-11
 names them. IS_IDENTITY is YES of an identity column. Of one,
 IDENTITY_GENERATION is ALWAYS or BY DEFAULT, and IDENTITY_START,
@@ -62,6 +70,16 @@ generator's options, each as text, and IDENTITY_CYCLE is YES if it cycles.
 Of another column the six are null. IS_GENERATED is ALWAYS of a generated
 column and NEVER of another, and GENERATION_EXPRESSION is a generated
 column's expression as written. COLUMN_DEFAULT is null of both kinds.
+
+COLUMNS and DOMAINS have two more *(extension)*, as ISO/IEC 9075-11
+names them. DATA_TYPE is ARRAY or ROW of a column or domain of such a
+type, MAXIMUM_CARDINALITY an array's maximum cardinality, and null of
+another type. DTD_IDENTIFIER identifies the type's descriptor. It is a
+column's ordinal position, or 1 of a domain, and null of a column of a domain,
+whose type is the domain's. A part's is its parent's, a point, and the
+field's place in its row, or 1 of an array's element, so the first field
+of column 2 is `2.1` and the element of that field's array `2.1.1`.
+ELEMENT_TYPES and FIELDS join to COLUMNS and DOMAINS by it.
 
 TABLE_CONSTRAINTS has one more column *(extension)*, NULLS_DISTINCT, as
 ISO/IEC 9075-11 names it: YES of a UNIQUE constraint of NULLS DISTINCT,

@@ -375,6 +375,9 @@ pub enum DefaultOption {
     Datetime(DatetimeFunction),
     /// NULL.
     Null,
+    /// [ISO/IEC 9075-2:2023 §6.5] An `<empty specification>` of an array,
+    /// ARRAY `[` `]`.
+    Empty,
 }
 
 /// [ISO/IEC 9075:1992 §11.4] `<column constraint definition>` ::=

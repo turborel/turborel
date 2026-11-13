@@ -32,15 +32,18 @@ each group.
 
 ### Types
 
-- Arrays (S091) [§4.12.2, §6.25, §6.47 to §6.49] and row types (T051)
-  [§4.10, §7.1]. ARRAY[...] and ROW(...) values, their columns,
-  comparison, CARDINALITY and UNNEST in FROM. SEARCH and CYCLE need them.
+- Distinct types (S011) [§4.9, §11.51]. CREATE TYPE of a predefined
+  type, its values comparable only with its own. Arrays of them (S093)
+  would then claim S091, and with it S095, S096 and S098, which are
+  processed already.
+- Array element assignment of a host target (S097) [§9.1 SR4]. A target
+  `A[i]` of FETCH INTO, SELECT INTO and GET DESCRIPTOR. It needs a target
+  that is not a whole parameter.
 
 ### Queries
 
-- SEARCH and CYCLE (T133) [§7.18] of WITH RECURSIVE, once ARRAY and ROW
-  types are in. The sequence column of SEARCH and the path of CYCLE are an
-  array of rows, so they wait on those types. Cycle marks may be of any
+- SEARCH and CYCLE (T133) [§7.18] of WITH RECURSIVE. The sequence
+  column of SEARCH and the path of CYCLE are an array of rows. Cycle marks may be of any
   type, BOOLEAN among them.
 - Enhanced derived column names (T285) [§7.16]. A select list item's column
   is named from its expression in more cases.

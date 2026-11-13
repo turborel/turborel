@@ -37,7 +37,7 @@ impl Compared {
     /// it (`coerce`); of a `?`'s value, only itself, as another
     /// execution's value is placed (`placed_as_is`), else none.
     pub(super) fn placed(&self, column: &DataType) -> Option<Comparisons> {
-        if self.slot.is_some_and(|s| !placed_as_is(&s.data_type, column)) {
+        if self.slot.as_ref().is_some_and(|s| !placed_as_is(&s.data_type, column)) {
             return None;
         }
         coerce(self.op, &self.value, column)
@@ -45,7 +45,7 @@ impl Compared {
 
     /// Its `?`, standing at `place` in a probe, if its value is one's.
     pub(super) fn slot_at(&self, place: Place) -> Option<ProbeSlot> {
-        self.slot.map(|slot| ProbeSlot { place, slot })
+        self.slot.clone().map(|slot| ProbeSlot { place, slot })
     }
 }
 
@@ -104,11 +104,11 @@ fn collated_bound(c: &Cond) -> Option<(usize, CompOp, Value, CollationRef)> {
 fn slot_bound(c: &Cond, values: &[Value]) -> Option<(usize, CompOp, Slot, Value)> {
     let Cond::Compare(left, op, right) = c else { return None };
     let (column, op, slot) = match (left, right) {
-        (Expr::Column(column), Expr::Dynamic(slot)) => (*column, *op, *slot),
-        (Expr::Dynamic(slot), Expr::Column(column)) => (*column, op.flip(), *slot),
+        (Expr::Column(column), Expr::Dynamic(slot)) => (*column, *op, slot.clone()),
+        (Expr::Dynamic(slot), Expr::Column(column)) => (*column, op.flip(), slot.clone()),
         _ => return None,
     };
-    let Ok(Expr::Const(value)) = filled_expr(Expr::Dynamic(slot), values) else { return None };
+    let Ok(Expr::Const(value)) = filled_expr(Expr::Dynamic(slot.clone()), values) else { return None };
     Some((column, op, slot, value))
 }
 
@@ -569,7 +569,7 @@ mod tests {
         let (compared, _) =
             comparisons(&[cond], Known { stats: None, cost: &crate::physical::CostModel::default() }, Some(&[Value::Char("4".into())]));
         let [c] = compared.as_slice() else { panic!("{} compared", compared.len()) };
-        assert_eq!((c.column, c.op, c.slot.map(|s| s.index)), (2, CompOp::Lt, Some(0)), "flipped, the slot noted");
+        assert_eq!((c.column, c.op, c.slot.clone().map(|s| s.index)), (2, CompOp::Lt, Some(0)), "flipped, the slot noted");
         assert_eq!(compare(&c.value, &int(4)), Some(Ordering::Equal), "the value cast to the slot's type");
         let tenth = |slot: Option<Slot>| Compared {
             collation: None,

@@ -68,14 +68,14 @@ impl State {
     pub(crate) fn resolve_type(&self, of: &TypeName, (schema, auth): (&str, &str)) -> Result<(DataType, Option<&DomainDesc>)> {
         let missing = "[ISO/IEC 9075:1992 §11.4 SR4] there is no domain or type";
         match of {
-            TypeName::Data(t) => Ok((*t, None)),
+            TypeName::Data(t) => Ok((t.clone(), None)),
             TypeName::Domain(name) => {
                 let qn = qualify(name, schema);
                 if name.auth.is_none() && self.catalog.domain(&qn).is_none() && self.types.get(&name.ident).is_some() {
                     return Ok((self.extension_type((name, &[]), missing)?, None));
                 }
                 let domain = self.usable_domain(&qn, auth).or_at(name.at)?;
-                Ok((domain.data_type, Some(domain)))
+                Ok((domain.data_type.clone(), Some(domain)))
             }
             TypeName::Extension { name, params } => Ok((self.extension_type((name, params), missing)?, None)),
         }
@@ -93,7 +93,7 @@ impl State {
     pub(crate) fn domain_type(&self, of: &TypeName, schema: &str) -> Result<DataType> {
         let missing = "[ISO/IEC 9075:1992 §11.21] there is no type";
         match of {
-            TypeName::Data(t) => Ok(*t),
+            TypeName::Data(t) => Ok(t.clone()),
             TypeName::Domain(name) => {
                 if self.catalog.domain(&qualify(name, schema)).is_some() {
                     let msg = format!("[ISO/IEC 9075:1992 §11.21] a domain's <data type> is no domain, as {} is", name.ident);

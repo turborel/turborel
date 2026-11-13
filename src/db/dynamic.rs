@@ -31,6 +31,7 @@ use crate::value::Value;
 mod areas;
 mod cursors;
 mod descriptor;
+mod nested;
 mod positioned;
 mod statements;
 mod using;
@@ -150,7 +151,7 @@ impl Session {
             DynamicStatement::SetDescriptor { name, info } => self.set_descriptor(name, info, params),
             DynamicStatement::Prepare { name, source } => self.prepare_named(cx.st, name, source, params),
             DynamicStatement::DeallocatePrepare(name) => self.deallocate_prepare(name, params),
-            DynamicStatement::Describe { input, name, descriptor } => self.describe(*input, name, descriptor, params),
+            DynamicStatement::Describe { input, nesting, name, descriptor } => self.describe((*input, *nesting), name, descriptor, params),
             DynamicStatement::AllocateCursor { cursor, insensitive, scroll, statement } => {
                 self.allocate_cursor(cursor, (*insensitive, *scroll), statement, params)
             }

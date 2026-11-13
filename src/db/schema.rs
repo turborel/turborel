@@ -115,6 +115,9 @@ impl State {
             .iter()
             .map(|c| desc.column(c).ok_or_else(|| api(format!("[EXTENSION] {qn} has no column {c}"))))
             .collect::<Result<Vec<_>>>()?;
+        // Its keys group its columns' values [ISO/IEC 9075-2:2023 §9.12 SR3].
+        let keyed = cols.iter().filter_map(|&c| desc.columns.get(c));
+        keyed.into_iter().try_for_each(|column| crate::binder::grouping_operand(&column.data_type, &format!("index {name}")))?;
         if self.catalog.index(name).is_some() {
             return fail(Code::Api, format!("[EXTENSION] an index named {name} already exists"));
         }

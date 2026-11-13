@@ -58,11 +58,10 @@ use crate::value::codec::{put_value, value};
 
 mod columns;
 mod objects;
-mod types;
+use crate::value::types::tags::{data_type, put_type};
 use columns::{collation_name, column, put_collation_name, put_column};
 pub(crate) use columns::{default, put_default};
 pub(crate) use objects::{collation, put_collation, put_sequence, sequence};
-use types::{data_type, put_type};
 
 /// A count, or a position, as a u32.
 fn count(n: usize) -> u32 {
@@ -262,7 +261,7 @@ pub(crate) fn constraint(r: &mut Reader<'_>) -> Result<ConstraintDesc> {
 /// (0, or 1 then the name; none is PUBLIC) and grant option.
 pub(crate) fn put_domain(out: &mut Vec<u8>, domain: &DomainDesc) {
     put_name(out, &domain.name);
-    put_type(out, domain.data_type);
+    put_type(out, &domain.data_type.clone());
     put_default(out, domain.default.as_ref());
     put_all(out, domain.constraints.iter(), put_constraint);
     put_usage(out, &domain.usage);
@@ -448,7 +447,7 @@ mod tests {
             bytes(
                 |out| {
                     out.put_str("C");
-                    put_type(out, DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric });
+                    put_type(out, &DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric });
                     put_flag(out, false);
                 },
                 &[tag, 0, 0, 0],
@@ -491,7 +490,7 @@ mod tests {
         let t = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
         let sequence = SequenceDesc {
             name: QualifiedName { auth: "A".into(), ident: "T".into() },
-            data_type: t,
+            data_type: t.clone(),
             start: 1,
             minimum: 1,
             maximum: 99,
@@ -504,7 +503,15 @@ mod tests {
         let identity = Generated::Identity(Identity { always: true, sequence });
         let expression = Generated::Expression(Generation { text: "K + 1".into(), names: "A".into() });
         for generated in [None, Some(identity), Some(expression)] {
-            let c = ColumnDesc { name: "C".into(), data_type: t, not_null: true, default: None, domain: None, collation: None, generated };
+            let c = ColumnDesc {
+                name: "C".into(),
+                data_type: t.clone(),
+                not_null: true,
+                default: None,
+                domain: None,
+                collation: None,
+                generated,
+            };
             let mut out = Vec::new();
             put_column(&mut out, &c);
             assert_eq!(column(&mut Reader::new(&out, "column")).unwrap().generated, c.generated);

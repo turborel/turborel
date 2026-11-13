@@ -39,7 +39,7 @@ impl Binder<'_> {
             let msg = format!("[ISO/IEC 9075-2:2023 §6.14 AR1b] {} holds no USAGE on sequence generator {qn}", self.auth);
             return Err(SqlError::new(Code::Privilege, msg));
         }
-        let t = seq.data_type;
+        let t = seq.data_type.clone();
         Ok((Expr::NextValue(Arc::new(seq)), t))
     }
 

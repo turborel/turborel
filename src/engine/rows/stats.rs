@@ -257,7 +257,8 @@ mod tests {
         let file = pool.add_pager(pager);
         let int = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
         let table =
-            RowTable::create(&TableFiles::new(pool, file, Arc::new(MemoryLog::new())), &[int, int], TableOptions::default()).unwrap();
+            RowTable::create(&TableFiles::new(pool, file, Arc::new(MemoryLog::new())), &[int.clone(), int], TableOptions::default())
+                .unwrap();
         for n in 0..rows {
             let value = |v: u64| Value::Exact(Decimal::new(i128::from(v), 0));
             table.insert(NO_TRANSACTION, vec![value(n), value(n % 10)]).unwrap();

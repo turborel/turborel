@@ -35,7 +35,7 @@ pub(crate) fn collation(r: &mut Reader<'_>) -> Result<CollationDesc> {
 /// grants.
 pub(crate) fn put_sequence(out: &mut Vec<u8>, sequence: &SequenceDesc) {
     put_name(out, &sequence.name);
-    put_type(out, sequence.data_type);
+    put_type(out, &sequence.data_type.clone());
     for v in [sequence.start, sequence.minimum, sequence.maximum, sequence.increment] {
         out.put_i128(v);
     }

@@ -35,7 +35,7 @@ use crate::db::State;
 use crate::exec::WorkRows;
 use crate::index::Probe;
 use crate::logical::{
-    AggCall, Cond, Expr, Fixpoint, LogicalPlan, OuterJoin, SetOp, SortKey, column_name, judged_by_sets, render_cond, render_expr,
+    AggCall, Cond, Expr, Fixpoint, LogicalPlan, OuterJoin, SetOp, SortKey, Unnest, column_name, judged_by_sets, render_cond, render_expr,
     render_keys, split_and,
 };
 use crate::system::SystemRead;
@@ -279,6 +279,9 @@ pub enum Plan {
         /// Its rows, once given.
         rows: Option<WorkRows>,
     },
+    /// [ISO/IEC 9075-2:2023 §7.6 SR8] A `<collection derived table>`
+    /// laterally over the rows of its input (`exec/unnest.rs`).
+    Unnest(Box<Unnest<Plan>>),
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's
@@ -394,6 +397,7 @@ impl<'a> PhysicalPlanner<'a> {
                 Built::unordered(Plan::Recursive { member: *member, fixpoint: fixpoint.map_ref(|p| self.plan(p)) })
             }
             LogicalPlan::WorkTable { member, .. } => Built::unordered(Plan::WorkTable { member: *member, rows: None }),
+            LogicalPlan::Unnest(u) => Built::unordered(Plan::Unnest(Box::new(u.with_input(|input| self.plan(input))))),
         }
     }
 
@@ -518,6 +522,9 @@ impl Plan {
             }
             Plan::IndexJoin { left, cond, .. } => left.can_raise() || cond.as_ref().is_some_and(Cond::can_raise),
             Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),
+            Plan::Unnest(u) => {
+                u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(Cond::can_raise) || u.input.can_raise()
+            }
         }
     }
 }

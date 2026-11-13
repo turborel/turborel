@@ -31,7 +31,7 @@ pub struct DomainChecks {
 
 /// \[EXTENSION\] A `<dynamic parameter specification>` in a kept plan
 /// (`Expr::Dynamic`).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Slot {
     /// Its place among the statement's `?`s, from 0.
     pub index: usize,
@@ -78,6 +78,8 @@ impl Truth {
             | Value::Binary(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_) => Truth::Unknown,
         }
     }

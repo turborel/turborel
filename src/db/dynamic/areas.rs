@@ -4,7 +4,7 @@
 
 use super::descriptor::{Descriptor, Item, code, exact, is_text, matches};
 use super::{Name, dynamic_error, value_of, whole};
-use crate::ast::{DescriptorItem, ExtendedName, GetDescriptor, ParameterSpecification, SetDescriptor, ValueSpecification};
+use crate::ast::{DescriptorItem, ExtendedName, GetDescriptor, HeaderItem, ParameterSpecification, SetDescriptor, ValueSpecification};
 use crate::db::assignment::declared_type;
 use crate::db::{Completion, Session};
 use crate::error::{At, Code, Result, SqlError, SqlState};
@@ -22,9 +22,10 @@ pub(crate) const MAX_OCCURRENCES: i64 = 1_000;
 /// SQL beyond a limit (RULES.md D18).
 pub(crate) const MAX_DESCRIPTORS: usize = 64;
 
-/// [ISO/IEC 9075:1992 §17.5 GR4] The order a `<set descriptor statement>`
-/// assigns its fields in.
-const SET_ORDER: [DescriptorItem; 11] = [
+/// [ISO/IEC 9075:1992 §17.5 GR4; ISO/IEC 9075-2:2023 §20.5 GR3] The order
+/// a `<set descriptor statement>` assigns its fields in.
+const SET_ORDER: [DescriptorItem; 14] = [
+    DescriptorItem::Level,
     DescriptorItem::Type,
     DescriptorItem::DatetimeIntervalCode,
     DescriptorItem::DatetimeIntervalPrecision,
@@ -35,6 +36,8 @@ const SET_ORDER: [DescriptorItem; 11] = [
     DescriptorItem::CharacterSetName,
     DescriptorItem::Length,
     DescriptorItem::Indicator,
+    DescriptorItem::Degree,
+    DescriptorItem::Cardinality,
     DescriptorItem::Data,
 ];
 
@@ -77,7 +80,7 @@ fn wrong_type(rule: &str, what: &str) -> SqlError {
 
 /// [ISO/IEC 9075:1992 §17.4 GR2, §17.5 GR5] A DATA value or target whose
 /// type does not match the item descriptor area's (SQLSTATE 22005).
-fn data_mismatch(rule: &str, t: DataType) -> SqlError {
+fn data_mismatch(rule: &str, t: &DataType) -> SqlError {
     SqlError::new(Code::Data, format!("[ISO/IEC 9075:1992 {rule}, §17.1 SR2] {t} does not match the type the item describes"))
         .with_state(SqlState::ERROR_IN_ASSIGNMENT)
 }
@@ -95,7 +98,7 @@ fn got_into(got: Vec<(Value, ParameterSpecification)>, params: &mut Params) -> R
 /// Whether `t` is of the type Table 17 gives a field that is not DATA: a
 /// character string of at least 128 characters for a name's, else exact
 /// numeric with scale 0; of a target, `target`, or of a value.
-fn of_field_type(f: DescriptorItem, t: DataType, target: bool) -> bool {
+fn of_field_type(f: DescriptorItem, t: &DataType, target: bool) -> bool {
     /// [ISO/IEC 9075:1992 §17.1 Table 17] The least length of a field of a
     /// name.
     const NAME_LENGTH: u32 = 128;
@@ -103,7 +106,7 @@ fn of_field_type(f: DescriptorItem, t: DataType, target: bool) -> bool {
         return matches!(t, DataType::Exact { scale: 0, .. });
     }
     match t {
-        DataType::Character { length, .. } | DataType::Varying { length, .. } => !target || length >= NAME_LENGTH,
+        DataType::Character { length, .. } | DataType::Varying { length, .. } => !target || *length >= NAME_LENGTH,
         DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }
@@ -114,6 +117,8 @@ fn of_field_type(f: DescriptorItem, t: DataType, target: bool) -> bool {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => false,
     }
 }
@@ -195,12 +200,7 @@ impl Session {
     pub(super) fn get_descriptor(&self, name: &ExtendedName, info: &GetDescriptor, params: &mut Params) -> Result<Completion> {
         let (_, area) = self.descriptor(name, params, "§17.4 GR1")?;
         let (number, items) = match info {
-            GetDescriptor::Count(target) => {
-                if !of_field_type(DescriptorItem::Type, declared_type(params, &target.name)?, true) {
-                    return Err(wrong_type("§17.4 SR2", "the target of COUNT is exact numeric with scale 0"));
-                }
-                return got_into(vec![(exact(area.count), target.clone())], params);
-            }
+            GetDescriptor::Header(header) => return got_header((area.count, area.top_level), header, params),
             GetDescriptor::Value { number, items } => (whole(self, number, params, "§17.4 SR1")?, items),
         };
         if !(1..=area.occurrences).contains(&number) {
@@ -217,14 +217,21 @@ impl Session {
         for (target, f) in items {
             let t = declared_type(params, &target.name)?;
             if *f != DescriptorItem::Data {
-                if !of_field_type(*f, t, true) {
+                if !of_field_type(*f, &t, true) {
                     return Err(wrong_type("§17.4 SR3", &format!("the target of {} is not of its type", f.name())));
                 }
                 got.push((item.get(*f), target.clone()));
                 continue;
             }
-            if !item.data_type(&catalog).is_some_and(|described| matches(described, t, true)) {
-                return Err(data_mismatch("§17.4 GR2", t));
+            let represented = area.represented(number, area.occurrences, &catalog);
+            if !represented.is_some_and(|(described, _)| matches(&described, &t, true)) {
+                return Err(data_mismatch("§17.4 GR2", &t));
+            }
+            // [ISO/IEC 9075-2:2023 §20.4 GR5a, GR5b] no DATA of an array's
+            // element, or of a row.
+            if area.under_array(number) || item.code() == code::ROW {
+                let msg = format!("[ISO/IEC 9075-2:2023 §20.4 GR5a, GR5b] item {number} has no DATA: it is a row, or an array's element");
+                return Err(dynamic_error(SqlState::UNDEFINED_DATA_VALUE, msg));
             }
             let negative = item.number(DescriptorItem::Indicator) < 0;
             if negative && !indicator {
@@ -263,23 +270,24 @@ impl Session {
             return Err(bad_index(number, area.occurrences, "§17.5 GR2"));
         }
         let catalog = self.catalog_now()?;
-        let mut item = area.item(number);
         for f in SET_ORDER {
             let Some((_, v)) = items.iter().find(|(set, _)| *set == f) else { continue };
             let (value, t) = value_of(self, v, params)?;
             if f == DescriptorItem::Data {
-                if !item.data_type(&catalog).is_some_and(|described| matches(described, t, false)) {
-                    return Err(data_mismatch("§17.5 GR5", t));
-                }
-                item.set(f, value);
+                set_data(&mut area, number, (value, &t), &catalog)?;
                 continue;
             }
-            if !of_field_type(f, t, false) {
+            if !of_field_type(f, &t, false) {
                 return Err(wrong_type("§17.5 SR3", &format!("the value of {} is not of its type", f.name())));
             }
+            if f == DescriptorItem::Level {
+                let Value::Exact(d) = &value else { return Err(wrong_type("§17.5 SR3", "the value of LEVEL is not of its type")) };
+                area.level_may_be(number, i64::try_from(d.units).unwrap_or(i64::MIN))?;
+            }
+            let mut item = area.item(number);
             set_field(&mut item, f, value, &catalog);
+            area.items.insert(number, item);
         }
-        area.items.insert(number, item);
         self.put_descriptor(key, area);
         Ok(Completion::Success)
     }
@@ -294,7 +302,8 @@ impl Session {
     /// SQLSTATE 33000 if no area of the name is allocated \[GR2\].
     pub(super) fn describe_into(&self, name: &ExtendedName, params: &Params, items: Vec<Item>) -> Result<Completion> {
         let (key, mut area) = self.descriptor(name, params, "§17.9 GR2")?;
-        let insufficient = area.describe(items);
+        let top = items.iter().filter(|i| i.level() == 0).count();
+        let insufficient = area.describe(items, top);
         self.put_descriptor(key, area);
         Ok(if insufficient { Completion::Warning(SqlState::INSUFFICIENT_ITEM_DESCRIPTOR_AREAS) } else { Completion::Success })
     }
@@ -303,6 +312,28 @@ impl Session {
     pub(super) fn catalog_now(&self) -> Result<String> {
         Ok(self.db.snapshot()?.catalog_name())
     }
+}
+
+/// [ISO/IEC 9075:1992 §17.5 GR5; ISO/IEC 9075-2:2023 §20.5 GR4a] DATA of
+/// item `number` of `area` set to `value`, of type `t`, if its type
+/// matches the one the item represents, of the catalog `catalog`.
+///
+/// # Errors
+///
+/// SQLSTATE 0700D if the item is a row or an array's element \[GR4a i,
+/// ii\]; 22005 if the type does not match \[GR4a iii\].
+fn set_data(area: &mut Descriptor, number: i64, (value, t): (Value, &DataType), catalog: &str) -> Result<()> {
+    let mut item = area.item(number);
+    if area.under_array(number) || item.code() == code::ROW {
+        let msg = format!("[ISO/IEC 9075-2:2023 §20.5 GR4a i, ii] item {number} has no DATA: it is a row, or an array's element");
+        return Err(dynamic_error(SqlState::INVALID_DATA_TARGET, msg));
+    }
+    if !area.represented(number, area.occurrences, catalog).is_some_and(|(described, _)| matches(&described, t, false)) {
+        return Err(data_mismatch("§17.5 GR5", t));
+    }
+    item.set(DescriptorItem::Data, value);
+    area.items.insert(number, item);
+    Ok(())
 }
 
 /// [ISO/IEC 9075:1992 §17.5 GR4, GR5] Field `f`, not DATA, of `item` set
@@ -318,10 +349,11 @@ fn set_field(item: &mut Item, f: DescriptorItem, value: Value, catalog: &str) {
     }
 }
 
-/// [ISO/IEC 9075:1992 §17.5 GR5a-h] TYPE set: the fields its type takes
-/// set as GR5 says, every other undefined.
+/// [ISO/IEC 9075:1992 §17.5 GR5a-h; ISO/IEC 9075-2:2023 §20.5 GR4c] TYPE
+/// set: the fields its type takes set as GR5 says, every other but LEVEL
+/// undefined.
 fn set_type(item: &mut Item, catalog: &str) {
-    item.keep_only(&[DescriptorItem::Type]);
+    item.keep_only(&[DescriptorItem::Type, DescriptorItem::Level]);
     match item.number(DescriptorItem::Type) {
         code::CHARACTER | code::VARYING => {
             item.default_character_set(catalog);
@@ -358,4 +390,22 @@ fn set_interval_code(item: &mut Item) {
         }
         _ => {}
     }
+}
+
+/// GET DESCRIPTOR's `header` items [ISO/IEC 9075:1992 §17.4], of an area
+/// of COUNT `count` and TOP_LEVEL_COUNT `top_level`, into their targets.
+/// SQLCODE -103 if a target is not exact numeric of scale 0 \[SR2\].
+fn got_header((count, top_level): (i64, i64), header: &[(ParameterSpecification, HeaderItem)], params: &mut Params) -> Result<Completion> {
+    let mut got = Vec::with_capacity(header.len());
+    for (target, h) in header {
+        if !of_field_type(DescriptorItem::Type, &declared_type(params, &target.name)?, true) {
+            return Err(wrong_type("§17.4 SR2", "the target of COUNT or TOP_LEVEL_COUNT is exact numeric with scale 0"));
+        }
+        let n = match h {
+            HeaderItem::Count => count,
+            HeaderItem::TopLevelCount => top_level,
+        };
+        got.push((exact(n), target.clone()));
+    }
+    got_into(got, params)
 }

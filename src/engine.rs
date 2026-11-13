@@ -150,6 +150,6 @@ impl MemoryPages {
 
 /// The width of a column's value in a record's fixed part, if it has one,
 /// as its kind says: character strings are variable.
-pub(crate) fn fixed_width(data_type: DataType) -> Option<usize> {
-    data_type.kind().record_width(&data_type)
+pub(crate) fn fixed_width(data_type: &DataType) -> Option<usize> {
+    data_type.kind().record_width(data_type)
 }

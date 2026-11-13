@@ -67,7 +67,7 @@ impl ScalarFunction for CastAt {
         "CAST"
     }
     fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
-        Ok(self.to)
+        Ok(self.to.clone())
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         cast_at(args.first().cloned().unwrap_or(Value::Null), &self.to, self.now)
@@ -94,6 +94,8 @@ pub(super) fn shown(e: Expr, from: DataType, now: Clocked<'_>) -> Expr {
         | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => e,
     }
 }
@@ -102,14 +104,14 @@ pub(super) fn shown(e: Expr, from: DataType, now: Clocked<'_>) -> Expr {
 /// in a column of type `to`: a time or timestamp without time zone, in one
 /// WITH TIME ZONE, of the session's displacement, `now`'s, which it
 /// implies; any other as it is.
-pub(super) fn stored(e: Expr, from: DataType, to: DataType, now: Clocked<'_>) -> Expr {
-    if takes_zone(from, to) { shown(e, from, now) } else { e }
+pub(super) fn stored(e: Expr, from: DataType, to: &DataType, now: Clocked<'_>) -> Expr {
+    if takes_zone(&from.clone(), to) { shown(e, from, now) } else { e }
 }
 
 /// Whether a value of `from`, stored in a column of `to`, takes the
 /// session's displacement: a time or timestamp without time zone, in one
 /// WITH TIME ZONE.
-pub(super) fn takes_zone(from: DataType, to: DataType) -> bool {
+pub(super) fn takes_zone(from: &DataType, to: &DataType) -> bool {
     matches!(from, DataType::Time { zoned: false, .. } | DataType::Timestamp { zoned: false, .. })
         && matches!(to, DataType::Time { zoned: true, .. } | DataType::Timestamp { zoned: true, .. })
 }
@@ -153,6 +155,8 @@ fn castable(from: &DataType, to: &DataType) -> bool {
         | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => None,
     };
     match (moment(from), moment(to)) {
@@ -252,6 +256,8 @@ fn fields(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -314,7 +320,7 @@ impl Binder<'_> {
             return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3] {t} has no field {}", extract_name(field))));
         }
         let f = Extract { field, scale, digits: SMALLINT_PRECISION };
-        let result = f.return_type(&[t])?;
+        let result = f.return_type(std::slice::from_ref(&t))?;
         Ok((Expr::Call(ScalarRef(Arc::new(f)), vec![shown(e, t, self.now)]), result))
     }
 
@@ -324,8 +330,8 @@ impl Binder<'_> {
     /// # Errors
     ///
     /// SQLCODE -103 if CAST takes no value of `from` to `to` [SR4].
-    pub(super) fn datetime_cast(&self, e: Expr, from: DataType, to: DataType) -> Result<Expr> {
-        if !castable(&from, &to) {
+    pub(super) fn datetime_cast(&self, e: Expr, from: &DataType, to: DataType) -> Result<Expr> {
+        if !castable(from, &to) {
             return Err(SqlError::new(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.10 SR4] CAST of {from} to {to} is not valid")));
         }
         Ok(Expr::Call(ScalarRef(Arc::new(CastAt { to, now: self.now.instant() })), vec![e]))

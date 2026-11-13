@@ -156,6 +156,11 @@ impl Filling<'_> {
             }
             LogicalPlan::OuterJoin { kind, cond, left, right } => LogicalPlan::OuterJoin { kind, cond: self.cond(cond), left, right },
             LogicalPlan::Values { rows, types } => LogicalPlan::Values { rows: rows.into_iter().map(|r| self.exprs(r)).collect(), types },
+            LogicalPlan::Unnest(mut u) => {
+                u.collections = self.exprs(std::mem::take(&mut u.collections));
+                u.outer = u.outer.take().map(|c| self.cond(c));
+                LogicalPlan::Unnest(u)
+            }
             other @ (LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Product { .. }

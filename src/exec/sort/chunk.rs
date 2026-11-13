@@ -72,7 +72,14 @@ fn cell_kind(cell: Cell<'_>) -> Option<(u8, u32)> {
         Cell::Approx(_) | Cell::Value(Value::Approx(_)) => Some((FLOATS, 0_u32)),
         Cell::Text(_) | Cell::Value(Value::Char(_)) => Some((TEXTS, 0_u32)),
         Cell::Value(
-            Value::DecFloat(_) | Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_),
+            Value::DecFloat(_)
+            | Value::Binary(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
+            | Value::Extension(_),
         ) => Some((VALUES, 0_u32)),
     }
 }

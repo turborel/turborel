@@ -223,7 +223,7 @@ fn a_plan_holding_the_instant_is_made_at_each_execution() {
 /// Parameters FK and FN, INTEGER, a FETCH's targets.
 fn targets() -> Params {
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
-    Params::new().declare("FK", integer, int(0)).declare("FN", integer, int(0))
+    Params::new().declare("FK", integer.clone(), int(0)).declare("FN", integer, int(0))
 }
 
 /// Verifies: [EXTENSION] [X3.135-1986 §8.4, §8.11; ISO/IEC 9075:1992

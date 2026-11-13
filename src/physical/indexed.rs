@@ -240,6 +240,7 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Recursive { .. }
+            | LogicalPlan::Unnest(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }
@@ -275,6 +276,7 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::Values { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Recursive { .. }
+            | LogicalPlan::Unnest(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }
@@ -282,7 +284,7 @@ impl PhysicalPlanner<'_> {
     /// The type of `plan`'s column `column`, if it is a table's column.
     fn column_type(&self, plan: &LogicalPlan, column: usize) -> Option<DataType> {
         match plan {
-            LogicalPlan::Scan { table, .. } => self.db.catalog.table(table)?.columns.get(column).map(|c| c.data_type),
+            LogicalPlan::Scan { table, .. } => self.db.catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone()),
             LogicalPlan::Filter { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => {
                 self.column_type(input, column)
             }
@@ -294,11 +296,12 @@ impl PhysicalPlanner<'_> {
                 let Some(Expr::Column(c)) = exprs.get(column) else { return None };
                 self.column_type(input, *c)
             }
-            LogicalPlan::Values { types, .. } => types.get(column).copied(),
+            LogicalPlan::Values { types, .. } => types.get(column).cloned(),
             LogicalPlan::Aggregate { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Recursive { .. }
+            | LogicalPlan::Unnest(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }
@@ -319,7 +322,7 @@ fn probed_columns(
     if ix.is_collated() {
         return None;
     }
-    let types: Vec<DataType> = ix.columns.iter().map(|&c| columns.get(c).map(|d| d.data_type)).collect::<Option<_>>()?;
+    let types: Vec<DataType> = ix.columns.iter().map(|&c| columns.get(c).map(|d| d.data_type.clone())).collect::<Option<_>>()?;
     let mut used = Vec::new();
     for (&column, data_type) in ix.columns.iter().zip(&types) {
         let Some(k) = keys.iter().position(|&(l, r)| r == column && of_kind(l, data_type)) else { break };
@@ -352,6 +355,7 @@ fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::Values { .. }
         | Plan::Sort { .. }
         | Plan::Recursive { .. }
+        | Plan::Unnest(..)
         | Plan::WorkTable { .. } => None,
     }
 }
@@ -396,6 +400,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         | LogicalPlan::Values { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::Recursive { .. }
+        | LogicalPlan::Unnest(..)
         | LogicalPlan::WorkTable { .. } => None,
     }
 }
@@ -421,6 +426,8 @@ fn family(t: &DataType) -> &'static str {
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => t.kind().name(),
     }
 }
@@ -441,7 +448,7 @@ fn sample(t: &DataType) -> Option<Value> {
         DataType::Time { zoned, .. } => Some(moment(Moment::Time, *zoned)),
         DataType::Timestamp { zoned, .. } => Some(moment(Moment::Timestamp, *zoned)),
         DataType::Interval(qualifier) => Some(Value::Interval(Interval { units: 0, qualifier: *qualifier })),
-        DataType::Extension(_) => None,
+        DataType::Array(_) | DataType::Row(_) | DataType::Extension(_) => None,
     }
 }
 

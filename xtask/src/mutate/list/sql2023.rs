@@ -318,7 +318,7 @@ pub const SQL2023: [Mutation; 55] = [
         package: Package::Core,
         breaks: "GREATEST's arguments are not cast to the type of all, so LEAST(1, 2.5, -3) is -3, of no scale",
         file: "src/binder/greatest.rs",
-        original: ".map(|(e, t)| brought(e, t, result))",
+        original: ".map(|(e, t)| brought(e, &t, result.clone()))",
         replacement: ".map(|(e, _)| e)",
         integration: &["expressions::greatest_and_least_6_15"],
         unit: &[],

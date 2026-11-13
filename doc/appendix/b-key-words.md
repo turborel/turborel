@@ -104,4 +104,16 @@ column list follows it, so `WITH RECURSIVE AS (...)` names a query
 RECURSIVE. SEARCH and CYCLE are read after a query of the list, and
 refused there as not implemented.
 
+ARRAY, ROW, UNNEST, CARDINALITY, ARRAY_MAX_CARDINALITY, TRIM_ARRAY and
+ARRAY_AGG, which SQL:2023 reserves and SQL-92 does not, are identifiers
+too, key words only where they are read. ARRAY is one after a data type,
+and before `[` or a parenthesis where a value is; ROW before a parenthesis
+where a data type or a value is; UNNEST before a parenthesis where a table
+is; and the four functions before a parenthesis, so a column of one of
+those names is written in double quotes only there. ORDINALITY, which
+SQL:2023 does not reserve, is read only after WITH, after UNNEST's
+arrays. Of the descriptor items, DEGREE, CARDINALITY and
+RETURNED_CARDINALITY are read only as items, TOP_LEVEL_COUNT only as a
+header item, and NESTING and WITHOUT only after DESCRIBE's descriptor.
+
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

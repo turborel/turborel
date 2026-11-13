@@ -94,6 +94,8 @@ pub(super) fn character(name: &str, t: &DataType) -> Result<u32> {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => {
             fail(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.7, §6.13] {name} takes a character string, not {t}"))
         }
@@ -122,6 +124,8 @@ fn binary_string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -142,6 +146,8 @@ fn integer(name: &str, t: &DataType) -> Result<()> {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => fail(
             Code::SyntaxRule,
             format!("[ISO/IEC 9075:1992 §6.7 SR1] the start position and length of {name} are exact numbers of scale 0, not {t}"),
@@ -161,6 +167,8 @@ pub(super) fn text(v: &Value) -> Result<Option<&str>> {
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Row(_)
         | Value::Extension(_) => fail(Code::Api, "[DESIGN] a string function was given a value not a character string"),
     }
 }
@@ -185,6 +193,8 @@ pub(super) fn whole(v: Option<&Value>) -> Result<Option<i128>> {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_),
         ) => not_integer(),
     }
@@ -391,7 +401,7 @@ impl ScalarFunction for Fold {
         let [s] = args else { return fail(Code::Api, "[DESIGN] UPPER and LOWER take one string") };
         // [SR3a] the string's type.
         character(self.name(), s)?;
-        Ok(*s)
+        Ok(s.clone())
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let [s] = args else { return fail(Code::Api, "[DESIGN] UPPER and LOWER take one string") };
@@ -503,6 +513,8 @@ impl ScalarFunction for Length {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
             | Value::Extension(_) => {
                 return text(s).map(|_| Value::Null);
             }

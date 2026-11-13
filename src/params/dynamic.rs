@@ -23,7 +23,7 @@ use crate::value::cast;
 use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
 
 /// [ISO/IEC 9075:1992 §17.6 GR5] The type a `?` takes from its context.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ParameterType {
     /// The data type of another operand, a column, or a CAST's target.
     Of(DataType),
@@ -184,7 +184,7 @@ impl Params {
     pub(crate) fn dynamic_typed(&self, index: usize, taken: Option<ParameterType>) -> Result<(Value, DataType)> {
         let (Some(dynamic), Some(to)) = (&self.dynamic, taken) else { return Err(untyped()) };
         if let Some(slot) = dynamic.types.borrow_mut().get_mut(index) {
-            *slot = Some(to);
+            *slot = Some(to.clone());
         }
         let Some(values) = &dynamic.values else { return Ok((Value::Null, to.data_type())) };
         let value = values.get(index).cloned().ok_or_else(untyped)?;

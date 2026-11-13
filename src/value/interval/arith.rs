@@ -75,6 +75,8 @@ pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> 
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Row(_)
         | Value::Extension(_) => factor.clone(),
     };
     let Value::Exact(number) = exact else {

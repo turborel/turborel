@@ -105,7 +105,7 @@ impl State {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.72 SR3] schema {} has a sequence generator {} already", qn.auth, qn.ident))
                 .or_at(d.name.at));
         }
-        let data_type = match d.data_type {
+        let data_type = match d.data_type.clone() {
             None => DEFAULT_TYPE,
             Some((t @ DataType::Exact { scale: 0, .. }, _)) => t,
             Some((t, at)) => {
@@ -164,12 +164,12 @@ impl State {
     ///
     /// SQLCODE -103 if the options break §9.37's Syntax Rules.
     pub(super) fn altered(&self, seq: SequenceDesc, o: &SequenceOptions, (at, epochs): (usize, &mut Epochs)) -> Result<SequenceDesc> {
-        let increment = o.increment.map_or(Ok(seq.increment), |n| integer(n, seq.data_type))?;
-        let values = bounds(o, increment, seq.data_type, Some(&seq)).or_at(at)?;
+        let increment = o.increment.map_or(Ok(seq.increment), |n| integer(n, &seq.data_type.clone()))?;
+        let values = bounds(o, increment, &seq.data_type.clone(), Some(&seq)).or_at(at)?;
         let restarted = match o.restart {
             None => None,
             Some(None) => Some((seq.start, at)),
-            Some(Some(n)) => Some((integer(n, seq.data_type)?, n.at)),
+            Some(Some(n)) => Some((integer(n, &seq.data_type.clone())?, n.at)),
         };
         let (epoch, origin) = if let Some((value, written)) = restarted {
             within(value, &values, "§9.37 SR12", "restart").or_at(written)?;
@@ -295,10 +295,10 @@ impl State {
 ///
 /// SQLCODE -103 if its options break §9.36's Syntax Rules.
 pub(super) fn generator(name: QualifiedName, t: DataType, o: &SequenceOptions, at: usize) -> Result<SequenceDesc> {
-    let increment = o.increment.map_or(Ok(1), |n| integer(n, t))?;
-    let values = bounds(o, increment, t, None).or_at(at)?;
+    let increment = o.increment.map_or(Ok(1), |n| integer(n, &t.clone()))?;
+    let values = bounds(o, increment, &t.clone(), None).or_at(at)?;
     let start = match o.start {
-        Some(n) => integer(n, t)?,
+        Some(n) => integer(n, &t.clone())?,
         None if increment > 0 => values.minimum,
         None => values.maximum,
     };
@@ -327,14 +327,14 @@ fn described(name: QualifiedName, values: &Values) -> SequenceDesc {
 /// generator of type `t`, else `before`'s, else the defaults: of NO
 /// MAXVALUE, the type's greatest value ascending, -1 descending (ID112);
 /// of NO MINVALUE, 1 ascending, the type's least value descending (ID113).
-fn bounds(o: &SequenceOptions, increment: i128, t: DataType, before: Option<&SequenceDesc>) -> Result<Values> {
+fn bounds(o: &SequenceOptions, increment: i128, t: &DataType, before: Option<&SequenceDesc>) -> Result<Values> {
     if increment == 0 {
         return Err(rule("[ISO/IEC 9075-2:2023 §9.36 SR5, §9.37 SR5] the increment of a sequence generator is not 0".to_owned()));
     }
-    let greatest = greatest_of(t);
+    let greatest = greatest_of(&t.clone());
     let (high, low) = if increment > 0 { (greatest, 1) } else { (-1, greatest.saturating_neg()) };
     let bound = |given: Option<Option<SignedNumber>>, kept: Option<i128>, default: i128| match given {
-        Some(Some(n)) => integer(n, t),
+        Some(Some(n)) => integer(n, &t.clone()),
         Some(None) => Ok(default),
         None => Ok(kept.unwrap_or(default)),
     };
@@ -362,9 +362,9 @@ fn within(value: i128, values: &Values, cited: &str, what: &str) -> Result<()> {
 }
 
 /// The greatest value of `t`, an exact numeric type of scale 0.
-fn greatest_of(t: DataType) -> i128 {
-    let precision = if let DataType::Exact { precision, .. } = t { precision } else { MAX_EXACT_PRECISION };
-    pow10(precision).map_or(i128::MAX, |p| p.saturating_sub(1))
+fn greatest_of(t: &DataType) -> i128 {
+    let precision = if let DataType::Exact { precision, .. } = t { precision } else { &MAX_EXACT_PRECISION };
+    pow10(*precision).map_or(i128::MAX, |p| p.saturating_sub(1))
 }
 
 /// [ISO/IEC 9075-2:2023 §9.36 SR10, §9.37 SR10] The value of `n`, which is
@@ -373,12 +373,12 @@ fn greatest_of(t: DataType) -> i128 {
 /// # Errors
 ///
 /// SQLCODE -103 if it is not.
-fn integer(n: SignedNumber, t: DataType) -> Result<i128> {
+fn integer(n: SignedNumber, t: &DataType) -> Result<i128> {
     let whole = n.value.and_then(|d| {
         let factor = pow10(d.scale)?;
         (d.units.checked_rem(factor)? == 0).then(|| d.units.checked_div(factor)).flatten()
     });
-    let greatest = greatest_of(t);
+    let greatest = greatest_of(&t.clone());
     match whole.filter(|v| v.checked_abs().is_some_and(|a| a <= greatest)) {
         Some(v) => Ok(v),
         None => Err(rule(format!(

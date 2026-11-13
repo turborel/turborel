@@ -4,7 +4,7 @@
 
 use super::Parser;
 use super::generated::RESTART;
-use crate::ast::{DynamicStatement, SetClause, SqlStatement, UpdateSource};
+use crate::ast::{DynamicStatement, SetClause, SqlStatement, UpdateSource, ValueExpression};
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
 
@@ -139,10 +139,19 @@ impl Parser {
 
     /// [X3.135-1986 §8.11, §8.12] `<set clause>` ::= `<object column>` =
     /// `<update source>`, which is `<value expression>` | NULL | DEFAULT
-    /// [ISO/IEC 9075:1992 §13.9]; `<object column>` ::= `<column name>`
+    /// [ISO/IEC 9075:1992 §13.9]; `<object column>` ::= `<column name>`;
+    /// [ISO/IEC 9075-2:2023 §14.15] `<update target>` ::= `<object column>`
+    /// \[`[` `<simple value specification>` `]`\].
     fn set_clause(&mut self) -> Result<SetClause> {
         let at = self.here();
         let column = self.identifier()?;
+        let element = if self.accept_delim(delim::LEFT_BRACKET) {
+            let index = ValueExpression::Value(self.value_specification()?);
+            self.expect_delim(delim::RIGHT_BRACKET)?;
+            Some(index)
+        } else {
+            None
+        };
         self.expect_delim(delim::EQUALS)?;
         let value = if self.accept_kw(kw::NULL) {
             UpdateSource::Null
@@ -151,6 +160,6 @@ impl Parser {
         } else {
             UpdateSource::Value(self.value_expression()?)
         };
-        Ok(SetClause { column, value, at })
+        Ok(SetClause { column, element, value, at })
     }
 }

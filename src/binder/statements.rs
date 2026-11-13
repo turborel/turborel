@@ -97,8 +97,8 @@ pub const UPDATE_POSITIONED_RULE: AssignRule = AssignRule { rule: "§13.9 SR10" 
 /// # Errors
 ///
 /// SQLCODE -103 citing `r` if it cannot.
-pub fn check_assignment(col: &ColumnDesc, t: DataType, r: AssignRule) -> Result<()> {
-    if assignable(&col.data_type, &t) {
+pub fn check_assignment(col: &ColumnDesc, t: &DataType, r: AssignRule) -> Result<()> {
+    if assignable(&col.data_type, t) {
         return Ok(());
     }
     Err(rule(format!("[ISO/IEC 9075:1992 {}, §9.2 SR2] cannot assign a {t} value to column {} ({})", r.rule, col.name, col.data_type)))
@@ -112,8 +112,20 @@ pub fn check_assignment(col: &ColumnDesc, t: DataType, r: AssignRule) -> Result<
 /// \[EXTENSION\] Where either is a type beyond the standard, which SR2
 /// does not speak of (RULES.md D53): a value comparable with the target,
 /// as its kind says, or a character string, if the target's kind takes
-/// one (`SqlType::assigns_text`).
+/// one (`SqlType::assigns_text`). [ISO/IEC 9075-2:2023 §9.2 SR2d, SR2e]
+/// An array in an array whose element type its elements are assignable
+/// to, a row in a row of its degree, field by field.
 pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
+    if let (DataType::Array(a), DataType::Array(b)) = (target, t) {
+        return assignable(&a.element, &b.element);
+    }
+    if let (DataType::Row(a), DataType::Row(b)) = (target, t) {
+        return a.fields.len() == b.fields.len() && a.fields.iter().zip(&b.fields).all(|(x, y)| assignable(&x.data_type, &y.data_type));
+    }
+    let composite = |either: &DataType| matches!(either, DataType::Array(_) | DataType::Row(_));
+    if composite(target) || composite(t) {
+        return false;
+    }
     if let DataType::Extension(e) = target {
         return target.comparable(t) || (t.is_character() && e.kind.assigns_text());
     }
@@ -242,13 +254,16 @@ fn bind_set_clause(binder: &Binder<'_>, sc: &SetClause, rules: &SetRules, done: 
     }
     let base = match &item.source {
         Source::Base(vb) => vb.base.columns.get(position),
-        Source::Table | Source::Derived(_) | Source::Common | Source::System(_) => Some(col),
+        Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) => Some(col),
     };
     // [ISO/IEC 9075-2:2023 §14.15 SR5] a generated column, or an identity
     // column always generated, set only to DEFAULT.
     if base.is_some_and(ColumnDesc::always_generated) && !matches!(sc.value, UpdateSource::Default) {
         let msg = format!("[ISO/IEC 9075-2:2023 §14.15 SR5] column {} is generated always, so it is set only to DEFAULT", sc.column);
         return Err(rule(msg));
+    }
+    if let Some(index) = &sc.element {
+        return Ok((position, Some(binder.element_assignment((sc, col), index, rules.set_function)?)));
     }
     let value = match &sc.value {
         // NULL: SQL-86 refuses it for a NOT NULL column [X3.135-1986 §8.11
@@ -267,9 +282,9 @@ fn bind_set_clause(binder: &Binder<'_>, sc: &SetClause, rules: &SetRules, done: 
         },
         UpdateSource::Value(v) => {
             // [ISO/IEC 9075:1992 §17.6 GR5w] a `?` takes its object column's type.
-            let (e, t) = binder.typed(v, ParameterType::Of(col.data_type), Scope::Rows(rules.set_function))?;
-            check_assignment(col, t, rules.assign)?;
-            Some(super::datetime::stored(e, t, col.data_type, binder.now))
+            let (e, t) = binder.typed(v, ParameterType::Of(col.data_type.clone()), Scope::Rows(rules.set_function))?;
+            check_assignment(col, &t.clone(), rules.assign)?;
+            Some(super::datetime::stored(e, t, &col.data_type.clone(), binder.now))
         }
     };
     Ok((position, value))

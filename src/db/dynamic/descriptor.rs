@@ -14,6 +14,7 @@ use crate::ast::DescriptorItem;
 use crate::parser::descriptor_type;
 use crate::system::INFORMATION_SCHEMA;
 use crate::value::datetime::Field;
+use crate::value::types::MAX_TYPE_NESTING;
 use crate::value::{DataType, Decimal, Spelled, Value, spelling};
 
 /// [ISO/IEC 9075:1992 §17.1 Table 18] The codes of the data types.
@@ -48,6 +49,10 @@ pub(super) mod code {
     pub(in crate::db::dynamic) const BINARY: i64 = 60;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY VARYING.
     pub(in crate::db::dynamic) const BINARY_VARYING: i64 = 61;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] ROW TYPE.
+    pub(in crate::db::dynamic) const ROW: i64 = 19;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] ARRAY.
+    pub(in crate::db::dynamic) const ARRAY: i64 = 50;
     /// \[DESIGN\] An implementation-defined data type, of a code less than 0:
     /// a plug-in's (RULES.md D53), each described by this one code.
     pub(in crate::db::dynamic) const EXTENSION: i64 = -1;
@@ -111,7 +116,7 @@ pub(super) fn exact(n: i64) -> Value {
 }
 
 /// The value of the `usize` `n`, at most `i64::MAX`.
-fn number(n: usize) -> i64 {
+pub(super) fn number(n: usize) -> i64 {
     i64::try_from(n).unwrap_or(i64::MAX)
 }
 
@@ -138,8 +143,18 @@ impl Item {
         }
     }
 
+    /// [ISO/IEC 9075-2:2023 §20.1 SR3] Its LEVEL.
+    pub(super) fn level(&self) -> i64 {
+        self.number(DescriptorItem::Level)
+    }
+
+    /// Its TYPE.
+    pub(super) fn code(&self) -> i64 {
+        self.number(DescriptorItem::Type)
+    }
+
     /// The value of the character string field `f`.
-    fn text(&self, f: DescriptorItem) -> String {
+    pub(super) fn text(&self, f: DescriptorItem) -> String {
         match self.fields.get(&f) {
             Some(Value::Char(s)) => s.clone(),
             Some(_) | None => String::new(),
@@ -186,7 +201,7 @@ impl Item {
     /// the catalog `catalog`. NAME of one unnamed is the empty string.
     pub(super) fn described(t: DataType, name: Option<&str>, nullable: bool, catalog: &str) -> Item {
         let mut item = Item::default();
-        item.set_number(DescriptorItem::Type, type_code(t));
+        item.set_number(DescriptorItem::Type, type_code(&t.clone()));
         item.set_number(DescriptorItem::Nullable, i64::from(nullable));
         item.set(DescriptorItem::Name, Value::Char(name.unwrap_or_default().to_owned()));
         item.set_number(DescriptorItem::Unnamed, i64::from(name.is_none()));
@@ -220,7 +235,7 @@ impl Item {
                 self.set_number(DescriptorItem::Precision, i64::from(precision));
             }
             DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } => {
-                let (code, positions, precision) = datetime_shape(t);
+                let (code, positions, precision) = datetime_shape(&t);
                 self.set_number(DescriptorItem::Length, positions);
                 self.set_number(DescriptorItem::DatetimeIntervalCode, code);
                 self.set_number(DescriptorItem::Precision, precision);
@@ -233,6 +248,11 @@ impl Item {
             }
             // [ISO/IEC 9075-2:2023 §20.1 SR6j] Of BOOLEAN, TYPE alone.
             DataType::Boolean => {}
+            // [ISO/IEC 9075-2:2023 §20.10 GR7d x, xi] DEGREE of a row type,
+            // CARDINALITY an array type's maximum; its subordinate items
+            // describe the rest (`nested.rs`).
+            DataType::Row(r) => self.set_number(DescriptorItem::Degree, number(r.fields.len())),
+            DataType::Array(a) => self.set_number(DescriptorItem::Cardinality, i64::from(a.max)),
             DataType::Extension(_) => self.extension = Some(t),
         }
     }
@@ -270,7 +290,7 @@ impl Item {
                 written.replace("{p}", &precision.to_string())
             }
             code::INTERVAL => self.interval_text()?,
-            code::EXTENSION => return self.extension,
+            code::EXTENSION => return self.extension.clone(),
             _ => return None,
         };
         descriptor_type(&text)
@@ -309,17 +329,17 @@ pub(super) fn is_text(f: DescriptorItem) -> bool {
 }
 
 /// [ISO/IEC 9075:1992 §17.1 Table 18] The code of `t`.
-fn type_code(t: DataType) -> i64 {
+fn type_code(t: &DataType) -> i64 {
     match t {
         DataType::Character { .. } => code::CHARACTER,
         DataType::Varying { .. } => code::VARYING,
-        DataType::Exact { .. } => match spelling(&t) {
+        DataType::Exact { .. } => match spelling(t) {
             Spelled::Decimal => code::DECIMAL,
             Spelled::Integer => code::INTEGER,
             Spelled::Smallint => code::SMALLINT,
             Spelled::Numeric | Spelled::Float | Spelled::Real | Spelled::DoublePrecision => code::NUMERIC,
         },
-        DataType::Approximate { .. } => match spelling(&t) {
+        DataType::Approximate { .. } => match spelling(t) {
             Spelled::Real => code::REAL,
             Spelled::DoublePrecision => code::DOUBLE_PRECISION,
             Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint => code::FLOAT,
@@ -330,22 +350,24 @@ fn type_code(t: DataType) -> i64 {
         DataType::Boolean => code::BOOLEAN,
         DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } => code::DATETIME,
         DataType::Interval(_) => code::INTERVAL,
+        DataType::Row(_) => code::ROW,
+        DataType::Array(_) => code::ARRAY,
         DataType::Extension(_) => code::EXTENSION,
     }
 }
 
 /// [ISO/IEC 9075:1992 §17.9 GR3e iv 5, Table 19, §6.1 SR27] A datetime
 /// type's code, its length in positions, and its precision.
-fn datetime_shape(t: DataType) -> (i64, i64, i64) {
+fn datetime_shape(t: &DataType) -> (i64, i64, i64) {
     let with_fraction = |base: i64, p: u32| {
         let p = i64::from(p);
         base.saturating_add(if p > 0 { p.saturating_add(1) } else { 0 })
     };
     match t {
-        DataType::Time { precision, zoned: false } => (2, with_fraction(TIME_POSITIONS, precision), i64::from(precision)),
-        DataType::Timestamp { precision, zoned: false } => (3, with_fraction(TIMESTAMP_POSITIONS, precision), i64::from(precision)),
-        DataType::Time { precision, zoned: true } => (4, with_fraction(TIME_ZONED_POSITIONS, precision), i64::from(precision)),
-        DataType::Timestamp { precision, zoned: true } => (5, with_fraction(TIMESTAMP_ZONED_POSITIONS, precision), i64::from(precision)),
+        DataType::Time { precision, zoned: false } => (2, with_fraction(TIME_POSITIONS, *precision), i64::from(*precision)),
+        DataType::Timestamp { precision, zoned: false } => (3, with_fraction(TIMESTAMP_POSITIONS, *precision), i64::from(*precision)),
+        DataType::Time { precision, zoned: true } => (4, with_fraction(TIME_ZONED_POSITIONS, *precision), i64::from(*precision)),
+        DataType::Timestamp { precision, zoned: true } => (5, with_fraction(TIMESTAMP_ZONED_POSITIONS, *precision), i64::from(*precision)),
         DataType::Date
         | DataType::Character { .. }
         | DataType::Varying { .. }
@@ -356,6 +378,8 @@ fn datetime_shape(t: DataType) -> (i64, i64, i64) {
         | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Row(_)
         | DataType::Extension(_) => (1, DATE_POSITIONS, 0),
     }
 }
@@ -365,15 +389,36 @@ fn datetime_shape(t: DataType) -> (i64, i64, i64) {
 /// same name, precision and scale; a fixed-length string of the same
 /// length; a varying one of the same, or a target of no shorter.
 /// \[DESIGN\] SR2 lists no datetime, interval or plug-in's type: one matches
-/// the type it is.
-pub(super) fn matches(described: DataType, t: DataType, target: bool) -> bool {
-    let named = std::mem::discriminant(&spelling(&described)) == std::mem::discriminant(&spelling(&t));
-    match (described, t) {
+/// the type it is. [ISO/IEC 9075-2:2023 §20.1 SR7t, SR7u] A row type of
+/// the same degree whose fields' types match, and an array type whose
+/// element type matches, of the same maximum cardinality, or of a target
+/// of one no less.
+pub(super) fn matches(described: &DataType, t: &DataType, target: bool) -> bool {
+    matches_at(described, t, target, 0)
+}
+
+/// `matches`, `depth` deep in composite types, as deep as they nest at
+/// most (RULES.md R-CF-6).
+fn matches_at(described: &DataType, t: &DataType, target: bool, depth: usize) -> bool {
+    if depth > MAX_TYPE_NESTING {
+        return false;
+    }
+    if let (DataType::Row(r), DataType::Row(its)) = (described, t) {
+        let paired = r.fields.len() == its.fields.len();
+        return paired
+            && r.fields.iter().zip(&its.fields).all(|(f, g)| matches_at(&f.data_type, &g.data_type, target, depth.saturating_add(1)));
+    }
+    if let (DataType::Array(a), DataType::Array(its)) = (described, t) {
+        let max = its.max == a.max || (target && its.max > a.max);
+        return max && matches_at(&a.element, &its.element, target, depth.saturating_add(1));
+    }
+    let named = std::mem::discriminant(&spelling(described)) == std::mem::discriminant(&spelling(t));
+    match (described.clone(), t.clone()) {
         (DataType::Exact { precision, scale, .. }, DataType::Exact { precision: its_precision, scale: its_scale, .. }) => {
-            named && (matches!(spelling(&t), Spelled::Integer | Spelled::Smallint) || (precision, scale) == (its_precision, its_scale))
+            named && (matches!(spelling(t), Spelled::Integer | Spelled::Smallint) || (precision, scale) == (its_precision, its_scale))
         }
         (DataType::Approximate { precision, .. }, DataType::Approximate { precision: its_precision, .. }) => {
-            named && (!matches!(spelling(&t), Spelled::Float) || precision == its_precision)
+            named && (!matches!(spelling(t), Spelled::Float) || precision == its_precision)
         }
         (DataType::Character { length, units }, DataType::Character { length: its_length, units: its_units }) => {
             (length, units) == (its_length, its_units)
@@ -397,6 +442,9 @@ pub(crate) struct Descriptor {
     pub(super) occurrences: i64,
     /// COUNT [§17.4 GR7a, §17.5 GR3a].
     pub(super) count: i64,
+    /// [ISO/IEC 9075-2:2023 §20.10 GR6b] TOP_LEVEL_COUNT: of the items
+    /// DESCRIBE set, those of LEVEL 0.
+    pub(super) top_level: i64,
     /// Its item descriptor areas set, by number, from 1.
     pub(super) items: BTreeMap<i64, Item>,
 }
@@ -404,7 +452,7 @@ pub(crate) struct Descriptor {
 impl Descriptor {
     /// A descriptor area of `occurrences` items, each undefined.
     pub(super) fn new(occurrences: i64) -> Descriptor {
-        Descriptor { occurrences, count: 0, items: BTreeMap::new() }
+        Descriptor { occurrences, count: 0, top_level: 0, items: BTreeMap::new() }
     }
 
     /// Its `n`-th item descriptor area.
@@ -412,12 +460,14 @@ impl Descriptor {
         self.items.get(&n).cloned().unwrap_or_default()
     }
 
-    /// [ISO/IEC 9075:1992 §17.9 GR3c-e, GR4c-e] Described: COUNT the number
-    /// of `items`, and they the first item descriptor areas, unless there
-    /// are more than its occurrences; then whether there were more.
-    pub(super) fn describe(&mut self, items: Vec<Item>) -> bool {
+    /// [ISO/IEC 9075:1992 §17.9 GR3c-e, GR4c-e; ISO/IEC 9075-2:2023 §20.10
+    /// GR6] Described: COUNT the number of `items`, TOP_LEVEL_COUNT `top`,
+    /// those of LEVEL 0, and they the first item descriptor areas, unless
+    /// there are more than its occurrences; then whether there were more.
+    pub(super) fn describe(&mut self, items: Vec<Item>, top: usize) -> bool {
         let d = number(items.len());
         self.count = d;
+        self.top_level = number(top);
         if d > self.occurrences {
             return true;
         }

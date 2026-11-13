@@ -51,6 +51,30 @@ fn statements_run_and_show_their_results() {
     assert_eq!(run.err, "");
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.49, §7.1]; [DESIGN] RULES.md D46: an
+/// array and a row are shown as their text, a column of either as wide
+/// as its type's values, each element or field as its literal, a null
+/// array shown as asked, a null field as NULL.
+#[test]
+fn arrays_and_rows_are_shown_as_their_text() {
+    let (_db, server) = served();
+    let mut given = options(
+        &server,
+        vec![
+            command("INSERT INTO T VALUES (1, 'a'); INSERT INTO T VALUES (2, NULL)"),
+            command("SELECT ARRAY[K, 2] AS A, ROW(K, S) AS R, NULLIF(ARRAY[K], ARRAY[2]) AS N, K FROM T ORDER BY K"),
+        ],
+    );
+    given.null = "-".into();
+    let run = ran(&given, "", false);
+    assert!(run.succeeded, "{}", run.err);
+    assert_eq!(
+        run.out,
+        "OK\nOK\n A                                   | R                          | N                     |            K\n-------------------------------------+----------------------------+-----------------------+--------------\n ARRAY[1, 2]                         | ROW(1, 'a    ')            | ARRAY[1]              |            1\n ARRAY[2, 2]                         | ROW(2, NULL)               | -                     |            2\n(2 rows)\n"
+    );
+    assert_eq!(run.err, "");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR1b, §6.10 GR5c ii,
 /// §22.1]; [DESIGN] RULES.md D46: a warning an expression raises is shown
 /// as other warnings are: OK with a warning's SQLSTATE, or, of a query,

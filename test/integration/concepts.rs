@@ -90,7 +90,7 @@ fn columns_have_descriptions() {
     let s = db.session("APP");
     let cursor = s.open_cursor("SELECT ID, NAME, AMT + 1 FROM T").unwrap();
     let described: Vec<(Option<String>, DataType, bool)> =
-        cursor.columns.iter().map(|c| (c.name.clone(), c.data_type, c.not_null)).collect();
+        cursor.columns.iter().map(|c| (c.name.clone(), c.data_type.clone(), c.not_null)).collect();
     assert_eq!(described[0], (Some("ID".into()), DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric }, true));
     assert_eq!(described[1], (Some("NAME".into()), DataType::character(6), false));
     assert_eq!((described[2].0.clone(), described[2].2), (None, false), "an expression is an unnamed column");

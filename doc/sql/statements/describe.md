@@ -10,10 +10,12 @@ DESCRIBE: describe a statement prepared in an SQL descriptor area *(in a program
 
 ```
 <describe statement> ::=
-      DESCRIBE INPUT <SQL statement name> <using descriptor>
-    | DESCRIBE [ OUTPUT ] <SQL statement name> <using descriptor>
+      DESCRIBE INPUT <SQL statement name> <using descriptor> [ <nesting option> ]
+    | DESCRIBE [ OUTPUT ] <SQL statement name> <using descriptor> [ <nesting option> ]
 
 <using descriptor> ::= USING SQL DESCRIPTOR <descriptor name>
+
+<nesting option> ::= WITH NESTING | WITHOUT NESTING
 ```
 
 The `<SQL statement name>` is [PREPARE](prepare.md)'s, the `<descriptor
@@ -29,6 +31,15 @@ the fields its type takes, NULLABLE, NAME and UNNAMED, as
 [GET DESCRIPTOR](get-descriptor.md) shows. A dynamic parameter's type is
 the one it takes from where it stands, as [PREPARE](prepare.md) gives it;
 it is nullable, and unnamed.
+
+WITH NESTING, a column or parameter of an array or row type is followed
+by items of its parts, in order, each of LEVEL one more than its own. A
+row is followed by an item of each field, named as the field is, and an
+array by one of its element, of an empty NAME and UNNAMED 1. Each part is
+followed in turn by its own parts. COUNT is then the number of every
+item, and TOP_LEVEL_COUNT of those of LEVEL 0. WITHOUT NESTING, the
+default, sets no item of a part, and COUNT and TOP_LEVEL_COUNT are both
+the number of columns or parameters.
 
 If they are more than the area's occurrences, COUNT is their number,
 no item is set, and DESCRIBE completes with a warning, SQLSTATE 01005,
@@ -104,6 +115,8 @@ DESCRIBE PAY USING SQL DESCRIPTOR 'SMALL'      warning 01005: SMALL has 2 occurr
 ## STANDARD
 
 ISO/IEC 9075:1992 §17.8, of the `<using clause>` of §17.9 GR3 and GR4.
+The `<nesting option>` is ISO/IEC 9075-2:2023's [§20.9, §20.10 GR6f,
+GR7].
 SQL-92 makes it no `<directly executable statement>` [§20.1]. SQL-86 has
 no dynamic SQL.
 

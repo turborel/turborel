@@ -143,7 +143,7 @@ fn host() -> Params {
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
     Params::new()
         .declare("TEXT", DataType::varying(100), Value::Char(String::new()))
-        .declare("KV", integer, int(0))
+        .declare("KV", integer.clone(), int(0))
         .declare("FK", integer, int(0))
         .declare("NM", DataType::character(20), Value::Char(String::new()))
 }
