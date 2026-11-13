@@ -123,6 +123,7 @@ mod kept_plans;
 mod language;
 mod language_collations;
 mod length_units;
+mod listagg;
 mod log;
 mod log_durability;
 mod log_sync;

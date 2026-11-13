@@ -11,7 +11,7 @@ use crate::ast::{
     CaseExpression, Predicate, SearchCondition, SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification, WhenOperand,
 };
 use crate::error::Result;
-use crate::functions::{EVERY, FORMAT, GREATEST, LEAST, LPAD, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS, using};
+use crate::functions::{ANY_VALUE, EVERY, FORMAT, GREATEST, LEAST, LISTAGG, LPAD, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS, using};
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
@@ -94,9 +94,15 @@ impl Parser {
         }
         // [ISO/IEC 9075-2:2023 §10.9] EVERY, no key word of SQL-92, before
         // "(" the set function.
-        let every = matches!(self.peek(), Tok::Identifier(name) if name == EVERY);
-        if every && matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
+        // [ISO/IEC 9075-2:2023 §10.9] EVERY and ANY_VALUE, no key words of
+        // SQL-92, before "(" set functions, and LISTAGG the <listagg set
+        // function>.
+        let opens = matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN));
+        if opens && (self.is_word(EVERY) || self.is_word(ANY_VALUE)) {
             return Ok(ValueExpression::SetFunction(self.set_function_specification()?));
+        }
+        if opens && self.is_word(LISTAGG) {
+            return Ok(ValueExpression::SetFunction(self.listagg()?));
         }
         // [ISO/IEC 9075-2:2023 §6.15] GREATEST and LEAST, no key words of
         // SQL-92, before "(" the functions.
@@ -142,8 +148,10 @@ impl Parser {
         let at = self.here();
         let name = match self.peek() {
             Tok::KeyWord(name) => *name,
-            // [ISO/IEC 9075-2:2023 §10.9] EVERY, no key word of SQL-92.
+            // [ISO/IEC 9075-2:2023 §10.9] EVERY and ANY_VALUE, no key words
+            // of SQL-92.
             Tok::Identifier(name) if name == EVERY => EVERY,
+            Tok::Identifier(name) if name == ANY_VALUE => ANY_VALUE,
             Tok::Identifier(_)
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
@@ -165,7 +173,7 @@ impl Parser {
             SetArg::All(Box::new(self.value_expression()?))
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), at })
+        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg: None, at })
     }
 
     /// [ISO/IEC 9075-2:2023 §6.9] `<grouping operation>` ::= GROUPING (
@@ -179,7 +187,7 @@ impl Parser {
             columns.push(ValueExpression::Column(self.column_specification()?));
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name: GROUPING, arg: SetArg::Grouping(columns), order_by: Vec::new(), at })
+        Ok(SetFunctionSpecification { name: GROUPING, arg: SetArg::Grouping(columns), order_by: Vec::new(), listagg: None, at })
     }
 
     /// [ISO/IEC 9075:1992 §6.9] `<case expression>`: NULLIF, COALESCE, or

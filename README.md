@@ -1,15 +1,20 @@
-# turborel
+<p align="center">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="artwork/turborel-logo-white.svg">
+      <img src="artwork/turborel-logo.svg" alt="turborel" width="360">
+    </picture>
+</p>
 
-> turborel is in alpha, meaning, version 0.0.0. Anything may change
+> Turborel is in alpha, meaning, version 0.0.0. Anything may change
 > from one build to the next, SQL, API, protocol and files alike. See
 > [VERSIONING.md](VERSIONING.md).
 
-turborel (TUR-boh-rel) is a relational database system written in
+Turborel (TUR-boh-rel) is a relational database system written in
 Rust. Embed it as a library, or run it as a server, `turboreld`, for
 many clients at once, and query it in SQL with `turborel`, its
 command-line client.
 
-Nearly every part of turborel is a plug-in point. Storage engines, index
+Nearly every part of Turborel is a plug-in point. Storage engines, index
 methods, data types, functions, optimizer rules, system tables, the log,
 the catalog's store, file systems, encodings, authentication, transports
 and wire protocols are each an interface with a built-in implementation
@@ -61,10 +66,10 @@ cargo xtask verify                     # every check a change must pass
   the file formats and the protocol.
 - [CONFORMANCE.md](CONFORMANCE.md): what is implemented of the
   standards.
-- [RULES.md](RULES.md): how turborel is designed, written and verified.
+- [RULES.md](RULES.md): how Turborel is designed, written and verified.
 - [TODO.md](TODO.md): open work.
 - [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md):
   contributing, and reporting an issue or a vulnerability.
 - [LICENSE](LICENSE) and [TRADEMARK.md](TRADEMARK.md): the code is
-  under the BSD 2-Clause License; the name turborel and its logos are not,
+  under the BSD 2-Clause License; the name Turborel and its logos are not,
   and TRADEMARK.md says how they may be used.

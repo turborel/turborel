@@ -14,7 +14,8 @@ use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specifi
 use crate::ast::{Composite, Literal, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{
-    ARRAY_AGG, AggregateRef, ArrayAggregate, CONCATENATION, CollatedExtreme, GREATEST, LEAST, ScalarRef, regex_function, trim_named,
+    ANY_VALUE, ARRAY_AGG, AggregateRef, ArrayAggregate, CONCATENATION, CollatedExtreme, GREATEST, LEAST, LISTAGG, ScalarRef,
+    regex_function, trim_named,
 };
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
@@ -331,6 +332,9 @@ impl Binder<'_> {
         if sf.name == ARRAY_AGG {
             return self.array_aggregate(sf, scope);
         }
+        if sf.name == LISTAGG {
+            return self.listagg(sf, scope);
+        }
         let func: AggregateRef = self
             .db
             .functions
@@ -463,6 +467,9 @@ impl Binder<'_> {
         if self.purpose.constrains() && extreme && arg_type.clone().is_some_and(|t| t.is_character()) {
             return Err(nondeterministic("§7.8 SR3a, §7.9 SR13c i", "MAX or MIN of a character string"));
         }
+        if let Some(item) = possibly_nondeterministic(func.0.name()).filter(|_| self.purpose.constrains()) {
+            return Err(nondeterministic_source(item, func.0.name()));
+        }
         let (func, arg, named) = self.collated_call((func, arg, arg_type.clone()), arg_of, (extreme, distinct))?;
         let result = func.0.result_type(arg_type)?;
         let collated = named.map_or_else(String::new, |c| format!(" COLLATE {}", c.collation.name()));
@@ -515,6 +522,23 @@ fn distinct_operand(t: &DataType) -> Result<()> {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.30 SR3] a <numeric primary> is numeric, not of the distinct type {t}")));
     }
     Ok(())
+}
+
+/// [ISO/IEC 9075-2:2023 §9.16 SR1, §11.9 CR2] A constraint's condition
+/// contains `what`, a potential source of non-determinism by the item
+/// `item` of §9.16 SR1, which a CHECK may contain only with Feature F672,
+/// not claimed: so SQL-92's rule refuses it [ISO/IEC 9075:1992 §11.9 SR6].
+fn nondeterministic_source(item: &str, what: &str) -> SqlError {
+    rule(format!(
+        "[ISO/IEC 9075-2:2023 §9.16 SR1{item}, §11.9 CR2] a CHECK condition shall not contain a potential source of non-determinism: {what}"
+    ))
+}
+
+/// [ISO/IEC 9075-2:2023 §9.16 SR1ap, SR1ar, SR1as] The item of §9.16 SR1
+/// that makes a call of the set function `name` a potential source of
+/// non-determinism: ANY_VALUE, ARRAY_AGG and LISTAGG; of others, none.
+fn possibly_nondeterministic(name: &str) -> Option<&'static str> {
+    [(ANY_VALUE, "ap"), (ARRAY_AGG, "ar"), (LISTAGG, "as")].into_iter().find(|(f, _)| *f == name).map(|(_, item)| item)
 }
 
 // Unit tests: the exact result types of [X3.135-1986 §5.9 SR4] (RULES.md R-TEST-1).

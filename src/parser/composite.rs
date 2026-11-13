@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use super::Parser;
 use crate::ast::{
     ColumnSpecification, Composite, SelectSublist, SetArg, SetFunctionSpecification, Subquery, TableName, TableReference, UnnestTable,
-    ValueExpression, ValueOrder,
+    ValueExpression,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::functions::{ARRAY_AGG, ARRAY_MAX_CARDINALITY, CARDINALITY, TRIM_ARRAY};
@@ -263,20 +263,10 @@ impl Parser {
         let mut order_by = Vec::new();
         if self.accept_kw(kw::ORDER) {
             self.expect_kw(kw::BY)?;
-            loop {
-                let key = self.nested(Parser::value_expression)?;
-                let descending = self.accept_kw(kw::DESC);
-                if !descending {
-                    self.accept_kw(kw::ASC);
-                }
-                order_by.push(ValueOrder { key, descending });
-                if !self.accept_delim(delim::COMMA) {
-                    break;
-                }
-            }
+            order_by = self.sort_specification_list()?;
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name: ARRAY_AGG, arg: SetArg::All(Box::new(value)), order_by, at })
+        Ok(SetFunctionSpecification { name: ARRAY_AGG, arg: SetArg::All(Box::new(value)), order_by, listagg: None, at })
     }
 
     /// `primary` followed by each `<array element reference>` `[` `<numeric

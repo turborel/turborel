@@ -26,6 +26,8 @@ use crate::storage::{Floats, Ints, Texts};
 use crate::value::Spelled;
 use crate::value::{DOUBLE_PRECISION, DataType, Decimal, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
 
+mod any_value;
+pub use any_value::ANY_VALUE;
 mod arrays;
 pub use arrays::{
     ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf, ElementOf,
@@ -40,6 +42,8 @@ pub use formatted::{FORMAT, formatted_cast};
 mod greatest;
 pub use greatest::{GREATEST, GreatestOrLeast, LEAST};
 mod ints;
+mod listagg;
+pub use listagg::{LISTAGG, Listagg, ListaggSpec, MAX_LISTAGG_LENGTH, Truncation};
 mod regex;
 mod rows;
 pub use rows::{FieldOf, RowOf};
@@ -310,7 +314,8 @@ impl Registry {
         ];
         let scalars = strings::functions().into_iter().chain(trim::functions()).map(|f| (f.name().to_string(), ScalarRef(f))).collect();
         let truths = [Truths::EVERY, Truths::ANY, Truths::SOME].map(|t| AggregateRef(Arc::new(t)));
-        let aggregates = standard.iter().chain(&truths).map(|f| (f.0.name().to_string(), f.clone())).collect();
+        let any_value = [AggregateRef(Arc::new(any_value::AnyValue))];
+        let aggregates = standard.iter().chain(&truths).chain(&any_value).map(|f| (f.0.name().to_string(), f.clone())).collect();
         Registry { scalars, aggregates, standard }
     }
 

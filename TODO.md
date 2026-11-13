@@ -33,9 +33,6 @@ each group.
 
 ### Queries
 
-- ANY_VALUE (T626) and LISTAGG (T625) [§10.9]. ANY_VALUE takes a column
-  that does not depend on the grouping, LISTAGG joins a group's strings in
-  the order WITHIN GROUP gives.
 - Window functions (T611, T612, T614 to T620) [§4.17.15, §6.10, §6.11,
   §7.15]. Ranks, running totals, LEAD and LAG, FIRST_VALUE, NTH_VALUE and
   frames of ROWS, RANGE and GROUPS.

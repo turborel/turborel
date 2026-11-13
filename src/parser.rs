@@ -37,6 +37,7 @@ mod expression;
 mod generated;
 mod grouping;
 mod interval;
+mod listagg;
 mod literal;
 mod names;
 mod primary;

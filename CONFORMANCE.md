@@ -1041,6 +1041,30 @@ grouping does. A grouping column of two collations among the sets is
 grouped by each where its set names it. ROLLUP, CUBE and GROUPING, which
 SQL-92 does not reserve, are key words only where they are read.
 
+### LISTAGG and ANY_VALUE
+
+Features T625 (LISTAGG) and T626 (ANY_VALUE), set functions of
+ISO/IEC 9075-2:2023 §10.9.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| ANY_VALUE | §10.9 SR7f, GR7d v | `ANY_VALUE([DISTINCT \| ALL] x)` is one of the values of x not null, of x's type and collation, and null of none. Nulls left out give SQLSTATE 01003, as of any set function. |
+| LISTAGG's syntax | §10.9 SR11 | `LISTAGG([DISTINCT \| ALL] x, 'sep' [ON OVERFLOW ...]) WITHIN GROUP (ORDER BY ...)`. Its separator and filler are character string literals, else SQLCODE -102, and no longer than its result, else -103. x is a character string, else -103. A set function or a subquery in x or a key is -103 [SR11a]. A key is an operand of an ordering operation [§9.14]. |
+| Its order and nulls | GR11a, GR11b | The values in the order of the keys, each key as its collation orders it. Values of keys alike are in the order they were read. Null values are left out, with SQLSTATE 01003. |
+| DISTINCT | GR11c | Values equal by x's collation are one, `'a'` and `'A'` under CASE_INSENSITIVE say. |
+| Its result | SR11d, GR11e to GR11g | CHARACTER VARYING(32,767), of x's collation, null of no values. Values joined longer than 32,767 characters are SQLSTATE 22001 of ON OVERFLOW ERROR, written or implicit. ON OVERFLOW TRUNCATE takes the most values that fit with the separator, the filler (`...` if none is written) and, WITH COUNT, the count of those left out in parentheses, as GR11g iii defines, three periods where even the filler does not fit. |
+| In a constraint | §9.16 SR1ap, SR1ar, SR1as, §11.9 CR2 | ANY_VALUE, ARRAY_AGG and LISTAGG are potential sources of non-determinism. A CHECK or an assertion containing one is SQLCODE -103, as F672 is not claimed. |
+
+LISTAGG's argument is the row of x and its keys, null where x is, so the
+executor leaves out a null value and warns of it as of any set function.
+Of a group's values it holds only those its result can show. Once the
+values in order are longer than 32,767 characters, those after cannot be
+in its result, so without DISTINCT they are let go as they are passed,
+and of ON OVERFLOW ERROR the error is raised then. Their total does not
+depend on their order, so it is the error the result would raise
+(RULES.md D15). ANY_VALUE, LISTAGG, WITHIN and OVERFLOW, which SQL-92 does
+not reserve, are key words only where they are read.
+
 ### Arrays and row types
 
 Features S090 (Minimal array support), S099 (Array expressions), S301
@@ -1282,6 +1306,7 @@ topic. The Where column names the file that implements each.
 | 2023 §6.1 SR30 (IV032) the radix and precision of BIGINT | Decimal, as INTEGER's and SMALLINT's, of 18 digits, the most an exact value holds | `value.rs` |
 | 86 §5.5 SR10–SR12 FLOAT, REAL, DOUBLE PRECISION | 24 bits if p ≤ 24, else 53. REAL 24, DOUBLE PRECISION 53, FLOAT with no precision 53. | `parser/data_type.rs`, `value.rs` |
 | 2023 §6.9 SR10b (IV081), §7.13 SR17m iii (IV183) the type of the result of a grouping operation | Exact numeric of scale 0 and precision 18, the type BIGINT's, which holds GROUPING of up to 59 columns | `binder/grouping_sets.rs` |
+| 2023 §10.9 SR11d (IA044) the type and maximum length of LISTAGG's result | CHARACTER VARYING of 32,767 characters, the longest character string, as there is no CHARACTER LARGE OBJECT | `functions/listagg.rs` |
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |
 | 86 §5.9 SR4b, c precision of sums and products | 18 | `binder/expression.rs` |
@@ -1346,6 +1371,8 @@ topic. The Where column names the file that implements each.
 | §3.3.4.4, Annex C item 6 (implementation-dependent) whether the exception of an inessential part of a search condition is raised | An EXISTS reads its subquery's rows up to the first its condition keeps, and a scalar or row subquery reads two rows at most, the second failing it. So an error of a later row is not raised, by batches as row by row. Every other part of a condition is evaluated of every row its clause applies to (RULES.md D15). | `exec/eval.rs`, `exec/batch/stream.rs`, `exec/batch/joined/pairs.rs` |
 | §3.3.4.4, Annex C item 5 (implementation-dependent) whether expressions are evaluated left to right | Conjuncts and rows are judged in the order the plan reads them. Where several would raise an error, which one a statement raises may differ by plan (the operand a hash join builds, the join order, an OPTIMIZER setting). Whether one is raised does not (RULES.md D15). | `physical/join.rs` |
 | 2023 §7.13 SR17 (UV132) the column names and correlation name of the grouping sets' transformation | None is made. The sets are grouped in one pass, and nothing of the transformation can be named or seen. | `binder/grouping_sets.rs` |
+| 2023 §10.9 GR7d v (UV062) the value ANY_VALUE gives | The first value not null it reads. So of several it may differ by plan, row by row, by batches or past the work area. | `functions/any_value.rs` |
+| 2023 §10.9 GR11a, §10.10 the order of LISTAGG's values of sort keys alike | The order they were read | `functions/listagg.rs` |
 | 86 §6.5 GR1 whether a viewed table is materialized | No. Its query is bound into the plan of each query that names it. | `binder/views.rs` |
 | §3.3.4.1 more than one condition of a statement | One is made available. That is an exception if one is raised, else no data if the statement found none, else a warning of its own rules, as of an assignment or a privilege, else the first warning an expression raised. A query's rows that can raise a condition are read as its cursor opens (RULES.md D15), so its warnings are its OPEN's, or, over the protocol, its Complete's once its rows are sent. | `error/warnings.rs`, `db/completion.rs` |
 
@@ -1463,6 +1490,13 @@ The standards leave memory to the implementation (RULES.md D38). This is in
 | MEMORY.WORK_BYTES | 4 MiB, at least 64 KiB, a session's to set | What an operator, or a temporary table's instance (D49), holds before it spills |
 | SPILL.BATCH_BYTES | 16 KiB, from 4 KiB to 1 MiB | The bytes a spilled run is written in |
 
+A set function's accumulator holds its group's values in memory, past
+the work area too. LISTAGG's holds the values that fit in the 32,767
+characters its result can show, of which empty strings joined by an
+empty separator may be any number, and under DISTINCT each distinct
+value, to count them.
+ARRAY_AGG's holds at most 65,535 elements.
+
 ---
 
 ## Limits
@@ -1520,6 +1554,7 @@ Where the standards are unclear, turborel reads them as follows.
 
 | Text | Reading |
 |---|---|
+| LISTAGG DISTINCT's copy kept [2023 §10.9 GR11c] | GR11c removes the redundant duplicates of values ordered by WITHIN GROUP, but does not say which copy stays. The first in that order stays, in its place, so `'X'` keyed 1 and `'x'` keyed 2 give `X` under CASE_INSENSITIVE, and `x` of ORDER BY the key DESC. |
 | Binary strings brought together [2023 §9.5 SR3b] | The result of CASE, a set operation or a table value constructor of BINARY(2) and BINARY(3) is BINARY(3), but no rule extends a value of 2 octets to it. Each keeps its octets until it is assigned, where a BINARY(3) column pads it [§9.2 GR3b x]. |
 | A time or timestamp without time zone [§4.5.1, §6.1 GR5] | SQL-92 keeps it in UTC, the session's displacement implied, so it is kept so, and a value retrieved shows in the displacement of the session that retrieves it (RULES.md D54). Stored in a column WITH TIME ZONE, it takes that displacement. A datetime literal in a `<default clause>` without one is of UTC [§5.3 SR18], as a definition is read again where no session is. |
 | UNICODE_<LOCALE> and CLDR [UTS #35 Part 5 §3.13.2] | The rules tailor UNICODE, not CLDR's root collation, which orders 105 of its 24,412 characters otherwise. These are currency symbols, length and repetition marks, and a few Cyrillic letters. The script groups `[reorder]` moves are laid over UNICODE's primaries from CLDR's own, as UTS #35 describes for allkeys.txt. So the digits of scripts, which UNICODE puts before the currency symbols, are in the group of digits but stay where UNICODE has them. |

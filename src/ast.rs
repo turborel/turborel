@@ -72,7 +72,7 @@ pub use schema::{
 };
 pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
-pub use set_functions::{SetArg, SetFunctionSpecification};
+pub use set_functions::{Listagg, Overflow, SetArg, SetFunctionSpecification};
 pub use user_types::{TypeDefinition, TypeOption};
 pub use users::UserStatement;
 

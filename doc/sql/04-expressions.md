@@ -330,6 +330,8 @@ a query reads, or of each group of its GROUP BY.
 | EVERY(x) | of a BOOLEAN x, TRUE if each x is TRUE, else FALSE |
 | ARRAY_AGG(x ORDER BY ...) | an array of every x, nulls among them, in the order ORDER BY gives; null of no rows |
 | ANY(x), SOME(x) | of a BOOLEAN x, TRUE if an x is TRUE, else FALSE |
+| ANY_VALUE(x) | one of the values of x, the first one read |
+| LISTAGG(x, 'sep') WITHIN GROUP (ORDER BY ...) | the strings x joined by the separator in the order ORDER BY gives, CHARACTER VARYING(32767) |
 
 Each but COUNT(*) leaves out the nulls of x, and with DISTINCT counts
 each value of x once: `COUNT(DISTINCT DEPT)`. Of no rows, COUNT is 0
@@ -386,6 +388,39 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): a <set function specification> is in a 
 
 The mean is found by a subquery: `WHERE SALARY > (SELECT AVG(SALARY)
 FROM STAFF)`.
+
+LISTAGG's separator is a literal, and its WITHIN GROUP's ORDER BY says
+the order of the strings, each key by its collation. LISTAGG(DISTINCT
+x, ...) joins each value once, the first of values alike in that order.
+Strings joined longer than 32,767 characters are refused, SQLSTATE
+22001, unless ON OVERFLOW TRUNCATE is written after the separator. Then
+it joins as many as fit and ends with the separator and a filler, `...`
+if none is written. WITH COUNT adds the number of strings left out in
+parentheses, and WITHOUT COUNT does not.
+
+ANY_VALUE gives a column that the grouping decides but does not name,
+such as a department's name grouped by its number, with no need to
+group by it too. Which value it gives of several is not defined.
+Below, the four names fit, so the second query adds no filler.
+
+```sql
+SELECT DEPT, LISTAGG(NAME, ', ') WITHIN GROUP (ORDER BY SALARY DESC) AS BY_PAY,
+    ANY_VALUE(NAME) AS SOMEONE FROM STAFF GROUP BY DEPT ORDER BY DEPT;
+SELECT LISTAGG(NAME, ', ' ON OVERFLOW TRUNCATE '...' WITH COUNT) WITHIN GROUP (ORDER BY ID) FROM STAFF;
+```
+
+```
+ DEPT | BY_PAY                                                       | SOMEONE
+------+--------------------------------------------------------------+--------------------------------
+ ENG  | Grace, Ada                                                   | Ada
+ OPS  | Edsger                                                       | Edsger
+ NULL | Barbara                                                      | Barbara
+(3 rows)
+
+--------------------------------------------------------------
+ Ada, Grace, Edsger, Barbara
+(1 row)
+```
 
 ## NEXT VALUE FOR
 

@@ -1,18 +1,18 @@
-# The turborel Documentation Set
+# The Turborel Documentation Set
 
-turborel is a relational database system: a library a program embeds, a
+Turborel is a relational database system: a library a program embeds, a
 server, `turboreld`, that serves its databases over a network, and a
 command-line client, `turborel`. This set of manuals describes them for
 those who use, run and connect to them.
 
-turborel speaks the SQL of the international standards. Today that is
+Turborel speaks the SQL of the international standards. Today that is
 ANSI X3.135-1986 ("SQL-86") and ISO/IEC 9075:1992 ("SQL-92"), read as one
 language, the newer prevailing where they differ. Later editions of the
 standard are added to the same language as they are implemented, through
 SQL:2023. What is implemented, clause by clause, is in
 [CONFORMANCE.md](../CONFORMANCE.md).
 
-turborel is in alpha: what these manuals describe may change in any
+Turborel is in alpha: what these manuals describe may change in any
 release until 1.0.0 ([Versions](appendix/f-versions.md)). Each change
 updates the pages it touches, so the manuals describe the release they
 come with.
@@ -21,7 +21,7 @@ come with.
 
 | Volume | For | |
 |---|---|---|
-| [I. User's Guide](user/README.md) | Anyone who writes SQL against turborel | Concepts, and how to use them, chapter by chapter |
+| [I. User's Guide](user/README.md) | Anyone who writes SQL against Turborel | Concepts, and how to use them, chapter by chapter |
 | [II. SQL Reference Manual](sql/README.md) | The same, looking something up | The language element by element; each statement on a page of its own |
 | [III. Operator's Guide](operator/README.md) | Whoever installs and runs a server | Installing, running `turboreld`, databases, settings, users, connections |
 | [IV. Client Reference](client/README.md) | Users of the client, and programs that connect or embed | The `turborel` command, the client library, and the embedded library |

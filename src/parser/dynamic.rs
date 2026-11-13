@@ -42,7 +42,7 @@ const TOP_LEVEL_COUNT: &str = "TOP_LEVEL_COUNT";
 /// [ISO/IEC 9075-2:2023 §20.10] NESTING, of a `<nesting option>`.
 const NESTING: &str = "NESTING";
 /// [ISO/IEC 9075-2:2023 §20.10] WITHOUT, of a `<nesting option>`.
-const WITHOUT: &str = "WITHOUT";
+pub(super) const WITHOUT: &str = "WITHOUT";
 
 /// A dynamic statement, as the parser gives it.
 fn dynamic(statement: DynamicStatement) -> SqlStatement {

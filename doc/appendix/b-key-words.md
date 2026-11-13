@@ -51,9 +51,9 @@ follows it, beginning a statement. DATABASE is that statement's
 only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
-SQL:2023 reserves BIGINT, BINARY, BOOLEAN, BTRIM, CUBE, CYCLE, DECFLOAT, EVERY, GREATEST,
-GROUPING, LEAST, LIKE_REGEX, LPAD, LTRIM, OCCURRENCES_REGEX, PARTITION, POSITION_REGEX, ROLLUP, RPAD,
-RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX and VARBINARY, which SQL-92 does not, so
+SQL:2023 reserves ANY_VALUE, BIGINT, BINARY, BOOLEAN, BTRIM, CUBE, CYCLE, DECFLOAT, EVERY, GREATEST,
+GROUPING, LEAST, LIKE_REGEX, LISTAGG, LPAD, LTRIM, OCCURRENCES_REGEX, PARTITION, POSITION_REGEX, ROLLUP, RPAD,
+RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX, VARBINARY and WITHIN, which SQL-92 does not, so
 a column of an older database may be named any of them. They stay identifiers here, key words only where
 they are read. BIGINT, BINARY, BOOLEAN, DECFLOAT and VARBINARY are data types
 where a data type is written, so a domain cannot be named BINARY,
@@ -74,6 +74,10 @@ In a GROUP BY, ROLLUP and CUBE are read only before a parenthesis, and
 GROUPING only before SETS, which SQL:2023 does not reserve. GROUPING is
 the grouping operation before a parenthesis in a value, so `GROUP BY
 ROLLUP, CUBE` groups by two columns of those names.
+ANY_VALUE and LISTAGG are set functions only before a parenthesis. WITHIN
+is read only before GROUP after LISTAGG's arguments, and OVERFLOW, which
+SQL:2023 does not reserve, only after ON there, so `SELECT LISTAGG,
+WITHIN FROM T` names two columns.
 
 SEQUENCE, INCREMENT, MAXVALUE, MINVALUE and RESTART, which SQL:2023 does
 not reserve, and CYCLE and START are key words only in CREATE, ALTER and
