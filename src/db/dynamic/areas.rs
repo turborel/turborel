@@ -119,6 +119,7 @@ fn of_field_type(f: DescriptorItem, t: &DataType, target: bool) -> bool {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => false,
     }
 }

@@ -22,12 +22,16 @@ GRANT: give privileges
     | UPDATE [ ( <column name list> ) ]
     | REFERENCES [ ( <column name list> ) ]
     | USAGE
+    | EXECUTE
 
 <object name> ::=
       [ TABLE ] <table name>
     | DOMAIN <domain name>
     | COLLATION <collation name>
     | SEQUENCE <sequence generator name>
+    | TYPE <user-defined type name>
+    | SPECIFIC FUNCTION <specific name>
+    | FUNCTION <function name> [ ( [ <data type> [ { , <data type> }... ] ] ) ]
 
 <grantee> ::= PUBLIC | <authorization identifier>
 ```
@@ -35,7 +39,8 @@ GRANT: give privileges
 ## DESCRIPTION
 
 GRANT gives each grantee privileges on a table, a view, a domain, a
-collation CREATE COLLATION made, or a sequence generator:
+collation CREATE COLLATION made, a sequence generator, a distinct type,
+or a function a distinct type's definition made:
 
 | Privilege | Lets its holder |
 |---|---|
@@ -44,8 +49,12 @@ collation CREATE COLLATION made, or a sequence generator:
 | UPDATE | update the table; on columns, set only those columns |
 | DELETE | delete rows |
 | REFERENCES | name the table, or the columns, in a constraint: a foreign key that references them, a CHECK or an assertion that reads them |
-| USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR |
+| USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR; use the distinct type: name it as a column's type or a CAST's |
+| EXECUTE | invoke the function, by name or by a CAST to or from its distinct type |
 
+A function is named by its specific name, the type's name and
+_TO_DISTINCT or _TO_SOURCE, or by its name and, if more than one function
+of the schema has it, its parameter's type.
 INSERT, UPDATE or REFERENCES without columns is the privilege on the
 table and on each of its columns, and on each column added to it later.
 ALL PRIVILEGES is every privilege its user may grant on the object.
@@ -59,18 +68,20 @@ statement completes with the warning SQLSTATE 01007. WITH GRANT OPTION
 lets the grantees grant the privileges in turn.
 
 GRANT runs within the session's transaction: ROLLBACK undoes it.
-INFORMATION_SCHEMA.TABLE_PRIVILEGES, COLUMN_PRIVILEGES and
-USAGE_PRIVILEGES show the privileges.
+INFORMATION_SCHEMA.TABLE_PRIVILEGES, COLUMN_PRIVILEGES,
+USAGE_PRIVILEGES, UDT_PRIVILEGES and ROUTINE_PRIVILEGES show the
+privileges.
 
 ## RULES
 
 1. The object exists. A table named without a schema is of the
    session's default schema.
-2. Of a domain, a collation or a sequence generator, USAGE alone is
-   granted; of a table, USAGE is not.
-3. Each column named is the table's.
-4. Of a temporary table, ALL PRIVILEGES alone is granted.
-5. The transaction is not READ ONLY.
+2. Of a domain, a collation, a sequence generator or a type, USAGE alone
+   is granted, and of a function EXECUTE alone; of a table, neither.
+3. A function's name designates exactly one function.
+4. Each column named is the table's.
+5. Of a temporary table, ALL PRIVILEGES alone is granted.
+6. The transaction is not READ ONLY.
 
 ## PRIVILEGES
 

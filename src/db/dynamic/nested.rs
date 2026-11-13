@@ -55,7 +55,8 @@ fn subordinates(t: &DataType, level: i64, catalog: &str, out: &mut Vec<Item>) {
     match t {
         DataType::Row(r) => r.fields.iter().for_each(|f| add(&f.data_type, (&f.name, f.unnamed), out)),
         DataType::Array(a) => add(&a.element, ("", true), out),
-        DataType::Character { .. }
+        DataType::Distinct(_)
+        | DataType::Character { .. }
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }

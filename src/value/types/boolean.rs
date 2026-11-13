@@ -100,6 +100,7 @@ pub(crate) fn as_text(b: bool, t: &DataType) -> Result<Value> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => return uncastable(&Value::Bool(b), t),
     };
     let rule = if fixed { "GR11f iii" } else { "GR12f iii" };

@@ -1,6 +1,6 @@
 //! The catalog: descriptions of schemas, tables, views, columns,
 //! constraints, domains, assertions, collations, sequence generators,
-//! indexes and privileges.
+//! user-defined types, indexes and privileges.
 //!
 //! [X3.135-1986 §4.6] a `<schema>` is a "persistent object" created by implementor-defined
 //! mechanisms, so where descriptions live is up to us. The `Catalog` trait is
@@ -25,6 +25,7 @@ mod domains;
 mod keys;
 mod privileges;
 mod sequences;
+mod user_types;
 
 use crate::value::collation::CollationRef;
 pub use collations::CollationDesc;
@@ -34,6 +35,7 @@ pub use domains::{DomainDesc, UsageDesc};
 pub use keys::KeyShape;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, applicable, merged};
 pub use sequences::SequenceDesc;
+pub use user_types::{Routine, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, based_on, types_in};
 
 /// A `<table name>` with its `<authorization identifier>` made explicit.
 /// [X3.135-1986 §5.4 SR3] two table names are equal iff both parts are equal.
@@ -250,8 +252,9 @@ pub struct IndexDesc {
 /// * After `put_domain`, `domain` returns it by name, and `domains` among
 ///   every domain in a stable order; after `remove_domain`, neither does.
 ///   So too `put_collation`, `collation`, `collations` and
-///   `remove_collation`; and `put_sequence`, `sequence`, `sequences` and
-///   `remove_sequence`.
+///   `remove_collation`; `put_sequence`, `sequence`, `sequences` and
+///   `remove_sequence`; and `put_user_type`, `user_type`, `user_types` and
+///   `remove_user_type`.
 ///   So too `put_assertion`, `assertion`, `assertions` and
 ///   `remove_assertion`.
 /// * `duplicate` returns an independent copy: changing either leaves the
@@ -350,6 +353,15 @@ pub trait Catalog: Send + Sync {
     fn sequences(&self) -> Vec<&SequenceDesc>;
     /// Forget the sequence generator of this name.
     fn remove_sequence(&mut self, name: &QualifiedName);
+    /// Record a user-defined type, in place of one of its name [ISO/IEC
+    /// 9075-2:2023 §11.51 GR1].
+    fn put_user_type(&mut self, user_type: UserTypeDesc);
+    /// The user-defined type of this name, if any.
+    fn user_type(&self, name: &QualifiedName) -> Option<&UserTypeDesc>;
+    /// Every user-defined type, in a stable order.
+    fn user_types(&self) -> Vec<&UserTypeDesc>;
+    /// Forget the user-defined type of this name: one dropped [§11.59 GR].
+    fn remove_user_type(&mut self, name: &QualifiedName);
     /// Forget the domain with this name: one dropped [§11.27 GR3].
     fn remove_domain(&mut self, name: &QualifiedName);
     /// Record the assertion `assertion`, a CHECK of no table, in place of
@@ -385,6 +397,7 @@ pub struct MemoryCatalog {
     domains: HashMap<QualifiedName, DomainDesc>,
     collations: HashMap<QualifiedName, CollationDesc>,
     sequences: HashMap<QualifiedName, SequenceDesc>,
+    user_types: HashMap<QualifiedName, UserTypeDesc>,
     assertions: HashMap<QualifiedName, ConstraintDesc>,
 }
 
@@ -509,6 +522,20 @@ impl Catalog for MemoryCatalog {
     }
     fn remove_sequence(&mut self, name: &QualifiedName) {
         self.sequences.remove(name);
+    }
+    fn put_user_type(&mut self, user_type: UserTypeDesc) {
+        self.user_types.insert(user_type.name.clone(), user_type);
+    }
+    fn user_type(&self, name: &QualifiedName) -> Option<&UserTypeDesc> {
+        self.user_types.get(name)
+    }
+    fn user_types(&self) -> Vec<&UserTypeDesc> {
+        let mut user_types: Vec<&UserTypeDesc> = self.user_types.values().collect();
+        user_types.sort_by_key(|t| t.name.to_string());
+        user_types
+    }
+    fn remove_user_type(&mut self, name: &QualifiedName) {
+        self.user_types.remove(name);
     }
     fn remove_domain(&mut self, name: &QualifiedName) {
         self.domains.remove(name);

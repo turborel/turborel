@@ -307,6 +307,7 @@ pub fn padding(t: &DataType) -> Option<Option<usize>> {
     match t {
         DataType::Character { length, units: CharUnits::Characters } => usize::try_from(*length).ok().map(Some),
         DataType::Varying { .. } => Some(None),
+        DataType::Distinct(d) => padding(&d.source),
         DataType::Character { units: CharUnits::Octets, .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }

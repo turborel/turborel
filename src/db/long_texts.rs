@@ -75,7 +75,8 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         | SchemaStatement::Revoke(_)
         | SchemaStatement::Collation(_)
         | SchemaStatement::Sequence(_)
-        | SchemaStatement::AlterSequence(_) => None,
+        | SchemaStatement::AlterSequence(_)
+        | SchemaStatement::Type(_) => None,
     }
 }
 

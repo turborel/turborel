@@ -92,7 +92,9 @@ fn string(r: &mut Reader<'_>) -> Result<String> {
 
 /// A type: its kind's tag, then its parameters, as its kind writes them;
 /// of a kind beyond the standard, its name and its parameters as written,
-/// which a client reads without the kind.
+/// which a client reads without the kind. A distinct type goes as its
+/// source type, as its from-sql transform gives its values to a host
+/// [ISO/IEC 9075-2:2023 §4.9.6, §11.51 GR2b] (RULES.md D69).
 fn put_type(b: &mut Vec<u8>, t: &DataType) {
     match t {
         DataType::Character { .. } => b.put_u8(CHARACTER),
@@ -124,6 +126,7 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
             }
             return;
         }
+        DataType::Distinct(d) => return put_type(b, &d.source),
         DataType::Extension(e) => {
             b.put_u8(EXTENSION);
             b.put_str(e.kind.name());

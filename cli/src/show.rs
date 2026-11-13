@@ -95,6 +95,8 @@ fn measured(t: &DataType, depth: usize) -> (usize, bool) {
             (part(&a.element).saturating_mul(usize::try_from(a.max).unwrap_or(MAX_WIDTH)).saturating_add(ARRAY_EXTRA), false)
         }
         DataType::Row(r) => (r.fields.iter().map(|f| part(&f.data_type)).fold(ROW_EXTRA, usize::saturating_add), false),
+        // A distinct type as its source, as its values are.
+        DataType::Distinct(d) => measured(&d.source, depth),
         // A type beyond the standard, shown as its text, as wide as it is.
         DataType::Extension(_) => (MAX_WIDTH, false),
     };

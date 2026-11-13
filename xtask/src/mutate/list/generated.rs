@@ -278,7 +278,7 @@ pub const GENERATED: [Mutation; 28] = [
         file: "src/db/generated/named.rs",
         original: "if made.is_err() && dropped {",
         replacement: "if false {",
-        integration: &["generated_named::domain_dropped_11_40", "generated::referenced_column_dropped_11_23"],
+        integration: &["generated::referenced_column_dropped_11_23"],
         unit: &[],
     },
     Mutation {

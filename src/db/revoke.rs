@@ -171,6 +171,9 @@ impl State {
         if r.object == PrivilegeObject::Sequence {
             return self.revoke_sequence_usage((auth, schema), r).or_at(r.table.at);
         }
+        if matches!(r.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine | PrivilegeObject::Routine) {
+            return self.revoke_on_type((auth, schema), r).or_at(r.table.at);
+        }
         let name = qualify(&r.table, schema);
         let table = self.object(&name).or_at(r.table.at)?;
         let (held, grantable) = applicable(&*self.catalog, auth, &name);

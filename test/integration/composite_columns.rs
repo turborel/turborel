@@ -80,7 +80,7 @@ fn kept_after_reopening() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.5 SR3e, §6.5 SR1, §11.11 GR] ARRAY[]
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.5 SR4e, §6.5 SR1, §11.11 GR] ARRAY[]
 /// is the default of a column of an array type: as a column is defined,
 /// and as one is added, every row taking it; it is the default of no other
 /// type.

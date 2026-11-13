@@ -8,7 +8,7 @@
 use super::descriptor::{Descriptor, Item, exact, number};
 use super::{Name, dynamic_error};
 use crate::ast::{DescriptorItem, ParameterSpecification, UsingClause};
-use crate::binder::{OutColumn, cast_is_valid};
+use crate::binder::{OutColumn, assignable, cast_is_valid};
 use crate::db::assignment::{assign_targets, check_targets};
 use crate::db::{Completion, Session};
 use crate::error::{Result, SqlError, SqlState};
@@ -30,6 +30,22 @@ pub(super) enum Targets<'a> {
 /// `to` (SQLSTATE 07006).
 fn restricted(rule: &str, from: &DataType, to: &DataType) -> SqlError {
     dynamic_error(SqlState::RESTRICTED_DATA_TYPE, format!("[ISO/IEC 9075:1992 {rule}, §6.10 SR4] CAST of {from} to {to} is not valid"))
+}
+
+/// [ISO/IEC 9075:1992 §17.9 GR5e, GR7c] Whether a value of `from` goes
+/// to `to`, as CAST takes it; [ISO/IEC 9075-2:2023 §20.11 GR6c iii, §20.12
+/// GR5d iii] to a distinct type by its to-sql function, FNUDT, from one by
+/// its from-sql function, FNSDT (ID048), whose source type is then
+/// compatible with the other, each assignable to the other.
+fn transformed(from: &DataType, to: &DataType) -> bool {
+    let compatible = |a: &DataType, b: &DataType| assignable(a, b) && assignable(b, a);
+    if let DataType::Distinct(d) = to {
+        return compatible(&d.source, from);
+    }
+    if let DataType::Distinct(d) = from {
+        return compatible(&d.source, to);
+    }
+    cast_is_valid(from, to)
 }
 
 /// [ISO/IEC 9075:1992 §17.9 GR5a, GR5b ii-iv] The `<using clause>` does
@@ -145,7 +161,7 @@ impl Session {
         given
             .into_iter()
             .zip(types)
-            .map(|((value, from), to)| if cast_is_valid(&from, to) { Ok(value) } else { Err(restricted("§17.9 GR5e", &from, &to.clone())) })
+            .map(|((value, from), to)| if transformed(&from, to) { Ok(value) } else { Err(restricted("§17.9 GR5e", &from, &to.clone())) })
             .collect()
     }
 
@@ -207,7 +223,7 @@ impl Session {
             return Err(targets_mismatch("§17.9 GR6b ii", &format!("{} items of LEVEL 0 for {d} columns", tops.len())));
         }
         for ((_, t), column) in tops.iter().zip(columns) {
-            if !cast_is_valid(&column.data_type, t) {
+            if !transformed(&column.data_type, t) {
                 return Err(restricted("§17.9 GR7c", &column.data_type.clone(), t));
             }
         }

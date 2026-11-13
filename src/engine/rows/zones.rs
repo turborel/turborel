@@ -201,6 +201,7 @@ fn kept(t: &DataType) -> bool {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_) => true,
+        DataType::Distinct(d) => kept(&d.source),
         DataType::Binary { .. } | DataType::VarBinary { .. } | DataType::Array(_) | DataType::Row(_) | DataType::Extension(_) => false,
     }
 }

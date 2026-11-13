@@ -1,5 +1,6 @@
-//! Arrays and rows over a connection [ISO/IEC 9075-2:2023 §4.10, §4.12]:
-//! their types described and their values sent both ways, nested too.
+//! Arrays, rows and distinct types over a connection [ISO/IEC 9075-2:2023
+//! §4.9, §4.10, §4.12], their types described and their values sent both
+//! ways, nested too.
 
 use std::sync::Arc;
 
@@ -51,5 +52,31 @@ fn arrays_and_rows_go_both_ways() {
     let row = Value::Row(Arc::from(vec![Value::Array(Arc::from(vec![int(6)]))]));
     assert_eq!(done(&c.execute(&prepared, &[int(2), array, row]).unwrap()), 0);
     assert_eq!(rows(&c.query("SELECT A, R FROM T WHERE K = 2").unwrap()), ["ARRAY[ROW(5, 'e ')],ROW(ARRAY[6])"]);
+    c.terminate().unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.9.6, §11.51 GR2b; §20.11, §20.12];
+/// [DESIGN] RULES.md D69: a column of a distinct type is described to the
+/// client as its source type, by the transform its definition makes
+/// (ID048), and its values, an array of the type's among them, reach the
+/// client as its source's; a value sent as a prepared statement's is made
+/// a value of the type, as one of its source is.
+#[test]
+fn distinct_types_go_as_their_source() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TYPE MONEY AS NUMERIC(10, 2) CREATE TABLE M (K INTEGER, P MONEY, L MONEY ARRAY[2])")
+        .unwrap();
+    let server = start(&db, &[]);
+    let mut c = server.connect("X");
+    assert_eq!(done(&c.query("INSERT INTO M VALUES (1, 5, ARRAY[MONEY(1), MONEY(2.5)])").unwrap()), 0);
+    let out = c.query("SELECT P, L FROM M").unwrap();
+    assert_eq!(rows(&out), ["5.00,ARRAY[1.00, 2.50]"]);
+    let Outcome::Rows { columns, .. } = &out else { panic!("no rows") };
+    let declared: Vec<String> = columns.iter().map(|c| c.data_type.to_string()).collect();
+    assert_eq!(declared, ["NUMERIC(10,2)", "NUMERIC(10,2) ARRAY[2]"]);
+    let prepared = c.prepare("INSERT INTO M (K, P) VALUES (?, ?)").unwrap();
+    assert_eq!(prepared.parameters()[1].clone().data_type().to_string(), "NUMERIC(10,2)");
+    assert_eq!(done(&c.execute(&prepared, &[int(2), Value::Exact(Decimal::new(725, 2))]).unwrap()), 0);
+    assert_eq!(rows(&c.query("SELECT K FROM M WHERE P = MONEY(7.25)").unwrap()), ["2"]);
     c.terminate().unwrap();
 }

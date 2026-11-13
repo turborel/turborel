@@ -6,7 +6,9 @@
 //! `ValueExpression::for_each_child` and `SearchCondition::for_each_value`,
 //! which stop at a subquery, a query of its own.
 
-use super::{Composite, DatetimeFunction, ExtractField, QueryExpression, TableName, TypeName, ValueOrder, ValueSpecification};
+use super::{
+    Composite, DatetimeFunction, ExtractField, QueryExpression, SetArg, SetFunctionSpecification, TableName, TypeName, ValueSpecification,
+};
 use crate::catalog::MatchType;
 use crate::value::interval::Qualifier;
 use crate::value::{ArithOp, CompOp};
@@ -280,47 +282,23 @@ pub enum ValueExpression {
     /// [ISO/IEC 9075-2:2023 §6.16, §6.25, §6.49, §7.1] An expression of
     /// arrays and rows, and where it begins in the statement.
     Composite(Box<Composite>, usize),
-    /// \[EXTENSION\] accepted only when a session enables it:
-    /// `<identifier>` ( \[`<value expression>` \[{, `<value expression>`}...\]\] )
+    /// [ISO/IEC 9075-2:2023 §10.4] `<routine invocation>` ::= \[`<schema
+    /// name>` .\] `<identifier>` ( \[`<value expression>` \[{, `<value
+    /// expression>`}...\]\] ): of a routine, or \[EXTENSION\] of a
+    /// function registered, taken only when a session enables it.
     Call {
+        /// The `<schema name>`, if written.
+        schema: Option<String>,
         /// The function's name.
         name: String,
         /// The arguments, in order.
         args: Vec<ValueExpression>,
         /// Where it begins in the statement.
         at: usize,
+        /// \[EXTENSION\] Whether the session took function calls as it was
+        /// read, so it may call a function registered.
+        extension: bool,
     },
-}
-
-/// [X3.135-1986 §5.8] `<set function specification>` ::=
-///     COUNT(*) | `<distinct set function>` | `<all set function>`
-#[derive(Debug, Clone)]
-pub struct SetFunctionSpecification {
-    /// COUNT, AVG, MAX, MIN or SUM; \[ISO/IEC 9075-2:2023 §10.9\] EVERY,
-    /// ANY or SOME
-    pub name: &'static str,
-    /// What the function is applied to.
-    pub arg: SetArg,
-    /// [ISO/IEC 9075-2:2023 §10.9] The `<sort specification list>` of an
-    /// ARRAY_AGG, if written; of every other function, none.
-    pub order_by: Vec<ValueOrder>,
-    /// Where it begins in the statement: a character offset, for the
-    /// positions of errors (`SqlError::or_at`).
-    pub at: usize,
-}
-
-/// The argument of a `<set function specification>`.
-#[derive(Debug, Clone)]
-pub enum SetArg {
-    /// COUNT(*)
-    CountStar,
-    /// `<general set function>` with DISTINCT [ISO/IEC 9075:1992 §6.5]:
-    /// SQL-86's `<distinct set function>` of a `<column specification>`
-    /// among them.
-    Distinct(Box<ValueExpression>),
-    /// `<general set function>` with ALL, or neither [ISO/IEC 9075:1992
-    /// §6.5 SR1]: SQL-86's `<all set function>` among them.
-    All(Box<ValueExpression>),
 }
 
 /// [ISO/IEC 9075:1992 §6.9] `<case expression>` ::= `<case abbreviation>` |

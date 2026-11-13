@@ -8,7 +8,7 @@ use super::Parser;
 use crate::ast::{
     Action, CheckLevels, CollationDefinition, ColumnDefinition, DefaultOption, PrivilegeDefinition, PrivilegeObject, QueryExpression,
     RevokeStatement, Schema, SchemaStatement, SqlStatement, TableDefinition, TableElement, TableName, TableStorage, Temporary,
-    TemporaryKind, ViewDefinition,
+    TemporaryKind, TypeName, ViewDefinition,
 };
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
@@ -47,7 +47,7 @@ impl Parser {
         //     | <grant statement> | <assertion definition> | <character set definition>
         //     | <collation definition> | <translation definition>
         let (mut domains, mut tables, mut views, mut privileges) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let (mut collations, mut sequences) = (Vec::new(), Vec::new());
+        let (mut collations, mut sequences, mut types) = (Vec::new(), Vec::new(), Vec::new());
         let mut assertions = Vec::new();
         loop {
             if self.is_kw(kw::GRANT) {
@@ -62,6 +62,8 @@ impl Parser {
             }
             if self.next_is_sequence() {
                 sequences.push(self.sequence_definition()?);
+            } else if self.next_is_type() {
+                types.push(self.type_definition()?);
             } else if matches!(self.peek_at(1), Tok::KeyWord(kw::VIEW)) {
                 views.push(self.view_definition()?);
             } else if matches!(self.peek_at(1), Tok::KeyWord(kw::DOMAIN)) {
@@ -73,7 +75,7 @@ impl Parser {
             }
         }
         self.end()?;
-        Ok(Schema { catalog, name, auth, collations, sequences, domains, assertions, tables, views, privileges })
+        Ok(Schema { catalog, name, auth, collations, sequences, types, domains, assertions, tables, views, privileges })
     }
 
     /// [ISO/IEC 9075:1992 §5.4] `<schema name>` ::= \[`<catalog name>` .\]
@@ -132,6 +134,8 @@ impl Parser {
             SchemaStatement::AlterSequence(self.alter_sequence()?)
         } else if self.next_is_sequence() {
             SchemaStatement::Sequence(self.sequence_definition()?)
+        } else if self.next_is_type() {
+            SchemaStatement::Type(self.type_definition()?)
         } else {
             SchemaStatement::Table(self.table_definition()?)
         };
@@ -149,10 +153,10 @@ impl Parser {
             self.expect_kw(kw::FOR)?;
         }
         let actions = self.privileges()?;
-        let (table, object) = self.object_name()?;
+        let (table, object, parameters) = self.object_name()?;
         self.expect_kw(kw::FROM)?;
         let grantees = self.grantees()?;
-        Ok(RevokeStatement { grant_option_for, actions, table, object, grantees, behavior: self.drop_behavior()? })
+        Ok(RevokeStatement { grant_option_for, actions, table, object, parameters, grantees, behavior: self.drop_behavior()? })
     }
 
     /// [X3.135-1986 §6.5; ISO/IEC 9075:1992 §11.19] `<view definition>` ::=
@@ -337,7 +341,7 @@ impl Parser {
     }
 
     /// (`<column name>` \[{,`<column name>`}...\])
-    fn column_list(&mut self) -> Result<Vec<String>> {
+    pub(super) fn column_list(&mut self) -> Result<Vec<String>> {
         self.expect_delim(delim::LEFT_PAREN)?;
         let mut columns = vec![self.identifier()?];
         while self.accept_delim(delim::COMMA) {
@@ -354,7 +358,7 @@ impl Parser {
     fn privilege_definition(&mut self) -> Result<PrivilegeDefinition> {
         self.expect_kw(kw::GRANT)?;
         let actions = self.privileges()?;
-        let (table, object) = self.object_name()?;
+        let (table, object, parameters) = self.object_name()?;
         self.expect_kw(kw::TO)?;
         let grantees = self.grantees()?;
         let grant_option = self.accept_kw(kw::WITH);
@@ -362,17 +366,23 @@ impl Parser {
             self.expect_kw(kw::GRANT)?;
             self.expect_kw(kw::OPTION)?;
         }
-        Ok(PrivilegeDefinition { actions, table, object, grantees, grant_option })
+        Ok(PrivilegeDefinition { actions, table, object, parameters, grantees, grant_option })
     }
 
     /// `<action>` ::= SELECT | DELETE | INSERT \[(`<privilege column
     /// list>`)\] | UPDATE \[(`<grant column list>`)\] | REFERENCES
-    /// \[(`<privilege column list>`)\] | USAGE [ISO/IEC 9075:1992 §10.3]
+    /// \[(`<privilege column list>`)\] | USAGE [ISO/IEC 9075:1992 §10.3] |
+    /// EXECUTE | UNDER [ISO/IEC 9075-2:2023 §12.3]
     fn action(&mut self) -> Result<Action> {
-        for (word, action) in [(kw::SELECT, Action::Select), (kw::DELETE, Action::Delete), (kw::USAGE, Action::Usage)] {
+        for (word, action) in
+            [(kw::SELECT, Action::Select), (kw::DELETE, Action::Delete), (kw::USAGE, Action::Usage), (kw::EXECUTE, Action::Execute)]
+        {
             if self.accept_kw(word) {
                 return Ok(action);
             }
+        }
+        if self.accept_word("UNDER") {
+            return Ok(Action::Under);
         }
         let made = if self.accept_kw(kw::INSERT) {
             Action::Insert
@@ -403,27 +413,67 @@ impl Parser {
 
     /// ON `<object name>`: [ISO/IEC 9075:1992 §11.36] `<object name>` ::=
     /// \[TABLE\] `<table name>` | DOMAIN `<domain name>` | COLLATION
-    /// `<collation name>` | SEQUENCE `<sequence generator name>` [ISO/IEC
-    /// 9075-2:2023 §12.3], of those implemented: the name, and what it
-    /// names. A character set or translation is read, its name left empty.
-    fn object_name(&mut self) -> Result<(TableName, PrivilegeObject)> {
+    /// `<collation name>` | SEQUENCE `<sequence generator name>` | TYPE
+    /// `<schema-resolved user-defined type name>` | `<specific routine
+    /// designator>` [ISO/IEC 9075-2:2023 §12.3], of those implemented: the
+    /// name, what it names, and a routine's `<data type list>` if written.
+    /// A character set or translation is read, its name left empty.
+    fn object_name(&mut self) -> Result<(TableName, PrivilegeObject, Option<Vec<TypeName>>)> {
         self.expect_kw(kw::ON)?;
         let at = self.here();
         // A character set or translation: refused as the statement ends.
         if self.character_set_object()? {
-            return Ok((TableName { auth: None, ident: String::new(), at }, PrivilegeObject::Domain));
+            return Ok((TableName { auth: None, ident: String::new(), at }, PrivilegeObject::Domain, None));
         }
-        if self.accept_kw(kw::DOMAIN) {
-            return Ok((self.table_name()?, PrivilegeObject::Domain));
+        let object = if self.accept_kw(kw::DOMAIN) {
+            PrivilegeObject::Domain
+        } else if self.accept_kw(kw::COLLATION) {
+            PrivilegeObject::Collation
+        } else if self.accept_word(super::sequences::SEQUENCE) {
+            PrivilegeObject::Sequence
+        } else if self.accept_word(super::user_types::TYPE) {
+            PrivilegeObject::Type
+        } else if let Some(object) = self.routine_designator() {
+            object
+        } else {
+            self.accept_kw(kw::TABLE);
+            PrivilegeObject::Table
+        };
+        let name = self.table_name()?;
+        let parameters =
+            if object == PrivilegeObject::Routine && self.is_delim(delim::LEFT_PAREN) { Some(self.data_type_list()?) } else { None };
+        Ok((name, object, parameters))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §12.3, §10.6] The `<routine type>` of a
+    /// `<specific routine designator>`, if one is next: SPECIFIC before it,
+    /// then FUNCTION or ROUTINE, the routines this implementation has.
+    fn routine_designator(&mut self) -> Option<PrivilegeObject> {
+        let specific = self.is_word("SPECIFIC");
+        let routine = |w: &Tok| matches!(w, Tok::Identifier(w) if w == "FUNCTION" || w == "ROUTINE");
+        if !(routine(self.peek()) || (specific && routine(self.peek_at(1)))) {
+            return None;
         }
-        if self.accept_kw(kw::COLLATION) {
-            return Ok((self.table_name()?, PrivilegeObject::Collation));
+        if specific {
+            self.advance();
         }
-        if self.accept_word(super::sequences::SEQUENCE) {
-            return Ok((self.table_name()?, PrivilegeObject::Sequence));
+        self.advance();
+        Some(if specific { PrivilegeObject::SpecificRoutine } else { PrivilegeObject::Routine })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §10.6] `<data type list>` ::= ( \[`<data type>`
+    /// \[{, `<data type>`}...\]\] ).
+    fn data_type_list(&mut self) -> Result<Vec<TypeName>> {
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut types = Vec::new();
+        if !self.accept_delim(delim::RIGHT_PAREN) {
+            types.push(self.type_name()?);
+            while self.accept_delim(delim::COMMA) {
+                types.push(self.type_name()?);
+            }
+            self.expect_delim(delim::RIGHT_PAREN)?;
         }
-        self.accept_kw(kw::TABLE);
-        Ok((self.table_name()?, PrivilegeObject::Table))
+        Ok(types)
     }
 
     /// `<grantee>` \[{, `<grantee>`}...\]

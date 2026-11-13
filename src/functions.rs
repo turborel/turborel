@@ -483,6 +483,7 @@ impl AggregateFunction for Sum {
             | DataType::Timestamp { .. }
             | DataType::Array(_)
             | DataType::Row(_)
+            | DataType::Distinct(_)
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         })
     }
@@ -522,6 +523,7 @@ impl AggregateFunction for Avg {
             | DataType::Timestamp { .. }
             | DataType::Array(_)
             | DataType::Row(_)
+            | DataType::Distinct(_)
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         })
     }

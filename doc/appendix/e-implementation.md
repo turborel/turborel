@@ -50,6 +50,9 @@ choices:
 | An array type's maximum cardinality written without one; the greatest | 65,535; 65,535 |
 | The names of a row's fields made of values, as by ROW(...) | F1, F2 and so on, by place, described as UNNAMED |
 | UNNEST's ordinality column | INTEGER |
+| A distinct type's source of an exact or an approximate type | NUMERIC of its precision and scale; FLOAT of its precision |
+| The SQL-path, where a function's name not qualified is found | the schema of the statement's names, the session's default schema or a schema statement's own |
+| A session's transform group of a distinct type | the one its definition makes, so a value goes to and from the host as its source's |
 | The order of ARRAY_AGG's elements without ORDER BY | as the rows are read |
 | Which identifiers are users | any, of a program's own session; of a server's client, the users the database keeps |
 

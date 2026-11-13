@@ -321,3 +321,15 @@ fn the_dynamic_sql_examples_run_as_printed() {
         assert!(ann.page(page) > 0, "{page} shows its examples' output");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D69: the examples of CREATE TYPE,
+/// then those of DROP TYPE of its types and table, run as printed, as ANN.
+#[test]
+fn the_distinct_type_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    for page in ["sql/statements/create-type.md", "sql/statements/drop-type.md"] {
+        assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+}

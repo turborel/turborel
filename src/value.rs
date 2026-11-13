@@ -17,6 +17,7 @@ mod decimal;
 pub mod interval;
 mod like;
 mod operators;
+pub mod precedence;
 pub mod types;
 mod units;
 pub use units::CharUnits;
@@ -122,6 +123,7 @@ pub fn spelling(t: &DataType) -> Spelled {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => Spelled::Numeric,
     }
 }
@@ -209,6 +211,9 @@ pub enum DataType {
     Array(Arc<types::ArrayType>),
     /// [ISO/IEC 9075-2:2023 §6.1] ROW(field type, ...): a row type.
     Row(Arc<types::RowType>),
+    /// [ISO/IEC 9075-2:2023 §4.9.2] A distinct type, a user-defined type of
+    /// a source type (RULES.md D69).
+    Distinct(Arc<types::DistinctType>),
     /// A type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionType),
 }
@@ -251,6 +256,9 @@ impl DataType {
         }
         if let (DataType::Row(a), DataType::Row(b)) = (self, other) {
             return a.fields.len() == b.fields.len() && a.fields.iter().zip(&b.fields).all(|(x, y)| x.data_type.comparable(&y.data_type));
+        }
+        if let (DataType::Distinct(_), _) | (_, DataType::Distinct(_)) = (self, other) {
+            return self == other && self.kind().comparable(other);
         }
         self.kind().comparable(other)
     }

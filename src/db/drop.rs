@@ -1,7 +1,8 @@
 //! \[EXTENSION\] DROP SCHEMA [ISO/IEC 9075:1992 §11.2], DROP TABLE [§11.18],
 //! DROP VIEW [§11.20], DROP DOMAIN [§11.27] (`db/domains.rs`), DROP
-//! ASSERTION [§11.35] (`db/assertions.rs`), and DROP COLLATION and DROP
-//! SEQUENCE [ISO/IEC 9075-2:2023 §11.44, §11.74], in a transaction (RULES.md D33):
+//! ASSERTION [§11.35] (`db/assertions.rs`), and DROP COLLATION, DROP
+//! SEQUENCE and DROP TYPE [ISO/IEC 9075-2:2023 §11.44, §11.74, §11.59]
+//! (`db/user_types.rs`), in a transaction (RULES.md D33):
 //! each staged as one change (`Change::Drop`), made again on the definitions
 //! published when it commits, and by recovery.
 //!
@@ -41,6 +42,7 @@ impl State {
             DropTarget::Assertion(qn) => self.drop_assertion(qn),
             DropTarget::Collation(qn) => self.drop_collation(qn, cascade),
             DropTarget::Sequence(qn) => self.drop_sequence(qn),
+            DropTarget::Type(qn) => self.drop_user_type(qn, cascade),
         }
     }
 
@@ -109,8 +111,8 @@ impl State {
     /// # Errors
     ///
     /// SQLCODE -103 if there is no such schema [SR2] (SQLSTATE 3F000), or,
-    /// not `cascade`, it holds a table, view, domain, assertion, collation
-    /// or sequence generator [SR3].
+    /// not `cascade`, it holds a table, view, domain, assertion, collation,
+    /// sequence generator or user-defined type [SR3].
     fn drop_schema(&mut self, auth: &str, cascade: bool) -> Result<Dropped> {
         if !self.catalog.schema_exists(auth) {
             let msg = format!("[ISO/IEC 9075:1992 §11.2 SR2] there is no schema {auth}");
@@ -125,7 +127,9 @@ impl State {
             self.catalog.assertions().into_iter().filter(|a| a.name.auth == auth).map(|a| a.name.clone()).collect();
         let collations = self.schema_collations(auth);
         let sequences = self.schema_sequences(auth);
-        let held = tables.first().or(views.first()).or(domains.first()).or(assertions.first()).or(collations.first()).or(sequences.first());
+        let types = self.schema_user_types(auth);
+        let held = (tables.first().or(views.first()).or(domains.first()).or(assertions.first()))
+            .or(collations.first().or(sequences.first()).or(types.first()));
         if let (Some(first), false) = (held, cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {first}, so it is dropped only with CASCADE")));
         }
@@ -147,6 +151,8 @@ impl State {
         }
         dropped.absorb(self.drop_schema_collations(auth)?);
         dropped.absorb(self.drop_schema_sequences(auth)?);
+        // Its types, once the tables of them are gone.
+        dropped.absorb(self.drop_schema_user_types(auth)?);
         let mut catalog = self.catalog.duplicate();
         catalog.remove_schema(auth);
         self.catalog = Arc::from(catalog);
@@ -259,9 +265,10 @@ impl State {
 
 impl Session {
     /// [ISO/IEC 9075:1992 §11.2, §11.18, §11.20, §11.27, §11.35] DROP
-    /// SCHEMA, TABLE, VIEW, DOMAIN, ASSERTION, COLLATION or SEQUENCE, in
-    /// transaction `tx`. With CASCADE, the generated columns that name a
-    /// domain or collation it drops go first.
+    /// SCHEMA, TABLE, VIEW, DOMAIN, ASSERTION, COLLATION, SEQUENCE or TYPE,
+    /// in transaction `tx`. With CASCADE, the generated columns that name a
+    /// domain, collation or type it drops go first, and the columns of a
+    /// type it drops.
     pub(super) fn drop_object(&self, st: &Arc<State>, tx: &Txn, object: &DropObject, behavior: DropBehavior) -> Result<Completion> {
         let target = self.drop_target(st, object)?;
         let cascade = behavior == DropBehavior::Cascade;
@@ -285,9 +292,12 @@ impl Session {
             DropTarget::Schema(auth) => {
                 st.schema_collations(auth).into_iter().map(|qn| (qn.clone(), st.tables_of_collation(&qn, Some(auth)))).collect()
             }
-            DropTarget::Table(_) | DropTarget::View(_) | DropTarget::Domain(_) | DropTarget::Assertion(_) | DropTarget::Sequence(_) => {
-                Vec::new()
-            }
+            DropTarget::Table(_)
+            | DropTarget::View(_)
+            | DropTarget::Domain(_)
+            | DropTarget::Assertion(_)
+            | DropTarget::Sequence(_)
+            | DropTarget::Type(_) => Vec::new(),
         };
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
@@ -345,6 +355,7 @@ impl Session {
             DropObject::Assertion(assertion) => Ok(DropTarget::Assertion(self.owned(st, assertion, "ISO/IEC 9075:1992 §11.35 AR1")?)),
             DropObject::Collation(collation) => Ok(DropTarget::Collation(self.owned(st, collation, "ISO/IEC 9075-2:2023 §11.44 AR1")?)),
             DropObject::Sequence(sequence) => Ok(DropTarget::Sequence(self.owned(st, sequence, "ISO/IEC 9075-2:2023 §11.74 AR1")?)),
+            DropObject::Type(name) => Ok(DropTarget::Type(self.owned(st, name, "ISO/IEC 9075-2:2023 §11.59 AR1")?)),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {

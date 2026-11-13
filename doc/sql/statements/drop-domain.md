@@ -25,8 +25,10 @@ type, and the domain's default, if it has none of its own; and each of
 the domain's constraints is kept on it, as a constraint of its table.
 The views, constraints and assertions that CAST to the domain are
 dropped. Each generated column whose generation expression CASTs to it
-is dropped first, as ALTER TABLE DROP COLUMN with CASCADE drops it. If
-the drop then fails, the transaction can only roll back.
+is dropped first, as ALTER TABLE DROP COLUMN with CASCADE drops it. A
+drop that would leave a table no column is refused before it drops any.
+If the drop fails after one is dropped, the transaction can only roll
+back.
 
 DROP DOMAIN runs within the session's transaction: ROLLBACK undoes it.
 

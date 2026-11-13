@@ -119,6 +119,11 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
         // with it.
         let data_type = if let Some(extension @ DataType::Extension(_)) = object {
             extension
+        } else if let Some(distinct @ DataType::Distinct(_)) = object {
+            // [ISO/IEC 9075-2:2023 §9.5 SR3l, §9.2 SR3] Into a column of a
+            // distinct type, the type of its values alone, each then
+            // assigned to the column: no other is brought together with it.
+            if types.is_empty() { distinct } else { set_type(&types, "§7.2 GR2, §7.10 SR12b ii")? }
         } else {
             types.extend(object);
             set_type(&types, "§7.2 GR2, §7.10 SR12b ii")?

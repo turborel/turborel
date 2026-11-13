@@ -418,6 +418,7 @@ fn family(t: &DataType) -> &'static str {
     match t {
         DataType::Character { .. } | DataType::Varying { .. } => "CHARACTER",
         DataType::Binary { .. } | DataType::VarBinary { .. } => "BINARY",
+        DataType::Distinct(d) => family(&d.source),
         DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -448,6 +449,7 @@ fn sample(t: &DataType) -> Option<Value> {
         DataType::Time { zoned, .. } => Some(moment(Moment::Time, *zoned)),
         DataType::Timestamp { zoned, .. } => Some(moment(Moment::Timestamp, *zoned)),
         DataType::Interval(qualifier) => Some(Value::Interval(Interval { units: 0, qualifier: *qualifier })),
+        DataType::Distinct(d) => sample(&d.source),
         DataType::Array(_) | DataType::Row(_) | DataType::Extension(_) => None,
     }
 }

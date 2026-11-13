@@ -107,6 +107,26 @@ fn a_scalar_plug_in_checks_its_argument_types() {
     assert_eq!(code(&s, "SELECT TWICE(NAME) FROM T"), Code::SyntaxRule);
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.18 SR10b; §11.51 GR2b]; [DESIGN]
+/// RULES.md D53, D69: a routine on the SQL-path is invoked before a plug-in
+/// of its name, with function calls taken or not; in a schema whose path
+/// has none, the plug-in is called; a name qualified by a schema is never
+/// a plug-in's.
+#[test]
+fn a_routine_is_found_before_a_plug_in() {
+    let db = with_twice();
+    db.schema("CREATE SCHEMA AUTHORIZATION R CREATE TYPE TWICE AS INTEGER CREATE TABLE W (V TWICE)").unwrap();
+    let r = db.session("R");
+    r.run("INSERT INTO W VALUES (3)").unwrap();
+    assert_eq!(rows(&r, "SELECT V FROM W WHERE V = TWICE(3)"), Ok(vec!["3".into()]), "SQL-86 syntax, the routine");
+    crate::common::function_calls(&r);
+    assert_eq!(rows(&r, "SELECT V FROM W WHERE V = TWICE(3)"), Ok(vec!["3".into()]), "taken, still the routine");
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
+    assert_eq!(rows(&s, "SELECT TWICE(ID) FROM T WHERE ID = 1"), Ok(vec!["2".into()]), "no routine on APP's path");
+    assert_eq!(code(&s, "SELECT APP.TWICE(ID) FROM T"), Code::SyntaxRule);
+}
+
 /// Verifies: [EXTENSION] calling a function that is not registered is a syntax rule error.
 #[test]
 fn an_unregistered_function_is_refused() {

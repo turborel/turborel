@@ -15,7 +15,7 @@
 
 use super::super::collations::collates;
 use super::super::domains::casts_to;
-use super::super::{Session, State, api};
+use super::super::{Session, State, api, rule};
 use crate::ast::{AlterAction, DropBehavior, PrivilegeObject, RevokeStatement};
 use crate::catalog::{Generation, QualifiedName};
 use crate::error::Result;
@@ -81,10 +81,14 @@ impl State {
     /// those that name the domain or collation it drops, or, of a schema,
     /// those of other schemas' tables that name its domains or collations,
     /// as its own tables go with it [ISO/IEC 9075:1992 §11.2 GR1, GR3,
-    /// GR5].
+    /// GR5]. And the columns a type it drops loses, of a type based on it
+    /// or whose generation expressions reference it [ISO/IEC 9075-2:2023
+    /// §12.7 GR12h], as revoking every privilege on it loses them [§11.59
+    /// GR7].
     pub(in crate::db) fn generations_dropped(&self, target: &DropTarget) -> Vec<Column> {
         match target {
             DropTarget::Domain(qn) => self.generations_naming(Named::Domain(qn), &|_| true),
+            DropTarget::Type(qn) => self.columns_lost_with(std::slice::from_ref(qn), &|_| true),
             DropTarget::Collation(qn) => self.generations_naming(Named::Collation(qn), &|_| true),
             DropTarget::Schema(auth) => {
                 let other = |schema: &str| schema != auth;
@@ -95,6 +99,7 @@ impl State {
                 for qn in self.schema_collations(auth) {
                     columns.extend(self.generations_naming(Named::Collation(&qn), &other));
                 }
+                columns.extend(self.columns_lost_with(&self.schema_user_types(auth), &other));
                 columns.sort();
                 columns.dedup();
                 columns
@@ -106,7 +111,8 @@ impl State {
     /// The generated columns REVOKE `r` by `auth`, its names in schema
     /// `schema`, loses: of USAGE on a domain or collation, those of the
     /// tables of each schema whose owner it leaves without USAGE that name
-    /// it.
+    /// it; of a privilege on a type or its routine, the columns it loses
+    /// (`State::type_columns_revoked`).
     ///
     /// # Errors
     ///
@@ -116,9 +122,28 @@ impl State {
             self.domain_generations_revoked((auth, schema), r)
         } else if r.object == PrivilegeObject::Collation {
             self.collation_generations_revoked(auth, r)
+        } else if matches!(r.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine | PrivilegeObject::Routine) {
+            self.type_columns_revoked((auth, schema), r)
         } else {
             Ok(Vec::new())
         }
+    }
+}
+
+impl State {
+    /// [ISO/IEC 9075-2:2023 §11.23 SR4] That `columns`, which a statement
+    /// drops as ALTER TABLE DROP COLUMN CASCADE drops each, leave each of
+    /// their tables a column.
+    fn none_emptied(&self, columns: &[Column]) -> Result<()> {
+        for (qn, _) in columns {
+            let Some(t) = self.catalog.table(qn) else { continue };
+            if t.columns.iter().all(|c| columns.iter().any(|(q, n)| q == qn && *n == c.name)) {
+                let msg =
+                    format!("[ISO/IEC 9075-2:2023 §12.7 GR12z, §11.23 SR4] the statement drops every column of {qn}, which keeps one");
+                return Err(rule(msg));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -126,12 +151,18 @@ impl Session {
     /// [ISO/IEC 9075-2:2023 §12.7 GR12z] In transaction `tx`, each of
     /// `columns` dropped, as ALTER TABLE DROP COLUMN CASCADE drops it, each
     /// logged apart, and then `then` made. Once one is dropped, the
-    /// transaction only rolls back if a later drop or `then` fails.
+    /// transaction only rolls back if a later drop or `then` fails, so a
+    /// table each of whose columns is lost is refused before any is
+    /// dropped.
     ///
     /// # Errors
     ///
-    /// As each drop's, or `then`'s.
+    /// SQLCODE -103 if `columns` are every column of a table [§11.23 SR4];
+    /// as each drop's, or `then`'s.
     pub(in crate::db) fn dropping_generations<T>(&self, tx: &Txn, columns: &[Column], then: impl FnOnce() -> Result<T>) -> Result<T> {
+        if !columns.is_empty() {
+            self.definitions(self.db.snapshot()?)?.none_emptied(columns)?;
+        }
         let mut dropped = false;
         let made = (|| {
             for (qn, name) in columns {

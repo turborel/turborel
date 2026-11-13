@@ -3,12 +3,16 @@
 //! where either may be written; and `<assertion definition>` [§11.34].
 
 use super::Parser;
+use super::composite::within_nesting;
 use crate::ast::ColumnSpecification;
 use crate::ast::{
     AlterDomain, AlterDomainAction, AssertionDefinition, DomainDefinition, TableConstraint, TableConstraintKind, TypeName, ValueExpression,
 };
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
+use crate::value::DataType;
+use crate::value::types::Field;
+use crate::value::types::composite::nesting;
 
 /// The column VALUE stands for in a domain constraint, as it is bound
 /// [ISO/IEC 9075:1992 §6.2 SR5]: no regular identifier is VALUE, a
@@ -102,14 +106,36 @@ impl Parser {
     /// <extension type> ::= <identifier>
     ///     [ <left paren> <unsigned integer> [ <comma> <unsigned integer> ] <right paren> ]
     /// ```
+    ///
+    /// [ISO/IEC 9075-2:2023 §6.1] An array's element type and a row's field
+    /// type may name a type too, nested no deeper than `MAX_TYPE_NESTING`.
     pub(super) fn type_name(&mut self) -> Result<TypeName> {
-        if !matches!(self.peek(), Tok::Identifier(_))
-            || self.at_boolean_type()
-            || self.at_binary_type()
-            || self.at_decfloat_type()
-            || self.at_row_type()
-        {
-            return Ok(TypeName::Data(self.data_type()?));
+        let at = self.here();
+        let base = self.named_or_row()?;
+        let t = self.array_suffix()?.into_iter().fold(base, |t, max| match t {
+            TypeName::Data(element) => TypeName::Data(DataType::array(element, max)),
+            TypeName::Domain(_) | TypeName::Extension { .. } | TypeName::Array(..) | TypeName::Row(_) => TypeName::Array(Box::new(t), max),
+        });
+        within_nesting(type_nesting(&t), at)?;
+        Ok(t)
+    }
+
+    /// A `<predefined type>`, a `<row type>`, or a name, of a type beyond
+    /// the standard with its parameters.
+    fn named_or_row(&mut self) -> Result<TypeName> {
+        if self.at_row_type() {
+            let fields = self.row_fields(Parser::type_name)?;
+            if !fields.iter().all(|(_, t)| matches!(t, TypeName::Data(_))) {
+                return Ok(TypeName::Row(fields));
+            }
+            let data = |(name, t): (String, TypeName)| match t {
+                TypeName::Data(data_type) => Some(Field { name, data_type, unnamed: false }),
+                TypeName::Domain(_) | TypeName::Extension { .. } | TypeName::Array(..) | TypeName::Row(_) => None,
+            };
+            return Ok(TypeName::Data(DataType::row(fields.into_iter().filter_map(data).collect())));
+        }
+        if !matches!(self.peek(), Tok::Identifier(_)) || self.at_boolean_type() || self.at_binary_type() || self.at_decfloat_type() {
+            return Ok(TypeName::Data(self.predefined_type()?));
         }
         let name = self.table_name()?;
         if !self.accept_delim(delim::LEFT_PAREN) {
@@ -132,5 +158,16 @@ impl Parser {
         }
         self.expect_kw(kw::VALUE)?;
         Ok(ValueExpression::Column(ColumnSpecification { qualifier: None, column: VALUE_COLUMN.to_owned(), catalog: None, at }))
+    }
+}
+
+/// How deep arrays and rows nest in `t`, as written: a type it names
+/// counts as none, its own nesting checked as it is resolved.
+fn type_nesting(t: &TypeName) -> usize {
+    match t {
+        TypeName::Data(d) => nesting(d),
+        TypeName::Domain(_) | TypeName::Extension { .. } => 0,
+        TypeName::Array(element, _) => type_nesting(element).saturating_add(1),
+        TypeName::Row(fields) => fields.iter().map(|(_, f)| type_nesting(f)).max().unwrap_or(0).saturating_add(1),
     }
 }

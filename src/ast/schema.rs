@@ -2,7 +2,8 @@
 //! ISO/IEC 9075:1992 §11].
 
 use super::{
-    AlterSequence, DatetimeFunction, DropBehavior, Literal, QueryExpression, SearchCondition, SequenceDefinition, TableName, UserFunction,
+    AlterSequence, DatetimeFunction, DropBehavior, Literal, QueryExpression, SearchCondition, SequenceDefinition, TableName,
+    TypeDefinition, UserFunction,
 };
 use crate::value::DataType;
 use crate::value::collation::Pad;
@@ -31,6 +32,9 @@ pub struct Schema {
     /// The `<sequence generator definition>`s, in order [ISO/IEC
     /// 9075-2:2023 §11.72].
     pub sequences: Vec<SequenceDefinition>,
+    /// The `<user-defined type definition>`s, in order [ISO/IEC 9075-2:2023
+    /// §11.51].
+    pub types: Vec<TypeDefinition>,
     /// The `<domain definition>`s, in order [ISO/IEC 9075:1992 §11.21].
     pub domains: Vec<DomainDefinition>,
     /// The `<assertion definition>`s, in order [§11.34].
@@ -72,6 +76,8 @@ pub enum SchemaStatement {
     /// An `<alter sequence generator statement>` [ISO/IEC 9075-2:2023
     /// §11.73].
     AlterSequence(AlterSequence),
+    /// A `<user-defined type definition>` [ISO/IEC 9075-2:2023 §11.51].
+    Type(TypeDefinition),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION
@@ -98,6 +104,14 @@ pub enum PrivilegeObject {
     Collation,
     /// A sequence generator [ISO/IEC 9075-2:2023 §11.72].
     Sequence,
+    /// A user-defined type [ISO/IEC 9075-2:2023 §12.3].
+    Type,
+    /// [ISO/IEC 9075-2:2023 §12.3] SPECIFIC FUNCTION or SPECIFIC ROUTINE
+    /// `<specific name>`.
+    SpecificRoutine,
+    /// [ISO/IEC 9075-2:2023 §12.3] FUNCTION or ROUTINE `<member name>`,
+    /// its `<data type list>` if written.
+    Routine,
 }
 
 /// [ISO/IEC 9075:1992 §11.34] `<assertion definition>` ::= CREATE ASSERTION
@@ -157,14 +171,25 @@ pub enum AlterDomainAction {
 }
 
 /// [ISO/IEC 9075:1992 §11.4, §6.10] A `<data type>`, or a `<domain name>`:
-/// a column's type, or a CAST's target.
+/// a column's type, or a CAST's target. [ISO/IEC 9075-2:2023 §6.1] A
+/// `<data type>` may name a user-defined type, as an array's element type
+/// or a row's field type too, so a type written is a tree of the types it
+/// names, resolved as a statement is processed.
 #[derive(Debug, Clone)]
 pub enum TypeName {
-    /// A `<data type>`.
+    /// A `<data type>` that names no type.
     Data(DataType),
-    /// A `<domain name>`: the domain's data type; or, unqualified and no
-    /// domain's, a type beyond the standard (RULES.md D53).
+    /// A `<domain name>`: the domain's data type; or [ISO/IEC 9075-2:2023
+    /// §6.1] a `<path-resolved user-defined type name>`, a distinct type
+    /// (RULES.md D69); or, unqualified and neither's, a type beyond the
+    /// standard (RULES.md D53).
     Domain(TableName),
+    /// [ISO/IEC 9075-2:2023 §6.1] `<data type>` ARRAY \[`[` `<maximum
+    /// cardinality>` `]`\], its element type naming a type.
+    Array(Box<TypeName>, u32),
+    /// [ISO/IEC 9075-2:2023 §6.1] `<row type>`, a field's type naming a
+    /// type: each field's name and type.
+    Row(Vec<(String, TypeName)>),
     /// \[EXTENSION\] A type beyond the standard with parameters, as its
     /// name and `(a [, b])` write it (RULES.md D53): no domain takes
     /// parameters.
@@ -189,6 +214,9 @@ pub struct RevokeStatement {
     pub table: TableName,
     /// What it names [§11.36].
     pub object: PrivilegeObject,
+    /// [ISO/IEC 9075-2:2023 §12.3] Of a routine named by FUNCTION or
+    /// ROUTINE, its `<data type list>`, if written.
+    pub parameters: Option<Vec<TypeName>>,
     /// The `<grantee>`s: an `<authorization identifier>`, or none for PUBLIC.
     pub grantees: Vec<Option<String>>,
     /// The `<drop behavior>`.
@@ -235,6 +263,9 @@ pub struct PrivilegeDefinition {
     pub table: TableName,
     /// What it names [ISO/IEC 9075:1992 §11.36].
     pub object: PrivilegeObject,
+    /// [ISO/IEC 9075-2:2023 §12.3] Of a routine named by FUNCTION or
+    /// ROUTINE, its `<data type list>`, if written.
+    pub parameters: Option<Vec<TypeName>>,
     /// The `<grantee>`s: an `<authorization identifier>`, or none for PUBLIC.
     pub grantees: Vec<Option<String>>,
     /// WITH GRANT OPTION was written.
@@ -261,6 +292,10 @@ pub enum Action {
     References(Option<Vec<String>>),
     /// [ISO/IEC 9075:1992 §10.3] USAGE, of a domain.
     Usage,
+    /// [ISO/IEC 9075-2:2023 §12.3] EXECUTE, of a routine.
+    Execute,
+    /// [ISO/IEC 9075-2:2023 §12.3] UNDER, of a structured type.
+    Under,
 }
 
 /// [X3.135-1986 §6.2; ISO/IEC 9075:1992 §11.3] `<table definition>` ::=

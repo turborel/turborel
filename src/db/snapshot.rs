@@ -3,10 +3,11 @@
 //! and index reopened by its locator, and only the definitions logged since
 //! replayed; not from every definition ever made. The schemas, domains,
 //! assertions, tables with their generations, views, indexes, sequence
-//! generators and privileges of the catalog, the database's settings, in
-//! the forms of `catalog/codec.rs`; its users and owner (`db/users.rs`);
-//! and the counters of its sequence generators, settled, with the last
-//! epoch given (`db/sequences/counters.rs`, RULES.md D62).
+//! generators, user-defined types and privileges of the catalog, the
+//! database's settings, in the forms of `catalog/codec.rs`; its users and
+//! owner (`db/users.rs`); and the counters of its sequence generators,
+//! settled, with the last epoch given (`db/sequences/counters.rs`,
+//! RULES.md D62).
 //!
 //! ```text
 //! snapshot: schemas (count u32, each its name and its owner, str),
@@ -15,10 +16,11 @@
 //!           and version), assertions (count u32, each a constraint),
 //!           tables (count u32, each a table), views (likewise), indexes
 //!           (likewise), privileges (likewise), sequence generators
-//!           (likewise), settings (count u32, each str and value), users
-//!           (count u32, each str and verifier bytes), owner (u8 1 and
-//!           str, or u8 0 for none), the last epoch given (u64), counters
-//!           (count u32, each a name, its epoch u64 and its base i128)
+//!           (likewise), user-defined types (likewise), settings (count
+//!           u32, each str and value), users (count u32, each str and
+//!           verifier bytes), owner (u8 1 and str, or u8 0 for none), the
+//!           last epoch given (u64), counters (count u32, each a name, its
+//!           epoch u64 and its base i128)
 //! ```
 
 use std::sync::Arc;
@@ -28,10 +30,11 @@ use super::{State, api};
 use crate::bytes::{Put, Reader};
 use crate::catalog::codec::{
     collation, constraint, domain, index, privilege, put_collation, put_constraint, put_domain, put_index, put_name, put_privilege,
-    put_sequence, put_table, put_view, qualified, sequence, table, view,
+    put_sequence, put_table, put_user_type, put_view, qualified, sequence, table, user_type, view,
 };
 use crate::catalog::{
-    CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, TableDesc, ViewDesc,
+    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, TableDesc, UserTypeDesc,
+    ViewDesc,
 };
 use crate::error::Result;
 use crate::settings;
@@ -54,6 +57,7 @@ pub(super) struct Snapshot {
     indexes: Vec<IndexDesc>,
     privileges: Vec<PrivilegeDesc>,
     sequences: Vec<SequenceDesc>,
+    user_types: Vec<UserTypeDesc>,
     settings: Vec<(String, Value)>,
     users: Vec<(String, Vec<u8>)>,
     owner: Option<String>,
@@ -90,6 +94,7 @@ impl Snapshot {
         let collation_versions = st.collation_versions();
         let assertions = st.catalog.assertions().into_iter().cloned().collect();
         let sequences: Vec<SequenceDesc> = st.catalog.sequences().into_iter().cloned().collect();
+        let user_types = st.catalog.user_types().into_iter().cloned().collect();
         let (epochs, mut counters) = st.sequences.settle()?;
         // [DESIGN] RULES.md D63: a generator's counter of its own epoch
         // kept, though another of its name, of a schema or a table, is of
@@ -110,6 +115,7 @@ impl Snapshot {
             indexes,
             privileges,
             sequences,
+            user_types,
             settings: st.settings.database_values(),
             users,
             owner,
@@ -152,6 +158,8 @@ impl Snapshot {
         self.privileges.iter().for_each(|p| put_privilege(out, p));
         out.put_u32(count(self.sequences.len()));
         self.sequences.iter().for_each(|s| put_sequence(out, s));
+        out.put_u32(count(self.user_types.len()));
+        self.user_types.iter().for_each(|t| put_user_type(out, t));
         out.put_u32(count(self.settings.len()));
         for (name, v) in &self.settings {
             out.put_str(name);
@@ -191,6 +199,7 @@ impl Snapshot {
         let indexes = (0..r.u32()?).map(|_| index(r)).collect::<Result<_>>()?;
         let privileges = (0..r.u32()?).map(|_| privilege(r)).collect::<Result<_>>()?;
         let sequences = (0..r.u32()?).map(|_| sequence(r)).collect::<Result<_>>()?;
+        let user_types = (0..r.u32()?).map(|_| user_type(r)).collect::<Result<_>>()?;
         let settings = (0..r.u32()?).map(|_| Ok((r.str()?, value(r)?))).collect::<Result<_>>()?;
         let users = (0..r.u32()?).map(|_| Ok((r.str()?, r.bytes()?.to_vec()))).collect::<Result<_>>()?;
         let owner = if r.u8()? == 0 { None } else { Some(r.str()?) };
@@ -207,6 +216,7 @@ impl Snapshot {
             indexes,
             privileges,
             sequences,
+            user_types,
             settings,
             users,
             owner,
@@ -232,9 +242,7 @@ impl State {
         for (schema, owner) in &snapshot.schemas {
             catalog.create_schema(schema, owner, snapshot.tables.iter().filter(|t| t.name.auth == *schema).cloned().collect());
         }
-        snapshot.domains.iter().cloned().for_each(|d| catalog.put_domain(d));
-        snapshot.collations.iter().cloned().for_each(|c| catalog.put_collation(c));
-        snapshot.sequences.iter().cloned().for_each(|s| catalog.put_sequence(s));
+        put_described(&mut *catalog, snapshot);
         self.install_counters(snapshot)?;
         // Before the indexes, whose keys are by them.
         self.catalog = Arc::from(catalog.duplicate());
@@ -298,6 +306,15 @@ impl State {
 }
 
 // Unit tests: a snapshot reads back as written (RULES.md R-TEST-1).
+
+/// The domains, collations, sequence generators and user-defined types of
+/// `snapshot`, put in `catalog`: none of them depends on a table.
+fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
+    snapshot.domains.iter().cloned().for_each(|d| catalog.put_domain(d));
+    snapshot.collations.iter().cloned().for_each(|c| catalog.put_collation(c));
+    snapshot.sequences.iter().cloned().for_each(|s| catalog.put_sequence(s));
+    snapshot.user_types.iter().cloned().for_each(|t| catalog.put_user_type(t));
+}
 #[cfg(test)]
 mod tests {
     use super::*;

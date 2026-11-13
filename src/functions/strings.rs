@@ -96,6 +96,7 @@ pub(super) fn character(name: &str, t: &DataType) -> Result<u32> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => {
             fail(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.7, §6.13] {name} takes a character string, not {t}"))
         }
@@ -126,6 +127,7 @@ fn binary_string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -148,6 +150,7 @@ fn integer(name: &str, t: &DataType) -> Result<()> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => fail(
             Code::SyntaxRule,
             format!("[ISO/IEC 9075:1992 §6.7 SR1] the start position and length of {name} are exact numbers of scale 0, not {t}"),

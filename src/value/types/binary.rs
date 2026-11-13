@@ -50,6 +50,7 @@ fn length_of(t: &DataType) -> u32 {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => 0,
     }
 }

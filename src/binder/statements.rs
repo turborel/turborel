@@ -16,6 +16,7 @@ use crate::catalog::{Catalog, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlError};
 use crate::logical::{Expr, LogicalPlan, and_all};
 use crate::params::ParameterType;
+use crate::value::precedence::in_precedence_list;
 use crate::value::{DataType, Value};
 
 /// [X3.135-1986 §8.3 SR4b; ISO/IEC 9075:1992 §13.1 SR3] the table of a
@@ -114,8 +115,14 @@ pub fn check_assignment(col: &ColumnDesc, t: &DataType, r: AssignRule) -> Result
 /// as its kind says, or a character string, if the target's kind takes
 /// one (`SqlType::assigns_text`). [ISO/IEC 9075-2:2023 §9.2 SR2d, SR2e]
 /// An array in an array whose element type its elements are assignable
-/// to, a row in a row of its degree, field by field.
+/// to, a row in a row of its degree, field by field. [§4.9.5, §4.13, §9.2
+/// SR3] A distinct type's value in a site of it, or of its source type
+/// alone; in a site of it, a value of it, or one its function from its
+/// source takes, implicitly invocable (`distinct_assignable`).
 pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
+    if let Some(fits) = distinct_assignable(target, t) {
+        return fits;
+    }
     if let (DataType::Array(a), DataType::Array(b)) = (target, t) {
         return assignable(&a.element, &b.element);
     }
@@ -135,6 +142,30 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     let temporal = target.is_datetime() || t.is_datetime() || target.is_interval() || t.is_interval();
     let datetime = if temporal { target.comparable(t) } else { true };
     target.is_character() == t.is_character() && target.is_binary() == t.is_binary() && datetime
+}
+
+/// [ISO/IEC 9075-2:2023 §4.9.5, §4.13, §9.2 SR3] Whether a value of `t` is
+/// assigned to a site of `target`, if either is a distinct type: one of
+/// the distinct type alone, as it has no subtype; or by an appropriate
+/// user-defined cast function. Its function from its source is one if the
+/// source's designator is in `t`'s type precedence list [§9.7] and `t` is
+/// assignable to the source, its parameter [§9.18]; its function to its
+/// source is one if `target` is its source, the function's result type.
+/// None if neither is a distinct type.
+pub(crate) fn distinct_assignable(target: &DataType, t: &DataType) -> Option<bool> {
+    if let (DataType::Distinct(_), DataType::Distinct(_)) = (target, t) {
+        return Some(target == t);
+    }
+    // Of every source type a distinct type may have, a type whose list
+    // holds the source's designator is assignable to it, the second
+    // condition kept as the rule states it.
+    if let DataType::Distinct(d) = target {
+        return Some(in_precedence_list(&d.source, t) && assignable(&d.source, t));
+    }
+    if let DataType::Distinct(d) = t {
+        return Some(*target == d.source);
+    }
+    None
 }
 
 /// Which statement changes the table.

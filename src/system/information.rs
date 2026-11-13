@@ -9,6 +9,7 @@
 
 mod composites;
 mod extensions;
+mod user_types;
 
 use std::sync::OnceLock;
 
@@ -50,11 +51,12 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 
 /// The views of the Information Schema, in the standard's order, then this
 /// implementation's: those of ISO/IEC 9075:1992, those of arrays and
-/// row types (`information/composites.rs`), then the extensions
+/// row types (`information/composites.rs`), those of user-defined types
+/// and their routines (`information/user_types.rs`), then the extensions
 /// (`information/extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
-    ALL.get_or_init(|| [VIEWS, composites::VIEWS, extensions::VIEWS].concat())
+    ALL.get_or_init(|| [VIEWS, composites::VIEWS, user_types::VIEWS, extensions::VIEWS].concat())
 }
 
 /// The views of ISO/IEC 9075:1992 [§21.2.4-§21.2.26].
@@ -205,6 +207,9 @@ const VIEWS: &[SystemView] = &[
        COALESCE (D1.COLLATION_NAME, D2.COLLATION_NAME) AS
      COLLATION_NAME,
        DOMAIN_CATALOG, DOMAIN_SCHEMA, DOMAIN_NAME,
+       D1.USER_DEFINED_TYPE_CATALOG AS UDT_CATALOG,
+       D1.USER_DEFINED_TYPE_SCHEMA AS UDT_SCHEMA,
+       D1.USER_DEFINED_TYPE_NAME AS UDT_NAME,
        IS_IDENTITY, IDENTITY_GENERATION, IDENTITY_START, IDENTITY_INCREMENT,
        IDENTITY_MAXIMUM, IDENTITY_MINIMUM, IDENTITY_CYCLE,
        IS_GENERATED, GENERATION_EXPRESSION,

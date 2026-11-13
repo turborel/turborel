@@ -130,7 +130,9 @@ fn check_target(c: &OutColumn, t: &ParameterSpecification, params: &Params, type
     // [ISO/IEC 9075:1992 §9.1 SR2] a character string to a character
     // string, a number to a number: SQL-86's rule that only an exact one go
     // to an exact target is Entry SQL's [§13.3, §13.5, Leveling Rules].
-    if target.is_character() != c.data_type.is_character() {
+    // [ISO/IEC 9075-2:2023 §4.9.6] A distinct type's value goes to a host
+    // target as its from-sql function's result, of its source (ID048).
+    if target.is_character() != c.data_type.represented().is_character() {
         return Err(rule(format!(
             "[X3.135-1986 {type_rule}; ISO/IEC 9075:1992 §9.1 SR2] a {} column cannot be assigned to {} ({target})",
             c.data_type, t.name

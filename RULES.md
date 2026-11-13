@@ -106,6 +106,7 @@ verification approach DO-178C expects (§8).
 | D66 | A key of NULLS NOT DISTINCT holds its nulls in its index |
 | D67 | A recursive query is iterated over held work tables, bounded by a setting |
 | D68 | Arrays and rows are values of shared parts, nested to a bound |
+| D69 | A distinct type's value is its source's, untagged |
 
 ### The project
 
@@ -600,6 +601,47 @@ both. In the Information Schema a column's or domain's data type descriptor
 is identified by its ordinal position, or 1 for a domain, and each part's
 by its parent's, a point and its place, so ELEMENT_TYPES and FIELDS join
 them without a counter of their own.
+
+#### D69. A distinct type's value is its source's, untagged
+
+A distinct type [ISO/IEC 9075-2:2023 §4.9, §11.51] is a data type of its
+own kind (D53, `value/types/distinct.rs`). It holds its schema, its name
+and its source type behind one shared pointer. It is FINAL and never
+altered, so a column's descriptor holds the type itself, and DROP TYPE
+drops every column of it first or refuses. A value of the type is its
+source's value, with no tag [UV103]. The binder knows the type, so each
+comparison, assignment and CAST is checked as it is bound, and no value
+grows nor any path of execution changes.
+
+The source is a predefined type or an array type [§11.51 SR5a]. An exact
+source is kept as NUMERIC of its precision and scale, an approximate one
+as FLOAT of its precision [IV223]. Values compare within one type alone,
+as their source values do [GR2c], and those of an array source with none,
+as no ordering is made of them.
+
+The two functions of its definition [GR2b], FNUDT from the source and
+FNSDT to it, are kept in the type's descriptor, each with its name, its
+specific name and its EXECUTE grants, not as routines apart. Their
+specific names are the type's name and _TO_DISTINCT or _TO_SOURCE, unique
+while the types' names are. Each binds as the change of representation it
+is, which is none. A name not qualified is found in the schema of the
+statement's names, the SQL-path [ID047], before a function a plug-in
+registered.
+
+Every session's transform group for a distinct type is the one its
+definition makes [ID048], so a value crosses to a host or a client as its
+source's. The protocol describes a column of one as its source type, and
+no client needs to know the type.
+
+What references a type is found by binding each view's query, each search
+condition and each generation expression again, in the definitions
+without the type, or with the privileges a REVOKE leaves. One that no
+longer binds referenced it. DROP TYPE's RESTRICT counts a transform only
+if a CREATE TRANSFORM made it [§11.59 SR4e], since the one its definition
+makes goes with it [GR2], and turborel has no CREATE TRANSFORM. CASCADE
+drops each column of a type based on it first, as ALTER TABLE DROP COLUMN
+does, and refuses before dropping any where that would drop every column
+of a table [§11.23 SR4].
 
 #### D33. Schema changes are transactional
 

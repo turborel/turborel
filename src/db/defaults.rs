@@ -25,13 +25,21 @@ const USER_LENGTH: u32 = 128;
 ///
 /// SQLCODE -103 if the option does not suit the type [SR3].
 pub(super) fn default_of(subject: &DataType, option: &DefaultOption, zone: i16) -> Result<ColumnDefault> {
+    // [ISO/IEC 9075-2:2023 §11.5 SR3b] of a distinct type of no collection
+    // type, the null value alone.
+    let collection = matches!(subject.represented(), DataType::Array(_));
+    if matches!(subject, DataType::Distinct(_)) && !collection && !matches!(option, DefaultOption::Null) {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.5 SR3b] the default of a column of {subject}, a user-defined type, is NULL")));
+    }
     let literal = match option {
         DefaultOption::Null => return Ok(ColumnDefault::Value(Value::Null)),
-        // [ISO/IEC 9075-2:2023 §11.5 SR3e, §6.5 GR1] of an array type, the
-        // array of no element.
+        // [ISO/IEC 9075-2:2023 §11.5 SR4e, §6.5 GR1] of an array type, or a
+        // distinct type of one, the array of no element.
         DefaultOption::Empty => {
-            if !matches!(subject, DataType::Array(_)) {
-                return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.5 SR3e] ARRAY[] is the default only of an array type, not {subject}")));
+            if !collection {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §11.5 SR4e] ARRAY[] is the default only of an array type, or a distinct type of one, not {subject}"
+                )));
             }
             return Ok(ColumnDefault::Value(Value::Array(Arc::from(Vec::new()))));
         }
@@ -87,6 +95,7 @@ fn literal_value(literal: &Literal, subject: &DataType, zone: i16) -> Result<Val
             | DataType::Interval(_)
             | DataType::Array(_)
             | DataType::Row(_)
+            | DataType::Distinct(_)
             | DataType::Extension(_) => Err(not_of()),
         },
         // [ISO/IEC 9075-2:2023 §11.5 SR4a iv] of an approximate type;
@@ -179,7 +188,8 @@ fn character_default(s: &str, subject: &DataType) -> Option<Result<Value>> {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
-        | DataType::Row(_) => None,
+        | DataType::Row(_)
+        | DataType::Distinct(_) => None,
     }
 }
 

@@ -11,9 +11,9 @@ use super::contents::Element;
 use super::indexes::IndexSpec;
 use super::sequences::Epochs;
 use super::{Completion, Database, State, api};
-use crate::ast::{Action, PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
-use crate::binder::{no_column, qualify};
-use crate::catalog::{Actions, Catalog, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, TemporaryKind, applicable, merged};
+use crate::ast::{PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
+use crate::binder::qualify;
+use crate::catalog::{Catalog, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, TemporaryKind, applicable, merged};
 use crate::engine::rows::ROW_STORE;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::index::Index;
@@ -23,41 +23,9 @@ use crate::storage::chosen;
 use crate::txn::Timestamp;
 use crate::value::Value;
 
-/// [X3.135-1986 §6.6 SR1, SR2; ISO/IEC 9075:1992 §10.3 SR4] The
-/// privileges the `<action>`s `list` specify on `table`: INSERT, UPDATE or
-/// REFERENCES on each column of a column list, which are columns of the
-/// table, or on every column without one.
-pub(super) fn granted_actions(list: &[Action], table: &TableDesc) -> Result<Actions> {
-    let mut actions = Actions::default();
-    for a in list {
-        match a {
-            Action::Select => actions.select = true,
-            Action::Insert(None) => actions.insert.extend(0..table.columns.len()),
-            Action::Insert(Some(names)) => actions.insert.extend(columns_of(table, names)?),
-            Action::Delete => actions.delete = true,
-            Action::Update(None) => actions.update.extend(0..table.columns.len()),
-            Action::Update(Some(names)) => actions.update.extend(columns_of(table, names)?),
-            Action::References(None) => actions.references.extend(0..table.columns.len()),
-            Action::References(Some(names)) => actions.references.extend(columns_of(table, names)?),
-            // [ISO/IEC 9075:1992 §11.36 SR1] USAGE is a domain's.
-            Action::Usage => {
-                return rule(format!("[ISO/IEC 9075:1992 §11.36 SR1] USAGE is granted on a domain, not on table {}", table.name));
-            }
-        }
-    }
-    Ok(actions)
-}
+mod actions;
 
-/// The positions of the columns `names` of `table` [X3.135-1986 §6.6 SR2,
-/// ISO/IEC 9075:1992 §10.3 SR3].
-fn columns_of(table: &TableDesc, names: &[String]) -> Result<Vec<usize>> {
-    names
-        .iter()
-        .map(|c| {
-            table.column(c).ok_or_else(|| no_column(&table.name, format!("[X3.135-1986 §6.6 SR2] {} has no column {c}", table.name), c))
-        })
-        .collect()
-}
+pub(super) use actions::granted_actions;
 
 /// A Syntax Rule violation.
 fn rule<T>(message: String) -> Result<T> {
@@ -246,7 +214,8 @@ impl State {
 
     /// The grants of `<schema>` `s`, by its owner `owner`: each table's
     /// privileges granted, and whether any was not; USAGE on a domain,
-    /// collation or sequence generator is granted in its descriptor
+    /// collation, sequence generator or type, and EXECUTE on a routine, is
+    /// granted in its descriptor
     /// [§11.36].
     fn schema_grants(&mut self, s: &Schema, owner: &str) -> Result<Vec<(Vec<PrivilegeDesc>, bool)>> {
         let mut granted = Vec::new();
@@ -261,6 +230,9 @@ impl State {
                 PrivilegeObject::Domain => self.grant_usage(owner, &s.name, p),
                 PrivilegeObject::Collation => self.grant_collation_usage(owner, p),
                 PrivilegeObject::Sequence => self.grant_sequence_usage(owner, &s.name, p),
+                PrivilegeObject::Type | PrivilegeObject::SpecificRoutine | PrivilegeObject::Routine => {
+                    self.grant_on_type(owner, &s.name, p)
+                }
             };
             granted.push((Vec::new(), done.or_at(p.table.at)?.completion != Completion::Success));
         }

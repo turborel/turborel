@@ -29,6 +29,7 @@ pub(crate) mod composite;
 pub(crate) use composite::rows_hold;
 pub(crate) mod datetime;
 mod decfloat;
+pub(crate) mod distinct;
 mod exact;
 pub(crate) mod interval;
 mod row;
@@ -45,6 +46,7 @@ pub use character::{CHARACTER, Character};
 pub use datetime::{Chronon, DATE, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED};
 pub(crate) use decfloat::arith as decfloat_arith;
 pub use decfloat::{DECFLOAT, DECFLOAT_NAME, DecFloatKind};
+pub use distinct::{DISTINCT, DistinctKind, DistinctType, USER_DEFINED_NAME};
 pub use exact::{EXACT, Exact};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
 pub use row::{Field, ROW, ROW_NAME, RowKind, RowType};
@@ -386,6 +388,9 @@ pub struct Descriptor {
     pub datetime_precision: Option<u32>,
     /// MAXIMUM_CARDINALITY, of an array [ISO/IEC 9075-2:2023 §4.12.1].
     pub cardinality: Option<u32>,
+    /// USER_DEFINED_TYPE_SCHEMA and USER_DEFINED_TYPE_NAME, of a
+    /// user-defined type [ISO/IEC 9075-2:2023 §4.9.2].
+    pub user_defined: Option<(String, String)>,
 }
 
 impl Descriptor {
@@ -401,6 +406,7 @@ impl Descriptor {
             scale: None,
             datetime_precision: None,
             cardinality: None,
+            user_defined: None,
         }
     }
 }
@@ -425,6 +431,7 @@ impl DataType {
             DataType::DecFloat { .. } => &DECFLOAT,
             DataType::Array(_) => &ARRAY,
             DataType::Row(_) => &ROW,
+            DataType::Distinct(_) => &DISTINCT,
             DataType::Extension(e) => *e.kind,
         }
     }
@@ -450,7 +457,8 @@ impl DataType {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Array(_)
-            | DataType::Row(_) => self.kind().encode_record(v, self),
+            | DataType::Row(_)
+            | DataType::Distinct(_) => self.kind().encode_record(v, self),
             DataType::Exact { .. } => EXACT.encode_record(v, self),
             DataType::Approximate { .. } => APPROXIMATE.encode_record(v, self),
             DataType::DecFloat { .. } => DECFLOAT.encode_record(v, self),
@@ -471,7 +479,8 @@ impl DataType {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Array(_)
-            | DataType::Row(_) => self.kind().decode_record(field, self),
+            | DataType::Row(_)
+            | DataType::Distinct(_) => self.kind().decode_record(field, self),
             DataType::Exact { .. } => EXACT.decode_record(field, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_record(field, self),
             DataType::DecFloat { .. } => DECFLOAT.decode_record(field, self),
@@ -496,7 +505,8 @@ impl DataType {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Array(_)
-            | DataType::Row(_) => self.kind().encode_key(v, self, out),
+            | DataType::Row(_)
+            | DataType::Distinct(_) => self.kind().encode_key(v, self, out),
             DataType::Exact { .. } => EXACT.encode_key(v, self, out),
             DataType::Approximate { .. } => APPROXIMATE.encode_key(v, self, out),
             DataType::DecFloat { .. } => DECFLOAT.encode_key(v, self, out),
@@ -521,7 +531,8 @@ impl DataType {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Array(_)
-            | DataType::Row(_) => self.kind().decode_key(rest, self),
+            | DataType::Row(_)
+            | DataType::Distinct(_) => self.kind().decode_key(rest, self),
             DataType::Exact { .. } => EXACT.decode_key(rest, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_key(rest, self),
             DataType::DecFloat { .. } => DECFLOAT.decode_key(rest, self),

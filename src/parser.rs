@@ -44,6 +44,7 @@ mod regex;
 mod schema;
 mod sequences;
 mod served;
+mod user_types;
 pub(crate) use data_statements::{TRUNCATE, begins_truncate};
 pub(crate) use served::CANCEL;
 mod session;

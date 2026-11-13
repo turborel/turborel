@@ -4,9 +4,10 @@
 
 Every value is of a data type, and every column, parameter and
 expression has one. A column may also be of a [domain](statements/create-domain.md),
-which is a data type with a default and constraints, or *(extension)* of
-a type a plug-in registers, written by its name and, in parentheses, one
-or two unsigned integers it takes; so may a domain.
+which is a data type with a default and constraints, of a
+[distinct type](#distinct-types), or *(extension)* of a type a plug-in
+registers, written by its name and, in parentheses, one or two unsigned
+integers it takes; so may a domain.
 
 ```
 <data type> ::=
@@ -16,6 +17,7 @@ or two unsigned integers it takes; so may a domain.
     | <decimal floating-point type>
     | <datetime type> | <interval type>
     | <row type> | <array type>
+    | <path-resolved user-defined type name>
 ```
 
 | Type | Holds | Written |
@@ -443,6 +445,30 @@ Types nest at most 16 deep.
 them, and UNNEST in [Query Expressions](06-queries.md#unnest) gives an
 array's elements as rows.
 
+## Distinct types
+
+A distinct type is a type of its own made from another, its source type,
+by [CREATE TYPE](statements/create-type.md). `CREATE TYPE MONEY AS
+DECIMAL(10,2)` makes MONEY, whose values are those of DECIMAL(10,2) but
+compare only with other values of MONEY. A price and a weight of one
+source type cannot then be compared or added by mistake.
+
+The source type is a predefined type or an array type. A value of the
+source, or of a type that is assigned to it, is assigned to a column of
+the distinct type, and a value of the distinct type is assigned only to a
+site of exactly its source type. CAST takes the same paths. No operator
+takes a value of a distinct type but comparison, so `PRICE + 1` is
+refused and `"NUMERIC"(PRICE) + 1` is not. Values of a type whose source
+is an array type are compared with none, so they are never ordered or
+grouped.
+
+The type's definition makes two functions, one from its source, named
+for the type, and one to it, named for the source type. Each is invoked
+by name, `MONEY(5)` and `"NUMERIC"(PRICE)`, and needs EXECUTE, which the
+type's owner holds and [GRANT](statements/grant.md) gives. A column of the
+type needs USAGE on it. A client reads and writes its values as values of
+the source type.
+
 ## Assignment and CAST
 
 **Assignment** stores a value in a column, or a parameter: INSERT,
@@ -469,8 +495,9 @@ domain's, checking the domain's constraints:
 | Datetime | yes | no | no | no | no | yes, of its fields | no |
 | Interval | yes | no | of one field | no | no | no | of its class |
 
-An array is assigned and CAST element by element to its target's element
-type, and a row field by field to its target's fields, in order, whatever
+A distinct type is assigned and CAST from its source, and to it, as
+[Distinct types](#distinct-types) says. An array is assigned and CAST
+element by element to its target's element type, and a row field by field to its target's fields, in order, whatever
 their names. An array of more elements than its target's maximum
 cardinality is refused, SQLSTATE 2202F, but on assignment its nulls past
 the maximum are dropped. Nothing else is assigned or CAST to or from an

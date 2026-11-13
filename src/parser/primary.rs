@@ -116,13 +116,12 @@ impl Parser {
         if let Some(name) = regex.filter(|_| matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))) {
             return self.regex_function(name);
         }
-        // An <identifier> followed by "(" never occurs in SQL-86.
-        if matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
-            if !self.extensions {
-                return Err(self.syntax(
-                    "[X3.135-1986 §5.9 F] function calls are not SQL-86 (they are an [EXTENSION], taken while SQL.FUNCTION_CALLS is ON); expected a <value expression>",
-                ));
-            }
+        // [ISO/IEC 9075-2:2023 §10.4] a <routine invocation>: its name,
+        // perhaps of a schema, then "(".
+        let qualified = matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD))
+            && matches!(self.peek_at(2), Tok::Identifier(_))
+            && matches!(self.peek_at(3), Tok::Delimiter(delim::LEFT_PAREN));
+        if qualified || matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
             return self.function_call();
         }
         if self.at_parameter() {
@@ -371,10 +370,17 @@ impl Parser {
         Ok(ValueExpression::Function { name, args, at })
     }
 
-    /// \[EXTENSION\] `<identifier>` ( \[`<value expression>` \[{, `<value expression>`}...\]\] )
+    /// [ISO/IEC 9075-2:2023 §10.4] `<routine invocation>` ::= `<routine
+    /// name>` `<SQL argument list>`, the name perhaps of a schema; or
+    /// \[EXTENSION\] the call of a function registered, which the binder
+    /// takes while SQL.FUNCTION_CALLS is ON.
     fn function_call(&mut self) -> Result<ValueExpression> {
         let at = self.here();
-        let name = self.identifier()?;
+        let mut name = self.identifier()?;
+        let mut schema = None;
+        if self.accept_delim(delim::PERIOD) {
+            schema = Some(std::mem::replace(&mut name, self.identifier()?));
+        }
         self.expect_delim(delim::LEFT_PAREN)?;
         let mut args = Vec::new();
         if !self.accept_delim(delim::RIGHT_PAREN) {
@@ -384,7 +390,7 @@ impl Parser {
             }
             self.expect_delim(delim::RIGHT_PAREN)?;
         }
-        Ok(ValueExpression::Call { name, args, at })
+        Ok(ValueExpression::Call { schema, name, args, at, extension: self.extensions })
     }
 }
 

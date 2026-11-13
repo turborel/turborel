@@ -125,13 +125,15 @@ enum Place {
 pub(super) struct Rules<'w> {
     names: Vec<&'w str>,
     db: &'w State,
+    /// The schema the names of the query are of, the SQL-path.
+    schema: &'w str,
 }
 
 impl<'w> Rules<'w> {
     /// The rules of the stratum of `w`'s elements at `members`.
-    pub(super) fn new(db: &'w State, w: &'w WithQuery, members: &[usize]) -> Rules<'w> {
+    pub(super) fn new((db, schema): (&'w State, &'w str), w: &'w WithQuery, members: &[usize]) -> Rules<'w> {
         let names = members.iter().filter_map(|&m| w.elements.get(m)).map(|e| e.name.as_str()).collect();
-        Rules { names, db }
+        Rules { names, db, schema }
     }
 
     /// Its members' names, for a message.
@@ -313,7 +315,7 @@ impl<'w> Rules<'w> {
 
     /// Whether `v` contains a set function, in a subquery too.
     fn has_set_function(&self, v: &ValueExpression) -> bool {
-        let mut found = v.any(&|e| is_aggregate_call(e, self.db));
+        let mut found = v.any(&|e| is_aggregate_call(e, (self.db, self.schema)));
         v.for_each_subquery(&mut |s| found = found || any_query(&s.query, &|q| self.own_set_function(q)));
         found
     }
@@ -321,7 +323,7 @@ impl<'w> Rules<'w> {
     /// Whether `c` contains a set function, in a subquery too.
     fn condition_has_set_function(&self, c: &SearchCondition) -> bool {
         let mut found = false;
-        c.for_each_value(&mut |v| found = found || v.any(&|e| is_aggregate_call(e, self.db)));
+        c.for_each_value(&mut |v| found = found || v.any(&|e| is_aggregate_call(e, (self.db, self.schema))));
         c.for_each_subquery(&mut |s| found = found || any_query(&s.query, &|q| self.own_set_function(q)));
         found
     }
@@ -329,7 +331,7 @@ impl<'w> Rules<'w> {
     /// Whether a value expression of `q` itself, not of a query nested in
     /// it, is or has a set function.
     fn own_set_function(&self, q: &QueryExpression) -> bool {
-        let agg = |v: &ValueExpression| v.any(&|e| is_aggregate_call(e, self.db));
+        let agg = |v: &ValueExpression| v.any(&|e| is_aggregate_call(e, (self.db, self.schema)));
         match q {
             QueryExpression::Spec(spec) => {
                 let mut found = selected(spec).into_iter().any(agg);

@@ -50,6 +50,8 @@ fn ordered_by(t: &DataType, member: fn(&DataType) -> bool) -> bool {
         || match t {
             DataType::Array(a) => ordered_by(&a.element, member),
             DataType::Row(r) => r.fields.iter().any(|f| ordered_by(&f.data_type, member)),
+            // Ordered by MAP of its cast to its source [§11.51 GR2c].
+            DataType::Distinct(d) => ordered_by(&d.source, member),
             DataType::Character { .. }
             | DataType::Varying { .. }
             | DataType::Exact { .. }
@@ -81,6 +83,7 @@ pub(crate) fn nesting(t: &DataType) -> usize {
     match t {
         DataType::Array(a) => nesting(&a.element).saturating_add(1),
         DataType::Row(r) => r.fields.iter().map(|f| nesting(&f.data_type)).max().unwrap_or(0).saturating_add(1),
+        DataType::Distinct(d) => nesting(&d.source),
         DataType::Character { .. }
         | DataType::Varying { .. }
         | DataType::Exact { .. }

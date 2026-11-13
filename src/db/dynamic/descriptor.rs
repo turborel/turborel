@@ -51,8 +51,13 @@ pub(super) mod code {
     pub(in crate::db::dynamic) const BINARY_VARYING: i64 = 61;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] ROW TYPE.
     pub(in crate::db::dynamic) const ROW: i64 = 19;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] A user-defined type.
+    pub(in crate::db::dynamic) const USER_DEFINED: i64 = 17;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] ARRAY.
     pub(in crate::db::dynamic) const ARRAY: i64 = 50;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 34] DISTINCT, the category of a
+    /// distinct type.
+    pub(in crate::db::dynamic) const DISTINCT: i64 = 1;
     /// \[DESIGN\] An implementation-defined data type, of a code less than 0:
     /// a plug-in's (RULES.md D53), each described by this one code.
     pub(in crate::db::dynamic) const EXTENSION: i64 = -1;
@@ -253,6 +258,14 @@ impl Item {
             // describe the rest (`nested.rs`).
             DataType::Row(r) => self.set_number(DescriptorItem::Degree, number(r.fields.len())),
             DataType::Array(a) => self.set_number(DescriptorItem::Cardinality, i64::from(a.max)),
+            // [ISO/IEC 9075-2:2023 §20.10 GR7d viii] Its name and category.
+            DataType::Distinct(d) => {
+                let parts = [catalog, d.schema.as_str(), d.name.as_str()];
+                for (f, part) in USER_DEFINED_TYPE.into_iter().zip(parts) {
+                    self.set(f, Value::Char(part.to_owned()));
+                }
+                self.set_number(DescriptorItem::UserDefinedTypeCode, code::DISTINCT);
+            }
             DataType::Extension(_) => self.extension = Some(t),
         }
     }
@@ -323,10 +336,16 @@ fn field_name(f: Field) -> &'static str {
     }
 }
 
-/// Whether `f` is a field of a character string [§17.1 Table 17].
+/// Whether `f` is a field of a character string [§17.1 Table 17; ISO/IEC
+/// 9075-2:2023 §20.1, Table 29].
 pub(super) fn is_text(f: DescriptorItem) -> bool {
-    matches!(f, DescriptorItem::Name) || CHARACTER_SET.contains(&f) || COLLATION.contains(&f)
+    matches!(f, DescriptorItem::Name) || CHARACTER_SET.contains(&f) || COLLATION.contains(&f) || USER_DEFINED_TYPE.contains(&f)
 }
+
+/// [ISO/IEC 9075-2:2023 §20.1, Table 29] The fields of a user-defined
+/// type's name: its catalog, schema and identifier.
+const USER_DEFINED_TYPE: [DescriptorItem; 3] =
+    [DescriptorItem::UserDefinedTypeCatalog, DescriptorItem::UserDefinedTypeSchema, DescriptorItem::UserDefinedTypeName];
 
 /// [ISO/IEC 9075:1992 §17.1 Table 18] The code of `t`.
 fn type_code(t: &DataType) -> i64 {
@@ -352,6 +371,7 @@ fn type_code(t: &DataType) -> i64 {
         DataType::Interval(_) => code::INTERVAL,
         DataType::Row(_) => code::ROW,
         DataType::Array(_) => code::ARRAY,
+        DataType::Distinct(_) => code::USER_DEFINED,
         DataType::Extension(_) => code::EXTENSION,
     }
 }
@@ -380,6 +400,7 @@ fn datetime_shape(t: &DataType) -> (i64, i64, i64) {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => (1, DATE_POSITIONS, 0),
     }
 }

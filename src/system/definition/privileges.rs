@@ -22,7 +22,7 @@ use crate::storage::Row;
 use crate::system::{Rows, SYSTEM_GRANTOR, Seen, SystemTable, catalog_name, text, yes};
 
 /// [§21.3.20 Description 2] The grantee of a privilege granted to all.
-const PUBLIC: &str = "PUBLIC";
+pub(super) const PUBLIC: &str = "PUBLIC";
 
 /// The tables.
 pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {

@@ -57,6 +57,7 @@ pub fn restores(t: &DataType) -> bool {
         | DataType::Date
         | DataType::Interval(_) => true,
         DataType::Time { zoned, .. } | DataType::Timestamp { zoned, .. } => !zoned,
+        DataType::Distinct(d) => restores(&d.source),
         DataType::Varying { .. } | DataType::Approximate { .. } | DataType::Array(_) | DataType::Row(_) | DataType::Extension(_) => false,
     }
 }

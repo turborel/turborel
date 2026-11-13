@@ -83,7 +83,8 @@ impl Session {
             | SchemaStatement::AlterDomain(_)
             | SchemaStatement::Collation(_)
             | SchemaStatement::Sequence(_)
-            | SchemaStatement::AlterSequence(_) => Ok(()),
+            | SchemaStatement::AlterSequence(_)
+            | SchemaStatement::Type(_) => Ok(()),
         }
     }
 

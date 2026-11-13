@@ -32,10 +32,6 @@ each group.
 
 ### Types
 
-- Distinct types (S011) [§4.9, §11.51]. CREATE TYPE of a predefined
-  type, its values comparable only with its own. Arrays of them (S093)
-  would then claim S091, and with it S095, S096 and S098, which are
-  processed already.
 - Array element assignment of a host target (S097) [§9.1 SR4]. A target
   `A[i]` of FETCH INTO, SELECT INTO and GET DESCRIPTOR. It needs a target
   that is not a whole parameter.

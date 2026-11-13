@@ -2,9 +2,10 @@
 //! DATA_TYPE_DESCRIPTOR has one row for each domain and one for each
 //! column of each table that is of no domain. ELEMENT_TYPES and FIELDS,
 //! the tables ISO/IEC 9075-11 names so, have one row for each descriptor
-//! subordinate to one of those [ISO/IEC 9075-2:2023 §4.10.2, §4.12.1].
-//! ELEMENT_TYPES holds each array type's element type, and FIELDS each
-//! field of each row type.
+//! subordinate to one of those [ISO/IEC 9075-2:2023 §4.10.2, §4.12.1],
+//! or to a user-defined type's source type or a routine's parameter or
+//! result type (`definition/user_types.rs`). ELEMENT_TYPES holds each array
+//! type's element type, and FIELDS each field of each row type.
 //!
 //! Each descriptor's DTD_IDENTIFIER is unique among those of its object,
 //! and implementation-dependent. A column's is its ordinal position and a
@@ -18,6 +19,7 @@
 
 use std::sync::Arc;
 
+use super::user_types::heads;
 use super::{Columns, SQL_TEXT, catalog_name, defined, ids, information, number, objects, text};
 use crate::catalog::{ColumnDesc, QualifiedName};
 use crate::error::Result;
@@ -38,8 +40,9 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     ]
 }
 
-/// Then the columns of a descriptor, from DATA_TYPE on.
-fn described(columns: Columns) -> Columns {
+/// Then the columns of a descriptor, from DATA_TYPE on, ending with a
+/// user-defined type's name [ISO/IEC 9075-2:2023 §4.9.2].
+pub(super) fn described(columns: Columns) -> Columns {
     columns
         .data("DATA_TYPE", true)
         .number("CHARACTER_MAXIMUM_LENGTH", false)
@@ -50,6 +53,7 @@ fn described(columns: Columns) -> Columns {
         .number("NUMERIC_SCALE", false)
         .number("DATETIME_PRECISION", false)
         .number("MAXIMUM_CARDINALITY", false)
+        .ids("USER_DEFINED_TYPE", false)
 }
 
 fn data_type_columns() -> Vec<ColumnDesc> {
@@ -175,6 +179,10 @@ fn nested(seen: &Seen<'_>, fields: bool) -> Result<Vec<Row>> {
         let head = [ids(&catalog, &t.object).to_vec(), vec![text(if t.domain { "DOMAIN" } else { "TABLE" })]].concat();
         subordinates(&t.data_type, (&t.dtd, 0), &head, fields, &mut rows);
     }
+    for (object, kind, dtd, t) in heads(seen) {
+        let head = [ids(&catalog, &object).to_vec(), vec![text(kind)]].concat();
+        subordinates(&t, (dtd, 0), &head, fields, &mut rows);
+    }
     Ok(rows)
 }
 
@@ -192,8 +200,9 @@ fn fields(seen: &Seen<'_>) -> Result<Vec<Row>> {
 
 /// [§21.3.5 Description 3] The data type `t`, from DATA_TYPE on, as its
 /// kind describes it (`SqlType::descriptor`): a character string's
-/// collation `named`, else the character set's, SQL_TEXT.
-fn data_type(catalog: &Value, t: &DataType, named: Option<&QualifiedName>) -> Vec<Value> {
+/// collation `named`, else the character set's, SQL_TEXT; a user-defined
+/// type's name.
+pub(super) fn data_type(catalog: &Value, t: &DataType, named: Option<&QualifiedName>) -> Vec<Value> {
     let d = t.kind().descriptor(t);
     let optional = |n: Option<u32>| n.map_or(Value::Null, |n| number(usize::try_from(n).unwrap_or(usize::MAX)));
     let default = information(SQL_TEXT);
@@ -201,5 +210,9 @@ fn data_type(catalog: &Value, t: &DataType, named: Option<&QualifiedName>) -> Ve
     let octets = d.octets.map_or(Value::Null, number);
     let head = vec![text(&d.name), optional(d.length), octets];
     let tail = vec![optional(d.precision), optional(d.radix), optional(d.scale), optional(d.datetime_precision), optional(d.cardinality)];
-    [head, collation, tail].concat()
+    let user_defined = match &d.user_defined {
+        Some((auth, ident)) => ids(catalog, &QualifiedName { auth: auth.clone(), ident: ident.clone() }).to_vec(),
+        None => vec![Value::Null, Value::Null, Value::Null],
+    };
+    [head, collation, tail, user_defined].concat()
 }

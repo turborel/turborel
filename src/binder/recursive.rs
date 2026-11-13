@@ -64,7 +64,7 @@ pub(super) fn bind_list(cx: Context<'_>, w: &WithQuery, (queries, drawn): (&Quer
             elements.into_iter().try_for_each(|e| bind_element(cx, e, (queries, drawn)))?;
             continue;
         }
-        let rules = Rules::new(cx.db, w, &stratum.members);
+        let rules = Rules::new((cx.db, cx.schema), w, &stratum.members);
         let mut members = Vec::new();
         for (e, &n) in elements.into_iter().zip(&stratum.members) {
             rules.check(e)?;

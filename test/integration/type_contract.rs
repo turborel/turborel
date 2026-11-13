@@ -260,3 +260,39 @@ fn rows_keep_the_type_contract() {
     let nested = DataType::row(vec![field("A", DataType::row(vec![field("B", integer())])), field("C", integer())]);
     type_contract(&nested, &[row([row([exact(1, 0)]), exact(2, 0)]), row([row([exact(0, 0)]), exact(9, 0)])]);
 }
+
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D53, D69: a distinct type keeps
+/// the `SqlType` contract as its source does [ISO/IEC 9075-2:2023 §4.9.2,
+/// §11.51 GR2c]: of an exact number and of a fixed-length character
+/// string, its values and keys its source's; an array of a distinct type
+/// [Feature S093] too, but for keys.
+#[test]
+fn distinct_types_keep_the_type_contract() {
+    let money = DataType::distinct("S", "MONEY", DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric });
+    type_contract(&money, &[exact(-12_345, 2), exact(0, 0), exact(5, 0), exact(999_999_999, 2)]);
+    let code = DataType::distinct("S", "CODE", DataType::character(3));
+    type_contract(&code, &["", "a", "ab ", "zzz"].map(|s| Value::Char(s.into())));
+    let monies = DataType::array(money, 2);
+    type_contract_of_arrays(&monies, &[array([]), array([exact(1, 2), Value::Null])]);
+}
+
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D69: a distinct type of an array
+/// type has no ordering, so it is comparable with nothing, not even itself
+/// [ISO/IEC 9075-2:2023 §4.9.5, §11.51 GR2c]; its parameters, values and
+/// record bytes still read back, and two distinct types of one source are
+/// not comparable.
+#[test]
+fn a_distinct_type_of_an_array_compares_with_nothing() {
+    let t = DataType::distinct("S", "LIST", DataType::array(integer(), 3));
+    let kind = t.kind();
+    assert!(!t.comparable(&t), "{t} has no ordering");
+    let mut params = Vec::new();
+    kind.put_params(&t, &mut params);
+    assert_eq!(kind.params(&mut Reader::new(&params, "parameters")).unwrap(), t);
+    let v = assign(array([exact(1, 0), Value::Null]), &t, "contract").unwrap();
+    let record = kind.encode_record(&v, &t).unwrap();
+    assert_eq!(kind.decode_record(&record, &t).unwrap().to_literal(), v.to_literal());
+    let a = DataType::distinct("S", "A", integer());
+    let b = DataType::distinct("S", "B", integer());
+    assert!(a.comparable(&a) && !a.comparable(&b) && !a.comparable(&integer()) && !integer().comparable(&a));
+}

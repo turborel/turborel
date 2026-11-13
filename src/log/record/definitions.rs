@@ -16,6 +16,7 @@ const DROPPED_DOMAIN: u8 = 4;
 const DROPPED_ASSERTION: u8 = 5;
 const DROPPED_COLLATION: u8 = 6;
 const DROPPED_SEQUENCE: u8 = 7;
+const DROPPED_TYPE: u8 = 8;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +35,8 @@ pub enum DropTarget {
     Collation(QualifiedName),
     /// A sequence generator [ISO/IEC 9075-2:2023 §11.74].
     Sequence(QualifiedName),
+    /// A user-defined type [ISO/IEC 9075-2:2023 §11.59].
+    Type(QualifiedName),
 }
 
 /// A schema's text, the engine of each table it created, its
@@ -143,6 +146,7 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::Assertion(assertion) => (DROPPED_ASSERTION, assertion),
         DropTarget::Collation(collation) => (DROPPED_COLLATION, collation),
         DropTarget::Sequence(sequence) => (DROPPED_SEQUENCE, sequence),
+        DropTarget::Type(user_type) => (DROPPED_TYPE, user_type),
     };
     out.put_u8(tag);
     put_table(out, name);
@@ -159,6 +163,7 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_ASSERTION => Ok(DropTarget::Assertion(table(r)?)),
         DROPPED_COLLATION => Ok(DropTarget::Collation(table(r)?)),
         DROPPED_SEQUENCE => Ok(DropTarget::Sequence(table(r)?)),
+        DROPPED_TYPE => Ok(DropTarget::Type(table(r)?)),
         other => Err(SqlError::new(Code::Corrupt, format!("[DESIGN] a log record drops an unknown kind of object, {other}"))),
     }
 }

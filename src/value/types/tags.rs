@@ -2,11 +2,12 @@
 //! tag of its kind, then its parameters; a number type's tag says the name
 //! it was written with [ISO/IEC 9075:1992 §21.3.5]. An array type's
 //! parameters hold its element type's bytes, and a row type's its fields'
-//! (RULES.md D68).
+//! (RULES.md D68); a distinct type's its name and its source type's
+//! (RULES.md D69).
 
 use super::{
-    APPROXIMATE, ARRAY, BINARY, BINARY_VARYING, BOOLEAN, CHARACTER, DATE, DECFLOAT, EXACT, INTERVAL_DAY_TIME, ROW, TIME, TIME_ZONED,
-    TIMESTAMP, TIMESTAMP_ZONED, VARYING,
+    APPROXIMATE, ARRAY, BINARY, BINARY_VARYING, BOOLEAN, CHARACTER, DATE, DECFLOAT, DISTINCT, EXACT, INTERVAL_DAY_TIME, ROW, TIME,
+    TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING,
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -41,6 +42,9 @@ const DECFLOAT_TYPE: u8 = 19;
 const ARRAY_TYPE: u8 = 20;
 /// A row type: its fields, each its name and then its type.
 const ROW_TYPE: u8 = 21;
+/// A distinct type: its schema's name and its own, then its source type
+/// (RULES.md D69).
+const DISTINCT_TYPE: u8 = 22;
 
 /// Appends `data_type`'s bytes to `out`.
 pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
@@ -60,6 +64,7 @@ pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
         DataType::Exact { spelled, .. } | DataType::Approximate { spelled, .. } => out.put_u8(number_tag(*spelled)),
         DataType::Array(_) => out.put_u8(ARRAY_TYPE),
         DataType::Row(_) => out.put_u8(ROW_TYPE),
+        DataType::Distinct(_) => out.put_u8(DISTINCT_TYPE),
         DataType::Extension(e) => {
             out.put_u8(EXTENSION_TYPE);
             out.put_str(e.kind.name());
@@ -98,6 +103,7 @@ fn spelled_as(t: DataType, spelled: Spelled) -> DataType {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => t,
     }
 }
@@ -136,6 +142,7 @@ pub(crate) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         INTERVAL_TYPE => &INTERVAL_DAY_TIME,
         ARRAY_TYPE => &ARRAY,
         ROW_TYPE => &ROW,
+        DISTINCT_TYPE => &DISTINCT,
         EXTENSION_TYPE => {
             let name = r.str()?;
             r.kind(&name)?

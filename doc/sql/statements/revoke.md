@@ -35,8 +35,9 @@ what that abandons in turn.
 A generated column whose generation expression names a domain or a
 collation is lost when its table's schema's owner loses USAGE on it.
 RESTRICT refuses the revoke, and CASCADE drops the column first, as ALTER
-TABLE DROP COLUMN with CASCADE drops it. If the revoke then fails, the
-transaction can only roll back.
+TABLE DROP COLUMN with CASCADE drops it. A revoke that would leave a
+table no column is refused before it drops any. If the revoke fails after
+one is dropped, the transaction can only roll back.
 
 USAGE taken on a collation leaves some schemas' owners without it. A
 column or domain of such a schema that is of the collation is impacted:
@@ -46,6 +47,16 @@ as ALTER TABLE does. That can take as long, and it fails if a constraint
 no longer holds of the rows. A table whose foreign key references one
 reverted is checked again. The schema's views and constraints that name
 the collation in COLLATE are abandoned.
+
+USAGE taken on a distinct type, or EXECUTE on one of its functions,
+abandons what needs it. A column of a schema whose owner is left without
+USAGE on the type is lost if it is of the type, an array of it, or a type
+based on it, and so is a generated column that names the type or invokes
+one of its functions. A view, constraint or assertion that does is
+abandoned. RESTRICT refuses the revoke (SQLSTATE 2B000), and CASCADE
+drops each lost column first, as ALTER TABLE DROP COLUMN with CASCADE
+drops it, then what is abandoned. A revoke that would drop every column
+of a table is refused before it drops any.
 
 A privilege named that its user had not granted the grantee is not
 taken, and the statement completes with the warning SQLSTATE 01006.
@@ -68,7 +79,7 @@ None: a user revokes only what it granted.
 |---|---|---|
 | 2A000 | -102 | No `<drop behavior>` is written, or the statement is not written as the synopsis shows |
 | 2A000 | -103 | A rule above is broken |
-| 2B000 | -103 | RESTRICT, and a column or domain of a schema left without USAGE is of the collation, or a grant of USAGE on the sequence generator would be abandoned |
+| 2B000 | -103 | RESTRICT, and a column or domain of a schema left without USAGE is of the collation, a grant of USAGE on the sequence generator would be abandoned, or a column, view, constraint, generated column or grant would be lost or abandoned with a privilege on a distinct type or its function |
 | 23000 | -201 | A constraint no longer holds of the rows of a table reverted |
 | 25000 | -917 | The transaction is READ ONLY |
 | 01006 | 0 | Not an error: a privilege named was not granted, and is not taken |

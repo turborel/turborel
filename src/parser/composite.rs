@@ -33,19 +33,21 @@ impl Parser {
     /// another: nested no deeper than `MAX_TYPE_NESTING`.
     pub(super) fn data_type(&mut self) -> Result<DataType> {
         let at = self.here();
-        let mut t = if self.at_row_type() { self.row_type()? } else { self.predefined_type()? };
-        while self.accept_word(ARRAY_NAME) {
-            let max = if self.accept_delim(delim::LEFT_BRACKET) { self.maximum_cardinality()? } else { MAX_ARRAY_CARDINALITY };
-            t = DataType::array(t, max);
-        }
-        if nesting(&t) > MAX_TYPE_NESTING {
-            return Err(SqlError::at(
-                Code::Unsupported,
-                at,
-                format!("[DESIGN] the type nests arrays and rows deeper than this implementation's limit of {MAX_TYPE_NESTING}"),
-            ));
-        }
+        let t = if self.at_row_type() { self.row_type()? } else { self.predefined_type()? };
+        let t = self.array_suffix()?.into_iter().fold(t, DataType::array);
+        within_nesting(nesting(&t), at)?;
         Ok(t)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] The maximum cardinality of each ARRAY
+    /// \[`[` `<maximum cardinality>` `]`\] that follows a `<data type>`,
+    /// in order: of one written without it, `MAX_ARRAY_CARDINALITY` [SR47].
+    pub(super) fn array_suffix(&mut self) -> Result<Vec<u32>> {
+        let mut maxima = Vec::new();
+        while self.accept_word(ARRAY_NAME) {
+            maxima.push(if self.accept_delim(delim::LEFT_BRACKET) { self.maximum_cardinality()? } else { MAX_ARRAY_CARDINALITY });
+        }
+        Ok(maxima)
     }
 
     /// Whether a `<row type>` begins here: ROW, no key word of SQL-92,
@@ -77,6 +79,14 @@ impl Parser {
     /// definition>` \[, ...\] ), `<field definition>` ::= `<field name>`
     /// `<data type>` [§6.2], no two names equivalent \[SR2\].
     fn row_type(&mut self) -> Result<DataType> {
+        let fields = self.row_fields(Parser::data_type)?;
+        Ok(DataType::row(fields.into_iter().map(|(name, data_type)| Field { name, data_type, unnamed: false }).collect()))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1, §6.2] The fields of a `<row type>`, each
+    /// its name and its type as `part` reads it, no two names equivalent
+    /// \[SR2\].
+    pub(super) fn row_fields<T>(&mut self, part: fn(&mut Parser) -> Result<T>) -> Result<Vec<(String, T)>> {
         self.advance();
         self.expect_delim(delim::LEFT_PAREN)?;
         let mut fields = Vec::new();
@@ -91,15 +101,31 @@ impl Parser {
                     format!("[ISO/IEC 9075-2:2023 §6.2 SR2] the row type has two fields {name}"),
                 ));
             }
-            let data_type = self.nested(Parser::data_type)?;
-            fields.push(Field { name, data_type, unnamed: false });
+            fields.push((name, self.nested(part)?));
             if !self.accept_delim(delim::COMMA) {
                 break;
             }
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(DataType::row(fields))
+        Ok(fields)
     }
+}
+
+/// That a type written at `at` nests arrays and rows `depth` deep, no
+/// deeper than `MAX_TYPE_NESTING`.
+///
+/// # Errors
+///
+/// SQLCODE -900 if it nests deeper.
+pub(super) fn within_nesting(depth: usize, at: usize) -> Result<()> {
+    if depth > MAX_TYPE_NESTING {
+        return Err(SqlError::at(
+            Code::Unsupported,
+            at,
+            format!("[DESIGN] the type nests arrays and rows deeper than this implementation's limit of {MAX_TYPE_NESTING}"),
+        ));
+    }
+    Ok(())
 }
 
 impl Parser {

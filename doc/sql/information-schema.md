@@ -59,8 +59,25 @@ Two views of ISO/IEC 9075-11 describe the parts of array and row types
 
 | View | One row of each |
 |---|---|
-| ELEMENT_TYPES | array type of a column, a domain or a part of either, with its OBJECT_TYPE TABLE or DOMAIN, COLLECTION_TYPE_IDENTIFIER the array type's DTD_IDENTIFIER, and its element type, as COLUMNS gives a type |
+| ELEMENT_TYPES | array type of a column, a domain, a distinct type's source, a function's parameter or result, or a part of one, with its OBJECT_TYPE TABLE, DOMAIN, USER-DEFINED TYPE or ROUTINE, COLLECTION_TYPE_IDENTIFIER the array type's DTD_IDENTIFIER, and its element type, as COLUMNS gives a type |
 | FIELDS | field of a row type of a column, a domain or a part of either, with ROW_IDENTIFIER the row type's DTD_IDENTIFIER, FIELD_NAME, ORDINAL_POSITION, and the field's type |
+
+Six more of ISO/IEC 9075-11 describe distinct types and the two functions
+each one's definition makes ([CREATE TYPE](statements/create-type.md)),
+those the user, or PUBLIC, holds a privilege on:
+
+| View | One row of each |
+|---|---|
+| USER_DEFINED_TYPES | distinct type: USER_DEFINED_TYPE_CATEGORY DISTINCT, IS_INSTANTIABLE and IS_FINAL YES, ORDERING_FORM FULL and ORDERING_CATEGORY MAP with the specific name of its function to its source in ORDERING_ROUTINE_CATALOG, _SCHEMA and _NAME, or NONE of an array source, and the source type, as COLUMNS gives a type, its DTD_IDENTIFIER in SOURCE_DTD_IDENTIFIER |
+| UDT_PRIVILEGES | privilege on a distinct type, its PRIVILEGE_TYPE TYPE USAGE |
+| ROUTINES | function: its specific name and its name, ROUTINE_TYPE FUNCTION, its result type, as COLUMNS gives a type, the type's name in TYPE_UDT_CATALOG, _SCHEMA and _NAME, ROUTINE_BODY SQL, IS_DETERMINISTIC YES, SQL_DATA_ACCESS CONTAINS SQL, IS_NULL_CALL NO, SCHEMA_LEVEL_ROUTINE YES and SECURITY_TYPE DEFINER |
+| PARAMETERS | function's parameter, of ORDINAL_POSITION 1, PARAMETER_MODE IN, and its type |
+| ROUTINE_PRIVILEGES | privilege on a function, its PRIVILEGE_TYPE EXECUTE |
+| TRANSFORMS | distinct type's transform, its GROUP_NAME the name of the function from its source, of TRANSFORM_TYPE FROM SQL, its function to its source, and TO SQL, its function from it |
+
+COLUMNS, ELEMENT_TYPES and FIELDS have three more columns, UDT_CATALOG,
+UDT_SCHEMA and UDT_NAME, the name of a distinct type the column or part
+is of, its DATA_TYPE then USER-DEFINED. They are null of another type.
 
 COLUMNS has nine more columns *(extension)*, named as ISO/IEC 9075-11
 names them. IS_IDENTITY is YES of an identity column. Of one,

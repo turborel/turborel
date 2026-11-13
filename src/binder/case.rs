@@ -86,6 +86,7 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
             | DataType::Interval(_)
             | DataType::Array(_)
             | DataType::Row(_)
+            | DataType::Distinct(_)
             | DataType::Extension(_) => {}
         }
     }
@@ -127,6 +128,7 @@ fn string_set_type(types: &[DataType]) -> Option<DataType> {
             | DataType::Interval(_)
             | DataType::Array(_)
             | DataType::Row(_)
+            | DataType::Distinct(_)
             | DataType::Extension(_) => {}
         }
     }
@@ -143,6 +145,16 @@ fn string_set_type(types: &[DataType]) -> Option<DataType> {
 /// only with its own kind: beyond the standard, a truth value, a
 /// datetime, an interval.
 fn apart_set_type(types: &[DataType], clause: &str) -> Option<Result<DataType>> {
+    // [ISO/IEC 9075-2:2023 §9.5 SR3l] A distinct type is the one member
+    // of its subtype family, so values of it come together with its alone.
+    if let Some(d) = types.iter().find(|t| matches!(t, DataType::Distinct(_))) {
+        if let Some(other) = types.iter().find(|t| *t != d) {
+            return Some(Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §9.5 SR3l] {clause}: values of {d} are brought together with values of {other}"
+            ))));
+        }
+        return Some(Ok(d.clone()));
+    }
     if let Some(t) = super::composite::composite_set_type(types, clause) {
         return Some(t);
     }
@@ -420,15 +432,18 @@ impl Binder<'_> {
         // [§17.6 GR5i] a `?` takes the target's type.
         let (e, t) = self.typed(v, ParameterType::Of(target.clone()), scope)?;
         if !super::composite::castable(&t, &target) {
-            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR5, SR6, SR7, SR8] CAST of {t} to {target} is not valid")));
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR5, SR6, SR7, SR8, SR12] CAST of {t} to {target} is not valid")));
         }
-        if t.is_datetime() || target.is_datetime() || t.is_interval() || target.is_interval() {
-            return Ok((self.datetime_cast(e, &t, target.clone())?, target));
+        self.cast_function(&t, &target)?;
+        // [§11.51 GR2b] a distinct type's value is its source's (UV103).
+        let (from, to) = (t.represented(), target.represented().clone());
+        if from.is_datetime() || to.is_datetime() || from.is_interval() || to.is_interval() {
+            return Ok((self.datetime_cast(e, from, to)?, target));
         }
-        if !super::datetime::binary_castable(&t, &target) {
+        if !super::datetime::binary_castable(from, &to) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR7] CAST of {t} to {target} is not valid")));
         }
-        Ok((Expr::Cast(Box::new(e), target.clone()), target))
+        Ok((Expr::Cast(Box::new(e), to), target))
     }
 
     /// [ISO/IEC 9075-2:2023 §6.13 SR4] CAST of `operand` to `target` FORMAT

@@ -62,11 +62,17 @@ pub(crate) fn grouping_operand(t: &DataType, what: &str) -> Result<()> {
 }
 
 /// [ISO/IEC 9075-2:2023 §6.13 SR5-SR8] Whether CAST takes a value of
-/// `from` to `to`, either an array or a row type: an array to an array
+/// `from` to `to`, either an array, a row or a distinct type: an array to an array
 /// whose element type its elements cast to; a row to a row of its degree,
 /// field by field; neither from nor to another type. Of others, true, as
 /// their own rules say.
 pub(super) fn castable(from: &DataType, to: &DataType) -> bool {
+    // [§6.13 SR12] By a user-defined cast whose source's designator is in
+    // `from`'s type precedence list, to its target: as an appropriate one
+    // assigns, implicitly invocable as a distinct type's casts are.
+    if let Some(cast) = super::statements::distinct_assignable(to, from) {
+        return cast;
+    }
     let part = |x: &DataType, y: &DataType| castable(x, y) && element_castable(x, y);
     if let (DataType::Array(a), DataType::Array(b)) = (from, to) {
         return part(&a.element, &b.element);

@@ -30,7 +30,7 @@ use crate::ast::{
     DropBehavior, PrivilegeDefinition, PrivilegeObject, SchemaStatement, SqlStatement, TableDefinition, TableName, ViewDefinition,
 };
 use crate::binder::qualify;
-use crate::catalog::{ConstraintKind, QualifiedName, TableDesc, merged, owner_of};
+use crate::catalog::{ConstraintKind, QualifiedName, TableDesc, merged, owner_of, types_in};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::log::record::Change;
 use crate::parser::Parser;
@@ -147,14 +147,15 @@ impl Session {
     /// schema is not the session's own.
     fn object_of(&self, st: &State, statement: &SchemaStatement, schema: &str) -> Result<QualifiedName> {
         match statement {
-            SchemaStatement::Table(t) => self.own_object(st, &t.name, (schema, "§11.3 AR1")),
-            SchemaStatement::View(v) => self.own_object(st, &v.name, (schema, "§11.19 AR1")),
+            SchemaStatement::Table(t) => self.own_object(st, &t.name, (schema, "ISO/IEC 9075:1992 §11.3 AR1")),
+            SchemaStatement::View(v) => self.own_object(st, &v.name, (schema, "ISO/IEC 9075:1992 §11.19 AR1")),
             SchemaStatement::Grant(p) => Ok(qualify(&p.table, schema)),
             SchemaStatement::Revoke(r) => Ok(qualify(&r.table, schema)),
-            SchemaStatement::Domain(d) => self.own_object(st, &d.name, (schema, "§11.21 AR1")),
-            SchemaStatement::Assertion(a) => self.own_object(st, &a.name, (schema, "§11.34 AR1")),
-            SchemaStatement::Collation(c) => self.own_object(st, &c.name, (schema, "§11.43 SR1")),
-            SchemaStatement::Sequence(d) => self.own_object(st, &d.name, (schema, "§11.72 SR4")),
+            SchemaStatement::Domain(d) => self.own_object(st, &d.name, (schema, "ISO/IEC 9075:1992 §11.21 AR1")),
+            SchemaStatement::Assertion(a) => self.own_object(st, &a.name, (schema, "ISO/IEC 9075:1992 §11.34 AR1")),
+            SchemaStatement::Collation(c) => self.own_object(st, &c.name, (schema, "ISO/IEC 9075-2:2023 §11.43 SR1")),
+            SchemaStatement::Sequence(d) => self.own_object(st, &d.name, (schema, "ISO/IEC 9075-2:2023 §11.72 SR4")),
+            SchemaStatement::Type(d) => self.own_object(st, &d.name, (schema, "ISO/IEC 9075-2:2023 §11.51 AR1")),
             SchemaStatement::AlterSequence(a) => {
                 let qn = qualify(&a.name, schema);
                 // [ISO/IEC 9075-2:2023 §11.73 AR1] only the owner of its
@@ -180,12 +181,13 @@ impl Session {
 
     /// The name `name` of an object to define, qualified by the session's
     /// default schema `schema` if written without one [ISO/IEC 9075:1992
-    /// §5.4 SR8b], in a schema the session owns, as the Access Rule `rule`
-    /// says. A schema not there is refused as the object is defined.
-    fn own_object(&self, st: &State, name: &TableName, (schema, rule): (&str, &str)) -> Result<QualifiedName> {
+    /// §5.4 SR8b], in a schema the session owns, as the rule `cited`, its
+    /// standard named, says. A schema not there is refused as the object
+    /// is defined.
+    fn own_object(&self, st: &State, name: &TableName, (schema, cited): (&str, &str)) -> Result<QualifiedName> {
         let qn = qualify(name, schema);
         if st.catalog.schema_exists(&qn.auth) && !self.owns_schema(st, &qn.auth) {
-            let msg = format!("[ISO/IEC 9075:1992 {rule}] {} is in schema {}, which {} does not own", qn.ident, qn.auth, self.auth());
+            let msg = format!("[{cited}] {} is in schema {}, which {} does not own", qn.ident, qn.auth, self.auth());
             return Err(SqlError::new(Code::Privilege, msg).or_at(name.at));
         }
         Ok(qn)
@@ -225,6 +227,7 @@ impl State {
             SchemaStatement::AlterDomain(a) => self.alter_domain((schema, zone), a),
             SchemaStatement::Sequence(d) => self.create_sequence(schema, d, epochs),
             SchemaStatement::AlterSequence(a) => self.alter_sequence(schema, a, epochs),
+            SchemaStatement::Type(d) => self.create_user_type(schema, d),
         }
     }
 
@@ -344,6 +347,9 @@ impl State {
         if p.object == PrivilegeObject::Sequence {
             return self.grant_sequence_usage(auth, schema, p).or_at(p.table.at);
         }
+        if matches!(p.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine | PrivilegeObject::Routine) {
+            return self.grant_on_type(auth, schema, p).or_at(p.table.at);
+        }
         let (granted, warned) = self.describe_grant((auth, schema), p).or_at(p.table.at)?;
         let name = qualify(&p.table, schema);
         let mut catalog = self.catalog.duplicate();
@@ -375,10 +381,12 @@ fn in_schema(qn: &QualifiedName, reads: Vec<QualifiedName>) -> Vec<(QualifiedNam
 }
 
 /// The tables other than `desc` its foreign keys reference and its CHECKs
-/// read, and the collations made its columns are of, which are not
-/// reverted meanwhile (`db/collations/revert.rs`).
+/// read, the collations made its columns are of, which are not reverted
+/// meanwhile (`db/collations/revert.rs`), and the user-defined types they
+/// are based on, which are not dropped meanwhile (`db/user_types.rs`).
 fn read_by(desc: &TableDesc) -> Vec<QualifiedName> {
     let mut read: Vec<QualifiedName> = Vec::new();
+    desc.columns.iter().for_each(|c| types_in(&c.data_type, &mut read));
     for name in desc.columns.iter().filter_map(|c| c.collation.clone()).filter(is_made) {
         if !read.contains(&name) {
             read.push(name);

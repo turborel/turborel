@@ -69,8 +69,12 @@ impl Binder<'_> {
     /// specification>` taking the type `taken` its context gives it.
     pub(super) fn typed(&self, e: &ValueExpression, taken: ParameterType, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         // [ISO/IEC 9075-2:2023 §6.5 SR1] ARRAY[] of the array type its
-        // context gives, an empty array.
-        if let (true, ParameterType::Of(t @ DataType::Array(_))) = (super::composite::is_empty_array(e), &taken) {
+        // context gives, or of the distinct type whose source type it is
+        // [§6.13 SR6, §11.5 SR4e], an empty array.
+        if let ParameterType::Of(t) = &taken
+            && matches!(t.represented(), DataType::Array(_))
+            && super::composite::is_empty_array(e)
+        {
             return Ok((Expr::Const(Value::Array(Vec::new().into())), t.clone()));
         }
         if let Some((index, at)) = dynamic_of(e) {
@@ -177,9 +181,12 @@ impl Binder<'_> {
             // [ISO/IEC 9075-2:2023 §6.14 SR2] none draws a value in a set
             // function, a CASE or a search condition.
             ValueExpression::SetFunction(sf) => self.drawing(false, || self.set_function(sf, scope)).or_at(sf.at),
-            ValueExpression::Call { name, args, at } => {
+            ValueExpression::Call { schema, name, args, at, extension } => {
+                if let Some(called) = self.routine_call((schema.as_deref(), name), args, scope).or_at(*at)? {
+                    return Ok(called);
+                }
                 let aggregate = self.db.functions.aggregate(name).is_some();
-                self.drawing(self.drawing.get() && !aggregate, || self.call(name, args, scope)).or_at(*at)
+                self.drawing(self.drawing.get() && !aggregate, || self.call((schema.as_deref(), name, *extension), args, scope)).or_at(*at)
             }
             ValueExpression::Function { name, args, at } => self.function(name, args, scope).or_at(*at),
             ValueExpression::Case(case) => self.drawing(false, || self.case(case, scope)),
@@ -269,6 +276,7 @@ impl Binder<'_> {
         if t.is_binary() || t.is_datetime() {
             return Err(rule(format!("[ISO/IEC 9075:1992 §6.12] {t} is no <numeric primary>")));
         }
+        distinct_operand(&t)?;
         Ok(match (sign, e) {
             (Sign::Plus, e) => (e, t),
             (Sign::Minus, Expr::Const(c)) => (Expr::Const(c.negate()), t),
@@ -299,6 +307,8 @@ impl Binder<'_> {
         if left_type.is_binary() || right_type.is_binary() {
             return Err(rule("[ISO/IEC 9075-2:2023 §6.30 SR3] binary string values cannot be used with arithmetic operators"));
         }
+        distinct_operand(&left_type)?;
+        distinct_operand(&right_type)?;
         // [§6.14, §6.15] datetimes and intervals.
         if left_type.is_datetime() || right_type.is_datetime() || left_type.is_interval() || right_type.is_interval() {
             return self.temporal((a, left_type), op, (b, right_type), dynamic);
@@ -351,8 +361,31 @@ impl Binder<'_> {
         self.aggregate(func, Some(&row), false, scope)
     }
 
-    /// \[EXTENSION\] A call by name of a registered scalar or aggregate function.
-    pub(super) fn call(&self, name: &str, args: &[ValueExpression], scope: Scope<'_>) -> Result<(Expr, DataType)> {
+    /// \[EXTENSION\] A call by name of a registered scalar or aggregate
+    /// function, of no schema, read while the session took function calls
+    /// (`extension`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it names a schema, which a routine invocation does
+    /// and a call of a function registered does not; -104 if the session
+    /// did not take function calls, as SQL-86 has none; -103 if no
+    /// function of the name is registered.
+    pub(super) fn call(
+        &self,
+        (schema, name, extension): (Option<&str>, &str, bool),
+        args: &[ValueExpression],
+        scope: Scope<'_>,
+    ) -> Result<(Expr, DataType)> {
+        if let Some(s) = schema {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR10b] schema {s} has no function {name}")));
+        }
+        if !extension {
+            return Err(SqlError::new(
+                Code::Syntax,
+                "[X3.135-1986 §5.9 F] function calls are not SQL-86 (they are an [EXTENSION], taken while SQL.FUNCTION_CALLS is ON); expected a <value expression>",
+            ));
+        }
         if let Some(f) = self.db.functions.scalar(name) {
             let (exprs, types) = self.arguments(&*f.0, args, scope)?;
             let t = f.0.return_type(&types)?;
@@ -465,6 +498,17 @@ fn operand_rules(t: &DataType, name: &str, (extreme, distinct): (bool, bool)) ->
         return Err(rule(format!(
             "[ISO/IEC 9075-2:2023 §10.9 SR7d ii] {name} of {t}: rows are not totally ordered, (1, NULL) and (NULL, 1) neither before the other"
         )));
+    }
+    Ok(())
+}
+
+/// [ISO/IEC 9075-2:2023 §6.30 SR3, §4.9.5] That `t`, an arithmetic
+/// operand's type, is no distinct type: its values are of no numeric type,
+/// whatever its source, and are operands of comparison alone, or of the
+/// functions its definition makes (`binder/routines.rs`).
+fn distinct_operand(t: &DataType) -> Result<()> {
+    if let DataType::Distinct(_) = t {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.30 SR3] a <numeric primary> is numeric, not of the distinct type {t}")));
     }
     Ok(())
 }

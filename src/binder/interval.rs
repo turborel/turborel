@@ -38,6 +38,7 @@ fn fits(t: &DataType, q: Qualifier) -> bool {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => false,
     };
     q.fields().all(has)
@@ -116,6 +117,7 @@ fn zoned(t: DataType) -> DataType {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => t,
     }
 }

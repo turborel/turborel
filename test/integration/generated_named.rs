@@ -35,11 +35,10 @@ fn columns(s: &Session, table: &str) -> Vec<String> {
 /// DROP DOMAIN with RESTRICT is refused while a generation expression
 /// CASTs to the domain; with CASCADE each such generated column is dropped
 /// first, as ALTER TABLE DROP COLUMN CASCADE drops it, its table's rows and
-/// other columns kept. If the drop fails once one is dropped, the
-/// transaction only rolls back (SQLCODE -913 at its commit); if it fails
-/// before, it goes on. MC/DC of that decision's two conditions: T2's
-/// generated column, its only one, failing after T1's went dooms; T0's
-/// failing first does not; T1's alone, dropped, succeeds.
+/// other columns kept. A drop that would leave a table no column is
+/// refused before it drops any [§11.23 SR4], the transaction going on,
+/// whether that table's column comes after another's to drop (T2's after
+/// T1's) or before (T0's); T1's alone, dropped, succeeds.
 #[test]
 fn domain_dropped_11_40() {
     let db = Database::new();
@@ -56,8 +55,8 @@ fn domain_dropped_11_40() {
     assert_eq!(refused(a.run("DROP DOMAIN D RESTRICT")), Some(Code::SyntaxRule), "SR2a");
     a.commit().unwrap();
     assert_eq!(refused(a.run("DROP DOMAIN D CASCADE")), Some(Code::SyntaxRule), "T2's only column");
-    assert_eq!(refused(a.commit()), Some(Code::CommitFailed), "doomed");
-    assert_eq!(columns(&a, "T1"), ["A", "G"]);
+    assert_eq!(columns(&a, "T1"), ["A", "G"], "nothing dropped");
+    a.commit().unwrap();
     a.run("CREATE TABLE T0 (G INTEGER GENERATED ALWAYS AS (CAST(2 AS D)))").unwrap();
     a.commit().unwrap();
     assert_eq!(refused(a.run("DROP DOMAIN D CASCADE")), Some(Code::SyntaxRule), "T0's only column, first");

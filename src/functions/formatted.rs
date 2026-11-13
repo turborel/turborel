@@ -44,6 +44,7 @@ fn target(t: &DataType) -> Option<Target> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -66,6 +67,7 @@ fn string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => None,
     }
 }

@@ -47,6 +47,7 @@ mod purpose;
 mod query;
 mod recursive;
 mod referencing;
+mod routines;
 mod sequences;
 mod set_functions;
 mod set_operations;

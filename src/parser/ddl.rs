@@ -44,7 +44,7 @@ impl Parser {
         let defines =
             [kw::TABLE, kw::VIEW, kw::GLOBAL, kw::LOCAL, kw::DOMAIN, kw::ASSERTION, kw::COLLATION].iter().any(|w| self.next_is_kw(w));
         let altered = self.next_is_kw(kw::DOMAIN) || self.next_is_sequence();
-        if (self.is_kw(kw::CREATE) && (defines || self.next_is_sequence())) || (self.is_kw(kw::ALTER) && altered) {
+        if (self.is_kw(kw::CREATE) && (defines || self.next_is_sequence() || self.next_is_type())) || (self.is_kw(kw::ALTER) && altered) {
             return self.schema_statement();
         }
         if self.accept_kw(kw::CREATE) {
@@ -77,6 +77,12 @@ impl Parser {
         // name> <drop behavior>
         if !alter && self.accept_word(super::sequences::SEQUENCE) {
             let object = DropObject::Sequence(self.table_name()?);
+            return Ok(SqlStatement::Drop { object, behavior: self.drop_behavior()? });
+        }
+        // [ISO/IEC 9075-2:2023 §11.59] DROP TYPE <schema-resolved
+        // user-defined type name> <drop behavior>
+        if !alter && self.accept_word(super::user_types::TYPE) {
+            let object = DropObject::Type(self.table_name()?);
             return Ok(SqlStatement::Drop { object, behavior: self.drop_behavior()? });
         }
         if self.accept_word("INDEX") {

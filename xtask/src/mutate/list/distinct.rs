@@ -1,0 +1,127 @@
+//! The mutations of distinct types (RULES.md R-TEST-9, D69): their
+//! comparability, assignment to and from the source type, the record of
+//! a type, the choice of a function and EXECUTE on it, ARRAY[] of a type of
+//! an array source, the default of a column, DROP TYPE's RESTRICT, and a
+//! revoke's abandoned columns and tables left a column.
+
+use super::{Mutation, Package};
+
+/// The mutations of distinct types, in the order they run.
+pub const DISTINCT: [Mutation; 11] = [
+    Mutation {
+        name: "distinct-other-type-compared",
+        package: Package::Core,
+        breaks: "a value of a distinct type compares with a value of another type, its source among them",
+        file: "src/value.rs",
+        original: "            return self == other && self.kind().comparable(other);",
+        replacement: "            return self.represented().kind().comparable(other.represented());",
+        integration: &["distinct_type_values::compared_within_one_type_4_9_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-array-source-compared",
+        package: Package::Core,
+        breaks: "a distinct type of an array source compares, orders and groups",
+        file: "src/value/types/distinct.rs",
+        original: "        distinct_type(other).is_some_and(|d| !matches!(d.source, DataType::Array(_)))",
+        replacement: "        distinct_type(other).is_some()",
+        integration: &["distinct_type_values::compared_within_one_type_4_9_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-precedence-ignored",
+        package: Package::Core,
+        breaks: "a value whose type's precedence list lacks the source's designator is assigned to a distinct type",
+        file: "src/binder/statements.rs",
+        original: "        return Some(in_precedence_list(&d.source, t) && assignable(&d.source, t));",
+        replacement: "        return Some(assignable(&d.source, t) || t.is_numeric());",
+        integration: &[
+            "distinct_type_values::assigned_to_and_from_its_source_9_2",
+            "distinct_type_values::cast_to_and_from_its_source_6_13",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-out-to-any-assignable",
+        package: Package::Core,
+        breaks: "a value of a distinct type is assigned to any site its source is assignable to, not its source type alone",
+        file: "src/binder/statements.rs",
+        original: "        return Some(*target == d.source);",
+        replacement: "        return Some(assignable(target, &d.source));",
+        integration: &[
+            "distinct_type_values::assigned_to_and_from_its_source_9_2",
+            "distinct_type_values::cast_to_and_from_its_source_6_13",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-record-source-lost",
+        package: Package::Core,
+        breaks: "a distinct type's record drops its source type, read back as of no type",
+        file: "src/value/types/distinct.rs",
+        original: "            out.put_str(&d.name);\n            tags::put_type(out, &d.source);",
+        replacement: "            out.put_str(&d.name);\n            tags::put_type(out, &DataType::Boolean);",
+        integration: &["distinct_types::kept_after_reopening"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-execute-unchecked",
+        package: Package::Core,
+        breaks: "a function is invoked by one who holds no EXECUTE on it",
+        file: "src/binder/routines.rs",
+        original: "        let executable: Vec<Function<'f>> = candidates.iter().copied().filter(|f| self.holds_execute(*f)).collect();",
+        replacement: "        let executable: Vec<Function<'f>> = candidates.clone();",
+        integration: &["distinct_type_routines::invoked_with_execute_9_18"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-overload-untyped",
+        package: Package::Core,
+        breaks: "a function of a name is chosen without its parameter's type taking the argument's",
+        file: "src/binder/routines.rs",
+        original: "        let takes = |f: &Function<'_>| in_precedence_list(&parameter(*f), t) && super::statements::assignable(&parameter(*f), t);",
+        replacement: "        let takes = |f: &Function<'_>| !parameter(*f).is_character() || t.is_character();",
+        integration: &["distinct_type_routines::overloads_chosen_by_type_9_18", "distinct_type_routines::invoked_by_name_10_4"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-empty-array-untyped",
+        package: Package::Core,
+        breaks: "ARRAY[] takes no type of a distinct type whose source is an array type",
+        file: "src/binder/expression.rs",
+        original: "            && matches!(t.represented(), DataType::Array(_))",
+        replacement: "            && matches!(t, DataType::Array(_))",
+        integration: &["distinct_type_values::an_empty_array_of_a_distinct_type_6_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-default-literal",
+        package: Package::Core,
+        breaks: "a column of a distinct type of no collection type takes a default but NULL",
+        file: "src/db/defaults.rs",
+        original: "    if matches!(subject, DataType::Distinct(_)) && !collection && !matches!(option, DefaultOption::Null) {",
+        replacement: "    if matches!(subject, DataType::Distinct(_)) && !collection && matches!(option, DefaultOption::User(_)) {",
+        integration: &["distinct_type_values::an_empty_array_of_a_distinct_type_6_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-restrict-columns",
+        package: Package::Core,
+        breaks: "DROP TYPE with RESTRICT drops a type a column is of",
+        file: "src/db/user_types/uses.rs",
+        original: "    if let Some((t, c)) = columns.first() {\n        return Err(rule(",
+        replacement: "    if let Some((t, c)) = columns.first().filter(|_| false) {\n        return Err(rule(",
+        integration: &["distinct_types::drop_type_restrict_and_cascade_11_59"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-table-emptied",
+        package: Package::Core,
+        breaks: "a CASCADE that loses every column of a table drops the others before it is refused",
+        file: "src/db/generated/named.rs",
+        original: "            if t.columns.iter().all(|c| columns.iter().any(|(q, n)| q == qn && *n == c.name)) {",
+        replacement: "            if t.columns.is_empty() {",
+        integration: &["distinct_type_privileges::every_column_of_a_table_is_not_dropped_11_23"],
+        unit: &[],
+    },
+];

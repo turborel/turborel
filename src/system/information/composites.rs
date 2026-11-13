@@ -4,8 +4,10 @@
 //! Definition Schema (`definition/descriptors.rs`). Their text is this
 //! implementation's, as ISO/IEC 9075:1992 has neither. Each shows the
 //! descriptors subordinate to those of the tables the current user has a
-//! privilege on, as TABLES chooses them [ISO/IEC 9075:1992 §21.2.7], and
-//! of the domains DOMAINS shows [§21.2.5].
+//! privilege on, as TABLES chooses them [ISO/IEC 9075:1992 §21.2.7], of
+//! the domains DOMAINS shows [§21.2.5], and of the user-defined types and
+//! routines USER_DEFINED_TYPES and ROUTINES show
+//! (`information/user_types.rs`).
 
 use super::SystemView;
 
@@ -20,7 +22,11 @@ pub(super) const VIEWS: &[SystemView] = &[
        S.CHARACTER_SET_CATALOG, S.CHARACTER_SET_SCHEMA, S.CHARACTER_SET_NAME,
        E.COLLATION_CATALOG, E.COLLATION_SCHEMA, E.COLLATION_NAME,
        E.NUMERIC_PRECISION, E.NUMERIC_PRECISION_RADIX, E.NUMERIC_SCALE,
-       E.DATETIME_PRECISION, E.MAXIMUM_CARDINALITY, E.DTD_IDENTIFIER
+       E.DATETIME_PRECISION,
+       E.USER_DEFINED_TYPE_CATALOG AS UDT_CATALOG,
+       E.USER_DEFINED_TYPE_SCHEMA AS UDT_SCHEMA,
+       E.USER_DEFINED_TYPE_NAME AS UDT_NAME,
+       E.MAXIMUM_CARDINALITY, E.DTD_IDENTIFIER
      FROM DEFINITION_SCHEMA.ELEMENT_TYPES AS E
          LEFT JOIN
            DEFINITION_SCHEMA.COLLATIONS AS S
@@ -35,7 +41,18 @@ pub(super) const VIEWS: &[SystemView] = &[
                  ( E.OBJECT_TYPE = 'DOMAIN'
                    AND ( E.OBJECT_CATALOG, E.OBJECT_SCHEMA, E.OBJECT_NAME )
                      IN ( SELECT DOMAIN_CATALOG, DOMAIN_SCHEMA, DOMAIN_NAME
-                            FROM DOMAINS ) ) )
+                            FROM DOMAINS ) )
+                 OR
+                 ( E.OBJECT_TYPE = 'USER-DEFINED TYPE'
+                   AND ( E.OBJECT_CATALOG, E.OBJECT_SCHEMA, E.OBJECT_NAME )
+                     IN ( SELECT USER_DEFINED_TYPE_CATALOG,
+                                 USER_DEFINED_TYPE_SCHEMA, USER_DEFINED_TYPE_NAME
+                            FROM USER_DEFINED_TYPES ) )
+                 OR
+                 ( E.OBJECT_TYPE = 'ROUTINE'
+                   AND ( E.OBJECT_CATALOG, E.OBJECT_SCHEMA, E.OBJECT_NAME )
+                     IN ( SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME
+                            FROM ROUTINES ) ) )
          AND E.OBJECT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -48,7 +65,11 @@ pub(super) const VIEWS: &[SystemView] = &[
        S.CHARACTER_SET_CATALOG, S.CHARACTER_SET_SCHEMA, S.CHARACTER_SET_NAME,
        F.COLLATION_CATALOG, F.COLLATION_SCHEMA, F.COLLATION_NAME,
        F.NUMERIC_PRECISION, F.NUMERIC_PRECISION_RADIX, F.NUMERIC_SCALE,
-       F.DATETIME_PRECISION, F.MAXIMUM_CARDINALITY, F.DTD_IDENTIFIER
+       F.DATETIME_PRECISION,
+       F.USER_DEFINED_TYPE_CATALOG AS UDT_CATALOG,
+       F.USER_DEFINED_TYPE_SCHEMA AS UDT_SCHEMA,
+       F.USER_DEFINED_TYPE_NAME AS UDT_NAME,
+       F.MAXIMUM_CARDINALITY, F.DTD_IDENTIFIER
      FROM DEFINITION_SCHEMA.FIELDS AS F
          LEFT JOIN
            DEFINITION_SCHEMA.COLLATIONS AS S
@@ -63,7 +84,18 @@ pub(super) const VIEWS: &[SystemView] = &[
                  ( F.OBJECT_TYPE = 'DOMAIN'
                    AND ( F.OBJECT_CATALOG, F.OBJECT_SCHEMA, F.OBJECT_NAME )
                      IN ( SELECT DOMAIN_CATALOG, DOMAIN_SCHEMA, DOMAIN_NAME
-                            FROM DOMAINS ) ) )
+                            FROM DOMAINS ) )
+                 OR
+                 ( F.OBJECT_TYPE = 'USER-DEFINED TYPE'
+                   AND ( F.OBJECT_CATALOG, F.OBJECT_SCHEMA, F.OBJECT_NAME )
+                     IN ( SELECT USER_DEFINED_TYPE_CATALOG,
+                                 USER_DEFINED_TYPE_SCHEMA, USER_DEFINED_TYPE_NAME
+                            FROM USER_DEFINED_TYPES ) )
+                 OR
+                 ( F.OBJECT_TYPE = 'ROUTINE'
+                   AND ( F.OBJECT_CATALOG, F.OBJECT_SCHEMA, F.OBJECT_NAME )
+                     IN ( SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME
+                            FROM ROUTINES ) ) )
          AND F.OBJECT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },

@@ -317,6 +317,14 @@ pub fn set_all_rules(db: &Database, enabled: bool) {
     db.with_optimizer(|o| o.rules()).unwrap().into_iter().for_each(|name| set_rule(db, name, enabled));
 }
 
+/// Schema A: distinct type MONEY of NUMERIC(10, 2), and table T of an
+/// INTEGER column K and a column P of MONEY.
+pub fn money() -> Database {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TYPE MONEY AS NUMERIC(10, 2) CREATE TABLE T (K INTEGER, P MONEY)").unwrap();
+    db
+}
+
 /// Turns the function call syntax on for `s` (SQL.FUNCTION_CALLS).
 pub fn function_calls(s: &Session) {
     s.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned())).unwrap();

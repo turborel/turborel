@@ -19,12 +19,17 @@ pub(super) fn column_references<'v>(v: &'v ValueExpression, out: &mut Vec<&'v Va
     }
 }
 
-/// Whether `v` is itself a set function, or a call of an extension aggregate.
-pub(super) fn is_aggregate_call(v: &ValueExpression, db: &State) -> bool {
+/// Whether `v` is itself a set function, or a call of an extension
+/// aggregate, read while a session took function calls, of no schema, and
+/// naming no routine (`binder/routines.rs`).
+pub(super) fn is_aggregate_call(v: &ValueExpression, (db, path): (&State, &str)) -> bool {
     match v {
         ValueExpression::SetFunction(_) => true,
-        ValueExpression::Call { name, .. } => db.functions.aggregate(name).is_some(),
-        ValueExpression::Dyadic(..)
+        ValueExpression::Call { schema: None, name, extension: true, .. } => {
+            db.functions.aggregate(name).is_some() && !super::routines::names_routine(db, path, name)
+        }
+        ValueExpression::Call { .. }
+        | ValueExpression::Dyadic(..)
         | ValueExpression::Monadic(..)
         | ValueExpression::Value(_)
         | ValueExpression::Column(_)
@@ -54,7 +59,7 @@ impl Binder<'_> {
     /// counts, its error found as it is bound.
     pub(super) fn has_own_aggregate(&self, v: &ValueExpression) -> bool {
         let own = |a: &ValueExpression| self.outer.is_none() || !matches!(self.is_outer_argument(a), Ok(true));
-        v.any(&|e| is_aggregate_call(e, self.db) && aggregate_argument(e).is_none_or(own))
+        v.any(&|e| is_aggregate_call(e, (self.db, self.schema)) && aggregate_argument(e).is_none_or(own))
     }
 }
 

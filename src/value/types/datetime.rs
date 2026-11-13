@@ -70,6 +70,7 @@ fn shape(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Row(_)
+        | DataType::Distinct(_)
         | DataType::Extension(_) => None,
     }
 }

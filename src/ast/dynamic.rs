@@ -107,10 +107,20 @@ pub enum DescriptorItem {
     /// [ISO/IEC 9075-2:2023 §20.1, Table 29] RETURNED_CARDINALITY, of an
     /// array put in DATA.
     ReturnedCardinality,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] USER_DEFINED_TYPE_CATALOG, of
+    /// a user-defined type's name.
+    UserDefinedTypeCatalog,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] USER_DEFINED_TYPE_SCHEMA.
+    UserDefinedTypeSchema,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] USER_DEFINED_TYPE_NAME.
+    UserDefinedTypeName,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] USER_DEFINED_TYPE_CODE, its
+    /// category's code [Table 34].
+    UserDefinedTypeCode,
 }
 
 /// [ISO/IEC 9075:1992 §17.4] Each `<descriptor item name>`, as written.
-const ITEM_NAMES: [(&str, DescriptorItem); 24] = [
+const ITEM_NAMES: [(&str, DescriptorItem); 28] = [
     ("TYPE", DescriptorItem::Type),
     ("LENGTH", DescriptorItem::Length),
     ("OCTET_LENGTH", DescriptorItem::OctetLength),
@@ -135,6 +145,10 @@ const ITEM_NAMES: [(&str, DescriptorItem); 24] = [
     ("DEGREE", DescriptorItem::Degree),
     ("CARDINALITY", DescriptorItem::Cardinality),
     ("RETURNED_CARDINALITY", DescriptorItem::ReturnedCardinality),
+    ("USER_DEFINED_TYPE_CATALOG", DescriptorItem::UserDefinedTypeCatalog),
+    ("USER_DEFINED_TYPE_SCHEMA", DescriptorItem::UserDefinedTypeSchema),
+    ("USER_DEFINED_TYPE_NAME", DescriptorItem::UserDefinedTypeName),
+    ("USER_DEFINED_TYPE_CODE", DescriptorItem::UserDefinedTypeCode),
 ];
 
 impl DescriptorItem {

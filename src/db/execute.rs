@@ -347,7 +347,8 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::Assertion(_)
         | SchemaStatement::Collation(_)
         | SchemaStatement::Sequence(_)
-        | SchemaStatement::AlterSequence(_) => None,
+        | SchemaStatement::AlterSequence(_)
+        | SchemaStatement::Type(_) => None,
     }
 }
 
@@ -385,6 +386,7 @@ fn schema_command(s: &SchemaStatement) -> &'static str {
         SchemaStatement::Revoke(_) => "REVOKE",
         SchemaStatement::Sequence(_) => "CREATE SEQUENCE",
         SchemaStatement::AlterSequence(_) => "ALTER SEQUENCE",
+        SchemaStatement::Type(_) => "CREATE TYPE",
     }
 }
 
@@ -407,6 +409,7 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::Drop { object: DropObject::Assertion(_), .. } => "DROP ASSERTION",
         SqlStatement::Drop { object: DropObject::Collation(_), .. } => "DROP COLLATION",
         SqlStatement::Drop { object: DropObject::Sequence(_), .. } => "DROP SEQUENCE",
+        SqlStatement::Drop { object: DropObject::Type(_), .. } => "DROP TYPE",
         SqlStatement::Fetch { .. } => "FETCH",
         SqlStatement::GetDiagnostics(_) => "GET DIAGNOSTICS",
         SqlStatement::Dynamic(d) => dynamic::command(d),

@@ -965,13 +965,54 @@ table, and an array of a row type is unnested into the fields (RULES.md
 D68). A collection derived table in a RIGHT or FULL join that reads a
 table reference outside the join, or nested in a LEFT join's second
 operand and reading its first, is valid SQL not supported (SQLCODE -900).
-S091 (Basic array support) implies S093 (Arrays of distinct types), and
-turborel has no distinct types, so it is not claimed. S095 (Array
-constructors by query), S096 (Optional array bounds) and S098 (ARRAY_AGG)
-are processed as the table says, but each implies S091 [Annex D], so none
-is claimed either. S097 (Array element assignment) needs a host target
-element, which turborel does not take. ARRAY, ROW, UNNEST and the functions are key words only
+S091 (Basic array support) is claimed with S093 (Arrays of distinct
+types), which it implies, and with it S095 (Array constructors by query),
+S096 (Optional array bounds) and S098 (ARRAY_AGG), each processed as the
+table says. S097 (Array element assignment) needs a host target element,
+which turborel does not take. ARRAY, ROW, UNNEST and the functions are key words only
 where they are read (Appendix B).
+
+### Distinct types
+
+Features S011 (Distinct data types), S028 (Permutable UDT options list)
+and S401 (Distinct types based on array types). CREATE TYPE defines a
+distinct type of a predefined type or an array type [§11.51], and DROP
+TYPE drops one [§11.59]. Its values are its source type's, and compare
+only with values of the same type [§4.9.5].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Definition | §11.51 SR1 to SR7 | `CREATE TYPE n AS <predefined type> \| <array type> [FINAL]` and the two CAST options, in any order, each at most once. The schema is there (3F000) and is its schema definition's, and no type or domain of the schema has the name, else SQLCODE -103. A row type, another distinct type or a type of an extension as its source is SQLCODE -103, as is each option of a structured type. A structured type is SQLCODE -900. |
+| Source type | §11.51 SR7a | An exact type is kept as NUMERIC of its precision and scale and an approximate one as FLOAT of its precision (IV223), so INTEGER is NUMERIC(10, 0). |
+| Comparison | §4.9.5, §8.2, §11.51 GR2c | Of values of one distinct type alone, as their source values compare. Ordered, grouped, made DISTINCT, kept unique and indexed so, unless the source is an array type, whose values compare with nothing. |
+| Assignment and CAST | §4.13, §9.2 SR3, §6.13 SR12 | To a distinct type, of a value of the type, or of a type whose type precedence list [§9.7] holds the source's designator and that is assignable to the source. From one, to exactly its source type, of the same precision and scale. Any other is SQLCODE -103. |
+| Operators | §6.30 SR3 and others | None but comparison. Arithmetic, a set function but COUNT, MAX and MIN, a string function, a predicate of strings, a Boolean operator, an element reference and CARDINALITY take no value of a distinct type, SQLCODE -103. |
+| Result type | §9.5 SR3l | Values of one distinct type are brought together with values of that type alone, in CASE, COALESCE, a set operation and a VALUES of more than one row. |
+| Functions | §11.51 GR2b, §9.18, §10.4 | FNUDT, named by the CAST (SOURCE AS DISTINCT) option or the type's name, and FNSDT, named by the CAST (DISTINCT AS SOURCE) option or the source type's name [§9.9], are invoked by name, a name not qualified found in the schema of the statement's names (ID047). Of the functions of one name, the argument's type chooses. None that takes it, or two alike, is SQLCODE -103, and a ? argument of a name of two functions is SQLCODE -103. A function of the name another function of the schema has, of the same type designator, is refused [§11.60 SR20b]. Their specific names are the type's name and _TO_DISTINCT or _TO_SOURCE. |
+| Privileges | §6.1 AR1, §6.13 AR2, §9.18 SR6, §12.2, §12.3, §12.7 | Naming the type needs USAGE on it, and a CAST to or from it, or invoking a function, EXECUTE on the function, each SQLCODE -104 if not held. The schema's owner holds them grantably. GRANT and REVOKE take USAGE ON TYPE and EXECUTE ON SPECIFIC FUNCTION n or FUNCTION n [(types)]. REVOKE with RESTRICT is 2B000 where it would abandon a column of a type based on the type, a view, constraint, assertion or generated column, or a grant. With CASCADE each goes, a column as ALTER TABLE DROP COLUMN drops it. UNDER is SQLCODE -103 of a distinct type. |
+| Drop | §11.59 | RESTRICT refuses while a column, or another type's source, is based on the type, or a view, constraint, assertion or generated column references it or invokes its functions. CASCADE drops each, the types based on it among them, and is refused before it drops any if a table would lose every column [§11.23 SR4]. DROP SCHEMA CASCADE drops its types. |
+| A default | §11.5 SR3, SR4e | A column of a distinct type has no default but NULL, and one of a type of an array source NULL or ARRAY[]. |
+| Transforms | §4.9.6, §20.11, §20.12 | A value goes to the host and to a client as its source's, and comes from one as a value of its source made the type (ID048). A dynamic USING argument or INTO target is of a type its source is assignable to and from, else 07006. The protocol describes a column of a distinct type as its source type. |
+| Dynamic SQL | §20.1, §20.10 GR7d viii | DESCRIBE gives TYPE 17 and USER_DEFINED_TYPE_CATALOG, _SCHEMA, _NAME and _CODE 1. Such an item is not valid [§20.1 SR6], so a FETCH or USING of it is 07002 or 07001 until its TYPE is set. |
+| Its description | ISO/IEC 9075-11 | USER_DEFINED_TYPES, UDT_PRIVILEGES, ROUTINES, PARAMETERS, ROUTINE_PRIVILEGES and TRANSFORMS describe the types and their functions. COLUMNS, ELEMENT_TYPES and FIELDS give a column's or a part's DATA_TYPE as USER-DEFINED and the type's name in UDT_CATALOG, UDT_SCHEMA and UDT_NAME, ROUTINES in TYPE_UDT_CATALOG, TYPE_UDT_SCHEMA and TYPE_UDT_NAME. |
+
+A value of a distinct type is its source's value, untagged (UV103,
+RULES.md D69). A type is FINAL and never altered, so its descriptor is
+kept in each column of it. What references a type is found by binding
+each definition again without it, or without the privileges a REVOKE
+leaves.
+
+Some readings fill gaps in the rules. DROP TYPE with RESTRICT [§11.59
+SR4e] refuses a type whose transforms are in a transform descriptor. The
+transform its own definition makes [§11.51 GR2b] goes with it [§11.59
+GR2], so only one a CREATE TRANSFORM made counts, and turborel has none. A CASCADE that would drop every column of a table is
+refused before it drops any [§11.23 SR4]. TYPE, FINAL, INSTANTIABLE,
+UNDER, SOURCE, REF, SPECIFIC and FUNCTION are no key words of SQL-92, so
+each stays an identifier, a key word only where CREATE TYPE, DROP TYPE,
+GRANT and REVOKE read it. A function named by a key word, as FNSDT of a
+NUMERIC source is, is invoked delimited, `"NUMERIC"(p)`. Structured types,
+SET TRANSFORM GROUP and SQL-invoked routines a user defines are not
+implemented.
 
 ---
 
@@ -1290,6 +1331,9 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §21.3.13 names of unnamed constraints | The table's name, the constraint's kind and a number, as `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |
 | ID106, ISO/IEC 9075-2:2023 §8.11 SR3, §11.7 SR5 the `<unique null treatment>` not written | NULLS DISTINCT, as every key and UNIQUE predicate was before one could be written | `ast/schema.rs` |
 | IA201, ISO/IEC 9075-2:2023 §4.25.3.2 whether two rows all null are unique with nulls not distinct | Not: under NULLS NOT DISTINCT they are the same, a key refusing the second and UNIQUE false of them | `db/integrity/keys.rs`, `exec/eval.rs` |
+| IV223, ISO/IEC 9075-2:2023 §11.51 SR7a the source type of a distinct type of an exact or an approximate type | NUMERIC of its precision and scale, or FLOAT of its precision | `db/user_types.rs` |
+| ID047, ISO/IEC 9075-2:2023 §9.18 SR10b the SQL-path | The schema of the statement's names, the session's default schema or a schema statement's own | `binder/routines.rs` |
+| ID048, ISO/IEC 9075-2:2023 §4.9.6 a session's transform group of a distinct type | The one its definition makes, named FNUDT, in every session | `db/dynamic/using.rs`, `protocol/src/fields.rs` |
 
 ### Memory
 

@@ -123,6 +123,7 @@ mod truncate;
 mod types;
 mod unnamed;
 mod usage;
+mod user_types;
 mod users;
 mod views;
 mod write;

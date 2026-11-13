@@ -188,10 +188,9 @@ impl State {
             let msg = format!("[ISO/IEC 9075:1992 §11.21 SR1] there is no schema {}", qn.auth);
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::INVALID_SCHEMA_NAME).or_at(d.name.at));
         }
-        if self.catalog.domain(&qn).is_some() {
-            return Err(
-                rule(format!("[ISO/IEC 9075:1992 §11.21 SR1] schema {} has a domain {} already", qn.auth, qn.ident)).or_at(d.name.at)
-            );
+        if self.catalog.domain(&qn).is_some() || self.catalog.user_type(&qn).is_some() {
+            let msg = format!("[ISO/IEC 9075-2:2023 §11.34 SR3] schema {} has a domain or type {} already", qn.auth, qn.ident);
+            return Err(rule(msg).or_at(d.name.at));
         }
         let data_type = self.domain_type(&d.data_type, schema)?;
         let default = d.default.as_ref().map(|o| default_of(&data_type.clone(), o, zone)).transpose().or_at(d.name.at)?;
@@ -570,14 +569,14 @@ fn casts_any(t: &TableDesc, qn: &QualifiedName) -> bool {
 }
 
 impl State {
-    /// [ISO/IEC 9075:1992 §11.21; ISO/IEC 9075-2:2023 §11.43, §11.72] The
-    /// collations, sequence generators and domains of `<schema>` `s`, owned
-    /// by `owner`, its datetimes of `zone` where they write no
-    /// displacement, made first, which its tables' columns may be of; each
+    /// [ISO/IEC 9075:1992 §11.21; ISO/IEC 9075-2:2023 §11.43, §11.72,
+    /// §11.51] The collations, sequence generators, user-defined types and
+    /// domains of `<schema>` `s`, owned by `owner`, its datetimes of `zone`
+    /// where they write no displacement, made first, which its tables' columns may be of; each
     /// sequence generator's epoch from `epochs`: a failing `<schema>` is
     /// discarded whole (`Database::change`).
     pub(super) fn schema_domains(&mut self, s: &Schema, (owner, zone): (&str, i16), epochs: &mut Epochs) -> Result<()> {
-        if s.domains.is_empty() && s.collations.is_empty() && s.sequences.is_empty() {
+        if s.domains.is_empty() && s.collations.is_empty() && s.sequences.is_empty() && s.types.is_empty() {
             return Ok(());
         }
         let mut catalog = self.catalog.duplicate();
@@ -588,6 +587,9 @@ impl State {
         }
         for d in &s.sequences {
             self.schema_sequence(&s.name, d, epochs)?;
+        }
+        for d in &s.types {
+            self.schema_user_type(&s.name, d)?;
         }
         for d in &s.domains {
             self.make_domain((&s.name, zone), d, false)?;

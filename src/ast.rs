@@ -30,12 +30,15 @@ mod connection;
 mod contents;
 mod cursor;
 mod diagnostics;
+mod drop;
 mod dynamic;
 mod expression;
 mod generated;
 mod query;
 mod schema;
 mod sequences;
+mod set_functions;
+mod user_types;
 mod users;
 
 pub use composite::{Composite, ValueOrder};
@@ -43,13 +46,13 @@ pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
 pub use contents::{AsSubquery, LikeClause};
 pub use cursor::{DeclareCursor, FetchOrientation};
 pub use diagnostics::{ConditionItem, GetDiagnostics, StatementItem};
+pub use drop::{DropBehavior, DropObject};
 pub use dynamic::{
     DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, HeaderItem, Scope, SetDescriptor,
     UsingClause,
 };
 pub use expression::{
-    CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, SetArg, SetFunctionSpecification, Sign, Subquery,
-    TruthValue, ValueExpression, WhenOperand,
+    CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use query::{
@@ -66,6 +69,8 @@ pub use schema::{
     TypeName, ViewDefinition,
 };
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
+pub use set_functions::{SetArg, SetFunctionSpecification};
+pub use user_types::{TypeDefinition, TypeOption};
 pub use users::UserStatement;
 
 // ---------------------------------------------------------------------------
@@ -481,58 +486,6 @@ pub enum IndexStatement {
         /// The `<table option>`s, in order.
         options: Vec<TableOptionValue>,
     },
-}
-
-/// What a DROP statement names [ISO/IEC 9075:1992 §11.2, §11.18, §11.20,
-/// §11.27].
-#[derive(Debug, Clone)]
-pub enum DropObject {
-    /// A base table.
-    Table(TableName),
-    /// A view.
-    View(TableName),
-    /// A domain.
-    Domain(TableName),
-    /// An assertion [§11.35], which DROP names with no `<drop behavior>`.
-    Assertion(TableName),
-    /// A collation [ISO/IEC 9075-2:2023 §11.44].
-    Collation(TableName),
-    /// A sequence generator [ISO/IEC 9075-2:2023 §11.74].
-    Sequence(TableName),
-    /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
-    /// schema name>` [§5.4].
-    Schema {
-        /// The `<catalog name>`, if written.
-        catalog: Option<String>,
-        /// The `<unqualified schema name>`.
-        name: String,
-        /// Where it begins in the statement.
-        at: usize,
-    },
-}
-
-impl DropObject {
-    /// Where its name begins in the statement.
-    pub fn at(&self) -> usize {
-        match self {
-            DropObject::Collation(name)
-            | DropObject::Sequence(name)
-            | DropObject::Table(name)
-            | DropObject::View(name)
-            | DropObject::Domain(name)
-            | DropObject::Assertion(name) => name.at,
-            DropObject::Schema { at, .. } => *at,
-        }
-    }
-}
-
-/// [ISO/IEC 9075:1992 §11.2] `<drop behavior>` ::= CASCADE | RESTRICT
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DropBehavior {
-    /// CASCADE: what depends on the object is dropped with it.
-    Cascade,
-    /// RESTRICT: the object is not dropped while anything depends on it.
-    Restrict,
 }
 
 /// [X3.135-1986 §8.11, §8.12] `<set clause>` ::= `<object column>` = `<update source>`

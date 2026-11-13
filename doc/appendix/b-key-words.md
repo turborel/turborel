@@ -116,4 +116,12 @@ arrays. Of the descriptor items, DEGREE, CARDINALITY and
 RETURNED_CARDINALITY are read only as items, TOP_LEVEL_COUNT only as a
 header item, and NESTING and WITHOUT only after DESCRIBE's descriptor.
 
+TYPE, FINAL, INSTANTIABLE, UNDER, SOURCE, REF, SPECIFIC, FUNCTION and
+ROUTINE, which SQL-92 does not reserve, are key words only in CREATE TYPE,
+DROP TYPE, GRANT and REVOKE, so a column may be named TYPE. A function a
+distinct type's definition makes may be named by a key word, as one of a
+NUMERIC source is, and is then invoked delimited, `"NUMERIC"(p)`. Of the
+descriptor items, USER_DEFINED_TYPE_CATALOG, USER_DEFINED_TYPE_SCHEMA,
+USER_DEFINED_TYPE_NAME and USER_DEFINED_TYPE_CODE are read only as items.
+
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.
