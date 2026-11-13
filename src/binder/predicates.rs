@@ -49,14 +49,15 @@ fn exprs(row: &[(Expr, DataType)]) -> Vec<Expr> {
 }
 
 /// [ISO/IEC 9075:1992 §8.2 SR1, SR3] Rows of one degree, their
-/// corresponding values comparable; `clause` is the rule to cite.
+/// corresponding values comparable; `clause` is the rule to cite, its
+/// standard named.
 fn comparable(x: &[(Expr, DataType)], y: &[DataType], clause: &str) -> Result<()> {
     if x.len() != y.len() {
-        return Err(rule(format!("[ISO/IEC 9075:1992 {clause}] rows of degrees {} and {} are compared", x.len(), y.len())));
+        return Err(rule(format!("[{clause}] rows of degrees {} and {} are compared", x.len(), y.len())));
     }
     for ((_, a), b) in x.iter().zip(y) {
         if !a.comparable(b) {
-            return Err(rule(format!("[ISO/IEC 9075:1992 {clause}] {a} and {b} are not comparable")));
+            return Err(rule(format!("[{clause}] {a} and {b} are not comparable")));
         }
     }
     Ok(())
@@ -108,16 +109,33 @@ fn compare_rows(x: &[Expr], op: CompOp, y: &[Expr]) -> Cond {
     }
 }
 
+/// [ISO/IEC 9075-2:2023 §8.15 GR1c iv] "X IS DISTINCT FROM Y", rows of one
+/// degree, as their pairs of values: distinct if one pair is. A row
+/// constructor is never the null value, so GR1a and GR1b are of its
+/// values, each pair's own `Cond::Distinct`.
+fn distinct_rows(x: &[Expr], y: &[Expr]) -> Cond {
+    or_all(x.iter().zip(y).map(|(a, b)| Cond::Distinct(a.clone(), b.clone())).collect())
+}
+
 impl Binder<'_> {
     /// [X3.135-1986 §5.10; ISO/IEC 9075:1992 §8.1] a `<predicate>`.
     pub(super) fn predicate(&self, p: &Predicate, scope: Scope<'_>) -> Result<Cond> {
         Ok(match p {
             Predicate::Comparison(left, op, right) => {
                 let (x, y) = self.rows_paired(left, right, scope)?;
-                comparable(&x, &y.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), "§8.2 SR1, SR3")?;
+                comparable(&x, &y.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), "ISO/IEC 9075:1992 §8.2 SR1, SR3")?;
                 ordered(&x, *op, "the comparison")?;
                 let (x, y) = self.keyed_rows((left, right), &x, &y)?;
                 compare_rows(&exprs(&x), *op, &exprs(&y))
+            }
+            // [ISO/IEC 9075-2:2023 §8.15 SR5, §9.11] each field an operand of
+            // an equality operation, which an array may be.
+            Predicate::Distinct { left, right, not } => {
+                let (x, y) = self.rows_paired(left, right, scope)?;
+                comparable(&x, &types(&y), "ISO/IEC 9075-2:2023 §8.15 SR1, SR3")?;
+                let (x, y) = self.keyed_rows((left, right), &x, &y)?;
+                // [SR6] NOT (X IS DISTINCT FROM Y).
+                negated(distinct_rows(&exprs(&x), &exprs(&y)), *not)
             }
             Predicate::Between { value, low, high, not } => self.between([value, low, high], *not, scope)?,
             Predicate::Overlaps(left, right) => self.overlaps(left, right, scope)?,
@@ -145,7 +163,7 @@ impl Binder<'_> {
                 // [§17.6 GR5t] a `?` takes its subquery column's type.
                 let (s, types) = self.subquery(subquery, scope, Use::Rows)?;
                 let x = self.row_as(value, &types, scope)?;
-                comparable(&x, &types, "§8.10 SR1, SR2")?;
+                comparable(&x, &types, "ISO/IEC 9075:1992 §8.10 SR1, SR2")?;
                 let (x, keyed) = self.keyed_subquery((value, subquery), (&x, &types), &s)?;
                 Cond::Match { values: exprs(&x), unique: *unique, match_type: *match_type, subquery: keyed }
             }
@@ -205,7 +223,7 @@ impl Binder<'_> {
         // [§17.6 GR5q, t] a `?` takes its subquery column's type.
         let (bound, types) = self.subquery(s, scope, Use::Rows)?;
         let x = special(self.row_as(value, &types, scope)?, types.len());
-        comparable(&x, &types, "§8.7 SR1, SR2").or_at(s.at)?;
+        comparable(&x, &types, "ISO/IEC 9075:1992 §8.7 SR1, SR2").or_at(s.at)?;
         ordered(&x, op, "the quantified comparison").or_at(s.at)?;
         let (x, keyed) = self.keyed_subquery((value, s), (&x, &types), &bound)?;
         Ok(Cond::Quantified(exprs(&x), op, quantifier, keyed))
@@ -218,7 +236,7 @@ impl Binder<'_> {
         let [value, low, high] = rows;
         let (x, y, z) = self.between_rows([value, low, high], scope)?;
         for other in [&y, &z] {
-            comparable(&x, &other.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), "§8.3")?;
+            comparable(&x, &other.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), "ISO/IEC 9075:1992 §8.3")?;
         }
         ordered(&x, CompOp::Ge, "BETWEEN")?;
         let (from, y) = self.keyed_rows((value, low), &x, &y)?;
@@ -284,7 +302,7 @@ impl Binder<'_> {
                 None => self.value_expression(v, scope)?,
             };
             let other = special(vec![(e, t)], x.len());
-            comparable(&x, &types(&other), "§8.4 SR1, SR4; §8.7 SR1, SR2")?;
+            comparable(&x, &types(&other), "ISO/IEC 9075:1992 §8.4 SR1, SR4; §8.7 SR1, SR2")?;
             let (keyed, other) = self.keyed_rows((value, std::slice::from_ref(v)), &x, &other)?;
             any.push(compare_rows(&exprs(&keyed), CompOp::Eq, &exprs(&other)));
         }

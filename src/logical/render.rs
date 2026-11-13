@@ -61,6 +61,7 @@ pub fn render_cond(c: &Cond, names: &[String]) -> String {
         Cond::And(a, b) => format!("{} AND {}", render_cond(a, names), render_cond(b, names)),
         Cond::Not(a) => format!("NOT ({})", render_cond(a, names)),
         Cond::Compare(a, op, b) => format!("{} {} {}", render_expr(a, names), op.symbol(), render_expr(b, names)),
+        Cond::Distinct(a, b) => format!("{} IS DISTINCT FROM {}", render_expr(a, names), render_expr(b, names)),
         Cond::IsNull(e, not) => format!("{} IS {}NULL", render_expr(e, names), if *not { "NOT " } else { "" }),
         Cond::Exists(_) => "EXISTS (<subquery>)".to_string(),
         Cond::Value(e) => render_expr(e, names),

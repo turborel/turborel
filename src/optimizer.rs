@@ -274,21 +274,27 @@ fn fold_cond(c: &Cond) -> Option<Cond> {
             }
         },
         Cond::Not(a) => fold_cond(a).map(|a| Cond::Not(Box::new(a))),
-        Cond::Compare(a, op, b) => {
-            let (fa, fb) = (fold_expr(a), fold_expr(b));
-            let (a2, b2) = (fa.clone().unwrap_or_else(|| a.clone()), fb.clone().unwrap_or_else(|| b.clone()));
-            if let (Expr::Const(_), Expr::Const(_)) = (&a2, &b2) {
-                let changed = fa.is_some() || fb.is_some();
-                let cmp = Cond::Compare(a2, *op, b2);
-                return match eval_cond(&cmp, &Vec::new(), &NoSubqueries) {
-                    Ok(t) => Some(Cond::Const(t)),
-                    // Left for run time, as in `fold_expr`.
-                    Err(_) => changed.then_some(cmp),
-                };
-            }
-            if fa.is_none() && fb.is_none() { None } else { Some(Cond::Compare(a2, *op, b2)) }
-        }
+        Cond::Compare(a, op, b) => fold_pair((a, b), |a, b| Cond::Compare(a, *op, b)),
+        Cond::Distinct(a, b) => fold_pair((a, b), Cond::Distinct),
     }
+}
+
+/// The folded form of the condition `of` makes of `a` and `b`, a
+/// comparison or a `<distinct predicate>`: its truth if both fold to
+/// constants, else of what folds; `None` if nothing does.
+fn fold_pair((a, b): (&Expr, &Expr), of: impl Fn(Expr, Expr) -> Cond) -> Option<Cond> {
+    let (fa, fb) = (fold_expr(a), fold_expr(b));
+    let (a2, b2) = (fa.clone().unwrap_or_else(|| a.clone()), fb.clone().unwrap_or_else(|| b.clone()));
+    if let (Expr::Const(_), Expr::Const(_)) = (&a2, &b2) {
+        let changed = fa.is_some() || fb.is_some();
+        let cmp = of(a2, b2);
+        return match eval_cond(&cmp, &Vec::new(), &NoSubqueries) {
+            Ok(t) => Some(Cond::Const(t)),
+            // Left for run time, as in `fold_expr`.
+            Err(_) => changed.then_some(cmp),
+        };
+    }
+    if fa.is_none() && fb.is_none() { None } else { Some(of(a2, b2)) }
 }
 
 impl Rule for ConstantFolding {
@@ -367,6 +373,7 @@ fn simplify(c: &Cond) -> Option<Cond> {
         Cond::Const(_)
         | Cond::Is(..)
         | Cond::Compare(..)
+        | Cond::Distinct(..)
         | Cond::IsNull(..)
         | Cond::Like(..)
         | Cond::Exists(_)

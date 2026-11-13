@@ -160,6 +160,38 @@ SELECT ID FROM STAFF WHERE DEPT IS NULL;
 (1 row)
 ```
 
+## DISTINCT
+
+`x IS DISTINCT FROM y` is true if x and y differ, a null counting as a
+value. Two nulls are not distinct, and a null and a value are. It is
+never unknown, so `IS NOT DISTINCT FROM` is the comparison to use where
+a null should equal a null. Rows are distinct if a pair of their values
+is, and arrays if their cardinalities differ or a pair of elements at
+one place is. The operands must be comparable, as for `=`. A bare NULL
+is no operand, so write `CAST(NULL AS type)`.
+
+```sql
+SELECT ID FROM STAFF WHERE SALARY IS DISTINCT FROM 7200 ORDER BY ID;
+SELECT ID FROM STAFF WHERE DEPT IS NOT DISTINCT FROM CAST(NULL AS CHAR(3));
+```
+
+```
+           ID
+--------------
+            2
+            3
+            4
+(3 rows)
+           ID
+--------------
+            4
+(1 row)
+```
+
+Barbara's null salary is distinct from 7200, where `SALARY <> 7200`
+would leave her out. A join on `a IS NOT DISTINCT FROM b` is hashed on
+it as on `a = b`, a null key joining a null key.
+
 ## Quantified comparison
 
 `x op ALL (subquery)` is true if the comparison is true of every row of

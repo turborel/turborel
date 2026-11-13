@@ -138,6 +138,16 @@ pub enum Predicate {
         /// IS NOT NULL was written.
         not: bool,
     },
+    /// [ISO/IEC 9075-2:2023 §8.15] `<distinct predicate>` ::= `<row value
+    /// predicand 3>` IS \[NOT\] DISTINCT FROM `<row value predicand 4>`
+    Distinct {
+        /// The first row, X.
+        left: RowValue,
+        /// The second row, Y.
+        right: RowValue,
+        /// IS NOT DISTINCT FROM was written \[SR6\].
+        not: bool,
+    },
     /// [§8.7] `<quantified comparison predicate>` ::= `<row value
     /// constructor>` `<comp op>` `<quantifier>` `<table subquery>`
     Quantified {
@@ -532,7 +542,9 @@ impl Predicate {
     /// those of its subqueries.
     pub fn for_each_value<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         match self {
-            Predicate::Comparison(a, _, b) | Predicate::Overlaps(a, b) => a.iter().chain(b).for_each(f),
+            Predicate::Comparison(a, _, b) | Predicate::Overlaps(a, b) | Predicate::Distinct { left: a, right: b, .. } => {
+                a.iter().chain(b).for_each(f);
+            }
             Predicate::Between { value, low, high, .. } => value.iter().chain(low).chain(high).for_each(f),
             Predicate::InList { value, list, .. } => value.iter().chain(list).for_each(f),
             Predicate::Like { value, pattern, escape: third, .. } | Predicate::LikeRegex { value, pattern, flag: third, .. } => {
@@ -566,6 +578,7 @@ impl Predicate {
             | Predicate::InList { .. }
             | Predicate::Like { .. }
             | Predicate::LikeRegex { .. }
+            | Predicate::Distinct { .. }
             | Predicate::Null { .. } => None,
         }
     }

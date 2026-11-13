@@ -21,7 +21,7 @@ use std::hash::{BuildHasher, RandomState};
 use super::super::super::partition::{merge_all, numbered, unnumbered};
 use super::super::super::work::Work;
 use super::super::super::{RowIter, failed};
-use super::super::key;
+use super::super::{Operand, key};
 use super::{PLACE_BYTES, Spec, chunked};
 use crate::error::{Code, Result, SqlError};
 use crate::logical::Cond;
@@ -144,7 +144,7 @@ impl Parts {
         let mut lonely = work.run()?;
         for (n, r) in (0_u64..).zip(rows) {
             let row = r?;
-            match key(&row, spec.keys.iter().map(|k| k.1))? {
+            match key(&row, &spec.keys, Operand::Right)? {
                 Some(b) => {
                     let (run, bytes) = runs.get_mut(self.of(&b)).ok_or_else(lost)?;
                     *bytes = bytes.saturating_add(row_bytes(&row)).saturating_add(PLACE_BYTES);
@@ -172,7 +172,7 @@ impl Parts {
         for (n, r) in (0_u64..).zip(rows) {
             let row = r?;
             any = true;
-            let keyed = if spec.left_may_match(&row)? { key(&row, spec.keys.iter().map(|k| k.0))? } else { None };
+            let keyed = if spec.left_may_match(&row)? { key(&row, &spec.keys, Operand::Left)? } else { None };
             match keyed {
                 Some(b) => runs.get_mut(self.of(&b)).ok_or_else(lost)?.0.push(&numbered(n, &row))?,
                 None => {
@@ -193,8 +193,7 @@ impl Parts {
         for record in records {
             let record = record?;
             let (_, row) = unnumbered(&record, work.types())?;
-            let columns = spec.keys.iter().map(|&(l, r)| if right { r } else { l });
-            let b = key(&row, columns)?.ok_or_else(lost)?;
+            let b = key(&row, &spec.keys, if right { Operand::Right } else { Operand::Left })?.ok_or_else(lost)?;
             let (run, bytes) = runs.get_mut(self.of(&b)).ok_or_else(lost)?;
             *bytes = bytes.saturating_add(row_bytes(&row)).saturating_add(PLACE_BYTES);
             run.push(&record)?;

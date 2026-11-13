@@ -33,8 +33,6 @@ each group.
 
 ### Queries
 
-- Enhanced derived column names (T285) [§7.16]. A select list item's column
-  is named from its expression in more cases.
 - Partitioned outer joins (F403) [§7.10], `PARTITION BY` on one side of an
   outer join. Filling the gaps of a series per group needs it.
 - ROLLUP, CUBE and GROUPING SETS (T431 to T434) [§7.13], with GROUPING and
@@ -84,6 +82,11 @@ each group.
   an array. Its array is an SQL parameter or a new transition variable's
   column, never a host parameter, so it waits for triggers or SQL-invoked
   routines.
+- Enhanced derived column names (T285) [§7.16 SR17c, CR6]. A select list
+  item that is a single SQL parameter reference names its column for the
+  parameter. Any other item without an `<as clause>` that is not a column
+  reference is unnamed with or without it [SR17d] (UV087), so it waits for
+  SQL-invoked routines.
 - Polymorphic table functions (B200 to B209) [§4.35.4, §7.6, §9.24, §9.25].
   A function in FROM whose result's columns depend on its arguments. It
   needs SQL-invoked routines.

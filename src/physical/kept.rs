@@ -109,6 +109,7 @@ fn slot_equal(conds: &[Cond], column: usize, data_type: &DataType) -> Option<(Sl
                 slot
             }
             Cond::Compare(..)
+            | Cond::Distinct(..)
             | Cond::Const(_)
             | Cond::Or(..)
             | Cond::And(..)

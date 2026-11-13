@@ -481,6 +481,12 @@ whatever its collation.
 What SQL:2023 adds beyond collations, written from ISO/IEC 9075-2:2023
 (RULES.md D32). Citations here are of that edition unless marked.
 
+T285 (Enhanced derived column names) is not claimed. It names a column
+of a single SQL parameter reference for the parameter [§7.16 SR17c,
+CR6], and turborel has no SQL parameters. A column of any other
+expression without an `<as clause>` is unnamed, the name SR17d leaves
+implementation-dependent (UV087).
+
 ### Truth values
 
 Feature T031 (BOOLEAN data type).
@@ -564,14 +570,31 @@ and is true if any is, as `WHEN (CO EWO1) OR ... OR (CO EWOm)` [SR2i].
 |---|---|---|
 | `<case operand>` | §6.12 SR2c, CR1 | A `<row value predicand>`, a value or a row, or an `<overlaps predicate part 1>`. |
 | A `<row value predicand>` as a `<when operand>` | SR2f i | True if the case operand equals it. A dynamic parameter among them takes the type of the first WHEN's first operand [92 §17.6 GR5k]. |
-| A predicate's second part as a `<when operand>` | SR2f ii, CR2 | A comparison, BETWEEN, IN of a list or a subquery, LIKE, IS NULL, each with NOT where it takes one, a quantified comparison, MATCH and OVERLAPS, the case operand its first part. |
+| A predicate's second part as a `<when operand>` | SR2f ii, CR2 | A comparison, BETWEEN, IN of a list or a subquery, LIKE, IS NULL, IS DISTINCT FROM, each with NOT where it takes one, a quantified comparison, MATCH and OVERLAPS, the case operand its first part. |
 | OVERLAPS | SR2c | Every `<when operand>` of a CASE is OVERLAPS or none is, else SQLCODE -103. |
 
 The case operand is evaluated once for each operand it is compared with,
 as the equivalent searched CASE does. LIKE_REGEX is a `<when operand>`
 too, with NOT or without. The predicates turborel has not, SIMILAR, IS
-DISTINCT FROM, IS NORMALIZED, MEMBER, SUBMULTISET, IS A SET and IS OF,
-are no `<when operand>`s either.
+NORMALIZED, MEMBER, SUBMULTISET, IS A SET and IS OF, are no `<when
+operand>`s either.
+
+### DISTINCT predicate
+
+Features T151 (DISTINCT predicate) and T152 (DISTINCT predicate with
+negation). `X IS DISTINCT FROM Y` is true or false, never unknown
+[§8.15 GR1], and IS NOT DISTINCT FROM is `NOT (X IS DISTINCT FROM Y)`
+[SR6].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Its operands | §8.15 SR1, SR3, SR5 | `<row value predicand>`s of one degree, each pair comparable and an operand of an equality operation [§9.11], else SQLCODE -103. An array may be one, as no ordering is needed. Strings compare under the collation §9.15 gives them, as for `=`. A bare NULL is no row value predicand [§7.2, §6.5], so it is refused as it is by `=`. |
+| Its truth | §8.15 GR1 | Two nulls are not distinct and a null and a value are [GR1a, GR1b]. Two rows are distinct if a pair of fields is [GR1c iv], two arrays if their cardinalities differ or a pair of elements at one place is [GR1c v], other values if they are not equal [GR1c i, ii]. A distinct type's values compare as their source's. |
+| A `<when operand>` | §6.12 SR2f ii | IS [NOT] DISTINCT FROM y, the case operand its first predicand. |
+| Joins | §7.10 GR1 | A conjunct `a IS NOT DISTINCT FROM b` of a column of each operand is a hash key, on which a null matches a null, in memory, spilled and by batches, of collated strings by their sort keys. EXPLAIN shows it as `a IS NOT DISTINCT FROM b`. An index join probes on `=` keys alone. |
+
+DISTINCT and FROM are key words of SQL-92 already, so nothing new is
+reserved.
 
 ### GREATEST and LEAST
 

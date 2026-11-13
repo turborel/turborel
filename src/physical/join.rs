@@ -35,7 +35,7 @@
 use super::collated::{Lifted, lifted};
 use super::indexed::{Equijoin, index_join, right_index_join};
 use super::shown::Shown;
-use super::{Built, PhysicalPlanner, Plan, of_left};
+use super::{Built, JoinKey, PhysicalPlanner, Plan, of_left};
 use crate::logical::{
     Cond, Expr, LogicalPlan, OuterJoin, SortKey, and_all, column_name, cond_columns, judged_by_sets, map_cond_columns, render_cond,
     render_expr, split_and,
@@ -77,8 +77,10 @@ impl PhysicalPlanner<'_> {
         let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
         let ordered = !want_left.is_empty() && l.ordered;
         // A few left rows each probing an index of the right's table.
-        if let Some((probing, rows)) = self.probed_instead((left, right), &keys, &r.plan) {
-            let join = Equijoin { width, keys: &keys, rest, outer: false };
+        if let Some(pairs) = plain(&keys)
+            && let Some((probing, rows)) = self.probed_instead((left, right), &pairs, &r.plan)
+        {
+            let join = Equijoin { width, keys: &pairs, rest, outer: false };
             return Some(Built { plan: index_join(probing, join, (l.plan, rows), shown), ordered });
         }
         // The left built instead, if it has fewer rows; its order is lost.
@@ -103,7 +105,7 @@ impl PhysicalPlanner<'_> {
 /// The hash join of `left` and `right` on `keys`, the left `width` columns
 /// wide, its rows filtered by the rest of the condition, `rest`, over its
 /// pairs' columns, described as `shown` says.
-fn hashed((left, right): (Plan, Plan), keys: Vec<(usize, usize)>, rest: Vec<Cond>, (width, shown): (usize, Shown<'_>)) -> Plan {
+fn hashed((left, right): (Plan, Plan), keys: Vec<JoinKey>, rest: Vec<Cond>, (width, shown): (usize, Shown<'_>)) -> Plan {
     let detail = shown.text(|names| keys_detail(&keys, names, width));
     let join = Plan::HashJoin { left: Box::new(left), right: Box::new(right), keys, detail };
     match and_all(rest).map(judged_by_sets) {
@@ -148,31 +150,63 @@ impl Flip {
     }
 }
 
-/// A join's keys, pairs of a left column and a right column, as the keys
+/// A join's keys, each of a left column and a right column, as the keys
 /// of the join of its operands swapped.
-fn swapped_keys(keys: &[(usize, usize)]) -> Vec<(usize, usize)> {
-    keys.iter().map(|&(l, r)| (r, l)).collect()
+fn swapped_keys(keys: &[JoinKey]) -> Vec<JoinKey> {
+    keys.iter().map(|k| JoinKey { left: k.right, right: k.left, nulls: k.nulls }).collect()
 }
 
-/// The equalities `keys` of a join whose left operand is `width` columns
-/// wide, as text, of its pairs' column `names`.
-fn keys_detail(keys: &[(usize, usize)], names: &[String], width: usize) -> String {
+/// `keys` as the pairs of columns an index join probes by, if each is an
+/// equality: a probe by a null finds nothing, so a key on which a null
+/// matches a null [ISO/IEC 9075-2:2023 §8.15] is hashed alone.
+fn plain(keys: &[JoinKey]) -> Option<Vec<(usize, usize)>> {
+    keys.iter().map(|k| (!k.nulls).then_some((k.left, k.right))).collect()
+}
+
+/// The keys `keys` of a join whose left operand is `width` columns wide,
+/// as text, of its pairs' column `names`: each an equality, or IS NOT
+/// DISTINCT FROM.
+fn keys_detail(keys: &[JoinKey], names: &[String], width: usize) -> String {
     keys.iter()
-        .map(|&(l, r)| format!("{} = {}", column_name(names, l), column_name(names, r.saturating_add(width))))
+        .map(|k| {
+            let matched = if k.nulls { "IS NOT DISTINCT FROM" } else { "=" };
+            format!("{} {matched} {}", column_name(names, k.left), column_name(names, k.right.saturating_add(width)))
+        })
         .collect::<Vec<_>>()
         .join(" AND ")
 }
 
-/// The columns `c` equates, one of the left operand of a product whose
+/// The key `c` is, of a column of the left operand of a product whose
 /// left operand is `width` columns wide and one of the right, numbered in
-/// it: "left = right" or "right = left".
-fn equated(c: &Cond, width: usize) -> Option<(usize, usize)> {
-    let Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) = c else { return None };
-    let (a, b) = (*a, *b);
+/// it: "left = right" or "right = left", or of IS NOT DISTINCT FROM,
+/// NOT (left IS DISTINCT FROM right) [ISO/IEC 9075-2:2023 §8.15 SR6],
+/// either way round.
+fn equated(c: &Cond, width: usize) -> Option<JoinKey> {
+    let (a, b, nulls) = match c {
+        Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) => (*a, *b, false),
+        Cond::Not(inner) => {
+            let Cond::Distinct(Expr::Column(a), Expr::Column(b)) = &**inner else { return None };
+            (*a, *b, true)
+        }
+        Cond::Compare(..)
+        | Cond::Const(_)
+        | Cond::Or(..)
+        | Cond::And(..)
+        | Cond::Is(..)
+        | Cond::Distinct(..)
+        | Cond::IsNull(..)
+        | Cond::Like(..)
+        | Cond::Exists(_)
+        | Cond::Unique(..)
+        | Cond::Quantified(..)
+        | Cond::Match { .. }
+        | Cond::In(..)
+        | Cond::Value(_) => return None,
+    };
     if a < width && b >= width {
-        Some((a, b.saturating_sub(width)))
+        Some(JoinKey { left: a, right: b.saturating_sub(width), nulls })
     } else if b < width && a >= width {
-        Some((b, a.saturating_sub(width)))
+        Some(JoinKey { left: b, right: a.saturating_sub(width), nulls })
     } else {
         None
     }
@@ -186,7 +220,7 @@ fn equated(c: &Cond, width: usize) -> Option<(usize, usize)> {
 /// reads both operands' columns, every conjunct is the rest's: every pair
 /// is then judged (RULES.md D15).
 struct Parted {
-    keys: Vec<(usize, usize)>,
+    keys: Vec<JoinKey>,
     rest: Vec<Cond>,
     own: (Vec<Cond>, Vec<Cond>),
 }
@@ -266,11 +300,12 @@ impl PhysicalPlanner<'_> {
         let ordered = !want_left.is_empty() && l.ordered;
         // Of a LEFT join, a few left rows each probing an index of the
         // right's table; of a RIGHT join, a few right rows the left's.
-        let swapped = swapped_keys(&parted.keys);
-        let probed = if !parted.keyed_alone() {
+        let pairs = plain(&parted.keys).unwrap_or_default();
+        let swapped: Vec<(usize, usize)> = pairs.iter().map(|&(a, b)| (b, a)).collect();
+        let probed = if !parted.keyed_alone() || pairs.len() != parted.keys.len() {
             None
         } else if kind == OuterJoin::Left {
-            self.probed_instead((left, right), &parted.keys, &r.plan).map(|p| (p, false))
+            self.probed_instead((left, right), &pairs, &r.plan).map(|p| (p, false))
         } else if kind == OuterJoin::Right {
             self.probed_instead((right, left), &swapped, &l.plan).map(|p| (p, true))
         } else {
@@ -280,7 +315,7 @@ impl PhysicalPlanner<'_> {
             return Built::unordered(right_index_join(probing, (&swapped, parted.rest), (r.plan, rows), ((width, right.width()), shown)));
         }
         if let Some(((probing, rows), false)) = probed {
-            let join = Equijoin { width, keys: &parted.keys, rest: parted.rest, outer: true };
+            let join = Equijoin { width, keys: &pairs, rest: parted.rest, outer: true };
             return Built { plan: index_join(probing, join, (l.plan, rows), shown), ordered };
         }
         // A RIGHT join as the LEFT one of its operands swapped, which

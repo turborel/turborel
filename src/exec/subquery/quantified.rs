@@ -39,6 +39,7 @@ use super::super::work::Work;
 use super::SubqueryRows;
 use crate::error::Result;
 use crate::logical::{Quantifier, Truth};
+use crate::physical::JoinKey;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
 use crate::value::{Bucket, CompOp, Value, bucket, compare};
@@ -123,7 +124,7 @@ impl SubqueryRows {
         if hash.is_none() {
             let of_pattern = pattern.to_vec();
             let rows = self.rows()?.filter(move |r| !r.as_ref().is_ok_and(|row| nulls(row) != of_pattern));
-            let keys = on.iter().map(|&i| (i, i)).collect();
+            let keys = on.iter().map(|&i| JoinKey { left: i, right: i, nulls: false }).collect();
             let Right::Held(built) = Built::of(rows, keys, (&mut Work::new(&self.db), Full::Table))? else {
                 return Err(super::broken("a subquery's rows were partitioned"));
             };

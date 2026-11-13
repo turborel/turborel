@@ -28,7 +28,7 @@ pub const SQL2023: [Mutation; 55] = [
         package: Package::Core,
         breaks: "IS of a predicand is read as a null predicate, so B IS TRUE is a syntax error",
         file: "src/parser/expression.rs",
-        original: "        self.is_kw(kw::IS) && (null_at(1) || (matches!(self.peek_at(1), Tok::KeyWord(kw::NOT)) && null_at(2)))",
+        original: "        self.is_kw(kw::IS) && (word_at(1) || (matches!(self.peek_at(1), Tok::KeyWord(kw::NOT)) && word_at(2)))",
         replacement: "        self.is_kw(kw::IS)",
         integration: &["booleans::boolean_literals_are_kept_5_3"],
         unit: &[],

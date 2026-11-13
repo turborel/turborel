@@ -25,8 +25,9 @@ use std::hash::{BuildHasher, RandomState};
 use super::super::partition::{Merge, merge_all, numbered, unnumbered};
 use super::super::work::Work;
 use super::super::{RowIter, failed};
-use super::{Built, Full, Right, each_match, key};
+use super::{Built, Full, Operand, Right, each_match, key};
 use crate::error::{Code, Result, SqlError};
+use crate::physical::JoinKey;
 use crate::spill::{Records, SpillRun, bucket_key, record_row, row_bytes, row_record};
 use crate::storage::Row;
 use crate::value::Bucket;
@@ -41,7 +42,7 @@ pub const DEFAULT_PARTITION_DEPTH: usize = 8;
 
 /// A hash join's operands, as they are partitioned.
 pub(in crate::exec) struct Partitions {
-    keys: Vec<(usize, usize)>,
+    keys: Vec<JoinKey>,
     hasher: RandomState,
     /// The right operand's partitions, each with the bytes its rows take
     /// in memory.
@@ -51,7 +52,7 @@ pub(in crate::exec) struct Partitions {
 impl Partitions {
     /// No partitions yet of an operand joined on `keys`: as many as `work`
     /// writes at once.
-    fn new(keys: Vec<(usize, usize)>, work: &mut Work) -> Result<Partitions> {
+    fn new(keys: Vec<JoinKey>, work: &mut Work) -> Result<Partitions> {
         let mut right = Vec::new();
         for _ in 0..work.width().min(work.partitions()) {
             right.push((work.run()?, 0));
@@ -84,7 +85,7 @@ impl Partitions {
     fn add_rights(&mut self, rows: impl Iterator<Item = Result<Row>>) -> Result<()> {
         for r in rows {
             let row = r?;
-            if let Some(b) = key(&row, self.keys.iter().map(|k| k.1))? {
+            if let Some(b) = key(&row, &self.keys, Operand::Right)? {
                 self.add_right(&b, &row)?;
             }
         }
@@ -108,7 +109,7 @@ impl Partitions {
         }
         for r in rows {
             let (n, row) = r?;
-            if let Some(b) = key(&row, self.keys.iter().map(|k| k.0))? {
+            if let Some(b) = key(&row, &self.keys, Operand::Left)? {
                 lefts.get_mut(self.of_key(&b)).ok_or_else(lost)?.push(&numbered(n, &row))?;
             }
         }
@@ -150,7 +151,7 @@ fn merged(left: RowIter, parts: Partitions, work: &mut Work) -> Result<Merge> {
 /// up to SPILL.PARTITION_DEPTH times, or built in a table of the spill
 /// area once that depth is passed or it did not shrink.
 pub(in crate::exec) struct Pending {
-    keys: Vec<(usize, usize)>,
+    keys: Vec<JoinKey>,
     types: TypeRegistry,
     pairs: Vec<Pair>,
 }

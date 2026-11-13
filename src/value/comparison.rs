@@ -168,6 +168,9 @@ pub enum Bucket {
     Extension(Box<[u8]>),
     /// An array's or a row's parts, each's bucket.
     Composite(Box<[Bucket]>),
+    /// [ISO/IEC 9075-2:2023 §8.15] The null value, of a join key on which
+    /// a null matches a null (`key_bucket`); `bucket` gives none.
+    Null,
 }
 
 /// The bucket of `v`, or none for the null value, which equals nothing

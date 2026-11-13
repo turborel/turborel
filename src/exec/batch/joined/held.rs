@@ -4,13 +4,13 @@
 //! area, joined into one batch (`Batch::joined`), each vector of the kind
 //! its batches' were, and of each key, the places of its rows in that
 //! batch, in order, a row of a null key in none, as none matches
-//! [X3.135-1986 §5.11 GR2]. So the right's columns are gathered into the
+//! [X3.135-1986 §5.11 GR2], but of a key on which a null matches a null
+//! [ISO/IEC 9075-2:2023 §8.15] (`key_bucket`). So the right's columns are gathered into the
 //! joined rows as the left's are, no value made. Past the work area, the
 //! batches read and the rest of the operand are given back, made into rows
 //! for the row path to build (`exec/join.rs`): of the operand's width, or
 //! of the columns its batches hold alone.
 
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -19,10 +19,10 @@ use super::{gathered, rows_of};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::{RowIter, broken, execute};
-use crate::physical::Plan;
+use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Cell};
 use crate::txn::TxId;
-use crate::value::{Bucket, Value, bucket, compare};
+use crate::value::{Bucket, Value, key_bucket, key_equal};
 
 /// A right operand held as vectors: its rows, and of each key, the places
 /// of its rows.
@@ -30,6 +30,8 @@ pub(super) struct HeldRight {
     pub(super) batch: Arc<Batch>,
     /// The place in `batch` of each key's column.
     pub(super) places: Vec<usize>,
+    /// Of each key, whether a null matches a null.
+    nulls: Vec<bool>,
     buckets: HashMap<Vec<Bucket>, Arc<[usize]>>,
 }
 
@@ -68,11 +70,21 @@ impl HeldRight {
         self.buckets.get(key).map_or(&[], |rows| rows)
     }
 
-    /// Whether the keys of row `p` equal the left's `values`
-    /// [X3.135-1986 §5.11]: integers of one scale by their units, else
-    /// compared as values.
-    pub(super) fn keys_equal(&self, p: usize, values: &[Value]) -> bool {
-        self.places.iter().zip(values).all(|(&at, v)| equal(v, self.batch.cell(at, p)))
+    /// Whether the keys of row `p` match the left's `values`: equal
+    /// [X3.135-1986 §5.11], integers of one scale by their units, else
+    /// compared as values; or not distinct, of a key on which a null
+    /// matches a null [ISO/IEC 9075-2:2023 §8.15].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a value nests deeper than a type may.
+    pub(super) fn keys_equal(&self, p: usize, values: &[Value]) -> Result<bool> {
+        for ((&at, &nulls), v) in self.places.iter().zip(&self.nulls).zip(values) {
+            if !equal(v, self.batch.cell(at, p), nulls)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// The places of the rows of key `key`, in order, shared.
@@ -81,17 +93,17 @@ impl HeldRight {
     }
 }
 
-/// The right operand `right`, keyed by its columns `keys`, read and held
-/// while its vectors hold no more than `limit` bytes.
+/// The right operand `right`, keyed by the right columns of `keys`, read
+/// and held while its vectors hold no more than `limit` bytes.
 ///
 /// # Errors
 ///
 /// The operand's; a key column its batches lack (SQLCODE -910).
-pub(super) fn read(right: Plan, keys: &[usize], limit: usize, (db, tx): (&Arc<State>, TxId)) -> Result<Read> {
+pub(super) fn read(right: Plan, keys: &[JoinKey], limit: usize, (db, tx): (&Arc<State>, TxId)) -> Result<Read> {
     let (columns, width) = stream::layout(&right, db).unwrap_or_default();
     let places: Vec<usize> = keys
         .iter()
-        .map(|k| columns.iter().position(|c| c == k).ok_or_else(|| broken("a join key the right operand's batch lacks")))
+        .map(|k| columns.iter().position(|&c| c == k.right).ok_or_else(|| broken("a join key the right operand's batch lacks")))
         .collect::<Result<_>>()?;
     let mut batches: Batches =
         if stream::reads_by_batch(&right, db) { stream::batches(right, db, tx)? } else { gathered(execute(right, db, tx), &columns) };
@@ -107,31 +119,48 @@ pub(super) fn read(right: Plan, keys: &[usize], limit: usize, (db, tx): (&Arc<St
         }
     }
     let batch = Batch::joined(parts);
-    let mut buckets: HashMap<Vec<Bucket>, Vec<usize>> = HashMap::new();
-    let mut key = Vec::with_capacity(places.len());
-    for r in 0..batch.rows {
-        key.clear();
-        // A null equals nothing [X3.135-1986 §5.11 GR2].
-        let values: Vec<Value> = places.iter().map(|&at| batch.cell(at, r).to_value()).collect();
-        if values.iter().all(|v| bucket(v).map(|b| key.push(b)).is_some()) {
-            buckets.entry(key.clone()).or_default().push(r);
-        }
-    }
-    let buckets = buckets.into_iter().map(|(bucketed, rows)| (bucketed, Arc::from(rows))).collect();
-    Ok(Read::Held(HeldRight { batch: Arc::new(batch), places, buckets }))
+    let nulls: Vec<bool> = keys.iter().map(|k| k.nulls).collect();
+    let buckets = bucketed(&batch, &places, &nulls)?;
+    Ok(Read::Held(HeldRight { batch: Arc::new(batch), places, nulls, buckets }))
 }
 
-/// Whether `v` equals the value of `cell` [X3.135-1986 §5.11]: an
+/// Of each key of the rows of `batch`, its columns at `places`, the places
+/// of its rows, in order: a row of a null key in none, as a null equals
+/// nothing [X3.135-1986 §5.11 GR2], but of a key whose `nulls` says a null
+/// matches a null [ISO/IEC 9075-2:2023 §8.15].
+///
+/// # Errors
+///
+/// SQLCODE -910 if a value nests deeper than a type may.
+fn bucketed(batch: &Batch, places: &[usize], nulls: &[bool]) -> Result<HashMap<Vec<Bucket>, Arc<[usize]>>> {
+    let mut buckets: HashMap<Vec<Bucket>, Vec<usize>> = HashMap::new();
+    'rows: for r in 0..batch.rows {
+        let mut key = Vec::with_capacity(places.len());
+        for (&at, &matches_null) in places.iter().zip(nulls) {
+            match key_bucket(&batch.cell(at, r).to_value(), matches_null)? {
+                Some(b) => key.push(b),
+                None => continue 'rows,
+            }
+        }
+        buckets.entry(key).or_default().push(r);
+    }
+    Ok(buckets.into_iter().map(|(bucketed, rows)| (bucketed, Arc::from(rows))).collect())
+}
+
+/// Whether `v` matches the value of `cell` as a key's (`key_equal`): an
 /// integer's units of one scale compared as they are, else the values.
-fn equal(v: &Value, cell: Cell<'_>) -> bool {
+///
+/// # Errors
+///
+/// SQLCODE -910 if a value nests deeper than a type may.
+fn equal(v: &Value, cell: Cell<'_>, nulls: bool) -> Result<bool> {
     if let (Value::Exact(d), Cell::Exact(units, scale)) = (v, cell)
         && d.scale == scale
     {
-        return d.units == i128::from(units);
+        return Ok(d.units == i128::from(units));
     }
-    let order = match cell {
-        Cell::Value(w) => compare(v, w),
-        Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Null => compare(v, &cell.to_value()),
-    };
-    order == Some(Ordering::Equal)
+    match cell {
+        Cell::Value(w) => key_equal(v, w, nulls),
+        Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Null => key_equal(v, &cell.to_value(), nulls),
+    }
 }

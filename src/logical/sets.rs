@@ -139,6 +139,7 @@ pub fn judged_by_sets(cond: Cond) -> Cond {
         Cond::Is(a, truth, not) => Cond::Is(Box::new(judged_by_sets(*a)), truth, not),
         other @ (Cond::Const(_)
         | Cond::Compare(..)
+        | Cond::Distinct(..)
         | Cond::IsNull(..)
         | Cond::Like(..)
         | Cond::Exists(_)

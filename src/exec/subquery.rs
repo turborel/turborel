@@ -43,7 +43,7 @@ use crate::db::State;
 use crate::error::{Result, Warnings};
 use crate::logical::{Decorrelated, LogicalPlan, Subquery};
 use crate::optimizer::RuleContext;
-use crate::physical::PhysicalPlanner;
+use crate::physical::{JoinKey, PhysicalPlanner};
 use crate::spill::heap_bytes;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
@@ -271,7 +271,7 @@ impl Runner {
             None => None,
             Some(how) => {
                 // Its key columns follow its own, each equal to an outer slot's value.
-                let keys = (0..how.slots.len()).map(|n| (n, how.width.saturating_add(n))).collect();
+                let keys = (0..how.slots.len()).map(|n| JoinKey { left: n, right: how.width.saturating_add(n), nulls: false }).collect();
                 let rows = self.run(how.plan.clone());
                 let Right::Held(rows) = Built::of(rows, keys, (&mut Work::of(&self.db, self.tx), Full::Table))? else {
                     return Err(broken("a subquery's rows were partitioned"));

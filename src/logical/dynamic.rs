@@ -126,6 +126,10 @@ impl Filling<'_> {
                 let a = self.expr(a);
                 Cond::Compare(a, op, self.expr(b))
             }
+            Cond::Distinct(a, b) => {
+                let a = self.expr(a);
+                Cond::Distinct(a, self.expr(b))
+            }
             Cond::IsNull(e, not) => Cond::IsNull(self.expr(e), not),
             Cond::In(e, set) => Cond::In(self.expr(e), set),
             Cond::Value(e) => Cond::Value(self.expr(e)),

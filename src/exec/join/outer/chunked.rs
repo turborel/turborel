@@ -16,7 +16,7 @@ use std::iter::Peekable;
 
 use super::super::super::partition::{numbered, unnumbered};
 use super::super::super::work::Work;
-use super::super::key;
+use super::super::{Operand, key};
 use super::spilled::{Sources, lost};
 use super::{PLACE_BYTES, Spec};
 use crate::error::Result;
@@ -92,7 +92,7 @@ impl Part {
             let Some(record) = right.next() else { break };
             let (n, row) = unnumbered(&record?, work.types())?;
             bytes = bytes.saturating_add(row_bytes(&row)).saturating_add(PLACE_BYTES);
-            let b = key(&row, spec.keys.iter().map(|k| k.1))?.ok_or_else(lost)?;
+            let b = key(&row, &spec.keys, Operand::Right)?.ok_or_else(lost)?;
             if !judged || spec.right_may_match(&row)? {
                 part.buckets.entry(b).or_default().push(part.rows.len());
             }
@@ -105,7 +105,7 @@ impl Part {
     /// Left row `l` joined with each of its rows that matches it, each
     /// given to `out`, the rows marked; whether one did.
     pub(super) fn probed(&mut self, l: &Row, spec: &Spec, out: &mut dyn FnMut(Row) -> Result<()>) -> Result<bool> {
-        let Some(b) = key(l, spec.keys.iter().map(|k| k.0))? else { return Ok(false) };
+        let Some(b) = key(l, &spec.keys, Operand::Left)? else { return Ok(false) };
         let mut found = false;
         for &at in self.buckets.get(&b).map(Vec::as_slice).unwrap_or_default() {
             let (_, r) = self.rows.get(at).ok_or_else(lost)?;

@@ -35,6 +35,7 @@ const SPAN_TAG: u8 = 5;
 const EXTENSION_TAG: u8 = 6;
 const BOOL_TAG: u8 = 7;
 const COMPOSITE_TAG: u8 = 8;
+const NULL_TAG: u8 = 9;
 
 /// The two halves of the hash of `v`'s bucket; none for the null value,
 /// which equals nothing.
@@ -73,6 +74,9 @@ pub fn hashed(v: &Value) -> Option<(u64, u64)> {
             key.push(COMPOSITE_TAG);
             key.extend_from_slice(&crate::spill::bucket_key(&parts));
         }
+        // `bucket` gives a null none, so it is in no filter; this is the
+        // bucket of a key on which nulls match (`key_bucket`) alone.
+        Bucket::Null => key.push(NULL_TAG),
     }
     Some(murmur3_x64_128(&key, 0))
 }

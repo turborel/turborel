@@ -21,22 +21,21 @@ mod chunked;
 mod spilled;
 mod streamed;
 
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::super::work::Work;
-use super::super::{RowIter, Runner, column, eval_cond, execute, failed};
-use super::key;
+use super::super::{RowIter, Runner, eval_cond, execute, failed};
 use super::rescan::{Pass, Rescanned};
+use super::{Operand, equal, key};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{Cond, OuterJoin, Truth};
-use crate::physical::{Own, Plan};
+use crate::physical::{JoinKey, Own, Plan};
 use crate::spill::{SpillRun, record_row, row_bytes, row_record};
 use crate::storage::Row;
 use crate::txn::TxId;
-use crate::value::{Bucket, Value, compare};
+use crate::value::{Bucket, Value};
 
 /// The bytes a right row held for an outer join on keys takes beyond its
 /// own: its place in its bucket, and its flag, whether it matched.
@@ -45,8 +44,8 @@ pub(super) const PLACE_BYTES: usize = size_of::<usize>() + 1;
 /// What an outer join matches on, and keeps.
 pub(in crate::exec) struct Spec {
     pub(in crate::exec) kind: OuterJoin,
-    /// Pairs of a left column and a right column that are equal.
-    pub(in crate::exec) keys: Vec<(usize, usize)>,
+    /// Pairs of a left column and a right column that match.
+    pub(in crate::exec) keys: Vec<JoinKey>,
     /// The rest of the `<join condition>`, over the pair's columns.
     pub(in crate::exec) cond: Option<Cond>,
     /// Its conjuncts that can raise an error of the left's columns alone
@@ -63,10 +62,8 @@ impl Spec {
     /// `l` concatenated with `r`, if they match: their keys equal
     /// [X3.135-1986 §5.11], and the condition true [§7.5 GR1c].
     pub(super) fn joined(&self, l: &Row, r: &Row) -> Result<Option<Row>> {
-        for &(lc, rc) in &self.keys {
-            if compare(column(l, lc)?, column(r, rc)?) != Some(Ordering::Equal) {
-                return Ok(None);
-            }
+        if !equal(&self.keys, l, r)? {
+            return Ok(None);
         }
         let joined: Row = l.iter().chain(r).cloned().collect();
         if let Some(c) = &self.cond
@@ -113,7 +110,7 @@ fn may_match(own: Option<&Cond>, row: &Row, runner: &Runner) -> Result<bool> {
 /// (`Plan::OuterJoin`).
 pub(in crate::exec) struct Joining {
     pub(in crate::exec) kind: OuterJoin,
-    pub(in crate::exec) keys: Vec<(usize, usize)>,
+    pub(in crate::exec) keys: Vec<JoinKey>,
     pub(in crate::exec) cond: Option<Cond>,
     pub(in crate::exec) own: Own,
     pub(in crate::exec) widths: (usize, usize),
@@ -268,12 +265,12 @@ enum Held {
 
 /// The right operand `rows`, hashed on its columns of `keys`, if it holds
 /// no more than `limit` bytes, with the places and flags of its rows.
-fn held(mut rows: RowIter, keys: &[(usize, usize)], limit: usize) -> Result<Held> {
+fn held(mut rows: RowIter, keys: &[JoinKey], limit: usize) -> Result<Held> {
     let (mut kept, mut bytes, mut buckets) = (Vec::new(), 0_usize, HashMap::<Vec<Bucket>, Vec<usize>>::new());
     while let Some(r) = rows.next() {
         let row = r?;
         bytes = bytes.saturating_add(row_bytes(&row)).saturating_add(PLACE_BYTES);
-        if let Some(b) = key(&row, keys.iter().map(|k| k.1))? {
+        if let Some(b) = key(&row, keys, Operand::Right)? {
             buckets.entry(b).or_default().push(kept.len());
         }
         kept.push(row);
@@ -297,10 +294,10 @@ type Numbered = Box<dyn Iterator<Item = Result<(usize, Row)>> + Send>;
 impl Side {
     /// The right rows that may match left row `l`, each with its place:
     /// those of its bucket, or every row.
-    fn candidates(&mut self, l: &Row, keys: &[(usize, usize)]) -> Result<Numbered> {
+    fn candidates(&mut self, l: &Row, keys: &[JoinKey]) -> Result<Numbered> {
         match self {
             Side::Hashed(table) => {
-                let found = key(l, keys.iter().map(|k| k.0))?.and_then(|b| table.buckets.get(&b).cloned()).unwrap_or_else(|| Arc::from([]));
+                let found = key(l, keys, Operand::Left)?.and_then(|b| table.buckets.get(&b).cloned()).unwrap_or_else(|| Arc::from([]));
                 let rows = Arc::clone(&table.rows);
                 let places = (0..found.len()).filter_map(move |at| found.get(at).copied());
                 Ok(Box::new(places.filter_map(move |n| rows.get(n).cloned().map(|r| Ok((n, r))))))

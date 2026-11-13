@@ -118,7 +118,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Unnest(..)
         | Plan::WorkTable { .. } => return columns,
     };
-    columns.extend(keys.iter().flat_map(|&(l, r)| [l, r.saturating_add(width)]));
+    columns.extend(keys.iter().flat_map(|k| [k.left, k.right.saturating_add(width)]));
     columns
 }
 

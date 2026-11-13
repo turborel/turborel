@@ -10,7 +10,7 @@ use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Subquery, Truth};
 use crate::spill::norm_row;
 use crate::storage::Row;
 use crate::value::types::rows_hold;
-use crate::value::{CompOp, Value, arith, cast_warned, compare};
+use crate::value::{CompOp, Value, arith, cast_warned, compare, distinct};
 
 /// Where no subquery can be, as `NoSubqueries`, the warnings raised heard
 /// by the `Warnings` it holds: a session's, or the optimizer's own, to
@@ -158,6 +158,8 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
         Cond::Is(a, value, not) => truth((eval_cond(a, row, subqueries)? == *value) != *not),
         // [X3.135-1986 §5.11 GR2, GR3]
         Cond::Compare(a, op, b) => compared(&eval(a, row, subqueries)?, *op, &eval(b, row, subqueries)?),
+        // [ISO/IEC 9075-2:2023 §8.15 GR1] never unknown.
+        Cond::Distinct(a, b) => truth(distinct(&eval(a, row, subqueries)?, &eval(b, row, subqueries)?)?),
         // [X3.135-1986 §5.15 GR2-GR4]: IS NULL is never unknown.
         Cond::IsNull(e, not) => truth(eval(e, row, subqueries)?.is_null() != *not),
         Cond::Like(e, pattern, escape) => liked((e, pattern, escape.as_ref()), row, subqueries)?,

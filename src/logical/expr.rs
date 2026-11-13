@@ -153,6 +153,10 @@ pub enum Cond {
     /// A `<null predicate>` [X3.135-1986 §5.15]: the value, and true for IS
     /// NOT NULL.
     IsNull(Expr, bool),
+    /// [ISO/IEC 9075-2:2023 §8.15] `<distinct predicate>` of two values,
+    /// never Unknown: whether they are distinct, two nulls not, a null and
+    /// a value so \[GR1\]. IS NOT DISTINCT FROM is its negation \[SR6\].
+    Distinct(Expr, Expr),
     /// A `<like predicate>` [X3.135-1986 §5.14]: the value matched, the
     /// `<pattern>`, and the `<escape character>` if one was given.
     Like(Expr, Expr, Option<Expr>),
@@ -317,6 +321,10 @@ impl Cond {
                 let a = f(a);
                 Cond::Compare(a, op, f(b))
             }
+            Cond::Distinct(a, b) => {
+                let a = f(a);
+                Cond::Distinct(a, f(b))
+            }
             Cond::IsNull(e, not) => Cond::IsNull(f(e), not),
             Cond::Like(e, pattern, escape) => {
                 let (e, pattern) = (f(e), f(pattern));
@@ -347,7 +355,7 @@ impl Cond {
                 b.for_each_expr(f);
             }
             Cond::Not(a) | Cond::Is(a, ..) => a.for_each_expr(f),
-            Cond::Compare(a, _, b) => {
+            Cond::Compare(a, _, b) | Cond::Distinct(a, b) => {
                 f(a);
                 f(b);
             }
@@ -372,7 +380,9 @@ impl Cond {
             Cond::Or(a, b) | Cond::And(a, b) => [a.subqueries(), b.subqueries()].concat(),
             Cond::Not(a) | Cond::Is(a, ..) => a.subqueries(),
             Cond::Exists(s) | Cond::Unique(s, _) | Cond::Quantified(.., s) | Cond::Match { subquery: s, .. } => vec![&**s],
-            Cond::Const(_) | Cond::Compare(..) | Cond::IsNull(..) | Cond::Like(..) | Cond::In(..) | Cond::Value(_) => Vec::new(),
+            Cond::Const(_) | Cond::Compare(..) | Cond::Distinct(..) | Cond::IsNull(..) | Cond::Like(..) | Cond::In(..) | Cond::Value(_) => {
+                Vec::new()
+            }
         }
     }
 
@@ -394,6 +404,7 @@ impl Cond {
             Cond::Not(a) | Cond::Is(a, ..) => a.can_raise(),
             Cond::Const(_)
             | Cond::Compare(..)
+            | Cond::Distinct(..)
             | Cond::IsNull(..)
             | Cond::Exists(_)
             | Cond::Unique(..)

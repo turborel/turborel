@@ -81,6 +81,7 @@ mod descriptors;
 mod diagnostics;
 mod direct;
 mod disk;
+mod distinct_predicate;
 mod distinct_type_dynamic;
 mod distinct_type_information;
 mod distinct_type_privileges;

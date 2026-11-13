@@ -47,6 +47,7 @@ fn conjuncts(cond: &Cond, found: &mut Vec<Conjunct>) {
         ),
         Cond::Like(Expr::Column(c), pattern, escape) => found.extend(prefixed(*c, pattern, escape.as_ref())),
         Cond::Compare(..)
+        | Cond::Distinct(..)
         | Cond::In(..)
         | Cond::IsNull(..)
         | Cond::Const(_)
@@ -134,6 +135,7 @@ pub fn compared_with_constant(cond: &Cond) -> Option<(usize, CompOp, &Value)> {
         // "constant op column" is "column op' constant".
         Cond::Compare(Expr::Const(v), op, Expr::Column(c)) => Some((*c, op.flip(), v)),
         Cond::Compare(..)
+        | Cond::Distinct(..)
         | Cond::Const(_)
         | Cond::Or(..)
         | Cond::And(..)

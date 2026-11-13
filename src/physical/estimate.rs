@@ -41,6 +41,9 @@ pub fn selectivity(cond: &Cond, known: Known<'_>) -> f64 {
             if *not { 1.0_f64 - nulls } else { nulls }
         }
         Cond::Quantified(_, op, _, _) => default_compare(*op, guess),
+        // Distinct where an equality would not hold, so IS NOT DISTINCT
+        // FROM, its negation, keeps what an equality does.
+        Cond::Distinct(..) => 1.0_f64 - guess.equal_selectivity,
         // An OR of equalities, taken as each other's exclusion.
         Cond::In(e, set) => set
             .values()

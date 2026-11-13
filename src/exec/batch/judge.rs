@@ -234,6 +234,7 @@ fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mu
         Cond::Not(inner) => listed(inner).and_then(|(c, set)| Some(Judged::In(place(c)?, set, true))),
         Cond::Like(Expr::Column(c), pattern, escape) => liked((*c, pattern, escape.as_ref()), columns),
         Cond::Compare(..)
+        | Cond::Distinct(..)
         | Cond::Const(_)
         | Cond::IsNull(..)
         | Cond::Is(..)

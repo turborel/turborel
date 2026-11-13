@@ -202,6 +202,7 @@ fn form_of(c: &Cond, known: &Known<'_>) -> Option<Vec<Form>> {
         | Cond::And(..)
         | Cond::Is(..)
         | Cond::Compare(..)
+        | Cond::Distinct(..)
         | Cond::IsNull(..)
         | Cond::In(..)
         | Cond::Like(..)
@@ -434,7 +435,10 @@ pub(super) fn rejects(c: &Cond, at: usize) -> bool {
         Cond::Compare(a, _, b) => strict(a, at) || strict(b, at),
         Cond::Is(inner, Truth::True, false) => rejects(inner, at),
         Cond::And(a, b) => rejects(a, at) || rejects(b, at),
+        // [ISO/IEC 9075-2:2023 §8.15 GR1] never Unknown: a null is
+        // distinct from a value and not from a null.
         Cond::IsNull(_, false)
+        | Cond::Distinct(..)
         | Cond::Is(..)
         | Cond::Const(_)
         | Cond::Or(..)
@@ -473,7 +477,7 @@ pub(super) fn row_cond(c: &Cond) -> bool {
         Cond::Const(_) => true,
         Cond::Or(a, b) | Cond::And(a, b) => row_cond(a) && row_cond(b),
         Cond::Not(a) | Cond::Is(a, ..) => row_cond(a),
-        Cond::Compare(a, _, b) => row_expr(a) && row_expr(b),
+        Cond::Compare(a, _, b) | Cond::Distinct(a, b) => row_expr(a) && row_expr(b),
         Cond::IsNull(e, _) | Cond::In(e, _) | Cond::Value(e) => row_expr(e),
         Cond::Like(e, pattern, escape) => row_expr(e) && row_expr(pattern) && escape.as_ref().is_none_or(row_expr),
         Cond::Exists(_) | Cond::Quantified(..) | Cond::Unique(..) | Cond::Match { .. } => false,

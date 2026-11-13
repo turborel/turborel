@@ -21,7 +21,6 @@ pub(in crate::exec) use partitioned::{Partitions, Pending, joined as partitioned
 pub(in crate::exec) use rescan::{Pass, Rescanned, product};
 
 use std::borrow::Cow;
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -29,12 +28,12 @@ use super::work::Work;
 use super::{RowIter, broken, column, execute, failed};
 use crate::db::State;
 use crate::error::Result;
-use crate::physical::Plan;
+use crate::physical::{JoinKey, Plan};
 use crate::spill::{Records, SpillTable, bucket_key, record_row, row_bytes, row_record};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::types::TypeRegistry;
-use crate::value::{Bucket, bucket, compare};
+use crate::value::{Bucket, key_bucket, key_equal};
 
 /// The rows of `left` joined with those of `right`: on `keys` if given
 /// (`HashJoin`), else with every one (`product`). The right operand is
@@ -42,7 +41,7 @@ use crate::value::{Bucket, bucket, compare};
 /// `execute`, whose frame every level of a plan adds to the stack (RULES.md
 /// R-CF-6).
 #[inline(never)]
-pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<(usize, usize)>>, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<JoinKey>>, db: &Arc<State>, tx: TxId) -> RowIter {
     let mut work = Work::of(db, tx);
     let Some(keys) = keys else {
         return match Rescanned::of(execute(right, db, tx), &mut work) {
@@ -58,13 +57,14 @@ pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<(usize, usize)>>,
 }
 
 /// The right operand of a hash join, its rows with a null key left out, as
-/// none matches [X3.135-1986 §5.11 GR2]: by bucket of key values, in
+/// none matches [X3.135-1986 §5.11 GR2], but of a key on which a null
+/// matches a null [ISO/IEC 9075-2:2023 §8.15]: by bucket of key values, in
 /// memory, or in a table of its spill area keyed by bucket if they outgrew
 /// it. Either way a bucket's rows are in order, and read one at a time
 /// (`Probe`), so a bucket of more rows than the work area holds is never in
 /// memory whole.
 pub(in crate::exec) struct Built {
-    keys: Vec<(usize, usize)>,
+    keys: Vec<JoinKey>,
     /// The place in `held` of each bucket's rows.
     buckets: HashMap<Vec<Bucket>, usize>,
     held: Vec<Vec<Row>>,
@@ -101,14 +101,14 @@ impl Built {
     /// once it outgrows it, done with as `full` says.
     pub(in crate::exec) fn of(
         mut rows: impl Iterator<Item = Result<Row>>,
-        keys: Vec<(usize, usize)>,
+        keys: Vec<JoinKey>,
         (work, full): (&mut Work, Full),
     ) -> Result<Right> {
         let mut built = Built { keys, buckets: HashMap::new(), held: Vec::new(), spilled: None, types: work.types().clone() };
         let mut bytes = 0_usize;
         for r in rows.by_ref() {
             let row = r?;
-            let Some(b) = key(&row, built.keys.iter().map(|k| k.1))? else { continue };
+            let Some(b) = key(&row, &built.keys, Operand::Right)? else { continue };
             bytes = bytes.saturating_add(row_bytes(&row));
             built.add(b, row)?;
             if bytes > work.limit() {
@@ -151,7 +151,7 @@ impl Built {
         }
         for r in rows {
             let row = r?;
-            if let Some(b) = key(&row, self.keys.iter().map(|k| k.1))? {
+            if let Some(b) = key(&row, &self.keys, Operand::Right)? {
                 table.insert(&bucket_key(&b), &row_record(&row))?;
             }
         }
@@ -226,7 +226,7 @@ impl HashJoin {
                 continue;
             }
             let Some(l) = self.left.next().transpose()? else { return Ok(None) };
-            if let Some(b) = key(&l, self.right.keys.iter().map(|k| k.0))? {
+            if let Some(b) = key(&l, &self.right.keys, Operand::Left)? {
                 self.current = Some((l, self.right.probe(&b)?));
             }
         }
@@ -241,15 +241,28 @@ impl Iterator for HashJoin {
     }
 }
 
-/// The buckets of `row`'s values in `columns`, or none if one is null.
+/// Which operand's columns of a join's keys a row is of.
+#[derive(Clone, Copy)]
+pub(in crate::exec) enum Operand {
+    Left,
+    Right,
+}
+
+/// The buckets of `row`'s values in the columns of `keys` of its `side`,
+/// or none if one matches nothing: a null, but of a key on which a null
+/// matches a null [ISO/IEC 9075-2:2023 §8.15] (`key_bucket`).
 ///
 /// # Errors
 ///
 /// A column the row does not have (SQLCODE -910).
-fn key(row: &Row, columns: impl Iterator<Item = usize>) -> Result<Option<Vec<Bucket>>> {
-    let mut buckets = Vec::new();
-    for c in columns {
-        match bucket(column(row, c)?) {
+pub(in crate::exec) fn key(row: &Row, keys: &[JoinKey], side: Operand) -> Result<Option<Vec<Bucket>>> {
+    let mut buckets = Vec::with_capacity(keys.len());
+    for k in keys {
+        let c = match side {
+            Operand::Left => k.left,
+            Operand::Right => k.right,
+        };
+        match key_bucket(column(row, c)?, k.nulls)? {
             Some(b) => buckets.push(b),
             None => return Ok(None),
         }
@@ -257,11 +270,16 @@ fn key(row: &Row, columns: impl Iterator<Item = usize>) -> Result<Option<Vec<Buc
     Ok(Some(buckets))
 }
 
-/// Whether the values of `l` and `r` the pairs `keys` name are equal, as
-/// rows in one bucket may differ.
-fn equal(keys: &[(usize, usize)], l: &Row, r: &Row) -> Result<bool> {
-    for &(lc, rc) in keys {
-        if compare(column(l, lc)?, column(r, rc)?) != Some(Ordering::Equal) {
+/// Whether the values of `l` and `r` the keys `keys` name match, as rows
+/// in one bucket may differ: equal, or of a key on which nulls match, not
+/// distinct (`key_equal`).
+///
+/// # Errors
+///
+/// A column a row does not have (SQLCODE -910).
+pub(in crate::exec) fn equal(keys: &[JoinKey], l: &Row, r: &Row) -> Result<bool> {
+    for k in keys {
+        if !key_equal(column(l, k.left)?, column(r, k.right)?, k.nulls)? {
             return Ok(false);
         }
     }
@@ -277,7 +295,7 @@ fn each_match(right: &Built, l: &Row, mut each: impl FnMut(Row) -> Result<()>) -
 /// Gives `each` each row of `right` whose keys equal those of left row
 /// `l`, in order, as its bucket is read.
 pub(in crate::exec) fn each_pair(right: &Built, l: &Row, mut each: impl FnMut(&Row) -> Result<()>) -> Result<()> {
-    let Some(b) = key(l, right.keys.iter().map(|k| k.0))? else { return Ok(()) };
+    let Some(b) = key(l, &right.keys, Operand::Left)? else { return Ok(()) };
     for r in right.bucket_rows(&b)? {
         let r = r?;
         if equal(&right.keys, l, &r)? {

@@ -40,6 +40,7 @@ pub fn bucket_key(key: &[Bucket]) -> Vec<u8> {
                 out.extend_from_slice(&u64::try_from(parts.len()).unwrap_or(u64::MAX).to_le_bytes());
                 out.extend_from_slice(&bucket_key(parts));
             }
+            Bucket::Null => out.push(NULL_BUCKET),
         }
     }
     out
@@ -50,6 +51,9 @@ const BOOL_BUCKET: u8 = 6;
 /// The tag of an array's or a row's bucket, then its parts' count and
 /// their keys, each of which ends where it says.
 const COMPOSITE_BUCKET: u8 = 7;
+/// The tag of the null value's bucket, of a key on which a null matches a
+/// null.
+const NULL_BUCKET: u8 = 8;
 
 /// The tags of a normalized key's values (`norm_key`).
 const NULL_TAG: u8 = 0;

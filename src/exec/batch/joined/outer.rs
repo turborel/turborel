@@ -20,12 +20,12 @@
 //! its rows gathered into batches: where no order is asked of the join, each
 //! pair of partitions' rows as they are joined (`Rowwise::unordered`).
 
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::super::stream::{self, Batches, Kept};
 use super::held::{self, HeldRight, Read as HeldRead};
 use super::pairs::{Out, kept_rows};
+use super::probe::{keyed, keys_match};
 use super::{gathered, in_order, left_batches, operand_rows};
 use crate::db::State;
 use crate::error::Result;
@@ -33,10 +33,10 @@ use crate::exec::eval_cond;
 use crate::exec::join::{Holding, Joining, Prepared, Spec, prepared, spec_of};
 use crate::exec::work::Work;
 use crate::logical::{Truth, cond_columns};
-use crate::physical::Plan;
+use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Row};
 use crate::txn::TxId;
-use crate::value::{Bucket, Value, bucket, compare};
+use crate::value::{Bucket, Value};
 
 /// The batches of the outer join `joining` says of `left` and `right`.
 ///
@@ -54,8 +54,7 @@ pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Arc<Sta
     let rows = if spec.keys.is_empty() {
         operand_rows(right, db, tx)
     } else {
-        let keys: Vec<usize> = spec.keys.iter().map(|k| k.1).collect();
-        match held::read(right, &keys, work.limit(), (db, tx))? {
+        match held::read(right, &spec.keys, work.limit(), (db, tx))? {
             HeldRead::Held(held) => {
                 let out = Out::over(left_columns.len(), Arc::clone(&held.batch));
                 let read = places(&spec, &left_columns)?;
@@ -86,7 +85,7 @@ pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Arc<Sta
 /// key, its left column's place with its right column; of each left column
 /// its conditions read, its place with the column.
 struct Read {
-    keys: Vec<(usize, usize)>,
+    keys: Vec<JoinKey>,
     columns: Vec<(usize, usize)>,
 }
 
@@ -100,7 +99,7 @@ fn places(spec: &Spec, left_columns: &[usize]) -> Result<Read> {
     let at = |c: usize| {
         left_columns.iter().position(|&h| h == c).ok_or_else(|| crate::exec::broken("a column an outer join reads its batch lacks"))
     };
-    let keys = spec.keys.iter().map(|&(l, r)| at(l).map(|a| (a, r))).collect::<Result<Vec<_>>>()?;
+    let keys = spec.keys.iter().map(|&k| at(k.left).map(|a| JoinKey { left: a, ..k })).collect::<Result<Vec<_>>>()?;
     let mut read = Vec::new();
     for c in [spec.cond.as_ref(), spec.own.0.as_ref()].into_iter().flatten() {
         cond_columns(c, &mut read);
@@ -161,13 +160,18 @@ impl Right {
         }
     }
 
-    /// Whether row `n`'s keys equal the left's `values`.
-    fn equal(&self, n: usize, keys: &[(usize, usize)], values: &[Value]) -> bool {
-        let same = |v: &Value, w: &Value| compare(v, w) == Some(Ordering::Equal);
+    /// Whether row `n`'s keys match the left's `values` (`key_equal`).
+    ///
+    /// # Errors
+    ///
+    /// A column the row lacks, or a value nested deeper than a type may
+    /// (SQLCODE -910).
+    fn equal(&self, n: usize, keys: &[JoinKey], values: &[Value]) -> Result<bool> {
         match self {
-            Right::Rows(held) => {
-                held.rows.get(n).is_some_and(|right| keys.iter().zip(values).all(|(&(_, rc), v)| right.get(rc).is_some_and(|w| same(v, w))))
-            }
+            Right::Rows(held) => match held.rows.get(n) {
+                Some(right) => keys_match(keys, values, right),
+                None => Ok(false),
+            },
             Right::Vectors(v) => v.held.keys_equal(n, values),
         }
     }
@@ -232,10 +236,8 @@ impl Probe {
                 }
             }
             values.clear();
-            values.extend(self.read.keys.iter().map(|&(at, _)| batch.cell(at, r).to_value()));
-            key.clear();
-            // A null equals nothing [X3.135-1986 §5.11 GR2].
-            let keyed = values.iter().all(|v| bucket(v).map(|b| key.push(b)).is_some());
+            values.extend(self.read.keys.iter().map(|k| batch.cell(k.left, r).to_value()));
+            let keyed = keyed(&self.read.keys, &values, &mut key)?;
             // Its own condition judged of it as the right has a row, its key
             // null or not [§7.5 GR1c].
             let may = self.right.len() > 0 && self.right.spec().left_may_match(&self.scratch)?;
@@ -258,7 +260,7 @@ impl Probe {
         for i in 0..count {
             let n = places.as_ref().map_or(Some(i), |p| p.get(i).copied()).unwrap_or(i);
             let barred = self.barred.as_ref().and_then(|b| b.get(n)).copied().unwrap_or(false);
-            if barred || n >= self.right.len() || !self.right.equal(n, &self.read.keys, values) || !self.holds(n)? {
+            if barred || n >= self.right.len() || !self.right.equal(n, &self.read.keys, values)? || !self.holds(n)? {
                 continue;
             }
             found = true;

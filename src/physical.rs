@@ -43,6 +43,21 @@ use crate::value::Value;
 use crate::value::collation::CollationRef;
 use shown::Shown;
 
+/// \[DESIGN\] A key of a join on keys: a column of its left operand and a
+/// column of its right whose values match, each row found through a hash
+/// table of them. They match if equal [X3.135-1986 §5.11], a null
+/// matching nothing; or, if `nulls`, if not distinct [ISO/IEC 9075-2:2023
+/// §8.15], a null matching a null, as IS NOT DISTINCT FROM says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JoinKey {
+    /// The left operand's column.
+    pub left: usize,
+    /// The right operand's column.
+    pub right: usize,
+    /// A null matches a null.
+    pub nulls: bool,
+}
+
 /// \[DESIGN\] A physical plan: the operators the executor runs, each with what
 /// EXPLAIN shows of it. Cloned as a prepared statement's kept plan is
 /// filled for an execution (`physical/kept.rs`).
@@ -123,8 +138,9 @@ pub enum Plan {
         left: Box<Plan>,
         /// The inner input, read once, into a hash table.
         right: Box<Plan>,
-        /// Pairs of a column of `left` and a column of `right` that are equal.
-        keys: Vec<(usize, usize)>,
+        /// Pairs of a column of `left` and a column of `right` that are
+        /// equal, or not distinct.
+        keys: Vec<JoinKey>,
         /// The equalities, as text.
         detail: String,
     },
@@ -175,8 +191,8 @@ pub enum Plan {
         /// The second operand, read once.
         right: Box<Plan>,
         /// Pairs of a column of `left` and a column of `right` that are
-        /// equal, found through a hash table.
-        keys: Vec<(usize, usize)>,
+        /// equal, or not distinct, found through a hash table.
+        keys: Vec<JoinKey>,
         /// The rest of the `<join condition>`, over the pair's columns.
         cond: Option<Cond>,
         /// Its conjuncts that can raise an error over the columns of one

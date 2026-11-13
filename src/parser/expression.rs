@@ -109,12 +109,8 @@ impl Parser {
             return Ok(predicate(Predicate::Unique { subquery: Box::new(self.subquery()?), nulls_distinct }));
         }
         let value = self.row_value()?;
-        if self.at_null_test() {
-            // [§8.6] <null predicate> ::= <row value constructor> IS [NOT] NULL
-            self.advance();
-            let not = self.accept_kw(kw::NOT);
-            self.expect_kw(kw::NULL)?;
-            return Ok(predicate(Predicate::Null { value, not }));
+        if self.at_is_predicate() {
+            return self.is_predicate(value).map(predicate);
         }
         let row = match (self.at_predicate_operator(), <[ValueExpression; 1]>::try_from(value)) {
             (false, Ok([v])) => return Ok(SearchCondition::Predicand(Box::new(v), at)),
@@ -137,11 +133,8 @@ impl Parser {
     pub(super) fn when_operand(&mut self, operand: &RowValue) -> Result<WhenOperand> {
         let at = self.here();
         let predicate = |p: Predicate| WhenOperand::Condition(SearchCondition::Predicate(Box::new(p), at));
-        if self.at_null_test() {
-            self.advance();
-            let not = self.accept_kw(kw::NOT);
-            self.expect_kw(kw::NULL)?;
-            return Ok(predicate(Predicate::Null { value: operand.clone(), not }));
+        if self.at_is_predicate() {
+            return self.is_predicate(operand.clone()).map(predicate);
         }
         if self.at_predicate_operator() {
             return self.predicate_rest(operand.clone()).map(predicate);
@@ -155,11 +148,28 @@ impl Parser {
         self.row_value()
     }
 
-    /// Whether IS \[NOT\] NULL is next, IS \[NOT\] TRUE, FALSE or UNKNOWN
-    /// being a `<boolean test>` of a predicand [ISO/IEC 9075-2:2023 §6.46].
-    fn at_null_test(&self) -> bool {
-        let null_at = |n: usize| matches!(self.peek_at(n), Tok::KeyWord(kw::NULL));
-        self.is_kw(kw::IS) && (null_at(1) || (matches!(self.peek_at(1), Tok::KeyWord(kw::NOT)) && null_at(2)))
+    /// Whether IS \[NOT\] NULL or IS \[NOT\] DISTINCT is next, IS \[NOT\]
+    /// TRUE, FALSE or UNKNOWN being a `<boolean test>` of a predicand
+    /// [ISO/IEC 9075-2:2023 §6.46].
+    fn at_is_predicate(&self) -> bool {
+        let word_at = |n: usize| matches!(self.peek_at(n), Tok::KeyWord(kw::NULL | kw::DISTINCT));
+        self.is_kw(kw::IS) && (word_at(1) || (matches!(self.peek_at(1), Tok::KeyWord(kw::NOT)) && word_at(2)))
+    }
+
+    /// The predicate after its first row value, `value`, at IS: a `<null
+    /// predicate>`, or a `<distinct predicate>` [ISO/IEC 9075-2:2023 §8.15].
+    fn is_predicate(&mut self, value: RowValue) -> Result<Predicate> {
+        self.expect_kw(kw::IS)?;
+        let not = self.accept_kw(kw::NOT);
+        // [§8.6] <null predicate> ::= <row value constructor> IS [NOT] NULL
+        if self.accept_kw(kw::NULL) {
+            return Ok(Predicate::Null { value, not });
+        }
+        // [ISO/IEC 9075-2:2023 §8.15] <distinct predicate part 2> ::= IS
+        // [NOT] DISTINCT FROM <row value predicand 4>
+        self.expect_kw(kw::DISTINCT)?;
+        self.expect_kw(kw::FROM)?;
+        Ok(Predicate::Distinct { left: value, right: self.row_value()?, not })
     }
 
     /// Whether what follows a row value makes it a predicate's: MATCH,

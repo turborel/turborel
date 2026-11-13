@@ -11,7 +11,6 @@
 //! area, so every left row probes it in the left's order; of an inner one,
 //! it is partitioned (`parted.rs`).
 
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::super::stream::{self, Batches, Kept};
@@ -22,12 +21,12 @@ use crate::db::State;
 use crate::error::Result;
 use crate::exec::join::{Built, Full, Right, partitioned_joined};
 use crate::exec::work::Work;
-use crate::exec::{Runner, eval_cond};
+use crate::exec::{Runner, column, eval_cond};
 use crate::logical::{Cond, Truth};
-use crate::physical::Plan;
+use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Row};
 use crate::txn::TxId;
-use crate::value::{Bucket, Value, bucket, compare};
+use crate::value::{Bucket, Value, key_bucket, key_equal};
 
 /// Which rows a join of streams probing its built right operand gives.
 pub(super) enum Kind {
@@ -44,7 +43,7 @@ pub(super) enum Kind {
 /// # Errors
 ///
 /// The right operand's; the spill area's; a key the left's batches lack.
-pub(super) fn probed((left, right, keys): (Plan, Plan, Vec<(usize, usize)>), kind: Kind, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(super) fn probed((left, right, keys): (Plan, Plan, Vec<JoinKey>), kind: Kind, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let (left_columns, _) = stream::layout(&left, db).unwrap_or_default();
     let (right_columns, _) = stream::layout(&right, db).unwrap_or_default();
     let mut work = Work::of(db, tx);
@@ -52,16 +51,15 @@ pub(super) fn probed((left, right, keys): (Plan, Plan, Vec<(usize, usize)>), kin
         Kind::Inner => Full::Partition,
         Kind::Left(..) => Full::Table,
     };
-    let places: Option<Vec<(usize, usize)>> =
-        keys.iter().map(|&(l, r)| left_columns.iter().position(|&c| c == l).map(|at| (at, r))).collect();
+    let places: Option<Vec<JoinKey>> =
+        keys.iter().map(|&k| left_columns.iter().position(|&c| c == k.left).map(|at| JoinKey { left: at, ..k })).collect();
     let places = places.ok_or_else(|| crate::exec::broken("a join key the left operand's batch lacks"))?;
     let scratch = match &kind {
         Kind::Left(Some(_), (l, r)) => vec![Value::Null; l.saturating_add(*r)],
         Kind::Inner | Kind::Left(None, _) => Vec::new(),
     };
     // The right operand first, held as vectors if it fits the work area.
-    let right_keys: Vec<usize> = keys.iter().map(|k| k.1).collect();
-    let rest = match held::read(right, &right_keys, work.limit(), (db, tx))? {
+    let rest = match held::read(right, &keys, work.limit(), (db, tx))? {
         Read::Held(held) => {
             let out = Out::over(left_columns.len(), Arc::clone(&held.batch));
             let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
@@ -95,16 +93,19 @@ pub(super) fn probed((left, right, keys): (Plan, Plan, Vec<(usize, usize)>), kin
 ///
 /// As `probed`.
 fn narrowed(
-    (left, rest, keys): (Plan, Rest, Vec<(usize, usize)>),
-    (joined, places): (Joined, Vec<(usize, usize)>),
+    (left, rest, keys): (Plan, Rest, Vec<JoinKey>),
+    (joined, places): (Joined, Vec<JoinKey>),
     mut work: Work,
     db: &Arc<State>,
     tx: TxId,
 ) -> Result<Batches> {
     let place = |c: usize, of: &[usize]| of.iter().position(|&h| h == c).ok_or_else(|| crate::exec::broken("a join key its batch lacks"));
     let (left_columns, right_columns) = (&joined.left_columns, &joined.right_columns);
-    let narrow = keys.iter().map(|&(l, r)| Ok((place(l, left_columns)?, place(r, right_columns)?))).collect::<Result<Vec<_>>>()?;
-    let places = places.iter().zip(&narrow).map(|(&(at, _), &(_, r))| (at, r)).collect();
+    let narrow = keys
+        .iter()
+        .map(|&k| Ok(JoinKey { left: place(k.left, left_columns)?, right: place(k.right, right_columns)?, nulls: k.nulls }))
+        .collect::<Result<Vec<_>>>()?;
+    let places = places.iter().zip(&narrow).map(|(&at, &n)| JoinKey { right: n.right, ..at }).collect();
     let (left_width, right_width) = (left_columns.len(), right_columns.len());
     let (lefts, rights): (Vec<usize>, Vec<usize>) = ((0..left_width).collect(), (0..right_width).collect());
     match Built::of(rest.narrow(), narrow, (&mut work, Full::Partition))? {
@@ -203,9 +204,9 @@ struct Probe {
     left: Batches,
     joined: Joined,
     right: Holding,
-    /// The place in a left batch of each key's left column, with its
-    /// right column.
-    places: Vec<(usize, usize)>,
+    /// Each key, its left column's place in a left batch, with its right
+    /// column.
+    places: Vec<JoinKey>,
     out: Out,
     /// The work area the right operand is built in, held while it is.
     _work: Work,
@@ -218,10 +219,8 @@ impl Probe {
         let mut key: Vec<Bucket> = Vec::with_capacity(self.places.len());
         for &r in rows {
             values.clear();
-            values.extend(self.places.iter().map(|&(at, _)| batch.cell(at, r).to_value()));
-            key.clear();
-            // A null equals nothing [X3.135-1986 §5.11 GR2].
-            let keyed = values.iter().all(|v| bucket(v).map(|b| key.push(b)).is_some());
+            values.extend(self.places.iter().map(|k| batch.cell(k.left, r).to_value()));
+            let keyed = keyed(&self.places, &values, &mut key)?;
             let found = match &self.right {
                 Holding::Vectors(held) => {
                     let pairs = (&mut self.joined, &mut self.out);
@@ -242,25 +241,58 @@ impl Probe {
     }
 }
 
+/// Whether the key `values` of `keys` has a bucket, put in `key`: none if
+/// a value is null, as a null equals nothing [X3.135-1986 §5.11 GR2], but
+/// of a key on which a null matches a null [ISO/IEC 9075-2:2023 §8.15].
+///
+/// # Errors
+///
+/// SQLCODE -910 if a value nests deeper than a type may.
+pub(super) fn keyed(keys: &[JoinKey], values: &[Value], key: &mut Vec<Bucket>) -> Result<bool> {
+    key.clear();
+    for (k, v) in keys.iter().zip(values) {
+        match key_bucket(v, k.nulls)? {
+            Some(b) => key.push(b),
+            None => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
 /// Adds to `out` the pairs `joined` keeps of left row `r` of `batch`, of
 /// key `values`, bucketed as `key`, and the rows of that key of `built`,
 /// their keys' right columns those `places` gives: whether it kept any.
 fn probe_built(
     built: &Built,
-    (joined, out, places): (&mut Joined, &mut Out, &[(usize, usize)]),
+    (joined, out, places): (&mut Joined, &mut Out, &[JoinKey]),
     (batch, r): (&Batch, usize),
     (values, key): (&[Value], &[Bucket]),
 ) -> Result<bool> {
     let mut found = false;
     for right in built.bucket_rows(key)? {
         let right = right?;
-        let equal = places.iter().zip(values).all(|(&(_, rc), v)| right.get(rc).and_then(|w| compare(v, w)) == Some(Ordering::Equal));
-        if joined.keeps((batch, r), &right, equal)? {
+        if joined.keeps((batch, r), &right, keys_match(places, values, &right)?)? {
             found = true;
             out.push(Some(batch), Some(r), Some(&right));
         }
     }
     Ok(found)
+}
+
+/// Whether the right columns of `keys` of row `right` match the left's
+/// `values` as keys (`key_equal`).
+///
+/// # Errors
+///
+/// A column the row lacks, or a value nested deeper than a type may
+/// (SQLCODE -910).
+pub(super) fn keys_match(keys: &[JoinKey], values: &[Value], right: &Row) -> Result<bool> {
+    for (k, v) in keys.iter().zip(values) {
+        if !key_equal(v, column(right, k.right)?, k.nulls)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Adds to `out` the pairs `joined` keeps of left row `r` of `batch`, of
@@ -274,7 +306,7 @@ fn probe_held(
 ) -> Result<bool> {
     let mut found = false;
     for &p in held.rows_of(key) {
-        if joined.keeps_held((batch, r), (&held.batch, p), held.keys_equal(p, values))? {
+        if joined.keeps_held((batch, r), (&held.batch, p), held.keys_equal(p, values)?)? {
             found = true;
             out.push_held(Some(batch), Some(r), Some(p));
         }
