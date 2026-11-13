@@ -24,9 +24,9 @@ use super::query::Nesting;
 use super::set_operations::bind_query_expression;
 use super::subquery::Outer;
 use super::views::{Named, Reader, Source, ViewBase, named};
-use super::{Binder, Context, Purpose, Scope, qualify, require, rule};
+use super::{Binder, Context, OutColumn, Purpose, Scope, qualify, require, rule, with};
 use crate::ast::{DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, SearchCondition, TableReference};
-use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc};
+use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc, Underlying};
 use crate::error::{At, Code, Result, SqlError};
 use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, Truth, cond_columns};
 use crate::system::SystemRead;
@@ -53,6 +53,11 @@ pub(super) struct FromItem {
     /// is in, which its `<qualifier>` does not reference [ISO/IEC
     /// 9075:1992 §6.4 SR2b, §7.9 SR4].
     pub(super) common: Vec<usize>,
+    /// Of a query a `<with clause>` names, what each of its columns is
+    /// drawn from, if that is being found (`binder/underlying.rs`):
+    /// what a column referenced of it is drawn from [ISO/IEC 9075-2:2023
+    /// §7.17 SR23b].
+    pub(super) drawn: Option<Box<Underlying>>,
 }
 
 impl FromItem {
@@ -60,7 +65,7 @@ impl FromItem {
     /// name, alone at the start of the row: of `desc`, its rows from
     /// `source`.
     pub(super) fn alone(table: QualifiedName, at: usize, (desc, source): (TableDesc, Source)) -> FromItem {
-        FromItem { table, at, correlation: None, desc, offset: 0, source, nullable: false, common: Vec::new() }
+        FromItem { table, at, correlation: None, desc, offset: 0, source, nullable: false, common: Vec::new(), drawn: None }
     }
 
     pub(super) fn designator(&self) -> &str {
@@ -243,6 +248,11 @@ fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, from: &mut Fr
 /// list [ISO/IEC 9075:1992 §6.3 SR6, SR7]. An error binding a view's query
 /// is placed at the view's name, not in the view's own text.
 fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
+    // [ISO/IEC 9075-2:2023 §7.17 SR3i] a query name in scope names no
+    // table.
+    if let Some(query) = with::query_item(b, t, offset)? {
+        return Ok(query);
+    }
     let cx = b.cx;
     let name = qualify(&t.table, cx.schema);
     let Named { desc, source } = named(cx.db, &name, Reader::of(&cx)).map_err(|e| SqlError { pos: None, ..e })?;
@@ -268,12 +278,13 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
         source,
         nullable: false,
         common: Vec::new(),
+        drawn: None,
     })
 }
 
 /// [ISO/IEC 9075:1992 §6.3 SR6, SR7] `columns` named as the derived
 /// column list `names` says: one name each, none twice.
-fn renamed(columns: &mut [ColumnDesc], names: &[String]) -> Result<()> {
+pub(super) fn renamed(columns: &mut [ColumnDesc], names: &[String]) -> Result<()> {
     if names.len() != columns.len() {
         return Err(rule(format!("[ISO/IEC 9075:1992 §6.3 SR7] {} column names for {} columns", names.len(), columns.len())));
     }
@@ -313,20 +324,7 @@ fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
     };
     // [ISO/IEC 9075-2:2023 §6.14 SR1] none of its rows draws a value.
     let bound = bind_query_expression(Context { draws: false, ..b.cx }, &d.query.query, &nesting)?;
-    let mut columns: Vec<ColumnDesc> = bound
-        .columns
-        .iter()
-        .enumerate()
-        .map(|(k, c)| ColumnDesc {
-            name: c.name.clone().unwrap_or_else(|| format!("#{}", k.saturating_add(1))),
-            data_type: c.data_type,
-            not_null: c.not_null,
-            default: None,
-            domain: None,
-            collation: c.collation.clone(),
-            generated: None,
-        })
-        .collect();
+    let mut columns: Vec<ColumnDesc> = bound.columns.iter().enumerate().map(|(k, c)| column_of(k, c)).collect();
     if let Some(names) = &d.columns {
         renamed(&mut columns, names)?;
     }
@@ -349,7 +347,22 @@ fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
         source: Source::Derived(bound.plan),
         nullable: false,
         common: Vec::new(),
+        drawn: None,
     })
+}
+
+/// Column `k` of a derived table, of the column `c` of its query: named
+/// as its query names it, or by its position if it does not.
+pub(super) fn column_of(k: usize, c: &OutColumn) -> ColumnDesc {
+    ColumnDesc {
+        name: c.name.clone().unwrap_or_else(|| format!("#{}", k.saturating_add(1))),
+        data_type: c.data_type,
+        not_null: c.not_null,
+        default: None,
+        domain: None,
+        collation: c.collation.clone(),
+        generated: None,
+    }
 }
 
 /// [ISO/IEC 9075:1992 §7.5] The joined table `j`, its first column at

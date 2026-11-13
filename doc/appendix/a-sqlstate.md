@@ -97,7 +97,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | TB914 | A table damaged by a change that could not be undone |
 | TB915 | A file could not be read, written or synced |
 | TB916 | Stored data failed its checksum or format |
-| TB918 | The memory budget is spent, or a buffer pool has no frame free |
+| TB918 | The memory budget is spent, a buffer pool has no frame free, or a recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | TB920 | The statement was cancelled |
 
 Statements are run directly, so an error of the rules of a statement's
@@ -128,7 +128,7 @@ negative of an exception:
 | -915 | An I/O error |
 | -916 | Corrupt stored data |
 | -917 | An invalid transaction state |
-| -918 | The memory budget spent, or a buffer pool with every frame held |
+| -918 | The memory budget spent, a buffer pool with every frame held, or a recursive query past its iterations |
 | -919 | A connection exception |
 | -920 | The statement cancelled |
 | -921 | A dynamic SQL error |

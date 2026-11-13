@@ -94,7 +94,7 @@ fn outer_label(e: &Expr, scope: Scope<'_>) -> String {
 /// The slot of the enclosing query's expression `e` in the subquery
 /// `outer` gives the values of, displayed as `name`: one already made for
 /// it, or a new one.
-fn capture(outer: &Outer<'_>, e: Expr, name: String) -> Expr {
+pub(super) fn capture(outer: &Outer<'_>, e: Expr, name: String) -> Expr {
     let mut captured = outer.captured.borrow_mut();
     let slot = captured.iter().position(|c| same_slot(c, &e)).unwrap_or_else(|| {
         captured.push(e);

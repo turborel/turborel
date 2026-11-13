@@ -161,7 +161,9 @@ impl Filling<'_> {
             | LogicalPlan::Product { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }
-            | LogicalPlan::Sort { .. }) => other,
+            | LogicalPlan::Sort { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. }) => other,
         };
         node.map_inputs(|p| self.plan(p))
     }

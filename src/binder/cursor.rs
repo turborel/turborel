@@ -4,8 +4,9 @@
 use super::collation::{sort_collations, with_sort};
 use super::query::{Nesting, bind_query_specification};
 use super::set_operations::bind_query_expression;
+use super::with::with_scope;
 use super::{Bound, Context, OutColumn, rule};
-use crate::ast::{ColumnSpecification, CursorSpecification, SortColumn, SortSpecification};
+use crate::ast::{ColumnSpecification, CursorSpecification, QueryExpression, SortColumn, SortSpecification};
 use crate::error::{At, Result};
 use crate::logical::SortKey;
 
@@ -20,6 +21,11 @@ pub fn bind_cursor(cx: Context<'_>, c: &CursorSpecification) -> Result<Bound> {
     // specifications against its own FROM clause.
     if let Some(spec) = c.query.spec() {
         return bind_query_specification(Context { draws: true, ..cx }, spec, &c.order_by);
+    }
+    // [ISO/IEC 9075-2:2023 §7.17] so can one after a <with clause>, in its
+    // scope.
+    if let (QueryExpression::With(w), Some(spec)) = (&c.query, c.query.body().spec()) {
+        return with_scope(cx, w, (None, false), |inner| bind_query_specification(Context { draws: true, ..inner }, spec, &c.order_by));
     }
     let (db, auth, session) = (cx.db, cx.auth, cx.collation);
     let bound = bind_query_expression(cx, &c.query, &Nesting::Query)?;

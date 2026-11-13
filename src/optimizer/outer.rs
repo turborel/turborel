@@ -68,7 +68,9 @@ impl Rule for PushFilterIntoOuterJoin {
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Values { .. }
             | LogicalPlan::System { .. }
-            | LogicalPlan::Sort { .. } => None,
+            | LogicalPlan::Sort { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. } => None,
         }
     }
 }

@@ -134,7 +134,9 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
-        | Plan::Sort { .. }) => Err(broken(&format!("not a table access: {other:?}"))),
+        | Plan::Sort { .. }
+        | Plan::Recursive { .. }
+        | Plan::WorkTable { .. }) => Err(broken(&format!("not a table access: {other:?}"))),
     }
 }
 

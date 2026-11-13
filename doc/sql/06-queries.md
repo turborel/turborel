@@ -207,4 +207,80 @@ TABLE DEPT;
 A row of one value may be written without parentheses: `VALUES 1, 2` is
 two rows.
 
-The standard: ISO/IEC 9075:1992 §7.1–§7.11; X3.135-1986 §5.19–§5.25.
+## WITH and WITH RECURSIVE
+
+WITH names queries for the query after it. Each is read where its name
+is written as a table is, by the query and by each query after it in the
+list, of the columns its column list names or else its query's.
+
+```sql
+WITH BIG (DEPT, PEOPLE) AS (SELECT DEPT, COUNT(*) FROM STAFF GROUP BY DEPT)
+SELECT DEPT FROM BIG WHERE PEOPLE > 1;
+```
+
+```
+ DEPT
+------
+ ENG
+(1 row)
+```
+
+WITH RECURSIVE lets a query read itself, and the queries of the list
+read each other. Each such query is a UNION of an anchor, which reads
+none of them, and queries that read them. The anchor's rows come first;
+then each query is evaluated again over the rows they gave, until it
+gives no more. UNION keeps each row once, so a query over a graph with
+cycles ends; UNION ALL keeps every row. Every column list is written.
+
+```sql
+CREATE TABLE BOSS (ID INTEGER, REPORTS_TO INTEGER);
+INSERT INTO BOSS VALUES (1, NULL), (2, 1), (3, 1), (4, 3);
+WITH RECURSIVE UNDER (ID, DEPTH) AS (
+  SELECT ID, 0 FROM BOSS WHERE ID = 1
+  UNION ALL
+  SELECT BOSS.ID, DEPTH + 1 FROM UNDER, BOSS WHERE BOSS.REPORTS_TO = UNDER.ID)
+SELECT * FROM UNDER ORDER BY ID;
+```
+
+```
+OK
+OK
+           ID | DEPTH
+--------------+-------
+            1 |     0
+            2 |     1
+            3 |     1
+            4 |     2
+(4 rows)
+```
+
+A recursive query's columns are of its anchor's types, so the anchor
+gives the type a column grows in. Here `0` is NUMERIC(1,0), which holds
+depths up to 9, and `CAST(0 AS INTEGER)` would hold more.
+
+A query reads the queries of its list once in each query specification,
+in its FROM clause or a derived table there, beside no set function, not
+on the side of an outer join that nulls give, under no INTERSECT ALL or
+EXCEPT ALL and not after EXCEPT; and each cycle of queries reading each
+other passes through an anchor. A query that never stops growing is
+refused once it has taken EXECUTOR.MAX_ITERATIONS iterations, a million
+unless the session sets another number; 0 sets none.
+
+```sql
+SET EXECUTOR.MAX_ITERATIONS = 100;
+WITH RECURSIVE N (I) AS (VALUES (CAST(1 AS INTEGER)) UNION ALL SELECT I + 1 FROM N)
+SELECT COUNT(*) FROM N;
+SET EXECUTOR.MAX_ITERATIONS = 1000000;
+```
+
+```
+OK
+turborel: SQLCODE -918 (SQLSTATE TB918): a recursive query reached no fixpoint in 100 iterations, as EXECUTOR.MAX_ITERATIONS allows [ISO/IEC 9075-2:2023 §7.17 GR2c ii 4]
+OK
+```
+
+SEARCH and CYCLE, which order a recursive query's rows and mark its
+cycles, are not implemented.
+
+The standard: ISO/IEC 9075:1992 §7.1–§7.11; X3.135-1986 §5.19–§5.25;
+WITH, ISO/IEC 9075-2:2023 §7.17.

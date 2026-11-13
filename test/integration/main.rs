@@ -187,4 +187,5 @@ mod varying;
 mod vector_operators;
 mod views;
 mod warnings;
+mod with_queries;
 mod working_tables;

@@ -905,6 +905,34 @@ which no other index does, so a second null is found as a second value
 is (RULES.md D66). No probe of it selects one, as no comparison with a
 null is true. NULLS is a non-reserved word, a key word only after UNIQUE.
 
+### WITH and WITH RECURSIVE
+
+Features T121 (WITH (excluding RECURSIVE) in query expression), T122
+(WITH (excluding RECURSIVE) in subquery), T131 (Recursive query) and T132
+(Recursive query in subquery). A `<with clause>` names queries for the
+query expression that follows it [§7.17].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| WITH | §7.17 SR3c, d, i, GR2a, b | Each query named once, its columns named once or by a `<with column list>` of as many names, else SQLCODE -103. Each read by the query expression's body and by the queries after it, where a table may be, correlated with outer rows as a subquery is. In a query, a subquery, a derived table, a view, INSERT, a CHECK constraint and an assertion. |
+| WITH RECURSIVE | SR3h, j i to viii | Every query of the list has a column list, and none contains another WITH RECURSIVE list. The queries are bound stratum by stratum. Each that reads its stratum is a UNION, one operand of which reads none of the stratum, and every cycle of the stratum passes through such a query. Else SQLCODE -103. |
+| Linear recursion | SR3j ix, x | A query specification reads its stratum once, in its FROM clause or a derived table there, beside no set function in its select list or HAVING, not on a side of an outer join that nulls give (UNION JOIN taken as FULL), under no INTERSECT ALL or EXCEPT ALL, not after EXCEPT. Else SQLCODE -103. |
+| Types | SR19 b ii 2 | A recursive query's column is of its anchor's type, a recursive operand's value cast to it, so `VALUES (1)` gives NUMERIC(1,0) and 10 is SQLCODE -301. Every column of a recursive query may be null, where the standard may know some not to be. |
+| Evaluation | GR2c | To a fixpoint, as the General Rules say, or of a single query over only the rows each iteration adds where that gives the same rows (RULES.md D67). The order of the rows is implementation-dependent (US036) without ORDER BY. |
+| Runaway recursion | GR2c ii 4, NOTE 322 | Refused past the session's EXECUTOR.MAX_ITERATIONS iterations, a million by default, 0 for no limit (SQLCODE -918, SQLSTATE TB918). This implementation's own, as the standard's loop does not end. A cancel or STATEMENT.TIMEOUT_MS stops it (SQLCODE -920). |
+
+SEARCH and CYCLE (T133) [§7.18], whose columns are of ARRAY and ROW
+types, are not supported (SQLCODE -900). Neither is an anchor operand of
+UNION CORRESPONDING without BY, nor a recursive query whose anchor UNION
+is within its `<query expression body>` rather than all of it, as `A
+UNION ALL B UNION ALL C` of two recursive operands. A query of a WITH is not
+updatable, so no view of one is. RECURSIVE is a key word only after WITH,
+SEARCH and CYCLE only after a query of the list.
+
+A CHECK constraint whose subquery reads no table, such as one of a WITH of
+VALUES, is checked of each row written, as one that reads a table is;
+before, it was refused at its first check with SQLCODE -910.
+
 ---
 
 ## Extensions

@@ -434,7 +434,8 @@ impl State {
                 pos: None,
                 ..e
             })?;
-            *reads = cond.tables();
+            // [ISO/IEC 9075:1992 §11.6 GR3] One whose subqueries read no table is checked of its table whole, as one reading one is.
+            *reads = Some(cond.tables()).filter(|t| !t.is_empty() || !cond.has_subquery()).unwrap_or_else(|| vec![table.clone()]);
             for other in reads.iter().filter(|t| **t != table).filter_map(|t| self.catalog.table(t)) {
                 super::temporary::may_refer(&this, other, ("§11.9 SR3", "§11.9 SR4"))?;
             }

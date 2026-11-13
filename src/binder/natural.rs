@@ -66,6 +66,7 @@ pub(super) fn natural(
         source: Source::Common,
         nullable: false,
         common: Vec::new(),
+        drawn: None,
     });
     Ok((and_all(equal), Some((from.items.len().saturating_sub(1), exprs))))
 }

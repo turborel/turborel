@@ -105,6 +105,9 @@ pub const REKEY_BYTES_PER_SECOND: Key = Key(44);
 /// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
 /// the transaction settings.
 pub const TRANSACTION_ISOLATION: Key = Key(45);
+/// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
+/// the executor's settings.
+pub const MAX_ITERATIONS: Key = Key(46);
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -299,10 +302,23 @@ fn system_cache() -> Definition {
 
 /// \[DESIGN\] The settings declared after the others, each at its key's
 /// place, though of the storage settings: the system's cache, and the
-/// files' key and the sweep's pace (RULES.md D48); and, of the transaction
-/// settings, the level of one that names none.
-fn later() -> [Definition; 4] {
-    [system_cache(), checksum_key(), rekey_rate(), transaction_isolation()]
+/// files' key and the sweep's pace (RULES.md D48); of the transaction
+/// settings, the level of one that names none; and, of the executor's, the
+/// most iterations of a recursive query.
+fn later() -> [Definition; 5] {
+    [system_cache(), checksum_key(), rekey_rate(), transaction_isolation(), max_iterations()]
+}
+
+/// [ISO/IEC 9075-2:2023 §7.17 GR2] The most iterations a recursive query
+/// takes, at its key's place, after the others, though of the executor's
+/// settings: the fixpoint is the standard's, and a query that never
+/// reaches it is refused past this.
+fn max_iterations() -> Definition {
+    defined(
+        ("EXECUTOR.MAX_ITERATIONS", at_least(0), count(crate::exec::DEFAULT_MAX_ITERATIONS)),
+        SESSION,
+        "The most iterations a recursive query of WITH RECURSIVE takes, each evaluating its recursive elements once more, before it is refused (SQLCODE -918) as never reaching its fixpoint; 0 for no limit.",
+    )
 }
 
 /// \[DESIGN\] The key a keyed checksum makes digests with from now on

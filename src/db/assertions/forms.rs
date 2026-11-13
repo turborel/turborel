@@ -366,7 +366,9 @@ pub(super) fn passing(plan: &LogicalPlan) -> Option<Passing> {
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Values { .. }
-            | LogicalPlan::Sort { .. } => return None,
+            | LogicalPlan::Sort { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. } => return None,
         }
     }
 }

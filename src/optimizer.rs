@@ -316,7 +316,9 @@ impl Rule for ConstantFolding {
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Values { .. }
             | LogicalPlan::System { .. }
-            | LogicalPlan::Sort { .. } => None,
+            | LogicalPlan::Sort { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. } => None,
         }
     }
 }
@@ -525,7 +527,9 @@ fn base_table(plan: &LogicalPlan) -> Option<&LogicalPlan> {
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::Values { .. }
         | LogicalPlan::System { .. }
-        | LogicalPlan::Sort { .. } => None,
+        | LogicalPlan::Sort { .. }
+        | LogicalPlan::Recursive { .. }
+        | LogicalPlan::WorkTable { .. } => None,
     }
 }
 

@@ -300,7 +300,9 @@ fn collapse(db: &State, plan: LogicalPlan, has_where: bool) -> Result<ViewBase> 
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Values { .. }
             | LogicalPlan::System { .. }
-            | LogicalPlan::Sort { .. }) => return Err(broken(&format!("an updatable view reads {}", other.explain()))),
+            | LogicalPlan::Sort { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. }) => return Err(broken(&format!("an updatable view reads {}", other.explain()))),
         }
     };
     let base = db.catalog.table(&table).cloned().ok_or_else(|| broken(&format!("an updatable view reads {table}, not a table")))?;

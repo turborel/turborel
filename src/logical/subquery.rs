@@ -11,7 +11,7 @@
 //! nested inside are in this plan's rows, so they are replaced too, and its
 //! own plan is not.
 
-use super::{AggCall, Cond, Expr, LogicalPlan, and_all, map_cond_exprs, split_and};
+use super::{AggCall, Cond, Expr, LogicalPlan, and_all, split_and};
 use crate::value::{CompOp, Value};
 
 /// \[DESIGN\] A bound subquery.
@@ -35,33 +35,38 @@ fn bound_expr(e: Expr, values: &[Value]) -> Expr {
     e.map_children(&mut |child| bound_expr(child, values))
 }
 
-/// `plan` with every outer reference slot replaced by its value: in its
-/// conditions, among them the outer expressions of the subqueries nested in
-/// it, which are over its rows; in its select list; in its set
-/// functions' arguments; and in the rows of its VALUES.
+/// `plan` with every outer reference slot replaced by its value.
 fn bound_plan(plan: LogicalPlan, values: &[Value]) -> LogicalPlan {
-    let bound = |e: Expr| bound_expr(e, values);
+    map_plan_exprs(plan, &mut |e| bound_expr(e, values))
+}
+
+/// `plan` with each expression over its rows, at any node, replaced by `f`
+/// of it: in its conditions, among them the outer expressions of the
+/// subqueries nested in it, which are over its rows; in its select lists;
+/// in its set functions' arguments; and in the rows of its VALUES. Not
+/// those of a subquery's plan, which are over the subquery's rows.
+pub fn map_plan_exprs(plan: LogicalPlan, f: &mut dyn FnMut(Expr) -> Expr) -> LogicalPlan {
     let node = match plan {
-        LogicalPlan::Filter { cond, input } => LogicalPlan::Filter { cond: map_cond_exprs(cond, &bound), input },
-        LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs: exprs.into_iter().map(bound).collect(), input },
+        LogicalPlan::Filter { cond, input } => LogicalPlan::Filter { cond: cond.map_exprs(f), input },
+        LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs: exprs.into_iter().map(&mut *f).collect(), input },
         LogicalPlan::Aggregate { groups, collations, aggs, input } => {
-            let aggs = aggs.into_iter().map(|a| AggCall { arg: a.arg.map(bound), ..a }).collect();
+            let aggs = aggs.into_iter().map(|a| AggCall { arg: a.arg.map(&mut *f), ..a }).collect();
             LogicalPlan::Aggregate { groups, collations, aggs, input }
         }
-        LogicalPlan::OuterJoin { kind, cond, left, right } => {
-            LogicalPlan::OuterJoin { kind, cond: map_cond_exprs(cond, &bound), left, right }
-        }
+        LogicalPlan::OuterJoin { kind, cond, left, right } => LogicalPlan::OuterJoin { kind, cond: cond.map_exprs(f), left, right },
         LogicalPlan::Values { rows, types } => {
-            LogicalPlan::Values { rows: rows.into_iter().map(|r| r.into_iter().map(bound).collect()).collect(), types }
+            LogicalPlan::Values { rows: rows.into_iter().map(|r| r.into_iter().map(&mut *f).collect()).collect(), types }
         }
         other @ (LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Product { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::SetOp { .. }
-        | LogicalPlan::Sort { .. }) => other,
+        | LogicalPlan::Sort { .. }
+        | LogicalPlan::Recursive { .. }
+        | LogicalPlan::WorkTable { .. }) => other,
     };
-    node.map_inputs(|p| bound_plan(p, values))
+    node.map_inputs(|p| map_plan_exprs(p, f))
 }
 
 /// Whether running `plan` can raise a run-time error: through a condition
@@ -72,12 +77,15 @@ fn plan_can_raise(plan: &LogicalPlan) -> bool {
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(Expr::can_raise),
         LogicalPlan::Aggregate { aggs, .. } => !aggs.is_empty(),
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
+        // Past EXECUTOR.MAX_ITERATIONS, its iteration is refused.
+        LogicalPlan::Recursive { .. } => true,
         LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Product { .. }
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::Distinct { .. }
-        | LogicalPlan::Sort { .. } => false,
+        | LogicalPlan::Sort { .. }
+        | LogicalPlan::WorkTable { .. } => false,
     };
     own || plan.inputs().any(plan_can_raise)
 }
@@ -143,7 +151,9 @@ pub fn plan_has_outer(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Product { .. }
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::Distinct { .. }
-        | LogicalPlan::Sort { .. } => false,
+        | LogicalPlan::Sort { .. }
+        | LogicalPlan::Recursive { .. }
+        | LogicalPlan::WorkTable { .. } => false,
     };
     own || plan.inputs().any(plan_has_outer)
 }

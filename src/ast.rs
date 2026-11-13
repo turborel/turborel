@@ -52,7 +52,7 @@ pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use query::{
     Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable,
     QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn,
-    SortSpecification, TableExpression, TableReference, Updatability, ValuesRow,
+    SortSpecification, TableExpression, TableReference, Updatability, ValuesRow, WithElement, WithQuery,
 };
 
 pub use schema::{

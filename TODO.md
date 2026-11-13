@@ -30,12 +30,18 @@ D and the clauses that define them, so a bare `§` here is SQL:2023. The
 groups run in the order they build on each other, and so do the items in
 each group.
 
+### Types
+
+- Arrays (S091) [§4.12.2, §6.25, §6.47 to §6.49] and row types (T051)
+  [§4.10, §7.1]. ARRAY[...] and ROW(...) values, their columns,
+  comparison, CARDINALITY and UNNEST in FROM. SEARCH and CYCLE need them.
+
 ### Queries
 
-- WITH and WITH RECURSIVE (T121, T122, T131, T132) [§7.17], with SEARCH and
-  CYCLE (T133) [§7.18]. Hierarchies and graphs need recursion, and a query
-  that names a subquery once reads better than one that repeats it. Cycle
-  marks may be of any type, BOOLEAN among them.
+- SEARCH and CYCLE (T133) [§7.18] of WITH RECURSIVE, once ARRAY and ROW
+  types are in. The sequence column of SEARCH and the path of CYCLE are an
+  array of rows, so they wait on those types. Cycle marks may be of any
+  type, BOOLEAN among them.
 - Enhanced derived column names (T285) [§7.16]. A select list item's column
   is named from its expression in more cases.
 - Partitioned outer joins (F403) [§7.10], `PARTITION BY` on one side of an

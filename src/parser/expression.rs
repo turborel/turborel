@@ -264,7 +264,7 @@ impl Parser {
     /// (`<row value constructor list>`), if a list of two elements or more
     /// begins here; else none, the position left anywhere.
     fn row_list(&mut self) -> Result<Option<RowValue>> {
-        if !self.accept_delim(delim::LEFT_PAREN) || self.is_kw(kw::SELECT) {
+        if !self.accept_delim(delim::LEFT_PAREN) || self.is_kw(kw::SELECT) || self.is_kw(kw::WITH) {
             return Ok(None);
         }
         if self.is_kw(kw::NULL) || self.is_kw(kw::DEFAULT) {
@@ -317,7 +317,9 @@ impl Parser {
         }
         let open =
             (1..self.toks.len().saturating_add(1)).find(|&n| !matches!(self.peek_at(n), Tok::Delimiter(delim::LEFT_PAREN))).unwrap_or(1);
-        if !matches!(self.peek_at(open), Tok::KeyWord(kw::SELECT) | Tok::KeyWord(kw::VALUES) | Tok::KeyWord(kw::TABLE)) {
+        // [ISO/IEC 9075-2:2023 §7.17] a query begins so, or with a <with
+        // clause>.
+        if !matches!(self.peek_at(open), Tok::KeyWord(kw::SELECT | kw::VALUES | kw::TABLE | kw::WITH)) {
             return false;
         }
         if open == 1 {

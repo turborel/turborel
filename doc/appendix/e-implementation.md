@@ -44,6 +44,9 @@ choices:
 | Two rows all null, under NULLS NOT DISTINCT | the same: a key refuses the second, and UNIQUE is false of them |
 | A sequence generator of no type; its bounds unwritten | NUMERIC(18); ascending, 1 to the type's greatest value, descending, its least to -1 |
 | The values a crash skips of a sequence generator | at most 1024, those reserved and not given out |
+| A recursive query with no fixpoint | refused after EXECUTOR.MAX_ITERATIONS iterations, a million unless the session sets another, 0 for no limit |
+| How a recursive query is evaluated | over every row each iteration, as the standard says, or over only the rows the last iteration added where that gives the same rows |
+| The order of a recursive query's rows | as they are found, unless ORDER BY orders them |
 | Which identifiers are users | any, of a program's own session; of a server's client, the users the database keeps |
 
 [CONFORMANCE.md](../../CONFORMANCE.md) lists each choice with the rule

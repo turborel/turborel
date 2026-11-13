@@ -10,6 +10,7 @@
 
 mod dynamic;
 mod expr;
+mod fixpoint;
 mod pushed;
 mod render;
 mod sets;
@@ -22,10 +23,11 @@ pub use expr::{
     Cond, DomainChecks, Expr, Quantifier, Slot, Truth, and_all, cond_columns, expr_columns, map_cond_columns, map_cond_exprs,
     map_expr_columns, or_all, split_and,
 };
+pub use fixpoint::Fixpoint;
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
-pub use subquery::{Decorrelated, Subquery, plan_has_outer};
+pub use subquery::{Decorrelated, Subquery, map_plan_exprs, plan_has_outer};
 
 use crate::catalog::QualifiedName;
 use crate::functions::AggregateRef;
@@ -161,6 +163,26 @@ pub enum LogicalPlan {
         /// The rows sorted.
         input: Box<LogicalPlan>,
     },
+    /// [ISO/IEC 9075-2:2023 §7.17 GR2c ii] The rows of member `member` of
+    /// a recursive stratum of a `<with list>`: those of the fixpoint of its
+    /// members' queries.
+    Recursive {
+        /// Which member's rows, by its place among them.
+        member: usize,
+        /// The members' queries, and how their fixpoint is found.
+        fixpoint: Fixpoint<LogicalPlan>,
+        /// Its columns' display names.
+        names: Vec<String>,
+    },
+    /// [ISO/IEC 9075-2:2023 §7.17 GR2c ii 2] A reference, in a query of a
+    /// recursive stratum, to its member `member`: the rows the iteration
+    /// before gave it, of the `Recursive` it is read in.
+    WorkTable {
+        /// Which member, by its place among them.
+        member: usize,
+        /// Its columns' display names.
+        names: Vec<String>,
+    },
 }
 
 /// [ISO/IEC 9075:1992 §7.10] A set operator.
@@ -230,6 +252,11 @@ fn cond_subqueries(c: &Cond) -> Vec<&Subquery> {
 }
 
 impl Cond {
+    /// Whether it has a subquery, among its expressions' too.
+    pub fn has_subquery(&self) -> bool {
+        !cond_subqueries(self).is_empty()
+    }
+
     /// Every base table the subqueries of this condition read, none if it
     /// has none.
     pub fn tables(&self) -> Vec<QualifiedName> {
@@ -281,33 +308,42 @@ impl LogicalPlan {
             | LogicalPlan::Product { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }
-            | LogicalPlan::Sort { .. } => {}
+            | LogicalPlan::Sort { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. } => {}
         }
         out
     }
 }
 
 impl LogicalPlan {
-    /// Its inputs, in order: two, one or none, given without a list made.
+    /// Its inputs, in order: two, one or none, or a recursive stratum's
+    /// members' queries, given without a list made.
     pub fn inputs(&self) -> impl Iterator<Item = &LogicalPlan> {
-        let (first, second): (Option<&LogicalPlan>, Option<&LogicalPlan>) = match self {
-            LogicalPlan::Scan { .. } | LogicalPlan::System { .. } | LogicalPlan::Values { .. } => (None, None),
+        let (first, second, rest): (Option<&LogicalPlan>, Option<&LogicalPlan>, &[LogicalPlan]) = match self {
+            LogicalPlan::Scan { .. } | LogicalPlan::System { .. } | LogicalPlan::Values { .. } | LogicalPlan::WorkTable { .. } => {
+                (None, None, &[])
+            }
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
-                (Some(left), Some(right))
+                (Some(left), Some(right), &[])
             }
             LogicalPlan::Filter { input, .. }
             | LogicalPlan::Aggregate { input, .. }
             | LogicalPlan::Project { input, .. }
             | LogicalPlan::Distinct { input }
-            | LogicalPlan::Sort { input, .. } => (Some(input), None),
+            | LogicalPlan::Sort { input, .. } => (Some(input), None, &[]),
+            LogicalPlan::Recursive { fixpoint, .. } => fixpoint.plans(),
         };
-        first.into_iter().chain(second)
+        first.into_iter().chain(second).chain(rest)
     }
 
     /// Display names for the columns of this node's output.
     pub fn names(&self) -> Vec<String> {
         match self {
-            LogicalPlan::Scan { names, .. } | LogicalPlan::System { names, .. } => names.clone(),
+            LogicalPlan::Scan { names, .. }
+            | LogicalPlan::System { names, .. }
+            | LogicalPlan::Recursive { names, .. }
+            | LogicalPlan::WorkTable { names, .. } => names.clone(),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => {
                 let mut n = left.names();
                 n.extend(right.names());
@@ -361,7 +397,8 @@ impl LogicalPlan {
     pub fn map_inputs(self, mut f: impl FnMut(LogicalPlan) -> LogicalPlan) -> LogicalPlan {
         let mut g = |b: Box<LogicalPlan>| Box::new(f(*b));
         match self {
-            LogicalPlan::Scan { .. } | LogicalPlan::System { .. } | LogicalPlan::Values { .. } => self,
+            LogicalPlan::Scan { .. } | LogicalPlan::System { .. } | LogicalPlan::Values { .. } | LogicalPlan::WorkTable { .. } => self,
+            LogicalPlan::Recursive { member, fixpoint, names } => LogicalPlan::Recursive { member, fixpoint: fixpoint.map(f), names },
             LogicalPlan::Filter { cond, input } => LogicalPlan::Filter { cond, input: g(input) },
             LogicalPlan::Product { left, right } => {
                 let left = g(left);
@@ -424,6 +461,8 @@ impl LogicalPlan {
                     .join(", ")
             ),
             LogicalPlan::Sort { keys, input } => writeln!(out, "{pad}Sort {}", render_keys(keys, &inner(input))),
+            LogicalPlan::Recursive { member, fixpoint, .. } => writeln!(out, "{pad}Recursive member {member} {}", fixpoint.word()),
+            LogicalPlan::WorkTable { member, .. } => writeln!(out, "{pad}Work table of member {member}"),
         };
         for input in self.inputs() {
             input.write(out, depth.saturating_add(1));

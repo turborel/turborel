@@ -148,7 +148,9 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
         | Plan::System { .. }
         | Plan::Values { .. }
         | Plan::Append { .. }
-        | Plan::Sort { .. } => false,
+        | Plan::Sort { .. }
+        | Plan::Recursive { .. }
+        | Plan::WorkTable { .. } => false,
     }
 }
 
@@ -188,7 +190,9 @@ pub(crate) fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }
-        | Plan::Values { .. } => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
+        | Plan::Values { .. }
+        | Plan::Recursive { .. }
+        | Plan::WorkTable { .. } => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
     }
 }
 

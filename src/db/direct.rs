@@ -36,7 +36,7 @@ impl Session {
         let cancel = (named_cancel && matches!(second, Some(Tok::KeyWord("CONNECTION")))) || begins_truncate(first, second);
         let joined = (matches!(first, Some(Tok::Identifier(_) | Tok::Introducer(_))) && !cancel)
             || matches!((first, second), (Some(Tok::KeyWord("MODULE")), Some(Tok::Delimiter("."))));
-        if joined || matches!(first, Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE") | Tok::Delimiter("("))) {
+        if joined || matches!(first, Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE" | "WITH") | Tok::Delimiter("("))) {
             return self.open_cursor(sql).map(Direct::Rows);
         }
         if matches!((first, second), (Some(Tok::KeyWord("CREATE")), Some(Tok::KeyWord("SCHEMA")))) {

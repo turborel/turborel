@@ -15,14 +15,23 @@
 //! have none [§7.10 SR16a]; a set operation's are both operands' [SR16d],
 //! with CORRESPONDING those of the columns of each it names [SR9a iv].
 //! Of each column only those of a leaf underlying table are kept.
+//!
+//! A query a `<with clause>` names has the leaves of its element's query,
+//! and each column of it is drawn from what that column of its query is
+//! [ISO/IEC 9075-2:2023 §7.17 SR23b], which a reference to it notes
+//! (`Binder::note`). Of a `<with clause>` nested in a derived table, the
+//! leaves are every table it names, in an element referenced or not and in
+//! a subquery too, so a view may be found to hold fewer privileges, never
+//! more.
 
 use super::from::FromItem;
-use super::query::Nesting;
 use super::set_operations::bind_query_expression;
+use super::subquery::Outer;
+use super::with::{element_nesting, with_scope};
 use super::{Binder, Context, Selected, Uses, qualify, views};
 use crate::ast::{
-    Correspondence, Literal, QueryExpression, QuerySpecification, SelectItem, SelectList, SelectSublist, SetOperation, TableReference,
-    ValueExpression, ValueSpecification,
+    Correspondence, Literal, QueryExpression, QuerySpecification, SelectItem, SelectList, SelectSublist, SetOperation, TableName,
+    TableReference, ValueExpression, ValueSpecification,
 };
 use crate::catalog::{QualifiedName, Underlying};
 use crate::error::Result;
@@ -35,19 +44,26 @@ use crate::value::Decimal;
 ///
 /// The query does not bind.
 pub fn underlying(cx: Context<'_>, query: &QueryExpression) -> Result<Underlying> {
+    drawn_from(cx, query, None)
+}
+
+/// What the columns of `query`, bound with `cx` as a subquery of `site`'s
+/// query if given, are drawn from, as `underlying` finds them.
+pub(super) fn drawn_from<'s>(cx: Context<'_>, query: &QueryExpression, site: Option<&'s Outer<'s>>) -> Result<Underlying> {
     match query {
-        QueryExpression::Spec(spec) => of_spec(cx, query, spec),
+        QueryExpression::Spec(spec) => of_spec(cx, query, (spec, site)),
         QueryExpression::Values(_) => {
-            let degree = bind_query_expression(cx, query, &Nesting::Query)?.columns.len();
+            let degree = bind_query_expression(cx, query, &element_nesting(site))?.columns.len();
             Ok(Underlying { leaves: Vec::new(), columns: vec![Vec::new(); degree] })
         }
         QueryExpression::SetOp(s) => {
-            let (left, right) = (underlying(cx, &s.left)?, underlying(cx, &s.right)?);
+            let (left, right) = (drawn_from(cx, &s.left, site)?, drawn_from(cx, &s.right, site)?);
             match &s.corresponding {
                 Correspondence::Position => Ok(merged(left, right)),
-                Correspondence::Names | Correspondence::By(_) => corresponded(cx, s, (left, right)),
+                Correspondence::Names | Correspondence::By(_) => corresponded(cx, (s, site), (left, right)),
             }
         }
+        QueryExpression::With(w) => with_scope(cx, w, (site, true), |inner| drawn_from(inner, &w.body, site)),
     }
 }
 
@@ -73,9 +89,13 @@ fn merged(left: Underlying, right: Underlying) -> Underlying {
 /// operation `s` with CORRESPONDING are drawn from, of its operands'
 /// `left` and `right`: as `( SELECT SL FROM TN1 ) OP ( SELECT SL FROM
 /// TN2 )`, each column of SL that of the column of its name in each.
-fn corresponded(cx: Context<'_>, s: &SetOperation, (left, right): (Underlying, Underlying)) -> Result<Underlying> {
+fn corresponded(
+    cx: Context<'_>,
+    (s, site): (&SetOperation, Option<&Outer<'_>>),
+    (left, right): (Underlying, Underlying),
+) -> Result<Underlying> {
     let names_of = |q: &QueryExpression| -> Result<Vec<Option<String>>> {
-        Ok(bind_query_expression(cx, q, &Nesting::Query)?.columns.into_iter().map(|c| c.name).collect())
+        Ok(bind_query_expression(cx, q, &element_nesting(site))?.columns.into_iter().map(|c| c.name).collect())
     };
     let (in_left, in_right) = (names_of(&s.left)?, names_of(&s.right)?);
     let sl: Vec<String> = match &s.corresponding {
@@ -95,13 +115,14 @@ fn corresponded(cx: Context<'_>, s: &SetOperation, (left, right): (Underlying, U
 }
 
 /// What the columns of the `<query specification>` `spec`, the query
-/// `query`, are drawn from [ISO/IEC 9075:1992 §7.9 SR5].
-fn of_spec(cx: Context<'_>, query: &QueryExpression, spec: &QuerySpecification) -> Result<Underlying> {
+/// `query`, a subquery of `site`'s if given, are drawn from [ISO/IEC
+/// 9075:1992 §7.9 SR5].
+fn of_spec(cx: Context<'_>, query: &QueryExpression, (spec, site): (&QuerySpecification, Option<&Outer<'_>>)) -> Result<Underlying> {
     let mut leaves = Vec::new();
     spec.table_expression.from.iter().for_each(|r| reference_leaves(cx, r, &mut leaves));
     let (uses, selected) = (Uses::default(), Selected::default());
-    bind_query_expression(Context { uses: Some(&uses), selected: Some(&selected), ..cx }, query, &Nesting::Query)?;
-    let te = table_expression_uses(cx, spec)?;
+    bind_query_expression(Context { uses: Some(&uses), selected: Some(&selected), ..cx }, query, &element_nesting(site))?;
+    let te = table_expression_uses(cx, (spec, site))?;
     // Each column's own: a column of none would have no REFERENCES.
     let columns = selected
         .into_inner()
@@ -116,13 +137,15 @@ fn of_spec(cx: Context<'_>, query: &QueryExpression, spec: &QuerySpecification) 
 }
 
 /// [ISO/IEC 9075:1992 §7.3 SR2] The columns the `<table expression>` of
-/// `spec` references: its own, bound with `cx` as `SELECT 1` of it.
-fn table_expression_uses(cx: Context<'_>, spec: &QuerySpecification) -> Result<Vec<(QualifiedName, String)>> {
+/// `spec` references: its own, bound with `cx` as `SELECT 1` of it, a
+/// subquery of `site`'s query if given.
+fn table_expression_uses(cx: Context<'_>, (spec, site): (&QuerySpecification, Option<&Outer<'_>>)) -> Result<Vec<(QualifiedName, String)>> {
     let one = ValueExpression::Value(ValueSpecification::Literal(Literal::Exact(Decimal::new(1_i128, 0_u32))));
     let select_list = SelectList::Values(vec![SelectSublist::Derived(SelectItem { value: one, alias: None, at: 0 })]);
     let te = QuerySpecification { distinct: false, select_list, table_expression: spec.table_expression.clone() };
     let uses = Uses::default();
-    bind_query_expression(Context { uses: Some(&uses), selected: None, ..cx }, &QueryExpression::Spec(Box::new(te)), &Nesting::Query)?;
+    let nesting = element_nesting(site);
+    bind_query_expression(Context { uses: Some(&uses), selected: None, ..cx }, &QueryExpression::Spec(Box::new(te)), &nesting)?;
     Ok(uses.into_inner())
 }
 
@@ -132,7 +155,7 @@ fn table_expression_uses(cx: Context<'_>, spec: &QuerySpecification) -> Result<V
 /// query.
 fn reference_leaves(cx: Context<'_>, r: &TableReference, leaves: &mut Vec<QualifiedName>) {
     match r {
-        TableReference::Table(t) => add_new(leaves, vec![qualify(&t.table, cx.schema)]),
+        TableReference::Table(t) => add_new(leaves, named_leaves(cx, &t.table)),
         TableReference::Derived(d) => query_leaves(cx, &d.query.query, leaves),
         TableReference::Joined(j) => {
             reference_leaves(cx, &j.left, leaves);
@@ -141,7 +164,9 @@ fn reference_leaves(cx: Context<'_>, r: &TableReference, leaves: &mut Vec<Qualif
     }
 }
 
-/// Adds to `leaves` the leaf underlying tables of query `q`.
+/// Adds to `leaves` the leaf underlying tables of query `q`: through its
+/// joined and derived tables and set operations' operands, not its
+/// subqueries'; of a `<with clause>`, those of every element too.
 fn query_leaves(cx: Context<'_>, q: &QueryExpression, leaves: &mut Vec<QualifiedName>) {
     match q {
         QueryExpression::Spec(spec) => spec.table_expression.from.iter().for_each(|r| reference_leaves(cx, r, leaves)),
@@ -150,7 +175,21 @@ fn query_leaves(cx: Context<'_>, q: &QueryExpression, leaves: &mut Vec<Qualified
             query_leaves(cx, &s.left, leaves);
             query_leaves(cx, &s.right, leaves);
         }
+        // Every table it names, a subquery's too, but no query name it has
+        // in scope.
+        QueryExpression::With(_) => q.for_each_named(&mut |t, query| {
+            if !query {
+                add_new(leaves, named_leaves(cx, &t.table));
+            }
+        }),
     }
+}
+
+/// The leaf underlying tables of the table, view or query `name` names:
+/// it, or, of a query a `<with clause>` around names, its query's.
+fn named_leaves(cx: Context<'_>, name: &TableName) -> Vec<QualifiedName> {
+    let query = name.auth.is_none().then(|| cx.queries.and_then(|q| q.leaves_of(&name.ident))).flatten();
+    query.unwrap_or_else(|| vec![qualify(name, cx.schema)])
 }
 
 /// Adds to `to` those of `more` it has not.

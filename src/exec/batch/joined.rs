@@ -60,7 +60,9 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
-        | Plan::Distinct { .. } => None,
+        | Plan::Distinct { .. }
+        | Plan::Recursive { .. }
+        | Plan::WorkTable { .. } => None,
     }
 }
 
@@ -110,7 +112,9 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
-        | Plan::Distinct { .. } => return columns,
+        | Plan::Distinct { .. }
+        | Plan::Recursive { .. }
+        | Plan::WorkTable { .. } => return columns,
     };
     columns.extend(keys.iter().flat_map(|&(l, r)| [l, r.saturating_add(width)]));
     columns
@@ -145,7 +149,9 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
-        | Plan::Distinct { .. } => Err(crate::exec::broken("a join of streams is not one")),
+        | Plan::Distinct { .. }
+        | Plan::Recursive { .. }
+        | Plan::WorkTable { .. } => Err(crate::exec::broken("a join of streams is not one")),
     }
 }
 
@@ -259,7 +265,9 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
-        | Plan::Distinct { .. } => true,
+        | Plan::Distinct { .. }
+        | Plan::Recursive { .. }
+        | Plan::WorkTable { .. } => true,
     }
 }
 

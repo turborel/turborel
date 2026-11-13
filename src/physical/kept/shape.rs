@@ -51,7 +51,9 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }
-        | Plan::Values { .. } => false,
+        | Plan::Values { .. }
+        | Plan::Recursive { .. }
+        | Plan::WorkTable { .. } => false,
     }
 }
 

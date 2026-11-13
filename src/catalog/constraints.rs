@@ -58,8 +58,9 @@ pub enum ConstraintKind {
         /// definition>`; else the session's default schema as it was
         /// defined.
         names: String,
-        /// The tables its subqueries read, none if it has none: a change
-        /// to one, or to the table, may falsify it for any row.
+        /// The tables its subqueries read, none if it has none, its own
+        /// table if they read none: a change to one, or to the table, may
+        /// falsify it for any row.
         reads: Vec<QualifiedName>,
         /// The columns of its table and of the tables it reads it sees,
         /// once it is bound: none before.

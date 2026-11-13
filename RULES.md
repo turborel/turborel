@@ -104,6 +104,7 @@ verification approach DO-178C expects (§8).
 | D64 | TRUNCATE TABLE replaces a table's storage |
 | D65 | LIKE and AS are found again from what they read |
 | D66 | A key of NULLS NOT DISTINCT holds its nulls in its index |
+| D67 | A recursive query is iterated over held work tables, bounded by a setting |
 
 ### The project
 
@@ -537,6 +538,29 @@ range is open below starts after them, and the `Index` contract says no
 probe but a read of every entry selects one. The planner is unchanged: it
 reads an index whole only of columns that are NOT NULL, and nulls are
 ordered after every value where the index orders them first.
+
+#### D67. A recursive query is iterated over held work tables, bounded by a setting
+
+A WITH RECURSIVE list is bound stratum by stratum [ISO/IEC 9075-2:2023
+§7.17 SR3j v], each recursive stratum one plan whose members read work
+tables, the rows each member gave the iteration before
+(`logical/fixpoint.rs`, `exec/recursive.rs`). A work table is a list of
+held rows, spilled past MEMORY.WORK_BYTES, shared by the plans that read
+it, so a deep recursion needs no more memory than its rows.
+
+The General Rules evaluate every member again over every row, until no
+member gives more [GR2c ii]. That costs the square of the iterations, so a
+stratum of one member whose recursive operand keeps each row of its work
+table as it would alone is evaluated over only the rows each iteration
+adds, which gives the same rows. Any other stratum is evaluated as the
+rules say. A recursive operand's column takes its anchor's type [SR19 b ii
+2], so the types are found by binding again until they settle.
+
+A recursion may have no finite fixpoint [NOTE 322], so the session setting
+EXECUTOR.MAX_ITERATIONS refuses one past its count of iterations (SQLCODE
+-918), and a work table is read only while its statement is not cancelled
+(D44). SEARCH and CYCLE [§7.18] wait for ARRAY and ROW types, which their
+columns are of.
 
 #### D33. Schema changes are transactional
 

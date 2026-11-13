@@ -43,6 +43,7 @@ pub(super) fn bind_query_expression(cx: Context<'_>, q: &QueryExpression, nestin
         QueryExpression::Spec(spec) => bind_query(cx, spec, &[], nesting),
         QueryExpression::Values(rows) => values(cx, rows, nesting),
         QueryExpression::SetOp(s) => set_operation(cx, s, nesting).or_at(s.at),
+        QueryExpression::With(w) => super::with::bind_with(cx, w, nesting),
     }
 }
 
@@ -139,7 +140,7 @@ fn conformed(e: Expr, t: Option<DataType>, to: DataType) -> Expr {
 
 /// [ISO/IEC 9075-2:2023 §9.5] The collation of a set operation's column of
 /// `a` and `b`, none if they differ.
-fn result_collation(a: &OutColumn, b: &OutColumn) -> Option<QualifiedName> {
+pub(super) fn result_collation(a: &OutColumn, b: &OutColumn) -> Option<QualifiedName> {
     a.collation.clone().filter(|_| a.collation == b.collation)
 }
 
@@ -282,11 +283,27 @@ fn set_operation(cx: Context<'_>, s: &SetOperation, nesting: &Nesting<'_>) -> Re
 /// again (RULES.md R-CF-6).
 #[inline(never)]
 fn combined(cx: Context<'_>, s: &SetOperation, left: Bound, right: Bound) -> Result<Bound> {
+    let (left, right) = aligned(&cx, s, (left, right))?;
+    let clause = if s.op == SetOperator::Intersect { "§7.10 SR10b ii" } else { "§7.10 SR12b ii" };
+    let mut columns = Vec::new();
+    for (a, b) in left.columns.iter().zip(&right.columns) {
+        let data_type = set_type(&[a.data_type, b.data_type], clause)?;
+        let name = a.name.clone().filter(|_| a.name == b.name);
+        let collation = result_collation(a, b);
+        columns.push(OutColumn { name, collation, data_type, not_null: a.not_null && b.not_null, origin: None });
+    }
+    Ok(assembled(&cx, s, (left, right), columns))
+}
+
+/// [ISO/IEC 9075:1992 §7.10 SR9, SR15] The operands `left` and `right` of
+/// the set operation `s`, their columns corresponding: by position, of one
+/// degree, or by name; in a constraint, not possibly non-deterministic.
+pub(super) fn aligned(cx: &Context<'_>, s: &SetOperation, (left, right): (Bound, Bound)) -> Result<(Bound, Bound)> {
     let character = left.columns.iter().chain(&right.columns).any(|c| c.data_type.is_character());
     if cx.purpose.constrains() && character && !(s.op == SetOperator::Union && s.all) {
         return Err(nondeterministic("§7.10 SR15", "UNION, EXCEPT or INTERSECT, not UNION ALL, of a character string column"));
     }
-    let (left, right) = match &s.corresponding {
+    Ok(match &s.corresponding {
         Correspondence::Position => {
             if left.columns.len() != right.columns.len() {
                 let (n, m) = (left.columns.len(), right.columns.len());
@@ -298,27 +315,25 @@ fn combined(cx: Context<'_>, s: &SetOperation, left: Bound, right: Bound) -> Res
         }
         Correspondence::Names => corresponding(left, right, None)?,
         Correspondence::By(names) => corresponding(left, right, Some(names))?,
-    };
-    let clause = if s.op == SetOperator::Intersect { "§7.10 SR10b ii" } else { "§7.10 SR12b ii" };
-    let mut columns = Vec::new();
-    for (a, b) in left.columns.iter().zip(&right.columns) {
-        let data_type = set_type(&[a.data_type, b.data_type], clause)?;
-        let name = a.name.clone().filter(|_| a.name == b.name);
-        let collation = result_collation(a, b);
-        columns.push(OutColumn { name, collation, data_type, not_null: a.not_null && b.not_null, origin: None });
-    }
+    })
+}
+
+/// [ISO/IEC 9075:1992 §7.10 GR1b] The set operation `s` of its operands
+/// `left` and `right`, aligned, its result's columns `columns`: each
+/// operand's brought to their types.
+pub(super) fn assembled(cx: &Context<'_>, s: &SetOperation, (left, right): (Bound, Bound), columns: Vec<OutColumn>) -> Bound {
     let op = match s.op {
         SetOperator::Union => SetOp::Union,
         SetOperator::Except => SetOp::Except,
         SetOperator::Intersect => SetOp::Intersect,
     };
     let (l, r) = (conform(left, &columns), conform(right, &columns));
-    Ok(Bound { plan: collated_set_operation(&cx, (op, s.all), (l, r), &columns), columns })
+    Bound { plan: collated_set_operation(cx, (op, s.all), (l, r), &columns), columns }
 }
 
 /// The plan of `bound`, its columns cast to the types of `columns` where
 /// theirs differ.
-fn conform(bound: Bound, columns: &[OutColumn]) -> LogicalPlan {
+pub(super) fn conform(bound: Bound, columns: &[OutColumn]) -> LogicalPlan {
     if bound.columns.iter().zip(columns).all(|(a, b)| a.data_type == b.data_type) {
         return bound.plan;
     }

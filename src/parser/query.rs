@@ -7,10 +7,19 @@ use super::Parser;
 use crate::ast::{
     Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable,
     QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn,
-    SortSpecification, TableExpression, TableName, TableReference, ValuesRow,
+    SortSpecification, TableExpression, TableName, TableReference, ValuesRow, WithElement, WithQuery,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
+
+// [ISO/IEC 9075-2:2023 §5.2, §7.17, §7.18] Words of a <with clause> that
+// SQL-92 does not reserve: identifiers, read as these only there.
+/// RECURSIVE, after WITH.
+const RECURSIVE: &str = "RECURSIVE";
+/// SEARCH, which begins a `<search clause>`.
+const SEARCH: &str = "SEARCH";
+/// CYCLE, which begins a `<cycle clause>`.
+const CYCLE: &str = "CYCLE";
 
 impl Parser {
     /// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] `<cursor specification>`
@@ -54,10 +63,58 @@ impl Parser {
         Ok(SortSpecification { key, collate, descending })
     }
 
-    /// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §7.10] `<query expression>`
-    /// ::= `<query term>` | `<query expression>` {UNION | EXCEPT} \[ALL\]
-    /// \[`<corresponding spec>`\] `<query term>`
+    /// [ISO/IEC 9075-2:2023 §7.17] `<query expression>` ::= \[`<with
+    /// clause>`\] `<query expression body>`
     pub(super) fn query_expression(&mut self) -> Result<QueryExpression> {
+        if self.is_kw(kw::WITH) {
+            return self.nested(Self::with_clause);
+        }
+        self.query_expression_body()
+    }
+
+    /// [ISO/IEC 9075-2:2023 §7.17] `<with clause>` ::= WITH \[RECURSIVE\]
+    /// `<with list>`, and the `<query expression body>` after it.
+    /// RECURSIVE, which SQL-92 does not reserve, is that key word unless
+    /// AS or a `<with column list>` follows it, naming a query RECURSIVE.
+    fn with_clause(&mut self) -> Result<QueryExpression> {
+        let at = self.here();
+        self.expect_kw(kw::WITH)?;
+        let named = matches!(self.peek_at(1), Tok::KeyWord(kw::AS) | Tok::Delimiter(delim::LEFT_PAREN));
+        let recursive = !named && self.accept_word(RECURSIVE);
+        let mut elements = vec![self.with_list_element()?];
+        while self.accept_delim(delim::COMMA) {
+            elements.push(self.with_list_element()?);
+        }
+        let body = self.query_expression_body()?;
+        Ok(QueryExpression::With(Box::new(WithQuery { recursive, elements, body, at })))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §7.17] `<with list element>` ::= `<query
+    /// name>` \[(`<with column list>`)\] AS `<table subquery>` \[`<search or
+    /// cycle clause>`\]. The `<search or cycle clause>` [§7.18] is valid SQL
+    /// not implemented: its sequence and path columns are of row and array
+    /// types, which turborel has not.
+    fn with_list_element(&mut self) -> Result<WithElement> {
+        let at = self.here();
+        let name = self.identifier()?;
+        let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.name_list()?) } else { None };
+        self.expect_kw(kw::AS)?;
+        let query = self.subquery()?.query;
+        if self.is_word(SEARCH) || self.is_word(CYCLE) {
+            return Err(self.unsupported("a <search or cycle clause> [ISO/IEC 9075-2:2023 §7.18]"));
+        }
+        Ok(WithElement { name, columns, query, at })
+    }
+
+    /// Whether the `<non-reserved word>` `word` is next.
+    fn is_word(&self, word: &str) -> bool {
+        matches!(self.peek(), Tok::Identifier(s) if s == word)
+    }
+
+    /// [X3.135-1986 §8.3; ISO/IEC 9075-2:2023 §7.17] `<query expression
+    /// body>` ::= `<query term>` | `<query expression body>` {UNION |
+    /// EXCEPT} \[ALL\] \[`<corresponding spec>`\] `<query term>`
+    fn query_expression_body(&mut self) -> Result<QueryExpression> {
         self.nested(|p| {
             let mut left = p.query_term()?;
             loop {

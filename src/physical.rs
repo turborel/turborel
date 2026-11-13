@@ -32,10 +32,11 @@ pub(crate) use kept::{filled_plan, keepable, same_shape};
 
 use crate::catalog::QualifiedName;
 use crate::db::State;
+use crate::exec::WorkRows;
 use crate::index::Probe;
 use crate::logical::{
-    AggCall, Cond, Expr, LogicalPlan, OuterJoin, SetOp, SortKey, column_name, judged_by_sets, render_cond, render_expr, render_keys,
-    split_and,
+    AggCall, Cond, Expr, Fixpoint, LogicalPlan, OuterJoin, SetOp, SortKey, column_name, judged_by_sets, render_cond, render_expr,
+    render_keys, split_and,
 };
 use crate::system::SystemRead;
 use crate::value::Value;
@@ -260,6 +261,24 @@ pub enum Plan {
         /// The rows sorted.
         input: Box<Plan>,
     },
+    /// [ISO/IEC 9075-2:2023 §7.17 GR2c ii] The rows of member `member` of
+    /// a recursive stratum: its members' plans run to their fixpoint
+    /// (`exec/recursive.rs`).
+    Recursive {
+        /// Which member's rows, by its place among them.
+        member: usize,
+        /// The members' plans, and how their fixpoint is found.
+        fixpoint: Fixpoint<Plan>,
+    },
+    /// The rows a member of the recursive stratum around it had after the
+    /// last iteration: none until the `Recursive` it is read in gives them
+    /// to it.
+    WorkTable {
+        /// Which member, by its place among them.
+        member: usize,
+        /// Its rows, once given.
+        rows: Option<WorkRows>,
+    },
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's
@@ -371,6 +390,10 @@ impl<'a> PhysicalPlanner<'a> {
             }
 
             LogicalPlan::Sort { keys, input } => self.sort(keys, input),
+            LogicalPlan::Recursive { member, fixpoint, .. } => {
+                Built::unordered(Plan::Recursive { member: *member, fixpoint: fixpoint.map_ref(|p| self.plan(p)) })
+            }
+            LogicalPlan::WorkTable { member, .. } => Built::unordered(Plan::WorkTable { member: *member, rows: None }),
         }
     }
 
@@ -477,9 +500,10 @@ impl Plan {
     /// failure, not the statement's.
     pub fn can_raise(&self) -> bool {
         match self {
-            Plan::SeqScan { .. } | Plan::IndexScan { .. } => false,
-            // A system table may fail to make its rows.
-            Plan::System { .. } => true,
+            Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::WorkTable { .. } => false,
+            // Past EXECUTOR.MAX_ITERATIONS a recursive query is refused,
+            // and a system table may fail to make its rows.
+            Plan::Recursive { .. } | Plan::System { .. } => true,
             Plan::Filter { cond, input, .. } => cond.can_raise() || input.can_raise(),
             Plan::Project { exprs, input, .. } => exprs.iter().any(Expr::can_raise) || input.can_raise(),
             Plan::Aggregate { aggs, input, .. } => !aggs.is_empty() || input.can_raise(),

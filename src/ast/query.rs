@@ -75,6 +75,38 @@ pub enum QueryExpression {
     Values(Vec<ValuesRow>),
     /// UNION, EXCEPT or INTERSECT.
     SetOp(Box<SetOperation>),
+    /// [ISO/IEC 9075-2:2023 §7.17] A `<with clause>` and the `<query
+    /// expression body>` its query names are in scope in.
+    With(Box<WithQuery>),
+}
+
+/// [ISO/IEC 9075-2:2023 §7.17] `<with clause>` ::= WITH \[RECURSIVE\]
+/// `<with list>`, and the query it is written before.
+#[derive(Debug, Clone)]
+pub struct WithQuery {
+    /// RECURSIVE was written: the `<with list>` is potentially recursive
+    /// \[SR3e\].
+    pub recursive: bool,
+    /// The `<with list element>`s, in order.
+    pub elements: Vec<WithElement>,
+    /// The `<query expression body>`.
+    pub body: QueryExpression,
+    /// Where WITH is written.
+    pub at: usize,
+}
+
+/// [ISO/IEC 9075-2:2023 §7.17] `<with list element>` ::= `<query name>`
+/// \[(`<with column list>`)\] AS `<table subquery>`
+#[derive(Debug, Clone)]
+pub struct WithElement {
+    /// The `<query name>`.
+    pub name: String,
+    /// The `<with column list>`, if written.
+    pub columns: Option<Vec<String>>,
+    /// The `<query expression>` of its `<table subquery>`.
+    pub query: QueryExpression,
+    /// Where its `<query name>` is written.
+    pub at: usize,
 }
 
 impl QueryExpression {
@@ -83,17 +115,47 @@ impl QueryExpression {
         if let QueryExpression::Spec(s) = self { Some(s) } else { None }
     }
 
+    /// Its `<query expression body>`: itself, or that after its `<with
+    /// clause>`s [ISO/IEC 9075-2:2023 §7.17].
+    pub fn body(&self) -> &QueryExpression {
+        let mut q = self;
+        while let QueryExpression::With(w) = q {
+            q = &w.body;
+        }
+        q
+    }
+
     /// Adds to `out` the `<table name>`s the `<from clause>`s of it and of
-    /// its subqueries name, as written.
+    /// its subqueries name, as written: not a `<query name>` in scope
+    /// there, which names no table [ISO/IEC 9075-2:2023 §7.17 SR3i].
     pub fn table_names<'a>(&'a self, out: &mut Vec<&'a TableName>) {
+        self.for_each_named(&mut |t, query| {
+            if !query {
+                out.push(&t.table);
+            }
+        });
+    }
+
+    /// Calls `each` with every `<table reference>` that names a table or a
+    /// query, in the `<from clause>`s of it and of its subqueries, and
+    /// whether a `<with clause>` within it has a query of that name in
+    /// scope there [ISO/IEC 9075-2:2023 §7.17 SR3i]: one named with no
+    /// schema.
+    pub fn for_each_named<'a>(&'a self, each: &mut dyn FnMut(&'a NamedTable, bool)) {
+        self.named_in(&mut Vec::new(), each);
+    }
+
+    /// `for_each_named`, the query names of `scope` in scope.
+    pub fn named_in<'a>(&'a self, scope: &mut Vec<&'a str>, each: &mut dyn FnMut(&'a NamedTable, bool)) {
         let mut subqueries = Vec::new();
         let spec = match self {
             QueryExpression::Spec(spec) => spec,
             QueryExpression::SetOp(s) => {
-                s.left.table_names(out);
-                s.right.table_names(out);
+                s.left.named_in(scope, each);
+                s.right.named_in(scope, each);
                 return;
             }
+            QueryExpression::With(w) => return w.named_in(scope, each),
             QueryExpression::Values(rows) => {
                 for element in rows.iter().flat_map(|r| &r.elements) {
                     if let RowElement::Value(v, _) = element {
@@ -101,19 +163,19 @@ impl QueryExpression {
                     }
                 }
                 for s in subqueries {
-                    s.query.table_names(out);
+                    s.query.named_in(scope, each);
                 }
                 return;
             }
         };
         let te = &spec.table_expression;
-        let mut refs: Vec<&TableReference> = te.from.iter().collect();
+        let mut refs: Vec<&TableReference> = te.from.iter().rev().collect();
         while let Some(r) = refs.pop() {
             match r {
-                TableReference::Table(t) => out.push(&t.table),
+                TableReference::Table(t) => each(t, t.table.auth.is_none() && scope.contains(&t.table.ident.as_str())),
                 TableReference::Derived(d) => subqueries.push(&*d.query),
                 TableReference::Joined(j) => {
-                    refs.extend([&j.left, &j.right]);
+                    refs.extend([&j.right, &j.left]);
                     if let Some(JoinSpecification::On(c)) = &j.on {
                         c.for_each_subquery(&mut |s| subqueries.push(s));
                     }
@@ -131,8 +193,29 @@ impl QueryExpression {
             }
         }
         for s in subqueries {
-            s.query.table_names(out);
+            s.query.named_in(scope, each);
         }
+    }
+}
+
+impl WithQuery {
+    /// `QueryExpression::named_in` of its elements and body, each with the
+    /// query names in scope there besides `scope`'s [ISO/IEC 9075-2:2023
+    /// §7.17 SR3i]: of a non-recursive list, an element's the earlier
+    /// elements', of a potentially recursive one, every element's.
+    fn named_in<'a>(&'a self, scope: &mut Vec<&'a str>, each: &mut dyn FnMut(&'a NamedTable, bool)) {
+        let base = scope.len();
+        if self.recursive {
+            scope.extend(self.elements.iter().map(|e| e.name.as_str()));
+        }
+        for e in &self.elements {
+            e.query.named_in(scope, each);
+            if !self.recursive {
+                scope.push(&e.name);
+            }
+        }
+        self.body.named_in(scope, each);
+        scope.truncate(base);
     }
 }
 

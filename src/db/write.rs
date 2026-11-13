@@ -287,7 +287,7 @@ impl Session {
         }
         // [X3.135-1986 §8.7 SR6] placed at its select list item, if written;
         // a <table value constructor>'s values are checked as bound.
-        let written: Vec<usize> = match query {
+        let written: Vec<usize> = match query.body() {
             QueryExpression::Spec(spec) => match &spec.select_list {
                 SelectList::Values(items) => items
                     .iter()
@@ -296,9 +296,9 @@ impl Session {
                     .unwrap_or_default(),
                 SelectList::Star => Vec::new(),
             },
-            QueryExpression::Values(_) | QueryExpression::SetOp(_) => Vec::new(),
+            QueryExpression::Values(_) | QueryExpression::SetOp(_) | QueryExpression::With(_) => Vec::new(),
         };
-        if !matches!(query, QueryExpression::Values(_)) {
+        if !matches!(query.body(), QueryExpression::Values(_)) {
             for (n, (out, col)) in bound.columns.iter().zip(target.columns()).enumerate() {
                 let checked = binder::check_assignment(col, out.data_type, INSERT_RULE);
                 match written.get(n) {
@@ -446,7 +446,7 @@ pub(super) fn delete_searched(StatementContext { st, tx }: StatementContext<'_>,
 /// placed: at its first value or select list item too many, or, of too
 /// few, at its first row or item.
 fn degree_at(query: &QueryExpression, m: usize) -> Option<usize> {
-    match query {
+    match query.body() {
         QueryExpression::Values(rows) => {
             let row = rows.first()?;
             Some(row.elements.get(m).map_or(row.at, |e| match e {
@@ -458,6 +458,6 @@ fn degree_at(query: &QueryExpression, m: usize) -> Option<usize> {
             let at = |i: &SelectSublist| if let SelectSublist::Derived(d) = i { Some(d.at) } else { None };
             items.get(m).or(items.first()).and_then(at)
         }
-        QueryExpression::SetOp(_) => None,
+        QueryExpression::SetOp(_) | QueryExpression::With(_) => None,
     }
 }

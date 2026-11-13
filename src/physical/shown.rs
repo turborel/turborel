@@ -91,23 +91,36 @@ impl Plan {
             Plan::Values { detail, .. } => writeln!(out, "{pad}Values {detail}"),
             Plan::System { read } => writeln!(out, "{pad}System {}", read.name()),
             Plan::Sort { detail, .. } => writeln!(out, "{pad}Sort {detail}"),
+            Plan::Recursive { member, fixpoint } => writeln!(out, "{pad}Recursive member {member} ({})", fixpoint.word()),
+            Plan::WorkTable { member, .. } => writeln!(out, "{pad}WorkTable of member {member}"),
         };
+        self.write_inputs(out, depth.saturating_add(1));
+    }
+
+    /// Writes its inputs, each at `depth`.
+    fn write_inputs(&self, out: &mut String, depth: usize) {
         match self {
-            Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Values { .. } | Plan::System { .. } => {}
+            Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Values { .. } | Plan::System { .. } | Plan::WorkTable { .. } => {}
+            Plan::Recursive { fixpoint, .. } => {
+                let (first, second, rest) = fixpoint.plans();
+                for p in first.into_iter().chain(second).chain(rest) {
+                    p.write(out, depth);
+                }
+            }
             Plan::Product { left, right }
             | Plan::HashJoin { left, right, .. }
             | Plan::OuterJoin { left, right, .. }
             | Plan::Append { left, right }
             | Plan::SetOp { left, right, .. } => {
-                left.write(out, depth.saturating_add(1));
-                right.write(out, depth.saturating_add(1));
+                left.write(out, depth);
+                right.write(out, depth);
             }
             Plan::Filter { input, .. }
             | Plan::Aggregate { input, .. }
             | Plan::Project { input, .. }
             | Plan::Distinct { input }
             | Plan::Sort { input, .. }
-            | Plan::IndexJoin { left: input, .. } => input.write(out, depth.saturating_add(1)),
+            | Plan::IndexJoin { left: input, .. } => input.write(out, depth),
         }
     }
 }

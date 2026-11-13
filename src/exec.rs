@@ -24,6 +24,7 @@ mod group;
 mod held;
 mod join;
 mod partition;
+mod recursive;
 mod set;
 mod sort;
 mod subquery;
@@ -48,6 +49,7 @@ pub(crate) use eval::{Escape, like_escape};
 pub use eval::{Heard, eval, eval_cond, quantified, warn};
 pub use held::{HeldIter, HeldRows, Holdable};
 pub use join::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
+pub use recursive::{DEFAULT_MAX_ITERATIONS, WorkRows};
 pub use sort::compare_rows;
 
 /// [X3.135-1986 §8.3 GR3b] `rows` sorted by `keys`, in a work area of
@@ -98,6 +100,9 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::System { .. } => system_plan(plan, db),
         Plan::Sort { .. } => sorted_plan(plan, db, tx),
         Plan::Distinct { .. } => distinct_rows(plan, db, tx),
+        // [ISO/IEC 9075-2:2023 §7.17 GR2c ii] its fixpoint is found as the cursor opens.
+        Plan::Recursive { .. } => recursive::recursive(plan, db, tx),
+        Plan::WorkTable { .. } => recursive::work_table(plan, db, tx),
     }
 }
 
@@ -159,7 +164,9 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
-        | Plan::Distinct { .. } => failed(broken("a join is not one")),
+        | Plan::Distinct { .. }
+        | Plan::Recursive { .. }
+        | Plan::WorkTable { .. } => failed(broken("a join is not one")),
     }
 }
 

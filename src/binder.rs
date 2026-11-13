@@ -43,16 +43,19 @@ mod natural;
 mod predicates;
 mod purpose;
 mod query;
+mod recursive;
 mod referencing;
 mod sequences;
 mod set_functions;
 mod set_operations;
 mod statements;
+mod strata;
 mod subquery;
 mod trim;
 mod underlying;
 mod values;
 mod views;
+mod with;
 
 pub use cursor::bind_cursor;
 use cursor::sort_keys;
@@ -70,6 +73,7 @@ pub use underlying::underlying;
 pub use values::{value_specification, value_specification_as};
 pub use views::{BoundView, ViewCheck, WriteTarget, bind_view, table_columns, view_degree, write_target};
 pub(crate) use views::{once_each, system_view_columns, view_uses};
+pub(crate) use with::Queries;
 
 /// A column of a cursor's result.
 #[derive(Debug, Clone)]
@@ -152,6 +156,10 @@ pub struct Context<'a> {
     /// query of a cursor, of a SELECT INTO, or of an INSERT. Not of its
     /// subqueries.
     pub draws: bool,
+    /// [ISO/IEC 9075-2:2023 §7.17 SR3i] The query names of the `<with
+    /// clause>`s it is in the scope of, if any: of none at the start of a
+    /// statement, nor in a view, which is bound where it is defined.
+    pub(crate) queries: Option<&'a Queries<'a>>,
 }
 
 pub use purpose::Purpose;
@@ -185,6 +193,7 @@ impl<'a> Context<'a> {
             selected: None,
             referencing: None,
             draws: false,
+            queries: None,
         }
     }
 }
@@ -343,6 +352,8 @@ struct Binder<'a> {
     /// a search condition or a set function [ISO/IEC 9075-2:2023 §6.14
     /// SR1, SR2] (`binder/sequences.rs`).
     drawing: Cell<bool>,
+    /// The query names in scope (`Context::queries`).
+    queries: Option<&'a Queries<'a>>,
 }
 
 /// The FROM row a binder sees: its items, the display names of its
@@ -369,6 +380,7 @@ impl<'a> Binder<'a> {
             referencing,
             now,
             draws,
+            queries,
         } = cx;
         let (used, aggregated) = (RefCell::new(used), Cell::new(false));
         Binder {
@@ -395,6 +407,7 @@ impl<'a> Binder<'a> {
             now,
             draws: draws && !purpose.constrains(),
             drawing: Cell::new(false),
+            queries,
         }
     }
 
@@ -419,6 +432,7 @@ impl<'a> Binder<'a> {
             referencing,
             now,
             draws: false,
+            queries: self.queries,
         }
     }
 }
@@ -463,6 +477,11 @@ impl Binder<'_> {
         if let Some(uses) = self.uses.filter(|_| !item.table.auth.is_empty()) {
             let column = views::column_name(self.db, &item.table, i).or_else(|| item.desc.columns.get(i).map(|c| c.name.clone()));
             uses.borrow_mut().extend(column.map(|c| (item.table.clone(), c)));
+        }
+        // [ISO/IEC 9075-2:2023 §7.17 SR23b] a column of a query a <with
+        // clause> names is drawn from what its query's column is.
+        if let (Some(uses), Some(drawn)) = (self.uses, &item.drawn) {
+            uses.borrow_mut().extend(drawn.columns.get(i).cloned().unwrap_or_default());
         }
         if let (Some(uses), views::Source::Common) = (self.uses, &item.source) {
             underlying::note_common(self, item, i, uses);

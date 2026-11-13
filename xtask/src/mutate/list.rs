@@ -11,6 +11,7 @@ mod nulls;
 mod readers;
 mod reads;
 mod regex;
+mod rekey;
 mod sequences;
 mod server;
 mod shadow;
@@ -20,6 +21,7 @@ mod tailorings;
 mod truncate;
 mod vr;
 mod waits;
+mod with;
 mod zones;
 
 use super::{Mutation, Package};
@@ -38,13 +40,15 @@ pub use zones::ZONES;
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
-    let core: [&[Mutation]; 9] = [&MUTATIONS, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 5] = [&sequences::SEQUENCES, &generated::GENERATED, &truncate::TRUNCATE, &contents::CONTENTS, &nulls::NULLS];
+    let core: [&[Mutation]; 10] =
+        [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
+    let areas: [&[Mutation]; 6] =
+        [&sequences::SEQUENCES, &generated::GENERATED, &truncate::TRUNCATE, &contents::CONTENTS, &nulls::NULLS, &with::WITH];
     core.into_iter().chain(areas).chain([near::NEAR.as_slice(), &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER]).flatten().copied().collect()
 }
 
-/// The core's mutations: transactions, durability, constraints, assertions, the hash index.
-pub const MUTATIONS: [Mutation; 51] = [
+/// The core's mutations: transactions, durability, constraints, assertions, the hash index. Rekeying's are in `rekey.rs`.
+pub const MUTATIONS: [Mutation; 43] = [
     Mutation {
         name: "mvcc-snapshot",
         package: Package::Core,
@@ -516,85 +520,5 @@ pub const MUTATIONS: [Mutation; 51] = [
             "engine::hash::tests::it_holds_what_a_model_holds",
             "engine::hash::tests::a_hot_keys_bucket_splits_and_merges_a_page_at_a_time",
         ],
-    },
-    Mutation {
-        name: "rekey-untold",
-        package: Package::Core,
-        breaks: "a change of STORAGE.ENCODINGS or STORAGE.CHECKSUM_KEY reaches no file",
-        file: "src/db/settings.rs",
-        original: "        self.tell_formats()?;",
-        replacement: "        self.tell_durability()?;",
-        integration: &["rekeying::files_follow_the_formats_set_at_once"],
-        unit: &[],
-    },
-    Mutation {
-        name: "rekey-log-segment",
-        package: Package::Core,
-        breaks: "the log goes on in its segment, in the old formats, after they change",
-        file: "src/log/file.rs",
-        original: "        if self.rotate_asked.load(Ordering::Acquire) {\n            self.rotate_for_formats();",
-        replacement: "        if self.rotate_asked.load(Ordering::Acquire) {\n            drop(());",
-        integration: &["rekeying::files_follow_the_formats_set_at_once"],
-        unit: &[],
-    },
-    Mutation {
-        name: "rekey-catalog-switch",
-        package: Package::Core,
-        breaks: "the catalog appends to its file, in the old formats, after they change",
-        file: "src/db/catalog_file.rs",
-        original: "        if active.records < compact_after && !active.broken && !self.switch.swap(false, Ordering::AcqRel) {",
-        replacement: "        if active.records < compact_after && !active.broken {",
-        integration: &["rekeying::files_follow_the_formats_set_at_once"],
-        unit: &[],
-    },
-    Mutation {
-        name: "rekey-pages-key",
-        package: Package::Core,
-        breaks: "the data file's pages keep the old key once STORAGE.CHECKSUM_KEY changes",
-        file: "src/disk/buffer.rs",
-        original: "        if hash.keyed() {\n            pager.set_hash(hash)?;",
-        replacement: "        if hash.keyed() {\n            drop(hash);",
-        integration: &["rekeying::files_follow_the_formats_set_at_once"],
-        unit: &[],
-    },
-    Mutation {
-        name: "rekey-behind-blind",
-        package: Package::Core,
-        breaks: "the sweep finds no page in other formats, so none is written again",
-        file: "src/disk/pager/formats.rs",
-        original: "        key.is_some_and(|key| ids != current.encodings || key != current.key)",
-        replacement: "        key.is_some_and(|key| ids != current.encodings && key != current.key && false)",
-        integration: &["rekeying::files_follow_the_formats_set_at_once"],
-        unit: &["disk::pager::formats::tests::pages_behind_the_formats_are_found_and_the_file_settled"],
-    },
-    Mutation {
-        name: "rekey-meta-stale",
-        package: Package::Core,
-        breaks: "the meta slot stays keyed by the old key once the header is settled, so the file cannot open without it",
-        file: "src/disk/pager/sync.rs",
-        original: "            if !free.changed() && !self.resettled.swap(false, Ordering::AcqRel) {",
-        replacement: "            if !free.changed() {",
-        integration: &[],
-        unit: &["disk::pager::formats::tests::pages_behind_the_formats_are_found_and_the_file_settled"],
-    },
-    Mutation {
-        name: "rekey-walk-stale",
-        package: Package::Core,
-        breaks: "the sweep goes on from where it was once the formats change under it, leaving the pages before in the old ones",
-        file: "src/db/rekey.rs",
-        original: "        if walk.target.as_ref() != Some(current) {",
-        replacement: "        if walk.target.is_none() {",
-        integration: &["rekeying::the_sweep_runs_in_its_own_time"],
-        unit: &[],
-    },
-    Mutation {
-        name: "rekey-settled-untold",
-        package: Package::Core,
-        breaks: "the files settled are never told",
-        file: "src/db/checkpoint.rs",
-        original: "            self.tell_if_settled();",
-        replacement: "            drop(());",
-        integration: &["rekeying::files_follow_the_formats_set_at_once"],
-        unit: &[],
     },
 ];

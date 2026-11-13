@@ -98,4 +98,10 @@ NULLS, which SQL:2023 does not reserve either, is a key word only after
 UNIQUE, in a table constraint and in the UNIQUE predicate, where NULLS
 DISTINCT or NULLS NOT DISTINCT follows. A column may be named NULLS.
 
+RECURSIVE, SEARCH and CYCLE, which SQL:2023 reserves and SQL-92 does not,
+are key words only in a WITH. RECURSIVE is one after WITH unless AS or a
+column list follows it, so `WITH RECURSIVE AS (...)` names a query
+RECURSIVE. SEARCH and CYCLE are read after a query of the list, and
+refused there as not implemented.
+
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

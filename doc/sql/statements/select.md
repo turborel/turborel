@@ -13,8 +13,17 @@ SELECT: read rows
     <query expression> [ <order by clause> ] [ <updatability clause> ]
 
 <query expression> ::=
+    [ <with clause> ] <query expression body>
+
+<with clause> ::=
+    WITH [ RECURSIVE ] <with list element> [ { , <with list element> }... ]
+
+<with list element> ::=
+    <query name> [ ( <column name> [ { , <column name> }... ] ) ] AS ( <query expression> )
+
+<query expression body> ::=
       <query term>
-    | <query expression> { UNION | EXCEPT } [ ALL ] [ <corresponding spec> ] <query term>
+    | <query expression body> { UNION | EXCEPT } [ ALL ] [ <corresponding spec> ] <query term>
 
 <query term> ::=
       <query primary>
@@ -71,6 +80,13 @@ written. Without ORDER BY the order of the rows is not defined. The null
 value sorts as greater than every other value: last ascending, first
 descending.
 
+WITH names queries for the query after it, each read where its name is
+written as a table is, and by each query after it in the list. WITH
+RECURSIVE lets them read themselves and each other, each evaluated again
+over the rows it gave until it gives no more, as [Query
+Expressions](../06-queries.md#with-and-with-recursive) shows; past
+EXECUTOR.MAX_ITERATIONS iterations the query is refused.
+
 A query begins a transaction if none is active, and reads as its
 isolation level says ([SET TRANSACTION](set-transaction.md)).
 
@@ -90,6 +106,13 @@ parameters, is [a statement of a program too](#select-into).
    function is a grouping column.
 5. The operands of a set operation have as many columns, of comparable
    types.
+6. The queries of a WITH have names of their own, and columns of names
+   of their own, or a column list of as many names. Of WITH RECURSIVE,
+   each has a column list; each that reads itself or another is a UNION
+   of a query that reads none of them; and each reads them once in a
+   query specification, in its FROM clause and not on the side of an
+   outer join that nulls give, beside no set function, under no
+   INTERSECT ALL or EXCEPT ALL and not after EXCEPT.
 
 ## PRIVILEGES
 
@@ -102,8 +125,9 @@ SELECT on each table and view the query names.
 | 2A000 | -103 | A rule above is broken: a table or column not found or ambiguous, a sort column not of the result, a column not grouped, operands of a set operation not alike; or FOR UPDATE is written |
 | 2A000 | -104 | Its user lacks SELECT on a table or view |
 | 21000 | -811 | A scalar subquery gives more than one row |
+| TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
-| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md) |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); SEARCH or CYCLE of a WITH; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body |
 
 An error is placed at the construct it is about, its character position
 told.
@@ -208,7 +232,9 @@ it: a string cut to fit is a warning, SQLSTATE 01004.
 
 ISO/IEC 9075:1992 §20.1, the `<direct select statement: multiple
 rows>`, and its query expression [§7.10], query specification [§7.9] and
-table expression [§7.3]; X3.135-1986 §5.25 and §8.3. SELECT ... INTO is
+table expression [§7.3]; X3.135-1986 §5.25 and §8.3. WITH and WITH
+RECURSIVE are the `<with clause>` of ISO/IEC 9075-2:2023 §7.17, Features
+T121, T122, T131 and T132. SELECT ... INTO is
 the `<select statement: single row>` [§13.5; X3.135-1986 §8.10]. FOR
 READ ONLY, of a `<cursor specification>` [§13.1], is taken in a direct
 SELECT too. Where the null value sorts is implementation-defined

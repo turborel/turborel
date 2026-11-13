@@ -57,7 +57,9 @@ fn row_condition(plan: &LogicalPlan) -> Option<Cond> {
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Values { .. }
-            | LogicalPlan::System { .. } => break,
+            | LogicalPlan::System { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. } => break,
         }
     }
     and_all(conds)

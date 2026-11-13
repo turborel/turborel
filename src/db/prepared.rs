@@ -201,7 +201,15 @@ fn kind_of(tokens: &[Token]) -> Kind {
         // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
         // name too, MODULE's: no other statement begins so, but TRUNCATE
         // TABLE [ISO/IEC 9075-2:2023 §14.10].
-        (Some(Tok::KeyWord(kw::SELECT | kw::VALUES | kw::TABLE) | Tok::Delimiter("(") | Tok::Identifier(_) | Tok::Introducer(_)), _)
+        (
+            Some(
+                Tok::KeyWord(kw::SELECT | kw::VALUES | kw::TABLE | kw::WITH)
+                | Tok::Delimiter("(")
+                | Tok::Identifier(_)
+                | Tok::Introducer(_),
+            ),
+            _,
+        )
         | (Some(Tok::KeyWord(kw::MODULE)), Some(Tok::Delimiter("."))) => Kind::Query,
         (Some(Tok::KeyWord(kw::CREATE)), Some(Tok::KeyWord(kw::SCHEMA))) => Kind::Schema,
         _ => Kind::Statement,

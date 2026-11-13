@@ -235,7 +235,12 @@ impl PhysicalPlanner<'_> {
             LogicalPlan::Product { left, right } => Some(self.rows_of(left)? * self.rows_of(right)?),
             LogicalPlan::Project { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => self.rows_of(input),
             LogicalPlan::Values { rows, .. } => Some(cost_of(rows.len())),
-            LogicalPlan::OuterJoin { .. } | LogicalPlan::Aggregate { .. } | LogicalPlan::SetOp { .. } | LogicalPlan::System { .. } => None,
+            LogicalPlan::OuterJoin { .. }
+            | LogicalPlan::Aggregate { .. }
+            | LogicalPlan::SetOp { .. }
+            | LogicalPlan::System { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. } => None,
         }
     }
 
@@ -265,7 +270,12 @@ impl PhysicalPlanner<'_> {
                 let Some(Expr::Column(c)) = exprs.get(column) else { return None };
                 self.distinct_of(input, *c)
             }
-            LogicalPlan::Aggregate { .. } | LogicalPlan::SetOp { .. } | LogicalPlan::Values { .. } | LogicalPlan::System { .. } => None,
+            LogicalPlan::Aggregate { .. }
+            | LogicalPlan::SetOp { .. }
+            | LogicalPlan::Values { .. }
+            | LogicalPlan::System { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. } => None,
         }
     }
 
@@ -285,7 +295,11 @@ impl PhysicalPlanner<'_> {
                 self.column_type(input, *c)
             }
             LogicalPlan::Values { types, .. } => types.get(column).copied(),
-            LogicalPlan::Aggregate { .. } | LogicalPlan::SetOp { .. } | LogicalPlan::System { .. } => None,
+            LogicalPlan::Aggregate { .. }
+            | LogicalPlan::SetOp { .. }
+            | LogicalPlan::System { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. } => None,
         }
     }
 }
@@ -336,7 +350,9 @@ fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::SetOp { .. }
         | Plan::System { .. }
         | Plan::Values { .. }
-        | Plan::Sort { .. } => None,
+        | Plan::Sort { .. }
+        | Plan::Recursive { .. }
+        | Plan::WorkTable { .. } => None,
     }
 }
 
@@ -378,7 +394,9 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }
-        | LogicalPlan::Sort { .. } => None,
+        | LogicalPlan::Sort { .. }
+        | LogicalPlan::Recursive { .. }
+        | LogicalPlan::WorkTable { .. } => None,
     }
 }
 
