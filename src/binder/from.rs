@@ -20,6 +20,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use super::natural::natural;
+use super::partitioned::Partitioned;
 use super::query::Nesting;
 use super::set_operations::bind_query_expression;
 use super::subquery::Outer;
@@ -143,6 +144,9 @@ pub(super) struct Join {
     /// For NATURAL or USING: the item of its common columns, and the
     /// expression of each over its operands' columns [SR6d].
     pub(super) common: Option<(usize, Vec<Expr>)>,
+    /// [ISO/IEC 9075-2:2023 §7.10] The join partitioning columns of each
+    /// operand, the first's then the second's, if it is partitioned.
+    pub(super) partitioned: [Option<Partitioned>; 2],
 }
 
 /// A bound `<from clause>`: its items, its table references, and the
@@ -387,7 +391,9 @@ fn bind_join(b: Bounds<'_>, j: &JoinedTable, start: usize, from: &mut From) -> R
     from.lateral.truncate(seen);
     let right = right?;
     if matches!(j.kind, JoinKind::Right | JoinKind::Full | JoinKind::Union) {
-        not_lateral(&right, &from.items, start..start.saturating_add(lw))?;
+        let refused =
+            "[ISO/IEC 9075-2:2023 §7.10 SR4] the second operand of a RIGHT or FULL join references its first in a collection derived table";
+        not_lateral(&right, &from.items, start..start.saturating_add(lw), refused)?;
     }
     let rw = width(&right, &from.items);
     let (mut cond, mut common) = (None, None);
@@ -408,6 +414,8 @@ fn bind_join(b: Bounds<'_>, j: &JoinedTable, start: usize, from: &mut From) -> R
         }
         (None, false) => {}
     }
+    let partitioned = super::partitioned::bound(b, j, (&left, &right), (start, lw), from)?;
+    super::partitioned::not_common(&partitioned, &from.items, j.at)?;
     let mark = |tree: &Tree, bound: &mut From| {
         let mut ids = Vec::new();
         tree_items(tree, &mut ids);
@@ -423,7 +431,7 @@ fn bind_join(b: Bounds<'_>, j: &JoinedTable, start: usize, from: &mut From) -> R
     if matches!(j.kind, JoinKind::Left | JoinKind::Full | JoinKind::Union) {
         mark(&right, from);
     }
-    Ok(Tree::Join(Box::new(Join { kind: j.kind, left, right, cond, common })))
+    Ok(Tree::Join(Box::new(Join { kind: j.kind, left, right, cond, common, partitioned })))
 }
 
 /// [ISO/IEC 9075:1992 §7.5 SR4] The `<join condition>` `c` of the joined

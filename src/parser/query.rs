@@ -5,7 +5,7 @@
 
 use super::Parser;
 use crate::ast::{
-    Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable,
+    Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable, Partitioning,
     QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn,
     SortSpecification, TableExpression, TableName, TableReference, ValuesRow, WithElement, WithQuery,
 };
@@ -16,6 +16,10 @@ use crate::lexer::{Tok, delim, kw};
 // does not reserve: identifiers, read as these only there.
 /// RECURSIVE, after WITH.
 const RECURSIVE: &str = "RECURSIVE";
+
+/// [ISO/IEC 9075-2:2023 §5.2, §7.10] PARTITION, before BY after an operand
+/// of a join: a word SQL-92 does not reserve, read as this only there.
+const PARTITION: &str = "PARTITION";
 
 impl Parser {
     /// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] `<cursor specification>`
@@ -372,30 +376,78 @@ impl Parser {
     /// counting one level toward the nesting limit.
     pub(super) fn table_reference(&mut self) -> Result<TableReference> {
         let first = self.table_primary()?;
-        self.joins(first)
+        let partitioned = self.partitioning()?;
+        self.joins(first, partitioned)
     }
 
-    /// `left`, then the joins after it, each joining what is before it.
+    /// `first`, partitioned as `partitioned` says, then the joins after
+    /// it, each joining what is before it.
     ///
     /// [ISO/IEC 9075:1992 §7.5 F] A join's second operand is a `<table
     /// reference>`, so a joined table itself: one that needs a `<join
     /// specification>` and is followed by another join before it has
     /// taken the join that follows as its second operand's, as in "A JOIN B
     /// LEFT JOIN C ON c1 ON c2".
-    fn joins(&mut self, first: TableReference) -> Result<TableReference> {
-        let mut left = first;
+    ///
+    /// [ISO/IEC 9075-2:2023 §7.10 F] A `<partitioned join table>` is an
+    /// operand of a qualified or natural join alone, a `<table factor>`
+    /// PARTITION BY its columns.
+    fn joins(&mut self, first: TableReference, partitioned: Option<Partitioning>) -> Result<TableReference> {
+        let (mut left, mut left_partitioned) = (first, partitioned);
         loop {
             let at = self.here();
-            let Some((kind, natural)) = self.join_type()? else { return Ok(left) };
+            let Some((kind, natural)) = self.join_type()? else {
+                return match left_partitioned {
+                    Some(p) => Err(SqlError::at(
+                        Code::Syntax,
+                        p.at,
+                        "[ISO/IEC 9075-2:2023 §7.10 F] a <partitioned join table> is an operand of a join",
+                    )),
+                    None => Ok(left),
+                };
+            };
             self.deepen()?;
             let mut right = self.table_primary()?;
-            let specified = !(kind == JoinKind::Cross || kind == JoinKind::Union || natural);
-            if specified && self.at_join() {
-                right = self.joins(right)?;
+            let mut right_partitioned = self.partitioning()?;
+            let crossed = kind == JoinKind::Cross || kind == JoinKind::Union;
+            if let Some(p) = left_partitioned.as_ref().or(right_partitioned.as_ref()).filter(|_| crossed) {
+                return Err(SqlError::at(
+                    Code::Syntax,
+                    p.at,
+                    "[ISO/IEC 9075-2:2023 §7.10 F] a CROSS or UNION join has no <partitioned join table>",
+                ));
+            }
+            if !(crossed || natural) && self.at_join() {
+                right = self.joins(right, right_partitioned.take())?;
             }
             let on = self.join_specification(kind, natural)?;
-            left = TableReference::Joined(Box::new(JoinedTable { left, right, kind, natural, on, at }));
+            let both = [left_partitioned.take(), right_partitioned];
+            left = TableReference::Joined(Box::new(JoinedTable { left, right, kind, natural, on, at, partitioned: both }));
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §7.10] PARTITION BY `<partitioned join column
+    /// reference list>`, if written. PARTITION, which SQL-92 does not
+    /// reserve, is a key word only where BY follows it here.
+    fn partitioning(&mut self) -> Result<Option<Partitioning>> {
+        if !self.at_partitioning() {
+            return Ok(None);
+        }
+        let at = self.here();
+        self.advance();
+        self.expect_kw(kw::BY)?;
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut columns = vec![self.column_specification()?];
+        while self.accept_delim(delim::COMMA) {
+            columns.push(self.column_specification()?);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(Some(Partitioning { columns, at }))
+    }
+
+    /// Whether PARTITION BY is next.
+    fn at_partitioning(&self) -> bool {
+        self.is_word(PARTITION) && self.next_is_kw(kw::BY)
     }
 
     /// Whether a join begins here, its key words not taken.
@@ -487,6 +539,9 @@ impl Parser {
     pub(super) fn correlation(&mut self) -> Result<Option<String>> {
         if self.accept_kw(kw::AS) {
             return self.identifier().map(Some);
+        }
+        if self.at_partitioning() {
+            return Ok(None);
         }
         Ok(match self.peek() {
             Tok::Identifier(_) => Some(self.identifier()?),

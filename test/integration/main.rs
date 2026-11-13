@@ -131,6 +131,7 @@ mod named_schemas;
 mod ordered_joins;
 mod pages;
 mod partial_groups;
+mod partitioned_joins;
 mod planning;
 mod plugin_files;
 mod plugin_settings;

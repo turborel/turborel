@@ -474,6 +474,21 @@ pub struct JoinedTable {
     /// Where its join is written in the statement: the first key word
     /// after `left`.
     pub at: usize,
+    /// The `<partitioned join column reference list>` of each operand, the
+    /// first's then the second's, if it is a `<partitioned join table>`
+    /// [ISO/IEC 9075-2:2023 §7.10].
+    pub partitioned: [Option<Partitioning>; 2],
+}
+
+/// [ISO/IEC 9075-2:2023 §7.10] PARTITION BY `<partitioned join column
+/// reference list>`: the `<column reference>`s an operand of a join is
+/// partitioned by, and where PARTITION is written.
+#[derive(Debug, Clone)]
+pub struct Partitioning {
+    /// The `<partitioned join column reference>`s, in order.
+    pub columns: Vec<ColumnSpecification>,
+    /// Where PARTITION begins in the statement.
+    pub at: usize,
 }
 
 /// [ISO/IEC 9075:1992 §7.5] What a join is: CROSS, or a `<join type>`.

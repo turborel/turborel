@@ -33,8 +33,6 @@ each group.
 
 ### Queries
 
-- Partitioned outer joins (F403) [§7.10], `PARTITION BY` on one side of an
-  outer join. Filling the gaps of a series per group needs it.
 - ROLLUP, CUBE and GROUPING SETS (T431 to T434) [§7.13], with GROUPING and
   GROUP BY DISTINCT. One query then gives subtotals and the grand total.
 - ANY_VALUE (T626) and LISTAGG (T625) [§10.9]. ANY_VALUE takes a column

@@ -42,6 +42,7 @@ mod from;
 mod generated;
 mod greatest;
 mod natural;
+mod partitioned;
 mod predicates;
 mod purpose;
 mod query;

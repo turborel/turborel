@@ -137,14 +137,12 @@ fn columns_of(types: &[DataType], u: &UnnestTable) -> Result<Vec<ColumnDesc>> {
 /// [ISO/IEC 9075-2:2023 §7.10 SR4] Of a RIGHT or FULL join whose first
 /// operand is the columns `first` of the FROM row, its second operand
 /// `right`: no collection derived table of it references the first.
-pub(super) fn not_lateral(right: &Tree, items: &[FromItem], first: std::ops::Range<usize>) -> Result<()> {
+pub(super) fn not_lateral(right: &Tree, items: &[FromItem], first: std::ops::Range<usize>, refused: &str) -> Result<()> {
     let mut ids = Vec::new();
     tree_items(right, &mut ids);
     let reads = |it: &FromItem| if let Source::Unnest(u) = &it.source { u.reads.range(first.clone()).next().is_some() } else { false };
     if ids.iter().filter_map(|&i| items.get(i)).any(reads) {
-        return Err(rule(
-            "[ISO/IEC 9075-2:2023 §7.10 SR4] the second operand of a RIGHT or FULL join references its first in a collection derived table",
-        ));
+        return Err(rule(refused));
     }
     Ok(())
 }
@@ -247,7 +245,7 @@ fn joined(binder: &Binder<'_>, j: &Join, begins: usize, prefix: Option<Placed>) 
         // [GR1d] the rows of a LEFT join's second operand, a collection
         // derived table, that its condition makes true, else nulls.
         JoinKind::Left => {
-            if let Some(found) = unnest_of(&j.right, items) {
+            if let Some(found) = unnest_of(&j.right, items).filter(|_| j.partitioned[1].is_none()) {
                 let plan = unnested(binder, found, (left.plan, base), Some(on))?;
                 return Ok(commons(j, Placed { plan, base }, begins));
             }
@@ -267,7 +265,10 @@ fn joined(binder: &Binder<'_>, j: &Join, begins: usize, prefix: Option<Placed>) 
         }
     };
     let right = placed(binder, &j.right, None)?;
-    let plan = LogicalPlan::OuterJoin { kind, cond: on, left: Box::new(left.plan), right: Box::new(right.plan) };
+    let plan = match &j.partitioned {
+        [None, None] => LogicalPlan::OuterJoin { kind, cond: on, left: Box::new(left.plan), right: Box::new(right.plan) },
+        partitioned => super::partitioned::plan(binder, (kind, on), (left.plan, begins.saturating_sub(base)), right.plan, partitioned),
+    };
     Ok(commons(j, Placed { plan, base }, begins))
 }
 

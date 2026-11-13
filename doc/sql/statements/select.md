@@ -133,6 +133,11 @@ parameters, is [a statement of a program too](#select-into).
    columns BY and CYCLE name are of its column list, each once. The
    sequence, cycle mark and path columns are new names, each different.
    The marks are two different one-character strings, or TRUE and FALSE.
+8. A partitioned operand is of a LEFT, RIGHT or FULL join: the second
+   of a LEFT join, the first of a RIGHT join, either or both of a FULL
+   join. Each column PARTITION BY names is one column of it, not a
+   column NATURAL or USING joins on, and a collection derived table in a
+   partitioned second operand reads nothing of the first.
 
 ## PRIVILEGES
 
@@ -258,7 +263,8 @@ RECURSIVE are the `<with clause>` of ISO/IEC 9075-2:2023 §7.17, Features
 T121, T122, T131 and T132, and SEARCH and CYCLE its `<search or cycle
 clause>` [§7.18], with Feature T133. The fields of a row, `R.*`, are its `<all
 fields reference>` [§7.16], and UNNEST its `<collection derived table>`
-[§7.6]. SELECT ... INTO is
+[§7.6]. PARTITION BY on an operand of a join is its `<partitioned join
+table>` [§7.10], Feature F403. SELECT ... INTO is
 the `<select statement: single row>` [§13.5; X3.135-1986 §8.10]. FOR
 READ ONLY, of a `<cursor specification>` [§13.1], is taken in a direct
 SELECT too. Where the null value sorts is implementation-defined

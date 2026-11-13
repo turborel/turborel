@@ -77,6 +77,45 @@ SELECT * FROM (SELECT DEPT, COUNT(*) FROM STAFF GROUP BY DEPT) AS C (D, N) WHERE
 (1 row)
 ```
 
+### Partitioned joins
+
+An operand of an outer join may be **partitioned**: `B PARTITION BY
+(c, ...)` splits B into partitions, one for each distinct value of its
+columns c, a null value making one too. The other operand is then joined
+with each partition in turn. A row that pairs with none of a partition's
+rows is still given, with that partition's values in B's columns c and
+nulls in the rest. That fills a series's gaps once for each group.
+
+| Join | Partitioned operand |
+|---|---|
+| `A LEFT JOIN B PARTITION BY (c) ON ...` | the second |
+| `A PARTITION BY (c) RIGHT JOIN B ON ...` | the first |
+| `A FULL JOIN B PARTITION BY (c) ON ...` | either, or both |
+
+The columns are of the partitioned table, which is a table, a derived
+table, a collection derived table or a joined table in parentheses. A
+partitioned table that is empty has no partitions, so the join gives no
+row of the other.
+
+```sql
+SELECT S.NAME, D.DEPT, S.SALARY FROM DEPT D LEFT JOIN STAFF S PARTITION BY (NAME)
+  ON S.DEPT = D.DEPT ORDER BY S.NAME, D.DEPT;
+```
+
+```
+ NAME                           | DEPT |      SALARY
+--------------------------------+------+-------------
+ Ada                            | ENG  |     7200.00
+ Ada                            | HR   |        NULL
+ Barbara                        | ENG  |        NULL
+ Barbara                        | HR   |        NULL
+ Edsger                         | ENG  |        NULL
+ Edsger                         | HR   |        NULL
+ Grace                          | ENG  |     8100.00
+ Grace                          | HR   |        NULL
+(8 rows)
+```
+
 ## UNNEST
 
 UNNEST in the FROM clause gives the elements of arrays as rows, a row of

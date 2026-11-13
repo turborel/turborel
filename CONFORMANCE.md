@@ -977,6 +977,33 @@ A CHECK constraint whose subquery reads no table, such as one of a WITH of
 VALUES, is checked of each row written, as one that reads a table is;
 before, it was refused at its first check with SQLCODE -910.
 
+### Partitioned joins
+
+Feature F403 (Partitioned join tables). An operand of an outer join
+PARTITION BY its columns is a `<partitioned join table>` [§7.10]: the
+other operand is joined with each of its partitions, and a row a
+partition does not match is given that partition's values [GR4].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Where it is written | §7.10 F, SR9a, SR9c, SR9d | An operand of a qualified or natural join that is LEFT, RIGHT or FULL: the second of LEFT, the first of RIGHT, either or both of FULL. Else SQLCODE -103, or -102 of a CROSS or UNION join or of no join. The operand is a table, a derived table, a collection derived table that reads nothing of the first operand, or a joined table in parentheses. |
+| Its columns | SR9b, SR10d | Each names one column of the partitioned operand, else SQLCODE -103, an outer reference included. A corresponding join column of NATURAL or USING is none of them. |
+| Its partitions | GR4b, GR4c | Of values not distinct [§8.15], so the null value is a partition, and strings are partitioned by their collation. An array column partitions too, as arrays compare for equality. An empty operand has no partitions, so the join gives no row of the other [NOTE 239, NOTE 240]. |
+| Its rows | GR4d to GR4k, GR5 | The rows of the join, then each row unmatched in a partition, of the other operand's partitioned columns the partition's values and nulls in the rest. A matched row keeps its own values. |
+
+It is planned as an outer join of what its operands are made (RULES.md
+D38), so it spills and reads by batches as any outer join does. The
+partitioned operand's partitioning columns DISTINCT give its partitions,
+and the other operand is joined with every one of them. The partitioned
+operand's rows then match those on the join's condition and on each
+partitioning column IS NOT DISTINCT FROM the partition's. The partitioned
+operand is read twice, which gives the same rows, as a derived table
+draws no sequence value. GR4h gives a filled row its partition's common
+value. Of values a collation holds equal, 'a' and 'A' under
+CASE_INSENSITIVE say, that is the one DISTINCT keeps, the first it reads.
+PARTITION, which SQL-92 does not reserve, is read only before BY after an
+operand of a join.
+
 ### Arrays and row types
 
 Features S090 (Minimal array support), S099 (Array expressions), S301
