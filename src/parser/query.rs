@@ -5,9 +5,9 @@
 
 use super::Parser;
 use crate::ast::{
-    Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable, Partitioning,
-    QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn,
-    SortSpecification, TableExpression, TableName, TableReference, ValuesRow, WithElement, WithQuery,
+    Correspondence, CursorSpecification, DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, Partitioning, QueryExpression,
+    QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn, SortSpecification,
+    TableExpression, TableName, TableReference, ValuesRow, WithElement, WithQuery,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -337,25 +337,16 @@ impl Parser {
         let from = from?;
         // [X3.135-1986 §5.21] <where clause> ::= WHERE <search condition>
         let where_clause = if self.accept_kw(kw::WHERE) { Some(self.search_condition()?) } else { None };
-        // [X3.135-1986 §5.22] <group by clause> ::= GROUP BY <column specification> [{, <column specification>}...]
-        let mut group_by = Vec::new();
-        if self.accept_kw(kw::GROUP) {
+        // [X3.135-1986 §5.22; ISO/IEC 9075-2:2023 §7.13] <group by clause>
+        let group_by = if self.accept_kw(kw::GROUP) {
             self.expect_kw(kw::BY)?;
-            // [ISO/IEC 9075:1992 §7.7] <grouping column reference> ::=
-            // <column reference> [<collate clause>]
-            group_by.push(self.grouping_column()?);
-            while self.accept_delim(delim::COMMA) {
-                group_by.push(self.grouping_column()?);
-            }
-        }
+            Some(self.group_by()?)
+        } else {
+            None
+        };
         // [X3.135-1986 §5.23] <having clause> ::= HAVING <search condition>
         let having = if self.accept_kw(kw::HAVING) { Some(self.search_condition()?) } else { None };
         Ok(TableExpression { from, where_clause, group_by, having })
-    }
-
-    /// [ISO/IEC 9075:1992 §7.7] A `<grouping column reference>`.
-    fn grouping_column(&mut self) -> Result<GroupingColumn> {
-        Ok(GroupingColumn { column: self.column_specification()?, collate: self.collate_clause()? })
     }
 
     /// The `<table reference>`s of a `<from clause>`. The plan joins them one
@@ -565,6 +556,6 @@ impl Parser {
 /// SELECT * FROM `from`: what TABLE `<table name>` and a `<joined table>`
 /// are as a `<query primary>` [ISO/IEC 9075:1992 §7.10 SR2, SR13b].
 fn all_of(from: TableReference) -> QueryExpression {
-    let table_expression = TableExpression { from: vec![from], where_clause: None, group_by: Vec::new(), having: None };
+    let table_expression = TableExpression { from: vec![from], where_clause: None, group_by: None, having: None };
     QueryExpression::Spec(Box::new(QuerySpecification { distinct: false, select_list: SelectList::Star, table_expression }))
 }

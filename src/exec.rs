@@ -257,9 +257,9 @@ fn grouped(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     if batched(db) && batch::aggregable(&plan, db) {
         return batch::aggregated(plan, db, tx);
     }
-    let Plan::Aggregate { groups, collations, aggs, input, .. } = plan else { return failed(broken("an aggregation is not one")) };
+    let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan else { return failed(broken("an aggregation is not one")) };
     let rows = execute(*input, db, tx);
-    group::grouping(group::Spec { groups, collations, aggs }, rows, db, tx)
+    group::grouping(group::Spec { groups, collations, aggs, seeds }, rows, db, tx)
 }
 
 /// [X3.135-1986 §8.3 GR3b] The rows of `input`, sorted by `keys`.
@@ -385,16 +385,18 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::catalog::{MemoryCatalog, TableDesc};
+    use crate::catalog::{Catalog, MemoryCatalog, TableDesc};
     use crate::engine::rows::{ROW_STORE, RowStore, TableOptions};
     use crate::index::BTREE_METHOD;
     use crate::storage::StorageEngine;
     use crate::txn::NO_TRANSACTION;
 
-    /// A state with one empty table, `A.E`, and no `A.T`.
-    fn state() -> State {
-        let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
+    /// A state with one empty table, `A.E`, of no columns, and no `A.T`.
+    pub(super) fn state() -> State {
         let desc = state_desc();
+        let mut catalog = MemoryCatalog::default();
+        catalog.add_table(desc.clone());
+        let mut st = State::with_builtins(Box::new(catalog));
         st.storage
             .insert(Arc::new(desc.name.clone()), Arc::from(RowStore::in_memory(TableOptions::default()).create_table(&desc).unwrap()));
         st
@@ -510,6 +512,7 @@ mod tests {
             groups: vec![1],
             collations: vec![],
             aggs: vec![],
+            seeds: vec![],
             detail: String::new(),
             input: Box::new(one_row(row.clone())),
         };

@@ -41,6 +41,7 @@ mod expression;
 mod from;
 mod generated;
 mod greatest;
+mod grouping_sets;
 mod natural;
 mod partitioned;
 mod predicates;
@@ -281,10 +282,15 @@ pub(crate) fn no_column(table: &QualifiedName, message: String, column: &str) ->
 
 /// The grouping columns of a grouped query, and the set functions found so far.
 struct Grouping {
+    /// The columns of the rows grouped that it groups by: of the FROM row,
+    /// or, of grouping sets, of the rows `grouping_sets::Sets` makes.
     columns: Vec<usize>,
     /// What each is grouped by, if any is not the default collation.
     collations: Vec<Option<CollationRef>>,
     aggs: RefCell<Vec<AggCall>>,
+    /// [ISO/IEC 9075-2:2023 §7.13 SR17] Its grouping sets, of a GROUP BY
+    /// not simple; none of a primitive one [SR10, SR11].
+    sets: Option<grouping_sets::Sets>,
 }
 
 /// What a column reference means where it appears.
@@ -535,21 +541,23 @@ impl Binder<'_> {
         }
     }
 
-    /// The position of FROM-row column `pos`, of type `t`, in the rows
-    /// `scope` sees. In a group it must be a grouping column [X3.135-1986
-    /// §5.25 SR7, §5.23 SR1]; in a constraint, a grouping column not a
-    /// character string one [ISO/IEC 9075:1992 §11.9 SR6, §7.8 SR3b, §7.9 SR13c ii].
-    fn column_in(&self, pos: usize, t: &DataType, scope: Scope<'_>) -> Result<usize> {
-        let Scope::Groups(g, why) = scope else { return Ok(pos) };
-        let at = g
-            .columns
-            .iter()
-            .position(|&c| c == pos)
-            .ok_or_else(|| rule(format!("{why} (found {})", self.names.get(pos).map_or("", String::as_str))))?;
+    /// FROM-row column `pos`, of type `t`, in the rows `scope` sees. In a
+    /// group it must be a grouping column [X3.135-1986 §5.25 SR7, §5.23
+    /// SR1], its value of the group, which of grouping sets is null in a
+    /// set that leaves it out [ISO/IEC 9075-2:2023 §7.13 SR17]; in a
+    /// constraint, a grouping column not a character string one [ISO/IEC
+    /// 9075:1992 §11.9 SR6, §7.8 SR3b, §7.9 SR13c ii].
+    fn column_in(&self, pos: usize, t: &DataType, scope: Scope<'_>) -> Result<Expr> {
+        let Scope::Groups(g, why) = scope else { return Ok(Expr::Column(pos)) };
+        let found = match &g.sets {
+            Some(sets) => sets.value_of(pos).cloned(),
+            None => g.columns.iter().position(|&c| c == pos).map(Expr::Column),
+        };
+        let e = found.ok_or_else(|| rule(format!("{why} (found {})", self.names.get(pos).map_or("", String::as_str))))?;
         if self.purpose.constrains() && t.is_character() {
             return Err(nondeterministic("§7.8 SR3b, §7.9 SR13c ii", "a reference to a character string grouping column"));
         }
-        Ok(at)
+        Ok(e)
     }
 
     /// [X3.135-1986 §5.18] `<search condition>`

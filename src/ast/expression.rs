@@ -415,6 +415,7 @@ impl ValueExpression {
                 match &sf.arg {
                     SetArg::CountStar => {}
                     SetArg::Distinct(x) | SetArg::All(x) => f(x),
+                    SetArg::Grouping(columns) => columns.iter().for_each(&mut *f),
                 }
                 sf.order_by.iter().for_each(|o| f(&o.key));
             }

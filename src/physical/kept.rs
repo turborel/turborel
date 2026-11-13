@@ -175,10 +175,10 @@ pub(crate) fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
         }
         Plan::IndexScan { .. } => filled_scan(plan, values),
         Plan::SeqScan { .. } => Ok(plan),
-        Plan::Aggregate { groups, collations, aggs, detail, input } => {
+        Plan::Aggregate { groups, collations, aggs, seeds, detail, input } => {
             let filled_agg = |a: AggCall| Ok(AggCall { arg: a.arg.map(|e| filled_expr(e, values)).transpose()?, ..a });
             let aggs = aggs.into_iter().map(filled_agg).collect::<Result<_>>()?;
-            Ok(Plan::Aggregate { groups, collations, aggs, detail, input: Box::new(filled_plan(*input, values)?) })
+            Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(filled_plan(*input, values)?) })
         }
         Plan::Distinct { input } => Ok(Plan::Distinct { input: Box::new(filled_plan(*input, values)?) }),
         Plan::Sort { keys, detail, input } => Ok(Plan::Sort { keys, detail, input: Box::new(filled_plan(*input, values)?) }),

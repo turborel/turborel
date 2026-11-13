@@ -527,7 +527,7 @@ impl State {
             correlation: None,
             columns: None,
         });
-        let table_expression = TableExpression { from: vec![from], where_clause: Some(condition), group_by: Vec::new(), having: None };
+        let table_expression = TableExpression { from: vec![from], where_clause: Some(condition), group_by: None, having: None };
         // Its rows are selected as 1, so only the condition references a column.
         let one = ValueExpression::Value(ValueSpecification::Literal(Literal::Exact(Decimal::new(1_i128, 0_u32))));
         let select_list = SelectList::Values(vec![SelectSublist::Derived(SelectItem { value: one, alias: None, at: 0 })]);

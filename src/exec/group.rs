@@ -40,6 +40,9 @@ pub(super) struct Spec {
     pub(super) collations: Vec<Option<CollationRef>>,
     /// The set functions.
     pub(super) aggs: Vec<AggCall>,
+    /// [ISO/IEC 9075-2:2023 §7.13 GR2a] The values of groups made before
+    /// any row, so they are groups even of no rows.
+    pub(super) seeds: Vec<Row>,
 }
 
 /// The key of a group of `values`: by their sort keys where `spec` says, so
@@ -61,8 +64,15 @@ struct Group {
     states: Vec<Box<dyn Accumulator>>,
 }
 
-/// Rows, each with its number.
-type Numbered<'a> = Box<dyn Iterator<Item = Result<(u64, Row)>> + 'a>;
+/// What a pass groups: seeds, each its group's values, then rows, each
+/// with its number.
+enum Seeded {
+    Seed(u64, Row),
+    Row(u64, Row),
+}
+
+/// What a pass groups, in order.
+type Numbered<'a> = Box<dyn Iterator<Item = Result<Seeded>> + 'a>;
 
 /// Groups finished, each with the number of its first row, in that order.
 pub(super) type Finished = Vec<(u64, Row)>;
@@ -129,10 +139,16 @@ impl Grouper {
 
     /// The groups of `input`, from memory if they fit the work area, else
     /// merged from runs. Without GROUP BY, there is a single group even of
-    /// no rows ([X3.135-1986 §5.23 GR1, §5.25 GR1]).
+    /// no rows ([X3.135-1986 §5.23 GR1, §5.25 GR1]); and the seeds are
+    /// groups too, made first, numbered before the rows, in the first pass,
+    /// which holds them whatever else it holds.
     fn grouped(&mut self, input: RowIter) -> Result<RowIter> {
         let mut overflow = Overflow::Partitions(None);
-        let mut held = self.pass(Box::new((0_u64..).zip(input).map(|(n, r)| r.map(|row| (n, row)))), &mut overflow)?;
+        let seeds = std::mem::take(&mut self.spec.seeds);
+        let first = u64::try_from(seeds.len()).unwrap_or(u64::MAX);
+        let seeded = (0_u64..).zip(seeds).map(|(n, values)| Ok(Seeded::Seed(n, values)));
+        let rows = (first..).zip(input).map(|(n, r)| r.map(|row| Seeded::Row(n, row)));
+        let mut held = self.pass(Box::new(seeded.chain(rows)), &mut overflow)?;
         if self.spec.groups.is_empty() && held.is_empty() {
             held.push((0, finished(Group { first: 0, values: Vec::new(), states: fresh(&self.spec) })?));
         }
@@ -151,7 +167,8 @@ impl Grouper {
         while let Some(records) = next.take() {
             let mut overflow = if depth < self.work.depth() { Overflow::Partitions(None) } else { Overflow::Run(None) };
             let types = self.work.types().clone();
-            let held = self.pass(Box::new(records.map(move |r| r.and_then(|record| unnumbered(&record, &types)))), &mut overflow)?;
+            let records = records.map(move |r| r.and_then(|record| unnumbered(&record, &types)).map(|(n, row)| Seeded::Row(n, row)));
+            let held = self.pass(Box::new(records), &mut overflow)?;
             sources.push(self.written(held)?);
             match overflow {
                 Overflow::Partitions(Some(parts)) => {
@@ -172,7 +189,15 @@ impl Grouper {
         let (mut found, mut bytes) = (HashMap::<Vec<u8>, Group>::new(), 0_usize);
         let mut seen = Bag::new(self.bag.as_ref().unwrap_or(&self.work).another());
         for r in rows {
-            let (n, row) = r?;
+            let (n, row) = match r? {
+                Seeded::Seed(n, values) => {
+                    let key = group_key(&self.spec, &values);
+                    bytes = bytes.saturating_add(key.len()).saturating_add(row_bytes(&values));
+                    found.entry(key).or_insert_with(|| Group { first: n, values, states: fresh(&self.spec) });
+                    continue;
+                }
+                Seeded::Row(n, row) => (n, row),
+            };
             let values: Row = self.spec.groups.iter().map(|&c| column(&row, c).cloned()).collect::<Result<_>>()?;
             let key = group_key(&self.spec, &values);
             if !found.contains_key(&key) {
@@ -257,11 +282,40 @@ fn joins_argument(distinct: bool, v: &Value, first: impl FnOnce() -> Result<bool
     first()
 }
 
-// Unit tests: the set-function argument decision (RULES.md R-TEST-1, R-TEST-8).
+// Unit tests: the set-function argument decision, and groups made before
+// any row (RULES.md R-TEST-1, R-TEST-8).
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::MemoryCatalog;
+    use crate::txn::NO_TRANSACTION;
     use crate::value::Decimal;
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.13 GR2a] a seed is a
+    /// group even of no rows, its set functions fed nothing; rows of its
+    /// values feed it, no second group made of them; rows of others make
+    /// groups after it.
+    ///
+    /// Decision: a seed's key is or is not that of a row. Each row set
+    /// changes the outcome alone: none, one of the seed's key, one of
+    /// another key.
+    #[test]
+    fn seeds_are_groups_even_of_no_rows() {
+        let db = Arc::new(State::with_builtins(Box::new(MemoryCatalog::default())));
+        let count = db.functions.aggregate("COUNT").unwrap();
+        let result = count.0.result_type(None).unwrap();
+        let agg = AggCall { func: count, arg: None, distinct: false, result, label: "COUNT(*)".into() };
+        let int = |n: i128| Value::Exact(Decimal::new(n, 0));
+        let grouped = |input: Vec<Row>| {
+            let spec = Spec { groups: vec![0], collations: Vec::new(), aggs: vec![agg.clone()], seeds: vec![vec![int(9)]] };
+            let rows = grouping(spec, Box::new(input.into_iter().map(Ok)), &db, NO_TRANSACTION);
+            rows.map(|r| r.unwrap().iter().map(|v| format!("{v:?}")).collect::<Vec<_>>().join(",")).collect::<Vec<_>>()
+        };
+        let (nine, five) = (format!("{:?}", int(9)), format!("{:?}", int(5)));
+        assert_eq!(grouped(Vec::new()), [format!("{nine},{:?}", int(0))]);
+        assert_eq!(grouped(vec![vec![int(9)]]), [format!("{nine},{:?}", int(1))]);
+        assert_eq!(grouped(vec![vec![int(5)]]), [format!("{nine},{:?}", int(0)), format!("{five},{:?}", int(1))]);
+    }
 
     /// Verifies: [X3.135-1986 §5.8 GR1, GR2] nulls never join a set function's
     /// argument; without DISTINCT every other value does, with DISTINCT once.

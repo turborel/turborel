@@ -57,9 +57,10 @@ pub use expression::{
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use query::{
-    Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable, Partitioning,
-    QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn,
-    SortSpecification, TableExpression, TableReference, UnnestTable, Updatability, ValuesRow, WithElement, WithQuery,
+    Correspondence, CursorSpecification, DerivedTable, GroupBy, GroupingColumn, GroupingElement, JoinKind, JoinSpecification, JoinedTable,
+    NamedTable, Partitioning, QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation,
+    SetOperator, SortColumn, SortSpecification, TableExpression, TableReference, UnnestTable, Updatability, ValuesRow, WithElement,
+    WithQuery,
 };
 
 pub use schema::{

@@ -325,6 +325,9 @@ impl Binder<'_> {
 
     /// [X3.135-1986 §5.8] a `<set function specification>`.
     pub(super) fn set_function(&self, sf: &SetFunctionSpecification, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        if let SetArg::Grouping(columns) = &sf.arg {
+            return self.grouping_operation(columns, scope);
+        }
         if sf.name == ARRAY_AGG {
             return self.array_aggregate(sf, scope);
         }
@@ -337,6 +340,7 @@ impl Binder<'_> {
             SetArg::CountStar => self.aggregate(func, None, false, scope),
             SetArg::Distinct(argument) => self.aggregate(func, Some(argument), true, scope),
             SetArg::All(argument) => self.aggregate(func, Some(argument), false, scope),
+            SetArg::Grouping(columns) => self.grouping_operation(columns, scope),
         }
     }
 

@@ -397,7 +397,10 @@ fn distributes(plan: &LogicalPlan, distinct: bool) -> bool {
         }
         LogicalPlan::SetOp { op: SetOp::Except | SetOp::Intersect, left, right, .. } => distinct && one_side(left, right, distinct),
         LogicalPlan::Distinct { input } => distinct && distributes(input, distinct),
-        LogicalPlan::Aggregate { aggs, input, .. } => distinct && aggs.is_empty() && distributes(input, distinct),
+        // A group made before any row is no group of one row.
+        LogicalPlan::Aggregate { aggs, seeds, input, .. } => {
+            distinct && aggs.is_empty() && seeds.is_empty() && distributes(input, distinct)
+        }
         LogicalPlan::WorkTable { .. }
         | LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }

@@ -32,4 +32,7 @@ pub enum SetArg {
     /// `<general set function>` with ALL, or neither [ISO/IEC 9075:1992
     /// §6.5 SR1]: SQL-86's `<all set function>` among them.
     All(Box<ValueExpression>),
+    /// [ISO/IEC 9075-2:2023 §6.9] The `<column reference>`s of a `<grouping
+    /// operation>`, each a `ValueExpression::Column`.
+    Grouping(Vec<ValueExpression>),
 }

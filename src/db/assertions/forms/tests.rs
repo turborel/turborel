@@ -76,7 +76,8 @@ fn none_of(exprs: Vec<Expr>, rows: LogicalPlan) -> Cond {
 /// `(SELECT f(arg) FROM rows) op 10`, DISTINCT if `distinct`.
 fn aggregated(f: AggregateRef, (arg, distinct): (Option<Expr>, bool), rows: LogicalPlan, op: CompOp) -> Cond {
     let agg = AggCall { func: f, arg, distinct, result: COUNTED, label: "F".into() };
-    let aggregate = LogicalPlan::Aggregate { collations: Vec::new(), groups: Vec::new(), aggs: vec![agg], input: Box::new(rows) };
+    let aggregate =
+        LogicalPlan::Aggregate { collations: Vec::new(), groups: Vec::new(), aggs: vec![agg], seeds: Vec::new(), input: Box::new(rows) };
     let s = subquery(LogicalPlan::Project { exprs: vec![Expr::Column(0)], input: Box::new(aggregate) });
     compare(Expr::Subquery(s, 0), op, number(10))
 }
@@ -260,7 +261,8 @@ fn other_shapes_have_no_form() {
     let call = Expr::Call(length, vec![Expr::Column(1)]);
     let inner = Cond::Exists(subquery(scan()));
     let raising = Expr::Arith(Box::new(Expr::Column(0)), ArithOp::Div, Box::new(number(0)));
-    let grouped = LogicalPlan::Aggregate { collations: Vec::new(), groups: vec![0], aggs: Vec::new(), input: Box::new(scan()) };
+    let grouped =
+        LogicalPlan::Aggregate { collations: Vec::new(), groups: vec![0], aggs: Vec::new(), seeds: Vec::new(), input: Box::new(scan()) };
     let cases = [
         none_of(vec![number(1)], filtered(compare(call, CompOp::Eq, number(1)))),
         none_of(vec![number(1)], filtered(Cond::IsNull(cast.clone(), false))),
@@ -381,7 +383,13 @@ fn sums_of_exact_numbers_keep_totals_6_5() {
     let real = DataType::Approximate { precision: 24, spelled: Spelled::Float };
     let of = |f: AggregateRef, result: DataType, bound: Expr| {
         let agg = AggCall { func: f, arg: k(), distinct: false, result, label: "F".into() };
-        let aggregate = LogicalPlan::Aggregate { collations: Vec::new(), groups: Vec::new(), aggs: vec![agg], input: Box::new(scan()) };
+        let aggregate = LogicalPlan::Aggregate {
+            collations: Vec::new(),
+            groups: Vec::new(),
+            aggs: vec![agg],
+            seeds: Vec::new(),
+            input: Box::new(scan()),
+        };
         let s = subquery(LogicalPlan::Project { exprs: vec![Expr::Column(0)], input: Box::new(aggregate) });
         Cond::Compare(Expr::Subquery(s, 0), CompOp::Le, bound)
     };

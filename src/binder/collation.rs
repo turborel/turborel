@@ -218,7 +218,7 @@ impl Binder<'_> {
             ValueExpression::Subquery(s) => self.subquery_derived(s).into_iter().next().unwrap_or(Derived::Yielding),
             ValueExpression::SetFunction(f) => match &f.arg {
                 SetArg::Distinct(argument) | SetArg::All(argument) => self.derived(argument)?,
-                SetArg::CountStar => Derived::Yielding,
+                SetArg::CountStar | SetArg::Grouping(_) => Derived::Yielding,
             },
             ValueExpression::Dyadic(..)
             | ValueExpression::Boolean(_)

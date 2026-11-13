@@ -167,8 +167,8 @@ selects is a grouping column, or of a set function, computed of the
 group. **HAVING** keeps the groups its condition is true of; without
 GROUP BY, it makes the whole table one group, even of no rows. A
 grouped query of no groups gives no row, though it selects only set
-functions: GROUP BY of no rows makes no groups, and HAVING may keep
-none.
+functions: GROUP BY a column of no rows makes no groups, and HAVING may
+keep none.
 
 ```sql
 SELECT DEPT, COUNT(*) AS N, SUM(SALARY) AS TOTAL FROM STAFF
@@ -182,6 +182,51 @@ SELECT DEPT, NAME FROM STAFF GROUP BY DEPT;
  ENG  |                    2 |             15300.00
 (1 row)
 turborel: SQLCODE -103 (SQLSTATE 2A000): outside a set function, a grouped query may only reference grouping columns (found STAFF.NAME) [X3.135-1986 §5.25 SR7] (at character 13)
+```
+
+### Grouping sets
+
+GROUP BY may group the rows several ways in one query, each way a
+grouping set. Each set's groups give their rows, and a column the set
+leaves out is null in them.
+
+| GROUP BY | Grouping sets |
+|---|---|
+| `ROLLUP (A, B)` | (A, B), (A), () |
+| `CUBE (A, B)` | (A, B), (A), (B), () |
+| `GROUPING SETS ((A), (B, C), ())` | (A), (B, C), () |
+| `A, ROLLUP (B)` | (A, B), (A) |
+| `()` | () |
+
+The empty set () makes the whole table one group, even of no rows, so
+it gives the grand total. Sets written one after another are combined,
+each set of the first with each of the second. GROUPING(A) is 1 in the
+rows of a set that leaves A out, else 0, which tells a total's null from
+a null in the data. Of several columns its bits make a binary number,
+the first column the highest. HAVING is judged of each set's groups.
+GROUP BY DISTINCT keeps one of each set alike and one of each row alike.
+
+A set function's argument sees the left-out column null too, as the
+standard defines the rows, so SUM(SALARY) totals but SUM of a grouping
+column is null on the rows of a set that leaves it out.
+
+Below, the first NULL row is the staff of no department, G 0, and the
+second the total of all four, G 1. The warning is of the null salary
+SUM leaves out.
+
+```sql
+SELECT DEPT, COUNT(*) AS N, SUM(SALARY) AS TOTAL, GROUPING(DEPT) AS G
+    FROM STAFF GROUP BY ROLLUP (DEPT) ORDER BY G, DEPT;
+```
+
+```
+ DEPT |                    N |                TOTAL |                    G
+------+----------------------+----------------------+----------------------
+ ENG  |                    2 |             15300.00 |                    0
+ OPS  |                    1 |              5400.00 |                    0
+ NULL |                    1 |                 NULL |                    0
+ NULL |                    4 |             20700.00 |                    1
+(4 rows, with a warning: SQLSTATE 01003)
 ```
 
 ## The select list

@@ -14,7 +14,7 @@ use crate::ast::{
 };
 use crate::db::State;
 use crate::error::{At, Result};
-use crate::logical::{Cond, Expr, LogicalPlan};
+use crate::logical::{Expr, LogicalPlan};
 use crate::value::collation::CollationRef;
 
 /// [X3.135-1986 §5.25] `<query specification>`, with the ORDER BY of its cursor if it is the
@@ -81,8 +81,11 @@ pub(super) fn bind_query(
 
     // R is a grouped table if GROUP BY or HAVING is present ([X3.135-1986 §5.22, §5.23 GR1]).
     // Otherwise, set functions in the select list make R one argument [X3.135-1986 §5.25 GR1].
-    let grouped = !te.group_by.is_empty() || te.having.is_some();
+    let grouped = te.group_by.is_some() || te.having.is_some();
     let (grouping, exprs, columns) = bind_selected(&binder, &selected, (te, grouped))?;
+    if let Some(g) = &grouping {
+        super::grouping_sets::checked(g, te.group_by.as_ref(), &columns)?;
+    }
     if cx.purpose.constrains() && spec.distinct && columns.iter().any(|c| c.data_type.is_character()) {
         return Err(nondeterministic("§7.9 SR13a", "DISTINCT with a character string column"));
     }
@@ -100,11 +103,11 @@ pub(super) fn bind_query(
     if let Some(cond) = where_cond {
         plan = LogicalPlan::Filter { cond, input: Box::new(plan) };
     }
-    if let Some(g) = grouping {
-        plan = group(plan, g, having);
-    }
     // [X3.135-1986 §5.25 GR2]
-    plan = LogicalPlan::Project { exprs, input: Box::new(plan) };
+    plan = match grouping {
+        Some(g) => super::grouping_sets::grouped(&binder, plan, (g, having), (exprs, &columns)),
+        None => LogicalPlan::Project { exprs, input: Box::new(plan) },
+    };
     if spec.distinct {
         // [ISO/IEC 9075-2:2023 §9.12 SR2e] each column an operand of a
         // grouping operation.
@@ -124,7 +127,7 @@ pub(super) fn distinct(plan: LogicalPlan, (db, session): (&State, Option<&Collat
     if collations.is_empty() {
         return LogicalPlan::Distinct { input: Box::new(plan) };
     }
-    LogicalPlan::Aggregate { groups: (0..columns.len()).collect(), collations, aggs: Vec::new(), input: Box::new(plan) }
+    LogicalPlan::Aggregate { groups: (0..columns.len()).collect(), collations, aggs: Vec::new(), seeds: Vec::new(), input: Box::new(plan) }
 }
 
 /// The items of a `<select list>`. [X3.135-1986 §5.25 SR4] "*" is a
@@ -182,16 +185,7 @@ fn bind_selected(
     (te, grouped): (&TableExpression, bool),
 ) -> Result<(Option<Grouping>, Vec<Expr>, Vec<OutColumn>)> {
     let grouping = if grouped || selected.iter().any(|i| binder.has_own_aggregate(&i.value)) {
-        // [X3.135-1986 §5.22 SR2] each grouping column references a column of T.
-        let columns = te.group_by.iter().map(|g| binder.resolve(&g.column).map(|(p, _)| p)).collect::<Result<Vec<_>>>()?;
-        // [ISO/IEC 9075-2:2023 §9.12 SR2a] each an operand of a grouping
-        // operation.
-        for g in &te.group_by {
-            super::composite::grouping_operand(&binder.resolve(&g.column)?.1, "GROUP BY").or_at(g.column.at)?;
-        }
-        // [ISO/IEC 9075-2:2023 §9.15] each by its collation.
-        let collations = te.group_by.iter().map(|g| binder.grouped_by(g)).collect::<Result<Vec<_>>>()?;
-        Some(Grouping { columns, collations: any_of(collations), aggs: RefCell::new(Vec::new()) })
+        Some(super::grouping_sets::grouping(binder, te.group_by.as_ref())?)
     } else {
         None
     };
@@ -202,7 +196,7 @@ fn bind_selected(
     if first.is_ok() || grouping.is_some() || !binder.aggregated.get() {
         return first.map(|(exprs, columns)| (grouping, exprs, columns));
     }
-    let one = Some(Grouping { columns: Vec::new(), collations: Vec::new(), aggs: RefCell::new(Vec::new()) });
+    let one = Some(Grouping { columns: Vec::new(), collations: Vec::new(), aggs: RefCell::new(Vec::new()), sets: None });
     let (exprs, columns) = bind_select_list(binder, selected, select_scope(one.as_ref(), grouped))?;
     Ok((one, exprs, columns))
 }
@@ -243,8 +237,10 @@ fn bind_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_>
         // [X3.135-1986 §5.25 SR10] NOT NULL only if it is a named column of a NOT NULL column.
         let (name, not_null, origin) = match v {
             // A column of this query; or an outer reference, in a subquery.
+            // [ISO/IEC 9075-2:2023 §7.13 SR17 m iii 1 A II] null in a
+            // grouping set that leaves it out.
             ValueExpression::Column(cs) => match binder.local(cs)? {
-                Some((pos, _, not_null)) => (Some(cs.column.clone()), not_null, Some(pos)),
+                Some((pos, _, not_null)) => (Some(cs.column.clone()), not_null && !left_out(scope, pos), Some(pos)),
                 None => (Some(cs.column.clone()), false, None),
             },
             ValueExpression::Dyadic(..)
@@ -274,6 +270,15 @@ fn bind_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_>
     Ok((exprs, columns))
 }
 
+/// Whether a grouping set of the groups `scope` is of leaves out the
+/// FROM row's column `pos`.
+fn left_out(scope: Scope<'_>, pos: usize) -> bool {
+    match scope {
+        Scope::Groups(g, _) => g.sets.as_ref().is_some_and(|s| s.left_out(pos)),
+        Scope::Rows(_) | Scope::Select => false,
+    }
+}
+
 /// [X3.135-1986 §8.3 SR6] The result column an ORDER BY `<column specification>` names.
 fn order_by_column(binder: &Binder<'_>, columns: &[OutColumn], cs: &ColumnSpecification) -> Result<usize> {
     let matches: Vec<usize> = match &cs.qualifier {
@@ -292,25 +297,9 @@ fn order_by_column(binder: &Binder<'_>, columns: &[OutColumn], cs: &ColumnSpecif
     }
 }
 
-/// [X3.135-1986 §5.22, §5.23, §5.25 GR1-GR2] Groups `plan` and computes the
-/// set functions, and keeps the groups HAVING accepts. Without GROUP BY
-/// the aggregation gives one group even of no rows: the argument of a
-/// non-grouped query's set functions [ISO/IEC 9075:1992 §7.9 GR1a i], or
-/// the single group HAVING alone makes [ISO/IEC 9075:1992 §7.8 GR1]. A
-/// grouped table of 0 groups gives no row, whatever the select list
-/// [ISO/IEC 9075:1992 §7.9 GR1b i]: GROUP BY of no rows makes none, and
-/// HAVING may remove every group, the single one included.
-fn group(plan: LogicalPlan, g: Grouping, having: Option<Cond>) -> LogicalPlan {
-    let plan = LogicalPlan::Aggregate { groups: g.columns, collations: g.collations, aggs: g.aggs.into_inner(), input: Box::new(plan) };
-    match having {
-        Some(cond) => LogicalPlan::Filter { cond, input: Box::new(plan) },
-        None => plan,
-    }
-}
-
 impl Binder<'_> {
     /// [ISO/IEC 9075:1992 §7.7] The collation `g` groups by.
-    fn grouped_by(&self, g: &GroupingColumn) -> Result<Option<CollationRef>> {
+    pub(super) fn grouped_by(&self, g: &GroupingColumn) -> Result<Option<CollationRef>> {
         let (_, t) = self.resolve(&g.column)?;
         if !t.is_character() {
             return Ok(None);

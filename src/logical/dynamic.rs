@@ -154,9 +154,9 @@ impl Filling<'_> {
         let node = match plan {
             LogicalPlan::Filter { cond, input } => LogicalPlan::Filter { cond: self.cond(cond), input },
             LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs: self.exprs(exprs), input },
-            LogicalPlan::Aggregate { groups, collations, aggs, input } => {
+            LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
                 let aggs = aggs.into_iter().map(|a| AggCall { arg: a.arg.map(|e| self.expr(e)), ..a }).collect();
-                LogicalPlan::Aggregate { groups, collations, aggs, input }
+                LogicalPlan::Aggregate { groups, collations, aggs, seeds, input }
             }
             LogicalPlan::OuterJoin { kind, cond, left, right } => LogicalPlan::OuterJoin { kind, cond: self.cond(cond), left, right },
             LogicalPlan::Values { rows, types } => LogicalPlan::Values { rows: rows.into_iter().map(|r| self.exprs(r)).collect(), types },

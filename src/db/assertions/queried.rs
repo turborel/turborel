@@ -88,8 +88,10 @@ fn grouped(plan: &LogicalPlan, known: &Known<'_>) -> Option<Shape> {
         match node {
             LogicalPlan::Filter { cond, input } => node = row_cond(cond).then_some(&**input)?,
             LogicalPlan::Project { exprs, input } => node = exprs.iter().all(row_expr).then_some(&**input)?,
-            LogicalPlan::Aggregate { groups, collations, aggs, input } => {
-                if !collations.is_empty() {
+            LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
+                // A seeded group is made whatever rows are kept, so it is
+                // not one of the groups of the rows kept alone.
+                if !collations.is_empty() || !seeds.is_empty() {
                     return None;
                 }
                 let standard = |f| known.functions.standard(f);
@@ -229,9 +231,9 @@ fn constants<'r>(rows: impl Iterator<Item = &'r Row>) -> Vec<Vec<Expr>> {
 /// null, as grouping takes them [ISO/IEC 9075:1992 §3.1.3h, §7.7 GR1].
 pub(super) fn of_groups(plan: LogicalPlan, (keys, types): (&[Row], Option<&[DataType]>)) -> LogicalPlan {
     match plan {
-        LogicalPlan::Aggregate { groups, collations, aggs, input } => {
+        LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
             let input = Box::new(keyed(*input, &groups, (keys, types)));
-            LogicalPlan::Aggregate { groups, collations, aggs, input }
+            LogicalPlan::Aggregate { groups, collations, aggs, seeds, input }
         }
         LogicalPlan::Filter { .. } | LogicalPlan::Project { .. } => plan.map_inputs(|input| of_groups(input, (keys, types))),
         LogicalPlan::Scan { .. }

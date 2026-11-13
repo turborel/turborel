@@ -29,9 +29,9 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
             let Plan::Project { exprs: exprs2, input: input2, .. } = other else { return false };
             exprs.len() == exprs2.len() && same_shape(input, input2)
         }
-        Plan::Aggregate { groups, aggs, input, .. } => {
-            let Plan::Aggregate { groups: groups2, aggs: aggs2, input: input2, .. } = other else { return false };
-            groups == groups2 && aggs.len() == aggs2.len() && same_shape(input, input2)
+        Plan::Aggregate { groups, aggs, seeds, input, .. } => {
+            let Plan::Aggregate { groups: groups2, aggs: aggs2, seeds: seeds2, input: input2, .. } = other else { return false };
+            groups == groups2 && aggs.len() == aggs2.len() && seeds.len() == seeds2.len() && same_shape(input, input2)
         }
         Plan::Distinct { input } => {
             let Plan::Distinct { input: input2 } = other else { return false };

@@ -62,8 +62,21 @@ SELECT: read rows
 <table expression> ::=
     FROM <table reference> [ { , <table reference> }... ]
     [ WHERE <search condition> ]
-    [ GROUP BY <column reference> [ { , <column reference> }... ] ]
+    [ GROUP BY [ ALL | DISTINCT ] <grouping element> [ { , <grouping element> }... ] ]
     [ HAVING <search condition> ]
+
+<grouping element> ::=
+      <ordinary grouping set>
+    | ROLLUP ( <ordinary grouping set> [ { , <ordinary grouping set> }... ] )
+    | CUBE ( <ordinary grouping set> [ { , <ordinary grouping set> }... ] )
+    | GROUPING SETS ( <grouping element> [ { , <grouping element> }... ] )
+    | ( )
+
+<ordinary grouping set> ::=
+      <grouping column reference>
+    | ( <grouping column reference> [ { , <grouping column reference> }... ] )
+
+<grouping column reference> ::= <column reference> [ COLLATE <collation name> ]
 
 <order by clause> ::=
     ORDER BY <sort specification> [ { , <sort specification> }... ]
@@ -117,7 +130,9 @@ parameters, is [a statement of a program too](#select-into).
 3. A `<sort specification>` names a column of the result, or gives its
    position.
 4. In a query with GROUP BY or a set function, a column outside a set
-   function is a grouping column.
+   function is a grouping column. GROUPING, in the select list or HAVING
+   of its query and in no set function, names grouping columns of that
+   query, at most 59 of them.
 5. The operands of a set operation have as many columns, of comparable
    types.
 6. The queries of a WITH have names of their own, and columns of names
@@ -153,7 +168,7 @@ SELECT on each table and view the query names.
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
 | 2202F | -301 | A path or a DEPTH FIRST sequence would hold more than 65,535 rows |
-| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
 
 An error is placed at the construct it is about, its character position
 told.
@@ -264,7 +279,10 @@ T121, T122, T131 and T132, and SEARCH and CYCLE its `<search or cycle
 clause>` [§7.18], with Feature T133. The fields of a row, `R.*`, are its `<all
 fields reference>` [§7.16], and UNNEST its `<collection derived table>`
 [§7.6]. PARTITION BY on an operand of a join is its `<partitioned join
-table>` [§7.10], Feature F403. SELECT ... INTO is
+table>` [§7.10], Feature F403. ROLLUP, CUBE, GROUPING SETS and the empty
+grouping set are the `<group by clause>` of §7.13 and GROUPING its
+`<grouping operation>` [§6.9], Features T431, T432 and T433, and GROUP BY
+DISTINCT Feature T434. SELECT ... INTO is
 the `<select statement: single row>` [§13.5; X3.135-1986 §8.10]. FOR
 READ ONLY, of a `<cursor specification>` [§13.1], is taken in a direct
 SELECT too. Where the null value sorts is implementation-defined

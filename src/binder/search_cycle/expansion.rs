@@ -97,7 +97,7 @@ fn spec(list: Vec<SelectSublist>, from: TableReference, condition: Option<Search
 
 /// `spec`'s `<query specification>` itself.
 fn specification(list: Vec<SelectSublist>, from: TableReference, condition: Option<SearchCondition>) -> QuerySpecification {
-    let table_expression = TableExpression { from: vec![from], where_clause: condition, group_by: Vec::new(), having: None };
+    let table_expression = TableExpression { from: vec![from], where_clause: condition, group_by: None, having: None };
     QuerySpecification { distinct: false, select_list: SelectList::Values(list), table_expression }
 }
 

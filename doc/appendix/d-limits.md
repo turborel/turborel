@@ -37,6 +37,13 @@ pattern with a back-reference goes back to try each way and stops past
 10,000,000 steps; one without any takes time linear in the string, with
 no limit. Each is SQLCODE -900.
 
+## Grouping
+
+A GROUP BY stands for at most 4,096 grouping sets: a CUBE of 12 columns
+or sets, or ROLLUPs and GROUPING SETS whose sets, multiplied, come to no
+more. GROUPING names at most 59 columns, since its value, up to 2 to
+their number less 1, has at most the 18 digits of its type.
+
 ## Sizes
 
 | What | Limit |

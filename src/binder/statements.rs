@@ -57,7 +57,7 @@ pub fn updatable_in(c: &CursorSpecification, catalog: &dyn Catalog, schema: &str
 /// table [ISO/IEC 9075:1992 §7.5 SR10, §7.9 SR12c], and no GROUP BY or
 /// HAVING.
 fn single_ungrouped_table(te: &TableExpression) -> bool {
-    matches!(te.from.as_slice(), [TableReference::Table(t)] if t.columns.is_none()) && te.group_by.is_empty() && te.having.is_none()
+    matches!(te.from.as_slice(), [TableReference::Table(t)] if t.columns.is_none()) && te.group_by.is_none() && te.having.is_none()
 }
 
 /// [X3.135-1986 §8.10] the `<query specification>` of a `<select statement>`.

@@ -59,8 +59,21 @@ impl Binder<'_> {
     /// counts, its error found as it is bound.
     pub(super) fn has_own_aggregate(&self, v: &ValueExpression) -> bool {
         let own = |a: &ValueExpression| self.outer.is_none() || !matches!(self.is_outer_argument(a), Ok(true));
-        v.any(&|e| is_aggregate_call(e, (self.db, self.schema)) && aggregate_argument(e).is_none_or(own))
+        // [ISO/IEC 9075-2:2023 §6.9 SR6] GROUPING is of this query unless
+        // each of its column references is an outer reference.
+        let of_this = |e: &ValueExpression| match grouping_arguments(e) {
+            Some(columns) => columns.iter().any(own),
+            None => aggregate_argument(e).is_none_or(own),
+        };
+        v.any(&|e| is_aggregate_call(e, (self.db, self.schema)) && of_this(e))
     }
+}
+
+/// The column references of `v` if it is a `<grouping operation>`.
+fn grouping_arguments(v: &ValueExpression) -> Option<&[ValueExpression]> {
+    let ValueExpression::SetFunction(sf) = v else { return None };
+    let SetArg::Grouping(columns) = &sf.arg else { return None };
+    Some(columns)
 }
 
 /// The argument of the set function or extension aggregate `v`, if it
@@ -68,7 +81,7 @@ impl Binder<'_> {
 fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
     match v {
         ValueExpression::SetFunction(sf) => match &sf.arg {
-            SetArg::CountStar => None,
+            SetArg::CountStar | SetArg::Grouping(_) => None,
             SetArg::Distinct(a) | SetArg::All(a) => Some(a),
         },
         ValueExpression::Call { args, .. } => args.first(),

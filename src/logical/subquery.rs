@@ -49,9 +49,9 @@ pub fn map_plan_exprs(plan: LogicalPlan, f: &mut dyn FnMut(Expr) -> Expr) -> Log
     let node = match plan {
         LogicalPlan::Filter { cond, input } => LogicalPlan::Filter { cond: cond.map_exprs(f), input },
         LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs: exprs.into_iter().map(&mut *f).collect(), input },
-        LogicalPlan::Aggregate { groups, collations, aggs, input } => {
+        LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
             let aggs = aggs.into_iter().map(|a| AggCall { arg: a.arg.map(&mut *f), ..a }).collect();
-            LogicalPlan::Aggregate { groups, collations, aggs, input }
+            LogicalPlan::Aggregate { groups, collations, aggs, seeds, input }
         }
         LogicalPlan::OuterJoin { kind, cond, left, right } => LogicalPlan::OuterJoin { kind, cond: cond.map_exprs(f), left, right },
         LogicalPlan::Values { rows, types } => {
@@ -311,7 +311,13 @@ mod tests {
         let plans = [
             LogicalPlan::Product { left: Box::new(scan()), right: Box::new(inner_filter.clone()) },
             LogicalPlan::Project { exprs: vec![outer()], input: Box::new(scan()) },
-            LogicalPlan::Aggregate { groups: vec![], collations: vec![], aggs: vec![], input: Box::new(inner_filter.clone()) },
+            LogicalPlan::Aggregate {
+                groups: vec![],
+                collations: vec![],
+                aggs: vec![],
+                seeds: vec![],
+                input: Box::new(inner_filter.clone()),
+            },
             LogicalPlan::Distinct { input: Box::new(inner_filter) },
         ];
         for plan in plans {

@@ -441,7 +441,7 @@ pub struct BoundView {
 /// It breaks a rule of its query.
 pub fn bind_view(cx: Context<'_>, query: &QueryExpression) -> Result<BoundView> {
     let bound = bind_query_expression(cx, query, &Nesting::Query)?;
-    let grouped = query.spec().is_some_and(|spec| !spec.table_expression.group_by.is_empty() || spec.table_expression.having.is_some());
+    let grouped = query.spec().is_some_and(|spec| spec.table_expression.group_by.is_some() || spec.table_expression.having.is_some());
     let mut reads = Vec::new();
     named_tables(cx, query, &mut reads);
     // [ISO/IEC 9075:1992 §11.19 SR6, §7.10 SR4] updatable only if it is

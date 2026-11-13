@@ -473,7 +473,10 @@ impl Rule for PushFilterIntoProduct {
 /// whose rows it would keep before grouping, so it can be applied first, as if
 /// it were in WHERE, and fewer rows get grouped. It must use at least one
 /// grouping column: without GROUP BY there is always one group [X3.135-1986 §5.23 GR1], so
-/// a constant HAVING condition must stay where it is.
+/// a constant HAVING condition must stay where it is. Nor is one pushed below
+/// a grouping that makes groups before any row, of each empty grouping set
+/// [ISO/IEC 9075-2:2023 §7.13 GR2a]: such a group is there whatever rows
+/// are let through.
 pub struct PushHavingIntoWhere;
 
 impl Rule for PushHavingIntoWhere {
@@ -482,9 +485,10 @@ impl Rule for PushHavingIntoWhere {
     }
     fn apply(&self, plan: &LogicalPlan, _ctx: &RuleContext<'_>) -> Option<LogicalPlan> {
         let LogicalPlan::Filter { cond, input } = plan else { return None };
-        let LogicalPlan::Aggregate { groups, collations, aggs, input: rows } = &**input else { return None };
-        // A row of a group is not the group's value under a collation.
-        if !collations.is_empty() {
+        let LogicalPlan::Aggregate { groups, collations, aggs, seeds, input: rows } = &**input else { return None };
+        // A row of a group is not the group's value under a collation, and
+        // a group made before any row is no group of the rows let through.
+        if !collations.is_empty() || !seeds.is_empty() {
             return None;
         }
         let mut conjuncts = Vec::new();
@@ -509,6 +513,7 @@ impl Rule for PushHavingIntoWhere {
             groups: groups.clone(),
             collations: Vec::new(),
             aggs: aggs.clone(),
+            seeds: seeds.clone(),
             input: Box::new(wrap((**rows).clone(), down)),
         };
         Some(wrap(agg, keep))

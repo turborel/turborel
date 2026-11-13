@@ -38,6 +38,7 @@ use crate::logical::{
     AggCall, Cond, Expr, Fixpoint, LogicalPlan, OuterJoin, SetOp, SortKey, Unnest, column_name, judged_by_sets, render_cond, render_expr,
     render_keys, split_and,
 };
+use crate::storage::Row;
 use crate::system::SystemRead;
 use crate::value::Value;
 use crate::value::collation::CollationRef;
@@ -216,6 +217,9 @@ pub enum Plan {
         collations: Vec<Option<CollationRef>>,
         /// The set functions computed per group.
         aggs: Vec<AggCall>,
+        /// The values of groups made before any row
+        /// (`LogicalPlan::Aggregate`).
+        seeds: Vec<Row>,
         /// The grouping and set functions, as text.
         detail: String,
         /// The rows grouped.
@@ -420,24 +424,27 @@ impl<'a> PhysicalPlanner<'a> {
     /// The groups of `logical`, an aggregation, in the order of `want` if
     /// their first rows' order can give it.
     fn aggregate(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
-        let LogicalPlan::Aggregate { groups, collations, aggs, input } = logical else { return self.build_node(logical, want) };
+        let LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } = logical else { return self.build_node(logical, want) };
         let detail = self.described(input, |names| {
+            let seeded = if seeds.is_empty() { String::new() } else { format!(" with {} groups of no rows", seeds.len()) };
             format!(
-                "group by [{}] computing [{}]",
+                "group by [{}] computing [{}]{seeded}",
                 groups.iter().map(|&g| column_name(names, g)).collect::<Vec<_>>().join(", "),
                 aggs.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")
             )
         });
         // Groups come in the order of their first rows (`exec/group.rs`),
-        // so rows in order of grouping columns give groups in that order.
+        // so rows in order of grouping columns give groups in that order;
+        // groups made before any row come first, in no such order.
+        let ordered = collations.is_empty() && seeds.is_empty();
         let inner: Vec<SortKey> = want
             .iter()
-            .map(|k| groups.get(k.column).filter(|_| collations.is_empty()).map(|&c| SortKey { column: c, descending: k.descending }))
+            .map(|k| groups.get(k.column).filter(|_| ordered).map(|&c| SortKey { column: c, descending: k.descending }))
             .collect::<Option<_>>()
             .unwrap_or_default();
         let b = self.build(input, &inner);
-        let plan =
-            Plan::Aggregate { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), detail, input: Box::new(b.plan) };
+        let (groups, collations, aggs, seeds) = (groups.clone(), collations.clone(), aggs.clone(), seeds.clone());
+        let plan = Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(b.plan) };
         Built { plan, ordered: !inner.is_empty() && b.ordered }
     }
 
@@ -546,42 +553,6 @@ impl Plan {
 }
 
 // Unit tests: the planner's response to a state that breaks its invariants
-// (RULES.md R-TEST-2 robustness).
+// (RULES.md R-TEST-2 robustness), and the orders its plans give.
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use super::*;
-    use crate::catalog::{Catalog, MemoryCatalog, TableDesc};
-    use crate::engine::rows::ROW_STORE;
-    use crate::error::{Code, Result};
-    use crate::exec::execute;
-    use crate::txn::NO_TRANSACTION;
-
-    /// Verifies: [DESIGN] a catalog table without storage is planned as a
-    /// scan, which then reports SQLCODE -910 instead of the planner panicking.
-    #[test]
-    fn a_table_without_storage_is_scanned_and_reported() {
-        let name = QualifiedName { auth: "A".into(), ident: "T".into() };
-        let mut catalog = MemoryCatalog::default();
-        catalog.create_schema(
-            "A",
-            "A",
-            vec![TableDesc {
-                name: name.clone(),
-                columns: vec![],
-                constraints: vec![],
-                engine: ROW_STORE.into(),
-                options: Vec::new(),
-                generation: 0,
-                temporary: None,
-            }],
-        );
-        let st = Arc::new(State::with_builtins(Box::new(catalog)));
-        let conds = vec![Cond::Const(crate::logical::Truth::True)];
-        let built = PhysicalPlanner::new(&st).access(TableRead { table: &name, shown: Shown::of(None), needed: &[] }, conds, &[]);
-        assert!(matches!(&built.plan, Plan::Filter { input, .. } if matches!(**input, Plan::SeqScan { .. })));
-        let failed = execute(built.plan, &st, NO_TRANSACTION).collect::<Result<Vec<_>>>();
-        assert_eq!(failed.err().map(|e| e.code), Some(Code::Api));
-    }
-}
+mod tests;

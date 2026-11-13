@@ -81,9 +81,10 @@ fn taken(aggs: &[AggCall], columns: &[usize]) -> Option<Vec<Taken>> {
 /// What `plan` reads, if it is an aggregation read by batches: of a
 /// subtree that gives them (`stream::layout`).
 fn read_of(plan: &Plan, db: &State) -> Option<Read> {
-    let Plan::Aggregate { groups, collations, aggs, input, .. } = plan else { return None };
-    // Batches key groups by their values, not by a collation's sort keys.
-    if !collations.is_empty() {
+    let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan else { return None };
+    // Batches key groups by their values, not by a collation's sort keys,
+    // and make none before their rows.
+    if !collations.is_empty() || !seeds.is_empty() {
         return None;
     }
     let (columns, _) = stream::layout(input, db)?;
@@ -111,7 +112,14 @@ pub(super) fn distinct_groupable(plan: &Plan, db: &State) -> Option<usize> {
 #[inline(never)]
 pub(super) fn distinct_grouping(plan: Plan, width: usize) -> Plan {
     let Plan::Distinct { input } = plan else { return plan };
-    Plan::Aggregate { groups: (0..width).collect(), collations: Vec::new(), aggs: Vec::new(), detail: String::new(), input }
+    Plan::Aggregate {
+        groups: (0..width).collect(),
+        collations: Vec::new(),
+        aggs: Vec::new(),
+        seeds: Vec::new(),
+        detail: String::new(),
+        input,
+    }
 }
 
 /// Whether `plan` is an aggregation read by batches.
@@ -358,4 +366,43 @@ fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [usize]>) ->
 enum Fed<'b> {
     Values(Lane<'b>),
     Ints(Ints),
+}
+
+// Unit tests: which aggregations are read by batches (RULES.md R-TEST-1,
+// R-TEST-8).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exec::tests::state;
+    use crate::value::DataType;
+    use crate::value::collation::{CASE_INSENSITIVE, CollationRef, builtin, default_pad};
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.13 GR2a] [DESIGN] an
+    /// aggregation of a scan is read by batches unless it groups by a
+    /// collation or makes groups before any row, which batches do not.
+    ///
+    /// Decision `!collations.is_empty() || !seeds.is_empty()`: neither
+    /// (batches) against seeds alone (rows) shows the seeds' condition;
+    /// collations alone (rows) shows the collations'.
+    #[test]
+    fn seeded_aggregations_are_not_batched() {
+        let st = state();
+        let table = crate::catalog::QualifiedName { auth: "A".into(), ident: "E".into() };
+        let count = st.functions.aggregate("COUNT").unwrap();
+        let agg = AggCall { func: count, arg: None, distinct: false, result: DataType::Boolean, label: "COUNT(*)".into() };
+        let scan = || Plan::SeqScan { table: table.clone(), columns: vec![], rows: 0, cost: 0.0_f64, order: vec![], backward: false };
+        let aggregate = |seeds: Vec<Vec<Value>>, collations: Vec<Option<CollationRef>>| Plan::Aggregate {
+            groups: Vec::new(),
+            collations,
+            aggs: vec![agg.clone()],
+            seeds,
+            detail: String::new(),
+            input: Box::new(scan()),
+        };
+        assert!(aggregable(&aggregate(Vec::new(), Vec::new()), &st));
+        assert!(!aggregable(&aggregate(vec![Vec::new()], Vec::new()), &st));
+        let case_insensitive = builtin().into_iter().find(|c| c.name() == CASE_INSENSITIVE).unwrap();
+        let collated = CollationRef { collation: case_insensitive, pad: default_pad(CASE_INSENSITIVE) };
+        assert!(!aggregable(&aggregate(Vec::new(), vec![Some(collated)]), &st));
+    }
 }

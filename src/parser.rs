@@ -35,6 +35,7 @@ mod domains;
 mod dynamic;
 mod expression;
 mod generated;
+mod grouping;
 mod interval;
 mod literal;
 mod names;

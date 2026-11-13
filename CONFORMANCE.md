@@ -1004,6 +1004,43 @@ CASE_INSENSITIVE say, that is the one DISTINCT keeps, the first it reads.
 PARTITION, which SQL-92 does not reserve, is read only before BY after an
 operand of a join.
 
+### Grouping sets
+
+Features T431 (Extended grouping capabilities), T432 (Nested and
+concatenated GROUPING SETS), T433 (Multi-argument GROUPING function) and
+T434 (GROUP BY DISTINCT). One query gives subtotals and the grand total
+[§7.13, §6.9].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| ROLLUP and CUBE | §7.13 SR13, SR14 | ROLLUP of n sets stands for n + 1 grouping sets, the longest first down to (). CUBE stands for 2 to the n, in the order of SR14's bits counted from the left. |
+| GROUPING SETS | SR15, SR16 | Nested sets are promoted. Elements written one after another are concatenated, each set of the first with each of the second, in that order. |
+| A simple GROUP BY | SR9 to SR11 | One of no ROLLUP, CUBE or GROUPING SETS loses its parentheses, so `GROUP BY (A, B), ()` is `GROUP BY A, B`. GROUPING is 0 there. |
+| The empty grouping set | GR2a | `GROUP BY ()` makes one group even of no rows, as does each () among the sets. So COUNT(*) of an empty table grouped by ROLLUP (A) is one row, 0. |
+| Each set's rows | SR17 | A column a set leaves out is null in that set's rows, in the select list, HAVING, a subquery's outer reference and a set function's argument. HAVING is judged of each set's groups. |
+| GROUPING | §6.9 SR1 to SR10 | 1 of a column its set leaves out, else 0, and of several columns the bits read as a binary number, the first the highest. Each argument names a grouping column, else SQLCODE -103. It is written only in the select list or HAVING, never in a set function's argument, and one of outer references only is the outer query's. |
+| GROUP BY DISTINCT | §7.13 SR17n | Sets of the same columns and collations are one. Rows alike of sets still apart are one, so a select column of an array type, which no operation groups [§9.12 SR3], is SQLCODE -103. GROUP BY ALL, the default, keeps every set. |
+
+The Syntax Rules give a set function's argument the null value of a column
+its set leaves out, as they do the select list [SR17m iii]. So in
+
+```sql
+SELECT P, SUM(P) FROM S GROUP BY ROLLUP (P)
+```
+
+the total row's SUM(P) is null, not the sum of every P, as the query of
+that set alone is `SELECT CAST(NULL AS INTEGER), SUM(CAST(NULL AS INTEGER))
+FROM S`. turborel gives the rows the rules define. A column no set
+leaves out, or not a grouping column, is summed as it is.
+
+The FROM and WHERE are read once, not once for each set. Each row is
+given to every set, a left-out column's value null, and one aggregation
+groups them all by the set's number and its GROUPING bits, so the groups
+of two sets alike stay apart under ALL (RULES.md D38). It spills as any
+grouping does. A grouping column of two collations among the sets is
+grouped by each where its set names it. ROLLUP, CUBE and GROUPING, which
+SQL-92 does not reserve, are key words only where they are read.
+
 ### Arrays and row types
 
 Features S090 (Minimal array support), S099 (Array expressions), S301
@@ -1244,6 +1281,7 @@ topic. The Where column names the file that implements each.
 | 86 §5.5 SR7–SR9 precision of DECIMAL, INTEGER, SMALLINT | As specified, 10, 5 | `value.rs` |
 | 2023 §6.1 SR30 (IV032) the radix and precision of BIGINT | Decimal, as INTEGER's and SMALLINT's, of 18 digits, the most an exact value holds | `value.rs` |
 | 86 §5.5 SR10–SR12 FLOAT, REAL, DOUBLE PRECISION | 24 bits if p ≤ 24, else 53. REAL 24, DOUBLE PRECISION 53, FLOAT with no precision 53. | `parser/data_type.rs`, `value.rs` |
+| 2023 §6.9 SR10b (IV081), §7.13 SR17m iii (IV183) the type of the result of a grouping operation | Exact numeric of scale 0 and precision 18, the type BIGINT's, which holds GROUPING of up to 59 columns | `binder/grouping_sets.rs` |
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |
 | 86 §5.9 SR4b, c precision of sums and products | 18 | `binder/expression.rs` |
@@ -1307,6 +1345,7 @@ topic. The Where column names the file that implements each.
 |---|---|---|
 | §3.3.4.4, Annex C item 6 (implementation-dependent) whether the exception of an inessential part of a search condition is raised | An EXISTS reads its subquery's rows up to the first its condition keeps, and a scalar or row subquery reads two rows at most, the second failing it. So an error of a later row is not raised, by batches as row by row. Every other part of a condition is evaluated of every row its clause applies to (RULES.md D15). | `exec/eval.rs`, `exec/batch/stream.rs`, `exec/batch/joined/pairs.rs` |
 | §3.3.4.4, Annex C item 5 (implementation-dependent) whether expressions are evaluated left to right | Conjuncts and rows are judged in the order the plan reads them. Where several would raise an error, which one a statement raises may differ by plan (the operand a hash join builds, the join order, an OPTIMIZER setting). Whether one is raised does not (RULES.md D15). | `physical/join.rs` |
+| 2023 §7.13 SR17 (UV132) the column names and correlation name of the grouping sets' transformation | None is made. The sets are grouped in one pass, and nothing of the transformation can be named or seen. | `binder/grouping_sets.rs` |
 | 86 §6.5 GR1 whether a viewed table is materialized | No. Its query is bound into the plan of each query that names it. | `binder/views.rs` |
 | §3.3.4.1 more than one condition of a statement | One is made available. That is an exception if one is raised, else no data if the statement found none, else a warning of its own rules, as of an assignment or a privilege, else the first warning an expression raised. A query's rows that can raise a condition are read as its cursor opens (RULES.md D15), so its warnings are its OPEN's, or, over the protocol, its Complete's once its rows are sent. | `error/warnings.rs`, `db/completion.rs` |
 
@@ -1443,6 +1482,7 @@ SQLCODE -900 (RULES.md D18).
 | SQL descriptor areas | 64 at once, of a session | §17.2 GR3 leaves the number to the implementation, and names no exception past it. Direct SQL allocates them, a server's clients among it. | `db/dynamic/areas.rs` |
 | Regular expression size | 8,192 instructions compiled, about as many characters and quantified repeats, and groups 64 deep | §9.28 sets no limit. A counted repeat is compiled once for each count, so `a{9000}` passes it. | `regex/compile.rs`, `regex/parse.rs` |
 | Regular expression steps | 10,000,000, of a search with back-references | A back-reference matches no automaton, so its search goes back and can take time exponential in the string. One without any takes time linear in it, with no limit. | `regex/backtrack.rs` |
+| Grouping sets | 4,096 of a GROUP BY, and GROUPING of 59 columns | 2023 §7.13 SR14 and SR16 set no maximum, and a CUBE of n sets stands for 2 to the n. GROUPING's value is of 18 digits [§6.9 SR10b], which 2 to the 59 fits and 2 to the 60 does not. | `binder/grouping_sets.rs`, `binder/grouping_sets/expansion.rs` |
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
 
 An index entry is an encoded key plus an 8-byte row id, and has its own limit.

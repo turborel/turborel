@@ -6,6 +6,7 @@
 //! 9075-2:2023 §6.14], and the \[EXTENSION\] function call.
 
 use super::Parser;
+use super::grouping::GROUPING;
 use crate::ast::{
     CaseExpression, Predicate, SearchCondition, SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification, WhenOperand,
 };
@@ -116,6 +117,11 @@ impl Parser {
         if let Some(name) = regex.filter(|_| matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))) {
             return self.regex_function(name);
         }
+        // [ISO/IEC 9075-2:2023 §6.9] GROUPING, no key word of SQL-92,
+        // before "(" the <grouping operation>.
+        if self.is_word(GROUPING) && matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
+            return Ok(ValueExpression::SetFunction(self.grouping_operation()?));
+        }
         // [ISO/IEC 9075-2:2023 §10.4] a <routine invocation>: its name,
         // perhaps of a schema, then "(".
         let qualified = matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD))
@@ -160,6 +166,20 @@ impl Parser {
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), at })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.9] `<grouping operation>` ::= GROUPING (
+    /// `<column reference>` \[{, `<column reference>`}...\] ).
+    fn grouping_operation(&mut self) -> Result<SetFunctionSpecification> {
+        let at = self.here();
+        self.advance();
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut columns = vec![ValueExpression::Column(self.column_specification()?)];
+        while self.accept_delim(delim::COMMA) {
+            columns.push(ValueExpression::Column(self.column_specification()?));
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(SetFunctionSpecification { name: GROUPING, arg: SetArg::Grouping(columns), order_by: Vec::new(), at })
     }
 
     /// [ISO/IEC 9075:1992 §6.9] `<case expression>`: NULLIF, COALESCE, or

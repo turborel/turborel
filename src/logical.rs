@@ -31,6 +31,7 @@ pub use subquery::{Decorrelated, Subquery, map_plan_exprs, plan_has_outer};
 
 use crate::catalog::QualifiedName;
 use crate::functions::AggregateRef;
+use crate::storage::Row;
 use crate::system::SystemRead;
 use crate::value::DataType;
 use crate::value::collation::CollationRef;
@@ -96,6 +97,10 @@ pub enum LogicalPlan {
         collations: Vec<Option<CollationRef>>,
         /// The set functions computed per group.
         aggs: Vec<AggCall>,
+        /// [ISO/IEC 9075-2:2023 §7.13 GR2a] The values of groups made before
+        /// any row, which are groups even of no rows: of each empty grouping
+        /// set (`binder/grouping_sets.rs`).
+        seeds: Vec<Row>,
         /// The rows grouped.
         input: Box<LogicalPlan>,
     },
@@ -482,8 +487,8 @@ impl LogicalPlan {
                 let left = g(left);
                 LogicalPlan::OuterJoin { kind, cond, left, right: g(right) }
             }
-            LogicalPlan::Aggregate { groups, collations, aggs, input } => {
-                LogicalPlan::Aggregate { groups, collations, aggs, input: g(input) }
+            LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
+                LogicalPlan::Aggregate { groups, collations, aggs, seeds, input: g(input) }
             }
             LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs, input: g(input) },
             LogicalPlan::Distinct { input } => LogicalPlan::Distinct { input: g(input) },

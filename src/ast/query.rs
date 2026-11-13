@@ -52,6 +52,33 @@ pub struct GroupingColumn {
     pub collate: Option<TableName>,
 }
 
+/// [ISO/IEC 9075-2:2023 §7.13] `<group by clause>` ::= GROUP BY \[`<set
+/// quantifier>`\] `<grouping element list>`
+#[derive(Debug, Clone)]
+pub struct GroupBy {
+    /// DISTINCT was written; ALL, or neither, is not \[SR6\].
+    pub distinct: bool,
+    /// The `<grouping element list>`.
+    pub elements: Vec<GroupingElement>,
+}
+
+/// [ISO/IEC 9075-2:2023 §7.13] A `<grouping element>`, or a `<grouping
+/// set>`, of the same forms.
+#[derive(Debug, Clone)]
+pub enum GroupingElement {
+    /// An `<ordinary grouping set>`: a `<grouping column reference>`, or a
+    /// `<grouping column reference list>` in parentheses.
+    Ordinary(Vec<GroupingColumn>),
+    /// A `<rollup list>`: ROLLUP of `<ordinary grouping set>`s.
+    Rollup(Vec<Vec<GroupingColumn>>),
+    /// A `<cube list>`: CUBE of `<ordinary grouping set>`s.
+    Cube(Vec<Vec<GroupingColumn>>),
+    /// A `<grouping sets specification>`: GROUPING SETS of `<grouping set>`s.
+    Sets(Vec<GroupingElement>),
+    /// The `<empty grouping set>`, ().
+    Empty,
+}
+
 /// How a `<sort specification>` names its column.
 #[derive(Debug, Clone)]
 pub enum SortColumn {
@@ -387,8 +414,9 @@ pub struct TableExpression {
     pub from: Vec<TableReference>,
     /// [X3.135-1986 §5.21] `<where clause>` ::= WHERE `<search condition>`
     pub where_clause: Option<SearchCondition>,
-    /// [X3.135-1986 §5.22] `<group by clause>` ::= GROUP BY `<column specification>` \[{, `<column specification>`}...\]
-    pub group_by: Vec<GroupingColumn>,
+    /// [X3.135-1986 §5.22; ISO/IEC 9075-2:2023 §7.13] `<group by clause>`,
+    /// if written.
+    pub group_by: Option<GroupBy>,
     /// [X3.135-1986 §5.23] `<having clause>` ::= HAVING `<search condition>`
     pub having: Option<SearchCondition>,
 }

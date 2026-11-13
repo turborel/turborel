@@ -33,8 +33,6 @@ each group.
 
 ### Queries
 
-- ROLLUP, CUBE and GROUPING SETS (T431 to T434) [§7.13], with GROUPING and
-  GROUP BY DISTINCT. One query then gives subtotals and the grand total.
 - ANY_VALUE (T626) and LISTAGG (T625) [§10.9]. ANY_VALUE takes a column
   that does not depend on the grouping, LISTAGG joins a group's strings in
   the order WITHIN GROUP gives.

@@ -175,7 +175,13 @@ fn collated_set_operation(
     }
     if op == SetOp::Union {
         let appended = LogicalPlan::SetOp { op, all: true, compared: None, left, right };
-        return LogicalPlan::Aggregate { groups: (0..columns.len()).collect(), collations, aggs: Vec::new(), input: Box::new(appended) };
+        return LogicalPlan::Aggregate {
+            groups: (0..columns.len()).collect(),
+            collations,
+            aggs: Vec::new(),
+            seeds: Vec::new(),
+            input: Box::new(appended),
+        };
     }
     let width = collations.len();
     let (keyed_left, keyed_right) = (Box::new(keyed_operand(*left, &collations)), Box::new(keyed_operand(*right, &collations)));

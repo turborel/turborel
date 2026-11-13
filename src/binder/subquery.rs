@@ -89,6 +89,21 @@ pub(super) fn outer_aggregate(outer: &Outer<'_>, func: AggregateRef, v: &ValueEx
     Ok((capture(outer, e, label), t))
 }
 
+/// [ISO/IEC 9075-2:2023 §6.9 SR3, SR6b] GROUPING of `args`, each an outer
+/// reference: of the query their columns are of, as it sees them where the
+/// subquery is, its value filling a slot here.
+pub(super) fn outer_grouping(outer: &Outer<'_>, args: &[ValueExpression]) -> Result<(Expr, DataType)> {
+    let (e, t) = outer.binder.grouping_operation(args, outer.scope)?;
+    let label = format!(
+        "GROUPING({})",
+        args.iter()
+            .filter_map(|a| if let ValueExpression::Column(cs) = a { Some(written(cs)) } else { None })
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    Ok((capture(outer, e, label), t))
+}
+
 /// The display name of the enclosing query's set function `e`, bound in
 /// `scope`: its call as written there, or the name of its own slot.
 fn outer_label(e: &Expr, scope: Scope<'_>) -> String {
@@ -158,12 +173,12 @@ impl Binder<'_> {
             return Ok(field);
         }
         if let Some((pos, t, _)) = self.local(cs)? {
-            return Ok((Expr::Column(self.column_in(pos, &t.clone(), scope)?), t));
+            return Ok((self.column_in(pos, &t.clone(), scope)?, t));
         }
         let Some(outer) = self.outer else {
             // In no scope at all: the error the lookup gives.
             let (pos, t) = self.resolve(cs)?;
-            return Ok((Expr::Column(self.column_in(pos, &t.clone(), scope)?), t));
+            return Ok((self.column_in(pos, &t.clone(), scope)?, t));
         };
         let (e, t) = outer.binder.column_expr(cs, outer.scope)?;
         Ok((capture(outer, e, written(cs)), t))
@@ -323,7 +338,13 @@ impl Binder<'_> {
         let result = super::composite::bounded(DataType::array(element, MAX_ARRAY_CARDINALITY))?;
         let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
         let agg = AggCall { func: AggregateRef(Arc::new(func)), arg: Some(arg), distinct: false, result: result.clone(), label };
-        let plan = LogicalPlan::Aggregate { groups: Vec::new(), collations: Vec::new(), aggs: vec![agg], input: Box::new(bound.plan) };
+        let plan = LogicalPlan::Aggregate {
+            groups: Vec::new(),
+            collations: Vec::new(),
+            aggs: vec![agg],
+            seeds: Vec::new(),
+            input: Box::new(bound.plan),
+        };
         let subquery = Subquery { plan, outer: outer.captured.into_inner() };
         Ok((Expr::Subquery(Arc::new(subquery), 0), result))
     }
