@@ -107,6 +107,7 @@ verification approach DO-178C expects (§8).
 | D67 | A recursive query is iterated over held work tables, bounded by a setting |
 | D68 | Arrays and rows are values of shared parts, nested to a bound |
 | D69 | A distinct type's value is its source's, untagged |
+| D70 | SEARCH and CYCLE are their expansion, its growing columns widened |
 
 ### The project
 
@@ -561,7 +562,7 @@ rules say. A recursive operand's column takes its anchor's type [SR19 b ii
 A recursion may have no finite fixpoint [NOTE 322], so the session setting
 EXECUTOR.MAX_ITERATIONS refuses one past its count of iterations (SQLCODE
 -918), and a work table is read only while its statement is not cancelled
-(D44). SEARCH and CYCLE [§7.18] are not yet taken.
+(D44). SEARCH and CYCLE [§7.18] are their expansion (D70).
 
 #### D68. Arrays and rows are values of shared parts, nested to a bound
 
@@ -642,6 +643,40 @@ makes goes with it [GR2], and turborel has no CREATE TRANSFORM. CASCADE
 drops each column of a type based on it first, as ALTER TABLE DROP COLUMN
 does, and refuses before dropping any where that would drop every column
 of a table [§11.23 SR4].
+
+#### D70. SEARCH and CYCLE are their expansion, its growing columns widened
+
+A `<with list element>` with a `<search or cycle clause>` is replaced in
+the binder by the expanded element ISO/IEC 9075-2:2023 §7.18 SR8 says it
+is equivalent to, which is then bound and iterated as any recursive
+element is (D67). So the clause costs no operator of its own, and its
+rows are those of the rules (`binder/search_cycle.rs`). The expansion's
+own columns are qualified by its own correlation names, so no name of the
+statement is taken for one.
+
+Read to the letter, the expansion cannot recurse. The anchor's `ARRAY
+[ROW(...)]` has a maximum cardinality of 1 [§6.49 SR2], and a recursive
+query's column takes the anchor's type [§7.17 SR17c]. So the path column
+and DEPTH FIRST's sequence column would fail (2202F) at the second level.
+BREADTH FIRST's level starts as the literal 0, NUMERIC(1,0), and would
+fail (-301) at level 10. Those columns are therefore arrays of the
+greatest maximum cardinality, `MAX_ARRAY_CARDINALITY` [IL008], which
+bounds a path's length, and the level is INTEGER, which is NUMERIC(10,0)
+here.
+
+SR5c ii renames the fields of BREADTH FIRST's row to read its level as
+LEVEL, which no SQL turborel takes can write. The level is read as the
+row's first field, F1, as turborel names the fields of `ROW(...)` by place
+(D68). A `*` of the recursive operand, which would take the columns the
+expansion adds to the element, is each table's columns, the element's
+those of its `<with column list>`. One of a NATURAL join, or a join USING
+columns, is not supported (SQLCODE -900), nor is a UNION CORRESPONDING.
+
+What follows from the rules is kept. The DEPTH FIRST sequence is an
+array, so it is ordered by no operation [§9.14 SR3]. A UNION, not UNION
+ALL, groups the arrays a cycle clause or DEPTH FIRST adds, so it is
+refused [§9.12 SR3]. A cycle mark value of UNKNOWN is refused, since it is
+neither equal to the other nor unequal [§7.18 SR6c].
 
 #### D33. Schema changes are transactional
 

@@ -2,7 +2,7 @@
 //! `<query expression>` [ISO/IEC 9075:1992 §7.10] and `<query
 //! specification>` [X3.135-1986 §5.25] and their parts.
 
-use super::{ColumnSpecification, SearchCondition, Subquery, TableName, ValueExpression};
+use super::{ColumnSpecification, CycleClause, SearchClause, SearchCondition, Subquery, TableName, ValueExpression};
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.3] <cursor specification> and [X3.135-1986 §5.25] <query specification>
 // ---------------------------------------------------------------------------
@@ -96,7 +96,8 @@ pub struct WithQuery {
 }
 
 /// [ISO/IEC 9075-2:2023 §7.17] `<with list element>` ::= `<query name>`
-/// \[(`<with column list>`)\] AS `<table subquery>`
+/// \[(`<with column list>`)\] AS `<table subquery>` \[`<search or cycle
+/// clause>`\]
 #[derive(Debug, Clone)]
 pub struct WithElement {
     /// The `<query name>`.
@@ -105,6 +106,12 @@ pub struct WithElement {
     pub columns: Option<Vec<String>>,
     /// The `<query expression>` of its `<table subquery>`.
     pub query: QueryExpression,
+    /// [§7.18] The `<search clause>` of its `<search or cycle clause>`, if
+    /// written.
+    pub search: Option<SearchClause>,
+    /// [§7.18] The `<cycle clause>` of its `<search or cycle clause>`, if
+    /// written.
+    pub cycle: Option<CycleClause>,
     /// Where its `<query name>` is written.
     pub at: usize,
 }

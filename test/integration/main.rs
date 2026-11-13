@@ -157,6 +157,7 @@ mod rule_settings;
 mod schema_statements;
 mod schema_transactions;
 mod scroll_cursors;
+mod search_cycle;
 mod sequences;
 mod served;
 mod set_statements;

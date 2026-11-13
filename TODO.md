@@ -30,17 +30,8 @@ D and the clauses that define them, so a bare `§` here is SQL:2023. The
 groups run in the order they build on each other, and so do the items in
 each group.
 
-### Types
-
-- Array element assignment of a host target (S097) [§9.1 SR4]. A target
-  `A[i]` of FETCH INTO, SELECT INTO and GET DESCRIPTOR. It needs a target
-  that is not a whole parameter.
-
 ### Queries
 
-- SEARCH and CYCLE (T133) [§7.18] of WITH RECURSIVE. The sequence
-  column of SEARCH and the path of CYCLE are an array of rows. Cycle marks may be of any
-  type, BOOLEAN among them.
 - Enhanced derived column names (T285) [§7.16]. A select list item's column
   is named from its expression in more cases.
 - Partitioned outer joins (F403) [§7.10], `PARTITION BY` on one side of an
@@ -87,6 +78,11 @@ each group.
   CALL and the control statements, running as their module's
   authorization identifier, as SQL:2023 Parts 2 and 4 define them. Part
   4's text is not yet local.
+- Array element assignment (S097) [§6.4 SR7, SR8; §14.5 GR; §14.7 GR].
+  A FETCH INTO or SELECT INTO target `A[i]`, which writes one element of
+  an array. Its array is an SQL parameter or a new transition variable's
+  column, never a host parameter, so it waits for triggers or SQL-invoked
+  routines.
 - Polymorphic table functions (B200 to B209) [§4.35.4, §7.6, §9.24, §9.25].
   A function in FROM whose result's columns depend on its arguments. It
   needs SQL-invoked routines.

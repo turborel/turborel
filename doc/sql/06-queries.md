@@ -334,8 +334,64 @@ turborel: SQLCODE -918 (SQLSTATE TB918): a recursive query reached no fixpoint i
 OK
 ```
 
-SEARCH and CYCLE, which order a recursive query's rows and mark its
-cycles, are not implemented.
+### SEARCH and CYCLE
+
+A recursive query may be followed by a CYCLE clause, a SEARCH clause, or
+both. CYCLE names columns whose values, met again along a path, close a
+cycle. It adds a mark column, TRUE on a row that closes a cycle and FALSE
+on the others, and a path column, an array of a row of those columns for
+each step from the anchor's row. A row that closes a cycle is extended no
+further, so UNION ALL over a graph with cycles ends. TO and DEFAULT give
+other marks, two different one-character strings or TRUE and FALSE.
+
+```sql
+CREATE TABLE ROAD (A INTEGER, B INTEGER);
+INSERT INTO ROAD VALUES (1, 2), (2, 3), (3, 1);
+WITH RECURSIVE TRIP (TOWN) AS (
+  VALUES (1)
+  UNION ALL
+  SELECT ROAD.B FROM TRIP, ROAD WHERE ROAD.A = TRIP.TOWN)
+  CYCLE TOWN SET LOOPED USING ROUTE
+SELECT * FROM TRIP;
+```
+
+```
+OK
+OK
+ TOWN | LOOPED | ROUTE
+------+--------+--------------------------------------------------------------
+    1 | FALSE  | ARRAY[ROW(1)]
+    2 | FALSE  | ARRAY[ROW(1), ROW(2)]
+    3 | FALSE  | ARRAY[ROW(1), ROW(2), ROW(3)]
+    1 | TRUE   | ARRAY[ROW(1), ROW(2), ROW(3), ROW(1)]
+(4 rows)
+```
+
+SEARCH DEPTH FIRST adds a column of the path of rows of the columns BY
+names, from the anchor's. SEARCH BREADTH FIRST adds a row of the level,
+from 0, and those columns, so ordering by it gives the rows level by
+level. An array is not ordered, so ORDER BY takes BREADTH FIRST's column
+and not DEPTH FIRST's. UNION compares rows and cannot compare arrays, so
+CYCLE and DEPTH FIRST need UNION ALL. A path holds at most 65,535 rows.
+
+```sql
+WITH RECURSIVE UNDER (ID) AS (
+  SELECT ID FROM BOSS WHERE ID = 1
+  UNION ALL
+  SELECT BOSS.ID FROM UNDER, BOSS WHERE BOSS.REPORTS_TO = UNDER.ID)
+  SEARCH BREADTH FIRST BY ID SET SEQ
+SELECT ID, SEQ FROM UNDER ORDER BY SEQ;
+```
+
+```
+           ID | SEQ
+--------------+-----------------------------------
+            1 | ROW(0, 1)
+            2 | ROW(1, 2)
+            3 | ROW(1, 3)
+            4 | ROW(2, 4)
+(4 rows)
+```
 
 The standard: ISO/IEC 9075:1992 §7.1–§7.11; X3.135-1986 §5.19–§5.25;
-WITH, ISO/IEC 9075-2:2023 §7.17.
+WITH, ISO/IEC 9075-2:2023 §7.17, and SEARCH and CYCLE, §7.18.

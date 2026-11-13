@@ -12,14 +12,10 @@ use crate::ast::{
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
-// [ISO/IEC 9075-2:2023 §5.2, §7.17, §7.18] Words of a <with clause> that
-// SQL-92 does not reserve: identifiers, read as these only there.
+// [ISO/IEC 9075-2:2023 §5.2, §7.17] Words of a <with clause> that SQL-92
+// does not reserve: identifiers, read as these only there.
 /// RECURSIVE, after WITH.
 const RECURSIVE: &str = "RECURSIVE";
-/// SEARCH, which begins a `<search clause>`.
-const SEARCH: &str = "SEARCH";
-/// CYCLE, which begins a `<cycle clause>`.
-const CYCLE: &str = "CYCLE";
 
 impl Parser {
     /// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] `<cursor specification>`
@@ -91,19 +87,15 @@ impl Parser {
 
     /// [ISO/IEC 9075-2:2023 §7.17] `<with list element>` ::= `<query
     /// name>` \[(`<with column list>`)\] AS `<table subquery>` \[`<search or
-    /// cycle clause>`\]. The `<search or cycle clause>` [§7.18] is valid SQL
-    /// not implemented: its sequence and path columns are of row and array
-    /// types, which turborel has not.
+    /// cycle clause>`\] (`parser/search_cycle.rs`).
     fn with_list_element(&mut self) -> Result<WithElement> {
         let at = self.here();
         let name = self.identifier()?;
         let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.name_list()?) } else { None };
         self.expect_kw(kw::AS)?;
         let query = self.subquery()?.query;
-        if self.is_word(SEARCH) || self.is_word(CYCLE) {
-            return Err(self.unsupported("a <search or cycle clause> [ISO/IEC 9075-2:2023 §7.18]"));
-        }
-        Ok(WithElement { name, columns, query, at })
+        let (search, cycle) = self.search_or_cycle_clause()?;
+        Ok(WithElement { name, columns, query, search, cycle, at })
     }
 
     /// Whether the `<non-reserved word>` `word` is next.

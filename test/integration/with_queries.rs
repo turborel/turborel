@@ -120,7 +120,7 @@ fn a_with_list_names_its_queries_for_the_query_after_it_7_17() {
 /// its query has are refused (SQLCODE -103, 2A000); a with name is not a
 /// table of a schema, so qualified it names none (-103), and a
 /// non-recursive list's element reads no element after it (-103), nor
-/// itself. A `<search or cycle clause>` is not implemented (-900).
+/// itself.
 #[test]
 fn a_with_list_breaking_its_syntax_rules_is_refused_7_17() {
     let db = tables();
@@ -133,11 +133,6 @@ fn a_with_list_breaking_its_syntax_rules_is_refused_7_17() {
     assert_eq!(refused(&a, "WITH X AS (SELECT K FROM T) SELECT * FROM A.X"), Some(Code::SyntaxRule), "qualified");
     assert_eq!(refused(&a, "WITH X AS (SELECT K FROM Y), Y AS (SELECT K FROM T) SELECT * FROM X"), Some(Code::SyntaxRule), "SR3i, later");
     assert_eq!(refused(&a, "WITH X (P) AS (SELECT P FROM X) SELECT * FROM X"), Some(Code::SyntaxRule), "SR3i, itself");
-    assert_eq!(refused(&a, "WITH X (P) AS (SELECT K FROM T) SEARCH DEPTH FIRST BY P SET S SELECT * FROM X"), Some(Code::Unsupported));
-    assert_eq!(
-        refused(&a, "WITH RECURSIVE X (P) AS (SELECT K FROM T) CYCLE P SET C TO 1 DEFAULT 0 USING H SELECT * FROM X"),
-        Some(Code::Unsupported)
-    );
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 GR2c] a recursive query

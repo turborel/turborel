@@ -42,6 +42,7 @@ mod primary;
 mod query;
 mod regex;
 mod schema;
+mod search_cycle;
 mod sequences;
 mod served;
 mod user_types;

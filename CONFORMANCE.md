@@ -908,9 +908,11 @@ null is true. NULLS is a non-reserved word, a key word only after UNIQUE.
 ### WITH and WITH RECURSIVE
 
 Features T121 (WITH (excluding RECURSIVE) in query expression), T122
-(WITH (excluding RECURSIVE) in subquery), T131 (Recursive query) and T132
-(Recursive query in subquery). A `<with clause>` names queries for the
-query expression that follows it [§7.17].
+(WITH (excluding RECURSIVE) in subquery), T131 (Recursive query), T132
+(Recursive query in subquery) and T133 (Enhanced cycle mark values). A
+`<with clause>` names queries for the query expression that follows it
+[§7.17], and a `<search or cycle clause>` adds a recursive query's
+sequence, cycle mark and path columns [§7.18].
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -919,12 +921,15 @@ query expression that follows it [§7.17].
 | Linear recursion | SR3j ix, x | A query specification reads its stratum once, in its FROM clause or a derived table there, beside no set function in its select list or HAVING, not on a side of an outer join that nulls give (UNION JOIN taken as FULL), under no INTERSECT ALL or EXCEPT ALL, not after EXCEPT. Else SQLCODE -103. |
 | Types | SR19 b ii 2 | A recursive query's column is of its anchor's type, a recursive operand's value cast to it, so `VALUES (1)` gives NUMERIC(1,0) and 10 is SQLCODE -301. Every column of a recursive query may be null, where the standard may know some not to be. |
 | Evaluation | GR2c | To a fixpoint, as the General Rules say, or of a single query over only the rows each iteration adds where that gives the same rows (RULES.md D67). The order of the rows is implementation-dependent (US036) without ORDER BY. |
+| SEARCH and CYCLE | §7.17 SR3j xi, SR3k; §7.18 | An element with a `<search or cycle clause>` is expandable, recursive and referencing no other query of its list, a UNION whose first operand does not reference it and whose second is a `<query specification>` reading it in its FROM clause, else SQLCODE -103. Each Syntax Rule on the columns named and the mark values is SQLCODE -103. The element is its expansion [SR8], with its path and DEPTH FIRST sequence columns arrays of the greatest maximum cardinality and BREADTH FIRST's level INTEGER, so they grow past the anchor's types (RULES.md D70). The marks are TRUE and FALSE unless written. |
 | Runaway recursion | GR2c ii 4, NOTE 322 | Refused past the session's EXECUTOR.MAX_ITERATIONS iterations, a million by default, 0 for no limit (SQLCODE -918, SQLSTATE TB918). This implementation's own, as the standard's loop does not end. A cancel or STATEMENT.TIMEOUT_MS stops it (SQLCODE -920). |
 
-SEARCH and CYCLE (T133) [§7.18] are not supported (SQLCODE -900). Neither is an anchor operand of
-UNION CORRESPONDING without BY, nor a recursive query whose anchor UNION
-is within its `<query expression body>` rather than all of it, as `A
-UNION ALL B UNION ALL C` of two recursive operands. A query of a WITH is not
+A `<search or cycle clause>` of a UNION CORRESPONDING, or of a recursive
+operand that selects `*` of a NATURAL join or a join USING columns, is not
+supported (SQLCODE -900). A path holds at most 65,535 rows. Neither is an
+anchor operand of UNION CORRESPONDING without BY, nor a recursive query
+whose anchor UNION is within its `<query expression body>` rather than
+all of it, as `A UNION ALL B UNION ALL C` of two recursive operands. A query of a WITH is not
 updatable, so no view of one is. RECURSIVE is a key word only after WITH,
 SEARCH and CYCLE only after a query of the list.
 
@@ -968,9 +973,11 @@ operand and reading its first, is valid SQL not supported (SQLCODE -900).
 S091 (Basic array support) is claimed with S093 (Arrays of distinct
 types), which it implies, and with it S095 (Array constructors by query),
 S096 (Optional array bounds) and S098 (ARRAY_AGG), each processed as the
-table says. S097 (Array element assignment) needs a host target element,
-which turborel does not take. ARRAY, ROW, UNNEST and the functions are key words only
-where they are read (Appendix B).
+table says. S097 (Array element assignment) is not claimed. Its target's
+array is an SQL parameter or a new transition variable's column [§6.4
+SR7], and turborel has neither SQL-invoked routines with parameters nor
+triggers. ARRAY, ROW, UNNEST and the functions are key words only where
+they are read (Appendix B).
 
 ### Distinct types
 

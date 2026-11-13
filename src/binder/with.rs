@@ -150,6 +150,7 @@ pub(super) fn with_scope<'a, T>(
 /// `e`, bound with the query names of `queries` in scope, and added to
 /// them; what its columns are drawn from found too if `drawn`.
 pub(super) fn bind_element(cx: Context<'_>, e: &WithElement, (queries, drawn): (&Queries<'_>, bool)) -> Result<()> {
+    super::search_cycle::refuse_clause(e)?;
     let inner = Context { queries: Some(queries), draws: false, ..cx };
     let bound = bind_query_expression(inner, &e.query, &element_nesting(queries.site)).or_at(e.at)?;
     let underlying = if drawn { Some(drawn_from(inner, &e.query, queries.site)?) } else { None };

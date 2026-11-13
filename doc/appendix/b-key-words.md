@@ -102,7 +102,7 @@ RECURSIVE, SEARCH and CYCLE, which SQL:2023 reserves and SQL-92 does not,
 are key words only in a WITH. RECURSIVE is one after WITH unless AS or a
 column list follows it, so `WITH RECURSIVE AS (...)` names a query
 RECURSIVE. SEARCH and CYCLE are read after a query of the list, and
-refused there as not implemented.
+DEPTH and BREADTH after SEARCH. A column may be named any of them.
 
 ARRAY, ROW, UNNEST, CARDINALITY, ARRAY_MAX_CARDINALITY, TRIM_ARRAY and
 ARRAY_AGG, which SQL:2023 reserves and SQL-92 does not, are identifiers

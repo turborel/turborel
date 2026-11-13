@@ -42,6 +42,10 @@ struct Member<'w> {
     anchor: Option<Side>,
     /// The members, by their places in the stratum, its query references.
     on: Vec<usize>,
+    /// [RULES.md D70] The places of its columns that are arrays of the
+    /// greatest maximum cardinality, of a `<search or cycle clause>`
+    /// (`binder/search_cycle.rs`).
+    widened: &'w [usize],
 }
 
 /// The elements of the potentially recursive list `w`, bound into
@@ -58,6 +62,8 @@ pub(super) fn bind_list(cx: Context<'_>, w: &WithQuery, (queries, drawn): (&Quer
         }
     }
     let arcs = strata::graph(w);
+    let expanded = super::search_cycle::expanded(w, &arcs)?;
+    let (w, widened) = expanded.as_ref().map_or((w, &[][..]), |x| (&x.list, x.widened.as_slice()));
     for stratum in strata::strata(&arcs) {
         let elements: Vec<&WithElement> = stratum.members.iter().filter_map(|&m| w.elements.get(m)).collect();
         if !stratum.recursive {
@@ -69,7 +75,8 @@ pub(super) fn bind_list(cx: Context<'_>, w: &WithQuery, (queries, drawn): (&Quer
         for (e, &n) in elements.into_iter().zip(&stratum.members) {
             rules.check(e)?;
             let on = arcs.get(n).into_iter().flatten().filter_map(|j| stratum.members.iter().position(|m| m == j)).collect();
-            members.push(Member { element: e, anchor: rules.anchor(e)?, on });
+            let wide = widened.get(n).map_or(&[][..], Vec::as_slice);
+            members.push(Member { element: e, anchor: rules.anchor(e)?, on, widened: wide });
         }
         let anchors: Vec<usize> = stratum.members.iter().zip(&members).filter(|(_, m)| m.anchor.is_some()).map(|(&n, _)| n).collect();
         rules.anchored(&arcs, &stratum.members, &anchors)?;
@@ -184,7 +191,8 @@ fn first_columns(cx: Context<'_>, (m, side): (&Member<'_>, Side), queries: &Quer
             Correspondence::By(names) => picked(&first.columns, &positions(&first.columns, names)),
             Correspondence::Position | Correspondence::Names => first.columns,
         };
-        Ok(columns.into_iter().map(|c| OutColumn { not_null: false, origin: None, ..c }).collect())
+        let columns = columns.into_iter().map(|c| OutColumn { not_null: false, origin: None, ..c }).collect();
+        Ok(super::search_cycle::widened(columns, m.widened))
     })
     .or_at(m.element.at)
 }
@@ -213,7 +221,8 @@ fn columns_over(
     let names: Vec<&str> = members.iter().map(|member| member.element.name.as_str()).collect();
     in_body(inner, &m.element.query, outer, &mut |within, body| {
         if let Some(side) = m.anchor {
-            return anchor_columns(within, (union_of(body)?, side), (outer, &names));
+            let columns = anchor_columns(within, (union_of(body)?, side), (outer, &names))?;
+            return Ok(super::search_cycle::widened(columns, m.widened));
         }
         let bound = bind_query_expression(within, body, &element_nesting(outer))?;
         Ok(bound.columns.into_iter().map(|c| OutColumn { not_null: false, origin: None, ..c }).collect())

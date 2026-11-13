@@ -20,6 +20,15 @@ SELECT: read rows
 
 <with list element> ::=
     <query name> [ ( <column name> [ { , <column name> }... ] ) ] AS ( <query expression> )
+    [ <search clause> ] [ <cycle clause> ]
+
+<search clause> ::=
+    SEARCH { DEPTH | BREADTH } FIRST BY <column name> [ { , <column name> }... ]
+    SET <sequence column>
+
+<cycle clause> ::=
+    CYCLE <column name> [ { , <column name> }... ] SET <cycle mark column>
+    [ TO <cycle mark value> DEFAULT <non-cycle mark value> ] USING <path column>
 
 <query expression body> ::=
       <query term>
@@ -86,7 +95,11 @@ written as a table is, and by each query after it in the list. WITH
 RECURSIVE lets them read themselves and each other, each evaluated again
 over the rows it gave until it gives no more, as [Query
 Expressions](../06-queries.md#with-and-with-recursive) shows; past
-EXECUTOR.MAX_ITERATIONS iterations the query is refused.
+EXECUTOR.MAX_ITERATIONS iterations the query is refused. SEARCH adds a
+column that orders a recursive query's rows depth first or breadth first,
+and CYCLE a column marking each row that closes a cycle and a column of
+the path to it, ending the path there ([SEARCH and
+CYCLE](../06-queries.md#search-and-cycle)).
 
 A query begins a transaction if none is active, and reads as its
 isolation level says ([SET TRANSACTION](set-transaction.md)).
@@ -114,6 +127,12 @@ parameters, is [a statement of a program too](#select-into).
    query specification, in its FROM clause and not on the side of an
    outer join that nulls give, beside no set function, under no
    INTERSECT ALL or EXCEPT ALL and not after EXCEPT.
+7. A query of WITH RECURSIVE with SEARCH or CYCLE reads itself and no
+   other query of its list, and is a UNION of a query that does not read
+   it and a query specification that reads it in its FROM clause. The
+   columns BY and CYCLE name are of its column list, each once. The
+   sequence, cycle mark and path columns are new names, each different.
+   The marks are two different one-character strings, or TRUE and FALSE.
 
 ## PRIVILEGES
 
@@ -128,7 +147,8 @@ SELECT on each table and view the query names.
 | 21000 | -811 | A scalar subquery gives more than one row |
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
-| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); SEARCH or CYCLE of a WITH; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body |
+| 2202F | -301 | A path or a DEPTH FIRST sequence would hold more than 65,535 rows |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
 
 An error is placed at the construct it is about, its character position
 told.
@@ -235,7 +255,8 @@ ISO/IEC 9075:1992 §20.1, the `<direct select statement: multiple
 rows>`, and its query expression [§7.10], query specification [§7.9] and
 table expression [§7.3]; X3.135-1986 §5.25 and §8.3. WITH and WITH
 RECURSIVE are the `<with clause>` of ISO/IEC 9075-2:2023 §7.17, Features
-T121, T122, T131 and T132. The fields of a row, `R.*`, are its `<all
+T121, T122, T131 and T132, and SEARCH and CYCLE its `<search or cycle
+clause>` [§7.18], with Feature T133. The fields of a row, `R.*`, are its `<all
 fields reference>` [§7.16], and UNNEST its `<collection derived table>`
 [§7.6]. SELECT ... INTO is
 the `<select statement: single row>` [§13.5; X3.135-1986 §8.10]. FOR

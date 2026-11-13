@@ -36,6 +36,7 @@ mod expression;
 mod generated;
 mod query;
 mod schema;
+mod search_cycle;
 mod sequences;
 mod set_functions;
 mod user_types;
@@ -68,6 +69,7 @@ pub use schema::{
     TableConstraint, TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage, Temporary, TemporaryKind,
     TypeName, ViewDefinition,
 };
+pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
 pub use set_functions::{SetArg, SetFunctionSpecification};
 pub use user_types::{TypeDefinition, TypeOption};
