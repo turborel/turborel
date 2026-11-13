@@ -11,7 +11,7 @@ use crate::ast::{CaseExpression, Composite, Overflow, Predicate, SearchCondition
 use crate::error::{Code, Result, SqlError};
 use crate::functions::{AggregateRef, Listagg, ListaggSpec, MAX_LISTAGG_LENGTH, Truncation};
 use crate::logical::Expr;
-use crate::value::DataType;
+use crate::value::{DataType, SortOrder};
 
 impl Binder<'_> {
     /// [ISO/IEC 9075-2:2023 §10.9 SR11] LISTAGG ( \[DISTINCT\] V, LAS ...
@@ -40,8 +40,8 @@ impl Binder<'_> {
         let collation = if distinct { self.collation_of(&[self.derived(value)?])? } else { None };
         // A key not a character string is its own sort key.
         let collations = keys.clone().map(|k| self.collation_of(&[self.derived(k)?])).collect::<Result<Vec<_>>>()?;
-        let descending = sf.order_by.iter().map(|k| k.descending).collect();
-        let spec = ListaggSpec { separator, truncation, distinct, collation, descending, collations };
+        let orders = sf.order_by.iter().map(|k| SortOrder::of(k.descending, k.nulls_first)).collect();
+        let spec = ListaggSpec { separator, truncation, distinct, collation, orders, collations };
         let row = ValueExpression::Composite(Box::new(Composite::Row(std::iter::once(&**value).chain(keys).cloned().collect())), sf.at);
         let null = Predicate::Null { value: vec![(**value).clone()], not: false };
         let whens = vec![(SearchCondition::Predicate(Box::new(null), sf.at), None)];

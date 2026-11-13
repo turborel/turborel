@@ -43,6 +43,7 @@ use crate::physical::Plan;
 use crate::storage::{Condition, Conjunction, Row, TableStorage};
 use crate::system::SystemRead;
 use crate::txn::{TxId, checked};
+use crate::value::SortOrder;
 use crate::value::Value;
 
 pub use entries::{Entries, row_entries, table_entries};
@@ -145,7 +146,7 @@ fn ordered_scan(
         None => storage.scan(tx, columns),
     };
     // Sorted as ORDER BY sorts, in a work area that spills (RULES.md D38).
-    let keys: Vec<SortKey> = order.iter().map(|&column| SortKey { column, descending: backward }).collect();
+    let keys: Vec<SortKey> = order.iter().map(|&column| SortKey::new(column, SortOrder::of(backward, None))).collect();
     sort::sort(&keys, Box::new(checked(read.map(|r| r.map(|(_, row)| row)), stop)), db, tx)
 }
 
@@ -517,7 +518,7 @@ mod tests {
             input: Box::new(one_row(row.clone())),
         };
         assert_eq!(code(execute(aggregate, &st, NO_TRANSACTION)), Some(Code::Api));
-        let keys = vec![SortKey { column: 1, descending: false }];
+        let keys = vec![SortKey::ascending(1)];
         let sort = Plan::Sort { keys, detail: String::new(), input: Box::new(one_row(vec![Value::Null])) };
         assert_eq!(code(execute(sort, &st, NO_TRANSACTION)), Some(Code::Api));
         assert_eq!(code(execute(one_row(row), &st, NO_TRANSACTION)), None, "the row source itself succeeds");

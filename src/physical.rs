@@ -439,7 +439,7 @@ impl<'a> PhysicalPlanner<'a> {
         let ordered = collations.is_empty() && seeds.is_empty();
         let inner: Vec<SortKey> = want
             .iter()
-            .map(|k| groups.get(k.column).filter(|_| ordered).map(|&c| SortKey { column: c, descending: k.descending }))
+            .map(|k| groups.get(k.column).filter(|_| ordered).map(|&c| SortKey { column: c, ..*k }))
             .collect::<Option<_>>()
             .unwrap_or_default();
         let b = self.build(input, &inner);
@@ -489,7 +489,7 @@ impl<'a> PhysicalPlanner<'a> {
             .iter()
             .map(|k| {
                 let Some(Expr::Column(c)) = exprs.get(k.column) else { return None };
-                Some(SortKey { column: *c, descending: k.descending })
+                Some(SortKey { column: *c, ..*k })
             })
             .collect::<Option<_>>()
             .unwrap_or_default();

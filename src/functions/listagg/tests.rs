@@ -16,7 +16,7 @@ fn spec(separator: &str, truncation: Option<Truncation>, (distinct, descending):
         truncation,
         distinct,
         collation: None,
-        descending: Arc::from(vec![descending]),
+        orders: Arc::from(vec![SortOrder::of(descending, None)]),
         collations: vec![None],
     })
 }

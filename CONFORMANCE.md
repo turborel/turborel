@@ -1065,6 +1065,21 @@ depend on their order, so it is the error the result would raise
 (RULES.md D15). ANY_VALUE, LISTAGG, WITHIN and OVERFLOW, which SQL-92 does
 not reserve, are key words only where they are read.
 
+### Null ordering
+
+Feature T611 (Elementary OLAP operations) in part: its `<null ordering>`
+of ISO/IEC 9075-2:2023 §10.10. Window functions, the rest of T611, are
+not yet done.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Its syntax | §10.10 | NULLS FIRST or NULLS LAST after a key's direction, in a cursor's ORDER BY, ARRAY(query ORDER BY ...), ARRAY_AGG's ORDER BY and LISTAGG's WITHIN GROUP. NULLS followed by neither is SQLCODE -104. |
+| Where nulls go | GR1e ii | Under NULLS FIRST a null is before every value, under NULLS LAST after, ascending and descending alike. Two nulls are peers. Without one, nulls are last ascending and first descending (ID133). |
+| Its plans | | A sort places nulls so in memory, spilled and by batches, a null's sort prefix the least or the greatest as its key places it. A column store kept in order of a column is read in that order only for the null ordering implied. An index read in key order gives no null, so it serves either. EXPLAIN shows a key's null ordering where it is not the one implied. |
+
+NULLS, which neither SQL-92 nor SQL:2023 reserves, is a key word only
+where it is read, so a column may be named NULLS.
+
 ### Arrays and row types
 
 Features S090 (Minimal array support), S099 (Array expressions), S301
@@ -1311,7 +1326,7 @@ topic. The Where column names the file that implements each.
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |
 | 86 §5.9 SR4b, c precision of sums and products | 18 | `binder/expression.rs` |
 | 86 §5.9 SR4d precision and scale of quotients | 18 digits, at the largest scale (at most 18) that fits, truncated toward zero, trailing zeros dropped down to max(s1, s2) | `value/decimal.rs`, `binder/expression.rs` |
-| 86 §8.3 GR3b vii where nulls sort | Greater than every value, so last ascending and first descending | `value.rs` |
+| 86 §8.3 GR3b vii; 2023 §10.10 SR3, ID133, where nulls sort, the `<null ordering>` implied | Greater than every value, so last ascending and first descending, as NULLS LAST of ASC and NULLS FIRST of DESC | `value.rs`, `value/order.rs` |
 | §6.1 SR2 the national character set | SQL_TEXT, the one there is. NATIONAL CHARACTER is CHARACTER. | `parser/data_type.rs`, `lexer.rs` |
 | §6.13 SR3a VL and FL, the longest varying and fixed-length strings | 32767 characters each | `value.rs` |
 | 2023 §4.4.1, IA022, whether trailing X'00' octets of a binary string are significant | They are | `value/binary.rs` |

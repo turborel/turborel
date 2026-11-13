@@ -15,7 +15,7 @@ use super::{Accumulator, AggregateFunction};
 use crate::error::{Code, Result, SqlError, SqlState, fail, fail_with};
 use crate::value::collation::CollationRef;
 use crate::value::types::composite::array_ordered;
-use crate::value::{DataType, MAX_CHARACTER_LENGTH, NormKey, Value, sort_cmp};
+use crate::value::{DataType, MAX_CHARACTER_LENGTH, NormKey, SortOrder, Value};
 
 #[cfg(test)]
 mod tests;
@@ -57,8 +57,8 @@ pub struct ListaggSpec {
     /// The collation its values are compared by under DISTINCT \[GR11c\], if
     /// not the default.
     pub collation: Option<CollationRef>,
-    /// Per sort key, whether DESC was written.
-    pub descending: Arc<[bool]>,
+    /// Per sort key, its direction and null ordering.
+    pub orders: Arc<[SortOrder]>,
     /// Per sort key, the collation it orders by, if not the default.
     pub collations: Vec<Option<CollationRef>>,
 }
@@ -110,9 +110,10 @@ impl AggregateFunction for Listagg {
         let overflow = s.truncation.as_ref().map_or_else(String::new, |t| {
             format!(" ON OVERFLOW TRUNCATE '{}' {} COUNT", t.filler.replace('\'', "''"), if t.count { "WITH" } else { "WITHOUT" })
         });
-        let keys = s.descending.iter().zip(&s.collations).enumerate().map(|(i, (&down, collation))| {
+        let keys = s.orders.iter().zip(&s.collations).enumerate().map(|(i, (order, collation))| {
             let by = collation.as_ref().map_or_else(String::new, |c| format!(" COLLATE {}", c.collation.name()));
-            format!("{}{by}{}", i.saturating_add(2), if down { " DESC" } else { "" })
+            let down = if order.descending { " DESC" } else { "" };
+            format!("{}{by}{down}{}", i.saturating_add(2), order.null_suffix())
         });
         let keys: Vec<String> = keys.collect();
         let separator = s.separator.replace('\'', "''");
@@ -125,19 +126,19 @@ fn not_bound() -> SqlError {
 }
 
 /// Where a value is in the order of its group: by its sort keys, each as
-/// its collation orders it, ascending or descending [GR11a, §10.10], and of
-/// keys alike by the order it was read.
+/// its collation orders it, in its direction, its nulls placed by its null
+/// ordering [GR11a, §10.10], and of keys alike by the order it was read.
 #[derive(Clone)]
 struct Place {
     keys: Vec<Value>,
     read: u64,
-    descending: Arc<[bool]>,
+    orders: Arc<[SortOrder]>,
 }
 
 impl Ord for Place {
     fn cmp(&self, other: &Self) -> Ordering {
-        let keys = self.keys.iter().zip(&other.keys).zip(self.descending.iter());
-        let by_keys = keys.map(|((x, y), &down)| if down { sort_cmp(y, x) } else { sort_cmp(x, y) }).find(|o| o.is_ne());
+        let keys = self.keys.iter().zip(&other.keys).zip(self.orders.iter());
+        let by_keys = keys.map(|((x, y), order)| order.cmp(x, y)).find(|o| o.is_ne());
         by_keys.unwrap_or(Ordering::Equal).then(self.read.cmp(&other.read))
     }
 }
@@ -224,7 +225,7 @@ impl Accumulator for Joined {
             .skip(1)
             .enumerate()
             .map(|(k, part)| self.spec.collations.get(k).and_then(Option::as_ref).map_or_else(|| part.clone(), |c| c.sort_key(part)));
-        let place = Place { keys: keyed.collect(), read: self.read, descending: Arc::clone(&self.spec.descending) };
+        let place = Place { keys: keyed.collect(), read: self.read, orders: Arc::clone(&self.spec.orders) };
         self.read = self.read.saturating_add(1);
         if self.spec.distinct {
             let id = self.spec.collation.as_ref().map_or_else(|| Value::Char(text.clone()), |c| c.sort_key(&Value::Char(text.clone())));

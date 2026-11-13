@@ -9,6 +9,7 @@ use super::{Bound, Context, OutColumn, rule};
 use crate::ast::{ColumnSpecification, CursorSpecification, QueryExpression, SortColumn, SortSpecification};
 use crate::error::{At, Result};
 use crate::logical::SortKey;
+use crate::value::SortOrder;
 
 /// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] A `<cursor
 /// specification>`: its query, then ORDER BY.
@@ -71,7 +72,7 @@ pub(super) fn sort_keys(
             if let Some(c) = columns.get(column) {
                 super::composite::ordering_operand(&c.data_type, "ORDER BY")?;
             }
-            Ok(SortKey { column, descending: s.descending })
+            Ok(SortKey::new(column, SortOrder::of(s.descending, s.nulls_first)))
         })
         .collect()
 }

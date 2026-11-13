@@ -100,7 +100,8 @@ impl Parser {
     }
 
     /// [ISO/IEC 9075-2:2023 §10.10] `<sort specification list>`, each
-    /// `<sort key>` a `<value expression>` \[ASC | DESC\]: of ARRAY_AGG and
+    /// `<sort key>` a `<value expression>` \[ASC | DESC\] \[`<null
+    /// ordering>`\]: of ARRAY_AGG and
     /// of a `<within group specification>`.
     pub(super) fn sort_specification_list(&mut self) -> Result<Vec<ValueOrder>> {
         let mut order_by = Vec::new();
@@ -110,7 +111,8 @@ impl Parser {
             if !descending {
                 self.accept_kw(kw::ASC);
             }
-            order_by.push(ValueOrder { key, descending });
+            let nulls_first = self.null_ordering()?;
+            order_by.push(ValueOrder { key, descending, nulls_first });
             if !self.accept_delim(delim::COMMA) {
                 return Ok(order_by);
             }

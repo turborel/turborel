@@ -69,7 +69,7 @@ fn groups_made_before_any_row_are_sorted() {
             needed: vec![0],
         };
         let aggregate = LogicalPlan::Aggregate { groups: vec![0], collations: Vec::new(), aggs: vec![agg], seeds, input: Box::new(scan) };
-        let logical = LogicalPlan::Sort { keys: vec![SortKey { column: 0, descending: false }], input: Box::new(aggregate) };
+        let logical = LogicalPlan::Sort { keys: vec![SortKey::ascending(0)], input: Box::new(aggregate) };
         matches!(PhysicalPlanner::new(&st).plan(&logical), Plan::Sort { .. })
     };
     assert!(!sorted(Vec::new()), "the index gives the groups' order");

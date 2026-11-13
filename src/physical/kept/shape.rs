@@ -97,7 +97,7 @@ mod tests {
     use super::*;
     use crate::catalog::QualifiedName;
     use crate::logical::SortKey;
-    use crate::value::{CompOp, Decimal, Value};
+    use crate::value::{CompOp, Decimal, SortOrder, Value};
 
     fn int(n: i128) -> Value {
         Value::Exact(Decimal::new(n, 0))
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn operators_over_one_shape_have_it_if_alike() {
         let sorted = |descending: bool| Plan::Sort {
-            keys: vec![SortKey { column: 0, descending }],
+            keys: vec![SortKey::new(0, SortOrder::of(descending, None))],
             detail: String::new(),
             input: Box::new(scan("I", Probe::All, false)),
         };

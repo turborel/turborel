@@ -11,9 +11,9 @@ use crate::ast::{
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
-/// The `<non-reserved word>` of a `<unique null treatment>` [ISO/IEC
-/// 9075-2:2023 §5.2, §8.11].
-const NULLS: &str = "NULLS";
+/// The `<non-reserved word>` of a `<unique null treatment>` and a `<null
+/// ordering>` [ISO/IEC 9075-2:2023 §5.2, §8.11, §10.10].
+pub(super) const NULLS: &str = "NULLS";
 
 impl Parser {
     /// Whether a `<table constraint definition>` begins here.

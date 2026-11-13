@@ -173,9 +173,9 @@ pub(super) fn ordered_ids(plan: Plan, st: &Arc<State>, tx: TxId, projection: &[u
     // Each row as its sort keys' values, then its id.
     let (columns, on_keys): (Vec<usize>, Vec<SortKey>) = keys
         .iter()
-        .filter_map(|k| projection.get(k.column).map(|&column| (column, k.descending)))
+        .filter_map(|k| projection.get(k.column).map(|&column| (column, k.order())))
         .enumerate()
-        .map(|(i, (column, descending))| (column, SortKey { column: i, descending }))
+        .map(|(i, (column, order))| (column, SortKey::new(i, order)))
         .unzip();
     let id_at = columns.len();
     let keyed: RowIter = Box::new(table_entries(*input, st, tx)?.map(move |read| read.and_then(|(id, row)| keyed(&row, &columns, id))));

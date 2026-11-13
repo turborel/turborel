@@ -18,6 +18,7 @@ mod distinct;
 pub mod interval;
 mod like;
 mod operators;
+mod order;
 pub mod precedence;
 pub mod types;
 mod units;
@@ -32,6 +33,7 @@ pub use decimal::{Decimal, pow10};
 pub use distinct::{distinct, key_bucket, key_equal};
 pub use like::{LikePattern, LikePatterns, collated as like_collated, constant_pattern, constant_prefix, like};
 pub use operators::{ArithOp, CompOp, arith};
+pub use order::SortOrder;
 pub use types::{Descriptor, SqlType};
 
 // ---------------------------------------------------------------------------

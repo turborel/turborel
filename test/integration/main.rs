@@ -130,6 +130,7 @@ mod log_sync;
 mod memory;
 mod mvcc;
 mod named_schemas;
+mod null_ordering;
 mod ordered_joins;
 mod pages;
 mod partial_groups;

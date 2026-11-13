@@ -101,7 +101,7 @@ impl Held {
     fn add(&mut self, keys: &[SortKey], batch: Batch, rows: &[usize]) {
         let at = self.batches.len();
         for &row in rows {
-            let prefix = keys.first().and_then(|k| prefix_of_cell(batch.cell(k.column, row), k.descending));
+            let prefix = keys.first().and_then(|k| prefix_of_cell(batch.cell(k.column, row), k.order()));
             self.kind = self.kind.zip(prefix).and_then(|(kind, p)| joined(kind, p.kind));
             self.whole &= prefix.is_some_and(|p| p.whole);
             self.places.push(Place { batch: at, row, prefix: prefix.map_or(0, |p| p.bits) });
@@ -144,7 +144,7 @@ impl Held {
         for places in self.places.chunks(each) {
             let rows: Vec<Pick<'_>> = places.iter().filter_map(|p| self.batches.get(p.batch).map(|b| (b, p.row))).collect();
             let heads: Vec<(u8, u64)> =
-                rows.iter().map(|&(b, r)| head(keys.first().and_then(|k| prefix_of_cell(b.cell(k.column, r), k.descending)))).collect();
+                rows.iter().map(|&(b, r)| head(keys.first().and_then(|k| prefix_of_cell(b.cell(k.column, r), k.order())))).collect();
             put_chunk(&heads, &rows, &mut out);
             run.push(&out)?;
         }
@@ -181,13 +181,14 @@ pub(super) fn row_of(batch: &Batch, r: usize) -> Row {
     (0..batch.columns.len()).map(|at| batch.cell(at, r).to_value()).collect()
 }
 
-/// [X3.135-1986 §8.3 GR3b] The order of row `ra` of `a` and row `rb` of
-/// `b` under `keys`, as `compare_rows` orders the rows of their values.
+/// [X3.135-1986 §8.3 GR3b; ISO/IEC 9075-2:2023 §10.10 GR1] The order of
+/// row `ra` of `a` and row `rb` of `b` under `keys`, as `compare_rows`
+/// orders the rows of their values.
 pub(super) fn compare_cells(keys: &[SortKey], (a, ra): (&Batch, usize), (b, rb): (&Batch, usize)) -> Ordering {
     keys.iter()
         .map(|k| {
-            let o = cell_cmp(a.cell(k.column, ra), b.cell(k.column, rb));
-            if k.descending { o.reverse() } else { o }
+            let (x, y) = (a.cell(k.column, ra), b.cell(k.column, rb));
+            k.order().placed((x.is_null(), y.is_null()), || cell_cmp(x, y))
         })
         .find(|o| o.is_ne())
         .unwrap_or(Ordering::Equal)
@@ -240,13 +241,13 @@ mod tests {
         let int = |n: i128, scale: u32| Value::Exact(Decimal::new(n, scale));
         let mixed = Column::Values(vec![int(2_i128, 0_u32), Value::Char("a".to_owned()), int(15_i128, 1_u32), int(1_i128, 0_u32)]);
         let place = Column::Ints(Ints::new(vec![0_i64, 1_i64, 2_i64, 3_i64], 0_u32, None));
-        let up = [SortKey { column: 0, descending: false }];
+        let up = [SortKey::ascending(0)];
         let made = sorted_of(&up, vec![mixed.clone(), place.clone()], 4_usize).unwrap();
         let mut whole: Vec<Row> = (0..4).map(|r| vec![mixed.values()[r].clone(), place.values()[r].clone()]).collect();
         whole.sort_by(|a, b| crate::exec::compare_rows(&up, a, b));
         let expected: Vec<String> = whole.iter().map(|r| r.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")).collect();
         assert_eq!(made, expected);
-        let missing = [SortKey { column: 2, descending: false }];
+        let missing = [SortKey::ascending(2)];
         assert_eq!(sorted_of(&missing, vec![mixed, place], 4_usize), Err(Code::Api));
         assert_eq!(sorted_of(&missing, vec![], 0_usize), Ok(vec![]), "no row, none refused");
     }

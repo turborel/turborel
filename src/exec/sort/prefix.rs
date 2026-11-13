@@ -3,8 +3,10 @@
 //! one kind: an exact number's floor, the first bytes of a string padded
 //! with spaces, an approximate number's bits in order, a datetime's
 //! instant in UTC (as a time or timestamp WITH TIME ZONE compares), an
-//! interval's units, a binary string's first octets and its length; nulls placed
-//! by `NULLS_SORT_HIGH`; reversed if the key is DESC. Two rows whose
+//! interval's units, a binary string's first octets and its length;
+//! reversed if the key is DESC; a null's the least or the greatest, as the
+//! key's null ordering places it [ISO/IEC 9075-2:2023 §10.10 GR1e ii],
+//! and a value's that is the same not held whole. Two rows whose
 //! prefixes differ are in that order. In memory, the prefixes and the
 //! rows' places are sorted, side by side, rows of equal prefixes compared
 //! whole, then by place, so the sort is stable; then the rows are put in
@@ -23,7 +25,7 @@ use super::compare_rows;
 use crate::logical::SortKey;
 use crate::storage::{Cell, Row};
 use crate::value::datetime::Moment;
-use crate::value::{Binary, Decimal, NULLS_SORT_HIGH, Value, pow10};
+use crate::value::{Binary, Decimal, SortOrder, Value, pow10};
 
 /// The bit that orders a signed number's prefix after its sign.
 const SIGN: u64 = 1 << 63;
@@ -41,10 +43,6 @@ const BINARY_HELD: u32 = 7;
 /// The length a binary string's prefix gives one longer than
 /// `BINARY_HELD`: greater than any it holds whole.
 const LONG_BINARY: u8 = u8::MAX;
-
-/// A null's prefix, before a DESC key reverses it: the greatest if nulls
-/// sort high, else the least.
-const NULL_PREFIX: u64 = if NULLS_SORT_HIGH { u64::MAX } else { 0 };
 
 /// `rows`, sorted by `keys` [X3.135-1986 §8.3 GR3b], stably.
 pub(super) fn sorted(keys: &[SortKey], mut rows: Vec<Row>) -> Vec<Row> {
@@ -136,11 +134,12 @@ pub(super) struct Prefix {
     pub(super) whole: bool,
 }
 
-/// The prefix of `value`, of a key `descending` or not; none if its kind
-/// has none, or it is an exact number whose floor cannot be found.
-pub(super) fn prefix_of(value: &Value, descending: bool) -> Option<Prefix> {
+/// The prefix of `value`, of a key of `order`; none if its kind has none,
+/// or it is an exact number whose floor cannot be found.
+pub(super) fn prefix_of(value: &Value, order: SortOrder) -> Option<Prefix> {
     let (kind, bits, held) = match value {
-        Value::Null => (Kind::Null, NULL_PREFIX, true),
+        // Its bits are its null ordering's (`finished`).
+        Value::Null => (Kind::Null, 0, true),
         Value::Exact(d) => {
             let (bits, held) = exact(d)?;
             (Kind::Exact, bits, held)
@@ -166,27 +165,33 @@ pub(super) fn prefix_of(value: &Value, descending: bool) -> Option<Prefix> {
         // number is compared whole.
         Value::Bool(_) | Value::DecFloat(_) | Value::Array(_) | Value::Row(_) | Value::Extension(_) => return None,
     };
-    Some(finished((kind, bits, held), descending))
+    Some(finished((kind, bits, held), order))
 }
 
 /// The prefix of a value of `kind` whose prefix is `bits`, held whole if
-/// `held`, of a key `descending` or not.
-fn finished((kind, bits, held): (Kind, u64, bool), descending: bool) -> Prefix {
+/// `held`, of a key of `order`: reversed if descending, a null's the least
+/// under NULLS FIRST and the greatest under NULLS LAST [ISO/IEC
+/// 9075-2:2023 §10.10 GR1e ii].
+fn finished((kind, bits, held): (Kind, u64, bool), order: SortOrder) -> Prefix {
+    let null = if order.nulls_first { 0 } else { u64::MAX };
+    if kind == Kind::Null {
+        return Prefix { kind, bits: null, whole: held };
+    }
+    let bits = if order.descending { !bits } else { bits };
     // A value whose prefix is a null's does not hold it whole, so no null
     // ties a value held whole.
-    let whole = held && (kind == Kind::Null || bits != NULL_PREFIX);
-    Prefix { kind, bits: if descending { !bits } else { bits }, whole }
+    Prefix { kind, bits, whole: held && bits != null }
 }
 
 /// The prefix of the value of a batch's `cell`, as `prefix_of` gives it of
 /// the value, made without making a string's (RULES.md D31).
-pub(super) fn prefix_of_cell(cell: Cell<'_>, descending: bool) -> Option<Prefix> {
+pub(super) fn prefix_of_cell(cell: Cell<'_>, order: SortOrder) -> Option<Prefix> {
     match cell {
-        Cell::Value(v) => prefix_of(v, descending),
-        Cell::Exact(units, scale) => prefix_of(&Value::Exact(Decimal::new(i128::from(units), scale)), descending),
-        Cell::Approx(f) => prefix_of(&Value::Approx(f), descending),
-        Cell::Text(t) => Some(finished((Kind::Char, text(t), t.len() <= PREFIX_BYTES), descending)),
-        Cell::Null => prefix_of(&Value::Null, descending),
+        Cell::Value(v) => prefix_of(v, order),
+        Cell::Exact(units, scale) => prefix_of(&Value::Exact(Decimal::new(i128::from(units), scale)), order),
+        Cell::Approx(f) => prefix_of(&Value::Approx(f), order),
+        Cell::Text(t) => Some(finished((Kind::Char, text(t), t.len() <= PREFIX_BYTES), order)),
+        Cell::Null => prefix_of(&Value::Null, order),
     }
 }
 
@@ -196,7 +201,7 @@ fn prefixes(key: &SortKey, rows: &[Row]) -> Option<(Vec<(u64, usize)>, bool)> {
     let (mut kind, mut whole) = (Kind::Null, true);
     let mut out = Vec::with_capacity(rows.len());
     for (at, row) in rows.iter().enumerate() {
-        let prefix = prefix_of(row.get(key.column)?, key.descending)?;
+        let prefix = prefix_of(row.get(key.column)?, key.order())?;
         kind = joined(kind, prefix.kind)?;
         whole &= prefix.whole;
         out.push((prefix.bits, at));
@@ -264,6 +269,14 @@ mod tests {
     use crate::value::interval::{Interval, Qualifier};
     use crate::value::types::unregistered;
 
+    /// Each direction under each null ordering.
+    const ORDERS: [SortOrder; 4] = [
+        SortOrder { descending: false, nulls_first: false },
+        SortOrder { descending: false, nulls_first: true },
+        SortOrder { descending: true, nulls_first: false },
+        SortOrder { descending: true, nulls_first: true },
+    ];
+
     /// A timestamp of `local` microseconds at a zone of `zone` minutes, of a
     /// type WITH TIME ZONE.
     fn stamp(local: i64, zone: i16) -> Value {
@@ -285,7 +298,7 @@ mod tests {
     /// every kind keeps its code.
     #[test]
     fn prefixes_of_datetimes_intervals_and_binary_strings_keep_order() {
-        let of = |v: &Value| prefix_of(v, false).unwrap();
+        let of = |v: &Value| prefix_of(v, SortOrder::of(false, None)).unwrap();
         let hour = 3_600_000_000_i64;
         let stamps: Vec<Prefix> = [stamp(hour, 60_i16), stamp(hour, 0_i16), stamp(2_i64 * hour, 0_i16)].iter().map(of).collect();
         assert!(stamps.iter().map(|p| p.bits).is_sorted() && stamps.iter().all(|p| p.whole), "{stamps:?}");
@@ -303,7 +316,7 @@ mod tests {
         assert!(bits.windows(2).take(8).all(|w| w[0].bits < w[1].bits), "whole ones differ");
         assert_eq!(bits.iter().map(|p| p.whole).collect::<Vec<bool>>(), [true, true, true, true, true, true, true, true, false, false]);
         assert_eq!(bits[8].bits, bits[9].bits, "alike past 7 octets");
-        assert_eq!(prefix_of(&unregistered("POINT", "(1 2)", &[1_u8]), false), None);
+        assert_eq!(prefix_of(&unregistered("POINT", "(1 2)", &[1_u8]), SortOrder::of(false, None)), None);
         assert!(KINDS.iter().all(|&k| Kind::of_code(k.code()) == Some(k)));
         assert_eq!((Kind::of_code(0_u8), Kind::of_code(u8::MAX)), (None, None));
     }
@@ -355,8 +368,8 @@ mod tests {
             Cell::Null,
         ];
         for cell in cells {
-            for descending in [false, true] {
-                assert_eq!(prefix_of_cell(cell, descending), prefix_of(&cell.to_value(), descending), "{cell:?} {descending}");
+            for order in ORDERS {
+                assert_eq!(prefix_of_cell(cell, order), prefix_of(&cell.to_value(), order), "{cell:?} {order:?}");
             }
         }
     }
@@ -371,20 +384,21 @@ mod tests {
 
     /// Whether each of `columns`' rows, of their places too, sorted by
     /// prefixes as `sorted` does, are in the order comparing them whole
-    /// gives, stably, ascending and DESC, alone and then by another key.
+    /// gives, stably, ascending and DESC under each null ordering, alone
+    /// and then by another key.
     fn as_whole(columns: &[Vec<Value>]) {
         let int = |n: i128| Value::Exact(Decimal::new(n, 0_u32));
         for column in columns {
             // The second column, the row's place, shows a sort's stability.
             let rows: Vec<Row> =
                 column.iter().zip(0_i128..).map(|(v, n)| vec![v.clone(), int(n.checked_rem(2_i128).unwrap_or(0_i128)), int(n)]).collect();
-            for descending in [false, true] {
-                let one = [SortKey { column: 0, descending }];
+            for order in ORDERS {
+                let one = [SortKey::new(0, order)];
                 let (by_prefix, whole) = both(&one, &rows);
-                assert_eq!(format!("{by_prefix:?}"), format!("{whole:?}"), "{column:?} {descending}");
-                let two = [SortKey { column: 0, descending }, SortKey { column: 1, descending: !descending }];
+                assert_eq!(format!("{by_prefix:?}"), format!("{whole:?}"), "{column:?} {order:?}");
+                let two = [SortKey::new(0, order), SortKey::new(1, SortOrder::of(!order.descending, None))];
                 let (then_prefix, then_whole) = both(&two, &rows);
-                assert_eq!(format!("{then_prefix:?}"), format!("{then_whole:?}"), "{column:?} {descending}, then another key");
+                assert_eq!(format!("{then_prefix:?}"), format!("{then_whole:?}"), "{column:?} {order:?}, then another key");
             }
         }
     }
@@ -396,10 +410,12 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D38 [X3.135-1986 §8.3 GR3b]: rows sorted
     /// by prefixes are in the order comparing them whole gives, stably:
-    /// ascending and DESC, nulls among them, ties of a whole prefix broken
-    /// by the next key, strings longer than a prefix, exact numbers of
-    /// fractions, approximate numbers, binary strings; a key of two kinds
-    /// sorted whole.
+    /// ascending and DESC, nulls among them first or last [ISO/IEC
+    /// 9075-2:2023 §10.10 GR1e ii], ties of a whole prefix broken by the
+    /// next key, strings longer than a prefix, exact numbers of fractions,
+    /// approximate numbers, binary strings, the empty one, whose prefix is
+    /// a null's under NULLS FIRST ascending and NULLS LAST descending; a
+    /// key of two kinds sorted whole.
     #[test]
     fn sorted_by_prefixes_as_whole() {
         let int = |n: i128| Value::Exact(Decimal::new(n, 0_u32));
@@ -425,6 +441,7 @@ mod tests {
             ],
             vec![int(1_i128), text("a"), Value::Null, int(2_i128), int(0_i128), text("b")],
             binary_strings(&["FF", "", "00", "FF", "", "0001"].map(str::to_owned)),
+            vec![Value::Binary(Binary::of_hex("").unwrap()), Value::Null, Value::Binary(Binary::of_hex("00").unwrap()), Value::Null],
         ]);
         assert!(sorted(&[], vec![vec![int(2_i128)], vec![int(1_i128)]]).len() == 2, "no key, the rows as they were");
     }

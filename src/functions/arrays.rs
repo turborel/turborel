@@ -12,7 +12,7 @@ use crate::error::{Code, Result, SqlError, SqlState, fail, fail_with};
 use crate::value::collation::CollationRef;
 use crate::value::types::MAX_ARRAY_CARDINALITY;
 use crate::value::types::composite::array_ordered;
-use crate::value::{DataType, Decimal, Value, sort_cmp};
+use crate::value::{DataType, Decimal, SortOrder, Value};
 
 /// [ISO/IEC 9075-2:2023 §6.31] `<cardinality expression>`'s name.
 pub const CARDINALITY: &str = "CARDINALITY";
@@ -198,12 +198,12 @@ impl ScalarFunction for AssignElement {
 
 /// [ISO/IEC 9075-2:2023 §10.9 GR12] ARRAY_AGG: its argument a row of the
 /// value and its sort keys, so no null is removed before it \[NOTE 528\];
-/// each key ascending or, where `descending` says so, descending, as ORDER
-/// BY orders [§10.10], by its collation if it has one. Of `<array value
+/// each key in its direction, its nulls placed by its null ordering, as
+/// ORDER BY orders [§10.10], by its collation if it has one. Of `<array value
 /// constructor by query>` [§6.49 GR3], no rows make an empty array.
 pub struct ArrayAggregate {
-    /// Per sort key, whether DESC was written.
-    pub descending: Vec<bool>,
+    /// Per sort key, its direction and null ordering.
+    pub orders: Vec<SortOrder>,
     /// Per sort key, the collation it orders by, if not the default.
     pub collations: Vec<Option<CollationRef>>,
     /// Whether it is an `<array value constructor by query>`'s.
@@ -236,14 +236,16 @@ impl AggregateFunction for ArrayAggregate {
         }
     }
     fn accumulator(&self, _: DataType) -> Box<dyn Accumulator> {
-        let (descending, collations) = (self.descending.clone(), self.collations.clone());
-        Box::new(Gathered { rows: Vec::new(), descending, collations, by_query: self.by_query })
+        let (orders, collations) = (self.orders.clone(), self.collations.clone());
+        Box::new(Gathered { rows: Vec::new(), orders, collations, by_query: self.by_query })
     }
-    /// Its keys' directions and collations, by their places in its row.
+    /// Its keys' directions, null orderings and collations, by their places
+    /// in its row.
     fn label_suffix(&self) -> String {
-        let keys = self.descending.iter().zip(&self.collations).enumerate().map(|(i, (&down, collation))| {
+        let keys = self.orders.iter().zip(&self.collations).enumerate().map(|(i, (order, collation))| {
             let collated = collation.as_ref().map_or_else(String::new, |c| format!(" COLLATE {}", c.collation.name()));
-            format!("{}{collated}{}", i.saturating_add(2), if down { " DESC" } else { "" })
+            let down = if order.descending { " DESC" } else { "" };
+            format!("{}{collated}{down}{}", i.saturating_add(2), order.null_suffix())
         });
         let keys: Vec<String> = keys.collect();
         if keys.is_empty() { String::new() } else { format!(" ORDER BY {}", keys.join(", ")) }
@@ -257,16 +259,16 @@ fn no_argument() -> SqlError {
 /// The rows of value and keys so far, each key as its collation orders it.
 struct Gathered {
     rows: Vec<Arc<[Value]>>,
-    descending: Vec<bool>,
+    orders: Vec<SortOrder>,
     collations: Vec<Option<CollationRef>>,
     by_query: bool,
 }
 
 impl Gathered {
     /// [ISO/IEC 9075-2:2023 §10.10] How two rows order by their keys.
-    fn order(a: &[Value], b: &[Value], descending: &[bool]) -> Ordering {
-        let keys = a.iter().zip(b).skip(1).zip(descending);
-        keys.map(|((x, y), &down)| if down { sort_cmp(y, x) } else { sort_cmp(x, y) }).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+    fn order(a: &[Value], b: &[Value], orders: &[SortOrder]) -> Ordering {
+        let keys = a.iter().zip(b).skip(1).zip(orders);
+        keys.map(|((x, y), order)| order.cmp(x, y)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
     }
 }
 
@@ -294,7 +296,7 @@ impl Accumulator for Gathered {
             return Ok(Value::Null);
         }
         let mut rows: Vec<&Arc<[Value]>> = self.rows.iter().collect();
-        rows.sort_by(|a, b| Gathered::order(a, b, &self.descending));
+        rows.sort_by(|a, b| Gathered::order(a, b, &self.orders));
         Ok(Value::Array(rows.into_iter().map(|r| r.first().cloned().unwrap_or(Value::Null)).collect()))
     }
 }

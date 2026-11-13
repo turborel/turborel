@@ -262,6 +262,23 @@ SELECT NAME AS WHO, SALARY / 12 AS MONTHLY FROM STAFF WHERE ID = 1;
 ORDER BY sorts by columns of the result alone, named or by position: a
 column the query does not select is not a sort key.
 
+A key is ascending unless DESC follows it. Nulls sort after every value
+ascending and before every value descending. NULLS FIRST or NULLS LAST
+after a key puts them first or last in either direction.
+
+```sql
+SELECT DISTINCT DEPT FROM STAFF ORDER BY DEPT NULLS FIRST;
+```
+
+```
+ DEPT
+------
+ NULL
+ ENG
+ OPS
+(3 rows)
+```
+
 `R.*` of a value R of a row type gives a column of each of its fields,
 named as the fields are, and `R.* AS (A, B)` names them.
 

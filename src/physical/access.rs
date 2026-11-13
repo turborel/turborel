@@ -367,12 +367,15 @@ fn supports(method: &dyn IndexMethod, probe: &Probe, (width, ordering): (usize, 
 
 /// `scan`, a scan of `storage`, read in the order of the columns it keeps
 /// its rows sorted by, if `want` asks for the first of them, all ascending,
-/// or, read backward, all descending (`TableStorage::scan_ordered`): no
-/// sort, its rows merged as they are read, so its cost is the scan's.
+/// or, read backward, all descending, each of the null ordering implied,
+/// as a table kept in order places its nulls (`SortOrder::implied`)
+/// (`TableStorage::scan_ordered`): no sort, its rows merged as they are
+/// read, so its cost is the scan's.
 fn in_order(storage: &dyn TableStorage, want: &[SortKey], scan: Path) -> Path {
     let keys: Vec<usize> = want.iter().map(|k| k.column).collect();
     let Some(backward) = want.first().map(|k| k.descending) else { return scan };
-    if want.iter().any(|k| k.descending != backward) || !storage.ordered_by().starts_with(&keys) {
+    let placed = want.iter().all(|k| k.descending == backward && k.order().implied());
+    if !placed || !storage.ordered_by().starts_with(&keys) {
         return scan;
     }
     Path { total: scan.cost, ordered: true, reverse: backward, order: keys, ..scan }
@@ -509,7 +512,9 @@ fn tested(probe: &Probe) -> usize {
 /// held equal by its probe, gives rows in the order of `want`: once the
 /// keys of the columns held equal are left out, the rest are the index's
 /// next columns, in order, all ascending, or all descending, when it is
-/// read backward. Some(backward) if so.
+/// read backward. Some(backward) if so. Any null ordering is kept, as an
+/// index read in key order gives no null in them: its probe is true of no
+/// null, and a column it does not test is NOT NULL (`best_path`).
 fn index_order(columns: &[usize], fixed: usize, want: &[SortKey]) -> Option<bool> {
     let (held, free) = columns.split_at(fixed.min(columns.len()));
     let keys: Vec<&SortKey> = want.iter().filter(|k| !held.contains(&k.column)).collect();

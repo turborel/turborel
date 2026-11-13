@@ -23,7 +23,7 @@ use crate::ast::{
 };
 use crate::error::{At, Result, SqlState};
 use crate::functions::{AggregateFunction, AggregateRef, ArrayAggregate, RowOf, ScalarRef};
-use crate::logical::{AggCall, Expr, LogicalPlan, Subquery, render_expr};
+use crate::logical::{AggCall, Expr, LogicalPlan, SortKey, Subquery, render_expr};
 use crate::value::types::{Field, MAX_ARRAY_CARDINALITY};
 use crate::value::{DataType, Decimal};
 
@@ -333,8 +333,8 @@ impl Binder<'_> {
         let parts = keys.len().saturating_add(1);
         let fields = (0..parts).map(|i| Field { name: anonymous(i), data_type: element.clone(), unnamed: true }).collect();
         let arg = Expr::Call(ScalarRef(Arc::new(RowOf(DataType::row(fields)))), vec![Expr::Column(0); parts]);
-        let descending = keys.iter().map(|k| k.descending).collect();
-        let func = ArrayAggregate { descending, collations, by_query: true };
+        let orders = keys.iter().map(SortKey::order).collect();
+        let func = ArrayAggregate { orders, collations, by_query: true };
         let result = super::composite::bounded(DataType::array(element, MAX_ARRAY_CARDINALITY))?;
         let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
         let agg = AggCall { func: AggregateRef(Arc::new(func)), arg: Some(arg), distinct: false, result: result.clone(), label };

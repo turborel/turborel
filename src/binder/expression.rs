@@ -23,7 +23,7 @@ use crate::params::ParameterType;
 use crate::value::Spelled;
 use crate::value::collation::CollationRef;
 use crate::value::types::composite::row_ordered;
-use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
+use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, SortOrder, Value};
 
 /// [X3.135-1986 §5.9 SR4] The type of an operation on two exact numbers. Its
 /// precision is implementor-defined: `MAX_EXACT_PRECISION`. Its scale is
@@ -364,8 +364,8 @@ impl Binder<'_> {
             parts.push(key.key.clone());
         }
         let row = ValueExpression::Composite(Box::new(Composite::Row(parts)), sf.at);
-        let descending = sf.order_by.iter().map(|k| k.descending).collect();
-        let func = AggregateRef(Arc::new(ArrayAggregate { descending, collations, by_query: false }));
+        let orders = sf.order_by.iter().map(|k| SortOrder::of(k.descending, k.nulls_first)).collect();
+        let func = AggregateRef(Arc::new(ArrayAggregate { orders, collations, by_query: false }));
         self.aggregate(func, Some(&row), false, scope)
     }
 

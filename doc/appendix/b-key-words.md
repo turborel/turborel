@@ -106,7 +106,8 @@ EXCLUDING.
 
 NULLS, which SQL:2023 does not reserve either, is a key word only after
 UNIQUE, in a table constraint and in the UNIQUE predicate, where NULLS
-DISTINCT or NULLS NOT DISTINCT follows. A column may be named NULLS.
+DISTINCT or NULLS NOT DISTINCT follows, and after a sort key, where NULLS
+FIRST or NULLS LAST follows. A column may be named NULLS.
 
 RECURSIVE, SEARCH and CYCLE, which SQL:2023 reserves and SQL-92 does not,
 are key words only in a WITH. RECURSIVE is one after WITH unless AS or a

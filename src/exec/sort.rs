@@ -29,7 +29,6 @@ use crate::logical::SortKey;
 use crate::spill::{SpillRun, row_bytes};
 use crate::storage::Row;
 use crate::txn::TxId;
-use crate::value::sort_cmp;
 use merge::{Order, merge};
 use vectors::written_rows;
 
@@ -88,15 +87,13 @@ fn merged(keys: &[SortKey], mut runs: Vec<Box<dyn SpillRun>>, work: &mut Work) -
     Ok(Box::new(merge(&order, runs)?))
 }
 
-/// [X3.135-1986 §8.3 GR3b] The order of rows `a` and `b` under `keys`.
-/// `sort` has checked that both have every key column; a missing one would
-/// compare equal.
+/// [X3.135-1986 §8.3 GR3b; ISO/IEC 9075-2:2023 §10.10 GR1] The order of
+/// rows `a` and `b` under `keys`, each key's nulls placed by its null
+/// ordering. `sort` has checked that both have every key column; a missing
+/// one would compare equal.
 pub fn compare_rows(keys: &[SortKey], a: &Row, b: &Row) -> Ordering {
     keys.iter()
-        .map(|k| {
-            let o = a.get(k.column).zip(b.get(k.column)).map_or(Ordering::Equal, |(x, y)| sort_cmp(x, y));
-            if k.descending { o.reverse() } else { o }
-        })
+        .map(|k| a.get(k.column).zip(b.get(k.column)).map_or(Ordering::Equal, |(x, y)| k.order().cmp(x, y)))
         .find(|o| o.is_ne())
         .unwrap_or(Ordering::Equal)
 }

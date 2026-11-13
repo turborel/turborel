@@ -4,6 +4,7 @@
 //! [X3.135-1986 §5.19-§5.23].
 
 use super::Parser;
+use super::constraints::NULLS;
 use crate::ast::{
     Correspondence, CursorSpecification, DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, Partitioning, QueryExpression,
     QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn, SortSpecification,
@@ -45,7 +46,9 @@ impl Parser {
         Ok(CursorSpecification { query, order_by, updatability })
     }
 
-    /// [X3.135-1986 §8.3] `<sort specification>` ::= {`<unsigned integer>` | `<column specification>`} \[ASC | DESC\]
+    /// [X3.135-1986 §8.3] `<sort specification>` ::= {`<unsigned integer>`
+    /// | `<column specification>`} \[ASC | DESC\] \[ISO/IEC 9075-2:2023
+    /// §10.10\] \[`<null ordering>`\]
     pub(super) fn sort_specification(&mut self) -> Result<SortSpecification> {
         let key = if matches!(self.peek(), Tok::ExactNumeric(_)) {
             SortColumn::Position(self.unsigned_integer()?)
@@ -60,7 +63,26 @@ impl Parser {
             self.accept_kw(kw::ASC);
             false
         };
-        Ok(SortSpecification { key, collate, descending })
+        let nulls_first = self.null_ordering()?;
+        Ok(SortSpecification { key, collate, descending, nulls_first })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §10.10] `<null ordering>` ::= NULLS FIRST |
+    /// NULLS LAST, if written: whether NULLS FIRST. NULLS is a key word
+    /// only here and before \[NOT\] DISTINCT (`parser/constraints.rs`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -104 if NULLS is followed by neither FIRST nor LAST.
+    pub(super) fn null_ordering(&mut self) -> Result<Option<bool>> {
+        if !self.accept_word(NULLS) {
+            return Ok(None);
+        }
+        if self.accept_kw(kw::FIRST) {
+            return Ok(Some(true));
+        }
+        self.expect_kw(kw::LAST)?;
+        Ok(Some(false))
     }
 
     /// [ISO/IEC 9075-2:2023 §7.17] `<query expression>` ::= \[`<with

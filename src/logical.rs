@@ -33,8 +33,8 @@ use crate::catalog::QualifiedName;
 use crate::functions::AggregateRef;
 use crate::storage::Row;
 use crate::system::SystemRead;
-use crate::value::DataType;
 use crate::value::collation::CollationRef;
+use crate::value::{DataType, SortOrder};
 
 /// One set function to compute per group.
 #[derive(Debug, Clone)]
@@ -59,6 +59,26 @@ pub struct SortKey {
     pub column: usize,
     /// DESC rather than ASC.
     pub descending: bool,
+    /// [ISO/IEC 9075-2:2023 §10.10 GR1e ii] NULLS FIRST rather than NULLS
+    /// LAST, as written or implied (`SortOrder::of`).
+    pub nulls_first: bool,
+}
+
+impl SortKey {
+    /// Column `column` in the order `order`.
+    pub fn new(column: usize, order: SortOrder) -> SortKey {
+        SortKey { column, descending: order.descending, nulls_first: order.nulls_first }
+    }
+
+    /// Column `column`, ascending, nulls placed as implied.
+    pub fn ascending(column: usize) -> SortKey {
+        SortKey::new(column, SortOrder::of(false, None))
+    }
+
+    /// How it orders its column's values.
+    pub fn order(&self) -> SortOrder {
+        SortOrder { descending: self.descending, nulls_first: self.nulls_first }
+    }
 }
 
 /// \[DESIGN\] A logical plan node. Each node's inputs are logical plans too.

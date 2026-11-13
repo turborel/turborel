@@ -101,7 +101,7 @@ pub fn render_cond(c: &Cond, names: &[String]) -> String {
 /// Sort keys as text, with columns named from `names`.
 pub fn render_keys(keys: &[SortKey], names: &[String]) -> String {
     keys.iter()
-        .map(|k| format!("{}{}", column_name(names, k.column), if k.descending { " DESC" } else { "" }))
+        .map(|k| format!("{}{}{}", column_name(names, k.column), if k.descending { " DESC" } else { "" }, k.order().null_suffix()))
         .collect::<Vec<_>>()
         .join(", ")
 }

@@ -63,4 +63,7 @@ pub struct ValueOrder {
     pub key: ValueExpression,
     /// DESC was written.
     pub descending: bool,
+    /// [ISO/IEC 9075-2:2023 §10.10] Its `<null ordering>`, if written:
+    /// whether NULLS FIRST.
+    pub nulls_first: Option<bool>,
 }

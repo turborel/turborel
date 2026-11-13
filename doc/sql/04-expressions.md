@@ -398,6 +398,9 @@ it joins as many as fit and ends with the separator and a filler, `...`
 if none is written. WITH COUNT adds the number of strings left out in
 parentheses, and WITHOUT COUNT does not.
 
+A key of ARRAY_AGG's ORDER BY or of a WITHIN GROUP may be followed by
+NULLS FIRST or NULLS LAST, as a key of a query's ORDER BY may.
+
 ANY_VALUE gives a column that the grouping decides but does not name,
 such as a department's name grouped by its number, with no need to
 group by it too. Which value it gives of several is not defined.
