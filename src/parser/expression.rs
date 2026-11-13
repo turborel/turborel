@@ -102,9 +102,11 @@ impl Parser {
         if self.accept_kw(kw::EXISTS) {
             return Ok(predicate(Predicate::Exists(Box::new(self.subquery()?))));
         }
-        // [§8.9] <unique predicate> ::= UNIQUE <table subquery>
+        // [ISO/IEC 9075-2:2023 §8.11] <unique predicate> ::= UNIQUE
+        // [ <unique null treatment> ] <table subquery>
         if self.accept_kw(kw::UNIQUE) {
-            return Ok(predicate(Predicate::Unique(Box::new(self.subquery()?))));
+            let nulls_distinct = self.unique_null_treatment()?.unwrap_or(crate::ast::IMPLICIT_NULLS_DISTINCT);
+            return Ok(predicate(Predicate::Unique { subquery: Box::new(self.subquery()?), nulls_distinct }));
         }
         let value = self.row_value()?;
         if self.at_null_test() {

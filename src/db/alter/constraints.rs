@@ -15,7 +15,6 @@ use crate::db::schema::constraint_index_name;
 use crate::error::{Code, Result, SqlError};
 use crate::index::Index;
 use crate::txn::{Timestamp, Txn};
-use crate::value::Value;
 
 /// A Syntax Rule violation.
 fn rule(message: String) -> SqlError {
@@ -65,8 +64,11 @@ impl State {
                 None => self.unique_index(qn, &name, &columns, tx)?,
             };
             self.indexes.insert(name.clone(), Arc::clone(&structure));
+            // Of what the table's columns and its new constraint make it:
+            // its key's collations, and whether it holds nulls.
+            let ix = self.with_derived(self.constraint_index(qn, &name, columns), &desc)?;
             let mut with_index = self.catalog.duplicate();
-            with_index.add_index(self.constraint_index(qn, &name, columns));
+            with_index.add_index(ix);
             self.catalog = Arc::from(with_index);
             built.indexes.push((name, structure));
         }
@@ -82,7 +84,16 @@ impl State {
     /// of `qn`.
     fn constraint_index(&self, qn: &QualifiedName, name: &str, columns: Vec<usize>) -> IndexDesc {
         let method = self.constraint_method().to_owned();
-        IndexDesc { name: name.to_owned(), table: qn.clone(), columns, method, unique: true, options: Vec::new(), collations: Vec::new() }
+        IndexDesc {
+            name: name.to_owned(),
+            table: qn.clone(),
+            columns,
+            method,
+            unique: true,
+            options: Vec::new(),
+            collations: Vec::new(),
+            nulls: false,
+        }
     }
 
     /// The index `name` of a unique constraint on `columns` of `qn`, filled
@@ -93,7 +104,7 @@ impl State {
     /// Empty, of a temporary table.
     fn unique_index(&mut self, qn: &QualifiedName, name: &str, columns: &[usize], tx: Option<&Txn>) -> Result<Arc<dyn Index>> {
         let desc = self.base_table(qn)?;
-        let ix = self.with_key_collations(self.constraint_index(qn, name, columns.to_vec()), &desc)?;
+        let ix = self.with_derived(self.constraint_index(qn, name, columns.to_vec()), &desc)?;
         let method = Arc::clone(
             self.methods.get(self.constraint_method()).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] no constraint index method"))?,
         );
@@ -107,10 +118,13 @@ impl State {
         }
         match tx {
             Some(tx) => {
+                // Joined first: its engine reads only for a transaction
+                // begun in it, though none of the statement's has read it.
+                self.read_lock(tx, qn)?;
                 let all: Vec<usize> = (0..desc.columns.len()).collect();
                 for read in Arc::clone(self.storage_of(qn)?).scan(tx.id, &all) {
                     let (id, row) = read?;
-                    let Some(key) = ix.key_of(&row).filter(|k| !k.0.iter().any(Value::is_null)) else { continue };
+                    let Some(key) = ix.entry_of(&row) else { continue };
                     structure.insert(key, id)?;
                 }
             }

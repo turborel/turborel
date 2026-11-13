@@ -86,7 +86,7 @@ fn alike(c: &Cond) -> bool {
         Cond::IsNull(e, _) | Cond::In(e, _) | Cond::Value(e) => plain(e),
         Cond::Or(a, b) | Cond::And(a, b) => alike(a) && alike(b),
         Cond::Not(a) | Cond::Is(a, ..) => alike(a),
-        Cond::Like(..) | Cond::Exists(_) | Cond::Quantified(..) | Cond::Unique(_) | Cond::Match { .. } => false,
+        Cond::Like(..) | Cond::Exists(_) | Cond::Quantified(..) | Cond::Unique(..) | Cond::Match { .. } => false,
     }
 }
 

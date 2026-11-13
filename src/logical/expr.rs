@@ -165,9 +165,10 @@ pub enum Cond {
     /// [ISO/IEC 9075:1992 §8.12] `<boolean test>`: the condition IS (or,
     /// if the flag, IS NOT) the truth value.
     Is(Box<Cond>, Truth, bool),
-    /// [ISO/IEC 9075:1992 §8.9] `<unique predicate>`: no two rows of the
-    /// subquery equal, nulls not counting.
-    Unique(Arc<Subquery>),
+    /// [ISO/IEC 9075-2:2023 §8.11] `<unique predicate>`: no two rows of
+    /// the subquery equal; if the flag, NULLS DISTINCT, two rows with a null
+    /// never equal, else NULLS NOT DISTINCT, a null equal to a null.
+    Unique(Arc<Subquery>, bool),
     /// [ISO/IEC 9075:1992 §8.10] `<match predicate>`: the row of values
     /// matches a row of the subquery, a unique one if UNIQUE.
     Match {
@@ -320,7 +321,7 @@ impl Cond {
                 Cond::Like(e, pattern, escape.map(&mut *f))
             }
             Cond::Exists(s) => Cond::Exists(s.map_outer(f)),
-            Cond::Unique(s) => Cond::Unique(s.map_outer(f)),
+            Cond::Unique(s, nulls_distinct) => Cond::Unique(s.map_outer(f), nulls_distinct),
             Cond::Quantified(values, op, quantifier, s) => {
                 let values = values.into_iter().map(&mut *f).collect();
                 Cond::Quantified(values, op, quantifier, s.map_outer(f))
@@ -354,7 +355,7 @@ impl Cond {
                 f(pattern);
                 escape.iter().for_each(f);
             }
-            Cond::Exists(s) | Cond::Unique(s) => s.outer.iter().for_each(f),
+            Cond::Exists(s) | Cond::Unique(s, _) => s.outer.iter().for_each(f),
             Cond::Quantified(values, .., s) | Cond::Match { values, subquery: s, .. } => {
                 values.iter().for_each(&mut *f);
                 s.outer.iter().for_each(f);
@@ -368,7 +369,7 @@ impl Cond {
         match self {
             Cond::Or(a, b) | Cond::And(a, b) => [a.subqueries(), b.subqueries()].concat(),
             Cond::Not(a) | Cond::Is(a, ..) => a.subqueries(),
-            Cond::Exists(s) | Cond::Unique(s) | Cond::Quantified(.., s) | Cond::Match { subquery: s, .. } => vec![&**s],
+            Cond::Exists(s) | Cond::Unique(s, _) | Cond::Quantified(.., s) | Cond::Match { subquery: s, .. } => vec![&**s],
             Cond::Const(_) | Cond::Compare(..) | Cond::IsNull(..) | Cond::Like(..) | Cond::In(..) | Cond::Value(_) => Vec::new(),
         }
     }
@@ -393,7 +394,7 @@ impl Cond {
             | Cond::Compare(..)
             | Cond::IsNull(..)
             | Cond::Exists(_)
-            | Cond::Unique(_)
+            | Cond::Unique(..)
             | Cond::Quantified(..)
             | Cond::Match { .. }
             | Cond::In(..)

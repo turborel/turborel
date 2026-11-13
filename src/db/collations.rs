@@ -135,19 +135,25 @@ impl State {
         Ok(out)
     }
 
-    /// `ix`, on a column of `table`, with what its key is collated by.
+    /// `ix`, on columns of `table`, with what it derives from the table:
+    /// what its key is collated by, and whether it holds keys with a null,
+    /// as the index of a UNIQUE NULLS NOT DISTINCT constraint does. Not
+    /// another index on its columns: made and dropped apart from the
+    /// constraint, it would hold them or not as the constraint was when it
+    /// was made, and be read as the constraint is now.
     ///
     /// # Errors
     ///
     /// As `column_collation`.
-    pub(crate) fn with_key_collations(&self, ix: IndexDesc, table: &TableDesc) -> Result<IndexDesc> {
+    pub(crate) fn with_derived(&self, ix: IndexDesc, table: &TableDesc) -> Result<IndexDesc> {
         let collations = ix
             .columns
             .iter()
             .map(|&c| table.columns.get(c).map_or(Ok(None), |column| self.column_collation(column)))
             .collect::<Result<Vec<_>>>()?;
         let collations = if collations.iter().any(Option::is_some) { collations } else { Vec::new() };
-        Ok(IndexDesc { collations, ..ix })
+        let nulls = ix.unique && table.nulls_not_distinct(&ix.columns);
+        Ok(IndexDesc { collations, nulls, ..ix })
     }
 
     /// The collation a `<collate clause>` in schema `schema`'s definitions,
@@ -381,6 +387,58 @@ fn collation_name(name: &TableName) -> QualifiedName {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::{ConstraintAttributes, MemoryCatalog};
+    use crate::value::Spelled;
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.7] the index of a
+    /// UNIQUE NULLS NOT DISTINCT constraint holds the keys with a null, as
+    /// no other index derived from the table does. MC/DC of `unique &&
+    /// not distinct`: the constraint's index of NULLS NOT DISTINCT holds
+    /// them (both true); another index on its columns does not (unique
+    /// false); the index of a NULLS DISTINCT constraint does not (not
+    /// distinct false).
+    #[test]
+    fn the_index_of_a_nulls_not_distinct_key_holds_nulls() {
+        let column = |name: &str| ColumnDesc {
+            name: name.into(),
+            data_type: DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric },
+            not_null: false,
+            default: None,
+            domain: None,
+            collation: None,
+            generated: None,
+        };
+        let key = |at: usize, nulls_distinct: bool| ConstraintDesc {
+            name: QualifiedName { auth: "A".into(), ident: format!("U{at}") },
+            kind: ConstraintKind::Unique { columns: vec![at], primary: false, nulls_distinct },
+            attributes: ConstraintAttributes::default(),
+            domain: None,
+        };
+        let table = TableDesc {
+            name: QualifiedName { auth: "A".into(), ident: "T".into() },
+            columns: vec![column("A"), column("B")],
+            constraints: vec![key(0, false), key(1, true)],
+            engine: String::new(),
+            options: Vec::new(),
+            generation: 0,
+            temporary: None,
+        };
+        let st = State::with_builtins(Box::new(MemoryCatalog::default()));
+        let index = |at: usize, unique: bool| IndexDesc {
+            name: format!("I{at}"),
+            table: table.name.clone(),
+            columns: vec![at],
+            method: String::new(),
+            unique,
+            options: Vec::new(),
+            collations: Vec::new(),
+            nulls: false,
+        };
+        let nulls = |at: usize, unique: bool| st.with_derived(index(at, unique), &table).unwrap().nulls;
+        assert!(nulls(0, true), "the constraint's index");
+        assert!(!nulls(0, false), "another on its columns");
+        assert!(!nulls(1, true), "of NULLS DISTINCT");
+    }
 
     /// Verifies: [DESIGN] RULES.md D60: a collation a database uses, of
     /// another version or gone, is found; one it does not use, or of the

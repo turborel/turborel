@@ -103,6 +103,7 @@ verification approach DO-178C expects (§8).
 | D63 | Identity and generated columns are given their values as rows are written |
 | D64 | TRUNCATE TABLE replaces a table's storage |
 | D65 | LIKE and AS are found again from what they read |
+| D66 | A key of NULLS NOT DISTINCT holds its nulls in its index |
 
 ### The project
 
@@ -514,6 +515,28 @@ leaves no table. Its rows are logged before the definition, and recovery
 redoes them after it, by the table's name and generation. A `<schema
 definition>` run apart from a session has no transaction to insert in, so
 AS is refused in a CREATE SCHEMA.
+
+#### D66. A key of NULLS NOT DISTINCT holds its nulls in its index
+
+An index holds no key with a null, as no comparison with a null is true
+[X3.135-1986 §5.11 GR2], so a key of NULLS DISTINCT, the default, needs
+none to find its duplicates. A key of NULLS NOT DISTINCT [ISO/IEC
+9075-2:2023 §11.7] counts a null as a value, so its index holds every key,
+and a second null is found as a second value is: by the same probe of the
+same index at the statement's end, the same -911 for a row another
+transaction is changing, and the same entries logged and found again by
+recovery. Scanning for it instead would cost a read of the table each
+time.
+
+Whether an index holds nulls is decided in one place, from the table's
+constraints, and every path that adds or removes an entry asks it
+(`catalog/keys.rs`). Only the constraint's own index holds them, or one
+built again to take its place, as each is made and dropped with the
+constraint. A key with a null sorts before every value, so a probe whose
+range is open below starts after them, and the `Index` contract says no
+probe but a read of every entry selects one. The planner is unchanged: it
+reads an index whole only of columns that are NOT NULL, and nulls are
+ordered after every value where the index orders them first.
 
 #### D33. Schema changes are transactional
 

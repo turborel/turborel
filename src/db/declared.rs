@@ -156,6 +156,7 @@ fn indexes_of(desc: &TableDesc, method: &str) -> Vec<IndexDesc> {
             unique: true,
             options: Vec::new(),
             collations: Vec::new(),
+            nulls: desc.nulls_not_distinct(columns),
         })
         .collect()
 }

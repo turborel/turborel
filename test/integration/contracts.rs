@@ -139,6 +139,7 @@ fn memory_catalog_keeps_the_catalog_contract() {
             unique: false,
             options: Vec::new(),
             collations: Vec::new(),
+            nulls: false,
         });
     }
     assert_eq!(catalog.index("T_N").map(|i| i.table.to_string()), Some("A.T".into()));

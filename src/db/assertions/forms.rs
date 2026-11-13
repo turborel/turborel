@@ -207,7 +207,7 @@ fn form_of(c: &Cond, known: &Known<'_>) -> Option<Vec<Form>> {
         | Cond::Like(..)
         | Cond::Exists(_)
         | Cond::Quantified(..)
-        | Cond::Unique(_)
+        | Cond::Unique(..)
         | Cond::Match { .. }
         | Cond::Value(_) => None,
     }
@@ -400,7 +400,7 @@ pub(super) fn declared(table: &QualifiedName, at: usize, catalog: &dyn Catalog) 
         desc.constraints.iter().any(|c| {
             let on = match &c.kind {
                 ConstraintKind::NotNull(column) => *column == at,
-                ConstraintKind::Unique { columns, primary } => *primary && columns.contains(&at),
+                ConstraintKind::Unique { columns, primary, .. } => *primary && columns.contains(&at),
                 ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => false,
             };
             on && !c.attributes.deferrable
@@ -438,7 +438,7 @@ pub(super) fn rejects(c: &Cond, at: usize) -> bool {
         | Cond::Not(_)
         | Cond::Exists(_)
         | Cond::Quantified(..)
-        | Cond::Unique(_)
+        | Cond::Unique(..)
         | Cond::Match { .. } => false,
     }
 }
@@ -473,7 +473,7 @@ pub(super) fn row_cond(c: &Cond) -> bool {
         Cond::Compare(a, _, b) => row_expr(a) && row_expr(b),
         Cond::IsNull(e, _) | Cond::In(e, _) | Cond::Value(e) => row_expr(e),
         Cond::Like(e, pattern, escape) => row_expr(e) && row_expr(pattern) && escape.as_ref().is_none_or(row_expr),
-        Cond::Exists(_) | Cond::Quantified(..) | Cond::Unique(_) | Cond::Match { .. } => false,
+        Cond::Exists(_) | Cond::Quantified(..) | Cond::Unique(..) | Cond::Match { .. } => false,
     }
 }
 

@@ -159,6 +159,57 @@ fn range_contract(method: &dyn IndexMethod) {
     }
 }
 
+/// The entries of `keys`, ids from 1, in an index of `method` on columns
+/// of `types`: those each of `probes` selects checked against
+/// `Probe::answers`, and those of each key against `rows`.
+fn answered(method: &dyn IndexMethod, (types, keys): (&[DataType], &[Key]), probes: &[Probe]) {
+    let index: Arc<dyn Index> = Arc::from(method.create(types).unwrap());
+    for (id, k) in (1..).zip(keys) {
+        index.insert(k.clone(), id).unwrap();
+    }
+    for (id, k) in (1..).zip(keys) {
+        assert_eq!(index.rows(k).unwrap(), [id], "{}: the entry of {k:?}", method.name());
+    }
+    for probe in probes {
+        let mut found: Vec<RowId> = searched(&index, probe).unwrap().into_iter().map(|(_, id)| id).collect();
+        found.sort_unstable();
+        let expected: Vec<RowId> = (1..).zip(keys).filter(|(_, k)| probe.answers(&k.0)).map(|(id, _)| id).collect();
+        assert_eq!(found, expected, "{} {probe:?}", method.name());
+    }
+}
+
+/// Checks the contract of keys with a null on `method`, as an index of a
+/// UNIQUE NULLS NOT DISTINCT constraint holds them, on one column and on
+/// two: no probe but `Probe::All` selects one, as no comparison with a
+/// null is true; `rows` finds a key's entries, a null equal to a null.
+fn nulls_contract(method: &dyn IndexMethod) {
+    let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
+    let some = |n: Option<i128>| n.map_or(Value::Null, number);
+    let ones: Vec<Key> = [None, Some(1), Some(2)].into_iter().map(|a| Key(vec![some(a)])).collect();
+    let compared: Vec<Probe> = OPERATORS
+        .into_iter()
+        .filter(|op| method.supports(*op))
+        .flat_map(|op| (0..4).map(move |v| Probe::Compare { op, value: number(v) }))
+        .chain([Probe::All])
+        .collect();
+    answered(method, (&[exact], &ones), &compared);
+    let pairs = [(None, None), (None, Some(1)), (Some(1), None), (Some(1), Some(2)), (Some(2), Some(1)), (Some(2), None)];
+    let twos: Vec<Key> = pairs.iter().map(|(a, b)| Key(vec![some(*a), some(*b)])).collect();
+    let mut probes = vec![Probe::All];
+    for (op, v) in OPERATORS.into_iter().flat_map(|op| (0..4).map(move |v| (op, v))) {
+        if method.supports_prefix(2, 1, Some(op)) {
+            probes.push(Probe::Prefix { equal: vec![number(1)], then: Some((op, number(v))) });
+        }
+    }
+    if method.supports_prefix(2, 1, None) {
+        probes.push(Probe::Prefix { equal: vec![number(1)], then: None });
+    }
+    if method.supports_range(2, 0) {
+        probes.push(Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, number(0))), high: Box::new((CompOp::Le, number(1))) });
+    }
+    answered(method, (&[exact, exact], &twos), &probes);
+}
+
 /// Verifies: [EXTENSION] `IndexMethod` and `Index` contracts, for the built-in
 /// btree (in memory and in a pager file) and hash methods: every supported
 /// probe, of one column, a prefix of two, or a range (RULES.md D34), returns
@@ -166,7 +217,9 @@ fn range_contract(method: &dyn IndexMethod) {
 /// ascending or descending, if the method is ordered; an estimate known
 /// cheaply is exact; entries are counted, a pair inserted twice staying
 /// until removed twice; a key's rows read as taken (`Index::key_rows`)
-/// are those `Index::rows` gives, each once.
+/// are those `Index::rows` gives, each once. [ISO/IEC 9075-2:2023 §11.7]
+/// Of keys with a null, held for UNIQUE NULLS NOT DISTINCT, a comparison
+/// selects none, a `<` with no lower bound among them.
 #[test]
 fn built_in_index_methods_keep_the_index_contract() {
     let scratch = Scratch::new("contract-btree");
@@ -180,5 +233,6 @@ fn built_in_index_methods_keep_the_index_contract() {
         prefix_contract(method);
         assert_eq!(method.supports_range(2, 0), method.ordered(), "{}: an ordered method answers a range", method.name());
         range_contract(method);
+        nulls_contract(method);
     }
 }

@@ -8,9 +8,9 @@
 
 use super::State;
 use crate::ast::{
-    Check, ColumnConstraintKind, ColumnDefinition, ColumnGeneration, Literal, NamedTable, QuerySpecification, References, SelectItem,
-    SelectList, SelectSublist, TableConstraint, TableConstraintKind, TableElement, TableExpression, TableName, TableReference,
-    ValueExpression, ValueSpecification,
+    Check, ColumnConstraintKind, ColumnDefinition, ColumnGeneration, IMPLICIT_NULLS_DISTINCT, Literal, NamedTable, QuerySpecification,
+    References, SelectItem, SelectList, SelectSublist, TableConstraint, TableConstraintKind, TableElement, TableExpression, TableName,
+    TableReference, ValueExpression, ValueSpecification,
 };
 use crate::binder::{self, Context, Purpose, Referencing, Uses, bind_select, qualify};
 use crate::catalog::{
@@ -194,7 +194,8 @@ impl<'a> Described<'a> {
             let added = match &c.kind {
                 ColumnConstraintKind::NotNull => self.add(c.name.as_ref(), "NOTNULL", ConstraintKind::NotNull(at)),
                 ColumnConstraintKind::Unique { primary } => {
-                    self.add(c.name.as_ref(), word(*primary), ConstraintKind::Unique { columns: vec![at], primary: *primary })
+                    let kind = ConstraintKind::Unique { columns: vec![at], primary: *primary, nulls_distinct: IMPLICIT_NULLS_DISTINCT };
+                    self.add(c.name.as_ref(), word(*primary), kind)
                 }
                 ColumnConstraintKind::References(r) => self.foreign_key(c.name.as_ref(), vec![at], r, c.at),
                 ColumnConstraintKind::Check(check) => self.check(c.name.as_ref(), check),
@@ -215,9 +216,10 @@ impl<'a> Described<'a> {
     pub(super) fn table_constraint(&mut self, c: &TableConstraint) -> Result<()> {
         self.attributes = c.attributes;
         let added = match &c.kind {
-            TableConstraintKind::Unique { primary, columns } => {
+            TableConstraintKind::Unique { primary, columns, nulls_distinct } => {
                 let columns = self.positions(columns, "§11.7 SR4")?;
-                self.add(c.name.as_ref(), word(*primary), ConstraintKind::Unique { columns, primary: *primary })
+                let kind = ConstraintKind::Unique { columns, primary: *primary, nulls_distinct: *nulls_distinct };
+                self.add(c.name.as_ref(), word(*primary), kind)
             }
             TableConstraintKind::ForeignKey { columns, references } => {
                 let columns = self.positions(columns, "§11.8 SR6")?;
@@ -249,7 +251,7 @@ impl<'a> Described<'a> {
         let unique: Vec<(&Vec<usize>, bool)> = table
             .constraints
             .iter()
-            .filter_map(|c| if let ConstraintKind::Unique { columns, primary } = &c.kind { Some((columns, *primary)) } else { None })
+            .filter_map(|c| if let ConstraintKind::Unique { columns, primary, .. } = &c.kind { Some((columns, *primary)) } else { None })
             .collect();
         if unique.iter().filter(|(_, primary)| *primary).count() > 1 {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.7 SR5, SR6] {} has more than one PRIMARY KEY", table.name)));

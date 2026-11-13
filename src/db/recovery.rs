@@ -58,7 +58,6 @@ use crate::spill::Area;
 use crate::storage::{Row, RowId};
 use crate::txn::Timestamp;
 use crate::txn::{NO_TRANSACTION, Persistence, TxId};
-use crate::value::Value;
 use crate::value::types::TypeRegistry;
 
 /// Which of the log's definitions reading it replays: those after the
@@ -115,10 +114,10 @@ pub struct RecoveryReport {
 /// on a loop that should take back a few.
 const MOST_ENTRIES: usize = 1_024;
 
-/// The key of `row` in the index `ix`, unless it has a null: such keys are
-/// never inserted (`Index::insert`).
+/// The key of `row`'s entry in the index `ix`, if it holds one
+/// (`IndexDesc::entry_of`).
 fn key_of(row: &Row, ix: &IndexDesc) -> Option<Key> {
-    ix.key_of(row).filter(|k| !k.0.iter().any(Value::is_null))
+    ix.entry_of(row)
 }
 
 /// Takes back every entry of `row` under `key` in `index`.
@@ -404,6 +403,7 @@ impl Database {
                         columns: columns.clone(),
                         method: method.clone(),
                         options: options.clone(),
+                        nulls: false,
                     };
                     st.create_index(&spec)?;
                 }
@@ -572,7 +572,8 @@ impl State {
     }
 
     /// The entries the index `ix` holds, of each version
-    /// readers may still see: keys with a null left out.
+    /// readers may still see: keys the index does not hold left out
+    /// (`IndexDesc::holds`).
     fn entries_for<'a>(&self, ix: &'a IndexDesc, as_of: Timestamp) -> Result<impl Iterator<Item = Result<(Key, RowId)>> + 'a> {
         let versions = Arc::clone(self.storage_of(&ix.table)?).versions(self.tx.horizon(), as_of, &ix.columns);
         Ok(versions.filter_map(move |read| {
@@ -583,7 +584,7 @@ impl State {
                 Ok((key, id))
             });
             match keyed {
-                Ok((key, id)) => (!key.0.iter().any(Value::is_null)).then_some(Ok((key, id))),
+                Ok((key, id)) => ix.holds(&key).then_some(Ok((key, id))),
                 Err(e) => Some(Err(e)),
             }
         }))

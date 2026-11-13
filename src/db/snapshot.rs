@@ -256,7 +256,7 @@ impl State {
                 .iter()
                 .find(|t| t.name == ix.table)
                 .ok_or_else(|| api(format!("[DESIGN] index {} has no table", ix.name)))?;
-            let ix = self.with_key_collations(ix.clone(), desc)?;
+            let ix = self.with_derived(ix.clone(), desc)?;
             let types = ix.key_types(desc).ok_or_else(|| api(format!("[DESIGN] index {} is on a column its table lacks", ix.name)))?;
             let (structure, _) = self.index_structure(&*method, (&ix, desc), &types)?;
             self.indexes.insert(ix.name.clone(), structure);

@@ -219,9 +219,11 @@ fn renumbered(c: &ConstraintDesc, table: &TableDesc, reshape: Reshape, own: bool
     let moved = |columns: &[usize]| reshape.columns(columns).unwrap_or_else(|| columns.to_vec());
     let kind = match &c.kind {
         ConstraintKind::NotNull(at) => ConstraintKind::NotNull(if own { reshape.moved(*at).unwrap_or(*at) } else { *at }),
-        ConstraintKind::Unique { columns, primary } => {
-            ConstraintKind::Unique { columns: if own { moved(columns) } else { columns.clone() }, primary: *primary }
-        }
+        ConstraintKind::Unique { columns, primary, nulls_distinct } => ConstraintKind::Unique {
+            columns: if own { moved(columns) } else { columns.clone() },
+            primary: *primary,
+            nulls_distinct: *nulls_distinct,
+        },
         ConstraintKind::ForeignKey(fk) => {
             let mut fk = fk.clone();
             if own {

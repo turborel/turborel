@@ -75,7 +75,7 @@ pub fn render_cond(c: &Cond, names: &[String]) -> String {
         Cond::Is(a, t, not) => {
             format!("({}) IS {}{}", render_cond(a, names), if *not { "NOT " } else { "" }, format!("{t:?}").to_uppercase())
         }
-        Cond::Unique(_) => "UNIQUE (<subquery>)".to_string(),
+        Cond::Unique(_, nulls_distinct) => format!("UNIQUE {}(<subquery>)", if *nulls_distinct { "" } else { "NULLS NOT DISTINCT " }),
         Cond::Match { values, unique, match_type, .. } => {
             let kind = match match_type {
                 MatchType::Simple => "",

@@ -40,6 +40,11 @@ pub enum ConstraintKind {
         columns: Vec<usize>,
         /// PRIMARY KEY.
         primary: bool,
+        /// [ISO/IEC 9075-2:2023 §4.25.3.2, §11.7 SR5] NULLS DISTINCT, as
+        /// a PRIMARY KEY's is: two rows of a null among their values are
+        /// unique. Else NULLS NOT DISTINCT, a null in one equal to a null
+        /// in the other.
+        nulls_distinct: bool,
     },
     /// [§11.8] A referential constraint.
     ForeignKey(ForeignKey),
@@ -96,10 +101,20 @@ impl TableDesc {
         })
     }
 
+    /// Whether a UNIQUE NULLS NOT DISTINCT constraint is on exactly
+    /// `columns` [ISO/IEC 9075-2:2023 §11.7], so their index holds the keys
+    /// with a null (`IndexDesc::nulls`).
+    pub fn nulls_not_distinct(&self, columns: &[usize]) -> bool {
+        self.constraints.iter().any(|c| match &c.kind {
+            ConstraintKind::Unique { columns: on, nulls_distinct, .. } => !nulls_distinct && on == columns,
+            ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => false,
+        })
+    }
+
     /// The columns of its PRIMARY KEY, if it has one.
     pub fn primary_key(&self) -> Option<&[usize]> {
         self.constraints.iter().find_map(|c| match &c.kind {
-            ConstraintKind::Unique { columns, primary: true } => Some(columns.as_slice()),
+            ConstraintKind::Unique { columns, primary: true, .. } => Some(columns.as_slice()),
             ConstraintKind::Unique { primary: false, .. }
             | ConstraintKind::NotNull(_)
             | ConstraintKind::ForeignKey(_)

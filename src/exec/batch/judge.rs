@@ -239,7 +239,7 @@ fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mu
         | Cond::Is(..)
         | Cond::Like(..)
         | Cond::Exists(_)
-        | Cond::Unique(_)
+        | Cond::Unique(..)
         | Cond::Quantified(..)
         | Cond::Match { .. }
         | Cond::Value(_) => compared_with_constant(cond)

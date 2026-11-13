@@ -97,21 +97,22 @@ impl SubqueryRows {
         self.rows()?.take(n).collect()
     }
 
-    /// [ISO/IEC 9075:1992 §8.9 GR2] Whether no two of its rows, neither with
-    /// a null, are equal; the keys seen kept in memory, or, of a result
-    /// that spilled, in a bag of its database's work area, which spills too.
+    /// [ISO/IEC 9075-2:2023 §8.11 GR2] Whether no two of its rows are
+    /// equal, of none with a null if `nulls_distinct` (`eval::unique`); the
+    /// keys seen kept in memory, or, of a result that spilled, in a bag of
+    /// its database's work area, which spills too.
     ///
     /// # Errors
     ///
     /// As `rows`; the work area's.
-    pub fn unique(&self) -> Result<bool> {
+    pub fn unique(&self, nulls_distinct: bool) -> Result<bool> {
         let rows = self.rows()?;
         if self.spilled {
             let mut seen = Bag::new(Work::new(&self.db));
-            return super::eval::unique(rows, &mut |key| seen.add_new(&key));
+            return super::eval::unique(rows, nulls_distinct, &mut |key| seen.add_new(&key));
         }
         let mut seen = HashSet::new();
-        super::eval::unique(rows, &mut |key| Ok(seen.insert(key)))
+        super::eval::unique(rows, nulls_distinct, &mut |key| Ok(seen.insert(key)))
     }
 }
 

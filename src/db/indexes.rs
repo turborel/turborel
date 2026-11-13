@@ -37,7 +37,10 @@ use crate::txn::{Concurrency, LockMode, TableLock, Timestamp, Transactions, Txn}
 use crate::value::Value;
 
 /// \[EXTENSION\] An index to make: its name, its table, its columns by
-/// name, its method, and the method's options it sets (RULES.md D41).
+/// name, its method, the method's options it sets (RULES.md D41), and
+/// whether it holds keys with a null (`IndexDesc::nulls`): only one built
+/// again to take the place of a UNIQUE NULLS NOT DISTINCT constraint's,
+/// which holds every key the old one held once it does.
 #[derive(Debug, Clone)]
 pub(crate) struct IndexSpec {
     pub(crate) name: String,
@@ -45,12 +48,13 @@ pub(crate) struct IndexSpec {
     pub(crate) columns: Vec<String>,
     pub(crate) method: String,
     pub(crate) options: Vec<(String, Value)>,
+    pub(crate) nulls: bool,
 }
 
 impl IndexSpec {
     /// The definition the log keeps of it.
     pub(super) fn change(&self) -> Change {
-        let IndexSpec { name, table, columns, method, options } = self.clone();
+        let IndexSpec { name, table, columns, method, options, .. } = self.clone();
         Change::CreateIndex { name, table, columns, method, options }
     }
 }
@@ -227,8 +231,8 @@ impl Database {
     /// table's errors, reading its rows.
     pub fn create_index(&self, name: &str, table: &str, columns: &[&str], method: &str) -> Result<()> {
         let columns = columns.iter().map(|c| (*c).to_owned()).collect();
-        let spec =
-            IndexSpec { name: name.to_owned(), table: qualified_name(table)?, columns, method: method.to_owned(), options: Vec::new() };
+        let (table, method) = (qualified_name(table)?, method.to_owned());
+        let spec = IndexSpec { name: name.to_owned(), table, columns, method, options: Vec::new(), nulls: false };
         self.noted(self.make_index(&spec))
     }
 
@@ -369,7 +373,8 @@ impl Database {
             }
             let table = current.catalog.table(&ix.table).ok_or_else(|| api(format!("[EXTENSION] no table {}", ix.table)))?;
             let columns = ix.columns.iter().filter_map(|&c| table.columns.get(c)).map(|c| c.name.clone()).collect();
-            let spec = IndexSpec { name: built.clone(), table: ix.table.clone(), columns, method: ix.method.clone(), options };
+            let spec =
+                IndexSpec { name: built.clone(), table: ix.table.clone(), columns, method: ix.method.clone(), options, nulls: ix.nulls };
             return self.build_index(&spec, &|st, tx| {
                 st.swap_index((&built, name))?;
                 st.log_definition(Some(tx), change.clone())

@@ -308,7 +308,7 @@ impl State {
             if ix.unique && !next.unique().any(|u| u == columns.as_slice()) {
                 continue;
             }
-            kept.push(self.with_key_collations(IndexDesc { columns, ..ix.clone() }, next)?);
+            kept.push(self.with_derived(IndexDesc { columns, ..ix.clone() }, next)?);
         }
         let added: Vec<Vec<usize>> =
             next.unique().filter(|u| !kept.iter().any(|ix| ix.unique && ix.columns == *u)).map(<[usize]>::to_vec).collect();
@@ -323,8 +323,9 @@ impl State {
                 unique: true,
                 options: Vec::new(),
                 collations: Vec::new(),
+                nulls: false,
             };
-            kept.push(self.with_key_collations(ix, next)?);
+            kept.push(self.with_derived(ix, next)?);
         }
         let mut out = Vec::new();
         for ix in kept {

@@ -88,7 +88,8 @@ pub enum KeyOrder {
 /// What an index is asked for.
 #[derive(Debug, Clone)]
 pub enum Probe {
-    /// Every row with a nonnull key (used to read rows in key order).
+    /// Every entry (used to read rows in key order): of a key with no null,
+    /// but in an index that holds them (`IndexDesc::nulls`).
     All,
     /// "column `<op>` value", of the key's first column.
     Compare {
@@ -284,8 +285,10 @@ pub trait IndexMethod: Send + Sync {
 /// a row only if the version it sees has the entry's key.
 ///
 /// Contract (RULES.md R-SAFE-3; checked by `test/integration/index_contracts.rs`):
-/// * Callers never insert a key containing a null, and probe only with
-///   operators the method `supports`.
+/// * Callers insert a key containing a null only into the index of a
+///   UNIQUE NULLS NOT DISTINCT constraint (`IndexDesc::nulls`), and probe
+///   only with operators the method `supports`. No probe but `Probe::All`
+///   selects such a key, as no comparison with a null is true.
 /// * `search` gives exactly the (key, id) pairs inserted more often than
 ///   removed whose key satisfies the probe by the [X3.135-1986 §5.11]
 ///   comparison rules (`Probe::All`: every pair), each once, as it is read:
@@ -295,8 +298,8 @@ pub trait IndexMethod: Send + Sync {
 ///   inserted or removed while it reads may or may not be given; one held
 ///   throughout is given once. An error of its storage is given as an
 ///   entry is; callers read no further.
-/// * `rows(key)` returns the ids of the pairs with a key equal to `key`,
-///   each once; `key_rows(key)` gives the same ids, as they are read,
+/// * `rows(key)` returns the ids of the pairs with a key equal to `key`, a
+///   null in it equal to a null, each once; `key_rows(key)` gives the same ids, as they are read,
 ///   holding no more of them than `search` does, so a key of more rows
 ///   than memory holds is read whole (RULES.md D34, D38); an error of its
 ///   storage is given as an id is.
@@ -315,9 +318,11 @@ pub trait IndexMethod: Send + Sync {
 /// * No method may call back into the `Database` or its sessions (RULES.md
 ///   R-ERR-4); the `Database` docs say what happens if one does.
 pub trait Index: Send + Sync {
-    /// Adds an entry of `row` under `key`. Keys containing a null are never
-    /// inserted: a comparison with null is never true [X3.135-1986 §5.11
-    /// GR2], so no probe could match them anyway.
+    /// Adds an entry of `row` under `key`. Keys containing a null are
+    /// inserted only into the index of a UNIQUE NULLS NOT DISTINCT
+    /// constraint [ISO/IEC 9075-2:2023 §11.7], to be found by `rows`: a
+    /// comparison with null is never true [X3.135-1986 §5.11 GR2], so no
+    /// other probe matches them.
     ///
     /// # Errors
     ///

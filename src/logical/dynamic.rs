@@ -134,7 +134,7 @@ impl Filling<'_> {
                 Cond::Like(e, pattern, escape.map(|x| self.expr(x)))
             }
             Cond::Exists(s) => Cond::Exists(self.subquery(&s)),
-            Cond::Unique(s) => Cond::Unique(self.subquery(&s)),
+            Cond::Unique(s, nulls_distinct) => Cond::Unique(self.subquery(&s), nulls_distinct),
             Cond::Quantified(values, op, quantifier, s) => {
                 let values = self.exprs(values);
                 Cond::Quantified(values, op, quantifier, self.subquery(&s))
@@ -212,7 +212,7 @@ mod tests {
             Cond::In(slot(0), Arc::new(InSet::of(vec![Value::Exact(Decimal::new(12, 0))]))),
             Cond::Like(slot(0), slot(1), Some(slot(0))),
             Cond::Exists(subquery()),
-            Cond::Unique(subquery()),
+            Cond::Unique(subquery(), false),
             Cond::Quantified(vec![slot(0)], CompOp::Eq, Quantifier::Some, subquery()),
             Cond::Match { values: vec![slot(1)], unique: true, match_type: MatchType::Full, subquery: subquery() },
             Cond::Const(Truth::True),

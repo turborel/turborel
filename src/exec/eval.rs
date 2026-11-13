@@ -166,7 +166,7 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
             let rows = subqueries.rows(s, &outer_values(s, row, subqueries)?, None)?;
             rows.quantified(&values(xs, row, subqueries)?, (*op, *q))?
         }
-        Cond::Unique(s) => truth(subqueries.rows(s, &outer_values(s, row, subqueries)?, None)?.unique()?),
+        Cond::Unique(s, nulls_distinct) => truth(subqueries.rows(s, &outer_values(s, row, subqueries)?, None)?.unique(*nulls_distinct)?),
         // [X3.135-1986 §5.13 GR2, §5.18 GR2] the OR of its equalities, by its set.
         Cond::In(e, set) => set.truth(&eval(e, row, subqueries)?),
         // [ISO/IEC 9075-2:2023 §4.6.1] a BOOLEAN value's truth, null Unknown.
@@ -258,17 +258,23 @@ pub fn quantified(xs: &[Value], (op, quantifier): (CompOp, Quantifier), rows: im
     })
 }
 
-/// [ISO/IEC 9075:1992 §8.9 GR2] UNIQUE: true unless two of `rows`, neither
-/// with a null, are equal; `first` tells whether a row's key is seen the
-/// first time, and keeps it.
+/// [ISO/IEC 9075-2:2023 §8.11 GR2] UNIQUE: true unless two of `rows` are
+/// equal. If `nulls_distinct`, a row with a null equals none \[GR2b\]; else
+/// nulls are values, a null equal to a null \[GR2c\], and two rows all null
+/// are equal (IA201, §4.25.3.2). `first` tells whether a row's key is seen
+/// the first time, and keeps it.
 ///
 /// # Errors
 ///
 /// The rows', and `first`'s.
-pub(super) fn unique(rows: impl IntoIterator<Item = Result<Row>>, first: &mut dyn FnMut(Vec<u8>) -> Result<bool>) -> Result<bool> {
+pub(super) fn unique(
+    rows: impl IntoIterator<Item = Result<Row>>,
+    nulls_distinct: bool,
+    first: &mut dyn FnMut(Vec<u8>) -> Result<bool>,
+) -> Result<bool> {
     for r in rows {
         let row = r?;
-        if row.iter().any(Value::is_null) {
+        if nulls_distinct && row.iter().any(Value::is_null) {
             continue;
         }
         if !first(norm_row(&row))? {
@@ -422,16 +428,24 @@ mod tests {
     }
 
     /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §8.9 GR2, §8.10 GR2-GR4] UNIQUE counts
-    /// no row with a null; MATCH by its type.
+    /// no row with a null; MATCH by its type. [ISO/IEC 9075-2:2023 §8.11
+    /// GR2c] UNIQUE NULLS NOT DISTINCT counts each, a null equal to a null,
+    /// rows all null among them (IA201). MC/DC of the skip: a row with a
+    /// null skipped only if NULLS DISTINCT (rows 2 and 4), one of none
+    /// never (rows 1 and 3).
     #[test]
     fn unique_and_match() {
         let rows_of = |rows: &[Row]| rows.iter().cloned().map(Ok).collect::<Vec<Result<Row>>>();
-        let unique_of = |rows: &[Row]| {
+        let unique_of = |rows: &[Row], nulls_distinct: bool| {
             let mut seen = std::collections::HashSet::new();
-            unique(rows_of(rows), &mut |key| Ok(seen.insert(key))).unwrap()
+            unique(rows_of(rows), nulls_distinct, &mut |key| Ok(seen.insert(key))).unwrap()
         };
-        assert!(!unique_of(&[vec![n(1)], vec![n(1)]]));
-        assert!(unique_of(&[vec![n(1), Value::Null], vec![n(1), Value::Null]]));
+        assert!(!unique_of(&[vec![n(1)], vec![n(1)]], true));
+        assert!(unique_of(&[vec![n(1), Value::Null], vec![n(1), Value::Null]], true));
+        assert!(!unique_of(&[vec![n(1)], vec![n(1)]], false));
+        assert!(!unique_of(&[vec![n(1), Value::Null], vec![n(1), Value::Null]], false));
+        assert!(!unique_of(&[vec![Value::Null, Value::Null], vec![Value::Null, Value::Null]], false));
+        assert!(unique_of(&[vec![n(1), Value::Null], vec![n(2), Value::Null], vec![Value::Null, Value::Null]], false));
         let rows = [vec![n(1), n(2)], vec![n(1), n(3)]];
         let matches = |xs: &[Value], how: (bool, MatchType)| matched(xs, how, rows_of(&rows)).unwrap();
         let simple = (false, MatchType::Simple);

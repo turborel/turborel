@@ -5,11 +5,15 @@
 
 use super::Parser;
 use crate::ast::{
-    Check, ColumnConstraint, ColumnConstraintKind, ConstraintAttributes, MatchType, References, ReferentialAction, SqlStatement,
-    TableConstraint, TableConstraintKind,
+    Check, ColumnConstraint, ColumnConstraintKind, ConstraintAttributes, IMPLICIT_NULLS_DISTINCT, MatchType, References, ReferentialAction,
+    SqlStatement, TableConstraint, TableConstraintKind,
 };
-use crate::error::Result;
-use crate::lexer::{delim, kw};
+use crate::error::{Code, Result, SqlError};
+use crate::lexer::{Tok, delim, kw};
+
+/// The `<non-reserved word>` of a `<unique null treatment>` [ISO/IEC
+/// 9075-2:2023 §5.2, §8.11].
+const NULLS: &str = "NULLS";
 
 impl Parser {
     /// Whether a `<table constraint definition>` begins here.
@@ -33,7 +37,14 @@ impl Parser {
         let name = self.constraint_name()?;
         let kind = if self.is_kw(kw::UNIQUE) || self.is_kw(kw::PRIMARY) {
             let primary = self.unique_specification()?;
-            TableConstraintKind::Unique { primary, columns: self.name_list()? }
+            let treatment_at = self.here();
+            let treatment = self.unique_null_treatment()?;
+            if primary && treatment.is_some() {
+                let msg = "[ISO/IEC 9075-2:2023 §11.7 SR5] PRIMARY KEY writes no <unique null treatment>, as its columns are not null";
+                return Err(SqlError::at(Code::SyntaxRule, treatment_at, msg));
+            }
+            let nulls_distinct = treatment.unwrap_or(IMPLICIT_NULLS_DISTINCT);
+            TableConstraintKind::Unique { primary, columns: self.name_list()?, nulls_distinct }
         } else if self.accept_kw(kw::FOREIGN) {
             // [§11.8] FOREIGN KEY (<referencing columns>) <references specification>
             self.expect_kw(kw::KEY)?;
@@ -54,7 +65,12 @@ impl Parser {
             self.expect_kw(kw::NULL)?;
             ColumnConstraintKind::NotNull
         } else if self.is_kw(kw::UNIQUE) || self.is_kw(kw::PRIMARY) {
-            ColumnConstraintKind::Unique { primary: self.unique_specification()? }
+            let primary = self.unique_specification()?;
+            if matches!(self.peek(), Tok::Identifier(w) if w == NULLS) {
+                let msg = "[ISO/IEC 9075-2:2023 §11.4] a <column constraint> writes no <unique null treatment>; a <unique constraint definition> of the table does";
+                return Err(SqlError::at(Code::SyntaxRule, self.here(), msg));
+            }
+            ColumnConstraintKind::Unique { primary }
         } else if self.is_kw(kw::REFERENCES) {
             ColumnConstraintKind::References(self.references()?)
         } else {
@@ -78,6 +94,21 @@ impl Parser {
         self.expect_kw(kw::PRIMARY)?;
         self.expect_kw(kw::KEY)?;
         Ok(true)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §8.11] `<unique null treatment>` ::= NULLS
+    /// \[NOT\] DISTINCT, if written: whether NULLS DISTINCT.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -104 if NULLS is not followed by \[NOT\] DISTINCT.
+    pub(super) fn unique_null_treatment(&mut self) -> Result<Option<bool>> {
+        if !self.accept_word(NULLS) {
+            return Ok(None);
+        }
+        let distinct = !self.accept_kw(kw::NOT);
+        self.expect_kw(kw::DISTINCT)?;
+        Ok(Some(distinct))
     }
 
     /// (`<column name>` \[{, `<column name>`}...\])

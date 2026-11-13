@@ -181,6 +181,7 @@ mod truncate;
 mod type_contract;
 mod typed_vectors;
 mod unique_checks;
+mod unique_nulls;
 mod users;
 mod varying;
 mod vector_operators;

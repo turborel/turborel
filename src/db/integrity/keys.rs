@@ -42,6 +42,9 @@ pub(in crate::db) struct KeyCheck<'s> {
     columns: &'s [usize],
     /// Whether it is a PRIMARY KEY.
     primary: bool,
+    /// Whether NULLS DISTINCT [ISO/IEC 9075-2:2023 §11.7 SR5]: a key with
+    /// a null then a duplicate of none.
+    nulls_distinct: bool,
     /// The indexes of exactly its columns that are unique.
     unique: Vec<&'s IndexDesc>,
     /// Of a PRIMARY KEY, the first failure of a row not for a null, told
@@ -62,11 +65,12 @@ impl<'s> KeyCheck<'s> {
         desc: &'s TableDesc,
         (name, kind): (&'s QualifiedName, &'s ConstraintKind),
     ) -> Result<Option<KeyCheck<'s>>> {
-        let ConstraintKind::Unique { columns, primary } = kind else { return Ok(None) };
+        let ConstraintKind::Unique { columns, primary, nulls_distinct } = kind else { return Ok(None) };
         let storage = st.storage_of(&desc.name)?;
         let indexes = st.catalog.indexes(&desc.name).into_iter();
         let unique = indexes.filter(|ix| ix.unique && ix.columns == *columns).collect();
-        Ok(Some(KeyCheck { st, txn, desc, storage, name, columns, primary: *primary, unique, failed: None }))
+        let (primary, nulls_distinct) = (*primary, *nulls_distinct);
+        Ok(Some(KeyCheck { st, txn, desc, storage, name, columns, primary, nulls_distinct, unique, failed: None }))
     }
 
     /// Whether it checks constraint `name`.
@@ -83,7 +87,7 @@ impl<'s> KeyCheck<'s> {
     /// PRIMARY KEY; the storage's and the index's.
     pub(in crate::db) fn row(&mut self, id: RowId) -> Result<()> {
         // None whose entry was its key's only one as it was inserted
-        // (`Txn::alone`): its key has no null, and a row of its key
+        // (`Txn::alone`): its index holds its key, and a row of its key
         // inserted after was not, and is read itself.
         if self.unique.iter().any(|ix| self.txn.alone(&ix.name, id)) {
             return Ok(());
@@ -97,8 +101,10 @@ impl<'s> KeyCheck<'s> {
                 return fail(Code::Constraint, format!("[ISO/IEC 9075:1992 §11.7 SR3a] PRIMARY KEY column {column} of {table} is null"));
             }
         }
-        // A key with a null is never a duplicate [X3.135-1986 §6.4 GR2].
-        if self.failed.is_some() || key.0.iter().any(Value::is_null) {
+        // A key with a null is never a duplicate [X3.135-1986 §6.4 GR2],
+        // but of NULLS NOT DISTINCT, whose index holds it, a null there
+        // equal to a null [ISO/IEC 9075-2:2023 §4.25.3.2].
+        if self.failed.is_some() || self.nulls_distinct && key.0.iter().any(Value::is_null) {
             return Ok(());
         }
         match (self.duplicate(&key), self.primary) {
@@ -175,7 +181,7 @@ fn holds(newest: &Newest, key: &Key, key_of: &dyn Fn(&Row) -> Result<Key>) -> Re
 fn duplicated(desc: &TableDesc, columns: &[usize]) -> String {
     let names: Vec<&str> = columns.iter().filter_map(|&c| desc.columns.get(c)).map(|c| c.name.as_str()).collect();
     let constraint = desc.constraints.iter().find_map(|c| match &c.kind {
-        ConstraintKind::Unique { columns: on, primary } => {
+        ConstraintKind::Unique { columns: on, primary, .. } => {
             (on == columns).then_some((if *primary { "PRIMARY KEY" } else { "UNIQUE" }, &c.name))
         }
         ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,

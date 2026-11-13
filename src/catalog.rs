@@ -214,6 +214,13 @@ pub struct IndexDesc {
     /// is the columns' values (`catalog/keys.rs`, RULES.md D60). Derived
     /// from the table's columns, and not stored.
     pub collations: Vec<Option<CollationRef>>,
+    /// [ISO/IEC 9075-2:2023 §11.7] Whether it holds the keys with a null
+    /// too: the index of a UNIQUE NULLS NOT DISTINCT constraint, whose
+    /// nulls its keys compare as values, or one built again to take its
+    /// place. Every other index holds none, as no comparison with a null
+    /// is true [X3.135-1986 §5.11 GR2]. Derived from the table's
+    /// constraints, and not stored (`catalog/keys.rs`).
+    pub nulls: bool,
 }
 
 /// \[DESIGN\] Where schemas, tables and indexes are described.

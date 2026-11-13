@@ -206,7 +206,10 @@ SELECT ID FROM STAFF S WHERE EXISTS (SELECT * FROM STAFF T WHERE T.DEPT = S.DEPT
 ## UNIQUE
 
 `UNIQUE (subquery)` is true if no two rows of the subquery are equal,
-rows with a null not counting.
+rows with a null not counting. `UNIQUE NULLS DISTINCT (subquery)` is the
+same. `UNIQUE NULLS NOT DISTINCT (subquery)` counts them too, a null
+equal to a null: it is false if two rows are equal but for nulls in the
+same columns, two rows all null among them.
 
 ```sql
 SELECT COUNT(*) FROM STAFF WHERE UNIQUE (SELECT DEPT FROM STAFF WHERE DEPT IS NOT NULL);
@@ -220,6 +223,27 @@ SELECT COUNT(*) FROM STAFF WHERE UNIQUE (SELECT DEPT FROM STAFF WHERE DEPT IS NO
 ```
 
 Two rows have ENG, so it is false of every row.
+
+Barbara's department is null. Two rows of it, each a null, are not
+counted by UNIQUE, but are equal under NULLS NOT DISTINCT:
+
+```sql
+SELECT COUNT(*) FROM STAFF
+    WHERE UNIQUE (SELECT DEPT FROM STAFF WHERE DEPT IS NULL UNION ALL SELECT DEPT FROM STAFF WHERE DEPT IS NULL);
+SELECT COUNT(*) FROM STAFF
+    WHERE UNIQUE NULLS NOT DISTINCT (SELECT DEPT FROM STAFF WHERE DEPT IS NULL UNION ALL SELECT DEPT FROM STAFF WHERE DEPT IS NULL);
+```
+
+```
+
+----------------------
+                    4
+(1 row)
+
+----------------------
+                    0
+(1 row)
+```
 
 ## MATCH
 

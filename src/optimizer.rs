@@ -262,7 +262,7 @@ fn fold_cond(c: &Cond) -> Option<Cond> {
         | Cond::Exists(_)
         | Cond::Quantified(..)
         | Cond::Is(..)
-        | Cond::Unique(_)
+        | Cond::Unique(..)
         | Cond::Match { .. }
         | Cond::In(..) => None,
         Cond::Or(a, b) | Cond::And(a, b) => match (fold_cond(a), fold_cond(b)) {
@@ -367,7 +367,7 @@ fn simplify(c: &Cond) -> Option<Cond> {
         | Cond::IsNull(..)
         | Cond::Like(..)
         | Cond::Exists(_)
-        | Cond::Unique(_)
+        | Cond::Unique(..)
         | Cond::Quantified(..)
         | Cond::Match { .. }
         | Cond::In(..)

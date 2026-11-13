@@ -29,8 +29,8 @@ fn catalog() -> MemoryCatalog {
     let constraints = vec![
         constraint("K0", ConstraintKind::NotNull(0), false),
         constraint("K2", ConstraintKind::NotNull(2), true),
-        constraint("K3", ConstraintKind::Unique { columns: vec![3], primary: true }, false),
-        constraint("K4", ConstraintKind::Unique { columns: vec![4], primary: false }, false),
+        constraint("K3", ConstraintKind::Unique { columns: vec![3], primary: true, nulls_distinct: true }, false),
+        constraint("K4", ConstraintKind::Unique { columns: vec![4], primary: false, nulls_distinct: true }, false),
     ];
     let desc = TableDesc {
         name: table(),

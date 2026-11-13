@@ -81,6 +81,7 @@ fn entries_not_made_complete_refuse_every_use() {
         unique: false,
         options: Vec::new(),
         collations: Vec::new(),
+        nulls: false,
     };
     let key = Key(vec![crate::value::Value::Exact(crate::value::Decimal::new(1_i128, 0_u32))]);
     let refusing = Arc::new(Entries::refusing(&desc, &ix("btree")));

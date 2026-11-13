@@ -51,23 +51,26 @@ fn table_constraints_columns() -> Vec<ColumnDesc> {
         .ids("TABLE", true)
         .data("IS_DEFERRABLE", true)
         .data("INITIALLY_DEFERRED", true)
+        .data("NULLS_DISTINCT", false)
         .done()
 }
 
 /// Each, of its type, deferrable or not and initially deferred or not
-/// [§10.6 GR1, GR2].
+/// [§10.6 GR1, GR2]; \[EXTENSION\] and, of a UNIQUE constraint, YES if
+/// NULLS DISTINCT, NO if NULLS NOT DISTINCT [ISO/IEC 9075-2:2023 §11.7
+/// GR2d], as ISO/IEC 9075-11 names the column; null of another.
 fn table_constraints(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     constraints(seen)
         .into_iter()
         .map(|(t, c)| {
-            let kind = match &c.kind {
-                ConstraintKind::Unique { primary: true, .. } => "PRIMARY KEY",
-                ConstraintKind::Unique { primary: false, .. } => "UNIQUE",
-                ConstraintKind::ForeignKey(_) => "FOREIGN KEY",
-                ConstraintKind::NotNull(_) | ConstraintKind::Check { .. } => "CHECK",
+            let (kind, nulls) = match &c.kind {
+                ConstraintKind::Unique { primary: true, .. } => ("PRIMARY KEY", Value::Null),
+                ConstraintKind::Unique { primary: false, nulls_distinct, .. } => ("UNIQUE", yes(*nulls_distinct)),
+                ConstraintKind::ForeignKey(_) => ("FOREIGN KEY", Value::Null),
+                ConstraintKind::NotNull(_) | ConstraintKind::Check { .. } => ("CHECK", Value::Null),
             };
-            let deferral = vec![yes(c.attributes.deferrable), yes(c.attributes.initially_deferred)];
+            let deferral = vec![yes(c.attributes.deferrable), yes(c.attributes.initially_deferred), nulls];
             [ids(&catalog, &c.name).to_vec(), vec![text(kind)], ids(&catalog, &t.name).to_vec(), deferral].concat()
         })
         .collect()

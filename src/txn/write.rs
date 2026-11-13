@@ -12,7 +12,6 @@ use crate::index::{Index, Key};
 use crate::log::record::Change;
 use crate::storage::{Row, RowId};
 use crate::txn::{Concurrency, LockWait, Timestamp, Txn, Undo};
-use crate::value::Value;
 
 impl State {
     fn table_indexes(&self, table: &QualifiedName) -> Vec<IndexDesc> {
@@ -26,7 +25,7 @@ impl State {
 
     fn index_add(&self, tx: &Txn, ix: &IndexDesc, row: &Row, id: RowId) -> Result<()> {
         let key = Self::index_key(ix, row)?;
-        if !key.0.iter().any(Value::is_null) {
+        if ix.holds(&key) {
             let index = self.index_handle(&ix.name)?;
             // Of a unique index, whether the key's only entry, so its
             // constraint need not look for another row (`Txn::alone`).
@@ -43,7 +42,7 @@ impl State {
 
     fn index_remove(&self, tx: &Txn, ix: &IndexDesc, row: &Row, id: RowId) -> Result<()> {
         let key = Self::index_key(ix, row)?;
-        if !key.0.iter().any(Value::is_null) {
+        if ix.holds(&key) {
             let index = self.index_handle(&ix.name)?;
             index.remove(&key, id)?;
             tx.log(UndoEntry::IndexRemoved { table: ix.table.clone(), index, key, id })?;

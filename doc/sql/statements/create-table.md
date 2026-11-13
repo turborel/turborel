@@ -56,7 +56,7 @@ CREATE TABLE: define a base table
 
 <table constraint definition> ::=
     [ CONSTRAINT <constraint name> ]
-    {   { UNIQUE | PRIMARY KEY } ( <column name> [ { , <column name> }... ] )
+    {   { UNIQUE [ NULLS [ NOT ] DISTINCT ] | PRIMARY KEY } ( <column name> [ { , <column name> }... ] )
       | FOREIGN KEY ( <column name> [ { , <column name> }... ] ) <references specification>
       | <check constraint definition> }
     [ <constraint attributes> ]
@@ -79,7 +79,7 @@ CREATE TABLE: define a base table
 
 A column has a data type or a domain unless it has a generation clause.
 GENERATED, ALWAYS and EXPRESSION are non-reserved words, so a domain may
-be named GENERATED. INCLUDING, EXCLUDING, DEFAULTS and DATA are
+be named GENERATED. INCLUDING, EXCLUDING, DEFAULTS, DATA and NULLS are
 non-reserved words too. ON UPDATE and ON DELETE may be written in either order, each once. The
 data types are in [Data Types](../02-data-types.md); a column may also
 be of a type a plug-in registers *(extension)*, written by its name and,
@@ -118,7 +118,11 @@ DEFAULT. Constraints and indexes take its values as any column's.
 
 **Constraints.** NOT NULL refuses the null value. UNIQUE refuses two
 rows of the same values in its columns, of rows none of whose values is
-null. PRIMARY KEY is UNIQUE and NOT NULL, one to a table. A foreign key
+null. UNIQUE NULLS NOT DISTINCT takes a null as a value too, the same as
+another null, so it refuses a second row of a null where a row has one
+and the same values in the other columns, and two rows all null. One
+column of it holds one null at most. NULLS DISTINCT is the default.
+PRIMARY KEY is UNIQUE and NOT NULL, one to a table. A foreign key
 refuses a row whose values do not match a row of the referenced table:
 of its PRIMARY KEY, or of the columns named, which a UNIQUE or PRIMARY
 KEY constraint is on. Its MATCH says how a row with nulls in the foreign
@@ -234,6 +238,8 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
     columns, no two the same. The query has no dynamic parameter and
     reads no declared local temporary table. AS is not written in a
     [CREATE SCHEMA](create-schema.md).
+17. NULLS DISTINCT or NULLS NOT DISTINCT follows UNIQUE in a table
+    constraint, not PRIMARY KEY, and not in a column constraint.
 
 ## PRIVILEGES
 
@@ -374,6 +380,28 @@ The CHECK of TICKETS is not copied, so ARCHIVE takes a price of -1, and
 its generator starts at 10, as that of TICKETS did. No row of TICKETS
 costs more than 100, so the last table is defined with no data.
 
+A key that lets one member of staff have no desk, not two:
+
+```sql
+CREATE TABLE STAFF (ID INTEGER PRIMARY KEY, DESK INTEGER, CONSTRAINT ONE_UNSEATED UNIQUE NULLS NOT DISTINCT (DESK));
+INSERT INTO STAFF VALUES (1, 10), (2, NULL);
+INSERT INTO STAFF VALUES (3, NULL);
+COMMIT;
+SELECT CONSTRAINT_NAME, NULLS_DISTINCT FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+    WHERE TABLE_NAME = 'STAFF' AND CONSTRAINT_TYPE = 'UNIQUE';
+```
+
+```
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): UNIQUE ANN.ONE_UNSEATED (DESK) of ANN.STAFF would be violated: a row of these values is there [X3.135-1986 §6.4 GR2]
+OK
+ CONSTRAINT_NAME                                              | NULLS_DISTINCT
+--------------------------------------------------------------+--------------------------------------------------------------
+ ONE_UNSEATED                                                 | NO
+(1 row)
+```
+
 Tables refused:
 
 ```sql
@@ -386,6 +414,7 @@ CREATE TABLE T10 (A REAL GENERATED ALWAYS AS IDENTITY);
 CREATE TABLE T11 (A INTEGER, B GENERATED ALWAYS AS (A + (SELECT COUNT(*) FROM ORDERS)));
 CREATE TABLE T12 (LIKE ORDERS INCLUDING DEFAULTS EXCLUDING DEFAULTS);
 CREATE TABLE T13 AS (SELECT QUANTITY * PRICE FROM ORDERS) WITH NO DATA;
+CREATE TABLE T14 (A INTEGER, PRIMARY KEY NULLS NOT DISTINCT (A));
 ```
 
 ```
@@ -398,6 +427,7 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): an identity column is of an exact numer
 turborel: SQLCODE -103 (SQLSTATE 2A000): the generation expression of column B of ANN.T11: it contains no <query expression> [ISO/IEC 9075-2:2023 §11.4 SR10f] (at character 29)
 turborel: SQLCODE -103 (SQLSTATE 2A000): a <like clause> writes its <column default option> once [ISO/IEC 9075-2:2023 §11.3 SR9b iv 1] (at character 49)
 turborel: SQLCODE -103 (SQLSTATE 2A000): column 1 of the query has no name, so a <column name list> names it [ISO/IEC 9075-2:2023 §11.3 SR10b] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 2A000): PRIMARY KEY writes no <unique null treatment>, as its columns are not null [ISO/IEC 9075-2:2023 §11.7 SR5] (at character 41)
 ```
 
 ## STANDARD
@@ -409,7 +439,10 @@ UNIQUE only. Identity columns and generated columns are ISO/IEC
 is ISO/IEC 9075-2:2023 §11.3, Feature T171, and its options Feature
 T173; AS is Feature T172. That AS is not written in a CREATE SCHEMA, and
 that neither names a declared local temporary table, are this
-implementation's own. Outside a `<schema definition>`, CREATE TABLE is SQL-92's
+implementation's own. The null treatment of UNIQUE is ISO/IEC
+9075-2:2023 §11.7, Feature F292. With none written it is NULLS DISTINCT,
+and NULLS NOT DISTINCT takes two rows all null as the same, both choices
+the standard leaves to the implementation. Outside a `<schema definition>`, CREATE TABLE is SQL-92's
 `<SQL schema statement>` [§20.1], and a constraint's name written without
 a schema is of the default schema [§5.4 SR8b]. USING and WITH are
 extensions.

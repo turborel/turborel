@@ -7,8 +7,8 @@ Finished work leaves this file, and git keeps its history.
 
 Code never cites this file (R-DOC-5).
 
-[Next](#next) · [SQL](#sql) · [Tables and schemas](#tables-and-schemas) ·
-[Queries](#queries) · [Changing data](#changing-data) ·
+[Next](#next) · [SQL](#sql) · [Queries](#queries) ·
+[Changing data](#changing-data) ·
 [Triggers, routines and roles](#triggers-routines-and-roles) ·
 [Periods and temporal tables](#periods-and-temporal-tables) · [JSON](#json) ·
 [Query processing](#query-processing) ·
@@ -29,11 +29,6 @@ What came after SQL-92 follows it, written from the standards' own text
 D and the clauses that define them, so a bare `§` here is SQL:2023. The
 groups run in the order they build on each other, and so do the items in
 each group.
-
-### Tables and schemas
-
-- UNIQUE NULLS DISTINCT and NULLS NOT DISTINCT (F292) [§8.11, §11.7]. Nulls
-  are always distinct today, so a key cannot refuse a second null.
 
 ### Queries
 

@@ -91,7 +91,6 @@ use crate::storage::{Row, RowId, TableStorage};
 use crate::sync::{lock, lock_builtin};
 use crate::threads::{Turn, Turned};
 use crate::txn::{NO_TRANSACTION, Persistence, TableLock, Timestamp};
-use crate::value::Value;
 
 impl Database {
     /// \[DESIGN\] Takes a checkpoint now: see the module's documentation.
@@ -533,12 +532,12 @@ impl State {
     }
 }
 
-/// Logs the entry of row `row`, of `values`, in each of `indexes` whose key
-/// has no null (`Index::insert`), stale as of the checkpoint through
-/// `through`.
+/// Logs the entry of row `row`, of `values`, in each of `indexes` that
+/// holds its key (`IndexDesc::entry_of`), stale as of the checkpoint
+/// through `through`.
 fn log_entries(log: &dyn Log, (through, indexes): (Lsn, &[IndexDesc]), row: RowId, values: &Row) -> Result<()> {
     for ix in indexes {
-        let Some(key) = ix.key_of(values).filter(|k| !k.0.iter().any(Value::is_null)) else { continue };
+        let Some(key) = ix.entry_of(values) else { continue };
         let change = Change::Stale { through, index: ix.name.clone(), row, key: key.0 };
         log.append(&Record { tx: NO_TRANSACTION, change }.encode())?;
     }

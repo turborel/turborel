@@ -57,9 +57,10 @@ pub use query::{
 
 pub use schema::{
     Action, AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, ColumnConstraint,
-    ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, MatchType, OptionValue,
-    PrivilegeDefinition, PrivilegeObject, References, ReferentialAction, RevokeStatement, Schema, SchemaStatement, TableConstraint,
-    TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage, Temporary, TemporaryKind, TypeName, ViewDefinition,
+    ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, MatchType,
+    OptionValue, PrivilegeDefinition, PrivilegeObject, References, ReferentialAction, RevokeStatement, Schema, SchemaStatement,
+    TableConstraint, TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage, Temporary, TemporaryKind,
+    TypeName, ViewDefinition,
 };
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
 pub use users::UserStatement;

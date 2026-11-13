@@ -36,7 +36,7 @@ The views of SQL-92, each with the columns the standard gives it:
 | COLUMNS | column of a table or view: its position, type, default, nullability, domain, identity and generation |
 | DOMAINS | domain: its type and default |
 | DOMAIN_CONSTRAINTS | constraint of a domain |
-| TABLE_CONSTRAINTS | constraint of a table: its kind, PRIMARY KEY, UNIQUE, FOREIGN KEY or CHECK, and whether deferrable |
+| TABLE_CONSTRAINTS | constraint of a table: its kind, PRIMARY KEY, UNIQUE, FOREIGN KEY or CHECK, whether deferrable, and of a UNIQUE whether NULLS DISTINCT |
 | REFERENTIAL_CONSTRAINTS | foreign key: the constraint it references, its MATCH and actions |
 | CHECK_CONSTRAINTS | CHECK, domain constraint and assertion: its condition |
 | KEY_COLUMN_USAGE | column of a UNIQUE, PRIMARY KEY or foreign key, in order |
@@ -62,6 +62,11 @@ generator's options, each as text, and IDENTITY_CYCLE is YES if it cycles.
 Of another column the six are null. IS_GENERATED is ALWAYS of a generated
 column and NEVER of another, and GENERATION_EXPRESSION is a generated
 column's expression as written. COLUMN_DEFAULT is null of both kinds.
+
+TABLE_CONSTRAINTS has one more column *(extension)*, NULLS_DISTINCT, as
+ISO/IEC 9075-11 names it: YES of a UNIQUE constraint of NULLS DISTINCT,
+written or not, NO of one of NULLS NOT DISTINCT, and null of a PRIMARY
+KEY and of every other kind.
 
 NOT NULL is shown as a CHECK constraint, `C IS NOT NULL`. A constraint
 given no name has one made for it: the table's name, its kind and a

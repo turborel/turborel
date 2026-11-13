@@ -21,7 +21,8 @@
 //!             on commit delete rows u8)
 //! constraint: name, kind, deferrable u8, initially deferred u8, domain (0,
 //!             or 1 and the name of the domain it is a copy of)
-//! kind:       0 not null, position u32 | 1 unique, positions, primary u8
+//! kind:       0 not null, position u32 | 1 unique, positions, primary u8,
+//!             nulls distinct u8
 //!             | 2 foreign key, positions, table name, positions, match u8
 //!             (0 simple, 1 partial, 2 full), on update u8, on delete u8 (0
 //!             cascade, 1 set null, 2 set default, 3 no action) | 3 check,
@@ -145,10 +146,11 @@ fn put_kind(out: &mut Vec<u8>, kind: &ConstraintKind) {
             out.put_u8(0);
             out.put_u32(count(*at));
         }
-        ConstraintKind::Unique { columns, primary } => {
+        ConstraintKind::Unique { columns, primary, nulls_distinct } => {
             out.put_u8(1);
             put_positions(out, columns.iter());
             put_flag(out, *primary);
+            put_flag(out, *nulls_distinct);
         }
         ConstraintKind::ForeignKey(fk) => {
             out.put_u8(2);
@@ -172,7 +174,7 @@ fn put_kind(out: &mut Vec<u8>, kind: &ConstraintKind) {
 fn kind(r: &mut Reader<'_>) -> Result<ConstraintKind> {
     Ok(match r.u8()? {
         0 => ConstraintKind::NotNull(position(r)?),
-        1 => ConstraintKind::Unique { columns: positions(r)?, primary: flag(r)? },
+        1 => ConstraintKind::Unique { columns: positions(r)?, primary: flag(r)?, nulls_distinct: flag(r)? },
         2 => {
             let (columns, table, referenced) = (positions(r)?, qualified(r)?, positions(r)?);
             let (m, u, d) = (r.u8()?, r.u8()?, r.u8()?);
@@ -376,6 +378,7 @@ pub(crate) fn index(r: &mut Reader<'_>) -> Result<IndexDesc> {
         unique: flag(r)?,
         options: options(r)?,
         collations: Vec::new(),
+        nulls: false,
     })
 }
 

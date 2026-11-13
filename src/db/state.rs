@@ -502,6 +502,7 @@ mod tests {
             unique: false,
             options: Vec::new(),
             collations: Vec::new(),
+            nulls: false,
         });
         let mut st = State::with_builtins(Box::new(catalog));
         assert_eq!(st.attach_catalog_objects().err().map(|e| e.code), Some(Code::Api));

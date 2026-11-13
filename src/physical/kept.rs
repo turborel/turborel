@@ -118,7 +118,7 @@ fn slot_equal(conds: &[Cond], column: usize, data_type: &DataType) -> Option<(Sl
             | Cond::In(..)
             | Cond::Like(..)
             | Cond::Exists(_)
-            | Cond::Unique(_)
+            | Cond::Unique(..)
             | Cond::Quantified(..)
             | Cond::Match { .. }
             | Cond::Value(_) => return None,
@@ -314,6 +314,7 @@ mod tests {
             unique,
             options: Vec::new(),
             collations,
+            nulls: false,
         };
         catalog.add_index(index("I", vec![0, 1], Vec::new()));
         let folded =

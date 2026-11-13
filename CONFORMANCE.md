@@ -888,6 +888,23 @@ subquery clause>` is refused in a CREATE SCHEMA, SQLCODE -103. Both are
 this implementation's own. INCLUDING, EXCLUDING, DEFAULTS and DATA are
 non-reserved words.
 
+### UNIQUE null treatment
+
+Feature F292 (UNIQUE null treatment). A `<unique null treatment>`, NULLS
+DISTINCT or NULLS NOT DISTINCT, says whether a null counts as a value of
+a unique constraint and of the UNIQUE predicate [§4.25.3.2, §8.11, §11.7].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| A unique constraint | §11.7 SR5, GR2d, GR3 | Written after UNIQUE in a table constraint. NULLS NOT DISTINCT refuses a second row of the same values, a null the same as a null, by any statement, at its end or at commit if deferred (SQLCODE -201). After PRIMARY KEY it is SQLCODE -103, and so in a column constraint [§11.4], whose grammar has none. Keys of both treatments on the same columns are two unique constraints on them [SR6c]. |
+| The UNIQUE predicate | §8.11 GR2 | NULLS NOT DISTINCT is false of two rows equal but for nulls in the same columns. NULLS DISTINCT counts no row with a null. |
+| Its description | §11.7 GR2d | INFORMATION_SCHEMA.TABLE_CONSTRAINTS gives NULLS_DISTINCT, as ISO/IEC 9075-11 names it: YES, NO, or null of a constraint not UNIQUE. |
+
+The index of a key of NULLS NOT DISTINCT holds the keys with a null,
+which no other index does, so a second null is found as a second value
+is (RULES.md D66). No probe of it selects one, as no comparison with a
+null is true. NULLS is a non-reserved word, a key word only after UNIQUE.
+
 ---
 
 ## Extensions
@@ -1203,6 +1220,8 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §21.3.23, §21.3.24 the character set SQL_TEXT | Form-of-use UTF-8, 1,112,064 characters (every Unicode scalar value), PAD SPACE | `system/definition.rs` |
 | §21.3.5 how data types are described | A number's by the name it was written with, INTEGER, SMALLINT, DECIMAL or NUMERIC, radix 10, or REAL, DOUBLE PRECISION or FLOAT, radix 2, of the binary precision it holds values of, 24 or 53. A type computed is NUMERIC or FLOAT. The name is no part of the type, so INTEGER and NUMERIC(10,0) are one type. A character string's octet length is 4n. | `value.rs`, `value/types/exact.rs`, `value/types/approximate.rs` |
 | §21.3.13 names of unnamed constraints | The table's name, the constraint's kind and a number, as `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |
+| ID106, ISO/IEC 9075-2:2023 §8.11 SR3, §11.7 SR5 the `<unique null treatment>` not written | NULLS DISTINCT, as every key and UNIQUE predicate was before one could be written | `ast/schema.rs` |
+| IA201, ISO/IEC 9075-2:2023 §4.25.3.2 whether two rows all null are unique with nulls not distinct | Not: under NULLS NOT DISTINCT they are the same, a key refusing the second and UNIQUE false of them | `db/integrity/keys.rs`, `exec/eval.rs` |
 
 ### Memory
 

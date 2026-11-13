@@ -40,6 +40,8 @@ choices:
 | An SQL-server's name | an address, 'host:port' or a socket's path |
 | A view | not materialized: its query is read into each query that reads it |
 | A constraint not named | named for its table, its kind and a number: `T_PRIMARY1` |
+| The null treatment of a UNIQUE constraint or predicate that writes none | NULLS DISTINCT |
+| Two rows all null, under NULLS NOT DISTINCT | the same: a key refuses the second, and UNIQUE is false of them |
 | A sequence generator of no type; its bounds unwritten | NUMERIC(18); ascending, 1 to the type's greatest value, descending, its least to -1 |
 | The values a crash skips of a sequence generator | at most 1024, those reserved and not given out |
 | Which identifiers are users | any, of a program's own session; of a server's client, the users the database keeps |

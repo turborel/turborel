@@ -1,6 +1,5 @@
-//! The mutations `cargo xtask mutate` applies (RULES.md R-TEST-9): each breaks one mechanism of the core, of replication (`vr.rs`) or of
-//! the server (`server.rs`), and names tests, by their full paths, that each fail when it is broken. A mechanism a change adds gets one
-//! here; a change to a quoted snippet brings its mutation up to date (`verify` refuses one that no longer applies).
+//! The mutations `cargo xtask mutate` applies (RULES.md R-TEST-9), each breaking one mechanism and naming tests, by their full paths,
+//! that fail when it is broken. A new mechanism adds one; a change to a quoted snippet updates its mutation (`verify` refuses a stale one).
 
 mod collations;
 mod contents;
@@ -8,6 +7,7 @@ mod fill;
 mod generated;
 mod kept;
 mod near;
+mod nulls;
 mod readers;
 mod reads;
 mod regex;
@@ -39,8 +39,8 @@ pub use zones::ZONES;
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 9] = [&MUTATIONS, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 5] = [&sequences::SEQUENCES, &generated::GENERATED, &truncate::TRUNCATE, &contents::CONTENTS, &near::NEAR];
-    core.into_iter().chain(areas).chain([FILL.as_slice(), &ZONES, &STATS, &WAITS, &VR, &SERVER]).flatten().copied().collect()
+    let areas: [&[Mutation]; 5] = [&sequences::SEQUENCES, &generated::GENERATED, &truncate::TRUNCATE, &contents::CONTENTS, &nulls::NULLS];
+    core.into_iter().chain(areas).chain([near::NEAR.as_slice(), &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER]).flatten().copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints, assertions, the hash index.

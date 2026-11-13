@@ -18,7 +18,6 @@ use crate::index::{Index, Key};
 use crate::memory::Undoing;
 use crate::storage::{Row, RowId, TableStorage};
 use crate::sync::lock_builtin;
-use crate::value::Value;
 
 impl State {
     /// [X3.135-1986 §8.2 GR1, GR3] terminate the transaction and commit its
@@ -278,13 +277,13 @@ impl State {
 }
 
 /// Removes the entries of row `id`, a version collected, of `row`, from
-/// `indexes`, each with its columns. Keys with a null were never inserted
-/// (`Index::insert`). Those that cannot be are left: their places among
+/// `indexes`, each with its columns, of those it holds
+/// (`IndexDesc::entry_of`). Those that cannot be are left: their places among
 /// `indexes`, and their keys.
 pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc)], id: RowId, row: &Row) -> Vec<(usize, Key)> {
     let mut failed = Vec::new();
     for (at, (index, ix)) in indexes.iter().enumerate() {
-        if let Some(key) = ix.key_of(row).filter(|k| !k.0.iter().any(Value::is_null))
+        if let Some(key) = ix.entry_of(row)
             && index.remove(&key, id).is_err()
         {
             failed.push((at, key));

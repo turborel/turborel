@@ -150,8 +150,15 @@ pub enum Predicate {
     },
     /// [§8.8] `<exists predicate>` ::= EXISTS `<table subquery>`
     Exists(Box<Subquery>),
-    /// [§8.9] `<unique predicate>` ::= UNIQUE `<table subquery>`
-    Unique(Box<Subquery>),
+    /// [ISO/IEC 9075-2:2023 §8.11] `<unique predicate>` ::= UNIQUE
+    /// \[`<unique null treatment>`\] `<table subquery>`
+    Unique {
+        /// The `<table subquery>`.
+        subquery: Box<Subquery>,
+        /// NULLS DISTINCT, written or implicit, rather than NULLS NOT
+        /// DISTINCT.
+        nulls_distinct: bool,
+    },
     /// [§8.10] `<match predicate>` ::= `<row value constructor>` MATCH
     /// \[UNIQUE\] \[PARTIAL | FULL\] `<table subquery>`
     Match {
@@ -542,7 +549,7 @@ impl Predicate {
             | Predicate::Match { value, .. } => {
                 value.iter().for_each(f);
             }
-            Predicate::Exists(_) | Predicate::Unique(_) => {}
+            Predicate::Exists(_) | Predicate::Unique { .. } => {}
         }
     }
 
@@ -552,8 +559,8 @@ impl Predicate {
             Predicate::InSubquery { subquery, .. }
             | Predicate::Quantified { subquery, .. }
             | Predicate::Match { subquery, .. }
-            | Predicate::Exists(subquery)
-            | Predicate::Unique(subquery) => Some(subquery),
+            | Predicate::Unique { subquery, .. }
+            | Predicate::Exists(subquery) => Some(subquery),
             Predicate::Comparison(..)
             | Predicate::Overlaps(..)
             | Predicate::Between { .. }

@@ -109,7 +109,7 @@ impl State {
     /// write from this snapshot on keeps it up to date. Returns the
     /// structure, its columns' positions, and whether it was reopened.
     pub(super) fn define_index(&mut self, spec: &IndexSpec) -> Result<(Arc<dyn Index>, IndexDesc, bool)> {
-        let IndexSpec { name, table: qn, columns, method, options } = spec;
+        let IndexSpec { name, table: qn, columns, method, options, nulls } = spec;
         let desc = self.catalog.table(qn).cloned().ok_or_else(|| api(format!("[EXTENSION] no table {qn}")))?;
         let cols = columns
             .iter()
@@ -139,8 +139,10 @@ impl State {
             unique: false,
             options: taken,
             collations: Vec::new(),
+            nulls: false,
         };
-        let ix = self.with_key_collations(ix, &desc)?;
+        // Not unique, so of nulls only if it takes the place of one that is.
+        let ix = IndexDesc { nulls: *nulls, ..self.with_derived(ix, &desc)? };
         let (index, built) = self.index_structure(&*m, (&ix, &desc), &ix.key_types(&desc).unwrap_or_default())?;
         self.indexes.insert(name.clone(), Arc::clone(&index));
         let mut catalog = self.catalog.duplicate();
@@ -479,8 +481,9 @@ impl State {
                 unique: true,
                 options: Vec::new(),
                 collations: Vec::new(),
+                nulls: false,
             };
-            let index = self.with_key_collations(index, d)?;
+            let index = self.with_derived(index, d)?;
             let types =
                 index.key_types(d).ok_or_else(|| api(format!("[DESIGN] a UNIQUE constraint of {} is on a column it lacks", d.name)))?;
             let structure = match made.and_then(|m| m.indexes.iter().find(|(n, _)| *n == name)) {
@@ -533,7 +536,7 @@ mod tests {
         let name = QualifiedName { auth: "A".into(), ident: "T".into() };
         let key = ConstraintDesc {
             name: QualifiedName { auth: "A".into(), ident: "T_UNIQUE1".into() },
-            kind: ConstraintKind::Unique { columns: vec![0], primary: false },
+            kind: ConstraintKind::Unique { columns: vec![0], primary: false, nulls_distinct: true },
             attributes: crate::catalog::ConstraintAttributes::default(),
             domain: None,
         };
@@ -587,7 +590,8 @@ mod tests {
         catalog.create_schema("A", "A", vec![table(ROW_STORE, false)]);
         let mut st = State::with_builtins(Box::new(catalog));
         let name = QualifiedName { auth: "A".into(), ident: "T".into() };
-        let spec = IndexSpec { name: "I".into(), table: name, columns: vec!["K".into()], method: BTREE_METHOD.into(), options: Vec::new() };
+        let (columns, method) = (vec!["K".into()], BTREE_METHOD.into());
+        let spec = IndexSpec { name: "I".into(), table: name, columns, method, options: Vec::new(), nulls: false };
         assert_eq!(st.create_index(&spec).err().map(|e| e.code), Some(Code::Api));
     }
 }

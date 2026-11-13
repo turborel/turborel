@@ -141,7 +141,7 @@ pub fn judged_by_sets(cond: Cond) -> Cond {
         | Cond::Like(..)
         | Cond::Exists(_)
         | Cond::Quantified(..)
-        | Cond::Unique(_)
+        | Cond::Unique(..)
         | Cond::Match { .. }
         | Cond::In(..)
         | Cond::Value(_)) => other,

@@ -372,7 +372,8 @@ impl Entries {
         lock_builtin(&self.made).clone()
     }
 
-    /// An entry of each row `read` gives whose key has no null.
+    /// An entry of each row `read` gives whose key the index holds
+    /// (`IndexDesc::holds`).
     ///
     /// # Errors
     ///
@@ -381,7 +382,7 @@ impl Entries {
         for each in read {
             let (id, row) = each?;
             let key = self.index.key_of(&row).ok_or_else(|| api(format!("[DESIGN] a row is shorter than index {}", self.index.name)))?;
-            if !key.0.iter().any(crate::value::Value::is_null) {
+            if self.index.holds(&key) {
                 self.insert(key, id)?;
             }
         }

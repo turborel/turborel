@@ -338,7 +338,7 @@ fn catalog_with_table(engine: &str) -> MemoryCatalog {
         ColumnDesc { name: "K".into(), data_type: integer, not_null: true, default: None, domain: None, collation: None, generated: None };
     let constraint = ConstraintDesc {
         name: QualifiedName { auth: "A".into(), ident: "T_UNIQUE1".into() },
-        kind: ConstraintKind::Unique { columns: vec![0], primary: false },
+        kind: ConstraintKind::Unique { columns: vec![0], primary: false, nulls_distinct: true },
         attributes: turborel::catalog::ConstraintAttributes::default(),
         domain: None,
     };
@@ -355,6 +355,7 @@ fn catalog_with_table(engine: &str) -> MemoryCatalog {
         unique: true,
         options,
         collations: Vec::new(),
+        nulls: false,
     });
     catalog
 }

@@ -94,4 +94,8 @@ are key words only in a LIKE clause of CREATE TABLE and in its WITH DATA
 and WITH NO DATA. GENERATED is read there too, after INCLUDING or
 EXCLUDING.
 
+NULLS, which SQL:2023 does not reserve either, is a key word only after
+UNIQUE, in a table constraint and in the UNIQUE predicate, where NULLS
+DISTINCT or NULLS NOT DISTINCT follows. A column may be named NULLS.
+
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

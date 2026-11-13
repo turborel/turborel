@@ -34,7 +34,7 @@ pub fn selectivity(cond: &Cond, known: Known<'_>) -> f64 {
         Cond::Not(c) => 1.0_f64 - selectivity(c, known),
         // A pattern restricts as an order comparison does, by default; a
         // subquery's result is not known before it runs.
-        Cond::Like(..) | Cond::Exists(_) | Cond::Unique(_) | Cond::Match { .. } | Cond::Is(..) | Cond::Value(_) => guess.range_selectivity,
+        Cond::Like(..) | Cond::Exists(_) | Cond::Unique(..) | Cond::Match { .. } | Cond::Is(..) | Cond::Value(_) => guess.range_selectivity,
         Cond::IsNull(e, not) => {
             let column = if let Expr::Column(c) = e { Some(*c) } else { None };
             let nulls = column.and_then(|c| stats?.nulls(c)).unwrap_or(guess.null_fraction);

@@ -133,6 +133,28 @@ fn index_options_change_in_place_and_survive_the_database_closing() {
     assert_eq!(indexes(&db).1, ["T_K,noted,FILL,90,DEFAULT", "T_K,noted,SHAPE,TALL,INDEX"]);
 }
 
+/// Verifies: [EXTENSION] RULES.md D41, D66 [ISO/IEC 9075-2:2023 §11.7] the
+/// index of a UNIQUE NULLS NOT DISTINCT constraint built again by ALTER
+/// INDEX holds the keys with a null as the old one did, while rows are
+/// written and after: a second null is refused (SQLCODE -201), and a null
+/// deleted is gone from it.
+#[test]
+fn a_key_of_nulls_not_distinct_built_again_holds_its_nulls() {
+    let (db, calls) = noted();
+    db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER, N INTEGER, UNIQUE NULLS NOT DISTINCT (K))").unwrap();
+    let s = db.session("S");
+    s.run("INSERT INTO T VALUES (NULL, 1), (1, 2)").unwrap();
+    s.commit().unwrap();
+    calls.taken();
+    exec(&s, "ALTER INDEX \"S.T.UNIQUE1\" SET (SHAPE = TALL)").unwrap();
+    assert_eq!(calls.taken(), ["index T  / SHAPE=TALL"], "built again");
+    assert_eq!(exec(&s, "INSERT INTO T VALUES (NULL, 3)"), Err(Code::Constraint), "the null kept");
+    s.run("DELETE FROM T WHERE N = 1").unwrap();
+    s.run("INSERT INTO T VALUES (NULL, 3)").unwrap();
+    s.commit().unwrap();
+    assert_eq!(exec(&s, "INSERT INTO T VALUES (NULL, 4)"), Err(Code::Constraint), "the null written after");
+}
+
 /// Verifies: [EXTENSION] RULES.md D41, D27: an index built again for an
 /// option fixed when it is made is built while transactions write its
 /// table, as CREATE INDEX builds one: a transaction that wrote the table

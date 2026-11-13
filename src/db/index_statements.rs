@@ -60,7 +60,7 @@ impl Session {
                 }
                 let options = options_of(st, &method, &storage.options)?;
                 let columns = columns.iter().map(|(c, _)| c.clone()).collect();
-                let spec = IndexSpec { name: name.clone(), table: qn, columns, method, options };
+                let spec = IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls: false };
                 self.db.noted(self.db.make_index(&spec))?;
             }
             IndexStatement::Drop { name: (name, at) } => {

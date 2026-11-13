@@ -253,12 +253,13 @@ fn the_users_guide_runs_as_printed() {
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8: the SQL Reference Manual's
-/// examples of value expressions and query expressions, of the tables the
-/// first makes, and INSERT's and UPDATE's, of the table the first makes,
-/// run as printed, as ANN.
+/// examples of value expressions, predicates and query expressions, of
+/// the tables the first makes, and INSERT's and UPDATE's, of the table the
+/// first makes, run as printed, as ANN.
 #[test]
 fn the_reference_manuals_examples_run_as_printed() {
-    for pages in [["sql/04-expressions.md", "sql/06-queries.md"], ["sql/statements/insert.md", "sql/statements/update.md"]] {
+    let chapters = ["sql/04-expressions.md", "sql/05-predicates.md", "sql/06-queries.md"];
+    for pages in [chapters.as_slice(), &["sql/statements/insert.md", "sql/statements/update.md"]] {
         let db = Database::new();
         db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
         let mut ann = Client::of(&db, "ANN");
@@ -278,8 +279,9 @@ fn the_truncate_examples_run_as_printed() {
     assert!(ann.page("sql/statements/truncate-table.md") > 0, "it shows its examples' output");
 }
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D65: the examples of CREATE
-/// TABLE run as printed, as ANN, those of LIKE and AS among them.
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D65, D66: the examples of CREATE
+/// TABLE run as printed, as ANN, those of LIKE and AS, and of UNIQUE
+/// NULLS NOT DISTINCT, among them.
 #[test]
 fn the_create_table_examples_run_as_printed() {
     let db = Database::new();

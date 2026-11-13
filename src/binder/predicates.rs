@@ -111,9 +111,9 @@ impl Binder<'_> {
             Predicate::LikeRegex { value, pattern, flag, not } => self.like_regex([value, pattern], flag.as_deref(), *not, scope)?,
             Predicate::Null { value, not } => self.null(value, *not, scope)?,
             Predicate::Exists(s) => Cond::Exists(self.subquery(s, scope, Use::Exists)?.0),
-            Predicate::Unique(s) => {
+            Predicate::Unique { subquery: s, nulls_distinct } => {
                 let (bound, types) = self.subquery(s, scope, Use::Rows)?;
-                Cond::Unique(self.keyed_rows_of(s, &types, &bound)?)
+                Cond::Unique(self.keyed_rows_of(s, &types, &bound)?, *nulls_distinct)
             }
             Predicate::Match { value, unique, match_type, subquery } => {
                 // [§17.6 GR5t] a `?` takes its subquery column's type.

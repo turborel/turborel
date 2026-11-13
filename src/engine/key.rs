@@ -68,6 +68,17 @@ const PRESENT: u8 = 1;
 /// moment's, with its tag; a long string's grows past them.
 const ANCHOR_BYTES: usize = 16;
 
+/// The least key, after `prefix`, of a column's value not null: before it
+/// are only the keys of a null there, which no comparison selects
+/// [X3.135-1986 §5.11 GR2], and which an index holds only of a UNIQUE
+/// NULLS NOT DISTINCT constraint [ISO/IEC 9075-2:2023 §11.7].
+pub fn least_present(prefix: &[u8]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(prefix.len().saturating_add(1));
+    key.extend_from_slice(prefix);
+    key.push(PRESENT);
+    key
+}
+
 /// Appends the key of `values`, the values of columns of `types`, to `out`.
 ///
 /// # Errors

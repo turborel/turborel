@@ -436,18 +436,27 @@ pub struct TableConstraint {
     pub attributes: ConstraintAttributes,
 }
 
+/// [ISO/IEC 9075-2:2023 §8.11 SR3, §11.7 SR5] The `<unique null treatment>`
+/// implicit where none is written, implementation-defined (ID106): NULLS
+/// DISTINCT, as every key and UNIQUE predicate was before one could be
+/// written. A `<column constraint>` writes none [§11.4].
+pub const IMPLICIT_NULLS_DISTINCT: bool = true;
+
 /// [ISO/IEC 9075:1992 §11.6] `<table constraint>` ::= `<unique constraint
 /// definition>` | `<referential constraint definition>` | `<check
 /// constraint definition>`
 #[derive(Debug)]
 pub enum TableConstraintKind {
-    /// [§11.7] `<unique specification>` (`<unique column list>`): UNIQUE,
-    /// or PRIMARY KEY if `primary`.
+    /// [§11.7] `<unique specification>` \[`<unique null treatment>`\]
+    /// (`<unique column list>`): UNIQUE, or PRIMARY KEY if `primary`.
     Unique {
         /// PRIMARY KEY was written.
         primary: bool,
         /// The `<unique column list>`.
         columns: Vec<String>,
+        /// [ISO/IEC 9075-2:2023 §11.7 SR5] NULLS DISTINCT, written or
+        /// implicit, rather than NULLS NOT DISTINCT.
+        nulls_distinct: bool,
     },
     /// [§11.8] FOREIGN KEY (`<referencing columns>`) `<references
     /// specification>`

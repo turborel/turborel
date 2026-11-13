@@ -32,7 +32,7 @@ use super::{BTREE_METHOD, Entries, Index, IndexMethod, Key, KeyOrder, Probe, Row
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
-use crate::engine::key::{anchor, decode_key, encode_key};
+use crate::engine::key::{anchor, decode_key, encode_key, least_present};
 use crate::engine::tree::{BLinkTree, Direction, LEAST_LOOKUPS, Update, scan_of};
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
@@ -314,8 +314,10 @@ impl BLinkIndex {
                 let upper = after(&key);
                 (Bound::Included(key), upper)
             }
-            CompOp::Lt if exact => (Bound::Included(prefix), Bound::Excluded(key)),
-            CompOp::Lt | CompOp::Le => (Bound::Included(prefix), after(&key)),
+            // From the first value not null: a key of a null there, of an
+            // index that holds them, is less than every value's.
+            CompOp::Lt if exact => (Bound::Included(least_present(&prefix)), Bound::Excluded(key)),
+            CompOp::Lt | CompOp::Le => (Bound::Included(least_present(&prefix)), after(&key)),
             CompOp::Gt if exact => (from_after(&key)?, after(&prefix)),
             CompOp::Gt | CompOp::Ge => (Bound::Included(key), after(&prefix)),
             CompOp::Ne => return Some(within(prefix, true)),

@@ -276,6 +276,27 @@ fn constraints_added_and_dropped_11_16_11_17() {
     assert_eq!(state(&s, "INSERT INTO C VALUES (99)"), "00000", "its key went with P");
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.16 GR1] ALTER TABLE adds a
+/// UNIQUE constraint in a transaction that has not read its table yet,
+/// and, on a column of a collation, its index keys the column's sort keys
+/// at once, so a row written in the same transaction is checked by them.
+/// Regression (R-TEST-7): the first was refused as the table's engine had
+/// not begun the transaction (SQLCODE -910); the second wrote its row by
+/// the column's values to an index of sort keys, refused the same way.
+#[test]
+fn a_unique_constraint_added_first_in_a_transaction_11_16() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, N VARCHAR(10) COLLATE CASE_INSENSITIVE)").unwrap();
+    let s = db.session("A");
+    s.run("ALTER TABLE T ADD CONSTRAINT UK UNIQUE (K)").unwrap();
+    s.run("ALTER TABLE T ADD CONSTRAINT UN UNIQUE (N)").unwrap();
+    s.run("INSERT INTO T VALUES (1, 'Bob')").unwrap();
+    assert_eq!(state(&s, "INSERT INTO T VALUES (2, 'bob')"), "23000", "Bob, as the collation compares");
+    assert_eq!(state(&s, "INSERT INTO T VALUES (1, 'Ann')"), "23000", "K 1 again");
+    s.commit().unwrap();
+    assert_eq!(state(&s, "INSERT INTO T VALUES (3, 'BOB')"), "23000", "once committed");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.15 SR4, GR1, GR6] a column
 /// dropped takes its own constraints with it — NOT NULL, a CHECK of it
 /// alone — and with CASCADE those of it and other columns too, and the
