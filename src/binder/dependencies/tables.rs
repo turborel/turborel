@@ -8,9 +8,9 @@ use crate::logical::expr_columns;
 
 /// [§4.26.3] The base table `table`, of its first `width` columns, those
 /// the query sees. A non-deferrable PRIMARY KEY, and a non-deferrable
-/// UNIQUE of columns known not null, determine every column; so does a
-/// non-deferrable UNIQUE NULLS NOT DISTINCT of any columns (IE015), as no
-/// two rows are alike in them. A generated column is determined by its
+/// UNIQUE of columns known not null, determine every column, a BPK-set and
+/// a BUC-set; so does a non-deferrable UNIQUE NULLS NOT DISTINCT of any
+/// columns (IE015), a BUC-set [§4.26.2], as no two rows are alike in them. A generated column is determined by its
 /// parametric columns. A column is known not null of a non-deferrable NOT
 /// NULL or PRIMARY KEY. A table the catalog does not have, a declared
 /// local temporary one, has nothing known.
@@ -26,7 +26,8 @@ pub(super) fn base_table(w: &Walk<'_>, table: &QualifiedName, width: usize) -> K
             continue;
         }
         if let Some(key) = known.attributes_of(columns) {
-            known.depends(key, every.clone());
+            known.depends(key.clone(), every.clone());
+            known.keys.push((key, *primary));
         }
     }
     generated(w, desc, &mut known);

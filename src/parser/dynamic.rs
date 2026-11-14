@@ -24,7 +24,7 @@ type Using = (bool, UsingClause, usize);
 
 /// [ISO/IEC 9075:1992 §17.5 SR3; ISO/IEC 9075-2:2023 §20.5 SR3a] The
 /// `<descriptor item name>`s a `<set descriptor statement>` shall not set.
-const NOT_SET: [DescriptorItem; 10] = [
+const NOT_SET: [DescriptorItem; 11] = [
     DescriptorItem::ReturnedLength,
     DescriptorItem::ReturnedCardinality,
     DescriptorItem::ReturnedOctetLength,
@@ -35,10 +35,13 @@ const NOT_SET: [DescriptorItem; 10] = [
     DescriptorItem::CollationName,
     DescriptorItem::Name,
     DescriptorItem::Unnamed,
+    DescriptorItem::KeyMember,
 ];
 
 /// [ISO/IEC 9075-2:2023 §20.4] TOP_LEVEL_COUNT, a `<header item name>`.
 const TOP_LEVEL_COUNT: &str = "TOP_LEVEL_COUNT";
+/// [ISO/IEC 9075-2:2023 §20.4] KEY_TYPE, a `<header item name>`.
+const KEY_TYPE: &str = "KEY_TYPE";
 /// [ISO/IEC 9075-2:2023 §20.10] NESTING, of a `<nesting option>`.
 const NESTING: &str = "NESTING";
 /// [ISO/IEC 9075-2:2023 §20.10] WITHOUT, of a `<nesting option>`.
@@ -217,7 +220,7 @@ impl Parser {
     /// specification 1>` = `<header item name>` \[{, ...}...\] | VALUE
     /// `<item number>` `<simple target specification 2>` = `<descriptor
     /// item name>` \[{, ...}...\]}, after GET; [ISO/IEC 9075-2:2023 §20.4]
-    /// a `<header item name>` COUNT or TOP_LEVEL_COUNT.
+    /// a `<header item name>` COUNT, TOP_LEVEL_COUNT or KEY_TYPE.
     pub(super) fn get_descriptor(&mut self) -> Result<SqlStatement> {
         self.expect_kw(kw::DESCRIPTOR)?;
         let name = self.extended_name()?;
@@ -228,6 +231,8 @@ impl Parser {
                 self.expect_delim(delim::EQUALS)?;
                 let item = if self.accept_word(TOP_LEVEL_COUNT) {
                     HeaderItem::TopLevelCount
+                } else if self.accept_word(KEY_TYPE) {
+                    HeaderItem::KeyType
                 } else {
                     self.expect_kw(kw::COUNT)?;
                     HeaderItem::Count
@@ -261,8 +266,8 @@ impl Parser {
         let name = self.extended_name()?;
         if !self.accept_kw(kw::VALUE) {
             let at = self.here();
-            if self.accept_word(TOP_LEVEL_COUNT) {
-                return Err(Self::rule_at(at, "[ISO/IEC 9075-2:2023 §20.5 SR2] TOP_LEVEL_COUNT is not set".to_owned()));
+            if self.accept_word(TOP_LEVEL_COUNT) || self.accept_word(KEY_TYPE) {
+                return Err(Self::rule_at(at, "[ISO/IEC 9075-2:2023 §20.5 SR2] neither TOP_LEVEL_COUNT nor KEY_TYPE is set".to_owned()));
             }
             self.expect_kw(kw::COUNT)?;
             self.expect_delim(delim::EQUALS)?;

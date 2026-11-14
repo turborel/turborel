@@ -201,7 +201,7 @@ impl Session {
     pub(super) fn get_descriptor(&self, name: &ExtendedName, info: &GetDescriptor, params: &mut Params) -> Result<Completion> {
         let (_, area) = self.descriptor(name, params, "§17.4 GR1")?;
         let (number, items) = match info {
-            GetDescriptor::Header(header) => return got_header((area.count, area.top_level), header, params),
+            GetDescriptor::Header(header) => return got_header(&area, header, params),
             GetDescriptor::Value { number, items } => (whole(self, number, params, "§17.4 SR1")?, items),
         };
         if !(1..=area.occurrences).contains(&number) {
@@ -294,17 +294,18 @@ impl Session {
     }
 
     /// [ISO/IEC 9075:1992 §17.9 GR2-GR4] The SQL descriptor area `name`
-    /// names described as `items`: COUNT their number, and they its first
-    /// item descriptor areas, unless it has fewer occurrences; then the
-    /// warning insufficient item descriptor areas (01005).
+    /// names described as `items`: COUNT their number, KEY_TYPE `key_type`
+    /// [ISO/IEC 9075-2:2023 §20.10 GR6d], and they its first item
+    /// descriptor areas, unless it has fewer occurrences; then the warning
+    /// insufficient item descriptor areas (01005).
     ///
     /// # Errors
     ///
     /// SQLSTATE 33000 if no area of the name is allocated \[GR2\].
-    pub(super) fn describe_into(&self, name: &ExtendedName, params: &Params, items: Vec<Item>) -> Result<Completion> {
+    pub(super) fn describe_into(&self, name: &ExtendedName, params: &Params, (items, key_type): (Vec<Item>, i64)) -> Result<Completion> {
         let (key, mut area) = self.descriptor(name, params, "§17.9 GR2")?;
         let top = items.iter().filter(|i| i.level() == 0).count();
-        let insufficient = area.describe(items, top);
+        let insufficient = area.describe(items, (top, key_type));
         self.put_descriptor(key, area);
         Ok(if insufficient { Completion::Warning(SqlState::INSUFFICIENT_ITEM_DESCRIPTOR_AREAS) } else { Completion::Success })
     }
@@ -394,17 +395,18 @@ fn set_interval_code(item: &mut Item) {
 }
 
 /// GET DESCRIPTOR's `header` items [ISO/IEC 9075:1992 §17.4], of an area
-/// of COUNT `count` and TOP_LEVEL_COUNT `top_level`, into their targets.
-/// SQLCODE -103 if a target is not exact numeric of scale 0 \[SR2\].
-fn got_header((count, top_level): (i64, i64), header: &[(ParameterSpecification, HeaderItem)], params: &mut Params) -> Result<Completion> {
+/// of `area`, into their targets. SQLCODE -103 if a target is not exact
+/// numeric of scale 0 \[SR2\].
+fn got_header(area: &Descriptor, header: &[(ParameterSpecification, HeaderItem)], params: &mut Params) -> Result<Completion> {
     let mut got = Vec::with_capacity(header.len());
     for (target, h) in header {
         if !of_field_type(DescriptorItem::Type, &declared_type(params, &target.name)?, true) {
-            return Err(wrong_type("§17.4 SR2", "the target of COUNT or TOP_LEVEL_COUNT is exact numeric with scale 0"));
+            return Err(wrong_type("§17.4 SR2", "the target of COUNT, TOP_LEVEL_COUNT or KEY_TYPE is exact numeric with scale 0"));
         }
         let n = match h {
-            HeaderItem::Count => count,
-            HeaderItem::TopLevelCount => top_level,
+            HeaderItem::Count => area.count,
+            HeaderItem::TopLevelCount => area.top_level,
+            HeaderItem::KeyType => area.key_type,
         };
         got.push((exact(n), target.clone()));
     }

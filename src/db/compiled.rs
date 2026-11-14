@@ -5,7 +5,7 @@
 use super::prepared::Keeping;
 use super::{Session, State};
 use crate::ast::CursorSpecification;
-use crate::binder::OutColumn;
+use crate::binder::{DescribedKey, OutColumn, described_key};
 use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::logical::LogicalPlan;
@@ -18,6 +18,9 @@ use crate::value::Value;
 /// shown, if compiled to be shown, the optimizer's trace, and its plans.
 pub(super) struct Compiled {
     pub(super) columns: Vec<OutColumn>,
+    /// [ISO/IEC 9075-2:2023 §4.27] Of a statement compiled to be shown or
+    /// described, the key of its rows; none of one compiled to run.
+    pub(super) key: Option<DescribedKey>,
     pub(super) bound: String,
     pub(super) trace: Vec<&'static str>,
     pub(super) optimized: LogicalPlan,
@@ -56,8 +59,9 @@ impl Session {
     pub(super) fn compile(&self, st: &State, spec: &CursorSpecification, params: &Params) -> Result<Compiled> {
         let (columns, logical) = self.cursor_bound(st, spec, params, None)?;
         let bound = logical.explain();
+        let key = Some(described_key(st, &logical));
         let (optimized, trace, physical) = described(st, logical);
-        Ok(Compiled { columns, bound, trace, optimized, physical })
+        Ok(Compiled { columns, key, bound, trace, optimized, physical })
     }
 
     /// `spec` compiled to run: of a prepared statement, from the plan it
@@ -66,7 +70,7 @@ impl Session {
     fn compile_kept(&self, st: &State, spec: &CursorSpecification, params: &Params, keeping: Option<&Keeping<'_>>) -> Result<Compiled> {
         let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
         let (optimized, trace, physical) = plan(st, logical);
-        Ok(Compiled { columns, bound: String::new(), trace, optimized, physical })
+        Ok(Compiled { columns, key: None, bound: String::new(), trace, optimized, physical })
     }
 
     /// [X3.135-1986 §8.3 SR4b; ISO/IEC 9075:1992 §13.1 SR5, §7.9 SR12] The

@@ -287,3 +287,60 @@ fn groups_set_operations_and_collections() {
     assert!(!unnest(false, Expr::Column(1)).determines(&[0, 1, 2], 3));
     assert!(!unnest(true, dice(Expr::Column(1))).determines(&[0, 1, 2, 4], 3));
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.27] the left-most rule: of
+/// two sets of columns, in order of their numbers, the shorter extended
+/// with zeros, the first that differ the smaller; alike, neither.
+#[test]
+fn the_left_most_rule_orders_sets() {
+    assert!(keys::left_of(&[0, 2], &[1]), "1 before 2");
+    assert!(!keys::left_of(&[1], &[0, 2]));
+    assert!(keys::left_of(&[0], &[0, 1]), "a zero after 1");
+    assert!(keys::left_of(&[], &[0]));
+    assert!(!keys::left_of(&[0, 1], &[0, 1]), "alike");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.27] the search finds the
+/// left-most candidate key, {1, 3}, before {2}, which leaving the
+/// right-most columns out first would find; and stops after its limit.
+#[test]
+fn the_search_finds_the_left_most_candidate_key() {
+    let mut k = Known { columns: vec![0, 1, 2], ..Known::default() };
+    k.depends(Attrs::from([0, 2]), Attrs::from([1]));
+    k.depends(Attrs::from([1]), Attrs::from([0, 2]));
+    let mut budget = 64;
+    assert_eq!(k.leftmost(&[0, 1, 2], &mut budget), keys::Found::Key(vec![0, 2]));
+    assert_eq!(k.leftmost(&[1, 2], &mut budget), keys::Found::Key(vec![1]));
+    assert_eq!(k.leftmost(&[2], &mut budget), keys::Found::None, "no key within column 3 alone");
+    let mut spent = 1;
+    assert_eq!(k.leftmost(&[0, 1, 2], &mut spent), keys::Found::Stopped);
+    let constant = Known { columns: vec![0], dependencies: vec![(Attrs::new(), Attrs::from([0]))], ..Known::default() };
+    assert_eq!(constant.leftmost(&[0], &mut budget), keys::Found::Key(Vec::new()), "of at most one row");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.27, §4.26.3] of a base
+/// table, its PRIMARY KEY is described, else a UNIQUE of a column not null,
+/// else all its columns; a search stopped describes none.
+#[test]
+fn a_tables_key_is_described() {
+    let primary = database(vec![constraint(unique(vec![1], (true, true)), false)]);
+    assert_eq!(described_key(&primary, &scan()), DescribedKey::Primary(vec![1]));
+    let not_null = constraint(ConstraintKind::NotNull(2), false);
+    let unique = database(vec![constraint(unique(vec![2], (false, true)), false), not_null]);
+    assert_eq!(described_key(&unique, &scan()), DescribedKey::Preferred(vec![2]));
+    assert_eq!(described_key(&database(vec![]), &scan()), DescribedKey::Preferred(vec![0, 1, 2]));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.27] of two candidate keys,
+/// the left-most is preferred unless the other is strong, of a BUC-set or
+/// within a grouped table's grouping columns, nullable as they may be.
+#[test]
+fn a_strong_candidate_key_is_preferred() {
+    let mut k = Known { columns: vec![0, 1], ..Known::default() };
+    k.same(0, 1);
+    assert_eq!(k.described(), DescribedKey::Preferred(vec![0]));
+    let grouped = Known { grouping: Some(Attrs::from([1])), ..k.clone() };
+    assert_eq!(grouped.described(), DescribedKey::Preferred(vec![1]));
+    let unique = Known { keys: vec![(Attrs::from([1]), false)], ..k };
+    assert_eq!(unique.described(), DescribedKey::Preferred(vec![1]));
+}

@@ -35,6 +35,7 @@ pub(crate) use composite::grouping_operand;
 mod cursor;
 mod datetime;
 mod dependencies;
+pub(crate) use dependencies::{DescribedKey, described_key};
 mod interval;
 mod listagg;
 pub(crate) use datetime::cast_is_valid;

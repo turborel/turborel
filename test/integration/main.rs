@@ -62,6 +62,7 @@ mod booleans;
 mod buffer;
 mod buffer_claims;
 mod cancel;
+mod candidate_keys;
 mod checkpoints;
 mod checks;
 mod column_store;

@@ -21,6 +21,7 @@
 //! before it, with them, and of a COALESCE of a column known not null.
 
 mod conditions;
+mod keys;
 mod tables;
 #[cfg(test)]
 mod tests;
@@ -33,6 +34,7 @@ use crate::logical::{Cond, Expr, LogicalPlan, SetOp, Unnest, expr_columns};
 use crate::value::collation::CollationRef;
 
 pub(super) use conditions::deterministic;
+pub(crate) use keys::{DescribedKey, described_key};
 
 /// A set of attributes.
 type Attrs = BTreeSet<usize>;
@@ -53,6 +55,16 @@ pub(super) struct Known {
     /// The collation of each attribute of a base table's column that has
     /// one: an equality by it is of the column's values.
     collations: Vec<(usize, CollationRef)>,
+    /// Its BUC-sets, each with whether it is a BPK-set too [§4.26.2]. The
+    /// deduction rule for them is applied as a candidate key is found
+    /// (`keys.rs`).
+    keys: Vec<(Attrs, bool)>,
+    /// Of a product, the BUC-sets and BPK-sets of the table references it
+    /// is of, which a condition over it makes its own where they determine
+    /// every column [§4.26.11, §4.26.12].
+    pending: Vec<(Attrs, bool)>,
+    /// Of a grouped table, the attributes of its grouping columns [§4.27].
+    grouping: Option<Attrs>,
 }
 
 /// A walk of a plan: the database it reads, and the next attribute not
@@ -150,6 +162,31 @@ impl Known {
         self.not_null.extend(other.not_null);
         self.nulled_with.extend(other.nulled_with);
         self.collations.extend(other.collations);
+        self.pending.extend(self.keys.iter().cloned().chain(other.pending).chain(other.keys.iter().cloned()));
+        self.keys.extend(other.keys);
+        self.grouping = None;
+        self
+    }
+
+    /// [§4.26.12] Of a condition over a product, the BUC-sets and BPK-sets
+    /// of its table references made its own, of those that determine every
+    /// column.
+    fn adopted(mut self) -> Known {
+        let pending = std::mem::take(&mut self.pending);
+        self.keys.extend(pending);
+        self.keyed(false)
+    }
+
+    /// [§4.26.7, §4.26.12] Its BUC-sets and BPK-sets that determine every
+    /// column, and, of a joined table's if `not_null`, whose columns are
+    /// all known not null.
+    fn keyed(mut self, not_null: bool) -> Known {
+        let visible: Attrs = self.columns.iter().copied().collect();
+        let keys = std::mem::take(&mut self.keys);
+        self.keys = keys
+            .into_iter()
+            .filter(|(key, _)| (!not_null || key.is_subset(&self.not_null)) && visible.is_subset(&self.closure(key.clone())))
+            .collect();
         self
     }
 
@@ -182,6 +219,8 @@ impl Known {
             self.depends(moved_set(a), moved_set(b));
         }
         self.not_null.extend(second.not_null.iter().map(|&a| moved(a)));
+        self.keys.extend(second.keys.iter().map(|(key, primary)| (moved_set(key), *primary)));
+        self.grouping = None;
         self
     }
 
@@ -199,14 +238,25 @@ impl Known {
     }
 }
 
-/// What is known of the rows of `plan`. Matched by reference, each arm
-/// handing the plan's parts on, so a level of the plan adds little to the
-/// stack, which the parser's nesting limit bounds (RULES.md R-CF-6).
+/// What is known of the rows of `plan`: its node's, the keys of a
+/// product's table references carried only to the condition over it.
 fn known(w: &Walk<'_>, plan: &LogicalPlan) -> Known {
+    let mut known = of_node(w, plan);
+    if !matches!(plan, LogicalPlan::Product { .. }) {
+        known.pending.clear();
+    }
+    known
+}
+
+/// What is known of the rows of `plan`, of its node's rule. Matched by
+/// reference, each arm handing the plan's parts on, so a level of the plan
+/// adds little to the stack, which the parser's nesting limit bounds
+/// (RULES.md R-CF-6).
+fn of_node(w: &Walk<'_>, plan: &LogicalPlan) -> Known {
     match plan {
         LogicalPlan::Scan { table, names, .. } => tables::base_table(w, table, names.len()),
-        LogicalPlan::Filter { cond, input } => known(w, input).filtered(cond),
-        LogicalPlan::Product { left, right } => known(w, left).beside(known(w, right)),
+        LogicalPlan::Filter { cond, input } => known(w, input).filtered(cond).adopted(),
+        LogicalPlan::Product { left, right } => known(w, left).beside(known(w, right)).keyed(false),
         LogicalPlan::Aggregate { groups, aggs, seeds, input, .. } => grouped(w, known(w, input), groups, (aggs.len(), seeds.is_empty())),
         LogicalPlan::Project { exprs, input } => projected(w, known(w, input), exprs),
         // [§4.26.16] Rows of its input, once each or in order.
@@ -230,13 +280,22 @@ fn known(w: &Walk<'_>, plan: &LogicalPlan) -> Known {
 /// its attribute, and they determine the rest [note 70]. What is known of
 /// the rows holds of the groups, as each group's grouping columns are those
 /// of any of its rows; but not where groups of no rows are made before any
-/// row (`rowed` false), of grouping sets.
+/// row (`rowed` false), of grouping sets, whose rows are a union's. The
+/// grouping columns are a BUC-set if each is known not null, and a BPK-set
+/// if they are a subset of one of the rows'.
 fn grouped(w: &Walk<'_>, input: Known, groups: &[usize], (aggs, rowed): (usize, bool)) -> Known {
     let mut columns: Vec<usize> = groups.iter().map(|&g| input.attribute_of(g).unwrap_or_else(|| w.attribute())).collect();
     let g: Attrs = columns.iter().copied().collect();
     let made: Vec<usize> = (0..aggs).map(|_| w.attribute()).collect();
     columns.extend(&made);
+    let primary = input.keys.iter().any(|(key, primary)| *primary && g.is_subset(key));
+    let not_null = g.is_subset(&input.not_null);
     let mut known = if rowed { Known { columns, ..input } } else { Known { columns, ..Known::default() } };
+    known.keys.clear();
+    if rowed && (primary || not_null) {
+        known.keys.push((g.clone(), primary));
+    }
+    known.grouping = rowed.then(|| g.clone());
     known.depends(g, made.into_iter().collect());
     known
 }
@@ -261,6 +320,10 @@ fn projected(w: &Walk<'_>, mut known: Known, exprs: &[Expr]) -> Known {
         }
         columns.push(a);
     }
+    // [§4.26.15] A BUC-set or BPK-set of columns the select list
+    // references is one of its result.
+    let visible: Attrs = columns.iter().copied().collect();
+    known.keys.retain(|(key, _)| key.is_subset(&visible));
     known.columns = columns;
     known
 }
@@ -271,7 +334,7 @@ fn projected(w: &Walk<'_>, mut known: Known, exprs: &[Expr]) -> Known {
 fn set_operation(w: &Walk<'_>, op: SetOp, (left, right): (&LogicalPlan, &LogicalPlan), width: usize) -> Known {
     match op {
         SetOp::Union => w.fresh(width),
-        SetOp::Except => known(w, left),
+        SetOp::Except => Known { grouping: None, ..known(w, left) },
         SetOp::Intersect => known(w, left).meeting(&known(w, right)),
     }
 }
@@ -306,6 +369,12 @@ fn unnested(w: &Walk<'_>, u: &Unnest<LogicalPlan>) -> Known {
             known.not_null.insert(ordinal);
         }
     }
+    // [§4.26.8] The ordinality column is a BPK-set of a collection derived
+    // table that reads no column before it; of one that does, the rows'
+    // keys are not, as each row of them is given many.
+    let alone = known.columns.is_empty() && u.outer.is_none();
+    known.keys = own.last().filter(|_| u.ordinality && fixed && alone).map(|&o| (Attrs::from([o]), true)).into_iter().collect();
+    known.grouping = None;
     known.columns.extend(own);
     known
 }

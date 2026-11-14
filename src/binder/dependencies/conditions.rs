@@ -210,7 +210,8 @@ impl Known {
 /// `right` on `cond`: of each operand whose rows may be extended with
 /// nulls, only what `Known::null_extended` keeps; of the preserved one,
 /// what is known; of a LEFT or RIGHT join on a deterministic condition,
-/// what `Known::preserving` adds. A partitioned join's plan is read as the
+/// what `Known::preserving` adds; of each operand's BUC-sets and BPK-sets,
+/// those `Known::keyed` keeps. A partitioned join's plan is read as the
 /// nodes it is made of, its join partitioning columns' rules not applied.
 pub(super) fn outer_joined(kind: OuterJoin, cond: &Cond, (left, right): (Known, Known)) -> Known {
     let width = left.columns.len();
@@ -226,5 +227,5 @@ pub(super) fn outer_joined(kind: OuterJoin, cond: &Cond, (left, right): (Known, 
             OuterJoin::Full => {}
         }
     }
-    known
+    known.keyed(true)
 }

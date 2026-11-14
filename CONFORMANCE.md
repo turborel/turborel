@@ -1087,8 +1087,8 @@ and §6.7 SR7 b iv, SR8. A grouped query names, outside a set function,
 a column functionally dependent on its grouping columns, in its select
 list, HAVING, window clause, a hypothetical set function's values, an
 inverse distribution function's fraction and an outer reference of a
-subquery. T301 is not yet claimed, as DESCRIBE OUTPUT does not yet give
-KEY_TYPE and KEY_MEMBER [§4.27, §20.4].
+subquery. DESCRIBE OUTPUT gives a query's primary key or preferred
+candidate key as KEY_TYPE and KEY_MEMBER [§4.27, §20.10 GR6d, GR7c].
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1098,7 +1098,17 @@ KEY_TYPE and KEY_MEMBER [§4.27, §20.4].
 | Groups | §4.26.13 | The grouping columns determine the columns of the set functions. A grouping column written with COLLATE determines nothing. Of grouping sets, a column is dependent on each set's columns, else SQLCODE -103. |
 | Queries | §4.26.4, §4.26.8, §4.26.15, §4.26.16 | A view, a derived table and a WITH query that is not recursive keep their query's dependencies, and a column of a select list is determined by the columns of its expression if it is deterministic. EXCEPT keeps its first operand's, INTERSECT both's. A collection derived table WITH ORDINALITY's ordinality column with its input's columns determines its elements, if its collections are deterministic. |
 | Table value constructors | §4.26.6 | One of at most one row determines every column (IE015). One of more rows, a recursive query (IA204) and UNION (IA226) know none. |
+| BUC-sets and BPK-sets | §4.26.2 to §4.26.16 | A non-deferrable PRIMARY KEY's columns are a BPK-set, a non-deferrable UNIQUE's of columns known not null, or NULLS NOT DISTINCT, a BUC-set [§4.26.2]. A select list, a view, a derived table, WHERE, HAVING and EXCEPT keep those of the columns they keep, INTERSECT either operand's, a join an operand's that determine every column and are known not null, a FROM of several table references those its WHERE makes determine every column [§4.26.11, §4.26.12]. A grouped table's grouping columns are a BUC-set if known not null and a BPK-set if within one. A collection derived table WITH ORDINALITY that reads no column before it has its ordinality column as a BPK-set. UNION, grouping sets, a table value constructor (IA203) and a recursive query (IA204) have none. |
+| Candidate keys | §4.27, §20.10 GR6d, GR7c | KEY_TYPE is 1 of a candidate key within a BPK-set, which the deduction rule makes a BPK-set, the left-most of them the primary key. Else it is 2, the preferred candidate key the left-most within a BUC-set or within the grouping columns, a strong candidate key, else the left-most of all. KEY_MEMBER is 1 of the key's columns, 0 of the others, of a parameter and of a part of a column. DESCRIBE INPUT and a statement not a query set KEY_TYPE 0. SET DESCRIPTOR sets neither [§20.5 SR2, SR3a]. |
 | A dependent column's value | §6.7 GR1e | The value of the group's first row read, kept as a set function would keep it, its null kept with no SQLSTATE 01003. Of a character string, a datetime with time zone or a user-defined type it is UV070. In a CHECK or an assertion such a column of a character string is a potential source of non-determinism, SQLCODE -103 [ISO/IEC 9075:1992 §11.9 SR6]. |
+
+The candidate keys are found by a search of sets of the result's
+columns in the order the left-most rule gives, the first found the
+left-most. A table may have candidate keys exponentially many in its
+columns, so the search stops after 4,096 sets, and then KEY_TYPE is 0,
+no column a member. A query whose rows are a grouped query's, through a
+select list, HAVING, a sort or a window, is taken as grouped, its
+grouping columns of the result a strong candidate key.
 
 A refused column is SQLCODE -103 citing §6.7 SR8. A partitioned join's
 plan is read as the nodes it is made of, so its join partitioning
@@ -1243,7 +1253,7 @@ of a name and a type [§4.10].
 | Assignment and CAST | §9.2, §6.13 | Element by element and field by field, an array of more non-null elements than its target's maximum SQLSTATE 2202F. Nothing else is assigned or cast to or from an array or a row. |
 | `SET A[i] = v` | §14.15 GR10b | Past the cardinality the array is extended with nulls; index 0 or past the maximum is SQLSTATE 2202E, a null array SQLSTATE 2200E. |
 | UNNEST | §7.6 SR8, §7.10 | `UNNEST(a, ...) [WITH ORDINALITY] AS t [(names)]` of the rows of its arrays' elements, padded with nulls to the longest, each array of rows spread into its fields. The ordinality column is INTEGER (IV158). It reads the FROM items before it, after a comma or as the second operand of CROSS, INNER and LEFT joins; as that of a RIGHT or FULL join it may read none of the first (SQLCODE -103). |
-| Dynamic SQL | §20.1, §20.9 to §20.12 | An item of a composite type is followed by items of its parts, of LEVEL one greater, with DEGREE, CARDINALITY and RETURNED_CARDINALITY. TOP_LEVEL_COUNT counts the items of LEVEL 0. DESCRIBE takes WITH NESTING and WITHOUT NESTING. DATA of an item of a row or of an array's element is SQLSTATE 0700C to get and 0700D to set; a LEVEL set out of order SQLSTATE 0700E. |
+| Dynamic SQL | §20.1, §20.9 to §20.12 | An item of a composite type is followed by items of its parts, of LEVEL one greater, with DEGREE, CARDINALITY and RETURNED_CARDINALITY, and KEY_MEMBER 0. TOP_LEVEL_COUNT counts the items of LEVEL 0. DESCRIBE takes WITH NESTING and WITHOUT NESTING. DATA of an item of a row or of an array's element is SQLSTATE 0700C to get and 0700D to set; a LEVEL set out of order SQLSTATE 0700E. |
 | Its description | ISO/IEC 9075-11 | COLUMNS and DOMAINS give MAXIMUM_CARDINALITY and DTD_IDENTIFIER, and ELEMENT_TYPES and FIELDS describe the parts. A column's DTD_IDENTIFIER is its ordinal position, a domain's 1, and a part's its parent's, a point, and its field's place, or 1 for an element. |
 
 An array's elements and a row's fields are kept in the row of their
@@ -1636,7 +1646,8 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | ID106, ISO/IEC 9075-2:2023 §8.11 SR3, §11.7 SR5 the `<unique null treatment>` not written | NULLS DISTINCT, as every key and UNIQUE predicate was before one could be written | `ast/schema.rs` |
 | IA201, ISO/IEC 9075-2:2023 §4.25.3.2 whether two rows all null are unique with nulls not distinct | Not: under NULLS NOT DISTINCT they are the same, a key refusing the second and UNIQUE false of them | `db/integrity/keys.rs`, `exec/eval.rs` |
 | IE015, ISO/IEC 9075-2:2023 §4.26.3, §4.26.6, §4.26.12 known functional dependencies the rules leave to the implementation | A non-deferrable UNIQUE NULLS NOT DISTINCT determines its table's columns. A table value constructor of at most one row determines its columns. A column compared with a deterministic expression of no column has one value, and one compared with a deterministic expression of columns is determined by them (notes 68 and 69). | `binder/dependencies.rs`, `binder/dependencies/tables.rs`, `binder/dependencies/conditions.rs` |
-| IA204, ISO/IEC 9075-2:2023 §4.26.16 the known functional dependencies of a recursive query | None but the axiomatic | `binder/dependencies.rs` |
+| IA203, ISO/IEC 9075-2:2023 §4.26.6 the BPK-sets and BUC-sets of a table value constructor | None | `binder/dependencies.rs` |
+| IA204, ISO/IEC 9075-2:2023 §4.26.16 the known functional dependencies, BPK-sets and BUC-sets of a recursive query | None but the axiomatic | `binder/dependencies.rs` |
 | IA226, ISO/IEC 9075-2:2023 §4.26.16 known functional dependencies of a UNION | None but the axiomatic | `binder/dependencies.rs` |
 | IV223, ISO/IEC 9075-2:2023 §11.51 SR7a the source type of a distinct type of an exact or an approximate type | NUMERIC of its precision and scale, or FLOAT of its precision | `db/user_types.rs` |
 | ID047, ISO/IEC 9075-2:2023 §9.18 SR10b the SQL-path | The schema of the statement's names, the session's default schema or a schema statement's own | `binder/routines.rs` |

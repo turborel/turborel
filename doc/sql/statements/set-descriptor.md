@@ -80,8 +80,8 @@ literals or parameters. It begins a transaction if none is active.
    or of a character set's name a character string; DATA to a value of
    the item's type.
 4. LEVEL is set in the order above.
-5. Neither TOP_LEVEL_COUNT, NAME, UNNAMED, NULLABLE, OCTET_LENGTH, RETURNED_LENGTH,
-   RETURNED_OCTET_LENGTH, RETURNED_CARDINALITY nor the collation's
+5. Neither TOP_LEVEL_COUNT, KEY_TYPE, NAME, UNNAMED, NULLABLE, OCTET_LENGTH, RETURNED_LENGTH,
+   RETURNED_OCTET_LENGTH, RETURNED_CARDINALITY, KEY_MEMBER nor the collation's
    fields is set; no field twice.
 6. DATA is not set of an item of TYPE ROW, nor of an item that is part of
    an array's element.

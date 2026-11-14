@@ -206,8 +206,11 @@ impl Item {
     /// `<dynamic parameter specification>` of type `t`, named `name` if it
     /// has a name not implementation-dependent, NULLABLE as `nullable`, of
     /// the catalog `catalog`. NAME of one unnamed is the empty string.
+    /// KEY_MEMBER is 0, as of a parameter or a subordinate item [ISO/IEC
+    /// 9075-2:2023 §20.10 GR7c ii 3, iii 3], unless DESCRIBE sets it.
     pub(super) fn described(t: DataType, name: Option<&str>, nullable: bool, catalog: &str) -> Item {
         let mut item = Item::default();
+        item.set_number(DescriptorItem::KeyMember, 0);
         item.set_number(DescriptorItem::Type, type_code(&t.clone()));
         item.set_number(DescriptorItem::Nullable, i64::from(nullable));
         item.set(DescriptorItem::Name, Value::Char(name.unwrap_or_default().to_owned()));
@@ -473,6 +476,8 @@ pub(crate) struct Descriptor {
     /// [ISO/IEC 9075-2:2023 §20.10 GR6b] TOP_LEVEL_COUNT: of the items
     /// DESCRIBE set, those of LEVEL 0.
     pub(super) top_level: i64,
+    /// [ISO/IEC 9075-2:2023 §20.10 GR6d] KEY_TYPE, as DESCRIBE set it.
+    pub(super) key_type: i64,
     /// Its item descriptor areas set, by number, from 1.
     pub(super) items: BTreeMap<i64, Item>,
 }
@@ -480,7 +485,7 @@ pub(crate) struct Descriptor {
 impl Descriptor {
     /// A descriptor area of `occurrences` items, each undefined.
     pub(super) fn new(occurrences: i64) -> Descriptor {
-        Descriptor { occurrences, count: 0, top_level: 0, items: BTreeMap::new() }
+        Descriptor { occurrences, count: 0, top_level: 0, key_type: 0, items: BTreeMap::new() }
     }
 
     /// Its `n`-th item descriptor area.
@@ -490,12 +495,14 @@ impl Descriptor {
 
     /// [ISO/IEC 9075:1992 §17.9 GR3c-e, GR4c-e; ISO/IEC 9075-2:2023 §20.10
     /// GR6] Described: COUNT the number of `items`, TOP_LEVEL_COUNT `top`,
-    /// those of LEVEL 0, and they the first item descriptor areas, unless
-    /// there are more than its occurrences; then whether there were more.
-    pub(super) fn describe(&mut self, items: Vec<Item>, top: usize) -> bool {
+    /// those of LEVEL 0, KEY_TYPE `key_type`, and they the first item
+    /// descriptor areas, unless there are more than its occurrences; then
+    /// whether there were more.
+    pub(super) fn describe(&mut self, items: Vec<Item>, (top, key_type): (usize, i64)) -> bool {
         let d = number(items.len());
         self.count = d;
         self.top_level = number(top);
+        self.key_type = key_type;
         if d > self.occurrences {
             return true;
         }

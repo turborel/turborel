@@ -151,9 +151,9 @@ where a data type or a value is; UNNEST before a parenthesis where a table
 is; and the four functions before a parenthesis, so a column of one of
 those names is written in double quotes only there. ORDINALITY, which
 SQL:2023 does not reserve, is read only after WITH, after UNNEST's
-arrays. Of the descriptor items, DEGREE, CARDINALITY and
-RETURNED_CARDINALITY are read only as items, TOP_LEVEL_COUNT only as a
-header item, and NESTING and WITHOUT only after DESCRIBE's descriptor.
+arrays. Of the descriptor items, DEGREE, CARDINALITY,
+RETURNED_CARDINALITY and KEY_MEMBER are read only as items,
+TOP_LEVEL_COUNT and KEY_TYPE only as header items, and NESTING and WITHOUT only after DESCRIBE's descriptor.
 
 TYPE, FINAL, INSTANTIABLE, UNDER, SOURCE, REF, SPECIFIC, FUNCTION and
 ROUTINE, which SQL-92 does not reserve, are key words only in CREATE TYPE,

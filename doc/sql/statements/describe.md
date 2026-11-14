@@ -41,6 +41,26 @@ item, and TOP_LEVEL_COUNT of those of LEVEL 0. WITHOUT NESTING, the
 default, sets no item of a part, and COUNT and TOP_LEVEL_COUNT are both
 the number of columns or parameters.
 
+DESCRIBE OUTPUT of a query sets KEY_TYPE too, and each column's
+KEY_MEMBER. A candidate key of the query's rows is a set of its columns
+whose values determine every column's, of which no smaller set does, as
+the rules of functional dependency find ([Functionally dependent
+columns](../06-queries.md#functionally-dependent-columns)).
+
+KEY_TYPE is 1 if a candidate key is within the selected columns of a
+table's PRIMARY KEY, or of grouping columns within one: that key is the
+primary key. Otherwise KEY_TYPE is 2, and the key is the preferred
+candidate key: one within the columns of a UNIQUE of columns NOT NULL,
+or within the grouping columns, else any. Of several, the key is the
+left-most: the one whose first column, in the order the query selects
+them, comes first, and so on. Each column of the key has KEY_MEMBER 1,
+any other column 0, as do a column's parts and a dynamic parameter.
+DESCRIBE INPUT sets KEY_TYPE 0.
+
+A candidate key may not be unique. A query that selects rows alike
+still has one, all its columns. A query of at most one row has the empty
+set as its key, of no member.
+
 If they are more than the area's occurrences, COUNT is their number,
 no item is set, and DESCRIBE completes with a warning, SQLSTATE 01005,
 SQLCODE 0: the area is too small.
@@ -84,13 +104,17 @@ s.execute("ALLOCATE DESCRIPTOR 'PAY_ROW' WITH MAX 3", &mut p)?;
 s.execute("DESCRIBE OUTPUT PAY USING SQL DESCRIPTOR 'PAY_ROW'", &mut p)?;
 ```
 
-The area then holds COUNT 3 and these items:
+The area then holds COUNT 3, KEY_TYPE 1, and these items. `ID = ?`
+makes ID one value, so the query has at most one row, and its primary
+key is the empty set, within the table's:
 
-| Item | TYPE | Other fields | NULLABLE | NAME | UNNAMED |
-|---|---|---|---|---|---|
-| 1 | 4 (INTEGER) | PRECISION 10, SCALE 0 | 0 | ID | 0 |
-| 2 | 12 (CHARACTER VARYING) | LENGTH 30, OCTET_LENGTH 120, SQL_TEXT | 1 | NAME | 0 |
-| 3 | 2 (NUMERIC) | PRECISION 18, SCALE 2 | 1 | | 1 |
+| Item | TYPE | Other fields | NULLABLE | NAME | UNNAMED | KEY_MEMBER |
+|---|---|---|---|---|---|---|
+| 1 | 4 (INTEGER) | PRECISION 10, SCALE 0 | 0 | ID | 0 | 0 |
+| 2 | 12 (CHARACTER VARYING) | LENGTH 30, OCTET_LENGTH 120, SQL_TEXT | 1 | NAME | 0 | 0 |
+| 3 | 2 (NUMERIC) | PRECISION 18, SCALE 2 | 1 | | 1 | 0 |
+
+Of `SELECT NAME, ID FROM STAFF`, KEY_TYPE is 1, and ID's KEY_MEMBER 1.
 
 Then, the row of ID 2 put into it, and its parameter described:
 
@@ -116,7 +140,8 @@ DESCRIBE PAY USING SQL DESCRIPTOR 'SMALL'      warning 01005: SMALL has 2 occurr
 
 ISO/IEC 9075:1992 §17.8, of the `<using clause>` of §17.9 GR3 and GR4.
 The `<nesting option>` is ISO/IEC 9075-2:2023's [§20.9, §20.10 GR6f,
-GR7].
+GR7], and so are KEY_TYPE and KEY_MEMBER [§20.10 GR6d, GR7c, §4.27],
+Feature T301.
 SQL-92 makes it no `<directly executable statement>` [§20.1]. SQL-86 has
 no dynamic SQL.
 

@@ -3,7 +3,10 @@
 //! UNION kept whole, a WHERE equality dropped, a collation or a COALESCE
 //! misjudged, grouping sets checked of one set, a dependent column's
 //! nullability or its constraint's refusal lost, and groups of no rows
-//! taken as rows.
+//! taken as rows; and of candidate keys, a product's or a condition's keys
+//! misjudged, a UNIQUE, grouping columns or an ordinality column not
+//! keys, EXCEPT forgetting, the left-most rule or minimality broken, and
+//! KEY_MEMBER unset.
 
 use super::{Mutation, Package};
 
@@ -33,11 +36,29 @@ const WHERE: &str = "dependencies::equalities_of_where_determine_columns_4_26_12
 const JOINS: &str = "dependencies::joins_keep_and_add_dependencies_4_26_7";
 /// The test of views, derived tables and set operations.
 const QUERIES: &str = "dependencies::queries_read_keep_their_dependencies_4_26_16";
+/// The file of the candidate key search.
+const KEYS_SEARCH: &str = "src/binder/dependencies/keys.rs";
+/// The unit test of the left-most rule.
+const LEFT_MOST: &str = "binder::dependencies::tests::the_left_most_rule_orders_sets";
+/// The unit test of strong candidate keys.
+const STRONG: &str = "binder::dependencies::tests::a_strong_candidate_key_is_preferred";
+/// The unit test of the search.
+const SEARCH: &str = "binder::dependencies::tests::the_search_finds_the_left_most_candidate_key";
+/// The test of a base table's keys described.
+const KEY_BASE: &str = "candidate_keys::a_base_tables_keys_are_described_4_27";
+/// The test of the deduction rule.
+const KEY_WITHIN: &str = "candidate_keys::a_candidate_key_within_a_key_is_one_4_27";
+/// The test of joins' keys.
+const KEY_JOINS: &str = "candidate_keys::a_joins_keys_are_described_4_26_7";
+/// The test of grouped tables' keys.
+const KEY_GROUPS: &str = "candidate_keys::a_grouped_tables_keys_are_described_4_26_13";
+/// The test of query expressions' keys.
+const KEY_QUERIES: &str = "candidate_keys::queries_keys_are_described_4_26_16";
 /// The test of constraints.
 const CONSTRAINT: &str = "dependencies::a_constraint_names_a_dependent_number_alone_6_7";
 
 /// The mutations of functional dependencies, in the order they run.
-pub const DEPENDENCIES: [Mutation; 13] = [
+pub const DEPENDENCIES: [Mutation; 24] = [
     Mutation {
         name: "fd-deferrable-key-taken",
         package: Package::Core,
@@ -166,6 +187,116 @@ pub const DEPENDENCIES: [Mutation; 13] = [
         original: "if self.purpose.constrains() && chosen_of_group(t) {",
         replacement: "if self.purpose.constrains() && chosen_of_group(t) && false {",
         integration: &[CONSTRAINT],
+        unit: &[],
+    },
+    Mutation {
+        name: "key-product-unpruned",
+        package: Package::Core,
+        breaks: "a product keeps a table reference's key that does not determine every column, so a column of repeated values is described as a key [§4.26.11]",
+        file: ENGINE,
+        original: ".filter(|(key, _)| (!not_null || key.is_subset(&self.not_null)) && visible.is_subset(&self.closure(key.clone())))",
+        replacement: ".filter(|(key, _)| !not_null || key.is_subset(&self.not_null))",
+        integration: &[KEY_JOINS],
+        unit: &[],
+    },
+    Mutation {
+        name: "key-pending-not-adopted",
+        package: Package::Core,
+        breaks: "a condition over a product makes none of its table references' keys its own [§4.26.12]",
+        file: ENGINE,
+        original: "        self.keys.extend(pending);\n        self.keyed(false)",
+        replacement: "        drop(pending);\n        self.keyed(false)",
+        integration: &[KEY_JOINS],
+        unit: &[],
+    },
+    Mutation {
+        name: "key-unique-not-buc",
+        package: Package::Core,
+        breaks: "a UNIQUE of columns not null is no BUC-set, so a candidate key left of it is preferred [§4.26.3, §4.27]",
+        file: TABLES,
+        original: "            known.keys.push((key, *primary));",
+        replacement: "            known.keys.extend((*primary).then_some((key, true)));",
+        integration: &[KEY_BASE],
+        unit: &[],
+    },
+    Mutation {
+        name: "key-grouping-subset-exact",
+        package: Package::Core,
+        breaks: "grouping columns a proper subset of a BPK-set are no BPK-set [§4.26.13]",
+        file: ENGINE,
+        original: "*primary && g.is_subset(key)",
+        replacement: "*primary && g == *key",
+        integration: &[KEY_GROUPS],
+        unit: &[],
+    },
+    Mutation {
+        name: "key-ordinality-not-primary",
+        package: Package::Core,
+        breaks: "an ordinality column is no BPK-set of its collection derived table [§4.26.8]",
+        file: ENGINE,
+        original: ".map(|&o| (Attrs::from([o]), true))",
+        replacement: ".map(|&o| (Attrs::from([o]), false))",
+        integration: &[KEY_QUERIES],
+        unit: &[],
+    },
+    Mutation {
+        name: "key-except-forgets",
+        package: Package::Core,
+        breaks: "EXCEPT keeps nothing of its first operand [§4.26.16]",
+        file: ENGINE,
+        original: "SetOp::Except => Known { grouping: None, ..known(w, left) },",
+        replacement: "SetOp::Except => w.fresh(width),",
+        integration: &[KEY_QUERIES],
+        unit: &[],
+    },
+    Mutation {
+        name: "key-every-key-primary",
+        package: Package::Core,
+        breaks: "a BUC-set is taken as a BPK-set, so a UNIQUE is described as a primary key [§4.27]",
+        file: KEYS_SEARCH,
+        original: ".filter(|(_, primary)| *primary).map(",
+        replacement: ".filter(|(_, primary)| *primary || !*primary).map(",
+        integration: &[KEY_BASE],
+        unit: &[],
+    },
+    Mutation {
+        name: "key-grouping-not-strong",
+        package: Package::Core,
+        breaks: "a grouped table's grouping columns are no strong candidate key [§4.27]",
+        file: KEYS_SEARCH,
+        original: "        strong.extend(&self.grouping);\n",
+        replacement: "",
+        integration: &[],
+        unit: &[STRONG],
+    },
+    Mutation {
+        name: "key-right-most",
+        package: Package::Core,
+        breaks: "of two candidate keys the right-most is chosen [§4.27]",
+        file: KEYS_SEARCH,
+        original: "differs.is_some_and(|i| number(a, i) < number(b, i))",
+        replacement: "differs.is_some_and(|i| number(a, i) > number(b, i))",
+        integration: &[KEY_BASE],
+        unit: &[LEFT_MOST],
+    },
+    Mutation {
+        name: "key-not-minimal",
+        package: Package::Core,
+        breaks: "a set that determines every column is taken as a candidate key though a proper subset does too [§4.27]",
+        file: KEYS_SEARCH,
+        original: "            !self.superkey(&less)",
+        replacement: "            less.len() < positions.len()",
+        integration: &[KEY_WITHIN],
+        unit: &[SEARCH],
+    },
+    Mutation {
+        name: "key-member-unset",
+        package: Package::Core,
+        breaks: "no column is described a member of the key KEY_TYPE says [§20.10 GR7c i 3]",
+        file: "src/db/dynamic/statements.rs",
+        original: "i64::from(members.contains(&at))",
+        replacement: "i64::from(members.is_empty() && at > 0)",
+        integration: &[KEY_BASE],
         unit: &[],
     },
 ];

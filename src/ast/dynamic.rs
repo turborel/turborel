@@ -117,10 +117,13 @@ pub enum DescriptorItem {
     /// [ISO/IEC 9075-2:2023 §20.1, Table 29] USER_DEFINED_TYPE_CODE, its
     /// category's code [Table 34].
     UserDefinedTypeCode,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] KEY_MEMBER: 1 of a column of
+    /// the key KEY_TYPE says [§20.10 GR7c i 3], else 0.
+    KeyMember,
 }
 
 /// [ISO/IEC 9075:1992 §17.4] Each `<descriptor item name>`, as written.
-const ITEM_NAMES: [(&str, DescriptorItem); 28] = [
+const ITEM_NAMES: [(&str, DescriptorItem); 29] = [
     ("TYPE", DescriptorItem::Type),
     ("LENGTH", DescriptorItem::Length),
     ("OCTET_LENGTH", DescriptorItem::OctetLength),
@@ -149,6 +152,7 @@ const ITEM_NAMES: [(&str, DescriptorItem); 28] = [
     ("USER_DEFINED_TYPE_SCHEMA", DescriptorItem::UserDefinedTypeSchema),
     ("USER_DEFINED_TYPE_NAME", DescriptorItem::UserDefinedTypeName),
     ("USER_DEFINED_TYPE_CODE", DescriptorItem::UserDefinedTypeCode),
+    ("KEY_MEMBER", DescriptorItem::KeyMember),
 ];
 
 impl DescriptorItem {
@@ -171,6 +175,9 @@ pub enum HeaderItem {
     Count,
     /// TOP_LEVEL_COUNT: of those of LEVEL 0.
     TopLevelCount,
+    /// KEY_TYPE: of the result DESCRIBE OUTPUT described, 1 of its primary
+    /// key, 2 of its preferred candidate key, else 0 [§20.10 GR6d].
+    KeyType,
 }
 
 /// [ISO/IEC 9075:1992 §17.4] `<get descriptor information>`.

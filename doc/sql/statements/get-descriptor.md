@@ -11,7 +11,7 @@ GET DESCRIPTOR: read fields of an SQL descriptor area *(in a program)*
 ```
 <get descriptor statement> ::=
     GET DESCRIPTOR <descriptor name>
-    { <parameter name> = { COUNT | TOP_LEVEL_COUNT }
+    { <parameter name> = { COUNT | TOP_LEVEL_COUNT | KEY_TYPE }
     | VALUE <item number> <get item information> [ { , <get item information> }... ] }
 
 <get item information> ::= <parameter name> = <descriptor item name>
@@ -22,7 +22,7 @@ GET DESCRIPTOR: read fields of an SQL descriptor area *(in a program)*
       TYPE | LENGTH | OCTET_LENGTH | RETURNED_LENGTH | RETURNED_OCTET_LENGTH
     | PRECISION | SCALE | DATETIME_INTERVAL_CODE | DATETIME_INTERVAL_PRECISION
     | NULLABLE | INDICATOR | DATA | NAME | UNNAMED
-    | LEVEL | DEGREE | CARDINALITY | RETURNED_CARDINALITY
+    | LEVEL | DEGREE | CARDINALITY | RETURNED_CARDINALITY | KEY_MEMBER
     | COLLATION_CATALOG | COLLATION_SCHEMA | COLLATION_NAME
     | CHARACTER_SET_CATALOG | CHARACTER_SET_SCHEMA | CHARACTER_SET_NAME
 ```
@@ -31,7 +31,7 @@ The `<descriptor name>` is [ALLOCATE DESCRIPTOR](allocate-descriptor.md)'s.
 
 ## DESCRIPTION
 
-GET DESCRIPTOR copies COUNT, TOP_LEVEL_COUNT, or fields of the item descriptor area of
+GET DESCRIPTOR copies COUNT, TOP_LEVEL_COUNT, KEY_TYPE, or fields of the item descriptor area of
 the number given, from 1, into parameters. An item beyond COUNT is no
 data, SQLSTATE 02000, its targets unchanged. A field never set reads as
 0, or the empty string, and DATA as the null value.
@@ -58,6 +58,7 @@ The fields of an item, of a dynamic parameter or a column, as
 | DEGREE | exact | A row's number of fields |
 | CARDINALITY | exact | An array's maximum cardinality |
 | RETURNED_CARDINALITY | exact | Of an array fetched, its cardinality |
+| KEY_MEMBER | exact | 1 of a column of the key KEY_TYPE says, else 0 ([DESCRIBE](describe.md)) |
 | CHARACTER_SET_CATALOG, _SCHEMA, _NAME | character | A string's character set: the catalog, INFORMATION_SCHEMA, SQL_TEXT |
 | COLLATION_CATALOG, _SCHEMA, _NAME | character | A string's collation, named as its character set |
 
@@ -149,7 +150,8 @@ their lengths in octets, are ISO/IEC 9075-2:2023's [§20.1 Table 30,
 §20.10 GR7d ii], and so is the code 26 of DECFLOAT, its PRECISION its
 precision [§20.10 GR7d v]. So are TOP_LEVEL_COUNT, LEVEL, DEGREE,
 CARDINALITY and RETURNED_CARDINALITY, and the codes 19 and 50 of ROW and
-ARRAY [§20.1 SR3 to SR6, §20.4 GR5].
+ARRAY [§20.1 SR3 to SR6, §20.4 GR5], and KEY_TYPE and KEY_MEMBER
+[§20.10 GR6d, GR7c], Feature T301.
 
 ## SEE ALSO
 

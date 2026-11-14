@@ -12,8 +12,8 @@ use super::descriptor::Item;
 use super::nested::described;
 use super::using::Targets;
 use super::{Name, dynamic_error, value_of};
-use crate::ast::{DynamicName, ExecuteStatement, ExtendedName, UsingClause, ValueSpecification};
-use crate::binder::OutColumn;
+use crate::ast::{DescriptorItem, DynamicName, ExecuteStatement, ExtendedName, UsingClause, ValueSpecification};
+use crate::binder::{DescribedKey, OutColumn};
 use crate::db::prepared::{Preparer, in_dynamic};
 use crate::db::{Completion, Prepared, Session, State, cursor_error};
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -138,17 +138,19 @@ impl Session {
         let catalog = self.catalog_now()?;
         // [ISO/IEC 9075-2:2023 §20.10 GR5, GR6f] WITH NESTING, each item's
         // subordinate items after it.
-        let items: Vec<Item> = if input {
+        if input {
             let item = |t: DataType| described(&t.clone(), Item::described(t, None, true, &catalog), nesting, &catalog);
-            prepared.parameters().iter().flat_map(|p| item(p.clone().data_type())).collect()
-        } else {
-            let item = |c: &OutColumn| {
-                let top = Item::described(c.data_type.clone(), c.name.as_deref(), !c.not_null, &catalog);
-                described(&c.data_type, top, nesting, &catalog)
-            };
-            prepared.columns().iter().flat_map(item).collect()
+            let items = prepared.parameters().iter().flat_map(|p| item(p.clone().data_type())).collect();
+            return self.describe_into(descriptor, params, (items, NO_KEY));
+        }
+        let (key_type, members) = key_of(prepared.key());
+        let item = |(at, c): (usize, &OutColumn)| {
+            let mut top = Item::described(c.data_type.clone(), c.name.as_deref(), !c.not_null, &catalog);
+            top.set_number(DescriptorItem::KeyMember, i64::from(members.contains(&at)));
+            described(&c.data_type, top, nesting, &catalog)
         };
-        self.describe_into(descriptor, params, items)
+        let items = prepared.columns().iter().enumerate().flat_map(item).collect();
+        self.describe_into(descriptor, params, (items, key_type))
     }
 
     /// [ISO/IEC 9075:1992 §17.10, §17.11] EXECUTE or EXECUTE IMMEDIATE `e`,
@@ -245,5 +247,24 @@ impl Session {
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::DYNAMIC_SYNTAX_ERROR));
         }
         self.run_prepared(&prepared, Vec::new(), "EXECUTE IMMEDIATE")
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §20.10 GR6d i] KEY_TYPE of a primary key.
+const PRIMARY_KEY: i64 = 1;
+/// [ISO/IEC 9075-2:2023 §20.10 GR6d ii] KEY_TYPE of a preferred candidate
+/// key.
+const PREFERRED_CANDIDATE_KEY: i64 = 2;
+/// [ISO/IEC 9075-2:2023 §20.10 GR6d iii] KEY_TYPE of neither.
+const NO_KEY: i64 = 0;
+
+/// [ISO/IEC 9075-2:2023 §20.10 GR6d, GR7c i 3] KEY_TYPE of a result whose
+/// key is `key`, and the positions of the key's columns, whose KEY_MEMBER
+/// is 1.
+fn key_of(key: &DescribedKey) -> (i64, &[usize]) {
+    match key {
+        DescribedKey::Primary(columns) => (PRIMARY_KEY, columns),
+        DescribedKey::Preferred(columns) => (PREFERRED_CANDIDATE_KEY, columns),
+        DescribedKey::Unknown => (NO_KEY, &[]),
     }
 }

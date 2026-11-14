@@ -25,7 +25,7 @@ use super::collations::Collating;
 use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
 use crate::ast::{SqlStatement, TableName};
-use crate::binder::{self, OutColumn, WriteKind, bind_write};
+use crate::binder::{self, DescribedKey, OutColumn, WriteKind, bind_write};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, Token, kw, lex};
@@ -53,6 +53,9 @@ pub struct Prepared {
     kind: Kind,
     parameters: Vec<ParameterType>,
     columns: Vec<OutColumn>,
+    /// [ISO/IEC 9075-2:2023 §4.27, §20.10 GR6d] Of a query, the key of its
+    /// rows DESCRIBE OUTPUT describes.
+    key: DescribedKey,
     plans: Arc<Plans>,
     /// Whether it is a `<dynamic single row select statement>` [§17.6]: a
     /// `<query specification>` alone.
@@ -84,6 +87,12 @@ impl Prepared {
     /// statement>`; none of another.
     pub fn columns(&self) -> &[OutColumn] {
         &self.columns
+    }
+
+    /// [ISO/IEC 9075-2:2023 §4.27] Of a query, the key of its rows; else
+    /// none.
+    pub(crate) fn key(&self) -> &DescribedKey {
+        &self.key
     }
 
     /// Whether it is a `<dynamic select statement>`, opened as a cursor.
@@ -264,6 +273,7 @@ impl Session {
             .in_catalog(&st.catalog_name())
             .implying(implicit.clone());
         let mut single_row = false;
+        let mut key = DescribedKey::Unknown;
         let (columns, params) = match kind {
             Kind::Query => {
                 let spec = parser.cursor_specification()?;
@@ -273,7 +283,9 @@ impl Session {
                     && spec.updatability.is_none()
                     && matches!(tokens.first().map(|t| &t.tok), Some(Tok::KeyWord(kw::SELECT)));
                 let params = Params::preparing(parser.dynamic_parameters());
-                (self.compile(st, &spec, &params)?.columns, params)
+                let compiled = self.compile(st, &spec, &params)?;
+                key = compiled.key.unwrap_or(DescribedKey::Unknown);
+                (compiled.columns, params)
             }
             Kind::Schema => {
                 parser.schema()?;
@@ -294,7 +306,7 @@ impl Session {
             .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
         })?;
         let collation = self.collation.borrow().clone();
-        Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, plans: Arc::default(), single_row, cursor, implicit })
+        Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, key, plans: Arc::default(), single_row, cursor, implicit })
     }
 
     /// `stmt`, a `<preparable statement>` other than a query, bound as it
