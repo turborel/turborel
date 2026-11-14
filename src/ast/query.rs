@@ -31,10 +31,11 @@ pub enum Updatability {
     Update(Option<Vec<(String, usize)>>),
 }
 
-/// [X3.135-1986 §8.3] `<sort specification>` ::= {`<unsigned integer>` | `<column specification>`} \[ASC | DESC\]
+/// [X3.135-1986 §8.3] `<sort specification>` ::= {`<unsigned integer>` | `<column specification>`} \[ASC | DESC\];
+/// [ISO/IEC 9075-2:2023 §10.10] its `<sort key>` a `<value expression>`.
 #[derive(Debug, Clone)]
 pub struct SortSpecification {
-    /// The column sorted on.
+    /// What it sorts on.
     pub key: SortColumn,
     /// The `<collation name>` of its `<collate clause>`, if written.
     pub collate: Option<TableName>,
@@ -43,6 +44,8 @@ pub struct SortSpecification {
     /// [ISO/IEC 9075-2:2023 §10.10] Its `<null ordering>`, if written:
     /// whether NULLS FIRST.
     pub nulls_first: Option<bool>,
+    /// Where it begins in the statement.
+    pub at: usize,
 }
 
 /// [ISO/IEC 9075:1992 §7.7] `<grouping column reference>` ::= `<column
@@ -82,13 +85,16 @@ pub enum GroupingElement {
     Empty,
 }
 
-/// How a `<sort specification>` names its column.
+/// What a `<sort specification>` sorts on.
 #[derive(Debug, Clone)]
 pub enum SortColumn {
     /// An `<unsigned integer>`: the column's position, from 1.
     Position(u32),
     /// A `<column specification>`.
     Column(ColumnSpecification),
+    /// [ISO/IEC 9075-2:2023 §10.10] Any other `<sort key>`, a `<value
+    /// expression>`.
+    Value(ValueExpression),
 }
 
 /// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §7.10] `<query expression>`: a

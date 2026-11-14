@@ -134,6 +134,7 @@ mod memory;
 mod mvcc;
 mod named_schemas;
 mod null_ordering;
+mod order_by;
 mod ordered_joins;
 mod pages;
 mod partial_groups;

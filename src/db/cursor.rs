@@ -20,7 +20,6 @@ use crate::binder::{self, OutColumn, bind_select};
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlState, fail, fail_with};
 use crate::exec::{Runner, execute};
-use crate::logical::{Cond, LogicalPlan, and_all};
 use crate::params::Params;
 use crate::settings::FUNCTION_CALLS;
 use crate::storage::{Row, RowId};
@@ -28,6 +27,7 @@ use crate::sync::lock_builtin;
 use crate::txn::Txn;
 use crate::value::datetime::show_in;
 use crate::value::{DataType, Value};
+use ordered::{ordered_columns, row_condition};
 
 /// The columns of a cursor and the row it is on, if it is on one.
 type Fetched = Option<(Vec<OutColumn>, Row)>;
@@ -36,36 +36,7 @@ type Fetched = Option<(Vec<OutColumn>, Row)>;
 /// [X3.135-1986 §8.10 GR2].
 const CARDINALITY_PROBE_ROWS: usize = 2;
 
-/// The condition the rows of an updatable cursor's table satisfy, over the
-/// rows of the table it reads: the conditions of the filters of `plan`
-/// below its select list, its WHERE clause's and its view's. A row must
-/// still satisfy it when the cursor reaches it (`db/scroll.rs`).
-fn row_condition(plan: &LogicalPlan) -> Option<Cond> {
-    let mut conds = Vec::new();
-    let mut node = plan;
-    loop {
-        match node {
-            LogicalPlan::Project { input, .. } | LogicalPlan::Sort { input, .. } => node = input,
-            LogicalPlan::Filter { cond, input } => {
-                conds.push(cond.clone());
-                node = input;
-            }
-            LogicalPlan::Scan { .. }
-            | LogicalPlan::Product { .. }
-            | LogicalPlan::OuterJoin { .. }
-            | LogicalPlan::Aggregate { .. }
-            | LogicalPlan::Distinct { .. }
-            | LogicalPlan::SetOp { .. }
-            | LogicalPlan::Values { .. }
-            | LogicalPlan::System { .. }
-            | LogicalPlan::Recursive { .. }
-            | LogicalPlan::Unnest(..)
-            | LogicalPlan::Window(..)
-            | LogicalPlan::WorkTable { .. } => break,
-        }
-    }
-    and_all(conds)
-}
+mod ordered;
 
 /// [ISO/IEC 9075:1992 §13.1 SR5, SR6] How a cursor's updatability is
 /// given: FOR READ ONLY, written or implicit; FOR UPDATE written; or FOR
@@ -110,14 +81,6 @@ pub(super) fn declared_updatable(spec: &CursorSpecification, flags: (bool, bool)
         Wanted::Written => true,
         Wanted::Implicit => binder::updatable(spec).is_some(),
     })
-}
-
-/// [ISO/IEC 9075:1992 §13.9 SR4] The columns of its table an updatable
-/// cursor's ORDER BY reads: the keys of the Sort atop its `plan`, each a
-/// column of the cursor, `projection`'s column of the table.
-fn ordered_columns(plan: &LogicalPlan, projection: &[usize]) -> Vec<usize> {
-    let LogicalPlan::Sort { keys, .. } = plan else { return Vec::new() };
-    keys.iter().filter_map(|k| projection.get(k.column).copied()).collect()
 }
 
 /// [ISO/IEC 9075:1992 §13.1 SR13, SR14] The columns of `table` (`desc`) a
@@ -207,9 +170,9 @@ fn open_updatable(
         .map(|col| col.origin.ok_or_else(|| api(format!("[DESIGN] a cursor's column is not a column of {table}"))))
         .collect::<Result<_>>()?;
     let settable = settable(&st.base_table(&table)?, spec.updatability.as_ref())?;
-    let ordered = ordered_columns(&c.optimized, &projection);
+    let ordered = ordered_columns(&c.optimized)?;
     let condition = row_condition(&c.optimized);
-    let ids = super::scroll::ordered_ids(c.physical, st, tx.id, &projection)?;
+    let ids = super::scroll::ordered_ids(c.physical, st, tx.id)?;
     let snapshot = Arc::clone(st);
     let at = Position::Before(0);
     let rows = Updatable { snapshot, named, table, ids, projection, condition, at, settable, ordered, changed: Vec::new(), on: None };

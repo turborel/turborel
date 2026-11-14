@@ -9,8 +9,8 @@ use super::position::{Move, Places, Position, Slot, fetch};
 use super::{State, Stream, api};
 use crate::catalog::QualifiedName;
 use crate::error::Result;
-use crate::exec::{HeldRows, RowIter, Runner, Subqueries, eval_cond, sort_rows, table_entries};
-use crate::logical::{Cond, SortKey, Truth};
+use crate::exec::{HeldRows, RowIter, Runner, Subqueries, eval, eval_cond, sort_rows, table_entries};
+use crate::logical::{Cond, Expr, SortKey, Truth};
 use crate::physical::Plan;
 use crate::storage::{Row, RowId, TableStorage, project};
 use crate::txn::TxId;
@@ -154,35 +154,103 @@ impl Updatable {
 }
 
 /// The rows an updatable cursor may cover, in its order: those of its
-/// `plan`'s table access, sorted, if a Sort is atop it, on the keys it
-/// has, each a column of the cursor, `projection`'s column of the table.
-/// Read by transaction `tx`, their ids held, and sorted, as the
-/// statement's work area holds them (RULES.md D38).
+/// `plan`'s table access, sorted, if a Sort is in it, on the keys it has.
+/// Each key is a column of the projections between the Sort and the
+/// access, of a column of the cursor or of a value its ORDER BY computes
+/// [ISO/IEC 9075-2:2023 §7.17 SR26 d i 10], so each row is projected as
+/// they project it. Read by transaction `tx`, their ids held, and sorted,
+/// as the statement's work area holds them (RULES.md D38).
 ///
 /// # Errors
 ///
-/// Reading the rows, sorting them, or holding their ids failed.
-pub(super) fn ordered_ids(plan: Plan, st: &Arc<State>, tx: TxId, projection: &[usize]) -> Result<HeldRows<RowId>> {
+/// Reading the rows, computing their keys, sorting them, or holding their
+/// ids failed.
+pub(super) fn ordered_ids(plan: Plan, st: &Arc<State>, tx: TxId) -> Result<HeldRows<RowId>> {
     let mut ids = HeldRows::new(st.list_space());
-    let Plan::Sort { keys, input, .. } = plan else {
-        for entry in table_entries(plan, st, tx)? {
-            ids.push(entry?.0)?;
+    // The projections atop the Sort take away what it alone reads.
+    let mut node = plan;
+    let (keys, input) = loop {
+        match node {
+            Plan::Project { input, .. } => node = *input,
+            Plan::Sort { keys, input, .. } => break (keys, *input),
+            other @ (Plan::SeqScan { .. }
+            | Plan::IndexScan { .. }
+            | Plan::Filter { .. }
+            | Plan::Append { .. }
+            | Plan::Product { .. }
+            | Plan::HashJoin { .. }
+            | Plan::OuterJoin { .. }
+            | Plan::IndexJoin { .. }
+            | Plan::Aggregate { .. }
+            | Plan::Distinct { .. }
+            | Plan::SetOp { .. }
+            | Plan::Values { .. }
+            | Plan::System { .. }
+            | Plan::Recursive { .. }
+            | Plan::Unnest(..)
+            | Plan::Window { .. }
+            | Plan::WorkTable { .. }) => {
+                for entry in table_entries(other, st, tx)? {
+                    ids.push(entry?.0)?;
+                }
+                return Ok(ids);
+            }
         }
-        return Ok(ids);
     };
+    let (layers, access) = layers_of(input);
     // Each row as its sort keys' values, then its id.
-    let (columns, on_keys): (Vec<usize>, Vec<SortKey>) = keys
-        .iter()
-        .filter_map(|k| projection.get(k.column).map(|&column| (column, k.order())))
-        .enumerate()
-        .map(|(i, (column, order))| (column, SortKey::new(i, order)))
-        .unzip();
+    let columns: Vec<usize> = keys.iter().map(|k| k.column).collect();
+    let on_keys: Vec<SortKey> = keys.iter().enumerate().map(|(i, k)| SortKey::new(i, k.order())).collect();
     let id_at = columns.len();
-    let keyed: RowIter = Box::new(table_entries(*input, st, tx)?.map(move |read| read.and_then(|(id, row)| keyed(&row, &columns, id))));
+    let runner = Runner::new(st, tx);
+    let keyed: RowIter = Box::new(
+        table_entries(access, st, tx)?.map(move |read| read.and_then(|(id, row)| keyed(&projected(row, &layers, &runner)?, &columns, id))),
+    );
     for row in sort_rows(&on_keys, keyed, st, tx) {
         ids.push(id_of(&row?, id_at)?)?;
     }
     Ok(ids)
+}
+
+/// The expressions of each projection atop `plan`'s table access, the
+/// lowest first, and the access.
+fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
+    let mut layers = Vec::new();
+    let mut node = plan;
+    loop {
+        match node {
+            Plan::Project { exprs, input, .. } => {
+                layers.push(exprs);
+                node = *input;
+            }
+            other @ (Plan::SeqScan { .. }
+            | Plan::IndexScan { .. }
+            | Plan::Sort { .. }
+            | Plan::Filter { .. }
+            | Plan::Append { .. }
+            | Plan::Product { .. }
+            | Plan::HashJoin { .. }
+            | Plan::OuterJoin { .. }
+            | Plan::IndexJoin { .. }
+            | Plan::Aggregate { .. }
+            | Plan::Distinct { .. }
+            | Plan::SetOp { .. }
+            | Plan::Values { .. }
+            | Plan::System { .. }
+            | Plan::Recursive { .. }
+            | Plan::Unnest(..)
+            | Plan::Window { .. }
+            | Plan::WorkTable { .. }) => {
+                layers.reverse();
+                return (layers, other);
+            }
+        }
+    }
+}
+
+/// `row` of a table, projected by each of `layers` in turn.
+fn projected(row: Row, layers: &[Vec<Expr>], runner: &Runner) -> Result<Row> {
+    layers.iter().try_fold(row, |row, exprs| exprs.iter().map(|e| eval(e, &row, runner)).collect())
 }
 
 /// The values of `row`'s `columns`, then `id`.

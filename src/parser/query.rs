@@ -7,11 +7,13 @@ use super::Parser;
 use super::constraints::NULLS;
 use crate::ast::{
     Correspondence, CursorSpecification, DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, Partitioning, QueryExpression,
-    QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn, SortSpecification,
-    TableExpression, TableName, TableReference, ValuesRow, WithElement, WithQuery,
+    QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, TableExpression, TableName,
+    TableReference, ValuesRow, WithElement, WithQuery,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
+
+mod order_by;
 
 // [ISO/IEC 9075-2:2023 §5.2, §7.17] Words of a <with clause> that SQL-92
 // does not reserve: identifiers, read as these only there.
@@ -44,27 +46,6 @@ impl Parser {
         let updatability = self.updatability_clause()?;
         self.end()?;
         Ok(CursorSpecification { query, order_by, updatability })
-    }
-
-    /// [X3.135-1986 §8.3] `<sort specification>` ::= {`<unsigned integer>`
-    /// | `<column specification>`} \[ASC | DESC\] \[ISO/IEC 9075-2:2023
-    /// §10.10\] \[`<null ordering>`\]
-    pub(super) fn sort_specification(&mut self) -> Result<SortSpecification> {
-        let key = if matches!(self.peek(), Tok::ExactNumeric(_)) {
-            SortColumn::Position(self.unsigned_integer()?)
-        } else {
-            SortColumn::Column(self.column_specification()?)
-        };
-        // [ISO/IEC 9075:1992 §13.1] [<collate clause>]
-        let collate = self.collate_clause()?;
-        let descending = if self.accept_kw(kw::DESC) {
-            true
-        } else {
-            self.accept_kw(kw::ASC);
-            false
-        };
-        let nulls_first = self.null_ordering()?;
-        Ok(SortSpecification { key, collate, descending, nulls_first })
     }
 
     /// [ISO/IEC 9075-2:2023 §10.10] `<null ordering>` ::= NULLS FIRST |

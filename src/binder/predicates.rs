@@ -13,7 +13,7 @@ use super::composite::{grouping_operand, ordering_operand, spread};
 use super::expression::dynamic_of;
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
-use crate::ast::{Literal, Predicate, RowValue, Subquery, ValueExpression, ValueSpecification};
+use crate::ast::{Literal, Predicate, RowValue, SearchCondition, Subquery, TruthValue, ValueExpression, ValueSpecification};
 use crate::error::{At, Result};
 use crate::functions::{LikeRegex, ScalarRef};
 use crate::logical::{Cond, Expr, Quantifier, Truth, and_all};
@@ -373,5 +373,39 @@ impl Binder<'_> {
     fn null(&self, value: &RowValue, not: bool, scope: Scope<'_>) -> Result<Cond> {
         let each: Vec<Cond> = self.row(value, scope)?.into_iter().map(|(e, _)| Cond::IsNull(e, not)).collect();
         and_all(each).ok_or_else(|| rule("[ISO/IEC 9075:1992 §8.6] IS NULL tests a value"))
+    }
+}
+
+impl Binder<'_> {
+    /// [X3.135-1986 §5.18] `<search condition>`
+    pub(super) fn search_condition(&self, c: &SearchCondition, scope: Scope<'_>) -> Result<Cond> {
+        Ok(match c {
+            SearchCondition::Or(a, b) => Cond::Or(Box::new(self.search_condition(a, scope)?), Box::new(self.search_condition(b, scope)?)),
+            SearchCondition::And(a, b) => Cond::And(Box::new(self.search_condition(a, scope)?), Box::new(self.search_condition(b, scope)?)),
+            SearchCondition::Not(a) => Cond::Not(Box::new(self.search_condition(a, scope)?)),
+            // [ISO/IEC 9075:1992 §8.12] IS [NOT] TRUE, FALSE or UNKNOWN.
+            SearchCondition::Is(a, value, not) => {
+                let truth = match value {
+                    TruthValue::True => Truth::True,
+                    TruthValue::False => Truth::False,
+                    TruthValue::Unknown => Truth::Unknown,
+                };
+                Cond::Is(Box::new(self.search_condition(a, scope)?), truth, *not)
+            }
+            SearchCondition::Predicate(p, at) => self.predicate(p, scope).or_at(*at)?,
+            SearchCondition::Predicand(v, at) => self.predicand(v, scope).or_at(*at)?,
+        })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.46 SR3] A `<boolean predicand>` as a
+    /// condition, a value of type BOOLEAN: a truth value written as one
+    /// given back as its condition.
+    pub(super) fn predicand(&self, v: &ValueExpression, scope: Scope<'_>) -> Result<Cond> {
+        let (e, t) = self.value_expression(v, scope)?;
+        if t != DataType::Boolean {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.46 SR3] a <boolean predicand> is of type BOOLEAN (found {t})")));
+        }
+        let Expr::Truth(c) = e else { return Ok(Cond::Value(e)) };
+        Ok(*c)
     }
 }

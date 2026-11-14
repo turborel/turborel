@@ -122,7 +122,9 @@ SELECT: read rows
 <order by clause> ::=
     ORDER BY <sort specification> [ { , <sort specification> }... ]
 
-<sort specification> ::= { <unsigned integer> | <column reference> } [ COLLATE <collation name> ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]
+<sort specification> ::= <sort key> [ COLLATE <collation name> ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]
+
+<sort key> ::= <unsigned integer> | <value expression>
 
 <updatability clause> ::= FOR READ ONLY
 ```
@@ -138,11 +140,16 @@ A query, run on its own, gives its rows to the client, which shows them
 as they come. TABLE T is `SELECT * FROM T`; a `<joined table>` on its
 own is `SELECT * FROM` it.
 
-ORDER BY sorts the rows by each sort specification in turn: a column of
-the result, named or by its position from 1, ascending unless DESC is
-written. Without ORDER BY the order of the rows is not defined. The null
-value sorts as greater than every other value: last ascending, first
-descending.
+ORDER BY sorts the rows by each sort key in turn, ascending unless DESC
+is written. A key is a column of the result, named or by its position
+from 1, or any value expression. A key of a query specification may read
+columns its select list leaves out, which are computed with the select
+list and taken away after the sort. A key alike an item of the select
+list sorts by that item's column. In a key, a name of a result column is
+that column. Of a UNION or another query that is not a query
+specification, the keys read the result's columns alone. Without ORDER BY
+the order of the rows is not defined. The null value sorts as greater
+than every other value, so last ascending and first descending.
 
 WITH names queries for the query after it, each read where its name is
 written as a table is, and by each query after it in the list. WITH
@@ -173,8 +180,12 @@ parameters, is [a statement of a program too](#select-into).
 1. Each table and view named exists, and its user holds SELECT on it.
 2. Each column named is of a table in scope; one named without a
    qualifier is of exactly one.
-3. A `<sort specification>` names a column of the result, or gives its
-   position.
+3. A sort key that is a number is a position of a column of the result.
+   Any other key reads a column, and holds no subquery, set function or
+   NEXT VALUE FOR. A key that reads a column the select list leaves out
+   is of a query specification that is not DISTINCT, has no set
+   function in its select list, and is not grouped. Of any other query,
+   a key reads the result's columns alone.
 4. In a query with GROUP BY or a set function, a column outside a set
    function is a grouping column. GROUPING, in the select list or HAVING
    of its query and in no set function, names grouping columns of that
@@ -199,8 +210,8 @@ parameters, is [a statement of a program too](#select-into).
    join. Each column PARTITION BY names is one column of it, not a
    column NATURAL or USING joins on, and a collection derived table in a
    partitioned second operand reads nothing of the first.
-9. A window function is in the select list of a query specification
-   alone. The WINDOW clause names each window once, and a window name
+9. A window function is in the select list or ORDER BY of a query
+   specification alone. The WINDOW clause names each window once, and a window name
    names one of them. A window built on another adds no PARTITION BY, no
    ORDER BY where the other has one, and builds on none with a frame.
    RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST, NTILE, LEAD, LAG and a
@@ -242,13 +253,13 @@ SELECT on each table and view the query names.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken: a table or column not found or ambiguous, a sort column not of the result, a column not grouped, operands of a set operation not alike; or FOR UPDATE is written |
+| 2A000 | -103 | A rule above is broken: a table or column not found or ambiguous, a sort key breaking rule 3, a column not grouped, operands of a set operation not alike; or FOR UPDATE is written |
 | 2A000 | -104 | Its user lacks SELECT on a table or view |
 | 21000 | -811 | A scalar subquery gives more than one row |
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), the fraction of PERCENTILE_CONT or PERCENTILE_DISC below 0 or above 1 (22003), a window frame's offset negative or null (22013), a number of tiles of NTILE below 1 (22014), a row of NTH_VALUE below 1 (22016), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
 | 2202F | -301 | A path or a DEPTH FIRST sequence would hold more than 65,535 rows |
-| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); an ORDER BY of a grouped query reading a column its select list leaves out (Feature F868); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
 
 An error is placed at the construct it is about, its character position
 told.
@@ -282,6 +293,30 @@ SELECT NAME, SALARY FROM STAFF WHERE SALARY > 6000 ORDER BY SALARY DESC;
  Grace        |    8100.00
  Ada          |    7200.00
 (2 rows)
+```
+
+Sorted by a column the select list leaves out, and by an expression:
+
+```sql
+SELECT NAME FROM STAFF ORDER BY SALARY DESC NULLS LAST;
+SELECT NAME, SALARY FROM STAFF ORDER BY CHAR_LENGTH(NAME), NAME;
+```
+
+```
+ NAME
+--------------
+ Grace
+ Ada
+ Edgar
+ Barbara
+(4 rows)
+ NAME         |     SALARY
+--------------+------------
+ Ada          |    7200.00
+ Edgar        |    5400.00
+ Grace        |    8100.00
+ Barbara      |       NULL
+(4 rows)
 ```
 
 Groups:
@@ -374,6 +409,9 @@ READ ONLY, of a `<cursor specification>` [§13.1], is taken in a direct
 SELECT too. Where the null value sorts is implementation-defined
 [X3.135-1986 §8.3 GR3b vii]: here, as greater than every value. NULLS
 FIRST and NULLS LAST are the `<null ordering>` of §10.10, Feature T611.
+A sort key of any value expression, and of a column the select list
+leaves out, is the `<sort key>` of §10.10 and §7.17 SR26, Features
+E121-02 and E121-03.
 
 ## SEE ALSO
 

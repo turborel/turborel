@@ -619,6 +619,100 @@ SELECT ID FROM STAFF UNION SELECT TITLE FROM DEPT;
 turborel: SQLCODE -103 (SQLSTATE 2A000): character strings and numbers are brought together [ISO/IEC 9075:1992 §7.10 SR12b ii, §9.3 SR2, SR3a] (at character 21)
 ```
 
+## ORDER BY
+
+ORDER BY sorts the rows a query gives by each sort key in turn. A key is
+a position of a column of the result, from 1, or any value expression
+that reads a column. Of a query specification, a key may read the columns
+its select list leaves out, and they are taken away after the sort. A key
+alike an item of the select list sorts by that item's column, so it is
+computed once. In a key, a name of a result column is that column, so
+`N` below is `NAME`.
+
+```sql
+SELECT NAME FROM STAFF ORDER BY SALARY DESC NULLS LAST;
+SELECT NAME AS N FROM STAFF ORDER BY CHAR_LENGTH(N) DESC, ID;
+SELECT ID, SALARY - 1000 * ID AS SCORE FROM STAFF ORDER BY SALARY - 1000 * ID NULLS FIRST;
+```
+
+```
+ NAME
+--------------------------------
+ Grace
+ Ada
+ Edsger
+ Barbara
+(4 rows)
+ N
+--------------------------------
+ Barbara
+ Edsger
+ Grace
+ Ada
+(4 rows)
+           ID |                SCORE
+--------------+----------------------
+            4 |                 NULL
+            3 |              2400.00
+            2 |              6100.00
+            1 |              6200.00
+(4 rows)
+```
+
+A window function is a key too, of the rows before the sort. A key holds
+no subquery, set function or NEXT VALUE FOR, so a set function to sort by
+is named in the select list. A query that is DISTINCT, or of a set
+function in its select list, sorts by columns of its result alone, since
+a column it leaves out may have several values in one of its rows. A
+grouped query sorting by a column its select list leaves out is Feature
+F868, which turborel does not support, so it is SQLCODE -900.
+
+```sql
+SELECT NAME FROM STAFF ORDER BY ROW_NUMBER() OVER (ORDER BY SALARY DESC NULLS LAST);
+SELECT DEPT, MAX(SALARY) AS TOP FROM STAFF GROUP BY DEPT ORDER BY TOP DESC NULLS LAST;
+SELECT DEPT FROM STAFF GROUP BY DEPT ORDER BY MAX(SALARY);
+SELECT DISTINCT DEPT FROM STAFF ORDER BY ID;
+SELECT DEPT FROM STAFF GROUP BY DEPT ORDER BY ID;
+```
+
+```
+ NAME
+--------------------------------
+ Grace
+ Ada
+ Edsger
+ Barbara
+(4 rows)
+ DEPT |         TOP
+------+-------------
+ ENG  |     8100.00
+ OPS  |     5400.00
+ NULL |        NULL
+(3 rows, with a warning: SQLSTATE 01003)
+turborel: SQLCODE -103 (SQLSTATE 2A000): a sort key contains no set function; name it in the select list, and sort by that column [ISO/IEC 9075-2:2023 §7.17 SR26b] (at character 46)
+turborel: SQLCODE -103 (SQLSTATE 2A000): SELECT DISTINCT is ordered by columns of its result alone [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B II] (at character 41)
+turborel: SQLCODE -900 (SQLSTATE 0A000): ORDER BY of a grouped query of what its select list leaves out is Feature F868, which turborel does not support [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B I] (at character 46)
+```
+
+The keys of a set operation, a VALUES list or any other query that is
+not a query specification read the columns of its result alone.
+
+```sql
+SELECT DEPT FROM STAFF UNION SELECT DEPT FROM DEPT ORDER BY CASE DEPT WHEN 'HR' THEN 0 ELSE 1 END, DEPT;
+SELECT DEPT FROM STAFF UNION SELECT DEPT FROM DEPT ORDER BY TITLE;
+```
+
+```
+ DEPT
+------
+ HR
+ ENG
+ OPS
+ NULL
+(4 rows)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the result has no column TITLE [ISO/IEC 9075:1992 §13.1 SR10a] (at character 60)
+```
+
 ## Table value constructors
 
 `VALUES (a, b), (c, d), ...` is a table of the rows written, its columns

@@ -100,7 +100,7 @@ pub(super) fn element_nesting<'n>(site: Option<&'n Outer<'n>>) -> Nesting<'n> {
 }
 
 /// The query a clause written as `nesting` says is a subquery of.
-fn site_of<'n>(nesting: &Nesting<'n>) -> Option<&'n Outer<'n>> {
+pub(super) fn site_of<'n>(nesting: &Nesting<'n>) -> Option<&'n Outer<'n>> {
     match nesting {
         Nesting::Subquery { outer, .. } => Some(*outer),
         Nesting::Query | Nesting::Source { .. } => None,

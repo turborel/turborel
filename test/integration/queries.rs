@@ -315,13 +315,14 @@ fn nulls_sort_on_one_side_8_3() {
     assert_eq!(rows(&s, "SELECT NAME FROM T ORDER BY NAME DESC").map(|r| r[0].clone()), Ok(ascending[2].clone()));
 }
 
-/// Verifies: [X3.135-1986 §8.3 SR6] a sort key must be a column of the result.
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 SR26 d i 1] a sort key of a query
+/// expression that is not a simple table query is of its result's columns.
 #[test]
-fn a_sort_key_must_be_a_result_column_8_3() {
+fn a_sort_key_of_a_union_must_be_a_result_column_7_17() {
     let db = setup();
     let s = db.session("APP");
-    assert_eq!(code(&s, "SELECT ID FROM U ORDER BY CODE"), Code::SyntaxRule); // must be a column of the result
-    assert_eq!(code(&s, "SELECT ID FROM T ORDER BY NAME"), Code::SyntaxRule); // not a column of the result
+    assert_eq!(code(&s, "SELECT ID FROM U UNION SELECT ID FROM T ORDER BY CODE"), Code::SyntaxRule);
+    assert_eq!(code(&s, "SELECT ID FROM T UNION ALL SELECT ID FROM T ORDER BY NAME"), Code::SyntaxRule);
 }
 
 /// Verifies: [X3.135-1986 §8.3 SR6] a sort position is greater than 0 and not
@@ -340,7 +341,8 @@ fn a_sort_position_must_be_within_the_select_list_8_3() {
 fn an_unnamed_column_is_sorted_by_position_8_3() {
     let db = setup();
     let s = db.session("APP");
-    assert_eq!(code(&s, "SELECT ID + 1 FROM T ORDER BY ID"), Code::SyntaxRule); // unnamed column
+    // [ISO/IEC 9075-2:2023 §7.17 SR26 d i 1] the result has no column ID.
+    assert_eq!(code(&s, "SELECT ID + 1 FROM T UNION ALL SELECT ID + 2 FROM T ORDER BY ID"), Code::SyntaxRule);
     assert_eq!(rows(&s, "SELECT ID + 1 FROM T ORDER BY 1 DESC").map(|r| r[0].clone()), Ok("4".into()));
 }
 

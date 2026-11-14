@@ -9,10 +9,9 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use super::collation::sort_collations;
 use super::composite::anonymous;
 use super::composite::field_of;
-use super::cursor::{result_column, sort_keys};
+use super::order_by::ordered_query;
 use super::query::Nesting;
 use super::set_functions::column_references;
 use super::set_operations::bind_query_expression;
@@ -194,6 +193,11 @@ impl Binder<'_> {
 
     /// `column_expr`, its errors not yet placed.
     fn column_at(&self, cs: &ColumnSpecification, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        // [ISO/IEC 9075-2:2023 §7.17 SR26 d i 6] in a sort key, a name of a
+        // result's column first.
+        if let Some(v) = self.sort_named(cs) {
+            return self.unnamed(|| self.value_expression(&v, scope));
+        }
         if let Some(field) = self.catalog_chain(cs, scope)? {
             return Ok(field);
         }
@@ -377,20 +381,24 @@ impl Binder<'_> {
         let cx = self.context();
         let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
         let nesting = Nesting::Subquery { outer: &outer, result: None };
-        let bound = bind_query_expression(cx, &s.query, &nesting).or_at(s.at)?;
-        self.note_subquery(s, &bound.columns);
-        let [column] = bound.columns.as_slice() else {
-            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.49 SR3a] the query of ARRAY is of degree one, not {}", bound.columns.len())));
+        let ordered = ordered_query(cx, &s.query, (order_by, &nesting), cx.draws).or_at(s.at)?;
+        let own = ordered.all.get(..ordered.visible).unwrap_or_default();
+        self.note_subquery(s, own);
+        let [column] = own else {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.49 SR3a] the query of ARRAY is of degree one, not {}", own.len())));
         };
-        let keys = sort_keys(order_by, &bound.columns, |cs| result_column(&bound.columns, cs).or_at(cs.at))?;
-        super::composite::ordering_operand(&column.data_type, "ORDER BY")?;
-        let collations = sort_collations((cx.db, cx.auth, cx.collation), order_by, &keys, &bound.columns)?;
         let element = column.data_type.clone();
-        let parts = keys.len().saturating_add(1);
-        let fields = (0..parts).map(|i| Field { name: anonymous(i), data_type: element.clone(), unnamed: true }).collect();
-        let arg = Expr::Call(ScalarRef(Arc::new(RowOf(DataType::row(fields)))), vec![Expr::Column(0); parts]);
-        let orders = keys.iter().map(SortKey::order).collect();
-        let func = ArrayAggregate { orders, collations, by_query: true };
+        // Each row's value, then its value of each sort key.
+        let mut fields = vec![Field { name: anonymous(0), data_type: element.clone(), unnamed: true }];
+        let mut args = vec![Expr::Column(0)];
+        for (i, k) in ordered.keys.iter().enumerate() {
+            let data_type = ordered.all.get(k.column).map_or_else(|| element.clone(), |c| c.data_type.clone());
+            fields.push(Field { name: anonymous(i.saturating_add(1)), data_type, unnamed: true });
+            args.push(Expr::Column(k.column));
+        }
+        let arg = Expr::Call(ScalarRef(Arc::new(RowOf(DataType::row(fields)))), args);
+        let orders = ordered.keys.iter().map(SortKey::order).collect();
+        let func = ArrayAggregate { orders, collations: ordered.collations, by_query: true };
         let result = super::composite::bounded(DataType::array(element, MAX_ARRAY_CARDINALITY))?;
         let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
         let agg = AggCall {
@@ -407,7 +415,7 @@ impl Binder<'_> {
             collations: Vec::new(),
             aggs: vec![agg],
             seeds: Vec::new(),
-            input: Box::new(bound.plan),
+            input: Box::new(ordered.plan),
         };
         let subquery = Subquery { plan, outer: outer.captured.into_inner() };
         Ok((Expr::Subquery(Arc::new(subquery), 0), result))

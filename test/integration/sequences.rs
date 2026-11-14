@@ -132,7 +132,7 @@ fn where_it_may_not_be_6_14() {
         assert_eq!(e.as_ref().map(|e| e.code), Some(Code::SyntaxRule), "{sql}: {e:?}");
     }
     let ordered = a.open_cursor("SELECT K FROM T ORDER BY NEXT VALUE FOR S").err();
-    assert_eq!(ordered.map(|e| e.code), Some(Code::Syntax), "a sort key is a column");
+    assert_eq!(ordered.map(|e| e.code), Some(Code::SyntaxRule), "[§6.14 SR1] none in a sort key");
     let defaulted = a.run("CREATE TABLE F (K NUMERIC(18) DEFAULT NEXT VALUE FOR S)");
     assert_eq!(rule(defaulted), Some(Code::Syntax), "a default is a literal or a function of no arguments");
     for sql in [

@@ -17,7 +17,7 @@ pub const SQL2023: [Mutation; 55] = [
         name: "boolean-predicand-untyped",
         package: Package::Core,
         breaks: "a value written as a condition is taken whatever its type, so WHERE K of a number is no error",
-        file: "src/binder.rs",
+        file: "src/binder/predicates.rs",
         original: "        if t != DataType::Boolean {",
         replacement: "        if false {",
         integration: &["booleans::a_predicand_is_boolean_6_46"],

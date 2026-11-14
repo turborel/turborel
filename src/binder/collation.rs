@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use super::predicates::BoundRow;
-use super::{Binder, Bound, OutColumn, Scope, rule};
+use super::{Binder, OutColumn, Scope, rule};
 use crate::ast::{
     CaseExpression, ColumnSpecification, RowValue, SetArg, SortSpecification, Subquery as AstSubquery, TableName, ValueExpression,
     WindowKind,
@@ -276,6 +276,9 @@ impl Binder<'_> {
 
     /// Of column `cs`, of this query or an enclosing one, its collation.
     fn column_derived(&self, cs: &ColumnSpecification) -> Result<Derived> {
+        if let Some(v) = self.sort_named(cs) {
+            return self.unnamed(|| self.derived(&v));
+        }
         let here = match &cs.qualifier {
             Some(q) => self.items.iter().any(|it| it.designated_by(q, self.schema)),
             None => self.visible_has(&cs.column),
@@ -431,34 +434,6 @@ impl Binder<'_> {
             Ok(Derived::Yielding | Derived::Conflicting) | Err(_) => None,
         }
     }
-}
-
-/// [X3.135-1986 §8.3] `bound` sorted by `keys`, each by its collation in
-/// `collations`, if any: the sort keys of a collation are made columns of
-/// the rows sorted, and taken away after.
-pub(super) fn with_sort(bound: Bound, (keys, collations): (Vec<SortKey>, Vec<Option<CollationRef>>)) -> Bound {
-    if keys.is_empty() {
-        return bound;
-    }
-    if collations.iter().all(Option::is_none) {
-        return Bound { plan: LogicalPlan::Sort { keys, input: Box::new(bound.plan) }, columns: bound.columns };
-    }
-    let width = bound.columns.len();
-    let mut exprs: Vec<Expr> = (0..width).map(Expr::Column).collect();
-    let mut sorted = Vec::with_capacity(keys.len());
-    for (key, collation) in keys.into_iter().zip(&collations) {
-        sorted.push(match collation {
-            Some(c) => {
-                exprs.push(Expr::sort_key(Expr::Column(key.column), c));
-                SortKey { column: exprs.len().saturating_sub(1), ..key }
-            }
-            None => key,
-        });
-    }
-    let keyed = LogicalPlan::Project { exprs, input: Box::new(bound.plan) };
-    let plan = LogicalPlan::Sort { keys: sorted, input: Box::new(keyed) };
-    let kept = (0..width).map(Expr::Column).collect();
-    Bound { plan: LogicalPlan::Project { exprs: kept, input: Box::new(plan) }, columns: bound.columns }
 }
 
 /// The collation each of the `<sort specification>`s `order_by` sorts by,

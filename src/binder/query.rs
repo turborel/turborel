@@ -4,13 +4,14 @@
 
 use std::cell::RefCell;
 
-use super::collation::{any_of, of_column, sort_collations, with_sort};
+use super::collation::{any_of, of_column};
 use super::from::{Bounds, From, bind_from, from_plan};
+use super::order_by::{Keys, Ordered, hidden_rules};
 use super::set_operations::ObjectColumn;
-use super::{Binder, Bound, Context, FromItem, Grouping, OutColumn, Outer, Scope, nondeterministic, rule, sort_keys};
+use super::{Binder, Bound, Context, FromItem, Grouping, OutColumn, Outer, Scope, nondeterministic, rule};
 use crate::ast::{
-    ColumnSpecification, GroupingColumn, QuerySpecification, SelectItem, SelectList, SelectSublist, SortSpecification, TableExpression,
-    TableName, ValueExpression,
+    ColumnSpecification, GroupingColumn, QuerySpecification, SelectItem, SelectList, SelectSublist, SortColumn, SortSpecification,
+    TableExpression, TableName, ValueExpression,
 };
 use crate::db::State;
 use crate::error::{At, Result};
@@ -49,13 +50,24 @@ impl<'a> Nesting<'a> {
     }
 }
 
-/// A query specification, bound as `nesting` says.
+/// A query specification, bound as `nesting` says, sorted by `order_by`.
 pub(super) fn bind_query(
     cx: Context<'_>,
     spec: &QuerySpecification,
     order_by: &[SortSpecification],
     nesting: &Nesting<'_>,
 ) -> Result<Bound> {
+    Ok(bind_ordered(cx, spec, order_by, nesting)?.sorted())
+}
+
+/// A query specification, bound as `nesting` says: its rows and the keys
+/// of `order_by` that sort them, not yet sorted.
+pub(super) fn bind_ordered(
+    cx: Context<'_>,
+    spec: &QuerySpecification,
+    order_by: &[SortSpecification],
+    nesting: &Nesting<'_>,
+) -> Result<Ordered> {
     let te = &spec.table_expression;
     let (outer, result) = match nesting {
         Nesting::Query | Nesting::Source { .. } => (None, None),
@@ -72,9 +84,9 @@ pub(super) fn bind_query(
         Some(r) => vec![r],
         None => select_items(&binder, &spec.select_list)?,
     };
-    // [ISO/IEC 9075-2:2023 §7.15] its <window clause>, and the window
-    // functions of its select list.
-    if !te.window.is_empty() || selected.iter().any(|i| super::window::has_window_function(&i.value)) {
+    // [ISO/IEC 9075-2:2023 §7.15, §6.10 SR2] its <window clause>, and the
+    // window functions of its select list and its sort keys.
+    if !te.window.is_empty() || selected.iter().any(|i| super::window::has_window_function(&i.value)) || keyed_windows(order_by) {
         *binder.windowing.borrow_mut() = Some(super::window::Windowing::new(&te.window)?);
     }
 
@@ -87,11 +99,12 @@ pub(super) fn bind_query(
     // R is a grouped table if GROUP BY or HAVING is present ([X3.135-1986 §5.22, §5.23 GR1]).
     // Otherwise, set functions in the select list make R one argument [X3.135-1986 §5.25 GR1].
     let grouped = te.group_by.is_some() || te.having.is_some();
-    let (grouping, exprs, columns) = bind_selected(&binder, &selected, (te, grouped))?;
+    let ((grouping, exprs, columns), keys, width) = selected_and_keys(&binder, &selected, (te, grouped, spec.distinct), order_by)?;
+    let own = columns.get(..width).unwrap_or_default();
     if let Some(g) = &grouping {
-        super::grouping_sets::checked(g, te.group_by.as_ref(), &columns)?;
+        super::grouping_sets::checked(g, te.group_by.as_ref(), own)?;
     }
-    if cx.purpose.constrains() && spec.distinct && columns.iter().any(|c| c.data_type.is_character()) {
+    if cx.purpose.constrains() && spec.distinct && own.iter().any(|c| c.data_type.is_character()) {
         return Err(nondeterministic("§7.9 SR13a", "DISTINCT with a character string column"));
     }
 
@@ -102,17 +115,53 @@ pub(super) fn bind_query(
         // HAVING always makes the query grouped, so this is only "no HAVING".
         _ => None,
     };
-    let keys = sort_keys(order_by, &columns, |cs| order_by_column(&binder, &columns, cs).or_at(cs.at))?;
 
     let mut plan = from_plan(&binder, &trees)?;
     if let Some(cond) = where_cond {
         plan = LogicalPlan::Filter { cond, input: Box::new(plan) };
     }
     // [X3.135-1986 §5.25 GR2]
-    plan = selected_plan(&binder, plan, (grouping, having), (exprs, &columns, spec.distinct))?;
-    let session = binder.session_collation;
-    let collations = sort_collations((binder.db, binder.auth, session), order_by, &keys, &columns)?;
-    Ok(with_sort(Bound { plan, columns }, (keys, collations)))
+    let (mut ordered, places) = keys.ordered((exprs, columns, width), |exprs, columns| {
+        selected_plan(&binder, plan, (grouping, having), (exprs, columns, spec.distinct))
+    })?;
+    ordered.keyed(binder.context(), order_by, places)?;
+    Ok(ordered)
+}
+
+/// Whether a sort key of `order_by` has a window function [ISO/IEC
+/// 9075-2:2023 §6.10 SR2a].
+fn keyed_windows(order_by: &[SortSpecification]) -> bool {
+    order_by.iter().any(|s| match &s.key {
+        SortColumn::Value(v) => super::window::has_window_function(v),
+        SortColumn::Position(_) | SortColumn::Column(_) => false,
+    })
+}
+
+/// A select list bound with its grouping, as `bind_selected` binds it.
+type SelectedList = (Option<Grouping>, Vec<Expr>, Vec<OutColumn>);
+
+/// The select list `selected` of a query of table expression `te`, bound
+/// with its grouping, and the keys of `order_by` placed. Any select items
+/// they add [ISO/IEC 9075-2:2023 §7.17 SR26 d i 10] are bound with it,
+/// after its own, whose number it gives too.
+fn selected_and_keys(
+    binder: &Binder<'_>,
+    selected: &[SelectItem],
+    (te, grouped, distinct): (&TableExpression, bool, bool),
+    order_by: &[SortSpecification],
+) -> Result<(SelectedList, Keys, usize)> {
+    let own = bind_selected(binder, selected, (te, grouped))?;
+    let keys = Keys::of(binder, order_by, selected, &own.2)?;
+    let width = own.2.len();
+    let Some(first) = keys.hidden.first() else {
+        return Ok((own, keys, width));
+    };
+    hidden_rules(binder, selected, (grouped, distinct)).or_at(first.at)?;
+    let all: Vec<SelectItem> = selected.iter().chain(&keys.hidden).cloned().collect();
+    binder.sorting_from(Some(width));
+    let with_added = bind_selected(binder, &all, (te, grouped));
+    binder.sorting_from(None);
+    Ok((with_added?, keys, width))
 }
 
 /// [X3.135-1986 §5.25 GR2, GR3] The select list `exprs`, of `columns`, of
@@ -261,7 +310,8 @@ fn bound_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_
     if let Some((selected, _)) = noted {
         selected.borrow_mut().clear();
     }
-    for item in select {
+    for (i, item) in select.iter().enumerate() {
+        binder.sort_item(i);
         let v = &item.value;
         let start = noted.map_or(0, |(_, uses)| uses.borrow().len());
         let (e, data_type) = binder.value_expression(v, scope).or_at(item.at)?;
@@ -314,24 +364,6 @@ fn left_out(scope: Scope<'_>, pos: usize) -> bool {
     match scope {
         Scope::Groups(g, _) => g.sets.as_ref().is_some_and(|s| s.left_out(pos)),
         Scope::Rows(_) | Scope::Select => false,
-    }
-}
-
-/// [X3.135-1986 §8.3 SR6] The result column an ORDER BY `<column specification>` names.
-fn order_by_column(binder: &Binder<'_>, columns: &[OutColumn], cs: &ColumnSpecification) -> Result<usize> {
-    let matches: Vec<usize> = match &cs.qualifier {
-        // Qualified: the named result column that comes from that FROM column.
-        Some(_) => {
-            let (pos, _) = binder.resolve(cs)?;
-            columns.iter().enumerate().filter(|(_, c)| c.origin == Some(pos)).map(|(i, _)| i).collect()
-        }
-        // Unqualified: the named result column with that name.
-        None => columns.iter().enumerate().filter(|(_, c)| c.name.as_deref() == Some(&cs.column)).map(|(i, _)| i).collect(),
-    };
-    match matches.as_slice() {
-        [i] => Ok(*i),
-        [] => Err(rule(format!("[X3.135-1986 §8.3 SR6] ORDER BY {} is not a named column of the result", cs.column))),
-        [_, _, ..] => Err(rule(format!("[X3.135-1986 §8.3 SR6] ORDER BY {} matches more than one result column", cs.column))),
     }
 }
 

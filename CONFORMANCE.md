@@ -399,7 +399,7 @@ Cursors follow §13.1, §13.3.
 | SCROLL | FETCH's every orientation (NEXT, PRIOR, FIRST, LAST, ABSOLUTE, RELATIVE) and FROM. |
 | INSENSITIVE | Implemented. |
 | `<updatability clause>` | FOR READ ONLY or FOR UPDATE [OF columns]. FOR UPDATE with ORDER BY or SCROLL too. |
-| Positioned UPDATE | Sets only the columns it names, and none its ORDER BY reads [§13.9 SR4, SR8]. |
+| Positioned UPDATE | Sets only the columns it names, and none a sort key of its ORDER BY reads, through an expression too [§13.9 SR4, SR8]. |
 
 ### Transactions, sessions and the Information Schema
 
@@ -812,7 +812,7 @@ are, and NEXT VALUE FOR takes its next value [§6.14].
 | Values | §9.35 | The first of the current base value plus a multiple of the increment within the bounds. Past them, 2200H of NO CYCLE, else the minimum ascending, the maximum descending. |
 | Alteration | §9.37, §11.73 | RESTART goes on from the start, RESTART WITH from its value, and neither from the current base value, which is checked to be within the new bounds. |
 | Drop | §11.74 | Nothing can depend on a generator, so RESTRICT and CASCADE are alike. USAGE on it goes with it. |
-| Placement | §6.14 SR1, SR2 | In a select list of a cursor's query, a SELECT INTO's and an INSERT's, in an INSERT's VALUES and an UPDATE's SET; elsewhere SQLCODE -103. ORDER BY and a default take no value expression, so there it is a syntax error. |
+| Placement | §6.14 SR1, SR2 | In a select list of a cursor's query, a SELECT INTO's and an INSERT's, in an INSERT's VALUES and an UPDATE's SET; elsewhere SQLCODE -103, a sort key among them. A default takes no value expression, so there it is a syntax error. |
 | One value a row | §6.14 GR1, §4.29.1 | Every NEXT VALUE FOR of one generator in a row gives the row's one value. |
 | USAGE | §6.14 AR1, §11.72 GR2, §12.2, §12.7 | The schema's owner holds it grantably. GRANT and REVOKE ON SEQUENCE give and take it, and REVOKE with RESTRICT is 2B000 while a grant made by it would be abandoned [§12.7 GR12q]. INFORMATION_SCHEMA.USAGE_PRIVILEGES shows it, of OBJECT_TYPE SEQUENCE. |
 
@@ -1080,6 +1080,26 @@ below.
 NULLS, which neither SQL-92 nor SQL:2023 reserves, is a key word only
 where it is read, so a column may be named NULLS.
 
+### Sort keys
+
+Features E121-02 (ORDER BY columns need not be in select list) and
+E121-03 (Value expressions in ORDER BY clause), the `<sort key>` of
+ISO/IEC 9075-2:2023 §10.10 and §7.17 SR26, in a cursor's ORDER BY and
+ARRAY(query ORDER BY ...) [§6.49 NOTE 207]. F868 (ORDER BY in grouped
+table) is not claimed.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Its syntax | §10.10, §7.17 SR26b | A key is an unsigned integer, a position as SQL-92 has it, or any value expression, its COLLATE taken as the key's. A key that is not a position contains a column reference, one of a window's PARTITION BY among them, and no query expression, set function or NEXT VALUE FOR [§6.14 SR1], else SQLCODE -103. |
+| A column left out | SR26 d i | A key of a simple table query may read the columns of its table expression the select list leaves out. Each such key is an extended sort key column, computed with the select list and taken away after the sort [GR5], so DESCRIBE and the rows show the result's columns alone. A key of the result's columns alone is computed of its rows [d ii]. |
+| A key alike a select item | SR26 d i 6 | A key of the same operations on the same columns and values as an item of the select list sorts by that item's column, computed once. A key that SR26 d i 6's left normal form derivation would call alike, and this does not, sorts by a column of its own, of the same values. |
+| A result's name | SR26 d i 6 | In a key, an unqualified name of one result column is that column, so of a key with a column left out the select item's value. |
+| What it refuses | SR26 d i 9 | A key reading a column left out of a query that is DISTINCT, or of a set function in its select list, is SQLCODE -103 [9 B II]. Of a grouped query it is Feature F868, SQLCODE -900 [9 B I]. |
+| Other query expressions | SR26 d i 1 | The keys of a set operation, a VALUES list or another query expression that is not a simple table query read its result's columns alone, else SQLCODE -103. A window function is in the ORDER BY of a simple table query alone [§6.10 SR2a]. |
+| Window functions | §6.10 SR2a | A key of a simple table query may be a window function, computed with the select list's. |
+| Updatable cursors | §14.3, Feature F833 | Ordered by its keys, each row's computed from its own values as OPEN reads it. One ordered by a window function, whose value is not of its row alone, is SQLCODE -900. |
+| Its plans | | A key spills past MEMORY.WORK_BYTES with the rows, by batches or row by row. |
+
 ### Window functions
 
 Features T611 (Elementary OLAP operations), T612 (Advanced OLAP
@@ -1118,7 +1138,7 @@ distribution functions.
 | Set functions | §9.23 SR8, §10.9 | Each is computed over the row's frame as of a group, nulls left out with SQLSTATE 01003, an empty frame giving what an empty group gives. One of a window of an ordering or a frame is not LISTAGG or an inverse distribution function, and is DISTINCT only if COUNT [SR8d], else SQLCODE -103. |
 | Framed COUNT DISTINCT | §9.23 SR8d ii, §10.9 GR4b, Feature T627 | COUNT(DISTINCT x) over a window of an ordering or a frame counts each value of the frame's rows once, by the comparison of x's collation, its exclusion applied. Over a frame that moves, each value's count among the last frame's rows is kept in a work area that spills (RULES.md D38), and only the rows a frame gains or loses are counted. A frame's bounds move only forward, so a partition costs about its rows, not its rows times the frame's length. |
 | Grouped queries | §9.20 | Windows of a grouped query are over its groups, after HAVING, so their arguments and keys may be set functions of the group, `SUM(SUM(X)) OVER ()`. SELECT DISTINCT removes groups alike before the windows, as SR22 builds the derived table of groups. |
-| Their order of evaluation | §7.16 | Windows are computed over the rows of FROM, WHERE, GROUP BY and HAVING, before DISTINCT and the cursor's ORDER BY. A query of a window function makes a view or cursor not updatable. |
+| Their order of evaluation | §7.16 | Windows are computed over the rows of FROM, WHERE, GROUP BY and HAVING, before DISTINCT and the cursor's ORDER BY. A query of a window function in its select list makes a view or cursor not updatable. |
 | In a constraint | §9.16 SR1c, §11.9 CR2 | ROW_NUMBER, NTILE, LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTH_VALUE and a set function over a ROWS window are potential sources of non-determinism, so a CHECK or an assertion containing one is SQLCODE -103. |
 | WIDTH_BUCKET | §6.31 SR21, GR17 | Each operand a number and the count exact of scale 0, else SQLCODE -103. The result is of the count's type. Null if any operand is. A count of 0 or below, or equal bounds, SQLSTATE 2201G. 0 before bound 1, the count plus 1 at or past bound 2, SQLSTATE 22003 if that is past the count's type, else the greatest whole number not above the count times the operand's distance from bound 1 over the range's width, plus 1. Of exact operands it is found exactly, of an approximate one in approximate arithmetic, and of a DECFLOAT one in DECFLOAT, kept within 1 to the count where rounding would pass either end. \[EXTENSION\] A `?` count is NUMERIC(18), a `?` operand or bound of the type of the first other operand or bound. |
 | FILTER | §10.9 GR4 | `FILTER (WHERE cond)` after COUNT(*), a general set function, ARRAY_AGG or LISTAGG, of the groups or OVER a window, before OVER. Its set function is fed only the rows cond is true of, and of a row it is false or unknown of the argument is not computed, so a null of it is not left out and gives no SQLSTATE 01003. Over a window, each frame's rows cond is true of, of a frame growing, moving or computed again, and of nested window functions. A filtered set function is computed row by row, as one of DISTINCT is, not by batches. GROUPING takes no filter, so one written is SQLCODE -102. |

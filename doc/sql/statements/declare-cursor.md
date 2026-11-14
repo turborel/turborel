@@ -95,8 +95,8 @@ statement is prepared.
    FOR UPDATE is of an updatable query; the columns of FOR UPDATE OF are
    the table's.
 4. A positioned UPDATE or DELETE names the cursor's table, and the
-   cursor is updatable, open, and on a row; an UPDATE sets only columns
-   of its FOR UPDATE.
+   cursor is updatable, open, and on a row. An UPDATE sets only columns
+   of its FOR UPDATE, and none a sort key of its ORDER BY reads.
 
 ## PRIVILEGES
 
@@ -110,6 +110,7 @@ UPDATE or DELETE needs UPDATE on the columns set, or DELETE.
 | 2A000 | -102 | Declared by `Session::execute`, as a statement |
 | 2A000 | -103 | A rule above is broken |
 | 24000 | -501 | A positioned UPDATE or DELETE of a cursor not open, or on no row |
+| 0A000 | -900 | An updatable cursor ordered by a window function is opened |
 
 ## EXAMPLES
 

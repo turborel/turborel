@@ -15,11 +15,11 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
-use crate::ast::{ColumnSpecification, SearchCondition, TableName, TruthValue, ValueExpression};
+use crate::ast::{ColumnSpecification, TableName, ValueExpression};
 use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc, WHOLE, applicable};
 use crate::db::State;
 use crate::error::{At, Code, Result, SqlError, Subject};
-use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Truth};
+use crate::logical::{AggCall, Expr, LogicalPlan};
 use crate::params::Params;
 use crate::settings::{self, Own};
 use crate::value::DataType;
@@ -47,6 +47,7 @@ mod greatest;
 mod grouping_sets;
 mod hypothetical;
 mod natural;
+mod order_by;
 mod partitioned;
 mod predicates;
 mod purpose;
@@ -70,7 +71,6 @@ mod window;
 mod with;
 
 pub use cursor::bind_cursor;
-use cursor::sort_keys;
 use from::FromItem;
 pub use generated::{bind_generation, generations};
 use query::bind_query_specification;
@@ -371,6 +371,9 @@ struct Binder<'a> {
     queries: Option<&'a Queries<'a>>,
     /// The window functions of its select list (`binder/window.rs`).
     windowing: RefCell<Option<window::Windowing>>,
+    /// The names of its result's columns, while its sort keys are bound
+    /// (`binder/order_by.rs`).
+    sort_names: RefCell<order_by::SortNames>,
 }
 
 /// The FROM row a binder sees: its items, the display names of its
@@ -426,6 +429,7 @@ impl<'a> Binder<'a> {
             drawing: Cell::new(false),
             queries,
             windowing: RefCell::new(None),
+            sort_names: RefCell::new(order_by::SortNames::default()),
         }
     }
 
@@ -564,37 +568,5 @@ impl Binder<'_> {
             return Err(nondeterministic("§7.8 SR3b, §7.9 SR13c ii", "a reference to a character string grouping column"));
         }
         Ok(e)
-    }
-
-    /// [X3.135-1986 §5.18] `<search condition>`
-    fn search_condition(&self, c: &SearchCondition, scope: Scope<'_>) -> Result<Cond> {
-        Ok(match c {
-            SearchCondition::Or(a, b) => Cond::Or(Box::new(self.search_condition(a, scope)?), Box::new(self.search_condition(b, scope)?)),
-            SearchCondition::And(a, b) => Cond::And(Box::new(self.search_condition(a, scope)?), Box::new(self.search_condition(b, scope)?)),
-            SearchCondition::Not(a) => Cond::Not(Box::new(self.search_condition(a, scope)?)),
-            // [ISO/IEC 9075:1992 §8.12] IS [NOT] TRUE, FALSE or UNKNOWN.
-            SearchCondition::Is(a, value, not) => {
-                let truth = match value {
-                    TruthValue::True => Truth::True,
-                    TruthValue::False => Truth::False,
-                    TruthValue::Unknown => Truth::Unknown,
-                };
-                Cond::Is(Box::new(self.search_condition(a, scope)?), truth, *not)
-            }
-            SearchCondition::Predicate(p, at) => self.predicate(p, scope).or_at(*at)?,
-            SearchCondition::Predicand(v, at) => self.predicand(v, scope).or_at(*at)?,
-        })
-    }
-
-    /// [ISO/IEC 9075-2:2023 §6.46 SR3] A `<boolean predicand>` as a
-    /// condition, a value of type BOOLEAN: a truth value written as one
-    /// given back as its condition.
-    fn predicand(&self, v: &ValueExpression, scope: Scope<'_>) -> Result<Cond> {
-        let (e, t) = self.value_expression(v, scope)?;
-        if t != DataType::Boolean {
-            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.46 SR3] a <boolean predicand> is of type BOOLEAN (found {t})")));
-        }
-        let Expr::Truth(c) = e else { return Ok(Cond::Value(e)) };
-        Ok(*c)
     }
 }
