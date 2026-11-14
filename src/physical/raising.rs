@@ -34,6 +34,8 @@ impl Plan {
                 u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(Cond::can_raise) || u.input.can_raise()
             }
             Plan::Window { window, .. } => window.can_raise() || window.input.can_raise(),
+            // Its search can always pass the matcher's limits.
+            Plan::Recognize { recognize, .. } => recognize.can_raise(),
         }
     }
 }

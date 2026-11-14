@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use super::case::{brought, set_type};
 use super::composite::{anonymous, bounded, ordering_operand};
-use super::set_functions::registered;
 use super::window::double;
 use super::{Binder, NOT_AGGREGATED, Scope, rule};
 use crate::ast::{SetFunctionSpecification, ValueExpression, ValueOrder};
@@ -78,7 +77,7 @@ impl Binder<'_> {
         let filter = self.filter_of(sf.filter.as_deref(), rows)?;
         let label = self.filtered_label(label, filter.as_ref());
         let distinct = hypothesis == Hypothesis::DenseRank;
-        Ok(registered(g, AggCall { func, arg: Some(arg), distinct, filter, distribution: None, result, label }, None))
+        Ok(self.registered_in(g, AggCall { func, arg: Some(arg), distinct, filter, distribution: None, result, label }, None))
     }
 
     /// The value `v` and sort key `k` of the hypothetical set function

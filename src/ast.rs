@@ -35,6 +35,7 @@ mod dynamic;
 mod expression;
 mod generated;
 mod ordered;
+mod pattern;
 mod query;
 mod schema;
 mod search_cycle;
@@ -59,6 +60,10 @@ pub use expression::{
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
+pub use pattern::{
+    Definition, EmptyMatches, Logical, Measure, Navigation, PatternCommon, Physical, Quantified, RecognizedTable, RowPattern,
+    RowPatternRecognition, RowsPerMatch, Semantics, SkipTo, Subset, WindowRecognition,
+};
 pub use query::{
     Correspondence, CursorSpecification, DerivedTable, GroupBy, GroupingColumn, GroupingElement, JoinKind, JoinSpecification, JoinedTable,
     NamedTable, Partitioning, QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation,

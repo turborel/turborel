@@ -242,6 +242,8 @@ impl PhysicalPlanner<'_> {
             LogicalPlan::Values { rows, .. } => Some(cost_of(rows.len())),
             // A row for each of its input's.
             LogicalPlan::Window(w) => self.rows_of(&w.input),
+            // At most a row for each of its input's, or one for each match.
+            LogicalPlan::Recognize(r) => self.rows_of(&r.input),
             LogicalPlan::OuterJoin { .. }
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::SetOp { .. }
@@ -286,6 +288,7 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
+            | LogicalPlan::Recognize(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }
@@ -313,6 +316,7 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
+            | LogicalPlan::Recognize(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }
@@ -369,6 +373,7 @@ fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
+        | Plan::Recognize { .. }
         | Plan::WorkTable { .. } => None,
     }
 }
@@ -416,6 +421,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         | LogicalPlan::Recursive { .. }
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
+        | LogicalPlan::Recognize(..)
         | LogicalPlan::WorkTable { .. } => None,
     }
 }

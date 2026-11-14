@@ -4,7 +4,8 @@
 //! functions [§6.6, §6.7], EXTRACT [§6.6], the datetime value functions
 //! [§6.8], VALUE of a domain constraint [§6.2], NEXT VALUE FOR [ISO/IEC
 //! 9075-2:2023 §6.14], WIDTH_BUCKET [§6.31], the ordered set functions
-//! [§10.9], and the \[EXTENSION\] function call.
+//! [§10.9], the \[EXTENSION\] function call, and, by `pattern/navigation.rs`,
+//! row pattern matching's expressions [§6.27, §6.31, §6.33].
 
 use super::Parser;
 use super::grouping::GROUPING;
@@ -83,7 +84,9 @@ impl Parser {
             // local temporary table.
             Tok::KeyWord(kw::MODULE) => Ok(ValueExpression::Column(self.column_specification()?)),
             Tok::KeyWord(kw::VALUE) => self.value_reference(),
-            Tok::KeyWord(kw::NEXT) => self.next_value_expression(),
+            // [ISO/IEC 9075-2:2023 §6.27] NEXT, FIRST and LAST before "(".
+            Tok::KeyWord(kw::NEXT) => self.next_primary(),
+            Tok::KeyWord(kw::FIRST | kw::LAST) => self.first_or_last_primary(),
             Tok::KeyWord(_) => self.string_function(),
             Tok::Delimiter(_) | Tok::End => Err(self.syntax("expected a <value expression>")),
         }
@@ -92,21 +95,10 @@ impl Parser {
     /// A `<primary>` that starts with an `<identifier>`: a function call, a
     /// `<parameter specification>`, or a `<column specification>`.
     fn identifier_primary(&mut self) -> Result<ValueExpression> {
-        if let Some(composite) = self.composite_primary()? {
-            return Ok(composite);
+        if let Some(special) = self.composite_pattern_or_aggregate()? {
+            return Ok(special);
         }
-        // [ISO/IEC 9075-2:2023 §10.9] EVERY, no key word of SQL-92, before
-        // "(" the set function.
-        // [ISO/IEC 9075-2:2023 §10.9] EVERY and ANY_VALUE, no key words of
-        // SQL-92, before "(" set functions, and LISTAGG the <listagg set
-        // function>.
         let opens = matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN));
-        if opens && (self.is_word(EVERY) || self.is_word(ANY_VALUE)) {
-            return Ok(ValueExpression::SetFunction(self.set_function_specification()?));
-        }
-        if opens && self.is_word(LISTAGG) {
-            return Ok(ValueExpression::SetFunction(self.listagg()?));
-        }
         // [ISO/IEC 9075-2:2023 §6.15] GREATEST and LEAST, no key words of
         // SQL-92, before "(" the functions.
         let extreme = if let Tok::Identifier(name) = self.peek() { [GREATEST, LEAST].into_iter().find(|f| name == f) } else { None };
@@ -170,6 +162,30 @@ impl Parser {
         self.identifier_chain()
     }
 
+    /// A `<primary>` that starts with an `<identifier>` and is an array or
+    /// row expression [ISO/IEC 9075-2:2023 §6.47, §7.1], an expression of
+    /// row pattern matching [§6.9, §6.10, §6.27, §6.31, §6.33], or an
+    /// aggregate of a name no key word of SQL-92 [§10.9], if one is next.
+    fn composite_pattern_or_aggregate(&mut self) -> Result<Option<ValueExpression>> {
+        if let Some(composite) = self.composite_primary()? {
+            return Ok(Some(composite));
+        }
+        if let Some(pattern) = self.row_pattern_primary_expression()? {
+            return Ok(Some(pattern));
+        }
+        // [ISO/IEC 9075-2:2023 §10.9] EVERY and ANY_VALUE, no key words of
+        // SQL-92, before "(" set functions, and LISTAGG the <listagg set
+        // function>.
+        let opens = matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN));
+        if opens && (self.is_word(EVERY) || self.is_word(ANY_VALUE)) {
+            return Ok(Some(ValueExpression::SetFunction(self.set_function_specification()?)));
+        }
+        if opens && self.is_word(LISTAGG) {
+            return Ok(Some(ValueExpression::SetFunction(self.listagg()?)));
+        }
+        Ok(None)
+    }
+
     /// [ISO/IEC 9075:1992 §6.5] `<set function specification>` ::= COUNT(*)
     /// | `<set function type>` (\[DISTINCT | ALL\] `<value expression>`)
     fn set_function_specification(&mut self) -> Result<SetFunctionSpecification> {
@@ -191,7 +207,10 @@ impl Parser {
         };
         self.advance();
         self.expect_delim(delim::LEFT_PAREN)?;
-        let arg = if name == kw::COUNT && self.accept_delim(delim::ASTERISK) {
+        let counted = if name == kw::COUNT { self.row_pattern_count_function()? } else { None };
+        let arg = if let Some(variable) = counted {
+            variable
+        } else if name == kw::COUNT && self.accept_delim(delim::ASTERISK) {
             SetArg::CountStar
         } else if self.accept_kw(kw::DISTINCT) {
             SetArg::Distinct(Box::new(self.value_expression()?))
@@ -201,7 +220,7 @@ impl Parser {
             SetArg::All(Box::new(self.value_expression()?))
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg: None, filter: None, at })
+        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg: None, filter: None, semantics: None, at })
     }
 
     /// [ISO/IEC 9075-2:2023 §6.9] `<grouping operation>` ::= GROUPING (
@@ -221,6 +240,7 @@ impl Parser {
             order_by: Vec::new(),
             listagg: None,
             filter: None,
+            semantics: None,
             at,
         })
     }

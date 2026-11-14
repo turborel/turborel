@@ -90,6 +90,8 @@ const DELIMITERS: &[&str] = &[
     delim::NOT_EQUALS,
     delim::GREATER_OR_EQUAL,
     delim::LESS_OR_EQUAL,
+    delim::LEFT_BRACE_MINUS,
+    delim::RIGHT_MINUS_BRACE,
     delim::COMMA,
     delim::LEFT_PAREN,
     delim::RIGHT_PAREN,
@@ -106,6 +108,11 @@ const DELIMITERS: &[&str] = &[
     delim::SEMICOLON,
     delim::LEFT_BRACKET,
     delim::RIGHT_BRACKET,
+    delim::VERTICAL_BAR,
+    delim::LEFT_BRACE,
+    delim::RIGHT_BRACE,
+    delim::CIRCUMFLEX,
+    delim::DOLLAR_SIGN,
 ];
 
 /// The quote that delimits a `<character string literal>` [X3.135-1986 §5.2].
@@ -559,3 +566,7 @@ impl Scanner {
         ))
     }
 }
+
+// Unit tests: the delimiters of row patterns (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

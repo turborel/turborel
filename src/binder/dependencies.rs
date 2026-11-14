@@ -269,6 +269,9 @@ fn of_node(w: &Walk<'_>, plan: &LogicalPlan) -> Known {
         LogicalPlan::Unnest(u) => unnested(w, u),
         // Rows of its input, each with the values of its window functions.
         LogicalPlan::Window(window) => known(w, &window.input).widened(w, plan.width()),
+        // [§4.26] Of row pattern recognition, which §4.26 gives no rule,
+        // nothing.
+        LogicalPlan::Recognize(_) => w.fresh(plan.width()),
         // [§4.26.8, §4.26.16] Of a system table, and of a recursive
         // query's (IA204), nothing.
         LogicalPlan::System { names, .. } | LogicalPlan::Recursive { names, .. } | LogicalPlan::WorkTable { names, .. } => {

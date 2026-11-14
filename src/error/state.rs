@@ -144,6 +144,15 @@ impl SqlState {
     /// Data exception: invalid row count in result offset clause [ISO/IEC
     /// 9075-2:2023 §7.17 GR6b].
     pub const INVALID_ROW_COUNT_IN_RESULT_OFFSET: SqlState = SqlState("2201X");
+    /// Data exception: invalid argument for row pattern navigation
+    /// function [ISO/IEC 9075-2:2023 §6.27 GR2].
+    pub const INVALID_ARGUMENT_FOR_ROW_PATTERN_NAVIGATION: SqlState = SqlState("2202J");
+    /// Data exception: skip to non-existent row [ISO/IEC 9075-2:2023 §7.7
+    /// GR8].
+    pub const SKIP_TO_NON_EXISTENT_ROW: SqlState = SqlState("2202K");
+    /// Data exception: skip to first row of match [ISO/IEC 9075-2:2023
+    /// §7.7 GR8].
+    pub const SKIP_TO_FIRST_ROW_OF_MATCH: SqlState = SqlState("2202L");
     /// Data exception: invalid escape character.
     pub const INVALID_ESCAPE_CHARACTER: SqlState = SqlState("22019");
     /// Data exception: invalid character value for cast [ISO/IEC 9075:1992

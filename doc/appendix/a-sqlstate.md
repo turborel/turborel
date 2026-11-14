@@ -79,6 +79,9 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22027 | Trim error |
 | 2202E | Array element error: an element referenced not of the array, or an array trimmed of more elements than it has |
 | 2202F | Array data, right truncation: an array of more elements than its target's maximum cardinality |
+| 2202J | Invalid argument for row pattern navigation function: a logical or physical offset of PREV, NEXT, FIRST or LAST below 0, or null |
+| 2202K | Skip to non-existent row: AFTER MATCH SKIP TO a variable no row of the match is mapped to |
+| 2202L | Skip to first row of match: AFTER MATCH SKIP TO a variable whose row it names is the match's first |
 | 23000 | Integrity constraint violation |
 | 24000 | Invalid cursor state |
 | 25000 | Invalid transaction state |

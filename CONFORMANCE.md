@@ -1255,6 +1255,47 @@ are among its arguments, so a function registered as VALUE_OF stays
 callable. Within VALUE_OF's value, AT begins a time zone only before
 LOCAL or TIME.
 
+### Row pattern recognition
+
+Features R010 (Row pattern recognition: FROM clause), R020 (Row pattern
+recognition: WINDOW clause) and R030 (Row pattern recognition: full
+aggregate support), of ISO/IEC 9075-2:2023 §4.19 to §4.23, §6.27, §7.7
+to §7.9, §7.15 and §9.41.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| In FROM | §7.6, §7.7 SR3, SR11 | `<table primary> MATCH_RECOGNIZE (...)` of a table, a view or a derived table, its correlation name optional. Its input's name is seen only in its PARTITION BY and ORDER BY [§7.6 SR8b i 5]. PARTITION BY names columns of the input of a type grouping takes, COLLATE only of a character string, and ORDER BY sort keys an ordering takes, else SQLCODE -103. A result of no columns is -103. |
+| Its output | §7.7 SR7 to SR10, GR5 | ONE ROW PER MATCH gives the partition columns and the measures, one row of each match. ALL ROWS PER MATCH gives the partition columns, the ordering columns, the measures and the rest of the input's columns, of each row of each match, SHOW EMPTY MATCHES the default. A match of no rows gives the row it was sought at, its measures of no rows, COUNT 0 and a navigation null. OMIT EMPTY MATCHES gives none of it, and WITH UNMATCHED ROWS gives each row no match covered, its measures null. Rows `{- -}` excludes give no row. |
+| Variables | §7.9 SR4, SR7 to SR15, SR18 | The primary row pattern variables are those PATTERN names. SUBSET names a union of them, not a primary one, each once. DEFINE names primary ones, each once, and one it leaves out is true of every row. The universal variable, of every row, is the one a bare column names. Else SQLCODE -103. |
+| The pattern | §7.9 SR19 to SR22, §9.41 | Concatenation, `|`, PERMUTE, `^`, `$`, `{- -}`, `()` and the quantifiers `*`, `+`, `?`, `{n}`, `{n,}`, `{,m}` and `{n,m}`, each reluctant with a `?` after it but `{n}`. A quantifier's m is at least its n and above 0, else -103. The match taken from a row is the first in §9.41's order of preference, the alternatives of `|` left to right, of PERMUTE in the lexicographic order of its permutations, a greedy quantifier the most iterations first and a reluctant one the fewest. An iteration of a quantifier that matches no rows ends it [§9.41 GR6b i]. WITH UNMATCHED ROWS with `{- -}` is -103 [SR22]. |
+| Where the next match is sought | §7.9 SR23, GR2 | AFTER MATCH SKIP PAST LAST ROW, the default, TO NEXT ROW, TO FIRST v and TO LAST v, v a primary or union variable, and TO v as TO LAST v. Skipping to a variable that mapped no row is SQLSTATE 2202K, and to the match's first row 2202L. |
+| References | §4.23, §6.27 | `v.c` is the column c of the last row v mapped, as far as the current row, and a bare `c` the universal variable's. Of a row no variable mapped, null. |
+| Navigation | §6.27 SR1 to SR5, GR | PREV and NEXT move by a physical offset from a row, 1 by default, and FIRST and LAST by a logical offset among the rows a variable mapped, 0 by default. The two nest, a logical one within a physical one. The offset is a literal, its sign written against its number, or a parameter, exact of scale 0, a negative literal SQLCODE -103 and a negative or null parameter SQLSTATE 2202J. Its value expression names columns of one variable, and holds no navigation but that nesting, no set function and no query expression, else -103. A physical offset may pass the match within the partition. Past the partition, or a logical offset past the rows the variable mapped, null. |
+| RUNNING and FINAL | §4.21, §6.27 SR4, §10.9 SR11 | RUNNING reads the match as far as the current row, the default, and FINAL the whole match. FINAL is only in MEASURES, else SQLCODE -103. Of ONE ROW PER MATCH both read the whole match. |
+| CLASSIFIER and MATCH_NUMBER | §6.27, §6.31 SR22 | CLASSIFIER() is the name of the primary variable that mapped the row, a character string of the identifier type, null of a row of no variable. MATCH_NUMBER() is the number of the match in its partition, from 1, of COUNT's type. MATCH_NUMBER is not in a window, else -103. |
+| Set functions | §10.9 SR6, SR11, SR15, Feature R030 | Every set function, `COUNT(v.*)` too, of the rows of one variable its arguments' columns name, or of the universal one, RUNNING or FINAL. Its arguments name columns of one variable, else -103. No GROUPING, no window function and no outer reference. A hypothetical set function's values and an inverse distribution function's fraction are of the partition, each column naming one of its partition columns or one they determine, else -103. |
+| Subqueries | §7.8 SR3, §7.9 SR14 | A query expression in MEASURES or DEFINE references no row pattern variable, else SQLCODE -103. |
+| In a window | §7.15 SR13, SR14, GR6, §9.23 SR9 | A window definition's MEASURES, AFTER MATCH SKIP, INITIAL or SEEK, PATTERN, SUBSET and DEFINE, after its frame. The frame is ROWS BETWEEN CURRENT ROW AND a bound, EXCLUDE NO OTHERS, and the pattern has no `^` and no `$`, else SQLCODE -103. Each row's frame is narrowed to the match starting at it, INITIAL the default, or of SEEK the first match starting in its frame, empty of a row with none or that a match skipped past. `m OVER w` names a measure of w's, else -103. |
+| In a recursive query | §7.17 SR3f | A recursive query holds no row pattern recognition, else SQLCODE -103. |
+
+| What | Why | Outcome |
+|---|---|---|
+| A window's row pattern recognition in a grouped query | \[DESIGN\] Its variables would be of groups, not rows. | SQLCODE -900. |
+| Navigation or CLASSIFIER in an ordered set function's argument that is not aggregated | \[DESIGN\] It names no row of the partition. | SQLCODE -900. |
+| A pattern past the matcher's limits | \[DESIGN\] PERMUTE of more than 8, a pattern compiled to more than 524,288 instructions, nested more than 256 deep, or a search past 10,000,000 steps from one row. | SQLCODE -900. |
+
+A partition is read sorted by its partition columns, then its ordering,
+unless its input is ordered so, and is held while its matches are
+sought, spilling past the work area (RULES.md D38). The matcher
+backtracks through the pattern in its order of preference, so the first
+match it finds is the one taken.
+
+MATCH_RECOGNIZE, MEASURES, PATTERN, DEFINE, SUBSET, PERMUTE, PREV,
+CLASSIFIER, MATCH_NUMBER, RUNNING, FINAL, SKIP, PAST, INITIAL and SEEK,
+which SQL:2023 reserves or does not and SQL-92 does not, are key words
+only where they are read, so a column of one of those names stays a
+column.
+
 ### Arrays and row types
 
 Features S090 (Minimal array support), S099 (Array expressions), S301

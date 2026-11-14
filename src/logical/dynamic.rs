@@ -175,6 +175,10 @@ impl Filling<'_> {
                 w.map_exprs(&mut |e| self.expr(e));
                 LogicalPlan::Window(w)
             }
+            LogicalPlan::Recognize(mut r) => {
+                r.map_exprs(&mut |e| self.expr(e));
+                LogicalPlan::Recognize(r)
+            }
             LogicalPlan::Limit { limit, input } => LogicalPlan::Limit { limit: limit.map_exprs(&mut |e| self.expr(e)), input },
             other @ (LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }

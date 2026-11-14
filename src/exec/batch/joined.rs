@@ -65,6 +65,7 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
+        | Plan::Recognize { .. }
         | Plan::WorkTable { .. } => None,
     }
 }
@@ -120,6 +121,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
+        | Plan::Recognize { .. }
         | Plan::WorkTable { .. } => return columns,
     };
     columns.extend(keys.iter().flat_map(|k| [k.left, k.right.saturating_add(width)]));
@@ -160,6 +162,7 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
+        | Plan::Recognize { .. }
         | Plan::WorkTable { .. } => Err(crate::exec::broken("a join of streams is not one")),
     }
 }
@@ -279,6 +282,7 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
+        | Plan::Recognize { .. }
         | Plan::WorkTable { .. } => true,
     }
 }

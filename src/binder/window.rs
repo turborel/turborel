@@ -10,12 +10,15 @@
 
 mod label;
 mod nested;
-mod spec;
+pub(super) mod spec;
 mod value;
 
 use self::label::{labelled, nested_names};
 use self::nested::NESTED;
 use self::spec::{Described, Keys, described};
+use super::pattern::Matched;
+use std::sync::Arc;
+
 use super::collation::any_of;
 use super::{Binder, Scope, rule};
 use crate::ast::{Composite, SearchCondition, ValueExpression, WindowDefinition, WindowFunction, WindowKind as Kind, WindowOver};
@@ -134,6 +137,7 @@ impl Binder<'_> {
             self.own_references(Vec::new(), d)?;
             let keys = self.within(IN_WINDOW, || self.window_keys(d, scope))?;
             self.within(IN_WINDOW, || self.window_frame(d.frame.as_ref(), &keys, scope))?;
+            self.within(IN_WINDOW, || self.window_matching(d, &keys, scope))?;
         }
         if let Some(w) = self.windowing.borrow_mut().as_mut() {
             w.open = false;
@@ -203,8 +207,10 @@ impl Binder<'_> {
         kind_rules(&w.kind, &described)?;
         self.deterministic(&w.kind, &described)?;
         let keys = self.within(IN_WINDOW, || self.window_keys(&described, scope))?;
-        let frame = self.within(IN_WINDOW, || self.window_frame(described.frame.as_ref(), &keys, scope))?;
-        let (kind, t) = self.window_kind(&w.kind, &described, scope)?;
+        let mut frame = self.within(IN_WINDOW, || self.window_frame(described.frame.as_ref(), &keys, scope))?;
+        let matched = self.within(IN_WINDOW, || self.window_matching(&described, &keys, scope))?;
+        let (kind, t) = self.window_kind(&w.kind, (&described, matched.as_ref()), scope)?;
+        frame.matching = matched.map(|(m, _)| Arc::new(m));
         let nested = self.windowing.borrow_mut().as_mut().map(|windowing| std::mem::take(&mut windowing.nested)).unwrap_or_default();
         Ok((self.windowed(keys, WindowCall { kind, frame, label: String::new(), nested }), t))
     }
@@ -252,7 +258,7 @@ impl Binder<'_> {
     /// The window structure descriptor `over` identifies: a definition of
     /// the `<window clause>` [§7.15 SR16], or an in-line specification
     /// described with those definitions in scope.
-    fn described_window(&self, over: &WindowOver) -> Result<Described> {
+    pub(in crate::binder) fn described_window(&self, over: &WindowOver) -> Result<Described> {
         let windowing = self.windowing.borrow();
         let named = windowing.as_ref().map_or(&[][..], |w| w.named.as_slice());
         match over {
@@ -287,7 +293,7 @@ impl Binder<'_> {
                 crate::ast::Which::Last => "LAST_VALUE",
                 crate::ast::Which::Nth { .. } => "NTH_VALUE",
             },
-            Kind::Rank(_) | Kind::Aggregate(_) => {
+            Kind::Rank(_) | Kind::Aggregate(_) | Kind::Measure(_) => {
                 if !rows {
                     return Ok(());
                 }
@@ -304,7 +310,12 @@ impl Binder<'_> {
     }
 
     /// What `kind` computes over `described`, bound in `scope`, and its type.
-    fn window_kind(&self, kind: &Kind, described: &Described, scope: Scope<'_>) -> Result<(WindowKind, DataType)> {
+    fn window_kind(
+        &self,
+        kind: &Kind,
+        (described, matched): (&Described, Option<&Matched>),
+        scope: Scope<'_>,
+    ) -> Result<(WindowKind, DataType)> {
         let count = || self.count_type();
         let rank = |k| match k {
             crate::ast::RankKind::Rank => (WindowKind::Rank, count()),
@@ -323,6 +334,7 @@ impl Binder<'_> {
             Kind::Ntile(tiles) => return self.ntile(tiles),
             Kind::Offset(o) => return self.offset_function(o, scope),
             Kind::Value(v) => return self.value_function(v, scope),
+            Kind::Measure(name) => return super::pattern::window_measure(name, matched),
         };
         Ok((kind, t?))
     }
@@ -384,7 +396,7 @@ fn after_read(windows: &[Partitioned], call: &WindowCall) -> usize {
 /// window: an aggregate's, or a function's arguments.
 fn own_parts(kind: &Kind) -> Vec<&ValueExpression> {
     match kind {
-        Kind::RowNumber | Kind::Rank(_) => Vec::new(),
+        Kind::RowNumber | Kind::Rank(_) | Kind::Measure(_) => Vec::new(),
         Kind::Aggregate(a) => vec![&**a],
         Kind::Ntile(tiles) => vec![&**tiles],
         Kind::Offset(o) => std::iter::once(&o.extent).chain(&o.default).collect(),
@@ -405,7 +417,7 @@ pub(super) fn double() -> DataType {
 /// NTILE, LEAD and LAG have no frame, and all but ROW_NUMBER an ordering.
 fn kind_rules(kind: &Kind, described: &Described) -> Result<()> {
     let name = match kind {
-        Kind::Aggregate(_) | Kind::Value(_) => return Ok(()),
+        Kind::Aggregate(_) | Kind::Value(_) | Kind::Measure(_) => return Ok(()),
         Kind::RowNumber => "ROW_NUMBER",
         Kind::Rank(_) => "a rank function",
         Kind::Ntile(_) => "NTILE",
@@ -447,6 +459,7 @@ pub(super) fn windowed(windowing: Option<Windowing>, input: LogicalPlan, exprs: 
             .map(|(_, call)| {
                 let mut call = call.clone();
                 call.map_exprs(&mut |e| map_expr_columns(e, &place));
+                super::pattern::placed(&mut call, at);
                 let names = nested_names(&call.nested, &names);
                 labelled(call, &names)
             })

@@ -5,7 +5,8 @@
 //! ROW, which neither reserves, are key words only where this syntax has
 //! them, so a column, table or function may have any of those names. The
 //! window functions of arguments but the aggregates are in `values.rs`,
-//! and the nested window functions in `nested.rs`.
+//! and the nested window functions in `nested.rs`. A frame's row pattern
+//! measures and common syntax are read by `pattern.rs`.
 
 mod nested;
 mod values;
@@ -14,7 +15,7 @@ use super::Parser;
 use super::query::PARTITION;
 use crate::ast::{
     Exclusion, Frame, FrameBound, FrameUnits, RankKind, ValueExpression, WindowDefinition, WindowFunction, WindowKind, WindowOver,
-    WindowSpecification,
+    WindowRecognition, WindowSpecification,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -33,6 +34,9 @@ const EXCLUDE: &str = "EXCLUDE";
 pub(super) const TIES: &str = "TIES";
 const OTHERS: &str = "OTHERS";
 pub(super) const ROW: &str = "ROW";
+/// The words that may follow an `<existing window name>` written alone
+/// before a frame's units.
+pub(super) const NAMES_AFTER_WINDOW_NAME: [&str; 3] = [PARTITION, RANGE, GROUPS];
 
 /// ROW_NUMBER and the `<rank function type>`s, by name.
 const RANKS: [(&str, WindowKind); 5] = [
@@ -85,7 +89,7 @@ impl Parser {
 
     /// `<window name or specification>` ::= `<window name>` | `<in-line
     /// window specification>`, OVER taken.
-    fn window_over(&mut self) -> Result<WindowOver> {
+    pub(super) fn window_over(&mut self) -> Result<WindowOver> {
         if self.is_delim(delim::LEFT_PAREN) {
             return Ok(WindowOver::Specification(Box::new(self.window_specification()?)));
         }
@@ -146,16 +150,16 @@ impl Parser {
         } else {
             Vec::new()
         };
-        let frame = if self.at_frame_units().is_some() { Some(self.frame()?) } else { None };
+        let (frame, recognition) = self.window_frame_clause()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(WindowSpecification { existing, partition, order, frame, at })
+        Ok(WindowSpecification { existing, partition, order, frame, recognition, at })
     }
 
     /// Whether the name at hand is an `<existing window name>`: any name
     /// but PARTITION before BY, and RANGE or GROUPS only where a frame's
     /// extent does not follow.
     fn at_existing_window_name(&self) -> bool {
-        if !matches!(self.peek(), Tok::Identifier(_)) || self.at_partitioning() {
+        if !matches!(self.peek(), Tok::Identifier(_)) || self.at_partitioning() || self.at_window_measures() {
             return false;
         }
         if self.at_frame_units().is_none() {
@@ -163,7 +167,7 @@ impl Parser {
         }
         match self.peek_at(1) {
             Tok::Delimiter(delim::RIGHT_PAREN) | Tok::KeyWord(kw::ORDER | kw::ROWS) => true,
-            Tok::Identifier(s) => s == PARTITION || s == RANGE || s == GROUPS,
+            Tok::Identifier(s) => NAMES_AFTER_WINDOW_NAME.contains(&s.as_str()),
             Tok::KeyWord(_)
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
@@ -188,8 +192,32 @@ impl Parser {
         }
     }
 
-    /// `<window frame clause>` ::= `<window frame units>` `<window frame
-    /// extent>` \[`<window frame exclusion>`\], where `<window frame
+    /// `<window frame clause>` ::= \[`<row pattern measures>`\] `<window
+    /// frame units>` `<window frame extent>` \[`<window frame
+    /// exclusion>`\] \[`<row pattern common syntax>`\], if written: the
+    /// frame, and its row pattern recognition if either part of it is
+    /// written. Measures need the common syntax [§7.15 SR13]; the binder
+    /// checks the frame of a window that recognizes \[SR14\].
+    fn window_frame_clause(&mut self) -> Result<(Option<Frame>, Option<Box<WindowRecognition>>)> {
+        let measures_at = self.here();
+        let measures = if self.at_window_measures() { self.row_pattern_measures()? } else { Vec::new() };
+        if measures.is_empty() && self.at_frame_units().is_none() {
+            return Ok((None, None));
+        }
+        let frame = self.frame()?;
+        if self.at_row_pattern_common_syntax() {
+            let common = self.row_pattern_common_syntax(true)?;
+            return Ok((Some(frame), Some(Box::new(WindowRecognition { measures, common }))));
+        }
+        if !measures.is_empty() {
+            let msg = "[ISO/IEC 9075-2:2023 §7.15 SR13] a window's <row pattern measures> need a <row pattern common syntax>";
+            return Err(SqlError::at(Code::SyntaxRule, measures_at, msg));
+        }
+        Ok((Some(frame), None))
+    }
+
+    /// `<window frame units>` `<window frame extent>` \[`<window frame
+    /// exclusion>`\], where `<window frame
     /// extent>` ::= `<window frame start>` | BETWEEN `<window frame bound
     /// 1>` AND `<window frame bound 2>`.
     fn frame(&mut self) -> Result<Frame> {

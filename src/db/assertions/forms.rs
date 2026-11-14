@@ -374,6 +374,7 @@ pub(super) fn passing(plan: &LogicalPlan) -> Option<Passing> {
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
+            | LogicalPlan::Recognize(..)
             | LogicalPlan::WorkTable { .. } => return None,
         }
     }

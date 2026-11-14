@@ -1,7 +1,7 @@
 //! Abstract syntax of `<set function specification>` [X3.135-1986 §5.8;
 //! ISO/IEC 9075-2:2023 §10.9] and its argument.
 
-use super::{SearchCondition, ValueExpression, ValueOrder};
+use super::{SearchCondition, Semantics, ValueExpression, ValueOrder};
 
 /// [X3.135-1986 §5.8] `<set function specification>` ::=
 ///     COUNT(*) | `<distinct set function>` | `<all set function>`
@@ -24,6 +24,9 @@ pub struct SetFunctionSpecification {
     /// clause>`, if written: only the rows it is true of are aggregated
     /// \[GR4\].
     pub filter: Option<Box<SearchCondition>>,
+    /// [ISO/IEC 9075-2:2023 §6.9] The `<running or final>` written before
+    /// it, if one is.
+    pub semantics: Option<Semantics>,
     /// Where it begins in the statement: a character offset, for the
     /// positions of errors (`SqlError::or_at`).
     pub at: usize,
@@ -34,6 +37,9 @@ pub struct SetFunctionSpecification {
 pub enum SetArg {
     /// COUNT(*)
     CountStar,
+    /// [ISO/IEC 9075-2:2023 §10.9] `<row pattern count function>` ::= COUNT
+    /// ( `<row pattern variable name>` . * ), and where the name is.
+    Variable(String, usize),
     /// `<general set function>` with DISTINCT [ISO/IEC 9075:1992 §6.5]:
     /// SQL-86's `<distinct set function>` of a `<column specification>`
     /// among them.

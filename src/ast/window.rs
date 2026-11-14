@@ -1,7 +1,7 @@
 //! Abstract syntax of `<window function>` [ISO/IEC 9075-2:2023 §6.10] and
 //! `<window clause>` [§7.15].
 
-use super::{GroupingColumn, ValueExpression, ValueOrder};
+use super::{GroupingColumn, ValueExpression, ValueOrder, WindowRecognition};
 
 /// [ISO/IEC 9075-2:2023 §6.10] `<window function>` ::= `<window function
 /// type>` OVER `<window name or specification>`
@@ -32,6 +32,9 @@ pub enum WindowKind {
     Offset(Box<OffsetFunction>),
     /// A `<first or last value function>` or an `<nth value function>`.
     Value(Box<ValueFunction>),
+    /// [ISO/IEC 9075-2:2023 §6.10] `<window row pattern measure>` ::=
+    /// `<measure name>`.
+    Measure(String),
 }
 
 /// [ISO/IEC 9075-2:2023 §6.10] `<lead or lag function>` ::= `<lead or lag>`
@@ -132,6 +135,9 @@ pub struct WindowSpecification {
     pub order: Vec<ValueOrder>,
     /// Its `<window frame clause>`, if written.
     pub frame: Option<Frame>,
+    /// [ISO/IEC 9075-2:2023 §7.15] The `<row pattern measures>` and `<row
+    /// pattern common syntax>` of its frame, if written.
+    pub recognition: Option<Box<WindowRecognition>>,
     /// Where it begins in the statement.
     pub at: usize,
 }
@@ -198,7 +204,7 @@ impl WindowFunction {
     /// window specification.
     pub(super) fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         match &self.kind {
-            WindowKind::RowNumber | WindowKind::Rank(_) => {}
+            WindowKind::RowNumber | WindowKind::Rank(_) | WindowKind::Measure(_) => {}
             WindowKind::Aggregate(aggregate) => aggregate.for_each_child(f),
             WindowKind::Ntile(tiles) => f(tiles),
             WindowKind::Offset(o) => {
@@ -222,7 +228,9 @@ impl WindowFunction {
 impl WindowSpecification {
     /// Calls `f` with each value expression it is made of: its sort keys and
     /// its frame's offsets. Its partition columns are column references
-    /// alone.
+    /// alone. Its row pattern measures and definitions are not: they are
+    /// read in the scope of its row pattern variables, as a subquery's are
+    /// in its own [ISO/IEC 9075-2:2023 §7.9 SR5].
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         self.order.iter().for_each(|o| f(&o.key));
         if let Some(frame) = &self.frame {

@@ -43,6 +43,7 @@ mod interval;
 mod listagg;
 mod literal;
 mod names;
+mod pattern;
 mod primary;
 mod query;
 mod regex;
@@ -407,7 +408,6 @@ impl Parser {
         self.expect_kw(kw::INSERT)?;
         self.expect_kw(kw::INTO)?;
         let table = self.table_name()?;
-
         // <insert column list> ::= <column name> [{,<column name>}...]
         let mut columns = None;
         if self.accept_delim(delim::LEFT_PAREN) {

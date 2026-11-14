@@ -23,6 +23,7 @@
 mod aggregate;
 mod distribution;
 mod frame;
+mod matched;
 mod nested;
 mod reader;
 mod value;
@@ -32,7 +33,8 @@ use std::sync::Arc;
 
 use self::aggregate::Framed;
 use self::distribution::{DISTRIBUTION_READERS, Distributed};
-use self::frame::{Bounds, Current, Partition};
+use self::frame::{Bounds, Current, Partition, Ranges};
+use self::matched::Matched;
 use self::nested::{Nest, Shape};
 use self::reader::{Placed, Reader};
 use self::value::{Count, NotNull, Picked, RANGE_ENDS, Sequence, counted, tile};
@@ -173,9 +175,9 @@ impl Windowed {
         // its reader another (`readers`).
         let readers = self.w.calls.iter().map(readers).fold(PEER_READERS, usize::saturating_add);
         let keyed = ListSpace { limit: space.limit.checked_div(readers).unwrap_or_default().max(1), ..space.clone() };
-        let (rows, mut part, lists) = self.read(first, (space.clone(), keyed.clone()))?;
+        let (mut rows, mut part, lists) = self.read(first, (space.clone(), keyed.clone()))?;
         let tree = space.limit.checked_div(self.w.calls.len()).unwrap_or_default();
-        let values = self.values(&mut part, lists, (space, keyed, tree), &work)?;
+        let values = self.values((&mut part, &mut rows), lists, (space, keyed, tree), &work)?;
         let given = rows.into_iter().zip(values).map(|(row, values)| {
             let mut row = row?;
             row.extend(values?);
@@ -256,7 +258,8 @@ impl Windowed {
                 | WindowKind::DenseRank
                 | WindowKind::PercentRank
                 | WindowKind::CumeDist
-                | WindowKind::Ntile(_) => continue,
+                | WindowKind::Ntile(_)
+                | WindowKind::Measure(_) => continue,
             };
             values.push(arg.clone());
             values.extend(default);
@@ -272,14 +275,16 @@ impl Windowed {
         Ok(values)
     }
 
-    /// Of each row of `part`, its calls' values, held in `space`: under
+    /// Of each row of `part`, of the rows `rows`, its calls' values, held
+    /// in `space`, each frame of a row pattern recognition narrowed to its
+    /// row's designated match (`matched.rs`): under
     /// IGNORE NULLS of each of `lists`, a tree of states each taking at
     /// most `tree` bytes, a DISTINCT set function's values kept in `work`,
     /// an argument of nested window functions computed once held in
     /// `keyed`.
     fn values(
         &mut self,
-        part: &mut Partition,
+        (part, rows): (&mut Partition, &mut HeldRows<Row>),
         lists: Vec<Option<NotNull>>,
         (space, keyed, tree): (ListSpace, ListSpace, usize),
         work: &Work,
@@ -297,12 +302,21 @@ impl Windowed {
                 (None, None) => Computed::new(&call.kind, (b, *count), (slot, list), part, (tree, work))?,
             });
         }
-        let (mut out, mut peers) = (HeldRows::new(space), Peers::default());
+        let (mut matched, mut peers) = (Matched::new(&self.w.calls)?, Peers::default());
+        matched.reset();
+        let mut out = HeldRows::new(space.clone());
         for row in 0..part.len {
             let current = current(row, part, &mut peers)?;
+            matched.designate(&current, (bounds, part), rows, (&self.runner, work, &space))?;
             let mut values = Vec::with_capacity(computed.len());
-            for (c, (b, _)) in computed.iter_mut().zip(bounds.iter_mut()) {
-                values.push(c.value((b, &current), part, &self.runner)?);
+            for (n, (c, (b, _))) in computed.iter_mut().zip(bounds.iter_mut()).enumerate() {
+                // [ISO/IEC 9075-2:2023 §6.10 GR1e] a measure of the row's
+                // designated match.
+                if let Some(WindowKind::Measure(k)) = self.w.calls.get(n).map(|call| &call.kind) {
+                    values.push(matched.measure(n, *k));
+                    continue;
+                }
+                values.push(c.value((b, &current, matched.frame(n)), part, &self.runner)?);
             }
             out.push(values)?;
         }
@@ -349,26 +363,34 @@ impl<'a> Computed<'a> {
             | WindowKind::DenseRank
             | WindowKind::PercentRank
             | WindowKind::CumeDist
-            | WindowKind::Ntile(_) => Computed::Ranked(kind, count),
+            | WindowKind::Ntile(_)
+            | WindowKind::Measure(_) => Computed::Ranked(kind, count),
         })
     }
 
-    /// Its value of `current`, a row of `part`, its frame of `bounds`.
-    fn value(&mut self, (bounds, current): (&mut Bounds, &Current), part: &mut Partition, runner: &Runner) -> Result<Value> {
+    /// Its value of `current`, a row of `part`, its frame of `bounds`, or
+    /// `narrowed` to a row pattern match if given [§7.15 GR6d iii 2 D].
+    fn value(
+        &mut self,
+        (bounds, current, narrowed): (&mut Bounds, &Current, Option<Ranges>),
+        part: &mut Partition,
+        runner: &Runner,
+    ) -> Result<Value> {
+        let mut frame = |of: &mut Partition| narrowed.map_or_else(|| bounds.frame(current, of), Ok);
         match self {
             Computed::Ranked(kind, count) => rank(kind, current, part.len, *count),
             Computed::Framed(f) => {
-                let frame = bounds.frame(current, part)?;
+                let frame = frame(part)?;
                 Ok(noted(f.value(frame, part)?, runner))
             }
             Computed::Nested(n) => {
-                let frame = bounds.frame(current, part)?;
+                let frame = frame(part)?;
                 Ok(noted(n.value(frame, current.row, part, runner)?, runner))
             }
             Computed::Distributed(d) => Ok(noted(d.value(current.row, part)?, runner)),
             Computed::Offset(p) => p.offset(current.row, part),
             Computed::Valued(p) => {
-                let frame = bounds.frame(current, part)?;
+                let frame = frame(part)?;
                 p.framed(frame, part)
             }
         }
@@ -392,7 +414,8 @@ fn width(kind: &WindowKind) -> usize {
         | WindowKind::DenseRank
         | WindowKind::PercentRank
         | WindowKind::CumeDist
-        | WindowKind::Ntile(_) => (0_usize, false),
+        | WindowKind::Ntile(_)
+        | WindowKind::Measure(_) => (0_usize, false),
     };
     taken.saturating_add(usize::from(counted))
 }
@@ -424,7 +447,8 @@ fn distributed(kind: &WindowKind) -> Option<&AggCall> {
         | WindowKind::CumeDist
         | WindowKind::Ntile(_)
         | WindowKind::Offset(_)
-        | WindowKind::Value(_) => None,
+        | WindowKind::Value(_)
+        | WindowKind::Measure(_) => None,
     }
 }
 
@@ -440,7 +464,8 @@ fn ignores_nulls(kind: &WindowKind) -> bool {
         | WindowKind::PercentRank
         | WindowKind::CumeDist
         | WindowKind::Aggregate(_)
-        | WindowKind::Ntile(_) => false,
+        | WindowKind::Ntile(_)
+        | WindowKind::Measure(_) => false,
     }
 }
 
@@ -468,7 +493,8 @@ fn readers(call: &WindowCall) -> usize {
         | WindowKind::DenseRank
         | WindowKind::PercentRank
         | WindowKind::CumeDist
-        | WindowKind::Ntile(_) => 0,
+        | WindowKind::Ntile(_)
+        | WindowKind::Measure(_) => 0,
     }
 }
 
@@ -534,8 +560,8 @@ fn rank(kind: &WindowKind, current: &Current, len: usize, tiles: Count) -> Resul
             Count::Of(n) => count(tile(current.row, len, n).saturating_sub(1)),
             Count::Null | Count::Unused => Value::Null,
         },
-        WindowKind::Aggregate(_) | WindowKind::Offset(_) | WindowKind::Value(_) => {
-            return Err(broken("a set function or a value function computed as a rank"));
+        WindowKind::Aggregate(_) | WindowKind::Offset(_) | WindowKind::Value(_) | WindowKind::Measure(_) => {
+            return Err(broken("a set function, a value function or a measure computed as a rank"));
         }
     })
 }

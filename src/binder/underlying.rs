@@ -162,6 +162,7 @@ fn reference_leaves(cx: Context<'_>, r: &TableReference, leaves: &mut Vec<Qualif
         // Its collections are value expressions, their subqueries not its
         // operands.
         TableReference::Unnest(_) => {}
+        TableReference::Recognized(r) => reference_leaves(cx, &r.input, leaves),
         TableReference::Joined(j) => {
             reference_leaves(cx, &j.left, leaves);
             reference_leaves(cx, &j.right, leaves);

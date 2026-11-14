@@ -25,6 +25,7 @@ mod kept;
 mod order;
 mod probe;
 mod raising;
+mod recognized;
 mod shown;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
@@ -36,8 +37,8 @@ use crate::db::State;
 use crate::exec::WorkRows;
 use crate::index::Probe;
 use crate::logical::{
-    AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, SetOp, SortKey, Unnest, Window, column_name, judged_by_sets,
-    render_cond, render_expr, render_keys, split_and,
+    AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, Recognize, SetOp, SortKey, Unnest, Window, column_name,
+    judged_by_sets, render_cond, render_expr, render_keys, split_and,
 };
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -325,6 +326,15 @@ pub enum Plan {
         /// The partitioning, ordering and functions, as text.
         detail: String,
     },
+    /// [ISO/IEC 9075-2:2023 §7.7] Row pattern recognition over the rows of
+    /// its input, which come sorted by its partitioning and ordering
+    /// (`exec/pattern.rs`).
+    Recognize {
+        /// The recognition, and the rows it is sought in.
+        recognize: Box<Recognize<Plan>>,
+        /// The partitioning, ordering, measures and pattern, as text.
+        detail: String,
+    },
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's
@@ -449,6 +459,7 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::WorkTable { member, .. } => Built::unordered(Plan::WorkTable { member: *member, rows: None }),
             LogicalPlan::Unnest(u) => Built::unordered(Plan::Unnest(Box::new(u.with_input(|input| self.plan(input))))),
             LogicalPlan::Window(w) => self.window(w, want),
+            LogicalPlan::Recognize(r) => self.recognize(r),
         }
     }
 

@@ -101,7 +101,7 @@ impl Plan {
                 u.collections.len(),
                 if u.ordinality { " with ordinality" } else { "" }
             ),
-            Plan::Window { detail, .. } => writeln!(out, "{pad}{detail}"),
+            Plan::Window { detail, .. } | Plan::Recognize { detail, .. } => writeln!(out, "{pad}{detail}"),
         };
         self.write_inputs(out, depth.saturating_add(1));
     }
@@ -133,6 +133,7 @@ impl Plan {
             | Plan::IndexJoin { left: input, .. } => input.write(out, depth),
             Plan::Unnest(u) => u.input.write(out, depth),
             Plan::Window { window, .. } => window.input.write(out, depth),
+            Plan::Recognize { recognize, .. } => recognize.input.write(out, depth),
         }
     }
 }

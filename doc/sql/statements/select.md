@@ -112,8 +112,49 @@ SELECT: read rows
     ( [ <window name> ]
       [ PARTITION BY <column reference> [ COLLATE <collation name> ] [ { , <column reference> [ COLLATE <collation name> ] }... ] ]
       [ ORDER BY <window sort key> [ { , <window sort key> }... ] ]
-      [ { ROWS | RANGE | GROUPS } { <frame bound> | BETWEEN <frame bound> AND <frame bound> }
-        [ EXCLUDE { CURRENT ROW | GROUP | TIES | NO OTHERS } ] ] )
+      [ [ MEASURES <measure> [ { , <measure> }... ] ]
+        { ROWS | RANGE | GROUPS } { <frame bound> | BETWEEN <frame bound> AND <frame bound> }
+        [ EXCLUDE { CURRENT ROW | GROUP | TIES | NO OTHERS } ]
+        [ [ AFTER MATCH <skip to> ] [ INITIAL | SEEK ] <pattern common> ] ] )
+
+<row pattern recognition> ::=
+    <table primary> MATCH_RECOGNIZE (
+      [ PARTITION BY <column reference> [ COLLATE <collation name> ] [ { , <column reference> [ COLLATE <collation name> ] }... ] ]
+      [ ORDER BY <sort specification> [ { , <sort specification> }... ] ]
+      [ MEASURES <measure> [ { , <measure> }... ] ]
+      [ ONE ROW PER MATCH
+      | ALL ROWS PER MATCH [ SHOW EMPTY MATCHES | OMIT EMPTY MATCHES | WITH UNMATCHED ROWS ] ]
+      [ AFTER MATCH <skip to> ] <pattern common> )
+    [ [ AS ] <correlation name> [ ( <column name> [ { , <column name> }... ] ) ] ]
+
+<measure> ::= <value expression> AS <column name>
+
+<skip to> ::= SKIP { PAST LAST ROW | TO NEXT ROW | TO [ FIRST | LAST ] <variable> }
+
+<pattern common> ::=
+    PATTERN ( <row pattern> )
+    [ SUBSET <variable> = ( <variable> [ { , <variable> }... ] ) [ { , <variable> = ( ... ) }... ] ]
+    DEFINE <variable> AS <search condition> [ { , <variable> AS <search condition> }... ]
+
+<row pattern> ::=
+      <row pattern term> [ { | <row pattern term> }... ]
+
+<row pattern term> ::= { <row pattern primary> [ <quantifier> ] }...
+
+<row pattern primary> ::=
+      <variable> | ^ | $ | ( [ <row pattern> ] ) | {- <row pattern> -}
+    | PERMUTE ( <row pattern> [ { , <row pattern> }... ] )
+
+<quantifier> ::=
+      { * | + | ? | { [ n ] , [ m ] } } [ ? ]
+    | { n }
+
+<row pattern navigation> ::=
+      [ RUNNING | FINAL ] { FIRST | LAST } ( <value expression> [ , <offset> ] )
+    | { PREV | NEXT } ( <value expression> [ , <offset> ] )
+    | CLASSIFIER ( [ <variable> ] ) | MATCH_NUMBER ( )
+
+<window row pattern measure> ::= <column name> OVER { <window name> | <window specification> }
 
 <window sort key> ::= <value expression> [ COLLATE <collation name> ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]
 
@@ -188,6 +229,13 @@ A window function computes a value of each row out of the rows of its
 partition, ordered, or of a frame of rows around it, as [Window
 functions](../06-queries.md#window-functions) shows. Windows are
 computed after HAVING and before DISTINCT and ORDER BY.
+
+MATCH_RECOGNIZE after a table finds runs of its rows that match a
+pattern of row pattern variables, each defined by a condition, and gives
+a row of each match or each row of each match, with measures computed
+over the match. A window may hold a row pattern too, which narrows each
+row's frame to the match starting at it ([Row pattern
+recognition](../06-queries.md#row-pattern-recognition)).
 
 A query begins a transaction if none is active, and reads as its
 isolation level says ([SET TRANSACTION](set-transaction.md)).
@@ -275,6 +323,19 @@ parameters, is [a statement of a program too](#select-into).
     whose sort key's columns are all outer references is the query's of
     those columns, as rule 11 says. Its window has no ORDER BY and no
     frame.
+13. Of MATCH_RECOGNIZE, PARTITION BY names columns of its table, and
+    the result has a column. DEFINE names variables PATTERN names, each
+    once, and SUBSET names others, each of them once. A quantifier's
+    most is above 0 and no less than its least. WITH UNMATCHED ROWS is
+    of a pattern with no `{- -}`. MATCH_RECOGNIZE takes no INITIAL or
+    SEEK. A navigation's value, and a set function's arguments, read
+    columns of one variable. A navigation's offset is a literal or a
+    parameter, an integer not negative. FINAL is only in MEASURES.
+    MATCH_NUMBER is not in a window. A subquery in MEASURES or DEFINE
+    reads no variable, and a recursive query holds no row pattern.
+14. A window of a row pattern has a frame of ROWS BETWEEN CURRENT ROW
+    and a bound, EXCLUDE NO OTHERS, and a pattern of no `^` or `$`. A
+    `<window row pattern measure>` names one of its measures.
 
 ## PRIVILEGES
 
@@ -435,7 +496,11 @@ DISTINCT Feature T434. Window functions are the `<window function>` of
 and T620, with the window parts of T612. NTILE is Feature T614, LEAD
 and LAG T615, IGNORE NULLS T616, FIRST_VALUE and LAST_VALUE T617,
 NTH_VALUE T618, the `<nested window function>` [§6.11] T619, and
-COUNT(DISTINCT ...) over a window of an ordering or a frame T627. SELECT
+COUNT(DISTINCT ...) over a window of an ordering or a frame T627.
+MATCH_RECOGNIZE is the `<row pattern recognition clause>` of §7.7 to
+§7.9, Feature R010, a window's row pattern its `<row pattern measures>`
+and `<row pattern common syntax>` [§7.15], Feature R020, and its set
+functions Feature R030. SELECT
 ... INTO is
 the `<select statement: single row>` [§13.5; X3.135-1986 §8.10]. FOR
 READ ONLY, of a `<cursor specification>` [§13.1], is taken in a direct

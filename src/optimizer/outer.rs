@@ -73,6 +73,7 @@ impl Rule for PushFilterIntoOuterJoin {
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
+            | LogicalPlan::Recognize(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }

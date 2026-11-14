@@ -245,12 +245,13 @@ pub(super) fn bind_from(b: Bounds<'_>, refs: &[TableReference]) -> Result<From> 
 }
 
 /// The `<table reference>` `r`, its first column at `start` of the FROM row.
-fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, from: &mut From) -> Result<Tree> {
+pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, from: &mut From) -> Result<Tree> {
     let item = match r {
         TableReference::Table(t) => from_item(b, t, start).or_at(t.table.at)?,
         TableReference::Derived(d) => derived(b, d, start).or_at(d.query.at)?,
         TableReference::Joined(j) => return bind_join(b, j, start, from).or_at(j.at),
         TableReference::Unnest(u) => unnest_item(b, u, start, from).or_at(u.at)?,
+        TableReference::Recognized(r) => super::pattern::recognized(b, r, start).or_at(r.at)?,
     };
     from.items.push(item);
     Ok(Tree::Item(from.items.len().saturating_sub(1)))
@@ -470,7 +471,10 @@ fn bind_on(b: Bounds<'_>, c: &SearchCondition, (left, right): (&Tree, &Tree), st
 fn exposure_conflict(a: &FromItem, b: &FromItem) -> Option<SqlError> {
     let same_name = |x: &String| rule(format!("[X3.135-1986 §5.20 SR3] correlation name {x} equals an exposed table identifier"));
     match (&a.correlation, &b.correlation) {
-        (None, None) => (a.table == b.table).then(|| rule(format!("[X3.135-1986 §5.20 SR2] table {} is exposed more than once", a.table))),
+        // [ISO/IEC 9075-2:2023 §7.6 SR8b i 7] an implicit row pattern
+        // output name, of no name, is distinct from every other.
+        (None, None) => (a.table == b.table && !a.table.ident.is_empty())
+            .then(|| rule(format!("[X3.135-1986 §5.20 SR2] table {} is exposed more than once", a.table))),
         (Some(x), Some(y)) => (x == y).then(|| rule(format!("[X3.135-1986 §5.20 SR3] correlation name {x} is used twice"))),
         (Some(x), None) => (*x == b.table.ident).then(|| same_name(x)),
         (None, Some(x)) => (*x == a.table.ident).then(|| same_name(x)),

@@ -61,6 +61,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
+        | Plan::Recognize { .. }
         | Plan::WorkTable { .. } => false,
     }
 }

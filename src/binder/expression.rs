@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::composite::{grouping_operand, ordering_operand};
 use super::interval::assumed;
-use super::set_functions::{column_references, registered};
+use super::set_functions::column_references;
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
 use crate::ast::{Composite, Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
@@ -210,6 +210,9 @@ impl Binder<'_> {
             }
             ValueExpression::AtZone { source, zone, at } => self.at_zone(source, zone.as_deref(), scope).or_at(*at),
             ValueExpression::Composite(c, at) => self.composite((c, *at), scope).or_at(*at),
+            ValueExpression::Navigation(n) => self.navigation(n, scope).or_at(n.at),
+            ValueExpression::Classifier { variable, at } => self.classifier(variable.as_deref(), scope).or_at(*at),
+            ValueExpression::MatchNumber { at } => self.match_number(scope).or_at(*at),
         }
     }
 
@@ -330,10 +333,12 @@ impl Binder<'_> {
 
     /// [X3.135-1986 §5.8] a `<set function specification>`.
     pub(super) fn set_function(&self, sf: &SetFunctionSpecification, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let scope = self.pattern_set_function(sf, scope)?;
         match &sf.arg {
             SetArg::Grouping(columns) => return self.grouping_operation(columns, scope),
             SetArg::Hypothetical(values) => return self.hypothetical(sf, values, scope),
             SetArg::Fraction(fraction) => return self.inverse_distribution(sf, fraction, scope),
+            SetArg::Variable(name, at) => return self.pattern_count(sf, name, scope).or_at(*at),
             SetArg::CountStar | SetArg::Distinct(_) | SetArg::All(_) => {}
         }
         if sf.name == ARRAY_AGG {
@@ -354,6 +359,7 @@ impl Binder<'_> {
             SetArg::Grouping(columns) => self.grouping_operation(columns, scope),
             SetArg::Hypothetical(values) => self.hypothetical(sf, values, scope),
             SetArg::Fraction(fraction) => self.inverse_distribution(sf, fraction, scope),
+            SetArg::Variable(name, at) => self.pattern_count(sf, name, scope).or_at(*at),
         }
     }
 
@@ -468,7 +474,7 @@ impl Binder<'_> {
         // made a column of the groups before any window function, holds no
         // nested window function.
         let (call, collation) = self.unnested(|| self.aggregate_call(func, argued, filter, rows))?;
-        Ok(registered(g, call, collation))
+        Ok(self.registered_in(g, call, collation))
     }
 
     /// The set function `func` of `arg`, bound in `scope`, DISTINCT if so,

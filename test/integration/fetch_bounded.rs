@@ -11,8 +11,7 @@ use turborel::params::Params;
 use turborel::threads::JobPolicy;
 use turborel::value::{Decimal, Value};
 
-use crate::common::{Counted, exec, rows};
-use crate::fetch_first::{staff, state};
+use crate::common::{Counted, exec, rows, staff, state};
 
 /// Rows of M.
 const ROWS: i64 = 3000;

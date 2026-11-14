@@ -13,7 +13,11 @@ Code never cites this file (R-DOC-5).
 [Types](#types) ·
 [Periods and temporal tables](#periods-and-temporal-tables) · [JSON](#json) ·
 [Query processing](#query-processing) ·
-[Storage and durability](#storage-and-durability)
+[Storage and durability](#storage-and-durability) ·
+[Index structures](#index-structures) ·
+[Other standards](#other-standards) · [XML](#xml) ·
+[Full text](#full-text) · [Spatial](#spatial) · [Graph](#graph) ·
+[Vectors](#vectors)
 
 ---
 
@@ -33,9 +37,7 @@ each group.
 
 ### Queries
 
-- Row pattern recognition (R010, R020, R030) [§4.19 to §4.23, §6.27, §7.7
-  to §7.9, §9.41]. MATCH_RECOGNIZE in FROM and in a window, for finding
-  runs of rows such as a price falling then rising. It builds on windows.
+Nothing is open.
 
 ### Changing data
 
@@ -59,8 +61,7 @@ each group.
   call refused.
 - Stored procedures (SQL/PSM). This covers CREATE PROCEDURE and FUNCTION,
   CALL and the control statements, running as their module's
-  authorization identifier, as SQL:2023 Parts 2 and 4 define them. Part
-  4's text is not yet local.
+  authorization identifier, as SQL:2023 Parts 2 and 4 define them.
 - Array element assignment (S097) [§6.4 SR7, SR8; §14.5 GR; §14.7 GR].
   A FETCH INTO or SELECT INTO target `A[i]`, which writes one element of
   an array. Its array is an SQL parameter or a new transition variable's
@@ -150,3 +151,81 @@ Nothing is open.
 - A renamed column in the column store's options (D31). COLUMNSTORE.ORDER
   names a table's columns, so once ALTER TABLE renames columns,
   COLUMNSTORE.ORDER follows a renamed column.
+
+---
+
+## Index structures
+
+The access methods the other standards stand on. Each one is built, made
+durable and tested on its own before the extension that reads it. Each
+is kept consistent under concurrent change and recovery as the B-tree is.
+
+- An R-tree, over the bounding boxes of geometries, for spatial
+  predicates and nearest neighbours. Spatial needs it.
+- An inverted index of terms to the rows and positions they appear at,
+  with its tokenizer, for full text search. Full text needs it.
+- HNSW, a hierarchical graph of vectors for approximate nearest neighbour
+  search. Vectors need it, and a structure kept on disk past what memory
+  holds may follow it.
+- Adjacency held for a graph's edges, so a path query follows an edge
+  without a join's search. Graph queries need it.
+- An index of XML documents' paths and values, so XQuery and XPath read
+  only the nodes they ask for. XML needs it.
+
+---
+
+## Other standards
+
+Standards beside ISO/IEC 9075-2, each implemented from its own text as
+SQL:2023 is (RULES.md D32). Each waits for its index structure above. The groups below are claimed in
+CONFORMANCE.md one by one as they are done.
+
+### XML
+
+- SQL/XML (ISO/IEC 9075-14:2023). The XML type, stored parsed, XMLPARSE,
+  XMLSERIALIZE, XMLELEMENT, XMLFOREST, XMLAGG and the other publishing
+  functions, XMLQUERY, XMLEXISTS, XMLTABLE and XMLCAST, with XQuery and
+  XPath and XML Schema validation. It needs large objects for documents
+  past a row.
+
+### Full text
+
+- SQL/MM Full-Text (ISO/IEC 13249-2). The FULLTEXT type and its methods,
+  CONTAINS and its search patterns of words, phrases, proximity,
+  stemming and thesaurus, and ranking by score, over the inverted index.
+
+### Spatial
+
+- SQL/MM Spatial (ISO/IEC 13249-3). The ST_Geometry type hierarchy of
+  points, curves, surfaces and their collections, their constructors from
+  well-known text and binary, measures, the spatial relationships of
+  ST_Intersects to ST_Relate, ST_Buffer and the set operations, and
+  spatial reference systems, over the R-tree.
+- Simple feature access, SQL option (ISO 19125-2). The schema of geometry
+  columns and spatial reference systems it defines, and its
+  geometry functions where they differ from SQL/MM's, so tools that read
+  either find both.
+
+### Graph
+
+- GQL (ISO/IEC 39075:2024). Property graphs of nodes and edges with labels
+  and properties, their graph types, MATCH of graph patterns with
+  quantified paths and path modes, and inserting, setting and removing
+  nodes and edges, as a language beside SQL over the same storage and
+  transactions.
+- SQL/PGQ (ISO/IEC 9075-16:2023). CREATE PROPERTY GRAPH over existing
+  tables, naming which are vertex tables and which edge tables and the
+  keys that join them, and GRAPH_TABLE in FROM, whose MATCH shares GQL's
+  graph patterns and gives its matches as rows to the rest of the query.
+  It shares GQL's pattern matcher and the edges' adjacency, so the two
+  are built together.
+
+### Vectors
+
+- A VECTOR type and its search [EXTENSION]. No ISO standard defines one,
+  so it follows what Oracle and Microsoft SQL Server ship, from their
+  documentation. It covers a VECTOR column of a dimension and an element
+  type, VECTOR_DISTANCE by cosine, Euclidean, dot product, Manhattan and
+  Hamming metrics, norms and normalizing, and CREATE VECTOR INDEX over
+  HNSW. An approximate top-k query, ORDER BY a distance then FETCH APPROX
+  FIRST, reads the index, and an exact one sorts as ORDER BY does today.

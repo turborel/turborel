@@ -7,7 +7,7 @@ use super::super::composite::{grouping_operand, integer, ordering_operand};
 use super::super::{Binder, Scope, rule};
 use crate::ast::{
     Exclusion as Excluded, Frame as Written, FrameBound, FrameUnits, GroupingColumn, SetArg, ValueExpression, ValueOrder, WindowDefinition,
-    WindowSpecification,
+    WindowRecognition, WindowSpecification,
 };
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::LISTAGG;
@@ -30,6 +30,9 @@ pub(in crate::binder) struct Described {
     pub(in crate::binder) order: Vec<ValueOrder>,
     /// Its window framing.
     pub(in crate::binder) frame: Option<Written>,
+    /// [ISO/IEC 9075-2:2023 §7.15 GR1b i 7] Its window row pattern
+    /// recognition clauses, of its window frame clause.
+    pub(in crate::binder) recognition: Option<Box<WindowRecognition>>,
 }
 
 /// A window's partitioning and ordering, bound.
@@ -68,7 +71,12 @@ pub(super) fn described(definitions: &[WindowDefinition]) -> Result<Vec<(String,
 /// has one.
 pub(super) fn describe(spec: &WindowSpecification, named: &[(String, Described)]) -> Result<Described> {
     let Some((name, at)) = &spec.existing else {
-        return Ok(Described { partition: spec.partition.clone(), order: spec.order.clone(), frame: spec.frame.clone() });
+        return Ok(Described {
+            partition: spec.partition.clone(),
+            order: spec.order.clone(),
+            frame: spec.frame.clone(),
+            recognition: spec.recognition.clone(),
+        });
     };
     let refused = |text: String| SqlError::at(Code::SyntaxRule, *at, text);
     let Some((_, existing)) = named.iter().find(|(n, _)| n == name) else {
@@ -84,7 +92,7 @@ pub(super) fn describe(spec: &WindowSpecification, named: &[(String, Described)]
         return Err(refused(format!("[ISO/IEC 9075-2:2023 §7.15 SR12e] the existing window {name} has a frame")));
     }
     let order = if spec.order.is_empty() { existing.order.clone() } else { spec.order.clone() };
-    Ok(Described { partition: existing.partition.clone(), order, frame: spec.frame.clone() })
+    Ok(Described { partition: existing.partition.clone(), order, frame: spec.frame.clone(), recognition: spec.recognition.clone() })
 }
 
 /// [ISO/IEC 9075-2:2023 §9.23 SR8c, SR8d] That the aggregate function
@@ -200,7 +208,7 @@ impl Binder<'_> {
             Excluded::Group => Exclusion::Group,
             Excluded::Ties => Exclusion::Ties,
         };
-        Ok(Frame { units, start, end, exclusion })
+        Ok(Frame { units, start, end, exclusion, matching: None })
     }
 
     /// The bound `b` of a frame of `units` over a window of `keys`.

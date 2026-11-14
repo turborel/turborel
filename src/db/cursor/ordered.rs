@@ -30,6 +30,7 @@ pub(super) fn row_condition(plan: &LogicalPlan) -> Option<Cond> {
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
+            | LogicalPlan::Recognize(..)
             | LogicalPlan::WorkTable { .. } => break,
         }
     }
@@ -73,6 +74,7 @@ fn sort_of(plan: &LogicalPlan) -> Result<Option<(&[SortKey], &LogicalPlan)>> {
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
+            | LogicalPlan::Recognize(..)
             | LogicalPlan::WorkTable { .. } => return Err(unordered()),
         }
     }
@@ -110,6 +112,7 @@ fn table_columns(mut columns: Vec<usize>, plan: &LogicalPlan) -> Result<Vec<usiz
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
+            | LogicalPlan::Recognize(..)
             | LogicalPlan::WorkTable { .. } => return Err(unordered()),
         }
     }

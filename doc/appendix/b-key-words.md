@@ -107,6 +107,25 @@ them. The six row markers are read only there, so each names a column
 elsewhere and a function registered as VALUE_OF stays callable. Within
 VALUE_OF's value, AT is a time zone's only before LOCAL or TIME.
 
+MATCH_RECOGNIZE, MEASURES, PATTERN, DEFINE, SUBSET, PERMUTE, PREV,
+CLASSIFIER, MATCH_NUMBER, RUNNING, FINAL, INITIAL, SEEK, ONE, PER, SHOW,
+OMIT, EMPTY, MATCHES, UNMATCHED, AFTER, SKIP and PAST, which SQL:2023
+reserves or not and SQL-92 does not, are identifiers, read only in a
+row pattern. MATCH_RECOGNIZE is read only after a table, so it is never
+taken for a correlation name. MEASURES begins a window's measures
+unless `)`, ORDER, PARTITION, ROWS, RANGE or GROUPS follows it, where it
+names a window. PREV, CLASSIFIER and MATCH_NUMBER are read only before
+a parenthesis, so a column of one of those names stays a column. NEXT
+is navigation only before a parenthesis, and NEXT VALUE FOR elsewhere.
+FIRST and LAST are navigation only before a parenthesis at the start of
+a value, so NULLS FIRST and FETCH FIRST read as before. RUNNING and
+FINAL are read only before FIRST, LAST or a set function and a
+parenthesis. In a pattern, `?` and `*` are quantifiers, never a
+parameter or a product, and `??)` is the right bracket trigraph, so a
+reluctant `?` before a parenthesis is written `?? )`. A name followed by
+OVER and a parenthesis or a window's name is a window row pattern
+measure.
+
 SEQUENCE, INCREMENT, MAXVALUE, MINVALUE and RESTART, which SQL:2023 does
 not reserve, and CYCLE and START are key words only in CREATE, ALTER and
 DROP SEQUENCE, GRANT and REVOKE ON SEQUENCE, so a table may have columns of

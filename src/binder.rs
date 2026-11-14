@@ -54,6 +54,7 @@ mod limit;
 mod natural;
 mod order_by;
 mod partitioned;
+mod pattern;
 mod predicates;
 mod purpose;
 mod query;
@@ -386,6 +387,10 @@ struct Binder<'a> {
     /// Its FROM and WHERE, while its grouped clauses are bound
     /// (`binder/invariant.rs`).
     rows: RefCell<invariant::Rows>,
+    /// Of the `<row pattern measures>` and `<row pattern definition search
+    /// condition>`s of row pattern recognition, what their row pattern
+    /// column references read (`binder/pattern.rs`).
+    recognizing: Option<Box<pattern::Recognizing>>,
 }
 
 /// The FROM row a binder sees: its items, the display names of its
@@ -443,6 +448,7 @@ impl<'a> Binder<'a> {
             windowing: RefCell::new(None),
             sort_names: RefCell::new(order_by::SortNames::default()),
             rows: RefCell::new(invariant::Rows::default()),
+            recognizing: None,
         }
     }
 

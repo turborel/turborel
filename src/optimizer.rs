@@ -327,6 +327,7 @@ impl Rule for ConstantFolding {
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
+            | LogicalPlan::Recognize(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }
@@ -547,6 +548,7 @@ fn base_table(plan: &LogicalPlan) -> Option<&LogicalPlan> {
         | LogicalPlan::Recursive { .. }
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
+        | LogicalPlan::Recognize(..)
         | LogicalPlan::WorkTable { .. } => None,
     }
 }

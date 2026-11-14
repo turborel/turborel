@@ -20,13 +20,15 @@ any release until 1.0.0 ([Versions](../appendix/f-versions.md)).
 
 ## The SQL it speaks
 
-turborel's SQL is the language of the standards: ANSI X3.135-1986,
-SQL-86, in full, and ISO/IEC 9075:1992, SQL-92, as one language, each
-later standard to extend it in turn. Where turborel adds to the
-standard, this manual marks it *(extension)*: storage engines and
-indexes, users and passwords, settings. What it does not process of the
-standard, as character sets other than SQL_TEXT, it refuses, saying
-so.
+turborel's SQL is the language of the standards, ANSI X3.135-1986
+(SQL-86), ISO/IEC 9075:1992 (SQL-92) and ISO/IEC 9075-2:2023 (SQL:2023),
+read as one language, the newer prevailing where they differ. SQL-86 is
+implemented in full and SQL-92 nearly so, and SQL:2023's features are
+added as they are implemented ([CONFORMANCE.md](../../CONFORMANCE.md)).
+Where turborel adds to the standards, this manual marks it
+*(extension)*, as for storage engines and indexes, users and passwords,
+and settings. What it does not process of the standards, as character
+sets other than SQL_TEXT, it refuses, saying so.
 
 ## How this guide is organized
 

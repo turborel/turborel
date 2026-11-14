@@ -2,6 +2,7 @@
 
 mod dynamic;
 mod encodings;
+mod fixtures;
 mod settings;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -24,6 +25,7 @@ pub use crate::database::{
 pub use crate::logs::Watched;
 pub use dynamic::{code_with, dynamic_host, run_with, set_text};
 pub use encodings::{RunLength, Scramble};
+pub use fixtures::{prices, recognized, staff, state};
 pub use settings::{Noted, whole};
 
 /// Schema D: tables T (btree index on N) and U, each holding 1-3; views V

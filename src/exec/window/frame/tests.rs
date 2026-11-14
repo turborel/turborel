@@ -253,6 +253,7 @@ fn an_offset_negative_or_null_is_22013_7_15() {
                 start: Bound::Preceding(crate::logical::Expr::Const(offset)),
                 end: Bound::CurrentRow,
                 exclusion: Exclusion::NoOthers,
+                matching: None,
             };
             let found = Bounds::of(&frame, order, &runner);
             assert_eq!(found.is_err(), fails, "{units:?}");

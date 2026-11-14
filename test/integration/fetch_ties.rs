@@ -10,8 +10,7 @@ use turborel::error::Code;
 use turborel::params::Params;
 use turborel::value::Value;
 
-use crate::common::{Counted, code, exec, expected, rows};
-use crate::fetch_first::{staff, state};
+use crate::common::{Counted, code, exec, expected, rows, staff, state};
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 GR7b ii, NOTE 328, Feature
 /// F866] FETCH FIRST n PERCENT keeps CEILING ( n * rows / 100.0E0 ) rows,

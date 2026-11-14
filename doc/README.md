@@ -5,11 +5,12 @@ server, `turboreld`, that serves its databases over a network, and a
 command-line client, `turborel`. This set of manuals describes them for
 those who use, run and connect to them.
 
-Turborel speaks the SQL of the international standards. Today that is
-ANSI X3.135-1986 ("SQL-86") and ISO/IEC 9075:1992 ("SQL-92"), read as one
-language, the newer prevailing where they differ. Later editions of the
-standard are added to the same language as they are implemented, through
-SQL:2023. What is implemented, clause by clause, is in
+Turborel speaks the SQL of the international standards, ANSI X3.135-1986
+("SQL-86"), ISO/IEC 9075:1992 ("SQL-92") and ISO/IEC 9075-2:2023
+("SQL:2023"), read as one language, the newer prevailing where they
+differ. SQL-86 is implemented in full and SQL-92 nearly so, and SQL:2023's
+features are added to the same language as they are implemented. What is
+implemented, clause by clause and feature by feature, is in
 [CONFORMANCE.md](../CONFORMANCE.md).
 
 Turborel is in alpha: what these manuals describe may change in any
@@ -57,6 +58,7 @@ NULL, where by default the client shows nothing
 ([The turborel Command](client/01-turborel.md)).
 
 **Citations** name the clause of a standard a rule comes from:
+[ISO/IEC 9075-2:2023 §7.17] is clause 7.17 of SQL:2023;
 [ISO/IEC 9075:1992 §11.3] is clause 11.3 of SQL-92; [X3.135-1986 §8.7]
 is clause 8.7 of SQL-86. A rule is cited further as Syntax Rule (SR),
 General Rule (GR) or Access Rule (AR) and its number: §11.9 AR1 is Access

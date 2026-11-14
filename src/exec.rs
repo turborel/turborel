@@ -25,6 +25,7 @@ mod held;
 mod join;
 mod limit;
 mod partition;
+mod pattern;
 mod recursive;
 mod set;
 mod sort;
@@ -113,6 +114,7 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Unnest(..) => unnest::unnested(plan, db, tx),
         // [ISO/IEC 9075-2:2023 §7.15] each row of its input with its window functions' values.
         Plan::Window { .. } => window::windowed(plan, db, tx),
+        Plan::Recognize { .. } => pattern::recognized(plan, db, tx),
     }
 }
 
@@ -184,6 +186,7 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
+        | Plan::Recognize { .. }
         | Plan::WorkTable { .. } => failed(broken("a join is not one")),
     }
 }

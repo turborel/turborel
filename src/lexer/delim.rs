@@ -45,3 +45,22 @@ pub const SEMICOLON: &str = ";";
 pub const LEFT_BRACKET: &str = "[";
 /// [ISO/IEC 9075-2:2023 §5.1] `<right bracket or trigraph>`.
 pub const RIGHT_BRACKET: &str = "]";
+/// [ISO/IEC 9075-2:2023 §5.2] `<left brace minus>`: the start of a row
+/// pattern's rows left out of ALL ROWS PER MATCH's output [§7.9].
+pub const LEFT_BRACE_MINUS: &str = "{-";
+/// [ISO/IEC 9075-2:2023 §5.2] `<right minus brace>`: their end.
+pub const RIGHT_MINUS_BRACE: &str = "-}";
+/// [ISO/IEC 9075-2:2023 §5.1] `<vertical bar>`: of a row pattern
+/// alternation [§7.9].
+pub const VERTICAL_BAR: &str = "|";
+/// [ISO/IEC 9075-2:2023 §5.1] `<left brace>`: of a row pattern
+/// quantifier's bounds [§7.9].
+pub const LEFT_BRACE: &str = "{";
+/// [ISO/IEC 9075-2:2023 §5.1] `<right brace>`.
+pub const RIGHT_BRACE: &str = "}";
+/// [ISO/IEC 9075-2:2023 §5.1] `<circumflex>`: the start of a row pattern
+/// partition [§7.9].
+pub const CIRCUMFLEX: &str = "^";
+/// [ISO/IEC 9075-2:2023 §5.1] `<dollar sign>`: the end of a row pattern
+/// partition [§7.9].
+pub const DOLLAR_SIGN: &str = "$";

@@ -4,7 +4,10 @@
 //! and FETCH FIRST in `ordered.rs`.
 
 use super::ordered::OrderedQuery;
-use super::{ColumnSpecification, CycleClause, SearchClause, SearchCondition, Subquery, TableName, ValueExpression, WindowDefinition};
+use super::{
+    ColumnSpecification, CycleClause, RecognizedTable, SearchClause, SearchCondition, Subquery, TableName, ValueExpression,
+    WindowDefinition,
+};
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.3] <cursor specification> and [X3.135-1986 §5.25] <query specification>
 // ---------------------------------------------------------------------------
@@ -259,6 +262,10 @@ fn named_in_from<'a>(
             TableReference::Table(t) => each(t, t.table.auth.is_none() && scope.contains(&t.table.ident.as_str())),
             TableReference::Derived(d) => subqueries.push(&*d.query),
             TableReference::Unnest(u) => u.collections.iter().for_each(|v| v.for_each_subquery(&mut |s| subqueries.push(s))),
+            TableReference::Recognized(r) => {
+                refs.push(&r.input);
+                r.clause.for_each_subquery(&mut |s| subqueries.push(s));
+            }
             TableReference::Joined(j) => {
                 refs.extend([&j.right, &j.left]);
                 if let Some(JoinSpecification::On(c)) = &j.on {
@@ -459,6 +466,9 @@ pub enum TableReference {
     /// [ISO/IEC 9075-2:2023 §7.6] `<collection derived table>`
     /// `<correlation or recognition>`.
     Unnest(UnnestTable),
+    /// [ISO/IEC 9075-2:2023 §7.6, §7.7] A table or a derived table, then a
+    /// `<row pattern recognition clause and name>`.
+    Recognized(Box<RecognizedTable>),
 }
 
 impl TableReference {

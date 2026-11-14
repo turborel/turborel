@@ -8,43 +8,12 @@
 //! and by batches or row by row. PERCENT and WITH TIES are in
 //! `fetch_ties.rs`.
 
-use turborel::db::{Database, Session};
+use turborel::db::Database;
 use turborel::error::Code;
 use turborel::params::Params;
 use turborel::value::{DataType, Decimal, Spelled, Value};
 
-use crate::common::{Counted, code, exec, expected, rows};
-
-/// Schema A: STAFF of five rows, one of no department and no salary;
-/// DEPTS of three departments, keyed.
-pub fn staff() -> (Database, Session) {
-    let db = Database::new();
-    db.schema(
-        "CREATE SCHEMA AUTHORIZATION A \
-         CREATE TABLE STAFF (ID INTEGER PRIMARY KEY, NAME VARCHAR(20), DEPT CHAR(3), SALARY INTEGER) \
-         CREATE TABLE DEPTS (DEPT CHAR(3) PRIMARY KEY, TITLE VARCHAR(20))",
-    )
-    .unwrap();
-    let a = db.session("A");
-    a.run(
-        "INSERT INTO STAFF VALUES (1, 'Ada', 'ENG', 7200), (2, 'Grace', 'ENG', 8100), (3, 'Edsger', 'OPS', 5400), \
-         (4, 'Barbara', NULL, NULL), (5, 'Alan', 'OPS', 6100)",
-    )
-    .unwrap();
-    a.run("INSERT INTO DEPTS VALUES ('ENG', 'Engineering'), ('OPS', 'Operations'), ('HR', 'People')").unwrap();
-    a.commit().unwrap();
-    (db, a)
-}
-
-/// The SQLSTATE of the error `sql` raises as it opens or its rows are
-/// read.
-pub fn state(a: &Session, sql: &str) -> String {
-    let read = a.open_cursor(sql).and_then(|mut c| {
-        while c.fetch()?.is_some() {}
-        Ok(())
-    });
-    read.err().map_or_else(|| panic!("no error: {sql}"), |e| e.sqlstate().as_str().to_owned())
-}
+use crate::common::{Counted, code, exec, expected, rows, staff, state};
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 GR5, GR6, GR7,
 /// Features F850, F857, F861] a query's rows sorted, then OFFSET's count

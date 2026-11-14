@@ -22,7 +22,7 @@ use super::rule;
 use super::set_functions::is_aggregate_call;
 use crate::ast::{
     Correspondence, JoinKind, JoinSpecification, QueryExpression, QuerySpecification, RowElement, SearchCondition, SelectItem, SelectList,
-    SelectSublist, SetOperator, Subquery, TableReference, ValueExpression, WithElement, WithQuery,
+    SelectSublist, SetOperator, Subquery, TableReference, ValueExpression, WindowOver, WithElement, WithQuery,
 };
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
@@ -169,6 +169,11 @@ impl<'w> Rules<'w> {
                 }
                 n
             }
+            TableReference::Recognized(r) => {
+                let mut n = self.reference_refs(&r.input, scope);
+                r.clause.for_each_subquery(&mut |s| n = n.saturating_add(self.refs(&s.query, scope)));
+                n
+            }
             TableReference::Joined(j) => {
                 let mut n = self.reference_refs(&j.left, scope).saturating_add(self.reference_refs(&j.right, scope));
                 if let Some(JoinSpecification::On(c)) = &j.on {
@@ -182,6 +187,13 @@ impl<'w> Rules<'w> {
     /// [ISO/IEC 9075-2:2023 §7.17 SR3j ix, x] Checks the query of `e`, a
     /// member of the stratum.
     pub(super) fn check(&self, e: &'w WithElement) -> Result<()> {
+        if any_query(&e.query, &recognizes) {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §7.17 SR3f] recursive query {} contains no <row pattern measures> and no <row pattern common syntax>",
+                e.name
+            ))
+            .or_at(e.at));
+        }
         if e.query.ordered().is_some_and(|o| o.fetch.is_some()) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §7.17 SR3j ix 3] recursive query {} has no FETCH FIRST", e.name)).or_at(e.at));
         }
@@ -297,6 +309,12 @@ impl<'w> Rules<'w> {
                 for v in &u.collections {
                     v.for_each_subquery(&mut |s| subqueries.push(s));
                 }
+                self.elsewhere(subqueries, scope)
+            }
+            TableReference::Recognized(r) => {
+                let mut subqueries = Vec::new();
+                r.clause.for_each_subquery(&mut |s| subqueries.push(s));
+                self.reference(&r.input, (place, scope))?;
                 self.elsewhere(subqueries, scope)
             }
             TableReference::Joined(j) => {
@@ -481,11 +499,43 @@ fn any_query(q: &QueryExpression, pred: &dyn Fn(&QueryExpression) -> bool) -> bo
                         }
                     }
                     TableReference::Joined(j) => refs.extend([&j.left, &j.right]),
+                    TableReference::Recognized(r) => {
+                        refs.push(&r.input);
+                        r.clause.for_each_subquery(&mut |s| nested.push(&s.query));
+                    }
                 }
             }
         }
     }
     nested.into_iter().any(|n| any_query(n, pred))
+}
+
+/// [ISO/IEC 9075-2:2023 §7.17 SR3f] Whether `q` is a query specification
+/// that simply contains row pattern recognition: of a table primary, or
+/// of a window of its window clause or its select list.
+fn recognizes(q: &QueryExpression) -> bool {
+    let QueryExpression::Spec(spec) = q else { return false };
+    let te = &spec.table_expression;
+    if te.window.iter().any(|d| d.specification.recognition.is_some()) {
+        return true;
+    }
+    let inline = |v: &ValueExpression| {
+        let ValueExpression::Window(w) = v else { return false };
+        let WindowOver::Specification(s) = &w.over else { return false };
+        s.recognition.is_some()
+    };
+    if selected(spec).into_iter().any(|v| v.any(&inline)) {
+        return true;
+    }
+    let mut refs: Vec<&TableReference> = te.from.iter().collect();
+    while let Some(r) = refs.pop() {
+        match r {
+            TableReference::Recognized(_) => return true,
+            TableReference::Joined(j) => refs.extend([&j.left, &j.right]),
+            TableReference::Table(_) | TableReference::Derived(_) | TableReference::Unnest(_) => {}
+        }
+    }
+    false
 }
 
 /// The value expressions of the select list of `spec`.

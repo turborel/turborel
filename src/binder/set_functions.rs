@@ -67,6 +67,9 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, (db, path): (&State, &str))
         | ValueExpression::Function { .. }
         | ValueExpression::Composite(..)
         | ValueExpression::Window(_)
+        | ValueExpression::Navigation(_)
+        | ValueExpression::Classifier { .. }
+        | ValueExpression::MatchNumber { .. }
         | ValueExpression::NestedWindow(_)
         | ValueExpression::NextValue { .. } => false,
     }
@@ -105,7 +108,7 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         ValueExpression::SetFunction(sf) => match &sf.arg {
             // [ISO/IEC 9075-2:2023 §10.9 SR14] of an ordered set function,
             // its sort keys, whose outer references it refuses.
-            SetArg::CountStar | SetArg::Grouping(_) | SetArg::Hypothetical(_) | SetArg::Fraction(_) => None,
+            SetArg::CountStar | SetArg::Variable(..) | SetArg::Grouping(_) | SetArg::Hypothetical(_) | SetArg::Fraction(_) => None,
             SetArg::Distinct(a) | SetArg::All(a) => Some(a),
         },
         ValueExpression::Call { args, .. } => args.first(),
@@ -127,6 +130,9 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::Function { .. }
         | ValueExpression::Composite(..)
         | ValueExpression::Window(_)
+        | ValueExpression::Navigation(_)
+        | ValueExpression::Classifier { .. }
+        | ValueExpression::MatchNumber { .. }
         | ValueExpression::NestedWindow(_)
         | ValueExpression::NextValue { .. } => None,
     }

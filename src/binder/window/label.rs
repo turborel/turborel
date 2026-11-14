@@ -42,6 +42,9 @@ pub(super) fn labelled(call: WindowCall, names: &[String]) -> WindowCall {
             };
             format!("{called}{}", treated(v.ignore_nulls))
         }
+        // [ISO/IEC 9075-2:2023 §6.10] A `<window row pattern measure>`, its
+        // `<measure name>`.
+        WindowKind::Measure(k) => call.frame.matching.as_ref().and_then(|m| m.names.get(*k)).cloned().unwrap_or_default(),
     };
     WindowCall { label, ..call }
 }

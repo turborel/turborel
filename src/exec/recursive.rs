@@ -203,6 +203,7 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         | Plan::Limit { input, .. } => give(input, work),
         Plan::Unnest(u) => give(&mut u.input, work),
         Plan::Window { window, .. } => give(&mut window.input, work),
+        Plan::Recognize { recognize, .. } => give(&mut recognize.input, work),
         Plan::Product { left, right }
         | Plan::HashJoin { left, right, .. }
         | Plan::OuterJoin { left, right, .. }

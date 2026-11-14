@@ -252,7 +252,15 @@ impl Parser {
             order_by = self.sort_specification_list()?;
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name: ARRAY_AGG, arg: SetArg::All(Box::new(value)), order_by, listagg: None, filter: None, at })
+        Ok(SetFunctionSpecification {
+            name: ARRAY_AGG,
+            arg: SetArg::All(Box::new(value)),
+            order_by,
+            listagg: None,
+            filter: None,
+            semantics: None,
+            at,
+        })
     }
 
     /// `primary` followed by each `<array element reference>` `[` `<numeric

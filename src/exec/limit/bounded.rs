@@ -37,6 +37,7 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
         | Plan::Recursive { .. }
         | Plan::WorkTable { .. }
         | Plan::Unnest(_)
-        | Plan::Window { .. }) => plan,
+        | Plan::Window { .. }
+        | Plan::Recognize { .. }) => plan,
     }
 }

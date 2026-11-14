@@ -22,8 +22,8 @@ behind it, and each can be replaced or added to.
 
 ## What it has
 
-- Standard SQL as one language, SQL-86 in full and SQL-92 and SQL:2023
-  being implemented. See [CONFORMANCE.md](CONFORMANCE.md).
+- Standard SQL as one language, SQL-86 in full, SQL-92 nearly so and
+  SQL:2023 being implemented. See [CONFORMANCE.md](CONFORMANCE.md).
 - Transactions at READ COMMITTED by default, or up to SERIALIZABLE, that run
   on many threads at once and survive a crash with multi-version concurrency
   control, a write-ahead log, checkpoints and recovery.
@@ -41,6 +41,10 @@ behind it, and each can be replaced or added to.
   once a majority of servers holds it, so three servers survive losing one.
   Backups serve reads and elect a new primary within seconds, and a lost
   server catches up when it rejoins.
+- Analytic SQL, with window functions, grouping sets, recursive queries
+  with SEARCH and CYCLE, and row pattern recognition (MATCH_RECOGNIZE).
+- Arrays, row types, distinct types, DECFLOAT, regular expressions,
+  sequences and identity columns.
 - Domains, assertions, temporary tables, scrollable cursors and dynamic SQL.
 - Import of CSV and tab-separated files through the client.
 - Library, embedded modes

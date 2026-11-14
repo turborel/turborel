@@ -219,7 +219,9 @@ impl Binder<'_> {
             ValueExpression::Subquery(s) => self.subquery_derived(s).into_iter().next().unwrap_or(Derived::Yielding),
             ValueExpression::SetFunction(f) => match &f.arg {
                 SetArg::Distinct(argument) | SetArg::All(argument) => self.derived(argument)?,
-                SetArg::CountStar | SetArg::Grouping(_) | SetArg::Hypothetical(_) | SetArg::Fraction(_) => Derived::Yielding,
+                SetArg::CountStar | SetArg::Variable(..) | SetArg::Grouping(_) | SetArg::Hypothetical(_) | SetArg::Fraction(_) => {
+                    Derived::Yielding
+                }
             },
             // [ISO/IEC 9075-2:2023 §9.23 SR8b] an aggregate's over a window,
             // its set function's; [SR5j v, SR6c] a value function's, its
@@ -228,11 +230,15 @@ impl Binder<'_> {
                 WindowKind::Aggregate(aggregate) => self.derived(aggregate)?,
                 WindowKind::Offset(o) => self.derived(&o.extent)?,
                 WindowKind::Value(v) => self.derived(&v.arg)?,
+                WindowKind::Measure(name) => self.measure_derived(w, name)?,
                 WindowKind::RowNumber | WindowKind::Rank(_) | WindowKind::Ntile(_) => Derived::Yielding,
             },
             // [ISO/IEC 9075-2:2023 §6.11 SR3] VALUE_OF's, of its value
             // expression and default as §9.5 brings them together;
             // ROW_NUMBER's none.
+            // [ISO/IEC 9075-2:2023 §6.27 GR11] a navigation's, its value
+            // expression's, evaluated in another row.
+            ValueExpression::Navigation(n) => self.derived(&n.expr)?,
             ValueExpression::NestedWindow(n) => match &n.value {
                 Some((value, default)) => self.all_derived(std::iter::once(&**value).chain(default.as_deref()))?,
                 None => Derived::Yielding,
@@ -250,7 +256,11 @@ impl Binder<'_> {
             | ValueExpression::NextValue { .. }
             // An element's or field's, as arrays and rows keep none of
             // their parts'.
-            | ValueExpression::Composite(..) => Derived::Yielding,
+            | ValueExpression::Composite(..)
+            // [ISO/IEC 9075-2:2023 §6.33 SR24b] CLASSIFIER's, its declared
+            // type's, of no column: none.
+            | ValueExpression::Classifier { .. }
+            | ValueExpression::MatchNumber { .. } => Derived::Yielding,
         })
     }
 

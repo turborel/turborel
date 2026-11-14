@@ -51,7 +51,8 @@ impl Count {
             | WindowKind::PercentRank
             | WindowKind::CumeDist
             | WindowKind::Aggregate(_)
-            | WindowKind::Offset(_) => return Ok(Count::Unused),
+            | WindowKind::Offset(_)
+            | WindowKind::Measure(_) => return Ok(Count::Unused),
         };
         let v = eval(e, &Vec::new(), runner)?;
         if v.is_null() {

@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use super::set_functions::registered;
 use super::window::double;
 use super::{Binder, NOT_AGGREGATED, Scope, rule};
 use crate::ast::{SetFunctionSpecification, ValueExpression};
@@ -50,8 +49,10 @@ impl Binder<'_> {
         };
         // [SR14] the fraction, a non-aggregated argument, of the groups.
         self.fraction(sf.name, fraction, scope)?;
-        let call = self.unnested(|| self.distribution_call(sf, fraction, (Scope::Rows(CONTAINED), Scope::Rows(CONTAINED))))?;
-        Ok(registered(g, call, None))
+        // [§10.9 GR1a to c] of row pattern matching, of the matches.
+        let fractioned = self.non_aggregated(scope, Scope::Rows(CONTAINED));
+        let call = self.unnested(|| self.distribution_call(sf, fraction, (Scope::Rows(CONTAINED), fractioned)))?;
+        Ok(self.registered_in(g, call, None))
     }
 
     /// The call of the inverse distribution function `sf`, its sort key

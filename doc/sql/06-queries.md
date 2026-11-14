@@ -157,6 +157,133 @@ OK
 (2 rows)
 ```
 
+## Row pattern recognition
+
+MATCH_RECOGNIZE after a table in the FROM clause finds runs of its rows
+that match a pattern, such as a price falling and then rising. Its rows
+are split by PARTITION BY and put in order by ORDER BY, and each
+partition is searched on its own.
+
+```
+table MATCH_RECOGNIZE (
+    [PARTITION BY column, ...] [ORDER BY sort key, ...]
+    [MEASURES expression AS name, ...]
+    [ONE ROW PER MATCH | ALL ROWS PER MATCH [SHOW EMPTY MATCHES |
+        OMIT EMPTY MATCHES | WITH UNMATCHED ROWS]]
+    [AFTER MATCH SKIP {PAST LAST ROW | TO NEXT ROW | TO FIRST v | TO LAST v}]
+    PATTERN (pattern) [SUBSET u = (v, ...), ...]
+    DEFINE v AS condition, ...
+) [AS name]
+```
+
+PATTERN is a regular expression over row pattern variables. A variable
+matches one row its DEFINE condition is true of, and one DEFINE leaves
+out matches any row. Variables written one after another match rows one
+after another, `|` takes either side, PERMUTE takes its variables in any
+order, `^` and `$` match a partition's start and end, and `{- ... -}`
+matches rows it leaves out of the output. A quantifier `*`, `+`, `?`,
+`{n}`, `{n,}`, `{,m}` or `{n,m}` repeats, the most it can unless a `?`
+follows it. Of the matches a pattern has from a row, the one taken is
+the first in that order of preference, left before right and more before
+fewer. SUBSET names a union of variables.
+
+In DEFINE and MEASURES, `A.PRICE` is the PRICE of the row A matched, the
+last such row so far, and a bare `PRICE` that of the current row. PREV
+and NEXT read a row before or after it, by default one, and FIRST and
+LAST the first or last row a variable matched. A set function reads
+every row of a variable, as `AVG(DOWN.PRICE)` and `COUNT(A.*)`.
+CLASSIFIER() gives the variable that matched the row, and MATCH_NUMBER()
+numbers the matches of a partition from 1. In MEASURES, RUNNING reads the
+match as far as the current row and FINAL the whole match. RUNNING is the
+default, and DEFINE takes no FINAL.
+
+ONE ROW PER MATCH, the default, gives a row of each match of the
+partition columns and the measures. ALL ROWS PER MATCH gives each row of
+each match, with its own columns and the measures. A match of no rows
+gives the row it was sought at, its measures of no rows, unless OMIT
+EMPTY MATCHES, and WITH UNMATCHED ROWS gives every row no match covered
+too, its measures null.
+After a match, AFTER MATCH SKIP says where the next is sought, past the
+match's last row by default. Skipping to a variable that matched no row,
+or to the match's first row, raises SQLSTATE 2202K or 2202L.
+
+Below, PRICES has a ticker's price each day D, and each match is a fall of
+one or more days and then a rise.
+
+```sql
+CREATE TABLE PRICES (TICKER CHAR(1), D INTEGER, PRICE INTEGER);
+INSERT INTO PRICES VALUES ('A', 1, 10), ('A', 2, 9), ('A', 3, 8), ('A', 4, 9),
+    ('A', 5, 10), ('A', 6, 11), ('A', 7, 10), ('A', 8, 9), ('A', 9, 12);
+SELECT * FROM PRICES MATCH_RECOGNIZE (PARTITION BY TICKER ORDER BY D
+    MEASURES STRT.D AS S, LAST(DOWN.D) AS BOTTOM, LAST(UP.D) AS E,
+        MATCH_NUMBER() AS N
+    PATTERN (STRT DOWN+ UP+)
+    DEFINE DOWN AS PRICE < PREV(PRICE), UP AS PRICE > PREV(PRICE)) AS M
+    ORDER BY S;
+SELECT D, PRICE, C, N FROM PRICES MATCH_RECOGNIZE (ORDER BY D
+    MEASURES CLASSIFIER() AS C, RUNNING COUNT(*) AS N
+    ALL ROWS PER MATCH PATTERN (STRT DOWN+ UP+)
+    DEFINE DOWN AS PRICE < PREV(PRICE), UP AS PRICE > PREV(PRICE))
+    ORDER BY D;
+```
+
+```
+OK
+OK
+ TICKER |            S |       BOTTOM |            E |                    N
+--------+--------------+--------------+--------------+----------------------
+ A      |            1 |            3 |            6 |                    1
+ A      |            7 |            8 |            9 |                    2
+(2 rows)
+            D |        PRICE | C                                                            |                    N
+--------------+--------------+--------------------------------------------------------------+----------------------
+            1 |           10 | STRT                                                         |                    1
+            2 |            9 | DOWN                                                         |                    2
+            3 |            8 | DOWN                                                         |                    3
+            4 |            9 | UP                                                           |                    4
+            5 |           10 | UP                                                           |                    5
+            6 |           11 | UP                                                           |                    6
+            7 |           10 | STRT                                                         |                    1
+            8 |            9 | DOWN                                                         |                    2
+            9 |           12 | UP                                                           |                    3
+(9 rows)
+```
+
+### Row patterns in a window
+
+A window may hold a row pattern too, of MEASURES, AFTER MATCH SKIP,
+INITIAL or SEEK, PATTERN, SUBSET and DEFINE after its frame. Its frame
+is ROWS BETWEEN CURRENT ROW and a bound, and its pattern has no `^` and
+no `$`. Each row's frame is narrowed to the match starting at the row,
+or with SEEK the first match starting within the frame, and is empty of
+a row with none or that a match skipped past. Window functions over the
+window read that narrowed frame, and `m OVER w` gives the measure `m` of
+it.
+
+```sql
+SELECT D, E OVER W AS E, COUNT(*) OVER W AS N FROM PRICES
+    WINDOW W AS (ORDER BY D MEASURES LAST(UP.D) AS E
+        ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
+        AFTER MATCH SKIP PAST LAST ROW PATTERN (STRT DOWN+ UP+)
+        DEFINE DOWN AS PRICE < PREV(PRICE), UP AS PRICE > PREV(PRICE))
+    ORDER BY D;
+```
+
+```
+            D |            E |                    N
+--------------+--------------+----------------------
+            1 |            6 |                    6
+            2 |         NULL |                    0
+            3 |         NULL |                    0
+            4 |         NULL |                    0
+            5 |         NULL |                    0
+            6 |         NULL |                    0
+            7 |            9 |                    3
+            8 |         NULL |                    0
+            9 |         NULL |                    0
+(9 rows)
+```
+
 ## The WHERE, GROUP BY and HAVING clauses
 
 **WHERE** keeps the rows its condition is true of.

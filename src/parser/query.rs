@@ -505,11 +505,13 @@ impl Parser {
     fn table_primary(&mut self) -> Result<TableReference> {
         if self.at_subquery() {
             // <derived table> [AS] <correlation name> [(<derived column list>)]
+            // [ISO/IEC 9075-2:2023 §7.6] or a <row pattern recognition clause and name>.
             let query = Box::new(self.subquery()?);
-            let correlation =
-                self.correlation()?.ok_or_else(|| self.syntax("[ISO/IEC 9075:1992 §6.3 F] a <derived table> has a correlation name"))?;
+            let Some(correlation) = self.correlation()? else {
+                return self.unnamed_input(DerivedTable { query, correlation: String::new(), columns: None });
+            };
             let columns = self.derived_columns()?;
-            return Ok(TableReference::Derived(DerivedTable { query, correlation, columns }));
+            return self.recognized(TableReference::Derived(DerivedTable { query, correlation, columns }));
         }
         if self.accept_delim(delim::LEFT_PAREN) {
             let inner = self.table_reference()?;
@@ -525,7 +527,7 @@ impl Parser {
         let table = self.table_name()?;
         let correlation = self.correlation()?;
         let columns = if correlation.is_some() { self.derived_columns()? } else { None };
-        Ok(TableReference::Table(NamedTable { table, correlation, columns }))
+        self.recognized(TableReference::Table(NamedTable { table, correlation, columns }))
     }
 
     /// \[\[AS\] `<correlation name>`\], if written.
@@ -533,7 +535,7 @@ impl Parser {
         if self.accept_kw(kw::AS) {
             return self.identifier().map(Some);
         }
-        if self.at_partitioning() || self.at_window_clause() || self.at_result_offset() {
+        if self.at_partitioning() || self.at_window_clause() || self.at_result_offset() || self.at_match_recognize() {
             return Ok(None);
         }
         Ok(match self.peek() {

@@ -397,8 +397,9 @@ fn distributes(plan: &LogicalPlan, distinct: bool) -> bool {
             distributes(input, distinct)
         }
         // Which rows OFFSET passes over is of every row of its input, and
-        // a window function's value of a row of every row of its partition.
-        LogicalPlan::Limit { .. } | LogicalPlan::Window(_) => false,
+        // a window function's value of a row of every row of its partition,
+        // as are a row pattern partition's matches.
+        LogicalPlan::Limit { .. } | LogicalPlan::Window(_) | LogicalPlan::Recognize(_) => false,
         // Its rows are found of each row of its input alone.
         LogicalPlan::Unnest(u) => distributes(&u.input, distinct),
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => one_side(left, right, distinct),
@@ -448,6 +449,7 @@ fn reads_work(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Values { .. }
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
+        | LogicalPlan::Recognize(..)
         | LogicalPlan::Sort { .. }
         | LogicalPlan::Limit { .. } => plan.inputs().any(reads_work),
     }

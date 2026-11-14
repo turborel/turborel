@@ -3,7 +3,9 @@
 //! expression or of its groups: each row given with the value of each
 //! function for it appended.
 
-use super::{AggCall, Expr, SortKey, column_name, render_expr, render_keys};
+use std::sync::Arc;
+
+use super::{AggCall, Cond, Expr, SortKey, WindowMatching, column_name, render_expr, render_keys};
 use crate::value::Value;
 
 /// [ISO/IEC 9075-2:2023 §7.15] The window functions over the rows of
@@ -154,6 +156,11 @@ pub enum WindowKind {
     /// FIRST_VALUE, LAST_VALUE or NTH_VALUE, over its frame [§6.10 GR1c,
     /// GR1d].
     Value(Valued),
+    /// [ISO/IEC 9075-2:2023 §6.10 GR1e] A `<window row pattern measure>`:
+    /// the measure numbered so of its frame's `matching`, evaluated in the
+    /// row's designated row pattern match, null if its skip indicator is
+    /// set.
+    Measure(usize),
 }
 
 /// [ISO/IEC 9075-2:2023 §6.10 GR1b] LEAD or LAG: the extent of the row
@@ -209,7 +216,12 @@ impl WindowKind {
     /// counts.
     pub fn exprs(&self) -> Vec<&Expr> {
         match self {
-            WindowKind::RowNumber | WindowKind::Rank | WindowKind::DenseRank | WindowKind::PercentRank | WindowKind::CumeDist => Vec::new(),
+            WindowKind::RowNumber
+            | WindowKind::Rank
+            | WindowKind::DenseRank
+            | WindowKind::PercentRank
+            | WindowKind::CumeDist
+            | WindowKind::Measure(_) => Vec::new(),
             WindowKind::Aggregate(a) => a.exprs(),
             WindowKind::Ntile(tiles) => vec![tiles],
             WindowKind::Offset(o) => vec![&o.extent, &o.default],
@@ -224,7 +236,12 @@ impl WindowKind {
     pub fn map_exprs(&mut self, f: &mut dyn FnMut(Expr) -> Expr) {
         let mut put = |e: &mut Expr| *e = f(std::mem::replace(e, Expr::Const(Value::Null)));
         match self {
-            WindowKind::RowNumber | WindowKind::Rank | WindowKind::DenseRank | WindowKind::PercentRank | WindowKind::CumeDist => {}
+            WindowKind::RowNumber
+            | WindowKind::Rank
+            | WindowKind::DenseRank
+            | WindowKind::PercentRank
+            | WindowKind::CumeDist
+            | WindowKind::Measure(_) => {}
             WindowKind::Aggregate(a) => *a = a.clone().map_exprs(f),
             WindowKind::Ntile(tiles) => put(tiles),
             WindowKind::Offset(o) => {
@@ -244,7 +261,7 @@ impl WindowKind {
     /// function's.
     pub fn framed(&self) -> bool {
         match self {
-            WindowKind::Aggregate(_) | WindowKind::Value(_) => true,
+            WindowKind::Aggregate(_) | WindowKind::Value(_) | WindowKind::Measure(_) => true,
             WindowKind::RowNumber
             | WindowKind::Rank
             | WindowKind::DenseRank
@@ -268,6 +285,10 @@ pub struct Frame {
     pub end: Bound,
     /// What it leaves out of the rows its bounds take in.
     pub exclusion: Exclusion,
+    /// [ISO/IEC 9075-2:2023 §7.15 GR6] Of a window with a `<row pattern
+    /// common syntax>`, the matches each row's frame is narrowed to, and
+    /// its measures.
+    pub matching: Option<Arc<WindowMatching>>,
 }
 
 /// [ISO/IEC 9075-2:2023 §7.15] `<window frame units>`.
@@ -316,7 +337,7 @@ impl Frame {
     /// an ordering, the rows up to the current row's last peer [§7.15 GR5a].
     pub fn implied(ordered: bool) -> Frame {
         let end = if ordered { Bound::CurrentRow } else { Bound::UnboundedFollowing };
-        Frame { units: Units::Range, start: Bound::UnboundedPreceding, end, exclusion: Exclusion::NoOthers }
+        Frame { units: Units::Range, start: Bound::UnboundedPreceding, end, exclusion: Exclusion::NoOthers, matching: None }
     }
 
     /// Its offsets, of a bound with one.
@@ -374,9 +395,15 @@ impl<P> Window<P> {
     }
 
     /// The expressions of its calls: their arguments, counts and frames'
-    /// offsets.
+    /// offsets, and their frames' row pattern measures' and definitions'
+    /// values'; not their definitions' conditions, which `conds` gives.
     pub fn exprs(&self) -> impl Iterator<Item = &Expr> {
-        self.calls.iter().flat_map(|c| c.exprs().chain(c.frame.offsets()))
+        self.calls.iter().flat_map(|c| c.exprs().chain(c.frame.offsets()).chain(c.frame.matching.iter().flat_map(|m| m.exprs())))
+    }
+
+    /// The conditions of its calls' frames' row pattern definitions.
+    pub fn conds(&self) -> impl Iterator<Item = &Cond> {
+        self.calls.iter().flat_map(|c| c.frame.matching.iter().flat_map(|m| m.conds()))
     }
 
     /// Its calls' expressions, each replaced by `f` of it.
@@ -388,13 +415,18 @@ impl<P> Window<P> {
                     *e = f(std::mem::replace(e, Expr::Const(Value::Null)));
                 }
             }
+            if let Some(m) = &mut call.frame.matching {
+                Arc::make_mut(m).map_exprs(f);
+            }
         }
     }
 
     /// Whether computing it can raise a run-time error: an aggregate's, an
-    /// expression's of a call, or a frame's offset's (`exec/window.rs`).
+    /// expression's of a call, or a frame's offset's (`exec/window.rs`), or
+    /// a row pattern search's.
     pub fn can_raise(&self) -> bool {
-        self.calls.iter().any(|c| matches!(c.kind, WindowKind::Aggregate(_))) || self.exprs().next().is_some()
+        let matched = self.calls.iter().any(|c| c.frame.matching.is_some());
+        matched || self.calls.iter().any(|c| matches!(c.kind, WindowKind::Aggregate(_))) || self.exprs().next().is_some()
     }
 
     /// Its own columns' display names, after its input's: its calls'.
@@ -425,5 +457,37 @@ impl Window<()> {
     pub fn over<Q>(self, input: Q) -> Window<Q> {
         let Window { partition, order, calls, input: () } = self;
         Window { partition, order, calls, input }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logical::{Matching, Skip, Slotted, Variable};
+    use crate::pattern::Pattern;
+
+    /// A window of ROW_NUMBER whose frame seeks `A` of no definition and no
+    /// measures, if `matched`, so no call has an expression.
+    fn numbered(matched: bool) -> Window<()> {
+        let matching = matched.then(|| {
+            let variables = vec![Variable { name: "A".into(), components: vec![0] }, Variable { name: String::new(), components: vec![0] }];
+            let matching = Matching { pattern: Pattern::Variable(0), variables, defines: vec![None], skip: Skip::PastLastRow, seek: false };
+            Arc::new(WindowMatching { matching, measures: Slotted { expr: Vec::new(), values: Vec::new() }, names: Vec::new() })
+        });
+        let frame =
+            Frame { units: Units::Rows, start: Bound::CurrentRow, end: Bound::CurrentRow, exclusion: Exclusion::NoOthers, matching };
+        let call = WindowCall { kind: WindowKind::RowNumber, frame, label: String::new(), nested: Vec::new() };
+        Window { partition: Vec::new(), order: vec![SortKey::ascending(0)], calls: vec![call], input: () }
+    }
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.15 GR6, §6.10 GR1e] a
+    /// window whose frame seeks a row pattern can raise though no call has an
+    /// aggregate or an expression, its search's own exceptions possible; the
+    /// same window without one cannot. MC/DC of `matched ||`: matched true, the
+    /// rest false, gives true; matched false, the rest false, gives false.
+    #[test]
+    fn a_row_pattern_alone_can_raise() {
+        assert!(numbered(true).can_raise());
+        assert!(!numbered(false).can_raise());
     }
 }

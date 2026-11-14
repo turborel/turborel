@@ -190,6 +190,7 @@ pub(super) fn ordered_ids(plan: Plan, st: &Arc<State>, tx: TxId) -> Result<HeldR
             | Plan::Recursive { .. }
             | Plan::Unnest(..)
             | Plan::Window { .. }
+            | Plan::Recognize { .. }
             | Plan::WorkTable { .. }) => {
                 for entry in table_entries(other, st, tx)? {
                     ids.push(entry?.0)?;
@@ -242,6 +243,7 @@ fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
             | Plan::Recursive { .. }
             | Plan::Unnest(..)
             | Plan::Window { .. }
+            | Plan::Recognize { .. }
             | Plan::WorkTable { .. }) => {
                 layers.reverse();
                 return (layers, other);

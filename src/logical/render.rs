@@ -157,6 +157,7 @@ impl LogicalPlan {
                 writeln!(out, "{pad}{left} {}{}", c.join(", "), if u.ordinality { " with ordinality" } else { "" })
             }
             LogicalPlan::Window(w) => writeln!(out, "{pad}{}", w.render(&inner(&w.input))),
+            LogicalPlan::Recognize(r) => writeln!(out, "{pad}{}", r.render(&inner(&r.input))),
         };
         for input in self.inputs() {
             input.write(out, depth.saturating_add(1));
