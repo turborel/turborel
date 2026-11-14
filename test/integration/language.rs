@@ -485,6 +485,7 @@ fn nesting_shapes() -> Vec<(&'static str, NestedSql)> {
 /// Runs `sql` on a thread with `HALF_DEFAULT_STACK`; a stack overflow aborts the test.
 fn rows_on_half_stack(sql: String) -> Result<usize, Code> {
     std::thread::Builder::new()
+        .name("nesting".to_owned())
         .stack_size(HALF_DEFAULT_STACK)
         .spawn(move || rows(&setup().session("APP"), &sql).map(|r| r.len()))
         .expect("the thread starts")
@@ -497,7 +498,10 @@ fn rows_on_half_stack(sql: String) -> Result<usize, Code> {
 /// and the deepest accepted statement of each shape runs in half the default stack.
 ///
 /// Regression test: 100,000 nested
-/// parentheses used to abort the process.
+/// parentheses used to abort the process. Regression test too: the deepest
+/// accepted statements of several shapes overflowed half the default stack
+/// on Windows, whose debug frames are larger, until the recursive functions'
+/// frames were shrunk; on Linux each shape now runs in a quarter of it.
 #[test]
 fn nesting_beyond_the_limit_is_rejected_not_a_crash() {
     for (shape, sql) in nesting_shapes() {

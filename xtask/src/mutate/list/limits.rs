@@ -6,7 +6,9 @@
 //! correlation name before its count; of WITH TIES no peer kept, or every
 //! row a peer, or no ORDER BY taken; of PERCENT a count of the rows after
 //! OFFSET, a floor for a ceiling, a DECFLOAT's ceiling inexact, a null
-//! percentage or one not a number taken.
+//! percentage or one not a number taken; of a path in the order asked for
+//! below FETCH FIRST, the rows it reads unpriced, or OFFSET's left out, or
+//! known through a filter, or a path read whole priced by them.
 
 use super::{Mutation, Package};
 
@@ -36,6 +38,10 @@ const BOUND: &str = "src/binder/limit.rs";
 const TIES_KEPT: &str = "exec::limit::tests::with_ties_keeps_the_peers_of_the_last_row_7_17";
 /// The unit test of a percentage.
 const PERCENT_KEPT: &str = "exec::limit::tests::a_percentage_keeps_its_ceiling_of_the_rows_7_17";
+/// The file of access paths.
+const ACCESS: &str = "src/physical/access.rs";
+/// The test of a path in order priced by the rows it reads.
+const PRICED: &str = "fetch_first::fetch_first_prices_a_path_in_order_by_the_rows_it_reads";
 /// The test of WITH TIES.
 const TIES: &str = "fetch_ties::with_ties_keeps_the_peers_of_the_last_row_7_17";
 /// The test of a percentage.
@@ -44,7 +50,7 @@ const PERCENTAGE: &str = "fetch_ties::a_percentage_keeps_its_ceiling_of_the_rows
 const OPTIONS_REFUSED: &str = "fetch_ties::the_options_refused_7_17";
 
 /// The mutations of OFFSET and FETCH FIRST, in the order they run.
-pub const LIMITS: [Mutation; 18] = [
+pub const LIMITS: [Mutation; 22] = [
     Mutation {
         name: "limit-offset-not-skipped",
         package: Package::Core,
@@ -223,6 +229,46 @@ pub const LIMITS: [Mutation; 18] = [
         original: "    if !t.is_numeric() {",
         replacement: "    if !t.is_numeric() && false {",
         integration: &[OPTIONS_REFUSED],
+        unit: &[],
+    },
+    Mutation {
+        name: "limit-first-unpriced",
+        package: Package::Core,
+        breaks: "a path in order below FETCH FIRST is priced by all its rows, so the table is sorted",
+        file: ACCESS,
+        original: "        let asked = self.first.filter(|_| !want.is_empty());",
+        replacement: "        let asked = self.first.filter(|_| false);",
+        integration: &[PRICED],
+        unit: &[],
+    },
+    Mutation {
+        name: "limit-first-offset-left-out",
+        package: Package::Core,
+        breaks: "the rows OFFSET passes over are not counted among those read",
+        file: "src/logical/limit.rs",
+        original: "        passed?.checked_add(self.most()?)",
+        replacement: "        passed.map(|_| 0_usize)?.checked_add(self.most()?)",
+        integration: &[PRICED],
+        unit: &[],
+    },
+    Mutation {
+        name: "limit-first-through-a-filter",
+        package: Package::Core,
+        breaks: "the first rows read are taken as known through a filter",
+        file: "src/physical.rs",
+        original: "        if self.first.is_some() && !matches!(",
+        replacement: "        if false && self.first.is_some() && !matches!(",
+        integration: &[PRICED],
+        unit: &[],
+    },
+    Mutation {
+        name: "limit-first-read-whole",
+        package: Package::Core,
+        breaks: "a scan read whole to be sorted is priced by the rows FETCH FIRST asks",
+        file: ACCESS,
+        original: "        let total = if scan.ordered { scan.total * self.read_share(want, scan.est) } else { scan.total };",
+        replacement: "        let total = scan.total * self.read_share(want, scan.est);",
+        integration: &[PRICED],
         unit: &[],
     },
 ];

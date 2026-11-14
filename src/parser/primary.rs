@@ -22,13 +22,30 @@ impl Parser {
     /// A `<primary>` in parentheses: a `<scalar subquery>`, a `<row value
     /// constructor>` of two or more elements [ISO/IEC 9075-2:2023 §7.1],
     /// or a `<value expression>` nested.
+    ///
+    /// \[DESIGN\] What follows the first value is read by
+    /// `parenthesized_rest`, and a subquery by `scalar_subquery`, so the
+    /// frame a nesting of parentheses recurs through holds neither's
+    /// locals (RULES.md R-CF-6).
     fn parenthesized_primary(&mut self) -> Result<ValueExpression> {
         if self.at_subquery() {
-            return Ok(ValueExpression::Subquery(Box::new(self.subquery()?)));
+            return self.scalar_subquery();
         }
         let at = self.here();
         self.advance();
         let e = self.value_expression()?;
+        self.parenthesized_rest(e, at)
+    }
+
+    /// [X3.135-1986 §5.9] A `<scalar subquery>` as a `<primary>`.
+    fn scalar_subquery(&mut self) -> Result<ValueExpression> {
+        Ok(ValueExpression::Subquery(Box::new(self.subquery()?)))
+    }
+
+    /// The rest of a `<primary>` in parentheses, begun at `at`, whose first
+    /// value is `e`: the other elements of a `<row value constructor>`, or
+    /// ")".
+    fn parenthesized_rest(&mut self, e: ValueExpression, at: usize) -> Result<ValueExpression> {
         if self.is_delim(delim::COMMA) {
             return self.row_constructor(e, at);
         }
@@ -42,21 +59,72 @@ impl Parser {
     ///   | `<case expression>` | `<cast specification>` | `<scalar
     ///   subquery>` | `<numeric value function>` | `<string value function>`
     ///   | `<datetime value function>` [ISO/IEC 9075:1992 §6.11]
+    ///
+    /// \[DESIGN\] Each arm here is one call, its result its own; a primary
+    /// read and then wrapped is read by `wrapped_primary`. So the frame a
+    /// nesting of expressions recurs through holds no arm's locals
+    /// (RULES.md R-CF-6).
     pub(super) fn primary(&mut self) -> Result<ValueExpression> {
         match self.peek() {
             Tok::Delimiter(delim::LEFT_PAREN) => self.parenthesized_primary(),
             Tok::Identifier(_) => self.identifier_primary(),
+            Tok::KeyWord(kw::CAST) => self.cast_specification(),
+            Tok::KeyWord(kw::COLLATION) => self.collation_for(),
+            Tok::KeyWord(kw::EXTRACT) => self.extract_expression(),
+            Tok::KeyWord(kw::VALUE) => self.value_reference(),
+            // [ISO/IEC 9075-2:2023 §6.27] NEXT, FIRST and LAST before "(".
+            Tok::KeyWord(kw::NEXT) => self.next_primary(),
+            Tok::KeyWord(kw::FIRST | kw::LAST) => self.first_or_last_primary(),
+            Tok::KeyWord(
+                kw::COUNT
+                | kw::AVG
+                | kw::MAX
+                | kw::MIN
+                | kw::SUM
+                | kw::ANY
+                | kw::SOME
+                | kw::CASE
+                | kw::NULLIF
+                | kw::COALESCE
+                | kw::CURRENT_DATE
+                | kw::CURRENT_TIME
+                | kw::CURRENT_TIMESTAMP
+                | kw::DATE
+                | kw::TIME
+                | kw::TIMESTAMP
+                | kw::INTERVAL
+                | kw::TRUE
+                | kw::FALSE
+                | kw::UNKNOWN
+                | kw::USER
+                | kw::CURRENT_USER
+                | kw::SESSION_USER
+                | kw::SYSTEM_USER
+                | kw::MODULE,
+            )
+            | Tok::Delimiter(_)
+            | Tok::ExactNumeric(_)
+            | Tok::ApproximateNumeric(_)
+            | Tok::CharacterString(_)
+            | Tok::BinaryString(_)
+            | Tok::Introducer(_)
+            | Tok::End => self.wrapped_primary(),
+            Tok::KeyWord(_) => self.string_function(),
+        }
+    }
+
+    /// A `<primary>` read, then wrapped as one: a set function, a CASE, a
+    /// datetime value function, a value specification or a column.
+    fn wrapped_primary(&mut self) -> Result<ValueExpression> {
+        match self.peek() {
             Tok::KeyWord(kw::COUNT | kw::AVG | kw::MAX | kw::MIN | kw::SUM | kw::ANY | kw::SOME) => {
                 Ok(ValueExpression::SetFunction(self.set_function_specification()?))
             }
             Tok::KeyWord(kw::CASE | kw::NULLIF | kw::COALESCE) => Ok(ValueExpression::Case(Box::new(self.case_expression()?))),
-            Tok::KeyWord(kw::CAST) => self.cast_specification(),
-            Tok::KeyWord(kw::COLLATION) => self.collation_for(),
             Tok::KeyWord(kw::CURRENT_DATE | kw::CURRENT_TIME | kw::CURRENT_TIMESTAMP) => {
                 let f = self.datetime_value_function()?.ok_or_else(|| self.syntax("expected a <datetime value function>"))?;
                 Ok(ValueExpression::Datetime(f))
             }
-            Tok::KeyWord(kw::EXTRACT) => self.extract_expression(),
             Tok::KeyWord(kw::DATE | kw::TIME | kw::TIMESTAMP | kw::INTERVAL)
             | Tok::KeyWord(kw::TRUE | kw::FALSE | kw::UNKNOWN)
             | Tok::KeyWord(kw::USER)
@@ -83,11 +151,8 @@ impl Parser {
             // [ISO/IEC 9075:1992 §5.4] MODULE.T.C: a column of a declared
             // local temporary table.
             Tok::KeyWord(kw::MODULE) => Ok(ValueExpression::Column(self.column_specification()?)),
-            Tok::KeyWord(kw::VALUE) => self.value_reference(),
-            // [ISO/IEC 9075-2:2023 §6.27] NEXT, FIRST and LAST before "(".
-            Tok::KeyWord(kw::NEXT) => self.next_primary(),
-            Tok::KeyWord(kw::FIRST | kw::LAST) => self.first_or_last_primary(),
-            Tok::KeyWord(_) => self.string_function(),
+            // Of the others, as `primary` reads them.
+            Tok::Delimiter(delim::LEFT_PAREN) | Tok::Identifier(_) | Tok::KeyWord(_) => self.primary(),
             Tok::Delimiter(_) | Tok::End => Err(self.syntax("expected a <value expression>")),
         }
     }

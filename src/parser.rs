@@ -30,6 +30,7 @@ mod data_statements;
 mod data_type;
 mod datetime;
 mod ddl;
+mod depth;
 mod diagnostics;
 mod distribution;
 mod domains;
@@ -435,28 +436,6 @@ impl Parser {
     fn column_name(&mut self) -> Result<ColumnName> {
         let at = self.here();
         Ok(ColumnName { name: self.identifier()?, at })
-    }
-
-    /// Parses one level deeper in the syntax tree. The depth is restored
-    /// afterwards, also on failure, because `boolean_primary` backtracks.
-    fn nested<T>(&mut self, parse: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
-        let saved = self.depth;
-        let result = self.deepen().and_then(|()| parse(self));
-        self.depth = saved;
-        result
-    }
-
-    /// Counts one more level of the tree being built; fails past `MAX_NESTING_DEPTH`.
-    fn deepen(&mut self) -> Result<()> {
-        if self.depth >= MAX_NESTING_DEPTH {
-            return Err(SqlError::at(
-                Code::Unsupported,
-                self.here(),
-                format!("[DESIGN] the statement nests deeper than this implementation's limit of {MAX_NESTING_DEPTH} levels"),
-            ));
-        }
-        self.depth = self.depth.saturating_add(1);
-        Ok(())
     }
 
     /// [X3.135-1986 §5.6] `<parameter specification>` ::= `<parameter name>` \[`<indicator parameter>`\]

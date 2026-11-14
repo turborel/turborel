@@ -158,8 +158,8 @@ impl PhysicalPlanner<'_> {
             return path;
         }
         let (seq_cost, scanned) = scan_priced(&**storage, read.needed, &self.priced(conds));
-        let mut best =
-            in_order(&**storage, want, Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread });
+        let scan = Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread };
+        let mut best = self.scan_path(&**storage, want, scan);
 
         // An index being built is not read until it is (`Database::create_index`).
         for ix in self.db.catalog.indexes(read.table).into_iter().filter(|ix| !self.db.building.contains(&ix.name)) {
@@ -200,7 +200,7 @@ impl PhysicalPlanner<'_> {
                 let entry_cost = ENTRY_SCAN_ROWS * storage.scan_cost(read.needed) / all.max(1.0_f64);
                 let saved = |share: f64| est * share * (storage.fetch_cost() - entry_cost).max(0.0_f64);
                 let path_cost = probed_cost - visible.map_or(0.0_f64, saved);
-                let total = path_cost + sort_penalty(est, order.is_some());
+                let total = path_cost * order.map_or(1.0_f64, |_| self.read_share(want, est)) + sort_penalty(est, order.is_some());
                 if total < best.total {
                     let chosen = Some(Probed::of(ix, c, visible.is_some()));
                     let ordered = (order.is_some(), order.unwrap_or(false));
@@ -213,6 +213,24 @@ impl PhysicalPlanner<'_> {
 }
 
 impl PhysicalPlanner<'_> {
+    /// \[DESIGN\] The share of a path's `est` rows read, if it gives the
+    /// order `want` asks: below a FETCH FIRST only as many as it reads
+    /// (`PhysicalPlanner::first`), so the path costs that share of its
+    /// rows. A path in no order is read whole to be sorted.
+    fn read_share(&self, want: &[SortKey], est: f64) -> f64 {
+        let asked = self.first.filter(|_| !want.is_empty());
+        asked.map_or(1.0_f64, |n| (cost_of(n) / est.max(1.0_f64)).min(1.0_f64))
+    }
+
+    /// `scan`, a sequential scan of `storage`, read in the order `want`
+    /// asks if its storage keeps it (`in_order`), and then priced by the
+    /// share of it read.
+    fn scan_path(&self, storage: &dyn TableStorage, want: &[SortKey], scan: Path) -> Path {
+        let scan = in_order(storage, want, scan);
+        let total = if scan.ordered { scan.total * self.read_share(want, scan.est) } else { scan.total };
+        Path { total, ..scan }
+    }
+
     /// `conds`, each `?` filled with its value, if the planner is given
     /// an execution's: what a scan's share is priced by, as a plan made
     /// with the values would price it.

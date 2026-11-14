@@ -49,11 +49,34 @@ fn column(row: &Row, i: usize) -> Result<&Value> {
 /// one row [ISO/IEC 9075:1992 §7.11 GR1]; a column the row does not have
 /// (SQLCODE -910).
 pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
+    // [DESIGN] The rest are evaluated by `eval_rest`, so the frame a
+    // nesting of operators recurs through holds none of their locals
+    // (RULES.md R-CF-6).
     match e {
         Expr::Column(i) => column(row, *i).cloned(),
         Expr::Const(v) => Ok(v.clone()),
-        Expr::Neg(x) => Ok(eval(x, row, subqueries)?.negate()),
         Expr::Arith(a, op, b) => arith(*op, &eval(a, row, subqueries)?, &eval(b, row, subqueries)?),
+        Expr::Neg(_)
+        | Expr::Call(..)
+        | Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Case(..)
+        | Expr::Cast(..)
+        | Expr::Domain(..)
+        | Expr::SortKey(..)
+        | Expr::Truth(_)
+        | Expr::NextValue(_)
+        | Expr::Subquery(..) => eval_rest(e, row, subqueries),
+    }
+}
+
+/// `e`, an expression other than a column, a constant or an operation of
+/// two operands, evaluated for `row`.
+fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
+    match e {
+        // As `eval` evaluates them.
+        Expr::Column(_) | Expr::Const(_) | Expr::Arith(..) => eval(e, row, subqueries),
+        Expr::Neg(x) => Ok(eval(x, row, subqueries)?.negate()),
         Expr::Call(f, args) => {
             let values = args.iter().map(|a| eval(a, row, subqueries)).collect::<Result<Vec<_>>>()?;
             f.0.call(&values)

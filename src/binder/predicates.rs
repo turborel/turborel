@@ -378,23 +378,39 @@ impl Binder<'_> {
 
 impl Binder<'_> {
     /// [X3.135-1986 §5.18] `<search condition>`
+    ///
+    /// \[DESIGN\] Each arm here is one call, so the frame a chain of AND
+    /// or OR recurs through holds no arm's locals (RULES.md R-CF-6).
     pub(super) fn search_condition(&self, c: &SearchCondition, scope: Scope<'_>) -> Result<Cond> {
-        Ok(match c {
-            SearchCondition::Or(a, b) => Cond::Or(Box::new(self.search_condition(a, scope)?), Box::new(self.search_condition(b, scope)?)),
-            SearchCondition::And(a, b) => Cond::And(Box::new(self.search_condition(a, scope)?), Box::new(self.search_condition(b, scope)?)),
-            SearchCondition::Not(a) => Cond::Not(Box::new(self.search_condition(a, scope)?)),
-            // [ISO/IEC 9075:1992 §8.12] IS [NOT] TRUE, FALSE or UNKNOWN.
-            SearchCondition::Is(a, value, not) => {
-                let truth = match value {
-                    TruthValue::True => Truth::True,
-                    TruthValue::False => Truth::False,
-                    TruthValue::Unknown => Truth::Unknown,
-                };
-                Cond::Is(Box::new(self.search_condition(a, scope)?), truth, *not)
-            }
-            SearchCondition::Predicate(p, at) => self.predicate(p, scope).or_at(*at)?,
-            SearchCondition::Predicand(v, at) => self.predicand(v, scope).or_at(*at)?,
-        })
+        match c {
+            SearchCondition::Or(a, b) => self.connected(a, b, scope).map(|(x, y)| Cond::Or(x, y)),
+            SearchCondition::And(a, b) => self.connected(a, b, scope).map(|(x, y)| Cond::And(x, y)),
+            SearchCondition::Not(a) => self.negated(a, scope),
+            SearchCondition::Is(a, value, not) => self.tested(a, *value, *not, scope),
+            SearchCondition::Predicate(p, at) => self.predicate(p, scope).or_at(*at),
+            SearchCondition::Predicand(v, at) => self.predicand(v, scope).or_at(*at),
+        }
+    }
+
+    /// The two operands of AND or OR, bound.
+    fn connected(&self, a: &SearchCondition, b: &SearchCondition, scope: Scope<'_>) -> Result<(Box<Cond>, Box<Cond>)> {
+        let a = Box::new(self.search_condition(a, scope)?);
+        Ok((a, Box::new(self.search_condition(b, scope)?)))
+    }
+
+    /// NOT `a`.
+    fn negated(&self, a: &SearchCondition, scope: Scope<'_>) -> Result<Cond> {
+        Ok(Cond::Not(Box::new(self.search_condition(a, scope)?)))
+    }
+
+    /// [ISO/IEC 9075:1992 §8.12] `a` IS \[NOT\] TRUE, FALSE or UNKNOWN.
+    fn tested(&self, a: &SearchCondition, value: TruthValue, not: bool, scope: Scope<'_>) -> Result<Cond> {
+        let truth = match value {
+            TruthValue::True => Truth::True,
+            TruthValue::False => Truth::False,
+            TruthValue::Unknown => Truth::Unknown,
+        };
+        Ok(Cond::Is(Box::new(self.search_condition(a, scope)?), truth, not))
     }
 
     /// [ISO/IEC 9075-2:2023 §6.46 SR3] A `<boolean predicand>` as a

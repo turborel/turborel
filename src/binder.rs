@@ -28,6 +28,7 @@ use crate::value::collation::CollationRef;
 use crate::value::datetime::Clocked;
 
 mod arguments;
+mod arithmetic;
 mod case;
 mod collation;
 mod composite;

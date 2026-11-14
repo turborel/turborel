@@ -140,12 +140,15 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
     Ok(Box::new(checked(joined(plan, db, tx)?, stop)))
 }
 
-/// `batches`' work: the join's batches.
+/// `batches`' work: the join's batches, of a function for each kind of
+/// join, chosen by reference and handed the plan at one call, so this
+/// frame, which each level of a chain of joins adds to the stack, holds no
+/// copy of a plan for each (RULES.md R-CF-6).
 fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
-    match plan {
-        Plan::Product { left, right } => nested::multiplied((*left, *right), db, tx),
-        Plan::HashJoin { left, right, keys, .. } => probe::probed((*left, *right, keys), Kind::Inner, db, tx),
-        outer @ Plan::OuterJoin { .. } => outer_batches(outer, db, tx),
+    let made: fn(Plan, &Arc<State>, TxId) -> Result<Batches> = match &plan {
+        Plan::Product { .. } => product_batches,
+        Plan::HashJoin { .. } => hash_batches,
+        Plan::OuterJoin { .. } => outer_batches,
         Plan::SeqScan { .. }
         | Plan::IndexScan { .. }
         | Plan::Filter { .. }
@@ -163,8 +166,38 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => Err(crate::exec::broken("a join of streams is not one")),
-    }
+        | Plan::WorkTable { .. } => no_join,
+    };
+    made(plan, db, tx)
+}
+
+/// Of a plan that is no join of streams: none.
+///
+/// # Errors
+///
+/// SQLCODE -910, always.
+fn no_join(_plan: Plan, _db: &Arc<State>, _tx: TxId) -> Result<Batches> {
+    Err(crate::exec::broken("a join of streams is not one"))
+}
+
+/// The batches of `plan`, a product of streams.
+///
+/// # Errors
+///
+/// As `batches`.
+fn product_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+    let Plan::Product { left, right } = plan else { return no_join(plan, db, tx) };
+    nested::multiplied((*left, *right), db, tx)
+}
+
+/// The batches of `plan`, an inner hash join of streams.
+///
+/// # Errors
+///
+/// As `batches`.
+fn hash_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+    let Plan::HashJoin { left, right, keys, .. } = plan else { return no_join(plan, db, tx) };
+    probe::probed((*left, *right, keys), Kind::Inner, db, tx)
 }
 
 /// The batches of `plan`, an outer join of streams: a LEFT one probing, if

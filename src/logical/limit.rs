@@ -55,6 +55,18 @@ impl Limit {
         usize::try_from(d.units).ok()
     }
 
+    /// The most of its input's first rows it reads, if its counts are
+    /// constants: OFFSET's and FETCH FIRST's, of ONLY. Of no FETCH FIRST,
+    /// its input is read to its end.
+    pub fn read_rows(&self) -> Option<usize> {
+        let passed = match &self.offset {
+            None => Some(0),
+            Some(Expr::Const(Value::Exact(d))) => (d.scale == 0).then(|| usize::try_from(d.units).ok()).flatten(),
+            Some(_) => None,
+        };
+        passed?.checked_add(self.most()?)
+    }
+
     /// It as EXPLAIN shows it: "Limit", then "offset" and "fetch" with
     /// each count written, "percent" after a percentage and "with ties"
     /// after a count of WITH TIES.

@@ -463,44 +463,42 @@ impl LogicalPlan {
     }
 
     /// Rebuild this node with each input replaced by `f(input)`.
+    ///
+    /// \[DESIGN\] Each input is replaced where it is, the node never taken
+    /// apart, so the frame a walk of the plan recurs through holds a
+    /// reference, not every variant's fields: a statement nested to
+    /// `MAX_NESTING_DEPTH` is planned within half the default stack
+    /// (RULES.md R-CF-6).
     #[must_use]
-    pub fn map_inputs(self, mut f: impl FnMut(LogicalPlan) -> LogicalPlan) -> LogicalPlan {
-        let mut g = |b: Box<LogicalPlan>| Box::new(f(*b));
+    pub fn map_inputs(mut self, mut f: impl FnMut(LogicalPlan) -> LogicalPlan) -> LogicalPlan {
+        self.for_each_input_mut(&mut |input| {
+            // An empty VALUES holds the place for as long as `f` runs; it
+            // allocates nothing.
+            let taken = std::mem::replace(input, LogicalPlan::Values { rows: Vec::new(), types: Vec::new() });
+            *input = f(taken);
+        });
+        self
+    }
+
+    /// Calls `f` with each of its inputs, in order, each to be changed in
+    /// place.
+    pub fn for_each_input_mut(&mut self, f: &mut dyn FnMut(&mut LogicalPlan)) {
         match self {
-            LogicalPlan::Scan { .. } | LogicalPlan::System { .. } | LogicalPlan::Values { .. } | LogicalPlan::WorkTable { .. } => self,
-            LogicalPlan::Recursive { member, fixpoint, names } => LogicalPlan::Recursive { member, fixpoint: fixpoint.map(f), names },
-            LogicalPlan::Filter { cond, input } => LogicalPlan::Filter { cond, input: g(input) },
-            LogicalPlan::Product { left, right } => {
-                let left = g(left);
-                LogicalPlan::Product { left, right: g(right) }
+            LogicalPlan::Scan { .. } | LogicalPlan::System { .. } | LogicalPlan::Values { .. } | LogicalPlan::WorkTable { .. } => {}
+            LogicalPlan::Recursive { fixpoint, .. } => fixpoint.for_each_mut(f),
+            LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
+                f(left);
+                f(right);
             }
-            LogicalPlan::OuterJoin { kind, cond, left, right } => {
-                let left = g(left);
-                LogicalPlan::OuterJoin { kind, cond, left, right: g(right) }
-            }
-            LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
-                LogicalPlan::Aggregate { groups, collations, aggs, seeds, input: g(input) }
-            }
-            LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs, input: g(input) },
-            LogicalPlan::Distinct { input } => LogicalPlan::Distinct { input: g(input) },
-            LogicalPlan::SetOp { op, all, compared, left, right } => {
-                let left = g(left);
-                LogicalPlan::SetOp { op, all, compared, left, right: g(right) }
-            }
-            LogicalPlan::Sort { keys, input } => LogicalPlan::Sort { keys, input: g(input) },
-            LogicalPlan::Limit { limit, input } => LogicalPlan::Limit { limit, input: g(input) },
-            LogicalPlan::Unnest(u) => {
-                let (u, input) = u.split();
-                LogicalPlan::Unnest(Box::new(u.over(f(input))))
-            }
-            LogicalPlan::Window(w) => {
-                let (w, input) = w.split();
-                LogicalPlan::Window(Box::new(w.over(f(input))))
-            }
-            LogicalPlan::Recognize(r) => {
-                let (r, input) = r.split();
-                LogicalPlan::Recognize(Box::new(r.over(f(input))))
-            }
+            LogicalPlan::Filter { input, .. }
+            | LogicalPlan::Aggregate { input, .. }
+            | LogicalPlan::Project { input, .. }
+            | LogicalPlan::Distinct { input }
+            | LogicalPlan::Sort { input, .. }
+            | LogicalPlan::Limit { input, .. } => f(input),
+            LogicalPlan::Unnest(u) => f(&mut u.input),
+            LogicalPlan::Window(w) => f(&mut w.input),
+            LogicalPlan::Recognize(r) => f(&mut r.input),
         }
     }
 }

@@ -82,40 +82,46 @@ fn failed(e: SqlError) -> RowIter {
     Box::new(std::iter::once(Err(e)))
 }
 
+/// A function giving the rows of a plan of one kind, read as a
+/// transaction sees them.
+type Opened = fn(Plan, &Arc<State>, TxId) -> RowIter;
+
 /// Rows are read as transaction `tx` sees them. A failure is the iterator's
 /// next item, so it reaches the caller as an error, not a panic.
 pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    // Matched by reference, the plan handed whole to each arm's function,
-    // so no arm adds a plan of its own to the frame every level of a plan
-    // adds to the stack (RULES.md R-CF-6).
-    match &plan {
-        Plan::SeqScan { .. } => scanned_plan(plan, db, tx),
-        Plan::IndexScan { .. } => indexed(plan, db, tx),
-        Plan::Filter { .. } => filtered(plan, db, tx),
-        Plan::Product { .. } | Plan::HashJoin { .. } => joined_plan(plan, db, tx),
-        Plan::OuterJoin { .. } => join::outer(plan, db, tx),
-        Plan::IndexJoin { .. } => join::indexed(plan, db, tx),
+    // Matched by reference, the function chosen then handed the plan
+    // whole at one call, so no arm adds a plan of its own, nor a copy of
+    // one for its call, to the frame every level of a plan adds to the
+    // stack (RULES.md R-CF-6).
+    let run: Opened = match &plan {
+        Plan::SeqScan { .. } => scanned_plan,
+        Plan::IndexScan { .. } => indexed,
+        Plan::Filter { .. } => filtered,
+        Plan::Product { .. } | Plan::HashJoin { .. } => joined_plan,
+        Plan::OuterJoin { .. } => join::outer,
+        Plan::IndexJoin { .. } => join::indexed,
         // [X3.135-1986 §5.22, §5.8]. Grouping must see every row, so it runs when the cursor opens.
-        Plan::Aggregate { .. } => grouped(plan, db, tx),
+        Plan::Aggregate { .. } => grouped,
         // [X3.135-1986 §5.25 GR2] apply each <value expression> to each row.
-        Plan::Project { .. } => projected(plan, db, tx),
-        Plan::Append { .. } => appended(plan, db, tx),
-        Plan::SetOp { .. } => set::operation(plan, db, tx),
-        Plan::Values { .. } => set::values(plan, db, tx),
-        Plan::System { .. } => system_plan(plan, db),
-        Plan::Sort { .. } => sorted_plan(plan, db, tx),
+        Plan::Project { .. } => projected,
+        Plan::Append { .. } => appended,
+        Plan::SetOp { .. } => set::operation,
+        Plan::Values { .. } => set::values,
+        Plan::System { .. } => system_plan,
+        Plan::Sort { .. } => sorted_plan,
         // [ISO/IEC 9075-2:2023 §7.17 GR6, GR7] its counts evaluated as it opens.
-        Plan::Limit { .. } => limit::limited(plan, db, tx),
-        Plan::Distinct { .. } => distinct_rows(plan, db, tx),
+        Plan::Limit { .. } => limit::limited,
+        Plan::Distinct { .. } => distinct_rows,
         // [ISO/IEC 9075-2:2023 §7.17 GR2c ii] its fixpoint is found as the cursor opens.
-        Plan::Recursive { .. } => recursive::recursive(plan, db, tx),
-        Plan::WorkTable { .. } => recursive::work_table(plan, db, tx),
+        Plan::Recursive { .. } => recursive::recursive,
+        Plan::WorkTable { .. } => recursive::work_table,
         // [ISO/IEC 9075-2:2023 §7.6 SR8] each row of its input with its collections' elements.
-        Plan::Unnest(..) => unnest::unnested(plan, db, tx),
+        Plan::Unnest(..) => unnest::unnested,
         // [ISO/IEC 9075-2:2023 §7.15] each row of its input with its window functions' values.
-        Plan::Window { .. } => window::windowed(plan, db, tx),
-        Plan::Recognize { .. } => pattern::recognized(plan, db, tx),
-    }
+        Plan::Window { .. } => window::windowed,
+        Plan::Recognize { .. } => pattern::recognized,
+    };
+    run(plan, db, tx)
 }
 
 /// The rows of the scan `plan`.
@@ -200,7 +206,7 @@ fn appended(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// [ISO/IEC 9075:1992 §21.1] a system table's rows, made as it is read.
 #[inline(never)]
-fn system_plan(plan: Plan, db: &Arc<State>) -> RowIter {
+fn system_plan(plan: Plan, db: &Arc<State>, _tx: TxId) -> RowIter {
     let Plan::System { read } = plan else { return failed(broken("a system table's read is not one")) };
     system_rows(&read, db)
 }
@@ -551,9 +557,6 @@ mod tests {
         assert_eq!(code(execute(one_row(row), &st, NO_TRANSACTION)), None, "the row source itself succeeds");
     }
 
-    /// An executor of one kind of plan.
-    type Executor = fn(Plan, &Arc<State>, TxId) -> RowIter;
-
     /// Verifies: [DESIGN] each executor of one kind of plan, given a plan
     /// of another, yields SQLCODE -910 rather than panicking (RULES.md
     /// R-ERR-1); and the batch reader takes it for none of its own.
@@ -561,10 +564,8 @@ mod tests {
     fn executors_refuse_a_plan_of_another_kind() {
         let st = Arc::new(state());
         let other = || one_row(vec![Value::Null]);
-        let executors: [Executor; 10] =
-            [scanned_plan, appended, sorted_plan, indexed, filtered, grouped, distinct_rows, projected, set::operation, |plan, db, _| {
-                system_plan(plan, db)
-            }];
+        let executors: [Opened; 10] =
+            [scanned_plan, appended, sorted_plan, indexed, filtered, grouped, distinct_rows, projected, set::operation, system_plan];
         for run in executors {
             assert_eq!(code(run(other(), &st, NO_TRANSACTION)), Some(Code::Api));
         }

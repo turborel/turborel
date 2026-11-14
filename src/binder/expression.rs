@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
+use super::arithmetic::distinct_operand;
 use super::composite::{grouping_operand, ordering_operand};
-use super::interval::assumed;
 use super::set_functions::column_references;
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
@@ -20,36 +20,9 @@ use crate::functions::{
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
-use crate::value::Spelled;
 use crate::value::collation::CollationRef;
 use crate::value::types::composite::row_ordered;
-use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, SortOrder, Value};
-
-/// [X3.135-1986 §5.9 SR4] The type of an operation on two exact numbers. Its
-/// precision is implementor-defined: `MAX_EXACT_PRECISION`. Its scale is
-/// max(s1, s2) for + and - \[SR4b\], s1 + s2 for * \[SR4c\], and for / at least
-/// max(s1, s2): a quotient keeps as many more fractional digits as fit, so
-/// as to lose no leading digit \[GR6b\], the implementor-defined choice of
-/// \[SR4d\] (`Decimal::checked_div`).
-///
-/// A scale above the precision is not a type [X3.135-1986 §5.5 SR4], so a
-/// product whose scale would exceed `MAX_EXACT_PRECISION` is valid SQL-86 that
-/// this implementation does not process: SQLCODE -900. Capping the scale
-/// instead made every row fail at run time.
-fn exact_result_type(op: ArithOp, s1: u32, s2: u32) -> Result<DataType> {
-    let scale = match op {
-        ArithOp::Mul => s1.checked_add(s2).filter(|s| *s <= MAX_EXACT_PRECISION).ok_or_else(|| {
-            SqlError::new(
-                Code::Unsupported,
-                format!(
-                    "[X3.135-1986 §5.9 SR4c, §5.5 SR4] a product of scales {s1} and {s2} needs a scale above this implementation's maximum precision of {MAX_EXACT_PRECISION}"
-                ),
-            )
-        })?,
-        ArithOp::Add | ArithOp::Sub | ArithOp::Div => s1.max(s2),
-    };
-    Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale, spelled: Spelled::Numeric })
-}
+use crate::value::{DataType, SortOrder, Value};
 
 /// [ISO/IEC 9075:1992 §17.6 GR3] `e`, if it is a `<dynamic parameter
 /// specification>`, alone or in any number of parentheses: its index, and
@@ -106,24 +79,6 @@ impl Binder<'_> {
         }
     }
 
-    /// [ISO/IEC 9075:1992 §17.6 GR5f-h] The two operands of `op` bound: a
-    /// `<dynamic parameter specification>` among them taking the type
-    /// `interval::assumed` gives. Both of them one takes none \[GR4c\].
-    fn operands(&self, (a, b): (&ValueExpression, &ValueExpression), op: ArithOp, scope: Scope<'_>) -> Result<[(Expr, DataType); 2]> {
-        match (dynamic_of(a), dynamic_of(b)) {
-            (Some(_), None) => {
-                let y = self.value_expression(b, scope)?;
-                Ok([self.typed(a, ParameterType::Of(assumed(op, y.1.clone(), true)), scope)?, y])
-            }
-            (None, Some(_)) => {
-                let x = self.value_expression(a, scope)?;
-                let y = self.typed(b, ParameterType::Of(assumed(op, x.1.clone(), false)), scope)?;
-                Ok([x, y])
-            }
-            (Some(_), Some(_)) | (None, None) => self.pair((a, b), scope),
-        }
-    }
-
     /// [ISO/IEC 9075-2:2023 §9.15] The set function `func` of `arg`, bound
     /// from `written`, as its argument's collation has it: MAX and MIN
     /// order by it, and DISTINCT compares by it; and that collation, if it
@@ -167,18 +122,50 @@ impl Binder<'_> {
     }
 
     /// [X3.135-1986 §5.9] `<value expression>`: bind and type-check.
+    ///
+    /// \[DESIGN\] Each arm here is one call, its result its own; those
+    /// that do more are bound by `decorated`. So the frame a nesting of
+    /// expressions recurs through holds no arm's locals (RULES.md R-CF-6).
     pub(super) fn value_expression(&self, v: &ValueExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         match v {
-            ValueExpression::Value(vs) => {
-                let (val, t) = self.value_specification(vs)?;
-                Ok((Expr::Const(val), t))
-            }
             ValueExpression::Column(cs) => self.column_expr(cs, scope),
             ValueExpression::Nested(inner) => self.value_expression(inner, scope),
             ValueExpression::CollationFor(inner) => self.collation_for(inner, scope),
             ValueExpression::Collated(inner, _) => self.collated_value(inner, scope),
             ValueExpression::Monadic(sign, inner) => self.monadic(*sign, inner, scope),
             ValueExpression::Dyadic(left, op, right) => self.dyadic(left, *op, right, scope),
+            ValueExpression::Subquery(s) => self.scalar_subquery(s, scope),
+            ValueExpression::Datetime(f) => self.datetime_function(*f),
+            ValueExpression::Value(_)
+            | ValueExpression::SetFunction(_)
+            | ValueExpression::Call { .. }
+            | ValueExpression::Function { .. }
+            | ValueExpression::Window(_)
+            | ValueExpression::NestedWindow(_)
+            | ValueExpression::Case(_)
+            | ValueExpression::Cast { .. }
+            | ValueExpression::Boolean(_)
+            | ValueExpression::NextValue { .. }
+            | ValueExpression::Extract { .. }
+            | ValueExpression::Difference { .. }
+            | ValueExpression::AtZone { .. }
+            | ValueExpression::Composite(..)
+            | ValueExpression::Navigation(_)
+            | ValueExpression::Classifier { .. }
+            | ValueExpression::MatchNumber { .. } => self.decorated(v, scope),
+        }
+    }
+
+    /// `v`, a `<value expression>` whose binding does more than one call:
+    /// each error placed where it was written, a value drawn or not, or a
+    /// literal made a constant. Of the others, as `value_expression`
+    /// binds them.
+    fn decorated(&self, v: &ValueExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        match v {
+            ValueExpression::Value(vs) => {
+                let (val, t) = self.value_specification(vs)?;
+                Ok((Expr::Const(val), t))
+            }
             // [ISO/IEC 9075-2:2023 §6.14 SR2] none draws a value in a set
             // function, a CASE or a search condition.
             ValueExpression::SetFunction(sf) => self.drawing(false, || self.set_function(sf, scope)).or_at(sf.at),
@@ -196,14 +183,12 @@ impl Binder<'_> {
             ValueExpression::Cast { operand, target, format, at } => {
                 self.cast(operand.as_deref(), target, format.as_deref(), scope).or_at(*at)
             }
-            ValueExpression::Subquery(s) => self.scalar_subquery(s, scope),
             // [ISO/IEC 9075-2:2023 §6.46 SR1] A truth value, of type BOOLEAN.
             ValueExpression::Boolean(c) => {
                 let cond = self.drawing(false, || self.search_condition(c, scope))?;
                 Ok((Expr::Truth(Box::new(cond)), DataType::Boolean))
             }
             ValueExpression::NextValue { name, at } => self.next_value(name).or_at(*at),
-            ValueExpression::Datetime(f) => self.datetime_function(*f),
             ValueExpression::Extract { field, source, at } => self.extract(*field, source, scope).or_at(*at),
             ValueExpression::Difference { minuend, subtrahend, qualifier, at } => {
                 self.difference((minuend, subtrahend), *qualifier, scope).or_at(*at)
@@ -213,6 +198,14 @@ impl Binder<'_> {
             ValueExpression::Navigation(n) => self.navigation(n, scope).or_at(n.at),
             ValueExpression::Classifier { variable, at } => self.classifier(variable.as_deref(), scope).or_at(*at),
             ValueExpression::MatchNumber { at } => self.match_number(scope).or_at(*at),
+            ValueExpression::Column(_)
+            | ValueExpression::Nested(_)
+            | ValueExpression::CollationFor(_)
+            | ValueExpression::Collated(..)
+            | ValueExpression::Monadic(..)
+            | ValueExpression::Dyadic(..)
+            | ValueExpression::Subquery(_)
+            | ValueExpression::Datetime(_) => self.value_expression(v, scope),
         }
     }
 
@@ -290,45 +283,6 @@ impl Binder<'_> {
             (Sign::Minus, Expr::Const(c)) => (Expr::Const(c.negate()), t),
             (Sign::Minus, e) => (Expr::Neg(Box::new(e)), t),
         })
-    }
-
-    /// [X3.135-1986 §5.9 SR4, SR5] a dyadic operator and the type of its result.
-    pub(super) fn dyadic(
-        &self,
-        left: &ValueExpression,
-        op: ArithOp,
-        right: &ValueExpression,
-        scope: Scope<'_>,
-    ) -> Result<(Expr, DataType)> {
-        // [ISO/IEC 9075:1992 §17.6 GR5f-h] a `?` takes the type its other
-        // operand gives it. Without one, each is bound as it is, so a chain
-        // of operators nests no deeper in the stack than it did.
-        let dynamic = dynamic_of(left).is_some() || dynamic_of(right).is_some();
-        let [(a, left_type), (b, right_type)] = if dynamic {
-            self.operands((left, right), op, scope)?
-        } else {
-            [self.value_expression(left, scope)?, self.value_expression(right, scope)?]
-        };
-        if left_type.is_character() || right_type.is_character() {
-            return Err(rule("[X3.135-1986 §5.9 SR3] character string values cannot be used with arithmetic operators"));
-        }
-        if left_type.is_binary() || right_type.is_binary() {
-            return Err(rule("[ISO/IEC 9075-2:2023 §6.30 SR3] binary string values cannot be used with arithmetic operators"));
-        }
-        distinct_operand(&left_type)?;
-        distinct_operand(&right_type)?;
-        // [§6.14, §6.15] datetimes and intervals.
-        if left_type.is_datetime() || right_type.is_datetime() || left_type.is_interval() || right_type.is_interval() {
-            return self.temporal((a, left_type), op, (b, right_type), dynamic);
-        }
-        let t = match (left_type, right_type) {
-            (DataType::Exact { scale: s1, .. }, DataType::Exact { scale: s2, .. }) => exact_result_type(op, s1, s2)?,
-            // [ISO/IEC 9075-2:2023 §6.30 SR1a] DECFLOAT of 34 digits (IV134).
-            (DataType::DecFloat { .. }, _) | (_, DataType::DecFloat { .. }) => DataType::DecFloat { precision: MAX_DECFLOAT_PRECISION },
-            // [X3.135-1986 §5.9 SR5]
-            _ => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
-        };
-        Ok((Expr::Arith(Box::new(a), op, Box::new(b)), t))
     }
 
     /// [X3.135-1986 §5.8] a `<set function specification>`.
@@ -548,17 +502,6 @@ fn operand_rules(t: &DataType, name: &str, (extreme, distinct): (bool, bool)) ->
     Ok(())
 }
 
-/// [ISO/IEC 9075-2:2023 §6.30 SR3, §4.9.5] That `t`, an arithmetic
-/// operand's type, is no distinct type: its values are of no numeric type,
-/// whatever its source, and are operands of comparison alone, or of the
-/// functions its definition makes (`binder/routines.rs`).
-fn distinct_operand(t: &DataType) -> Result<()> {
-    if let DataType::Distinct(_) = t {
-        return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.30 SR3] a <numeric primary> is numeric, not of the distinct type {t}")));
-    }
-    Ok(())
-}
-
 /// [ISO/IEC 9075-2:2023 §9.16 SR1, §11.9 CR2] A constraint's condition
 /// contains `what`, a potential source of non-determinism by the item
 /// `item` of §9.16 SR1, which a CHECK may contain only with Feature F672,
@@ -574,27 +517,4 @@ pub(super) fn nondeterministic_source(item: &str, what: &str) -> SqlError {
 /// non-determinism: ANY_VALUE, ARRAY_AGG and LISTAGG; of others, none.
 fn possibly_nondeterministic(name: &str) -> Option<&'static str> {
     [(ANY_VALUE, "ap"), (ARRAY_AGG, "ar"), (LISTAGG, "as")].into_iter().find(|(f, _)| *f == name).map(|(_, item)| item)
-}
-
-// Unit tests: the exact result types of [X3.135-1986 §5.9 SR4] (RULES.md R-TEST-1).
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verifies: [X3.135-1986 §5.9 SR4b, SR4c, §5.5 SR4] product scale is s1 + s2 up to
-    /// `MAX_EXACT_PRECISION` and rejected beyond it; sums keep max(s1, s2).
-    #[test]
-    fn exact_result_scales() {
-        let half = 9_u32; // any split of MAX_EXACT_PRECISION into two scales
-        let scale = |op, s1, s2| {
-            exact_result_type(op, s1, s2)
-                .map(|t| if let DataType::Exact { scale, .. } = t { Some(scale) } else { None })
-                .map_err(|e| e.code)
-        };
-        assert_eq!(scale(ArithOp::Mul, half, MAX_EXACT_PRECISION - half), Ok(Some(MAX_EXACT_PRECISION)));
-        assert_eq!(scale(ArithOp::Mul, half, MAX_EXACT_PRECISION - half + 1), Err(Code::Unsupported));
-        assert_eq!(scale(ArithOp::Add, MAX_EXACT_PRECISION, MAX_EXACT_PRECISION), Ok(Some(MAX_EXACT_PRECISION)));
-        assert_eq!(scale(ArithOp::Sub, 2, 5), Ok(Some(5)));
-        assert_eq!(scale(ArithOp::Div, 5, 2), Ok(Some(5)));
-    }
 }

@@ -181,21 +181,25 @@ pub(super) fn open(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Stream> {
     Ok(Stream { batches, columns })
 }
 
+/// A function giving the batches of a plan of one kind.
+type Batched = fn(Plan, &Arc<State>, TxId) -> Result<Batches>;
+
 /// The batches of `plan`, a subtree that gives them (`layout`). Each kind
-/// of plan made by a function of its own, so this one's frame, which each
-/// level of a plan adds to the stack, holds none of their locals (RULES.md
-/// R-CF-6).
+/// of plan is made by a function of its own, chosen by reference and
+/// handed the plan at one call, so this one's frame, which each level of
+/// a plan adds to the stack, holds none of their locals and no copy of a
+/// plan for each (RULES.md R-CF-6).
 ///
 /// # Errors
 ///
 /// As `open`.
 pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
-    match plan {
-        scan @ Plan::SeqScan { .. } => scan_batches(scan, db, tx),
-        Plan::Filter { cond, input, .. } => filter_batches((cond, *input), db, tx),
-        join @ (Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. }) => joined::batches(join, db, tx),
-        Plan::Project { exprs, input, .. } => projected_batches((exprs, *input), db, tx),
-        chain @ Plan::Append { .. } => Ok(appended_batches(chain, db, tx)),
+    let made: Batched = match &plan {
+        Plan::SeqScan { .. } => scan_batches,
+        Plan::Filter { .. } => filter_batches,
+        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::batches,
+        Plan::Project { .. } => projected_batches,
+        Plan::Append { .. } => appended_batches,
         Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::Aggregate { .. }
@@ -209,8 +213,18 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => Err(crate::exec::broken("a plan that gives no batches")),
-    }
+        | Plan::WorkTable { .. } => none,
+    };
+    made(plan, db, tx)
+}
+
+/// Of a plan that gives no batches: none.
+///
+/// # Errors
+///
+/// SQLCODE -910, always.
+fn none(_plan: Plan, _db: &Arc<State>, _tx: TxId) -> Result<Batches> {
+    Err(crate::exec::broken("a plan that gives no batches"))
 }
 
 /// The batches of `scan`, a table's scan: in an order if it is in one.
@@ -229,7 +243,9 @@ fn scan_batches(scan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 /// # Errors
 ///
 /// As `batches`.
-fn filter_batches((cond, inner): (Cond, Plan), db: &Arc<State>, tx: TxId) -> Result<Batches> {
+fn filter_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+    let Plan::Filter { cond, input, .. } = plan else { return Err(crate::exec::broken("a filter is not one")) };
+    let inner = *input;
     let (inner, columns) = if let Plan::SeqScan { table, columns, order, .. } = &inner
         && order.is_empty()
     {
@@ -246,7 +262,9 @@ fn filter_batches((cond, inner): (Cond, Plan), db: &Arc<State>, tx: TxId) -> Res
 /// # Errors
 ///
 /// As `batches`.
-fn projected_batches((exprs, input): (Vec<Expr>, Plan), db: &Arc<State>, tx: TxId) -> Result<Batches> {
+fn projected_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+    let Plan::Project { exprs, input, .. } = plan else { return Err(crate::exec::broken("a projection is not one")) };
+    let input = *input;
     let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
     let inner = batches(input, db, tx)?;
     if let Some(picks) = picked(&exprs, &columns) {
@@ -259,10 +277,17 @@ fn projected_batches((exprs, input): (Vec<Expr>, Plan), db: &Arc<State>, tx: TxI
 
 /// The batches of `chain`, appended streams: each operand opened once
 /// those before it are read, an error opening one given in its place.
-fn appended_batches(chain: Plan, db: &Arc<State>, tx: TxId) -> Batches {
+///
+/// # Errors
+///
+/// SQLCODE -910 if `chain` is no append.
+fn appended_batches(chain: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+    if !matches!(chain, Plan::Append { .. }) {
+        return Err(crate::exec::broken("an append is not one"));
+    }
     let later = Arc::clone(db);
     let operands = appended_owned(chain).into_iter();
-    Box::new(operands.flat_map(move |operand| batches(operand, &later, tx).unwrap_or_else(|e| Box::new(std::iter::once(Err(e))))))
+    Ok(Box::new(operands.flat_map(move |operand| batches(operand, &later, tx).unwrap_or_else(|e| Box::new(std::iter::once(Err(e)))))))
 }
 
 /// `batch` with the vectors at `picks`, in order: each moved, or copied if

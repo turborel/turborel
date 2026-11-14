@@ -7,15 +7,16 @@
 use super::Parser;
 use super::constraints::NULLS;
 use crate::ast::{
-    Correspondence, CursorSpecification, DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, Partitioning, QueryExpression,
-    QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, TableExpression, TableName,
-    TableReference, ValuesRow, WithElement, WithQuery,
+    CursorSpecification, DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, Partitioning, QueryExpression,
+    QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, TableExpression, TableName, TableReference, ValuesRow,
+    WithElement, WithQuery,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
 mod order_by;
 mod ordered;
+mod sets;
 
 // [ISO/IEC 9075-2:2023 §5.2, §7.17] Words of a <with clause> that SQL-92
 // does not reserve: identifiers, read as these only there.
@@ -112,21 +113,8 @@ impl Parser {
     /// EXCEPT} \[ALL\] \[`<corresponding spec>`\] `<query term>`
     fn query_expression_body(&mut self) -> Result<QueryExpression> {
         self.nested(|p| {
-            let mut left = p.query_term()?;
-            loop {
-                let at = p.here();
-                let op = if p.accept_kw(kw::UNION) {
-                    SetOperator::Union
-                } else if p.accept_kw(kw::EXCEPT) {
-                    SetOperator::Except
-                } else {
-                    return Ok(left);
-                };
-                p.deepen()?;
-                let (all, corresponding) = p.set_quantifiers()?;
-                let right = p.query_term()?;
-                left = QueryExpression::SetOp(Box::new(SetOperation { op, all, corresponding, left, right, at }));
-            }
+            let left = p.query_term()?;
+            p.unions(left)
         })
     }
 
@@ -134,31 +122,8 @@ impl Parser {
     /// `<query term>` INTERSECT \[ALL\] \[`<corresponding spec>`\] `<query
     /// primary>`
     fn query_term(&mut self) -> Result<QueryExpression> {
-        let mut left = self.query_primary()?;
-        loop {
-            let at = self.here();
-            if !self.accept_kw(kw::INTERSECT) {
-                return Ok(left);
-            }
-            self.deepen()?;
-            let (all, corresponding) = self.set_quantifiers()?;
-            let right = self.query_primary()?;
-            left = QueryExpression::SetOp(Box::new(SetOperation { op: SetOperator::Intersect, all, corresponding, left, right, at }));
-        }
-    }
-
-    /// \[ALL\] \[`<corresponding spec>`\] after a set operator, where
-    /// `<corresponding spec>` ::= CORRESPONDING \[BY (`<corresponding column
-    /// list>`)\] [ISO/IEC 9075:1992 §7.10].
-    fn set_quantifiers(&mut self) -> Result<(bool, Correspondence)> {
-        let all = self.accept_kw(kw::ALL);
-        if !self.accept_kw(kw::CORRESPONDING) {
-            return Ok((all, Correspondence::Position));
-        }
-        if !self.accept_kw(kw::BY) {
-            return Ok((all, Correspondence::Names));
-        }
-        Ok((all, Correspondence::By(self.name_list()?)))
+        let left = self.query_primary()?;
+        self.intersections(left)
     }
 
     /// [ISO/IEC 9075:1992 §7.10] `<query primary>`: (`<query
@@ -174,11 +139,15 @@ impl Parser {
             )
         };
         if self.is_delim(delim::LEFT_PAREN) && query_next(self) {
-            self.advance();
-            let q = self.query_expression()?;
-            self.expect_delim(delim::RIGHT_PAREN)?;
-            return Ok(q);
+            return self.parenthesized_query();
         }
+        self.simple_query_primary()
+    }
+
+    /// A `<query primary>` not in parentheses: a `<query specification>`,
+    /// a `<table value constructor>`, TABLE `<table name>` or a `<joined
+    /// table>`.
+    fn simple_query_primary(&mut self) -> Result<QueryExpression> {
         if self.is_kw(kw::SELECT) {
             return Ok(QueryExpression::Spec(Box::new(self.query_specification()?)));
         }

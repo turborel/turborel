@@ -22,6 +22,7 @@ mod estimate;
 mod indexed;
 mod join;
 mod kept;
+mod nodes;
 mod order;
 mod probe;
 mod raising;
@@ -348,6 +349,11 @@ pub struct PhysicalPlanner<'a> {
     /// Of a plan made with a prepared statement's slots, the values of the
     /// execution its paths are chosen by (`physical/kept.rs`).
     values: Option<&'a [Value]>,
+    /// Of the input of a FETCH FIRST, the most of its first rows read, if
+    /// known as planned (`Limit::read_rows`): through a sort and a
+    /// projection to a scan, whose path in the order asked is priced by
+    /// them (`physical/access.rs`). Below any other node, none.
+    first: Option<usize>,
 }
 
 /// A built plan, and whether its rows come out in the order that was asked for.
@@ -374,20 +380,20 @@ struct TableRead<'a> {
 impl<'a> PhysicalPlanner<'a> {
     /// A planner over the state `db`, of plans to run.
     pub fn new(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: false, values: None }
+        PhysicalPlanner { db, shown: false, values: None, first: None }
     }
 
     /// A planner over the state `db`, of plans to run made with a prepared
     /// statement's slots, their paths chosen by `values`, one execution's,
     /// so that another's may fill them (`physical/kept.rs`).
     pub fn slotted(db: &'a State, values: &'a [Value]) -> Self {
-        PhysicalPlanner { db, shown: false, values: Some(values) }
+        PhysicalPlanner { db, shown: false, values: Some(values), first: None }
     }
 
     /// A planner over the state `db`, of plans to show: each operator
     /// described, as EXPLAIN shows it.
     pub fn describing(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: true, values: None }
+        PhysicalPlanner { db, shown: true, values: None, first: None }
     }
 
     /// The physical plan for `logical`.
@@ -406,58 +412,32 @@ impl<'a> PhysicalPlanner<'a> {
     }
 
     /// Build `logical` as it is: a chain of products below it is not
-    /// reordered (`build_node` of its operands), others are.
+    /// reordered (`build_node` of its operands), others are. The first
+    /// rows a FETCH FIRST reads are known through a scan, a projection or
+    /// a sort alone: a filter, a join or a grouping reads more of its input
+    /// than it gives.
     fn build_node(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
+        if self.first.is_some() && !matches!(logical, LogicalPlan::Scan { .. } | LogicalPlan::Project { .. } | LogicalPlan::Sort { .. }) {
+            return PhysicalPlanner { first: None, ..*self }.build_node(logical, want);
+        }
         match logical {
             LogicalPlan::Scan { table, names, needed } => {
                 self.access(TableRead { table, shown: self.showing(names), needed }, Vec::new(), want)
             }
             LogicalPlan::Filter { cond, input } => self.filter(cond, input, want),
-
-            // The nested loop yields rows in the order of its left input.
-            LogicalPlan::Product { left, right } => {
-                let want_left = of_left(want, left.width());
-                let l = self.build_node(left, want_left);
-                let r = self.build_node(right, &[]);
-                Built {
-                    plan: Plan::Product { left: Box::new(l.plan), right: Box::new(r.plan) },
-                    ordered: !want_left.is_empty() && l.ordered,
-                }
-            }
-
+            LogicalPlan::Product { left, right } => self.product(left, right, want),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_join((*kind, cond), left, right, want),
-
             LogicalPlan::Aggregate { .. } => self.aggregate(logical, want),
-
             LogicalPlan::Project { exprs, input } => self.project(exprs, input, want),
-
-            // Duplicate elimination keeps the first occurrence, so order is kept.
-            LogicalPlan::Distinct { input } => {
-                let b = self.build(input, want);
-                Built { plan: Plan::Distinct { input: Box::new(b.plan) }, ordered: b.ordered }
-            }
-
+            LogicalPlan::Distinct { input } => self.distinct(input, want),
             LogicalPlan::SetOp { .. } => self.set_operation(logical, want),
-            LogicalPlan::System { read, .. } => Built::unordered(Plan::System { read: read.clone() }),
-            LogicalPlan::Values { rows, .. } => {
-                let row = |r: &Vec<Expr>| format!("({})", r.iter().map(|e| render_expr(e, &[])).collect::<Vec<_>>().join(", "));
-                let detail = if self.shown { rows.iter().map(row).collect::<Vec<_>>().join(", ") } else { String::new() };
-                Built::unordered(Plan::Values { rows: rows.clone(), detail })
-            }
-
+            LogicalPlan::System { read, .. } => Self::system(read),
+            LogicalPlan::Values { rows, .. } => self.values(rows),
             LogicalPlan::Sort { keys, input } => self.sort(keys, input),
-            // It keeps its input's order, the one `want` asks of it if it
-            // gives that: of no ORDER BY, which rows it keeps is
-            // implementation-dependent [§7.17 GR5a].
-            LogicalPlan::Limit { limit, input } => {
-                let b = self.build(input, want);
-                Built { plan: Plan::Limit { limit: limit.clone(), input: Box::new(b.plan) }, ordered: b.ordered }
-            }
-            LogicalPlan::Recursive { member, fixpoint, .. } => {
-                Built::unordered(Plan::Recursive { member: *member, fixpoint: fixpoint.map_ref(|p| self.plan(p)) })
-            }
-            LogicalPlan::WorkTable { member, .. } => Built::unordered(Plan::WorkTable { member: *member, rows: None }),
-            LogicalPlan::Unnest(u) => Built::unordered(Plan::Unnest(Box::new(u.with_input(|input| self.plan(input))))),
+            LogicalPlan::Limit { limit, input } => self.limited(limit, input, want),
+            LogicalPlan::Recursive { member, fixpoint, .. } => self.recursive(*member, fixpoint),
+            LogicalPlan::WorkTable { member, .. } => Self::work_table(*member),
+            LogicalPlan::Unnest(u) => self.unnest(u),
             LogicalPlan::Window(w) => self.window(w, want),
             LogicalPlan::Recognize(r) => self.recognize(r),
         }
@@ -515,15 +495,11 @@ impl<'a> PhysicalPlanner<'a> {
     /// its order [ISO/IEC 9075:1992 §7.10 GR1b].
     fn set_operation(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
         let LogicalPlan::SetOp { op, all, compared, left, right } = logical else { return self.build_node(logical, want) };
-        let (op, all, compared) = (*op, *all, *compared);
-        let r = self.build(right, &[]);
-        if op == SetOp::Union {
-            let l = self.build(left, &[]);
-            let append = Plan::Append { left: Box::new(l.plan), right: Box::new(r.plan) };
-            return Built::unordered(if all { append } else { Plan::Distinct { input: Box::new(append) } });
-        }
-        let l = self.build(left, want);
-        Built { plan: Plan::SetOp { op, all, compared, left: Box::new(l.plan), right: Box::new(r.plan) }, ordered: l.ordered }
+        let r = self.build(right, &[]).plan;
+        // UNION's rows are in no order, so it asks none of its left operand.
+        let asked = if *op == SetOp::Union { &[] } else { want };
+        let l = self.build(left, asked);
+        Self::combined(*op, (*all, *compared), l, r)
     }
 
     /// A filter directly on a table becomes part of the access path; any

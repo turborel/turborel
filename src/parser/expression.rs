@@ -3,13 +3,15 @@
 //! expression>` [X3.135-1986 §5.9; ISO/IEC 9075:1992 §6.11] down to its
 //! primaries (`parser/primary.rs`).
 
+mod tails;
+
 use super::{Parser, furthest};
-use crate::ast::{Composite, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression, WhenOperand};
+use crate::ast::{Predicate, RowValue, SearchCondition, Subquery, ValueExpression, WhenOperand};
 use crate::catalog::MatchType;
 use crate::error::Result;
-use crate::functions::{CONCATENATION, FLAG, LIKE_REGEX};
+use crate::functions::{FLAG, LIKE_REGEX};
 use crate::lexer::{Tok, delim, kw};
-use crate::value::{ArithOp, CompOp};
+use crate::value::CompOp;
 
 impl Parser {
     // =====================================================================
@@ -19,26 +21,16 @@ impl Parser {
     /// [X3.135-1986 §5.18] `<search condition>` ::= `<boolean term>` | `<search condition>` OR `<boolean term>`
     pub(super) fn search_condition(&mut self) -> Result<SearchCondition> {
         self.nested(|p| {
-            let mut left = p.boolean_term()?;
-            while p.accept_kw(kw::OR) {
-                p.deepen()?;
-                let right = p.boolean_term()?;
-                left = SearchCondition::Or(Box::new(left), Box::new(right));
-            }
-            Ok(left)
+            let left = p.boolean_term()?;
+            p.disjunction(left)
         })
     }
 
     /// [X3.135-1986 §5.18] `<boolean term>` ::= `<boolean factor>` | `<boolean term>` AND `<boolean factor>`
     fn boolean_term(&mut self) -> Result<SearchCondition> {
         self.nested(|p| {
-            let mut left = p.boolean_factor()?;
-            while p.accept_kw(kw::AND) {
-                p.deepen()?;
-                let right = p.boolean_factor()?;
-                left = SearchCondition::And(Box::new(left), Box::new(right));
-            }
-            Ok(left)
+            let left = p.boolean_factor()?;
+            p.conjunction(left)
         })
     }
 
@@ -51,20 +43,7 @@ impl Parser {
     /// \[IS \[NOT\] `<truth value>`\]
     fn boolean_test(&mut self) -> Result<SearchCondition> {
         let primary = self.boolean_primary()?;
-        if !self.accept_kw(kw::IS) {
-            return Ok(primary);
-        }
-        let not = self.accept_kw(kw::NOT);
-        // <truth value> ::= TRUE | FALSE | UNKNOWN
-        let value = if self.accept_kw(kw::TRUE) {
-            TruthValue::True
-        } else if self.accept_kw(kw::FALSE) {
-            TruthValue::False
-        } else {
-            self.expect_kw(kw::UNKNOWN)?;
-            TruthValue::Unknown
-        };
-        Ok(SearchCondition::Is(Box::new(primary), value, not))
+        self.truth_test(primary)
     }
 
     /// [X3.135-1986 §5.18] `<boolean primary>` ::= `<predicate>` | (`<search
@@ -96,34 +75,12 @@ impl Parser {
     /// predicate>`; or [ISO/IEC 9075-2:2023 §6.46] a `<boolean predicand>`,
     /// one value that no predicate's operator follows.
     fn predicate(&mut self) -> Result<SearchCondition> {
+        if self.is_kw(kw::EXISTS) || self.is_kw(kw::UNIQUE) {
+            return self.subquery_predicate();
+        }
         let at = self.here();
-        let predicate = |p: Predicate| SearchCondition::Predicate(Box::new(p), at);
-        // [§8.8] <exists predicate> ::= EXISTS <table subquery>
-        if self.accept_kw(kw::EXISTS) {
-            return Ok(predicate(Predicate::Exists(Box::new(self.subquery()?))));
-        }
-        // [ISO/IEC 9075-2:2023 §8.11] <unique predicate> ::= UNIQUE
-        // [ <unique null treatment> ] <table subquery>
-        if self.accept_kw(kw::UNIQUE) {
-            let nulls_distinct = self.unique_null_treatment()?.unwrap_or(crate::ast::IMPLICIT_NULLS_DISTINCT);
-            return Ok(predicate(Predicate::Unique { subquery: Box::new(self.subquery()?), nulls_distinct }));
-        }
         let value = self.row_value()?;
-        if self.at_is_predicate() {
-            return self.is_predicate(value).map(predicate);
-        }
-        let row = match (self.at_predicate_operator(), <[ValueExpression; 1]>::try_from(value)) {
-            (false, Ok([v])) => return Ok(SearchCondition::Predicand(Box::new(v), at)),
-            (true, Ok(one)) => Vec::from(one),
-            // [ISO/IEC 9075-2:2023 §7.1] a row value constructor of no
-            // predicate: a value of a row type.
-            (false, Err(row)) => {
-                let constructed = ValueExpression::Composite(Box::new(Composite::Row(row)), at);
-                return Ok(SearchCondition::Predicand(Box::new(constructed), at));
-            }
-            (true, Err(row)) => row,
-        };
-        self.predicate_rest(row).map(predicate)
+        self.predicate_of(value, at)
     }
 
     /// [ISO/IEC 9075-2:2023 §6.12] A `<when operand>` of a simple CASE
@@ -287,15 +244,7 @@ impl Parser {
             return self.predicate_element().map(|_| None);
         }
         let Ok(first) = self.common_value_expression() else { return Ok(None) };
-        if !self.accept_delim(delim::COMMA) {
-            return Ok(None);
-        }
-        let mut values = vec![first, self.predicate_element()?];
-        while self.accept_delim(delim::COMMA) {
-            values.push(self.predicate_element()?);
-        }
-        self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(Some(values))
+        self.row_list_rest(first)
     }
 
     /// [X3.135-1986 §5.11] `<comp op>`, taken.
@@ -458,49 +407,16 @@ impl Parser {
     /// expression>` [ISO/IEC 9075-2:2023 §6.29], no truth value.
     pub(super) fn common_value_expression(&mut self) -> Result<ValueExpression> {
         self.nested(|p| {
-            let mut left = p.term()?;
-            loop {
-                let at = p.here();
-                if p.accept_delim(delim::CONCATENATION) {
-                    p.deepen()?;
-                    let right = p.term()?;
-                    left = ValueExpression::Function { name: CONCATENATION, args: vec![left, right], at };
-                    continue;
-                }
-                let op = if p.is_delim(delim::PLUS) {
-                    ArithOp::Add
-                } else if p.is_delim(delim::MINUS) {
-                    ArithOp::Sub
-                } else {
-                    break;
-                };
-                p.advance();
-                p.deepen()?;
-                let right = p.term()?;
-                left = ValueExpression::Dyadic(Box::new(left), op, Box::new(right));
-            }
-            Ok(left)
+            let left = p.term()?;
+            p.additions(left)
         })
     }
 
     /// [X3.135-1986 §5.9] `<term>` ::= `<factor>` | `<term>` * `<factor>` | `<term>` / `<factor>`
     fn term(&mut self) -> Result<ValueExpression> {
         self.nested(|p| {
-            let mut left = p.factor()?;
-            loop {
-                let op = if p.is_delim(delim::ASTERISK) {
-                    ArithOp::Mul
-                } else if p.is_delim(delim::SOLIDUS) {
-                    ArithOp::Div
-                } else {
-                    break;
-                };
-                p.advance();
-                p.deepen()?;
-                let right = p.factor()?;
-                left = ValueExpression::Dyadic(Box::new(left), op, Box::new(right));
-            }
-            Ok(left)
+            let left = p.factor()?;
+            p.products(left)
         })
     }
 
@@ -508,23 +424,10 @@ impl Parser {
     pub(super) fn factor(&mut self) -> Result<ValueExpression> {
         // A sign touching a number is part of that <literal>, not an operator.
         if (self.is_delim(delim::PLUS) || self.is_delim(delim::MINUS)) && !self.sign_attached() {
-            let sign = if self.is_delim(delim::MINUS) { Sign::Minus } else { Sign::Plus };
-            self.advance();
-            // [X3.135-1986 §5.9 SR2] the first character of the token after a monadic
-            // operator shall not be a plus or minus sign.
-            if self.is_delim(delim::PLUS) || self.is_delim(delim::MINUS) {
-                return Err(self.rule("[X3.135-1986 §5.9 SR2] the token after a monadic operator shall not begin with + or -"));
-            }
-            let primary = self.qualified_primary()?;
-            let factor = self.time_zone(primary)?;
-            let factor = self.collated(factor)?;
-            return Ok(ValueExpression::Monadic(sign, Box::new(factor)));
+            return self.signed_factor();
         }
         let primary = self.qualified_primary()?;
-        let factor = self.time_zone(primary)?;
-        // [ISO/IEC 9075:1992 §6.13] <character factor> ::= <character
-        // primary> [<collate clause>]
-        self.collated(factor)
+        self.factor_rest(primary)
     }
 
     /// `factor`, with the `<collate clause>` that may follow it.
@@ -538,12 +441,9 @@ impl Parser {
     /// A `<primary>`, with the `<filter clause>` [ISO/IEC 9075-2:2023
     /// §10.9], OVER and `<interval qualifier>` [ISO/IEC 9075:1992 §6.15]
     /// that may follow it.
-    fn qualified_primary(&mut self) -> Result<ValueExpression> {
+    pub(super) fn qualified_primary(&mut self) -> Result<ValueExpression> {
         let at = self.here();
         let primary = self.primary()?;
-        let primary = self.filtered(primary)?;
-        let primary = self.windowed(primary, at)?;
-        let primary = self.postfixed(primary)?;
-        self.qualified(primary, at)
+        self.qualifiers(primary, at)
     }
 }
