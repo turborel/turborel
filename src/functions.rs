@@ -51,6 +51,7 @@ mod strings;
 mod sum;
 mod trim;
 mod truths;
+mod width_bucket;
 use sum::{AvgAcc, SumAcc};
 
 pub use regex::{
@@ -61,6 +62,7 @@ pub use strings::{CONCATENATION, using};
 pub use trim::{BTRIM, LPAD, LTRIM, RPAD, RTRIM, TRIMS_AND_PADS, Trim, source_of, trim_named};
 pub use truths::EVERY;
 use truths::Truths;
+pub use width_bucket::{WIDTH_BUCKET, width_bucket};
 
 /// \[EXTENSION\] A function callable with the opt-in call syntax.
 ///

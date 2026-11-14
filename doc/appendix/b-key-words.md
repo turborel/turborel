@@ -54,14 +54,14 @@ the name of the setting SET sets.
 SQL:2023 reserves ANY_VALUE, BEGIN_FRAME, BEGIN_PARTITION, BIGINT, BINARY, BOOLEAN, BTRIM, CUBE, CUME_DIST, CURRENT_ROW, CYCLE, DECFLOAT,
 DENSE_RANK, END_FRAME, END_PARTITION, EVERY, FIRST_VALUE, FRAME_ROW, GREATEST, GROUPING, GROUPS, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
 LISTAGG, LPAD, LTRIM, NTH_VALUE, NTILE, OCCURRENCES_REGEX, OVER, PARTITION, PERCENT_RANK, POSITION_REGEX,
-RANGE, RANK, ROLLUP, ROW_NUMBER, RPAD, RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX, VALUE_OF, VARBINARY, WINDOW
+RANGE, RANK, ROLLUP, ROW_NUMBER, RPAD, RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX, VALUE_OF, VARBINARY, WIDTH_BUCKET, WINDOW
 and WITHIN, which SQL-92 does not, so
 a column of an older database may be named any of them. They stay identifiers here, key words only where
 they are read. BIGINT, BINARY, BOOLEAN, DECFLOAT and VARBINARY are data types
 where a data type is written, so a domain cannot be named BINARY,
 BOOLEAN or VARBINARY, and one named BIGINT or DECFLOAT is never the type
-a column of that type is. BTRIM, EVERY, GREATEST, LEAST, LPAD, LTRIM, RPAD and
-RTRIM are functions before a parenthesis, so a table's column of one of
+a column of that type is. BTRIM, EVERY, GREATEST, LEAST, LPAD, LTRIM, RPAD,
+RTRIM and WIDTH_BUCKET are functions before a parenthesis, so a table's column of one of
 those names is written in double quotes, `"LPAD"` say, only where a
 parenthesis follows it. LIKE_REGEX is a predicate after a value, and
 FLAG, which SQL:2023 does not reserve, is read only after its pattern, so

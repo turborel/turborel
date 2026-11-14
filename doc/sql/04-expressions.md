@@ -95,6 +95,34 @@ The numeric functions:
 | BIT_LENGTH(s) | *(extension)* eight bits to each of those octets |
 | POSITION(a IN b) | where string a first begins in b, from 1; 0 if not in it, 1 if a is empty; of binary strings, in octets |
 | EXTRACT(f FROM d) | the field f of a datetime or interval |
+| WIDTH_BUCKET(x, b1, b2, n) | which of n buckets of equal width from b1 to b2 x falls in |
+
+WIDTH_BUCKET cuts the range from b1 to b2 into n buckets of equal width
+and gives the bucket x falls in, from 1. A value before b1 is in bucket
+0, and one at b2 or past it in bucket n + 1. Each bucket holds its lower
+edge, so with b1 greater than b2 the buckets count down, and b2 is in
+bucket n + 1. The result is null if any operand is. Each operand is a
+number, n is exact of scale 0, and the result is of n's type. An n of 0
+or below, or equal bounds, are refused (SQLSTATE 2201G), as is an n + 1
+past n's type (22003). Of exact operands the bucket is found exactly.
+
+```sql
+SELECT NAME, SALARY, WIDTH_BUCKET(SALARY, 5000, 9000, 4) AS UP,
+       WIDTH_BUCKET(SALARY, 9000, 5000, 4) AS DOWN
+  FROM STAFF ORDER BY NAME;
+VALUES (WIDTH_BUCKET(1, 0, 0, 4));
+```
+
+```
+ NAME                           |      SALARY |  UP | DOWN
+--------------------------------+-------------+-----+------
+ Ada                            |     7200.00 |   3 |    2
+ Barbara                        |        NULL | NULL | NULL
+ Edsger                         |     5400.00 |   1 |    4
+ Grace                          |     8100.00 |   4 |    1
+(4 rows)
+turborel: SQLCODE -301 (SQLSTATE 2201G): the width bucket bounds are equal [ISO/IEC 9075-2:2023 §6.31 GR17c]
+```
 
 ## String expressions
 

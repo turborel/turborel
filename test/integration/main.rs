@@ -205,6 +205,7 @@ mod varying;
 mod vector_operators;
 mod views;
 mod warnings;
+mod width_bucket;
 mod window_nested;
 mod window_nested_rules;
 mod window_rules;

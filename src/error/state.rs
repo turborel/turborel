@@ -135,6 +135,9 @@ impl SqlState {
     /// Data exception: invalid argument for NTH_VALUE function [ISO/IEC
     /// 9075-2:2023 §6.10 GR1d ii 2].
     pub const INVALID_ARGUMENT_FOR_NTH_VALUE: SqlState = SqlState("22016");
+    /// Data exception: invalid argument for width bucket function [ISO/IEC
+    /// 9075-2:2023 §6.31 GR17b, GR17c].
+    pub const INVALID_ARGUMENT_FOR_WIDTH_BUCKET: SqlState = SqlState("2201G");
     /// Data exception: invalid escape character.
     pub const INVALID_ESCAPE_CHARACTER: SqlState = SqlState("22019");
     /// Data exception: invalid character value for cast [ISO/IEC 9075:1992

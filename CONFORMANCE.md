@@ -1088,8 +1088,8 @@ functions), T617 (FIRST_VALUE and LAST_VALUE functions), T618 (NTH_VALUE
 function), T619 (Nested window functions) and T620 (WINDOW clause: GROUPS
 option), of ISO/IEC 9075-2:2023 §6.10, §6.11, §7.15, §9.20 and §9.23.
 Of T612 (Advanced OLAP operations), the window name, the WINDOW clause,
-an existing window name, frame exclusion, PERCENT_RANK, CUME_DIST and
-ROW_NUMBER of no ordering are done. Its WIDTH_BUCKET, FILTER clause,
+an existing window name, frame exclusion, PERCENT_RANK, CUME_DIST,
+ROW_NUMBER of no ordering and WIDTH_BUCKET are done. Its FILTER clause,
 hypothetical set functions and inverse distribution functions are not,
 so T612 is not claimed. Nor is T627.
 
@@ -1118,6 +1118,7 @@ so T612 is not claimed. Nor is T627.
 | Grouped queries | §9.20 | Windows of a grouped query are over its groups, after HAVING, so their arguments and keys may be set functions of the group, `SUM(SUM(X)) OVER ()`. SELECT DISTINCT removes groups alike before the windows, as SR22 builds the derived table of groups. |
 | Their order of evaluation | §7.16 | Windows are computed over the rows of FROM, WHERE, GROUP BY and HAVING, before DISTINCT and the cursor's ORDER BY. A query of a window function makes a view or cursor not updatable. |
 | In a constraint | §9.16 SR1c, §11.9 CR2 | ROW_NUMBER, NTILE, LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTH_VALUE and a set function over a ROWS window are potential sources of non-determinism, so a CHECK or an assertion containing one is SQLCODE -103. |
+| WIDTH_BUCKET | §6.31 SR21, GR17 | Each operand a number and the count exact of scale 0, else SQLCODE -103. The result is of the count's type. Null if any operand is. A count of 0 or below, or equal bounds, SQLSTATE 2201G. 0 before bound 1, the count plus 1 at or past bound 2, SQLSTATE 22003 if that is past the count's type, else the greatest whole number not above the count times the operand's distance from bound 1 over the range's width, plus 1. Of exact operands it is found exactly, of an approximate one in approximate arithmetic, and of a DECFLOAT one in DECFLOAT, kept within 1 to the count where rounding would pass either end. \[EXTENSION\] A `?` count is NUMERIC(18), a `?` operand or bound of the type of the first other operand or bound. |
 
 A window reads its input sorted by its partition columns, then its
 ordering, unless the input is ordered so, as a column store kept in that

@@ -3,7 +3,8 @@
 //! CASE [§6.9], CAST [§6.10], scalar subqueries [§7.11], the string
 //! functions [§6.6, §6.7], EXTRACT [§6.6], the datetime value functions
 //! [§6.8], VALUE of a domain constraint [§6.2], NEXT VALUE FOR [ISO/IEC
-//! 9075-2:2023 §6.14], and the \[EXTENSION\] function call.
+//! 9075-2:2023 §6.14], WIDTH_BUCKET [§6.31], and the \[EXTENSION\]
+//! function call.
 
 use super::Parser;
 use super::grouping::GROUPING;
@@ -11,7 +12,9 @@ use crate::ast::{
     CaseExpression, Predicate, SearchCondition, SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification, WhenOperand,
 };
 use crate::error::Result;
-use crate::functions::{ANY_VALUE, EVERY, FORMAT, GREATEST, LEAST, LISTAGG, LPAD, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS, using};
+use crate::functions::{
+    ANY_VALUE, EVERY, FORMAT, GREATEST, LEAST, LISTAGG, LPAD, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS, WIDTH_BUCKET, using,
+};
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
@@ -122,6 +125,11 @@ impl Parser {
         let regex = if let Tok::Identifier(name) = self.peek() { REGEX_FUNCTIONS.into_iter().find(|f| name == f) } else { None };
         if let Some(name) = regex.filter(|_| matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))) {
             return self.regex_function(name);
+        }
+        // [ISO/IEC 9075-2:2023 §6.31] WIDTH_BUCKET, no key word of SQL-92,
+        // before "(" the <width bucket function>.
+        if opens && self.is_word(WIDTH_BUCKET) {
+            return self.width_bucket();
         }
         // [ISO/IEC 9075-2:2023 §6.9] GROUPING, no key word of SQL-92,
         // before "(" the <grouping operation>.
@@ -413,6 +421,24 @@ impl Parser {
         Ok(ValueExpression::Function { name, args, at })
     }
 
+    /// [ISO/IEC 9075-2:2023 §6.31] `<width bucket function>` ::=
+    /// WIDTH_BUCKET ( `<width bucket operand>` , `<width bucket bound 1>` ,
+    /// `<width bucket bound 2>` , `<width bucket count>` ), each a
+    /// `<numeric value expression>`, called with them in order
+    /// (`functions/width_bucket.rs`).
+    fn width_bucket(&mut self) -> Result<ValueExpression> {
+        let at = self.here();
+        self.advance();
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut args = vec![self.common_value_expression()?];
+        for _ in 1..WIDTH_BUCKET_OPERANDS {
+            self.expect_delim(delim::COMMA)?;
+            args.push(self.common_value_expression()?);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::Function { name: WIDTH_BUCKET, args, at })
+    }
+
     /// [ISO/IEC 9075-2:2023 §10.4] `<routine invocation>` ::= `<routine
     /// name>` `<SQL argument list>`, the name perhaps of a schema; or
     /// \[EXTENSION\] the call of a function registered, which the binder
@@ -436,6 +462,10 @@ impl Parser {
         Ok(ValueExpression::Call { schema, name, args, at, extension: self.extensions })
     }
 }
+
+/// [ISO/IEC 9075-2:2023 §6.31] The operands of a `<width bucket
+/// function>`.
+const WIDTH_BUCKET_OPERANDS: usize = 4;
 
 /// A space, the trim character or padding none is written gives.
 fn space() -> ValueExpression {
