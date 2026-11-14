@@ -158,7 +158,7 @@ fn selected_and_keys(
     let Some(first) = keys.hidden.first() else {
         return Ok((own, keys, width));
     };
-    hidden_rules(binder, selected, (grouped, distinct)).or_at(first.at)?;
+    hidden_rules(binder, (selected, te), distinct).or_at(first.at)?;
     let all: Vec<SelectItem> = selected.iter().chain(&keys.hidden).cloned().collect();
     binder.sorting_from(Some(width));
     let with_added = bind_selected(binder, &all, (te, grouped));
@@ -317,7 +317,7 @@ fn bound_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_
         binder.sort_item(i);
         let v = &item.value;
         let start = noted.map_or(0, |(_, uses)| uses.borrow().len());
-        let (e, data_type) = binder.value_expression(v, scope).or_at(item.at)?;
+        let (e, data_type) = binder.value_expression(v, binder.item_scope(scope)).or_at(item.at)?;
         if let Some((selected, uses)) = noted {
             selected.borrow_mut().push(uses.borrow().get(start..).unwrap_or_default().to_vec());
         }

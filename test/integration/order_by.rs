@@ -3,8 +3,10 @@
 //! columns its select list leaves out, of expressions of them, alike a
 //! select item, of its result's names, with COLLATE, DESC and NULLS, of a
 //! window function, after a WITH clause, in ARRAY and through an updatable
-//! cursor; of any other query expression, keys of its result alone; each
-//! refusal; past the work area, and by batches or row by row.
+//! cursor; of a grouped query, keys of its grouping columns and columns
+//! functionally dependent on them; of any other query expression, keys of
+//! its result alone; each refusal; past the work area, and by batches or
+//! row by row.
 
 use turborel::db::{Completion, Database, Session};
 use turborel::error::Code;
@@ -147,8 +149,9 @@ fn a_key_of_a_union_is_of_its_result_7_17() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 SR26b, d i 9 B, §6.14 SR1] a sort key
 /// has a column reference and no query expression, set function or next
 /// value expression; a key of a column left out is of a query neither
-/// DISTINCT nor of a set function of its select list, and of a grouped
-/// query is Feature F868.
+/// DISTINCT nor of a set function of its select list, HAVING or window
+/// clause, and of a grouped query of grouping columns or columns
+/// functionally dependent on them, the rule cited.
 #[test]
 fn a_key_breaking_a_rule_is_refused_7_17() {
     let (_db, a) = staff();
@@ -164,13 +167,51 @@ fn a_key_breaking_a_rule_is_refused_7_17() {
         ("SELECT DISTINCT NAME FROM STAFF ORDER BY ID", "DISTINCT"),
         ("SELECT DISTINCT NAME FROM STAFF ORDER BY CHAR_LENGTH(DEPT)", "DISTINCT"),
         ("SELECT COUNT(*) FROM STAFF ORDER BY ID", "a set function of the select list"),
+        ("SELECT DEPT FROM STAFF GROUP BY DEPT, NAME HAVING COUNT(*) > 0 ORDER BY NAME", "a set function of HAVING"),
+        (
+            "SELECT DEPT, RANK() OVER W FROM STAFF GROUP BY DEPT, NAME WINDOW W AS (ORDER BY COUNT(*)) ORDER BY NAME",
+            "a set function of the window clause",
+        ),
+        ("SELECT DEPT FROM STAFF GROUP BY ROLLUP (DEPT, NAME) ORDER BY ID", "no grouping column"),
         ("SELECT NAME FROM STAFF ORDER BY NOPE", "no such column"),
         ("SELECT NAME FROM STAFF ORDER BY 2", "no such position"),
     ] {
         assert_eq!(code(&a, sql), Code::SyntaxRule, "{why}: {sql}");
     }
-    assert_eq!(code(&a, "SELECT DEPT FROM STAFF GROUP BY DEPT ORDER BY ID"), Code::Unsupported, "F868");
-    assert_eq!(code(&a, "SELECT DEPT FROM STAFF GROUP BY DEPT ORDER BY CHAR_LENGTH(NAME)"), Code::Unsupported, "F868");
+    for sql in ["SELECT DEPT FROM STAFF GROUP BY DEPT ORDER BY ID", "SELECT DEPT FROM STAFF GROUP BY DEPT ORDER BY CHAR_LENGTH(NAME)"] {
+        let e = a.open_cursor(sql).err().unwrap();
+        assert_eq!((e.code, e.rule.as_deref()), (Code::SyntaxRule, Some("ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B I")), "{sql}");
+        assert!(e.msg.contains("functionally dependent"), "{sql}: {}", e.msg);
+    }
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B I, §7.13
+/// SR17, Feature F868] a grouped query is sorted by a grouping column its
+/// select list leaves out, null in a grouping set that leaves it out; by a
+/// column functionally dependent on the grouping columns, of a key, of a
+/// join's condition and of WHERE, by an expression of one and by a window
+/// function of one, in ARRAY too; its HAVING of no set function kept.
+#[test]
+fn a_grouped_query_is_sorted_by_its_groups_columns_7_17() {
+    let (_db, a) = staff();
+    assert_eq!(rows(&a, "SELECT DEPT FROM STAFF GROUP BY DEPT, NAME ORDER BY NAME"), expected(&["ENG", "NULL", "OPS", "ENG"]));
+    let rollup = "SELECT DEPT FROM STAFF GROUP BY ROLLUP (DEPT, NAME) ORDER BY NAME NULLS FIRST, DEPT NULLS FIRST";
+    assert_eq!(rows(&a, rollup), expected(&["NULL", "NULL", "ENG", "OPS", "ENG", "NULL", "OPS", "ENG"]));
+    let having = "SELECT DEPT FROM STAFF GROUP BY DEPT, NAME HAVING DEPT IS NOT NULL ORDER BY NAME DESC";
+    assert_eq!(rows(&a, having), expected(&["ENG", "OPS", "ENG"]));
+    a.run("CREATE TABLE KEYED (ID INTEGER PRIMARY KEY, NAME VARCHAR(20), DEPT CHAR(3))").unwrap();
+    a.run("CREATE TABLE DEPTS (CODE CHAR(3) PRIMARY KEY, TITLE VARCHAR(20))").unwrap();
+    a.run("INSERT INTO KEYED VALUES (1, 'Ada', 'ENG'), (2, 'Grace', 'ENG'), (3, 'Edsger', 'OPS')").unwrap();
+    a.run("INSERT INTO DEPTS VALUES ('ENG', 'Engineering'), ('OPS', 'Operations')").unwrap();
+    assert_eq!(rows(&a, "SELECT ID FROM KEYED GROUP BY ID ORDER BY NAME"), expected(&["1", "3", "2"]));
+    assert_eq!(rows(&a, "SELECT ID FROM KEYED GROUP BY ID ORDER BY CHAR_LENGTH(NAME) DESC, ID"), expected(&["3", "2", "1"]));
+    let joined = "SELECT K.DEPT FROM KEYED K JOIN DEPTS D ON K.DEPT = D.CODE GROUP BY D.CODE ORDER BY D.TITLE DESC";
+    assert_eq!(rows(&a, joined), expected(&["OPS", "ENG"]));
+    assert_eq!(rows(&a, "SELECT DEPT FROM STAFF WHERE SALARY = 7200 GROUP BY DEPT ORDER BY SALARY"), expected(&["ENG"]));
+    let ranked = "SELECT ID FROM KEYED GROUP BY ID ORDER BY RANK() OVER (ORDER BY NAME DESC)";
+    assert_eq!(rows(&a, ranked), expected(&["2", "3", "1"]));
+    let array = "SELECT CARDINALITY(ARRAY(SELECT ID FROM KEYED GROUP BY ID ORDER BY NAME)), ARRAY(SELECT ID FROM KEYED GROUP BY ID ORDER BY NAME)[3] FROM DEPTS WHERE CODE = 'ENG'";
+    assert_eq!(rows(&a, array), expected(&["3,2"]));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.49 GR3, §7.17 SR26, NOTE 207] the ORDER
@@ -248,11 +289,12 @@ fn an_updatable_cursor_is_ordered_by_a_collation_13_9() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 SR26 d i 10; RULES.md D38] rows
 /// sorted by a key left out past MEMORY.WORK_BYTES spill and come back in
-/// order, row by row and by batches alike.
+/// order, row by row and by batches alike, of groups too, by a column
+/// functionally dependent on their grouping column [Feature F868].
 #[test]
 fn keys_left_out_sort_past_the_work_area_7_17() {
     let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE M (I INTEGER, V INTEGER, P VARCHAR(40))").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE M (I INTEGER PRIMARY KEY, V INTEGER, P VARCHAR(40))").unwrap();
     let a = db.session("A");
     let n: u32 = 3000;
     let values: Vec<String> = (1..=n)
@@ -270,6 +312,7 @@ fn keys_left_out_sort_past_the_work_area_7_17() {
         exec(&a, &format!("SET EXECUTOR.BATCHES = '{batches}'")).unwrap();
         assert_eq!(rows(&a, "SELECT I FROM M ORDER BY V, I DESC").unwrap(), want, "batches {batches}");
         assert_eq!(rows(&a, "SELECT I FROM M ORDER BY V + 0, -I").unwrap(), want, "batches {batches}");
+        assert_eq!(rows(&a, "SELECT I FROM M GROUP BY I ORDER BY V, I DESC").unwrap(), want, "grouped, batches {batches}");
     }
     assert!(spilled.taken() > 0, "the sorts spilled");
 }

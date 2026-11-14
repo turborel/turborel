@@ -183,9 +183,11 @@ parameters, is [a statement of a program too](#select-into).
 3. A sort key that is a number is a position of a column of the result.
    Any other key reads a column, and holds no subquery, set function or
    NEXT VALUE FOR. A key that reads a column the select list leaves out
-   is of a query specification that is not DISTINCT, has no set
-   function in its select list, and is not grouped. Of any other query,
-   a key reads the result's columns alone.
+   is of a query specification that is not DISTINCT and has no set
+   function in its select list, HAVING or window clause. Of a grouped
+   query, such a key reads grouping columns and columns functionally
+   dependent on them alone. Of any other query, a key reads the result's
+   columns alone.
 4. In a query with GROUP BY or a set function, a column outside a set
    function is a grouping column or functionally dependent on the
    grouping columns ([Functionally dependent
@@ -262,7 +264,7 @@ SELECT on each table and view the query names.
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), the fraction of PERCENTILE_CONT or PERCENTILE_DISC below 0 or above 1 (22003), a window frame's offset negative or null (22013), a number of tiles of NTILE below 1 (22014), a row of NTH_VALUE below 1 (22016), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
 | 2202F | -301 | A path or a DEPTH FIRST sequence would hold more than 65,535 rows |
-| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); an ORDER BY of a grouped query reading a column its select list leaves out (Feature F868); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
 
 An error is placed at the construct it is about, its character position
 told.
@@ -414,7 +416,7 @@ SELECT too. Where the null value sorts is implementation-defined
 FIRST and NULLS LAST are the `<null ordering>` of §10.10, Feature T611.
 A sort key of any value expression, and of a column the select list
 leaves out, is the `<sort key>` of §10.10 and §7.17 SR26, Features
-E121-02 and E121-03.
+E121-02 and E121-03, and of a grouped query Feature F868.
 
 ## SEE ALSO
 

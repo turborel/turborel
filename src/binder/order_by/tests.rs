@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::error::Code;
 use crate::functions::{RowOf, ScalarRef};
 use crate::parser::Parser;
 use crate::value::ArithOp;

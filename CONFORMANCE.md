@@ -1118,11 +1118,10 @@ argument has both its columns and the subquery's is still refused
 
 ### Sort keys
 
-Features E121-02 (ORDER BY columns need not be in select list) and
-E121-03 (Value expressions in ORDER BY clause), the `<sort key>` of
-ISO/IEC 9075-2:2023 §10.10 and §7.17 SR26, in a cursor's ORDER BY and
-ARRAY(query ORDER BY ...) [§6.49 NOTE 207]. F868 (ORDER BY in grouped
-table) is not claimed.
+Features E121-02 (ORDER BY columns need not be in select list), E121-03
+(Value expressions in ORDER BY clause) and F868 (ORDER BY in grouped
+table), the `<sort key>` of ISO/IEC 9075-2:2023 §10.10 and §7.17 SR26, in
+a cursor's ORDER BY and ARRAY(query ORDER BY ...) [§6.49 NOTE 207].
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1130,7 +1129,8 @@ table) is not claimed.
 | A column left out | SR26 d i | A key of a simple table query may read the columns of its table expression the select list leaves out. Each such key is an extended sort key column, computed with the select list and taken away after the sort [GR5], so DESCRIBE and the rows show the result's columns alone. A key of the result's columns alone is computed of its rows [d ii]. |
 | A key alike a select item | SR26 d i 6 | A key of the same operations on the same columns and values as an item of the select list sorts by that item's column, computed once. A key that SR26 d i 6's left normal form derivation would call alike, and this does not, sorts by a column of its own, of the same values. |
 | A result's name | SR26 d i 6 | In a key, an unqualified name of one result column is that column, so of a key with a column left out the select item's value. |
-| What it refuses | SR26 d i 9 | A key reading a column left out of a query that is DISTINCT, or of a set function in its select list, is SQLCODE -103 [9 B II]. Of a grouped query it is Feature F868, SQLCODE -900 [9 B I]. |
+| A grouped query | SR26 d i 9 B I, Feature F868 | A key of a grouped query reading a column its select list leaves out is computed over its groups. Each column it reads outside a window function is a grouping column or functionally dependent on the grouping columns, of each grouping set, by the rules T301 knows [§4.26], else SQLCODE -103 citing SR26 d i 9 B I. |
+| What it refuses | SR26 d i 9 B II | A key reading a column left out of a query that is DISTINCT, or that directly contains a set function in its select list, HAVING or window clause, is SQLCODE -103. |
 | Other query expressions | SR26 d i 1 | The keys of a set operation, a VALUES list or another query expression that is not a simple table query read its result's columns alone, else SQLCODE -103. A window function is in the ORDER BY of a simple table query alone [§6.10 SR2a]. |
 | Window functions | §6.10 SR2a | A key of a simple table query may be a window function, computed with the select list's. |
 | Updatable cursors | §14.3, Feature F833 | Ordered by its keys, each row's computed from its own values as OPEN reads it. One ordered by a window function, whose value is not of its row alone, is SQLCODE -900. |

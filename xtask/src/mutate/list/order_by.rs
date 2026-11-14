@@ -1,9 +1,11 @@
 //! The mutations of sort keys that are value expressions (RULES.md
 //! R-TEST-9): the columns added for the sort left in the result, a key
 //! alike a select item not sorted by its column, SR26b's set function and
-//! partition column misjudged, SR26 d i 9's refusals dropped, a result's
-//! name not its column, and an updatable cursor's keys not computed or
-//! their columns not followed.
+//! partition column misjudged, SR26 d i 9's refusals dropped, a grouped
+//! query's key of a column not dependent on its groups taken, a set
+//! function of HAVING or the window clause passed over, a result's name
+//! not its column, and an updatable cursor's keys not computed or their
+//! columns not followed.
 
 use super::{Mutation, Package};
 
@@ -25,7 +27,7 @@ const REFUSED: &str = "order_by::a_key_breaking_a_rule_is_refused_7_17";
 const CURSOR: &str = "order_by::an_updatable_cursor_is_ordered_by_its_keys_13_9";
 
 /// The mutations of sort keys, in the order they run.
-pub const ORDER_BY: [Mutation; 9] = [
+pub const ORDER_BY: [Mutation; 11] = [
     Mutation {
         name: "order-by-added-left-in",
         package: Package::Core,
@@ -77,12 +79,32 @@ pub const ORDER_BY: [Mutation; 9] = [
         unit: &[],
     },
     Mutation {
-        name: "order-by-grouped-not-f868",
+        name: "order-by-grouped-key-rule-lost",
         package: Package::Core,
-        breaks: "a grouped query sorted by a column its select list leaves out is not told of as Feature F868 [§7.17 SR26 d i 9 B I]",
+        breaks: "a grouped query's sort key of a column not dependent on its grouping columns is refused by the select list's rule, not its own [§7.17 SR26 d i 9 B I]",
         file: KEYS,
-        original: "    if grouped {",
-        replacement: "    if false {",
+        original: "if self.sort_names.borrow().on {",
+        replacement: "if self.sort_names.borrow().on && false {",
+        integration: &[REFUSED],
+        unit: &[],
+    },
+    Mutation {
+        name: "order-by-having-set-function-taken",
+        package: Package::Core,
+        breaks: "a query whose HAVING has a set function is sorted by a column its select list leaves out [§7.17 SR26 d i 9 B II]",
+        file: KEYS,
+        original: "        having.for_each_value(&mut |v| aggregated |= binder.has_own_aggregate(v));\n",
+        replacement: "        having.for_each_value(&mut |_| {});\n",
+        integration: &[REFUSED],
+        unit: &[],
+    },
+    Mutation {
+        name: "order-by-window-set-function-taken",
+        package: Package::Core,
+        breaks: "a query whose window clause has a set function is sorted by a column its select list leaves out [§7.17 SR26 d i 9 B II]",
+        file: KEYS,
+        original: "    aggregated |= ordered.into_iter().any(|o| binder.has_own_aggregate(&o.key));\n",
+        replacement: "    drop(ordered);\n",
         integration: &[REFUSED],
         unit: &[],
     },

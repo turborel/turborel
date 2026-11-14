@@ -17,9 +17,11 @@ use super::views::{Source, unconstrained};
 use super::window::has_window_function;
 use super::with::{site_of, with_scope};
 use super::{Binder, Bound, Context, OutColumn, Scope, rule};
-use crate::ast::{ColumnSpecification, QueryExpression, SelectItem, SortColumn, SortSpecification, ValueExpression, WindowOver};
+use crate::ast::{
+    ColumnSpecification, QueryExpression, SelectItem, SortColumn, SortSpecification, TableExpression, ValueExpression, WindowOver,
+};
 use crate::catalog::QualifiedName;
-use crate::error::{At, Code, Result, SqlError};
+use crate::error::{At, Result};
 use crate::logical::{Expr, LogicalPlan, SortKey};
 use crate::value::SortOrder;
 use crate::value::collation::CollationRef;
@@ -466,6 +468,14 @@ impl Binder<'_> {
         names.on = names.from.is_some_and(|from| i >= from);
     }
 
+    /// The scope the select item bound now is bound in, of the select
+    /// list's `scope`: of one added for a sort key of a grouped query, its
+    /// groups', refused as §7.17 SR26 d i 9 B I says.
+    pub(super) fn item_scope<'s>(&self, scope: Scope<'s>) -> Scope<'s> {
+        let Scope::Groups(g, _) = scope else { return scope };
+        if self.sort_names.borrow().on { Scope::Groups(g, KEY_NOT_GROUPED) } else { scope }
+    }
+
     /// The value of the select item the `<column specification>` `cs`
     /// names, if it names the result's column of one while a select item
     /// added for the sort is bound; the names off while it is.
@@ -486,31 +496,37 @@ impl Binder<'_> {
     }
 }
 
-/// [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9] A query sorted by a key that adds
-/// a select item is not DISTINCT, and its select list has no set function
-/// of its own, `selected`; not `grouped`, Feature F868.
+/// [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B II] A query sorted by a key
+/// that adds a select item is not DISTINCT, and directly contains no set
+/// function of its own: in its select list `selected`, or in the HAVING or
+/// window clause of its table expression `te`. Of a grouped query, each
+/// such key's columns are grouping columns or functionally dependent on
+/// them \[9 B I\], as `Binder::item_scope` binds it, Feature F868.
 ///
 /// # Errors
 ///
-/// SQLCODE -103 if it is DISTINCT or has such a set function \[9 B II\];
-/// -900 if it is grouped.
-pub(super) fn hidden_rules(binder: &Binder<'_>, selected: &[SelectItem], (grouped, distinct): (bool, bool)) -> Result<()> {
+/// SQLCODE -103 if it is DISTINCT or directly contains such a set function.
+pub(super) fn hidden_rules(binder: &Binder<'_>, (selected, te): (&[SelectItem], &TableExpression), distinct: bool) -> Result<()> {
     if distinct {
         return Err(rule("[ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B II] SELECT DISTINCT is ordered by columns of its result alone"));
     }
-    if selected.iter().any(|i| binder.has_own_aggregate(&i.value)) {
-        return Err(rule(
-            "[ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B II] a query whose select list has a set function is ordered by columns of its result alone",
-        ));
+    let mut aggregated = selected.iter().any(|i| binder.has_own_aggregate(&i.value));
+    if let Some(having) = &te.having {
+        having.for_each_value(&mut |v| aggregated |= binder.has_own_aggregate(v));
     }
-    if grouped {
-        return Err(SqlError::new(
-            Code::Unsupported,
-            "[ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B I] ORDER BY of a grouped query of what its select list leaves out is Feature F868, which turborel does not support",
+    let ordered = te.window.iter().flat_map(|w| &w.specification.order);
+    aggregated |= ordered.into_iter().any(|o| binder.has_own_aggregate(&o.key));
+    if aggregated {
+        return Err(rule(
+            "[ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B II] a query whose select list, HAVING or window clause has a set function is ordered by columns of its result alone",
         ));
     }
     Ok(())
 }
+
+/// [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B I] Why a sort key's column of a
+/// grouped query is refused.
+const KEY_NOT_GROUPED: &str = "[ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B I] a sort key of a grouped query that its select list leaves out may only reference grouping columns and columns functionally dependent on them";
 
 impl Binder<'_> {
     /// Notes that the select items from the `from`th on, if any, are added

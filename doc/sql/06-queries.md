@@ -702,14 +702,20 @@ SELECT ID, SALARY - 1000 * ID AS SCORE FROM STAFF ORDER BY SALARY - 1000 * ID NU
 A window function is a key too, of the rows before the sort. A key holds
 no subquery, set function or NEXT VALUE FOR, so a set function to sort by
 is named in the select list. A query that is DISTINCT, or of a set
-function in its select list, sorts by columns of its result alone, since
-a column it leaves out may have several values in one of its rows. A
-grouped query sorting by a column its select list leaves out is Feature
-F868, which turborel does not support, so it is SQLCODE -900.
+function in its select list, HAVING or window clause, sorts by columns of
+its result alone, since a column it leaves out may have several values in
+one of its rows.
+
+A grouped query sorts by its groups. A key may read a grouping column the
+select list leaves out, or a column [functionally
+dependent](#functionally-dependent-columns) on the grouping columns, which
+has one value in each group. A key that reads any other column is SQLCODE
+-103.
 
 ```sql
 SELECT NAME FROM STAFF ORDER BY ROW_NUMBER() OVER (ORDER BY SALARY DESC NULLS LAST);
 SELECT DEPT, MAX(SALARY) AS TOP FROM STAFF GROUP BY DEPT ORDER BY TOP DESC NULLS LAST;
+SELECT DEPT FROM DEPT GROUP BY DEPT ORDER BY TITLE DESC;
 SELECT DEPT FROM STAFF GROUP BY DEPT ORDER BY MAX(SALARY);
 SELECT DISTINCT DEPT FROM STAFF ORDER BY ID;
 SELECT DEPT FROM STAFF GROUP BY DEPT ORDER BY ID;
@@ -729,9 +735,14 @@ SELECT DEPT FROM STAFF GROUP BY DEPT ORDER BY ID;
  OPS  |     5400.00
  NULL |        NULL
 (3 rows, with a warning: SQLSTATE 01003)
+ DEPT
+------
+ HR
+ ENG
+(2 rows)
 turborel: SQLCODE -103 (SQLSTATE 2A000): a sort key contains no set function; name it in the select list, and sort by that column [ISO/IEC 9075-2:2023 §7.17 SR26b] (at character 46)
 turborel: SQLCODE -103 (SQLSTATE 2A000): SELECT DISTINCT is ordered by columns of its result alone [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B II] (at character 41)
-turborel: SQLCODE -900 (SQLSTATE 0A000): ORDER BY of a grouped query of what its select list leaves out is Feature F868, which turborel does not support [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B I] (at character 46)
+turborel: SQLCODE -103 (SQLSTATE 2A000): a sort key of a grouped query that its select list leaves out may only reference grouping columns and columns functionally dependent on them (found STAFF.ID) [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B I] (at character 46)
 ```
 
 The keys of a set operation, a VALUES list or any other query that is

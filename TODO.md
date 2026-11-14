@@ -33,9 +33,6 @@ each group.
 
 ### Queries
 
-- ORDER BY in a grouped query of what the select list leaves out (F868)
-  [§7.17 SR26 d i 9 B I], each key's columns grouping columns or
-  functionally dependent on them (T301).
 - FETCH FIRST and OFFSET (F850 to F867) [§7.17]. For the column store (D31)
   this is the clause limiting the rows an ordered read gives. Once ALTER
   TABLE renames columns, COLUMNSTORE.ORDER follows a renamed column.
