@@ -208,6 +208,24 @@ impl Bag {
         Ok(true)
     }
 
+    /// Adds one to the count of `key`; whether it was 0.
+    pub(super) fn raise(&mut self, key: &[u8]) -> Result<bool> {
+        let n = self.count(key)?;
+        self.set(key, (n, n.saturating_add(1)))?;
+        Ok(n == 0)
+    }
+
+    /// Takes one from the count of `key`, if it is above 0; whether it is
+    /// 0 now, one taken.
+    pub(super) fn lower(&mut self, key: &[u8]) -> Result<bool> {
+        let n = self.count(key)?;
+        if n == 0 {
+            return Ok(false);
+        }
+        self.set(key, (n, n.saturating_sub(1)))?;
+        Ok(n == 1)
+    }
+
     /// Takes one from the count of `key`, if it is above 0; whether it was.
     pub(super) fn take(&mut self, key: &[u8]) -> Result<bool> {
         let n = self.count(key)?;

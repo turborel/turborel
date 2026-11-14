@@ -284,8 +284,6 @@ impl<'a> Nest<'a> {
             }
             let mut own = Partition { keys: list, len: part.len, nulls: part.nulls };
             Way::Alone { framed: Framed::new(agg, (bounds, 0), &mut own, tree, work)?, own }
-        } else if agg.distinct && !bounds.grows() {
-            return Err(broken("a DISTINCT set function over a frame that moves"));
         } else {
             let cached = !call.nested.iter().any(|n| n.marker == Marker::CurrentRow);
             Way::Walked { context, arg, work: work.another(), cached, last: None }

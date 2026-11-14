@@ -8,18 +8,25 @@
 //! set function whose state can be written (`Accumulator::write_state`)
 //! is given a tree of states, each the merge of its two children's, built
 //! only while it fits the bytes it may hold, so each frame is the merge of
-//! at most a few states for each of its ranges, merged first to last. Of
-//! any other, each frame's rows are fed to a new accumulator. A frame
-//! alike to the row before it gives the value it gave.
+//! at most a few states for each of its ranges, merged first to last.
+//! COUNT(DISTINCT ...) over a frame that moves counts the values of the
+//! last frame's rows, adding and taking away the rows each frame gains and
+//! loses (`aggregate/sliding.rs`). Of any other, each frame's rows are fed
+//! to a new accumulator. A frame alike to the row before it gives the value
+//! it gave.
+
+mod sliding;
 
 use std::slice;
 
+use self::sliding::Sliding;
 use super::frame::{Bounds, EMPTY, Partition, Ranges};
 use super::reader::Reader;
 use crate::error::Result;
 use crate::exec::broken;
 use crate::exec::work::{Bag, Work};
 use crate::functions::Accumulator;
+use crate::lexer::kw;
 use crate::logical::AggCall;
 use crate::spill::norm_row;
 use crate::value::Value;
@@ -59,12 +66,14 @@ enum Way {
     Tree { nodes: Vec<Option<Node>>, size: usize },
     /// Each frame fed to a new accumulator.
     Each(Reader),
+    /// COUNT(DISTINCT ...) of the values of the last frame's rows counted.
+    Sliding(Box<Sliding>),
 }
 
 impl<'a> Framed<'a> {
     /// `call` over the frames `bounds` finds of `part`, its argument at
     /// `slot`, a tree of states built if it fits in `bytes`, a DISTINCT
-    /// one's values kept in `work`.
+    /// one's values or their counts kept in `work`.
     ///
     /// # Errors
     ///
@@ -80,7 +89,12 @@ impl<'a> Framed<'a> {
             let seen = call.distinct.then(|| Bag::new(work.another()));
             Way::Growing { acc: fresh(call), fed: 0, nulls: false, seen, reader: Reader::default() }
         } else if call.distinct {
-            return Err(broken("a DISTINCT set function over a frame that moves"));
+            // [ISO/IEC 9075-2:2023 §9.23 SR8d ii] COUNT alone, of DISTINCT
+            // set functions, is over a frame that moves (T627).
+            if call.func.0.name() != kw::COUNT {
+                return Err(broken("a DISTINCT set function but COUNT over a frame that moves"));
+            }
+            Way::Sliding(Box::new(Sliding::new(work)))
         } else {
             match tree(call, slot, part, bytes)? {
                 Some((nodes, size)) => Way::Tree { nodes, size },
@@ -118,6 +132,7 @@ impl<'a> Framed<'a> {
             }
             Way::Tree { nodes, size } => merged(call, (nodes, *size), &frame)?,
             Way::Each(reader) => each(call, slot, (reader, part), &frame)?,
+            Way::Sliding(sliding) => sliding.value((call, slot), &frame, part)?,
         };
         self.last = Some((frame, value.clone(), nulls));
         Ok((value, nulls))

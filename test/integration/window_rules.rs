@@ -106,8 +106,8 @@ fn frames_are_well_bounded_7_15() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.23 SR5a, SR5b, SR8d, §6.10;
 /// T627] a rank function's window has an ordering; neither it nor
 /// ROW_NUMBER has a frame; over a window of an ordering or a frame a set
-/// function is not LISTAGG and is DISTINCT only of COUNT, which is
-/// Feature T627, SQLCODE -900; OVER follows a set function or a rank
+/// function is not LISTAGG and is DISTINCT only of COUNT, Feature T627,
+/// whose values are counted; OVER follows a set function or a rank
 /// function alone, else -102. The rest are SQLCODE -103.
 #[test]
 fn window_function_types_fit_their_windows_9_23() {
@@ -119,13 +119,12 @@ fn window_function_types_fit_their_windows_9_23() {
         ("SELECT DENSE_RANK() OVER (ORDER BY D RANGE UNBOUNDED PRECEDING) FROM S", Code::SyntaxRule, "§9.23 SR5b"),
         ("SELECT LISTAGG(R, ',') WITHIN GROUP (ORDER BY D) OVER (ORDER BY D) FROM S", Code::SyntaxRule, "§9.23 SR8d i"),
         ("SELECT SUM(DISTINCT D) OVER (ORDER BY D) FROM S", Code::SyntaxRule, "§9.23 SR8d ii"),
-        ("SELECT COUNT(DISTINCT D) OVER (ORDER BY D) FROM S", Code::Unsupported, "T627"),
-        ("SELECT COUNT(DISTINCT D) OVER (ROWS UNBOUNDED PRECEDING) FROM S", Code::Unsupported, "T627"),
     ];
     for (sql, code, rule) in cases {
         assert_eq!(refused(&a, sql, rule), (code, true), "{sql}");
     }
     assert_eq!(sorted(&a, "SELECT COUNT(DISTINCT D) OVER () FROM S WHERE R = 's'"), ["2", "2"]);
+    assert_eq!(sorted(&a, "SELECT COUNT(DISTINCT D) OVER (ORDER BY D ROWS 1 PRECEDING) FROM S WHERE R = 'n'"), ["1", "1", "2", "2"]);
     assert_eq!(fetched(&a, "SELECT ABS(D) OVER () FROM S").map_err(|e| e.code), Err(Code::Syntax), "OVER after no set function");
 }
 

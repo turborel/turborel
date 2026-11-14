@@ -33,9 +33,6 @@ each group.
 
 ### Queries
 
-- Framed COUNT DISTINCT (T627) [§9.23 SR8d]. A moving frame's distinct
-  values counted within the work area, which a spilled count of each
-  value would allow.
 - ORDER BY in a grouped query of what the select list leaves out (F868)
   [§7.17]. It needs functional dependencies (T301) [§4.26], which also
   decide what a grouped select list may name.

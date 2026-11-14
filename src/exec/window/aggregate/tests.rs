@@ -145,12 +145,42 @@ fn frames_that_grow_are_their_rows_values_7_15() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.23 SR8d] a DISTINCT set
-/// function over a frame that moves, which the binder refuses, is SQLCODE
-/// -910 here, never a value of the wrong rows.
+/// The bytes of a work area whose bag of counts spills past a few values.
+const FEW_VALUES: usize = 64;
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.23 SR8d ii, §10.9 GR4b,
+/// Feature T627]; [DESIGN] COUNT(DISTINCT X) over a frame that moves
+/// counts each value of the frame's rows once, its nulls left out and told
+/// of: of frames of up to three ranges in any order, so rows are added and
+/// taken away, of partitions in memory and spilled, and of a bag of counts
+/// in memory and spilled, 1,000 fixed cases.
 #[test]
-fn distinct_over_a_moving_frame_is_refused_9_23() {
+fn count_distinct_over_frames_that_move_7_15() {
+    let mut state = 0xD1B5_4A32_D192_ED03_u64;
+    let (work, few) = (work(), work().part(FEW_VALUES));
     let c = call("COUNT", (false, true));
+    let moving = Bounds::new(Edge::Row, Edge::Last, Exclusion::NoOthers);
+    for case in 0_u32..1000 {
+        let args = arguments(&mut state);
+        let mut part = partition(&args, case % 2 == 1);
+        let mut ways = [&work, &few].map(|w| Framed::new(&c, (&moving, 1), &mut part, usize::MAX, w).unwrap());
+        for _ in 0_u32..8 {
+            let frame = ranges(&mut state, args.len());
+            let want = brute(&c, &args, &frame);
+            for (n, way) in ways.iter_mut().enumerate() {
+                let (value, nulls) = way.value(frame, &mut part).unwrap();
+                assert_eq!((format!("{value:?}"), nulls), want, "case {case}, bag {n}: over {frame:?} of {args:?}");
+            }
+        }
+    }
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.23 SR8d ii] a DISTINCT set
+/// function but COUNT over a frame that moves, which the binder refuses,
+/// is SQLCODE -910 here, never a value of the wrong rows.
+#[test]
+fn distinct_but_count_over_a_moving_frame_is_refused_9_23() {
+    let c = call("SUM", (false, true));
     let mut part = partition(&[Some(1)], false);
     let moving = Bounds::new(Edge::Row, Edge::Last, Exclusion::NoOthers);
     let found = Framed::new(&c, (&moving, 1), &mut part, usize::MAX, &work());

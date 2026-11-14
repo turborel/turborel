@@ -446,8 +446,9 @@ fn ignores_nulls(kind: &WindowKind) -> bool {
 
 /// \[DESIGN\] How many segments of a partition's places `call` keeps at
 /// once: of its frame's two bounds; an aggregate's or a value function's
-/// reader of its rows, and an aggregate's more of nested window functions
-/// (`nested::readers`); an inverse distribution function's of its rows'
+/// reader of its rows, a DISTINCT one's second, of the rows it takes away
+/// (`aggregate/sliding.rs`), and an aggregate's more of nested window
+/// functions (`nested::readers`); an inverse distribution function's of its rows'
 /// fractions and its sorted values (`distribution.rs`); LEAD or LAG's of the current row and the row
 /// taken; under IGNORE NULLS, LEAD or LAG's of the row ahead, a value
 /// function's of the ends of its frame's ranges, and the list of values
@@ -458,7 +459,7 @@ fn readers(call: &WindowCall) -> usize {
     match kind {
         WindowKind::Aggregate(a) => match a.distribution {
             Some(_) => DISTRIBUTION_READERS,
-            None => BOUND_READERS.saturating_add(1).saturating_add(nested::readers(&call.nested)),
+            None => BOUND_READERS.saturating_add(1).saturating_add(usize::from(a.distinct)).saturating_add(nested::readers(&call.nested)),
         },
         WindowKind::Value(_) => BOUND_READERS.saturating_add(1).saturating_add(listed).saturating_add(ends),
         WindowKind::Offset(_) => OFFSET_READERS.saturating_add(listed).saturating_add(ahead),

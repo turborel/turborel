@@ -34,6 +34,7 @@ mod truncate;
 mod vr;
 mod waits;
 mod width_bucket;
+mod window_distinct;
 mod window_nested;
 mod window_values;
 mod windows;
@@ -58,7 +59,7 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 22] = [
+    let areas: [&[Mutation]; 23] = [
         &sequences::SEQUENCES,
         &generated::GENERATED,
         &truncate::TRUNCATE,
@@ -77,6 +78,7 @@ pub fn all() -> Vec<Mutation> {
         &windows::WINDOWS,
         &window_values::WINDOW_VALUES,
         &window_nested::WINDOW_NESTED,
+        &window_distinct::WINDOW_DISTINCT,
         &width_bucket::WIDTH_BUCKET,
         &filter::FILTER,
         &hypothetical::HYPOTHETICAL,

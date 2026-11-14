@@ -1086,12 +1086,13 @@ Features T611 (Elementary OLAP operations), T612 (Advanced OLAP
 operations), T614 (NTILE function), T615 (LEAD and LAG functions), T616
 (Null treatment option for LEAD and LAG functions), T617 (FIRST_VALUE and
 LAST_VALUE functions), T618 (NTH_VALUE function), T619 (Nested window
-functions) and T620 (WINDOW clause: GROUPS option), of ISO/IEC
+functions), T620 (WINDOW clause: GROUPS option) and T627 (Window framed
+COUNT DISTINCT), of ISO/IEC
 9075-2:2023 §6.10, §6.11, §6.31, §7.15, §9.20, §9.23 and §10.9. T612 is
 the window name, the WINDOW clause, an existing window name, frame
 exclusion, PERCENT_RANK, CUME_DIST, ROW_NUMBER of no ordering,
 WIDTH_BUCKET, the FILTER clause, and the hypothetical set and inverse
-distribution functions. T627 is not claimed.
+distribution functions.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1114,7 +1115,8 @@ distribution functions. T627 is not claimed.
 | Their columns | GR4e ii | A value expression's columns are read at the row its marker gives. GR4 says nothing of the default's, and the rest of the argument's are the frame's row's [GR1], so a default's are read there too. |
 | An empty frame | NOTE 170 | Reads no argument, so its set function is of no rows. |
 | In a constraint | §9.16 SR1c | No nested window function is a potential source of non-determinism, so a CHECK or an assertion may contain one. |
-| Set functions | §9.23 SR8, §10.9 | Each is computed over the row's frame as of a group, nulls left out with SQLSTATE 01003, an empty frame giving what an empty group gives. One of a window of an ordering or a frame is not LISTAGG or an inverse distribution function, and is DISTINCT only if COUNT [SR8d]. COUNT DISTINCT so is SQLCODE -900, Feature T627. |
+| Set functions | §9.23 SR8, §10.9 | Each is computed over the row's frame as of a group, nulls left out with SQLSTATE 01003, an empty frame giving what an empty group gives. One of a window of an ordering or a frame is not LISTAGG or an inverse distribution function, and is DISTINCT only if COUNT [SR8d], else SQLCODE -103. |
+| Framed COUNT DISTINCT | §9.23 SR8d ii, §10.9 GR4b, Feature T627 | COUNT(DISTINCT x) over a window of an ordering or a frame counts each value of the frame's rows once, by the comparison of x's collation, its exclusion applied. Over a frame that moves, each value's count among the last frame's rows is kept in a work area that spills (RULES.md D38), and only the rows a frame gains or loses are counted. A frame's bounds move only forward, so a partition costs about its rows, not its rows times the frame's length. |
 | Grouped queries | §9.20 | Windows of a grouped query are over its groups, after HAVING, so their arguments and keys may be set functions of the group, `SUM(SUM(X)) OVER ()`. SELECT DISTINCT removes groups alike before the windows, as SR22 builds the derived table of groups. |
 | Their order of evaluation | §7.16 | Windows are computed over the rows of FROM, WHERE, GROUP BY and HAVING, before DISTINCT and the cursor's ORDER BY. A query of a window function makes a view or cursor not updatable. |
 | In a constraint | §9.16 SR1c, §11.9 CR2 | ROW_NUMBER, NTILE, LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTH_VALUE and a set function over a ROWS window are potential sources of non-determinism, so a CHECK or an assertion containing one is SQLCODE -103. |

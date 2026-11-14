@@ -248,7 +248,7 @@ SELECT on each table and view the query names.
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), the fraction of PERCENTILE_CONT or PERCENTILE_DISC below 0 or above 1 (22003), a window frame's offset negative or null (22013), a number of tiles of NTILE below 1 (22014), a row of NTH_VALUE below 1 (22016), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
 | 2202F | -301 | A path or a DEPTH FIRST sequence would hold more than 65,535 rows |
-| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns; COUNT(DISTINCT ...) over a window of an ordering or a frame, Feature T627 |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
 
 An error is placed at the construct it is about, its character position
 told.
@@ -366,7 +366,8 @@ DISTINCT Feature T434. Window functions are the `<window function>` of
 §6.10 and the WINDOW clause its `<window clause>` [§7.15], Features T611
 and T620, with the window parts of T612. NTILE is Feature T614, LEAD
 and LAG T615, IGNORE NULLS T616, FIRST_VALUE and LAST_VALUE T617,
-NTH_VALUE T618, and the `<nested window function>` [§6.11] T619. SELECT
+NTH_VALUE T618, the `<nested window function>` [§6.11] T619, and
+COUNT(DISTINCT ...) over a window of an ordering or a frame T627. SELECT
 ... INTO is
 the `<select statement: single row>` [§13.5; X3.135-1986 §8.10]. FOR
 READ ONLY, of a `<cursor specification>` [§13.1], is taken in a direct

@@ -547,15 +547,20 @@ window function's arguments and keys may be the group's set functions.
 A window function is only in a select list, so a query that filters on
 one filters a derived table or a view of it.
 
-COUNT(DISTINCT x) is taken over a window of no ORDER BY or frame, but
-not over one of either, SQLCODE -900, Feature T627. LISTAGG and the
-other set functions of DISTINCT are taken only over a window of neither.
+COUNT(DISTINCT x) is taken over any window, each value of a frame's
+rows counted once. Over a frame that moves, the count of each value
+among the last frame's rows is kept, spilled past the work area, and
+only the rows a frame gains or loses are counted, so a partition costs
+about its rows. LISTAGG and the other set functions of DISTINCT are
+taken only over a window of no ORDER BY or frame, else SQLCODE -103.
 
 ```sql
 SELECT DEPT, SUM(SALARY) AS TOTAL, RANK() OVER (ORDER BY SUM(SALARY) DESC) AS R
     FROM STAFF GROUP BY DEPT ORDER BY R;
 SELECT NAME FROM STAFF WHERE RANK() OVER (ORDER BY SALARY) = 1;
-SELECT COUNT(DISTINCT DEPT) OVER (ORDER BY ID) FROM STAFF;
+SELECT ID, COUNT(DISTINCT DEPT) OVER (ORDER BY ID ROWS 1 PRECEDING) AS DEPTS
+    FROM STAFF ORDER BY ID;
+SELECT SUM(DISTINCT SALARY) OVER (ORDER BY ID) FROM STAFF;
 ```
 
 ```
@@ -566,7 +571,14 @@ SELECT COUNT(DISTINCT DEPT) OVER (ORDER BY ID) FROM STAFF;
  OPS  |              5400.00 |                    3
 (3 rows, with a warning: SQLSTATE 01003)
 turborel: SQLCODE -103 (SQLSTATE 2A000): a window function is only in the select list of a query specification [ISO/IEC 9075-2:2023 §6.10 SR2b] (at character 29)
-turborel: SQLCODE -900 (SQLSTATE 0A000): COUNT(DISTINCT ...) over a window of an ordering or a frame is Feature T627, which turborel does not support [ISO/IEC 9075-2:2023 §9.23 SR8d ii] (at character 7)
+           ID |                DEPTS
+--------------+----------------------
+            1 |                    1
+            2 |                    1
+            3 |                    2
+            4 |                    1
+(4 rows, with a warning: SQLSTATE 01003)
+turborel: SQLCODE -103 (SQLSTATE 2A000): SUM(DISTINCT ...) is over a window of no ordering and no frame [ISO/IEC 9075-2:2023 §9.23 SR8d ii] (at character 7)
 ```
 
 ## Set operations
