@@ -33,6 +33,8 @@ pub use arrays::{
     ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf, ElementOf,
     TRIM_ARRAY, TrimArrayOf,
 };
+mod distribution;
+pub use distribution::{FRACTION, InverseDistribution, PERCENTILE_CONT, PERCENTILE_DISC, Picked, picked, picked_value};
 mod extremes;
 pub use extremes::CollatedExtreme;
 use extremes::Extreme;

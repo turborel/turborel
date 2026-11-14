@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use super::{AggCall, Cond, Expr, LogicalPlan, Slot, Subquery};
+use super::{AggCall, Cond, Distribution, Expr, LogicalPlan, Slot, Subquery};
 use crate::error::{At, Code, Result, SqlError};
 use crate::value::{Value, cast};
 
@@ -157,7 +157,10 @@ impl Filling<'_> {
             LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
                 let aggs = aggs
                     .into_iter()
-                    .map(|a| AggCall { arg: a.arg.map(|e| self.expr(e)), filter: a.filter.map(|c| self.cond(c)), ..a })
+                    .map(|a| {
+                        let distribution = a.distribution.map(|d| Box::new(Distribution { fraction: self.expr(d.fraction.clone()), ..*d }));
+                        AggCall { arg: a.arg.map(|e| self.expr(e)), filter: a.filter.map(|c| self.cond(c)), distribution, ..a }
+                    })
                     .collect();
                 LogicalPlan::Aggregate { groups, collations, aggs, seeds, input }
             }

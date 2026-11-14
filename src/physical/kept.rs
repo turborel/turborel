@@ -19,7 +19,7 @@ use super::probe::{Compared, placed_as_is};
 use crate::db::State;
 use crate::error::{Code, Result, fail};
 use crate::index::Probe;
-use crate::logical::{AggCall, Cond, Expr, Slot, filled_cond, filled_expr};
+use crate::logical::{AggCall, Cond, Distribution, Expr, Slot, filled_cond, filled_expr};
 use crate::value::{CompOp, DataType, Value};
 
 mod shape;
@@ -179,7 +179,11 @@ pub(crate) fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
         Plan::Aggregate { groups, collations, aggs, seeds, detail, input } => {
             let filled_agg = |a: AggCall| {
                 let arg = a.arg.map(|e| filled_expr(e, values)).transpose()?;
-                Ok(AggCall { arg, filter: a.filter.map(|c| filled_cond(c, values)).transpose()?, ..a })
+                let distribution = match a.distribution {
+                    Some(d) => Some(Box::new(Distribution { fraction: filled_expr(d.fraction.clone(), values)?, ..*d })),
+                    None => None,
+                };
+                Ok(AggCall { arg, filter: a.filter.map(|c| filled_cond(c, values)).transpose()?, distribution, ..a })
             };
             let aggs = aggs.into_iter().map(filled_agg).collect::<Result<_>>()?;
             Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(filled_plan(*input, values)?) })

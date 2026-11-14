@@ -360,6 +360,8 @@ a query reads, or of each group of its GROUP BY.
 | ANY(x), SOME(x) | of a BOOLEAN x, TRUE if an x is TRUE, else FALSE |
 | ANY_VALUE(x) | one of the values of x, the first one read |
 | LISTAGG(x, 'sep') WITHIN GROUP (ORDER BY ...) | the strings x joined by the separator in the order ORDER BY gives, CHARACTER VARYING(32767) |
+| PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY x) | the value a fraction p of the way through the sorted x, between two of them if it falls between |
+| PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY x) | the first of the sorted x whose share of the values up to it is at least p |
 
 Each but COUNT(*) leaves out the nulls of x, and with DISTINCT counts
 each value of x once: `COUNT(DISTINCT DEPT)`. Of no rows, COUNT is 0
@@ -519,6 +521,56 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): RANK WITHIN GROUP, a hypothetical set f
 
 Barbara's null salary is placed first descending, before 7500, and
 last ascending, after it.
+
+PERCENTILE_CONT and PERCENTILE_DISC of a fraction p from 0 to 1,
+followed by WITHIN GROUP and an ORDER BY of one key, are the inverse
+distribution functions. They sort the key's values that are not null in
+the key's direction. PERCENTILE_CONT takes the value p·(N−1) places
+from the first of N, counted from 0. Where that falls between two
+values it moves from the first toward the second by what is left over,
+so the median of 7200 and 8100 is 7650. PERCENTILE_DISC takes the first
+value of a share of the values up to it, its peers among them, that is
+at least p, so it is always one of the values. The key is a number or
+an interval. Of an exact or approximate key the result is DOUBLE
+PRECISION, of a DECFLOAT key DECFLOAT(34), and of an interval the
+interval's type.
+
+A group of no values gives null, as does a null p. A p below 0 or above
+1 is refused, SQLSTATE 22003, even of a group of no rows. Like a
+hypothetical set function's values, p is not aggregated, and a `?` p is
+NUMERIC(18,17). An exact p picks its places exactly, so a share equal to
+p is at least it. Each takes FILTER, and OVER a window of a PARTITION BY
+alone, whose every row has its partition's value, but not a window of
+an ORDER BY or a frame. Over a window p may differ from row to row.
+
+```sql
+SELECT DEPT, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY SALARY) AS MEDIAN,
+    PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY SALARY) AS MIDDLE FROM STAFF GROUP BY DEPT ORDER BY DEPT;
+SELECT ID, NAME, PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY SALARY DESC) OVER (PARTITION BY DEPT) AS HIGH FROM STAFF ORDER BY ID;
+SELECT PERCENTILE_CONT(1.5) WITHIN GROUP (ORDER BY SALARY) FROM STAFF;
+SELECT PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY SALARY) OVER (ORDER BY ID) FROM STAFF;
+```
+
+```
+ DEPT |                   MEDIAN |                   MIDDLE
+------+--------------------------+--------------------------
+ ENG  |                   7.65E3 |                    7.2E3
+ OPS  |                    5.4E3 |                    5.4E3
+ NULL |                     NULL |                     NULL
+(3 rows, with a warning: SQLSTATE 01003)
+           ID | NAME                           |                     HIGH
+--------------+--------------------------------+--------------------------
+            1 | Ada                            |                  7.875E3
+            2 | Grace                          |                  7.875E3
+            3 | Edsger                         |                    5.4E3
+            4 | Barbara                        |                     NULL
+(4 rows, with a warning: SQLSTATE 01003)
+turborel: SQLCODE -301 (SQLSTATE 22003): the fraction of an inverse distribution function is from 0 to 1, not 1.5 [ISO/IEC 9075-2:2023 §10.9 GR10c]
+turborel: SQLCODE -103 (SQLSTATE 2A000): PERCENTILE_DISC is over a window of no ordering and no frame [ISO/IEC 9075-2:2023 §9.23 SR8d i] (at character 7)
+```
+
+Engineering's upper quarter, sorted from the highest salary, is a
+quarter of the way from 8100 to 7200.
 
 ANY_VALUE gives a column that the grouping decides but does not name,
 such as a department's name grouped by its number, with no need to

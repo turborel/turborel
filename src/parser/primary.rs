@@ -3,8 +3,8 @@
 //! CASE [§6.9], CAST [§6.10], scalar subqueries [§7.11], the string
 //! functions [§6.6, §6.7], EXTRACT [§6.6], the datetime value functions
 //! [§6.8], VALUE of a domain constraint [§6.2], NEXT VALUE FOR [ISO/IEC
-//! 9075-2:2023 §6.14], WIDTH_BUCKET [§6.31], and the \[EXTENSION\]
-//! function call.
+//! 9075-2:2023 §6.14], WIDTH_BUCKET [§6.31], the ordered set functions
+//! [§10.9], and the \[EXTENSION\] function call.
 
 use super::Parser;
 use super::grouping::GROUPING;
@@ -141,10 +141,10 @@ impl Parser {
         if let Some(nesting) = self.at_nested_window() {
             return self.nested_window(nesting);
         }
-        // [ISO/IEC 9075-2:2023 §10.9] the rank functions, no key words of
-        // SQL-92, of values before WITHIN GROUP.
-        if let Some(name) = self.at_hypothetical() {
-            return self.hypothetical_set_function(name);
+        // [ISO/IEC 9075-2:2023 §10.9] the ordered set functions, of names
+        // no key words of SQL-92.
+        if let Some(ordered) = self.ordered_set_function() {
+            return ordered;
         }
         // [ISO/IEC 9075-2:2023 §6.10] ROW_NUMBER and the rank functions,
         // no key words of SQL-92, before ( ) OVER.

@@ -333,6 +333,7 @@ impl Binder<'_> {
         match &sf.arg {
             SetArg::Grouping(columns) => return self.grouping_operation(columns, scope),
             SetArg::Hypothetical(values) => return self.hypothetical(sf, values, scope),
+            SetArg::Fraction(fraction) => return self.inverse_distribution(sf, fraction, scope),
             SetArg::CountStar | SetArg::Distinct(_) | SetArg::All(_) => {}
         }
         if sf.name == ARRAY_AGG {
@@ -352,6 +353,7 @@ impl Binder<'_> {
             SetArg::All(argument) => self.aggregate(func, (Some(argument), false), sf.filter.as_deref(), scope),
             SetArg::Grouping(columns) => self.grouping_operation(columns, scope),
             SetArg::Hypothetical(values) => self.hypothetical(sf, values, scope),
+            SetArg::Fraction(fraction) => self.inverse_distribution(sf, fraction, scope),
         }
     }
 
@@ -516,7 +518,7 @@ impl Binder<'_> {
         };
         let filter = self.filter_of(filter, scope)?;
         let label = self.filtered_label(label, filter.as_ref());
-        Ok((AggCall { func, arg, distinct, filter, result, label }, named))
+        Ok((AggCall { func, arg, distinct, filter, distribution: None, result, label }, named))
     }
 }
 

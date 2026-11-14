@@ -8,15 +8,14 @@ use super::{SearchCondition, ValueExpression, ValueOrder};
 #[derive(Debug, Clone)]
 pub struct SetFunctionSpecification {
     /// COUNT, AVG, MAX, MIN or SUM; \[ISO/IEC 9075-2:2023 §10.9\] EVERY,
-    /// ANY or SOME, or the `<rank function type>` of a hypothetical set
-    /// function
+    /// ANY or SOME, the `<rank function type>` of a hypothetical set
+    /// function, or the `<inverse distribution function type>`
     pub name: &'static str,
     /// What the function is applied to.
     pub arg: SetArg,
     /// [ISO/IEC 9075-2:2023 §10.9] The `<sort specification list>` of an
-    /// ARRAY_AGG, if written, or of a LISTAGG's or a hypothetical set
-    /// function's `<within group specification>`; of every other function,
-    /// none.
+    /// ARRAY_AGG, if written, or of the `<within group specification>` of a
+    /// LISTAGG or an ordered set function; of every other function, none.
     pub order_by: Vec<ValueOrder>,
     /// [ISO/IEC 9075-2:2023 §10.9] A `<listagg set function>`'s separator
     /// and overflow behavior; of every other function, none.
@@ -49,6 +48,10 @@ pub enum SetArg {
     /// expression list>` of a `<hypothetical set function>`, its sort keys
     /// the `order_by` of its `<within group specification>`.
     Hypothetical(Vec<ValueExpression>),
+    /// [ISO/IEC 9075-2:2023 §10.9] The `<inverse distribution function
+    /// argument>` of an `<inverse distribution function>`, its sort key the
+    /// `order_by` of its `<within group specification>`.
+    Fraction(Box<ValueExpression>),
 }
 
 /// [ISO/IEC 9075-2:2023 §10.9] What a `<listagg set function>` writes

@@ -31,6 +31,7 @@ mod data_type;
 mod datetime;
 mod ddl;
 mod diagnostics;
+mod distribution;
 mod domains;
 mod dynamic;
 mod expression;

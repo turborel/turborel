@@ -61,6 +61,12 @@ impl Work {
         Work { limit, batch, partitions, areas: Arc::clone(&self.areas), area: None, types: self.types.clone(), stop }
     }
 
+    /// A work area of the same settings, of its own, of `limit` bytes: for
+    /// a part of an operator held beside its others in a part of its area.
+    pub(super) fn part(&self, limit: usize) -> Work {
+        Work { limit, ..self.another() }
+    }
+
     /// Half of it, of its own, the other half left to it, an area of each
     /// half made of each when needed: for a part of an operator that holds
     /// rows beside it, so the two hold no more than one work area does.

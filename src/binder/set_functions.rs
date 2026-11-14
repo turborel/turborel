@@ -103,9 +103,9 @@ fn grouping_arguments(v: &ValueExpression) -> Option<&[ValueExpression]> {
 fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
     match v {
         ValueExpression::SetFunction(sf) => match &sf.arg {
-            // [ISO/IEC 9075-2:2023 §10.9 SR14] of a hypothetical set
-            // function, its sort keys, whose outer references it refuses.
-            SetArg::CountStar | SetArg::Grouping(_) | SetArg::Hypothetical(_) => None,
+            // [ISO/IEC 9075-2:2023 §10.9 SR14] of an ordered set function,
+            // its sort keys, whose outer references it refuses.
+            SetArg::CountStar | SetArg::Grouping(_) | SetArg::Hypothetical(_) | SetArg::Fraction(_) => None,
             SetArg::Distinct(a) | SetArg::All(a) => Some(a),
         },
         ValueExpression::Call { args, .. } => args.first(),

@@ -168,7 +168,15 @@ impl Binder<'_> {
         filter: Option<&SearchCondition>,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        let ((call, _), nested) = self.within(IN_ARGUMENT, || self.nesting(|| self.aggregate_call(func, argued, filter, scope)))?;
+        self.window_taken(|| self.aggregate_call(func, argued, filter, scope).map(|(call, _)| call))
+    }
+
+    /// The aggregate function of a window function, `bind` binding it as
+    /// it is over the rows of the window frame, with window functions
+    /// refused in it: kept for the window function. Its value is not a
+    /// column.
+    pub(super) fn window_taken(&self, bind: impl FnOnce() -> Result<AggCall>) -> Result<(Expr, DataType)> {
+        let (call, nested) = self.within(IN_ARGUMENT, || self.nesting(bind))?;
         let result = call.result.clone();
         if let Some(w) = self.windowing.borrow_mut().as_mut() {
             (w.taken, w.nested) = (Some(call), nested);

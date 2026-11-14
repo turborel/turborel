@@ -38,6 +38,7 @@ mod listagg;
 pub(crate) use datetime::cast_is_valid;
 pub use datetime::{function_type as datetime_function_type, literal_value as datetime_literal};
 pub use interval::{displacement_of, is_displacement};
+mod distribution;
 mod expression;
 mod filter;
 mod from;

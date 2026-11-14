@@ -28,7 +28,7 @@ fn call(name: &str, (star, distinct): (bool, bool)) -> AggCall {
     let arg_type = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric };
     let result = func.0.result_type(if star { None } else { Some(arg_type) }).unwrap();
     let arg = if star { None } else { Some(Expr::Column(0)) };
-    AggCall { func, arg, distinct, result, filter: None, label: name.into() }
+    AggCall { func, arg, distinct, result, filter: None, distribution: None, label: name.into() }
 }
 
 /// A partition of the arguments `args`, each null if none, held in a space

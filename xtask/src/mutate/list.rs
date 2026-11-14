@@ -7,6 +7,7 @@ mod composite;
 mod contents;
 mod distinct;
 mod distinct_predicate;
+mod distribution;
 mod fill;
 mod filter;
 mod generated;
@@ -57,7 +58,7 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 21] = [
+    let areas: [&[Mutation]; 22] = [
         &sequences::SEQUENCES,
         &generated::GENERATED,
         &truncate::TRUNCATE,
@@ -79,6 +80,7 @@ pub fn all() -> Vec<Mutation> {
         &width_bucket::WIDTH_BUCKET,
         &filter::FILTER,
         &hypothetical::HYPOTHETICAL,
+        &distribution::DISTRIBUTION,
     ];
     core.into_iter().chain(areas).chain([near::NEAR.as_slice(), &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER]).flatten().copied().collect()
 }

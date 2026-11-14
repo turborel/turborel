@@ -219,7 +219,7 @@ impl Binder<'_> {
             ValueExpression::Subquery(s) => self.subquery_derived(s).into_iter().next().unwrap_or(Derived::Yielding),
             ValueExpression::SetFunction(f) => match &f.arg {
                 SetArg::Distinct(argument) | SetArg::All(argument) => self.derived(argument)?,
-                SetArg::CountStar | SetArg::Grouping(_) | SetArg::Hypothetical(_) => Derived::Yielding,
+                SetArg::CountStar | SetArg::Grouping(_) | SetArg::Hypothetical(_) | SetArg::Fraction(_) => Derived::Yielding,
             },
             // [ISO/IEC 9075-2:2023 §9.23 SR8b] an aggregate's over a window,
             // its set function's; [SR5j v, SR6c] a value function's, its

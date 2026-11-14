@@ -11,11 +11,17 @@
 //! rows came, as in memory. The values a DISTINCT set function has taken, of
 //! every group of a pass, are kept as keys of one bag, which spills to a table
 //! once they outgrow it (`exec/work.rs`): the work area split in two, half the
-//! groups', half the bag's, so they hold no more than one.
+//! groups', half the bag's, so they hold no more than one. The values of the
+//! inverse distribution functions of a pass are sorted in a part of their own
+//! of what is left, split so again (`group/distribution.rs`).
+
+mod distribution;
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
+use self::distribution::{Pick, Sorted, Sorting, picked_of, picks, seeded};
 use super::partition::{Partitioner, merge_all, numbered, unnumbered};
 use super::work::{Bag, Work};
 use super::{RowIter, Runner, column, eval, eval_cond, failed, warn};
@@ -56,12 +62,14 @@ fn group_key(spec: &Spec, values: &Row) -> Vec<u8> {
     norm_row(&values.iter().zip(&spec.collations).map(keyed).collect::<Row>())
 }
 
-/// One group: its grouping values, the set functions fed so far, and the
-/// number of its first row, which orders the output.
+/// One group: its grouping values, the set functions fed so far, of its
+/// inverse distribution functions what picks their values, and the number
+/// of its first row, which orders the output.
 struct Group {
     first: u64,
     values: Row,
     states: Vec<Box<dyn Accumulator>>,
+    picks: Vec<Option<Pick>>,
 }
 
 /// What a pass groups: seeds, each its group's values, then rows, each
@@ -90,12 +98,23 @@ pub(super) fn grouping(spec: Spec, input: RowIter, db: &Arc<State>, tx: TxId) ->
 }
 
 /// A grouping being made: in its work area, and, of DISTINCT set
-/// functions, the half of it their bag of values taken holds.
+/// functions, the half of it their bag of values taken holds, and of
+/// inverse distribution functions, the part their values are sorted in.
 struct Grouper {
     spec: Spec,
     runner: Runner,
     work: Work,
     bag: Option<Work>,
+    sorts: Option<Work>,
+}
+
+/// What the rows of a pass are fed to beside their groups: the bag of the
+/// values DISTINCT set functions took, and the sort of the values of
+/// inverse distribution functions.
+struct Fed<'a> {
+    runner: &'a Runner,
+    seen: Bag,
+    sorting: Option<Sorting>,
 }
 
 /// Where a pass writes the rows of the groups it has no room for: to
@@ -130,11 +149,23 @@ impl Overflow {
 
 impl Grouper {
     /// A grouping under `spec`, in a work area of `db`, read as `tx` sees
-    /// it, split in two if a set function is DISTINCT.
+    /// it, split in two if a set function is DISTINCT, and what is left in
+    /// two again if one is an inverse distribution function.
     fn new(spec: Spec, db: &Arc<State>, tx: TxId) -> Grouper {
         let mut work = Work::of(db, tx);
         let bag = spec.aggs.iter().any(|a| a.distinct).then(|| work.split());
-        Grouper { spec, runner: Runner::new(db, tx), work, bag }
+        let sorts = spec.aggs.iter().any(|a| a.distribution.is_some()).then(|| work.split());
+        Grouper { spec, runner: Runner::new(db, tx), work, bag, sorts }
+    }
+
+    /// A new group of the grouping values `values`, its first row numbered
+    /// `first`: `row`, or of a group of no rows none.
+    fn group(&self, first: u64, values: Row, row: Option<&Row>) -> Result<Group> {
+        let picks = match row {
+            Some(row) => picks(&self.spec.aggs, row, &self.runner)?,
+            None => picks(&self.spec.aggs, &seeded(&self.spec.aggs, &self.spec.groups, &values), &self.runner)?,
+        };
+        Ok(Group { first, values, states: fresh(&self.spec), picks })
     }
 
     /// The groups of `input`, from memory if they fit the work area, else
@@ -150,7 +181,7 @@ impl Grouper {
         let rows = (first..).zip(input).map(|(n, r)| r.map(|row| Seeded::Row(n, row)));
         let mut held = self.pass(Box::new(seeded.chain(rows)), &mut overflow)?;
         if self.spec.groups.is_empty() && held.is_empty() {
-            held.push((0, finished(Group { first: 0, values: Vec::new(), states: fresh(&self.spec) })?));
+            held.push((0, finished(self.group(0, Vec::new(), None)?, &self.spec.aggs, None)?));
         }
         let Overflow::Partitions(Some(parts)) = overflow else { return Ok(Box::new(held.into_iter().map(|(_, row)| Ok(row)))) };
         let mut sources = vec![self.written(held)?];
@@ -187,13 +218,16 @@ impl Grouper {
     /// holds, the rows of the others written to `overflow`.
     fn pass(&mut self, rows: Numbered<'_>, overflow: &mut Overflow) -> Result<Finished> {
         let (mut found, mut bytes) = (HashMap::<Vec<u8>, Group>::new(), 0_usize);
-        let mut seen = Bag::new(self.bag.as_ref().unwrap_or(&self.work).another());
+        let seen = Bag::new(self.bag.as_ref().unwrap_or(&self.work).another());
+        let mut fed = Fed { runner: &self.runner, seen, sorting: self.sorts.as_ref().map(|w| Sorting::new(w.another())) };
         for r in rows {
             let (n, row) = match r? {
                 Seeded::Seed(n, values) => {
                     let key = group_key(&self.spec, &values);
                     bytes = bytes.saturating_add(key.len()).saturating_add(row_bytes(&values));
-                    found.entry(key).or_insert_with(|| Group { first: n, values, states: fresh(&self.spec) });
+                    if let Entry::Vacant(vacant) = found.entry(key) {
+                        vacant.insert(self.group(n, values, None)?);
+                    }
                     continue;
                 }
                 Seeded::Row(n, row) => (n, row),
@@ -207,15 +241,16 @@ impl Grouper {
                 }
                 bytes = bytes.saturating_add(key.len()).saturating_add(row_bytes(&values));
                 bytes = bytes.saturating_add(self.spec.aggs.len().saturating_mul(STATE_BYTES));
-                found.insert(key.clone(), Group { first: n, values, states: fresh(&self.spec) });
+                found.insert(key.clone(), self.group(n, values, Some(&row))?);
             }
             if let Some(group) = found.get_mut(&key) {
-                feed(&self.spec.aggs, (group, &key), &row, (&self.runner, &mut seen))?;
+                feed(&self.spec.aggs, (group, &key), &row, &mut fed)?;
             }
         }
         let mut found: Vec<Group> = found.into_values().collect();
         found.sort_by_key(|g| g.first);
-        found.into_iter().map(|g| (g.first, finished(g))).map(|(n, row)| row.map(|r| (n, r))).collect()
+        let mut sorted = fed.sorting.map(Sorting::sorted).transpose()?;
+        found.into_iter().map(|g| (g.first, finished(g, &self.spec.aggs, sorted.as_mut()))).map(|(n, row)| row.map(|r| (n, r))).collect()
     }
 
     /// Groups `held` in a run of the work area, read from the first.
@@ -234,9 +269,12 @@ fn fresh(spec: &Spec) -> Vec<Box<dyn Accumulator>> {
 }
 
 /// Feeds each set function of `group`, of grouping key `key`, its
-/// argument of `row`, the values each DISTINCT one took kept in `seen`.
-fn feed(aggs: &[AggCall], (group, key): (&mut Group, &[u8]), row: &Row, (runner, seen): (&Runner, &mut Bag)) -> Result<()> {
-    for (n, (a, acc)) in aggs.iter().zip(group.states.iter_mut()).enumerate() {
+/// argument of `row`, the values each DISTINCT one took kept in the bag of
+/// `fed`, those of each inverse distribution function sorted in its sort.
+fn feed(aggs: &[AggCall], (group, key): (&mut Group, &[u8]), row: &Row, fed: &mut Fed<'_>) -> Result<()> {
+    let (runner, seen, sorting) = (fed.runner, &mut fed.seen, &mut fed.sorting);
+    let Group { first, states, picks, .. } = group;
+    for (n, (a, acc)) in aggs.iter().zip(states.iter_mut()).enumerate() {
         // [ISO/IEC 9075-2:2023 §10.9 GR4] a row its filter is not true of
         // is not aggregated, its argument not computed.
         if !admitted(a.filter.as_ref(), row, runner)? {
@@ -250,6 +288,13 @@ fn feed(aggs: &[AggCall], (group, key): (&mut Group, &[u8]), row: &Row, (runner,
                 // [ISO/IEC 9075:1992 §6.5 GR1b] a null eliminated warns.
                 if v.is_null() {
                     warn(runner, SqlState::NULL_VALUE_ELIMINATED);
+                }
+                // [ISO/IEC 9075-2:2023 §10.9 GR10f] an inverse distribution
+                // function's values not null are sorted.
+                if let (Some(d), Some(pick), Some(sorting)) = (&a.distribution, picks.get_mut(n).and_then(Option::as_mut), sorting.as_mut())
+                {
+                    sorting.push((*first, n), (d.order, pick), v)?;
+                    continue;
                 }
                 // The group's key, the function's place, and the value: one
                 // key for each value each function of each group took.
@@ -275,10 +320,14 @@ pub(super) fn admitted(filter: Option<&Cond>, row: &Row, runner: &Runner) -> Res
 }
 
 /// The row of a finished group: its grouping values, then each set
-/// function's result.
-fn finished(Group { values: mut row, states, .. }: Group) -> Result<Row> {
-    for acc in states {
-        row.push(acc.finish()?);
+/// function's result, of `aggs`, of an inverse distribution function of
+/// its values read from `sorted`.
+fn finished(Group { first, values: mut row, states, picks }: Group, aggs: &[AggCall], mut sorted: Option<&mut Sorted>) -> Result<Row> {
+    for (n, (acc, call)) in states.into_iter().zip(aggs).enumerate() {
+        match picks.get(n).and_then(Option::as_ref) {
+            Some(pick) => row.push(picked_of(sorted.as_deref_mut(), (first, n), call, pick)?),
+            None => row.push(acc.finish()?),
+        }
     }
     Ok(row)
 }
@@ -318,7 +367,7 @@ mod tests {
         let db = Arc::new(State::with_builtins(Box::new(MemoryCatalog::default())));
         let count = db.functions.aggregate("COUNT").unwrap();
         let result = count.0.result_type(None).unwrap();
-        let agg = AggCall { func: count, arg: None, distinct: false, result, filter: None, label: "COUNT(*)".into() };
+        let agg = AggCall { func: count, arg: None, distinct: false, result, filter: None, distribution: None, label: "COUNT(*)".into() };
         let int = |n: i128| Value::Exact(Decimal::new(n, 0));
         let grouped = |input: Vec<Row>| {
             let spec = Spec { groups: vec![0], collations: Vec::new(), aggs: vec![agg.clone()], seeds: vec![vec![int(9)]] };

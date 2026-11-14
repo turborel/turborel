@@ -1082,16 +1082,16 @@ where it is read, so a column may be named NULLS.
 
 ### Window functions
 
-Features T611 (Elementary OLAP operations), T614 (NTILE function), T615
-(LEAD and LAG functions), T616 (Null treatment option for LEAD and LAG
-functions), T617 (FIRST_VALUE and LAST_VALUE functions), T618 (NTH_VALUE
-function), T619 (Nested window functions) and T620 (WINDOW clause: GROUPS
-option), of ISO/IEC 9075-2:2023 §6.10, §6.11, §7.15, §9.20 and §9.23.
-Of T612 (Advanced OLAP operations), the window name, the WINDOW clause,
-an existing window name, frame exclusion, PERCENT_RANK, CUME_DIST,
-ROW_NUMBER of no ordering, WIDTH_BUCKET, the FILTER clause and the
-hypothetical set functions are done. Its inverse distribution functions
-are not, so T612 is not claimed. Nor is T627.
+Features T611 (Elementary OLAP operations), T612 (Advanced OLAP
+operations), T614 (NTILE function), T615 (LEAD and LAG functions), T616
+(Null treatment option for LEAD and LAG functions), T617 (FIRST_VALUE and
+LAST_VALUE functions), T618 (NTH_VALUE function), T619 (Nested window
+functions) and T620 (WINDOW clause: GROUPS option), of ISO/IEC
+9075-2:2023 §6.10, §6.11, §6.31, §7.15, §9.20, §9.23 and §10.9. T612 is
+the window name, the WINDOW clause, an existing window name, frame
+exclusion, PERCENT_RANK, CUME_DIST, ROW_NUMBER of no ordering,
+WIDTH_BUCKET, the FILTER clause, and the hypothetical set and inverse
+distribution functions. T627 is not claimed.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1114,7 +1114,7 @@ are not, so T612 is not claimed. Nor is T627.
 | Their columns | GR4e ii | A value expression's columns are read at the row its marker gives. GR4 says nothing of the default's, and the rest of the argument's are the frame's row's [GR1], so a default's are read there too. |
 | An empty frame | NOTE 170 | Reads no argument, so its set function is of no rows. |
 | In a constraint | §9.16 SR1c | No nested window function is a potential source of non-determinism, so a CHECK or an assertion may contain one. |
-| Set functions | §9.23 SR8, §10.9 | Each is computed over the row's frame as of a group, nulls left out with SQLSTATE 01003, an empty frame giving what an empty group gives. One of a window of an ordering or a frame is not LISTAGG, and is DISTINCT only if COUNT [SR8d]. COUNT DISTINCT so is SQLCODE -900, Feature T627. |
+| Set functions | §9.23 SR8, §10.9 | Each is computed over the row's frame as of a group, nulls left out with SQLSTATE 01003, an empty frame giving what an empty group gives. One of a window of an ordering or a frame is not LISTAGG or an inverse distribution function, and is DISTINCT only if COUNT [SR8d]. COUNT DISTINCT so is SQLCODE -900, Feature T627. |
 | Grouped queries | §9.20 | Windows of a grouped query are over its groups, after HAVING, so their arguments and keys may be set functions of the group, `SUM(SUM(X)) OVER ()`. SELECT DISTINCT removes groups alike before the windows, as SR22 builds the derived table of groups. |
 | Their order of evaluation | §7.16 | Windows are computed over the rows of FROM, WHERE, GROUP BY and HAVING, before DISTINCT and the cursor's ORDER BY. A query of a window function makes a view or cursor not updatable. |
 | In a constraint | §9.16 SR1c, §11.9 CR2 | ROW_NUMBER, NTILE, LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTH_VALUE and a set function over a ROWS window are potential sources of non-determinism, so a CHECK or an assertion containing one is SQLCODE -103. |
@@ -1126,6 +1126,12 @@ are not, so T612 is not claimed. Nor is T627.
 | Their values and keys | SR10a, SR10c, §9.14 SR3, §6.11 SR1 | No window function, set function, query expression or nested window function, else SQLCODE -103. Each value and its key of compatible types, else -103, compared as of the type §9.5 gives them, character strings by the collation §9.15 gives both. A key is an operand of an ordering operation. \[EXTENSION\] A `?` value takes its key's type, where §20.7 GR5a gives it none. |
 | Not aggregated | SR14, §6.9 SR6 | The values are of the groups, so a column they name is a grouping column or an outer reference, else SQLCODE -103 as of a select list [§7.16 SR15]. Of a grouping set, a column it leaves out is null in them. A sort key holding an outer reference would make the function the enclosing query's, with values over its rows, and is SQLCODE -900. |
 | Over a window | §9.23 SR8c | A hypothetical set function is no window function's aggregate, else SQLCODE -103. |
+| Inverse distribution functions | §10.9 SR12, GR10 | `PERCENTILE_CONT` and `PERCENTILE_DISC` of a fraction, `WITHIN GROUP (ORDER BY ...)` of one sort key, else SQLCODE -103 \[SR12a\]. The key's values not null are sorted in its direction, nulls eliminated with SQLSTATE 01003. A null fraction, or no values, gives null. A fraction below 0 or above 1 is SQLSTATE 22003, even of a group of no rows. PERCENTILE_CONT interpolates between ROW0 and ROW1 by FACTOR in SQL's arithmetic, so of intervals an interval, and PERCENTILE_DISC takes the value at the ⌈NVE·N⌉th place, the first if NVE is 0, the first whose CUME_DIST is at least NVE. They take FILTER. |
+| Their rows | GR10h | \[DESIGN\] Of an exact fraction ROW0, ROW1 and the place PERCENTILE_DISC takes are found exactly, so a CUME_DIST equal to the fraction is at least it, as GR10h iii's comparison of exact numbers has it. Of an approximate fraction they are found in approximate arithmetic, as NVE·(N−1) is. A DECFLOAT fraction is taken to 17 decimal places, the most an exact number of one digit before them holds. |
+| Their values | GR10d, RULES.md D38 | \[DESIGN\] No accumulator holds them. A grouping sorts each group's values with the number of its first row and the call's place, in a part of its work area that spills, and each group, finished in that order, reads its values once and keeps the one or two its fraction picks. A window sorts each partition's values once, in a part that spills, and reads by place those each row's fraction picks. They are computed row by row, as a set function of DISTINCT is, not by batches. |
+| Their key and fraction | SR12b, SR12d, SR14, §6.11 SR1 | No window function, set function, query expression or nested window function, else SQLCODE -103. The key is numeric or an interval, and the fraction numeric, else -103. The fraction is not aggregated, so of a grouped query it names grouping columns and outer references, as a hypothetical set function's values do, computed of each group's first row, or of a group of no rows of its grouping values. A key holding an outer reference is SQLCODE -900. \[EXTENSION\] A `?` fraction is NUMERIC(18,17), where §20.7 GR5a gives it none. |
+| Their result | SR12e | Of an exact or approximate key DOUBLE PRECISION (IV177), of a DECFLOAT key DECFLOAT(34) (IV177), of an interval its type. |
+| Over a window | §9.23 SR8d i | Only of a window of no ordering and no frame, so each row's frame is its partition, else SQLCODE -103. The fraction is computed of each row. |
 | In a constraint | §9.16 SR1c | A filter is no potential source of non-determinism. An assertion of a filtered set function is checked by its query, not from the changes alone. |
 
 A window reads its input sorted by its partition columns, then its
@@ -1411,6 +1417,7 @@ topic. The Where column names the file that implements each.
 | 2023 §6.11 SR2 (IV085) the type of a `<nested row number function>` | COUNT's, as IV166 below | `binder/window/nested.rs` |
 | 2023 §10.9 SR10d i (IV174) the precision of a hypothetical RANK or DENSE_RANK | COUNT's, as IV166 below | `binder/hypothetical.rs` |
 | 2023 §10.9 SR10d ii (IA043) the type of a hypothetical PERCENT_RANK or CUME_DIST | Approximate numeric, DOUBLE PRECISION, as the window functions' (IV082, IV083) | `binder/hypothetical.rs` |
+| 2023 §10.9 SR12e (IV177) the precision of an inverse distribution function of a number | DOUBLE PRECISION's 53 binary digits of an exact or approximate key, DECFLOAT(34)'s 34 decimal digits of a DECFLOAT key | `binder/distribution.rs` |
 | 2023 §10.9 SR4 (IV166) the type of COUNT, and so of ROW_NUMBER, RANK and DENSE_RANK | Exact numeric of scale 0 and precision 18, as 86 §5.8 SR7 below | `functions.rs`, `binder/window.rs` |
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |

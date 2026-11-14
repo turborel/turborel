@@ -8,7 +8,9 @@
 //! move forward (`frame.rs`), and the rows given with their values, before
 //! the next partition is read. A set function holding nested window
 //! functions [§6.11] holds of each row the columns its argument reads and
-//! computes its argument with the frames (`nested.rs`).
+//! computes its argument with the frames (`nested.rs`). An inverse
+//! distribution function, whose frame is its whole partition, sorts the
+//! partition's values once (`distribution.rs`).
 //!
 //! The rows a window function compares are those of its partition in its
 //! ordering: no partition's rows depend on another's. Peers are given in the
@@ -19,6 +21,7 @@
 //! D44).
 
 mod aggregate;
+mod distribution;
 mod frame;
 mod nested;
 mod reader;
@@ -28,6 +31,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use self::aggregate::Framed;
+use self::distribution::{DISTRIBUTION_READERS, Distributed};
 use self::frame::{Bounds, Current, Partition};
 use self::nested::{Nest, Shape};
 use self::reader::{Placed, Reader};
@@ -37,7 +41,7 @@ use super::work::Work;
 use super::{HeldRows, RowIter, Runner, broken, column, eval, execute, failed, warn};
 use crate::db::State;
 use crate::error::{Result, SqlState};
-use crate::logical::{SortKey, Window, WindowCall, WindowKind};
+use crate::logical::{AggCall, SortKey, Window, WindowCall, WindowKind};
 use crate::physical::Plan;
 use crate::spill::ListSpace;
 use crate::storage::Row;
@@ -231,19 +235,22 @@ impl Windowed {
                 shape.take_from(row, &mut values)?;
                 continue;
             }
-            let (arg, default) = match &call.kind {
+            let (arg, default, fraction) = match &call.kind {
                 // [ISO/IEC 9075-2:2023 §10.9 GR4] of a row its filter is not
-                // true of, no argument computed, and that it is not taken.
+                // true of, no argument computed, and that it is not taken;
+                // [GR10a] of an inverse distribution function, the row's
+                // fraction.
                 WindowKind::Aggregate(a) => {
                     let taken = admitted(a.filter.as_ref(), row, &self.runner)?;
                     let arg = match (&a.arg, taken) {
                         (Some(e), true) => eval(e, row, &self.runner)?,
                         (Some(_), false) | (None, _) => Value::Null,
                     };
-                    (arg, a.filter.as_ref().map(|_| Value::Bool(taken)))
+                    let fraction = a.distribution.as_ref().map(|d| eval(&d.fraction, row, &self.runner)).transpose()?;
+                    (arg, a.filter.as_ref().map(|_| Value::Bool(taken)), fraction)
                 }
-                WindowKind::Offset(o) => (eval(&o.extent, row, &self.runner)?, Some(eval(&o.default, row, &self.runner)?)),
-                WindowKind::Value(v) => (eval(&v.arg, row, &self.runner)?, None),
+                WindowKind::Offset(o) => (eval(&o.extent, row, &self.runner)?, Some(eval(&o.default, row, &self.runner)?), None),
+                WindowKind::Value(v) => (eval(&v.arg, row, &self.runner)?, None, None),
                 WindowKind::RowNumber
                 | WindowKind::Rank
                 | WindowKind::DenseRank
@@ -253,6 +260,7 @@ impl Windowed {
             };
             values.push(arg.clone());
             values.extend(default);
+            values.extend(fraction);
             if let Some(list) = list {
                 values.push(counted(list.len));
                 if !arg.is_null() {
@@ -283,9 +291,10 @@ impl Windowed {
         let mut computed = Vec::with_capacity(self.w.calls.len());
         let calls = self.w.calls.iter().zip(&self.shapes).zip(bounds.iter());
         for (((call, shape), (b, count)), (&slot, list)) in calls.zip(self.slots.iter().zip(lists)) {
-            computed.push(match shape {
-                Some(shape) => Computed::Nested(Nest::new((call, shape), (b, slot), part, (&keyed, tree, work), &self.runner)?),
-                None => Computed::new(&call.kind, (b, *count), (slot, list), part, (tree, work))?,
+            computed.push(match (shape, distributed(&call.kind)) {
+                (Some(shape), _) => Computed::Nested(Nest::new((call, shape), (b, slot), part, (&keyed, tree, work), &self.runner)?),
+                (None, Some(a)) => Computed::Distributed(Distributed::new(a, slot, part, (&keyed, work))?),
+                (None, None) => Computed::new(&call.kind, (b, *count), (slot, list), part, (tree, work))?,
             });
         }
         let (mut out, mut peers) = (HeldRows::new(space), Peers::default());
@@ -314,6 +323,8 @@ enum Computed<'a> {
     Valued(Picked<'a>),
     /// A set function's holding nested window functions, over each frame.
     Nested(Nest<'a>),
+    /// An inverse distribution function's, over the whole partition.
+    Distributed(Distributed<'a>),
 }
 
 impl<'a> Computed<'a> {
@@ -354,6 +365,7 @@ impl<'a> Computed<'a> {
                 let frame = bounds.frame(current, part)?;
                 Ok(noted(n.value(frame, current.row, part, runner)?, runner))
             }
+            Computed::Distributed(d) => Ok(noted(d.value(current.row, part)?, runner)),
             Computed::Offset(p) => p.offset(current.row, part),
             Computed::Valued(p) => {
                 let frame = bounds.frame(current, part)?;
@@ -364,12 +376,15 @@ impl<'a> Computed<'a> {
 }
 
 /// How many of a row's `Placed` values the call `kind` takes: an
-/// aggregate its argument, and if filtered whether it takes the row; LEAD or LAG its extent and default; a value
-/// function its argument; and under IGNORE NULLS, one more, the count of
-/// arguments not null before the row.
+/// aggregate its argument, if filtered whether it takes the row, and if an
+/// inverse distribution function its fraction; LEAD or LAG its extent and
+/// default; a value function its argument; and under IGNORE NULLS, one
+/// more, the count of arguments not null before the row.
 fn width(kind: &WindowKind) -> usize {
     let (taken, counted) = match kind {
-        WindowKind::Aggregate(a) => (1_usize.saturating_add(usize::from(a.filter.is_some())), false),
+        WindowKind::Aggregate(a) => {
+            (1_usize.saturating_add(usize::from(a.filter.is_some())).saturating_add(usize::from(a.distribution.is_some())), false)
+        }
         WindowKind::Offset(o) => (OFFSET_VALUES, o.ignore_nulls),
         WindowKind::Value(v) => (1_usize, v.ignore_nulls),
         WindowKind::RowNumber
@@ -398,6 +413,21 @@ fn slots(calls: &[WindowCall], shapes: &[Option<Shape>]) -> Vec<usize> {
         .collect()
 }
 
+/// The call `kind`, if an inverse distribution function.
+fn distributed(kind: &WindowKind) -> Option<&AggCall> {
+    match kind {
+        WindowKind::Aggregate(a) => a.distribution.as_ref().map(|_| a),
+        WindowKind::RowNumber
+        | WindowKind::Rank
+        | WindowKind::DenseRank
+        | WindowKind::PercentRank
+        | WindowKind::CumeDist
+        | WindowKind::Ntile(_)
+        | WindowKind::Offset(_)
+        | WindowKind::Value(_) => None,
+    }
+}
+
 /// Whether the call `kind` counts only the rows whose argument is not
 /// null: under IGNORE NULLS.
 fn ignores_nulls(kind: &WindowKind) -> bool {
@@ -417,7 +447,8 @@ fn ignores_nulls(kind: &WindowKind) -> bool {
 /// \[DESIGN\] How many segments of a partition's places `call` keeps at
 /// once: of its frame's two bounds; an aggregate's or a value function's
 /// reader of its rows, and an aggregate's more of nested window functions
-/// (`nested::readers`); LEAD or LAG's of the current row and the row
+/// (`nested::readers`); an inverse distribution function's of its rows'
+/// fractions and its sorted values (`distribution.rs`); LEAD or LAG's of the current row and the row
 /// taken; under IGNORE NULLS, LEAD or LAG's of the row ahead, a value
 /// function's of the ends of its frame's ranges, and the list of values
 /// not null and its reader.
@@ -425,7 +456,10 @@ fn readers(call: &WindowCall) -> usize {
     let kind = &call.kind;
     let (listed, ends, ahead) = if ignores_nulls(kind) { (LIST_SEGMENTS, RANGE_ENDS, 1) } else { (0, 0, 0) };
     match kind {
-        WindowKind::Aggregate(_) => BOUND_READERS.saturating_add(1).saturating_add(nested::readers(&call.nested)),
+        WindowKind::Aggregate(a) => match a.distribution {
+            Some(_) => DISTRIBUTION_READERS,
+            None => BOUND_READERS.saturating_add(1).saturating_add(nested::readers(&call.nested)),
+        },
         WindowKind::Value(_) => BOUND_READERS.saturating_add(1).saturating_add(listed).saturating_add(ends),
         WindowKind::Offset(_) => OFFSET_READERS.saturating_add(listed).saturating_add(ahead),
         WindowKind::RowNumber

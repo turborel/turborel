@@ -88,6 +88,7 @@ mod distinct_type_privileges;
 mod distinct_type_routines;
 mod distinct_type_values;
 mod distinct_types;
+mod distribution;
 mod domains;
 mod drops;
 mod durability;

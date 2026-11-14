@@ -48,6 +48,9 @@ pub struct AggCall {
     /// [ISO/IEC 9075-2:2023 §10.9 GR4] The condition of its `<filter
     /// clause>`, if written: a row it is not true of is not fed to it.
     pub filter: Option<Cond>,
+    /// [ISO/IEC 9075-2:2023 §10.9 GR10] Of an inverse distribution
+    /// function, what it picks of its values, which its grouping sorts.
+    pub distribution: Option<Box<Distribution>>,
     /// The type of the result.
     pub result: DataType,
     /// The call as written, e.g. "COUNT(DISTINCT E.DEPT)": its column name and
@@ -55,20 +58,37 @@ pub struct AggCall {
     pub label: String,
 }
 
+/// [ISO/IEC 9075-2:2023 §10.9 GR10] What an inverse distribution function
+/// picks of its values, its argument sorted.
+#[derive(Debug, Clone)]
+pub struct Distribution {
+    /// PERCENTILE_CONT, which interpolates, rather than PERCENTILE_DISC.
+    pub continuous: bool,
+    /// The direction of its `<sort specification>`; a null value is
+    /// eliminated, so its null ordering places none.
+    pub order: SortOrder,
+    /// NVE, its `<inverse distribution function argument>`, over a row of
+    /// the group: not aggregated \[SR14\], so alike of every row of it.
+    pub fraction: Expr,
+}
+
 impl AggCall {
-    /// Its expressions: its argument, and those of its filter.
+    /// Its expressions: its argument, those of its filter, and its
+    /// fraction.
     pub fn exprs(&self) -> Vec<&Expr> {
         let mut out: Vec<&Expr> = self.arg.iter().collect();
         if let Some(c) = &self.filter {
             c.for_each_expr(&mut |e| out.push(e));
         }
+        out.extend(self.distribution.iter().map(|d| &d.fraction));
         out
     }
 
     /// Its expressions, as `exprs` gives them, each replaced by `f` of it.
     #[must_use]
     pub fn map_exprs(self, f: &mut dyn FnMut(Expr) -> Expr) -> AggCall {
-        AggCall { arg: self.arg.map(&mut *f), filter: self.filter.map(|c| c.map_exprs(f)), ..self }
+        let distribution = self.distribution.map(|d| Box::new(Distribution { fraction: f(d.fraction.clone()), ..*d }));
+        AggCall { arg: self.arg.map(&mut *f), filter: self.filter.map(|c| c.map_exprs(f)), distribution, ..self }
     }
 }
 
@@ -415,8 +435,7 @@ impl LogicalPlan {
             LogicalPlan::Project { exprs, .. } => exprs.iter().for_each(|e| expr_subqueries(e, &mut out)),
             LogicalPlan::Aggregate { aggs, .. } => {
                 for a in aggs {
-                    a.arg.iter().for_each(|e| expr_subqueries(e, &mut out));
-                    out.extend(a.filter.iter().flat_map(cond_subqueries));
+                    a.exprs().into_iter().for_each(|e| expr_subqueries(e, &mut out));
                 }
             }
             LogicalPlan::Values { rows, .. } => rows.iter().flatten().for_each(|e| expr_subqueries(e, &mut out)),

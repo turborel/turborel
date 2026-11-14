@@ -420,7 +420,7 @@ impl ValueExpression {
             ValueExpression::SetFunction(sf) => {
                 match &sf.arg {
                     SetArg::CountStar => {}
-                    SetArg::Distinct(x) | SetArg::All(x) => f(x),
+                    SetArg::Distinct(x) | SetArg::All(x) | SetArg::Fraction(x) => f(x),
                     SetArg::Grouping(columns) | SetArg::Hypothetical(columns) => columns.iter().for_each(&mut *f),
                 }
                 sf.order_by.iter().for_each(|o| f(&o.key));

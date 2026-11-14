@@ -342,8 +342,15 @@ impl Binder<'_> {
         let func = ArrayAggregate { orders, collations, by_query: true };
         let result = super::composite::bounded(DataType::array(element, MAX_ARRAY_CARDINALITY))?;
         let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
-        let agg =
-            AggCall { func: AggregateRef(Arc::new(func)), arg: Some(arg), distinct: false, result: result.clone(), filter: None, label };
+        let agg = AggCall {
+            func: AggregateRef(Arc::new(func)),
+            arg: Some(arg),
+            distinct: false,
+            result: result.clone(),
+            filter: None,
+            distribution: None,
+            label,
+        };
         let plan = LogicalPlan::Aggregate {
             groups: Vec::new(),
             collations: Vec::new(),

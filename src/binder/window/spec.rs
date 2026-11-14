@@ -90,9 +90,9 @@ pub(super) fn describe(spec: &WindowSpecification, named: &[(String, Described)]
 
 /// [ISO/IEC 9075-2:2023 §9.23 SR8c, SR8d] That the aggregate function
 /// `aggregate` of a window, `described`, is no hypothetical set function,
-/// and of a window of an ordering or a frame is no LISTAGG and is DISTINCT
-/// only if COUNT. COUNT DISTINCT over such a
-/// window is T627, not claimed.
+/// and of a window of an ordering or a frame is no LISTAGG or inverse
+/// distribution function and is DISTINCT only if COUNT. COUNT DISTINCT
+/// over such a window is T627, not claimed.
 pub(super) fn aggregate_rules(aggregate: &ValueExpression, described: &Described) -> Result<()> {
     let ValueExpression::SetFunction(sf) = aggregate else { return Ok(()) };
     if matches!(sf.arg, SetArg::Hypothetical(_)) {
@@ -104,8 +104,8 @@ pub(super) fn aggregate_rules(aggregate: &ValueExpression, described: &Described
     if described.order.is_empty() && described.frame.is_none() {
         return Ok(());
     }
-    if sf.name == LISTAGG {
-        return Err(rule("[ISO/IEC 9075-2:2023 §9.23 SR8d i] LISTAGG is over a window of no ordering and no frame"));
+    if sf.name == LISTAGG || matches!(sf.arg, SetArg::Fraction(_)) {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.23 SR8d i] {} is over a window of no ordering and no frame", sf.name)));
     }
     if !matches!(sf.arg, SetArg::Distinct(_)) {
         return Ok(());

@@ -29,7 +29,7 @@ use super::window::{Inner, grouped_windowed};
 use super::{Binder, Grouping, OutColumn, Scope, rule};
 use crate::ast::{GroupBy, ValueExpression};
 use crate::error::{At, Code, Result, SqlError};
-use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Unnest, map_cond_columns, map_expr_columns};
+use crate::logical::{AggCall, Cond, Distribution, Expr, LogicalPlan, Unnest, map_cond_columns, map_expr_columns};
 use crate::storage::Row;
 use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
 
@@ -191,6 +191,7 @@ pub(super) fn grouped(
     let masked_agg = |a: AggCall| AggCall {
         arg: a.arg.map(|e| map_expr_columns(e, &value)),
         filter: a.filter.map(|c| map_cond_columns(c, &value)),
+        distribution: a.distribution.map(|d| Box::new(Distribution { fraction: map_expr_columns(d.fraction.clone(), &value), ..*d })),
         ..a
     };
     let aggs = aggs.into_iter().map(masked_agg).collect();

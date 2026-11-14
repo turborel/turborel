@@ -69,7 +69,7 @@ fn crossed() -> LogicalPlan {
 
 /// `SELECT K FROM T GROUP BY K HAVING f(arg) > 1`, of the call `f`.
 fn grouped(f: AggregateRef, (arg, result): (Option<Expr>, DataType)) -> LogicalPlan {
-    let agg = AggCall { func: f, arg, distinct: false, result, filter: None, label: "F".into() };
+    let agg = AggCall { func: f, arg, distinct: false, result, filter: None, distribution: None, label: "F".into() };
     let aggregate =
         LogicalPlan::Aggregate { collations: Vec::new(), groups: vec![0], aggs: vec![agg], seeds: Vec::new(), input: Box::new(scan("T")) };
     let having = filter(Cond::Compare(Expr::Column(1), CompOp::Gt, number(1)), aggregate);
@@ -106,7 +106,7 @@ fn query_form(found: Option<Vec<Form>>) -> (&'static str, Form) {
 
 /// `(SELECT f(x) FROM rows) op 10`.
 fn bounded(f: AggregateRef, x: Expr, rows: LogicalPlan, op: CompOp) -> Cond {
-    let agg = AggCall { func: f, arg: Some(x), distinct: false, result: COUNTED, filter: None, label: "F".into() };
+    let agg = AggCall { func: f, arg: Some(x), distinct: false, result: COUNTED, filter: None, distribution: None, label: "F".into() };
     let aggregate =
         LogicalPlan::Aggregate { collations: Vec::new(), groups: Vec::new(), aggs: vec![agg], seeds: Vec::new(), input: Box::new(rows) };
     let s =
@@ -166,7 +166,8 @@ fn other_queries_are_checked_whole_11_34() {
         right: Box::new(scan("U")),
     };
     let set = LogicalPlan::SetOp { compared: None, op: SetOp::Except, all: false, left: Box::new(scan("T")), right: Box::new(scan("U")) };
-    let agg = AggCall { func: count.clone(), arg: None, distinct: false, result: COUNTED, filter: None, label: "F".into() };
+    let agg =
+        AggCall { func: count.clone(), arg: None, distinct: false, result: COUNTED, filter: None, distribution: None, label: "F".into() };
     let of_join = LogicalPlan::Aggregate {
         collations: Vec::new(),
         groups: vec![0],
@@ -243,6 +244,7 @@ fn a_querys_columns_never_null_are_traced_6_5() {
         distinct: false,
         result: COUNTED,
         filter: None,
+        distribution: None,
         label: "F".into(),
     });
     let aggregate = LogicalPlan::Aggregate {
@@ -339,7 +341,15 @@ fn a_seeded_grouping_is_checked_whole_7_13() {
     let functions = Registry::with_set_functions();
     let count = functions.aggregate("COUNT").unwrap();
     let with = |seeds: Vec<Row>| {
-        let agg = AggCall { func: count.clone(), arg: None, distinct: false, result: COUNTED, filter: None, label: "F".into() };
+        let agg = AggCall {
+            func: count.clone(),
+            arg: None,
+            distinct: false,
+            result: COUNTED,
+            filter: None,
+            distribution: None,
+            label: "F".into(),
+        };
         let aggregate =
             LogicalPlan::Aggregate { collations: Vec::new(), groups: vec![0], aggs: vec![agg], seeds, input: Box::new(scan("T")) };
         none_of(aggregate, &functions)

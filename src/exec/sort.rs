@@ -45,26 +45,56 @@ pub(super) fn sort(keys: &[SortKey], input: RowIter, db: &State, tx: TxId) -> Ro
 
 /// `sort`'s work.
 fn sorted(keys: &[SortKey], input: RowIter, work: &mut Work) -> Result<RowIter> {
-    let (mut rows, mut bytes, mut runs) = (Vec::new(), 0_usize, Vec::new());
+    let mut sorter = Sorter::new(keys.to_vec());
     for r in input {
         let row = r?;
         if let Some(k) = keys.iter().find(|k| row.get(k.column).is_none()) {
             return Err(broken(&format!("sort column {} is not in the rows sorted", k.column)));
         }
-        bytes = bytes.saturating_add(row_bytes(&row));
-        rows.push(row);
-        if bytes > work.limit() {
-            runs.push(written_rows(keys, std::mem::take(&mut rows), work)?);
-            bytes = 0;
+        sorter.push(row, work)?;
+    }
+    sorter.sorted(work)
+}
+
+/// Rows being sorted by their keys, given one at a time, held while they
+/// fit the work area, each work area's worth then written as a sorted run.
+pub(super) struct Sorter {
+    keys: Vec<SortKey>,
+    rows: Vec<Row>,
+    bytes: usize,
+    runs: Vec<Box<dyn SpillRun>>,
+}
+
+impl Sorter {
+    /// Rows to be sorted by `keys`, each of which every row has.
+    pub(super) fn new(keys: Vec<SortKey>) -> Sorter {
+        Sorter { keys, rows: Vec::new(), bytes: 0, runs: Vec::new() }
+    }
+
+    /// Adds `row`, the rows held written to a run of `work` once they
+    /// outgrow it.
+    pub(super) fn push(&mut self, row: Row, work: &mut Work) -> Result<()> {
+        self.bytes = self.bytes.saturating_add(row_bytes(&row));
+        self.rows.push(row);
+        if self.bytes > work.limit() {
+            self.runs.push(written_rows(&self.keys, std::mem::take(&mut self.rows), work)?);
+            self.bytes = 0;
         }
+        Ok(())
     }
-    if runs.is_empty() {
-        return Ok(Box::new(prefix::sorted(keys, rows).into_iter().map(Ok)));
+
+    /// The rows added, sorted: in memory if they fit `work`, else merged
+    /// from its runs.
+    pub(super) fn sorted(self, work: &mut Work) -> Result<RowIter> {
+        let Sorter { keys, rows, mut runs, .. } = self;
+        if runs.is_empty() {
+            return Ok(Box::new(prefix::sorted(&keys, rows).into_iter().map(Ok)));
+        }
+        if !rows.is_empty() {
+            runs.push(written_rows(&keys, rows, work)?);
+        }
+        merged(&keys, runs, work)
     }
-    if !rows.is_empty() {
-        runs.push(written_rows(keys, rows, work)?);
-    }
-    merged(keys, runs, work)
 }
 
 /// The rows of sorted `runs`, merged by `keys`, in passes of as many as
