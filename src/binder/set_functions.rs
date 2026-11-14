@@ -2,9 +2,29 @@
 //! §5.8, §5.25; ISO/IEC 9075:1992 §6.5, §7.9]: which columns an expression
 //! names outside its set functions, and whether it calls one.
 
-use super::Binder;
+use super::{Binder, Grouping};
 use crate::ast::{Composite, SetArg, ValueExpression};
 use crate::db::State;
+use crate::logical::{AggCall, Expr};
+use crate::value::DataType;
+use crate::value::collation::CollationRef;
+
+/// `call`, a set function of the groups `g`, its argument compared by
+/// `collation` if one: its column of them, and its result type. The same
+/// set function written twice (say in SELECT and HAVING) is computed once,
+/// as its label names the function, argument, DISTINCT and filter.
+pub(super) fn registered(g: &Grouping, call: AggCall, collation: Option<CollationRef>) -> (Expr, DataType) {
+    let result = call.result.clone();
+    let mut aggs = g.aggs.borrow_mut();
+    let k = if let Some(k) = aggs.iter().position(|a| a.label == call.label) {
+        k
+    } else {
+        aggs.push(call);
+        g.collated.borrow_mut().push(collation);
+        aggs.len().saturating_sub(1)
+    };
+    (Expr::Column(g.columns.len().saturating_add(k)), result)
+}
 
 /// Adds to `out` the column references of `v`, each a `<column
 /// specification>` or an `<identifier chain>` of a column of a row type
@@ -83,7 +103,9 @@ fn grouping_arguments(v: &ValueExpression) -> Option<&[ValueExpression]> {
 fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
     match v {
         ValueExpression::SetFunction(sf) => match &sf.arg {
-            SetArg::CountStar | SetArg::Grouping(_) => None,
+            // [ISO/IEC 9075-2:2023 §10.9 SR14] of a hypothetical set
+            // function, its sort keys, whose outer references it refuses.
+            SetArg::CountStar | SetArg::Grouping(_) | SetArg::Hypothetical(_) => None,
             SetArg::Distinct(a) | SetArg::All(a) => Some(a),
         },
         ValueExpression::Call { args, .. } => args.first(),

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::composite::{grouping_operand, ordering_operand};
 use super::interval::assumed;
-use super::set_functions::column_references;
+use super::set_functions::{column_references, registered};
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
 use crate::ast::{Composite, Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
@@ -330,8 +330,10 @@ impl Binder<'_> {
 
     /// [X3.135-1986 §5.8] a `<set function specification>`.
     pub(super) fn set_function(&self, sf: &SetFunctionSpecification, scope: Scope<'_>) -> Result<(Expr, DataType)> {
-        if let SetArg::Grouping(columns) = &sf.arg {
-            return self.grouping_operation(columns, scope);
+        match &sf.arg {
+            SetArg::Grouping(columns) => return self.grouping_operation(columns, scope),
+            SetArg::Hypothetical(values) => return self.hypothetical(sf, values, scope),
+            SetArg::CountStar | SetArg::Distinct(_) | SetArg::All(_) => {}
         }
         if sf.name == ARRAY_AGG {
             return self.array_aggregate(sf, scope);
@@ -349,6 +351,7 @@ impl Binder<'_> {
             SetArg::Distinct(argument) => self.aggregate(func, (Some(argument), true), sf.filter.as_deref(), scope),
             SetArg::All(argument) => self.aggregate(func, (Some(argument), false), sf.filter.as_deref(), scope),
             SetArg::Grouping(columns) => self.grouping_operation(columns, scope),
+            SetArg::Hypothetical(values) => self.hypothetical(sf, values, scope),
         }
     }
 
@@ -463,18 +466,7 @@ impl Binder<'_> {
         // made a column of the groups before any window function, holds no
         // nested window function.
         let (call, collation) = self.unnested(|| self.aggregate_call(func, argued, filter, rows))?;
-        let result = call.result.clone();
-        // The same set function written twice (say in SELECT and HAVING) is
-        // computed once: the label names the function, argument and DISTINCT.
-        let mut aggs = g.aggs.borrow_mut();
-        let k = if let Some(k) = aggs.iter().position(|a| a.label == call.label) {
-            k
-        } else {
-            aggs.push(call);
-            g.collated.borrow_mut().push(collation);
-            aggs.len().saturating_sub(1)
-        };
-        Ok((Expr::Column(g.columns.len().saturating_add(k)), result))
+        Ok(registered(g, call, collation))
     }
 
     /// The set function `func` of `arg`, bound in `scope`, DISTINCT if so,

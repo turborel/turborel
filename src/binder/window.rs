@@ -290,7 +290,7 @@ impl Binder<'_> {
     }
 
     /// [ISO/IEC 9075-2:2023 §10.9 SR4] COUNT's type (IV166).
-    fn count_type(&self) -> Result<DataType> {
+    pub(super) fn count_type(&self) -> Result<DataType> {
         let count = self.db.functions.aggregate(kw::COUNT);
         count.ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] COUNT is not registered")).and_then(|c| c.0.result_type(None))
     }
@@ -389,7 +389,7 @@ fn own_parts(kind: &Kind) -> Vec<&ValueExpression> {
 
 /// [ISO/IEC 9075-2:2023 §9.23 SR5g, SR5h] DOUBLE PRECISION, the type of
 /// PERCENT_RANK and CUME_DIST, of the precision (IV082, IV083) it has.
-fn double() -> DataType {
+pub(super) fn double() -> DataType {
     DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::DoublePrecision }
 }
 

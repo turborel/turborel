@@ -110,6 +110,7 @@ mod generated_named;
 mod get_diagnostics;
 mod grouping_sets;
 mod hybrid_layout;
+mod hypothetical;
 mod identity;
 mod index_contracts;
 mod index_only;

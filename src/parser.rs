@@ -37,6 +37,7 @@ mod expression;
 mod filter;
 mod generated;
 mod grouping;
+mod hypothetical;
 mod interval;
 mod listagg;
 mod literal;

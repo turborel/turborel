@@ -86,8 +86,10 @@ parenthesis or a window's name follows it, so `SELECT COUNT(*) OVER FROM
 T` names the count OVER. FILTER is read only after a set function's
 closing parenthesis, where a parenthesis and WHERE follow it, so `SELECT
 COUNT(*) FILTER FROM T` names the count FILTER. ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK and
-CUME_DIST are window functions only where `( ) OVER` follows, so a
-function registered as RANK stays callable. NTILE, LEAD, LAG,
+CUME_DIST are window functions only where `( ) OVER` follows, and the
+four but ROW_NUMBER hypothetical set functions only where values between
+parentheses are followed by WITHIN GROUP, so a function registered as
+RANK stays callable. NTILE, LEAD, LAG,
 FIRST_VALUE, LAST_VALUE and NTH_VALUE are window functions only where,
 after the closing parenthesis of their arguments, OVER follows, perhaps
 after FROM FIRST or FROM LAST and RESPECT NULLS or IGNORE NULLS. RESPECT

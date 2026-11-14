@@ -41,6 +41,8 @@ mod formatted;
 pub use formatted::{FORMAT, formatted_cast};
 mod greatest;
 pub use greatest::{GREATEST, GreatestOrLeast, LEAST};
+mod hypothetical;
+pub use hypothetical::{Hypothesis, Hypothetical, RANK_FUNCTION_TYPES};
 mod ints;
 mod listagg;
 pub use listagg::{LISTAGG, Listagg, ListaggSpec, MAX_LISTAGG_LENGTH, Truncation};

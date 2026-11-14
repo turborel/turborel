@@ -88,12 +88,19 @@ pub(super) fn describe(spec: &WindowSpecification, named: &[(String, Described)]
     Ok(Described { partition: existing.partition.clone(), order, frame: spec.frame.clone() })
 }
 
-/// [ISO/IEC 9075-2:2023 §9.23 SR8d] That the aggregate function
-/// `aggregate` of a window of an ordering or a frame, `described`, is no
-/// LISTAGG and is DISTINCT only if COUNT. COUNT DISTINCT over such a
+/// [ISO/IEC 9075-2:2023 §9.23 SR8c, SR8d] That the aggregate function
+/// `aggregate` of a window, `described`, is no hypothetical set function,
+/// and of a window of an ordering or a frame is no LISTAGG and is DISTINCT
+/// only if COUNT. COUNT DISTINCT over such a
 /// window is T627, not claimed.
 pub(super) fn aggregate_rules(aggregate: &ValueExpression, described: &Described) -> Result<()> {
     let ValueExpression::SetFunction(sf) = aggregate else { return Ok(()) };
+    if matches!(sf.arg, SetArg::Hypothetical(_)) {
+        return Err(rule(format!(
+            "[ISO/IEC 9075-2:2023 §9.23 SR8c] {} WITHIN GROUP, a hypothetical set function, is over no window",
+            sf.name
+        )));
+    }
     if described.order.is_empty() && described.frame.is_none() {
         return Ok(());
     }

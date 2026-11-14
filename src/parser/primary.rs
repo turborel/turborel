@@ -141,6 +141,11 @@ impl Parser {
         if let Some(nesting) = self.at_nested_window() {
             return self.nested_window(nesting);
         }
+        // [ISO/IEC 9075-2:2023 §10.9] the rank functions, no key words of
+        // SQL-92, of values before WITHIN GROUP.
+        if let Some(name) = self.at_hypothetical() {
+            return self.hypothetical_set_function(name);
+        }
         // [ISO/IEC 9075-2:2023 §6.10] ROW_NUMBER and the rank functions,
         // no key words of SQL-92, before ( ) OVER.
         if let Some(kind) = self.at_rank_function() {

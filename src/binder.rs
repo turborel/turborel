@@ -44,6 +44,7 @@ mod from;
 mod generated;
 mod greatest;
 mod grouping_sets;
+mod hypothetical;
 mod natural;
 mod partitioned;
 mod predicates;

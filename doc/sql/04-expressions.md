@@ -480,6 +480,46 @@ SELECT COUNT(*) FILTER (WHERE SALARY > AVG(SALARY)) FROM STAFF;
 turborel: SQLCODE -103 (SQLSTATE 2A000): a <filter clause> cannot contain a set function [ISO/IEC 9075-2:2023 §6.9 SR5] (at character 7)
 ```
 
+RANK, DENSE_RANK, PERCENT_RANK and CUME_DIST of values, followed by
+WITHIN GROUP and an ORDER BY of as many keys, are the hypothetical set
+functions. Each gives what its window function would give a row of
+those values, were it added to the group's rows and ordered among them
+by the keys. RANK is one more than the rows before it, and DENSE_RANK
+one more than the distinct rows before it, both of COUNT's type.
+PERCENT_RANK is the rows before it over the group's rows, 0 of none, and
+CUME_DIST the rows not after it, itself among them, over the group's
+rows and it, both DOUBLE PRECISION. A row whose keys are all equal to
+the values is a peer, not before. Of a group of no rows they are 1, 1, 0
+and 1.
+
+A null key is not left out but placed as its null ordering says, last
+ascending and first descending unless NULLS FIRST or LAST is written.
+Each value and its key are compared as of the type they have in common,
+character strings by the collation they have together. The values are
+not aggregated, so of a grouped query they name grouping columns, as
+the select list does, and of one with no GROUP BY no column. A `?`
+value takes its key's type. A hypothetical set function takes FILTER
+but no OVER.
+
+```sql
+SELECT DEPT, RANK(7500) WITHIN GROUP (ORDER BY SALARY DESC) AS PLACE,
+    CUME_DIST(7500) WITHIN GROUP (ORDER BY SALARY) AS AT_MOST FROM STAFF GROUP BY DEPT ORDER BY DEPT;
+SELECT RANK(7500) WITHIN GROUP (ORDER BY SALARY) OVER () FROM STAFF;
+```
+
+```
+ DEPT |                PLACE |                  AT_MOST
+------+----------------------+--------------------------
+ ENG  |                    2 |     6.666666666666666E-1
+ OPS  |                    1 |                      1E0
+ NULL |                    2 |                     5E-1
+(3 rows)
+turborel: SQLCODE -103 (SQLSTATE 2A000): RANK WITHIN GROUP, a hypothetical set function, is over no window [ISO/IEC 9075-2:2023 §9.23 SR8c] (at character 7)
+```
+
+Barbara's null salary is placed first descending, before 7500, and
+last ascending, after it.
+
 ANY_VALUE gives a column that the grouping decides but does not name,
 such as a department's name grouped by its number, with no need to
 group by it too. Which value it gives of several is not defined.

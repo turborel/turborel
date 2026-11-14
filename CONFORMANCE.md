@@ -1089,9 +1089,9 @@ function), T619 (Nested window functions) and T620 (WINDOW clause: GROUPS
 option), of ISO/IEC 9075-2:2023 §6.10, §6.11, §7.15, §9.20 and §9.23.
 Of T612 (Advanced OLAP operations), the window name, the WINDOW clause,
 an existing window name, frame exclusion, PERCENT_RANK, CUME_DIST,
-ROW_NUMBER of no ordering, WIDTH_BUCKET and the FILTER clause are done.
-Its hypothetical set functions and inverse distribution functions are
-not, so T612 is not claimed. Nor is T627.
+ROW_NUMBER of no ordering, WIDTH_BUCKET, the FILTER clause and the
+hypothetical set functions are done. Its inverse distribution functions
+are not, so T612 is not claimed. Nor is T627.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1122,6 +1122,10 @@ not, so T612 is not claimed. Nor is T627.
 | FILTER | §10.9 GR4 | `FILTER (WHERE cond)` after COUNT(*), a general set function, ARRAY_AGG or LISTAGG, of the groups or OVER a window, before OVER. Its set function is fed only the rows cond is true of, and of a row it is false or unknown of the argument is not computed, so a null of it is not left out and gives no SQLSTATE 01003. Over a window, each frame's rows cond is true of, of a frame growing, moving or computed again, and of nested window functions. A filtered set function is computed row by row, as one of DISTINCT is, not by batches. GROUPING takes no filter, so one written is SQLCODE -102. |
 | Its condition | §6.9 SR5, §10.9 SR8, §6.11 SR1 | No set function, query expression, window function, nested window function or outer reference, else SQLCODE -103. |
 | Of an enclosing query | §6.9 SR6, §10.9 SR8 | A set function whose argument is an outer reference is the enclosing query's, aggregated over its rows, so its filter would be too. One naming a column, which SR8 refuses of the query it is written in and the enclosing query's scope does not reach, is SQLCODE -103. One of no column is computed with it. |
+| Hypothetical set functions | §10.9 SR10, GR9 | `RANK`, `DENSE_RANK`, `PERCENT_RANK` and `CUME_DIST` of values, `WITHIN GROUP (ORDER BY ...)` of as many sort keys, else SQLCODE -103 \[SR10b\]. Each is the value GR9's window function gives the hypothetical row among the group's rows, counted as each row is read, nothing held. A null key is placed as its null ordering says, never eliminated, so no SQLSTATE 01003. DENSE_RANK takes each distinct row once, by the values of the rows a DISTINCT set function has taken, which spill past the work area. RANK and DENSE_RANK are of COUNT's type (IV174), PERCENT_RANK and CUME_DIST DOUBLE PRECISION (IA043). Of a group of no rows, 1, 1, 0 and 1. They take FILTER. |
+| Their values and keys | SR10a, SR10c, §9.14 SR3, §6.11 SR1 | No window function, set function, query expression or nested window function, else SQLCODE -103. Each value and its key of compatible types, else -103, compared as of the type §9.5 gives them, character strings by the collation §9.15 gives both. A key is an operand of an ordering operation. \[EXTENSION\] A `?` value takes its key's type, where §20.7 GR5a gives it none. |
+| Not aggregated | SR14, §6.9 SR6 | The values are of the groups, so a column they name is a grouping column or an outer reference, else SQLCODE -103 as of a select list [§7.16 SR15]. Of a grouping set, a column it leaves out is null in them. A sort key holding an outer reference would make the function the enclosing query's, with values over its rows, and is SQLCODE -900. |
+| Over a window | §9.23 SR8c | A hypothetical set function is no window function's aggregate, else SQLCODE -103. |
 | In a constraint | §9.16 SR1c | A filter is no potential source of non-determinism. An assertion of a filtered set function is checked by its query, not from the changes alone. |
 
 A window reads its input sorted by its partition columns, then its
@@ -1405,6 +1409,8 @@ topic. The Where column names the file that implements each.
 | 2023 §9.23 SR5g, SR5h (IV082, IV083) the precision of PERCENT_RANK and CUME_DIST | 53 binary digits, DOUBLE PRECISION's | `binder/window.rs`, `exec/window.rs` |
 | 2023 §9.23 SR5i ii (IV084) the type of NTILE | COUNT's, as IV166 below | `binder/window/value.rs` |
 | 2023 §6.11 SR2 (IV085) the type of a `<nested row number function>` | COUNT's, as IV166 below | `binder/window/nested.rs` |
+| 2023 §10.9 SR10d i (IV174) the precision of a hypothetical RANK or DENSE_RANK | COUNT's, as IV166 below | `binder/hypothetical.rs` |
+| 2023 §10.9 SR10d ii (IA043) the type of a hypothetical PERCENT_RANK or CUME_DIST | Approximate numeric, DOUBLE PRECISION, as the window functions' (IV082, IV083) | `binder/hypothetical.rs` |
 | 2023 §10.9 SR4 (IV166) the type of COUNT, and so of ROW_NUMBER, RANK and DENSE_RANK | Exact numeric of scale 0 and precision 18, as 86 §5.8 SR7 below | `functions.rs`, `binder/window.rs` |
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |

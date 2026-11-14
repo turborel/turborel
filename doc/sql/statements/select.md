@@ -93,6 +93,10 @@ SELECT: read rows
 
 <filter clause> ::= FILTER ( WHERE <search condition> )
 
+<hypothetical set function> ::=
+    { RANK | DENSE_RANK | PERCENT_RANK | CUME_DIST } ( <value expression> [ { , <value expression> }... ] )
+    WITHIN GROUP ( ORDER BY <window sort key> [ { , <window sort key> }... ] ) [ <filter clause> ]
+
 <nested window function> ::=
       ROW_NUMBER ( <row marker> )
     | VALUE_OF ( <value expression> AT <row marker> [ { + | - } <number of rows> ] [ , <value expression> ] )
@@ -211,6 +215,11 @@ parameters, is [a statement of a program too](#select-into).
     LISTAGG, not GROUPING, and holds no set function, subquery, window
     function, nested window function or outer reference. That of a set
     function of an enclosing query names no column.
+11. A hypothetical set function has as many values as sort keys, each
+    value and its key of compatible types, and holds no set function,
+    subquery, window function or nested window function. Its values
+    name only grouping columns of their query and outer references, and
+    its sort keys no outer reference. It is followed by no OVER.
 
 ## PRIVILEGES
 
@@ -226,7 +235,7 @@ SELECT on each table and view the query names.
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), a window frame's offset negative or null (22013), a number of tiles of NTILE below 1 (22014), a row of NTH_VALUE below 1 (22016), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
 | 2202F | -301 | A path or a DEPTH FIRST sequence would hold more than 65,535 rows |
-| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns; COUNT(DISTINCT ...) over a window of an ordering or a frame, Feature T627 |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns; COUNT(DISTINCT ...) over a window of an ordering or a frame, Feature T627; a hypothetical set function whose sort key holds an outer reference |
 
 An error is placed at the construct it is about, its character position
 told.

@@ -1,5 +1,7 @@
 //! [ISO/IEC 9075-2:2023 §10.9] The `<listagg set function>`, and the
-//! `<sort specification list>` of it and of ARRAY_AGG. LISTAGG and WITHIN,
+//! `<sort specification list>` of it and of ARRAY_AGG, and the `<within
+//! group specification>` of it and of a hypothetical set function
+//! (`hypothetical.rs`). LISTAGG and WITHIN,
 //! which SQL:2023 reserves and SQL-92 does not, and OVERFLOW, ERROR,
 //! TRUNCATE and WITHOUT, which SQL-92 does not reserve either, are key
 //! words only here: LISTAGG before a parenthesis, the others where the
@@ -16,7 +18,7 @@ use crate::lexer::{Tok, delim, kw};
 /// The words of a `<listagg set function>` that SQL-92 does not reserve.
 const OVERFLOW: &str = "OVERFLOW";
 const ERROR: &str = "ERROR";
-const WITHIN: &str = "WITHIN";
+pub(super) const WITHIN: &str = "WITHIN";
 
 /// \[SR11g\] The `<listagg truncation filler>` when none is written.
 const DEFAULT_FILLER: &str = "...";
@@ -40,10 +42,18 @@ impl Parser {
         let separator = self.character_string_literal("<listagg separator>")?;
         let overflow = self.overflow_clause()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
-        // <within group specification> ::= WITHIN GROUP ( ORDER BY <sort
-        // specification list> )
+        let order_by = self.within_group_specification(LISTAGG)?;
+        let arg = if distinct { SetArg::Distinct(value) } else { SetArg::All(value) };
+        let listagg = Some(Box::new(Listagg { separator, overflow }));
+        Ok(SetFunctionSpecification { name: LISTAGG, arg, order_by, listagg, filter: None, at })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §10.9] `<within group specification>` ::=
+    /// WITHIN GROUP ( ORDER BY `<sort specification list>` ), after the
+    /// arguments of `function`: its sort specifications.
+    pub(super) fn within_group_specification(&mut self, function: &str) -> Result<Vec<ValueOrder>> {
         if !self.accept_word(WITHIN) {
-            return Err(self.syntax("expected WITHIN GROUP after LISTAGG's arguments [ISO/IEC 9075-2:2023 §10.9]"));
+            return Err(self.syntax(format!("expected WITHIN GROUP after {function}'s arguments [ISO/IEC 9075-2:2023 §10.9]")));
         }
         self.expect_kw(kw::GROUP)?;
         self.expect_delim(delim::LEFT_PAREN)?;
@@ -51,9 +61,7 @@ impl Parser {
         self.expect_kw(kw::BY)?;
         let order_by = self.sort_specification_list()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
-        let arg = if distinct { SetArg::Distinct(value) } else { SetArg::All(value) };
-        let listagg = Some(Box::new(Listagg { separator, overflow }));
-        Ok(SetFunctionSpecification { name: LISTAGG, arg, order_by, listagg, filter: None, at })
+        Ok(order_by)
     }
 
     /// `<listagg overflow clause>` ::= ON OVERFLOW `<overflow behavior>`, if
