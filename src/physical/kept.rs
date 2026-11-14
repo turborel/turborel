@@ -19,7 +19,7 @@ use super::probe::{Compared, placed_as_is};
 use crate::db::State;
 use crate::error::{Code, Result, fail};
 use crate::index::Probe;
-use crate::logical::{AggCall, Cond, Distribution, Expr, Slot, filled_cond, filled_expr};
+use crate::logical::{AggCall, Cond, Distribution, Expr, Limit, Slot, filled_cond, filled_expr};
 use crate::value::{CompOp, DataType, Value};
 
 mod shape;
@@ -130,11 +130,11 @@ fn slot_equal(conds: &[Cond], column: usize, data_type: &DataType) -> Option<(Sl
 
 /// Whether `plan` is the plan every execution of its statement would make,
 /// whatever its values: one probe fixing every column of a unique index,
-/// under a filter or a projection or both, or none. The index is read from
+/// under a filter, a projection or a limit, or none. The index is read from
 /// `st`, the state it was planned in.
 pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
     match plan {
-        Plan::Project { input, .. } | Plan::Filter { input, .. } => keepable(input, st),
+        Plan::Project { input, .. } | Plan::Filter { input, .. } | Plan::Limit { input, .. } => keepable(input, st),
         Plan::IndexScan { index, probe, .. } => {
             st.catalog.index(index).is_some_and(|ix| ix_is_point(ix) && whole_key(probe, ix.columns.len()))
         }
@@ -190,6 +190,11 @@ pub(crate) fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
         }
         Plan::Distinct { input } => Ok(Plan::Distinct { input: Box::new(filled_plan(*input, values)?) }),
         Plan::Sort { keys, detail, input } => Ok(Plan::Sort { keys, detail, input: Box::new(filled_plan(*input, values)?) }),
+        Plan::Limit { limit, input } => {
+            let filled = |e: Option<Expr>| e.map(|e| filled_expr(e, values)).transpose();
+            let limit = Limit { offset: filled(limit.offset)?, fetch: filled(limit.fetch)? };
+            Ok(Plan::Limit { limit, input: Box::new(filled_plan(*input, values)?) })
+        }
         Plan::Append { left, right } => {
             let left = Box::new(filled_plan(*left, values)?);
             Ok(Plan::Append { left, right: Box::new(filled_plan(*right, values)?) })

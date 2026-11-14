@@ -30,9 +30,9 @@ const PRECEDING: &str = "PRECEDING";
 const FOLLOWING: &str = "FOLLOWING";
 const UNBOUNDED: &str = "UNBOUNDED";
 const EXCLUDE: &str = "EXCLUDE";
-const TIES: &str = "TIES";
+pub(super) const TIES: &str = "TIES";
 const OTHERS: &str = "OTHERS";
-const ROW: &str = "ROW";
+pub(super) const ROW: &str = "ROW";
 
 /// ROW_NUMBER and the `<rank function type>`s, by name.
 const RANKS: [(&str, WindowKind); 5] = [
@@ -265,7 +265,7 @@ impl Parser {
 
     /// The word `word`, not a key word of SQL-92, taken; an error if it is
     /// not at hand.
-    fn expect_word(&mut self, word: &str) -> Result<()> {
+    pub(super) fn expect_word(&mut self, word: &str) -> Result<()> {
         if self.accept_word(word) { Ok(()) } else { Err(self.syntax(format!("expected {word}"))) }
     }
 }

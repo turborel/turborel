@@ -259,8 +259,10 @@ fn of_node(w: &Walk<'_>, plan: &LogicalPlan) -> Known {
         LogicalPlan::Product { left, right } => known(w, left).beside(known(w, right)).keyed(false),
         LogicalPlan::Aggregate { groups, aggs, seeds, input, .. } => grouped(w, known(w, input), groups, (aggs.len(), seeds.is_empty())),
         LogicalPlan::Project { exprs, input } => projected(w, known(w, input), exprs),
-        // [§4.26.16] Rows of its input, once each or in order.
-        LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => known(w, input),
+        // [§4.26.16] Rows of its input, once each or in order; or some of
+        // them, as OFFSET and FETCH FIRST keep, of which all that holds of
+        // them holds [NOTE 71].
+        LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } | LogicalPlan::Limit { input, .. } => known(w, input),
         LogicalPlan::OuterJoin { kind, cond, left, right } => conditions::outer_joined(*kind, cond, (known(w, left), known(w, right))),
         LogicalPlan::SetOp { op, left, right, .. } => set_operation(w, *op, (left, right), plan.width()),
         LogicalPlan::Values { rows, types } => values(w, rows.len(), types.len()),

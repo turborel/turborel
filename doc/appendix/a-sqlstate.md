@@ -72,6 +72,8 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2201T | Invalid XQuery option flag: a flag of a character none of s, m, i, x and q |
 | 2201U | Attempt to replace a zero-length string: TRANSLATE_REGEX of a match of no characters, or of a pattern that matches the empty string |
 | 2201V | Invalid XQuery replacement string: a `$` before no digit, or a `\` before neither `$` nor `\` |
+| 2201W | Invalid row count in fetch first clause: a count of FETCH FIRST below 1, or null |
+| 2201X | Invalid row count in result offset clause: an offset below 0, or null |
 | 22022 | Indicator overflow |
 | 22025 | Invalid escape sequence |
 | 22027 | Trim error |

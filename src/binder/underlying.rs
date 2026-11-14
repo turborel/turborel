@@ -64,6 +64,8 @@ pub(super) fn drawn_from<'s>(cx: Context<'_>, query: &QueryExpression, site: Opt
             }
         }
         QueryExpression::With(w) => with_scope(cx, w, (site, true), |inner| drawn_from(inner, &w.body, site)),
+        // Its ORDER BY, OFFSET and FETCH FIRST make no column.
+        QueryExpression::Ordered(o) => drawn_from(cx, &o.body, site),
     }
 }
 
@@ -174,6 +176,7 @@ fn query_leaves(cx: Context<'_>, q: &QueryExpression, leaves: &mut Vec<Qualified
     match q {
         QueryExpression::Spec(spec) => spec.table_expression.from.iter().for_each(|r| reference_leaves(cx, r, leaves)),
         QueryExpression::Values(_) => {}
+        QueryExpression::Ordered(o) => query_leaves(cx, &o.body, leaves),
         QueryExpression::SetOp(s) => {
             query_leaves(cx, &s.left, leaves);
             query_leaves(cx, &s.right, leaves);

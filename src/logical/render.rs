@@ -147,6 +147,7 @@ impl LogicalPlan {
                     .join(", ")
             ),
             LogicalPlan::Sort { keys, input } => writeln!(out, "{pad}Sort {}", render_keys(keys, &inner(input))),
+            LogicalPlan::Limit { limit, .. } => writeln!(out, "{pad}{}", limit.render()),
             LogicalPlan::Recursive { member, fixpoint, .. } => writeln!(out, "{pad}Recursive member {member} {}", fixpoint.word()),
             LogicalPlan::WorkTable { member, .. } => writeln!(out, "{pad}Work table of member {member}"),
             LogicalPlan::Unnest(u) => {

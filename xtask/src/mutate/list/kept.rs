@@ -44,8 +44,8 @@ pub const KEPT: [Mutation; 13] = [
         package: Package::Core,
         breaks: "kept plans: a projection or filter over a probe fixing a whole unique key planned at each execution",
         file: "src/physical/kept.rs",
-        original: "        Plan::Project { input, .. } | Plan::Filter { input, .. } => keepable(input, st),",
-        replacement: "        Plan::Project { .. } | Plan::Filter { .. } => false,",
+        original: "        Plan::Project { input, .. } | Plan::Filter { input, .. } | Plan::Limit { input, .. } => keepable(input, st),",
+        replacement: "        Plan::Project { .. } | Plan::Filter { .. } | Plan::Limit { .. } => false,",
         integration: &[],
         unit: &[
             "db::prepared::plans::tests::a_point_plan_is_kept_at_once_and_a_range_plan_once_learned",

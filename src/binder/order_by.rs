@@ -10,6 +10,7 @@
 
 use super::cursor::result_column;
 use super::from::{FromItem, column_of};
+use super::limit::ordered_and_limited;
 use super::query::{Nesting, bind_ordered};
 use super::set_functions::column_references;
 use super::set_operations::bind_query_expression;
@@ -22,56 +23,75 @@ use crate::ast::{
 };
 use crate::catalog::QualifiedName;
 use crate::error::{At, Result};
-use crate::logical::{Expr, LogicalPlan, SortKey};
+use crate::logical::{Expr, Limit, LogicalPlan, SortKey};
 use crate::value::SortOrder;
 use crate::value::collation::CollationRef;
 
 /// A query expression's rows to be sorted: `plan`, of the columns `all`,
 /// the first `visible` of them the result's and the rest computed for the
-/// sort, and the keys that sort them, each by its collation if it has one.
+/// sort, the keys that sort them, each by its collation if it has one, and
+/// the rows its OFFSET and FETCH FIRST keep of them, if it has either.
 pub(super) struct Ordered {
     pub(super) plan: LogicalPlan,
     pub(super) all: Vec<OutColumn>,
     pub(super) visible: usize,
     pub(super) keys: Vec<SortKey>,
     pub(super) collations: Vec<Option<CollationRef>>,
+    pub(super) limit: Option<Limit>,
 }
 
 impl Ordered {
     /// Of `bound`, not sorted.
     pub(super) fn unsorted(bound: Bound) -> Ordered {
         let visible = bound.columns.len();
-        Ordered { plan: bound.plan, all: bound.columns, visible, keys: Vec::new(), collations: Vec::new() }
+        Ordered { plan: bound.plan, all: bound.columns, visible, keys: Vec::new(), collations: Vec::new(), limit: None }
     }
 
-    /// [X3.135-1986 §8.3 GR3b] Its rows sorted, the sort keys of a
-    /// collation made columns of the rows sorted, and every column but the
-    /// result's taken away after [§7.17 GR5].
-    pub(super) fn sorted(self) -> Bound {
-        let Ordered { plan, mut all, visible, keys, collations } = self;
-        let width = all.len();
-        all.truncate(visible);
-        if keys.is_empty() {
-            return Bound { plan, columns: all };
+    /// [X3.135-1986 §8.3 GR3b] Its rows sorted, then limited, and every
+    /// column but the result's taken away after [ISO/IEC 9075-2:2023 §7.17
+    /// GR5, GR6, GR7].
+    pub(super) fn sorted(mut self) -> Bound {
+        let visible = self.visible;
+        self.sort_and_limit(visible);
+        self.all.truncate(visible);
+        Bound { plan: self.plan, columns: self.all }
+    }
+
+    /// Its rows sorted and limited, if it has a limit, of every column
+    /// still: so its keys are still of its columns, by which `ARRAY` orders
+    /// its elements again (`binder/subquery.rs`).
+    pub(super) fn limited(mut self) -> Ordered {
+        if self.limit.is_some() {
+            let width = self.all.len();
+            self.sort_and_limit(width);
         }
+        self
+    }
+
+    /// Its plan sorted by its keys, those of a collation made columns of
+    /// the rows sorted [§10.10], then limited, of its first `keep` columns.
+    fn sort_and_limit(&mut self, keep: usize) {
+        let width = self.all.len();
+        let input = std::mem::replace(&mut self.plan, LogicalPlan::Values { rows: Vec::new(), types: Vec::new() });
         let mut exprs: Vec<Expr> = (0..width).map(Expr::Column).collect();
-        let mut sorted = Vec::with_capacity(keys.len());
-        for (key, collation) in keys.into_iter().zip(&collations) {
+        let mut sorted = Vec::with_capacity(self.keys.len());
+        for (key, collation) in self.keys.iter().zip(&self.collations) {
             sorted.push(match collation {
                 Some(c) => {
                     exprs.push(Expr::sort_key(Expr::Column(key.column), c));
-                    SortKey { column: exprs.len().saturating_sub(1), ..key }
+                    SortKey { column: exprs.len().saturating_sub(1), ..*key }
                 }
-                None => key,
+                None => *key,
             });
         }
-        let keyed = if exprs.len() > width { LogicalPlan::Project { exprs: exprs.clone(), input: Box::new(plan) } } else { plan };
-        let rows = LogicalPlan::Sort { keys: sorted, input: Box::new(keyed) };
-        if exprs.len() == visible {
-            return Bound { plan: rows, columns: all };
+        let made = exprs.len();
+        let keyed = if made > width { LogicalPlan::Project { exprs, input: Box::new(input) } } else { input };
+        let mut rows = if sorted.is_empty() { keyed } else { LogicalPlan::Sort { keys: sorted, input: Box::new(keyed) } };
+        if let Some(limit) = self.limit.take() {
+            rows = LogicalPlan::Limit { limit, input: Box::new(rows) };
         }
-        let kept = (0..visible).map(Expr::Column).collect();
-        Bound { plan: LogicalPlan::Project { exprs: kept, input: Box::new(rows) }, columns: all }
+        self.plan =
+            if made == keep { rows } else { LogicalPlan::Project { exprs: (0..keep).map(Expr::Column).collect(), input: Box::new(rows) } };
     }
 
     /// Its rows, each with `extra`'s values of it after its columns.
@@ -244,7 +264,7 @@ impl Keys {
         columns.truncate(visible);
         columns.extend(hidden_columns);
         let plan = plan(exprs, &columns)?;
-        Ok((Ordered { plan, all: columns, visible, keys: Vec::new(), collations: Vec::new() }, places))
+        Ok((Ordered { plan, all: columns, visible, keys: Vec::new(), collations: Vec::new(), limit: None }, places))
     }
 }
 
@@ -353,6 +373,13 @@ pub(super) fn ordered_query(
             with_scope(cx, w, (site_of(nesting), false), |inner| ordered_query(inner, &w.body, (order_by, nesting), draws))
         }
         QueryExpression::Values(_) | QueryExpression::SetOp(_) => of_result(cx, bind_query_expression(cx, q, nesting)?, order_by),
+        // Of a query expression of its own ORDER BY, OFFSET or FETCH
+        // FIRST, one of no other keys is ordered and limited as written; a
+        // parenthesized one with more, of its result [SR26 d ii].
+        QueryExpression::Ordered(o) => {
+            let ordered = ordered_and_limited(cx, o, nesting, draws)?;
+            if order_by.is_empty() { Ok(ordered) } else { of_result(cx, ordered.sorted(), order_by) }
+        }
     }
 }
 

@@ -23,8 +23,8 @@ CREATE VIEW defines a view: a table whose rows are those of its query,
 found again each time the view is read. The view's columns are named by
 its column list, or else as the query names them.
 
-A view is updatable if its query is a query specification with no
-DISTINCT, whose select list names columns only, whose FROM clause names
+A view is updatable if its query is a query specification, of ORDER BY
+or none but of no OFFSET or FETCH FIRST, with no DISTINCT, whose select list names columns only, whose FROM clause names
 one table, a base table or an updatable view, with no GROUP BY or
 HAVING, and none of whose subqueries reads the table it would change.
 INSERT, UPDATE and DELETE on an updatable view change the table it is
@@ -137,7 +137,9 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.BAD3 is WITH CHECK OPTION, so must 
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.19, and X3.135-1986 §6.5, whose view is of a query
-specification. Which views are updatable is SQL-92's [§7.9 SR12]; LOCAL
+specification. Which views are updatable is SQL-92's [§7.9 SR12]; a
+query of ORDER BY, OFFSET or FETCH FIRST is ISO/IEC 9075-2:2023's [§7.17
+SR7, SR11], Features F852, F859 and F864. LOCAL
 and CASCADED are SQL-92's [§11.19 SR13, GR11]. A view is not
 materialized: its query is bound into each query that reads it, which is
 the implementor's to choose [X3.135-1986 §6.5 GR1]. A view sees the columns

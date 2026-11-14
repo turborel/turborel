@@ -7,7 +7,7 @@
 //!
 //! Only the operators a kept plan may hold compare (`filled_plan`): a
 //! table's scan, an index's, a filter, a projection, a grouping, DISTINCT,
-//! a sort and an append. A join, a set operation, a system table or a
+//! a sort, a limit and an append. A join, a set operation, a system table or a
 //! VALUES list has no shape a kept plan may take.
 
 use crate::index::Probe;
@@ -40,6 +40,12 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         Plan::Sort { keys, input, .. } => {
             let Plan::Sort { keys: keys2, input: input2, .. } = other else { return false };
             keys == keys2 && same_shape(input, input2)
+        }
+        Plan::Limit { limit, input } => {
+            let Plan::Limit { limit: limit2, input: input2 } = other else { return false };
+            limit.offset.is_some() == limit2.offset.is_some()
+                && limit.fetch.is_some() == limit2.fetch.is_some()
+                && same_shape(input, input2)
         }
         Plan::Append { left, right } => {
             let Plan::Append { left: left2, right: right2 } = other else { return false };

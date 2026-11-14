@@ -174,6 +174,7 @@ pub(super) fn ordered_ids(plan: Plan, st: &Arc<State>, tx: TxId) -> Result<HeldR
             Plan::Project { input, .. } => node = *input,
             Plan::Sort { keys, input, .. } => break (keys, *input),
             other @ (Plan::SeqScan { .. }
+            | Plan::Limit { .. }
             | Plan::IndexScan { .. }
             | Plan::Filter { .. }
             | Plan::Append { .. }
@@ -226,6 +227,7 @@ fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
             other @ (Plan::SeqScan { .. }
             | Plan::IndexScan { .. }
             | Plan::Sort { .. }
+            | Plan::Limit { .. }
             | Plan::Filter { .. }
             | Plan::Append { .. }
             | Plan::Product { .. }

@@ -1,6 +1,7 @@
-//! The query grammar: `<cursor specification>` with ORDER BY [X3.135-1986
-//! §8.3], `<query expression>` [ISO/IEC 9075:1992 §7.10], `<query
-//! specification>` [X3.135-1986 §5.25] and `<table expression>`
+//! The query grammar: `<cursor specification>` [ISO/IEC 9075-2:2023
+//! §14.3], `<query expression>` [ISO/IEC 9075:1992 §7.10] of ORDER BY,
+//! OFFSET and FETCH FIRST [ISO/IEC 9075-2:2023 §7.17] (`ordered.rs`),
+//! `<query specification>` [X3.135-1986 §5.25] and `<table expression>`
 //! [X3.135-1986 §5.19-§5.23].
 
 use super::Parser;
@@ -14,6 +15,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
 mod order_by;
+mod ordered;
 
 // [ISO/IEC 9075-2:2023 §5.2, §7.17] Words of a <with clause> that SQL-92
 // does not reserve: identifiers, read as these only there.
@@ -25,27 +27,18 @@ const RECURSIVE: &str = "RECURSIVE";
 pub(super) const PARTITION: &str = "PARTITION";
 
 impl Parser {
-    /// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] `<cursor specification>`
-    /// ::= `<query expression>` \[`<order by clause>`\] \[`<updatability
-    /// clause>`\]
+    /// [ISO/IEC 9075-2:2023 §14.3] `<cursor specification>` ::= `<query
+    /// expression>` \[`<updatability clause>`\], its ORDER BY the query
+    /// expression's [§7.17].
     ///
     /// # Errors
     ///
     /// A syntax error, or valid SQL this implementation does not process.
     pub fn cursor_specification(&mut self) -> Result<CursorSpecification> {
         let query = self.query_expression()?;
-        // <order by clause> ::= ORDER BY <sort specification> [{, <sort specification>}...]
-        let mut order_by = Vec::new();
-        if self.accept_kw(kw::ORDER) {
-            self.expect_kw(kw::BY)?;
-            order_by.push(self.sort_specification()?);
-            while self.accept_delim(delim::COMMA) {
-                order_by.push(self.sort_specification()?);
-            }
-        }
         let updatability = self.updatability_clause()?;
         self.end()?;
-        Ok(CursorSpecification { query, order_by, updatability })
+        Ok(CursorSpecification { query, updatability })
     }
 
     /// [ISO/IEC 9075-2:2023 §10.10] `<null ordering>` ::= NULLS FIRST |
@@ -67,16 +60,19 @@ impl Parser {
     }
 
     /// [ISO/IEC 9075-2:2023 §7.17] `<query expression>` ::= \[`<with
-    /// clause>`\] `<query expression body>`
+    /// clause>`\] `<query expression body>` \[`<order by clause>`\]
+    /// \[`<result offset clause>`\] \[`<fetch first clause>`\]
     pub(super) fn query_expression(&mut self) -> Result<QueryExpression> {
         if self.is_kw(kw::WITH) {
             return self.nested(Self::with_clause);
         }
-        self.query_expression_body()
+        let body = self.query_expression_body()?;
+        self.ordered(body)
     }
 
     /// [ISO/IEC 9075-2:2023 §7.17] `<with clause>` ::= WITH \[RECURSIVE\]
-    /// `<with list>`, and the `<query expression body>` after it.
+    /// `<with list>`, and the `<query expression body>` after it, with the
+    /// clauses that may follow it, in the scope of its query names.
     /// RECURSIVE, which SQL-92 does not reserve, is that key word unless
     /// AS or a `<with column list>` follows it, naming a query RECURSIVE.
     fn with_clause(&mut self) -> Result<QueryExpression> {
@@ -89,6 +85,7 @@ impl Parser {
             elements.push(self.with_list_element()?);
         }
         let body = self.query_expression_body()?;
+        let body = self.ordered(body)?;
         Ok(QueryExpression::With(Box::new(WithQuery { recursive, elements, body, at })))
     }
 
@@ -536,7 +533,7 @@ impl Parser {
         if self.accept_kw(kw::AS) {
             return self.identifier().map(Some);
         }
-        if self.at_partitioning() || self.at_window_clause() {
+        if self.at_partitioning() || self.at_window_clause() || self.at_result_offset() {
             return Ok(None);
         }
         Ok(match self.peek() {

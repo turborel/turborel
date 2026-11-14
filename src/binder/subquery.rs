@@ -17,8 +17,8 @@ use super::set_functions::column_references;
 use super::set_operations::bind_query_expression;
 use super::{Binder, NOT_AGGREGATED, Scope, rule};
 use crate::ast::{
-    self, ColumnSpecification, Composite, Literal, SearchCondition, SelectItem, SelectList, SetFunctionSpecification, SortSpecification,
-    TableName, ValueExpression, ValueSpecification,
+    self, ColumnSpecification, Composite, Literal, SearchCondition, SelectItem, SelectList, SetFunctionSpecification, TableName,
+    ValueExpression, ValueSpecification,
 };
 use crate::error::{At, Result, SqlState};
 use crate::functions::{AggregateFunction, AggregateRef, ArrayAggregate, RowOf, ScalarRef};
@@ -377,11 +377,13 @@ impl Binder<'_> {
     /// aggregates, ordered by the `<order by clause>` it ends with, each
     /// `<sort key>` its one column [§7.17, NOTE 207]; of no rows, an empty
     /// array.
-    pub(super) fn array_query(&self, s: &ast::Subquery, order_by: &[SortSpecification], scope: Scope<'_>) -> Result<(Expr, DataType)> {
+    pub(super) fn array_query(&self, s: &ast::Subquery, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let cx = self.context();
         let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
         let nesting = Nesting::Subquery { outer: &outer, result: None };
-        let ordered = ordered_query(cx, &s.query, (order_by, &nesting), cx.draws).or_at(s.at)?;
+        // Its rows sorted and limited first, if its query has OFFSET or
+        // FETCH FIRST, then its elements in that order [§6.49 NOTE 207].
+        let ordered = ordered_query(cx, &s.query, (&[], &nesting), cx.draws).or_at(s.at)?.limited();
         let own = ordered.all.get(..ordered.visible).unwrap_or_default();
         self.note_subquery(s, own);
         let [column] = own else {

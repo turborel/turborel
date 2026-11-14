@@ -20,6 +20,7 @@ pub(super) fn row_condition(plan: &LogicalPlan) -> Option<Cond> {
             }
             LogicalPlan::Scan { .. }
             | LogicalPlan::Product { .. }
+            | LogicalPlan::Limit { .. }
             | LogicalPlan::OuterJoin { .. }
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Distinct { .. }
@@ -62,6 +63,7 @@ fn sort_of(plan: &LogicalPlan) -> Result<Option<(&[SortKey], &LogicalPlan)>> {
             LogicalPlan::Sort { keys, input } => return Ok(Some((keys, input))),
             LogicalPlan::Filter { .. } | LogicalPlan::Scan { .. } => return Ok(None),
             LogicalPlan::Product { .. }
+            | LogicalPlan::Limit { .. }
             | LogicalPlan::OuterJoin { .. }
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Distinct { .. }
@@ -98,6 +100,7 @@ fn table_columns(mut columns: Vec<usize>, plan: &LogicalPlan) -> Result<Vec<usiz
             LogicalPlan::Scan { .. } => break,
             LogicalPlan::Sort { .. }
             | LogicalPlan::Product { .. }
+            | LogicalPlan::Limit { .. }
             | LogicalPlan::OuterJoin { .. }
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Distinct { .. }

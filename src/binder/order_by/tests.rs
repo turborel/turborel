@@ -14,7 +14,7 @@ use crate::value::{DataType, Decimal, Value};
 /// key`.
 fn key(key: &str) -> ValueExpression {
     let c = Parser::new(&format!("SELECT A FROM T ORDER BY {key}")).unwrap().cursor_specification().unwrap();
-    match c.order_by.into_iter().next().map(|s| s.key) {
+    match c.query.order_by().first().map(|s| s.key.clone()) {
         Some(SortColumn::Value(v)) => v,
         Some(SortColumn::Column(cs)) => ValueExpression::Column(cs),
         Some(SortColumn::Position(_)) | None => panic!("no value expression: {key}"),

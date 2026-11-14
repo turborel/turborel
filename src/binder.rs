@@ -50,6 +50,7 @@ mod greatest;
 mod grouping_sets;
 mod hypothetical;
 mod invariant;
+mod limit;
 mod natural;
 mod order_by;
 mod partitioned;

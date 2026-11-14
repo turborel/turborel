@@ -136,7 +136,7 @@ fn in_body<'a, T>(
 ) -> Result<T> {
     match q {
         QueryExpression::With(w) => with_scope(cx, w, (site, false), |inner| in_body(inner, &w.body, site, then)),
-        QueryExpression::Spec(_) | QueryExpression::Values(_) | QueryExpression::SetOp(_) => then(cx, q),
+        QueryExpression::Spec(_) | QueryExpression::Values(_) | QueryExpression::SetOp(_) | QueryExpression::Ordered(_) => then(cx, q),
     }
 }
 
@@ -315,10 +315,12 @@ fn operand(s: &SetOperation, side: Side) -> &QueryExpression {
     }
 }
 
-/// The UNION an anchor expression's body is.
+/// The UNION an anchor expression's body is, before its ORDER BY and
+/// OFFSET if it has them.
 fn union_of(body: &QueryExpression) -> Result<&SetOperation> {
     match body {
         QueryExpression::SetOp(s) => Ok(s),
+        QueryExpression::Ordered(o) => union_of(&o.body),
         QueryExpression::Spec(_) | QueryExpression::Values(_) | QueryExpression::With(_) => {
             Err(SqlError::new(Code::Api, "[DESIGN] an anchor expression is not a UNION"))
         }
@@ -346,7 +348,12 @@ fn planned(
             }
             let s = union_of(body)?;
             let operands = (bind_query_expression(within, &s.left, &nesting)?, bind_query_expression(within, &s.right, &nesting)?);
-            Ok(assembled(&within, s, aligned(&within, s, operands)?, cols.clone()).plan)
+            let united = assembled(&within, s, aligned(&within, s, operands)?, cols.clone());
+            // Its ORDER BY and OFFSET, of its result [§7.17 SR26 d ii].
+            if let QueryExpression::Ordered(o) = body {
+                return Ok(super::limit::ordered_result(within, united, o)?.plan);
+            }
+            Ok(united.plan)
         })
         .or_at(m.element.at)?;
         plans.push(plan);
@@ -359,9 +366,9 @@ fn planned(
 /// rows each adds; else as the General Rules say.
 fn iteration(mut plans: Vec<LogicalPlan>, members: &[Member<'_>]) -> Fixpoint<LogicalPlan> {
     let (Some(side), true) = (members.first().and_then(|m| m.anchor), plans.len() == 1) else { return Fixpoint::Whole(plans) };
-    let Some(LogicalPlan::SetOp { op: SetOp::Union, all, compared: None, left, right }) = plans.pop() else {
-        return Fixpoint::Whole(plans);
-    };
+    // Of ORDER BY or OFFSET, its rows are sorted or passed over whole.
+    let Some(top) = plans.pop() else { return Fixpoint::Whole(plans) };
+    let LogicalPlan::SetOp { op: SetOp::Union, all, compared: None, left, right } = top else { return Fixpoint::Whole(vec![top]) };
     let (anchor, step) = match side {
         Side::Left => (left, right),
         Side::Right => (right, left),
@@ -389,11 +396,11 @@ fn distributes(plan: &LogicalPlan, distinct: bool) -> bool {
         LogicalPlan::Filter { input, .. } | LogicalPlan::Project { input, .. } | LogicalPlan::Sort { input, .. } => {
             distributes(input, distinct)
         }
+        // Which rows OFFSET passes over is of every row of its input, and
+        // a window function's value of a row of every row of its partition.
+        LogicalPlan::Limit { .. } | LogicalPlan::Window(_) => false,
         // Its rows are found of each row of its input alone.
         LogicalPlan::Unnest(u) => distributes(&u.input, distinct),
-        // A window function's value of a row is of every row of its
-        // partition.
-        LogicalPlan::Window(_) => false,
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => one_side(left, right, distinct),
         LogicalPlan::SetOp { op: SetOp::Union, all, left, right, .. } => {
             (*all || distinct) && distributes(left, distinct) && distributes(right, distinct)
@@ -441,7 +448,8 @@ fn reads_work(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Values { .. }
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
-        | LogicalPlan::Sort { .. } => plan.inputs().any(reads_work),
+        | LogicalPlan::Sort { .. }
+        | LogicalPlan::Limit { .. } => plan.inputs().any(reads_work),
     }
 }
 

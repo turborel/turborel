@@ -72,6 +72,7 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::IndexJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
+        | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
@@ -135,6 +136,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::IndexJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
+        | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
@@ -196,6 +198,7 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
         | Plan::IndexJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
+        | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }

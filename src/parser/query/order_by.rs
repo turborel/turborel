@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn each_form_of_a_sort_key_10_10() {
         let c = parsed("SELECT A FROM T ORDER BY 2 DESC, A NULLS FIRST, A COLLATE X, A + 1, 1.0, (1), B.A").unwrap();
-        let keys: Vec<&SortColumn> = c.order_by.iter().map(|s| &s.key).collect();
+        let keys: Vec<&SortColumn> = c.query.order_by().iter().map(|s| &s.key).collect();
         assert!(matches!(
             keys.as_slice(),
             [
@@ -156,7 +156,7 @@ mod tests {
                 SortColumn::Column(_),
             ]
         ));
-        let [first, second, third, fourth, ..] = c.order_by.as_slice() else { panic!("seven keys") };
+        let [first, second, third, fourth, ..] = c.query.order_by() else { panic!("seven keys") };
         assert!(first.descending && first.collate.is_none());
         assert_eq!(second.nulls_first, Some(true));
         assert!(third.collate.is_some() && !third.descending);
@@ -170,6 +170,6 @@ mod tests {
     fn a_position_past_the_maximum_is_refused() {
         assert_eq!(parsed("SELECT A FROM T ORDER BY 4294967296").err().map(|e| e.code), Some(Code::Unsupported));
         let c = parsed("SELECT A FROM T ORDER BY 4294967295").unwrap();
-        assert!(matches!(c.order_by.first().map(|s| &s.key), Some(SortColumn::Position(u32::MAX))));
+        assert!(matches!(c.query.order_by().first().map(|s| &s.key), Some(SortColumn::Position(u32::MAX))));
     }
 }

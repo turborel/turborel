@@ -2,7 +2,7 @@
 //! 9075-2:2023 §6.16, §6.25, §6.49, §7.1], each a `ValueExpression::
 //! Composite`, and of the ordering of an array aggregate [§10.9].
 
-use super::{SortSpecification, Subquery, ValueExpression};
+use super::{Subquery, ValueExpression};
 
 /// An expression of arrays and rows.
 #[derive(Debug, Clone)]
@@ -12,8 +12,9 @@ pub enum Composite {
     /// element, an `<empty specification>` [§6.5], ARRAY `[` `]`.
     Array(Vec<ValueExpression>),
     /// [ISO/IEC 9075-2:2023 §6.49] `<array value constructor by query>`
-    /// ::= ARRAY ( `<query expression>` \[`<order by clause>`\] ).
-    ArrayQuery(Box<Subquery>, Vec<SortSpecification>),
+    /// ::= ARRAY `<table subquery>`, its `<query expression>`'s ORDER BY
+    /// ordering the elements \[NOTE 207\].
+    ArrayQuery(Box<Subquery>),
     /// [ISO/IEC 9075-2:2023 §7.1] `<explicit row value constructor>` ::=
     /// ROW ( `<row value constructor element list>` ) | (
     /// `<row value constructor element>` , `<row value constructor element
@@ -50,7 +51,7 @@ impl Composite {
 
     /// Its subquery, if it has one.
     pub fn subquery(&self) -> Option<&Subquery> {
-        if let Composite::ArrayQuery(s, _) = self { Some(s) } else { None }
+        if let Composite::ArrayQuery(s) = self { Some(s) } else { None }
     }
 }
 

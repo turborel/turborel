@@ -128,7 +128,7 @@ impl Parser {
 
     /// `<number of tiles>` or `<nth row>` ::= `<simple value
     /// specification>` | `<dynamic parameter specification>`.
-    pub(super) fn number_of_rows(&mut self) -> Result<ValueExpression> {
+    pub(in crate::parser) fn number_of_rows(&mut self) -> Result<ValueExpression> {
         let spec = if self.is_delim(delim::QUESTION) { self.value_specification()? } else { self.simple_value_specification()? };
         Ok(ValueExpression::Value(spec))
     }

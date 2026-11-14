@@ -268,11 +268,15 @@ fn expand(db: &State, view: &ViewDesc, Reader { purpose, own, user, now, .. }: R
         schema: &view.names,
         ..Context::new(db, owner_of(&*db.catalog, &view.name.auth), &params)
     };
-    let bound = bind_query_expression(cx, &query, &Nesting::Query)?;
+    // An updatable view's rows are its query specification's: its ORDER
+    // BY orders none of a query that names it [ISO/IEC 9075-2:2023 §7.17
+    // GR5].
+    let rows = if view.updates.is_some() { query.updatable_body().unwrap_or(&query) } else { &query };
+    let bound = bind_query_expression(cx, rows, &Nesting::Query)?;
     if view.updates.is_none() {
         return Ok(Source::Derived(bound.plan));
     }
-    let has_where = query.spec().is_some_and(|spec| spec.table_expression.where_clause.is_some());
+    let has_where = query.updatable_spec().is_some_and(|spec| spec.table_expression.where_clause.is_some());
     let base = collapse(db, bound.plan, has_where)?;
     Ok(Source::Base(Box::new(base)))
 }
@@ -305,6 +309,7 @@ fn collapse(db: &State, plan: LogicalPlan, has_where: bool) -> Result<ViewBase> 
             | LogicalPlan::Values { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Sort { .. }
+            | LogicalPlan::Limit { .. }
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
@@ -442,12 +447,14 @@ pub struct BoundView {
 /// It breaks a rule of its query.
 pub fn bind_view(cx: Context<'_>, query: &QueryExpression) -> Result<BoundView> {
     let bound = bind_query_expression(cx, query, &Nesting::Query)?;
-    let grouped = query.spec().is_some_and(|spec| spec.table_expression.group_by.is_some() || spec.table_expression.having.is_some());
+    let grouped =
+        query.unordered().spec().is_some_and(|spec| spec.table_expression.group_by.is_some() || spec.table_expression.having.is_some());
     let mut reads = Vec::new();
     named_tables(cx, query, &mut reads);
     // [ISO/IEC 9075:1992 §11.19 SR6, §7.10 SR4] updatable only if it is
-    // an updatable <query specification>.
-    let updates = match query.spec() {
+    // an updatable <query specification>, of no OFFSET or FETCH FIRST
+    // [ISO/IEC 9075-2:2023 §7.17 SR7].
+    let updates = match query.updatable_spec() {
         Some(spec) => updates(cx, spec, &bound.plan.subquery_tables())?,
         None => None,
     };

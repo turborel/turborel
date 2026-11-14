@@ -91,6 +91,7 @@ impl Plan {
             Plan::Values { detail, .. } => writeln!(out, "{pad}Values {detail}"),
             Plan::System { read } => writeln!(out, "{pad}System {}", read.name()),
             Plan::Sort { detail, .. } => writeln!(out, "{pad}Sort {detail}"),
+            Plan::Limit { limit, .. } => writeln!(out, "{pad}{}", limit.render()),
             Plan::Recursive { member, fixpoint } => writeln!(out, "{pad}Recursive member {member} ({})", fixpoint.word()),
             Plan::WorkTable { member, .. } => writeln!(out, "{pad}WorkTable of member {member}"),
             Plan::Unnest(u) => writeln!(
@@ -128,6 +129,7 @@ impl Plan {
             | Plan::Project { input, .. }
             | Plan::Distinct { input }
             | Plan::Sort { input, .. }
+            | Plan::Limit { input, .. }
             | Plan::IndexJoin { left: input, .. } => input.write(out, depth),
             Plan::Unnest(u) => u.input.write(out, depth),
             Plan::Window { window, .. } => window.input.write(out, depth),

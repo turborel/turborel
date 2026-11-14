@@ -1,21 +1,22 @@
-//! Abstract syntax of queries: `<cursor specification>` [X3.135-1986 §8.3],
-//! `<query expression>` [ISO/IEC 9075:1992 §7.10] and `<query
-//! specification>` [X3.135-1986 §5.25] and their parts.
+//! Abstract syntax of queries: `<cursor specification>` [ISO/IEC 9075-2:2023
+//! §14.3], `<query expression>` [ISO/IEC 9075:1992 §7.10] and `<query
+//! specification>` [X3.135-1986 §5.25] and their parts; ORDER BY, OFFSET
+//! and FETCH FIRST in `ordered.rs`.
 
+use super::ordered::OrderedQuery;
 use super::{ColumnSpecification, CycleClause, SearchClause, SearchCondition, Subquery, TableName, ValueExpression, WindowDefinition};
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.3] <cursor specification> and [X3.135-1986 §5.25] <query specification>
 // ---------------------------------------------------------------------------
 
-/// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] `<cursor specification>`
-/// ::= `<query expression>` \[`<order by clause>`\] \[`<updatability
-/// clause>`\]
+/// [ISO/IEC 9075-2:2023 §14.3] `<cursor specification>` ::= `<query
+/// expression>` \[`<updatability clause>`\], its `<order by clause>` the
+/// query expression's [§7.17], as it was SQL-92's own [ISO/IEC 9075:1992
+/// §13.1].
 #[derive(Debug, Clone)]
 pub struct CursorSpecification {
     /// The `<query expression>`.
     pub query: QueryExpression,
-    /// `<order by clause>` ::= ORDER BY `<sort specification>` \[{, `<sort specification>`}...\]
-    pub order_by: Vec<SortSpecification>,
     /// The `<updatability clause>`, if written.
     pub updatability: Option<Updatability>,
 }
@@ -114,6 +115,10 @@ pub enum QueryExpression {
     /// [ISO/IEC 9075-2:2023 §7.17] A `<with clause>` and the `<query
     /// expression body>` its query names are in scope in.
     With(Box<WithQuery>),
+    /// [ISO/IEC 9075-2:2023 §7.17] A `<query expression body>` with an
+    /// `<order by clause>`, a `<result offset clause>` or a `<fetch first
+    /// clause>`.
+    Ordered(Box<OrderedQuery>),
 }
 
 /// [ISO/IEC 9075-2:2023 §7.17] `<with clause>` ::= WITH \[RECURSIVE\]
@@ -159,13 +164,17 @@ impl QueryExpression {
     }
 
     /// Its `<query expression body>`: itself, or that after its `<with
-    /// clause>`s [ISO/IEC 9075-2:2023 §7.17].
+    /// clause>`s and before its `<order by clause>`, `<result offset
+    /// clause>` and `<fetch first clause>` [ISO/IEC 9075-2:2023 §7.17].
     pub fn body(&self) -> &QueryExpression {
         let mut q = self;
-        while let QueryExpression::With(w) = q {
-            q = &w.body;
+        loop {
+            q = match q {
+                QueryExpression::With(w) => &w.body,
+                QueryExpression::Ordered(o) => &o.body,
+                QueryExpression::Spec(_) | QueryExpression::Values(_) | QueryExpression::SetOp(_) => return q,
+            };
         }
-        q
     }
 
     /// Adds to `out` the `<table name>`s the `<from clause>`s of it and of
@@ -199,6 +208,9 @@ impl QueryExpression {
                 return;
             }
             QueryExpression::With(w) => return w.named_in(scope, each),
+            // Its sort keys and row counts hold no query expression [§7.17
+            // SR26b, §6.4].
+            QueryExpression::Ordered(o) => return o.body.named_in(scope, each),
             QueryExpression::Values(rows) => {
                 for element in rows.iter().flat_map(|r| &r.elements) {
                     if let RowElement::Value(v, _) = element {

@@ -199,7 +199,8 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         | Plan::Aggregate { input, .. }
         | Plan::Project { input, .. }
         | Plan::Distinct { input }
-        | Plan::Sort { input, .. } => give(input, work),
+        | Plan::Sort { input, .. }
+        | Plan::Limit { input, .. } => give(input, work),
         Plan::Unnest(u) => give(&mut u.input, work),
         Plan::Window { window, .. } => give(&mut window.input, work),
         Plan::Product { left, right }

@@ -764,6 +764,74 @@ SELECT DEPT FROM STAFF UNION SELECT DEPT FROM DEPT ORDER BY TITLE;
 turborel: SQLCODE -103 (SQLSTATE 2A000): the result has no column TITLE [ISO/IEC 9075:1992 §13.1 SR10a] (at character 60)
 ```
 
+### OFFSET and FETCH FIRST
+
+After ORDER BY, `OFFSET n ROWS` passes over the first n rows and `FETCH
+FIRST n ROWS ONLY` keeps at most n of those after. ROW and ROWS are one,
+as are FIRST and NEXT, and FETCH FIRST ROW ONLY keeps one row. Either
+clause may be written without ORDER BY, which leaves which rows they
+keep to the order the rows come in.
+
+```sql
+SELECT NAME FROM STAFF ORDER BY ID OFFSET 1 ROW FETCH FIRST 2 ROWS ONLY;
+SELECT NAME FROM STAFF ORDER BY SALARY DESC NULLS LAST FETCH NEXT ROW ONLY;
+```
+
+```
+ NAME
+--------------------------------
+ Grace
+ Edsger
+(2 rows)
+ NAME
+--------------------------------
+ Grace
+(1 row)
+```
+
+The three clauses end any query expression, not the statement alone. A
+subquery, a derived table, a view's query, a WITH element's query and an
+INSERT's query may each be sorted and limited, and so may a query in
+parentheses, before a set operation takes its rows.
+
+```sql
+SELECT DEPT, (SELECT NAME FROM STAFF S WHERE S.DEPT = D.DEPT ORDER BY SALARY DESC FETCH FIRST ROW ONLY) AS TOP FROM DEPT D ORDER BY DEPT;
+(SELECT NAME FROM STAFF ORDER BY ID FETCH FIRST ROW ONLY) UNION ALL (SELECT NAME FROM STAFF ORDER BY ID DESC FETCH FIRST ROW ONLY);
+```
+
+```
+ DEPT | TOP
+------+--------------------------------
+ ENG  | Grace
+ HR   | NULL
+(2 rows)
+ NAME
+--------------------------------
+ Ada
+ Barbara
+(2 rows)
+```
+
+A count is a literal, a parameter, or a `?` of a prepared statement,
+read once as the rows are first asked for. It is a whole number, else
+SQLCODE -103. An offset below 0 is SQLSTATE 2201X, and a count of FETCH
+FIRST below 1 is 2201W; a null count raises the same. A view or a cursor
+of OFFSET or FETCH FIRST is not updatable, though one of ORDER BY alone
+is. A recursive query has no FETCH FIRST, nor does a query in one that
+reads it. FETCH FIRST n PERCENT and WITH TIES are SQLCODE -900.
+
+```sql
+SELECT NAME FROM STAFF FETCH FIRST 0 ROWS ONLY;
+SELECT NAME FROM STAFF OFFSET 1.5 ROWS;
+SELECT NAME FROM STAFF ORDER BY ID FETCH FIRST 2 ROWS WITH TIES;
+```
+
+```
+turborel: SQLCODE -301 (SQLSTATE 2201W): the fetch first row count is 0, less than 1 [ISO/IEC 9075-2:2023 §7.17 GR7c]
+turborel: SQLCODE -103 (SQLSTATE 2A000): the offset row count is an exact number of scale 0, not NUMERIC(2,1) [ISO/IEC 9075-2:2023 §7.17 SR27] (at character 30)
+turborel: SQLCODE -900 (SQLSTATE 0A000): WITH TIES is Feature F867, which turborel does not support [ISO/IEC 9075-2:2023 §7.17 GR7d i] (at character 35)
+```
+
 ## Table value constructors
 
 `VALUES (a, b), (c, d), ...` is a table of the rows written, its columns

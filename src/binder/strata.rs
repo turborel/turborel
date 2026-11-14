@@ -182,6 +182,9 @@ impl<'w> Rules<'w> {
     /// [ISO/IEC 9075-2:2023 §7.17 SR3j ix, x] Checks the query of `e`, a
     /// member of the stratum.
     pub(super) fn check(&self, e: &'w WithElement) -> Result<()> {
+        if e.query.ordered().is_some_and(|o| o.fetch.is_some()) {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §7.17 SR3j ix 3] recursive query {} has no FETCH FIRST", e.name)).or_at(e.at));
+        }
         self.query(&e.query, (Place::Body, &mut Vec::new())).map_err(|(clause, what)| {
             rule(format!("[ISO/IEC 9075-2:2023 §7.17 {clause}] query {} references {} {what}", e.name, self.listed())).or_at(e.at)
         })
@@ -216,6 +219,12 @@ impl<'w> Rules<'w> {
                 self.elsewhere(subqueries, scope)
             }
             QueryExpression::Spec(spec) => self.spec(spec, (place, scope)),
+            QueryExpression::Ordered(o) => {
+                if o.fetch.is_some() {
+                    return Err(("SR3j ix 4", "in a query expression with FETCH FIRST"));
+                }
+                self.query(&o.body, (place, scope))
+            }
         }
     }
 
@@ -341,7 +350,8 @@ impl<'w> Rules<'w> {
                 found
             }
             QueryExpression::Values(rows) => row_values(rows).into_iter().any(agg),
-            QueryExpression::SetOp(_) | QueryExpression::With(_) => false,
+            // Its sort keys and counts hold none [§7.17 SR26b].
+            QueryExpression::SetOp(_) | QueryExpression::With(_) | QueryExpression::Ordered(_) => false,
         }
     }
 
@@ -351,9 +361,17 @@ impl<'w> Rules<'w> {
     /// not supported, nor one whose anchor's UNION is within its body.
     pub(super) fn anchor(&self, e: &'w WithElement) -> Result<Option<Side>> {
         let (mut q, mut scope) = (&e.query, Vec::new());
-        while let QueryExpression::With(w) = q {
-            scope.extend(w.elements.iter().map(|x| x.name.as_str()));
-            q = &w.body;
+        // [SR3j vii 1 A] Its body, after its <with clause> and before its
+        // ORDER BY and OFFSET, which it simply contains.
+        loop {
+            q = match q {
+                QueryExpression::With(w) => {
+                    scope.extend(w.elements.iter().map(|x| x.name.as_str()));
+                    &w.body
+                }
+                QueryExpression::Ordered(o) => &o.body,
+                QueryExpression::SetOp(_) | QueryExpression::Spec(_) | QueryExpression::Values(_) => break,
+            };
         }
         let QueryExpression::SetOp(s) = q else { return Ok(None) };
         let side = match (s.op, self.refs(&s.left, &scope), self.refs(&s.right, &scope)) {
@@ -382,7 +400,7 @@ impl<'w> Rules<'w> {
         let QueryExpression::SetOp(s) = q else { return false };
         let union = |o: &'w QueryExpression| match o {
             QueryExpression::SetOp(x) => x.op == SetOperator::Union && (self.refs(&x.left, scope) == 0 || self.refs(&x.right, scope) == 0),
-            QueryExpression::Spec(_) | QueryExpression::Values(_) | QueryExpression::With(_) => false,
+            QueryExpression::Spec(_) | QueryExpression::Values(_) | QueryExpression::With(_) | QueryExpression::Ordered(_) => false,
         };
         [&s.left, &s.right].into_iter().any(|o| self.refs(o, scope) > 0 && (union(o) || self.anchored_within(o, scope)))
     }
@@ -422,6 +440,7 @@ fn simply_all(q: &QueryExpression) -> bool {
     match q {
         QueryExpression::SetOp(s) => (s.all && s.op != SetOperator::Union) || simply_all(&s.left) || simply_all(&s.right),
         QueryExpression::With(w) => simply_all(&w.body),
+        QueryExpression::Ordered(o) => simply_all(&o.body),
         QueryExpression::Spec(_) | QueryExpression::Values(_) => false,
     }
 }
@@ -442,6 +461,7 @@ fn any_query(q: &QueryExpression, pred: &dyn Fn(&QueryExpression) -> bool) -> bo
     match q {
         QueryExpression::SetOp(s) => nested.extend([&s.left, &s.right]),
         QueryExpression::With(w) => nested.extend(w.elements.iter().map(|e| &e.query).chain([&w.body])),
+        QueryExpression::Ordered(o) => nested.push(&o.body),
         QueryExpression::Values(rows) => row_values(rows).into_iter().for_each(|v| v.for_each_subquery(&mut |s| nested.push(&s.query))),
         QueryExpression::Spec(spec) => {
             for v in selected(spec) {

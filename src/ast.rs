@@ -34,6 +34,7 @@ mod drop;
 mod dynamic;
 mod expression;
 mod generated;
+mod ordered;
 mod query;
 mod schema;
 mod search_cycle;
@@ -57,6 +58,7 @@ pub use expression::{
     CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
+pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
 pub use query::{
     Correspondence, CursorSpecification, DerivedTable, GroupBy, GroupingColumn, GroupingElement, JoinKind, JoinSpecification, JoinedTable,
     NamedTable, Partitioning, QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation,

@@ -25,8 +25,9 @@ use crate::value::{DataType, Value};
 /// specification>`. Whether the cursor is, with ORDER BY, SCROLL or its
 /// `<updatability clause>`, is §13.1 SR5's (`db/cursor.rs`).
 pub fn updatable(c: &CursorSpecification) -> Option<&QuerySpecification> {
-    // [ISO/IEC 9075:1992 §7.10 SR4] no set operation.
-    let s = c.query.spec()?;
+    // [ISO/IEC 9075:1992 §7.10 SR4] no set operation; [ISO/IEC
+    // 9075-2:2023 §7.17 SR7] no OFFSET or FETCH FIRST.
+    let s = c.query.updatable_spec()?;
     updatable_query(s).then_some(s)
 }
 

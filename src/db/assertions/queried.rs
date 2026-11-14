@@ -74,6 +74,7 @@ fn joined(plan: &LogicalPlan) -> bool {
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Sort { .. }
+        | LogicalPlan::Limit { .. }
         | LogicalPlan::Recursive { .. }
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
@@ -116,6 +117,7 @@ fn grouped(plan: &LogicalPlan, known: &Known<'_>) -> Option<Shape> {
             | LogicalPlan::System { .. }
             | LogicalPlan::Values { .. }
             | LogicalPlan::Sort { .. }
+            | LogicalPlan::Limit { .. }
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
@@ -182,6 +184,7 @@ fn column_never_null(plan: &LogicalPlan, at: usize, known: &Known<'_>) -> bool {
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Sort { .. }
+        | LogicalPlan::Limit { .. }
         | LogicalPlan::Recursive { .. }
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
@@ -250,6 +253,7 @@ pub(super) fn of_groups(plan: LogicalPlan, (keys, types): (&[Row], Option<&[Data
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }
         | LogicalPlan::Sort { .. }
+        | LogicalPlan::Limit { .. }
         | LogicalPlan::Recursive { .. }
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)

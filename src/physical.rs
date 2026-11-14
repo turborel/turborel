@@ -24,6 +24,7 @@ mod join;
 mod kept;
 mod order;
 mod probe;
+mod raising;
 mod shown;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
@@ -35,7 +36,7 @@ use crate::db::State;
 use crate::exec::WorkRows;
 use crate::index::Probe;
 use crate::logical::{
-    AggCall, Cond, Expr, Fixpoint, LogicalPlan, OuterJoin, SetOp, SortKey, Unnest, Window, column_name, judged_by_sets, render_cond,
+    AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, OuterJoin, SetOp, SortKey, Unnest, Window, column_name, judged_by_sets, render_cond,
     render_expr, render_keys, split_and,
 };
 use crate::storage::Row;
@@ -281,6 +282,14 @@ pub enum Plan {
         /// The rows sorted.
         input: Box<Plan>,
     },
+    /// [ISO/IEC 9075-2:2023 §7.17 GR6, GR7] The rows of `input` `limit`
+    /// keeps, in its order (`exec/limit.rs`).
+    Limit {
+        /// Its counts.
+        limit: Limit,
+        /// The rows limited.
+        input: Box<Plan>,
+    },
     /// [ISO/IEC 9075-2:2023 §7.17 GR2c ii] The rows of member `member` of
     /// a recursive stratum: its members' plans run to their fixpoint
     /// (`exec/recursive.rs`).
@@ -422,6 +431,13 @@ impl<'a> PhysicalPlanner<'a> {
             }
 
             LogicalPlan::Sort { keys, input } => self.sort(keys, input),
+            // It keeps its input's order, the one `want` asks of it if it
+            // gives that: of no ORDER BY, which rows it keeps is
+            // implementation-dependent [§7.17 GR5a].
+            LogicalPlan::Limit { limit, input } => {
+                let b = self.build(input, want);
+                Built { plan: Plan::Limit { limit: limit.clone(), input: Box::new(b.plan) }, ordered: b.ordered }
+            }
             LogicalPlan::Recursive { member, fixpoint, .. } => {
                 Built::unordered(Plan::Recursive { member: *member, fixpoint: fixpoint.map_ref(|p| self.plan(p)) })
             }
@@ -548,40 +564,6 @@ fn of_left(want: &[SortKey], width: usize) -> &[SortKey] {
 /// An outer join's own conditions, of its left operand's columns and of
 /// its right's (`Plan::OuterJoin`), if either has one.
 pub type Own = Option<Box<(Option<Cond>, Option<Cond>)>>;
-
-impl Plan {
-    /// Whether running it can raise an error of a General Rule (an
-    /// overflow, a division by zero, a subquery's cardinality): through a
-    /// condition or expression that can, or a set function, which can
-    /// overflow. Reading a table can fail too, but that is the storage's
-    /// failure, not the statement's.
-    pub fn can_raise(&self) -> bool {
-        match self {
-            Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::WorkTable { .. } => false,
-            // Past EXECUTOR.MAX_ITERATIONS a recursive query is refused,
-            // and a system table may fail to make its rows.
-            Plan::Recursive { .. } | Plan::System { .. } => true,
-            Plan::Filter { cond, input, .. } => cond.can_raise() || input.can_raise(),
-            Plan::Project { exprs, input, .. } => exprs.iter().any(Expr::can_raise) || input.can_raise(),
-            Plan::Aggregate { aggs, input, .. } => !aggs.is_empty() || input.can_raise(),
-            Plan::Product { left, right }
-            | Plan::HashJoin { left, right, .. }
-            | Plan::Append { left, right }
-            | Plan::SetOp { left, right, .. } => left.can_raise() || right.can_raise(),
-            Plan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
-            Plan::OuterJoin { left, right, cond, own, .. } => {
-                let owned = own.as_deref().is_some_and(|(l, r)| [l, r].iter().any(|c| c.as_ref().is_some_and(Cond::can_raise)));
-                left.can_raise() || right.can_raise() || owned || cond.as_ref().is_some_and(Cond::can_raise)
-            }
-            Plan::IndexJoin { left, cond, .. } => left.can_raise() || cond.as_ref().is_some_and(Cond::can_raise),
-            Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),
-            Plan::Unnest(u) => {
-                u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(Cond::can_raise) || u.input.can_raise()
-            }
-            Plan::Window { window, .. } => window.can_raise() || window.input.can_raise(),
-        }
-    }
-}
 
 // Unit tests: the planner's response to a state that breaks its invariants
 // (RULES.md R-TEST-2 robustness), and the orders its plans give.

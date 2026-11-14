@@ -1,5 +1,6 @@
-//! [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] A `<cursor specification>`:
-//! its query bound, then the `<sort key>`s of its ORDER BY.
+//! [ISO/IEC 9075-2:2023 §14.3] A `<cursor specification>`: its query
+//! expression bound, with its ORDER BY, OFFSET and FETCH FIRST [§7.17],
+//! as SQL-92's cursor alone had ORDER BY [ISO/IEC 9075:1992 §13.1].
 
 use super::order_by::ordered_query;
 use super::query::Nesting;
@@ -7,17 +8,18 @@ use super::{Bound, Context, OutColumn, rule};
 use crate::ast::{ColumnSpecification, CursorSpecification};
 use crate::error::Result;
 
-/// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] A `<cursor
-/// specification>`: its query, then ORDER BY.
+/// [ISO/IEC 9075-2:2023 §14.3] A `<cursor specification>`: its query
+/// expression, sorted and limited as it says.
 ///
 /// # Errors
 ///
-/// Any Syntax Rule the query or its ORDER BY breaks, or a missing privilege.
+/// Any Syntax Rule the query, its ORDER BY or a row count breaks, or a
+/// missing privilege; SQLCODE -900 for PERCENT or WITH TIES.
 pub fn bind_cursor(cx: Context<'_>, c: &CursorSpecification) -> Result<Bound> {
     // A simple table query, one after a <with clause> too, resolves ORDER
     // BY's keys against its own FROM clause [ISO/IEC 9075-2:2023 §7.17
     // SR26 d i]; its select list draws values [§6.14 SR1a ii].
-    Ok(ordered_query(cx, &c.query, (&c.order_by, &Nesting::Query), true)?.sorted())
+    Ok(ordered_query(cx, &c.query, (&[], &Nesting::Query), true)?.sorted())
 }
 
 /// [ISO/IEC 9075:1992 §13.1 SR10a] The column of a `<query expression>`'s

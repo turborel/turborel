@@ -44,6 +44,7 @@ pub(super) fn bind_query_expression(cx: Context<'_>, q: &QueryExpression, nestin
         QueryExpression::Values(rows) => values(cx, rows, nesting),
         QueryExpression::SetOp(s) => set_operation(cx, s, nesting).or_at(s.at),
         QueryExpression::With(w) => super::with::bind_with(cx, w, nesting),
+        QueryExpression::Ordered(o) => Ok(super::limit::ordered_and_limited(cx, o, nesting, cx.draws)?.sorted()),
     }
 }
 
@@ -60,7 +61,9 @@ pub fn bind_insert_query(cx: Context<'_>, query: &QueryExpression, columns: &[Ob
     let now = cx.now;
     // [ISO/IEC 9075-2:2023 §6.14 SR1a iii, SR1c] the select list of its
     // <from subquery>, or the rows of its <from constructor>, draw values.
-    let draws = matches!(query, QueryExpression::Values(_)) || query.spec().is_some();
+    // So do those of one with its ORDER BY, OFFSET or FETCH FIRST, which
+    // it still constitutes [§7.17].
+    let draws = matches!(query.unordered(), QueryExpression::Values(_) | QueryExpression::Spec(_));
     let bound = bind_query_expression(Context { draws, ..cx }, query, &Nesting::Source { columns })?;
     // A time or timestamp without time zone, of the session's displacement
     // as a column WITH TIME ZONE takes it [§6.1 GR5].

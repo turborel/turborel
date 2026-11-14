@@ -398,7 +398,7 @@ Cursors follow §13.1, §13.3.
 |---|---|
 | SCROLL | FETCH's every orientation (NEXT, PRIOR, FIRST, LAST, ABSOLUTE, RELATIVE) and FROM. |
 | INSENSITIVE | Implemented. |
-| `<updatability clause>` | FOR READ ONLY or FOR UPDATE [OF columns]. FOR UPDATE with ORDER BY or SCROLL too. |
+| `<updatability clause>` | FOR READ ONLY or FOR UPDATE [OF columns]. FOR UPDATE with ORDER BY or SCROLL too, not of OFFSET or FETCH FIRST [2023 §7.17 SR7]. |
 | Positioned UPDATE | Sets only the columns it names, and none a sort key of its ORDER BY reads, through an expression too [§13.9 SR4, SR8]. |
 
 ### Transactions, sessions and the Information Schema
@@ -1135,6 +1135,33 @@ a cursor's ORDER BY and ARRAY(query ORDER BY ...) [§6.49 NOTE 207].
 | Window functions | §6.10 SR2a | A key of a simple table query may be a window function, computed with the select list's. |
 | Updatable cursors | §14.3, Feature F833 | Ordered by its keys, each row's computed from its own values as OPEN reads it. One ordered by a window function, whose value is not of its row alone, is SQLCODE -900. |
 | Its plans | | A key spills past MEMORY.WORK_BYTES with the rows, by batches or row by row. |
+
+### ORDER BY, OFFSET and FETCH FIRST
+
+Features F850 (Top-level ORDER BY in query expression), F851 (ORDER BY
+in subqueries), F852 (Top-level ORDER BY in views), F855 (Nested ORDER
+BY in query expression), F856 (Nested FETCH FIRST in query expression),
+F857 (Top-level FETCH FIRST in query expression), F858 (FETCH FIRST in
+subqueries), F859 (Top-level FETCH FIRST in views), F860 (Dynamic FETCH
+FIRST row count), F861 (Top-level OFFSET in query expression), F862
+(OFFSET in subqueries), F863 (Nested OFFSET in query expression), F864
+(Top-level OFFSET in views) and F865 (Dynamic offset row count in
+OFFSET), the
+`<order by clause>`, `<result offset clause>` and `<fetch first clause>`
+of ISO/IEC 9075-2:2023 §7.17. F866 (FETCH FIRST clause: PERCENT option)
+and F867 (FETCH FIRST clause: WITH TIES option) are not claimed.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Where the clauses are | §7.17 | After the body of any query expression: at the top of a cursor or a direct query, of a subquery, correlated too, a derived table, a view's query, a WITH element's query and its body, an INSERT's query, ARRAY's query [§6.49 NOTE 207] and a query in parentheses, an operand of a set operation among them. OFFSET, which SQL-92 does not reserve, is the clause only where a count and ROW or ROWS follow it, else an identifier. |
+| Counts | SR27, SR28, §6.4 | A count is a `<simple value specification>`: a literal, signed too, a parameter or an embedded variable, of a type exact numeric of scale 0, else SQLCODE -103. \[EXTENSION\] A `?` of a prepared statement is a count too, typed INTEGER, as NTILE's count is [§20.7 GR5a xxxii], since §20.7 gives a row count no type. A count is evaluated once, as the rows are first asked for. |
+| Their rows | GR5, GR6, GR7 | The body's rows sorted by ORDER BY, then OFFSET's count of them passed over, all past the last, then at most FETCH FIRST's count kept, one if it has none [GR7b iii]. No row past those kept is read. |
+| Counts out of range | GR6b, GR7c | An offset below 0 is SQLSTATE 2201X, a count of FETCH FIRST below 1 2201W. A null count raises the same, since it is no number of rows. |
+| Updatability | SR7, SR8, SR11 | A query expression of OFFSET or FETCH FIRST is neither updatable nor insertable-into, so a view of one is read-only and a cursor of one FOR UPDATE SQLCODE -103. One of ORDER BY alone is as its body is. |
+| Recursive queries | SR3j ix 3, ix 4, GR2c ii | A recursive query has no FETCH FIRST, nor does a query primary in it that references its stratum, each SQLCODE -103. ORDER BY and OFFSET of a recursive query, or OFFSET of a query over its work table, are found as the General Rules find its fixpoint, of all its rows each time. |
+| Functional dependencies | §4.26, NOTE 71 | A query of OFFSET or FETCH FIRST keeps the dependencies and candidate keys of its body, as its rows are some of the body's. |
+| What it refuses | GR7b ii, GR7d i | FETCH FIRST n PERCENT [F866] and WITH TIES [F867] are SQLCODE -900. |
+| Its plans | | A Limit node over the sort, the sort spilling past MEMORY.WORK_BYTES, by batches or row by row. A scan already in the order ORDER BY asks for is limited without a sort. |
 
 ### Window functions
 

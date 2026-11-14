@@ -60,6 +60,7 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
+        | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
@@ -114,6 +115,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
+        | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
@@ -153,6 +155,7 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
+        | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
@@ -271,6 +274,7 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
+        | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)

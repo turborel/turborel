@@ -138,6 +138,12 @@ impl SqlState {
     /// Data exception: invalid argument for width bucket function [ISO/IEC
     /// 9075-2:2023 §6.31 GR17b, GR17c].
     pub const INVALID_ARGUMENT_FOR_WIDTH_BUCKET: SqlState = SqlState("2201G");
+    /// Data exception: invalid row count in fetch first clause [ISO/IEC
+    /// 9075-2:2023 §7.17 GR7c].
+    pub const INVALID_ROW_COUNT_IN_FETCH_FIRST: SqlState = SqlState("2201W");
+    /// Data exception: invalid row count in result offset clause [ISO/IEC
+    /// 9075-2:2023 §7.17 GR6b].
+    pub const INVALID_ROW_COUNT_IN_RESULT_OFFSET: SqlState = SqlState("2201X");
     /// Data exception: invalid escape character.
     pub const INVALID_ESCAPE_CHARACTER: SqlState = SqlState("22019");
     /// Data exception: invalid character value for cast [ISO/IEC 9075:1992

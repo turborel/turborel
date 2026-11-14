@@ -33,9 +33,10 @@ each group.
 
 ### Queries
 
-- FETCH FIRST and OFFSET (F850 to F867) [§7.17]. For the column store (D31)
-  this is the clause limiting the rows an ordered read gives. Once ALTER
-  TABLE renames columns, COLUMNSTORE.ORDER follows a renamed column.
+- FETCH FIRST's PERCENT and WITH TIES (F866, F867) [§7.17 GR7], then a
+  sort that keeps only the rows FETCH FIRST asks for. For the column store
+  (D31) this is the clause limiting the rows an ordered read gives. Once
+  ALTER TABLE renames columns, COLUMNSTORE.ORDER follows a renamed column.
 - Row pattern recognition (R010, R020, R030) [§4.19 to §4.23, §6.27, §7.7
   to §7.9, §9.41]. MATCH_RECOGNIZE in FROM and in a window, for finding
   runs of rows such as a price falling then rising. It builds on windows.

@@ -63,8 +63,10 @@ fn wanted(spec: &CursorSpecification, (insensitive, scroll): (bool, bool)) -> Re
             }
             Ok(Wanted::Written)
         }
-        // [SR5a] INSENSITIVE, SCROLL or ORDER BY: READ ONLY.
-        None => Ok(if insensitive || scroll || !spec.order_by.is_empty() { Wanted::ReadOnly } else { Wanted::Implicit }),
+        // [SR5a] INSENSITIVE, SCROLL or ORDER BY: READ ONLY; so too OFFSET
+        // or FETCH FIRST, of a query not updatable [ISO/IEC 9075-2:2023
+        // §7.17 SR7].
+        None => Ok(if insensitive || scroll || spec.query.ordered().is_some() { Wanted::ReadOnly } else { Wanted::Implicit }),
     }
 }
 

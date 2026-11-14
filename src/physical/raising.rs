@@ -1,0 +1,39 @@
+//! Whether a plan can raise an error of a General Rule as it runs.
+
+use super::Plan;
+use crate::logical::{Cond, Expr};
+
+impl Plan {
+    /// Whether running it can raise an error of a General Rule (an
+    /// overflow, a division by zero, a subquery's cardinality): through a
+    /// condition or expression that can, or a set function, which can
+    /// overflow. Reading a table can fail too, but that is the storage's
+    /// failure, not the statement's.
+    pub fn can_raise(&self) -> bool {
+        match self {
+            Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::WorkTable { .. } => false,
+            // Past EXECUTOR.MAX_ITERATIONS a recursive query is refused,
+            // a system table may fail to make its rows, and a count not a
+            // row count raises [ISO/IEC 9075-2:2023 §7.17 GR6b, GR7c].
+            Plan::Recursive { .. } | Plan::System { .. } | Plan::Limit { .. } => true,
+            Plan::Filter { cond, input, .. } => cond.can_raise() || input.can_raise(),
+            Plan::Project { exprs, input, .. } => exprs.iter().any(Expr::can_raise) || input.can_raise(),
+            Plan::Aggregate { aggs, input, .. } => !aggs.is_empty() || input.can_raise(),
+            Plan::Product { left, right }
+            | Plan::HashJoin { left, right, .. }
+            | Plan::Append { left, right }
+            | Plan::SetOp { left, right, .. } => left.can_raise() || right.can_raise(),
+            Plan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
+            Plan::OuterJoin { left, right, cond, own, .. } => {
+                let owned = own.as_deref().is_some_and(|(l, r)| [l, r].iter().any(|c| c.as_ref().is_some_and(Cond::can_raise)));
+                left.can_raise() || right.can_raise() || owned || cond.as_ref().is_some_and(Cond::can_raise)
+            }
+            Plan::IndexJoin { left, cond, .. } => left.can_raise() || cond.as_ref().is_some_and(Cond::can_raise),
+            Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),
+            Plan::Unnest(u) => {
+                u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(Cond::can_raise) || u.input.can_raise()
+            }
+            Plan::Window { window, .. } => window.can_raise() || window.input.can_raise(),
+        }
+    }
+}

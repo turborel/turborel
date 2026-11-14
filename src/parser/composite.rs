@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 use super::Parser;
 use crate::ast::{
-    ColumnSpecification, Composite, SelectSublist, SetArg, SetFunctionSpecification, Subquery, TableName, TableReference, UnnestTable,
+    ColumnSpecification, Composite, SelectSublist, SetArg, SetFunctionSpecification, TableName, TableReference, UnnestTable,
     ValueExpression,
 };
 use crate::error::{Code, Result, SqlError};
@@ -191,21 +191,7 @@ impl Parser {
     /// \[NOTE 207\].
     fn array_query(&mut self) -> Result<Composite> {
         self.advance();
-        let at = self.here();
-        self.expect_delim(delim::LEFT_PAREN)?;
-        let query = self.nested(Parser::query_expression)?;
-        let mut order_by = Vec::new();
-        if self.accept_kw(kw::ORDER) {
-            self.expect_kw(kw::BY)?;
-            loop {
-                order_by.push(self.sort_specification()?);
-                if !self.accept_delim(delim::COMMA) {
-                    break;
-                }
-            }
-        }
-        self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(Composite::ArrayQuery(Box::new(Subquery { query, at }), order_by))
+        Ok(Composite::ArrayQuery(Box::new(self.subquery()?)))
     }
 
     /// [ISO/IEC 9075-2:2023 §7.1] ( `<row value constructor element>` ,

@@ -279,7 +279,6 @@ impl Session {
                 let spec = parser.cursor_specification()?;
                 // [§17.6] a <dynamic single row select statement> ::= <query specification>.
                 single_row = spec.query.spec().is_some()
-                    && spec.order_by.is_empty()
                     && spec.updatability.is_none()
                     && matches!(tokens.first().map(|t| &t.tok), Some(Tok::KeyWord(kw::SELECT)));
                 let params = Params::preparing(parser.dynamic_parameters());

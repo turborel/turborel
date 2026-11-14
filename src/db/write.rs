@@ -296,7 +296,7 @@ impl Session {
                     .unwrap_or_default(),
                 SelectList::Star => Vec::new(),
             },
-            QueryExpression::Values(_) | QueryExpression::SetOp(_) | QueryExpression::With(_) => Vec::new(),
+            QueryExpression::Values(_) | QueryExpression::SetOp(_) | QueryExpression::With(_) | QueryExpression::Ordered(_) => Vec::new(),
         };
         if !matches!(query.body(), QueryExpression::Values(_)) {
             for (n, (out, col)) in bound.columns.iter().zip(target.columns()).enumerate() {
@@ -458,6 +458,6 @@ fn degree_at(query: &QueryExpression, m: usize) -> Option<usize> {
             let at = |i: &SelectSublist| if let SelectSublist::Derived(d) = i { Some(d.at) } else { None };
             items.get(m).or(items.first()).and_then(at)
         }
-        QueryExpression::SetOp(_) | QueryExpression::With(_) => None,
+        QueryExpression::SetOp(_) | QueryExpression::With(_) | QueryExpression::Ordered(_) => None,
     }
 }

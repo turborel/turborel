@@ -234,6 +234,11 @@ impl PhysicalPlanner<'_> {
             }
             LogicalPlan::Product { left, right } => Some(self.rows_of(left)? * self.rows_of(right)?),
             LogicalPlan::Project { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => self.rows_of(input),
+            // Its input's, at most its FETCH FIRST count's.
+            LogicalPlan::Limit { limit, input } => {
+                let rows = self.rows_of(input)?;
+                Some(limit.most().map_or(rows, |most| rows.min(cost_of(most))))
+            }
             LogicalPlan::Values { rows, .. } => Some(cost_of(rows.len())),
             // A row for each of its input's.
             LogicalPlan::Window(w) => self.rows_of(&w.input),
@@ -262,9 +267,10 @@ impl PhysicalPlanner<'_> {
     fn distinct_of(&self, plan: &LogicalPlan, column: usize) -> Option<f64> {
         match plan {
             LogicalPlan::Scan { table, .. } => self.db.statistics(table).and_then(|s| s.distinct(column)).or_else(|| self.rows_of(plan)),
-            LogicalPlan::Filter { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => {
-                self.distinct_of(input, column)
-            }
+            LogicalPlan::Filter { input, .. }
+            | LogicalPlan::Distinct { input }
+            | LogicalPlan::Sort { input, .. }
+            | LogicalPlan::Limit { input, .. } => self.distinct_of(input, column),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
                 Some(of_right) => self.distinct_of(right, of_right),
                 None => self.distinct_of(left, column),
@@ -288,9 +294,10 @@ impl PhysicalPlanner<'_> {
     fn column_type(&self, plan: &LogicalPlan, column: usize) -> Option<DataType> {
         match plan {
             LogicalPlan::Scan { table, .. } => self.db.catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone()),
-            LogicalPlan::Filter { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => {
-                self.column_type(input, column)
-            }
+            LogicalPlan::Filter { input, .. }
+            | LogicalPlan::Distinct { input }
+            | LogicalPlan::Sort { input, .. }
+            | LogicalPlan::Limit { input, .. } => self.column_type(input, column),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
                 Some(of_right) => self.column_type(right, of_right),
                 None => self.column_type(left, column),
@@ -358,6 +365,7 @@ fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::System { .. }
         | Plan::Values { .. }
         | Plan::Sort { .. }
+        | Plan::Limit { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
@@ -404,6 +412,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }
         | LogicalPlan::Sort { .. }
+        | LogicalPlan::Limit { .. }
         | LogicalPlan::Recursive { .. }
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)

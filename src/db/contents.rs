@@ -386,7 +386,7 @@ pub(super) fn contents_read(t: &TableDefinition, names: &str) -> Vec<QualifiedNa
         t.elements.iter().filter_map(|e| if let TableElement::Like(like) = e { Some(&like.table) } else { None }).collect();
     if let Some(s) = &t.subquery {
         s.query.table_names(&mut written);
-        if let Some(SelectList::Values(items)) = s.query.spec().map(|spec| &spec.select_list) {
+        if let Some(SelectList::Values(items)) = s.query.unordered().spec().map(|spec| &spec.select_list) {
             for item in items {
                 if let SelectSublist::Derived(d) = item {
                     drawn(&d.value, &mut written);

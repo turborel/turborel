@@ -14,7 +14,7 @@ DECLARE CURSOR: declare a cursor *(in a program)*
     FOR <cursor specification>
 
 <cursor specification> ::=
-    <query expression> [ <order by clause> ] [ <updatability clause> ]
+    <query expression> [ <updatability clause> ]
 
 <updatability clause> ::= FOR { READ ONLY | UPDATE [ OF <column name list> ] }
 
@@ -23,8 +23,8 @@ DECLARE CURSOR: declare a cursor *(in a program)*
     FOR <statement name>
 ```
 
-The `<query expression>` and `<order by clause>` are those of
-[SELECT](select.md).
+The `<query expression>`, with its ORDER BY, OFFSET and FETCH FIRST, is
+that of [SELECT](select.md).
 
 ## DESCRIPTION
 
@@ -67,8 +67,10 @@ transaction's snapshot has them, whatever the cursor is.
 
 **Updatability.** FOR UPDATE makes the cursor updatable, on the columns
 named or every column; FOR READ ONLY, read-only. With neither, a cursor
-is read-only if it is INSENSITIVE or SCROLL, has ORDER BY, or reads a
-read-only table; else updatable on every column.
+is read-only if it is INSENSITIVE or SCROLL, has ORDER BY, OFFSET or
+FETCH FIRST, or reads a read-only table; else updatable on every column.
+A query of OFFSET or FETCH FIRST is not updatable, so FOR UPDATE of one
+is refused; one of ORDER BY alone is.
 
 **Positioned UPDATE and DELETE.**
 

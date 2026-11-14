@@ -11,6 +11,7 @@
 mod dynamic;
 mod expr;
 mod fixpoint;
+mod limit;
 mod pushed;
 mod render;
 mod sets;
@@ -23,6 +24,7 @@ pub use expr::{
     map_expr_columns, or_all, split_and,
 };
 pub use fixpoint::Fixpoint;
+pub use limit::Limit;
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
@@ -226,6 +228,14 @@ pub enum LogicalPlan {
         /// The sort keys, most significant first.
         keys: Vec<SortKey>,
         /// The rows sorted.
+        input: Box<LogicalPlan>,
+    },
+    /// [ISO/IEC 9075-2:2023 §7.17 GR6, GR7] OFFSET and FETCH FIRST: the
+    /// rows of `input` `limit` keeps, in its order.
+    Limit {
+        /// Its counts.
+        limit: Limit,
+        /// The rows limited.
         input: Box<LogicalPlan>,
     },
     /// [ISO/IEC 9075-2:2023 §7.17 GR2c ii] The rows of member `member` of
@@ -444,6 +454,7 @@ impl LogicalPlan {
                 out.extend(u.outer.iter().flat_map(cond_subqueries));
             }
             LogicalPlan::Window(w) => w.exprs().for_each(|e| expr_subqueries(e, &mut out)),
+            LogicalPlan::Limit { limit, .. } => limit.exprs().for_each(|e| expr_subqueries(e, &mut out)),
             LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Product { .. }
@@ -472,7 +483,8 @@ impl LogicalPlan {
             | LogicalPlan::Aggregate { input, .. }
             | LogicalPlan::Project { input, .. }
             | LogicalPlan::Distinct { input }
-            | LogicalPlan::Sort { input, .. } => (Some(input), None, &[]),
+            | LogicalPlan::Sort { input, .. }
+            | LogicalPlan::Limit { input, .. } => (Some(input), None, &[]),
             LogicalPlan::Unnest(u) => (Some(&u.input), None, &[]),
             LogicalPlan::Window(w) => (Some(&w.input), None, &[]),
             LogicalPlan::Recursive { fixpoint, .. } => fixpoint.plans(),
@@ -514,7 +526,10 @@ impl LogicalPlan {
                 n
             }
             LogicalPlan::Values { types, .. } => (0..types.len()).map(|i| column_name(&[], i)).collect(),
-            LogicalPlan::Filter { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => input.names(),
+            LogicalPlan::Filter { input, .. }
+            | LogicalPlan::Distinct { input }
+            | LogicalPlan::Sort { input, .. }
+            | LogicalPlan::Limit { input, .. } => input.names(),
         }
     }
 
@@ -571,6 +586,7 @@ impl LogicalPlan {
                 LogicalPlan::SetOp { op, all, compared, left, right: g(right) }
             }
             LogicalPlan::Sort { keys, input } => LogicalPlan::Sort { keys, input: g(input) },
+            LogicalPlan::Limit { limit, input } => LogicalPlan::Limit { limit, input: g(input) },
             LogicalPlan::Unnest(u) => {
                 let (u, input) = u.split();
                 LogicalPlan::Unnest(Box::new(u.over(f(input))))

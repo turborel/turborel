@@ -164,7 +164,7 @@ impl Binder<'_> {
     pub(super) fn composite(&self, (c, at): (&Composite, usize), scope: Scope<'_>) -> Result<(Expr, DataType)> {
         match c {
             Composite::Array(values) => self.array_of(values, scope),
-            Composite::ArrayQuery(s, order_by) => self.array_query(s, order_by, scope),
+            Composite::ArrayQuery(s) => self.array_query(s, scope),
             Composite::Row(values) => self.row_of(values, scope),
             Composite::Element(array, index) => self.element(array, index, scope),
             Composite::Field(value, name) => {
