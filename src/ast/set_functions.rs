@@ -1,7 +1,7 @@
 //! Abstract syntax of `<set function specification>` [X3.135-1986 §5.8;
 //! ISO/IEC 9075-2:2023 §10.9] and its argument.
 
-use super::{ValueExpression, ValueOrder};
+use super::{SearchCondition, ValueExpression, ValueOrder};
 
 /// [X3.135-1986 §5.8] `<set function specification>` ::=
 ///     COUNT(*) | `<distinct set function>` | `<all set function>`
@@ -19,6 +19,10 @@ pub struct SetFunctionSpecification {
     /// [ISO/IEC 9075-2:2023 §10.9] A `<listagg set function>`'s separator
     /// and overflow behavior; of every other function, none.
     pub listagg: Option<Box<Listagg>>,
+    /// [ISO/IEC 9075-2:2023 §10.9] The `<search condition>` of its `<filter
+    /// clause>`, if written: only the rows it is true of are aggregated
+    /// \[GR4\].
+    pub filter: Option<Box<SearchCondition>>,
     /// Where it begins in the statement: a character offset, for the
     /// positions of errors (`SqlError::or_at`).
     pub at: usize,

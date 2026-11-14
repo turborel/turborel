@@ -435,6 +435,51 @@ parentheses, and WITHOUT COUNT does not.
 A key of ARRAY_AGG's ORDER BY or of a WITHIN GROUP may be followed by
 NULLS FIRST or NULLS LAST, as a key of a query's ORDER BY may.
 
+FILTER (WHERE *condition*) after a set function's closing parenthesis
+feeds it only the rows the condition is true of, so a row it is false or
+unknown of is not counted and its argument is not computed. A group no
+row of which passes gives COUNT 0 and the others null, and a null is
+left out, with warning 01003, only of a row the filter takes. Each set
+function has its own filter, so one query counts several subsets of the
+same rows. FILTER comes before OVER, and over a window each frame's set
+function takes the rows of the frame the filter is true of.
+
+```sql
+SELECT DEPT, COUNT(*) FILTER (WHERE SALARY > 6000) AS WELL_PAID,
+    SUM(SALARY) FILTER (WHERE NAME <> 'Ada') AS NOT_ADA FROM STAFF GROUP BY DEPT ORDER BY DEPT;
+SELECT ID, NAME, COUNT(*) FILTER (WHERE SALARY > 6000) OVER (ORDER BY ID) AS SO_FAR FROM STAFF ORDER BY ID;
+```
+
+```
+ DEPT |            WELL_PAID |              NOT_ADA
+------+----------------------+----------------------
+ ENG  |                    2 |              8100.00
+ OPS  |                    0 |              5400.00
+ NULL |                    0 |                 NULL
+(3 rows, with a warning: SQLSTATE 01003)
+           ID | NAME                           |               SO_FAR
+--------------+--------------------------------+----------------------
+            1 | Ada                            |                    1
+            2 | Grace                          |                    2
+            3 | Edsger                         |                    2
+            4 | Barbara                        |                    2
+(4 rows)
+```
+
+A filter is of the rows its set function aggregates, so it holds no set
+function, subquery, window function or nested window function, and no
+outer reference. The filter of a set function of an enclosing query,
+whose argument is an outer reference, names no column at all. Each is
+refused, SQLCODE -103:
+
+```sql
+SELECT COUNT(*) FILTER (WHERE SALARY > AVG(SALARY)) FROM STAFF;
+```
+
+```
+turborel: SQLCODE -103 (SQLSTATE 2A000): a <filter clause> cannot contain a set function [ISO/IEC 9075-2:2023 §6.9 SR5] (at character 7)
+```
+
 ANY_VALUE gives a column that the grouping decides but does not name,
 such as a department's name grouped by its number, with no need to
 group by it too. Which value it gives of several is not defined.

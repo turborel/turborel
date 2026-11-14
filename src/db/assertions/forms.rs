@@ -240,7 +240,9 @@ fn aggregate_form(s: &Subquery, (op, k): (CompOp, &Expr), known: &Known<'_>) -> 
     let LogicalPlan::Project { exprs, input } = &s.plan else { return None };
     let LogicalPlan::Aggregate { groups, aggs, input: rows, .. } = &**input else { return None };
     let ([Expr::Column(0)], [agg]) = (exprs.as_slice(), aggs.as_slice()) else { return None };
-    let function = known.functions.standard(&agg.func).filter(|_| groups.is_empty() && s.outer.is_empty())?;
+    // A filtered set function [ISO/IEC 9075-2:2023 §10.9 GR4] is checked by
+    // its query.
+    let function = known.functions.standard(&agg.func).filter(|_| groups.is_empty() && s.outer.is_empty() && agg.filter.is_none())?;
     match passing(rows) {
         Some(passing) => table_aggregate_form(passing, (function, agg), (op, k), known),
         None => query_bound_form(rows, (function, agg), (op, k), known).map(|f| vec![f]),

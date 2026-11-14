@@ -49,7 +49,7 @@ impl Binder<'_> {
         let null = Predicate::Null { value: vec![(**value).clone()], not: false };
         let whens = vec![(SearchCondition::Predicate(Box::new(null), sf.at), None)];
         let arg = ValueExpression::Case(Box::new(CaseExpression::Searched { whens, otherwise: Some(row) }));
-        self.aggregate(AggregateRef(Arc::new(Listagg(Arc::new(spec)))), Some(&arg), false, scope)
+        self.aggregate(AggregateRef(Arc::new(Listagg(Arc::new(spec)))), (Some(&arg), false), sf.filter.as_deref(), scope)
     }
 }
 

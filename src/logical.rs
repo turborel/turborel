@@ -45,11 +45,31 @@ pub struct AggCall {
     pub arg: Option<Expr>,
     /// Whether duplicate values are removed first [X3.135-1986 §5.8 GR1].
     pub distinct: bool,
+    /// [ISO/IEC 9075-2:2023 §10.9 GR4] The condition of its `<filter
+    /// clause>`, if written: a row it is not true of is not fed to it.
+    pub filter: Option<Cond>,
     /// The type of the result.
     pub result: DataType,
     /// The call as written, e.g. "COUNT(DISTINCT E.DEPT)": its column name and
     /// how repeats of one call are found.
     pub label: String,
+}
+
+impl AggCall {
+    /// Its expressions: its argument, and those of its filter.
+    pub fn exprs(&self) -> Vec<&Expr> {
+        let mut out: Vec<&Expr> = self.arg.iter().collect();
+        if let Some(c) = &self.filter {
+            c.for_each_expr(&mut |e| out.push(e));
+        }
+        out
+    }
+
+    /// Its expressions, as `exprs` gives them, each replaced by `f` of it.
+    #[must_use]
+    pub fn map_exprs(self, f: &mut dyn FnMut(Expr) -> Expr) -> AggCall {
+        AggCall { arg: self.arg.map(&mut *f), filter: self.filter.map(|c| c.map_exprs(f)), ..self }
+    }
 }
 
 /// [X3.135-1986 §8.3 GR3b] a sort column of the node's output, and its direction.
@@ -393,7 +413,12 @@ impl LogicalPlan {
         match self {
             LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } => out = cond_subqueries(cond),
             LogicalPlan::Project { exprs, .. } => exprs.iter().for_each(|e| expr_subqueries(e, &mut out)),
-            LogicalPlan::Aggregate { aggs, .. } => aggs.iter().filter_map(|a| a.arg.as_ref()).for_each(|e| expr_subqueries(e, &mut out)),
+            LogicalPlan::Aggregate { aggs, .. } => {
+                for a in aggs {
+                    a.arg.iter().for_each(|e| expr_subqueries(e, &mut out));
+                    out.extend(a.filter.iter().flat_map(cond_subqueries));
+                }
+            }
             LogicalPlan::Values { rows, .. } => rows.iter().flatten().for_each(|e| expr_subqueries(e, &mut out)),
             LogicalPlan::Unnest(u) => {
                 u.collections.iter().for_each(|e| expr_subqueries(e, &mut out));

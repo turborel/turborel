@@ -29,7 +29,7 @@ use super::window::{Inner, grouped_windowed};
 use super::{Binder, Grouping, OutColumn, Scope, rule};
 use crate::ast::{GroupBy, ValueExpression};
 use crate::error::{At, Code, Result, SqlError};
-use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Unnest, map_expr_columns};
+use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Unnest, map_cond_columns, map_expr_columns};
 use crate::storage::Row;
 use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
 
@@ -185,10 +185,15 @@ pub(super) fn grouped(
     let spread = vec![None; collections.len()];
     let made = LogicalPlan::Unnest(Box::new(Unnest { collections, spread, ordinality: false, outer: None, names, input: plan }));
     let rows = LogicalPlan::Project { exprs: appended, input: Box::new(made) };
-    // [SR17 m iii 1 A II] a set function's argument reads each column
-    // grouped by as its set has it.
+    // [SR17 m iii 1 A II] a set function's argument, and its filter, read
+    // each column grouped by as its set has it.
     let value = |c: usize| masked.iter().find(|(pos, _)| *pos == c).map_or(c, |(_, v)| *v);
-    let aggs = aggs.into_iter().map(|a| AggCall { arg: a.arg.map(|e| map_expr_columns(e, &value)), ..a }).collect();
+    let masked_agg = |a: AggCall| AggCall {
+        arg: a.arg.map(|e| map_expr_columns(e, &value)),
+        filter: a.filter.map(|c| map_cond_columns(c, &value)),
+        ..a
+    };
+    let aggs = aggs.into_iter().map(masked_agg).collect();
     let groups_kept = having_of(LogicalPlan::Aggregate { groups, collations, aggs, seeds, input: Box::new(rows) }, having);
     match (sl2, windows) {
         (Some(pcs), None) => union_distinct(binder, groups_kept, (pcs, values, bits), (exprs, selected)),

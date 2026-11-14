@@ -101,6 +101,7 @@ mod extension_types;
 mod failures;
 mod faults;
 mod file_manager;
+mod filter;
 mod following;
 mod formatted_casts;
 mod functions;

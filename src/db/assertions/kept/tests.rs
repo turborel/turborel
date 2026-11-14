@@ -16,7 +16,7 @@ fn totals(counted: i128, nulled: i128, sum: Option<(i128, u32)>) -> Totals {
 fn totalled(avg: bool, op: CompOp, k: Decimal) -> Totalled {
     let functions = Registry::with_set_functions();
     let func = functions.aggregate(if avg { "AVG" } else { "SUM" }).unwrap();
-    let agg = AggCall { func, arg: Some(Expr::Column(0)), distinct: false, result: EXACT, label: "F".into() };
+    let agg = AggCall { func, arg: Some(Expr::Column(0)), distinct: false, result: EXACT, filter: None, label: "F".into() };
     Totalled { agg, x: Expr::Column(0), avg, op, k: Expr::Const(Value::Exact(k)) }
 }
 

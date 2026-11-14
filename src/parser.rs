@@ -34,6 +34,7 @@ mod diagnostics;
 mod domains;
 mod dynamic;
 mod expression;
+mod filter;
 mod generated;
 mod grouping;
 mod interval;

@@ -18,7 +18,7 @@ use super::set_functions::column_references;
 use super::set_operations::bind_query_expression;
 use super::{Binder, NOT_AGGREGATED, Scope, rule};
 use crate::ast::{
-    self, ColumnSpecification, Composite, Literal, SelectItem, SelectList, SortSpecification, TableName, ValueExpression,
+    self, ColumnSpecification, Composite, Literal, SearchCondition, SelectItem, SelectList, SortSpecification, TableName, ValueExpression,
     ValueSpecification,
 };
 use crate::error::{At, Result, SqlState};
@@ -72,7 +72,12 @@ fn same_slot(a: &Expr, b: &Expr) -> bool {
 /// enclosing query sees it, and its value fills a slot here. It must be
 /// in that query's select list, which it makes aggregated if it is not
 /// grouped (`bind_selected`), or in a subquery of its HAVING clause.
-pub(super) fn outer_aggregate(outer: &Outer<'_>, func: AggregateRef, v: &ValueExpression, distinct: bool) -> Result<(Expr, DataType)> {
+pub(super) fn outer_aggregate(
+    outer: &Outer<'_>,
+    func: AggregateRef,
+    (v, distinct): (&ValueExpression, bool),
+    filter: Option<&SearchCondition>,
+) -> Result<(Expr, DataType)> {
     if !outer.binder.is_outer_argument(v)? {
         if let Scope::Select = outer.scope {
             outer.binder.aggregated.set(true);
@@ -84,7 +89,7 @@ pub(super) fn outer_aggregate(outer: &Outer<'_>, func: AggregateRef, v: &ValueEx
             ));
         }
     }
-    let (e, t) = outer.binder.aggregate(func, Some(v), distinct, outer.scope)?;
+    let (e, t) = outer.binder.aggregate(func, (Some(v), distinct), filter, outer.scope)?;
     let label = outer_label(&e, outer.scope);
     Ok((capture(outer, e, label), t))
 }
@@ -337,7 +342,8 @@ impl Binder<'_> {
         let func = ArrayAggregate { orders, collations, by_query: true };
         let result = super::composite::bounded(DataType::array(element, MAX_ARRAY_CARDINALITY))?;
         let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
-        let agg = AggCall { func: AggregateRef(Arc::new(func)), arg: Some(arg), distinct: false, result: result.clone(), label };
+        let agg =
+            AggCall { func: AggregateRef(Arc::new(func)), arg: Some(arg), distinct: false, result: result.clone(), filter: None, label };
         let plan = LogicalPlan::Aggregate {
             groups: Vec::new(),
             collations: Vec::new(),

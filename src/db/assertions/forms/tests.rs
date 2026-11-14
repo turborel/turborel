@@ -75,7 +75,7 @@ fn none_of(exprs: Vec<Expr>, rows: LogicalPlan) -> Cond {
 
 /// `(SELECT f(arg) FROM rows) op 10`, DISTINCT if `distinct`.
 fn aggregated(f: AggregateRef, (arg, distinct): (Option<Expr>, bool), rows: LogicalPlan, op: CompOp) -> Cond {
-    let agg = AggCall { func: f, arg, distinct, result: COUNTED, label: "F".into() };
+    let agg = AggCall { func: f, arg, distinct, result: COUNTED, filter: None, label: "F".into() };
     let aggregate =
         LogicalPlan::Aggregate { collations: Vec::new(), groups: Vec::new(), aggs: vec![agg], seeds: Vec::new(), input: Box::new(rows) };
     let s = subquery(LogicalPlan::Project { exprs: vec![Expr::Column(0)], input: Box::new(aggregate) });
@@ -382,7 +382,7 @@ fn sums_of_exact_numbers_keep_totals_6_5() {
     assert!(kinds(aggregated(sum.clone(), (k(), true), scan(), CompOp::Le), &functions).is_none(), "DISTINCT");
     let real = DataType::Approximate { precision: 24, spelled: Spelled::Float };
     let of = |f: AggregateRef, result: DataType, bound: Expr| {
-        let agg = AggCall { func: f, arg: k(), distinct: false, result, label: "F".into() };
+        let agg = AggCall { func: f, arg: k(), distinct: false, result, filter: None, label: "F".into() };
         let aggregate = LogicalPlan::Aggregate {
             collations: Vec::new(),
             groups: Vec::new(),

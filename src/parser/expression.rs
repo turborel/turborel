@@ -535,11 +535,13 @@ impl Parser {
         })
     }
 
-    /// A `<primary>`, with the `<interval qualifier>` that may follow it
-    /// [ISO/IEC 9075:1992 §6.15].
+    /// A `<primary>`, with the `<filter clause>` [ISO/IEC 9075-2:2023
+    /// §10.9], OVER and `<interval qualifier>` [ISO/IEC 9075:1992 §6.15]
+    /// that may follow it.
     fn qualified_primary(&mut self) -> Result<ValueExpression> {
         let at = self.here();
         let primary = self.primary()?;
+        let primary = self.filtered(primary)?;
         let primary = self.windowed(primary, at)?;
         let primary = self.postfixed(primary)?;
         self.qualified(primary, at)

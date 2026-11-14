@@ -18,11 +18,11 @@ use std::sync::Arc;
 
 use super::partition::{Partitioner, merge_all, numbered, unnumbered};
 use super::work::{Bag, Work};
-use super::{RowIter, Runner, column, eval, failed, warn};
+use super::{RowIter, Runner, column, eval, eval_cond, failed, warn};
 use crate::db::State;
 use crate::error::{Result, SqlState};
 use crate::functions::Accumulator;
-use crate::logical::AggCall;
+use crate::logical::{AggCall, Cond, Truth};
 use crate::spill::{Records, SpillRun, norm_row, row_bytes};
 use crate::storage::Row;
 use crate::txn::TxId;
@@ -237,6 +237,11 @@ fn fresh(spec: &Spec) -> Vec<Box<dyn Accumulator>> {
 /// argument of `row`, the values each DISTINCT one took kept in `seen`.
 fn feed(aggs: &[AggCall], (group, key): (&mut Group, &[u8]), row: &Row, (runner, seen): (&Runner, &mut Bag)) -> Result<()> {
     for (n, (a, acc)) in aggs.iter().zip(group.states.iter_mut()).enumerate() {
+        // [ISO/IEC 9075-2:2023 §10.9 GR4] a row its filter is not true of
+        // is not aggregated, its argument not computed.
+        if !admitted(a.filter.as_ref(), row, runner)? {
+            continue;
+        }
         match &a.arg {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
             None => acc.update(&Value::Null)?,
@@ -258,6 +263,15 @@ fn feed(aggs: &[AggCall], (group, key): (&mut Group, &[u8]), row: &Row, (runner,
         }
     }
     Ok(())
+}
+
+/// [ISO/IEC 9075-2:2023 §10.9 GR4] Whether a set function of the filter
+/// `filter` aggregates `row`: the filter true of it, or none written.
+pub(super) fn admitted(filter: Option<&Cond>, row: &Row, runner: &Runner) -> Result<bool> {
+    match filter {
+        None => Ok(true),
+        Some(c) => Ok(eval_cond(c, row, runner)? == Truth::True),
+    }
 }
 
 /// The row of a finished group: its grouping values, then each set
@@ -304,7 +318,7 @@ mod tests {
         let db = Arc::new(State::with_builtins(Box::new(MemoryCatalog::default())));
         let count = db.functions.aggregate("COUNT").unwrap();
         let result = count.0.result_type(None).unwrap();
-        let agg = AggCall { func: count, arg: None, distinct: false, result, label: "COUNT(*)".into() };
+        let agg = AggCall { func: count, arg: None, distinct: false, result, filter: None, label: "COUNT(*)".into() };
         let int = |n: i128| Value::Exact(Decimal::new(n, 0));
         let grouped = |input: Vec<Row>| {
             let spec = Spec { groups: vec![0], collations: Vec::new(), aggs: vec![agg.clone()], seeds: vec![vec![int(9)]] };

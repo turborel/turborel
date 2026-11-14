@@ -1089,9 +1089,9 @@ function), T619 (Nested window functions) and T620 (WINDOW clause: GROUPS
 option), of ISO/IEC 9075-2:2023 §6.10, §6.11, §7.15, §9.20 and §9.23.
 Of T612 (Advanced OLAP operations), the window name, the WINDOW clause,
 an existing window name, frame exclusion, PERCENT_RANK, CUME_DIST,
-ROW_NUMBER of no ordering and WIDTH_BUCKET are done. Its FILTER clause,
-hypothetical set functions and inverse distribution functions are not,
-so T612 is not claimed. Nor is T627.
+ROW_NUMBER of no ordering, WIDTH_BUCKET and the FILTER clause are done.
+Its hypothetical set functions and inverse distribution functions are
+not, so T612 is not claimed. Nor is T627.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1119,6 +1119,10 @@ so T612 is not claimed. Nor is T627.
 | Their order of evaluation | §7.16 | Windows are computed over the rows of FROM, WHERE, GROUP BY and HAVING, before DISTINCT and the cursor's ORDER BY. A query of a window function makes a view or cursor not updatable. |
 | In a constraint | §9.16 SR1c, §11.9 CR2 | ROW_NUMBER, NTILE, LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTH_VALUE and a set function over a ROWS window are potential sources of non-determinism, so a CHECK or an assertion containing one is SQLCODE -103. |
 | WIDTH_BUCKET | §6.31 SR21, GR17 | Each operand a number and the count exact of scale 0, else SQLCODE -103. The result is of the count's type. Null if any operand is. A count of 0 or below, or equal bounds, SQLSTATE 2201G. 0 before bound 1, the count plus 1 at or past bound 2, SQLSTATE 22003 if that is past the count's type, else the greatest whole number not above the count times the operand's distance from bound 1 over the range's width, plus 1. Of exact operands it is found exactly, of an approximate one in approximate arithmetic, and of a DECFLOAT one in DECFLOAT, kept within 1 to the count where rounding would pass either end. \[EXTENSION\] A `?` count is NUMERIC(18), a `?` operand or bound of the type of the first other operand or bound. |
+| FILTER | §10.9 GR4 | `FILTER (WHERE cond)` after COUNT(*), a general set function, ARRAY_AGG or LISTAGG, of the groups or OVER a window, before OVER. Its set function is fed only the rows cond is true of, and of a row it is false or unknown of the argument is not computed, so a null of it is not left out and gives no SQLSTATE 01003. Over a window, each frame's rows cond is true of, of a frame growing, moving or computed again, and of nested window functions. A filtered set function is computed row by row, as one of DISTINCT is, not by batches. GROUPING takes no filter, so one written is SQLCODE -102. |
+| Its condition | §6.9 SR5, §10.9 SR8, §6.11 SR1 | No set function, query expression, window function, nested window function or outer reference, else SQLCODE -103. |
+| Of an enclosing query | §6.9 SR6, §10.9 SR8 | A set function whose argument is an outer reference is the enclosing query's, aggregated over its rows, so its filter would be too. One naming a column, which SR8 refuses of the query it is written in and the enclosing query's scope does not reach, is SQLCODE -103. One of no column is computed with it. |
+| In a constraint | §9.16 SR1c | A filter is no potential source of non-determinism. An assertion of a filtered set function is checked by its query, not from the changes alone. |
 
 A window reads its input sorted by its partition columns, then its
 ordering, unless the input is ordered so, as a column store kept in that

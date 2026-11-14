@@ -96,7 +96,10 @@ fn grouped(plan: &LogicalPlan, known: &Known<'_>) -> Option<Shape> {
                     return None;
                 }
                 let standard = |f| known.functions.standard(f);
-                let same = aggs.iter().all(|a| standard(&a.func).is_some_and(|f| !summed_approximately(f, &a.result)));
+                // A filtered set function [ISO/IEC 9075-2:2023 §10.9 GR4]
+                // is of rows other than its group's.
+                let unfiltered = aggs.iter().all(|a| a.filter.is_none());
+                let same = unfiltered && aggs.iter().all(|a| standard(&a.func).is_some_and(|f| !summed_approximately(f, &a.result)));
                 let rows = passing(input).filter(|_| same && !groups.is_empty())?;
                 let over = |e: &Expr| rows.columns.as_deref().map_or_else(|| e.clone(), |c| substitute(e.clone(), c));
                 let args: Option<Vec<Expr>> =

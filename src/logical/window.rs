@@ -205,11 +205,12 @@ pub enum Pick {
 }
 
 impl WindowKind {
-    /// Its expressions: its argument, extent, default and counts.
+    /// Its expressions: its argument and filter, extent, default and
+    /// counts.
     pub fn exprs(&self) -> Vec<&Expr> {
         match self {
             WindowKind::RowNumber | WindowKind::Rank | WindowKind::DenseRank | WindowKind::PercentRank | WindowKind::CumeDist => Vec::new(),
-            WindowKind::Aggregate(a) => a.arg.iter().collect(),
+            WindowKind::Aggregate(a) => a.exprs(),
             WindowKind::Ntile(tiles) => vec![tiles],
             WindowKind::Offset(o) => vec![&o.extent, &o.default],
             WindowKind::Value(v) => match &v.pick {
@@ -224,7 +225,7 @@ impl WindowKind {
         let mut put = |e: &mut Expr| *e = f(std::mem::replace(e, Expr::Const(Value::Null)));
         match self {
             WindowKind::RowNumber | WindowKind::Rank | WindowKind::DenseRank | WindowKind::PercentRank | WindowKind::CumeDist => {}
-            WindowKind::Aggregate(a) => a.arg.iter_mut().for_each(put),
+            WindowKind::Aggregate(a) => *a = a.clone().map_exprs(f),
             WindowKind::Ntile(tiles) => put(tiles),
             WindowKind::Offset(o) => {
                 put(&mut o.extent);

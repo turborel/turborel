@@ -80,7 +80,7 @@ SELECT: read rows
 <grouping column reference> ::= <column reference> [ COLLATE <collation name> ]
 
 <window function> ::=
-    { ROW_NUMBER ( ) | RANK ( ) | DENSE_RANK ( ) | PERCENT_RANK ( ) | CUME_DIST ( ) | <set function>
+    { ROW_NUMBER ( ) | RANK ( ) | DENSE_RANK ( ) | PERCENT_RANK ( ) | CUME_DIST ( ) | <set function> [ <filter clause> ]
     | NTILE ( <number of rows> )
     | { LEAD | LAG } ( <value expression> [ , <unsigned integer> [ , <value expression> ] ] ) [ <null treatment> ]
     | { FIRST_VALUE | LAST_VALUE } ( <value expression> ) [ <null treatment> ]
@@ -90,6 +90,8 @@ SELECT: read rows
 <number of rows> ::= <simple value specification> | ?
 
 <null treatment> ::= RESPECT NULLS | IGNORE NULLS
+
+<filter clause> ::= FILTER ( WHERE <search condition> )
 
 <nested window function> ::=
       ROW_NUMBER ( <row marker> )
@@ -205,6 +207,10 @@ parameters, is [a statement of a program too](#select-into).
    function contains, outside any set function of the groups. The
    number of rows after its marker is an integer, and VALUE_OF's value
    and default have a type in common.
+10. A `<filter clause>` follows a set function, COUNT(*), ARRAY_AGG or
+    LISTAGG, not GROUPING, and holds no set function, subquery, window
+    function, nested window function or outer reference. That of a set
+    function of an enclosing query names no column.
 
 ## PRIVILEGES
 

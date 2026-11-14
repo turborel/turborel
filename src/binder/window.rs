@@ -18,7 +18,7 @@ use self::nested::NESTED;
 use self::spec::{Described, Keys, described};
 use super::collation::any_of;
 use super::{Binder, Scope, rule};
-use crate::ast::{Composite, ValueExpression, WindowDefinition, WindowFunction, WindowKind as Kind, WindowOver};
+use crate::ast::{Composite, SearchCondition, ValueExpression, WindowDefinition, WindowFunction, WindowKind as Kind, WindowOver};
 use crate::error::{Code, Result, SqlError};
 use crate::functions::AggregateRef;
 use crate::lexer::kw;
@@ -164,11 +164,11 @@ impl Binder<'_> {
     pub(super) fn window_aggregate(
         &self,
         func: AggregateRef,
-        arg: Option<&ValueExpression>,
-        distinct: bool,
+        argued: (Option<&ValueExpression>, bool),
+        filter: Option<&SearchCondition>,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        let ((call, _), nested) = self.within(IN_ARGUMENT, || self.nesting(|| self.aggregate_call(func, arg, distinct, scope)))?;
+        let ((call, _), nested) = self.within(IN_ARGUMENT, || self.nesting(|| self.aggregate_call(func, argued, filter, scope)))?;
         let result = call.result.clone();
         if let Some(w) = self.windowing.borrow_mut().as_mut() {
             (w.taken, w.nested) = (Some(call), nested);

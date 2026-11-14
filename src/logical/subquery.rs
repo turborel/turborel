@@ -11,7 +11,7 @@
 //! nested inside are in this plan's rows, so they are replaced too, and its
 //! own plan is not.
 
-use super::{AggCall, Cond, Expr, LogicalPlan, and_all, split_and};
+use super::{Cond, Expr, LogicalPlan, and_all, split_and};
 use crate::value::{CompOp, Value};
 
 /// \[DESIGN\] A bound subquery.
@@ -43,14 +43,14 @@ fn bound_plan(plan: LogicalPlan, values: &[Value]) -> LogicalPlan {
 /// `plan` with each expression over its rows, at any node, replaced by `f`
 /// of it: in its conditions, among them the outer expressions of the
 /// subqueries nested in it, which are over its rows; in its select lists;
-/// in its set functions' arguments; and in the rows of its VALUES. Not
+/// in its set functions' arguments and filters; and in the rows of its VALUES. Not
 /// those of a subquery's plan, which are over the subquery's rows.
 pub fn map_plan_exprs(plan: LogicalPlan, f: &mut dyn FnMut(Expr) -> Expr) -> LogicalPlan {
     let node = match plan {
         LogicalPlan::Filter { cond, input } => LogicalPlan::Filter { cond: cond.map_exprs(f), input },
         LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs: exprs.into_iter().map(&mut *f).collect(), input },
         LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
-            let aggs = aggs.into_iter().map(|a| AggCall { arg: a.arg.map(&mut *f), ..a }).collect();
+            let aggs = aggs.into_iter().map(|a| a.map_exprs(&mut *f)).collect();
             LogicalPlan::Aggregate { groups, collations, aggs, seeds, input }
         }
         LogicalPlan::OuterJoin { kind, cond, left, right } => LogicalPlan::OuterJoin { kind, cond: cond.map_exprs(f), left, right },
@@ -155,7 +155,7 @@ pub fn plan_has_outer(plan: &LogicalPlan) -> bool {
     let own = match plan {
         LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } => cond_has_outer(cond),
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(expr_has_outer),
-        LogicalPlan::Aggregate { aggs, .. } => aggs.iter().any(|a| a.arg.as_ref().is_some_and(expr_has_outer)),
+        LogicalPlan::Aggregate { aggs, .. } => aggs.iter().any(|a| a.exprs().into_iter().any(expr_has_outer)),
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(expr_has_outer),
         LogicalPlan::Unnest(u) => u.collections.iter().any(expr_has_outer) || u.outer.as_ref().is_some_and(cond_has_outer),
         LogicalPlan::Window(w) => w.exprs().any(expr_has_outer),

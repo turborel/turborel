@@ -109,7 +109,9 @@ impl<'a> Framed<'a> {
                 let to = frame.first().map_or(0, |r| r.1);
                 while *fed < to {
                     let row = reader.get(&mut part.keys, *fed)?;
-                    take(acc.as_mut(), argument(call, slot, &row.values)?, (nulls, seen.as_mut()))?;
+                    if admitted(call, slot, &row.values)? {
+                        take(acc.as_mut(), argument(call, slot, &row.values)?, (nulls, seen.as_mut()))?;
+                    }
                     *fed = fed.saturating_add(1);
                 }
                 (acc.finish()?, *nulls)
@@ -134,6 +136,19 @@ fn argument<'v>(call: &AggCall, slot: usize, values: &'v [Value]) -> Result<Opti
         return Ok(None);
     }
     values.get(slot).map(Some).ok_or_else(|| broken("a window's row has no argument of its set function"))
+}
+
+/// [ISO/IEC 9075-2:2023 §10.9 GR4] Whether `call` takes a row of
+/// `values`, its argument at `slot`: unless filtered, or if the value
+/// after its argument says its filter is true of the row.
+fn admitted(call: &AggCall, slot: usize, values: &[Value]) -> Result<bool> {
+    if call.filter.is_none() {
+        return Ok(true);
+    }
+    match values.get(slot.saturating_add(1)) {
+        Some(taken) => Ok(matches!(taken, Value::Bool(true))),
+        None => Err(broken("a window's row has not whether a filtered set function takes it")),
+    }
 }
 
 /// [ISO/IEC 9075:1992 §6.5 GR1b, GR4b] Feeds `acc` the argument `arg`: a
@@ -161,7 +176,9 @@ fn each(call: &AggCall, slot: usize, (reader, part): (&mut Reader, &mut Partitio
     for &(from, to) in frame {
         for place in from..to {
             let row = reader.get(&mut part.keys, place)?;
-            take(acc.as_mut(), argument(call, slot, &row.values)?, (&mut nulls, None))?;
+            if admitted(call, slot, &row.values)? {
+                take(acc.as_mut(), argument(call, slot, &row.values)?, (&mut nulls, None))?;
+            }
         }
     }
     Ok((acc.finish()?, nulls))
@@ -182,7 +199,9 @@ fn tree(call: &AggCall, slot: usize, part: &mut Partition, bytes: usize) -> Resu
     for place in 0..part.len {
         let (mut acc, mut nulls) = (fresh(call), false);
         let row = reader.get(&mut part.keys, place)?;
-        take(acc.as_mut(), argument(call, slot, &row.values)?, (&mut nulls, None))?;
+        if admitted(call, slot, &row.values)? {
+            take(acc.as_mut(), argument(call, slot, &row.values)?, (&mut nulls, None))?;
+        }
         let node = written(acc.as_ref(), nulls)?;
         held = held.saturating_add(node.state.len());
         if held > bytes {

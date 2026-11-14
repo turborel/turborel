@@ -196,7 +196,7 @@ impl Parser {
             SetArg::All(Box::new(self.value_expression()?))
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg: None, at })
+        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg: None, filter: None, at })
     }
 
     /// [ISO/IEC 9075-2:2023 §6.9] `<grouping operation>` ::= GROUPING (
@@ -210,7 +210,14 @@ impl Parser {
             columns.push(ValueExpression::Column(self.column_specification()?));
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name: GROUPING, arg: SetArg::Grouping(columns), order_by: Vec::new(), listagg: None, at })
+        Ok(SetFunctionSpecification {
+            name: GROUPING,
+            arg: SetArg::Grouping(columns),
+            order_by: Vec::new(),
+            listagg: None,
+            filter: None,
+            at,
+        })
     }
 
     /// [ISO/IEC 9075:1992 §6.9] `<case expression>`: NULLIF, COALESCE, or

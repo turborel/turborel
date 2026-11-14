@@ -155,7 +155,10 @@ impl Filling<'_> {
             LogicalPlan::Filter { cond, input } => LogicalPlan::Filter { cond: self.cond(cond), input },
             LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs: self.exprs(exprs), input },
             LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
-                let aggs = aggs.into_iter().map(|a| AggCall { arg: a.arg.map(|e| self.expr(e)), ..a }).collect();
+                let aggs = aggs
+                    .into_iter()
+                    .map(|a| AggCall { arg: a.arg.map(|e| self.expr(e)), filter: a.filter.map(|c| self.cond(c)), ..a })
+                    .collect();
                 LogicalPlan::Aggregate { groups, collations, aggs, seeds, input }
             }
             LogicalPlan::OuterJoin { kind, cond, left, right } => LogicalPlan::OuterJoin { kind, cond: self.cond(cond), left, right },

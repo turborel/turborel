@@ -60,6 +60,7 @@ fn groups_made_before_any_row_are_sorted() {
             func: count.clone(),
             arg: None,
             distinct: false,
+            filter: None,
             result: DataType::Exact { precision: 18, scale: 0, spelled: Spelled::Numeric },
             label: "N".into(),
         };

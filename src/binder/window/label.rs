@@ -2,7 +2,7 @@
 //! and how EXPLAIN shows it: its function and arguments as they are
 //! written, over the columns of the window's input.
 
-use crate::logical::{Nested, Pick, WindowCall, WindowKind, render_expr};
+use crate::logical::{Nested, Pick, WindowCall, WindowKind, render_cond, render_expr};
 
 /// `call`, its label its function and arguments over the columns `names`.
 pub(super) fn labelled(call: WindowCall, names: &[String]) -> WindowCall {
@@ -13,13 +13,19 @@ pub(super) fn labelled(call: WindowCall, names: &[String]) -> WindowCall {
         WindowKind::DenseRank => "DENSE_RANK()".to_owned(),
         WindowKind::PercentRank => "PERCENT_RANK()".to_owned(),
         WindowKind::CumeDist => "CUME_DIST()".to_owned(),
-        WindowKind::Aggregate(a) => match &a.arg {
-            None => format!("{}(*)", a.func.0.name()),
-            Some(e) => {
-                let distinct = if a.distinct { "DISTINCT " } else { "" };
-                format!("{}({distinct}{}{})", a.func.0.name(), shown(e), a.func.0.label_suffix())
+        WindowKind::Aggregate(a) => {
+            let called = match &a.arg {
+                None => format!("{}(*)", a.func.0.name()),
+                Some(e) => {
+                    let distinct = if a.distinct { "DISTINCT " } else { "" };
+                    format!("{}({distinct}{}{})", a.func.0.name(), shown(e), a.func.0.label_suffix())
+                }
+            };
+            match &a.filter {
+                Some(c) => format!("{called} FILTER (WHERE {})", render_cond(c, names)),
+                None => called,
             }
-        },
+        }
         WindowKind::Ntile(tiles) => format!("NTILE({})", shown(tiles)),
         WindowKind::Offset(o) => {
             let name = if o.lead { "LEAD" } else { "LAG" };

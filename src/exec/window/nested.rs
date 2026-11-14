@@ -21,9 +21,10 @@ use super::aggregate::{Framed, fresh, take};
 use super::frame::{Bounds, EMPTY, Partition, Ranges};
 use super::reader::{Placed, Reader};
 use crate::error::Result;
+use crate::exec::group::admitted;
 use crate::exec::work::{Bag, Work};
 use crate::exec::{HeldRows, Runner, broken, eval};
-use crate::logical::{AggCall, Expr, Marker, Nested, WindowCall, WindowKind, expr_columns};
+use crate::logical::{AggCall, Cond, Expr, Marker, Nested, WindowCall, WindowKind, expr_columns};
 use crate::spill::ListSpace;
 use crate::storage::Row;
 use crate::value::{Decimal, Value};
@@ -160,6 +161,16 @@ impl<'a> Context<'a> {
         eval(arg, &self.row, runner)
     }
 
+    /// [ISO/IEC 9075-2:2023 §10.9 GR4] Whether the set function of the
+    /// filter `filter` takes R2, the `r2`th row of `part`: the filter, of
+    /// R2's columns, true of it, or none written.
+    fn admits(&mut self, filter: Option<&Cond>, r2: usize, part: &mut Partition, runner: &Runner) -> Result<bool> {
+        let Some(c) = filter else { return Ok(true) };
+        let own = columns(self.walker.get(&mut part.keys, r2)?, self.slot, self.shape.taken())?.to_vec();
+        put(&mut self.row, &self.shape.used, &own)?;
+        admitted(Some(c), &self.row, runner)
+    }
+
     /// [GR4e ii] The value expression `value` of the `k`th nested function
     /// evaluated at the `m`th row of `part`, its columns put in the context
     /// row for it, then R2's, `own`, put back.
@@ -262,7 +273,14 @@ impl<'a> Nest<'a> {
         let way = if alone(&call.nested) {
             let mut list = HeldRows::new(keyed.clone());
             for row in 0..part.len {
-                list.push(Placed { group: 0, values: vec![context.argument(arg, (row, row, &NO_FRAME), part, runner)?] })?;
+                // Of a row a filter does not take, no argument is computed,
+                // and that it is not taken held after it, as `Framed` reads.
+                let taken = context.admits(agg.filter.as_ref(), row, part, runner)?;
+                let mut values = vec![if taken { context.argument(arg, (row, row, &NO_FRAME), part, runner)? } else { Value::Null }];
+                if agg.filter.is_some() {
+                    values.push(Value::Bool(taken));
+                }
+                list.push(Placed { group: 0, values })?;
             }
             let mut own = Partition { keys: list, len: part.len, nulls: part.nulls };
             Way::Alone { framed: Framed::new(agg, (bounds, 0), &mut own, tree, work)?, own }
@@ -296,6 +314,9 @@ impl<'a> Nest<'a> {
         let mut seen = self.call.distinct.then(|| Bag::new(work.another()));
         for &(from, to) in &frame {
             for r2 in from..to {
+                if !context.admits(self.call.filter.as_ref(), r2, part, runner)? {
+                    continue;
+                }
                 let v = context.argument(arg, (row, r2, &frame), part, runner)?;
                 take(acc.as_mut(), Some(&v), (&mut nulls, seen.as_mut()))?;
             }

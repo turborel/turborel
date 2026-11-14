@@ -53,7 +53,7 @@ impl Parser {
         self.expect_delim(delim::RIGHT_PAREN)?;
         let arg = if distinct { SetArg::Distinct(value) } else { SetArg::All(value) };
         let listagg = Some(Box::new(Listagg { separator, overflow }));
-        Ok(SetFunctionSpecification { name: LISTAGG, arg, order_by, listagg, at })
+        Ok(SetFunctionSpecification { name: LISTAGG, arg, order_by, listagg, filter: None, at })
     }
 
     /// `<listagg overflow clause>` ::= ON OVERFLOW `<overflow behavior>`, if

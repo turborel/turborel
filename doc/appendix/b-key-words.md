@@ -52,7 +52,7 @@ only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
 SQL:2023 reserves ANY_VALUE, BEGIN_FRAME, BEGIN_PARTITION, BIGINT, BINARY, BOOLEAN, BTRIM, CUBE, CUME_DIST, CURRENT_ROW, CYCLE, DECFLOAT,
-DENSE_RANK, END_FRAME, END_PARTITION, EVERY, FIRST_VALUE, FRAME_ROW, GREATEST, GROUPING, GROUPS, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
+DENSE_RANK, END_FRAME, END_PARTITION, EVERY, FILTER, FIRST_VALUE, FRAME_ROW, GREATEST, GROUPING, GROUPS, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
 LISTAGG, LPAD, LTRIM, NTH_VALUE, NTILE, OCCURRENCES_REGEX, OVER, PARTITION, PERCENT_RANK, POSITION_REGEX,
 RANGE, RANK, ROLLUP, ROW_NUMBER, RPAD, RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX, VALUE_OF, VARBINARY, WIDTH_BUCKET, WINDOW
 and WITHIN, which SQL-92 does not, so
@@ -83,7 +83,9 @@ WITHIN FROM T` names two columns.
 
 OVER is read only after a function's closing parenthesis, where a
 parenthesis or a window's name follows it, so `SELECT COUNT(*) OVER FROM
-T` names the count OVER. ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK and
+T` names the count OVER. FILTER is read only after a set function's
+closing parenthesis, where a parenthesis and WHERE follow it, so `SELECT
+COUNT(*) FILTER FROM T` names the count FILTER. ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK and
 CUME_DIST are window functions only where `( ) OVER` follows, so a
 function registered as RANK stays callable. NTILE, LEAD, LAG,
 FIRST_VALUE, LAST_VALUE and NTH_VALUE are window functions only where,

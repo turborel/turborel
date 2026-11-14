@@ -82,7 +82,7 @@ fn call(written: &[Written], (name, distinct): (&str, bool)) -> WindowCall {
     let func = Registry::with_set_functions().aggregate(name).unwrap();
     let result = func.0.result_type(Some(DataType::Exact { precision: 18, scale: 0, spelled: Spelled::Numeric })).unwrap();
     let arg = (0..written.len()).fold(Expr::Column(0), |e, k| plus(e, nested_column(k)));
-    let agg = AggCall { func, arg: Some(arg), distinct, result, label: name.into() };
+    let agg = AggCall { func, arg: Some(arg), distinct, result, filter: None, label: name.into() };
     let frame = Frame { units: Units::Rows, start: Bound::UnboundedPreceding, end: Bound::CurrentRow, exclusion: Exclusion::NoOthers };
     let nested = written.iter().enumerate().map(|(k, &w)| bound(w, k)).collect();
     WindowCall { kind: WindowKind::Aggregate(agg), frame, label: name.into(), nested }

@@ -32,6 +32,7 @@ use self::frame::{Bounds, Current, Partition};
 use self::nested::{Nest, Shape};
 use self::reader::{Placed, Reader};
 use self::value::{Count, NotNull, Picked, RANGE_ENDS, Sequence, counted, tile};
+use super::group::admitted;
 use super::work::Work;
 use super::{HeldRows, RowIter, Runner, broken, column, eval, execute, failed, warn};
 use crate::db::State;
@@ -231,7 +232,16 @@ impl Windowed {
                 continue;
             }
             let (arg, default) = match &call.kind {
-                WindowKind::Aggregate(a) => (a.arg.as_ref().map_or(Ok(Value::Null), |e| eval(e, row, &self.runner))?, None),
+                // [ISO/IEC 9075-2:2023 §10.9 GR4] of a row its filter is not
+                // true of, no argument computed, and that it is not taken.
+                WindowKind::Aggregate(a) => {
+                    let taken = admitted(a.filter.as_ref(), row, &self.runner)?;
+                    let arg = match (&a.arg, taken) {
+                        (Some(e), true) => eval(e, row, &self.runner)?,
+                        (Some(_), false) | (None, _) => Value::Null,
+                    };
+                    (arg, a.filter.as_ref().map(|_| Value::Bool(taken)))
+                }
                 WindowKind::Offset(o) => (eval(&o.extent, row, &self.runner)?, Some(eval(&o.default, row, &self.runner)?)),
                 WindowKind::Value(v) => (eval(&v.arg, row, &self.runner)?, None),
                 WindowKind::RowNumber
@@ -354,12 +364,12 @@ impl<'a> Computed<'a> {
 }
 
 /// How many of a row's `Placed` values the call `kind` takes: an
-/// aggregate its argument; LEAD or LAG its extent and default; a value
+/// aggregate its argument, and if filtered whether it takes the row; LEAD or LAG its extent and default; a value
 /// function its argument; and under IGNORE NULLS, one more, the count of
 /// arguments not null before the row.
 fn width(kind: &WindowKind) -> usize {
     let (taken, counted) = match kind {
-        WindowKind::Aggregate(_) => (1_usize, false),
+        WindowKind::Aggregate(a) => (1_usize.saturating_add(usize::from(a.filter.is_some())), false),
         WindowKind::Offset(o) => (OFFSET_VALUES, o.ignore_nulls),
         WindowKind::Value(v) => (1_usize, v.ignore_nulls),
         WindowKind::RowNumber

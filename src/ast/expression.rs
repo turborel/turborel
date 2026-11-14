@@ -388,8 +388,9 @@ pub struct ColumnSpecification {
 
 impl ValueExpression {
     /// Calls `f` with each value expression this one is made of: operands,
-    /// arguments, a set function's argument, the parts of a CASE and the
-    /// values its conditions compare; not those of a subquery.
+    /// arguments, a set function's argument and those its filter compares,
+    /// the parts of a CASE and the values its conditions compare; not those
+    /// of a subquery.
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         match self {
             ValueExpression::Value(_)
@@ -423,6 +424,7 @@ impl ValueExpression {
                     SetArg::Grouping(columns) => columns.iter().for_each(&mut *f),
                 }
                 sf.order_by.iter().for_each(|o| f(&o.key));
+                sf.filter.iter().for_each(|c| c.for_each_value(f));
             }
             ValueExpression::Cast { operand, .. } => operand.iter().for_each(|x| f(x)),
             ValueExpression::Function { args, .. } | ValueExpression::Call { args, .. } => args.iter().for_each(f),
@@ -453,6 +455,11 @@ impl ValueExpression {
             }
         }
         if let ValueExpression::Boolean(c) = self {
+            c.for_each_own_subquery(f);
+        }
+        if let ValueExpression::SetFunction(sf) = self
+            && let Some(c) = &sf.filter
+        {
             c.for_each_own_subquery(f);
         }
         self.for_each_child(&mut |child| child.for_each_subquery(f));

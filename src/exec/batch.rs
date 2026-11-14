@@ -63,10 +63,10 @@ struct Read {
 
 /// What each of `aggs` takes of a batch of `columns`, if each counts rows
 /// or takes an expression of columns the batch holds, no subquery in it,
-/// and none is DISTINCT.
+/// and none is DISTINCT or filtered, which rows alone take.
 fn taken(aggs: &[AggCall], columns: &[usize]) -> Option<Vec<Taken>> {
     aggs.iter()
-        .map(|a| match (&a.arg, a.distinct) {
+        .map(|a| match (&a.arg, a.distinct || a.filter.is_some()) {
             (None, false) => Some(Taken::Count),
             (Some(e), false) => Some(match project::place_of(e, columns)? {
                 Place::Column(at) => Taken::Column(at),
@@ -389,7 +389,7 @@ mod tests {
         let st = state();
         let table = crate::catalog::QualifiedName { auth: "A".into(), ident: "E".into() };
         let count = st.functions.aggregate("COUNT").unwrap();
-        let agg = AggCall { func: count, arg: None, distinct: false, result: DataType::Boolean, label: "COUNT(*)".into() };
+        let agg = AggCall { func: count, arg: None, distinct: false, result: DataType::Boolean, filter: None, label: "COUNT(*)".into() };
         let scan = || Plan::SeqScan { table: table.clone(), columns: vec![], rows: 0, cost: 0.0_f64, order: vec![], backward: false };
         let aggregate = |seeds: Vec<Vec<Value>>, collations: Vec<Option<CollationRef>>| Plan::Aggregate {
             groups: Vec::new(),

@@ -11,7 +11,7 @@ use super::interval::assumed;
 use super::set_functions::column_references;
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
-use crate::ast::{Composite, Literal, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
+use crate::ast::{Composite, Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{
     ANY_VALUE, ARRAY_AGG, AggregateRef, ArrayAggregate, CONCATENATION, CollatedExtreme, GREATEST, LEAST, LISTAGG, ScalarRef,
@@ -345,9 +345,9 @@ impl Binder<'_> {
             .aggregate(sf.name)
             .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the set function {} is not registered", sf.name)))?;
         match &sf.arg {
-            SetArg::CountStar => self.aggregate(func, None, false, scope),
-            SetArg::Distinct(argument) => self.aggregate(func, Some(argument), true, scope),
-            SetArg::All(argument) => self.aggregate(func, Some(argument), false, scope),
+            SetArg::CountStar => self.aggregate(func, (None, false), sf.filter.as_deref(), scope),
+            SetArg::Distinct(argument) => self.aggregate(func, (Some(argument), true), sf.filter.as_deref(), scope),
+            SetArg::All(argument) => self.aggregate(func, (Some(argument), false), sf.filter.as_deref(), scope),
             SetArg::Grouping(columns) => self.grouping_operation(columns, scope),
         }
     }
@@ -370,7 +370,7 @@ impl Binder<'_> {
         let row = ValueExpression::Composite(Box::new(Composite::Row(parts)), sf.at);
         let orders = sf.order_by.iter().map(|k| SortOrder::of(k.descending, k.nulls_first)).collect();
         let func = AggregateRef(Arc::new(ArrayAggregate { orders, collations, by_query: false }));
-        self.aggregate(func, Some(&row), false, scope)
+        self.aggregate(func, (Some(&row), false), sf.filter.as_deref(), scope)
     }
 
     /// \[EXTENSION\] A call by name of a registered scalar or aggregate
@@ -409,17 +409,23 @@ impl Binder<'_> {
         let [arg] = args else {
             return Err(rule(format!("[EXTENSION] aggregate {name} takes exactly one argument")));
         };
-        self.aggregate(f, Some(arg), false, scope)
+        self.aggregate(f, (Some(arg), false), None, scope)
     }
 
     /// [X3.135-1986 §5.23 GR3] The set function `func` of `arg`, if `arg`
-    /// is an outer reference: the enclosing query's (`binder/subquery.rs`).
-    /// None if it is not.
-    fn outer_set_function(&self, func: &AggregateRef, arg: Option<&ValueExpression>, distinct: bool) -> Result<Option<(Expr, DataType)>> {
+    /// is an outer reference: the enclosing query's (`binder/subquery.rs`),
+    /// filtered by `filter` there. None if it is not.
+    fn outer_set_function(
+        &self,
+        func: &AggregateRef,
+        (arg, distinct): (Option<&ValueExpression>, bool),
+        filter: Option<&SearchCondition>,
+    ) -> Result<Option<(Expr, DataType)>> {
         let (Some(v), Some(outer)) = (arg, self.outer) else { return Ok(None) };
         if !self.is_outer_argument(v)? {
             return Ok(None);
         }
+        self.outer_filter(filter)?;
         // [ISO/IEC 9075:1992 §6.5 SR4] the outer reference alone:
         // SQL-86's rule of no operators [X3.135-1986 §5.8 SR4] is Entry
         // SQL's [§6.5, Leveling Rules].
@@ -428,7 +434,7 @@ impl Binder<'_> {
         if columns.len() > 1 {
             return Err(rule("[ISO/IEC 9075:1992 §6.5 SR4] an outer reference in a set function's argument is its only column reference"));
         }
-        subquery::outer_aggregate(outer, func.clone(), v, distinct).map(Some)
+        subquery::outer_aggregate(outer, func.clone(), (v, distinct), filter).map(Some)
     }
 
     /// Bind a set function [X3.135-1986 §5.8] or extension aggregate and register it with the grouping.
@@ -437,14 +443,14 @@ impl Binder<'_> {
     pub(super) fn aggregate(
         &self,
         func: AggregateRef,
-        arg: Option<&ValueExpression>,
-        distinct: bool,
+        argued: (Option<&ValueExpression>, bool),
+        filter: Option<&SearchCondition>,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
         if self.windowed_next() {
-            return self.window_aggregate(func, arg, distinct, scope);
+            return self.window_aggregate(func, argued, filter, scope);
         }
-        if let Some(outer) = self.outer_set_function(&func, arg, distinct)? {
+        if let Some(outer) = self.outer_set_function(&func, argued, filter)? {
             return Ok(outer);
         }
         let g = match scope {
@@ -456,7 +462,7 @@ impl Binder<'_> {
         // [ISO/IEC 9075-2:2023 §6.11 SR1, §9.20] a group's set function,
         // made a column of the groups before any window function, holds no
         // nested window function.
-        let (call, collation) = self.unnested(|| self.aggregate_call(func, arg, distinct, rows))?;
+        let (call, collation) = self.unnested(|| self.aggregate_call(func, argued, filter, rows))?;
         let result = call.result.clone();
         // The same set function written twice (say in SELECT and HAVING) is
         // computed once: the label names the function, argument and DISTINCT.
@@ -471,14 +477,15 @@ impl Binder<'_> {
         Ok((Expr::Column(g.columns.len().saturating_add(k)), result))
     }
 
-    /// The set function `func` of `arg`, bound in `scope`, DISTINCT if so:
-    /// its argument, as the Syntax Rules have it, and its result type; and
-    /// the collation of its argument, if it is compared by one.
+    /// The set function `func` of `arg`, bound in `scope`, DISTINCT if so,
+    /// filtered by `filter` if written: its argument, as the Syntax Rules
+    /// have it, and its result type; and the collation of its argument, if
+    /// it is compared by one.
     pub(super) fn aggregate_call(
         &self,
         func: AggregateRef,
-        arg: Option<&ValueExpression>,
-        distinct: bool,
+        (arg, distinct): (Option<&ValueExpression>, bool),
+        filter: Option<&SearchCondition>,
         scope: Scope<'_>,
     ) -> Result<(AggCall, Option<CollationRef>)> {
         let arg_of = arg;
@@ -515,7 +522,9 @@ impl Binder<'_> {
                 format!("{name}({}{}{collated}{suffix})", if distinct { "DISTINCT " } else { "" }, render_expr(e, &self.names))
             }
         };
-        Ok((AggCall { func, arg, distinct, result, label }, named))
+        let filter = self.filter_of(filter, scope)?;
+        let label = self.filtered_label(label, filter.as_ref());
+        Ok((AggCall { func, arg, distinct, filter, result, label }, named))
     }
 }
 
