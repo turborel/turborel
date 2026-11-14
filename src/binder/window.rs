@@ -9,10 +9,12 @@
 //! select list.
 
 mod label;
+mod nested;
 mod spec;
 mod value;
 
-use self::label::labelled;
+use self::label::{labelled, nested_names};
+use self::nested::NESTED;
 use self::spec::{Described, Keys, described};
 use super::collation::any_of;
 use super::{Binder, Scope, rule};
@@ -20,7 +22,7 @@ use crate::ast::{Composite, ValueExpression, WindowDefinition, WindowFunction, W
 use crate::error::{Code, Result, SqlError};
 use crate::functions::AggregateRef;
 use crate::lexer::kw;
-use crate::logical::{AggCall, Expr, LogicalPlan, Window, WindowCall, WindowKind, expr_columns, map_expr_columns};
+use crate::logical::{AggCall, Expr, LogicalPlan, Nested, Window, WindowCall, WindowKind, expr_columns, map_expr_columns};
 use crate::value::collation::CollationRef;
 use crate::value::{DOUBLE_PRECISION, DataType, Spelled};
 
@@ -51,6 +53,11 @@ pub(super) struct Windowing {
     taking: bool,
     /// That aggregate, once bound.
     taken: Option<AggCall>,
+    /// The nested window functions bound while a window function's set
+    /// function's argument is bound, else none [§6.11 SR1].
+    nesting: Option<Vec<Nested>>,
+    /// Those of that set function, once bound.
+    nested: Vec<Nested>,
     /// The expressions its windows append to the rows they are over.
     extras: Vec<Expr>,
     /// Its windows, one of each partitioning and ordering, in order.
@@ -81,7 +88,8 @@ impl Windowing {
     pub(super) fn new(definitions: &[WindowDefinition]) -> Result<Windowing> {
         let named = described(definitions)?;
         let (extras, windows) = (Vec::new(), Vec::new());
-        Ok(Windowing { named, open: false, within: None, taking: false, taken: None, extras, windows, calls: 0 })
+        let (nesting, nested) = (None, Vec::new());
+        Ok(Windowing { named, open: false, within: None, taking: false, taken: None, nesting, nested, extras, windows, calls: 0 })
     }
 
     /// Whether it has bound a window function.
@@ -160,10 +168,10 @@ impl Binder<'_> {
         distinct: bool,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        let (call, _) = self.within(IN_ARGUMENT, || self.aggregate_call(func, arg, distinct, scope))?;
+        let ((call, _), nested) = self.within(IN_ARGUMENT, || self.nesting(|| self.aggregate_call(func, arg, distinct, scope)))?;
         let result = call.result.clone();
         if let Some(w) = self.windowing.borrow_mut().as_mut() {
-            w.taken = Some(call);
+            (w.taken, w.nested) = (Some(call), nested);
         }
         Ok((Expr::Const(crate::value::Value::Null), result))
     }
@@ -189,7 +197,8 @@ impl Binder<'_> {
         let keys = self.within(IN_WINDOW, || self.window_keys(&described, scope))?;
         let frame = self.within(IN_WINDOW, || self.window_frame(described.frame.as_ref(), &keys, scope))?;
         let (kind, t) = self.window_kind(&w.kind, &described, scope)?;
-        Ok((self.windowed(keys, WindowCall { kind, frame, label: String::new() }), t))
+        let nested = self.windowing.borrow_mut().as_mut().map(|windowing| std::mem::take(&mut windowing.nested)).unwrap_or_default();
+        Ok((self.windowed(keys, WindowCall { kind, frame, label: String::new(), nested }), t))
     }
 
     /// That a window function may be bound in `scope` now.
@@ -358,7 +367,7 @@ impl Binder<'_> {
 /// placeholder columns; the first if they read none.
 fn after_read(windows: &[Partitioned], call: &WindowCall) -> usize {
     let mut read = Vec::new();
-    call.kind.exprs().into_iter().for_each(|e| expr_columns(e, &mut read));
+    call.exprs().for_each(|e| expr_columns(e, &mut read));
     let reads = |p: &Partitioned| p.calls.iter().any(|(k, _)| read.contains(&PLACEHOLDER.saturating_add(*k)));
     windows.iter().rposition(reads).map_or(0, |at| at.saturating_add(1))
 }
@@ -418,14 +427,19 @@ pub(super) fn windowed(windowing: Option<Windowing>, input: LogicalPlan, exprs: 
         let partition = p.partition.iter().map(|&c| column(c)).collect();
         let order = p.order.iter().map(|&(c, o)| crate::logical::SortKey::new(column(c), o)).collect();
         // The window functions its calls' arguments read are of windows
-        // before it (`after_read`), so placed already.
-        let place = |c: usize| c.checked_sub(PLACEHOLDER).and_then(|k| placed.get(k).copied()).unwrap_or(c);
+        // before it (`after_read`), so placed already; a call's nested
+        // window functions are the columns after its input's.
+        let place = |c: usize| match c.checked_sub(PLACEHOLDER) {
+            Some(k) => placed.get(k).copied().unwrap_or(c),
+            None => c.checked_sub(NESTED).map_or(c, |k| at.saturating_add(k)),
+        };
         let calls: Vec<WindowCall> = p
             .calls
             .iter()
             .map(|(_, call)| {
                 let mut call = call.clone();
-                call.kind.map_exprs(&mut |e| map_expr_columns(e, &place));
+                call.map_exprs(&mut |e| map_expr_columns(e, &place));
+                let names = nested_names(&call.nested, &names);
                 labelled(call, &names)
             })
             .collect();
@@ -495,7 +509,7 @@ pub(super) struct Inner {
 pub(super) fn grouped_windowed(mut w: Windowing, groups: LogicalPlan, inner: Inner, exprs: Vec<Expr>) -> LogicalPlan {
     let width = groups.width();
     let mut read = Vec::new();
-    for e in exprs.iter().chain(&w.extras).chain(w.windows.iter().flat_map(|p| p.calls.iter()).flat_map(|(_, c)| c.kind.exprs())) {
+    for e in exprs.iter().chain(&w.extras).chain(w.windows.iter().flat_map(|p| p.calls.iter()).flat_map(|(_, c)| c.exprs())) {
         expr_columns(e, &mut read);
     }
     read.retain(|&c| c < inner.aggs_from);
@@ -524,7 +538,7 @@ pub(super) fn grouped_windowed(mut w: Windowing, groups: LogicalPlan, inner: Inn
     let place = |c: usize| read.binary_search(&c).unwrap_or(c);
     w.extras = std::mem::take(&mut w.extras).into_iter().map(|e| map_expr_columns(e, &place)).collect();
     for (_, call) in w.windows.iter_mut().flat_map(|p| p.calls.iter_mut()) {
-        call.kind.map_exprs(&mut |e| map_expr_columns(e, &place));
+        call.map_exprs(&mut |e| map_expr_columns(e, &place));
     }
     let exprs = exprs.into_iter().map(|e| map_expr_columns(e, &place)).collect();
     windowed(Some(w), plan, exprs)

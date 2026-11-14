@@ -7,8 +7,8 @@
 //! which stop at a subquery, a query of its own.
 
 use super::{
-    Composite, DatetimeFunction, ExtractField, QueryExpression, SetArg, SetFunctionSpecification, TableName, TypeName, ValueSpecification,
-    WindowFunction,
+    Composite, DatetimeFunction, ExtractField, NestedWindow, QueryExpression, SetArg, SetFunctionSpecification, TableName, TypeName,
+    ValueSpecification, WindowFunction,
 };
 use crate::catalog::MatchType;
 use crate::value::interval::Qualifier;
@@ -312,6 +312,8 @@ pub enum ValueExpression {
     },
     /// [ISO/IEC 9075-2:2023 §6.10] A `<window function>`.
     Window(Box<WindowFunction>),
+    /// [ISO/IEC 9075-2:2023 §6.11] A `<nested window function>`.
+    NestedWindow(Box<NestedWindow>),
 }
 
 /// [ISO/IEC 9075:1992 §6.9] `<case expression>` ::= `<case abbreviation>` |
@@ -428,6 +430,7 @@ impl ValueExpression {
             ValueExpression::Boolean(c) => c.for_each_value(f),
             ValueExpression::Composite(c, _) => c.for_each_child(f),
             ValueExpression::Window(w) => w.for_each_child(f),
+            ValueExpression::NestedWindow(n) => n.for_each_child(f),
         }
     }
 

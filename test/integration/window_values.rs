@@ -14,23 +14,11 @@ use turborel::params::Params;
 use turborel::value::{Decimal, Value};
 
 use crate::common::{Counted, both_ways, exec, fetched, sorted};
-use crate::windows::{by_row, ordered, sales};
+use crate::windows::{by_row, ordered, prepared, sales};
 
 /// The exact number `n`.
 fn int(n: i128) -> Value {
     Value::Exact(Decimal::new(n, 0))
-}
-
-/// The second column of each row of the prepared `sql` run with `values`,
-/// in order; else the SQLSTATE of its failure.
-fn prepared(a: &Session, sql: &str, values: &[Value]) -> Result<Vec<String>, Option<SqlState>> {
-    let p = a.prepare(sql).unwrap();
-    let mut cursor = a.open_prepared(&p, values).map_err(|e| e.state)?;
-    let mut out = Vec::new();
-    while let Some(row) = cursor.fetch().map_err(|e| e.state)? {
-        out.push(row[1].to_string());
-    }
-    Ok(out)
 }
 
 /// The SQLSTATE of the failure of the query `sql`.

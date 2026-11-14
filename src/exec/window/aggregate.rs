@@ -123,7 +123,7 @@ impl<'a> Framed<'a> {
 }
 
 /// A new accumulator of `call`, fed nothing.
-fn fresh(call: &AggCall) -> Box<dyn Accumulator> {
+pub(super) fn fresh(call: &AggCall) -> Box<dyn Accumulator> {
     call.func.0.accumulator(call.result.clone())
 }
 
@@ -139,7 +139,7 @@ fn argument<'v>(call: &AggCall, slot: usize, values: &'v [Value]) -> Result<Opti
 /// [ISO/IEC 9075:1992 §6.5 GR1b, GR4b] Feeds `acc` the argument `arg`: a
 /// row of COUNT(*) if none; nothing if null, `nulls` then set; if
 /// DISTINCT, only once of each value, those taken kept in `seen`.
-fn take(acc: &mut dyn Accumulator, arg: Option<&Value>, (nulls, seen): (&mut bool, Option<&mut Bag>)) -> Result<()> {
+pub(super) fn take(acc: &mut dyn Accumulator, arg: Option<&Value>, (nulls, seen): (&mut bool, Option<&mut Bag>)) -> Result<()> {
     let Some(v) = arg else { return acc.update(&Value::Null) };
     if v.is_null() {
         *nulls = true;

@@ -159,9 +159,13 @@ impl Parser {
     /// one follows.
     pub(super) fn time_zone(&mut self, primary: ValueExpression) -> Result<ValueExpression> {
         let at = self.here();
-        if !self.accept_kw(kw::AT) {
+        // [ISO/IEC 9075-2:2023 §6.11] AT before neither LOCAL nor TIME is
+        // VALUE_OF's, before a row marker.
+        let zoned = matches!(self.peek_at(1), Tok::KeyWord(kw::LOCAL | kw::TIME));
+        if !(self.is_kw(kw::AT) && zoned) {
             return Ok(primary);
         }
+        self.advance();
         let zone = if self.accept_kw(kw::LOCAL) {
             None
         } else {

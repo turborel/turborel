@@ -235,3 +235,53 @@ impl WindowSpecification {
         }
     }
 }
+
+/// [ISO/IEC 9075-2:2023 §6.11] `<nested window function>` ::= `<nested row
+/// number function>` | `<value_of expression at row>`.
+#[derive(Debug, Clone)]
+pub struct NestedWindow {
+    /// The `<row marker>` it reads at.
+    pub marker: RowMarker,
+    /// The `<row marker delta>`, if written: whether `<minus sign>`, and
+    /// the `<row marker offset>`.
+    pub delta: Option<(bool, Box<ValueExpression>)>,
+    /// Of VALUE_OF, the `<value expression>` and the `<value_of default
+    /// value>` if written; none of ROW_NUMBER.
+    pub value: Option<(Box<ValueExpression>, Option<Box<ValueExpression>>)>,
+    /// Where it begins in the statement.
+    pub at: usize,
+}
+
+/// [ISO/IEC 9075-2:2023 §6.11] `<row marker>`, the row of a partition a
+/// nested window function reads [§4.17.15].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowMarker {
+    /// BEGIN_PARTITION: its partition's first row.
+    BeginPartition,
+    /// BEGIN_FRAME: its frame's first row.
+    BeginFrame,
+    /// CURRENT_ROW: the row its window function is computed for.
+    CurrentRow,
+    /// FRAME_ROW: the row of the frame its set function takes.
+    FrameRow,
+    /// END_FRAME: its frame's last row.
+    EndFrame,
+    /// END_PARTITION: its partition's last row.
+    EndPartition,
+}
+
+impl NestedWindow {
+    /// Calls `f` with each value expression it is made of: its offset, and
+    /// VALUE_OF's value expression and default.
+    pub(super) fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
+        if let Some((_, offset)) = &self.delta {
+            f(offset);
+        }
+        if let Some((value, default)) = &self.value {
+            f(value);
+            if let Some(default) = default {
+                f(default);
+            }
+        }
+    }
+}

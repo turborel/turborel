@@ -2,7 +2,7 @@
 //! and how EXPLAIN shows it: its function and arguments as they are
 //! written, over the columns of the window's input.
 
-use crate::logical::{Pick, WindowCall, WindowKind, render_expr};
+use crate::logical::{Nested, Pick, WindowCall, WindowKind, render_expr};
 
 /// `call`, its label its function and arguments over the columns `names`.
 pub(super) fn labelled(call: WindowCall, names: &[String]) -> WindowCall {
@@ -44,4 +44,25 @@ pub(super) fn labelled(call: WindowCall, names: &[String]) -> WindowCall {
 /// of RESPECT NULLS, written or implied.
 fn treated(ignore_nulls: bool) -> &'static str {
     if ignore_nulls { " IGNORE NULLS" } else { "" }
+}
+
+/// The columns `names` of a window's input, then those of the nested
+/// window functions `nested` of a call, each shown as it is written over
+/// the names before it [ISO/IEC 9075-2:2023 §6.11].
+pub(super) fn nested_names(nested: &[Nested], names: &[String]) -> Vec<String> {
+    let mut all = names.to_vec();
+    for n in nested {
+        let delta = match &n.delta {
+            None => String::new(),
+            Some((minus, offset)) => format!(" {} {}", if *minus { "-" } else { "+" }, render_expr(offset, &all)),
+        };
+        let shown = match &n.value {
+            None => format!("ROW_NUMBER({}{delta})", n.marker.render()),
+            Some((value, default)) => {
+                format!("VALUE_OF({} AT {}{delta}, {})", render_expr(value, &all), n.marker.render(), render_expr(default, &all))
+            }
+        };
+        all.push(shown);
+    }
+    all
 }

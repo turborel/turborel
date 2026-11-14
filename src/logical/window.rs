@@ -33,6 +33,101 @@ pub struct WindowCall {
     pub frame: Frame,
     /// The call as written, its column's display name.
     pub label: String,
+    /// [ISO/IEC 9075-2:2023 §6.11] Of an aggregate, the nested window
+    /// functions of its argument, inner first. The `k`th is read in its
+    /// argument, and in the value expressions and defaults of those after
+    /// it, as the column after the window's input's `k` columns on.
+    pub nested: Vec<Nested>,
+}
+
+impl WindowCall {
+    /// Its expressions but its frame's offsets: its kind's, and its nested
+    /// window functions'.
+    pub fn exprs(&self) -> impl Iterator<Item = &Expr> {
+        self.kind.exprs().into_iter().chain(self.nested.iter().flat_map(Nested::exprs))
+    }
+
+    /// Its expressions, as `exprs` gives them, each replaced by `f` of it.
+    pub fn map_exprs(&mut self, f: &mut dyn FnMut(Expr) -> Expr) {
+        self.kind.map_exprs(f);
+        self.nested.iter_mut().for_each(|n| n.map_exprs(f));
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §6.11] A `<nested window function>`: of a row
+/// marker, plus or minus an offset, ROW_NUMBER, or VALUE_OF a value
+/// expression at it.
+#[derive(Debug, Clone)]
+pub struct Nested {
+    /// The row it reads at.
+    pub marker: Marker,
+    /// The `<row marker delta>`, if written: whether subtracted, and the
+    /// offset, over no columns.
+    pub delta: Option<(bool, Expr)>,
+    /// Of VALUE_OF, the value expression, read at the row the marker and
+    /// delta give, and the default, read at the frame's row, each of
+    /// VALUE_OF's type \[SR3\]; none of ROW_NUMBER.
+    pub value: Option<(Expr, Expr)>,
+}
+
+/// [ISO/IEC 9075-2:2023 §6.11] A `<row marker>` [§4.17.15].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Marker {
+    /// BEGIN_PARTITION: the partition's first row.
+    BeginPartition,
+    /// BEGIN_FRAME: the frame's first row.
+    BeginFrame,
+    /// CURRENT_ROW: the row the window function is computed for.
+    CurrentRow,
+    /// FRAME_ROW: the frame's row its set function takes.
+    FrameRow,
+    /// END_FRAME: the frame's last row.
+    EndFrame,
+    /// END_PARTITION: the partition's last row.
+    EndPartition,
+}
+
+impl Marker {
+    /// Whether its row is of the row the window function is computed for
+    /// or of its frame, not of the frame's row and the partition alone.
+    pub fn of_current(self) -> bool {
+        match self {
+            Marker::BeginFrame | Marker::CurrentRow | Marker::EndFrame => true,
+            Marker::BeginPartition | Marker::FrameRow | Marker::EndPartition => false,
+        }
+    }
+
+    /// It as written.
+    pub fn render(self) -> &'static str {
+        match self {
+            Marker::BeginPartition => "BEGIN_PARTITION",
+            Marker::BeginFrame => "BEGIN_FRAME",
+            Marker::CurrentRow => "CURRENT_ROW",
+            Marker::FrameRow => "FRAME_ROW",
+            Marker::EndFrame => "END_FRAME",
+            Marker::EndPartition => "END_PARTITION",
+        }
+    }
+}
+
+impl Nested {
+    /// Its expressions: its offset, and VALUE_OF's value expression and
+    /// default.
+    pub fn exprs(&self) -> impl Iterator<Item = &Expr> {
+        self.delta.iter().map(|(_, e)| e).chain(self.value.iter().flat_map(|(v, d)| [v, d]))
+    }
+
+    /// Its expressions, as `exprs` gives them, each replaced by `f` of it.
+    pub fn map_exprs(&mut self, f: &mut dyn FnMut(Expr) -> Expr) {
+        let mut put = |e: &mut Expr| *e = f(std::mem::replace(e, Expr::Const(Value::Null)));
+        if let Some((_, offset)) = &mut self.delta {
+            put(offset);
+        }
+        if let Some((value, default)) = &mut self.value {
+            put(value);
+            put(default);
+        }
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §6.10] What a window function computes.
@@ -280,13 +375,13 @@ impl<P> Window<P> {
     /// The expressions of its calls: their arguments, counts and frames'
     /// offsets.
     pub fn exprs(&self) -> impl Iterator<Item = &Expr> {
-        self.calls.iter().flat_map(|c| c.kind.exprs().into_iter().chain(c.frame.offsets()))
+        self.calls.iter().flat_map(|c| c.exprs().chain(c.frame.offsets()))
     }
 
     /// Its calls' expressions, each replaced by `f` of it.
     pub fn map_exprs(&mut self, f: &mut dyn FnMut(Expr) -> Expr) {
         for call in &mut self.calls {
-            call.kind.map_exprs(f);
+            call.map_exprs(f);
             for bound in [&mut call.frame.start, &mut call.frame.end] {
                 if let Bound::Preceding(e) | Bound::Following(e) = bound {
                     *e = f(std::mem::replace(e, Expr::Const(Value::Null)));

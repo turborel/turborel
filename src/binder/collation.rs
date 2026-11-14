@@ -230,6 +230,13 @@ impl Binder<'_> {
                 WindowKind::Value(v) => self.derived(&v.arg)?,
                 WindowKind::RowNumber | WindowKind::Rank(_) | WindowKind::Ntile(_) => Derived::Yielding,
             },
+            // [ISO/IEC 9075-2:2023 §6.11 SR3] VALUE_OF's, of its value
+            // expression and default as §9.5 brings them together;
+            // ROW_NUMBER's none.
+            ValueExpression::NestedWindow(n) => match &n.value {
+                Some((value, default)) => self.all_derived(std::iter::once(&**value).chain(default.as_deref()))?,
+                None => Derived::Yielding,
+            },
             ValueExpression::Dyadic(..)
             | ValueExpression::Boolean(_)
             | ValueExpression::CollationFor(_)

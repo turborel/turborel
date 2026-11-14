@@ -4,8 +4,10 @@
 //! does not, and PRECEDING, FOLLOWING, UNBOUNDED, EXCLUDE, TIES, OTHERS and
 //! ROW, which neither reserves, are key words only where this syntax has
 //! them, so a column, table or function may have any of those names. The
-//! window functions of arguments but the aggregates are in `values.rs`.
+//! window functions of arguments but the aggregates are in `values.rs`,
+//! and the nested window functions in `nested.rs`.
 
+mod nested;
 mod values;
 
 use super::Parser;

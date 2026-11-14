@@ -51,10 +51,10 @@ follows it, beginning a statement. DATABASE is that statement's
 only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
-SQL:2023 reserves ANY_VALUE, BIGINT, BINARY, BOOLEAN, BTRIM, CUBE, CUME_DIST, CYCLE, DECFLOAT,
-DENSE_RANK, EVERY, FIRST_VALUE, GREATEST, GROUPING, GROUPS, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
+SQL:2023 reserves ANY_VALUE, BEGIN_FRAME, BEGIN_PARTITION, BIGINT, BINARY, BOOLEAN, BTRIM, CUBE, CUME_DIST, CURRENT_ROW, CYCLE, DECFLOAT,
+DENSE_RANK, END_FRAME, END_PARTITION, EVERY, FIRST_VALUE, FRAME_ROW, GREATEST, GROUPING, GROUPS, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
 LISTAGG, LPAD, LTRIM, NTH_VALUE, NTILE, OCCURRENCES_REGEX, OVER, PARTITION, PERCENT_RANK, POSITION_REGEX,
-RANGE, RANK, ROLLUP, ROW_NUMBER, RPAD, RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX, VARBINARY, WINDOW
+RANGE, RANK, ROLLUP, ROW_NUMBER, RPAD, RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX, VALUE_OF, VARBINARY, WINDOW
 and WITHIN, which SQL-92 does not, so
 a column of an older database may be named any of them. They stay identifiers here, key words only where
 they are read. BIGINT, BINARY, BOOLEAN, DECFLOAT and VARBINARY are data types
@@ -96,7 +96,12 @@ name and AS follow it, after the table expression's other clauses. RANGE
 and GROUPS begin a frame only where ROWS, which SQL-92 reserves, may, and
 PRECEDING, FOLLOWING, UNBOUNDED, EXCLUDE, TIES and OTHERS, which SQL:2023
 does not reserve, are read only in a frame. A column may be named any of
-them but ROWS.
+them but ROWS. ROW_NUMBER is a nested window function only where one
+row marker alone is between its parentheses, and VALUE_OF only where AT
+and a row marker are among its arguments, outside any parentheses within
+them. The six row markers are read only there, so each names a column
+elsewhere and a function registered as VALUE_OF stays callable. Within
+VALUE_OF's value, AT is a time zone's only before LOCAL or TIME.
 
 SEQUENCE, INCREMENT, MAXVALUE, MINVALUE and RESTART, which SQL:2023 does
 not reserve, and CYCLE and START are key words only in CREATE, ALTER and

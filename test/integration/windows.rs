@@ -50,6 +50,18 @@ pub fn ordered(s: &Session, sql: &str) -> Vec<String> {
     rows(s, sql).unwrap_or_else(|_| panic!("{sql}: {:?}", crate::common::fetched(s, sql)))
 }
 
+/// The second column of each row of the prepared `sql` run with `values`,
+/// in order; else the SQLSTATE of its failure.
+pub fn prepared(a: &Session, sql: &str, values: &[Value]) -> Result<Vec<String>, Option<SqlState>> {
+    let p = a.prepare(sql).unwrap();
+    let mut cursor = a.open_prepared(&p, values).map_err(|e| e.state)?;
+    let mut out = Vec::new();
+    while let Some(row) = cursor.fetch().map_err(|e| e.state)? {
+        out.push(row[1].to_string());
+    }
+    Ok(out)
+}
+
 /// The value of the window function `call` of each row of F, by I.
 pub fn by_row(s: &Session, call: &str) -> Vec<String> {
     let found = ordered(s, &format!("SELECT I, {call} FROM F ORDER BY I"));

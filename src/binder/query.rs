@@ -298,6 +298,7 @@ fn bound_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_
             | ValueExpression::Subquery(_)
             | ValueExpression::Composite(..)
             | ValueExpression::Window(_)
+            | ValueExpression::NestedWindow(_)
             | ValueExpression::NextValue { .. } => (None, false, None),
         };
         exprs.push(e);

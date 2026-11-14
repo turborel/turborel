@@ -91,6 +91,12 @@ SELECT: read rows
 
 <null treatment> ::= RESPECT NULLS | IGNORE NULLS
 
+<nested window function> ::=
+      ROW_NUMBER ( <row marker> )
+    | VALUE_OF ( <value expression> AT <row marker> [ { + | - } <number of rows> ] [ , <value expression> ] )
+
+<row marker> ::= BEGIN_PARTITION | BEGIN_FRAME | CURRENT_ROW | FRAME_ROW | END_FRAME | END_PARTITION
+
 <window specification> ::=
     ( [ <window name> ]
       [ PARTITION BY <column reference> [ COLLATE <collation name> ] [ { , <column reference> [ COLLATE <collation name> ] }... ] ]
@@ -194,7 +200,11 @@ parameters, is [a statement of a program too](#select-into).
    to its first argument's, to whose type it is cast. A frame's start is not after
    its end. An offset is a literal or a parameter, an integer of ROWS and
    GROUPS. RANGE with an offset orders by one key, a number, a datetime
-   or an interval, the offset a number or an interval of it.
+   or an interval, the offset a number or an interval of it. A nested
+   window function is only in the argument of a set function a window
+   function contains, outside any set function of the groups. The
+   number of rows after its marker is an integer, and VALUE_OF's value
+   and default have a type in common.
 
 ## PRIVILEGES
 
@@ -327,8 +337,9 @@ grouping set are the `<group by clause>` of §7.13 and GROUPING its
 DISTINCT Feature T434. Window functions are the `<window function>` of
 §6.10 and the WINDOW clause its `<window clause>` [§7.15], Features T611
 and T620, with the window parts of T612. NTILE is Feature T614, LEAD
-and LAG T615, IGNORE NULLS T616, FIRST_VALUE and LAST_VALUE T617, and
-NTH_VALUE T618. SELECT ... INTO is
+and LAG T615, IGNORE NULLS T616, FIRST_VALUE and LAST_VALUE T617,
+NTH_VALUE T618, and the `<nested window function>` [§6.11] T619. SELECT
+... INTO is
 the `<select statement: single row>` [§13.5; X3.135-1986 §8.10]. FOR
 READ ONLY, of a `<cursor specification>` [§13.1], is taken in a direct
 SELECT too. Where the null value sorts is implementation-defined

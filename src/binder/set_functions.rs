@@ -47,6 +47,7 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, (db, path): (&State, &str))
         | ValueExpression::Function { .. }
         | ValueExpression::Composite(..)
         | ValueExpression::Window(_)
+        | ValueExpression::NestedWindow(_)
         | ValueExpression::NextValue { .. } => false,
     }
 }
@@ -104,6 +105,7 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::Function { .. }
         | ValueExpression::Composite(..)
         | ValueExpression::Window(_)
+        | ValueExpression::NestedWindow(_)
         | ValueExpression::NextValue { .. } => None,
     }
 }

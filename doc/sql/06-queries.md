@@ -483,6 +483,62 @@ SELECT NAME, LAG(SALARY) OVER () FROM STAFF;
 turborel: SQLCODE -103 (SQLSTATE 2A000): the window of LEAD or LAG has an ordering [ISO/IEC 9075-2:2023 §9.23 SR5a] (at character 13)
 ```
 
+### Nested window functions
+
+A set function OVER a window may read, in its argument, where a row is
+in its partition and the values of other rows. Each of these nested
+window functions names a row by a marker.
+
+| Marker | Row |
+|---|---|
+| BEGIN_PARTITION | the partition's first row |
+| END_PARTITION | the partition's last row |
+| CURRENT_ROW | the row the window function is computed for |
+| FRAME_ROW | the row of the frame the set function is taking |
+| BEGIN_FRAME | the frame's first row, after EXCLUDE |
+| END_FRAME | the frame's last row, after EXCLUDE |
+
+`ROW_NUMBER(marker)` is that row's place in the partition, from 1, of
+COUNT's type. `VALUE_OF(x AT marker)` is x read at that row, and `AT
+marker + k` or `AT marker - k` moves k rows on or back, k an integer
+literal or a parameter. Past either end of the partition, or of a null
+k, VALUE_OF takes the default after a comma, or null if it is left out.
+x is read at the row named, but the default and the rest of the argument
+at the frame's row. VALUE_OF is of the type x and the default have in
+common, both cast to it. One VALUE_OF may hold another in its x.
+
+Below, WEIGHTED counts the row's salary twice and the row before once,
+AFTER is the next row's salary, and LAST_ID names the partition's last
+row.
+
+```sql
+SELECT ID, NAME, SALARY,
+    SUM(SALARY * (2 - ROW_NUMBER(CURRENT_ROW) + ROW_NUMBER(FRAME_ROW))) OVER (ORDER BY ID
+        ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS WEIGHTED,
+    MAX(VALUE_OF(SALARY AT CURRENT_ROW + 1, 0)) OVER (ORDER BY ID ROWS CURRENT ROW) AS AFTER,
+    MIN(VALUE_OF(NAME AT END_PARTITION)) OVER (ORDER BY ID) AS LAST_ID
+    FROM STAFF ORDER BY ID;
+SELECT ROW_NUMBER(CURRENT_ROW) FROM STAFF;
+```
+
+```
+           ID | NAME                           |      SALARY |             WEIGHTED |       AFTER | LAST_ID
+--------------+--------------------------------+-------------+----------------------+-------------+--------------------------------
+            1 | Ada                            |     7200.00 |             14400.00 |     8100.00 | Barbara
+            2 | Grace                          |     8100.00 |             23400.00 |     5400.00 | Barbara
+            3 | Edsger                         |     5400.00 |             18900.00 |        NULL | Barbara
+            4 | Barbara                        |        NULL |              5400.00 |        0.00 | Barbara
+(4 rows, with a warning: SQLSTATE 01003)
+turborel: SQLCODE -103 (SQLSTATE 2A000): a nested window function is only in the argument of a set function a window function contains [ISO/IEC 9075-2:2023 §6.11 SR1] (at character 7)
+```
+
+A nested window function is only in the argument of a set function OVER
+a window, and not in a set function of the groups within it. An empty
+frame reads no argument, so it gives what a set function of no rows
+gives. An argument that reads none of CURRENT_ROW, BEGIN_FRAME and
+END_FRAME is computed once for each row. Any other is computed again for
+each row of each frame, so it costs the rows times the frame's length.
+
 ### Where windows are computed
 
 Windows are computed after WHERE, GROUP BY and HAVING, and before

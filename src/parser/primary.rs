@@ -128,6 +128,11 @@ impl Parser {
         if self.is_word(GROUPING) && matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
             return Ok(ValueExpression::SetFunction(self.grouping_operation()?));
         }
+        // [ISO/IEC 9075-2:2023 §6.11] ROW_NUMBER of a row marker and
+        // VALUE_OF at one, no key words of SQL-92.
+        if let Some(nesting) = self.at_nested_window() {
+            return self.nested_window(nesting);
+        }
         // [ISO/IEC 9075-2:2023 §6.10] ROW_NUMBER and the rank functions,
         // no key words of SQL-92, before ( ) OVER.
         if let Some(kind) = self.at_rank_function() {

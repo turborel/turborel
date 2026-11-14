@@ -1085,13 +1085,13 @@ where it is read, so a column may be named NULLS.
 Features T611 (Elementary OLAP operations), T614 (NTILE function), T615
 (LEAD and LAG functions), T616 (Null treatment option for LEAD and LAG
 functions), T617 (FIRST_VALUE and LAST_VALUE functions), T618 (NTH_VALUE
-function) and T620 (WINDOW clause: GROUPS option), of ISO/IEC 9075-2:2023
-§6.10, §7.15, §9.20 and §9.23.
+function), T619 (Nested window functions) and T620 (WINDOW clause: GROUPS
+option), of ISO/IEC 9075-2:2023 §6.10, §6.11, §7.15, §9.20 and §9.23.
 Of T612 (Advanced OLAP operations), the window name, the WINDOW clause,
 an existing window name, frame exclusion, PERCENT_RANK, CUME_DIST and
 ROW_NUMBER of no ordering are done. Its WIDTH_BUCKET, FILTER clause,
 hypothetical set functions and inverse distribution functions are not,
-so T612 is not claimed. Nor are T619 or T627.
+so T612 is not claimed. Nor is T627.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1107,7 +1107,13 @@ so T612 is not claimed. Nor are T619 or T627.
 | Their default | SR5j iii | \[EXTENSION\] SR5j iii asks a default "compatible" with the extent, which would refuse `LAG(I, 1, 0)` of an INTEGER I, as 0 is NUMERIC. A default is taken where each of its type and the extent's is assignable to the other, and is cast to the extent's type, a string too long cut with SQLSTATE 01004 as CAST cuts it. Else SQLCODE -103. \[EXTENSION\] A `?` default takes the extent's type, where §20.7 GR5a gives it none. |
 | Null treatment | §6.10 GR1b, GR1c, GR1d | IGNORE NULLS counts only the rows whose argument is not null, of LEAD, LAG, FIRST_VALUE, LAST_VALUE and NTH_VALUE. RESPECT NULLS, the default, counts every row. LEAD and LAG of offset 0 take the current row's extent under either. |
 | FIRST_VALUE, LAST_VALUE and NTH_VALUE | §6.10 GR1c, GR1d, §9.23 SR6 | The first, the last and the nth argument of the row's frame, its exclusion applied, of the argument's type and collation derivation. NTH_VALUE counts from the frame's first row, or from its last under FROM LAST. Its `<nth row>` is as NTILE's number of tiles, null giving null and below 1 SQLSTATE 22016. A frame of no such row gives null. |
-| Nested in an argument | §6.10 | A window function in the argument of LEAD, LAG, FIRST_VALUE, LAST_VALUE or NTH_VALUE is computed first, by its own window, or with the outer one's where they are alike and in one pass. T619 (nested window functions, §6.11) is not done. |
+| Nested in an argument | §6.10 | A window function in the argument of LEAD, LAG, FIRST_VALUE, LAST_VALUE or NTH_VALUE is computed first, by its own window, or with the outer one's where they are alike and in one pass. |
+| Nested window functions | §6.11 SR1 | ROW_NUMBER of a row marker and VALUE_OF at one are only in the aggregated argument of a set function a window function immediately contains, not in a set function of the groups within it, which §9.20 makes a column of the groups first. Elsewhere, SQLCODE -103. |
+| ROW_NUMBER of a marker | SR2, GR2, GR3 | The place in the partition, from 1, of the partition's first or last row, the current row, the frame's row the set function takes, or the frame's first or last row as its exclusion leaves it, of COUNT's type (IV085). |
+| VALUE_OF | SR3, SR4, GR4 | Its value expression read at the marker's row moved by the offset, after a plus or a minus sign. Past the partition, or of a null offset, the default, null if not written. Of the type §9.5 gives its value expression and default, each cast to it. The offset is a `<simple value specification>` or `?`, exact numeric of scale 0 (a `?` NUMERIC(18, 0), 18 the most digits of an exact number [§20.7 GR5a xxxiii]), evaluated once as the first partition is read, else SQLCODE -103. A `?` default takes the value expression's type [§20.7 GR5a xxxiv]. |
+| Their columns | GR4e ii | A value expression's columns are read at the row its marker gives. GR4 says nothing of the default's, and the rest of the argument's are the frame's row's [GR1], so a default's are read there too. |
+| An empty frame | NOTE 170 | Reads no argument, so its set function is of no rows. |
+| In a constraint | §9.16 SR1c | No nested window function is a potential source of non-determinism, so a CHECK or an assertion may contain one. |
 | Set functions | §9.23 SR8, §10.9 | Each is computed over the row's frame as of a group, nulls left out with SQLSTATE 01003, an empty frame giving what an empty group gives. One of a window of an ordering or a frame is not LISTAGG, and is DISTINCT only if COUNT [SR8d]. COUNT DISTINCT so is SQLCODE -900, Feature T627. |
 | Grouped queries | §9.20 | Windows of a grouped query are over its groups, after HAVING, so their arguments and keys may be set functions of the group, `SUM(SUM(X)) OVER ()`. SELECT DISTINCT removes groups alike before the windows, as SR22 builds the derived table of groups. |
 | Their order of evaluation | §7.16 | Windows are computed over the rows of FROM, WHERE, GROUP BY and HAVING, before DISTINCT and the cursor's ORDER BY. A query of a window function makes a view or cursor not updatable. |
@@ -1127,7 +1133,13 @@ Of each row is held how many rows of its partition before it a function
 under IGNORE NULLS counts, and the arguments not null are held apart in
 order, spilling past their part of the work area. So LEAD, LAG and the
 nth row of a frame are found by counting, not by reading the rows
-between.
+between. Of a set function holding nested window functions, each row
+holds the columns its argument reads. An argument that reads none of
+CURRENT_ROW, BEGIN_FRAME and END_FRAME is of the frame's row alone, so
+it is computed once for each row, held apart and spilling, and the set
+function computed over it as over any argument. Any other is computed
+for each row of each frame, so its cost is the rows times the frame's
+length.
 
 OVER, WINDOW, PARTITION, RANGE, GROUPS, the five rank names and NTILE,
 LEAD, LAG, FIRST_VALUE, LAST_VALUE and NTH_VALUE, which SQL:2023 reserves
@@ -1135,7 +1147,13 @@ and SQL-92 does not, are key words only where they are read. So are
 PRECEDING, FOLLOWING, UNBOUNDED, EXCLUDE, TIES, OTHERS, RESPECT and
 IGNORE, which neither reserves. A function registered as RANK stays
 callable, RANK read as the window function only where `() OVER` follows,
-and one registered as LAG where OVER does not follow its arguments.
+and one registered as LAG where OVER does not follow its arguments. VALUE_OF
+and the six row markers, which SQL:2023 reserves and SQL-92 does not,
+are read only in a nested window function, ROW_NUMBER so only of one
+marker alone in its parentheses, and VALUE_OF only where AT and a marker
+are among its arguments, so a function registered as VALUE_OF stays
+callable. Within VALUE_OF's value, AT begins a time zone only before
+LOCAL or TIME.
 
 ### Arrays and row types
 
@@ -1381,6 +1399,7 @@ topic. The Where column names the file that implements each.
 | 2023 §10.9 SR11d (IA044) the type and maximum length of LISTAGG's result | CHARACTER VARYING of 32,767 characters, the longest character string, as there is no CHARACTER LARGE OBJECT | `functions/listagg.rs` |
 | 2023 §9.23 SR5g, SR5h (IV082, IV083) the precision of PERCENT_RANK and CUME_DIST | 53 binary digits, DOUBLE PRECISION's | `binder/window.rs`, `exec/window.rs` |
 | 2023 §9.23 SR5i ii (IV084) the type of NTILE | COUNT's, as IV166 below | `binder/window/value.rs` |
+| 2023 §6.11 SR2 (IV085) the type of a `<nested row number function>` | COUNT's, as IV166 below | `binder/window/nested.rs` |
 | 2023 §10.9 SR4 (IV166) the type of COUNT, and so of ROW_NUMBER, RANK and DENSE_RANK | Exact numeric of scale 0 and precision 18, as 86 §5.8 SR7 below | `functions.rs`, `binder/window.rs` |
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |

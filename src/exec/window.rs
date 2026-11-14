@@ -6,7 +6,9 @@
 //! the work area each and spilled past it (RULES.md D38). Then each row's
 //! value of each call is found, its frame's bounds from pointers that only
 //! move forward (`frame.rs`), and the rows given with their values, before
-//! the next partition is read.
+//! the next partition is read. A set function holding nested window
+//! functions [§6.11] holds of each row the columns its argument reads and
+//! computes its argument with the frames (`nested.rs`).
 //!
 //! The rows a window function compares are those of its partition in its
 //! ordering: no partition's rows depend on another's. Peers are given in the
@@ -18,6 +20,7 @@
 
 mod aggregate;
 mod frame;
+mod nested;
 mod reader;
 mod value;
 
@@ -26,6 +29,7 @@ use std::sync::Arc;
 
 use self::aggregate::Framed;
 use self::frame::{Bounds, Current, Partition};
+use self::nested::{Nest, Shape};
 use self::reader::{Placed, Reader};
 use self::value::{Count, NotNull, Picked, RANGE_ENDS, Sequence, counted, tile};
 use super::work::Work;
@@ -69,10 +73,10 @@ pub(super) fn windowed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::Window { window, .. } = plan else { return failed(broken("a window is not one")) };
     let (w, input) = window.split();
     let partition = w.partition.iter().map(|&c| SortKey::ascending(c)).collect();
-    let slots = slots(&w.calls);
     let rows = execute(input, db, tx);
     let (db_held, runner) = (Arc::clone(db), Runner::new(db, tx));
-    let given = Windowed { w, partition, slots, rows, runner, db: db_held, tx, bounds: None, next: None, given: None, done: false };
+    let (slots, shapes) = (Vec::new(), Vec::new());
+    let given = Windowed { w, partition, slots, shapes, rows, runner, db: db_held, tx, bounds: None, next: None, given: None, done: false };
     Box::new(checked(given, db.tx.stop_of(tx)))
 }
 
@@ -84,8 +88,12 @@ struct Windowed {
     w: Window<()>,
     /// The partitioning columns, as keys a row's are compared by.
     partition: Vec<SortKey>,
-    /// Where each call's values begin among a row's `Placed` values.
+    /// Where each call's values begin among a row's `Placed` values,
+    /// found as the first row is read.
     slots: Vec<usize>,
+    /// Of each call holding nested window functions, what it reads of each
+    /// row, found as the first row is read.
+    shapes: Vec<Option<Shape>>,
     rows: RowIter,
     runner: Runner,
     db: Arc<State>,
@@ -145,6 +153,10 @@ impl Windowed {
             },
         };
         if self.bounds.is_none() {
+            // The input's rows are all of its width, the first's.
+            let shaped = |c: &WindowCall| Shape::of(c, first.len(), &self.runner);
+            self.shapes = self.w.calls.iter().map(shaped).collect::<Result<_>>()?;
+            self.slots = slots(&self.w.calls, &self.shapes);
             let order = self.w.order.first().map(SortKey::order);
             let prepared = |c: &WindowCall| Ok((Bounds::of(&c.frame, order, &self.runner)?, Count::of(&c.kind, &self.runner)?));
             self.bounds = Some(self.w.calls.iter().map(prepared).collect::<Result<_>>()?);
@@ -154,11 +166,11 @@ impl Windowed {
         // [DESIGN] Each reader of the places' values keeps a segment of
         // them, and each list of values not null holds one in memory and
         // its reader another (`readers`).
-        let readers = self.w.calls.iter().map(|c| readers(&c.kind)).fold(PEER_READERS, usize::saturating_add);
+        let readers = self.w.calls.iter().map(readers).fold(PEER_READERS, usize::saturating_add);
         let keyed = ListSpace { limit: space.limit.checked_div(readers).unwrap_or_default().max(1), ..space.clone() };
-        let (rows, mut part, lists) = self.read(first, (space.clone(), keyed))?;
+        let (rows, mut part, lists) = self.read(first, (space.clone(), keyed.clone()))?;
         let tree = space.limit.checked_div(self.w.calls.len()).unwrap_or_default();
-        let values = self.values(&mut part, lists, (space, tree), &work)?;
+        let values = self.values(&mut part, lists, (space, keyed, tree), &work)?;
         let given = rows.into_iter().zip(values).map(|(row, values)| {
             let mut row = row?;
             row.extend(values?);
@@ -205,14 +217,19 @@ impl Windowed {
 
     /// The values a row's frames are found by: its range key `key`, then
     /// of each call at its slot, of `row`: an aggregate's argument, null of
-    /// COUNT(*) [§10.9 GR4]; LEAD or LAG's extent and default; a value
+    /// COUNT(*) [§10.9 GR4], or the columns it reads if it holds nested
+    /// window functions; LEAD or LAG's extent and default; a value
     /// function's argument; and under IGNORE NULLS, how many arguments not
     /// null are before it, the row's added to its call's list of `lists`
     /// if not null.
     fn arguments(&self, key: Value, row: &Row, lists: &mut [Option<NotNull>]) -> Result<Row> {
         let mut values = Vec::with_capacity(self.slots.last().copied().unwrap_or(1).saturating_add(self.w.calls.len()));
         values.push(key);
-        for (call, list) in self.w.calls.iter().zip(lists.iter_mut()) {
+        for ((call, list), shape) in self.w.calls.iter().zip(lists.iter_mut()).zip(&self.shapes) {
+            if let Some(shape) = shape {
+                shape.take_from(row, &mut values)?;
+                continue;
+            }
             let (arg, default) = match &call.kind {
                 WindowKind::Aggregate(a) => (a.arg.as_ref().map_or(Ok(Value::Null), |e| eval(e, row, &self.runner))?, None),
                 WindowKind::Offset(o) => (eval(&o.extent, row, &self.runner)?, Some(eval(&o.default, row, &self.runner)?)),
@@ -239,12 +256,14 @@ impl Windowed {
 
     /// Of each row of `part`, its calls' values, held in `space`: under
     /// IGNORE NULLS of each of `lists`, a tree of states each taking at
-    /// most `tree` bytes, a DISTINCT set function's values kept in `work`.
+    /// most `tree` bytes, a DISTINCT set function's values kept in `work`,
+    /// an argument of nested window functions computed once held in
+    /// `keyed`.
     fn values(
         &mut self,
         part: &mut Partition,
         lists: Vec<Option<NotNull>>,
-        (space, tree): (ListSpace, usize),
+        (space, keyed, tree): (ListSpace, ListSpace, usize),
         work: &Work,
     ) -> Result<HeldRows<Row>> {
         let Some(bounds) = self.bounds.as_mut() else { return Err(broken("a window's frames were not bound")) };
@@ -252,8 +271,12 @@ impl Windowed {
             b.reset();
         }
         let mut computed = Vec::with_capacity(self.w.calls.len());
-        for ((call, (b, count)), (&slot, list)) in self.w.calls.iter().zip(bounds.iter()).zip(self.slots.iter().zip(lists)) {
-            computed.push(Computed::new(&call.kind, (b, *count), (slot, list), part, (tree, work))?);
+        let calls = self.w.calls.iter().zip(&self.shapes).zip(bounds.iter());
+        for (((call, shape), (b, count)), (&slot, list)) in calls.zip(self.slots.iter().zip(lists)) {
+            computed.push(match shape {
+                Some(shape) => Computed::Nested(Nest::new((call, shape), (b, slot), part, (&keyed, tree, work), &self.runner)?),
+                None => Computed::new(&call.kind, (b, *count), (slot, list), part, (tree, work))?,
+            });
         }
         let (mut out, mut peers) = (HeldRows::new(space), Peers::default());
         for row in 0..part.len {
@@ -279,6 +302,8 @@ enum Computed<'a> {
     Offset(Picked<'a>),
     /// A value function's, over each frame.
     Valued(Picked<'a>),
+    /// A set function's holding nested window functions, over each frame.
+    Nested(Nest<'a>),
 }
 
 impl<'a> Computed<'a> {
@@ -311,7 +336,14 @@ impl<'a> Computed<'a> {
     fn value(&mut self, (bounds, current): (&mut Bounds, &Current), part: &mut Partition, runner: &Runner) -> Result<Value> {
         match self {
             Computed::Ranked(kind, count) => rank(kind, current, part.len, *count),
-            Computed::Framed(f) => aggregated(f, (bounds, current), part, runner),
+            Computed::Framed(f) => {
+                let frame = bounds.frame(current, part)?;
+                Ok(noted(f.value(frame, part)?, runner))
+            }
+            Computed::Nested(n) => {
+                let frame = bounds.frame(current, part)?;
+                Ok(noted(n.value(frame, current.row, part, runner)?, runner))
+            }
             Computed::Offset(p) => p.offset(current.row, part),
             Computed::Valued(p) => {
                 let frame = bounds.frame(current, part)?;
@@ -341,14 +373,16 @@ fn width(kind: &WindowKind) -> usize {
 }
 
 /// Where each of `calls`' values begin among a row's `Placed` values,
-/// after its range key.
-fn slots(calls: &[WindowCall]) -> Vec<usize> {
+/// after its range key, of each its `shapes` if it holds nested window
+/// functions.
+fn slots(calls: &[WindowCall], shapes: &[Option<Shape>]) -> Vec<usize> {
     let mut at = 1_usize;
     calls
         .iter()
-        .map(|c| {
+        .zip(shapes)
+        .map(|(c, shape)| {
             let slot = at;
-            at = at.saturating_add(width(&c.kind));
+            at = at.saturating_add(shape.as_ref().map_or_else(|| width(&c.kind), Shape::taken));
             slot
         })
         .collect()
@@ -370,16 +404,18 @@ fn ignores_nulls(kind: &WindowKind) -> bool {
     }
 }
 
-/// \[DESIGN\] How many segments of a partition's places the call `kind`
-/// keeps at once: of its frame's two bounds; an aggregate's or a value
-/// function's reader of its rows; LEAD or LAG's of the current row and
-/// the row taken; under IGNORE NULLS, LEAD or LAG's of the row ahead, a
-/// value function's of the ends of its frame's ranges, and the list of
-/// values not null and its reader.
-fn readers(kind: &WindowKind) -> usize {
+/// \[DESIGN\] How many segments of a partition's places `call` keeps at
+/// once: of its frame's two bounds; an aggregate's or a value function's
+/// reader of its rows, and an aggregate's more of nested window functions
+/// (`nested::readers`); LEAD or LAG's of the current row and the row
+/// taken; under IGNORE NULLS, LEAD or LAG's of the row ahead, a value
+/// function's of the ends of its frame's ranges, and the list of values
+/// not null and its reader.
+fn readers(call: &WindowCall) -> usize {
+    let kind = &call.kind;
     let (listed, ends, ahead) = if ignores_nulls(kind) { (LIST_SEGMENTS, RANGE_ENDS, 1) } else { (0, 0, 0) };
     match kind {
-        WindowKind::Aggregate(_) => BOUND_READERS.saturating_add(1),
+        WindowKind::Aggregate(_) => BOUND_READERS.saturating_add(1).saturating_add(nested::readers(&call.nested)),
         WindowKind::Value(_) => BOUND_READERS.saturating_add(1).saturating_add(listed).saturating_add(ends),
         WindowKind::Offset(_) => OFFSET_READERS.saturating_add(listed).saturating_add(ahead),
         WindowKind::RowNumber
@@ -391,15 +427,14 @@ fn readers(kind: &WindowKind) -> usize {
     }
 }
 
-/// The value of the set function `f` over `current`'s frame of `bounds`,
-/// a row of `part`.
-fn aggregated(f: &mut Framed<'_>, (bounds, current): (&mut Bounds, &Current), part: &mut Partition, runner: &Runner) -> Result<Value> {
-    let (value, nulls) = f.value(bounds.frame(current, part)?, part)?;
+/// The value of a set function, `value`, warned of if it left out a
+/// null (`nulls`).
+fn noted((value, nulls): (Value, bool), runner: &Runner) -> Value {
     // [ISO/IEC 9075:1992 §6.5 GR1b] a null left out warns.
     if nulls {
         warn(runner, SqlState::NULL_VALUE_ELIMINATED);
     }
-    Ok(value)
+    value
 }
 
 /// Whether `row`'s values of `keys` are those of `values`: of one

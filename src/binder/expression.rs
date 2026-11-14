@@ -191,6 +191,7 @@ impl Binder<'_> {
             }
             ValueExpression::Function { name, args, at } => self.function(name, args, scope).or_at(*at),
             ValueExpression::Window(w) => self.window_function(w, scope).or_at(w.at),
+            ValueExpression::NestedWindow(n) => self.nested_window(n, scope).or_at(n.at),
             ValueExpression::Case(case) => self.drawing(false, || self.case(case, scope)),
             ValueExpression::Cast { operand, target, format, at } => {
                 self.cast(operand.as_deref(), target, format.as_deref(), scope).or_at(*at)
@@ -450,7 +451,10 @@ impl Binder<'_> {
             Scope::Select => return Err(rule(NOT_AGGREGATED)),
         };
         let rows = Scope::Rows("[ISO/IEC 9075:1992 §6.5 SR4] a set function argument cannot contain a set function");
-        let (call, collation) = self.aggregate_call(func, arg, distinct, rows)?;
+        // [ISO/IEC 9075-2:2023 §6.11 SR1, §9.20] a group's set function,
+        // made a column of the groups before any window function, holds no
+        // nested window function.
+        let (call, collation) = self.unnested(|| self.aggregate_call(func, arg, distinct, rows))?;
         let result = call.result.clone();
         // The same set function written twice (say in SELECT and HAVING) is
         // computed once: the label names the function, argument and DISTINCT.

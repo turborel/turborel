@@ -77,8 +77,8 @@ pub use set_functions::{Listagg, Overflow, SetArg, SetFunctionSpecification};
 pub use user_types::{TypeDefinition, TypeOption};
 pub use users::UserStatement;
 pub use window::{
-    Exclusion, Frame, FrameBound, FrameUnits, OffsetFunction, RankKind, ValueFunction, Which, WindowDefinition, WindowFunction, WindowKind,
-    WindowOver, WindowSpecification,
+    Exclusion, Frame, FrameBound, FrameUnits, NestedWindow, OffsetFunction, RankKind, RowMarker, ValueFunction, Which, WindowDefinition,
+    WindowFunction, WindowKind, WindowOver, WindowSpecification,
 };
 
 // ---------------------------------------------------------------------------
