@@ -17,6 +17,7 @@ use super::predicates::BoundRow;
 use super::{Binder, Bound, OutColumn, Scope, rule};
 use crate::ast::{
     CaseExpression, ColumnSpecification, RowValue, SetArg, SortSpecification, Subquery as AstSubquery, TableName, ValueExpression,
+    WindowKind,
 };
 use crate::catalog::QualifiedName;
 use crate::db::State;
@@ -219,6 +220,12 @@ impl Binder<'_> {
             ValueExpression::SetFunction(f) => match &f.arg {
                 SetArg::Distinct(argument) | SetArg::All(argument) => self.derived(argument)?,
                 SetArg::CountStar | SetArg::Grouping(_) => Derived::Yielding,
+            },
+            // [ISO/IEC 9075-2:2023 §6.10 SR8b] an aggregate's over a window,
+            // its set function's.
+            ValueExpression::Window(w) => match &w.kind {
+                WindowKind::Aggregate(aggregate) => self.derived(aggregate)?,
+                WindowKind::RowNumber | WindowKind::Rank(_) => Derived::Yielding,
             },
             ValueExpression::Dyadic(..)
             | ValueExpression::Boolean(_)

@@ -116,12 +116,39 @@ fn datetime_overflow<T>(d: &Datetime, i: &Interval, subtract: bool) -> Result<T>
 /// SQLSTATE 22008 if a field of the result leaves its range, or the date
 /// is no date \[GR3c\].
 pub fn shift(d: &Datetime, i: &Interval, subtract: bool) -> Result<Value> {
+    shifted(d, i, subtract, Day::Kept)
+}
+
+/// [ISO/IEC 9075-2:2023 §7.15 GR5b i 1 A] `shift`, but a day past the last
+/// of the year and month a year-month interval gives is that month's last
+/// day: how a RANGE frame's bound is found.
+///
+/// # Errors
+///
+/// As `shift`, but never of the day.
+pub fn shift_clamped(d: &Datetime, i: &Interval, subtract: bool) -> Result<Value> {
+    shifted(d, i, subtract, Day::Clamped)
+}
+
+/// What a year-month interval's move does with a day past its month's
+/// last.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Day {
+    /// It is kept, so the result is no date.
+    Kept,
+    /// It is made the month's last.
+    Clamped,
+}
+
+/// `shift`, the day past its month's last as `day` says.
+fn shifted(d: &Datetime, i: &Interval, subtract: bool, day_past: Day) -> Result<Value> {
     let units = if subtract { i.units.checked_neg() } else { Some(i.units) };
     let Some(units) = units.and_then(|u| i64::try_from(u).ok()) else { return datetime_overflow(d, i, subtract) };
     let moved = if i.qualifier.year_month() {
         let (was_year, was_month, day) = civil_from_days(d.days());
         let months = was_year.saturating_mul(12).saturating_add(was_month.saturating_sub(1)).saturating_add(units);
         let (year, month) = (months.checked_div_euclid(12).unwrap_or(0), months.checked_rem_euclid(12).unwrap_or(0).saturating_add(1));
+        let day = if day_past == Day::Clamped { day.min(days_in(year, month)) } else { day };
         if !(1..=9999).contains(&year) || day > days_in(year, month) {
             return datetime_overflow(d, i, subtract);
         }

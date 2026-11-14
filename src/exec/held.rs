@@ -174,6 +174,23 @@ impl<T: Holdable> HeldRows<T> {
         Ok(self.window.as_ref().and_then(|(_, items)| items.get(at)).cloned())
     }
 
+    /// Where its `place`th is: held, or in which spilled segment and where
+    /// there; none past the last. A reader of its own segments by place
+    /// reads them so (`exec/window/reader.rs`).
+    pub fn locate(&self, place: usize) -> Option<Located<'_, T>> {
+        self.list.locate(place)
+    }
+
+    /// The items of its `segment`th segment, read back, the list kept.
+    ///
+    /// # Errors
+    ///
+    /// The spill area's, reading the segment.
+    pub fn segment(&mut self, segment: usize) -> Result<Vec<T>> {
+        let types = self.types.clone();
+        self.list.segment(segment, &move |record: &[u8]| T::read(record, &types))
+    }
+
     /// Appends the items of `other` after its own, as they are: held, or in
     /// their runs.
     pub fn append(&mut self, other: HeldRows<T>) {

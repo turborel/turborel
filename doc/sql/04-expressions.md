@@ -389,6 +389,12 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): a <set function specification> is in a 
 The mean is found by a subquery: `WHERE SALARY > (SELECT AVG(SALARY)
 FROM STAFF)`.
 
+A set function followed by OVER and a window is a window function, which
+keeps every row and computes over the rows of each one's window, as
+[Window functions](06-queries.md#window-functions) shows. `SUM(SALARY)
+OVER (PARTITION BY DEPT)` is each row's department total. LISTAGG takes
+a window only of no ORDER BY and no frame.
+
 LISTAGG's separator is a literal, and its WITHIN GROUP's ORDER BY says
 the order of the strings, each key by its collation. LISTAGG(DISTINCT
 x, ...) joins each value once, the first of values alike in that order.

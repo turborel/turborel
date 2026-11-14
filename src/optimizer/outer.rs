@@ -71,6 +71,7 @@ impl Rule for PushFilterIntoOuterJoin {
             | LogicalPlan::Sort { .. }
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
+            | LogicalPlan::Window(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }

@@ -201,7 +201,7 @@ impl Binder<'_> {
     /// this query's FROM clause: as a column, or as the basis of the chain
     /// of a column of a row type and its fields [ISO/IEC 9075-2:2023 §6.6
     /// SR9b iv 2].
-    fn is_local(&self, r: &ValueExpression) -> Result<bool> {
+    pub(super) fn is_local(&self, r: &ValueExpression) -> Result<bool> {
         if let ValueExpression::Column(cs) = r {
             return Ok(self.local(cs)?.is_some() || self.chain_basis(cs).is_some());
         }

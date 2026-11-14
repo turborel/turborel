@@ -78,6 +78,7 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::System { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
+        | Plan::Window { .. }
         | Plan::WorkTable { .. } => None,
     }
 }
@@ -140,6 +141,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::System { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
+        | Plan::Window { .. }
         | Plan::WorkTable { .. } => false,
     }
 }
@@ -200,6 +202,7 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
         | Plan::System { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
+        | Plan::Window { .. }
         | Plan::WorkTable { .. } => Err(crate::exec::broken("a plan that gives no batches")),
     }
 }

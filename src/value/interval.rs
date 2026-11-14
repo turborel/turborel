@@ -307,7 +307,7 @@ impl fmt::Display for Interval {
 }
 
 mod arith;
-pub use arith::{add, difference, minutes, scale, shift};
+pub use arith::{add, difference, minutes, scale, shift, shift_clamped};
 
 #[cfg(test)]
 mod tests;

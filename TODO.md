@@ -33,9 +33,15 @@ each group.
 
 ### Queries
 
-- Window functions (T611, T612, T614 to T620) [§4.17.15, §6.10, §6.11,
-  §7.15]. Ranks, running totals, LEAD and LAG, FIRST_VALUE, NTH_VALUE and
-  frames of ROWS, RANGE and GROUPS.
+- The rest of the window functions (T614 to T619) [§4.17.15, §6.10].
+  NTILE, LEAD and LAG with their null treatment, FIRST_VALUE, LAST_VALUE
+  and NTH_VALUE, then nested window functions.
+- The rest of T612 (Advanced OLAP operations) [§6.31, §10.9]. WIDTH_BUCKET,
+  the FILTER clause, and the hypothetical set and inverse distribution
+  functions.
+- Framed COUNT DISTINCT (T627) [§9.23 SR8d]. A moving frame's distinct
+  values counted within the work area, which a spilled count of each
+  value would allow.
 - ORDER BY in a grouped query of what the select list leaves out (F868)
   [§7.17]. It needs functional dependencies (T301) [§4.26], which also
   decide what a grouped select list may name.

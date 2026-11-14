@@ -1067,9 +1067,9 @@ not reserve, are key words only where they are read.
 
 ### Null ordering
 
-Feature T611 (Elementary OLAP operations) in part: its `<null ordering>`
-of ISO/IEC 9075-2:2023 §10.10. Window functions, the rest of T611, are
-not yet done.
+Feature T611 (Elementary OLAP operations), its `<null ordering>` of
+ISO/IEC 9075-2:2023 §10.10. Window functions, the rest of T611, are
+below.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1079,6 +1079,47 @@ not yet done.
 
 NULLS, which neither SQL-92 nor SQL:2023 reserves, is a key word only
 where it is read, so a column may be named NULLS.
+
+### Window functions
+
+Features T611 (Elementary OLAP operations) and T620 (WINDOW clause:
+GROUPS option), of ISO/IEC 9075-2:2023 §6.10, §7.15, §9.20 and §9.23.
+Of T612 (Advanced OLAP operations), the window name, the WINDOW clause,
+an existing window name, frame exclusion, PERCENT_RANK, CUME_DIST and
+ROW_NUMBER of no ordering are done. Its WIDTH_BUCKET, FILTER clause,
+hypothetical set functions and inverse distribution functions are not,
+so T612 is not claimed. Nor are T614 to T619 or T627.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Window functions | §6.10 SR2 | ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST and every set function, followed by OVER and a window name or specification. One is only in the select list of a query specification, never in WHERE, GROUP BY, HAVING, a set function's argument or a window's definition, else SQLCODE -103. Its arguments, keys and offsets hold no outer reference and no query expression [§9.23 SR3]. |
+| Window names | §7.15 SR2, SR12, SR16 | The WINDOW clause after HAVING names windows, each name once. A window name in the select list, or an existing window name in a later definition, names one of them. A window built on an existing one adds no PARTITION BY, adds no ORDER BY where that one has one, and builds on none that has a frame. Each is SQLCODE -103 otherwise. |
+| Partitions | SR4 to SR6, GR3 | PARTITION BY names columns of the table expression, grouping columns in a grouped query, each of a type a grouping operation takes. COLLATE is written only of a character string. Rows are of one partition where those columns are not distinct, each string by its collation. |
+| Orderings | §10.10, GR4 | An ORDER BY of sort keys a sort takes, NULLS FIRST and LAST among them. Without one, every row of a partition is a peer of every other (US034). |
+| Frames | SR10, SR11, SR15, GR5 | ROWS, RANGE and GROUPS, a start alone ending at CURRENT ROW. Bound pairs SR10 refuses are SQLCODE -103. An offset is a literal or a parameter, an exact integer of ROWS and GROUPS. RANGE with an offset orders by one key of a numeric, datetime or interval type, its offset numeric or an interval that key adds. GROUPS needs an ORDER BY. A frame is given whole as GR5 defines it, a null RANGE key's frame the rows of null keys. A date moved by a year-month interval to a day past its month's end takes the month's last day [GR5b i 1 A]. An offset negative or null is SQLSTATE 22013. |
+| Exclusion | GR5b ii | EXCLUDE CURRENT ROW, GROUP, TIES and NO OTHERS. |
+| Ranks | §9.23 SR5 | ROW_NUMBER is the row's place, RANK and DENSE_RANK count the rows and peer groups before its own, PERCENT_RANK and CUME_DIST are the fractions SR5g and SR5h define. The four ranks need an ORDER BY, and none of the five takes a frame, else SQLCODE -103. |
+| Set functions | §9.23 SR8, §10.9 | Each is computed over the row's frame as of a group, nulls left out with SQLSTATE 01003, an empty frame giving what an empty group gives. One of a window of an ordering or a frame is not LISTAGG, and is DISTINCT only if COUNT [SR8d]. COUNT DISTINCT so is SQLCODE -900, Feature T627. |
+| Grouped queries | §9.20 | Windows of a grouped query are over its groups, after HAVING, so their arguments and keys may be set functions of the group, `SUM(SUM(X)) OVER ()`. SELECT DISTINCT removes groups alike before the windows, as SR22 builds the derived table of groups. |
+| Their order of evaluation | §7.16 | Windows are computed over the rows of FROM, WHERE, GROUP BY and HAVING, before DISTINCT and the cursor's ORDER BY. A query of a window function makes a view or cursor not updatable. |
+| In a constraint | §9.16 SR1c, §11.9 CR2 | ROW_NUMBER and a set function over a ROWS window are potential sources of non-determinism, so a CHECK or an assertion containing one is SQLCODE -103. |
+
+A window reads its input sorted by its partition columns, then its
+ordering, unless the input is ordered so, as a column store kept in that
+order is. Windows of the same partitioning and ordering are computed in
+one pass, and one sort orders peers alike for each of them (US035). A
+partition is held while its rows are read, spilling past the work area,
+and each frame bound is a pointer that only moves forward. A set
+function over a frame starting at the partition's first row, and
+excluding nothing, is fed each row once. Otherwise it merges states of a
+tree of the partition's rows where the accumulator writes its state and
+the tree fits the work area, and else reads each frame's rows again.
+
+OVER, WINDOW, PARTITION, RANGE, GROUPS and the five rank names, which
+SQL:2023 reserves and SQL-92 does not, are key words only where they are
+read. So are PRECEDING, FOLLOWING, UNBOUNDED, EXCLUDE, TIES and OTHERS,
+which neither reserves. A function registered as RANK stays callable,
+RANK read as the window function only where `() OVER` follows.
 
 ### Arrays and row types
 
@@ -1322,6 +1363,8 @@ topic. The Where column names the file that implements each.
 | 86 §5.5 SR10–SR12 FLOAT, REAL, DOUBLE PRECISION | 24 bits if p ≤ 24, else 53. REAL 24, DOUBLE PRECISION 53, FLOAT with no precision 53. | `parser/data_type.rs`, `value.rs` |
 | 2023 §6.9 SR10b (IV081), §7.13 SR17m iii (IV183) the type of the result of a grouping operation | Exact numeric of scale 0 and precision 18, the type BIGINT's, which holds GROUPING of up to 59 columns | `binder/grouping_sets.rs` |
 | 2023 §10.9 SR11d (IA044) the type and maximum length of LISTAGG's result | CHARACTER VARYING of 32,767 characters, the longest character string, as there is no CHARACTER LARGE OBJECT | `functions/listagg.rs` |
+| 2023 §9.23 SR5g, SR5h (IV082, IV083) the precision of PERCENT_RANK and CUME_DIST | 53 binary digits, DOUBLE PRECISION's | `binder/window.rs`, `exec/window.rs` |
+| 2023 §10.9 SR4 (IV166) the type of COUNT, and so of ROW_NUMBER, RANK and DENSE_RANK | Exact numeric of scale 0 and precision 18, as 86 §5.8 SR7 below | `functions.rs`, `binder/window.rs` |
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |
 | 86 §5.9 SR4b, c precision of sums and products | 18 | `binder/expression.rs` |
@@ -1388,6 +1431,8 @@ topic. The Where column names the file that implements each.
 | 2023 §7.13 SR17 (UV132) the column names and correlation name of the grouping sets' transformation | None is made. The sets are grouped in one pass, and nothing of the transformation can be named or seen. | `binder/grouping_sets.rs` |
 | 2023 §10.9 GR7d v (UV062) the value ANY_VALUE gives | The first value not null it reads. So of several it may differ by plan, row by row, by batches or past the work area. | `functions/any_value.rs` |
 | 2023 §10.9 GR11a, §10.10 the order of LISTAGG's values of sort keys alike | The order they were read | `functions/listagg.rs` |
+| 2023 §7.15 GR4 (US034) the window ordering of a window of no ORDER BY | The order the rows are read, so ROW_NUMBER without an ordering may number them differently by plan | `exec/window.rs` |
+| 2023 §7.15 GR4 (US035) the order of peers in a window partition | The order the window's sort leaves them in, the same for each window of that partitioning and ordering, as they are computed in one pass | `physical.rs`, `exec/window.rs` |
 | 86 §6.5 GR1 whether a viewed table is materialized | No. Its query is bound into the plan of each query that names it. | `binder/views.rs` |
 | §3.3.4.1 more than one condition of a statement | One is made available. That is an exception if one is raised, else no data if the statement found none, else a warning of its own rules, as of an assignment or a privilege, else the first warning an expression raised. A query's rows that can raise a condition are read as its cursor opens (RULES.md D15), so its warnings are its OPEN's, or, over the protocol, its Complete's once its rows are sent. | `error/warnings.rs`, `db/completion.rs` |
 
@@ -1511,6 +1556,12 @@ characters its result can show, of which empty strings joined by an
 empty separator may be any number, and under DISTINCT each distinct
 value, to count them.
 ARRAY_AGG's holds at most 65,535 elements.
+
+A window's partition is held as its rows are read, and spills past the
+work area, so a partition of any size is computed in it. A set function
+over a moving frame keeps a tree of states only if the tree fits the
+work area, else it reads each frame's rows from the held partition
+again. The work area is shared among the window's set functions.
 
 ---
 

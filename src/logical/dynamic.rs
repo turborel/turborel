@@ -165,6 +165,10 @@ impl Filling<'_> {
                 u.outer = u.outer.take().map(|c| self.cond(c));
                 LogicalPlan::Unnest(u)
             }
+            LogicalPlan::Window(mut w) => {
+                w.map_exprs(&mut |e| self.expr(e));
+                LogicalPlan::Window(w)
+            }
             other @ (LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Product { .. }

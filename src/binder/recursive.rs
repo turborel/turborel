@@ -391,6 +391,9 @@ fn distributes(plan: &LogicalPlan, distinct: bool) -> bool {
         }
         // Its rows are found of each row of its input alone.
         LogicalPlan::Unnest(u) => distributes(&u.input, distinct),
+        // A window function's value of a row is of every row of its
+        // partition.
+        LogicalPlan::Window(_) => false,
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => one_side(left, right, distinct),
         LogicalPlan::SetOp { op: SetOp::Union, all, left, right, .. } => {
             (*all || distinct) && distributes(left, distinct) && distributes(right, distinct)
@@ -437,6 +440,7 @@ fn reads_work(plan: &LogicalPlan) -> bool {
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }
         | LogicalPlan::Unnest(..)
+        | LogicalPlan::Window(..)
         | LogicalPlan::Sort { .. } => plan.inputs().any(reads_work),
     }
 }

@@ -15,8 +15,7 @@ mod pushed;
 mod render;
 mod sets;
 mod subquery;
-
-use std::fmt::Write;
+mod window;
 
 pub use dynamic::{filled, filled_cond, filled_expr};
 pub use expr::{
@@ -28,6 +27,7 @@ pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
 pub use subquery::{Decorrelated, Subquery, map_plan_exprs, plan_has_outer};
+pub use window::{Bound, Exclusion, Frame, Units, Window, WindowCall, WindowKind};
 
 use crate::catalog::QualifiedName;
 use crate::functions::AggregateRef;
@@ -214,6 +214,9 @@ pub enum LogicalPlan {
     /// up to the greatest cardinality, an element past a collection's
     /// cardinality null.
     Unnest(Box<Unnest<LogicalPlan>>),
+    /// [ISO/IEC 9075-2:2023 §7.15] The window functions of one window
+    /// partitioning and ordering over the rows of `input`.
+    Window(Box<Window<LogicalPlan>>),
 }
 
 /// [ISO/IEC 9075-2:2023 §7.6 SR8] A `<collection derived table>` over the
@@ -396,6 +399,7 @@ impl LogicalPlan {
                 u.collections.iter().for_each(|e| expr_subqueries(e, &mut out));
                 out.extend(u.outer.iter().flat_map(cond_subqueries));
             }
+            LogicalPlan::Window(w) => w.exprs().for_each(|e| expr_subqueries(e, &mut out)),
             LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Product { .. }
@@ -426,6 +430,7 @@ impl LogicalPlan {
             | LogicalPlan::Distinct { input }
             | LogicalPlan::Sort { input, .. } => (Some(input), None, &[]),
             LogicalPlan::Unnest(u) => (Some(&u.input), None, &[]),
+            LogicalPlan::Window(w) => (Some(&w.input), None, &[]),
             LogicalPlan::Recursive { fixpoint, .. } => fixpoint.plans(),
         };
         first.into_iter().chain(second).chain(rest)
@@ -457,6 +462,11 @@ impl LogicalPlan {
             LogicalPlan::Unnest(u) => {
                 let mut n = u.input.names();
                 n.extend(u.names.iter().cloned());
+                n
+            }
+            LogicalPlan::Window(w) => {
+                let mut n = w.input.names();
+                n.extend(w.names());
                 n
             }
             LogicalPlan::Values { types, .. } => (0..types.len()).map(|i| column_name(&[], i)).collect(),
@@ -521,66 +531,10 @@ impl LogicalPlan {
                 let (u, input) = u.split();
                 LogicalPlan::Unnest(Box::new(u.over(f(input))))
             }
-        }
-    }
-
-    /// The plan as indented text, one node per line.
-    pub fn explain(&self) -> String {
-        let mut out = String::new();
-        self.write(&mut out, 0);
-        out
-    }
-
-    fn write(&self, out: &mut String, depth: usize) {
-        let pad = "  ".repeat(depth);
-        let inner = |p: &LogicalPlan| p.names();
-        // Writing to a String cannot fail.
-        let _ = match self {
-            LogicalPlan::Scan { table, .. } => writeln!(out, "{pad}Scan {table}"),
-            LogicalPlan::Filter { cond, input } => writeln!(out, "{pad}Filter {}", render_cond(cond, &inner(input))),
-            LogicalPlan::Product { .. } => writeln!(out, "{pad}Product"),
-            LogicalPlan::OuterJoin { kind, cond, .. } => {
-                writeln!(out, "{pad}{kind:?} outer join on {}", render_cond(cond, &self.names()))
+            LogicalPlan::Window(w) => {
+                let (w, input) = w.split();
+                LogicalPlan::Window(Box::new(w.over(f(input))))
             }
-            LogicalPlan::Aggregate { groups, aggs, input, .. } => {
-                let n = inner(input);
-                let g: Vec<String> = groups.iter().map(|&i| column_name(&n, i)).collect();
-                let a: Vec<&str> = aggs.iter().map(|a| a.label.as_str()).collect();
-                writeln!(out, "{pad}Aggregate group by [{}] computing [{}]", g.join(", "), a.join(", "))
-            }
-            LogicalPlan::Project { exprs, input } => {
-                let n = inner(input);
-                writeln!(out, "{pad}Project {}", exprs.iter().map(|e| render_expr(e, &n)).collect::<Vec<_>>().join(", "))
-            }
-            LogicalPlan::Distinct { .. } => writeln!(out, "{pad}Distinct"),
-            LogicalPlan::SetOp { op, all, .. } => writeln!(out, "{pad}{op:?}{}", if *all { " all" } else { "" }),
-            LogicalPlan::System { read, .. } => writeln!(out, "{pad}System {}", read.name()),
-            LogicalPlan::Values { rows, .. } => writeln!(
-                out,
-                "{pad}Values {}",
-                rows.iter()
-                    .map(|r| format!("({})", r.iter().map(|e| render_expr(e, &[])).collect::<Vec<_>>().join(", ")))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            LogicalPlan::Sort { keys, input } => writeln!(out, "{pad}Sort {}", render_keys(keys, &inner(input))),
-            LogicalPlan::Recursive { member, fixpoint, .. } => writeln!(out, "{pad}Recursive member {member} {}", fixpoint.word()),
-            LogicalPlan::WorkTable { member, .. } => writeln!(out, "{pad}Work table of member {member}"),
-            LogicalPlan::Unnest(u) => {
-                let n = inner(&u.input);
-                let c: Vec<String> = u.collections.iter().map(|e| render_expr(e, &n)).collect();
-                let left = if u.outer.is_some() { "Left unnest" } else { "Unnest" };
-                writeln!(out, "{pad}{left} {}{}", c.join(", "), if u.ordinality { " with ordinality" } else { "" })
-            }
-        };
-        for input in self.inputs() {
-            input.write(out, depth.saturating_add(1));
-        }
-        // Its subqueries, each run for a row with its outer references'
-        // values.
-        for s in self.subqueries() {
-            let _ = writeln!(out, "{pad}  Subquery");
-            s.plan.write(out, depth.saturating_add(2));
         }
     }
 }

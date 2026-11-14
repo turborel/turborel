@@ -126,6 +126,9 @@ impl SqlState {
     pub const ERROR_IN_ASSIGNMENT: SqlState = SqlState("22005");
     /// Data exception: division by zero.
     pub const DIVISION_BY_ZERO: SqlState = SqlState("22012");
+    /// Data exception: invalid preceding or following size in window
+    /// function [ISO/IEC 9075-2:2023 §7.15 GR5b].
+    pub const INVALID_PRECEDING_OR_FOLLOWING_SIZE: SqlState = SqlState("22013");
     /// Data exception: invalid escape character.
     pub const INVALID_ESCAPE_CHARACTER: SqlState = SqlState("22019");
     /// Data exception: invalid character value for cast [ISO/IEC 9075:1992

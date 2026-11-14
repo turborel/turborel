@@ -41,6 +41,7 @@ mod sequences;
 mod set_functions;
 mod user_types;
 mod users;
+mod window;
 
 pub use composite::{Composite, ValueOrder};
 pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
@@ -75,6 +76,9 @@ pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNu
 pub use set_functions::{Listagg, Overflow, SetArg, SetFunctionSpecification};
 pub use user_types::{TypeDefinition, TypeOption};
 pub use users::UserStatement;
+pub use window::{
+    Exclusion, Frame, FrameBound, FrameUnits, RankKind, WindowDefinition, WindowFunction, WindowKind, WindowOver, WindowSpecification,
+};
 
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.7] <insert statement>

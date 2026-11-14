@@ -22,9 +22,10 @@ mod layout;
 use std::cell::RefCell;
 
 use self::expansion::{Expansion, Set};
-use super::collation::any_of;
+use super::collation::{any_of, of_column};
 use super::query::distinct;
 use super::subquery::outer_grouping;
+use super::window::{Inner, grouped_windowed};
 use super::{Binder, Grouping, OutColumn, Scope, rule};
 use crate::ast::{GroupBy, ValueExpression};
 use crate::error::{At, Code, Result, SqlError};
@@ -110,7 +111,7 @@ pub(super) fn grouping(binder: &Binder<'_>, group_by: Option<&GroupBy>) -> Resul
         Expansion::Sets(sets) => {
             let distinct = group_by.is_some_and(|g| g.distinct);
             let (columns, collations, sets) = layout::laid_out(binder, &sets, distinct)?;
-            Ok(Grouping { columns, collations, aggs: RefCell::new(Vec::new()), sets: Some(sets) })
+            Ok(Grouping { columns, collations, aggs: RefCell::new(Vec::new()), collated: RefCell::new(Vec::new()), sets: Some(sets) })
         }
     }
 }
@@ -129,7 +130,13 @@ fn primitive(binder: &Binder<'_>, columns: &Set<'_>) -> Result<Grouping> {
         // [ISO/IEC 9075-2:2023 §9.15] grouped by its collation.
         collations.push(binder.grouped_by(g)?);
     }
-    Ok(Grouping { columns: at, collations: any_of(collations), aggs: RefCell::new(Vec::new()), sets: None })
+    Ok(Grouping {
+        columns: at,
+        collations: any_of(collations),
+        aggs: RefCell::new(Vec::new()),
+        collated: RefCell::new(Vec::new()),
+        sets: None,
+    })
 }
 
 /// [ISO/IEC 9075-2:2023 §7.13 SR17n, §9.12 SR2a] Of GROUP BY DISTINCT of
@@ -156,13 +163,23 @@ pub(super) fn grouped(
     binder: &Binder<'_>,
     plan: LogicalPlan,
     (g, having): (Grouping, Option<Cond>),
-    (exprs, selected): (Vec<Expr>, &[OutColumn]),
+    (exprs, selected, once): (Vec<Expr>, &[OutColumn], bool),
 ) -> LogicalPlan {
-    let Grouping { columns: groups, collations, aggs, sets } = g;
+    let Grouping { columns: groups, collations, aggs, collated, sets } = g;
     let aggs = aggs.into_inner();
+    // [ISO/IEC 9075-2:2023 §9.20] Of a grouped windowed query, its windows
+    // are over its groups, which its DISTINCT is of.
+    let windows = binder.take_windows().map(|w| {
+        let mut compared = if collations.is_empty() { vec![None; groups.len()] } else { collations.clone() };
+        compared.extend(aggs.iter().zip(collated.into_inner()).map(|(a, c)| c.filter(|_| a.result.is_character())));
+        (w, Inner { once, compared, aggs_from: groups.len(), sl2: None })
+    });
     let Some(sets) = sets else {
-        let plan = LogicalPlan::Aggregate { groups, collations, aggs, seeds: Vec::new(), input: Box::new(plan) };
-        return LogicalPlan::Project { exprs, input: Box::new(having_of(plan, having)) };
+        let plan = having_of(LogicalPlan::Aggregate { groups, collations, aggs, seeds: Vec::new(), input: Box::new(plan) }, having);
+        return match windows {
+            Some((w, inner)) => grouped_windowed(w, plan, inner, exprs),
+            None => LogicalPlan::Project { exprs, input: Box::new(plan) },
+        };
     };
     let Sets { values, bits, collections, names, appended, seeds, masked, sl2, .. } = sets;
     let spread = vec![None; collections.len()];
@@ -173,9 +190,14 @@ pub(super) fn grouped(
     let value = |c: usize| masked.iter().find(|(pos, _)| *pos == c).map_or(c, |(_, v)| *v);
     let aggs = aggs.into_iter().map(|a| AggCall { arg: a.arg.map(|e| map_expr_columns(e, &value)), ..a }).collect();
     let groups_kept = having_of(LogicalPlan::Aggregate { groups, collations, aggs, seeds, input: Box::new(rows) }, having);
-    match sl2 {
-        Some(pcs) => union_distinct(binder, groups_kept, (pcs, values, bits), (exprs, selected)),
-        None => LogicalPlan::Project { exprs, input: Box::new(groups_kept) },
+    match (sl2, windows) {
+        (Some(pcs), None) => union_distinct(binder, groups_kept, (pcs, values, bits), (exprs, selected)),
+        (None, None) => LogicalPlan::Project { exprs, input: Box::new(groups_kept) },
+        (sl2, Some((w, inner))) => {
+            let session = binder.session_collation;
+            let sl2 = sl2.map(|pcs| (values, pcs.iter().map(|c| of_column(binder.db, session, c)).collect(), bits));
+            grouped_windowed(w, groups_kept, Inner { sl2, ..inner }, exprs)
+        }
     }
 }
 

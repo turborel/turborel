@@ -62,6 +62,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22009 | Invalid time zone displacement value |
 | 22011 | Substring error |
 | 22012 | Division by zero |
+| 22013 | Invalid preceding or following size in window function: a frame's offset negative or null |
 | 22015 | Interval field overflow |
 | 22018 | Invalid character value for cast |
 | 22019 | Invalid escape character |

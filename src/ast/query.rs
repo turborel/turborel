@@ -2,7 +2,7 @@
 //! `<query expression>` [ISO/IEC 9075:1992 §7.10] and `<query
 //! specification>` [X3.135-1986 §5.25] and their parts.
 
-use super::{ColumnSpecification, CycleClause, SearchClause, SearchCondition, Subquery, TableName, ValueExpression};
+use super::{ColumnSpecification, CycleClause, SearchClause, SearchCondition, Subquery, TableName, ValueExpression, WindowDefinition};
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.3] <cursor specification> and [X3.135-1986 §5.25] <query specification>
 // ---------------------------------------------------------------------------
@@ -422,6 +422,9 @@ pub struct TableExpression {
     pub group_by: Option<GroupBy>,
     /// [X3.135-1986 §5.23] `<having clause>` ::= HAVING `<search condition>`
     pub having: Option<SearchCondition>,
+    /// [ISO/IEC 9075-2:2023 §7.15] The `<window definition>`s of its `<window
+    /// clause>`, none if it has none.
+    pub window: Vec<WindowDefinition>,
 }
 
 /// [X3.135-1986 §5.20; ISO/IEC 9075:1992 §6.3] `<table reference>`.

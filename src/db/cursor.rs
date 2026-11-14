@@ -60,6 +60,7 @@ fn row_condition(plan: &LogicalPlan) -> Option<Cond> {
             | LogicalPlan::System { .. }
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
+            | LogicalPlan::Window(..)
             | LogicalPlan::WorkTable { .. } => break,
         }
     }

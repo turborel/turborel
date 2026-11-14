@@ -48,6 +48,7 @@ mod search_cycle;
 mod sequences;
 mod served;
 mod user_types;
+mod window;
 pub(crate) use data_statements::{TRUNCATE, begins_truncate};
 pub(crate) use served::CANCEL;
 mod session;

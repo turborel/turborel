@@ -190,6 +190,7 @@ impl Binder<'_> {
                 self.drawing(self.drawing.get() && !aggregate, || self.call((schema.as_deref(), name, *extension), args, scope)).or_at(*at)
             }
             ValueExpression::Function { name, args, at } => self.function(name, args, scope).or_at(*at),
+            ValueExpression::Window(w) => self.window_function(w, scope).or_at(w.at),
             ValueExpression::Case(case) => self.drawing(false, || self.case(case, scope)),
             ValueExpression::Cast { operand, target, format, at } => {
                 self.cast(operand.as_deref(), target, format.as_deref(), scope).or_at(*at)
@@ -428,6 +429,8 @@ impl Binder<'_> {
     }
 
     /// Bind a set function [X3.135-1986 §5.8] or extension aggregate and register it with the grouping.
+    /// The aggregate function of a window function is bound and kept apart
+    /// instead (`binder/window.rs`).
     pub(super) fn aggregate(
         &self,
         func: AggregateRef,
@@ -435,6 +438,9 @@ impl Binder<'_> {
         distinct: bool,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
+        if self.windowed_next() {
+            return self.window_aggregate(func, arg, distinct, scope);
+        }
         if let Some(outer) = self.outer_set_function(&func, arg, distinct)? {
             return Ok(outer);
         }
@@ -443,6 +449,32 @@ impl Binder<'_> {
             Scope::Rows(why) => return Err(rule(why)),
             Scope::Select => return Err(rule(NOT_AGGREGATED)),
         };
+        let rows = Scope::Rows("[ISO/IEC 9075:1992 §6.5 SR4] a set function argument cannot contain a set function");
+        let (call, collation) = self.aggregate_call(func, arg, distinct, rows)?;
+        let result = call.result.clone();
+        // The same set function written twice (say in SELECT and HAVING) is
+        // computed once: the label names the function, argument and DISTINCT.
+        let mut aggs = g.aggs.borrow_mut();
+        let k = if let Some(k) = aggs.iter().position(|a| a.label == call.label) {
+            k
+        } else {
+            aggs.push(call);
+            g.collated.borrow_mut().push(collation);
+            aggs.len().saturating_sub(1)
+        };
+        Ok((Expr::Column(g.columns.len().saturating_add(k)), result))
+    }
+
+    /// The set function `func` of `arg`, bound in `scope`, DISTINCT if so:
+    /// its argument, as the Syntax Rules have it, and its result type; and
+    /// the collation of its argument, if it is compared by one.
+    pub(super) fn aggregate_call(
+        &self,
+        func: AggregateRef,
+        arg: Option<&ValueExpression>,
+        distinct: bool,
+        scope: Scope<'_>,
+    ) -> Result<(AggCall, Option<CollationRef>)> {
         let arg_of = arg;
         let (arg, arg_type) = match arg {
             None => (None, None),
@@ -453,10 +485,7 @@ impl Binder<'_> {
                 if v.any(&|e| matches!(e, ValueExpression::Subquery(_))) {
                     return Err(rule("[ISO/IEC 9075:1992 §6.5 SR4] the argument of a set function cannot contain a subquery"));
                 }
-                let (e, t) = self.value_expression(
-                    v,
-                    Scope::Rows("[ISO/IEC 9075:1992 §6.5 SR4] a set function argument cannot contain a set function"),
-                )?;
+                let (e, t) = self.value_expression(v, scope)?;
                 (Some(e), Some(t))
             }
         };
@@ -472,7 +501,7 @@ impl Binder<'_> {
         }
         let (func, arg, named) = self.collated_call((func, arg, arg_type.clone()), arg_of, (extreme, distinct))?;
         let result = func.0.result_type(arg_type)?;
-        let collated = named.map_or_else(String::new, |c| format!(" COLLATE {}", c.collation.name()));
+        let collated = named.as_ref().map_or_else(String::new, |c| format!(" COLLATE {}", c.collation.name()));
         let label = match &arg {
             None => format!("{}(*)", func.0.name()),
             Some(e) => {
@@ -480,16 +509,7 @@ impl Binder<'_> {
                 format!("{name}({}{}{collated}{suffix})", if distinct { "DISTINCT " } else { "" }, render_expr(e, &self.names))
             }
         };
-        // The same set function written twice (say in SELECT and HAVING) is
-        // computed once: the label names the function, argument and DISTINCT.
-        let mut aggs = g.aggs.borrow_mut();
-        let k = if let Some(k) = aggs.iter().position(|a| a.label == label) {
-            k
-        } else {
-            aggs.push(AggCall { func, arg, distinct, result: result.clone(), label });
-            aggs.len().saturating_sub(1)
-        };
-        Ok((Expr::Column(g.columns.len().saturating_add(k)), result))
+        Ok((AggCall { func, arg, distinct, result, label }, named))
     }
 }
 
@@ -528,7 +548,7 @@ fn distinct_operand(t: &DataType) -> Result<()> {
 /// contains `what`, a potential source of non-determinism by the item
 /// `item` of §9.16 SR1, which a CHECK may contain only with Feature F672,
 /// not claimed: so SQL-92's rule refuses it [ISO/IEC 9075:1992 §11.9 SR6].
-fn nondeterministic_source(item: &str, what: &str) -> SqlError {
+pub(super) fn nondeterministic_source(item: &str, what: &str) -> SqlError {
     rule(format!(
         "[ISO/IEC 9075-2:2023 §9.16 SR1{item}, §11.9 CR2] a CHECK condition shall not contain a potential source of non-determinism: {what}"
     ))

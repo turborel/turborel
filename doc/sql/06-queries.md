@@ -293,6 +293,160 @@ SELECT P.* AS (WHO_ID, WHO) FROM (SELECT ROW(ID, NAME) AS P FROM STAFF WHERE ID 
 (1 row)
 ```
 
+## Window functions
+
+A window function computes a value for each row out of the rows around
+it, and keeps every row, where a set function makes one row of each
+group. It is written in the select list as a function followed by OVER
+and a window.
+
+A window is written in parentheses. PARTITION BY divides the rows into
+partitions, each of the rows alike in its columns, nulls alike and
+strings by their collation. ORDER BY orders each partition, and rows
+alike in its keys are **peers**. Either may be left out. Without
+PARTITION BY the whole table is one partition, and without ORDER BY
+every row of a partition is a peer of every other.
+
+| Function | Value |
+|---|---|
+| ROW_NUMBER() | the row's place in its partition, from 1 |
+| RANK() | 1 more than the rows ordered before its peers |
+| DENSE_RANK() | 1 more than the peer groups ordered before its own |
+| PERCENT_RANK() | (RANK − 1) / (rows − 1), 0 of a partition of one row |
+| CUME_DIST() | the rows up to its last peer, divided by the rows |
+| a set function | the set function of the row's frame |
+
+Each of the four ranks needs an ORDER BY. ROW_NUMBER without one
+numbers the rows in the order they are read. ROW_NUMBER, RANK and
+DENSE_RANK are of COUNT's type, and PERCENT_RANK and CUME_DIST are
+DOUBLE PRECISION.
+
+A set function OVER a window computes over the row's **frame**. Without
+ORDER BY the frame is the whole partition. With it the frame is the rows
+up to the row's last peer, so SUM is a running total. Below, each row is
+ranked by salary over the table and totalled over its department.
+
+```sql
+SELECT NAME, DEPT, SALARY, RANK() OVER (ORDER BY SALARY DESC NULLS LAST) AS R,
+    SUM(SALARY) OVER (PARTITION BY DEPT) AS DEPT_TOTAL FROM STAFF ORDER BY R;
+```
+
+```
+ NAME                           | DEPT |      SALARY |                    R |           DEPT_TOTAL
+--------------------------------+------+-------------+----------------------+----------------------
+ Grace                          | ENG  |     8100.00 |                    1 |             15300.00
+ Ada                            | ENG  |     7200.00 |                    2 |             15300.00
+ Edsger                         | OPS  |     5400.00 |                    3 |              5400.00
+ Barbara                        | NULL |        NULL |                    4 |                 NULL
+(4 rows, with a warning: SQLSTATE 01003)
+```
+
+### Frames
+
+A frame clause after ORDER BY says the frame itself. ROWS counts rows
+from the current row, GROUPS counts peer groups, and RANGE takes the
+rows whose key is within an offset of the current row's.
+
+```
+{ROWS | RANGE | GROUPS} BETWEEN start AND end [EXCLUDE ...]
+```
+
+A bound is UNBOUNDED PRECEDING, n PRECEDING, CURRENT ROW, n FOLLOWING
+or UNBOUNDED FOLLOWING. The start's kind comes no later in that list
+than the end's, so `ROWS BETWEEN CURRENT ROW AND 1 PRECEDING` is
+refused. A start written alone ends at CURRENT ROW. CURRENT
+ROW of RANGE or GROUPS is the row's peers, not the row alone.
+
+An offset is a literal or a parameter, never negative or null, which is
+SQLSTATE 22013. For ROWS and GROUPS it is an integer. RANGE with an
+offset orders by one key, a number, a datetime or an interval, and the
+offset is a number or an interval of it. A date moved by months to a day
+its month lacks is the month's last day. A row whose RANGE key is null
+has the rows of null keys as its peers and its frame.
+
+EXCLUDE CURRENT ROW leaves the row out of its frame, EXCLUDE GROUP its
+peers and itself, EXCLUDE TIES its peers but not itself, and EXCLUDE NO
+OTHERS, the default, nothing. The ranks take no frame.
+
+A WINDOW clause after HAVING names windows. `OVER W` uses one as it is,
+and `OVER (W ...)` adds to it an ORDER BY it has not, or a frame. Below,
+NEAR is the mean of the row and those either side of it.
+
+```sql
+SELECT NAME, SALARY, ROW_NUMBER() OVER W AS N, SUM(SALARY) OVER W AS RUNNING,
+    AVG(SALARY) OVER (W ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS NEAR
+    FROM STAFF WINDOW W AS (ORDER BY ID) ORDER BY N;
+SELECT NAME, SALARY, COUNT(*) OVER (ORDER BY SALARY
+    RANGE BETWEEN 1000 PRECEDING AND 1000 FOLLOWING) AS NEARBY FROM STAFF ORDER BY NAME;
+```
+
+```
+ NAME                           |      SALARY |                    N |              RUNNING |                 NEAR
+--------------------------------+-------------+----------------------+----------------------+----------------------
+ Ada                            |     7200.00 |                    1 |              7200.00 |            7650.0000
+ Grace                          |     8100.00 |                    2 |             15300.00 |            6900.0000
+ Edsger                         |     5400.00 |                    3 |             20700.00 |            6750.0000
+ Barbara                        |        NULL |                    4 |             20700.00 |            5400.0000
+(4 rows, with a warning: SQLSTATE 01003)
+ NAME                           |      SALARY |               NEARBY
+--------------------------------+-------------+----------------------
+ Ada                            |     7200.00 |                    2
+ Barbara                        |        NULL |                    1
+ Edsger                         |     5400.00 |                    1
+ Grace                          |     8100.00 |                    2
+(4 rows)
+```
+
+Below, G counts the rows of a row's peer group and the next, less the
+row itself.
+
+```sql
+SELECT NAME, DEPT, DENSE_RANK() OVER (ORDER BY DEPT) AS D,
+    PERCENT_RANK() OVER (ORDER BY DEPT) AS P, CUME_DIST() OVER (ORDER BY DEPT) AS C,
+    COUNT(*) OVER (ORDER BY DEPT GROUPS BETWEEN CURRENT ROW AND 1 FOLLOWING
+        EXCLUDE CURRENT ROW) AS G FROM STAFF ORDER BY D, NAME;
+```
+
+```
+ NAME                           | DEPT |                    D |                        P |                        C |                    G
+--------------------------------+------+----------------------+--------------------------+--------------------------+----------------------
+ Ada                            | ENG  |                    1 |                      0E0 |                     5E-1 |                    2
+ Grace                          | ENG  |                    1 |                      0E0 |                     5E-1 |                    2
+ Edsger                         | OPS  |                    2 |     6.666666666666666E-1 |                   7.5E-1 |                    1
+ Barbara                        | NULL |                    3 |                      1E0 |                      1E0 |                    0
+(4 rows)
+```
+
+### Where windows are computed
+
+Windows are computed after WHERE, GROUP BY and HAVING, and before
+DISTINCT and ORDER BY. In a grouped query they are over the groups, so a
+window function's arguments and keys may be the group's set functions.
+A window function is only in a select list, so a query that filters on
+one filters a derived table or a view of it.
+
+COUNT(DISTINCT x) is taken over a window of no ORDER BY or frame, but
+not over one of either, SQLCODE -900, Feature T627. LISTAGG and the
+other set functions of DISTINCT are taken only over a window of neither.
+
+```sql
+SELECT DEPT, SUM(SALARY) AS TOTAL, RANK() OVER (ORDER BY SUM(SALARY) DESC) AS R
+    FROM STAFF GROUP BY DEPT ORDER BY R;
+SELECT NAME FROM STAFF WHERE RANK() OVER (ORDER BY SALARY) = 1;
+SELECT COUNT(DISTINCT DEPT) OVER (ORDER BY ID) FROM STAFF;
+```
+
+```
+ DEPT |                TOTAL |                    R
+------+----------------------+----------------------
+ NULL |                 NULL |                    1
+ ENG  |             15300.00 |                    2
+ OPS  |              5400.00 |                    3
+(3 rows, with a warning: SQLSTATE 01003)
+turborel: SQLCODE -103 (SQLSTATE 2A000): a window function is only in the select list of a query specification [ISO/IEC 9075-2:2023 §6.10 SR2b] (at character 29)
+turborel: SQLCODE -900 (SQLSTATE 0A000): COUNT(DISTINCT ...) over a window of an ordering or a frame is Feature T627, which turborel does not support [ISO/IEC 9075-2:2023 §9.23 SR8d ii] (at character 7)
+```
+
 ## Set operations
 
 UNION gives the rows of either query, EXCEPT those of the first not in

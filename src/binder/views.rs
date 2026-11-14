@@ -307,6 +307,7 @@ fn collapse(db: &State, plan: LogicalPlan, has_where: bool) -> Result<ViewBase> 
             | LogicalPlan::Sort { .. }
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
+            | LogicalPlan::Window(..)
             | LogicalPlan::WorkTable { .. }) => return Err(broken(&format!("an updatable view reads {}", other.explain()))),
         }
     };

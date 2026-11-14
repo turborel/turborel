@@ -235,6 +235,8 @@ impl PhysicalPlanner<'_> {
             LogicalPlan::Product { left, right } => Some(self.rows_of(left)? * self.rows_of(right)?),
             LogicalPlan::Project { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => self.rows_of(input),
             LogicalPlan::Values { rows, .. } => Some(cost_of(rows.len())),
+            // A row for each of its input's.
+            LogicalPlan::Window(w) => self.rows_of(&w.input),
             LogicalPlan::OuterJoin { .. }
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::SetOp { .. }
@@ -277,6 +279,7 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::System { .. }
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
+            | LogicalPlan::Window(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }
@@ -302,6 +305,7 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::System { .. }
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
+            | LogicalPlan::Window(..)
             | LogicalPlan::WorkTable { .. } => None,
         }
     }
@@ -356,6 +360,7 @@ fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::Sort { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
+        | Plan::Window { .. }
         | Plan::WorkTable { .. } => None,
     }
 }
@@ -401,6 +406,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         | LogicalPlan::Sort { .. }
         | LogicalPlan::Recursive { .. }
         | LogicalPlan::Unnest(..)
+        | LogicalPlan::Window(..)
         | LogicalPlan::WorkTable { .. } => None,
     }
 }

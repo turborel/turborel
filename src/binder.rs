@@ -63,6 +63,7 @@ mod underlying;
 mod unnest;
 mod values;
 mod views;
+mod window;
 mod with;
 
 pub use cursor::bind_cursor;
@@ -274,10 +275,6 @@ pub(crate) fn no_column(table: &QualifiedName, message: String, column: &str) ->
 }
 
 // ---------------------------------------------------------------------------
-// [X3.135-1986 §8.3] <cursor specification>
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Scopes
 // ---------------------------------------------------------------------------
 
@@ -289,6 +286,8 @@ struct Grouping {
     /// What each is grouped by, if any is not the default collation.
     collations: Vec<Option<CollationRef>>,
     aggs: RefCell<Vec<AggCall>>,
+    /// The collation each of `aggs` compares its result by, if any.
+    collated: RefCell<Vec<Option<CollationRef>>>,
     /// [ISO/IEC 9075-2:2023 §7.13 SR17] Its grouping sets, of a GROUP BY
     /// not simple; none of a primitive one [SR10, SR11].
     sets: Option<grouping_sets::Sets>,
@@ -367,6 +366,8 @@ struct Binder<'a> {
     drawing: Cell<bool>,
     /// The query names in scope (`Context::queries`).
     queries: Option<&'a Queries<'a>>,
+    /// The window functions of its select list (`binder/window.rs`).
+    windowing: RefCell<Option<window::Windowing>>,
 }
 
 /// The FROM row a binder sees: its items, the display names of its
@@ -421,6 +422,7 @@ impl<'a> Binder<'a> {
             draws: draws && !purpose.constrains(),
             drawing: Cell::new(false),
             queries,
+            windowing: RefCell::new(None),
         }
     }
 

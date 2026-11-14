@@ -23,11 +23,14 @@ impl Binder<'_> {
         let (SetArg::All(value) | SetArg::Distinct(value)) = &sf.arg else { return Err(not_read()) };
         let Some(written) = &sf.listagg else { return Err(not_read()) };
         let keys = sf.order_by.iter().map(|k| &k.key);
-        // [SR11a] no <set function specification> or <query expression>,
-        // of the value or a key; turborel has no <window function>.
-        let nested = |e: &ValueExpression| matches!(e, ValueExpression::SetFunction(_) | ValueExpression::Subquery(_));
+        // [SR11a] no <window function>, <set function specification> or
+        // <query expression>, of the value or a key.
+        let nested =
+            |e: &ValueExpression| matches!(e, ValueExpression::Window(_) | ValueExpression::SetFunction(_) | ValueExpression::Subquery(_));
         if std::iter::once(&**value).chain(keys.clone()).any(|part| part.any(&nested)) {
-            return Err(rule("[ISO/IEC 9075-2:2023 §10.9 SR11a] LISTAGG cannot contain a set function or a query expression"));
+            return Err(rule(
+                "[ISO/IEC 9075-2:2023 §10.9 SR11a] LISTAGG cannot contain a window function, a set function or a query expression",
+            ));
         }
         let truncation = match &written.overflow {
             Overflow::Error => None,

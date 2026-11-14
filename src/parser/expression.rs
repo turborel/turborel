@@ -540,6 +540,7 @@ impl Parser {
     fn qualified_primary(&mut self) -> Result<ValueExpression> {
         let at = self.here();
         let primary = self.primary()?;
+        let primary = self.windowed(primary, at)?;
         let primary = self.postfixed(primary)?;
         self.qualified(primary, at)
     }

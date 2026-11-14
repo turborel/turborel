@@ -205,5 +205,7 @@ mod varying;
 mod vector_operators;
 mod views;
 mod warnings;
+mod window_rules;
+mod windows;
 mod with_queries;
 mod working_tables;

@@ -3,6 +3,9 @@
 //! qualifiers.
 
 use super::*;
+use crate::error::SqlState;
+use crate::value::Value;
+use crate::value::datetime::{Datetime, Moment};
 
 /// The qualifier `start` TO `end` of `leading` digits and 6 of fraction.
 fn q(start: Field, end: Field, leading: u32) -> Qualifier {
@@ -67,4 +70,31 @@ fn fields_and_conversion() {
     assert_eq!(q(Field::Day, Field::Second, 2).positions(), 2 + 9 + 7);
     assert_eq!(q(Field::Year, Field::Month, 4).positions(), 7);
     assert_eq!(field_name(Field::Minute), "MINUTE");
+}
+
+/// The date `text`.
+fn date(text: &str) -> Datetime {
+    let w = crate::value::datetime::parse(Moment::Date, text).unwrap();
+    Datetime::of_local(Moment::Date, w.local, 0, false, 0)
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.15 GR5b i 1 A; ISO/IEC
+/// 9075:1992 §6.14 GR3c] a date moved by a year-month interval to a day
+/// its month has not is that month's last day, as a RANGE frame's bound
+/// is found, where the arithmetic of an expression raises 22008. A day
+/// the month has is kept, and a year past 9999 is still 22008.
+///
+/// Decision: the day is past the month's last, or not, and the move
+/// clamps, or not; each changes the outcome alone.
+#[test]
+fn a_frame_bound_takes_the_months_last_day_7_15() {
+    let month = Interval { units: 1, qualifier: q(Field::Month, Field::Month, 2) };
+    let shown = |v: crate::error::Result<Value>| v.map(|v| v.to_string()).map_err(|e| e.state);
+    let overflow = Err(Some(SqlState::DATETIME_FIELD_OVERFLOW));
+    assert_eq!(shown(shift_clamped(&date("2024-01-31"), &month, false)), Ok("2024-02-29".to_owned()));
+    assert_eq!(shown(shift(&date("2024-01-31"), &month, false)), overflow);
+    assert_eq!(shown(shift_clamped(&date("2023-03-31"), &month, true)), Ok("2023-02-28".to_owned()));
+    assert_eq!(shown(shift_clamped(&date("2024-01-15"), &month, false)), Ok("2024-02-15".to_owned()));
+    assert_eq!(shown(shift(&date("2024-01-15"), &month, false)), Ok("2024-02-15".to_owned()));
+    assert_eq!(shown(shift_clamped(&date("9999-12-31"), &month, false)), overflow);
 }

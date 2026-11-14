@@ -35,8 +35,8 @@ use crate::db::State;
 use crate::exec::WorkRows;
 use crate::index::Probe;
 use crate::logical::{
-    AggCall, Cond, Expr, Fixpoint, LogicalPlan, OuterJoin, SetOp, SortKey, Unnest, column_name, judged_by_sets, render_cond, render_expr,
-    render_keys, split_and,
+    AggCall, Cond, Expr, Fixpoint, LogicalPlan, OuterJoin, SetOp, SortKey, Unnest, Window, column_name, judged_by_sets, render_cond,
+    render_expr, render_keys, split_and,
 };
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -302,6 +302,15 @@ pub enum Plan {
     /// [ISO/IEC 9075-2:2023 §7.6 SR8] A `<collection derived table>`
     /// laterally over the rows of its input (`exec/unnest.rs`).
     Unnest(Box<Unnest<Plan>>),
+    /// [ISO/IEC 9075-2:2023 §7.15] Window functions over the rows of its
+    /// input, which come sorted by its partitioning and ordering
+    /// (`exec/window.rs`).
+    Window {
+        /// The functions, and the rows they are computed over.
+        window: Box<Window<Plan>>,
+        /// The partitioning, ordering and functions, as text.
+        detail: String,
+    },
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's
@@ -418,7 +427,28 @@ impl<'a> PhysicalPlanner<'a> {
             }
             LogicalPlan::WorkTable { member, .. } => Built::unordered(Plan::WorkTable { member: *member, rows: None }),
             LogicalPlan::Unnest(u) => Built::unordered(Plan::Unnest(Box::new(u.with_input(|input| self.plan(input))))),
+            LogicalPlan::Window(w) => self.window(w, want),
         }
+    }
+
+    /// The window functions `w`, their input sorted by their partitioning,
+    /// each column in the order `want` asks of it if it does, then their
+    /// ordering, unless the input gives that order. Its rows keep it, so
+    /// it gives `want` if `want` is the first of those keys.
+    fn window(&self, w: &Window<LogicalPlan>, want: &[SortKey]) -> Built {
+        let asked = |c: usize| want.iter().find(|k| k.column == c).copied();
+        let mut keys: Vec<SortKey> = w.partition.iter().map(|&c| asked(c).unwrap_or_else(|| SortKey::ascending(c))).collect();
+        keys.extend(w.order.iter().copied());
+        let b = self.build(&w.input, &keys);
+        let detail = self.described(&w.input, |names| w.render(names));
+        let input = if b.ordered {
+            b.plan
+        } else {
+            let sorting = self.described(&w.input, |names| render_keys(&keys, names));
+            Plan::Sort { keys: keys.clone(), detail: sorting, input: Box::new(b.plan) }
+        };
+        let window = Box::new(w.with_input(|_| ()).over(input));
+        Built { plan: Plan::Window { window, detail }, ordered: !want.is_empty() && keys.starts_with(want) }
     }
 
     /// The groups of `logical`, an aggregation, in the order of `want` if
@@ -548,6 +578,7 @@ impl Plan {
             Plan::Unnest(u) => {
                 u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(Cond::can_raise) || u.input.can_raise()
             }
+            Plan::Window { window, .. } => window.can_raise() || window.input.can_raise(),
         }
     }
 }

@@ -64,6 +64,7 @@ SELECT: read rows
     [ WHERE <search condition> ]
     [ GROUP BY [ ALL | DISTINCT ] <grouping element> [ { , <grouping element> }... ] ]
     [ HAVING <search condition> ]
+    [ WINDOW <window name> AS <window specification> [ { , <window name> AS <window specification> }... ] ]
 
 <grouping element> ::=
       <ordinary grouping set>
@@ -78,10 +79,26 @@ SELECT: read rows
 
 <grouping column reference> ::= <column reference> [ COLLATE <collation name> ]
 
+<window function> ::=
+    { ROW_NUMBER ( ) | RANK ( ) | DENSE_RANK ( ) | PERCENT_RANK ( ) | CUME_DIST ( ) | <set function> }
+    OVER { <window name> | <window specification> }
+
+<window specification> ::=
+    ( [ <window name> ]
+      [ PARTITION BY <column reference> [ COLLATE <collation name> ] [ { , <column reference> [ COLLATE <collation name> ] }... ] ]
+      [ ORDER BY <window sort key> [ { , <window sort key> }... ] ]
+      [ { ROWS | RANGE | GROUPS } { <frame bound> | BETWEEN <frame bound> AND <frame bound> }
+        [ EXCLUDE { CURRENT ROW | GROUP | TIES | NO OTHERS } ] ] )
+
+<window sort key> ::= <value expression> [ COLLATE <collation name> ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]
+
+<frame bound> ::=
+    UNBOUNDED PRECEDING | <offset> PRECEDING | CURRENT ROW | <offset> FOLLOWING | UNBOUNDED FOLLOWING
+
 <order by clause> ::=
     ORDER BY <sort specification> [ { , <sort specification> }... ]
 
-<sort specification> ::= { <unsigned integer> | <column reference> } [ COLLATE <collation name> ] [ ASC | DESC ]
+<sort specification> ::= { <unsigned integer> | <column reference> } [ COLLATE <collation name> ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]
 
 <updatability clause> ::= FOR READ ONLY
 ```
@@ -113,6 +130,11 @@ column that orders a recursive query's rows depth first or breadth first,
 and CYCLE a column marking each row that closes a cycle and a column of
 the path to it, ending the path there ([SEARCH and
 CYCLE](../06-queries.md#search-and-cycle)).
+
+A window function computes a value of each row out of the rows of its
+partition, ordered, or of a frame of rows around it, as [Window
+functions](../06-queries.md#window-functions) shows. Windows are
+computed after HAVING and before DISTINCT and ORDER BY.
 
 A query begins a transaction if none is active, and reads as its
 isolation level says ([SET TRANSACTION](set-transaction.md)).
@@ -153,6 +175,15 @@ parameters, is [a statement of a program too](#select-into).
    join. Each column PARTITION BY names is one column of it, not a
    column NATURAL or USING joins on, and a collection derived table in a
    partitioned second operand reads nothing of the first.
+9. A window function is in the select list of a query specification
+   alone. The WINDOW clause names each window once, and a window name
+   names one of them. A window built on another adds no PARTITION BY, no
+   ORDER BY where the other has one, and builds on none with a frame.
+   RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST and a frame of GROUPS need
+   an ORDER BY, and no rank takes a frame. A frame's start is not after
+   its end. An offset is a literal or a parameter, an integer of ROWS and
+   GROUPS. RANGE with an offset orders by one key, a number, a datetime
+   or an interval, the offset a number or an interval of it.
 
 ## PRIVILEGES
 
@@ -166,9 +197,9 @@ SELECT on each table and view the query names.
 | 2A000 | -104 | Its user lacks SELECT on a table or view |
 | 21000 | -811 | A scalar subquery gives more than one row |
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
-| 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
+| 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), a window frame's offset negative or null (22013), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
 | 2202F | -301 | A path or a DEPTH FIRST sequence would hold more than 65,535 rows |
-| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns; COUNT(DISTINCT ...) over a window of an ordering or a frame, Feature T627 |
 
 An error is placed at the construct it is about, its character position
 told.
@@ -282,11 +313,14 @@ fields reference>` [§7.16], and UNNEST its `<collection derived table>`
 table>` [§7.10], Feature F403. ROLLUP, CUBE, GROUPING SETS and the empty
 grouping set are the `<group by clause>` of §7.13 and GROUPING its
 `<grouping operation>` [§6.9], Features T431, T432 and T433, and GROUP BY
-DISTINCT Feature T434. SELECT ... INTO is
+DISTINCT Feature T434. Window functions are the `<window function>` of
+§6.10 and the WINDOW clause its `<window clause>` [§7.15], Features T611
+and T620, with the window parts of T612. SELECT ... INTO is
 the `<select statement: single row>` [§13.5; X3.135-1986 §8.10]. FOR
 READ ONLY, of a `<cursor specification>` [§13.1], is taken in a direct
 SELECT too. Where the null value sorts is implementation-defined
-[X3.135-1986 §8.3 GR3b vii]: here, as greater than every value.
+[X3.135-1986 §8.3 GR3b vii]: here, as greater than every value. NULLS
+FIRST and NULLS LAST are the `<null ordering>` of §10.10, Feature T611.
 
 ## SEE ALSO
 

@@ -370,6 +370,7 @@ pub(super) fn passing(plan: &LogicalPlan) -> Option<Passing> {
             | LogicalPlan::Sort { .. }
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
+            | LogicalPlan::Window(..)
             | LogicalPlan::WorkTable { .. } => return None,
         }
     }

@@ -72,6 +72,11 @@ pub(super) fn bind_query(
         Some(r) => vec![r],
         None => select_items(&binder, &spec.select_list)?,
     };
+    // [ISO/IEC 9075-2:2023 §7.15] its <window clause>, and the window
+    // functions of its select list.
+    if !te.window.is_empty() || selected.iter().any(|i| super::window::has_window_function(&i.value)) {
+        *binder.windowing.borrow_mut() = Some(super::window::Windowing::new(&te.window)?);
+    }
 
     // [X3.135-1986 §5.21] <where clause>: applied to rows.
     let where_scope = Scope::Rows(
@@ -104,19 +109,34 @@ pub(super) fn bind_query(
         plan = LogicalPlan::Filter { cond, input: Box::new(plan) };
     }
     // [X3.135-1986 §5.25 GR2]
-    plan = match grouping {
-        Some(g) => super::grouping_sets::grouped(&binder, plan, (g, having), (exprs, &columns)),
-        None => LogicalPlan::Project { exprs, input: Box::new(plan) },
-    };
-    if spec.distinct {
-        // [ISO/IEC 9075-2:2023 §9.12 SR2e] each column an operand of a
-        // grouping operation.
-        columns.iter().try_for_each(|c| super::composite::grouping_operand(&c.data_type, "DISTINCT"))?;
-        plan = distinct(plan, (binder.db, binder.session_collation), &columns);
-    }
+    plan = selected_plan(&binder, plan, (grouping, having), (exprs, &columns, spec.distinct))?;
     let session = binder.session_collation;
     let collations = sort_collations((binder.db, binder.auth, session), order_by, &keys, &columns)?;
     Ok(with_sort(Bound { plan, columns }, (keys, collations)))
+}
+
+/// [X3.135-1986 §5.25 GR2, GR3] The select list `exprs`, of `columns`, of
+/// the rows `plan`, grouped by `grouping` and `having` if so, DISTINCT if
+/// `once`: of a grouped windowed query, its groups are [ISO/IEC 9075-2:2023
+/// §9.20 SR22] (`grouping_sets::grouped`).
+fn selected_plan(
+    binder: &Binder<'_>,
+    plan: LogicalPlan,
+    (grouping, having): (Option<Grouping>, Option<crate::logical::Cond>),
+    (exprs, columns, once): (Vec<Expr>, &[OutColumn], bool),
+) -> Result<LogicalPlan> {
+    let windowed = grouping.is_some() && binder.has_windows();
+    let plan = match grouping {
+        Some(g) => super::grouping_sets::grouped(binder, plan, (g, having), (exprs, columns, once)),
+        None => super::window::windowed(binder.take_windows(), plan, exprs),
+    };
+    if !once {
+        return Ok(plan);
+    }
+    // [ISO/IEC 9075-2:2023 §9.12 SR2e] each column an operand of a
+    // grouping operation.
+    columns.iter().try_for_each(|c| super::composite::grouping_operand(&c.data_type, "DISTINCT"))?;
+    Ok(if windowed { plan } else { distinct(plan, (binder.db, binder.session_collation), columns) })
 }
 
 /// `plan`, of `columns`, DISTINCT: rows the same by each column's collation
@@ -196,7 +216,13 @@ fn bind_selected(
     if first.is_ok() || grouping.is_some() || !binder.aggregated.get() {
         return first.map(|(exprs, columns)| (grouping, exprs, columns));
     }
-    let one = Some(Grouping { columns: Vec::new(), collations: Vec::new(), aggs: RefCell::new(Vec::new()), sets: None });
+    let one = Some(Grouping {
+        columns: Vec::new(),
+        collations: Vec::new(),
+        aggs: RefCell::new(Vec::new()),
+        collated: RefCell::new(Vec::new()),
+        sets: None,
+    });
     let (exprs, columns) = bind_select_list(binder, selected, select_scope(one.as_ref(), grouped))?;
     Ok((one, exprs, columns))
 }
@@ -216,8 +242,18 @@ fn select_scope(grouping: Option<&Grouping>, grouped: bool) -> Scope<'_> {
     Scope::Groups(g, why)
 }
 
-/// [X3.135-1986 §5.25] `<select list>`: an expression and a result column for each item.
+/// [X3.135-1986 §5.25] `<select list>`: an expression and a result column
+/// for each item, its window functions bound with it [ISO/IEC 9075-2:2023
+/// §6.10 SR2b] (`binder/window.rs`).
 fn bind_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_>) -> Result<(Vec<Expr>, Vec<OutColumn>)> {
+    binder.open_windows();
+    let bound = bound_select_list(binder, select, scope)?;
+    binder.close_windows(scope)?;
+    Ok(bound)
+}
+
+/// The items `select` of a select list bound in `scope`.
+fn bound_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_>) -> Result<(Vec<Expr>, Vec<OutColumn>)> {
     let mut exprs = Vec::new();
     let mut columns = Vec::new();
     // Bound again, aggregated, it notes them again (`bind_selected`).
@@ -261,6 +297,7 @@ fn bind_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_>
             | ValueExpression::Boolean(_)
             | ValueExpression::Subquery(_)
             | ValueExpression::Composite(..)
+            | ValueExpression::Window(_)
             | ValueExpression::NextValue { .. } => (None, false, None),
         };
         exprs.push(e);

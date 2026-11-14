@@ -51,9 +51,10 @@ follows it, beginning a statement. DATABASE is that statement's
 only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
-SQL:2023 reserves ANY_VALUE, BIGINT, BINARY, BOOLEAN, BTRIM, CUBE, CYCLE, DECFLOAT, EVERY, GREATEST,
-GROUPING, LEAST, LIKE_REGEX, LISTAGG, LPAD, LTRIM, OCCURRENCES_REGEX, PARTITION, POSITION_REGEX, ROLLUP, RPAD,
-RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX, VARBINARY and WITHIN, which SQL-92 does not, so
+SQL:2023 reserves ANY_VALUE, BIGINT, BINARY, BOOLEAN, BTRIM, CUBE, CUME_DIST, CYCLE, DECFLOAT,
+DENSE_RANK, EVERY, GREATEST, GROUPING, GROUPS, LEAST, LIKE_REGEX, LISTAGG, LPAD, LTRIM, OCCURRENCES_REGEX,
+OVER, PARTITION, PERCENT_RANK, POSITION_REGEX, RANGE, RANK, ROLLUP, ROW_NUMBER, RPAD, RTRIM, START,
+SUBSTRING_REGEX, TRANSLATE_REGEX, VARBINARY, WINDOW and WITHIN, which SQL-92 does not, so
 a column of an older database may be named any of them. They stay identifiers here, key words only where
 they are read. BIGINT, BINARY, BOOLEAN, DECFLOAT and VARBINARY are data types
 where a data type is written, so a domain cannot be named BINARY,
@@ -78,6 +79,18 @@ ANY_VALUE and LISTAGG are set functions only before a parenthesis. WITHIN
 is read only before GROUP after LISTAGG's arguments, and OVERFLOW, which
 SQL:2023 does not reserve, only after ON there, so `SELECT LISTAGG,
 WITHIN FROM T` names two columns.
+
+OVER is read only after a function's closing parenthesis, where a
+parenthesis or a window's name follows it, so `SELECT COUNT(*) OVER FROM
+T` names the count OVER. ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK and
+CUME_DIST are window functions only where `( ) OVER` follows, so a
+function registered as RANK stays callable. PARTITION is read in a
+window only before BY too. WINDOW begins the WINDOW clause only where a
+name and AS follow it, after the table expression's other clauses. RANGE
+and GROUPS begin a frame only where ROWS, which SQL-92 reserves, may, and
+PRECEDING, FOLLOWING, UNBOUNDED, EXCLUDE, TIES and OTHERS, which SQL:2023
+does not reserve, are read only in a frame. A column may be named any of
+them but ROWS.
 
 SEQUENCE, INCREMENT, MAXVALUE, MINVALUE and RESTART, which SQL:2023 does
 not reserve, and CYCLE and START are key words only in CREATE, ALTER and

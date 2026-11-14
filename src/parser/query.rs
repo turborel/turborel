@@ -20,7 +20,7 @@ const RECURSIVE: &str = "RECURSIVE";
 
 /// [ISO/IEC 9075-2:2023 §5.2, §7.10] PARTITION, before BY after an operand
 /// of a join: a word SQL-92 does not reserve, read as this only there.
-const PARTITION: &str = "PARTITION";
+pub(super) const PARTITION: &str = "PARTITION";
 
 impl Parser {
     /// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] `<cursor specification>`
@@ -368,7 +368,9 @@ impl Parser {
         };
         // [X3.135-1986 §5.23] <having clause> ::= HAVING <search condition>
         let having = if self.accept_kw(kw::HAVING) { Some(self.search_condition()?) } else { None };
-        Ok(TableExpression { from, where_clause, group_by, having })
+        // [ISO/IEC 9075-2:2023 §7.15] <window clause>
+        let window = self.window_clause()?;
+        Ok(TableExpression { from, where_clause, group_by, having, window })
     }
 
     /// The `<table reference>`s of a `<from clause>`. The plan joins them one
@@ -459,7 +461,7 @@ impl Parser {
     }
 
     /// Whether PARTITION BY is next.
-    fn at_partitioning(&self) -> bool {
+    pub(super) fn at_partitioning(&self) -> bool {
         self.is_word(PARTITION) && self.next_is_kw(kw::BY)
     }
 
@@ -553,7 +555,7 @@ impl Parser {
         if self.accept_kw(kw::AS) {
             return self.identifier().map(Some);
         }
-        if self.at_partitioning() {
+        if self.at_partitioning() || self.at_window_clause() {
             return Ok(None);
         }
         Ok(match self.peek() {
@@ -578,6 +580,6 @@ impl Parser {
 /// SELECT * FROM `from`: what TABLE `<table name>` and a `<joined table>`
 /// are as a `<query primary>` [ISO/IEC 9075:1992 §7.10 SR2, SR13b].
 fn all_of(from: TableReference) -> QueryExpression {
-    let table_expression = TableExpression { from: vec![from], where_clause: None, group_by: None, having: None };
+    let table_expression = TableExpression { from: vec![from], where_clause: None, group_by: None, having: None, window: Vec::new() };
     QueryExpression::Spec(Box::new(QuerySpecification { distinct: false, select_list: SelectList::Star, table_expression }))
 }
