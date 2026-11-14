@@ -2,8 +2,11 @@
 //! passed over, one more kept, a null count or one below its least taken,
 //! SR3j ix 3 and ix 4 dropped, a query of OFFSET or FETCH FIRST updatable,
 //! an OFFSET over a work table found of the rows an iteration adds, a
-//! recursive query of ORDER BY losing its plan, and OFFSET read as a
-//! correlation name before its count.
+//! recursive query of ORDER BY losing its plan, OFFSET read as a
+//! correlation name before its count; of WITH TIES no peer kept, or every
+//! row a peer, or no ORDER BY taken; of PERCENT a count of the rows after
+//! OFFSET, a floor for a ceiling, a DECFLOAT's ceiling inexact, a null
+//! percentage or one not a number taken.
 
 use super::{Mutation, Package};
 
@@ -25,16 +28,30 @@ const COUNTS: &str = "fetch_first::a_count_is_a_value_given_or_refused_7_17";
 const RECURSION: &str = "fetch_first::a_recursive_query_of_the_clauses_7_17";
 /// The test of a view and a cursor of the clauses.
 const VIEWS: &str = "fetch_first::a_view_and_a_cursor_of_the_clauses_7_17";
+/// The file of a percentage's count.
+const PERCENT: &str = "src/exec/limit/percent.rs";
+/// The file of OFFSET and FETCH FIRST bound.
+const BOUND: &str = "src/binder/limit.rs";
+/// The unit test of WITH TIES.
+const TIES_KEPT: &str = "exec::limit::tests::with_ties_keeps_the_peers_of_the_last_row_7_17";
+/// The unit test of a percentage.
+const PERCENT_KEPT: &str = "exec::limit::tests::a_percentage_keeps_its_ceiling_of_the_rows_7_17";
+/// The test of WITH TIES.
+const TIES: &str = "fetch_ties::with_ties_keeps_the_peers_of_the_last_row_7_17";
+/// The test of a percentage.
+const PERCENTAGE: &str = "fetch_ties::a_percentage_keeps_its_ceiling_of_the_rows_7_17";
+/// The test of the refusals of PERCENT and WITH TIES.
+const OPTIONS_REFUSED: &str = "fetch_ties::the_options_refused_7_17";
 
 /// The mutations of OFFSET and FETCH FIRST, in the order they run.
-pub const LIMITS: [Mutation; 10] = [
+pub const LIMITS: [Mutation; 18] = [
     Mutation {
         name: "limit-offset-not-skipped",
         package: Package::Core,
         breaks: "OFFSET passes over no row [§7.17 GR6c]",
         file: RUN,
-        original: "if row.is_ok() && self.skip > 0 {",
-        replacement: "if row.is_ok() && self.skip > 0 && false {",
+        original: "            if self.skip > 0 {",
+        replacement: "            if self.skip > 0 && false {",
         integration: &[IN_ORDER],
         unit: &[KEPT],
     },
@@ -43,8 +60,8 @@ pub const LIMITS: [Mutation; 10] = [
         package: Package::Core,
         breaks: "FETCH FIRST keeps one row more than its count [§7.17 GR7d]",
         file: RUN,
-        original: "let fetch = limit.fetch.as_ref().map(|e| count(e, subqueries, &Rule::FETCH)).transpose()?;",
-        replacement: "let fetch = limit.fetch.as_ref().map(|e| count(e, subqueries, &Rule::FETCH)).transpose()?.map(|n: usize| n.saturating_add(1));",
+        original: "let left = count(&f.count, subqueries, &Rule::FETCH)?;",
+        replacement: "let left = count(&f.count, subqueries, &Rule::FETCH)?.saturating_add(1);",
         integration: &[IN_ORDER],
         unit: &[KEPT],
     },
@@ -127,5 +144,85 @@ pub const LIMITS: [Mutation; 10] = [
         replacement: "if self.at_partitioning() || self.at_window_clause() {",
         integration: &[IN_ORDER],
         unit: &["parser::query::ordered::tests::the_clauses_where_a_query_expression_is_7_17"],
+    },
+    Mutation {
+        name: "limit-ties-no-peer",
+        package: Package::Core,
+        breaks: "WITH TIES keeps no peer of the last row [§7.17 GR7d i]",
+        file: RUN,
+        original: "if compare_rows(&ties.keys, last, next) == Ordering::Equal {",
+        replacement: "if compare_rows(&ties.keys, last, next) == Ordering::Equal && false {",
+        integration: &[TIES],
+        unit: &[TIES_KEPT],
+    },
+    Mutation {
+        name: "limit-ties-keys-lost",
+        package: Package::Core,
+        breaks: "WITH TIES compares rows by no key, so every row after is a peer [§7.17 GR7d i]",
+        file: "src/binder/order_by.rs",
+        original: "peers.clone_from(&sorted);",
+        replacement: "peers.clear();",
+        integration: &[TIES],
+        unit: &[],
+    },
+    Mutation {
+        name: "limit-ties-unordered",
+        package: Package::Core,
+        breaks: "WITH TIES of a query expression of no ORDER BY is taken [§7.17 SR30]",
+        file: BOUND,
+        original: "if f.ties && o.order_by.is_empty() {",
+        replacement: "if f.ties && o.order_by.is_empty() && false {",
+        integration: &[OPTIONS_REFUSED],
+        unit: &[],
+    },
+    Mutation {
+        name: "limit-percent-after-offset",
+        package: Package::Core,
+        breaks: "a percentage is of the rows after OFFSET, not before [§7.17 NOTE 328]",
+        file: RUN,
+        original: "let left = percent::count(&f.count, held.len(), subqueries)?;",
+        replacement: "let left = percent::count(&f.count, held.len().saturating_sub(skip), subqueries)?;",
+        integration: &[PERCENTAGE],
+        unit: &[PERCENT_KEPT],
+    },
+    Mutation {
+        name: "limit-percent-floor",
+        package: Package::Core,
+        breaks: "a percentage keeps the floor of its rows, not the ceiling [§7.17 GR7b ii]",
+        file: PERCENT,
+        original: "format!(\"{:.0}\", x.ceil())",
+        replacement: "format!(\"{:.0}\", x.floor())",
+        integration: &[PERCENTAGE],
+        unit: &[PERCENT_KEPT],
+    },
+    Mutation {
+        name: "limit-percent-decfloat-floor",
+        package: Package::Core,
+        breaks: "a DECFLOAT percentage keeps the floor of its rows, not the ceiling [§7.17 GR7b ii]",
+        file: PERCENT,
+        original: "c.div_euclid(p).saturating_add(i128::from(c.rem_euclid(p) > 0))",
+        replacement: "c.div_euclid(p)",
+        integration: &[],
+        unit: &[PERCENT_KEPT],
+    },
+    Mutation {
+        name: "limit-percent-null",
+        package: Package::Core,
+        breaks: "a null percentage raises no exception of FETCH FIRST",
+        file: PERCENT,
+        original: "    if percentage.is_null() {",
+        replacement: "    if percentage.is_null() && false {",
+        integration: &[OPTIONS_REFUSED],
+        unit: &[PERCENT_KEPT],
+    },
+    Mutation {
+        name: "limit-percent-not-a-number",
+        package: Package::Core,
+        breaks: "a percentage not a number is taken [§7.17 SR29]",
+        file: BOUND,
+        original: "    if !t.is_numeric() {",
+        replacement: "    if !t.is_numeric() && false {",
+        integration: &[OPTIONS_REFUSED],
+        unit: &[],
     },
 ];

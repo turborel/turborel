@@ -812,24 +812,49 @@ SELECT DEPT, (SELECT NAME FROM STAFF S WHERE S.DEPT = D.DEPT ORDER BY SALARY DES
 (2 rows)
 ```
 
+`FETCH FIRST n PERCENT ROWS ONLY` keeps n percent of the rows, counted
+before OFFSET passes over any, rounded up: CEILING(n × rows / 100.0E0).
+`WITH TIES` in place of ONLY keeps, after the last row its count keeps,
+the rows that sort as its peers, equal by every key, nulls equal to each
+other. WITH TIES needs an ORDER BY.
+
+```sql
+SELECT NAME FROM STAFF ORDER BY ID FETCH FIRST 50 PERCENT ROWS ONLY;
+SELECT NAME, DEPT FROM STAFF ORDER BY DEPT FETCH FIRST ROW WITH TIES;
+```
+
+```
+ NAME
+--------------------------------
+ Ada
+ Grace
+(2 rows)
+ NAME                           | DEPT
+--------------------------------+------
+ Ada                            | ENG
+ Grace                          | ENG
+(2 rows)
+```
+
 A count is a literal, a parameter, or a `?` of a prepared statement,
 read once as the rows are first asked for. It is a whole number, else
-SQLCODE -103. An offset below 0 is SQLSTATE 2201X, and a count of FETCH
-FIRST below 1 is 2201W; a null count raises the same. A view or a cursor
-of OFFSET or FETCH FIRST is not updatable, though one of ORDER BY alone
-is. A recursive query has no FETCH FIRST, nor does a query in one that
-reads it. FETCH FIRST n PERCENT and WITH TIES are SQLCODE -900.
+SQLCODE -103, and a percentage any number. An offset below 0 is SQLSTATE
+2201X, and a count of FETCH FIRST below 1 is 2201W, as is a percentage
+whose count is, of a table of no rows too. A null count raises the same.
+A view or a cursor of OFFSET or FETCH FIRST is not updatable, though one
+of ORDER BY alone is. A recursive query has no FETCH FIRST, nor does a
+query in one that reads it.
 
 ```sql
 SELECT NAME FROM STAFF FETCH FIRST 0 ROWS ONLY;
 SELECT NAME FROM STAFF OFFSET 1.5 ROWS;
-SELECT NAME FROM STAFF ORDER BY ID FETCH FIRST 2 ROWS WITH TIES;
+SELECT NAME FROM STAFF FETCH FIRST 2 ROWS WITH TIES;
 ```
 
 ```
 turborel: SQLCODE -301 (SQLSTATE 2201W): the fetch first row count is 0, less than 1 [ISO/IEC 9075-2:2023 §7.17 GR7c]
 turborel: SQLCODE -103 (SQLSTATE 2A000): the offset row count is an exact number of scale 0, not NUMERIC(2,1) [ISO/IEC 9075-2:2023 §7.17 SR27] (at character 30)
-turborel: SQLCODE -900 (SQLSTATE 0A000): WITH TIES is Feature F867, which turborel does not support [ISO/IEC 9075-2:2023 §7.17 GR7d i] (at character 35)
+turborel: SQLCODE -103 (SQLSTATE 2A000): FETCH FIRST WITH TIES is of a query expression with an ORDER BY [ISO/IEC 9075-2:2023 §7.17 SR30] (at character 23)
 ```
 
 ## Table value constructors

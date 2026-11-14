@@ -17,9 +17,9 @@ use super::Plan;
 use super::access::{ix_is_point, whole_key};
 use super::probe::{Compared, placed_as_is};
 use crate::db::State;
-use crate::error::{Code, Result, fail};
+use crate::error::{Code, Result, SqlError, fail};
 use crate::index::Probe;
-use crate::logical::{AggCall, Cond, Distribution, Expr, Limit, Slot, filled_cond, filled_expr};
+use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Slot, filled_cond, filled_expr};
 use crate::value::{CompOp, DataType, Value};
 
 mod shape;
@@ -191,9 +191,9 @@ pub(crate) fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
         Plan::Distinct { input } => Ok(Plan::Distinct { input: Box::new(filled_plan(*input, values)?) }),
         Plan::Sort { keys, detail, input } => Ok(Plan::Sort { keys, detail, input: Box::new(filled_plan(*input, values)?) }),
         Plan::Limit { limit, input } => {
-            let filled = |e: Option<Expr>| e.map(|e| filled_expr(e, values)).transpose();
-            let limit = Limit { offset: filled(limit.offset)?, fetch: filled(limit.fetch)? };
-            Ok(Plan::Limit { limit, input: Box::new(filled_plan(*input, values)?) })
+            let offset = limit.offset.map(|e| filled_expr(e, values)).transpose()?;
+            let fetch = limit.fetch.map(|f| Ok::<_, SqlError>(Fetch { count: filled_expr(f.count, values)?, ..f })).transpose()?;
+            Ok(Plan::Limit { limit: Limit { offset, fetch }, input: Box::new(filled_plan(*input, values)?) })
         }
         Plan::Append { left, right } => {
             let left = Box::new(filled_plan(*left, values)?);

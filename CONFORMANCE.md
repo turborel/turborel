@@ -1145,11 +1145,10 @@ F857 (Top-level FETCH FIRST in query expression), F858 (FETCH FIRST in
 subqueries), F859 (Top-level FETCH FIRST in views), F860 (Dynamic FETCH
 FIRST row count), F861 (Top-level OFFSET in query expression), F862
 (OFFSET in subqueries), F863 (Nested OFFSET in query expression), F864
-(Top-level OFFSET in views) and F865 (Dynamic offset row count in
-OFFSET), the
-`<order by clause>`, `<result offset clause>` and `<fetch first clause>`
-of ISO/IEC 9075-2:2023 §7.17. F866 (FETCH FIRST clause: PERCENT option)
-and F867 (FETCH FIRST clause: WITH TIES option) are not claimed.
+(Top-level OFFSET in views), F865 (Dynamic offset row count in OFFSET),
+F866 (FETCH FIRST clause: PERCENT option) and F867 (FETCH FIRST clause:
+WITH TIES option), the `<order by clause>`, `<result offset clause>` and
+`<fetch first clause>` of ISO/IEC 9075-2:2023 §7.17.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1160,7 +1159,8 @@ and F867 (FETCH FIRST clause: WITH TIES option) are not claimed.
 | Updatability | SR7, SR8, SR11 | A query expression of OFFSET or FETCH FIRST is neither updatable nor insertable-into, so a view of one is read-only and a cursor of one FOR UPDATE SQLCODE -103. One of ORDER BY alone is as its body is. |
 | Recursive queries | SR3j ix 3, ix 4, GR2c ii | A recursive query has no FETCH FIRST, nor does a query primary in it that references its stratum, each SQLCODE -103. ORDER BY and OFFSET of a recursive query, or OFFSET of a query over its work table, are found as the General Rules find its fixpoint, of all its rows each time. |
 | Functional dependencies | §4.26, NOTE 71 | A query of OFFSET or FETCH FIRST keeps the dependencies and candidate keys of its body, as its rows are some of the body's. |
-| What it refuses | GR7b ii, GR7d i | FETCH FIRST n PERCENT [F866] and WITH TIES [F867] are SQLCODE -900. |
+| PERCENT | SR29, GR7b ii, NOTE 328, Feature F866 | A percentage is a `<simple value specification>` of a numeric type, else SQLCODE -103, or \[EXTENSION\] a `?` typed DOUBLE PRECISION. Its count is CEILING ( FFP * LOCT / 100.0E0 ), LOCT the rows before OFFSET, in SQL's arithmetic: approximate, or DECFLOAT of a DECFLOAT percentage, whose ceiling is exact. The rows are held to be counted, spilling past MEMORY.WORK_BYTES. A count below 1, of a percentage of 0 or below or of a table of no rows, is SQLSTATE 2201W, as GR7c says. |
+| WITH TIES | SR30, GR7d i, Feature F867 | Of a query expression with an ORDER BY, else SQLCODE -103. After the last row its count keeps, the rows after it that are its peers by every sort key are kept [§10.10], compared as the sort compares them, by each key's collation, nulls peers of each other; no row past them is read. The peers OFFSET passed over stay passed over. |
 | Its plans | | A Limit node over the sort, the sort spilling past MEMORY.WORK_BYTES, by batches or row by row. A scan already in the order ORDER BY asks for is limited without a sort. |
 
 ### Window functions

@@ -130,7 +130,7 @@ SELECT: read rows
 <result offset clause> ::= OFFSET <row count> { ROW | ROWS }
 
 <fetch first clause> ::=
-    FETCH { FIRST | NEXT } [ <row count> ] { ROW | ROWS } ONLY
+    FETCH { FIRST | NEXT } [ <row count> [ PERCENT ] ] { ROW | ROWS } { ONLY | WITH TIES }
 
 <row count> ::= [ + | - ] <unsigned literal> | <parameter name> | ?
 
@@ -160,7 +160,10 @@ the order of the rows is not defined. The null value sorts as greater
 than every other value, so last ascending and first descending.
 
 OFFSET passes over the first rows, as many as its count, and FETCH FIRST
-keeps at most its count of the rows after, one if it has none. Both come
+keeps at most its count of the rows after, one if it has none. Of
+PERCENT, its count is that percent of the rows before OFFSET, rounded
+up; of WITH TIES, it keeps the peers of the last row it keeps too, the
+rows after it equal by every sort key. Both come
 after ORDER BY, and any query expression may have the three clauses: a
 subquery, a derived table, a view's query, a WITH element's query or
 body, an INSERT's query, ARRAY's query and a query in parentheses. A
@@ -204,8 +207,9 @@ parameters, is [a statement of a program too](#select-into).
    query, such a key reads grouping columns and columns functionally
    dependent on them alone. Of any other query, a key reads the result's
    columns alone.
-   A count of OFFSET or FETCH FIRST is an exact number of scale 0. A
-   recursive query of WITH RECURSIVE has no FETCH FIRST, nor does a
+   A count of OFFSET or FETCH FIRST is an exact number of scale 0, and a
+   percentage a number. WITH TIES is of a query expression with an
+   ORDER BY. A recursive query of WITH RECURSIVE has no FETCH FIRST, nor does a
    query in it that reads a query of its list.
 4. In a query with GROUP BY or a set function, a column outside a set
    function is a grouping column or functionally dependent on the
@@ -282,10 +286,10 @@ SELECT on each table and view the query names.
 | 21000 | -811 | A scalar subquery gives more than one row |
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | 2201X | -301 | An offset below 0, or null |
-| 2201W | -301 | A count of FETCH FIRST below 1, or null |
+| 2201W | -301 | A count of FETCH FIRST below 1, or null, or a percentage whose count is |
 | 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), the fraction of PERCENTILE_CONT or PERCENTILE_DISC below 0 or above 1 (22003), a window frame's offset negative or null (22013), a number of tiles of NTILE below 1 (22014), a row of NTH_VALUE below 1 (22016), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
 | 2202F | -301 | A path or a DEPTH FIRST sequence would hold more than 65,535 rows |
-| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); FETCH FIRST of PERCENT or WITH TIES; a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns |
 
 An error is placed at the construct it is about, its character position
 told.
@@ -440,13 +444,13 @@ leaves out, is the `<sort key>` of §10.10 and §7.17 SR26, Features
 E121-02 and E121-03, and of a grouped query Feature F868. ORDER BY,
 OFFSET and FETCH FIRST of any query expression are its `<order by
 clause>`, `<result offset clause>` and `<fetch first clause>` [§7.17],
-Features F850 to F865: ORDER BY in a subquery F851, in a view F852 and
+Features F850 to F867: ORDER BY in a subquery F851, in a view F852 and
 in a query in parentheses F855, FETCH FIRST at the top F857, in a
 subquery F858, in a view F859, nested F856 and of a parameter F860, and
 OFFSET at the top F861, in a subquery F862, nested F863, in a view F864
-and of a parameter F865. A count of a `?` is an extension, typed INTEGER.
-Neither PERCENT [F866] nor WITH TIES [F867] is taken. A null count
-raises the exception of a count out of range.
+and of a parameter F865, and PERCENT F866 and WITH TIES F867. A count
+of a `?` is an extension, typed INTEGER, and a percentage of one DOUBLE
+PRECISION. A null count raises the exception of a count out of range.
 
 ## SEE ALSO
 

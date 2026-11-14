@@ -11,6 +11,7 @@
 //! VALUES list has no shape a kept plan may take.
 
 use crate::index::Probe;
+use crate::logical::Limit;
 use crate::physical::Plan;
 
 /// Whether `one` and `other` have one shape, as the module says.
@@ -43,9 +44,8 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         }
         Plan::Limit { limit, input } => {
             let Plan::Limit { limit: limit2, input: input2 } = other else { return false };
-            limit.offset.is_some() == limit2.offset.is_some()
-                && limit.fetch.is_some() == limit2.fetch.is_some()
-                && same_shape(input, input2)
+            let fetch = |l: &Limit| l.fetch.as_ref().map(|f| (f.percent, f.ties.clone()));
+            limit.offset.is_some() == limit2.offset.is_some() && fetch(limit) == fetch(limit2) && same_shape(input, input2)
         }
         Plan::Append { left, right } => {
             let Plan::Append { left: left2, right: right2 } = other else { return false };

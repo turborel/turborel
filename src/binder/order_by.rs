@@ -23,7 +23,7 @@ use crate::ast::{
 };
 use crate::catalog::QualifiedName;
 use crate::error::{At, Result};
-use crate::logical::{Expr, Limit, LogicalPlan, SortKey};
+use crate::logical::{Expr, Fetch, Limit, LogicalPlan, SortKey};
 use crate::value::SortOrder;
 use crate::value::collation::CollationRef;
 
@@ -86,6 +86,10 @@ impl Ordered {
         }
         let made = exprs.len();
         let keyed = if made > width { LogicalPlan::Project { exprs, input: Box::new(input) } } else { input };
+        // [§7.17 GR7d i] Peers are of the keys the rows are sorted by.
+        if let Some(Fetch { ties: Some(peers), .. }) = self.limit.as_mut().and_then(|l| l.fetch.as_mut()) {
+            peers.clone_from(&sorted);
+        }
         let mut rows = if sorted.is_empty() { keyed } else { LogicalPlan::Sort { keys: sorted, input: Box::new(keyed) } };
         if let Some(limit) = self.limit.take() {
             rows = LogicalPlan::Limit { limit, input: Box::new(rows) };

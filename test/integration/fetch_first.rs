@@ -5,7 +5,8 @@
 //! counts of literals, parameters and `?`, refused below their least or
 //! null; a query of OFFSET or FETCH FIRST not updatable; a recursive query
 //! of ORDER BY and OFFSET, FETCH FIRST refused there; past the work area,
-//! and by batches or row by row.
+//! and by batches or row by row. PERCENT and WITH TIES are in
+//! `fetch_ties.rs`.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
@@ -16,7 +17,7 @@ use crate::common::{Counted, code, exec, expected, rows};
 
 /// Schema A: STAFF of five rows, one of no department and no salary;
 /// DEPTS of three departments, keyed.
-fn staff() -> (Database, Session) {
+pub fn staff() -> (Database, Session) {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A \
@@ -37,7 +38,7 @@ fn staff() -> (Database, Session) {
 
 /// The SQLSTATE of the error `sql` raises as it opens or its rows are
 /// read.
-fn state(a: &Session, sql: &str) -> String {
+pub fn state(a: &Session, sql: &str) -> String {
     let read = a.open_cursor(sql).and_then(|mut c| {
         while c.fetch()?.is_some() {}
         Ok(())
@@ -178,9 +179,6 @@ fn a_count_is_a_value_given_or_refused_7_17() {
     assert_eq!(state(&a, "SELECT ID FROM STAFF OFFSET -2 ROWS"), "2201X");
     assert_eq!(code(&a, "SELECT ID FROM STAFF FETCH FIRST 1.5 ROWS ONLY"), Code::SyntaxRule, "SR28");
     assert_eq!(code(&a, "SELECT ID FROM STAFF OFFSET 'A' ROWS"), Code::SyntaxRule, "SR27");
-    // PERCENT and WITH TIES are Features F866 and F867.
-    assert_eq!(code(&a, "SELECT ID FROM STAFF ORDER BY ID FETCH FIRST 10 PERCENT ROWS ONLY"), Code::Unsupported);
-    assert_eq!(code(&a, "SELECT ID FROM STAFF ORDER BY ID FETCH FIRST 1 ROW WITH TIES"), Code::Unsupported);
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 SR3j ix 3, ix 4, GR2c

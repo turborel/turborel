@@ -2,38 +2,53 @@
 //! `<result offset clause>` and `<fetch first clause>` keep of its rows,
 //! in their order.
 
-use super::{Expr, render_expr};
+use super::{Expr, SortKey, render_expr};
 use crate::value::Value;
 
 /// [ISO/IEC 9075-2:2023 §7.17 GR6, GR7] OFFSET and FETCH FIRST, each
-/// count an exact number of scale 0 over no columns, evaluated once as
-/// the rows are first read.
+/// count over no columns, evaluated once as the rows are first read.
 #[derive(Debug, Clone)]
 pub struct Limit {
-    /// The `<offset row count>`, if written: the rows passed over first
-    /// \[GR6\].
+    /// The `<offset row count>`, if written, an exact number of scale 0:
+    /// the rows passed over first \[GR6\].
     pub offset: Option<Expr>,
-    /// The `<fetch first row count>`, if a `<fetch first clause>` is
-    /// written: the most rows kept after \[GR7\].
-    pub fetch: Option<Expr>,
+    /// The `<fetch first clause>`, if written \[GR7\].
+    pub fetch: Option<Fetch>,
+}
+
+/// [ISO/IEC 9075-2:2023 §7.17 GR7] A `<fetch first clause>`: the most
+/// rows kept after OFFSET's, and of WITH TIES their peers too.
+#[derive(Debug, Clone)]
+pub struct Fetch {
+    /// Its `<fetch first row count>`, an exact number of scale 0, 1 if
+    /// none is written \[GR7b iii\]; or of `percent`, the value of its
+    /// `<fetch first percentage>`, a number.
+    pub count: Expr,
+    /// [GR7b ii] Its count is a percentage of the rows before OFFSET.
+    pub percent: bool,
+    /// [GR7d i] Of WITH TIES, the keys whose peers of the last row kept are
+    /// kept too: the keys of its rows' sort, columns of its rows, none until
+    /// that sort is made (`binder/order_by.rs`). None of ONLY.
+    pub ties: Option<Vec<SortKey>>,
 }
 
 impl Limit {
     /// Its counts.
     pub fn exprs(&self) -> impl Iterator<Item = &Expr> {
-        self.offset.iter().chain(&self.fetch)
+        self.offset.iter().chain(self.fetch.iter().map(|f| &f.count))
     }
 
     /// It, each count replaced by `f` of it.
     #[must_use]
     pub fn map_exprs(self, f: &mut dyn FnMut(Expr) -> Expr) -> Limit {
-        Limit { offset: self.offset.map(&mut *f), fetch: self.fetch.map(f) }
+        let offset = self.offset.map(&mut *f);
+        Limit { offset, fetch: self.fetch.map(|fetch| Fetch { count: f(fetch.count), ..fetch }) }
     }
 
     /// The most rows it keeps, if its FETCH FIRST count is a constant row
-    /// count.
+    /// count, of ONLY.
     pub fn most(&self) -> Option<usize> {
-        let Some(Expr::Const(Value::Exact(d))) = &self.fetch else { return None };
+        let Some(Fetch { count: Expr::Const(Value::Exact(d)), percent: false, ties: None }) = &self.fetch else { return None };
         if d.scale != 0 {
             return None;
         }
@@ -41,10 +56,24 @@ impl Limit {
     }
 
     /// It as EXPLAIN shows it: "Limit", then "offset" and "fetch" with
-    /// each count written.
+    /// each count written, "percent" after a percentage and "with ties"
+    /// after a count of WITH TIES.
     pub fn render(&self) -> String {
-        let counts = [("offset", &self.offset), ("fetch", &self.fetch)];
-        let written = counts.iter().filter_map(|(word, count)| count.as_ref().map(|e| format!(" {word} {}", render_expr(e, &[]))));
-        std::iter::once(String::from("Limit")).chain(written).collect()
+        let mut out = String::from("Limit");
+        if let Some(e) = &self.offset {
+            out.push_str(" offset ");
+            out.push_str(&render_expr(e, &[]));
+        }
+        if let Some(f) = &self.fetch {
+            out.push_str(" fetch ");
+            out.push_str(&render_expr(&f.count, &[]));
+            if f.percent {
+                out.push_str(" percent");
+            }
+            if f.ties.is_some() {
+                out.push_str(" with ties");
+            }
+        }
+        out
     }
 }
