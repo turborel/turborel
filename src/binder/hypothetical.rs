@@ -31,10 +31,12 @@ impl Binder<'_> {
     /// whose values are not aggregated but of the groups, as a select
     /// list's \[SR14\], and whose sort keys are of its rows.
     ///
+    /// Its sort keys' columns all outer references, it is the enclosing
+    /// query's [§6.9 SR6b], and is bound there.
+    ///
     /// # Errors
     ///
-    /// SQLCODE -103 if a Syntax Rule is broken; -900 if a sort key holds an
-    /// outer reference, whose enclosing query it would aggregate.
+    /// SQLCODE -103 if a Syntax Rule is broken.
     pub(super) fn hypothetical(
         &self,
         sf: &SetFunctionSpecification,
@@ -45,19 +47,14 @@ impl Binder<'_> {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] {} is no hypothetical set function", sf.name)));
         };
         syntax_rules(sf, values)?;
+        if let Some(outer) = self.outer_ordered(sf)? {
+            return Ok(outer);
+        }
         let g = match scope {
             Scope::Groups(g, _) => g,
             Scope::Rows(why) => return Err(rule(why)),
             Scope::Select => return Err(rule(NOT_AGGREGATED)),
         };
-        for k in &sf.order_by {
-            if self.is_outer_argument(&k.key)? {
-                return Err(SqlError::new(
-                    Code::Unsupported,
-                    "[ISO/IEC 9075-2:2023 §6.9 SR6b] a hypothetical set function whose sort key holds an outer reference, of the enclosing query's set functions, is not supported",
-                ));
-            }
-        }
         let rows = Scope::Rows("[ISO/IEC 9075-2:2023 §10.9 SR10a] a hypothetical set function cannot contain a set function");
         let mut parts: (Parts, Parts) = ((Vec::new(), Vec::new()), (Vec::new(), Vec::new()));
         for (v, k) in values.iter().zip(&sf.order_by) {

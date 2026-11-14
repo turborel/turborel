@@ -180,8 +180,10 @@ fn hypothetical_set_functions_past_the_work_area_10_9() {
 /// values are not aggregated, so of a grouped query they name grouping
 /// columns, and of an ungrouped one none, else SQLCODE -103 as a select
 /// list's column would be; an outer reference among them is a value of
-/// the enclosing row, as GR9's subquery has it; a sort key with an outer
-/// reference, which would aggregate the enclosing query, -900.
+/// the enclosing row, as GR9's subquery has it; sort keys whose columns
+/// are all outer references make it the enclosing query's, of its groups,
+/// its values of those groups too, and keys of a column of their own query
+/// as well keep it there, an outer reference a value of the enclosing row.
 #[test]
 fn values_are_of_the_groups_10_9() {
     let (_db, a) = ranked_rows();
@@ -192,8 +194,10 @@ fn values_are_of_the_groups_10_9() {
                    AS X (M, C)) AS Y (M, R) WHERE M = 1) FROM U";
     assert_eq!(sorted(&a, outer), sorted(&a, defined));
     assert_eq!(sorted(&a, outer), ["1,2", "2,3", "6,8"]);
-    let keyed = "SELECT X, (SELECT RANK(1) WITHIN GROUP (ORDER BY U.X) FROM T) FROM U";
-    assert_eq!(fetched(&a, keyed).map_err(|e| e.code), Err(Code::Unsupported));
+    let enclosing = "SELECT G, (SELECT RANK(G) WITHIN GROUP (ORDER BY T.V DESC) FROM U WHERE X = 1) FROM T GROUP BY G";
+    assert_eq!(sorted(&a, enclosing), sorted(&a, "SELECT G, RANK(G) WITHIN GROUP (ORDER BY V DESC) FROM T GROUP BY G"));
+    let keyed = "SELECT X, (SELECT RANK(5) WITHIN GROUP (ORDER BY V + U.X) FROM T) FROM U";
+    assert_eq!(sorted(&a, keyed), ["1,5", "2,5", "6,1"]);
 }
 
 /// The SQLCODE of the query `sql`, and whether its error cites `rule`.

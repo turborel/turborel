@@ -543,6 +543,12 @@ p is at least it. Each takes FILTER, and OVER a window of a PARTITION BY
 alone, whose every row has its partition's value, but not a window of
 an ORDER BY or a frame. Over a window p may differ from row to row.
 
+In a subquery, an inverse distribution function or hypothetical set
+function whose sort keys name only columns of an enclosing query is
+that query's, computed over its groups, and its p or values name that
+query's grouping columns. A key that names a column of the subquery too
+keeps it in the subquery, where the enclosing row's columns are values.
+
 ```sql
 SELECT DEPT, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY SALARY) AS MEDIAN,
     PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY SALARY) AS MIDDLE FROM STAFF GROUP BY DEPT ORDER BY DEPT;

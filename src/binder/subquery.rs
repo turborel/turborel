@@ -18,8 +18,8 @@ use super::set_functions::column_references;
 use super::set_operations::bind_query_expression;
 use super::{Binder, NOT_AGGREGATED, Scope, rule};
 use crate::ast::{
-    self, ColumnSpecification, Composite, Literal, SearchCondition, SelectItem, SelectList, SortSpecification, TableName, ValueExpression,
-    ValueSpecification,
+    self, ColumnSpecification, Composite, Literal, SearchCondition, SelectItem, SelectList, SetFunctionSpecification, SortSpecification,
+    TableName, ValueExpression, ValueSpecification,
 };
 use crate::error::{At, Result, SqlState};
 use crate::functions::{AggregateFunction, AggregateRef, ArrayAggregate, RowOf, ScalarRef};
@@ -79,19 +79,42 @@ pub(super) fn outer_aggregate(
     filter: Option<&SearchCondition>,
 ) -> Result<(Expr, DataType)> {
     if !outer.binder.is_outer_argument(v)? {
-        if let Scope::Select = outer.scope {
-            outer.binder.aggregated.set(true);
-            return Err(rule(format!("[ISO/IEC 9075:1992 §7.9 SR7] {NOT_AGGREGATED}")));
-        }
-        if let Scope::Rows(_) = outer.scope {
-            return Err(rule(
-                "[ISO/IEC 9075:1992 §6.5 SR5; X3.135-1986 §5.8 SR5, §5.21 SR3] a set function over an outer reference is allowed only in the select list of the query of its column, or in a <subquery> of its <having clause>",
-            ));
-        }
+        aggregated_there(outer)?;
     }
     let (e, t) = outer.binder.aggregate(func, (Some(v), distinct), filter, outer.scope)?;
     let label = outer_label(&e, outer.scope);
     Ok((capture(outer, e, label), t))
+}
+
+/// [ISO/IEC 9075-2:2023 §6.9 SR6b, SR7, §10.9 SR14] The ordered set
+/// function `sf` whose sort keys' columns, its aggregated column
+/// references, are all outer references: of the query they are of, whose
+/// groups its values or fraction are of too, bound there and its value
+/// filling a slot here.
+pub(super) fn outer_ordered(outer: &Outer<'_>, sf: &SetFunctionSpecification) -> Result<(Expr, DataType)> {
+    if !outer.binder.keys_outer(sf)? {
+        aggregated_there(outer)?;
+    }
+    let (e, t) = outer.binder.set_function(sf, outer.scope)?;
+    let label = outer_label(&e, outer.scope);
+    Ok((capture(outer, e, label), t))
+}
+
+/// [ISO/IEC 9075:1992 §6.5 SR5, §7.9 SR7] That a set function the
+/// enclosing query of `outer` aggregates is where that query may have
+/// one: its select list, which it makes aggregated if it is not grouped,
+/// or a subquery of its HAVING clause.
+fn aggregated_there(outer: &Outer<'_>) -> Result<()> {
+    if let Scope::Select = outer.scope {
+        outer.binder.aggregated.set(true);
+        return Err(rule(format!("[ISO/IEC 9075:1992 §7.9 SR7] {NOT_AGGREGATED}")));
+    }
+    if let Scope::Rows(_) = outer.scope {
+        return Err(rule(
+            "[ISO/IEC 9075:1992 §6.5 SR5; X3.135-1986 §5.8 SR5, §5.21 SR3] a set function over an outer reference is allowed only in the select list of the query of its column, or in a <subquery> of its <having clause>",
+        ));
+    }
+    Ok(())
 }
 
 /// [ISO/IEC 9075-2:2023 §6.9 SR3, SR6b] GROUPING of `args`, each an outer
@@ -187,6 +210,34 @@ impl Binder<'_> {
         };
         let (e, t) = outer.binder.column_expr(cs, outer.scope)?;
         Ok((capture(outer, e, written(cs)), t))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.9 SR6b] Whether the ordered set function
+    /// `sf` is an enclosing query's: its sort keys have a column reference,
+    /// and each is an outer reference.
+    pub(super) fn keys_outer(&self, sf: &SetFunctionSpecification) -> Result<bool> {
+        let mut columns = Vec::new();
+        sf.order_by.iter().for_each(|k| column_references(&k.key, &mut columns));
+        if columns.is_empty() {
+            return Ok(false);
+        }
+        for r in columns {
+            if self.is_local(r)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The ordered set function `sf`, if it is an enclosing query's
+    /// (`keys_outer`): bound there, its filter of no column. None if not.
+    pub(super) fn outer_ordered(&self, sf: &SetFunctionSpecification) -> Result<Option<(Expr, DataType)>> {
+        let Some(outer) = self.outer else { return Ok(None) };
+        if !self.keys_outer(sf)? {
+            return Ok(None);
+        }
+        self.outer_filter(sf.filter.as_deref())?;
+        outer_ordered(outer, sf).map(Some)
     }
 
     /// Whether the argument `v` of a set function has an outer reference: a

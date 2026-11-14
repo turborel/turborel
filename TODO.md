@@ -33,10 +33,6 @@ each group.
 
 ### Queries
 
-- A hypothetical set function or inverse distribution function whose
-  sort key holds an outer reference [§10.9 SR14, §6.9 SR6]. It is the
-  enclosing query's, its values or fraction over that query's rows,
-  which the outer set functions of `binder/subquery.rs` would carry.
 - Framed COUNT DISTINCT (T627) [§9.23 SR8d]. A moving frame's distinct
   values counted within the work area, which a spilled count of each
   value would allow.

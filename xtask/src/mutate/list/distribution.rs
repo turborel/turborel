@@ -2,7 +2,10 @@
 //! R-TEST-9): ROW0 and ROW1 swapped, PERCENTILE_DISC a row late, the
 //! key's direction ignored, nulls kept by a grouping and by a window, a
 //! fraction out of range taken, the empty group's fraction not looked at,
-//! the fraction aggregated, and SR8d's window ordering taken.
+//! the fraction aggregated, SR8d's window ordering taken; and of both
+//! ordered set functions, one of outer sort keys kept by its own query,
+//! one of a local key too given to the enclosing query, and the
+//! enclosing query's place for it not looked at.
 
 use super::{Mutation, Package};
 
@@ -14,10 +17,14 @@ const FRACTIONS: &str = "distribution::nulls_empty_groups_and_fractions_10_9";
 const REFUSED: &str = "distribution::inverse_distribution_functions_misused_are_refused_10_9";
 /// The test over a window's partition.
 const PARTITIONED: &str = "distribution::over_a_partition_10_9";
+/// The test of an inverse distribution function of an enclosing query.
+const ENCLOSING: &str = "distribution::of_an_enclosing_query_6_9";
+/// The test of a hypothetical set function's values and keys.
+const HYPOTHETICAL_VALUES: &str = "hypothetical::values_are_of_the_groups_10_9";
 
 /// The mutations of the inverse distribution functions, in the order they
 /// run.
-pub const DISTRIBUTION: [Mutation; 9] = [
+pub const DISTRIBUTION: [Mutation; 12] = [
     Mutation {
         name: "cont-rows-swapped",
         package: Package::Core,
@@ -106,6 +113,36 @@ pub const DISTRIBUTION: [Mutation; 9] = [
         original: "    if sf.name == LISTAGG || matches!(sf.arg, SetArg::Fraction(_)) {",
         replacement: "    if sf.name == LISTAGG {",
         integration: &[REFUSED],
+        unit: &[],
+    },
+    Mutation {
+        name: "ordered-outer-keys-kept",
+        package: Package::Core,
+        breaks: "an ordered set function whose sort keys' columns are all outer references is aggregated by its own query, not the enclosing one [§6.9 SR6b]",
+        file: "src/binder/subquery.rs",
+        original: "        if !self.keys_outer(sf)? {",
+        replacement: "        if true || !self.keys_outer(sf)? {",
+        integration: &[ENCLOSING, HYPOTHETICAL_VALUES],
+        unit: &[],
+    },
+    Mutation {
+        name: "ordered-local-key-given-out",
+        package: Package::Core,
+        breaks: "an ordered set function of a sort key of a column of its own query as well as an outer reference is given to the enclosing query [§6.9 SR6b]",
+        file: "src/binder/subquery.rs",
+        original: "            if self.is_local(r)? {\n                return Ok(false);",
+        replacement: "            if self.is_local(r)? && false {\n                return Ok(false);",
+        integration: &[ENCLOSING, HYPOTHETICAL_VALUES],
+        unit: &[],
+    },
+    Mutation {
+        name: "ordered-outer-place-unchecked",
+        package: Package::Core,
+        breaks: "an enclosing query's ordered set function is taken where that query has no set function, or leaves it ungrouped [§6.9 SR7]",
+        file: "src/binder/subquery.rs",
+        original: "    if !outer.binder.keys_outer(sf)? {",
+        replacement: "    if false && !outer.binder.keys_outer(sf)? {",
+        integration: &[ENCLOSING],
         unit: &[],
     },
 ];

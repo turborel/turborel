@@ -264,8 +264,7 @@ fn refused(a: &Session, sql: &str, rule: &str) -> (Code, bool) {
 /// fraction or key, of a nested window function, of a key neither numeric
 /// nor an interval, of a fraction not numeric, of a fraction aggregated,
 /// or over a window of an ordering or a frame, is SQLCODE -103, citing its
-/// rule; a sort key of an outer reference, which would aggregate the
-/// enclosing query, -900.
+/// rule.
 #[test]
 fn inverse_distribution_functions_misused_are_refused_10_9() {
     let (_db, a) = distributed_rows();
@@ -286,8 +285,37 @@ fn inverse_distribution_functions_misused_are_refused_10_9() {
     ] {
         assert_eq!(refused(&a, sql, rule), (Code::SyntaxRule, true), "{sql}");
     }
-    let keyed = "SELECT X, (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY U.X) FROM T) FROM U";
-    assert_eq!(fetched(&a, keyed).map_err(|e| e.code), Err(Code::Unsupported));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.9 SR6, SR7, §10.9 SR14,
+/// GR10] an inverse distribution function whose sort key's columns are
+/// all outer references is the enclosing query's: of its groups, its
+/// fraction of them, or making an ungrouped query aggregated, nested two
+/// deep too, in its select list or a subquery of its HAVING, else SQLCODE
+/// -103, as is a fraction of a column of the subquery or a filter of a
+/// column. A key of a column of its own query too keeps it there, the
+/// outer reference a value of the enclosing row.
+#[test]
+fn of_an_enclosing_query_6_9() {
+    let (_db, a) = distributed_rows();
+    let enclosing = "SELECT G, (SELECT PERCENTILE_CONT(G / 4.0) WITHIN GROUP (ORDER BY T.V DESC) FROM U WHERE X = 1), \
+                     (SELECT (SELECT PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY T.V) FROM U AS U2 WHERE U2.X = 1) FROM U WHERE X = 1) \
+                     FROM T GROUP BY G";
+    let grouped = "SELECT G, PERCENTILE_CONT(G / 4.0) WITHIN GROUP (ORDER BY V DESC), PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY V) \
+                   FROM T GROUP BY G";
+    assert_eq!(sorted(&a, enclosing), sorted(&a, grouped));
+    assert_eq!(sorted(&a, "SELECT (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY T.V) FROM U WHERE X = 1) FROM T"), ["3.5E0"]);
+    let having = "SELECT G FROM T GROUP BY G HAVING 2 < (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY T.V) FROM U WHERE X = 1)";
+    assert_eq!(sorted(&a, having), ["2", "4"]);
+    for sql in [
+        "SELECT G FROM T WHERE V < (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY T.V) FROM U WHERE X = 1)",
+        "SELECT G, (SELECT PERCENTILE_CONT(X / 4.0) WITHIN GROUP (ORDER BY T.V) FROM U WHERE X = 1) FROM T GROUP BY G",
+        "SELECT G, (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY T.V) FILTER (WHERE X = 1) FROM U WHERE X = 1) FROM T GROUP BY G",
+    ] {
+        assert_eq!(fetched(&a, sql).map_err(|e| e.code), Err(Code::SyntaxRule), "{sql}");
+    }
+    let keyed = "SELECT X, (SELECT PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY V * U.X) FROM T) FROM U";
+    assert_eq!(sorted(&a, keyed), ["1,3E0", "2,6E0", "4,1.2E1"]);
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §5.2, §10.9] PERCENTILE_CONT

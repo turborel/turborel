@@ -222,13 +222,16 @@ parameters, is [a statement of a program too](#select-into).
 11. A hypothetical set function has as many values as sort keys, each
     value and its key of compatible types, and holds no set function,
     subquery, window function or nested window function. Its values
-    name only grouping columns of their query and outer references, and
-    its sort keys no outer reference. It is followed by no OVER.
+    name only grouping columns of their query and outer references. One
+    whose sort keys' columns are all outer references is the query's of
+    those columns, and is where that query may have a set function. It
+    is followed by no OVER.
 12. An inverse distribution function has one sort key, a number or an
     interval, and its fraction is a number. It holds no set function,
     subquery, window function or nested window function. Its fraction
-    names only grouping columns of its query and outer references, and
-    its sort key no outer reference. Its window has no ORDER BY and no
+    names only grouping columns of its query and outer references. One
+    whose sort key's columns are all outer references is the query's of
+    those columns, as rule 11 says. Its window has no ORDER BY and no
     frame.
 
 ## PRIVILEGES
@@ -245,7 +248,7 @@ SELECT on each table and view the query names.
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), the fraction of PERCENTILE_CONT or PERCENTILE_DISC below 0 or above 1 (22003), a window frame's offset negative or null (22013), a number of tiles of NTILE below 1 (22014), a row of NTH_VALUE below 1 (22016), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
 | 2202F | -301 | A path or a DEPTH FIRST sequence would hold more than 65,535 rows |
-| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns; COUNT(DISTINCT ...) over a window of an ordering or a frame, Feature T627; a hypothetical set function or inverse distribution function whose sort key holds an outer reference |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns; COUNT(DISTINCT ...) over a window of an ordering or a frame, Feature T627 |
 
 An error is placed at the construct it is about, its character position
 told.

@@ -23,12 +23,13 @@ impl Binder<'_> {
     /// distribution function `sf` of the fraction `fraction`, in `scope`:
     /// of the groups, its sort key of their rows and its fraction not
     /// aggregated but of the groups, as a select list's \[SR14\]; or, of
-    /// a window function, both of the window's rows.
+    /// a window function, both of the window's rows. Its sort key's columns
+    /// all outer references, it is the enclosing query's [§6.9 SR6b], and
+    /// is bound there.
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if a Syntax Rule is broken; -900 if the sort key holds
-    /// an outer reference, whose enclosing query it would aggregate.
+    /// SQLCODE -103 if a Syntax Rule is broken.
     pub(super) fn inverse_distribution(
         &self,
         sf: &SetFunctionSpecification,
@@ -39,17 +40,14 @@ impl Binder<'_> {
         if self.windowed_next() {
             return self.window_taken(|| self.distribution_call(sf, fraction, (scope, scope)));
         }
+        if let Some(outer) = self.outer_ordered(sf)? {
+            return Ok(outer);
+        }
         let g = match scope {
             Scope::Groups(g, _) => g,
             Scope::Rows(why) => return Err(rule(why)),
             Scope::Select => return Err(rule(NOT_AGGREGATED)),
         };
-        if sf.order_by.iter().try_fold(false, |outer, k| Ok::<_, SqlError>(outer || self.is_outer_argument(&k.key)?))? {
-            return Err(SqlError::new(
-                Code::Unsupported,
-                "[ISO/IEC 9075-2:2023 §6.9 SR6b] an inverse distribution function whose sort key holds an outer reference, of the enclosing query's set functions, is not supported",
-            ));
-        }
         // [SR14] the fraction, a non-aggregated argument, of the groups.
         self.fraction(sf.name, fraction, scope)?;
         let call = self.unnested(|| self.distribution_call(sf, fraction, (Scope::Rows(CONTAINED), Scope::Rows(CONTAINED))))?;
