@@ -24,7 +24,7 @@ pub use expr::{
     map_expr_columns, or_all, split_and,
 };
 pub use fixpoint::Fixpoint;
-pub use limit::{Fetch, Limit};
+pub use limit::{Fetch, Limit, Most};
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};

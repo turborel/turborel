@@ -157,9 +157,9 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
 ///
 /// As `batches`.
 fn ordered_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
-    if let Plan::SeqScan { table, columns, order, backward, .. } = &plan {
+    if let Plan::SeqScan { table, columns, order, backward, most, .. } = &plan {
         let storage = Arc::clone(db.storage_of(table)?);
-        if let Some(batches) = storage.scan_ordered_batches(tx, columns, (order, *backward), None) {
+        if let Some(batches) = storage.scan_ordered_batches(tx, columns, (order, *backward, *most), None) {
             return Ok(Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None)))));
         }
     }

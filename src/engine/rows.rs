@@ -90,7 +90,7 @@ use crate::memory::Host;
 use crate::settings::Configurable;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Near, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
+use crate::storage::{Condition, Conjunction, Near, Newest, Row, RowId, Rows, ScanOrder, StorageEngine, TableStorage};
 use crate::sync::{lock_builtin, write};
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 use crate::value::DataType;
@@ -374,16 +374,11 @@ impl TableStorage for RowTable {
     }
 
     /// Of the column store, its groups' rows and the tree's merged in the
-    /// order of `keys`, or backward (`rows/frozen/ordered.rs`).
-    fn scan_ordered(
-        self: Arc<Self>,
-        tx: TxId,
-        columns: &[usize],
-        (keys, backward): (&[usize], bool),
-        conditions: Option<&Conjunction>,
-    ) -> Option<Rows> {
-        (!keys.is_empty() && self.ordered_by().starts_with(keys))
-            .then(|| self.scan_ordered_of(tx, (columns, (keys, backward)), conditions.cloned()))
+    /// order of `keys`, or backward, of the first `most` alone if only those
+    /// are asked for (`rows/frozen/ordered.rs`).
+    fn scan_ordered(self: Arc<Self>, tx: TxId, columns: &[usize], order: ScanOrder<'_>, conditions: Option<&Conjunction>) -> Option<Rows> {
+        (!order.0.is_empty() && self.ordered_by().starts_with(order.0))
+            .then(|| self.scan_ordered_of(tx, (columns, order), conditions.cloned()))
     }
 
     /// Of the column store, merged by batch, of `columns` alone, no row
@@ -392,11 +387,11 @@ impl TableStorage for RowTable {
         self: Arc<Self>,
         tx: TxId,
         columns: &[usize],
-        (keys, backward): (&[usize], bool),
+        order: ScanOrder<'_>,
         conditions: Option<&Conjunction>,
     ) -> Option<crate::storage::Batches> {
-        (!keys.is_empty() && self.ordered_by().starts_with(keys))
-            .then(|| self.scan_ordered_batches_of(tx, (columns, (keys, backward)), conditions.cloned()))
+        (!order.0.is_empty() && self.ordered_by().starts_with(order.0))
+            .then(|| self.scan_ordered_batches_of(tx, (columns, order), conditions.cloned()))
     }
 
     fn row_count(&self) -> usize {

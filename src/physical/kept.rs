@@ -189,7 +189,7 @@ pub(crate) fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
             Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(filled_plan(*input, values)?) })
         }
         Plan::Distinct { input } => Ok(Plan::Distinct { input: Box::new(filled_plan(*input, values)?) }),
-        Plan::Sort { keys, detail, input } => Ok(Plan::Sort { keys, detail, input: Box::new(filled_plan(*input, values)?) }),
+        Plan::Sort { keys, detail, input, most } => Ok(Plan::Sort { keys, detail, input: Box::new(filled_plan(*input, values)?), most }),
         Plan::Limit { limit, input } => {
             let offset = limit.offset.map(|e| filled_expr(e, values)).transpose()?;
             let fetch = limit.fetch.map(|f| Ok::<_, SqlError>(Fetch { count: filled_expr(f.count, values)?, ..f })).transpose()?;
@@ -388,9 +388,10 @@ mod tests {
         assert!(!keepable(&scan("J", Probe::Compare { op: CompOp::Eq, value: int(1) }, Vec::new()), &st), "collated");
         assert!(!keepable(&scan("I", Probe::Prefix { equal: vec![int(1)], then: None }, Vec::new()), &st), "a prefix of the key");
         assert!(!keepable(&scan("I", Probe::All, Vec::new()), &st), "every key");
-        let seq = Plan::SeqScan { table: table(), columns: vec![0], rows: 0, cost: 0.0_f64, order: Vec::new(), backward: false };
+        let seq =
+            Plan::SeqScan { table: table(), columns: vec![0], rows: 0, cost: 0.0_f64, order: Vec::new(), backward: false, most: None };
         assert!(!keepable(&seq, &st));
-        let sorted = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(scan("I", whole(), Vec::new())) };
+        let sorted = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(scan("I", whole(), Vec::new())), most: None };
         assert!(!keepable(&sorted, &st));
         assert!(!keepable(&scan("X", whole(), Vec::new()), &st), "no such index");
     }
@@ -472,7 +473,7 @@ mod tests {
         let low_of_prefix =
             scan("I", Probe::Prefix { equal: vec![int(1)], then: None }, vec![ProbeSlot { place: Place::Low, slot: slot(0) }]);
         assert_eq!(filled_plan(low_of_prefix, &[int(1)]).unwrap_err().code, Code::Api, "a bound of no range");
-        let sorted = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(scan("I", Probe::All, Vec::new())) };
+        let sorted = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(scan("I", Probe::All, Vec::new())), most: None };
         assert!(filled_plan(Plan::Distinct { input: Box::new(sorted) }, &[]).is_ok());
         let other = Plan::Product { left: Box::new(scan("I", Probe::All, Vec::new())), right: Box::new(scan("I", Probe::All, Vec::new())) };
         assert_eq!(filled_plan(other, &[]).unwrap_err().code, Code::Api);

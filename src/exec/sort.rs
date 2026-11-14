@@ -9,11 +9,13 @@
 //! their first key, where it has one (`sort/prefix.rs`). The runs read back
 //! look for a cancel of the statement (RULES.md D44). A stream's batches are
 //! sorted as they are, no row made but to be given or written
-//! (`sort/vectors.rs`, RULES.md D31).
+//! (`sort/vectors.rs`, RULES.md D31). A sort of which only the first rows
+//! are asked for holds about those alone (`sort/top.rs`).
 
 mod chunk;
 mod merge;
 mod prefix;
+mod top;
 mod vectors;
 
 pub(super) use vectors::sort_batches;
@@ -25,7 +27,7 @@ use super::work::Work;
 use super::{RowIter, broken, failed};
 use crate::db::State;
 use crate::error::Result;
-use crate::logical::SortKey;
+use crate::logical::{Most, SortKey};
 use crate::spill::{SpillRun, row_bytes};
 use crate::storage::Row;
 use crate::txn::TxId;
@@ -38,6 +40,17 @@ use vectors::written_rows;
 #[inline(never)]
 pub(super) fn sort(keys: &[SortKey], input: RowIter, db: &State, tx: TxId) -> RowIter {
     match sorted(keys, input, &mut Work::of(db, tx)) {
+        Ok(rows) => rows,
+        Err(e) => failed(e),
+    }
+}
+
+/// The first `most` rows of `input` sorted by `keys`, and of WITH TIES the
+/// peers of the last, in a work area of `db`, for the statement of `tx`
+/// (`sort/top.rs`).
+#[inline(never)]
+pub(super) fn first(keys: &[SortKey], input: RowIter, most: Most, db: &State, tx: TxId) -> RowIter {
+    match top::top(keys, input, most, &mut Work::of(db, tx)) {
         Ok(rows) => rows,
         Err(e) => failed(e),
     }

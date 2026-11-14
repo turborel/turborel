@@ -36,7 +36,7 @@ fn kept_of(limit: &Limit, values: &[i128]) -> std::result::Result<Vec<i128>, Str
 /// `kept_of`, a percentage's rows held in `space`.
 fn kept_in(limit: &Limit, values: &[i128], space: ListSpace) -> std::result::Result<Vec<i128>, String> {
     let state = |e: SqlError| e.sqlstate().as_str().to_owned();
-    let limited = kept(limit, &NoSubqueries, rows(values), space).map_err(state)?;
+    let limited = kept(limit, &NoSubqueries, (|_| rows(values), false), space).map_err(state)?;
     limited.map(|r| r.as_ref().map(number).map_err(Clone::clone)).collect::<Result<Vec<_>>>().map_err(state)
 }
 
@@ -144,11 +144,59 @@ fn a_percentages_rows_spill_past_their_space_7_17() {
 fn an_error_passes_on_and_no_row_past_is_read() {
     let failing: RowIter =
         Box::new([Ok(vec![Value::Null]), Err(SqlError::new(Code::Data, "x")), Ok(vec![Value::Null]), Ok(vec![Value::Null])].into_iter());
-    let got: Vec<bool> = Limited { rows: failing, skip: 1, left: Some(2), ties: None }.map(|r| r.is_ok()).collect();
+    let got: Vec<bool> = Limited { rows: failing, skip: 1, left: Some(2), ties: None, drain: false }.map(|r| r.is_ok()).collect();
     assert_eq!(got, vec![false, true, true]);
     let endless: RowIter = Box::new(std::iter::repeat_with(|| Ok(vec![Value::Null])));
-    assert_eq!(Limited { rows: endless, skip: 3, left: Some(2), ties: None }.count(), 2);
+    assert_eq!(Limited { rows: endless, skip: 3, left: Some(2), ties: None, drain: false }.count(), 2);
     let grouped: RowIter = Box::new((0..).map(|i: i128| Ok(vec![Value::Exact(Decimal::new(i.div_euclid(3), 0))])));
     let ties = Some(Ties { keys: vec![SortKey::ascending(0)], last: None });
-    assert_eq!(Limited { rows: grouped, skip: 0, left: Some(4), ties }.count(), 6, "the peers of 1, then no more read");
+    assert_eq!(Limited { rows: grouped, skip: 0, left: Some(4), ties, drain: false }.count(), 6, "the peers of 1, then no more read");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 GR6, GR7; ISO/IEC 9075:1992
+/// §3.3.4.4] of an input that can raise an exception, the rows past those
+/// kept are read, and the first error among them given after them; of one
+/// that cannot, none is.
+#[test]
+fn an_input_that_can_raise_is_read_to_its_end_7_17() {
+    let failing = || -> RowIter {
+        let made: Vec<Result<Row>> =
+            (0_i32..5_i32).map(|i| if i == 3_i32 { Err(SqlError::new(Code::Data, "x")) } else { Ok(vec![Value::Null]) }).collect();
+        Box::new(made.into_iter())
+    };
+    let drained: Vec<bool> = Limited { rows: failing(), skip: 0, left: Some(2), ties: None, drain: true }.map(|r| r.is_ok()).collect();
+    assert_eq!(drained, vec![true, true, false]);
+    let stopped: Vec<bool> = Limited { rows: failing(), skip: 0, left: Some(2), ties: None, drain: false }.map(|r| r.is_ok()).collect();
+    assert_eq!(stopped, vec![true, true]);
+}
+
+/// Verifies: [DESIGN] the input is told how many of its first rows are asked
+/// for: OFFSET's and FETCH FIRST's counts, of WITH TIES so; none of OFFSET
+/// alone, of a percentage, or of counts past `usize::MAX`.
+#[test]
+fn the_input_is_told_the_rows_asked_for() {
+    let told = |limit: &Limit| {
+        let asked = std::cell::Cell::new(None);
+        let _kept = kept(
+            limit,
+            &NoSubqueries,
+            (
+                |most| {
+                    asked.set(Some(most));
+                    rows(&upto(3))
+                },
+                false,
+            ),
+            ListSpace::default(),
+        )
+        .unwrap();
+        asked.get().flatten()
+    };
+    let limit = |offset: Option<i128>, f: Option<Fetch>| Limit { offset: offset.map(int), fetch: f };
+    assert_eq!(told(&limit(Some(2), Some(fetch(int(3), false)))), Some(Most { rows: 5, ties: false }));
+    assert_eq!(told(&limit(None, Some(tied(int(1), false)))), Some(Most { rows: 1, ties: true }));
+    assert_eq!(told(&limit(Some(2), None)), None);
+    assert_eq!(told(&limit(None, Some(fetch(int(50), true)))), None);
+    let past = i128::from(u64::MAX) * 4;
+    assert_eq!(told(&limit(Some(past), Some(fetch(int(past), false)))), None);
 }

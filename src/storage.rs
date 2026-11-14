@@ -34,7 +34,7 @@ pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
-pub use rows::{Near, Row, RowId, Rows, project};
+pub use rows::{Near, Row, RowId, Rows, ScanOrder, project};
 
 use std::sync::Arc;
 
@@ -166,16 +166,17 @@ pub trait TableStorage: Send + Sync {
     /// `conditions`, in the order of the columns `keys`, the first of
     /// `ordered_by`, each ascending as ORDER BY sorts it [X3.135-1986 §8.3
     /// GR3b], or each descending if `backward`, nulls as it puts them, ties
-    /// in no particular order; none if it cannot give them so. Default:
-    /// none.
+    /// in no particular order; none if it cannot give them so. Of `most`,
+    /// no more than the first `most` rows are read, so it may leave out any
+    /// after them, as FETCH FIRST asks (`exec/limit.rs`). Default: none.
     fn scan_ordered(
         self: Arc<Self>,
         tx: TxId,
         columns: &[usize],
-        (keys, backward): (&[usize], bool),
+        (keys, backward, most): ScanOrder<'_>,
         conditions: Option<&Conjunction>,
     ) -> Option<Rows> {
-        let _ = (tx, columns, keys, backward, conditions);
+        let _ = (tx, columns, keys, backward, most, conditions);
         None
     }
     /// \[DESIGN\] The rows `scan_ordered` gives, by batch, of `columns`;
@@ -184,10 +185,10 @@ pub trait TableStorage: Send + Sync {
         self: Arc<Self>,
         tx: TxId,
         columns: &[usize],
-        (keys, backward): (&[usize], bool),
+        order: ScanOrder<'_>,
         conditions: Option<&Conjunction>,
     ) -> Option<Batches> {
-        self.scan_ordered(tx, columns, (keys, backward), conditions).map(|rows| batches_of(rows, columns))
+        self.scan_ordered(tx, columns, order, conditions).map(|rows| batches_of(rows, columns))
     }
     /// \[DESIGN\] Whether `scan_batches` gives its rows without making each,
     /// so a statement given rows a few at a time, a cursor's, reads them by

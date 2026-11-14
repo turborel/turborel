@@ -36,8 +36,8 @@ use crate::db::State;
 use crate::exec::WorkRows;
 use crate::index::Probe;
 use crate::logical::{
-    AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, OuterJoin, SetOp, SortKey, Unnest, Window, column_name, judged_by_sets, render_cond,
-    render_expr, render_keys, split_and,
+    AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, SetOp, SortKey, Unnest, Window, column_name, judged_by_sets,
+    render_cond, render_expr, render_keys, split_and,
 };
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -81,6 +81,9 @@ pub enum Plan {
         order: Vec<usize>,
         /// Read in that order backward: each column descending.
         backward: bool,
+        /// Of its first rows in that order alone asked for, how many
+        /// (`exec/limit.rs`).
+        most: Option<usize>,
     },
     /// The rows of a table an index finds for a probe, in index order.
     IndexScan {
@@ -281,6 +284,8 @@ pub enum Plan {
         detail: String,
         /// The rows sorted.
         input: Box<Plan>,
+        /// Of its first rows alone asked for, how many (`exec/limit.rs`).
+        most: Option<Most>,
     },
     /// [ISO/IEC 9075-2:2023 §7.17 GR6, GR7] The rows of `input` `limit`
     /// keeps, in its order (`exec/limit.rs`).
@@ -461,7 +466,7 @@ impl<'a> PhysicalPlanner<'a> {
             b.plan
         } else {
             let sorting = self.described(&w.input, |names| render_keys(&keys, names));
-            Plan::Sort { keys: keys.clone(), detail: sorting, input: Box::new(b.plan) }
+            Plan::Sort { keys: keys.clone(), detail: sorting, input: Box::new(b.plan), most: None }
         };
         let window = Box::new(w.with_input(|_| ()).over(input));
         Built { plan: Plan::Window { window, detail }, ordered: !want.is_empty() && keys.starts_with(want) }
@@ -551,7 +556,7 @@ impl<'a> PhysicalPlanner<'a> {
             return Built::unordered(b.plan);
         }
         let detail = self.described(input, |names| render_keys(keys, names));
-        Built::unordered(Plan::Sort { keys: keys.to_vec(), detail, input: Box::new(b.plan) })
+        Built::unordered(Plan::Sort { keys: keys.to_vec(), detail, input: Box::new(b.plan), most: None })
     }
 }
 

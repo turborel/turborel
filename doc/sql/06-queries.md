@@ -845,6 +845,15 @@ A view or a cursor of OFFSET or FETCH FIRST is not updatable, though one
 of ORDER BY alone is. A recursive query has no FETCH FIRST, nor does a
 query in one that reads it.
 
+A sort of which FETCH FIRST keeps only the first rows holds only those
+as it reads, with OFFSET's and the peers of WITH TIES, so ORDER BY with
+FETCH FIRST 10 ROWS ONLY over a large table needs little memory. A table
+of the column store read in its COLUMNSTORE.ORDER order sorts no more
+than those first rows of the parts of it not yet sorted. No row past
+those kept is read, unless computing one can raise an exception, as a
+division by zero does. Then every row is read, and the exception is
+raised as it would be if every row were kept.
+
 ```sql
 SELECT NAME FROM STAFF FETCH FIRST 0 ROWS ONLY;
 SELECT NAME FROM STAFF OFFSET 1.5 ROWS;

@@ -77,3 +77,15 @@ impl Limit {
         out
     }
 }
+
+/// \[DESIGN\] Of a sort, or a scan in an order, the most rows of it read
+/// that are asked for, the first in its order, as FETCH FIRST and OFFSET
+/// ask, and of WITH TIES the peers of the last of them too
+/// (`exec/limit.rs`): given it as it runs, none as planned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Most {
+    /// How many rows are asked for.
+    pub rows: usize,
+    /// The peers of the last are asked for too.
+    pub ties: bool,
+}

@@ -168,7 +168,10 @@ after ORDER BY, and any query expression may have the three clauses: a
 subquery, a derived table, a view's query, a WITH element's query or
 body, an INSERT's query, ARRAY's query and a query in parentheses. A
 count is read once, as the rows are first asked for
-([OFFSET and FETCH FIRST](../06-queries.md#offset-and-fetch-first)).
+([OFFSET and FETCH FIRST](../06-queries.md#offset-and-fetch-first)). A
+sort of which only the first rows are kept holds only those, and no row
+past them is read unless computing one can raise an exception, whose
+rows are all read so it is raised.
 
 WITH names queries for the query after it, each read where its name is
 written as a table is, and by each query after it in the list. WITH

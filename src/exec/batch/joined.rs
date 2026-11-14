@@ -298,7 +298,15 @@ mod tests {
     fn rows_asked_for_in_an_order() {
         let scan = || {
             let table = QualifiedName { auth: "A".into(), ident: "T".into() };
-            Box::new(Plan::SeqScan { table, columns: Vec::new(), rows: 0_usize, cost: 0.0_f64, order: Vec::new(), backward: false })
+            Box::new(Plan::SeqScan {
+                table,
+                columns: Vec::new(),
+                rows: 0_usize,
+                cost: 0.0_f64,
+                order: Vec::new(),
+                backward: false,
+                most: None,
+            })
         };
         let values = || Box::new(Plan::Values { rows: Vec::new(), detail: String::new() });
         assert!(!in_order(&scan()));

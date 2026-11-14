@@ -101,6 +101,7 @@ impl PhysicalPlanner<'_> {
                 cost: 0.0_f64,
                 order: Vec::new(),
                 backward: false,
+                most: None,
             };
             let cost = self.db.cost();
             let with =
@@ -115,7 +116,7 @@ impl PhysicalPlanner<'_> {
             None => {
                 let order = best.order;
                 let (columns, backward) = (read.needed.to_vec(), best.reverse);
-                let plan = Plan::SeqScan { table: read.table.clone(), columns, rows, cost: best.cost, order, backward };
+                let plan = Plan::SeqScan { table: read.table.clone(), columns, rows, cost: best.cost, order, backward, most: None };
                 (plan, (cost_of(rows), best.est))
             }
             Some(mut probed) => {

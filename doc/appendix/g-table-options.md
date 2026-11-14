@@ -100,7 +100,9 @@ ORDER BY S, G of an option naming S and G, reads the rows in that order
 as it scans them, merging the groups', and needs no sort; so does one
 by them each descending, ORDER BY S DESC or ORDER BY S DESC, G DESC,
 reading them in that order backward. One mixing the two, ORDER BY S
-DESC, G, is sorted. A column the
+DESC, G, is sorted. Of FETCH FIRST, such a query sorts no more than the
+first rows it asks for of the rows not yet frozen and of each group
+frozen before the option was set. A column the
 option names is not dropped until it names it no more; each is named as
 an identifier is, a regular one in any case, a delimited one in double
 quotes.

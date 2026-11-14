@@ -103,6 +103,7 @@ mod expressions;
 mod extension_types;
 mod failures;
 mod faults;
+mod fetch_bounded;
 mod fetch_first;
 mod fetch_ties;
 mod file_manager;

@@ -159,6 +159,7 @@ mod tests {
             keys: vec![SortKey::new(0, SortOrder::of(descending, None))],
             detail: String::new(),
             input: Box::new(scan("I", Probe::All, false)),
+            most: None,
         };
         assert!(same_shape(&sorted(false), &sorted(false)));
         assert!(!same_shape(&sorted(false), &sorted(true)), "another order");

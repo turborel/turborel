@@ -43,3 +43,9 @@ pub struct Near {
 /// The iterator owns what it reads, so it can be kept between calls, and
 /// moved to another thread with the cursor reading it.
 pub type Rows = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
+
+/// \[DESIGN\] The order an ordered scan gives its rows in: the columns
+/// sorted by, by their places, whether backward, and the most of its
+/// first rows asked for, if FETCH FIRST asks only those
+/// (`TableStorage::scan_ordered`).
+pub type ScanOrder<'a> = (&'a [usize], bool, Option<usize>);

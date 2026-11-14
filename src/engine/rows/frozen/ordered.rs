@@ -9,7 +9,9 @@
 //! keys. The merge gives rows, or batches of the columns asked for alone,
 //! so a statement read by batches makes no row (`scan_ordered_batches`). A
 //! group not sorted by them, one frozen before COLUMNSTORE.ORDER named them
-//! and not yet written again, is read whole and sorted. The directory is
+//! and not yet written again, is read whole and sorted. Of the first rows
+//! alone asked for, as FETCH FIRST asks, each source sorted keeps those of
+//! its own rows alone, found without sorting the rest. The directory is
 //! taken before the tree is read, as a merged scan takes it (`merge.rs`),
 //! so a row frozen meanwhile is read once.
 
@@ -25,7 +27,7 @@ use crate::engine::columns::scan::{read_candidates, values};
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::{RowTable, row_id};
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batch, Batches, Column, Conjunction, Row, RowId};
+use crate::storage::{BATCH_ROWS, Batch, Batches, Column, Conjunction, Row, RowId, ScanOrder};
 use crate::value::{Value, sort_cmp};
 
 /// Rows of a source read, by column: each column decoded's values, the
@@ -99,6 +101,8 @@ pub(in crate::engine::rows) struct Ordered {
     keys: Vec<usize>,
     /// Read backward: each key descending.
     backward: bool,
+    /// Of the first rows alone asked for, how many.
+    most: Option<usize>,
     condition: Option<Conjunction>,
     /// The ids of the tree's entries, in order: their groups' rows left out.
     shadowed: Vec<RowId>,
@@ -112,12 +116,12 @@ pub(in crate::engine::rows) struct Ordered {
 impl Ordered {
     /// The rows of `table` `reader` sees, of the columns `asked`, only
     /// those `condition` matches if given, in the order of the columns
-    /// `keys`, or backward; `directory` its groups, taken before its tree
-    /// is read.
+    /// `keys`, or backward, the first `most` alone if only those are asked
+    /// for; `directory` its groups, taken before its tree is read.
     pub(in crate::engine::rows) fn new(
         table: Arc<RowTable>,
         (reader, directory): (Reader, Arc<Directory>),
-        (asked, (keys, backward)): (&[usize], (&[usize], bool)),
+        (asked, (keys, backward, most)): (&[usize], ScanOrder<'_>),
         condition: Option<Conjunction>,
     ) -> Ordered {
         let mut decoded: Vec<usize> = asked.iter().chain(keys).copied().chain(condition.iter().flat_map(Conjunction::columns)).collect();
@@ -129,7 +133,22 @@ impl Ordered {
             .map(|i| asked.get(i.saturating_add(1)..).is_some_and(|rest| asked.get(i).is_some_and(|c| rest.contains(c))))
             .collect();
         let (shadowed, sources, heads) = (Vec::new(), Vec::new(), Vec::new());
-        Ordered { table, reader, directory, decoded, asked, again, keys, backward, condition, shadowed, sources, heads, started: false }
+        Ordered {
+            table,
+            reader,
+            directory,
+            decoded,
+            asked,
+            again,
+            keys,
+            backward,
+            most,
+            condition,
+            shadowed,
+            sources,
+            heads,
+            started: false,
+        }
     }
 
     /// A row of the table's width, of `values`, of the columns decoded, and
@@ -204,13 +223,23 @@ impl Ordered {
         part
     }
 
-    /// Orders `part`'s rows kept by their keys, or backward.
+    /// Orders `part`'s rows kept by their keys, or backward; of the first
+    /// `most` alone asked for, keeps those alone, found first. Its order is
+    /// of the keys then the rows' ids, so those are the first a whole sort
+    /// gives.
     fn sort(&self, part: &mut Part) {
         let mut keep = mem::take(&mut part.keep);
-        keep.sort_by(|&a, &b| {
+        let order = |a: &usize, b: &usize| {
             let id = |n: usize| part.ids.get(n).copied().unwrap_or_default();
-            by_keys((&part.key(&self.keys, a), id(a)), (&part.key(&self.keys, b), id(b)), self.backward)
-        });
+            by_keys((&part.key(&self.keys, *a), id(*a)), (&part.key(&self.keys, *b), id(*b)), self.backward)
+        };
+        if let Some(most) = self.most.filter(|&most| most < keep.len()) {
+            if let Some(last) = most.checked_sub(1) {
+                keep.select_nth_unstable_by(last, order);
+            }
+            keep.truncate(most);
+        }
+        keep.sort_by(order);
         part.keep = keep;
     }
 

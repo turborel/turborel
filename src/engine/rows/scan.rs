@@ -12,7 +12,7 @@ use super::mvcc::Read;
 use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
 use crate::error::Result;
-use crate::storage::{Batches, Conjunction, Near, Ramp, Row, RowId, Rows, batches_of};
+use crate::storage::{Batches, Conjunction, Near, Ramp, Row, RowId, Rows, ScanOrder, batches_of};
 use crate::txn::TxId;
 
 /// A table's tree, reached through the table, so a scan that owns the
@@ -117,15 +117,16 @@ impl RowTable {
     }
 
     /// The rows `tx` sees, `columns` decoded, and only those `condition`
-    /// matches, if given, in the order of `keys`, or backward
+    /// matches, if given, in the order of `keys`, or backward, the first
+    /// `most` alone if only those are asked for
     /// (`frozen/ordered.rs`).
     pub(super) fn scan_ordered_of(
         self: Arc<Self>,
         tx: TxId,
-        (columns, (keys, backward)): (&[usize], (&[usize], bool)),
+        (columns, order): (&[usize], ScanOrder<'_>),
         condition: Option<Conjunction>,
     ) -> Rows {
-        match self.ordered(tx, (columns, (keys, backward)), condition) {
+        match self.ordered(tx, (columns, order), condition) {
             Ok(ordered) => Box::new(ordered),
             Err(e) => Box::new(iter::once(Err(e))),
         }
@@ -135,27 +136,22 @@ impl RowTable {
     pub(super) fn scan_ordered_batches_of(
         self: Arc<Self>,
         tx: TxId,
-        (columns, (keys, backward)): (&[usize], (&[usize], bool)),
+        (columns, order): (&[usize], ScanOrder<'_>),
         condition: Option<Conjunction>,
     ) -> Batches {
-        match self.ordered(tx, (columns, (keys, backward)), condition) {
+        match self.ordered(tx, (columns, order), condition) {
             Ok(ordered) => ordered.batches(),
             Err(e) => Box::new(iter::once(Err(e))),
         }
     }
 
     /// The merge `scan_ordered_of` reads, the read noted.
-    fn ordered(
-        self: Arc<Self>,
-        tx: TxId,
-        (columns, (keys, backward)): (&[usize], (&[usize], bool)),
-        condition: Option<Conjunction>,
-    ) -> Result<Ordered> {
+    fn ordered(self: Arc<Self>, tx: TxId, (columns, order): (&[usize], ScanOrder<'_>), condition: Option<Conjunction>) -> Result<Ordered> {
         let read = || condition.clone().map_or(Read::All, Read::Condition);
         let reader = self.reader(tx)?;
         self.note_read(tx, read)?;
         let directory = self.frozen.directory()?;
-        Ok(Ordered::new(Arc::clone(&self), (reader, directory), (columns, (keys, backward)), condition))
+        Ok(Ordered::new(Arc::clone(&self), (reader, directory), (columns, order), condition))
     }
 
     /// The rows `tx` sees by batch, of `columns`, only those `condition`

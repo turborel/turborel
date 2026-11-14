@@ -399,7 +399,8 @@ mod tests {
             distribution: None,
             label: "COUNT(*)".into(),
         };
-        let scan = || Plan::SeqScan { table: table.clone(), columns: vec![], rows: 0, cost: 0.0_f64, order: vec![], backward: false };
+        let scan =
+            || Plan::SeqScan { table: table.clone(), columns: vec![], rows: 0, cost: 0.0_f64, order: vec![], backward: false, most: None };
         let aggregate = |seeds: Vec<Vec<Value>>, collations: Vec<Option<CollationRef>>| Plan::Aggregate {
             groups: Vec::new(),
             collations,

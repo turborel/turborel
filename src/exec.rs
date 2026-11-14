@@ -40,9 +40,9 @@ use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Entries as IndexEntries, KeyOrder, Probe};
-use crate::logical::{Cond, Expr, SortKey, Truth, pushed_conjuncts};
+use crate::logical::{Cond, Expr, Most, SortKey, Truth, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Condition, Conjunction, Row, TableStorage};
+use crate::storage::{Condition, Conjunction, Row, ScanOrder, TableStorage};
 use crate::system::SystemRead;
 use crate::txn::{TxId, checked};
 use crate::value::SortOrder;
@@ -119,11 +119,11 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// The rows of the scan `plan`.
 #[inline(never)]
 fn scanned_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::SeqScan { table, columns, order, backward, .. } = plan else { return failed(broken("a scan is not one")) };
+    let Plan::SeqScan { table, columns, order, backward, most, .. } = plan else { return failed(broken("a scan is not one")) };
     if order.is_empty() {
         return scanned(&table, &columns, db, tx);
     }
-    ordered_scan((&table, &columns, (&order, backward)), None, db, tx)
+    ordered_scan((&table, &columns, (&order, backward, most)), None, db, tx)
 }
 
 /// The rows of `table`, `columns` read, in the order of the columns
@@ -131,10 +131,11 @@ fn scanned_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// [X3.135-1986 §8.3 GR3b], only those
 /// `condition` may match if given: as its storage reads them so
 /// (`TableStorage::scan_ordered`), else read and sorted, if it no longer
-/// can, its option changed since the plan was made; each row read only
-/// while the statement is not cancelled (RULES.md D44).
+/// can, its option changed since the plan was made, the first `most` alone
+/// if only those are asked for; each row read only while the statement is
+/// not cancelled (RULES.md D44).
 fn ordered_scan(
-    (table, columns, (order, backward)): (&QualifiedName, &[usize], (&[usize], bool)),
+    (table, columns, (order, backward, most)): (&QualifiedName, &[usize], ScanOrder<'_>),
     condition: Option<&Conjunction>,
     db: &Arc<State>,
     tx: TxId,
@@ -144,7 +145,7 @@ fn ordered_scan(
         Err(e) => return failed(e),
     };
     let stop = db.tx.stop_of(tx);
-    if let Some(rows) = Arc::clone(&storage).scan_ordered(tx, columns, (order, backward), condition) {
+    if let Some(rows) = Arc::clone(&storage).scan_ordered(tx, columns, (order, backward, most), condition) {
         return Box::new(checked(rows.map(|read| read.map(|(_, row)| row)), stop));
     }
     let read = match condition {
@@ -153,7 +154,11 @@ fn ordered_scan(
     };
     // Sorted as ORDER BY sorts, in a work area that spills (RULES.md D38).
     let keys: Vec<SortKey> = order.iter().map(|&column| SortKey::new(column, SortOrder::of(backward, None))).collect();
-    sort::sort(&keys, Box::new(checked(read.map(|r| r.map(|(_, row)| row)), stop)), db, tx)
+    let rows: RowIter = Box::new(checked(read.map(|r| r.map(|(_, row)| row)), stop));
+    match most {
+        Some(rows_asked) => sort::first(&keys, rows, Most { rows: rows_asked, ties: false }, db, tx),
+        None => sort::sort(&keys, rows, db, tx),
+    }
 }
 
 /// The rows of the product or hash join `plan`.
@@ -197,11 +202,14 @@ fn system_plan(plan: Plan, db: &Arc<State>) -> RowIter {
     system_rows(&read, db)
 }
 
-/// The rows of the sort `plan`.
+/// The rows of the sort `plan`: of its first alone asked for, those.
 #[inline(never)]
 fn sorted_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::Sort { keys, input, .. } = plan else { return failed(broken("a sort is not one")) };
-    sorted(&keys, *input, db, tx)
+    let Plan::Sort { keys, input, most, .. } = plan else { return failed(broken("a sort is not one")) };
+    match most {
+        Some(most) => sort::first(&keys, execute(*input, db, tx), most, db, tx),
+        None => sorted(&keys, *input, db, tx),
+    }
 }
 
 /// The rows of `table`'s columns `columns`, each read only while the
@@ -301,7 +309,7 @@ fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIte
     match (input, pushed_conjuncts(cond)) {
         (Plan::SeqScan { table, columns, order, backward, .. }, Some(condition)) => {
             if !order.is_empty() {
-                return ordered_scan((&table, &columns, (&order, backward)), Some(&condition), db, tx);
+                return ordered_scan((&table, &columns, (&order, backward, None)), Some(&condition), db, tx);
             }
             match db.storage_of(&table) {
                 Ok(storage) => {
@@ -429,7 +437,15 @@ mod tests {
     #[test]
     fn missing_storage_and_indexes_are_reported() {
         let st = Arc::new(state());
-        let seq = || Plan::SeqScan { table: missing_table(), columns: vec![], rows: 0, cost: 0.0_f64, order: vec![], backward: false };
+        let seq = || Plan::SeqScan {
+            table: missing_table(),
+            columns: vec![],
+            rows: 0,
+            cost: 0.0_f64,
+            order: vec![],
+            backward: false,
+            most: None,
+        };
         let index = || Plan::IndexScan {
             table: missing_table(),
             index: "I".into(),
@@ -476,7 +492,7 @@ mod tests {
                 table.insert(NO_TRANSACTION, vec![Value::Exact(Decimal::new(ROWS - k, 0))]).unwrap();
             }
             st.storage.insert(Arc::new(name.clone()), Arc::from(table));
-            let plan = Plan::SeqScan { table: name, columns: vec![0], rows: 0, cost: 0.0_f64, order: vec![0], backward: false };
+            let plan = Plan::SeqScan { table: name, columns: vec![0], rows: 0, cost: 0.0_f64, order: vec![0], backward: false, most: None };
             let read = execute(plan, &Arc::new(st), NO_TRANSACTION).collect::<Result<Vec<Row>>>();
             if broken {
                 assert_eq!(read.err().map(|e| e.code), Some(Code::Io), "spilled");
@@ -527,7 +543,7 @@ mod tests {
         };
         assert_eq!(code(execute(aggregate, &st, NO_TRANSACTION)), Some(Code::Api));
         let keys = vec![SortKey::ascending(1)];
-        let sort = Plan::Sort { keys, detail: String::new(), input: Box::new(one_row(vec![Value::Null])) };
+        let sort = Plan::Sort { keys, detail: String::new(), input: Box::new(one_row(vec![Value::Null])), most: None };
         assert_eq!(code(execute(sort, &st, NO_TRANSACTION)), Some(Code::Api));
         assert_eq!(code(execute(one_row(row), &st, NO_TRANSACTION)), None, "the row source itself succeeds");
     }
