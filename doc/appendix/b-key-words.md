@@ -52,9 +52,10 @@ only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
 SQL:2023 reserves ANY_VALUE, BIGINT, BINARY, BOOLEAN, BTRIM, CUBE, CUME_DIST, CYCLE, DECFLOAT,
-DENSE_RANK, EVERY, GREATEST, GROUPING, GROUPS, LEAST, LIKE_REGEX, LISTAGG, LPAD, LTRIM, OCCURRENCES_REGEX,
-OVER, PARTITION, PERCENT_RANK, POSITION_REGEX, RANGE, RANK, ROLLUP, ROW_NUMBER, RPAD, RTRIM, START,
-SUBSTRING_REGEX, TRANSLATE_REGEX, VARBINARY, WINDOW and WITHIN, which SQL-92 does not, so
+DENSE_RANK, EVERY, FIRST_VALUE, GREATEST, GROUPING, GROUPS, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
+LISTAGG, LPAD, LTRIM, NTH_VALUE, NTILE, OCCURRENCES_REGEX, OVER, PARTITION, PERCENT_RANK, POSITION_REGEX,
+RANGE, RANK, ROLLUP, ROW_NUMBER, RPAD, RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX, VARBINARY, WINDOW
+and WITHIN, which SQL-92 does not, so
 a column of an older database may be named any of them. They stay identifiers here, key words only where
 they are read. BIGINT, BINARY, BOOLEAN, DECFLOAT and VARBINARY are data types
 where a data type is written, so a domain cannot be named BINARY,
@@ -84,7 +85,12 @@ OVER is read only after a function's closing parenthesis, where a
 parenthesis or a window's name follows it, so `SELECT COUNT(*) OVER FROM
 T` names the count OVER. ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK and
 CUME_DIST are window functions only where `( ) OVER` follows, so a
-function registered as RANK stays callable. PARTITION is read in a
+function registered as RANK stays callable. NTILE, LEAD, LAG,
+FIRST_VALUE, LAST_VALUE and NTH_VALUE are window functions only where,
+after the closing parenthesis of their arguments, OVER follows, perhaps
+after FROM FIRST or FROM LAST and RESPECT NULLS or IGNORE NULLS. RESPECT
+and IGNORE, which neither SQL-92 nor SQL:2023 reserves, are read only
+there. PARTITION is read in a
 window only before BY too. WINDOW begins the WINDOW clause only where a
 name and AS follow it, after the table expression's other clauses. RANGE
 and GROUPS begin a frame only where ROWS, which SQL-92 reserves, may, and

@@ -18,9 +18,9 @@ fn exact(n: i128) -> Value {
 #[test]
 fn ranks_count_rows_and_peer_groups_9_23() {
     let current = at(3, 1, (2, 4));
-    assert_eq!(format!("{:?}", rank(&WindowKind::RowNumber, &current, 5).unwrap()), format!("{:?}", exact(4)));
-    assert_eq!(format!("{:?}", rank(&WindowKind::Rank, &current, 5).unwrap()), format!("{:?}", exact(3)));
-    assert_eq!(format!("{:?}", rank(&WindowKind::DenseRank, &current, 5).unwrap()), format!("{:?}", exact(2)));
+    assert_eq!(format!("{:?}", rank(&WindowKind::RowNumber, &current, 5, Count::Unused).unwrap()), format!("{:?}", exact(4)));
+    assert_eq!(format!("{:?}", rank(&WindowKind::Rank, &current, 5, Count::Unused).unwrap()), format!("{:?}", exact(3)));
+    assert_eq!(format!("{:?}", rank(&WindowKind::DenseRank, &current, 5, Count::Unused).unwrap()), format!("{:?}", exact(2)));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.23 SR5g, SR5h]
@@ -33,7 +33,7 @@ fn ranks_count_rows_and_peer_groups_9_23() {
 #[test]
 fn relative_ranks_are_fractions_of_the_partition_9_23() {
     let real = |kind: &WindowKind, current: &Current, len: usize| {
-        let found = rank(kind, current, len).unwrap();
+        let found = rank(kind, current, len, Count::Unused).unwrap();
         let Value::Approx(x) = found else { panic!("not approximate: {found:?}") };
         x
     };

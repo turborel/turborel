@@ -1082,27 +1082,36 @@ where it is read, so a column may be named NULLS.
 
 ### Window functions
 
-Features T611 (Elementary OLAP operations) and T620 (WINDOW clause:
-GROUPS option), of ISO/IEC 9075-2:2023 §6.10, §7.15, §9.20 and §9.23.
+Features T611 (Elementary OLAP operations), T614 (NTILE function), T615
+(LEAD and LAG functions), T616 (Null treatment option for LEAD and LAG
+functions), T617 (FIRST_VALUE and LAST_VALUE functions), T618 (NTH_VALUE
+function) and T620 (WINDOW clause: GROUPS option), of ISO/IEC 9075-2:2023
+§6.10, §7.15, §9.20 and §9.23.
 Of T612 (Advanced OLAP operations), the window name, the WINDOW clause,
 an existing window name, frame exclusion, PERCENT_RANK, CUME_DIST and
 ROW_NUMBER of no ordering are done. Its WIDTH_BUCKET, FILTER clause,
 hypothetical set functions and inverse distribution functions are not,
-so T612 is not claimed. Nor are T614 to T619 or T627.
+so T612 is not claimed. Nor are T619 or T627.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
-| Window functions | §6.10 SR2 | ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST and every set function, followed by OVER and a window name or specification. One is only in the select list of a query specification, never in WHERE, GROUP BY, HAVING, a set function's argument or a window's definition, else SQLCODE -103. Its arguments, keys and offsets hold no outer reference and no query expression [§9.23 SR3]. |
+| Window functions | §6.10 SR2 | ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST, NTILE, LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTH_VALUE and every set function, followed by OVER and a window name or specification. One is only in the select list of a query specification, never in WHERE, GROUP BY, HAVING, a set function's argument or a window's definition, else SQLCODE -103. Its arguments, keys and offsets hold no outer reference and no query expression [§9.23 SR3]. |
 | Window names | §7.15 SR2, SR12, SR16 | The WINDOW clause after HAVING names windows, each name once. A window name in the select list, or an existing window name in a later definition, names one of them. A window built on an existing one adds no PARTITION BY, adds no ORDER BY where that one has one, and builds on none that has a frame. Each is SQLCODE -103 otherwise. |
 | Partitions | SR4 to SR6, GR3 | PARTITION BY names columns of the table expression, grouping columns in a grouped query, each of a type a grouping operation takes. COLLATE is written only of a character string. Rows are of one partition where those columns are not distinct, each string by its collation. |
 | Orderings | §10.10, GR4 | An ORDER BY of sort keys a sort takes, NULLS FIRST and LAST among them. Without one, every row of a partition is a peer of every other (US034). |
 | Frames | SR10, SR11, SR15, GR5 | ROWS, RANGE and GROUPS, a start alone ending at CURRENT ROW. Bound pairs SR10 refuses are SQLCODE -103. An offset is a literal or a parameter, an exact integer of ROWS and GROUPS. RANGE with an offset orders by one key of a numeric, datetime or interval type, its offset numeric or an interval that key adds. GROUPS needs an ORDER BY. A frame is given whole as GR5 defines it, a null RANGE key's frame the rows of null keys. A date moved by a year-month interval to a day past its month's end takes the month's last day [GR5b i 1 A]. An offset negative or null is SQLSTATE 22013. |
 | Exclusion | GR5b ii | EXCLUDE CURRENT ROW, GROUP, TIES and NO OTHERS. |
 | Ranks | §9.23 SR5 | ROW_NUMBER is the row's place, RANK and DENSE_RANK count the rows and peer groups before its own, PERCENT_RANK and CUME_DIST are the fractions SR5g and SR5h define. The four ranks need an ORDER BY, and none of the five takes a frame, else SQLCODE -103. |
+| NTILE | §6.10 GR1a, §9.23 SR5i | Each partition cut into the number of tiles given, the first MOD(rows, tiles) one row longer, a row's value its tile's number, of COUNT's type (IV084). The number is a `<simple value specification>` or `?`, exact numeric of scale 0 (a `?` INTEGER [§20.7 GR5a xxxii]), else SQLCODE -103. It is evaluated once, as the first partition is read, so of no rows it raises nothing. Null, each tile is null. Below 1, SQLSTATE 22014. |
+| LEAD and LAG | §6.10 GR1b, §9.23 SR5j | The extent of the row the offset after or before the current one in its partition, of the extent's type and collation derivation. The offset is an `<unsigned integer>`, 1 if not written, and 0 takes the current row's own extent. Past the partition, the default, evaluated for the current row (RULES.md D15), null if not written. |
+| Their default | SR5j iii | \[EXTENSION\] SR5j iii asks a default "compatible" with the extent, which would refuse `LAG(I, 1, 0)` of an INTEGER I, as 0 is NUMERIC. A default is taken where each of its type and the extent's is assignable to the other, and is cast to the extent's type, a string too long cut with SQLSTATE 01004 as CAST cuts it. Else SQLCODE -103. \[EXTENSION\] A `?` default takes the extent's type, where §20.7 GR5a gives it none. |
+| Null treatment | §6.10 GR1b, GR1c, GR1d | IGNORE NULLS counts only the rows whose argument is not null, of LEAD, LAG, FIRST_VALUE, LAST_VALUE and NTH_VALUE. RESPECT NULLS, the default, counts every row. LEAD and LAG of offset 0 take the current row's extent under either. |
+| FIRST_VALUE, LAST_VALUE and NTH_VALUE | §6.10 GR1c, GR1d, §9.23 SR6 | The first, the last and the nth argument of the row's frame, its exclusion applied, of the argument's type and collation derivation. NTH_VALUE counts from the frame's first row, or from its last under FROM LAST. Its `<nth row>` is as NTILE's number of tiles, null giving null and below 1 SQLSTATE 22016. A frame of no such row gives null. |
+| Nested in an argument | §6.10 | A window function in the argument of LEAD, LAG, FIRST_VALUE, LAST_VALUE or NTH_VALUE is computed first, by its own window, or with the outer one's where they are alike and in one pass. T619 (nested window functions, §6.11) is not done. |
 | Set functions | §9.23 SR8, §10.9 | Each is computed over the row's frame as of a group, nulls left out with SQLSTATE 01003, an empty frame giving what an empty group gives. One of a window of an ordering or a frame is not LISTAGG, and is DISTINCT only if COUNT [SR8d]. COUNT DISTINCT so is SQLCODE -900, Feature T627. |
 | Grouped queries | §9.20 | Windows of a grouped query are over its groups, after HAVING, so their arguments and keys may be set functions of the group, `SUM(SUM(X)) OVER ()`. SELECT DISTINCT removes groups alike before the windows, as SR22 builds the derived table of groups. |
 | Their order of evaluation | §7.16 | Windows are computed over the rows of FROM, WHERE, GROUP BY and HAVING, before DISTINCT and the cursor's ORDER BY. A query of a window function makes a view or cursor not updatable. |
-| In a constraint | §9.16 SR1c, §11.9 CR2 | ROW_NUMBER and a set function over a ROWS window are potential sources of non-determinism, so a CHECK or an assertion containing one is SQLCODE -103. |
+| In a constraint | §9.16 SR1c, §11.9 CR2 | ROW_NUMBER, NTILE, LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTH_VALUE and a set function over a ROWS window are potential sources of non-determinism, so a CHECK or an assertion containing one is SQLCODE -103. |
 
 A window reads its input sorted by its partition columns, then its
 ordering, unless the input is ordered so, as a column store kept in that
@@ -1114,12 +1123,19 @@ function over a frame starting at the partition's first row, and
 excluding nothing, is fed each row once. Otherwise it merges states of a
 tree of the partition's rows where the accumulator writes its state and
 the tree fits the work area, and else reads each frame's rows again.
+Of each row is held how many rows of its partition before it a function
+under IGNORE NULLS counts, and the arguments not null are held apart in
+order, spilling past their part of the work area. So LEAD, LAG and the
+nth row of a frame are found by counting, not by reading the rows
+between.
 
-OVER, WINDOW, PARTITION, RANGE, GROUPS and the five rank names, which
-SQL:2023 reserves and SQL-92 does not, are key words only where they are
-read. So are PRECEDING, FOLLOWING, UNBOUNDED, EXCLUDE, TIES and OTHERS,
-which neither reserves. A function registered as RANK stays callable,
-RANK read as the window function only where `() OVER` follows.
+OVER, WINDOW, PARTITION, RANGE, GROUPS, the five rank names and NTILE,
+LEAD, LAG, FIRST_VALUE, LAST_VALUE and NTH_VALUE, which SQL:2023 reserves
+and SQL-92 does not, are key words only where they are read. So are
+PRECEDING, FOLLOWING, UNBOUNDED, EXCLUDE, TIES, OTHERS, RESPECT and
+IGNORE, which neither reserves. A function registered as RANK stays
+callable, RANK read as the window function only where `() OVER` follows,
+and one registered as LAG where OVER does not follow its arguments.
 
 ### Arrays and row types
 
@@ -1364,6 +1380,7 @@ topic. The Where column names the file that implements each.
 | 2023 §6.9 SR10b (IV081), §7.13 SR17m iii (IV183) the type of the result of a grouping operation | Exact numeric of scale 0 and precision 18, the type BIGINT's, which holds GROUPING of up to 59 columns | `binder/grouping_sets.rs` |
 | 2023 §10.9 SR11d (IA044) the type and maximum length of LISTAGG's result | CHARACTER VARYING of 32,767 characters, the longest character string, as there is no CHARACTER LARGE OBJECT | `functions/listagg.rs` |
 | 2023 §9.23 SR5g, SR5h (IV082, IV083) the precision of PERCENT_RANK and CUME_DIST | 53 binary digits, DOUBLE PRECISION's | `binder/window.rs`, `exec/window.rs` |
+| 2023 §9.23 SR5i ii (IV084) the type of NTILE | COUNT's, as IV166 below | `binder/window/value.rs` |
 | 2023 §10.9 SR4 (IV166) the type of COUNT, and so of ROW_NUMBER, RANK and DENSE_RANK | Exact numeric of scale 0 and precision 18, as 86 §5.8 SR7 below | `functions.rs`, `binder/window.rs` |
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |
@@ -1431,7 +1448,7 @@ topic. The Where column names the file that implements each.
 | 2023 §7.13 SR17 (UV132) the column names and correlation name of the grouping sets' transformation | None is made. The sets are grouped in one pass, and nothing of the transformation can be named or seen. | `binder/grouping_sets.rs` |
 | 2023 §10.9 GR7d v (UV062) the value ANY_VALUE gives | The first value not null it reads. So of several it may differ by plan, row by row, by batches or past the work area. | `functions/any_value.rs` |
 | 2023 §10.9 GR11a, §10.10 the order of LISTAGG's values of sort keys alike | The order they were read | `functions/listagg.rs` |
-| 2023 §7.15 GR4 (US034) the window ordering of a window of no ORDER BY | The order the rows are read, so ROW_NUMBER without an ordering may number them differently by plan | `exec/window.rs` |
+| 2023 §7.15 GR4 (US034) the window ordering of a window of no ORDER BY | The order the rows are read, so ROW_NUMBER, FIRST_VALUE, LAST_VALUE and NTH_VALUE without an ordering may give values differently by plan | `exec/window.rs` |
 | 2023 §7.15 GR4 (US035) the order of peers in a window partition | The order the window's sort leaves them in, the same for each window of that partitioning and ordering, as they are computed in one pass | `physical.rs`, `exec/window.rs` |
 | 86 §6.5 GR1 whether a viewed table is materialized | No. Its query is bound into the plan of each query that names it. | `binder/views.rs` |
 | §3.3.4.1 more than one condition of a statement | One is made available. That is an exception if one is raised, else no data if the statement found none, else a warning of its own rules, as of an assignment or a privilege, else the first warning an expression raised. A query's rows that can raise a condition are read as its cursor opens (RULES.md D15), so its warnings are its OPEN's, or, over the protocol, its Complete's once its rows are sent. | `error/warnings.rs`, `db/completion.rs` |

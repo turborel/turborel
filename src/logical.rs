@@ -27,7 +27,7 @@ pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
 pub use subquery::{Decorrelated, Subquery, map_plan_exprs, plan_has_outer};
-pub use window::{Bound, Exclusion, Frame, Units, Window, WindowCall, WindowKind};
+pub use window::{Bound, Exclusion, Frame, Offset, Pick, Units, Valued, Window, WindowCall, WindowKind};
 
 use crate::catalog::QualifiedName;
 use crate::functions::AggregateRef;

@@ -314,12 +314,19 @@ every row of a partition is a peer of every other.
 | DENSE_RANK() | 1 more than the peer groups ordered before its own |
 | PERCENT_RANK() | (RANK − 1) / (rows − 1), 0 of a partition of one row |
 | CUME_DIST() | the rows up to its last peer, divided by the rows |
+| NTILE(n) | the row's tile, the partition cut into n tiles in order |
+| LAG(x [, k [, d]]) | x of the row k rows before, else d |
+| LEAD(x [, k [, d]]) | x of the row k rows after, else d |
+| FIRST_VALUE(x) | x of the frame's first row |
+| LAST_VALUE(x) | x of the frame's last row |
+| NTH_VALUE(x, n) | x of the frame's nth row |
 | a set function | the set function of the row's frame |
 
-Each of the four ranks needs an ORDER BY. ROW_NUMBER without one
-numbers the rows in the order they are read. ROW_NUMBER, RANK and
-DENSE_RANK are of COUNT's type, and PERCENT_RANK and CUME_DIST are
-DOUBLE PRECISION.
+Each of the four ranks needs an ORDER BY, as do NTILE, LAG and LEAD.
+ROW_NUMBER without one numbers the rows in the order they are read.
+ROW_NUMBER, RANK, DENSE_RANK and NTILE are of COUNT's type, and
+PERCENT_RANK and CUME_DIST are DOUBLE PRECISION. LAG, LEAD and the three
+value functions are of x's type.
 
 A set function OVER a window computes over the row's **frame**. Without
 ORDER BY the frame is the whole partition. With it the frame is the rows
@@ -366,7 +373,8 @@ has the rows of null keys as its peers and its frame.
 
 EXCLUDE CURRENT ROW leaves the row out of its frame, EXCLUDE GROUP its
 peers and itself, EXCLUDE TIES its peers but not itself, and EXCLUDE NO
-OTHERS, the default, nothing. The ranks take no frame.
+OTHERS, the default, nothing. The ranks, NTILE, LAG and LEAD take no
+frame.
 
 A WINDOW clause after HAVING names windows. `OVER W` uses one as it is,
 and `OVER (W ...)` adds to it an ORDER BY it has not, or a frame. Below,
@@ -415,6 +423,64 @@ SELECT NAME, DEPT, DENSE_RANK() OVER (ORDER BY DEPT) AS D,
  Edsger                         | OPS  |                    2 |     6.666666666666666E-1 |                   7.5E-1 |                    1
  Barbara                        | NULL |                    3 |                      1E0 |                      1E0 |                    0
 (4 rows)
+```
+
+### Offsets and values
+
+NTILE cuts each partition into n tiles of rows in its order, the first
+tiles one row longer where the rows do not divide evenly. With more
+tiles than rows, each row is a tile of its own. n is a literal or a
+parameter. A null n makes every tile null, and an n below 1 is SQLSTATE
+22014.
+
+LAG and LEAD take x of the row k rows before or after the current one in
+its partition, k being 1 if left out. k is an unsigned integer literal,
+and 0 takes the current row's own x. Past either end of the partition
+they take the default d, computed for the current row, or null if d is
+left out. d is cast to x's type, so it is of a type each assignable to
+the other, such as a number of a number.
+
+FIRST_VALUE, LAST_VALUE and NTH_VALUE take x of a row of the frame, so a
+frame clause and EXCLUDE apply to them as to a set function. Of the
+frame without one, LAST_VALUE takes the current row's last peer. NTH_VALUE
+counts from the frame's first row, or from its last after FROM LAST. Its
+n is a literal or a parameter, and a frame of fewer rows gives null. A
+null n gives null, and an n below 1 is SQLSTATE 22016.
+
+IGNORE NULLS after the parentheses counts only the rows whose x is not
+null, for LAG, LEAD and the three value functions. RESPECT NULLS, the
+default, counts every row. A window function may be in the argument of
+any of these, so `LAG(ROW_NUMBER() OVER W) OVER W` is the row number
+before.
+
+```sql
+SELECT ID, NAME, SALARY, NTILE(2) OVER W AS HALF, LAG(SALARY) OVER W AS BEFORE,
+    LEAD(SALARY, 1, 0) OVER W AS AFTER,
+    LAG(SALARY) IGNORE NULLS OVER (ORDER BY ID DESC) AS NEXT_PAID
+    FROM STAFF WINDOW W AS (ORDER BY ID) ORDER BY ID;
+SELECT ID, NAME, DEPT, FIRST_VALUE(NAME) OVER D AS FIRST_IN,
+    LAST_VALUE(NAME) OVER D AS LAST_SO_FAR,
+    NTH_VALUE(NAME, 2) OVER (D ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS RUNNER_UP
+    FROM STAFF WINDOW D AS (PARTITION BY DEPT ORDER BY SALARY DESC) ORDER BY ID;
+SELECT NAME, LAG(SALARY) OVER () FROM STAFF;
+```
+
+```
+           ID | NAME                           |      SALARY |                 HALF |      BEFORE |       AFTER |   NEXT_PAID
+--------------+--------------------------------+-------------+----------------------+-------------+-------------+-------------
+            1 | Ada                            |     7200.00 |                    1 |        NULL |     8100.00 |     8100.00
+            2 | Grace                          |     8100.00 |                    1 |     7200.00 |     5400.00 |     5400.00
+            3 | Edsger                         |     5400.00 |                    2 |     8100.00 |        NULL |        NULL
+            4 | Barbara                        |        NULL |                    2 |     5400.00 |        0.00 |        NULL
+(4 rows)
+           ID | NAME                           | DEPT | FIRST_IN                       | LAST_SO_FAR                    | RUNNER_UP
+--------------+--------------------------------+------+--------------------------------+--------------------------------+--------------------------------
+            1 | Ada                            | ENG  | Grace                          | Ada                            | Ada
+            2 | Grace                          | ENG  | Grace                          | Grace                          | Ada
+            3 | Edsger                         | OPS  | Edsger                         | Edsger                         | NULL
+            4 | Barbara                        | NULL | Barbara                        | Barbara                        | NULL
+(4 rows)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the window of LEAD or LAG has an ordering [ISO/IEC 9075-2:2023 §9.23 SR5a] (at character 13)
 ```
 
 ### Where windows are computed

@@ -430,7 +430,13 @@ impl Binder<'_> {
     fn cast_to(&self, operand: Option<&ValueExpression>, target: DataType, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let Some(v) = operand else { return Ok((Expr::Const(Value::Null), target)) };
         // [§17.6 GR5i] a `?` takes the target's type.
-        let (e, t) = self.typed(v, ParameterType::Of(target.clone()), scope)?;
+        let bound = self.typed(v, ParameterType::Of(target.clone()), scope)?;
+        self.cast_bound(bound, target)
+    }
+
+    /// CAST of `e`, bound, of type `t`, to `target` [ISO/IEC 9075:1992
+    /// §6.10].
+    pub(super) fn cast_bound(&self, (e, t): (Expr, DataType), target: DataType) -> Result<(Expr, DataType)> {
         if !super::composite::castable(&t, &target) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR5, SR6, SR7, SR8, SR12] CAST of {t} to {target} is not valid")));
         }

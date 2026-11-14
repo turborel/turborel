@@ -129,6 +129,12 @@ impl SqlState {
     /// Data exception: invalid preceding or following size in window
     /// function [ISO/IEC 9075-2:2023 §7.15 GR5b].
     pub const INVALID_PRECEDING_OR_FOLLOWING_SIZE: SqlState = SqlState("22013");
+    /// Data exception: invalid argument for NTILE function [ISO/IEC
+    /// 9075-2:2023 §6.10 GR1a ii 2].
+    pub const INVALID_ARGUMENT_FOR_NTILE: SqlState = SqlState("22014");
+    /// Data exception: invalid argument for NTH_VALUE function [ISO/IEC
+    /// 9075-2:2023 §6.10 GR1d ii 2].
+    pub const INVALID_ARGUMENT_FOR_NTH_VALUE: SqlState = SqlState("22016");
     /// Data exception: invalid escape character.
     pub const INVALID_ESCAPE_CHARACTER: SqlState = SqlState("22019");
     /// Data exception: invalid character value for cast [ISO/IEC 9075:1992

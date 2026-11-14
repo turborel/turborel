@@ -30,6 +30,7 @@ mod tailorings;
 mod truncate;
 mod vr;
 mod waits;
+mod window_values;
 mod windows;
 mod with;
 mod zones;
@@ -52,7 +53,7 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 16] = [
+    let areas: [&[Mutation]; 17] = [
         &sequences::SEQUENCES,
         &generated::GENERATED,
         &truncate::TRUNCATE,
@@ -69,6 +70,7 @@ pub fn all() -> Vec<Mutation> {
         &listagg::LISTAGG,
         &null_ordering::NULL_ORDERING,
         &windows::WINDOWS,
+        &window_values::WINDOW_VALUES,
     ];
     core.into_iter().chain(areas).chain([near::NEAR.as_slice(), &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER]).flatten().copied().collect()
 }

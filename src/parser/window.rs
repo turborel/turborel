@@ -3,7 +3,10 @@
 //! GROUPS, ROW_NUMBER and the rank names, which SQL:2023 reserves and SQL-92
 //! does not, and PRECEDING, FOLLOWING, UNBOUNDED, EXCLUDE, TIES, OTHERS and
 //! ROW, which neither reserves, are key words only where this syntax has
-//! them, so a column, table or function may have any of those names.
+//! them, so a column, table or function may have any of those names. The
+//! window functions of arguments but the aggregates are in `values.rs`.
+
+mod values;
 
 use super::Parser;
 use super::query::PARTITION;

@@ -63,7 +63,9 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22011 | Substring error |
 | 22012 | Division by zero |
 | 22013 | Invalid preceding or following size in window function: a frame's offset negative or null |
+| 22014 | Invalid argument for NTILE function: a number of tiles below 1 |
 | 22015 | Interval field overflow |
+| 22016 | Invalid argument for NTH_VALUE function: a row below 1 |
 | 22018 | Invalid character value for cast |
 | 22019 | Invalid escape character |
 | 2201S | Invalid XQuery regular expression: a pattern no XQuery regular expression |

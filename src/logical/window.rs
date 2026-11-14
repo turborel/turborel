@@ -28,8 +28,8 @@ pub struct Window<P> {
 pub struct WindowCall {
     /// What it computes.
     pub kind: WindowKind,
-    /// The rows of its frame [§7.15 GR5]: of an aggregate, those it is
-    /// computed over.
+    /// The rows of its frame [§7.15 GR5]: of an aggregate or a value
+    /// function, those it is computed over.
     pub frame: Frame,
     /// The call as written, its column's display name.
     pub label: String,
@@ -52,6 +52,112 @@ pub enum WindowKind {
     /// An `<aggregate function>`, its argument over the columns of the
     /// window's input, computed over its frame [§7.15 GR5].
     Aggregate(AggCall),
+    /// NTILE of the number of tiles, over no columns [§6.10 GR1a].
+    Ntile(Expr),
+    /// LEAD or LAG [§6.10 GR1b].
+    Offset(Offset),
+    /// FIRST_VALUE, LAST_VALUE or NTH_VALUE, over its frame [§6.10 GR1c,
+    /// GR1d].
+    Value(Valued),
+}
+
+/// [ISO/IEC 9075-2:2023 §6.10 GR1b] LEAD or LAG: the extent of the row
+/// `offset` rows after or before the current row in its partition, else
+/// the default.
+#[derive(Debug, Clone)]
+pub struct Offset {
+    /// LEAD rather than LAG.
+    pub lead: bool,
+    /// The extent, over the columns of the window's input.
+    pub extent: Expr,
+    /// How many rows after or before [§9.23 SR5j ii].
+    pub offset: u32,
+    /// The default, over the columns of the window's input, of the
+    /// extent's type [§9.23 SR5j iii].
+    pub default: Expr,
+    /// IGNORE NULLS: rows whose extent is null are not counted.
+    pub ignore_nulls: bool,
+}
+
+/// [ISO/IEC 9075-2:2023 §6.10 GR1c, GR1d] FIRST_VALUE, LAST_VALUE or
+/// NTH_VALUE: the argument of a row of the frame.
+#[derive(Debug, Clone)]
+pub struct Valued {
+    /// Which row of the frame.
+    pub pick: Pick,
+    /// The argument, over the columns of the window's input.
+    pub arg: Expr,
+    /// IGNORE NULLS: rows whose argument is null are not counted.
+    pub ignore_nulls: bool,
+}
+
+/// [ISO/IEC 9075-2:2023 §6.10] Which row of its frame a value function
+/// takes.
+#[derive(Debug, Clone)]
+pub enum Pick {
+    /// FIRST_VALUE: the first.
+    First,
+    /// LAST_VALUE: the last.
+    Last,
+    /// NTH_VALUE: the `row`th, over no columns, from the last if
+    /// `from_last`.
+    Nth {
+        /// The `<nth row>`.
+        row: Expr,
+        /// FROM LAST.
+        from_last: bool,
+    },
+}
+
+impl WindowKind {
+    /// Its expressions: its argument, extent, default and counts.
+    pub fn exprs(&self) -> Vec<&Expr> {
+        match self {
+            WindowKind::RowNumber | WindowKind::Rank | WindowKind::DenseRank | WindowKind::PercentRank | WindowKind::CumeDist => Vec::new(),
+            WindowKind::Aggregate(a) => a.arg.iter().collect(),
+            WindowKind::Ntile(tiles) => vec![tiles],
+            WindowKind::Offset(o) => vec![&o.extent, &o.default],
+            WindowKind::Value(v) => match &v.pick {
+                Pick::First | Pick::Last => vec![&v.arg],
+                Pick::Nth { row, .. } => vec![&v.arg, row],
+            },
+        }
+    }
+
+    /// Its expressions, as `exprs` gives them, each replaced by `f` of it.
+    pub fn map_exprs(&mut self, f: &mut dyn FnMut(Expr) -> Expr) {
+        let mut put = |e: &mut Expr| *e = f(std::mem::replace(e, Expr::Const(Value::Null)));
+        match self {
+            WindowKind::RowNumber | WindowKind::Rank | WindowKind::DenseRank | WindowKind::PercentRank | WindowKind::CumeDist => {}
+            WindowKind::Aggregate(a) => a.arg.iter_mut().for_each(put),
+            WindowKind::Ntile(tiles) => put(tiles),
+            WindowKind::Offset(o) => {
+                put(&mut o.extent);
+                put(&mut o.default);
+            }
+            WindowKind::Value(v) => {
+                put(&mut v.arg);
+                if let Pick::Nth { row, .. } = &mut v.pick {
+                    put(row);
+                }
+            }
+        }
+    }
+
+    /// Whether it is computed over a frame: an aggregate's or a value
+    /// function's.
+    pub fn framed(&self) -> bool {
+        match self {
+            WindowKind::Aggregate(_) | WindowKind::Value(_) => true,
+            WindowKind::RowNumber
+            | WindowKind::Rank
+            | WindowKind::DenseRank
+            | WindowKind::PercentRank
+            | WindowKind::CumeDist
+            | WindowKind::Ntile(_)
+            | WindowKind::Offset(_) => false,
+        }
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §7.15] A window frame: units, bounds and
@@ -171,23 +277,16 @@ impl<P> Window<P> {
         Window { partition: self.partition.clone(), order: self.order.clone(), calls: self.calls.clone(), input: f(&self.input) }
     }
 
-    /// The expressions of its calls: their arguments and frames' offsets.
+    /// The expressions of its calls: their arguments, counts and frames'
+    /// offsets.
     pub fn exprs(&self) -> impl Iterator<Item = &Expr> {
-        self.calls.iter().flat_map(|c| {
-            let arg = match &c.kind {
-                WindowKind::Aggregate(a) => a.arg.as_ref(),
-                WindowKind::RowNumber | WindowKind::Rank | WindowKind::DenseRank | WindowKind::PercentRank | WindowKind::CumeDist => None,
-            };
-            arg.into_iter().chain(c.frame.offsets())
-        })
+        self.calls.iter().flat_map(|c| c.kind.exprs().into_iter().chain(c.frame.offsets()))
     }
 
     /// Its calls' expressions, each replaced by `f` of it.
     pub fn map_exprs(&mut self, f: &mut dyn FnMut(Expr) -> Expr) {
         for call in &mut self.calls {
-            if let WindowKind::Aggregate(a) = &mut call.kind {
-                a.arg = a.arg.take().map(&mut *f);
-            }
+            call.kind.map_exprs(f);
             for bound in [&mut call.frame.start, &mut call.frame.end] {
                 if let Bound::Preceding(e) | Bound::Following(e) = bound {
                     *e = f(std::mem::replace(e, Expr::Const(Value::Null)));
@@ -196,10 +295,10 @@ impl<P> Window<P> {
         }
     }
 
-    /// Whether computing it can raise a run-time error: an aggregate's, or
-    /// a frame's offset's (`exec/window.rs`).
+    /// Whether computing it can raise a run-time error: an aggregate's, an
+    /// expression's of a call, or a frame's offset's (`exec/window.rs`).
     pub fn can_raise(&self) -> bool {
-        self.calls.iter().any(|c| matches!(c.kind, WindowKind::Aggregate(_)) || c.frame.offsets().next().is_some())
+        self.calls.iter().any(|c| matches!(c.kind, WindowKind::Aggregate(_))) || self.exprs().next().is_some()
     }
 
     /// Its own columns' display names, after its input's: its calls'.
@@ -214,12 +313,7 @@ impl<P> Window<P> {
         let calls: Vec<String> = self
             .calls
             .iter()
-            .map(|c| match &c.kind {
-                WindowKind::Aggregate(_) => format!("{} ({})", c.label, c.frame.render()),
-                WindowKind::RowNumber | WindowKind::Rank | WindowKind::DenseRank | WindowKind::PercentRank | WindowKind::CumeDist => {
-                    c.label.clone()
-                }
-            })
+            .map(|c| if c.kind.framed() { format!("{} ({})", c.label, c.frame.render()) } else { c.label.clone() })
             .collect();
         format!(
             "Window partition by [{}] order by [{}] computing [{}]",

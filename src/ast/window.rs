@@ -26,6 +26,63 @@ pub enum WindowKind {
     /// An `<aggregate function>`: a `<set function specification>`, or a
     /// call of a set function by name.
     Aggregate(Box<ValueExpression>),
+    /// `<ntile function>` ::= NTILE ( `<number of tiles>` ).
+    Ntile(Box<ValueExpression>),
+    /// A `<lead or lag function>`.
+    Offset(Box<OffsetFunction>),
+    /// A `<first or last value function>` or an `<nth value function>`.
+    Value(Box<ValueFunction>),
+}
+
+/// [ISO/IEC 9075-2:2023 §6.10] `<lead or lag function>` ::= `<lead or lag>`
+/// ( `<lead or lag extent>` \[, `<offset>` \[, `<default expression>`\]\]
+/// ) \[`<window function null treatment>`\]
+#[derive(Debug, Clone)]
+pub struct OffsetFunction {
+    /// LEAD rather than LAG.
+    pub lead: bool,
+    /// The `<lead or lag extent>`.
+    pub extent: ValueExpression,
+    /// The `<offset>`, an `<unsigned integer>`, if written; 1 if not
+    /// [§9.23 SR5j ii].
+    pub offset: Option<u32>,
+    /// The `<default expression>`, if written.
+    pub default: Option<ValueExpression>,
+    /// IGNORE NULLS rather than RESPECT NULLS, written or implied.
+    pub ignore_nulls: bool,
+}
+
+/// [ISO/IEC 9075-2:2023 §6.10] `<first or last value function>` ::= `<first
+/// or last value>` ( `<value expression>` ) \[`<window function null
+/// treatment>`\], or `<nth value function>` ::= NTH_VALUE ( `<value
+/// expression>` , `<nth row>` ) \[`<from first or last>`\] \[`<window
+/// function null treatment>`\]
+#[derive(Debug, Clone)]
+pub struct ValueFunction {
+    /// Which row of the frame it takes the value of.
+    pub which: Which,
+    /// The `<value expression>`.
+    pub arg: ValueExpression,
+    /// IGNORE NULLS rather than RESPECT NULLS, written or implied.
+    pub ignore_nulls: bool,
+}
+
+/// [ISO/IEC 9075-2:2023 §6.10] Which row of its frame a value function
+/// takes the value of.
+#[derive(Debug, Clone)]
+pub enum Which {
+    /// FIRST_VALUE.
+    First,
+    /// LAST_VALUE.
+    Last,
+    /// NTH_VALUE of the `<nth row>`, counted from the frame's last row if
+    /// FROM LAST, else from its first.
+    Nth {
+        /// The `<nth row>`.
+        row: Box<ValueExpression>,
+        /// FROM LAST rather than FROM FIRST, written or implied.
+        from_last: bool,
+    },
 }
 
 /// [ISO/IEC 9075-2:2023 §6.10] `<rank function type>`.
@@ -137,11 +194,23 @@ pub enum Exclusion {
 
 impl WindowFunction {
     /// Calls `f` with each value expression it is made of: its aggregate's
-    /// own parts, and those of its in-line window specification.
+    /// own parts, or its function's arguments, and those of its in-line
+    /// window specification.
     pub(super) fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         match &self.kind {
             WindowKind::RowNumber | WindowKind::Rank(_) => {}
             WindowKind::Aggregate(aggregate) => aggregate.for_each_child(f),
+            WindowKind::Ntile(tiles) => f(tiles),
+            WindowKind::Offset(o) => {
+                f(&o.extent);
+                o.default.iter().for_each(&mut *f);
+            }
+            WindowKind::Value(v) => {
+                f(&v.arg);
+                if let Which::Nth { row, .. } = &v.which {
+                    f(row);
+                }
+            }
         }
         match &self.over {
             WindowOver::Name(..) => {}

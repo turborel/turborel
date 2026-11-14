@@ -33,9 +33,9 @@ each group.
 
 ### Queries
 
-- The rest of the window functions (T614 to T619) [§4.17.15, §6.10].
-  NTILE, LEAD and LAG with their null treatment, FIRST_VALUE, LAST_VALUE
-  and NTH_VALUE, then nested window functions.
+- Nested window functions (T619) [§4.17.15, §6.11]. ROW_NUMBER and
+  VALUE_OF at a row marker, such as BEGIN_FRAME or CURRENT_ROW, in the
+  argument of a set function over a window.
 - The rest of T612 (Advanced OLAP operations) [§6.31, §10.9]. WIDTH_BUCKET,
   the FILTER clause, and the hypothetical set and inverse distribution
   functions.

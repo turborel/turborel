@@ -80,8 +80,16 @@ SELECT: read rows
 <grouping column reference> ::= <column reference> [ COLLATE <collation name> ]
 
 <window function> ::=
-    { ROW_NUMBER ( ) | RANK ( ) | DENSE_RANK ( ) | PERCENT_RANK ( ) | CUME_DIST ( ) | <set function> }
+    { ROW_NUMBER ( ) | RANK ( ) | DENSE_RANK ( ) | PERCENT_RANK ( ) | CUME_DIST ( ) | <set function>
+    | NTILE ( <number of rows> )
+    | { LEAD | LAG } ( <value expression> [ , <unsigned integer> [ , <value expression> ] ] ) [ <null treatment> ]
+    | { FIRST_VALUE | LAST_VALUE } ( <value expression> ) [ <null treatment> ]
+    | NTH_VALUE ( <value expression> , <number of rows> ) [ FROM { FIRST | LAST } ] [ <null treatment> ] }
     OVER { <window name> | <window specification> }
+
+<number of rows> ::= <simple value specification> | ?
+
+<null treatment> ::= RESPECT NULLS | IGNORE NULLS
 
 <window specification> ::=
     ( [ <window name> ]
@@ -179,8 +187,11 @@ parameters, is [a statement of a program too](#select-into).
    alone. The WINDOW clause names each window once, and a window name
    names one of them. A window built on another adds no PARTITION BY, no
    ORDER BY where the other has one, and builds on none with a frame.
-   RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST and a frame of GROUPS need
-   an ORDER BY, and no rank takes a frame. A frame's start is not after
+   RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST, NTILE, LEAD, LAG and a
+   frame of GROUPS need an ORDER BY, and no rank, NTILE, LEAD or LAG
+   takes a frame. The number of tiles of NTILE and the row of NTH_VALUE
+   are integers. The default of LEAD or LAG is of a type each assignable
+   to its first argument's, to whose type it is cast. A frame's start is not after
    its end. An offset is a literal or a parameter, an integer of ROWS and
    GROUPS. RANGE with an offset orders by one key, a number, a datetime
    or an interval, the offset a number or an interval of it.
@@ -197,7 +208,7 @@ SELECT on each table and view the query names.
 | 2A000 | -104 | Its user lacks SELECT on a table or view |
 | 21000 | -811 | A scalar subquery gives more than one row |
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
-| 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), a window frame's offset negative or null (22013), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
+| 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), a window frame's offset negative or null (22013), a number of tiles of NTILE below 1 (22014), a row of NTH_VALUE below 1 (22016), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
 | 2202F | -301 | A path or a DEPTH FIRST sequence would hold more than 65,535 rows |
 | 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md); a GROUP BY of more than 4,096 grouping sets, or GROUPING of more than 59 columns; an anchor of WITH RECURSIVE of UNION CORRESPONDING without BY, or within its query's body; SEARCH or CYCLE of a UNION CORRESPONDING, or of a query that selects `*` of a NATURAL join or a join USING columns; COUNT(DISTINCT ...) over a window of an ordering or a frame, Feature T627 |
 
@@ -315,7 +326,9 @@ grouping set are the `<group by clause>` of §7.13 and GROUPING its
 `<grouping operation>` [§6.9], Features T431, T432 and T433, and GROUP BY
 DISTINCT Feature T434. Window functions are the `<window function>` of
 §6.10 and the WINDOW clause its `<window clause>` [§7.15], Features T611
-and T620, with the window parts of T612. SELECT ... INTO is
+and T620, with the window parts of T612. NTILE is Feature T614, LEAD
+and LAG T615, IGNORE NULLS T616, FIRST_VALUE and LAST_VALUE T617, and
+NTH_VALUE T618. SELECT ... INTO is
 the `<select statement: single row>` [§13.5; X3.135-1986 §8.10]. FOR
 READ ONLY, of a `<cursor specification>` [§13.1], is taken in a direct
 SELECT too. Where the null value sorts is implementation-defined

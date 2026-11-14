@@ -326,7 +326,7 @@ fn negative(v: &Value) -> bool {
 
 /// The offset of ROWS or GROUPS `v`, exact of scale 0 [§7.15 SR15b], not
 /// negative.
-fn whole(v: &Value) -> Result<i128> {
+pub(super) fn whole(v: &Value) -> Result<i128> {
     if let Value::Exact(d) = v
         && d.scale == 0
     {

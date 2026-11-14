@@ -133,6 +133,11 @@ impl Parser {
         if let Some(kind) = self.at_rank_function() {
             return self.rank_function(kind);
         }
+        // [ISO/IEC 9075-2:2023 §6.10] NTILE, LEAD, LAG, FIRST_VALUE,
+        // LAST_VALUE and NTH_VALUE, no key words of SQL-92, before OVER.
+        if let Some(named) = self.at_value_function() {
+            return self.value_function(named);
+        }
         // [ISO/IEC 9075-2:2023 §10.4] a <routine invocation>: its name,
         // perhaps of a schema, then "(".
         let qualified = matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD))

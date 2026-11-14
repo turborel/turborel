@@ -46,12 +46,12 @@ pub fn sales() -> (Database, Session) {
 }
 
 /// The rows of `sql`, in its order.
-fn ordered(s: &Session, sql: &str) -> Vec<String> {
+pub fn ordered(s: &Session, sql: &str) -> Vec<String> {
     rows(s, sql).unwrap_or_else(|_| panic!("{sql}: {:?}", crate::common::fetched(s, sql)))
 }
 
 /// The value of the window function `call` of each row of F, by I.
-fn by_row(s: &Session, call: &str) -> Vec<String> {
+pub fn by_row(s: &Session, call: &str) -> Vec<String> {
     let found = ordered(s, &format!("SELECT I, {call} FROM F ORDER BY I"));
     found.into_iter().map(|r| r.split_once(',').map_or_else(String::new, |(_, v)| v.to_owned())).collect()
 }

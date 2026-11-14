@@ -8,8 +8,11 @@
 //! and ordering in a window of its own, one after another, before the
 //! select list.
 
+mod label;
 mod spec;
+mod value;
 
+use self::label::labelled;
 use self::spec::{Described, Keys, described};
 use super::collation::any_of;
 use super::{Binder, Scope, rule};
@@ -17,7 +20,7 @@ use crate::ast::{Composite, ValueExpression, WindowDefinition, WindowFunction, W
 use crate::error::{Code, Result, SqlError};
 use crate::functions::AggregateRef;
 use crate::lexer::kw;
-use crate::logical::{AggCall, Expr, LogicalPlan, Window, WindowCall, WindowKind, expr_columns, map_expr_columns, render_expr};
+use crate::logical::{AggCall, Expr, LogicalPlan, Window, WindowCall, WindowKind, expr_columns, map_expr_columns};
 use crate::value::collation::CollationRef;
 use crate::value::{DOUBLE_PRECISION, DataType, Spelled};
 
@@ -120,7 +123,7 @@ impl Binder<'_> {
         let named: Vec<Described> =
             self.windowing.borrow().as_ref().map(|w| w.named.iter().map(|(_, d)| d.clone()).collect()).unwrap_or_default();
         for d in &named {
-            self.own_references(None, d)?;
+            self.own_references(Vec::new(), d)?;
             let keys = self.within(IN_WINDOW, || self.window_keys(d, scope))?;
             self.within(IN_WINDOW, || self.window_frame(d.frame.as_ref(), &keys, scope))?;
         }
@@ -180,8 +183,7 @@ impl Binder<'_> {
     pub(super) fn window_function(&self, w: &WindowFunction, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         self.window_allowed(scope)?;
         let described = self.described_window(&w.over)?;
-        let aggregate = if let Kind::Aggregate(a) = &w.kind { Some(&**a) } else { None };
-        self.own_references(aggregate, &described)?;
+        self.own_references(own_parts(&w.kind), &described)?;
         kind_rules(&w.kind, &described)?;
         self.deterministic(&w.kind, &described)?;
         let keys = self.within(IN_WINDOW, || self.window_keys(&described, scope))?;
@@ -202,13 +204,12 @@ impl Binder<'_> {
     }
 
     /// [ISO/IEC 9075-2:2023 §9.23 SR3, §7.15 SR4] That a window function
-    /// of `aggregate`, if any, over `described` contains no query
-    /// expression and no outer reference: its aggregate, sort keys and
+    /// of the arguments `parts` over `described` contains no query
+    /// expression and no outer reference: its arguments, sort keys and
     /// offsets. Its partitioning columns are its table expression's
     /// (`spec.rs`).
-    fn own_references(&self, aggregate: Option<&ValueExpression>, described: &Described) -> Result<()> {
-        let mut parts: Vec<&ValueExpression> = described.order.iter().map(|o| &o.key).collect();
-        parts.extend(aggregate);
+    fn own_references<'a>(&self, mut parts: Vec<&'a ValueExpression>, described: &'a Described) -> Result<()> {
+        parts.extend(described.order.iter().map(|o| &o.key));
         if let Some(f) = &described.frame {
             for bound in std::iter::once(&f.start).chain(&f.end) {
                 if let crate::ast::FrameBound::Preceding(v) | crate::ast::FrameBound::Following(v) = bound {
@@ -247,7 +248,8 @@ impl Binder<'_> {
 
     /// [ISO/IEC 9075-2:2023 §9.16 SR1c, §11.9 CR2] Of a constraint, that
     /// the window function `kind` over `described` is no potential source
-    /// of non-determinism: ROW_NUMBER, or a window of ROWS.
+    /// of non-determinism: ROW_NUMBER, FIRST_VALUE, LAST_VALUE, NTH_VALUE,
+    /// NTILE, LEAD or LAG, or a window of ROWS.
     fn deterministic(&self, kind: &Kind, described: &Described) -> Result<()> {
         if !self.purpose.constrains() {
             return Ok(());
@@ -255,6 +257,19 @@ impl Binder<'_> {
         let rows = described.frame.as_ref().is_some_and(|f| f.units == crate::ast::FrameUnits::Rows);
         let what = match kind {
             Kind::RowNumber => "ROW_NUMBER",
+            Kind::Ntile(_) => "NTILE",
+            Kind::Offset(o) => {
+                if o.lead {
+                    "LEAD"
+                } else {
+                    "LAG"
+                }
+            }
+            Kind::Value(v) => match v.which {
+                crate::ast::Which::First => "FIRST_VALUE",
+                crate::ast::Which::Last => "LAST_VALUE",
+                crate::ast::Which::Nth { .. } => "NTH_VALUE",
+            },
             Kind::Rank(_) | Kind::Aggregate(_) => {
                 if !rows {
                     return Ok(());
@@ -265,12 +280,15 @@ impl Binder<'_> {
         Err(super::expression::nondeterministic_source("c", what))
     }
 
+    /// [ISO/IEC 9075-2:2023 §10.9 SR4] COUNT's type (IV166).
+    fn count_type(&self) -> Result<DataType> {
+        let count = self.db.functions.aggregate(kw::COUNT);
+        count.ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] COUNT is not registered")).and_then(|c| c.0.result_type(None))
+    }
+
     /// What `kind` computes over `described`, bound in `scope`, and its type.
     fn window_kind(&self, kind: &Kind, described: &Described, scope: Scope<'_>) -> Result<(WindowKind, DataType)> {
-        let count = || {
-            let count = self.db.functions.aggregate(kw::COUNT);
-            count.ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] COUNT is not registered")).and_then(|c| c.0.result_type(None))
-        };
+        let count = || self.count_type();
         let rank = |k| match k {
             crate::ast::RankKind::Rank => (WindowKind::Rank, count()),
             crate::ast::RankKind::DenseRank => (WindowKind::DenseRank, count()),
@@ -285,6 +303,9 @@ impl Binder<'_> {
             Kind::RowNumber => (WindowKind::RowNumber, count()),
             Kind::Rank(k) => rank(*k),
             Kind::Aggregate(aggregate) => return self.window_aggregate_of(aggregate, described, scope),
+            Kind::Ntile(tiles) => return self.ntile(tiles),
+            Kind::Offset(o) => return self.offset_function(o, scope),
+            Kind::Value(v) => return self.value_function(v, scope),
         };
         Ok((kind, t?))
     }
@@ -307,7 +328,9 @@ impl Binder<'_> {
         Ok((WindowKind::Aggregate(call), t))
     }
 
-    /// `call`, over the window of `keys`, kept: its placeholder column.
+    /// `call`, over the window of `keys`, kept: its placeholder column. It
+    /// is computed in a window of its partitioning and ordering after those
+    /// computing the window functions its arguments read, if any.
     fn windowed(&self, keys: Keys, call: WindowCall) -> Expr {
         let mut windowing = self.windowing.borrow_mut();
         let Some(w) = windowing.as_mut() else { return Expr::Const(crate::value::Value::Null) };
@@ -320,12 +343,38 @@ impl Binder<'_> {
         };
         let partition: Vec<usize> = keys.partition.into_iter().map(&mut place).collect();
         let order: Vec<_> = keys.order.into_iter().map(|(e, o)| (place(e), o)).collect();
-        let found = w.windows.iter_mut().find(|p| p.key == keys.text);
+        let after = after_read(&w.windows, &call);
+        let found = w.windows.iter_mut().skip(after).find(|p| p.key == keys.text);
         match found {
             Some(p) => p.calls.push((k, call)),
             None => w.windows.push(Partitioned { key: keys.text, partition, order, calls: vec![(k, call)] }),
         }
         Expr::Column(PLACEHOLDER.saturating_add(k))
+    }
+}
+
+/// The first of `windows` that `call` may be computed in: the one after
+/// the last computing a window function its arguments read, of their
+/// placeholder columns; the first if they read none.
+fn after_read(windows: &[Partitioned], call: &WindowCall) -> usize {
+    let mut read = Vec::new();
+    call.kind.exprs().into_iter().for_each(|e| expr_columns(e, &mut read));
+    let reads = |p: &Partitioned| p.calls.iter().any(|(k, _)| read.contains(&PLACEHOLDER.saturating_add(*k)));
+    windows.iter().rposition(reads).map_or(0, |at| at.saturating_add(1))
+}
+
+/// The value expressions a window function `kind` is of, beside its
+/// window: an aggregate's, or a function's arguments.
+fn own_parts(kind: &Kind) -> Vec<&ValueExpression> {
+    match kind {
+        Kind::RowNumber | Kind::Rank(_) => Vec::new(),
+        Kind::Aggregate(a) => vec![&**a],
+        Kind::Ntile(tiles) => vec![&**tiles],
+        Kind::Offset(o) => std::iter::once(&o.extent).chain(&o.default).collect(),
+        Kind::Value(v) => match &v.which {
+            crate::ast::Which::First | crate::ast::Which::Last => vec![&v.arg],
+            crate::ast::Which::Nth { row, .. } => vec![&v.arg, &**row],
+        },
     }
 }
 
@@ -335,19 +384,19 @@ fn double() -> DataType {
     DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::DoublePrecision }
 }
 
-/// [ISO/IEC 9075-2:2023 §9.23 SR5] That ROW_NUMBER and the rank functions
-/// have no frame, and the rank functions an ordering.
+/// [ISO/IEC 9075-2:2023 §9.23 SR5] That ROW_NUMBER, the rank functions,
+/// NTILE, LEAD and LAG have no frame, and all but ROW_NUMBER an ordering.
 fn kind_rules(kind: &Kind, described: &Described) -> Result<()> {
     let name = match kind {
-        Kind::Aggregate(_) => return Ok(()),
+        Kind::Aggregate(_) | Kind::Value(_) => return Ok(()),
         Kind::RowNumber => "ROW_NUMBER",
-        Kind::Rank(_) => {
-            if described.order.is_empty() {
-                return Err(rule("[ISO/IEC 9075-2:2023 §9.23 SR5a] a rank function's window has an ordering"));
-            }
-            "a rank function"
-        }
+        Kind::Rank(_) => "a rank function",
+        Kind::Ntile(_) => "NTILE",
+        Kind::Offset(_) => "LEAD or LAG",
     };
+    if described.order.is_empty() && !matches!(kind, Kind::RowNumber) {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.23 SR5a] the window of {name} has an ordering")));
+    }
     if described.frame.is_some() {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.23 SR5b] the window of {name} has no frame")));
     }
@@ -361,20 +410,29 @@ fn kind_rules(kind: &Kind, described: &Described) -> Result<()> {
 /// placeholders placed.
 pub(super) fn windowed(windowing: Option<Windowing>, input: LogicalPlan, exprs: Vec<Expr>) -> LogicalPlan {
     let Some(windowing) = windowing.filter(Windowing::computes) else { return LogicalPlan::Project { exprs, input: Box::new(input) } };
-    let names = input.names();
     let (mut plan, extra) = with_extras(input, windowing.extras);
     let column = |c: usize| extra.get(c).copied().unwrap_or(c);
     let mut placed = vec![0_usize; windowing.calls];
     for p in windowing.windows {
-        let at = plan.width();
+        let (at, names) = (plan.width(), plan.names());
         let partition = p.partition.iter().map(|&c| column(c)).collect();
         let order = p.order.iter().map(|&(c, o)| crate::logical::SortKey::new(column(c), o)).collect();
-        let mut calls = Vec::new();
-        for (n, (k, call)) in p.calls.into_iter().enumerate() {
-            if let Some(slot) = placed.get_mut(k) {
+        // The window functions its calls' arguments read are of windows
+        // before it (`after_read`), so placed already.
+        let place = |c: usize| c.checked_sub(PLACEHOLDER).and_then(|k| placed.get(k).copied()).unwrap_or(c);
+        let calls: Vec<WindowCall> = p
+            .calls
+            .iter()
+            .map(|(_, call)| {
+                let mut call = call.clone();
+                call.kind.map_exprs(&mut |e| map_expr_columns(e, &place));
+                labelled(call, &names)
+            })
+            .collect();
+        for (n, (k, _)) in p.calls.iter().enumerate() {
+            if let Some(slot) = placed.get_mut(*k) {
                 *slot = at.saturating_add(n);
             }
-            calls.push(labelled(call, &names));
         }
         plan = LogicalPlan::Window(Box::new(Window { partition, order, calls, input: plan }));
     }
@@ -437,7 +495,7 @@ pub(super) struct Inner {
 pub(super) fn grouped_windowed(mut w: Windowing, groups: LogicalPlan, inner: Inner, exprs: Vec<Expr>) -> LogicalPlan {
     let width = groups.width();
     let mut read = Vec::new();
-    for e in exprs.iter().chain(&w.extras).chain(w.windows.iter().flat_map(|p| p.calls.iter()).filter_map(|(_, c)| argument(c))) {
+    for e in exprs.iter().chain(&w.extras).chain(w.windows.iter().flat_map(|p| p.calls.iter()).flat_map(|(_, c)| c.kind.exprs())) {
         expr_columns(e, &mut read);
     }
     read.retain(|&c| c < inner.aggs_from);
@@ -466,17 +524,10 @@ pub(super) fn grouped_windowed(mut w: Windowing, groups: LogicalPlan, inner: Inn
     let place = |c: usize| read.binary_search(&c).unwrap_or(c);
     w.extras = std::mem::take(&mut w.extras).into_iter().map(|e| map_expr_columns(e, &place)).collect();
     for (_, call) in w.windows.iter_mut().flat_map(|p| p.calls.iter_mut()) {
-        if let WindowKind::Aggregate(a) = &mut call.kind {
-            a.arg = a.arg.take().map(|e| map_expr_columns(e, &place));
-        }
+        call.kind.map_exprs(&mut |e| map_expr_columns(e, &place));
     }
     let exprs = exprs.into_iter().map(|e| map_expr_columns(e, &place)).collect();
     windowed(Some(w), plan, exprs)
-}
-
-/// The argument of `call`, if an aggregate's of one.
-fn argument(call: &WindowCall) -> Option<&Expr> {
-    if let WindowKind::Aggregate(a) = &call.kind { a.arg.as_ref() } else { None }
 }
 
 /// `plan` DISTINCT, each of its columns compared by its collation of
@@ -493,23 +544,4 @@ fn distinct_by(plan: LogicalPlan, compared: Vec<Option<CollationRef>>) -> Logica
         seeds: Vec::new(),
         input: Box::new(plan),
     }
-}
-
-/// `call`, its label its function and argument over the columns `names`.
-fn labelled(call: WindowCall, names: &[String]) -> WindowCall {
-    let label = match &call.kind {
-        WindowKind::RowNumber => "ROW_NUMBER()".to_owned(),
-        WindowKind::Rank => "RANK()".to_owned(),
-        WindowKind::DenseRank => "DENSE_RANK()".to_owned(),
-        WindowKind::PercentRank => "PERCENT_RANK()".to_owned(),
-        WindowKind::CumeDist => "CUME_DIST()".to_owned(),
-        WindowKind::Aggregate(a) => match &a.arg {
-            None => format!("{}(*)", a.func.0.name()),
-            Some(e) => {
-                let distinct = if a.distinct { "DISTINCT " } else { "" };
-                format!("{}({distinct}{}{})", a.func.0.name(), render_expr(e, names), a.func.0.label_suffix())
-            }
-        },
-    };
-    WindowCall { label, ..call }
 }
