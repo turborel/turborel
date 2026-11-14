@@ -1080,6 +1080,32 @@ below.
 NULLS, which neither SQL-92 nor SQL:2023 reserves, is a key word only
 where it is read, so a column may be named NULLS.
 
+### Functional dependencies
+
+Feature T301 (Functional dependencies), of ISO/IEC 9075-2:2023 §4.26
+and §6.7 SR7 b iv, SR8. A grouped query names, outside a set function,
+a column functionally dependent on its grouping columns, in its select
+list, HAVING, window clause, a hypothetical set function's values, an
+inverse distribution function's fraction and an outer reference of a
+subquery. T301 is not yet claimed, as DESCRIBE OUTPUT does not yet give
+KEY_TYPE and KEY_MEMBER [§4.27, §20.4].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Base tables | §4.26.3 | A non-deferrable PRIMARY KEY, or a non-deferrable UNIQUE of columns known not null, determines every column. A column is known not null of a non-deferrable NOT NULL or PRIMARY KEY. A generated column is determined by its parametric columns. A non-deferrable UNIQUE NULLS NOT DISTINCT determines every column too (IE015). |
+| Equalities | §4.26.2, §4.26.12 | Of WHERE, each equality AND-component, of rows field by field: of two columns each determines the other, and of a column and a literal none determines it. A column compared with another deterministic expression of no column has one value too, and one compared with a deterministic expression of columns is determined by them (IE015, notes 68 and 69). A column compared by a collation not its own determines nothing. |
+| Joins | §4.26.7 | An inner join keeps both operands' dependencies and adds its condition's equalities. Of the operand an outer join extends with nulls, a dependency holds only if a column of its determinant is known not null. A LEFT join on a deterministic condition adds that its condition's columns of the preserved operand determine each column of the other its equalities compare with a constant or a preserved column, and RIGHT the mirror. A NATURAL or USING join's common column is alike the column it is the value of, where that is known not null or null with the other. |
+| Groups | §4.26.13 | The grouping columns determine the columns of the set functions. A grouping column written with COLLATE determines nothing. Of grouping sets, a column is dependent on each set's columns, else SQLCODE -103. |
+| Queries | §4.26.4, §4.26.8, §4.26.15, §4.26.16 | A view, a derived table and a WITH query that is not recursive keep their query's dependencies, and a column of a select list is determined by the columns of its expression if it is deterministic. EXCEPT keeps its first operand's, INTERSECT both's. A collection derived table WITH ORDINALITY's ordinality column with its input's columns determines its elements, if its collections are deterministic. |
+| Table value constructors | §4.26.6 | One of at most one row determines every column (IE015). One of more rows, a recursive query (IA204) and UNION (IA226) know none. |
+| A dependent column's value | §6.7 GR1e | The value of the group's first row read, kept as a set function would keep it, its null kept with no SQLSTATE 01003. Of a character string, a datetime with time zone or a user-defined type it is UV070. In a CHECK or an assertion such a column of a character string is a potential source of non-determinism, SQLCODE -103 [ISO/IEC 9075:1992 §11.9 SR6]. |
+
+A refused column is SQLCODE -103 citing §6.7 SR8. A partitioned join's
+plan is read as the nodes it is made of, so its join partitioning
+columns add no dependency. A set function of an enclosing query whose
+argument has both its columns and the subquery's is still refused
+[§6.9 SR8], so T301's rule for such an argument is not reached.
+
 ### Sort keys
 
 Features E121-02 (ORDER BY columns need not be in select list) and
@@ -1506,6 +1532,7 @@ topic. The Where column names the file that implements each.
 | §3.3.4.4, Annex C item 5 (implementation-dependent) whether expressions are evaluated left to right | Conjuncts and rows are judged in the order the plan reads them. Where several would raise an error, which one a statement raises may differ by plan (the operand a hash join builds, the join order, an OPTIMIZER setting). Whether one is raised does not (RULES.md D15). | `physical/join.rs` |
 | 2023 §7.13 SR17 (UV132) the column names and correlation name of the grouping sets' transformation | None is made. The sets are grouped in one pass, and nothing of the transformation can be named or seen. | `binder/grouping_sets.rs` |
 | 2023 §10.9 GR7d v (UV062) the value ANY_VALUE gives | The first value not null it reads. So of several it may differ by plan, row by row, by batches or past the work area. | `functions/any_value.rs` |
+| 2023 §6.7 GR1e (UV070) the value of a column functionally dependent on the grouping columns, of values not distinct in a group | The value of the group's first row read, so it may differ by plan, row by row, by batches or past the work area. | `functions/any_value.rs` |
 | 2023 §10.9 GR11a, §10.10 the order of LISTAGG's values of sort keys alike | The order they were read | `functions/listagg.rs` |
 | 2023 §7.15 GR4 (US034) the window ordering of a window of no ORDER BY | The order the rows are read, so ROW_NUMBER, FIRST_VALUE, LAST_VALUE and NTH_VALUE without an ordering may give values differently by plan | `exec/window.rs` |
 | 2023 §7.15 GR4 (US035) the order of peers in a window partition | The order the window's sort leaves them in, the same for each window of that partitioning and ordering, as they are computed in one pass | `physical.rs`, `exec/window.rs` |
@@ -1608,6 +1635,9 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §21.3.13 names of unnamed constraints | The table's name, the constraint's kind and a number, as `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |
 | ID106, ISO/IEC 9075-2:2023 §8.11 SR3, §11.7 SR5 the `<unique null treatment>` not written | NULLS DISTINCT, as every key and UNIQUE predicate was before one could be written | `ast/schema.rs` |
 | IA201, ISO/IEC 9075-2:2023 §4.25.3.2 whether two rows all null are unique with nulls not distinct | Not: under NULLS NOT DISTINCT they are the same, a key refusing the second and UNIQUE false of them | `db/integrity/keys.rs`, `exec/eval.rs` |
+| IE015, ISO/IEC 9075-2:2023 §4.26.3, §4.26.6, §4.26.12 known functional dependencies the rules leave to the implementation | A non-deferrable UNIQUE NULLS NOT DISTINCT determines its table's columns. A table value constructor of at most one row determines its columns. A column compared with a deterministic expression of no column has one value, and one compared with a deterministic expression of columns is determined by them (notes 68 and 69). | `binder/dependencies.rs`, `binder/dependencies/tables.rs`, `binder/dependencies/conditions.rs` |
+| IA204, ISO/IEC 9075-2:2023 §4.26.16 the known functional dependencies of a recursive query | None but the axiomatic | `binder/dependencies.rs` |
+| IA226, ISO/IEC 9075-2:2023 §4.26.16 known functional dependencies of a UNION | None but the axiomatic | `binder/dependencies.rs` |
 | IV223, ISO/IEC 9075-2:2023 §11.51 SR7a the source type of a distinct type of an exact or an approximate type | NUMERIC of its precision and scale, or FLOAT of its precision | `db/user_types.rs` |
 | ID047, ISO/IEC 9075-2:2023 §9.18 SR10b the SQL-path | The schema of the statement's names, the session's default schema or a schema statement's own | `binder/routines.rs` |
 | ID048, ISO/IEC 9075-2:2023 §4.9.6 a session's transform group of a distinct type | The one its definition makes, named FNUDT, in every session | `db/dynamic/using.rs`, `protocol/src/fields.rs` |

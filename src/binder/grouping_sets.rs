@@ -97,6 +97,11 @@ impl Sets {
     pub(super) fn left_out(&self, pos: usize) -> bool {
         self.pcs.iter().position(|&c| c == pos).and_then(|k| self.left_out.get(k)).is_some_and(|&l| l)
     }
+
+    /// [GR2a] Whether a set is empty, so a group of it may have no rows.
+    pub(super) fn has_empty(&self) -> bool {
+        !self.seeds.is_empty()
+    }
 }
 
 /// The grouping of a query bound by `binder`, grouped by `group_by` if
@@ -110,10 +115,21 @@ pub(super) fn grouping(binder: &Binder<'_>, group_by: Option<&GroupBy>) -> Resul
         Expansion::Primitive(columns) => primitive(binder, &columns),
         Expansion::Sets(sets) => {
             let distinct = group_by.is_some_and(|g| g.distinct);
+            let determinants = sets.iter().map(|s| determinants(binder, s)).collect::<Result<_>>()?;
             let (columns, collations, sets) = layout::laid_out(binder, &sets, distinct)?;
-            Ok(Grouping { columns, collations, aggs: RefCell::new(Vec::new()), collated: RefCell::new(Vec::new()), sets: Some(sets) })
+            let (aggs, collated) = (RefCell::new(Vec::new()), RefCell::new(Vec::new()));
+            Ok(Grouping { columns, collations, aggs, collated, sets: Some(sets), determinants })
         }
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §6.7 SR8, §4.26.2] The FROM-row columns of the
+/// grouping set `set` a column functionally dependent on them is of the
+/// groups of: each grouped by its own collation. One grouped by a COLLATE
+/// may group values told apart by its own, so of it none is known
+/// [§4.26.13].
+fn determinants(binder: &Binder<'_>, set: &Set<'_>) -> Result<Vec<usize>> {
+    set.iter().filter(|g| g.collate.is_none()).map(|g| binder.resolve(&g.column).map(|(pos, _)| pos)).collect()
 }
 
 /// [SR10, SR11] The grouping of a primitive `<group by clause>` of
@@ -136,6 +152,7 @@ fn primitive(binder: &Binder<'_>, columns: &Set<'_>) -> Result<Grouping> {
         aggs: RefCell::new(Vec::new()),
         collated: RefCell::new(Vec::new()),
         sets: None,
+        determinants: vec![determinants(binder, columns)?],
     })
 }
 
@@ -165,7 +182,7 @@ pub(super) fn grouped(
     (g, having): (Grouping, Option<Cond>),
     (exprs, selected, once): (Vec<Expr>, &[OutColumn], bool),
 ) -> LogicalPlan {
-    let Grouping { columns: groups, collations, aggs, collated, sets } = g;
+    let Grouping { columns: groups, collations, aggs, collated, sets, .. } = g;
     let aggs = aggs.into_inner();
     // [ISO/IEC 9075-2:2023 §9.20] Of a grouped windowed query, its windows
     // are over its groups, which its DISTINCT is of.

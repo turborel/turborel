@@ -17,9 +17,8 @@ use crate::params::ParameterType;
 use crate::value::{ArithOp, DataType, SortOrder};
 
 /// [ISO/IEC 9075-2:2023 §7.15 SR6] A grouped query's window referencing a
-/// column not grouped by.
-const NOT_GROUPED: &str =
-    "[ISO/IEC 9075-2:2023 §7.15 SR6] in a grouped query, a window references grouping columns alone, outside set functions";
+/// column neither grouped by nor functionally dependent on those that are.
+const NOT_GROUPED: &str = "[ISO/IEC 9075-2:2023 §7.15 SR6] in a grouped query, a window references grouping columns and columns functionally dependent on them alone, outside set functions";
 
 /// [ISO/IEC 9075-2:2023 §7.15 GR1b i] A window structure descriptor: its
 /// partitioning, ordering and framing, those of an existing window taken.

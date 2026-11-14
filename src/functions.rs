@@ -28,6 +28,7 @@ use crate::value::{DOUBLE_PRECISION, DataType, Decimal, MAX_DECFLOAT_PRECISION, 
 
 mod any_value;
 pub use any_value::ANY_VALUE;
+pub(crate) use any_value::GroupValue;
 mod arrays;
 pub use arrays::{
     ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf, ElementOf,

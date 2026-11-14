@@ -403,8 +403,10 @@ SELECT SUM(SALARY) FROM STAFF WHERE 1 = 0;
 ```
 
 A query of a set function and no GROUP BY or HAVING gives one row,
-even of no rows, so each column it selects is in a set function. A set function is not in a
-WHERE clause, which is applied to rows one by one:
+even of no rows, so each column it selects is in a set function, or of
+one value in all the rows, as WHERE makes a column it compares with a
+literal. A set function is not in a WHERE clause, which is applied to
+rows one by one:
 
 ```sql
 SELECT NAME, COUNT(*) FROM STAFF;
@@ -412,12 +414,23 @@ SELECT ID FROM STAFF WHERE SALARY > AVG(SALARY);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): when the select list has a set function, every column reference must be inside one (found STAFF.NAME) [X3.135-1986 §5.25 SR7] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 2A000): when the select list has a set function, every column reference must be inside one, or of a column functionally dependent on none (found STAFF.NAME) [X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] (at character 7)
 turborel: SQLCODE -103 (SQLSTATE 2A000): a <set function specification> is in a <where clause> only in a <having clause>'s <subquery>, of an outer reference [X3.135-1986 §5.21 SR3] (at character 36)
 ```
 
 The mean is found by a subquery: `WHERE SALARY > (SELECT AVG(SALARY)
-FROM STAFF)`.
+FROM STAFF)`. A column WHERE fixes may be selected:
+
+```sql
+SELECT DEPT, COUNT(*) AS N FROM STAFF WHERE DEPT = 'ENG';
+```
+
+```
+ DEPT |                    N
+------+----------------------
+ ENG  |                    2
+(1 row)
+```
 
 A set function followed by OVER and a window is a window function, which
 keeps every row and computes over the rows of each one's window, as
@@ -498,8 +511,9 @@ A null key is not left out but placed as its null ordering says, last
 ascending and first descending unless NULLS FIRST or LAST is written.
 Each value and its key are compared as of the type they have in common,
 character strings by the collation they have together. The values are
-not aggregated, so of a grouped query they name grouping columns, as
-the select list does, and of one with no GROUP BY no column. A `?`
+not aggregated, so of a grouped query they name grouping columns and
+columns functionally dependent on them, as the select list does, and of
+one with no GROUP BY only a column of one value in all the rows. A `?`
 value takes its key's type. A hypothetical set function takes FILTER
 but no OVER.
 
@@ -546,7 +560,7 @@ an ORDER BY or a frame. Over a window p may differ from row to row.
 In a subquery, an inverse distribution function or hypothetical set
 function whose sort keys name only columns of an enclosing query is
 that query's, computed over its groups, and its p or values name that
-query's grouping columns. A key that names a column of the subquery too
+query's grouping columns and columns functionally dependent on them. A key that names a column of the subquery too
 keeps it in the subquery, where the enclosing row's columns are values.
 
 ```sql

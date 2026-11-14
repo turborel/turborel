@@ -205,12 +205,12 @@ impl Binder<'_> {
             return Ok(field);
         }
         if let Some((pos, t, _)) = self.local(cs)? {
-            return Ok((self.column_in(pos, &t.clone(), scope)?, t));
+            return Ok((self.column_in(cs, (pos, &t), scope)?, t));
         }
         let Some(outer) = self.outer else {
             // In no scope at all: the error the lookup gives.
             let (pos, t) = self.resolve(cs)?;
-            return Ok((self.column_in(pos, &t.clone(), scope)?, t));
+            return Ok((self.column_in(cs, (pos, &t), scope)?, t));
         };
         let (e, t) = outer.binder.column_expr(cs, outer.scope)?;
         Ok((capture(outer, e, written(cs)), t))

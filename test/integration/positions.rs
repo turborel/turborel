@@ -37,7 +37,8 @@ fn offset(sql: &str, part: &str, nth: usize) -> Option<usize> {
 /// SR5] at its name; a comparison of incomparable types [§5.11 SR1] at the
 /// predicate; an arithmetic operator on a string [§5.9 SR3] at its select
 /// list item; a set function in WHERE [§5.21 SR3] at the function; a
-/// column outside GROUP BY [§5.25 SR7] at the column; a subquery of two
+/// column outside GROUP BY that no grouping column determines [§5.25 SR7;
+/// ISO/IEC 9075-2:2023 §6.7 SR8] at the column; a subquery of two
 /// columns [§5.24 SR2a] at the subquery; ORDER BY a column not in the
 /// result [§8.3 SR6] at the column.
 #[test]
@@ -51,7 +52,7 @@ fn query_errors_are_placed_at_their_construct() {
         ("SELECT ID FROM T WHERE ID = 1 AND NAME = 1", "NAME", 0),
         ("SELECT ID, NAME + 1 FROM T", "NAME + 1", 0),
         ("SELECT ID FROM T WHERE MAX(ID) > 1", "MAX", 0),
-        ("SELECT NAME FROM T GROUP BY ID", "NAME", 0),
+        ("SELECT ID FROM T GROUP BY NAME", "ID", 0),
         ("SELECT ID FROM T WHERE ID IN (SELECT * FROM U)", "(SELECT", 0),
         ("SELECT ID FROM T ORDER BY NOPE", "NOPE", 0),
     ];

@@ -187,7 +187,10 @@ parameters, is [a statement of a program too](#select-into).
    function in its select list, and is not grouped. Of any other query,
    a key reads the result's columns alone.
 4. In a query with GROUP BY or a set function, a column outside a set
-   function is a grouping column. GROUPING, in the select list or HAVING
+   function is a grouping column or functionally dependent on the
+   grouping columns ([Functionally dependent
+   columns](../06-queries.md#functionally-dependent-columns)), of each
+   grouping set. GROUPING, in the select list or HAVING
    of its query and in no set function, names grouping columns of that
    query, at most 59 of them.
 5. The operands of a set operation have as many columns, of comparable
@@ -233,14 +236,14 @@ parameters, is [a statement of a program too](#select-into).
 11. A hypothetical set function has as many values as sort keys, each
     value and its key of compatible types, and holds no set function,
     subquery, window function or nested window function. Its values
-    name only grouping columns of their query and outer references. One
+    name only columns rule 4 allows of their query and outer references. One
     whose sort keys' columns are all outer references is the query's of
     those columns, and is where that query may have a set function. It
     is followed by no OVER.
 12. An inverse distribution function has one sort key, a number or an
     interval, and its fraction is a number. It holds no set function,
     subquery, window function or nested window function. Its fraction
-    names only grouping columns of its query and outer references. One
+    names only columns rule 4 allows of its query and outer references. One
     whose sort key's columns are all outer references is the query's of
     those columns, as rule 11 says. Its window has no ORDER BY and no
     frame.

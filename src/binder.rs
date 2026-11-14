@@ -3,7 +3,8 @@
 //! The binder enforces the Syntax Rules that need the catalog: names exist
 //! [X3.135-1986 §5.4 SR5], column references are unambiguous [X3.135-1986 §5.7 SR3], types are
 //! comparable [X3.135-1986 §5.11 SR1], privileges are held [X3.135-1986 §5.25 SR1], grouped queries
-//! reference only grouping columns outside set functions ([X3.135-1986 §5.25 SR7, §5.23 SR1]),
+//! reference only grouping columns and columns functionally dependent on them outside set functions
+//! ([X3.135-1986 §5.25 SR7, §5.23 SR1; ISO/IEC 9075-2:2023 §6.7 SR8]),
 //! set operations' operands correspond [ISO/IEC 9075:1992 §7.10 SR9], and sort keys are valid
 //! [X3.135-1986 §8.3 SR6].
 //!
@@ -33,6 +34,7 @@ mod composite;
 pub(crate) use composite::grouping_operand;
 mod cursor;
 mod datetime;
+mod dependencies;
 mod interval;
 mod listagg;
 pub(crate) use datetime::cast_is_valid;
@@ -46,6 +48,7 @@ mod generated;
 mod greatest;
 mod grouping_sets;
 mod hypothetical;
+mod invariant;
 mod natural;
 mod order_by;
 mod partitioned;
@@ -294,6 +297,10 @@ struct Grouping {
     /// [ISO/IEC 9075-2:2023 §7.13 SR17] Its grouping sets, of a GROUP BY
     /// not simple; none of a primitive one [SR10, SR11].
     sets: Option<grouping_sets::Sets>,
+    /// [ISO/IEC 9075-2:2023 §6.7 SR8] Of each grouping set, the FROM-row
+    /// columns a column referenced in a group, no grouping column, must be
+    /// functionally dependent on (`binder/invariant.rs`).
+    determinants: Vec<Vec<usize>>,
 }
 
 /// What a column reference means where it appears.
@@ -374,6 +381,9 @@ struct Binder<'a> {
     /// The names of its result's columns, while its sort keys are bound
     /// (`binder/order_by.rs`).
     sort_names: RefCell<order_by::SortNames>,
+    /// Its FROM and WHERE, while its grouped clauses are bound
+    /// (`binder/invariant.rs`).
+    rows: RefCell<invariant::Rows>,
 }
 
 /// The FROM row a binder sees: its items, the display names of its
@@ -430,6 +440,7 @@ impl<'a> Binder<'a> {
             queries,
             windowing: RefCell::new(None),
             sort_names: RefCell::new(order_by::SortNames::default()),
+            rows: RefCell::new(invariant::Rows::default()),
         }
     }
 
@@ -549,24 +560,5 @@ impl Binder<'_> {
             [] => Err(rule(format!("[X3.135-1986 §5.7 SR3b] no table in the FROM clause has a column {c}"))),
             [_, _, ..] => Err(rule(format!("[X3.135-1986 §5.7 SR3b] column {c} is ambiguous; qualify it"))),
         }
-    }
-
-    /// FROM-row column `pos`, of type `t`, in the rows `scope` sees. In a
-    /// group it must be a grouping column [X3.135-1986 §5.25 SR7, §5.23
-    /// SR1], its value of the group, which of grouping sets is null in a
-    /// set that leaves it out [ISO/IEC 9075-2:2023 §7.13 SR17]; in a
-    /// constraint, a grouping column not a character string one [ISO/IEC
-    /// 9075:1992 §11.9 SR6, §7.8 SR3b, §7.9 SR13c ii].
-    fn column_in(&self, pos: usize, t: &DataType, scope: Scope<'_>) -> Result<Expr> {
-        let Scope::Groups(g, why) = scope else { return Ok(Expr::Column(pos)) };
-        let found = match &g.sets {
-            Some(sets) => sets.value_of(pos).cloned(),
-            None => g.columns.iter().position(|&c| c == pos).map(Expr::Column),
-        };
-        let e = found.ok_or_else(|| rule(format!("{why} (found {})", self.names.get(pos).map_or("", String::as_str))))?;
-        if self.purpose.constrains() && t.is_character() {
-            return Err(nondeterministic("§7.8 SR3b, §7.9 SR13c ii", "a reference to a character string grouping column"));
-        }
-        Ok(e)
     }
 }

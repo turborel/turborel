@@ -131,7 +131,9 @@ fn quantified_comparisons_5_16() {
 
 /// Verifies: [X3.135-1986 §5.23 GR4, SR2] a subquery of a HAVING clause is
 /// run for each group, its outer references being to grouping columns or
-/// in set functions; [§5.23 GR3, §5.8 SR4, SR5, §5.21 SR3] a set function
+/// in set functions, or [ISO/IEC 9075-2:2023 §6.7 SR8] to columns
+/// functionally dependent on them, as a UNIQUE NOT NULL makes the rest of
+/// its row; [§5.23 GR3, §5.8 SR4, SR5, §5.21 SR3] a set function
 /// over an outer reference has the outer group as its argument source, in
 /// the subquery's select list or WHERE clause, nested deeper too; it is not
 /// in a subquery of a WHERE clause. [ISO/IEC 9075:1992 §7.9 GR1a] It does
@@ -143,7 +145,8 @@ fn subqueries_of_having_clauses_5_23() {
     let s = db.session("APP");
     assert_eq!(rows(&s, "SELECT ID FROM T GROUP BY ID HAVING ID IN (SELECT ID FROM U)"), expected(&["1"]));
     assert_eq!(rows(&s, "SELECT ID, COUNT(*) FROM T GROUP BY ID HAVING EXISTS (SELECT * FROM U WHERE U.ID = T.ID)"), expected(&["1,1"]));
-    assert_eq!(code(&s, "SELECT ID FROM T GROUP BY ID HAVING EXISTS (SELECT * FROM U WHERE U.ID = T.AMT)"), Code::SyntaxRule);
+    assert_eq!(rows(&s, "SELECT ID FROM T GROUP BY ID HAVING EXISTS (SELECT * FROM U WHERE U.ID < T.AMT)"), expected(&["1"]));
+    assert_eq!(code(&s, "SELECT NAME FROM T GROUP BY NAME HAVING EXISTS (SELECT * FROM U WHERE U.ID = T.AMT)"), Code::SyntaxRule);
     assert_eq!(
         rows(&s, "SELECT ID FROM T GROUP BY ID HAVING 1 < (SELECT MAX(T.ID) FROM U WHERE CODE = 'A') ORDER BY ID"),
         expected(&["2", "3"])

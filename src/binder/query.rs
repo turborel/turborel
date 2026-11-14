@@ -95,6 +95,7 @@ pub(super) fn bind_ordered(
         "[X3.135-1986 §5.21 SR3] a <set function specification> is in a <where clause> only in a <having clause>'s <subquery>, of an outer reference",
     );
     let where_cond = te.where_clause.as_ref().map(|c| binder.search_condition(c, where_scope)).transpose()?;
+    binder.keep_rows(trees, where_cond);
 
     // R is a grouped table if GROUP BY or HAVING is present ([X3.135-1986 §5.22, §5.23 GR1]).
     // Otherwise, set functions in the select list make R one argument [X3.135-1986 §5.25 GR1].
@@ -109,15 +110,16 @@ pub(super) fn bind_ordered(
     }
 
     // [X3.135-1986 §5.23] <having clause>: applied to groups.
-    let having_rule = "[X3.135-1986 §5.23 SR1] outside a set function, HAVING may only reference grouping columns";
+    let having_rule = "[X3.135-1986 §5.23 SR1; ISO/IEC 9075-2:2023 §6.7 SR8] outside a set function, HAVING may only reference grouping columns and columns functionally dependent on them";
     let having = match (&te.having, &grouping) {
         (Some(h), Some(g)) => Some(binder.search_condition(h, Scope::Groups(g, having_rule))?),
         // HAVING always makes the query grouped, so this is only "no HAVING".
         _ => None,
     };
 
-    let mut plan = from_plan(&binder, &trees)?;
-    if let Some(cond) = where_cond {
+    let (kept_trees, kept_cond) = binder.kept_rows();
+    let mut plan = from_plan(&binder, &kept_trees)?;
+    if let Some(cond) = kept_cond {
         plan = LogicalPlan::Filter { cond, input: Box::new(plan) };
     }
     // [X3.135-1986 §5.25 GR2]
@@ -271,6 +273,7 @@ fn bind_selected(
         aggs: RefCell::new(Vec::new()),
         collated: RefCell::new(Vec::new()),
         sets: None,
+        determinants: vec![Vec::new()],
     });
     let (exprs, columns) = bind_select_list(binder, selected, select_scope(one.as_ref(), grouped))?;
     Ok((one, exprs, columns))
@@ -284,9 +287,9 @@ fn select_scope(grouping: Option<&Grouping>, grouped: bool) -> Scope<'_> {
         return Scope::Select;
     };
     let why = if grouped {
-        "[X3.135-1986 §5.25 SR7] outside a set function, a grouped query may only reference grouping columns"
+        "[X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] outside a set function, a grouped query may only reference grouping columns and columns functionally dependent on them"
     } else {
-        "[X3.135-1986 §5.25 SR7] when the select list has a set function, every column reference must be inside one"
+        "[X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] when the select list has a set function, every column reference must be inside one, or of a column functionally dependent on none"
     };
     Scope::Groups(g, why)
 }
@@ -358,11 +361,13 @@ fn bound_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_
     Ok((exprs, columns))
 }
 
-/// Whether a grouping set of the groups `scope` is of leaves out the
-/// FROM row's column `pos`.
+/// Whether the FROM row's column `pos` may be null in a group of the
+/// groups `scope` is of: a grouping set leaves it out; or it is no
+/// grouping column, and a group may have no rows [ISO/IEC 9075-2:2023
+/// §6.7 GR1e] (`binder/invariant.rs`).
 fn left_out(scope: Scope<'_>, pos: usize) -> bool {
     match scope {
-        Scope::Groups(g, _) => g.sets.as_ref().is_some_and(|s| s.left_out(pos)),
+        Scope::Groups(g, _) => g.sets.as_ref().is_some_and(|s| s.left_out(pos)) || (!g.groups_by(pos) && g.may_be_empty()),
         Scope::Rows(_) | Scope::Select => false,
     }
 }

@@ -163,8 +163,8 @@ OK
 
 **GROUP BY** makes groups of the rows, one of each value of its columns,
 the nulls one group. A query then gives a row of each group: what it
-selects is a grouping column, or of a set function, computed of the
-group. **HAVING** keeps the groups its condition is true of; without
+selects is a grouping column, a column functionally dependent on the
+grouping columns, or of a set function, computed of the group. **HAVING** keeps the groups its condition is true of; without
 GROUP BY, it makes the whole table one group, even of no rows. A
 grouped query of no groups gives no row, though it selects only set
 functions: GROUP BY a column of no rows makes no groups, and HAVING may
@@ -181,7 +181,47 @@ SELECT DEPT, NAME FROM STAFF GROUP BY DEPT;
 ------+----------------------+----------------------
  ENG  |                    2 |             15300.00
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): outside a set function, a grouped query may only reference grouping columns (found STAFF.NAME) [X3.135-1986 §5.25 SR7] (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 2A000): outside a set function, a grouped query may only reference grouping columns and columns functionally dependent on them (found STAFF.NAME) [X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] (at character 13)
+```
+
+### Functionally dependent columns
+
+A column is functionally dependent on the grouping columns when their
+values decide its value, so it has one value in each group. The rules of
+the standard say which columns are, and turborel knows these:
+
+- A table's PRIMARY KEY, or a UNIQUE constraint of columns NOT NULL or of
+  NULLS NOT DISTINCT, decides each of its columns. A constraint that is
+  DEFERRABLE decides none, as it may not hold until commit.
+- A generated column is decided by the columns it is computed of.
+- An equality AND-component of a WHERE or ON condition makes two columns
+  decide each other, and a column compared with a literal has one value.
+- A join keeps what each table decides, though of the table an outer join
+  extends with nulls only what a column known not null decides. A
+  NATURAL or USING join's common column is one of them.
+- A view, a derived table and a WITH query keep what their query decides,
+  and EXCEPT keeps its first operand's, INTERSECT both's, UNION nothing.
+
+A column grouped with COLLATE decides nothing. Of grouping sets, a column
+must be dependent on each set's columns. DEPT is the key of DEPT, so it
+decides TITLE, and the join's condition makes it decide STAFF's DEPT too:
+
+```sql
+SELECT S.DEPT, D.TITLE, COUNT(*) AS N FROM STAFF S JOIN DEPT D ON S.DEPT = D.DEPT
+    GROUP BY D.DEPT;
+SELECT ID, NAME, SALARY FROM STAFF GROUP BY ID HAVING SALARY > 6000;
+```
+
+```
+ DEPT | TITLE                |                    N
+------+----------------------+----------------------
+ ENG  | Engineering          |                    2
+(1 row)
+           ID | NAME                           |      SALARY
+--------------+--------------------------------+-------------
+            1 | Ada                            |     7200.00
+            2 | Grace                          |     8100.00
+(2 rows)
 ```
 
 ### Grouping sets
