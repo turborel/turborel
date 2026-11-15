@@ -717,6 +717,11 @@ neighbours are known. Its priority queue reserves memory from the supplied
 `MemoryBudget` and returns SQLCODE -918 if it cannot grow. Dropping the
 iterator releases that memory. Distances use the coordinates' units.
 
+`RTree::join` streams pairs of intersecting entries from two trees. It
+prunes disjoint branches on both sides and charges its workspace to the
+supplied budget. Joining a tree to itself includes both orientations and
+each self-pair. Reference counts do not multiply the returned pairs.
+
 These are rectangle storage operations. An exact geometry predicate needs
 to test the candidate geometry, and rectangle containment has different
 boundary semantics from a geometry's topological ST_Contains operation.

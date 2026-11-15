@@ -1850,6 +1850,12 @@ This ordering is exact for indexed rectangles and points. A geometry
 consumer must rerank candidates by exact geometry distance and continue
 until the remaining lower bound exceeds its kth exact distance.
 
+Intersection joins traverse pairs of branches and prune disjoint bounds.
+They descend one side at a time and stream matching leaf pairs. Split
+chains partition each input independently, so the product of two moved
+groups is not visited twice. The pending pairs and two decoded leaf pages
+reserve memory (D38); result pairs are never collected in the index.
+
 ## 2. Project layout
 
 ```

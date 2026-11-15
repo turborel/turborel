@@ -4,7 +4,7 @@
 use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail spatial requirements.
-pub const RTREE: [Mutation; 5] = [
+pub const RTREE: [Mutation; 6] = [
     Mutation {
         name: "rtree-split-stamp",
         package: Package::Core,
@@ -54,5 +54,15 @@ pub const RTREE: [Mutation; 5] = [
         replacement: "down(down(squared.sqrt()) * scale) + scale",
         integration: &[],
         unit: &["spatial::tests::distances_bound_the_geometry_at_extreme_scales"],
+    },
+    Mutation {
+        name: "rtree-join-split-product",
+        package: Package::Core,
+        breaks: "a two-sided split visits the right-right join product twice",
+        file: "src/engine/rtree/join.rs",
+        original: "left: current_left, right: Visit { id, ..pair.right }, right_hops: hops, ..pair",
+        replacement: "left: pair.left, right: Visit { id, ..pair.right }, right_hops: hops, ..pair",
+        integration: &[],
+        unit: &["engine::rtree::tests::join::old_roots_partition_split_pairs_without_duplicates"],
     },
 ];
