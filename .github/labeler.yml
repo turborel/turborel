@@ -1,0 +1,123 @@
+area/parser:
+  - changed-files:
+      - any-glob-to-any-file: ["src/lexer.rs", "src/lexer/**", "src/parser.rs", "src/parser/**", "src/ast.rs", "src/ast/**"]
+
+area/binder:
+  - changed-files:
+      - any-glob-to-any-file: ["src/binder.rs", "src/binder/**", "src/params.rs", "src/params/**"]
+
+area/optimizer:
+  - changed-files:
+      - any-glob-to-any-file: ["src/logical.rs", "src/logical/**", "src/optimizer.rs", "src/optimizer/**"]
+
+area/planner:
+  - changed-files:
+      - any-glob-to-any-file: ["src/physical.rs", "src/physical/**", "src/stats.rs", "src/stats/**"]
+
+area/exec:
+  - changed-files:
+      - any-glob-to-any-file: ["src/exec.rs", "src/exec/**", "src/spill.rs", "src/spill/**"]
+
+# db/ less recovery's paths.
+area/db:
+  - any:
+      - changed-files:
+          - any-glob-to-any-file: ["src/db.rs"]
+      - changed-files:
+          - all-globs-to-any-file: ["src/db/**", "!src/db/recovery.rs", "!src/db/recovery/**", "!src/db/files.rs", "!src/db/files/**", "!src/db/catalog_file.rs", "!src/db/catalog_file/**"]
+
+area/recovery:
+  - changed-files:
+      - any-glob-to-any-file: ["src/db/recovery.rs", "src/db/recovery/**", "src/db/files.rs", "src/db/files/**", "src/db/catalog_file.rs", "src/db/catalog_file/**"]
+
+area/txn:
+  - changed-files:
+      - any-glob-to-any-file: ["src/txn.rs", "src/txn/**"]
+
+area/log:
+  - changed-files:
+      - any-glob-to-any-file: ["src/log.rs", "src/log/**"]
+
+area/catalog:
+  - changed-files:
+      - any-glob-to-any-file: ["src/catalog.rs", "src/catalog/**", "src/system.rs", "src/system/**"]
+
+area/rowstore:
+  - changed-files:
+      - any-glob-to-any-file: ["src/engine/rows.rs", "src/engine/rows/**", "src/engine/record.rs", "src/engine/record/**"]
+
+area/index:
+  - changed-files:
+      - any-glob-to-any-file: ["src/index.rs", "src/index/**", "src/engine/tree.rs", "src/engine/tree/**", "src/engine/hash.rs", "src/engine/hash/**"]
+
+area/disk:
+  - changed-files:
+      - any-glob-to-any-file: ["src/disk.rs", "src/disk/**"]
+
+area/value:
+  - changed-files:
+      - any-glob-to-any-file: ["src/value.rs", "src/value/**", "src/functions.rs", "src/functions/**", "src/hash.rs", "src/hash/**"]
+
+area/settings:
+  - changed-files:
+      - any-glob-to-any-file: ["src/settings.rs", "src/settings/**", "src/memory.rs", "src/diagnostics.rs"]
+
+area/protocol:
+  - changed-files:
+      - any-glob-to-any-file: ["protocol/**"]
+
+area/client:
+  - changed-files:
+      - any-glob-to-any-file: ["client/**"]
+
+area/server:
+  - changed-files:
+      - any-glob-to-any-file: ["server/**"]
+
+area/turboreld:
+  - changed-files:
+      - any-glob-to-any-file: ["turboreld/**"]
+
+area/cli:
+  - changed-files:
+      - any-glob-to-any-file: ["cli/**"]
+
+area/lz4:
+  - changed-files:
+      - any-glob-to-any-file: ["lz4/**"]
+
+area/aes:
+  - changed-files:
+      - any-glob-to-any-file: ["aes/**"]
+
+area/replication:
+  - changed-files:
+      - any-glob-to-any-file: ["replication/**"]
+
+area/xtask:
+  - changed-files:
+      - any-glob-to-any-file: ["xtask/**"]
+
+area/bench:
+  - changed-files:
+      - any-glob-to-any-file: ["bench/**"]
+
+area/test:
+  - changed-files:
+      - any-glob-to-any-file: ["test/**"]
+
+area/support:
+  - changed-files:
+      - any-glob-to-any-file: ["support/**"]
+
+area/doc:
+  - changed-files:
+      - any-glob-to-any-file: ["doc/**", "README.md", "RULES.md", "CONFORMANCE.md", "TODO.md", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "SECURITY.md", "TRADEMARK.md", "VERSIONING.md"]
+
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file: [".github/**"]
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file: ["Cargo.lock", "**/Cargo.toml", "rust-toolchain.toml"]
