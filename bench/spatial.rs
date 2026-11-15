@@ -1,5 +1,5 @@
-//! Spatial workloads expressed with existing SQL, before a spatial index
-//! is added: rectangular filters, points joined to rectangles, nearest
+//! Spatial workloads expressed with the same SQL for scans, B-trees and
+//! R-trees: rectangular filters, points joined to rectangles, nearest
 //! points by squared Euclidean distance, and readers sharing a table with
 //! writers. The same statements remain the baseline when access paths
 //! change. Every result is fetched; setup is outside the timed operation.
@@ -43,9 +43,8 @@ const NEIGHBOURS: u64 = 10;
 
 fn main() {
     let bench = Bench::new("spatial");
-    for indexed in [false, true] {
-        let db = database(indexed);
-        let method = if indexed { "btree" } else { "scan" };
+    for method in ["scan", "btree", "rtree"] {
+        let db = database(method);
         for threads in THREADS {
             windows(&bench, &db, method, threads);
             nearest(&bench, &db, method, threads);
@@ -63,7 +62,7 @@ fn main() {
         for threads in THREADS {
             bench.measure_fresh(
                 Case::new(format!("80% windows, 20% writes, {method}"), "operations").threads(threads),
-                || database(indexed),
+                || database(method),
                 |mixed| mix(&mixed, threads),
             );
         }
@@ -140,7 +139,7 @@ fn fetch(session: &Session, sql: &str) -> u64 {
     count
 }
 
-fn database(indexed: bool) -> Database {
+fn database(method: &str) -> Database {
     let db = Database::new();
     db.set_lock_wait(LockWait::Wait).unwrap();
     db.schema(
@@ -160,8 +159,8 @@ fn database(indexed: bool) -> Database {
         session.run(&format!("INSERT INTO WINDOWS VALUES ({id}, {x}, {}, {y}, {})", x + 10, y + 10)).unwrap();
     }
     session.commit().unwrap();
-    if indexed {
-        db.create_index("POINTS_XY", "B.POINTS", &["X", "Y"], "btree").unwrap();
+    if method != "scan" {
+        db.create_index("POINTS_XY", "B.POINTS", &["X", "Y"], method).unwrap();
     }
     db
 }

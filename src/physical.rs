@@ -20,6 +20,8 @@ mod collated;
 mod cost;
 mod estimate;
 mod indexed;
+mod join_probe;
+pub use join_probe::{JoinComparison, JoinProbe};
 mod join;
 mod kept;
 mod nodes;
@@ -158,8 +160,8 @@ pub enum Plan {
         detail: String,
     },
     /// The rows of `left` joined with the rows of a table an index finds
-    /// for each, by the values of its `keys` (`physical/indexed.rs`): the
-    /// rows of a product that its equalities keep [X3.135-1986 §5.20 GR2b,
+    /// for each, by its bound `probe` (`physical/indexed.rs`): the
+    /// rows of a product that its comparisons keep [X3.135-1986 §5.20 GR2b,
     /// §5.21 GR2], or, `outer`, of a LEFT outer join [ISO/IEC 9075:1992
     /// §7.5], each row of `left` no table row matches with nulls; in the
     /// order of `left`, each row's matches in the index's (`exec/join/indexed.rs`).
@@ -174,9 +176,8 @@ pub enum Plan {
         index: String,
         /// The index's method, for EXPLAIN.
         method: String,
-        /// The columns of `left` whose values each probe looks for, of the
-        /// index's first columns in order.
-        keys: Vec<usize>,
+        /// How each outer row supplies the index search bounds.
+        probe: JoinProbe,
         /// The rest of the condition, over the pair's columns: the table's
         /// own filter's, and the join's.
         cond: Option<Cond>,

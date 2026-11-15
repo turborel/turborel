@@ -68,7 +68,7 @@ impl PhysicalPlanner<'_> {
             }
         }
         if keys.is_empty() {
-            return None;
+            return self.comparison_join(cond, (left, right), want);
         }
         let names = self.names_of(input);
         let shown = Shown::of(names.as_deref());

@@ -1542,7 +1542,8 @@ These are RULES.md D34, of the methods `btree`, `hash` and `rtree`, or a
 plug-in's. The statements run outside a transaction. The `rtree` method
 indexes two approximate-numeric point coordinates or four rectangle
 coordinates and answers independent SQL comparisons (`index/rtree.rs`,
-`physical/access/columns.rs`, D72). This does not add geometry types or
+`physical/access/columns.rs`, D72). Inner joins can bind these comparisons
+from each outer row (`physical/indexed/coordinates.rs`). This does not add geometry types or
 SQL/MM spatial routines.
 
 ```

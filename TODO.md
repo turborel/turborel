@@ -167,8 +167,9 @@ The access methods the other standards stand on. Each one is built, made
 durable and tested on its own before the extension that reads it. Each
 is kept consistent under concurrent change and recovery as the B-tree is.
 
-- Extend the numeric `rtree` method with SQL spatial joins, geometry
-  predicates and nearest-neighbour access paths. Add bulk packing
+- Connect geometry predicates and SQL nearest-neighbour ordering to the
+  numeric `rtree` method. Let SQL joins traverse two indexed trees directly,
+  beyond probing one tree for each outer row. Add bulk packing
   and reclaim empty nodes without relocating entries under active scans;
   measure overlap and space after sustained updates as well as fresh loads.
 - An inverted index of terms to the rows and positions they appear at,

@@ -1,5 +1,5 @@
 //! The index nested-loop join (`physical/indexed.rs`, RULES.md D35): the
-//! rows of a product its equalities keep [X3.135-1986 §5.20 GR2b, §5.21
+//! rows of a product its comparisons keep [X3.135-1986 §5.20 GR2b, §5.21
 //! GR2], or of a LEFT outer join [ISO/IEC 9075:1992 §7.5], each row of
 //! the left operand joined with the rows an index of the right's table
 //! finds for its values, as they are found, those the rest of the
@@ -12,23 +12,23 @@
 use std::sync::Arc;
 
 use super::super::entries::{Reading, fetch};
-use super::super::{RowIter, Runner, broken, column, eval_cond, execute, failed};
+use super::super::{RowIter, Runner, broken, eval_cond, execute, failed};
 use crate::catalog::{IndexDesc, KeyShape};
 use crate::db::State;
 use crate::error::Result;
-use crate::index::{Entries, Index, Key, KeyOrder, Probe};
+use crate::index::{Entries, Index, Key, KeyOrder};
 use crate::logical::{Cond, Truth};
-use crate::physical::Plan;
+use crate::physical::{JoinProbe, Plan};
 use crate::storage::{self, Condition, Row, RowId, TableStorage};
 use crate::txn::{Stop, TxId, checked};
-use crate::value::{CompOp, Value};
+use crate::value::Value;
 
 /// The rows of the index nested-loop join `plan`. Never inlined into
 /// `execute`, whose frame every level of a plan adds to the stack (RULES.md
 /// R-CF-6).
 #[inline(never)]
 pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::IndexJoin { outer, left, table, index, keys, cond, width, columns: needed, located, .. } = plan else {
+    let Plan::IndexJoin { outer, left, table, index, probe, cond, width, columns: needed, located, .. } = plan else {
         return failed(broken("an index join is not one"));
     };
     let opened = db.storage_of(&table).map(Arc::clone).and_then(|storage| {
@@ -39,7 +39,7 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter
         Ok((storage, found, ix)) => Box::new(IndexJoin {
             left: execute(*left, db, tx),
             table: Probed { storage, index: found, reading: Reading::of(&ix, Some(&needed)), ix, tx, stop: db.tx.stop_of(tx), located },
-            keys,
+            probe,
             cond,
             nulls: outer.then(|| vec![Value::Null; width]),
             runner: Runner::new(db, tx),
@@ -66,22 +66,14 @@ struct Probed {
 }
 
 impl Probed {
-    /// The entries of the index whose first columns' keys are `values`:
-    /// none if one is null, which equals nothing [X3.135-1986 §5.11 GR2].
-    /// The engine is told which rows are read by them
-    /// (`TableStorage::read_by_condition`).
-    fn entries(&self, values: Vec<Value>) -> Result<Entries> {
+    /// Binds the outer row and records the exact predicate read. A NULL
+    /// compared value selects no entries for either kind of probe.
+    fn entries(&self, binding: &JoinProbe, row: &Row) -> Result<Entries> {
         if let Some(stop) = &self.stop {
             stop.check()?;
         }
-        if values.iter().any(Value::is_null) {
+        let Some(probe) = binding.bind(row, self.ix.columns.len())? else {
             return Ok(Box::new(std::iter::empty()));
-        }
-        // An index of one column is asked by a comparison, which every
-        // method answers that supports equality.
-        let probe = match (values.len(), self.ix.columns.len()) {
-            (1, 1) => Probe::Compare { op: CompOp::Eq, value: values.into_iter().next().unwrap_or(Value::Null) },
-            _ => Probe::Prefix { equal: values, then: None },
         };
         self.storage.read_by_condition(self.tx, &Condition { columns: self.ix.columns.clone(), probe: probe.clone() })?;
         let entries = Arc::clone(&self.index).search(&probe, KeyOrder::Ascending);
@@ -108,9 +100,8 @@ impl Probed {
 struct IndexJoin {
     left: RowIter,
     table: Probed,
-    /// The left columns whose values are probed for, of the index's first
-    /// columns in order.
-    keys: Vec<usize>,
+    /// The outer columns and comparisons bound for each search.
+    probe: JoinProbe,
     cond: Option<Cond>,
     /// Of a LEFT join, the nulls of a table row.
     nulls: Option<Vec<Value>>,
@@ -126,8 +117,8 @@ impl IndexJoin {
         loop {
             let Some((l, mut entries, found)) = self.current.take() else {
                 let Some(l) = self.left.next().transpose()? else { return Ok(None) };
-                let values = self.keys.iter().map(|&k| column(&l, k).cloned()).collect::<Result<Vec<_>>>()?;
-                self.current = Some((l, self.table.entries(values)?, false));
+                let entries = self.table.entries(&self.probe, &l)?;
+                self.current = Some((l, entries, false));
                 continue;
             };
             let Some(entry) = entries.next() else {
@@ -185,7 +176,7 @@ mod tests {
             table: name,
             index: "I".into(),
             method: String::new(),
-            keys: Vec::new(),
+            probe: JoinProbe::Prefix(Box::new([])),
             cond: None,
             width: 0,
             columns: Vec::new(),
