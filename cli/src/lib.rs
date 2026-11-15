@@ -53,6 +53,7 @@ pub const USAGE: &str = "usage: turborel [options]
   -c, --command SQL      run SQL's statements; more than once for more
   -f, --file FILE        run FILE's statements; more than once for more
       --stop-on-error    end the run at the first statement that fails
+      --timing           report each statement's elapsed time to standard error
       --null TEXT        show a null value as TEXT, and import a field TEXT as
                          null (default nothing)
       --import FILE      insert FILE's rows into the table --table names; more

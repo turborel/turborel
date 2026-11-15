@@ -9,6 +9,7 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use turborel::error::{Code, SqlError};
 use turborel_client::agent::{Agent, Connector};
@@ -139,7 +140,7 @@ impl<C: Connector> Statements for Agent<C> {
 }
 
 /// A run, under way.
-struct Shell<'a, S: Statements + ?Sized> {
+struct Shell<'a, S: Statements + ?Sized, C: FnMut() -> Duration> {
     connection: &'a mut S,
     options: &'a Options,
     /// Standard input, while it is not being read.
@@ -150,13 +151,22 @@ struct Shell<'a, S: Statements + ?Sized> {
     interrupts: Option<&'a Interrupts>,
     /// Whether anything failed.
     failed: bool,
+    /// A monotonic elapsed clock: `Instant` in a run, supplied in tests
+    /// (RULES.md R-TEST-5).
+    now: C,
 }
 
 /// Runs `options`' inputs over `connection`, as `io` says: whether every
 /// statement succeeded. What failed is told to `io.err`.
 pub fn run<S: Statements + ?Sized>(connection: &mut S, options: &Options, io: Io<'_>) -> bool {
+    let origin = Instant::now();
+    run_with_clock(connection, options, io, || origin.elapsed())
+}
+
+/// Runs with a supplied elapsed clock so timing tests need no real time.
+fn run_with_clock<S: Statements + ?Sized>(connection: &mut S, options: &Options, io: Io<'_>, now: impl FnMut() -> Duration) -> bool {
     let Io { input, typed, out, err, interrupts } = io;
-    let mut shell = Shell { connection, options, input: Some(input), typed, out, err, interrupts, failed: false };
+    let mut shell = Shell { connection, options, input: Some(input), typed, out, err, interrupts, failed: false, now };
     for named in &options.inputs {
         if let Next::Stop = shell.input(named) {
             break;
@@ -170,7 +180,7 @@ fn cancelled(failure: &Failure) -> bool {
     failure.sqlcode == SqlError::new(Code::Cancelled, "").sqlcode()
 }
 
-impl<S: Statements + ?Sized> Shell<'_, S> {
+impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     /// Runs the statements of `input`.
     fn input(&mut self, input: &Input) -> Next {
         match input {
@@ -267,18 +277,25 @@ impl<S: Statements + ?Sized> Shell<'_, S> {
 
     /// Runs `sql`, typed or not.
     fn statement(&mut self, sql: &str, typed: bool) -> Next {
+        let began = self.options.timing.then(|| (self.now)());
         let ran = self.ran(sql);
+        let elapsed = began.map(|at| (self.now)().saturating_sub(at));
         if let Some(interrupts) = self.interrupts {
             interrupts.cancel_by(self.connection.canceller());
         }
-        match ran {
+        let next = match ran {
             Ok(()) => Next::Go,
             Err(Wrong::Unwritten(e)) => self.tell(&format!("cannot write: {e}"), Next::Stop),
             Err(Wrong::Failed(failure)) => {
                 let stop = self.connection.is_lost() || (!typed && (self.options.stop_on_error || cancelled(&failure)));
                 self.tell(&failure.to_string(), if stop { Next::Stop } else { Next::Go })
             }
+        };
+        if let Some(time) = elapsed {
+            // Nothing is left to tell a failure to write a failure to.
+            let _ = writeln!(self.err, "Time: {} ns", time.as_nanos()).and_then(|()| self.err.flush());
         }
+        next
     }
 
     /// Runs `sql`, its results written.
@@ -298,3 +315,6 @@ impl<S: Statements + ?Sized> Shell<'_, S> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
