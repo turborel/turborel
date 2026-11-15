@@ -104,6 +104,29 @@ empty inputs.
 For the wire protocol (D45) and settings (D36), say what an older client or
 an existing database sees.
 
+## Spatial benchmarks
+
+`cargo xtask bench spatial --save before` measures SQL filters, joins,
+nearest-point sorting and mixed sessions. `cargo xtask bench spatial_index
+--save initial` measures the paged index itself, without SQL planning or
+row materialization. These are separate measurements, not interchangeable
+query rates.
+
+The index suite defaults to 100,000 entries and covers uniform points,
+clusters, a diagonal, coincident points, and overlapping rectangles. Set
+`TURBOREL_SPATIAL_ROWS=1000000` for a million entries, or
+`TURBOREL_SPATIAL_DISTRIBUTION=uniform` to run one distribution. Coincident
+input is capped at 5,000 entries. Other distributions require at least
+16,000 entries. Query coordinates come from a separate fixed sequence.
+
+The harness warms each case once and measures five runs. Sampled cases
+also report p50, p95 and p99 latency, including lock waits, and keep them
+as `@latency` rows in the saved TSV. Each worker waits for its operation
+before starting another: these are closed-loop latencies, without an
+independent arrival queue. The small-pool case measures buffer-pool misses;
+it does not flush the operating system's cache. Run comparisons on an
+otherwise idle machine with the same settings and toolchain.
+
 ## Commit messages
 
 The form is Linux's.

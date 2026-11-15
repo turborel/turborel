@@ -226,3 +226,68 @@ pub fn crc() -> Arc<dyn HashFunction> {
 pub fn pool(frames: usize) -> Arc<BufferPool> {
     Arc::new(BufferPool::new(frames, Box::new(Clock::new(frames))).unwrap())
 }
+
+/// Runs a closed-loop workload: each worker starts its next operation
+/// after the previous one finishes. Start is synchronized; samples include
+/// the entire call, including lock waits. This does not model queued load
+/// from an independent arrival process or correct coordinated omission.
+pub fn sampled_threads(threads: usize, operations: usize, work: impl Fn(usize, usize) + Sync) -> Vec<std::time::Duration> {
+    let start = std::sync::Barrier::new(threads);
+    thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|t| {
+                let (work, start) = (&work, &start);
+                scope.spawn(move || {
+                    let mut samples = Vec::with_capacity(operations);
+                    start.wait();
+                    for n in 0..operations {
+                        let now = Instant::now();
+                        work(t, n);
+                        samples.push(now.elapsed());
+                    }
+                    samples
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|w| w.join().unwrap()).collect()
+    })
+}
+
+impl Bench {
+    /// Measures aggregate throughput and individual operation latencies.
+    /// Percentiles use all samples from the five measured runs, excluding
+    /// warmup. They are printed and saved as `@latency` metadata in the
+    /// same TSV as the throughput results, in microseconds.
+    pub fn measure_sampled(&self, case: Case, mut run: impl FnMut() -> Vec<std::time::Duration>) {
+        let key = (case.operation.clone(), case.threads, case.bytes);
+        assert!(self.measured.borrow_mut().insert(key), "duplicate measurement");
+        let mut rates = Vec::with_capacity(RUNS);
+        let mut samples = Vec::new();
+        for timed in [false].into_iter().chain([true; RUNS]) {
+            let started = Instant::now();
+            let found = run();
+            let secs = started.elapsed().as_secs_f64();
+            if timed {
+                rates.push(found.len() as f64 / secs);
+                samples.extend(found);
+            }
+        }
+        rates.sort_by(f64::total_cmp);
+        samples.sort_unstable();
+        let percentile = |p: usize| samples[(samples.len() * p).div_ceil(100).saturating_sub(1)].as_secs_f64() * 1e6_f64;
+        let (p50, p95, p99) = (percentile(50), percentile(95), percentile(99));
+        if let Some(out) = self.out.borrow_mut().as_mut() {
+            writeln!(
+                out,
+                "@latency\t{}\t{}\t{}\t{}\t{p50:.3}\t{p95:.3}\t{p99:.3}\tus",
+                self.name,
+                case.operation,
+                case.threads,
+                samples.len()
+            )
+            .unwrap();
+        }
+        self.report(case, Rates { median: rates[RUNS / 2], low: rates[0], high: rates[RUNS - 1] });
+        note(&format!("{} samples; p50 {p50:.1} us, p95 {p95:.1} us, p99 {p99:.1} us (closed loop)", samples.len()));
+    }
+}

@@ -32,6 +32,8 @@ const SAVE: &str = "--save";
 const COMPARE: &str = "--compare";
 /// Marks a header line of a results file.
 const HEADER: &str = "# ";
+/// Per-operation latency metadata from the shared harness, kept with its benchmark.
+const LATENCY: &str = "@latency\t";
 /// The smallest change called real: results move this much between runs
 /// on one machine (a cooler or busier machine, other processes), more than
 /// the spread within one run shows.
@@ -163,9 +165,17 @@ fn rows(text: &str) -> Vec<Row<'_>> {
 fn merged(before: &str, now: &str) -> String {
     let run: Vec<&str> = rows(now).iter().map(|r| r.key[0]).collect();
     let header = now.lines().filter(|l| l.starts_with(HEADER));
-    let kept = before.lines().filter(|l| !l.starts_with(HEADER) && rows(l).first().is_some_and(|r| !run.contains(&r.key[0])));
+    let kept = before.lines().filter(|l| benchmark_of(l).is_some_and(|name| !run.contains(&name)));
     let results = now.lines().filter(|l| !l.starts_with(HEADER));
     header.chain(kept).chain(results).flat_map(|l| [l, "\n"]).collect()
+}
+
+/// The benchmark owning a throughput row or latency metadata row.
+fn benchmark_of(line: &str) -> Option<&str> {
+    if line.starts_with(LATENCY) {
+        return line.split('\t').nth(1);
+    }
+    rows(line).first().map(|row| row.key[0])
 }
 
 /// Each result of `now` against the same one in `base`: the change in its
@@ -258,5 +268,19 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("read") && l.contains("-25.0%") && l.contains("slower")), "{lines:?}");
         assert!(lines.iter().any(|l| l.contains("scan (4 threads)") && l.contains("new")), "{lines:?}");
         assert!(lines.iter().any(|l| l.contains("write (1 thread, 4096 B)")), "{lines:?}");
+    }
+    /// Verifies: [TOOL] R-BENCH-1: saving one benchmark replaces its
+    /// latency samples' summary and preserves another benchmark's.
+    /// Metadata is neither a throughput row nor a machine header.
+    #[test]
+    fn latency_metadata_follows_its_benchmark() {
+        let before = "a\tx\t1\t0\top\t1\t1\t1\n@latency\ta\tx\t1\t5\t10\t20\t30\tus\nb\ty\t1\t0\top\t1\t1\t1\n@latency\tb\ty\t1\t5\t10\t20\t30\tus\n";
+        let now = "a\tx\t1\t0\top\t2\t2\t2\n@latency\ta\tx\t1\t5\t5\t10\t15\tus\n";
+        let kept = merged(before, now);
+        assert_eq!(kept.matches("@latency\ta").count(), 1);
+        assert!(kept.contains("@latency\tb\ty"));
+        assert!(kept.contains("\t5\t5\t10\t15\tus"));
+        assert_eq!(rows(&kept).len(), 2);
+        assert!(comparison(before, now).iter().all(|line| !line.contains("@latency")));
     }
 }
