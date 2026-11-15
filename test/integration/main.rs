@@ -77,6 +77,7 @@ mod decfloat;
 mod defaults;
 mod deferred;
 mod dependencies;
+mod dependencies_drops;
 mod descriptor_nesting;
 mod descriptor_types;
 mod descriptors;

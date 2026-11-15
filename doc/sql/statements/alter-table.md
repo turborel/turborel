@@ -87,6 +87,21 @@ without a schema being of the session's default schema. RESTRICT refuses
 the drop of a UNIQUE or PRIMARY KEY constraint that a foreign key
 references; CASCADE drops that foreign key too.
 
+A grouped query may read a column outside a set function because a key
+makes it dependent on the grouping columns. A view, a CHECK, a domain
+constraint, an assertion or a trigger whose query does so depends on
+that key, and on a NOT NULL that makes a UNIQUE's columns a key. RESTRICT
+refuses to drop such a constraint, and CASCADE drops each object that
+depends on it: a view with the views over it, a CHECK from its table, a
+domain constraint from its domain, an assertion, a trigger.
+
+```sql
+CREATE TABLE T (K INTEGER NOT NULL, N INTEGER, CONSTRAINT U_K UNIQUE (K));
+CREATE VIEW V AS SELECT K, N FROM T GROUP BY K;
+ALTER TABLE T DROP CONSTRAINT U_K RESTRICT;  -- refused, V depends on U_K
+ALTER TABLE T DROP CONSTRAINT U_K CASCADE;   -- drops V too
+```
+
 **SET and USING** *(extension)* change how the table is stored: SET
 changes the options of its engine, DEFAULT an option's default; USING
 moves its rows to another engine, or to the same one made again, with

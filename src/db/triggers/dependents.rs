@@ -82,15 +82,16 @@ impl State {
     /// [ISO/IEC 9075-2:2023 §11.26 SR13f, GR5] The triggers on or naming
     /// `table` whose action binds no more once a constraint of it is
     /// dropped, those that depend on it, dropped if `cascade`: what was
-    /// taken away.
+    /// taken away. One depends on it if its action bound in the
+    /// definitions `before` the drop and binds no more.
     ///
     /// # Errors
     ///
     /// SQLCODE -103, not `cascade`, if one depends on it.
-    pub(in crate::db) fn drop_constraint_triggering(&mut self, table: &QualifiedName, cascade: bool) -> Result<Dropped> {
+    pub(in crate::db) fn drop_constraint_triggering(&mut self, before: &State, table: &QualifiedName, cascade: bool) -> Result<Dropped> {
         let mut doomed = Vec::new();
         for t in self.catalog.triggers() {
-            if (t.table != *table && !t.reads.contains(table)) || self.trigger_binds(t).is_ok() {
+            if (t.table != *table && !t.reads.contains(table)) || self.trigger_binds(t).is_ok() || before.trigger_binds(t).is_err() {
                 continue;
             }
             if !cascade {

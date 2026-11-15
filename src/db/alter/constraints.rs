@@ -135,10 +135,12 @@ impl State {
     }
 
     /// [ISO/IEC 9075:1992 §11.17] Drops the constraint `name`, its schema
-    /// `implicit` if it names none [§5.4 SR8], of base table `qn`: and with CASCADE, the foreign keys that reference the columns
-    /// of a unique one [SR3, GR1]; with RESTRICT, not while there are any
-    /// [SR4]. A unique one's index goes with it, and the triggers that
-    /// depend on it with CASCADE.
+    /// `implicit` if it names none [§5.4 SR8], of base table `qn`. With
+    /// CASCADE the foreign keys that reference the columns of a unique one
+    /// go with it [SR3, GR1], and so do the constraints, views, assertions
+    /// and triggers that depend on it [ISO/IEC 9075-2:2023 §11.26 GR1, GR3
+    /// to GR5]. With RESTRICT it is refused while there are any [SR4;
+    /// ISO/IEC 9075-2:2023 §11.26 SR13]. A unique one's index goes with it.
     pub(in crate::db) fn drop_constraint(
         &mut self,
         (qn, implicit): (&QualifiedName, &str),
@@ -146,6 +148,8 @@ impl State {
         behavior: DropBehavior,
     ) -> Result<Dropped> {
         let mut desc = self.base_table(qn)?;
+        // The definitions as they are, of which what depends on it is told.
+        let before = self.clone();
         let named = qualify(name, implicit);
         let at = desc
             .constraints
@@ -187,8 +191,12 @@ impl State {
         desc.refresh_not_null();
         catalog.replace_table(desc);
         self.catalog = Arc::from(catalog);
-        // [ISO/IEC 9075-2:2023 §11.26 SR13f, GR5] the triggers that bind by it.
-        dropped.absorb(self.drop_constraint_triggering(qn, behavior == DropBehavior::Cascade)?);
+        // [ISO/IEC 9075-2:2023 §11.26 SR13a, SR13c, SR13e, GR1, GR3, GR4]
+        // the constraints, views and assertions that bind by it;
+        // [SR13f, GR5] the triggers.
+        let cascade = behavior == DropBehavior::Cascade;
+        dropped.absorb(self.drop_constraint_dependents(&before, qn, cascade)?);
+        dropped.absorb(self.drop_constraint_triggering(&before, qn, cascade)?);
         Ok(dropped)
     }
 }

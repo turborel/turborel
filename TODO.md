@@ -37,13 +37,7 @@ each group.
 
 ### Queries
 
-- Views and constraints that depend on a constraint (T301) [§11.26 SR13a,
-  SR13c, SR13e, GR3 to GR5]. A grouped query may read a column its
-  grouping columns determine through a key, so a view or CHECK of one
-  depends on that key. DROP CONSTRAINT drops a trigger that does
-  (SR13f), but not such a view or constraint: RESTRICT should refuse it
-  and CASCADE drop it, found as triggers' are, by binding it again
-  without the key.
+Nothing is open.
 
 ### Changing data
 

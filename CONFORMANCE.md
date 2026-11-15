@@ -1183,6 +1183,16 @@ no column a member. A query whose rows are a grouped query's, through a
 select list, HAVING, a sort or a window, is taken as grouped, its
 grouping columns of the result a strong candidate key.
 
+A table constraint a grouped query needs to know a column dependent is
+one the query depends on [§11.26 SR4]. So do a view, a CHECK, a domain
+constraint, an assertion and a trigger that contain the query [SR5, SR7,
+SR8]. DROP CONSTRAINT finds them by binding each that reads the table
+again without the constraint. One that bound with it and binds no more
+depends on it. With RESTRICT such a one refuses the drop, SQLCODE -103 citing SR13a, SR13c, SR13e or SR13f. With
+CASCADE each is dropped as GR1 and GR3 to GR5 say, a domain constraint
+from its domain as NOTE 568 says. A routine depends on none, since there
+are no SQL routines [SR6, SR13b, SR13d].
+
 A refused column is SQLCODE -103 citing §6.7 SR8. A partitioned join's
 plan is read as the nodes it is made of, so its join partitioning
 columns add no dependency. A set function of an enclosing query whose

@@ -6,10 +6,17 @@
 //! taken as rows; and of candidate keys, a product's or a condition's keys
 //! misjudged, a UNIQUE, grouping columns or an ordinality column not
 //! keys, EXCEPT forgetting, the left-most rule or minimality broken, and
-//! KEY_MEMBER unset.
+//! KEY_MEMBER unset; and of what depends on a constraint dropped, a view,
+//! a CHECK, a domain constraint or an assertion that needs it kept, a
+//! CHECK refused but not dropped with CASCADE, or one that bound neither
+//! before nor after taken as dependent.
 
 use super::{Mutation, Package};
 
+/// The file of what depends on a constraint dropped.
+const DEPENDING: &str = "src/db/alter/depending.rs";
+/// The test of a CHECK that needs a key.
+const CHECK_DEPENDS: &str = "dependencies_drops::a_check_that_needs_a_key_is_dropped_with_it";
 /// The file of a base table's dependencies.
 const TABLES: &str = "src/binder/dependencies/tables.rs";
 /// The file of conditions' and outer joins' dependencies.
@@ -58,7 +65,7 @@ const KEY_QUERIES: &str = "candidate_keys::queries_keys_are_described_4_26_16";
 const CONSTRAINT: &str = "dependencies::a_constraint_names_a_dependent_number_alone_6_7";
 
 /// The mutations of functional dependencies, in the order they run.
-pub const DEPENDENCIES: [Mutation; 24] = [
+pub const DEPENDENCIES: [Mutation; 30] = [
     Mutation {
         name: "fd-deferrable-key-taken",
         package: Package::Core,
@@ -297,6 +304,69 @@ pub const DEPENDENCIES: [Mutation; 24] = [
         original: "i64::from(members.contains(&at))",
         replacement: "i64::from(members.is_empty() && at > 0)",
         integration: &[KEY_BASE],
+        unit: &[],
+    },
+    Mutation {
+        name: "dependent-view-kept",
+        package: Package::Core,
+        breaks: "a view whose grouped query needs a constraint dropped is kept, not refused or dropped [§11.26 SR13c, GR3]",
+        file: DEPENDING,
+        original: "is_some_and(|v| binds(before, v) && !binds(self, v))",
+        replacement: "is_some_and(|v| binds(before, v) && !binds(self, v) && v.columns.is_empty())",
+        integration: &[
+            "dependencies_drops::a_view_that_needs_a_key_is_dropped_with_it",
+            "dependencies_drops::a_view_that_needs_a_not_null_depends_on_it",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "dependent-check-kept",
+        package: Package::Core,
+        breaks: "a CHECK whose query needs a constraint dropped is kept, not refused or dropped [§11.26 SR13a, GR1]",
+        file: DEPENDING,
+        original: "if c.domain.is_none() && reads.contains(qn) && binds(before) && !binds(self) {",
+        replacement: "if c.domain.is_none() && reads.contains(qn) && binds(before) && !binds(self) && names.is_empty() {",
+        integration: &[CHECK_DEPENDS],
+        unit: &[],
+    },
+    Mutation {
+        name: "dependent-check-not-dropped",
+        package: Package::Core,
+        breaks: "a CHECK that needs a constraint dropped with CASCADE stays on its table [§11.26 GR1]",
+        file: DEPENDING,
+        original: "                dropped.absorb(self.drop_constraint((table, &table.auth), &written(c), DropBehavior::Cascade)?);\n",
+        replacement: "",
+        integration: &[CHECK_DEPENDS],
+        unit: &[],
+    },
+    Mutation {
+        name: "dependent-domain-constraint-kept",
+        package: Package::Core,
+        breaks: "a domain constraint whose query needs a constraint dropped is kept, not refused or dropped [§11.26 SR13e]",
+        file: DEPENDING,
+        original: "if reads.contains(qn) && binds(before) && !binds(self) {",
+        replacement: "if reads.contains(qn) && binds(before) && !binds(self) && names.is_empty() {",
+        integration: &["dependencies_drops::a_domain_constraint_that_needs_a_key_is_dropped_with_it"],
+        unit: &[],
+    },
+    Mutation {
+        name: "dependent-assertion-kept",
+        package: Package::Core,
+        breaks: "an assertion whose query needs a constraint dropped is kept, not refused or dropped [§11.26 SR13e, GR4]",
+        file: DEPENDING,
+        original: "before.assertion_plan(a).is_ok() && self.assertion_plan(a).is_err()",
+        replacement: "before.assertion_plan(a).is_ok() && self.assertion_plan(a).is_err() && a.name.ident.is_empty()",
+        integration: &["dependencies_drops::an_assertion_that_needs_a_key_is_dropped_with_it"],
+        unit: &[],
+    },
+    Mutation {
+        name: "dependent-bound-before-unasked",
+        package: Package::Core,
+        breaks: "an assertion that a REVOKE abandons as it drops a CHECK is taken as dependent on the CHECK, dropped before the REVOKE drops it",
+        file: DEPENDING,
+        original: "reading(&a.kind) && before.assertion_plan(a).is_ok() && ",
+        replacement: "reading(&a.kind) && ",
+        integration: &["domains::revoking_usage_abandons_what_casts_to_the_domain_11_37"],
         unit: &[],
     },
 ];
