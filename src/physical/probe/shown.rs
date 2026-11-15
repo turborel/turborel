@@ -1,11 +1,11 @@
-//! \[DESIGN\] Probes shown as SQL conditions by EXPLAIN (RULES.md D34).
+//! \[DESIGN\] EXPLAIN displays index lookups as SQL conditions (RULES.md D34).
 
 use crate::index::Probe;
 use crate::logical::{Cond, Expr, and_all, render_cond};
 use crate::value::{CompOp, Value};
 
-/// `probe`, of an index on `columns`, as a condition over the table's
-/// columns, written with their `names`.
+/// Renders the lookup with table column names so EXPLAIN shows which
+/// condition the index serves. Function calls retain their argument order.
 pub(in crate::physical) fn render_probe(probe: &Probe, columns: &[usize], names: &[String]) -> String {
     let compared = |at: usize, op: CompOp, value: &Value| {
         Cond::Compare(Expr::Column(columns.get(at).copied().unwrap_or_default()), op, Expr::Const(value.clone()))

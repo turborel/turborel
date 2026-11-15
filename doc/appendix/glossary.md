@@ -53,8 +53,9 @@ USING; or one a plug-in registers.
 **foreign key**: a constraint that a row's values match those of a row
 of another table, or its own.
 
-**index**: a structure that finds rows by the values of columns, kept
-by an index method: a B-link tree, a hash table or a plug-in's method.
+**index**: a structure that finds rows from column values. The built-in
+methods use B-link trees and hash tables for comparisons. A plug-in may
+also find rows for a function used in a WHERE filter.
 
 **Information Schema**: the schema INFORMATION_SCHEMA, of views that
 describe the database. [The Information Schema](../sql/information-schema.md).

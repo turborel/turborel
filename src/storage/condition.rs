@@ -22,8 +22,9 @@ impl Condition {
     /// Whether `row` may be one the index chooses: every column of the key
     /// not null (`Index::insert`), and the key answering the probe
     /// (`Probe::answers`), so this is never narrower than what the index
-    /// returns. A named predicate may choose any key, nulls included; no
-    /// function is called while storage may hold a lock (D34, R-ERR-4).
+    /// returns. For a function lookup, every key is a possible candidate,
+    /// including nulls. Storage never calls the function because it may
+    /// hold a lock here (D34, R-ERR-4).
     pub fn matches(&self, row: &Row) -> bool {
         let key: Option<Vec<&Value>> = self.columns.iter().map(|&c| row.get(c)).collect();
         key.is_some_and(|k| self.matches_key(&k))
@@ -41,8 +42,8 @@ impl Condition {
     /// Whether a row whose every column's value is within `bounds`, its
     /// least and greatest not null, may match: never narrower than whether
     /// one does, as each column is taken alone. A column with no bounds has
-    /// no value not null, so no comparison matches. A named predicate
-    /// excludes no range without calling its function, so returns true.
+    /// no value not null, so no comparison matches. For a function lookup,
+    /// returns true: these bounds cannot tell which rows the function selects.
     pub fn may_match(&self, bounds: &[Option<(Value, Value)>]) -> bool {
         if matches!(self.probe, Probe::Predicate { .. }) {
             return true;

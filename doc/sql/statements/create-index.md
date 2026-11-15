@@ -38,13 +38,22 @@ raise an error, as a division can, is evaluated on every row of the
 tables it reads, which are then read whole, so the error is raised
 whatever the plan. An index changes no result: only how fast it comes.
 
-A plug-in method may also answer a registered binary Boolean function of
-an indexed column and a constant or parameter. The function must declare
-that it cannot raise and returns null for null arguments. The index may
-return extra candidates: every visible row is checked against the whole
-WHERE condition. The built-in methods answer no such calls. See
-[Engines and other plug-ins](../../client/03-embedding.md#engines-and-other-plug-ins)
-for the contract (RULES.md D34).
+A plug-in method may also support a filter such as `WHERE f(column, ?)`.
+The registered function takes two arguments, returns BOOLEAN or null and
+uses an indexed column in either argument position. The other argument
+is a constant or parameter. The method declares which functions it
+supports; the planner chooses a lookup by cost, as it does for a
+comparison (RULES.md D34).
+
+The index may return extra rows, called candidates. The executor fetches
+each visible row and checks the full WHERE condition before returning it.
+Only functions that promise the same answer for the same inputs, no side
+effects, no errors for accepted arguments and null for a null argument
+can use this lookup. A filter that can raise keeps a full table read, so
+an index cannot hide its error (D15). The built-in `btree` and `hash`
+methods support comparisons; a plug-in supplies the function lookup. See
+[Indexes for function calls](../../client/03-embedding.md#indexes-for-function-calls-extension)
+for a runnable example and the Rust API.
 
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each

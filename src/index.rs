@@ -1,6 +1,6 @@
 //! \[EXTENSION\] Indexes do not exist in X3.135-1986 (it has no CREATE INDEX).
 //! \[DESIGN\] Index access methods. An `IndexMethod` declares its capabilities: which
-//! comparisons and named predicates it can answer, and
+//! comparisons and function calls it can use to find rows, and
 //! whether it returns rows in key order. The physical planner asks each index
 //! for an estimate and picks the cheapest path, so adding a new kind of index
 //! never touches the planner.
@@ -86,13 +86,14 @@ pub enum KeyOrder {
     Descending,
 }
 
-/// \[EXTENSION\] A registered predicate an index method answers (RULES.md
-/// D34). Support is for this function and argument position, for every
-/// accepted value of the other argument, including values filled later
-/// in a prepared plan. The function declares `ScalarFunction::index_predicate`.
+/// \[EXTENSION\] A function call used to find rows through an index, such
+/// as `f(column, ?)` (RULES.md D34). The function must opt in through
+/// `ScalarFunction::index_predicate`. An index method declares support
+/// for this function and both positions, for every accepted value of the
+/// other argument, including null and later prepared parameter values.
 #[derive(Debug, Clone)]
 pub struct Predicate {
-    /// The bound function, shared with the condition that rechecks rows.
+    /// The registered function, also used to check each fetched row.
     pub function: ScalarRef,
     /// The indexed column's position in the key, from zero.
     pub column: usize,
@@ -137,11 +138,12 @@ pub enum Probe {
         /// The upper bound of the next column, and its operator.
         high: Box<(CompOp, Value)>,
     },
-    /// \[EXTENSION\] Candidates for a registered Boolean predicate. Every
-    /// matching entry is returned; extra candidates are allowed and the
-    /// executor checks the whole condition on their visible rows (D34).
+    /// \[EXTENSION\] Rows that may satisfy a Boolean function call.
+    /// The index returns every matching entry and may return extras.
+    /// The executor fetches each visible row and checks the full WHERE
+    /// condition to reject those extras (D34).
     Predicate {
-        /// The function and the indexed column's places.
+        /// The function and the column's positions in the key and call.
         predicate: Box<Predicate>,
         /// The other argument, as the bound function receives it.
         value: Value,
@@ -151,9 +153,10 @@ pub enum Probe {
 impl Probe {
     /// Whether a key, its values in order, answers the probe by the
     /// [X3.135-1986 §5.11] comparison rules: never with a null where a
-    /// value is compared (GR2). A named predicate conservatively answers
-    /// true: this helper calls no plug-in, as storage uses it under locks.
-    /// Its exact truth is checked by the executor (RULES.md D34).
+    /// value is compared (GR2). For `Probe::Predicate`, this always returns
+    /// true: storage uses it under locks, where calling a plug-in is
+    /// forbidden. The executor checks the function on fetched rows
+    /// (RULES.md D34).
     pub fn answers<'v>(&self, key: impl IntoIterator<Item = &'v Value>) -> bool {
         let mut key = key.into_iter();
         let holds = |op: CompOp, k: Option<&Value>, v: &Value| k.and_then(|k| compare(k, v)).is_some_and(|o| op.holds(o));
@@ -183,9 +186,10 @@ impl Probe {
 ///   on `columns` columns answers exactly a `Probe::Prefix` of `equal`
 ///   values and a comparison by `then`.
 /// * `supports_predicate` is true only if every index it creates on the
-///   given types returns every match of the bound function, with extra
-///   candidates allowed (RULES.md D34). Support is independent of the
-///   constant's value, so a prepared probe may replace that value.
+///   given types returns every match of the registered function, indexed
+///   column and argument position. Extra candidates are allowed
+///   (RULES.md D34). Support covers every accepted other argument,
+///   including null, so prepared executions may replace that value.
 /// * `ordered()` is true only if `search` gives its entries in the key
 ///   order asked (`KeyOrder`), by the [X3.135-1986 §5.11] comparison rules.
 /// * `create` returns an empty index on columns of the types given.
@@ -228,9 +232,10 @@ pub trait IndexMethod: Send + Sync {
     fn supports_range(&self, _columns: usize, _equal: usize) -> bool {
         false
     }
-    /// \[EXTENSION\] Can an index on `columns` answer this registered
-    /// predicate, for every accepted other argument? Extra candidates are
-    /// allowed, missing matches are not (RULES.md D34). Default: no.
+    /// \[EXTENSION\] Whether an index on `columns` can find every match
+    /// for this function call, for every accepted other argument,
+    /// including null. Extra candidates are allowed (RULES.md D34).
+    /// Defaults to false. Support must stay fixed for the method's life.
     fn supports_predicate(&self, _predicate: &Predicate, _columns: &[DataType]) -> bool {
         false
     }
@@ -324,7 +329,7 @@ pub trait IndexMethod: Send + Sync {
 /// * Callers insert a key containing a null only into the index of a
 ///   UNIQUE NULLS NOT DISTINCT constraint (`IndexDesc::nulls`), and probe
 ///   only with probes the method supports. No comparison probe selects
-///   such a key. A named predicate may return one as an extra candidate.
+///   such a key. `Probe::Predicate` may return one as an extra candidate.
 /// * For comparison probes and `Probe::All`, `search` gives exactly the
 ///   (key, id) pairs inserted more often than removed whose key satisfies
 ///   the probe by the [X3.135-1986 §5.11]
@@ -335,12 +340,13 @@ pub trait IndexMethod: Send + Sync {
 ///   inserted or removed while it reads may or may not be given; one held
 ///   throughout is given once. An error of its storage is given as an
 ///   entry is; callers read no further.
-/// * For `Probe::Predicate`, `search` may also give extra inserted pairs,
-///   each once, but must give every match. Keys are the inserted values,
-///   never an internal approximation. The executor checks visibility and
-///   the whole condition on fetched rows (RULES.md D34). The function's
-///   declaration and the method's support must hold throughout an index's
-///   life; estimates and searches call back into no database or session.
+/// * For `Probe::Predicate`, `search` returns every matching inserted
+///   `(Key, RowId)` pair, each once. It may also return extra candidates,
+///   each once. Keys contain the inserted values, never approximations
+///   such as bounding boxes. The executor fetches visible row versions and
+///   checks the full WHERE condition (RULES.md D34). The function's
+///   declaration and the method's support must hold for the index's life.
+///   Estimates and searches must never call back into a database or session.
 /// * `rows(key)` returns the ids of the pairs with a key equal to `key`, a
 ///   null in it equal to a null, each once; `key_rows(key)` gives the same ids, as they are read,
 ///   holding no more of them than `search` does, so a key of more rows
@@ -355,7 +361,7 @@ pub trait IndexMethod: Send + Sync {
 ///   called, and those only by readers that found the index before.
 /// * `estimate` is only a statistic: results never depend on it. `None` is
 ///   "not known cheaply", and the planner then estimates from the table's
-///   statistics; for a named predicate it prices the table's row count.
+///   statistics; for `Probe::Predicate` it prices fetching every table row.
 /// * Methods may be called from several threads at once (`Send + Sync`): an
 ///   implementation guards its own state.
 /// * No method may call back into the `Database` or its sessions (RULES.md
@@ -365,7 +371,7 @@ pub trait Index: Send + Sync {
     /// inserted only into the index of a UNIQUE NULLS NOT DISTINCT
     /// constraint [ISO/IEC 9075-2:2023 §11.7], to be found by `rows`: a
     /// comparison with null is never true [X3.135-1986 §5.11 GR2], so no
-    /// comparison probe matches them. A named predicate may return them
+    /// comparison probe matches them. `Probe::Predicate` may return them
     /// as extra candidates (D34).
     ///
     /// # Errors
@@ -427,8 +433,8 @@ pub trait Index: Send + Sync {
         }
     }
     /// How many rows the probe would return, if known cheaply: the
-    /// planner's statistics. For a named predicate this counts candidates,
-    /// including those its recheck rejects, not only true matches (D34).
+    /// planner's statistics. For `Probe::Predicate`, count all candidates,
+    /// including those the full WHERE check will reject (D34).
     fn estimate(&self, probe: &Probe) -> Option<usize>;
     /// \[DESIGN\] How many distinct keys it holds, near enough, if it knows:
     /// the planner's estimate of the rows of an equality on all its

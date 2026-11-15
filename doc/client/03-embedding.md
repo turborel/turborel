@@ -455,46 +455,79 @@ fn main() -> Result<(), turborel::error::SqlError> {
 }
 ```
 
-### Indexes of named predicates *(extension)*
+### Indexes for function calls *(extension)*
 
-An `IndexMethod` may answer a WHERE call `f(column, constant)` or
-`f(constant, column)`, including a prepared parameter in the constant's
-place. `supports_predicate` receives the bound `ScalarRef`, the column's
-position in the key, its position in the call and the key's types. It
-defaults to false, as it does for `btree` and `hash`. Support covers every
-accepted argument value, including null, and stays fixed for the method's
-life (RULES.md D34).
+A plug-in index can find rows for a WHERE filter written as a function
+call. The example below registers `NEXT_TO(a, b)`, true when `a` is one
+greater than `b`, and an index method that supports this query:
 
-The function opts in with `ScalarFunction::index_predicate`. True promises
-a deterministic Boolean or null result, no side effects and no error for
-any accepted arguments; a null argument gives null. A function that can
-raise, an argument expression that can raise or another raising conjunct
-keeps the full scan, so an index cannot hide an error (D15).
+```sql
+SELECT N FROM ITEMS WHERE NEXT_TO(N, ?);
+```
 
-`Probe::Predicate` carries that descriptor and the other argument's
-value. A search must return every matching inserted `(Key, RowId)` pair,
-each once. It may return extra candidates, but must give their original
-keys. Every candidate's visible row is fetched and the whole WHERE
-condition rechecked, excluding false and unknown. This path is never
-index-only. A key's collated values cannot supply the raw function
-arguments; an untested nullable key column prevents the path unless the
-index holds null keys. If nulls can survive in those columns, the planner
-keeps the requested sort to give SQL's null ordering (D34).
+With the parameter set to 40, the example index returns rows containing
+40, 41 and 42. These are candidates: the database fetches them and checks
+the full WHERE condition. Only 41 passes. This permits an index to return
+extra rows while requiring it to find every true match. For example, a
+spatial index could find shapes by their bounding boxes and leave the
+exact function to reject the extra matches (RULES.md D34).
 
-`Index::estimate` counts candidates before the recheck. Without an
-estimate the planner prices fetching every table row; `probe_pages`
-defaults to the usual descent estimate. Prepared and learned plans fill
-the probe and filter from the current execution's arguments (D45).
-Storage records a whole-table read for phantom checks, including nulls,
-and never calls the scalar under its locks. The traits are `Send + Sync`;
-implementations guard their own state and call back into no database or
-session (D27, D42, R-ERR-4).
+The example defines its own integer function and index. An application
+must register both before using them; `NEXT_TO` is not a built-in
+function. The built-in `btree` and `hash` methods retain their comparison
+lookups. A plug-in supplies the search for a function.
 
-This example registers `NEXT_TO(a, b)`, true when `a = b + 1`. Its method
-wraps a B-link tree and deliberately also returns `b` and `b + 2`, so the
-filter must remove both. It demonstrates the contract with integers; it
-adds no spatial structure. With 201 rows, including a null, the supplied
-candidate estimate makes the planner choose the index.
+The function and index opt in separately:
+
+| API | What the implementation promises |
+|---|---|
+| `ScalarFunction::index_predicate` | True means every call accepted by the function's type checks returns BOOLEAN or null without an error or side effect. Equal inputs give equal answers, and either argument being null gives null. `deterministic` must also return true. |
+| `IndexMethod::supports_predicate` | True means every index it creates on the given key types returns every match for the registered function, indexed column and argument position. Support covers every accepted value of the other argument, including null. |
+| `Index::search` with `Probe::Predicate` | Return matching inserted `(Key, RowId)` pairs, each once. Extra candidates are allowed. Return the original key values so the executor can check the visible row version. |
+
+Both opt-ins default to false and their promises hold for the lifetime
+of the registered implementations. The planner recognizes calls with
+two arguments: one indexed column and one constant or parameter, in
+either order. `Predicate::column` is the column's position in the index
+key; `Predicate::argument` is its position in the call, 0 or 1.
+`Probe::Predicate::value` supplies the other argument. The example method
+below supports the column in the first argument only.
+
+The planner compares the lookup cost with a scan. `Index::estimate`
+counts every candidate, including those the WHERE check rejects. If it
+returns `None`, the planner prices fetching every table row. If
+`probe_pages` returns `None`, the planner uses its usual estimate of a
+tree descent. Each prepared execution supplies its current parameter to
+both the lookup and the WHERE check, including when it reuses a learned
+plan (D45). EXPLAIN shows the function lookup and the filter above it.
+
+The lookup must preserve results and errors:
+
+- If the function, an argument expression or another part of the WHERE
+  filter can raise, the table is read whole. Skipping a row must not hide
+  an error (D15).
+- Every candidate is fetched and checked against the whole WHERE
+  condition. FALSE and unknown discard the row. This lookup never uses
+  an index-only scan.
+- An index of collation sort keys cannot supply the function's original
+  column values, so it is not eligible for a function lookup.
+- If another key column may be null, the index must hold null keys to
+  avoid missing matches. The planner keeps the requested sort when those
+  nulls could survive the filter (D34, D66).
+- The executor records a read of the whole table, including nulls, so
+  conflict checks catch rows inserted or changed by another transaction.
+  Storage checks never call the function while holding their locks
+  (D29, R-ERR-4).
+
+The traits are `Send + Sync`. Implementations protect their own state
+when sessions call them concurrently and never call back into a database
+or session (D27, D42, R-ERR-4).
+
+This complete program wraps a B-link tree to return the three integer
+candidates described above. Its estimate of three candidates makes the
+planner choose the lookup over scanning the 201 rows. It also executes
+the prepared statement with a null argument and checks that the plan
+contains both `IndexScan` and the WHERE filter.
 
 ```rust
 use std::sync::Arc;
@@ -552,7 +585,7 @@ impl ScalarFunction for NextTo {
         let [Value::Exact(a), Value::Exact(b)] = args else {
             return Err(SqlError::new(
                 Code::Api,
-                "[DESIGN] NEXT_TO was given no pair of integers",
+                "[DESIGN] NEXT_TO requires two integer values",
             ));
         };
         Ok(Value::Bool(a.units.checked_sub(b.units) == Some(1)))
@@ -602,7 +635,7 @@ impl Index for CandidateIndex {
         let Value::Exact(n) = value else {
             return Box::new(std::iter::empty());
         };
-        // D34: this deliberately includes extra keys on both sides of n + 1.
+        // D34: include n and n + 2 so the WHERE check must reject them.
         let high = Value::Exact(Decimal::new(n.units.saturating_add(EXTRA), 0));
         let candidates = Probe::Range {
             equal: Vec::new(),

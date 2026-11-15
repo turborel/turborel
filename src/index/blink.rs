@@ -504,7 +504,7 @@ impl Index for BLinkIndex {
     /// descending keys.
     fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
         if matches!(probe, Probe::Predicate { .. }) {
-            return Box::new(std::iter::once(Err(SqlError::new(Code::Unsupported, "[EXTENSION] btree answers no named predicate"))));
+            return Box::new(std::iter::once(Err(SqlError::new(Code::Unsupported, "[EXTENSION] btree does not support function lookups"))));
         }
         let direction = match order {
             KeyOrder::Ascending => Direction::Forward,

@@ -5,8 +5,8 @@
 //!   * each index estimates how many rows a probe returns (`Index`),
 //!   * the storage engine's statistics estimate how many rows a condition
 //!     keeps (`Statistics`, `physical/estimate.rs`),
-//!   * each index method declares which comparisons and named predicates it
-//!     answers and whether its output is in key order (`IndexMethod`),
+//!   * each index method declares which comparisons and function calls it
+//!     can use to find rows, and whether it gives key order (`IndexMethod`),
 //!   * the remaining weights live in a `CostModel` the user can change.
 //!
 //! "Interesting orders" (System R: Selinger et al., "Access Path Selection in a

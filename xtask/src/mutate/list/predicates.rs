@@ -1,14 +1,14 @@
-//! Mutations of named predicate probes: full rechecks and the order of
-//! nullable candidates (RULES.md D34, R-TEST-9).
+//! Break the WHERE check or SQL null ordering after a function lookup,
+//! and require the result tests to catch it (RULES.md D34, R-TEST-9).
 
 use super::{Mutation, Package};
 
-/// The named predicate mechanisms a wrong result exposes.
+/// Deliberate faults that must produce wrong rows or wrong order in tests.
 pub const PREDICATES: [Mutation; 2] = [
     Mutation {
         name: "predicate-recheck",
         package: Package::Core,
-        breaks: "a named predicate's extra candidates pass without the full condition rechecked",
+        breaks: "a function lookup returns extra rows because the full WHERE check is removed",
         file: "src/physical/access.rs",
         original: "            self.used.clear();",
         replacement: "            self.used.truncate(usize::MAX);",
@@ -18,7 +18,7 @@ pub const PREDICATES: [Mutation; 2] = [
     Mutation {
         name: "predicate-null-order",
         package: Package::Core,
-        breaks: "a named predicate's nullable candidates claim a key order that is not SQL's null order",
+        breaks: "a function lookup skips the sort needed to put surviving nulls in SQL order",
         file: "src/physical/access.rs",
         original: " && !predicate::untested_nulls(&columns, c.probes.first())",
         replacement: "",

@@ -106,13 +106,15 @@ pub trait ScalarFunction: Send + Sync {
     ///
     /// The value cannot be computed: the statement fails with this error.
     fn call(&self, args: &[Value]) -> Result<Value>;
-    /// \[EXTENSION\] May a named index predicate skip calls on rows
-    /// (RULES.md D34)? True promises that every accepted call is
-    /// deterministic, has no observable side effects and returns Boolean
-    /// or null without error, including for null arguments; a null
-    /// argument returns null. The promise holds for the function's life.
-    /// Argument expressions may still raise and are checked separately
-    /// (D15). Default: no; existing functions retain their full evaluation.
+    /// \[EXTENSION\] Whether an index may find rows for this function in
+    /// a WHERE filter, such as `f(column, ?)` (RULES.md D34).
+    /// True promises that every call accepted by the function's type
+    /// checks returns Boolean or null without an error or side effect.
+    /// Equal inputs give equal answers; a null argument gives null.
+    /// `deterministic` must also return true. These promises hold for the
+    /// function's life. Argument expressions are checked separately:
+    /// an expression that can raise still requires full evaluation (D15).
+    /// Defaults to false, so existing functions do not opt in.
     fn index_predicate(&self) -> bool {
         false
     }

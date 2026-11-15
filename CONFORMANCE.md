@@ -1547,15 +1547,24 @@ Rust has `Database::create_index` and `drop_index`, and the views are
 INFORMATION_SCHEMA.INDEXES and INDEX_OPTIONS. Index methods and other plug-ins
 declare the options (`Database::declare_index_option`).
 
-A plug-in method may answer a registered binary Boolean scalar predicate
-of an indexed column and a constant or parameter, in either argument
-position (`IndexMethod::supports_predicate`, `Probe::Predicate`). The
-function must declare deterministic, total, side-effect-free behaviour
-and return null for null arguments (`ScalarFunction::index_predicate`).
-The executor fetches visible rows and checks the whole condition, so a
-method may return extra candidates. A function or conjunct that can raise
-keeps a scan (D15). Built-in methods answer no named predicates. This
-extends the Rust index contract without adding SQL syntax (D34).
+The Rust plug-in API also lets an index support a WHERE filter written as
+a function call, such as `f(column, ?)` or `f(?, column)`. The registered
+function takes two arguments and returns BOOLEAN or null; the other
+argument is a constant or parameter. `IndexMethod::supports_predicate`
+declares support, and `Probe::Predicate` carries the lookup request
+(`src/index.rs`, RULES.md D34). This extension uses the existing
+function-call syntax.
+
+The function must return the same answer for the same inputs, have no
+side effects, accept nulls and return null when either argument is null.
+It must never raise an error for arguments its type checks accept
+(`ScalarFunction::index_predicate`, `src/functions.rs`). A lookup may
+return extra rows, called candidates: the executor fetches each visible
+row and checks the full WHERE condition. If the function, an argument
+expression or another part of the filter can raise, the table is read
+whole so the lookup cannot hide the error (D15). The built-in `btree` and
+`hash` methods retain their comparison lookups; a plug-in supplies the
+function lookup.
 
 ### Users
 

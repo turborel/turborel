@@ -1,6 +1,7 @@
-//! Integer predicates and an index of their candidates, for D34's tests.
-//! The method scans its held keys so the tests judge the contract without
-//! adding another production index structure.
+//! NEXT_TO(a, b) is true when a is one greater than b. The test index wraps
+//! a B-link tree and scans its keys, optionally returning extra candidates:
+//! NEXT_TO(K, 40) finds both 41 and 42 in lossy mode. This tests the D34
+//! plug-in contract without adding a production index implementation.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -57,10 +58,10 @@ impl ScalarFunction for Function {
             return Ok(if self.null_true { Value::Bool(true) } else { Value::Null });
         }
         let [Value::Exact(a), Value::Exact(b)] = args else {
-            return Err(SqlError::new(Code::Api, "[DESIGN] NEXT_TO was given no pair of integers"));
+            return Err(SqlError::new(Code::Api, "[DESIGN] NEXT_TO requires two integer values"));
         };
         if self.error_at == Some(a.units) {
-            return Err(SqlError::new(Code::Data, "[EXTENSION] NEXT_TO refuses this integer"));
+            return Err(SqlError::new(Code::Data, "[EXTENSION] NEXT_TO test error at the configured integer"));
         }
         Ok(Value::Bool(a.units.checked_sub(b.units) == Some(1)))
     }

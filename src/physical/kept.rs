@@ -47,7 +47,7 @@ pub enum Place {
     Low,
     /// The upper bound of a `Probe::Range`.
     High,
-    /// The other argument of a named predicate (RULES.md D34).
+    /// The constant or parameter argument of `Probe::Predicate` (RULES.md D34).
     PredicateValue,
 }
 
@@ -377,9 +377,10 @@ mod tests {
         Probe::Prefix { equal: vec![int(1), int(2)], then: None }
     }
 
-    /// Verifies: [DESIGN] D34, D45: a predicate's argument slot converts
-    /// values and accepts nulls; no comparison slot fits it, and its slot
-    /// fits no comparison, SQLCODE -910. No unique-key shortcut keeps it.
+    /// Verifies: [DESIGN] D34, D45: a function lookup's parameter slot
+    /// converts values and accepts nulls. A missing parameter or a slot
+    /// meant for another probe kind raises SQLCODE -910. Function lookups
+    /// cannot use the plan-reuse shortcut reserved for unique-key lookups.
     #[test]
     fn predicate_slots_accept_only_their_argument_place() {
         let function = crate::functions::Registry::with_set_functions().scalar("UPPER").unwrap();

@@ -1,6 +1,6 @@
-//! \[DESIGN\] Named predicate candidates and the capabilities that make
-//! an index path complete (RULES.md D34). No function is evaluated while
-//! planning; a candidate keeps its whole condition for the executor.
+//! \[DESIGN\] Index lookups for WHERE function calls such as `f(column, ?)`
+//! (RULES.md D34). These helpers describe the lookup without calling the
+//! function. The executor checks the full WHERE condition on fetched rows.
 
 use super::Candidate;
 use crate::catalog::{ColumnDesc, IndexDesc};
@@ -9,13 +9,14 @@ use crate::logical::{Cond, Expr, Slot, filled_expr};
 use crate::physical::{Place, ProbeSlot};
 use crate::value::{DataType, Value};
 
-/// Whether the path needs the whole predicate rechecked on fetched rows.
+/// Whether this is a function lookup, requiring the full WHERE check.
 pub(super) fn named(probes: &[Probe]) -> bool {
     matches!(probes.first(), Some(Probe::Predicate { .. }))
 }
 
-/// The calls of a column and a constant or slot among `conds`, over the
-/// index's raw values. A sort key is no argument of the bound function.
+/// Finds function calls with one indexed column and a constant or parameter.
+/// Collated indexes are excluded because their keys replace the original
+/// column values with sort keys, which cannot be passed to the function.
 pub(super) fn candidates(conds: &[Cond], ix: &IndexDesc, values: Option<&[Value]>, all: f64) -> Vec<Candidate> {
     if ix.is_collated() {
         return Vec::new();
@@ -34,14 +35,14 @@ pub(super) fn candidates(conds: &[Cond], ix: &IndexDesc, values: Option<&[Value]
             let predicate = Box::new(Predicate { function: function.clone(), column, argument });
             let probe = Probe::Predicate { predicate, value };
             let slots = slot.into_iter().map(|slot| ProbeSlot { place: Place::PredicateValue, slot }).collect();
-            // `access` retains this conjunct even when the index is exact.
+            // D34: even an exact index leaves the full WHERE check in place.
             Some(Candidate { slots, ..Candidate::one(probe, (vec![at], 0, all, true)) })
         })
         .collect()
 }
 
-/// The column's two places, and the other argument. Argument order is
-/// preserved; a method declares each position it supports.
+/// Returns the table column number, its position in the call and the other
+/// argument. Order matters: `f(column, value)` need not equal `f(value, column)`.
 fn operands(args: &[Expr]) -> Option<(usize, usize, &Expr)> {
     match args {
         [Expr::Column(column), other] => Some((*column, 0, other)),
@@ -50,8 +51,8 @@ fn operands(args: &[Expr]) -> Option<(usize, usize, &Expr)> {
     }
 }
 
-/// The same value the bound call receives, with its slot if one supplies
-/// it. Failed slot conversions are reported by ordinary plan filling.
+/// Gets the constant or current parameter value, retaining its slot for
+/// later executions. Plan filling reports any failed parameter conversion.
 fn constant(expr: &Expr, values: Option<&[Value]>) -> Option<(Value, Option<Slot>)> {
     match expr {
         Expr::Const(value) => Some((value.clone(), None)),
@@ -74,8 +75,9 @@ fn constant(expr: &Expr, values: Option<&[Value]>) -> Option<(Value, Option<Slot
     }
 }
 
-/// Whether the method answers the probe on these types. Support for a
-/// predicate promises every value of its other argument, not one sample.
+/// Whether the method supports this lookup on the given key types.
+/// Function support must cover every accepted other argument, including
+/// values supplied by later executions of a prepared statement (D34).
 pub(super) fn supports(method: &dyn IndexMethod, probe: &Probe, (types, ordering): (&[DataType], bool)) -> bool {
     match probe {
         Probe::All => method.ordered() && ordering,
@@ -86,8 +88,8 @@ pub(super) fn supports(method: &dyn IndexMethod, probe: &Probe, (types, ordering
     }
 }
 
-/// Whether a true row could have no index entry because another column
-/// of its key is null. The predicate itself rejects its column's nulls.
+/// Whether omitting null keys could hide a matching row. A function call
+/// rejects nulls in its argument column, but may leave other key columns null.
 pub(super) fn omits_rows(ix: &IndexDesc, columns: &[&ColumnDesc], probe: Option<&Probe>) -> bool {
     if matches!(probe, Some(Probe::Predicate { .. })) {
         return !ix.nulls && untested_nulls(columns, probe);
@@ -95,8 +97,9 @@ pub(super) fn omits_rows(ix: &IndexDesc, columns: &[&ColumnDesc], probe: Option<
     columns.get(probe.map_or(0, tested)..).unwrap_or_default().iter().any(|col| !col.not_null)
 }
 
-/// Whether a named probe may keep a key with a null. Such keys need an
-/// index that holds nulls, and give no SQL null order without a sort (D34).
+/// Whether a function lookup may keep nulls in another key column. Such
+/// rows need an index that holds null keys; their order may still require
+/// a SQL sort (D34).
 pub(super) fn untested_nulls(columns: &[&ColumnDesc], probe: Option<&Probe>) -> bool {
     let Some(Probe::Predicate { predicate, .. }) = probe else { return false };
     columns.iter().enumerate().any(|(at, col)| at != predicate.column && !col.not_null)
@@ -118,12 +121,11 @@ mod tests {
     use crate::catalog::QualifiedName;
     use crate::functions::Registry;
 
-    /// Verifies: [DESIGN] D34: a named predicate cannot use an index that
-    /// omits a possible true row. MC/DC pairs: from an untested nullable
-    /// column, change only the index holding nulls, the column being
-    /// tested or the column being NOT NULL; each alone permits the path.
-    /// The latter two pairs also decide whether nulls can survive, so the
-    /// named probe may claim key order without a SQL sort.
+    /// Verifies: [DESIGN] D34: a function lookup cannot use an index that
+    /// might omit a matching row. MC/DC pairs start with a nullable key
+    /// column outside the call: storing null keys, testing that column or
+    /// making it NOT NULL each independently permits the lookup. The last
+    /// two also prevent surviving nulls, allowing the index to supply order.
     #[test]
     fn nullable_untested_columns_require_null_entries() {
         let mut ix = IndexDesc {
