@@ -22,7 +22,8 @@ CREATE INDEX: make an index on a table *(extension)*
 
 CREATE INDEX makes an index on columns of a base table, kept by an index
 method: `btree`, a B-link tree, the default; `hash`, a linear hash table;
-or a method a plug-in registers. The planner uses an index when its cost
+`rtree`, a spatial tree over coordinate columns; or a method a plug-in
+registers. The planner uses an index when its cost
 says the index is the cheaper way to find a query's rows: by the
 comparisons of its columns with constants in a WHERE clause, BETWEEN,
 IN lists of constants, ORs of these of one column, and LIKE patterns
@@ -50,10 +51,19 @@ each visible row and checks the full WHERE condition before returning it.
 Only functions that promise the same answer for the same inputs, no side
 effects, no errors for accepted arguments and null for a null argument
 can use this lookup. A filter that can raise keeps a full table read, so
-an index cannot hide its error (D15). The built-in `btree` and `hash`
+an index cannot hide its error (D15). The built-in `btree`, `hash` and `rtree`
 methods support comparisons; a plug-in supplies the function lookup. See
 [Indexes for function calls](../../client/03-embedding.md#indexes-for-function-calls-extension)
 for a runnable example and the Rust API.
+
+An `rtree` index takes two REAL, FLOAT or DOUBLE PRECISION columns in
+(X, Y) order for points, or four in (min X, min Y, max X, max Y) order
+for rectangles. Coordinates must be finite; each minimum must be at most
+its maximum. WHERE comparisons can constrain several coordinates at once,
+including ranges on both X and Y. The index checks each comparison against
+the stored coordinates and provides no SQL key order. It omits rows with
+a NULL coordinate, so the planner uses it only when those rows cannot
+answer the query. It does not implement geometry types or SQL/MM functions.
 
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each
@@ -85,7 +95,7 @@ run again after COMMIT or ROLLBACK.
 3. Each column is the table's.
 4. No index has the name.
 5. The method is registered; its name is matched in any case. On a
-   temporary table, it is `btree` or `hash`.
+   temporary table, it is `btree`, `hash` or `rtree`.
 6. Each option is declared, given once, of a value it accepts.
 
 ## PRIVILEGES
@@ -99,6 +109,8 @@ The table's schema is its user's.
 | 25000 | -917 | The session has a transaction open |
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the table's schema |
+| 0A000 | -900 | `rtree` is asked to index an unsupported column count or type |
+| TB910 | -910 | An `rtree` coordinate is non-finite or a rectangle has reversed bounds |
 
 ## EXAMPLES
 
@@ -121,6 +133,28 @@ OK
  STAFF_DEPT                                                   | btree                                                        | NO                                                           | DEPT
  STAFF_NAME                                                   | hash                                                         | NO                                                           | NAME
 (3 rows)
+```
+
+A point window, of a table PLACES (ID INTEGER, X DOUBLE PRECISION NOT
+NULL, Y DOUBLE PRECISION NOT NULL):
+
+```sql
+CREATE INDEX PLACES_XY ON PLACES (X, Y) USING RTREE;
+INSERT INTO PLACES VALUES (1, 0, 0), (2, 5, 5), (3, 10, 10);
+COMMIT;
+SELECT ID FROM PLACES
+    WHERE X BETWEEN 0 AND 5 AND Y BETWEEN 0 AND 5 ORDER BY ID;
+```
+
+```
+OK
+OK
+OK
+           ID
+--------------
+            1
+            2
+(2 rows)
 ```
 
 Indexes refused, V a view:

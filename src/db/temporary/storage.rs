@@ -16,7 +16,7 @@ use crate::catalog::{IndexDesc, TableDesc};
 use crate::db::api;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::{Code, Result, SqlError};
-use crate::index::{self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe};
+use crate::index::{self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe, RTREE_METHOD, RTreeMethod};
 use crate::log::Lsn;
 use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
@@ -418,6 +418,8 @@ impl Entries {
         let (pool, file) = pages.file()?;
         let entries: Arc<dyn Index> = if self.index.method == HASH_METHOD {
             Arc::from(HashMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == RTREE_METHOD {
+            Arc::from(RTreeMethod::new(pool, file).create_on(&types, on)?)
         } else {
             Arc::from(BTreeMethod::new(pool, file).create_on(&types, on)?)
         };

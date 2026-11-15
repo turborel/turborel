@@ -141,7 +141,12 @@ fn asked(condition: &Conjunct) -> Option<(usize, &[Value])> {
             match probe {
                 Probe::Compare { op: CompOp::Eq, value } => Some((*column, std::slice::from_ref(value))),
                 Probe::Prefix { equal, then: None } => Some((*column, equal.as_slice())),
-                Probe::All | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Predicate { .. } => None,
+                Probe::All
+                | Probe::Columns(_)
+                | Probe::Compare { .. }
+                | Probe::Prefix { .. }
+                | Probe::Range { .. }
+                | Probe::Predicate { .. } => None,
             }
         }
         Conjunct::In { column, values } => Some((*column, values.as_slice())),

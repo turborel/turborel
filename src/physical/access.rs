@@ -2,6 +2,8 @@
 //! an index's probes (`physical/probe.rs`), one, or one of each range of
 //! an OR, chosen by cost.
 
+mod columns;
+
 use super::estimate::{self, Known};
 use super::kept::{Place, point_probe};
 use super::probe::{Alternatives, Compared, comparisons, probes_of_any, render_probe, served_by};
@@ -202,7 +204,7 @@ impl PhysicalPlanner<'_> {
             let Some(types) = ix.key_types(desc) else { continue };
             let served = served_by(&compared, ix);
             let alternatives: &[Alternatives] = if ix.is_collated() { &[] } else { &ors };
-            let mut candidates = probes(&ix.columns, &types, (&served, alternatives), all, known);
+            let mut candidates = columns::candidates((&ix.columns, &types), (&served, alternatives), (all, known), &**kind);
             candidates.extend(predicate::candidates(answerable, ix, self.values, all));
             // A full ordered read, only to provide order.
             candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
@@ -343,7 +345,7 @@ pub(super) fn whole_key(probe: &Probe, width: usize) -> bool {
     match probe {
         Probe::Compare { op, .. } => *op == CompOp::Eq && width == 1,
         Probe::Prefix { equal, then } => then.is_none() && equal.len() == width,
-        Probe::All | Probe::Range { .. } | Probe::Predicate { .. } => false,
+        Probe::All | Probe::Columns(_) | Probe::Range { .. } | Probe::Predicate { .. } => false,
     }
 }
 

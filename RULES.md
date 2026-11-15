@@ -1301,10 +1301,12 @@ error, so results and errors match the row path (D15).
 #### D34. Index methods support comparisons and function predicates
 
 An index method creates indexes and says which probes they answer, and the
-planner picks by estimate, so a new method needs no planner change. Two are
-built in, paged through the buffer pool. `btree` is a B-link tree, ordered,
-for equality and ranges. `hash` is a linear hash table (Litwin, 1980), for
-equality only, and its readers lock nothing.
+planner picks by estimate. Three are built in, paged through the buffer
+pool. `btree` is a B-link tree, ordered, for equality and ranges. `hash` is
+a linear hash table (Litwin, 1980), for equality only, and its readers lock
+nothing. `rtree` indexes two point coordinates or four rectangle coordinates
+(D72). A method can support independent comparisons on several key columns
+without an equality prefix (`IndexMethod::supports_columns`).
 
 A comparison probe finds exactly what SQL compares. A probe value of
 another type is placed by its anchor and each entry checked, and a number
@@ -1849,6 +1851,17 @@ returned is omitted, as concurrent inserts are optional to an index scan.
 This ordering is exact for indexed rectangles and points. A geometry
 consumer must rerank candidates by exact geometry distance and continue
 until the remaining lower bound exceeds its kth exact distance.
+
+The built-in `rtree` method accepts two approximate-numeric columns in
+(X, Y) order, or four in (min X, min Y, max X, max Y) order. Coordinates
+must be finite and rectangle bounds ordered. The method keeps the complete
+coordinate key, checks SQL comparisons after candidate traversal and returns
+no SQL key order. As other ordinary indexes do, it omits keys containing
+NULL; NULLS NOT DISTINCT constraints are unsupported. The planner uses
+independent coordinate bounds only when omitted null keys cannot satisfy
+the query. Prepared probes replace each comparison value independently.
+Ordinary MVCC key checks and serializable predicate tracking apply. These
+are numeric index keys, not geometry types or SQL/MM routines.
 
 Intersection joins traverse pairs of branches and prune disjoint bounds.
 They descend one side at a time and stream matching leaf pairs. Split

@@ -2,15 +2,16 @@
 //! \[DESIGN\] Index access methods. An `IndexMethod` declares its capabilities: which
 //! comparisons and function calls it can use to find rows, and
 //! whether it returns rows in key order. The physical planner asks each index
-//! for an estimate and picks the cheapest path, so adding a new kind of index
-//! never touches the planner.
+//! for an estimate and picks the cheapest supported path.
 //!
 //! Built in: "btree" (`index/blink.rs`), a B-link tree in pages, ordered,
 //! for equality and ranges; "hash" (`index/hash.rs`), a linear hash table
-//! in pages, for equality.
+//! in pages, for equality; "rtree" (`index/rtree.rs`), an R-link tree with
+//! R* partitioning, for independent point or rectangle coordinate bounds.
 
 mod blink;
 mod hash;
+mod rtree;
 mod stats;
 
 use std::cmp::Ordering;
@@ -18,6 +19,7 @@ use std::sync::Arc;
 
 pub use blink::BTreeMethod;
 pub use hash::HashMethod;
+pub use rtree::RTreeMethod;
 
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::error::Result;
@@ -101,9 +103,24 @@ pub struct Predicate {
     pub argument: usize,
 }
 
+/// One SQL comparison of an independently constrained index column.
+#[derive(Debug, Clone)]
+pub struct ColumnComparison {
+    /// The position of the column in the index key, from zero.
+    pub column: usize,
+    /// The comparison operator.
+    pub op: CompOp,
+    /// The value compared with that column.
+    pub value: Value,
+}
+
 /// What an index is asked for.
 #[derive(Debug, Clone)]
 pub enum Probe {
+    /// All comparisons must hold, including comparisons on columns after
+    /// a range. This describes a multidimensional window without requiring
+    /// an equality prefix (`IndexMethod::supports_columns`).
+    Columns(Vec<ColumnComparison>),
     /// Every entry (used to read rows in key order): of a key with no null,
     /// but in an index that holds them (`IndexDesc::nulls`).
     All,
@@ -162,6 +179,7 @@ impl Probe {
         let holds = |op: CompOp, k: Option<&Value>, v: &Value| k.and_then(|k| compare(k, v)).is_some_and(|o| op.holds(o));
         match self {
             Probe::All | Probe::Predicate { .. } => true,
+            Probe::Columns(each) => columns_answer(key, each),
             Probe::Compare { op, value } => holds(*op, key.next(), value),
             Probe::Prefix { equal, then } => {
                 equal.iter().all(|v| holds(CompOp::Eq, key.next(), v)) && then.as_ref().is_none_or(|(op, v)| holds(*op, key.next(), v))
@@ -173,6 +191,21 @@ impl Probe {
             }
         }
     }
+}
+
+/// Test independent comparisons without allocating a copy of the key.
+/// Missing key columns cannot satisfy a comparison.
+fn columns_answer<'a>(key: impl Iterator<Item = &'a Value>, each: &[ColumnComparison]) -> bool {
+    let mut checked = 0_usize;
+    for (at, value) in key.enumerate() {
+        for c in each.iter().filter(|c| c.column == at) {
+            if !compare(value, &c.value).is_some_and(|o| c.op.holds(o)) {
+                return false;
+            }
+            checked = checked.saturating_add(1);
+        }
+    }
+    checked == each.len()
 }
 
 /// \[EXTENSION\] A kind of index: creates `Index`es and says which probes they answer.
@@ -237,6 +270,12 @@ pub trait IndexMethod: Send + Sync {
     /// including null. Extra candidates are allowed (RULES.md D34).
     /// Defaults to false. Support must stay fixed for the method's life.
     fn supports_predicate(&self, _predicate: &Predicate, _columns: &[DataType]) -> bool {
+        false
+    }
+    /// Can an index on `columns` columns answer all independent
+    /// comparisons, each a key-column position and operator, exactly?
+    /// Default: no. Values use the same SQL rules as `Probe::Compare`.
+    fn supports_columns(&self, _columns: usize, _comparisons: &[(usize, CompOp)]) -> bool {
         false
     }
     /// Does `search` give its entries in the key order asked (by the
@@ -509,3 +548,6 @@ pub(crate) fn searched<I: Index + ?Sized>(index: &Arc<I>, probe: &Probe) -> Resu
 pub const BTREE_METHOD: &str = "btree";
 /// The name of `HashMethod`.
 pub const HASH_METHOD: &str = "hash";
+
+/// The name of `RTreeMethod`, for finite Cartesian point and rectangle keys.
+pub const RTREE_METHOD: &str = "rtree";

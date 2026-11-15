@@ -39,6 +39,8 @@ pub struct ProbeSlot {
 /// Where a `?`'s value goes in a probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {
+    /// The value of this comparison in `Probe::Columns`.
+    Column(usize),
     /// The value compared with the index's column of this place, from 0:
     /// a `Probe::Compare`'s, one of the equal values of a `Probe::Prefix`
     /// or a `Probe::Range`, or the comparison after a prefix's.
@@ -253,6 +255,7 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         | Expr::NextValue(_) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),
     };
     let at = match (probe, s.place) {
+        (Probe::Columns(each), Place::Column(n)) => each.get_mut(n).map(|c| &mut c.value),
         (Probe::Compare { value: first, .. }, Place::Key(n)) => (n == 0).then_some(first),
         (Probe::Prefix { equal, then }, Place::Key(n)) => {
             if n == equal.len() {
@@ -265,10 +268,11 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         (Probe::Range { low, .. }, Place::Low) => Some(&mut low.1),
         (Probe::Range { high, .. }, Place::High) => Some(&mut high.1),
         (Probe::Predicate { value: argument, .. }, Place::PredicateValue) => Some(argument),
-        (Probe::All, Place::Key(_) | Place::Low | Place::High | Place::PredicateValue)
+        (Probe::All, Place::Column(_) | Place::Key(_) | Place::Low | Place::High | Place::PredicateValue)
+        | (Probe::Columns(_), Place::Key(_) | Place::Low | Place::High | Place::PredicateValue)
+        | (Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. }, Place::Column(_) | Place::PredicateValue)
         | (Probe::Compare { .. } | Probe::Prefix { .. }, Place::Low | Place::High)
-        | (Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. }, Place::PredicateValue)
-        | (Probe::Predicate { .. }, Place::Key(_) | Place::Low | Place::High) => None,
+        | (Probe::Predicate { .. }, Place::Column(_) | Place::Key(_) | Place::Low | Place::High) => None,
     };
     match at {
         Some(at) => {
@@ -530,5 +534,34 @@ mod tests {
         assert!(filled_plan(Plan::Distinct { input: Box::new(sorted) }, &[]).is_ok());
         let other = Plan::Product { left: Box::new(scan("I", Probe::All, Vec::new())), right: Box::new(scan("I", Probe::All, Vec::new())) };
         assert_eq!(filled_plan(other, &[]).unwrap_err().code, Code::Api);
+    }
+
+    /// Verifies: [DESIGN] A prepared multidimensional probe replaces each
+    /// comparison independently, including two on the same key column.
+    /// A missing comparison and every incompatible place fail with -910.
+    #[test]
+    fn independent_probe_slots_replace_each_bound_and_reject_missing_places() {
+        use crate::index::ColumnComparison;
+        let make = || {
+            Probe::Columns(vec![
+                ColumnComparison { column: 0, op: CompOp::Ge, value: Value::Null },
+                ColumnComparison { column: 0, op: CompOp::Lt, value: Value::Null },
+                ColumnComparison { column: 1, op: CompOp::Eq, value: Value::Null },
+            ])
+        };
+        let slots = (0..3).map(|n| ProbeSlot { place: Place::Column(n), slot: slot(n) }).collect();
+        let Plan::IndexScan { probe, .. } = filled_plan(scan("I", make(), slots), &[int(1), int(3), int(7)]).unwrap() else {
+            panic!("not a scan")
+        };
+        assert!(probe.answers(&[int(2), int(7)]));
+        for key in [[int(0), int(7)], [int(3), int(7)], [int(2), int(6)]] {
+            assert!(!probe.answers(&key));
+        }
+        for place in [Place::Column(3), Place::Key(0), Place::Low, Place::High, Place::PredicateValue] {
+            let plan = scan("I", make(), vec![ProbeSlot { place, slot: slot(0) }]);
+            assert_eq!(filled_plan(plan, &[int(1)]).unwrap_err().code, Code::Api);
+        }
+        let wrong = scan("I", whole(), vec![ProbeSlot { place: Place::Column(0), slot: slot(0) }]);
+        assert_eq!(filled_plan(wrong, &[int(1)]).unwrap_err().code, Code::Api);
     }
 }

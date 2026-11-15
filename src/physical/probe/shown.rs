@@ -13,6 +13,7 @@ pub(in crate::physical) fn render_probe(probe: &Probe, columns: &[usize], names:
     let equalities = |equal: &[Value]| equal.iter().enumerate().map(|(at, v)| compared(at, CompOp::Eq, v)).collect::<Vec<_>>();
     let conds = match probe {
         Probe::All => Vec::new(),
+        Probe::Columns(each) => each.iter().map(|c| compared(c.column, c.op, &c.value)).collect(),
         Probe::Predicate { predicate, value } => {
             let column = Expr::Column(columns.get(predicate.column).copied().unwrap_or_default());
             let value = Expr::Const(value.clone());

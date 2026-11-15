@@ -275,6 +275,7 @@ impl BLinkIndex {
         match probe {
             Probe::All => Some(Range::all(false)),
             Probe::Predicate { .. } => None,
+            Probe::Columns(_) => Some(Range::all(true)),
             Probe::Compare { op, value } => self.prefix_range(&[], Some((*op, value))),
             Probe::Prefix { equal, then } => self.prefix_range(equal, then.as_ref().map(|(op, v)| (*op, v))),
             // From where the lower bound's keys begin to where the upper

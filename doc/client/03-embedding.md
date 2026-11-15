@@ -436,7 +436,7 @@ off, as the built-in rules' do ([Settings](../appendix/c-settings.md)).
 
 The built-in engines are `rowstore`, the default, and `columnstore`
 ([Table Options](../appendix/g-table-options.md)); the built-in index
-methods `btree` and `hash`. Each trait's contract, what the database
+methods are `btree`, `hash` and `rtree`. Each trait's contract, what the database
 calls and what an implementation must keep, is in the crate's own
 documentation, of the module the trait is in.
 
@@ -474,7 +474,7 @@ exact function to reject the extra matches (RULES.md D34).
 
 The example defines its own integer function and index. An application
 must register both before using them; `NEXT_TO` is not a built-in
-function. The built-in `btree` and `hash` methods retain their comparison
+function. The built-in `btree`, `hash` and `rtree` methods retain their comparison
 lookups. A plug-in supplies the search for a function.
 
 The function and index opt in separately:
@@ -688,6 +688,11 @@ recheck: true
 ```
 
 ## Spatial storage primitives
+
+The built-in `RTreeMethod` connects these pages to SQL. An index on two
+REAL, FLOAT or DOUBLE PRECISION columns treats them as (X, Y); four
+columns are (min X, min Y, max X, max Y). The planner can combine bounds
+on each coordinate. See [CREATE INDEX](../sql/statements/create-index.md).
 
 `spatial::Bounds` represents a finite, closed Cartesian rectangle in X/Y
 order. It accepts points and zero-width rectangles, rejects reversed bounds

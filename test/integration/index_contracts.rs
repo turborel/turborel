@@ -8,7 +8,7 @@ use turborel::disk::encoding::Pipeline;
 use turborel::disk::io::OsFileSystem;
 use turborel::disk::pager::Pager;
 use turborel::error::Result;
-use turborel::index::{BTreeMethod, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe};
+use turborel::index::{BTreeMethod, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe, RTreeMethod};
 use turborel::storage::RowId;
 use turborel::value::{CompOp, DataType, Spelled, Value, compare};
 
@@ -42,8 +42,8 @@ fn expected(op: CompOp, value: i128) -> Vec<RowId> {
 }
 
 /// Checks the `IndexMethod` and `Index` contracts on `method`.
-fn index_contract(method: &dyn IndexMethod) {
-    let index: Arc<dyn Index> = Arc::from(method.create(&[DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }]).unwrap());
+fn index_contract(method: &dyn IndexMethod, types: &[DataType], key: fn(i128) -> Key) {
+    let index: Arc<dyn Index> = Arc::from(method.create(types).unwrap());
     assert!(searched(&index, &Probe::All).unwrap().is_empty(), "a new index is empty");
     for (k, id) in ENTRIES {
         index.insert(key(k), id).unwrap();
@@ -102,10 +102,9 @@ fn index_contract(method: &dyn IndexMethod) {
 /// Checks the `Probe::Prefix` contract on `method`, with an index on two
 /// columns: every prefix it supports returns exactly the entries whose key
 /// answers it, in key order if the method is ordered.
-fn prefix_contract(method: &dyn IndexMethod) {
-    let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    let index: Arc<dyn Index> = Arc::from(method.create(&[exact.clone(), exact]).unwrap());
-    let keys: Vec<Key> = (0..4).flat_map(|a| (0..4).map(move |b| Key(vec![number(a), number(b)]))).collect();
+fn prefix_contract(method: &dyn IndexMethod, data_type: &DataType, value: fn(i128) -> Value) {
+    let index: Arc<dyn Index> = Arc::from(method.create(&[data_type.clone(), data_type.clone()]).unwrap());
+    let keys: Vec<Key> = (0..4).flat_map(|a| (0..4).map(move |b| Key(vec![value(a), value(b)]))).collect();
     for (id, k) in (1..).zip(&keys) {
         index.insert(k.clone(), id).unwrap();
     }
@@ -133,10 +132,9 @@ fn prefix_contract(method: &dyn IndexMethod) {
 /// columns: every range it supports, of each pair of bounds, inclusive or
 /// not, empty ones among them, after no equal column or one, returns
 /// exactly the entries whose key answers it, in key order.
-fn range_contract(method: &dyn IndexMethod) {
-    let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    let index: Arc<dyn Index> = Arc::from(method.create(&[exact.clone(), exact]).unwrap());
-    let keys: Vec<Key> = (0..4).flat_map(|a| (0..6).map(move |b| Key(vec![number(a), number(b)]))).collect();
+fn range_contract(method: &dyn IndexMethod, data_type: &DataType, value: fn(i128) -> Value) {
+    let index: Arc<dyn Index> = Arc::from(method.create(&[data_type.clone(), data_type.clone()]).unwrap());
+    let keys: Vec<Key> = (0..4).flat_map(|a| (0..6).map(move |b| Key(vec![value(a), value(b)]))).collect();
     for (id, k) in (1..).zip(&keys) {
         index.insert(k.clone(), id).unwrap();
     }
@@ -152,9 +150,14 @@ fn range_contract(method: &dyn IndexMethod) {
                 Probe::Range { equal: vec![number(2); equal], low: Box::new((low, number(lo))), high: Box::new((high, number(hi))) };
             let found: Vec<RowId> = searched(&index, &probe).unwrap().into_iter().map(|(_, id)| id).collect();
             let expected: Vec<RowId> = (1..).zip(&keys).filter(|(_, k)| probe.answers(&k.0)).map(|(id, _)| id).collect();
-            assert_eq!(found, expected, "{} {probe:?}", method.name());
-            let reversed: Vec<RowId> = expected.iter().rev().copied().collect();
-            assert_eq!(descending(&index, &probe), reversed, "{} {probe:?} descending", method.name());
+            let mut sorted = found.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, expected, "{} {probe:?}", method.name());
+            if method.ordered() {
+                assert_eq!(found, expected, "{} {probe:?} in key order", method.name());
+                let reversed: Vec<RowId> = expected.iter().rev().copied().collect();
+                assert_eq!(descending(&index, &probe), reversed, "{} {probe:?} descending", method.name());
+            }
         }
     }
 }
@@ -228,11 +231,33 @@ fn built_in_index_methods_keep_the_index_contract() {
     let file = pool.add_pager(Arc::new(pager));
     for method in [&BTreeMethod::in_memory() as &dyn IndexMethod, &BTreeMethod::new(pool, file), &HashMethod::in_memory()] {
         assert!(method.supports(CompOp::Eq), "{} answers equality", method.name());
-        index_contract(method);
+        let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
+        index_contract(method, std::slice::from_ref(&exact), key);
         assert!(method.supports_prefix(2, 2, None), "{} answers a whole key's equality", method.name());
-        prefix_contract(method);
+        prefix_contract(method, &exact, number);
         assert_eq!(method.supports_range(2, 0), method.ordered(), "{}: an ordered method answers a range", method.name());
-        range_contract(method);
+        range_contract(method, &exact, number);
         nulls_contract(method);
+    }
+}
+
+/// Verifies: [EXTENSION] The rtree method passes the same comparisons,
+/// streaming, key reconstruction, counted-reference, prefix and range
+/// contracts as the other built-ins, with its two-coordinate key. Range
+/// support does not imply SQL key order. Both memory and file pagers run.
+#[test]
+fn spatial_method_keeps_the_index_contract() {
+    let scratch = Scratch::new("contract-rtree");
+    let pager = Pager::create(&OsFileSystem, &scratch.path("index"), crc32c(), Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
+    let file = pool.add_pager(Arc::new(pager));
+    let approximate = DataType::Approximate { precision: 53, spelled: Spelled::DoublePrecision };
+    let value = |n| Value::Approx(f64::from(i32::try_from(n).unwrap()));
+    let point = |n| Key(vec![Value::Approx(f64::from(i32::try_from(n).unwrap())), Value::Approx(0.0_f64)]);
+    for method in [RTreeMethod::in_memory(), RTreeMethod::new(pool, file)] {
+        assert!(!method.ordered());
+        index_contract(&method, &[approximate.clone(), approximate.clone()], point);
+        prefix_contract(&method, &approximate, value);
+        range_contract(&method, &approximate, value);
     }
 }
