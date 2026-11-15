@@ -83,7 +83,7 @@ verification approach DO-178C expects (§8).
 | D29 | Engines own concurrency, at logical timestamps |
 | D30 | A storage foundation of independent components |
 | D31 | The built-in engines are a row store and a column store |
-| D34 | Index methods |
+| D34 | Index methods answer comparisons and named predicates |
 | D35 | The optimizer and planner |
 | D36 | Settings |
 | D37 | System tables and the Information Schema |
@@ -539,7 +539,8 @@ constraints, and every path that adds or removes an entry asks it
 built again to take its place, as each is made and dropped with the
 constraint. A key with a null sorts before every value, so a probe whose
 range is open below starts after them, and the `Index` contract says no
-probe but a read of every entry selects one. The planner is unchanged: it
+comparison probe selects one. A named predicate may return null keys as
+extra candidates, which the whole condition rechecks (D34). The planner
 reads an index whole only of columns that are NOT NULL, and nulls are
 ordered after every value where the index orders them first.
 
@@ -1295,7 +1296,7 @@ row at a time so the two can be compared. The batch tests read each answer
 both ways. A batch that raises gives its earlier rows first, then the
 error, so results and errors match the row path (D15).
 
-#### D34. Index methods
+#### D34. Index methods answer comparisons and named predicates
 
 An index method creates indexes and says which probes they answer, and the
 planner picks by estimate, so a new method needs no planner change. Two are
@@ -1303,13 +1304,53 @@ built in, paged through the buffer pool. `btree` is a B-link tree, ordered,
 for equality and ranges. `hash` is a linear hash table (Litwin, 1980), for
 equality only, and its readers lock nothing.
 
-An index finds exactly what SQL compares. A probe value of another type is
+A comparison probe finds exactly what SQL compares. A probe value of another type is
 placed by its anchor and each entry checked, and a number of the other kind
 is placed among the column's values (`physical/probe.rs`) [X3.135-1986
 §5.11 GR4]. The planner probes only with conjuncts that can't raise an error
 (D15).
 
-A scan is index-only when every column it reads is in the key, of a type
+A method may also answer a registered binary Boolean scalar function of
+one indexed column and a constant or parameter, in either argument
+position. `IndexMethod::supports_predicate` declares support for the bound
+function, key column, argument position and key types, for every accepted
+value of the other argument. Its default is false. `Probe::Predicate`
+holds that descriptor and the argument's value. A collated index is not
+used: its sort keys are not the function's arguments.
+
+The function opts in through `ScalarFunction::index_predicate`: it is
+deterministic, has no side effects, raises no error for any accepted
+arguments, including nulls, and returns BOOLEAN or null, null whenever
+either argument is null. The declaration and the method's support hold
+throughout their registered life. Without the declaration, or with any
+argument or other conjunct that can raise, no selective probe is used
+(D15). Thus an error on a row an index would skip still occurs.
+
+A named predicate's search gives every matching inserted entry, each
+once, and may give extra candidates. Its keys are the inserted values,
+not approximations. The executor fetches each visible row and rechecks
+the whole condition, even for an exact method; false and unknown both
+exclude it. Such a scan is never index-only. Another nullable key column
+forbids the path unless the index holds null keys, since an omitted key
+could satisfy the predicate.
+When such a key can contain nulls, the planner keeps the requested sort:
+the method's key order need not have SQL's null ordering.
+
+An estimate of a named probe counts candidates before rechecking. Without
+one, the planner prices every row of the table; without `probe_pages`, it
+uses the ordinary descent estimate. It prices fetching every candidate
+before estimating survivors. Parameters fill both the probe and its
+filter on every execution. Learned shapes retain the bound function and
+both column positions, ignoring the value; these are not unique-key
+point probes (D45).
+
+Storage checks of a named probe exclude no keys or ranges and call no
+function. The executor records a whole-table read, including nulls, for
+phantom checks. A method guards its own state across sessions and calls
+back into no database or session; no storage lock is held across a scalar
+call (D27, D42, R-ERR-4).
+
+A comparison scan is index-only when every column it reads is in the key, of a type
 the key codec gives back exactly (`engine::key::restores`). A versioned
 engine keeps an entry per version, so a row is made from its entry only
 where every reader sees that row's one version

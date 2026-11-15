@@ -274,6 +274,7 @@ impl BLinkIndex {
     fn range(&self, probe: &Probe) -> Option<Range> {
         match probe {
             Probe::All => Some(Range::all(false)),
+            Probe::Predicate { .. } => None,
             Probe::Compare { op, value } => self.prefix_range(&[], Some((*op, value))),
             Probe::Prefix { equal, then } => self.prefix_range(equal, then.as_ref().map(|(op, v)| (*op, v))),
             // From where the lower bound's keys begin to where the upper
@@ -437,7 +438,7 @@ impl Index for BLinkIndex {
     }
 
     fn estimate(&self, probe: &Probe) -> Option<usize> {
-        if matches!(probe, Probe::All) {
+        if matches!(probe, Probe::All | Probe::Predicate { .. }) {
             return None;
         }
         let range = self.range(probe);
@@ -476,7 +477,10 @@ impl Index for BLinkIndex {
     }
 
     /// A descent, its levels the tree's.
-    fn probe_pages(&self, _probe: &Probe) -> Option<f64> {
+    fn probe_pages(&self, probe: &Probe) -> Option<f64> {
+        if matches!(probe, Probe::Predicate { .. }) {
+            return None;
+        }
         self.tree.height().ok().map(f64::from)
     }
 
@@ -499,6 +503,9 @@ impl Index for BLinkIndex {
     /// Read a leaf at a time (`engine/tree/scan.rs`), backward for
     /// descending keys.
     fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        if matches!(probe, Probe::Predicate { .. }) {
+            return Box::new(std::iter::once(Err(SqlError::new(Code::Unsupported, "[EXTENSION] btree answers no named predicate"))));
+        }
         let direction = match order {
             KeyOrder::Ascending => Direction::Forward,
             KeyOrder::Descending => Direction::Backward,

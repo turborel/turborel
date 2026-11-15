@@ -282,10 +282,13 @@ impl Expr {
     /// [ISO/IEC 9075-2:2023 §9.35 GR3a]; a column, a constant, a sort key and monadic minus
     /// cannot (exact values never exceed `MAX_EXACT_PRECISION` digits, so
     /// negation cannot overflow), and CASE only through its parts, as a
-    /// truth value only through its condition.
+    /// truth value only through its condition. A function declaring D34's
+    /// safe predicate contract can raise only through its arguments.
     pub fn can_raise(&self) -> bool {
         match self {
-            Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) => true,
+            Expr::Arith(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) => true,
+            // D34's declaration covers the function, not its arguments.
+            Expr::Call(f, args) => !f.0.index_predicate() || !f.0.deterministic() || args.iter().any(Expr::can_raise),
             Expr::Truth(c) => c.can_raise(),
             Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::Case(..) | Expr::SortKey(..) => {
                 let mut raises = false;

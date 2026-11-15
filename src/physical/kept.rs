@@ -47,6 +47,8 @@ pub enum Place {
     Low,
     /// The upper bound of a `Probe::Range`.
     High,
+    /// The other argument of a named predicate (RULES.md D34).
+    PredicateValue,
 }
 
 /// The probe fixing every column of an index on `columns`, of `types`, by
@@ -262,7 +264,11 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         (Probe::Range { equal, .. }, Place::Key(n)) => equal.get_mut(n),
         (Probe::Range { low, .. }, Place::Low) => Some(&mut low.1),
         (Probe::Range { high, .. }, Place::High) => Some(&mut high.1),
-        (Probe::All, _) | (Probe::Compare { .. } | Probe::Prefix { .. }, Place::Low | Place::High) => None,
+        (Probe::Predicate { value: argument, .. }, Place::PredicateValue) => Some(argument),
+        (Probe::All, Place::Key(_) | Place::Low | Place::High | Place::PredicateValue)
+        | (Probe::Compare { .. } | Probe::Prefix { .. }, Place::Low | Place::High)
+        | (Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. }, Place::PredicateValue)
+        | (Probe::Predicate { .. }, Place::Key(_) | Place::Low | Place::High) => None,
     };
     match at {
         Some(at) => {
@@ -369,6 +375,39 @@ mod tests {
     /// A probe of the two values of the key of `I`.
     fn whole() -> Probe {
         Probe::Prefix { equal: vec![int(1), int(2)], then: None }
+    }
+
+    /// Verifies: [DESIGN] D34, D45: a predicate's argument slot converts
+    /// values and accepts nulls; no comparison slot fits it, and its slot
+    /// fits no comparison, SQLCODE -910. No unique-key shortcut keeps it.
+    #[test]
+    fn predicate_slots_accept_only_their_argument_place() {
+        let function = crate::functions::Registry::with_set_functions().scalar("UPPER").unwrap();
+        let predicate = Box::new(crate::index::Predicate { function, column: 0, argument: 0 });
+        let probe = Probe::Predicate { predicate, value: Value::Null };
+        let s = ProbeSlot { place: Place::PredicateValue, slot: slot(0) };
+        let mut filled = probe.clone();
+        place(&mut filled, &s, &[Value::Char("12".into())]).unwrap();
+        let Probe::Predicate { value, .. } = &filled else { panic!("not a predicate") };
+        assert!(same(value, &int(12)));
+        place(&mut filled, &s, &[Value::Null]).unwrap();
+        let Probe::Predicate { value: null, .. } = &filled else { panic!("not a predicate") };
+        assert!(null.is_null());
+        assert_eq!(place(&mut filled, &s, &[]).unwrap_err().sqlcode(), -910_i32);
+        for position in [Place::Key(0), Place::Low, Place::High] {
+            let wrong = ProbeSlot { place: position, slot: slot(0) };
+            assert_eq!(place(&mut filled, &wrong, &[int(1)]).unwrap_err().sqlcode(), -910_i32);
+        }
+        let comparisons = [
+            Probe::All,
+            Probe::Compare { op: CompOp::Eq, value: int(1) },
+            whole(),
+            Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, int(1))), high: Box::new((CompOp::Le, int(2))) },
+        ];
+        for mut comparison in comparisons {
+            assert_eq!(place(&mut comparison, &s, &[int(1)]).unwrap_err().sqlcode(), -910_i32);
+        }
+        assert!(!keepable(&scan("I", probe, Vec::new()), &state(true)));
     }
 
     /// Verifies: [DESIGN] RULES.md D45: a plan is kept if it is one probe

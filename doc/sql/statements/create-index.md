@@ -38,6 +38,14 @@ raise an error, as a division can, is evaluated on every row of the
 tables it reads, which are then read whole, so the error is raised
 whatever the plan. An index changes no result: only how fast it comes.
 
+A plug-in method may also answer a registered binary Boolean function of
+an indexed column and a constant or parameter. The function must declare
+that it cannot raise and returns null for null arguments. The index may
+return extra candidates: every visible row is checked against the whole
+WHERE condition. The built-in methods answer no such calls. See
+[Engines and other plug-ins](../../client/03-embedding.md#engines-and-other-plug-ins)
+for the contract (RULES.md D34).
+
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each
 change. It is made at once, apart from any transaction: no ROLLBACK

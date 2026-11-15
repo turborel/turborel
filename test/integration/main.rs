@@ -155,6 +155,7 @@ mod plugin_files;
 mod plugin_settings;
 mod point_plans;
 mod positions;
+mod predicate_indexes;
 mod predicates;
 mod prepared;
 mod privileges;

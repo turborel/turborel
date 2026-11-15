@@ -54,7 +54,7 @@ USING; or one a plug-in registers.
 of another table, or its own.
 
 **index**: a structure that finds rows by the values of columns, kept
-by an index method: a B-link tree or a hash table.
+by an index method: a B-link tree, a hash table or a plug-in's method.
 
 **Information Schema**: the schema INFORMATION_SCHEMA, of views that
 describe the database. [The Information Schema](../sql/information-schema.md).

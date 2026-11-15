@@ -11,9 +11,12 @@ use super::estimate::{self, Known};
 use super::kept::{Place, ProbeSlot};
 use crate::catalog::IndexDesc;
 use crate::index::Probe;
-use crate::logical::{Cond, Expr, Slot, and_all, compared_with_constant, disjuncts, filled_expr, like_bounds, render_cond, split_and};
+use crate::logical::{Cond, Expr, Slot, compared_with_constant, disjuncts, filled_expr, like_bounds, split_and};
 use crate::value::collation::CollationRef;
 use crate::value::{CompOp, DataType, DecFloat, Decimal, Value, compare};
+
+mod shown;
+pub(super) use shown::render_probe;
 
 /// A comparison of a column with a constant an index may answer: of the
 /// conjunct `at`, answering it `exact`ly, or else only bounding the rows it
@@ -421,28 +424,6 @@ fn exact_place(f: f64, scale: u32) -> Option<Placed> {
         Ordering::Less => Placed::Between(Value::Exact(rounded), Value::Exact(rounded.checked_add(unit).ok()?)),
         Ordering::Greater => Placed::Between(Value::Exact(rounded.checked_sub(unit).ok()?), Value::Exact(rounded)),
     })
-}
-
-/// `probe`, of an index on `columns`, as a condition over the table's
-/// columns, written with their `names`.
-pub(super) fn render_probe(probe: &Probe, columns: &[usize], names: &[String]) -> String {
-    let compared = |at: usize, op: CompOp, value: &Value| {
-        Cond::Compare(Expr::Column(columns.get(at).copied().unwrap_or_default()), op, Expr::Const(value.clone()))
-    };
-    let equalities = |equal: &[Value]| equal.iter().enumerate().map(|(at, v)| compared(at, CompOp::Eq, v)).collect::<Vec<_>>();
-    let conds = match probe {
-        Probe::All => Vec::new(),
-        Probe::Compare { op, value } => vec![compared(0, *op, value)],
-        Probe::Prefix { equal, then } => {
-            let next = then.as_ref().map(|(op, value)| compared(equal.len(), *op, value));
-            equalities(equal).into_iter().chain(next).collect()
-        }
-        Probe::Range { equal, low, high } => {
-            let next = [compared(equal.len(), low.0, &low.1), compared(equal.len(), high.0, &high.1)];
-            equalities(equal).into_iter().chain(next).collect()
-        }
-    };
-    and_all(conds).map_or_else(|| "all keys, in order".to_string(), |c| render_cond(&c, names))
 }
 
 // Unit tests: ranges merged, numbers placed among a column's values, and
