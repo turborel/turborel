@@ -12,17 +12,24 @@
 //! or INSERT on each column named, on the view [§14.9 AR1, §14.11 AR1,
 //! §14.14 AR1], and SELECT on it if a WHERE clause is written. No CHECK
 //! OPTION applies [§11.49 SR15c, SR15d]. ROW_COUNT counts the transitions.
+//!
+//! An INSERT into an updatable view over one with an INSERT trigger
+//! (`routed.rs`) gives that trigger each row of the view named as a row of
+//! the view under it [§15.12 GR2b iii], its columns the view named lacks
+//! null as the columns an INSERT names not. An UPDATE or DELETE of such a
+//! view is decided over its base table's rows (`searched_instead`).
 
 use std::sync::Arc;
 
 use super::super::{Session, State, StatementContext, plan, rule};
 use super::changes::Event;
+use super::routed::{instead_for, updatable};
 use crate::ast::{
     ColumnSpecification, InsertSource, InsertStatement, NamedTable, QuerySpecification, SearchCondition, SelectItem, SelectList,
     SelectSublist, SetClause, SqlStatement, TableExpression, TableName, TableReference, UpdateSource, ValueExpression,
 };
 use crate::binder::{Context, ObjectColumn, bind_insert_query, bind_select, qualify};
-use crate::catalog::{ActionTime, Actions, ColumnDesc, Horizon, QualifiedName, TriggerDesc, TriggerEvent, ViewDesc, applicable, owner_of};
+use crate::catalog::{Actions, ColumnDesc, ViewDesc, applicable, owner_of};
 use crate::error::{Code, Result, SqlError, Subject};
 use crate::exec::{HeldRows, TransitionRows, execute};
 use crate::logical::LogicalPlan;
@@ -55,14 +62,27 @@ impl Session {
         } else if let SqlStatement::DeleteSearched { table, .. } = stmt {
             (table, Event::Delete)
         } else {
-            return refused_instead(cx.st, stmt, &self.default_schema()).map(|()| None);
-        };
-        let name = qualify(table, &self.default_schema());
-        let (Some(view), Some(trigger)) = (cx.st.catalog.view(&name).cloned(), instead_trigger(cx.st, &name, event)) else {
             return Ok(None);
         };
+        let name = qualify(table, &self.default_schema());
+        let (Some(view), Some(instead)) = (cx.st.catalog.view(&name).cloned(), instead_for(cx.st, &name, event)) else {
+            return Ok(None);
+        };
+        // [§15.15 GR3c iv 2, §15.9] An UPDATE or DELETE of a view under the
+        // one named is decided over the base table's rows (`searched_instead`).
+        if instead.view != name && event != Event::Insert {
+            return Ok(None);
+        }
         let transitions = if let SqlStatement::Insert(i) = stmt {
-            self.inserted_rows(cx, (&view, i), params)?
+            let rows = self.inserted_rows(cx, (&view, i), params)?;
+            // [§15.12 GR2b iii] each row of the view named a row of the
+            // view under it, its other columns null.
+            let mut under = HeldRows::new(cx.st.list_space());
+            for row in rows {
+                let (id, old, new) = row?;
+                under.push((id, old, instead.of_named(new)))?;
+            }
+            under
         } else if let SqlStatement::UpdateSearched { set, where_clause, .. } = stmt {
             self.changed_rows(cx, (&view, set), (where_clause.as_ref(), params))?
         } else if let SqlStatement::DeleteSearched { where_clause, .. } = stmt {
@@ -71,7 +91,7 @@ impl Session {
             return Ok(None);
         };
         let count = transitions.len();
-        self.execute_trigger(cx, &trigger, transitions)?;
+        self.execute_trigger(cx, &instead.trigger, transitions)?;
         Ok(Some(count))
     }
 
@@ -84,19 +104,9 @@ impl Session {
         (view, set): (&ViewDesc, &[SetClause]),
         (where_clause, params): (Option<&SearchCondition>, &Params),
     ) -> Result<HeldRows<(RowId, Row, Row)>> {
-        let user = self.auth().clone();
-        let columns = set_columns(view, set)?;
-        let wanted = if set.is_empty() {
-            Actions { delete: true, select: where_clause.is_some(), ..Actions::default() }
-        } else {
-            Actions { update: columns.iter().copied().collect(), select: where_clause.is_some(), ..Actions::default() }
-        };
-        held(cx.st, &user, view, &wanted)?;
+        let (spec, columns) = changed_spec(cx.st, &self.auth(), (view, set, where_clause))?;
         let rows = view_rows(cx, view)?;
-        let mut items: Vec<SelectSublist> = view.columns.iter().map(|c| item(column(&c.name))).collect();
-        items.extend(set.iter().filter_map(|s| if let UpdateSource::Value(v) = &s.value { Some(item(v.clone())) } else { None }));
-        let spec = query(&view.name.ident, SelectList::Values(items), where_clause.cloned());
-        let over = params.clone().with_transitions(Arc::new(read_as(view, rows)));
+        let over = params.clone().with_transitions(Arc::new(read_as(view, rows, params)));
         let bound = self.bound(cx.st, &over, |b| bind_select(b, &spec))?;
         let width = view.columns.len();
         let mut out = HeldRows::new(cx.st.list_space());
@@ -119,23 +129,13 @@ impl Session {
         (view, i): (&ViewDesc, &InsertStatement),
         params: &Params,
     ) -> Result<HeldRows<(RowId, Row, Row)>> {
-        let user = self.auth().clone();
-        let named: Vec<usize> = match &i.columns {
-            None => (0..view.columns.len()).collect(),
-            Some(list) => list.iter().map(|c| column_of(view, &c.name)).collect::<Result<_>>()?,
-        };
-        held(cx.st, &user, view, &Actions { insert: named.iter().copied().collect(), ..Actions::default() })?;
+        let (named, objects) = inserted_objects(cx.st, &self.auth(), (view, i))?;
         let width = view.columns.len();
         let mut out = HeldRows::new(cx.st.list_space());
         let InsertSource::Query(q) = &i.source else {
             out.push((0, Row::new(), vec![Value::Null; width]))?;
             return Ok(out);
         };
-        let objects: Vec<ObjectColumn> = named
-            .iter()
-            .filter_map(|&k| view.columns.get(k))
-            .map(|c| ObjectColumn { desc: c.clone(), default: Value::Null, draws: None })
-            .collect();
         let bound = self.bound(cx.st, params, |b| bind_insert_query(b, q, &objects))?;
         for read in run(cx, bound.plan)? {
             let mut new = vec![Value::Null; width];
@@ -149,63 +149,89 @@ impl Session {
     }
 }
 
-/// [ISO/IEC 9075-2:2023 §15.10, §15.13, §15.16] The INSTEAD OF trigger of
-/// view `name` for `event`, if it has one [§11.49 SR5a: one at most].
-fn instead_trigger(st: &State, name: &QualifiedName, event: Event) -> Option<TriggerDesc> {
-    let of = |t: &&TriggerDesc| match (&t.event, event) {
-        (TriggerEvent::Insert, Event::Insert) | (TriggerEvent::Delete, Event::Delete) | (TriggerEvent::Update(_), Event::Update) => true,
-        (TriggerEvent::Insert, Event::Delete | Event::Update)
-        | (TriggerEvent::Delete, Event::Insert | Event::Update)
-        | (TriggerEvent::Update(_), Event::Insert | Event::Delete) => false,
+/// [ISO/IEC 9075-2:2023 §15.13, §15.16] Of an UPDATE of `view` by `set`,
+/// or a DELETE if `set` is empty, where `where_clause`, by `user`: the
+/// query of the view's rows and its SET values over the rows it chooses,
+/// and the columns it assigns. `user` holds UPDATE on each, or DELETE, on
+/// the view, and SELECT if a WHERE clause is written.
+fn changed_spec(
+    st: &State,
+    user: &str,
+    (view, set, where_clause): (&ViewDesc, &[SetClause], Option<&SearchCondition>),
+) -> Result<(QuerySpecification, Vec<usize>)> {
+    let columns = set_columns(view, set)?;
+    let wanted = if set.is_empty() {
+        Actions { delete: true, select: where_clause.is_some(), ..Actions::default() }
+    } else {
+        Actions { update: columns.iter().copied().collect(), select: where_clause.is_some(), ..Actions::default() }
     };
-    st.catalog.triggers_on(name).into_iter().filter(|t| t.time == ActionTime::InsteadOf).find(of).cloned()
+    held(st, user, view, &wanted)?;
+    let mut items: Vec<SelectSublist> = view.columns.iter().map(|c| item(column(&c.name))).collect();
+    items.extend(set.iter().filter_map(|s| if let UpdateSource::Value(v) = &s.value { Some(item(v.clone())) } else { None }));
+    Ok((query(&view.name.ident, SelectList::Values(items), where_clause.cloned()), columns))
 }
 
-/// \[DESIGN\] That `stmt`, if a MERGE or a positioned UPDATE or DELETE,
-/// changes no view with an INSTEAD OF trigger, its names in `schema`:
-/// those are not rerouted to the trigger yet, and are refused rather than
-/// written through the view.
-fn refused_instead(st: &State, stmt: &SqlStatement, schema: &str) -> Result<()> {
-    let table = match stmt {
-        SqlStatement::Merge(m) => &m.target,
-        SqlStatement::UpdatePositioned { table, .. } | SqlStatement::DeletePositioned { table, .. } => table,
-        SqlStatement::Insert(_)
-        | SqlStatement::UpdateSearched { .. }
-        | SqlStatement::DeleteSearched { .. }
-        | SqlStatement::Close(_)
-        | SqlStatement::SetCollation(_)
-        | SqlStatement::Commit
-        | SqlStatement::Truncate { .. }
-        | SqlStatement::AlterTable { .. }
-        | SqlStatement::Drop { .. }
-        | SqlStatement::Schema { .. }
-        | SqlStatement::Fetch { .. }
-        | SqlStatement::GetDiagnostics(_)
-        | SqlStatement::Dynamic(_)
-        | SqlStatement::Execute(_)
-        | SqlStatement::DeclareTable(_)
-        | SqlStatement::Open(_)
-        | SqlStatement::Rollback
-        | SqlStatement::Select { .. }
-        | SqlStatement::SetTransaction(_)
-        | SqlStatement::SetCatalog(_)
-        | SqlStatement::SetSchema(_)
-        | SqlStatement::SetTimeZone(_)
-        | SqlStatement::SetSessionAuthorization(_)
-        | SqlStatement::Connection(_)
-        | SqlStatement::SetSetting { .. }
-        | SqlStatement::SetDatabase { .. }
-        | SqlStatement::Index(_)
-        | SqlStatement::User(_)
-        | SqlStatement::Served(_)
-        | SqlStatement::SetConstraints { .. } => return Ok(()),
+/// [ISO/IEC 9075-2:2023 §15.10] Of the INSERT `i` into `view` by `user`:
+/// the columns it names, by their positions, and each as the binder takes
+/// it, of no default. `user` holds INSERT on each.
+fn inserted_objects(st: &State, user: &str, (view, i): (&ViewDesc, &InsertStatement)) -> Result<(Vec<usize>, Vec<ObjectColumn>)> {
+    let named: Vec<usize> = match &i.columns {
+        None => (0..view.columns.len()).collect(),
+        Some(list) => list.iter().map(|c| column_of(view, &c.name)).collect::<Result<_>>()?,
     };
-    let name = qualify(table, schema);
-    if st.catalog.triggers_on(&name).iter().any(|t| t.instead()) {
-        let msg = format!("[DESIGN] {name} has an INSTEAD OF trigger, which a MERGE or a positioned UPDATE or DELETE does not execute yet");
-        return Err(SqlError::new(Code::Unsupported, msg).about(Subject::table(name.parts())));
+    held(st, user, view, &Actions { insert: named.iter().copied().collect(), ..Actions::default() })?;
+    let objects = named
+        .iter()
+        .filter_map(|&k| view.columns.get(k))
+        .map(|c| ObjectColumn { desc: c.clone(), default: Value::Null, draws: None })
+        .collect();
+    Ok((named, objects))
+}
+
+/// [ISO/IEC 9075-2:2023 §11.49 SR13, §15.10, §15.13, §15.16] The INSERT,
+/// searched UPDATE or searched DELETE `stmt` of a triggered action, bound
+/// in `cx` as its owner, if it changes a view only INSTEAD OF triggers
+/// change, that view not updatable: bound as it runs (`instead_of`), over
+/// the view's rows; whether it is one. Any other is bound through its
+/// table, as it runs.
+///
+/// # Errors
+///
+/// As `instead_of`'s binding.
+pub(in crate::db) fn bind_taken(cx: Context<'_>, stmt: &SqlStatement) -> Result<bool> {
+    let (table, event) = if let SqlStatement::Insert(i) = stmt {
+        (&i.table, Event::Insert)
+    } else if let SqlStatement::UpdateSearched { table, .. } = stmt {
+        (table, Event::Update)
+    } else if let SqlStatement::DeleteSearched { table, .. } = stmt {
+        (table, Event::Delete)
+    } else {
+        return Ok(false);
+    };
+    let name = qualify(table, cx.schema);
+    let (Some(view), Some(_)) = (cx.db.catalog.view(&name), instead_for(cx.db, &name, event)) else { return Ok(false) };
+    if updatable(cx.db, &name) {
+        return Ok(false);
     }
-    Ok(())
+    if let SqlStatement::Insert(i) = stmt {
+        let (_, objects) = inserted_objects(cx.db, cx.auth, (view, i))?;
+        if let InsertSource::Query(q) = &i.source {
+            bind_insert_query(cx, q, &objects)?;
+        }
+    } else if let SqlStatement::UpdateSearched { set, where_clause, .. } = stmt {
+        bind_changed(cx, view, (set, where_clause.as_ref()))?;
+    } else if let SqlStatement::DeleteSearched { where_clause, .. } = stmt {
+        bind_changed(cx, view, (&[], where_clause.as_ref()))?;
+    }
+    Ok(true)
+}
+
+/// An UPDATE of `view` by `set`, or a DELETE if `set` is empty, where
+/// `where_clause`, bound in `cx` over the view's rows, none read.
+fn bind_changed(cx: Context<'_>, view: &ViewDesc, (set, where_clause): (&[SetClause], Option<&SearchCondition>)) -> Result<()> {
+    let (spec, _) = changed_spec(cx.db, cx.auth, (view, set, where_clause))?;
+    let over = cx.params.clone().with_transitions(Arc::new(read_as(view, HeldRows::new(cx.db.list_space()), cx.params)));
+    bind_select(Context { params: &over, ..cx }, &spec).map(drop)
 }
 
 /// That `user` holds `wanted` on `view`.
@@ -263,7 +289,7 @@ fn replaced(view: &ViewDesc, old: &Row, (set, columns): (&[SetClause], &[usize])
 }
 
 /// The rows of `view`, as its owner reads them.
-fn view_rows(cx: StatementContext<'_>, view: &ViewDesc) -> Result<HeldRows<Row>> {
+pub(in crate::db) fn view_rows(cx: StatementContext<'_>, view: &ViewDesc) -> Result<HeldRows<Row>> {
     let owner = owner_of(&*cx.st.catalog, &view.name.auth).to_owned();
     let named = TableName { auth: Some(view.name.auth.clone()), ident: view.name.ident.clone(), at: 0 };
     let spec = QuerySpecification { distinct: false, select_list: SelectList::Star, table_expression: from(named, None) };
@@ -276,10 +302,14 @@ fn view_rows(cx: StatementContext<'_>, view: &ViewDesc) -> Result<HeldRows<Row>>
     Ok(rows)
 }
 
-/// `rows` of `view`, read as a transition table of its name and columns.
-fn read_as(view: &ViewDesc, rows: HeldRows<Row>) -> Transitions {
+/// `rows` of `view`, read as a transition table of its name and columns;
+/// of a statement of a triggered action, `params`, beside the action's
+/// own transition variables and tables, which its WHERE and SET values
+/// may read [ISO/IEC 9075-2:2023 §6.6 SR9, §7.6 SR6].
+fn read_as(view: &ViewDesc, rows: HeldRows<Row>, params: &Params) -> Transitions {
     let table = TransitionRows::with(rows);
     let columns: Vec<ColumnDesc> = view.columns.clone();
+    let beside = params.transitions_shared();
     Transitions {
         subject: view.name.clone(),
         columns,
@@ -287,8 +317,9 @@ fn read_as(view: &ViewDesc, rows: HeldRows<Row>) -> Transitions {
         new_row: None,
         old_table: Some((view.name.ident.clone(), table)),
         new_table: None,
-        horizon: Horizon::default(),
+        horizon: params.horizon().clone(),
         assigns: false,
+        beside,
     }
 }
 

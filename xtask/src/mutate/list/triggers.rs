@@ -9,7 +9,16 @@
 //! after the trigger is dropped, triggers kept past the drop of a column
 //! they use or of a table they name, a BEFORE trigger reading a generated
 //! column, the TRIGGER privilege unchecked and a triggered action
-//! exception told with no condition left out.
+//! exception told with no condition left out. Of the INSTEAD OF triggers
+//! that take a change of a view: a MERGE's clauses routed to none, a
+//! clause they take written, its insert's values lost, its generated
+//! columns computed, a view's rows of one row id, a view not updatable
+//! read through a base table, a positioned or nested change written, a
+//! nested insert's or a nested view's columns not mapped, a view WITH
+//! CHECK OPTION over one, a triggered action refused when it changes one,
+//! and a statement of it blind to its action's transition variables or
+//! tables. A MERGE's BEFORE trigger given the source's columns as its old
+//! row.
 //!
 //! An AFTER DELETE of a positioned statement is no separate mutation. It
 //! records its transition through the call that also keeps the row's
@@ -36,9 +45,21 @@ const AFTER: &str = "triggers::an_after_row_trigger_sees_each_row_inserted";
 const GENERATED: &str = "triggers::a_before_trigger_leaves_generated_columns_alone";
 /// The test of a failed action.
 const FAILED: &str = "triggers_firing::a_failure_names_the_trigger_in_the_diagnostics_area";
+/// The file of a MERGE's clauses INSTEAD OF triggers take.
+const MERGE_ROUTED: &str = "src/db/merge/routed.rs";
+/// The file of the INSTEAD OF trigger that takes a change of a view.
+const ROUTED: &str = "src/db/triggers/routed.rs";
+/// The test of a MERGE into a read-only view with INSTEAD OF triggers.
+const MERGE_VIEW: &str = "triggers_routed::a_merge_into_a_read_only_view_runs_its_triggers";
+/// The test of a view over a view with INSTEAD OF triggers.
+const NESTED: &str = "triggers_routed::a_view_over_a_trigger_view_is_changed_by_its_triggers";
+/// The test of a positioned change of a view with INSTEAD OF triggers.
+const POSITIONED: &str = "triggers_routed::a_positioned_change_of_a_view_runs_its_triggers";
+/// The test of a triggered action changing a view with INSTEAD OF triggers.
+const ACTION: &str = "triggers_routed::a_triggered_action_changes_a_trigger_view";
 
 /// The mutations of triggers, in the order they run.
-pub const TRIGGERS: [Mutation; 21] = [
+pub const TRIGGERS: [Mutation; 38] = [
     Mutation {
         name: "triggers-before-insert-skipped",
         package: Package::Core,
@@ -247,6 +268,176 @@ pub const TRIGGERS: [Mutation; 21] = [
         original: "let caused = condition.state == SqlState::TRIGGERED_ACTION_EXCEPTION;",
         replacement: "let caused = condition.state != condition.state;",
         integration: &[FAILED],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-merge-routed-to-none",
+        package: Package::Core,
+        breaks: "a MERGE into a view finds no INSTEAD OF trigger for any of its clauses",
+        file: MERGE_ROUTED,
+        original: "stmt.clauses.iter().map(|c| instead_for(st, &name, event_of(c))).collect();",
+        replacement: "stmt.clauses.iter().map(|c| instead_for(st, &name, event_of(c)).filter(|_| false)).collect();",
+        integration: &[MERGE_VIEW, NESTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-merge-routed-clause-written",
+        package: Package::Core,
+        breaks: "a MERGE clause an INSTEAD OF trigger takes is written through the view instead",
+        file: "src/db/merge/apply.rs",
+        original: "if let Some(instead) = merge.route(j) {",
+        replacement: "if let Some(instead) = merge.route(j).filter(|_| false) {",
+        integration: &["triggers_routed::a_merge_into_an_updatable_view_writes_what_no_trigger_takes", NESTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-merge-insert-values-lost",
+        package: Package::Core,
+        breaks: "a MERGE insert an INSTEAD OF trigger takes gives it a row of nulls",
+        file: MERGE_ROUTED,
+        original: "Some(value) => assign(value.clone(), &c.data_type, STORED),",
+        replacement: "Some(_) => Ok(Value::Null),",
+        integration: &[MERGE_VIEW],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-merge-routed-generated",
+        package: Package::Core,
+        breaks: "the new row a MERGE gives an INSTEAD OF trigger has its base table's generated columns computed again",
+        file: "src/db/merge/decide.rs",
+        original: "if merge.route(clause).is_some() { &[] } else { &bound.generated };",
+        replacement: "if merge.route(clause).is_some() && false { &[] } else { &bound.generated };",
+        integration: &["triggers_routed::a_trigger_view_row_keeps_its_generated_values"],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-merge-held-rows-one-id",
+        package: Package::Core,
+        breaks: "every row of a view a MERGE reads for its INSTEAD OF triggers has one row id",
+        file: MERGE_ROUTED,
+        original: "row.push(located(RowId::try_from(n)",
+        replacement: "row.push(located(RowId::try_from(n * 0)",
+        integration: &[MERGE_VIEW],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-merge-read-only-view-written",
+        package: Package::Core,
+        breaks: "a MERGE into a read-only view its triggers take whole is bound through a base table, and refused",
+        file: MERGE_ROUTED,
+        original: "let held = routes.iter().any(Option::is_some) && !updatable(st, &name)",
+        replacement: "let held = routes.iter().any(Option::is_some) && !updatable(st, &name) && false",
+        integration: &[MERGE_VIEW, ACTION],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-merge-before-source-row",
+        package: Package::Core,
+        breaks: "a MERGE's BEFORE trigger is given other columns of the joined row than the target row's as its old row",
+        file: "src/db/merge/apply.rs",
+        original: "let target = |joined: &Row| target_part(merge, joined);",
+        replacement: "let target = |joined: &Row| target_part(merge, joined).map(|mut r| { r.rotate_left(1); r });",
+        integration: &["triggers_firing::a_merge_before_trigger_sees_the_target_row"],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-positioned-instead-written",
+        package: Package::Core,
+        breaks: "a positioned change of a view with an INSTEAD OF trigger is written through the view",
+        file: "src/db/execute.rs",
+        original: "            return self.positioned_instead(cx, at, (&w, &instead, clause));",
+        replacement: "            let _ = (instead, clause);",
+        integration: &[POSITIONED],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-nested-change-written",
+        package: Package::Core,
+        breaks: "an UPDATE or DELETE of a view over one with INSTEAD OF triggers is written through both",
+        file: "src/db/execute.rs",
+        original: "            return self.searched_instead(cx, w, &instead).map(|n| self.affected(n));",
+        replacement: "            let _ = instead;",
+        integration: &[NESTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-nested-insert-unmapped",
+        package: Package::Core,
+        breaks: "an INSERT into a view over one with an INSTEAD OF trigger gives it the outer view's row as its own",
+        file: "src/db/triggers/rerouted.rs",
+        original: "under.push((id, old, instead.of_named(new)))?;",
+        replacement: "under.push((id, old, new))?;",
+        integration: &[NESTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-nested-columns-unmapped",
+        package: Package::Core,
+        breaks: "the columns of a view are taken as those of the view under it, as though in the same order",
+        file: ROUTED,
+        original: "from_named = from_named.iter().filter_map(|&k| columns.get(k).copied()).collect();",
+        replacement: "from_named = from_named.iter().filter_map(|&k| columns.get(k).map(|_| k)).collect();",
+        integration: &[NESTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-base-columns-unmapped",
+        package: Package::Core,
+        breaks: "a view's row is taken from its base table's row as though its columns were the table's, in order",
+        file: ROUTED,
+        original: "columns = columns.iter().map(|&k| map.get(k).copied()).collect::<Option<_>>()?;",
+        replacement: "columns = columns.iter().map(|&k| map.get(k).map(|_| k)).collect::<Option<_>>()?;",
+        integration: &[POSITIONED],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-check-option-over-trigger-view",
+        package: Package::Core,
+        breaks: "a view WITH CHECK OPTION is defined over a view with an INSTEAD OF trigger",
+        file: "src/db/views.rs",
+        original: "            self.unchecked_under(&name, under)?;",
+        replacement: "            let _ = under;",
+        integration: &["triggers_routed::a_view_with_check_option_reads_no_trigger_view"],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-check-option-read-directly",
+        package: Package::Core,
+        breaks: "an INSTEAD OF trigger is refused only on a view a view WITH CHECK OPTION reads directly",
+        file: DEFINE,
+        original: "                if u == *table {",
+        replacement: "                if u == *table && w.updates.as_ref().is_some_and(|(d, _)| d == table) {",
+        integration: &["triggers_routed::a_view_with_check_option_reads_no_trigger_view"],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-action-into-trigger-view-refused",
+        package: Package::Core,
+        breaks: "a triggered action that changes a read-only view with INSTEAD OF triggers is bound through a base table, and refused",
+        file: DEFINE,
+        original: "if bind_taken(cx, stmt)? {",
+        replacement: "if bind_taken(cx, stmt)? && false {",
+        integration: &[ACTION],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-view-rows-hide-the-action",
+        package: Package::Core,
+        breaks: "a statement of a triggered action changing a view its triggers take sees no transition table of its action",
+        file: "src/params/transition.rs",
+        original: "None => self.beside.as_ref()?.table(name),",
+        replacement: "None => None,",
+        integration: &[ACTION],
+        unit: &[],
+    },
+    Mutation {
+        name: "triggers-view-rows-hide-the-variables",
+        package: Package::Core,
+        breaks: "a statement of a triggered action changing a view its triggers take sees no transition variable of its action",
+        file: "src/params/transition.rs",
+        original: "return self.beside.as_ref()?.variable(variable, column);",
+        replacement: "return None;",
+        integration: &[ACTION],
         unit: &[],
     },
 ];

@@ -27,7 +27,9 @@ The table's triggers run as [CREATE TRIGGER](create-trigger.md) says:
 its BEFORE triggers once the rows are found, before any is deleted, its AFTER triggers at the end of the
 statement. A view with an INSTEAD OF trigger of the statement's event
 runs it in place of the change, and nothing is written through the view:
-its row count is of the rows the trigger was given. The
+its row count is of the rows the trigger was given. An updatable view
+over such a view runs its trigger the same way, and so does the
+positioned form through a cursor over either. The
 rows a referential action deletes or changes run their own table's
 triggers too.
 

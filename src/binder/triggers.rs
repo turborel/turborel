@@ -82,10 +82,10 @@ pub(super) fn transition_item(b: &Bounds<'_>, t: &NamedTable, offset: usize) -> 
     if t.table.auth.is_some() {
         return None;
     }
-    let rows = transitions.table(&t.table.ident)?.clone();
-    let names = transitions.columns.iter().map(|c| c.name.clone()).collect();
+    let (rows, columns) = transitions.table(&t.table.ident)?;
+    let (rows, mut columns) = (rows.clone(), columns.to_vec());
+    let names = columns.iter().map(|c| c.name.clone()).collect();
     let name = QualifiedName { auth: String::new(), ident: t.table.ident.clone() };
-    let mut columns = transitions.columns.clone();
     // As a table of no constraints: what a column is drawn from is no
     // column of the subject table.
     for c in &mut columns {

@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use crate::ast::MergeStatement;
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::error::Result;
+use crate::exec::TransitionRows;
 use crate::logical::{Cond, Expr, LogicalPlan};
 
 use super::{Binder, Context, ObjectColumn, ViewCheck};
@@ -118,12 +119,23 @@ pub enum BoundAction {
 /// merge insert value list too [§7.6 SR20b]: those are bound over the
 /// source's columns alone.
 ///
+/// Of a view whose INSTEAD OF triggers take every WHEN clause, `held` its
+/// rows, each followed by its ordinal (`storage::located`): T is the view
+/// itself, its rows those, each ordinal its row id [ISO/IEC 9075-2:2023
+/// §15.10 GR3a, §15.13 GR3a, §15.16 GR3a]; `inserts` are then columns of
+/// the view.
+///
 /// # Errors
 ///
 /// A rule of §14.12, or of what it reads, is broken (SQLCODE -103 and
 /// others), or a privilege it needs is not held (SQLCODE -104).
-pub fn bind_merge(cx: Context<'_>, stmt: &MergeStatement, inserts: &[Vec<ObjectColumn>]) -> Result<BoundMerge> {
-    let target::Target { name, write, item } = target::bind_target(cx, stmt)?;
+pub fn bind_merge(
+    cx: Context<'_>,
+    stmt: &MergeStatement,
+    inserts: &[Vec<ObjectColumn>],
+    held: Option<&TransitionRows>,
+) -> Result<BoundMerge> {
+    let target::Target { name, write, item } = target::bind_target(cx, stmt, held.is_some())?;
     let tw = write.base.columns.len();
     let src = source::bind_source(cx, &stmt.source, (&item, tw))?;
     let names: Vec<String> = item.row_names().into_iter().chain(src.names.iter().cloned()).collect();
@@ -137,7 +149,8 @@ pub fn bind_merge(cx: Context<'_>, stmt: &MergeStatement, inserts: &[Vec<ObjectC
     let sc1 = clauses::condition(&both, &stmt.on)?;
     let scopes = clauses::Scopes { both: &both, source: &alone, base: &write.base, flags: tw.saturating_add(src.width) };
     let (bound, flagged) = clauses::bind_clauses(&scopes, &stmt.clauses, inserts)?;
-    let sides = rows::Sides { base: &write.base, names: &names, view: write.cond.as_ref(), target_width: tw, source_width: src.width };
+    let sides =
+        rows::Sides { base: &write.base, names: &names, view: write.cond.as_ref(), target_width: tw, source_width: src.width, held };
     let flags = flagged.into_iter().map(|scj| rows::flag(&sides, &sc1, scj)).collect();
     let rows = rows::joined(&sides, src.plan, flags, &sc1);
     // A target row changed since it was read is matched again by the ON

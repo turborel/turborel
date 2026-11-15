@@ -19,19 +19,19 @@ use std::sync::Arc;
 use super::super::ddl::Dropped;
 use super::super::definitions::Defined;
 use super::super::generated::Inserted;
-use super::super::merge::MERGE_INSERT_RULES;
+use super::super::merge::{Inserting, inserting};
 use super::super::write::{INSERT_RULES, InsertInto, insert_target_in};
 use super::super::{State, assignment::check_targets, rule};
 use super::named::named;
+use super::rerouted::bind_taken;
 use super::run::{parsed, transitions_of};
-use crate::ast::{
-    InsertSource, InsertStatement, MergeStatement, MergeWhen, Schema, SqlStatement, TriggerDefinition, TriggerEvent as Written,
-};
+use crate::ast::{InsertSource, InsertStatement, MergeStatement, Schema, SqlStatement, TriggerDefinition, TriggerEvent as Written};
 use crate::binder::{
     Context, ObjectColumn, Uses, WriteKind, bind_insert_query, bind_merge, bind_select, bind_when, bind_write, once_each, qualify,
 };
-use crate::catalog::{ActionTime, Horizon, QualifiedName, TransitionNames, TriggerDesc, TriggerEvent, applicable, owner_of};
+use crate::catalog::{ActionTime, Horizon, QualifiedName, TransitionNames, TriggerDesc, TriggerEvent, ViewDesc, applicable, owner_of};
 use crate::error::{At, Code, Result, SqlError, Subject};
+use crate::exec::TransitionRows;
 use crate::params::Params;
 use crate::txn::LockMode;
 use crate::value::Value;
@@ -138,7 +138,19 @@ impl State {
         if v.check_option.is_some() {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.49 SR15c] view {table} is WITH CHECK OPTION")));
         }
-        let checked = self.catalog.views().into_iter().find(|w| w.check_option.is_some() && w.reads.contains(table));
+        // A view WITH CHECK OPTION is updatable, so its generally underlying
+        // tables are the chain of views each reads, down to a base table.
+        let under = |w: &ViewDesc| {
+            let mut at = w.updates.as_ref().map(|(u, _)| u.clone());
+            while let Some(u) = at {
+                if u == *table {
+                    return true;
+                }
+                at = self.catalog.view(&u).and_then(|next| next.updates.as_ref().map(|(n, _)| n.clone()));
+            }
+            false
+        };
+        let checked = self.catalog.views().into_iter().find(|w| w.check_option.is_some() && under(w));
         if let Some(w) = checked {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.49 SR15d] view {} WITH CHECK OPTION reads view {table}", w.name)));
         }
@@ -227,21 +239,20 @@ impl State {
     /// The MERGE `m` of a triggered action bound in `cx` as its owner
     /// `owner` would with `params`.
     fn bind_triggered_merge(&self, cx: Context<'_>, m: &MergeStatement, (owner, params): (&str, &Params)) -> Result<()> {
-        let mut objects: Vec<Vec<ObjectColumn>> = Vec::new();
-        for clause in &m.clauses {
-            if let MergeWhen::NotMatched { insert, .. } = clause {
-                let given = (Inserted::Row(&insert.values), insert.overriding);
-                let horizon = params.horizon();
-                let into = InsertInto { table: &m.target, columns: insert.columns.as_deref(), given, rules: &MERGE_INSERT_RULES, horizon };
-                objects.push(insert_target_in(self, &into, (owner, cx.schema, Now::default()), None)?.objects());
-            }
-        }
-        bind_merge(cx, m, &objects).map(drop)
+        let (targets, held) = inserting(self, m, ((owner, cx.schema, Now::default()), params))?;
+        let objects: Vec<Vec<ObjectColumn>> = targets.iter().map(Inserting::objects).collect();
+        // Of a view its triggers take whole, over its rows, none read.
+        let none = held.then(|| TransitionRows::new(self.list_space()));
+        bind_merge(cx, m, &objects, none.as_ref()).map(drop)
     }
 
     /// `stmt` of a triggered action bound in `cx` as its owner `owner`
     /// would with `params`.
     fn bind_triggered(&self, cx: Context<'_>, stmt: &SqlStatement, (owner, params): (&str, &Params)) -> Result<()> {
+        // A change of a view only its INSTEAD OF triggers change.
+        if bind_taken(cx, stmt)? {
+            return Ok(());
+        }
         match stmt {
             SqlStatement::Insert(ins) => self.bind_triggered_insert(cx, ins, (owner, params)),
             SqlStatement::Merge(m) => self.bind_triggered_merge(cx, m, (owner, params)),

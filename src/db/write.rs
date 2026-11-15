@@ -356,13 +356,13 @@ pub(super) const INSERT_RULES: InsertRules = InsertRules {
     privilege: "X3.135-1986 §8.7 SR1",
 };
 
-/// The columns of `desc`, the table or view `name`, that `list` names, by
-/// their positions, in order: each a column of it, none named twice.
-fn object_columns(name: &QualifiedName, desc: &TableDesc, list: &[ColumnName], rules: &InsertRules) -> Result<Vec<usize>> {
+/// The columns `columns` of the table or view `name` that `list` names,
+/// by their positions, in order: each a column of it, none named twice.
+pub(super) fn object_columns(name: &QualifiedName, columns: &[ColumnDesc], list: &[ColumnName], rules: &InsertRules) -> Result<Vec<usize>> {
     let mut cols = Vec::new();
     for ColumnName { name: c, at } in list {
         let missing = || no_column(name, format!("[{}] {name} has no column {c}", rules.missing), c).or_at(*at);
-        let i = desc.column(c).ok_or_else(missing)?;
+        let i = columns.iter().position(|d| d.name == *c).ok_or_else(missing)?;
         if cols.contains(&i) {
             return Err(rule(format!("[{}] column {c} is listed twice", rules.twice)).or_at(*at));
         }
@@ -543,7 +543,7 @@ pub(super) fn insert_target_in(
     let desc = &target.named;
     let object: Vec<usize> = match into.columns {
         None => (0..into.horizon.width(&name).map_or(desc.columns.len(), |w| w.min(desc.columns.len()))).collect(),
-        Some(list) => object_columns(&name, desc, list, rules)?,
+        Some(list) => object_columns(&name, &desc.columns, list, rules)?,
     };
     // [ISO/IEC 9075:1992 §13.8 AR1; ISO/IEC 9075-2:2023 §14.12 AR1b
     // iii] INSERT on each column named, or on each of the table's.

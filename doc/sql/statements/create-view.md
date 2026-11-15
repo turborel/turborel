@@ -29,9 +29,10 @@ one table, a base table or an updatable view, with no GROUP BY or
 HAVING, and none of whose subqueries reads the table it would change.
 INSERT, UPDATE and DELETE on an updatable view change the table it is
 drawn from. Any other view is read-only, but for an event it has an
-INSTEAD OF trigger of: an INSERT, a searched UPDATE or a searched DELETE
-of it runs the trigger in place of the change (see
-[CREATE TRIGGER](create-trigger.md)).
+INSTEAD OF trigger of. INSERT, UPDATE, DELETE and MERGE of it run the
+trigger in place of the change (see [CREATE TRIGGER](create-trigger.md)).
+A change of an updatable view over a view with such a trigger runs that
+trigger too.
 
 WITH CHECK OPTION refuses a row inserted or updated through the view
 that is not then a row of it. CASCADED, the default, checks the row
@@ -61,7 +62,8 @@ CREATE VIEW runs within the session's transaction: ROLLBACK undoes it.
 2. No table or view of the schema has the name.
 3. A column list names as many columns as the query has, none twice;
    without one, the query names each of its columns, none twice.
-4. WITH CHECK OPTION is of an updatable view.
+4. WITH CHECK OPTION is of an updatable view, none of whose underlying
+   views has an INSTEAD OF trigger.
 5. The query names no declared local temporary table.
 6. The query follows the rules of a query.
 7. The transaction is not READ ONLY.

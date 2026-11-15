@@ -56,6 +56,7 @@ statement. A view with an INSTEAD OF trigger of the statement's event
 runs it in place of the change, and nothing is written through the view:
 its row count is of the rows the trigger was given. A view's
 columns not given a value are null in the rows its trigger is given.
+An updatable view over such a view runs its trigger the same way.
 
 ## RULES
 

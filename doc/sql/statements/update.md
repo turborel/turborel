@@ -49,7 +49,9 @@ The table's triggers run as [CREATE TRIGGER](create-trigger.md) says:
 its BEFORE triggers once the rows and their new values are found, before any is changed, after which a generated column is computed again from each row as they left it, its AFTER triggers at the end of the
 statement. A view with an INSTEAD OF trigger of the statement's event
 runs it in place of the change, and nothing is written through the view:
-its row count is of the rows the trigger was given. A
+its row count is of the rows the trigger was given. An updatable view
+over such a view runs its trigger the same way, and so does the
+positioned form through a cursor over either. A
 trigger of UPDATE OF its columns runs only if a SET clause names one.
 
 The positioned form, WHERE CURRENT OF a cursor, of a cursor named by

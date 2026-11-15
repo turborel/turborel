@@ -8,8 +8,9 @@
 use std::cmp::Ordering;
 
 use super::super::assignment::Assigned;
-use super::super::write::Target;
+use super::super::triggers::Instead;
 use super::super::{State, StatementContext, api};
+use super::routed::Inserting;
 use crate::binder::{BoundAction, BoundMerge, BoundWhen};
 use crate::error::{Code, Result, SqlError};
 use crate::exec::{Drawn, HeldRows, Runner, eval, eval_cond, execute};
@@ -23,14 +24,24 @@ use crate::value::Value;
 /// assignment cites.
 pub(super) const UPDATE_RULE: &str = "ISO/IEC 9075-2:2023 §14.12 GR6a i 1 B III";
 
-/// A MERGE as it runs: bound, the tables its WHEN NOT MATCHED clauses
-/// insert into, in order, what runs its subqueries, and where a joined
-/// row holds its target row's row id.
+/// A MERGE as it runs: bound, where its WHEN NOT MATCHED clauses insert,
+/// in order, what runs its subqueries, where a joined row holds its target
+/// row's row id, the INSTEAD OF trigger that takes each clause, if one
+/// does, and whether T is a view read as its rows (`merge/routed.rs`).
 pub(super) struct Merge<'a> {
     pub(super) bound: &'a BoundMerge,
-    pub(super) targets: &'a [Target],
+    pub(super) targets: &'a [Inserting],
     pub(super) runner: &'a Runner,
     pub(super) id_column: usize,
+    pub(super) routes: &'a [Option<Instead>],
+    pub(super) held: bool,
+}
+
+impl Merge<'_> {
+    /// The INSTEAD OF trigger that takes clause `clause`, if one does.
+    pub(super) fn route(&self, clause: usize) -> Option<&Instead> {
+        self.routes.get(clause).and_then(Option::as_ref)
+    }
 }
 
 /// What one clause does, decided: held up to the work area, the rest
@@ -164,7 +175,10 @@ fn subject_row(merge: &Merge<'_>, subject: Subject, planned: &mut [Planned]) -> 
                 return Err(unplanned());
             };
             let old = target_part(merge, &joined)?;
-            let assigned = Assigned { desc: &bound.desc, set, generated: &bound.generated };
+            // [ISO/IEC 9075-2:2023 §15.16 GR3a] no base table written of a
+            // clause a trigger takes, so no generated column of one.
+            let generated: &[(usize, Expr)] = if merge.route(clause).is_some() { &[] } else { &bound.generated };
+            let assigned = Assigned { desc: &bound.desc, set, generated };
             let new = assigned.candidate((&old, &joined), (UPDATE_RULE, merge.runner))?;
             rows.push((id, joined, new))
         }
@@ -174,7 +188,7 @@ fn subject_row(merge: &Merge<'_>, subject: Subject, planned: &mut [Planned]) -> 
 }
 
 /// The target row of `joined`: its first columns, those of T.
-fn target_part(merge: &Merge<'_>, joined: &Row) -> Result<Row> {
+pub(super) fn target_part(merge: &Merge<'_>, joined: &Row) -> Result<Row> {
     let n = merge.bound.desc.columns.len();
     joined.get(..n).map(<[Value]>::to_vec).ok_or_else(|| api("[DESIGN] a joined row of a MERGE is shorter than its target's"))
 }
@@ -191,7 +205,7 @@ fn unmatched(st: &State, merge: &Merge<'_>, joined: &Row, planned: &mut [Planned
     };
     let target = merge.targets.get(*target).ok_or_else(|| api("[DESIGN] a WHEN NOT MATCHED clause of a MERGE has no target"))?;
     // Bound in the order of the target's object columns [SR18a], one value each.
-    if values.len() != target.object().len() {
+    if values.len() != target.width() {
         return Err(api("[DESIGN] a WHEN NOT MATCHED clause of a MERGE gives other values than its object columns"));
     }
     // [ISO/IEC 9075-2:2023 §4.29.1] the row's draws of one generator are one.

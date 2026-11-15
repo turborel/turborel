@@ -61,6 +61,9 @@ impl State {
         if v.check_option.is_some() && updates.is_none() {
             return Err(rule(format!("[X3.135-1986 §6.5 SR9] {name} is WITH CHECK OPTION, so must be updatable")));
         }
+        if let (Some(_), Some((under, _))) = (v.check_option, &updates) {
+            self.unchecked_under(&name, under)?;
+        }
         // [ISO/IEC 9075:1992 §11.11 GR2, note] the columns it sees of each table it reads, as they are now.
         // [ISO/IEC 9075:1992 §11.19 SR5] no declared local temporary table.
         let declared =
@@ -73,6 +76,27 @@ impl State {
         let underlying = Some(underlying(cx, &v.query)?);
         let (query, names) = (v.text.clone(), names.to_owned());
         Ok(ViewDesc { name, columns, query, names, check_option: v.check_option, grouped, updates, reads, horizon, underlying })
+    }
+}
+
+impl State {
+    /// [ISO/IEC 9075-2:2023 §11.32 SR19] That no view the updatable view
+    /// `name` WITH CHECK OPTION reads, `under` and each view under that in
+    /// turn, its generally underlying tables, is trigger insertable-into,
+    /// updatable or deletable: has an INSTEAD OF trigger.
+    fn unchecked_under(&self, name: &QualifiedName, under: &QualifiedName) -> Result<()> {
+        let mut at = under.clone();
+        while let Some(view) = self.catalog.view(&at) {
+            if let Some(t) = self.catalog.triggers_on(&at).iter().find(|t| t.instead()) {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §11.32 SR19] {name} is WITH CHECK OPTION, so reads no view with an INSTEAD OF trigger, as {at} has {}",
+                    t.name
+                )));
+            }
+            let Some((next, _)) = &view.updates else { break };
+            at = next.clone();
+        }
+        Ok(())
     }
 }
 

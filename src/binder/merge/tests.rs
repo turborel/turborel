@@ -57,7 +57,7 @@ fn prepared(sql: &str) -> (Arc<State>, Box<MergeStatement>, Vec<Vec<ObjectColumn
 fn bound_as(user: &str, sql: &str) -> Result<BoundMerge> {
     let (st, stmt, inserts) = prepared(sql);
     let params = Params::new();
-    bind_merge(Context::new(&st, user, &params), &stmt, &inserts)
+    bind_merge(Context::new(&st, user, &params), &stmt, &inserts, None)
 }
 
 /// `sql` bound as S, the owner.

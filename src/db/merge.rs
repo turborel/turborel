@@ -6,27 +6,33 @@
 //! It is bound, or taken as a prepared statement keeps it (RULES.md D45),
 //! here; each joined row is read and what it does decided in
 //! `merge/decide.rs`; the changes are made and checked in
-//! `merge/apply.rs`.
+//! `merge/apply.rs`; a clause a view's INSTEAD OF trigger takes is given
+//! to it in `merge/routed.rs`.
 
 mod apply;
 mod decide;
+mod routed;
 
 use std::sync::Arc;
 
 use self::decide::Merge;
+pub(super) use self::routed::Inserting;
+use self::routed::{Routing, held_rows, routing, view_rows_of};
 use super::generated::Inserted;
 use super::prepared::{Keeping, KeptPlan};
-use super::write::{InsertInto, InsertRules, Target};
+use super::write::{InsertInto, InsertRules, insert_target_in};
 use super::{Completion, Session, State, StatementContext, api, plan};
 use crate::ast::{MergeStatement, MergeWhen};
+use crate::binder::qualify;
 use crate::binder::{self, BoundAction, BoundMerge, BoundWhen, ObjectColumn};
 use crate::catalog::QualifiedName;
 use crate::error::Result;
-use crate::exec::Runner;
+use crate::exec::{Runner, TransitionRows};
 use crate::logical::{Expr, LogicalPlan, SortKey, filled, filled_cond, filled_expr};
 use crate::params::Params;
 use crate::physical::Plan;
 use crate::value::Value;
+use crate::value::datetime::Now;
 
 /// [ISO/IEC 9075-2:2023 §14.12 SR2, SR14, SR17, AR1b iii] The rules a
 /// WHEN NOT MATCHED clause's insert cites.
@@ -85,62 +91,71 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Merged> {
         let StatementContext { st, tx } = cx;
-        let (bound, targets) = self.merge_kept(st, stmt, params, keeping)?;
-        let physical = locked_rows(cx, &bound)?;
-        self.settle_cursors(st, &bound.table);
+        let routed = routing(st, stmt, &self.default_schema());
+        // [ISO/IEC 9075-2:2023 §15.10 GR3a, §15.13 GR3a, §15.16 GR3a] of a
+        // view its triggers take whole, its rows read first.
+        let rows_held = if routed.held { Some(held_rows(cx, &qualify(&stmt.target, &self.default_schema()))?) } else { None };
+        let (bound, targets) = self.merge_kept(st, stmt, params, (keeping, &routed, rows_held.as_ref()))?;
+        let physical = locked_rows(cx, &bound, routed.held)?;
+        if !routed.held {
+            self.settle_cursors(st, &bound.table);
+        }
         let runner = Runner::new(st, tx.id);
-        let merge = Merge { bound: &bound, targets: &targets, runner: &runner, id_column: row_id_column(&bound)? };
+        let id_column = row_id_column(&bound)?;
+        let merge = Merge { bound: &bound, targets: &targets, runner: &runner, id_column, routes: &routed.routes, held: routed.held };
         // [GR5, GR6a i 1 A, GR6a ii 6] Every row read and what it does
         // decided before any row of T is changed.
         let (mut planned, read) = decide::planned(cx, &merge, physical)?;
         let mut effects = self.effects(st);
-        let again = apply::applied(cx, &merge, &mut planned, &mut effects)?;
+        let again = apply::applied((self, cx), &merge, &mut planned, &mut effects)?;
         // [GR7] Each row updated or inserted checked once all are written.
         apply::checked(&merge, &mut planned, &again)?;
         st.end_statement(tx, effects)?;
         Ok(Merged { changed: read.row_count(&bound.clauses), read: read.rows > 0 })
     }
 
-    /// `stmt`, bound as `params` say, and the table each of its WHEN NOT
-    /// MATCHED clauses inserts into, in order (`insert_target_of`).
+    /// `stmt`, bound as `params` say, and where each of its WHEN NOT
+    /// MATCHED clauses inserts, in order: the table (`insert_target_of`),
+    /// or the INSTEAD OF trigger that takes it (`merge/routed.rs`). T is
+    /// read as its rows `held`, if given; of a view its triggers take
+    /// whole, as no rows if not.
     ///
     /// # Errors
     ///
     /// A rule of §14.12, or of what it reads, is broken, or a privilege it
     /// needs is not held.
-    pub(super) fn merge_bound(&self, st: &State, stmt: &MergeStatement, params: &Params) -> Result<(BoundMerge, Vec<Target>)> {
-        let mut targets = Vec::new();
-        for clause in &stmt.clauses {
-            match clause {
-                MergeWhen::NotMatched { insert, .. } => {
-                    let into = InsertInto {
-                        table: &stmt.target,
-                        columns: insert.columns.as_deref(),
-                        given: (Inserted::Row(&insert.values), insert.overriding),
-                        rules: &MERGE_INSERT_RULES,
-                        horizon: params.horizon(),
-                    };
-                    targets.push(self.insert_target_of(st, &into, params.noted())?);
-                }
-                MergeWhen::Matched { .. } => {}
-            }
-        }
-        let objects: Vec<Vec<ObjectColumn>> = targets.iter().map(Target::objects).collect();
-        let bound = self.bound(st, params, |cx| binder::bind_merge(cx, stmt, &objects))?;
+    pub(super) fn merge_bound(
+        &self,
+        st: &State,
+        stmt: &MergeStatement,
+        params: &Params,
+        held: Option<&TransitionRows>,
+    ) -> Result<(BoundMerge, Vec<Inserting>)> {
+        let (auth, schema) = (self.auth(), self.default_schema());
+        let (targets, routed) = inserting(st, stmt, ((&auth, &schema, self.now.get()), params))?;
+        let objects: Vec<Vec<ObjectColumn>> = targets.iter().map(Inserting::objects).collect();
+        let none = routed.then(|| TransitionRows::new(st.list_space()));
+        let rows = held.or(none.as_ref()).filter(|_| routed);
+        let bound = self.bound(st, params, |cx| binder::bind_merge(cx, stmt, &objects, rows))?;
         Ok((bound, targets))
     }
 
-    /// `stmt` bound, and the tables it inserts into: of a prepared
-    /// statement, as it keeps them, filled with its values and its
-    /// defaults those of now (RULES.md D45).
+    /// `stmt` bound, and where it inserts: of a prepared statement, as it
+    /// keeps them, filled with its values and its defaults those of now
+    /// (RULES.md D45). Of a view its triggers take whole, as `routed` says,
+    /// bound each time over its rows `held`, as those are of the time.
     fn merge_kept(
         &self,
         st: &State,
         stmt: &MergeStatement,
         params: &Params,
-        keeping: Option<&Keeping<'_>>,
-    ) -> Result<(BoundMerge, Vec<Target>)> {
+        (keeping, routed, held): (Option<&Keeping<'_>>, &Routing, Option<&TransitionRows>),
+    ) -> Result<(BoundMerge, Vec<Inserting>)> {
         let values = params.dynamic_values();
+        if routed.held {
+            let (bound, targets) = self.merge_bound(st, stmt, params, held)?;
+            return Ok((filled_merge(&bound, values)?, targets));
+        }
         if let Some(KeptPlan::Merge(bound, targets)) = keeping.map(Keeping::plan).transpose()?.flatten() {
             let now = self.now.get();
             let targets = targets.iter().map(|t| t.clone().refreshed(&self.auth(), now)).collect::<Result<Vec<_>>>()?;
@@ -148,26 +163,65 @@ impl Session {
         }
         let kept = keeping.map(|_| params.keeping());
         let binding = kept.as_ref().unwrap_or(params);
-        let (bound, targets) = self.merge_bound(st, stmt, binding)?;
+        let (bound, targets) = self.merge_bound(st, stmt, binding, None)?;
         let Some(k) = keeping else { return Ok((bound, targets)) };
         k.made((!binding.held()).then(|| KeptPlan::Merge(Arc::new(bound.clone()), targets.clone().into())))?;
         Ok((filled_merge(&bound, values)?, targets))
     }
 }
 
+/// Where each WHEN NOT MATCHED clause of `stmt` inserts, in order, of a
+/// statement run under `auth`, its unqualified names in `schema`, its
+/// defaults those of `now`, bound with `params`: the table, or the INSTEAD
+/// OF trigger that takes it (`merge/routed.rs`); and whether T is a view
+/// its triggers take whole, read as its rows.
+///
+/// # Errors
+///
+/// As `insert_target_in` and `view_rows_of`.
+pub(super) fn inserting(
+    st: &State,
+    stmt: &MergeStatement,
+    ((auth, schema, now), params): ((&str, &str, Now), &Params),
+) -> Result<(Vec<Inserting>, bool)> {
+    let routed = routing(st, stmt, schema);
+    let name = qualify(&stmt.target, schema);
+    let mut targets = Vec::new();
+    for (clause, route) in stmt.clauses.iter().zip(&routed.routes) {
+        let MergeWhen::NotMatched { insert, .. } = clause else { continue };
+        if let Some(instead) = route {
+            let into = (&name, insert, &MERGE_INSERT_RULES);
+            targets.push(Inserting::Instead(view_rows_of(st, into, (instead, routed.held), auth)?));
+            continue;
+        }
+        let into = InsertInto {
+            table: &stmt.target,
+            columns: insert.columns.as_deref(),
+            given: (Inserted::Row(&insert.values), insert.overriding),
+            rules: &MERGE_INSERT_RULES,
+            horizon: params.horizon(),
+        };
+        targets.push(Inserting::Table(Box::new(insert_target_in(st, &into, (auth, schema, now), params.noted())?)));
+    }
+    Ok((targets, routed.held))
+}
+
 /// The plan of the joined rows of `bound`, sorted by their target rows'
 /// row ids so the pairs of each target row come together, its tables
-/// locked: T to be written, and every table it or its clauses read.
+/// locked: T to be written, unless it is a view `held`, and every table
+/// it or its clauses read.
 ///
 /// # Errors
 ///
 /// A lock is refused.
-fn locked_rows(StatementContext { st, tx }: StatementContext<'_>, bound: &BoundMerge) -> Result<Plan> {
+fn locked_rows(StatementContext { st, tx }: StatementContext<'_>, bound: &BoundMerge, held: bool) -> Result<Plan> {
     // [DESIGN] A sort holds what passes the work area in runs of a spill
     // area (RULES.md D38), so the rows may outgrow memory.
     let sorted = LogicalPlan::Sort { keys: vec![SortKey::ascending(row_id_column(bound)?)], input: Box::new(bound.rows.clone()) };
     let (optimized, _, physical) = plan(st, sorted);
-    st.update_lock(tx, &bound.table)?;
+    if !held {
+        st.update_lock(tx, &bound.table)?;
+    }
     for t in optimized.tables().into_iter().chain(clause_tables(bound)) {
         st.read_lock(tx, &t)?;
     }

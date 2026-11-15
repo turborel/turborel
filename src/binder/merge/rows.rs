@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use crate::catalog::TableDesc;
+use crate::exec::TransitionRows;
 use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, Subquery, map_cond_columns};
 use crate::storage::ROW_ID;
 
@@ -24,13 +25,27 @@ pub(super) struct Sides<'b> {
     pub(super) target_width: usize,
     /// The width of the source's side.
     pub(super) source_width: usize,
+    /// Of a view whose INSTEAD OF triggers take every WHEN clause, its
+    /// rows, each followed by its ordinal as its row id: T's rows, in
+    /// place of a scan of a base table.
+    pub(super) held: Option<&'b TransitionRows>,
 }
 
 impl Sides<'_> {
     /// The rows of T, as the view is read, every column of them; with each
-    /// row's id after its columns, if `located` (`storage::located`).
+    /// row's id after its columns, if `located` (`storage::located`). Of
+    /// rows held, those rows.
     fn target(&self, located: bool) -> LogicalPlan {
         let mut names: Vec<String> = self.names.get(..self.target_width).unwrap_or_default().to_vec();
+        if let Some(rows) = self.held {
+            names.push(ROW_ID.to_owned());
+            let all = LogicalPlan::Transition { rows: rows.clone(), names };
+            if located {
+                return all;
+            }
+            let exprs = (0..self.target_width).map(Expr::Column).collect();
+            return LogicalPlan::Project { exprs, input: Box::new(all) };
+        }
         if located {
             names.push(ROW_ID.to_owned());
         }

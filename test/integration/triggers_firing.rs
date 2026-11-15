@@ -264,3 +264,20 @@ fn a_recursive_trigger_stops_at_the_limit() {
         .expect("the statements do not panic");
     assert_eq!(outcome, (vec!["10".to_owned()], SqlState::TRIGGERED_ACTION_EXCEPTION, Code::Unsupported, vec!["0".to_owned()]));
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §14.12 GR6a, §15.14 GR5] a
+/// BEFORE trigger of a MERGE's update sees each target row's own columns
+/// as its old transition variable, not the source row's.
+#[test]
+fn a_merge_before_trigger_sees_the_target_row() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE U (A INTEGER, B INTEGER, C INTEGER)").unwrap();
+    let a = db.session("A");
+    a.run("INSERT INTO U VALUES (1, 100, 7)").unwrap();
+    a.run(
+        "CREATE TRIGGER BU BEFORE UPDATE ON U REFERENCING OLD AS O NEW AS NW FOR EACH ROW SELECT O.B INTO NW.C FROM (VALUES (1)) AS Z (Z)",
+    )
+    .unwrap();
+    a.run("MERGE INTO U USING (VALUES (1, 5)) AS S (X, Y) ON U.A = S.X WHEN MATCHED THEN UPDATE SET B = S.Y").unwrap();
+    assert_eq!(rows(&a, "SELECT A, B, C FROM U"), ["1,5,100"]);
+}

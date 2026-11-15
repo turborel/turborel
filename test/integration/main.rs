@@ -218,6 +218,7 @@ mod triggers_drops;
 mod triggers_firing;
 mod triggers_instead;
 mod triggers_privileges;
+mod triggers_routed;
 mod truncate;
 mod type_contract;
 mod typed_vectors;

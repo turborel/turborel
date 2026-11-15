@@ -390,6 +390,27 @@ pub fn write_target(db: &State, name: &QualifiedName, (read_only, user): (&str, 
     }
 }
 
+/// [ISO/IEC 9075-2:2023 §14.12 SR2 to SR4] The view `name` as the target
+/// of a MERGE whose every WHEN clause its INSTEAD OF triggers take, read
+/// as `user` reads it: its own columns, no table under it written and no
+/// view checked. A view's instant read is noted in `noted`, if given.
+///
+/// # Errors
+///
+/// `name` is not defined, or a view it reads breaks a rule.
+pub(super) fn trigger_target(db: &State, name: &QualifiedName, user: &str, noted: Option<&Cell<bool>>) -> Result<WriteTarget> {
+    let reader = Reader {
+        purpose: Purpose::Query,
+        own: &settings::NONE,
+        user,
+        definitions: false,
+        now: Clocked::new(db.now(&settings::NONE), noted),
+    };
+    let Named { desc, source, .. } = named(db, name, reader)?;
+    let map = (0..desc.columns.len()).collect();
+    Ok(WriteTarget { named: desc.clone(), base: desc, map, checks: Vec::new(), cond: None, source })
+}
+
 /// [ISO/IEC 9075:1992 §11.19 GR11] A view WITH CHECK OPTION that an
 /// update operation spans, and what of it a row of the base table is
 /// checked against, at the end of the statement \[GR12\].

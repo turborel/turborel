@@ -114,20 +114,3 @@ fn an_instead_of_trigger_gives_its_privileges() {
     assert_eq!(rows(&a, held), Vec::<String>::new());
     assert_eq!(b.run("DELETE FROM A.V").unwrap_err().code, Code::SyntaxRule);
 }
-
-/// Verifies: [DESIGN] a MERGE into a view with an INSTEAD OF trigger is
-/// refused, not written through the view.
-#[test]
-fn a_merge_into_a_view_with_an_instead_of_trigger_is_refused() {
-    let db = Database::new();
-    db.schema(
-        "CREATE SCHEMA AUTHORIZATION A
-           CREATE TABLE T (K INTEGER, N INTEGER)
-           CREATE VIEW W AS SELECT K, N FROM T
-           CREATE TRIGGER X INSTEAD OF DELETE ON W DELETE FROM T",
-    )
-    .unwrap();
-    let a = db.session("A");
-    let e = a.run("MERGE INTO W USING (VALUES (1)) AS S (K) ON W.K = S.K WHEN MATCHED THEN DELETE").unwrap_err();
-    assert_eq!(e.code, Code::Unsupported, "{e}");
-}

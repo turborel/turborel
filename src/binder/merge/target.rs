@@ -5,7 +5,7 @@
 //! checks each insert column list.
 
 use super::super::from::FromItem;
-use super::super::views::{WriteTarget, write_target};
+use super::super::views::{WriteTarget, trigger_target, write_target};
 use super::super::{Context, qualify, require};
 use crate::ast::{MatchedAction, MergeStatement, MergeWhen};
 use crate::catalog::{Actions, QualifiedName, TableDesc};
@@ -36,9 +36,18 @@ pub(super) struct Target {
 /// its base table. Its exposed name is the merge correlation name if one
 /// is written [SR8a], else its table name [SR8b]; its columns are every
 /// column of T [SR10].
-pub(super) fn bind_target(cx: Context<'_>, stmt: &MergeStatement) -> Result<Target> {
+///
+/// Of a view whose INSTEAD OF triggers take every WHEN clause, `held`, the
+/// view is read as itself, its rows those the db layer holds of it
+/// [§15.10 GR3a, §15.13 GR3a, §15.16 GR3a].
+pub(super) fn bind_target(cx: Context<'_>, stmt: &MergeStatement, held: bool) -> Result<Target> {
     let name = qualify(&stmt.target, cx.schema);
-    let write = write_target(cx.db, &name, (&read_only_rule(stmt), cx.user), cx.now.noted()).or_at(stmt.target.at)?;
+    let write = if held {
+        trigger_target(cx.db, &name, cx.user, cx.now.noted())
+    } else {
+        write_target(cx.db, &name, (&read_only_rule(stmt), cx.user), cx.now.noted())
+    }
+    .or_at(stmt.target.at)?;
     required(cx, stmt, &write.named).or_at(stmt.target.at)?;
     let alone = FromItem::alone(name.clone(), stmt.target.at, (write.named.clone(), write.source.clone()));
     // A source row no target row matches is joined to nulls, so a NOT

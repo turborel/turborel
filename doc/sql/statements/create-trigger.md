@@ -49,8 +49,11 @@ them, and a row trigger's action can change the new row by assigning a
 column of its new transition variable with SELECT INTO. An AFTER
 trigger runs at the end of the statement, after its referential actions
 and once its immediate constraints hold. An INSTEAD OF trigger is on a
-view and runs in place of the change: nothing is written through the
-view, which need not be updatable.
+view and runs in place of the change. Nothing is written through the
+view, which need not be updatable. A change of an updatable view over
+it reaches it as a change of its own rows, and so does an UPDATE or
+DELETE through a cursor over it. Its action may change the view in
+turn, through the view's own triggers.
 
 FOR EACH ROW runs the action once for each row changed, in the order
 the statement changed them, and its old and new transition variables
@@ -239,10 +242,10 @@ turborel: SQLCODE -201 (SQLSTATE 09000): the triggered action of trigger ANN.LIM
 ## STANDARD
 
 ISO/IEC 9075-2:2023 §11.49, §4.46, §15.19 to §15.21, Features T200,
-T211 to T218. An INSTEAD OF trigger takes INSERT, a searched UPDATE and
-a searched DELETE of its view; MERGE into such a view, and an UPDATE or
-DELETE WHERE CURRENT OF a cursor over it, are refused with SQLCODE
--900. SQL-86 and SQL-92 have no triggers.
+T211 to T218. An INSTEAD OF trigger takes INSERT, UPDATE, DELETE and
+MERGE of its view, an UPDATE or DELETE WHERE CURRENT OF a cursor over
+it, and a change of an updatable view over it. SQL-86 and SQL-92 have
+no triggers.
 
 ## SEE ALSO
 

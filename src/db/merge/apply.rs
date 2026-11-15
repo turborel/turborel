@@ -8,15 +8,15 @@ use std::collections::HashMap;
 
 use super::super::assignment::{Assigned, check_option, set_columns_of};
 use super::super::integrity::Effects;
-use super::super::{StatementContext, api};
-use super::decide::{Merge, Planned, UPDATE_RULE};
+use super::super::{Session, StatementContext, api};
+use super::decide::{Merge, Planned, UPDATE_RULE, target_part};
+use super::routed::Inserting;
 use crate::binder::{BoundAction, BoundWhen};
 use crate::error::Result;
 use crate::exec::{HeldRows, eval_cond};
 use crate::logical::{Cond, Expr, Truth};
 use crate::storage::{Row, RowId};
 use crate::txn::Again;
-use crate::value::Value;
 
 /// [ISO/IEC 9075-2:2023 §14.12 GR7] The rule `check_option` cites.
 const CHECK_RULE: &str = "ISO/IEC 9075-2:2023 §14.12 GR7";
@@ -27,19 +27,24 @@ const CHECK_RULE: &str = "ISO/IEC 9075-2:2023 §14.12 GR7";
 pub(super) type Rewritten = HashMap<RowId, Option<Row>>;
 
 /// [GR6a] Does `planned`, clause by clause in order, into `effects`: the
-/// rows updates wrote in place of those planned.
+/// rows updates wrote in place of those planned. A clause an INSTEAD OF
+/// trigger takes is given to it by `session` (`merge/routed.rs`).
 ///
 /// # Errors
 ///
-/// A row's write fails, or a value of a row checked again.
+/// A row's write fails, or a value of a row checked again; a trigger's.
 pub(super) fn applied(
-    cx: StatementContext<'_>,
+    (session, cx): (&Session, StatementContext<'_>),
     merge: &Merge<'_>,
     planned: &mut [Planned],
     effects: &mut Effects<'_>,
 ) -> Result<Rewritten> {
     let mut again = Rewritten::new();
-    for (clause, plan) in merge.bound.clauses.iter().zip(planned.iter_mut()) {
+    for (j, (clause, plan)) in merge.bound.clauses.iter().zip(planned.iter_mut()).enumerate() {
+        if let Some(instead) = merge.route(j) {
+            session.taken(cx, merge, instead, plan)?;
+            continue;
+        }
         let unplanned = || api("[DESIGN] a clause of a MERGE is not the clause of its plan");
         // [ISO/IEC 9075-2:2023 §15.19] each clause's BEFORE triggers as its
         // rows are decided, before they are written.
@@ -71,13 +76,13 @@ fn before_clause(
     effects: &mut Effects<'_>,
 ) -> Result<()> {
     let bound = merge.bound;
-    let target = |joined: &Row| joined.get(bound.source_width..).map(<[Value]>::to_vec).unwrap_or_default();
+    let target = |joined: &Row| target_part(merge, joined);
     match plan {
         Planned::Updates(rows) => {
             let BoundWhen::Matched { action: BoundAction::Update(set), .. } = clause else { return Ok(()) };
             let columns = set_columns_of(set, &bound.generated);
             let mut changes = HeldRows::new(cx.st.list_space());
-            rows.visit(&mut |(id, joined, new)| changes.push((*id, target(joined), new.clone())))?;
+            rows.visit(&mut |(id, joined, new)| changes.push((*id, target(joined)?, new.clone())))?;
             let altered = effects.before_update(cx, (&bound.table, &columns), changes)?;
             let mut out = HeldRows::new(cx.st.list_space());
             for (row, change) in std::mem::replace(rows, HeldRows::new(cx.st.list_space())).into_iter().zip(altered) {
@@ -88,11 +93,11 @@ fn before_clause(
         }
         Planned::Deletes(rows) => {
             let mut olds = HeldRows::new(cx.st.list_space());
-            rows.visit(&mut |(id, joined)| olds.push((*id, target(joined))))?;
+            rows.visit(&mut |(id, joined)| olds.push((*id, target(joined)?)))?;
             effects.before_delete(cx, &bound.table, &mut olds)?;
         }
         Planned::Inserts(at, rows) => {
-            let table = merge.targets.get(*at).ok_or_else(|| api("[DESIGN] a WHEN NOT MATCHED clause of a MERGE has no target"))?.name();
+            let table = table_of(merge, *at)?.name();
             let given = std::mem::replace(rows, HeldRows::new(cx.st.list_space()));
             *rows = effects.before_insert(cx, table, given)?;
         }
@@ -171,8 +176,7 @@ fn inserts(
     rows: &mut HeldRows<Row>,
     effects: &mut Effects<'_>,
 ) -> Result<()> {
-    let target = merge.targets.get(target).ok_or_else(|| api("[DESIGN] a WHEN NOT MATCHED clause of a MERGE has no target"))?;
-    let table = target.name();
+    let table = table_of(merge, target)?.name();
     rows.visit(&mut |row| effects.inserted(table, st.insert_row(tx, table, row)?, row))
 }
 
@@ -187,7 +191,12 @@ fn inserts(
 /// read back.
 pub(super) fn checked(merge: &Merge<'_>, planned: &mut [Planned], again: &Rewritten) -> Result<()> {
     let checks = &merge.bound.checks;
-    for plan in planned {
+    for (j, plan) in planned.iter_mut().enumerate() {
+        // [ISO/IEC 9075-2:2023 §11.32 SR19] no view WITH CHECK OPTION
+        // reads a view whose trigger takes a clause.
+        if merge.route(j).is_some() {
+            continue;
+        }
         match plan {
             Planned::Updates(rows) => {
                 if checks.is_empty() {
@@ -201,8 +210,7 @@ pub(super) fn checked(merge: &Merge<'_>, planned: &mut [Planned], again: &Rewrit
                 })?;
             }
             Planned::Inserts(target, rows) => {
-                let target =
-                    merge.targets.get(*target).ok_or_else(|| api("[DESIGN] a WHEN NOT MATCHED clause of a MERGE has no target"))?;
+                let target = table_of(merge, *target)?;
                 if !target.checks().is_empty() {
                     rows.visit(&mut |row| check_option(target.checks(), [row], (CHECK_RULE, merge.runner)))?;
                 }
@@ -228,4 +236,14 @@ fn still_matched(merge: &Merge<'_>, condition: Option<&Cond>, newest: &Row, join
         None => true,
     };
     Ok(chosen.then_some(rejoined))
+}
+
+/// The table the `at`th WHEN NOT MATCHED clause of `merge` inserts into:
+/// none of one a trigger takes, which is not written.
+fn table_of<'m>(merge: &'m Merge<'_>, at: usize) -> Result<&'m super::super::write::Target> {
+    merge
+        .targets
+        .get(at)
+        .and_then(Inserting::table)
+        .ok_or_else(|| api("[DESIGN] a WHEN NOT MATCHED clause of a MERGE written has no table"))
 }

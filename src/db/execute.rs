@@ -8,6 +8,7 @@ use super::area::commands::{self, Command};
 use super::dynamic::{self, Name};
 use super::integrity::Effects;
 use super::prepared::{Keeping, Plans};
+use super::triggers::{Event, instead_for};
 use super::write::{Written, delete_searched, update_searched};
 use super::{Call, Completion, Session, StatementContext, slow};
 use crate::ast::{
@@ -225,8 +226,15 @@ impl Session {
         (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<Completion> {
         let w = self.write_bound(cx.st, params, keeping, |b| bind_write(b, kind, table, set, None))?;
+        let at = (&self.positioned_key(&cursor.0), cursor.1);
+        // [ISO/IEC 9075-2:2023 §15.6 GR11b, §15.7 GR17b] the INSTEAD OF
+        // trigger of a view the cursor's row is of, in place of the change.
+        if let Some(instead) = instead_for(cx.st, &w.bound.named, event_of(kind)) {
+            let clause = if event_of(kind) == Event::Delete { "§8.4" } else { "§8.11" };
+            return self.positioned_instead(cx, at, (&w, &instead, clause));
+        }
         self.settle_cursors(cx.st, &w.bound.table);
-        run(self, cx, (&self.positioned_key(&cursor.0), cursor.1), &w)
+        run(self, cx, at, &w)
     }
 
     /// A searched UPDATE or DELETE, `kind`, of `table` giving `set` where
@@ -241,6 +249,12 @@ impl Session {
     ) -> Result<Completion> {
         let bind = |b: Context<'_>| bind_write(b, kind, table, set, where_clause);
         let w = self.write_bound(cx.st, params, keeping, bind)?;
+        // [ISO/IEC 9075-2:2023 §15.15 GR3c iv 2] the INSTEAD OF trigger of a
+        // view under the one named, in place of the change; one of the view
+        // named took it already (`instead_of`).
+        if let Some(instead) = instead_for(cx.st, &w.bound.named, event_of(kind)) {
+            return self.searched_instead(cx, w, &instead).map(|n| self.affected(n));
+        }
         self.settle_cursors(cx.st, &w.bound.table);
         run(cx, w, self.effects(cx.st)).map(|n| self.affected(n))
     }
@@ -305,6 +319,15 @@ impl Session {
             | SqlStatement::Execute(_)
             | SqlStatement::DeclareTable(_) => Ok(Completion::Success),
         }
+    }
+}
+
+/// The trigger event of a change of kind `kind` [ISO/IEC 9075-2:2023
+/// §4.46.2].
+fn event_of(kind: WriteKind) -> Event {
+    match kind {
+        WriteKind::UpdateSearched | WriteKind::UpdatePositioned => Event::Update,
+        WriteKind::DeleteSearched | WriteKind::DeletePositioned => Event::Delete,
     }
 }
 

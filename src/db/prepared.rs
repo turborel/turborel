@@ -333,7 +333,7 @@ impl Session {
             SqlStatement::UpdateSearched { table, set, where_clause } => {
                 self.write_only(st, params, (WriteKind::UpdateSearched, table, set, where_clause.as_ref()))?;
             }
-            SqlStatement::Merge(merge) => drop(self.merge_bound(st, merge, params)?),
+            SqlStatement::Merge(merge) => drop(self.merge_bound(st, merge, params, None)?),
             SqlStatement::DeleteSearched { table, where_clause } => {
                 self.write_only(st, params, (WriteKind::DeleteSearched, table, &[], where_clause.as_ref()))?;
             }

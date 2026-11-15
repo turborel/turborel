@@ -64,8 +64,17 @@ The target's triggers run as [CREATE TRIGGER](create-trigger.md) says,
 clause by clause: each clause runs the BEFORE triggers of its event on
 its own rows before it changes them, a statement trigger once for the
 statement whatever clauses share its event, and the AFTER triggers run
-at the end of the statement over the rows of every clause. A MERGE into
-a view with an INSTEAD OF trigger is refused (SQLCODE -900).
+at the end of the statement over the rows of every clause.
+
+A clause whose event an INSTEAD OF trigger of the view takes gives its
+rows to that trigger in place of changing them. The trigger is the
+view's own, or that of a view under it when the view is updatable. Its
+rows are those of the trigger's view, before and after the SET clauses,
+and a candidate row has null in each column the clause gives no value.
+Every decision is made before any clause runs, and the clauses run in
+the order they are written. A view that is not updatable takes a MERGE
+only if its triggers take every clause, and its rows are then those its
+query gives. Its row count counts the rows the triggers were given too.
 
 A MERGE whose source has no row completes with no data. One whose source
 has rows completes, however many it changes. Its row count is of the rows

@@ -46,11 +46,21 @@ pub(crate) struct Transitions {
     /// were when its trigger was defined [ISO/IEC 9075-2:2023 §11.21 GR2,
     /// Note 561].
     pub(crate) horizon: Horizon,
+    /// Of the rows of a view read as a table by a statement of a triggered
+    /// action, a change of the view an INSTEAD OF trigger takes: the
+    /// action's own, which name what these do not.
+    pub(crate) beside: Option<Arc<Transitions>>,
 }
 
 impl Transitions {
     /// Whether `name` is the old or new transition variable name.
     pub(crate) fn names_variable(&self, name: &str) -> bool {
+        self.own_variable(name) || self.beside.as_ref().is_some_and(|b| b.names_variable(name))
+    }
+
+    /// Whether `name` is its own old or new transition variable name, not
+    /// one of those beside it.
+    fn own_variable(&self, name: &str) -> bool {
         self.old_row.as_deref() == Some(name) || self.new_row.as_deref() == Some(name)
     }
 
@@ -59,10 +69,10 @@ impl Transitions {
     /// type, if `variable` is the old or new transition variable name and
     /// the subject table has such a column.
     pub(crate) fn variable(&self, variable: &str, column: &str) -> Option<(usize, DataType)> {
-        let new = self.new_row.as_deref() == Some(variable);
-        if !new && self.old_row.as_deref() != Some(variable) {
-            return None;
+        if !self.own_variable(variable) {
+            return self.beside.as_ref()?.variable(variable, column);
         }
+        let new = self.new_row.as_deref() == Some(variable);
         let (k, c) = self.columns.iter().enumerate().find(|(_, c)| c.name == column)?;
         let at = if new { self.columns.len().saturating_add(k) } else { k };
         Some((at, c.data_type.clone()))
@@ -72,14 +82,21 @@ impl Transitions {
     /// transition variable `variable` is one a BEFORE trigger's action may
     /// not reference: a generated column of the new row.
     pub(crate) fn withheld(&self, variable: &str, column: &str) -> bool {
+        if !self.own_variable(variable) {
+            return self.beside.as_ref().is_some_and(|b| b.withheld(variable, column));
+        }
         let generated = || self.columns.iter().any(|c| c.name == column && c.generation().is_some());
         self.assigns && self.new_row.as_deref() == Some(variable) && generated()
     }
 
     /// The transition table named `name`, if it is the old or new
-    /// transition table name.
-    pub(crate) fn table(&self, name: &str) -> Option<&TransitionRows> {
-        [&self.old_table, &self.new_table].into_iter().flatten().find(|(n, _)| n == name).map(|(_, rows)| rows)
+    /// transition table name, and its columns: its own, else one beside
+    /// it.
+    pub(crate) fn table(&self, name: &str) -> Option<(&TransitionRows, &[ColumnDesc])> {
+        match [&self.old_table, &self.new_table].into_iter().flatten().find(|(n, _)| n == name) {
+            Some((_, rows)) => Some((rows, &self.columns)),
+            None => self.beside.as_ref()?.table(name),
+        }
     }
 }
 
@@ -119,6 +136,11 @@ impl Params {
     /// parameters these are, if they are a triggered action's.
     pub(crate) fn transitions(&self) -> Option<&Transitions> {
         self.transitions.as_deref()
+    }
+
+    /// Those, shared, if they are a triggered action's.
+    pub(crate) fn transitions_shared(&self) -> Option<Arc<Transitions>> {
+        self.transitions.clone()
     }
 
     /// The place among the dynamic values of column `name` of the new row

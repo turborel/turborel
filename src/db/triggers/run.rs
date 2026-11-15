@@ -238,6 +238,7 @@ pub(super) fn transitions_of(st: &State, t: &TriggerDesc) -> Result<Transitions>
         new_table: table(&t.names.new_table),
         assigns: t.time == ActionTime::Before && t.level == TriggerLevel::Row,
         horizon: t.horizon.clone(),
+        beside: None,
     };
     Ok(transitions)
 }
