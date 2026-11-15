@@ -156,6 +156,7 @@ impl Session {
             SchemaStatement::Collation(c) => self.own_object(st, &c.name, (schema, "ISO/IEC 9075-2:2023 §11.43 SR1")),
             SchemaStatement::Sequence(d) => self.own_object(st, &d.name, (schema, "ISO/IEC 9075-2:2023 §11.72 SR4")),
             SchemaStatement::Type(d) => self.own_object(st, &d.name, (schema, "ISO/IEC 9075-2:2023 §11.51 AR1")),
+            SchemaStatement::Trigger(t) => self.own_object(st, &t.name, (schema, "ISO/IEC 9075-2:2023 §11.49 AR1")),
             SchemaStatement::AlterSequence(a) => {
                 let qn = qualify(&a.name, schema);
                 // [ISO/IEC 9075-2:2023 §11.73 AR1] only the owner of its
@@ -228,6 +229,7 @@ impl State {
             SchemaStatement::Sequence(d) => self.create_sequence(schema, d, epochs),
             SchemaStatement::AlterSequence(a) => self.alter_sequence(schema, a, epochs),
             SchemaStatement::Type(d) => self.create_user_type(schema, d),
+            SchemaStatement::Trigger(t) => self.create_trigger(schema, t),
         }
     }
 

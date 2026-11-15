@@ -3,7 +3,7 @@
 //! and index reopened by its locator, and only the definitions logged since
 //! replayed; not from every definition ever made. The schemas, domains,
 //! assertions, tables with their generations, views, indexes, sequence
-//! generators, user-defined types and privileges of the catalog, the
+//! generators, user-defined types, privileges and triggers of the catalog, the
 //! database's settings, in the forms of `catalog/codec.rs`; its users and
 //! owner (`db/users.rs`); and the counters of its sequence generators,
 //! settled, with the last epoch given (`db/sequences/counters.rs`,
@@ -20,7 +20,8 @@
 //!           u32, each str and value), users (count u32, each str and
 //!           verifier bytes), owner (u8 1 and str, or u8 0 for none), the
 //!           last epoch given (u64), counters (count u32, each a name, its
-//!           epoch u64 and its base i128)
+//!           epoch u64 and its base i128), triggers (count u32, each a
+//!           trigger, in the order of their timestamps of creation)
 //! ```
 
 use std::sync::Arc;
@@ -30,11 +31,11 @@ use super::{State, api};
 use crate::bytes::{Put, Reader};
 use crate::catalog::codec::{
     collation, constraint, domain, index, privilege, put_collation, put_constraint, put_domain, put_index, put_name, put_privilege,
-    put_sequence, put_table, put_user_type, put_view, qualified, sequence, table, user_type, view,
+    put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, sequence, table, trigger, user_type, view,
 };
 use crate::catalog::{
-    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, TableDesc, UserTypeDesc,
-    ViewDesc,
+    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, TableDesc, TriggerDesc,
+    UserTypeDesc, ViewDesc,
 };
 use crate::error::Result;
 use crate::settings;
@@ -66,11 +67,14 @@ pub(super) struct Snapshot {
     /// The counters, settled: each but one of a generator's earlier epoch,
     /// which no statement draws from once the database reopens.
     counters: Vec<Settled>,
+    /// The triggers, oldest first.
+    triggers: Vec<TriggerDesc>,
 }
 
 impl Snapshot {
     /// The definitions of `st`, in an order that does not depend on how
-    /// they are held: each kind by name. The counters of its sequence
+    /// they are held: each kind by name, the triggers by their timestamps
+    /// of creation. The counters of its sequence
     /// generators settled.
     ///
     /// # Errors
@@ -121,6 +125,7 @@ impl Snapshot {
             owner,
             epochs,
             counters,
+            triggers: st.catalog.triggers().into_iter().cloned().collect(),
         })
     }
 
@@ -170,6 +175,13 @@ impl Snapshot {
             out.put_str(name);
             out.put_bytes(verifier);
         }
+        self.put_rest(out);
+    }
+
+    /// Its owner, epochs, counters and triggers in bytes, the last of
+    /// what `put` writes.
+    fn put_rest(&self, out: &mut Vec<u8>) {
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         out.put_u8(u8::from(self.owner.is_some()));
         if let Some(owner) = &self.owner {
             out.put_str(owner);
@@ -181,6 +193,8 @@ impl Snapshot {
             out.put_u64(*epoch);
             out.put_i128(*base);
         }
+        out.put_u32(count(self.triggers.len()));
+        self.triggers.iter().for_each(|t| put_trigger(out, t));
     }
 
     /// The snapshot `put` wrote.
@@ -205,6 +219,7 @@ impl Snapshot {
         let owner = if r.u8()? == 0 { None } else { Some(r.str()?) };
         let epochs = r.u64()?;
         let counters = (0..r.u32()?).map(|_| Ok((qualified(r)?, r.u64()?, r.i128()?))).collect::<Result<_>>()?;
+        let triggers = (0..r.u32()?).map(|_| trigger(r)).collect::<Result<_>>()?;
         Ok(Snapshot {
             schemas,
             domains,
@@ -222,6 +237,7 @@ impl Snapshot {
             owner,
             epochs,
             counters,
+            triggers,
         })
     }
 }
@@ -246,9 +262,7 @@ impl State {
         self.install_counters(snapshot)?;
         // Before the indexes, whose keys are by them.
         self.catalog = Arc::from(catalog.duplicate());
-        snapshot.assertions.iter().cloned().for_each(|a| catalog.put_assertion(a));
-        catalog.add_views(snapshot.views.clone());
-        catalog.grant(snapshot.privileges.clone());
+        put_dependent(&mut *catalog, snapshot);
         self.check_collation_versions(&*catalog, &snapshot.collation_versions)?;
         for desc in &snapshot.tables {
             let engine =
@@ -315,6 +329,16 @@ fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.sequences.iter().cloned().for_each(|s| catalog.put_sequence(s));
     snapshot.user_types.iter().cloned().for_each(|t| catalog.put_user_type(t));
 }
+
+/// The assertions, views, privileges and triggers of `snapshot`, put in
+/// `catalog`: each depends on a table, so they follow the tables.
+fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
+    snapshot.assertions.iter().cloned().for_each(|a| catalog.put_assertion(a));
+    catalog.add_views(snapshot.views.clone());
+    catalog.grant(snapshot.privileges.clone());
+    snapshot.triggers.iter().cloned().for_each(|t| catalog.put_trigger(t));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

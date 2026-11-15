@@ -416,6 +416,7 @@ fn distributes(plan: &LogicalPlan, distinct: bool) -> bool {
         | LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }
+        | LogicalPlan::Transition { .. }
         | LogicalPlan::Recursive { .. } => true,
     }
 }
@@ -436,7 +437,7 @@ fn one_side(left: &LogicalPlan, right: &LogicalPlan, distinct: bool) -> bool {
 fn reads_work(plan: &LogicalPlan) -> bool {
     match plan {
         LogicalPlan::WorkTable { .. } => true,
-        LogicalPlan::Recursive { .. } => false,
+        LogicalPlan::Recursive { .. } | LogicalPlan::Transition { .. } => false,
         LogicalPlan::Scan { .. }
         | LogicalPlan::Filter { .. }
         | LogicalPlan::Product { .. }

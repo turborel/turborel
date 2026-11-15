@@ -27,7 +27,7 @@ use crate::bytes::{Put, Reader};
 use crate::catalog::{ForeignKey, MatchType, QualifiedName, ReferentialAction, TableDesc};
 use crate::db::defaults::default_row;
 use crate::db::generated::Generating;
-use crate::db::{State, api};
+use crate::db::{State, StatementContext, api};
 use crate::error::{Code, Result, SqlError, SqlState, Subject};
 use crate::exec::{HeldRows, NoSubqueries};
 use crate::spill::ListSpace;
@@ -37,6 +37,7 @@ use crate::txn::Txn;
 use crate::value::Value;
 use crate::value::codec::{put_value, value};
 use crate::value::types::TypeRegistry;
+use std::sync::Arc;
 
 /// What the referential actions of a statement keep while they run, in
 /// the statement's space: the values given [GR7], each row's column's
@@ -84,7 +85,7 @@ impl State {
     /// none is left to run: none, and what it did not read again, if no
     /// foreign key has an action. The values the statement gave are kept
     /// [GR7] only of the tables an action may give values to.
-    pub(super) fn referential_actions(&self, tx: &Txn, effects: &mut Effects<'_>) -> Result<()> {
+    pub(super) fn referential_actions(self: &Arc<Self>, tx: &Txn, effects: &mut Effects<'_>) -> Result<()> {
         let acted: Vec<&QualifiedName> = self.catalog.tables().into_iter().filter(|t| acts_on(t)).map(|t| &t.name).collect();
         if acted.is_empty() {
             return Ok(());
@@ -125,7 +126,7 @@ impl State {
     /// unique matching rows [GR3b, GR5b, GR6b]. The rows that match are
     /// all found before any is acted on.
     fn act(
-        &self,
+        self: &Arc<Self>,
         tx: &Txn,
         (child, name, fk): (&TableDesc, &QualifiedName, &ForeignKey),
         change: &Change<'_>,
@@ -161,7 +162,7 @@ impl State {
     /// which matches the row changed: if it is a unique matching row, with
     /// MATCH PARTIAL [GR3b].
     fn act_on(
-        &self,
+        self: &Arc<Self>,
         tx: &Txn,
         done: &Action<'_>,
         (row_id, row): (RowId, Row),
@@ -181,7 +182,10 @@ impl State {
         }
         // [GR8] a row a cursor changed: a cursor operation conflict.
         effects.cursors.acted_on(child, row_id);
+        let cx = StatementContext { st: self, tx };
         if done.rule == ReferentialAction::Cascade && !updated {
+            // [ISO/IEC 9075-2:2023 §15.8 GR2] its BEFORE triggers first.
+            effects.before_deleted_row(cx, child, (row_id, &row))?;
             // [GR5a i, GR5b i] the matching rows deleted.
             self.delete_row(tx, child, row_id)?;
             return effects.deleted(child, row_id, row);
@@ -195,9 +199,11 @@ impl State {
         done.generating.give(self, &mut next, &NoSubqueries)?;
         let given: Vec<usize> = done.generating.columns().filter(|c| !columns.contains(c)).collect();
         columns.extend(given);
+        // [ISO/IEC 9075-2:2023 §15.14 GR5] its BEFORE triggers first.
+        let next = effects.before_updated_row(cx, (child, &columns), (row_id, &row, next))?;
         acting.give((done.name, child, row_id), &next, &columns)?;
         self.update_row(tx, child, row_id, &next)?;
-        effects.updated(child, row_id, row, &columns)
+        effects.updated(child, row_id, (row, &next), &columns)
     }
 
     /// [§11.8 GR6b i] A CASCADE of MATCH PARTIAL gives a row the new value

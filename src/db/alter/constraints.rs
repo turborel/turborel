@@ -137,7 +137,8 @@ impl State {
     /// [ISO/IEC 9075:1992 §11.17] Drops the constraint `name`, its schema
     /// `implicit` if it names none [§5.4 SR8], of base table `qn`: and with CASCADE, the foreign keys that reference the columns
     /// of a unique one [SR3, GR1]; with RESTRICT, not while there are any
-    /// [SR4]. A unique one's index goes with it.
+    /// [SR4]. A unique one's index goes with it, and the triggers that
+    /// depend on it with CASCADE.
     pub(in crate::db) fn drop_constraint(
         &mut self,
         (qn, implicit): (&QualifiedName, &str),
@@ -186,6 +187,8 @@ impl State {
         desc.refresh_not_null();
         catalog.replace_table(desc);
         self.catalog = Arc::from(catalog);
+        // [ISO/IEC 9075-2:2023 §11.26 SR13f, GR5] the triggers that bind by it.
+        dropped.absorb(self.drop_constraint_triggering(qn, behavior == DropBehavior::Cascade)?);
         Ok(dropped)
     }
 }

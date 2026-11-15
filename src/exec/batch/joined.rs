@@ -66,7 +66,8 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => None,
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => None,
     }
 }
 
@@ -122,7 +123,8 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => return columns,
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => return columns,
     };
     columns.extend(keys.iter().flat_map(|k| [k.left, k.right.saturating_add(width)]));
     columns
@@ -166,7 +168,8 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => no_join,
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => no_join,
     };
     made(plan, db, tx)
 }
@@ -316,7 +319,8 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => true,
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => true,
     }
 }
 

@@ -85,6 +85,7 @@ fn add(all: &mut BTreeMap<Descriptor, bool>, (grantor, grantee, object): (&str, 
         ("DELETE", held.delete, grantable.delete),
         ("UPDATE", every(&held.update), every(&grantable.update)),
         ("REFERENCES", every(&held.references), every(&grantable.references)),
+        ("TRIGGER", held.trigger, grantable.trigger),
     ];
     let mut put = |kind: &'static str, column: Option<String>, can: bool| {
         let key = (grantor.to_owned(), grantee.to_owned(), object.name.clone(), kind, column);

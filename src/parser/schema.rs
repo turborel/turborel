@@ -2,7 +2,8 @@
 //! definition>`s [X3.135-1986 §6.2-§6.4], `<view definition>`s [X3.135-1986
 //! §6.5] and `<privilege definition>`s [X3.135-1986 §6.6]; temporary tables
 //! [ISO/IEC 9075:1992 §11.3, §13.11] and the `<revoke statement>` [§11.37].
-//! Domains and assertions are in `parser/domains.rs`.
+//! Domains and assertions are in `parser/domains.rs`, triggers in
+//! `parser/triggers.rs`.
 
 use super::Parser;
 use crate::ast::{
@@ -34,21 +35,15 @@ impl Parser {
             (None, Some(auth)) => (None, auth.clone()),
             (None, None) => return Err(self.syntax("expected a <schema name> or AUTHORIZATION")),
         };
-        // [§11.1] <schema character set specification> ::= DEFAULT
-        // CHARACTER SET <character set specification>: SQL_TEXT's taken.
-        if self.accept_kw(kw::DEFAULT) {
-            if !self.is_kw(kw::CHARACTER) {
-                return Err(self.syntax("expected CHARACTER SET"));
-            }
-            self.character_set_clause()?;
-        }
+        self.schema_character_set()?;
 
         // <schema element> ::= <domain definition> | <table definition> | <view definition>
         //     | <grant statement> | <assertion definition> | <character set definition>
         //     | <collation definition> | <translation definition>
+        //     | <trigger definition> [ISO/IEC 9075-2:2023 §11.1]
         let (mut domains, mut tables, mut views, mut privileges) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut collations, mut sequences, mut types) = (Vec::new(), Vec::new(), Vec::new());
-        let mut assertions = Vec::new();
+        let (mut assertions, mut triggers) = (Vec::new(), Vec::new());
         loop {
             if self.is_kw(kw::GRANT) {
                 privileges.push(self.privilege_definition()?);
@@ -70,12 +65,27 @@ impl Parser {
                 domains.push(self.domain_definition()?);
             } else if matches!(self.peek_at(1), Tok::KeyWord(kw::ASSERTION)) {
                 assertions.push(self.assertion_definition()?);
+            } else if self.next_is_trigger() {
+                triggers.push(self.trigger_definition()?);
             } else {
                 tables.push(self.table_definition()?);
             }
         }
         self.end()?;
-        Ok(Schema { catalog, name, auth, collations, sequences, types, domains, assertions, tables, views, privileges })
+        Ok(Schema { catalog, name, auth, collations, sequences, types, domains, assertions, tables, views, privileges, triggers })
+    }
+
+    /// [§11.1] `<schema character set specification>` ::= DEFAULT
+    /// CHARACTER SET `<character set specification>`, if written. SQL_TEXT's
+    /// is taken.
+    fn schema_character_set(&mut self) -> Result<()> {
+        if !self.accept_kw(kw::DEFAULT) {
+            return Ok(());
+        }
+        if !self.is_kw(kw::CHARACTER) {
+            return Err(self.syntax("expected CHARACTER SET"));
+        }
+        self.character_set_clause()
     }
 
     /// [ISO/IEC 9075:1992 §5.4] `<schema name>` ::= \[`<catalog name>` .\]
@@ -110,8 +120,9 @@ impl Parser {
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1] A `<table definition>`, a
     /// `<view definition>`, a `<domain definition>`, an `<alter domain
-    /// statement>`, an `<assertion definition>`, a `<grant statement>` or a
-    /// `<revoke statement>`, on its own: with its text.
+    /// statement>`, an `<assertion definition>`, a `<grant statement>`, a
+    /// `<revoke statement>` or [ISO/IEC 9075-2:2023 §11.49] a `<trigger
+    /// definition>`, on its own: with its text.
     pub(super) fn schema_statement(&mut self) -> Result<SqlStatement> {
         let start = self.here();
         let statement = if self.is_kw(kw::GRANT) {
@@ -136,6 +147,8 @@ impl Parser {
             SchemaStatement::Sequence(self.sequence_definition()?)
         } else if self.next_is_type() {
             SchemaStatement::Type(self.type_definition()?)
+        } else if self.next_is_trigger() {
+            SchemaStatement::Trigger(self.trigger_definition()?)
         } else {
             SchemaStatement::Table(self.table_definition()?)
         };
@@ -372,7 +385,7 @@ impl Parser {
     /// `<action>` ::= SELECT | DELETE | INSERT \[(`<privilege column
     /// list>`)\] | UPDATE \[(`<grant column list>`)\] | REFERENCES
     /// \[(`<privilege column list>`)\] | USAGE [ISO/IEC 9075:1992 §10.3] |
-    /// EXECUTE | UNDER [ISO/IEC 9075-2:2023 §12.3]
+    /// EXECUTE | UNDER | TRIGGER [ISO/IEC 9075-2:2023 §12.3]
     fn action(&mut self) -> Result<Action> {
         for (word, action) in
             [(kw::SELECT, Action::Select), (kw::DELETE, Action::Delete), (kw::USAGE, Action::Usage), (kw::EXECUTE, Action::Execute)]
@@ -383,6 +396,9 @@ impl Parser {
         }
         if self.accept_word("UNDER") {
             return Ok(Action::Under);
+        }
+        if self.accept_word("TRIGGER") {
+            return Ok(Action::Trigger);
         }
         let made = if self.accept_kw(kw::INSERT) {
             Action::Insert

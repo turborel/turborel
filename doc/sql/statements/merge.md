@@ -60,6 +60,13 @@ or inserts. Generated columns are computed again from each row as
 changed, and identity columns get their generators' next values as
 INSERT gives them.
 
+The target's triggers run as [CREATE TRIGGER](create-trigger.md) says,
+clause by clause: each clause runs the BEFORE triggers of its event on
+its own rows before it changes them, a statement trigger once for the
+statement whatever clauses share its event, and the AFTER triggers run
+at the end of the statement over the rows of every clause. A MERGE into
+a view with an INSTEAD OF trigger is refused (SQLCODE -900).
+
 A MERGE whose source has no row completes with no data. One whose source
 has rows completes, however many it changes. Its row count is of the rows
 read, not of those changed. With WHEN MATCHED clauses alone it is the
@@ -174,4 +181,4 @@ implementation's own (RULES.md D29), as is TB911. See
 ## SEE ALSO
 
 [INSERT](insert.md), [UPDATE](update.md), [DELETE](delete.md),
-[CREATE VIEW](create-view.md)
+[CREATE VIEW](create-view.md), [CREATE TRIGGER](create-trigger.md)

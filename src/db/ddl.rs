@@ -429,7 +429,7 @@ pub(super) fn copy_rows(
                 );
             }
         }
-        effects.inserted(table, next.insert_row(tx, table, &new)?)?;
+        effects.inserted(table, next.insert_row(tx, table, &new)?, &new)?;
     }
     // The table's constraints, those of a column added among them, hold of
     // the rows copied.
@@ -446,8 +446,8 @@ pub(super) fn validate_rows(next: &Arc<State>, tx: &Txn, table: &QualifiedName, 
     let columns: Vec<usize> = (0..desc.columns.len()).collect();
     effects.rewritten(table);
     for read in Arc::clone(next.storage_of(table)?).scan(tx.id, &columns) {
-        let (id, _) = read?;
-        effects.inserted(table, id)?;
+        let (id, row) = read?;
+        effects.inserted(table, id, &row)?;
     }
     next.end_statement(tx, effects)
 }

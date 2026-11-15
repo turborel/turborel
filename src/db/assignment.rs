@@ -164,6 +164,17 @@ pub(super) fn check_targets(
 /// Whether column `c` can be assigned to target `t`, as `type_rule` says.
 fn check_target(c: &OutColumn, t: &ParameterSpecification, params: &Params, type_rule: &str) -> Result<()> {
     let target = declared_type(params, &t.name)?;
+    // [ISO/IEC 9075-2:2023 §9.2 SR2] a new transition variable column is a
+    // site of store assignment.
+    if t.transition {
+        params.check_transition(&t.name)?;
+        if crate::binder::assignable(&target, &c.data_type) {
+            return Ok(());
+        }
+        let msg =
+            format!("[ISO/IEC 9075-2:2023 §9.2 SR2] a {} column cannot be stored in new row column {} ({target})", c.data_type, t.name);
+        return Err(rule(msg));
+    }
     // [ISO/IEC 9075:1992 §9.1 SR2] a character string to a character
     // string, a number to a number: SQL-86's rule that only an exact one go
     // to an exact target is Entry SQL's [§13.3, §13.5, Leveling Rules].
@@ -208,6 +219,12 @@ fn assign_target(
     (null_rule, assign_rule): (&str, &str),
 ) -> Result<Option<SqlState>> {
     let int = |n: i64| Value::Exact(Decimal::new(i128::from(n), 0));
+    // [ISO/IEC 9075-2:2023 §6.4 SR7, §9.2] a new transition variable
+    // column takes the value by store assignment, null too.
+    if spec.transition {
+        params.assign_transition(&spec.name, fetched.clone(), "ISO/IEC 9075-2:2023 §9.2")?;
+        return Ok(None);
+    }
     let target = declared_type(params, &spec.name)?;
     if fetched.is_null() {
         // "If v is the null value, then an indicator shall be specified
@@ -286,9 +303,12 @@ fn indicator_of(m: usize) -> Result<i64> {
 /// The declared type of the parameter `name`. The parser has checked that it
 /// is declared [X3.135-1986 §7.3 SR3]; this reports it if not.
 pub(super) fn declared_type(params: &Params, name: &str) -> Result<DataType> {
+    // [ISO/IEC 9075-2:2023 §11.49 SR10] a triggered action declares no
+    // parameter, so a target there is a new row's column.
     params
         .get(name)
         .map(|p| p.data_type.clone())
+        .or_else(|| params.transition_type(name))
         .ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[X3.135-1986 §7.3 SR3] parameter {name} is not declared")))
 }
 

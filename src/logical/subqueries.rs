@@ -125,7 +125,8 @@ impl LogicalPlan {
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Sort { .. }
             | LogicalPlan::Recursive { .. }
-            | LogicalPlan::WorkTable { .. } => {}
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => {}
         }
         out
     }

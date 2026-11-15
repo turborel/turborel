@@ -276,6 +276,16 @@ fn named_in_from<'a>(
     }
 }
 
+/// Adds to `out` the `<table name>`s the `<table reference>`s `from` and
+/// their subqueries name, as written.
+pub fn from_table_names<'a>(from: &'a [TableReference], out: &mut Vec<&'a TableName>) {
+    let mut subqueries = Vec::new();
+    named_in_from(from, &[], &mut |t, _| out.push(&t.table), &mut subqueries);
+    for s in subqueries {
+        s.query.table_names(out);
+    }
+}
+
 impl WithQuery {
     /// `QueryExpression::named_in` of its elements and body, each with the
     /// query names in scope there besides `scope`'s [ISO/IEC 9075-2:2023

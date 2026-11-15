@@ -16,7 +16,7 @@ use crate::ast::{
     ColumnName, InsertSource, InsertStatement, Overriding, QueryExpression, RowElement, SelectList, SelectSublist, TableName,
 };
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
-use crate::catalog::{Actions, ColumnDesc, QualifiedName, TableDesc};
+use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc};
 use crate::error::{At, Result};
 use crate::exec::{HeldRows, Runner, Subqueries, eval_cond, execute, row_entries};
 use crate::logical::{Expr, LogicalPlan, Truth, filled, filled_cond, filled_expr};
@@ -198,7 +198,7 @@ impl Session {
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
         let (target, query) = self.insert_bound(st, stmt, params, keeping)?;
-        let mut rows = if let Some(logical) = query {
+        let rows = if let Some(logical) = query {
             query_rows(cx, &target, logical)?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
@@ -207,14 +207,17 @@ impl Session {
             one.push(target.candidate(st, Row::new(), &Runner::new(st, tx.id))?)?;
             one
         };
-        // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted.
-        if rows.is_empty() {
+        let mut effects = self.effects(st);
+        // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted, though its
+        // statement-level triggers execute [ISO/IEC 9075-2:2023 §4.46.2].
+        if rows.is_empty() && effects.triggered.is_none() {
             return Ok(0);
         }
         self.settle_cursors(st, &target.name);
-        let mut effects = self.effects(st);
+        // [ISO/IEC 9075-2:2023 §15.11 GR4] its BEFORE triggers first.
+        let mut rows = effects.before_insert(cx, &target.name, rows)?;
         rows.visit(&mut |row| {
-            effects.inserted(&target.name, st.insert_row(tx, &target.name, row)?) // [X3.135-1986 §8.7 GR1c]
+            effects.inserted(&target.name, st.insert_row(tx, &target.name, row)?, row) // [X3.135-1986 §8.7 GR1c]
         })?;
         if !target.checks.is_empty() {
             let runner = Runner::new(st, tx.id);
@@ -241,7 +244,7 @@ impl Session {
         }
         let kept = keeping.map(|_| params.keeping());
         let binding = kept.as_ref().unwrap_or(params);
-        let target = self.insert_target(st, stmt, binding.noted())?;
+        let target = self.insert_target(st, stmt, (binding.noted(), binding.horizon()))?;
         let query = match &stmt.source {
             InsertSource::Query(query) => Some(self.insert_query(st, &target, query, binding)?),
             InsertSource::DefaultValues => None,
@@ -255,12 +258,18 @@ impl Session {
     /// not read-only, and its object columns: through an updatable view,
     /// its base table's [X3.135-1986 §6.5 GR2]. A view's read of the
     /// statement's instant is noted in `noted`, if given (`Clocked`).
-    pub(super) fn insert_target(&self, st: &State, stmt: &InsertStatement, noted: Option<&Cell<bool>>) -> Result<Target> {
+    pub(super) fn insert_target(
+        &self,
+        st: &State,
+        stmt: &InsertStatement,
+        (noted, horizon): (Option<&Cell<bool>>, &Horizon),
+    ) -> Result<Target> {
         let into = InsertInto {
             table: &stmt.table,
             columns: stmt.columns.as_deref(),
             given: (Inserted::Source(&stmt.source), stmt.overriding),
             rules: &INSERT_RULES,
+            horizon,
         };
         self.insert_target_of(st, &into, noted)
     }
@@ -269,29 +278,7 @@ impl Session {
     /// columns, as `insert_target` gives them, of an INSERT or of a
     /// MERGE's WHEN NOT MATCHED clause, each citing its own rules.
     pub(super) fn insert_target_of(&self, st: &State, into: &InsertInto<'_>, noted: Option<&Cell<bool>>) -> Result<Target> {
-        let (held, rules) = (self.auth(), into.rules);
-        let auth = held.as_str();
-        let name = qualify(into.table, &self.default_schema());
-        let target = binder::write_target(st, &name, (rules.read_only, auth), noted).or_at(into.table.at)?;
-        let desc = &target.named;
-        let object: Vec<usize> = match into.columns {
-            None => (0..desc.columns.len()).collect(),
-            Some(list) => object_columns(&name, desc, list, rules)?,
-        };
-        // [ISO/IEC 9075:1992 §13.8 AR1; ISO/IEC 9075-2:2023 §14.12 AR1b
-        // iii] INSERT on each column named, or on each of the table's.
-        let needed = Actions { insert: object.iter().copied().collect(), ..Actions::default() };
-        binder::require(st, auth, desc, &needed, rules.privilege).or_at(into.table.at)?;
-        // [X3.135-1986 §8.7 GR1a] the candidate row is one of the base table.
-        let object: Vec<usize> = object.iter().filter_map(|&i| target.map.get(i).copied()).collect();
-        let defaults = default_row(&target.base, auth, self.now.get())?;
-        // [ISO/IEC 9075-2:2023 §14.11 SR12, SR13, §14.12 SR18f, SR18h] its
-        // identity column and generated columns given values only as its
-        // override says.
-        let draws = check_override(&target.base, &object, into.given).or_at(into.table.at)?;
-        let generating = Generating::of(st, &target.base, draws)?;
-        let table = target.base.name.clone();
-        Ok(Target { name: table, desc: target.base, object, checks: target.checks, defaults, generating })
+        insert_target_in(st, into, (&self.auth(), &self.default_schema(), self.now.get()), noted)
     }
 
     /// [X3.135-1986 §8.7 SR5, SR6] The `<query expression>` `query` of an
@@ -345,6 +332,10 @@ pub(super) struct InsertInto<'a> {
     pub(super) columns: Option<&'a [ColumnName]>,
     pub(super) given: (Inserted<'a>, Option<Overriding>),
     pub(super) rules: &'a InsertRules,
+    /// The columns seen of the table without a column list: a triggered
+    /// action's, as they were when its trigger was defined [ISO/IEC
+    /// 9075-2:2023 §11.21 GR2, Note 561].
+    pub(super) horizon: &'a Horizon,
 }
 
 /// The rules an insert cites, each in full: of a read-only table, of a
@@ -358,7 +349,7 @@ pub(super) struct InsertRules {
 }
 
 /// [X3.135-1986 §8.7 SR1 to SR3] The rules of an INSERT.
-const INSERT_RULES: InsertRules = InsertRules {
+pub(super) const INSERT_RULES: InsertRules = InsertRules {
     read_only: "X3.135-1986 §8.7 SR2",
     missing: "X3.135-1986 §8.7 SR3",
     twice: "X3.135-1986 §8.7 SR3",
@@ -434,9 +425,10 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
 /// [X3.135-1986 §8.12] the searched UPDATE bound as `w`: the rows it
 /// updated [ISO/IEC 9075:1992 §18.1 GR1e], none for no data [X3.135-1986
 /// §7.3 GR3a iv].
-pub(super) fn update_searched(StatementContext { st, tx }: StatementContext<'_>, w: Written, mut effects: Effects<'_>) -> Result<usize> {
+pub(super) fn update_searched(cx: StatementContext<'_>, w: Written, mut effects: Effects<'_>) -> Result<usize> {
+    let StatementContext { st, tx } = cx;
     let (w, objects) = object_rows(st, tx, w)?;
-    if objects.is_empty() {
+    if objects.is_empty() && effects.triggered.is_none() {
         return Ok(0);
     }
     let columns = set_columns(&w);
@@ -449,6 +441,8 @@ pub(super) fn update_searched(StatementContext { st, tx }: StatementContext<'_>,
         let new = candidate(&w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", &runner))?;
         changes.push((id, old, new))?;
     }
+    // [ISO/IEC 9075-2:2023 §15.14 GR5] its BEFORE triggers first.
+    let mut changes = effects.before_update(cx, (&w.bound.table, &columns), changes)?;
     // A row another transaction changed is written in the version it
     // committed, if it is still one to change, its values computed from it.
     let mut again: HashMap<RowId, Option<Row>> = HashMap::new();
@@ -464,7 +458,7 @@ pub(super) fn update_searched(StatementContext { st, tx }: StatementContext<'_>,
         };
         match st.rewrite_row(tx, (&w.bound.table, *id), Some(new), &mut recheck)? {
             Some(old) => {
-                effects.updated(&w.bound.table, *id, old, &columns)?;
+                effects.updated(&w.bound.table, *id, (old, recomputed.as_ref().unwrap_or(new)), &columns)?;
                 if let Some(row) = recomputed {
                     again.insert(*id, Some(row));
                 }
@@ -490,11 +484,14 @@ pub(super) fn update_searched(StatementContext { st, tx }: StatementContext<'_>,
 /// [X3.135-1986 §8.5] the searched DELETE bound as `w`: the rows it
 /// deleted [ISO/IEC 9075:1992 §18.1 GR1e], none for no data [X3.135-1986
 /// §7.3 GR3a iv].
-pub(super) fn delete_searched(StatementContext { st, tx }: StatementContext<'_>, w: Written, mut effects: Effects<'_>) -> Result<usize> {
-    let (w, objects) = object_rows(st, tx, w)?;
-    if objects.is_empty() {
+pub(super) fn delete_searched(cx: StatementContext<'_>, w: Written, mut effects: Effects<'_>) -> Result<usize> {
+    let StatementContext { st, tx } = cx;
+    let (w, mut objects) = object_rows(st, tx, w)?;
+    if objects.is_empty() && effects.triggered.is_none() {
         return Ok(0);
     }
+    // [ISO/IEC 9075-2:2023 §15.8 GR2] its BEFORE triggers first.
+    effects.before_delete(cx, &w.bound.table, &mut objects)?;
     let runner = Runner::new(st, tx.id);
     let mut count = 0_usize;
     for object in objects {
@@ -529,4 +526,37 @@ fn degree_at(query: &QueryExpression, m: usize) -> Option<usize> {
         }
         QueryExpression::SetOp(_) | QueryExpression::With(_) | QueryExpression::Ordered(_) => None,
     }
+}
+
+/// The table `into` inserts into, as `Session::insert_target_of` gives
+/// it, of a statement run under `auth`, its unqualified names in `schema`,
+/// its defaults those of `now`.
+pub(super) fn insert_target_in(
+    st: &State,
+    into: &InsertInto<'_>,
+    (auth, schema, now): (&str, &str, Now),
+    noted: Option<&Cell<bool>>,
+) -> Result<Target> {
+    let rules = into.rules;
+    let name = qualify(into.table, schema);
+    let target = binder::write_target(st, &name, (rules.read_only, auth), noted).or_at(into.table.at)?;
+    let desc = &target.named;
+    let object: Vec<usize> = match into.columns {
+        None => (0..into.horizon.width(&name).map_or(desc.columns.len(), |w| w.min(desc.columns.len()))).collect(),
+        Some(list) => object_columns(&name, desc, list, rules)?,
+    };
+    // [ISO/IEC 9075:1992 §13.8 AR1; ISO/IEC 9075-2:2023 §14.12 AR1b
+    // iii] INSERT on each column named, or on each of the table's.
+    let needed = Actions { insert: object.iter().copied().collect(), ..Actions::default() };
+    binder::require(st, auth, desc, &needed, rules.privilege).or_at(into.table.at)?;
+    // [X3.135-1986 §8.7 GR1a] the candidate row is one of the base table.
+    let object: Vec<usize> = object.iter().filter_map(|&i| target.map.get(i).copied()).collect();
+    let defaults = default_row(&target.base, auth, now)?;
+    // [ISO/IEC 9075-2:2023 §14.11 SR12, SR13, §14.12 SR18f, SR18h] its
+    // identity column and generated columns given values only as its
+    // override says.
+    let draws = check_override(&target.base, &object, into.given).or_at(into.table.at)?;
+    let generating = Generating::of(st, &target.base, draws)?;
+    let table = target.base.name.clone();
+    Ok(Target { name: table, desc: target.base, object, checks: target.checks, defaults, generating })
 }

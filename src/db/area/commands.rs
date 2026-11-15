@@ -39,6 +39,8 @@ pub(in crate::db) const ALLOCATE_DESCRIPTOR: Command = command("ALLOCATE DESCRIP
 pub(in crate::db) const ALTER_DOMAIN: Command = command("ALTER DOMAIN", 3);
 /// `<alter table statement>`.
 pub(in crate::db) const ALTER_TABLE: Command = command("ALTER TABLE", 4);
+/// `<trigger definition>` [ISO/IEC 9075-2:2023 Table 39].
+pub(in crate::db) const CREATE_TRIGGER: Command = command("CREATE TRIGGER", 80);
 /// `<assertion definition>`.
 pub(in crate::db) const CREATE_ASSERTION: Command = command("CREATE ASSERTION", 6);
 /// `<close statement>`.
@@ -69,6 +71,8 @@ pub(in crate::db) const CREATE_DOMAIN: Command = command("CREATE DOMAIN", 23);
 pub(in crate::db) const DROP_ASSERTION: Command = command("DROP ASSERTION", 24);
 /// `<drop collation statement>`.
 pub(in crate::db) const DROP_COLLATION: Command = command("DROP COLLATION", 26);
+/// `<drop trigger statement>` [ISO/IEC 9075-2:2023 Table 39].
+pub(in crate::db) const DROP_TRIGGER: Command = command("DROP TRIGGER", 34);
 /// `<drop domain statement>`.
 pub(in crate::db) const DROP_DOMAIN: Command = command("DROP DOMAIN", 27);
 /// `<drop schema statement>`.

@@ -74,7 +74,8 @@ impl Rule for PushFilterIntoOuterJoin {
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
-            | LogicalPlan::WorkTable { .. } => None,
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => None,
         }
     }
 }

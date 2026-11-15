@@ -197,9 +197,13 @@ impl State {
                 return Err(api("[DESIGN] not a column action"));
             }
         };
-        // [§11.15 SR4] the assertions that refer to a column dropped.
+        // [§11.15 SR4] the assertions that refer to a column dropped;
+        // [ISO/IEC 9075-2:2023 §11.23 SR7e, GR1] the triggers.
         let asserting = if let (AlterAction::DropColumn { behavior, .. }, Reshape::Remove(at)) = (action, reshape) {
-            self.drop_column_asserting(&desc, at, *behavior == DropBehavior::Cascade)?
+            let cascade = *behavior == DropBehavior::Cascade;
+            let mut asserting = self.drop_column_asserting(&desc, at, cascade)?;
+            asserting.absorb(self.drop_column_triggering(&desc, at, cascade)?);
+            asserting
         } else {
             Dropped::default()
         };
@@ -243,7 +247,7 @@ impl State {
         }
         self.catalog = Arc::from(catalog);
         self.rebind_checks(qn)?;
-        self.alter_views(qn, reshape, action)?;
+        dropped.absorb(self.alter_views(qn, reshape, action)?);
         self.alter_privileges(qn, desc, reshape);
         let built = Made {
             storage: Some(storage),
@@ -368,9 +372,10 @@ impl State {
     /// The views over `table` once it is altered: each must bind as before
     /// [§11.11 GR2, note]; after a DROP COLUMN, one that does not refers
     /// to the column, and is dropped with the views over it if CASCADE,
-    /// else refused [§11.15 SR4, GR2]. An updatable view's columns are
-    /// moved with the table's.
-    fn alter_views(&mut self, table: &QualifiedName, reshape: Reshape, action: &AlterAction) -> Result<()> {
+    /// else refused [§11.15 SR4, GR2], with the triggers on or naming
+    /// them [ISO/IEC 9075-2:2023 §11.33 GR3b v]. An updatable view's
+    /// columns are moved with the table's. What was taken away.
+    fn alter_views(&mut self, table: &QualifiedName, reshape: Reshape, action: &AlterAction) -> Result<Dropped> {
         let over = self.views_reading(table);
         let views: Vec<ViewDesc> = over.iter().filter_map(|v| self.catalog.view(v).cloned()).collect();
         let mut broken = Vec::new();
@@ -379,7 +384,7 @@ impl State {
                 broken.push(view.name.clone());
             }
         }
-        let Some(first) = broken.first() else { return self.move_view_columns(&views, table, reshape) };
+        let Some(first) = broken.first() else { return self.move_view_columns(&views, table, reshape).map(|()| Dropped::default()) };
         let AlterAction::DropColumn { behavior: DropBehavior::Cascade, .. } = action else {
             return Err(match action {
                 AlterAction::AddColumn(def) => api(format!("[DESIGN] view {first} binds otherwise once {} is added to {table}", def.name)),
@@ -404,8 +409,10 @@ impl State {
             catalog.revoke_all(view);
         }
         self.catalog = Arc::from(catalog);
+        let dropped = self.drop_triggering(&gone.iter().collect::<Vec<_>>(), (true, false))?;
         let kept: Vec<ViewDesc> = views.into_iter().filter(|v| !gone.contains(&v.name)).collect();
-        self.move_view_columns(&kept, table, reshape)
+        self.move_view_columns(&kept, table, reshape)?;
+        Ok(dropped)
     }
 
     /// The columns of `table` the updatable views of `views` are, moved.

@@ -2,7 +2,9 @@
 //! statements, in a transaction: `<alter table statement>` [§11.10],
 //! `<drop schema statement>` [§11.2], `<drop table statement>` [§11.18],
 //! `<drop view statement>` [§11.20], `<drop domain statement>` [§11.27]
-//! and `<drop assertion statement>` [§11.35]; and the index statements and
+//! and `<drop assertion statement>` [§11.35]; ISO/IEC 9075-2:2023's
+//! `<trigger definition>` [§11.49] and `<drop trigger statement>` [§11.50]
+//! (`parser/triggers.rs`); and the index statements and
 //! table storage clauses of this implementation (RULES.md D41, D48), in
 //! the standard's notation:
 //!
@@ -28,21 +30,24 @@ use crate::lexer::{Tok, delim, kw};
 /// seals a table's rows again (RULES.md D48).
 pub const RESEAL: &str = "RESEAL";
 
+/// The key words after CREATE that begin a definition `schema_statement`
+/// reads.
+const DEFINED: [&str; 7] = [kw::TABLE, kw::VIEW, kw::GLOBAL, kw::LOCAL, kw::DOMAIN, kw::ASSERTION, kw::COLLATION];
+
 /// What the log writes for columns of a collation dropped.
 pub const REVERT_COLLATION: &str = "REVERT_COLLATION";
 
 impl Parser {
     /// An SQL-schema statement: CREATE TABLE, VIEW, DOMAIN, ASSERTION,
-    /// COLLATION or SEQUENCE, CREATE GLOBAL or LOCAL TEMPORARY TABLE, or
+    /// COLLATION, SEQUENCE or TRIGGER, CREATE GLOBAL or LOCAL TEMPORARY TABLE, or
     /// ALTER DOMAIN or SEQUENCE (`parser/schema.rs`); ALTER TABLE; DROP
-    /// SCHEMA, TABLE, VIEW, DOMAIN, ASSERTION, COLLATION or SEQUENCE; CREATE
+    /// SCHEMA, TABLE, VIEW, DOMAIN, ASSERTION, COLLATION, SEQUENCE or TRIGGER; CREATE
     /// or DROP of a character set or translation,
     /// read then refused (`parser/charsets.rs`); or, of this implementation,
     /// CREATE, DROP or ALTER INDEX, CREATE, ALTER or DROP USER, and ALTER
     /// DATABASE (`parser/users.rs`).
     pub(super) fn schema_manipulation(&mut self) -> Result<SqlStatement> {
-        let defines =
-            [kw::TABLE, kw::VIEW, kw::GLOBAL, kw::LOCAL, kw::DOMAIN, kw::ASSERTION, kw::COLLATION].iter().any(|w| self.next_is_kw(w));
+        let defines = DEFINED.iter().any(|w| self.next_is_kw(w)) || self.next_is_trigger();
         let altered = self.next_is_kw(kw::DOMAIN) || self.next_is_sequence();
         if (self.is_kw(kw::CREATE) && (defines || self.next_is_sequence() || self.next_is_type())) || (self.is_kw(kw::ALTER) && altered) {
             return self.schema_statement();
@@ -139,6 +144,9 @@ impl Parser {
         // [§11.35] DROP ASSERTION <constraint name>: no <drop behavior>.
         if self.accept_kw(kw::ASSERTION) {
             return Ok(SqlStatement::Drop { object: DropObject::Assertion(self.table_name()?), behavior: DropBehavior::Restrict });
+        }
+        if let Some(drop) = self.drop_trigger()? {
+            return Ok(drop);
         }
         let object = if self.accept_kw(kw::SCHEMA) {
             let (catalog, name, at) = self.schema_name()?;

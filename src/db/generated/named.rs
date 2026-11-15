@@ -104,7 +104,9 @@ impl State {
                 columns.dedup();
                 columns
             }
-            DropTarget::Table(_) | DropTarget::View(_) | DropTarget::Assertion(_) | DropTarget::Sequence(_) => Vec::new(),
+            DropTarget::Table(_) | DropTarget::View(_) | DropTarget::Assertion(_) | DropTarget::Sequence(_) | DropTarget::Trigger(_) => {
+                Vec::new()
+            }
         }
     }
 

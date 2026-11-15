@@ -21,6 +21,9 @@ pub struct Subject {
     /// Whether the constraint is an assertion, which GR3j iv shows to its
     /// schema's owner alone.
     pub assertion: bool,
+    /// [ISO/IEC 9075-2:2023 §23.1 GR4g] The trigger whose triggered action
+    /// failed, of a triggered action exception.
+    pub trigger: Option<(String, String)>,
 }
 
 impl Subject {
@@ -42,6 +45,12 @@ impl Subject {
     /// The table or view `table` \[GR3g, GR3i\].
     pub fn table(table: (String, String)) -> Subject {
         Subject { table: Some(table), ..Subject::default() }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §23.1 GR4g] The trigger `trigger` of the table
+    /// `table`.
+    pub fn trigger(trigger: (String, String), table: (String, String)) -> Subject {
+        Subject { trigger: Some(trigger), table: Some(table), ..Subject::default() }
     }
 
     /// The cursor `name` \[GR3h\].

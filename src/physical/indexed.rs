@@ -256,7 +256,8 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::System { .. }
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::Unnest(..)
-            | LogicalPlan::WorkTable { .. } => None,
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => None,
         }
     }
 
@@ -295,7 +296,8 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
-            | LogicalPlan::WorkTable { .. } => None,
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => None,
         }
     }
 
@@ -323,7 +325,8 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
-            | LogicalPlan::WorkTable { .. } => None,
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => None,
         }
     }
 }
@@ -380,7 +383,8 @@ fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => None,
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => None,
     }
 }
 
@@ -429,7 +433,8 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
         | LogicalPlan::Recognize(..)
-        | LogicalPlan::WorkTable { .. } => None,
+        | LogicalPlan::WorkTable { .. }
+        | LogicalPlan::Transition { .. } => None,
     }
 }
 

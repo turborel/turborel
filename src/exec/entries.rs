@@ -141,7 +141,8 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. }) => Err(broken(&format!("not a table access: {other:?}"))),
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. }) => Err(broken(&format!("not a table access: {other:?}"))),
     }
 }
 

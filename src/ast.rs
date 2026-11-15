@@ -42,6 +42,7 @@ mod schema;
 mod search_cycle;
 mod sequences;
 mod set_functions;
+mod triggers;
 mod user_types;
 mod users;
 mod window;
@@ -70,7 +71,7 @@ pub use query::{
     Correspondence, CursorSpecification, DerivedTable, GroupBy, GroupingColumn, GroupingElement, JoinKind, JoinSpecification, JoinedTable,
     NamedTable, Partitioning, QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation,
     SetOperator, SortColumn, SortSpecification, TableExpression, TableReference, UnnestTable, Updatability, ValuesRow, WithElement,
-    WithQuery,
+    WithQuery, from_table_names,
 };
 
 pub use schema::{
@@ -83,6 +84,7 @@ pub use schema::{
 pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
 pub use set_functions::{Listagg, Overflow, SetArg, SetFunctionSpecification};
+pub use triggers::{ActionTime, Referencing, TriggerDefinition, TriggerEvent, TriggerLevel};
 pub use user_types::{TypeDefinition, TypeOption};
 pub use users::UserStatement;
 pub use window::{
@@ -180,6 +182,10 @@ pub struct ParameterSpecification {
     pub name: String,
     /// The `<indicator parameter>`'s name, if written.
     pub indicator: Option<String>,
+    /// [ISO/IEC 9075-2:2023 §6.4 SR7, §6.6 SR13] Whether it is a new
+    /// transition variable column reference of a BEFORE trigger: `name` is
+    /// then the column of the new row it assigns.
+    pub transition: bool,
     /// Where it begins in the statement: a character offset, for the
     /// positions of errors (`SqlError::or_at`).
     pub at: usize,

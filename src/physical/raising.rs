@@ -11,7 +11,7 @@ impl Plan {
     /// failure, not the statement's.
     pub fn can_raise(&self) -> bool {
         match self {
-            Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::WorkTable { .. } => false,
+            Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::WorkTable { .. } | Plan::Transition { .. } => false,
             // Past EXECUTOR.MAX_ITERATIONS a recursive query is refused,
             // a system table may fail to make its rows, and a count not a
             // row count raises [ISO/IEC 9075-2:2023 §7.17 GR6b, GR7c].

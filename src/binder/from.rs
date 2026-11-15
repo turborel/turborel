@@ -268,6 +268,10 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
     if let Some(query) = with::query_item(b, t, offset)? {
         return Ok(query);
     }
+    // [ISO/IEC 9075-2:2023 §7.6 SR6] nor does a transition table name.
+    if let Some(transition) = super::triggers::transition_item(&b, t, offset) {
+        return Ok(transition);
+    }
     let cx = b.cx;
     let name = qualify(&t.table, cx.schema);
     let Named { desc, source } = named(cx.db, &name, Reader::of(&cx)).map_err(|e| SqlError { pos: None, ..e })?;
@@ -280,7 +284,9 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
         // [ISO/IEC 9075:1992 §21.1] SELECT on a system table is PUBLIC's.
         require(cx.db, cx.auth, &desc, &Actions { select: true, ..Actions::default() }, b.clause)?;
     }
-    let (mut desc, source) = seen(cx.horizon, &name, (desc, source));
+    // A triggered action's statement sees what its trigger saw.
+    let horizon = if cx.params.transitions().is_some() { cx.params.horizon() } else { cx.horizon };
+    let (mut desc, source) = seen(horizon, &name, (desc, source));
     if let Some(names) = &t.columns {
         renamed(&mut desc.columns, names)?;
     }

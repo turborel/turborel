@@ -23,6 +23,14 @@ as it says: refuses the delete, deletes or changes the rows that refer
 to it, or sets their columns null or to their defaults. A DELETE that
 deletes no row completes with no data.
 
+The table's triggers run as [CREATE TRIGGER](create-trigger.md) says:
+its BEFORE triggers once the rows are found, before any is deleted, its AFTER triggers at the end of the
+statement. A view with an INSTEAD OF trigger of the statement's event
+runs it in place of the change, and nothing is written through the view:
+its row count is of the rows the trigger was given. The
+rows a referential action deletes or changes run their own table's
+triggers too.
+
 The positioned form, WHERE CURRENT OF a cursor, runs only in a program
 that embeds turborel; see [DECLARE CURSOR](declare-cursor.md), and, of a
 cursor named by an extended name, [ALLOCATE CURSOR](allocate-cursor.md).
@@ -90,4 +98,4 @@ implementation's own.
 ## SEE ALSO
 
 [INSERT](insert.md), [UPDATE](update.md), [DROP TABLE](drop-table.md),
-[Constraints](../../user/07-constraints.md)
+[CREATE TRIGGER](create-trigger.md), [Constraints](../../user/07-constraints.md)

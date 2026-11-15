@@ -78,7 +78,8 @@ pub fn map_plan_exprs(plan: LogicalPlan, f: &mut dyn FnMut(Expr) -> Expr) -> Log
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::Recursive { .. }
-        | LogicalPlan::WorkTable { .. }) => other,
+        | LogicalPlan::WorkTable { .. }
+        | LogicalPlan::Transition { .. }) => other,
     };
     node.map_inputs(|p| map_plan_exprs(p, f))
 }
@@ -103,7 +104,8 @@ fn plan_can_raise(plan: &LogicalPlan) -> bool {
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. }
-        | LogicalPlan::WorkTable { .. } => false,
+        | LogicalPlan::WorkTable { .. }
+        | LogicalPlan::Transition { .. } => false,
     };
     own || plan.inputs().any(plan_can_raise)
 }
@@ -180,7 +182,8 @@ pub fn plan_has_outer(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::Recursive { .. }
-        | LogicalPlan::WorkTable { .. } => false,
+        | LogicalPlan::WorkTable { .. }
+        | LogicalPlan::Transition { .. } => false,
     };
     own || plan.inputs().any(plan_has_outer)
 }

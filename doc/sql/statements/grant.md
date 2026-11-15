@@ -21,6 +21,7 @@ GRANT: give privileges
     | INSERT [ ( <column name list> ) ]
     | UPDATE [ ( <column name list> ) ]
     | REFERENCES [ ( <column name list> ) ]
+    | TRIGGER
     | USAGE
     | EXECUTE
 
@@ -49,6 +50,7 @@ or a function a distinct type's definition made:
 | UPDATE | update the table; on columns, set only those columns |
 | DELETE | delete rows |
 | REFERENCES | name the table, or the columns, in a constraint: a foreign key that references them, a CHECK or an assertion that reads them |
+| TRIGGER | define a trigger on the table, in a schema of its own (see [CREATE TRIGGER](create-trigger.md)) |
 | USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR; use the distinct type: name it as a column's type or a CAST's |
 | EXECUTE | invoke the function, by name or by a CAST to or from its distinct type |
 
@@ -62,7 +64,10 @@ PUBLIC is every authorization identifier, present and to come.
 
 The privileges granted are those its user holds with grant option: the
 owner of the object's schema holds every privilege on a base table
-with grant option, and those of a view as the tables below give them.
+with grant option, and those of a view as the tables below give them,
+with TRIGGER on its own views too, but without grant option. An INSTEAD
+OF trigger gives the owner of its schema the privilege of its event on
+its view, with grant option.
 A privilege it does not hold with grant option is not granted, and the
 statement completes with the warning SQLSTATE 01007. WITH GRANT OPTION
 lets the grantees grant the privileges in turn.

@@ -66,7 +66,7 @@ impl Parser {
         if !self.params.contains(&name) {
             return Err(Self::rule_at(at, format!("[X3.135-1986 §7.3 SR3] parameter {name} is not declared")));
         }
-        Ok(ParameterSpecification { name, indicator: None, at })
+        Ok(ParameterSpecification { name, indicator: None, at, transition: false })
     }
 
     /// [§6.2] `<simple value specification>` ::= `<parameter name>` |

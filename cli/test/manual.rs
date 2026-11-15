@@ -333,3 +333,15 @@ fn the_distinct_type_examples_run_as_printed() {
         assert!(ann.page(page) > 0, "{page} shows its examples' output");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8: the examples of CREATE TRIGGER,
+/// then those of DROP TRIGGER, run as printed, as ANN.
+#[test]
+fn the_trigger_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    for page in ["sql/statements/create-trigger.md", "sql/statements/drop-trigger.md"] {
+        assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+}

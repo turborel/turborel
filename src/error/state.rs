@@ -34,6 +34,9 @@ impl SqlState {
     /// Warning: query expression too long for information schema [ISO/IEC
     /// 9075:1992 §11.19 GR13].
     pub const QUERY_EXPRESSION_TOO_LONG: SqlState = SqlState("0100A");
+    /// Warning: statement too long for information schema [ISO/IEC
+    /// 9075-2:2023 §11.49 GR4].
+    pub const STATEMENT_TOO_LONG: SqlState = SqlState("0100F");
     /// Warning: string data, right truncation [ISO/IEC 9075:1992 §9.1
     /// GR3b, GR3e; §6.10 GR5c ii, GR6c ii; ISO/IEC 9075-2:2023 §9.1 GR7i,
     /// GR7l; §6.13 GR13].
@@ -202,6 +205,12 @@ impl SqlState {
     pub const INTEGRITY_CONSTRAINT_VIOLATION: SqlState = SqlState("23000");
     /// Triggered data change violation.
     pub const TRIGGERED_DATA_CHANGE_VIOLATION: SqlState = SqlState("27000");
+    /// Triggered action exception [ISO/IEC 9075-2:2023 §15.21 GR5b i 1,
+    /// GR6m].
+    pub const TRIGGERED_ACTION_EXCEPTION: SqlState = SqlState("09000");
+    /// Prohibited statement encountered during trigger execution [ISO/IEC
+    /// 9075-2:2023 §15.21 GR6e iii, GR6h].
+    pub const PROHIBITED_STATEMENT_IN_TRIGGER: SqlState = SqlState("0W000");
     /// Invalid cursor state.
     pub const INVALID_CURSOR_STATE: SqlState = SqlState("24000");
     /// Invalid transaction state.

@@ -21,6 +21,7 @@ use crate::catalog::{QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlState, fail, fail_with};
 use crate::exec::{Runner, execute};
 use crate::params::Params;
+use crate::parser::Parser;
 use crate::settings::FUNCTION_CALLS;
 use crate::storage::{Row, RowId};
 use crate::sync::lock_builtin;
@@ -508,10 +509,12 @@ impl Session {
         }
         let runner = Runner::new(st, tx.id);
         let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.9 GR9", &runner))?;
+        let mut effects = self.effects(st);
+        // [ISO/IEC 9075-2:2023 §15.14 GR5] its BEFORE triggers first.
+        let new = effects.before_updated_row(cx, (table, &set_columns(w)), (id, &old, new))?;
         st.update_row(tx, table, id, &new)?;
         check_option(&w.bound.checks, [&new], ("X3.135-1986 §8.11 GR5", &runner))?;
-        let mut effects = self.effects(st);
-        effects.updated(table, id, old, &set_columns(w))?;
+        effects.updated(table, id, (old, &new), &set_columns(w))?;
         st.end_statement(tx, effects)?;
         self.changed_through(cursor, id);
         Ok(Completion::Success)
@@ -524,8 +527,10 @@ impl Session {
         let id = self.positioned_row(cx, cursor, w, "§8.4").or_at(at)?;
         let table = &w.bound.table;
         let old = st.storage_of(table)?.get(tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {table} vanished")))?;
-        st.delete_row(tx, table, id)?;
         let mut effects = self.effects(st);
+        // [ISO/IEC 9075-2:2023 §15.8 GR2] its BEFORE triggers first.
+        effects.before_deleted_row(cx, table, (id, &old))?;
+        st.delete_row(tx, table, id)?;
         effects.deleted(table, id, old)?;
         st.end_statement(tx, effects)?;
         // [X3.135-1986 §4.12] the cursor is now before the next row.
@@ -536,5 +541,32 @@ impl Session {
             u.changed.push(id);
         }
         Ok(Completion::Success)
+    }
+
+    /// [X3.135-1986 §8.3] `<declare cursor>`. In SQL-86 cursors belong to the
+    /// `<module>` [X3.135-1986 §7.1]; here, to the session.
+    ///
+    /// # Errors
+    ///
+    /// The declaration does not parse, or the cursor is already declared.
+    pub fn declare_cursor(&self, sql: &str) -> Result<()> {
+        let call = self.enter()?;
+        let d = Parser::new(sql)?.in_catalog(&call.state().catalog_name()).declare_cursor()?;
+        let mut inner = self.inner.borrow_mut();
+        let name = Name::plain(&d.name);
+        if inner.cursors.contains_key(&name) {
+            return Err(rule(format!("[X3.135-1986 §8.3 SR1] cursor {} is already declared", d.name)));
+        }
+        // [ISO/IEC 9075:1992 §17.12] of a <statement name>: a dynamic cursor.
+        let statement = super::dynamic::declared_statement(&d.specification).map(|s| Name::plain(&s));
+        // Known now only if the text parses without the opening procedure's
+        // parameters; otherwise it is parsed, and any error reported, at OPEN.
+        let parsed = Parser::new(&d.specification).and_then(|p| p.of_definition().cursor_specification()).ok();
+        let updatable = parsed.map(|c| declared_updatable(&c, (d.insensitive, d.scroll))).transpose()?;
+        let (insensitive, scroll) = (d.insensitive, d.scroll);
+        inner
+            .cursors
+            .insert(name, DeclaredCursor { specification: d.specification, insensitive, scroll, updatable, open: None, statement });
+        Ok(())
     }
 }

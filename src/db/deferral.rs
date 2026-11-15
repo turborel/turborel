@@ -30,6 +30,7 @@ impl Session {
         let cursors = Cursored { rows: self.cursor_changes(), conflict: &self.conflict };
         let mut effects = Effects::new(&self.auth(), &self.deferral, cursors, st.list_space());
         effects.now = self.now.get();
+        effects.triggered = super::triggers::Triggered::of(self, st);
         effects
     }
 

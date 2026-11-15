@@ -35,6 +35,7 @@ pub use subquery::{Decorrelated, Subquery, map_plan_exprs, plan_has_outer};
 pub use window::{Bound, Exclusion, Frame, Marker, Nested, Offset, Pick, Units, Valued, Window, WindowCall, WindowKind};
 
 use crate::catalog::QualifiedName;
+use crate::exec::TransitionRows;
 use crate::functions::AggregateRef;
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -266,6 +267,15 @@ pub enum LogicalPlan {
         /// Its columns' display names.
         names: Vec<String>,
     },
+    /// [ISO/IEC 9075-2:2023 §4.46.2, §15.21 GR5a] A transition table a
+    /// triggered action reads: the rows of the state change it is invoked
+    /// for, given as it is (`exec/transition.rs`).
+    Transition {
+        /// Its rows, as given.
+        rows: TransitionRows,
+        /// Its columns' display names.
+        names: Vec<String>,
+    },
     /// [ISO/IEC 9075-2:2023 §7.6 SR8] A `<collection derived table>`
     /// laterally over `input`: for each of its rows, that row and the
     /// elements of its collections side by side, a row for each ordinal
@@ -378,9 +388,11 @@ impl LogicalPlan {
     /// members' queries, given without a list made.
     pub fn inputs(&self) -> impl Iterator<Item = &LogicalPlan> {
         let (first, second, rest): (Option<&LogicalPlan>, Option<&LogicalPlan>, &[LogicalPlan]) = match self {
-            LogicalPlan::Scan { .. } | LogicalPlan::System { .. } | LogicalPlan::Values { .. } | LogicalPlan::WorkTable { .. } => {
-                (None, None, &[])
-            }
+            LogicalPlan::Scan { .. }
+            | LogicalPlan::System { .. }
+            | LogicalPlan::Values { .. }
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => (None, None, &[]),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
                 (Some(left), Some(right), &[])
             }
@@ -404,7 +416,8 @@ impl LogicalPlan {
             LogicalPlan::Scan { names, .. }
             | LogicalPlan::System { names, .. }
             | LogicalPlan::Recursive { names, .. }
-            | LogicalPlan::WorkTable { names, .. } => names.clone(),
+            | LogicalPlan::WorkTable { names, .. }
+            | LogicalPlan::Transition { names, .. } => names.clone(),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => {
                 let mut n = left.names();
                 n.extend(right.names());
@@ -489,7 +502,11 @@ impl LogicalPlan {
     /// place.
     pub fn for_each_input_mut(&mut self, f: &mut dyn FnMut(&mut LogicalPlan)) {
         match self {
-            LogicalPlan::Scan { .. } | LogicalPlan::System { .. } | LogicalPlan::Values { .. } | LogicalPlan::WorkTable { .. } => {}
+            LogicalPlan::Scan { .. }
+            | LogicalPlan::System { .. }
+            | LogicalPlan::Values { .. }
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => {}
             LogicalPlan::Recursive { fixpoint, .. } => fixpoint.for_each_mut(f),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
                 f(left);

@@ -11,7 +11,8 @@ use super::rule;
 /// [X3.135-1986 §6.6 SR1, SR2; ISO/IEC 9075:1992 §10.3 SR4] The
 /// privileges the `<action>`s `list` specify on `table`: INSERT, UPDATE or
 /// REFERENCES on each column of a column list, which are columns of the
-/// table, or on every column without one.
+/// table, or on every column without one; TRIGGER [ISO/IEC 9075-2:2023
+/// §12.3] of the table.
 pub(in crate::db) fn granted_actions(list: &[Action], table: &TableDesc) -> Result<Actions> {
     let mut actions = Actions::default();
     for a in list {
@@ -20,6 +21,7 @@ pub(in crate::db) fn granted_actions(list: &[Action], table: &TableDesc) -> Resu
             Action::Insert(None) => actions.insert.extend(0..table.columns.len()),
             Action::Insert(Some(names)) => actions.insert.extend(columns_of(table, names)?),
             Action::Delete => actions.delete = true,
+            Action::Trigger => actions.trigger = true,
             Action::Update(None) => actions.update.extend(0..table.columns.len()),
             Action::Update(Some(names)) => actions.update.extend(columns_of(table, names)?),
             Action::References(None) => actions.references.extend(0..table.columns.len()),

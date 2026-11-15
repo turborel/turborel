@@ -92,6 +92,10 @@ pub(super) struct Effects<'a> {
     /// The tables whose rows it wrote again whole, or took away at once
     /// (`integrity/rewritten.rs`).
     rewritten: Vec<QualifiedName>,
+    /// [ISO/IEC 9075-2:2023 §4.46.2] Of a session's statement in a catalog
+    /// with triggers, its state changes, and the session that executes the
+    /// triggers they activate (`db/triggers/fire.rs`).
+    pub(super) triggered: Option<super::triggers::Triggered<'a>>,
 }
 
 /// [ISO/IEC 9075:1992 §11.8 GR8] The rows a session changed through each
@@ -119,7 +123,8 @@ impl<'a> Effects<'a> {
     /// what it did held in `space`.
     pub(super) fn new(user: &str, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>, space: ListSpace) -> Effects<'a> {
         let now = crate::value::datetime::Now::default();
-        Effects { done: HeldRows::new(space.clone()), space, user: user.to_string(), now, deferral, cursors, rewritten: Vec::new() }
+        let (done, rewritten) = (HeldRows::new(space.clone()), Vec::new());
+        Effects { done, space, user: user.to_string(), now, deferral, cursors, rewritten, triggered: None }
     }
 
     /// The authorization identifier the statement runs under.
@@ -127,30 +132,43 @@ impl<'a> Effects<'a> {
         &self.user
     }
 
-    /// Row `id` of `table` inserted.
+    /// Row `id` of `table`, `row`, inserted: a transition of its state
+    /// change, if a trigger may read it [ISO/IEC 9075-2:2023 §15.11 GR5].
     ///
     /// # Errors
     ///
     /// The spill area's, SQLCODE -918 if it cannot be reserved.
-    pub(super) fn inserted(&mut self, table: &QualifiedName, id: RowId) -> Result<()> {
+    pub(super) fn inserted(&mut self, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
+        if let Some(t) = &mut self.triggered {
+            t.record(table, &[], (id, Row::new(), row.clone()))?;
+        }
         self.done.push(Effect::Inserted { table: table.clone(), id })
     }
 
-    /// Row `id` of `table` updated from `old`, giving values to `columns`.
+    /// Row `id` of `table` updated from `old` to `new`, giving values to
+    /// `columns`: a transition of its state change, if a trigger may read
+    /// it [ISO/IEC 9075-2:2023 §15.14 GR8].
     ///
     /// # Errors
     ///
     /// As `inserted`.
-    pub(super) fn updated(&mut self, table: &QualifiedName, id: RowId, old: Row, columns: &[usize]) -> Result<()> {
+    pub(super) fn updated(&mut self, table: &QualifiedName, id: RowId, (old, new): (Row, &Row), columns: &[usize]) -> Result<()> {
+        if let Some(t) = &mut self.triggered {
+            t.record(table, columns, (id, old.clone(), new.clone()))?;
+        }
         self.done.push(Effect::Updated { table: table.clone(), id, old, columns: columns.to_vec() })
     }
 
-    /// Row `id` of `table`, `old`, deleted.
+    /// Row `id` of `table`, `old`, deleted: a transition of its state
+    /// change, if a trigger may read it [ISO/IEC 9075-2:2023 §15.8 GR3].
     ///
     /// # Errors
     ///
     /// As `inserted`.
     pub(super) fn deleted(&mut self, table: &QualifiedName, id: RowId, old: Row) -> Result<()> {
+        if let Some(t) = &mut self.triggered {
+            t.record(table, &[], (id, old.clone(), Row::new()))?;
+        }
         self.done.push(Effect::Deleted { table: table.clone(), id, old })
     }
 
@@ -314,12 +332,17 @@ impl State {
         // [ISO/IEC 9075:1992 §4.28] serializable at every level.
         tx.check_reads(true)?;
         let checked = self.checked(tx, effects);
-        checked.and(tx.check_reads(false))
+        let read = tx.check_reads(false);
+        let triggered = checked.and_then(|t| read.map(|()| t))?;
+        // [ISO/IEC 9075-2:2023 §9.17 GR17b] then its AFTER triggers.
+        triggered.map_or(Ok(()), |t| t.after(self, tx))
     }
 
-    /// `end_statement`'s work, its reads checked.
-    fn checked(self: &Arc<Self>, tx: &Txn, mut effects: Effects<'_>) -> Result<()> {
+    /// `end_statement`'s work, its reads checked: what its triggers are
+    /// to read, of a statement whose state changes may activate some.
+    fn checked<'a>(self: &Arc<Self>, tx: &Txn, mut effects: Effects<'a>) -> Result<Option<super::triggers::Triggered<'a>>> {
         self.referential_actions(tx, &mut effects)?;
+        let triggered = effects.triggered.take();
         let whole = effects.whole_assertions(self)?;
         let checks = self.checks(&mut effects)?;
         let (mut deferred, mut wholes) = (HeldRows::new(effects.space.clone()), Vec::new());
@@ -360,7 +383,7 @@ impl State {
             self.end_checking(tx, &mut checking)?;
         }
         effects.deferral.borrow_mut().defer(deferred, wholes);
-        Ok(())
+        Ok(triggered)
     }
 
     /// The constraint `check` checks, if its table still has it.

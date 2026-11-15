@@ -55,7 +55,6 @@ use self::area::commands;
 use crate::binder::OutColumn;
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, SqlState, fail};
-use crate::parser::Parser;
 use crate::settings::{COMMIT_SYNC, LOCKS_TIMEOUT_MS, STATEMENT_TIMEOUT_MS};
 use crate::sync::lock_builtin;
 use crate::txn::{SessionEnd, Stop, TxId, Txn, Window};
@@ -121,6 +120,7 @@ mod stores;
 mod stream;
 mod temporary;
 mod time_zone;
+mod triggers;
 mod truncate;
 mod types;
 mod unnamed;
@@ -283,6 +283,9 @@ pub struct Session {
     /// The instant of the statement running, and the session's time zone
     /// [ISO/IEC 9075:1992 §6.8 GR3, §4.5.1], set as it begins.
     now: Cell<crate::value::datetime::Now>,
+    /// [ISO/IEC 9075-2:2023 §15.21] The triggered actions it is executing,
+    /// and their plans (`db/triggers/run.rs`).
+    triggering: triggers::Triggering,
 }
 
 /// One call on a session: the snapshot it runs against, and the session
@@ -358,6 +361,7 @@ impl Session {
             temporaries: temporary::Temporaries::default(),
             conflict: RefCell::new(None),
             now: Cell::default(),
+            triggering: triggers::Triggering::default(),
         }
     }
 
@@ -531,33 +535,6 @@ impl Session {
         self.db.checkpoint_if_due();
         self.db.maintain_if_due();
         ended
-    }
-
-    /// [X3.135-1986 §8.3] `<declare cursor>`. In SQL-86 cursors belong to the
-    /// `<module>` [X3.135-1986 §7.1]; here, to the session.
-    ///
-    /// # Errors
-    ///
-    /// The declaration does not parse, or the cursor is already declared.
-    pub fn declare_cursor(&self, sql: &str) -> Result<()> {
-        let call = self.enter()?;
-        let d = Parser::new(sql)?.in_catalog(&call.state().catalog_name()).declare_cursor()?;
-        let mut inner = self.inner.borrow_mut();
-        let name = dynamic::Name::plain(&d.name);
-        if inner.cursors.contains_key(&name) {
-            return Err(rule(format!("[X3.135-1986 §8.3 SR1] cursor {} is already declared", d.name)));
-        }
-        // [ISO/IEC 9075:1992 §17.12] of a <statement name>: a dynamic cursor.
-        let statement = dynamic::declared_statement(&d.specification).map(|s| dynamic::Name::plain(&s));
-        // Known now only if the text parses without the opening procedure's
-        // parameters; otherwise it is parsed, and any error reported, at OPEN.
-        let parsed = Parser::new(&d.specification).and_then(|p| p.of_definition().cursor_specification()).ok();
-        let updatable = parsed.map(|c| cursor::declared_updatable(&c, (d.insensitive, d.scroll))).transpose()?;
-        let (insensitive, scroll) = (d.insensitive, d.scroll);
-        inner
-            .cursors
-            .insert(name, DeclaredCursor { specification: d.specification, insensitive, scroll, updatable, open: None, statement });
-        Ok(())
     }
 }
 

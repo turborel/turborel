@@ -23,6 +23,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE SCHEMA](create-schema.md): define a schema
 - [CREATE SEQUENCE](create-sequence.md): define a sequence generator
 - [CREATE TABLE](create-table.md): define a base table
+- [CREATE TRIGGER](create-trigger.md): define a trigger
 - [CREATE TYPE](create-type.md): define a distinct type
 - [CREATE USER](create-user.md): define a user
 - [CREATE VIEW](create-view.md): define a viewed table
@@ -40,6 +41,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP SCHEMA](drop-schema.md): drop a schema
 - [DROP SEQUENCE](drop-sequence.md): drop a sequence generator
 - [DROP TABLE](drop-table.md): drop a base table
+- [DROP TRIGGER](drop-trigger.md): drop a trigger
 - [DROP TYPE](drop-type.md): drop a distinct type
 - [DROP USER](drop-user.md): drop a user
 - [DROP VIEW](drop-view.md): drop a view

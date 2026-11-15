@@ -35,7 +35,7 @@ pub(crate) use kept::{filled_plan, keepable, same_shape};
 
 use crate::catalog::QualifiedName;
 use crate::db::State;
-use crate::exec::WorkRows;
+use crate::exec::{TransitionRows, WorkRows};
 use crate::index::Probe;
 use crate::logical::{
     AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, Recognize, SetOp, SortKey, Unnest, Window, column_name,
@@ -325,6 +325,12 @@ pub enum Plan {
         /// Its rows, once given.
         rows: Option<WorkRows>,
     },
+    /// [ISO/IEC 9075-2:2023 §4.46.2] The rows of a transition table, as
+    /// given to the triggered action that reads it (`exec/transition.rs`).
+    Transition {
+        /// Its rows.
+        rows: TransitionRows,
+    },
     /// [ISO/IEC 9075-2:2023 §7.6 SR8] A `<collection derived table>`
     /// laterally over the rows of its input (`exec/unnest.rs`).
     Unnest(Box<Unnest<Plan>>),
@@ -449,6 +455,7 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::Limit { limit, input } => self.limited(limit, input, want),
             LogicalPlan::Recursive { member, fixpoint, .. } => self.recursive(*member, fixpoint),
             LogicalPlan::WorkTable { member, .. } => Self::work_table(*member),
+            LogicalPlan::Transition { rows, .. } => Built::unordered(Plan::Transition { rows: rows.clone() }),
             LogicalPlan::Unnest(u) => self.unnest(u),
             LogicalPlan::Window(w) => self.window(w, want),
             LogicalPlan::Recognize(r) => self.recognize(r),

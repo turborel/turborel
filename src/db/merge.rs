@@ -118,6 +118,7 @@ impl Session {
                         columns: insert.columns.as_deref(),
                         given: (Inserted::Row(&insert.values), insert.overriding),
                         rules: &MERGE_INSERT_RULES,
+                        horizon: params.horizon(),
                     };
                     targets.push(self.insert_target_of(st, &into, params.noted())?);
                 }

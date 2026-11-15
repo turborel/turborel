@@ -209,6 +209,7 @@ impl State {
         self.check_new_objects(&descs)?;
         let mut built = self.apply_schema(&*with_views, &descs, granted.concat(), made)?;
         let asserted = self.schema_assertions(&s, (made, &mut built))?;
+        self.schema_triggers(&s)?;
         Ok((owner, descs.into_iter().map(|d| (d.name.ident, d.engine)).collect(), warned.contains(&true), asserted, built))
     }
 

@@ -272,11 +272,13 @@ fn of_node(w: &Walk<'_>, plan: &LogicalPlan) -> Known {
         // [§4.26] Of row pattern recognition, which §4.26 gives no rule,
         // nothing.
         LogicalPlan::Recognize(_) => w.fresh(plan.width()),
-        // [§4.26.8, §4.26.16] Of a system table, and of a recursive
-        // query's (IA204), nothing.
-        LogicalPlan::System { names, .. } | LogicalPlan::Recursive { names, .. } | LogicalPlan::WorkTable { names, .. } => {
-            w.fresh(names.len())
-        }
+        // [§4.26.8, §4.26.16] Of a system table, of a recursive query's
+        // (IA204), and of a transition table, which §4.26 gives no rule,
+        // nothing.
+        LogicalPlan::System { names, .. }
+        | LogicalPlan::Recursive { names, .. }
+        | LogicalPlan::WorkTable { names, .. }
+        | LogicalPlan::Transition { names, .. } => w.fresh(names.len()),
     }
 }
 

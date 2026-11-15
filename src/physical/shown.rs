@@ -94,6 +94,7 @@ impl Plan {
             Plan::Limit { limit, .. } => writeln!(out, "{pad}{}", limit.render()),
             Plan::Recursive { member, fixpoint } => writeln!(out, "{pad}Recursive member {member} ({})", fixpoint.word()),
             Plan::WorkTable { member, .. } => writeln!(out, "{pad}WorkTable of member {member}"),
+            Plan::Transition { .. } => writeln!(out, "{pad}Transition table"),
             Plan::Unnest(u) => writeln!(
                 out,
                 "{pad}{}Unnest of {} collections{}",
@@ -109,7 +110,12 @@ impl Plan {
     /// Writes its inputs, each at `depth`.
     fn write_inputs(&self, out: &mut String, depth: usize) {
         match self {
-            Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Values { .. } | Plan::System { .. } | Plan::WorkTable { .. } => {}
+            Plan::SeqScan { .. }
+            | Plan::IndexScan { .. }
+            | Plan::Values { .. }
+            | Plan::System { .. }
+            | Plan::WorkTable { .. }
+            | Plan::Transition { .. } => {}
             Plan::Recursive { fixpoint, .. } => {
                 let (first, second, rest) = fixpoint.plans();
                 for p in first.into_iter().chain(second).chain(rest) {

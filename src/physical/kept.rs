@@ -154,7 +154,8 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => false,
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => false,
     }
 }
 
@@ -211,7 +212,8 @@ pub(crate) fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
     }
 }
 

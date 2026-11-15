@@ -13,7 +13,7 @@ use crate::lexer::{Tok, delim, kw};
 const CONDITION: &str = "CONDITION";
 /// [ISO/IEC 9075-2:2023 §23.1] STATEMENT, an `<all qualifier>`, read as
 /// CONDITION is.
-const STATEMENT: &str = "STATEMENT";
+pub(super) const STATEMENT: &str = "STATEMENT";
 
 impl Parser {
     /// [ISO/IEC 9075:1992 §18.1] `<get diagnostics statement>` ::= GET
@@ -95,12 +95,16 @@ impl Parser {
     /// [ISO/IEC 9075:1992 §6.2] `<simple target specification>` ::=
     /// `<parameter name>`, of a parameter declared: with no indicator.
     fn simple_target_specification(&mut self) -> Result<ParameterSpecification> {
+        // [ISO/IEC 9075-2:2023 §6.4 SR7] of a <triggered action>.
+        if self.trigger.is_some() {
+            return self.transition_target();
+        }
         let at = self.here();
         let name = self.identifier()?;
         if !self.params.contains(&name) {
             return Err(SqlError::at(Code::SyntaxRule, at, format!("[X3.135-1986 §7.3 SR3] parameter {name} is not declared")));
         }
-        Ok(ParameterSpecification { name, indicator: None, at })
+        Ok(ParameterSpecification { name, indicator: None, at, transition: false })
     }
 }
 

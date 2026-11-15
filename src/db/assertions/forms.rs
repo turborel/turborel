@@ -375,7 +375,8 @@ pub(super) fn passing(plan: &LogicalPlan) -> Option<Passing> {
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
-            | LogicalPlan::WorkTable { .. } => return None,
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => return None,
         }
     }
 }

@@ -160,7 +160,10 @@ impl Session {
         let area = &mut self.inner.borrow_mut().area;
         // [§18.1 GR1b] an exception, or another warning, in its place.
         let replaced = area.heard.take().or(unheard).is_some_and(|w| w != condition.state);
-        area.more |= left_out || replaced;
+        // [ISO/IEC 9075-2:2023 §15.21 GR6m] a triggered action exception
+        // is raised with the condition that caused it, which is left out.
+        let caused = condition.state == SqlState::TRIGGERED_ACTION_EXCEPTION;
+        area.more |= left_out || replaced || caused;
         area.condition = Some(condition);
         outcome
     }
@@ -255,7 +258,7 @@ impl Session {
             let name = QualifiedName { auth: schema.clone(), ident: ident.clone() };
             access || !applicable(&*st.catalog, &self.auth(), &name).0.is_empty()
         };
-        let Subject { constraint, table, column, cursor, assertion } = &condition.subject;
+        let Subject { constraint, table, column, cursor, assertion, trigger } = &condition.subject;
         let named = table.is_some();
         let table = table.clone().filter(visible);
         // [GR3j iii] a table constraint goes with its table; [GR3j iv] an
@@ -264,7 +267,8 @@ impl Session {
             if *assertion { owner_of(&*st.catalog, schema) == *self.auth() } else { !named || table.is_some() }
         };
         let constraint = constraint.clone().filter(shown_constraint);
-        Shown { catalog, constraint, column: column.clone().filter(|_| table.is_some()), table, cursor: cursor.clone() }
+        let column = column.clone().filter(|_| table.is_some());
+        Shown { catalog, constraint, column, table, cursor: cursor.clone(), trigger: trigger.clone() }
     }
 }
 
@@ -312,6 +316,7 @@ struct Shown {
     table: Option<(String, String)>,
     column: Option<String>,
     cursor: Option<String>,
+    trigger: Option<(String, String)>,
 }
 
 impl Shown {
@@ -344,19 +349,21 @@ impl Shown {
             ConditionItem::MessageText => text(&condition.message),
             ConditionItem::MessageLength => number(condition.message.chars().count()),
             ConditionItem::MessageOctetLength => number(condition.message.len()),
+            // [ISO/IEC 9075-2:2023 §23.1 GR4g] the trigger of a triggered
+            // action exception.
+            ConditionItem::TriggerCatalog => catalog_of(&self.trigger),
+            ConditionItem::TriggerSchema => schema_of(&self.trigger),
+            ConditionItem::TriggerName => name_of(&self.trigger),
             // [ISO/IEC 9075-2:2023 §23.1 GR4l iii 2, GR5] 0 and zero-length
-            // strings. turborel has no trigger, and a condition of a
-            // distinct type's function is one of the CAST it stands for.
+            // strings. A condition of a distinct type's function is one of
+            // the CAST it stands for.
             ConditionItem::ParameterOrdinalPosition => number(0_usize),
             ConditionItem::ParameterMode
             | ConditionItem::ParameterName
             | ConditionItem::RoutineCatalog
             | ConditionItem::RoutineName
             | ConditionItem::RoutineSchema
-            | ConditionItem::SpecificName
-            | ConditionItem::TriggerCatalog
-            | ConditionItem::TriggerName
-            | ConditionItem::TriggerSchema => text(""),
+            | ConditionItem::SpecificName => text(""),
         }
     }
 }

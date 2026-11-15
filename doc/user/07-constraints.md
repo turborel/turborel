@@ -117,3 +117,37 @@ Member 20 came before its team, and was checked as the transaction
 committed, team 1 with it. Member 21's team 3 never came: the COMMIT
 failed, and rolled the transaction back. Made IMMEDIATE, the constraint
 refused member 22 at once.
+
+## Triggers
+
+A trigger is an action its table runs each time a statement changes it:
+to keep a record of the changes, to keep another table in step, or to
+give a row a value before it is written. [CREATE
+TRIGGER](../sql/statements/create-trigger.md) makes one, of INSERT,
+DELETE or UPDATE, to run BEFORE the rows are written or AFTER the
+statement, once for each row or once for the statement:
+
+```sql
+CREATE TABLE MOVES (MEMBER INTEGER, FROM_TEAM INTEGER, TO_TEAM INTEGER);
+CREATE TRIGGER MOVED AFTER UPDATE OF TEAM ON MEMBERS
+  REFERENCING OLD AS O NEW AS N FOR EACH ROW
+  INSERT INTO MOVES VALUES (N.ID, O.TEAM, N.TEAM);
+UPDATE MEMBERS SET TEAM = 1 WHERE ID = 20;
+SELECT * FROM MOVES;
+```
+
+```
+OK
+OK
+OK
+       MEMBER |    FROM_TEAM |      TO_TEAM
+--------------+--------------+--------------
+           20 |            2 |            1
+(1 row)
+```
+
+The trigger saw member 20 as it was, O, and as it is, N. It runs
+whoever changes MEMBERS, with the privileges of the owner of its schema,
+and what it does is undone with the statement if it fails. A view that
+cannot take a change can be given an INSTEAD OF trigger that does what
+the change means.

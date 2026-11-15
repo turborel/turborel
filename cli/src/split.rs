@@ -6,6 +6,21 @@
 //! sent without the separators around it, but for the `<newline>` that
 //! ends a comment last in it, which a comment needs [X3.135-1986 §5.3];
 //! the end of the text ends a comment as a newline would.
+//!
+//! A `;` in a `<compound triggered SQL statement>` [ISO/IEC 9075-2:2023
+//! §11.49] ends none either. In code, the words BEGIN and ATOMIC, apart
+//! only by separators, open a block. In one, CASE opens a level and END
+//! closes one, and the block ends with the END of its BEGIN. Words are
+//! matched in any case, never in a string, an identifier or a comment.
+
+/// BEGIN, which with ATOMIC after it opens a block.
+const BEGIN: &str = "BEGIN";
+/// ATOMIC, after BEGIN.
+const ATOMIC: &str = "ATOMIC";
+/// CASE, which an END closes in a block.
+const CASE: &str = "CASE";
+/// END, which closes a block or a CASE in one.
+const END: &str = "END";
 
 /// Where the text read so far stands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -19,6 +34,16 @@ enum State {
     Ident,
     /// In a `<comment>`.
     Comment,
+}
+
+/// What came last in code, for BEGIN ATOMIC.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Last {
+    /// The word BEGIN, with only separators after it.
+    Begin,
+    /// Anything else, or nothing.
+    #[default]
+    Other,
 }
 
 /// What splits text, given in parts, into statements.
@@ -35,6 +60,13 @@ pub struct Splitter {
     before_dash: bool,
     /// Where the `<newline>` ending the last comment ends, in `text`.
     comment_end: usize,
+    /// The word of code being read, if one is.
+    word: String,
+    /// What came last in code, as far as opening a block goes.
+    last: Last,
+    /// The levels of BEGIN ATOMIC blocks and CASEs in them open, 0 out of
+    /// any block.
+    depth: usize,
 }
 
 impl Splitter {
@@ -51,10 +83,17 @@ impl Splitter {
 
     /// The statement `c` ends, if it ends one.
     fn take(&mut self, c: char) -> Option<String> {
+        if self.state == State::Code {
+            self.read_word(c);
+        }
         let was_dash = std::mem::take(&mut self.dash);
         let in_comment = self.state == State::Comment;
         match (self.state, c) {
-            (State::Code, ';') => return self.ended(),
+            (State::Code, ';') => {
+                if self.depth == 0 {
+                    return self.ended();
+                }
+            }
             (State::Code, '\'') => self.state = State::Quote,
             (State::Code, '"') => self.state = State::Ident,
             (State::Code, '-') => {
@@ -79,8 +118,40 @@ impl Splitter {
         None
     }
 
+    /// Reads `c`, of code, into the word being read, or ends that word.
+    /// A character neither a separator nor a minus sign, which may begin a
+    /// comment, parts BEGIN from ATOMIC.
+    fn read_word(&mut self, c: char) {
+        if c.is_alphanumeric() || c == '_' {
+            self.word.push(c);
+            return;
+        }
+        if !self.word.is_empty() {
+            self.ended_word();
+        }
+        if !c.is_whitespace() && c != '-' {
+            self.last = Last::Other;
+        }
+    }
+
+    /// Ends the word read, which may open or close a block or a level in
+    /// one.
+    fn ended_word(&mut self) {
+        let word = std::mem::take(&mut self.word);
+        let is = |keyword: &str| word.eq_ignore_ascii_case(keyword);
+        let opens = (self.last == Last::Begin && is(ATOMIC)) || (self.depth > 0 && is(CASE));
+        if opens {
+            self.depth = self.depth.saturating_add(1);
+        } else if is(END) {
+            self.depth = self.depth.saturating_sub(1);
+        }
+        self.last = if is(BEGIN) { Last::Begin } else { Last::Other };
+    }
+
     /// The statement read so far, if it is one; the text begun anew.
     fn ended(&mut self) -> Option<String> {
+        self.word.clear();
+        (self.last, self.depth) = (Last::Other, 0);
         let text = std::mem::take(&mut self.text);
         let significant = std::mem::take(&mut self.significant);
         let comment_end = std::mem::take(&mut self.comment_end);
@@ -146,5 +217,33 @@ mod tests {
         assert_eq!(splitter.feed("  "), Vec::<String>::new());
         assert!(!splitter.pending(), "separators alone");
         assert_eq!(splitter.finish(), None);
+    }
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.49] a `;` in BEGIN
+    /// ATOMIC ... END ends no statement, a CASE ... END in the block
+    /// closing no block, words matched in any case; the `;` after the
+    /// block's END ends the statement. MC/DC of `opens`: ATOMIC after
+    /// BEGIN opens, ATOMIC after another word does not, CASE in a block
+    /// opens a level, CASE out of one does not.
+    #[test]
+    fn semicolons_in_begin_atomic_end_no_statement() {
+        let trigger = "CREATE TRIGGER TR AFTER INSERT ON T begin  atomic \
+                       INSERT INTO U VALUES (CASE WHEN 1 = 1 THEN 1 ELSE 2 END); DELETE FROM U; End";
+        assert_eq!(split(&format!("{trigger}; SELECT 1;")), [trigger, "SELECT 1"]);
+        assert_eq!(split("SELECT ATOMIC FROM T; SELECT 2"), ["SELECT ATOMIC FROM T", "SELECT 2"]);
+        assert_eq!(split("SELECT CASE WHEN A THEN 1 END FROM T; SELECT 2"), ["SELECT CASE WHEN A THEN 1 END FROM T", "SELECT 2"]);
+        assert_eq!(split("SELECT BEGIN_ATOMIC; SELECT 2"), ["SELECT BEGIN_ATOMIC", "SELECT 2"]);
+        assert_eq!(split("X BEGIN -- note\n ATOMIC A; B END; C"), ["X BEGIN -- note\n ATOMIC A; B END", "C"]);
+    }
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.49]; [ISO/IEC
+    /// 9075:1992 §5.2, §5.3] BEGIN ATOMIC in a string, a delimited
+    /// identifier or a comment opens no block.
+    #[test]
+    fn begin_atomic_quoted_or_commented_opens_no_block() {
+        assert_eq!(split("SELECT 'BEGIN ATOMIC'; SELECT 2"), ["SELECT 'BEGIN ATOMIC'", "SELECT 2"]);
+        assert_eq!(split("SELECT \"BEGIN ATOMIC\"; SELECT 2"), ["SELECT \"BEGIN ATOMIC\"", "SELECT 2"]);
+        assert_eq!(split("SELECT 1 -- BEGIN ATOMIC\n; SELECT 2"), ["SELECT 1 -- BEGIN ATOMIC\n", "SELECT 2"]);
+        assert_eq!(split("SELECT BEGIN 'x' ATOMIC; SELECT 2"), ["SELECT BEGIN 'x' ATOMIC", "SELECT 2"]);
     }
 }

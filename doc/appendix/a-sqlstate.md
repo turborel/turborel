@@ -47,6 +47,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 08004 | Connection exception: the server refused the connection |
 | 08006 | Connection exception: connection failure |
 | 08007 | Connection exception: transaction resolution unknown: a commit in doubt, its commit record not synced; decided when the database is opened again |
+| 09000 | Triggered action exception: a trigger's action failed; the message gives the trigger and the SQLSTATE and message of its failure |
 | 0A000 | Feature not supported: valid SQL turborel does not process |
 | 0A001 | Feature not supported: multiple server transactions |
 | 21000 | Cardinality violation: a subquery of one row gave more |

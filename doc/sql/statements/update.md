@@ -45,6 +45,13 @@ identity column set to DEFAULT takes its generator's next value. A
 generated column, or an identity column GENERATED ALWAYS, is set only to
 DEFAULT.
 
+The table's triggers run as [CREATE TRIGGER](create-trigger.md) says:
+its BEFORE triggers once the rows and their new values are found, before any is changed, after which a generated column is computed again from each row as they left it, its AFTER triggers at the end of the
+statement. A view with an INSTEAD OF trigger of the statement's event
+runs it in place of the change, and nothing is written through the view:
+its row count is of the rows the trigger was given. A
+trigger of UPDATE OF its columns runs only if a SET clause names one.
+
 The positioned form, WHERE CURRENT OF a cursor, of a cursor named by
 an extended name too ([ALLOCATE CURSOR](allocate-cursor.md)), runs only
 in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
@@ -184,6 +191,6 @@ TB911 is this implementation's own.
 
 ## SEE ALSO
 
-[INSERT](insert.md), [DELETE](delete.md),
+[INSERT](insert.md), [DELETE](delete.md), [CREATE TRIGGER](create-trigger.md),
 [DECLARE CURSOR](declare-cursor.md), [SET TRANSACTION](set-transaction.md),
 [Changing Data](../../user/05-changing-data.md)

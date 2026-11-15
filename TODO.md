@@ -37,7 +37,13 @@ each group.
 
 ### Queries
 
-Nothing is open.
+- Views and constraints that depend on a constraint (T301) [§11.26 SR13a,
+  SR13c, SR13e, GR3 to GR5]. A grouped query may read a column its
+  grouping columns determine through a key, so a view or CHECK of one
+  depends on that key. DROP CONSTRAINT drops a trigger that does
+  (SR13f), but not such a view or constraint: RESTRICT should refuse it
+  and CASCADE drop it, found as triggers' are, by binding it again
+  without the key.
 
 ### Changing data
 
@@ -45,23 +51,36 @@ Nothing is open.
 
 ### Triggers, routines and roles
 
-- Triggers (T200, T211 to T218) [§4.46, §11.49, §11.50], BEFORE and AFTER,
-  per row and per statement, with transition tables, then INSTEAD OF
-  triggers on views (T213). Every data change fires them through one
-  path, a MERGE's updates, deletes and inserts too.
+- INSTEAD OF a MERGE or a positioned UPDATE or DELETE [§14.12 SR3, SR4,
+  §15.10, §15.13, §15.16]. A view with an INSTEAD OF trigger takes
+  INSERT and searched UPDATE and DELETE, but a MERGE into it, or a
+  positioned change of a cursor over it, is refused (SQLCODE -900). MERGE
+  needs each clause routed to the trigger of its event, and a positioned
+  change the cursor's current row given as the transition.
+- The Information Schema's views of triggers (ISO/IEC 9075-11:2023):
+  TRIGGERS, TRIGGERED_UPDATE_COLUMNS, TRIGGER_TABLE_USAGE,
+  TRIGGER_COLUMN_USAGE, TRIGGER_ROUTINE_USAGE and
+  TRIGGER_SEQUENCE_USAGE, and the trigger descriptors of the Definition
+  Schema they are views of, so tools can list a schema's triggers.
 - Function overloading (D53). Each name registers one scalar function today.
   Overloading is shared with SQL-invoked functions, and should follow their
   resolution, with candidates by number of arguments and store assignment
   [ISO/IEC 9075:1992 §9.2 SR2], the most specific chosen and an ambiguous
   call refused.
-- Stored procedures (SQL/PSM). This covers CREATE PROCEDURE and FUNCTION,
-  CALL and the control statements, running as their module's
-  authorization identifier, as SQL:2023 Parts 2 and 4 define them.
+- SQL-invoked routines (T321) [§4.35, §11.60, §11.62, §10.4, §16.1].
+  CREATE PROCEDURE and CREATE FUNCTION of a body of one SQL procedure
+  statement, CALL, RETURN, and DROP ROUTINE, each running as its owner,
+  as Part 2 defines them, the WHEN condition of a trigger reading one
+  among them [§11.49 SR11].
+- Stored procedures (SQL/PSM, ISO/IEC 9075-4:2023). Compound statements,
+  local variables, cursors and handlers, and the control statements, IF,
+  CASE, LOOP, WHILE, REPEAT, FOR, LEAVE and ITERATE, in a routine's body
+  and a trigger's action, as Part 4 defines them on Part 2's routines.
 - Array element assignment (S097) [§6.4 SR7, SR8; §14.5 GR; §14.7 GR].
   A FETCH INTO or SELECT INTO target `A[i]`, which writes one element of
   an array. Its array is an SQL parameter or a new transition variable's
-  column, never a host parameter, so it waits for triggers or SQL-invoked
-  routines.
+  column, never a host parameter. A BEFORE row trigger's new transition
+  variable is one now, so `NEW.A[i]` can be taken first.
 - Enhanced derived column names (T285) [§7.16 SR17c, CR6]. A select list
   item that is a single SQL parameter reference names its column for the
   parameter. Any other item without an `<as clause>` that is not a column

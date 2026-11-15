@@ -27,7 +27,7 @@ use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
 use crate::ast::{SearchCondition, SetClause, SqlStatement, TableName};
 use crate::binder::{self, DescribedKey, OutColumn, WriteKind, bind_write};
-use crate::catalog::QualifiedName;
+use crate::catalog::{QualifiedName, WHOLE};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::{ParameterType, Params};
@@ -325,7 +325,7 @@ impl Session {
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
         match stmt {
             SqlStatement::Insert(ins) => {
-                let target = self.insert_target(st, ins, None)?;
+                let target = self.insert_target(st, ins, (None, &WHOLE))?;
                 if let crate::ast::InsertSource::Query(query) = &ins.source {
                     self.bound_insert(st, &target, query, params)?;
                 }

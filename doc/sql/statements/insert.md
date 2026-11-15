@@ -50,6 +50,13 @@ The query is evaluated in full before any row is inserted, so a query
 that reads the table inserted into sees none of the rows it inserts. An
 INSERT whose query gives no row completes with no data.
 
+The table's triggers run as [CREATE TRIGGER](create-trigger.md) says:
+its BEFORE triggers once the rows are given their values, before any is inserted, after which a generated column is computed again from each row as they left it, its AFTER triggers at the end of the
+statement. A view with an INSTEAD OF trigger of the statement's event
+runs it in place of the change, and nothing is written through the view:
+its row count is of the rows the trigger was given. A view's
+columns not given a value are null in the rows its trigger is given.
+
 ## RULES
 
 1. The table exists and is not read-only: a base table, or a view that
@@ -188,4 +195,5 @@ columns and generated columns take, are ISO/IEC 9075-2:2023 §14.11 and
 ## SEE ALSO
 
 [UPDATE](update.md), [DELETE](delete.md), [SELECT](select.md),
-[CREATE TABLE](create-table.md), [Changing Data](../../user/05-changing-data.md)
+[CREATE TABLE](create-table.md), [CREATE TRIGGER](create-trigger.md),
+[Changing Data](../../user/05-changing-data.md)

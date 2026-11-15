@@ -98,6 +98,14 @@ pub fn render_cond(c: &Cond, names: &[String]) -> String {
     }
 }
 
+/// The rows of a VALUES plan as text, each parenthesized.
+fn render_rows(rows: &[Vec<Expr>]) -> String {
+    rows.iter()
+        .map(|r| format!("({})", r.iter().map(|e| render_expr(e, &[])).collect::<Vec<_>>().join(", ")))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Sort keys as text, with columns named from `names`.
 pub fn render_keys(keys: &[SortKey], names: &[String]) -> String {
     keys.iter()
@@ -138,18 +146,12 @@ impl LogicalPlan {
             LogicalPlan::Distinct { .. } => writeln!(out, "{pad}Distinct"),
             LogicalPlan::SetOp { op, all, .. } => writeln!(out, "{pad}{op:?}{}", if *all { " all" } else { "" }),
             LogicalPlan::System { read, .. } => writeln!(out, "{pad}System {}", read.name()),
-            LogicalPlan::Values { rows, .. } => writeln!(
-                out,
-                "{pad}Values {}",
-                rows.iter()
-                    .map(|r| format!("({})", r.iter().map(|e| render_expr(e, &[])).collect::<Vec<_>>().join(", ")))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            LogicalPlan::Values { rows, .. } => writeln!(out, "{pad}Values {}", render_rows(rows)),
             LogicalPlan::Sort { keys, input } => writeln!(out, "{pad}Sort {}", render_keys(keys, &inner(input))),
             LogicalPlan::Limit { limit, .. } => writeln!(out, "{pad}{}", limit.render()),
             LogicalPlan::Recursive { member, fixpoint, .. } => writeln!(out, "{pad}Recursive member {member} {}", fixpoint.word()),
             LogicalPlan::WorkTable { member, .. } => writeln!(out, "{pad}Work table of member {member}"),
+            LogicalPlan::Transition { names, .. } => writeln!(out, "{pad}Transition table ({})", names.join(", ")),
             LogicalPlan::Unnest(u) => {
                 let n = inner(&u.input);
                 let c: Vec<String> = u.collections.iter().map(|e| render_expr(e, &n)).collect();

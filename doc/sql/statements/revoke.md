@@ -27,8 +27,10 @@ privileges. A privilege another user granted the grantee is not taken.
 
 What a privilege taken leaves without the privileges it needs is
 abandoned: a privilege the grantee granted on, by the grant option it
-loses; a view, a constraint, an assertion or a domain constraint of the
-grantee's that needs the privilege. RESTRICT refuses the revoke if
+loses; a view, a constraint, an assertion, a domain constraint or a
+trigger of the grantee's that needs the privilege: TRIGGER on its table,
+SELECT on it if the trigger names a transition variable or table, or one
+its action's statements need. RESTRICT refuses the revoke if
 anything would be abandoned; CASCADE destroys what is abandoned, and
 what that abandons in turn.
 

@@ -70,6 +70,7 @@ mod set_operations;
 mod statements;
 mod strata;
 mod subquery;
+mod triggers;
 mod trim;
 mod underlying;
 mod unnest;
@@ -90,6 +91,7 @@ pub use statements::{
     check_assignment, updatable, updatable_in,
 };
 use subquery::Outer;
+pub use triggers::bind_when;
 pub use underlying::underlying;
 pub use values::{value_specification, value_specification_as};
 pub use views::{BoundView, ViewCheck, WriteTarget, bind_view, table_columns, view_degree, write_target};

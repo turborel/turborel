@@ -16,6 +16,7 @@ use crate::exec::{HeldRows, eval_cond};
 use crate::logical::{Cond, Expr, Truth};
 use crate::storage::{Row, RowId};
 use crate::txn::Again;
+use crate::value::Value;
 
 /// [ISO/IEC 9075-2:2023 §14.12 GR7] The rule `check_option` cites.
 const CHECK_RULE: &str = "ISO/IEC 9075-2:2023 §14.12 GR7";
@@ -40,6 +41,11 @@ pub(super) fn applied(
     let mut again = Rewritten::new();
     for (clause, plan) in merge.bound.clauses.iter().zip(planned.iter_mut()) {
         let unplanned = || api("[DESIGN] a clause of a MERGE is not the clause of its plan");
+        // [ISO/IEC 9075-2:2023 §15.19] each clause's BEFORE triggers as its
+        // rows are decided, before they are written.
+        if effects.triggered.is_some() {
+            before_clause(cx, (merge, clause), plan, effects)?;
+        }
         match plan {
             Planned::Updates(rows) => {
                 let BoundWhen::Matched { condition, action: BoundAction::Update(set) } = clause else { return Err(unplanned()) };
@@ -53,6 +59,45 @@ pub(super) fn applied(
         }
     }
     Ok(again)
+}
+
+/// [ISO/IEC 9075-2:2023 §15.8 GR2, §15.11 GR4, §15.14 GR5] The BEFORE
+/// triggers of `clause`, planned as `plan`, executed: its rows as they
+/// left them.
+fn before_clause(
+    cx: StatementContext<'_>,
+    (merge, clause): (&Merge<'_>, &BoundWhen),
+    plan: &mut Planned,
+    effects: &mut Effects<'_>,
+) -> Result<()> {
+    let bound = merge.bound;
+    let target = |joined: &Row| joined.get(bound.source_width..).map(<[Value]>::to_vec).unwrap_or_default();
+    match plan {
+        Planned::Updates(rows) => {
+            let BoundWhen::Matched { action: BoundAction::Update(set), .. } = clause else { return Ok(()) };
+            let columns = set_columns_of(set, &bound.generated);
+            let mut changes = HeldRows::new(cx.st.list_space());
+            rows.visit(&mut |(id, joined, new)| changes.push((*id, target(joined), new.clone())))?;
+            let altered = effects.before_update(cx, (&bound.table, &columns), changes)?;
+            let mut out = HeldRows::new(cx.st.list_space());
+            for (row, change) in std::mem::replace(rows, HeldRows::new(cx.st.list_space())).into_iter().zip(altered) {
+                let ((id, joined, _), (_, _, new)) = (row?, change?);
+                out.push((id, joined, new))?;
+            }
+            *rows = out;
+        }
+        Planned::Deletes(rows) => {
+            let mut olds = HeldRows::new(cx.st.list_space());
+            rows.visit(&mut |(id, joined)| olds.push((*id, target(joined))))?;
+            effects.before_delete(cx, &bound.table, &mut olds)?;
+        }
+        Planned::Inserts(at, rows) => {
+            let table = merge.targets.get(*at).ok_or_else(|| api("[DESIGN] a WHEN NOT MATCHED clause of a MERGE has no target"))?.name();
+            let given = std::mem::replace(rows, HeldRows::new(cx.st.list_space()));
+            *rows = effects.before_insert(cx, table, given)?;
+        }
+    }
+    Ok(())
 }
 
 /// [GR6a i 5] A WHEN MATCHED clause's updates, of search condition
@@ -81,7 +126,7 @@ fn updates(
         };
         match st.rewrite_row(tx, (&bound.table, *id), Some(new), &mut recheck)? {
             Some(old) => {
-                effects.updated(&bound.table, *id, old, &columns)?;
+                effects.updated(&bound.table, *id, (old, recomputed.as_ref().unwrap_or(new)), &columns)?;
                 if let Some(row) = recomputed {
                     again.insert(*id, Some(row));
                 }
@@ -128,7 +173,7 @@ fn inserts(
 ) -> Result<()> {
     let target = merge.targets.get(target).ok_or_else(|| api("[DESIGN] a WHEN NOT MATCHED clause of a MERGE has no target"))?;
     let table = target.name();
-    rows.visit(&mut |row| effects.inserted(table, st.insert_row(tx, table, row)?))
+    rows.visit(&mut |row| effects.inserted(table, st.insert_row(tx, table, row)?, row))
 }
 
 /// [GR7] Each row `planned` updated or inserted, once all are written,

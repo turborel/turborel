@@ -5,7 +5,8 @@
 use std::sync::Arc;
 
 use turborel::catalog::{
-    Actions, Catalog, ColumnDesc, Horizon, IndexDesc, MemoryCatalog, PrivilegeDesc, QualifiedName, TableDesc, ViewDesc,
+    ActionTime, Actions, Catalog, ColumnDesc, Horizon, IndexDesc, MemoryCatalog, PrivilegeDesc, QualifiedName, TableDesc, TransitionNames,
+    TriggerDesc, TriggerEvent, TriggerLevel, ViewDesc,
 };
 use turborel::db::{CatalogFiles, CatalogStorage, CatalogStore, Database, FileFormats, FileLogs, LogStorage, OpenedLog, StorePlace};
 use turborel::disk::buffer::{BufferPool, Clock};
@@ -183,6 +184,63 @@ fn memory_catalog_keeps_the_catalog_contract() {
     catalog.remove_schema("B");
     assert!(!catalog.schema_exists("B"));
     assert_eq!(catalog.schemas(), vec!["A", "C"], "the others as before");
+}
+
+/// The name `ident` in schema A.
+fn in_a(ident: &str) -> QualifiedName {
+    QualifiedName { auth: "A".into(), ident: ident.into() }
+}
+
+/// A trigger named `ident` in schema A on `table`, of timestamp `created`.
+fn trigger_desc(ident: &str, table: &QualifiedName, created: u64) -> TriggerDesc {
+    TriggerDesc {
+        name: in_a(ident),
+        table: table.clone(),
+        time: ActionTime::After,
+        level: TriggerLevel::Row,
+        event: TriggerEvent::Insert,
+        names: TransitionNames::default(),
+        text: format!("CREATE TRIGGER {ident} AFTER INSERT ON {table} FOR EACH ROW DELETE FROM {table}"),
+        schema: "A".into(),
+        reads: vec![table.clone()],
+        horizon: Horizon::default(),
+        columns: Vec::new(),
+        created,
+    }
+}
+
+/// Verifies: [DESIGN] `Catalog` contract, for `MemoryCatalog`, of triggers
+/// [ISO/IEC 9075-2:2023 §4.46.1]: each recorded is found by name, in place
+/// of one of its name; `triggers` and `triggers_on` list them in the order
+/// of their timestamps of creation, not of their names, `triggers_on` only
+/// its table's; one removed is found by none, the others as before.
+#[test]
+fn memory_catalog_keeps_the_trigger_contract() {
+    let mut catalog = MemoryCatalog::default();
+    catalog.create_schema("A", "A", vec![table_desc("A", "T", "rowstore"), table_desc("A", "U", "rowstore")]);
+    let (t, u, w) = (in_a("T"), in_a("U"), in_a("W"));
+    for (ident, table, created) in [("Z", &t, 1), ("M", &t, 2), ("B", &u, 3), ("A", &t, 4)] {
+        catalog.put_trigger(trigger_desc(ident, table, created));
+    }
+    let idents = |all: Vec<&TriggerDesc>| all.iter().map(|d| d.name.ident.clone()).collect::<Vec<_>>();
+    assert_eq!(idents(catalog.triggers()), vec!["Z", "M", "B", "A"], "by timestamp, not name");
+    assert_eq!(idents(catalog.triggers_on(&t)), vec!["Z", "M", "A"], "only its table's");
+    assert_eq!(idents(catalog.triggers_on(&u)), vec!["B"]);
+    assert!(catalog.triggers_on(&w).is_empty(), "none on a table with none");
+    let m = in_a("M");
+    assert_eq!(catalog.trigger(&m).map(|d| (d.table.clone(), d.created)), Some((t.clone(), 2)));
+    let copy = catalog.duplicate();
+    let mut replaced = trigger_desc("M", &t, 2);
+    replaced.event = TriggerEvent::Update(vec!["S".into()]);
+    catalog.put_trigger(replaced);
+    assert_eq!(catalog.trigger(&m).map(|d| d.event.clone()), Some(TriggerEvent::Update(vec!["S".into()])), "in place");
+    assert_eq!(idents(catalog.triggers()), vec!["Z", "M", "B", "A"], "one of each name");
+    catalog.remove_trigger(&m);
+    assert!(catalog.trigger(&m).is_none(), "removed");
+    assert_eq!(idents(catalog.triggers()), vec!["Z", "B", "A"], "the others as before");
+    assert_eq!(idents(catalog.triggers_on(&t)), vec!["Z", "A"]);
+    assert_eq!(idents(copy.triggers()), vec!["Z", "M", "B", "A"], "the duplicate is independent");
+    assert_eq!(copy.trigger(&m).map(|d| d.event.clone()), Some(TriggerEvent::Insert));
 }
 
 /// A scalar function that breaks the contract: it calls back into the

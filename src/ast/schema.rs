@@ -3,7 +3,7 @@
 
 use super::{
     AlterSequence, DatetimeFunction, DropBehavior, Literal, QueryExpression, SearchCondition, SequenceDefinition, TableName,
-    TypeDefinition, UserFunction,
+    TriggerDefinition, TypeDefinition, UserFunction,
 };
 use crate::value::DataType;
 use crate::value::collation::Pad;
@@ -45,6 +45,8 @@ pub struct Schema {
     pub views: Vec<ViewDefinition>,
     /// The `<privilege definition>`s, in order.
     pub privileges: Vec<PrivilegeDefinition>,
+    /// The `<trigger definition>`s, in order [ISO/IEC 9075-2:2023 §11.49].
+    pub triggers: Vec<TriggerDefinition>,
 }
 
 /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1] An `<SQL schema statement>` of
@@ -78,6 +80,8 @@ pub enum SchemaStatement {
     AlterSequence(AlterSequence),
     /// A `<user-defined type definition>` [ISO/IEC 9075-2:2023 §11.51].
     Type(TypeDefinition),
+    /// A `<trigger definition>` [ISO/IEC 9075-2:2023 §11.49].
+    Trigger(TriggerDefinition),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION
@@ -296,6 +300,8 @@ pub enum Action {
     Execute,
     /// [ISO/IEC 9075-2:2023 §12.3] UNDER, of a structured type.
     Under,
+    /// [ISO/IEC 9075-2:2023 §12.3] TRIGGER (Feature T217), of a table.
+    Trigger,
 }
 
 /// [X3.135-1986 §6.2; ISO/IEC 9075:1992 §11.3] `<table definition>` ::=

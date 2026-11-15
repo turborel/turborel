@@ -13,6 +13,9 @@
 use std::collections::HashSet;
 
 mod dynamic;
+mod transition;
+
+pub(crate) use transition::Transitions;
 
 use dynamic::Dynamic;
 pub use dynamic::ParameterType;
@@ -44,6 +47,9 @@ pub struct Params {
     /// \[EXTENSION\] The dynamic parameters of a prepared statement, if it
     /// is one (`params/dynamic.rs`).
     dynamic: Option<Dynamic>,
+    /// [ISO/IEC 9075-2:2023 §4.46.2] Of a triggered action, its transition
+    /// variables and tables (`params/transition.rs`).
+    transitions: Option<std::sync::Arc<Transitions>>,
 }
 
 fn api(msg: impl Into<String>) -> SqlError {

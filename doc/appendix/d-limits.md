@@ -27,6 +27,9 @@ A statement is at most 64 levels deep as it is read: about 30 nested
 parentheses, 60 `AND`, `OR`, `+` or `UNION` in a row, or 60 tables in a
 FROM clause. A deeper one is refused rather than run out of stack.
 
+Triggers run within triggers at most 16 deep: a trigger whose action
+runs a 17th fails its statement with SQLSTATE 09000, SQLCODE -900.
+
 Array and row types nest at most 16 deep, an array of rows of arrays
 counting three. A deeper type is refused as it is read.
 

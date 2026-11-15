@@ -32,7 +32,8 @@
 //!             constraint), usage (count u32, each grantor (str), grantee
 //!             (0 PUBLIC, or 1 and str), grantable u8)
 //! collation, sequence generator and user-defined type:
-//!             catalog/codec/objects.rs; the column
+//!             catalog/codec/objects.rs; trigger: catalog/codec/triggers.rs;
+//!             the column
 //!             is written in catalog/codec/columns.rs
 //! view:       name, columns, query (str), names (str), check option u8 (0
 //!             none, 1 cascaded, 2 local), grouped u8, updates (0, or 1, a
@@ -59,10 +60,12 @@ use crate::value::codec::{put_value, value};
 
 mod columns;
 mod objects;
+mod triggers;
 use crate::value::types::tags::{data_type, put_type};
 use columns::{collation_name, column, put_collation_name, put_column};
 pub(crate) use columns::{default, put_default};
 pub(crate) use objects::{collation, put_collation, put_sequence, put_user_type, sequence, user_type};
+pub(crate) use triggers::{put_trigger, trigger};
 
 /// A count, or a position, as a u32.
 fn count(n: usize) -> u32 {
@@ -399,6 +402,7 @@ pub(crate) fn put_privilege(out: &mut Vec<u8>, privilege: &PrivilegeDesc) {
     put_positions(out, a.insert.iter());
     put_positions(out, a.update.iter());
     put_positions(out, a.references.iter());
+    put_flag(out, a.trigger);
     put_flag(out, privilege.grantable);
 }
 
@@ -410,7 +414,7 @@ pub(crate) fn privilege(r: &mut Reader<'_>) -> Result<PrivilegeDesc> {
     let (select, delete) = (flag(r)?, flag(r)?);
     let mut columns = || positions(r).map(|p| p.into_iter().collect::<BTreeSet<usize>>());
     let (insert, update, references) = (columns()?, columns()?, columns()?);
-    let actions = Actions { select, insert, delete, update, references };
+    let actions = Actions { select, insert, delete, update, references, trigger: flag(r)? };
     Ok(PrivilegeDesc { grantor, grantee, table, actions, grantable: flag(r)? })
 }
 

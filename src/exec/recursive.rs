@@ -193,7 +193,12 @@ fn given(mut plan: Plan, work: &[WorkRows]) -> Plan {
 fn give(plan: &mut Plan, work: &[WorkRows]) {
     match plan {
         Plan::WorkTable { member, rows } => *rows = work.get(*member).cloned(),
-        Plan::Recursive { .. } | Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::System { .. } | Plan::Values { .. } => {}
+        Plan::Recursive { .. }
+        | Plan::SeqScan { .. }
+        | Plan::IndexScan { .. }
+        | Plan::System { .. }
+        | Plan::Values { .. }
+        | Plan::Transition { .. } => {}
         Plan::Filter { input, .. }
         | Plan::IndexJoin { left: input, .. }
         | Plan::Aggregate { input, .. }

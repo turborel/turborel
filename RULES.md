@@ -108,6 +108,7 @@ verification approach DO-178C expects (§8).
 | D68 | Arrays and rows are values of shared parts, nested to a bound |
 | D69 | A distinct type's value is its source's, untagged |
 | D70 | SEARCH and CYCLE are their expansion, its growing columns widened |
+| D71 | Triggered actions run inside their statement, nested to a bound |
 
 ### The project
 
@@ -677,6 +678,37 @@ array, so it is ordered by no operation [§9.14 SR3]. A UNION, not UNION
 ALL, groups the arrays a cycle clause or DEPTH FIRST adds, so it is
 refused [§9.12 SR3]. A cycle mark value of UNKNOWN is refused, since it is
 neither equal to the other nor unequal [§7.18 SR6c].
+
+#### D71. Triggered actions run inside their statement, nested to a bound
+
+A triggered action runs inside the statement that activated it, under
+that statement's single undo mark (`db/triggers/run.rs`). Each statement
+of the action is a statement of its own, with its own referential
+actions, checks and AFTER triggers [ISO/IEC 9075-2:2023 §15.21 GR6]. It
+neither opens a transaction statement nor takes a mark of its own. So a
+failure anywhere fails the outermost statement whole, as §15.21 GR6m
+asks, and the new savepoint level of §15.21 GR6 holds nothing, since
+there is no SAVEPOINT. The action shares its statement's instant [§9.17
+GR5].
+
+Nesting is bounded by `MAX_TRIGGER_DEPTH`, 16, so the deepest chain runs
+on half the default stack. A deeper one fails with SQLCODE -900, raised
+as SQLSTATE 09000. A trigger that writes its own table recurses until its
+WHEN condition stops it or the bound does.
+
+A state change's transitions are held rows (D38), spilled past the work
+area, so a transition table of any size is read whole. A database with
+no trigger records nothing and takes no new path, so a write costs what
+it did before triggers. An action and its WHEN condition are bound when
+the trigger is defined, under its schema's owner, and kept with the
+columns its tables had then [§11.21 Note 561]. A column added later is
+seen by no action.
+
+A BEFORE trigger changes its new row only through a `SELECT ... INTO` or
+GET DIAGNOSTICS whose target is a new transition variable [§6.4 SR7, §6.6
+SR13], since Part 2 gives it no assignment statement. A MERGE or a
+positioned UPDATE or DELETE into a view with an INSTEAD OF trigger is not
+supported (SQLCODE -900) rather than written through the view.
 
 #### D33. Schema changes are transactional
 

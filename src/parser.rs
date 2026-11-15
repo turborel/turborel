@@ -58,6 +58,7 @@ mod window;
 pub(crate) use data_statements::{TRUNCATE, begins_word_statement};
 pub(crate) use served::CANCEL;
 mod session;
+mod triggers;
 mod users;
 
 /// \[DESIGN\] The deepest syntax tree the parser builds. Each nested `<search
@@ -115,6 +116,8 @@ pub struct Parser {
     /// Each `<value expression>` read, by the token it begins at: what was
     /// read, the token after it, and the dynamic parameters read by then.
     read_values: HashMap<usize, (Result<ValueExpression>, usize, Option<usize>)>,
+    /// [ISO/IEC 9075-2:2023 §11.49] Of a `<triggered action>` being read, what it knows.
+    trigger: Option<triggers::TriggerScope>,
 }
 
 /// How a parser takes a `<catalog name>` written in a qualified name or a
@@ -193,6 +196,7 @@ impl Parser {
             catalogs: Catalogs::Refused,
             implicit: None,
             read_values: HashMap::new(),
+            trigger: None,
         })
     }
 
@@ -319,6 +323,10 @@ impl Parser {
     /// semicolon, if written; then the refusal of valid SQL not implemented
     /// read in it, if any (`refuse_later`).
     fn end(&mut self) -> Result<()> {
+        // A statement of a <triggered action> ends where its Format does.
+        if self.trigger.is_some() {
+            return Ok(());
+        }
         self.accept_delim(delim::SEMICOLON);
         if *self.peek() != Tok::End {
             return Err(self.syntax("expected end of statement"));
@@ -467,7 +475,7 @@ impl Parser {
         } else {
             None
         };
-        Ok(ParameterSpecification { name, indicator, at })
+        Ok(ParameterSpecification { name, indicator, at, transition: false })
     }
 
     /// [X3.135-1986 §8.6, §8.10] `<fetch target list>` and `<select target list>`
@@ -483,6 +491,9 @@ impl Parser {
     /// [X3.135-1986 §5.6] `<target specification>` ::= `<parameter specification>`
     /// (not implemented: `<variable specification>`, which is embedded SQL)
     fn target_specification(&mut self) -> Result<ParameterSpecification> {
+        if self.trigger.is_some() {
+            return self.transition_target();
+        }
         if self.is_delim(delim::COLON) {
             return Err(self.unsupported("<variable specification> (embedded SQL)"));
         }

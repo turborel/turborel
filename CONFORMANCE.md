@@ -957,7 +957,7 @@ adds to it [§23.1].
 | Transaction counts | GR2h, GR2i, GR2j, CR2 | TRANSACTIONS_COMMITTED and TRANSACTIONS_ROLLED_BACK count the transactions the statement committed and rolled back, by COMMIT, ROLLBACK, EXECUTE IMMEDIATE of either or the Rust API. A COMMIT that fails rolls back, and is counted so. TRANSACTION_ACTIVE is 1 while a transaction is active. |
 | Codes | GR2c to GR2e, Table 39 | COMMAND_FUNCTION_CODE and DYNAMIC_FUNCTION_CODE give each statement's code, 0 of one that did not parse and of none prepared. |
 | CONDITION | Format | CONDITION n reads a condition as SQL-92's EXCEPTION n does. |
-| Routines and triggers | GR4g, GR4l, GR4q, GR5 | Their items are zero-length strings, and PARAMETER_ORDINAL_POSITION 0. turborel has no triggers, and a condition of a distinct type's function is read as one of CAST (see [Readings](#readings-of-ambiguous-text)). |
+| Routines and triggers | GR4g, GR4l, GR4q, GR5 | Of 09000, the trigger items name the trigger whose action failed, and CATALOG_NAME, SCHEMA_NAME and TABLE_NAME its table (see [Triggers](#triggers)). The routine items are zero-length strings, and PARAMETER_ORDINAL_POSITION 0, a condition of a distinct type's function read as one of CAST (see [Readings](#readings-of-ambiguous-text)). |
 
 COMMAND_FUNCTION and DYNAMIC_FUNCTION keep SQL-92's identifiers [92
 §18.1 Table 22], and the codes are SQL:2023's, so a code tells apart
@@ -1407,8 +1407,8 @@ types), which it implies, and with it S095 (Array constructors by query),
 S096 (Optional array bounds) and S098 (ARRAY_AGG), each processed as the
 table says. S097 (Array element assignment) is not claimed. Its target's
 array is an SQL parameter or a new transition variable's column [§6.4
-SR7], and turborel has neither SQL-invoked routines with parameters nor
-triggers. ARRAY, ROW, UNNEST and the functions are key words only where
+SR7]. turborel has no SQL-invoked routines with parameters, and a BEFORE
+row trigger's target `NEW.A[i]` is not taken yet. ARRAY, ROW, UNNEST and the functions are key words only where
 they are read (Appendix B).
 
 ### Distinct types
@@ -1452,6 +1452,52 @@ GRANT and REVOKE read it. A function named by a key word, as FNSDT of a
 NUMERIC source is, is invoked delimited, `"NUMERIC"(p)`. Structured types,
 SET TRANSFORM GROUP and SQL-invoked routines a user defines are not
 implemented.
+
+### Triggers
+
+Features T200 (Trigger DDL), T211 (Basic trigger capability), T212
+(Enhanced trigger capability), T213 (INSTEAD OF triggers), T214 (BEFORE
+triggers), T215 (AFTER triggers), T216 (Ability to require true search
+condition before trigger is invoked), T217 (TRIGGER privilege) and T218
+(Multiple triggers for the same event executed in the order created).
+CREATE TRIGGER defines a trigger [§11.49] and DROP TRIGGER drops one
+[§11.50]. A statement's changes execute the triggers they activate
+[§4.46, §15.19 to §15.21].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Definition | §11.49 SR1 to SR9, SR15, AR1 | The name is new in its schema, and of the schema definition's in one. A BEFORE or AFTER trigger is on a persistent base table, an INSTEAD OF trigger on a view with no CHECK OPTION that no view WITH CHECK OPTION reads, one of each event, with no WHEN condition or column list. The column list's columns are the table's, once each. Each REFERENCING name once, none for the side the event has not, none the same, a transition variable only FOR EACH ROW. Each rule broken is SQLCODE -103, and a schema not owned -104. |
+| The action | SR10, SR12 to SR14, IA046, IA047 | Bound as the trigger is defined, as the schema's owner, so its rules and privileges are checked then. INSERT, searched UPDATE and DELETE, MERGE, SELECT INTO and GET DIAGNOSTICS, else SQLCODE -103: a schema, transaction, connection, session, dynamic or cursor statement, or a parameter, is refused as the trigger is defined. A BEFORE trigger's action changes no SQL-data and has no transition tables, and references no generated column of its new transition variable, else SQLCODE -103. |
+| Privileges | AR2, AR3, §12.3, §12.7 | The schema's owner holds TRIGGER on the table, and SELECT if a transition name is given, else SQLCODE -104. TRIGGER is granted, revoked and held in ALL PRIVILEGES as the other table privileges are, and TABLE_PRIVILEGES shows it. A view's owner holds TRIGGER on it, not grantable [§11.32 GR5]. REVOKE with RESTRICT is refused where it would abandon a trigger, its TRIGGER or SELECT or a privilege its action needs, and CASCADE drops it. |
+| Transition variables | §6.6 SR9, SR13, §6.4 SR7, §9.2 | OLD.C and NEW.C, where no table or correlation name of the statement is the qualifier, are the old and new row of the transition. A BEFORE row trigger's SELECT INTO and GET DIAGNOSTICS assign columns of NEW by store assignment, which the row then takes. |
+| Transition tables | §7.6 SR6, §4.46.2 | OLD TABLE and NEW TABLE name, where no query name does, the old and new rows of the state change, held up to the work area and spilled past it, read in subqueries too. |
+| Activation | §4.46.2 | A state change of each table, event and set of updated columns. A trigger of UPDATE OF its columns sees the transitions whose SET clauses name one of them, of every state change, the referential actions' included. A state change arises of no rows too, so a statement trigger executes for a statement that changes none. |
+| BEFORE | §15.19, §15.21 GR4, §15.11 GR4, GR6a, §15.14 GR5, GR9, §15.8 GR2 | Once the rows are decided, before any is written: of an INSERT its rows given their values and identities, then computed again by their generated columns as the triggers left them; of an UPDATE its pairs of rows, the same; of a DELETE its rows. A statement trigger once for its state change, a row trigger for each transition. |
+| AFTER | §15.20, §9.17 GR17b | At the end of the statement, after its referential actions and once its immediate constraints hold, over every state change it made, each trigger's transition tables whole. |
+| Order | §4.46.1, §15.21 GR4, IS003, US048 | Triggers of one action time execute in the order created, their timestamps of creation never equal. A row trigger takes the transitions in the order the statement changed the rows. |
+| Execution | §15.21 GR6, §9.17 GR5 | Each statement of the action runs as one of its own, with its referential actions, its immediate checks and its own triggers, as the schema's owner, CURRENT_USER that owner, under the triggering statement's instant, in a diagnostics area of its own. The WHEN condition is evaluated for each run, and its exception is 09000. |
+| Failure | §15.21 GR6m, §23.1 GR4g, IA079 | SQLSTATE 09000, SQLCODE the cause's, the message naming the trigger and the cause's SQLSTATE and message. Nothing the statement did is kept. TRIGGER_SCHEMA and TRIGGER_NAME name the trigger, SCHEMA_NAME and TABLE_NAME its table, and MORE is Y, the cause's condition left out. |
+| Referential actions | §15.17, §15.18 | The rows a referential action deletes or updates execute their table's BEFORE triggers before each change and its AFTER triggers with the statement's. |
+| MERGE | §14.12 GR6a | Clause by clause, each clause's BEFORE triggers on its own rows before its changes, a statement trigger once for each event, then the AFTER triggers over all of them. |
+| INSTEAD OF | §15.10, §15.13, §15.16, §11.49 GR6, §11.50 GR1 | An INSERT, searched UPDATE or searched DELETE of a view with an INSTEAD OF trigger of its event executes the trigger for the rows the view would give, before and after the SET clauses, or the rows inserted, a column not given null, and writes nothing through the view. No CHECK OPTION applies, and ROW_COUNT counts the transitions. The view's owner reads it, and the statement's user needs the privilege of the event. The trigger gives its schema's owner that privilege, grantable, with grantor _SYSTEM, and dropping it revokes it with CASCADE. |
+| Dropping | §11.2 SR4j, GR9, §11.23 SR7e, GR1, §11.26 SR13f, GR5, §11.31 SR7g, GR4b, §11.33 SR5c, GR3b | A trigger goes with its subject table or view. A table or view its action names, a column of its column list or of its action, and a constraint its action binds by, are dropped only with CASCADE, which drops the trigger, else SQLCODE -103. A schema holding a trigger is dropped only with CASCADE. |
+| What it sees | §11.21 Note 561 | The action sees the columns its tables and its subject table had when it was defined: a column added later is not among those of its `*`, its INSERT without a column list or its transition rows. |
+
+The action is bound again only when the definitions change, and kept
+for each level of nesting it runs at. A trigger whose action executes
+it again recurses until its WHEN condition stops it or the limit of
+nesting is passed (see [Limits](#limits)). The statements IA046 and
+IA047 refuse are refused as Syntax Rules when the trigger is defined, so
+0W000 is never raised as an action runs [§15.21 GR6e iii, GR6h]. 11000
+and 0W001 are of system-time columns and data change delta tables,
+which turborel has none of. TRUNCATE TABLE executes no trigger [§14.10
+GR]. A MERGE into a view with an INSTEAD OF trigger, and a positioned
+UPDATE or DELETE of a cursor over one, are valid SQL not supported
+(SQLCODE -900). TRIGGER, BEFORE, AFTER, INSTEAD, REFERENCING, OLD, NEW,
+ROW, EACH, STATEMENT and ATOMIC are no key words of SQL-92, so each
+stays an identifier, a key word only where a trigger's statements read
+it. The Information Schema's views of triggers [ISO/IEC 9075-11] are
+not implemented.
 
 ---
 
@@ -1738,6 +1784,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | Rule | Choice | Where |
 |---|---|---|
 | §4.19 the size of the diagnostics area, and the order of its conditions | One condition, the statement's, successful completion too [§4.18] | `db/area.rs` |
+| IA079, 2023 §9.17 GR22 whether condition areas past the first are occupied | None. Of 09000 [§15.21 GR6m], the cause's condition is left out, MORE Y, its SQLSTATE and message within the 09000's | `db/area.rs`, `db/triggers/run.rs` |
 | §18.1 GR1e ROW_COUNT after other statements; Table 21's L; GR3b, GR3c an implementation's class origin; GR3k MESSAGE_TEXT | 0; the longest character string (L is never reached); TURBOREL for class TB; the error's message with its rule, empty for a completion | `db/area.rs` |
 | §14.1 GR6, GR7 diagnostics area limit | A statement reports one condition, so any limit of 1 or more holds | `db/session.rs` |
 | 2023 §23.1 Table 37, Table 38, IL205, the maximum length of a character string item | 32,767 characters, the longest character string varying | `db/area.rs` |
@@ -1798,6 +1845,10 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | IA203, ISO/IEC 9075-2:2023 §4.26.6 the BPK-sets and BUC-sets of a table value constructor | None | `binder/dependencies.rs` |
 | IA204, ISO/IEC 9075-2:2023 §4.26.16 the known functional dependencies, BPK-sets and BUC-sets of a recursive query | None but the axiomatic | `binder/dependencies.rs` |
 | IA226, ISO/IEC 9075-2:2023 §4.26.16 known functional dependencies of a UNION | None but the axiomatic | `binder/dependencies.rs` |
+| IA046, ISO/IEC 9075-2:2023 §11.49 SR13 whether a triggered action may contain a schema, transaction, connection, dynamic or session statement, and whether that is a Syntax Rule | It may not, nor a cursor statement or a parameter, refused as a Syntax Rule as the trigger is defined (SQLCODE -103) | `db/triggers/define.rs`, `parser/triggers.rs` |
+| IA047, ISO/IEC 9075-2:2023 §11.49 SR14a whether a BEFORE trigger's action may contain a statement that possibly modifies SQL-data | It may not: INSERT, UPDATE, DELETE and MERGE are refused as the trigger is defined (SQLCODE -103) | `db/triggers/define.rs`, `parser/triggers.rs` |
+| IS003, ISO/IEC 9075-2:2023 §4.46.1 the order of triggers of one timestamp of creation | None share one: each is one more than the greatest of the catalog's as it is defined | `db/triggers/define.rs` |
+| US048, ISO/IEC 9075-2:2023 §15.21 GR4a the order a row trigger takes its transitions in | The order the statement changed the rows | `db/triggers/changes.rs`, `db/triggers/fire.rs` |
 | IV223, ISO/IEC 9075-2:2023 §11.51 SR7a the source type of a distinct type of an exact or an approximate type | NUMERIC of its precision and scale, or FLOAT of its precision | `db/user_types.rs` |
 | ID047, ISO/IEC 9075-2:2023 §9.18 SR10b the SQL-path | The schema of the statement's names, the session's default schema or a schema statement's own | `binder/routines.rs` |
 | ID048, ISO/IEC 9075-2:2023 §4.9.6 a session's transform group of a distinct type | The one its definition makes, named FNUDT, in every session | `db/dynamic/using.rs`, `protocol/src/fields.rs` |
@@ -1849,6 +1900,7 @@ SQLCODE -900 (RULES.md D18).
 | Regular expression size | 8,192 instructions compiled, about as many characters and quantified repeats, and groups 64 deep | §9.28 sets no limit. A counted repeat is compiled once for each count, so `a{9000}` passes it. | `regex/compile.rs`, `regex/parse.rs` |
 | Regular expression steps | 10,000,000, of a search with back-references | A back-reference matches no automaton, so its search goes back and can take time exponential in the string. One without any takes time linear in it, with no limit. | `regex/backtrack.rs` |
 | Grouping sets | 4,096 of a GROUP BY, and GROUPING of 59 columns | 2023 §7.13 SR14 and SR16 set no maximum, and a CUBE of n sets stands for 2 to the n. GROUPING's value is of 18 digits [§6.9 SR10b], which 2 to the 59 fits and 2 to the 60 does not. | `binder/grouping_sets.rs`, `binder/grouping_sets/expansion.rs` |
+| Trigger nesting | 16 levels of triggers executed within triggers, past which the statement fails with SQLSTATE 09000, SQLCODE -900 | §15.21 sets no limit, and a trigger whose action executes it again would recurse until the stack overflowed. 16 levels run in half of Rust's default 2 MiB thread stack. | `db/triggers.rs`, `db/triggers/run.rs` |
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
 
 An index entry is an encoded key plus an 8-byte row id, and has its own limit.

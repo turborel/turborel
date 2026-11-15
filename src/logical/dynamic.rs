@@ -187,7 +187,8 @@ impl Filling<'_> {
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Sort { .. }
             | LogicalPlan::Recursive { .. }
-            | LogicalPlan::WorkTable { .. }) => other,
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. }) => other,
         };
         node.map_inputs(|p| self.plan(p))
     }

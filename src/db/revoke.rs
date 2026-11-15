@@ -32,7 +32,7 @@ use super::{Completion, State, api, rule};
 use crate::ast::{AlterDomain, AlterDomainAction, DropBehavior, PrivilegeObject, RevokeStatement, TableName};
 use crate::binder::qualify;
 use crate::catalog::{
-    Actions, Catalog, ConstraintDesc, ConstraintKind, Privilege, PrivilegeDesc, QualifiedName, applicable, merged, owner_of,
+    Actions, Catalog, ConstraintDesc, ConstraintKind, Privilege, PrivilegeDesc, QualifiedName, SYSTEM_GRANTOR, applicable, merged, owner_of,
 };
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::txn::LockMode;
@@ -90,7 +90,10 @@ fn standing(catalog: &dyn Catalog, grants: &[Granted]) -> Vec<bool> {
     loop {
         let now: Vec<&Granted> = grants.iter().zip(&stands).filter(|(_, s)| **s).map(|(g, _)| g).collect();
         let held = with_grants(catalog, &now);
-        let next: Vec<bool> = grants.iter().map(|g| applicable(&*held, &g.grantor, &g.table).1.each().contains(&g.privilege)).collect();
+        // [ISO/IEC 9075-2:2023 §11.49 GR6] one of the special grantor
+        // stands as its trigger does.
+        let holds = |g: &Granted| g.grantor == SYSTEM_GRANTOR || applicable(&*held, &g.grantor, &g.table).1.each().contains(&g.privilege);
+        let next: Vec<bool> = grants.iter().map(holds).collect();
         if next == stands {
             return stands;
         }
@@ -113,6 +116,9 @@ pub(super) struct Abandoned {
     /// \[DESIGN\] Generated columns whose generation expressions name the
     /// object, each with its table, lost (`db/generated/named.rs`).
     pub(super) columns: Vec<Column>,
+    /// [ISO/IEC 9075-2:2023 §12.7 SR3b] Triggers whose owner loses a
+    /// privilege their definition needs.
+    pub(super) triggers: Vec<QualifiedName>,
 }
 
 impl Abandoned {
@@ -124,6 +130,7 @@ impl Abandoned {
             && self.domain_constraints.is_empty()
             && self.assertions.is_empty()
             && self.columns.is_empty()
+            && self.triggers.is_empty()
     }
 
     /// The first of them, named for a refusal.
@@ -146,6 +153,9 @@ impl Abandoned {
         }
         if let Some(a) = self.assertions.first() {
             return format!("assertion {a}");
+        }
+        if let Some(t) = self.triggers.first() {
+            return format!("trigger {t}");
         }
         self.columns.first().map(|(t, c)| format!("generated column {t}.{c}")).unwrap_or_default()
     }
@@ -270,6 +280,11 @@ impl State {
                 abandoned.assertions.push(a.name.clone());
             }
         }
+        for t in self.catalog.triggers() {
+            if lost(bound.trigger_binds(t)) {
+                abandoned.triggers.push(t.name.clone());
+            }
+        }
     }
 
     /// The domain, and the name, of the domain constraint `c` is a copy of,
@@ -344,7 +359,36 @@ impl State {
             dropped.storage.extend(taken.storage);
             locks.extend(taken.names.into_iter().map(|name| (name, LockMode::Exclusive)));
         }
+        // [ISO/IEC 9075-2:2023 §12.7 GR6] DROP TRIGGER.
+        let triggers: Vec<QualifiedName> = abandoned.triggers.iter().filter(|t| self.catalog.trigger(t).is_some()).cloned().collect();
+        for t in &triggers {
+            let taken = self.drop_trigger(t)?;
+            locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
+            dropped.absorb(taken);
+        }
         Ok((dropped, locks))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.50 GR1] The privileges `revoked`, on view
+    /// `view` by `SYSTEM_GRANTOR` to `grantee`, revoked with CASCADE: what
+    /// that took away, the names of what it abandoned among them.
+    ///
+    /// # Errors
+    ///
+    /// As each drop's.
+    pub(super) fn revoke_system(&mut self, view: &QualifiedName, (revoked, grantee): (&[Privilege], &str)) -> Result<Dropped> {
+        let all = granted(&*self.catalog);
+        let identified = |g: &Granted| {
+            g.grantor == SYSTEM_GRANTOR && g.table == *view && g.grantee.as_deref() == Some(grantee) && revoked.contains(&g.privilege)
+        };
+        let remaining: Vec<Granted> = all.iter().filter(|g| !identified(g)).cloned().collect();
+        let stands = standing(&*self.catalog, &remaining);
+        let kept: Vec<&Granted> = remaining.iter().zip(&stands).filter(|(_, s)| **s).map(|(g, _)| g).collect();
+        let after = with_grants(&*self.catalog, &kept);
+        let abandoned = self.abandoned(&*after);
+        let (mut dropped, locks) = self.destroy(Arc::from(after), &abandoned)?;
+        dropped.names.extend(locks.into_iter().map(|(name, _)| name));
+        Ok(dropped)
     }
 }
 

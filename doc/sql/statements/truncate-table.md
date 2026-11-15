@@ -24,7 +24,7 @@ rows go at once. The table is given new, empty storage, as ALTER TABLE
 gives it, so the statement costs the same however many rows it held, and
 its indexes are emptied with it. A temporary table loses the session's
 own rows, and other sessions keep theirs. A TRUNCATE TABLE that finds no
-row completes with no data.
+row completes with no data. It runs no trigger of the table.
 
 CONTINUE IDENTITY, the default, leaves the table's identity column to go
 on from the last value it gave. RESTART IDENTITY restarts it at its start

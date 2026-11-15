@@ -71,6 +71,8 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         }
         // [§11.34 GR4]
         SchemaStatement::Assertion(a) => condition(&a.check.text),
+        // [ISO/IEC 9075-2:2023 §11.49 GR4]
+        SchemaStatement::Trigger(t) => long(&t.action_text).then_some(SqlState::STATEMENT_TOO_LONG),
         SchemaStatement::Grant(_)
         | SchemaStatement::Revoke(_)
         | SchemaStatement::Collation(_)

@@ -43,6 +43,7 @@ impl State {
             DropTarget::Collation(qn) => self.drop_collation(qn, cascade),
             DropTarget::Sequence(qn) => self.drop_sequence(qn),
             DropTarget::Type(qn) => self.drop_user_type(qn, cascade),
+            DropTarget::Trigger(qn) => self.drop_trigger(qn),
         }
     }
 
@@ -106,13 +107,15 @@ impl State {
     /// [ISO/IEC 9075:1992 §11.2] Drops schema `auth`: each of its tables,
     /// then each of its views left, as DROP TABLE and DROP VIEW with
     /// CASCADE do [GR1, GR2], then its domains, as DROP DOMAIN with CASCADE
-    /// does [GR3], then its assertions [GR4], then the schema [GR8].
+    /// does [GR3], then its assertions [GR4], then its triggers [ISO/IEC
+    /// 9075-2:2023 §11.2 GR9], then the schema [GR8].
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if there is no such schema [SR2] (SQLSTATE 3F000), or,
     /// not `cascade`, it holds a table, view, domain, assertion, collation,
-    /// sequence generator or user-defined type [SR3].
+    /// sequence generator, user-defined type [SR3] or trigger [ISO/IEC
+    /// 9075-2:2023 §11.2 SR4j].
     fn drop_schema(&mut self, auth: &str, cascade: bool) -> Result<Dropped> {
         if !self.catalog.schema_exists(auth) {
             let msg = format!("[ISO/IEC 9075:1992 §11.2 SR2] there is no schema {auth}");
@@ -128,8 +131,12 @@ impl State {
         let collations = self.schema_collations(auth);
         let sequences = self.schema_sequences(auth);
         let types = self.schema_user_types(auth);
-        let held = (tables.first().or(views.first()).or(domains.first()).or(assertions.first()))
-            .or(collations.first().or(sequences.first()).or(types.first()));
+        let triggers = self.schema_triggers_of(auth);
+        let held = (tables.first().or(views.first()).or(domains.first()).or(assertions.first())).or(collations
+            .first()
+            .or(sequences.first())
+            .or(types.first())
+            .or(triggers.first()));
         if let (Some(first), false) = (held, cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {first}, so it is dropped only with CASCADE")));
         }
@@ -149,6 +156,8 @@ impl State {
         for assertion in assertions.iter().filter(|a| self.catalog.assertion(a).is_some()).cloned().collect::<Vec<_>>() {
             dropped.absorb(self.drop_assertion(&assertion)?);
         }
+        // [ISO/IEC 9075-2:2023 §11.2 GR9] its triggers left.
+        dropped.absorb(self.drop_triggers(&triggers)?);
         dropped.absorb(self.drop_schema_collations(auth)?);
         dropped.absorb(self.drop_schema_sequences(auth)?);
         // Its types, once the tables of them are gone.
@@ -198,8 +207,9 @@ impl State {
     /// `cascade`: the views that read it, directly or through others, and
     /// the constraints of other tables that reference or read it or them,
     /// and the assertions that read it or them, with the privileges on the
-    /// views. The names of the views, of the tables changed and of the
-    /// assertions are among what it took away.
+    /// views; the triggers on them, and those whose actions name them. The
+    /// names of the views, of the tables changed, of the assertions and of
+    /// the triggers are among what it took away.
     ///
     /// # Errors
     ///
@@ -238,6 +248,7 @@ impl State {
         }
         self.catalog = Arc::from(catalog);
         dropped.absorb(self.drop_asserting(&gone, (cascade, cited))?);
+        dropped.absorb(self.drop_triggering(&gone, (cascade, self.catalog.table(qn).is_some()))?);
         dropped.names.extend(views);
         Ok(dropped)
     }
@@ -297,7 +308,8 @@ impl Session {
             | DropTarget::Domain(_)
             | DropTarget::Assertion(_)
             | DropTarget::Sequence(_)
-            | DropTarget::Type(_) => Vec::new(),
+            | DropTarget::Type(_)
+            | DropTarget::Trigger(_) => Vec::new(),
         };
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
@@ -356,6 +368,7 @@ impl Session {
             DropObject::Collation(collation) => Ok(DropTarget::Collation(self.owned(st, collation, "ISO/IEC 9075-2:2023 §11.44 AR1")?)),
             DropObject::Sequence(sequence) => Ok(DropTarget::Sequence(self.owned(st, sequence, "ISO/IEC 9075-2:2023 §11.74 AR1")?)),
             DropObject::Type(name) => Ok(DropTarget::Type(self.owned(st, name, "ISO/IEC 9075-2:2023 §11.59 AR1")?)),
+            DropObject::Trigger(name) => Ok(DropTarget::Trigger(self.owned(st, name, "ISO/IEC 9075-2:2023 §11.50 AR1")?)),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {

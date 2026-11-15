@@ -31,7 +31,8 @@ pub(super) fn row_condition(plan: &LogicalPlan) -> Option<Cond> {
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
-            | LogicalPlan::WorkTable { .. } => break,
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => break,
         }
     }
     and_all(conds)
@@ -75,7 +76,8 @@ fn sort_of(plan: &LogicalPlan) -> Result<Option<(&[SortKey], &LogicalPlan)>> {
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
-            | LogicalPlan::WorkTable { .. } => return Err(unordered()),
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => return Err(unordered()),
         }
     }
 }
@@ -113,7 +115,8 @@ fn table_columns(mut columns: Vec<usize>, plan: &LogicalPlan) -> Result<Vec<usiz
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
-            | LogicalPlan::WorkTable { .. } => return Err(unordered()),
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. } => return Err(unordered()),
         }
     }
     columns.sort_unstable();

@@ -28,7 +28,10 @@ or none but of no OFFSET or FETCH FIRST, with no DISTINCT, whose select list nam
 one table, a base table or an updatable view, with no GROUP BY or
 HAVING, and none of whose subqueries reads the table it would change.
 INSERT, UPDATE and DELETE on an updatable view change the table it is
-drawn from. Any other view is read-only.
+drawn from. Any other view is read-only, but for an event it has an
+INSTEAD OF trigger of: an INSERT, a searched UPDATE or a searched DELETE
+of it runs the trigger in place of the change (see
+[CREATE TRIGGER](create-trigger.md)).
 
 WITH CHECK OPTION refuses a row inserted or updated through the view
 that is not then a row of it. CASCADED, the default, checks the row
@@ -148,4 +151,4 @@ of when it was defined [§11.11 GR2, note].
 ## SEE ALSO
 
 [DROP VIEW](drop-view.md), [SELECT](select.md), [GRANT](grant.md),
-[Concepts](../../user/03-concepts.md)
+[CREATE TRIGGER](create-trigger.md), [Concepts](../../user/03-concepts.md)

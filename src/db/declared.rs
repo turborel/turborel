@@ -84,7 +84,8 @@ impl Session {
             | SchemaStatement::Collation(_)
             | SchemaStatement::Sequence(_)
             | SchemaStatement::AlterSequence(_)
-            | SchemaStatement::Type(_) => Ok(()),
+            | SchemaStatement::Type(_)
+            | SchemaStatement::Trigger(_) => Ok(()),
         }
     }
 

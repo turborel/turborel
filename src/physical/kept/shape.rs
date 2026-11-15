@@ -62,7 +62,8 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => false,
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => false,
     }
 }
 

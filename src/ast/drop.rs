@@ -21,6 +21,9 @@ pub enum DropObject {
     Sequence(TableName),
     /// A user-defined type [ISO/IEC 9075-2:2023 §11.59].
     Type(TableName),
+    /// A trigger [ISO/IEC 9075-2:2023 §11.50], which DROP names with no
+    /// `<drop behavior>`.
+    Trigger(TableName),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
     /// schema name>` [§5.4].
     Schema {
@@ -43,7 +46,8 @@ impl DropObject {
             | DropObject::View(name)
             | DropObject::Domain(name)
             | DropObject::Assertion(name)
-            | DropObject::Type(name) => name.at,
+            | DropObject::Type(name)
+            | DropObject::Trigger(name) => name.at,
             DropObject::Schema { at, .. } => *at,
         }
     }

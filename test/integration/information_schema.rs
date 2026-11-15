@@ -166,11 +166,12 @@ fn constraints_are_described_21_2_13() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.2.10-§21.2.12, §4.26,
-/// §11.3 GR4, §10.4 SR2]: TABLE_PRIVILEGES and COLUMN_PRIVILEGES show the
-/// privileges a user granted or holds, PUBLIC's among them: an owner's of
-/// the grantor "_SYSTEM", every privilege on its base table and its
-/// columns, grantable; one granted on a column alone a column privilege;
-/// and USAGE_PRIVILEGES PUBLIC's USAGE on the character set and collation.
+/// §11.3 GR4, §10.4 SR2; ISO/IEC 9075-2:2023 §12.3]: TABLE_PRIVILEGES and
+/// COLUMN_PRIVILEGES show the privileges a user granted or holds, PUBLIC's
+/// among them: an owner's of the grantor "_SYSTEM", every privilege on its
+/// base table, TRIGGER among them, and its columns, grantable; one granted
+/// on a column alone a column privilege; and USAGE_PRIVILEGES PUBLIC's
+/// USAGE on the character set and collation.
 #[test]
 fn privileges_are_described_21_2_10() {
     let db = catalog();
@@ -181,7 +182,14 @@ fn privileges_are_described_21_2_10() {
     let mine = "SELECT GRANTOR, PRIVILEGE_TYPE, IS_GRANTABLE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE TABLE_NAME = 'MINE'";
     assert_eq!(
         seen(&other, mine),
-        ["_SYSTEM|DELETE|YES", "_SYSTEM|INSERT|YES", "_SYSTEM|REFERENCES|YES", "_SYSTEM|SELECT|YES", "_SYSTEM|UPDATE|YES"]
+        [
+            "_SYSTEM|DELETE|YES",
+            "_SYSTEM|INSERT|YES",
+            "_SYSTEM|REFERENCES|YES",
+            "_SYSTEM|SELECT|YES",
+            "_SYSTEM|TRIGGER|YES",
+            "_SYSTEM|UPDATE|YES"
+        ]
     );
     let column = "SELECT GRANTOR, GRANTEE, TABLE_NAME, COLUMN_NAME, PRIVILEGE_TYPE, IS_GRANTABLE \
                   FROM INFORMATION_SCHEMA.COLUMN_PRIVILEGES WHERE TABLE_SCHEMA = 'S' AND TABLE_NAME <> 'P'";

@@ -83,7 +83,8 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => None,
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => None,
     }
 }
 
@@ -148,7 +149,8 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => false,
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => false,
     }
 }
 
@@ -215,7 +217,8 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::WorkTable { .. } => none,
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => none,
     };
     made(plan, db, tx)
 }

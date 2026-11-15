@@ -24,13 +24,16 @@ pub struct Actions {
     /// columns REFERENCES is held on: a referential constraint may name
     /// them [§11.8 AR1].
     pub references: BTreeSet<usize>,
+    /// [ISO/IEC 9075-2:2023 §12.3] TRIGGER (Feature T217): its schema's
+    /// owner may define a trigger on the table [§11.49 AR2].
+    pub trigger: bool,
 }
 
 impl Actions {
     /// Every privilege on a table of `columns` columns.
     pub fn all(columns: usize) -> Actions {
         let every = || (0..columns).collect();
-        Actions { select: true, insert: every(), delete: true, update: every(), references: every() }
+        Actions { select: true, insert: every(), delete: true, update: every(), references: every(), trigger: true }
     }
 
     /// Adds the privileges of `other`.
@@ -40,6 +43,7 @@ impl Actions {
         self.delete |= other.delete;
         self.update.extend(other.update.iter().copied());
         self.references.extend(other.references.iter().copied());
+        self.trigger |= other.trigger;
     }
 
     /// Whether there are none.
@@ -56,6 +60,7 @@ impl Actions {
             delete: self.delete && other.delete,
             update: self.update.intersection(&other.update).copied().collect(),
             references: self.references.intersection(&other.references).copied().collect(),
+            trigger: self.trigger && other.trigger,
         }
     }
 
@@ -63,7 +68,7 @@ impl Actions {
     /// one for each action on the table, or on one of its columns
     /// [ISO/IEC 9075:1992 §10.3 GR3, §11.36 GR3].
     pub fn each(&self) -> Vec<Privilege> {
-        let tabled = [(self.select, Privilege::Select), (self.delete, Privilege::Delete)];
+        let tabled = [(self.select, Privilege::Select), (self.delete, Privilege::Delete), (self.trigger, Privilege::Trigger)];
         let mut each: Vec<Privilege> = tabled.into_iter().filter(|(held, _)| *held).map(|(_, p)| p).collect();
         each.extend(self.insert.iter().map(|c| Privilege::Insert(*c)));
         each.extend(self.update.iter().map(|c| Privilege::Update(*c)));
@@ -87,6 +92,7 @@ impl Actions {
                 Privilege::References(c) => {
                     actions.references.insert(c);
                 }
+                Privilege::Trigger => actions.trigger = true,
             }
         }
         actions
@@ -96,7 +102,8 @@ impl Actions {
     /// names `columns` (or positions, where it has none): "SELECT",
     /// "UPDATE(AMT)"; none if they lack none.
     pub fn missing(&self, other: &Actions, columns: &[String]) -> Option<String> {
-        let actions = [("SELECT", self.select, other.select), ("DELETE", self.delete, other.delete)];
+        let actions =
+            [("SELECT", self.select, other.select), ("DELETE", self.delete, other.delete), ("TRIGGER", self.trigger, other.trigger)];
         if let Some((name, ..)) = actions.iter().find(|(_, held, wanted)| *wanted && !*held) {
             return Some((*name).to_owned());
         }
@@ -114,7 +121,7 @@ impl Actions {
     /// The column of the privilege `missing` names, if it names one: the
     /// inaccessible column [ISO/IEC 9075:1992 §18.1 GR3g ii].
     pub fn missing_column(&self, other: &Actions) -> Option<usize> {
-        if (other.select && !self.select) || (other.delete && !self.delete) {
+        if (other.select && !self.select) || (other.delete && !self.delete) || (other.trigger && !self.trigger) {
             return None;
         }
         let mut columns = other.insert.difference(&self.insert);
@@ -137,7 +144,13 @@ pub enum Privilege {
     Update(usize),
     /// REFERENCES on the column at this position.
     References(usize),
+    /// [ISO/IEC 9075-2:2023 §12.3] TRIGGER.
+    Trigger,
 }
+
+/// [ISO/IEC 9075-2:2023 §11.49 GR6] The special grantor value of the
+/// privileges an INSTEAD OF trigger gives the owner of its view's schema.
+pub const SYSTEM_GRANTOR: &str = "_SYSTEM";
 
 /// [X3.135-1986 §6.6] What one `<privilege definition>`, or `<grant
 /// statement>` [ISO/IEC 9075:1992 §11.36], grants one `<grantee>`.
@@ -218,6 +231,33 @@ pub fn applicable(catalog: &dyn Catalog, auth: &str, name: &QualifiedName) -> (A
         return (all.clone(), all);
     }
     let Some(view) = catalog.view(name) else { return (Actions::default(), Actions::default()) };
+    let (mut held, mut grantable) = derived(catalog, auth, view);
+    // [ISO/IEC 9075-2:2023 §11.32 GR5] TRIGGER on its view, not grantable.
+    (held.trigger, grantable.trigger) = (true, false);
+    system_granted(catalog, auth, name, (held, grantable))
+}
+
+/// [ISO/IEC 9075-2:2023 §11.49 GR6] `held` and `grantable`, the privileges
+/// of `auth`, the owner, on view `name`, with those granted it by
+/// `SYSTEM_GRANTOR` for its INSTEAD OF triggers.
+fn system_granted(
+    catalog: &dyn Catalog,
+    auth: &str,
+    name: &QualifiedName,
+    (mut held, mut grantable): (Actions, Actions),
+) -> (Actions, Actions) {
+    for p in catalog.privileges(name).into_iter().filter(|p| p.grantor == SYSTEM_GRANTOR && p.grantee.as_deref() == Some(auth)) {
+        held.add(&p.actions);
+        if p.grantable {
+            grantable.add(&p.actions);
+        }
+    }
+    (held, grantable)
+}
+
+/// The privileges of `auth`, the owner of view `view`, that the view's
+/// definition gives it, and those of them grantable, as `applicable` says.
+fn derived(catalog: &dyn Catalog, auth: &str, view: &ViewDesc) -> (Actions, Actions) {
     let (mut held, mut grantable) = if let Some((table, columns)) = &view.updates {
         let (on_table, with_option) = applicable(catalog, auth, table);
         (through(&on_table, columns), through(&with_option, columns))
@@ -287,5 +327,7 @@ fn through(actions: &Actions, columns: &[usize]) -> Actions {
         update: (0..).zip(columns).filter(|(_, c)| actions.update.contains(c)).map(|(j, _)| j).collect(),
         // Found from what it is drawn from (`view_references`).
         references: BTreeSet::new(),
+        // [ISO/IEC 9075-2:2023 §11.32 GR5] the owner's own on its view.
+        trigger: false,
     }
 }

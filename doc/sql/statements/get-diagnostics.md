@@ -88,9 +88,12 @@ The condition information items, of condition 1:
 | ROUTINE_CATALOG, ROUTINE_SCHEMA, ROUTINE_NAME, SPECIFIC_NAME | character | Empty. A condition of a distinct type's function is one of the CAST it stands for |
 | PARAMETER_MODE, PARAMETER_NAME | character | Empty |
 | PARAMETER_ORDINAL_POSITION | exact | 0 |
-| TRIGGER_CATALOG, TRIGGER_SCHEMA, TRIGGER_NAME | character | Empty, as turborel has no triggers |
+| TRIGGER_CATALOG, TRIGGER_SCHEMA, TRIGGER_NAME | character | Of SQLSTATE 09000, the trigger whose action failed; else empty |
 
-An item that does not apply is empty, or 0. A name of a table the
+An item that does not apply is empty, or 0. Of SQLSTATE 09000, CATALOG_NAME,
+SCHEMA_NAME and TABLE_NAME are the trigger's table, and MORE is Y: the
+condition the action failed with is left out, its SQLSTATE and message
+within MESSAGE_TEXT. A name of a table the
 session holds no privilege on is withheld, but for a syntax error or
 access rule violation (SQLSTATE class 42 or 2A). An assertion's name is
 withheld from a session that does not own its schema. An assertion broken

@@ -208,6 +208,11 @@ impl Binder<'_> {
             return Ok((self.column_in(cs, (pos, &t), scope)?, t));
         }
         let Some(outer) = self.outer else {
+            // [ISO/IEC 9075-2:2023 §11.49 SR12] the trigger's scope, which
+            // encloses its action's.
+            if let Some(field) = self.transition_variable(cs)? {
+                return Ok(field);
+            }
             // In no scope at all: the error the lookup gives.
             let (pos, t) = self.resolve(cs)?;
             return Ok((self.column_in(cs, (pos, &t), scope)?, t));

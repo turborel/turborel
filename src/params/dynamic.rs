@@ -101,6 +101,7 @@ impl Params {
         let implicit = self.dynamic.as_ref().and_then(|d| d.implicit.clone());
         Params {
             dynamic: Some(Dynamic { values: Some(values), types, slots: true, held: Cell::new(false), implicit }),
+            transitions: self.transitions.clone(),
             ..Params::default()
         }
     }
@@ -109,6 +110,18 @@ impl Params {
     /// statement is prepared.
     pub(crate) fn dynamic_values(&self) -> &[Value] {
         self.dynamic.as_ref().and_then(|d| d.values.as_deref()).unwrap_or_default()
+    }
+
+    /// Makes `value` the value of its `index`-th dynamic parameter.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it has no such parameter.
+    pub(super) fn set_dynamic(&mut self, index: usize, value: Value) -> Result<()> {
+        let slot = self.dynamic.as_mut().and_then(|d| d.values.as_mut()).and_then(|v| v.get_mut(index));
+        let slot = slot.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] there is no dynamic value {index}")))?;
+        *slot = value;
+        Ok(())
     }
 
     /// Whether each typed `?` binds as a slot (`keeping`).

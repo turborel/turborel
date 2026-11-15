@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use super::area::commands::{self, Command};
 use super::dynamic::{self, Name};
+use super::integrity::Effects;
 use super::prepared::{Keeping, Plans};
 use super::write::{Written, delete_searched, update_searched};
 use super::{Call, Completion, Session, StatementContext, slow};
 use crate::ast::{
     AlterAction, ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, PrivilegeObject, RevokeStatement, SchemaStatement,
-    ServedStatement, SetClause, SqlStatement, TableName, TableStorage, UserStatement,
+    SearchCondition, ServedStatement, SetClause, SqlStatement, TableName, TableStorage, UserStatement,
 };
 use crate::binder::{Context, WriteKind, bind_write, qualify};
 use crate::error::{Code, Result, SqlState, fail};
@@ -228,10 +229,26 @@ impl Session {
         run(self, cx, (&self.positioned_key(&cursor.0), cursor.1), &w)
     }
 
+    /// A searched UPDATE or DELETE, `kind`, of `table` giving `set` where
+    /// `where_clause` is true, bound and run in `cx` by `run`; of a
+    /// prepared statement, bound as it keeps it (`keeping`, RULES.md D45).
+    fn searched(
+        &self,
+        cx: StatementContext<'_>,
+        (kind, table, set, where_clause): (WriteKind, &TableName, &[SetClause], Option<&SearchCondition>),
+        run: fn(StatementContext<'_>, Written, Effects<'_>) -> Result<usize>,
+        (params, keeping): (&Params, Option<&Keeping<'_>>),
+    ) -> Result<Completion> {
+        let bind = |b: Context<'_>| bind_write(b, kind, table, set, where_clause);
+        let w = self.write_bound(cx.st, params, keeping, bind)?;
+        self.settle_cursors(cx.st, &w.bound.table);
+        run(cx, w, self.effects(cx.st)).map(|n| self.affected(n))
+    }
+
     /// Runs a statement that runs in the transaction `tx`: not COMMIT,
     /// ROLLBACK or another that `execute_parsed` runs itself; of a prepared
     /// statement, with the plans it keeps.
-    fn run_statement(
+    pub(super) fn run_statement(
         &self,
         cx: StatementContext<'_>,
         stmt: &SqlStatement,
@@ -239,20 +256,19 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
+        // [ISO/IEC 9075-2:2023 §15.10, §15.13, §15.16] a view's INSTEAD OF
+        // trigger in place of the change.
+        if let Some(n) = self.instead_of(cx, stmt, params)? {
+            return Ok(self.affected(n));
+        }
         match stmt {
             SqlStatement::Insert(ins) => self.insert_statement(cx, ins, params, keeping).map(|n| self.affected(n)),
             SqlStatement::Merge(merge) => self.merge_completed(cx, merge, params, keeping),
             SqlStatement::UpdateSearched { table, set, where_clause } => {
-                let bind = |b: Context<'_>| bind_write(b, WriteKind::UpdateSearched, table, set, where_clause.as_ref());
-                let w = self.write_bound(st, params, keeping, bind)?;
-                self.settle_cursors(st, &w.bound.table);
-                update_searched(cx, w, self.effects(st)).map(|n| self.affected(n))
+                self.searched(cx, (WriteKind::UpdateSearched, table, set, where_clause.as_ref()), update_searched, (&*params, keeping))
             }
             SqlStatement::DeleteSearched { table, where_clause } => {
-                let bind = |b: Context<'_>| bind_write(b, WriteKind::DeleteSearched, table, &[], where_clause.as_ref());
-                let w = self.write_bound(st, params, keeping, bind)?;
-                self.settle_cursors(st, &w.bound.table);
-                delete_searched(cx, w, self.effects(st)).map(|n| self.affected(n))
+                self.searched(cx, (WriteKind::DeleteSearched, table, &[], where_clause.as_ref()), delete_searched, (&*params, keeping))
             }
             SqlStatement::UpdatePositioned { table, set, cursor } => {
                 self.positioned(cx, (table, set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), (params, keeping))
@@ -345,6 +361,7 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::Revoke(RevokeStatement { table, object: PrivilegeObject::Table, .. }) => Some(table),
         SchemaStatement::Table(t) => Some(&t.name),
         SchemaStatement::View(v) => Some(&v.name),
+        SchemaStatement::Trigger(t) => Some(&t.table),
         SchemaStatement::Grant(_)
         | SchemaStatement::Revoke(_)
         | SchemaStatement::Domain(_)
@@ -392,6 +409,23 @@ fn schema_command(s: &SchemaStatement) -> Command {
         SchemaStatement::Sequence(_) => commands::CREATE_SEQUENCE,
         SchemaStatement::AlterSequence(_) => commands::ALTER_SEQUENCE,
         SchemaStatement::Type(_) => commands::CREATE_TYPE,
+        SchemaStatement::Trigger(_) => commands::CREATE_TRIGGER,
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §23.1 GR2c, GR2d, Table 39] How COMMAND_FUNCTION
+/// and COMMAND_FUNCTION_CODE name the drop of `object`.
+fn drop_command(object: &DropObject) -> Command {
+    match object {
+        DropObject::Table(_) => commands::DROP_TABLE,
+        DropObject::View(_) => commands::DROP_VIEW,
+        DropObject::Schema { .. } => commands::DROP_SCHEMA,
+        DropObject::Domain(_) => commands::DROP_DOMAIN,
+        DropObject::Assertion(_) => commands::DROP_ASSERTION,
+        DropObject::Collation(_) => commands::DROP_COLLATION,
+        DropObject::Sequence(_) => commands::DROP_SEQUENCE,
+        DropObject::Type(_) => commands::DROP_TYPE,
+        DropObject::Trigger(_) => commands::DROP_TRIGGER,
     }
 }
 
@@ -407,14 +441,7 @@ fn command_of(stmt: &SqlStatement) -> Command {
         SqlStatement::DeleteSearched { .. } => commands::DELETE_WHERE,
         SqlStatement::Truncate { .. } => commands::TRUNCATE_TABLE,
         SqlStatement::AlterTable { .. } => commands::ALTER_TABLE,
-        SqlStatement::Drop { object: DropObject::Table(_), .. } => commands::DROP_TABLE,
-        SqlStatement::Drop { object: DropObject::View(_), .. } => commands::DROP_VIEW,
-        SqlStatement::Drop { object: DropObject::Schema { .. }, .. } => commands::DROP_SCHEMA,
-        SqlStatement::Drop { object: DropObject::Domain(_), .. } => commands::DROP_DOMAIN,
-        SqlStatement::Drop { object: DropObject::Assertion(_), .. } => commands::DROP_ASSERTION,
-        SqlStatement::Drop { object: DropObject::Collation(_), .. } => commands::DROP_COLLATION,
-        SqlStatement::Drop { object: DropObject::Sequence(_), .. } => commands::DROP_SEQUENCE,
-        SqlStatement::Drop { object: DropObject::Type(_), .. } => commands::DROP_TYPE,
+        SqlStatement::Drop { object, .. } => drop_command(object),
         SqlStatement::Fetch { .. } => commands::FETCH,
         SqlStatement::GetDiagnostics(_) => commands::GET_DIAGNOSTICS,
         SqlStatement::Dynamic(d) => dynamic::command(d),
