@@ -99,6 +99,11 @@ name = "rows"
 path = "bench/rows.rs"
 harness = false
 
+[[bench]]
+name = "spatial"
+path = "bench/spatial.rs"
+harness = false
+
 # `cargo xtask <command>` runs the project's checks (RULES.md R-TOOL-1).
 [workspace]
 members = ["xtask", "protocol", "client", "server", "turboreld", "support", "cli", "lz4", "aes", "replication"]
