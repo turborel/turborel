@@ -177,7 +177,15 @@ impl RTree {
         root.entries.push(Entry { bounds: right.bounds().unwrap_or(empty), id: right_id.0, value: right.stamp });
         *page = root.bytes()?;
         drop(page);
-        *self.inner.pool.write(self.inner.file, self.inner.meta)? = meta_bytes(new, root.stamp);
+        match self.inner.pool.write(self.inner.file, self.inner.meta) {
+            Ok(mut metadata) => *metadata = meta_bytes(new, root.stamp),
+            Err(error) => {
+                // No root link was published. Cleanup failure leaks a
+                // page only; preserve the original publication error.
+                let _ = self.inner.pool.free(self.inner.file, new);
+                return Err(error);
+            }
+        }
         node.pending = false;
         self.store(id, node)
     }
