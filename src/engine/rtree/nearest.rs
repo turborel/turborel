@@ -1,0 +1,167 @@
+//! \[DESIGN\] Best-first rectangle distance search. Branch priorities
+//! are rounded downward; leaf priorities are rectangle distances. A
+//! branch is expanded before an equally distant entry, so rows tied on
+//! distance can be returned by row id. The frontier reserves its memory
+//! before growing; a cancelled caller drops it without reading the rest.
+
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+use std::sync::Arc;
+use std::sync::atomic::Ordering as AtomicOrder;
+
+use super::{RTree, Visit, corrupt};
+use crate::disk::pager::PageId;
+use crate::error::{Code, Result, SqlError};
+use crate::memory::{MemoryBudget, Reservation};
+use crate::spatial::Bounds;
+use crate::storage::RowId;
+
+/// Avoid an allocation at each of the first few queued branches.
+const INITIAL_CAPACITY: usize = 64;
+/// Geometric growth bounds allocation work as the frontier expands.
+const GROWTH: usize = 2;
+
+/// Rectangle entries in increasing Euclidean distance, then row-id
+/// order. Distances are exact for point and rectangle entries; a geometry
+/// represented by a rectangle still needs an exact distance calculation.
+/// Entries held throughout appear once. Concurrently changed entries may
+/// be omitted, including a new entry nearer than one already returned.
+pub struct Nearest {
+    tree: RTree,
+    query: Bounds,
+    queue: BinaryHeap<Queued>,
+    held: Reservation,
+    failed: bool,
+    visited: u64,
+    limit: u64,
+    /// An insertion may enlarge a branch whose old bound is queued. Its
+    /// new entry is optional to this scan; omit it if it would go back
+    /// before an entry already returned. Entries held throughout remain
+    /// ordered by their admissible branch bounds.
+    last: Option<(f64, RowId)>,
+}
+
+#[derive(Clone, Copy)]
+enum Item {
+    Page(Visit),
+    Entry(Bounds, RowId),
+}
+
+#[derive(Clone, Copy)]
+struct Queued {
+    distance: f64,
+    item: Item,
+}
+
+impl Queued {
+    fn tie(self) -> (u8, u64) {
+        match self.item {
+            Item::Page(visit) => (0, visit.id.0),
+            Item::Entry(_, row) => (1, row),
+        }
+    }
+}
+
+impl Ord for Queued {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.distance.total_cmp(&self.distance).then_with(|| other.tie().cmp(&self.tie()))
+    }
+}
+
+impl PartialOrd for Queued {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Queued {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Queued {}
+
+impl Nearest {
+    pub(super) fn new(tree: RTree, query: Bounds, budget: &Arc<MemoryBudget>) -> Result<Nearest> {
+        let root = tree.root()?;
+        let held = budget.reserve(0, "the R-tree nearest-neighbour frontier")?;
+        let mut nearest = Nearest { tree, query, queue: BinaryHeap::new(), held, failed: false, visited: 0, limit: 0, last: None };
+        nearest.push(Queued { distance: 0.0_f64, item: Item::Page(root) })?;
+        Ok(nearest)
+    }
+
+    fn push(&mut self, entry: Queued) -> Result<()> {
+        if self.queue.len() == self.queue.capacity() {
+            let capacity = self.queue.capacity().checked_mul(GROWTH).ok_or_else(exhausted)?.max(INITIAL_CAPACITY);
+            let bytes = capacity.checked_mul(size_of::<Queued>()).ok_or_else(exhausted)?;
+            self.held.resize(bytes)?;
+            self.queue.try_reserve_exact(capacity.saturating_sub(self.queue.len())).map_err(|_| exhausted())?;
+        }
+        self.queue.push(entry);
+        Ok(())
+    }
+
+    fn expand(&mut self, visit: Visit, distance: f64) -> Result<()> {
+        self.visited = self.visited.saturating_add(1);
+        if self.visited > self.limit {
+            self.limit = self.tree.inner.pool.pages_in_use(self.tree.inner.file)?;
+            if self.visited > self.limit {
+                return Err(corrupt("its nearest-neighbour traversal contains a cycle"));
+            }
+        }
+        let node = self.tree.read(visit.id)?;
+        if node.level != visit.level {
+            return Err(corrupt("a nearest-neighbour child is at the wrong level"));
+        }
+        if node.stamp != visit.stamp {
+            let id = node.right.ok_or_else(|| corrupt("a nearest-neighbour split has no sibling"))?;
+            self.push(Queued { distance, item: Item::Page(Visit { id, ..visit }) })?;
+            self.tree.inner.right_moves.fetch_add(1, AtomicOrder::Relaxed);
+        }
+        for entry in node.entries {
+            let item = if node.level == 0 {
+                Queued { distance: entry.bounds.distance(self.query), item: Item::Entry(entry.bounds, entry.id) }
+            } else {
+                let child = Visit { id: PageId(entry.id), stamp: entry.value, level: node.level.saturating_sub(1) };
+                Queued { distance: entry.bounds.distance_lower_bound(self.query), item: Item::Page(child) }
+            };
+            self.push(item)?;
+        }
+        Ok(())
+    }
+}
+
+impl Iterator for Nearest {
+    type Item = Result<(f64, Bounds, RowId)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.failed {
+            return None;
+        }
+        while let Some(queued) = self.queue.pop() {
+            match queued.item {
+                Item::Entry(bounds, row) => {
+                    let earlier =
+                        self.last.is_some_and(|(distance, id)| queued.distance.total_cmp(&distance).then(row.cmp(&id)) == Ordering::Less);
+                    if !earlier {
+                        self.last = Some((queued.distance, row));
+                        return Some(Ok((queued.distance, bounds, row)));
+                    }
+                }
+                Item::Page(visit) => {
+                    if let Err(error) = self.expand(visit, queued.distance) {
+                        self.failed = true;
+                        self.queue.clear();
+                        return Some(Err(error));
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+fn exhausted() -> SqlError {
+    SqlError::new(Code::Resources, "[DESIGN] the R-tree nearest-neighbour frontier cannot allocate more memory")
+}

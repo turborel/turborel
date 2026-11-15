@@ -711,6 +711,12 @@ and streams intersecting entries once each. Clones share its node locks;
 readers hold a page latch only while copying that page. Its meta page is
 the locator used to reopen it after the owning pager is checkpointed.
 
+`RTree::nearest` streams entries by Euclidean rectangle distance, breaking
+ties by row identifier. Take the first k entries to stop as soon as those
+neighbours are known. Its priority queue reserves memory from the supplied
+`MemoryBudget` and returns SQLCODE -918 if it cannot grow. Dropping the
+iterator releases that memory. Distances use the coordinates' units.
+
 These are rectangle storage operations. An exact geometry predicate needs
 to test the candidate geometry, and rectangle containment has different
 boundary semantics from a geometry's topological ST_Contains operation.
