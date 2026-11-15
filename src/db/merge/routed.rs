@@ -13,17 +13,19 @@
 //! them, each its ordinal as its row id (`held`).
 //!
 //! A candidate row for an insert a trigger takes is a row of its view:
-//! each insert object column its value, every other column null, as an
-//! INSERT into the view gives it (`triggers/rerouted.rs`). Nothing of a
+//! each insert object column its value, every other column its default,
+//! that of its counterpart column [§11.5 GR3d], as an INSERT into the view
+//! gives it (`triggers/rerouted.rs`). Nothing of a
 //! base table is written for such a clause, so no BEFORE trigger, CHECK
 //! OPTION or generated column of one is of it.
 
+use super::super::defaults::default_value;
 use super::super::triggers::{Event, Instead, instead_for, updatable, view_rows};
 use super::super::write::{InsertRules, Target, object_columns};
 use super::super::{Session, State, StatementContext, api};
 use super::decide::{Merge, Planned, target_part};
 use crate::ast::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
-use crate::binder::{ObjectColumn, qualify};
+use crate::binder::{ObjectColumn, defaulted_columns, qualify};
 use crate::catalog::{Actions, ColumnDesc, QualifiedName, applicable};
 use crate::error::{Code, Result, SqlError, Subject};
 use crate::exec::{HeldRows, Subqueries, TransitionRows};
@@ -84,10 +86,13 @@ pub(in crate::db) enum Inserting {
 pub(in crate::db) struct ViewRows {
     /// The insert object columns, as the binder takes them: a column of
     /// the base table, of a view updatable down to one, else of the view,
-    /// with no default and no generator.
+    /// with its default as a column of the view and no generator.
     objects: Vec<ObjectColumn>,
-    /// The trigger's view's columns.
+    /// The trigger's view's columns, each with the default it takes
+    /// (`binder::defaulted_columns`).
     columns: Vec<ColumnDesc>,
+    /// Their defaults, of the statement as it runs.
+    defaults: Row,
     /// Of each of them, the place among the insert values of the value it
     /// is given, if one is.
     given: Vec<Option<usize>>,
@@ -113,7 +118,7 @@ impl Inserting {
     /// The candidate row of the insert values `values`: a row of the table,
     /// as `Target::candidate` makes it, by `st`, warnings to `subqueries`;
     /// or a row of the trigger's view, each column given a value it, every
-    /// other null.
+    /// other its default [§11.5 GR3d].
     ///
     /// # Errors
     ///
@@ -126,14 +131,15 @@ impl Inserting {
         v.columns
             .iter()
             .zip(&v.given)
-            .map(|(c, at)| match at.and_then(|i| values.get(i)) {
+            .zip(&v.defaults)
+            .map(|((c, at), default)| match at.and_then(|i| values.get(i)) {
                 Some(value) => assign(value.clone(), &c.data_type, STORED),
-                None => Ok(Value::Null),
+                None => Ok(default.clone()),
             })
             .collect()
     }
 
-    /// It, as a prepared statement's kept plan takes it again: a table's
+    /// It, as a prepared statement's kept plan takes it again: its
     /// defaults those of a statement run under `auth` at `now`.
     ///
     /// # Errors
@@ -142,7 +148,7 @@ impl Inserting {
     pub(super) fn refreshed(self, auth: &str, now: Now) -> Result<Inserting> {
         match self {
             Inserting::Table(t) => Ok(Inserting::Table(Box::new(t.refreshed(auth, now)?))),
-            Inserting::Instead(v) => Ok(Inserting::Instead(v)),
+            Inserting::Instead(v) => Ok(Inserting::Instead(ViewRows { defaults: defaults_of(&v.columns, auth, now)?, ..v })),
         }
     }
 
@@ -160,7 +166,8 @@ impl Inserting {
 /// the view of `instead`, the trigger that takes it: its insert object
 /// columns, each a column of `name`, none twice, INSERT on each held by
 /// `user`. Of a view `held`, each is a column of the view, else of the
-/// base table.
+/// base table; its default, and each of the view's, that of a statement
+/// run under `user` at `now` [§11.5 GR3d].
 ///
 /// # Errors
 ///
@@ -170,7 +177,7 @@ pub(super) fn view_rows_of(
     st: &State,
     (name, insert, rules): (&QualifiedName, &MergeInsert, &InsertRules),
     (instead, held): (&Instead, bool),
-    user: &str,
+    (user, now): (&str, Now),
 ) -> Result<ViewRows> {
     let named = st.catalog.view(name).ok_or_else(|| api(format!("[DESIGN] {name} is no view of an INSTEAD OF trigger")))?;
     let listed = match insert.columns.as_deref() {
@@ -188,19 +195,29 @@ pub(super) fn view_rows_of(
         (Some((table, columns)), false) => Some((st.base_table(table)?, columns)),
         (Some(_) | None, true) | (None, false) => None,
     };
+    let columns = defaulted_columns(st, &instead.view, user)?;
+    let defaults = defaults_of(&columns, user, now)?;
     let mut objects = Vec::with_capacity(listed.len());
     for &k in &listed {
-        let column = match (&base, instead.from_named.get(k)) {
-            (Some((desc, columns)), Some(&j)) => columns.get(j).and_then(|&c| desc.columns.get(c)),
-            (None, _) => named.columns.get(k),
-            (Some(_), None) => None,
+        // Of a view held, the view named is the trigger's.
+        let j = instead.from_named.get(k).copied();
+        let column = match (&base, j) {
+            (Some((desc, map)), Some(j)) => map.get(j).and_then(|&c| desc.columns.get(c)),
+            (None, Some(j)) => columns.get(j),
+            (Some(_) | None, None) => None,
         };
         let desc = column.cloned().ok_or_else(|| api(format!("[DESIGN] column {k} of {name} is no column of the table under it")))?;
-        objects.push(ObjectColumn { desc, default: Value::Null, draws: None });
+        let default = j.and_then(|j| defaults.get(j)).cloned().unwrap_or(Value::Null);
+        objects.push(ObjectColumn { desc, default, draws: None });
     }
-    let view = st.catalog.view(&instead.view).ok_or_else(|| api(format!("[DESIGN] {} is no view", instead.view)))?;
-    let given = (0..view.columns.len()).map(|j| listed.iter().position(|&k| instead.from_named.get(k) == Some(&j))).collect();
-    Ok(ViewRows { objects, columns: view.columns.clone(), given })
+    let given = (0..columns.len()).map(|j| listed.iter().position(|&k| instead.from_named.get(k) == Some(&j))).collect();
+    Ok(ViewRows { objects, columns, defaults, given })
+}
+
+/// The default value of each of `columns`, of a statement run under `auth`
+/// at `now`.
+fn defaults_of(columns: &[ColumnDesc], auth: &str, now: Now) -> Result<Row> {
+    columns.iter().map(|c| default_value(c, auth, now)).collect()
 }
 
 /// [ISO/IEC 9075-2:2023 §15.10 GR3a, §15.13 GR3a, §15.16 GR3a] The rows of

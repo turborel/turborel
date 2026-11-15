@@ -8,6 +8,7 @@
 //! a Scan outputs its table's columns, a Product the left's then the right's,
 //! an Aggregate its grouping columns then one column per set function.
 
+mod counterparts;
 mod dynamic;
 mod expr;
 mod fixpoint;
@@ -20,6 +21,7 @@ mod subqueries;
 mod subquery;
 mod window;
 
+pub use counterparts::BaseColumn;
 pub use dynamic::{filled, filled_cond, filled_expr};
 pub use expr::{
     Cond, DomainChecks, Expr, Quantifier, Slot, Truth, and_all, cond_columns, expr_columns, map_cond_columns, map_cond_exprs,

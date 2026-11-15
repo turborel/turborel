@@ -32,6 +32,7 @@ mod arithmetic;
 mod case;
 mod collation;
 mod composite;
+mod counterparts;
 pub(crate) use composite::grouping_operand;
 mod cursor;
 mod datetime;
@@ -79,6 +80,7 @@ mod views;
 mod window;
 mod with;
 
+pub use counterparts::defaulted_columns;
 pub use cursor::bind_cursor;
 use from::FromItem;
 pub use generated::{bind_generation, generations};

@@ -62,9 +62,11 @@ impl Instead {
 
     /// The row of its view that the row `row` of the view named makes:
     /// each of its columns the view named has given that column's value,
-    /// the null value in each other, as a column not named in an INSERT.
-    pub(in crate::db) fn of_named(&self, row: Row) -> Row {
-        let mut out = vec![Value::Null; self.width];
+    /// each other its value of `defaults`, its view's columns' defaults, as
+    /// a column not named in an INSERT [ISO/IEC 9075-2:2023 §15.12 GR2b iii
+    /// 1]. Of a view the view named itself, `defaults` may be empty.
+    pub(in crate::db) fn of_named(&self, row: Row, defaults: &[Value]) -> Row {
+        let mut out: Row = (0..self.width).map(|j| defaults.get(j).cloned().unwrap_or(Value::Null)).collect();
         for (v, &k) in row.into_iter().zip(&self.from_named) {
             if let Some(slot) = out.get_mut(k) {
                 *slot = v;

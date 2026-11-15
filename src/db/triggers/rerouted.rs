@@ -13,14 +13,18 @@
 //! §14.14 AR1], and SELECT on it if a WHERE clause is written. No CHECK
 //! OPTION applies [§11.49 SR15c, SR15d]. ROW_COUNT counts the transitions.
 //!
-//! An INSERT into an updatable view over one with an INSERT trigger
-//! (`routed.rs`) gives that trigger each row of the view named as a row of
-//! the view under it [§15.12 GR2b iii], its columns the view named lacks
-//! null as the columns an INSERT names not. An UPDATE or DELETE of such a
-//! view is decided over its base table's rows (`searched_instead`).
+//! A column an INSERT names not, or that SET gives DEFAULT, takes the
+//! default of its counterpart column [§11.5 GR3d, §14.11 GR, §15.12 GR2b
+//! iii 1] (`binder::defaulted_columns`). An INSERT into an updatable view
+//! over one with an INSERT trigger (`routed.rs`) gives that trigger each
+//! row of the view named as a row of the view under it [§15.12 GR2b iii],
+//! its columns the view named lacks their defaults as the columns an INSERT
+//! names not. An UPDATE or DELETE of such a view is decided over its base
+//! table's rows (`searched_instead`).
 
 use std::sync::Arc;
 
+use super::super::defaults::default_value;
 use super::super::{Session, State, StatementContext, plan, rule};
 use super::changes::Event;
 use super::routed::{instead_for, updatable};
@@ -28,7 +32,7 @@ use crate::ast::{
     ColumnSpecification, InsertSource, InsertStatement, NamedTable, QuerySpecification, SearchCondition, SelectItem, SelectList,
     SelectSublist, SetClause, SqlStatement, TableExpression, TableName, TableReference, UpdateSource, ValueExpression,
 };
-use crate::binder::{Context, ObjectColumn, bind_insert_query, bind_select, qualify};
+use crate::binder::{Context, ObjectColumn, bind_insert_query, bind_select, defaulted_columns, qualify};
 use crate::catalog::{Actions, ColumnDesc, ViewDesc, applicable, owner_of};
 use crate::error::{Code, Result, SqlError, Subject};
 use crate::exec::{HeldRows, TransitionRows, execute};
@@ -76,11 +80,12 @@ impl Session {
         let transitions = if let SqlStatement::Insert(i) = stmt {
             let rows = self.inserted_rows(cx, (&view, i), params)?;
             // [§15.12 GR2b iii] each row of the view named a row of the
-            // view under it, its other columns null.
+            // view under it, its other columns their defaults.
+            let defaults = if instead.view == name { Vec::new() } else { self.view_defaults(cx.st, &instead.view)? };
             let mut under = HeldRows::new(cx.st.list_space());
             for row in rows {
                 let (id, old, new) = row?;
-                under.push((id, old, instead.of_named(new)))?;
+                under.push((id, old, instead.of_named(new, &defaults)))?;
             }
             under
         } else if let SqlStatement::UpdateSearched { set, where_clause, .. } = stmt {
@@ -109,36 +114,40 @@ impl Session {
         let over = params.clone().with_transitions(Arc::new(read_as(view, rows, params)));
         let bound = self.bound(cx.st, &over, |b| bind_select(b, &spec))?;
         let width = view.columns.len();
+        // [§11.5 GR3d] SET C = DEFAULT gives C its counterpart's default.
+        let defaults =
+            if set.iter().any(|s| matches!(s.value, UpdateSource::Default)) { self.view_defaults(cx.st, &view.name)? } else { Vec::new() };
         let mut out = HeldRows::new(cx.st.list_space());
         for read in run(cx, bound.plan)? {
             let read = read?;
             let old: Row = read.get(..width).map(<[Value]>::to_vec).unwrap_or_default();
-            let new =
-                if set.is_empty() { Row::new() } else { replaced(view, &old, (set, &columns), read.get(width..).unwrap_or_default())? };
+            let values = (read.get(width..).unwrap_or_default(), defaults.as_slice());
+            let new = if set.is_empty() { Row::new() } else { replaced(view, &old, (set, &columns), values)? };
             out.push((0, old, new))?;
         }
         Ok(out)
     }
 
     /// [ISO/IEC 9075-2:2023 §15.10] The transitions of the INSERT `i` into
-    /// `view`: each row its query gives, in the view's columns, the null
-    /// value in each it does not name.
+    /// `view`: each row its query gives, in the view's columns, the default
+    /// of each it does not name [§11.5 GR3d].
     fn inserted_rows(
         &self,
         cx: StatementContext<'_>,
         (view, i): (&ViewDesc, &InsertStatement),
         params: &Params,
     ) -> Result<HeldRows<(RowId, Row, Row)>> {
-        let (named, objects) = inserted_objects(cx.st, &self.auth(), (view, i))?;
-        let width = view.columns.len();
+        let columns = defaulted_columns(cx.st, &view.name, &self.auth())?;
+        let defaults = self.defaults_of(&columns)?;
+        let (named, objects) = inserted_objects(cx.st, &self.auth(), (view, i), (&columns, &defaults))?;
         let mut out = HeldRows::new(cx.st.list_space());
         let InsertSource::Query(q) = &i.source else {
-            out.push((0, Row::new(), vec![Value::Null; width]))?;
+            out.push((0, Row::new(), defaults))?;
             return Ok(out);
         };
         let bound = self.bound(cx.st, params, |b| bind_insert_query(b, q, &objects))?;
         for read in run(cx, bound.plan)? {
-            let mut new = vec![Value::Null; width];
+            let mut new = defaults.clone();
             for (&k, v) in named.iter().zip(read?) {
                 let (Some(slot), Some(c)) = (new.get_mut(k), view.columns.get(k)) else { continue };
                 *slot = assign(v, &c.data_type, STORED)?;
@@ -146,6 +155,23 @@ impl Session {
             out.push((0, Row::new(), new))?;
         }
         Ok(out)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.5 GR3d] The default of each column of view
+    /// `name`, of this statement.
+    ///
+    /// # Errors
+    ///
+    /// The view does not bind; a default does not fit its column.
+    pub(in crate::db) fn view_defaults(&self, st: &State, name: &crate::catalog::QualifiedName) -> Result<Row> {
+        self.defaults_of(&defaulted_columns(st, name, &self.auth())?)
+    }
+
+    /// The default value of each of `columns`, of this statement: its
+    /// user's, at its instant.
+    fn defaults_of(&self, columns: &[ColumnDesc]) -> Result<Row> {
+        let (auth, now) = (self.auth(), self.now.get());
+        columns.iter().map(|c| default_value(c, &auth, now)).collect()
     }
 }
 
@@ -173,8 +199,14 @@ fn changed_spec(
 
 /// [ISO/IEC 9075-2:2023 §15.10] Of the INSERT `i` into `view` by `user`:
 /// the columns it names, by their positions, and each as the binder takes
-/// it, of no default. `user` holds INSERT on each.
-fn inserted_objects(st: &State, user: &str, (view, i): (&ViewDesc, &InsertStatement)) -> Result<(Vec<usize>, Vec<ObjectColumn>)> {
+/// it, of `columns`, the view's, and its value of `defaults`, if given
+/// [§11.5 GR3d]. `user` holds INSERT on each.
+fn inserted_objects(
+    st: &State,
+    user: &str,
+    (view, i): (&ViewDesc, &InsertStatement),
+    (columns, defaults): (&[ColumnDesc], &[Value]),
+) -> Result<(Vec<usize>, Vec<ObjectColumn>)> {
     let named: Vec<usize> = match &i.columns {
         None => (0..view.columns.len()).collect(),
         Some(list) => list.iter().map(|c| column_of(view, &c.name)).collect::<Result<_>>()?,
@@ -182,8 +214,9 @@ fn inserted_objects(st: &State, user: &str, (view, i): (&ViewDesc, &InsertStatem
     held(st, user, view, &Actions { insert: named.iter().copied().collect(), ..Actions::default() })?;
     let objects = named
         .iter()
-        .filter_map(|&k| view.columns.get(k))
-        .map(|c| ObjectColumn { desc: c.clone(), default: Value::Null, draws: None })
+        .filter_map(|&k| {
+            Some(ObjectColumn { desc: columns.get(k)?.clone(), default: defaults.get(k).cloned().unwrap_or(Value::Null), draws: None })
+        })
         .collect();
     Ok((named, objects))
 }
@@ -214,7 +247,7 @@ pub(in crate::db) fn bind_taken(cx: Context<'_>, stmt: &SqlStatement) -> Result<
         return Ok(false);
     }
     if let SqlStatement::Insert(i) = stmt {
-        let (_, objects) = inserted_objects(cx.db, cx.auth, (view, i))?;
+        let (_, objects) = inserted_objects(cx.db, cx.auth, (view, i), (&view.columns, &[]))?;
         if let InsertSource::Query(q) = &i.source {
             bind_insert_query(cx, q, &objects)?;
         }
@@ -272,15 +305,16 @@ fn set_columns(view: &ViewDesc, set: &[SetClause]) -> Result<Vec<usize>> {
 }
 
 /// `old`, each of `columns` that `set` assigns given its value: the next
-/// of `values` of a value expression, else the null value, a view's column
-/// having no default [§11.5].
-fn replaced(view: &ViewDesc, old: &Row, (set, columns): (&[SetClause], &[usize]), values: &[Value]) -> Result<Row> {
+/// of `values` of a value expression, its column's of `defaults` of
+/// DEFAULT [§11.5 GR3d], else the null value.
+fn replaced(view: &ViewDesc, old: &Row, (set, columns): (&[SetClause], &[usize]), (values, defaults): (&[Value], &[Value])) -> Result<Row> {
     let mut new = old.clone();
     let mut values = values.iter();
     for (s, &k) in set.iter().zip(columns) {
         let v = match &s.value {
             UpdateSource::Value(_) => values.next().cloned().unwrap_or(Value::Null),
-            UpdateSource::Null | UpdateSource::Default => Value::Null,
+            UpdateSource::Default => defaults.get(k).cloned().unwrap_or(Value::Null),
+            UpdateSource::Null => Value::Null,
         };
         let (Some(slot), Some(c)) = (new.get_mut(k), view.columns.get(k)) else { continue };
         *slot = assign(v, &c.data_type, STORED)?;

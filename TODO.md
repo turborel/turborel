@@ -45,11 +45,6 @@ Nothing is open.
 
 ### Triggers, routines and roles
 
-- A view column's default [§11.5 GR3d]. A column of a view with a single
-  counterpart column in a leaf underlying table takes that column's
-  default, so a row an INSERT or a MERGE gives an INSTEAD OF trigger
-  should get it in each column given no value. Today such a column is
-  null.
 - The Information Schema's views of triggers (ISO/IEC 9075-11:2023):
   TRIGGERS, TRIGGERED_UPDATE_COLUMNS, TRIGGER_TABLE_USAGE,
   TRIGGER_COLUMN_USAGE, TRIGGER_ROUTINE_USAGE and

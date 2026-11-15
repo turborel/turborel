@@ -70,7 +70,8 @@ A clause whose event an INSTEAD OF trigger of the view takes gives its
 rows to that trigger in place of changing them. The trigger is the
 view's own, or that of a view under it when the view is updatable. Its
 rows are those of the trigger's view, before and after the SET clauses,
-and a candidate row has null in each column the clause gives no value.
+and a candidate row has in each column the clause gives no value that
+column's default, as [INSERT](insert.md) says.
 Every decision is made before any clause runs, and the clauses run in
 the order they are written. A view that is not updatable takes a MERGE
 only if its triggers take every clause, and its rows are then those its

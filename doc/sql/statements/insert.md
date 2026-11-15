@@ -54,8 +54,11 @@ The table's triggers run as [CREATE TRIGGER](create-trigger.md) says:
 its BEFORE triggers once the rows are given their values, before any is inserted, after which a generated column is computed again from each row as they left it, its AFTER triggers at the end of the
 statement. A view with an INSTEAD OF trigger of the statement's event
 runs it in place of the change, and nothing is written through the view:
-its row count is of the rows the trigger was given. A view's
-columns not given a value are null in the rows its trigger is given.
+its row count is of the rows the trigger was given. A column of the
+view not given a value, or given DEFAULT, takes the default of the column
+of a base table it is drawn from by column references alone, and is
+null if it has no such column or that column is an identity or
+generated one.
 An updatable view over such a view runs its trigger the same way.
 
 ## RULES

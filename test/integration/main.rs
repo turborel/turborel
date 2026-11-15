@@ -214,6 +214,7 @@ mod transaction_memory;
 mod transactions;
 mod trees;
 mod triggers;
+mod triggers_defaults;
 mod triggers_drops;
 mod triggers_firing;
 mod triggers_instead;

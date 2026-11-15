@@ -40,6 +40,7 @@ mod stats;
 mod tailorings;
 mod triggers;
 mod truncate;
+mod view_defaults;
 mod vr;
 mod waits;
 mod width_bucket;
@@ -68,7 +69,7 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 32] = [
+    let areas: [&[Mutation]; 33] = [
         &predicates::PREDICATES,
         &sequences::SEQUENCES,
         &generated::GENERATED,
@@ -101,6 +102,7 @@ pub fn all() -> Vec<Mutation> {
         &merge::MERGE,
         &diagnostics::DIAGNOSTICS,
         &triggers::TRIGGERS,
+        &view_defaults::VIEW_DEFAULTS,
     ];
     core.into_iter().chain(areas).chain([near::NEAR.as_slice(), &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER]).flatten().copied().collect()
 }

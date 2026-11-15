@@ -406,7 +406,10 @@ pub(super) fn trigger_target(db: &State, name: &QualifiedName, user: &str, noted
         definitions: false,
         now: Clocked::new(db.now(&settings::NONE), noted),
     };
-    let Named { desc, source, .. } = named(db, name, reader)?;
+    let Named { mut desc, source, .. } = named(db, name, reader)?;
+    // [ISO/IEC 9075-2:2023 §11.5 GR3d] SET C = DEFAULT gives C its
+    // counterpart's default.
+    desc.columns = super::counterparts::defaulted(db, std::mem::take(&mut desc.columns), &source);
     let map = (0..desc.columns.len()).collect();
     Ok(WriteTarget { named: desc.clone(), base: desc, map, checks: Vec::new(), cond: None, source })
 }

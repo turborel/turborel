@@ -191,7 +191,7 @@ pub(super) fn inserting(
         let MergeWhen::NotMatched { insert, .. } = clause else { continue };
         if let Some(instead) = route {
             let into = (&name, insert, &MERGE_INSERT_RULES);
-            targets.push(Inserting::Instead(view_rows_of(st, into, (instead, routed.held), auth)?));
+            targets.push(Inserting::Instead(view_rows_of(st, into, (instead, routed.held), (auth, now))?));
             continue;
         }
         let into = InsertInto {
