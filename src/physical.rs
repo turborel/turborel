@@ -86,6 +86,9 @@ pub enum Plan {
         /// Of its first rows in that order alone asked for, how many
         /// (`exec/limit.rs`).
         most: Option<usize>,
+        /// Whether each row it reads is followed by the row's id
+        /// (`LogicalPlan::Scan`).
+        located: bool,
     },
     /// The rows of a table an index finds for a probe, in index order.
     IndexScan {
@@ -118,6 +121,9 @@ pub enum Plan {
         /// row its table says every reader sees alone is then made of its
         /// entry, not read (`TableStorage::visible_to_all`, RULES.md D34).
         covering: bool,
+        /// Whether each row it reads is followed by the row's id
+        /// (`LogicalPlan::Scan`).
+        located: bool,
     },
     /// The rows of `input` for which `cond` is true [X3.135-1986 §5.21 GR2].
     Filter {
@@ -174,7 +180,8 @@ pub enum Plan {
         /// The rest of the condition, over the pair's columns: the table's
         /// own filter's, and the join's.
         cond: Option<Cond>,
-        /// The table's degree, the width of its nulls.
+        /// The table's degree, the width of its nulls, and one more if
+        /// `located`.
         width: usize,
         /// The table's columns the query uses, the only ones a row found
         /// is read of (`TableStorage::get_columns`).
@@ -185,6 +192,9 @@ pub enum Plan {
         est: f64,
         /// The planner's cost estimate of all its probes.
         cost: f64,
+        /// Whether each table row found is followed by its id, of a LEFT
+        /// join a null with the nulls (`LogicalPlan::Scan`).
+        located: bool,
     },
     /// [ISO/IEC 9075:1992 §7.5] An outer join: each row of `left` with the
     /// rows of `right` whose `keys` are equal and for which `cond` is true,
@@ -369,12 +379,14 @@ impl Built {
 }
 
 /// One table to read: its name, how the operators over it are described
-/// (`physical/shown.rs`), and the columns the query uses.
+/// (`physical/shown.rs`), the columns the query uses, and whether each row
+/// read is followed by its id (`LogicalPlan::Scan`).
 #[derive(Clone, Copy)]
 struct TableRead<'a> {
     table: &'a QualifiedName,
     shown: Shown<'a>,
     needed: &'a [usize],
+    located: bool,
 }
 
 impl<'a> PhysicalPlanner<'a> {
@@ -421,8 +433,8 @@ impl<'a> PhysicalPlanner<'a> {
             return PhysicalPlanner { first: None, ..*self }.build_node(logical, want);
         }
         match logical {
-            LogicalPlan::Scan { table, names, needed } => {
-                self.access(TableRead { table, shown: self.showing(names), needed }, Vec::new(), want)
+            LogicalPlan::Scan { table, names, needed, located } => {
+                self.access(TableRead { table, shown: self.showing(names), needed, located: *located }, Vec::new(), want)
             }
             LogicalPlan::Filter { cond, input } => self.filter(cond, input, want),
             LogicalPlan::Product { left, right } => self.product(left, right, want),
@@ -506,10 +518,10 @@ impl<'a> PhysicalPlanner<'a> {
     /// other keeps the order of its input, its long IN lists judged by
     /// sets (`logical::judged_by_sets`).
     fn filter(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Built {
-        if let LogicalPlan::Scan { table, names, needed } = input {
+        if let LogicalPlan::Scan { table, names, needed, located } = input {
             let mut conds = Vec::new();
             split_and(cond.clone(), &mut conds);
-            return self.access(TableRead { table, shown: self.showing(names), needed }, conds, want);
+            return self.access(TableRead { table, shown: self.showing(names), needed, located: *located }, conds, want);
         }
         if let Some(join) = self.hash_join(cond, input, want) {
             return join;

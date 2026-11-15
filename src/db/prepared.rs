@@ -24,13 +24,13 @@ pub(super) use plans::{Keeping, KeptPlan, Plans};
 use super::collations::Collating;
 use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
-use crate::ast::{SqlStatement, TableName};
+use crate::ast::{SearchCondition, SetClause, SqlStatement, TableName};
 use crate::binder::{self, DescribedKey, OutColumn, WriteKind, bind_write};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::{ParameterType, Params};
-use crate::parser::begins_truncate;
+use crate::parser::begins_word_statement;
 use crate::settings::FUNCTION_CALLS;
 use crate::value::Value;
 
@@ -203,13 +203,13 @@ fn dynamic(state: SqlState, msg: String) -> SqlError {
 fn kind_of(tokens: &[Token]) -> Kind {
     let mut words = tokens.iter().map(|t| &t.tok);
     let (first, second) = (words.next(), words.next());
-    if begins_truncate(first, second) {
+    if begins_word_statement(first, second) {
         return Kind::Statement;
     }
     match (first, second) {
         // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
         // name too, MODULE's: no other statement begins so, but TRUNCATE
-        // TABLE [ISO/IEC 9075-2:2023 §14.10].
+        // TABLE and MERGE INTO [ISO/IEC 9075-2:2023 §14.10, §14.12].
         (
             Some(
                 Tok::KeyWord(kw::SELECT | kw::VALUES | kw::TABLE | kw::WITH)
@@ -308,6 +308,17 @@ impl Session {
         Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, key, plans: Arc::default(), single_row, cursor, implicit })
     }
 
+    /// An UPDATE or DELETE of `kind`, on `table`, of SET clauses `set` and
+    /// search condition `cond`, bound as `bind_only` binds it.
+    fn write_only(
+        &self,
+        st: &State,
+        params: &Params,
+        (kind, table, set, cond): (WriteKind, &TableName, &[SetClause], Option<&SearchCondition>),
+    ) -> Result<()> {
+        self.bound(st, params, |cx| bind_write(cx, kind, table, set, cond)).map(drop)
+    }
+
     /// `stmt`, a `<preparable statement>` other than a query, bound as it
     /// would be run, without running it: so each `?` takes its type.
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
@@ -319,17 +330,16 @@ impl Session {
                 }
             }
             SqlStatement::UpdateSearched { table, set, where_clause } => {
-                self.bound(st, params, |cx| bind_write(cx, WriteKind::UpdateSearched, table, set, where_clause.as_ref()))?;
+                self.write_only(st, params, (WriteKind::UpdateSearched, table, set, where_clause.as_ref()))?;
             }
+            SqlStatement::Merge(merge) => drop(self.merge_bound(st, merge, params)?),
             SqlStatement::DeleteSearched { table, where_clause } => {
-                self.bound(st, params, |cx| bind_write(cx, WriteKind::DeleteSearched, table, &[], where_clause.as_ref()))?;
+                self.write_only(st, params, (WriteKind::DeleteSearched, table, &[], where_clause.as_ref()))?;
             }
             SqlStatement::UpdatePositioned { table, set, .. } => {
-                self.bound(st, params, |cx| bind_write(cx, WriteKind::UpdatePositioned, table, set, None))?;
+                self.write_only(st, params, (WriteKind::UpdatePositioned, table, set, None))?;
             }
-            SqlStatement::DeletePositioned { table, .. } => {
-                self.bound(st, params, |cx| bind_write(cx, WriteKind::DeletePositioned, table, &[], None))?;
-            }
+            SqlStatement::DeletePositioned { table, .. } => self.write_only(st, params, (WriteKind::DeletePositioned, table, &[], None))?,
             // [§17.6 GR5u]
             SqlStatement::SetCollation(Some(v))
             | SqlStatement::SetSchema(v)

@@ -210,7 +210,12 @@ mod tests {
     }
 
     fn scan() -> LogicalPlan {
-        LogicalPlan::Scan { table: QualifiedName { auth: "A".into(), ident: "U".into() }, names: vec!["K".into()], needed: vec![0] }
+        LogicalPlan::Scan {
+            table: QualifiedName { auth: "A".into(), ident: "U".into() },
+            names: vec!["K".into()],
+            needed: vec![0],
+            located: false,
+        }
     }
 
     /// A subquery of U whose condition and outer expression have slot 1.

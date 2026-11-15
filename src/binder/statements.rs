@@ -78,16 +78,17 @@ pub fn bind_select(cx: Context<'_>, query: &QuerySpecification) -> Result<Bound>
 /// applies store assignment [ISO/IEC 9075:1992 §9.2] to it.
 #[derive(Clone, Copy)]
 pub struct AssignRule {
-    /// The clause and Syntax Rule, e.g. "§13.8 SR6".
+    /// The clause and Syntax Rule, cited in full, e.g. "ISO/IEC 9075:1992
+    /// §13.8 SR6".
     pub rule: &'static str,
 }
 
 /// The assignment rule of INSERT.
-pub const INSERT_RULE: AssignRule = AssignRule { rule: "§13.8 SR6" };
+pub const INSERT_RULE: AssignRule = AssignRule { rule: "ISO/IEC 9075:1992 §13.8 SR6" };
 /// The assignment rule of a searched UPDATE.
-pub const UPDATE_SEARCHED_RULE: AssignRule = AssignRule { rule: "§13.10 SR5" };
+pub const UPDATE_SEARCHED_RULE: AssignRule = AssignRule { rule: "ISO/IEC 9075:1992 §13.10 SR5" };
 /// The assignment rule of a positioned UPDATE.
-pub const UPDATE_POSITIONED_RULE: AssignRule = AssignRule { rule: "§13.9 SR10" };
+pub const UPDATE_POSITIONED_RULE: AssignRule = AssignRule { rule: "ISO/IEC 9075:1992 §13.9 SR10" };
 
 /// [ISO/IEC 9075:1992 §9.2 SR2] Can a value of type `t` be stored in
 /// `col`? As `assignable` says. SQL-86's rules that a string be no longer
@@ -103,7 +104,7 @@ pub fn check_assignment(col: &ColumnDesc, t: &DataType, r: AssignRule) -> Result
     if assignable(&col.data_type, t) {
         return Ok(());
     }
-    Err(rule(format!("[ISO/IEC 9075:1992 {}, §9.2 SR2] cannot assign a {t} value to column {} ({})", r.rule, col.name, col.data_type)))
+    Err(rule(format!("[{}; ISO/IEC 9075:1992 §9.2 SR2] cannot assign a {t} value to column {} ({})", r.rule, col.name, col.data_type)))
 }
 
 /// [ISO/IEC 9075:1992 §9.2 SR2] Can a value of type `t` be stored in a
@@ -186,10 +187,10 @@ impl WriteKind {
     /// The rule a read-only table breaks [X3.135-1986 §4.4].
     fn read_only_rule(self) -> &'static str {
         match self {
-            WriteKind::UpdateSearched => "§8.12 SR2",
-            WriteKind::UpdatePositioned => "§8.11 SR3",
-            WriteKind::DeleteSearched => "§8.5 SR2",
-            WriteKind::DeletePositioned => "§8.4 SR3",
+            WriteKind::UpdateSearched => "X3.135-1986 §8.12 SR2",
+            WriteKind::UpdatePositioned => "X3.135-1986 §8.11 SR3",
+            WriteKind::DeleteSearched => "X3.135-1986 §8.5 SR2",
+            WriteKind::DeletePositioned => "X3.135-1986 §8.4 SR3",
         }
     }
 
@@ -245,13 +246,13 @@ fn bind_set_clauses(binder: &Binder<'_>, kind: WriteKind, set: &[SetClause]) -> 
     let rules = match kind {
         WriteKind::UpdatePositioned => SetRules {
             set_function: "[X3.135-1986 §8.11 SR5] a value of a SET clause contains no set function",
-            column: "§8.11 SR6",
+            column: "X3.135-1986 §8.11 SR6",
             assign: UPDATE_POSITIONED_RULE,
         },
         // A DELETE has no SET clauses, so only the UPDATE rules are ever cited.
         WriteKind::UpdateSearched | WriteKind::DeleteSearched | WriteKind::DeletePositioned => SetRules {
             set_function: "[X3.135-1986 §8.12 SR3] a value of a SET clause contains no set function",
-            column: "§8.12 SR4",
+            column: "X3.135-1986 §8.12 SR4",
             assign: UPDATE_SEARCHED_RULE,
         },
     };
@@ -265,24 +266,32 @@ fn bind_set_clauses(binder: &Binder<'_>, kind: WriteKind, set: &[SetClause]) -> 
 
 /// The rules a `<set clause>` cites: of a set function in its value, of its
 /// object column, and of the assignment.
-struct SetRules {
-    set_function: &'static str,
-    column: &'static str,
-    assign: AssignRule,
+pub(super) struct SetRules {
+    /// The message of a set function in a value, its rule first.
+    pub(super) set_function: &'static str,
+    /// The rule of the object column, cited in full.
+    pub(super) column: &'static str,
+    /// The rule of the assignment.
+    pub(super) assign: AssignRule,
 }
 
 /// One `<set clause>` `sc`, after the clauses `done`: its object column's
 /// position in the row of the table changed, and its new value.
-fn bind_set_clause(binder: &Binder<'_>, sc: &SetClause, rules: &SetRules, done: &[(usize, Option<Expr>)]) -> Result<(usize, Option<Expr>)> {
+pub(super) fn bind_set_clause(
+    binder: &Binder<'_>,
+    sc: &SetClause,
+    rules: &SetRules,
+    done: &[(usize, Option<Expr>)],
+) -> Result<(usize, Option<Expr>)> {
     let item = binder.items.first().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] an UPDATE binds its table first"))?;
     let (name, desc) = (&item.table, &item.desc);
     let (i, col) = desc
         .column_desc(&sc.column)
-        .ok_or_else(|| no_column(name, format!("[X3.135-1986 {}] {name} has no column {}", rules.column, sc.column), &sc.column))?;
+        .ok_or_else(|| no_column(name, format!("[{}] {name} has no column {}", rules.column, sc.column), &sc.column))?;
     // An updatable view's column is a column of its base table.
     let position = item.position(i);
     if done.iter().any(|(j, _)| *j == position) {
-        return Err(rule(format!("[X3.135-1986 {}] column {} is set twice", rules.column, sc.column)));
+        return Err(rule(format!("[{}] column {} is set twice", rules.column, sc.column)));
     }
     let base = match &item.source {
         Source::Base(vb) => vb.base.columns.get(position),
@@ -348,7 +357,7 @@ pub fn bind_write(
             Actions { update: set.iter().filter_map(|s| desc.column(&s.column)).collect(), ..Actions::default() }
         }
     };
-    require(db, auth, desc, &needed, &format!("{clause} SR1")).or_at(table.at)?;
+    require(db, auth, desc, &needed, &format!("X3.135-1986 {clause} SR1")).or_at(table.at)?;
     // [X3.135-1986 §8.5 SR3, §8.12 SR5, §8.11 SR7] the scope of the <table name> is the whole statement.
     let item = FromItem::alone(name.clone(), table.at, (desc.clone(), target.source.clone()));
     let visible = (0..desc.columns.len()).map(|k| (0, k)).collect();
@@ -368,7 +377,7 @@ pub fn bind_write(
     let bound_set = binder.drawing(true, || bind_set_clauses(&binder, kind, set))?;
     let base = target.base;
     let generated = super::generations(db, &base)?;
-    let mut rows = LogicalPlan::Scan { table: base.name.clone(), names, needed: (0..base.columns.len()).collect() };
+    let mut rows = LogicalPlan::Scan { table: base.name.clone(), names, needed: (0..base.columns.len()).collect(), located: false };
     if let Some(cond) = and_all(target.cond.into_iter().chain(cond).collect()) {
         rows = LogicalPlan::Filter { cond, input: Box::new(rows) };
     }

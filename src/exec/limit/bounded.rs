@@ -13,9 +13,9 @@ use crate::physical::Plan;
 pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
     match plan {
         Plan::Sort { keys, detail, input, .. } => Plan::Sort { keys, detail, input, most: Some(most) },
-        Plan::SeqScan { table, columns, rows, cost, order, backward, most: before } => {
+        Plan::SeqScan { table, columns, rows, cost, order, backward, most: before, located } => {
             let most = if order.is_empty() || most.ties { before } else { Some(most.rows) };
-            Plan::SeqScan { table, columns, rows, cost, order, backward, most }
+            Plan::SeqScan { table, columns, rows, cost, order, backward, most, located }
         }
         Plan::Project { exprs, detail, input } => {
             let input = if exprs.iter().any(Expr::can_raise) { input } else { Box::new(bounded(*input, most)) };

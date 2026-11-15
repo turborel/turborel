@@ -343,6 +343,7 @@ mod tests {
                 order: Vec::new(),
                 backward: false,
                 most: None,
+                located: false,
             })
         };
         let values = || Box::new(Plan::Values { rows: Vec::new(), detail: String::new() });

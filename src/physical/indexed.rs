@@ -51,6 +51,8 @@ pub(super) struct Probing {
     /// The table's columns the query uses: the only ones a row found need
     /// be read of.
     needed: Vec<usize>,
+    /// Whether each row found is followed by its id (`LogicalPlan::Scan`).
+    located: bool,
 }
 
 /// Whether values of a left column are of the kind of an indexed column's
@@ -137,6 +139,7 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
         detail,
         est: probing.each,
         cost: rows * probing.cost,
+        located: probing.located,
     }
 }
 
@@ -165,7 +168,7 @@ impl PhysicalPlanner<'_> {
     /// the equalities `keys` give values of, of their kinds as `of_kind`
     /// says of a left column and an indexed column's type.
     pub(super) fn probing(&self, right: &LogicalPlan, keys: &[(usize, usize)], of_kind: OfKind<'_>) -> Option<Probing> {
-        let Read { table, filter, through, needed } = read_table(right)?;
+        let Read { table, filter, through, needed, located } = read_table(right)?;
         // The equalities' right columns, of the table's.
         let keys: Vec<(usize, usize)> = match &through {
             Some((columns, _)) => keys.iter().map(|&(l, r)| columns.get(r).map(|&t| (l, t))).collect::<Option<_>>()?,
@@ -194,7 +197,9 @@ impl PhysicalPlanner<'_> {
             let missed = found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost();
             let cost = model.index_descent * pages + missed + each * storage.fetch_cost();
             if best.as_ref().is_none_or(|b| cost < b.cost) {
-                let (index, method, width) = (ix.name.clone(), ix.method.clone(), desc.columns.len());
+                // A row's id follows its columns.
+                let width = desc.columns.len().saturating_add(usize::from(located));
+                let (index, method) = (ix.name.clone(), ix.method.clone());
                 let through = through.clone();
                 let needed = needed.to_vec();
                 best = Some(Probing {
@@ -208,6 +213,7 @@ impl PhysicalPlanner<'_> {
                     cost,
                     through,
                     needed,
+                    located,
                 });
             }
         }
@@ -386,6 +392,7 @@ struct Read<'a> {
     filter: Option<&'a Cond>,
     through: Option<(Vec<usize>, Vec<String>)>,
     needed: &'a [usize],
+    located: bool,
 }
 
 /// How `plan` reads a table, if it is a table's scan, a filter of one that
@@ -395,10 +402,10 @@ struct Read<'a> {
 /// would not be null; of an inner, it would be evaluated of fewer rows.
 fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
     match plan {
-        LogicalPlan::Scan { table, needed, .. } => Some(Read { table, filter: None, through: None, needed }),
+        LogicalPlan::Scan { table, needed, located, .. } => Some(Read { table, filter: None, through: None, needed, located: *located }),
         LogicalPlan::Filter { cond, input } => {
-            let LogicalPlan::Scan { table, needed, .. } = &**input else { return None };
-            (!cond.can_raise()).then_some(Read { table, filter: Some(cond), through: None, needed })
+            let LogicalPlan::Scan { table, needed, located, .. } = &**input else { return None };
+            (!cond.can_raise()).then_some(Read { table, filter: Some(cond), through: None, needed, located: *located })
         }
         LogicalPlan::Project { exprs, input } => {
             let columns: Vec<usize> = exprs.iter().map(|e| if let Expr::Column(c) = e { Some(*c) } else { None }).collect::<Option<_>>()?;

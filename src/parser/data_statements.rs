@@ -1,6 +1,7 @@
 //! The data statements of a procedure [X3.135-1986 §8; ISO/IEC 9075:1992
 //! §13]: OPEN, CLOSE, positioned and searched DELETE and UPDATE, and their
-//! SET clauses; TRUNCATE TABLE [ISO/IEC 9075-2:2023 §14.10].
+//! SET clauses; TRUNCATE TABLE [ISO/IEC 9075-2:2023 §14.10]; where MERGE
+//! begins [§14.12].
 
 use super::Parser;
 use super::generated::RESTART;
@@ -16,8 +17,20 @@ pub(crate) const TRUNCATE: &str = "TRUNCATE";
 /// Whether the tokens `first` and `second` begin a `<truncate table
 /// statement>`, not a query: TRUNCATE, then TABLE, which, reserved, no
 /// table's name is followed by in a `<joined table>`.
-pub(crate) fn begins_truncate(first: Option<&Tok>, second: Option<&Tok>) -> bool {
+fn begins_truncate(first: Option<&Tok>, second: Option<&Tok>) -> bool {
     matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::KeyWord(kw::TABLE))) if w == TRUNCATE)
+}
+
+/// [ISO/IEC 9075-2:2023 §14.12] The word that begins a `<merge
+/// statement>`: SQL:2023 reserves it, SQL-92 does not, so it stays a
+/// `<regular identifier>` elsewhere.
+pub(crate) const MERGE: &str = "MERGE";
+
+/// Whether the tokens `first` and `second` begin a statement a word
+/// begins, not a query: TRUNCATE, then TABLE, or MERGE, then INTO, each
+/// reserved, which no table's name is followed by in a `<joined table>`.
+pub(crate) fn begins_word_statement(first: Option<&Tok>, second: Option<&Tok>) -> bool {
+    begins_truncate(first, second) || matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::KeyWord(kw::INTO))) if w == MERGE)
 }
 
 impl Parser {
@@ -65,18 +78,26 @@ impl Parser {
     }
 
     /// The statement a word, no key word, begins, if one does, read to its
-    /// end: \[EXTENSION\] CANCEL CONNECTION (`parser/served.rs`), or
-    /// TRUNCATE TABLE.
+    /// end: \[EXTENSION\] CANCEL CONNECTION (`parser/served.rs`),
+    /// TRUNCATE TABLE, or MERGE INTO (`parser/merge.rs`).
     pub(super) fn word_statement(&mut self) -> Result<Option<SqlStatement>> {
         let stmt = if self.at_cancel_connection() {
             self.served_statement()?
         } else if self.at_truncate() {
             self.truncate_statement()?
+        } else if self.at_merge() {
+            self.merge_statement()?
         } else {
             return Ok(None);
         };
         self.end()?;
         Ok(Some(stmt))
+    }
+
+    /// Whether a `<merge statement>` begins here: MERGE, then INTO.
+    fn at_merge(&self) -> bool {
+        let Tok::Identifier(word) = self.peek() else { return false };
+        word == MERGE && self.next_is_kw(kw::INTO)
     }
 
     /// Whether a `<truncate table statement>` begins here: TRUNCATE, then
@@ -128,7 +149,7 @@ impl Parser {
     }
 
     /// SET `<set clause>` \[{, `<set clause>`}...\]
-    fn set_clause_list(&mut self) -> Result<Vec<SetClause>> {
+    pub(super) fn set_clause_list(&mut self) -> Result<Vec<SetClause>> {
         self.expect_kw(kw::SET)?;
         let mut set = vec![self.set_clause()?];
         while self.accept_delim(delim::COMMA) {

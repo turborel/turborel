@@ -10,7 +10,7 @@ pub const COLLATIONS: [Mutation; 14] = [
         name: "collated-read-tracked",
         package: Package::Core,
         breaks: "MVCC reads: a probe of sort keys tells the engine it read what no row's value matches",
-        file: "src/exec.rs",
+        file: "src/exec/scan.rs",
         original: "    let probe = if ix.is_collated() { Probe::All } else { probe };",
         replacement: "    let probe = if ix.is_collated() && false { Probe::All } else { probe };",
         integration: &["collated_indexes::a_read_through_sort_keys_is_tracked_for_its_commit"],

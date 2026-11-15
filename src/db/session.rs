@@ -122,6 +122,7 @@ impl Session {
             |table: &TableName| st.catalog.table(&qualify(table, &self.default_schema())).is_some_and(|t| t.temporary.is_some());
         let (changes, rule) = match stmt {
             SqlStatement::Insert(ins) => (!temporary(&ins.table), "§13.8 GR1"),
+            SqlStatement::Merge(merge) => (!temporary(&merge.target), "§14.12 GR1"),
             SqlStatement::UpdateSearched { table, .. } => (!temporary(table), "§13.10 GR1"),
             SqlStatement::UpdatePositioned { table, .. } => (!temporary(table), "§13.9 GR1"),
             SqlStatement::DeleteSearched { table, .. } => (!temporary(table), "§13.7 GR1"),
@@ -153,8 +154,8 @@ impl Session {
             SqlStatement::Dynamic(d) => super::dynamic::changed_table(d).map_or((false, ""), |(table, rule)| (!temporary(table), rule)),
         };
         if changes && self.mode.get().access == AccessMode::ReadOnly {
-            // Of SQL:2023's subclass, which TRUNCATE TABLE names.
-            if let SqlStatement::Truncate { .. } = stmt {
+            // Of SQL:2023's subclass, which TRUNCATE TABLE and MERGE name.
+            if let SqlStatement::Truncate { .. } | SqlStatement::Merge(_) = stmt {
                 let msg = format!("[ISO/IEC 9075-2:2023 {rule}] the transaction is READ ONLY");
                 return Err(SqlError::new(Code::TransactionState, msg).with_state(SqlState::READ_ONLY_TRANSACTION));
             }

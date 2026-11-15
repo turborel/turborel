@@ -5,7 +5,8 @@
 use std::sync::Arc;
 
 use super::held::HeldRows;
-use super::{Found, Runner, asked, broken, eval_cond, probe_index};
+use super::scan::{Found, asked, probe_index};
+use super::{Runner, broken, eval_cond};
 use crate::catalog::KeyShape;
 use crate::db::State;
 use crate::error::Result;

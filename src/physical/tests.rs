@@ -33,7 +33,8 @@ fn a_table_without_storage_is_scanned_and_reported() {
     );
     let st = Arc::new(State::with_builtins(Box::new(catalog)));
     let conds = vec![Cond::Const(crate::logical::Truth::True)];
-    let built = PhysicalPlanner::new(&st).access(TableRead { table: &name, shown: Shown::of(None), needed: &[] }, conds, &[]);
+    let built =
+        PhysicalPlanner::new(&st).access(TableRead { table: &name, shown: Shown::of(None), needed: &[], located: false }, conds, &[]);
     assert!(matches!(&built.plan, Plan::Filter { input, .. } if matches!(**input, Plan::SeqScan { .. })));
     let failed = execute(built.plan, &st, NO_TRANSACTION).collect::<Result<Vec<_>>>();
     assert_eq!(failed.err().map(|e| e.code), Some(Code::Api));
@@ -69,6 +70,7 @@ fn groups_made_before_any_row_are_sorted() {
             table: QualifiedName { auth: "S".into(), ident: "T".into() },
             names: vec!["K".into(), "V".into()],
             needed: vec![0],
+            located: false,
         };
         let aggregate = LogicalPlan::Aggregate { groups: vec![0], collations: Vec::new(), aggs: vec![agg], seeds, input: Box::new(scan) };
         let logical = LogicalPlan::Sort { keys: vec![SortKey::ascending(0)], input: Box::new(aggregate) };

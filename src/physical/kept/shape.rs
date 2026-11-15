@@ -125,6 +125,7 @@ mod tests {
             est: 1.0_f64,
             cost: 1.0_f64,
             covering: false,
+            located: false,
         }
     }
 

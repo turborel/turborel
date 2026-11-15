@@ -41,9 +41,6 @@ Nothing is open.
 
 ### Changing data
 
-- MERGE (F312, F313, F314) [§14.12]. Inserts, updates and deletes from one
-  source in one statement, with several WHEN clauses and a condition on
-  each. Today an upsert takes two statements and a retry.
 - GET DIAGNOSTICS into targets of another type (F122), ALL (F123) and the
   transaction counts (T511) [§23.1]. Each target must be of its item's
   type today.
@@ -52,8 +49,8 @@ Nothing is open.
 
 - Triggers (T200, T211 to T218) [§4.46, §11.49, §11.50], BEFORE and AFTER,
   per row and per statement, with transition tables, then INSTEAD OF
-  triggers on views (T213). They follow MERGE so every data change fires
-  them through one path.
+  triggers on views (T213). Every data change fires them through one
+  path, a MERGE's updates, deletes and inserts too.
 - Function overloading (D53). Each name registers one scalar function today.
   Overloading is shared with SQL-invoked functions, and should follow their
   resolution, with candidates by number of arguments and store assignment
@@ -148,9 +145,14 @@ Nothing is open.
 
 ## Storage and durability
 
-- A renamed column in the column store's options (D31). COLUMNSTORE.ORDER
-  names a table's columns, so once ALTER TABLE renames columns,
-  COLUMNSTORE.ORDER follows a renamed column.
+- Renaming a column [EXTENSION], ALTER TABLE … RENAME COLUMN … TO …,
+  with COLUMNSTORE.ORDER following it (D31). SQL:2023 renames no column
+  [§11.10], so today a new name takes a new column and a copy of its data.
+  A view, a constraint or a generated column that names the column by its
+  text keeps the old name, so the rename refuses while one depends on it,
+  as DROP COLUMN RESTRICT does [§11.23 SR7], and changes the column's
+  descriptor, the information schema and COLUMNSTORE.ORDER in one
+  transaction, durable and replicated as other schema changes are.
 
 ---
 

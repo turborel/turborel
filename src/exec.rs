@@ -27,6 +27,7 @@ mod limit;
 mod partition;
 mod pattern;
 mod recursive;
+mod scan;
 mod set;
 mod sort;
 mod subquery;
@@ -36,17 +37,13 @@ mod work;
 
 use std::sync::Arc;
 
-use self::entries::{Reading, entry_row};
-use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
-use crate::index::{Entries as IndexEntries, KeyOrder, Probe};
-use crate::logical::{Cond, Expr, Most, SortKey, Truth, pushed_conjuncts};
+use crate::logical::{Cond, Expr, SortKey, Truth};
 use crate::physical::Plan;
-use crate::storage::{Condition, Conjunction, Row, ScanOrder, TableStorage};
+use crate::storage::Row;
 use crate::system::SystemRead;
-use crate::txn::{TxId, checked};
-use crate::value::SortOrder;
+use crate::txn::TxId;
 use crate::value::Value;
 
 pub use entries::{Entries, row_entries, table_entries};
@@ -94,8 +91,8 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     // one for its call, to the frame every level of a plan adds to the
     // stack (RULES.md R-CF-6).
     let run: Opened = match &plan {
-        Plan::SeqScan { .. } => scanned_plan,
-        Plan::IndexScan { .. } => indexed,
+        Plan::SeqScan { .. } => scan::scanned_plan,
+        Plan::IndexScan { .. } => scan::indexed,
         Plan::Filter { .. } => filtered,
         Plan::Product { .. } | Plan::HashJoin { .. } => joined_plan,
         Plan::OuterJoin { .. } => join::outer,
@@ -122,51 +119,6 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Recognize { .. } => pattern::recognized,
     };
     run(plan, db, tx)
-}
-
-/// The rows of the scan `plan`.
-#[inline(never)]
-fn scanned_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::SeqScan { table, columns, order, backward, most, .. } = plan else { return failed(broken("a scan is not one")) };
-    if order.is_empty() {
-        return scanned(&table, &columns, db, tx);
-    }
-    ordered_scan((&table, &columns, (&order, backward, most)), None, db, tx)
-}
-
-/// The rows of `table`, `columns` read, in the order of the columns
-/// `order`, each descending if `backward`, as ORDER BY sorts them
-/// [X3.135-1986 §8.3 GR3b], only those
-/// `condition` may match if given: as its storage reads them so
-/// (`TableStorage::scan_ordered`), else read and sorted, if it no longer
-/// can, its option changed since the plan was made, the first `most` alone
-/// if only those are asked for; each row read only while the statement is
-/// not cancelled (RULES.md D44).
-fn ordered_scan(
-    (table, columns, (order, backward, most)): (&QualifiedName, &[usize], ScanOrder<'_>),
-    condition: Option<&Conjunction>,
-    db: &Arc<State>,
-    tx: TxId,
-) -> RowIter {
-    let storage = match db.storage_of(table) {
-        Ok(storage) => Arc::clone(storage),
-        Err(e) => return failed(e),
-    };
-    let stop = db.tx.stop_of(tx);
-    if let Some(rows) = Arc::clone(&storage).scan_ordered(tx, columns, (order, backward, most), condition) {
-        return Box::new(checked(rows.map(|read| read.map(|(_, row)| row)), stop));
-    }
-    let read = match condition {
-        Some(c) => storage.scan_where(tx, columns, c),
-        None => storage.scan(tx, columns),
-    };
-    // Sorted as ORDER BY sorts, in a work area that spills (RULES.md D38).
-    let keys: Vec<SortKey> = order.iter().map(|&column| SortKey::new(column, SortOrder::of(backward, None))).collect();
-    let rows: RowIter = Box::new(checked(read.map(|r| r.map(|(_, row)| row)), stop));
-    match most {
-        Some(rows_asked) => sort::first(&keys, rows, Most { rows: rows_asked, ties: false }, db, tx),
-        None => sort::sort(&keys, rows, db, tx),
-    }
 }
 
 /// The rows of the product or hash join `plan`.
@@ -221,19 +173,6 @@ fn sorted_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     }
 }
 
-/// The rows of `table`'s columns `columns`, each read only while the
-/// statement is not cancelled (RULES.md D44).
-#[inline(never)]
-fn scanned(table: &QualifiedName, columns: &[usize], db: &Arc<State>, tx: TxId) -> RowIter {
-    match db.storage_of(table) {
-        Ok(storage) => {
-            let rows = Arc::clone(storage).scan(tx, columns).map(|read| read.map(|(_, row)| row));
-            Box::new(checked(rows, db.tx.stop_of(tx)))
-        }
-        Err(e) => failed(e),
-    }
-}
-
 /// The rows of the system table `read` reads, made now.
 #[inline(never)]
 fn system_rows(read: &SystemRead, db: &Arc<State>) -> RowIter {
@@ -243,36 +182,11 @@ fn system_rows(read: &SystemRead, db: &Arc<State>) -> RowIter {
     }
 }
 
-/// The rows the index scan `plan` finds, in index order or reversed: of a
-/// covering scan, made of their entries where it may (`entry_row`). Never
-/// inlined into `execute`, whose frame every level of a plan adds to the
-/// stack (RULES.md R-CF-6), as are the helpers below.
-#[inline(never)]
-fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::IndexScan { table, index, probe, reverse, covering, columns: needed, .. } = plan else {
-        return failed(broken("an index scan is not one"));
-    };
-    let width = covering.then(|| db.catalog.table(&table).map(|t| t.columns.len())).flatten();
-    match probe_index(db, &table, &index, &probe, reverse) {
-        Ok(Found { storage, ix, entries }) => match storage.read_by_condition(tx, &asked(&ix, probe)) {
-            Ok(()) => {
-                let mut reading = Reading::of(&ix, Some(&needed));
-                let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
-                    entry.and_then(|(key, id)| entry_row(&*storage, (&ix, width), &mut reading, (tx, id), key)).transpose()
-                });
-                Box::new(checked(rows, db.tx.stop_of(tx)))
-            }
-            Err(e) => failed(e),
-        },
-        Err(e) => failed(e),
-    }
-}
-
 /// [X3.135-1986 §5.21 GR2] The rows of the filter `plan`.
 #[inline(never)]
 fn filtered(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::Filter { cond, input, .. } = plan else { return failed(broken("a filter is not one")) };
-    let rows = filtered_input(*input, &cond, db, tx);
+    let rows = scan::filtered_input(*input, &cond, db, tx);
     filter(cond, rows, Runner::new(db, tx))
 }
 
@@ -309,58 +223,6 @@ fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     }
     let Plan::Distinct { input } = plan else { return failed(broken("a duplicate elimination is not one")) };
     distinct::distinct_of(execute(*input, db, tx), db, tx)
-}
-
-/// The rows of `input`, under a filter on `cond`: a scan is told the
-/// conditions, if it has simple ones (`logical::pushed_conjuncts`), each
-/// row read only while the statement is not cancelled (RULES.md D44).
-fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIter {
-    match (input, pushed_conjuncts(cond)) {
-        (Plan::SeqScan { table, columns, order, backward, .. }, Some(condition)) => {
-            if !order.is_empty() {
-                return ordered_scan((&table, &columns, (&order, backward, None)), Some(&condition), db, tx);
-            }
-            match db.storage_of(&table) {
-                Ok(storage) => {
-                    let rows = Arc::clone(storage).scan_where(tx, &columns, &condition).map(|read| read.map(|(_, row)| row));
-                    Box::new(checked(rows, db.tx.stop_of(tx)))
-                }
-                Err(e) => failed(e),
-            }
-        }
-        (input, _) => execute(input, db, tx),
-    }
-}
-
-/// What an index found: its entries, and how to read their rows.
-struct Found {
-    storage: Arc<dyn TableStorage>,
-    /// The index's key.
-    ix: KeyShape,
-    /// The entries, in index order or reversed, read as they are taken.
-    entries: IndexEntries,
-}
-
-/// What an engine is told a probe of `ix` reads. A key by a sort key is no
-/// value of its columns, so the probe cannot say which rows it chose, and
-/// the engine is told every row with a key: never narrower than the index,
-/// so it may refuse more commits, and never fewer (RULES.md D60).
-pub(in crate::exec) fn asked(ix: &KeyShape, probe: Probe) -> Condition {
-    let probe = if ix.is_collated() { Probe::All } else { probe };
-    Condition { columns: ix.columns.clone(), probe }
-}
-
-/// What `index` finds for `probe`, in index order, or reversed, read as
-/// it is taken: callers look for a cancel as each entry is read (RULES.md
-/// D44). The rows are chosen by a condition: callers tell the table's
-/// engine (`TableStorage::read_by_condition`).
-fn probe_index(db: &State, table: &QualifiedName, index: &str, probe: &Probe, reverse: bool) -> Result<Found> {
-    let storage = Arc::clone(db.storage_of(table)?);
-    let ix =
-        db.catalog.index(index).map(IndexDesc::key_shape).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index {index}")))?;
-    let order = if reverse { KeyOrder::Descending } else { KeyOrder::Ascending };
-    let entries = Arc::clone(db.index_of(index)?).search(probe, order);
-    Ok(Found { storage, ix, entries })
 }
 
 /// [X3.135-1986 §5.21 GR2] keep the rows for which the condition is true,
@@ -411,9 +273,9 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::catalog::{Catalog, MemoryCatalog, TableDesc};
+    use crate::catalog::{Catalog, MemoryCatalog, QualifiedName, TableDesc};
     use crate::engine::rows::{ROW_STORE, RowStore, TableOptions};
-    use crate::index::BTREE_METHOD;
+    use crate::index::{BTREE_METHOD, Probe};
     use crate::storage::StorageEngine;
     use crate::txn::NO_TRANSACTION;
 
@@ -454,6 +316,7 @@ mod tests {
             order: vec![],
             backward: false,
             most: None,
+            located: false,
         };
         let index = || Plan::IndexScan {
             table: missing_table(),
@@ -467,6 +330,7 @@ mod tests {
             est: 0.0_f64,
             cost: 0.0_f64,
             covering: false,
+            located: false,
         };
         assert_eq!(code(execute(seq(), &st, NO_TRANSACTION)), Some(Code::Api));
         assert_eq!(code(execute(index(), &st, NO_TRANSACTION)), Some(Code::Api));
@@ -501,7 +365,16 @@ mod tests {
                 table.insert(NO_TRANSACTION, vec![Value::Exact(Decimal::new(ROWS - k, 0))]).unwrap();
             }
             st.storage.insert(Arc::new(name.clone()), Arc::from(table));
-            let plan = Plan::SeqScan { table: name, columns: vec![0], rows: 0, cost: 0.0_f64, order: vec![0], backward: false, most: None };
+            let plan = Plan::SeqScan {
+                table: name,
+                columns: vec![0],
+                rows: 0,
+                cost: 0.0_f64,
+                order: vec![0],
+                backward: false,
+                most: None,
+                located: false,
+            };
             let read = execute(plan, &Arc::new(st), NO_TRANSACTION).collect::<Result<Vec<Row>>>();
             if broken {
                 assert_eq!(read.err().map(|e| e.code), Some(Code::Io), "spilled");
@@ -564,8 +437,18 @@ mod tests {
     fn executors_refuse_a_plan_of_another_kind() {
         let st = Arc::new(state());
         let other = || one_row(vec![Value::Null]);
-        let executors: [Opened; 10] =
-            [scanned_plan, appended, sorted_plan, indexed, filtered, grouped, distinct_rows, projected, set::operation, system_plan];
+        let executors: [Opened; 10] = [
+            scan::scanned_plan,
+            appended,
+            sorted_plan,
+            scan::indexed,
+            filtered,
+            grouped,
+            distinct_rows,
+            projected,
+            set::operation,
+            system_plan,
+        ];
         for run in executors {
             assert_eq!(code(run(other(), &st, NO_TRANSACTION)), Some(Code::Api));
         }
@@ -589,7 +472,7 @@ mod tests {
         let warnings = Warnings::default();
         assert_eq!(eval(&cut, &Vec::new(), &Heard(&warnings)).unwrap().to_string(), "A");
         assert_eq!(warnings.take(), Some(SqlState::STRING_TRUNCATED));
-        let plan = LogicalPlan::Scan { table: missing_table(), names: vec![], needed: vec![] };
+        let plan = LogicalPlan::Scan { table: missing_table(), names: vec![], needed: vec![], located: false };
         let scalar = Expr::Subquery(Arc::new(Subquery { plan, outer: vec![] }), 0);
         assert_eq!(eval(&scalar, &Vec::new(), &Heard(&warnings)).err().map(|e| e.code), Some(Code::Api));
     }

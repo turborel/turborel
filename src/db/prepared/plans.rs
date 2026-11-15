@@ -47,7 +47,7 @@ use super::super::write::{Target, Written};
 use super::super::{Call, Cursor, Session, State};
 use super::Prepared;
 use crate::ast::{CursorSpecification, SqlStatement};
-use crate::binder::{BoundWrite, Context, OutColumn, bind_cursor};
+use crate::binder::{BoundMerge, BoundWrite, Context, OutColumn, bind_cursor};
 use crate::catalog::{Catalog, QualifiedName};
 use crate::error::Result;
 use crate::logical::{LogicalPlan, filled};
@@ -147,6 +147,9 @@ pub(in crate::db) enum KeptPlan {
     Write(Arc<BoundWrite>),
     /// An INSERT's table, and its query's plan, if it has one.
     Insert(Box<Target>, Option<LogicalPlan>),
+    /// A MERGE, bound, and the table each of its WHEN NOT MATCHED clauses
+    /// inserts into, in order.
+    Merge(Arc<BoundMerge>, Arc<[Target]>),
 }
 
 /// What a plan is made with, besides the statement's text: as the module

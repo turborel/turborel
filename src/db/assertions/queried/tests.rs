@@ -42,7 +42,7 @@ fn catalog() -> MemoryCatalog {
 }
 
 fn scan(ident: &str) -> LogicalPlan {
-    LogicalPlan::Scan { table: named(ident), names: vec!["K".into(), "N".into()], needed: vec![0, 1] }
+    LogicalPlan::Scan { table: named(ident), names: vec!["K".into(), "N".into()], needed: vec![0, 1], located: false }
 }
 
 fn number(n: i128) -> Expr {

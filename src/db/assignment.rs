@@ -8,10 +8,10 @@ use super::write::Written;
 use super::{Completion, api, rule};
 use crate::ast::ParameterSpecification;
 use crate::binder::{OutColumn, ViewCheck};
-use crate::catalog::CheckLevels;
+use crate::catalog::{CheckLevels, TableDesc};
 use crate::error::{At, Code, Result, SqlError, SqlState, Subject, fail_with};
 use crate::exec::{Drawn, Subqueries, eval, eval_cond};
-use crate::logical::{Cond, Truth, expr_columns};
+use crate::logical::{Cond, Expr, Truth, expr_columns};
 use crate::params::Params;
 use crate::storage::Row;
 use crate::value::cast::cast;
@@ -19,8 +19,9 @@ use crate::value::{DataType, Decimal, Value, assign};
 
 /// [ISO/IEC 9075:1992 §11.19 GR11] Rows inserted or updated by an update
 /// operation, which spans the views WITH CHECK OPTION `checks`, are rows of
-/// each [X3.135-1986 §6.5 GR3a; `rule`, one of §8.7 GR2, §8.11 GR5, §8.12
-/// GR4], their subqueries run by `subqueries`. \[GR12\] They are checked at
+/// each [X3.135-1986 §6.5 GR3a; `rule`, cited in full, X3.135-1986 §8.7
+/// GR2, §8.11 GR5 or §8.12 GR4, or ISO/IEC 9075-2:2023 §14.12 GR7], their
+/// subqueries run by `subqueries`. \[GR12\] They are checked at
 /// the end of the statement, once each row is changed: the subqueries may
 /// read the table changed [§7.9 SR12d].
 pub(super) fn check_option<'r>(
@@ -52,8 +53,7 @@ fn check_row(check: &ViewCheck, row: &Row, rule: &str, subqueries: &dyn Subqueri
         return Ok(());
     }
     let (view, levels) = (&check.view, if check.levels == CheckLevels::Local { "LOCAL" } else { "CASCADED" });
-    let msg =
-        format!("[ISO/IEC 9075:1992 §11.19 GR11; X3.135-1986 {rule}] the row is not in view {view}, defined WITH {levels} CHECK OPTION");
+    let msg = format!("[ISO/IEC 9075:1992 §11.19 GR11; {rule}] the row is not in view {view}, defined WITH {levels} CHECK OPTION");
     // [§18.1 GR3i] about the view.
     Err(SqlError::new(Code::Constraint, msg).with_state(SqlState::WITH_CHECK_OPTION_VIOLATION).about(Subject::table(view.parts())))
 }
@@ -62,8 +62,15 @@ fn check_row(check: &ViewCheck, row: &Row, rule: &str, subqueries: &dyn Subqueri
 /// generated column whose expression references one [ISO/IEC 9075-2:2023
 /// §15.14 GR4a].
 pub(super) fn set_columns(w: &Written) -> Vec<usize> {
-    let mut columns: Vec<usize> = w.set().iter().map(|(c, _)| *c).collect();
-    for (at, e) in &w.bound.generated {
+    set_columns_of(w.set(), &w.bound.generated)
+}
+
+/// The columns the `<set clause>`s `set` give values to, and each of the
+/// generated columns `generated` whose expression references one
+/// [ISO/IEC 9075-2:2023 §15.14 GR4a].
+pub(super) fn set_columns_of(set: &[(usize, Option<Expr>)], generated: &[(usize, Expr)]) -> Vec<usize> {
+    let mut columns: Vec<usize> = set.iter().map(|(c, _)| *c).collect();
+    for (at, e) in generated {
         let mut used = Vec::new();
         expr_columns(e, &mut used);
         if used.iter().any(|u| columns.contains(u)) && !columns.contains(at) {
@@ -78,14 +85,44 @@ pub(super) fn set_columns(w: &Written) -> Vec<usize> {
 /// "before any value of the object row is updated", its subqueries run by
 /// `subqueries`.
 pub(super) fn candidate(w: &Written, old: &Row, (assign_rule, subqueries): (&str, &dyn Subqueries)) -> Result<Row> {
+    let assigned = Assigned { desc: &w.bound.desc, set: w.set(), generated: &w.bound.generated };
+    assigned.candidate((old, old), (assign_rule, subqueries))
+}
+
+/// What an update assigns: the table's description, its `<set clause>`s,
+/// each column's position and value (`None` is NULL), and its generated
+/// columns, each by its position and expression.
+pub(super) struct Assigned<'a> {
+    pub(super) desc: &'a TableDesc,
+    pub(super) set: &'a [(usize, Option<Expr>)],
+    pub(super) generated: &'a [(usize, Expr)],
+}
+
+impl Assigned<'_> {
+    /// The candidate row of the object row `old`, as `candidate` makes it,
+    /// each SET value computed from the row `read`: `old` itself, or of a
+    /// MERGE the row `old` is joined to its matching row in [ISO/IEC
+    /// 9075-2:2023 §14.12 GR6a i 1 B III].
+    ///
+    /// # Errors
+    ///
+    /// A value fails, or is not assignable to its column.
+    pub(super) fn candidate(&self, (old, read): (&Row, &Row), (assign_rule, subqueries): (&str, &dyn Subqueries)) -> Result<Row> {
+        assigned(self, (old, read), (assign_rule, subqueries))
+    }
+}
+
+/// The candidate row `assigned` makes of `old`, its SET values computed
+/// from `read` (`Assigned::candidate`).
+fn assigned(a: &Assigned<'_>, (old, read): (&Row, &Row), (assign_rule, subqueries): (&str, &dyn Subqueries)) -> Result<Row> {
     // [ISO/IEC 9075-2:2023 §4.29.1] the row's draws of one generator are one.
     let subqueries = &Drawn::new(subqueries);
     let mut new = old.clone();
-    let desc = &w.bound.desc;
-    for (i, value) in w.set() {
+    let desc = a.desc;
+    for (i, value) in a.set {
         let v = match value {
             None => Value::Null,
-            Some(e) => eval(e, old, subqueries)?,
+            Some(e) => eval(e, read, subqueries)?,
         };
         let (Some(slot), Some(column)) = (new.get_mut(*i), desc.columns.get(*i)) else {
             return Err(api(format!("[DESIGN] {} has no column {i}", desc.name)));
@@ -95,7 +132,7 @@ pub(super) fn candidate(w: &Written, old: &Row, (assign_rule, subqueries): (&str
     // [ISO/IEC 9075-2:2023 §15.14 GR9] each generated column's value, of the
     // row so made.
     let missing = |at: usize| api(format!("[DESIGN] {} has no column {at}", desc.name));
-    for (at, e) in &w.bound.generated {
+    for (at, e) in a.generated {
         let column = desc.columns.get(*at).ok_or_else(|| missing(*at))?;
         let v = assign(eval(e, &new, subqueries)?, &column.data_type, "ISO/IEC 9075-2:2023 §15.14 GR9")?;
         *new.get_mut(*at).ok_or_else(|| missing(*at))? = v;
@@ -294,7 +331,7 @@ mod tests {
             generation: 0,
             temporary: None,
         };
-        let rows = LogicalPlan::Scan { table: name.clone(), names: vec!["K".into()], needed: vec![0] };
+        let rows = LogicalPlan::Scan { table: name.clone(), names: vec!["K".into()], needed: vec![0], located: false };
         let write = crate::binder::BoundWrite {
             named: name.clone(),
             table: name,

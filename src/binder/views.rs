@@ -347,7 +347,7 @@ pub struct WriteTarget {
 /// # Errors
 ///
 /// `name` is not defined [X3.135-1986 §5.4 SR5], or is a read-only table,
-/// which `read_only` (e.g. "§8.7 SR2") forbids. A view's instant read is
+/// which the rule `read_only` (e.g. "X3.135-1986 §8.7 SR2") forbids. A view's instant read is
 /// noted in `noted`, if given (`Clocked`).
 pub fn write_target(db: &State, name: &QualifiedName, (read_only, user): (&str, &str), noted: Option<&Cell<bool>>) -> Result<WriteTarget> {
     if [INFORMATION_SCHEMA, DEFINITION_SCHEMA].contains(&name.auth.as_str()) {
@@ -379,7 +379,7 @@ pub fn write_target(db: &State, name: &QualifiedName, (read_only, user): (&str, 
             Ok(WriteTarget { named: desc, base, map, checks, cond, source })
         }
         Source::Derived(_) | Source::Common | Source::Unnest(_) => {
-            Err(rule(format!("[X3.135-1986 {read_only}, §4.4] {name} is a read-only table")))
+            Err(rule(format!("[{read_only}; X3.135-1986 §4.4] {name} is a read-only table")))
         }
         Source::System(_) => Err(SqlError::new(
             Code::Privilege,

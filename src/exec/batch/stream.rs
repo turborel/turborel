@@ -49,7 +49,7 @@ pub(super) struct Stream {
 /// rows, if it is a subtree that gives batches.
 pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     match plan {
-        Plan::SeqScan { table, columns, .. } => Some((columns.clone(), db.catalog.table(table)?.columns.len())),
+        Plan::SeqScan { table, columns, located: false, .. } => Some((columns.clone(), db.catalog.table(table)?.columns.len())),
         Plan::Filter { input, .. } => layout(input, db),
         Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::layout(plan, db),
         Plan::Project { exprs, input, .. } => {
@@ -68,7 +68,9 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
             }
             held
         }
-        Plan::IndexScan { .. }
+        // A located scan's rows end in their ids, which no batch holds.
+        Plan::SeqScan { located: true, .. }
+        | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
@@ -127,7 +129,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
     match plan {
         // A scan in an order too, merged by batch
         // (`TableStorage::scan_ordered_batches`).
-        Plan::SeqScan { table, .. } => db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
+        Plan::SeqScan { table, located, .. } => !located && db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => reads_by_batch(input, db),
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
         Plan::Product { left, right } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {

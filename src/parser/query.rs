@@ -211,7 +211,7 @@ impl Parser {
 
     /// [ISO/IEC 9075:1992 §7.1] `<row value constructor element>` ::=
     /// `<value expression>` | NULL | DEFAULT
-    fn row_element(&mut self) -> Result<RowElement> {
+    pub(super) fn row_element(&mut self) -> Result<RowElement> {
         let at = self.here();
         if self.accept_kw(kw::NULL) {
             return Ok(RowElement::Null(at));

@@ -903,6 +903,45 @@ table is checked whole after it too. TRUNCATE, which SQL:2023 reserves and SQL-9
 identifier, a key word only where TABLE follows it at the start of a
 statement. RESTART is a non-reserved word.
 
+### MERGE
+
+Features F312 (MERGE statement), F313 (enhanced MERGE statement) and F314
+(MERGE statement with DELETE branch). MERGE updates, deletes and inserts
+rows of a table from one source, each row as the first WHEN clause that
+applies to it says [§14.12].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| The target | §14.12 SR2 to SR4, SR7, SR8, AR1 | A base table, or an updatable view changed as its base table, insertable into if a WHEN NOT MATCHED clause is written. Its exposed name is the correlation name, if written. UPDATE on each column set, DELETE if a clause deletes and INSERT on each column inserted, else SQLCODE -104. A read-only target is SQLCODE -103. |
+| The source | SR11, SR12, §7.6 AR1 | Any table reference but a joined table directly contained, whose exposed name differs from the target's, else SQLCODE -103. SELECT on what it reads. |
+| Scope | SR9 | The target's columns are in scope in ON, in each WHEN condition and in SET, and not in an insert's values, which name the source's alone. |
+| Evaluation | GR5 | The source joined to the target, as a LEFT join on ON, read whole before any row is changed. The rows are sorted by the target row's id, held up to the work area and spilled past it, as are the rows each clause will change. |
+| WHEN MATCHED | GR6a i | A target row's clause is the first whose condition is true of a pair of it and a source row. Two such pairs of one target row are SQLSTATE 21000, duplicate source rows included. A target row no clause applies to is left alone. UPDATE computes its values from the pair, DELETE deletes the row. |
+| WHEN NOT MATCHED | GR6a ii | As printed. A source row is inserted by a clause of condition SCj only if no target row makes `SC1 OR NOT SCj` true, read before any change, so an empty target inserts every source row and an SCj unknown for a row inserts it. A clause of no condition takes every source row ON matches to no target row. Each row is inserted by the first clause that takes it. |
+| The insert | SR14 to SR18 | An insert column list, or every column, named once. As many values as columns, each NULL, DEFAULT or a value expression assignable to its column. A generated column takes DEFAULT alone, and an identity column follows OVERRIDING as INSERT does. Each rule broken is SQLCODE -103. |
+| Order | GR6a | Clause by clause, in the order written, all the rows of one before the next. |
+| Positioned changes | GR6a i 4 | An object row a positioned UPDATE or DELETE changed in the transaction raises warning 01001. |
+| CHECK OPTION | GR7 | Every row updated or inserted through a view WITH CHECK OPTION is checked once all are written, SQLSTATE 44000. |
+| READ ONLY | GR1 | A persistent table is refused, SQLSTATE 25006. A temporary one is not. |
+| Completion | GR8, §23.1 GR2f ii | No data only if the source had no row. Otherwise success, however many rows changed. ROW_COUNT is as printed, of the target joined to the source before the MERGE, whatever the WHEN conditions. Of WHEN MATCHED clauses alone it counts the pairs ON matches, of WHEN NOT MATCHED clauses alone the source rows ON matches to no target row, and of both, the rows of the target RIGHT OUTER JOIN the source. COMMAND_FUNCTION is MERGE. |
+
+At READ COMMITTED a target row another transaction changed after the
+statement read it is matched again as that transaction left it, against
+the same source row, by ON, the views' conditions and its clause's
+condition (RULES.md D29). If they still hold, it is changed from that
+version, and if not, it is left alone and not counted. It is never
+inserted instead, since GR6a ii decides the inserts from the rows read
+before any change. A row another transaction inserts meanwhile is not
+read, so an insert of its key fails its unique constraint, and the
+statement may be run again.
+
+An error in a later WHEN MATCHED clause's condition is not raised for a
+pair an earlier clause already takes, nor for one of a target row an
+earlier clause took, since no later clause can be its row's clause.
+MERGE, which SQL:2023 reserves and SQL-92 does not, stays an identifier,
+a key word only where INTO follows it at the start of a statement.
+MATCHED is a non-reserved word.
+
 ### LIKE and AS in CREATE TABLE
 
 Features T171 (LIKE clause in table definition), T172 (AS subquery clause
@@ -1601,6 +1640,7 @@ topic. The Where column names the file that implements each.
 | 86 §4.12 an error in a statement naming an open cursor | The cursor's state and position are unchanged. A FETCH failing to assign a value [86 §8.6 GR6] leaves the cursor on the row it fetched, the targets assigned before keeping their values. A failed OPEN leaves it closed. | `db/cursor.rs`, `db/assignment.rs` |
 | 86 §8.6 GR5 the order targets are assigned in | The order of the `<fetch target list>`, stopping at the first that fails | `db/assignment.rs` |
 | 2023 §14.10 GR2b, IA233, whether TRUNCATE TABLE's change is visible to a sensitive cursor held into a later transaction | No cursor of the transaction that reads the table may be open, so none sees it. The statement is refused, SQLSTATE 36002. | `db/truncate.rs` |
+| 2023 §14.12 GR2b, IA233, whether MERGE's change is visible to a sensitive cursor held into a later transaction | As of UPDATE and DELETE. A read-only cursor that reads the table reads the rest of its rows before the change, so it sees none. | `db/merge.rs`, `db/cursor.rs` |
 
 ### Evaluation
 
@@ -1697,6 +1737,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §14.1 GR5 isolation level | SERIALIZABLE as itself. REPEATABLE READ as snapshot isolation. READ COMMITTED and READ UNCOMMITTED with a snapshot for each statement, kept while a cursor is open. Each as SERIALIZABLE on an engine that does not read below it. | `db/session.rs`, `txn.rs` |
 | §4.30 the initial default schema | The session's authorization identifier, for every statement the session binds | `db/session.rs` |
 | 2023 §14.10 GR4, IA234, the changes TRUNCATE TABLE disallows that are not significant | Any other transaction's write of the table until the truncating one ends, and any use of the table by a transaction or statement that began before it committed (SQLCODE -911) | `db/truncate.rs`, `txn/locks.rs` |
+| 2023 §14.12 GR4, IA234, the changes MERGE disallows that are not significant | As of UPDATE, DELETE and INSERT. The rows it changes, and under a coordinator's locks the tables it reads, are another transaction's to write only once it ends. | `db/merge.rs`, `txn/access.rs` |
 
 ### Schemas and the catalog
 

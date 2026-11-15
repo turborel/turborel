@@ -34,7 +34,7 @@ pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
-pub use rows::{Near, Row, RowId, Rows, ScanOrder, project};
+pub use rows::{Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
 
 use std::sync::Arc;
 

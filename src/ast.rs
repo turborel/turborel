@@ -34,6 +34,7 @@ mod drop;
 mod dynamic;
 mod expression;
 mod generated;
+mod merge;
 mod ordered;
 mod pattern;
 mod query;
@@ -59,6 +60,7 @@ pub use expression::{
     CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
+pub use merge::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
 pub use pattern::{
     Definition, EmptyMatches, Logical, Measure, Navigation, PatternCommon, Physical, Quantified, RecognizedTable, RowPattern,
@@ -265,6 +267,8 @@ pub enum SqlStatement {
         /// The `<search condition>`, if written.
         where_clause: Option<SearchCondition>,
     },
+    /// [ISO/IEC 9075-2:2023 §14.12] `<merge statement>`.
+    Merge(Box<MergeStatement>),
     /// [ISO/IEC 9075-2:2023 §14.10] `<truncate table statement>` ::=
     ///     TRUNCATE TABLE `<target table>` \[CONTINUE IDENTITY | RESTART IDENTITY\]
     Truncate {

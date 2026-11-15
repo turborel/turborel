@@ -137,6 +137,11 @@ pub enum LogicalPlan {
         names: Vec<String>,
         /// The columns the query uses, which a storage engine may use to price a scan.
         needed: Vec<usize>,
+        /// \[DESIGN\] Whether each row it reads is followed by the row's id
+        /// (`storage::located`), the last of `names` then naming it
+        /// (`storage::ROW_ID`): a MERGE's target, whose rows a join reads,
+        /// so it can change the ones it matched.
+        located: bool,
     },
     /// [X3.135-1986 §5.21, §5.23] keep rows for which the condition is true.
     Filter {

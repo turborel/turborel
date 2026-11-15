@@ -17,7 +17,7 @@ mod named;
 mod rows;
 
 pub(super) use named::{Column, Named};
-pub(super) use rows::{Generating, check_override};
+pub(super) use rows::{Generating, Inserted, check_override};
 
 use super::State;
 use super::sequences::{Epochs, generator};

@@ -98,6 +98,7 @@ mod integrity;
 mod log_sync;
 mod long_texts;
 mod maintenance;
+mod merge;
 mod position;
 mod prepared;
 mod recovery;

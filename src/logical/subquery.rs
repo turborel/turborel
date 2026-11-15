@@ -253,6 +253,7 @@ mod tests {
             table: QualifiedName { auth: "A".into(), ident: "U".into() },
             names: vec!["K".into(), "W".into()],
             needed: vec![0, 1],
+            located: false,
         }
     }
 

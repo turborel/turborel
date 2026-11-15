@@ -360,6 +360,7 @@ mod tests {
             est: 1.0_f64,
             cost: 1.0_f64,
             covering: false,
+            located: false,
         }
     }
 
@@ -390,8 +391,16 @@ mod tests {
         assert!(!keepable(&scan("J", Probe::Compare { op: CompOp::Eq, value: int(1) }, Vec::new()), &st), "collated");
         assert!(!keepable(&scan("I", Probe::Prefix { equal: vec![int(1)], then: None }, Vec::new()), &st), "a prefix of the key");
         assert!(!keepable(&scan("I", Probe::All, Vec::new()), &st), "every key");
-        let seq =
-            Plan::SeqScan { table: table(), columns: vec![0], rows: 0, cost: 0.0_f64, order: Vec::new(), backward: false, most: None };
+        let seq = Plan::SeqScan {
+            table: table(),
+            columns: vec![0],
+            rows: 0,
+            cost: 0.0_f64,
+            order: Vec::new(),
+            backward: false,
+            most: None,
+            located: false,
+        };
         assert!(!keepable(&seq, &st));
         let sorted = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(scan("I", whole(), Vec::new())), most: None };
         assert!(!keepable(&sorted, &st));

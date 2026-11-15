@@ -182,6 +182,7 @@ impl Session {
             // transaction.
             SqlStatement::DeclareTable(t) => return self.declare_table(st, t),
             SqlStatement::Insert(_)
+            | SqlStatement::Merge(_)
             | SqlStatement::UpdateSearched { .. }
             | SqlStatement::DeleteSearched { .. }
             | SqlStatement::UpdatePositioned { .. }
@@ -238,6 +239,7 @@ impl Session {
         let StatementContext { st, tx } = cx;
         match stmt {
             SqlStatement::Insert(ins) => self.insert_statement(cx, ins, params, keeping).map(|n| self.affected(n)),
+            SqlStatement::Merge(merge) => self.merge_completed(cx, merge, params, keeping),
             SqlStatement::UpdateSearched { table, set, where_clause } => {
                 let bind = |b: Context<'_>| bind_write(b, WriteKind::UpdateSearched, table, set, where_clause.as_ref());
                 let w = self.write_bound(st, params, keeping, bind)?;
@@ -295,6 +297,7 @@ impl Session {
 fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
     match stmt {
         SqlStatement::Insert(ins) => Some(&ins.table),
+        SqlStatement::Merge(merge) => Some(&merge.target),
         SqlStatement::UpdateSearched { table, .. }
         | SqlStatement::DeleteSearched { table, .. }
         | SqlStatement::UpdatePositioned { table, .. }
@@ -416,6 +419,7 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::Execute(e) => dynamic::execute_command(e),
         SqlStatement::DeclareTable(_) => "DECLARE LOCAL TEMPORARY TABLE",
         SqlStatement::Insert(_) => "INSERT",
+        SqlStatement::Merge(_) => "MERGE",
         SqlStatement::Open(_) => "OPEN",
         SqlStatement::Rollback => "ROLLBACK WORK",
         SqlStatement::Select { .. } => "SELECT",

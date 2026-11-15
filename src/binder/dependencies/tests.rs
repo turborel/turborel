@@ -49,6 +49,7 @@ fn scan() -> LogicalPlan {
         table: QualifiedName { auth: "A".into(), ident: "T".into() },
         names: vec!["K".into(), "V".into(), "W".into()],
         needed: vec![],
+        located: false,
     }
 }
 
@@ -132,8 +133,12 @@ fn a_base_tables_keys_determine_its_rows() {
     }
     let k = of(&database(vec![constraint(ConstraintKind::NotNull(1), false)]), &scan());
     assert_eq!(k.not_null, Attrs::from([k.columns[1]]));
-    let missing =
-        LogicalPlan::Scan { table: QualifiedName { auth: "A".into(), ident: "GONE".into() }, names: vec!["X".into()], needed: vec![] };
+    let missing = LogicalPlan::Scan {
+        table: QualifiedName { auth: "A".into(), ident: "GONE".into() },
+        names: vec!["X".into()],
+        needed: vec![],
+        located: false,
+    };
     assert_eq!(of(&database(vec![]), &missing).dependencies, Vec::new());
 }
 

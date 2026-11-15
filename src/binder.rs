@@ -39,6 +39,7 @@ mod dependencies;
 pub(crate) use dependencies::{DescribedKey, described_key};
 mod interval;
 mod listagg;
+mod merge;
 pub(crate) use datetime::cast_is_valid;
 pub use datetime::{function_type as datetime_function_type, literal_value as datetime_literal};
 pub use interval::{displacement_of, is_displacement};
@@ -80,6 +81,7 @@ mod with;
 pub use cursor::bind_cursor;
 use from::FromItem;
 pub use generated::{bind_generation, generations};
+pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 use query::bind_query_specification;
 pub use set_operations::{ObjectColumn, bind_insert_query};
 pub(crate) use statements::assignable;
@@ -249,7 +251,7 @@ fn nondeterministic(rules: &str, what: &str) -> SqlError {
 }
 
 /// [X3.135-1986 §6.6 SR3] Whether the applicable privileges of `auth` on
-/// `table` include `needed`, as the Syntax Rule `clause` (e.g. "§8.7 SR1")
+/// `table` include `needed`, as the Syntax Rule `clause` (e.g. "X3.135-1986 §8.7 SR1"), cited in full,
 /// requires.
 ///
 /// # Errors
@@ -266,7 +268,7 @@ pub fn require(db: &State, auth: &str, table: &TableDesc, needed: &Actions, clau
             let subject = Subject { column, ..Subject::table(table.name.parts()) };
             Err(SqlError::new(
                 Code::Privilege,
-                format!("[X3.135-1986 {clause}, §6.6 SR3] {auth} has no {missing} privilege on {}", table.name),
+                format!("[{clause}; X3.135-1986 §6.6 SR3] {auth} has no {missing} privilege on {}", table.name),
             )
             .about(subject))
         }
@@ -510,7 +512,7 @@ impl Binder<'_> {
         if self.purpose == Purpose::Constraint {
             if !item.table.auth.is_empty() {
                 let needed = Actions { references: std::iter::once(i).collect(), ..Actions::default() };
-                require(self.db, self.auth, &item.desc, &needed, "§11.9 AR1a")?;
+                require(self.db, self.auth, &item.desc, &needed, "ISO/IEC 9075:1992 §11.9 AR1a")?;
             }
             if let Some(r) = self.referencing {
                 r.column_named(&item.table);

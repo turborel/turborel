@@ -518,7 +518,8 @@ impl State {
             self.read_lock(tx, t)?;
         }
         let columns = desc.columns.iter().map(|column| column.name.clone()).collect();
-        let scan = LogicalPlan::Scan { table: desc.name.clone(), names: columns, needed: (0..desc.columns.len()).collect() };
+        let scan =
+            LogicalPlan::Scan { table: desc.name.clone(), names: columns, needed: (0..desc.columns.len()).collect(), located: false };
         let falsified = LogicalPlan::Filter { cond: Cond::Not(Box::new(cond)), input: Box::new(scan) };
         let (_, _, physical) = plan(self, falsified);
         if execute(physical, self, tx.id).next().transpose()?.is_some() {

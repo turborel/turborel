@@ -91,7 +91,7 @@ mod tests {
     /// A scan of table `name`.
     fn scan(name: &str) -> Plan {
         let table = QualifiedName { auth: "A".into(), ident: name.into() };
-        Plan::SeqScan { table, columns: vec![0], rows: 0, cost: 0.0_f64, order: Vec::new(), backward: false, most: None }
+        Plan::SeqScan { table, columns: vec![0], rows: 0, cost: 0.0_f64, order: Vec::new(), backward: false, most: None, located: false }
     }
 
     /// The learning after `agreed` executions in a row of a scan of `T`,

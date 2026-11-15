@@ -501,7 +501,7 @@ pub(super) fn leaf(binder: &Binder<'_>, it: &FromItem) -> Result<LogicalPlan> {
         binder.names.get(it.offset..end).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] the FROM row lost a column name"))?;
     let mut needed: Vec<usize> = used.range(it.offset..end).map(|p| p.saturating_sub(it.offset)).collect();
     Ok(match &it.source {
-        Source::Table => LogicalPlan::Scan { table: it.table.clone(), names: item_names.to_vec(), needed },
+        Source::Table => LogicalPlan::Scan { table: it.table.clone(), names: item_names.to_vec(), needed, located: false },
         // The views' conditions read columns of their own.
         Source::Base(vb) => {
             if let Some(c) = &vb.cond {
@@ -509,7 +509,7 @@ pub(super) fn leaf(binder: &Binder<'_>, it: &FromItem) -> Result<LogicalPlan> {
             }
             needed.sort_unstable();
             needed.dedup();
-            let scan = LogicalPlan::Scan { table: vb.base.name.clone(), names: item_names.to_vec(), needed };
+            let scan = LogicalPlan::Scan { table: vb.base.name.clone(), names: item_names.to_vec(), needed, located: false };
             match &vb.cond {
                 Some(cond) => LogicalPlan::Filter { cond: cond.clone(), input: Box::new(scan) },
                 None => scan,

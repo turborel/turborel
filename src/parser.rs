@@ -43,6 +43,7 @@ mod hypothetical;
 mod interval;
 mod listagg;
 mod literal;
+mod merge;
 mod names;
 mod pattern;
 mod primary;
@@ -54,7 +55,7 @@ mod sequences;
 mod served;
 mod user_types;
 mod window;
-pub(crate) use data_statements::{TRUNCATE, begins_truncate};
+pub(crate) use data_statements::{TRUNCATE, begins_word_statement};
 pub(crate) use served::CANCEL;
 mod session;
 mod users;
@@ -409,16 +410,7 @@ impl Parser {
         self.expect_kw(kw::INSERT)?;
         self.expect_kw(kw::INTO)?;
         let table = self.table_name()?;
-        // <insert column list> ::= <column name> [{,<column name>}...]
-        let mut columns = None;
-        if self.accept_delim(delim::LEFT_PAREN) {
-            let mut list = vec![self.column_name()?];
-            while self.accept_delim(delim::COMMA) {
-                list.push(self.column_name()?);
-            }
-            self.expect_delim(delim::RIGHT_PAREN)?;
-            columns = Some(list);
-        }
+        let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.insert_column_list()?) } else { None };
         // [ISO/IEC 9075-2:2023 §14.11] [<override clause>]
         let overriding = self.override_clause()?;
         // [ISO/IEC 9075:1992 §13.8] DEFAULT VALUES, with no column list.
@@ -430,6 +422,20 @@ impl Parser {
         let query = self.query_expression()?;
         self.end()?;
         Ok(InsertStatement { table, columns, overriding, source: InsertSource::Query(Box::new(query)) })
+    }
+
+    /// (`<insert column list>`) ::= ( `<column name>` \[{, `<column
+    /// name>`}...\] ), each column where it is written, of an INSERT
+    /// \[X3.135-1986 §8.7\] or a MERGE's insert \[ISO/IEC 9075-2:2023
+    /// §14.12\].
+    pub(super) fn insert_column_list(&mut self) -> Result<Vec<ColumnName>> {
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut columns = vec![self.column_name()?];
+        while self.accept_delim(delim::COMMA) {
+            columns.push(self.column_name()?);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(columns)
     }
 
     /// A `<column name>`, with where it is written.

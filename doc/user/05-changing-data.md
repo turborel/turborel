@@ -61,6 +61,37 @@ OK
 ROLLBACK undoes the transaction's changes: the insert, the raise and the
 delete.
 
+## Merging rows
+
+MERGE updates the rows a source matches and inserts those it does not,
+in one statement. Each source row takes the first WHEN clause that
+applies to it, and a WHEN MATCHED clause may delete instead:
+
+```sql
+MERGE INTO EMPLOYEES AS E
+  USING (VALUES (3, 'Edsger', 'OPS', 5600), (5, 'Frances', 'OPS', 6100)) AS N (ID, NAME, DEPT, SALARY)
+  ON E.ID = N.ID
+  WHEN MATCHED THEN UPDATE SET SALARY = N.SALARY
+  WHEN NOT MATCHED THEN INSERT VALUES (N.ID, N.NAME, N.DEPT, N.SALARY);
+SELECT ID, NAME, SALARY FROM EMPLOYEES ORDER BY ID;
+ROLLBACK;
+```
+
+```
+OK
+           ID | NAME                           |      SALARY
+--------------+--------------------------------+-------------
+            1 | Ada                            |     7200.00
+            2 | Grace                          |     8100.00
+            3 | Edsger                         |     5600.00
+            5 | Frances                        |     6100.00
+(4 rows)
+OK
+```
+
+Edsger's salary is updated, and Frances is inserted
+([MERGE](../sql/statements/merge.md)).
+
 ## Cursors
 
 A program that embeds turborel may read a query's rows one at a time,

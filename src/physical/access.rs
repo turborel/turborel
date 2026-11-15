@@ -102,6 +102,7 @@ impl PhysicalPlanner<'_> {
                 order: Vec::new(),
                 backward: false,
                 most: None,
+                located: read.located,
             };
             let cost = self.db.cost();
             let with =
@@ -116,7 +117,16 @@ impl PhysicalPlanner<'_> {
             None => {
                 let order = best.order;
                 let (columns, backward) = (read.needed.to_vec(), best.reverse);
-                let plan = Plan::SeqScan { table: read.table.clone(), columns, rows, cost: best.cost, order, backward, most: None };
+                let plan = Plan::SeqScan {
+                    table: read.table.clone(),
+                    columns,
+                    rows,
+                    cost: best.cost,
+                    order,
+                    backward,
+                    most: None,
+                    located: read.located,
+                };
                 (plan, (cost_of(rows), best.est))
             }
             Some(mut probed) => {
@@ -354,6 +364,7 @@ fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, c
                 est: est / share,
                 cost: cost / share,
                 covering,
+                located: read.located,
             }
         })
         .collect();

@@ -4,9 +4,9 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use crate::error::Result;
+use crate::error::{Code, Result, SqlError};
 use crate::txn::TxId;
-use crate::value::Value;
+use crate::value::{Decimal, Value};
 
 /// A row: one value per column, in column order.
 pub type Row = Vec<Value>;
@@ -19,6 +19,37 @@ pub fn project(row: &[Value], columns: &[usize]) -> Option<Row> {
 
 /// Identifies a row within its table, for as long as the table exists.
 pub type RowId = u64;
+
+/// \[DESIGN\] The name of the column a located scan appends to each row
+/// it reads: the row's id (`located`). No column of a table is named so,
+/// a name of lower case letters no unquoted identifier is (`<regular
+/// identifier>` [ISO/IEC 9075:1992 §5.2 SR10]), and no reference reaches
+/// it, so it is read only by the statement that asked for it, a MERGE's.
+pub const ROW_ID: &str = "row id";
+
+/// \[DESIGN\] Row id `id` as the value a located scan gives it: an exact
+/// number of scale 0, which holds every row id.
+pub fn located(id: RowId) -> Value {
+    Value::Exact(Decimal::new(i128::from(id), 0))
+}
+
+/// The row id `value` holds, a located scan's (`located`), or none if it
+/// is null: of a row an outer join gave no row of the located table.
+///
+/// # Errors
+///
+/// SQLCODE -910 if `value` is no row id.
+pub fn row_id_of(value: &Value) -> Result<Option<RowId>> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    let not_one = || SqlError::new(Code::Api, "[DESIGN] a located scan's row id is an exact number of scale 0");
+    let Value::Exact(d) = value else { return Err(not_one()) };
+    if d.scale != 0 {
+        return Err(not_one());
+    }
+    RowId::try_from(d.units).map(Some).map_err(|_| not_one())
+}
 
 /// \[DESIGN\] What a table keeps from one read by row id to the next of one
 /// scan (`TableStorage::get_near`), so rows side by side cost less to read.

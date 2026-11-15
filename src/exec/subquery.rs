@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn no_subqueries_refuses_to_run_one() {
         let table = QualifiedName { auth: "A".into(), ident: "T".into() };
-        let s = Subquery { plan: LogicalPlan::Scan { table, names: vec![], needed: vec![] }, outer: vec![] };
+        let s = Subquery { plan: LogicalPlan::Scan { table, names: vec![], needed: vec![], located: false }, outer: vec![] };
         assert_eq!(NoSubqueries.rows(&s, &[], None).err().map(|e| e.code), Some(crate::error::Code::Api));
     }
 }

@@ -74,7 +74,7 @@ pub(super) fn bind_ordered(
         Nesting::Subquery { outer, result } => (Some(*outer), result.clone()),
     };
     // [X3.135-1986 §5.24 SR1, §5.25 SR1] SELECT on each table.
-    let clause = if outer.is_some() { "§5.24 SR1" } else { "§5.25 SR1" };
+    let clause = if outer.is_some() { "X3.135-1986 §5.24 SR1" } else { "X3.135-1986 §5.25 SR1" };
     let From { items, trees, used, .. } = bind_from(Bounds { cx, clause, outer }, &te.from)?;
     let visible = From::visible_of(&trees, &items);
     let names = items.iter().flat_map(FromItem::row_names).collect();

@@ -19,7 +19,7 @@ use crate::error::Result;
 use crate::index::{Entries, Index, Key, KeyOrder, Probe};
 use crate::logical::{Cond, Truth};
 use crate::physical::Plan;
-use crate::storage::{Condition, Row, RowId, TableStorage};
+use crate::storage::{self, Condition, Row, RowId, TableStorage};
 use crate::txn::{Stop, TxId, checked};
 use crate::value::{CompOp, Value};
 
@@ -28,7 +28,7 @@ use crate::value::{CompOp, Value};
 /// R-CF-6).
 #[inline(never)]
 pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::IndexJoin { outer, left, table, index, keys, cond, width, columns: needed, .. } = plan else {
+    let Plan::IndexJoin { outer, left, table, index, keys, cond, width, columns: needed, located, .. } = plan else {
         return failed(broken("an index join is not one"));
     };
     let opened = db.storage_of(&table).map(Arc::clone).and_then(|storage| {
@@ -38,7 +38,7 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter
     match opened {
         Ok((storage, found, ix)) => Box::new(IndexJoin {
             left: execute(*left, db, tx),
-            table: Probed { storage, index: found, reading: Reading::of(&ix, Some(&needed)), ix, tx, stop: db.tx.stop_of(tx) },
+            table: Probed { storage, index: found, reading: Reading::of(&ix, Some(&needed)), ix, tx, stop: db.tx.stop_of(tx), located },
             keys,
             cond,
             nulls: outer.then(|| vec![Value::Null; width]),
@@ -51,7 +51,8 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter
 
 /// The table an index join probes: its storage, the index, its columns,
 /// what every fetch of its rows shares, read as `tx` sees them, the
-/// statement's stop looked at.
+/// statement's stop looked at, and whether each row is followed by its id
+/// (`LogicalPlan::Scan`).
 struct Probed {
     storage: Arc<dyn TableStorage>,
     index: Arc<dyn Index>,
@@ -61,6 +62,7 @@ struct Probed {
     reading: Reading,
     tx: TxId,
     stop: Option<Arc<Stop>>,
+    located: bool,
 }
 
 impl Probed {
@@ -86,10 +88,17 @@ impl Probed {
         Ok(Box::new(checked(entries, self.stop.clone())))
     }
 
-    /// The row of the entry `(key, id)`, if the version `tx` sees has it.
+    /// The row of the entry `(key, id)`, if the version `tx` sees has it,
+    /// followed by its id if located.
     fn row(&mut self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
-        Ok(fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?.map(|(_, row)| row))
+        let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?;
+        Ok(found.map(|(_, mut row)| {
+            if self.located {
+                row.push(storage::located(id));
+            }
+            row
+        }))
     }
 }
 
@@ -183,6 +192,7 @@ mod tests {
             detail: String::new(),
             est: 0.0_f64,
             cost: 0.0_f64,
+            located: false,
         }
     }
 

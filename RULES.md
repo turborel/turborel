@@ -1168,7 +1168,10 @@ statement bases on what it read is never lost. At the per-statement levels a
 searched UPDATE or DELETE that finds a row changed by a transaction it does
 not see, under LOCKS.WAIT ON, reads the version committed, checks its search
 condition of it, and changes that version or leaves the row
-(`TableStorage::newest`, `write_newest`). A positioned write, or a
+(`TableStorage::newest`, `write_newest`). A MERGE does the same of a
+target row, checking its ON condition and its clause's condition of that
+version joined to the same source row, and never inserts a row it leaves.
+A positioned write, or a
 referential action, is refused instead. A value read by one statement and
 written back by a later one can overwrite a change committed between them. An engine that ignores `TableStorage::read_mode` reads as
 SERIALIZABLE.

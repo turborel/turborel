@@ -51,6 +51,7 @@ One reference page for each statement, in alphabetical order.
 - [GET DIAGNOSTICS](get-diagnostics.md): read the diagnostics area
 - [GRANT](grant.md): grant privileges
 - [INSERT](insert.md): insert rows
+- [MERGE](merge.md): update, delete and insert rows of a table from one source
 - [OPEN](open.md): open a cursor
 - [PREPARE](prepare.md): prepare a statement, by name
 - [REVOKE](revoke.md): revoke privileges

@@ -509,7 +509,7 @@ impl Session {
         let runner = Runner::new(st, tx.id);
         let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.9 GR9", &runner))?;
         st.update_row(tx, table, id, &new)?;
-        check_option(&w.bound.checks, [&new], ("§8.11 GR5", &runner))?;
+        check_option(&w.bound.checks, [&new], ("X3.135-1986 §8.11 GR5", &runner))?;
         let mut effects = self.effects(st);
         effects.updated(table, id, old, &set_columns(w))?;
         st.end_statement(tx, effects)?;

@@ -11,7 +11,7 @@ use super::collation::{any_of, of_column};
 use super::datetime::{stored, takes_zone};
 use super::expression::dynamic_of;
 use super::query::{Nesting, bind_query};
-use super::statements::{INSERT_RULE, check_assignment};
+use super::statements::{AssignRule, INSERT_RULE, check_assignment};
 use super::{Binder, Bound, Context, OutColumn, Scope, nondeterministic, rule};
 use crate::ast::{Correspondence, QueryExpression, RowElement, SetOperation, SetOperator, ValueExpression, ValuesRow};
 use crate::catalog::{ColumnDesc, QualifiedName, SequenceDesc};
@@ -84,7 +84,7 @@ pub fn bind_insert_query(cx: Context<'_>, query: &QueryExpression, columns: &[Ob
 
 /// The type of each element of a row of a `<table value constructor>`, or
 /// none for NULL or DEFAULT, which take the type of their object column.
-type BoundRow = Vec<(Expr, Option<DataType>)>;
+pub(super) type BoundRow = Vec<(Expr, Option<DataType>)>;
 
 /// [ISO/IEC 9075:1992 §7.2] A `<table value constructor>`: its rows, of one
 /// degree \[SR1\], each column of the type §9.3 gives its values, as the
@@ -101,7 +101,7 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
     let taken = binder.dynamic_types(rows, objects)?;
     let mut bound: Vec<BoundRow> = Vec::new();
     for row in rows {
-        let elements = binder.values_row(row, (objects, &taken)).or_at(row.at)?;
+        let elements = binder.values_row(row, (objects, &taken), INSERT_RULE).or_at(row.at)?;
         if let Some(first) = bound.first().filter(|first| first.len() != elements.len()) {
             let (n, m) = (first.len(), elements.len());
             return Err(rule(format!(
@@ -212,7 +212,7 @@ impl Binder<'_> {
     /// specification>` in each column of `rows` takes: the first row's whose
     /// value there is not one; or, if each is, the column's an INSERT
     /// inserts into, of `objects`; else none \[GR4j\].
-    fn dynamic_types(&self, rows: &[ValuesRow], objects: Option<&[ObjectColumn]>) -> Result<Vec<Option<DataType>>> {
+    pub(super) fn dynamic_types(&self, rows: &[ValuesRow], objects: Option<&[ObjectColumn]>) -> Result<Vec<Option<DataType>>> {
         let degree = rows.iter().map(|r| r.elements.len()).max().unwrap_or(0);
         let scope = Scope::Rows("[X3.135-1986 §5.8 SR1] a set function needs an argument source");
         let mut taken = Vec::new();
@@ -237,7 +237,12 @@ impl Binder<'_> {
     /// each of its columns. NULL and DEFAULT are only of the rows inserted
     /// into `objects` \[SR1\], each its column's default \[GR2\], and a value
     /// for an object column must be one it can take [X3.135-1986 §8.7 SR6].
-    fn values_row(&self, row: &ValuesRow, (objects, taken): (Option<&[ObjectColumn]>, &[Option<DataType>])) -> Result<BoundRow> {
+    pub(super) fn values_row(
+        &self,
+        row: &ValuesRow,
+        (objects, taken): (Option<&[ObjectColumn]>, &[Option<DataType>]),
+        assign: AssignRule,
+    ) -> Result<BoundRow> {
         let scope =
             Scope::Rows("[X3.135-1986 §5.8 SR1] a set function needs an argument source, which a <table value constructor> does not have");
         if let [RowElement::Value(v @ ValueExpression::Subquery(_), at)] = row.elements.as_slice() {
@@ -258,7 +263,7 @@ impl Binder<'_> {
                     }
                     .or_at(*at)?;
                     if let Some(o) = object {
-                        check_assignment(&o.desc, &t.clone(), INSERT_RULE).or_at(*at)?;
+                        check_assignment(&o.desc, &t.clone(), assign).or_at(*at)?;
                     }
                     ((e, Some(t)), *at)
                 }
