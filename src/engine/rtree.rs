@@ -17,6 +17,7 @@
 //! bounds. Counts of one row are serialized separately, so a changed
 //! subtree choice cannot create a second copy of an existing entry.
 
+mod join;
 mod nearest;
 mod node;
 mod scan;
@@ -35,6 +36,7 @@ use crate::spatial::Bounds;
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 
+pub use join::{Join, Joined};
 pub use nearest::Nearest;
 use node::{ENTRY_BYTES, HEADER, Node};
 pub use scan::Scan;
@@ -190,6 +192,18 @@ impl RTree {
     /// An error after construction is yielded once by the iterator.
     pub fn nearest(&self, query: Bounds, budget: &Arc<MemoryBudget>) -> Result<Nearest> {
         Nearest::new(self.clone(), query, budget)
+    }
+
+    /// Streams intersecting pairs, pruning disjoint branches of both
+    /// trees. Self-joins include both directions and each self-pair.
+    /// Stable pairs appear once; concurrent changes are optional.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; SQLCODE -918 if the frontier exceeds the budget.
+    /// An error after construction is yielded once by the iterator.
+    pub fn join(&self, other: &RTree, budget: &Arc<MemoryBudget>) -> Result<Join> {
+        Join::new(self.clone(), other.clone(), budget)
     }
 
     /// Frees the nodes and meta page of a discarded tree. The caller must
