@@ -30,6 +30,7 @@ fn defaults_reach_the_local_server() {
     assert_eq!((options.user.as_str(), options.inputs.as_slice(), options.null.as_str()), ("ann", [Input::Standard].as_slice(), ""));
     assert!(matches!(options.credentials, Credentials::Trust));
     assert!(!options.stop_on_error);
+    assert!(!options.timing);
     assert_eq!(options.timeouts, Timeouts { connect: Some(CONNECT_WITHIN), read: None });
     assert_eq!(CONNECT_WITHIN, Duration::from_secs(30));
     assert_eq!(parsed(&[], &[("USERNAME", "bob")]).unwrap().user, "bob", "as Windows names it");
@@ -59,6 +60,7 @@ fn options_are_taken() {
         "--command",
         "SELECT 2",
         "--stop-on-error",
+        "--timing",
         "--null",
         "<null>",
         "--connect-timeout",
@@ -72,6 +74,7 @@ fn options_are_taken() {
     let inputs = [Input::Command("SELECT 1".into()), Input::File(PathBuf::from("a.sql")), Input::Command("SELECT 2".into())];
     assert_eq!((options.user.as_str(), options.inputs.as_slice(), options.null.as_str()), ("carol", inputs.as_slice(), "<null>"));
     assert!(options.stop_on_error);
+    assert!(options.timing);
     assert_eq!(options.timeouts, Timeouts { connect: None, read: Some(Duration::from_secs(5)) }, "0 for no limit");
     let Credentials::Given(password) = &options.credentials else { panic!("given") };
     assert_eq!(password.0, "secret");

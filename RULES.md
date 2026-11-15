@@ -1691,6 +1691,16 @@ input. Each statement runs alone as a `<direct SQL statement>` [ISO/IEC
 to standard error and the run continues, unless `--stop-on-error` is given
 or the connection is lost. Exit status is 1 if any statement failed.
 
+`--timing` reports each attempted SQL statement's elapsed time in whole
+nanoseconds to standard error, after the statement. It uses the client's
+monotonic clock, from starting the statement through receiving its outcome
+and writing any result rows: server work, network transfer and streamed
+output are included; writing a failure's diagnostic is not. Reading input,
+the initial connection and login, and imports are outside it. Nanoseconds
+are the unit, not a promise of clock precision. A failure to write timing
+is ignored, as one to write a diagnostic is. Timing is off by default and
+changes no protocol message (D45).
+
 The client library is the SQL-agent [ISO/IEC 9075:1992 §15]
 (`turborel_client::agent`). It runs CONNECT, SET CONNECTION and DISCONNECT
 itself, and refuses them in an active transaction [§15.1 GR1, §15.2 GR1,

@@ -29,6 +29,7 @@ as a table as they come, and each statement's outcome.
 | `-c`, `--command SQL` | run SQL's statements; more than once for more |
 | `-f`, `--file FILE` | run FILE's statements; more than once for more |
 | `--stop-on-error` | end the run at the first statement that fails |
+| `--timing` | report each statement's elapsed time to standard error ([Timing](#timing)); off by default |
 | `--null TEXT` | show a null value as TEXT, and import a field written TEXT as null; nothing by default |
 | `--import FILE` | insert FILE's rows into the table `--table` names; more than once for more, in turn with `-c` and `-f` ([Importing](#importing)) |
 | `--table NAME` | the table rows are imported into |
@@ -147,6 +148,22 @@ A transaction a run leaves open is ended as the session ends: committed,
 unless the setting SESSION.COMMIT_AT_END is OFF. A commit that fails then, as
 one of a deferred constraint not satisfied (SQLSTATE 40002), is told,
 the transaction rolled back, and the program exits with 1.
+
+## Timing
+
+`--timing` writes `Time: N ns` to standard error after each SQL statement,
+including one that fails or is cancelled. It applies to commands, files
+and standard input, including typed sessions. Each statement gets its own
+time; the results on standard output keep their usual format.
+
+The client measures elapsed time with a monotonic clock, from starting the
+statement through receiving its outcome and writing any result rows. This
+includes server work, network transfer, formatting and streamed output, so
+a slow terminal or a large result increases it. Writing a failure's
+diagnostic is not included. It is not a measurement of server execution
+alone. Reading SQL input, the initial connection and login, and
+`--import` are outside the measurement. Nanoseconds are the unit shown;
+the clock's precision depends on the platform.
 
 ## Importing
 
