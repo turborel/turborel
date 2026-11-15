@@ -1538,8 +1538,12 @@ Plug-ins register these with `Database::register_type` (RULES.md D53).
 
 ### Indexes
 
-These are RULES.md D34, of the methods `btree` and `hash` or a plug-in's. The
-statements run outside a transaction.
+These are RULES.md D34, of the methods `btree`, `hash` and `rtree`, or a
+plug-in's. The statements run outside a transaction. The `rtree` method
+indexes two approximate-numeric point coordinates or four rectangle
+coordinates and answers independent SQL comparisons (`index/rtree.rs`,
+`physical/access/columns.rs`, D72). This does not add geometry types or
+SQL/MM spatial routines.
 
 ```
 CREATE INDEX name ON table (columns) [USING method] [WITH (...)]

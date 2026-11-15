@@ -4,7 +4,7 @@
 use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail spatial requirements.
-pub const RTREE: [Mutation; 6] = [
+pub const RTREE: [Mutation; 8] = [
     Mutation {
         name: "rtree-split-stamp",
         package: Package::Core,
@@ -64,5 +64,25 @@ pub const RTREE: [Mutation; 6] = [
         replacement: "left: pair.left, right: Visit { id, ..pair.right }, right_hops: hops, ..pair",
         integration: &[],
         unit: &["engine::rtree::tests::join::old_roots_partition_split_pairs_without_duplicates"],
+    },
+    Mutation {
+        name: "rtree-coordinate-recheck",
+        package: Package::Core,
+        breaks: "rectangle candidates are returned without checking their individual coordinate comparisons",
+        file: "src/index/rtree/probe.rs",
+        original: "probe.answers(values.iter().take(width))",
+        replacement: "probe.answers(values.iter().take(width)) || width > 0",
+        integration: &[],
+        unit: &["index::rtree::tests::independent_comparisons_match_sql_for_points_and_rectangles"],
+    },
+    Mutation {
+        name: "rtree-independent-slots",
+        package: Package::Core,
+        breaks: "a prepared multidimensional probe overwrites its first bound for every parameter",
+        file: "src/physical/kept.rs",
+        original: "each.get_mut(n).map(|c| &mut c.value)",
+        replacement: "each.get_mut(n.saturating_sub(n)).map(|c| &mut c.value)",
+        integration: &[],
+        unit: &["physical::kept::tests::independent_probe_slots_replace_each_bound_and_reject_missing_places"],
     },
 ];

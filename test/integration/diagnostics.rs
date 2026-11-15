@@ -45,6 +45,7 @@ fn a_database_tells_its_sink_of_its_life() {
             registered(Extension::Engine, "rowstore"),
             registered(Extension::IndexMethod, "btree"),
             registered(Extension::IndexMethod, "hash"),
+            registered(Extension::IndexMethod, "rtree"),
             info("Opened(Created)"),
             info("Thread { label: \"turborel-maintenance\", change: Started }"),
             info("CheckpointTaken(1)"),

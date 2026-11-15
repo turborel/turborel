@@ -18,7 +18,7 @@ use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
-use crate::index::{BTreeMethod, HashMethod, Index, IndexMethod};
+use crate::index::{BTreeMethod, HashMethod, Index, IndexMethod, RTreeMethod};
 use crate::log::Log;
 use crate::optimizer::Optimizer;
 use crate::physical::CostModel;
@@ -220,7 +220,8 @@ impl State {
         let btree = BTreeMethod::sharing(Arc::clone(&st.pages));
         st.engines.insert(ROW_STORE.to_owned(), Arc::new(engine));
         let hash = HashMethod::sharing(Arc::clone(&st.pages));
-        let methods: Vec<Arc<dyn IndexMethod>> = vec![Arc::new(btree), Arc::new(hash)];
+        let spatial = RTreeMethod::sharing(Arc::clone(&st.pages));
+        let methods: Vec<Arc<dyn IndexMethod>> = vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial)];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);
         }

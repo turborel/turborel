@@ -90,6 +90,10 @@ fn same_probe(one: &Probe, other: &Probe) -> bool {
             let Probe::Predicate { predicate: b, .. } = other else { return false };
             Arc::ptr_eq(&a.function.0, &b.function.0) && a.column == b.column && a.argument == b.argument
         }
+        Probe::Columns(each) => {
+            let Probe::Columns(those) = other else { return false };
+            each.len() == those.len() && each.iter().zip(those).all(|(a, b)| a.column == b.column && a.op == b.op)
+        }
         Probe::Compare { op, .. } => {
             let Probe::Compare { op: op2, .. } = other else { return false };
             op == op2
@@ -196,5 +200,20 @@ mod tests {
         assert!(!same_shape(&distinct, &sorted(false)), "another operator");
         let joined = Plan::Product { left: Box::new(sorted(false)), right: Box::new(sorted(false)) };
         assert!(!same_shape(&joined, &joined), "a join is kept by no plan");
+    }
+
+    /// Verifies: [DESIGN] Independent probes share a prepared shape only
+    /// when their comparison count, column positions and operators agree.
+    /// MC/DC: changing each alone rejects reuse; changing values permits it.
+    #[test]
+    fn independent_probe_shapes_include_columns_and_operators() {
+        use crate::index::ColumnComparison;
+        let probe = |column, op, value| Probe::Columns(vec![ColumnComparison { column, op, value: int(value) }]);
+        let one = probe(1, CompOp::Ge, 3);
+        assert!(same_probe(&one, &probe(1, CompOp::Ge, 5)));
+        assert!(!same_probe(&one, &probe(0, CompOp::Ge, 3)));
+        assert!(!same_probe(&one, &probe(1, CompOp::Gt, 3)));
+        assert!(!same_probe(&one, &Probe::Columns(Vec::new())));
+        assert!(!same_probe(&one, &Probe::All));
     }
 }

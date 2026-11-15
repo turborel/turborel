@@ -187,6 +187,7 @@ mod sequences;
 mod served;
 mod set_statements;
 mod settings;
+mod spatial_index;
 mod spill_encodings;
 mod spilled_actions;
 mod spilled_checks;

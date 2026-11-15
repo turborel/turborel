@@ -52,6 +52,7 @@ impl Condition {
         let Some(ranges) = ranges else { return false };
         match &self.probe {
             Probe::All | Probe::Predicate { .. } => true,
+            Probe::Columns(each) => each.iter().all(|c| ranges.get(c.column).is_some_and(|r| within(c.op, r, &c.value))),
             Probe::Compare { op, value } => ranges.first().is_some_and(|r| within(*op, r, value)),
             Probe::Prefix { equal, then } => {
                 equal.iter().zip(&ranges).all(|(v, r)| within(CompOp::Eq, r, v))
@@ -297,5 +298,28 @@ mod tests {
         let both = Conjunction(vec![null, listed]);
         assert_eq!(both.columns(), vec![0, 1]);
         assert!(both.matches(&row) && !both.may_match(&bounds));
+    }
+
+    /// Verifies: [DESIGN] Serializable change summaries intersect every
+    /// independent key constraint. Either axis alone can exclude a change;
+    /// closed boundaries include it. Missing columns cannot match.
+    #[test]
+    fn independent_conditions_retain_each_coordinate_boundary() {
+        use crate::index::ColumnComparison;
+        let condition = Condition {
+            columns: vec![1, 0],
+            probe: Probe::Columns(vec![
+                ColumnComparison { column: 0, op: CompOp::Ge, value: n(10) },
+                ColumnComparison { column: 1, op: CompOp::Le, value: n(20) },
+            ]),
+        };
+        let ranges = |x, y| vec![Some((n(x), n(x))), Some((n(y), n(y)))];
+        assert!(condition.may_match(&ranges(20, 10)));
+        assert!(!condition.may_match(&ranges(21, 10)));
+        assert!(!condition.may_match(&ranges(20, 9)));
+        assert!(!condition.may_match(&[Some((n(20), n(20)))]));
+        let missing =
+            Condition { columns: vec![0], probe: Probe::Columns(vec![ColumnComparison { column: 1, op: CompOp::Eq, value: n(1) }]) };
+        assert!(!missing.may_match(&ranges(1, 1)));
     }
 }

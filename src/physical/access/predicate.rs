@@ -81,6 +81,7 @@ fn constant(expr: &Expr, values: Option<&[Value]>) -> Option<(Value, Option<Slot
 pub(super) fn supports(method: &dyn IndexMethod, probe: &Probe, (types, ordering): (&[DataType], bool)) -> bool {
     match probe {
         Probe::All => method.ordered() && ordering,
+        Probe::Columns(each) => method.supports_columns(types.len(), &each.iter().map(|c| (c.column, c.op)).collect::<Vec<_>>()),
         Probe::Compare { op, .. } => method.supports(*op),
         Probe::Prefix { equal, then } => method.supports_prefix(types.len(), equal.len(), then.as_ref().map(|(op, _)| *op)),
         Probe::Range { equal, .. } => method.supports_range(types.len(), equal.len()),
@@ -109,6 +110,7 @@ pub(super) fn untested_nulls(columns: &[&ColumnDesc], probe: Option<&Probe>) -> 
 fn tested(probe: &Probe) -> usize {
     match probe {
         Probe::All | Probe::Predicate { .. } => 0,
+        Probe::Columns(each) => (0..each.len()).take_while(|&at| each.iter().any(|c| c.column == at)).count(),
         Probe::Compare { .. } => 1,
         Probe::Prefix { equal, then } => equal.len().saturating_add(usize::from(then.is_some())),
         Probe::Range { equal, .. } => equal.len().saturating_add(1),
