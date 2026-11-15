@@ -406,7 +406,7 @@ impl Index for HashIndex {
     /// order: `order` is not asked of a method not ordered.
     fn search(self: Arc<Self>, probe: &Probe, _order: KeyOrder) -> Entries {
         if matches!(probe, Probe::Predicate { .. }) {
-            return Box::new(std::iter::once(Err(SqlError::new(Code::Unsupported, "[EXTENSION] hash answers no named predicate"))));
+            return Box::new(std::iter::once(Err(SqlError::new(Code::Unsupported, "[EXTENSION] hash does not support function lookups"))));
         }
         match self.lookup(probe) {
             Lookup::Nothing => Box::new(std::iter::empty()),

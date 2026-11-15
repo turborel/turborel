@@ -140,10 +140,10 @@ mod tests {
         Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, int(low))), high: Box::new((op, int(high))) }
     }
 
-    /// Verifies: [DESIGN] D34, D45: a learned predicate keeps its bound
-    /// function and both column positions, ignoring its argument value.
-    /// MC/DC pairs change only the function, key column or argument
-    /// position from the same descriptor; each alone changes the shape.
+    /// Verifies: [DESIGN] D34, D45: plan reuse compares the registered
+    /// function and the column's positions in the key and call, ignoring
+    /// the other argument's value. MC/DC pairs change only the function,
+    /// key column or call position; each independently changes the shape.
     #[test]
     fn predicate_shapes_keep_the_function_and_positions() {
         let registry = crate::functions::Registry::with_set_functions();

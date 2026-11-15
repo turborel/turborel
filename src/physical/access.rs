@@ -60,12 +60,10 @@ struct Probed {
     covering: bool,
 }
 
-/// Probes an index could answer: its probes, of one range each, the
-/// conjuncts they answer or bound, how many of the index's first columns
-/// they hold equal, the rows they are guessed to find from the table's
-/// statistics, whether they only bound the rows of a conjunct, which a
-/// filter still judges (a LIKE's or named predicate's), and the `?`s among
-/// their values.
+/// One possible index access: its probes, the WHERE terms they serve,
+/// the number of leading key columns held equal, the estimated rows and
+/// any parameter slots. A loose candidate only narrows the rows to check;
+/// LIKE and function calls still need a filter on the fetched rows.
 struct Candidate {
     probes: Vec<Probe>,
     used: Vec<usize>,
@@ -90,20 +88,20 @@ impl Probed {
         Probed { index, method, columns, probes: c.probes, slots: c.slots, used: c.used, loose: c.loose, covering }
     }
 
-    /// The path of this index at its estimated rows, cost and total cost,
-    /// giving the order asked, forward or backward, if any.
+    /// Builds a path with the candidate count, lookup cost and total cost
+    /// including any sort. `order` records a usable forward or reverse order.
     fn path(self, (est, cost, total): (f64, f64, f64), order: Option<bool>) -> Path {
         Path { total, cost, est, ordered: order.is_some(), reverse: order.unwrap_or(false), index: Some(self), order: Vec::new() }
     }
 
-    /// Removes only conjuncts answered exactly. A named predicate keeps
-    /// every conjunct for the visible row's recheck (D34).
+    /// Removes WHERE terms fully answered by comparison probes. A function
+    /// lookup keeps every term for the check on fetched visible rows (D34).
     fn answered(&mut self, conds: &mut Vec<Cond>) -> Vec<Cond> {
         if predicate::named(&self.probes) {
             self.used.clear();
         }
-        // `used` indexes `conds`, which `best_path` enumerated; a
-        // conjunct two comparisons of it answer is there twice.
+        // Two comparisons can serve the same WHERE term. Remove its
+        // position only once, from the end so earlier positions stay valid.
         self.used.sort_unstable();
         self.used.dedup();
         let mut answered = Vec::new();
@@ -210,14 +208,14 @@ impl PhysicalPlanner<'_> {
             candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
             for c in candidates {
                 let supported = c.probes.iter().all(|p| supports(&**kind, p, (&types, !want.is_empty())));
-                // Indexes hold no key with a null, so the rows of a probe are
-                // all its conjuncts select only if no column it does not test
-                // may be null.
+                // An index that omits null keys can miss a match when a
+                // key column outside the filter is nullable (D34).
                 let omitted = omits_rows(ix, &columns, c.probes.first());
                 // The probes of several ranges, an OR's, are of ranges apart
                 // and in key order (`probe::probes_of_any`): their rows,
                 // appended, are in key order too, read backward in reverse.
-                // A key of sort keys is in the order of no column.
+                // Collation sort keys and surviving nulls may require a
+                // different SQL order, so neither can replace a sort.
                 let ordered_index = kind.ordered() && !ix.is_collated() && !predicate::untested_nulls(&columns, c.probes.first());
                 let order = if ordered_index && !want.is_empty() { index_order(&ix.columns, c.fixed, want) } else { None };
                 let all_keys = matches!(c.probes.first(), Some(Probe::All));
@@ -544,8 +542,8 @@ impl Held {
 /// next columns, in order, all ascending, or all descending, when it is
 /// read backward. Some(backward) if so. Any null ordering is kept, as an
 /// index read in key order gives no null in them: its probe is true of no
-/// null, and a column it does not test is NOT NULL (`best_path`). A named
-/// probe that may retain a null key is not offered here (D34).
+/// null, and a column it does not test is NOT NULL (`best_path`). Function
+/// lookups that may keep nulls are excluded by `best_path` (D34).
 fn index_order(columns: &[usize], fixed: usize, want: &[SortKey]) -> Option<bool> {
     let (held, free) = columns.split_at(fixed.min(columns.len()));
     let keys: Vec<&SortKey> = want.iter().filter(|k| !held.contains(&k.column)).collect();
@@ -562,8 +560,8 @@ struct Filtered<'a> {
     known: Known<'a>,
     /// Whether the access yields rows in the order asked for.
     ordered: bool,
-    /// The rows the filter's selectivity is a fraction of: the table's,
-    /// for a scan or named predicate, or those comparison probes find.
+    /// The row count used to estimate the fraction a filter keeps: the
+    /// whole table for a scan or function lookup, else comparison matches.
     read: f64,
     /// The most rows the filter may keep: those the access reads, a scan
     /// only those of the zones or chunks its conditions may match

@@ -1,5 +1,5 @@
-//! Named index predicates: candidates, full rechecks, errors and prepared
-//! slots (RULES.md D15, D34, D45).
+//! Index lookups for WHERE function calls: reject extra candidates, preserve
+//! errors and use each execution's parameter (RULES.md D15, D34, D45).
 
 mod fixture;
 
@@ -10,12 +10,13 @@ use turborel::value::Value;
 
 use crate::common::{fetched, number, rows};
 
-/// Verifies: [DESIGN] D34: exact and lossy methods are chosen by cost,
-/// both argument positions keep their meaning, the whole condition is
-/// rechecked, nulls are unknown and scans give the same rows. Extra
-/// candidates must fail this test if the recheck is removed (R-TEST-9).
-/// A covered projection still fetches rows; an ordered method keeps its
-/// key order through the recheck, forward and backward.
+/// Verifies: [DESIGN] D34: NEXT_TO(K, 40) returns 41 even when the index
+/// also returns 42. Exact and lossy lookups both check the full WHERE
+/// condition and give the same rows as a scan, including nulls and empty
+/// results. Reversing the arguments keeps their meaning. Removing the
+/// WHERE check lets an extra row through and fails this test (R-TEST-9).
+/// Rows are fetched even when the index covers the projection; filtering
+/// preserves the index's forward or reverse order.
 #[test]
 fn candidates_are_rechecked_against_the_whole_condition() {
     for lossy in [true, false] {
@@ -45,9 +46,10 @@ fn candidates_are_rechecked_against_the_whole_condition() {
     }
 }
 
-/// Verifies: [DESIGN] D15: a function that raises on a would-be skipped
-/// row or an extra candidate raises SQLCODE -301 with an index present
-/// and absent. Another raising conjunct also prevents skipping rows.
+/// Verifies: [DESIGN] D15: a function that raises SQLCODE -301 still does
+/// so with an index present, even on a row a lookup would skip or reject.
+/// A division in an argument or another WHERE term also keeps the full
+/// scan and raises SQLCODE -301.
 #[test]
 fn raising_predicates_and_conjuncts_keep_their_errors() {
     for error_at in [0, 41, 42] {
@@ -71,9 +73,10 @@ fn raising_predicates_and_conjuncts_keep_their_errors() {
     }
 }
 
-/// Verifies: [DESIGN] D34, D45: a learned predicate probe and its recheck
-/// both receive each execution's value, including nulls and a converted
-/// parameter. A bad conversion is SQLCODE -301 before and after learning.
+/// Verifies: [DESIGN] D34, D45: reusing a prepared plan updates both the
+/// index lookup and the WHERE check with the current parameter, including
+/// null and a string converted to an integer. A bad conversion raises
+/// SQLCODE -301 before and after the plan is learned for reuse.
 #[test]
 fn learned_predicates_fill_each_executions_argument() {
     let method = Method { lossy: true, ..Method::default() };
@@ -104,11 +107,11 @@ fn learned_predicates_fill_each_executions_argument() {
     }
 }
 
-/// Verifies: [DESIGN] D15, D34: MC/DC of function safety: declared,
-/// deterministic and non-raising arguments together permit a probe;
-/// toggling each alone retains the scan. A function true of nulls that
-/// does not opt in keeps those rows. Unsupported argument positions and
-/// columns are scanned without changing results.
+/// Verifies: [DESIGN] D15, D34: MC/DC pairs independently remove the
+/// function's opt-in, determinism or non-raising arguments; each prevents
+/// the lookup. A function that returns true for nulls without opting in
+/// keeps those rows. An unsupported argument position or column keeps a
+/// scan. Wrong argument types or counts raise SQLCODE -103.
 #[test]
 fn only_declared_safe_supported_calls_are_probed() {
     for (safe, deterministic, argument, uses_index) in
@@ -134,10 +137,11 @@ fn only_declared_safe_supported_calls_are_probed() {
     assert_eq!(s.open_cursor("SELECT N FROM T WHERE NEXT_TO(K)").err().unwrap().sqlcode(), -103);
 }
 
-/// Verifies: [DESIGN] D34: a predicate may address a later key column;
-/// another nullable column could omit true rows and prevents that path.
-/// MC/DC of an omitted column: tested nullable, untested nullable and
-/// untested NOT NULL each alone. An empty table gives no rows or row error.
+/// Verifies: [DESIGN] D34: the function can use any column of a composite
+/// key. MC/DC pairs vary whether a nullable column is tested by the call
+/// and whether an untested column is NOT NULL. Only an untested nullable
+/// column prevents the lookup, since omitted null keys could hide matches.
+/// An empty table returns no rows, even for a function that could raise.
 #[test]
 fn composite_keys_and_empty_tables_keep_all_matches() {
     for (columns, uses_index) in [(&["K"][..], true), (&["K", "N"][..], true), (&["N", "K"][..], true), (&["K", "V"][..], false)] {
@@ -157,9 +161,10 @@ fn composite_keys_and_empty_tables_keep_all_matches() {
     assert_eq!(rows(&s, "SELECT N FROM T WHERE NEXT_TO(K, 40)").unwrap(), Vec::<String>::new());
 }
 
-/// Verifies: [DESIGN] D34, D29: predicate reads find phantoms even when
-/// they return no candidates. Two serializable readers that each insert
-/// the other's match cannot both commit; the second raises SQLCODE -911.
+/// Verifies: [DESIGN] D34, D29: an empty function lookup still records a
+/// read for transaction conflict checks. Two serializable readers each
+/// insert a row that would match the other's lookup; they cannot both
+/// commit, and the second commit raises SQLCODE -911.
 #[test]
 fn predicate_reads_record_concurrent_matches() {
     let db = database(Method::default(), Function::default());
@@ -177,9 +182,10 @@ fn predicate_reads_record_concurrent_matches() {
     assert_eq!(b.commit().unwrap_err().sqlcode(), -911);
 }
 
-/// Verifies: [DESIGN] D34: stale entries do not supply an invisible row,
-/// and lossy candidates are rechecked for searched UPDATE and DELETE,
-/// including prepared writes. Their effects equal those of a full scan.
+/// Verifies: [DESIGN] D34: old index entries cannot make a changed row
+/// match its former key. UPDATE and DELETE, including prepared writes,
+/// check the full WHERE condition so extra candidates are left unchanged.
+/// Final rows equal those produced by a full scan.
 #[test]
 fn writes_and_visible_versions_recheck_candidates() {
     let mut results = Vec::new();
@@ -201,9 +207,10 @@ fn writes_and_visible_versions_recheck_candidates() {
     assert_eq!(results[1], ["41,900", "42,42", "51,900", "52,52", "62,62"]);
 }
 
-/// Verifies: [DESIGN] D34: unknown candidate counts price every table
-/// row, expensive probe pages lose to a scan, and unknown page counts use
-/// the ordinary descent guess. Estimates decide no result.
+/// Verifies: [DESIGN] D34: an unknown candidate count is priced as fetching
+/// every table row. An expensive page estimate makes the planner choose a
+/// scan; an unknown page estimate uses the usual tree descent cost. Each
+/// choice returns the same rows.
 #[test]
 fn estimates_price_candidates_and_unknown_costs() {
     for (estimate, pages, uses_index) in
@@ -219,9 +226,10 @@ fn estimates_price_candidates_and_unknown_costs() {
     }
 }
 
-/// Verifies: [DESIGN] D34: built-in methods opt out of named predicates,
-/// estimate none and refuse a direct search with SQLCODE -900. Storage
-/// checks stay conservative without calling a function that would fail.
+/// Verifies: [DESIGN] D34: built-in indexes decline function lookups,
+/// return no estimates and reject a direct search with SQLCODE -900.
+/// Storage treats every key and range as a possible match, including
+/// nulls, without calling a function that would raise.
 #[test]
 fn builtins_refuse_predicates_and_storage_never_evaluates_them() {
     use std::sync::Arc;
@@ -250,10 +258,10 @@ fn builtins_refuse_predicates_and_storage_never_evaluates_them() {
     assert!(condition.may_match(&[Some((number(0), number(0)))]));
 }
 
-/// Verifies: [DESIGN] D34, D66: a predicate of one key column can leave
-/// nulls in another when its index holds null keys. The index's order
-/// cannot replace SQL's null order, in either direction or under FETCH
-/// FIRST. This fails without the named probe's null-order gate (R-TEST-7).
+/// Verifies: [DESIGN] D34, D66: filtering K can leave nulls in V when the
+/// index holds null keys. SQL's requested null order still needs a sort,
+/// in either direction and with FETCH FIRST. Removing the planner's check
+/// for surviving nulls makes this regression test fail (R-TEST-7).
 #[test]
 fn nullable_candidates_keep_the_requested_null_order() {
     let db = database(Method { lossy: true, ..Method::default() }, Function::default());
