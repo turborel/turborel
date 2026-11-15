@@ -17,6 +17,7 @@
 //! bounds. Counts of one row are serialized separately, so a changed
 //! subtree choice cannot create a second copy of an existing entry.
 
+mod nearest;
 mod node;
 mod scan;
 mod write;
@@ -29,10 +30,12 @@ use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
 use crate::engine::locks::Locks;
 use crate::error::{Code, Result, SqlError};
+use crate::memory::MemoryBudget;
 use crate::spatial::Bounds;
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 
+pub use nearest::Nearest;
 use node::{ENTRY_BYTES, HEADER, Node};
 pub use scan::Scan;
 
@@ -175,6 +178,18 @@ impl RTree {
     /// entries concurrently added or removed may or may not appear.
     pub fn scan(&self, bounds: Option<Bounds>) -> Scan {
         Scan::new(self.clone(), bounds)
+    }
+
+    /// Visits rectangles in increasing Euclidean distance from `query`,
+    /// then row-id order. Taking the first k entries stops the traversal
+    /// as soon as they are known. The frontier draws on `budget`.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; SQLCODE -918 if the frontier exceeds the budget.
+    /// An error after construction is yielded once by the iterator.
+    pub fn nearest(&self, query: Bounds, budget: &Arc<MemoryBudget>) -> Result<Nearest> {
+        Nearest::new(self.clone(), query, budget)
     }
 
     /// Frees the nodes and meta page of a discarded tree. The caller must

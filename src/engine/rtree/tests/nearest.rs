@@ -1,0 +1,144 @@
+//! Nearest-neighbour requirements: exact rectangle distances, ties,
+//! bounded frontier memory and scans crossing structural changes.
+
+use super::*;
+use crate::engine::rtree::node::Entry;
+
+fn ordered(tree: &RTree, query: Bounds) -> Vec<(f64, u64)> {
+    tree.nearest(query, &MemoryBudget::new(usize::MAX)).unwrap().map(|e| e.map(|(d, _, id)| (d, id)).unwrap()).collect()
+}
+
+/// Verifies: [DESIGN] Best-first traversal returns the same nearest
+/// points as exhaustive distance calculation and sorting, including
+/// k=1, 10, 100 and the complete input; ties are broken by row identifier.
+#[test]
+fn nearest_points_match_exhaustive_sorting() {
+    let tree = tree();
+    fill(&tree, 0..2_000);
+    for n in 0..20 {
+        let query = point(n * 133);
+        let mut expected: Vec<_> = (0..2_000).map(|i| (query.distance(point(i)), u64::from(i))).collect();
+        expected.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let found = ordered(&tree, query);
+        assert_eq!(found, expected);
+        for k in [1, 10, 100] {
+            let near: Vec<_> = tree.nearest(query, &MemoryBudget::new(usize::MAX)).unwrap().take(k).map(|e| e.unwrap().2).collect();
+            assert_eq!(near, expected[..k].iter().map(|e| e.1).collect::<Vec<_>>());
+        }
+    }
+}
+
+/// Verifies: [DESIGN] A rectangle containing the query has zero distance
+/// even when its centre is far away. Equal distances across different
+/// leaves return in row-id order, not page or insertion order.
+#[test]
+fn rectangle_distances_and_cross_leaf_ties_are_exact() {
+    let tree = tree();
+    for n in (0_u32..300).rev() {
+        let wide = Bounds::new([-f64::from(n), -1.0_f64], [f64::from(n), 1.0_f64]).unwrap();
+        tree.insert(wide, u64::from(n)).unwrap();
+    }
+    let query = Bounds::point([0.0_f64, 0.0_f64]).unwrap();
+    let found = ordered(&tree, query);
+    assert_eq!(found.iter().map(|e| e.1).collect::<Vec<_>>(), (0..300).collect::<Vec<_>>());
+    assert!(found.iter().all(|e| e.0.to_bits() == 0));
+}
+
+/// Verifies: [DESIGN] A nearest-neighbour cursor retains the old root's
+/// expected stamp and traverses its split chain after root growth, with
+/// the same distances and no duplicate entries as a new cursor.
+#[test]
+fn nearest_from_an_old_root_survives_growth() {
+    let tree = tree();
+    fill(&tree, 0..40);
+    let query = point(17);
+    let near = tree.nearest(query, &MemoryBudget::new(usize::MAX)).unwrap();
+    fill(&tree, 40..8_000);
+    let found: Vec<_> = near.map(|e| e.map(|(d, _, id)| (d, id)).unwrap()).collect();
+    assert_eq!(found, ordered(&tree, query));
+    assert_eq!(found.len(), 8_000);
+}
+
+/// Verifies: [DESIGN] The frontier is charged to the memory budget and
+/// releases its reservation on cancellation. Exhausting the budget while
+/// expanding a leaf reports SQLCODE -918 once and stops the cursor.
+#[test]
+fn nearest_frontier_is_budgeted_and_released() {
+    let tree = tree();
+    fill(&tree, 0..2_000);
+    let budget = MemoryBudget::new(usize::MAX);
+    let mut near = tree.nearest(point(0), &budget).unwrap();
+    assert!(budget.reserved() > 0);
+    assert!(near.next().unwrap().is_ok());
+    drop(near);
+    assert_eq!(budget.reserved(), 0);
+    let mut limited = tree.nearest(point(0), &budget).unwrap();
+    budget.set_limit(budget.reserved());
+    let error = limited.by_ref().find_map(Result::err).unwrap();
+    assert_eq!(error.code, Code::Resources);
+    assert!(limited.next().is_none());
+    drop(limited);
+    assert_eq!(budget.reserved(), 0);
+    budget.set_limit(0);
+    assert_eq!(tree.nearest(point(0), &budget).err().unwrap().code, Code::Resources);
+}
+
+/// Verifies: [DESIGN] Empty trees have no nearest entry. Extreme finite
+/// coordinates retain correct distance order even when a distance
+/// overflows f64; every overflowing distance ties after finite distances.
+#[test]
+fn empty_and_extreme_distance_searches_are_defined() {
+    let tree = tree();
+    let query = Bounds::point([-f64::MAX, 0.0_f64]).unwrap();
+    assert_eq!(ordered(&tree, query), []);
+    for (id, x) in [(3, f64::MAX), (2, 0.0_f64), (1, -f64::MAX), (0, f64::MAX)] {
+        tree.insert(Bounds::point([x, 0.0_f64]).unwrap(), id).unwrap();
+    }
+    let found = ordered(&tree, query);
+    assert_eq!(found.iter().map(|e| e.1).collect::<Vec<_>>(), [1, 2, 0, 3]);
+    assert!(found[2].0.is_infinite());
+}
+
+/// Verifies: [DESIGN] Enlarging a queued branch may add an entry nearer
+/// than a result already returned. That concurrent entry is omitted;
+/// stable entries retain distance order and appear exactly once.
+#[test]
+fn an_entry_inserted_behind_the_distance_cursor_is_omitted() {
+    let tree = tree();
+    fill(&tree, 0..200);
+    let query = Bounds::point([-100.0_f64, -100.0_f64]).unwrap();
+    let mut near = tree.nearest(query, &MemoryBudget::new(usize::MAX)).unwrap();
+    let first = near.next().unwrap().unwrap();
+    let root = tree.root().unwrap();
+    assert_eq!(root.level, 1);
+    let mut above = tree.read(root.id).unwrap();
+    let child = above.entries.iter_mut().find(|e| e.bounds.distance_lower_bound(query) > first.0).unwrap();
+    let id = PageId(child.id);
+    child.bounds = child.bounds.union(query);
+    tree.store(root.id, &above).unwrap();
+    let mut leaf = tree.read(id).unwrap();
+    assert!(leaf.entries.len() < tree.inner.capacity);
+    leaf.entries.push(Entry { bounds: query, id: 9_999, value: 1 });
+    tree.store(id, &leaf).unwrap();
+    let found: Vec<_> = std::iter::once(first).chain(near.map(Result::unwrap)).collect();
+    assert!(found.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+    let mut ids: Vec<_> = found.iter().map(|e| e.2).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, (0..200).collect::<Vec<_>>());
+    assert_eq!(ordered(&tree, query)[0].1, 9_999);
+}
+
+/// Verifies: [DESIGN] Nearest traversal refuses a changed stamp lacking
+/// the required sibling, reporting SQLCODE -916 once and then stopping.
+#[test]
+fn nearest_refuses_a_missing_split_link() {
+    let tree = tree();
+    tree.insert(point(0), 0).unwrap();
+    let root = tree.root().unwrap();
+    let mut node = tree.read(root.id).unwrap();
+    node.stamp += 1;
+    tree.store(root.id, &node).unwrap();
+    let mut near = tree.nearest(point(0), &MemoryBudget::new(usize::MAX)).unwrap();
+    assert_eq!(near.next().unwrap().unwrap_err().code, Code::Corrupt);
+    assert!(near.next().is_none());
+}

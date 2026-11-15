@@ -12,6 +12,7 @@ use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::memory::MemoryBudget;
 
 mod damage;
+mod nearest;
 mod paths;
 
 fn tree() -> RTree {

@@ -1839,6 +1839,17 @@ implementation is an R-link tree with R* heuristics, not the complete
 R*-tree insertion algorithm. Node and metadata formats are versioned
 independently and reject unknown versions.
 
+Nearest-neighbour traversal expands the branch with the lowest distance
+bound next. Each arithmetic step of a branch bound rounds downward, so
+rounding cannot hide a nearer entry. Leaf rectangle distances and row
+identifiers order the results; every branch tied at that distance is
+expanded first. The frontier reserves memory before growing (D38), and
+dropping the iterator releases it. A new entry behind the distance already
+returned is omitted, as concurrent inserts are optional to an index scan.
+This ordering is exact for indexed rectangles and points. A geometry
+consumer must rerank candidates by exact geometry distance and continue
+until the remaining lower bound exceeds its kth exact distance.
+
 ## 2. Project layout
 
 ```

@@ -4,7 +4,7 @@
 use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail spatial requirements.
-pub const RTREE: [Mutation; 3] = [
+pub const RTREE: [Mutation; 5] = [
     Mutation {
         name: "rtree-split-stamp",
         package: Package::Core,
@@ -34,5 +34,25 @@ pub const RTREE: [Mutation; 3] = [
         replacement: "} else if entry.value > u64::MAX {",
         integration: &[],
         unit: &["engine::rtree::tests::reference_counts_preserve_versions_and_absent_removes_do_nothing"],
+    },
+    Mutation {
+        name: "rtree-nearest-priority",
+        package: Package::Core,
+        breaks: "nearest traversal expands the most distant frontier item first",
+        file: "src/engine/rtree/nearest.rs",
+        original: "other.distance.total_cmp(&self.distance)",
+        replacement: "self.distance.total_cmp(&other.distance)",
+        integration: &[],
+        unit: &["engine::rtree::tests::nearest::nearest_points_match_exhaustive_sorting"],
+    },
+    Mutation {
+        name: "rtree-distance-lower-bound",
+        package: Package::Core,
+        breaks: "a branch distance bound overestimates the distance of a nearer child",
+        file: "src/spatial.rs",
+        original: "down(down(squared.sqrt()) * scale)",
+        replacement: "down(down(squared.sqrt()) * scale) + scale",
+        integration: &[],
+        unit: &["spatial::tests::distances_bound_the_geometry_at_extreme_scales"],
     },
 ];
