@@ -50,8 +50,8 @@ const ROW_LOCKS: u64 = 64;
 const MIN_CAPACITY: usize = 4;
 
 /// A counted index of finite Cartesian rectangles and row identifiers.
-/// Clones share the tree and its locks. A file must have one live tree
-/// instance, with clones of that instance used for concurrent operations.
+/// Clones share the tree and its locks. Each tree locator must have one
+/// live instance, with its clones used for concurrent operations.
 #[derive(Clone)]
 pub struct RTree {
     inner: Arc<Inner>,
