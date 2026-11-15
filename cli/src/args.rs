@@ -16,6 +16,9 @@ pub const DEFAULT_PORT: u16 = 7422;
 /// The environment variable a password may be given in.
 pub const PASSWORD_VARIABLE: &str = "TURBOREL_PASSWORD";
 
+/// The option that asks for each statement's elapsed time (RULES.md D46).
+const TIMING: &str = "--timing";
+
 /// Where the server is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Server {
@@ -104,6 +107,9 @@ pub struct Options {
     pub inputs: Vec<Input>,
     /// Whether the first statement that fails ends a run not typed.
     pub stop_on_error: bool,
+    /// Whether each SQL statement's elapsed time is written to standard
+    /// error, in nanoseconds, including transfer and result output.
+    pub timing: bool,
     /// What a null value is shown as, and what a field imported is
     /// written as to be null.
     pub null: String,
@@ -140,9 +146,16 @@ struct Named {
     key: Option<PathBuf>,
     inputs: Vec<Input>,
     stop_on_error: bool,
-    null: Option<String>,
+    output: NamedOutput,
     timeouts: Timeouts,
     import: NamedImport,
+}
+
+/// What the command line named of how results are shown.
+#[derive(Debug, Default)]
+struct NamedOutput {
+    timing: bool,
+    null: Option<String>,
 }
 
 /// What the command line named of an import, before it is checked.
@@ -183,7 +196,8 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Co
             "-c" | "--command" => named.inputs.push(Input::Command(value()?)),
             "-f" | "--file" => named.inputs.push(Input::File(PathBuf::from(value()?))),
             "--stop-on-error" => named.stop_on_error = true,
-            "--null" => named.null = Some(value()?),
+            TIMING => named.output.timing = true,
+            "--null" => named.output.null = Some(value()?),
             "--connect-timeout" => named.timeouts.connect = seconds(&value()?)?,
             "--read-timeout" => named.timeouts.read = seconds(&value()?)?,
             "--import" => named.inputs.push(Input::Import(PathBuf::from(value()?))),
@@ -251,7 +265,7 @@ fn importing(inputs: &[Input], named: &NamedImport, null: &str) -> Result<Option
 
 /// The options `named` makes, checked.
 fn options(named: Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Options, String> {
-    let null = named.null.clone().unwrap_or_default();
+    let null = named.output.null.clone().unwrap_or_default();
     let import = importing(&named.inputs, &named.import, &null)?;
     let user = named.user.or_else(|| env("USER")).or_else(|| env("USERNAME")).ok_or_else(|| "name the user: --user NAME".to_owned())?;
     let identity = match (named.certificate, named.key) {
@@ -273,7 +287,7 @@ fn options(named: Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Options
     let server = server(named.socket, named.host, named.port, tls)?;
     let inputs = if named.inputs.is_empty() { vec![Input::Standard] } else { named.inputs };
     let (stop_on_error, timeouts) = (named.stop_on_error, named.timeouts);
-    Ok(Options { server, user, credentials, inputs, stop_on_error, null, timeouts, import })
+    Ok(Options { server, user, credentials, inputs, stop_on_error, timing: named.output.timing, null, timeouts, import })
 }
 
 /// Where the server is: at the Unix socket or named pipe `socket`, if one
