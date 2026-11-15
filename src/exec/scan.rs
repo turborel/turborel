@@ -151,6 +151,11 @@ pub(super) struct Found {
 /// the engine is told every row with a key: never narrower than the index,
 /// so it may refuse more commits, and never fewer (RULES.md D60).
 pub(in crate::exec) fn asked(ix: &KeyShape, probe: Probe) -> Condition {
+    // D34: arbitrary candidates have no comparison bounds. Track every
+    // row, nulls included, without calling a function under engine locks.
+    if matches!(probe, Probe::Predicate { .. }) {
+        return Condition { columns: Vec::new(), probe: Probe::All };
+    }
     let probe = if ix.is_collated() { Probe::All } else { probe };
     Condition { columns: ix.columns.clone(), probe }
 }

@@ -256,6 +256,7 @@ impl HashIndex {
     fn lookup(&self, probe: &Probe) -> Lookup {
         let values: &[Value] = match probe {
             Probe::All => return Lookup::Every,
+            Probe::Predicate { .. } => return Lookup::Nothing,
             Probe::Compare { value, .. } => std::slice::from_ref(value),
             Probe::Prefix { equal, .. } | Probe::Range { equal, .. } => equal,
         };
@@ -357,6 +358,9 @@ impl Index for HashIndex {
 
     /// A lookup reads its key's bucket; a probe of every entry, each bucket.
     fn probe_pages(&self, probe: &Probe) -> Option<f64> {
+        if matches!(probe, Probe::Predicate { .. }) {
+            return None;
+        }
         match self.lookup(probe) {
             Lookup::Nothing => Some(0.0_f64),
             Lookup::Key { .. } => Some(1.0_f64),
@@ -382,6 +386,9 @@ impl Index for HashIndex {
     /// inserted twice counted twice, not known past a bound; every entry's
     /// count for every row; not known for a probe that checks every entry.
     fn estimate(&self, probe: &Probe) -> Option<usize> {
+        if matches!(probe, Probe::Predicate { .. }) {
+            return None;
+        }
         match self.lookup(probe) {
             Lookup::Nothing => Some(0),
             Lookup::Key { key, checked } => match self.answers(&key, checked, probe).ok()? {
@@ -398,6 +405,9 @@ impl Index for HashIndex {
     /// the table's shape held meanwhile (`engine/hash/scan.rs`). In no
     /// order: `order` is not asked of a method not ordered.
     fn search(self: Arc<Self>, probe: &Probe, _order: KeyOrder) -> Entries {
+        if matches!(probe, Probe::Predicate { .. }) {
+            return Box::new(std::iter::once(Err(SqlError::new(Code::Unsupported, "[EXTENSION] hash answers no named predicate"))));
+        }
         match self.lookup(probe) {
             Lookup::Nothing => Box::new(std::iter::empty()),
             Lookup::Key { key, checked } => match self.answers(&key, checked, probe) {

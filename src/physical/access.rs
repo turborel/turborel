@@ -15,6 +15,9 @@ use crate::logical::{Cond, SortKey, and_all, filled_cond, judged_by_sets, pushed
 use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType, Value};
 
+mod predicate;
+use predicate::{omits_rows, supports};
+
 /// \[DESIGN\] What a row an index-only scan makes of its entry costs, in
 /// rows of a scan of its table: its zone's visibility looked at and the
 /// row made of the key, an entry at a time as a search gives them, where
@@ -58,10 +61,11 @@ struct Probed {
 }
 
 /// Probes an index could answer: its probes, of one range each, the
-/// conjuncts they answer exactly, how many of the index's first columns
+/// conjuncts they answer or bound, how many of the index's first columns
 /// they hold equal, the rows they are guessed to find from the table's
 /// statistics, whether they only bound the rows of a conjunct, which a
-/// filter still judges (a LIKE's), and the `?`s among their values.
+/// filter still judges (a LIKE's or named predicate's), and the `?`s among
+/// their values.
 struct Candidate {
     probes: Vec<Probe>,
     used: Vec<usize>,
@@ -84,6 +88,32 @@ impl Probed {
     fn of(ix: &IndexDesc, c: Candidate, covering: bool) -> Probed {
         let (index, method, columns) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
         Probed { index, method, columns, probes: c.probes, slots: c.slots, used: c.used, loose: c.loose, covering }
+    }
+
+    /// The path of this index at its estimated rows, cost and total cost,
+    /// giving the order asked, forward or backward, if any.
+    fn path(self, (est, cost, total): (f64, f64, f64), order: Option<bool>) -> Path {
+        Path { total, cost, est, ordered: order.is_some(), reverse: order.unwrap_or(false), index: Some(self), order: Vec::new() }
+    }
+
+    /// Removes only conjuncts answered exactly. A named predicate keeps
+    /// every conjunct for the visible row's recheck (D34).
+    fn answered(&mut self, conds: &mut Vec<Cond>) -> Vec<Cond> {
+        if predicate::named(&self.probes) {
+            self.used.clear();
+        }
+        // `used` indexes `conds`, which `best_path` enumerated; a
+        // conjunct two comparisons of it answer is there twice.
+        self.used.sort_unstable();
+        self.used.dedup();
+        let mut answered = Vec::new();
+        for &ci in self.used.iter().rev() {
+            if ci < conds.len() {
+                answered.push(conds.remove(ci));
+            }
+        }
+        answered.reverse();
+        answered
     }
 }
 
@@ -130,18 +160,10 @@ impl PhysicalPlanner<'_> {
                 (plan, (cost_of(rows), best.est))
             }
             Some(mut probed) => {
-                // `used` indexes `conds`, which `best_path` enumerated; a
-                // conjunct two comparisons of it answer is there twice.
-                probed.used.sort_unstable();
-                probed.used.dedup();
-                let mut answered = Vec::new();
-                for &ci in probed.used.iter().rev() {
-                    if ci < conds.len() {
-                        answered.push(conds.remove(ci));
-                    }
-                }
-                answered.reverse();
-                (index_scans(read, probed, answered, (best.est, best.cost, best.reverse)), (best.est, best.est))
+                let named = predicate::named(&probed.probes);
+                let answered = probed.answered(&mut conds);
+                let found = if named { cost_of(rows) } else { best.est };
+                (index_scans(read, probed, answered, (best.est, best.cost, best.reverse)), (found, best.est))
             }
         };
         let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
@@ -183,38 +205,37 @@ impl PhysicalPlanner<'_> {
             let served = served_by(&compared, ix);
             let alternatives: &[Alternatives] = if ix.is_collated() { &[] } else { &ors };
             let mut candidates = probes(&ix.columns, &types, (&served, alternatives), all, known);
+            candidates.extend(predicate::candidates(answerable, ix, self.values, all));
             // A full ordered read, only to provide order.
             candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
             for c in candidates {
-                let supported = c.probes.iter().all(|p| supports(&**kind, p, (types.len(), !want.is_empty())));
+                let supported = c.probes.iter().all(|p| supports(&**kind, p, (&types, !want.is_empty())));
                 // Indexes hold no key with a null, so the rows of a probe are
                 // all its conjuncts select only if no column it does not test
                 // may be null.
-                let untested = columns.get(c.probes.first().map_or(0, tested)..).unwrap_or_default();
+                let omitted = omits_rows(ix, &columns, c.probes.first());
                 // The probes of several ranges, an OR's, are of ranges apart
                 // and in key order (`probe::probes_of_any`): their rows,
                 // appended, are in key order too, read backward in reverse.
                 // A key of sort keys is in the order of no column.
-                let ordered_index = kind.ordered() && !ix.is_collated();
+                let ordered_index = kind.ordered() && !ix.is_collated() && !predicate::untested_nulls(&columns, c.probes.first());
                 let order = if ordered_index && !want.is_empty() { index_order(&ix.columns, c.fixed, want) } else { None };
                 let all_keys = matches!(c.probes.first(), Some(Probe::All));
-                if !supported || untested.iter().any(|col| !col.not_null) || all_keys && order.is_none() {
+                if !supported || omitted || all_keys && order.is_none() {
                     continue;
                 }
                 let distinct = || self.db.distinct_keys(read.table, &**found);
                 let (est, probed_cost) = priced((&**found, &distinct), &c, (all, types.len(), cost.index_descent), &**storage);
                 // Of a covering index, the rows its table says every reader
                 // sees are made of their entries, not fetched (RULES.md D34).
-                let whole = !ix.is_collated() && covers(&**kind, (&ix.columns, &types), read.needed);
+                let whole = !predicate::named(&c.probes) && !ix.is_collated() && covers(&**kind, (&ix.columns, &types), read.needed);
                 let visible = whole.then(|| storage.visible_share()).flatten();
                 let entry_cost = ENTRY_SCAN_ROWS * storage.scan_cost(read.needed) / all.max(1.0_f64);
                 let saved = |share: f64| est * share * (storage.fetch_cost() - entry_cost).max(0.0_f64);
                 let path_cost = probed_cost - visible.map_or(0.0_f64, saved);
                 let total = path_cost * order.map_or(1.0_f64, |_| self.read_share(want, est)) + sort_penalty(est, order.is_some());
                 if total < best.total {
-                    let chosen = Some(Probed::of(ix, c, visible.is_some()));
-                    let ordered = (order.is_some(), order.unwrap_or(false));
-                    best = Path { total, cost: path_cost, est, ordered: ordered.0, reverse: ordered.1, index: chosen, order: Vec::new() };
+                    best = Probed::of(ix, c, visible.is_some()).path((est, path_cost, total), order);
                 }
             }
         }
@@ -265,7 +286,7 @@ impl PhysicalPlanner<'_> {
             let (kind, found, types) = (self.db.methods.get(&ix.method)?, self.db.index_of(&ix.name).ok()?, ix.key_types(desc)?);
             let served = served_by(compared, ix);
             let (probe, slots, used) = point_probe(conds, &served, (&ix.columns, &types))?;
-            if !supports(&**kind, &probe, (types.len(), false)) {
+            if !supports(&**kind, &probe, (&types, false)) {
                 return None;
             }
             let descent = cost.index_descent * cost_of(storage.row_count().saturating_add(1)).log2();
@@ -324,7 +345,7 @@ pub(super) fn whole_key(probe: &Probe, width: usize) -> bool {
     match probe {
         Probe::Compare { op, .. } => *op == CompOp::Eq && width == 1,
         Probe::Prefix { equal, then } => then.is_none() && equal.len() == width,
-        Probe::All | Probe::Range { .. } => false,
+        Probe::All | Probe::Range { .. } | Probe::Predicate { .. } => false,
     }
 }
 
@@ -382,17 +403,6 @@ fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, c
         level = next;
     }
     level.pop().unwrap_or(Plan::Values { rows: Vec::new(), detail: String::new() })
-}
-
-/// Whether `method`, of an index of `width` columns, answers `probe`: a
-/// read of all its keys only to give an order, if `ordering`.
-fn supports(method: &dyn IndexMethod, probe: &Probe, (width, ordering): (usize, bool)) -> bool {
-    match probe {
-        Probe::All => method.ordered() && ordering,
-        Probe::Compare { op, .. } => method.supports(*op),
-        Probe::Prefix { equal, then } => method.supports_prefix(width, equal.len(), then.as_ref().map(|(op, _)| *op)),
-        Probe::Range { equal, .. } => method.supports_range(width, equal.len()),
-    }
 }
 
 /// `scan`, a scan of `storage`, read in the order of the columns it keeps
@@ -528,23 +538,14 @@ impl Held {
     }
 }
 
-/// How many of an index's first columns `probe` tests.
-fn tested(probe: &Probe) -> usize {
-    match probe {
-        Probe::All => 0,
-        Probe::Compare { .. } => 1,
-        Probe::Prefix { equal, then } => equal.len().saturating_add(usize::from(then.is_some())),
-        Probe::Range { equal, .. } => equal.len().saturating_add(1),
-    }
-}
-
 /// Whether reading an index on `columns` in key order, its first `fixed`
 /// held equal by its probe, gives rows in the order of `want`: once the
 /// keys of the columns held equal are left out, the rest are the index's
 /// next columns, in order, all ascending, or all descending, when it is
 /// read backward. Some(backward) if so. Any null ordering is kept, as an
 /// index read in key order gives no null in them: its probe is true of no
-/// null, and a column it does not test is NOT NULL (`best_path`).
+/// null, and a column it does not test is NOT NULL (`best_path`). A named
+/// probe that may retain a null key is not offered here (D34).
 fn index_order(columns: &[usize], fixed: usize, want: &[SortKey]) -> Option<bool> {
     let (held, free) = columns.split_at(fixed.min(columns.len()));
     let keys: Vec<&SortKey> = want.iter().filter(|k| !held.contains(&k.column)).collect();
@@ -562,7 +563,7 @@ struct Filtered<'a> {
     /// Whether the access yields rows in the order asked for.
     ordered: bool,
     /// The rows the filter's selectivity is a fraction of: the table's,
-    /// for a scan, or those its index probes find.
+    /// for a scan or named predicate, or those comparison probes find.
     read: f64,
     /// The most rows the filter may keep: those the access reads, a scan
     /// only those of the zones or chunks its conditions may match

@@ -13,6 +13,7 @@
 use crate::index::Probe;
 use crate::logical::Limit;
 use crate::physical::Plan;
+use std::sync::Arc;
 
 /// Whether `one` and `other` have one shape, as the module says.
 pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
@@ -85,6 +86,10 @@ fn same_index_scan(one: &Plan, other: &Plan) -> bool {
 fn same_probe(one: &Probe, other: &Probe) -> bool {
     match one {
         Probe::All => matches!(other, Probe::All),
+        Probe::Predicate { predicate: a, .. } => {
+            let Probe::Predicate { predicate: b, .. } = other else { return false };
+            Arc::ptr_eq(&a.function.0, &b.function.0) && a.column == b.column && a.argument == b.argument
+        }
         Probe::Compare { op, .. } => {
             let Probe::Compare { op: op2, .. } = other else { return false };
             op == op2
@@ -133,6 +138,26 @@ mod tests {
     /// A range probe of `low` to `high`, its upper bound by `op`.
     fn range(low: i128, high: i128, op: CompOp) -> Probe {
         Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, int(low))), high: Box::new((op, int(high))) }
+    }
+
+    /// Verifies: [DESIGN] D34, D45: a learned predicate keeps its bound
+    /// function and both column positions, ignoring its argument value.
+    /// MC/DC pairs change only the function, key column or argument
+    /// position from the same descriptor; each alone changes the shape.
+    #[test]
+    fn predicate_shapes_keep_the_function_and_positions() {
+        let registry = crate::functions::Registry::with_set_functions();
+        let function = registry.scalar("UPPER").unwrap();
+        let make = |bound, column, argument, value| Probe::Predicate {
+            predicate: Box::new(crate::index::Predicate { function: bound, column, argument }),
+            value,
+        };
+        let one = make(function.clone(), 0, 0, int(1));
+        assert!(same_probe(&one, &make(function.clone(), 0, 0, Value::Null)));
+        assert!(!same_probe(&one, &make(registry.scalar("LOWER").unwrap(), 0, 0, int(1))), "function");
+        assert!(!same_probe(&one, &make(function.clone(), 1, 0, int(1))), "key column");
+        assert!(!same_probe(&one, &make(function, 0, 1, int(1))), "argument position");
+        assert!(!same_probe(&one, &Probe::All), "probe kind");
     }
 
     /// Verifies: [DESIGN] RULES.md D45: scans of one index by probes of one

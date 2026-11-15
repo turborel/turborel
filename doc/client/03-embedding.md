@@ -455,6 +455,205 @@ fn main() -> Result<(), turborel::error::SqlError> {
 }
 ```
 
+### Indexes of named predicates *(extension)*
+
+An `IndexMethod` may answer a WHERE call `f(column, constant)` or
+`f(constant, column)`, including a prepared parameter in the constant's
+place. `supports_predicate` receives the bound `ScalarRef`, the column's
+position in the key, its position in the call and the key's types. It
+defaults to false, as it does for `btree` and `hash`. Support covers every
+accepted argument value, including null, and stays fixed for the method's
+life (RULES.md D34).
+
+The function opts in with `ScalarFunction::index_predicate`. True promises
+a deterministic Boolean or null result, no side effects and no error for
+any accepted arguments; a null argument gives null. A function that can
+raise, an argument expression that can raise or another raising conjunct
+keeps the full scan, so an index cannot hide an error (D15).
+
+`Probe::Predicate` carries that descriptor and the other argument's
+value. A search must return every matching inserted `(Key, RowId)` pair,
+each once. It may return extra candidates, but must give their original
+keys. Every candidate's visible row is fetched and the whole WHERE
+condition rechecked, excluding false and unknown. This path is never
+index-only. A key's collated values cannot supply the raw function
+arguments; an untested nullable key column prevents the path unless the
+index holds null keys. If nulls can survive in those columns, the planner
+keeps the requested sort to give SQL's null ordering (D34).
+
+`Index::estimate` counts candidates before the recheck. Without an
+estimate the planner prices fetching every table row; `probe_pages`
+defaults to the usual descent estimate. Prepared and learned plans fill
+the probe and filter from the current execution's arguments (D45).
+Storage records a whole-table read for phantom checks, including nulls,
+and never calls the scalar under its locks. The traits are `Send + Sync`;
+implementations guard their own state and call back into no database or
+session (D27, D42, R-ERR-4).
+
+This example registers `NEXT_TO(a, b)`, true when `a = b + 1`. Its method
+wraps a B-link tree and deliberately also returns `b` and `b + 2`, so the
+filter must remove both. It demonstrates the contract with integers; it
+adds no spatial structure. With 201 rows, including a null, the supplied
+candidate estimate makes the planner choose the index.
+
+```rust
+use std::sync::Arc;
+use turborel::db::Database;
+use turborel::error::{Code, Result, SqlError};
+use turborel::functions::ScalarFunction;
+use turborel::index::{BTreeMethod, Entries, Index, IndexMethod, Key, KeyOrder, Predicate, Probe};
+use turborel::params::{ParameterType, Params};
+use turborel::storage::RowId;
+use turborel::value::{CompOp, DataType, Decimal, Spelled, Value};
+
+const FUNCTION: &str = "NEXT_TO";
+const METHOD: &str = "next_candidates";
+const INTEGER: DataType = DataType::Exact {
+    precision: 10,
+    scale: 0,
+    spelled: Spelled::Integer,
+};
+const CANDIDATES: usize = 3;
+const EXTRA: i128 = 2;
+const ROWS: i128 = 200;
+
+fn integer(t: &DataType) -> bool {
+    matches!(t, DataType::Exact { scale: 0, .. })
+}
+
+struct NextTo;
+impl ScalarFunction for NextTo {
+    fn name(&self) -> &str {
+        FUNCTION
+    }
+    fn return_type(&self, args: &[DataType]) -> Result<DataType> {
+        if args.len() != 2 || !args.iter().all(integer) {
+            return Err(SqlError::new(
+                Code::SyntaxRule,
+                "[EXTENSION] NEXT_TO takes two integers",
+            ));
+        }
+        Ok(DataType::Boolean)
+    }
+    fn parameter_type(
+        &self,
+        _position: usize,
+        _args: &[Option<DataType>],
+    ) -> Option<ParameterType> {
+        Some(ParameterType::Of(INTEGER))
+    }
+    fn index_predicate(&self) -> bool {
+        true
+    }
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        if args.iter().any(Value::is_null) {
+            return Ok(Value::Null);
+        }
+        let [Value::Exact(a), Value::Exact(b)] = args else {
+            return Err(SqlError::new(
+                Code::Api,
+                "[DESIGN] NEXT_TO was given no pair of integers",
+            ));
+        };
+        Ok(Value::Bool(a.units.checked_sub(b.units) == Some(1)))
+    }
+}
+
+struct CandidateMethod;
+impl IndexMethod for CandidateMethod {
+    fn name(&self) -> &'static str {
+        METHOD
+    }
+    fn supports(&self, _op: CompOp) -> bool {
+        false
+    }
+    fn supports_predicate(&self, p: &Predicate, columns: &[DataType]) -> bool {
+        let one_integer = columns.len() == 1 && columns.first().is_some_and(integer);
+        p.function.0.name() == FUNCTION && p.column == 0 && p.argument == 0 && one_integer
+    }
+    fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
+        Ok(Box::new(CandidateIndex(Arc::from(
+            BTreeMethod::in_memory().create(columns)?,
+        ))))
+    }
+}
+
+struct CandidateIndex(Arc<dyn Index>);
+impl Index for CandidateIndex {
+    fn insert(&self, key: Key, row: RowId) -> Result<()> {
+        self.0.insert(key, row)
+    }
+    fn remove(&self, key: &Key, row: RowId) -> Result<()> {
+        self.0.remove(key, row)
+    }
+    fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
+        self.0.rows(key)
+    }
+    fn estimate(&self, _probe: &Probe) -> Option<usize> {
+        Some(CANDIDATES)
+    }
+    fn probe_pages(&self, _probe: &Probe) -> Option<f64> {
+        Some(1.0)
+    }
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        let Probe::Predicate { value, .. } = probe else {
+            return Arc::clone(&self.0).search(probe, order);
+        };
+        let Value::Exact(n) = value else {
+            return Box::new(std::iter::empty());
+        };
+        // D34: this deliberately includes extra keys on both sides of n + 1.
+        let high = Value::Exact(Decimal::new(n.units.saturating_add(EXTRA), 0));
+        let candidates = Probe::Range {
+            equal: Vec::new(),
+            low: Box::new((CompOp::Ge, value.clone())),
+            high: Box::new((CompOp::Le, high)),
+        };
+        Arc::clone(&self.0).search(&candidates, order)
+    }
+}
+
+fn main() -> Result<()> {
+    let db = Database::new();
+    db.register_scalar_function(Box::new(NextTo))?;
+    db.register_index_method(Box::new(CandidateMethod))?;
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE ITEMS (N INTEGER)")?;
+    let ann = db.session("ANN");
+    ann.run("SET SQL.FUNCTION_CALLS = 'ON'")?;
+    for n in 0..ROWS {
+        ann.run(&format!("INSERT INTO ITEMS VALUES ({n})"))?;
+    }
+    ann.run("INSERT INTO ITEMS VALUES (NULL)")?;
+    ann.commit()?;
+    ann.run("CREATE INDEX NEAR_ITEMS ON ITEMS (N) USING next_candidates")?;
+    let query = ann.prepare("SELECT N FROM ITEMS WHERE NEXT_TO(N, ?)")?;
+    let mut rows = ann.open_prepared(&query, &[Value::Exact(Decimal::new(40, 0))])?;
+    while let Some(row) = rows.fetch()? {
+        if let Some(value) = row.first() {
+            println!("{value}");
+        }
+    }
+    let mut unknown = ann.open_prepared(&query, &[Value::Null])?;
+    println!(
+        "null argument: {} rows",
+        usize::from(unknown.fetch()?.is_some())
+    );
+    let shown = ann.physical_plan("SELECT N FROM ITEMS WHERE NEXT_TO(N, 40)", &Params::new())?;
+    println!("predicate index: {}", shown.contains("IndexScan"));
+    println!("recheck: {}", shown.contains("Filter NEXT_TO"));
+    Ok(())
+}
+```
+
+Output:
+
+```text
+41
+null argument: 0 rows
+predicate index: true
+recheck: true
+```
+
 ## See also
 
 [The Client Library](02-library.md), to connect to a server instead;

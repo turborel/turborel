@@ -26,6 +26,7 @@ mod nulls;
 mod order_by;
 mod partitioned_joins;
 mod patterns;
+mod predicates;
 mod readers;
 mod reads;
 mod regex;
@@ -67,7 +68,8 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 31] = [
+    let areas: [&[Mutation]; 32] = [
+        &predicates::PREDICATES,
         &sequences::SEQUENCES,
         &generated::GENERATED,
         &truncate::TRUNCATE,

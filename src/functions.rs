@@ -106,6 +106,16 @@ pub trait ScalarFunction: Send + Sync {
     ///
     /// The value cannot be computed: the statement fails with this error.
     fn call(&self, args: &[Value]) -> Result<Value>;
+    /// \[EXTENSION\] May a named index predicate skip calls on rows
+    /// (RULES.md D34)? True promises that every accepted call is
+    /// deterministic, has no observable side effects and returns Boolean
+    /// or null without error, including for null arguments; a null
+    /// argument returns null. The promise holds for the function's life.
+    /// Argument expressions may still raise and are checked separately
+    /// (D15). Default: no; existing functions retain their full evaluation.
+    fn index_predicate(&self) -> bool {
+        false
+    }
     /// Same arguments always give the same result? If so, the optimizer may
     /// evaluate calls with constant arguments once, at planning time.
     fn deterministic(&self) -> bool {

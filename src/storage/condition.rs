@@ -22,7 +22,8 @@ impl Condition {
     /// Whether `row` may be one the index chooses: every column of the key
     /// not null (`Index::insert`), and the key answering the probe
     /// (`Probe::answers`), so this is never narrower than what the index
-    /// returns.
+    /// returns. A named predicate may choose any key, nulls included; no
+    /// function is called while storage may hold a lock (D34, R-ERR-4).
     pub fn matches(&self, row: &Row) -> bool {
         let key: Option<Vec<&Value>> = self.columns.iter().map(|&c| row.get(c)).collect();
         key.is_some_and(|k| self.matches_key(&k))
@@ -31,18 +32,25 @@ impl Condition {
     /// As `matches`, of a row whose values of the condition's columns, in
     /// their order, are `key`.
     pub fn matches_key(&self, key: &[&Value]) -> bool {
+        if matches!(self.probe, Probe::Predicate { .. }) {
+            return true;
+        }
         !key.iter().any(|v| v.is_null()) && self.probe.answers(key.iter().copied())
     }
 
     /// Whether a row whose every column's value is within `bounds`, its
     /// least and greatest not null, may match: never narrower than whether
     /// one does, as each column is taken alone. A column with no bounds has
-    /// no value not null, so no row matches.
+    /// no value not null, so no comparison matches. A named predicate
+    /// excludes no range without calling its function, so returns true.
     pub fn may_match(&self, bounds: &[Option<(Value, Value)>]) -> bool {
+        if matches!(self.probe, Probe::Predicate { .. }) {
+            return true;
+        }
         let ranges: Option<Vec<&(Value, Value)>> = self.columns.iter().map(|&c| bounds.get(c).and_then(Option::as_ref)).collect();
         let Some(ranges) = ranges else { return false };
         match &self.probe {
-            Probe::All => true,
+            Probe::All | Probe::Predicate { .. } => true,
             Probe::Compare { op, value } => ranges.first().is_some_and(|r| within(*op, r, value)),
             Probe::Prefix { equal, then } => {
                 equal.iter().zip(&ranges).all(|(v, r)| within(CompOp::Eq, r, v))

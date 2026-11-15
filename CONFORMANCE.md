@@ -1547,6 +1547,16 @@ Rust has `Database::create_index` and `drop_index`, and the views are
 INFORMATION_SCHEMA.INDEXES and INDEX_OPTIONS. Index methods and other plug-ins
 declare the options (`Database::declare_index_option`).
 
+A plug-in method may answer a registered binary Boolean scalar predicate
+of an indexed column and a constant or parameter, in either argument
+position (`IndexMethod::supports_predicate`, `Probe::Predicate`). The
+function must declare deterministic, total, side-effect-free behaviour
+and return null for null arguments (`ScalarFunction::index_predicate`).
+The executor fetches visible rows and checks the whole condition, so a
+method may return extra candidates. A function or conjunct that can raise
+keeps a scan (D15). Built-in methods answer no named predicates. This
+extends the Rust index contract without adding SQL syntax (D34).
+
 ### Users
 
 Neither standard has these (RULES.md D43). They run outside a transaction, by
