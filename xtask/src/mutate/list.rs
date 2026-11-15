@@ -31,6 +31,7 @@ mod readers;
 mod reads;
 mod regex;
 mod rekey;
+mod rtree;
 mod search_cycle;
 mod sequences;
 mod server;
@@ -104,7 +105,12 @@ pub fn all() -> Vec<Mutation> {
         &triggers::TRIGGERS,
         &view_defaults::VIEW_DEFAULTS,
     ];
-    core.into_iter().chain(areas).chain([near::NEAR.as_slice(), &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER]).flatten().copied().collect()
+    core.into_iter()
+        .chain(areas)
+        .chain([near::NEAR.as_slice(), &rtree::RTREE, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
+        .flatten()
+        .copied()
+        .collect()
 }
 
 /// The core's mutations: transactions, durability, constraints, assertions, the hash index. Rekeying's are in `rekey.rs`.

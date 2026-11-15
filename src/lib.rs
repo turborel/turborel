@@ -54,6 +54,7 @@ pub mod pattern;
 pub mod physical;
 pub mod regex;
 pub mod settings;
+pub mod spatial;
 pub mod spill;
 pub mod stats;
 pub mod storage;

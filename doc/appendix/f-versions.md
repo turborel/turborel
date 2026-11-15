@@ -47,5 +47,6 @@ opened only by a release that knows their versions.
 | A log record | 1 |
 | A row store table | 1 |
 | A B-link tree | 1 |
+| An R-link spatial tree's nodes and metadata | 1 |
 | A hash index | 1 |
 | The native protocol | 1 |
