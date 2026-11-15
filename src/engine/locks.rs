@@ -1,9 +1,8 @@
-//! \[DESIGN\] The node locks of a B-link tree (Lehman and Yao 1981, §2, §5):
+//! \[DESIGN\] Node locks shared by the paged tree implementations:
 //! a lock keeps other writers off a node, never readers, who read a node
-//! under the buffer pool's latch for the moment it takes. Writers take
-//! them bottom to top, and left to right within a level, so they never
-//! deadlock (§6.1, Theorem 1). Held locks are kept by shard, so writers of
-//! different nodes rarely meet.
+//! under the buffer pool's latch for the moment it takes. Each tree
+//! defines the order in which writers acquire these locks. Held locks
+//! are kept by shard, so writers of different nodes rarely meet.
 
 use std::sync::{Mutex, PoisonError};
 
@@ -17,25 +16,25 @@ const SHARDS: u64 = 64;
 #[derive(Default)]
 struct Shard {
     /// The pages locked in this shard: few at a time, as each writer holds
-    /// at most three (§5).
+    /// only a few at a time.
     held: Mutex<Vec<PageId>>,
     released: Signal,
 }
 
 /// The locks of one tree's nodes.
-pub(super) struct Locks {
+pub(crate) struct Locks {
     shards: Vec<Shard>,
 }
 
 /// A held lock, released when dropped.
-pub(super) struct NodeLock<'a> {
+pub(crate) struct NodeLock<'a> {
     shard: &'a Shard,
     /// The node locked.
-    pub(super) id: PageId,
+    pub(crate) id: PageId,
 }
 
 impl Locks {
-    pub(super) fn new() -> Locks {
+    pub(crate) fn new() -> Locks {
         Locks { shards: (0..SHARDS).map(|_| Shard::default()).collect() }
     }
 
@@ -45,11 +44,11 @@ impl Locks {
     /// # Errors
     ///
     /// SQLCODE -910 if the shard of `id` is missing, which `new` prevents.
-    pub(super) fn lock(&self, id: PageId) -> Result<NodeLock<'_>> {
+    pub(crate) fn lock(&self, id: PageId) -> Result<NodeLock<'_>> {
         let shard = usize::try_from(id.0 % SHARDS)
             .ok()
             .and_then(|i| self.shards.get(i))
-            .ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a shard of the B-link tree's locks is missing"))?;
+            .ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a shard of the tree's locks is missing"))?;
         let mut held =
             shard.released.wait_while(lock_builtin(&shard.held), |held| held.contains(&id)).unwrap_or_else(PoisonError::into_inner);
         held.push(id);

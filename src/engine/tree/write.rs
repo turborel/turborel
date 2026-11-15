@@ -3,10 +3,10 @@
 //! past splits, and changes it in place or splits it, posting the split up
 //! the tree (`tree.rs`, §5).
 
-use super::locks::NodeLock;
 use super::node::{self, CHILD, Node};
 use super::{BLinkTree, Path, Slot, Target};
 use crate::disk::pager::PageId;
+use crate::engine::locks::NodeLock;
 use crate::error::{Code, Result, SqlError};
 
 /// What a write asks of the entry it finds.
