@@ -107,7 +107,9 @@ an existing database sees.
 ## Spatial benchmarks
 
 `cargo xtask bench spatial --save before` measures SQL filters, joins,
-nearest-point sorting and mixed sessions. `cargo xtask bench spatial_index
+nearest-point sorting and mixed sessions for scans, B-trees and R-trees.
+The nearest SQL case still sorts its squared-distance expression; the
+R-tree's best-first nearest traversal is measured by the index suite. `cargo xtask bench spatial_index
 --save initial` measures the paged index itself, without SQL planning or
 row materialization. These are separate measurements, not interchangeable
 query rates.

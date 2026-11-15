@@ -1417,7 +1417,12 @@ from the system takes `unsafe` (R-SAFE-1).
 An inner or LEFT join on equalities becomes an index nested-loop join when
 its cost is below the hash join's (`physical/indexed.rs`). A hash join
 builds the operand of fewer estimated rows (`physical/join.rs`), swapping
-operands under a projection that restores column order.
+operands under a projection that restores column order. Inner joins on
+inequalities can probe independent index columns too. Each outer row binds
+the bounds, and the complete join condition checks each visible candidate.
+Both table orders are costed, including derived-table column projections.
+An untested nullable key column or a raising inner filter forbids the path.
+These joins use the existing indexed-row fetch and serializable read tracking.
 
 #### D36. Settings
 

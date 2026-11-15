@@ -63,7 +63,11 @@ its maximum. WHERE comparisons can constrain several coordinates at once,
 including ranges on both X and Y. The index checks each comparison against
 the stored coordinates and provides no SQL key order. It omits rows with
 a NULL coordinate, so the planner uses it only when those rows cannot
-answer the query. It does not implement geometry types or SQL/MM functions.
+answer the query. An inner join can probe the index with coordinate bounds
+from each row of the other operand. Both table orders and projections of
+the indexed table's columns are considered; candidate rows still satisfy
+the complete join condition. It does not implement geometry types or
+SQL/MM functions.
 
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each
@@ -155,6 +159,29 @@ OK
             1
             2
 (2 rows)
+```
+
+Joining those points to two windows includes a point on a shared edge in
+both windows. The planner chooses index probes when their estimated cost
+is lower than testing every pair:
+
+```sql
+SELECT P.ID, W.ID AS WINDOW_ID
+FROM PLACES P JOIN
+    (VALUES (10, 0E0, 0E0, 5E0, 5E0), (20, 5E0, 5E0, 10E0, 10E0))
+    AS W (ID, LX, LY, HX, HY)
+ON P.X >= W.LX AND P.X <= W.HX AND P.Y >= W.LY AND P.Y <= W.HY
+ORDER BY P.ID, W.ID;
+```
+
+```
+           ID | WINDOW_ID
+--------------+-----------
+            1 |        10
+            2 |        10
+            2 |        20
+            3 |        20
+(4 rows)
 ```
 
 Indexes refused, V a view:

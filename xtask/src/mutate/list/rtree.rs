@@ -4,7 +4,7 @@
 use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail spatial requirements.
-pub const RTREE: [Mutation; 8] = [
+pub const RTREE: [Mutation; 9] = [
     Mutation {
         name: "rtree-split-stamp",
         package: Package::Core,
@@ -84,5 +84,15 @@ pub const RTREE: [Mutation; 8] = [
         replacement: "each.get_mut(n.saturating_sub(n)).map(|c| &mut c.value)",
         integration: &[],
         unit: &["physical::kept::tests::independent_probe_slots_replace_each_bound_and_reject_missing_places"],
+    },
+    Mutation {
+        name: "rtree-join-phantoms",
+        package: Package::Core,
+        breaks: "an independent-coordinate join probe fails to record its serializable read predicate",
+        file: "src/exec/join/indexed.rs",
+        original: "self.storage.read_by_condition(self.tx, &Condition { columns: self.ix.columns.clone(), probe: probe.clone() })?;",
+        replacement: "if matches!(binding, JoinProbe::Prefix(_)) { self.storage.read_by_condition(self.tx, &Condition { columns: self.ix.columns.clone(), probe: probe.clone() })?; }",
+        integration: &["spatial_index::joins::spatial_joins_track_empty_probe_phantoms"],
+        unit: &[],
     },
 ];

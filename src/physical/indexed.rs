@@ -7,6 +7,8 @@
 //! derived table's does, is probed as the table, the join under a projection
 //! giving the operand's columns; and a RIGHT outer join as the LEFT one of its
 //! operands swapped, under a projection putting the left's columns first.
+//! Independent-coordinate inner joins use the same executor with bounds
+//! on several key columns (`indexed/coordinates.rs`).
 //!
 //! A probe reads only the rows its values select, so the rest of the
 //! condition is evaluated only on the pairs it finds, and the table's own
@@ -22,7 +24,9 @@ use super::cost::HASH_ROW;
 use super::estimate::{self, Known};
 use super::join::Flip;
 use super::shown::Shown;
-use super::{PhysicalPlanner, Plan};
+use super::{JoinProbe, PhysicalPlanner, Plan};
+
+mod coordinates;
 use crate::catalog::{ColumnDesc, IndexDesc, QualifiedName};
 use crate::index::{IndexMethod, Probe};
 use crate::logical::{Cond, Expr, LogicalPlan, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr, split_and};
@@ -132,7 +136,7 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
         table: probing.table,
         index: probing.index,
         method: probing.method,
-        keys,
+        probe: JoinProbe::Prefix(keys.into_boxed_slice()),
         cond,
         width: probing.width,
         columns: probing.needed,
