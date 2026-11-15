@@ -109,6 +109,7 @@ verification approach DO-178C expects (§8).
 | D69 | A distinct type's value is its source's, untagged |
 | D70 | SEARCH and CYCLE are their expansion, its growing columns widened |
 | D71 | Triggered actions run inside their statement, nested to a bound |
+| D72 | Spatial pages use R-link split stamps and R* partitioning |
 
 ### The project
 
@@ -1794,6 +1795,49 @@ rolls back the batch, unless `--skip-bad-rows` is given. A lost connection,
 cancel or unreadable record always stops it.
 
 ---
+
+#### D72. Spatial pages use R-link split stamps and R* partitioning
+
+`engine::rtree::RTree` stores finite two-dimensional bounds and counted
+row identifiers in buffer-pool pages. Closed bounds retain their f64
+coordinates; touching edges and point bounds intersect. Geometry predicates
+must check the geometry after this candidate search. Rectangle containment
+does not implement the topological ST_Contains relationship.
+
+Subtree choice minimizes overlap enlargement above leaves and area
+enlargement higher up. Splits choose the axis by summed margins, then the
+distribution by overlap and area, after
+[Beckmann et al., sections 4.1–4.2](https://sigmodrecord.org/publications/sigmodRecord/9006/pdfs/93605.98741.pdf).
+Costs share a coordinate scale so finite coordinates cannot produce NaN
+from overflowing area calculations. Stored bounds are never scaled.
+
+Readers use the expected-child-stamp protocol of
+[Kornacker and Banks, sections 3.1–3.2](https://www.vldb.org/conf/1995/P134.PDF).
+A split gives the new right sibling the old stamp and gives the old node
+a fresh stamp. A search follows siblings through the stamp it remembered
+from the parent. This finds entries moved by a split without also visiting
+a sibling already queued from the parent. Allocated page identifiers
+supply unique stamps; pages are not recycled within a live tree. These
+stamps are internal structure metadata, independent of SQL sequences and
+transaction commit numbers.
+
+Writers enlarge ancestor bounds before inserting, and recheck split
+stamps under node locks. A full node splits before the new entry is added:
+the partition applies to its existing entries, rather than to an overflow
+including the proposed entry. Allocation or parent-posting failure then
+leaves the logical insertion absent (D19). Readers can traverse an
+unfinished split, and later writers finish posting it. The tree uses the
+database's shadowed checkpoints and logical row recovery (D25), with no
+additional physical write-ahead log.
+
+Forced reinsertion and deletion condensation are excluded. They move
+entries between unrelated branches, which split stamps cannot track for
+a scan already partway through the tree. Empty nodes stay linked. This
+trades space and possible overlap after updates for a smaller concurrency
+protocol; benchmarks must include aged trees, not only fresh loads. The
+implementation is an R-link tree with R* heuristics, not the complete
+R*-tree insertion algorithm. Node and metadata formats are versioned
+independently and reject unknown versions.
 
 ## 2. Project layout
 

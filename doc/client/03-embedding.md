@@ -687,6 +687,34 @@ predicate index: true
 recheck: true
 ```
 
+## Spatial storage primitives
+
+`spatial::Bounds` represents a finite, closed Cartesian rectangle in X/Y
+order. It accepts points and zero-width rectangles, rejects reversed bounds
+and non-finite coordinates, and treats touching boundaries as intersections.
+
+```rust
+use turborel::spatial::Bounds;
+
+fn main() -> Result<(), turborel::error::SqlError> {
+    let window = Bounds::new([0.0, 0.0], [10.0, 10.0])?;
+    let point = Bounds::point([10.0, 5.0])?;
+    assert!(window.intersects(point));
+    assert!(window.contains(point));
+    Ok(())
+}
+```
+
+Storage implementations can use `engine::rtree::RTree` with a registered
+buffer-pool file. It inserts and removes counted `(Bounds, RowId)` entries
+and streams intersecting entries once each. Clones share its node locks;
+readers hold a page latch only while copying that page. Its meta page is
+the locator used to reopen it after the owning pager is checkpointed.
+
+These are rectangle storage operations. An exact geometry predicate needs
+to test the candidate geometry, and rectangle containment has different
+boundary semantics from a geometry's topological ST_Contains operation.
+
 ## See also
 
 [The Client Library](02-library.md), to connect to a server instead;

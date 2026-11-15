@@ -20,6 +20,7 @@ pub mod key;
 mod locks;
 pub mod record;
 pub mod rows;
+pub mod rtree;
 pub mod tree;
 
 use std::path::Path;

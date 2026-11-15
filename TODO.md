@@ -167,8 +167,10 @@ The access methods the other standards stand on. Each one is built, made
 durable and tested on its own before the extension that reads it. Each
 is kept consistent under concurrent change and recovery as the B-tree is.
 
-- An R-tree, over the bounding boxes of geometries, for spatial
-  predicates and nearest neighbours. Spatial needs it.
+- Connect the paged R-link tree (`engine::rtree`) to SQL spatial access
+  paths, geometry predicates and nearest neighbours. Add bulk packing
+  and reclaim empty nodes without relocating entries under active scans;
+  measure overlap and space after sustained updates as well as fresh loads.
 - An inverted index of terms to the rows and positions they appear at,
   with its tokenizer, for full text search. Full text needs it.
 - HNSW, a hierarchical graph of vectors for approximate nearest neighbour
