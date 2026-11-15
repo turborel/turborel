@@ -28,15 +28,15 @@ fn diagnosed() -> Database {
     db
 }
 
-/// Targets: NUM, exact; TXT, CHARACTER(128); J, 1, the condition number;
-/// and Q, exact of scale 2.
+/// Targets: NUM, exact; TXT, CHARACTER(128); and J, 1, the condition
+/// number.
 fn targets() -> Params {
     let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    Params::new()
-        .declare("NUM", exact.clone(), Value::Null)
-        .declare("TXT", DataType::character(128), Value::Null)
-        .declare("J", exact, Value::Exact(Decimal::new(1, 0)))
-        .declare("Q", DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, Value::Null)
+    Params::new().declare("NUM", exact.clone(), Value::Null).declare("TXT", DataType::character(128), Value::Null).declare(
+        "J",
+        exact,
+        Value::Exact(Decimal::new(1, 0)),
+    )
 }
 
 /// The item `item` of the statement information, as text, its padding
@@ -244,7 +244,9 @@ fn more_says_a_condition_was_left_out_18_1() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §18.1 SR1, SR2, GR2; §17.6]
-/// refused: a target not of its item's type (SQLCODE -103); a condition
+/// refused: a target its item's value cannot be assigned to, a number to
+/// a character string or a character string to a number (SQLCODE -103,
+/// ISO/IEC 9075-2:2023 §23.1 SR1); a condition
 /// number not exact with scale 0 (-103), or of no condition (-301,
 /// SQLSTATE 35000); an indicator on a target, or an item of no name, is a
 /// syntax error; GET DIAGNOSTICS is not prepared (SQLSTATE 37000).
@@ -255,7 +257,6 @@ fn what_get_diagnostics_refuses_18_1() {
     let mut p = targets();
     let code = |sql: &str, p: &mut Params| a.execute(sql, p).err().map(|e| (e.code, e.sqlstate().as_str().to_owned()));
     assert_eq!(code("GET DIAGNOSTICS TXT = NUMBER", &mut p).map(|c| c.0), Some(Code::SyntaxRule), "SR1");
-    assert_eq!(code("GET DIAGNOSTICS Q = ROW_COUNT", &mut p).map(|c| c.0), Some(Code::SyntaxRule), "SR1: a scale");
     assert_eq!(code("GET DIAGNOSTICS NUM = MORE", &mut p).map(|c| c.0), Some(Code::SyntaxRule), "SR1");
     a.run("INSERT INTO T VALUES (9, 'I')").unwrap();
     assert_eq!(code("GET DIAGNOSTICS EXCEPTION 1.5 TXT = MESSAGE_TEXT", &mut p).map(|c| c.0), Some(Code::SyntaxRule), "SR2");

@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use super::area::commands::{self, Command};
 use super::{Completion, Prepared, Session, StatementContext};
 use crate::ast::{DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, Scope, TableName, ValueSpecification};
 use crate::binder;
@@ -164,22 +165,23 @@ impl Session {
     }
 }
 
-/// [ISO/IEC 9075:1992 §18.1 GR1c, Table 22] How COMMAND_FUNCTION names `d`.
-pub(super) fn command(d: &DynamicStatement) -> &'static str {
+/// [ISO/IEC 9075:1992 §18.1 GR1c, Table 22; ISO/IEC 9075-2:2023 §23.1
+/// GR2d, Table 39] How COMMAND_FUNCTION and COMMAND_FUNCTION_CODE name `d`.
+pub(super) fn command(d: &DynamicStatement) -> Command {
     match d {
-        DynamicStatement::AllocateDescriptor { .. } => "ALLOCATE DESCRIPTOR",
-        DynamicStatement::DeallocateDescriptor(_) => "DEALLOCATE DESCRIPTOR",
-        DynamicStatement::GetDescriptor { .. } => "GET DESCRIPTOR",
-        DynamicStatement::SetDescriptor { .. } => "SET DESCRIPTOR",
-        DynamicStatement::Prepare { .. } => "PREPARE",
-        DynamicStatement::DeallocatePrepare(_) => "DEALLOCATE PREPARE",
-        DynamicStatement::Describe { .. } => "DESCRIBE",
-        DynamicStatement::AllocateCursor { .. } => "ALLOCATE CURSOR",
-        DynamicStatement::Open { .. } => "DYNAMIC OPEN",
-        DynamicStatement::Fetch { .. } => "DYNAMIC FETCH",
-        DynamicStatement::Close(_) => "DYNAMIC CLOSE",
-        DynamicStatement::DeletePositioned { .. } => "DYNAMIC DELETE CURSOR",
-        DynamicStatement::UpdatePositioned { .. } => "DYNAMIC UPDATE CURSOR",
+        DynamicStatement::AllocateDescriptor { .. } => commands::ALLOCATE_DESCRIPTOR,
+        DynamicStatement::DeallocateDescriptor(_) => commands::DEALLOCATE_DESCRIPTOR,
+        DynamicStatement::GetDescriptor { .. } => commands::GET_DESCRIPTOR,
+        DynamicStatement::SetDescriptor { .. } => commands::SET_DESCRIPTOR,
+        DynamicStatement::Prepare { .. } => commands::PREPARE,
+        DynamicStatement::DeallocatePrepare(_) => commands::DEALLOCATE_PREPARE,
+        DynamicStatement::Describe { .. } => commands::DESCRIBE,
+        DynamicStatement::AllocateCursor { .. } => commands::ALLOCATE_CURSOR,
+        DynamicStatement::Open { .. } => commands::DYNAMIC_OPEN,
+        DynamicStatement::Fetch { .. } => commands::DYNAMIC_FETCH,
+        DynamicStatement::Close(_) => commands::DYNAMIC_CLOSE,
+        DynamicStatement::DeletePositioned { .. } => commands::DYNAMIC_DELETE_CURSOR,
+        DynamicStatement::UpdatePositioned { .. } => commands::DYNAMIC_UPDATE_CURSOR,
     }
 }
 
@@ -204,10 +206,11 @@ pub(super) fn changed_table(d: &DynamicStatement) -> Option<(&TableName, &'stati
     }
 }
 
-/// [ISO/IEC 9075:1992 §18.1 GR1c, Table 22] How COMMAND_FUNCTION names `e`.
-pub(super) fn execute_command(e: &ExecuteStatement) -> &'static str {
+/// [ISO/IEC 9075:1992 §18.1 GR1c, Table 22; ISO/IEC 9075-2:2023 §23.1
+/// GR2d, Table 39] How COMMAND_FUNCTION and COMMAND_FUNCTION_CODE name `e`.
+pub(super) fn execute_command(e: &ExecuteStatement) -> Command {
     match e {
-        ExecuteStatement::Prepared { .. } => "EXECUTE",
-        ExecuteStatement::Immediate(_) => "EXECUTE IMMEDIATE",
+        ExecuteStatement::Prepared { .. } => commands::EXECUTE,
+        ExecuteStatement::Immediate(_) => commands::EXECUTE_IMMEDIATE,
     }
 }

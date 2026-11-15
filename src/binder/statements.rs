@@ -110,8 +110,9 @@ pub fn check_assignment(col: &ColumnDesc, t: &DataType, r: AssignRule) -> Result
 /// [ISO/IEC 9075:1992 §9.2 SR2] Can a value of type `t` be stored in a
 /// target of type `target`? A character string in a character string, a
 /// binary string in a binary string [ISO/IEC 9075-2:2023 §9.2 SR3], a
-/// number in a number, a datetime in a
-/// datetime of its fields, an interval in a comparable interval.
+/// number in a number alone, a truth value in a Boolean alone [ISO/IEC
+/// 9075-2:2023 §4.6.2], a datetime in a datetime of its fields, an
+/// interval in a comparable interval.
 /// \[EXTENSION\] Where either is a type beyond the standard, which SR2
 /// does not speak of (RULES.md D53): a value comparable with the target,
 /// as its kind says, or a character string, if the target's kind takes
@@ -143,7 +144,10 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     }
     let temporal = target.is_datetime() || t.is_datetime() || target.is_interval() || t.is_interval();
     let datetime = if temporal { target.comparable(t) } else { true };
-    target.is_character() == t.is_character() && target.is_binary() == t.is_binary() && datetime
+    // [ISO/IEC 9075-2:2023 §4.5.2, §4.6.2] a number only to a numeric site,
+    // so not to a Boolean one, nor a truth value to a numeric one.
+    let numeric = target.is_numeric() == t.is_numeric();
+    target.is_character() == t.is_character() && target.is_binary() == t.is_binary() && numeric && datetime
 }
 
 /// [ISO/IEC 9075-2:2023 §4.9.5, §4.13, §9.2 SR3] Whether a value of `t` is

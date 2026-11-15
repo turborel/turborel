@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 pub(super) use plans::{Keeping, KeptPlan, Plans};
 
+use super::area::commands::{self, Command};
 use super::collations::Collating;
 use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
@@ -249,7 +250,7 @@ impl Session {
     fn prepared(&self, sql: &str) -> Result<Prepared> {
         let call = self.enter()?;
         // [ISO/IEC 9075:1992 §18.1 Table 22] a <prepare statement>.
-        self.emptied(("PREPARE", ""));
+        self.emptied((commands::PREPARE, commands::UNRECOGNIZED));
         self.prepared_with(call.state(), sql, Preparer::Api)
     }
 
@@ -404,7 +405,7 @@ impl Session {
             return Err(dynamic(SqlState::CURSOR_SPECIFICATION_NOT_EXECUTED, msg));
         }
         Self::values_for(p, values)?;
-        self.run_prepared(p, values.to_vec(), "EXECUTE")
+        self.run_prepared(p, values.to_vec(), commands::EXECUTE)
     }
 
     /// `run`'s, bound under the collation `p` was prepared with.
@@ -420,7 +421,7 @@ impl Session {
     /// statement, its positioned DELETE or UPDATE through the cursor found
     /// as it was prepared [§17.6 GR2]; or a schema definition as `direct`
     /// runs it.
-    pub(super) fn run_prepared(&self, p: &Prepared, values: Vec<Value>, via: &'static str) -> Result<Completion> {
+    pub(super) fn run_prepared(&self, p: &Prepared, values: Vec<Value>, via: Command) -> Result<Completion> {
         if p.kind == Kind::Schema {
             return self.direct(&p.sql).map(|_| Completion::Success);
         }
@@ -445,7 +446,9 @@ impl Session {
             return Err(dynamic(SqlState::NOT_A_CURSOR_SPECIFICATION, msg));
         }
         let params = Self::values_for(p, values)?;
-        // [ISO/IEC 9075:1992 §18.1 Table 22] a <dynamic open statement>.
-        self.as_prepared(p, || self.open_with(("DYNAMIC OPEN", "SELECT"), |call| self.open_kept(call, p, &params)))
+        // [ISO/IEC 9075:1992 §18.1 Table 22] a <dynamic open statement>,
+        // of [ISO/IEC 9075-2:2023 §23.1 Table 39] a <dynamic select
+        // statement>.
+        self.as_prepared(p, || self.open_with((commands::DYNAMIC_OPEN, commands::SELECT_CURSOR), |call| self.open_kept(call, p, &params)))
     }
 }

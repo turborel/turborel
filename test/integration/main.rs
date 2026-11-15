@@ -114,6 +114,7 @@ mod functions;
 mod generated;
 mod generated_named;
 mod get_diagnostics;
+mod get_diagnostics_items;
 mod grouping_sets;
 mod hybrid_layout;
 mod hypothetical;

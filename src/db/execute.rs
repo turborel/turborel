@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use super::area::commands::{self, Command};
 use super::dynamic::{self, Name};
 use super::prepared::{Keeping, Plans};
 use super::write::{Written, delete_searched, update_searched};
@@ -48,7 +49,7 @@ impl Session {
     /// plans it keeps: the diagnostics area then names that, and the
     /// statement as its DYNAMIC_FUNCTION [ISO/IEC 9075:1992 §18.1 GR1c,
     /// GR1d].
-    pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(&'static str, &Plans)>) -> Result<Completion> {
+    pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(Command, &Plans)>) -> Result<Completion> {
         let mut call = self.enter()?;
         call.timed = slow::Timed::of(call.state(), || sql, &self.auth());
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
@@ -61,14 +62,15 @@ impl Session {
         if parsed.is_err() && diagnostics_statement(sql) {
             return parsed.map(|_| Completion::Success);
         }
-        let (command, function) = parsed.as_deref().map_or(("", ""), |stmt| (command_of(stmt), prepared_command(stmt)));
+        let (command, function) =
+            parsed.as_deref().map_or((commands::UNRECOGNIZED, commands::UNRECOGNIZED), |stmt| (command_of(stmt), prepared_command(stmt)));
         // [ISO/IEC 9075:1992 §17.10, §17.11] EXECUTE runs the statement
         // prepared as a statement of its own.
         if let Ok(SqlStatement::Execute(e)) = parsed.as_deref() {
             drop(call);
             return self.execute_dynamic(e, command, params);
         }
-        self.emptied(prepared.map_or((command, ""), |(outer, _)| (outer, function)));
+        self.emptied(prepared.map_or((command, commands::UNRECOGNIZED), |(outer, _)| (outer, function)));
         let outcome = parsed.and_then(|stmt| {
             let target = target_of(&stmt).map(|t| qualify(t, &self.default_schema()));
             self.execute_parsed(&call, &stmt, params, keeping.as_ref()).map_err(|e| match target {
@@ -114,7 +116,7 @@ impl Session {
     pub fn reseal_table(&self, table: &str) -> Result<Completion> {
         let name = super::qualified_name(table)?;
         let call = self.enter()?;
-        self.emptied(("ALTER TABLE", ""));
+        self.emptied((commands::ALTER_TABLE, commands::UNRECOGNIZED));
         let named = TableName { auth: Some(name.auth), ident: name.ident, at: 0 };
         let anew = AlterAction::Storage(TableStorage::default());
         let stmt = SqlStatement::AlterTable { table: named, action: anew, text: crate::parser::RESEAL.to_owned() };
@@ -360,12 +362,12 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
 /// `<preparable dynamic delete statement: positioned>` or `<preparable
 /// dynamic update statement: positioned>` [§17.6, §17.19, §17.20]; any
 /// other as COMMAND_FUNCTION names it.
-fn prepared_command(stmt: &SqlStatement) -> &'static str {
+fn prepared_command(stmt: &SqlStatement) -> Command {
     if let SqlStatement::DeletePositioned { .. } = stmt {
-        return "DYNAMIC DELETE CURSOR";
+        return commands::PREPARABLE_DELETE_CURSOR;
     }
     if let SqlStatement::UpdatePositioned { .. } = stmt {
-        return "DYNAMIC UPDATE CURSOR";
+        return commands::PREPARABLE_UPDATE_CURSOR;
     }
     command_of(stmt)
 }
@@ -377,74 +379,74 @@ fn diagnostics_statement(sql: &str) -> bool {
 }
 
 /// How COMMAND_FUNCTION names schema statement `s` (`command_of`).
-fn schema_command(s: &SchemaStatement) -> &'static str {
+fn schema_command(s: &SchemaStatement) -> Command {
     match s {
-        SchemaStatement::Assertion(_) => "CREATE ASSERTION",
-        SchemaStatement::Collation(_) => "CREATE COLLATION",
-        SchemaStatement::Domain(_) => "CREATE DOMAIN",
-        SchemaStatement::AlterDomain(_) => "ALTER DOMAIN",
-        SchemaStatement::Table(_) => "CREATE TABLE",
-        SchemaStatement::View(_) => "CREATE VIEW",
-        SchemaStatement::Grant(_) => "GRANT",
-        SchemaStatement::Revoke(_) => "REVOKE",
-        SchemaStatement::Sequence(_) => "CREATE SEQUENCE",
-        SchemaStatement::AlterSequence(_) => "ALTER SEQUENCE",
-        SchemaStatement::Type(_) => "CREATE TYPE",
+        SchemaStatement::Assertion(_) => commands::CREATE_ASSERTION,
+        SchemaStatement::Collation(_) => commands::CREATE_COLLATION,
+        SchemaStatement::Domain(_) => commands::CREATE_DOMAIN,
+        SchemaStatement::AlterDomain(_) => commands::ALTER_DOMAIN,
+        SchemaStatement::Table(_) => commands::CREATE_TABLE,
+        SchemaStatement::View(_) => commands::CREATE_VIEW,
+        SchemaStatement::Grant(_) => commands::GRANT,
+        SchemaStatement::Revoke(_) => commands::REVOKE,
+        SchemaStatement::Sequence(_) => commands::CREATE_SEQUENCE,
+        SchemaStatement::AlterSequence(_) => commands::ALTER_SEQUENCE,
+        SchemaStatement::Type(_) => commands::CREATE_TYPE,
     }
 }
 
-/// [ISO/IEC 9075:1992 §18.1 GR1c, Table 22] How COMMAND_FUNCTION names
-/// `stmt`; \[EXTENSION\] a statement of this implementation by its first
-/// words.
-fn command_of(stmt: &SqlStatement) -> &'static str {
+/// [ISO/IEC 9075:1992 §18.1 GR1c, Table 22; ISO/IEC 9075-2:2023 §23.1
+/// GR2c, GR2d, Table 39] How COMMAND_FUNCTION and COMMAND_FUNCTION_CODE
+/// name `stmt`.
+fn command_of(stmt: &SqlStatement) -> Command {
     match stmt {
-        SqlStatement::Close(_) => "CLOSE CURSOR",
+        SqlStatement::Close(_) => commands::CLOSE_CURSOR,
         SqlStatement::Schema { statement, .. } => schema_command(statement),
-        SqlStatement::Commit => "COMMIT WORK",
-        SqlStatement::DeletePositioned { .. } => "DELETE CURSOR",
-        SqlStatement::DeleteSearched { .. } => "DELETE WHERE",
-        SqlStatement::Truncate { .. } => "TRUNCATE TABLE",
-        SqlStatement::AlterTable { .. } => "ALTER TABLE",
-        SqlStatement::Drop { object: DropObject::Table(_), .. } => "DROP TABLE",
-        SqlStatement::Drop { object: DropObject::View(_), .. } => "DROP VIEW",
-        SqlStatement::Drop { object: DropObject::Schema { .. }, .. } => "DROP SCHEMA",
-        SqlStatement::Drop { object: DropObject::Domain(_), .. } => "DROP DOMAIN",
-        SqlStatement::Drop { object: DropObject::Assertion(_), .. } => "DROP ASSERTION",
-        SqlStatement::Drop { object: DropObject::Collation(_), .. } => "DROP COLLATION",
-        SqlStatement::Drop { object: DropObject::Sequence(_), .. } => "DROP SEQUENCE",
-        SqlStatement::Drop { object: DropObject::Type(_), .. } => "DROP TYPE",
-        SqlStatement::Fetch { .. } => "FETCH",
-        SqlStatement::GetDiagnostics(_) => "GET DIAGNOSTICS",
+        SqlStatement::Commit => commands::COMMIT_WORK,
+        SqlStatement::DeletePositioned { .. } => commands::DELETE_CURSOR,
+        SqlStatement::DeleteSearched { .. } => commands::DELETE_WHERE,
+        SqlStatement::Truncate { .. } => commands::TRUNCATE_TABLE,
+        SqlStatement::AlterTable { .. } => commands::ALTER_TABLE,
+        SqlStatement::Drop { object: DropObject::Table(_), .. } => commands::DROP_TABLE,
+        SqlStatement::Drop { object: DropObject::View(_), .. } => commands::DROP_VIEW,
+        SqlStatement::Drop { object: DropObject::Schema { .. }, .. } => commands::DROP_SCHEMA,
+        SqlStatement::Drop { object: DropObject::Domain(_), .. } => commands::DROP_DOMAIN,
+        SqlStatement::Drop { object: DropObject::Assertion(_), .. } => commands::DROP_ASSERTION,
+        SqlStatement::Drop { object: DropObject::Collation(_), .. } => commands::DROP_COLLATION,
+        SqlStatement::Drop { object: DropObject::Sequence(_), .. } => commands::DROP_SEQUENCE,
+        SqlStatement::Drop { object: DropObject::Type(_), .. } => commands::DROP_TYPE,
+        SqlStatement::Fetch { .. } => commands::FETCH,
+        SqlStatement::GetDiagnostics(_) => commands::GET_DIAGNOSTICS,
         SqlStatement::Dynamic(d) => dynamic::command(d),
         SqlStatement::Execute(e) => dynamic::execute_command(e),
-        SqlStatement::DeclareTable(_) => "DECLARE LOCAL TEMPORARY TABLE",
-        SqlStatement::Insert(_) => "INSERT",
-        SqlStatement::Merge(_) => "MERGE",
-        SqlStatement::Open(_) => "OPEN",
-        SqlStatement::Rollback => "ROLLBACK WORK",
-        SqlStatement::Select { .. } => "SELECT",
-        SqlStatement::SetTransaction(_) => "SET TRANSACTION",
-        SqlStatement::SetSchema(_) => "SET SCHEMA",
-        SqlStatement::SetCollation(_) => "SET COLLATION",
-        SqlStatement::SetCatalog(_) => "SET CATALOG",
-        SqlStatement::SetTimeZone(_) => "SET TIME ZONE",
-        SqlStatement::SetSessionAuthorization(_) => "SET SESSION AUTHORIZATION",
-        SqlStatement::Connection(ConnectionStatement::Connect { .. } | ConnectionStatement::ConnectDefault) => "CONNECT",
-        SqlStatement::Connection(ConnectionStatement::Set(_)) => "SET CONNECTION",
-        SqlStatement::Connection(ConnectionStatement::Disconnect(_)) => "DISCONNECT",
-        SqlStatement::SetConstraints { .. } => "SET CONSTRAINT",
-        SqlStatement::UpdatePositioned { .. } => "UPDATE CURSOR",
-        SqlStatement::UpdateSearched { .. } => "UPDATE WHERE",
-        SqlStatement::SetSetting { .. } => "SET",
-        SqlStatement::SetDatabase { .. } => "SET DATABASE",
-        SqlStatement::Index(IndexStatement::Create { .. }) => "CREATE INDEX",
-        SqlStatement::Index(IndexStatement::Drop { .. }) => "DROP INDEX",
-        SqlStatement::Index(IndexStatement::Alter { .. }) => "ALTER INDEX",
-        SqlStatement::User(UserStatement::Create { .. }) => "CREATE USER",
-        SqlStatement::User(UserStatement::Alter { .. }) => "ALTER USER",
-        SqlStatement::User(UserStatement::Drop { .. }) => "DROP USER",
-        SqlStatement::User(UserStatement::Owner { .. } | UserStatement::Members { .. }) => "ALTER DATABASE",
-        SqlStatement::Served(ServedStatement::End { .. }) => "END CONNECTION",
-        SqlStatement::Served(ServedStatement::Cancel { .. }) => "CANCEL CONNECTION",
+        SqlStatement::DeclareTable(_) => commands::DECLARE_TABLE,
+        SqlStatement::Insert(_) => commands::INSERT,
+        SqlStatement::Merge(_) => commands::MERGE,
+        SqlStatement::Open(_) => commands::OPEN,
+        SqlStatement::Rollback => commands::ROLLBACK_WORK,
+        SqlStatement::Select { .. } => commands::SELECT_ROW,
+        SqlStatement::SetTransaction(_) => commands::SET_TRANSACTION,
+        SqlStatement::SetSchema(_) => commands::SET_SCHEMA,
+        SqlStatement::SetCollation(_) => commands::SET_COLLATION,
+        SqlStatement::SetCatalog(_) => commands::SET_CATALOG,
+        SqlStatement::SetTimeZone(_) => commands::SET_TIME_ZONE,
+        SqlStatement::SetSessionAuthorization(_) => commands::SET_SESSION_AUTHORIZATION,
+        SqlStatement::Connection(ConnectionStatement::Connect { .. } | ConnectionStatement::ConnectDefault) => commands::CONNECT,
+        SqlStatement::Connection(ConnectionStatement::Set(_)) => commands::SET_CONNECTION,
+        SqlStatement::Connection(ConnectionStatement::Disconnect(_)) => commands::DISCONNECT,
+        SqlStatement::SetConstraints { .. } => commands::SET_CONSTRAINT,
+        SqlStatement::UpdatePositioned { .. } => commands::UPDATE_CURSOR,
+        SqlStatement::UpdateSearched { .. } => commands::UPDATE_WHERE,
+        SqlStatement::SetSetting { .. } => commands::SET_SETTING,
+        SqlStatement::SetDatabase { .. } => commands::SET_DATABASE,
+        SqlStatement::Index(IndexStatement::Create { .. }) => commands::CREATE_INDEX,
+        SqlStatement::Index(IndexStatement::Drop { .. }) => commands::DROP_INDEX,
+        SqlStatement::Index(IndexStatement::Alter { .. }) => commands::ALTER_INDEX,
+        SqlStatement::User(UserStatement::Create { .. }) => commands::CREATE_USER,
+        SqlStatement::User(UserStatement::Alter { .. }) => commands::ALTER_USER,
+        SqlStatement::User(UserStatement::Drop { .. }) => commands::DROP_USER,
+        SqlStatement::User(UserStatement::Owner { .. } | UserStatement::Members { .. }) => commands::ALTER_DATABASE,
+        SqlStatement::Served(ServedStatement::End { .. }) => commands::END_CONNECTION,
+        SqlStatement::Served(ServedStatement::Cancel { .. }) => commands::CANCEL_CONNECTION,
     }
 }

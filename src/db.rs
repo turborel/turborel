@@ -51,6 +51,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 
+use self::area::commands;
 use crate::binder::OutColumn;
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, SqlState, fail};
@@ -437,7 +438,7 @@ impl Session {
     /// or SQLCODE -910 if called back from a plug-in.
     pub fn commit(&self) -> Result<()> {
         let call = self.enter()?;
-        self.emptied(("COMMIT WORK", ""));
+        self.emptied((commands::COMMIT_WORK, commands::UNRECOGNIZED));
         self.diagnosed(self.db.noted(self.commit_in(&call)), |()| SqlState::SUCCESSFUL_COMPLETION)
     }
 
@@ -458,15 +459,14 @@ impl Session {
         if let Some(tx) = &ending {
             tx.set_sync_commit(st.settings.is_on(COMMIT_SYNC));
         }
+        // Whether it committed, though its definitions failed to publish.
+        let committed = Cell::new(false);
         let ended = match (&ending, staged) {
             (Some(tx), None) => st.commit(tx),
-            (Some(tx), Some(staged)) => self.db.commit_staged(tx, &staged),
+            (Some(tx), Some(staged)) => self.db.commit_staged(tx, &staged, &committed),
             (None, _) => return Ok(()),
         };
-        // In doubt, it is held, not ended (RULES.md D25).
-        if let (Some(tx), Err(e)) = (ending, &ended)
-            && e.code == Code::InDoubt
-        {
+        if let (Some(tx), true) = (ending, self.commit_ended(&ended, committed.get())) {
             self.db.hold_in_doubt(tx);
         }
         self.temporaries_ended(st, id);
@@ -490,7 +490,7 @@ impl Session {
     /// called back from a plug-in.
     pub fn rollback(&self) -> Result<()> {
         let call = self.enter()?;
-        self.emptied(("ROLLBACK WORK", ""));
+        self.emptied((commands::ROLLBACK_WORK, commands::UNRECOGNIZED));
         self.diagnosed(self.db.noted(self.rollback_in(call.state())), |()| SqlState::SUCCESSFUL_COMPLETION)
     }
 
@@ -525,6 +525,8 @@ impl Session {
             }
             (None, _) => return Ok(()),
         };
+        // [X3.135-1986 §8.9] Ended, every change undone or not (RULES.md D19).
+        self.transaction_ended(false);
         self.temporaries_ended(st, id);
         self.db.checkpoint_if_due();
         self.db.maintain_if_due();

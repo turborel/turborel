@@ -22,6 +22,7 @@
 //! while one of the transaction's cursors reads its table, the effect on an
 //! open cursor being implementation-defined too [§4.28].
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use super::alter::{Made, Reshape};
@@ -349,16 +350,19 @@ impl Database {
     /// Commits `tx`, publishing `staged`, its changes of definitions, with
     /// it: made on the definitions published by then, which no other
     /// transaction changed for the tables these are of, as it held their
-    /// locks; the definitions logged, so a checkpoint keeps them.
+    /// locks; the definitions logged, so a checkpoint keeps them. Sets
+    /// `committed` once it has committed, so a failure after is told from
+    /// one before.
     ///
     /// # Errors
     ///
     /// As for a commit; a change that cannot be made then, the transaction
     /// having committed (SQLCODE -910).
-    pub(super) fn commit_staged(&self, tx: &Txn, staged: &Staged) -> Result<()> {
+    pub(super) fn commit_staged(&self, tx: &Txn, staged: &Staged, committed: &Cell<bool>) -> Result<()> {
         let current = self.snapshot()?;
         let mut taken = Vec::new();
         let committed = current.commit_publishing(tx, &mut |at| {
+            committed.set(true);
             let dropped = self.change(|st| st.publish(staged, at));
             taken = dropped.map_err(|e| {
                 SqlError::new(

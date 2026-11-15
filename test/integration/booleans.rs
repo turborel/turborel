@@ -65,8 +65,27 @@ fn booleans_are_cast_6_13() {
     assert_eq!(code(&a, "SELECT CAST('yes' AS BOOLEAN) FROM T"), Code::Data, "22018");
     assert_eq!(rows(&a, "SELECT CAST(B AS CHAR(6)) || '|' FROM T WHERE K = 1").unwrap(), ["TRUE  |"]);
     assert_eq!(code(&a, "SELECT CAST(B AS CHAR(4)) FROM T WHERE K = 2"), Code::Data, "22018: FALSE is longer than 4");
-    assert!(exec(&a, "INSERT INTO T VALUES (4, 1)").is_err(), "a number is no truth value");
     a.commit().unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.5.2, §4.6.2, §9.2 SR3]
+/// a number is assignable to a numeric site alone, and a truth value to a
+/// Boolean one alone: an INSERT or UPDATE of a number into a BOOLEAN
+/// column, or of a truth value into an INTEGER one, is SQLCODE -103, as
+/// is GET DIAGNOSTICS of a number into a BOOLEAN target [§23.1 SR1, §9.1
+/// SR3]. A regression test: each was taken, the number to BOOLEAN failing
+/// only as it ran.
+#[test]
+fn numbers_and_truth_values_assigned_apart_4_6_2() {
+    let db = booleans();
+    let a = db.session("A");
+    a.run("INSERT INTO T VALUES (1, TRUE)").unwrap();
+    for sql in ["INSERT INTO T VALUES (4, 1)", "INSERT INTO T VALUES (TRUE, TRUE)", "UPDATE T SET B = 0", "UPDATE T SET K = B"] {
+        assert_eq!(exec(&a, sql).err(), Some(Code::SyntaxRule), "{sql}");
+    }
+    let mut p = dynamic_host().declare("TRUTH", DataType::Boolean, Value::Null);
+    assert_eq!(a.execute("GET DIAGNOSTICS TRUTH = ROW_COUNT", &mut p).err().map(|e| e.code), Some(Code::SyntaxRule));
+    assert_eq!(sorted(&a, "SELECT K, B FROM T"), ["1,TRUE"]);
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.46 SR3] a value written as a

@@ -14,6 +14,7 @@ use super::using::Targets;
 use super::{Name, dynamic_error, value_of};
 use crate::ast::{DescriptorItem, DynamicName, ExecuteStatement, ExtendedName, UsingClause, ValueSpecification};
 use crate::binder::{DescribedKey, OutColumn};
+use crate::db::area::commands::{self, Command};
 use crate::db::prepared::{Preparer, in_dynamic};
 use crate::db::{Completion, Prepared, Session, State, cursor_error};
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -160,8 +161,8 @@ impl Session {
     /// # Errors
     ///
     /// As `execute_named` or `execute_immediate`.
-    pub(in crate::db) fn execute_dynamic(&self, e: &ExecuteStatement, command: &'static str, params: &mut Params) -> Result<Completion> {
-        self.emptied((command, ""));
+    pub(in crate::db) fn execute_dynamic(&self, e: &ExecuteStatement, command: Command, params: &mut Params) -> Result<Completion> {
+        self.emptied((command, commands::UNRECOGNIZED));
         let done = match e {
             ExecuteStatement::Prepared { name, result, parameters } => {
                 self.execute_named(name, (result.as_ref(), parameters.as_ref()), params)
@@ -199,7 +200,7 @@ impl Session {
                 self.using_targets(result, &[], params, ("§8.10 GR8", "§8.10 GR9"))?;
             }
             let values = self.using_values(parameters, &types, params, "§17.10 GR4")?;
-            return self.run_prepared(&prepared, values, "EXECUTE");
+            return self.run_prepared(&prepared, values, commands::EXECUTE);
         }
         if !prepared.is_single_row() {
             let msg =
@@ -220,7 +221,7 @@ impl Session {
     /// parameters, put where `targets` says; no data if it has none.
     fn single_row(&self, prepared: &Prepared, values: Vec<Value>, targets: &Targets<'_>, params: &mut Params) -> Result<Completion> {
         let executing = Params::executing(values);
-        let mut rows = self.open_with(("EXECUTE", "SELECT"), |call| self.open_kept(call, prepared, &executing))?;
+        let mut rows = self.open_with((commands::EXECUTE, commands::DYNAMIC_SELECT), |call| self.open_kept(call, prepared, &executing))?;
         // [§13.5 GR2b] no row: no data.
         let Some(row) = rows.fetch()? else { return Ok(Completion::NoData) };
         if rows.fetch()?.is_some() {
@@ -246,7 +247,7 @@ impl Session {
             let msg = "[ISO/IEC 9075:1992 §17.11 GR3a, GR3c] a statement executed immediately is no query, and has no <dynamic parameter specification>";
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::DYNAMIC_SYNTAX_ERROR));
         }
-        self.run_prepared(&prepared, Vec::new(), "EXECUTE IMMEDIATE")
+        self.run_prepared(&prepared, Vec::new(), commands::EXECUTE_IMMEDIATE)
     }
 }
 

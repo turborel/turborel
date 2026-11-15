@@ -3,6 +3,7 @@
 //! them, each a `<direct SQL statement>`: a query, whose rows are read as
 //! they are fetched; a `<schema definition>`; or any other statement.
 
+use super::area::commands;
 use super::{Completion, Direct, Session};
 use crate::ast::AccessMode;
 use crate::error::{Code, Result, fail};
@@ -52,7 +53,7 @@ impl Session {
     /// \[SR2b\], so a user cannot create objects in another's name.
     /// `Database::schema`, the operator's, may create any.
     fn own_schema(&self, sql: &str) -> Result<Completion> {
-        self.emptied(("CREATE SCHEMA", ""));
+        self.emptied((commands::CREATE_SCHEMA, commands::UNRECOGNIZED));
         let made = self.schema_owned(sql);
         self.diagnosed(made, |done| done.sqlstate())
     }

@@ -1,5 +1,5 @@
 //! \[EXTENSION\] A session's diagnostics area [ISO/IEC 9075:1992 §4.19],
-//! and GET DIAGNOSTICS, which reads it [§18.1].
+//! and GET DIAGNOSTICS, which reads it [§18.1; ISO/IEC 9075-2:2023 §23.1].
 //!
 //! Every statement but GET DIAGNOSTICS empties the area as it begins, and
 //! places its condition there as it ends: the one its SQLCODE and SQLSTATE
@@ -7,23 +7,29 @@
 //! condition after each statement, none before the session's first.
 //! Another it raised is left out, and MORE says so. What the condition is
 //! about, a constraint, table, column or cursor, is what its error names
-//! (`error::Subject`).
+//! (`error::Subject`). The transactions the statement committed and
+//! rolled back are counted there too (Feature T511).
 //!
 //! A warning an expression raises as the statement runs, of a CAST
 //! [§6.10] or a set function [§6.5 GR1b], is heard by the session's
 //! `error::Warnings`, emptied as the area is, and is the statement's
 //! completion if it would be successful (`Completion::warned`).
 
+pub(super) mod commands;
+
+mod all;
+
+use self::commands::Command;
 use super::assignment::{assign_targets, declared_type};
 use super::{Completion, Session, State, rule};
-use crate::ast::{ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, ValueSpecification};
-use crate::binder;
+use crate::ast::{AllQualifier, ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, ValueSpecification};
+use crate::binder::{self, assignable};
 use crate::catalog::{QualifiedName, applicable, owner_of};
 use crate::error::{Code, Result, SqlState, Subject, fail_with};
 use crate::lexer::kw;
 use crate::params::Params;
 use crate::settings::CATALOG_NAME;
-use crate::value::{DataType, Decimal, Value};
+use crate::value::{DataType, Decimal, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Spelled, Value};
 
 /// \[DESIGN\] The naming authority of the conditions this implementation
 /// defines, its SQLSTATE class TB [§18.1 GR3b, GR3c].
@@ -46,14 +52,19 @@ const DEFAULT_CONNECTION: &str = kw::DEFAULT;
 /// DIAGNOSTICS raised.
 #[derive(Debug, Clone, Default)]
 pub(super) struct Area {
-    /// [§18.1 GR1c, Table 22] The statement, as COMMAND_FUNCTION names it.
-    command: &'static str,
+    /// [§18.1 GR1c, Table 22] The statement, as COMMAND_FUNCTION and
+    /// [ISO/IEC 9075-2:2023 §23.1 GR2d] COMMAND_FUNCTION_CODE name it.
+    command: Command,
     /// [§18.1 GR1d] The prepared statement it executed, as
-    /// DYNAMIC_FUNCTION names it; empty for one not prepared.
-    dynamic: &'static str,
+    /// DYNAMIC_FUNCTION and DYNAMIC_FUNCTION_CODE name it; unrecognized
+    /// for one not prepared.
+    dynamic: Command,
     /// [§18.1 GR1e] The rows it inserted, updated or deleted; 0 for a
     /// statement of another kind.
     row_count: usize,
+    /// [ISO/IEC 9075-2:2023 §23.1 GR2h, GR2i] The transactions it
+    /// committed, and those it rolled back.
+    ended: Ended,
     /// Its condition, once it ended.
     condition: Option<Condition>,
     /// The warning taken as it ended, kept to see if its condition is
@@ -61,6 +72,14 @@ pub(super) struct Area {
     heard: Option<SqlState>,
     /// [§18.1 GR1b] Whether it raised a condition not stored.
     more: bool,
+}
+
+/// [ISO/IEC 9075-2:2023 §23.1 GR2h, GR2i] The SQL-transactions a
+/// statement ended.
+#[derive(Debug, Clone, Copy, Default)]
+struct Ended {
+    committed: usize,
+    rolled_back: usize,
 }
 
 /// A condition placed in the area.
@@ -77,10 +96,31 @@ impl Session {
     /// [ISO/IEC 9075:1992 §4.19] The area emptied, as a statement other
     /// than GET DIAGNOSTICS begins: one `command` names, of the prepared
     /// statement `dynamic` names, if one.
-    pub(super) fn emptied(&self, (command, dynamic): (&'static str, &'static str)) {
+    pub(super) fn emptied(&self, (command, dynamic): (Command, Command)) {
         self.inner.borrow_mut().area = Area { command, dynamic, ..Area::default() };
         self.stop.warnings().take();
         self.stop.warnings().take_left_out();
+    }
+
+    /// [ISO/IEC 9075-2:2023 §23.1 GR2h, GR2i] The session's transaction
+    /// ended, committed or not, counted in the area.
+    pub(super) fn transaction_ended(&self, committed: bool) {
+        let ended = &mut self.inner.borrow_mut().area.ended;
+        let count = if committed { &mut ended.committed } else { &mut ended.rolled_back };
+        *count = count.saturating_add(1);
+    }
+
+    /// [ISO/IEC 9075-2:2023 §23.1 GR2h, GR2i] A commit whose outcome is
+    /// `ended` counted: committed if it succeeded, or if it had
+    /// `committed` before a failure after; else rolled back [X3.135-1986
+    /// §8.2], unless it is held in doubt (RULES.md D25), counted neither.
+    /// Whether it is in doubt, and so to be held, not ended.
+    pub(super) fn commit_ended(&self, ended: &Result<()>, committed: bool) -> bool {
+        let in_doubt = ended.as_ref().err().is_some_and(|e| e.code == Code::InDoubt);
+        if !in_doubt {
+            self.transaction_ended(ended.is_ok() || committed);
+        }
+        in_doubt
     }
 
     /// [ISO/IEC 9075:1992 §3.3.4.1] The warning the statement raised as it
@@ -133,43 +173,74 @@ impl Session {
         }
     }
 
-    /// [ISO/IEC 9075:1992 §18.1] GET DIAGNOSTICS `get`: what the area holds
-    /// assigned to its targets; the area as it was.
+    /// [ISO/IEC 9075:1992 §18.1; ISO/IEC 9075-2:2023 §23.1] GET
+    /// DIAGNOSTICS `get`: what the area holds assigned to its targets; the
+    /// area as it was.
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if a target is not of its item's type \[SR1\], or the
-    /// condition number not exact with scale 0 \[SR2\]; -301, SQLSTATE
-    /// 35000, if no condition has that number \[GR2\].
+    /// SQLCODE -103 if an item cannot be assigned to its target \[SR1\],
+    /// ALL's target is not a character string \[SR2\], or the condition
+    /// number is not exact with scale 0 \[SR3\]; -301, SQLSTATE 35000, if
+    /// no condition has that number \[GR3\]; 22001 if ALL's string is
+    /// longer than a string may be.
     pub(super) fn get_diagnostics(&self, st: &State, get: &GetDiagnostics, params: &mut Params) -> Result<Completion> {
         let area = self.inner.borrow().area.clone();
-        let count = usize::from(area.condition.is_some());
+        // [§23.1 GR2j] whether one is active now, as GET DIAGNOSTICS begins
+        // none [ISO/IEC 9075:1992 §4.28].
+        let active = self.inner.borrow().tx.is_some();
+        let statement = |item: StatementItem| area.value(item, active);
         let (targets, values) = match get {
-            GetDiagnostics::Statement(items) => {
-                let value = |item: StatementItem| match item {
-                    StatementItem::Number => number(count),
-                    StatementItem::More => text(if area.more { "Y" } else { "N" }),
-                    StatementItem::CommandFunction => text(area.command),
-                    StatementItem::DynamicFunction => text(area.dynamic),
-                    StatementItem::RowCount => number(area.row_count),
-                };
-                typed(items.iter().map(|(t, item)| (t, item.numeric(), value(*item))), params)?
-            }
-            GetDiagnostics::Condition { number: n, items } => {
-                let n = condition_number(n, &self.auth(), params)?;
-                let Some(condition) = area.condition.as_ref().filter(|_| n == 1) else {
-                    let msg = format!("[ISO/IEC 9075:1992 §18.1 GR2] there is no condition {n}: the area holds {count}");
-                    return fail_with(Code::Data, SqlState::INVALID_CONDITION_NUMBER, msg);
-                };
+            GetDiagnostics::Statement(items) => typed(items.iter().map(|(t, item)| (t, item.numeric(), statement(*item))), params)?,
+            GetDiagnostics::Condition { number, items } => {
+                let (n, condition) = area.numbered(number, &self.auth(), params)?;
                 let shown = self.shown(st, condition);
-                let value = |item: ConditionItem| shown.value(item, (n, condition));
-                typed(items.iter().map(|(t, item)| (t, item.numeric(), value(*item))), params)?
+                typed(items.iter().map(|(t, item)| (t, item.numeric(), shown.value(*item, (n, condition)))), params)?
+            }
+            GetDiagnostics::All { target, qualifier } => {
+                let presented = self.presented(st, (&area, active), qualifier, params)?;
+                (vec![all_target(target, params)?], vec![all::concatenated(presented)?])
             }
         };
         // [X3.135-1986 §8.6 GR8-GR10; ISO/IEC 9075:1992 §9.1] as a FETCH
         // assigns: a string cut is a warning, though the area is left as
         // it was [§18.1 GR1a].
         assign_targets(&values, &targets, params, "§8.6 GR8", "§8.6 GR10")
+    }
+
+    /// [ISO/IEC 9075-2:2023 §23.1 GR6a] The items `<all information>`
+    /// presents, by name, of the area `area` read while a transaction is
+    /// `active` or not, as `qualifier` asks: the statement's, each
+    /// condition's preceded by its CONDITION_NUMBER, or those of the one
+    /// condition its number names, without it.
+    fn presented(
+        &self,
+        st: &State,
+        (area, active): (&Area, bool),
+        qualifier: &AllQualifier,
+        params: &Params,
+    ) -> Result<Vec<(&'static str, Value)>> {
+        let mut presented = Vec::new();
+        if let AllQualifier::Everything | AllQualifier::Statement = qualifier {
+            presented.extend(StatementItem::EVERY.map(|item| (item.name(), area.value(item, active))));
+        }
+        let conditions = match qualifier {
+            AllQualifier::Statement => Vec::new(),
+            AllQualifier::Everything | AllQualifier::Condition(None) => area.conditions().map(|(n, c)| (true, n, c)).collect(),
+            AllQualifier::Condition(Some(number)) => {
+                let (n, condition) = area.numbered(number, &self.auth(), params)?;
+                vec![(false, n, condition)]
+            }
+        };
+        for (numbered, n, condition) in conditions {
+            if numbered {
+                presented.push((ConditionItem::ConditionNumber.name(), number(n)));
+            }
+            let shown = self.shown(st, condition);
+            let items = ConditionItem::EVERY.into_iter().filter(|item| *item != ConditionItem::ConditionNumber);
+            presented.extend(items.map(|item| (item.name(), shown.value(item, (n, condition)))));
+        }
+        Ok(presented)
     }
 
     /// The names `condition` gives, as this session's authorization
@@ -194,6 +265,43 @@ impl Session {
         };
         let constraint = constraint.clone().filter(shown_constraint);
         Shown { catalog, constraint, column: column.clone().filter(|_| table.is_some()), table, cursor: cursor.clone() }
+    }
+}
+
+impl Area {
+    /// The value of statement information item `item`, read while a
+    /// transaction is `active` or not [ISO/IEC 9075:1992 §18.1 GR1;
+    /// ISO/IEC 9075-2:2023 §23.1 GR2].
+    fn value(&self, item: StatementItem, active: bool) -> Value {
+        match item {
+            StatementItem::Number => number(self.conditions().count()),
+            StatementItem::More => text(if self.more { "Y" } else { "N" }),
+            StatementItem::CommandFunction => text(self.command.identifier),
+            StatementItem::CommandFunctionCode => code(self.command),
+            StatementItem::DynamicFunction => text(self.dynamic.identifier),
+            StatementItem::DynamicFunctionCode => code(self.dynamic),
+            StatementItem::RowCount => number(self.row_count),
+            StatementItem::TransactionsCommitted => number(self.ended.committed),
+            StatementItem::TransactionsRolledBack => number(self.ended.rolled_back),
+            StatementItem::TransactionActive => number(usize::from(active)),
+        }
+    }
+
+    /// Each condition the area holds, by its number: the one its statement
+    /// raised, if it has ended.
+    fn conditions(&self) -> impl Iterator<Item = (i128, &Condition)> {
+        self.condition.iter().map(|c| (1, c))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §23.1 SR3, GR3] The condition the `<condition
+    /// number>` `n` names, and its number.
+    fn numbered(&self, n: &ValueSpecification, auth: &str, params: &Params) -> Result<(i128, &Condition)> {
+        let n = condition_number(n, auth, params)?;
+        if let Some((_, condition)) = self.conditions().find(|(at, _)| *at == n) {
+            return Ok((n, condition));
+        }
+        let msg = format!("[ISO/IEC 9075:1992 §18.1 GR2] there is no condition {n}: the area holds {}", self.conditions().count());
+        fail_with(Code::Data, SqlState::INVALID_CONDITION_NUMBER, msg)
     }
 }
 
@@ -236,6 +344,19 @@ impl Shown {
             ConditionItem::MessageText => text(&condition.message),
             ConditionItem::MessageLength => number(condition.message.chars().count()),
             ConditionItem::MessageOctetLength => number(condition.message.len()),
+            // [ISO/IEC 9075-2:2023 §23.1 GR4l iii 2, GR5] 0 and zero-length
+            // strings. turborel has no trigger, and a condition of a
+            // distinct type's function is one of the CAST it stands for.
+            ConditionItem::ParameterOrdinalPosition => number(0_usize),
+            ConditionItem::ParameterMode
+            | ConditionItem::ParameterName
+            | ConditionItem::RoutineCatalog
+            | ConditionItem::RoutineName
+            | ConditionItem::RoutineSchema
+            | ConditionItem::SpecificName
+            | ConditionItem::TriggerCatalog
+            | ConditionItem::TriggerName
+            | ConditionItem::TriggerSchema => text(""),
         }
     }
 }
@@ -244,24 +365,45 @@ fn text(s: &str) -> Value {
     Value::Char(s.to_owned())
 }
 
-fn number(n: usize) -> Value {
-    Value::Exact(Decimal::new(i128::try_from(n).unwrap_or(i128::MAX), 0))
+fn number(n: impl TryInto<i128>) -> Value {
+    Value::Exact(Decimal::new(n.try_into().unwrap_or(i128::MAX), 0))
 }
 
-/// [ISO/IEC 9075:1992 §18.1 SR1] The targets and their values, each
-/// target of its item's data type: exact numeric with scale 0 if `numeric`,
-/// else a character string (Table 21).
+/// [ISO/IEC 9075-2:2023 §23.1 GR2d, GR2e] The code of `command`.
+fn code(command: Command) -> Value {
+    Value::Exact(Decimal::new(i128::from(command.code), 0))
+}
+
+/// [ISO/IEC 9075-2:2023 §23.1 Table 37, Table 38] An item's declared type:
+/// exact numeric with scale 0 if `numeric`, here of the greatest
+/// precision, else a character string, here of the longest a varying one
+/// may be (IL205).
+fn declared(numeric: bool) -> DataType {
+    if numeric {
+        DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric }
+    } else {
+        DataType::varying(MAX_CHARACTER_LENGTH)
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §23.1 SR1, §9.1 SR3, SR5b] The targets and their
+/// values, each item's type assignable to its target's (Feature F122):
+/// an exact numeric item to a target of any numeric type, a character
+/// string item to one of any character string type.
 fn typed<'a>(
     items: impl Iterator<Item = (&'a ParameterSpecification, bool, Value)>,
     params: &Params,
 ) -> Result<(Vec<ParameterSpecification>, Vec<Value>)> {
     let (mut targets, mut values) = (Vec::new(), Vec::new());
     for (target, numeric, value) in items {
-        let declared = declared_type(params, &target.name)?;
-        let fits = if numeric { matches!(declared, DataType::Exact { scale: 0, .. }) } else { declared.is_character() };
-        if !fits {
-            let wanted = if numeric { "exact numeric with scale 0" } else { "a character string" };
-            return Err(rule(format!("[ISO/IEC 9075:1992 §18.1 SR1] target {} is {declared}, not {wanted}", target.name)).or_at(target.at));
+        let target_type = declared_type(params, &target.name)?;
+        let item_type = declared(numeric);
+        if !assignable(&target_type, &item_type) {
+            let msg = format!(
+                "[ISO/IEC 9075-2:2023 §23.1 SR1, §9.1 SR3] a {item_type} item cannot be assigned to {} ({target_type})",
+                target.name
+            );
+            return Err(rule(msg).or_at(target.at));
         }
         targets.push(target.clone());
         values.push(value);
@@ -269,9 +411,20 @@ fn typed<'a>(
     Ok((targets, values))
 }
 
-/// [ISO/IEC 9075:1992 §18.1 SR2] The `<condition number>` `n`'s value.
+/// [ISO/IEC 9075-2:2023 §23.1 SR2] The `<all info target>` `target`, of a
+/// character string type.
+fn all_target(target: &ParameterSpecification, params: &Params) -> Result<ParameterSpecification> {
+    let target_type = declared_type(params, &target.name)?;
+    if !target_type.is_character() {
+        let msg = format!("[ISO/IEC 9075-2:2023 §23.1 SR2] target {} of ALL is {target_type}, not a character string", target.name);
+        return Err(rule(msg).or_at(target.at));
+    }
+    Ok(target.clone())
+}
+
+/// [ISO/IEC 9075-2:2023 §23.1 SR3] The `<condition number>` `n`'s value.
 fn condition_number(n: &ValueSpecification, auth: &str, params: &Params) -> Result<i128> {
-    let not_exact = || rule("[ISO/IEC 9075:1992 §18.1 SR2] the <condition number> is exact numeric with scale 0".to_owned());
+    let not_exact = || rule("[ISO/IEC 9075-2:2023 §23.1 SR3] the <condition number> is exact numeric with scale 0".to_owned());
     let (value, data_type) = binder::value_specification(n, auth, params)?;
     if !matches!(data_type, DataType::Exact { scale: 0, .. }) {
         return Err(not_exact());

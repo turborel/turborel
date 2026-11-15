@@ -50,7 +50,7 @@ pub use composite::{Composite, ValueOrder};
 pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
 pub use contents::{AsSubquery, LikeClause};
 pub use cursor::{DeclareCursor, FetchOrientation};
-pub use diagnostics::{ConditionItem, GetDiagnostics, StatementItem};
+pub use diagnostics::{AllQualifier, ConditionItem, GetDiagnostics, StatementItem};
 pub use drop::{DropBehavior, DropObject};
 pub use dynamic::{
     DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, HeaderItem, Scope, SetDescriptor,

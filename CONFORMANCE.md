@@ -498,6 +498,7 @@ Feature T031 (BOOLEAN data type).
 | `<boolean value expression>` as a value | §6.29, §6.46 | Where a select list, a VALUES row, an UPDATE's SET, a CASE result, CAST, COALESCE, NULLIF or a set function takes a `<value expression>`, and in parentheses. A comparison's operands are `<common value expression>`s, so a condition compared is parenthesized. |
 | `<boolean predicand>` | §6.46 SR3 | A value alone, no predicate's operator after it, is a condition, and of type BOOLEAN, else SQLCODE -103. IS TRUE, FALSE and UNKNOWN test it [§6.46], and IS NULL is its null predicate [§8.8]. |
 | CASE and COALESCE | §9.5 SR3f | Their results are all BOOLEAN or none, else SQLCODE -103. |
+| Assignment | §4.5.2, §4.6.2, §9.1 SR3, §9.2 SR3 | A truth value to a BOOLEAN site alone, and a number to a numeric one alone, else SQLCODE -103. |
 | CAST | §6.13 GR11f, GR12f, GR21 | A character string casts to BOOLEAN as a `<boolean literal>`, its spaces trimmed and in any case, else SQLSTATE 22018. A truth value casts to a string as 'TRUE' or 'FALSE', 22018 if it is too short. No other type casts to or from BOOLEAN. |
 | EVERY, ANY, SOME | §10.9 SR7e, GR7d | Set functions of a BOOLEAN argument, nulls left out, null of no values. ANY and SOME before a subquery are a quantifier [92 §8.7], before anything else the set function. |
 | Descriptor areas | §20.1 Table 30, SR6j | TYPE 16, with no other field. |
@@ -941,6 +942,39 @@ earlier clause took, since no later clause can be its row's clause.
 MERGE, which SQL:2023 reserves and SQL-92 does not, stays an identifier,
 a key word only where INTO follows it at the start of a statement.
 MATCHED is a non-reserved word.
+
+### Diagnostics
+
+Features F122 (Enhanced diagnostics management), F123 (All diagnostics)
+and T511 (Transaction counts). GET DIAGNOSTICS reads the diagnostics
+area as [SQL-92's](#queries-and-expressions) does, with what SQL:2023
+adds to it [§23.1].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Targets | §23.1 SR1, CR3, §9.1 SR3, SR5 | An item goes to a target of any type its value is assignable to, a number to any numeric type, a character string to any character string type, as FETCH assigns it. A number too large for its target is SQLSTATE 22003, a string cut to fit the warning 01004. Any other target is SQLCODE -103. |
+| ALL | SR2, GR6a, CR4 | ALL, ALL STATEMENT, ALL CONDITION and ALL CONDITION n put the items into one character string, each as `NAME = value`, joined by semicolons. An item whose value is a zero-length string, or spaces alone, which compare equal to one [§8.2 GR3b], is left out. A target of another type is SQLCODE -103, a condition number of no condition SQLSTATE 35000. |
+| Transaction counts | GR2h, GR2i, GR2j, CR2 | TRANSACTIONS_COMMITTED and TRANSACTIONS_ROLLED_BACK count the transactions the statement committed and rolled back, by COMMIT, ROLLBACK, EXECUTE IMMEDIATE of either or the Rust API. A COMMIT that fails rolls back, and is counted so. TRANSACTION_ACTIVE is 1 while a transaction is active. |
+| Codes | GR2c to GR2e, Table 39 | COMMAND_FUNCTION_CODE and DYNAMIC_FUNCTION_CODE give each statement's code, 0 of one that did not parse and of none prepared. |
+| CONDITION | Format | CONDITION n reads a condition as SQL-92's EXCEPTION n does. |
+| Routines and triggers | GR4g, GR4l, GR4q, GR5 | Their items are zero-length strings, and PARAMETER_ORDINAL_POSITION 0. turborel has no triggers, and a condition of a distinct type's function is read as one of CAST (see [Readings](#readings-of-ambiguous-text)). |
+
+COMMAND_FUNCTION and DYNAMIC_FUNCTION keep SQL-92's identifiers [92
+§18.1 Table 22], and the codes are SQL:2023's, so a code tells apart
+statements one identifier names. SELECT is 65 of SELECT ... INTO, 21 of
+the Rust API's cursor and 41 of a statement prepared and executed INTO
+targets. A positioned UPDATE or DELETE of a dynamic cursor is 42 or 38,
+one prepared 55 or 54. A cursor specification prepared and opened, which
+Table 22 has no row for, takes Table 39's identifier, SELECT CURSOR, and
+code 85.
+
+A transaction held in doubt (RULES.md D25) is counted neither committed
+nor rolled back, as recovery decides it. The index and user statements
+run outside a transaction, so they end none. A transaction that commits
+and fails to publish its definitions after (SQLCODE -910) is counted
+committed. CONDITION and STATEMENT are no key words of SQL-92, so each
+stays an identifier, a key word only in GET DIAGNOSTICS, and a parameter
+named CONDITION is still a target where = follows it.
 
 ### LIKE and AS in CREATE TABLE
 
@@ -1706,6 +1740,12 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §4.19 the size of the diagnostics area, and the order of its conditions | One condition, the statement's, successful completion too [§4.18] | `db/area.rs` |
 | §18.1 GR1e ROW_COUNT after other statements; Table 21's L; GR3b, GR3c an implementation's class origin; GR3k MESSAGE_TEXT | 0; the longest character string (L is never reached); TURBOREL for class TB; the error's message with its rule, empty for a completion | `db/area.rs` |
 | §14.1 GR6, GR7 diagnostics area limit | A statement reports one condition, so any limit of 1 or more holds | `db/session.rs` |
+| 2023 §23.1 Table 37, Table 38, IL205, the maximum length of a character string item | 32,767 characters, the longest character string varying | `db/area.rs` |
+| 2023 §23.1 GR2d, GR2e, Table 39, IE005, IV190, IV212, the identifiers and codes of this implementation's statements | Each statement's first words, and a negative code of its own, -1 to -13, as the manual's page of GET DIAGNOSTICS lists them | `db/area/commands.rs` |
+| 2023 §23.1 GR2e, IA156, whether a dynamic select statement prepared and not yet executed is described by its identifier and code | None is described. Only EXECUTE and the Rust API's open of a prepared statement set DYNAMIC_FUNCTION, and only as they run it | `db/execute.rs`, `db/prepared.rs` |
+| 2023 §23.1 GR2g, UV121, ROW_COUNT after a statement that is no INSERT, searched UPDATE or DELETE, or MERGE | 0 | `db/area.rs` |
+| 2023 §23.1 GR6a, US050, the order of the items of ALL | The order of the Format's lists of item names, statement items first, then each condition's CONDITION_NUMBER and items | `db/area.rs`, `ast/diagnostics.rs` |
+| 2023 §23.1 GR6a, IL006, M, the maximum length of CHARFORM's CAST | 32,767 characters, ALL's whole string bounded so too [§6.32 GR2b ii 3 B] | `db/area/all.rs` |
 
 ### Dynamic SQL
 
@@ -1861,3 +1901,7 @@ Where the standards are unclear, turborel reads them as follows.
 | Which collation a session's statement is prepared under [2023 §9.15 SR4c] | Its Syntax Rules apply as it is prepared, so it keeps that collation at every execution and rebind, unlike the time zone (RULES.md D45). |
 | A `?` beside a TIME [§17.6 GR5f ii, §6.14 SR3] | GR5f gives the `?` INTERVAL DAY TO SECOND, though §6.14 SR3 lets a time take no day field. The type is kept as GR5f says, and the days do not move a time of day. |
 | The default connection's names [§18.1 GR3n ii, §12.3 GR6c i] | A session the host program starts effectively ran CONNECT TO DEFAULT, whose text gives no name of a connection or server. CONNECTION_NAME and SERVER_NAME are each read as `DEFAULT`, the word that stands for them. |
+| ALL CONDITION of a number no condition has [2023 §23.1 GR3, GR6a iii] | GR3's exception is written of a `<condition information>`, and GR6a iii reads condition area CN as GR3 does. A number of no condition is read as GR3 reads it, SQLSTATE 35000. |
+| The items of ALL [2023 §23.1 GR6a ii 2, GR6a iii] | "CIN is the `<condition number>` of CII" is read as the `<condition information item name>` of CII, as SIN is a statement item's name. CONDITION_NUMBER is presented once for each condition, before its items and not among them, and ALL CONDITION with a number presents none, as GR6a iii names no COND. |
+| TRANSACTION_ACTIVE [2023 §23.1 GR2j] | "Currently active" is read as GET DIAGNOSTICS runs, which begins no transaction, so it tells whether the statement before left one active. |
+| The routine a condition is raised in [2023 §23.1 GR4l, GR4q] | The only SQL-invoked routines are the functions a distinct type's definition makes, which take a value of their parameter's type and give it back as their result's [§11.51 GR2b]. A condition raised as one is invoked is read as one of the CAST it stands for, so no condition names a routine, and ROUTINE_CATALOG, ROUTINE_SCHEMA, ROUTINE_NAME, SPECIFIC_NAME, PARAMETER_MODE and PARAMETER_NAME are zero-length strings, PARAMETER_ORDINAL_POSITION 0. |

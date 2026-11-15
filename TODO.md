@@ -41,9 +41,7 @@ Nothing is open.
 
 ### Changing data
 
-- GET DIAGNOSTICS into targets of another type (F122), ALL (F123) and the
-  transaction counts (T511) [§23.1]. Each target must be of its item's
-  type today.
+Nothing is open.
 
 ### Triggers, routines and roles
 

@@ -5,6 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use super::area::commands::{self, Command};
 use super::stream::Stream;
 use super::{Completion, Cursor, Session, State, rule};
 use crate::ast::{CursorSpecification, Updatability};
@@ -25,16 +26,12 @@ impl Session {
     pub fn open_cursor(&self, sql: &str) -> Result<Cursor> {
         // [ISO/IEC 9075:1992 §18.1 Table 22] a <direct select statement:
         // multiple rows>.
-        self.open_with(("SELECT", ""), |call| self.open_in(call, sql, &Params::new()))
+        self.open_with((commands::SELECT_ROWS, commands::UNRECOGNIZED), |call| self.open_in(call, sql, &Params::new()))
     }
 
     /// An unnamed cursor `open` opens in a call, as `open_cursor` opens
     /// one: the diagnostics area naming it as `command` says.
-    pub(super) fn open_with(
-        &self,
-        command: (&'static str, &'static str),
-        open: impl FnOnce(&super::Call<'_>) -> Result<Cursor>,
-    ) -> Result<Cursor> {
+    pub(super) fn open_with(&self, command: (Command, Command), open: impl FnOnce(&super::Call<'_>) -> Result<Cursor>) -> Result<Cursor> {
         let call = self.enter()?;
         self.emptied(command);
         let opened = open(&call);
