@@ -30,6 +30,11 @@ path = "test/integration/main.rs"
 # `harness = false`: each has its own `main`, on that harness rather than libtest's.
 
 [[bench]]
+name = "spatial_index"
+path = "bench/spatial_index.rs"
+harness = false
+
+[[bench]]
 name = "scaling"
 path = "bench/scaling.rs"
 harness = false
