@@ -17,6 +17,7 @@
 pub mod columns;
 pub mod hash;
 pub mod key;
+mod locks;
 pub mod record;
 pub mod rows;
 pub mod tree;

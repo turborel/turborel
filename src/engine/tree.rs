@@ -17,7 +17,7 @@
 //!   latch, held only while that one node is read (the paper's atomic
 //!   `get`, §2), and move right when the key is past it.
 //! * **Writers** go down the same way, remembering the rightmost node they
-//!   read at each level. They lock the leaf (`locks.rs`), move right if it
+//!   read at each level. They lock the leaf (`engine/locks.rs`), move right if it
 //!   has split, and change it in place if the change fits and starts no
 //!   run (`node.rs`). Otherwise they split it: the right half written to a new page first, then the left
 //!   half over the old one, which together are one change to the tree
@@ -49,7 +49,6 @@
 //! after (`disk/shadow.rs`, RULES.md D25).
 
 mod load;
-mod locks;
 mod near;
 mod node;
 mod reclaim;
@@ -60,7 +59,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use locks::{Locks, NodeLock};
+use super::locks::{Locks, NodeLock};
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, Node, Shape};
 pub use scan::{Direction, Scan, scan_of};
 pub use write::Update;
