@@ -14,6 +14,10 @@ use crate::lexer::{Tok, delim, kw};
 /// statement>`: SQL:2023 reserves it, SQL-92 does not, so it stays a
 /// `<regular identifier>` elsewhere.
 pub(crate) const TRUNCATE: &str = "TRUNCATE";
+/// \[EXTENSION\] The word that begins `EXPLAIN <cursor specification>`,
+/// a direct statement showing a query's plan (`db/explain.rs`). No
+/// standard reserves it, so it stays a `<regular identifier>` elsewhere.
+pub(crate) const EXPLAIN: &str = "EXPLAIN";
 
 /// Whether the tokens `first` and `second` begin a `<truncate table
 /// statement>`, not a query: TRUNCATE, then TABLE, which, reserved, no

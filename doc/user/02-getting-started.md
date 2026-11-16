@@ -5,20 +5,37 @@
 ## Connecting with the turborel client
 
 With a server running ([Running the Server](../operator/02-turboreld.md)),
-connect to it with `turborel`, as a user of the database:
+connect to it with `turborel`, as a user of the database. A password is
+proved only over a Unix socket, a named pipe or TLS, never over plain
+TCP, so a server of this machine is best reached at its socket. Start it
+with one, here a database kept in memory and owned by ANN:
 
 ```
-$ turborel -U ann -W
+$ turboreld --memory --owner ann --set SERVER.SOCKET=/run/turborel/socket
+password:
+turboreld: listening at 127.0.0.1:7422, /run/turborel/socket
+```
+
+Then connect at that socket:
+
+```
+$ turborel --socket /run/turborel/socket -U ann -W
 password:
 turborel 0.0.0 (alpha), the command-line client
 Copyright 2026, Turborel contributors.
 Distributed under the BSD 2-Clause License.
 
-Connected to turborel 0.0.0 (alpha) at 127.0.0.1:7422, as ANN.
+Connected to turborel 0.0.0 (alpha) at the socket /run/turborel/socket, as ANN.
 End each statement with a semicolon; end of input (Ctrl-D) quits.
 
 turborel>
 ```
+
+On Windows the socket is a named pipe, as `\\.\pipe\turborel`. A server
+of another machine is reached over TLS, with `--tls` ([The turborel
+Command](../client/01-turborel.md), [Connections](../operator/06-network.md)).
+Connecting with a password over plain TCP is refused before the password
+is asked for.
 
 `-W` asks for the password. Each statement runs once a semicolon ends
 it; it may go over many lines. The examples of this guide show a null
@@ -76,6 +93,14 @@ SELECT D.NAME, COUNT(*) AS STAFF, AVG(E.SALARY) AS AVERAGE
  Operations                     |                    1 |            5400.0000
 (2 rows)
 ```
+
+A column the query names, by a column of a table or by AS, is headed by
+that name. One it does not name, as `COUNT(*)` written without AS, has an
+empty heading. An exact number is shown to its type's scale. AVG of
+DECIMAL(9,2) has four places after the point, so AVERAGE above shows
+four, and a digit past them is dropped, not rounded. An approximate
+number, REAL or DOUBLE PRECISION, is shown in E notation, 11 as 1.1E1
+([Data Types](../sql/02-data-types.md)).
 
 And what the tables refuse:
 

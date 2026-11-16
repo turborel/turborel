@@ -279,6 +279,16 @@ fn the_truncate_examples_run_as_printed() {
     assert!(ann.page("sql/statements/truncate-table.md") > 0, "it shows its examples' output");
 }
 
+/// Verifies: [DESIGN] RULES.md R-DOC-8: the examples of EXPLAIN run as
+/// printed, as ANN, the client showing its plan's lines as rows.
+#[test]
+fn the_explain_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/statements/explain.md") > 0, "it shows its examples' output");
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D65, D66: the examples of CREATE
 /// TABLE run as printed, as ANN, those of LIKE and AS, and of UNIQUE
 /// NULLS NOT DISTINCT, among them.

@@ -158,8 +158,11 @@ impl Parser {
             let table = self.table_name()?;
             return Ok(all_of(TableReference::Table(NamedTable { table, correlation: None, columns: None })));
         }
-        let at = self.here();
+        let (at, first) = (self.here(), self.pos == 0);
         let joined = self.table_reference()?;
+        if let (TableReference::Table(named), true) = (&joined, first) {
+            return Err(SqlError::at(Code::Syntax, at, unknown_statement(&named.table.ident)));
+        }
         if !matches!(joined, TableReference::Joined(_)) {
             return Err(SqlError::at(
                 Code::Syntax,
@@ -531,4 +534,11 @@ impl Parser {
 fn all_of(from: TableReference) -> QueryExpression {
     let table_expression = TableExpression { from: vec![from], where_clause: None, group_by: None, having: None, window: Vec::new() };
     QueryExpression::Spec(Box::new(QuerySpecification { distinct: false, select_list: SelectList::Star, table_expression }))
+}
+
+/// [ISO/IEC 9075:1992 §7.10 F] Why a statement whose first word, `word`,
+/// begins no statement and is read as a table's name not followed by a
+/// join is refused.
+fn unknown_statement(word: &str) -> String {
+    format!("[ISO/IEC 9075:1992 §7.10 F] {word} begins no SQL statement, and read as a table's name it is followed by no join")
 }

@@ -149,6 +149,10 @@ fn main() -> Result<(), turborel::error::SqlError> {
 }
 ```
 
+`explain` gives the text of a query's plan that [EXPLAIN](../sql/statements/explain.md)
+shows as rows, without running it, its parameters of the values a
+`Params` gives. `physical_plan` gives the physical plan alone.
+
 ## Parameters
 
 A program's own values reach a statement as parameters, as SQL-86's

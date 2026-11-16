@@ -52,6 +52,7 @@ One reference page for each statement, in alphabetical order.
 - [END CONNECTION](end-connection.md): end a connection of the server
 - [EXECUTE](execute.md): run a statement prepared
 - [EXECUTE IMMEDIATE](execute-immediate.md): prepare a statement and run it at once
+- [EXPLAIN](explain.md): show how a query is planned
 - [FETCH](fetch.md): move a cursor and read its row
 - [GET DESCRIPTOR](get-descriptor.md): read fields of an SQL descriptor area
 - [GET DIAGNOSTICS](get-diagnostics.md): read the diagnostics area

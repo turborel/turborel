@@ -375,9 +375,22 @@ type, whatever order the rows are read in: past 18 digits of exact
 numbers, the range of approximate ones or of DECFLOAT, or an interval's
 leading field.
 So 999999999999999999, 1 and -1 sum to 999999999999999999. AVG is
-refused only if the mean does not fit. A SUM of DECFLOAT values is
+refused only if the mean does not fit. Its digits past its scale are
+dropped, not rounded, as those of every exact quotient are, so the mean
+of 10.00, 10.00 and 12.00 is 10.6666. A SUM of DECFLOAT values is
 rounded to 34 digits after each row, so of values whose total needs
 more its last digit may depend on that order.
+
+```sql
+SELECT AVG(X) FROM (VALUES (10.00), (10.00), (12.00)) AS V (X);
+```
+
+```
+
+----------------------
+              10.6666
+(1 row)
+```
 
 ```sql
 SELECT COUNT(*), COUNT(DEPT), COUNT(DISTINCT DEPT), SUM(SALARY), AVG(SALARY), MIN(NAME), MAX(SALARY) FROM STAFF;

@@ -208,3 +208,5 @@ pub(in crate::db) const ALTER_DATABASE: Command = command("ALTER DATABASE", -11)
 pub(in crate::db) const END_CONNECTION: Command = command("END CONNECTION", -12);
 /// \[EXTENSION\] CANCEL CONNECTION.
 pub(in crate::db) const CANCEL_CONNECTION: Command = command("CANCEL CONNECTION", -13);
+/// \[EXTENSION\] EXPLAIN.
+pub(in crate::db) const EXPLAIN: Command = command("EXPLAIN", -14);

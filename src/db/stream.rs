@@ -94,6 +94,21 @@ impl Stream {
         Ok(stream)
     }
 
+    /// \[DESIGN\] The rows `rows`, already made, which read no table: of
+    /// EXPLAIN (`db/explain.rs`).
+    ///
+    /// # Errors
+    ///
+    /// The rows cannot be held.
+    pub(super) fn made(st: &Arc<State>, rows: Vec<Row>) -> Result<Stream> {
+        let space = st.list_space();
+        let mut held = HeldRows::new(space.clone());
+        for row in rows {
+            held.push(row)?;
+        }
+        Ok(Stream { ready: Some(held.into_iter()), failure: None, rest: None, reads: Arc::from([]), space })
+    }
+
     /// Reads the rest of the rows from the plan, if any are still to read,
     /// up to the first error.
     fn read_ahead(&mut self) {

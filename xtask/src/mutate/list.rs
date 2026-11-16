@@ -12,6 +12,7 @@ mod diagnostics;
 mod distinct;
 mod distinct_predicate;
 mod distribution;
+mod explain;
 mod fill;
 mod filter;
 mod generated;
@@ -73,7 +74,7 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 36] = [
+    let areas: [&[Mutation]; 37] = [
         &predicates::PREDICATES,
         &sequences::SEQUENCES,
         &generated::GENERATED,
@@ -109,6 +110,7 @@ pub fn all() -> Vec<Mutation> {
         &routines::ROUTINES,
         &overloading::OVERLOADING,
         &array_targets::ARRAY_TARGETS,
+        &explain::EXPLAIN,
         &view_defaults::VIEW_DEFAULTS,
     ];
     core.into_iter()

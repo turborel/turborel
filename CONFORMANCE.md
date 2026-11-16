@@ -1701,6 +1701,16 @@ through those it names now, and is a non-reserved word.
 | JOBS | Its background jobs |
 | MEMORY_RESERVATIONS | What holds its memory |
 
+### Plans
+
+`EXPLAIN <cursor specification>`, a direct statement, gives the plan of
+a query as rows, one column PLAN of a line each, without running it.
+The plan as bound, the rewrite rules that fired, the plan they left and
+the physical plan follow in turn, as the library's `Session::explain`
+gives them. EXPLAIN is no key word. It is read as the statement only
+before SELECT, VALUES, TABLE, WITH or a parenthesis, so a table may be
+named EXPLAIN (`db/explain.rs`).
+
 ### Plug-ins
 
 Plug-ins cover storage engines, index methods, functions, optimizer rules,
@@ -1873,7 +1883,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §18.1 GR1e ROW_COUNT after other statements; Table 21's L; GR3b, GR3c an implementation's class origin; GR3k MESSAGE_TEXT | 0; the longest character string (L is never reached); TURBOREL for class TB; the error's message with its rule, empty for a completion | `db/area.rs` |
 | §14.1 GR6, GR7 diagnostics area limit | A statement reports one condition, so any limit of 1 or more holds | `db/session.rs` |
 | 2023 §23.1 Table 37, Table 38, IL205, the maximum length of a character string item | 32,767 characters, the longest character string varying | `db/area.rs` |
-| 2023 §23.1 GR2d, GR2e, Table 39, IE005, IV190, IV212, the identifiers and codes of this implementation's statements | Each statement's first words, and a negative code of its own, -1 to -13, as the manual's page of GET DIAGNOSTICS lists them | `db/area/commands.rs` |
+| 2023 §23.1 GR2d, GR2e, Table 39, IE005, IV190, IV212, the identifiers and codes of this implementation's statements | Each statement's first words, and a negative code of its own, -1 to -14, as the manual's page of GET DIAGNOSTICS lists them | `db/area/commands.rs` |
 | 2023 §23.1 GR2e, IA156, whether a dynamic select statement prepared and not yet executed is described by its identifier and code | None is described. Only EXECUTE and the Rust API's open of a prepared statement set DYNAMIC_FUNCTION, and only as they run it | `db/execute.rs`, `db/prepared.rs` |
 | 2023 §23.1 GR2g, UV121, ROW_COUNT after a statement that is no INSERT, searched UPDATE or DELETE, or MERGE | 0 | `db/area.rs` |
 | 2023 §23.1 GR6a, US050, the order of the items of ALL | The order of the Format's lists of item names, statement items first, then each condition's CONDITION_NUMBER and items | `db/area.rs`, `ast/diagnostics.rs` |

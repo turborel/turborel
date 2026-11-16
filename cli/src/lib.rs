@@ -15,7 +15,7 @@ mod split;
 
 use std::net::ToSocketAddrs;
 
-use turborel::error::SqlState;
+use turborel::error::{Code, SqlError, SqlState};
 
 use turborel_client::agent::Connected;
 use turborel_client::connection::{Certificate, Mechanism, Trust};
@@ -120,11 +120,26 @@ pub fn banner(options: &Options, connection: &Connected) -> String {
 ///
 /// Why it cannot: the server cannot be reached, or refuses the user.
 pub fn connect(options: &Options, typed: impl FnOnce() -> std::io::Result<String>) -> Result<Connected, String> {
+    in_the_clear(options)?;
     let mut mechanism = mechanism(&options.credentials, typed)?;
     reach(&options.server, (&options.user, mechanism.as_mut()), options.timeouts).map_err(|unreached| match unreached {
         Unreached::Address(why) => why,
         Unreached::Refused(failure) => failure.to_string(),
     })
+}
+
+/// \[DESIGN\] RULES.md D43: a password is proved only over TLS, a Unix
+/// socket or a named pipe, so one to be proved over plain TCP is refused
+/// before it is asked for (SQLSTATE 28000, as the server refuses it), the
+/// refusal naming the options that reach the server so.
+fn in_the_clear(options: &Options) -> Result<(), String> {
+    let password = matches!(options.credentials, Credentials::Ask | Credentials::Given(_));
+    if !password || !matches!(options.server, Server::Tcp { tls: None, .. }) {
+        return Ok(());
+    }
+    let msg = "[DESIGN] a password is proved only over TLS, a Unix socket or a named pipe, never over plain TCP. Connect with --tls FILE \
+               or --tls-system-roots, or with --socket PATH to the socket the server's SERVER.SOCKET names";
+    Err(Failure::from(&SqlError::new(Code::Connection, msg).with_state(SqlState::INVALID_AUTHORIZATION)).to_string())
 }
 
 /// How `credentials` are proved, a password typed read by `typed`.

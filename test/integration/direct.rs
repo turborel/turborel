@@ -79,3 +79,29 @@ fn direct_sql_declares_no_cursor_but_reads_a_query_by_one() {
     assert_eq!(rows.fetch().unwrap().map(|r| r[0].to_string()), Some("2".into()));
     assert!(rows.fetch().unwrap().is_none(), "after the last row");
 }
+
+/// Verifies: [EXTENSION] [DESIGN] EXPLAIN before a query, SELECT, VALUES,
+/// TABLE, WITH or a parenthesis, gives the lines `Session::explain` gives
+/// of it, one row each, of one column PLAN; an error of the query is
+/// placed in the statement as written. EXPLAIN is no key word: a table so
+/// named is read, and a first word that begins no statement is refused,
+/// saying so.
+#[test]
+fn explain_gives_the_plan_as_rows() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER) CREATE TABLE EXPLAIN (E INTEGER)").unwrap();
+    let s = db.session("X");
+    let query = "SELECT K FROM T WHERE K = 1";
+    let lines: Vec<String> = s.explain(query, &turborel::params::Params::new()).unwrap().lines().map(str::to_owned).collect();
+    assert_eq!(direct(&s, &format!("EXPLAIN {query}")), Ok(Ok(lines)));
+    let Direct::Rows(c) = s.direct("EXPLAIN VALUES (1)").unwrap() else { panic!("no rows") };
+    assert_eq!(c.columns.iter().map(|c| c.name.as_deref()).collect::<Vec<_>>(), [Some("PLAN")]);
+    for begun in ["EXPLAIN TABLE T", "EXPLAIN (SELECT K FROM T)", "EXPLAIN WITH W AS (SELECT K FROM T) SELECT K FROM W"] {
+        assert!(matches!(direct(&s, begun), Ok(Ok(rows)) if !rows.is_empty()), "{begun}");
+    }
+    let wrong = s.direct("EXPLAIN SELECT NOPE FROM T").err().unwrap();
+    assert_eq!(wrong.pos, Some("EXPLAIN SELECT ".len()), "{wrong}");
+    assert_eq!(direct(&s, "SELECT E FROM EXPLAIN"), Ok(Ok(vec![])));
+    let unknown = s.direct("SHOW TABLES").err().unwrap();
+    assert!(unknown.msg.contains("SHOW begins no SQL statement"), "{unknown}");
+}

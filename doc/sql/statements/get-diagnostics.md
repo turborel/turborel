@@ -71,6 +71,7 @@ own statements have negative codes.
 | CREATE USER, ALTER USER, DROP USER | -8, -9, -10 |
 | ALTER DATABASE | -11 |
 | END CONNECTION, CANCEL CONNECTION | -12, -13 |
+| EXPLAIN | -14 |
 
 The condition information items, of condition 1:
 
