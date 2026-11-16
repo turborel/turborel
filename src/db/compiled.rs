@@ -76,7 +76,8 @@ impl Session {
     /// [X3.135-1986 §8.3 SR4b; ISO/IEC 9075:1992 §13.1 SR5, §7.9 SR12] The
     /// compiled specification of a cursor its text makes updatable, and
     /// the one table it reads, unless a subquery of its WHERE clause reads
-    /// that table too \[SR12d\]: then it is read-only.
+    /// that table too \[SR12d\], or a column of it has no counterpart in
+    /// that table [ISO/IEC 9075-2:2023 §7.16 SR25c]: then it is read-only.
     pub(super) fn updatable_plan(
         &self,
         st: &State,
@@ -88,6 +89,12 @@ impl Session {
         let read = c.optimized.subquery_tables();
         let own: Vec<QualifiedName> = c.optimized.tables().into_iter().filter(|t| !read.contains(t)).collect();
         let [table] = own.as_slice() else { return Ok(None) };
+        // [ISO/IEC 9075-2:2023 §7.16 SR25c] every result column has a
+        // counterpart in the table: not an outer reference, nor an SQL
+        // parameter's or variable's column [SR17c].
+        if c.columns.iter().any(|col| col.origin.is_none()) {
+            return Ok(None);
+        }
         let table = table.clone();
         Ok(Some((c, table)))
     }

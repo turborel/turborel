@@ -120,3 +120,33 @@ fn a_function_that_modifies_sql_data_4_35_2() {
     a.run("UPDATE T SET N = GROWN(K + 10)").unwrap();
     assert_eq!(rows(&a, "SELECT K, N FROM T ORDER BY K"), ["1,11", "2,12", "3,13", "4,14", "11,0", "12,0", "13,0", "14,0"]);
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.16 SR17c, SR25c, CR6 (T285)]
+/// A select list item that is a single SQL parameter or SQL variable
+/// reference names its column for it, so a FOR's row names it, in a
+/// procedure and in a function; such a column has no counterpart in the
+/// table, so a cursor of it is read-only and a positioned UPDATE through
+/// it is refused, where before it failed as an updatable cursor
+/// (regression).
+#[test]
+fn a_parameters_column_is_named_for_it_7_16() {
+    let db = defined();
+    let a = db.session("A");
+    a.run("CREATE TABLE L (V INTEGER)").unwrap();
+    a.run("CREATE PROCEDURE P1 (IN P INTEGER) MODIFIES SQL DATA BEGIN FOR R AS SELECT P, K FROM T WHERE K = 1 DO INSERT INTO L VALUES (R.P); END FOR; END")
+        .unwrap();
+    a.run("CALL P1(7)").unwrap();
+    a.run("BEGIN DECLARE V INTEGER DEFAULT 3; FOR R AS SELECT V, K FROM T WHERE K = 1 DO INSERT INTO L VALUES (R.V); END FOR; END")
+        .unwrap();
+    assert_eq!(rows(&a, "SELECT V FROM L ORDER BY V"), ["3", "7"]);
+    a.run(
+        "CREATE FUNCTION F1 (P INTEGER) RETURNS INTEGER READS SQL DATA \
+         BEGIN DECLARE S INTEGER DEFAULT 0; FOR R AS SELECT P, K FROM T DO SET S = S + R.P; END FOR; RETURN S; END",
+    )
+    .unwrap();
+    assert_eq!(rows(&a, "SELECT F1(10) FROM T WHERE K = 1"), ["30"]);
+    let e = a
+        .run("BEGIN DECLARE V INTEGER DEFAULT 3; FOR R AS C CURSOR FOR SELECT V, K FROM T DO UPDATE T SET K = 2 WHERE CURRENT OF C; END FOR; END")
+        .unwrap_err();
+    assert_eq!((e.code, e.sqlcode()), (Code::SyntaxRule, -103), "{e:?}");
+}

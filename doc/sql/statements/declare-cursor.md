@@ -68,7 +68,8 @@ transaction's snapshot has them, whatever the cursor is.
 **Updatability.** FOR UPDATE makes the cursor updatable, on the columns
 named or every column; FOR READ ONLY, read-only. With neither, a cursor
 is read-only if it is INSENSITIVE or SCROLL, has ORDER BY, OFFSET or
-FETCH FIRST, or reads a read-only table; else updatable on every column.
+FETCH FIRST, reads a read-only table, or has a column that is no column
+of its table, as an SQL parameter's; else updatable on every column.
 A query of OFFSET or FETCH FIRST is not updatable, so FOR UPDATE of one
 is refused; one of ORDER BY alone is.
 

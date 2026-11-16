@@ -27,7 +27,8 @@ variable name are identifiers.
 
 FOR opens a cursor of its query and, for each row the cursor fetches,
 runs its statements. Each column of the query is a variable of the
-FOR, named by the column's name, which the statements read. The loop
+FOR, named by the column's name, which the statements read. A column
+that is an SQL parameter or SQL variable alone is named for it. The loop
 variable name, if written, qualifies them, so `R.QTY` is the column QTY
 of the FOR named R. The cursor is closed and destroyed as FOR ends.
 
@@ -112,6 +113,34 @@ OK
 ------------+--------------
  seen       |            3
 (1 row)
+```
+
+A procedure's parameter in the query names its column, so the row
+reads it as `R.MINIMUM`:
+
+```sql
+CREATE PROCEDURE SHORT (IN MINIMUM INTEGER) MODIFIES SQL DATA
+BEGIN
+  FOR R AS SELECT ITEM, QTY, MINIMUM FROM STOCK DO
+    IF R.QTY < R.MINIMUM THEN
+      INSERT INTO REORDER VALUES (R.ITEM, R.MINIMUM - R.QTY);
+    END IF;
+  END FOR;
+END;
+DELETE FROM REORDER;
+CALL SHORT(5);
+SELECT ITEM, NEEDED FROM REORDER ORDER BY ITEM;
+```
+
+```
+OK
+OK
+OK
+ ITEM       |       NEEDED
+------------+--------------
+ bolt       |            2
+ washer     |            5
+(2 rows)
 ```
 
 Rules refused:

@@ -189,6 +189,12 @@ A query, run on its own, gives its rows to the client, which shows them
 as they come. TABLE T is `SELECT * FROM T`; a `<joined table>` on its
 own is `SELECT * FROM` it.
 
+A column of the result takes the name its AS clause gives. Without one,
+an item that is a column reference alone takes the name of the column
+it reads. In a routine's body or a compound statement, an item that is
+an SQL parameter or SQL variable alone takes its name. Any other item
+gives a column of no name.
+
 ORDER BY sorts the rows by each sort key in turn, ascending unless DESC
 is written. A key is a column of the result, named or by its position
 from 1, or any value expression. A key of a query specification may read
@@ -519,6 +525,9 @@ OFFSET at the top F861, in a subquery F862, nested F863, in a view F864
 and of a parameter F865, and PERCENT F866 and WITH TIES F867. A count
 of a `?` is an extension, typed INTEGER, and a percentage of one DOUBLE
 PRECISION. A null count raises the exception of a count out of range.
+A column named for an SQL parameter or variable is ISO/IEC 9075-2:2023
+§7.16 SR17c, Feature T285. A column of no name is the one SR17d leaves
+implementation-dependent (UV087).
 
 ## SEE ALSO
 

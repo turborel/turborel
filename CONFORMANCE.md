@@ -481,11 +481,13 @@ whatever its collation.
 What SQL:2023 adds beyond collations, written from ISO/IEC 9075-2:2023
 (RULES.md D32). Citations here are of that edition unless marked.
 
-T285 (Enhanced derived column names) is not claimed. It names a column
-of a single SQL parameter reference for the parameter [§7.16 SR17c,
-CR6], and a routine's body may hold a cursor whose query has one
-([SQL/PSM](#sqlpsm)), but such a column is unnamed still. A column of any other
-expression without an `<as clause>` is unnamed, the name SR17d leaves
+T285 (Enhanced derived column names) is claimed. A select list item
+that is a single SQL parameter reference is named for the parameter
+[§7.16 SR17c, CR6], and so is one of an SQL variable of
+[SQL/PSM](#sqlpsm), so a FOR's row and a local cursor name it. Such a
+column has no counterpart in a table, so a cursor of it is not simply
+updatable [SR25c] and opens read-only. A column of any other expression
+without an `<as clause>` is unnamed, the name SR17d leaves
 implementation-dependent (UV087).
 
 ### Truth values

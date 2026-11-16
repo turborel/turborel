@@ -8,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of SQL/PSM, in the order they run.
-pub const PSM: [Mutation; 19] = [
+pub const PSM: [Mutation; 20] = [
     Mutation {
         name: "psm-handler-general-first",
         package: Package::Core,
@@ -137,6 +137,16 @@ pub const PSM: [Mutation; 19] = [
         original: "            if let (true, Some(program)) = (bodies, &i.program) {",
         replacement: "            if let (false, Some(program)) = (bodies, &i.program) {",
         integration: &["psm_functions::cursors_handlers_and_calls_in_a_function_12_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "psm-parameter-column-updatable",
+        package: Package::Core,
+        breaks: "a cursor whose column is an SQL parameter's or variable's opens as updatable, a column of no counterpart [§7.16 SR25c]",
+        file: "src/db/compiled.rs",
+        original: "        if c.columns.iter().any(|col| col.origin.is_none()) {",
+        replacement: "        if c.columns.iter().all(|col| col.origin.is_none()) {",
+        integration: &["psm_functions::a_parameters_column_is_named_for_it_7_16"],
         unit: &[],
     },
     Mutation {

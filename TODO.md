@@ -45,12 +45,6 @@ Nothing is open.
 
 ### Triggers, routines and roles
 
-- Enhanced derived column names (T285) [§7.16 SR17c, CR6]. A select list
-  item that is a single SQL parameter reference names its column for the
-  parameter. Any other item without an `<as clause>` that is not a column
-  reference is unnamed with or without it [SR17d] (UV087). A routine's
-  body may now hold a cursor (SQL/PSM), so an SQL parameter's column is
-  seen by FETCH and FOR.
 - COMMIT and ROLLBACK in an SQL control statement NOT ATOMIC run
   directly [ISO/IEC 9075-4:2006 draft §4.10.4; ISO/IEC 9075-2:2023
   §17.7, §17.8]. The transaction ends within the statement, its
