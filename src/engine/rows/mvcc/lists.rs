@@ -3,11 +3,14 @@
 //! holds in memory, and its record.
 //!
 //! ```text
-//! change:  row id u64, then 1 if it has a position appended, and the
-//!          position u64, or 0; then the entry it replaced, if its own
+//! change:  row id u64, or object id; flags u8, 1 if it has a position
+//!          appended, 2 if it made an object; the position u64 if it has
+//!          one; the objects it dropped, their count u32 and each id u64;
+//!          then the entry it replaced, if its own
 //! garbage: kind u8, then by kind: 0 own version, its row id and bytes;
 //!          1 older version, its row id and position; 2 deletion, its row
-//!          id; 3 undone, its position (little-endian)
+//!          id; 3 undone, its position; 4 objects dropped, their count u32
+//!          and each id u64 (little-endian)
 //! ```
 
 use super::{Change, Dead};
@@ -21,27 +24,46 @@ const FIXED: usize = 48;
 
 impl ListItem for Change {
     fn bytes(&self) -> usize {
-        FIXED.saturating_add(self.before.as_ref().map_or(0, Vec::len))
+        FIXED.saturating_add(self.before.as_ref().map_or(0, Vec::len)).saturating_add(self.dropped.len().saturating_mul(8))
     }
 }
 
 impl ListItem for Dead {
     fn bytes(&self) -> usize {
-        FIXED.saturating_add(if let Dead::Own(_, bytes) = self { bytes.len() } else { 0 })
+        FIXED.saturating_add(match self {
+            Dead::Own(_, bytes) => bytes.len(),
+            Dead::Objects(ids) => ids.len().saturating_mul(8),
+            Dead::Older(..) | Dead::Deletion(_) | Dead::Undone(_) => 0,
+        })
     }
+}
+
+/// The flag of a change that made an object.
+const MADE: u8 = 2;
+
+/// Writes `ids`, their count then each.
+fn put_ids(ids: &[u64], out: &mut Vec<u8>) {
+    out.put_u32(u32::try_from(ids.len()).unwrap_or(u32::MAX));
+    for &id in ids {
+        out.put_u64(id);
+    }
+}
+
+/// The ids `put_ids` wrote.
+fn read_ids(r: &mut Reader<'_>) -> Result<Vec<u64>> {
+    let count = r.u32()?;
+    (0..count).map(|_| r.u64()).collect()
 }
 
 /// `change` as a record.
 pub(super) fn encode_change(change: &Change) -> Vec<u8> {
     let mut out = Vec::new();
     out.put_u64(change.id);
-    match change.appended {
-        Some(at) => {
-            out.put_u8(1);
-            out.put_u64(at.0);
-        }
-        None => out.put_u8(0),
+    out.put_u8(u8::from(change.appended.is_some()) | if change.made { MADE } else { 0 });
+    if let Some(at) = change.appended {
+        out.put_u64(at.0);
     }
+    put_ids(&change.dropped, &mut out);
     out.extend_from_slice(change.before.as_deref().unwrap_or_default());
     out
 }
@@ -50,9 +72,11 @@ pub(super) fn encode_change(change: &Change) -> Vec<u8> {
 pub(super) fn decode_change(record: &[u8]) -> Result<Change> {
     let mut r = Reader::new(record, "row change");
     let id = r.u64()?;
-    let appended = if r.u8()? == 1 { Some(Lsn(r.u64()?)) } else { None };
+    let flags = r.u8()?;
+    let appended = if flags & 1 == 1 { Some(Lsn(r.u64()?)) } else { None };
+    let dropped = read_ids(&mut r)?;
     let rest = r.rest();
-    Ok(Change { id, before: (!rest.is_empty()).then(|| rest.to_vec()), appended })
+    Ok(Change { id, before: (!rest.is_empty()).then(|| rest.to_vec()), appended, dropped, made: flags & MADE == MADE })
 }
 
 /// `dead` as a record.
@@ -77,6 +101,10 @@ pub(super) fn encode_dead(dead: &Dead) -> Vec<u8> {
             out.put_u8(3);
             out.put_u64(at.0);
         }
+        Dead::Objects(ids) => {
+            out.put_u8(4);
+            put_ids(ids, &mut out);
+        }
     }
     out
 }
@@ -89,6 +117,7 @@ pub(super) fn decode_dead(record: &[u8]) -> Result<Dead> {
         1 => Dead::Older(r.u64()?, Lsn(r.u64()?)),
         2 => Dead::Deletion(r.u64()?),
         3 => Dead::Undone(Lsn(r.u64()?)),
+        4 => Dead::Objects(read_ids(&mut r)?),
         _ => return Err(r.corrupt("not a kind of garbage")),
     };
     r.finish()?;
@@ -107,15 +136,19 @@ mod tests {
     #[test]
     fn records_are_read_back_as_written() {
         for change in [
-            Change { id: 1, before: None, appended: None },
-            Change { id: 2, before: Some(vec![1, 2, 3]), appended: None },
-            Change { id: 3, before: None, appended: Some(Lsn(9)) },
+            Change::of_row(1, None, None, Vec::new()),
+            Change::of_row(2, Some(vec![1, 2, 3]), None, vec![7, 8]),
+            Change::of_row(3, None, Some(Lsn(9)), vec![5]),
+            Change { id: 4, before: None, appended: None, dropped: Vec::new(), made: true },
         ] {
             let back = decode_change(&encode_change(&change)).unwrap();
-            assert_eq!((back.id, back.before.clone(), back.appended), (change.id, change.before.clone(), change.appended));
+            assert_eq!(
+                (back.id, back.before.clone(), back.appended, back.dropped.clone(), back.made),
+                (change.id, change.before.clone(), change.appended, change.dropped.clone(), change.made)
+            );
             assert!(back.bytes() >= FIXED);
         }
-        for dead in [Dead::Own(1, vec![4, 5]), Dead::Older(2, Lsn(7)), Dead::Deletion(3), Dead::Undone(Lsn(8))] {
+        for dead in [Dead::Own(1, vec![4, 5]), Dead::Older(2, Lsn(7)), Dead::Deletion(3), Dead::Undone(Lsn(8)), Dead::Objects(vec![3, 4])] {
             let record = encode_dead(&dead);
             assert_eq!(encode_dead(&decode_dead(&record).unwrap()), record);
             assert!(dead.bytes() >= FIXED);

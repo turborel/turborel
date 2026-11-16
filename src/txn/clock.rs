@@ -106,6 +106,17 @@ impl Clock {
         snapshot
     }
 
+    /// Transaction `id`, open at `snapshot`, counts it open once more, until
+    /// as many `end`s of it: what it reads there is kept, though it moves
+    /// on. Its count is already above 0, so the oldest is unchanged.
+    pub(super) fn hold(&self, id: TxId, snapshot: Timestamp) {
+        let Some(stripe) = self.stripe(id) else { return };
+        let mut snapshots = lock_builtin(&stripe.snapshots);
+        let holders = snapshots.entry(snapshot).or_default();
+        *holders = holders.saturating_add(1);
+        stripe.oldest.store(snapshots.first_key_value().map_or(NONE, |(&s, _)| s), Ordering::SeqCst);
+    }
+
     /// Transaction `id`, at `snapshot`, has ended.
     pub(super) fn end(&self, id: TxId, snapshot: Timestamp) {
         let Some(stripe) = self.stripe(id) else { return };

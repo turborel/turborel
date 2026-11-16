@@ -272,12 +272,7 @@ impl State {
         match stmt {
             SqlStatement::Insert(ins) => self.bind_triggered_insert(cx, ins, (owner, params)),
             SqlStatement::Merge(m) => self.bind_triggered_merge(cx, m, (owner, params)),
-            SqlStatement::UpdateSearched { table, set, where_clause } => {
-                bind_write(cx, WriteKind::UpdateSearched, table, set, where_clause.as_ref()).map(drop)
-            }
-            SqlStatement::DeleteSearched { table, where_clause } => {
-                bind_write(cx, WriteKind::DeleteSearched, table, &[], where_clause.as_ref()).map(drop)
-            }
+            SqlStatement::UpdateSearched { .. } | SqlStatement::DeleteSearched { .. } => bind_searched(cx, stmt),
             SqlStatement::Select { query, targets } => {
                 let bound = bind_select(cx, query)?;
                 check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")
@@ -314,6 +309,7 @@ impl State {
             | SqlStatement::SetCatalog(_)
             | SqlStatement::SetSchema(_)
             | SqlStatement::SetTimeZone(_)
+            | SqlStatement::Locator { .. }
             | SqlStatement::SetSessionAuthorization(_)
             | SqlStatement::SetRole(_)
             | SqlStatement::Connection(_)
@@ -395,4 +391,15 @@ fn refused() -> SqlError {
         Code::SyntaxRule,
         "[ISO/IEC 9075-2:2023 §11.49 SR13] a triggered action contains only INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL and GET DIAGNOSTICS (IA046)",
     )
+}
+
+/// `stmt`, a searched UPDATE or DELETE, bound as `bind_triggered` binds it.
+fn bind_searched(cx: Context<'_>, stmt: &SqlStatement) -> Result<()> {
+    if let SqlStatement::UpdateSearched { table, set, where_clause } = stmt {
+        return bind_write(cx, WriteKind::UpdateSearched, table, set, where_clause.as_ref()).map(drop);
+    }
+    if let SqlStatement::DeleteSearched { table, where_clause } = stmt {
+        return bind_write(cx, WriteKind::DeleteSearched, table, &[], where_clause.as_ref()).map(drop);
+    }
+    Ok(())
 }

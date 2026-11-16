@@ -123,6 +123,8 @@ The server's settings, beside the database's:
   SERVER.MAX_MESSAGE_BYTES  the longest message taken from a client (default 16 MiB)
   SERVER.MAX_STATEMENTS  prepared statements a connection holds at once (default 1024)
   SERVER.BATCH_BYTES     about how many bytes of rows go in a batch (default 64 KiB)
+  SERVER.LOB_INLINE_BYTES  the longest large object a result sends whole; a longer one
+                         goes by its locator (default 64 KiB)
   SERVER.TRUST_LOCAL     OFF: every client proves who it is (default);
                          ON: trust a client of this machine as who it says
   SERVER.PASSWORD_ITERATIONS  PBKDF2 iterations of a password made (default 600000)

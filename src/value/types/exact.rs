@@ -142,6 +142,7 @@ impl SqlType for Exact {
             Value::Null
             | Value::Char(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
@@ -165,9 +166,13 @@ impl SqlType for Exact {
             Value::DecFloat(_) => self.assign(v, t, "ISO/IEC 9075-2:2023 §6.13 GR8a"),
             // [GR3c] an interval of one field, as a number of it.
             Value::Interval(i) => self.assign(Value::Exact(super::interval::as_number(&i)), t, "ISO/IEC 9075:1992 §6.10 GR3c"),
-            Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Array(_) | Value::Row(_) | Value::Extension(_) => {
-                uncastable(&v, t)
-            }
+            Value::Binary(_)
+            | Value::Lob(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Array(_)
+            | Value::Row(_)
+            | Value::Extension(_) => uncastable(&v, t),
         }
     }
 

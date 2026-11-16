@@ -48,7 +48,8 @@ impl Parser {
                 | Tok::ApproximateNumeric(_)
                 | Tok::CharacterString(_)
                 | Tok::BinaryString(_)
-                | Tok::Introducer(_) => {}
+                | Tok::Introducer(_)
+                | Tok::LargeObjectLength(_) => {}
             }
             at = at.saturating_add(1);
         }

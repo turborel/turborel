@@ -39,6 +39,7 @@ mod connections;
 mod diagnostics;
 mod ending;
 mod imports;
+mod lobs;
 mod logins;
 mod passwords;
 mod prepared;

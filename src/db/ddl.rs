@@ -125,6 +125,8 @@ impl State {
             | Change::StatementUndone { .. }
             | Change::Checkpoint
             | Change::Stale { .. }
+            | Change::LobPut { .. }
+            | Change::LobStale { .. }
             | Change::CreateIndex { .. }
             | Change::DropIndex { .. }
             | Change::AlterIndex { .. }
@@ -161,6 +163,8 @@ impl State {
                 | Change::StatementUndone { .. }
                 | Change::Checkpoint
                 | Change::Stale { .. }
+                | Change::LobPut { .. }
+                | Change::LobStale { .. }
                 | Change::Defined { placed: None, .. }
                 | Change::CreateIndex { .. }
                 | Change::DropIndex { .. }

@@ -12,7 +12,7 @@ integers it takes; so may a domain.
 ```
 <data type> ::=
       <character string type> | <national character string type>
-    | <binary string type> | <boolean type>
+    | <binary string type> | <large object string type> | <boolean type>
     | <exact numeric type> | <approximate numeric type>
     | <decimal floating-point type>
     | <datetime type> | <interval type>
@@ -27,6 +27,8 @@ integers it takes; so may a domain.
 | NATIONAL CHARACTER(n) | as CHARACTER | NCHAR(n), NATIONAL CHAR(n), and VARYING |
 | BINARY(n) | n octets, padded with X'00' | BINARY is BINARY(1) |
 | BINARY VARYING(n) | up to n octets | VARBINARY(n); VARBINARY is VARBINARY(32767) |
+| CHARACTER LARGE OBJECT(n) | up to n characters, kept in chunks | CLOB(n), NCLOB(n); n of K, M or G; CLOB is CLOB(4G) |
+| BINARY LARGE OBJECT(n) | up to n octets, kept in chunks | BLOB(n); BLOB is BLOB(4G) |
 | BOOLEAN | TRUE or FALSE, and UNKNOWN as its null | |
 | NUMERIC(p, s), DECIMAL(p, s) | exact numbers of p digits, s after the point | DEC(p, s); (p) is (p, 0); no precision is 18 |
 | INTEGER | NUMERIC(10, 0) | INT |
@@ -43,7 +45,7 @@ integers it takes; so may a domain.
 | t ARRAY[n] | up to n values of type t, in order | t ARRAY is t ARRAY[65535] |
 
 The longest string is 32,767 characters, the longest binary string 32,767
-octets, an exact number holds at most 18 digits and a DECFLOAT at most
+octets, the longest large object 4G characters or octets, an exact number holds at most 18 digits and a DECFLOAT at most
 34. A type past a limit
 is valid SQL turborel does not process: SQLCODE -900, SQLSTATE 0A000.
 The [Limits](../appendix/d-limits.md) appendix lists them all.
@@ -176,6 +178,65 @@ turborel: SQLCODE -301 (SQLSTATE 22001): a binary string of 5 octets, not X'00' 
 A binary string is neither a number nor characters. CAST takes one only
 to another binary type, and nothing else to one. SQL-92's BIT and BIT
 VARYING, and its `B'...'` literals, are gone, as SQL:2023 has none.
+
+## Large objects
+
+CHARACTER LARGE OBJECT, or CLOB, holds text, and BINARY LARGE OBJECT,
+or BLOB, octets, each up to 4G of them. A length may end in K, M or G,
+1024 and its powers, and a CLOB's may say CHARACTERS, the default, or
+OCTETS. NATIONAL CHARACTER LARGE OBJECT, or NCLOB, is a CLOB. Without a
+length either holds the longest, 4G.
+
+```
+<large object string type> ::=
+      { CHARACTER | CHAR } LARGE OBJECT [ ( <large object length> ) ] | CLOB [ ( ... ) ]
+    | { NATIONAL CHARACTER | NCHAR } LARGE OBJECT [ ( ... ) ] | NCLOB [ ( ... ) ]
+    | BINARY LARGE OBJECT [ ( ... ) ] | BLOB [ ( ... ) ]
+<large object length> ::= <unsigned integer> [ K | M | G ] [ CHARACTERS | OCTETS ]
+```
+
+A large object is kept apart from its row, in chunks of 256 KiB, and is
+logged, read and sent to a client a chunk at a time, so none is ever
+held whole in memory. A value a function makes, as UPPER or LPAD make
+one, is written to a temporary file the same way.
+
+`||`, SUBSTRING, POSITION, OVERLAY, TRIM, UPPER, LOWER, the pads, LIKE
+and the regular expressions take large objects, and a CLOB and a
+character string, or a BLOB and a binary string, mix as two strings do.
+`||` and SUBSTRING share the chunks they read rather than copy them, and
+CHAR_LENGTH and OCTET_LENGTH read nothing. Large objects compare for
+equality alone. ORDER BY, GROUP BY, DISTINCT, MAX, MIN, `<` and a key of
+a constraint or an index refuse one (SQLCODE -103).
+
+```sql
+CREATE TABLE NOTES (ID INTEGER, BODY CLOB(16M), SCAN BLOB);
+INSERT INTO NOTES VALUES (1, 'Ada wrote the first program.', X'FFD8FF');
+SELECT ID, CHAR_LENGTH(BODY), OCTET_LENGTH(SCAN) FROM NOTES WHERE BODY LIKE '%program%';
+SELECT CAST(UPPER(SUBSTRING(BODY FROM 1 FOR 3)) AS VARCHAR(10)) FROM NOTES WHERE BODY = 'Ada wrote the first program.';
+SELECT ID FROM NOTES ORDER BY BODY;
+```
+
+```
+OK
+OK
+           ID |                      |
+--------------+----------------------+----------------------
+            1 |                   28 |                    3
+(1 row)
+
+------------
+ ADA
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): ORDER BY orders values of CHARACTER LARGE OBJECT(16777216), and large objects are compared for equality alone [ISO/IEC 9075-2:2023 §9.14 SR3]
+```
+
+A value stored in a site shorter than it is refused (SQLSTATE 22001),
+unless what is past the site is spaces, which are cut. One cast shorter
+is cut with the warning 01004. A client reads a long value by its
+locator, a chunk at a time, and may write one the same way; FREE
+LOCATOR and HOLD LOCATOR end a locator early or keep it past a commit.
+The [client library](../client/02-library.md#large-objects) and the
+[embedded library](../client/03-embedding.md#large-objects) say how.
 
 ## Booleans
 

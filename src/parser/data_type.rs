@@ -10,7 +10,10 @@ use crate::error::{Code, Result, SqlError};
 use crate::functions::{CHARACTERS, OCTETS};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::Spelled;
-use crate::value::types::{BIGINT_NAME, BINARY_NAME, BOOLEAN_NAME, DECFLOAT_NAME, VARBINARY_NAME};
+use crate::value::lob::{LobKind, MAX_LOB_LENGTH};
+use crate::value::types::{
+    BIGINT_NAME, BINARY_NAME, BLOB_NAME, BOOLEAN_NAME, CLOB_NAME, DECFLOAT_NAME, LARGE_NAME, NCLOB_NAME, OBJECT_NAME, VARBINARY_NAME,
+};
 use crate::value::{
     BIGINT_PRECISION, CharUnits, DEFAULT_DECFLOAT_PRECISION, DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION,
     MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, REAL_PRECISION, SMALLINT_PRECISION,
@@ -95,7 +98,114 @@ impl Parser {
         if self.at_decfloat_type() {
             return self.decfloat_type().map(Some);
         }
+        // [SR1] CLOB, NCLOB and BLOB, CHARACTER LARGE OBJECT, NATIONAL
+        // CHARACTER LARGE OBJECT and BINARY LARGE OBJECT by other names.
+        if let Tok::Identifier(name) = self.peek() {
+            let kind = match name.as_str() {
+                CLOB_NAME | NCLOB_NAME => Some(LobKind::Character),
+                BLOB_NAME => Some(LobKind::Binary),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                self.advance();
+                return self.lob_type(kind).map(Some);
+            }
+        }
         Ok(None)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] Whether CLOB, NCLOB or BLOB is next, read
+    /// as identifiers as BOOLEAN is.
+    pub(super) fn at_lob_type(&self) -> bool {
+        matches!(self.peek(), Tok::Identifier(name) if name == CLOB_NAME || name == NCLOB_NAME || name == BLOB_NAME)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] Takes LARGE OBJECT if next, of words no
+    /// key words of SQL-92.
+    fn accept_large_object(&mut self) -> Result<bool> {
+        if !self.accept_word(LARGE_NAME) {
+            return Ok(false);
+        }
+        if !self.accept_word(OBJECT_NAME) {
+            return Err(self.syntax("expected OBJECT after LARGE"));
+        }
+        Ok(true)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] The rest of a large object string type of
+    /// `kind`, after its name: \[(`<character large object length>`)\] of
+    /// a character one, \[(`<large object length>`)\] of a binary one; of
+    /// the longest large object if none is written [SR10] (ID068).
+    fn lob_type(&mut self, kind: LobKind) -> Result<DataType> {
+        let (mut length, mut units) = (MAX_LOB_LENGTH, CharUnits::Characters);
+        if self.accept_delim(delim::LEFT_PAREN) {
+            length = self.large_object_length()?;
+            if kind == LobKind::Character && self.accept_word(OCTETS) {
+                units = CharUnits::Octets;
+            } else if kind == LobKind::Character {
+                self.accept_word(CHARACTERS);
+            }
+            self.expect_delim(delim::RIGHT_PAREN)?;
+        }
+        if kind == LobKind::Character {
+            self.character_set_clause()?;
+        }
+        Ok(DataType::Lob { kind, length, units })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1, §5.2] `<large object length>` ::=
+    /// `<unsigned integer>` \[`<multiplier>`\] | `<large object length
+    /// token>`: its digits' value times its multiplier's, K 1 024, M
+    /// 1 048 576, G 1 073 741 824, T and P theirs [SR11]; more than 0
+    /// [SR12], and no more than this implementation's longest large object
+    /// [SR17] (IL042), so no length of T or P is.
+    fn large_object_length(&mut self) -> Result<u64> {
+        let at = self.here();
+        let (digits, multiplier) = if let Tok::LargeObjectLength(token) = self.peek().clone() {
+            self.advance();
+            let (digits, letter) = token.split_at(token.len().saturating_sub(1));
+            (digits.to_owned(), Some(letter.to_owned()))
+        } else if let Tok::ExactNumeric(digits) = self.peek().clone()
+            && digits.chars().all(|c| c.is_ascii_digit())
+        {
+            self.advance();
+            let letter = if let Tok::Identifier(m) = self.peek()
+                && matches!(m.as_str(), "K" | "M" | "G" | "T" | "P")
+            {
+                Some(m.clone())
+            } else {
+                None
+            };
+            if letter.is_some() {
+                self.advance();
+            }
+            (digits, letter)
+        } else {
+            return Err(self.syntax("expected a <large object length>"));
+        };
+        let times: u64 = match multiplier.as_deref() {
+            None => 1,
+            Some("K") => 1 << 10_u32,
+            Some("M") => 1 << 20_u32,
+            Some("G") => 1 << 30_u32,
+            Some("T") => 1 << 40_u32,
+            Some(_) => 1 << 50_u32,
+        };
+        let length = digits.parse::<u64>().ok().and_then(|d| d.checked_mul(times));
+        match length {
+            Some(0) => {
+                Err(SqlError::at(Code::SyntaxRule, at, "[ISO/IEC 9075-2:2023 §6.1 SR12] a <large object length> shall be greater than 0"))
+            }
+            Some(n) if n <= MAX_LOB_LENGTH => Ok(n),
+            Some(_) | None => Err(SqlError::at(
+                Code::Unsupported,
+                at,
+                format!(
+                    "[ISO/IEC 9075-2:2023 §6.1 SR17] a large object of {digits}{} is longer than this implementation's maximum of {MAX_LOB_LENGTH}",
+                    multiplier.unwrap_or_default()
+                ),
+            )),
+        }
     }
 
     /// [ISO/IEC 9075-2:2023 §6.1] Whether a `<decimal floating-point
@@ -156,6 +266,11 @@ impl Parser {
     fn character_string_type(&mut self) -> Result<DataType> {
         let varchar = *self.peek() == Tok::KeyWord(kw::VARCHAR);
         self.advance();
+        // [ISO/IEC 9075-2:2023 §6.1] CHARACTER LARGE OBJECT, CHAR LARGE
+        // OBJECT, NCHAR LARGE OBJECT.
+        if !varchar && self.accept_large_object()? {
+            return self.lob_type(LobKind::Character);
+        }
         if varchar || self.accept_kw(kw::VARYING) {
             let (length, units) = self.character_length(MAX_CHARACTER_LENGTH)?;
             return Ok(DataType::Varying { length, units });
@@ -209,6 +324,10 @@ impl Parser {
     fn binary_string_type(&mut self) -> Result<DataType> {
         let varbinary = matches!(self.peek(), Tok::Identifier(name) if name == VARBINARY_NAME);
         self.advance();
+        // [ISO/IEC 9075-2:2023 §6.1] BINARY LARGE OBJECT.
+        if !varbinary && self.accept_large_object()? {
+            return self.lob_type(LobKind::Binary);
+        }
         if varbinary || self.accept_kw(kw::VARYING) {
             let mut length = MAX_BINARY_LENGTH;
             if self.accept_delim(delim::LEFT_PAREN) {

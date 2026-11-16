@@ -104,6 +104,7 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         | SqlStatement::SetCatalog(_)
         | SqlStatement::SetSchema(_)
         | SqlStatement::SetTimeZone(_)
+        | SqlStatement::Locator { .. }
         | SqlStatement::SetSessionAuthorization(_)
         | SqlStatement::SetRole(_)
         | SqlStatement::Connection(_)

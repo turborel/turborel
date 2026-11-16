@@ -52,7 +52,7 @@ impl Parser {
             return Ok(Some((self.identifier()?, named_at)));
         }
         let named = match self.peek() {
-            Tok::Identifier(_) | Tok::Introducer(_) => true,
+            Tok::Identifier(_) | Tok::Introducer(_) | Tok::LargeObjectLength(_) => true,
             Tok::KeyWord(_)
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)

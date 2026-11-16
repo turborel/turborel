@@ -51,6 +51,15 @@ pub(super) mod code {
     pub(in crate::db::dynamic) const BINARY: i64 = 60;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY VARYING.
     pub(in crate::db::dynamic) const BINARY_VARYING: i64 = 61;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY LARGE OBJECT.
+    pub(in crate::db::dynamic) const BLOB: i64 = 30;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY LARGE OBJECT LOCATOR.
+    pub(in crate::db::dynamic) const BLOB_LOCATOR: i64 = 31;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] CHARACTER LARGE OBJECT.
+    pub(in crate::db::dynamic) const CLOB: i64 = 40;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] CHARACTER LARGE OBJECT
+    /// LOCATOR.
+    pub(in crate::db::dynamic) const CLOB_LOCATOR: i64 = 41;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] ROW TYPE.
     pub(in crate::db::dynamic) const ROW: i64 = 19;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] A user-defined type.
@@ -232,10 +241,22 @@ impl Item {
         item
     }
 
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7d i, ii] The fields of a large object
+    /// type of `kind` and `length`: LENGTH its maximum length, OCTET_LENGTH
+    /// `octets`; a character one's character set and collation.
+    fn describe_lob(&mut self, kind: crate::value::lob::LobKind, length: u64, octets: i64, catalog: &str) {
+        self.set_number(DescriptorItem::Length, i64::try_from(length).unwrap_or(i64::MAX));
+        self.set_number(DescriptorItem::OctetLength, octets);
+        if kind == crate::value::lob::LobKind::Character {
+            self.sql_text(CHARACTER_SET, catalog);
+            self.sql_text(COLLATION, catalog);
+        }
+    }
+
     /// [ISO/IEC 9075:1992 §17.9 GR3e iv, GR4e iv] The fields of `t` that its
     /// TYPE says.
     fn describe_type(&mut self, t: DataType, catalog: &str) {
-        let octets = t.kind().descriptor(&t).octets.map(number);
+        let octets = t.kind().descriptor(&t).octets.map(|o| number(usize::try_from(o).unwrap_or(usize::MAX)));
         match t {
             DataType::Character { length, .. } | DataType::Varying { length, .. } => {
                 self.set_number(DescriptorItem::Length, i64::from(length));
@@ -249,6 +270,7 @@ impl Item {
                 self.set_number(DescriptorItem::Length, i64::from(length));
                 self.set_number(DescriptorItem::OctetLength, octets.unwrap_or(0));
             }
+            DataType::Lob { kind, length, .. } => self.describe_lob(kind, length, octets.unwrap_or(0), catalog),
             DataType::Exact { precision, scale, .. } => {
                 self.set_number(DescriptorItem::Precision, i64::from(precision));
                 self.set_number(DescriptorItem::Scale, i64::from(scale));
@@ -296,14 +318,20 @@ impl Item {
         let n = |f| self.number(f);
         let (length, precision, scale) = (n(DescriptorItem::Length), n(DescriptorItem::Precision), n(DescriptorItem::Scale));
         let text = match n(DescriptorItem::Type) {
-            code::CHARACTER | code::VARYING => {
+            code::CHARACTER | code::VARYING | code::CLOB => {
                 let set: Vec<String> = CHARACTER_SET.iter().map(|f| self.text(*f)).collect();
                 if set != [catalog, INFORMATION_SCHEMA, SQL_TEXT] {
                     return None;
                 }
-                let varying = if n(DescriptorItem::Type) == code::VARYING { " VARYING" } else { "" };
-                format!("CHARACTER{varying}({length})")
+                let rest = match n(DescriptorItem::Type) {
+                    code::VARYING => " VARYING",
+                    code::CLOB => " LARGE OBJECT",
+                    _ => "",
+                };
+                format!("CHARACTER{rest}({length})")
             }
+            // [ISO/IEC 9075-2:2023 §20.1 SR6c] BINARY LARGE OBJECT(LENGTH).
+            code::BLOB => format!("BINARY LARGE OBJECT({length})"),
             code::NUMERIC => format!("NUMERIC({precision}, {scale})"),
             code::DECIMAL => format!("DECIMAL({precision}, {scale})"),
             code::INTEGER => "INTEGER".to_owned(),
@@ -387,6 +415,8 @@ fn type_code(t: &DataType) -> i64 {
         DataType::DecFloat { .. } => code::DECFLOAT,
         DataType::Binary { .. } => code::BINARY,
         DataType::VarBinary { .. } => code::BINARY_VARYING,
+        DataType::Lob { kind: crate::value::lob::LobKind::Character, .. } => code::CLOB,
+        DataType::Lob { kind: crate::value::lob::LobKind::Binary, .. } => code::BLOB,
         DataType::Boolean => code::BOOLEAN,
         DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } => code::DATETIME,
         DataType::Interval(_) => code::INTERVAL,
@@ -417,6 +447,7 @@ fn datetime_shape(t: &DataType) -> (i64, i64, i64) {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Array(_)

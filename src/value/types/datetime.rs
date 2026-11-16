@@ -66,6 +66,7 @@ fn shape(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Array(_)
@@ -178,6 +179,7 @@ pub fn cast_at(v: Value, t: &DataType, now: Now) -> Result<Value> {
         | Value::Approx(_)
         | Value::DecFloat(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Interval(_)
         | Value::Array(_)

@@ -28,6 +28,8 @@ behind it, and each can be replaced or added to.
   on many threads at once and survive a crash with multi-version concurrency
   control, a write-ahead log, checkpoints and recovery.
 - Row and columnar storage, chosen per table.
+- Large objects up to 4G, stored, logged, read and sent a chunk at a
+  time, and reached by locators.
 - Indexes as plug-ins. B-link trees, linear hash tables and R-trees over
   points and rectangles are built in. Any other method registers with its
   own options, and a cost-based planner chooses among them for filters

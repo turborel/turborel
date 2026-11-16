@@ -12,7 +12,7 @@ use crate::error::{Code, Result, SqlError, SqlState, fail, fail_with};
 use crate::value::collation::CollationRef;
 use crate::value::types::MAX_ARRAY_CARDINALITY;
 use crate::value::types::array::with_element;
-use crate::value::types::composite::array_ordered;
+use crate::value::types::composite::unordered;
 use crate::value::{DataType, Decimal, SortOrder, Value};
 
 /// [ISO/IEC 9075-2:2023 §6.31] `<cardinality expression>`'s name.
@@ -201,13 +201,12 @@ impl AggregateFunction for ArrayAggregate {
     fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
         match arg {
             Some(DataType::Row(r)) => {
-                // [§9.14 SR2f, SR3] no key is array-ordered.
-                if let Some(key) = r.fields.iter().skip(1).find(|f| array_ordered(&f.data_type)) {
+                // [§9.14 SR2f, SR3] no key is LOB-ordered or array-ordered.
+                if let Some((key, these)) = r.fields.iter().skip(1).find_map(|f| Some((&f.data_type, unordered(&f.data_type)?))) {
                     return fail(
                         Code::SyntaxRule,
                         format!(
-                            "[ISO/IEC 9075-2:2023 §9.14 SR3] ARRAY_AGG orders by values of {}, and arrays are compared for equality alone",
-                            key.data_type
+                            "[ISO/IEC 9075-2:2023 §9.14 SR3] ARRAY_AGG orders by values of {key}, and {these} are compared for equality alone"
                         ),
                     );
                 }

@@ -146,6 +146,7 @@ fn how_far(j: &ValueSpecification, valued: &Valued<'_>) -> Result<i128> {
         | Value::Approx(_)
         | Value::DecFloat(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

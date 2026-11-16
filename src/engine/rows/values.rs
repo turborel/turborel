@@ -9,11 +9,14 @@ use crate::disk::pager::PageId;
 use crate::engine::record::{Reference, Spill};
 use crate::error::{Code, Result, SqlError};
 use crate::storage::{Row, RowId};
+use crate::value::Value;
+use crate::value::lob::Part;
 
 impl RowTable {
     /// The record of row `id`, holding `row`, and the pages of its values
     /// out of line; on failure, none is left allocated.
     pub(in crate::engine::rows) fn encode(&self, id: RowId, row: &Row) -> Result<(Vec<u8>, Vec<PageId>)> {
+        self.check_lobs(row)?;
         let mut pages = Vec::new();
         let mut record = Vec::new();
         // A record sealed takes more: room is kept for it.
@@ -30,6 +33,25 @@ impl RowTable {
                 Err(e)
             }
         }
+    }
+
+    /// Refuses a large object of `row` the table does not keep: one held
+    /// in memory, one it keeps, and one named by reference, as the log
+    /// names one, are written (`rows/lobs/owned.rs`).
+    fn check_lobs(&self, row: &Row) -> Result<()> {
+        for &(c, _) in self.lobs.columns() {
+            if let Some(Value::Lob(l)) = row.get(c)
+                && l.inline().is_none()
+                && !matches!(l.parts(), [Part::Reference(_)])
+                && self.lobs.kept_here(l).is_none()
+            {
+                return Err(SqlError::new(
+                    Code::Api,
+                    format!("[DESIGN] column {c}'s large object is not kept by the table: copy it first"),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Keeps `bytes`, column `column`'s value of row `id`, in a new page.
@@ -80,10 +102,14 @@ impl RowTable {
     pub(in crate::engine::rows) fn decode(&self, id: RowId, record: &[u8], columns: Option<&[usize]>) -> Result<Row> {
         let mut fetch = |reference: Reference| self.get_value(id, reference);
         let record = self.sealing.plain_record(id, record)?;
-        match columns {
-            Some(columns) => self.format.decode_columns_with(&record, columns, &mut fetch),
-            None => self.format.decode_with(&record, &mut fetch),
+        let mut row = match columns {
+            Some(columns) => self.format.decode_columns_with(&record, columns, &mut fetch)?,
+            None => self.format.decode_with(&record, &mut fetch)?,
+        };
+        if !self.lobs.columns().is_empty() {
+            self.lobs.resolve(&mut row);
         }
+        Ok(row)
     }
 
     /// Adds the row `record` holds, row `id`'s, to `into`, each column
@@ -95,7 +121,7 @@ impl RowTable {
     /// As `gather_record`, of a record already unsealed (`plain_record`).
     pub(in crate::engine::rows) fn gather_plain(&self, (id, plain): (RowId, &[u8]), into: &mut Gathering) -> Result<()> {
         let mut fetch = |reference: Reference| self.get_value(id, reference);
-        into.push((&self.format, plain), &mut fetch)
+        into.push((&self.format, plain), &mut fetch, Some(&self.lobs))
     }
 
     /// The record `record` holds, row `id`'s, unsealed.

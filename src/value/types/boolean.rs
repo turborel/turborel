@@ -93,6 +93,7 @@ pub(crate) fn as_text(b: bool, t: &DataType) -> Result<Value> {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -146,6 +147,7 @@ impl SqlType for Boolean {
             | Value::Approx(_)
             | Value::DecFloat(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
@@ -165,6 +167,7 @@ impl SqlType for Boolean {
             | Value::Approx(_)
             | Value::DecFloat(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)

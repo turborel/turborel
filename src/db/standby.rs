@@ -178,7 +178,8 @@ fn scope(record: &Record) -> Scope {
         | Change::Drop { .. }
         | Change::AlterTable { .. }
         | Change::Defined { .. }
-        | Change::Schema { .. } => true,
+        | Change::Schema { .. }
+        | Change::LobPut { .. } => true,
         Change::CreateIndex { .. }
         | Change::DropIndex { .. }
         | Change::AlterIndex { .. }
@@ -189,7 +190,8 @@ fn scope(record: &Record) -> Scope {
         | Change::Reconfiguration { .. }
         | Change::Sequence { .. }
         | Change::Checkpoint
-        | Change::Stale { .. } => false,
+        | Change::Stale { .. }
+        | Change::LobStale { .. } => false,
     };
     if of_transaction && tx != NO_TRANSACTION { Scope::Open(tx) } else { Scope::Now }
 }

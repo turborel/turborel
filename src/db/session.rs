@@ -141,6 +141,7 @@ impl Session {
             | SqlStatement::SetCollation(_)
             | SqlStatement::SetCatalog(_)
             | SqlStatement::SetTimeZone(_)
+            | SqlStatement::Locator { .. }
             | SqlStatement::SetSessionAuthorization(_)
             | SqlStatement::SetRole(_)
             | SqlStatement::Connection(_)

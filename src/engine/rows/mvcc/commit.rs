@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 
 use super::lists::decode_change;
 use super::reads::Changed;
-use super::{Dead, Maker, Validated, Version};
+use super::{Change, Dead, Maker, Validated, Version};
 use crate::engine::rows::{RowTable, key};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::murmur::MurmurSet;
@@ -32,7 +32,7 @@ impl RowTable {
             let mut writes = MurmurSet::default();
             if !wrote_many {
                 open.changes.visit(&decode_change, &mut |c| {
-                    writes.insert(c.id);
+                    writes.extend((!c.made).then_some(c.id));
                     Ok(())
                 })?;
             }
@@ -88,15 +88,55 @@ impl RowTable {
         self.decode(id, version.record, None).map(Some)
     }
 
+    /// Adds to `dead` the garbage `change` of `tx`, committed at `at`,
+    /// leaves; whether its row could not be stamped. An object made for
+    /// no version it wrote, as for an attempt that failed, is no one's,
+    /// and freed now.
+    fn committed(&self, (tx, at): (TxId, Timestamp), change: Change, adopted: &MurmurSet<u64>, dead: &mut Vec<Dead>) -> bool {
+        if change.made {
+            if !adopted.contains(&change.id) {
+                self.free_objects(&[change.id]);
+            }
+            return false;
+        }
+        if !change.dropped.is_empty() {
+            dead.push(Dead::Objects(change.dropped));
+        }
+        // The first change of a row stamps it; its later ones find it
+        // stamped.
+        let late = match self.stamp(tx, change.id, at) {
+            Ok(true) => {
+                dead.push(Dead::Deletion(change.id));
+                false
+            }
+            Ok(false) => false,
+            Err(_) => true,
+        };
+        // A version superseded leaves its zone not visible until it is
+        // collected, with its index entries (`rows/zones.rs`).
+        match (change.before, change.appended) {
+            (Some(own), _) => {
+                self.zones.superseded(change.id, true);
+                dead.push(Dead::Own(change.id, own));
+            }
+            (None, Some(appended)) => {
+                self.zones.superseded(change.id, true);
+                dead.push(Dead::Older(change.id, appended));
+            }
+            (None, None) => {}
+        }
+        late
+    }
+
     /// Stamps the versions of `tx` with `at`, and makes garbage of what they
     /// superseded, for when `at` is past the horizon.
     pub(in crate::engine::rows) fn commit_open(&self, tx: TxId, at: Timestamp) {
         let removed = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&tx);
         let Some(open) = removed else { return };
-        let changes = {
+        let (changes, adopted) = {
             let mut open = lock_builtin(&open);
             open.ended = true;
-            mem::take(&mut open.changes)
+            (mem::take(&mut open.changes), mem::take(&mut open.adopted))
         };
         if changes.is_empty() {
             return;
@@ -111,25 +151,9 @@ impl RowTable {
             };
             let mut dead = Vec::new();
             for change in segment {
-                // The first change of a row stamps it; its later ones find
-                // it stamped.
-                match self.stamp(tx, change.id, at) {
-                    Ok(true) => dead.push(Dead::Deletion(change.id)),
-                    Ok(false) => {}
-                    Err(_) => late.push(change.id),
-                }
-                // A version superseded leaves its zone not visible until it
-                // is collected, with its index entries (`rows/zones.rs`).
-                match (change.before, change.appended) {
-                    (Some(own), _) => {
-                        self.zones.superseded(change.id, true);
-                        dead.push(Dead::Own(change.id, own));
-                    }
-                    (None, Some(appended)) => {
-                        self.zones.superseded(change.id, true);
-                        dead.push(Dead::Older(change.id, appended));
-                    }
-                    (None, None) => {}
+                let id = change.id;
+                if self.committed((tx, at), change, &adopted, &mut dead) {
+                    late.push(id);
                 }
             }
             self.add_garbage(at, dead);

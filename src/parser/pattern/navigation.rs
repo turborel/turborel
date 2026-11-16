@@ -230,7 +230,7 @@ impl Parser {
     fn variable_name_span(&self) -> Option<usize> {
         match self.peek() {
             Tok::Identifier(_) => Some(1),
-            Tok::Introducer(_) => matches!(self.peek_at(1), Tok::Identifier(_)).then_some(2),
+            Tok::Introducer(_) | Tok::LargeObjectLength(_) => matches!(self.peek_at(1), Tok::Identifier(_)).then_some(2),
             Tok::KeyWord(_)
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)

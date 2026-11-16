@@ -8,7 +8,9 @@
 //!             ids reserved u64 | the first page of its groups' directory
 //!             u64, 0 for none (`rows/frozen.rs`) | the page listing
 //!             its zone maps' pages u64, 0 for none (`rows/zones/saved.rs`)
-//!             | rows as of its last checkpoint u64 (`rows/counted.rs`)
+//!             | rows as of its last checkpoint u64 (`rows/counted.rs`) |
+//!             its large objects' tree's meta page u64, 0 for none
+//!             (`rows/lobs.rs`)
 //! locator:    meta page u64 | durable position u64
 //! ```
 //!
@@ -18,7 +20,7 @@ use crate::disk::pager::PageId;
 
 /// The format of a table's meta page.
 pub const TABLE_FORMAT: u8 = 1;
-const META_LEN: usize = 41;
+const META_LEN: usize = 49;
 /// Bytes of a page number or a position.
 const WORD: usize = 8;
 
@@ -48,13 +50,15 @@ pub(super) struct Meta {
     /// Its rows whose newest version is not a deletion, as its last
     /// checkpoint wrote them.
     pub(super) rows: u64,
+    /// Its large objects' tree's meta page, 0 for none.
+    pub(super) lobs: u64,
 }
 
 /// The content of a table's meta page.
 pub(super) fn meta_content(meta: Meta) -> Vec<u8> {
     let mut content = Vec::with_capacity(META_LEN);
     content.push(TABLE_FORMAT);
-    for word in [meta.tree.0, meta.reserved, meta.directory, meta.zones, meta.rows] {
+    for word in [meta.tree.0, meta.reserved, meta.directory, meta.zones, meta.rows, meta.lobs] {
         content.extend_from_slice(&word.to_le_bytes());
     }
     content
@@ -73,5 +77,6 @@ pub(super) fn parse_meta(content: &[u8]) -> Option<Meta> {
         directory: word(1 + 2 * WORD)?,
         zones: word(1 + 3 * WORD)?,
         rows: word(1 + 4 * WORD)?,
+        lobs: word(1 + 5 * WORD)?,
     })
 }

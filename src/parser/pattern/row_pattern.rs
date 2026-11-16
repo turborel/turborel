@@ -54,7 +54,7 @@ impl Parser {
     /// Whether a `<row pattern primary>` begins here.
     fn at_row_pattern_primary(&self) -> bool {
         match self.peek() {
-            Tok::Identifier(_) | Tok::Introducer(_) => true,
+            Tok::Identifier(_) | Tok::Introducer(_) | Tok::LargeObjectLength(_) => true,
             Tok::Delimiter(d) => [delim::DOLLAR_SIGN, delim::CIRCUMFLEX, delim::LEFT_PAREN, delim::LEFT_BRACE_MINUS].contains(d),
             Tok::KeyWord(_)
             | Tok::ExactNumeric(_)

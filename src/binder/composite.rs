@@ -18,7 +18,7 @@ use crate::functions::{
 };
 use crate::logical::Expr;
 use crate::params::ParameterType;
-use crate::value::types::composite::{array_ordered, nesting};
+use crate::value::types::composite::{nesting, unordered};
 use crate::value::types::{Field, MAX_ARRAY_CARDINALITY, MAX_TYPE_NESTING};
 use crate::value::{DataType, Decimal, INTEGER_PRECISION, Spelled, Value};
 
@@ -34,29 +34,29 @@ fn call(f: impl crate::functions::ScalarFunction + 'static, args: Vec<Expr>) -> 
 }
 
 /// [ISO/IEC 9075-2:2023 §9.14 SR3] An operand of an ordering operation,
-/// `what`, of type `t`, is not array-ordered.
+/// `what`, of type `t`, is neither LOB-ordered nor array-ordered.
 ///
 /// # Errors
 ///
 /// SQLCODE -103 if it is.
 pub(super) fn ordering_operand(t: &DataType, what: &str) -> Result<()> {
-    if array_ordered(t) {
+    if let Some(these) = unordered(t) {
         return Err(rule(format!(
-            "[ISO/IEC 9075-2:2023 §9.14 SR3] {what} orders values of {t}, and arrays are compared for equality alone"
+            "[ISO/IEC 9075-2:2023 §9.14 SR3] {what} orders values of {t}, and {these} are compared for equality alone"
         )));
     }
     Ok(())
 }
 
 /// [ISO/IEC 9075-2:2023 §9.12 SR3] An operand of a grouping operation,
-/// `what`, of type `t`, is not array-ordered.
+/// `what`, of type `t`, is neither LOB-ordered nor array-ordered.
 ///
 /// # Errors
 ///
 /// SQLCODE -103 if it is.
 pub(crate) fn grouping_operand(t: &DataType, what: &str) -> Result<()> {
-    if array_ordered(t) {
-        return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and arrays are grouped by no operation")));
+    if let Some(these) = unordered(t) {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and {these} are grouped by no operation")));
     }
     Ok(())
 }

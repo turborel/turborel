@@ -103,6 +103,7 @@ pub(crate) fn with_element(array: &Value, i: Option<i128>, (max, value): (u32, V
         | Value::Approx(_)
         | Value::DecFloat(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

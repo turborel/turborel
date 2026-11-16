@@ -278,6 +278,9 @@ impl TableStorage for Rows_ {
     fn restore(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
         self.write(tx)?.restore(tx, id, row)
     }
+    fn keep_lobs(&self, tx: TxId, replacing: Option<RowId>, row: &mut Row, log: crate::storage::LobLog<'_>) -> Result<()> {
+        self.write(tx)?.keep_lobs(tx, replacing, row, log)
+    }
     fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>> {
         self.made().map_or(Ok(None), |rows| rows.get(tx, id))
     }

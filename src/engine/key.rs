@@ -53,6 +53,7 @@ pub fn restores(t: &DataType) -> bool {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Interval(_) => true,

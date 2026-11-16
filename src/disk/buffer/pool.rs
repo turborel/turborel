@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGua
 
 mod ahead;
 mod claim;
+mod passing;
 
 pub(super) use ahead::Queued;
 pub use ahead::READ_AHEAD_PAGES;

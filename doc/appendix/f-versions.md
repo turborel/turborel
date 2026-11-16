@@ -50,4 +50,4 @@ opened only by a release that knows their versions.
 | An R-link spatial tree's nodes and metadata | 1 |
 | An `rtree` index locator | 1 |
 | A hash index | 1 |
-| The native protocol | 1 |
+| The native protocol | 2 |

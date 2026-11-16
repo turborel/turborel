@@ -110,7 +110,13 @@ fn scram_over_plain_tcp_waits_for_the_setting() {
 /// client-first `client` makes of `nonce`.
 fn begin(raw: &mut Raw, user: &str, (client, nonce): (&mut Client, &str)) -> Vec<u8> {
     let initial = client.first(nonce);
-    raw.send(&Request::Hello { version: 1, user: user.into(), mechanism: MECHANISM.into(), initial, capabilities: vec![] });
+    raw.send(&Request::Hello {
+        version: turborel_protocol::VERSION,
+        user: user.into(),
+        mechanism: MECHANISM.into(),
+        initial,
+        capabilities: vec![],
+    });
     let Some(Reply::Challenge(server_first)) = raw.receive() else { panic!("no server-first") };
     server_first
 }

@@ -54,7 +54,8 @@ impl<S: Read + Write> Connection<S> {
         match self.receive()? {
             Reply::Complete(completed) => Ok(completed),
             Reply::Error(failure) => Err(self.failed(failure)),
-            Reply::Challenge(_)
+            Reply::Lob(_)
+            | Reply::Challenge(_)
             | Reply::Ready { .. }
             | Reply::Prepared { .. }
             | Reply::Description(_)
@@ -77,9 +78,13 @@ impl<S: Read + Write> Connection<S> {
         match self.receive()? {
             Reply::Prepared { statement, parameters, columns } => Ok(Statement { number: statement, parameters, columns }),
             Reply::Error(failure) => Err(self.failed(failure)),
-            Reply::Challenge(_) | Reply::Ready { .. } | Reply::Description(_) | Reply::Rows(_) | Reply::Suspended | Reply::Complete(_) => {
-                Err(self.lose("[DESIGN] the server sent no Prepared"))
-            }
+            Reply::Lob(_)
+            | Reply::Challenge(_)
+            | Reply::Ready { .. }
+            | Reply::Description(_)
+            | Reply::Rows(_)
+            | Reply::Suspended
+            | Reply::Complete(_) => Err(self.lose("[DESIGN] the server sent no Prepared")),
         }
     }
 

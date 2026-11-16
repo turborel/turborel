@@ -80,6 +80,11 @@ impl Judged {
             return typed;
         }
         let vector = batch.values(at);
+        // A large object is read to be compared, which may fail: judged a
+        // row at a time (`exec/eval.rs`).
+        if over.iter().any(|&r| matches!(vector.get(r), Some(Value::Lob(_)))) {
+            return None;
+        }
         Some(over.iter().copied().filter(|&r| vector.get(r).is_some_and(|v| self.keeps(v))).collect())
     }
 

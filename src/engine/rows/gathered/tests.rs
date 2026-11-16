@@ -78,7 +78,7 @@ fn gathered((format, records, store): (&RecordFormat, &[Vec<u8>], &[Vec<u8>]), c
     let mut fetch = |r: Reference| Ok(store[usize::try_from(r.at).unwrap()].clone());
     let mut gathering = Gathering::new(&types(), columns);
     for record in records {
-        gathering.push((format, record), &mut fetch).unwrap();
+        gathering.push((format, record), &mut fetch, None).unwrap();
     }
     let batch = gathering.take();
     assert_eq!(gathering.rows(), 0, "taken, it is empty");
@@ -96,9 +96,9 @@ fn malformed_fields_are_refused() {
     let mut fetch = |r: Reference| -> Result<Vec<u8>> { panic!("fetched {r:?}") };
     // The same bytes gathered as an exact number's: a field of 3 bytes.
     let mut numbers = Gathering::new(&[DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }], &[0]);
-    assert_eq!(numbers.push((&short, &record), &mut fetch).err().map(|e| e.code), Some(Code::Corrupt));
+    assert_eq!(numbers.push((&short, &record), &mut fetch, None).err().map(|e| e.code), Some(Code::Corrupt));
     let bad = record.iter().map(|&b| if b == b'b' { 0xFF_u8 } else { b }).collect::<Vec<u8>>();
     let mut texts = Gathering::new(&[DataType::varying(4)], &[0]);
-    assert_eq!(texts.push((&short, &bad), &mut fetch).err().map(|e| e.code), Some(Code::Corrupt));
+    assert_eq!(texts.push((&short, &bad), &mut fetch, None).err().map(|e| e.code), Some(Code::Corrupt));
     assert_eq!(short.column(&bad, 0).err().map(|e| e.code), Some(Code::Corrupt), "as decoded");
 }

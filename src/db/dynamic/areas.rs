@@ -125,6 +125,7 @@ fn of_field_type(f: DescriptorItem, t: &DataType, target: bool) -> bool {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -454,13 +455,16 @@ fn set_type(item: &mut Item, catalog: &str) {
         // [ISO/IEC 9075-2:2023 §20.5 GR4c iii 1] of a PTF descriptor area,
         // the collation the default one of SQL_TEXT; of another, its
         // collation implementation-dependent (UV113), so the same.
-        code::CHARACTER | code::VARYING => {
+        code::CHARACTER | code::VARYING | code::CLOB => {
             item.default_character_set(catalog);
             item.default_collation(catalog);
             item.set_number(DescriptorItem::Length, 1);
         }
-        // [ISO/IEC 9075-2:2023 §20.5 GR4c iii 3] of a binary string, LENGTH 1.
-        code::BINARY | code::BINARY_VARYING => item.set_number(DescriptorItem::Length, 1),
+        // [ISO/IEC 9075-2:2023 §20.5 GR4c iii 2 to 4] of a binary string or
+        // a large object locator, LENGTH 1.
+        code::BINARY | code::BINARY_VARYING | code::BLOB | code::CLOB_LOCATOR | code::BLOB_LOCATOR => {
+            item.set_number(DescriptorItem::Length, 1);
+        }
         code::DATETIME => item.set_number(DescriptorItem::Precision, 0),
         code::INTERVAL => item.set_number(DescriptorItem::DatetimeIntervalPrecision, LEADING_PRECISION),
         code::NUMERIC | code::DECIMAL => {

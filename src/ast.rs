@@ -6,7 +6,7 @@
 //! standard that are not implemented are listed under "Not implemented".
 
 use crate::catalog::QualifiedName;
-use crate::value::datetime::{Field, Moment, Written};
+use crate::value::datetime::Written;
 use crate::value::interval::Interval;
 use crate::value::{Binary, Decimal};
 
@@ -65,7 +65,8 @@ pub use dynamic::{
     Scope, SetDescriptor, UsingClause,
 };
 pub use expression::{
-    CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression, WhenOperand,
+    CaseExpression, ColumnSpecification, DatetimeFunction, ExtractField, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue,
+    ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use merge::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
@@ -223,27 +224,6 @@ pub enum Literal {
     Boolean(Option<bool>),
 }
 
-/// [ISO/IEC 9075:1992 §6.8] A `<datetime value function>`: CURRENT_DATE,
-/// CURRENT_TIME or CURRENT_TIMESTAMP, of a precision if written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DatetimeFunction {
-    /// Which: of a date, a time or a timestamp.
-    pub moment: Moment,
-    /// The `<time precision>` or `<timestamp precision>`, if written.
-    pub precision: Option<u32>,
-}
-
-/// [ISO/IEC 9075:1992 §6.6] An `<extract field>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExtractField {
-    /// A `<datetime field>`.
-    Datetime(Field),
-    /// TIMEZONE_HOUR.
-    TimezoneHour,
-    /// TIMEZONE_MINUTE.
-    TimezoneMinute,
-}
-
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §7.3] <SQL statement>, and [X3.135-1986 §8.3] <declare cursor>
 // ---------------------------------------------------------------------------
@@ -376,6 +356,13 @@ pub enum SqlStatement {
     /// [ISO/IEC 9075:1992 §16.5] `<set local time zone statement>`: SET TIME
     /// ZONE, of an `<interval value expression>`, or LOCAL, none.
     SetTimeZone(Option<ValueExpression>),
+    /// [ISO/IEC 9075-2:2023 §14.17, §14.18] FREE or HOLD LOCATOR.
+    Locator {
+        /// HOLD, not FREE.
+        hold: bool,
+        /// Its `<locator reference>`s, dynamic parameters.
+        references: Vec<ValueSpecification>,
+    },
     /// [ISO/IEC 9075:1992 §16.4] `<set session authorization identifier
     /// statement>` ::= SET SESSION AUTHORIZATION `<value specification>`
     SetSessionAuthorization(ValueSpecification),

@@ -31,7 +31,13 @@ fn a_connection_breaking_the_protocol_is_closed() {
     raw.send(&Request::Query { sql: "X".repeat(1025), ends: false });
     assert_eq!(state(&raw.refusal()), ("08006", -919), "too long");
     for again in [
-        Request::Hello { version: 1, user: "X".into(), mechanism: "trust".into(), initial: vec![], capabilities: vec![] },
+        Request::Hello {
+            version: turborel_protocol::VERSION,
+            user: "X".into(),
+            mechanism: "trust".into(),
+            initial: vec![],
+            capabilities: vec![],
+        },
         Request::Answer(vec![]),
     ] {
         let mut raw = server.raw();

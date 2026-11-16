@@ -97,8 +97,9 @@ fn measured(t: &DataType, depth: usize) -> (usize, bool) {
         DataType::Row(r) => (r.fields.iter().map(|f| part(&f.data_type)).fold(ROW_EXTRA, usize::saturating_add), false),
         // A distinct type as its source, as its values are.
         DataType::Distinct(d) => measured(&d.source, depth),
-        // A type beyond the standard, shown as its text, as wide as it is.
-        DataType::Extension(_) => (MAX_WIDTH, false),
+        // A type beyond the standard, shown as its text, as wide as it is;
+        // a large object as its text or hexits, as wide as a column grows.
+        DataType::Extension(_) | DataType::Lob { .. } => (MAX_WIDTH, false),
     };
     (width.min(MAX_WIDTH), right)
 }
@@ -173,6 +174,7 @@ impl Sink for Table<'_> {
                     | Value::Interval(_)
                     | Value::Array(_)
                     | Value::Row(_)
+                    | Value::Lob(_)
                     | Value::Extension(_) => v.to_string(),
                 })
                 .collect();

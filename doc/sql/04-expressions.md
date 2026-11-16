@@ -141,9 +141,13 @@ keep their first ones if the rest are X'00', else are refused (SQLSTATE
 | TRIM([[LEADING \| TRAILING \| BOTH] [c] FROM] s) | s without the character c, a space if not written, at its start, end or both, the default |
 | LTRIM(s [, set]), RTRIM(s [, set]), BTRIM(s [, set]) | s without any of the characters of set, a space if not written, at its start, its end or both |
 | LPAD(s, n [, pad]), RPAD(s, n [, pad]) | s brought to n characters, cut if longer, else with pad, a space if not written, repeated before it or after it; '' if n is less than 1 |
+| OVERLAY(s PLACING r FROM start [FOR length] [USING units]) | s with r in place of length characters from start, or of as many as r has; of binary strings, octets |
+| TRIM([[LEADING \| TRAILING \| BOTH] [o] FROM] b) | of a binary string b, b without the octet o, X'00' if not written |
 
 A function of a CHARACTER VARYING string is CHARACTER VARYING, and
-SUBSTRING of a binary string BINARY VARYING. UPPER, LOWER, the trims and
+SUBSTRING, OVERLAY and TRIM of a binary string BINARY VARYING. Of a
+[large object](02-data-types.md#large-objects) each is a large object of
+its type, and LPAD and RPAD of one a CLOB of 4G characters. UPPER, LOWER, the trims and
 the pads take character strings alone. A trim is as long as its string
 at most. A pad is CHARACTER VARYING(32767), and gives at most 32,767
 characters, so cast it to a shorter type to show or store it narrow. A

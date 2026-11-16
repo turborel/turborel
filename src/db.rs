@@ -95,6 +95,7 @@ mod image;
 mod index_statements;
 mod indexes;
 mod integrity;
+mod lobs;
 mod log_sync;
 mod long_texts;
 mod maintenance;
@@ -138,6 +139,7 @@ mod write;
 
 use compiled::{plan, plan_slotted};
 
+pub use lobs::LOB_READ_OCTETS;
 pub use prepared::Prepared;
 pub use served::ServedConnections;
 pub use state::State;
@@ -313,6 +315,9 @@ pub struct Session {
     /// [ISO/IEC 9075-2:2023 §9.24] The database and transaction of the
     /// statement running, which a PTF describe component procedure reads.
     compile: RefCell<Option<crate::binder::Compile>>,
+    /// [ISO/IEC 9075-2:2023 §4.37.5] Its large object locators
+    /// (`db/lobs.rs`).
+    locators: RefCell<lobs::Locators>,
 }
 
 /// One call on a session: the snapshot it runs against, and the session
@@ -395,6 +400,7 @@ impl Session {
             triggering: triggers::Triggering::default(),
             nesting: nested::Nesting::default(),
             compile: RefCell::new(None),
+            locators: RefCell::default(),
             running: RefCell::new(None),
         }
     }
@@ -500,6 +506,7 @@ impl Session {
         if let (Some(tx), true) = (ending, self.commit_ended(&ended, committed.get())) {
             self.db.hold_in_doubt(tx);
         }
+        self.locators_ended(ended.is_ok() || committed.get());
         self.temporaries_ended(st, id);
         // The transaction has ended. The garbage collected as it did may leave maintenance due; one that wrote
         // may leave a checkpoint, a fold of kept totals, or a sync of the log its commit did not wait for, due.
@@ -558,6 +565,7 @@ impl Session {
         };
         // [X3.135-1986 §8.9] Ended, every change undone or not (RULES.md D19).
         self.transaction_ended(false);
+        self.locators_ended(false);
         self.temporaries_ended(st, id);
         self.db.checkpoint_if_due();
         self.db.maintain_if_due();

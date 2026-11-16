@@ -210,6 +210,7 @@ fn respelled(t: DataType) -> DataType {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -230,6 +231,8 @@ fn type_name_of(t: &DataType) -> Option<&'static str> {
         DataType::Varying { .. } => "VARCHAR",
         DataType::Binary { .. } => "BINARY",
         DataType::VarBinary { .. } => "VARBINARY",
+        DataType::Lob { kind: crate::value::lob::LobKind::Character, .. } => crate::value::types::CLOB_NAME,
+        DataType::Lob { kind: crate::value::lob::LobKind::Binary, .. } => crate::value::types::BLOB_NAME,
         DataType::Exact { .. } => "NUMERIC",
         DataType::Approximate { .. } => "FLOAT",
         DataType::DecFloat { .. } => "DECFLOAT",

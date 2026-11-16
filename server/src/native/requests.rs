@@ -18,6 +18,8 @@ use turborel::storage::Row;
 use turborel::value::Value;
 use turborel_protocol::{Column, Completed, Failure, Reply, row_size};
 
+use crate::settings::DEFAULT_LOB_INLINE_BYTES;
+
 /// What a worker is asked to do.
 pub(super) enum Work {
     /// A `<direct SQL statement>`: all its rows; the transaction ended
@@ -35,6 +37,9 @@ pub(super) enum Work {
     Close(u32),
     /// [§17.7] Statement `.0` destroyed.
     Deallocate(u32),
+    /// \[DESIGN\] What a client asks of a large object by its locator
+    /// (`native/lobs.rs`).
+    Lob(turborel_protocol::LobRequest),
 }
 
 impl Work {
@@ -42,7 +47,7 @@ impl Work {
     fn ends(&self) -> bool {
         match self {
             Work::Query { ends, .. } | Work::Execute { ends, .. } => *ends,
-            Work::Prepare(..) | Work::Fetch(..) | Work::Close(_) | Work::Deallocate(_) => false,
+            Work::Prepare(..) | Work::Fetch(..) | Work::Close(_) | Work::Deallocate(_) | Work::Lob(_) => false,
         }
     }
 }
@@ -90,13 +95,23 @@ pub(super) struct Outgoing<'a> {
     sink: &'a mut dyn FnMut(Vec<Reply>) -> Result<()>,
     /// The bytes a batch of rows is.
     batch: usize,
+    /// SERVER.LOB_INLINE_BYTES: the longest large object sent whole.
+    inline: usize,
+    /// Whether a locator was sent (`native/lobs.rs`).
+    located: bool,
     gathered: Vec<Reply>,
 }
 
 impl<'a> Outgoing<'a> {
     /// None gathered yet, batches of `batch` bytes sent through `sink`.
     pub(super) fn new(sink: &'a mut dyn FnMut(Vec<Reply>) -> Result<()>, batch: usize) -> Outgoing<'a> {
-        Outgoing { sink, batch, gathered: Vec::new() }
+        Outgoing { sink, batch, inline: DEFAULT_LOB_INLINE_BYTES, located: false, gathered: Vec::new() }
+    }
+
+    /// As it is, large objects of at most `bytes` octets sent whole.
+    #[must_use]
+    pub(super) fn inlining(self, bytes: usize) -> Outgoing<'a> {
+        Outgoing { inline: bytes, ..self }
     }
 
     /// Sends the replies gathered and not sent ahead: the request's last.
@@ -145,7 +160,8 @@ impl Held {
             Err(Cut::Gone(e)) => return Err(e),
             Err(Cut::Failed(e)) => Reply::Error(Failure::from(&e)),
         };
-        let last = if ends { self.ended(last) } else { last };
+        // A locator sent is valid until the transaction ends: it is kept.
+        let last = if ends && !out.located { self.ended(last) } else { last };
         // [ISO/IEC 9075:1992 §15.1 GR1, §15.3 GR6] whether the transaction
         // is active, for the client's connection statements.
         let active = self.session.transaction().is_some();
@@ -171,6 +187,7 @@ impl Held {
             Reply::Complete(_) => self.session.commit(),
             Reply::Error(_) => self.session.rollback(),
             Reply::Suspended
+            | Reply::Lob(_)
             | Reply::Prepared { .. }
             | Reply::Description(_)
             | Reply::Rows(_)
@@ -194,7 +211,7 @@ impl Held {
                 Direct::Rows(cursor) => {
                     let mut open = Open { cursor, next: None, warning: self.session.warning() };
                     describe(&open.cursor, out);
-                    send_rows(&mut open, 0, out).map(|ended| Some(ended.reply()))
+                    send_rows(&self.session, &mut open, 0, out).map(|ended| Some(ended.reply()))
                 }
             },
             Work::Prepare(n, sql) => self.prepare(n, &sql, max_statements).map(Some).map_err(failed),
@@ -206,6 +223,7 @@ impl Held {
                 closed.map(|_| Some(Reply::Complete(Completion::Success.into()))).map_err(failed)
             }
             Work::Deallocate(n) => self.deallocate(n).map(|()| Some(Reply::Complete(Completion::Success.into()))).map_err(failed),
+            Work::Lob(request) => self.lob(request).map(Some).map_err(failed),
         }
     }
 
@@ -265,7 +283,7 @@ impl Held {
     /// Sends at most `rows` rows of `open`, statement `n`'s cursor: kept
     /// open if it has more, closed once all are sent.
     fn sent(&mut self, n: u32, mut open: Open, (rows, out): (u32, &mut Outgoing<'_>)) -> std::result::Result<Option<Reply>, Cut> {
-        let ended = send_rows(&mut open, rows, out)?;
+        let ended = send_rows(&self.session, &mut open, rows, out)?;
         if let Ended::More = ended {
             self.cursors.insert(n, open);
         }
@@ -300,8 +318,9 @@ fn describe(cursor: &Cursor, out: &mut Outgoing<'_>) {
 }
 
 /// Gathers at most `limit` rows of `open`, all if 0, sent ahead in batches
-/// of about `out`'s bytes; reads one row past them, to tell if it has more.
-fn send_rows(open: &mut Open, limit: u32, out: &mut Outgoing<'_>) -> std::result::Result<Ended, Cut> {
+/// of about `out`'s bytes, each large object placed for `session`
+/// (`native/lobs.rs`); reads one row past them, to tell if it has more.
+fn send_rows(session: &Session, open: &mut Open, limit: u32, out: &mut Outgoing<'_>) -> std::result::Result<Ended, Cut> {
     let limit = if limit == 0 { usize::MAX } else { usize::try_from(limit).unwrap_or(usize::MAX) };
     let (mut sent, mut rows, mut bytes): (usize, Vec<Row>, usize) = (0, Vec::new(), 0);
     loop {
@@ -316,6 +335,7 @@ fn send_rows(open: &mut Open, limit: u32, out: &mut Outgoing<'_>) -> std::result
             return Ok(Ended::More);
         }
         sent = sent.saturating_add(1);
+        let row = super::lobs::placed_row(session, row, out.inline, &mut out.located).map_err(Cut::Failed)?;
         bytes = bytes.saturating_add(row_size(&row));
         rows.push(row);
         if bytes >= out.batch {

@@ -113,6 +113,7 @@ whether TLS is offered at all, takes effect as the server starts.
 | SERVER.MAX_STATEMENTS | prepared statements of a connection, 1,024 |
 | SERVER.MAX_MESSAGE_BYTES | the longest message a client sends, 16 MiB |
 | SERVER.BATCH_BYTES | about the bytes of rows in a batch sent, 64 KiB |
+| SERVER.LOB_INLINE_BYTES | the longest large object a result sends whole, a longer one sent by its locator, 64 KiB |
 | SERVER.LOGIN_TIMEOUT_MS | the milliseconds a client has to begin TLS and authenticate, the two together, from when the connection is taken, 60,000 |
 | SERVER.MAX_LOGINS | logins checked at once, apart from SERVER.WORKERS, 4 |
 | SERVER.LOGIN_DELAY_MS | the longest a login waits after failed ones from its address, 10,000; 0, no wait |

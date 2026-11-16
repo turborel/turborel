@@ -20,6 +20,8 @@ use crate::disk::pager::Pager;
 use crate::engine::record::Reference;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::log::MemoryLog;
+use crate::settings::Configurable;
+use crate::value::DataType;
 
 /// Verifies: [DESIGN] RULES.md D31, values out of line: a reference
 /// read for another row or another column than its page holds is
@@ -41,7 +43,7 @@ fn stale_references_are_refused() {
     assert_eq!(table.get_value(8, reference).err().map(|e| e.code), Some(Code::Corrupt), "another row");
     let other_column = Reference { column: 1, ..reference };
     assert_eq!(table.get_value(7, other_column).err().map(|e| e.code), Some(Code::Corrupt), "another column");
-    let meta = Meta { tree: PageId(3), reserved: 9, directory: 11, zones: 13, rows: 17 };
+    let meta = Meta { tree: PageId(3), reserved: 9, directory: 11, zones: 13, rows: 17, lobs: 19 };
     assert_eq!(parse_meta(&meta_content(meta)), Some(meta));
     assert_eq!(parse_meta(&[TABLE_FORMAT; 3]), None);
     let mut other_format = meta_content(meta);
@@ -456,7 +458,7 @@ fn pages_in_memory_are_read_ahead_by_their_reader() {
 /// keeps of a transaction's bookkeeping serves that transaction's reads of
 /// that table only while it is open there. Ended by commit or by rollback,
 /// or read through another table, the read is refused as one by a
-/// transaction that has not begun (SQLCODE -901).
+/// transaction that has not begun (SQLCODE -900).
 #[test]
 fn a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open() {
     let pages = crate::engine::MemoryPages::new(1 << 20_u32);

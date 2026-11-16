@@ -141,6 +141,7 @@ fn product(fraction: &Value, count: u64) -> Result<(u64, f64)> {
         Value::Null
         | Value::Char(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

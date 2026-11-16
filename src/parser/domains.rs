@@ -137,6 +137,7 @@ impl Parser {
         if !matches!(self.peek(), Tok::Identifier(_))
             || self.at_boolean_type()
             || self.at_binary_type()
+            || self.at_lob_type()
             || self.at_decfloat_type()
             || self.at_bigint_type()
         {

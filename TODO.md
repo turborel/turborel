@@ -49,11 +49,6 @@ Nothing is open.
 
 ### Types
 
-- Large objects (T041, T042, T046, T040, T048, T047, T050) [§4.3, §4.4,
-  §6.1]. CHARACTER LARGE OBJECT and BINARY LARGE OBJECT, strings past the
-  32,767 a row holds today, kept apart from the row, with concatenation
-  and the string functions over them. Their locators (T039, T049)
-  [§4.37.5] are for host languages and follow the client protocol.
 - Multisets (S271, S275, S272, S274, S281, S402, S202) [§4.12.3, §6.50 to
   §6.52, §8.16 to §8.18]. MULTISET types and constructors, MEMBER, SUBMULTISET
   and IS A SET, MULTISET UNION, EXCEPT and INTERSECT, and SET, FUSION and

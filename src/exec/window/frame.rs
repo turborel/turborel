@@ -316,6 +316,7 @@ fn negative(v: &Value) -> bool {
         Value::Null
         | Value::Char(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Row(_)

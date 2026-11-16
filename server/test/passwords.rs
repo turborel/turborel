@@ -63,7 +63,13 @@ fn a_user_proves_itself_by_its_password() {
     assert_eq!(state(&clear).0, "28000");
     assert!(clear.message.contains("TLS"), "{clear}");
     let mut raw = server.raw();
-    raw.send(&Request::Hello { version: 1, user: "ann bob".into(), mechanism: "password".into(), initial: vec![], capabilities: vec![] });
+    raw.send(&Request::Hello {
+        version: turborel_protocol::VERSION,
+        user: "ann bob".into(),
+        mechanism: "password".into(),
+        initial: vec![],
+        capabilities: vec![],
+    });
     assert_eq!(state(&raw.refusal()).0, "28000", "not an identifier");
     #[cfg(any(unix, windows))]
     {

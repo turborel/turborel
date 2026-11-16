@@ -297,6 +297,52 @@ fn main() -> Result<(), turborel::error::SqlError> {
 }
 ```
 
+## Large objects
+
+A CLOB or BLOB value is a `Value::Lob`, a `turborel::value::lob::Lob`.
+`Lob::of_text` and `Lob::of_octets` make one of what is in memory, to
+pass as a parameter. A value read from a table holds no octets, only
+where its chunks are. Its `reader` reads a range of it by `read`, or
+gives its pieces in order by `each`, a chunk at a time. Such a value is valid while the
+statement's snapshot is: the transaction at REPEATABLE READ and
+SERIALIZABLE, the statement at READ COMMITTED.
+
+A session also gives locators, as a server gives its clients.
+`locator_of` gives one of a value, which keeps the transaction's
+snapshot until it ends, so the value stays readable under READ
+COMMITTED too. `read_lob` reads by one, `free_locator` ends one and
+`hold_locator` keeps one past the commit, as FREE LOCATOR and HOLD
+LOCATOR do. `create_lob` gives a locator of an empty value that
+`append_lob` adds to a piece at a time, written to the database's
+temporary store past a chunk; `Lob::of_locator` passes it as a
+parameter.
+
+```rust
+use turborel::db::Database;
+use turborel::value::Value;
+use turborel::value::lob::{Lob, LobKind};
+
+fn main() -> Result<(), turborel::error::SqlError> {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE NOTES (ID INTEGER, BODY CLOB)")?;
+    let ann = db.session("ANN");
+    let l = ann.create_lob(LobKind::Character);
+    for piece in ["Ada wrote ", "the first program."] {
+        ann.append_lob(l, piece.as_bytes())?;
+    }
+    let insert = ann.prepare("INSERT INTO NOTES VALUES (2, ?)")?;
+    ann.execute_prepared(&insert, &[Value::Lob(Lob::of_locator(LobKind::Character, l, (0, 0)))])?;
+    ann.commit()?;
+    let mut rows = ann.open_cursor("SELECT BODY FROM NOTES")?;
+    let Some(row) = rows.fetch()? else { panic!("no row") };
+    let Value::Lob(body) = &row[0] else { panic!("not a CLOB") };
+    let locator = ann.locator_of(body.clone());
+    assert_eq!(ann.read_lob(locator, (0, 3), true)?, b"Ada");
+    ann.free_locator(locator)?;
+    Ok(())
+}
+```
+
 ## Functions
 
 A program may add scalar functions, and set functions, of its own:

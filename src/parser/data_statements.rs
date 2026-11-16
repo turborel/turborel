@@ -47,7 +47,13 @@ pub(crate) fn begins_word_statement(first: Option<&Tok>, second: Option<&Tok>) -
     // prepared [§4.10.6].
     let signal = matches!(first, Some(Tok::Identifier(w)) if w == SIGNAL || w == RESIGNAL);
     let labelled = matches!((first, second), (Some(Tok::Identifier(_)), Some(Tok::Delimiter(delim::COLON))));
-    begins_truncate(first, second) || merge || call || returned || signal || labelled
+    begins_truncate(first, second)
+        || merge
+        || call
+        || returned
+        || signal
+        || labelled
+        || super::locators::begins_locator_statement(first, second)
 }
 
 impl Parser {
@@ -112,6 +118,8 @@ impl Parser {
             self.copy_descriptor()?
         } else if self.at_pipe_row() {
             self.pipe_row()?
+        } else if self.at_locator_statement() {
+            self.locator_statement()?
         } else {
             return Ok(None);
         };

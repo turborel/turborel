@@ -40,10 +40,12 @@
 
 mod counted;
 mod discard;
+mod engine;
 mod files;
 mod frozen;
 mod gathered;
 mod ids;
+mod lobs;
 mod meta;
 mod mvcc;
 mod options;
@@ -67,8 +69,9 @@ pub use frozen::SYSTEM_CACHE_BYTES;
 use frozen::{Frozen, Merged, Merging};
 use ids::IdBlocks;
 use ids::{key, no_row, row_id};
+use lobs::LobSpace;
 pub use meta::TABLE_FORMAT;
-use meta::{locator_of, meta_content, parse_locator};
+use meta::{locator_of, meta_content};
 use mvcc::{Past, Read, Versions};
 pub use options::{DEFAULT_HELD_BYTES, DEFAULT_REFRESH_FRACTION, DEFAULT_REFRESH_ROWS, DEFAULT_TRACKED_ROWS, Refresh, TableOptions};
 use sealing::Sealing;
@@ -82,18 +85,13 @@ use super::tree::BLinkTree;
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::encoding::Encodings;
-use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
-use crate::memory::Host;
-use crate::settings::Configurable;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Near, Newest, Row, RowId, Rows, ScanOrder, StorageEngine, TableStorage};
-use crate::sync::{lock_builtin, write};
+use crate::storage::{Condition, Conjunction, Near, Newest, Row, RowId, Rows, ScanOrder, TableStorage};
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
-use crate::value::DataType;
 
 /// The name of the row store.
 pub const ROW_STORE: &str = "rowstore";
@@ -145,89 +143,6 @@ pub struct RowStore {
     system_cache: Option<Arc<AtomicU64>>,
 }
 
-impl StorageEngine for RowStore {
-    fn name(&self) -> &'static str {
-        self.name
-    }
-    fn seals(&self) -> bool {
-        true
-    }
-    fn attach(&self, host: &Host) -> Result<()> {
-        self.use_budget(Arc::clone(&host.memory));
-        self.use_work(Arc::clone(&host.work));
-        self.use_encodings(Arc::clone(&host.encodings));
-        Ok(())
-    }
-    fn table_options(&self) -> Vec<crate::storage::TableOption> {
-        options::declared(self.defaults)
-    }
-    /// It reads its settings (`Configurable`).
-    fn configurable(&self) -> Option<&dyn Configurable> {
-        Some(self)
-    }
-    fn create_table(&self, desc: &TableDesc) -> Result<Box<dyn TableStorage>> {
-        let options = options::resolved(desc, lock_builtin(&self.tables).get(&desc.name).copied().unwrap_or(self.defaults));
-        let types: Vec<DataType> = desc.columns.iter().map(|c| c.data_type.clone()).collect();
-        Ok(Box::new(RowTable::create(&self.files()?, &types, options)?.sealed(self.sealing(desc))))
-    }
-
-    /// The table whose meta page the locator names; its pages hold every
-    /// change through the position the locator records (`locator`).
-    fn open_table(&self, desc: &TableDesc, locator: &[u8]) -> Result<Option<Box<dyn TableStorage>>> {
-        let (meta, durable) = parse_locator(locator).ok_or_else(|| corrupt("a table's locator is not the row store's"))?;
-        let options = options::resolved(desc, lock_builtin(&self.tables).get(&desc.name).copied().unwrap_or(self.defaults));
-        let types: Vec<DataType> = desc.columns.iter().map(|c| c.data_type.clone()).collect();
-        let files = self.files()?;
-        files.durable.fetch_max(durable, Ordering::AcqRel);
-        Ok(Some(Box::new(RowTable::open_with(&files, (meta, &types), options, self.sealing(desc))?)))
-    }
-
-    /// Saves its tables' zone maps and counts of rows
-    /// (`rows/zones/saved.rs`, `rows/counted.rs`); writes back every page and the pager's free list; a file shadowed
-    /// (`TableFiles::shadowed`) holds them in memory and seals that batch,
-    /// its commit left to `checkpoint_finish`; one not shadowed is synced
-    /// now.
-    fn checkpoint(&self, at: Lsn) -> Result<()> {
-        if !self.checkpoints {
-            return Ok(());
-        }
-        let files = self.files()?;
-        // No table's rows half frozen (`rows/frozen.rs`).
-        let _frozen = write(&files.freezes)?;
-        if let Some(shadows) = &files.shadows {
-            // What is written now is kept in memory: no I/O with writers held.
-            shadows.hold()?;
-            let captured =
-                files.save_zones().and_then(|()| files.save_counts()).and_then(|()| files.pool.sync(files.file, Durability::Full));
-            if let Err(e) = captured.and_then(|()| shadows.seal()) {
-                let _ = shadows.release();
-                return Err(e);
-            }
-            files.sealed.store(at.0, Ordering::Release);
-            return Ok(());
-        }
-        files.save_zones()?;
-        files.save_counts()?;
-        files.pool.sync(files.file, Durability::Full)?;
-        files.durable.fetch_max(at.0, Ordering::AcqRel);
-        Ok(())
-    }
-
-    /// Commits the batch sealed, so after a crash the file holds exactly
-    /// what the checkpoint captured.
-    fn checkpoint_finish(&self) -> Result<()> {
-        if !self.checkpoints {
-            return Ok(());
-        }
-        let files = self.files()?;
-        if let Some(shadows) = &files.shadows {
-            shadows.commit_sealed()?;
-            files.durable.fetch_max(files.sealed.load(Ordering::Acquire), Ordering::AcqRel);
-        }
-        Ok(())
-    }
-}
-
 /// \[DESIGN\] A table of the row store.
 pub struct RowTable {
     pool: Arc<BufferPool>,
@@ -269,6 +184,9 @@ pub struct RowTable {
     /// The bytes of its file the system's cache is taken to hold beyond the
     /// pool (`TableFiles::system_cache`).
     system_cache: Arc<AtomicU64>,
+    /// Its large objects (`rows/lobs.rs`), shared with the values read
+    /// from it.
+    lobs: Arc<LobSpace>,
 }
 
 impl TableStorage for RowTable {
@@ -457,6 +375,7 @@ impl TableStorage for RowTable {
 
     fn discard(&self) {
         self.discarded.store(true, Ordering::Release);
+        self.lobs.discard();
     }
     fn reconfigure(&self, desc: &TableDesc) {
         self.frozen.reconfigure(options::columns_of(desc, self.frozen.columns()));
@@ -516,6 +435,28 @@ impl TableStorage for RowTable {
 
     fn rollback(&self, tx: TxId) -> Result<()> {
         self.end_open(tx)
+    }
+
+    /// Copies each large object of `row` it does not keep for that row
+    /// (`rows/lobs/owned.rs`).
+    fn keep_lobs(&self, tx: TxId, replacing: Option<RowId>, row: &mut Row, log: crate::storage::LobLog<'_>) -> Result<()> {
+        RowTable::keep_lobs(self, tx, replacing, row, log)
+    }
+
+    fn apply_lob(&self, id: u64, body: &[u8]) -> Result<()> {
+        self.apply_object(id, body)
+    }
+
+    fn note_stale_lobs(&self, ids: &[u64]) {
+        self.lobs.note_candidates(ids);
+    }
+
+    fn recovered(&self) -> Result<()> {
+        self.sweep_objects()
+    }
+
+    fn stale_lobs(&self) -> Result<Vec<u64>> {
+        self.pending_objects()
     }
 
     fn read_by_condition(&self, tx: TxId, condition: &Condition) -> Result<()> {

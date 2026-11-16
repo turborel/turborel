@@ -6,7 +6,7 @@ use turborel::value::Value;
 use turborel::value::types::TypeRegistry;
 
 use crate::fields::{flag, put_flag, put_row, put_strs, row, strs};
-use crate::{CancelKey, KEY_BYTES, broken, frame};
+use crate::{CancelKey, KEY_BYTES, LobRequest, broken, frame};
 
 const HELLO: u8 = b'H';
 const ANSWER: u8 = b'A';
@@ -18,13 +18,14 @@ const CLOSE: u8 = b'C';
 const DEALLOCATE: u8 = b'D';
 const CANCEL: u8 = b'Z';
 const TERMINATE: u8 = b'X';
+const LOB: u8 = b'L';
 
 /// What a client sends.
 #[derive(Debug, Clone)]
 pub enum Request {
     /// The first message: the protocol version, the user, the mechanism of
     /// authentication and its first bytes, and the capabilities the client
-    /// has (none is defined in version 1).
+    /// has (none is defined in version 2).
     Hello {
         /// `VERSION`, as the client speaks it.
         version: u32,
@@ -92,6 +93,9 @@ pub enum Request {
         /// The statement's number.
         statement: u32,
     },
+    /// \[DESIGN\] What the client asks of a large object it reaches by its
+    /// locator (`lobs.rs`, RULES.md D79).
+    Lob(LobRequest),
     /// \[DESIGN\] The first and only message of a connection that cancels
     /// the statement another runs: the key its Ready gave.
     Cancel(CancelKey),
@@ -133,6 +137,7 @@ impl Request {
             Request::Deallocate { statement } => frame(out, DEALLOCATE, |b| b.put_u32(*statement)),
             Request::Cancel(key) => frame(out, CANCEL, |b| b.extend_from_slice(&key.0)),
             Request::Terminate => frame(out, TERMINATE, |_| ()),
+            Request::Lob(lob) => frame(out, LOB, |b| lob.put(b)),
         }
     }
 
@@ -173,6 +178,7 @@ impl Request {
                 Request::Cancel(CancelKey(key))
             }
             TERMINATE => Request::Terminate,
+            LOB => Request::Lob(LobRequest::read(&mut r)?),
             other => return Err(broken(format!("[DESIGN] no request is of kind {other}"))),
         };
         r.finish()?;

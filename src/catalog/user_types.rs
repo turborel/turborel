@@ -70,6 +70,7 @@ pub fn based_on(t: &DataType, name: &QualifiedName) -> bool {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -98,6 +99,7 @@ pub fn types_in(t: &DataType, into: &mut Vec<QualifiedName>) {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }

@@ -50,6 +50,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 09000 | Triggered action exception: a trigger's action failed; the message gives the trigger and the SQLSTATE and message of its failure |
 | 0A000 | Feature not supported: valid SQL turborel does not process |
 | 0A001 | Feature not supported: multiple server transactions |
+| 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
 | 21000 | Cardinality violation: a subquery of one row gave more |
 | 22000 | Data exception |
 | 22001 | String data, right truncation: a string too long for its type |
@@ -58,6 +59,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22005 | Error in assignment |
 | 22007 | Invalid datetime format |
 | 22008 | Datetime field overflow |
+| 2200D | Invalid escape octet: an octet LIKE's escape octet not of one octet |
 | 2200E | Null value in array target: an element assigned of a null array |
 | 2200H | Sequence generator limit exceeded: NEXT VALUE FOR of a generator of NO CYCLE past its last value |
 | 22009 | Invalid time zone displacement value |

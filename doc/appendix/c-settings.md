@@ -171,6 +171,7 @@ Each in a sentence:
 | SERVER.KEEPALIVE_IDLE_MS | 0 | INTEGER FROM 0 TO 32767000 | from the next connection |  |
 | SERVER.KEEPALIVE_INTERVAL_MS | 0 | INTEGER FROM 0 TO 32767000 | from the next connection |  |
 | SERVER.KEEPALIVE_PROBES | 0 | INTEGER FROM 0 TO 127 | from the next connection |  |
+| SERVER.LOB_INLINE_BYTES | 65536 | INTEGER FROM 0 TO 8388608 | at once |  |
 | SERVER.LOGIN_DELAY_MS | 10000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.LOGIN_TIMEOUT_MS | 60000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.MAX_CONNECTIONS | 100 | INTEGER FROM 1 TO 4294967295 | at once |  |
@@ -206,6 +207,7 @@ Each in a sentence:
 - **SERVER.KEEPALIVE_IDLE_MS**: The milliseconds a TCP connection is idle before the system probes whether its client is still there, rounded up to whole seconds; 0 for the system's own.
 - **SERVER.KEEPALIVE_INTERVAL_MS**: The milliseconds between the system's probes of a TCP connection's client, unanswered, rounded up to whole seconds; 0 for the system's own.
 - **SERVER.KEEPALIVE_PROBES**: The probes unanswered after which the system closes a TCP connection, its transaction rolled back; 0 for the system's own.
+- **SERVER.LOB_INLINE_BYTES**: The longest large object, in octets, a result sends whole; a longer one is sent by its locator, which the client reads a chunk at a time.
 - **SERVER.LOGIN_DELAY_MS**: The longest, in milliseconds, a login waits after failed ones from its client's address; 0 for no wait.
 - **SERVER.LOGIN_TIMEOUT_MS**: The milliseconds a connection has, from when it is taken, to begin TLS and authenticate, the two together, before it is closed; 0 for no limit.
 - **SERVER.MAX_CONNECTIONS**: Connections the server takes at once, at most.

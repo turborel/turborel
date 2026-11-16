@@ -192,7 +192,7 @@ impl SqlType for Varying {
             Value::Char(s) => Ok(cut_to(&s)),
             // [ISO/IEC 9075-2:2023 §6.13 SR8] Neither a binary string, an
             // array nor a row.
-            Value::Binary(_) | Value::Array(_) | Value::Row(_) => uncastable(&v, t).map(unwarned),
+            Value::Binary(_) | Value::Lob(_) | Value::Array(_) | Value::Row(_) => uncastable(&v, t).map(unwarned),
             Value::Bool(b) => super::boolean_text(b, t).map(unwarned),
             // [GR6e] its literal's string, as it shows.
             Value::Datetime(d) => super::datetime::as_string(&d, length, false).map(unwarned),
@@ -217,7 +217,12 @@ impl SqlType for Varying {
     /// UTF-8 takes.
     fn descriptor(&self, t: &DataType) -> Descriptor {
         let (length, units) = length_of(t);
-        Descriptor { length: Some(length), octets: Some(octets_of(length, units)), collated: true, ..Descriptor::of(self.name()) }
+        Descriptor {
+            length: Some(u64::from(length)),
+            octets: Some(u64::try_from(octets_of(length, units)).unwrap_or(u64::MAX)),
+            collated: true,
+            ..Descriptor::of(self.name())
+        }
     }
 
     fn put_value(&self, v: &Value, out: &mut Vec<u8>) {

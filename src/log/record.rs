@@ -37,6 +37,9 @@
 //! reconfiguration (19): members
 //! sequence (20): sequence generator, as a table | epoch u64 | resume i128
 //! role creator (21): authorization identifier | allowed u8
+//! large object (22): table | generation u32 | object id u64 | body bytes
+//! stale objects (23): checkpoint's position u64 | table | ids (count
+//!              u32, each u64)
 //! table:   authorization identifier | identifier
 //! options: count u32, each: name | value
 //! zone:    time zone displacement in minutes, i128
@@ -69,8 +72,8 @@ pub use definitions::DropTarget;
 use definitions::{defined, dropped, put_altered, put_defined, put_dropped, put_schema, put_sequence, schema, sequence};
 
 use kinds::{
-    ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, OWNER, RECONFIGURATION,
-    ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, STALE, STATEMENT_UNDONE, UPDATE, USER,
+    ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, LOB_PUT, LOB_STALE,
+    OWNER, RECONFIGURATION, ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, STALE, STATEMENT_UNDONE, UPDATE, USER,
 };
 pub use kinds::{KINDS, REPLICATED};
 
@@ -145,6 +148,33 @@ pub enum Change {
         row: RowId,
         /// The entry's key.
         key: Row,
+    },
+    /// \[DESIGN\] An object of a table's large object, as the table keeps
+    /// it (RULES.md D79): a chunk of its octets, or its directory, logged
+    /// one at a time as it is made, before the row change naming it.
+    /// Recovery keeps it as it reads it, whether its transaction commits
+    /// or not, and frees at its end what no row names.
+    LobPut {
+        /// Its table.
+        table: QualifiedName,
+        /// The generation of the table's storage (`TableDesc::generation`).
+        generation: u32,
+        /// The object's id.
+        id: u64,
+        /// Its body, as the table keeps it (`engine/rows/lobs.rs`).
+        body: Vec<u8>,
+    },
+    /// \[DESIGN\] The large objects of a table awaiting collection when
+    /// the checkpoint holding every change before `through` was taken:
+    /// recovery from that checkpoint frees them, as the crash lost the
+    /// collection (`db/checkpoint.rs`, RULES.md D79).
+    LobStale {
+        /// The position its checkpoint holds every change before.
+        through: Lsn,
+        /// The table.
+        table: QualifiedName,
+        /// The objects.
+        ids: Vec<u64>,
     },
     /// A `<schema>` processed [X3.135-1986 §6.1].
     Schema {
@@ -328,6 +358,7 @@ impl Record {
                 out.put_u64(*row);
                 put_row(&mut out, key);
             }
+            Change::LobPut { .. } | Change::LobStale { .. } => put_lob_change(&mut out, &self.change),
             Change::Schema { sql, owner, engines, zone, epochs } => put_schema(&mut out, (owner, sql, *zone), engines, epochs),
             Change::Defined { auth, role, schema, zone, sql, placed, epochs } => {
                 put_defined(&mut out, ((auth, role.as_deref()), schema, sql, *zone), placed.as_ref(), epochs);
@@ -389,17 +420,13 @@ impl Record {
             CHECKPOINT => Change::Checkpoint,
             STATEMENT_UNDONE => Change::StatementUndone { from: Lsn(r.u64()?) },
             STALE => Change::Stale { through: Lsn(r.u64()?), index: r.str()?, row: r.u64()?, key: row(&mut r)? },
+            LOB_PUT | LOB_STALE => lob_change(&mut r, tag)?,
             SCHEMA => schema(&mut r)?,
             DEFINED => defined(&mut r)?,
             SEQUENCE => sequence(&mut r)?,
             CREATE_INDEX => {
-                let name = r.str()?;
-                let table = table(&mut r)?;
-                let count = r.u32()?;
-                let mut columns = Vec::new();
-                for _ in 0..count {
-                    columns.push(r.str()?);
-                }
+                let (name, table) = (r.str()?, table(&mut r)?);
+                let columns = (0..r.u32()?).map(|_| r.str()).collect::<Result<_>>()?;
                 Change::CreateIndex { name, table, columns, method: r.str()?, options: options(&mut r)? }
             }
             ALTER_INDEX => Change::AlterIndex { name: r.str()?, options: options(&mut r)? },
@@ -420,6 +447,34 @@ impl Record {
         r.finish()?;
         Ok(Record { tx, change })
     }
+}
+
+/// Writes `change`, a large object's record: LobPut or LobStale.
+fn put_lob_change(out: &mut Vec<u8>, change: &Change) {
+    if let Change::LobPut { table, generation, id, body } = change {
+        put_table(out, table);
+        out.put_u32(*generation);
+        out.put_u64(*id);
+        out.put_bytes(body);
+    } else if let Change::LobStale { through, table, ids } = change {
+        out.put_u64(through.0);
+        put_table(out, table);
+        out.put_u32(u32::try_from(ids.len()).unwrap_or(u32::MAX));
+        for &id in ids {
+            out.put_u64(id);
+        }
+    }
+}
+
+/// A large object's record of `tag`, LOB_PUT or LOB_STALE, as
+/// `put_lob_change` wrote it.
+fn lob_change(r: &mut Reader<'_>, tag: u8) -> Result<Change> {
+    if tag == LOB_PUT {
+        return Ok(Change::LobPut { table: table(r)?, generation: r.u32()?, id: r.u64()?, body: r.bytes()?.to_vec() });
+    }
+    let (through, table) = (Lsn(r.u64()?), table(r)?);
+    let count = r.u32()?;
+    Ok(Change::LobStale { through, table, ids: (0..count).map(|_| r.u64()).collect::<Result<_>>()? })
 }
 
 /// A time zone displacement, in minutes, as `put_i128` wrote it.

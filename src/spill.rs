@@ -23,7 +23,9 @@
 //! exactly when the operator would find them equal.
 
 mod keys;
+pub use lobs::TempLobStore;
 mod list;
+mod lobs;
 pub(crate) mod map;
 pub(crate) mod paged;
 mod sort;
@@ -430,6 +432,9 @@ pub fn heap_bytes(v: &Value) -> usize {
         Value::Char(s) => s.len(),
         Value::Binary(b) => b.bytes().len(),
         Value::Extension(e) => e.bytes.len(),
+        // Its parts, and the octets of those held inline: never its
+        // length, which a source keeps (RULES.md D79).
+        Value::Lob(l) => l.held_bytes(),
         Value::Array(parts) | Value::Row(parts) => {
             parts.iter().fold(size_of_val::<[Value]>(parts), |sum, p| sum.saturating_add(heap_bytes(p)))
         }

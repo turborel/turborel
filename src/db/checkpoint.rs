@@ -14,15 +14,17 @@
 //!    pager's free list into its shadowed file (`disk/shadow.rs`), no sync,
 //!    and seals that batch; what plug-ins write meanwhile to their
 //!    shadowed directories (RULES.md D56) is held in memory, then sealed;
-//!    and holds back collection of every table with indexes, noting the
-//!    last commit captured;
+//!    and holds back collection of every table with indexes or large
+//!    object columns, noting the last commit captured;
 //!
 //! and opens the gate again. Then, writers going on,
 //!
 //! 3. logs, after L, each index entry of the versions awaiting collection
 //!    as of that commit (`TableStorage::garbage`), which a crash would
 //!    leave behind, as it is read, naming the checkpoint by L, for recovery
-//!    from it to take back (`Change::Stale`); then gives the holds up;
+//!    from it to take back (`Change::Stale`), and the large objects those
+//!    versions dropped, for it to free (`Change::LobStale`, RULES.md
+//!    D79); then gives the holds up;
 //! 4. logs and syncs a checkpoint record, so every record before L is
 //!    durable before the pages holding what they record are, and the
 //!    stale entries before the image naming them; the checkpoints' turn
@@ -449,9 +451,11 @@ impl State {
         for table in self.catalog.tables() {
             let indexes: Vec<IndexDesc> = self.catalog.indexes(&table.name).into_iter().cloned().collect();
             let (Ok(storage), Ok(lock)) = (self.storage_of(&table.name), self.lock_of(&table.name)) else { continue };
-            if !indexes.is_empty() {
+            // A table of large objects logs those awaiting collection.
+            let lobs = table.columns.iter().any(|c| matches!(c.data_type, crate::value::DataType::Lob { .. }));
+            if !indexes.is_empty() || lobs {
                 lock.hold_collection();
-                tables.push((Arc::clone(storage), indexes, Arc::clone(lock)));
+                tables.push((Arc::clone(storage), indexes, Arc::clone(lock), table.name.clone()));
             }
         }
         Stale { as_of: self.tx.stable(), tables }
@@ -466,10 +470,17 @@ impl State {
     /// whose sync makes them durable before the image is recorded.
     fn log_stale(&self, stale: &Stale, through: Lsn) -> Result<()> {
         let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
-        for (storage, indexes, lock) in &stale.tables {
-            for read in Arc::clone(storage).garbage(stale.as_of) {
-                let (row, values) = read?;
-                log_entries(&*log, (through, indexes), row, &values)?;
+        for (storage, indexes, lock, name) in &stale.tables {
+            if !indexes.is_empty() {
+                for read in Arc::clone(storage).garbage(stale.as_of) {
+                    let (row, values) = read?;
+                    log_entries(&*log, (through, indexes), row, &values)?;
+                }
+            }
+            // [DESIGN] RULES.md D79: the large objects it would leave kept.
+            for ids in storage.stale_lobs()?.chunks(STALE_OBJECTS) {
+                let change = Change::LobStale { through, table: name.clone(), ids: ids.to_vec() };
+                log.append(&Record { tx: NO_TRANSACTION, change }.encode())?;
             }
             lock.owed.each(&mut |index, key, row| {
                 let change = Change::Stale { through, index: index.to_owned(), row, key: key.0.clone() };
@@ -554,11 +565,15 @@ struct Stale {
 
 /// A table whose collection a checkpoint holds back: its storage, its
 /// indexes, and its lock.
-type Held = (Arc<dyn TableStorage>, Vec<IndexDesc>, Arc<TableLock>);
+type Held = (Arc<dyn TableStorage>, Vec<IndexDesc>, Arc<TableLock>, QualifiedName);
+
+/// \[DESIGN\] The most large objects one record of those awaiting
+/// collection names: 64 KiB of ids.
+const STALE_OBJECTS: usize = 8192;
 
 impl Drop for Stale {
     fn drop(&mut self) {
-        for (_, _, lock) in &self.tables {
+        for (_, _, lock, _) in &self.tables {
             lock.release_collection();
         }
     }

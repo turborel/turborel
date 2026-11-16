@@ -209,7 +209,7 @@ impl connection::Mechanism for Proof {
 fn a_failed_login_is_told_without_its_proof() {
     let (db, kept) = database();
     let server = start_with(&db, &[], vec![Arc::new(Refusing)]);
-    let peer = hello(server.address, (1, "ann", "secret"));
+    let peer = hello(server.address, (turborel_protocol::VERSION, "ann", "secret"));
     let refused = connection::connect(server.address, "BOB", &mut Proof).err().unwrap();
     assert_eq!(state(&refused).0, "28000");
     let told = kept.of("LoginFailed");
@@ -251,15 +251,15 @@ fn hello(address: std::net::SocketAddr, (version, user, mechanism): (u32, &str, 
 fn a_hello_refused_before_authentication_is_told() {
     let (db, kept) = database();
     let server = start_with(&db, &[], vec![Arc::new(Refusing)]);
-    let version = hello(server.address, (2, "ann", "secret"));
-    let unnamed = hello(server.address, (1, "a b", "secret"));
-    let unserved = hello(server.address, (1, "ann", "nothing"));
+    let version = hello(server.address, (1, "ann", "secret"));
+    let unnamed = hello(server.address, (2, "a b", "secret"));
+    let unserved = hello(server.address, (2, "ann", "nothing"));
     let told = kept.of("LoginFailed");
     assert_eq!(told.len(), 3, "{told:?}");
     assert_eq!(
         told[0],
         format!(
-            r#"LoginFailed {{ user: "ANN", peer: "{version}", mechanism: "secret", message: "protocol version 2 is not served; this server speaks 1" }}"#
+            r#"LoginFailed {{ user: "ANN", peer: "{version}", mechanism: "secret", message: "protocol version 1 is not served; this server speaks 2" }}"#
         )
     );
     assert!(told[1].starts_with(&format!(r#"LoginFailed {{ user: "a b", peer: "{unnamed}", mechanism: "secret", message: ""#)), "{told:?}");

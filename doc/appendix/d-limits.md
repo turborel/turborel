@@ -13,6 +13,8 @@ SQLSTATE 0A000.
 | An identifier | 128 characters |
 | CHARACTER and CHARACTER VARYING | 32,767 characters |
 | BINARY and BINARY VARYING | 32,767 octets |
+| CHARACTER LARGE OBJECT and BINARY LARGE OBJECT | 4G, 4,294,967,296 characters or octets |
+| A LIKE pattern or escape, or a regular expression's pattern, flag or replacement, of a large object | 262,144 octets, a chunk; a LIKE match value under UNICODE or a tailoring too |
 | NUMERIC, DECIMAL and an exact literal | 18 digits |
 | FLOAT | 53 binary digits; an approximate literal within the range of DOUBLE PRECISION |
 | DECFLOAT | 34 digits; an exponent of its leading digit from -6143 to 6144 |

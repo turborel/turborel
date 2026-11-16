@@ -1,10 +1,10 @@
 //! A regular expression read, compiled to a program both matchers run:
 //! instructions that match a character, assert a position, fork, jump,
-//! save where a group starts or ends, or match a back-reference; and the
-//! line boundaries of UTS #18 RL1.6 that `^`, `$` and `.` keep
-//! [ISO/IEC 9075-2:2023 §9.28 GR9a i].
+//! save where a group starts or ends, or match a back-reference, `^`, `$`
+//! and `.` keeping the line boundaries of UTS #18 RL1.6 [ISO/IEC
+//! 9075-2:2023 §9.28 GR9a i] that `regex/text.rs` finds.
 
-use super::class::{CharSet, NEWLINES, fixed_escape, not_newline};
+use super::class::{CharSet, fixed_escape, not_newline};
 use super::flags::{Flag, Flags};
 use super::parse::{MAX_NESTING, Node, Parsed, Quantity};
 use crate::error::Result;
@@ -227,58 +227,5 @@ impl Compiler {
         let (body, end) = (split.saturating_add(1), self.here());
         self.patch(split, if greedy { Inst::Split(body, end) } else { Inst::Split(end, body) });
         Ok(())
-    }
-}
-
-/// The character at `at` of `text`, if there is one.
-pub(super) fn char_at(text: &[char], at: usize) -> Option<char> {
-    text.get(at).copied()
-}
-
-/// Whether `at` is between a CR and an LF, no line boundary [UTS #18
-/// RL1.6].
-fn within_crlf(text: &[char], at: usize) -> bool {
-    at.checked_sub(1).and_then(|before| char_at(text, before)) == Some('\r') && char_at(text, at) == Some('\n')
-}
-
-/// [F&O 3.1 §5.6.1.1, §5.6.2; §9.28 GR9a i] Whether `^` matches at `at`:
-/// the string's start; and multi-line, after a newline sequence but at the
-/// string's end.
-pub(super) fn line_start(text: &[char], at: usize, multiline: bool) -> bool {
-    if at == 0 {
-        return true;
-    }
-    let after_newline = at.checked_sub(1).and_then(|before| char_at(text, before)).is_some_and(|c| NEWLINES.contains(&c));
-    multiline && after_newline && at < text.len() && !within_crlf(text, at)
-}
-
-/// [F&O 3.1 §5.6.1.1, §5.6.2; §9.28 GR9a i] Whether `$` matches at `at`:
-/// the string's end; and multi-line, before a newline sequence, the
-/// string's end only if no newline ends it.
-pub(super) fn line_end(text: &[char], at: usize, multiline: bool) -> bool {
-    if !multiline {
-        return at == text.len();
-    }
-    let ends_in_newline = text.last().is_some_and(|c| NEWLINES.contains(c));
-    let before_newline = char_at(text, at).is_some_and(|c| NEWLINES.contains(&c)) && !within_crlf(text, at);
-    before_newline || (at == text.len() && !ends_in_newline)
-}
-
-/// Whether `inst`, one that matches a character, matches the one at `at`.
-pub(super) fn one(inst: &Inst, text: &[char], at: usize) -> bool {
-    let Some(c) = char_at(text, at) else { return false };
-    match inst {
-        Inst::Char(want) => c == *want,
-        Inst::Set(set) => set.contains(c),
-        Inst::AnyButCrlf => !(c == '\r' && char_at(text, at.saturating_add(1)) == Some('\n')),
-        Inst::LineStart(_)
-        | Inst::LineEnd(_)
-        | Inst::Split(..)
-        | Inst::Jump(_)
-        | Inst::Save(_)
-        | Inst::BackRef(_)
-        | Inst::LoopEnter(_)
-        | Inst::LoopCheck(_)
-        | Inst::Match => false,
     }
 }

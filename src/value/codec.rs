@@ -17,7 +17,11 @@
 //!          then its units i128 |
 //!        11 (truth value) 0 for False, 1 for True u8 |
 //!        12 (decimal floating point) coefficient i128, exponent i32 |
-//!        13 (array) | 14 (row): its parts u32, then each part's value
+//!        13 (array) | 14 (row): its parts u32, then each part's value |
+//!        15 (character large object) | 16 (binary large object): 0, then
+//!          its octets, their count u32 first, if its row holds it; or 1,
+//!          then the id its table keeps it by u64, its octets u64 and its
+//!          characters u64 (RULES.md D79)
 //! row:   values u32, then each value
 //! ```
 
@@ -52,6 +56,10 @@ const DECFLOAT: u8 = 12;
 /// An array and a row: their parts (`types::composite`).
 const ARRAY: u8 = 13;
 const ROW: u8 = 14;
+/// [ISO/IEC 9075-2:2023 §4.3] A character large object.
+const CLOB: u8 = 15;
+/// [ISO/IEC 9075-2:2023 §4.4] A binary large object.
+const BLOB: u8 = 16;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -71,6 +79,10 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
         Value::Approx(_) => APPROXIMATE,
         Value::DecFloat(_) => DECFLOAT,
         Value::Binary(_) => BINARY,
+        Value::Lob(l) => match l.kind() {
+            super::lob::LobKind::Character => CLOB,
+            super::lob::LobKind::Binary => BLOB,
+        },
         Value::Bool(_) => BOOL,
         Value::Datetime(d) => match d.moment {
             Moment::Date => DATE,
@@ -114,6 +126,8 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         INTERVAL => &types::INTERVAL_DAY_TIME,
         ARRAY => &types::ARRAY,
         ROW => &types::ROW,
+        CLOB => &types::CLOB,
+        BLOB => &types::BLOB,
         EXTENSION => {
             let name = reader.str()?;
             reader.kind(&name)?

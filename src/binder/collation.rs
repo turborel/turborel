@@ -23,10 +23,12 @@ use crate::catalog::{QualifiedName, Who};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::{Escape, like_escape};
+use crate::functions::lobs::like::held_text;
 use crate::functions::{ScalarFunction, ScalarRef, source_of};
 use crate::logical::{Cond, Expr, LogicalPlan, SortKey, Subquery};
 use crate::system::INFORMATION_SCHEMA;
 use crate::value::collation::{CollationRef, SQL_TEXT};
+use crate::value::lob::{Lob, LobBuilder, LobKind, TempLobs, broken, char_cut};
 use crate::value::{CharUnits, CompOp, DataType, Decimal, Spelled, Value, like_collated};
 
 /// The collations of each subquery's columns, by the subquery's text.
@@ -73,9 +75,48 @@ impl ScalarFunction for Folded {
         Ok(args.first().cloned().unwrap_or(DataType::Varying { length: 0, units: CharUnits::Characters }))
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
-        let Some(Value::Char(text)) = args.first() else { return Ok(args.first().cloned().unwrap_or(Value::Null)) };
-        Ok(Value::Char(text.chars().map(|c| self.0.collation.fold(c).unwrap_or(c)).collect()))
+        self.call_with(args, None)
     }
+    /// A character large object folded a chunk at a time, to `temp` past
+    /// one (RULES.md D79).
+    fn call_with(&self, args: &[Value], temp: Option<&dyn TempLobs>) -> Result<Value> {
+        let fold = |c: char| self.0.collation.fold(c).unwrap_or(c);
+        if let Some(Value::Char(text)) = args.first() {
+            return Ok(Value::Char(text.chars().map(fold).collect()));
+        }
+        if let Some(Value::Lob(lob)) = args.first()
+            && lob.kind() == LobKind::Character
+        {
+            return folded_lob(lob, &fold, temp).map(Value::Lob);
+        }
+        Ok(args.first().cloned().unwrap_or(Value::Null))
+    }
+}
+
+/// `lob`, a character large object, each character folded by `fold`, read
+/// and written a chunk at a time, a character a chunk's end splits carried
+/// to the next.
+///
+/// # Errors
+///
+/// As reading or writing a chunk fails; SQLCODE -910 if its octets are not
+/// UTF-8, or it is longer than a chunk and `temp` is none.
+fn folded_lob(lob: &Lob, fold: &dyn Fn(char) -> char, temp: Option<&dyn TempLobs>) -> Result<Lob> {
+    let not_utf8 = || broken("a character large object's octets are not UTF-8");
+    let mut built = LobBuilder::new(LobKind::Character, temp);
+    let mut carried: Vec<u8> = Vec::new();
+    lob.reader().each(0, lob.octets(), &mut |piece| {
+        carried.extend_from_slice(piece);
+        let cut = char_cut(&carried, carried.len());
+        let whole = std::str::from_utf8(carried.get(..cut).unwrap_or_default()).map_err(|_| not_utf8())?;
+        built.push_str(&whole.chars().map(fold).collect::<String>())?;
+        carried.drain(..cut);
+        Ok(true)
+    })?;
+    if !carried.is_empty() {
+        return Err(not_utf8());
+    }
+    built.finish()
 }
 
 /// [ISO/IEC 9075-2:2023 §8.5 GR3d] LIKE under a collation whose characters
@@ -97,8 +138,25 @@ impl ScalarFunction for Collated {
             Escape::Of(c) => Some(c),
             Escape::Null => return Ok(Value::Null),
         };
-        let (Some(Value::Char(value)), Some(Value::Char(pattern))) = (args.first(), args.get(1)) else { return Ok(Value::Null) };
-        let matched = like_collated(value, pattern, escape, &self.0)?;
+        // A character large object is held whole to compare its
+        // substrings, up to a chunk (`functions/lobs/like.rs`).
+        let text = |v: Option<&Value>, what: &str| -> Result<Option<String>> {
+            if let Some(Value::Char(s)) = v {
+                return Ok(Some(s.clone()));
+            }
+            if let Some(Value::Lob(l)) = v
+                && l.kind() == LobKind::Character
+            {
+                return held_text(l, what).map(Some);
+            }
+            Ok(None)
+        };
+        let (Some(value), Some(pattern)) =
+            (text(args.first(), "a LIKE match value under a collation of contractions")?, text(args.get(1), "a LIKE pattern")?)
+        else {
+            return Ok(Value::Null);
+        };
+        let matched = like_collated(&value, &pattern, escape, &self.0)?;
         Ok(Value::Exact(Decimal::new(i128::from(matched), 0)))
     }
 }
@@ -346,18 +404,24 @@ impl Binder<'_> {
         x: &BoundRow,
         y: &BoundRow,
     ) -> Result<(BoundRow, BoundRow)> {
-        // Only strings have a collation, and most comparisons are of none.
-        if !x.iter().zip(y).any(|((_, t), (_, u))| t.is_character() && u.is_character()) {
+        // Only strings have a collation, and most comparisons are of none; a
+        // large object is compared by its proxies (`binder/lobs.rs`).
+        let lobs = |t: &DataType| crate::value::types::composite::lob_ordered(t);
+        if !x.iter().zip(y).any(|((_, t), (_, u))| (t.is_character() && u.is_character()) || lobs(t) || lobs(u)) {
             return Ok((x.clone(), y.clone()));
         }
         let (of_left, of_right) = (self.row_derived(left)?, self.row_derived(right)?);
         let (mut keyed_x, mut keyed_y) = (x.clone(), y.clone());
         for (i, ((a, t), (b, u))) in keyed_x.iter_mut().zip(keyed_y.iter_mut()).enumerate() {
-            if !(t.is_character() && u.is_character()) {
+            let characters = t.is_character() && u.is_character();
+            if !characters && !lobs(t) && !lobs(u) {
                 continue;
             }
             let operands: Vec<Derived> = [of_left.get(i), of_right.get(i)].into_iter().flatten().cloned().collect();
-            if let Some(c) = self.collation_of(&operands)? {
+            let c = if characters { self.collation_of(&operands)? } else { None };
+            if let Some((p, q)) = super::lobs::proxied(a, b, (t, u), c.as_ref()) {
+                (*a, *b) = (p, q);
+            } else if let Some(c) = c {
                 *a = Expr::sort_key(a.clone(), &c);
                 *b = Expr::sort_key(b.clone(), &c);
             }

@@ -69,6 +69,7 @@ impl Parser {
             | Tok::CharacterString(_)
             | Tok::BinaryString(_)
             | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_)
             | Tok::Delimiter(_)
             | Tok::End => return None,
         };
@@ -137,7 +138,7 @@ impl Parser {
             Tok::KeyWord(kw::TRUE) => Literal::Boolean(Some(true)),
             Tok::KeyWord(kw::FALSE) => Literal::Boolean(Some(false)),
             Tok::KeyWord(kw::UNKNOWN) => Literal::Boolean(None),
-            Tok::KeyWord(_) | Tok::Identifier(_) | Tok::Introducer(_) | Tok::Delimiter(_) | Tok::End => {
+            Tok::KeyWord(_) | Tok::Identifier(_) | Tok::Introducer(_) | Tok::LargeObjectLength(_) | Tok::Delimiter(_) | Tok::End => {
                 return Err(self.syntax("expected a <literal>"));
             }
         };

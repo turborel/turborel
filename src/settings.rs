@@ -153,6 +153,7 @@ fn bytes(value: &Value, default: usize) -> usize {
         | Value::Char(_)
         | Value::Null
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

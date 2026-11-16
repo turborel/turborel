@@ -59,6 +59,7 @@ fn ordered_by(t: &DataType, member: fn(&DataType) -> bool) -> bool {
             | DataType::DecFloat { .. }
             | DataType::Binary { .. }
             | DataType::VarBinary { .. }
+            | DataType::Lob { .. }
             | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }
@@ -71,6 +72,24 @@ fn ordered_by(t: &DataType, member: fn(&DataType) -> bool) -> bool {
 /// [ISO/IEC 9075-2:2023 §4.1] Whether `t` is array-ordered.
 pub(crate) fn array_ordered(t: &DataType) -> bool {
     ordered_by(t, |t| matches!(t, DataType::Array(_)))
+}
+
+/// [ISO/IEC 9075-2:2023 §4.1] Whether `t` is LOB-ordered.
+pub(crate) fn lob_ordered(t: &DataType) -> bool {
+    ordered_by(t, DataType::is_lob)
+}
+
+/// [ISO/IEC 9075-2:2023 §9.12 SR3, §9.14 SR3] What in `t` no ordering or
+/// grouping operation takes, named in the plural: large objects, of a
+/// LOB-ordered type, or arrays, of an array-ordered one; none of another.
+pub(crate) fn unordered(t: &DataType) -> Option<&'static str> {
+    if lob_ordered(t) {
+        Some("large objects")
+    } else if array_ordered(t) {
+        Some("arrays")
+    } else {
+        None
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §4.1] Whether `t` is row-ordered.
@@ -91,6 +110,7 @@ pub(crate) fn nesting(t: &DataType) -> usize {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }

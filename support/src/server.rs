@@ -142,14 +142,26 @@ impl Raw {
 
     /// Says Hello as `user`, trusted, and takes Ready.
     pub fn hello(&mut self, user: &str) {
-        self.send(&Request::Hello { version: 1, user: user.into(), mechanism: "trust".into(), initial: vec![], capabilities: vec![] });
+        self.send(&Request::Hello {
+            version: turborel_protocol::VERSION,
+            user: user.into(),
+            mechanism: "trust".into(),
+            initial: vec![],
+            capabilities: vec![],
+        });
         assert!(matches!(self.receive(), Some(Reply::Ready { .. })));
     }
 
     /// Says Hello as `user`, trusted, and takes the refusal, once the
     /// server has closed the connection after it.
     pub fn hello_refused(&mut self, user: &str) -> Failure {
-        self.send(&Request::Hello { version: 1, user: user.into(), mechanism: "trust".into(), initial: vec![], capabilities: vec![] });
+        self.send(&Request::Hello {
+            version: turborel_protocol::VERSION,
+            user: user.into(),
+            mechanism: "trust".into(),
+            initial: vec![],
+            capabilities: vec![],
+        });
         self.refusal()
     }
 }

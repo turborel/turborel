@@ -35,6 +35,8 @@ fn every_kind() -> Vec<Record> {
         Change::Checkpoint,
         Change::StatementUndone { from: Lsn(u64::MAX) },
         Change::Stale { through: Lsn(9), index: "I".into(), row: u64::MAX, key: edge_row() },
+        Change::LobPut { table: table(), generation: u32::MAX, id: u64::MAX, body: vec![0, 0xFF, 7] },
+        Change::LobStale { through: Lsn(u64::MAX), table: table(), ids: vec![0, 9, u64::MAX] },
         Change::CreateIndex {
             name: "I".into(),
             table: table(),

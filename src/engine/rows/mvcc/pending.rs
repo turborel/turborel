@@ -44,6 +44,36 @@ impl RowTable {
     }
 }
 
+impl RowTable {
+    /// The large objects awaiting collection (`Dead::Objects`), each list's
+    /// segments copied one at a time.
+    pub(in crate::engine::rows) fn pending_objects(&self) -> Result<Vec<u64>> {
+        let mut ids = Vec::new();
+        if self.lobs.columns().is_empty() {
+            return Ok(ids);
+        }
+        let timestamps: Vec<Timestamp> = lock_builtin(&self.versions.garbage).keys().copied().collect();
+        for at in timestamps {
+            let mut segment = 0_usize;
+            while let Some(items) = self.garbage_segment(at, segment)? {
+                segment = segment.saturating_add(1);
+                ids.extend(
+                    items.into_iter().filter_map(|item| if let Dead::Objects(dropped) = item { Some(dropped) } else { None }).flatten(),
+                );
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Segment `segment` of the garbage list of `at`, copied; none past
+    /// its last, or if it is gone.
+    fn garbage_segment(&self, at: Timestamp, segment: usize) -> Result<Option<Vec<Dead>>> {
+        let mut garbage = lock_builtin(&self.versions.garbage);
+        let Some(list) = garbage.get_mut(&at).filter(|list| segment < list.segments()) else { return Ok(None) };
+        list.segment(segment, &decode_dead).map(Some)
+    }
+}
+
 impl Pending {
     /// Copies the next segment with a version it takes; whether one was.
     fn fill(&mut self) -> Result<bool> {
@@ -97,6 +127,6 @@ fn own(item: &Dead) -> Option<bool> {
     match item {
         Dead::Own(..) => Some(true),
         Dead::Older(..) => Some(false),
-        Dead::Deletion(_) | Dead::Undone(_) => None,
+        Dead::Deletion(_) | Dead::Undone(_) | Dead::Objects(_) => None,
     }
 }

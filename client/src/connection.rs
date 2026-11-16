@@ -216,7 +216,7 @@ impl<S: Read + Write> Connection<S> {
                     return Ok(connection);
                 }
                 Reply::Error(failure) => return Err(failure),
-                Reply::Prepared { .. } | Reply::Description(_) | Reply::Rows(_) | Reply::Suspended | Reply::Complete(_) => {
+                Reply::Prepared { .. } | Reply::Description(_) | Reply::Rows(_) | Reply::Suspended | Reply::Complete(_) | Reply::Lob(_) => {
                     return Err(connection.lose("[DESIGN] the server sent no Ready"));
                 }
             }
@@ -332,7 +332,7 @@ impl<S: Read + Write> Connection<S> {
             Reply::Complete(completed) => return Ok(Outcome::Done(completed)),
             Reply::Description(columns) => columns,
             Reply::Error(failure) => return Err(self.failed(failure)),
-            Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } | Reply::Rows(_) | Reply::Suspended => {
+            Reply::Lob(_) | Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } | Reply::Rows(_) | Reply::Suspended => {
                 return Err(self.lose("[DESIGN] the server sent no result"));
             }
         };
@@ -352,7 +352,7 @@ impl<S: Read + Write> Connection<S> {
             Reply::Complete(completed) => return Ok(Streamed::Done(completed)),
             Reply::Description(columns) => sink.columns(&columns),
             Reply::Error(failure) => return Err(self.failed(failure)),
-            Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } | Reply::Rows(_) | Reply::Suspended => {
+            Reply::Lob(_) | Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } | Reply::Rows(_) | Reply::Suspended => {
                 return Err(self.lose("[DESIGN] the server sent no result"));
             }
         }
@@ -365,7 +365,12 @@ impl<S: Read + Write> Connection<S> {
                 }
                 Reply::Complete(_) => return Ok(Streamed::Rows(count)),
                 Reply::Error(failure) => return Err(self.failed(failure)),
-                Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } | Reply::Description(_) | Reply::Suspended => {
+                Reply::Lob(_)
+                | Reply::Challenge(_)
+                | Reply::Ready { .. }
+                | Reply::Prepared { .. }
+                | Reply::Description(_)
+                | Reply::Suspended => {
                     return Err(self.lose("[DESIGN] the server broke off its rows"));
                 }
             }
@@ -382,7 +387,7 @@ impl<S: Read + Write> Connection<S> {
                 Reply::Complete(_) => return Ok((rows, false)),
                 Reply::Suspended => return Ok((rows, true)),
                 Reply::Error(failure) => return Err(self.failed(failure)),
-                Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } | Reply::Description(_) => {
+                Reply::Lob(_) | Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } | Reply::Description(_) => {
                     return Err(self.lose("[DESIGN] the server broke off its rows"));
                 }
             }
@@ -413,7 +418,8 @@ impl<S: Read + Write> Connection<S> {
         let (kind, _) = turborel_protocol::header(*head, self.max_body).map_err(|e| Failure::from(&e))?;
         match Reply::decode(kind, body).map_err(|e| Failure::from(&e))? {
             Reply::Error(failure) => Err(failure),
-            Reply::Challenge(_)
+            Reply::Lob(_)
+            | Reply::Challenge(_)
             | Reply::Ready { .. }
             | Reply::Prepared { .. }
             | Reply::Description(_)
@@ -482,7 +488,8 @@ impl<S: Read + Write> Connection<S> {
             Reply::Complete(c) => (self.active, self.warning) = (c.active, c.is_warning().then(|| c.sqlstate.clone())),
             Reply::Error(f) => (self.active, self.warning) = (f.active, None),
             Reply::Description(_) => (self.active, self.warning) = (true, None),
-            Reply::Rows(_) | Reply::Suspended => self.active = true,
+            // A locator is valid within a transaction alone.
+            Reply::Rows(_) | Reply::Suspended | Reply::Lob(_) => self.active = true,
             Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } => {}
         }
         Ok(reply)

@@ -73,6 +73,9 @@ const BOOL_TAG: u8 = 9;
 const DECFLOAT_TAG: u8 = 10;
 /// The tag of an array or a row, then its parts' count and their keys.
 const COMPOSITE_TAG: u8 = 11;
+/// The tag of a large object, then its identity's key
+/// (`LobIdentity::put_key`).
+const LOB_TAG: u8 = 12;
 
 /// Appends `v`'s normalized key to `out`: the bytes `norm_key` gives of
 /// `v.norm()`, made without making it.
@@ -89,6 +92,10 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
         Value::Binary(b) => {
             out.push(BITS_TAG);
             b.put_key(out);
+        }
+        Value::Lob(l) => {
+            out.push(LOB_TAG);
+            crate::value::lob::LobIdentity(l.clone()).put_key(out);
         }
         Value::Bool(b) => {
             out.push(BOOL_TAG);
@@ -185,6 +192,10 @@ pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
             NormKey::Binary(b) => {
                 out.push(BITS_TAG);
                 b.put_key(&mut out);
+            }
+            NormKey::Lob(l) => {
+                out.push(LOB_TAG);
+                l.put_key(&mut out);
             }
             NormKey::Bool(b) => {
                 out.push(BOOL_TAG);

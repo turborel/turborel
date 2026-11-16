@@ -143,6 +143,13 @@ impl RowTable {
     /// What its meta page names, the row ids below `reserved` reserved,
     /// `rows` its count of rows as last saved (`rows/counted.rs`).
     fn meta_with(&self, reserved: u64, rows: u64) -> Meta {
-        Meta { tree: self.tree.meta(), reserved, directory: self.frozen.stored(), zones: self.zones.directory(), rows }
+        Meta {
+            tree: self.tree.meta(),
+            reserved,
+            directory: self.frozen.stored(),
+            zones: self.zones.directory(),
+            rows,
+            lobs: self.lobs.meta(),
+        }
     }
 }

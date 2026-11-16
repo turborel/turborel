@@ -51,8 +51,8 @@ pub(super) fn described(columns: Columns) -> Columns {
 pub(super) fn described_as(columns: Columns, not_null: bool) -> Columns {
     columns
         .data("DATA_TYPE", not_null)
-        .number("CHARACTER_MAXIMUM_LENGTH", false)
-        .number("CHARACTER_OCTET_LENGTH", false)
+        .length("CHARACTER_MAXIMUM_LENGTH", false)
+        .length("CHARACTER_OCTET_LENGTH", false)
         .ids("COLLATION", false)
         .number("NUMERIC_PRECISION", false)
         .number("NUMERIC_PRECISION_RADIX", false)
@@ -213,8 +213,8 @@ pub(super) fn data_type(catalog: &Value, t: &DataType, named: Option<&QualifiedN
     let optional = |n: Option<u32>| n.map_or(Value::Null, |n| number(usize::try_from(n).unwrap_or(usize::MAX)));
     let default = information(SQL_TEXT);
     let collation = if d.collated { ids(catalog, named.unwrap_or(&default)).to_vec() } else { vec![Value::Null, Value::Null, Value::Null] };
-    let octets = d.octets.map_or(Value::Null, number);
-    let head = vec![text(&d.name), optional(d.length), octets];
+    let long = |n: Option<u64>| n.map_or(Value::Null, |n| number(usize::try_from(n).unwrap_or(usize::MAX)));
+    let head = vec![text(&d.name), long(d.length), long(d.octets)];
     let tail = vec![optional(d.precision), optional(d.radix), optional(d.scale), optional(d.datetime_precision), optional(d.cardinality)];
     let user_defined = match &d.user_defined {
         Some((auth, ident)) => ids(catalog, &QualifiedName { auth: auth.clone(), ident: ident.clone() }).to_vec(),

@@ -223,6 +223,7 @@ fn decfloat_floor(wbc: i128, operands: [&Value; 4]) -> Option<i128> {
         Value::Null
         | Value::Char(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

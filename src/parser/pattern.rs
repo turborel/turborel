@@ -155,6 +155,7 @@ impl Parser {
             | Tok::CharacterString(_)
             | Tok::BinaryString(_)
             | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_)
             | Tok::Delimiter(_)
             | Tok::End => true,
         }

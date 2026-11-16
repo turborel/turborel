@@ -14,11 +14,12 @@ use std::io::{Read, Write};
 use turborel::error::{Code, SqlError};
 use turborel::lexer::{Tok, Token, delim, lex};
 use turborel::params::ParameterType;
-use turborel::value::{Value, assign};
+use turborel::value::{DataType, Value, assign};
 use turborel_protocol::Failure;
 
 use super::{Heading, Position, Record, Source};
 use crate::connection::Connection;
+use crate::lobs::LOB_INLINE_OCTETS;
 use crate::statements::Statement;
 
 /// \[DESIGN\] How many rows an import commits at a time, unless it is
@@ -295,7 +296,7 @@ impl<S: Read + Write> Run<'_, S> {
             let msg = format!("[DESIGN] {} fields, for {wanted} columns", record.values.len());
             return self.reject(Rejected { position: record.position, cause: Cause::Input(msg) }, rejected);
         }
-        let values = assigned(&record.values, self.insert.parameters());
+        let values = assigned(&record.values, self.insert.parameters()).and_then(|v| self.located(v));
         match values.and_then(|v| self.connection.execute(&self.insert, &v)) {
             Ok(_) => {
                 self.in_batch = self.in_batch.saturating_add(1);
@@ -311,6 +312,40 @@ impl<S: Read + Write> Run<'_, S> {
                 self.reject(Rejected { position: record.position, cause: Cause::sql(failure) }, rejected)
             }
         }
+    }
+
+    /// `values`, each long string for a large object parameter sent ahead
+    /// a piece at a time and given by its locator (`lobs.rs`), so no
+    /// request holds it whole.
+    fn located(&mut self, values: Vec<Value>) -> Result<Vec<Value>, Failure> {
+        let types = self.insert.parameters().to_vec();
+        values
+            .into_iter()
+            .zip(types)
+            .map(|(v, t)| {
+                let DataType::Lob { kind, .. } = t.data_type() else { return Ok(v) };
+                let bytes = match &v {
+                    Value::Char(s) if s.len() > LOB_INLINE_OCTETS => s.as_bytes(),
+                    Value::Binary(b) if b.bytes().len() > LOB_INLINE_OCTETS => b.bytes(),
+                    Value::Null
+                    | Value::Char(_)
+                    | Value::Binary(_)
+                    | Value::Exact(_)
+                    | Value::Approx(_)
+                    | Value::DecFloat(_)
+                    | Value::Bool(_)
+                    | Value::Datetime(_)
+                    | Value::Interval(_)
+                    | Value::Array(_)
+                    | Value::Row(_)
+                    | Value::Lob(_)
+                    | Value::Extension(_) => return Ok(v),
+                };
+                let mut writer = self.connection.create_lob(kind)?;
+                writer.write_all(bytes).map_err(|e| Failure::from(&SqlError::new(Code::Data, e.to_string())))?;
+                writer.finish().map(Value::Lob)
+            })
+            .collect()
     }
 
     /// Skips the row `row` and reports it to `rejected`, if the import

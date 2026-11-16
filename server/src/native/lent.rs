@@ -75,11 +75,11 @@ impl Lent {
     /// # Errors
     ///
     /// A write of replies failed: the connection is gone.
-    fn answer(&mut self, work: Work, running: &Running, (batch, max_statements): (usize, usize)) -> Result<()> {
+    fn answer(&mut self, work: Work, running: &Running, (batch, max_statements, inline): (usize, usize, usize)) -> Result<()> {
         let Lent { held, wire, .. } = self;
         running.present.running(true);
         let mut sink = |replies: Vec<Reply>| running.send(wire, &replies);
-        let mut out = Outgoing::new(&mut sink, batch);
+        let mut out = Outgoing::new(&mut sink, batch).inlining(inline);
         let written = held.handle(work, &mut out, max_statements).and_then(|()| out.finish());
         running.present.running(false);
         written
@@ -182,9 +182,10 @@ impl Loan {
     /// fast client that comes within `WAITED` while the connection is
     /// still served (`Lent::next`), with `permit`, the worker's, given up
     /// while it waits; the replies written through `running`, within
-    /// `limits`: SERVER.BATCH_BYTES and SERVER.MAX_STATEMENTS. A read or a
+    /// `limits`: SERVER.BATCH_BYTES, SERVER.MAX_STATEMENTS and
+    /// SERVER.LOB_INLINE_BYTES. A read or a
     /// write that fails ends the request, the loan given back failed.
-    pub(super) fn run(mut self, work: Work, running: &Running, mut permit: Permit, limits: (usize, usize)) {
+    pub(super) fn run(mut self, work: Work, running: &Running, mut permit: Permit, limits: (usize, usize, usize)) {
         self.ran = true;
         let Some(lent) = self.lent.as_mut() else { return };
         let mut work = Some(work);

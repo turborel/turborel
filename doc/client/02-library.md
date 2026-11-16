@@ -164,6 +164,51 @@ user or time zone changed since, and at each execution if it holds the
 statement's instant, as [The Embedded Library](03-embedding.md#prepared-statements)
 tells.
 
+## Large objects
+
+A CLOB or BLOB value of at most SERVER.LOB_INLINE_BYTES, 64 KiB unless
+the operator sets otherwise, comes in its row whole. A longer one comes
+as a `Value::Lob` that holds its locator and its lengths, not its
+octets. `read_lob` reads a range of it, by octets or by a CLOB's
+characters, at most a chunk of 256 KiB at a time. `lob_reader` gives a
+`std::io::Read` that reads it whole, a chunk at a time.
+
+A locator is valid until the transaction that read it ends. A statement
+whose reply sent one keeps its transaction open, under `set_autocommit`
+too, so commit once the value is read. `free_lob` ends the locator
+sooner, and `hold_lob` keeps it past the commit, until it is freed or a
+rollback ends it.
+
+`create_lob` writes a value a piece at a time, through a
+`std::io::Write`, and `finish` gives it as a `Value::Lob` to pass as a
+parameter of a CLOB or BLOB. A CLOB's octets must be UTF-8, and a
+character may be split between writes.
+
+```rust
+use std::io::{Read, Write};
+use turborel::value::lob::LobKind;
+
+let mut writer = conn.create_lob(LobKind::Binary)?;
+for chunk in std::iter::repeat_n([7_u8; 4096], 1024) {
+    writer.write_all(&chunk)?;
+}
+let scan = writer.finish()?;
+let insert = conn.prepare("INSERT INTO SCANS VALUES (1, ?)")?;
+conn.execute(&insert, &[Value::Lob(scan)])?;
+conn.query("COMMIT")?;
+if let Outcome::Rows { rows, .. } = conn.query("SELECT IMAGE FROM SCANS")? {
+    if let Value::Lob(image) = &rows[0][0] {
+        let mut octets = Vec::new();
+        conn.lob_reader(image).read_to_end(&mut octets)?;
+        // octets.len(): 4194304
+    }
+}
+conn.query("COMMIT")?;
+```
+
+An import sends a field longer than 64 KiB for a CLOB or BLOB column
+by `create_lob`, so no message carries more.
+
 ## Importing
 
 `import::import` inserts the rows of a `Source` into a table over a

@@ -174,6 +174,15 @@ pub trait Subqueries {
         None
     }
 
+    /// \[DESIGN\] Where the database the statement runs in keeps temporary
+    /// large objects (RULES.md D79): its state's, if one runs.
+    fn temp_lobs(&self) -> Option<&dyn crate::value::lob::TempLobs> {
+        self.state().map(|st| {
+            let temp: &dyn crate::value::lob::TempLobs = &*st.temp_lobs;
+            temp
+        })
+    }
+
     /// [ISO/IEC 9075-4:2006 draft §11.2] The value the function `i`, which
     /// possibly modifies SQL-data, returns of the parameters' values
     /// `values`, none if it returns none, run where an SQL-session runs
@@ -206,6 +215,7 @@ fn exact_norm(v: &Value) -> NormKey {
         | Value::Approx(_)
         | Value::DecFloat(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

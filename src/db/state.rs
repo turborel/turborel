@@ -122,6 +122,9 @@ pub struct State {
     pub(crate) sequences: Arc<super::sequences::Counters>,
     /// Where its operators spill, shared by every snapshot (`spill.rs`).
     pub(crate) work: Arc<WorkAreas>,
+    /// Its temporary large objects, kept in a scratch file of `work`'s,
+    /// shared by every snapshot (`spill/lobs.rs`, RULES.md D79).
+    pub(crate) temp_lobs: Arc<crate::spill::TempLobStore>,
     /// Its background work's jobs, shared by every snapshot (`threads.rs`,
     /// RULES.md D55).
     pub(crate) jobs: Arc<crate::threads::Jobs>,
@@ -150,6 +153,7 @@ impl State {
     /// set functions and optimizer rules, and nothing attached yet.
     pub(crate) fn with_builtins(catalog: Box<dyn Catalog>) -> State {
         let memory = MemoryBudget::new(DEFAULT_BUDGET);
+        let work = Arc::new(WorkAreas::new(Arc::clone(&memory)));
         let mut st = State {
             generation: 0,
             catalog: Arc::from(catalog),
@@ -179,7 +183,8 @@ impl State {
             pages: MemoryPages::new(crate::db::POOL_BYTES),
             temporaries: Arc::default(),
             sequences: Arc::default(),
-            work: Arc::new(WorkAreas::new(Arc::clone(&memory))),
+            work: Arc::clone(&work),
+            temp_lobs: Arc::new(crate::spill::TempLobStore::new(work)),
             jobs: Arc::default(),
             ahead: crate::disk::buffer::AheadReader::new(),
             rekey: Arc::default(),

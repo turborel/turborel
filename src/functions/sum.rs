@@ -70,6 +70,7 @@ impl Total {
                 Total::Empty,
                 Value::Char(_)
                 | Value::Binary(_)
+                | Value::Lob(_)
                 | Value::Bool(_)
                 | Value::Datetime(_)
                 | Value::Array(_)

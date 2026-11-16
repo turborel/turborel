@@ -34,6 +34,7 @@ fn fits(t: &DataType, q: Qualifier) -> bool {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Array(_)
@@ -113,6 +114,7 @@ fn zoned(t: DataType) -> DataType {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Array(_)

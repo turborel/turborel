@@ -15,10 +15,10 @@ use super::subquery::Use;
 use super::{Binder, Scope, rule};
 use crate::ast::{Literal, Predicate, RowValue, SearchCondition, Subquery, TruthValue, ValueExpression, ValueSpecification};
 use crate::error::{At, Result};
-use crate::functions::{LikeRegex, ScalarRef};
+use crate::functions::{LikeRegex, OctetLike, ScalarRef};
 use crate::logical::{Cond, Expr, Quantifier, Truth, and_all};
 use crate::params::ParameterType;
-use crate::value::{CompOp, DataType};
+use crate::value::{CompOp, DataType, Decimal, MAX_BINARY_LENGTH, Value};
 
 /// `cond`, or NOT `cond` if `not`.
 fn negated(cond: Cond, not: bool) -> Cond {
@@ -309,8 +309,27 @@ impl Binder<'_> {
         Ok(negated(or_all(any), not))
     }
 
+    /// [ISO/IEC 9075-2:2023 §8.5 SR2, GR4] `<octet like predicate>`: the
+    /// match value `matched`, of type `t`, and the `<octet pattern>` and
+    /// `<escape octet>`, binary strings, a `?` among them BINARY VARYING;
+    /// one if they match, compared to 1 (`functions/octet_like.rs`).
+    fn octet_like(&self, (matched, t): (Expr, DataType), rest: [Option<&ValueExpression>; 2], scope: Scope<'_>) -> Result<Cond> {
+        let mut bound = vec![matched];
+        for (what, v) in ["<octet pattern>", "<escape octet>"].into_iter().zip(rest) {
+            let Some(v) = v else { continue };
+            let (e, u) = self.typed(v, ParameterType::Of(DataType::VarBinary { length: MAX_BINARY_LENGTH }), scope)?;
+            if !u.is_binary() {
+                return Err(rule(format!("[ISO/IEC 9075-2:2023 §8.5 SR2] the {what} of LIKE of {t} is a binary string, not {u}")));
+            }
+            bound.push(e);
+        }
+        let call = Expr::Call(ScalarRef(Arc::new(OctetLike)), bound);
+        Ok(Cond::Compare(call, CompOp::Eq, Expr::Const(Value::Exact(Decimal::new(1, 0)))))
+    }
+
     /// [ISO/IEC 9075:1992 §8.5] `<like predicate>`: the `<match value>`,
-    /// `<pattern>` and `<escape character>`, character strings [SR1].
+    /// `<pattern>` and `<escape character>`, character strings [SR1]; or,
+    /// of a binary match value, an `<octet like predicate>`.
     pub(super) fn like(
         &self,
         [value, pattern]: [&ValueExpression; 2],
@@ -318,13 +337,20 @@ impl Binder<'_> {
         not: bool,
         scope: Scope<'_>,
     ) -> Result<Cond> {
-        let mut bound = Vec::new();
-        for (what, v) in [("<match value>", Some(value)), ("<pattern>", Some(pattern)), ("<escape character>", escape)] {
+        // [§17.6 GR5s] a `?` is CHARACTER VARYING.
+        let (first, t) = self.typed(value, ParameterType::Varying, scope)?;
+        if t.is_binary() {
+            return self.octet_like((first, t), [Some(pattern), escape], scope).map(|c| negated(c, not));
+        }
+        if !t.is_character() {
+            return Err(rule(format!("[ISO/IEC 9075:1992 §8.5 SR1] the <match value> of LIKE is a character string, not {t}")));
+        }
+        let mut bound = vec![first];
+        for (what, v) in [("<pattern>", Some(pattern)), ("<escape character>", escape)] {
             let Some(v) = v else { continue };
-            // [§17.6 GR5s] a `?` is CHARACTER VARYING.
-            let (e, t) = self.typed(v, ParameterType::Varying, scope)?;
-            if !t.is_character() {
-                return Err(rule(format!("[ISO/IEC 9075:1992 §8.5 SR1] the {what} of LIKE is a character string, not {t}")));
+            let (e, u) = self.typed(v, ParameterType::Varying, scope)?;
+            if !u.is_character() {
+                return Err(rule(format!("[ISO/IEC 9075:1992 §8.5 SR1] the {what} of LIKE is a character string, not {u}")));
             }
             bound.push(e);
         }

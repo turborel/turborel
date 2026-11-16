@@ -38,7 +38,8 @@ pub static BINARY_VARYING: BinaryKind = BinaryKind { varying: true };
 fn length_of(t: &DataType) -> u32 {
     match t {
         DataType::Binary { length } | DataType::VarBinary { length } => *length,
-        DataType::Character { .. }
+        DataType::Lob { .. }
+        | DataType::Character { .. }
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
@@ -152,7 +153,10 @@ impl SqlType for BinaryKind {
         match &v {
             Value::Null => Ok((Value::Null, None)),
             Value::Binary(b) => Ok(self.fitted(b, t)),
-            Value::Char(_)
+            // A large object is read as a binary string first
+            // (`types::lob::lowered`).
+            Value::Lob(_)
+            | Value::Char(_)
             | Value::Exact(_)
             | Value::Approx(_)
             | Value::DecFloat(_)
@@ -183,7 +187,7 @@ impl SqlType for BinaryKind {
     /// octets it takes; no collation, as no character type.
     fn descriptor(&self, t: &DataType) -> Descriptor {
         let length = length_of(t);
-        Descriptor { length: Some(length), octets: Some(octets(length)), ..Descriptor::of(self.name()) }
+        Descriptor { length: Some(u64::from(length)), octets: Some(u64::from(length)), ..Descriptor::of(self.name()) }
     }
 
     fn put_value(&self, v: &Value, out: &mut Vec<u8>) {

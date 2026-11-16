@@ -10,7 +10,7 @@ use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Subquery, Truth};
 use crate::spill::norm_row;
 use crate::storage::Row;
 use crate::value::types::rows_hold;
-use crate::value::{CompOp, Value, arith, cast_warned, compare, distinct};
+use crate::value::{CompOp, Value, arith, cast_warned, compare, distinct, proxies, row_proxies};
 
 /// Where no subquery can be, as `NoSubqueries`, the warnings raised heard
 /// by the `Warnings` it holds: a session's, or the optimizer's own, to
@@ -80,7 +80,7 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
         Expr::Neg(x) => Ok(eval(x, row, subqueries)?.negate()),
         Expr::Call(f, args) => {
             let values = args.iter().map(|a| eval(a, row, subqueries)).collect::<Result<Vec<_>>>()?;
-            f.0.call(&values)
+            f.0.call_with(&values, subqueries.temp_lobs())
         }
         Expr::Outer(_, name) => Err(broken(&format!("the outer reference {name} has no value"))),
         Expr::Invoked(i) => super::invoked::invoke(i, row, subqueries),
@@ -182,7 +182,7 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
         // [ISO/IEC 9075:1992 §8.12 GR2, Table 15] IS is never unknown.
         Cond::Is(a, value, not) => truth((eval_cond(a, row, subqueries)? == *value) != *not),
         // [X3.135-1986 §5.11 GR2, GR3]
-        Cond::Compare(a, op, b) => compared(&eval(a, row, subqueries)?, *op, &eval(b, row, subqueries)?),
+        Cond::Compare(a, op, b) => compared_read(&eval(a, row, subqueries)?, *op, &eval(b, row, subqueries)?)?,
         // [ISO/IEC 9075-2:2023 §8.15 GR1] never unknown.
         Cond::Distinct(a, b) => truth(distinct(&eval(a, row, subqueries)?, &eval(b, row, subqueries)?)?),
         // [X3.135-1986 §5.15 GR2-GR4]: IS NULL is never unknown.
@@ -196,7 +196,7 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
         }
         Cond::Unique(s, nulls_distinct) => truth(subqueries.rows(s, &outer_values(s, row, subqueries)?, None)?.unique(*nulls_distinct)?),
         // [X3.135-1986 §5.13 GR2, §5.18 GR2] the OR of its equalities, by its set.
-        Cond::In(e, set) => set.truth(&eval(e, row, subqueries)?),
+        Cond::In(e, set) => set.truth_read(&eval(e, row, subqueries)?)?,
         // [ISO/IEC 9075-2:2023 §4.6.1] a BOOLEAN value's truth, null Unknown.
         Cond::Value(e) => Truth::of(&eval(e, row, subqueries)?),
         Cond::Match { values: xs, unique, match_type, subquery } => {
@@ -213,6 +213,32 @@ pub(super) fn compared(x: &Value, op: CompOp, y: &Value) -> Truth {
         return known(rows_hold(a, op, b));
     }
     compare(x, y).map_or(Truth::Unknown, |ord| truth(op.holds(ord)))
+}
+
+/// `compared`, of values that may be or hold large objects, read as they
+/// must be (`value::proxies`).
+///
+/// # Errors
+///
+/// As reading a large object fails.
+pub(super) fn compared_read(x: &Value, op: CompOp, y: &Value) -> Result<Truth> {
+    Ok(match proxies(x, y)? {
+        Some((p, q)) => compared(&p, op, &q),
+        None => compared(x, op, y),
+    })
+}
+
+/// `compare_rows`, of rows that may hold large objects, read as they must
+/// be (`value::row_proxies`).
+///
+/// # Errors
+///
+/// As reading a large object fails.
+pub fn compare_rows_read(xs: &[Value], op: CompOp, ys: &[Value]) -> Result<Truth> {
+    Ok(match row_proxies(xs, ys)? {
+        Some((p, q)) => compare_rows(&p, op, &q),
+        None => compare_rows(xs, op, ys),
+    })
 }
 
 /// The truth value of `t`, unknown if none.
@@ -254,12 +280,12 @@ pub fn quantified(xs: &[Value], (op, quantifier): (CompOp, Quantifier), rows: im
         if rows.next().transpose()?.is_some() {
             return fail(Code::Cardinality, "[X3.135-1986 §5.11 GR1] the <subquery> of a comparison gives more than one value");
         }
-        return Ok(compare_rows(xs, op, &only));
+        return compare_rows_read(xs, op, &only);
     }
     // Whether a row gave true, false, unknown.
     let (mut some_true, mut some_false, mut some_unknown) = (false, false, false);
     for r in rows {
-        match compare_rows(xs, op, &r?) {
+        match compare_rows_read(xs, op, &r?)? {
             Truth::True => some_true = true,
             Truth::False => some_false = true,
             Truth::Unknown => some_unknown = true,
@@ -316,10 +342,18 @@ fn matched(xs: &[Value], (unique, match_type): (bool, MatchType), rows: impl Int
     if nulls > 0 && match_type != MatchType::Partial {
         return Ok(truth(match_type == MatchType::Simple));
     }
-    let equal = |r: &Row| xs.iter().zip(r).all(|(x, y)| x.is_null() || compare(x, y) == Some(std::cmp::Ordering::Equal));
+    // A large object is read as it must be to compare (`value::proxies`).
+    let equal = |r: &Row| -> Result<bool> {
+        for (x, y) in xs.iter().zip(r) {
+            if !x.is_null() && compared_read(x, CompOp::Eq, y)? != Truth::True {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    };
     let mut count = 0_usize;
     for r in rows {
-        if equal(&r?) {
+        if equal(&r?)? {
             count = count.saturating_add(1);
             // Past two, the answer is decided.
             if count > 1 {
@@ -383,6 +417,7 @@ pub(crate) fn like_escape(escape: Option<&Value>) -> Result<Escape> {
             | Value::Approx(_)
             | Value::DecFloat(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
@@ -412,6 +447,9 @@ pub(crate) fn like_truth(x: &Value, pattern: &Value, (escape, subqueries): (Opti
     Ok(match (x, pattern) {
         (Value::Null, _) | (_, Value::Null) => Truth::Unknown,
         (Value::Char(x), Value::Char(y)) => truth(subqueries.like(x, y, escape)?),
+        // [ISO/IEC 9075-2:2023 §8.5] a character large object read a
+        // chunk at a time.
+        (Value::Lob(_), _) | (_, Value::Lob(_)) => truth(crate::functions::lobs::like::like(x, pattern, escape)?),
         _ => return fail(Code::Data, "[X3.135-1986 §5.14 SR1, SR2] LIKE matches character strings"),
     })
 }

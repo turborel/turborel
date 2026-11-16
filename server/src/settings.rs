@@ -65,6 +65,14 @@ pub const MAX_MESSAGE_BYTES: &str = "SERVER.MAX_MESSAGE_BYTES";
 pub const MAX_STATEMENTS: &str = "SERVER.MAX_STATEMENTS";
 /// \[DESIGN\] The default of `MAX_STATEMENTS`.
 pub const DEFAULT_MAX_STATEMENTS: usize = 1024;
+/// \[DESIGN\] The longest large object a result sends whole, in octets;
+/// a longer one is sent by its locator (RULES.md D79).
+pub const LOB_INLINE_BYTES: &str = "SERVER.LOB_INLINE_BYTES";
+/// \[DESIGN\] The default of `LOB_INLINE_BYTES`: 64 KiB.
+pub const DEFAULT_LOB_INLINE_BYTES: usize = 64 * 1024;
+/// \[DESIGN\] The greatest `LOB_INLINE_BYTES`: half the longest message
+/// by default, so a row of one is sent.
+const MOST_LOB_INLINE_BYTES: i128 = 8 * 1024 * 1024;
 /// About how many bytes of rows go in one batch.
 pub const BATCH_BYTES: &str = "SERVER.BATCH_BYTES";
 /// The milliseconds a connection has, from when it is taken, to be secured
@@ -390,7 +398,7 @@ fn started() -> [Definition; 6] {
 }
 
 /// The limits, read as statements and connections begin.
-fn limits() -> [Definition; 7] {
+fn limits() -> [Definition; 8] {
     let processors = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
     let most = i128::from(u32::MAX);
     [
@@ -416,6 +424,12 @@ fn limits() -> [Definition; 7] {
             "The longest message, in bytes, the server takes from a client, read as the client's connection is taken.",
         ),
         limit(BATCH_BYTES, (1, most), DEFAULT_BATCH_BYTES, "About how many bytes of rows the server sends in one batch."),
+        limit(
+            LOB_INLINE_BYTES,
+            (0, MOST_LOB_INLINE_BYTES),
+            DEFAULT_LOB_INLINE_BYTES,
+            "The longest large object, in octets, a result sends whole; a longer one is sent by its locator, which the client reads a chunk at a time.",
+        ),
         limit(
             MAX_LOGINS,
             (1, i128::try_from(MOST_LOGINS).unwrap_or(most)),
@@ -501,6 +515,7 @@ pub fn count(db: &Database, name: &str) -> usize {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Row(_)
+            | Value::Lob(_)
             | Value::Extension(_),
         )
         | None => 0,
@@ -531,6 +546,7 @@ pub fn text(db: &Database, name: &str) -> String {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Row(_)
+            | Value::Lob(_)
             | Value::Extension(_),
         )
         | None => String::new(),

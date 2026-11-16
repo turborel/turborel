@@ -72,6 +72,7 @@ pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> 
         | Value::Char(_)
         | Value::Exact(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

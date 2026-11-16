@@ -51,6 +51,10 @@ pub(in crate::db) const CALL: Command = command("CALL", 7);
 pub(in crate::db) const CLOSE_CURSOR: Command = command("CLOSE CURSOR", 9);
 /// `<collation definition>`.
 pub(in crate::db) const CREATE_COLLATION: Command = command("CREATE COLLATION", 10);
+/// `<free locator statement>` [ISO/IEC 9075-2:2023 Table 39].
+pub(in crate::db) const FREE_LOCATOR: Command = command("FREE LOCATOR", 98);
+/// `<hold locator statement>` [ISO/IEC 9075-2:2023 Table 39].
+pub(in crate::db) const HOLD_LOCATOR: Command = command("HOLD LOCATOR", 99);
 /// `<commit statement>`.
 pub(in crate::db) const COMMIT_WORK: Command = command("COMMIT WORK", 11);
 /// `<connect statement>`.

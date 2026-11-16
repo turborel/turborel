@@ -94,7 +94,7 @@ verification approach DO-178C expects (§8).
 | D42 | The server has three modes over one core |
 | D43 | Users, passwords and the database's owner |
 | D44 | A running statement is cancelled from another thread |
-| D45 | Protocol version 1, and prepared statements |
+| D45 | Protocol version 2, and prepared statements |
 | D46 | The command-line client |
 | D59 | Import is rows from a pluggable source, over a connection |
 | D60 | Collations are sort keys, and a collation never changes |
@@ -116,6 +116,7 @@ verification approach DO-178C expects (§8).
 | D76 | Routine bodies: one program, two hosts |
 | D77 | SQL-server modules: catalog routines of a module, its tables in a schema of its own |
 | D78 | Polymorphic table functions: compiled as bound, run whole as the cursor opens |
+| D79 | Large objects stream: chunked, logged by chunk, read by range, reached by locators |
 
 ### The project
 
@@ -368,6 +369,12 @@ It would refuse `C = 'x'` of any collated column, so a literal, parameter,
 CAST or USER yields to a column's, as SQL-92's Coercible did. A session
 collation applies to direct and prepared statements, as they are prepared, and
 never to views or constraints, which keep what they were defined with.
+
+A collation also gives a string's weights one level at a time
+(`level_weights`) and where a string may be cut so that no contraction
+or reordering spans the cut (`safe_cut`). Equality of character large
+objects under a collation compares them so, a chunk at a time, never
+making a sort key of a whole value (`value/collation/streaming.rs`, D79).
 
 UNICODE_<LOCALE> [EXTENSION] is UNICODE tailored by CLDR 38's rules, one for
 each collation type of each locale but those for search. UNICODE_SV puts `å`,
@@ -977,6 +984,73 @@ each table argument's, are items of the FROM row together, a group
 whose first item holds the plan and the others `Source::Argument`
 (`binder/ptf.rs`). Each names its own columns of the one node.
 
+#### D79. Large objects stream: chunked, logged by chunk, read by range, reached by locators
+
+CHARACTER LARGE OBJECT, NATIONAL CHARACTER LARGE OBJECT and BINARY LARGE
+OBJECT hold values of up to 4G characters or octets (IL042), the length
+when none is written (ID068). No layer holds such a value whole. A
+`Value::Lob` is a list of parts, each inline octets, a range of a source
+of chunks, a table's object or a client's locator (`value/lob.rs`). `||`
+joins parts and SUBSTRING slices them, so neither copies a chunk. A chunk
+is 256 KiB, cut at a character's end of a character one (`char_cut`).
+
+Each table keeps its large objects in a space of its own, a B-link tree
+from an object's id to its page (`engine/rows/lobs.rs`). A segment holds
+one chunk in one page, sealed with its id, and a directory lists the
+segments by id with their lengths. Objects never change. Their pages
+pass through the buffer pool, read into no frame unless one holds them
+already, so a value larger than the pool passes through it.
+
+Every object belongs to one row, and the versions that name it are one
+run of that row's history. A new version names an object only if the
+version it replaces does, and the transaction layer copies any other
+(`txn/lobs.rs`). Each write so knows the objects it made and dropped
+without counting references. A commit puts what a version dropped with
+its garbage, freed once no snapshot reads it. An undo frees what the
+write made, and a commit frees what it made and no row it wrote names,
+a retry's leavings. DROP TABLE frees the space whole.
+
+Each object is logged as it is made, one `LobPut` record of at most a
+chunk, before the row change that names it. Recovery keeps every object
+it reads and at its end frees those that no row's newest version names,
+which covers transactions that never committed. A checkpoint logs the
+objects awaiting collection as `LobStale`, and recovery from it frees
+them. The column store refuses a large object column.
+
+A value a function makes, as UPPER, TRIM, OVERLAY and TRANSLATE_REGEX
+make one, is written a chunk at a time to the database's temporary
+store, a scratch file whose pages a value frees as it is dropped
+(`spill/lobs.rs`). A value read from a table is valid while its
+statement's snapshot is held. That is the transaction at REPEATABLE READ
+and SERIALIZABLE, and the statement at READ COMMITTED, unless a locator
+of it holds the snapshot to the transaction's end.
+
+A locator is a session's four-octet handle of a value [§4.37.5], valid
+until its transaction ends (`db/lobs.rs`). FREE LOCATOR ends one early
+and HOLD LOCATOR keeps one past commit, its value copied to the
+temporary store if a table holds it. A rollback ends every one. A
+client makes a value a piece at a time through a locator and sends that
+as a parameter. An invalid one is SQLSTATE 0F001.
+
+The server sends a large object of at most SERVER.LOB_INLINE_BYTES
+whole, a longer one by a locator the client reads a chunk at a time
+(D45). A request that would end its transaction keeps it once its reply
+sent a locator. The client library reads one as a stream and writes one
+as a stream, and an import sends a long field so.
+
+A large object is compared for equality alone. ORDER BY, GROUP BY,
+DISTINCT, keys, MAX and `<` refuse one [§9.12 SR3, §9.14 SR3]. Equality,
+POSITION, LIKE and the regular expressions read it a chunk at a time.
+What must be held whole is held up to a chunk and refused past one
+(SQLCODE -900, SQLSTATE 0A000). That is a LIKE pattern, escape or regular
+expression of a large object, and a match value under a collation of
+contractions, whose substrings LIKE compares.
+
+The costs are these. A long transaction writing large objects holds back
+log truncation. A standby holds the objects of each open transaction. A
+locator under READ COMMITTED holds back collection of every table until
+its transaction ends. Each object written is one log record.
+
 #### D33. Schema changes are transactional
 
 CREATE SCHEMA run by a session [ISO/IEC 9075:1992 §20.1 GR6b ii, iii],
@@ -1141,7 +1215,8 @@ session. A plug-in's type has TYPE code -1 [§17.1 Table 18].
 
 Each database has one logical log, in a versioned, engine-neutral format.
 It holds row changes (table, row id, before-image and after-image) and
-changes of definitions. A transaction commits when its commit record is
+changes of definitions. A large object's chunks are records of their own,
+each logged before the row change that names them (D79). A transaction commits when its commit record is
 durable, so commit order is log order.
 
 The `Log` is a plug-in. turborel ships a memory log and a segmented file
@@ -1519,7 +1594,8 @@ other layouts build on. Each table is a B-link tree (Lehman and Yao, 1981)
 keyed by a logical 64-bit row id. Row ids are stable, so indexes never need
 rewriting. The newest version of a row is in the tree and older ones are in
 an undo store, which is on disk for a database in a directory, so a long
-reader holds disk and not memory.
+reader holds disk and not memory. A table's large objects are a space of
+immutable objects beside it, each owned by one row (D79).
 
 The column store suits scans of a few columns of many rows. New rows stay
 in the tree as a delta, as in SQL Server's deltastore, HyPer's Data Blocks
@@ -1868,7 +1944,7 @@ points are `auth::Authenticator`, `transport::Listener` and
 TLS (D26) runs on one port with cleartext, and the first byte tells them
 apart (RFC 8446 §5.1). SERVER.TLS is OFF, ON or REQUIRED. Certificates reload
 without a restart (`Tls::reload`). SERVER.TLS_CLIENT_CA asks clients for a
-certificate. The native protocol is version 1 (D45) on port 7422.
+certificate. The native protocol is version 2 (D45) on port 7422.
 
 Each connection has one session, and each statement is a `<direct SQL
 statement>` [ISO/IEC 9075:1992 §20.1]. A terminated session ends as
@@ -1952,7 +2028,7 @@ SQLCODE -920 (SQLSTATE TB920) and is undone as any failed statement
 stays failed. STATEMENT.TIMEOUT_MS cancels a statement that has run that
 long.
 
-#### D45. Protocol version 1, and prepared statements
+#### D45. Protocol version 2, and prepared statements
 
 Prepared statements are SQL-92's dynamic SQL [ISO/IEC 9075:1992 §17], which
 drivers expect. `Session::prepare` checks a `<preparable statement>` once
@@ -2010,6 +2086,11 @@ random 128-bit key. A connection whose only message is Cancel with that key
 cancels what the session runs (D44). This needs no second writer, which a
 TLS stream can't have. Capabilities are exchanged by Hello and Ready, so
 later ones need no new version.
+
+Version 2 adds large objects (D79). A value of one is sent whole, or as
+its locator with its lengths. A Lob request reads a range of one, makes
+one, appends to it, or frees or holds its locator, and a Lob reply gives
+back the octets read or the new locator.
 
 #### D46. The command-line client
 

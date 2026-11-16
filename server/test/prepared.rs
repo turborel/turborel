@@ -1,4 +1,4 @@
-//! Protocol version 1 over a connection (RULES.md D45): prepared statements
+//! The protocol over a connection (RULES.md D45): prepared statements
 //! and their cursors, read a batch at a time [ISO/IEC 9075:1992 §17];
 //! requests sent before the last is answered; and a running statement
 //! cancelled from another connection.

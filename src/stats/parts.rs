@@ -211,7 +211,8 @@ impl Reservoir {
 
 /// `value` as a sample keeps it: a character string its first
 /// `SAMPLED_CHARACTERS` characters, a binary string its first
-/// `SAMPLED_OCTETS` octets, which compare no greater than it, any other whole.
+/// `SAMPLED_OCTETS` octets, which compare no greater than it, a large
+/// object none, any other whole.
 pub fn sampled(value: &Value) -> Value {
     match value {
         Value::Char(s) => match s.char_indices().nth(SAMPLED_CHARACTERS) {
@@ -225,6 +226,10 @@ pub fn sampled(value: &Value) -> Value {
                 value.clone()
             }
         }
+        // [DESIGN] A large object, the empty one of its kind: none is
+        // compared but for equality, so no histogram orders them, and a
+        // sample kept holds no version of a table read (RULES.md D79).
+        Value::Lob(l) => Value::Lob(crate::value::lob::Lob::empty(l.kind())),
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)

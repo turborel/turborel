@@ -2,6 +2,7 @@
 //! §5.6.4]: what fn:replace puts in place of each match, its `$N` the
 //! group N captured, and the replacing itself.
 
+use super::text::{Text, Window};
 use super::{Captures, Regex};
 use crate::error::{Code, Result, SqlError, SqlState};
 
@@ -95,47 +96,109 @@ fn variable(digits: &[u32], groups: usize) -> Vec<Piece> {
     pieces
 }
 
+/// A piece of what fn:replace makes, in order: characters of its own, or
+/// characters `from` to `to` of the text replaced in, a group's or those
+/// between matches, so a large object's are taken as they are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Emit<'p> {
+    /// Characters of the replacement string.
+    Text(&'p str),
+    /// Characters of the text, from the first to the second, the second
+    /// excluded.
+    Span(usize, usize),
+}
+
+/// A replacement string read, for a pattern that matches no zero-length
+/// string [§9.29 GR3, GR5].
+#[derive(Debug, Clone)]
+pub struct Replacement {
+    pieces: Vec<Piece>,
+}
+
 impl Regex {
-    /// [§9.29 GR9a; F&O 3.1 §5.6.4] fn:replace of `input`: each match, the
-    /// first of those that overlap, replaced by `replacement`.
+    /// [§9.29 GR9a; F&O 3.1 §5.6.4] `replacement` read, to replace this
+    /// pattern's matches.
     ///
     /// # Errors
     ///
     /// SQLSTATE 2201V if `replacement` is no XQuery replacement string;
     /// 2201U if the pattern matches the zero-length string, which F&O
-    /// refuses; SQLCODE -900 if a search passes `MAX_STEPS`.
-    pub fn replace(&self, input: &[char], replacement: &str) -> Result<String> {
+    /// refuses.
+    pub fn replacement(&self, replacement: &str) -> Result<Replacement> {
         let pieces = template(replacement, self.groups, self.literal)?;
         if self.is_match("")? {
             return Err(zero_length("the pattern matches the zero-length string [F&O 3.1 §5.6.4]"));
         }
-        let mut out = String::new();
+        Ok(Replacement { pieces })
+    }
+
+    /// [§9.29 GR9a; F&O 3.1 §5.6.4] fn:replace of characters `from` to `to`
+    /// of `text`, a string of their own: each match, the first of those
+    /// that overlap, replaced by `with`, what it makes given to `f` a piece
+    /// at a time, its spans in characters of `text`.
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 2201U of a match of no characters; SQLCODE -900 if a
+    /// search passes `MAX_STEPS`; as reading `text` fails, or `f` does.
+    pub fn replace_in<T, F>(&self, text: &T, (from, to): (usize, usize), with: &Replacement, mut f: F) -> Result<()>
+    where
+        T: Text + ?Sized,
+        F: FnMut(Emit<'_>) -> Result<()>,
+    {
+        let window = Window::new(text, from, to);
         let mut at = 0;
-        while let Some(found) = self.find_at(input, at)? {
+        while let Some(found) = self.find_in(&window, at)? {
             let Some((start, end)) = found.get(0).filter(|(start, end)| end > start) else {
                 return Err(zero_length("the pattern matches a zero-length string within the match"));
             };
-            out.extend(input.get(at..start).unwrap_or_default());
-            substituted(&mut out, &pieces, &found, input);
+            span(&mut f, from, (at, start))?;
+            for piece in &with.pieces {
+                substituted(&mut f, from, piece, &found)?;
+            }
             at = end;
         }
-        out.extend(input.get(at..).unwrap_or_default());
+        span(&mut f, from, (at, window.len()))
+    }
+
+    /// [§9.29 GR9a; F&O 3.1 §5.6.4] fn:replace of `input`: each match, the
+    /// first of those that overlap, replaced by `replacement`.
+    ///
+    /// # Errors
+    ///
+    /// As `replacement` and `replace_in`.
+    pub fn replace(&self, input: &[char], replacement: &str) -> Result<String> {
+        let with = self.replacement(replacement)?;
+        let mut out = String::new();
+        self.replace_in(input, (0, input.len()), &with, |piece| {
+            match piece {
+                Emit::Text(t) => out.push_str(t),
+                Emit::Span(a, b) => out.extend(input.get(a..b).unwrap_or_default()),
+            }
+            Ok(())
+        })?;
         Ok(out)
     }
 }
 
-/// Puts on `out` `pieces`, each group what `found` captured of `input`.
-fn substituted(out: &mut String, pieces: &[Piece], found: &Captures, input: &[char]) {
-    for piece in pieces {
-        match piece {
-            Piece::Text(text) => out.push_str(text),
-            Piece::Group(g) => {
-                if let Some((a, b)) = found.get(*g) {
-                    out.extend(input.get(a..b).unwrap_or_default());
-                }
+/// Gives `f` `piece`, a group what `found` captured, in a window from
+/// `from`.
+fn substituted<F: FnMut(Emit<'_>) -> Result<()>>(f: &mut F, from: usize, piece: &Piece, found: &Captures) -> Result<()> {
+    match piece {
+        Piece::Text(t) => {
+            if t.is_empty() {
+                Ok(())
+            } else {
+                f(Emit::Text(t))
             }
         }
+        Piece::Group(g) => found.get(*g).map_or(Ok(()), |group| span(f, from, group)),
     }
+}
+
+/// Gives `f` characters `a` to `b` of a window from `from`, if any.
+fn span<F: FnMut(Emit<'_>) -> Result<()>>(f: &mut F, from: usize, (a, b): (usize, usize)) -> Result<()> {
+    if b > a { f(Emit::Span(from.saturating_add(a), from.saturating_add(b))) } else { Ok(()) }
 }
 
 #[cfg(test)]

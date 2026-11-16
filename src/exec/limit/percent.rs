@@ -49,6 +49,7 @@ fn ceiling(q: &Value, rows: usize) -> Result<Option<usize>> {
         Value::Null
         | Value::Char(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

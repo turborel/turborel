@@ -7,12 +7,33 @@
 //! which stop at a subquery, a query of its own.
 
 use super::{
-    Composite, DatetimeFunction, ExtractField, Navigation, NestedWindow, QueryExpression, SetFunctionSpecification, TableName, TypeName,
-    ValueSpecification, WindowFunction,
+    Composite, Navigation, NestedWindow, QueryExpression, SetFunctionSpecification, TableName, TypeName, ValueSpecification, WindowFunction,
 };
 use crate::catalog::MatchType;
+use crate::value::datetime::{Field, Moment};
 use crate::value::interval::Qualifier;
 use crate::value::{ArithOp, CompOp};
+
+/// [ISO/IEC 9075:1992 §6.8] A `<datetime value function>`: CURRENT_DATE,
+/// CURRENT_TIME or CURRENT_TIMESTAMP, of a precision if written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DatetimeFunction {
+    /// Which: of a date, a time or a timestamp.
+    pub moment: Moment,
+    /// The `<time precision>` or `<timestamp precision>`, if written.
+    pub precision: Option<u32>,
+}
+
+/// [ISO/IEC 9075:1992 §6.6] An `<extract field>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtractField {
+    /// A `<datetime field>`.
+    Datetime(Field),
+    /// TIMEZONE_HOUR.
+    TimezoneHour,
+    /// TIMEZONE_MINUTE.
+    TimezoneMinute,
+}
 
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §5.18] <search condition>

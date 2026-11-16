@@ -25,7 +25,7 @@ use super::area::commands::{self, Command};
 use super::collations::Collating;
 use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
-use crate::ast::{InsertStatement, SearchCondition, SetClause, SetRole, SqlStatement, TableName};
+use crate::ast::{InsertStatement, SearchCondition, SetClause, SetRole, SqlStatement, TableName, ValueSpecification};
 use crate::binder::{self, DescribedKey, OutColumn, WriteKind, bind_write};
 use crate::catalog::{QualifiedName, WHOLE};
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -330,6 +330,27 @@ impl Session {
         self.bound(st, params, |cx| bind_write(cx, kind, table, set, cond)).map(drop)
     }
 
+    /// `stmt`, a positioned UPDATE or DELETE, bound as `bind_only` binds it.
+    fn positioned_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
+        if let SqlStatement::UpdatePositioned { table, set, .. } = stmt {
+            return self.write_only(st, params, (WriteKind::UpdatePositioned, table, set, None));
+        }
+        if let SqlStatement::DeletePositioned { table, .. } = stmt {
+            return self.write_only(st, params, (WriteKind::DeletePositioned, table, &[], None));
+        }
+        Ok(())
+    }
+
+    /// [ISO/IEC 9075-2:2023 §14.17, §14.18] The `<locator reference>`s of
+    /// FREE LOCATOR or HOLD LOCATOR bound, each a dynamic parameter of the
+    /// type of a locator, a four-octet integer \[§4.37.5\].
+    fn locators_only(&self, st: &State, references: &[ValueSpecification], params: &Params) -> Result<()> {
+        for r in references {
+            drop(self.value_in(st, r, params, Some(ParameterType::Of(super::lobs::LOCATOR_TYPE)))?);
+        }
+        Ok(())
+    }
+
     /// `stmt`, a `<preparable statement>` other than a query, bound as it
     /// would be run, without running it: so each `?` takes its type.
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
@@ -342,10 +363,7 @@ impl Session {
             SqlStatement::DeleteSearched { table, where_clause } => {
                 self.write_only(st, params, (WriteKind::DeleteSearched, table, &[], where_clause.as_ref()))?;
             }
-            SqlStatement::UpdatePositioned { table, set, .. } => {
-                self.write_only(st, params, (WriteKind::UpdatePositioned, table, set, None))?;
-            }
-            SqlStatement::DeletePositioned { table, .. } => self.write_only(st, params, (WriteKind::DeletePositioned, table, &[], None))?,
+            SqlStatement::UpdatePositioned { .. } | SqlStatement::DeletePositioned { .. } => self.positioned_only(st, stmt, params)?,
             // [§17.6 GR5u]
             SqlStatement::SetCollation(Some(v))
             | SqlStatement::SetSchema(v)
@@ -355,6 +373,8 @@ impl Session {
                 drop(self.value_in(st, v, params, Some(ParameterType::Varying))?);
             }
             SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),
+            // [ISO/IEC 9075-2:2023 §4.37.5] a locator, a four-octet integer.
+            SqlStatement::Locator { references, .. } => self.locators_only(st, references, params)?,
             // Of a module's cursors and targets: FETCH and SELECT ... INTO
             // name parameters, which a prepared statement has none of, so
             // only OPEN and CLOSE reach here.
@@ -418,8 +438,11 @@ impl Session {
             let msg = "[ISO/IEC 9075:1992 §17.10 GR2] a <cursor specification> is opened, not executed".to_owned();
             return Err(dynamic(SqlState::CURSOR_SPECIFICATION_NOT_EXECUTED, msg));
         }
-        Self::values_for(p, values)?;
-        self.run_prepared(p, values.to_vec(), commands::EXECUTE)
+        // [ISO/IEC 9075-2:2023 §4.37.5] a large object sent by its locator
+        // is the value it names.
+        let values = self.unlocated(values)?;
+        Self::values_for(p, &values)?;
+        self.run_prepared(p, values, commands::EXECUTE)
     }
 
     /// `run`'s, bound under the collation `p` was prepared with.
@@ -459,7 +482,7 @@ impl Session {
             let msg = "[ISO/IEC 9075:1992 §17.13 GR2] a prepared statement opened as a cursor is a <cursor specification>".to_owned();
             return Err(dynamic(SqlState::NOT_A_CURSOR_SPECIFICATION, msg));
         }
-        let params = Self::values_for(p, values)?;
+        let params = Self::values_for(p, &self.unlocated(values)?)?;
         // [ISO/IEC 9075:1992 §18.1 Table 22] a <dynamic open statement>,
         // of [ISO/IEC 9075-2:2023 §23.1 Table 39] a <dynamic select
         // statement>.

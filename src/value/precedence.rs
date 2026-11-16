@@ -11,8 +11,8 @@
 //! approximate one a type of a binary precision, so SMALLINT, INTEGER,
 //! BIGINT, NUMERIC and DECIMAL hold the same values alike and take each
 //! other's [§9.7 SR9b vi, vii]. Without Feature F054, DATE's list is DATE
-//! alone [§9.7 CR1]. No type has CLOB, BLOB or JSON, which turborel does
-//! not have, in its list.
+//! alone [§9.7 CR1]. No type has JSON, which turborel does not have, in its
+//! list.
 
 use super::DataType;
 
@@ -32,7 +32,11 @@ const THIRD: u8 = 2;
 /// so it is bounded by how deep types nest (`types::MAX_TYPE_NESTING`).
 pub fn position(p: &DataType, t: &DataType) -> Option<u8> {
     match p {
-        DataType::Character { .. } | DataType::Varying { .. } | DataType::Binary { .. } | DataType::VarBinary { .. } => of_string(p, t),
+        DataType::Character { .. }
+        | DataType::Varying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
+        | DataType::Lob { .. } => of_string(p, t),
         DataType::Exact { .. } | DataType::Approximate { .. } | DataType::DecFloat { .. } => of_number(p, t),
         // [SR10, SR11] an interval type of its class.
         DataType::Interval(q) => matches!(t, DataType::Interval(r) if r.year_month() == q.year_month()).then_some(FIRST),
@@ -49,6 +53,7 @@ pub fn position(p: &DataType, t: &DataType) -> Option<u8> {
             | DataType::Varying { .. }
             | DataType::Binary { .. }
             | DataType::VarBinary { .. }
+            | DataType::Lob { .. }
             | DataType::Exact { .. }
             | DataType::Approximate { .. }
             | DataType::DecFloat { .. }
@@ -119,15 +124,20 @@ pub fn told_apart(parameters: &[DataType], others: &[&[DataType]]) -> bool {
 }
 
 /// [ISO/IEC 9075-2:2023 §9.7 SR5 to SR8] Where the designator of `p`, a
-/// string type, is in the list of `t`: CHARACTER, then CHARACTER VARYING,
-/// of a fixed-length string; CHARACTER VARYING of a varying one; and so of
-/// binary strings.
+/// string type, is in the list of `t`, a string type of its family:
+/// CHARACTER, then CHARACTER VARYING, then CHARACTER LARGE OBJECT, of a
+/// fixed-length string; CHARACTER VARYING, then CHARACTER LARGE OBJECT, of
+/// a varying one; CHARACTER LARGE OBJECT of a large object [§4.3.1]; and
+/// so of binary strings.
 fn of_string(p: &DataType, t: &DataType) -> Option<u8> {
-    let (fixed, own) = match p {
-        DataType::Character { .. } => (false, matches!(t, DataType::Character { .. })),
-        DataType::Varying { .. } => (matches!(t, DataType::Character { .. }), matches!(t, DataType::Varying { .. })),
-        DataType::Binary { .. } => (false, matches!(t, DataType::Binary { .. })),
-        DataType::VarBinary { .. } => (matches!(t, DataType::Binary { .. }), matches!(t, DataType::VarBinary { .. })),
+    if p.is_character() != t.is_character() || p.is_binary() != t.is_binary() {
+        return None;
+    }
+    // The place of each length a string type is of: fixed, varying, large.
+    let rank = |d: &DataType| match d {
+        DataType::Character { .. } | DataType::Binary { .. } => Some(0_u8),
+        DataType::Varying { .. } | DataType::VarBinary { .. } => Some(1),
+        DataType::Lob { .. } => Some(2),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }
@@ -139,10 +149,10 @@ fn of_string(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Array(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => (false, false),
+        | DataType::Extension(_) => None,
     };
-    // A varying designator is second of a fixed-length string's list.
-    if own { Some(FIRST) } else { fixed.then_some(SECOND) }
+    let (own, of) = (rank(t)?, rank(p)?);
+    [FIRST, SECOND, THIRD].get(usize::from(of.checked_sub(own)?)).copied()
 }
 
 /// [ISO/IEC 9075-2:2023 §9.7 SR9] Where the designator of `p`, a number
@@ -174,6 +184,7 @@ fn of_number(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Varying { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Interval(_)
         | DataType::Boolean
         | DataType::Date

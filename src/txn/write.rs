@@ -2,6 +2,7 @@
 //! §8.7, §8.11, §8.12]: each changes a row and its index entries together, and
 //! logs what undoes it for the coordinator [X3.135-1986 §4.16, §7.3 GR3b i].
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::UndoEntry;
@@ -12,6 +13,7 @@ use crate::index::{Index, Key};
 use crate::log::record::Change;
 use crate::storage::{Row, RowId};
 use crate::txn::{Concurrency, LockWait, Timestamp, Txn, Undo};
+use crate::value::Value;
 
 impl State {
     fn table_indexes(&self, table: &QualifiedName) -> Vec<IndexDesc> {
@@ -60,19 +62,29 @@ impl State {
     /// §4.16, §7.3 GR3b i].
     pub(crate) fn insert_row(&self, tx: &Txn, table: &QualifiedName, row: &Row) -> Result<RowId> {
         self.prepare_write(tx, table)?;
+        // A row of large objects is copied, so each names one the table
+        // keeps for it (RULES.md D79); any other is written as given.
+        let kept = if row.iter().any(|v| matches!(v, Value::Lob(_))) {
+            let mut kept = row.clone();
+            self.keep_lobs(tx, table, None, &mut kept)?;
+            Cow::Owned(kept)
+        } else {
+            Cow::Borrowed(row)
+        };
+        let kept: &Row = &kept;
         // After any wait for a lock: a checkpoint never waits on a waiter.
         let _gate = self.tx.gate.enter();
-        let id = self.storage_of(table)?.insert(tx.id, row.clone())?;
+        let id = self.storage_of(table)?.insert(tx.id, kept.clone())?;
         let caps = self.capabilities(table)?;
         if caps.undo == Undo::Log {
             tx.log(UndoEntry::Inserted { table: table.clone(), storage: Arc::clone(self.storage_of(table)?), id })?;
         }
         if Self::logs_changes(caps.persistence) {
-            let change = Change::Insert { table: table.clone(), generation: self.generation_of(table), row: id, after: row.clone() };
+            let change = Change::Insert { table: table.clone(), generation: self.generation_of(table), row: id, after: kept.clone() };
             tx.log_sealed(change, self.seal_of(table)?.as_deref().map(|p| (p, id)))?;
         }
         for ix in self.table_indexes(table) {
-            self.index_add(tx, &ix, row, id)?;
+            self.index_add(tx, &ix, kept, id)?;
         }
         Ok(id)
     }
@@ -120,6 +132,9 @@ impl State {
         let mut seen: Option<(Timestamp, Row)> = None;
         let mut tries = 0_usize;
         loop {
+            if let Write::Update(row) = &mut write {
+                self.keep_lobs(tx, table, Some(id), row)?;
+            }
             let attempt = {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();

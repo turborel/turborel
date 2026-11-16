@@ -28,6 +28,8 @@ const COMMON_SECONDARY: u16 = 0x0020;
 const COMMON_TERTIARY: u16 = 0x0002;
 /// The fourth-level weight of what is not variable \[UTS #10 §4.4\].
 const MAXIMUM: u16 = 0xFFFF;
+/// \[UTS #10 §4.4\] The levels its keys hold, under Shifted.
+const LEVELS: usize = 4;
 /// [The Unicode Standard §3.12] Hangul syllables.
 const S_BASE: u32 = 0xAC00;
 const L_BASE: u32 = 0x1100;
@@ -125,6 +127,19 @@ impl Unicode {
             Some(entry) => self.0.elements(entry.run, out),
             None => implicit(&self.0, c, out),
         }
+    }
+
+    /// The character `c`'s normalized form begins with, if a string may be
+    /// cut before `c` as far as normalization and UNICODE's contractions go.
+    /// It is of canonical combining class 0, so no mark is reordered across
+    /// it [The Unicode Standard §3.11] and S2.1.1 takes no mark in past it;
+    /// no contraction holds it after its first character, so no match made
+    /// before it takes it in; and none begins with it, so its elements are
+    /// its own, whatever follows \[UTS #10 S2.1\].
+    pub(super) fn cut_before(&self, c: char) -> Option<char> {
+        let first = *self.normalized(c.encode_utf8(&mut [0; 4])).first()?;
+        let begins = self.0.entry(first).is_some_and(|e| e.contracts);
+        (self.0.class(first) == 0 && !begins && !self.0.continues(first)).then_some(first)
     }
 
     /// \[UTS #35 Part 5 §3.11\] The weights of the greatest element whose
@@ -292,5 +307,36 @@ impl Collation for Unicode {
 
     fn weighs(&self, c: char) -> bool {
         self.elements(vec![c]).iter().any(|e| e.weights[0] != 0)
+    }
+
+    /// The four of Shifted.
+    fn levels(&self) -> usize {
+        LEVELS
+    }
+
+    /// \[UTS #10 S3\] The weights `sort_key` holds of `level` under PAD
+    /// NONE, as it holds them: the key is the levels, a zero weight between
+    /// them, and no weight is zero, so two keys are equal exactly when each
+    /// level's weights are.
+    fn level_weights(&self, text: &str, level: usize, out: &mut Vec<u8>) {
+        let all = levels(&self.elements(self.normalized(text)));
+        for weight in level.checked_sub(1).and_then(|n| all.get(n)).into_iter().flatten() {
+            out.extend_from_slice(&weight.to_be_bytes());
+        }
+    }
+
+    /// The last character of `text` whose place is, by `cut_before`, a cut
+    /// of normalization and contractions, and whose own first element has
+    /// a first-level weight. That element sets Shifted's state (`levels`)
+    /// whatever it was before, ignorable elements after it being weighed
+    /// alike however the text before ends, so each level of the whole is
+    /// the levels of the pieces, joined.
+    fn safe_cut(&self, text: &str) -> Option<usize> {
+        let weighs_first = |first: char| {
+            let mut elements = Vec::new();
+            self.alone(first, &mut elements);
+            elements.first().is_some_and(|e| e.weights[0] != 0)
+        };
+        text.char_indices().rev().find(|&(_, c)| self.cut_before(c).is_some_and(weighs_first)).map(|(at, _)| at)
     }
 }

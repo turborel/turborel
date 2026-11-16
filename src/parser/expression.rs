@@ -144,6 +144,7 @@ impl Parser {
             | Tok::CharacterString(_)
             | Tok::BinaryString(_)
             | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_)
             | Tok::End => false,
         }
     }
@@ -263,6 +264,7 @@ impl Parser {
             | Tok::CharacterString(_)
             | Tok::BinaryString(_)
             | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_)
             | Tok::Delimiter(_)
             | Tok::End => return Err(self.syntax("expected a <comp op>")),
         };
@@ -303,6 +305,7 @@ impl Parser {
                 | Tok::CharacterString(_)
                 | Tok::BinaryString(_)
                 | Tok::Introducer(_)
+                | Tok::LargeObjectLength(_)
                 | Tok::Delimiter(_) => {}
             }
             if depth == 0 {

@@ -48,7 +48,16 @@ impl RowTable {
             None => self.remove_newest(id)?,
         };
         if let Some(old) = old {
-            self.free_values(id, Version::parse(&old)?.record);
+            let old = Version::parse(&old)?;
+            // What it named is freed by the sweep at recovery's end, if no
+            // row's newest version names it then (`rows/lobs/owned.rs`).
+            if !old.deleted && !self.lobs.columns().is_empty() {
+                self.lobs.note_candidates(&self.objects(id, old.record)?);
+            }
+            self.free_values(id, old.record);
+        }
+        if !self.lobs.columns().is_empty() {
+            self.lobs.note_touched(id);
         }
         Ok(())
     }

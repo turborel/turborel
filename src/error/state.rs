@@ -142,6 +142,12 @@ impl SqlState {
     pub const DATA_EXCEPTION: SqlState = SqlState(*b"22000");
     /// Data exception: string data, right truncation.
     pub const STRING_DATA_RIGHT_TRUNCATION: SqlState = SqlState(*b"22001");
+    /// [ISO/IEC 9075-2:2023 §4.2.1, §24.1] Data exception: character not
+    /// in repertoire.
+    pub const CHARACTER_NOT_IN_REPERTOIRE: SqlState = SqlState(*b"22021");
+    /// [ISO/IEC 9075-2:2023 §14.17 GR1a, §14.18 GR1a, §24.1] Locator
+    /// exception: invalid specification.
+    pub const LOCATOR_INVALID_SPECIFICATION: SqlState = SqlState(*b"0F001");
     /// Data exception: null value, no indicator parameter.
     pub const NULL_VALUE_NO_INDICATOR: SqlState = SqlState(*b"22002");
     /// Data exception: numeric value out of range.
@@ -217,6 +223,9 @@ impl SqlState {
     pub const INDICATOR_OVERFLOW: SqlState = SqlState(*b"22022");
     /// Data exception: invalid escape sequence.
     pub const INVALID_ESCAPE_SEQUENCE: SqlState = SqlState(*b"22025");
+    /// [ISO/IEC 9075-2:2023 §8.5 GR4d i 1] Data exception: invalid escape
+    /// octet.
+    pub const INVALID_ESCAPE_OCTET: SqlState = SqlState(*b"2200D");
     /// Data exception: invalid datetime format.
     pub const INVALID_DATETIME_FORMAT: SqlState = SqlState(*b"22007");
     /// Data exception: datetime field overflow.

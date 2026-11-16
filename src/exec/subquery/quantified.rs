@@ -42,7 +42,7 @@ use crate::logical::{Quantifier, Truth};
 use crate::physical::JoinKey;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
-use crate::value::{Bucket, CompOp, Value, bucket, compare};
+use crate::value::{Bucket, CompOp, Value, any_lob, bucket, compare};
 
 /// The hashes of a result's rows of each pattern of nulls, each on the
 /// columns where neither those rows nor R are null, by the place of the
@@ -65,6 +65,10 @@ pub(super) struct Summary {
     /// For each place of a row's first null, its degree for a row of none,
     /// the least and greatest of those rows' values before it.
     prefixes: Vec<Option<(Row, Row)>>,
+    /// Whether a row holds a large object, which is in no bucket and
+    /// compared for equality alone, by reading it [ISO/IEC 9075-2:2023
+    /// §9.11]: then each row is compared with R in turn.
+    lobs: bool,
 }
 
 impl SubqueryRows {
@@ -79,6 +83,9 @@ impl SubqueryRows {
             return super::super::eval::quantified(xs, (op, quantifier), self.rows()?);
         }
         let summary = self.summary()?;
+        if summary.lobs || any_lob(xs)? {
+            return super::super::eval::quantified(xs, (op, quantifier), self.rows()?);
+        }
         if summary.rows == 0 {
             return Ok(truth(quantifier == Quantifier::All));
         }
@@ -146,10 +153,11 @@ impl SubqueryRows {
         if let Some(made) = &*summary {
             return Ok(Arc::clone(made));
         }
-        let mut made = Summary { rows: 0, patterns: Vec::new(), columns: Vec::new(), prefixes: Vec::new() };
+        let mut made = Summary { rows: 0, patterns: Vec::new(), columns: Vec::new(), prefixes: Vec::new(), lobs: false };
         let mut patterns = HashSet::new();
         for r in self.rows()? {
             let row = r?;
+            made.lobs = made.lobs || any_lob(&row)?;
             made.add(&row);
             patterns.insert(nulls(&row));
         }

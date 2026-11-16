@@ -81,6 +81,7 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
         | SqlStatement::SetCatalog(_)
         | SqlStatement::SetSchema(_)
         | SqlStatement::SetTimeZone(_)
+        | SqlStatement::Locator { .. }
         | SqlStatement::SetSessionAuthorization(_)
         | SqlStatement::SetRole(_)
         | SqlStatement::Connection(_)

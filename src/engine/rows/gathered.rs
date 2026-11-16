@@ -90,6 +90,7 @@ impl Gathering {
         &mut self,
         (format, record): (&RecordFormat, &[u8]),
         fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>,
+        lobs: Option<&std::sync::Arc<super::lobs::LobSpace>>,
     ) -> Result<()> {
         let rows = self.rows;
         for (c, vector) in &mut self.columns {
@@ -112,7 +113,11 @@ impl Gathering {
                     nulls.push(rows, field.is_none());
                 }
                 Gathered::Values(values) => {
-                    let value = if at < format.columns() { format.column_with(record, at, fetch)? } else { Value::Null };
+                    let mut value = [if at < format.columns() { format.column_with(record, at, fetch)? } else { Value::Null }];
+                    if let (Some(lobs), [Value::Lob(_)]) = (lobs, &value) {
+                        lobs.resolve_column(at, &mut value);
+                    }
+                    let [value] = value;
                     values.push(value);
                 }
             }

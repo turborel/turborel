@@ -7,8 +7,11 @@
 //! `regex/class_expr.rs`) and compiled to a program (`regex/compile.rs`).
 //! A program with no back-reference runs on `regex/pike.rs`, in time
 //! linear in the string; one with a back-reference on `regex/backtrack.rs`,
-//! which counts its steps. Character classes come from Unicode 13.0's
-//! General Categories, blocks and case mappings (`regex/unicode.rs`).
+//! which counts its steps. Both read a text by position (`regex/text.rs`),
+//! a string's characters or a character large object's read a chunk at a
+//! time (`regex/lob_text.rs`), so what a search holds is bounded whatever
+//! the text's length. Character classes come from Unicode 13.0's General
+//! Categories, blocks and case mappings (`regex/unicode.rs`).
 //!
 //! [§9.28 GR9a] The standard's changes to F&O are kept: `^`, `$` and `.`
 //! know UTS #18 RL1.6's newlines, LF, VT, FF, CR, NEL, LINE SEPARATOR,
@@ -21,9 +24,11 @@ mod class;
 mod class_expr;
 mod compile;
 mod flags;
+mod lob_text;
 mod parse;
 mod pike;
 mod replace;
+mod text;
 mod unicode;
 
 use compile::{Program, compile};
@@ -31,7 +36,10 @@ use flags::{Flag, Flags};
 use parse::parse;
 use unicode::Table;
 
+pub use lob_text::LobText;
 pub(crate) use replace::zero_length;
+pub use replace::{Emit, Replacement};
+pub use text::{Text, Window};
 
 use crate::error::{Code, Result, SqlError, SqlState};
 
@@ -115,7 +123,17 @@ impl Regex {
     /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`.
     pub fn is_match(&self, text: &str) -> Result<bool> {
         let chars: Vec<char> = text.chars().collect();
-        Ok(self.search(&chars, 0, false)?.is_some())
+        self.is_match_in(chars.as_slice())
+    }
+
+    /// Whether `text`, or some substring of it, matches [F&O 3.1 §5.6.3].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`;
+    /// as reading `text` fails.
+    pub fn is_match_in<T: Text + ?Sized>(&self, text: &T) -> Result<bool> {
+        Ok(self.search(text, 0, false)?.is_some())
     }
 
     /// The first match in `text` beginning at character `from` or after,
@@ -125,6 +143,17 @@ impl Regex {
     ///
     /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`.
     pub fn find_at(&self, text: &[char], from: usize) -> Result<Option<Captures>> {
+        self.find_in(text, from)
+    }
+
+    /// The first match in `text` beginning at character `from` or after,
+    /// as `find_at`.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`;
+    /// as reading `text` fails.
+    pub fn find_in<T: Text + ?Sized>(&self, text: &T, from: usize) -> Result<Option<Captures>> {
         let Some(slots) = self.search(text, from, true)? else { return Ok(None) };
         let spans = slots.chunks(2).map(|pair| if let [Some(a), Some(b)] = pair { Some((*a, *b)) } else { None }).collect();
         Ok(Some(Captures { spans }))
@@ -139,21 +168,75 @@ impl Regex {
     /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`.
     pub fn list(&self, text: &[char], from: usize, most: usize) -> Result<Vec<Captures>> {
         let mut found = Vec::new();
-        let mut at = from;
-        while found.len() < most && at <= text.len() {
-            let Some(next) = self.find_at(text, at)? else { break };
-            let (start, end) = next.get(0).unwrap_or((at, at));
-            at = end.max(start.saturating_add(1));
+        self.each(text, from, most, |next| {
             found.push(next);
-        }
+            Ok(true)
+        })?;
         Ok(found)
     }
 
-    fn search(&self, text: &[char], from: usize, capture: bool) -> Result<Option<pike::Slots>> {
+    /// [§9.28 GR11] Gives `f` the match vectors of `text` from character
+    /// `from`, at most `most`, as `list` finds them, one at a time and
+    /// none kept, until it returns false.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`;
+    /// as reading `text` fails, or `f` does.
+    pub fn each<T, F>(&self, text: &T, from: usize, most: usize, mut f: F) -> Result<()>
+    where
+        T: Text + ?Sized,
+        F: FnMut(Captures) -> Result<bool>,
+    {
+        let (mut at, mut given) = (from, 0_usize);
+        while given < most && at <= text.len() {
+            let Some(next) = self.find_in(text, at)? else { break };
+            let (start, end) = next.get(0).unwrap_or((at, at));
+            at = end.max(start.saturating_add(1));
+            given = given.saturating_add(1);
+            if !f(next)? {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// [§9.28 GR11] The match vector `n` of `text` from character `from`,
+    /// from 1, as `list` finds them; none if there are fewer.
+    ///
+    /// # Errors
+    ///
+    /// As `each`.
+    pub fn nth_in<T: Text + ?Sized>(&self, text: &T, from: usize, n: usize) -> Result<Option<Captures>> {
+        let (mut seen, mut last) = (0_usize, None);
+        self.each(text, from, n, |mv| {
+            seen = seen.saturating_add(1);
+            last = (seen == n).then_some(mv);
+            Ok(true)
+        })?;
+        Ok(last)
+    }
+
+    /// [§9.28 GR11] How many match vectors `text` has from character
+    /// `from`, as `list` finds them.
+    ///
+    /// # Errors
+    ///
+    /// As `each`.
+    pub fn count_in<T: Text + ?Sized>(&self, text: &T, from: usize) -> Result<usize> {
+        let mut seen = 0_usize;
+        self.each(text, from, usize::MAX, |_| {
+            seen = seen.saturating_add(1);
+            Ok(true)
+        })?;
+        Ok(seen)
+    }
+
+    fn search<T: Text + ?Sized>(&self, text: &T, from: usize, capture: bool) -> Result<Option<pike::Slots>> {
         if self.back_references {
             return backtrack::search(&self.program, text, from, self.caseless.then_some(&self.table));
         }
-        Ok(pike::search(&self.program, text, from, capture))
+        pike::search(&self.program, text, from, capture)
     }
 }
 

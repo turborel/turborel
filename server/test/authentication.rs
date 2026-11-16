@@ -80,7 +80,13 @@ fn a_mechanism_may_challenge_the_client() {
     assert_eq!(state(&refused), ("28000", -919));
     assert!(refused.ends_connection());
     let mut raw = server.raw();
-    raw.send(&Request::Hello { version: 1, user: "ann".into(), mechanism: "echo".into(), initial: vec![], capabilities: vec![] });
+    raw.send(&Request::Hello {
+        version: turborel_protocol::VERSION,
+        user: "ann".into(),
+        mechanism: "echo".into(),
+        initial: vec![],
+        capabilities: vec![],
+    });
     assert!(matches!(raw.receive(), Some(turborel_protocol::Reply::Challenge(_))));
     raw.send(&Request::Query { sql: "SELECT 1".into(), ends: false });
     assert_eq!(state(&raw.refusal()), ("08006", -919), "a challenge is answered");
@@ -101,7 +107,7 @@ fn a_client_is_refused_saying_why() {
         initial: vec![],
         capabilities: vec![],
     };
-    for (request, expected) in [(hello(1, "X", "kerberos"), "28000"), (hello(1, "", "trust"), "28000"), (hello(2, "X", "trust"), "08004")] {
+    for (request, expected) in [(hello(2, "X", "kerberos"), "28000"), (hello(2, "", "trust"), "28000"), (hello(1, "X", "trust"), "08004")] {
         let mut raw = server.raw();
         raw.send(&request);
         let failure = raw.refusal();

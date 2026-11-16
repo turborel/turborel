@@ -12,6 +12,7 @@ use crate::catalog::{ColumnDefault, ColumnDesc, Principal, QualifiedName, TableD
 use crate::error::Result;
 use crate::storage::Row;
 use crate::value::datetime::Now;
+use crate::value::lob::{Lob, LobKind};
 use crate::value::{DataType, Decimal, Value, assign, compare};
 
 /// [ISO/IEC 9075:1992 §11.5 SR3b] The least length of a column whose
@@ -82,22 +83,13 @@ fn literal_value(literal: &Literal, subject: &DataType, zone: i16) -> Result<Val
     let not_of = || rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a] the default is not a <literal> of {subject}"));
     match literal {
         Literal::Character(s) => character_default(s, &subject.clone()).unwrap_or_else(|| Err(not_of())),
-        Literal::Exact(d) => match subject {
-            DataType::Exact { .. } | DataType::Approximate { .. } | DataType::DecFloat { .. } => exact_default(*d, &subject.clone()),
-            DataType::Character { .. }
-            | DataType::Varying { .. }
-            | DataType::Binary { .. }
-            | DataType::VarBinary { .. }
-            | DataType::Boolean
-            | DataType::Date
-            | DataType::Time { .. }
-            | DataType::Timestamp { .. }
-            | DataType::Interval(_)
-            | DataType::Array(_)
-            | DataType::Row(_)
-            | DataType::Distinct(_)
-            | DataType::Extension(_) => Err(not_of()),
-        },
+        Literal::Exact(d) => {
+            if subject.is_numeric() {
+                exact_default(*d, &subject.clone())
+            } else {
+                Err(not_of())
+            }
+        }
         // [ISO/IEC 9075-2:2023 §11.5 SR4a iv] of an approximate type;
         // \[EXTENSION\] of DECFLOAT too, of which SR4a says nothing.
         Literal::Approximate(f) => {
@@ -110,8 +102,14 @@ fn literal_value(literal: &Literal, subject: &DataType, zone: i16) -> Result<Val
         // than the column; [GR2a iv, GR2a v] of a fixed length, extended
         // with X'00' octets, with no warning.
         Literal::Binary(b) => {
-            let (DataType::Binary { length } | DataType::VarBinary { length }) = subject else { return Err(not_of()) };
-            if b.len() > *length {
+            let length = if let DataType::Binary { length } | DataType::VarBinary { length } = subject {
+                u64::from(*length)
+            } else if let DataType::Lob { kind: LobKind::Binary, length, .. } = subject {
+                *length
+            } else {
+                return Err(not_of());
+            };
+            if u64::from(b.len()) > length {
                 return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.5 SR4a ii] the default X'{b}' is longer than {subject}")));
             }
             subject.kind().cast(Value::Binary(b.clone()), subject)
@@ -176,12 +174,21 @@ fn character_default(s: &str, subject: &DataType) -> Option<Result<Value>> {
             }
             Some(Ok(Value::Char(s.to_owned())))
         }
+        // [ISO/IEC 9075-2:2023 §11.5 SR4a i] of a character large object
+        // too, a value held in its record.
+        DataType::Lob { kind: LobKind::Character, length, units } => {
+            if u64::try_from(units.count(s)).unwrap_or(u64::MAX) > *length {
+                return Some(Err(rule(format!("[ISO/IEC 9075-2:2023 §11.5 SR4a i] the default '{s}' is longer than {subject}"))));
+            }
+            Some(Ok(Value::Lob(Lob::of_text(s))))
+        }
         DataType::Extension(e) => Some(e.kind.cast(Value::Char(s.to_owned()), subject)),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { kind: LobKind::Binary, .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }

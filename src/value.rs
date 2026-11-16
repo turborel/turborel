@@ -17,6 +17,7 @@ mod decimal;
 mod distinct;
 pub mod interval;
 mod like;
+pub mod lob;
 mod operators;
 mod order;
 pub mod precedence;
@@ -26,12 +27,12 @@ pub use units::CharUnits;
 
 pub use binary::{BYTE_BITS, Binary};
 pub use cast::{cast, cast_warned};
-pub use comparison::{Bucket, bucket, compare, compare_strings};
+pub use comparison::{Bucket, LobEquality, any_lob, bucket, compare, compare_checked, compare_strings, lob_proxies, proxies, row_proxies};
 pub use datetime::Datetime;
 pub use decfloat::DecFloat;
 pub use decimal::{Decimal, pow10};
 pub use distinct::{distinct, key_bucket, key_equal};
-pub use like::{LikePattern, LikePatterns, collated as like_collated, constant_pattern, constant_prefix, like};
+pub use like::{LikePattern, LikePatterns, OctetPattern, collated as like_collated, constant_pattern, constant_prefix, like};
 pub use operators::{ArithOp, CompOp, arith};
 pub use order::SortOrder;
 pub use types::{Descriptor, SqlType};
@@ -125,6 +126,7 @@ pub fn spelling(t: &DataType) -> Spelled {
         | DataType::Varying { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::DecFloat { .. }
         | DataType::Boolean
         | DataType::Date
@@ -197,6 +199,18 @@ pub enum DataType {
         /// The maximum length in octets.
         length: u32,
     },
+    /// [ISO/IEC 9075-2:2023 §6.1] CHARACTER LARGE OBJECT(length), CLOB,
+    /// NATIONAL CHARACTER LARGE OBJECT or NCLOB, and BINARY LARGE
+    /// OBJECT(length) or BLOB: a large object string (RULES.md D79).
+    Lob {
+        /// Which: character or binary.
+        kind: lob::LobKind,
+        /// The maximum length, in `units` of a character one, else octets.
+        length: u64,
+        /// [ISO/IEC 9075-2:2023 §6.1 SR16] What a character one's length
+        /// counts.
+        units: CharUnits,
+    },
     /// [ISO/IEC 9075-2:2023 §6.1] BOOLEAN.
     Boolean,
     /// [ISO/IEC 9075:1992 §6.1] DATE.
@@ -237,13 +251,20 @@ impl DataType {
     pub const fn varying(length: u32) -> DataType {
         DataType::Varying { length, units: CharUnits::Characters }
     }
-    /// Whether this is a character string type.
+    /// Whether this is a character string type: CHARACTER, CHARACTER
+    /// VARYING or CHARACTER LARGE OBJECT [ISO/IEC 9075-2:2023 §4.3.1].
     pub fn is_character(&self) -> bool {
-        matches!(self, DataType::Character { .. } | DataType::Varying { .. })
+        matches!(self, DataType::Character { .. } | DataType::Varying { .. } | DataType::Lob { kind: lob::LobKind::Character, .. })
     }
-    /// Whether this is a binary string type.
+    /// Whether this is a binary string type: BINARY, BINARY VARYING or
+    /// BINARY LARGE OBJECT [ISO/IEC 9075-2:2023 §4.4.1].
     pub fn is_binary(&self) -> bool {
-        matches!(self, DataType::Binary { .. } | DataType::VarBinary { .. })
+        matches!(self, DataType::Binary { .. } | DataType::VarBinary { .. } | DataType::Lob { kind: lob::LobKind::Binary, .. })
+    }
+    /// Whether this is a large object string type [ISO/IEC 9075-2:2023
+    /// §4.3.1, §4.4.1].
+    pub fn is_lob(&self) -> bool {
+        matches!(self, DataType::Lob { .. })
     }
     /// Whether this is a datetime type.
     pub fn is_datetime(&self) -> bool {
@@ -308,6 +329,9 @@ pub enum Value {
     Datetime(Datetime),
     /// [ISO/IEC 9075:1992 §4.5.2] An interval.
     Interval(interval::Interval),
+    /// [ISO/IEC 9075-2:2023 §4.3, §4.4] A large object string, read a
+    /// chunk at a time (RULES.md D79).
+    Lob(lob::Lob),
     /// [ISO/IEC 9075-2:2023 §4.12.2] An array: its elements, in order.
     Array(Arc<[Value]>),
     /// [ISO/IEC 9075-2:2023 §4.10] A row: its fields' values, in order.
@@ -331,6 +355,7 @@ impl Value {
             Value::Null
             | Value::Char(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
@@ -351,6 +376,7 @@ impl Value {
             Value::Null
             | Value::Char(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Array(_)
@@ -380,6 +406,10 @@ impl Value {
             Value::Approx(f) => NormKey::Approx(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }),
             Value::DecFloat(d) => NormKey::DecFloat(*d),
             Value::Binary(b) => NormKey::Binary(b.clone()),
+            // [DESIGN] No large object is grouped or made distinct [ISO/IEC
+            // 9075-2:2023 §9.12 SR3]: its form is its identity, for a cache
+            // keyed by values (`lob::LobIdentity`).
+            Value::Lob(l) => NormKey::Lob(lob::LobIdentity(l.clone())),
             Value::Bool(b) => NormKey::Bool(*b),
             Value::Datetime(d) => NormKey::Instant(d.utc),
             Value::Interval(i) => NormKey::Span(i.units),
@@ -401,6 +431,7 @@ impl fmt::Display for Value {
             Value::Approx(x) => write!(f, "{x:E}"),
             Value::DecFloat(d) => write!(f, "{d}"),
             Value::Binary(b) => write!(f, "{b}"),
+            Value::Lob(l) => write!(f, "{l}"),
             // [ISO/IEC 9075-2:2023 §5.3] Written as a <boolean literal>.
             Value::Bool(b) => f.write_str(if *b { crate::lexer::kw::TRUE } else { crate::lexer::kw::FALSE }),
             Value::Datetime(d) => write!(f, "{d}"),
@@ -427,6 +458,8 @@ pub enum NormKey {
     DecFloat(DecFloat),
     /// A binary string.
     Binary(Binary),
+    /// A large object's identity.
+    Lob(lob::LobIdentity),
     /// A truth value.
     Bool(bool),
     /// A datetime's instant, in UTC.
@@ -461,6 +494,13 @@ pub fn assign(v: Value, target: &DataType, rule: &str) -> Result<Value> {
         return Ok(Value::Null);
     }
     let kind = target.kind();
+    // [ISO/IEC 9075-2:2023 §9.2 GR3b, GR3e] A large object to a string type
+    // of no large object: what fits, read.
+    if let Value::Lob(l) = &v
+        && let Some((lowered, _)) = types::lob::lowered(l.clone(), target, types::lob::Lowering::Assign(rule))?
+    {
+        return kind.assign(lowered, target, rule);
+    }
     let from_text = matches!((&v, target), (Value::Char(_), DataType::Extension(_))) && kind.assigns_text();
     let given = if from_text { kind.cast(v, target)? } else { v };
     kind.assign(given, target, rule)
@@ -536,43 +576,4 @@ pub fn sort_cmp(a: &Value, b: &Value) -> Ordering {
 // Unit tests: the decisions of arithmetic and assignment, one test per
 // decision, with MC/DC cases written out (RULES.md R-TEST-1, R-COV-3).
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verifies: [X3.135-1986 §5.9 GR5] an approximate zero divisor is a data exception.
-    ///
-    /// Decision `op == Div && y == 0.0`. MC/DC: (T T) error; (F T) adding zero is
-    /// fine; (T F) dividing by one is fine.
-    #[test]
-    fn approximate_division_by_zero() {
-        let one = Value::Approx(1.0);
-        let zero = Value::Approx(0.0);
-        assert_eq!(arith(ArithOp::Div, &one, &zero).map_err(|e| e.code).err(), Some(Code::Data)); // T T
-        assert!(arith(ArithOp::Add, &one, &zero).is_ok()); // F T
-        assert!(arith(ArithOp::Div, &one, &one).is_ok()); // T F
-    }
-
-    /// Verifies: [X3.135-1986 §5.9 SR3, §8.7 SR6] [ISO/IEC 9075:1992 §9.2 SR2] a value of the wrong type,
-    /// as a plug-in function might return, is a data exception in arithmetic
-    /// and in assignment, not a panic.
-    #[test]
-    fn mistyped_values_are_reported() {
-        let text = Value::Char("A".into());
-        let one = Value::Exact(Decimal::new(1, 0));
-        assert_eq!(arith(ArithOp::Add, &text, &one).unwrap_err().code, Code::Data);
-        let approximate = DataType::Approximate { precision: REAL_PRECISION, spelled: Spelled::Float };
-        assert_eq!(assign(text.clone(), &approximate, "test").unwrap_err().code, Code::Data);
-        let exact = DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric };
-        assert_eq!(assign(text, &exact, "test").unwrap_err().code, Code::Data);
-        let tiny_scale = DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric };
-        assert_eq!(assign(Value::Exact(Decimal::new(1, u32::MAX)), &tiny_scale, "test").unwrap_err().code, Code::Data);
-    }
-
-    /// Verifies: [DESIGN] an assignment's error cites ISO/IEC 9075:1992 once
-    /// when the rule that assigns is of it too, else both standards.
-    #[test]
-    fn assignment_rules_cite_each_standard_once() {
-        assert_eq!(assignment_rule("ISO/IEC 9075:1992 §13.8 GR4b iii", "§9.2 GR3b ii"), "ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3b ii");
-        assert_eq!(assignment_rule("X3.135-1986 §8.7 GR1", "§9.2 GR3b ii"), "X3.135-1986 §8.7 GR1; ISO/IEC 9075:1992 §9.2 GR3b ii");
-    }
-}
+mod tests;

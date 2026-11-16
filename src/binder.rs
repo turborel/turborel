@@ -42,6 +42,7 @@ pub(crate) use dependencies::{DescribedKey, described_key};
 mod interval;
 mod invocation;
 mod listagg;
+mod lobs;
 mod merge;
 pub(crate) use datetime::cast_is_valid;
 pub use datetime::{function_type as datetime_function_type, literal_value as datetime_literal};

@@ -150,6 +150,10 @@ pub enum Tok {
     /// before a period if written, before a `<character string literal>`
     /// or an `<identifier>`.
     Introducer(String),
+    /// [ISO/IEC 9075-2:2023 §5.2] A `<large object length token>`: digits
+    /// and a `<multiplier>` written against them, e.g. "64K", its letter
+    /// upper case.
+    LargeObjectLength(String),
     /// A `<delimiter token>` other than a `<character string literal>`.
     Delimiter(&'static str),
     /// The end of the input.
@@ -433,6 +437,16 @@ impl Scanner {
     fn number(&mut self) -> Tok {
         let start = self.at;
         self.skip_digits();
+        // [ISO/IEC 9075-2:2023 §5.2 SR10] digits and a <multiplier>, no
+        // <separator> between them, nor an <identifier part> after.
+        if let Some(m @ ('K' | 'M' | 'G' | 'T' | 'P' | 'k' | 'm' | 'g' | 't' | 'p')) = self.peek(0)
+            && !self.next_is(1, |c| c.is_alphanumeric() || c == '_')
+            && self.text(start).chars().all(|c| c.is_ascii_digit())
+        {
+            let digits = self.text(start);
+            self.advance(1);
+            return Tok::LargeObjectLength(format!("{digits}{}", m.to_ascii_uppercase()));
+        }
         if self.peek(0) == Some('.') {
             self.advance(1);
             self.skip_digits();
@@ -553,8 +567,11 @@ impl Scanner {
     fn check_followed(&self, tok: &Tok, start: usize) -> Result<()> {
         // A <delimited identifier> is a <delimiter token> [ISO/IEC 9075:1992 §5.2].
         let delimited = self.c.get(start) == Some(&DOUBLE_QUOTE);
-        let nondelimiter =
-            !delimited && matches!(tok, Tok::KeyWord(_) | Tok::Identifier(_) | Tok::ExactNumeric(_) | Tok::ApproximateNumeric(_));
+        let nondelimiter = !delimited
+            && matches!(
+                tok,
+                Tok::KeyWord(_) | Tok::Identifier(_) | Tok::ExactNumeric(_) | Tok::ApproximateNumeric(_) | Tok::LargeObjectLength(_)
+            );
         let Some(next) = self.peek(0) else { return Ok(()) };
         if !nondelimiter || self.at_token_boundary(next) {
             return Ok(());

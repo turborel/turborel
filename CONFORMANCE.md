@@ -531,9 +531,9 @@ implemented.
 
 ### Binary strings
 
-Feature T021 (BINARY and VARBINARY data types), with Features T023
-(compound binary literals) and T024 (spaces in binary literals), and of
-Feature T022 SUBSTRING on binary strings.
+Feature T021 (BINARY and VARBINARY data types), with Features T022
+(advanced support for BINARY and VARBINARY data types), T023 (compound
+binary literals) and T024 (spaces in binary literals).
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -544,6 +544,8 @@ Feature T022 SUBSTRING on binary strings.
 | Comparing, indexing, uniqueness | §8.2 GR5 | Octet by octet, a string less than a longer one it begins (IA219), so trailing X'00' octets count (IA022). A key escapes each X'00' octet, so no key begins another. |
 | `\|\|` | §6.32 SR6a, GR3 | BINARY if both operands are, else BINARY VARYING. A result past 32,767 octets keeps its first ones if the rest are X'00', else 22001. |
 | SUBSTRING | §6.33 SR21, GR17 | Of BINARY VARYING, its octets. |
+| TRIM, OVERLAY | §6.33 SR22, SR23, GR18, GR19 | BINARY VARYING of a binary string. TRIM takes X'00' if no trim octet is written, and a trim octet not of one octet is 22027. |
+| `<octet like predicate>` | §8.5 SR2, GR4 | `_` and `%` are those characters' octets, and an escape octet makes either, or itself, stand for itself. An escape octet not of one octet is 2200D, a pattern with no partitioning by it 22025. A `?` among the operands is BINARY VARYING. |
 | POSITION, OCTET_LENGTH | §6.31 GR3, GR6 | In octets. CHAR_LENGTH takes character strings alone. |
 | CASE, set operations | §9.5 SR3b | BINARY VARYING if any is, BINARY if all are, of the greatest length. A binary string with any other type is SQLCODE -103. |
 | CAST | §6.13 SR7, GR13 | From and to binary strings alone, else SQLCODE -103. Cut with 01004, or to BINARY padded with X'00' octets with no warning. |
@@ -556,12 +558,45 @@ of four bits a hexit, and is now a binary string, so an odd number of
 hexits is refused. CAST no longer takes a string's UTF-8 to bits and
 back. BINARY and VARBINARY are no key words of SQL-92, so both stay
 identifiers, read as data types where a data type is. A domain cannot be
-named BINARY or VARBINARY. TRIM and OVERLAY on binary strings, the rest
-of Feature T022, and the binary large objects of Feature T045 are not
-implemented.
+named BINARY or VARBINARY. Binary large objects are
+[large objects](#large-objects).
 
 A collation's sort keys are binary strings, and an index on a collated
 column keys them as BINARY VARYING (RULES.md D60).
+
+### Large objects
+
+Features T039 (CLOB locator: non-holdable), T040 (concatenation of
+CLOBs), T041 (basic LOB data type support), T042 (extended LOB data type
+support), T045 (BLOB data type), T046 (CLOB data type), T047 (POSITION,
+OCTET_LENGTH, TRIM and SUBSTRING for BLOBs), T048 (concatenation of
+BLOBs), T049 (BLOB locator: non-holdable), T050 (POSITION, CHAR_LENGTH,
+OCTET_LENGTH, LOWER, TRIM, UPPER and SUBSTRING for CLOBs), T312 (OVERLAY
+function) and T561 (holdable locators). No value of one is held whole,
+in memory, in the log or on the wire. RULES.md D79 says how.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| CHARACTER LARGE OBJECT, NATIONAL CHARACTER LARGE OBJECT, BINARY LARGE OBJECT | §5.2 SR10, §6.1 SR1, SR10 to SR13, SR17 | CLOB, CHAR LARGE OBJECT, NCLOB, NCHAR LARGE OBJECT and BLOB too. A `<large object length>` of digits, with K, M or G as one token or two, of CHARACTERS or OCTETS of a CLOB. 4G if none is written (ID068), the longest (IL042, IL002, IL004), so T, P or more than 4G is SQLCODE -900, and 0 is -103. NATIONAL CHARACTER LARGE OBJECT is CHARACTER LARGE OBJECT, SQL_TEXT the one character set. |
+| Assignment and CAST | §6.13 SR7, GR10 to GR13, §9.1, §9.2 GR3b, GR3e | To and from the strings of its family alone, else SQLCODE -103. Stored, a value longer than its site is 22001 unless what is past it is spaces, which are cut. Retrieved or cast, it is cut with 01004 unless what is cut is spaces. A dynamic parameter's value is cast to its type [§17.9 GR5g]. |
+| Comparing | §4.1, §8.2, §9.11, §9.12 SR3, §9.14 SR3 | Equality alone. `=`, `<>`, IN, a quantified `=`, MATCH, EXISTS of an equality and a join's equality read both operands a chunk at a time. ORDER BY, GROUP BY, DISTINCT, a set operation not ALL, MAX, MIN, `<`, UNIQUE, and a key of a constraint or an index refuse one, SQLCODE -103. |
+| `\|\|` | §6.32 SR3b i, SR6a i, GR2, GR3 | Of a large object and a string of its family, a large object of the sum of their lengths up to 4G, joined without a copy. |
+| CHAR_LENGTH, OCTET_LENGTH | §6.30 GR4, GR5 | From the value's counts, nothing read. |
+| POSITION | §6.31 SR2, GR2, GR3 | Searched a chunk at a time, of either operand, in characters or USING OCTETS. |
+| SUBSTRING, OVERLAY | §6.33 SR4a ii, SR17, SR21b, SR23, GR3, GR17, GR19 | Large objects of its type, slices of the value, nothing copied. USING OCTETS of a CLOB takes whole characters (UV074). |
+| TRIM, LTRIM, RTRIM, BTRIM, UPPER, LOWER, LPAD, RPAD | §6.33 SR9, SR14b ii, SR15a ii, SR16c ii, SR22, GR7, GR12, GR13, GR14, GR18 | Large objects of their argument's type, read from either end, or folded, a chunk at a time into the database's temporary store. A pad of a CLOB is a CLOB of 4G (IL046), its padding written to that store and joined to it uncopied, or the CLOB cut by a slice. |
+| LIKE | §8.5 GR3d, GR4 | A CLOB or BLOB match value read a chunk at a time, under a collation of one character at a time too. Under a collation of contractions (IA060), a pattern, escape or match value longer than a chunk is SQLCODE -900, SQLSTATE 0A000, and so is a pattern or escape of a large object longer than one. SIMILAR is not implemented (T141). |
+| Regular expressions | §6.31 GR18, GR19, §6.33 GR4b, GR9b, §8.7 | LIKE_REGEX, OCCURRENCES_REGEX, POSITION_REGEX, SUBSTRING_REGEX and TRANSLATE_REGEX read a CLOB subject a chunk at a time, and SUBSTRING_REGEX and TRANSLATE_REGEX of one are CLOBs. A pattern, flag or replacement longer than a chunk is SQLCODE -900. |
+| LISTAGG | §10.9 SR11d, GR11g | Of CLOBs, CHARACTER VARYING of 32,767 characters (IA044), a longer value 22001 or left out under TRUNCATE. |
+| Locators | §4.37.5, §14.17, §14.18 | A session's four-octet integer (UV065) of a value sent to a client or made by one a piece at a time. Valid until its transaction ends, FREE LOCATOR ending it sooner and HOLD LOCATOR keeping it past a commit. A rollback ends every one. FREE and HOLD take dynamic parameters [SR1]. One not valid is 0F001. |
+| Descriptor areas | §20.1 Table 30 | TYPE 30 of BINARY LARGE OBJECT, 40 of CHARACTER LARGE OBJECT, LENGTH its length and OCTET_LENGTH its length in octets. The locator types 31 and 41 are not used, as no host language is. |
+| Information Schema | 92 §21 | DATA_TYPE 'CHARACTER LARGE OBJECT' or 'BINARY LARGE OBJECT'. |
+| Stored | RULES.md D79 | In chunks of 256 KiB, logged and checkpointed by chunk, collected with the versions that name them. The column store refuses a large object column. |
+
+The non-holdable locators of T039 and T049 are the client protocol's
+(D45). An embedded program reaches the same registry through the
+`Session` API. T043 (multiplier T) and T044 (multiplier P) are not
+claimed, as no length they write is processed.
 
 ### Simple CASE
 
@@ -620,18 +655,18 @@ Features T055 (string padding functions) and T056 (multi-character TRIM
 function). LTRIM, RTRIM and BTRIM remove each character of a set from
 the start, the end or both of a string [§6.33 GR13], a space if no set
 is written [SR15b]. LPAD and RPAD bring a string to a total length,
-cutting it or adding the padding before or after it, repeated and cut,
-a space if none is written [GR14, SR16a]. A total length is an exact
-number of scale 0 [SR16b], else SQLCODE -103. A pad is CHARACTER
-VARYING of 32,767 characters [SR16c] (IL046), and a trim varying, as
-long as its string at most [SR15a]. A trim compares characters under
-the collation of its string, TRIM of one character too, and a trim or
-pad is of that collation [SR14d, SR15c, SR16e], whatever that of its
-other strings. A dynamic parameter as a total length is NUMERIC(P, 0),
-P the greatest precision, as SUBSTRING's length is [92 §17.6 GR5c],
-which §20 leaves unsaid; this is marked [EXTENSION]. The five names are
-no key words of SQL-92, so each stays an identifier, a function before
-a parenthesis.
+cutting it or adding the padding before or after it, repeated and cut, a
+space if none is written [GR14, SR16a]. A total length is an exact
+number of scale 0 [SR16b], else SQLCODE -103. A pad is CHARACTER VARYING
+of 32,767 characters [SR16c] (IL046), of a CLOB a CLOB of 4G, and a trim
+varying, as long as its string at most [SR15a]. A trim compares
+characters under the collation of its string, TRIM of one character too,
+and a trim or pad is of that collation [SR14d, SR15c, SR16e], whatever
+that of its other strings. A dynamic parameter as a total length is
+NUMERIC(P, 0), P the greatest precision, as SUBSTRING's length is [92
+§17.6 GR5c], which §20 leaves unsaid; this is marked [EXTENSION]. The
+five names are no key words of SQL-92, so each stays an identifier, a
+function before a parenthesis.
 
 ### Optional maximum lengths
 
@@ -1858,7 +1893,7 @@ topic. The Where column names the file that implements each.
 | 2023 §6.1 SR30 (IV032) the radix and precision of BIGINT | Decimal, as INTEGER's and SMALLINT's, of 18 digits, the most an exact value holds | `value.rs` |
 | 86 §5.5 SR10–SR12 FLOAT, REAL, DOUBLE PRECISION | 24 bits if p ≤ 24, else 53. REAL 24, DOUBLE PRECISION 53, FLOAT with no precision 53. | `parser/data_type.rs`, `value.rs` |
 | 2023 §6.9 SR10b (IV081), §7.13 SR17m iii (IV183) the type of the result of a grouping operation | Exact numeric of scale 0 and precision 18, the type BIGINT's, which holds GROUPING of up to 59 columns | `binder/grouping_sets.rs` |
-| 2023 §10.9 SR11d (IA044) the type and maximum length of LISTAGG's result | CHARACTER VARYING of 32,767 characters, the longest character string, as there is no CHARACTER LARGE OBJECT | `functions/listagg.rs` |
+| 2023 §10.9 SR11d (IA044) the type and maximum length of LISTAGG's result | CHARACTER VARYING of 32,767 characters, the longest varying character string, of CLOB arguments too | `functions/listagg.rs` |
 | 2023 §9.23 SR5g, SR5h (IV082, IV083) the precision of PERCENT_RANK and CUME_DIST | 53 binary digits, DOUBLE PRECISION's | `binder/window.rs`, `exec/window.rs` |
 | 2023 §9.23 SR5i ii (IV084) the type of NTILE | COUNT's, as IV166 below | `binder/window/value.rs` |
 | 2023 §6.11 SR2 (IV085) the type of a `<nested row number function>` | COUNT's, as IV166 below | `binder/window/nested.rs` |
@@ -1878,8 +1913,12 @@ topic. The Where column names the file that implements each.
 | 2023 §5.3 SR20, IV191, the type of a `<binary string literal>` | BINARY of its octets | `binder/values.rs` |
 | 2023 §6.32 SR6a, IL003 and IL007, the longest fixed and varying binary strings | 32,767 octets each | `value.rs` |
 | 2023 §6.1 SR6, SR7, IL007 and ID069, the maximum length of a varying string type written without one | 32,767 octets of a binary string, 32,767 characters of a character string | `parser/data_type.rs` |
-| 2023 §6.33 SR16c, IL046, the maximum length of LPAD and RPAD | 32,767 characters | `functions/trim.rs` |
-| 2023 §6.33 SR12f, IL047, the maximum length of TRANSLATE_REGEX with a replacement | 32,767 characters | `functions/regex/translate.rs` |
+| 2023 §6.33 SR16c, IL046, the maximum length of LPAD and RPAD | 32,767 characters, 4G of a CLOB | `functions/trim.rs`, `functions/lobs/pad.rs` |
+| 2023 §6.33 SR12f, IL047, the maximum length of TRANSLATE_REGEX with a replacement | 32,767 characters of a character string subject, 4G of a CLOB | `functions/regex/translate.rs` |
+| 2023 §6.1 SR17, IL042, IL002, IL004, the longest `<large object length>` and large object strings | 4G, 4,294,967,296 characters of a CLOB, octets of a CLOB of OCTETS or of a BLOB | `value/lob.rs`, `parser/data_type.rs` |
+| 2023 §6.1 SR10, ID068, the length of a large object type written without one | 4G, the longest | `parser/data_type.rs` |
+| 2023 §4.37.5, UV065, a locator's value | The next of the session's counter, from 1, never one in use | `db/lobs.rs` |
+| 2023 §5.2 SR4, IV074, the `<truncating whitespace>` | The space alone | `functions/lobs/ops.rs` |
 | 2023 §6.31 SR1, IV137, the type of OCCURRENCES_REGEX and POSITION_REGEX | NUMERIC(18) | `functions/regex.rs` |
 | 2023 §11.72 SR6, ID157, the type of a sequence generator that names none | NUMERIC(18) | `db/sequences.rs` |
 | 2023 §9.36 SR7, §9.37 SR7, ID112, the maximum of NO MAXVALUE | The type's greatest value ascending, -1 descending | `db/sequences.rs` |

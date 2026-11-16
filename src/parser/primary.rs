@@ -7,6 +7,8 @@
 //! [§10.9], the \[EXTENSION\] function call, and, by `pattern/navigation.rs`,
 //! row pattern matching's expressions [§6.27, §6.31, §6.33].
 
+mod strings;
+
 use super::Parser;
 use super::grouping::GROUPING;
 use crate::ast::{
@@ -14,7 +16,7 @@ use crate::ast::{
 };
 use crate::error::Result;
 use crate::functions::{
-    ANY_VALUE, EVERY, FORMAT, GREATEST, LEAST, LISTAGG, LPAD, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS, WIDTH_BUCKET, using,
+    ANY_VALUE, EVERY, FORMAT, GREATEST, LEAST, LISTAGG, LPAD, OVERLAY, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS, WIDTH_BUCKET,
 };
 use crate::lexer::{Tok, delim, kw};
 
@@ -108,6 +110,7 @@ impl Parser {
             | Tok::CharacterString(_)
             | Tok::BinaryString(_)
             | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_)
             | Tok::End => self.wrapped_primary(),
             Tok::KeyWord(_) => self.string_function(),
         }
@@ -141,7 +144,7 @@ impl Parser {
             | Tok::BinaryString(_) => Ok(ValueExpression::Value(self.value_specification()?)),
             // [ISO/IEC 9075:1992 §5.3, §5.4] a character string literal, or
             // a column, of a character set.
-            Tok::Introducer(_) => {
+            Tok::Introducer(_) | Tok::LargeObjectLength(_) => {
                 if matches!(self.peek_at(1), Tok::CharacterString(_)) {
                     Ok(ValueExpression::Value(self.value_specification()?))
                 } else {
@@ -186,6 +189,12 @@ impl Parser {
         let regex = if let Tok::Identifier(name) = self.peek() { REGEX_FUNCTIONS.into_iter().find(|f| name == f) } else { None };
         if let Some(name) = regex.filter(|_| matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))) {
             return self.regex_function(name);
+        }
+        // [ISO/IEC 9075-2:2023 §6.33] OVERLAY, no key word of SQL-92,
+        // before "(" the <character overlay function> or <binary overlay
+        // function>.
+        if opens && self.is_word(OVERLAY) {
+            return self.overlay();
         }
         // [ISO/IEC 9075-2:2023 §6.31] WIDTH_BUCKET, no key word of SQL-92,
         // before "(" the <width bucket function>.
@@ -271,6 +280,7 @@ impl Parser {
             | Tok::CharacterString(_)
             | Tok::BinaryString(_)
             | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_)
             | Tok::Delimiter(_)
             | Tok::End => return Err(self.syntax("expected a <set function specification>")),
         };
@@ -403,86 +413,6 @@ impl Parser {
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(ValueExpression::Cast { operand, target, format, at })
-    }
-
-    /// [ISO/IEC 9075:1992 §6.6, §6.7] A string function, called with its
-    /// operands in order (`functions/strings.rs`): SUBSTRING, UPPER,
-    /// LOWER, TRIM, POSITION, CHAR_LENGTH or CHARACTER_LENGTH,
-    /// OCTET_LENGTH, BIT_LENGTH.
-    ///
-    /// Read and refused: CONVERT and TRANSLATE, of character sets
-    /// (`Parser::conversion`).
-    fn string_function(&mut self) -> Result<ValueExpression> {
-        let at = self.here();
-        let Tok::KeyWord(word) = *self.peek() else { return Err(self.syntax("expected a <value expression>")) };
-        let name = match word {
-            kw::SUBSTRING | kw::UPPER | kw::LOWER | kw::TRIM | kw::POSITION | kw::OCTET_LENGTH | kw::BIT_LENGTH => word,
-            kw::CHAR_LENGTH | kw::CHARACTER_LENGTH => kw::CHAR_LENGTH,
-            kw::CONVERT | kw::TRANSLATE => return self.conversion(),
-            _ => return Err(self.syntax("expected a <value expression>")),
-        };
-        self.advance();
-        self.expect_delim(delim::LEFT_PAREN)?;
-        let args = match name {
-            kw::SUBSTRING => self.substring_operands()?,
-            kw::TRIM => self.trim_operands()?,
-            kw::POSITION => {
-                // POSITION (<character value expression> IN <character value expression>)
-                let needle = self.common_value_expression()?;
-                self.expect_kw(kw::IN)?;
-                vec![needle, self.common_value_expression()?]
-            }
-            _ => vec![self.common_value_expression()?],
-        };
-        // [ISO/IEC 9075-2:2023 §6.31, §6.33] USING of CHAR_LENGTH, POSITION
-        // and SUBSTRING [Feature T062].
-        let name = match self.char_length_units()? {
-            Some(units) => using(name, units).ok_or_else(|| self.syntax("USING follows no CHAR_LENGTH, POSITION or SUBSTRING"))?,
-            None => name,
-        };
-        self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(ValueExpression::Function { name, args, at })
-    }
-
-    /// SUBSTRING (`<character value expression>` FROM `<start position>`
-    /// \[FOR `<string length>`\]): its operands.
-    fn substring_operands(&mut self) -> Result<Vec<ValueExpression>> {
-        let source = self.common_value_expression()?;
-        self.expect_kw(kw::FROM)?;
-        let mut args = vec![source, self.common_value_expression()?];
-        if self.accept_kw(kw::FOR) {
-            args.push(self.common_value_expression()?);
-        }
-        Ok(args)
-    }
-
-    /// TRIM (\[\[`<trim specification>`\] \[`<trim character>`\] FROM\]
-    /// `<trim source>`): the specification, BOTH if none [SR6b], as a
-    /// string; the character, ' ' if none [SR6c]; and the source.
-    fn trim_operands(&mut self) -> Result<Vec<ValueExpression>> {
-        let literal = |s: &str| ValueExpression::Value(ValueSpecification::Literal(crate::ast::Literal::Character(s.to_owned())));
-        let spec = [kw::LEADING, kw::TRAILING, kw::BOTH].into_iter().find(|w| self.is_kw(w));
-        if let Some(w) = spec {
-            self.advance();
-            let character = if self.accept_kw(kw::FROM) {
-                literal(" ")
-            } else {
-                let c = self.common_value_expression()?;
-                self.expect_kw(kw::FROM)?;
-                c
-            };
-            return Ok(vec![literal(w), character, self.common_value_expression()?]);
-        }
-        // [§6.7] FROM with neither: BOTH [SR6b] and a space [SR6c].
-        if self.accept_kw(kw::FROM) {
-            return Ok(vec![literal(kw::BOTH), literal(" "), self.common_value_expression()?]);
-        }
-        let first = self.common_value_expression()?;
-        if self.accept_kw(kw::FROM) {
-            // [SR6a] FROM after a <trim character>.
-            return Ok(vec![literal(kw::BOTH), first, self.common_value_expression()?]);
-        }
-        Ok(vec![literal(kw::BOTH), literal(" "), first])
     }
 
     /// [ISO/IEC 9075-2:2023 §6.15] `<greatest or least function>` ::=

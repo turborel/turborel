@@ -112,7 +112,13 @@ fn messages_before_a_login_are_small() {
     let server = start(&db, &[]);
     let long = usize::try_from(LOGIN_MESSAGE_BYTES).unwrap() + 1;
     let mut raw = server.raw();
-    raw.send(&Request::Hello { version: 1, user: "X".into(), mechanism: "trust".into(), initial: vec![0; long], capabilities: vec![] });
+    raw.send(&Request::Hello {
+        version: turborel_protocol::VERSION,
+        user: "X".into(),
+        mechanism: "trust".into(),
+        initial: vec![0; long],
+        capabilities: vec![],
+    });
     let refused = raw.refusal();
     assert_eq!(state(&refused), ("08006", -919));
     assert!(refused.message.contains(&format!("longer than the {LOGIN_MESSAGE_BYTES} taken")), "{}", refused.message);
@@ -122,8 +128,14 @@ fn messages_before_a_login_are_small() {
     assert!(matches!(raw.receive(), Some(Reply::Description(_))), "taken once authenticated");
     let mut cut = server.raw();
     let mut hello = Vec::new();
-    Request::Hello { version: 1, user: "X".into(), mechanism: "trust".into(), initial: vec![0; 100], capabilities: vec![] }
-        .encode(&mut hello);
+    Request::Hello {
+        version: turborel_protocol::VERSION,
+        user: "X".into(),
+        mechanism: "trust".into(),
+        initial: vec![0; 100],
+        capabilities: vec![],
+    }
+    .encode(&mut hello);
     cut.send_bytes(&hello[..50]);
     cut.0.shutdown(std::net::Shutdown::Write).unwrap();
     let refused = cut.refusal();

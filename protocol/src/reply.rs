@@ -8,7 +8,7 @@ use turborel::storage::Row;
 use crate::fields::{
     column, counted, failure, flag, parameter, put_column, put_count, put_failure, put_flag, put_parameter, put_row, put_strs, row, strs,
 };
-use crate::{CancelKey, Column, Completed, Failure, KEY_BYTES, broken, frame};
+use crate::{CancelKey, Column, Completed, Failure, KEY_BYTES, LobReply, broken, frame};
 
 const CHALLENGE: u8 = b'C';
 const READY: u8 = b'R';
@@ -18,6 +18,7 @@ const ROWS: u8 = b'B';
 const SUSPENDED: u8 = b'S';
 const COMPLETE: u8 = b'K';
 const ERROR: u8 = b'E';
+const LOB: u8 = b'L';
 
 /// What a server sends. Not comparable: its values compare as SQL
 /// says, not as data; compare the bytes they encode to.
@@ -60,6 +61,8 @@ pub enum Reply {
     Complete(Completed),
     /// A statement's failure, or the connection's.
     Error(Failure),
+    /// \[DESIGN\] What a Lob request gave back (`lobs.rs`, RULES.md D79).
+    Lob(LobReply),
 }
 
 impl Reply {
@@ -95,6 +98,7 @@ impl Reply {
                 put_flag(b, c.active);
             }),
             Reply::Error(failure) => frame(out, ERROR, |b| put_failure(b, failure)),
+            Reply::Lob(lob) => frame(out, LOB, |b| lob.put(b)),
         }
     }
 
@@ -118,6 +122,7 @@ impl Reply {
             SUSPENDED => Reply::Suspended,
             COMPLETE => Reply::Complete(Completed { sqlcode: r.u32()?.cast_signed(), sqlstate: r.str()?, active: flag(&mut r)? }),
             ERROR => Reply::Error(failure(&mut r)?),
+            LOB => Reply::Lob(LobReply::read(&mut r)?),
             other => return Err(broken(format!("[DESIGN] no reply is of kind {other}"))),
         };
         r.finish()?;

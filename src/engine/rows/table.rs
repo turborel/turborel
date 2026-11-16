@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use super::counted::Counted;
 use super::ids::IdBlocks;
+use super::lobs::LobSpace;
 use super::meta::{Meta, meta_content, parse_meta};
 use super::mvcc::Versions;
 use super::sealing::Sealing;
@@ -28,6 +29,8 @@ pub(super) struct Found {
     zones: u64,
     /// Its count of rows as its meta page holds it.
     rows: u64,
+    /// Its large objects' tree's meta page, 0 for none.
+    lobs: u64,
 }
 
 impl RowTable {
@@ -43,10 +46,10 @@ impl RowTable {
         let zones = if options.columns.is_none() && keeps_any(types) { files.pool.new_page(files.file)?.0.0 } else { 0 };
         let meta = {
             let (meta, mut page) = files.pool.new_page(files.file)?;
-            *page = meta_content(Meta { tree: tree.meta(), reserved: RESERVE, directory: 0, zones, rows: 0 });
+            *page = meta_content(Meta { tree: tree.meta(), reserved: RESERVE, directory: 0, zones, rows: 0, lobs: 0 });
             meta
         };
-        RowTable::with(files, Found { meta, tree, reserved: RESERVE, zones, rows: 0 }, types, options)
+        RowTable::with(files, Found { meta, tree, reserved: RESERVE, zones, rows: 0, lobs: 0 }, types, options)
     }
 
     /// Opens the table whose meta page is `meta`, of columns of `types`:
@@ -77,8 +80,8 @@ impl RowTable {
             parse_meta(&page).ok_or_else(|| corrupt(&format!("page {} is not a table's meta page of this format", meta.0)))?
         };
         let tree = BLinkTree::open(Arc::clone(&files.pool), files.file, named.tree)?;
-        let (reserved, zones, rows) = (named.reserved, named.zones, named.rows);
-        let table = RowTable::with(files, Found { meta, tree, reserved, zones, rows }, types, options)?.sealed(sealing);
+        let (reserved, zones, rows, lobs) = (named.reserved, named.zones, named.rows, named.lobs);
+        let table = RowTable::with(files, Found { meta, tree, reserved, zones, rows, lobs }, types, options)?.sealed(sealing);
         table.load_directory(named.directory)?;
         table.zones.load(reserved)?;
         let live = if files.counts_kept() {
@@ -93,7 +96,7 @@ impl RowTable {
     }
 
     fn with(files: &TableFiles, found: Found, types: &[DataType], options: TableOptions) -> Result<RowTable> {
-        let Found { meta, tree, reserved, zones: directory, rows } = found;
+        let Found { meta, tree, reserved, zones: directory, rows, lobs } = found;
         let counted = Arc::new(Counted::new((&files.pool, files.file), meta, rows));
         files.note_counted(&counted)?;
         let sealing = Arc::new(Sealing::plain());
@@ -111,7 +114,9 @@ impl RowTable {
         let threshold = options.out_of_line.unwrap_or(files.pool.capacity(files.file)?.checked_div(4).unwrap_or_default());
         // A row's record shares its leaf entry with its key and its version.
         let spill = Spill { threshold, most: tree.max_entry().saturating_sub(KEY).saturating_sub(VERSION) };
+        let lobs = Arc::new(LobSpace::open((&files.pool, files.file), types, lobs, Arc::clone(&sealing))?);
         Ok(RowTable {
+            lobs,
             pool: Arc::clone(&files.pool),
             file: files.file,
             undo: Arc::clone(&files.undo),
@@ -141,6 +146,10 @@ impl RowTable {
     pub(super) fn sealed(mut self, sealing: Sealing) -> RowTable {
         self.sealing = Arc::new(sealing);
         self.zones.seal_with(&self.sealing);
+        // No value reads its objects yet: the space is the table's alone.
+        if let Some(lobs) = Arc::get_mut(&mut self.lobs) {
+            lobs.seal_with(Arc::clone(&self.sealing));
+        }
         self
     }
 

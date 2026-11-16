@@ -74,6 +74,7 @@ fn cell_kind(cell: Cell<'_>) -> Option<(u8, u32)> {
         Cell::Value(
             Value::DecFloat(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)

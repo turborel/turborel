@@ -76,6 +76,9 @@ fn returned(item: &mut Item, v: &Value) {
     let (length, octets) = match v {
         Value::Char(s) => (s.chars().count(), s.len()),
         Value::Binary(b) => (usize::try_from(b.len()).unwrap_or(usize::MAX), b.bytes().len()),
+        // [ISO/IEC 9075-2:2023 §20.12 GR5e i 2] a large object's from its
+        // counts, read from no chunk.
+        Value::Lob(l) => (usize::try_from(l.chars()).unwrap_or(usize::MAX), usize::try_from(l.octets()).unwrap_or(usize::MAX)),
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)
@@ -93,9 +96,11 @@ fn returned(item: &mut Item, v: &Value) {
     item.set(DescriptorItem::ReturnedOctetLength, exact(i64::try_from(octets).unwrap_or(i64::MAX)));
 }
 
-/// Whether `t` is CHARACTER VARYING or BINARY VARYING.
+/// Whether `t` is CHARACTER VARYING, BINARY VARYING or a large object
+/// string type, whose RETURNED_LENGTH is set [ISO/IEC 9075-2:2023 §20.12
+/// GR5e i 2].
 fn varying(t: &DataType) -> bool {
-    matches!(t, DataType::Varying { .. } | DataType::VarBinary { .. })
+    matches!(t, DataType::Varying { .. } | DataType::VarBinary { .. } | DataType::Lob { .. })
 }
 
 /// [ISO/IEC 9075:1992 §17.9 GR7e-g; ISO/IEC 9075-2:2023 §20.12 GR5e i 2]

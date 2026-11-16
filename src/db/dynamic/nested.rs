@@ -63,6 +63,7 @@ fn subordinates(t: &DataType, level: i64, catalog: &str, out: &mut Vec<Item>) {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }

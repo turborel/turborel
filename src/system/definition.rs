@@ -146,6 +146,18 @@ impl Columns {
         self
     }
 
+    /// Then a column `name` of CARDINAL_NUMBER of a length, as wide as
+    /// BIGINT: \[DESIGN\] a large object's length in characters, and in
+    /// octets, passes INTEGER's greatest value (RULES.md D79).
+    pub(super) fn length(mut self, name: &str, not_null: bool) -> Columns {
+        let mut column = cardinal(name, not_null);
+        if let crate::value::DataType::Exact { precision, .. } = &mut column.data_type {
+            *precision = crate::value::BIGINT_PRECISION;
+        }
+        self.0.push(column);
+        self
+    }
+
     /// Then a column `name` of CHARACTER_DATA.
     pub(super) fn data(mut self, name: &str, not_null: bool) -> Columns {
         self.0.push(text_column((name, LONG), not_null));

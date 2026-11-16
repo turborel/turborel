@@ -28,13 +28,15 @@ pub(super) const DEFINED: u8 = 18;
 pub(super) const RECONFIGURATION: u8 = 19;
 pub(super) const SEQUENCE: u8 = 20;
 pub(super) const ROLE_CREATOR: u8 = 21;
+pub(super) const LOB_PUT: u8 = 22;
+pub(super) const LOB_STALE: u8 = 23;
 
 /// \[DESIGN\] The tag of every kind of record, in tag order (RULES.md
 /// D57). A kind added gets its tag in `Change::kind`, whose match has no
 /// wildcard, so it does not compile until it has one; and a test fails
 /// until its tag is listed here, as `Record::decode` then reads a tag this
 /// does not list.
-pub const KINDS: [u8; 21] = [
+pub const KINDS: [u8; 23] = [
     INSERT,
     UPDATE,
     DELETE,
@@ -56,6 +58,8 @@ pub const KINDS: [u8; 21] = [
     RECONFIGURATION,
     SEQUENCE,
     ROLE_CREATOR,
+    LOB_PUT,
+    LOB_STALE,
 ];
 
 /// \[DESIGN\] The kinds written only through a replicated log (RULES.md
@@ -77,6 +81,8 @@ impl Change {
             Change::Checkpoint => CHECKPOINT,
             Change::StatementUndone { .. } => STATEMENT_UNDONE,
             Change::Stale { .. } => STALE,
+            Change::LobPut { .. } => LOB_PUT,
+            Change::LobStale { .. } => LOB_STALE,
             Change::Schema { .. } => SCHEMA,
             Change::Defined { .. } => DEFINED,
             Change::CreateIndex { .. } => CREATE_INDEX,

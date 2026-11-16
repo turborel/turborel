@@ -30,6 +30,7 @@
 //! once the user is dropped (RULES.md D43).
 
 mod lent;
+mod lobs;
 mod requests;
 mod wire;
 
@@ -176,7 +177,7 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
             services.cancel(&key);
             Ok(None)
         }
-        // No capability is defined in version 1, so none is taken.
+        // No capability is defined in version 2, so none is taken.
         Request::Hello { version, user, mechanism, initial, capabilities: _ } => {
             authenticate(wire, (peer, present), services, (version, user, mechanism, initial)).await.map(Some)
         }
@@ -187,6 +188,7 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
         | Request::Fetch { .. }
         | Request::Close { .. }
         | Request::Deallocate { .. }
+        | Request::Lob(_)
         | Request::Terminate => Err(broken("[DESIGN] a connection begins with Hello, or Cancel")),
     }
 }
@@ -294,6 +296,7 @@ fn work_of(request: Request) -> Result<Option<Work>> {
         Request::Fetch { statement, rows } => Work::Fetch(statement, rows),
         Request::Close { statement } => Work::Close(statement),
         Request::Deallocate { statement } => Work::Deallocate(statement),
+        Request::Lob(request) => Work::Lob(request),
         Request::Terminate => return Ok(None),
         Request::Hello { .. } | Request::Answer(_) => return Err(broken("[DESIGN] a connection is authenticated once")),
         Request::Cancel(_) => return Err(broken("[DESIGN] a Cancel is a connection's first and only message")),
@@ -322,10 +325,15 @@ async fn next_work(lent: &mut Lent, (services, present): (&Services, &Present), 
     Err(refused(format!("[DESIGN] the user {name} was dropped: its connections end")))
 }
 
-/// SERVER.BATCH_BYTES and SERVER.MAX_STATEMENTS, as they are now.
-fn limits(services: &Services) -> (usize, usize) {
+/// SERVER.BATCH_BYTES, SERVER.MAX_STATEMENTS and SERVER.LOB_INLINE_BYTES,
+/// as they are now.
+fn limits(services: &Services) -> (usize, usize, usize) {
     let db = services.database();
-    (settings::count(db, settings::BATCH_BYTES), settings::count(db, settings::MAX_STATEMENTS))
+    (
+        settings::count(db, settings::BATCH_BYTES),
+        settings::count(db, settings::MAX_STATEMENTS),
+        settings::count(db, settings::LOB_INLINE_BYTES),
+    )
 }
 
 /// Runs the client's requests in `admitted`'s session until it terminates,

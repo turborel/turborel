@@ -200,7 +200,10 @@ impl Session {
             | SqlStatement::Call(_)
             | SqlStatement::Return(_)
             | SqlStatement::Control(_)
-            | SqlStatement::Signal(_) => self.ensure_transaction(st),
+            | SqlStatement::Signal(_)
+            // [ISO/IEC 9075-2:2023 §4.41.2.2, §4.41.4] SQL-data statements,
+            // transaction initiating.
+            | SqlStatement::Locator { .. } => self.ensure_transaction(st),
         };
         call.runs(&tx);
         self.may_run(st, stmt)?;
@@ -288,6 +291,21 @@ impl Session {
         self.run_compiling(cx, stmt, params, keeping)
     }
 
+    /// OPEN, FETCH or CLOSE `stmt` of an embedded cursor, as
+    /// `run_compiling` runs it.
+    fn cursor_statement(&self, cx: StatementContext<'_>, stmt: &SqlStatement, params: &mut Params) -> Result<Completion> {
+        if let SqlStatement::Open(name) = stmt {
+            return self.open(cx, &cursor_named(name, params), params);
+        }
+        if let SqlStatement::Fetch { cursor, orientation, targets } = stmt {
+            return self.fetch(cx, &cursor_named(cursor, params), (orientation, targets), params);
+        }
+        if let SqlStatement::Close(name) = stmt {
+            return self.close(&cursor_named(name, params));
+        }
+        Ok(Completion::Success)
+    }
+
     /// `run_statement`'s statement run.
     fn run_compiling(
         &self,
@@ -315,11 +333,7 @@ impl Session {
                 self.positioned_statement(cx, stmt, (params, keeping))
             }
             SqlStatement::Truncate { table, restart } => self.truncate_table(cx, (table, *restart), params),
-            SqlStatement::Open(name) => self.open(cx, &cursor_named(name, params), params),
-            SqlStatement::Fetch { cursor, orientation, targets } => {
-                self.fetch(cx, &cursor_named(cursor, params), (orientation, targets), params)
-            }
-            SqlStatement::Close(name) => self.close(&cursor_named(name, params)),
+            SqlStatement::Open(_) | SqlStatement::Fetch { .. } | SqlStatement::Close(_) => self.cursor_statement(cx, stmt, params),
             SqlStatement::Dynamic(d) => self.run_dynamic(cx, d, params),
             SqlStatement::Select { query, targets } => self.select_into(cx, query, targets, params),
             SqlStatement::Drop { object, behavior } => self.drop_object(st, tx, object, *behavior),
@@ -328,6 +342,7 @@ impl Session {
             SqlStatement::Call(call) => self.call_statement(cx, call, params),
             SqlStatement::Control(_) | SqlStatement::Signal(_) => self.control_statement(cx, stmt, params),
             SqlStatement::Return(r) => super::routines::return_statement(r),
+            SqlStatement::Locator { hold, references } => self.locator_statement(st, *hold, references, params),
             // `execute_parsed` runs these itself, and never here.
             SqlStatement::Commit
             | SqlStatement::Rollback
@@ -422,6 +437,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::SetSchema(_)
         | SqlStatement::SetCollation(_)
         | SqlStatement::SetTimeZone(_)
+        | SqlStatement::Locator { .. }
         | SqlStatement::SetSessionAuthorization(_)
         | SqlStatement::SetRole(_)
         | SqlStatement::Connection(_)
@@ -553,6 +569,8 @@ pub(in crate::db) fn command_of(stmt: &SqlStatement) -> Command {
         SqlStatement::SetCollation(_) => commands::SET_COLLATION,
         SqlStatement::SetCatalog(_) => commands::SET_CATALOG,
         SqlStatement::SetTimeZone(_) => commands::SET_TIME_ZONE,
+        SqlStatement::Locator { hold: false, .. } => commands::FREE_LOCATOR,
+        SqlStatement::Locator { hold: true, .. } => commands::HOLD_LOCATOR,
         SqlStatement::SetSessionAuthorization(_) => commands::SET_SESSION_AUTHORIZATION,
         SqlStatement::SetRole(_) => commands::SET_ROLE,
         SqlStatement::Connection(ConnectionStatement::Connect { .. } | ConnectionStatement::ConnectDefault) => commands::CONNECT,

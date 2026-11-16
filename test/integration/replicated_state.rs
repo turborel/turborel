@@ -16,6 +16,8 @@ use turborel::files::FileOwner;
 use turborel::index::BTreeMethod;
 use turborel::log::record::{KINDS, REPLICATED, Record};
 use turborel::log::{FileLog, FileLogOptions, Log, Lsn};
+use turborel::value::Value;
+use turborel::value::lob::Lob;
 use turborel::value::types::TypeRegistry;
 
 use crate::common::{Scratch, after_crash, contents, crc32c, exec, number, os, rows};
@@ -68,7 +70,7 @@ struct Writer {
 /// For every kind of record, a statement that writes it. Records that are
 /// not synced as written (an abort record) are followed by a commit, whose
 /// sync makes them durable.
-const WRITERS: [Writer; 20] = [
+const WRITERS: [Writer; 22] = [
     Writer { kind: 1, run: |db| committed(db, &["INSERT INTO T VALUES (100, 'new')"]) },
     Writer { kind: 2, run: |db| committed(db, &["UPDATE T SET V = 'changed' WHERE K = 1"]) },
     Writer { kind: 3, run: |db| committed(db, &["DELETE FROM T WHERE K = 2"]) },
@@ -136,7 +138,32 @@ const WRITERS: [Writer; 20] = [
             db.allow_role_creator("C", true).unwrap();
         },
     },
+    Writer { kind: 22, run: |db| large_object(db, "L") },
+    Writer {
+        kind: 23,
+        run: |db| {
+            // A large object a reader may still see, awaiting collection
+            // as the checkpoint is taken: its objects are logged.
+            large_object(db, "M");
+            let reader = db.session("APP");
+            assert_eq!(rows(&reader, "SELECT CHAR_LENGTH(C) FROM M").unwrap(), ["300000"], "a snapshot, held open");
+            committed(db, &["UPDATE M SET C = 'short'"]);
+            db.checkpoint().unwrap();
+            reader.commit().unwrap();
+        },
+    },
 ];
+
+/// Table `name` of a CLOB, its row one of 300000 characters, more than a
+/// chunk.
+fn large_object(db: &Database, name: &str) {
+    committed(db, &[&format!("CREATE TABLE {name} (C CLOB)")]);
+    let s = db.session("APP");
+    let text: String = (0..300_000).map(|i| if i % 9 == 0 { 'ß' } else { 'l' }).collect();
+    let p = s.prepare(&format!("INSERT INTO {name} VALUES (?)")).unwrap();
+    s.execute_prepared(&p, &[Value::Lob(Lob::of_text(&text))]).unwrap();
+    s.commit().unwrap();
+}
 
 /// What the database holds, as its users see it, through a session of each
 /// of `READERS`.

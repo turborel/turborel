@@ -39,6 +39,7 @@
 //! same result.
 
 mod changes;
+mod stale;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -172,7 +173,7 @@ impl Analysis {
                 self.rolled_back.insert(record.tx, lsn);
                 self.transactions.insert(record.tx);
             }
-            Change::Insert { .. } | Change::Update { .. } | Change::Delete { .. } => {
+            Change::Insert { .. } | Change::Update { .. } | Change::Delete { .. } | Change::LobPut { .. } => {
                 self.transactions.insert(record.tx);
             }
             Change::Schema { .. }
@@ -189,7 +190,8 @@ impl Analysis {
             | Change::Reconfiguration { .. }
             | Change::Sequence { .. }
             | Change::Checkpoint
-            | Change::Stale { .. } => {}
+            | Change::Stale { .. }
+            | Change::LobStale { .. } => {}
         }
     }
 
@@ -295,6 +297,11 @@ impl Database {
             }
             Ok(())
         })?;
+        // The large objects no row names now, of transactions that did not
+        // commit or of versions replaced, freed (RULES.md D79).
+        for storage in self.snapshot()?.storage.values() {
+            storage.recovered()?;
+        }
         let committed = u64::try_from(analysis.committed.len()).unwrap_or(u64::MAX);
         report.committed = committed;
         report.not_committed = u64::try_from(analysis.transactions.len()).unwrap_or(u64::MAX).saturating_sub(committed);
@@ -343,16 +350,8 @@ impl Database {
                 replaying.pending.remove(&tx);
                 None
             }
-            Change::Stale { through, index, row, key } => {
-                // Only the checkpoint reopened from's: one before it, or one
-                // not recorded, saw garbage its indexes need not have.
-                let from = match replaying.definitions {
-                    Definitions::From(at) => Some(at),
-                    Definitions::All => None,
-                };
-                if from == Some(through) {
-                    self.take_back_stale(&index, row, &Key(key))?;
-                }
+            kept @ (Change::Stale { .. } | Change::LobStale { .. } | Change::LobPut { .. }) => {
+                self.replay_kept(lsn, kept, &replaying.definitions)?;
                 None
             }
             Change::StatementUndone { .. } | Change::Checkpoint => None,
@@ -374,20 +373,6 @@ impl Database {
         } else if replaying.replays(lsn) {
             self.replay_definition(&definition)?;
             report.definitions = report.definitions.saturating_add(1);
-        }
-        Ok(())
-    }
-
-    /// Takes back one entry of `row` under `key` in index `name`, if it is
-    /// there: an entry of a version a checkpoint saw awaiting collection,
-    /// which the crash lost. Before `mend_indexes`, which then sets right
-    /// the rows recovery touched; an index to be built anew is built
-    /// whatever it held.
-    fn take_back_stale(&self, name: &str, row: RowId, key: &Key) -> Result<()> {
-        let st = self.snapshot()?;
-        let Ok(index) = st.index_of(name) else { return Ok(()) };
-        if index.rows(key)?.contains(&row) {
-            index.remove(key, row)?;
         }
         Ok(())
     }
@@ -430,6 +415,8 @@ impl Database {
                 | Change::Abort
                 | Change::Checkpoint
                 | Change::Stale { .. }
+                | Change::LobPut { .. }
+                | Change::LobStale { .. }
                 | Change::StatementUndone { .. } => return Err(SqlError::new(Code::Corrupt, "[DESIGN] a definition is a row change")),
             }
             Ok(())

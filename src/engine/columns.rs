@@ -314,6 +314,7 @@ pub fn padding(t: &DataType) -> Option<Option<usize>> {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }

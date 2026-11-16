@@ -4,6 +4,10 @@
 //! SUBSTRING_REGEX (`regex/search.rs`); and TRANSLATE_REGEX
 //! (`regex/translate.rs`).
 //!
+//! A subject may be a character large object, read a chunk at a time and
+//! never held whole (RULES.md D79); SUBSTRING_REGEX and TRANSLATE_REGEX of
+//! one give one [§6.33 SR8f i 2, SR12f i].
+//!
 //! The binder makes each call its own function, so each keeps the last
 //! pattern it compiled, and none is registered. The parser passes what is
 //! a key word in the syntax, the units and START, AFTER or ALL, as
@@ -11,6 +15,7 @@
 //! specification.
 
 mod search;
+mod subject;
 mod translate;
 
 use std::sync::{Arc, Mutex};
@@ -22,8 +27,9 @@ use super::ScalarFunction;
 use super::strings::{character, text};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::params::ParameterType;
-use crate::regex::Regex;
-use crate::value::{DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::regex::{LobText, Regex};
+use crate::value::{CharUnits, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use subject::short;
 
 /// [ISO/IEC 9075-2:2023 §8.7] LIKE_REGEX, no key word of SQL-92.
 pub const LIKE_REGEX: &str = "LIKE_REGEX";
@@ -136,56 +142,20 @@ fn parameter(position: usize, args: &[Option<DataType>], strings: &[usize], numb
     (strings.contains(&position) && typed).then_some(ParameterType::Varying)
 }
 
+/// [§6.33 SR8f i, SR12f i 1] The type of a string cut from, or made as
+/// long as, a subject of type `subject`: CHARACTER VARYING as long as it at
+/// most, or of a character large object, that type, a large object as
+/// long.
+fn as_long_as(name: &str, subject: &DataType) -> Result<DataType> {
+    if subject.is_lob() {
+        return Ok(subject.clone());
+    }
+    Ok(DataType::Varying { length: character(name, subject)?, units: CharUnits::Characters })
+}
+
 /// `n`, a count or position.
 fn counted(n: i128) -> Value {
     Value::Exact(Decimal::new(n, 0))
-}
-
-/// A subject string, and the units its positions and lengths count
-/// [§9.28 GR11b].
-struct Subject {
-    chars: Vec<char>,
-    octets: bool,
-}
-
-impl Subject {
-    /// `s` counted in `units`, a `<char length units>`.
-    fn new(s: &str, units: &Value) -> Result<Subject> {
-        let octets = match text(units)? {
-            Some(OCTETS) => true,
-            Some(CHARACTERS) => false,
-            Some(_) | None => return fail(Code::Api, "[DESIGN] a regular expression function was given units that are none"),
-        };
-        Ok(Subject { chars: s.chars().collect(), octets })
-    }
-
-    /// The units of characters `from` to `to`.
-    fn units(&self, from: usize, to: usize) -> usize {
-        let part = self.chars.get(from..to).unwrap_or_default();
-        if self.octets { part.iter().map(|c| c.len_utf8()).sum() } else { part.len() }
-    }
-
-    /// [§6.31 GR18b ii] CHARACTER_LENGTH ( RSS USING CLU ).
-    fn length(&self) -> usize {
-        self.units(0, self.chars.len())
-    }
-
-    /// The position, from 1, of character `at`.
-    fn position(&self, at: usize) -> i128 {
-        i128::try_from(self.units(0, at)).unwrap_or(i128::MAX).saturating_add(1)
-    }
-
-    /// The character `sp`, a start position, names: none if it is less
-    /// than 1 or past the string's length [§6.31 GR18b ii]. An octet
-    /// within a character names the next character (UV074).
-    fn start(&self, sp: i128) -> Option<usize> {
-        let length = i128::try_from(self.length()).ok()?;
-        if sp < 1 || sp > length {
-            return None;
-        }
-        let offset = usize::try_from(sp.checked_sub(1)?).ok()?;
-        (0..=self.chars.len()).find(|at| self.units(0, *at) >= offset)
-    }
 }
 
 /// CVE LIKE_REGEX PAT FLAG FL, called with CVE, PAT and FL.
@@ -210,7 +180,7 @@ impl ScalarFunction for LikeRegex {
                 );
             }
         }
-        character(LIKE_REGEX, value).map(|_| DataType::Boolean)
+        Ok(DataType::Boolean)
     }
     /// [ISO/IEC 9075-2:2023 §20.7 GR5a xxxvi] A pattern or flag CHARACTER
     /// VARYING beside the other not a `?`, the implicit flag counting; the
@@ -219,10 +189,25 @@ impl ScalarFunction for LikeRegex {
         parameter(position, args, &[1, 2], &[])
     }
     /// \[GR1\] Unknown if any operand is null; else whether the value
-    /// matches [§9.28].
+    /// matches [§9.28], a character large object read a chunk at a time.
     fn call(&self, args: &[Value]) -> Result<Value> {
         let [value, pattern, flag] = args else { return fail(Code::Api, "[DESIGN] LIKE_REGEX takes a value, a pattern and a flag") };
-        let (Some(value), Some(pattern), Some(flag)) = (text(value)?, text(pattern)?, text(flag)?) else { return Ok(Value::Null) };
-        Ok(Value::Bool(self.cache.compiled(pattern, flag)?.is_match(value)?))
+        let (Some(pattern), Some(flag)) = (short(pattern)?, short(flag)?) else { return Ok(Value::Null) };
+        let matched = match value {
+            Value::Null => return Ok(Value::Null),
+            Value::Lob(lob) => self.cache.compiled(&pattern, &flag)?.is_match_in(&LobText::new(lob)?)?,
+            Value::Char(_)
+            | Value::Exact(_)
+            | Value::Approx(_)
+            | Value::DecFloat(_)
+            | Value::Binary(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Array(_)
+            | Value::Row(_)
+            | Value::Extension(_) => self.cache.compiled(&pattern, &flag)?.is_match(text(value)?.unwrap_or_default())?,
+        };
+        Ok(Value::Bool(matched))
     }
 }

@@ -17,7 +17,7 @@ use crate::error::{Code, Result, SqlState, fail_with};
 /// `v` is of a kind CAST does not take to `to` \[SR4\]; others as the
 /// target's kind says, as of a datetime or an interval.
 pub fn cast(v: Value, to: &DataType) -> Result<Value> {
-    to.kind().cast(v, to)
+    cast_warned(v, to).map(|(cast, _)| cast)
 }
 
 /// [ISO/IEC 9075:1992 §6.10] `cast`, and the warning the cast raises, a
@@ -29,6 +29,14 @@ pub fn cast(v: Value, to: &DataType) -> Result<Value> {
 ///
 /// As `cast`.
 pub fn cast_warned(v: Value, to: &DataType) -> Result<(Value, Option<SqlState>)> {
+    // [ISO/IEC 9075-2:2023 §6.13 GR11d, GR12d, GR13] A large object to a
+    // type of no large object: what fits, read, and taken as a string.
+    if let Value::Lob(l) = &v
+        && let Some((lowered, cut)) = super::types::lob::lowered(l.clone(), to, super::types::lob::Lowering::Cast)?
+    {
+        let (cast, warning) = to.kind().cast_warned(lowered, to)?;
+        return Ok((cast, cut.or(warning)));
+    }
     to.kind().cast_warned(v, to)
 }
 

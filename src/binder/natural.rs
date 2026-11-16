@@ -113,6 +113,10 @@ fn corresponding(
     let collation = of_join_columns(db, session, c1.collation.as_ref(), c2.collation.as_ref())?;
     let compared =
         |e: Expr| collation.as_ref().filter(|_| common.is_character()).map_or_else(|| e.clone(), |c| Expr::sort_key(e.clone(), c));
-    let equal = Cond::Compare(compared(Expr::Column(local1)), crate::value::CompOp::Eq, compared(Expr::Column(local2)));
+    // A large object by its proxies (`binder/lobs.rs`) [Feature F402].
+    let (one, two) = (Expr::Column(local1), Expr::Column(local2));
+    let (one, two) =
+        super::lobs::proxied(&one, &two, (&common, &common), collation.as_ref()).unwrap_or_else(|| (compared(one), compared(two)));
+    let equal = Cond::Compare(one, crate::value::CompOp::Eq, two);
     Ok((equal, coalesced, desc, [at1, at2]))
 }

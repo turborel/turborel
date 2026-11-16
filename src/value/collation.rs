@@ -16,6 +16,7 @@ mod folded;
 mod pad;
 mod reorder;
 mod rules;
+mod streaming;
 mod table;
 #[cfg(test)]
 pub(crate) use table::fnv;
@@ -27,6 +28,7 @@ use std::sync::Arc;
 
 use super::{Binary, DataType, MAX_BINARY_LENGTH, Value};
 
+pub use streaming::lob_equal;
 pub use unicode::Unicode;
 
 /// [ISO/IEC 9075-2:2023 §4.3.6] Ordering by Unicode scalar value.
@@ -71,7 +73,12 @@ pub enum Pad {
 ///   weight its keys hold, at the first level or, if it is variable, at
 ///   the fourth, so a string of `n` such characters has at least
 ///   `n / MOST_CONTRACTED` elements its keys hold, which LIKE's search
-///   relies on.
+///   relies on;
+/// * two strings compare equal exactly when, at each of its `levels`, the
+///   `level_weights` of each are the same; and the weights at a level of a
+///   string cut at the places `safe_cut` gives are the weights of its
+///   pieces, joined, so a large object is compared a piece at a time
+///   (`streaming.rs`, RULES.md D79).
 pub trait Collation: Send + Sync {
     /// Its name.
     fn name(&self) -> &str;
@@ -84,6 +91,29 @@ pub trait Collation: Send + Sync {
     fn fold(&self, c: char) -> Option<char>;
     /// Whether `c` alone has a first-level weight its keys hold.
     fn weighs(&self, c: char) -> bool;
+    /// The levels its comparisons have: one of a collation whose strings
+    /// compare one character at a time.
+    fn levels(&self) -> usize {
+        1
+    }
+    /// The weights of `text` at `level`, from 1, under PAD NONE, added to
+    /// `out`, as bytes compared for equality alone: of a collation whose
+    /// strings compare one character at a time, each character folded.
+    fn level_weights(&self, text: &str, level: usize, out: &mut Vec<u8>) {
+        if level == 1 {
+            let mut buffer = [0; 4];
+            for c in text.chars() {
+                out.extend_from_slice(self.fold(c).unwrap_or(c).encode_utf8(&mut buffer).as_bytes());
+            }
+        }
+    }
+    /// The last octet of `text` it may be cut at, so the weights of the
+    /// pieces are those of the whole however it goes on: anywhere, of a
+    /// collation whose strings compare one character at a time; none if
+    /// nowhere, as of one that does not say.
+    fn safe_cut(&self, text: &str) -> Option<usize> {
+        self.fold('a').map(|_| text.len())
+    }
 }
 
 /// \[EXTENSION\] The most characters one element of a key is made of: the

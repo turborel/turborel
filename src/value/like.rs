@@ -16,12 +16,15 @@
 //! pattern 'ABC', but matches 'ABC%' and 'ABC  '.
 
 mod collated;
+mod octets;
+mod streamed;
 
 use std::collections::HashMap;
 
 use super::Value;
 use crate::error::{Code, Result, SqlState, fail_with};
 pub use collated::collated;
+pub use octets::OctetPattern;
 
 /// A substring specifier of a pattern, one character long.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +196,7 @@ pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Optio
             | Value::Approx(_)
             | Value::DecFloat(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
@@ -210,6 +214,7 @@ pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Optio
         | Value::Approx(_)
         | Value::DecFloat(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

@@ -47,6 +47,9 @@ mod hypothetical;
 pub use hypothetical::{Hypothesis, Hypothetical, RANK_FUNCTION_TYPES};
 mod ints;
 mod listagg;
+mod octet_like;
+pub use octet_like::OctetLike;
+pub mod lobs;
 pub use listagg::{LISTAGG, Listagg, ListaggSpec, MAX_LISTAGG_LENGTH, Truncation};
 mod regex;
 mod registry;
@@ -65,7 +68,7 @@ pub use regex::{
 };
 pub use registry::Registry;
 pub(crate) use registry::Standard;
-pub use strings::{CONCATENATION, using};
+pub use strings::{CONCATENATION, OVERLAY, PLACING, using};
 pub use trim::{BTRIM, LPAD, LTRIM, RPAD, RTRIM, TRIMS_AND_PADS, Trim, source_of, trim_named};
 pub use truths::EVERY;
 use truths::Truths;
@@ -111,6 +114,17 @@ pub trait ScalarFunction: Send + Sync {
     ///
     /// The value cannot be computed: the statement fails with this error.
     fn call(&self, args: &[Value]) -> Result<Value>;
+    /// \[DESIGN\] As `call`, given where the database keeps temporary
+    /// large objects (RULES.md D79), for a function making a large object
+    /// longer than a chunk; none where no database runs it. Default:
+    /// `call`.
+    ///
+    /// # Errors
+    ///
+    /// As `call`.
+    fn call_with(&self, args: &[Value], _temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Value> {
+        self.call(args)
+    }
     /// \[EXTENSION\] Whether an index may find rows for this function in
     /// a WHERE filter, such as `f(column, ?)` (RULES.md D34).
     /// True promises that every call accepted by the function's type
@@ -412,6 +426,7 @@ impl AggregateFunction for Sum {
             | DataType::Varying { .. }
             | DataType::Binary { .. }
             | DataType::VarBinary { .. }
+            | DataType::Lob { .. }
             | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }
@@ -452,6 +467,7 @@ impl AggregateFunction for Avg {
             | DataType::Varying { .. }
             | DataType::Binary { .. }
             | DataType::VarBinary { .. }
+            | DataType::Lob { .. }
             | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }

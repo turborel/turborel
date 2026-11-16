@@ -7,6 +7,9 @@
 //! sections, each of fixed-size little-endian records sorted by code
 //! point, read in place by binary search.
 
+use std::collections::HashSet;
+use std::sync::OnceLock;
+
 use crate::error::{Code, Result, SqlError};
 
 /// The data's version, stored with a database that uses it.
@@ -125,6 +128,9 @@ pub(super) struct Table {
     classes: Section,
     folds: Section,
     ranges: Section,
+    /// Each character a contraction holds after its first, found the first
+    /// time it is asked for.
+    continuing: OnceLock<HashSet<char>>,
 }
 
 fn damaged() -> SqlError {
@@ -154,7 +160,7 @@ impl Table {
             return Err(damaged());
         }
         let [chars, elements, contractions, decompositions, parts, classes, folds, ranges] = sections;
-        Ok(Table { chars, elements, contractions, decompositions, parts, classes, folds, ranges })
+        Ok(Table { chars, elements, contractions, decompositions, parts, classes, folds, ranges, continuing: OnceLock::new() })
     }
 
     /// What the table says of `c`, if it has weights of its own.
@@ -184,6 +190,16 @@ impl Table {
             }
         }
         None
+    }
+
+    /// \[UTS #10 S2.1\] Whether a contraction holds `c` after its first
+    /// character, so a match made before `c` may take it in.
+    pub(super) fn continues(&self, c: char) -> bool {
+        let continuing = self.continuing.get_or_init(|| {
+            let at = |i: usize| (1..MOST_CONTRACTED).filter_map(move |n| self.contractions.u32_at(i, n));
+            (0..self.contractions.records).flat_map(at).filter(|&code| code != 0).filter_map(char::from_u32).collect()
+        });
+        continuing.contains(&c)
     }
 
     /// The elements of `run`, added to `out`.

@@ -14,6 +14,7 @@ use crate::logical::{Cond, DomainChecks, Expr};
 use crate::params::ParameterType;
 use crate::value::Spelled;
 use crate::value::interval::Qualifier;
+use crate::value::lob::LobKind;
 use crate::value::{CharUnits, CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
 
 /// [ISO/IEC 9075-2:2023 §9.5 SR3f] Of `types`, one of them BOOLEAN,
@@ -78,6 +79,7 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
             | DataType::Varying { .. }
             | DataType::Binary { .. }
             | DataType::VarBinary { .. }
+            | DataType::Lob { .. }
             | DataType::DecFloat { .. }
             | DataType::Boolean
             | DataType::Date
@@ -98,10 +100,11 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     })
 }
 
-/// [ISO/IEC 9075:1992 §9.3 SR3a; ISO/IEC 9075-2:2023 §9.5 SR3b] The result
-/// type of `types`, if they are character strings or binary strings, all
-/// one or the other: of the greatest length, varying if any is \[SR3a i,
-/// SR3b ii\], else fixed \[SR3a ii, SR3b iii\]. A character string's
+/// [ISO/IEC 9075:1992 §9.3 SR3a; ISO/IEC 9075-2:2023 §9.5 SR3a iii, SR3b]
+/// The result type of `types`, if they are character strings or binary
+/// strings, all one or the other: of the greatest length, a large object
+/// if any is \[SR3a iii 1, SR3b i\], else varying if any is \[SR3a iii 2,
+/// SR3b ii\], else fixed \[SR3a iii 3, SR3b iii\]. A character string's
 /// length is in octets if all are \[§6.1 SR16\], else in characters, which
 /// a length in octets bounds.
 fn string_set_type(types: &[DataType]) -> Option<DataType> {
@@ -109,15 +112,15 @@ fn string_set_type(types: &[DataType]) -> Option<DataType> {
     if !first.is_character() && !first.is_binary() {
         return None;
     }
-    let (mut length, mut varying, mut octets) = (0_u32, false, true);
+    // The place of each length: fixed, varying, large.
+    let (mut length, mut rank, mut octets) = (0_u64, 0_u8, true);
     for t in types {
-        match t {
-            DataType::Character { length: n, units } => (length, octets) = (length.max(*n), octets && *units == CharUnits::Octets),
-            DataType::Varying { length: n, units } => {
-                (length, varying, octets) = (length.max(*n), true, octets && *units == CharUnits::Octets);
-            }
-            DataType::Binary { length: n } => length = length.max(*n),
-            DataType::VarBinary { length: n } => (length, varying) = (length.max(*n), true),
+        let (n, r, units) = match t {
+            DataType::Character { length: n, units } => (u64::from(*n), 0, Some(*units)),
+            DataType::Varying { length: n, units } => (u64::from(*n), 1, Some(*units)),
+            DataType::Binary { length: n } => (u64::from(*n), 0, None),
+            DataType::VarBinary { length: n } => (u64::from(*n), 1, None),
+            DataType::Lob { length: n, units, kind } => (*n, 2, (*kind == LobKind::Character).then_some(*units)),
             DataType::Exact { .. }
             | DataType::Approximate { .. }
             | DataType::DecFloat { .. }
@@ -129,15 +132,20 @@ fn string_set_type(types: &[DataType]) -> Option<DataType> {
             | DataType::Array(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
-            | DataType::Extension(_) => {}
-        }
+            | DataType::Extension(_) => continue,
+        };
+        (length, rank) = (length.max(n), rank.max(r));
+        octets = octets && units.is_none_or(|u| u == CharUnits::Octets);
     }
     let units = if octets { CharUnits::Octets } else { CharUnits::Characters };
-    Some(match (first.is_binary(), varying) {
-        (true, true) => DataType::VarBinary { length },
-        (true, false) => DataType::Binary { length },
-        (false, true) => DataType::Varying { length, units },
-        (false, false) => DataType::Character { length, units },
+    let short = u32::try_from(length).unwrap_or(u32::MAX);
+    Some(match (first.is_binary(), rank) {
+        (true, 2) => DataType::Lob { kind: LobKind::Binary, length, units: CharUnits::Characters },
+        (false, 2) => DataType::Lob { kind: LobKind::Character, length, units },
+        (true, 1) => DataType::VarBinary { length: short },
+        (true, _) => DataType::Binary { length: short },
+        (false, 1) => DataType::Varying { length: short, units },
+        (false, _) => DataType::Character { length: short, units },
     })
 }
 
@@ -385,6 +393,10 @@ impl Binder<'_> {
         }
         let characters = xt.is_character() && yt.is_character();
         let by = if characters { self.collation_of(&[self.derived(a)?, self.derived(b)?])? } else { None };
+        // A large object by its proxies (`binder/lobs.rs`).
+        if let Some((p, q)) = super::lobs::proxied(&x, &y, (&xt, &yt), by.as_ref()) {
+            return Ok((Cond::Compare(p, CompOp::Eq, q), yt));
+        }
         let keyed = |e: Expr| by.as_ref().map_or_else(|| e.clone(), |collation| Expr::sort_key(e.clone(), collation));
         Ok((Cond::Compare(keyed(x), CompOp::Eq, keyed(y)), yt))
     }

@@ -196,6 +196,10 @@ impl RowTable {
                 self.undo.release(*appended);
                 Ok(())
             }
+            Dead::Objects(ids) => {
+                self.free_objects(ids);
+                Ok(())
+            }
             Dead::Deletion(id) => {
                 let k = key(*id);
                 let Some(newest) = self.tree.get(&k)? else { return Ok(()) };
@@ -218,7 +222,7 @@ impl RowTable {
         let (id, bytes) = match item {
             Dead::Own(id, bytes) => (id, bytes),
             Dead::Older(id, at) => (id, self.undo.read(at)?),
-            Dead::Deletion(_) | Dead::Undone(_) => return Ok(None),
+            Dead::Deletion(_) | Dead::Undone(_) | Dead::Objects(_) => return Ok(None),
         };
         let version = Version::parse(&bytes)?;
         if version.deleted {

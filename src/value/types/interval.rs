@@ -170,6 +170,7 @@ impl SqlType for IntervalKind {
             Value::Approx(_)
             | Value::DecFloat(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Array(_)

@@ -6,8 +6,8 @@
 //! (RULES.md D69).
 
 use super::{
-    APPROXIMATE, ARRAY, BINARY, BINARY_VARYING, BOOLEAN, CHARACTER, DATE, DECFLOAT, DISTINCT, EXACT, INTERVAL_DAY_TIME, ROW, TIME,
-    TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING,
+    APPROXIMATE, ARRAY, BINARY, BINARY_VARYING, BLOB, BOOLEAN, CHARACTER, CLOB, DATE, DECFLOAT, DISTINCT, EXACT, INTERVAL_DAY_TIME, ROW,
+    TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING,
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -47,6 +47,12 @@ const ROW_TYPE: u8 = 21;
 const DISTINCT_TYPE: u8 = 22;
 /// An exact type written BIGINT [ISO/IEC 9075-2:2023 §6.1].
 const BIGINT_TYPE: u8 = 23;
+/// [ISO/IEC 9075-2:2023 §6.1] CHARACTER LARGE OBJECT: its maximum length
+/// u64, then its units (RULES.md D79).
+const CLOB_TYPE: u8 = 24;
+/// [ISO/IEC 9075-2:2023 §6.1] BINARY LARGE OBJECT: its maximum length u64,
+/// then units its kind ignores.
+const BLOB_TYPE: u8 = 25;
 
 /// Appends `data_type`'s bytes to `out`.
 pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
@@ -55,6 +61,8 @@ pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
         DataType::Varying { .. } => out.put_u8(VARYING_TYPE),
         DataType::Binary { .. } => out.put_u8(BINARY_TYPE),
         DataType::VarBinary { .. } => out.put_u8(VARBINARY_TYPE),
+        DataType::Lob { kind: crate::value::lob::LobKind::Character, .. } => out.put_u8(CLOB_TYPE),
+        DataType::Lob { kind: crate::value::lob::LobKind::Binary, .. } => out.put_u8(BLOB_TYPE),
         DataType::Boolean => out.put_u8(BOOLEAN_TYPE),
         DataType::DecFloat { .. } => out.put_u8(DECFLOAT_TYPE),
         DataType::Date => out.put_u8(DATE_TYPE),
@@ -98,6 +106,7 @@ fn spelled_as(t: DataType, spelled: Spelled) -> DataType {
         | DataType::Varying { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
         | DataType::DecFloat { .. }
         | DataType::Boolean
         | DataType::Date
@@ -136,6 +145,8 @@ pub(crate) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         VARYING_TYPE => &VARYING,
         BINARY_TYPE => &BINARY,
         VARBINARY_TYPE => &BINARY_VARYING,
+        CLOB_TYPE => &CLOB,
+        BLOB_TYPE => &BLOB,
         BOOLEAN_TYPE => &BOOLEAN,
         DECFLOAT_TYPE => &DECFLOAT,
         DATE_TYPE => &DATE,

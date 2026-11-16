@@ -14,7 +14,7 @@ use std::sync::Arc;
 use super::{Accumulator, AggregateFunction};
 use crate::error::{Code, Result, SqlError, SqlState, fail, fail_with};
 use crate::value::collation::CollationRef;
-use crate::value::types::composite::array_ordered;
+use crate::value::types::composite::unordered;
 use crate::value::{DataType, MAX_CHARACTER_LENGTH, NormKey, SortOrder, Value};
 
 #[cfg(test)]
@@ -79,13 +79,10 @@ impl AggregateFunction for Listagg {
         if !value.is_character() {
             return fail(Code::SyntaxRule, format!("[ISO/IEC 9075-2:2023 §10.9 F] LISTAGG joins character strings, not values of {value}"));
         }
-        if let Some(key) = r.fields.iter().skip(1).find(|f| array_ordered(&f.data_type)) {
+        if let Some((key, these)) = r.fields.iter().skip(1).find_map(|f| Some((&f.data_type, unordered(&f.data_type)?))) {
             return fail(
                 Code::SyntaxRule,
-                format!(
-                    "[ISO/IEC 9075-2:2023 §9.14 SR3] LISTAGG orders by values of {}, and arrays are compared for equality alone",
-                    key.data_type
-                ),
+                format!("[ISO/IEC 9075-2:2023 §9.14 SR3] LISTAGG orders by values of {key}, and {these} are compared for equality alone"),
             );
         }
         Ok(DataType::varying(MAX_LISTAGG_LENGTH))
@@ -119,6 +116,24 @@ impl AggregateFunction for Listagg {
         let separator = s.separator.replace('\'', "''");
         format!("{distinct}{collated}, '{separator}'{overflow} WITHIN GROUP ORDER BY {}", keys.join(", "))
     }
+}
+
+/// The text `v` gives LISTAGG: of a character large object (RULES.md D79)
+/// at most its first MLRT + 1 characters, as one longer than MLRT is in
+/// no result but SQLSTATE 22001's [GR11g ii, iii], and is still counted.
+///
+/// # Errors
+///
+/// SQLCODE -910 if it is no character string; as reading it fails.
+fn listed(v: Option<&Value>) -> Result<String> {
+    if let Some(Value::Char(text)) = v {
+        return Ok(text.clone());
+    }
+    let Some(Value::Lob(lob)) = v else { return Err(not_bound()) };
+    let most = u64::from(MAX_LISTAGG_LENGTH).saturating_add(1);
+    let mut reader = lob.reader();
+    let end = if lob.chars() > most { reader.octet_of_char(most)? } else { lob.octets() };
+    String::from_utf8(reader.read(0, end)?).map_err(|_| crate::value::lob::broken("a character large object's octets are not UTF-8"))
 }
 
 fn not_bound() -> SqlError {
@@ -219,7 +234,7 @@ impl Accumulator for Joined {
     /// its collation orders it.
     fn update(&mut self, v: &Value) -> Result<()> {
         let Value::Row(row) = v else { return Err(not_bound()) };
-        let Some(Value::Char(text)) = row.first() else { return Err(not_bound()) };
+        let text = &listed(row.first())?;
         let keyed = row
             .iter()
             .skip(1)

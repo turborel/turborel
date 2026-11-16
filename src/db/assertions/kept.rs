@@ -268,6 +268,7 @@ pub(super) fn row_totals(form: &Form, row: &Row, tx: &Txn) -> Result<Totals> {
             | Value::Approx(_)
             | Value::DecFloat(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)

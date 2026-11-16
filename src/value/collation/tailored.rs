@@ -150,12 +150,23 @@ impl Built {
     fn starts(&self) -> HashSet<char> {
         self.map.keys().chain(self.prefixed.keys()).filter_map(|k| k.first().copied()).collect()
     }
+
+    /// The characters a match made before them may take in or weigh by: of
+    /// the strings the rules name, each after the first, and each of a
+    /// string weighed after a prefix and of its prefixes.
+    fn continuing(&self) -> HashSet<char> {
+        let after_first = self.map.keys().flat_map(|k| k.iter().skip(1));
+        let prefixed = self.prefixed.iter().flat_map(|(k, list)| k.iter().chain(list.iter().flat_map(|(p, _)| p.iter())));
+        after_first.chain(prefixed).copied().collect()
+    }
 }
 
-/// A made tailoring and the characters its strings begin with.
+/// A made tailoring, the characters its strings begin with, and those
+/// `Built::continuing` gives.
 struct Made {
     built: Built,
     starts: HashSet<char>,
+    continuing: HashSet<char>,
 }
 
 /// A collation `UNICODE_<LOCALE>`.
@@ -236,13 +247,24 @@ impl Tailored {
                 strength: QUATERNARY,
                 base: Base { unicode: self.unicode.clone(), suppressed: HashSet::new(), reorder: None },
             });
-            Made { starts: built.starts(), built }
+            Made { starts: built.starts(), continuing: built.continuing(), built }
         })
+    }
+
+    /// Whether a string may be cut before `c`: UNICODE's `Unicode::cut_before`
+    /// allows it, no string the rules name begins with or holds the
+    /// starter `c` begins with, nor weighs by it, and that starter's first
+    /// element, its own whatever follows, has a first-level weight, which
+    /// sets Shifted's state (`levels`) whatever it was before.
+    fn cuts_before(&self, c: char) -> bool {
+        let Made { built, starts, continuing } = self.made();
+        let Some(first) = built.base.unicode.cut_before(c) else { return false };
+        !starts.contains(&first) && !continuing.contains(&first) && self.elements(vec![first]).first().is_some_and(|e| e.weights[0] != 0)
     }
 
     /// The elements of `chars`.
     fn elements(&self, mut chars: Vec<char>) -> Vec<Wide> {
-        let Made { built, starts } = self.made();
+        let Made { built, starts, .. } = self.made();
         let mut out = Vec::with_capacity(chars.len());
         let mut base = Vec::new();
         let mut at = 0;
@@ -424,6 +446,38 @@ impl Collation for Tailored {
     fn weighs(&self, c: char) -> bool {
         let fourth = self.made().built.strength >= QUATERNARY;
         self.elements(vec![c]).iter().any(|e| e.weights[0] != 0 && (fourth || !e.variable))
+    }
+
+    /// Those up to `[strength n]`.
+    fn levels(&self) -> usize {
+        self.made().built.strength
+    }
+
+    /// \[UTS #10 S3\] The weights `sort_key` holds of `level` under PAD
+    /// NONE, as it holds them, each weight's bytes saying how many follow
+    /// and none beginning as the separator does, so two keys are equal
+    /// exactly when each level's weights are. Under `[backwards 2]` the
+    /// second level is given forward: the key holds the reverse of the
+    /// whole string's, and two sequences' reverses are equal exactly when
+    /// they are, so equality is the same, and forward weights of pieces
+    /// join as those of the whole do.
+    fn level_weights(&self, text: &str, level: usize, out: &mut Vec<u8>) {
+        let built = &self.made().built;
+        if level > built.strength {
+            return;
+        }
+        let all = levels(&self.elements(built.base.unicode.normalized(text)), built.upper_first);
+        for w in level.checked_sub(1).and_then(|n| all.get(n)).into_iter().flatten() {
+            put(*w, out);
+        }
+    }
+
+    /// The last character of `text` that `cuts_before` allows a cut before:
+    /// the elements of the whole are those of the pieces, joined, and each
+    /// level of them the levels of the pieces, joined, `[caseFirst upper]`
+    /// flagging each element alone.
+    fn safe_cut(&self, text: &str) -> Option<usize> {
+        text.char_indices().rev().find(|&(_, c)| self.cuts_before(c)).map(|(at, _)| at)
     }
 }
 

@@ -15,7 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::{Cond, Expr, Truth, in_list};
-use crate::value::{Bucket, Value, bucket, compare};
+use crate::error::Result;
+use crate::value::{Bucket, Value, any_lob, bucket, compare, compare_checked};
 
 /// \[DESIGN\] The fewest constants of an IN list judged by a set: of a
 /// shorter one, comparing the value with each costs no more than finding
@@ -59,6 +60,7 @@ impl InSet {
             | Value::Approx(_)
             | Value::DecFloat(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
@@ -93,6 +95,24 @@ impl InSet {
             None => (0..self.values.len()).any(|at| equal(&at)),
         };
         self.decided(found)
+    }
+
+    /// `truth`, of a value that may be or hold a large object, compared
+    /// with each constant in turn, read as it must be (`value::proxies`).
+    ///
+    /// # Errors
+    ///
+    /// As reading a large object fails.
+    pub fn truth_read(&self, v: &Value) -> Result<Truth> {
+        if v.is_null() || !any_lob(std::slice::from_ref(v))? {
+            return Ok(self.truth(v));
+        }
+        for c in &self.values {
+            if compare_checked(v, c)? == Some(Ordering::Equal) {
+                return Ok(Truth::True);
+            }
+        }
+        Ok(self.decided(false))
     }
 
     /// Whether it is a set of character strings alone, nulls aside.

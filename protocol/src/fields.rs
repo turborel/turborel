@@ -7,6 +7,7 @@ use turborel::error::Result;
 use turborel::params::ParameterType;
 use turborel::storage::Row;
 use turborel::value::datetime::Moment;
+use turborel::value::lob::{Lob, LobKind};
 use turborel::value::types::{ExtensionType, Field, TypeParams};
 use turborel::value::{DataType, SqlType, Value, types};
 
@@ -46,6 +47,17 @@ const ARRAY: u8 = 16;
 /// A row type, its degree and then each field's name and type; a row, its
 /// fields' count and then each field's value.
 const ROW: u8 = 17;
+/// CHARACTER LARGE OBJECT, as a type.
+const CLOB: u8 = 18;
+/// BINARY LARGE OBJECT, as a type.
+const BLOB: u8 = 19;
+/// A large object's value held whole in the message: its kind (0 character,
+/// 1 binary), then its octets after their count (`SERVER.LOB_INLINE_BYTES`).
+const LOB_INLINE: u8 = 20;
+/// A large object's value by its locator [ISO/IEC 9075-2:2023 §4.37.5]:
+/// its kind, the locator u32, its octets u64 and its characters u64; the
+/// client reads it by Lob messages (`lobs.rs`).
+const LOB_LOCATOR: u8 = 21;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -111,6 +123,8 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
         DataType::Exact { .. } => b.put_u8(EXACT),
         DataType::Approximate { .. } => b.put_u8(APPROXIMATE),
         DataType::DecFloat { .. } => b.put_u8(DECFLOAT),
+        DataType::Lob { kind: LobKind::Character, .. } => b.put_u8(CLOB),
+        DataType::Lob { kind: LobKind::Binary, .. } => b.put_u8(BLOB),
         DataType::Array(a) => {
             b.put_u8(ARRAY);
             b.put_u32(a.max);
@@ -162,6 +176,8 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         TIMESTAMP => Some(&types::TIMESTAMP),
         TIMESTAMP_ZONED => Some(&types::TIMESTAMP_ZONED),
         INTERVAL => Some(&types::INTERVAL_DAY_TIME),
+        CLOB => Some(&types::CLOB),
+        BLOB => Some(&types::BLOB),
         _ => None,
     }
 }
@@ -253,6 +269,7 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
             Moment::Timestamp => TIMESTAMP,
         },
         Value::Interval(_) => INTERVAL,
+        Value::Lob(l) => return put_lob(b, l),
         Value::Array(parts) | Value::Row(parts) => {
             b.put_u8(if matches!(v, Value::Array(_)) { ARRAY } else { ROW });
             put_row(b, parts);
@@ -288,9 +305,53 @@ fn value(r: &mut Reader<'_>) -> Result<Value> {
                 None => Ok(types::unregistered(&name, &text, bytes)),
             }
         }
+        LOB_INLINE => {
+            let kind = lob_kind(r)?;
+            let bytes = r.bytes()?;
+            match kind {
+                LobKind::Character => std::str::from_utf8(bytes).map(|s| Value::Lob(Lob::of_text(s))).map_err(|_| r.corrupt("not UTF-8")),
+                LobKind::Binary => Ok(Value::Lob(Lob::of_octets(bytes))),
+            }
+        }
+        LOB_LOCATOR => {
+            let kind = lob_kind(r)?;
+            let (locator, octets, chars) = (r.u32()?, r.u64()?, r.u64()?);
+            Ok(Value::Lob(Lob::of_locator(kind, locator, (octets, chars))))
+        }
         ARRAY => r.nested(|r| Ok(Value::Array(counted(r, value)?.into()))),
         ROW => r.nested(|r| Ok(Value::Row(counted(r, value)?.into()))),
         tag => kind_of(tag).ok_or_else(|| r.corrupt("no value has this tag"))?.value(r),
+    }
+}
+
+/// A large object: held whole if it is, as a server sends one short enough
+/// and a client one it made; else by its locator, as a server sends one it
+/// has registered (`server/native/lobs.rs`). One neither, which is never
+/// sent, goes as locator 0, which names none, so reading it fails.
+fn put_lob(b: &mut Vec<u8>, l: &Lob) {
+    let kind = match l.kind() {
+        LobKind::Character => 0,
+        LobKind::Binary => 1,
+    };
+    if let Some(bytes) = l.inline() {
+        b.put_u8(LOB_INLINE);
+        b.put_u8(kind);
+        b.put_bytes(bytes);
+        return;
+    }
+    b.put_u8(LOB_LOCATOR);
+    b.put_u8(kind);
+    b.put_u32(l.locator().unwrap_or(0));
+    b.put_u64(l.octets());
+    b.put_u64(l.chars());
+}
+
+/// A large object's kind, as `put_lob` writes it.
+fn lob_kind(r: &mut Reader<'_>) -> Result<LobKind> {
+    match r.u8()? {
+        0 => Ok(LobKind::Character),
+        1 => Ok(LobKind::Binary),
+        _ => Err(r.corrupt("not a kind of large object")),
     }
 }
 
@@ -306,6 +367,9 @@ pub fn row_size(row: &Row) -> usize {
         Value::Bool(_) => 2,
         // Its tag, then its octets after their count.
         Value::Binary(b) => b.bytes().len().saturating_add(5),
+        // Its tag and kind, then its octets after their count, or its
+        // locator and counts.
+        Value::Lob(l) => l.inline().map_or(22, |bytes| bytes.len().saturating_add(6)),
         // Its tag, its zone's flag, precision and displacement, and its
         // instant.
         Value::Datetime(_) => 15,

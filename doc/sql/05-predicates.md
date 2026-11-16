@@ -104,6 +104,26 @@ collation. So `WORD LIKE 'å%'` finds `åka` but not `apa` under UNICODE_SV,
 and under UNICODE_JA, which ignores punctuation and the kana's script,
 `'かな'` matches `カ-ナ`.
 
+LIKE of binary strings matches octets. `_` is the octet X'5F' and `%`
+X'25', and an escape octet, one octet long or SQLSTATE 2200D, takes
+either or itself as written. A pattern of the wrong family is refused.
+A [large object](02-data-types.md#large-objects) is matched as it is
+read, a chunk at a time, however long. Its pattern and escape, and under
+UNICODE or a tailoring its match value too, are held whole, and are
+refused past 262,144 octets (SQLSTATE 0A000).
+
+```sql
+VALUES (CASE WHEN X'0A250B' LIKE X'0A215F25' ESCAPE X'21' THEN 'yes' ELSE 'no' END,
+        CASE WHEN X'0A250B' LIKE X'0A21250B' ESCAPE X'21' THEN 'yes' ELSE 'no' END);
+```
+
+```
+     |
+-----+-----
+ no  | yes
+(1 row)
+```
+
 ## LIKE_REGEX
 
 `s LIKE_REGEX pattern [FLAG flag]` is true if some part of s matches an

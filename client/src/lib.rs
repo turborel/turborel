@@ -8,6 +8,7 @@ pub mod agent;
 mod cancel;
 pub mod connection;
 pub mod import;
+pub mod lobs;
 pub mod mechanism;
 #[cfg(any(windows, test))]
 mod pipe;

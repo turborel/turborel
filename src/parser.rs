@@ -43,6 +43,7 @@ mod hypothetical;
 mod interval;
 mod listagg;
 mod literal;
+mod locators;
 mod merge;
 mod modules;
 mod names;
@@ -150,7 +151,7 @@ enum Catalogs {
 fn describe(t: &Tok) -> String {
     match t {
         Tok::KeyWord(k) => k.to_string(),
-        Tok::Identifier(s) | Tok::ExactNumeric(s) | Tok::ApproximateNumeric(s) => s.clone(),
+        Tok::Identifier(s) | Tok::ExactNumeric(s) | Tok::ApproximateNumeric(s) | Tok::LargeObjectLength(s) => s.clone(),
         Tok::CharacterString(s) => format!("'{s}'"),
         Tok::BinaryString(b) => format!("X'{b}'"),
         Tok::Introducer(name) => format!("_{name}"),
@@ -364,7 +365,7 @@ impl Parser {
             }
             // [ISO/IEC 9075:1992 §5.4] <identifier> ::= [<introducer>
             // <character set specification>] <actual identifier>.
-            Tok::Introducer(_) => {
+            Tok::Introducer(_) | Tok::LargeObjectLength(_) => {
                 if !matches!(self.peek_at(1), Tok::Identifier(_)) {
                     return Err(self.syntax("expected an <identifier> after the <introducer>"));
                 }
@@ -403,6 +404,7 @@ impl Parser {
             | Tok::CharacterString(_)
             | Tok::BinaryString(_)
             | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_)
             | Tok::Delimiter(_)
             | Tok::End => Err(self.syntax("expected an <unsigned integer>")),
         }
@@ -559,6 +561,7 @@ impl Parser {
             | Tok::CharacterString(_)
             | Tok::BinaryString(_)
             | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_)
             | Tok::Delimiter(_)
             | Tok::End => return Err(self.syntax("expected an <SQL statement> [X3.135-1986 §7.3]")),
         };

@@ -8,7 +8,7 @@
 use std::cmp::Ordering;
 
 use super::types::MAX_TYPE_NESTING;
-use super::{Bucket, Value, bucket, compare};
+use super::{Bucket, Value, bucket, compare_checked};
 use crate::error::{Code, Result, SqlError};
 
 /// A value nested deeper than any type nests.
@@ -41,7 +41,7 @@ fn distinct_at(a: &Value, b: &Value, depth: usize) -> Result<bool> {
     if let (Value::Array(x), Value::Array(y)) | (Value::Row(x), Value::Row(y)) = (a, b) {
         return parts_distinct(x, y, depth.saturating_add(1));
     }
-    Ok(compare(a, b) != Some(Ordering::Equal))
+    Ok(compare_checked(a, b)? != Some(Ordering::Equal))
 }
 
 /// [ISO/IEC 9075-2:2023 §8.15 GR1c iv, v] Whether the parts `x` and `y` of
@@ -91,6 +91,7 @@ fn null_bucket(v: &Value, depth: usize) -> Result<Option<Bucket>> {
         | Value::Approx(_)
         | Value::DecFloat(_)
         | Value::Binary(_)
+        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
@@ -106,7 +107,7 @@ fn null_bucket(v: &Value, depth: usize) -> Result<Option<Bucket>> {
 ///
 /// SQLCODE -910 if a value nests deeper than a type may.
 pub fn key_equal(a: &Value, b: &Value, nulls: bool) -> Result<bool> {
-    if nulls { Ok(!distinct(a, b)?) } else { Ok(compare(a, b) == Some(Ordering::Equal)) }
+    if nulls { Ok(!distinct(a, b)?) } else { Ok(compare_checked(a, b)? == Some(Ordering::Equal)) }
 }
 
 // Unit tests: each case of GR1, and the keys of a join on IS NOT DISTINCT

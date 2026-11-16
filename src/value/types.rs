@@ -32,6 +32,7 @@ mod decfloat;
 pub(crate) mod distinct;
 mod exact;
 pub(crate) mod interval;
+pub(crate) mod lob;
 mod row;
 pub(crate) mod tags;
 mod unregistered;
@@ -49,6 +50,7 @@ pub use decfloat::{DECFLOAT, DECFLOAT_NAME, DecFloatKind};
 pub use distinct::{DISTINCT, DistinctKind, DistinctType, USER_DEFINED_NAME};
 pub use exact::{BIGINT_NAME, EXACT, Exact};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
+pub use lob::{BLOB, BLOB_NAME, CLOB, CLOB_NAME, LARGE_NAME, LobType, NCLOB_NAME, OBJECT_NAME};
 pub use row::{Field, ROW, ROW_NAME, RowKind, RowType};
 pub use unregistered::{UNREGISTERED, UNREGISTERED_KIND, Unregistered, parts, unregistered};
 pub use varying::{VARYING, Varying};
@@ -373,9 +375,9 @@ pub struct Descriptor {
     /// DATA_TYPE: its name.
     pub name: String,
     /// CHARACTER_MAXIMUM_LENGTH, of a character string.
-    pub length: Option<u32>,
+    pub length: Option<u64>,
     /// CHARACTER_OCTET_LENGTH, of a character string.
-    pub octets: Option<usize>,
+    pub octets: Option<u64>,
     /// Whether it has a collation, SQL_TEXT's: a character string.
     pub collated: bool,
     /// NUMERIC_PRECISION, of a number.
@@ -419,6 +421,8 @@ impl DataType {
             DataType::Varying { .. } => &VARYING,
             DataType::Binary { .. } => &BINARY,
             DataType::VarBinary { .. } => &BINARY_VARYING,
+            DataType::Lob { kind: crate::value::lob::LobKind::Character, .. } => &CLOB,
+            DataType::Lob { kind: crate::value::lob::LobKind::Binary, .. } => &BLOB,
             DataType::Boolean => &BOOLEAN,
             DataType::Date => &DATE,
             DataType::Time { zoned: false, .. } => &TIME,
@@ -452,6 +456,7 @@ impl DataType {
             DataType::Binary { .. } => BINARY.encode_record(v, self),
             DataType::VarBinary { .. } => BINARY_VARYING.encode_record(v, self),
             DataType::Boolean
+            | DataType::Lob { .. }
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
@@ -474,6 +479,7 @@ impl DataType {
             DataType::Binary { .. } => BINARY.decode_record(field, self),
             DataType::VarBinary { .. } => BINARY_VARYING.decode_record(field, self),
             DataType::Boolean
+            | DataType::Lob { .. }
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
@@ -500,6 +506,7 @@ impl DataType {
             DataType::Binary { .. } => BINARY.encode_key(v, self, out),
             DataType::VarBinary { .. } => BINARY_VARYING.encode_key(v, self, out),
             DataType::Boolean
+            | DataType::Lob { .. }
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
@@ -526,6 +533,7 @@ impl DataType {
             DataType::Binary { .. } => BINARY.decode_key(rest, self),
             DataType::VarBinary { .. } => BINARY_VARYING.decode_key(rest, self),
             DataType::Boolean
+            | DataType::Lob { .. }
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
@@ -552,6 +560,10 @@ impl Value {
             Value::Approx(_) => Some(&APPROXIMATE),
             Value::DecFloat(_) => Some(&DECFLOAT),
             Value::Binary(_) => Some(&BINARY_VARYING),
+            Value::Lob(l) => Some(match l.kind() {
+                crate::value::lob::LobKind::Character => &CLOB,
+                crate::value::lob::LobKind::Binary => &BLOB,
+            }),
             Value::Bool(_) => Some(&BOOLEAN),
             Value::Datetime(d) => Some(datetime::kind_of(d)),
             Value::Interval(i) => Some(interval::kind_of(i.qualifier)),

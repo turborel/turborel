@@ -6,7 +6,9 @@
 //! the match found is the one F&O 3.1 §5.6 gives: the leftmost, and of
 //! those the one alternation's order and the quantifiers' greed prefer.
 
-use super::compile::{Inst, Program, line_end, line_start, one};
+use super::compile::{Inst, Program};
+use super::text::{Text, line_end, line_start, one};
+use crate::error::Result;
 
 /// Where each group starts and ends, if it has.
 pub(super) type Slots = Vec<Option<usize>>;
@@ -39,15 +41,21 @@ enum Job {
 }
 
 /// What a search reads and keeps.
-struct Search<'a> {
+struct Search<'a, T: Text + ?Sized> {
     program: &'a Program,
-    text: &'a [char],
+    text: &'a T,
     stack: Vec<Job>,
 }
 
 /// The first match of `program` in `text` beginning at `from` or after,
-/// each slot of where its groups are if `capture`, else none of them.
-pub(super) fn search(program: &Program, text: &[char], from: usize, capture: bool) -> Option<Slots> {
+/// each slot of where its groups are if `capture`, else none of them. It
+/// reads `text` forward, each character once but those an assertion
+/// reads beside it.
+///
+/// # Errors
+///
+/// As reading `text` fails.
+pub(super) fn search<T: Text + ?Sized>(program: &Program, text: &T, from: usize, capture: bool) -> Result<Option<Slots>> {
     let instructions = program.insts.len();
     let mut s = Search { program, text, stack: Vec::new() };
     let (mut current, mut next) = (List::new(instructions), List::new(instructions));
@@ -57,7 +65,7 @@ pub(super) fn search(program: &Program, text: &[char], from: usize, capture: boo
     loop {
         if matched.is_none() {
             slots.fill(None);
-            s.add(&mut current, 0, at, &mut slots);
+            s.add(&mut current, 0, at, &mut slots)?;
         }
         if current.threads.is_empty() && (matched.is_some() || at >= text.len()) {
             break;
@@ -68,13 +76,13 @@ pub(super) fn search(program: &Program, text: &[char], from: usize, capture: boo
                 // Each thread after this one is less preferred.
                 matched = Some(thread.slots);
                 if !capture {
-                    return matched;
+                    return Ok(matched);
                 }
                 break;
             }
-            if one(inst, text, at) {
+            if one(inst, text, at)? {
                 let mut kept = thread.slots;
-                s.add(&mut next, thread.pc.saturating_add(1), at.saturating_add(1), &mut kept);
+                s.add(&mut next, thread.pc.saturating_add(1), at.saturating_add(1), &mut kept)?;
             }
         }
         if at >= text.len() {
@@ -85,13 +93,13 @@ pub(super) fn search(program: &Program, text: &[char], from: usize, capture: boo
         next.seen.fill(false);
         at = at.saturating_add(1);
     }
-    matched
+    Ok(matched)
 }
 
-impl Search<'_> {
+impl<T: Text + ?Sized> Search<'_, T> {
     /// Adds to `list` the threads `from` leads to at `at`, following jumps,
     /// forks, saves and assertions, each in the order it is preferred.
-    fn add(&mut self, list: &mut List, from: usize, at: usize, slots: &mut Slots) {
+    fn add(&mut self, list: &mut List, from: usize, at: usize, slots: &mut Slots) -> Result<()> {
         self.stack.push(Job::Visit(from));
         while let Some(job) = self.stack.pop() {
             let pc = match job {
@@ -123,8 +131,8 @@ impl Search<'_> {
                     }
                     self.stack.push(Job::Visit(after));
                 }
-                Inst::LineStart(multiline) => self.assert(line_start(self.text, at, *multiline), after),
-                Inst::LineEnd(multiline) => self.assert(line_end(self.text, at, *multiline), after),
+                Inst::LineStart(multiline) => self.assert(line_start(self.text, at, *multiline)?, after),
+                Inst::LineEnd(multiline) => self.assert(line_end(self.text, at, *multiline)?, after),
                 // An iteration that matches nothing reaches an instruction
                 // already seen at this position, so needs no check here.
                 Inst::LoopEnter(_) | Inst::LoopCheck(_) => self.stack.push(Job::Visit(after)),
@@ -133,6 +141,7 @@ impl Search<'_> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Goes on at `after` if `holds`.

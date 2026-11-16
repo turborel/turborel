@@ -461,7 +461,8 @@ fn family(t: &DataType) -> &'static str {
         DataType::Character { .. } | DataType::Varying { .. } => "CHARACTER",
         DataType::Binary { .. } | DataType::VarBinary { .. } => "BINARY",
         DataType::Distinct(d) => family(&d.source),
-        DataType::Boolean
+        DataType::Lob { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
@@ -492,7 +493,8 @@ fn sample(t: &DataType) -> Option<Value> {
         DataType::Timestamp { zoned, .. } => Some(moment(Moment::Timestamp, *zoned)),
         DataType::Interval(qualifier) => Some(Value::Interval(Interval { units: 0, qualifier: *qualifier })),
         DataType::Distinct(d) => sample(&d.source),
-        DataType::Array(_) | DataType::Row(_) | DataType::Extension(_) => None,
+        // No index is of a large object [ISO/IEC 9075-2:2023 §9.14 SR3].
+        DataType::Lob { .. } | DataType::Array(_) | DataType::Row(_) | DataType::Extension(_) => None,
     }
 }
 

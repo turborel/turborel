@@ -88,6 +88,7 @@ mod capabilities;
 mod clock;
 mod end;
 mod followed;
+mod lobs;
 mod locks;
 mod logging;
 mod marks;
@@ -192,6 +193,10 @@ pub(crate) struct TxState {
     held: Vec<Arc<TableLock>>,
     /// Whether it wrote a change to the log, so its end must be logged too.
     logged: bool,
+    /// The snapshots it read at before its current one that it keeps
+    /// counted open until it ends, as a locator holds a value read at one
+    /// (`Txn::pin_snapshot`, RULES.md D79).
+    pinned: Vec<Timestamp>,
     /// The position of the current statement's first change in the log.
     statement_from: Option<Lsn>,
     /// Of each mark open within the current statement, innermost last, the
@@ -546,8 +551,12 @@ impl Txn {
         for table in held {
             table.release(self.id);
         }
+        let pinned = mem::take(&mut lock_builtin(&self.state).pinned);
         if self.open.swap(false, Ordering::AcqRel) {
             self.shared.clock.end(self.id, self.snapshot());
+            for at in pinned {
+                self.shared.clock.end(self.id, at);
+            }
         }
     }
 }

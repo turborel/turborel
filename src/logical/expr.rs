@@ -76,6 +76,7 @@ impl Truth {
             | Value::Approx(_)
             | Value::DecFloat(_)
             | Value::Binary(_)
+            | Value::Lob(_)
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)

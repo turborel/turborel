@@ -98,6 +98,7 @@ impl SqlType for Approximate {
             Value::Approx(x) => approximated(&v, x, t, "ISO/IEC 9075-2:2023 §6.13 GR9a ii"),
             Value::DecFloat(d) => approximated(&v, d.to_f64(), t, "ISO/IEC 9075-2:2023 §6.13 GR9a ii"),
             Value::Binary(_)
+            | Value::Lob(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)

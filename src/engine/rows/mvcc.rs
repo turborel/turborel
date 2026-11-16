@@ -66,15 +66,16 @@ mod lists;
 mod open;
 mod pending;
 mod reads;
+mod versions;
 mod write;
 
-use lists::{decode_change, encode_change};
+use lists::decode_change;
 pub(in crate::engine::rows) use reads::Read;
 use reads::{Changed, Reads};
 
 use super::options::Bounds;
 use super::version::{Maker, Version};
-use super::{RowTable, key, no_row};
+use super::{RowTable, key};
 use crate::catalog::TableDesc;
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
@@ -83,7 +84,7 @@ use crate::log::Lsn;
 use crate::spill::{DEFAULT_SPILL_BATCH, ListSpace, SpillList, WorkAreas};
 use crate::storage::{Newest, Row, RowId};
 use crate::sync::lock_builtin;
-use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxId};
+use crate::txn::{ReadMode, Timestamp, TxId};
 use crate::value::types::TypeRegistry;
 
 /// SQLCODE -911: a row another transaction changed. Its row id, of no
@@ -138,6 +139,21 @@ struct Change {
     before: Option<Vec<u8>>,
     /// Where it appended the committed version it replaced.
     appended: Option<Lsn>,
+    /// The large objects the version it replaced names and its own does
+    /// not (`rows/lobs/owned.rs`).
+    dropped: Vec<u64>,
+    /// Whether it is not a row's change but a large object's making: `id`
+    /// is the object's.
+    made: bool,
+}
+
+impl Change {
+    /// A change of row `id`, replacing its own version `before`, or the
+    /// committed one it appended at `appended`, or neither, dropping the
+    /// objects `dropped`.
+    fn of_row(id: RowId, before: Option<Vec<u8>>, appended: Option<Lsn>, dropped: Vec<u64>) -> Change {
+        Change { id, before, appended, dropped, made: false }
+    }
 }
 
 /// A transaction's bookkeeping in a table.
@@ -155,6 +171,10 @@ struct Open {
     preserving: bool,
     /// Whether it has ended here, so a scan keeping it finds it again.
     ended: bool,
+    /// The large objects it made, and those a version it wrote names
+    /// (`rows/lobs/owned.rs`).
+    made: MurmurSet<u64>,
+    adopted: MurmurSet<u64>,
 }
 
 /// A transaction validated in the table: kept while one could still be
@@ -196,6 +216,9 @@ enum Dead {
     Older(RowId, Lsn),
     /// A row it deleted, whose deletion then leaves the tree.
     Deletion(RowId),
+    /// The large objects a change dropped (`rows/lobs/owned.rs`), freed
+    /// once no snapshot reads the version it replaced.
+    Objects(Vec<u64>),
     /// A committed version appended for a change that was undone: no
     /// version in the tree refers to it, but a reader that read the undone
     /// version before it was taken out may still go back to it. Kept
@@ -288,8 +311,17 @@ impl RowTable {
     pub(super) fn begin_open(&self, tx: TxId, snapshot: Timestamp) {
         let mut open = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let changes = SpillList::new(self.versions.space());
-        let made =
-            || Open { snapshot, changes, reads: Reads::default(), checked: true, reads_since: None, preserving: false, ended: false };
+        let made = || Open {
+            snapshot,
+            changes,
+            reads: Reads::default(),
+            checked: true,
+            reads_since: None,
+            preserving: false,
+            ended: false,
+            made: MurmurSet::default(),
+            adopted: MurmurSet::default(),
+        };
         open.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));
     }
 
@@ -343,121 +375,6 @@ impl RowTable {
 }
 
 impl RowTable {
-    /// Inserts row `id`, whose record is `record`, by `tx`.
-    pub(super) fn insert_version(&self, tx: TxId, id: RowId, record: &[u8]) -> Result<bool> {
-        let maker = if tx == NO_TRANSACTION { Maker::Committed(0) } else { Maker::Open(tx) };
-        let version = Version { maker, deleted: false, older: None, record }.encode();
-        if !self.tree.insert(&key(id), &version)? {
-            return Ok(false);
-        }
-        if tx != NO_TRANSACTION {
-            let open = self.open_of(tx)?;
-            lock_builtin(&open).changes.push(Change { id, before: None, appended: None }, &mut encode_change)?;
-        }
-        Ok(true)
-    }
-
-    /// Makes `record` the new version of row `id` by `tx`, or with none,
-    /// deletes it: the version it replaced, for its zone. Outside any
-    /// transaction, the newest is replaced at once, committed, and what it
-    /// held freed, as recovery writes, and none is given back. A write that
-    /// finds the entry it read gone or changed is tried once
-    /// more: a freeze may have taken out the entry of a row frozen, the same
-    /// row then read from its group (`rows/frozen.rs`); else it conflicts.
-    pub(super) fn write_version(&self, tx: TxId, id: RowId, record: Option<&[u8]>, past: Past) -> Result<Option<Vec<u8>>> {
-        if tx == NO_TRANSACTION {
-            return self.write_latest(id, record).map(|()| None);
-        }
-        if let Some(replaced) = self.try_write(tx, id, record, past)? {
-            return Ok(Some(replaced));
-        }
-        self.try_write(tx, id, record, past)?.map(Some).ok_or_else(conflict)
-    }
-
-    /// `write_version`'s work: the version it replaced, none if the entry
-    /// it read was gone or changed by then.
-    fn try_write(&self, tx: TxId, id: RowId, record: Option<&[u8]>, past: Past) -> Result<Option<Vec<u8>>> {
-        let open = self.open_of(tx)?;
-        let snapshot = lock_builtin(&open).snapshot;
-        let k = key(id);
-        let Some((newest, thawed)) = self.newest_or_frozen(id)? else { return no_row(id) };
-        let (older, appended) = {
-            let version = Version::parse(&newest)?;
-            match self.maker(&version) {
-                Maker::Open(by) => {
-                    if by != tx {
-                        return Err(conflict());
-                    }
-                    if version.deleted {
-                        return no_row(id);
-                    }
-                    (version.older, None)
-                }
-                Maker::Committed(at) => {
-                    let newer = match past {
-                        Past::Snapshot => at > snapshot,
-                        Past::Stamp(seen) => at != seen,
-                    };
-                    if newer {
-                        return Err(conflict());
-                    }
-                    if version.deleted {
-                        return no_row(id);
-                    }
-                    let appended = self.undo.append(&newest)?;
-                    (Some(appended), Some(appended))
-                }
-            }
-        };
-        let new = Version { maker: Maker::Open(tx), deleted: record.is_none(), older, record: record.unwrap_or_default() }.encode();
-        let written = if thawed.is_some() { self.tree.insert(&k, &new)? } else { self.tree.replace_if(&k, &newest, &new)? };
-        if !written {
-            if let Some(at) = appended {
-                self.undo.release(at);
-            }
-            self.free(&thawed.unwrap_or_default());
-            return Ok(None);
-        }
-        if thawed.is_some() {
-            self.frozen.shadow();
-        }
-        let before = appended.is_none().then(|| newest.clone());
-        lock_builtin(&open).changes.push(Change { id, before, appended }, &mut encode_change)?;
-        Ok(Some(newest))
-    }
-
-    /// Row `id`'s newest version: its entry in the tree; else, if it is
-    /// frozen, a version holding its frozen values, to change it over, its
-    /// entry to be inserted (`rows/frozen.rs`), with the pages of its values
-    /// out of line; none if neither.
-    fn newest_or_frozen(&self, id: RowId) -> Result<Option<Found>> {
-        if let Some(newest) = self.tree.get(&key(id))? {
-            return Ok(Some((newest, None)));
-        }
-        Ok(self.frozen_version(id)?.map(|(version, pages)| (version, Some(pages))))
-    }
-
-    /// Outside any transaction: replaces row `id`'s newest version with
-    /// `record`, committed, or removes it; frees the values it held. A
-    /// frozen row keeps its deletion (`rows/frozen.rs`).
-    fn write_latest(&self, id: RowId, record: Option<&[u8]>) -> Result<()> {
-        let k = key(id);
-        let frozen = self.frozen_holds(id);
-        let version =
-            Version { maker: Maker::Committed(0), deleted: record.is_none(), older: None, record: record.unwrap_or_default() }.encode();
-        let old = if record.is_some() || frozen { self.tree.replace(&k, &version)? } else { self.tree.delete(&k)? };
-        let Some(old) = old else {
-            if self.frozen_row(id, Some(&[]))?.is_none() {
-                return no_row(id);
-            }
-            self.tree.insert(&k, &version)?;
-            self.frozen.shadow();
-            return Ok(());
-        };
-        self.free_values(id, Version::parse(&old)?.record);
-        Ok(())
-    }
-
     /// Undoes the changes of `tx` after its first `from`, newest first.
     pub(super) fn undo_changes(&self, tx: TxId, from: usize) -> Result<()> {
         let undone = {
@@ -476,6 +393,10 @@ impl RowTable {
     /// Undoes `change` of `tx`: the entry it replaced put back, or the row
     /// it added taken out.
     fn undo_change(&self, tx: TxId, change: Change) -> Result<()> {
+        if change.made {
+            self.free_objects(&[change.id]);
+            return Ok(());
+        }
         {
             let k = key(change.id);
             let inserted = change.before.is_none() && change.appended.is_none();
@@ -503,7 +424,11 @@ impl RowTable {
             if let Some(replaced) = replaced {
                 let version = Version::parse(&replaced)?;
                 self.count_undone(&version, inserted);
+                let put_back = before.as_deref().map(Version::parse).transpose()?.filter(|v| !v.deleted).map(|v| v.record);
+                let named = if version.deleted { Vec::new() } else { self.objects(change.id, version.record)? };
+                let kept = put_back.map(|record| self.objects(change.id, record)).transpose()?.unwrap_or_default();
                 self.free_values(change.id, version.record);
+                self.free_objects(&named.into_iter().filter(|o| !kept.contains(o)).collect::<Vec<_>>());
             }
         }
         Ok(())
