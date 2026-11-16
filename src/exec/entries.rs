@@ -10,7 +10,7 @@ use super::{Runner, broken, eval_cond};
 use crate::catalog::KeyShape;
 use crate::db::State;
 use crate::error::Result;
-use crate::index::Key;
+use crate::index::{Key, KeyProjection};
 use crate::logical::{Truth, pushed_conjuncts};
 use crate::physical::Plan;
 use crate::storage::{Near, Row, RowId, TableStorage};
@@ -22,19 +22,20 @@ use crate::value::Value;
 pub(in crate::exec) struct Reading {
     columns: Option<Vec<usize>>,
     near: Near,
+    projection: Option<Arc<dyn KeyProjection>>,
 }
 
 impl Reading {
     /// For the scan of index `ix` by a statement that reads only `needed`
     /// and the index's columns, if it names them; else every column.
-    pub(in crate::exec) fn of(ix: &KeyShape, needed: Option<&[usize]>) -> Reading {
+    pub(in crate::exec) fn of(ix: &KeyShape, needed: Option<&[usize]>, projection: Option<Arc<dyn KeyProjection>>) -> Reading {
         let columns = needed.map(|needed| {
             let mut read: Vec<usize> = needed.iter().chain(&ix.columns).copied().collect();
             read.sort_unstable();
             read.dedup();
             read
         });
-        Reading { columns, near: Near::default() }
+        Reading { columns, near: Near::default(), projection }
     }
 }
 
@@ -49,9 +50,13 @@ pub(in crate::exec) fn fetch(
     (tx, id): (TxId, RowId),
     key: &Key,
 ) -> Result<Option<(RowId, Row)>> {
-    let Reading { columns, near } = reading;
+    let Reading { columns, near, projection } = reading;
     let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else { return Ok(None) };
-    Ok(ix.key_of(&row).filter(|seen| seen == key).map(|_| (id, row)))
+    let Some(mut seen) = ix.key_of(&row) else { return Ok(None) };
+    if let Some(project) = projection {
+        seen = project.project(&seen)?;
+    }
+    Ok((seen == *key).then_some((id, row)))
 }
 
 /// \[DESIGN\] (RULES.md D34) The row of an entry of row `id` under `key`
@@ -67,7 +72,7 @@ pub(super) fn entry_row(
     (tx, id): (TxId, RowId),
     key: Key,
 ) -> Result<Option<Row>> {
-    if let Some(width) = width
+    if let Some(width) = width.filter(|_| reading.projection.is_none())
         && storage.visible_to_all(id)
     {
         let mut row = vec![Value::Null; width];
@@ -102,9 +107,9 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
             Ok(Box::new(checked(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx))))
         }
         Plan::IndexScan { table, index, probe, reverse, .. } => {
-            let Found { storage, ix, entries } = probe_index(db, &table, &index, &probe, reverse)?;
+            let Found { storage, ix, entries, projection } = probe_index(db, &table, &index, &probe, reverse)?;
             storage.read_by_condition(tx, &asked(&ix, probe))?;
-            let mut reading = Reading::of(&ix, None);
+            let mut reading = Reading::of(&ix, None, projection);
             let rows = checked(entries, db.tx.stop_of(tx))
                 .filter_map(move |entry| entry.and_then(|(key, id)| fetch(&*storage, &ix, &mut reading, (tx, id), &key)).transpose());
             Ok(Box::new(checked(rows, db.tx.stop_of(tx))))
@@ -127,6 +132,7 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         // (`physical/access.rs`): each row once.
         Plan::Append { left, right } => Ok(Box::new(table_entries(*left, db, tx)?.chain(table_entries(*right, db, tx)?))),
         other @ (Plan::Product { .. }
+        | Plan::Nearest(_)
         | Plan::HashJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }

@@ -17,12 +17,15 @@ use super::Plan;
 use super::access::{ix_is_point, whole_key};
 use super::probe::{Compared, placed_as_is};
 use crate::db::State;
-use crate::error::{Code, Result, SqlError, fail};
+use crate::error::{Code, Result, fail};
 use crate::index::Probe;
-use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Slot, filled_cond, filled_expr};
+use crate::logical::{Cond, Expr, Slot, filled_expr};
 use crate::value::{CompOp, DataType, Value};
 
+mod filled;
 mod shape;
+
+pub(crate) use filled::filled_plan;
 
 pub(crate) use shape::same_shape;
 
@@ -143,6 +146,7 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
             st.catalog.index(index).is_some_and(|ix| ix_is_point(ix) && whole_key(probe, ix.columns.len()))
         }
         Plan::SeqScan { .. }
+        | Plan::Nearest(_)
         | Plan::Product { .. }
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }
@@ -161,65 +165,6 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => false,
-    }
-}
-
-/// `plan`, a kept plan (`keepable`), its slots filled with `values`: those
-/// of its projection's expressions and its filter's condition, and those
-/// of its probe.
-///
-/// # Errors
-///
-/// As `logical::filled`; SQLCODE -910 for an operator no kept plan holds.
-pub(crate) fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
-    match plan {
-        Plan::Project { exprs, detail, input } => {
-            let exprs = exprs.into_iter().map(|e| filled_expr(e, values)).collect::<Result<_>>()?;
-            Ok(Plan::Project { exprs, detail, input: Box::new(filled_plan(*input, values)?) })
-        }
-        Plan::Filter { cond, detail, est, input } => {
-            let cond = filled_cond(cond, values)?;
-            Ok(Plan::Filter { cond, detail, est, input: Box::new(filled_plan(*input, values)?) })
-        }
-        Plan::IndexScan { .. } => filled_scan(plan, values),
-        Plan::SeqScan { .. } => Ok(plan),
-        Plan::Aggregate { groups, collations, aggs, seeds, detail, input } => {
-            let filled_agg = |a: AggCall| {
-                let arg = a.arg.map(|e| filled_expr(e, values)).transpose()?;
-                let distribution = match a.distribution {
-                    Some(d) => Some(Box::new(Distribution { fraction: filled_expr(d.fraction.clone(), values)?, ..*d })),
-                    None => None,
-                };
-                Ok(AggCall { arg, filter: a.filter.map(|c| filled_cond(c, values)).transpose()?, distribution, ..a })
-            };
-            let aggs = aggs.into_iter().map(filled_agg).collect::<Result<_>>()?;
-            Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(filled_plan(*input, values)?) })
-        }
-        Plan::Distinct { input } => Ok(Plan::Distinct { input: Box::new(filled_plan(*input, values)?) }),
-        Plan::Sort { keys, detail, input, most } => Ok(Plan::Sort { keys, detail, input: Box::new(filled_plan(*input, values)?), most }),
-        Plan::Limit { limit, input } => {
-            let offset = limit.offset.map(|e| filled_expr(e, values)).transpose()?;
-            let fetch = limit.fetch.map(|f| Ok::<_, SqlError>(Fetch { count: filled_expr(f.count, values)?, ..f })).transpose()?;
-            Ok(Plan::Limit { limit: Limit { offset, fetch }, input: Box::new(filled_plan(*input, values)?) })
-        }
-        Plan::Append { left, right } => {
-            let left = Box::new(filled_plan(*left, values)?);
-            Ok(Plan::Append { left, right: Box::new(filled_plan(*right, values)?) })
-        }
-        Plan::Product { .. }
-        | Plan::HashJoin { .. }
-        | Plan::IndexJoin { .. }
-        | Plan::OuterJoin { .. }
-        | Plan::SetOp { .. }
-        | Plan::System { .. }
-        | Plan::Values { .. }
-        | Plan::Recursive { .. }
-        | Plan::Unnest(..)
-        | Plan::Window { .. }
-        | Plan::Polymorphic(..)
-        | Plan::Recognize { .. }
-        | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
     }
 }
 
@@ -301,6 +246,10 @@ mod tests {
     use crate::value::{Decimal, Spelled};
 
     const INT: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric };
+
+    fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
+        super::filled_plan(plan, values, None)
+    }
 
     fn int(n: i128) -> Value {
         Value::Exact(Decimal::new(n, 0))

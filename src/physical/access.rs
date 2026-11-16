@@ -3,6 +3,7 @@
 //! an OR, chosen by cost.
 
 mod columns;
+mod spatial;
 
 use super::estimate::{self, Known};
 use super::kept::{Place, point_probe};
@@ -206,6 +207,7 @@ impl PhysicalPlanner<'_> {
             let alternatives: &[Alternatives] = if ix.is_collated() { &[] } else { &ors };
             let mut candidates = columns::candidates((&ix.columns, &types), (&served, alternatives), (all, known), &**kind);
             candidates.extend(predicate::candidates(answerable, ix, self.values, all));
+            candidates.extend(spatial::candidates(conds, ix, &types, self.values, all));
             // A full ordered read, only to provide order.
             candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
             for c in candidates {

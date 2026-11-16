@@ -17,7 +17,7 @@ impl Plan {
             // row count raises [ISO/IEC 9075-2:2023 §7.17 GR6b, GR7c]; a
             // polymorphic table function's component procedure may raise
             // any exception.
-            Plan::Recursive { .. } | Plan::System { .. } | Plan::Limit { .. } | Plan::Polymorphic(_) => true,
+            Plan::Recursive { .. } | Plan::System { .. } | Plan::Limit { .. } | Plan::Polymorphic(_) | Plan::Nearest(_) => true,
             Plan::Filter { cond, input, .. } => cond.can_raise() || input.can_raise(),
             Plan::Project { exprs, input, .. } => exprs.iter().any(Expr::can_raise) || input.can_raise(),
             Plan::Aggregate { aggs, input, .. } => !aggs.is_empty() || input.can_raise(),

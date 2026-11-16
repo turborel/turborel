@@ -106,6 +106,46 @@ an existing database sees.
 
 ## Spatial benchmarks
 
+`cargo xtask bench geometry --save initial` separates direct geometry
+intersection, WKB and SQL-value decoding, and SQL intersection scans.
+It queries 10,000 points against a square and a 512-edge polygon, with
+SQL scans on one, four and eight threads. Query polygons are supplied as
+prepared parameters; every result is fetched. These cases measure the geometry
+implementation, not an indexed geometry query or a PostGIS comparison.
+
+`cargo xtask bench geometry_sql --save before` measures complete geometry
+intersection queries over 100,000 points, narrow and broad windows, and
+80% reads with 20% committed updates on one, four and eight threads.
+Read-only cases retain a prepared query per worker and report latency
+percentiles; each mixed run starts with a fresh database outside the timer.
+Both kinds fetch every result and maintain the geometry R-tree. The report
+states whether the planner could use that tree in each compared build.
+
+`cargo xtask bench geometry_nearest --save before` measures complete
+`ORDER BY ST_DISTANCE ... FETCH FIRST 10 ROWS ONLY` queries over 100,000
+points and rectangular polygons, on one, four and eight sessions. It checks
+every query's nearest IDs against independent integer squared distances
+before timing. The default is 16 queries per worker per run; set
+`TURBOREL_NEAREST_QUERIES` for longer runs. The case label records the count.
+Latency includes opening, refinement, sorting, fetching and commit.
+
+`cargo xtask bench geometry_mixed --save initial` runs 100,000 operations
+per worker with one, four and eight sessions: 80% complete intersection
+or nearest queries and 20% committed geometry moves. Every run starts
+with a fresh database. Workers write disjoint ID partitions and revisit
+them without turning updates into zero-row operations. Read and write
+latencies are reported separately. Final rows and spatial query results
+are checked outside the timer. `TURBOREL_MIXED_OPERATIONS` changes the
+count, recorded in each case label. This is an in-memory workload; it
+does not measure file-sync latency or conflicting writes to the same row.
+
+`cargo xtask bench geometry_join --save before` joins 100,000 geometry
+points to 32 square windows, with narrow and broad widths and one, four
+and eight concurrent sessions. It fetches every pair and reports complete
+joins per second, including query planning. Before timing, it compares
+the entire result to integer-coordinate inclusion. Filter benchmarks
+likewise validate every measured window outside the timer.
+
 `cargo xtask bench spatial --save before` measures SQL filters, joins,
 nearest-point sorting and mixed sessions for scans, B-trees and R-trees.
 The nearest SQL case still sorts its squared-distance expression; the

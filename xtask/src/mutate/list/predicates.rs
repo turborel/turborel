@@ -12,7 +12,10 @@ pub const PREDICATES: [Mutation; 2] = [
         file: "src/physical/access.rs",
         original: "            self.used.clear();",
         replacement: "            self.used.truncate(usize::MAX);",
-        integration: &["predicate_indexes::candidates_are_rechecked_against_the_whole_condition"],
+        integration: &[
+            "predicate_indexes::candidates_are_rechecked_against_the_whole_condition",
+            "geometry::index::geometry_index_filters_refine_candidates_and_equal_scans",
+        ],
         unit: &[],
     },
     Mutation {

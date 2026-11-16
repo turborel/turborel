@@ -74,6 +74,11 @@ impl Plan {
                 if *reverse { " backward" } else { "" }
             ),
             Plan::Filter { detail, est: None, .. } => writeln!(out, "{pad}Filter {detail}"),
+            Plan::Nearest(read) => writeln!(
+                out,
+                "{pad}NearestScan {} using {} [{}]: {}  (first={}, cost={:.1}; certified bounds or scan)",
+                read.table, read.index, read.method, read.detail, read.first, read.cost
+            ),
             Plan::Filter { detail, est: Some(est), .. } => writeln!(out, "{pad}Filter {detail}  (est. rows={est:.0})"),
             Plan::Product { .. } => writeln!(out, "{pad}NestedLoop (Cartesian product)"),
             Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
@@ -112,6 +117,7 @@ impl Plan {
     fn write_inputs(&self, out: &mut String, depth: usize) {
         match self {
             Plan::SeqScan { .. }
+            | Plan::Nearest(_)
             | Plan::IndexScan { .. }
             | Plan::Values { .. }
             | Plan::System { .. }

@@ -1,8 +1,9 @@
 //! \[DESIGN\] EXPLAIN displays index lookups as SQL conditions (RULES.md D34).
 
+use crate::geometry::SpatialOperation;
 use crate::index::Probe;
 use crate::logical::{Cond, Expr, and_all, render_cond};
-use crate::value::{CompOp, Value};
+use crate::value::{CompOp, Decimal, Value};
 
 /// Renders the lookup with table column names so EXPLAIN shows which
 /// condition the index serves. Function calls retain their argument order.
@@ -18,7 +19,13 @@ pub(in crate::physical) fn render_probe(probe: &Probe, columns: &[usize], names:
             let column = Expr::Column(columns.get(predicate.column).copied().unwrap_or_default());
             let value = Expr::Const(value.clone());
             let args = if predicate.argument == 0 { vec![column, value] } else { vec![value, column] };
-            vec![Cond::Value(Expr::Call(predicate.function.clone(), args))]
+            let call = Expr::Call(predicate.function.clone(), args);
+            let condition = if predicate.function.0.spatial_operation() == Some(SpatialOperation::Intersects) {
+                Cond::Compare(call, CompOp::Eq, Expr::Const(Value::Exact(Decimal::new(1, 0))))
+            } else {
+                Cond::Value(call)
+            };
+            vec![condition]
         }
         Probe::Compare { op, value } => vec![compared(0, *op, value)],
         Probe::Prefix { equal, then } => {

@@ -12,6 +12,7 @@
 use std::sync::Arc;
 
 use super::super::entries::{Reading, fetch};
+use super::super::scan::asked;
 use super::super::{RowIter, Runner, broken, eval_cond, execute, failed};
 use crate::catalog::{IndexDesc, KeyShape};
 use crate::db::State;
@@ -19,7 +20,7 @@ use crate::error::Result;
 use crate::index::{Entries, Index, Key, KeyOrder};
 use crate::logical::{Cond, Truth};
 use crate::physical::{JoinProbe, Plan};
-use crate::storage::{self, Condition, Row, RowId, TableStorage};
+use crate::storage::{self, Row, RowId, TableStorage};
 use crate::txn::{Stop, TxId, checked};
 use crate::value::Value;
 
@@ -38,7 +39,15 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter
     match opened {
         Ok((storage, found, ix)) => Box::new(IndexJoin {
             left: execute(*left, db, tx),
-            table: Probed { storage, index: found, reading: Reading::of(&ix, Some(&needed)), ix, tx, stop: db.tx.stop_of(tx), located },
+            table: Probed {
+                storage,
+                reading: Reading::of(&ix, Some(&needed), found.key_projection()),
+                index: found,
+                ix,
+                tx,
+                stop: db.tx.stop_of(tx),
+                located,
+            },
             probe,
             cond,
             nulls: outer.then(|| vec![Value::Null; width]),
@@ -66,8 +75,8 @@ struct Probed {
 }
 
 impl Probed {
-    /// Binds the outer row and records the exact predicate read. A NULL
-    /// compared value selects no entries for either kind of probe.
+    /// Binds the outer row and records the comparison read, or the whole
+    /// table for a spatial predicate. A NULL operand selects no entries.
     fn entries(&self, binding: &JoinProbe, row: &Row) -> Result<Entries> {
         if let Some(stop) = &self.stop {
             stop.check()?;
@@ -75,7 +84,7 @@ impl Probed {
         let Some(probe) = binding.bind(row, self.ix.columns.len())? else {
             return Ok(Box::new(std::iter::empty()));
         };
-        self.storage.read_by_condition(self.tx, &Condition { columns: self.ix.columns.clone(), probe: probe.clone() })?;
+        self.storage.read_by_condition(self.tx, &asked(&self.ix, probe.clone()))?;
         let entries = Arc::clone(&self.index).search(&probe, KeyOrder::Ascending);
         Ok(Box::new(checked(entries, self.stop.clone())))
     }

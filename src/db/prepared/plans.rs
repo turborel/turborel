@@ -284,7 +284,7 @@ impl Keeping<'_> {
                     self.keep(|k| k.physical = Physical::Learning(Learning::default()))?;
                     return Ok(None);
                 }
-                Ok(Some((columns, filled_plan(plan, values)?, reads)))
+                Ok(Some((columns, filled_plan(plan, values, crate::optimizer::prepared::budget(self.st))?, reads)))
             }
         }
     }
@@ -302,7 +302,7 @@ impl Keeping<'_> {
         }
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
         self.keep(|k| k.physical = Physical::Fixed(Box::new(plan.clone()), Arc::clone(&reads), None))?;
-        Ok((columns, filled_plan(plan, values)?, reads))
+        Ok((columns, filled_plan(plan, values, crate::optimizer::prepared::budget(self.st))?, reads))
     }
 
     /// `w`, a kept UPDATE or DELETE, filled with `values`: its object rows
@@ -320,14 +320,14 @@ impl Keeping<'_> {
             Physical::Varies | Physical::Learning(_) => Some(None),
         };
         if let Some(kept) = self.kept(fixed)? {
-            return Written::filled(w, kept, values);
+            return Written::filled(w, kept, values, crate::optimizer::prepared::budget(self.st));
         }
         let (_, _, plan) = super::super::plan(self.st, w.rows.clone());
         let reads: Arc<[QualifiedName]> = w.rows.tables().into();
         let kept = keepable(&plan, self.st).then_some((plan, reads));
         let physical = kept.as_ref().map_or(Physical::Varies, |(p, r)| Physical::Fixed(Box::new(p.clone()), Arc::clone(r), None));
         self.keep(|k| k.physical = physical)?;
-        Written::filled(w, kept, values)
+        Written::filled(w, kept, values, crate::optimizer::prepared::budget(self.st))
     }
 
     /// An execution of a query learning its plan, which `was` says: its
@@ -376,7 +376,7 @@ impl Session {
         let w = Arc::new(self.bound(st, &binding, bind)?);
         if binding.held() {
             k.made(None)?;
-            return Written::filled(w, None, values);
+            return Written::filled(w, None, values, crate::optimizer::prepared::budget(st));
         }
         k.made(Some(KeptPlan::Write(Arc::clone(&w))))?;
         k.written(w, values)

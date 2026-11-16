@@ -12,7 +12,7 @@ use super::{RowIter, broken, execute, failed, sort};
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
-use crate::index::{Entries as IndexEntries, KeyOrder, Probe};
+use crate::index::{Entries as IndexEntries, KeyOrder, KeyProjection, Probe};
 use crate::logical::{Cond, Most, SortKey, pushed_conjuncts};
 use crate::physical::Plan;
 use crate::storage::{self, Condition, Conjunction, Row, RowId, ScanOrder, TableStorage};
@@ -120,9 +120,9 @@ pub(super) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     };
     let width = covering.then(|| db.catalog.table(&table).map(|t| t.columns.len())).flatten();
     match probe_index(db, &table, &index, &probe, reverse) {
-        Ok(Found { storage, ix, entries }) => match storage.read_by_condition(tx, &asked(&ix, probe)) {
+        Ok(Found { storage, ix, entries, projection }) => match storage.read_by_condition(tx, &asked(&ix, probe)) {
             Ok(()) => {
-                let mut reading = Reading::of(&ix, Some(&needed));
+                let mut reading = Reading::of(&ix, Some(&needed), projection);
                 let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
                     let row = |(key, id)| {
                         Ok(entry_row(&*storage, (&ix, width), &mut reading, (tx, id), key)?.map(|row| read_row(located, (id, row))))
@@ -144,6 +144,8 @@ pub(super) struct Found {
     pub(super) ix: KeyShape,
     /// The entries, in index order or reversed, read as they are taken.
     pub(super) entries: IndexEntries,
+    /// Present only when entries contain projections of the original keys.
+    pub(super) projection: Option<Arc<dyn KeyProjection>>,
 }
 
 /// What an engine is told a probe of `ix` reads. A key by a sort key is no
@@ -169,8 +171,10 @@ pub(super) fn probe_index(db: &State, table: &QualifiedName, index: &str, probe:
     let ix =
         db.catalog.index(index).map(IndexDesc::key_shape).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index {index}")))?;
     let order = if reverse { KeyOrder::Descending } else { KeyOrder::Ascending };
-    let entries = Arc::clone(db.index_of(index)?).search(probe, order);
-    Ok(Found { storage, ix, entries })
+    let index = db.index_of(index)?;
+    let projection = index.key_projection();
+    let entries = Arc::clone(index).search(probe, order);
+    Ok(Found { storage, ix, entries, projection })
 }
 
 // Unit tests: located reads (RULES.md R-TEST-1).

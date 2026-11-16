@@ -16,6 +16,87 @@ fn physical(p: &Prepared) -> String {
     format!("{:?}", lock(&p.plans.kept).unwrap().as_ref().map(|k| &k.physical))
 }
 
+fn spatial_table() -> (Database, Session) {
+    let db = Database::new();
+    db.register_type(Box::new(crate::geometry::GeometryType)).unwrap();
+    for function in crate::geometry::FUNCTIONS {
+        db.register_scalar_function(Box::new(function)).unwrap();
+    }
+    db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE P (ID INTEGER, G GEOMETRY(0))").unwrap();
+    let s = db.session("A");
+    for start in (0_i32..1200_i32).step_by(100) {
+        let values: Vec<_> = (start..start.saturating_add(100)).map(|n| format!("({n}, ST_POINT({n}, {n}))")).collect();
+        s.run(&format!("INSERT INTO P VALUES {}", values.join(", "))).unwrap();
+    }
+    s.commit().unwrap();
+    s.run("CREATE INDEX P_G ON P (G) USING rtree").unwrap();
+    (db, s)
+}
+
+/// Verifies: [DESIGN] D45, D82: preparing a geometry operand must not
+/// prevent an indexed plan from learning. This regresses comparisons of
+/// the prepared function's object identity with its original function.
+/// Changed values, NULL, EMPTY and reference errors survive reuse.
+#[test]
+fn geometry_index_plans_learn_despite_scalar_preparation() {
+    use crate::geometry::Geometry;
+    let (_db, s) = spatial_table();
+    let query = s.prepare("SELECT ID FROM P WHERE ST_INTERSECTS(G, ?) = 1").unwrap();
+    for n in 0_i32..16_i32 {
+        let value = Geometry::point(f64::from(n), f64::from(n), 0).unwrap().to_value();
+        let mut cursor = s.open_prepared(&query, &[value]).unwrap();
+        assert_eq!(cursor.fetch().unwrap().unwrap()[0].to_string(), n.to_string());
+        assert!(cursor.fetch().unwrap().is_none());
+    }
+    let kept = physical(&query);
+    assert!(kept.starts_with("Some(Fixed") && kept.contains("IndexScan"), "{kept}");
+    for value in [Value::Null, Geometry::from_wkt("POINT EMPTY", 0).unwrap().to_value()] {
+        assert!(s.open_prepared(&query, &[value]).unwrap().fetch().unwrap().is_none());
+    }
+    for text in ["POINT (1 1)", "POINT EMPTY"] {
+        let value = Geometry::from_wkt(text, 4326).unwrap().to_value();
+        let result = s.open_prepared(&query, &[value]).and_then(|mut cursor| cursor.fetch());
+        assert_eq!(result.unwrap_err().code, crate::error::Code::Data);
+    }
+    let value = Geometry::point(2.0, 2.0, 0).unwrap().to_value();
+    assert_eq!(s.open_prepared(&query, &[value]).unwrap().fetch().unwrap().unwrap()[0].to_string(), "2");
+    assert_eq!(query.plans_made(), 1);
+}
+
+/// Verifies: [DESIGN] D15, D45, D82: a nearest plan learns with one
+/// distance parameter, fills its measure and filter on reuse, and keeps
+/// NULL, EMPTY and SRID-changing arguments correct after specialization.
+#[test]
+fn nearest_geometry_plans_learn_and_fill_each_execution() {
+    use crate::geometry::Geometry;
+    let (_db, s) = spatial_table();
+    let query = s.prepare("SELECT ID, ST_DISTANCE(G, ?) AS D FROM P WHERE ID >= ? ORDER BY D, ID FETCH FIRST 1 ROW ONLY").unwrap();
+    for n in 0_i32..16_i32 {
+        let value = Geometry::point(f64::from(n), f64::from(n), 0).unwrap().to_value();
+        let minimum = n.saturating_add(1);
+        let mut cursor = s.open_prepared(&query, &[value, int(i128::from(minimum))]).unwrap();
+        assert_eq!(cursor.fetch().unwrap().unwrap()[0].to_string(), minimum.to_string());
+        assert!(cursor.fetch().unwrap().is_none());
+    }
+    let kept = physical(&query);
+    assert!(kept.starts_with("Some(Fixed") && kept.contains("Nearest("), "{kept}");
+    for value in [Value::Null, Geometry::from_wkt("POINT EMPTY", 0).unwrap().to_value()] {
+        let mut cursor = s.open_prepared(&query, &[value, int(10)]).unwrap();
+        assert_eq!(cursor.fetch().unwrap().unwrap().iter().map(ToString::to_string).collect::<Vec<_>>(), ["10", "NULL"]);
+        assert!(cursor.fetch().unwrap().is_none());
+    }
+    for text in ["POINT (1 1)", "POINT EMPTY"] {
+        let value = Geometry::from_wkt(text, 4326).unwrap().to_value();
+        let result = s.open_prepared(&query, &[value, int(0)]).and_then(|mut cursor| cursor.fetch());
+        assert_eq!(result.unwrap_err().code, crate::error::Code::Data);
+    }
+    let value = Geometry::point(2.0, 2.0, 0).unwrap().to_value();
+    let row = s.open_prepared(&query, &[value, int(0)]).unwrap().fetch().unwrap().unwrap();
+    assert_eq!(row.iter().map(ToString::to_string).collect::<Vec<_>>(), ["2", "0E0"]);
+    assert_eq!(query.plans_made(), 1);
+}
+
 /// A database with the table `A.P` (A, B, C INTEGER) of 1,200 rows, A
 /// from 0 to 119, ten rows of each, B from 0 to 9 in each, its primary key
 /// (A, B); and a session of `A`.

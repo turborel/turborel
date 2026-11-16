@@ -152,11 +152,20 @@ impl Written {
     /// # Errors
     ///
     /// As `filled` and `physical::filled_plan`.
-    pub(super) fn filled(bound: Arc<BoundWrite>, kept: Option<(Plan, Arc<[QualifiedName]>)>, values: &[Value]) -> Result<Written> {
-        let fill = |(c, e): &(usize, Option<Expr>)| Ok((*c, e.clone().map(|e| filled_expr(e, values)).transpose()?));
+    pub(super) fn filled(
+        bound: Arc<BoundWrite>,
+        kept: Option<(Plan, Arc<[QualifiedName]>)>,
+        values: &[Value],
+        budget: Option<&Arc<crate::memory::MemoryBudget>>,
+    ) -> Result<Written> {
+        let fill = |(c, e): &(usize, Option<Expr>)| {
+            let expression =
+                e.clone().map(|e| filled_expr(e, values).map(|e| crate::optimizer::prepared::expression(e, budget))).transpose()?;
+            Ok((*c, expression))
+        };
         let set = bound.set.iter().map(fill).collect::<Result<_>>()?;
         let rows = match kept {
-            Some((plan, reads)) => ObjectRows::Kept(filled_plan(plan, values)?, reads),
+            Some((plan, reads)) => ObjectRows::Kept(filled_plan(plan, values, budget)?, reads),
             None => ObjectRows::Filled(filled(bound.rows.clone(), values)?),
         };
         Ok(Written { bound, set: Some(set), rows, values: Some(values.to_vec()) })

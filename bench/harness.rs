@@ -44,6 +44,9 @@ use turborel::disk::pager::{DEFAULT_PAGE_SIZE, Pager};
 use turborel::hash::HashFunction;
 use turborel::hash::crc::{CRC32_ISCSI, Crc};
 
+pub mod geometry;
+pub mod mixed;
+
 /// Timed runs of each measurement, after one untimed warm-up.
 pub const RUNS: usize = 5;
 /// The file each result is appended to, if set (`cargo xtask bench`).

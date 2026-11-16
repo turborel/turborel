@@ -70,6 +70,7 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         }
         // A located scan's rows end in their ids, which no batch holds.
         Plan::SeqScan { located: true, .. }
+        | Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::Aggregate { .. }
@@ -137,7 +138,8 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         Plan::Product { left, right } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {
             reads_by_batch(left, db) && reads_by_batch(right, db)
         }
-        Plan::IndexScan { .. }
+        Plan::Nearest(_)
+        | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
@@ -206,7 +208,8 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
         Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::batches,
         Plan::Project { .. } => projected_batches,
         Plan::Append { .. } => appended_batches,
-        Plan::IndexScan { .. }
+        Plan::Nearest(_)
+        | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }

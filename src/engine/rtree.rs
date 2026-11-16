@@ -194,6 +194,13 @@ impl RTree {
         Nearest::new(self.clone(), query, budget)
     }
 
+    /// Candidates ordered by monotone envelope lower bounds. Decline if
+    /// the query or root envelope exceeds the caller's finite-distance
+    /// domain; the captured root includes unfinished split siblings.
+    pub(crate) fn nearest_candidates(&self, query: Bounds, domain: Bounds, budget: &Arc<MemoryBudget>) -> Result<Option<Nearest>> {
+        Nearest::candidates(self.clone(), query, domain, budget)
+    }
+
     /// Streams intersecting pairs, pruning disjoint branches of both
     /// trees. Self-joins include both directions and each self-pair.
     /// Stable pairs appear once; concurrent changes are optional.

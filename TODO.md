@@ -113,8 +113,10 @@ The access methods the other standards stand on. Each one is built, made
 durable and tested on its own before the extension that reads it. Each
 is kept consistent under concurrent change and recovery as the B-tree is.
 
-- Connect geometry predicates and SQL nearest-neighbour ordering to the
-  numeric `rtree` method. Let SQL joins traverse two indexed trees directly,
+- Connect more geometry predicates and geometry outer joins to `rtree`.
+  Extend nearest ordering beyond ascending ST_DISTANCE with FETCH FIRST ONLY;
+  consider geometry distance predicates and spatial selectivity statistics.
+  Let SQL joins traverse two indexed trees directly,
   beyond probing one tree for each outer row. Add bulk packing
   and reclaim empty nodes without relocating entries under active scans;
   measure overlap and space after sustained updates as well as fresh loads.
@@ -152,6 +154,18 @@ CONFORMANCE.md one by one as they are done.
 
 ### Spatial
 
+- Geometry predicates over the registered XY GEOMETRY representation:
+  topological validity, Contains/Within, Covers, Touches, Crosses, Overlaps,
+  topological Equals and Relate. Add area and length measures and geometry
+  component/vertex accessors.
+  Extend intersection's envelope candidates to geometry outer joins and distance
+  searches while preserving runtime errors. Track spatial serializable read
+  regions instead of the current whole-table predicate read.
+  Add SQL large objects for WKT/WKB beyond the current string limits,
+  and Z/M representations.
+  Add enforced geometry kind constraints. Registered function calls
+  in stored CHECK conditions need their syntax permission retained across
+  rebinding and recovery, together with determinism checks.
 - SQL/MM Spatial (ISO/IEC 13249-3). The ST_Geometry type hierarchy of
   points, curves, surfaces and their collections, their constructors from
   well-known text and binary, measures, the spatial relationships of

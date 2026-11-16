@@ -1,9 +1,9 @@
 //! \[DESIGN\] A join's index probe bound to one outer row. Equality
-//! prefixes and independent comparisons share SQL NULL handling; neither
-//! can match when one of its compared outer values is NULL.
+//! prefixes, independent comparisons and NULL-rejecting function probes
+//! cannot match when one of their compared outer values is NULL.
 
 use crate::error::{Code, Result, SqlError};
-use crate::index::{ColumnComparison, Probe};
+use crate::index::{ColumnComparison, Predicate, Probe};
 use crate::value::{CompOp, Value};
 
 /// A comparison of an index key column with an outer row column.
@@ -24,6 +24,15 @@ pub enum JoinProbe {
     Prefix(Box<[usize]>),
     /// Independent comparisons, all of which must hold.
     Columns(Box<[JoinComparison]>),
+    /// A supported, NULL-rejecting function predicate, with its other
+    /// argument supplied by the outer row. Planning proves that pruning
+    /// preserves errors and retains any required exact recheck.
+    Predicate {
+        /// The function and the indexed column's argument position.
+        predicate: Box<Predicate>,
+        /// Position within the outer row, from zero.
+        outer: usize,
+    },
 }
 
 impl JoinProbe {
@@ -53,6 +62,10 @@ impl JoinProbe {
                 let each = each.collect::<Result<Vec<_>>>()?;
                 let has_null = each.iter().any(|c| c.value.is_null());
                 Ok((!has_null).then_some(Probe::Columns(each)))
+            }
+            JoinProbe::Predicate { predicate, outer } => {
+                let value = value(*outer)?;
+                Ok((!value.is_null()).then(|| Probe::Predicate { predicate: predicate.clone(), value }))
             }
         }
     }
@@ -92,6 +105,28 @@ mod tests {
         assert!(matches!(many, Probe::Prefix { .. }));
         for binding in [window, prefix] {
             assert_eq!(binding.bind(&[n(1)], 2).unwrap_err().code, Code::Api);
+        }
+    }
+
+    /// Verifies: [DESIGN] D82: a spatial join binds the chosen outer
+    /// geometry without changing either argument position. An unrelated
+    /// NULL is harmless, a NULL operand rejects the pair, and a missing
+    /// outer column reports the same -910 as comparison probes.
+    #[test]
+    fn spatial_join_binding_keeps_arguments_and_null_semantics() {
+        use crate::functions::ScalarRef;
+        use crate::geometry::{Geometry, GeometryFunction};
+        let point = Geometry::point(1.0, 2.0, 4326).unwrap().to_value();
+        for argument in [0_usize, 1] {
+            let predicate = Predicate { function: ScalarRef(std::sync::Arc::new(GeometryFunction::Intersects)), column: 0, argument };
+            let binding = JoinProbe::Predicate { predicate: Box::new(predicate), outer: 1 };
+            let probe = binding.bind(&[Value::Null, point.clone()], 1).unwrap().unwrap();
+            let Probe::Predicate { predicate: bound, value } = probe else { panic!("lost spatial predicate") };
+            assert_eq!(bound.argument, argument);
+            assert_eq!(bound.column, 0);
+            assert_eq!(crate::value::compare(&value, &point), Some(std::cmp::Ordering::Equal));
+            assert!(binding.bind(&[point.clone(), Value::Null], 1).unwrap().is_none());
+            assert_eq!(binding.bind(std::slice::from_ref(&point), 1).unwrap_err().code, Code::Api);
         }
     }
 }

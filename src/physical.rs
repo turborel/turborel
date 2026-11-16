@@ -24,12 +24,16 @@ mod join_probe;
 pub use join_probe::{JoinComparison, JoinProbe};
 mod join;
 mod kept;
+mod nearest;
 mod nodes;
+pub use nearest::NearestRead;
+pub(crate) use nearest::distance_call;
 mod order;
 mod probe;
 mod raising;
 mod recognized;
 mod shown;
+mod spatial;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
 pub use kept::{Place, ProbeSlot};
@@ -71,6 +75,8 @@ pub struct JoinKey {
 /// filled for an execution (`physical/kept.rs`).
 #[derive(Debug, Clone)]
 pub enum Plan {
+    /// Distance candidates refined before the final SQL ordering.
+    Nearest(Box<NearestRead>),
     /// Every row of a table, in the engine's order, or in that of `order`.
     SeqScan {
         /// The table read.
@@ -572,7 +578,7 @@ impl<'a> PhysicalPlanner<'a> {
 
     /// The keys are asked of the input; if it gives them, no Sort is needed.
     fn sort(&self, keys: &[SortKey], input: &LogicalPlan) -> Built {
-        let b = self.build(input, keys);
+        let b = self.nearest(keys, input).map_or_else(|| self.build(input, keys), Built::unordered);
         if b.ordered {
             return Built::unordered(b.plan);
         }

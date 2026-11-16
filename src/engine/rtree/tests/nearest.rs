@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::engine::rtree::node::Entry;
+use crate::spatial::DIMENSIONS;
 
 fn ordered(tree: &RTree, query: Bounds) -> Vec<(f64, u64)> {
     tree.nearest(query, &MemoryBudget::new(usize::MAX)).unwrap().map(|e| e.map(|(d, _, id)| (d, id)).unwrap()).collect()
@@ -141,4 +142,88 @@ fn nearest_refuses_a_missing_split_link() {
     let mut near = tree.nearest(point(0), &MemoryBudget::new(usize::MAX)).unwrap();
     assert_eq!(near.next().unwrap().unwrap_err().code, Code::Corrupt);
     assert!(near.next().is_none());
+}
+
+/// Verifies: [DESIGN] D82: geometry candidates use monotone lower bounds
+/// for leaves as well as branches, in bound/row order, through root growth.
+/// Their frontier remains charged until the cursor is dropped.
+#[test]
+fn candidate_bounds_match_exhaustive_order_through_old_roots() {
+    let tree = tree();
+    fill(&tree, 0..40);
+    let root = tree.root().unwrap();
+    fill(&tree, 40..2_000);
+    let query = Bounds::point([-3.0_f64, -4.0_f64]).unwrap();
+    let domain = Bounds::new([-1000.0_f64; DIMENSIONS], [1000.0_f64; DIMENSIONS]).unwrap();
+    let budget = MemoryBudget::new(usize::MAX);
+    let mut near = Nearest::within(tree.clone(), root, (query, domain), &budget).unwrap().unwrap();
+    assert!(budget.reserved() > 0);
+    let actual: Vec<_> = near.by_ref().map(|e| e.map(|(d, _, row)| (d, row)).unwrap()).collect();
+    let mut expected: Vec<_> = (0_u32..2_000).map(|n| (point(n).distance_lower_bound(query), u64::from(n))).collect();
+    expected.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    assert_eq!(actual, expected);
+    drop(near);
+    assert_eq!(budget.reserved(), 0);
+}
+
+fn split_root() -> (RTree, Visit, Bounds) {
+    let tree = tree();
+    for n in 0..tree.inner.capacity {
+        let x = if n.saturating_add(1) == tree.inner.capacity { 1e8_f64 } else { f64::from(u32::try_from(n).unwrap()) };
+        tree.insert(Bounds::point([x, 0.0_f64]).unwrap(), u64::try_from(n).unwrap()).unwrap();
+    }
+    let root = tree.root().unwrap();
+    tree.split_node(root.id, tree.read(root.id).unwrap()).unwrap();
+    let domain = Bounds::new([-1000.0_f64; DIMENSIONS], [1000.0_f64; DIMENSIONS]).unwrap();
+    let left = tree.read(root.id).unwrap();
+    assert!(domain.contains(left.bounds().unwrap()));
+    assert!(!domain.contains(tree.read(left.right.unwrap()).unwrap().bounds().unwrap()));
+    (tree, root, domain)
+}
+
+/// Verifies: [DESIGN] D15, D82: the finite-distance certificate covers
+/// every root split sibling, not only the safe left half. Query and data
+/// outside the domain independently decline; an empty tree is supported.
+#[test]
+fn candidate_range_proof_includes_unposted_root_siblings() {
+    let (tree, root, domain) = split_root();
+    let query = Bounds::point([0.0_f64; DIMENSIONS]).unwrap();
+    let budget = MemoryBudget::new(usize::MAX);
+    assert!(Nearest::within(tree.clone(), root, (query, domain), &budget).unwrap().is_none());
+    let wide = domain.union(Bounds::point([1e8_f64, 0.0_f64]).unwrap());
+    let found = Nearest::within(tree.clone(), root, (query, wide), &budget).unwrap().unwrap();
+    assert_eq!(found.map(Result::unwrap).count(), tree.inner.capacity);
+    let empty = super::tree();
+    let outside = Bounds::point([1001.0_f64, 0.0_f64]).unwrap();
+    assert!(empty.nearest_candidates(outside, domain, &budget).unwrap().is_none());
+    assert_eq!(empty.nearest_candidates(query, domain, &budget).unwrap().unwrap().count(), 0);
+    assert_eq!(budget.reserved(), 0);
+}
+
+/// Verifies: [DESIGN] D82: root-envelope certification refuses missing
+/// siblings, wrong levels and sibling cycles with SQLCODE -916, rather
+/// than treating an incomplete envelope as a safe distance domain.
+#[test]
+fn candidate_range_proof_refuses_damaged_root_chains() {
+    let budget = MemoryBudget::new(usize::MAX);
+    let query = Bounds::point([0.0_f64; DIMENSIONS]).unwrap();
+    for damage in 0_u8..3 {
+        let (tree, root, domain) = split_root();
+        let mut node = tree.read(root.id).unwrap();
+        let right = node.right.unwrap();
+        match damage {
+            0 => node.right = None,
+            1 => node.level += 1,
+            _ => {
+                let mut sibling = tree.read(right).unwrap();
+                sibling.stamp = node.stamp;
+                sibling.right = Some(root.id);
+                tree.store(right, &sibling).unwrap();
+            }
+        }
+        tree.store(root.id, &node).unwrap();
+        let wide = domain.union(Bounds::point([1e8_f64, 0.0_f64]).unwrap());
+        let error = Nearest::within(tree, root, (query, wide), &budget).err().unwrap();
+        assert_eq!(error.code, Code::Corrupt, "{damage}");
+    }
 }

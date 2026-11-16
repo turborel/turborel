@@ -30,6 +30,7 @@
 )]
 
 mod config_file;
+mod geometry;
 mod keys;
 mod program;
 mod replication;

@@ -8,7 +8,8 @@
 //! giving the operand's columns; and a RIGHT outer join as the LEFT one of its
 //! operands swapped, under a projection putting the left's columns first.
 //! Independent-coordinate inner joins use the same executor with bounds
-//! on several key columns (`indexed/coordinates.rs`).
+//! on several key columns (`indexed/coordinates.rs`). Geometry joins use
+//! envelope candidates with a full shape recheck (`indexed/spatial.rs`).
 //!
 //! A probe reads only the rows its values select, so the rest of the
 //! condition is evaluated only on the pairs it finds, and the table's own
@@ -27,6 +28,8 @@ use super::shown::Shown;
 use super::{JoinProbe, PhysicalPlanner, Plan};
 
 mod coordinates;
+mod probed;
+mod spatial;
 use crate::catalog::{ColumnDesc, IndexDesc, QualifiedName};
 use crate::index::{IndexMethod, Probe};
 use crate::logical::{Cond, Expr, LogicalPlan, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr, split_and};
@@ -360,8 +363,11 @@ fn probed_columns(
         used.push(k);
     }
     let probed = used.len();
-    let supported =
-        if probed == 1 && ix.columns.len() == 1 { kind.supports(CompOp::Eq) } else { kind.supports_prefix(ix.columns.len(), probed, None) };
+    let supported = if probed == 1 && ix.columns.len() == 1 {
+        kind.supports_compare(CompOp::Eq, &types)
+    } else {
+        kind.supports_prefix(ix.columns.len(), probed, None)
+    };
     let untested = ix.columns.get(probed..).unwrap_or_default();
     let nullable = untested.iter().any(|&c| columns.get(c).is_none_or(|d| !d.not_null));
     (probed > 0 && supported && !nullable).then_some((used, types))
@@ -376,6 +382,7 @@ fn access_cost(plan: &Plan) -> Option<f64> {
         Plan::Filter { input, .. } | Plan::Project { input, .. } => access_cost(input),
         Plan::Append { left, right } => Some(access_cost(left)? + access_cost(right)?),
         Plan::Product { .. }
+        | Plan::Nearest(_)
         | Plan::HashJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }

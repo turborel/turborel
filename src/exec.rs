@@ -25,6 +25,7 @@ mod held;
 mod invoked;
 mod join;
 mod limit;
+mod nearest;
 mod partition;
 mod pattern;
 mod program;
@@ -99,6 +100,7 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let run: Opened = match &plan {
         Plan::SeqScan { .. } => scan::scanned_plan,
         Plan::IndexScan { .. } => scan::indexed,
+        Plan::Nearest(_) => nearest::nearest,
         Plan::Filter { .. } => filtered,
         Plan::Product { .. } | Plan::HashJoin { .. } => joined_plan,
         Plan::OuterJoin { .. } => join::outer,
@@ -138,6 +140,7 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Product { left, right } => join::joined(*left, *right, None, db, tx),
         Plan::HashJoin { left, right, keys, .. } => join::joined(*left, *right, Some(keys), db, tx),
         Plan::SeqScan { .. }
+        | Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::Filter { .. }
         | Plan::OuterJoin { .. }

@@ -148,10 +148,34 @@ pub trait ScalarFunction: Send + Sync {
     fn index_predicate(&self) -> bool {
         false
     }
+    /// A spatial operation whose complete behavior this function implements,
+    /// including result types, NULLs and SRID errors (D82). Deterministic,
+    /// side-effect-free, and fixed for its lifetime. Unlike `index_predicate`,
+    /// this does not promise error-free calls: pruning requires a separate
+    /// proof and a runtime fallback for changed prepared arguments.
+    fn spatial_operation(&self) -> Option<crate::geometry::SpatialOperation> {
+        None
+    }
     /// Same arguments always give the same result? If so, the optimizer may
     /// evaluate calls with constant arguments once, at planning time.
     fn deterministic(&self) -> bool {
         true
+    }
+    /// Prepares an equivalent implementation using known constant
+    /// arguments; `None` marks an argument that varies. Called by constant
+    /// folding, without evaluating varying arguments. Retained prepared
+    /// state draws on `budget`; decline if it cannot be reserved.
+    /// Default: no change.
+    ///
+    /// The returned function must preserve the name, type contracts,
+    /// determinism, index capabilities, results and runtime errors of this
+    /// function. Preparation must have no side effects or raise errors:
+    /// leave a failing preparation for `call`, which may never be reached.
+    /// It must remain correct for different arguments too, since plans
+    /// may be reused. Return `None` from an already prepared implementation
+    /// to let optimization reach a fixed point.
+    fn specialize(&self, _args: &[Option<&Value>], _budget: &Arc<crate::memory::MemoryBudget>) -> Option<ScalarRef> {
+        None
     }
     /// \[EXTENSION\] The type of argument `position`, from 0, if the
     /// function declares one, the arguments' own types given in `args`,

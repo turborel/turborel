@@ -51,8 +51,8 @@ each visible row and checks the full WHERE condition before returning it.
 Only functions that promise the same answer for the same inputs, no side
 effects, no errors for accepted arguments and null for a null argument
 can use this lookup. A filter that can raise keeps a full table read, so
-an index cannot hide its error (D15). The built-in `btree`, `hash` and `rtree`
-methods support comparisons; a plug-in supplies the function lookup. See
+an index cannot hide its error (D15). This Boolean function contract is
+separate from the built-in geometry lookup described below. See
 [Indexes for function calls](../../client/03-embedding.md#indexes-for-function-calls-extension)
 for a runnable example and the Rust API.
 
@@ -66,8 +66,21 @@ a NULL coordinate, so the planner uses it only when those rows cannot
 answer the query. An inner join can probe the index with coordinate bounds
 from each row of the other operand. Both table orders and projections of
 the indexed table's columns are considered; candidate rows still satisfy
-the complete join condition. It does not implement geometry types or
-SQL/MM functions.
+the complete join condition.
+
+An `rtree` can also index one `GEOMETRY(srid)` column. It stores the
+geometry's envelope and can supply candidates for
+`ST_INTERSECTS(column, value) = 1`, where `value` is a constant or parameter.
+The executor fetches the visible geometry and checks the full condition;
+an envelope match alone never establishes intersection. The column must
+enforce one SRID. NULLs are omitted and empty values never intersect.
+Inner joins can also probe it when both geometry columns enforce the same
+SRID; the full ON condition checks every candidate pair. Ascending
+ST_DISTANCE with FETCH FIRST can also use this index, refining each
+candidate's geometry before deciding which rows to return. Geometry outer
+joins and distance filters are not indexed yet. See the
+[spatial guide](../../data/spatial/03-indexing.md) and
+[distance queries](../../data/spatial/05-distance.md) for runnable examples.
 
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each
@@ -221,4 +234,5 @@ An extension: neither SQL-86 nor SQL-92 has indexes.
 ## SEE ALSO
 
 [ALTER INDEX](alter-index.md), [DROP INDEX](drop-index.md),
-[CREATE TABLE](create-table.md)
+[CREATE TABLE](create-table.md),
+[R-tree queries](../../data/spatial/03-indexing.md)

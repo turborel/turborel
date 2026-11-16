@@ -129,3 +129,32 @@ fn enclosing_bounds_do_not_prune_nearer_children() {
         }
     }
 }
+
+/// Verifies: [DESIGN] D82: enlarging either rectangle never increases
+/// its computed lower bound. The first fixture regresses a one-ULP
+/// inversion in the scaled formula; the sweep covers both signs, axes,
+/// subnormal coordinates and every finite exponent bucket.
+#[test]
+fn distance_bounds_are_monotone_under_rectangle_enlargement() {
+    let origin = Bounds::point([0.0_f64, 0.0_f64]).unwrap();
+    let regression_x = f64::from_bits(0x2444_dc92_2e67_df92);
+    let regression_y = f64::from_bits(0x2433_924e_4108_1ec4);
+    let before = Bounds::point([regression_x, regression_y]).unwrap();
+    let enlarged = Bounds::new([regression_x.next_down(), regression_y], [regression_x, regression_y]).unwrap();
+    assert!(enlarged.distance_lower_bound(origin) <= before.distance_lower_bound(origin));
+    for exponent in 0_u64..2047 {
+        let x = f64::from_bits((exponent << 52) | 0x0004_dc92_2e67_df92);
+        for sign in [-1.0_f64, 1.0_f64] {
+            let child = Bounds::point([sign * x, sign * x * 0.75_f64]).unwrap();
+            for axis in 0..DIMENSIONS {
+                let mut lower = child.lower();
+                let mut upper = child.upper();
+                lower[axis] = lower[axis].next_down().max(-f64::MAX);
+                upper[axis] = upper[axis].next_up().min(f64::MAX);
+                let parent = Bounds::new(lower, upper).unwrap();
+                assert!(parent.distance_lower_bound(origin) <= child.distance_lower_bound(origin), "{exponent}, {sign}, {axis}");
+                assert!(origin.distance_lower_bound(parent) <= origin.distance_lower_bound(child), "reversed {exponent}, {sign}, {axis}");
+            }
+        }
+    }
+}
