@@ -98,7 +98,7 @@ fn rows_not_taken_compute_no_argument_10_9() {
     sorted(&a, "SELECT SUM(V) FILTER (WHERE V IS NOT NULL) OVER (ORDER BY I) FROM T");
     assert_eq!(a.warning(), None, "no null of a row taken in a window");
     sorted(&a, "SELECT SUM(V) FILTER (WHERE S <> 'z') FROM T");
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "a null of a row taken");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"), "a null of a row taken");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.9 GR4, §7.15] over a

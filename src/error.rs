@@ -10,7 +10,7 @@ mod warnings;
 use std::fmt;
 
 pub use state::SqlState;
-pub use subject::{RoutineSubject, Subject};
+pub use subject::{RoutineSubject, Signalled, Subject};
 pub use warnings::Warnings;
 
 /// The kinds of error, each with its negative SQLCODE as its discriminant.
@@ -34,6 +34,12 @@ pub enum Code {
     /// The cursor is not in the state or position the statement requires
     /// [X3.135-1986 §8.1 GR1, §8.4 GR1, §8.6 GR1, §8.8 GR1, §8.11 GR1].
     Cursor = -501,
+    /// \[EXTENSION\] [ISO/IEC 9075-4:2006 draft §17.2, §17.3] An exception
+    /// condition a `<signal statement>` or `<resignal statement>` raised and
+    /// no handler handled, its SQLSTATE the one signalled, 45000 of a
+    /// condition declared with none. Its SQLCODE is implementation-defined
+    /// [ISO/IEC 9075-2:2023 §24.2].
+    Signalled = -401,
     /// A single-row SELECT found more than one row [X3.135-1986 §8.10 GR2],
     /// or a subquery that may give at most one row gave more [X3.135-1986 §5.11 GR1]
     /// [ISO/IEC 9075:1992 §7.11 GR1].
@@ -209,7 +215,7 @@ impl fmt::Display for SqlError {
 /// The tags that mark, in the source, what no standard governs.
 const TAGS: [&str; 2] = ["[DESIGN]", "[EXTENSION]"];
 /// The standards a citation may name.
-const STANDARDS: [&str; 3] = ["X3.135-1986", "ISO/IEC 9075:1992", "ISO/IEC 9075-2:2023"];
+const STANDARDS: [&str; 4] = ["X3.135-1986", "ISO/IEC 9075:1992", "ISO/IEC 9075-2:2023", "ISO/IEC 9075-4:2006 draft"];
 
 /// The rule a message as the source writes it cites first, and its text:
 /// its leading tags dropped, and a leading citation of a standard taken
@@ -277,6 +283,7 @@ mod tests {
             Code::Constraint => -201,
             Code::Data => -301,
             Code::Cursor => -501,
+            Code::Signalled => -401,
             Code::Cardinality => -811,
             Code::Conflict => -911,
             Code::Policy => -912,

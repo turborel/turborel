@@ -8,7 +8,7 @@ use super::{ColumnName, QueryExpression, TableName};
 /// [ISO/IEC 9075-2:2023 §11.3] `<like clause>` ::= LIKE `<table name>`
 /// \[`<like options>`\], each `<like option>` written at most once
 /// \[SR9b iv 1\].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LikeClause {
     /// The `<table name>` of the table whose columns it copies.
     pub table: TableName,
@@ -33,7 +33,7 @@ impl LikeClause {
 
 /// [ISO/IEC 9075-2:2023 §11.3] `<as subquery clause>` ::= \[ ( `<column
 /// name list>` ) \] AS `<table subquery>` `<with or without data>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AsSubquery {
     /// The `<column name list>`, if written.
     pub columns: Option<Vec<ColumnName>>,

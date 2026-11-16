@@ -3,7 +3,10 @@
 //! CONDITION.
 
 use super::Parser;
-use crate::ast::{AllQualifier, ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, TargetKind, ValueSpecification};
+use crate::ast::{
+    AllQualifier, ConditionItem, DiagnosticsInformation, GetDiagnostics, ParameterSpecification, StatementItem, TargetKind,
+    ValueSpecification,
+};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
@@ -14,14 +17,26 @@ const CONDITION: &str = "CONDITION";
 /// [ISO/IEC 9075-2:2023 §23.1] STATEMENT, an `<all qualifier>`, read as
 /// CONDITION is.
 pub(super) const STATEMENT: &str = "STATEMENT";
+/// [ISO/IEC 9075-4:2006 draft §17.1] STACKED, a `<which area>`, read as
+/// CONDITION is.
+const STACKED: &str = "STACKED";
 
 impl Parser {
     /// [ISO/IEC 9075:1992 §18.1] `<get diagnostics statement>` ::= GET
-    /// DIAGNOSTICS {`<statement information>` | `<condition information>`};
-    /// [ISO/IEC 9075-2:2023 §23.1] | `<all information>`.
+    /// \[`<which area>`\] DIAGNOSTICS `<SQL diagnostics information>`
+    /// [ISO/IEC 9075-4:2006 draft §17.1], `<which area>` ::= CURRENT |
+    /// STACKED.
     pub(super) fn get_diagnostics(&mut self) -> Result<GetDiagnostics> {
         self.expect_kw(kw::GET)?;
+        let stacked = if self.accept_kw(kw::CURRENT) { false } else { self.accept_word(STACKED) };
         self.expect_kw(kw::DIAGNOSTICS)?;
+        Ok(GetDiagnostics { stacked, information: self.diagnostics_information()? })
+    }
+
+    /// [ISO/IEC 9075:1992 §18.1] `<SQL diagnostics information>` ::=
+    /// `<statement information>` | `<condition information>`; [ISO/IEC
+    /// 9075-2:2023 §23.1] | `<all information>`.
+    fn diagnostics_information(&mut self) -> Result<DiagnosticsInformation> {
         // CONDITION followed by = is a target, a parameter of that name.
         let condition = self.is_word(CONDITION) && *self.peek_at(1) != Tok::Delimiter(delim::EQUALS);
         if self.accept_kw(kw::EXCEPTION) || condition {
@@ -30,20 +45,20 @@ impl Parser {
             }
             let number = self.condition_number()?;
             let items = self.information_items(ConditionItem::named, "<condition information item name>")?;
-            return Ok(GetDiagnostics::Condition { number, items });
+            return Ok(DiagnosticsInformation::Condition { number, items });
         }
         let target = self.simple_target_specification()?;
         self.expect_delim(delim::EQUALS)?;
         if self.accept_kw(kw::ALL) {
             let qualifier = self.all_qualifier()?;
-            return Ok(GetDiagnostics::All { target, qualifier });
+            return Ok(DiagnosticsInformation::All { target, qualifier });
         }
         let first = self.information_item(StatementItem::named, "<statement information item name>")?;
         let mut items = vec![(target, first)];
         if self.accept_delim(delim::COMMA) {
             items.extend(self.information_items(StatementItem::named, "<statement information item name>")?);
         }
-        Ok(GetDiagnostics::Statement(items))
+        Ok(DiagnosticsInformation::Statement(items))
     }
 
     /// [ISO/IEC 9075-2:2023 §23.1] `<all qualifier>` ::= STATEMENT |
@@ -64,6 +79,10 @@ impl Parser {
     /// `<condition number>` ::= `<simple value specification>`, which
     /// [ISO/IEC 9075:1992 §6.2] is `<parameter name>` | `<literal>`.
     fn condition_number(&mut self) -> Result<ValueSpecification> {
+        // [ISO/IEC 9075-4:2006 draft §6.2] an SQL variable in scope too.
+        if let Some(variable) = self.variable_target() {
+            return Ok(ValueSpecification::Parameter(variable));
+        }
         if self.at_parameter() {
             return Ok(ValueSpecification::Parameter(self.simple_target_specification()?));
         }
@@ -93,8 +112,13 @@ impl Parser {
     }
 
     /// [ISO/IEC 9075:1992 §6.2] `<simple target specification>` ::=
-    /// `<parameter name>`, of a parameter declared: with no indicator.
+    /// `<parameter name>`, of a parameter declared: with no indicator; or
+    /// an SQL variable [ISO/IEC 9075-4:2006 draft §6.2].
     fn simple_target_specification(&mut self) -> Result<ParameterSpecification> {
+        // [ISO/IEC 9075-4:2006 draft §6.2] an SQL variable in scope.
+        if let Some(variable) = self.variable_target() {
+            return Ok(variable);
+        }
         // [ISO/IEC 9075-2:2023 §6.4 SR7] of a <triggered action>.
         if self.trigger.is_some() {
             return self.transition_target();

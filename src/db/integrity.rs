@@ -96,6 +96,9 @@ pub(super) struct Effects<'a> {
     /// with triggers, its state changes, and the session that executes the
     /// triggers they activate (`db/triggers/fire.rs`).
     pub(super) triggered: Option<super::triggers::Triggered<'a>>,
+    /// Of a session's statement, the session: what runs a function that
+    /// possibly modifies SQL-data its values invoke (`routines::Hosted`).
+    pub(super) host: Option<&'a super::Session>,
 }
 
 /// [ISO/IEC 9075:1992 §11.8 GR8] The rows a session changed through each
@@ -124,7 +127,7 @@ impl<'a> Effects<'a> {
     pub(super) fn new(user: Authorization, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>, space: ListSpace) -> Effects<'a> {
         let now = crate::value::datetime::Now::default();
         let (done, rewritten) = (HeldRows::new(space.clone()), Vec::new());
-        Effects { done, space, user, now, deferral, cursors, rewritten, triggered: None }
+        Effects { done, space, user, now, deferral, cursors, rewritten, triggered: None, host: None }
     }
 
     /// Whose the statement is: the top cell of its authorization stack

@@ -144,7 +144,7 @@ fn assigned(a: &Assigned<'_>, (old, read): (&Row, &Row), (assign_rule, subquerie
 
 /// [X3.135-1986 §8.6 SR2-SR3, §8.10 SR3-SR4] as many targets as columns, and
 /// each column's type assignable to its target.
-pub(super) fn check_targets(
+pub(crate) fn check_targets(
     columns: &[OutColumn],
     targets: &[ParameterSpecification],
     params: &Params,
@@ -163,11 +163,30 @@ pub(super) fn check_targets(
     Ok(())
 }
 
+/// [ISO/IEC 9075-4:2006 draft §14.5 SR8, SR10] The declared type of
+/// what the `<assignment target>` `t` assigns: of an element of an array,
+/// the element type; of a new row's column, one a target may assign.
+///
+/// # Errors
+///
+/// SQLCODE -103 if there is no such target, or it is no site of store
+/// assignment.
+pub(crate) fn assignment_type(params: &Params, t: &ParameterSpecification) -> Result<DataType> {
+    match t.kind {
+        TargetKind::Parameter => {
+            return Err(rule(format!("[ISO/IEC 9075-4:2006 draft §14.5 SR8] {} is no SQL variable, parameter or new row column", t.name)));
+        }
+        TargetKind::Transition => params.check_transition(&t.name)?,
+        TargetKind::Routine => {}
+    }
+    element::target_type(params, t, target_type(params, t)?)
+}
+
 /// Whether column `c` can be assigned to target `t`, as `type_rule` says:
 /// of an element of an array, to the element type [ISO/IEC 9075-2:2023
 /// §6.4 SR8b].
 fn check_target(c: &OutColumn, t: &ParameterSpecification, params: &Params, type_rule: &str) -> Result<()> {
-    let target = element::target_type(params, t, declared_type(params, &t.name)?)?;
+    let target = element::target_type(params, t, target_type(params, t)?)?;
     // [ISO/IEC 9075-2:2023 §9.2 SR2] a new transition variable column, or
     // an SQL parameter, is a site of store assignment.
     let site = match t.kind {
@@ -208,7 +227,7 @@ fn check_target(c: &OutColumn, t: &ParameterSpecification, params: &Params, type
 /// one does [ISO/IEC 9075:1992 §9.1 GR3b, GR3e, GR3g, GR3h, GR3j].
 /// `null_rule` and `assign_rule` are cited in full, the latter's case of
 /// an exact or approximate target appended to it, d or e.
-pub(super) fn assign_targets(
+pub(crate) fn assign_targets(
     values: &[Value],
     targets: &[ParameterSpecification],
     params: &mut Params,
@@ -245,11 +264,11 @@ fn assign_target(
         // [ISO/IEC 9075-2:2023 §9.2] an SQL parameter, null too.
         TargetKind::Routine => {
             let value = element::assigned(params, spec, fetched.clone())?;
-            params.assign_routine(&spec.name, value, "ISO/IEC 9075-2:2023 §9.2")?;
+            params.assign_routine((spec.qualifier.as_deref(), &spec.name), value, "ISO/IEC 9075-2:2023 §9.2")?;
             return Ok(None);
         }
     }
-    let target = declared_type(params, &spec.name)?;
+    let target = target_type(params, spec)?;
     if fetched.is_null() {
         // "If v is the null value, then an indicator shall be specified
         // for V, and that indicator is set to -1."
@@ -324,6 +343,19 @@ fn indicator_of(m: usize) -> Result<i64> {
     })
 }
 
+/// The declared type of the target `spec`: of an SQL variable or
+/// parameter, the one its qualifier, if any, names [ISO/IEC 9075-4:2006
+/// draft §6.2]; else as `declared_type` gives it.
+pub(super) fn target_type(params: &Params, spec: &ParameterSpecification) -> Result<DataType> {
+    if spec.kind == TargetKind::Routine {
+        let missing = || {
+            SqlError::new(Code::SyntaxRule, format!("[ISO/IEC 9075-2:2023 §6.8 SR1] there is no SQL parameter or variable {}", spec.name))
+        };
+        return params.routine_type(spec.qualifier.as_deref(), &spec.name).ok_or_else(missing);
+    }
+    declared_type(params, &spec.name)
+}
+
 /// The declared type of the parameter `name`. The parser has checked that it
 /// is declared [X3.135-1986 §7.3 SR3]; this reports it if not.
 pub(super) fn declared_type(params: &Params, name: &str) -> Result<DataType> {
@@ -333,7 +365,7 @@ pub(super) fn declared_type(params: &Params, name: &str) -> Result<DataType> {
         .get(name)
         .map(|p| p.data_type.clone())
         .or_else(|| params.transition_type(name))
-        .or_else(|| params.routine_type(name))
+        .or_else(|| params.routine_type(None, name))
         .ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[X3.135-1986 §7.3 SR3] parameter {name} is not declared")))
 }
 

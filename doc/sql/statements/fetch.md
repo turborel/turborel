@@ -37,6 +37,13 @@ if n is negative; RELATIVE n, n rows on, or back if negative. Past the
 last row, or before the first, the cursor is on no row and FETCH
 completes with no data, SQLSTATE 02000, the targets unchanged.
 
+A cursor a compound statement declares ([BEGIN](begin.md)) is fetched by
+this statement within it, in a routine's body, a trigger's action or a
+statement run directly. Its name is the compound statement's own, in
+scope there alone, and the cursor is destroyed as the compound
+statement ends. Its targets are SQL variables and SQL
+parameters, and a NOT FOUND handler takes its no data.
+
 A null value sets the target's indicator to -1. A character string
 longer than its target is cut to fit, and the indicator holds its
 length in characters; FETCH then completes with a warning, SQLSTATE
@@ -123,7 +130,7 @@ FETCH D USING MY_ID, MY_NAME    -103 (2A000): the <using clause> of a FETCH is o
 ## STANDARD
 
 ISO/IEC 9075:1992 §13.3, and of a dynamic cursor §17.15; X3.135-1986
-§8.6, whose FETCH moves to the next row alone.
+§8.6, whose FETCH moves to the next row alone. A local cursor's is ISO/IEC 9075-4:2006 draft §12.3, Feature P002.
 
 ## SEE ALSO
 

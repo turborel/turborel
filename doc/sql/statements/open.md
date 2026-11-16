@@ -29,6 +29,12 @@ and puts the cursor before its first row. It begins a transaction if
 none is active. The cursor stays open until [CLOSE](close.md), or until
 the transaction ends: COMMIT and ROLLBACK close it.
 
+A cursor a compound statement declares ([BEGIN](begin.md)) is opened by
+this statement within it, in a routine's body, a trigger's action or a
+statement run directly. Its name is the compound statement's own, in
+scope there alone, and the cursor is destroyed as the compound
+statement ends.
+
 A dynamic cursor, declared for a statement name or allocated, is opened
 of the query prepared for it, its dynamic parameters given their values
 by the USING clause, as [EXECUTE](execute.md) gives them; a query of
@@ -86,7 +92,7 @@ OPEN D USING FLOOR    -501 (24000): cursor D is already open [X3.135-1986 §8.8 
 ## STANDARD
 
 ISO/IEC 9075:1992 §13.2, and of a dynamic cursor §17.14; X3.135-1986
-§8.8.
+§8.8. A local cursor's is ISO/IEC 9075-4:2006 draft §12.2, Feature P002.
 
 ## SEE ALSO
 

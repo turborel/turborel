@@ -33,6 +33,7 @@ mod resolve;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use body::bind_procedure_program;
 pub use body::{FunctionBody, bind_function_body, routine_definition};
 pub use candidates::{Candidate, alike, functions_named};
 pub(super) use resolve::note as note_specific;
@@ -127,6 +128,8 @@ impl Binder<'_> {
             args,
             params,
             body: bound_body.body,
+            program: bound_body.program,
+            modifies: desc.access == DataAccess::Modifies,
             result: result.clone(),
             null_call: desc.null_call,
             deterministic: desc.deterministic,
@@ -162,7 +165,8 @@ impl Binder<'_> {
     }
 
     /// That what the invocation is bound for may invoke `desc`: one that
-    /// possibly modifies SQL-data nowhere (`invocation.rs`); in a
+    /// possibly modifies SQL-data only where the binder is hosting, at the
+    /// top level of a value Part 2 lets invoke one; in a
     /// constraint, none that possibly reads SQL-data or is possibly
     /// non-deterministic; in a generation expression, neither.
     ///
@@ -171,7 +175,7 @@ impl Binder<'_> {
     /// SQLCODE -103 if it may not.
     fn permitted(&self, desc: &SqlRoutineDesc) -> Result<()> {
         let name = &desc.name;
-        if desc.access == DataAccess::Modifies {
+        if desc.access == DataAccess::Modifies && !(self.purpose == Purpose::Query && self.hosting.get()) {
             let rules = match self.purpose {
                 Purpose::Query => "§7.17 SR25, §11.49 SR11",
                 Purpose::Constraint | Purpose::UnderConstraint => "§11.9 SR6, §11.47 SR8",
@@ -186,6 +190,17 @@ impl Binder<'_> {
             Purpose::Constraint | Purpose::UnderConstraint => constraint_permits(desc),
             Purpose::Generation => generation_permits(desc),
         }
+    }
+}
+
+impl Binder<'_> {
+    /// `bind` run with `hosting` saying whether what it binds may invoke a
+    /// function that possibly modifies SQL-data; as it was after.
+    pub(super) fn hosting<T>(&self, hosting: bool, bind: impl FnOnce() -> T) -> T {
+        let before = self.hosting.replace(hosting);
+        let bound = bind();
+        self.hosting.set(before);
+        bound
     }
 }
 

@@ -5,7 +5,7 @@
 //! as targets [§6.4 SR7, §6.6 SR13], and each refusal with its code.
 
 use super::*;
-use crate::ast::{ElementPosition, GetDiagnostics, Literal, SchemaStatement, TargetKind};
+use crate::ast::{DiagnosticsInformation, ElementPosition, GetDiagnostics, Literal, SchemaStatement, TargetKind};
 
 /// `text`, parsed as one statement: its trigger definition and the
 /// statement's text, if it is one.
@@ -144,7 +144,10 @@ fn new_transition_column_is_a_target_6_6() {
     let SqlStatement::Select { targets, .. } = &definition.action[0] else { panic!("{:?}", definition.action) };
     let target = &targets[0];
     assert_eq!((target.name.as_str(), target.kind, target.at), ("B", TargetKind::Transition, text.find("N.B").unwrap()));
-    let SqlStatement::GetDiagnostics(GetDiagnostics::Statement(items)) = &definition.action[1] else { panic!() };
+    let SqlStatement::GetDiagnostics(GetDiagnostics { information: DiagnosticsInformation::Statement(items), .. }) = &definition.action[1]
+    else {
+        panic!()
+    };
     assert_eq!((items[0].0.name.as_str(), items[0].0.kind), ("C", TargetKind::Transition));
 }
 
@@ -328,16 +331,18 @@ fn instead_of_trigger_has_no_when_or_columns_11_49() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.49] text that breaks the
-/// Format is a syntax error, SQLCODE -102: no action time or event, BEGIN
-/// without ATOMIC, an empty block, a statement no `<SQL procedure
-/// statement>`, REFERENCING with no name, and FOR EACH of neither ROW nor
-/// STATEMENT.
+/// Format is a syntax error, SQLCODE -102: no action time or event, a
+/// statement no `<SQL procedure statement>`, REFERENCING with no name, and
+/// FOR EACH of neither ROW nor STATEMENT. A compound statement not ATOMIC
+/// is a `<triggered SQL statement>` of the Format, refused by a Syntax
+/// Rule, SQLCODE -103 [ISO/IEC 9075-4:2006 draft §9.19 SR1]; one of no
+/// statements is of the Format [§14.1].
 #[test]
 fn format_errors_are_syntax_errors_11_49() {
     syntax_error("CREATE TRIGGER TR INSERT ON T DELETE FROM U");
     syntax_error("CREATE TRIGGER TR AFTER SELECT ON T DELETE FROM U");
-    syntax_error("CREATE TRIGGER TR AFTER INSERT ON T BEGIN DELETE FROM U; END");
-    syntax_error("CREATE TRIGGER TR AFTER INSERT ON T BEGIN ATOMIC END");
+    refused_by("CREATE TRIGGER TR AFTER INSERT ON T BEGIN DELETE FROM U; END", "ISO/IEC 9075-4:2006 draft §9.19 SR1");
+    assert!(parsed("CREATE TRIGGER TR AFTER INSERT ON T BEGIN ATOMIC END").is_ok());
     syntax_error("CREATE TRIGGER TR AFTER INSERT ON T BEGIN ATOMIC DELETE FROM U END");
     syntax_error("CREATE TRIGGER TR AFTER INSERT ON T DECLARE C CURSOR FOR SELECT A FROM U");
     syntax_error("CREATE TRIGGER TR AFTER INSERT ON T REFERENCING FOR EACH ROW DELETE FROM U");

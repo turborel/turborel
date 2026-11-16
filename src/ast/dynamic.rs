@@ -213,7 +213,7 @@ pub enum SetDescriptor {
 /// [ISO/IEC 9075:1992 §17.10, §17.11] An `<execute statement>` or an
 /// `<execute immediate statement>`, which runs a statement prepared as a
 /// statement of its own.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExecuteStatement {
     /// [§17.10] EXECUTE `<SQL statement name>` \[`<result using clause>`\]
     /// \[`<parameter using clause>`\].
@@ -232,7 +232,7 @@ pub enum ExecuteStatement {
 /// [ISO/IEC 9075:1992 §17] An `<SQL dynamic statement>` [§12.5] but
 /// EXECUTE and EXECUTE IMMEDIATE, and the `<dynamic declare cursor>`'s
 /// statements: each as its Subclause gives it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DynamicStatement {
     /// [§17.2] ALLOCATE DESCRIPTOR `<descriptor name>` \[WITH MAX
     /// `<occurrences>`\].

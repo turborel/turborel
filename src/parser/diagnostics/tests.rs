@@ -27,7 +27,7 @@ fn parsed(text: &str) -> Result<GetDiagnostics> {
 /// target.
 fn all(text: &str) -> (String, AllQualifier) {
     match parsed(text) {
-        Ok(GetDiagnostics::All { target, qualifier }) => (target.name, qualifier),
+        Ok(GetDiagnostics { information: DiagnosticsInformation::All { target, qualifier }, .. }) => (target.name, qualifier),
         other => panic!("{text}: {other:?}"),
     }
 }
@@ -38,10 +38,16 @@ fn all(text: &str) -> (String, AllQualifier) {
 #[test]
 fn statement_information_reads_each_item_23_1() {
     let names = StatementItem::EVERY.map(StatementItem::name).join(", T = ");
-    let Ok(GetDiagnostics::Statement(items)) = parsed(&format!("GET DIAGNOSTICS T = {names}")) else { panic!("{names}") };
+    let Ok(GetDiagnostics { information: DiagnosticsInformation::Statement(items), .. }) = parsed(&format!("GET DIAGNOSTICS T = {names}"))
+    else {
+        panic!("{names}")
+    };
     let read: Vec<StatementItem> = items.iter().map(|(_, item)| *item).collect();
     assert_eq!(read, StatementItem::EVERY);
-    let Ok(GetDiagnostics::Statement(one)) = parsed("GET DIAGNOSTICS N = TRANSACTION_ACTIVE") else { panic!() };
+    let Ok(GetDiagnostics { information: DiagnosticsInformation::Statement(one), .. }) = parsed("GET DIAGNOSTICS N = TRANSACTION_ACTIVE")
+    else {
+        panic!()
+    };
     assert_eq!(one.first().map(|(t, item)| (t.name.as_str(), *item)), Some(("N", StatementItem::TransactionActive)));
 }
 
@@ -53,16 +59,26 @@ fn statement_information_reads_each_item_23_1() {
 fn condition_information_after_condition_or_exception_23_1() {
     let names = ConditionItem::EVERY.map(ConditionItem::name).join(", T = ");
     for word in ["CONDITION", "EXCEPTION"] {
-        let Ok(GetDiagnostics::Condition { number, items }) = parsed(&format!("GET DIAGNOSTICS {word} N T = {names}")) else {
+        let Ok(GetDiagnostics { information: DiagnosticsInformation::Condition { number, items }, .. }) =
+            parsed(&format!("GET DIAGNOSTICS {word} N T = {names}"))
+        else {
             panic!("{word}")
         };
         assert!(matches!(number, ValueSpecification::Parameter(ParameterSpecification { ref name, .. }) if name == "N"), "{word}");
         let read: Vec<ConditionItem> = items.iter().map(|(_, item)| *item).collect();
         assert_eq!(read, ConditionItem::EVERY, "{word}");
     }
-    let Ok(GetDiagnostics::Condition { number, .. }) = parsed("GET DIAGNOSTICS CONDITION 2 T = MESSAGE_TEXT") else { panic!() };
+    let Ok(GetDiagnostics { information: DiagnosticsInformation::Condition { number, .. }, .. }) =
+        parsed("GET DIAGNOSTICS CONDITION 2 T = MESSAGE_TEXT")
+    else {
+        panic!()
+    };
     assert!(matches!(number, ValueSpecification::Literal(_)));
-    let Ok(GetDiagnostics::Statement(items)) = parsed("GET DIAGNOSTICS CONDITION = NUMBER, T = MORE") else { panic!() };
+    let Ok(GetDiagnostics { information: DiagnosticsInformation::Statement(items), .. }) =
+        parsed("GET DIAGNOSTICS CONDITION = NUMBER, T = MORE")
+    else {
+        panic!()
+    };
     let targets: Vec<&str> = items.iter().map(|(t, _)| t.name.as_str()).collect();
     assert_eq!(targets, ["CONDITION", "T"]);
 }

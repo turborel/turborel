@@ -29,10 +29,12 @@ CREATE TRIGGER: define a trigger
     [ WHEN ( <search condition> ) ]
     <triggered SQL statement>
 
-<triggered SQL statement> ::=
-      <SQL procedure statement>
-    | BEGIN ATOMIC { <SQL procedure statement> ; }... END
+<triggered SQL statement> ::= <SQL procedure statement>
 ```
+
+The action's statement may be a compound statement, which is ATOMIC
+([BEGIN](begin.md)). Part 2's `BEGIN ATOMIC { <SQL procedure statement>
+; }... END` is one.
 
 TRIGGER, BEFORE, AFTER, INSTEAD, REFERENCING, OLD, NEW, ROW, EACH,
 STATEMENT and ATOMIC are read as words, not key words, so a table or
@@ -46,7 +48,8 @@ statement inserts into, deletes from or updates its subject table.
 A trigger's action time says when the action runs. A BEFORE trigger
 runs once the statement has chosen its rows and before it writes any of
 them, and a row trigger's action can change the new row by assigning a
-column of its new transition variable with SELECT INTO. An AFTER
+column of its new transition variable with SELECT INTO, or with SET in
+a compound statement. An AFTER
 trigger runs at the end of the statement, after its referential actions
 and once its immediate constraints hold. An INSTEAD OF trigger is on a
 view and runs in place of the change. Nothing is written through the
@@ -104,8 +107,11 @@ it.
    DELETE no new one. A transition variable needs FOR EACH ROW. A BEFORE
    trigger has no transition tables.
 6. The action holds only INSERT, a searched UPDATE or DELETE, MERGE,
-   SELECT INTO, GET DIAGNOSTICS and CALL: no schema, transaction, connection,
-   session, cursor or dynamic statement, and no parameter.
+   SELECT INTO, GET DIAGNOSTICS, CALL, and the control statements,
+   SIGNAL and RESIGNAL that hold those: no schema, transaction,
+   connection, session, cursor or dynamic statement but those of a
+   compound statement's own cursors, and no parameter. A compound
+   statement of it is ATOMIC.
 7. A BEFORE trigger's action changes no table, calls no procedure that
    possibly changes one, and references no generated column of its new
    transition variable.
@@ -270,18 +276,45 @@ turborel: SQLCODE -201 (SQLSTATE 09000): the triggered action of trigger ANN.LIM
 (1 row)
 ```
 
+A BEFORE trigger whose action is a compound statement, which refuses a
+negative balance with SIGNAL and rounds a positive one:
+
+```sql
+CREATE TRIGGER CHECKED BEFORE UPDATE OF BALANCE ON ACCOUNTS
+  REFERENCING NEW AS N FOR EACH ROW
+BEGIN ATOMIC
+  IF N.BALANCE < 0 THEN
+    SIGNAL SQLSTATE '75001' SET MESSAGE_TEXT = 'a balance is never negative';
+  END IF;
+  SET N.BALANCE = CAST(N.BALANCE AS DECIMAL(9,0));
+END;
+UPDATE ACCOUNTS SET BALANCE = 12.60 WHERE ID = 1;
+UPDATE ACCOUNTS SET BALANCE = -1 WHERE ID = 2;
+SELECT * FROM ACCOUNTS ORDER BY ID;
+```
+
+```
+OK
+no data
+no data
+           ID |     BALANCE
+--------------+-------------
+(0 rows)
+```
+
 ## STANDARD
 
 ISO/IEC 9075-2:2023 §11.49, §4.46, §15.19 to §15.21, Features T200,
 T211 to T218. An INSTEAD OF trigger takes INSERT, UPDATE, DELETE and
 MERGE of its view, an UPDATE or DELETE WHERE CURRENT OF a cursor over
 it, and a change of an updatable view over it. A target `N.C[i]` is
-the `<target array element specification>` of §6.4, Feature S097.
-SQL-86 and SQL-92 have no triggers.
+the `<target array element specification>` of §6.4, Feature S097. An
+action of a control statement is ISO/IEC 9075-4:2006 draft §9.19,
+Feature P002. SQL-86 and SQL-92 have no triggers.
 
 ## SEE ALSO
 
-[DROP TRIGGER](drop-trigger.md), [CALL](call.md), [GRANT](grant.md),
+[DROP TRIGGER](drop-trigger.md), [CALL](call.md), [GRANT](grant.md), [BEGIN](begin.md),
 [GET DIAGNOSTICS](get-diagnostics.md), [CREATE VIEW](create-view.md),
 [Constraints](../../user/07-constraints.md), [Information
 Schema](../information-schema.md)

@@ -12,8 +12,10 @@ One reference page for each statement, in alphabetical order.
 - [ALTER SEQUENCE](alter-sequence.md): change a sequence generator
 - [ALTER TABLE](alter-table.md): change a base table
 - [ALTER USER](alter-user.md): change a user's password, or whether it may create roles
+- [BEGIN](begin.md): group statements with their own variables, conditions, cursors and handlers
 - [CALL](call.md): run an SQL-invoked procedure
 - [CANCEL CONNECTION](cancel-connection.md): cancel what a connection of the server runs
+- [CASE](case-statement.md): run the statements of the first WHEN that holds
 - [CLOSE](close.md): close a cursor
 - [COMMIT](commit.md): end a transaction, keeping its changes
 - [CONNECT](connect.md): connect to a server
@@ -32,6 +34,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE USER](create-user.md): define a user
 - [CREATE VIEW](create-view.md): define a viewed table
 - [DECLARE CURSOR](declare-cursor.md): declare a cursor
+- [DECLARE HANDLER](declare-handler.md): say what runs when a condition is raised *(in a compound statement)*
 - [DEALLOCATE DESCRIPTOR](deallocate-descriptor.md): deallocate an SQL descriptor area
 - [DEALLOCATE PREPARE](deallocate-prepare.md): forget a statement prepared
 - [DECLARE LOCAL TEMPORARY TABLE](declare-local-temporary-table.md): declare a session's own temporary table
@@ -56,18 +59,26 @@ One reference page for each statement, in alphabetical order.
 - [EXECUTE IMMEDIATE](execute-immediate.md): prepare a statement and run it at once
 - [EXPLAIN](explain.md): show how a query is planned
 - [FETCH](fetch.md): move a cursor and read its row
+- [FOR](for.md): run statements for each row of a query
 - [GET DESCRIPTOR](get-descriptor.md): read fields of an SQL descriptor area
 - [GET DIAGNOSTICS](get-diagnostics.md): read the diagnostics area
 - [GRANT](grant.md): grant privileges, or roles
+- [IF](if.md): run statements if a condition is true
 - [INSERT](insert.md): insert rows
+- [ITERATE](iterate.md): begin the next iteration of a loop *(in a labelled statement)*
+- [LEAVE](leave.md): end a labelled statement
+- [LOOP](loop.md): run statements again and again until something leaves
 - [MERGE](merge.md): update, delete and insert rows of a table from one source
 - [OPEN](open.md): open a cursor
 - [PREPARE](prepare.md): prepare a statement, by name
+- [REPEAT](repeat.md): run statements until a condition is true
+- [RESIGNAL](resignal.md): raise again the condition a handler handles *(in a handler)*
 - [RETURN](return.md): give the value of an SQL-invoked function
 - [REVOKE](revoke.md): revoke privileges, or roles
 - [ROLLBACK](rollback.md): end a transaction, undoing its changes
 - [SELECT](select.md): read rows
 - [SET](set-setting.md): change a session setting
+- [SET (assignment)](set-variable.md): assign a value to an SQL variable or parameter *(in a compound statement)*
 - [SET CATALOG](set-catalog.md): set the default catalog
 - [SET CONNECTION](set-connection.md): choose the current connection
 - [SET CONSTRAINTS](set-constraints.md): set constraint modes
@@ -79,8 +90,10 @@ One reference page for each statement, in alphabetical order.
 - [SET SESSION AUTHORIZATION](set-session-authorization.md): set the session's authorization identifier
 - [SET TIME ZONE](set-time-zone.md): set the session's time zone
 - [SET TRANSACTION](set-transaction.md): set the next transaction's modes
+- [SIGNAL](signal.md): raise a condition
 - [TRUNCATE TABLE](truncate-table.md): delete every row of a table at once
 - [UPDATE](update.md): update rows
+- [WHILE](while.md): run statements while a condition is true
 
 ## Valid SQL not processed
 

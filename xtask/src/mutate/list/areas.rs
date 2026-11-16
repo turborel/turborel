@@ -1,0 +1,48 @@
+//! Each area's mutations, in the order they run, after the core's.
+
+use super::Mutation;
+
+/// Every area's mutations, in order.
+pub fn all() -> [&'static [Mutation]; 39] {
+    [
+        &super::predicates::PREDICATES,
+        &super::psm::PSM,
+        &super::sequences::SEQUENCES,
+        &super::generated::GENERATED,
+        &super::truncate::TRUNCATE,
+        &super::contents::CONTENTS,
+        &super::nulls::NULLS,
+        &super::with::WITH,
+        &super::search_cycle::SEARCH_CYCLE,
+        &super::composite::COMPOSITE,
+        &super::distinct::DISTINCT,
+        &super::bigint::BIGINT,
+        &super::distinct_predicate::DISTINCT_PREDICATE,
+        &super::partitioned_joins::PARTITIONED_JOINS,
+        &super::grouping_sets::GROUPING_SETS,
+        &super::listagg::LISTAGG,
+        &super::null_ordering::NULL_ORDERING,
+        &super::windows::WINDOWS,
+        &super::window_values::WINDOW_VALUES,
+        &super::window_nested::WINDOW_NESTED,
+        &super::window_distinct::WINDOW_DISTINCT,
+        &super::width_bucket::WIDTH_BUCKET,
+        &super::filter::FILTER,
+        &super::hypothetical::HYPOTHETICAL,
+        &super::distribution::DISTRIBUTION,
+        &super::order_by::ORDER_BY,
+        &super::dependencies::DEPENDENCIES,
+        &super::limits::LIMITS,
+        &super::bounded::BOUNDED_FETCH,
+        &super::patterns::PATTERNS,
+        &super::merge::MERGE,
+        &super::diagnostics::DIAGNOSTICS,
+        &super::triggers::TRIGGERS,
+        &super::routines::ROUTINES,
+        &super::overloading::OVERLOADING,
+        &super::roles::ROLES,
+        &super::array_targets::ARRAY_TARGETS,
+        &super::explain::EXPLAIN,
+        &super::view_defaults::VIEW_DEFAULTS,
+    ]
+}

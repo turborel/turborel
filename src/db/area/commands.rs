@@ -10,6 +10,8 @@
 //! identifier. A statement of this implementation takes its first words
 //! and a negative code of its own (IE005, IV190, IV212).
 
+use crate::ast::{ControlStatement, Iteration};
+
 /// A statement, as the diagnostics area names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::db) struct Command {
@@ -183,6 +185,60 @@ pub(in crate::db) const DROP_SEQUENCE: Command = command("DROP SEQUENCE", 135);
 pub(in crate::db) const SET_COLLATION: Command = command("SET COLLATION", 136);
 /// `<truncate table statement>`.
 pub(in crate::db) const TRUNCATE_TABLE: Command = command("TRUNCATE TABLE", 139);
+
+// [ISO/IEC 9075-4:2006 draft §17.1 GR3, Table 2] The SQL control
+// statements, SIGNAL and RESIGNAL.
+
+/// `<assignment statement>`.
+pub(in crate::db) const ASSIGNMENT: Command = command("ASSIGNMENT", 5);
+/// `<compound statement>`.
+pub(in crate::db) const BEGIN_END: Command = command("BEGIN END", 12);
+/// `<for statement>`.
+pub(in crate::db) const FOR: Command = command("FOR", 46);
+/// `<case statement>`.
+pub(in crate::db) const CASE: Command = command("CASE", 86);
+/// `<if statement>`.
+pub(in crate::db) const IF: Command = command("IF", 88);
+/// `<leave statement>`.
+pub(in crate::db) const LEAVE: Command = command("LEAVE", 89);
+/// `<loop statement>`.
+pub(in crate::db) const LOOP: Command = command("LOOP", 90);
+/// `<resignal statement>`.
+pub(in crate::db) const RESIGNAL: Command = command("RESIGNAL", 91);
+/// `<signal statement>`.
+pub(in crate::db) const SIGNAL: Command = command("SIGNAL", 92);
+/// `<repeat statement>`.
+pub(in crate::db) const REPEAT: Command = command("REPEAT", 95);
+/// `<while statement>`.
+pub(in crate::db) const WHILE: Command = command("WHILE", 97);
+/// `<iterate statement>`.
+pub(in crate::db) const ITERATE: Command = command("ITERATE", 102);
+
+/// [ISO/IEC 9075-4:2006 draft §17.2, §17.3] RESIGNAL if `resignal`, else
+/// SIGNAL.
+pub(in crate::db) fn signal(resignal: bool) -> Command {
+    if resignal { RESIGNAL } else { SIGNAL }
+}
+
+/// [ISO/IEC 9075-4:2006 draft §17.1 Table 2] How the diagnostics area names
+/// the SQL control statement `c`.
+pub(in crate::db) fn control(c: &ControlStatement) -> Command {
+    match c {
+        ControlStatement::Assignment(_) => ASSIGNMENT,
+        ControlStatement::Compound(_) => BEGIN_END,
+        ControlStatement::Case(_) => CASE,
+        ControlStatement::If(_) => IF,
+        ControlStatement::Iterate(_) => ITERATE,
+        ControlStatement::Leave(_) => LEAVE,
+        ControlStatement::Iterated(l) => match l.iteration {
+            Iteration::Loop => LOOP,
+            Iteration::While(_) => WHILE,
+            Iteration::Repeat(_) => REPEAT,
+        },
+        ControlStatement::For(_) => FOR,
+    }
+}
+
 /// An unrecognized statement, one that did not parse; and the
 /// DYNAMIC_FUNCTION of a statement that was not prepared.
 pub(in crate::db) const UNRECOGNIZED: Command = command("", 0);

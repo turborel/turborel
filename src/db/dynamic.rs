@@ -63,8 +63,10 @@ impl Name {
 }
 
 impl fmt::Display for Name {
+    /// The name, of a local cursor its `<cursor name>` alone
+    /// (`binder/psm.rs`, `cursor_key`).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.name)
+        f.write_str(self.name.split('\u{0}').next().unwrap_or_default())
     }
 }
 

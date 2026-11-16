@@ -99,11 +99,11 @@ pub const ROUTINES: [Mutation; 22] = [
     Mutation {
         name: "routines-modifying-in-a-query",
         package: Package::Core,
-        breaks: "a function that possibly modifies SQL-data is invoked in a query",
+        breaks: "a function that possibly modifies SQL-data is invoked in a query, a WHERE or a CASE abbreviation",
         file: "src/binder/invocation.rs",
-        original: "if desc.access == DataAccess::Modifies {",
-        replacement: "if desc.access == DataAccess::Modifies && false {",
-        integration: &["routines::invocations_and_bodies_are_checked_9_18"],
+        original: "(self.purpose == Purpose::Query && self.hosting.get())",
+        replacement: "(self.purpose == Purpose::Query)",
+        integration: &["routines::invocations_and_bodies_are_checked_9_18", "psm_functions::a_function_that_modifies_sql_data_4_35_2"],
         unit: &[],
     },
     Mutation {

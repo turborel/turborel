@@ -16,7 +16,7 @@ mod dynamic;
 mod routine;
 mod transition;
 
-pub(crate) use routine::RoutineScope;
+pub(crate) use routine::{RoutineScope, ScopedVariable, local_key};
 pub(crate) use transition::Transitions;
 
 use dynamic::Dynamic;
@@ -55,6 +55,10 @@ pub struct Params {
     /// [ISO/IEC 9075-2:2023 §4.35.1] Of the body of an SQL-invoked
     /// procedure, its SQL parameters (`params/routine.rs`).
     routine: Option<std::sync::Arc<RoutineScope>>,
+    /// [ISO/IEC 9075-4:2006 draft §14.1 SR15] Of a program's frame, its
+    /// execution: what tells its local cursors from those of another
+    /// running in the session (`params/routine.rs`).
+    execution: usize,
 }
 
 fn api(msg: impl Into<String>) -> SqlError {

@@ -7,7 +7,7 @@ use super::{DefaultOption, SequenceOptions, ValueExpression};
 
 /// [ISO/IEC 9075-2:2023 §11.4] An `<identity column specification>` or a
 /// `<generation clause>`, in place of a `<default clause>`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ColumnGeneration {
     /// `<identity column specification>` ::= GENERATED { ALWAYS | BY
     /// DEFAULT } AS IDENTITY \[ ( `<common sequence generator options>` )
@@ -42,7 +42,7 @@ impl ColumnGeneration {
 }
 
 /// [ISO/IEC 9075-2:2023 §11.12] The `<alter column action>`s implemented.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AlterColumnAction {
     /// [§11.13] `<set column default clause>` ::= SET `<default clause>`
     SetDefault(DefaultOption),

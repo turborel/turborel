@@ -11,6 +11,7 @@ use super::defaults::default_row;
 use super::generated::{Generating, Inserted, check_override};
 use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
+use super::routines::{Hosted, hosted_rows};
 use super::{Session, State, StatementContext, plan, rule, set_columns};
 use crate::ast::{
     ColumnName, InsertSource, InsertStatement, Overriding, QueryExpression, RowElement, SelectList, SelectSublist, TableName,
@@ -199,7 +200,7 @@ impl Session {
         let StatementContext { st, tx } = cx;
         let (target, query) = self.insert_bound(st, stmt, params, keeping)?;
         let rows = if let Some(logical) = query {
-            query_rows(cx, &target, logical)?
+            query_rows((self, cx), &target, logical)?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
             // column its default, or its generated value.
@@ -377,17 +378,26 @@ pub(super) fn object_columns(name: &QualifiedName, columns: &[ColumnDesc], list:
 /// candidate rows of a `<query expression>`, bound as `logical`, one for
 /// each row of its result, which is evaluated in full before any row is
 /// inserted.
-fn query_rows(cx: StatementContext<'_>, target: &Target, logical: LogicalPlan) -> Result<HeldRows<Row>> {
+///
+/// Of VALUES that invoke a function that possibly modifies SQL-data, each
+/// row is evaluated in turn by the session (`routines::hosted_rows`).
+fn query_rows((session, cx): (&Session, StatementContext<'_>), target: &Target, logical: LogicalPlan) -> Result<HeldRows<Row>> {
     let StatementContext { st, tx } = cx;
+    let hosted = Hosted::new(Some(session), cx);
+    // Held up to MEMORY.WORK_BYTES, the rest spilled (RULES.md D38).
+    let mut rows = HeldRows::new(st.list_space());
+    if let Some(found) = hosted_rows(&logical, &hosted) {
+        for values in found? {
+            rows.push(target.candidate(st, values, &hosted)?)?;
+        }
+        return Ok(rows);
+    }
     let (optimized, _, physical) = plan(st, logical);
     for t in optimized.tables() {
         st.read_lock(tx, &t)?;
     }
-    // Held up to MEMORY.WORK_BYTES, the rest spilled (RULES.md D38).
-    let mut rows = HeldRows::new(st.list_space());
-    let runner = Runner::new(st, tx.id);
     for values in execute(physical, st, tx.id) {
-        rows.push(target.candidate(st, values?, &runner)?)?;
+        rows.push(target.candidate(st, values?, &hosted)?)?;
     }
     Ok(rows)
 }
@@ -434,13 +444,14 @@ pub(super) fn update_searched(cx: StatementContext<'_>, w: Written, mut effects:
         return Ok(0);
     }
     let columns = set_columns(&w);
-    let runner = Runner::new(st, tx.id);
+    let hosted = Hosted::new(effects.host, cx);
+    let runner = hosted.runner();
     // [ISO/IEC 9075:1992 §13.10 GR6] every value computed before any row
     // is updated: a subquery of one may read the table.
     let mut changes = HeldRows::new(st.list_space());
     for object in objects {
         let (id, old) = object?;
-        let new = candidate(&w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", &runner))?;
+        let new = candidate(&w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", &hosted))?;
         changes.push((id, old, new))?;
     }
     // [ISO/IEC 9075-2:2023 §15.14 GR5] its BEFORE triggers first.
@@ -451,10 +462,10 @@ pub(super) fn update_searched(cx: StatementContext<'_>, w: Written, mut effects:
     changes.visit(&mut |(id, _, new)| {
         let mut recomputed = None;
         let mut recheck = |newest: &Row| {
-            if !w.holds_of(newest, &runner)? {
+            if !w.holds_of(newest, runner)? {
                 return Ok(Again::Skip);
             }
-            let row = candidate(&w, newest, ("ISO/IEC 9075:1992 §13.10 GR8", &runner))?;
+            let row = candidate(&w, newest, ("ISO/IEC 9075:1992 §13.10 GR8", &hosted))?;
             recomputed = Some(row.clone());
             Ok(Again::Update(row))
         };
@@ -472,7 +483,7 @@ pub(super) fn update_searched(cx: StatementContext<'_>, w: Written, mut effects:
         Ok(())
     })?;
     if !w.bound.checks.is_empty() {
-        let checked = |row: &Row| check_option(&w.bound.checks, [row], ("X3.135-1986 §8.12 GR4", &runner));
+        let checked = |row: &Row| check_option(&w.bound.checks, [row], ("X3.135-1986 §8.12 GR4", runner));
         changes.visit(&mut |(id, _, new)| match again.get(id) {
             Some(None) => Ok(()),
             Some(Some(row)) => checked(row),

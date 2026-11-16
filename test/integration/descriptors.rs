@@ -44,16 +44,16 @@ fn allocate_and_deallocate_descriptor_17_2_17_3() {
     let mut p = dynamic_host();
     assert!(s.direct("ALLOCATE DESCRIPTOR 'D1' WITH MAX 5").is_ok());
     assert!(s.transaction_mode().is_some(), "§4.22.6");
-    assert_eq!(run(&s, "ALLOCATE DESCRIPTOR LOCAL 'D1'", &mut p), Err("33000"), "GR2: LOCAL is implicit");
+    assert_eq!(run(&s, "ALLOCATE DESCRIPTOR LOCAL 'D1'", &mut p), Err("33000".to_owned()), "GR2: LOCAL is implicit");
     assert_eq!(run(&s, "ALLOCATE DESCRIPTOR GLOBAL ' D1'", &mut p), Ok(Completion::Success), "GLOBAL apart");
-    assert_eq!(run(&s, "ALLOCATE DESCRIPTOR 'D2' WITH MAX 0", &mut p), Err("07009"), "GR3");
-    assert_eq!(run(&s, "ALLOCATE DESCRIPTOR 'D2' WITH MAX 1001", &mut p), Err("07009"), "GR3");
+    assert_eq!(run(&s, "ALLOCATE DESCRIPTOR 'D2' WITH MAX 0", &mut p), Err("07009".to_owned()), "GR3");
+    assert_eq!(run(&s, "ALLOCATE DESCRIPTOR 'D2' WITH MAX 1001", &mut p), Err("07009".to_owned()), "GR3");
     assert_eq!(code(&s, "ALLOCATE DESCRIPTOR 'D2' WITH MAX 1.5", &mut p), Code::SyntaxRule, "SR1");
-    assert_eq!(run(&s, "ALLOCATE DESCRIPTOR 'TWO WORDS'", &mut p), Err("33000"), "GR1");
+    assert_eq!(run(&s, "ALLOCATE DESCRIPTOR 'TWO WORDS'", &mut p), Err("33000".to_owned()), "GR1");
     assert_eq!(code(&s, "ALLOCATE DESCRIPTOR 5", &mut p), Code::SyntaxRule, "§5.4 SR16");
-    assert_eq!(run(&s, "DEALLOCATE DESCRIPTOR 'D9'", &mut p), Err("33000"), "§17.3 GR1");
+    assert_eq!(run(&s, "DEALLOCATE DESCRIPTOR 'D9'", &mut p), Err("33000".to_owned()), "§17.3 GR1");
     assert_eq!(run(&s, "DEALLOCATE DESCRIPTOR 'D1'", &mut p), Ok(Completion::Success));
-    assert_eq!(run(&s, "DEALLOCATE DESCRIPTOR 'D1'", &mut p), Err("33000"));
+    assert_eq!(run(&s, "DEALLOCATE DESCRIPTOR 'D1'", &mut p), Err("33000".to_owned()));
     for n in 0..63_i32 {
         run(&s, &format!("ALLOCATE DESCRIPTOR 'M{n}' WITH MAX 1"), &mut p).unwrap();
     }
@@ -81,17 +81,17 @@ fn set_and_get_descriptor_17_4_17_5() {
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 TYPE = 12, LENGTH = 128, DATA = SN", &mut p).unwrap();
     run(&s, "GET DESCRIPTOR 'D' VALUE 1 TEXT = DATA", &mut p).unwrap();
     assert_eq!(p.value("TEXT").to_string(), "hello", "a target of no shorter length matches");
-    assert_eq!(run(&s, "SET DESCRIPTOR 'D' VALUE 1 DATA = 'hello'", &mut p), Err("22005"), "§17.5 GR5: CHARACTER(5)");
-    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 1 NM = DATA", &mut p), Err("22005"), "§17.4 GR2");
+    assert_eq!(run(&s, "SET DESCRIPTOR 'D' VALUE 1 DATA = 'hello'", &mut p), Err("22005".to_owned()), "§17.5 GR5: CHARACTER(5)");
+    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 1 NM = DATA", &mut p), Err("22005".to_owned()), "§17.4 GR2");
     assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 2 N = TYPE", &mut p), Ok(Completion::NoData), "GR4");
-    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 3 N = TYPE", &mut p), Err("07009"), "GR3");
-    assert_eq!(run(&s, "SET DESCRIPTOR 'D' VALUE 0 TYPE = 1", &mut p), Err("07009"), "§17.5 GR2");
+    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 3 N = TYPE", &mut p), Err("07009".to_owned()), "GR3");
+    assert_eq!(run(&s, "SET DESCRIPTOR 'D' VALUE 0 TYPE = 1", &mut p), Err("07009".to_owned()), "§17.5 GR2");
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 INDICATOR = -1", &mut p).unwrap();
-    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 1 TEXT = DATA", &mut p), Err("22002"), "GR5");
+    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 1 TEXT = DATA", &mut p), Err("22002".to_owned()), "GR5");
     assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 1 TEXT = DATA, N = INDICATOR", &mut p), Ok(Completion::Success));
     assert_eq!((p.value("TEXT").to_string(), p.value("N").to_string()), ("hello".to_owned(), "-1".to_owned()), "DATA left as it was");
-    assert_eq!(run(&s, "GET DESCRIPTOR 'X' N = COUNT", &mut p), Err("33000"), "§17.4 GR1");
-    assert_eq!(run(&s, "SET DESCRIPTOR 'X' COUNT = 1", &mut p), Err("33000"), "§17.5 GR1");
+    assert_eq!(run(&s, "GET DESCRIPTOR 'X' N = COUNT", &mut p), Err("33000".to_owned()), "§17.4 GR1");
+    assert_eq!(run(&s, "SET DESCRIPTOR 'X' COUNT = 1", &mut p), Err("33000".to_owned()), "§17.5 GR1");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.4 SR1-SR3, §17.5 SR1-SR3,
@@ -217,7 +217,7 @@ fn describe_by_the_codes_of_tables_18_to_20_17_9() {
     assert_eq!(run(&s, "DESCRIBE S USING SQL DESCRIPTOR 'SMALL'", &mut p), Ok(warned), "GR3d");
     s.execute("GET DESCRIPTOR 'SMALL' N = COUNT", &mut p).unwrap();
     assert_eq!(p.value("N").to_string(), "18");
-    assert_eq!(run(&s, "DESCRIBE S USING SQL DESCRIPTOR 'NONE'", &mut p), Err("33000"), "GR2");
+    assert_eq!(run(&s, "DESCRIBE S USING SQL DESCRIPTOR 'NONE'", &mut p), Err("33000".to_owned()), "GR2");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.9 GR5b-g, §17.10 GR6]
@@ -233,11 +233,11 @@ fn execute_using_a_descriptor_17_9() {
     text(&mut p, "INSERT INTO T (ID, NAME) VALUES (?, ?)");
     run(&s, "PREPARE S FROM TEXT", &mut p).unwrap();
     run(&s, "ALLOCATE DESCRIPTOR 'D' WITH MAX 2", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07001"), "COUNT 0");
+    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07001".to_owned()), "COUNT 0");
     run(&s, "SET DESCRIPTOR 'D' COUNT = 2", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07001"), "GR5b iii: no TYPE");
+    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07001".to_owned()), "GR5b iii: no TYPE");
     run(&s, "DESCRIBE INPUT S USING SQL DESCRIPTOR 'D'", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07001"), "GR5b iv: no DATA");
+    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07001".to_owned()), "GR5b iv: no DATA");
     p.set("K", number(9));
     p.set("NM", Value::Char("ZED".to_owned()));
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 DATA = K", &mut p).unwrap();
@@ -249,12 +249,12 @@ fn execute_using_a_descriptor_17_9() {
     assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Ok(Completion::Success), "a null NAME");
     assert_eq!(rows(&s, "SELECT ID, NAME FROM T WHERE ID > 8 ORDER BY ID").unwrap(), ["9,ZED   ", "10,NULL"]);
     run(&s, "SET DESCRIPTOR 'D' COUNT = 3", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07008"), "GR5b i");
+    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07008".to_owned()), "GR5b i");
     run(&s, "SET DESCRIPTOR 'D' COUNT = -1", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07008"), "GR5b i");
+    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07008".to_owned()), "GR5b i");
     run(&s, "SET DESCRIPTOR 'D' COUNT = 2", &mut p).unwrap();
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 TYPE = 9, DATETIME_INTERVAL_CODE = 1, DATA = DATE '2026-10-30'", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07006"), "GR5e: no DATE is an INTEGER");
+    assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07006".to_owned()), "GR5e: no DATE is an INTEGER");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.9 GR6, GR7, §17.10 GR7]
@@ -284,10 +284,10 @@ fn execute_into_a_descriptor_17_9() {
     run(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D' USING K", &mut p).unwrap();
     assert_eq!((field(&s, 2, "INDICATOR"), field(&s, 3, "INDICATOR")), ("-1".to_owned(), "-1".to_owned()));
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 TYPE = 9, DATETIME_INTERVAL_CODE = 1", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D' USING K", &mut p), Err("07006"), "GR7c");
+    assert_eq!(run(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D' USING K", &mut p), Err("07006".to_owned()), "GR7c");
     run(&s, "SET DESCRIPTOR 'D' COUNT = 2", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D' USING K", &mut p), Err("07002"), "GR6b ii");
+    assert_eq!(run(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D' USING K", &mut p), Err("07002".to_owned()), "GR6b ii");
     run(&s, "SET DESCRIPTOR 'D' COUNT = 3", &mut p).unwrap();
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 TYPE = 0", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D' USING K", &mut p), Err("07002"), "GR6b iii");
+    assert_eq!(run(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D' USING K", &mut p), Err("07002".to_owned()), "GR6b iii");
 }

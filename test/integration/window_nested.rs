@@ -61,7 +61,11 @@ fn value_of_at_each_marker_6_11() {
     assert_eq!(by_row(&a, ahead), ["20", "NULL", "40", "50", "60", "70", "80", "-1"]);
     let behind = "SUM(VALUE_OF(V AT BEGIN_FRAME - 1, I)) OVER (ORDER BY I ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)";
     assert_eq!(by_row(&a, behind), ["1", "3", "20", "40", "NULL", "80", "100", "120"], "a default of the frame's row's I");
-    assert_eq!(a.warning().map(turborel::error::SqlState::as_str), Some("01003"), "V of the third row left out of the fifth's frame");
+    assert_eq!(
+        a.warning().as_ref().map(turborel::error::SqlState::as_str),
+        Some("01003"),
+        "V of the third row left out of the fifth's frame"
+    );
     let frame_row = "SUM(VALUE_OF(V AT FRAME_ROW - 1, 1000)) OVER (ORDER BY I ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING)";
     assert_eq!(by_row(&a, frame_row), ["1010", "30", "20", "40", "90", "110", "130", "70"]);
 }

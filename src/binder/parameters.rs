@@ -49,5 +49,6 @@ impl Binder<'_> {
 pub fn bind_argument(cx: Context<'_>, v: &ValueExpression, parameter: &DataType) -> Result<(Expr, DataType)> {
     let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
     let scope = Scope::Rows("[ISO/IEC 9075-2:2023 §10.9 SR2] an SQL argument of CALL has no set function");
-    binder.typed(v, ParameterType::Of(parameter.clone()), scope)
+    // [§4.35.2] it may invoke a function that possibly modifies SQL-data.
+    binder.hosting(true, || binder.typed(v, ParameterType::Of(parameter.clone()), scope))
 }

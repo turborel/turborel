@@ -15,6 +15,7 @@ mod fixpoint;
 mod invoked;
 mod limit;
 mod pattern;
+mod program;
 mod pushed;
 mod render;
 mod sets;
@@ -32,6 +33,10 @@ pub use fixpoint::Fixpoint;
 pub use invoked::Invocation;
 pub use limit::{Fetch, Limit, Most};
 pub use pattern::{Matching, Navigated, PatternAggregate, PatternValue, Recognize, RowsPerMatch, Skip, Slotted, Variable, WindowMatching};
+pub(crate) use program::{
+    Assign, Block, Branches, Called, Contained, Cursor, CursorAction, CursorStep, Declared, ForEach, Handled, Handler, Initial, Into, Leaf,
+    Looped, Program, Repeating, Signal, Step, Target,
+};
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};

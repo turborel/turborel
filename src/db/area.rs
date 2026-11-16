@@ -18,18 +18,19 @@
 pub(super) mod commands;
 
 mod all;
+mod read;
+mod stack;
 
 use self::commands::Command;
-use super::assignment::{assign_targets, declared_type};
+pub(super) use self::read::Reader;
+use super::assignment::target_type;
 use super::roles::Valued;
 use super::{Completion, Session, State, rule};
-use crate::ast::{AllQualifier, ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, ValueSpecification};
+use crate::ast::{ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, ValueSpecification};
 use crate::binder::assignable;
-use crate::catalog::{QualifiedName, applicable, owner_of};
-use crate::error::{Code, Result, RoutineSubject, SqlState, Subject, fail_with};
+use crate::error::{Code, Result, RoutineSubject, Signalled, SqlState, Subject, fail_with};
 use crate::lexer::kw;
 use crate::params::Params;
-use crate::settings::CATALOG_NAME;
 use crate::value::{DataType, Decimal, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Spelled, Value};
 
 /// \[DESIGN\] The naming authority of the conditions this implementation
@@ -73,6 +74,10 @@ pub(super) struct Area {
     heard: Option<SqlState>,
     /// [§18.1 GR1b] Whether it raised a condition not stored.
     more: bool,
+    /// [ISO/IEC 9075-2:2023 §23.2] The areas below it on the diagnostics
+    /// area stack, pushed as handlers were activated, the second last: the
+    /// one GET STACKED DIAGNOSTICS reads (`area/stack.rs`).
+    stacked: Vec<Area>,
 }
 
 /// [ISO/IEC 9075-2:2023 §23.1 GR2h, GR2i] The SQL-transactions a
@@ -93,12 +98,21 @@ struct Condition {
     subject: Subject,
 }
 
+impl Condition {
+    /// [ISO/IEC 9075-4:2006 draft §17.3 GR5b] Whether a RESIGNAL of a
+    /// `<signal value>` raised it ahead of a condition, which the area,
+    /// of one condition, leaves out.
+    fn stacked(&self) -> bool {
+        self.subject.signalled.as_ref().is_some_and(|s| s.stacked)
+    }
+}
+
 impl Session {
     /// [ISO/IEC 9075:1992 §4.19] The area emptied, as a statement other
     /// than GET DIAGNOSTICS begins: one `command` names, of the prepared
     /// statement `dynamic` names, if one.
     pub(super) fn emptied(&self, (command, dynamic): (Command, Command)) {
-        self.inner.borrow_mut().area = Area { command, dynamic, ..Area::default() };
+        self.inner.borrow_mut().area.begin((command, dynamic));
         self.stop.warnings().take();
         self.stop.warnings().take_left_out();
     }
@@ -164,7 +178,7 @@ impl Session {
         // [ISO/IEC 9075-2:2023 §15.21 GR6m] a triggered action exception
         // is raised with the condition that caused it, which is left out.
         let caused = condition.state == SqlState::TRIGGERED_ACTION_EXCEPTION;
-        area.more |= left_out || replaced || caused;
+        area.more |= left_out || replaced || caused || condition.stacked();
         area.condition = Some(condition);
         outcome
     }
@@ -183,102 +197,37 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if an item cannot be assigned to its target \[SR1\],
-    /// ALL's target is not a character string \[SR2\], or the condition
-    /// number is not exact with scale 0 \[SR3\]; -301, SQLSTATE 35000, if
-    /// no condition has that number \[GR3\]; 22001 if ALL's string is
-    /// longer than a string may be.
+    /// As `Reader::get`'s; SQLSTATE 0Z002 of STACKED where no handler is
+    /// active.
     pub(super) fn get_diagnostics(&self, st: &State, get: &GetDiagnostics, params: &mut Params) -> Result<Completion> {
-        let area = self.inner.borrow().area.clone();
+        let area = self.read_area(get.stacked)?;
         // [§23.1 GR2j] whether one is active now, as GET DIAGNOSTICS begins
         // none [ISO/IEC 9075:1992 §4.28].
         let active = self.inner.borrow().tx.is_some();
-        let statement = |item: StatementItem| area.value(item, active);
-        let (targets, values) = match get {
-            GetDiagnostics::Statement(items) => typed(items.iter().map(|(t, item)| (t, item.numeric(), statement(*item))), params)?,
-            GetDiagnostics::Condition { number, items } => {
-                let (n, condition) = area.numbered(number, &|v| self.value_in(st, v, params, None))?;
-                let shown = self.shown(st, condition);
-                typed(items.iter().map(|(t, item)| (t, item.numeric(), shown.value(*item, (n, condition)))), params)?
-            }
-            GetDiagnostics::All { target, qualifier } => {
-                let presented = self.presented(st, (&area, active), qualifier, params)?;
-                (vec![all_target(target, params)?], vec![all::concatenated(presented)?])
-            }
-        };
-        // [X3.135-1986 §8.6 GR8-GR10; ISO/IEC 9075:1992 §9.1] as a FETCH
-        // assigns: a string cut is a warning, though the area is left as
-        // it was [§18.1 GR1a].
-        assign_targets(&values, &targets, params, "X3.135-1986 §8.6 GR8", "X3.135-1986 §8.6 GR10")
-    }
-
-    /// [ISO/IEC 9075-2:2023 §23.1 GR6a] The items `<all information>`
-    /// presents, by name, of the area `area` read while a transaction is
-    /// `active` or not, as `qualifier` asks: the statement's, each
-    /// condition's preceded by its CONDITION_NUMBER, or those of the one
-    /// condition its number names, without it.
-    fn presented(
-        &self,
-        st: &State,
-        (area, active): (&Area, bool),
-        qualifier: &AllQualifier,
-        params: &Params,
-    ) -> Result<Vec<(&'static str, Value)>> {
-        let mut presented = Vec::new();
-        if let AllQualifier::Everything | AllQualifier::Statement = qualifier {
-            presented.extend(StatementItem::EVERY.map(|item| (item.name(), area.value(item, active))));
-        }
-        let conditions = match qualifier {
-            AllQualifier::Statement => Vec::new(),
-            AllQualifier::Everything | AllQualifier::Condition(None) => area.conditions().map(|(n, c)| (true, n, c)).collect(),
-            AllQualifier::Condition(Some(number)) => {
-                let (n, condition) = area.numbered(number, &|v| self.value_in(st, v, params, None))?;
-                vec![(false, n, condition)]
-            }
-        };
-        for (numbered, n, condition) in conditions {
-            if numbered {
-                presented.push((ConditionItem::ConditionNumber.name(), number(n)));
-            }
-            let shown = self.shown(st, condition);
-            let items = ConditionItem::EVERY.into_iter().filter(|item| *item != ConditionItem::ConditionNumber);
-            presented.extend(items.map(|item| (item.name(), shown.value(item, (n, condition)))));
-        }
-        Ok(presented)
-    }
-
-    /// The names `condition` gives, as this session's authorization
-    /// identifier may see them [ISO/IEC 9075:1992 §18.1 GR3f–GR3j].
-    fn shown(&self, st: &State, condition: &Condition) -> Shown {
-        let catalog = st.settings.get(CATALOG_NAME).to_string().trim_end().to_owned();
-        // [GR3j] but for a syntax error or access rule violation, a table
-        // on which the identifier holds no privilege, and a constraint of
-        // one, are not named.
-        let access = condition.state.is_syntax_or_access();
         let authorization = self.authorization();
-        let visible = |(schema, ident): &(String, String)| {
-            let name = QualifiedName { auth: schema.clone(), ident: ident.clone() };
-            access || !applicable(&*st.catalog, authorization.of(st.catalog.roles()).cell, &name).0.is_empty()
-        };
-        let Subject { constraint, table, column, cursor, assertion, trigger, routine } = &condition.subject;
-        let named = table.is_some();
-        let table = table.clone().filter(visible);
-        // [GR3j iii] a table constraint goes with its table; [GR3j iv] an
-        // assertion is shown to its schema's owner.
-        let shown_constraint = |(schema, _): &(String, String)| {
-            if *assertion {
-                authorization.of(st.catalog.roles()).cell.includes(owner_of(&*st.catalog, schema))
-            } else {
-                !named || table.is_some()
-            }
-        };
-        let constraint = constraint.clone().filter(shown_constraint);
-        let column = column.clone().filter(|_| table.is_some());
-        Shown { catalog, constraint, column, table, cursor: cursor.clone(), trigger: trigger.clone(), routine: routine.clone() }
+        Reader { st, user: authorization.of(st.catalog.roles()), active }.get(&area, get, params)
     }
 }
 
 impl Area {
+    /// [ISO/IEC 9075:1992 §4.19] The area emptied, as a statement other than
+    /// GET DIAGNOSTICS begins: one `command` names, of the prepared
+    /// statement `dynamic` names, if one; the stack below it kept.
+    pub(in crate::db) fn begin(&mut self, (command, dynamic): (Command, Command)) {
+        *self = Area { command, dynamic, stacked: std::mem::take(&mut self.stacked), ..Area::default() };
+    }
+
+    /// [ISO/IEC 9075:1992 §4.19] The condition of a statement's `outcome`
+    /// placed in the area, of a statement no warning is heard of apart.
+    pub(in crate::db) fn place(&mut self, outcome: &Result<Completion>) {
+        let condition = match outcome {
+            Ok(done) => Condition { state: done.sqlstate(), message: String::new(), subject: Subject::default() },
+            Err(e) => Condition { state: e.sqlstate(), message: e.described(), subject: e.subject.as_deref().cloned().unwrap_or_default() },
+        };
+        self.more |= condition.stacked();
+        self.condition = Some(condition);
+    }
+
     /// The value of statement information item `item`, read while a
     /// transaction is `active` or not [ISO/IEC 9075:1992 §18.1 GR1;
     /// ISO/IEC 9075-2:2023 §23.1 GR2].
@@ -324,13 +273,21 @@ struct Shown {
     cursor: Option<String>,
     trigger: Option<(String, String)>,
     routine: Option<RoutineSubject>,
+    signalled: Option<Box<Signalled>>,
 }
 
 impl Shown {
     /// [ISO/IEC 9075:1992 §18.1 GR3] The value of `item` for condition
     /// `n`, `condition`: a zero-length string for a name it has not
-    /// \[GR3o\].
+    /// \[GR3o\]; [ISO/IEC 9075-4:2006 draft §17.2 GR4] of a condition SIGNAL
+    /// or RESIGNAL raised, the value it set the item to, if it set it, the
+    /// lengths those of the message it set.
     fn value(&self, item: ConditionItem, (n, condition): (i128, &Condition)) -> Value {
+        let set = |name: &str| self.signalled.as_ref().and_then(|s| s.item(name));
+        if let Some(v) = set(item.name()) {
+            return text(v);
+        }
+        let message = set(ConditionItem::MessageText.name()).unwrap_or(&condition.message);
         // [GR3f ii, GR3g i] <space>s, one, for a declared local temporary
         // table's, in no catalog.
         let catalog_of = |named: &Option<(String, String)>| match named {
@@ -353,9 +310,9 @@ impl Shown {
             ConditionItem::TableName => name_of(&self.table),
             ConditionItem::ColumnName => text(self.column.as_deref().unwrap_or("")),
             ConditionItem::CursorName => text(self.cursor.as_deref().unwrap_or("")),
-            ConditionItem::MessageText => text(&condition.message),
-            ConditionItem::MessageLength => number(condition.message.chars().count()),
-            ConditionItem::MessageOctetLength => number(condition.message.len()),
+            ConditionItem::MessageText => text(message),
+            ConditionItem::MessageLength => number(message.chars().count()),
+            ConditionItem::MessageOctetLength => number(message.len()),
             // [ISO/IEC 9075-2:2023 §23.1 GR4g] the trigger of a triggered
             // action exception.
             ConditionItem::TriggerCatalog => catalog_of(&self.trigger),
@@ -372,6 +329,9 @@ impl Shown {
             ConditionItem::ParameterOrdinalPosition => number(self.parameter().map_or(0, |p| p.0)),
             ConditionItem::ParameterMode => text(self.parameter().map_or("", |p| p.1)),
             ConditionItem::ParameterName => text(self.parameter().map_or("", |p| &p.2)),
+            // [ISO/IEC 9075-4:2006 draft §17.2 GR2b] the condition name SIGNAL
+            // or RESIGNAL raised the condition of.
+            ConditionItem::ConditionIdentifier => text(self.signalled.as_ref().map_or("", |s| &s.identifier)),
         }
     }
 }
@@ -418,7 +378,7 @@ fn typed<'a>(
 ) -> Result<(Vec<ParameterSpecification>, Vec<Value>)> {
     let (mut targets, mut values) = (Vec::new(), Vec::new());
     for (target, numeric, value) in items {
-        let target_type = declared_type(params, &target.name)?;
+        let target_type = target_type(params, target)?;
         let item_type = declared(numeric);
         if !assignable(&target_type, &item_type) {
             let msg = format!(
@@ -436,7 +396,7 @@ fn typed<'a>(
 /// [ISO/IEC 9075-2:2023 §23.1 SR2] The `<all info target>` `target`, of a
 /// character string type.
 fn all_target(target: &ParameterSpecification, params: &Params) -> Result<ParameterSpecification> {
-    let target_type = declared_type(params, &target.name)?;
+    let target_type = target_type(params, target)?;
     if !target_type.is_character() {
         let msg = format!("[ISO/IEC 9075-2:2023 §23.1 SR2] target {} of ALL is {target_type}, not a character string", target.name);
         return Err(rule(msg).or_at(target.at));

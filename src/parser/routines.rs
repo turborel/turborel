@@ -74,6 +74,9 @@ pub(super) struct RoutineScope {
     pub(super) name: String,
     /// The names of its SQL parameters, in order.
     pub(super) parameters: Vec<String>,
+    /// Whether it is no routine's but an SQL control statement's run
+    /// directly, read as a procedure's body of no parameters.
+    pub(super) direct: bool,
 }
 
 /// [ISO/IEC 9075-2:2023 §11.60 SR19] The refusal of a parameter or
@@ -96,7 +99,7 @@ fn not_supported(at: usize, msg: &str) -> SqlError {
 /// The refusal of `what`, a cursor statement at `at` whose `<cursor name>`
 /// breaks `rule`, since no cursor is declared in the scope of an `<SQL
 /// routine body>`.
-fn cursor_refused(rule: &str, what: &str, at: usize) -> SqlError {
+pub(super) fn cursor_refused(rule: &str, what: &str, at: usize) -> SqlError {
     let msg = format!(
         "[ISO/IEC 9075-2:2023 {rule}] the <cursor name> of {what} shall be contained within the scope of a declared <cursor name>, \
          and an <SQL routine body> declares none"
@@ -174,7 +177,8 @@ impl Parser {
         let returns = if kind == RoutineKind::Function { Some(self.returns_clause(&mut sql_only)?) } else { None };
         let traits = self.routine_characteristics(kind, sql_only)?;
         self.routine_spec(kind)?;
-        let scope = RoutineScope { kind, name: name.ident.clone(), parameters: parameters.iter().map(|p| p.name.clone()).collect() };
+        let scope =
+            RoutineScope { kind, name: name.ident.clone(), parameters: parameters.iter().map(|p| p.name.clone()).collect(), direct: false };
         let body_start = self.here();
         let body = self.routine_body(scope)?;
         let body_text = self.text_from(body_start);
@@ -404,9 +408,11 @@ impl Parser {
         }
         let params = std::mem::take(&mut self.params);
         let dynamic = self.dynamic.take();
+        let blocks = std::mem::take(&mut self.blocks);
         let outer = self.routine.replace(scope);
         let result = self.sql_statement();
         self.routine = outer;
+        self.blocks = blocks;
         self.params = params;
         self.dynamic = dynamic;
         let body = result.map_err(|e| self.body_parameter_refusal(e))?;
@@ -421,7 +427,7 @@ impl Parser {
 
     /// The refusal of the OPEN, FETCH or CLOSE next, if one is: no cursor
     /// is declared in the scope of an `<SQL routine body>`.
-    fn cursor_refusal(&self) -> Option<SqlError> {
+    pub(super) fn cursor_refusal(&self) -> Option<SqlError> {
         let at = self.here();
         if self.is_kw(kw::OPEN) {
             return Some(cursor_refused("§14.4 SR1", "an <open statement>", at));
@@ -453,6 +459,11 @@ impl Parser {
     /// (`transition_target`), or of an `<SQL routine body>`
     /// (`routine_target`).
     pub(super) fn scoped_target(&mut self) -> Result<ParameterSpecification> {
+        // [ISO/IEC 9075-4:2006 draft §6.2] an SQL variable's scope is
+        // within the routine's or the trigger's.
+        if let Some(variable) = self.variable_target() {
+            return Ok(variable);
+        }
         if self.trigger.is_some() { self.transition_target() } else { self.routine_target() }
     }
 
@@ -499,7 +510,9 @@ impl Parser {
         let qualified = period && *first == scope.name;
         let named = if qualified { self.peek_at(2) } else { self.peek() };
         let Tok::Identifier(parameter) = named else { return None };
-        let whole = qualified || !period;
+        // [ISO/IEC 9075-4:2006 draft §14.5] P.F, a field of a row P holds,
+        // as an assignment's target.
+        let whole = qualified || !period || (!self.blocks.is_empty() && scope.parameters.contains(first));
         (whole && scope.parameters.contains(parameter)).then(|| (parameter.clone(), qualified))
     }
 

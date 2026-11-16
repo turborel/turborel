@@ -15,7 +15,7 @@
 //! \[DESIGN\] Triggered actions and procedures nest, each a statement of
 //! the one it is nested in, at most `MAX_NESTING` deep (RULES.md D71).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use super::collations::Collating;
 use super::{Session, area};
@@ -33,12 +33,22 @@ pub(in crate::db) const MAX_NESTING: usize = 16;
 #[derive(Default)]
 pub(in crate::db) struct Nesting {
     executing: RefCell<Vec<QualifiedName>>,
+    /// [ISO/IEC 9075-4:2006 draft §14.1 SR15] The programs the session has
+    /// run, which numbers each execution apart (`params::local_key`).
+    executions: Cell<usize>,
 }
 
 impl Nesting {
     /// How many contexts are pushed.
     pub(in crate::db) fn depth(&self) -> usize {
         self.executing.borrow().len()
+    }
+
+    /// A number no program the session has run has as its execution.
+    pub(in crate::db) fn execution(&self) -> usize {
+        let n = self.executions.get().wrapping_add(1);
+        self.executions.set(n);
+        n
     }
 }
 

@@ -262,7 +262,7 @@ fn bind_set_clauses(binder: &Binder<'_>, kind: WriteKind, set: &[SetClause]) -> 
     };
     let mut bound_set: Vec<(usize, Option<Expr>)> = Vec::new();
     for sc in set {
-        let bound = bind_set_clause(binder, sc, &rules, &bound_set).or_at(sc.at)?;
+        let bound = binder.hosting(true, || bind_set_clause(binder, sc, &rules, &bound_set)).or_at(sc.at)?;
         bound_set.push(bound);
     }
     Ok(bound_set)

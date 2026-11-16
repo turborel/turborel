@@ -113,6 +113,7 @@ verification approach DO-178C expects (§8).
 | D73 | SQL-invoked routines are bound as their owner, a function's body a subquery of its parameters |
 | D74 | Overloads are chosen by one place per kind of number |
 | D75 | Roles: one authorization cell, applicable roles by fixed point |
+| D76 | Routine bodies: one program, two hosts |
 
 ### The project
 
@@ -760,7 +761,9 @@ parameter of its name, as an inner scope hides an outer.
 
 A procedure's body is any statement a triggered action may be, or a
 CALL, run by `run_statement` as a nested context (D71), its parameters
-the dynamic values of a routine scope (`params/routine.rs`). SELECT
+the dynamic values of a routine scope (`params/routine.rs`). A body of
+an SQL control statement, of either kind of routine, is a program run as
+D76 says. SELECT
 INTO, GET DIAGNOSTICS and a nested CALL assign an OUT or INOUT one, and
 CALL then assigns each to its target. A routine runs with its owner's
 privileges, SQL SECURITY DEFINER the only behaviour, since T324 is not
@@ -842,6 +845,50 @@ granted to the role or by it, by any grantor, so no descriptor names a
 role that is gone and its name may be taken again; with RESTRICT it is
 refused while the role granted any, and it never drops a schema's owner,
 since no statement gives a schema another owner.
+
+#### D76. Routine bodies: one program, two hosts
+
+A routine's body, a trigger's action or a statement run directly that is
+an SQL control statement, SIGNAL or RESIGNAL [ISO/IEC 9075-4:2006 draft
+§11.2] is bound once into a program (`logical/program.rs`,
+`binder/psm.rs`). Labels are resolved to blocks, variables to slots of
+one frame row laid out at bind time, the parameters first, conditions
+to SQLSTATE values, and handlers to their condition values. Its values
+and queries are leaves, each a subquery whose outer references are frame
+slots, bound as D73 binds a RETURN. Its other statements keep their text
+and the scope they see, and are bound and run as a procedure's are.
+
+One interpreter runs it (`exec/program/run.rs`), generic over a `Host`
+that gives a leaf's rows, runs a statement, keeps local cursors, marks
+and undoes changes, and keeps the diagnostics area stack. The session
+host (`db/routines/program.rs`) runs procedures, triggers, statements
+run directly, and functions that possibly modify SQL-data. Each of its
+statements runs as a nested statement under a mark of its own, so one
+that fails is undone alone, and UNDO and ATOMIC undo a block's
+[ISO/IEC 9075-2:2023 §4.41.5]. The executor host (`db/routines/program/executor.rs`)
+runs a function that does not possibly modify SQL-data where the query
+invoking it is evaluated, with only that query's runner. It reads, keeps
+its cursors as rows it fetched, and changes nothing, so it needs no mark.
+A procedure that function CALLs is bound into the function's program and
+run there too (`binder/psm/inline.rs`).
+
+A function that possibly modifies SQL-data is placed only where Part 2
+lets a statement invoke one, not in a query expression, a search
+condition or a CASE abbreviation [§7.17 SR25, §6.12 SR1a]. The binder
+marks the top level of those places (`Binder::hosting`), and a subquery
+clears it. Where the mark is, the values are evaluated by `Hosted`
+(`db/routines/program/hosted.rs`), which runs such a function through
+the session host in the context its invocation pushes: the SET values of
+UPDATE and MERGE, the rows of an INSERT's or MERGE's VALUES, the
+arguments of CALL, and a program's values. An UPDATE's rows are found
+before its SET values are evaluated, so rows the function inserts are
+not updated by the statement invoking it.
+
+A program bound once may run nested in itself, through triggers, so a
+local cursor's name is its declaration's with the number of the
+execution that declared it (`params::local_key`). A loop checks for
+cancellation on every iteration (D44). Nesting is D71's bound, which
+programs count against as procedures do.
 
 #### D33. Schema changes are transactional
 

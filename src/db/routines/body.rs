@@ -48,7 +48,7 @@ pub(super) struct BodyBound {
 }
 
 /// The order of what a body possibly does with SQL-data, least first.
-fn rank(a: DataAccess) -> u8 {
+pub(super) fn rank(a: DataAccess) -> u8 {
     match a {
         DataAccess::Contains => 0,
         DataAccess::Reads => 1,
@@ -75,7 +75,11 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         | SqlStatement::DeleteSearched { .. }
         | SqlStatement::Select { .. }
         | SqlStatement::GetDiagnostics(_)
-        | SqlStatement::Call(_) => true,
+        | SqlStatement::Call(_)
+        // [ISO/IEC 9075-4:2006 draft §11.60 SR23] each statement within is
+        // one a body may contain, as the parser read it.
+        | SqlStatement::Control(_)
+        | SqlStatement::Signal(_) => true,
         SqlStatement::Return(_) => return returning(desc),
         SqlStatement::Close(_)
         | SqlStatement::SetCollation(_)
@@ -110,20 +114,25 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         return Ok(());
     }
     Err(rule(
-        "[ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g] an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS or a function's RETURN (IA078)",
+        "[ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23] an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL or a function's RETURN (IA078)",
     ))
 }
 
 /// What the statement `stmt` itself possibly does with SQL-data, of the
 /// routines it invokes and the tables it names aside.
-fn written(stmt: &SqlStatement) -> DataAccess {
+pub(super) fn written(stmt: &SqlStatement) -> DataAccess {
     let modifies = matches!(
         stmt,
-        SqlStatement::Insert(_) | SqlStatement::Merge(_) | SqlStatement::UpdateSearched { .. } | SqlStatement::DeleteSearched { .. }
+        SqlStatement::Insert(_)
+            | SqlStatement::Merge(_)
+            | SqlStatement::UpdateSearched { .. }
+            | SqlStatement::DeleteSearched { .. }
+            | SqlStatement::UpdatePositioned { .. }
+            | SqlStatement::DeletePositioned { .. }
     );
     if modifies {
         DataAccess::Modifies
-    } else if matches!(stmt, SqlStatement::Select { .. }) {
+    } else if matches!(stmt, SqlStatement::Select { .. } | SqlStatement::Open(_) | SqlStatement::Fetch { .. }) {
         DataAccess::Reads
     } else {
         DataAccess::Contains
@@ -148,6 +157,8 @@ impl State {
             name: desc.name.clone(),
             parameters: desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone(), p.mode)).collect(),
             horizon: desc.horizon.clone(),
+            variables: Vec::new(),
+            cursors: Vec::new(),
         };
         let params = Params::of_routine(vec![Value::Null; desc.parameters.len()], Arc::new(scope));
         let cx = Context {
@@ -158,9 +169,16 @@ impl State {
             drawn: Some(&drawn),
             ..Context::new(self, &owner, &params)
         };
-        let mut access = written(stmt);
+        let mut access = super::program::written(stmt);
         if let (true, SqlStatement::Return(_)) = (desc.function(), stmt) {
             access = bind_function_body(cx, desc, definition)?.access;
+        } else if let SqlStatement::Control(_) | SqlStatement::Signal(_) = stmt {
+            let returns = desc.function().then(|| desc.returns.clone()).flatten();
+            self.bind_program_checked(cx, stmt, (&owner, &params), returns)?;
+            // As each invocation binds it, its CALLs with it.
+            if desc.function() {
+                bind_function_body(Context { uses: None, invoked: None, drawn: None, ..cx }, desc, definition)?;
+            }
         } else {
             self.bind_triggered(cx, stmt, (&owner, &params))?;
         }

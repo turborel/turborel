@@ -21,7 +21,7 @@ use super::descriptors::{data_type, described, described_as};
 use super::privileges::PUBLIC;
 use super::user_types::{RESULT_DTD, functions, holders, signature, specific};
 use super::{Columns, catalog_name, defined, ids, long, number, text};
-use crate::catalog::{ColumnDesc, DataAccess, ParameterMode, QualifiedName, SqlRoutineDesc};
+use crate::catalog::{ColumnDesc, DataAccess, QualifiedName, SqlRoutineDesc};
 use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable, yes};
 use crate::value::{DataType, Value};
@@ -65,15 +65,6 @@ fn access(a: DataAccess) -> &'static str {
         DataAccess::Contains => "CONTAINS SQL",
         DataAccess::Reads => "READS SQL DATA",
         DataAccess::Modifies => "MODIFIES SQL DATA",
-    }
-}
-
-/// The name of a parameter's mode.
-fn mode(m: ParameterMode) -> &'static str {
-    match m {
-        ParameterMode::In => "IN",
-        ParameterMode::Out => "OUT",
-        ParameterMode::InOut => "INOUT",
     }
 }
 
@@ -156,7 +147,7 @@ fn parameters(seen: &Seen<'_>) -> Vec<Row> {
     for r in seen.state.catalog.routines() {
         for (at, p) in r.parameters.iter().enumerate() {
             let position = at.saturating_add(1);
-            let head = vec![number(position), text(mode(p.mode)), yes(false), yes(false), text(&p.name)];
+            let head = vec![number(position), text(p.mode.name()), yes(false), yes(false), text(&p.name)];
             let described = data_type(&catalog, &p.data_type, None);
             rows.push([ids(&catalog, &r.specific).to_vec(), head, described, vec![text(&position.to_string())]].concat());
         }

@@ -41,7 +41,7 @@ use super::{RowIter, broken, execute};
 use crate::catalog::SequenceDesc;
 use crate::db::State;
 use crate::error::{Result, Warnings};
-use crate::logical::{Decorrelated, LogicalPlan, Subquery};
+use crate::logical::{Decorrelated, Invocation, LogicalPlan, Subquery};
 use crate::optimizer::RuleContext;
 use crate::physical::{JoinKey, PhysicalPlanner};
 use crate::spill::heap_bytes;
@@ -154,6 +154,32 @@ pub trait Subqueries {
     /// SQLCODE -910 by default; a runner's, as `State::next_value`.
     fn next_value(&self, seq: &SequenceDesc) -> Result<Value> {
         Err(broken(&format!("NEXT VALUE FOR {} where no value is drawn", seq.name)))
+    }
+
+    /// Whether the statement has been cancelled, or has run past its time:
+    /// checked as each statement of a function's body that iterates
+    /// repeats (RULES.md D44). By default it has not, as none runs.
+    ///
+    /// # Errors
+    ///
+    /// The cancellation's.
+    fn interrupted(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// The database the statement runs in, if one does: what GET
+    /// DIAGNOSTICS in a function's body reads the names a condition gives
+    /// of.
+    fn state(&self) -> Option<&Arc<State>> {
+        None
+    }
+
+    /// [ISO/IEC 9075-4:2006 draft §11.2] The value the function `i`, which
+    /// possibly modifies SQL-data, returns of the parameters' values
+    /// `values`, none if it returns none, run where an SQL-session runs
+    /// its statements; by default none runs it.
+    fn invoke_hosted(&self, _: &Invocation, _: Vec<Value>) -> Option<Result<Option<Value>>> {
+        None
     }
 }
 
@@ -372,6 +398,14 @@ impl Subqueries for Runner {
     /// Drawn from its counter, which every snapshot shares.
     fn next_value(&self, seq: &SequenceDesc) -> Result<Value> {
         self.db.next_value(seq)
+    }
+
+    fn interrupted(&self) -> Result<()> {
+        self.stop.get_or_init(|| self.db.tx.stop_of(self.tx)).as_deref().map_or(Ok(()), Stop::check)
+    }
+
+    fn state(&self) -> Option<&Arc<State>> {
+        Some(&self.db)
     }
 }
 

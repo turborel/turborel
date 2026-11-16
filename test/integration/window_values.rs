@@ -105,7 +105,7 @@ fn lead_and_lag_defaults_take_the_extents_type_9_23() {
     assert_eq!(ordered(&a, fits), ["1,zz", "3,s"]);
     let long = "SELECT D, LAG(R, 1, 'abcdefgh') OVER (ORDER BY D, AMOUNT) FROM S WHERE R = 's' ORDER BY D";
     assert_eq!(ordered(&a, long), ["1,abcde", "3,s"]);
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01004"), "a string cut by CAST");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01004"), "a string cut by CAST");
     assert_eq!(by_row(&a, "LAG(V, 1, 2.0) OVER (ORDER BY I)")[0], "2");
 }
 

@@ -283,6 +283,11 @@ impl State {
                 check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")
             }
             SqlStatement::GetDiagnostics(_) => Ok(()),
+            SqlStatement::Control(_) | SqlStatement::Signal(_) => self.bind_program_checked(cx, stmt, (owner, params), None),
+            // [ISO/IEC 9075-4:2006 draft §12.5, §12.6] of a local cursor,
+            // which alone a statement within a compound statement names.
+            SqlStatement::UpdatePositioned { table, set, .. } => bind_write(cx, WriteKind::UpdatePositioned, table, set, None).map(drop),
+            SqlStatement::DeletePositioned { table, .. } => bind_write(cx, WriteKind::DeletePositioned, table, &[], None).map(drop),
             // [ISO/IEC 9075-2:2023 §11.49 SR13] a <call statement> is an
             // <SQL procedure statement> a triggered action may contain.
             SqlStatement::Call(call) => Self::bind_call(cx, call).map(drop),
@@ -290,7 +295,6 @@ impl State {
             | SqlStatement::Close(_)
             | SqlStatement::SetCollation(_)
             | SqlStatement::Commit
-            | SqlStatement::DeletePositioned { .. }
             | SqlStatement::Truncate { .. }
             | SqlStatement::AlterTable { .. }
             | SqlStatement::Drop { .. }
@@ -313,8 +317,7 @@ impl State {
             | SqlStatement::Index(_)
             | SqlStatement::User(_)
             | SqlStatement::Served(_)
-            | SqlStatement::SetConstraints { .. }
-            | SqlStatement::UpdatePositioned { .. } => Err(refused()),
+            | SqlStatement::SetConstraints { .. } => Err(refused()),
         }
     }
 

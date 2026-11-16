@@ -24,6 +24,7 @@ use std::sync::Arc;
 use super::super::assignment::{assign_targets, check_targets};
 use super::super::compiled::plan;
 use super::super::{Completion, Session, State, StatementContext, rule};
+use super::program::{Hosted, hosted_rows};
 use crate::ast::{
     CallStatement, Composite, ElementPosition, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification,
 };
@@ -37,15 +38,15 @@ use crate::storage::Row;
 use crate::value::{Value, assign};
 
 /// [ISO/IEC 9075-2:2023 §16.1] A CALL, bound.
-pub(in crate::db) struct BoundCall {
+pub(crate) struct BoundCall {
     /// The subject routine.
-    desc: SqlRoutineDesc,
+    pub(crate) desc: SqlRoutineDesc,
     /// The value each parameter is given, in order: its argument's, else
     /// the null value.
-    inputs: Vec<Expr>,
+    pub(crate) inputs: Vec<Expr>,
     /// Each output parameter's ordinal position, from 0, and the target
     /// its value is assigned to.
-    targets: Vec<(usize, ParameterSpecification)>,
+    pub(crate) targets: Vec<(usize, ParameterSpecification)>,
 }
 
 /// [ISO/IEC 9075-2:2023 §9.18 SR9h iii] The `<target specification>` the
@@ -147,7 +148,7 @@ impl State {
     /// SQLCODE -103 if no procedure of the name takes its arguments, or an
     /// argument is not as its parameter's mode allows; -104 without
     /// EXECUTE on it; an argument's, bound.
-    pub(in crate::db) fn bind_call(cx: Context<'_>, call: &CallStatement) -> Result<BoundCall> {
+    pub(crate) fn bind_call(cx: Context<'_>, call: &CallStatement) -> Result<BoundCall> {
         let desc = resolve_procedure(cx, &call.name, call.arguments.len())?;
         let (mut inputs, mut targets) = (Vec::new(), Vec::new());
         for (k, (p, a)) in desc.parameters.iter().zip(&call.arguments).enumerate() {
@@ -208,19 +209,21 @@ impl Session {
     /// parameter's, assigned to its target [GR10b].
     pub(in crate::db) fn call_statement(&self, cx: StatementContext<'_>, call: &CallStatement, params: &mut Params) -> Result<Completion> {
         let bound = self.bound(cx.st, params, |b| State::bind_call(b, call))?;
-        let values = call_values(cx, &bound)?;
+        let values = call_values((self, cx), &bound)?;
         let desc = &bound.desc;
         let scope = RoutineScope {
             name: desc.name.clone(),
             parameters: desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone(), p.mode)).collect(),
             horizon: desc.horizon.clone(),
+            variables: Vec::new(),
+            cursors: Vec::new(),
         };
         let mut inner = Params::of_routine(values, Arc::new(scope));
         let body = routine_definition(&desc.text)?.body;
         let owner = owner_of(&*cx.st.catalog, &desc.name.auth).to_owned();
         {
             let _pushed = self.push(&desc.name, (owner, desc.schema.clone()))?;
-            self.run_statement(cx, &body, &mut inner, None)?;
+            self.run_body(cx, &body, &mut inner)?;
         }
         let out = inner.dynamic_values();
         let returned: Vec<Value> = bound.targets.iter().map(|(k, _)| out.get(*k).cloned().unwrap_or(Value::Null)).collect();
@@ -242,29 +245,25 @@ impl Session {
 /// # Errors
 ///
 /// An argument's; its store assignment's, of the parameter [§23.1 GR4q].
-fn call_values(cx: StatementContext<'_>, bound: &BoundCall) -> Result<Row> {
+fn call_values((session, cx): (&Session, StatementContext<'_>), bound: &BoundCall) -> Result<Row> {
     let desc = &bound.desc;
     let types = desc.parameter_types();
-    let (optimized, _, physical) = plan(cx.st, LogicalPlan::Values { rows: vec![bound.inputs.clone()], types: types.clone() });
-    for t in optimized.tables() {
-        cx.st.read_lock(cx.tx, &t)?;
-    }
-    let row = execute(physical, cx.st, cx.tx.id).next().transpose()?.unwrap_or_default();
+    let logical = LogicalPlan::Values { rows: vec![bound.inputs.clone()], types: types.clone() };
+    // [ISO/IEC 9075-4:2006 draft §11.2] an argument that invokes a function
+    // that possibly modifies SQL-data evaluated by the session.
+    let row = if let Some(found) = hosted_rows(&logical, &Hosted::new(Some(session), cx)) {
+        found?.into_iter().next().unwrap_or_default()
+    } else {
+        let (optimized, _, physical) = plan(cx.st, logical);
+        for t in optimized.tables() {
+            cx.st.read_lock(cx.tx, &t)?;
+        }
+        execute(physical, cx.st, cx.tx.id).next().transpose()?.unwrap_or_default()
+    };
     let mut values = Vec::with_capacity(row.len());
     for (k, (v, p)) in row.into_iter().zip(&desc.parameters).enumerate() {
-        let about =
-            || Subject::parameter(desc.name.parts(), desc.specific.parts(), (k.saturating_add(1), mode_name(p.mode), p.name.clone()));
+        let about = || Subject::parameter(desc.name.parts(), desc.specific.parts(), (k.saturating_add(1), p.mode.name(), p.name.clone()));
         values.push(assign(v, &p.data_type, "ISO/IEC 9075-2:2023 §9.18 GR4c i").map_err(|e| e.or_about(about()))?);
     }
     Ok(values)
-}
-
-/// The name of the parameter mode `m`, as a condition's PARAMETER_MODE
-/// shows it [§23.1 GR4q].
-fn mode_name(m: ParameterMode) -> &'static str {
-    match m {
-        ParameterMode::In => "IN",
-        ParameterMode::Out => "OUT",
-        ParameterMode::InOut => "INOUT",
-    }
 }

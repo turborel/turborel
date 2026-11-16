@@ -28,15 +28,15 @@ fn warned_db() -> Database {
 }
 
 /// The warning the query `sql` completed with, its rows all read, if any.
-fn warning(s: &Session, sql: &str) -> Option<&'static str> {
+fn warning(s: &Session, sql: &str) -> Option<SqlState> {
     rows(s, sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
-    s.warning().map(SqlState::as_str)
+    s.warning()
 }
 
 /// `warning`, read row by row (EXECUTOR.BATCHES OFF), then by batches
 /// where it can be, which leaves its condition in the diagnostics area:
 /// the two the same, or the query named.
-fn both_ways(s: &Session, sql: &str) -> Option<&'static str> {
+fn both_ways(s: &Session, sql: &str) -> Option<SqlState> {
     exec(s, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
     let row_by_row = warning(s, sql);
     exec(s, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
@@ -64,12 +64,12 @@ fn returned(s: &Session) -> String {
 fn a_cast_that_cuts_a_character_string_warns_6_10() {
     let db = warned_db();
     let a = db.session("A");
-    assert_eq!(both_ways(&a, "SELECT CAST(N AS VARCHAR(1)) FROM W"), Some("01004"), "'AB' cut");
+    assert_eq!(both_ways(&a, "SELECT CAST(N AS VARCHAR(1)) FROM W"), SqlState::parse("01004"), "'AB' cut");
     assert_eq!(returned(&a), "01004");
-    assert_eq!(both_ways(&a, "SELECT CAST(C AS CHAR(1)) FROM W"), Some("01004"), "'XY ' cut");
+    assert_eq!(both_ways(&a, "SELECT CAST(C AS CHAR(1)) FROM W"), SqlState::parse("01004"), "'XY ' cut");
     assert_eq!(both_ways(&a, "SELECT CAST(N AS CHAR(2)), CAST(C AS VARCHAR(2)) FROM W"), None, "only spaces cut");
     assert_eq!(returned(&a), "00000");
-    assert_eq!(both_ways(&a, "SELECT CAST('ABC' AS CHAR(2)) FROM W"), Some("01004"), "a constant");
+    assert_eq!(both_ways(&a, "SELECT CAST('ABC' AS CHAR(2)) FROM W"), SqlState::parse("01004"), "a constant");
     assert_eq!(both_ways(&a, "SELECT CAST('A  ' AS VARCHAR(1)), CAST('A' AS CHAR(3)) FROM W"), None, "spaces cut, or padded");
     let mut p = Params::new().declare("X", DataType::character(1), Value::Null);
     let done = a.execute("SELECT CAST(N AS VARCHAR(1)) INTO X FROM W WHERE K = 1", &mut p).unwrap();
@@ -91,8 +91,8 @@ fn a_cast_that_cuts_a_character_string_warns_6_10() {
 fn a_cast_that_cuts_a_binary_string_warns_6_13() {
     let db = warned_db();
     let a = db.session("A");
-    assert_eq!(both_ways(&a, "SELECT CAST(B AS BINARY(1)) FROM W"), Some("01004"), "GR13a ii");
-    assert_eq!(both_ways(&a, "SELECT CAST(B AS VARBINARY(1)) FROM W"), Some("01004"), "GR13b ii");
+    assert_eq!(both_ways(&a, "SELECT CAST(B AS BINARY(1)) FROM W"), SqlState::parse("01004"), "GR13a ii");
+    assert_eq!(both_ways(&a, "SELECT CAST(B AS VARBINARY(1)) FROM W"), SqlState::parse("01004"), "GR13b ii");
     assert_eq!(both_ways(&a, "SELECT CAST(B AS BINARY(3)), CAST(B AS VARBINARY(3)), CAST(B AS BINARY(2)) FROM W"), None, "GR13a iii");
     assert_eq!(returned(&a), "00000");
     a.rollback().unwrap();
@@ -111,20 +111,20 @@ fn a_set_function_that_eliminates_a_null_warns_6_5() {
     let a = db.session("A");
     let columns = ["SUM(K)", "AVG(F)", "MAX(N)", "MIN(C)", "COUNT(B)", "SUM(K + 1)", "SUM(F * 2)", "MAX(CAST(N AS VARCHAR(4)))"];
     for f in columns.iter().chain(&["COUNT(DISTINCT K)"]) {
-        assert_eq!(both_ways(&a, &format!("SELECT {f} FROM W")), Some("01003"), "{f}");
+        assert_eq!(both_ways(&a, &format!("SELECT {f} FROM W")), SqlState::parse("01003"), "{f}");
         assert_eq!(both_ways(&a, &format!("SELECT {f} FROM W WHERE K IS NOT NULL")), None, "{f}: no null");
-        assert_eq!(both_ways(&a, &format!("SELECT {f} FROM W WHERE K > 0 OR K IS NULL")), Some("01003"), "{f}: of rows kept");
-        assert_eq!(both_ways(&a, &format!("SELECT K, {f} FROM W GROUP BY K")), Some("01003"), "{f}: grouped");
+        assert_eq!(both_ways(&a, &format!("SELECT {f} FROM W WHERE K > 0 OR K IS NULL")), SqlState::parse("01003"), "{f}: of rows kept");
+        assert_eq!(both_ways(&a, &format!("SELECT K, {f} FROM W GROUP BY K")), SqlState::parse("01003"), "{f}: grouped");
         assert_eq!(both_ways(&a, &format!("SELECT K, {f} FROM W WHERE K IS NOT NULL GROUP BY K")), None, "{f}: grouped, no null");
     }
     for f in ["COUNT(CAST(NULL AS INTEGER))", "K, COUNT(CAST(NULL AS INTEGER))"] {
         let grouped = if f.starts_with('K') { " GROUP BY K" } else { "" };
-        assert_eq!(both_ways(&a, &format!("SELECT {f} FROM W{grouped}")), Some("01003"), "a null constant: {f}");
+        assert_eq!(both_ways(&a, &format!("SELECT {f} FROM W{grouped}")), SqlState::parse("01003"), "a null constant: {f}");
         assert_eq!(both_ways(&a, &format!("SELECT {f} FROM W WHERE K > 9{grouped}")), None, "of no row: {f}");
     }
     assert_eq!(both_ways(&a, "SELECT COUNT(*) FROM W"), None, "GR1a");
     assert_eq!(returned(&a), "00000");
-    assert_eq!(both_ways(&a, "SELECT K FROM W WHERE K < (SELECT SUM(K) FROM W)"), Some("01003"), "in a subquery");
+    assert_eq!(both_ways(&a, "SELECT K FROM W WHERE K < (SELECT SUM(K) FROM W)"), SqlState::parse("01003"), "in a subquery");
     assert_eq!(returned(&a), "01003");
     let mut p = Params::new().declare("X", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     let done = a.execute("SELECT COUNT(K) INTO X FROM W", &mut p).map_err(|e| e.code);

@@ -10,7 +10,8 @@ GET DIAGNOSTICS: read the diagnostics area *(in a program)*
 
 ```
 <get diagnostics statement> ::=
-    GET DIAGNOSTICS { <statement information> | <condition information> | <all information> }
+    GET [ CURRENT | STACKED ] DIAGNOSTICS
+    { <statement information> | <condition information> | <all information> }
 
 <statement information> ::=
     <parameter name> = <statement information item name>
@@ -27,13 +28,27 @@ GET DIAGNOSTICS: read the diagnostics area *(in a program)*
 <condition number> ::= <parameter name> | <literal>
 ```
 
+In a routine's body or a compound statement, a `<parameter name>` may
+name an SQL parameter or an SQL variable. STACKED is read as a word,
+not a key word.
+
 ## DESCRIPTION
 
 GET DIAGNOSTICS copies what the session's last statement left in its
-diagnostics area into parameters. It runs only in a program that embeds
-turborel, through the Rust API: its targets are parameters, which direct
-SQL, and so the client, has none of. The client shows each statement's
-outcome itself.
+diagnostics area into parameters. Out of a compound statement it runs
+only in a program that embeds turborel, through the Rust API, since its
+targets are parameters, which direct SQL, and so the client, has none
+of. The client shows each statement's outcome itself. In a routine's
+body or a compound statement ([BEGIN](begin.md)), its targets are SQL
+parameters and SQL variables, so it runs wherever they do.
+
+In a program, each statement empties the area and leaves its own
+condition there. The diagnostics area is a stack. A handler's activation
+pushes it, so while its action runs, GET STACKED DIAGNOSTICS reads the
+condition the handler handles, and GET CURRENT DIAGNOSTICS, as GET
+DIAGNOSTICS does, the area of the action's last statement. The stack is
+popped as the action ends. STACKED where no handler is active fails with
+SQLSTATE 0Z002.
 
 The area holds one condition after each statement: its completion,
 SQLSTATE 00000, or the warning or exception it raised. GET DIAGNOSTICS
@@ -90,6 +105,7 @@ The condition information items, of condition 1:
 | PARAMETER_MODE, PARAMETER_NAME | character | Of an argument stored in its parameter, the parameter's mode and name; else empty |
 | PARAMETER_ORDINAL_POSITION | exact | Of an argument stored in its parameter, the parameter's position, from 1; else 0 |
 | TRIGGER_CATALOG, TRIGGER_SCHEMA, TRIGGER_NAME | character | Of SQLSTATE 09000, the trigger whose action failed; else empty |
+| CONDITION_IDENTIFIER | character | Of a condition [SIGNAL](signal.md) raised of a condition declared, its name; else empty |
 
 An item that does not apply is empty, or 0. Of SQLSTATE 09000, CATALOG_NAME,
 SCHEMA_NAME and TABLE_NAME are the trigger's table, and MORE is Y: the
@@ -123,9 +139,9 @@ character string type, cut to fit with a warning.
 
 ## RULES
 
-1. Each target is a parameter declared, of a type the item's value may
-   be assigned to: numeric for a number, a character string for a
-   character string.
+1. Each target is a parameter declared, or an SQL parameter or SQL
+   variable in scope, of a type the item's value may be assigned to:
+   numeric for a number, a character string for a character string.
 2. ALL's target is of a character string type.
 3. The condition number is exact with scale 0, and 1 to the number of
    conditions there are.
@@ -141,6 +157,7 @@ None.
 | 2A000 | -102 | An item's name is not one of those above |
 | 2A000 | -103 | A target is not a parameter declared, or not of a type its item may be assigned to; ALL's target is not a character string |
 | 35000 | -301 | There is no condition of the number |
+| 0Z002 | -301 | STACKED where no handler is active |
 | 22003 | -301 | A number too large for its target |
 | 01004 | 0 | Not an error: a warning, a value cut to fit its target, as [FETCH](fetch.md) cuts it; the area is left as it was |
 
@@ -181,6 +198,41 @@ GET DIAGNOSTICS N = ALL                                 -103 (2A000): target N o
 GET DIAGNOSTICS CONDITION 5 STATE = RETURNED_SQLSTATE   -301 (35000): there is no condition 5: the area holds 1 [ISO/IEC 9075:1992 §18.1 GR2]
 ```
 
+In a compound statement run directly, a handler reads the condition it
+handles with STACKED, and the row count of its own UPDATE with CURRENT:
+
+```sql
+CREATE TABLE SEEN (STATE CHAR(5), CHANGED INTEGER);
+CREATE TABLE DUES (ID INTEGER, AMOUNT INTEGER);
+INSERT INTO DUES VALUES (1, 10), (2, 20);
+BEGIN
+  DECLARE S CHAR(5);
+  DECLARE N INTEGER;
+  DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+  BEGIN
+    GET STACKED DIAGNOSTICS CONDITION 1 S = RETURNED_SQLSTATE;
+    UPDATE DUES SET AMOUNT = 0;
+    GET CURRENT DIAGNOSTICS N = ROW_COUNT;
+    INSERT INTO SEEN VALUES (S, N);
+  END;
+  UPDATE DUES SET AMOUNT = AMOUNT / 0;
+END;
+SELECT * FROM SEEN;
+BEGIN DECLARE N INTEGER; GET STACKED DIAGNOSTICS N = NUMBER; END;
+```
+
+```
+OK
+OK
+OK
+OK
+ STATE |      CHANGED
+-------+--------------
+ 22012 |            2
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 0Z002): GET STACKED DIAGNOSTICS where no handler is active [ISO/IEC 9075-2:2023 §23.1 GR1b]
+```
+
 ## STANDARD
 
 ISO/IEC 9075:1992 §18.1, of the diagnostics area of §4.19. SQL-92 does
@@ -188,9 +240,12 @@ not make it a `<directly executable statement>` [§20.1]. SQL-86 has no
 diagnostics area. ISO/IEC 9075-2:2023 §23.1 adds CONDITION in
 EXCEPTION's place, the codes and the items of routines and triggers,
 targets of another type (Feature F122), ALL (Feature F123) and the
-transaction counts (Feature T511).
+transaction counts (Feature T511). ISO/IEC 9075-4:2006 draft §17.1 adds
+CURRENT and STACKED (Feature P007), CONDITION_IDENTIFIER, and SQL
+variables as targets.
 
 ## SEE ALSO
 
 [Errors](../../user/10-errors.md), [SQLSTATE](../../appendix/a-sqlstate.md),
-[The Rust Library](../../client/02-library.md)
+[The Rust Library](../../client/02-library.md),
+[DECLARE HANDLER](declare-handler.md), [SIGNAL](signal.md)

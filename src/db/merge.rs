@@ -20,6 +20,7 @@ pub(super) use self::routed::Inserting;
 use self::routed::{Routing, held_rows, routing, view_rows_of};
 use super::generated::Inserted;
 use super::prepared::{Keeping, KeptPlan};
+use super::routines::Hosted;
 use super::write::{InsertInto, InsertRules, insert_target_in};
 use super::{Completion, Session, State, StatementContext, api, plan};
 use crate::ast::{MergeStatement, MergeWhen};
@@ -27,7 +28,7 @@ use crate::binder::qualify;
 use crate::binder::{self, BoundAction, BoundMerge, BoundWhen, ObjectColumn};
 use crate::catalog::{Principal, QualifiedName};
 use crate::error::Result;
-use crate::exec::{Runner, TransitionRows};
+use crate::exec::TransitionRows;
 use crate::logical::{Expr, LogicalPlan, SortKey, filled, filled_cond, filled_expr};
 use crate::params::Params;
 use crate::physical::Plan;
@@ -100,7 +101,7 @@ impl Session {
         if !routed.held {
             self.settle_cursors(st, &bound.table);
         }
-        let runner = Runner::new(st, tx.id);
+        let runner = Hosted::new(Some(self), cx);
         let id_column = row_id_column(&bound)?;
         let merge = Merge { bound: &bound, targets: &targets, runner: &runner, id_column, routes: &routed.routes, held: routed.held };
         // [GR5, GR6a i 1 A, GR6a ii 6] Every row read and what it does

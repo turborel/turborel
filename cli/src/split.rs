@@ -8,19 +8,25 @@
 //! the end of the text ends a comment as a newline would.
 //!
 //! A `;` in a `<compound triggered SQL statement>` [ISO/IEC 9075-2:2023
-//! §11.49] ends none either. In code, the words BEGIN and ATOMIC, apart
-//! only by separators, open a block. In one, CASE opens a level and END
-//! closes one, and the block ends with the END of its BEGIN. Words are
-//! matched in any case, never in a string, an identifier or a comment.
+//! §11.49], or a `<compound statement>` or another SQL control statement
+//! [ISO/IEC 9075-4:2006 draft §14.1 to §14.13], ends none either. In code,
+//! the word BEGIN, a key word nothing else begins with, opens a block. In
+//! one, BEGIN, CASE, IF, LOOP and REPEAT open a level, as DO does, which
+//! begins the statements of WHILE and FOR; END closes one, and the word
+//! after END, as in END IF, opens none. The block ends with the END of its
+//! BEGIN. A statement whose first word, after a label and its colon if one
+//! is written, is IF, CASE, LOOP, REPEAT, WHILE or FOR is a control
+//! statement run alone, whose openers open levels as a block's do. Words
+//! are matched in any case, never in a string, an identifier or a comment.
 
-/// BEGIN, which with ATOMIC after it opens a block.
+/// BEGIN, which opens a block, or a level in one.
 const BEGIN: &str = "BEGIN";
-/// ATOMIC, after BEGIN.
-const ATOMIC: &str = "ATOMIC";
-/// CASE, which an END closes in a block.
-const CASE: &str = "CASE";
-/// END, which closes a block or a CASE in one.
+/// The words that open a level in a block, but after END.
+const OPENERS: [&str; 5] = ["CASE", "IF", "LOOP", "REPEAT", "DO"];
+/// END, which closes a block or a level in one.
 const END: &str = "END";
+/// The first words of a control statement run alone, but BEGIN.
+const CONTROL: [&str; 6] = ["IF", "CASE", "LOOP", "REPEAT", "WHILE", "FOR"];
 
 /// Where the text read so far stands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -36,13 +42,28 @@ enum State {
     Comment,
 }
 
-/// What came last in code, for BEGIN ATOMIC.
+/// What came last in code, for END IF and the like.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum Last {
-    /// The word BEGIN, with only separators after it.
-    Begin,
+    /// The word END, with only separators after it.
+    End,
     /// Anything else, or nothing.
     #[default]
+    Other,
+}
+
+/// What the first word of a statement makes of it, its label's not
+/// counted.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Lead {
+    /// No word yet, or only a label and its colon.
+    #[default]
+    Start,
+    /// One word, which a colon makes a label.
+    One,
+    /// A control statement run alone.
+    Control,
+    /// Any other statement.
     Other,
 }
 
@@ -62,11 +83,13 @@ pub struct Splitter {
     comment_end: usize,
     /// The word of code being read, if one is.
     word: String,
-    /// What came last in code, as far as opening a block goes.
+    /// What came last in code, as far as opening a level goes.
     last: Last,
-    /// The levels of BEGIN ATOMIC blocks and CASEs in them open, 0 out of
+    /// The levels of blocks and of the statements in them open, 0 out of
     /// any block.
     depth: usize,
+    /// What its first word, its label's not counted, makes of it.
+    lead: Lead,
 }
 
 impl Splitter {
@@ -120,7 +143,7 @@ impl Splitter {
 
     /// Reads `c`, of code, into the word being read, or ends that word.
     /// A character neither a separator nor a minus sign, which may begin a
-    /// comment, parts BEGIN from ATOMIC.
+    /// comment, parts END from the word after it.
     fn read_word(&mut self, c: char) {
         if c.is_alphanumeric() || c == '_' {
             self.word.push(c);
@@ -128,6 +151,10 @@ impl Splitter {
         }
         if !self.word.is_empty() {
             self.ended_word();
+        }
+        // The colon after a label, so the word after it is the first.
+        if c == ':' && self.lead == Lead::One {
+            self.lead = Lead::Start;
         }
         if !c.is_whitespace() && c != '-' {
             self.last = Last::Other;
@@ -139,19 +166,26 @@ impl Splitter {
     fn ended_word(&mut self) {
         let word = std::mem::take(&mut self.word);
         let is = |keyword: &str| word.eq_ignore_ascii_case(keyword);
-        let opens = (self.last == Last::Begin && is(ATOMIC)) || (self.depth > 0 && is(CASE));
+        self.lead = match self.lead {
+            Lead::Start if CONTROL.iter().any(|w| is(w)) => Lead::Control,
+            Lead::Start => Lead::One,
+            Lead::One | Lead::Other => Lead::Other,
+            Lead::Control => Lead::Control,
+        };
+        let opens =
+            is(BEGIN) || ((self.depth > 0 || self.lead == Lead::Control) && self.last != Last::End && OPENERS.iter().any(|w| is(w)));
         if opens {
             self.depth = self.depth.saturating_add(1);
         } else if is(END) {
             self.depth = self.depth.saturating_sub(1);
         }
-        self.last = if is(BEGIN) { Last::Begin } else { Last::Other };
+        self.last = if is(END) { Last::End } else { Last::Other };
     }
 
     /// The statement read so far, if it is one; the text begun anew.
     fn ended(&mut self) -> Option<String> {
         self.word.clear();
-        (self.last, self.depth) = (Last::Other, 0);
+        (self.last, self.depth, self.lead) = (Last::Other, 0, Lead::Start);
         let text = std::mem::take(&mut self.text);
         let significant = std::mem::take(&mut self.significant);
         let comment_end = std::mem::take(&mut self.comment_end);
@@ -222,9 +256,8 @@ mod tests {
     /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.49] a `;` in BEGIN
     /// ATOMIC ... END ends no statement, a CASE ... END in the block
     /// closing no block, words matched in any case; the `;` after the
-    /// block's END ends the statement. MC/DC of `opens`: ATOMIC after
-    /// BEGIN opens, ATOMIC after another word does not, CASE in a block
-    /// opens a level, CASE out of one does not.
+    /// block's END ends the statement; ATOMIC alone, or a word BEGIN only
+    /// begins, opens none.
     #[test]
     fn semicolons_in_begin_atomic_end_no_statement() {
         let trigger = "CREATE TRIGGER TR AFTER INSERT ON T begin  atomic \
@@ -244,6 +277,48 @@ mod tests {
         assert_eq!(split("SELECT 'BEGIN ATOMIC'; SELECT 2"), ["SELECT 'BEGIN ATOMIC'", "SELECT 2"]);
         assert_eq!(split("SELECT \"BEGIN ATOMIC\"; SELECT 2"), ["SELECT \"BEGIN ATOMIC\"", "SELECT 2"]);
         assert_eq!(split("SELECT 1 -- BEGIN ATOMIC\n; SELECT 2"), ["SELECT 1 -- BEGIN ATOMIC\n", "SELECT 2"]);
-        assert_eq!(split("SELECT BEGIN 'x' ATOMIC; SELECT 2"), ["SELECT BEGIN 'x' ATOMIC", "SELECT 2"]);
+    }
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-4:2006 draft §14.1 to §14.13] a `;` in a
+    /// compound statement, plain or ATOMIC, ends no statement, nor one in
+    /// IF, CASE, LOOP, REPEAT, or WHILE or FOR, whose DO opens a level;
+    /// END IF and the like close one level, the word after END opening
+    /// none; out of a block IF, LOOP, REPEAT and DO open none. MC/DC of
+    /// `opens`: BEGIN out of a block opens, an opener in one opens, an
+    /// opener after END does not, an opener out of a block does not.
+    #[test]
+    fn semicolons_in_control_statements_end_no_statement() {
+        let body = "CREATE PROCEDURE P () BEGIN DECLARE I INTEGER DEFAULT 0; \
+                    L: LOOP SET I = I + 1; IF I > 3 THEN LEAVE L; END IF; END LOOP L; \
+                    WHILE I > 0 DO SET I = I - 1; END WHILE; REPEAT SET I = I + 1; UNTIL I > 2 END REPEAT; \
+                    FOR R AS SELECT K FROM T DO CASE WHEN R.K = 1 THEN SET I = 0; ELSE SET I = 1; END CASE; END FOR; \
+                    B: BEGIN ATOMIC SET I = 2; END B; END";
+        assert_eq!(split(&format!("{body}; SELECT 1;")), [body, "SELECT 1"]);
+        assert_eq!(split("begin insert into t values (1); end; select 2"), ["begin insert into t values (1); end", "select 2"]);
+        assert_eq!(
+            split("DROP TABLE IF; SELECT LOOP, REPEAT, DO FROM T; SELECT 2"),
+            ["DROP TABLE IF", "SELECT LOOP, REPEAT, DO FROM T", "SELECT 2"]
+        );
+    }
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-4:2006 draft §4.10.7, §14.6 to §14.13] a
+    /// control statement run alone, labelled or not, keeps its `;`s: IF,
+    /// CASE, LOOP, REPEAT, and WHILE and FOR by their DO. A query whose
+    /// first word is none of them, or whose label-like first word is not
+    /// one, splits as before.
+    #[test]
+    fn control_statements_run_alone_keep_their_semicolons() {
+        for alone in [
+            "IF X > 1 THEN SIGNAL SQLSTATE '75001'; ELSE SIGNAL SQLSTATE '75002'; END IF",
+            "case x when 1 then signal sqlstate '75001'; end case",
+            "L: LOOP LEAVE L; END LOOP L",
+            "REPEAT SIGNAL SQLSTATE '01001'; UNTIL TRUE END REPEAT",
+            "W: WHILE FALSE DO SIGNAL SQLSTATE '75001'; END WHILE W",
+            "FOR R AS SELECT K FROM T DO IF R.K = 1 THEN SIGNAL SQLSTATE '75001'; END IF; END FOR",
+        ] {
+            assert_eq!(split(&format!("{alone}; SELECT 1")), [alone, "SELECT 1"], "{alone}");
+        }
+        assert_eq!(split("SELECT IF FROM T; SELECT 2"), ["SELECT IF FROM T", "SELECT 2"]);
+        assert_eq!(split("X: SELECT 1; SELECT 2"), ["X: SELECT 1", "SELECT 2"]);
     }
 }

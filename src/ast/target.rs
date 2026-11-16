@@ -17,6 +17,10 @@ use super::Literal;
 pub struct ParameterSpecification {
     /// The `<parameter name>`.
     pub name: String,
+    /// [ISO/IEC 9075-4:2006 draft §6.2] The `<beginning label>` qualifying
+    /// an SQL variable, or the routine's name qualifying an SQL parameter,
+    /// if one is written (Feature P005).
+    pub qualifier: Option<String>,
     /// The `<indicator parameter>`'s name, if written.
     pub indicator: Option<String>,
     /// What it names: a parameter, a column of a new transition variable,
@@ -34,7 +38,7 @@ impl ParameterSpecification {
     /// The target `name` of kind `kind`, written at `at`, of no indicator
     /// and no element.
     pub fn of(name: String, kind: TargetKind, at: usize) -> ParameterSpecification {
-        ParameterSpecification { name, indicator: None, kind, element: None, at }
+        ParameterSpecification { name, qualifier: None, indicator: None, kind, element: None, at }
     }
 }
 
@@ -48,7 +52,9 @@ pub enum TargetKind {
     /// a BEFORE trigger: `name` is the column of the new row it assigns.
     Transition,
     /// [§6.8 SR1, §6.6 SR8] An `<SQL parameter reference>` in the body of
-    /// an SQL-invoked procedure: `name` is the SQL parameter it assigns.
+    /// an SQL-invoked procedure: `name` is the SQL parameter it assigns;
+    /// [ISO/IEC 9075-4:2006 draft §6.2] or an SQL variable reference, in
+    /// the scope of its declaration.
     Routine,
 }
 

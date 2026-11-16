@@ -6,9 +6,21 @@
 use super::{ParameterSpecification, ValueSpecification};
 
 /// \[EXTENSION\] [ISO/IEC 9075:1992 §18.1] `<get diagnostics statement>`
-/// ::= GET DIAGNOSTICS `<sql diagnostics information>`
+/// ::= GET \[`<which area>`\] DIAGNOSTICS `<sql diagnostics information>`
+/// [ISO/IEC 9075-4:2006 draft §17.1]
 #[derive(Debug, Clone)]
-pub enum GetDiagnostics {
+pub struct GetDiagnostics {
+    /// STACKED was written: the second diagnostics area, of the condition
+    /// a handler handles (Feature P007); CURRENT, written or implicit, the
+    /// first \[SR1\].
+    pub stacked: bool,
+    /// Its `<sql diagnostics information>`.
+    pub information: DiagnosticsInformation,
+}
+
+/// [ISO/IEC 9075:1992 §18.1] `<sql diagnostics information>`.
+#[derive(Debug, Clone)]
+pub enum DiagnosticsInformation {
     /// `<statement information>`: each `<simple target specification>` =
     /// `<statement information item name>`.
     Statement(Vec<(ParameterSpecification, StatementItem)>),
@@ -82,6 +94,9 @@ pub enum ConditionItem {
     ClassOrigin,
     /// COLUMN_NAME.
     ColumnName,
+    /// [ISO/IEC 9075-4:2006 draft §17.1] CONDITION_IDENTIFIER: the
+    /// `<condition name>` of a user-defined condition signalled.
+    ConditionIdentifier,
     /// CONDITION_NUMBER.
     ConditionNumber,
     /// CONNECTION_NAME.
@@ -190,7 +205,7 @@ impl ConditionItem {
     /// [ISO/IEC 9075-2:2023 §23.1] Every item, in the order its Format
     /// lists them, which is the order `<all information>` gives them
     /// (US050).
-    pub const EVERY: [ConditionItem; 27] = [
+    pub const EVERY: [ConditionItem; 28] = [
         ConditionItem::CatalogName,
         ConditionItem::ClassOrigin,
         ConditionItem::ColumnName,
@@ -218,6 +233,7 @@ impl ConditionItem {
         ConditionItem::TriggerCatalog,
         ConditionItem::TriggerName,
         ConditionItem::TriggerSchema,
+        ConditionItem::ConditionIdentifier,
     ];
 
     /// Its `<condition information item name>`.
@@ -226,6 +242,7 @@ impl ConditionItem {
             ConditionItem::CatalogName => "CATALOG_NAME",
             ConditionItem::ClassOrigin => "CLASS_ORIGIN",
             ConditionItem::ColumnName => "COLUMN_NAME",
+            ConditionItem::ConditionIdentifier => "CONDITION_IDENTIFIER",
             ConditionItem::ConditionNumber => "CONDITION_NUMBER",
             ConditionItem::ConnectionName => "CONNECTION_NAME",
             ConditionItem::ConstraintCatalog => "CONSTRAINT_CATALOG",
@@ -274,6 +291,7 @@ impl ConditionItem {
             | ConditionItem::ConstraintName
             | ConditionItem::ConstraintSchema
             | ConditionItem::CursorName
+            | ConditionItem::ConditionIdentifier
             | ConditionItem::MessageText
             | ConditionItem::ParameterMode
             | ConditionItem::ParameterName

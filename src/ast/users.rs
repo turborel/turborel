@@ -4,7 +4,7 @@
 /// transaction by the database's owner. ISO/IEC 9075:1992 has none: which
 /// identifiers are authorization identifiers is implementation-defined
 /// [§5.4; Annex B, item 41].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UserStatement {
     /// `<user definition>` ::= CREATE USER `<authorization identifier>`
     /// \[WITH\] PASSWORD `<character string literal>`

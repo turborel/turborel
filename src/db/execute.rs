@@ -16,7 +16,7 @@ use crate::ast::{
     SchemaStatement, SearchCondition, ServedStatement, SetClause, SqlStatement, TableName, TableStorage, UserStatement,
 };
 use crate::binder::{Context, WriteKind, bind_write, qualify};
-use crate::error::{Code, Result, SqlState, fail};
+use crate::error::{Code, Result, SqlError, SqlState, fail};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::Params;
 use crate::settings::FUNCTION_CALLS;
@@ -166,12 +166,7 @@ impl Session {
             // [ISO/IEC 9075-2:2023 §19.3 GR1] in no transaction, so begins none.
             SqlStatement::SetRole(role) => return done(self.set_role(role, params)),
             // [ISO/IEC 9075:1992 §15] the SQL-agent's, a client's.
-            SqlStatement::Connection(_) => {
-                return fail(
-                    Code::Unsupported,
-                    "[DESIGN] CONNECT, SET CONNECTION and DISCONNECT are the SQL-agent's: a client runs them, as turborel's does, not a session (RULES.md D46)",
-                );
-            }
+            SqlStatement::Connection(_) => return fail(Code::Unsupported, AGENTS_CONNECTIONS),
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
             SqlStatement::SetTimeZone(v) => return done(self.set_time_zone(st, v.as_ref(), params)),
             SqlStatement::SetSetting { name, value } => return done(self.set_named(st, name, value.as_ref(), params)),
@@ -203,15 +198,16 @@ impl Session {
             | SqlStatement::Dynamic(_)
             | SqlStatement::Execute(_)
             | SqlStatement::Call(_)
-            | SqlStatement::Return(_) => self.ensure_transaction(st),
+            | SqlStatement::Return(_)
+            | SqlStatement::Control(_)
+            | SqlStatement::Signal(_) => self.ensure_transaction(st),
         };
         call.runs(&tx);
         self.may_run(st, stmt)?;
         tx.begin_statement(|| !self.cursors_open())?;
-        // [X3.135-1986 §7.3 GR3b i] a failed statement is undone; if that fails
-        // too, the damage is the error reported, and it names the first one.
         let cx = StatementContext { st, tx: &tx };
-        self.db.noted(self.run_statement(cx, stmt, params, keeping).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e)))
+        let ran = self.run_statement(cx, stmt, params, keeping);
+        self.db.noted(settled(cx, stmt, ran))
     }
 
     /// [X3.135-1986 §8.4, §8.11] The positioned DELETE or UPDATE of
@@ -219,6 +215,22 @@ impl Session {
     /// the cursor its `<cursor name>` names: a dynamic cursor's, of a
     /// statement prepared that names it [ISO/IEC 9075:1992 §17.6 GR2]; of
     /// a prepared statement, bound as it keeps it (`keeping`, RULES.md D45).
+    /// The positioned UPDATE or DELETE `stmt`, run as `positioned` runs it.
+    fn positioned_statement(
+        &self,
+        cx: StatementContext<'_>,
+        stmt: &SqlStatement,
+        by: (&Params, Option<&Keeping<'_>>),
+    ) -> Result<Completion> {
+        if let SqlStatement::UpdatePositioned { table, set, cursor } = stmt {
+            return self.positioned(cx, (table, set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), by);
+        }
+        if let SqlStatement::DeletePositioned { table, cursor } = stmt {
+            return self.positioned(cx, (table, &[]), (WriteKind::DeletePositioned, cursor, Self::delete_positioned), by);
+        }
+        Err(SqlError::new(Code::Api, "[DESIGN] a positioned statement is an UPDATE or a DELETE"))
+    }
+
     fn positioned(
         &self,
         cx: StatementContext<'_>,
@@ -227,7 +239,8 @@ impl Session {
         (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<Completion> {
         let w = self.write_bound(cx.st, params, keeping, |b| bind_write(b, kind, table, set, None))?;
-        let at = (&self.positioned_key(&cursor.0), cursor.1);
+        let local = params.local_cursor(&cursor.0).map(|key| Name::plain(&key));
+        let at = (&local.unwrap_or_else(|| self.positioned_key(&cursor.0)), cursor.1);
         // [ISO/IEC 9075-2:2023 §15.6 GR11b, §15.7 GR17b] the INSTEAD OF
         // trigger of a view the cursor's row is of, in place of the change.
         if let Some(instead) = instead_for(cx.st, &w.bound.named, event_of(kind)) {
@@ -285,22 +298,22 @@ impl Session {
             SqlStatement::DeleteSearched { table, where_clause } => {
                 self.searched(cx, (WriteKind::DeleteSearched, table, &[], where_clause.as_ref()), delete_searched, (&*params, keeping))
             }
-            SqlStatement::UpdatePositioned { table, set, cursor } => {
-                self.positioned(cx, (table, set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), (params, keeping))
-            }
-            SqlStatement::DeletePositioned { table, cursor } => {
-                self.positioned(cx, (table, &[]), (WriteKind::DeletePositioned, cursor, Self::delete_positioned), (params, keeping))
+            SqlStatement::UpdatePositioned { .. } | SqlStatement::DeletePositioned { .. } => {
+                self.positioned_statement(cx, stmt, (params, keeping))
             }
             SqlStatement::Truncate { table, restart } => self.truncate_table(cx, (table, *restart), params),
-            SqlStatement::Open(name) => self.open(cx, &Name::plain(name), params),
-            SqlStatement::Fetch { cursor, orientation, targets } => self.fetch(cx, &Name::plain(cursor), (orientation, targets), params),
-            SqlStatement::Close(name) => self.close(&Name::plain(name)),
+            SqlStatement::Open(name) => self.open(cx, &cursor_named(name, params), params),
+            SqlStatement::Fetch { cursor, orientation, targets } => {
+                self.fetch(cx, &cursor_named(cursor, params), (orientation, targets), params)
+            }
+            SqlStatement::Close(name) => self.close(&cursor_named(name, params)),
             SqlStatement::Dynamic(d) => self.run_dynamic(cx, d, params),
             SqlStatement::Select { query, targets } => self.select_into(cx, query, targets, params),
             SqlStatement::Drop { object, behavior } => self.drop_object(st, tx, object, *behavior),
             SqlStatement::AlterTable { table, action, text } => self.alter_table(st, tx, (table, action, text)),
             SqlStatement::Schema { statement, text } => self.schema_statement(st, tx, statement, text),
             SqlStatement::Call(call) => self.call_statement(cx, call, params),
+            SqlStatement::Control(_) | SqlStatement::Signal(_) => self.control_statement(cx, stmt, params),
             SqlStatement::Return(r) => super::routines::return_statement(r),
             // `execute_parsed` runs these itself, and never here.
             SqlStatement::Commit
@@ -326,6 +339,29 @@ impl Session {
             SqlStatement::GetDiagnostics(get) => self.get_diagnostics(st, get, params),
         }
     }
+}
+
+/// [ISO/IEC 9075:1992 §15] Why a session runs no connection statement.
+const AGENTS_CONNECTIONS: &str = "[DESIGN] CONNECT, SET CONNECTION and DISCONNECT are the SQL-agent's: a client runs them, as turborel's does, not a session (RULES.md D46)";
+
+/// [X3.135-1986 §7.3 GR3b i] `ran`, of `stmt` in `cx`, a failure undone;
+/// if that fails too, the damage is the error reported, and it names the
+/// first one. [ISO/IEC
+/// 9075-2:2023 §4.41.5; ISO/IEC 9075-4:2006 draft §4.10.4] Of a statement
+/// that is not atomic, each statement within is undone alone as it fails,
+/// so what those before it did stays.
+fn settled(cx: StatementContext<'_>, stmt: &SqlStatement, ran: Result<Completion>) -> Result<Completion> {
+    if !super::routines::atomic(stmt) {
+        return ran;
+    }
+    ran.map_err(|e| cx.st.fail_statement(cx.tx, &e).err().unwrap_or(e))
+}
+
+/// [ISO/IEC 9075-4:2006 draft §14.1 SR15] The session's name of the cursor
+/// `name` names where `params` are: of a local cursor of the compound
+/// statement the statement is in, its own.
+fn cursor_named(name: &str, params: &Params) -> Name {
+    params.local_cursor(name).map_or_else(|| Name::plain(name), |key| Name::plain(&key))
 }
 
 /// The trigger event of a change of kind `kind` [ISO/IEC 9075-2:2023
@@ -358,6 +394,8 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         SqlStatement::DeclareTable(t) => Some(&t.name),
         SqlStatement::Dynamic(d) => dynamic::changed_table(d).map(|(table, _)| table),
         SqlStatement::Drop { .. }
+        | SqlStatement::Control(_)
+        | SqlStatement::Signal(_)
         | SqlStatement::Index(_)
         | SqlStatement::Close(_)
         | SqlStatement::Commit
@@ -472,8 +510,10 @@ fn drop_command(object: &DropObject) -> Command {
 /// [ISO/IEC 9075:1992 §18.1 GR1c, Table 22; ISO/IEC 9075-2:2023 §23.1
 /// GR2c, GR2d, Table 39] How COMMAND_FUNCTION and COMMAND_FUNCTION_CODE
 /// name `stmt`.
-fn command_of(stmt: &SqlStatement) -> Command {
+pub(in crate::db) fn command_of(stmt: &SqlStatement) -> Command {
     match stmt {
+        SqlStatement::Control(c) => commands::control(c),
+        SqlStatement::Signal(s) => commands::signal(s.resignal),
         SqlStatement::Close(_) => commands::CLOSE_CURSOR,
         SqlStatement::Schema { statement, .. } => schema_command(statement),
         SqlStatement::Commit => commands::COMMIT_WORK,

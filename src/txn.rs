@@ -90,6 +90,7 @@ mod end;
 mod followed;
 mod locks;
 mod logging;
+mod marks;
 mod owed;
 mod reading;
 mod stop;
@@ -104,6 +105,7 @@ pub use locks::Damage;
 pub(crate) use locks::TableLock;
 use locks::WaitsFor;
 pub(crate) use logging::Held;
+pub(crate) use marks::Mark;
 pub use reading::{ReadMode, Reading};
 pub use stop::Stop;
 use stop::Stops;
@@ -192,6 +194,9 @@ pub(crate) struct TxState {
     logged: bool,
     /// The position of the current statement's first change in the log.
     statement_from: Option<Lsn>,
+    /// Of each mark open within the current statement, innermost last, the
+    /// position of its first change in the log (`marks.rs`).
+    marks_from: Vec<Option<Lsn>>,
     /// Whether it has written a table: one that has not commits at its
     /// snapshot, without validation (`State::commit`).
     wrote: bool,
@@ -519,6 +524,7 @@ impl Txn {
             st.statement_start = st.undo.mark();
             st.statement_savepoints.clear();
             st.statement_from = None;
+            st.clear_marks();
         }
         if self.reading == Reading::Statement && self.open.load(Ordering::Acquire) && fresh() {
             self.snapshot.store(self.shared.clock.moved(self.id, self.snapshot()), Ordering::SeqCst);

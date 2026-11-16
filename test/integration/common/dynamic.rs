@@ -32,8 +32,8 @@ pub fn dynamic_host() -> Params {
 }
 
 /// `sql` run with `p`: its completion, or its error's SQLSTATE.
-pub fn run_with(s: &Session, sql: &str, p: &mut Params) -> Result<Completion, &'static str> {
-    s.execute(sql, p).map_err(|e| e.sqlstate().as_str())
+pub fn run_with(s: &Session, sql: &str, p: &mut Params) -> Result<Completion, String> {
+    s.execute(sql, p).map_err(|e| e.sqlstate().to_string())
 }
 
 /// The SQLCODE `sql`, run with `p`, fails with.

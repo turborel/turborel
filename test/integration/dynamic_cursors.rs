@@ -30,12 +30,12 @@ fn a_dynamic_declared_cursor_17_12() {
     let s = db.session("APP");
     let mut p = dynamic_host();
     s.declare_cursor("DECLARE C SCROLL CURSOR FOR S").unwrap();
-    assert_eq!(run(&s, "OPEN C", &mut p), Err("26000"), "§17.14 GR1");
+    assert_eq!(run(&s, "OPEN C", &mut p), Err("26000".to_owned()), "§17.14 GR1");
     text(&mut p, "DELETE FROM T");
-    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("07005"), "§17.6 GR9b ii");
+    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("07005".to_owned()), "§17.6 GR9b ii");
     text(&mut p, "SELECT ID, NAME FROM T WHERE ID >= ? ORDER BY ID");
     run(&s, "PREPARE S FROM TEXT", &mut p).unwrap();
-    assert_eq!(run(&s, "OPEN C", &mut p), Err("07004"), "§17.14 GR3");
+    assert_eq!(run(&s, "OPEN C", &mut p), Err("07004".to_owned()), "§17.14 GR3");
     assert_eq!(run(&s, "OPEN C USING K", &mut p), Ok(Completion::Success));
     assert_eq!(diagnostic(&s, "COMMAND_FUNCTION"), "DYNAMIC OPEN");
     assert_eq!(run(&s, "FETCH C INTO N, NM INDICATOR NI", &mut p), Ok(Completion::Success));
@@ -66,14 +66,14 @@ fn an_allocated_cursor_17_13() {
     let mut p = dynamic_host();
     p.set("SN", Value::Char("Q".to_owned()));
     p.set("CN", Value::Char("CUR".to_owned()));
-    assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR SN", &mut p), Err("26000"), "GR1");
+    assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR SN", &mut p), Err("26000".to_owned()), "GR1");
     text(&mut p, "SELECT ID, AMT FROM T WHERE ID < ? FOR UPDATE OF AMT");
     run(&s, "PREPARE SN FROM TEXT", &mut p).unwrap();
-    assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR GLOBAL SN", &mut p), Err("26000"), "GR1: LOCAL Q, not GLOBAL");
+    assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR GLOBAL SN", &mut p), Err("26000".to_owned()), "GR1: LOCAL Q, not GLOBAL");
     assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR LOCAL SN", &mut p), Ok(Completion::Success));
     assert_eq!(diagnostic(&s, "COMMAND_FUNCTION"), "ALLOCATE CURSOR");
-    assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR SN", &mut p), Err("34000"), "GR5");
-    assert_eq!(run(&s, "OPEN GLOBAL CN USING K", &mut p), Err("34000"), "§17.14 GR2");
+    assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR SN", &mut p), Err("34000".to_owned()), "GR5");
+    assert_eq!(run(&s, "OPEN GLOBAL CN USING K", &mut p), Err("34000".to_owned()), "§17.14 GR2");
     p.set("K", number(3));
     assert_eq!(run(&s, "OPEN CN USING K", &mut p), Ok(Completion::Success));
     assert_eq!(run(&s, "FETCH CN INTO ID, N", &mut p), Ok(Completion::Success));
@@ -84,14 +84,14 @@ fn an_allocated_cursor_17_13() {
     assert_eq!(diagnostic(&s, "COMMAND_FUNCTION"), "DYNAMIC DELETE CURSOR");
     assert_eq!(run(&s, "CLOSE CN", &mut p), Ok(Completion::Success));
     assert_eq!(diagnostic(&s, "COMMAND_FUNCTION"), "DYNAMIC CLOSE");
-    assert_eq!(run(&s, "CLOSE CN", &mut p), Err("24000"));
+    assert_eq!(run(&s, "CLOSE CN", &mut p), Err("24000".to_owned()));
     assert_eq!(rows(&s, "SELECT ID, AMT FROM T ORDER BY ID").unwrap(), ["1,99.00", "3,NULL"]);
     text(&mut p, "DELETE FROM T");
     run(&s, "PREPARE GLOBAL SN FROM TEXT", &mut p).unwrap();
     p.set("CN", Value::Char("OTHER".to_owned()));
-    assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR GLOBAL SN", &mut p), Err("07005"), "GR2");
+    assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR GLOBAL SN", &mut p), Err("07005".to_owned()), "GR2");
     p.set("CN", Value::Char("NOT ONE".to_owned()));
-    assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR SN", &mut p), Err("34000"), "GR4");
+    assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR SN", &mut p), Err("34000".to_owned()), "GR4");
     assert_eq!(code(&s, "ALLOCATE 'C' CURSOR FOR SN", &mut p), Code::SyntaxRule, "§5.4 SR13");
 }
 
@@ -112,11 +112,11 @@ fn deallocate_prepare_destroys_its_cursors_17_7() {
     text(&mut p, "DELETE FROM T WHERE CURRENT OF CUR");
     run(&s, "PREPARE D FROM TEXT", &mut p).unwrap();
     run(&s, "OPEN CN", &mut p).unwrap();
-    assert_eq!(run(&s, "DEALLOCATE PREPARE SN", &mut p), Err("24000"), "GR2");
+    assert_eq!(run(&s, "DEALLOCATE PREPARE SN", &mut p), Err("24000".to_owned()), "GR2");
     run(&s, "CLOSE CN", &mut p).unwrap();
     assert_eq!(run(&s, "DEALLOCATE PREPARE SN", &mut p), Ok(Completion::Success));
-    assert_eq!(run(&s, "OPEN CN", &mut p), Err("34000"), "GR3: the cursor destroyed");
-    assert_eq!(run(&s, "EXECUTE D", &mut p), Err("26000"), "GR3: so too D, of it");
+    assert_eq!(run(&s, "OPEN CN", &mut p), Err("34000".to_owned()), "GR3: the cursor destroyed");
+    assert_eq!(run(&s, "EXECUTE D", &mut p), Err("26000".to_owned()), "GR3: so too D, of it");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR2, §17.19 SR1, §17.20
@@ -131,7 +131,7 @@ fn positioned_statements_prepared_17_19_17_20() {
     let s = db.session("APP");
     let mut p = dynamic_host();
     text(&mut p, "DELETE WHERE CURRENT OF CUR");
-    assert_eq!(run(&s, "PREPARE D FROM TEXT", &mut p), Err("34000"), "GR2b");
+    assert_eq!(run(&s, "PREPARE D FROM TEXT", &mut p), Err("34000".to_owned()), "GR2b");
     s.declare_cursor("DECLARE CUR CURSOR FOR S").unwrap();
     text(&mut p, "SELECT ID, AMT FROM T WHERE ID > 1");
     run(&s, "PREPARE S FROM TEXT", &mut p).unwrap();
@@ -155,10 +155,10 @@ fn positioned_statements_prepared_17_19_17_20() {
     run(&s, "PREPARE SN FROM TEXT", &mut p).unwrap();
     run(&s, "ALLOCATE GLOBAL CN CURSOR FOR SN", &mut p).unwrap();
     text(&mut p, "DELETE WHERE CURRENT OF CUR");
-    assert_eq!(run(&s, "PREPARE D FROM TEXT", &mut p), Err("3C000"), "GR2a");
+    assert_eq!(run(&s, "PREPARE D FROM TEXT", &mut p), Err("3C000".to_owned()), "GR2a");
     s.declare_cursor("DECLARE R CURSOR FOR SELECT ID FROM T UNION SELECT ID FROM U").unwrap();
     text(&mut p, "DELETE WHERE CURRENT OF R");
-    assert_eq!(run(&s, "PREPARE D FROM TEXT", &mut p), Err("37000"), "§17.19 SR2: no table");
+    assert_eq!(run(&s, "PREPARE D FROM TEXT", &mut p), Err("37000".to_owned()), "§17.19 SR2: no table");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.17, §17.18, §17.16, §13.6
@@ -172,7 +172,7 @@ fn extended_cursor_names_refused_17_17_17_18() {
     let mut p = dynamic_host();
     p.set("CN", Value::Char("CUR".to_owned()));
     for refused in ["DELETE FROM T WHERE CURRENT OF CN", "UPDATE T SET AMT = 1 WHERE CURRENT OF CN", "CLOSE CN", "FETCH CN INTO ID"] {
-        assert_eq!(run(&s, refused, &mut p), Err("34000"), "{refused}");
+        assert_eq!(run(&s, refused, &mut p), Err("34000".to_owned()), "{refused}");
     }
     s.rollback().unwrap();
     run(&s, "SET TRANSACTION READ ONLY", &mut p).unwrap();
@@ -199,9 +199,9 @@ fn positioned_statements_of_open_cursors_17_19() {
     run(&s, "PREPARE P FROM TEXT", &mut p).unwrap();
     assert_eq!(run(&s, "EXECUTE P", &mut p), Ok(Completion::Success));
     assert_eq!(rows(&s, "SELECT AMT FROM T WHERE ID = 2").unwrap(), ["5.00"]);
-    assert_eq!(run(&s, "EXECUTE P INTO N", &mut p), Err("07002"), "§17.9 GR6a: of degree 0");
+    assert_eq!(run(&s, "EXECUTE P INTO N", &mut p), Err("07002".to_owned()), "§17.9 GR6a: of degree 0");
     assert_eq!(s.prepare("DELETE WHERE CURRENT OF U MORE").map_err(|e| e.code).err(), Some(Code::SyntaxRule));
     s.declare_cursor("DECLARE V CURSOR FOR NOT_YET").unwrap();
     text(&mut p, "DELETE WHERE CURRENT OF V");
-    assert_eq!(run(&s, "PREPARE Q FROM TEXT", &mut p), Err("26000"));
+    assert_eq!(run(&s, "PREPARE Q FROM TEXT", &mut p), Err("26000".to_owned()));
 }

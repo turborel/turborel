@@ -105,7 +105,7 @@ fn filters_collations_nested_and_nulls_10_9() {
     against(&a, (&format!("COUNT(DISTINCT VALUE_OF(V AT FRAME_ROW)) OVER ({moving})"), "W2.V"), near);
     against(&a, (&format!("COUNT(DISTINCT V + 0 * ROW_NUMBER(CURRENT_ROW)) OVER ({moving})"), "W2.V"), near);
     sorted(&a, &format!("SELECT COUNT(DISTINCT V) OVER ({moving}) FROM W"));
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "a null left out");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"), "a null left out");
     sorted(&a, &format!("SELECT COUNT(DISTINCT S) OVER ({moving}) FROM W"));
     assert_eq!(a.warning(), None, "no null left out");
     sorted(&a, &format!("SELECT COUNT(DISTINCT S) FILTER (WHERE I > 3) OVER ({moving}) FROM W"));

@@ -12,12 +12,19 @@
 //! local scope first [§6.6 SR4]. Each reference is an outer reference
 //! of the body's subquery, whose outer expression is the parameter's
 //! column of that row.
+//!
+//! A body that is a compound statement, or another SQL control statement,
+//! is bound as a program (`binder/psm.rs`) whose frame's first slots are
+//! the parameters' values, its CALLs bound with it, each procedure's body a
+//! program of its own bound as the owner of the procedure's schema binds
+//! it [ISO/IEC 9075-4:2006 draft §11.2].
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use super::super::from::FromItem;
+use super::super::psm::{Frame, bind_program};
 use super::super::subquery::Use;
 use super::super::views::Source;
 use super::super::{Binder, Context, Invoked, Purpose, Scope, assignable, rule};
@@ -26,8 +33,8 @@ use crate::ast::{
 };
 use crate::catalog::{ColumnDesc, DataAccess, Principal, QualifiedName, SqlRoutineDesc, TableDesc, Who, owner_of};
 use crate::error::{Code, Result, SqlError};
-use crate::logical::{LogicalPlan, Subquery};
-use crate::params::Params;
+use crate::logical::{LogicalPlan, Program, Subquery};
+use crate::params::{Params, RoutineScope};
 use crate::parser::{MAX_NESTING_DEPTH, Parser};
 use crate::value::DataType;
 use crate::value::precedence::in_precedence_list;
@@ -42,6 +49,9 @@ pub struct FunctionBody {
     /// body that is no `<return statement>`, which returns no value
     /// [§9.18 GR8b ix].
     pub body: Option<Arc<Subquery>>,
+    /// [ISO/IEC 9075-4:2006 draft §11.2] Of a body that is an SQL control
+    /// statement, its program.
+    pub(crate) program: Option<Arc<Program>>,
     /// What the body possibly does: reads SQL-data if it reads a table or
     /// invokes a routine that possibly reads SQL-data; modifies it if it
     /// invokes one that possibly modifies it; else neither.
@@ -94,13 +104,72 @@ pub(super) fn chain_of(invoked: Option<&Invoked>) -> Vec<QualifiedName> {
 pub(super) fn bind_body(
     cx: Context<'_>,
     (desc, definition): (&SqlRoutineDesc, &RoutineDefinition),
-    mut chain: Vec<QualifiedName>,
+    chain: Vec<QualifiedName>,
 ) -> Result<(FunctionBody, Vec<QualifiedName>)> {
+    let ((body, program), invoked) = within_body(cx, desc, chain, |body_cx| {
+        let stmt = &*definition.body;
+        if let (SqlStatement::Return(r), false) = (stmt, desc.access == DataAccess::Modifies) {
+            return Ok((Some(returned(body_cx, (desc, definition), r)?), None));
+        }
+        // One that possibly modifies SQL-data is run by the session, its
+        // RETURN a program's (`exec/invoked.rs`).
+        if matches!(stmt, SqlStatement::Control(_) | SqlStatement::Signal(_) | SqlStatement::Return(_)) {
+            return Ok((None, Some(Arc::new(bind_program(body_cx, stmt, inline_frame(desc))?))));
+        }
+        // [§9.18 GR8b ix] any other statement returns no value: raised as
+        // the function is invoked, not as it is defined.
+        Ok((None, None))
+    })?;
+    let access = access_of(cx, (body.as_deref(), program.as_deref()), &invoked);
+    Ok((FunctionBody { body, program, access }, invoked))
+}
+
+/// [ISO/IEC 9075-2:2023 §16.1, §9.18] The body of the procedure `desc`,
+/// which a CALL in the body of a function invokes, bound as a program in
+/// `cx`, the body's, as the owner of its schema binds it; the routines it
+/// invokes noted where `cx` notes them.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it invokes itself through the bodies it invokes; its
+/// own, bound.
+pub(crate) fn bind_procedure_program(cx: Context<'_>, desc: &SqlRoutineDesc) -> Result<Arc<Program>> {
+    let definition = routine_definition(&desc.text)?;
+    let (program, invoked) =
+        within_body(cx, desc, chain_of(cx.invoked), |body_cx| bind_program(body_cx, &definition.body, inline_frame(desc)))?;
+    if let Some(i) = cx.invoked {
+        i.borrow_mut().extend(invoked);
+    }
+    Ok(Arc::new(program))
+}
+
+/// [ISO/IEC 9075-4:2006 draft §11.2] What the body of `desc`, an SQL control
+/// statement, is bound over: its parameters, its CALLs bound with it.
+fn inline_frame(desc: &SqlRoutineDesc) -> Frame {
+    let scope = RoutineScope {
+        name: desc.name.clone(),
+        parameters: desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone(), p.mode)).collect(),
+        horizon: desc.horizon.clone(),
+        variables: Vec::new(),
+        cursors: Vec::new(),
+    };
+    Frame { base: desc.parameters.len(), scope: Arc::new(scope), transitions: None, returns: desc.returns.clone(), inline: true }
+}
+
+/// `f` of the context the body of `desc` is bound in, within the bodies of
+/// the routines of `chain`, as the owner of its schema binds it; with the
+/// specific names of the routines the body invokes.
+fn within_body<T>(
+    cx: Context<'_>,
+    desc: &SqlRoutineDesc,
+    mut chain: Vec<QualifiedName>,
+    f: impl FnOnce(Context<'_>) -> Result<T>,
+) -> Result<(T, Vec<QualifiedName>)> {
     if chain.contains(&desc.specific) {
-        return Err(rule(format!("[DESIGN] function {} invokes itself, through the functions its body invokes", desc.name)));
+        return Err(rule(format!("[DESIGN] routine {} invokes itself, through the routines its body invokes", desc.name)));
     }
     if chain.len() >= MAX_NESTING_DEPTH {
-        let msg = format!("[DESIGN] the bodies of functions invoking functions nest at most {MAX_NESTING_DEPTH} deep");
+        let msg = format!("[DESIGN] the bodies of routines invoking routines nest at most {MAX_NESTING_DEPTH} deep");
         return Err(SqlError::new(Code::Unsupported, msg));
     }
     chain.push(desc.specific.clone());
@@ -129,12 +198,9 @@ pub(super) fn bind_body(
         invoked: Some(&noted),
         ..cx
     };
-    // [§9.18 GR8b ix] any other statement returns no value: raised as the
-    // function is invoked, not as it is defined.
-    let body = if let SqlStatement::Return(r) = &*definition.body { Some(returned(body_cx, (desc, definition), r)?) } else { None };
+    let done = f(body_cx)?;
     let invoked = noted.into_inner().split_off(depth.saturating_add(1));
-    let access = access_of(cx, body.as_deref(), &invoked);
-    Ok((FunctionBody { body, access }, invoked))
+    Ok((done, invoked))
 }
 
 /// [ISO/IEC 9075-2:2023 §16.2] The value of the `<return statement>` `r`
@@ -200,18 +266,32 @@ fn parameters_item(desc: &SqlRoutineDesc) -> FromItem {
     FromItem { correlation: Some(desc.name.ident.clone()), ..FromItem::alone(name, 0, (table, source)) }
 }
 
-/// [ISO/IEC 9075-2:2023 §4.35.2] What a body of value `body`, invoking the
-/// routines `invoked`, possibly does with SQL-data, of the database of
-/// `cx`.
-fn access_of(cx: Context<'_>, body: Option<&Subquery>, invoked: &[QualifiedName]) -> DataAccess {
+/// [ISO/IEC 9075-2:2023 §4.35.2] What a body of value `body`, or of the
+/// program `program`, invoking the routines `invoked`, possibly does with
+/// SQL-data, of the database of `cx`.
+fn access_of(cx: Context<'_>, (body, program): (Option<&Subquery>, Option<&Program>), invoked: &[QualifiedName]) -> DataAccess {
     let accesses: Vec<DataAccess> = invoked.iter().filter_map(|s| cx.db.catalog.routine(s)).map(|r| r.access).collect();
-    if accesses.contains(&DataAccess::Modifies) {
+    if accesses.contains(&DataAccess::Modifies) || program.is_some_and(|p| p.contained().iter().any(|c| modifies(&c.statement))) {
         return DataAccess::Modifies;
     }
-    if accesses.contains(&DataAccess::Reads) || body.is_some_and(|b| reads(&b.plan)) {
+    let leaves_read = program.is_some_and(|p| p.all_leaves().iter().any(|l| reads(&l.query.plan)));
+    if accesses.contains(&DataAccess::Reads) || body.is_some_and(|b| reads(&b.plan)) || leaves_read {
         return DataAccess::Reads;
     }
     DataAccess::Contains
+}
+
+/// Whether the statement `s` of a program changes SQL-data.
+fn modifies(s: &SqlStatement) -> bool {
+    matches!(
+        s,
+        SqlStatement::Insert(_)
+            | SqlStatement::Merge(_)
+            | SqlStatement::UpdateSearched { .. }
+            | SqlStatement::DeleteSearched { .. }
+            | SqlStatement::UpdatePositioned { .. }
+            | SqlStatement::DeletePositioned { .. }
+    )
 }
 
 /// Whether `plan` reads a base table or a system table, at any node or

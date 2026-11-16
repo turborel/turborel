@@ -69,8 +69,8 @@ fn a_row_of_every_type_into_a_descriptor_17_9() {
     assert_eq!(field(&s, 11, "RETURNED_OCTET_LENGTH", "N", &mut p), "4");
     assert_eq!(field(&s, 19, "PRECISION", "N", &mut p), "3");
     assert_eq!(field(&s, 20, "DATETIME_INTERVAL_CODE", "N", &mut p), "3");
-    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 4 NU = DATA", &mut p), Err("22005"), "DECIMAL(4) to NUMERIC(5,2)");
-    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 9 FL = DATA", &mut p), Err("22005"), "DOUBLE PRECISION to FLOAT");
+    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 4 NU = DATA", &mut p), Err("22005".to_owned()), "DECIMAL(4) to NUMERIC(5,2)");
+    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 9 FL = DATA", &mut p), Err("22005".to_owned()), "DOUBLE PRECISION to FLOAT");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.1 SR3, §17.9 GR5b iii,
@@ -89,7 +89,7 @@ fn what_makes_an_item_valid_17_1() {
     run(&s, "ALLOCATE DESCRIPTOR 'D' WITH MAX 2", &mut p).unwrap();
     run(&s, "DESCRIBE INPUT S USING SQL DESCRIPTOR 'D'", &mut p).unwrap();
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 CHARACTER_SET_NAME = 'LATIN1'", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE S INTO N USING SQL DESCRIPTOR 'D'", &mut p), Err("07001"));
+    assert_eq!(run(&s, "EXECUTE S INTO N USING SQL DESCRIPTOR 'D'", &mut p), Err("07001".to_owned()));
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 TYPE = 4, DATETIME_INTERVAL_CODE = 3", &mut p).unwrap();
     assert_eq!(field(&s, 1, "PRECISION", "N", &mut p), "0", "GR5f: nothing with it");
     text(&mut p, "SELECT CAST(NAME AS VARCHAR(6)) FROM T WHERE ID = 2");
@@ -99,7 +99,7 @@ fn what_makes_an_item_valid_17_1() {
     run(&s, "EXECUTE V INTO SQL DESCRIPTOR 'D'", &mut p).unwrap();
     assert_eq!(field(&s, 1, "RETURNED_LENGTH", "N", &mut p), "6", "GR7g ii 2: SV's length");
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 TYPE = 99", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE V INTO SQL DESCRIPTOR 'D'", &mut p), Err("07002"), "no type of Table 18");
+    assert_eq!(run(&s, "EXECUTE V INTO SQL DESCRIPTOR 'D'", &mut p), Err("07002".to_owned()), "no type of Table 18");
 }
 
 /// Verifies: [EXTENSION] RULES.md D53, D58 [ISO/IEC 9075:1992 §17.1 Table
@@ -122,7 +122,7 @@ fn a_plug_in_type_described_17_1() {
     assert_eq!(run(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D'", &mut p), Ok(Completion::Success));
     assert_eq!(field(&s, 1, "INDICATOR", "N", &mut p), "0");
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 TYPE = -1", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D'", &mut p), Err("07002"));
+    assert_eq!(run(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D'", &mut p), Err("07002".to_owned()));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4 SR14-SR16, §6.2] an

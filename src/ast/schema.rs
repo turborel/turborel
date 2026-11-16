@@ -17,7 +17,7 @@ use crate::value::collation::Pad;
 ///   | `<grant statement>` | `<assertion definition>` | `<collation definition>`
 ///   | `<sequence generator definition>`; a character set
 ///   or translation definition is read, then refused.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Schema {
     /// The `<catalog name>` of its `<schema name>`, if written.
     pub catalog: Option<String>,
@@ -60,7 +60,7 @@ pub struct Schema {
 /// [§11.19], a `<grant statement>` [§11.36], a `<revoke statement>`
 /// [§11.37], a `<domain definition>` [§11.21], an `<alter domain
 /// statement>` [§11.22] or an `<assertion definition>` [§11.34].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SchemaStatement {
     /// A `<table definition>`.
     Table(TableDefinition),
@@ -96,7 +96,7 @@ pub enum SchemaStatement {
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION
 /// `<collation name>` FOR `<character set specification>` FROM `<existing
 /// collation name>` \[`<pad characteristic>`\]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CollationDefinition {
     /// The `<collation name>`.
     pub name: TableName,
@@ -109,7 +109,7 @@ pub struct CollationDefinition {
 /// [ISO/IEC 9075:1992 §11.34] `<assertion definition>` ::= CREATE ASSERTION
 /// `<constraint name>` CHECK ( `<search condition>` ) \[`<constraint
 /// attributes>`\]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AssertionDefinition {
     /// The `<constraint name>`.
     pub name: TableName,
@@ -123,7 +123,7 @@ pub struct AssertionDefinition {
 /// `<domain name>` \[AS\] `<data type>` \[`<default clause>`\] \[`<domain
 /// constraint>`...\]; \[EXTENSION\] or of a type beyond the standard
 /// (RULES.md D53).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DomainDefinition {
     /// The `<domain name>`.
     pub name: TableName,
@@ -141,7 +141,7 @@ pub struct DomainDefinition {
 
 /// [ISO/IEC 9075:1992 §11.22] `<alter domain statement>` ::= ALTER DOMAIN
 /// `<domain name>` `<alter domain action>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AlterDomain {
     /// The `<domain name>`.
     pub name: TableName,
@@ -150,7 +150,7 @@ pub struct AlterDomain {
 }
 
 /// [ISO/IEC 9075:1992 §11.22–§11.26] `<alter domain action>`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AlterDomainAction {
     /// SET `<default clause>` [§11.23].
     SetDefault(DefaultOption),
@@ -196,7 +196,7 @@ pub enum TypeName {
 /// [X3.135-1986 §6.5; ISO/IEC 9075:1992 §11.19] `<view definition>` ::=
 /// CREATE VIEW `<table name>` \[(`<view column list>`)\] AS `<query
 /// expression>` \[WITH \[`<levels clause>`\] CHECK OPTION\]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ViewDefinition {
     /// The `<table name>`.
     pub name: TableName,
@@ -230,7 +230,7 @@ pub enum CheckLevels {
 ///
 /// [ISO/IEC 9075-2:2023 §11.3] Its `<table contents source>`, a `<table
 /// element list>` or an `<as subquery clause>`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TableDefinition {
     /// The `<table name>`.
     pub name: TableName,
@@ -250,7 +250,7 @@ pub struct TableDefinition {
 /// `<table options>`\], after a `<table definition>`'s elements (RULES.md
 /// D41); `<table options>` ::= ( `<table option>` \[{, `<table
 /// option>`}...\] )
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TableStorage {
     /// The `<engine name>`, an `<identifier>`, and where it begins.
     pub engine: Option<(String, usize)>,
@@ -260,7 +260,7 @@ pub struct TableStorage {
 
 /// \[EXTENSION\] `<table option>` ::= `<option name>` = {`<literal>` |
 /// `<identifier>` | DEFAULT}, its name `<identifier>`s joined by periods.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TableOptionValue {
     /// The `<option name>`, its parts joined by periods.
     pub name: String,
@@ -271,7 +271,7 @@ pub struct TableOptionValue {
 }
 
 /// \[EXTENSION\] The value of a `<table option>`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum OptionValue {
     /// A `<literal>`.
     Literal(Literal),
@@ -282,7 +282,7 @@ pub enum OptionValue {
 /// [X3.135-1986 §6.2] `<table element>` ::= `<column definition>` |
 /// `<table constraint definition>` [ISO/IEC 9075:1992 §11.3] | `<like
 /// clause>` [ISO/IEC 9075-2:2023 §11.3]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TableElement {
     /// A `<column definition>`.
     Column(ColumnDefinition),
@@ -300,7 +300,7 @@ pub enum TableElement {
 /// `<identity column specification>` or a `<generation clause>` in place
 /// of the `<default clause>`, and no type with a `<generation clause>`
 /// [ISO/IEC 9075-2:2023 §11.4].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ColumnDefinition {
     /// The `<column name>`.
     pub name: String,
@@ -346,7 +346,7 @@ pub enum DefaultOption {
 ///
 /// `<column constraint>` ::= NOT NULL | `<unique specification>` |
 /// `<references specification>` | `<check constraint definition>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ColumnConstraint {
     /// The `<constraint name>`, if written [§10.6].
     pub name: Option<TableName>,
@@ -369,7 +369,7 @@ pub struct ConstraintAttributes {
 }
 
 /// [ISO/IEC 9075:1992 §11.4] `<column constraint>`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ColumnConstraintKind {
     /// NOT NULL.
     NotNull,
@@ -387,7 +387,7 @@ pub enum ColumnConstraintKind {
 /// [ISO/IEC 9075:1992 §11.6] `<table constraint definition>` ::=
 /// \[`<constraint name definition>`\] `<table constraint>`
 /// \[`<constraint attributes>`\]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TableConstraint {
     /// The `<constraint name>`, if written [§10.6].
     pub name: Option<TableName>,
@@ -408,7 +408,7 @@ pub const IMPLICIT_NULLS_DISTINCT: bool = true;
 /// [ISO/IEC 9075:1992 §11.6] `<table constraint>` ::= `<unique constraint
 /// definition>` | `<referential constraint definition>` | `<check
 /// constraint definition>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TableConstraintKind {
     /// [§11.7] `<unique specification>` \[`<unique null treatment>`\]
     /// (`<unique column list>`): UNIQUE, or PRIMARY KEY if `primary`.
@@ -479,7 +479,7 @@ pub enum ReferentialAction {
 
 /// [ISO/IEC 9075:1992 §11.9] `<check constraint definition>` ::= CHECK
 /// (`<search condition>`)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Check {
     /// The `<search condition>`.
     pub condition: SearchCondition,

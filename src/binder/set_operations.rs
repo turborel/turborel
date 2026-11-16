@@ -64,7 +64,11 @@ pub fn bind_insert_query(cx: Context<'_>, query: &QueryExpression, columns: &[Ob
     // So do those of one with its ORDER BY, OFFSET or FETCH FIRST, which
     // it still constitutes [§7.17].
     let draws = matches!(query.unordered(), QueryExpression::Values(_) | QueryExpression::Spec(_));
-    let bound = bind_query_expression(Context { draws, ..cx }, query, &Nesting::Source { columns })?;
+    // [§15.11 SR1, §7.17 SR25] its VALUES, a <contextually typed table
+    // value constructor>, and no <query expression>, may invoke a function
+    // that possibly modifies SQL-data.
+    let hosts = matches!(query, QueryExpression::Values(_));
+    let bound = bind_query_expression(Context { draws, hosts, ..cx }, query, &Nesting::Source { columns })?;
     // A time or timestamp without time zone, of the session's displacement
     // as a column WITH TIME ZONE takes it [§6.1 GR5].
     let wanted = columns.len() == bound.columns.len()
@@ -101,7 +105,7 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
     let taken = binder.dynamic_types(rows, objects)?;
     let mut bound: Vec<BoundRow> = Vec::new();
     for row in rows {
-        let elements = binder.values_row(row, (objects, &taken), INSERT_RULE).or_at(row.at)?;
+        let elements = binder.hosting(cx.hosts, || binder.values_row(row, (objects, &taken), INSERT_RULE)).or_at(row.at)?;
         if let Some(first) = bound.first().filter(|first| first.len() != elements.len()) {
             let (n, m) = (first.len(), elements.len());
             return Err(rule(format!(

@@ -156,6 +156,9 @@ impl Session {
             // modifies SQL-data is refused in a read-only transaction as
             // the statements of its body are.
             | SqlStatement::Call(_)
+            // Each statement within is checked as it runs.
+            | SqlStatement::Control(_)
+            | SqlStatement::Signal(_)
             | SqlStatement::DeclareTable(_) => (false, ""),
             SqlStatement::Dynamic(d) => super::dynamic::changed_table(d).map_or((false, ""), |(table, rule)| (!temporary(table), rule)),
         };

@@ -136,7 +136,7 @@ fn nulls_empty_groups_and_fractions_10_9() {
     let nulls = "SELECT PERCENTILE_CONT(CAST(NULL AS INTEGER)) WITHIN GROUP (ORDER BY V), PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY V) \
                  FROM T WHERE V IS NULL";
     assert_eq!(sorted(&a, nulls), ["NULL,NULL"]);
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "nulls eliminated");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"), "nulls eliminated");
     sorted(&a, "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY V) FROM T WHERE V IS NOT NULL");
     assert_eq!(a.warning(), None, "no null eliminated");
     let empty = "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY V), PERCENTILE_DISC(1) WITHIN GROUP (ORDER BY V) FROM T WHERE 1 = 0";
@@ -198,7 +198,7 @@ fn over_a_partition_10_9() {
     let grouped = "SELECT I, P, Q FROM T JOIN (SELECT G, PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY V DESC), \
                    PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY V) FILTER (WHERE V > 1) FROM T GROUP BY G) AS S (H, P, Q) ON G = H";
     assert_eq!(sorted(&a, windowed), sorted(&a, grouped));
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "a null eliminated");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"), "a null eliminated");
     let descending = "SELECT DISTINCT G, PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY V DESC) OVER (PARTITION BY G) FROM T";
     assert_eq!(sorted(&a, descending), ["1,4E0", "2,6E0", "3,NULL", "4,3E0"]);
     let each = "SELECT I, P, Q FROM (SELECT I, PERCENTILE_DISC(I / 16.0) WITHIN GROUP (ORDER BY V) OVER (), \

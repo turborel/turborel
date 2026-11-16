@@ -214,7 +214,7 @@ impl Parser {
     /// a `<value expression>`. A `<row subquery>` is read as a `<scalar
     /// subquery>`, a row of the subquery's degree (`binder/predicates.rs`).
     /// NULL and DEFAULT are elements only of an INSERT's VALUES [SR1].
-    fn row_value(&mut self) -> Result<RowValue> {
+    pub(super) fn row_value(&mut self) -> Result<RowValue> {
         let start = self.pos;
         if let Some(list) = self.row_list()? {
             return Ok(list);

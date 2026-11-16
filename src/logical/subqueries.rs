@@ -21,6 +21,11 @@ fn expr_subqueries<'e>(e: &'e Expr, out: &mut Vec<&'e Subquery>, bodies: bool) {
             if let (true, Some(body)) = (bodies, &i.body) {
                 out.push(body);
             }
+            // [ISO/IEC 9075-4:2006 draft §11.2] a program's leaves, its
+            // cursors' and its called procedures' among them.
+            if let (true, Some(program)) = (bodies, &i.program) {
+                out.extend(program.all_leaves().into_iter().map(|l| &*l.query));
+            }
         }
         Expr::Column(_)
         | Expr::Const(_)

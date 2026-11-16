@@ -27,6 +27,7 @@ mod join;
 mod limit;
 mod partition;
 mod pattern;
+mod program;
 mod recursive;
 mod scan;
 mod set;
@@ -62,6 +63,7 @@ pub use transition::TransitionRows;
 pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State, tx: TxId) -> RowIter {
     sort::sort(keys, rows, db, tx)
 }
+pub(crate) use program::{Ended, Host, rows, run_program};
 pub use subquery::{DEFAULT_DECORRELATE_AFTER, Drawn, NoSubqueries, Runner, Subqueries, SubqueryRows};
 
 /// The rows a plan produces, each read or computed when it is pulled. The

@@ -55,6 +55,18 @@ pub enum ParameterMode {
     InOut,
 }
 
+impl ParameterMode {
+    /// Its key word, as PARAMETER_MODE [§23.1 GR4q] and the Information
+    /// Schema show it.
+    pub const fn name(self) -> &'static str {
+        match self {
+            ParameterMode::In => "IN",
+            ParameterMode::Out => "OUT",
+            ParameterMode::InOut => "INOUT",
+        }
+    }
+}
+
 /// [ISO/IEC 9075-2:2023 §11.60] `<SQL parameter declaration>` ::=
 /// \[`<parameter mode>`\] `<SQL parameter name>` `<parameter type>`
 #[derive(Debug, Clone)]
@@ -87,7 +99,7 @@ pub enum DataAccess {
 /// CREATE {PROCEDURE | FUNCTION} `<schema qualified routine name>` (
 /// \[`<SQL parameter declaration>` \[{, ...}...\]\] ) \[RETURNS `<data
 /// type>`\] `<routine characteristics>` `<SQL procedure statement>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoutineDefinition {
     /// FUNCTION or PROCEDURE.
     pub kind: RoutineKind,

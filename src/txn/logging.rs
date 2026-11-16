@@ -209,6 +209,7 @@ impl Txn {
         }
         st.logged = true;
         st.statement_from.get_or_insert(lsn);
+        st.logged_at(lsn);
         self.shared.logged.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }

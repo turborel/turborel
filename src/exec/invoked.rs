@@ -7,13 +7,17 @@
 //! a null returns null, its body not executed [GR8a]. Else the body, a
 //! subquery of the row of the parameters' values, gives the value of its
 //! `<return statement>` [GR8b ix 2, §16.2 GR1], which is assigned to the
-//! result type [GR10a iii]. A body that is no `<return statement>` would
-//! execute none: SQLSTATE 2F005 [GR8b ix 1], raised without executing it,
-//! since the exception undoes all it would have done.
+//! result type [GR10a iii]. A body that is an SQL control statement is a
+//! program run over a frame of the parameters' values (`exec/program.rs`):
+//! one ending with no RETURN executed raises SQLSTATE 2F005. Another body
+//! that is no `<return statement>` would execute none: SQLSTATE 2F005
+//! [GR8b ix 1], raised without executing it, since the exception undoes
+//! all it would have done.
 
-use super::{Subqueries, eval};
+use super::{Subqueries, broken, eval};
+use crate::db::run_unhosted;
 use crate::error::{Code, Result, SqlError, SqlState, Subject};
-use crate::logical::{Expr, Invocation, LogicalPlan, Subquery, bound_expr};
+use crate::logical::{Expr, Invocation, LogicalPlan, Program, Subquery, bound_expr};
 use crate::storage::Row;
 use crate::value::{Value, assign};
 
@@ -35,6 +39,9 @@ pub(super) fn invoke(i: &Invocation, row: &Row, subqueries: &dyn Subqueries) -> 
     if i.null_call && values.iter().any(Value::is_null) {
         return Ok(Value::Null);
     }
+    if let Some(program) = &i.program {
+        return programmed(i, program, values, subqueries);
+    }
     let Some(body) = &i.body else { return Err(no_return(i)) };
     let outer = body.outer.iter().map(|e| eval(e, &values, subqueries)).collect::<Result<Vec<Value>>>()?;
     let returned = match single_value(body) {
@@ -42,6 +49,24 @@ pub(super) fn invoke(i: &Invocation, row: &Row, subqueries: &dyn Subqueries) -> 
         None => subqueries.rows(body, &outer, Some(1))?.first(1)?.into_iter().next().and_then(|r| r.into_iter().next()),
     };
     assign(returned.unwrap_or(Value::Null), &i.result, "ISO/IEC 9075-2:2023 §9.18 GR10a iii")
+}
+
+/// [ISO/IEC 9075-4:2006 draft §11.2; ISO/IEC 9075-2:2023 §9.18 GR8b ix] The
+/// value the function `i`, whose body is `program`, returns of the
+/// parameters' values `values`: run where a query evaluates it, or, of one
+/// that possibly modifies SQL-data, where an SQL-session runs its
+/// statements; SQLSTATE 2F005 if it returns none.
+fn programmed(i: &Invocation, program: &Program, values: Row, subqueries: &dyn Subqueries) -> Result<Value> {
+    let returned = match (i.modifies, subqueries.invoke_hosted(i, values.clone())) {
+        (_, Some(hosted)) => hosted?,
+        (false, None) => run_unhosted(program, values, subqueries)?,
+        (true, None) => {
+            let msg = format!("function {} possibly modifies SQL-data, and no SQL-session runs it here", i.name);
+            return Err(broken(&msg).about(Subject::routine(i.name.parts(), i.specific.parts())));
+        }
+    };
+    let returned = returned.ok_or_else(|| no_return(i))?;
+    assign(returned, &i.result, "ISO/IEC 9075-2:2023 §9.18 GR10a iii")
 }
 
 /// \[DESIGN\] The one expression of a body that is a VALUES of one row of

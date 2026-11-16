@@ -38,6 +38,7 @@ mod merge;
 mod ordered;
 mod pattern;
 mod privileges;
+mod psm;
 mod query;
 mod roles;
 mod routines;
@@ -55,7 +56,7 @@ pub use composite::{Composite, ValueOrder};
 pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
 pub use contents::{AsSubquery, LikeClause};
 pub use cursor::{DeclareCursor, FetchOrientation};
-pub use diagnostics::{AllQualifier, ConditionItem, GetDiagnostics, StatementItem};
+pub use diagnostics::{AllQualifier, ConditionItem, DiagnosticsInformation, GetDiagnostics, StatementItem};
 pub use drop::{DropBehavior, DropObject};
 pub use dynamic::{
     DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, HeaderItem, Scope, SetDescriptor,
@@ -79,6 +80,11 @@ pub use query::{
 };
 
 pub use privileges::{Action, PrivilegeDefinition, PrivilegeObject, RevokeStatement};
+pub use psm::{
+    Assignment, AssignmentSource, AssignmentTarget, CaseStatement, CaseWhen, CompoundStatement, ConditionDeclaration, ConditionValue,
+    ControlStatement, ForStatement, HandlerDeclaration, HandlerType, IfStatement, Iterated, Iteration, Label, LocalCursor,
+    LocalDeclaration, SignalStatement, SignalValue, VariableDeclaration,
+};
 pub use roles::{Grantor, RoleStatement, SetRole};
 pub use routines::{
     CallStatement, DataAccess, ParameterDeclaration, ParameterMode, ReturnStatement, RoutineDefinition, RoutineDesignator, RoutineKind,
@@ -109,7 +115,7 @@ pub use window::{
 /// [X3.135-1986 §8.7; ISO/IEC 9075:1992 §13.8] `<insert statement>` ::=
 ///     INSERT INTO `<table name>` {\[(`<insert column list>`)\] `<query
 ///     expression>` | DEFAULT VALUES}
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InsertStatement {
     /// The `<table name>`.
     pub table: TableName,
@@ -132,7 +138,7 @@ pub struct ColumnName {
 }
 
 /// [X3.135-1986 §8.7] What an `<insert statement>` inserts.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InsertSource {
     /// [ISO/IEC 9075:1992 §13.8] A `<query expression>`: its rows. SQL-86's
     /// VALUES (`<insert value list>`) is a `<table value constructor>` of
@@ -241,7 +247,7 @@ pub enum ExtractField {
 ///   | `<rollback statement>` | `<select statement>`
 ///   | `<update statement: positioned>` | `<update statement: searched>`;
 /// and the statements of ISO/IEC 9075:1992 and the \[EXTENSION\]s below.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SqlStatement {
     /// [X3.135-1986 §8.1] `<close statement>` ::= CLOSE `<cursor name>`
     Close(String),
@@ -318,6 +324,12 @@ pub enum SqlStatement {
     },
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §18.1] `<get diagnostics statement>`
     GetDiagnostics(GetDiagnostics),
+    /// [ISO/IEC 9075-4:2006 draft §11.2] An `<SQL control statement>` other
+    /// than CALL and RETURN (Feature P002).
+    Control(Box<ControlStatement>),
+    /// [ISO/IEC 9075-4:2006 draft §17.2, §17.3] `<signal statement>` or
+    /// `<resignal statement>`.
+    Signal(Box<SignalStatement>),
     /// [ISO/IEC 9075-2:2023 §16.1] `<call statement>`
     Call(CallStatement),
     /// [ISO/IEC 9075-2:2023 §16.2] `<return statement>`
@@ -429,7 +441,7 @@ pub enum SqlStatement {
 /// definition>` | `<alter column definition>` | `<drop column definition>`
 /// | `<add table constraint definition>` | `<drop table constraint
 /// definition>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AlterAction {
     /// [ISO/IEC 9075:1992 §11.11] `<add column definition>` ::= ADD \[COLUMN\]
     /// `<column definition>`
@@ -483,7 +495,7 @@ pub enum AlterAction {
 
 /// \[EXTENSION\] A statement of indexes (RULES.md D34, D41), run outside a
 /// transaction, as the index is built while transactions write its table.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum IndexStatement {
     /// `<create index statement>` ::= CREATE INDEX `<index name>` ON
     /// `<table name>` ( `<column name list>` ) \[USING `<method name>`\]
@@ -514,7 +526,7 @@ pub enum IndexStatement {
 }
 
 /// [X3.135-1986 §8.11, §8.12] `<set clause>` ::= `<object column>` = `<update source>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SetClause {
     /// The `<object column>`.
     pub column: String,
@@ -530,7 +542,7 @@ pub struct SetClause {
 
 /// [ISO/IEC 9075:1992 §13.9] `<update source>` ::= `<value expression>` |
 /// `<null specification>` | DEFAULT
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UpdateSource {
     /// A `<value expression>`.
     Value(ValueExpression),
@@ -542,7 +554,7 @@ pub enum UpdateSource {
 
 /// [ISO/IEC 9075:1992 §14.1] The `<transaction mode>`s of a `<set
 /// transaction statement>`, each written at most once \[SR1\].
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TransactionModes {
     /// `<isolation level>`, if written.
     pub isolation: Option<IsolationLevel>,

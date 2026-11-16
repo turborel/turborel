@@ -6,7 +6,8 @@
 
 use super::*;
 use crate::ast::{
-    DataAccess, DropObject, ElementPosition, GetDiagnostics, Literal, PrivilegeObject, ReturnStatement, SchemaStatement, SqlArgument,
+    DataAccess, DiagnosticsInformation, DropObject, ElementPosition, GetDiagnostics, Literal, PrivilegeObject, ReturnStatement,
+    SchemaStatement, SqlArgument,
 };
 
 /// `text`, parsed by `parser` as one statement: its routine definition and
@@ -355,7 +356,7 @@ fn parameter_is_a_target_6_6() {
     let SqlStatement::Select { targets, .. } = body(text) else { panic!("no SELECT") };
     let read: Vec<_> = targets.iter().map(|t| (t.name.as_str(), t.kind, t.at)).collect();
     assert_eq!(read, vec![("A", TargetKind::Routine, text.find("A,").unwrap()), ("B", TargetKind::Routine, text.find("P.B").unwrap())]);
-    let SqlStatement::GetDiagnostics(GetDiagnostics::Statement(items)) =
+    let SqlStatement::GetDiagnostics(GetDiagnostics { information: DiagnosticsInformation::Statement(items), .. }) =
         body("CREATE PROCEDURE P (OUT N INT) CONTAINS SQL GET DIAGNOSTICS N = ROW_COUNT")
     else {
         panic!("no GET DIAGNOSTICS")

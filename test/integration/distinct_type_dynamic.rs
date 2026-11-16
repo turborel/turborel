@@ -81,7 +81,7 @@ fn an_item_described_as_of_a_distinct_type_20_10() {
     assert_eq!(named, ["TURBOREL", "A", "MONEY"]);
     a.declare_cursor("DECLARE R CURSOR FOR Q").unwrap();
     run(&a, "OPEN R", &mut p).unwrap();
-    assert_eq!(run(&a, "FETCH R INTO SQL DESCRIPTOR 'D'", &mut p), Err("07002"));
+    assert_eq!(run(&a, "FETCH R INTO SQL DESCRIPTOR 'D'", &mut p), Err("07002".to_owned()));
     run(&a, "SET DESCRIPTOR 'D' VALUE 2 TYPE = 2, PRECISION = 10, SCALE = 2", &mut p).unwrap();
     assert_eq!(run(&a, "FETCH R INTO SQL DESCRIPTOR 'D'", &mut p), Ok(Completion::Success));
     run(&a, "GET DESCRIPTOR 'D' VALUE 2 NU = DATA", &mut p).unwrap();
@@ -89,7 +89,7 @@ fn an_item_described_as_of_a_distinct_type_20_10() {
     text(&mut p, "INSERT INTO T VALUES (?, ?)");
     run(&a, "PREPARE I FROM TEXT", &mut p).unwrap();
     run(&a, "DESCRIBE INPUT I USING SQL DESCRIPTOR 'D'", &mut p).unwrap();
-    assert_eq!(run(&a, "EXECUTE I USING SQL DESCRIPTOR 'D'", &mut p), Err("07001"));
+    assert_eq!(run(&a, "EXECUTE I USING SQL DESCRIPTOR 'D'", &mut p), Err("07001".to_owned()));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §20.11 GR6c iii, §20.12 GR5d iii; §4.9.6]
@@ -113,6 +113,6 @@ fn values_cross_to_and_from_the_host_20_11() {
     run(&a, "PREPARE I FROM TEXT", &mut p).unwrap();
     run(&a, "EXECUTE I USING IW, NU", &mut p).unwrap();
     run(&a, "EXECUTE I USING IW, IW", &mut p).unwrap();
-    assert_eq!(run(&a, "EXECUTE I USING IW, CH", &mut p), Err("07006"));
+    assert_eq!(run(&a, "EXECUTE I USING IW, CH", &mut p), Err("07006".to_owned()));
     assert_eq!(rows(&a, "SELECT P FROM T WHERE K = 3 ORDER BY P").unwrap(), ["3.00", "3.25"]);
 }

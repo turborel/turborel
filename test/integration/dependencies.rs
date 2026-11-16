@@ -240,7 +240,7 @@ fn a_null_kept_of_a_group_warns_of_nothing_6_7() {
     assert_eq!(rows(&a, "SELECT ID, SALARY FROM STAFF WHERE ID = 4 GROUP BY ID"), expected(&["4,NULL"]));
     assert_eq!(a.warning(), None);
     assert_eq!(rows(&a, "SELECT ID, SUM(SALARY) FROM STAFF WHERE ID = 4 GROUP BY ID"), expected(&["4,NULL"]));
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"));
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.9 SR6; ISO/IEC 9075-2:2023

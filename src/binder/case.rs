@@ -260,6 +260,17 @@ impl Binder<'_> {
     /// [SR2, SR3]; a simple CASE is a searched one whose conditions are
     /// "CO = WO" [SR4b].
     pub(super) fn case(&self, case: &CaseExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        // [ISO/IEC 9075-2:2023 §6.12 SR1a] a CASE abbreviation's values,
+        // each evaluated more than once, invoke no function that possibly
+        // modifies SQL-data.
+        if let CaseExpression::NullIf(..) | CaseExpression::Coalesce(_) = case {
+            return self.hosting(false, || self.case_of(case, scope));
+        }
+        self.case_of(case, scope)
+    }
+
+    /// `case`'s work.
+    fn case_of(&self, case: &CaseExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let mut whens: Vec<(Cond, Option<&ValueExpression>)> = Vec::new();
         // The type a `?` result takes [ISO/IEC 9075:1992 §17.6 GR5j, l]:
         // none else, as no rule gives it one.
@@ -286,7 +297,8 @@ impl Binder<'_> {
                 Some(last)
             }
             CaseExpression::Simple { operand, whens: simple, otherwise } => {
-                whens = self.simple_whens(operand, simple, scope)?;
+                // [ISO/IEC 9075-2:2023 §6.12 SR2a] nor does its operand.
+                whens = self.hosting(false, || self.simple_whens(operand, simple, scope))?;
                 otherwise.as_ref()
             }
             CaseExpression::Searched { whens: searched, otherwise } => {

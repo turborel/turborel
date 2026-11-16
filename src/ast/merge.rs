@@ -7,7 +7,7 @@ use super::{ColumnName, Overriding, SearchCondition, SetClause, TableName, Table
 /// [ISO/IEC 9075-2:2023 §14.12] `<merge statement>` ::= MERGE INTO
 /// `<target table>` \[\[AS\] `<merge correlation name>`\] USING `<table
 /// reference>` ON `<search condition>` `<merge operation specification>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MergeStatement {
     /// The `<table name>` of the `<target table>` \[SR1\].
     pub target: TableName,
@@ -25,7 +25,7 @@ pub struct MergeStatement {
 
 /// [ISO/IEC 9075-2:2023 §14.12] `<merge when clause>` ::= `<merge when
 /// matched clause>` | `<merge when not matched clause>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MergeWhen {
     /// WHEN MATCHED \[AND `<search condition>`\] THEN `<merge update or
     /// delete specification>`.
@@ -51,7 +51,7 @@ pub enum MergeWhen {
 
 /// [ISO/IEC 9075-2:2023 §14.12] `<merge update or delete specification>`
 /// ::= `<merge update specification>` | `<merge delete specification>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MatchedAction {
     /// UPDATE SET `<set clause list>`, its `<set clause>`s in order.
     Update(Vec<SetClause>),
@@ -62,7 +62,7 @@ pub enum MatchedAction {
 /// [ISO/IEC 9075-2:2023 §14.12] `<merge insert specification>` ::= INSERT
 /// \[(`<insert column list>`)\] \[`<override clause>`\] VALUES `<merge
 /// insert value list>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MergeInsert {
     /// The `<insert column list>`, if written; else every column of the
     /// target table, in order \[SR18a\].

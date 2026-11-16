@@ -15,280 +15,307 @@ use super::Code;
 
 /// \[EXTENSION\] An SQLSTATE value [ISO/IEC 9075:1992 §22.1].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SqlState(&'static str);
+pub struct SqlState([u8; 5]);
 
 impl SqlState {
     /// Successful completion.
-    pub const SUCCESSFUL_COMPLETION: SqlState = SqlState("00000");
+    pub const SUCCESSFUL_COMPLETION: SqlState = SqlState(*b"00000");
     /// No data.
-    pub const NO_DATA: SqlState = SqlState("02000");
+    pub const NO_DATA: SqlState = SqlState(*b"02000");
     /// Warning: cursor operation conflict [ISO/IEC 9075:1992 §11.8 GR8].
-    pub const CURSOR_OPERATION_CONFLICT: SqlState = SqlState("01001");
+    pub const CURSOR_OPERATION_CONFLICT: SqlState = SqlState(*b"01001");
     /// Warning: privilege not revoked [ISO/IEC 9075:1992 §11.37 GR8, GR9].
-    pub const PRIVILEGE_NOT_REVOKED: SqlState = SqlState("01006");
+    pub const PRIVILEGE_NOT_REVOKED: SqlState = SqlState(*b"01006");
     /// Warning: privilege not granted [ISO/IEC 9075:1992 §11.36 GR14, GR15].
-    pub const PRIVILEGE_NOT_GRANTED: SqlState = SqlState("01007");
+    pub const PRIVILEGE_NOT_GRANTED: SqlState = SqlState(*b"01007");
     /// Warning: search condition too long for information schema [ISO/IEC
     /// 9075:1992 §11.9 GR2, §11.34 GR4].
-    pub const SEARCH_CONDITION_TOO_LONG: SqlState = SqlState("01009");
+    pub const SEARCH_CONDITION_TOO_LONG: SqlState = SqlState(*b"01009");
     /// Warning: query expression too long for information schema [ISO/IEC
     /// 9075:1992 §11.19 GR13].
-    pub const QUERY_EXPRESSION_TOO_LONG: SqlState = SqlState("0100A");
+    pub const QUERY_EXPRESSION_TOO_LONG: SqlState = SqlState(*b"0100A");
     /// Warning: statement too long for information schema [ISO/IEC
     /// 9075-2:2023 §11.49 GR4].
-    pub const STATEMENT_TOO_LONG: SqlState = SqlState("0100F");
+    pub const STATEMENT_TOO_LONG: SqlState = SqlState(*b"0100F");
     /// Warning: string data, right truncation [ISO/IEC 9075:1992 §9.1
     /// GR3b, GR3e; §6.10 GR5c ii, GR6c ii; ISO/IEC 9075-2:2023 §9.1 GR7i,
     /// GR7l; §6.13 GR13].
-    pub const STRING_TRUNCATED: SqlState = SqlState("01004");
+    pub const STRING_TRUNCATED: SqlState = SqlState(*b"01004");
     /// Warning: null value eliminated in set function [ISO/IEC 9075:1992
     /// §6.5 GR1b].
-    pub const NULL_VALUE_ELIMINATED: SqlState = SqlState("01003");
+    pub const NULL_VALUE_ELIMINATED: SqlState = SqlState(*b"01003");
     /// Dependent privilege descriptors still exist [ISO/IEC 9075:1992
     /// §11.37 GR2b].
-    pub const DEPENDENT_PRIVILEGES: SqlState = SqlState("2B000");
+    pub const DEPENDENT_PRIVILEGES: SqlState = SqlState(*b"2B000");
     /// Feature not supported.
-    pub const FEATURE_NOT_SUPPORTED: SqlState = SqlState("0A000");
+    pub const FEATURE_NOT_SUPPORTED: SqlState = SqlState(*b"0A000");
     /// Cardinality violation.
-    pub const CARDINALITY_VIOLATION: SqlState = SqlState("21000");
+    pub const CARDINALITY_VIOLATION: SqlState = SqlState(*b"21000");
     /// Connection exception [ISO/IEC 9075:1992 §22.1, Table 23].
-    pub const CONNECTION_EXCEPTION: SqlState = SqlState("08000");
+    pub const CONNECTION_EXCEPTION: SqlState = SqlState(*b"08000");
     /// Connection exception: SQL-server rejected establishment of
     /// SQL-connection.
-    pub const CONNECTION_REJECTED: SqlState = SqlState("08004");
+    pub const CONNECTION_REJECTED: SqlState = SqlState(*b"08004");
     /// Connection exception: SQL-client unable to establish SQL-connection.
-    pub const UNABLE_TO_CONNECT: SqlState = SqlState("08001");
+    pub const UNABLE_TO_CONNECT: SqlState = SqlState(*b"08001");
     /// Connection exception: connection name in use.
-    pub const CONNECTION_NAME_IN_USE: SqlState = SqlState("08002");
+    pub const CONNECTION_NAME_IN_USE: SqlState = SqlState(*b"08002");
     /// Connection exception: connection does not exist.
-    pub const CONNECTION_DOES_NOT_EXIST: SqlState = SqlState("08003");
+    pub const CONNECTION_DOES_NOT_EXIST: SqlState = SqlState(*b"08003");
     /// Feature not supported: multiple server transactions.
-    pub const MULTIPLE_SERVER_TRANSACTIONS: SqlState = SqlState("0A001");
+    pub const MULTIPLE_SERVER_TRANSACTIONS: SqlState = SqlState(*b"0A001");
     /// Invalid connection name.
-    pub const INVALID_CONNECTION_NAME: SqlState = SqlState("2E000");
+    pub const INVALID_CONNECTION_NAME: SqlState = SqlState(*b"2E000");
     /// [ISO/IEC 9075-2:2023 §19.10 GR1] Invalid collation name.
-    pub const INVALID_COLLATION_NAME: SqlState = SqlState("2H000");
+    pub const INVALID_COLLATION_NAME: SqlState = SqlState(*b"2H000");
     /// Warning: disconnect error.
-    pub const DISCONNECT_ERROR: SqlState = SqlState("01002");
+    pub const DISCONNECT_ERROR: SqlState = SqlState(*b"01002");
     /// Connection exception: connection failure.
-    pub const CONNECTION_FAILURE: SqlState = SqlState("08006");
+    pub const CONNECTION_FAILURE: SqlState = SqlState(*b"08006");
     /// Invalid authorization specification.
-    pub const INVALID_AUTHORIZATION: SqlState = SqlState("28000");
+    pub const INVALID_AUTHORIZATION: SqlState = SqlState(*b"28000");
     /// [ISO/IEC 9075-2:2023 §12.5 GR1, §19.3 GR3, GR4] Invalid role
     /// specification.
-    pub const INVALID_ROLE_SPECIFICATION: SqlState = SqlState("0P000");
+    pub const INVALID_ROLE_SPECIFICATION: SqlState = SqlState(*b"0P000");
     /// Dynamic SQL error [ISO/IEC 9075:1992 §22.1, Table 23].
-    pub const DYNAMIC_SQL_ERROR: SqlState = SqlState("07000");
+    pub const DYNAMIC_SQL_ERROR: SqlState = SqlState(*b"07000");
     /// Dynamic SQL error: using clause does not match dynamic parameter
     /// specifications.
-    pub const USING_CLAUSE_MISMATCH: SqlState = SqlState("07001");
+    pub const USING_CLAUSE_MISMATCH: SqlState = SqlState(*b"07001");
     /// Dynamic SQL error: using clause does not match target
     /// specifications.
-    pub const USING_CLAUSE_TARGETS_MISMATCH: SqlState = SqlState("07002");
+    pub const USING_CLAUSE_TARGETS_MISMATCH: SqlState = SqlState(*b"07002");
     /// Dynamic SQL error: cursor specification cannot be executed.
-    pub const CURSOR_SPECIFICATION_NOT_EXECUTED: SqlState = SqlState("07003");
+    pub const CURSOR_SPECIFICATION_NOT_EXECUTED: SqlState = SqlState(*b"07003");
     /// Dynamic SQL error: using clause required for dynamic parameters.
-    pub const USING_CLAUSE_REQUIRED_PARAMETERS: SqlState = SqlState("07004");
+    pub const USING_CLAUSE_REQUIRED_PARAMETERS: SqlState = SqlState(*b"07004");
     /// Dynamic SQL error: prepared statement not a cursor specification.
-    pub const NOT_A_CURSOR_SPECIFICATION: SqlState = SqlState("07005");
+    pub const NOT_A_CURSOR_SPECIFICATION: SqlState = SqlState(*b"07005");
     /// Dynamic SQL error: restricted data type attribute violation.
-    pub const RESTRICTED_DATA_TYPE: SqlState = SqlState("07006");
+    pub const RESTRICTED_DATA_TYPE: SqlState = SqlState(*b"07006");
     /// Dynamic SQL error: using clause required for result fields.
-    pub const USING_CLAUSE_REQUIRED_RESULTS: SqlState = SqlState("07007");
+    pub const USING_CLAUSE_REQUIRED_RESULTS: SqlState = SqlState(*b"07007");
     /// Dynamic SQL error: invalid descriptor count.
-    pub const INVALID_DESCRIPTOR_COUNT: SqlState = SqlState("07008");
+    pub const INVALID_DESCRIPTOR_COUNT: SqlState = SqlState(*b"07008");
     /// Dynamic SQL error: invalid descriptor index.
-    pub const INVALID_DESCRIPTOR_INDEX: SqlState = SqlState("07009");
+    pub const INVALID_DESCRIPTOR_INDEX: SqlState = SqlState(*b"07009");
     /// [ISO/IEC 9075-2:2023 §20.4 GR5a, GR5b] Dynamic SQL error: undefined
     /// DATA value.
-    pub const UNDEFINED_DATA_VALUE: SqlState = SqlState("0700C");
+    pub const UNDEFINED_DATA_VALUE: SqlState = SqlState(*b"0700C");
     /// [ISO/IEC 9075-2:2023 §20.5 GR4a] Dynamic SQL error: invalid DATA
     /// target.
-    pub const INVALID_DATA_TARGET: SqlState = SqlState("0700D");
+    pub const INVALID_DATA_TARGET: SqlState = SqlState(*b"0700D");
     /// [ISO/IEC 9075-2:2023 §20.5 GR4b] Dynamic SQL error: invalid LEVEL
     /// value.
-    pub const INVALID_LEVEL_VALUE: SqlState = SqlState("0700E");
+    pub const INVALID_LEVEL_VALUE: SqlState = SqlState(*b"0700E");
     /// Warning: insufficient item descriptor areas.
-    pub const INSUFFICIENT_ITEM_DESCRIPTOR_AREAS: SqlState = SqlState("01005");
+    pub const INSUFFICIENT_ITEM_DESCRIPTOR_AREAS: SqlState = SqlState(*b"01005");
     /// Invalid SQL statement name.
-    pub const INVALID_STATEMENT_NAME: SqlState = SqlState("26000");
+    pub const INVALID_STATEMENT_NAME: SqlState = SqlState(*b"26000");
     /// Invalid SQL descriptor name.
-    pub const INVALID_DESCRIPTOR_NAME: SqlState = SqlState("33000");
+    pub const INVALID_DESCRIPTOR_NAME: SqlState = SqlState(*b"33000");
     /// Invalid cursor name.
-    pub const INVALID_CURSOR_NAME: SqlState = SqlState("34000");
+    pub const INVALID_CURSOR_NAME: SqlState = SqlState(*b"34000");
     /// Ambiguous cursor name.
-    pub const AMBIGUOUS_CURSOR_NAME: SqlState = SqlState("3C000");
+    pub const AMBIGUOUS_CURSOR_NAME: SqlState = SqlState(*b"3C000");
     /// Syntax error or access rule violation in dynamic SQL statement.
-    pub const DYNAMIC_SYNTAX_ERROR: SqlState = SqlState("37000");
+    pub const DYNAMIC_SYNTAX_ERROR: SqlState = SqlState(*b"37000");
+    /// [ISO/IEC 9075-4:2006 draft §14.6 GR2b, §20.1] Case not found for
+    /// case statement.
+    pub const CASE_NOT_FOUND: SqlState = SqlState(*b"20000");
+    /// [ISO/IEC 9075-4:2006 draft §17.1 GR, §20.1] Diagnostics exception:
+    /// stacked diagnostics accessed without active handler.
+    pub const STACKED_WITHOUT_HANDLER: SqlState = SqlState(*b"0Z002");
+    /// [ISO/IEC 9075-4:2006 draft §17.3 GR, §20.1] Resignal when handler
+    /// not active.
+    pub const RESIGNAL_NOT_ACTIVE: SqlState = SqlState(*b"0K000");
+    /// [ISO/IEC 9075-4:2006 draft §17.2 GR, §20.1] Unhandled user-defined
+    /// exception.
+    pub const UNHANDLED_USER_EXCEPTION: SqlState = SqlState(*b"45000");
     /// Data exception.
-    pub const DATA_EXCEPTION: SqlState = SqlState("22000");
+    pub const DATA_EXCEPTION: SqlState = SqlState(*b"22000");
     /// Data exception: string data, right truncation.
-    pub const STRING_DATA_RIGHT_TRUNCATION: SqlState = SqlState("22001");
+    pub const STRING_DATA_RIGHT_TRUNCATION: SqlState = SqlState(*b"22001");
     /// Data exception: null value, no indicator parameter.
-    pub const NULL_VALUE_NO_INDICATOR: SqlState = SqlState("22002");
+    pub const NULL_VALUE_NO_INDICATOR: SqlState = SqlState(*b"22002");
     /// Data exception: numeric value out of range.
-    pub const NUMERIC_VALUE_OUT_OF_RANGE: SqlState = SqlState("22003");
+    pub const NUMERIC_VALUE_OUT_OF_RANGE: SqlState = SqlState(*b"22003");
     /// Data exception: error in assignment.
-    pub const ERROR_IN_ASSIGNMENT: SqlState = SqlState("22005");
+    pub const ERROR_IN_ASSIGNMENT: SqlState = SqlState(*b"22005");
     /// Data exception: division by zero.
-    pub const DIVISION_BY_ZERO: SqlState = SqlState("22012");
+    pub const DIVISION_BY_ZERO: SqlState = SqlState(*b"22012");
     /// Data exception: invalid preceding or following size in window
     /// function [ISO/IEC 9075-2:2023 §7.15 GR5b].
-    pub const INVALID_PRECEDING_OR_FOLLOWING_SIZE: SqlState = SqlState("22013");
+    pub const INVALID_PRECEDING_OR_FOLLOWING_SIZE: SqlState = SqlState(*b"22013");
     /// Data exception: invalid argument for NTILE function [ISO/IEC
     /// 9075-2:2023 §6.10 GR1a ii 2].
-    pub const INVALID_ARGUMENT_FOR_NTILE: SqlState = SqlState("22014");
+    pub const INVALID_ARGUMENT_FOR_NTILE: SqlState = SqlState(*b"22014");
     /// Data exception: invalid argument for NTH_VALUE function [ISO/IEC
     /// 9075-2:2023 §6.10 GR1d ii 2].
-    pub const INVALID_ARGUMENT_FOR_NTH_VALUE: SqlState = SqlState("22016");
+    pub const INVALID_ARGUMENT_FOR_NTH_VALUE: SqlState = SqlState(*b"22016");
     /// Data exception: invalid argument for width bucket function [ISO/IEC
     /// 9075-2:2023 §6.31 GR17b, GR17c].
-    pub const INVALID_ARGUMENT_FOR_WIDTH_BUCKET: SqlState = SqlState("2201G");
+    pub const INVALID_ARGUMENT_FOR_WIDTH_BUCKET: SqlState = SqlState(*b"2201G");
     /// Data exception: invalid row count in fetch first clause [ISO/IEC
     /// 9075-2:2023 §7.17 GR7c].
-    pub const INVALID_ROW_COUNT_IN_FETCH_FIRST: SqlState = SqlState("2201W");
+    pub const INVALID_ROW_COUNT_IN_FETCH_FIRST: SqlState = SqlState(*b"2201W");
     /// Data exception: invalid row count in result offset clause [ISO/IEC
     /// 9075-2:2023 §7.17 GR6b].
-    pub const INVALID_ROW_COUNT_IN_RESULT_OFFSET: SqlState = SqlState("2201X");
+    pub const INVALID_ROW_COUNT_IN_RESULT_OFFSET: SqlState = SqlState(*b"2201X");
     /// Data exception: invalid argument for row pattern navigation
     /// function [ISO/IEC 9075-2:2023 §6.27 GR2].
-    pub const INVALID_ARGUMENT_FOR_ROW_PATTERN_NAVIGATION: SqlState = SqlState("2202J");
+    pub const INVALID_ARGUMENT_FOR_ROW_PATTERN_NAVIGATION: SqlState = SqlState(*b"2202J");
     /// Data exception: skip to non-existent row [ISO/IEC 9075-2:2023 §7.7
     /// GR8].
-    pub const SKIP_TO_NON_EXISTENT_ROW: SqlState = SqlState("2202K");
+    pub const SKIP_TO_NON_EXISTENT_ROW: SqlState = SqlState(*b"2202K");
     /// Data exception: skip to first row of match [ISO/IEC 9075-2:2023
     /// §7.7 GR8].
-    pub const SKIP_TO_FIRST_ROW_OF_MATCH: SqlState = SqlState("2202L");
+    pub const SKIP_TO_FIRST_ROW_OF_MATCH: SqlState = SqlState(*b"2202L");
     /// Data exception: invalid escape character.
-    pub const INVALID_ESCAPE_CHARACTER: SqlState = SqlState("22019");
+    pub const INVALID_ESCAPE_CHARACTER: SqlState = SqlState(*b"22019");
     /// Data exception: invalid character value for cast [ISO/IEC 9075:1992
     /// §6.10 GR3b i].
-    pub const INVALID_CHARACTER_VALUE_FOR_CAST: SqlState = SqlState("22018");
+    pub const INVALID_CHARACTER_VALUE_FOR_CAST: SqlState = SqlState(*b"22018");
     /// Data exception: substring error [ISO/IEC 9075:1992 §6.7 GR1d].
-    pub const SUBSTRING_ERROR: SqlState = SqlState("22011");
+    pub const SUBSTRING_ERROR: SqlState = SqlState(*b"22011");
     /// Data exception: trim error [ISO/IEC 9075:1992 §6.7 GR5d].
-    pub const TRIM_ERROR: SqlState = SqlState("22027");
+    pub const TRIM_ERROR: SqlState = SqlState(*b"22027");
     /// Data exception: invalid XQuery regular expression [ISO/IEC
     /// 9075-2:2023 §9.28 GR4].
-    pub const INVALID_XQUERY_REGULAR_EXPRESSION: SqlState = SqlState("2201S");
+    pub const INVALID_XQUERY_REGULAR_EXPRESSION: SqlState = SqlState(*b"2201S");
     /// Data exception: invalid XQuery option flag [ISO/IEC 9075-2:2023
     /// §9.28 GR5].
-    pub const INVALID_XQUERY_OPTION_FLAG: SqlState = SqlState("2201T");
+    pub const INVALID_XQUERY_OPTION_FLAG: SqlState = SqlState(*b"2201T");
     /// Data exception: attempt to replace a zero-length string [ISO/IEC
     /// 9075-2:2023 §9.29 GR3].
-    pub const ATTEMPT_TO_REPLACE_A_ZERO_LENGTH_STRING: SqlState = SqlState("2201U");
+    pub const ATTEMPT_TO_REPLACE_A_ZERO_LENGTH_STRING: SqlState = SqlState(*b"2201U");
     /// Data exception: invalid XQuery replacement string [ISO/IEC
     /// 9075-2:2023 §9.29 GR5].
-    pub const INVALID_XQUERY_REPLACEMENT_STRING: SqlState = SqlState("2201V");
+    pub const INVALID_XQUERY_REPLACEMENT_STRING: SqlState = SqlState(*b"2201V");
     /// Data exception: sequence generator limit exceeded [ISO/IEC
     /// 9075-2:2023 §9.35 GR3a].
-    pub const SEQUENCE_GENERATOR_LIMIT_EXCEEDED: SqlState = SqlState("2200H");
+    pub const SEQUENCE_GENERATOR_LIMIT_EXCEEDED: SqlState = SqlState(*b"2200H");
     /// Data exception: array element error [ISO/IEC 9075-2:2023 §6.25
     /// GR2b].
-    pub const ARRAY_ELEMENT_ERROR: SqlState = SqlState("2202E");
+    pub const ARRAY_ELEMENT_ERROR: SqlState = SqlState(*b"2202E");
     /// Data exception: array data, right truncation [ISO/IEC 9075-2:2023
     /// §9.2 GR3b xxii 2B].
-    pub const ARRAY_DATA_RIGHT_TRUNCATION: SqlState = SqlState("2202F");
+    pub const ARRAY_DATA_RIGHT_TRUNCATION: SqlState = SqlState(*b"2202F");
+    /// [ISO/IEC 9075-4:2006 draft §14.5 GR4a] Data exception: null value in
+    /// field reference.
+    pub const NULL_VALUE_IN_FIELD_REFERENCE: SqlState = SqlState(*b"2202A");
     /// Data exception: null value in array target [ISO/IEC 9075-2:2023
     /// §15.5 GR3b i 1].
-    pub const NULL_VALUE_IN_ARRAY_TARGET: SqlState = SqlState("2200E");
+    pub const NULL_VALUE_IN_ARRAY_TARGET: SqlState = SqlState(*b"2200E");
     /// Data exception: indicator overflow.
-    pub const INDICATOR_OVERFLOW: SqlState = SqlState("22022");
+    pub const INDICATOR_OVERFLOW: SqlState = SqlState(*b"22022");
     /// Data exception: invalid escape sequence.
-    pub const INVALID_ESCAPE_SEQUENCE: SqlState = SqlState("22025");
+    pub const INVALID_ESCAPE_SEQUENCE: SqlState = SqlState(*b"22025");
     /// Data exception: invalid datetime format.
-    pub const INVALID_DATETIME_FORMAT: SqlState = SqlState("22007");
+    pub const INVALID_DATETIME_FORMAT: SqlState = SqlState(*b"22007");
     /// Data exception: datetime field overflow.
-    pub const DATETIME_FIELD_OVERFLOW: SqlState = SqlState("22008");
+    pub const DATETIME_FIELD_OVERFLOW: SqlState = SqlState(*b"22008");
     /// Data exception: invalid time zone displacement value.
-    pub const INVALID_TIME_ZONE_DISPLACEMENT: SqlState = SqlState("22009");
+    pub const INVALID_TIME_ZONE_DISPLACEMENT: SqlState = SqlState(*b"22009");
     /// Data exception: interval field overflow.
-    pub const INTERVAL_FIELD_OVERFLOW: SqlState = SqlState("22015");
+    pub const INTERVAL_FIELD_OVERFLOW: SqlState = SqlState(*b"22015");
     /// Integrity constraint violation.
-    pub const INTEGRITY_CONSTRAINT_VIOLATION: SqlState = SqlState("23000");
+    pub const INTEGRITY_CONSTRAINT_VIOLATION: SqlState = SqlState(*b"23000");
     /// Triggered data change violation.
-    pub const TRIGGERED_DATA_CHANGE_VIOLATION: SqlState = SqlState("27000");
+    pub const TRIGGERED_DATA_CHANGE_VIOLATION: SqlState = SqlState(*b"27000");
     /// Triggered action exception [ISO/IEC 9075-2:2023 §15.21 GR5b i 1,
     /// GR6m].
-    pub const TRIGGERED_ACTION_EXCEPTION: SqlState = SqlState("09000");
+    pub const TRIGGERED_ACTION_EXCEPTION: SqlState = SqlState(*b"09000");
     /// Prohibited statement encountered during trigger execution [ISO/IEC
     /// 9075-2:2023 §15.21 GR6e iii, GR6h].
-    pub const PROHIBITED_STATEMENT_IN_TRIGGER: SqlState = SqlState("0W000");
+    pub const PROHIBITED_STATEMENT_IN_TRIGGER: SqlState = SqlState(*b"0W000");
     /// SQL routine exception [ISO/IEC 9075-2:2023 §24.1, Table 41].
-    pub const SQL_ROUTINE_EXCEPTION: SqlState = SqlState("2F000");
+    pub const SQL_ROUTINE_EXCEPTION: SqlState = SqlState(*b"2F000");
     /// SQL routine exception: modifying SQL-data not permitted [ISO/IEC
     /// 9075-2:2023 §9.18 GR8b i].
-    pub const MODIFYING_DATA_NOT_PERMITTED: SqlState = SqlState("2F002");
+    pub const MODIFYING_DATA_NOT_PERMITTED: SqlState = SqlState(*b"2F002");
     /// SQL routine exception: prohibited SQL-statement attempted [ISO/IEC
     /// 9075-2:2023 §9.18 GR8b iii to vi].
-    pub const PROHIBITED_ROUTINE_STATEMENT: SqlState = SqlState("2F003");
+    pub const PROHIBITED_ROUTINE_STATEMENT: SqlState = SqlState(*b"2F003");
     /// SQL routine exception: reading SQL-data not permitted [ISO/IEC
     /// 9075-2:2023 §9.18 GR8b ii].
-    pub const READING_DATA_NOT_PERMITTED: SqlState = SqlState("2F004");
+    pub const READING_DATA_NOT_PERMITTED: SqlState = SqlState(*b"2F004");
     /// SQL routine exception: function executed no return statement
     /// [ISO/IEC 9075-2:2023 §9.18 GR8b ix].
-    pub const NO_RETURN_STATEMENT: SqlState = SqlState("2F005");
+    pub const NO_RETURN_STATEMENT: SqlState = SqlState(*b"2F005");
     /// Invalid cursor state.
-    pub const INVALID_CURSOR_STATE: SqlState = SqlState("24000");
+    pub const INVALID_CURSOR_STATE: SqlState = SqlState(*b"24000");
     /// Invalid transaction state.
-    pub const INVALID_TRANSACTION_STATE: SqlState = SqlState("25000");
+    pub const INVALID_TRANSACTION_STATE: SqlState = SqlState(*b"25000");
     /// Invalid transaction state: active SQL-transaction [ISO/IEC
     /// 9075-2:2023 §19.3 GR1].
-    pub const ACTIVE_TRANSACTION: SqlState = SqlState("25001");
+    pub const ACTIVE_TRANSACTION: SqlState = SqlState(*b"25001");
     /// Invalid transaction state: read-only SQL-transaction [ISO/IEC
     /// 9075-2:2023 §14.10 GR1].
-    pub const READ_ONLY_TRANSACTION: SqlState = SqlState("25006");
+    pub const READ_ONLY_TRANSACTION: SqlState = SqlState(*b"25006");
     /// Cursor sensitivity exception: request failed [ISO/IEC 9075-2:2023
     /// §14.10 GR2, GR3].
-    pub const CURSOR_SENSITIVITY_FAILED: SqlState = SqlState("36002");
+    pub const CURSOR_SENSITIVITY_FAILED: SqlState = SqlState(*b"36002");
     /// Invalid condition number.
-    pub const INVALID_CONDITION_NUMBER: SqlState = SqlState("35000");
+    pub const INVALID_CONDITION_NUMBER: SqlState = SqlState(*b"35000");
     /// Invalid catalog name.
-    pub const INVALID_CATALOG_NAME: SqlState = SqlState("3D000");
+    pub const INVALID_CATALOG_NAME: SqlState = SqlState(*b"3D000");
     /// Invalid schema name.
-    pub const INVALID_SCHEMA_NAME: SqlState = SqlState("3F000");
+    pub const INVALID_SCHEMA_NAME: SqlState = SqlState(*b"3F000");
     /// Syntax error or access rule violation in direct SQL statement.
-    pub const SYNTAX_ERROR_IN_DIRECT_STATEMENT: SqlState = SqlState("2A000");
+    pub const SYNTAX_ERROR_IN_DIRECT_STATEMENT: SqlState = SqlState(*b"2A000");
     /// Connection exception: transaction resolution unknown [ISO/IEC
     /// 9075:1992 §4.29]: whether the transaction committed cannot be
     /// verified. \[DESIGN\] Of a commit in doubt (RULES.md D25).
-    pub const TRANSACTION_RESOLUTION_UNKNOWN: SqlState = SqlState("08007");
+    pub const TRANSACTION_RESOLUTION_UNKNOWN: SqlState = SqlState(*b"08007");
     /// Transaction rollback.
-    pub const TRANSACTION_ROLLBACK: SqlState = SqlState("40000");
+    pub const TRANSACTION_ROLLBACK: SqlState = SqlState(*b"40000");
     /// Transaction rollback: serialization failure.
-    pub const SERIALIZATION_FAILURE: SqlState = SqlState("40001");
+    pub const SERIALIZATION_FAILURE: SqlState = SqlState(*b"40001");
     /// Transaction rollback: integrity constraint violation [ISO/IEC
     /// 9075:1992 §14.3 GR5a].
-    pub const TRANSACTION_ROLLBACK_INTEGRITY: SqlState = SqlState("40002");
+    pub const TRANSACTION_ROLLBACK_INTEGRITY: SqlState = SqlState(*b"40002");
     /// With check option violation.
-    pub const WITH_CHECK_OPTION_VIOLATION: SqlState = SqlState("44000");
+    pub const WITH_CHECK_OPTION_VIOLATION: SqlState = SqlState(*b"44000");
     /// \[DESIGN\] A statement refused by a conflict with another
     /// transaction, undone while its transaction goes on, so not a
     /// transaction rollback.
-    pub const STATEMENT_CONFLICT: SqlState = SqlState("TB911");
+    pub const STATEMENT_CONFLICT: SqlState = SqlState(*b"TB911");
     /// \[DESIGN\] Use refused by the transaction policy.
-    pub const POLICY: SqlState = SqlState("TB912");
+    pub const POLICY: SqlState = SqlState(*b"TB912");
     /// \[DESIGN\] A table damaged by a change that could not be undone.
-    pub const DAMAGED: SqlState = SqlState("TB914");
+    pub const DAMAGED: SqlState = SqlState(*b"TB914");
     /// \[DESIGN\] A file could not be read, written or synced.
-    pub const IO: SqlState = SqlState("TB915");
+    pub const IO: SqlState = SqlState(*b"TB915");
     /// \[DESIGN\] Stored data failed its checksum or format.
-    pub const CORRUPT: SqlState = SqlState("TB916");
+    pub const CORRUPT: SqlState = SqlState(*b"TB916");
     /// \[DESIGN\] The host (Rust) API was misused.
-    pub const API: SqlState = SqlState("TB910");
+    pub const API: SqlState = SqlState(*b"TB910");
     /// \[DESIGN\] The memory budget is spent (SQLCODE -918).
-    pub const RESOURCES: SqlState = SqlState("TB918");
+    pub const RESOURCES: SqlState = SqlState(*b"TB918");
     /// \[DESIGN\] The statement was cancelled (SQLCODE -920).
-    pub const CANCELLED: SqlState = SqlState("TB920");
+    pub const CANCELLED: SqlState = SqlState(*b"TB920");
+
+    /// [ISO/IEC 9075-4:2006 draft §8.2 SR1, SR2] The SQLSTATE value of the
+    /// `<sqlstate value>` `s`: five characters, each a digit or a simple
+    /// Latin upper case letter, its class not 00, successful completion.
+    /// None if it is not one.
+    pub fn parse(s: &str) -> Option<SqlState> {
+        let bytes: [u8; 5] = s.as_bytes().try_into().ok()?;
+        let valid = bytes.iter().all(|b| b.is_ascii_digit() || b.is_ascii_uppercase());
+        let state = SqlState(bytes);
+        (valid && state.class() != SqlState::SUCCESSFUL_COMPLETION.class()).then_some(state)
+    }
 
     /// The five characters.
-    pub fn as_str(self) -> &'static str {
-        self.0
+    pub fn as_str(&self) -> &str {
+        // Every value is made of ASCII digits and letters (`parse`).
+        std::str::from_utf8(&self.0).unwrap_or_default()
     }
 
     /// The class: the first two characters.
-    pub fn class(self) -> &'static str {
-        self.0.get(..2).unwrap_or_default()
+    pub fn class(&self) -> &str {
+        self.as_str().get(..2).unwrap_or_default()
     }
 
     /// Whether it is of a class of syntax error or access rule violation
@@ -309,6 +336,7 @@ impl SqlState {
             Code::Constraint => SqlState::INTEGRITY_CONSTRAINT_VIOLATION,
             Code::Data => SqlState::DATA_EXCEPTION,
             Code::Cursor => SqlState::INVALID_CURSOR_STATE,
+            Code::Signalled => SqlState::UNHANDLED_USER_EXCEPTION,
             Code::Cardinality => SqlState::CARDINALITY_VIOLATION,
             Code::Conflict => SqlState::STATEMENT_CONFLICT,
             Code::Policy => SqlState::POLICY,
@@ -330,6 +358,6 @@ impl SqlState {
 
 impl fmt::Display for SqlState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
+        f.write_str(self.as_str())
     }
 }

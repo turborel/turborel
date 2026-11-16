@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use super::{Expr, Subquery};
+use super::{Expr, Program, Subquery};
 use crate::catalog::QualifiedName;
 use crate::value::DataType;
 
@@ -34,6 +34,12 @@ pub struct Invocation {
     /// of a body that is no `<return statement>`, which executes none
     /// [§9.18 GR8b ix].
     pub body: Option<Arc<Subquery>>,
+    /// [ISO/IEC 9075-4:2006 draft §11.2] Of a body that is an SQL control
+    /// statement, its program, over the parameters' values.
+    pub(crate) program: Option<Arc<Program>>,
+    /// Whether the function possibly modifies SQL-data: run where an
+    /// SQL-session runs its statements (`Subqueries::invoke_hosted`).
+    pub modifies: bool,
     /// The result type [§9.18 SR10e].
     pub result: DataType,
     /// Whether it is a null-call function [§9.18 GR8a].
@@ -46,5 +52,20 @@ impl Invocation {
     /// It, its arguments replaced by `f` of each.
     pub fn map_args(&self, f: &mut dyn FnMut(Expr) -> Expr) -> Arc<Invocation> {
         Arc::new(Invocation { args: self.args.iter().cloned().map(f).collect(), ..self.clone() })
+    }
+}
+
+impl Expr {
+    /// Whether it invokes, but in a subquery, a function that possibly
+    /// modifies SQL-data: a worklist, not recursion, so no depth bounds it.
+    pub fn invokes_modifying(&self) -> bool {
+        let mut work = vec![self];
+        while let Some(e) = work.pop() {
+            if matches!(e, Expr::Invoked(i) if i.modifies) {
+                return true;
+            }
+            e.for_each_child(&mut |child| work.push(child));
+        }
+        false
     }
 }

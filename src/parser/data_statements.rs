@@ -5,6 +5,7 @@
 
 use super::Parser;
 use super::generated::RESTART;
+use super::psm::{RESIGNAL, SIGNAL};
 use super::routines::{CALL, RETURN};
 use crate::ast::{DynamicStatement, SetClause, SqlStatement, UpdateSource, ValueExpression};
 use crate::error::Result;
@@ -35,12 +36,18 @@ pub(crate) const MERGE: &str = "MERGE";
 /// begins, not a query: TRUNCATE, then TABLE, or MERGE, then INTO, each
 /// reserved, which no table's name is followed by in a `<joined table>`;
 /// CALL, then a name, or RETURN [ISO/IEC 9075-2:2023 §16.1, §16.2], as a
-/// statement is read (`at_call`, `at_return`).
+/// statement is read (`at_call`, `at_return`); SIGNAL, RESIGNAL, or a
+/// label.
 pub(crate) fn begins_word_statement(first: Option<&Tok>, second: Option<&Tok>) -> bool {
     let merge = matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::KeyWord(kw::INTO))) if w == MERGE);
     let call = matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::Identifier(_) | Tok::KeyWord(_))) if w == CALL);
     let returned = matches!(first, Some(Tok::Identifier(w)) if w == RETURN);
-    begins_truncate(first, second) || merge || call || returned
+    // [ISO/IEC 9075-4:2006 draft §17.2, §17.3, §14.1] SIGNAL, RESIGNAL, and
+    // a labelled control statement, which `control_statement` refuses
+    // prepared [§4.10.6].
+    let signal = matches!(first, Some(Tok::Identifier(w)) if w == SIGNAL || w == RESIGNAL);
+    let labelled = matches!((first, second), (Some(Tok::Identifier(_)), Some(Tok::Delimiter(delim::COLON))));
+    begins_truncate(first, second) || merge || call || returned || signal || labelled
 }
 
 impl Parser {

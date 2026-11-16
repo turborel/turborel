@@ -507,7 +507,12 @@ impl Parser {
         if self.accept_kw(kw::AS) {
             return self.identifier().map(Some);
         }
-        if self.at_partitioning() || self.at_window_clause() || self.at_result_offset() || self.at_match_recognize() {
+        if self.at_partitioning()
+            || self.at_window_clause()
+            || self.at_result_offset()
+            || self.at_match_recognize()
+            || self.at_psm_reserved()
+        {
             return Ok(None);
         }
         Ok(match self.peek() {

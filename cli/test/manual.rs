@@ -375,3 +375,32 @@ fn the_routine_examples_run_as_printed() {
         assert!(ann.page(page) > 0, "{page} shows its examples' output");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8: the examples of the SQL/PSM
+/// statements, BEGIN, DECLARE HANDLER, SET, CASE, IF, LOOP, WHILE,
+/// REPEAT, FOR, LEAVE, ITERATE, SIGNAL and RESIGNAL, each page in a
+/// database of its own, run as printed, as ANN.
+#[test]
+fn the_psm_examples_run_as_printed() {
+    let pages = [
+        "sql/statements/begin.md",
+        "sql/statements/declare-handler.md",
+        "sql/statements/set-variable.md",
+        "sql/statements/case-statement.md",
+        "sql/statements/if.md",
+        "sql/statements/loop.md",
+        "sql/statements/while.md",
+        "sql/statements/repeat.md",
+        "sql/statements/for.md",
+        "sql/statements/leave.md",
+        "sql/statements/iterate.md",
+        "sql/statements/signal.md",
+        "sql/statements/resignal.md",
+    ];
+    for page in pages {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+        let mut ann = Client::of(&db, "ANN");
+        assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+}

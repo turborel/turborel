@@ -47,6 +47,7 @@ mod merge;
 mod names;
 mod pattern;
 mod primary;
+mod psm;
 mod query;
 mod regex;
 mod roles;
@@ -123,6 +124,8 @@ pub struct Parser {
     trigger: Option<triggers::TriggerScope>,
     /// [ISO/IEC 9075-2:2023 §11.60] Of an `<SQL routine body>` being read, what it knows.
     routine: Option<routines::RoutineScope>,
+    /// [ISO/IEC 9075-4:2006 draft §14.1] The SQL control statements being read, the outermost first.
+    blocks: Vec<psm::Block>,
 }
 
 /// How a parser takes a `<catalog name>` written in a qualified name or a
@@ -203,6 +206,7 @@ impl Parser {
             read_values: HashMap::new(),
             trigger: None,
             routine: None,
+            blocks: Vec::new(),
         })
     }
 
@@ -481,12 +485,21 @@ impl Parser {
         } else {
             None
         };
-        Ok(ParameterSpecification { name, indicator, at, kind: crate::ast::TargetKind::Parameter, element: None })
+        Ok(ParameterSpecification { name, qualifier: None, indicator, at, kind: crate::ast::TargetKind::Parameter, element: None })
     }
 
     // =====================================================================
     // [X3.135-1986 §7.3] <SQL statement>
     // =====================================================================
+
+    /// [X3.135-1986 §8.2, §8.9] COMMIT WORK or ROLLBACK WORK, next;
+    /// [ISO/IEC 9075:1992 §14.3, §14.4] WORK optional.
+    fn transaction_end(&mut self) -> SqlStatement {
+        let commit = self.is_kw(kw::COMMIT);
+        self.advance();
+        self.accept_kw(kw::WORK);
+        if commit { SqlStatement::Commit } else { SqlStatement::Rollback }
+    }
 
     /// `<SQL statement>`: one statement of a procedure.
     ///
@@ -495,6 +508,10 @@ impl Parser {
     /// The text is not an `<SQL statement>`, or is a `<declare cursor>`, which
     /// belongs to the module.
     pub fn sql_statement(&mut self) -> Result<SqlStatement> {
+        // [ISO/IEC 9075-4:2006 draft §4.10.7] an SQL control statement, in a body or directly.
+        if let Some(stmt) = self.control_statement()? {
+            return Ok(stmt);
+        }
         // \[EXTENSION\] CANCEL is no key word, nor TRUNCATE: words.
         if let Some(stmt) = self.word_statement()? {
             return Ok(stmt);
@@ -510,18 +527,7 @@ impl Parser {
             Tok::KeyWord(kw::ALLOCATE | kw::DEALLOCATE) => self.allocation()?,
             Tok::KeyWord(kw::PREPARE | kw::DESCRIBE | kw::EXECUTE) => self.dynamic_statement()?,
 
-            Tok::KeyWord(kw::COMMIT) => {
-                // [X3.135-1986 §8.2] COMMIT WORK; [ISO/IEC 9075:1992 §14.3] WORK optional.
-                self.advance();
-                self.accept_kw(kw::WORK);
-                SqlStatement::Commit
-            }
-            Tok::KeyWord(kw::ROLLBACK) => {
-                // [X3.135-1986 §8.9] ROLLBACK WORK; [ISO/IEC 9075:1992 §14.4] WORK optional.
-                self.advance();
-                self.accept_kw(kw::WORK);
-                SqlStatement::Rollback
-            }
+            Tok::KeyWord(kw::COMMIT | kw::ROLLBACK) => self.transaction_end(),
             Tok::KeyWord(kw::SET) => self.set_statement()?,
             Tok::KeyWord(kw::FETCH) => self.fetch_statement()?,
             Tok::KeyWord(kw::GET) => {

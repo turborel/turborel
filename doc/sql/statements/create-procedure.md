@@ -34,7 +34,11 @@ READS and MODIFIES are read as words, not key words.
 CREATE PROCEDURE defines a procedure of an SQL routine body, run by
 [CALL](call.md). Its body is a single statement: an INSERT, UPDATE,
 DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS or a CALL of another
-procedure.
+procedure. It may be a program too, a compound statement
+([BEGIN](begin.md)) or another control statement, whose variables,
+cursors, handlers and loops hold any number of those statements. Each
+statement of a program that fails is undone alone, so a handler finds
+the changes before it kept.
 
 A parameter's mode says how it passes its value. IN, the default,
 takes its argument's value. OUT starts null, and its value at the end
@@ -86,8 +90,9 @@ it.
    parameter is of a domain or a row type. A procedure has no RETURNS
    and no null-call clause.
 5. The body is no schema, transaction, connection, session or dynamic
-   statement, has no host or dynamic parameter, and is no RETURN. A body
-   of CONTAINS SQL reads no table. One of READS SQL DATA changes none.
+   statement, has no host or dynamic parameter, and is no RETURN, nor
+   holds one. A body of CONTAINS SQL reads no table, and one of READS
+   SQL DATA changes none, counting every statement a program holds.
 6. LANGUAGE is SQL. Any other language, SQL SECURITY, a parameter's
    default, DYNAMIC RESULT SETS above 0 and NEW SAVEPOINT LEVEL are not
    supported.
@@ -137,6 +142,40 @@ OK
 (2 rows)
 ```
 
+A program for a body, which caps each order's quantity and moves what
+is over the cap into a backlog:
+
+```sql
+CREATE TABLE BACKLOG (ID INTEGER, SHORT INTEGER);
+CREATE PROCEDURE CAP_ORDERS (IN MOST INTEGER) MODIFIES SQL DATA
+BEGIN
+  FOR O AS SELECT ID, QUANTITY FROM ORDERS DO
+    IF O.QUANTITY > MOST THEN
+      INSERT INTO BACKLOG VALUES (O.ID, O.QUANTITY - MOST);
+      UPDATE ORDERS SET QUANTITY = MOST WHERE ID = O.ID;
+    END IF;
+  END FOR;
+END;
+CALL CAP_ORDERS(6);
+SELECT * FROM ORDERS ORDER BY ID;
+SELECT * FROM BACKLOG;
+```
+
+```
+OK
+OK
+OK
+           ID |     QUANTITY
+--------------+--------------
+            1 |            5
+            2 |            6
+(2 rows)
+           ID |        SHORT
+--------------+--------------
+            2 |            1
+(1 row)
+```
+
 Rules refused:
 
 ```sql
@@ -149,19 +188,21 @@ CREATE PROCEDURE ENDED () MODIFIES SQL DATA COMMIT;
 
 ```
 turborel: SQLCODE -103 (SQLSTATE 2A000): the body of ANN.SNEAKY possibly modifies SQL-data, and it is READS SQL DATA (IA075) [ISO/IEC 9075-2:2023 §11.60 SR23c]
-turborel: SQLCODE -103 (SQLSTATE 2A000): schema ANN has procedure PLACE of 2 parameters already, of specific name ANN.PLACE_7 [ISO/IEC 9075-2:2023 §11.60 SR20a] (at character 17)
-turborel: SQLCODE -103 (SQLSTATE 2A000): an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS or a function's RETURN (IA078) [ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g]
+turborel: SQLCODE -103 (SQLSTATE 2A000): schema ANN has procedure PLACE of 2 parameters already, of specific name ANN.PLACE_9 [ISO/IEC 9075-2:2023 §11.60 SR20a] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 2A000): an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL or a function's RETURN (IA078) [ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23]
 ```
 
 ## STANDARD
 
 ISO/IEC 9075-2:2023 §11.60, §9.18, §4.35, Feature T321 (subfeatures 02
 and 04), T341, B128. An element target `P[i]` is the `<target array
-element specification>` of §6.4, Feature S097. SQL-86 and SQL-92 have
-no SQL-invoked routines.
+element specification>` of §6.4, Feature S097. A body of a control
+statement is ISO/IEC 9075-4:2006 draft §11.2, Feature P002. SQL-86 and
+SQL-92 have no SQL-invoked routines.
 
 ## SEE ALSO
 
 [CALL](call.md), [CREATE FUNCTION](create-function.md),
 [DROP ROUTINE](drop-routine.md), [GRANT](grant.md),
-[CREATE TRIGGER](create-trigger.md), [GET DIAGNOSTICS](get-diagnostics.md)
+[CREATE TRIGGER](create-trigger.md), [GET DIAGNOSTICS](get-diagnostics.md),
+[BEGIN](begin.md), [DECLARE HANDLER](declare-handler.md)

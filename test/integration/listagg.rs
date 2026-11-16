@@ -45,7 +45,7 @@ fn values_are_joined_in_order_10_9() {
     let (_db, a) = names();
     let by_key = "SELECT G, LISTAGG(NAME, ', ') WITHIN GROUP (ORDER BY K) FROM W GROUP BY G ORDER BY G";
     assert_eq!(ordered(&a, by_key), ["1,a, b, c", "2,X, x, y", "3,NULL"]);
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "a null eliminated");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"), "a null eliminated");
     let descending = "SELECT LISTAGG(NAME, '') WITHIN GROUP (ORDER BY NAME DESC) FROM W WHERE G = 1";
     assert_eq!(ordered(&a, descending), ["cba"]);
     let several = "SELECT LISTAGG(NAME, '-') WITHIN GROUP (ORDER BY G DESC, K DESC) FROM W";
@@ -145,7 +145,7 @@ fn any_value_is_one_of_the_group_10_9() {
     assert_eq!(batched, ["1,one", "2,two"]);
     assert_eq!(by_rows, batched);
     assert_eq!(ordered(&a, "SELECT ANY_VALUE(TITLE) FROM D WHERE G = 1"), ["one"]);
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "a null eliminated");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"), "a null eliminated");
     assert_eq!(ordered(&a, "SELECT ANY_VALUE(DISTINCT TITLE) FROM D WHERE G = 2"), ["two"]);
     assert_eq!(ordered(&a, "SELECT ANY_VALUE(K), COUNT(*) FROM E"), ["NULL,0"]);
     assert_eq!(ordered(&a, "SELECT CARDINALITY(ANY_VALUE(ARRAY[G, G])) FROM D WHERE G = 2"), ["2"]);

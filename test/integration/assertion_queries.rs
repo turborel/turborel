@@ -213,7 +213,7 @@ fn a_grouping_warns_as_checked_whole_6_5() {
         let _ = same(&a, &b, sql, step);
     }
     assert_eq!(exec(&a, "INSERT INTO T VALUES (23, 3, 1)"), exec(&b, "INSERT INTO T VALUES (23, 3, 1)"));
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "a null in group 2, not changed");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"), "a null in group 2, not changed");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.10.1, §14.3 GR4];

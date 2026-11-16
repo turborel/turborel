@@ -7,7 +7,7 @@ use super::{SearchCondition, SqlStatement, TableName};
 /// `<trigger name>` `<trigger action time>` `<trigger event>` ON `<table
 /// name>` \[REFERENCING `<transition table or variable list>`\]
 /// `<triggered action>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TriggerDefinition {
     /// The `<trigger name>`.
     pub name: TableName,

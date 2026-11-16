@@ -15,7 +15,7 @@ pub enum Grantor {
 
 /// A statement of roles, an SQL-schema statement [ISO/IEC 9075-2:2023
 /// §4.41.2].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RoleStatement {
     /// [§12.4] `<role definition>` ::= CREATE ROLE `<role name>` \[WITH
     /// ADMIN `<grantor>`\]
@@ -78,7 +78,7 @@ impl RoleStatement {
 /// [ISO/IEC 9075-2:2023 §19.3] `<set role statement>` ::= SET ROLE `<role
 /// specification>`, `<role specification>` ::= `<value specification>` |
 /// NONE.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SetRole {
     /// The `<value specification>`, whose value names the role.
     Role(ValueSpecification),

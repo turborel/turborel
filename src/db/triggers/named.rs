@@ -7,8 +7,9 @@
 use std::slice;
 
 use crate::ast::{
-    InsertSource, MatchedAction, MergeStatement, MergeWhen, QueryExpression, RowElement, SearchCondition, SetClause, SqlArgument,
-    SqlStatement, Subquery, TableName, UpdateSource, ValueExpression, ValuesRow, from_table_names,
+    AssignmentSource, CaseWhen, ControlStatement, InsertSource, Iteration, MatchedAction, MergeStatement, MergeWhen, QueryExpression,
+    RowElement, SearchCondition, SetClause, SqlArgument, SqlStatement, Subquery, TableName, UpdateSource, ValueExpression, ValuesRow,
+    WhenOperand, from_table_names,
 };
 use crate::binder::qualify;
 use crate::catalog::{QualifiedName, TransitionNames};
@@ -49,25 +50,23 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
             }
         }
         SqlStatement::Select { query: spec, .. } => query(&QueryExpression::Spec(spec.clone()), out),
-        SqlStatement::UpdateSearched { table, set, where_clause } => {
-            out.push(table.clone());
-            set_clauses(set, out);
-            if_condition(where_clause.as_ref(), out);
-        }
-        SqlStatement::DeleteSearched { table, where_clause } => {
-            out.push(table.clone());
-            if_condition(where_clause.as_ref(), out);
-        }
+        SqlStatement::UpdateSearched { table, set, where_clause } => changed(table, set, where_clause.as_ref(), out),
+        SqlStatement::DeleteSearched { table, where_clause } => changed(table, &[], where_clause.as_ref(), out),
         SqlStatement::Merge(m) => merge(m, out),
         SqlStatement::Call(call) => values(call.arguments.iter().filter_map(argued), out),
         // [ISO/IEC 9075-2:2023 §16.2] A function's `<return value>`.
         SqlStatement::Return(r) => values(r.value.iter(), out),
-        // What a triggered action may not contain names nothing it reads.
+        SqlStatement::Control(c) => control(c, out),
+        // [ISO/IEC 9075-4:2006 draft §12.5, §12.6] of a local cursor.
+        SqlStatement::UpdatePositioned { table, set, .. } => changed(table, set, None, out),
+        SqlStatement::DeletePositioned { table, .. } => changed(table, &[], None, out),
+        // What a triggered action may not contain names nothing it reads;
+        // SIGNAL's values are simple.
         SqlStatement::GetDiagnostics(_)
+        | SqlStatement::Signal(_)
         | SqlStatement::Close(_)
         | SqlStatement::SetCollation(_)
         | SqlStatement::Commit
-        | SqlStatement::DeletePositioned { .. }
         | SqlStatement::Truncate { .. }
         | SqlStatement::AlterTable { .. }
         | SqlStatement::Drop { .. }
@@ -90,9 +89,52 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
         | SqlStatement::Index(_)
         | SqlStatement::User(_)
         | SqlStatement::Served(_)
-        | SqlStatement::SetConstraints { .. }
-        | SqlStatement::UpdatePositioned { .. } => {}
+        | SqlStatement::SetConstraints { .. } => {}
     }
+}
+
+/// [ISO/IEC 9075-4:2006 draft Clause 14] Adds to `out` the table names
+/// written in the control statement `c`: in its conditions, values and
+/// cursors' queries, and in each statement it holds.
+fn control(statement_of: &ControlStatement, out: &mut Vec<TableName>) {
+    match statement_of {
+        ControlStatement::Assignment(a) => match &a.source {
+            AssignmentSource::Value(v) => values(std::iter::once(v), out),
+            AssignmentSource::Row(r, _) => values(r.iter(), out),
+            AssignmentSource::Null(_) => {}
+        },
+        ControlStatement::Compound(b) => b.cursors.iter().for_each(|cursor| query(&cursor.specification.query, out)),
+        ControlStatement::Case(case) => {
+            values(case.operand.iter().flatten(), out);
+            for (when, _) in &case.whens {
+                match when {
+                    CaseWhen::Condition(c) => condition(c, out),
+                    CaseWhen::Operands(operands) => operands.iter().for_each(|o| match o {
+                        WhenOperand::Value(r, _) => values(r.iter(), out),
+                        WhenOperand::Condition(c) => condition(c, out),
+                    }),
+                }
+            }
+        }
+        ControlStatement::If(i) => i.branches.iter().for_each(|(c, _)| condition(c, out)),
+        ControlStatement::Iterated(l) => match &l.iteration {
+            Iteration::While(c) | Iteration::Repeat(c) => condition(c, out),
+            Iteration::Loop => {}
+        },
+        ControlStatement::For(f) => query(&f.specification.query, out),
+        ControlStatement::Iterate(_) | ControlStatement::Leave(_) => {}
+    }
+    for s in statement_of.statements() {
+        statement(s, out);
+    }
+}
+
+/// Adds to `out` the table an UPDATE or DELETE changes, `table`, and those
+/// its SET clauses `set` and search condition `where_clause` name.
+fn changed(table: &TableName, set: &[SetClause], where_clause: Option<&SearchCondition>, out: &mut Vec<TableName>) {
+    out.push(table.clone());
+    set_clauses(set, out);
+    if_condition(where_clause, out);
 }
 
 /// The value expression of a CALL's argument `a`, if it is one.

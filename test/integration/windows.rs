@@ -148,7 +148,7 @@ fn set_functions_over_implied_frames_7_15() {
     let want =
         ["n,1,10,10,4,48", "n,2,5,35,4,48", "n,2,20,35,4,48", "n,4,NULL,35,4,48", "s,1,5,5,2,48", "s,3,7,12,2,48", "NULL,2,1,1,1,48"];
     assert_eq!(ordered(&a, sql), want);
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "a null left out of n's frames");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"), "a null left out of n's frames");
     let each = "SELECT R, COUNT(DISTINCT D) OVER (PARTITION BY R), MIN(D) OVER (PARTITION BY R), MAX(AMOUNT) OVER (PARTITION BY R) FROM S";
     assert_eq!(sorted(&a, each), ["NULL,1,2,1", "n,3,1,20", "n,3,1,20", "n,3,1,20", "n,3,1,20", "s,2,1,7", "s,2,1,7"]);
     let more = "SELECT R, AVG(AMOUNT) OVER (PARTITION BY R), EVERY(AMOUNT > 4) OVER (PARTITION BY R), \

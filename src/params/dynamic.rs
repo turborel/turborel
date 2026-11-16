@@ -103,6 +103,7 @@ impl Params {
             dynamic: Some(Dynamic { values: Some(values), types, slots: true, held: Cell::new(false), implicit }),
             transitions: self.transitions.clone(),
             routine: self.routine.clone(),
+            execution: self.execution,
             ..Params::default()
         }
     }

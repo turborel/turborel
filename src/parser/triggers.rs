@@ -1,7 +1,7 @@
 //! The `<trigger definition>` [ISO/IEC 9075-2:2023 §11.49] and the `<drop
 //! trigger statement>` [§11.50], with the Syntax Rules of §11.49 that need
 //! no catalog. TRIGGER, BEFORE, AFTER, INSTEAD, REFERENCING, OLD, NEW, ROW,
-//! EACH, STATEMENT and ATOMIC are no key words of SQL-92, so each is read
+//! EACH and STATEMENT are no key words of SQL-92, so each is read
 //! as an identifier, a key word only here.
 //!
 //! While a `<triggered action>` is read the parser knows it is in one
@@ -40,8 +40,6 @@ const NEW: &str = "NEW";
 const ROW: &str = "ROW";
 /// EACH, of FOR EACH ROW and FOR EACH STATEMENT.
 const EACH: &str = "EACH";
-/// ATOMIC, after BEGIN in a `<compound triggered SQL statement>`.
-const ATOMIC: &str = "ATOMIC";
 
 /// What the parser knows of the `<triggered action>` it is reading.
 #[derive(Debug)]
@@ -49,7 +47,9 @@ pub(super) struct TriggerScope {
     /// [ISO/IEC 9075-2:2023 §6.6 SR13] The `<new transition variable
     /// name>` of a BEFORE trigger, which qualifies a new transition
     /// variable column reference; none for any other trigger.
-    new_row: Option<String>,
+    pub(super) new_row: Option<String>,
+    /// When the trigger is fired, which decides what its statements may do.
+    pub(super) time: ActionTime,
 }
 
 /// One kind of `<transition table or variable>`.
@@ -237,7 +237,7 @@ impl Parser {
         let referencing = if self.accept_word(REFERENCING) { self.transition_list(time, &event)? } else { Referencing::default() };
         let level = self.trigger_level(&referencing)?;
         let new_row = if time == ActionTime::Before { referencing.new_row.as_ref().map(|(new_row, _)| new_row.clone()) } else { None };
-        let (when, action, action_text) = self.in_triggered_action(TriggerScope { new_row }, |p| p.triggered_action(time))?;
+        let (when, action, action_text) = self.in_triggered_action(TriggerScope { new_row, time }, |p| p.triggered_action(time))?;
         let text = self.text_from(start);
         let (when, when_text) = when.map_or((None, None), |(c, written)| (Some(c), Some(written)));
         Ok(TriggerDefinition { name, time, event, table, referencing, level, when, when_text, action, action_text, text })
@@ -387,9 +387,11 @@ impl Parser {
     fn in_triggered_action<T>(&mut self, scope: TriggerScope, read: impl FnOnce(&mut Parser) -> Result<T>) -> Result<T> {
         let params = std::mem::take(&mut self.params);
         let dynamic = self.dynamic.take();
+        let blocks = std::mem::take(&mut self.blocks);
         self.trigger = Some(scope);
         let result = read(self);
         self.trigger = None;
+        self.blocks = blocks;
         self.params = params;
         self.dynamic = dynamic;
         result.map_err(|e| self.parameter_refusal(e))
@@ -423,27 +425,38 @@ impl Parser {
             None
         };
         let start = self.here();
-        let action = if self.accept_kw(kw::BEGIN) {
-            // <compound triggered SQL statement> ::= BEGIN ATOMIC {<SQL
-            // procedure statement> <semicolon>}... END
-            self.expect_word(ATOMIC)?;
-            let mut action = Vec::new();
-            loop {
-                action.push(self.triggered_statement(time)?);
-                self.expect_delim(delim::SEMICOLON)?;
-                if self.accept_kw(kw::END) {
-                    break action;
-                }
-            }
-        } else {
-            vec![self.triggered_statement(time)?]
-        };
+        let action = self.triggered_statements()?;
         Ok((when, action, self.text_from(start)))
+    }
+
+    /// [ISO/IEC 9075-4:2006 draft §9.19] The `<triggered SQL statement>`
+    /// of a trigger at `time`: an `<SQL procedure statement>`, a compound
+    /// one ATOMIC. One of only statements, BEGIN ATOMIC {`<SQL procedure
+    /// statement>` `<semicolon>`}... END as ISO/IEC 9075-2:2023 §11.49
+    /// has it, is its statements, run as one atomic statement as before.
+    fn triggered_statements(&mut self) -> Result<Vec<SqlStatement>> {
+        let at = self.here();
+        let compound = self.is_kw(kw::BEGIN);
+        let statement = self.body_statement()?;
+        let SqlStatement::Control(control) = statement else { return Ok(vec![statement]) };
+        let crate::ast::ControlStatement::Compound(c) = *control else { return Ok(vec![SqlStatement::Control(control)]) };
+        if compound && !c.atomic {
+            return Err(SqlError::at(
+                Code::SyntaxRule,
+                at,
+                "[ISO/IEC 9075-4:2006 draft §9.19 SR1] a trigger's compound statement is ATOMIC",
+            ));
+        }
+        let plain = c.label.is_none() && c.declarations.is_empty() && c.cursors.is_empty() && c.handlers.is_empty();
+        if plain && !c.statements.is_empty() {
+            return Ok(c.statements);
+        }
+        Ok(vec![SqlStatement::Control(Box::new(crate::ast::ControlStatement::Compound(c)))])
     }
 
     /// One `<SQL procedure statement>` of a `<triggered action>` of a
     /// trigger at `time`, of the kinds a trigger may hold.
-    fn triggered_statement(&mut self, time: ActionTime) -> Result<SqlStatement> {
+    pub(super) fn triggered_statement(&mut self, time: ActionTime) -> Result<SqlStatement> {
         let at = self.here();
         let before = time == ActionTime::Before;
         match self.action_statement() {
@@ -569,7 +582,7 @@ impl Parser {
     /// Whether `N` . is next, N the new transition variable name of the
     /// BEFORE trigger whose action is being read.
     fn at_new_transition_column(&self) -> bool {
-        let Some(TriggerScope { new_row: Some(new_row) }) = &self.trigger else { return false };
+        let Some(TriggerScope { new_row: Some(new_row), .. }) = &self.trigger else { return false };
         let Tok::Identifier(word) = self.peek() else { return false };
         word == new_row && *self.peek_at(1) == Tok::Delimiter(delim::PERIOD)
     }

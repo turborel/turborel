@@ -1,0 +1,131 @@
+//! [ISO/IEC 9075-4:2006 draft §11.2; ISO/IEC 9075-2:2023 §4.35.2] What
+//! evaluates the values of a statement of the session that may invoke a
+//! function that possibly modifies SQL-data: the SET values of an UPDATE
+//! or a MERGE, the rows of an INSERT's or MERGE's VALUES, the arguments of
+//! a CALL, and the values of a program (`binder::Binder::hosting`).
+//!
+//! It runs subqueries as the statement's runner does; a function that
+//! possibly modifies SQL-data it runs with the session as its host, each
+//! statement of its body a statement of the session nested in the one
+//! that invokes it, in the context its invocation pushes [ISO/IEC
+//! 9075-2:2023 §9.18 GR6]. Its changes are the statement's, undone with
+//! it if it fails.
+
+use std::sync::Arc;
+
+use super::super::super::{Session, StatementContext};
+use crate::catalog::{SequenceDesc, owner_of};
+use crate::db::State;
+use crate::error::{Code, Result, SqlError, Warnings};
+use crate::exec::{Ended, Runner, Subqueries, SubqueryRows, eval};
+use crate::logical::{Expr, Invocation, LogicalPlan, Subquery};
+use crate::params::Params;
+use crate::storage::Row;
+use crate::value::Value;
+
+/// \[DESIGN\] A statement's runner, with the session that runs a function
+/// that possibly modifies SQL-data, if one does.
+pub(in crate::db) struct Hosted<'s> {
+    session: Option<&'s Session>,
+    cx: StatementContext<'s>,
+    runner: Runner,
+}
+
+impl<'s> Hosted<'s> {
+    /// The runner of the statement in `cx` of `session`, if it is one.
+    pub(in crate::db) fn new(session: Option<&'s Session>, cx: StatementContext<'s>) -> Hosted<'s> {
+        Hosted { session, cx, runner: Runner::new(cx.st, cx.tx.id) }
+    }
+
+    /// Its runner.
+    pub(in crate::db) fn runner(&self) -> &Runner {
+        &self.runner
+    }
+}
+
+impl Subqueries for Hosted<'_> {
+    fn rows(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> Result<SubqueryRows> {
+        self.runner.rows(subquery, outer, limit)
+    }
+
+    fn warnings(&self) -> Option<&Warnings> {
+        self.runner.warnings()
+    }
+
+    fn like(&self, value: &str, pattern: &str, escape: Option<char>) -> Result<bool> {
+        self.runner.like(value, pattern, escape)
+    }
+
+    fn next_value(&self, seq: &SequenceDesc) -> Result<Value> {
+        self.runner.next_value(seq)
+    }
+
+    fn interrupted(&self) -> Result<()> {
+        self.runner.interrupted()
+    }
+
+    fn state(&self) -> Option<&Arc<State>> {
+        self.runner.state()
+    }
+
+    fn invoke_hosted(&self, i: &Invocation, values: Vec<Value>) -> Option<Result<Option<Value>>> {
+        let session = self.session.filter(|_| i.modifies)?;
+        Some(session.invoke_function(self.cx, i, values))
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §15.11 GR3, §9.18 GR3] The rows of `plan`, the
+/// VALUES of an INSERT, or the arguments of a CALL, as a row, or a
+/// projection of one, if it invokes a function that possibly modifies
+/// SQL-data: each evaluated in turn by `hosted`, not as a query, which no
+/// SQL-session runs, the tables it reads locked first. None if it invokes
+/// none.
+pub(in crate::db) fn hosted_rows(plan: &LogicalPlan, hosted: &Hosted<'_>) -> Option<Result<Vec<Row>>> {
+    let (rows, projected) = if let LogicalPlan::Values { rows, .. } = plan {
+        (rows, None)
+    } else if let LogicalPlan::Project { exprs, input } = plan
+        && let LogicalPlan::Values { rows, .. } = &**input
+    {
+        (rows, Some(exprs))
+    } else {
+        return None;
+    };
+    if !rows.iter().flatten().any(Expr::invokes_modifying) {
+        return None;
+    }
+    for t in plan.tables() {
+        if let Err(e) = hosted.cx.st.read_lock(hosted.cx.tx, &t) {
+            return Some(Err(e));
+        }
+    }
+    let row_of = |exprs: &[Expr], input: &Row| exprs.iter().map(|e| eval(e, input, hosted)).collect::<Result<Row>>();
+    Some(
+        rows.iter()
+            .map(|r| row_of(r, &Row::new()).and_then(|values| projected.map_or(Ok(values.clone()), |p| row_of(p, &values))))
+            .collect(),
+    )
+}
+
+impl Session {
+    /// [ISO/IEC 9075-2:2023 §9.18 GR6, GR8b] The function `i`, which
+    /// possibly modifies SQL-data, invoked in `cx` with the parameters'
+    /// values `values`: its body run with the session as its host, in the
+    /// context its invocation pushes; the value it returns, none if it
+    /// returns none.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 of a function whose body is no program; as `push`'s;
+    /// an exception of it no handler of it handles.
+    pub(in crate::db) fn invoke_function(&self, cx: StatementContext<'_>, i: &Invocation, mut values: Vec<Value>) -> Result<Option<Value>> {
+        let program = i.program.as_ref().ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] function {} has no program", i.name)))?;
+        values.resize(program.base.saturating_add(program.variables.len()), Value::Null);
+        let mut frame = Params::of_routine(values, Arc::clone(&program.scope));
+        let owner = owner_of(&*cx.st.catalog, &i.name.auth).to_owned();
+        let _pushed = self.push(&i.name, (owner, i.name.auth.clone()))?;
+        match self.run_hosted(cx, program, &mut frame)? {
+            Ended::Returned(v) => Ok(Some(v)),
+            Ended::Completed(_) => Ok(None),
+        }
+    }
+}

@@ -136,16 +136,16 @@ mod write;
 use compiled::{plan, plan_slotted};
 
 pub use prepared::Prepared;
-use scroll::{Kept, Updatable};
 pub use served::ServedConnections;
 pub use state::State;
-use stream::Stream;
 pub use stream::{Cursor, Direct};
 pub use users::Credentials;
 
-use assignment::{assign_targets, candidate, check_option, check_targets, set_columns};
+use assignment::{candidate, check_option, set_columns};
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
 pub use rekey::FormatsBehind;
+use scroll::{Kept, Updatable};
+use stream::Stream;
 
 /// \[DESIGN\] The default of STORAGE.REKEY_BYTES_PER_SECOND: 8 MiB a second,
 /// a pace a disk bears beside the database's own work (RULES.md D48).
@@ -163,7 +163,12 @@ pub use recovery::RecoveryReport;
 pub use session::TransactionMode;
 pub use standby::Standby;
 pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, OpenedLog, StorePlace};
-pub(crate) use {database::WeakDatabase, triggers::trigger_texts};
+pub(crate) use {
+    assignment::{assign_targets, assignment_type, check_targets},
+    database::WeakDatabase,
+    routines::run_unhosted,
+    triggers::trigger_texts,
+};
 
 /// The state and transaction a statement runs in.
 #[derive(Clone, Copy)]
@@ -581,20 +586,4 @@ impl Drop for Session {
 // Unit tests: a session refuses a call back into itself (RULES.md R-ERR-4,
 // R-TEST-2 robustness).
 #[cfg(test)]
-mod tests {
-
-    use super::*;
-
-    /// Verifies: [DESIGN] RULES.md R-ERR-4: a call into a session already
-    /// running a call, as a plug-in calling back into it would make, is
-    /// refused with SQLCODE -910; once the first call ends the session works.
-    #[test]
-    fn a_session_refuses_a_call_back_into_itself() {
-        let db = Database::new();
-        let s = db.session("A");
-        let call = s.enter().unwrap();
-        assert_eq!(s.enter().err().map(|e| e.code), Some(Code::Api));
-        drop(call);
-        assert!(s.enter().is_ok());
-    }
-}
+mod tests;

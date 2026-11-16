@@ -28,7 +28,7 @@ pub enum PrivilegeObject {
 /// [ISO/IEC 9075:1992 §11.37] `<revoke statement>` ::= REVOKE \[GRANT
 /// OPTION FOR\] `<privileges>` ON `<object name>` FROM `<grantee>` \[{,
 /// `<grantee>`}...\] `<drop behavior>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RevokeStatement {
     /// GRANT OPTION FOR was written: the grant option goes, the privilege stays.
     pub grant_option_for: bool,
@@ -51,7 +51,7 @@ pub struct RevokeStatement {
 
 /// [X3.135-1986 §6.6] `<privilege definition>` ::= GRANT `<privileges>` ON
 /// `<table name>` TO `<grantee>` \[{, `<grantee>`}...\] \[WITH GRANT OPTION\]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PrivilegeDefinition {
     /// The `<action>`s, or none for ALL PRIVILEGES.
     pub actions: Option<Vec<Action>>,

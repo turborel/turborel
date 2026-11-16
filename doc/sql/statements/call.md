@@ -23,8 +23,9 @@ a schema is of the session's default schema.
 An argument of an IN parameter is a value expression, whose value is
 stored in the parameter's type. An argument of an OUT or INOUT parameter
 is a target: a host or embedded variable, a parameter of the procedure
-whose body the CALL is, or, in a BEFORE row trigger, a column of its
-new transition variable. Of the last two it may be one element of the
+whose body the CALL is, an SQL variable of a compound statement the
+CALL is in, or, in a BEFORE row trigger, a column of its new transition
+variable. Of the last two it may be one element of the
 array, `P[i]` or `N.C[i]`, as [CREATE PROCEDURE](create-procedure.md)
 says. An OUT parameter starts null. An INOUT
 parameter starts with its target's value. Once the body has run, the
@@ -35,7 +36,10 @@ The body runs as the owner of the procedure's schema, of that schema,
 with a diagnostics area of its own, within the CALL statement: all it
 does shares the CALL's instant, and is undone if any part of it fails.
 A procedure may call another, and a triggered action may call one.
-Triggered actions and procedures nest at most 16 deep.
+Triggered actions and procedures nest at most 16 deep. An argument may
+invoke a function that changes SQL-data, which runs before the
+procedure, its changes the CALL's. A function's body may call a
+procedure that changes none, which runs where the function does.
 
 GET DIAGNOSTICS after a CALL shows CALL as its COMMAND_FUNCTION, and of
 a failure the procedure as ROUTINE_SCHEMA, ROUTINE_NAME and
@@ -54,7 +58,7 @@ as PARAMETER_NAME, PARAMETER_MODE and PARAMETER_ORDINAL_POSITION.
    INOUT one, are of Features T522 and T523, not supported (SQLCODE
    -900).
 4. A BEFORE trigger's action calls no procedure that possibly changes
-   SQL-data.
+   SQL-data, nor does a function's body that changes none.
 
 ## PRIVILEGES
 

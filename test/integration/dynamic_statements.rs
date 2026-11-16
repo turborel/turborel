@@ -53,14 +53,14 @@ fn extended_statement_names_5_4_17_6() {
     p.set("SN", Value::Char("  S2 ".to_owned()));
     text(&mut p, "DELETE FROM T WHERE ID = 3");
     assert_eq!(run(&s, "PREPARE GLOBAL SN FROM TEXT", &mut p), Ok(Completion::Success));
-    assert_eq!(run(&s, "EXECUTE SN", &mut p), Err("26000"), "LOCAL is implicit, and apart");
-    assert_eq!(run(&s, "EXECUTE LOCAL SN", &mut p), Err("26000"));
+    assert_eq!(run(&s, "EXECUTE SN", &mut p), Err("26000".to_owned()), "LOCAL is implicit, and apart");
+    assert_eq!(run(&s, "EXECUTE LOCAL SN", &mut p), Err("26000".to_owned()));
     text(&mut p, "DELETE FROM T WHERE ID = 2");
     assert_eq!(run(&s, "PREPARE GLOBAL SN FROM TEXT", &mut p), Ok(Completion::Success), "GR6: the first deallocated");
     assert_eq!(run(&s, "EXECUTE GLOBAL SN", &mut p), Ok(Completion::Success));
     assert_eq!(rows(&s, "SELECT ID FROM T ORDER BY ID").unwrap(), ["1", "3"]);
     p.set("SN", Value::Char("NOT ONE".to_owned()));
-    assert_eq!(run(&s, "PREPARE SN FROM TEXT", &mut p), Err("26000"), "GR8");
+    assert_eq!(run(&s, "PREPARE SN FROM TEXT", &mut p), Err("26000".to_owned()), "GR8");
     assert_eq!(code(&s, "EXECUTE GLOBAL 'S2'", &mut p), Code::SyntaxRule, "§5.4 SR13");
     p.set("SN", Value::Char("S2".to_owned()));
     assert_eq!(run(&s, "EXECUTE GLOBAL SN", &mut p), Ok(Completion::NoData), "the name trimmed is S2's: no row to delete");
@@ -83,23 +83,23 @@ fn what_prepare_and_execute_refuse_17_6_17_10() {
     let continued = "DELETE FROM T WHERE NAME = 'A' -- and more\n'B'";
     for refused in ["COMMIT AND CHAIN", "PREPARE X FROM TEXT", "GET DIAGNOSTICS N = NUMBER", "DELETE FROM T -- all\n", continued] {
         text(&mut p, refused);
-        assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("37000"), "{refused}");
+        assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("37000".to_owned()), "{refused}");
     }
-    assert_eq!(run(&s, "EXECUTE S", &mut p), Err("26000"), "§17.10 GR1");
-    assert_eq!(run(&s, "DEALLOCATE PREPARE S", &mut p), Err("26000"), "§17.7 GR1");
+    assert_eq!(run(&s, "EXECUTE S", &mut p), Err("26000".to_owned()), "§17.10 GR1");
+    assert_eq!(run(&s, "DEALLOCATE PREPARE S", &mut p), Err("26000".to_owned()), "§17.7 GR1");
     text(&mut p, "DELETE FROM T WHERE NAME = '--' OR NAME = '''--'\n'--'");
     run(&s, "PREPARE S FROM TEXT", &mut p).unwrap();
     text(&mut p, "UPDATE T SET AMT = ? WHERE ID = ?");
     run(&s, "PREPARE S FROM TEXT", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE S", &mut p), Err("07004"), "§17.10 GR4");
-    assert_eq!(run(&s, "EXECUTE S USING K", &mut p), Err("07001"), "§17.9 GR5a");
+    assert_eq!(run(&s, "EXECUTE S", &mut p), Err("07004".to_owned()), "§17.10 GR4");
+    assert_eq!(run(&s, "EXECUTE S USING K", &mut p), Err("07001".to_owned()), "§17.9 GR5a");
     p.set("TXT", Value::Char("x".to_owned()));
-    assert_eq!(run(&s, "EXECUTE S USING TXT, K", &mut p), Err("22018"), "GR5f: CAST's own");
+    assert_eq!(run(&s, "EXECUTE S USING TXT, K", &mut p), Err("22018".to_owned()), "GR5f: CAST's own");
     text(&mut p, "SELECT ID FROM T WHERE CAST(? AS DATE) IS NOT NULL");
     run(&s, "PREPARE D FROM TEXT", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE D INTO N USING K", &mut p), Err("07006"), "§17.9 GR5e: no INTEGER is a DATE");
+    assert_eq!(run(&s, "EXECUTE D INTO N USING K", &mut p), Err("07006".to_owned()), "§17.9 GR5e: no INTEGER is a DATE");
     assert_eq!(run(&s, "DEALLOCATE PREPARE S", &mut p), Ok(Completion::Success));
-    assert_eq!(run(&s, "EXECUTE S USING K, K", &mut p), Err("26000"), "deallocated");
+    assert_eq!(run(&s, "EXECUTE S USING K, K", &mut p), Err("26000".to_owned()), "deallocated");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.9 SR1, §17.10 SR2, §17.8
@@ -139,18 +139,18 @@ fn a_single_row_select_executed_into_arguments_17_10() {
     text(&mut p, "SELECT ID, NAME FROM T WHERE ID >= ?");
     run(&s, "PREPARE Q FROM TEXT", &mut p).unwrap();
     p.set("K", number(2));
-    assert_eq!(run(&s, "EXECUTE Q INTO N, NM INDICATOR NI USING K", &mut p), Err("21000"));
+    assert_eq!(run(&s, "EXECUTE Q INTO N, NM INDICATOR NI USING K", &mut p), Err("21000".to_owned()));
     p.set("K", number(3));
     assert_eq!(run(&s, "EXECUTE Q INTO N, NM INDICATOR NI USING K", &mut p), Ok(Completion::Success));
     assert_eq!((p.value("N").to_string(), p.indicator_value("NI")), ("3".to_owned(), Some(-1)));
     assert_eq!(diagnostic(&s, "DYNAMIC_FUNCTION"), "SELECT");
     p.set("K", number(9));
     assert_eq!(run(&s, "EXECUTE Q INTO N, NM INDICATOR NI USING K", &mut p), Ok(Completion::NoData));
-    assert_eq!(run(&s, "EXECUTE Q USING K", &mut p), Err("07007"), "GR5");
-    assert_eq!(run(&s, "EXECUTE Q INTO N USING K", &mut p), Err("07002"), "§17.9 GR6a");
+    assert_eq!(run(&s, "EXECUTE Q USING K", &mut p), Err("07007".to_owned()), "GR5");
+    assert_eq!(run(&s, "EXECUTE Q INTO N USING K", &mut p), Err("07002".to_owned()), "§17.9 GR6a");
     text(&mut p, "SELECT ID FROM T ORDER BY ID");
     run(&s, "PREPARE O FROM TEXT", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE O INTO N", &mut p), Err("07003"), "GR2");
+    assert_eq!(run(&s, "EXECUTE O INTO N", &mut p), Err("07003".to_owned()), "GR2");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.11 GR3, GR4, §18.1 GR1c,
@@ -175,7 +175,7 @@ fn execute_immediate_17_11() {
     assert!(s.transaction_mode().is_none(), "SET TRANSACTION begins none");
     for refused in ["SELECT ID FROM T", "DELETE FROM T WHERE ID = ?", "DELETE FROM T -- all\n", "EXECUTE IMMEDIATE 'COMMIT'"] {
         text(&mut p, refused);
-        assert_eq!(run(&s, "EXECUTE IMMEDIATE TEXT", &mut p), Err("37000"), "{refused}");
+        assert_eq!(run(&s, "EXECUTE IMMEDIATE TEXT", &mut p), Err("37000".to_owned()), "{refused}");
     }
     assert_eq!(code(&s, "EXECUTE IMMEDIATE K", &mut p), Code::SyntaxRule, "§17.11 SR1");
 }
@@ -196,7 +196,7 @@ fn prepared_statements_outlive_their_transaction_17_6() {
     p.set("K", number(1));
     assert_eq!(run(&s, "EXECUTE S USING K", &mut p), Ok(Completion::Success), "GR10");
     assert_eq!(run(&s, "ALLOCATE DESCRIPTOR 'D'", &mut p), Ok(Completion::Success));
-    assert_eq!(run(&s, "DESCRIBE NONE USING SQL DESCRIPTOR 'D'", &mut p), Err("26000"));
+    assert_eq!(run(&s, "DESCRIBE NONE USING SQL DESCRIPTOR 'D'", &mut p), Err("26000".to_owned()));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR4a] a statement of
@@ -207,7 +207,7 @@ fn dynamic_statements_are_not_prepared_17_6() {
     let db = setup();
     let s = db.session("APP");
     for refused in ["PREPARE S FROM X", "EXECUTE S", "ALLOCATE DESCRIPTOR 'D'", "DEALLOCATE PREPARE S"] {
-        assert_eq!(s.prepare(refused).err().map(|e| e.sqlstate().as_str()), Some("37000"), "{refused}");
+        assert_eq!(s.prepare(refused).err().map(|e| e.sqlstate().to_string()).as_deref(), Some("37000"), "{refused}");
     }
 }
 
@@ -229,9 +229,9 @@ fn the_api_prepare_takes_comments_and_later_cursors_d58() {
     run(&s, "FETCH LATER INTO N", &mut p).unwrap();
     assert_eq!(s.execute_prepared(&positioned, &[]).unwrap(), Completion::Success, "found as it runs");
     text(&mut p, "-- the first row\nDELETE FROM T WHERE ID = 3");
-    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("37000"), "GR4q");
+    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("37000".to_owned()), "GR4q");
     text(&mut p, "DELETE FROM T WHERE CURRENT OF NONE");
-    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("34000"), "GR2b");
+    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("34000".to_owned()), "GR2b");
     assert_eq!(rows(&s, "SELECT ID FROM T").unwrap(), ["3"]);
 }
 

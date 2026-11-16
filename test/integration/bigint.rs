@@ -169,10 +169,10 @@ fn bigint_in_a_descriptor_20_1() {
     run_with(&s, "SET DESCRIPTOR 'E' COUNT = 1", &mut p).unwrap();
     run_with(&s, "SET DESCRIPTOR 'E' VALUE 1 TYPE = 25", &mut p).unwrap();
     assert_eq!((field(&mut p, "E", "PRECISION"), field(&mut p, "E", "SCALE")), ("0".to_owned(), "0".to_owned()), "GR4c: none set");
-    assert_eq!(run_with(&s, "SET DESCRIPTOR 'E' VALUE 1 DATA = K", &mut p), Err("22005"), "an INTEGER value");
+    assert_eq!(run_with(&s, "SET DESCRIPTOR 'E' VALUE 1 DATA = K", &mut p), Err("22005".to_owned()), "an INTEGER value");
     run_with(&s, "SET DESCRIPTOR 'E' VALUE 1 DATA = BG", &mut p).unwrap();
     run_with(&s, "EXECUTE Q INTO SQL DESCRIPTOR 'D' USING SQL DESCRIPTOR 'E'", &mut p).unwrap();
     run_with(&s, "GET DESCRIPTOR 'D' VALUE 1 BG = DATA", &mut p).unwrap();
     assert_eq!(p.value("BG").to_string(), "123456789012");
-    assert_eq!(run_with(&s, "GET DESCRIPTOR 'D' VALUE 1 N = DATA", &mut p), Err("22005"), "an INTEGER target");
+    assert_eq!(run_with(&s, "GET DESCRIPTOR 'D' VALUE 1 N = DATA", &mut p), Err("22005".to_owned()), "an INTEGER target");
 }

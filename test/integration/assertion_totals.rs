@@ -141,12 +141,12 @@ fn a_sum_kept_out_of_range_raises_as_whole_6_5() {
         s.commit().unwrap();
         s.run("INSERT INTO B VALUES (1, -999999999999999999)").unwrap();
         let past = s.execute("INSERT INTO B VALUES (2, -999999999999999999)", &mut Params::new()).unwrap_err();
-        assert_eq!((past.code, past.state.map(SqlState::as_str)), (Code::Data, Some("22003")), "{whole}: out of range");
+        assert_eq!((past.code, past.state.as_ref().map(SqlState::as_str)), (Code::Data, Some("22003")), "{whole}: out of range");
         s.run("INSERT INTO B VALUES (2, -999999999999999999), (3, 999999999999999999)").unwrap();
         s.run("DELETE FROM B").unwrap();
         s.commit().unwrap();
         assert!(exec(&s, "INSERT INTO B VALUES (4, NULL)").is_ok(), "{whole}: a sum of no value");
-        assert_eq!(s.warning().map(SqlState::as_str), Some("01003"), "{whole}: a null eliminated");
+        assert_eq!(s.warning().as_ref().map(SqlState::as_str), Some("01003"), "{whole}: a null eliminated");
     }
 }
 

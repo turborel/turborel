@@ -27,6 +27,31 @@ pub struct Subject {
     /// [ISO/IEC 9075-2:2023 §23.1 GR4l, GR4q] The SQL-invoked routine of
     /// an SQL routine exception, or of an assignment to an SQL parameter.
     pub routine: Option<RoutineSubject>,
+    /// [ISO/IEC 9075-4:2006 draft §17.2 GR2 to GR4] Of a condition SIGNAL
+    /// or RESIGNAL raised, its condition identifier and the items it set.
+    pub signalled: Option<Box<Signalled>>,
+}
+
+/// [ISO/IEC 9075-4:2006 draft §17.2 GR2 to GR4] What SIGNAL or RESIGNAL set
+/// of the condition it raised.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Signalled {
+    /// CONDITION_IDENTIFIER: the `<condition name>` signalled, else a
+    /// zero-length string.
+    pub identifier: String,
+    /// Each `<condition information item name>` set, and its value.
+    pub items: Vec<(&'static str, String)>,
+    /// Whether a RESIGNAL of a `<signal value>` raised it ahead of the
+    /// condition its handler handles [ISO/IEC 9075-4:2006 draft §17.3 GR5],
+    /// which an area of one condition leaves out, MORE Y \[GR5b\].
+    pub stacked: bool,
+}
+
+impl Signalled {
+    /// The value item `name` was set to, if it was.
+    pub fn item(&self, name: &str) -> Option<&str> {
+        self.items.iter().find(|(n, _)| *n == name).map(|(_, v)| v.as_str())
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §23.1 GR4l, GR4q] The SQL-invoked routine a

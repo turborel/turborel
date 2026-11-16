@@ -11,6 +11,7 @@ use super::dynamic::Name;
 use super::position::{Move, Position};
 use super::prepared::Keeping;
 use super::roles::Valued;
+use super::routines::Hosted;
 use super::write::Written;
 use super::{
     Completion, CursorRows, DeclaredCursor, Kept, OpenCursor, Session, State, StatementContext, Stream, Updatable, api, assign_targets,
@@ -20,7 +21,7 @@ use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, 
 use crate::binder::{self, OutColumn, bind_select};
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlState, fail, fail_with};
-use crate::exec::{Runner, execute};
+use crate::exec::execute;
 use crate::params::Params;
 use crate::parser::Parser;
 use crate::settings::FUNCTION_CALLS;
@@ -112,7 +113,7 @@ fn settable(desc: &TableDesc, updatability: Option<&Updatability>) -> Result<Vec
 ///
 /// SQLCODE -103 if it is not NEXT and the cursor is not SCROLL \[SR3\], or
 /// its J is not exact numeric with scale 0 \[SR4\]; -301 if J is null.
-fn movement(orientation: &FetchOrientation, scroll: bool, valued: &Valued<'_>) -> Result<Move> {
+pub(super) fn movement(orientation: &FetchOrientation, scroll: bool, valued: &Valued<'_>) -> Result<Move> {
     let to = match orientation {
         FetchOrientation::Next => Move::Next,
         FetchOrientation::Prior => Move::Prior,
@@ -507,7 +508,7 @@ impl Session {
         for t in w.bound.set_tables() {
             st.read_lock(tx, &t)?;
         }
-        let runner = Runner::new(st, tx.id);
+        let runner = Hosted::new(Some(self), cx);
         let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.9 GR9", &runner))?;
         let mut effects = self.effects(st);
         // [ISO/IEC 9075-2:2023 §15.14 GR5] its BEFORE triggers first.

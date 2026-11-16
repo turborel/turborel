@@ -18,7 +18,9 @@ pub enum Completion {
     NoData,
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §22.1, §22.2] A completion
     /// condition of class 01, warning: SQLCODE 0, as Table 24 gives none
-    /// other to a completion that is not "no data"; its SQLSTATE this.
+    /// other to a completion that is not "no data"; its SQLSTATE this. Of
+    /// class 02 but 02000 too, which only SIGNAL raises [ISO/IEC
+    /// 9075-4:2006 draft §17.3 GR6a iii]: SQLCODE 100, as of no data.
     Warning(SqlState),
 }
 
@@ -26,6 +28,7 @@ impl Completion {
     /// The SQLCODE value [X3.135-1986 §7.3 GR3a].
     pub fn sqlcode(self) -> i32 {
         match self {
+            Completion::Warning(state) if state.class() == SqlState::NO_DATA.class() => SQLCODE_NO_DATA,
             Completion::Success | Completion::Warning(_) => 0,
             Completion::NoData => SQLCODE_NO_DATA,
         }

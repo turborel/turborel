@@ -15,7 +15,7 @@ use super::order_by::ordered_query;
 use super::query::Nesting;
 use super::set_functions::column_references;
 use super::set_operations::bind_query_expression;
-use super::{Binder, NOT_AGGREGATED, Scope, rule};
+use super::{Binder, Context, NOT_AGGREGATED, OutColumn, Scope, rule};
 use crate::ast::{
     self, ColumnSpecification, Composite, Literal, SearchCondition, SelectItem, SelectList, SetFunctionSpecification, TableName,
     ValueExpression, ValueSpecification,
@@ -365,7 +365,24 @@ impl Binder<'_> {
 
     /// `subquery`, its errors not yet placed.
     fn subquery_at(&self, s: &ast::Subquery, scope: Scope<'_>, usage: Use) -> Result<(Arc<Subquery>, Vec<DataType>)> {
-        let cx = self.context();
+        self.subquery_columns(s, scope, usage).map(|(q, columns)| (q, columns.into_iter().map(|c| c.data_type).collect()))
+    }
+
+    /// `subquery`, its errors not yet placed, with its columns.
+    pub(super) fn subquery_columns(&self, s: &ast::Subquery, scope: Scope<'_>, usage: Use) -> Result<(Arc<Subquery>, Vec<OutColumn>)> {
+        self.subquery_of(s, scope, (usage, false))
+    }
+
+    /// [ISO/IEC 9075-4:2006 draft §11.2] `subquery_columns` of the rows of
+    /// `s`, a value of a program, whose table value constructor `hosts` a
+    /// function that possibly modifies SQL-data if so.
+    pub(super) fn subquery_hosting(&self, s: &ast::Subquery, scope: Scope<'_>, hosts: bool) -> Result<(Arc<Subquery>, Vec<OutColumn>)> {
+        self.subquery_of(s, scope, (Use::Rows, hosts))
+    }
+
+    /// `subquery_columns`' work.
+    fn subquery_of(&self, s: &ast::Subquery, scope: Scope<'_>, (usage, hosts): (Use, bool)) -> Result<(Arc<Subquery>, Vec<OutColumn>)> {
+        let cx = Context { hosts, ..self.context() };
         // [§7.9 SR3a] under EXISTS, * is an arbitrary <literal>: 1.
         let star = s.query.spec().is_some_and(|spec| matches!(spec.select_list, SelectList::Star));
         let result = (usage == Use::Exists && star).then(|| SelectItem {
@@ -376,10 +393,9 @@ impl Binder<'_> {
         let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
         let nesting = Nesting::Subquery { outer: &outer, result };
         let bound = bind_query_expression(cx, &s.query, &nesting)?;
-        let types = bound.columns.iter().map(|c| c.data_type.clone()).collect();
         self.note_subquery(s, &bound.columns);
         let subquery = Subquery { plan: bound.plan, outer: outer.captured.into_inner() };
-        Ok((Arc::new(subquery), types))
+        Ok((Arc::new(subquery), bound.columns))
     }
 
     /// [ISO/IEC 9075-2:2023 §6.49 SR3, GR3] `<array value constructor by

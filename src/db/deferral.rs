@@ -31,6 +31,7 @@ impl Session {
         let mut effects = Effects::new(self.authorization(), &self.deferral, cursors, st.list_space());
         effects.now = self.now.get();
         effects.triggered = super::triggers::Triggered::of(self, st);
+        effects.host = Some(self);
         effects
     }
 

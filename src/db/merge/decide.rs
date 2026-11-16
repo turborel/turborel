@@ -13,7 +13,7 @@ use super::super::{State, StatementContext, api};
 use super::routed::Inserting;
 use crate::binder::{BoundAction, BoundMerge, BoundWhen};
 use crate::error::{Code, Result, SqlError};
-use crate::exec::{Drawn, HeldRows, Runner, eval, eval_cond, execute};
+use crate::exec::{Drawn, HeldRows, Subqueries, eval, eval_cond, execute};
 use crate::logical::{Expr, Truth};
 use crate::physical::Plan;
 use crate::spill::ListSpace;
@@ -31,7 +31,7 @@ pub(super) const UPDATE_RULE: &str = "ISO/IEC 9075-2:2023 §14.12 GR6a i 1 B III
 pub(super) struct Merge<'a> {
     pub(super) bound: &'a BoundMerge,
     pub(super) targets: &'a [Inserting],
-    pub(super) runner: &'a Runner,
+    pub(super) runner: &'a dyn Subqueries,
     pub(super) id_column: usize,
     pub(super) routes: &'a [Option<Instead>],
     pub(super) held: bool,

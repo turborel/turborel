@@ -438,6 +438,7 @@ fn worth(code: Code) -> Option<Level> {
         | Code::Constraint
         | Code::Data
         | Code::Cursor
+        | Code::Signalled
         | Code::Cardinality
         | Code::Conflict
         | Code::Policy

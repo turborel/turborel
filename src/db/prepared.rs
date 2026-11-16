@@ -362,6 +362,10 @@ impl Session {
                 return Err(not_preparable("a statement of a module's cursor"));
             }
             SqlStatement::GetDiagnostics(_) => return Err(not_preparable("a <get diagnostics statement>")),
+            // [ISO/IEC 9075-4:2006 draft §4.10.6] SIGNAL and RESIGNAL are
+            // preparable, no SQL control statement is.
+            SqlStatement::Control(_) => return Err(not_preparable("an <SQL control statement>")),
+            SqlStatement::Signal(_) => self.bind_program_only(st, stmt, params)?,
             SqlStatement::Dynamic(_) | SqlStatement::Execute(_) => return Err(not_preparable("an <SQL dynamic statement>")),
             SqlStatement::DeclareTable(_) => return Err(not_preparable("a <temporary table declaration>")),
             SqlStatement::Call(call) => drop(self.bound(st, params, |cx| State::bind_call(cx, call))?),

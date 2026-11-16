@@ -86,7 +86,7 @@ fn described_with_nesting_20_9() {
     assert_eq!(items(&s, 3), ["0|4|K|0|0|0|1", "0|19|R|0|2|0|1", "0|50|A|0|0|3|1"]);
     run(&s, "DESCRIBE OUTPUT Q USING SQL DESCRIPTOR 'D'", &mut p).unwrap();
     assert_eq!(counts(&s), ("3".to_owned(), "3".to_owned()), "WITHOUT NESTING is implicit");
-    assert_eq!(run(&s, "SET DESCRIPTOR 'D' TOP_LEVEL_COUNT = 1", &mut p), Err("2A000"), "§20.5 SR2");
+    assert_eq!(run(&s, "SET DESCRIPTOR 'D' TOP_LEVEL_COUNT = 1", &mut p), Err("2A000".to_owned()), "§20.5 SR2");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §20.9 GR7c iii 2 A, §9.5 SR3g] a field's
@@ -130,9 +130,9 @@ fn read_into_subordinate_items_20_12() {
     run(&s, "GET DESCRIPTOR 'D' VALUE 5 ARR = DATA, VAL = RETURNED_CARDINALITY", &mut p).unwrap();
     let got = ["N", "Y5", "ARR", "VAL"].map(|n| p.value(n).to_string());
     assert_eq!(got, ["2", "b", "ARRAY[3, 4]", "2"]);
-    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 2 RV = DATA", &mut p), Err("0700C"), "GR5b");
-    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 6 N = DATA", &mut p), Err("0700C"), "GR5a");
-    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 2 N = DATA", &mut p), Err("22005"), "GR4");
+    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 2 RV = DATA", &mut p), Err("0700C".to_owned()), "GR5b");
+    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 6 N = DATA", &mut p), Err("0700C".to_owned()), "GR5a");
+    assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 2 N = DATA", &mut p), Err("22005".to_owned()), "GR4");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §20.5 GR4b] LEVEL is set only as the
@@ -147,14 +147,14 @@ fn level_set_20_5() {
     described(&s, ("SELECT K, R, A FROM T", "Q"), "D", "WITH NESTING", true);
     let mut p = dynamic_host();
     let mut set = |item: i64, level: i64| run(&s, &format!("SET DESCRIPTOR 'D' VALUE {item} LEVEL = {level}"), &mut p).map(|_| ());
-    assert_eq!(set(1, 1), Err("0700E"), "i");
+    assert_eq!(set(1, 1), Err("0700E".to_owned()), "i");
     assert_eq!(set(1, 0), Ok(()), "i");
-    assert_eq!(set(2, 1), Err("0700E"), "ii 1: after an INTEGER");
+    assert_eq!(set(2, 1), Err("0700E".to_owned()), "ii 1: after an INTEGER");
     assert_eq!(set(3, 1), Ok(()), "ii 1: after a ROW");
-    assert_eq!(set(3, 2), Err("0700E"), "ii 2");
-    assert_eq!(set(4, 0), Err("0700E"), "ii 3 A: R has one of its two fields");
+    assert_eq!(set(3, 2), Err("0700E".to_owned()), "ii 2");
+    assert_eq!(set(4, 0), Err("0700E".to_owned()), "ii 3 A: R has one of its two fields");
     assert_eq!(set(5, 0), Ok(()), "ii 3 A: R has both");
-    assert_eq!(set(5, 1), Err("0700E"), "ii 3 B: R has no third field");
+    assert_eq!(set(5, 1), Err("0700E".to_owned()), "ii 3 B: R has no third field");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §20.5 GR4a, §20.11 GR, §20.1 SR7] SET
@@ -182,13 +182,13 @@ fn written_using_subordinate_items_20_11() {
     ] {
         assert!(run(&s, sql, &mut p).is_ok(), "{sql}");
     }
-    assert_eq!(run(&s, "SET DESCRIPTOR 'E' VALUE 2 DATA = K", &mut p), Err("0700D"), "GR4a ii");
-    assert_eq!(run(&s, "SET DESCRIPTOR 'E' VALUE 6 DATA = K", &mut p), Err("0700D"), "GR4a i");
-    assert_eq!(run(&s, "SET DESCRIPTOR 'E' VALUE 4 DATA = C2", &mut p), Err("22005"), "GR4a iii");
+    assert_eq!(run(&s, "SET DESCRIPTOR 'E' VALUE 2 DATA = K", &mut p), Err("0700D".to_owned()), "GR4a ii");
+    assert_eq!(run(&s, "SET DESCRIPTOR 'E' VALUE 6 DATA = K", &mut p), Err("0700D".to_owned()), "GR4a i");
+    assert_eq!(run(&s, "SET DESCRIPTOR 'E' VALUE 4 DATA = C2", &mut p), Err("22005".to_owned()), "GR4a iii");
     run(&s, "SET DESCRIPTOR 'E' VALUE 2 INDICATOR = -1", &mut p).unwrap();
     run(&s, "EXECUTE I USING SQL DESCRIPTOR 'E'", &mut p).unwrap();
     run(&s, "SET DESCRIPTOR 'E' VALUE 2 TYPE = 4", &mut p).unwrap();
-    assert_eq!(run(&s, "EXECUTE I USING SQL DESCRIPTOR 'E'", &mut p), Err("07001"));
+    assert_eq!(run(&s, "EXECUTE I USING SQL DESCRIPTOR 'E'", &mut p), Err("07001".to_owned()));
     let kept = rows(&s, "SELECT K, R, A FROM T WHERE K = 5").unwrap();
     assert_eq!(kept, ["5,ROW(5, 'yy'),ARRAY[7]", "5,NULL,ARRAY[7]"]);
 }

@@ -45,16 +45,21 @@ Nothing is open.
 
 ### Triggers, routines and roles
 
-- Stored procedures (SQL/PSM, ISO/IEC 9075-4:2023). Compound statements,
-  local variables, cursors and handlers, and the control statements, IF,
-  CASE, LOOP, WHILE, REPEAT, FOR, LEAVE and ITERATE, in a routine's body
-  and a trigger's action, as Part 4 defines them on Part 2's routines.
 - Enhanced derived column names (T285) [§7.16 SR17c, CR6]. A select list
   item that is a single SQL parameter reference names its column for the
   parameter. Any other item without an `<as clause>` that is not a column
-  reference is unnamed with or without it [SR17d] (UV087). An SQL
-  parameter's column is seen in no query until a routine's body may hold
-  a cursor, so it waits for Part 4.
+  reference is unnamed with or without it [SR17d] (UV087). A routine's
+  body may now hold a cursor (SQL/PSM), so an SQL parameter's column is
+  seen by FETCH and FOR.
+- COMMIT and ROLLBACK in an SQL control statement NOT ATOMIC run
+  directly [ISO/IEC 9075-4:2006 draft §4.10.4; ISO/IEC 9075-2:2023
+  §17.7, §17.8]. The transaction ends within the statement, its
+  non-holdable local cursors closed, and the program goes on in a new
+  one. Refused now as not implemented.
+- SQL-server modules (P001, P003) [ISO/IEC 9075-4:2006 draft §9.21,
+  §9.22, Clause 18]. CREATE MODULE and DROP MODULE, a module's routines,
+  temporary tables and path, its privileges, and the MODULE_ views of
+  the Information Schema.
 - Polymorphic table functions (B200 to B209) [§4.35.4, §7.6, §9.24, §9.25].
   A function in FROM whose result's columns depend on its arguments, on
   the SQL-invoked functions there are.

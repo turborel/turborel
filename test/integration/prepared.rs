@@ -251,15 +251,15 @@ fn prepared_statements_are_refused_saying_why() {
     assert_eq!(s.run("DELETE FROM T WHERE K = ?").err().map(|e| e.code), Some(Code::SyntaxRule));
     assert_eq!(s.open_cursor("SELECT K FROM T WHERE K = ?").err().map(|e| e.code), Some(Code::SyntaxRule));
     for sql in ["OPEN C", "FETCH C INTO P", "CLOSE C"] {
-        assert_eq!(s.prepare(sql).err().map(|e| e.sqlstate().as_str()), Some("37000"), "{sql}");
+        assert_eq!(s.prepare(sql).err().map(|e| e.sqlstate().to_string()).as_deref(), Some("37000"), "{sql}");
     }
     let q = s.prepare("SELECT K FROM T WHERE K = ?").unwrap();
     let w = s.prepare("DELETE FROM T WHERE K = ?").unwrap();
-    let state = |e: turborel::error::SqlError| (e.code, e.sqlstate().as_str());
-    assert_eq!(s.open_prepared(&q, &[]).err().map(state), Some((Code::Dynamic, "07001")));
-    assert_eq!(s.open_prepared(&q, &[int(1), int(2)]).err().map(state), Some((Code::Dynamic, "07001")));
-    assert_eq!(s.execute_prepared(&q, &[int(1)]).err().map(state), Some((Code::Dynamic, "07003")));
-    assert_eq!(s.open_prepared(&w, &[int(1)]).err().map(state), Some((Code::Dynamic, "07005")));
-    assert_eq!(s.open_prepared(&q, &[text("one")]).err().map(state), Some((Code::Data, "22018")), "CAST's");
+    let state = |e: turborel::error::SqlError| (e.code, e.sqlstate().to_string());
+    assert_eq!(s.open_prepared(&q, &[]).err().map(state), Some((Code::Dynamic, "07001".to_owned())));
+    assert_eq!(s.open_prepared(&q, &[int(1), int(2)]).err().map(state), Some((Code::Dynamic, "07001".to_owned())));
+    assert_eq!(s.execute_prepared(&q, &[int(1)]).err().map(state), Some((Code::Dynamic, "07003".to_owned())));
+    assert_eq!(s.open_prepared(&w, &[int(1)]).err().map(state), Some((Code::Dynamic, "07005".to_owned())));
+    assert_eq!(s.open_prepared(&q, &[text("one")]).err().map(state), Some((Code::Data, "22018".to_owned())), "CAST's");
     assert_eq!(s.execute_prepared(&w, &[int(1)]).unwrap().sqlcode(), 0, "values right, it runs");
 }

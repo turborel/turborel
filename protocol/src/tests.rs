@@ -46,11 +46,11 @@ fn reply_round_trip(reply: &Reply) {
 }
 
 /// The code and SQLSTATE of an error.
-fn kind_of(e: &SqlError) -> (i32, &'static str) {
-    (e.sqlcode(), e.sqlstate().as_str())
+fn kind_of(e: &SqlError) -> (i32, SqlState) {
+    (e.sqlcode(), e.sqlstate())
 }
 
-const FAILED: (i32, &str) = (-919, "08006");
+const FAILED: (i32, SqlState) = (-919, SqlState::CONNECTION_FAILURE);
 
 /// Verifies: [DESIGN] RULES.md D42, D45: every request reads back as
 /// written; a frame is its kind, its body's length and the body, the fields

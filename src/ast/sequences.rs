@@ -7,7 +7,7 @@ use crate::value::{DataType, Decimal};
 /// [ISO/IEC 9075-2:2023 §11.72] `<sequence generator definition>` ::=
 /// CREATE SEQUENCE `<sequence generator name>` \[`<sequence generator
 /// options>`\]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SequenceDefinition {
     /// The `<sequence generator name>`.
     pub name: TableName,
@@ -21,7 +21,7 @@ pub struct SequenceDefinition {
 /// [ISO/IEC 9075-2:2023 §11.73] `<alter sequence generator statement>` ::=
 /// ALTER SEQUENCE `<sequence generator name>` `<alter sequence generator
 /// options>`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AlterSequence {
     /// The `<sequence generator name>`.
     pub name: TableName,
@@ -31,7 +31,7 @@ pub struct AlterSequence {
 
 /// [ISO/IEC 9075-2:2023 §11.72, §11.73] The options of a sequence
 /// generator, each written at most once [§9.36 SR3, §9.37 SR4].
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SequenceOptions {
     /// START WITH `<sequence generator start value>`, if written: never of
     /// an alteration.

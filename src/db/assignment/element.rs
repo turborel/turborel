@@ -7,7 +7,6 @@
 //! which stores each element in the element type [§9.2 GR3b xxii], the
 //! value too.
 
-use super::declared_type;
 use crate::ast::{ElementPosition, Literal, ParameterSpecification, TargetKind};
 use crate::error::{Code, Result, SqlError};
 use crate::params::Params;
@@ -41,7 +40,7 @@ pub(super) fn target_type(params: &Params, t: &ParameterSpecification, declared:
     let exact = match &**position {
         ElementPosition::Literal(Literal::Exact(d)) => d.scale == 0,
         ElementPosition::Literal(_) => false,
-        ElementPosition::Parameter(p) => matches!(params.routine_type(p), Some(DataType::Exact { scale: 0, .. })),
+        ElementPosition::Parameter(p) => matches!(params.routine_type(None, p), Some(DataType::Exact { scale: 0, .. })),
     };
     if !exact {
         return Err(rule(format!(
@@ -64,17 +63,17 @@ pub(super) fn target_type(params: &Params, t: &ParameterSpecification, declared:
 pub(super) fn assigned(params: &Params, spec: &ParameterSpecification, fetched: Value) -> Result<Value> {
     let Some(position) = &spec.element else { return Ok(fetched) };
     let held = match spec.kind {
-        TargetKind::Routine => params.routine_value(&spec.name),
+        TargetKind::Routine => params.routine_value(spec.qualifier.as_deref(), &spec.name),
         TargetKind::Transition => params.transition_value(&spec.name),
         TargetKind::Parameter => None,
     };
-    let declared = declared_type(params, &spec.name)?;
+    let declared = super::target_type(params, spec)?;
     let (Some(array), DataType::Array(a)) = (held, declared.represented()) else {
         return Err(design(&format!("{} holds no array whose element a target may assign", spec.name)));
     };
     let i = match &**position {
         ElementPosition::Literal(Literal::Exact(d)) if d.scale == 0 => Some(d.units),
-        ElementPosition::Parameter(p) => match params.routine_value(p) {
+        ElementPosition::Parameter(p) => match params.routine_value(None, p) {
             Some(Value::Exact(d)) if d.scale == 0 => Some(d.units),
             Some(Value::Null) => None,
             Some(_) | None => return Err(design(&format!("SQL parameter {p} holds no position in an array"))),

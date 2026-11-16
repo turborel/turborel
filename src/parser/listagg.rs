@@ -91,7 +91,7 @@ impl Parser {
     }
 
     /// A `<character string literal>`'s value, the `what` of the syntax.
-    fn character_string_literal(&mut self, what: &str) -> Result<String> {
+    pub(super) fn character_string_literal(&mut self, what: &str) -> Result<String> {
         let introduced = matches!(self.peek(), Tok::Introducer(_)) && matches!(self.peek_at(1), Tok::CharacterString(_));
         if !introduced && !matches!(self.peek(), Tok::CharacterString(_)) {
             return Err(self.syntax(format!("expected a <character string literal> as the {what} [ISO/IEC 9075-2:2023 §10.9]")));

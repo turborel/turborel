@@ -99,7 +99,7 @@ fn set_clauses(both: &Binder<'_>, set: &[SetClause]) -> Result<Vec<(usize, Optio
     both.drawing(true, || {
         let mut done: Vec<(usize, Option<Expr>)> = Vec::new();
         for sc in set {
-            let bound = bind_set_clause(both, sc, &MERGE_SET, &done).or_at(sc.at)?;
+            let bound = both.hosting(true, || bind_set_clause(both, sc, &MERGE_SET, &done)).or_at(sc.at)?;
             done.push(bound);
         }
         Ok(done)
@@ -123,7 +123,8 @@ fn insert_values(scopes: &Scopes<'_, '_>, insert: &MergeInsert, objects: &[Objec
     }
     let binder = scopes.source;
     let taken = binder.dynamic_types(std::slice::from_ref(row), Some(objects))?;
-    let elements = binder.drawing(true, || binder.values_row(row, (Some(objects), &taken), MERGE_ASSIGN)).or_at(row.at)?;
+    let bind_row = || binder.values_row(row, (Some(objects), &taken), MERGE_ASSIGN);
+    let elements = binder.drawing(true, || binder.hosting(true, bind_row)).or_at(row.at)?;
     // A row subquery gives as many values as it has columns.
     if elements.len() != objects.len() {
         return Err(wrong(elements.len()));

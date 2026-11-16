@@ -4,11 +4,13 @@
 //! the rest of that row.
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use super::{Subqueries, SubqueryRows};
 use crate::catalog::{QualifiedName, SequenceDesc};
+use crate::db::State;
 use crate::error::{Result, Warnings};
-use crate::logical::Subquery;
+use crate::logical::{Invocation, Subquery};
 use crate::value::Value;
 
 /// \[DESIGN\] The subqueries of `inner`, and the values one row drew of
@@ -47,5 +49,17 @@ impl Subqueries for Drawn<'_> {
         let v = self.inner.next_value(seq)?;
         self.drawn.borrow_mut().push((seq.name.clone(), seq.epoch, v.clone()));
         Ok(v)
+    }
+
+    fn interrupted(&self) -> Result<()> {
+        self.inner.interrupted()
+    }
+
+    fn state(&self) -> Option<&Arc<State>> {
+        self.inner.state()
+    }
+
+    fn invoke_hosted(&self, i: &Invocation, values: Vec<Value>) -> Option<Result<Option<Value>>> {
+        self.inner.invoke_hosted(i, values)
     }
 }

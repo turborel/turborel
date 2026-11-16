@@ -164,7 +164,7 @@ fn a_set_function_warns_as_checked_whole_6_5() {
     assert_eq!(same(&a, &b, "INSERT INTO T VALUES (12, 11, 5, 'S')", 3), Err(Code::Constraint), "three over 8");
     same(&a, &b, "UPDATE T SET M = 0 WHERE K = 10", 4).unwrap();
     same(&a, &b, "INSERT INTO T VALUES (12, NULL, 46, 'S')", 5).unwrap();
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "a null eliminated, checked whole");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"), "a null eliminated, checked whole");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR2b i, iii, §11.34 GR2];
@@ -381,7 +381,7 @@ fn a_count_of_distinct_values_answers_as_checked_whole_6_5() {
     ];
     for (step, (sql, expected, warned)) in cases.into_iter().enumerate() {
         assert_eq!(same(&a, &b, sql, step).err(), expected, "{sql}");
-        assert_eq!(a.warning().map(SqlState::as_str), warned, "{sql}");
+        assert_eq!(a.warning().as_ref().map(SqlState::as_str), warned, "{sql}");
         a.commit().unwrap();
         b.commit().unwrap();
     }
@@ -426,5 +426,5 @@ fn a_deferred_assertion_of_several_forms_is_checked_from_its_rows_14_3() {
     for (step, (sql, expected)) in script.into_iter().enumerate() {
         assert_eq!(same(&a, &b, sql, step).err(), expected, "{sql}");
     }
-    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "checked whole, a null eliminated");
+    assert_eq!(a.warning().as_ref().map(SqlState::as_str), Some("01003"), "checked whole, a null eliminated");
 }

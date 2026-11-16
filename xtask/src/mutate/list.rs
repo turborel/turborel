@@ -1,6 +1,7 @@
 //! The mutations `cargo xtask mutate` applies (RULES.md R-TEST-9), each breaking one mechanism and naming tests, by their full paths,
 //! that fail when it is broken. A new mechanism adds one; a change to a quoted snippet updates its mutation (`verify` refuses a stale one).
 
+mod areas;
 mod array_targets;
 mod bigint;
 mod bounded;
@@ -30,6 +31,7 @@ mod overloading;
 mod partitioned_joins;
 mod patterns;
 mod predicates;
+mod psm;
 mod readers;
 mod reads;
 mod regex;
@@ -75,48 +77,8 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 38] = [
-        &predicates::PREDICATES,
-        &sequences::SEQUENCES,
-        &generated::GENERATED,
-        &truncate::TRUNCATE,
-        &contents::CONTENTS,
-        &nulls::NULLS,
-        &with::WITH,
-        &search_cycle::SEARCH_CYCLE,
-        &composite::COMPOSITE,
-        &distinct::DISTINCT,
-        &bigint::BIGINT,
-        &distinct_predicate::DISTINCT_PREDICATE,
-        &partitioned_joins::PARTITIONED_JOINS,
-        &grouping_sets::GROUPING_SETS,
-        &listagg::LISTAGG,
-        &null_ordering::NULL_ORDERING,
-        &windows::WINDOWS,
-        &window_values::WINDOW_VALUES,
-        &window_nested::WINDOW_NESTED,
-        &window_distinct::WINDOW_DISTINCT,
-        &width_bucket::WIDTH_BUCKET,
-        &filter::FILTER,
-        &hypothetical::HYPOTHETICAL,
-        &distribution::DISTRIBUTION,
-        &order_by::ORDER_BY,
-        &dependencies::DEPENDENCIES,
-        &limits::LIMITS,
-        &bounded::BOUNDED_FETCH,
-        &patterns::PATTERNS,
-        &merge::MERGE,
-        &diagnostics::DIAGNOSTICS,
-        &triggers::TRIGGERS,
-        &routines::ROUTINES,
-        &overloading::OVERLOADING,
-        &roles::ROLES,
-        &array_targets::ARRAY_TARGETS,
-        &explain::EXPLAIN,
-        &view_defaults::VIEW_DEFAULTS,
-    ];
     core.into_iter()
-        .chain(areas)
+        .chain(areas::all())
         .chain([near::NEAR.as_slice(), &rtree::RTREE, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()
         .copied()

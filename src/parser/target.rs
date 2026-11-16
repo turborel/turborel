@@ -32,7 +32,7 @@ impl Parser {
     ///
     /// SQLCODE -103 if an element is of a host parameter, which no `<target
     /// array reference>` is.
-    fn target_specification(&mut self) -> Result<ParameterSpecification> {
+    pub(super) fn target_specification(&mut self) -> Result<ParameterSpecification> {
         let mut spec = if self.trigger.is_some() || self.routine.is_some() {
             self.scoped_target()?
         } else if self.is_delim(delim::COLON) {

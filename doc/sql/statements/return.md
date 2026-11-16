@@ -17,7 +17,9 @@ RETURN is read as a word, not a key word.
 ## DESCRIPTION
 
 RETURN is the body of a function defined by
-[CREATE FUNCTION](create-function.md). Its value, evaluated with the
+[CREATE FUNCTION](create-function.md), or a statement of a body that is
+a program ([BEGIN](begin.md)), where it ends the function's execution
+there. Its value, evaluated with the
 function's parameters as its arguments give them, is stored in the
 function's result type and is the value of the invocation. RETURN NULL
 gives a null of the result type.
@@ -27,8 +29,8 @@ function is of READS SQL DATA.
 
 ## RULES
 
-1. RETURN is the body of a function: not a statement of its own, nor
-   the body of a procedure.
+1. RETURN is the body of a function, or in one: not a statement of its
+   own, nor in the body of a procedure.
 2. Its value's type is one the result type may store.
 
 ## PRIVILEGES
@@ -67,9 +69,9 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): a <return statement> shall be contained
 
 ## STANDARD
 
-ISO/IEC 9075-2:2023 §16.2, Feature T321-05. SQL-86 and SQL-92 have no
-RETURN.
+ISO/IEC 9075-2:2023 §16.2, Feature T321-05, and in a program ISO/IEC
+9075-4:2006 draft §11.2. SQL-86 and SQL-92 have no RETURN.
 
 ## SEE ALSO
 
-[CREATE FUNCTION](create-function.md)
+[CREATE FUNCTION](create-function.md), [BEGIN](begin.md)

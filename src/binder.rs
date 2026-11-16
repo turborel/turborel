@@ -17,12 +17,12 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
 use crate::ast::{ColumnSpecification, TableName, ValueExpression};
-use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc, WHOLE, Who, applicable};
+use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc, Who, applicable};
 use crate::db::State;
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::logical::{AggCall, Expr, LogicalPlan};
 use crate::params::Params;
-use crate::settings::{self, Own};
+use crate::settings::Own;
 use crate::value::DataType;
 use crate::value::collation::CollationRef;
 use crate::value::datetime::Clocked;
@@ -32,6 +32,7 @@ mod arithmetic;
 mod case;
 mod collation;
 mod composite;
+mod context;
 mod counterparts;
 pub(crate) use composite::grouping_operand;
 mod cursor;
@@ -62,6 +63,7 @@ mod parameters;
 mod partitioned;
 mod pattern;
 mod predicates;
+mod psm;
 mod purpose;
 mod query;
 mod recursive;
@@ -90,6 +92,7 @@ pub use generated::{bind_generation, generations, noting_generation};
 pub use invocation::{Candidate, FunctionBody, alike, bind_function_body, functions_named, resolve_procedure, routine_definition};
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 pub use parameters::bind_argument;
+pub(crate) use psm::{Frame, bind_program};
 use query::bind_query_specification;
 pub use set_operations::{ObjectColumn, bind_insert_query};
 pub(crate) use statements::assignable;
@@ -200,45 +203,15 @@ pub struct Context<'a> {
     pub invoked: Option<&'a Invoked>,
     /// Where to note the sequence generators it draws from, if anywhere.
     pub drawn: Option<&'a DrawnFrom>,
+    /// [ISO/IEC 9075-2:2023 §7.17 SR25] Whether the rows of its `<table value
+    /// constructor>` may invoke a function that possibly modifies SQL-data:
+    /// of an INSERT's, or a program's value (`Binder::hosting`).
+    pub hosts: bool,
 }
 
 pub use noted::{DrawnFrom, Invoked, Selected, Uses};
 pub use purpose::Purpose;
 pub use referencing::Referencing;
-
-impl<'a> Context<'a> {
-    /// [ISO/IEC 9075-2:2023 §4.42.1.2] The cell whose privileges it is
-    /// bound with: `auth`, and `role`.
-    pub fn who(&self) -> Who<'a> {
-        Who { auth: self.auth, role: self.role, roles: self.db.catalog.roles() }
-    }
-
-    /// A statement's query, run under `auth` with `params`.
-    pub fn new(db: &'a State, auth: &'a str, params: &'a Params) -> Context<'a> {
-        let (purpose, own) = (Purpose::Query, &settings::NONE);
-        Context {
-            now: db.now(own).into(),
-            db,
-            auth,
-            role: None,
-            schema: auth,
-            user: Principal::sole(db.catalog.roles(), auth),
-            params,
-            purpose,
-            collation: None,
-            horizon: &WHOLE,
-            own,
-            definitions: false,
-            uses: None,
-            selected: None,
-            referencing: None,
-            draws: false,
-            queries: None,
-            invoked: None,
-            drawn: None,
-        }
-    }
-}
 
 /// [X3.135-1986 §5.4 SR2] a `<table name>` without an `<authorization identifier>` implicitly
 /// has the one of the enclosing `<schema>` or `<module>`. In direct invocation `auth` is the
@@ -403,6 +376,13 @@ struct Binder<'a> {
     /// a search condition or a set function [ISO/IEC 9075-2:2023 §6.14
     /// SR1, SR2] (`binder/sequences.rs`).
     drawing: Cell<bool>,
+    /// [ISO/IEC 9075-2:2023 §4.35.2, §7.17 SR25] Whether what it binds now
+    /// may invoke a function that possibly modifies SQL-data: the source of
+    /// a SET clause, a row of an INSERT's or a MERGE's VALUES, an argument
+    /// of CALL, or a program's value; not in a subquery, nor a CASE
+    /// abbreviation or a simple CASE's operand [§6.12 SR1a, SR2a]
+    /// (`binder/invocation.rs`).
+    hosting: Cell<bool>,
     /// The query names in scope (`Context::queries`).
     queries: Option<&'a Queries<'a>>,
     /// Where it notes the routines it invokes (`Context::invoked`).
@@ -457,6 +437,7 @@ impl<'a> Binder<'a> {
             now: cx.now,
             draws: cx.draws && !cx.purpose.constrains(),
             drawing: Cell::new(false),
+            hosting: Cell::new(false),
             queries: cx.queries,
             invoked: cx.invoked,
             drawn: cx.drawn,
@@ -492,6 +473,7 @@ impl<'a> Binder<'a> {
             queries: self.queries,
             invoked: self.invoked,
             drawn: self.drawn,
+            hosts: false,
         }
     }
 }

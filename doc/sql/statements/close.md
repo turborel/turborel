@@ -22,8 +22,14 @@ CLOSE ends an open cursor: its rows are let go, and it may be opened
 again, its query run anew. The transaction goes on. COMMIT and ROLLBACK
 close every open cursor of the transaction.
 
-CLOSE runs only in a program that embeds turborel: see
-[DECLARE CURSOR](declare-cursor.md).
+Out of a compound statement, CLOSE runs only in a program that embeds
+turborel: see [DECLARE CURSOR](declare-cursor.md).
+
+A cursor a compound statement declares ([BEGIN](begin.md)) is closed by
+this statement within it, in a routine's body, a trigger's action or a
+statement run directly. Its name is the compound statement's own, in
+scope there alone, and the cursor is destroyed as the compound
+statement ends.
 
 ## RULES
 
@@ -59,7 +65,7 @@ CLOSE CUR   -921 (34000): no cursor 'NONE' is allocated [ISO/IEC 9075:1992 §17.
 ## STANDARD
 
 ISO/IEC 9075:1992 §13.4, and of an extended cursor name §17.16;
-X3.135-1986 §8.1.
+X3.135-1986 §8.1. A local cursor's is ISO/IEC 9075-4:2006 draft §12.4, Feature P002.
 
 ## SEE ALSO
 
