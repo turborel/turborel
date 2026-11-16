@@ -213,6 +213,11 @@ impl Binder<'_> {
             if let Some(field) = self.transition_variable(cs)? {
                 return Ok(field);
             }
+            // [ISO/IEC 9075-2:2023 §6.6 SR8] the procedure's, which
+            // encloses its body's.
+            if let Some(field) = self.sql_parameter(cs)? {
+                return Ok(field);
+            }
             // In no scope at all: the error the lookup gives.
             let (pos, t) = self.resolve(cs)?;
             return Ok((self.column_in(cs, (pos, &t), scope)?, t));

@@ -1,7 +1,7 @@
 //! Abstract syntax of what a DROP statement names and its `<drop
 //! behavior>` [ISO/IEC 9075:1992 §11.2, §11.18, §11.20, §11.27].
 
-use super::TableName;
+use super::{RoutineDesignator, TableName};
 
 /// What a DROP statement names [ISO/IEC 9075:1992 §11.2, §11.18, §11.20,
 /// §11.27].
@@ -24,6 +24,9 @@ pub enum DropObject {
     /// A trigger [ISO/IEC 9075-2:2023 §11.50], which DROP names with no
     /// `<drop behavior>`.
     Trigger(TableName),
+    /// An SQL-invoked routine [ISO/IEC 9075-2:2023 §11.62], by its
+    /// `<specific routine designator>`.
+    Routine(RoutineDesignator),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
     /// schema name>` [§5.4].
     Schema {
@@ -48,6 +51,7 @@ impl DropObject {
             | DropObject::Assertion(name)
             | DropObject::Type(name)
             | DropObject::Trigger(name) => name.at,
+            DropObject::Routine(designator) => designator.name.at,
             DropObject::Schema { at, .. } => *at,
         }
     }

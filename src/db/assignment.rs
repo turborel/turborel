@@ -6,7 +6,7 @@
 
 use super::write::Written;
 use super::{Completion, api, rule};
-use crate::ast::ParameterSpecification;
+use crate::ast::{ParameterSpecification, TargetKind};
 use crate::binder::{OutColumn, ViewCheck};
 use crate::catalog::{CheckLevels, TableDesc};
 use crate::error::{At, Code, Result, SqlError, SqlState, Subject, fail_with};
@@ -164,15 +164,21 @@ pub(super) fn check_targets(
 /// Whether column `c` can be assigned to target `t`, as `type_rule` says.
 fn check_target(c: &OutColumn, t: &ParameterSpecification, params: &Params, type_rule: &str) -> Result<()> {
     let target = declared_type(params, &t.name)?;
-    // [ISO/IEC 9075-2:2023 §9.2 SR2] a new transition variable column is a
-    // site of store assignment.
-    if t.transition {
-        params.check_transition(&t.name)?;
+    // [ISO/IEC 9075-2:2023 §9.2 SR2] a new transition variable column, or
+    // an SQL parameter, is a site of store assignment.
+    let site = match t.kind {
+        TargetKind::Parameter => None,
+        TargetKind::Transition => {
+            params.check_transition(&t.name)?;
+            Some("new row column")
+        }
+        TargetKind::Routine => Some("SQL parameter"),
+    };
+    if let Some(site) = site {
         if crate::binder::assignable(&target, &c.data_type) {
             return Ok(());
         }
-        let msg =
-            format!("[ISO/IEC 9075-2:2023 §9.2 SR2] a {} column cannot be stored in new row column {} ({target})", c.data_type, t.name);
+        let msg = format!("[ISO/IEC 9075-2:2023 §9.2 SR2] a {} column cannot be stored in {site} {} ({target})", c.data_type, t.name);
         return Err(rule(msg));
     }
     // [ISO/IEC 9075:1992 §9.1 SR2] a character string to a character
@@ -195,6 +201,8 @@ fn check_target(c: &OutColumn, t: &ParameterSpecification, params: &Params, type
 /// [X3.135-1986 §8.6 GR8-GR10, §8.10 GR7-GR9] assign a row's values to
 /// targets; the completion is the first warning an assignment raises, if
 /// one does [ISO/IEC 9075:1992 §9.1 GR3b, GR3e, GR3g, GR3h, GR3j].
+/// `null_rule` and `assign_rule` are cited in full, the latter's case of
+/// an exact or approximate target appended to it, d or e.
 pub(super) fn assign_targets(
     values: &[Value],
     targets: &[ParameterSpecification],
@@ -221,9 +229,17 @@ fn assign_target(
     let int = |n: i64| Value::Exact(Decimal::new(i128::from(n), 0));
     // [ISO/IEC 9075-2:2023 §6.4 SR7, §9.2] a new transition variable
     // column takes the value by store assignment, null too.
-    if spec.transition {
-        params.assign_transition(&spec.name, fetched.clone(), "ISO/IEC 9075-2:2023 §9.2")?;
-        return Ok(None);
+    match spec.kind {
+        TargetKind::Parameter => {}
+        TargetKind::Transition => {
+            params.assign_transition(&spec.name, fetched.clone(), "ISO/IEC 9075-2:2023 §9.2")?;
+            return Ok(None);
+        }
+        // [ISO/IEC 9075-2:2023 §9.2] an SQL parameter, null too.
+        TargetKind::Routine => {
+            params.assign_routine(&spec.name, fetched.clone(), "ISO/IEC 9075-2:2023 §9.2")?;
+            return Ok(None);
+        }
     }
     let target = declared_type(params, &spec.name)?;
     if fetched.is_null() {
@@ -233,7 +249,7 @@ fn assign_target(
             return fail_with(
                 Code::Data,
                 SqlState::NULL_VALUE_NO_INDICATOR,
-                format!("[X3.135-1986 {null_rule}] the value is null, and target {} has no indicator parameter", spec.name),
+                format!("[{null_rule}] the value is null, and target {} has no indicator parameter", spec.name),
             );
         };
         params.set(ind, int(-1));
@@ -286,7 +302,7 @@ fn retrieved(fetched: &Value, target: &DataType, assign_rule: &str) -> Result<(V
         // [X3.135-1986 §8.6 GR10d, GR10e; §9.1 GR3k] exact, approximate.
         (target_type, value) => {
             let case = if let DataType::Approximate { .. } = target_type { "e" } else { "d" };
-            Ok((assign(value.clone(), target_type, &format!("X3.135-1986 {assign_rule}{case}; ISO/IEC 9075:1992 §9.1 GR3k"))?, 0, None))
+            Ok((assign(value.clone(), target_type, &format!("{assign_rule}{case}; ISO/IEC 9075:1992 §9.1 GR3k"))?, 0, None))
         }
     }
 }
@@ -309,6 +325,7 @@ pub(super) fn declared_type(params: &Params, name: &str) -> Result<DataType> {
         .get(name)
         .map(|p| p.data_type.clone())
         .or_else(|| params.transition_type(name))
+        .or_else(|| params.routine_type(name))
         .ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[X3.135-1986 §7.3 SR3] parameter {name} is not declared")))
 }
 

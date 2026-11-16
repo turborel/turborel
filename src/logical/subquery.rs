@@ -28,7 +28,7 @@ pub struct Subquery {
 
 /// `e` with every outer reference slot replaced by its value in `values`;
 /// a slot with none is left, and fails when evaluated.
-fn bound_expr(e: Expr, values: &[Value]) -> Expr {
+pub fn bound_expr(e: Expr, values: &[Value]) -> Expr {
     if let Expr::Outer(i, name) = e {
         return values.get(i).cloned().map_or(Expr::Outer(i, name), Expr::Const);
     }

@@ -19,11 +19,12 @@ DROP SCHEMA: drop a schema
 ## DESCRIPTION
 
 DROP SCHEMA drops a schema. RESTRICT refuses the drop if the schema
-holds a table, a view, a domain, an assertion or a collation. CASCADE
-drops each of them first: its tables, as DROP TABLE CASCADE does, and so
-the views, constraints and assertions of other schemas that refer to
-them; its views left; its domains, as DROP DOMAIN CASCADE does; and its
-assertions. A constraint named in the schema of a table or a domain of
+holds a table, a view, a domain, an assertion, a routine or a
+collation. CASCADE drops each of them first: its tables, as DROP TABLE
+CASCADE does, and so the views, constraints and assertions of other
+schemas that refer to them; its views left; its domains, as DROP DOMAIN
+CASCADE does; its assertions; and its routines, as DROP ROUTINE CASCADE
+does, with what of other schemas invokes them. A constraint named in the schema of a table or a domain of
 another schema is dropped too, as ALTER TABLE or ALTER DOMAIN DROP
 CONSTRAINT drops it; RESTRICT refuses the drop while there is one. Its
 collations go last, as DROP COLLATION CASCADE drops them, so a column of

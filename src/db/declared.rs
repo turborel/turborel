@@ -85,7 +85,8 @@ impl Session {
             | SchemaStatement::Sequence(_)
             | SchemaStatement::AlterSequence(_)
             | SchemaStatement::Type(_)
-            | SchemaStatement::Trigger(_) => Ok(()),
+            | SchemaStatement::Trigger(_)
+            | SchemaStatement::Routine(_) => Ok(()),
         }
     }
 

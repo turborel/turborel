@@ -2,15 +2,17 @@
 //! routines, as ISO/IEC 9075-11 names them. USER_DEFINED_TYPES shows each
 //! distinct type and UDT_PRIVILEGES each privilege on one. ROUTINES,
 //! PARAMETERS and ROUTINE_PRIVILEGES show the functions each type's
-//! definition makes [ISO/IEC 9075-2:2023 §11.51 GR2], and TRANSFORMS each
-//! type's transform group. Each reads its table of the Definition Schema
-//! (`definition/user_types.rs`). Their text is this implementation's, as
+//! definition makes [ISO/IEC 9075-2:2023 §11.51 GR2] and each SQL-invoked
+//! routine [§11.60], and TRANSFORMS each type's transform group. Each
+//! reads its table of the Definition Schema (`definition/user_types.rs`,
+//! `definition/routines.rs`). Their text is this implementation's, as
 //! ISO/IEC 9075:1992 has none of them.
 //!
 //! A type is shown to the current user if it or PUBLIC holds a privilege
 //! on it, as DOMAINS shows domains [ISO/IEC 9075:1992 §21.2.5], and a
 //! function likewise. A privilege is shown to its grantee and its grantor,
-//! as TABLE_PRIVILEGES shows one [§21.2.10]. Each view shows a data type
+//! as TABLE_PRIVILEGES shows one [§21.2.10]. A routine's definition is
+//! shown to the owner of its schema alone, as a view's is [§21.2.8]. Each view shows a data type
 //! descriptor's character set, which the descriptor's collation is of, and
 //! the columns ISO/IEC 9075-11 names for a user-defined type's name.
 
@@ -71,6 +73,12 @@ pub(super) const VIEWS: &[SystemView] = &[
        R.USER_DEFINED_TYPE_SCHEMA AS TYPE_UDT_SCHEMA,
        R.USER_DEFINED_TYPE_NAME AS TYPE_UDT_NAME,
        R.MAXIMUM_CARDINALITY, R.DTD_IDENTIFIER, R.ROUTINE_BODY,
+       CASE WHEN ( R.ROUTINE_CATALOG, R.ROUTINE_SCHEMA, CURRENT_USER )
+                   IN ( SELECT CATALOG_NAME, SCHEMA_NAME, SCHEMA_OWNER
+                               FROM DEFINITION_SCHEMA.SCHEMATA )
+            THEN R.ROUTINE_DEFINITION
+            ELSE NULL
+       END AS ROUTINE_DEFINITION,
        R.IS_DETERMINISTIC, R.SQL_DATA_ACCESS, R.IS_NULL_CALL,
        R.SCHEMA_LEVEL_ROUTINE, R.SECURITY_TYPE
      FROM DEFINITION_SCHEMA.ROUTINES AS R

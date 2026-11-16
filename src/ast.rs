@@ -38,6 +38,7 @@ mod merge;
 mod ordered;
 mod pattern;
 mod query;
+mod routines;
 mod schema;
 mod search_cycle;
 mod sequences;
@@ -74,6 +75,10 @@ pub use query::{
     WithQuery, from_table_names,
 };
 
+pub use routines::{
+    CallStatement, DataAccess, ParameterDeclaration, ParameterMode, ReturnStatement, RoutineDefinition, RoutineDesignator, RoutineKind,
+    RoutineType, SqlArgument,
+};
 pub use schema::{
     Action, AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, ColumnConstraint,
     ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, MatchType,
@@ -182,13 +187,26 @@ pub struct ParameterSpecification {
     pub name: String,
     /// The `<indicator parameter>`'s name, if written.
     pub indicator: Option<String>,
-    /// [ISO/IEC 9075-2:2023 §6.4 SR7, §6.6 SR13] Whether it is a new
-    /// transition variable column reference of a BEFORE trigger: `name` is
-    /// then the column of the new row it assigns.
-    pub transition: bool,
+    /// What it names: a parameter, a column of a new transition variable,
+    /// or an SQL parameter.
+    pub kind: TargetKind,
     /// Where it begins in the statement: a character offset, for the
     /// positions of errors (`SqlError::or_at`).
     pub at: usize,
+}
+
+/// [ISO/IEC 9075-2:2023 §6.4] What a `<target specification>` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetKind {
+    /// A `<host parameter specification>`: `name` is a parameter of the
+    /// procedure the statement is of [X3.135-1986 §5.6].
+    Parameter,
+    /// [§6.4 SR7, §6.6 SR13] A new transition variable column reference of
+    /// a BEFORE trigger: `name` is the column of the new row it assigns.
+    Transition,
+    /// [§6.8 SR1, §6.6 SR8] An `<SQL parameter reference>` in the body of
+    /// an SQL-invoked procedure: `name` is the SQL parameter it assigns.
+    Routine,
 }
 
 /// [X3.135-1986 §5.2; ISO/IEC 9075:1992 §5.3; ISO/IEC 9075-2:2023 §5.3]
@@ -324,6 +342,10 @@ pub enum SqlStatement {
     },
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §18.1] `<get diagnostics statement>`
     GetDiagnostics(GetDiagnostics),
+    /// [ISO/IEC 9075-2:2023 §16.1] `<call statement>`
+    Call(CallStatement),
+    /// [ISO/IEC 9075-2:2023 §16.2] `<return statement>`
+    Return(ReturnStatement),
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17] An `<SQL dynamic statement>`.
     Dynamic(Box<DynamicStatement>),
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.10, §17.11] EXECUTE or EXECUTE

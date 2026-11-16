@@ -345,3 +345,23 @@ fn the_trigger_examples_run_as_printed() {
         assert!(ann.page(page) > 0, "{page} shows its examples' output");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8: the examples of CREATE FUNCTION,
+/// CREATE PROCEDURE, CALL, RETURN and DROP ROUTINE run as printed, in
+/// that order, as ANN.
+#[test]
+fn the_routine_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    let pages = [
+        "sql/statements/create-function.md",
+        "sql/statements/create-procedure.md",
+        "sql/statements/call.md",
+        "sql/statements/return.md",
+        "sql/statements/drop-routine.md",
+    ];
+    for page in pages {
+        assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+}

@@ -30,7 +30,10 @@ abandoned: a privilege the grantee granted on, by the grant option it
 loses; a view, a constraint, an assertion, a domain constraint or a
 trigger of the grantee's that needs the privilege: TRIGGER on its table,
 SELECT on it if the trigger names a transition variable or table, or one
-its action's statements need. RESTRICT refuses the revoke if
+its action's statements need. A function or procedure of a schema whose
+owner loses a privilege its body needs, or EXECUTE on a routine its body
+invokes, is abandoned too, with what invokes it. RESTRICT refuses the
+revoke (SQLSTATE 2B000) if
 anything would be abandoned; CASCADE destroys what is abandoned, and
 what that abandons in turn.
 
@@ -81,7 +84,7 @@ None: a user revokes only what it granted.
 |---|---|---|
 | 2A000 | -102 | No `<drop behavior>` is written, or the statement is not written as the synopsis shows |
 | 2A000 | -103 | A rule above is broken |
-| 2B000 | -103 | RESTRICT, and a column or domain of a schema left without USAGE is of the collation, a grant of USAGE on the sequence generator would be abandoned, or a column, view, constraint, generated column or grant would be lost or abandoned with a privilege on a distinct type or its function |
+| 2B000 | -103 | RESTRICT, and a privilege, view, constraint, assertion, trigger or routine would be abandoned, a column or domain of a schema left without USAGE is of the collation, a grant of USAGE on the sequence generator would be abandoned, or a column, view, constraint, generated column or grant would be lost or abandoned with a privilege on a distinct type or its function |
 | 23000 | -201 | A constraint no longer holds of the rows of a table reverted |
 | 25000 | -917 | The transaction is READ ONLY |
 | 01006 | 0 | Not an error: a privilege named was not granted, and is not taken |

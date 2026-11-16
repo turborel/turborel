@@ -21,9 +21,10 @@ impl State {
     /// [ISO/IEC 9075-2:2023 §11.59] Drops distinct type `qn`, with each
     /// type based on it, and its routines [GR8, GR9]: with CASCADE, the
     /// views, constraints and assertions that reference them, as revoking
-    /// every privilege on them takes them [GR7], the columns of a type
-    /// based on them and the generated columns that reference them gone
-    /// already (`Session::dropping_generations`).
+    /// every privilege on them takes them [GR7], and the routines that
+    /// reference them [SR4g], the columns of a type based on them and the
+    /// generated columns that reference them gone already
+    /// (`Session::dropping_generations`).
     ///
     /// # Errors
     ///
@@ -33,6 +34,14 @@ impl State {
     pub(in crate::db) fn drop_user_type(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         self.user_type_named(qn, "§11.59 SR3")?;
         let gone = self.types_based_on(qn);
+        // [SR4g] The routines of them, or whose bodies reference them.
+        let routines = self.routines_lost_with(&gone);
+        if let (Some(r), false) = (routines.first(), cascade) {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §11.59 SR4g] routine {r} references type {qn}, so it is dropped only with CASCADE"
+            )));
+        }
+        let mut dropped = self.drop_routines(&routines)?;
         let after = self.without_types(&gone);
         let abandoned = self.unbound_in(&after, &|_| true, &|_| true);
         let columns = self.columns_based_on(&gone, &|_| true);
@@ -42,10 +51,27 @@ impl State {
         if let Some((t, c)) = columns.first() {
             return Err(api(format!("[DESIGN] column {t}.{c} is of a type based on {qn}, and was not dropped first")));
         }
-        let (mut dropped, locks) = self.destroy(Arc::clone(&after.catalog), &abandoned)?;
+        let (destroyed, locks) = self.destroy(Arc::clone(&after.catalog), &abandoned)?;
+        dropped.absorb(destroyed);
         dropped.names.extend(locks.into_iter().map(|(name, _)| name));
         dropped.names.extend(gone);
         Ok(dropped)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.59 SR4g, GR1, §11.62 GR1] The specific
+    /// names of the SQL-invoked routines DROP TYPE with CASCADE of the
+    /// types `gone` drops: those of a parameter or result of a type based
+    /// on one, those whose bodies bind no more without them, and each that
+    /// invokes one of those, at any remove.
+    pub(in crate::db) fn routines_lost_with(&self, gone: &[QualifiedName]) -> Vec<QualifiedName> {
+        if !self.catalog.any_routines() {
+            return Vec::new();
+        }
+        let mut lost = self.routines_typed_by(gone);
+        let after = self.without_types(gone);
+        let unbound = self.catalog.routines().into_iter().filter(|r| !lost.contains(&r.specific) && after.routine_binds(r).is_err());
+        lost.extend(unbound.map(|r| r.specific.clone()).collect::<Vec<_>>());
+        self.invokers_of(&lost)
     }
 
     /// The columns DROP TYPE `qn` with CASCADE loses, or of each type of
@@ -57,6 +83,9 @@ impl State {
             gone.extend(self.types_based_on(qn).into_iter().filter(|t| !gone.contains(t)).collect::<Vec<_>>());
         }
         let mut columns = self.columns_based_on(&gone, within);
+        // Those that invoke a routine lost with them.
+        let routined = self.invoking(&self.routines_lost_with(&gone)).columns.into_iter().filter(|(t, _)| within(&t.auth));
+        columns.extend(routined.filter(|c| !columns.contains(c)).collect::<Vec<_>>());
         let after = self.without_types(&gone);
         columns.extend(self.unbound_in(&after, &|_| true, within).columns.into_iter().filter(|c| !columns.contains(c)).collect::<Vec<_>>());
         columns

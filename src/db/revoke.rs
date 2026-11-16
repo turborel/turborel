@@ -119,6 +119,10 @@ pub(super) struct Abandoned {
     /// [ISO/IEC 9075-2:2023 §12.7 SR3b] Triggers whose owner loses a
     /// privilege their definition needs.
     pub(super) triggers: Vec<QualifiedName>,
+    /// [ISO/IEC 9075-2:2023 §12.7 GR12o, §11.62 GR1] SQL-invoked routines,
+    /// by specific name, whose owner loses a privilege their bodies need,
+    /// or whose bodies invoke a routine dropped.
+    pub(super) routines: Vec<QualifiedName>,
 }
 
 impl Abandoned {
@@ -131,6 +135,7 @@ impl Abandoned {
             && self.assertions.is_empty()
             && self.columns.is_empty()
             && self.triggers.is_empty()
+            && self.routines.is_empty()
     }
 
     /// The first of them, named for a refusal.
@@ -157,6 +162,9 @@ impl Abandoned {
         if let Some(t) = self.triggers.first() {
             return format!("trigger {t}");
         }
+        if let Some(r) = self.routines.first() {
+            return format!("routine {r}");
+        }
         self.columns.first().map(|(t, c)| format!("generated column {t}.{c}")).unwrap_or_default()
     }
 }
@@ -181,7 +189,7 @@ impl State {
         if r.object == PrivilegeObject::Sequence {
             return self.revoke_sequence_usage((auth, schema), r).or_at(r.table.at);
         }
-        if matches!(r.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine | PrivilegeObject::Routine) {
+        if matches!(r.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_)) {
             return self.revoke_on_type((auth, schema), r).or_at(r.table.at);
         }
         let name = qualify(&r.table, schema);
@@ -218,7 +226,7 @@ impl State {
         let mut abandoned = self.abandoned(&*after);
         abandoned.grants = remaining.iter().zip(&stands).filter(|(_, s)| !**s).map(|(g, _)| g.clone()).collect();
         if r.behavior == DropBehavior::Restrict && !abandoned.is_empty() {
-            return Err(rule(format!("[ISO/IEC 9075:1992 §11.37 SR18] REVOKE ... RESTRICT would abandon {}", abandoned.first())));
+            return Err(abandoning(&abandoned));
         }
         let (dropped, locks) = self.destroy(Arc::from(after), &abandoned)?;
         let completion = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_REVOKED) } else { Completion::Success };
@@ -247,7 +255,7 @@ impl State {
 
     /// Adds to `abandoned` the constraints abandoned in `after`: of tables
     /// [SR14], of domains [SR16], each with its copies on columns, and
-    /// assertions [SR15].
+    /// assertions [SR15]; and the triggers and routines abandoned.
     fn abandoned_constraints(&self, after: &dyn Catalog, abandoned: &mut Abandoned) {
         let mut bound = self.clone();
         bound.catalog = Arc::from(after.duplicate());
@@ -283,6 +291,13 @@ impl State {
         for t in self.catalog.triggers() {
             if lost(bound.trigger_binds(t)) {
                 abandoned.triggers.push(t.name.clone());
+            }
+        }
+        // [ISO/IEC 9075-2:2023 §12.7 GR12o] routines whose bodies need
+        // what the owner no longer holds.
+        for r in self.catalog.routines() {
+            if lost(bound.routine_binds(r)) {
+                abandoned.routines.push(r.specific.clone());
             }
         }
     }
@@ -366,6 +381,10 @@ impl State {
             locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
             dropped.absorb(taken);
         }
+        // [ISO/IEC 9075-2:2023 §12.7 GR12o] DROP ROUTINE ... CASCADE.
+        let taken = self.drop_routines(&abandoned.routines)?;
+        locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
+        dropped.absorb(taken);
         Ok((dropped, locks))
     }
 
@@ -430,4 +449,12 @@ fn dependents(all: &[Granted], identified: &dyn Fn(&Granted) -> bool) -> Result<
         .with_state(SqlState::DEPENDENT_PRIVILEGES)),
         None => Ok(()),
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §12.7 GR12q] The refusal of a REVOKE with RESTRICT
+/// that would abandon what `abandoned` holds: SQLSTATE 2B000.
+fn abandoning(abandoned: &Abandoned) -> SqlError {
+    let msg =
+        format!("[ISO/IEC 9075-2:2023 §12.7 GR12q; ISO/IEC 9075:1992 §11.37 SR18] REVOKE ... RESTRICT would abandon {}", abandoned.first());
+    rule(msg).with_state(SqlState::DEPENDENT_PRIVILEGES)
 }

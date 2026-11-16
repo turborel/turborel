@@ -13,8 +13,10 @@
 use std::collections::HashSet;
 
 mod dynamic;
+mod routine;
 mod transition;
 
+pub(crate) use routine::RoutineScope;
 pub(crate) use transition::Transitions;
 
 use dynamic::Dynamic;
@@ -50,6 +52,9 @@ pub struct Params {
     /// [ISO/IEC 9075-2:2023 §4.46.2] Of a triggered action, its transition
     /// variables and tables (`params/transition.rs`).
     transitions: Option<std::sync::Arc<Transitions>>,
+    /// [ISO/IEC 9075-2:2023 §4.35.1] Of the body of an SQL-invoked
+    /// procedure, its SQL parameters (`params/routine.rs`).
+    routine: Option<std::sync::Arc<RoutineScope>>,
 }
 
 fn api(msg: impl Into<String>) -> SqlError {

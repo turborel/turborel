@@ -157,6 +157,7 @@ impl Session {
             SchemaStatement::Sequence(d) => self.own_object(st, &d.name, (schema, "ISO/IEC 9075-2:2023 §11.72 SR4")),
             SchemaStatement::Type(d) => self.own_object(st, &d.name, (schema, "ISO/IEC 9075-2:2023 §11.51 AR1")),
             SchemaStatement::Trigger(t) => self.own_object(st, &t.name, (schema, "ISO/IEC 9075-2:2023 §11.49 AR1")),
+            SchemaStatement::Routine(r) => self.own_object(st, &r.name, (schema, "ISO/IEC 9075-2:2023 §11.60 AR1")),
             SchemaStatement::AlterSequence(a) => {
                 let qn = qualify(&a.name, schema);
                 // [ISO/IEC 9075-2:2023 §11.73 AR1] only the owner of its
@@ -230,6 +231,7 @@ impl State {
             SchemaStatement::AlterSequence(a) => self.alter_sequence(schema, a, epochs),
             SchemaStatement::Type(d) => self.create_user_type(schema, d),
             SchemaStatement::Trigger(t) => self.create_trigger(schema, t),
+            SchemaStatement::Routine(r) => self.create_routine(schema, r),
         }
     }
 
@@ -349,7 +351,7 @@ impl State {
         if p.object == PrivilegeObject::Sequence {
             return self.grant_sequence_usage(auth, schema, p).or_at(p.table.at);
         }
-        if matches!(p.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine | PrivilegeObject::Routine) {
+        if matches!(p.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_)) {
             return self.grant_on_type(auth, schema, p).or_at(p.table.at);
         }
         let (granted, warned) = self.describe_grant((auth, schema), p).or_at(p.table.at)?;

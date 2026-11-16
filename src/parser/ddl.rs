@@ -38,6 +38,32 @@ const DEFINED: [&str; 7] = [kw::TABLE, kw::VIEW, kw::GLOBAL, kw::LOCAL, kw::DOMA
 pub const REVERT_COLLATION: &str = "REVERT_COLLATION";
 
 impl Parser {
+    /// What a DROP of a collation, a sequence generator, a routine or a
+    /// type names, its `<drop behavior>` next, if one follows DROP here:
+    /// COLLATION, then its name; [ISO/IEC 9075-2:2023 §11.74] SEQUENCE,
+    /// then a `<sequence generator name>`; [§11.62] a `<specific routine
+    /// designator>`; [§11.59] TYPE, then a `<schema-resolved user-defined
+    /// type name>`.
+    ///
+    /// # Errors
+    ///
+    /// The text after the word is not the name it takes.
+    fn dropped_object(&mut self) -> Result<Option<DropObject>> {
+        if self.accept_kw(kw::COLLATION) {
+            return Ok(Some(DropObject::Collation(self.table_name()?)));
+        }
+        if self.accept_word(super::sequences::SEQUENCE) {
+            return Ok(Some(DropObject::Sequence(self.table_name()?)));
+        }
+        if self.next_is_routine_designator() {
+            return Ok(Some(DropObject::Routine(self.routine_designator()?)));
+        }
+        if self.accept_word(super::user_types::TYPE) {
+            return Ok(Some(DropObject::Type(self.table_name()?)));
+        }
+        Ok(None)
+    }
+
     /// An SQL-schema statement: CREATE TABLE, VIEW, DOMAIN, ASSERTION,
     /// COLLATION, SEQUENCE or TRIGGER, CREATE GLOBAL or LOCAL TEMPORARY TABLE, or
     /// ALTER DOMAIN or SEQUENCE (`parser/schema.rs`); ALTER TABLE; DROP
@@ -47,7 +73,7 @@ impl Parser {
     /// CREATE, DROP or ALTER INDEX, CREATE, ALTER or DROP USER, and ALTER
     /// DATABASE (`parser/users.rs`).
     pub(super) fn schema_manipulation(&mut self) -> Result<SqlStatement> {
-        let defines = DEFINED.iter().any(|w| self.next_is_kw(w)) || self.next_is_trigger();
+        let defines = DEFINED.iter().any(|w| self.next_is_kw(w)) || self.next_is_trigger() || self.next_is_routine();
         let altered = self.next_is_kw(kw::DOMAIN) || self.next_is_sequence();
         if (self.is_kw(kw::CREATE) && (defines || self.next_is_sequence() || self.next_is_type())) || (self.is_kw(kw::ALTER) && altered) {
             return self.schema_statement();
@@ -74,20 +100,7 @@ impl Parser {
         if !alter && let Some(refused) = self.drop_character_set()? {
             return Ok(refused);
         }
-        if !alter && self.accept_kw(kw::COLLATION) {
-            let object = DropObject::Collation(self.table_name()?);
-            return Ok(SqlStatement::Drop { object, behavior: self.drop_behavior()? });
-        }
-        // [ISO/IEC 9075-2:2023 §11.74] DROP SEQUENCE <sequence generator
-        // name> <drop behavior>
-        if !alter && self.accept_word(super::sequences::SEQUENCE) {
-            let object = DropObject::Sequence(self.table_name()?);
-            return Ok(SqlStatement::Drop { object, behavior: self.drop_behavior()? });
-        }
-        // [ISO/IEC 9075-2:2023 §11.59] DROP TYPE <schema-resolved
-        // user-defined type name> <drop behavior>
-        if !alter && self.accept_word(super::user_types::TYPE) {
-            let object = DropObject::Type(self.table_name()?);
+        if !alter && let Some(object) = self.dropped_object()? {
             return Ok(SqlStatement::Drop { object, behavior: self.drop_behavior()? });
         }
         if self.accept_word("INDEX") {

@@ -44,6 +44,7 @@ impl State {
             DropTarget::Sequence(qn) => self.drop_sequence(qn),
             DropTarget::Type(qn) => self.drop_user_type(qn, cascade),
             DropTarget::Trigger(qn) => self.drop_trigger(qn),
+            DropTarget::Routine(specific) => self.drop_routine(specific, cascade),
         }
     }
 
@@ -114,8 +115,8 @@ impl State {
     ///
     /// SQLCODE -103 if there is no such schema [SR2] (SQLSTATE 3F000), or,
     /// not `cascade`, it holds a table, view, domain, assertion, collation,
-    /// sequence generator, user-defined type [SR3] or trigger [ISO/IEC
-    /// 9075-2:2023 §11.2 SR4j].
+    /// sequence generator, user-defined type [SR3], trigger or SQL-invoked
+    /// routine [ISO/IEC 9075-2:2023 §11.2 SR4j, SR4l].
     fn drop_schema(&mut self, auth: &str, cascade: bool) -> Result<Dropped> {
         if !self.catalog.schema_exists(auth) {
             let msg = format!("[ISO/IEC 9075:1992 §11.2 SR2] there is no schema {auth}");
@@ -132,11 +133,13 @@ impl State {
         let sequences = self.schema_sequences(auth);
         let types = self.schema_user_types(auth);
         let triggers = self.schema_triggers_of(auth);
+        let routines = self.schema_routines_of(auth);
         let held = (tables.first().or(views.first()).or(domains.first()).or(assertions.first())).or(collations
             .first()
             .or(sequences.first())
             .or(types.first())
-            .or(triggers.first()));
+            .or(triggers.first())
+            .or(routines.first()));
         if let (Some(first), false) = (held, cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {first}, so it is dropped only with CASCADE")));
         }
@@ -158,6 +161,8 @@ impl State {
         }
         // [ISO/IEC 9075-2:2023 §11.2 GR9] its triggers left.
         dropped.absorb(self.drop_triggers(&triggers)?);
+        // [ISO/IEC 9075-2:2023 §11.2 GR10] its routines left.
+        dropped.absorb(self.drop_routines(&routines)?);
         dropped.absorb(self.drop_schema_collations(auth)?);
         dropped.absorb(self.drop_schema_sequences(auth)?);
         // Its types, once the tables of them are gone.
@@ -249,6 +254,7 @@ impl State {
         self.catalog = Arc::from(catalog);
         dropped.absorb(self.drop_asserting(&gone, (cascade, cited))?);
         dropped.absorb(self.drop_triggering(&gone, (cascade, self.catalog.table(qn).is_some()))?);
+        dropped.absorb(self.drop_routining(&gone, (cascade, self.catalog.table(qn).is_some()))?);
         dropped.names.extend(views);
         Ok(dropped)
     }
@@ -309,7 +315,8 @@ impl Session {
             | DropTarget::Assertion(_)
             | DropTarget::Sequence(_)
             | DropTarget::Type(_)
-            | DropTarget::Trigger(_) => Vec::new(),
+            | DropTarget::Trigger(_)
+            | DropTarget::Routine(_) => Vec::new(),
         };
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
@@ -369,6 +376,7 @@ impl Session {
             DropObject::Sequence(sequence) => Ok(DropTarget::Sequence(self.owned(st, sequence, "ISO/IEC 9075-2:2023 §11.74 AR1")?)),
             DropObject::Type(name) => Ok(DropTarget::Type(self.owned(st, name, "ISO/IEC 9075-2:2023 §11.59 AR1")?)),
             DropObject::Trigger(name) => Ok(DropTarget::Trigger(self.owned(st, name, "ISO/IEC 9075-2:2023 §11.50 AR1")?)),
+            DropObject::Routine(designator) => self.routine_target(st, designator),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {

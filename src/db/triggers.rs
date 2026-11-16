@@ -18,12 +18,7 @@ mod run;
 
 pub(super) use changes::Event;
 pub(super) use fire::Triggered;
+pub(super) use named::named;
 pub(super) use rerouted::view_rows;
 pub(super) use routed::{Instead, instead_for, updatable};
 pub(super) use run::Triggering;
-
-/// \[DESIGN\] How deep triggered actions nest, a trigger's statement
-/// activating another's, or its own: past it, the statement fails, as
-/// with any triggered action exception (SQLSTATE 09000), not the stack
-/// of the thread that runs it (RULES.md R-CF-6).
-pub(super) const MAX_TRIGGER_DEPTH: usize = 16;

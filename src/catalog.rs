@@ -23,6 +23,7 @@ mod domains;
 mod keys;
 mod memory;
 mod privileges;
+mod routines;
 mod sequences;
 mod triggers;
 mod user_types;
@@ -35,6 +36,7 @@ pub use domains::{DomainDesc, UsageDesc};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, applicable, merged};
+pub use routines::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc};
 pub use sequences::SequenceDesc;
 pub use triggers::{ActionTime, TransitionNames, TriggerDesc, TriggerEvent, TriggerLevel};
 pub use user_types::{Routine, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, based_on, types_in};
@@ -260,7 +262,10 @@ pub struct IndexDesc {
 ///   So too `put_assertion`, `assertion`, `assertions` and
 ///   `remove_assertion`; and `put_trigger`, `trigger`, `triggers` and
 ///   `remove_trigger`, `triggers` and `triggers_on` in the order of
-///   their timestamps of creation.
+///   their timestamps of creation; and `put_routine`, `routine`,
+///   `routines`, `routines_named` and `remove_routine`, by specific
+///   name, `routines` and `routines_named` in the order of their
+///   timestamps of creation.
 /// * `duplicate` returns an independent copy: changing either leaves the
 ///   other as it was. Each snapshot of the database's definitions holds its
 ///   own copy, and a change of definitions works on a fresh duplicate
@@ -397,6 +402,27 @@ pub trait Catalog: Send + Sync {
     }
     /// Forget the trigger with this name: one dropped [§11.50 GR3].
     fn remove_trigger(&mut self, name: &QualifiedName);
+    /// Record the SQL-invoked routine `routine`, in place of any of its
+    /// specific name [ISO/IEC 9075-2:2023 §11.60 GR3].
+    fn put_routine(&mut self, routine: SqlRoutineDesc);
+    /// The SQL-invoked routine of this specific name, if any.
+    fn routine(&self, specific: &QualifiedName) -> Option<&SqlRoutineDesc>;
+    /// Whether it has an SQL-invoked routine: none, so a routine
+    /// invocation costs the lookup of none.
+    fn any_routines(&self) -> bool {
+        !self.routines().is_empty()
+    }
+    /// Every SQL-invoked routine, in the order of their timestamps of
+    /// creation.
+    fn routines(&self) -> Vec<&SqlRoutineDesc>;
+    /// The SQL-invoked routines of the `<schema qualified routine name>`
+    /// `name`, in the order of `routines`.
+    fn routines_named(&self, name: &QualifiedName) -> Vec<&SqlRoutineDesc> {
+        self.routines().into_iter().filter(|r| r.name == *name).collect()
+    }
+    /// Forget the SQL-invoked routine of this specific name: one dropped
+    /// [§11.62 GR2].
+    fn remove_routine(&mut self, specific: &QualifiedName);
     /// An independent copy of this catalog.
     fn duplicate(&self) -> Box<dyn Catalog>;
 }

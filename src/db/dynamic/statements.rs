@@ -197,7 +197,7 @@ impl Session {
         if !prepared.is_query() {
             // [§17.9 GR6] a statement of no row: of degree 0.
             if let Some(result) = result {
-                self.using_targets(result, &[], params, ("§8.10 GR8", "§8.10 GR9"))?;
+                self.using_targets(result, &[], params, ("X3.135-1986 §8.10 GR8", "X3.135-1986 §8.10 GR9"))?;
             }
             let values = self.using_values(parameters, &types, params, "§17.10 GR4")?;
             return self.run_prepared(&prepared, values, commands::EXECUTE);
@@ -211,7 +211,7 @@ impl Session {
             let msg = "[ISO/IEC 9075:1992 §17.10 GR5] a <dynamic single row select statement> needs a <result using clause>";
             return Err(dynamic_error(SqlState::USING_CLAUSE_REQUIRED_RESULTS, msg.to_owned()));
         };
-        let targets = self.using_targets(result, prepared.columns(), params, ("§8.10 GR8", "§8.10 GR9"))?;
+        let targets = self.using_targets(result, prepared.columns(), params, ("X3.135-1986 §8.10 GR8", "X3.135-1986 §8.10 GR9"))?;
         let values = self.using_values(parameters, &types, params, "§17.10 GR4")?;
         self.single_row(&prepared, values, &targets, params)
     }

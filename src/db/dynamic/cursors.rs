@@ -150,8 +150,9 @@ impl Session {
         params: &mut Params,
     ) -> Result<Completion> {
         let key = self.cursor_key(cursor, params, "§17.15 SR4")?;
-        let (targets, fetched) =
-            self.fetch_row(cx, (&key, orientation), params, |columns, p| self.using_targets(using, columns, p, ("§8.6 GR8", "§8.6 GR10")))?;
+        let (targets, fetched) = self.fetch_row(cx, (&key, orientation), params, |columns, p| {
+            self.using_targets(using, columns, p, ("X3.135-1986 §8.6 GR8", "X3.135-1986 §8.6 GR10"))
+        })?;
         match fetched {
             None => Ok(Completion::NoData),
             Some((columns, row)) => self.put_row(&targets, &columns, &row, params),

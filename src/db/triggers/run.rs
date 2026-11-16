@@ -3,12 +3,8 @@
 //! statement executed, as a statement of its own [§9.17], in the context
 //! the trigger pushes on the session.
 //!
-//! As the action runs, the session's diagnostics area is one of its own,
-//! discarded after, so the statement that caused it reads its own [GR6a,
-//! GR6k]; its authorization identifier is the owner of the trigger's
-//! schema [GR6b, GR6l], its default schema the one the trigger's names
-//! were defined in, and no session collation applies, as of a view. Its
-//! statement timestamp is the statement's that caused it [§9.17 GR5]. No
+//! As the action runs, the trigger's context is pushed on the session
+//! [GR6a, GR6b, GR6k, GR6l] (`db/nested.rs`). Its statement timestamp is the statement's that caused it [§9.17 GR5]. No
 //! savepoint is established [GR6c, GR6j]: one that fails fails that
 //! statement, undone whole [§4.46.2], so its own changes are undone too.
 //!
@@ -22,10 +18,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 
-use super::super::collations::Collating;
 use super::super::prepared::Plans;
-use super::super::{Session, State, StatementContext, area};
-use super::MAX_TRIGGER_DEPTH;
+use super::super::{Session, State, StatementContext};
 use crate::ast::{SchemaStatement, SearchCondition, SqlStatement, TriggerDefinition};
 use crate::binder::bind_when;
 use crate::catalog::{ActionTime, Catalog, ColumnDesc, QualifiedName, TriggerDesc, TriggerLevel, owner_of};
@@ -38,11 +32,10 @@ use crate::storage::Row;
 use crate::sync::lock_builtin;
 use crate::value::Value;
 
-/// The triggered actions a session is executing, innermost last, and the
-/// actions it keeps, each bound for a trigger at a depth of nesting.
+/// The triggered actions a session keeps, each bound for a trigger at a
+/// depth of nesting (`db/nested.rs`).
 #[derive(Default)]
 pub(in crate::db) struct Triggering {
-    executing: RefCell<Vec<QualifiedName>>,
     kept: RefCell<HashMap<(QualifiedName, u64, usize), Arc<Action>>>,
 }
 
@@ -68,27 +61,6 @@ pub(in crate::db) struct Invocation {
     pub(in crate::db) new_table: Option<HeldRows<Row>>,
 }
 
-/// What a session was, before a trigger pushed its context on it: put
-/// back as it is dropped.
-struct Pushed<'s> {
-    session: &'s Session,
-    auth: String,
-    schema: String,
-    collating: Collating,
-    area: area::Area,
-}
-
-impl Drop for Pushed<'_> {
-    fn drop(&mut self) {
-        let s = self.session;
-        *s.auth.borrow_mut() = std::mem::take(&mut self.auth);
-        *s.schema.borrow_mut() = std::mem::take(&mut self.schema);
-        s.prepared_collation.replace(std::mem::replace(&mut self.collating, Collating::AsSet));
-        s.inner.borrow_mut().area = std::mem::take(&mut self.area);
-        s.triggering.executing.borrow_mut().pop();
-    }
-}
-
 impl Session {
     /// [ISO/IEC 9075-2:2023 §15.21 GR5, GR6] Invokes the triggered action
     /// of trigger `t` in `cx`, with `given`: the new row as its statements
@@ -98,24 +70,21 @@ impl Session {
     ///
     /// SQLSTATE 09000, about the trigger, with the SQLCODE of the error of
     /// its WHEN condition or of a statement that failed [GR5b i 1, GR6m];
-    /// so too past `MAX_TRIGGER_DEPTH` nested triggered actions.
+    /// so too past `MAX_NESTING` nested contexts (`db/nested.rs`).
     pub(in crate::db) fn invoke(&self, cx: StatementContext<'_>, t: &TriggerDesc, given: Invocation) -> Result<Option<Vec<Value>>> {
         self.invoked(cx, t, given).map_err(|e| triggered_exception(t, &e))
     }
 
     /// `invoke`'s work, its error not yet the trigger's.
     fn invoked(&self, cx: StatementContext<'_>, t: &TriggerDesc, given: Invocation) -> Result<Option<Vec<Value>>> {
-        let depth = self.triggering.executing.borrow().len();
-        if depth >= MAX_TRIGGER_DEPTH {
-            let msg = format!("[DESIGN] triggered actions nest at most {MAX_TRIGGER_DEPTH} deep: trigger {} would nest deeper", t.name);
-            return Err(SqlError::new(Code::Unsupported, msg));
-        }
+        let depth = self.nesting.depth();
         let action = self.action(cx.st, t, depth)?;
         let Invocation { values, old_table, new_table } = given;
         give(action.transitions.old_table.as_ref().map(|(_, rows)| rows), old_table)?;
         give(action.transitions.new_table.as_ref().map(|(_, rows)| rows), new_table)?;
         let mut params = Params::transitional(values, Arc::clone(&action.transitions));
-        let _pushed = self.push(cx.st, t);
+        let owner = owner_of(&*cx.st.catalog, &t.name.auth).to_owned();
+        let _pushed = self.push(&t.name, (owner, t.schema.clone()))?;
         if !self.when_holds(cx, &action, &params)? {
             return Ok(None);
         }
@@ -125,21 +94,6 @@ impl Session {
             self.run_statement(cx, stmt, &mut params, Some(&keeping))?;
         }
         Ok(params.new_row())
-    }
-
-    /// [ISO/IEC 9075-2:2023 §15.21 GR6a to GR6d] Pushes trigger `t`'s
-    /// context on the session, as the module says: popped as what is
-    /// returned is dropped.
-    fn push(&self, st: &State, t: &TriggerDesc) -> Pushed<'_> {
-        let owner = owner_of(&*st.catalog, &t.name.auth).to_owned();
-        self.triggering.executing.borrow_mut().push(t.name.clone());
-        Pushed {
-            session: self,
-            auth: self.auth.replace(owner),
-            schema: self.schema.replace(t.schema.clone()),
-            collating: self.prepared_collation.replace(Collating::Fixed(None)),
-            area: std::mem::take(&mut self.inner.borrow_mut().area),
-        }
     }
 
     /// [ISO/IEC 9075-2:2023 §15.21 GR5b] Whether `action` has no WHEN

@@ -75,7 +75,9 @@ with it. RESTRICT refuses the drop if a view, an assertion, a foreign
 key of another table, or a constraint that reads other columns too
 refers to the column; CASCADE drops them with it. RESTRICT refuses it too
 if a generated column's expression references the column; CASCADE first
-drops each such generated column, as DROP COLUMN CASCADE would. If the drop
+drops each such generated column, as DROP COLUMN CASCADE would. A
+function or procedure whose body references the column is refused the
+same way, and dropped by CASCADE with what invokes it. If the drop
 then fails, the transaction can only roll back. The privileges on the
 column go.
 

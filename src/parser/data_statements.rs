@@ -5,6 +5,7 @@
 
 use super::Parser;
 use super::generated::RESTART;
+use super::routines::{CALL, RETURN};
 use crate::ast::{DynamicStatement, SetClause, SqlStatement, UpdateSource, ValueExpression};
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
@@ -28,9 +29,14 @@ pub(crate) const MERGE: &str = "MERGE";
 
 /// Whether the tokens `first` and `second` begin a statement a word
 /// begins, not a query: TRUNCATE, then TABLE, or MERGE, then INTO, each
-/// reserved, which no table's name is followed by in a `<joined table>`.
+/// reserved, which no table's name is followed by in a `<joined table>`;
+/// CALL, then a name, or RETURN [ISO/IEC 9075-2:2023 §16.1, §16.2], as a
+/// statement is read (`at_call`, `at_return`).
 pub(crate) fn begins_word_statement(first: Option<&Tok>, second: Option<&Tok>) -> bool {
-    begins_truncate(first, second) || matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::KeyWord(kw::INTO))) if w == MERGE)
+    let merge = matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::KeyWord(kw::INTO))) if w == MERGE);
+    let call = matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::Identifier(_) | Tok::KeyWord(_))) if w == CALL);
+    let returned = matches!(first, Some(Tok::Identifier(w)) if w == RETURN);
+    begins_truncate(first, second) || merge || call || returned
 }
 
 impl Parser {
@@ -87,6 +93,10 @@ impl Parser {
             self.truncate_statement()?
         } else if self.at_merge() {
             self.merge_statement()?
+        } else if self.at_call() {
+            SqlStatement::Call(self.call_statement()?)
+        } else if self.at_return() {
+            SqlStatement::Return(self.return_statement()?)
         } else {
             return Ok(None);
         };

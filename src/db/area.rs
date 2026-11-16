@@ -25,7 +25,7 @@ use super::{Completion, Session, State, rule};
 use crate::ast::{AllQualifier, ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, ValueSpecification};
 use crate::binder::{self, assignable};
 use crate::catalog::{QualifiedName, applicable, owner_of};
-use crate::error::{Code, Result, SqlState, Subject, fail_with};
+use crate::error::{Code, Result, RoutineSubject, SqlState, Subject, fail_with};
 use crate::lexer::kw;
 use crate::params::Params;
 use crate::settings::CATALOG_NAME;
@@ -208,7 +208,7 @@ impl Session {
         // [X3.135-1986 §8.6 GR8-GR10; ISO/IEC 9075:1992 §9.1] as a FETCH
         // assigns: a string cut is a warning, though the area is left as
         // it was [§18.1 GR1a].
-        assign_targets(&values, &targets, params, "§8.6 GR8", "§8.6 GR10")
+        assign_targets(&values, &targets, params, "X3.135-1986 §8.6 GR8", "X3.135-1986 §8.6 GR10")
     }
 
     /// [ISO/IEC 9075-2:2023 §23.1 GR6a] The items `<all information>`
@@ -258,7 +258,7 @@ impl Session {
             let name = QualifiedName { auth: schema.clone(), ident: ident.clone() };
             access || !applicable(&*st.catalog, &self.auth(), &name).0.is_empty()
         };
-        let Subject { constraint, table, column, cursor, assertion, trigger } = &condition.subject;
+        let Subject { constraint, table, column, cursor, assertion, trigger, routine } = &condition.subject;
         let named = table.is_some();
         let table = table.clone().filter(visible);
         // [GR3j iii] a table constraint goes with its table; [GR3j iv] an
@@ -268,7 +268,7 @@ impl Session {
         };
         let constraint = constraint.clone().filter(shown_constraint);
         let column = column.clone().filter(|_| table.is_some());
-        Shown { catalog, constraint, column, table, cursor: cursor.clone(), trigger: trigger.clone() }
+        Shown { catalog, constraint, column, table, cursor: cursor.clone(), trigger: trigger.clone(), routine: routine.clone() }
     }
 }
 
@@ -317,6 +317,7 @@ struct Shown {
     column: Option<String>,
     cursor: Option<String>,
     trigger: Option<(String, String)>,
+    routine: Option<RoutineSubject>,
 }
 
 impl Shown {
@@ -354,17 +355,25 @@ impl Shown {
             ConditionItem::TriggerCatalog => catalog_of(&self.trigger),
             ConditionItem::TriggerSchema => schema_of(&self.trigger),
             ConditionItem::TriggerName => name_of(&self.trigger),
-            // [ISO/IEC 9075-2:2023 §23.1 GR4l iii 2, GR5] 0 and zero-length
-            // strings. A condition of a distinct type's function is one of
-            // the CAST it stands for.
-            ConditionItem::ParameterOrdinalPosition => number(0_usize),
-            ConditionItem::ParameterMode
-            | ConditionItem::ParameterName
-            | ConditionItem::RoutineCatalog
-            | ConditionItem::RoutineName
-            | ConditionItem::RoutineSchema
-            | ConditionItem::SpecificName => text(""),
+            // [ISO/IEC 9075-2:2023 §23.1 GR4l, GR4q, GR5] of an SQL-invoked
+            // routine's condition; else 0 and zero-length strings. A
+            // condition of a distinct type's function is one of the CAST it
+            // stands for.
+            ConditionItem::RoutineCatalog => catalog_of(&self.routine.as_ref().map(|r| r.name.clone())),
+            ConditionItem::RoutineSchema => schema_of(&self.routine.as_ref().map(|r| r.name.clone())),
+            ConditionItem::RoutineName => name_of(&self.routine.as_ref().map(|r| r.name.clone())),
+            ConditionItem::SpecificName => text(self.routine.as_ref().map_or("", |r| &r.specific)),
+            ConditionItem::ParameterOrdinalPosition => number(self.parameter().map_or(0, |p| p.0)),
+            ConditionItem::ParameterMode => text(self.parameter().map_or("", |p| p.1)),
+            ConditionItem::ParameterName => text(self.parameter().map_or("", |p| &p.2)),
         }
+    }
+}
+
+impl Shown {
+    /// The parameter its routine's condition is related to, if any.
+    fn parameter(&self) -> Option<&(usize, &'static str, String)> {
+        self.routine.as_ref()?.parameter.as_ref()
     }
 }
 

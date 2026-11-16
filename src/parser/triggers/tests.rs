@@ -5,7 +5,7 @@
 //! as targets [§6.4 SR7, §6.6 SR13], and each refusal with its code.
 
 use super::*;
-use crate::ast::{GetDiagnostics, SchemaStatement};
+use crate::ast::{GetDiagnostics, SchemaStatement, TargetKind};
 
 /// `text`, parsed as one statement: its trigger definition and the
 /// statement's text, if it is one.
@@ -143,9 +143,9 @@ fn new_transition_column_is_a_target_6_6() {
     let definition = trigger(text);
     let SqlStatement::Select { targets, .. } = &definition.action[0] else { panic!("{:?}", definition.action) };
     let target = &targets[0];
-    assert_eq!((target.name.as_str(), target.transition, target.at), ("B", true, text.find("N.B").unwrap()));
+    assert_eq!((target.name.as_str(), target.kind, target.at), ("B", TargetKind::Transition, text.find("N.B").unwrap()));
     let SqlStatement::GetDiagnostics(GetDiagnostics::Statement(items)) = &definition.action[1] else { panic!() };
-    assert_eq!((items[0].0.name.as_str(), items[0].0.transition), ("C", true));
+    assert_eq!((items[0].0.name.as_str(), items[0].0.kind), ("C", TargetKind::Transition));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.50] DROP TRIGGER reads
@@ -352,4 +352,17 @@ fn format_errors_are_syntax_errors_11_49() {
 fn truncate_in_action_is_not_implemented_14_10() {
     assert_eq!(refusal("CREATE TRIGGER TR AFTER INSERT ON T TRUNCATE TABLE U").code, Code::Unsupported);
     refused_by("CREATE TRIGGER TR BEFORE INSERT ON T TRUNCATE TABLE U", "ISO/IEC 9075-2:2023 §11.49 SR14a");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.49 SR13, §16.1, §16.2 SR1] a
+/// `<triggered SQL statement>` may be a CALL, alone or in a compound
+/// statement, of any trigger; RETURN, of a function's body alone, it may
+/// not be.
+#[test]
+fn action_may_call_a_procedure_11_49() {
+    let definition = trigger("CREATE TRIGGER TR AFTER INSERT ON T CALL P (1, DEFAULT)");
+    assert!(matches!(definition.action.as_slice(), [SqlStatement::Call(_)]));
+    let text = "CREATE TRIGGER TR BEFORE INSERT ON T REFERENCING NEW N FOR EACH ROW BEGIN ATOMIC CALL P (N.A); CALL Q (); END";
+    assert_eq!(trigger(text).action.len(), 2);
+    syntax_error("CREATE TRIGGER TR AFTER INSERT ON T RETURN 1");
 }

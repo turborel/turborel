@@ -39,6 +39,7 @@ mod datetime;
 mod dependencies;
 pub(crate) use dependencies::{DescribedKey, described_key};
 mod interval;
+mod invocation;
 mod listagg;
 mod merge;
 pub(crate) use datetime::cast_is_valid;
@@ -56,6 +57,7 @@ mod invariant;
 mod limit;
 mod natural;
 mod order_by;
+mod parameters;
 mod partitioned;
 mod pattern;
 mod predicates;
@@ -84,7 +86,9 @@ pub use counterparts::defaulted_columns;
 pub use cursor::bind_cursor;
 use from::FromItem;
 pub use generated::{bind_generation, generations};
+pub use invocation::{FunctionBody, bind_function_body, resolve_routine, routine_definition};
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
+pub use parameters::bind_argument;
 use query::bind_query_specification;
 pub use set_operations::{ObjectColumn, bind_insert_query};
 pub(crate) use statements::assignable;
@@ -185,6 +189,9 @@ pub struct Context<'a> {
     /// clause>`s it is in the scope of, if any: of none at the start of a
     /// statement, nor in a view, which is bound where it is defined.
     pub(crate) queries: Option<&'a Queries<'a>>,
+    /// Where to note the specific names of the SQL-invoked routines it
+    /// invokes [ISO/IEC 9075-2:2023 §11.60 GR1], if anywhere.
+    pub invoked: Option<&'a Invoked>,
 }
 
 pub use purpose::Purpose;
@@ -197,6 +204,9 @@ pub type Uses = RefCell<Vec<(QualifiedName, String)>>;
 /// The columns each item of a select list references, as `Uses` notes
 /// them, its subqueries' too.
 pub type Selected = RefCell<Vec<Vec<(QualifiedName, String)>>>;
+
+/// The specific names of the SQL-invoked routines a statement invokes.
+pub type Invoked = RefCell<Vec<QualifiedName>>;
 
 impl<'a> Context<'a> {
     /// A statement's query, run under `auth` with `params`.
@@ -219,6 +229,7 @@ impl<'a> Context<'a> {
             referencing: None,
             draws: false,
             queries: None,
+            invoked: None,
         }
     }
 }
@@ -386,6 +397,8 @@ struct Binder<'a> {
     drawing: Cell<bool>,
     /// The query names in scope (`Context::queries`).
     queries: Option<&'a Queries<'a>>,
+    /// Where it notes the routines it invokes (`Context::invoked`).
+    invoked: Option<&'a Invoked>,
     /// The window functions of its select list (`binder/window.rs`).
     windowing: RefCell<Option<window::Windowing>>,
     /// The names of its result's columns, while its sort keys are bound
@@ -408,50 +421,33 @@ impl<'a> Binder<'a> {
     /// A binder of a query bound with `cx`, a subquery of `outer`'s if one
     /// is given, over the FROM row `row`, whose columns `used` it reads.
     fn new(cx: Context<'a>, outer: Option<&'a Outer<'a>>, (items, names, visible): Row, used: BTreeSet<usize>) -> Binder<'a> {
-        let Context {
-            db,
-            auth,
-            schema,
-            user,
-            params,
-            purpose,
-            collation,
-            horizon,
-            own,
-            definitions,
-            uses,
-            selected,
-            referencing,
-            now,
-            draws,
-            queries,
-        } = cx;
         let (used, aggregated) = (RefCell::new(used), Cell::new(false));
         Binder {
-            db,
-            params,
-            auth,
-            schema,
+            db: cx.db,
+            params: cx.params,
+            auth: cx.auth,
+            schema: cx.schema,
             items,
             names,
             used,
             outer,
-            session_collation: collation,
+            session_collation: cx.collation,
             subquery_collations: RefCell::new(Vec::new()),
-            purpose,
+            purpose: cx.purpose,
             visible,
-            horizon,
-            own,
-            user,
-            definitions,
-            uses,
-            selected,
-            referencing,
+            horizon: cx.horizon,
+            own: cx.own,
+            user: cx.user,
+            definitions: cx.definitions,
+            uses: cx.uses,
+            selected: cx.selected,
+            referencing: cx.referencing,
             aggregated,
-            now,
-            draws: draws && !purpose.constrains(),
+            now: cx.now,
+            draws: cx.draws && !cx.purpose.constrains(),
             drawing: Cell::new(false),
-            queries,
+            queries: cx.queries,
+            invoked: cx.invoked,
             windowing: RefCell::new(None),
             sort_names: RefCell::new(order_by::SortNames::default()),
             rows: RefCell::new(invariant::Rows::default()),
@@ -481,6 +477,7 @@ impl<'a> Binder<'a> {
             now,
             draws: false,
             queries: self.queries,
+            invoked: self.invoked,
         }
     }
 }

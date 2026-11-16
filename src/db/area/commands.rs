@@ -43,6 +43,8 @@ pub(in crate::db) const ALTER_TABLE: Command = command("ALTER TABLE", 4);
 pub(in crate::db) const CREATE_TRIGGER: Command = command("CREATE TRIGGER", 80);
 /// `<assertion definition>`.
 pub(in crate::db) const CREATE_ASSERTION: Command = command("CREATE ASSERTION", 6);
+/// `<call statement>` [ISO/IEC 9075-2:2023 Table 39].
+pub(in crate::db) const CALL: Command = command("CALL", 7);
 /// `<close statement>`.
 pub(in crate::db) const CLOSE_CURSOR: Command = command("CLOSE CURSOR", 9);
 /// `<collation definition>`.
@@ -71,6 +73,12 @@ pub(in crate::db) const CREATE_DOMAIN: Command = command("CREATE DOMAIN", 23);
 pub(in crate::db) const DROP_ASSERTION: Command = command("DROP ASSERTION", 24);
 /// `<drop collation statement>`.
 pub(in crate::db) const DROP_COLLATION: Command = command("DROP COLLATION", 26);
+/// `<drop routine statement>` [ISO/IEC 9075-2:2023 Table 39].
+pub(in crate::db) const DROP_ROUTINE: Command = command("DROP ROUTINE", 30);
+/// `<schema routine>` [ISO/IEC 9075-2:2023 Table 39].
+pub(in crate::db) const CREATE_ROUTINE: Command = command("CREATE ROUTINE", 14);
+/// `<return statement>` [ISO/IEC 9075-2:2023 Table 39].
+pub(in crate::db) const RETURN: Command = command("RETURN", 58);
 /// `<drop trigger statement>` [ISO/IEC 9075-2:2023 Table 39].
 pub(in crate::db) const DROP_TRIGGER: Command = command("DROP TRIGGER", 34);
 /// `<drop domain statement>`.

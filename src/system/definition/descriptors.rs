@@ -4,7 +4,7 @@
 //! the tables ISO/IEC 9075-11 names so, have one row for each descriptor
 //! subordinate to one of those [ISO/IEC 9075-2:2023 §4.10.2, §4.12.1],
 //! or to a user-defined type's source type or a routine's parameter or
-//! result type (`definition/user_types.rs`). ELEMENT_TYPES holds each array
+//! result type (`definition/user_types.rs`, `definition/routines.rs`). ELEMENT_TYPES holds each array
 //! type's element type, and FIELDS each field of each row type.
 //!
 //! Each descriptor's DTD_IDENTIFIER is unique among those of its object,
@@ -19,8 +19,8 @@
 
 use std::sync::Arc;
 
-use super::user_types::heads;
 use super::{Columns, SQL_TEXT, catalog_name, defined, ids, information, number, objects, text};
+use super::{routines, user_types};
 use crate::catalog::{ColumnDesc, QualifiedName};
 use crate::error::Result;
 use crate::storage::Row;
@@ -43,8 +43,14 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
 /// Then the columns of a descriptor, from DATA_TYPE on, ending with a
 /// user-defined type's name [ISO/IEC 9075-2:2023 §4.9.2].
 pub(super) fn described(columns: Columns) -> Columns {
+    described_as(columns, true)
+}
+
+/// Then the columns of a descriptor, as `described` gives them, DATA_TYPE
+/// NOT NULL if `not_null`: of a row that may describe no data type.
+pub(super) fn described_as(columns: Columns, not_null: bool) -> Columns {
     columns
-        .data("DATA_TYPE", true)
+        .data("DATA_TYPE", not_null)
         .number("CHARACTER_MAXIMUM_LENGTH", false)
         .number("CHARACTER_OCTET_LENGTH", false)
         .ids("COLLATION", false)
@@ -179,9 +185,9 @@ fn nested(seen: &Seen<'_>, fields: bool) -> Result<Vec<Row>> {
         let head = [ids(&catalog, &t.object).to_vec(), vec![text(if t.domain { "DOMAIN" } else { "TABLE" })]].concat();
         subordinates(&t.data_type, (&t.dtd, 0), &head, fields, &mut rows);
     }
-    for (object, kind, dtd, t) in heads(seen) {
+    for (object, kind, dtd, t) in user_types::heads(seen).into_iter().chain(routines::heads(seen)) {
         let head = [ids(&catalog, &object).to_vec(), vec![text(kind)]].concat();
-        subordinates(&t, (dtd, 0), &head, fields, &mut rows);
+        subordinates(&t, (&dtd, 0), &head, fields, &mut rows);
     }
     Ok(rows)
 }

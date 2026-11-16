@@ -9,6 +9,7 @@ use super::alter::Made;
 use super::constraints::{self, Pending, Within};
 use super::contents::Element;
 use super::indexes::IndexSpec;
+use super::routines::of_schema_routine;
 use super::sequences::Epochs;
 use super::{Completion, Database, State, api};
 use crate::ast::{PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
@@ -209,8 +210,10 @@ impl State {
         self.check_new_objects(&descs)?;
         let mut built = self.apply_schema(&*with_views, &descs, granted.concat(), made)?;
         let asserted = self.schema_assertions(&s, (made, &mut built))?;
+        let routines_warned = self.schema_routines(&s, &owner)?;
         self.schema_triggers(&s)?;
-        Ok((owner, descs.into_iter().map(|d| (d.name.ident, d.engine)).collect(), warned.contains(&true), asserted, built))
+        let warned = warned.contains(&true) || routines_warned;
+        Ok((owner, descs.into_iter().map(|d| (d.name.ident, d.engine)).collect(), warned, asserted, built))
     }
 
     /// The grants of `<schema>` `s`, by its owner `owner`: each table's
@@ -231,7 +234,9 @@ impl State {
                 PrivilegeObject::Domain => self.grant_usage(owner, &s.name, p),
                 PrivilegeObject::Collation => self.grant_collation_usage(owner, p),
                 PrivilegeObject::Sequence => self.grant_sequence_usage(owner, &s.name, p),
-                PrivilegeObject::Type | PrivilegeObject::SpecificRoutine | PrivilegeObject::Routine => {
+                // Granted once the schema's routines are made.
+                PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) if of_schema_routine(s, p) => continue,
+                PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) => {
                     self.grant_on_type(owner, &s.name, p)
                 }
             };

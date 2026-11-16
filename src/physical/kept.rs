@@ -252,7 +252,8 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         | Expr::SortKey(..)
         | Expr::Domain(..)
         | Expr::Truth(_)
-        | Expr::NextValue(_) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),
     };
     let at = match (probe, s.place) {
         (Probe::Columns(each), Place::Column(n)) => each.get_mut(n).map(|c| &mut c.value),

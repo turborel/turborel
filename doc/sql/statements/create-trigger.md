@@ -100,12 +100,14 @@ it.
    DELETE no new one. A transition variable needs FOR EACH ROW. A BEFORE
    trigger has no transition tables.
 6. The action holds only INSERT, a searched UPDATE or DELETE, MERGE,
-   SELECT INTO and GET DIAGNOSTICS: no schema, transaction, connection,
+   SELECT INTO, GET DIAGNOSTICS and CALL: no schema, transaction, connection,
    session, cursor or dynamic statement, and no parameter.
-7. A BEFORE trigger's action changes no table, and references no
-   generated column of its new transition variable.
-8. A target of SELECT INTO or GET DIAGNOSTICS is a column of the new
-   transition variable, and only of a BEFORE row trigger.
+7. A BEFORE trigger's action changes no table, calls no procedure that
+   possibly changes one, and references no generated column of its new
+   transition variable.
+8. A target of SELECT INTO, GET DIAGNOSTICS or an output parameter of
+   CALL is a column of the new transition variable, and only of a BEFORE
+   row trigger.
 9. The transaction is not READ ONLY.
 
 ## PRIVILEGES
@@ -129,8 +131,8 @@ Once made, a statement whose trigger's action fails fails with SQLSTATE
 trigger and that failure. Nothing the statement did is kept.
 GET DIAGNOSTICS shows the trigger as TRIGGER_SCHEMA and TRIGGER_NAME,
 and its table as SCHEMA_NAME and TABLE_NAME. A trigger that runs itself
-again stops at 16 levels of triggers within triggers: the statement
-fails with SQLSTATE 09000, SQLCODE -900.
+again stops at 16 levels of triggers and procedures within each other:
+the statement fails with SQLSTATE 09000, SQLCODE -900.
 
 ## EXAMPLES
 
@@ -249,6 +251,6 @@ no triggers.
 
 ## SEE ALSO
 
-[DROP TRIGGER](drop-trigger.md), [GRANT](grant.md),
+[DROP TRIGGER](drop-trigger.md), [CALL](call.md), [GRANT](grant.md),
 [GET DIAGNOSTICS](get-diagnostics.md), [CREATE VIEW](create-view.md),
 [Constraints](../../user/07-constraints.md)

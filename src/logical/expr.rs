@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use super::{InSet, Subquery};
+use super::{InSet, Invocation, Subquery};
 use crate::catalog::{MatchType, QualifiedName, SequenceDesc};
 use crate::functions::ScalarRef;
 use crate::value::collation::CollationRef;
@@ -135,6 +135,9 @@ pub enum Expr {
     /// its statement saw: a value drawn from its counter for each row, the
     /// same for every one of the generator in the row \[GR1\].
     NextValue(Arc<SequenceDesc>),
+    /// [ISO/IEC 9075-2:2023 §9.18] An invocation of an SQL-invoked
+    /// function of an SQL routine body (`logical/invoked.rs`).
+    Invoked(Arc<Invocation>),
 }
 
 /// A bound `<search condition>` [X3.135-1986 §5.18].
@@ -231,6 +234,7 @@ impl Expr {
             Expr::Domain(x, checks) => Expr::Domain(Box::new(f(*x)), checks),
             Expr::Subquery(s, column) => Expr::Subquery(s.map_outer(f), column),
             Expr::Truth(c) => Expr::Truth(Box::new(c.map_exprs(f))),
+            Expr::Invoked(i) => Expr::Invoked(i.map_args(f)),
         }
     }
 
@@ -254,6 +258,7 @@ impl Expr {
             }
             Expr::Subquery(s, _) => s.outer.iter().for_each(f),
             Expr::Truth(c) => c.for_each_expr(f),
+            Expr::Invoked(i) => i.args.iter().for_each(f),
         }
     }
 
@@ -287,7 +292,7 @@ impl Expr {
     /// but computing those arguments can still raise.
     pub fn can_raise(&self) -> bool {
         match self {
-            Expr::Arith(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) => true,
+            Expr::Arith(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) => true,
             // D34: the function's promise does not cover argument expressions.
             Expr::Call(f, args) => !f.0.index_predicate() || !f.0.deterministic() || args.iter().any(Expr::can_raise),
             Expr::Truth(c) => c.can_raise(),

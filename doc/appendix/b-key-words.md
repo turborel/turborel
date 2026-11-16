@@ -204,4 +204,10 @@ NUMERIC source is, and is then invoked delimited, `"NUMERIC"(p)`. Of the
 descriptor items, USER_DEFINED_TYPE_CATALOG, USER_DEFINED_TYPE_SCHEMA,
 USER_DEFINED_TYPE_NAME and USER_DEFINED_TYPE_CODE are read only as items.
 
+FUNCTION, RETURNS, RETURN, CALL, SPECIFIC, ROUTINE, DETERMINISTIC, READS,
+MODIFIES, CONTAINS, OUT and INOUT, which SQL-92 does not reserve, are
+read as words where a routine is defined, called, dropped, granted or
+revoked, so a table or column may still be named by one. PROCEDURE and
+IN are SQL-92 key words.
+
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

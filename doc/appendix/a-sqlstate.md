@@ -93,6 +93,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2A000 | Syntax error or access rule violation in a direct SQL statement |
 | 2B000 | Dependent privilege descriptors still exist |
 | 2E000 | Invalid connection name |
+| 2F005 | SQL routine exception: function executed no return statement, of a function whose body is no RETURN |
 | 2H000 | Invalid collation name |
 | 33000 | Invalid SQL descriptor name |
 | 34000 | Invalid cursor name: of a cursor allocated, or a positioned statement prepared |

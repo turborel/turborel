@@ -1,0 +1,179 @@
+# CREATE FUNCTION
+
+[Statements](README.md)
+
+## NAME
+
+CREATE FUNCTION: define an SQL-invoked function
+
+## SYNOPSIS
+
+```
+<SQL-invoked function> ::=
+    CREATE FUNCTION <schema qualified routine name>
+    ( [ <parameter name> <data type> [ , <parameter name> <data type> ]... ] )
+    RETURNS <data type>
+    [ <routine characteristic> ]...
+    <SQL procedure statement>
+
+<routine characteristic> ::=
+      LANGUAGE SQL
+    | SPECIFIC <specific name>
+    | [ NOT ] DETERMINISTIC
+    | CONTAINS SQL | READS SQL DATA | MODIFIES SQL DATA
+    | RETURNS NULL ON NULL INPUT | CALLED ON NULL INPUT
+
+<return statement> ::= RETURN { <value expression> | NULL }
+```
+
+FUNCTION, RETURNS, RETURN, SPECIFIC, DETERMINISTIC, CONTAINS, READS and
+MODIFIES are read as words, not key words, so a table or column may
+still be named by one.
+
+## DESCRIPTION
+
+CREATE FUNCTION defines a function of an SQL routine body, invoked by
+its name in a value expression like a built-in function. Its body is a
+single statement, which gives the function's value by a [RETURN](return.md)
+statement.
+
+An invocation evaluates each argument, in order, and stores its value
+in its parameter, as an INSERT stores a value in a column: a value too
+long for a parameter's type, or out of its range, fails the statement.
+A function of RETURNS NULL ON NULL INPUT given a null returns null, its
+body not run. CALLED ON NULL INPUT, the default, runs it. The value of
+the body's RETURN is then stored in the result type in the same way.
+A body that is no RETURN raises SQLSTATE 2F005 each time the function
+is invoked.
+
+In the body, a parameter is named by its name, or by the function's
+name and its name. A column of a table the body reads hides a parameter
+of its name.
+
+The body is bound as the owner of the function's schema binds it, of
+that schema: it uses the owner's privileges, whoever invokes it, and
+sees the tables and functions there were when it was made. A function
+defined in CREATE SCHEMA may be granted on in the same definition.
+
+The SQL-data access, always written, says what the body may do:
+CONTAINS SQL reads no table, and READS SQL DATA reads them. A function of
+MODIFIES SQL DATA is defined but may be invoked in no query.
+DETERMINISTIC says the function gives the same value for the same
+arguments, as turborel takes on trust. NOT DETERMINISTIC is the default.
+A CHECK constraint or a generated column may invoke only a function
+that is deterministic and reads no table.
+
+The owner holds EXECUTE on the function from the system, and may grant
+it if each privilege the body needs is held grantable. A function has
+a specific name, which names it apart from its name: SPECIFIC gives it,
+else it is the function's name, an underscore and a number.
+
+CREATE FUNCTION runs within the session's transaction: ROLLBACK undoes
+it.
+
+## RULES
+
+1. The function's schema exists and its user owns it. A function named
+   without a schema is of the session's default schema. In CREATE
+   SCHEMA, it is of the schema made.
+2. The schema has no other routine, and no distinct type's function, of
+   the name: a second function of a name is overloading, of Feature
+   T341, not supported (SQLCODE -900).
+3. The specific name, if written, is of the function's schema, and no
+   routine of the schema has it.
+4. Each characteristic is written at most once, and the SQL-data access
+   is written. The parameters are
+   named, no two the same, and have no mode. No parameter or result is
+   of a domain or a row type.
+5. The body is no schema, transaction, connection, session or dynamic
+   statement, and has no host or dynamic parameter. A body of CONTAINS
+   SQL reads no table. One of READS SQL DATA changes none.
+6. The type of the RETURN value is one the result type may store.
+7. LANGUAGE is SQL. Any other language, SQL SECURITY, a parameter's
+   default, RETURNS TABLE, NO SQL and NEW SAVEPOINT LEVEL are not
+   supported.
+8. The transaction is not READ ONLY.
+
+## PRIVILEGES
+
+The schema is its user's. The owner holds the privileges the body needs,
+and EXECUTE on each function it invokes.
+
+## ERRORS
+
+| SQLSTATE | SQLCODE | When |
+|---|---|---|
+| 3F000 | -103 | The schema does not exist |
+| 2A000 | -102 | The definition is not well formed |
+| 2A000 | -103 | A rule above is broken |
+| 2A000 | -104 | Its user does not own the schema, or the owner lacks a privilege the body needs |
+| 0A000 | -900 | Another routine of the name is in the schema, or a feature not supported is used |
+| 25000 | -917 | The transaction is READ ONLY |
+
+Once made, an invocation fails with the SQLSTATE of what fails in it:
+22001 or 22003 of a value an argument or the result cannot be stored
+in, 2F005 of a body that is no RETURN. GET DIAGNOSTICS shows the
+function as ROUTINE_SCHEMA, ROUTINE_NAME and SPECIFIC_NAME, and of an
+argument the parameter as PARAMETER_NAME, PARAMETER_MODE and
+PARAMETER_ORDINAL_POSITION.
+
+## EXAMPLES
+
+A function of a value, and one that reads a table:
+
+```sql
+CREATE TABLE PRICES (ITEM INTEGER, AMOUNT DECIMAL(7,2));
+INSERT INTO PRICES VALUES (1, 9.50), (2, 20.00);
+CREATE FUNCTION TAXED (AMOUNT DECIMAL(7,2)) RETURNS DECIMAL(9,2)
+  DETERMINISTIC CONTAINS SQL RETURNS NULL ON NULL INPUT
+  RETURN AMOUNT * 1.20;
+CREATE FUNCTION DEAREST () RETURNS DECIMAL(7,2) READS SQL DATA
+  RETURN (SELECT MAX(AMOUNT) FROM PRICES);
+SELECT ITEM, TAXED(AMOUNT) FROM PRICES ORDER BY ITEM;
+SELECT DEAREST(), TAXED(CAST(NULL AS DECIMAL(7,2))) FROM (VALUES (0)) AS ONE (X);
+```
+
+```
+OK
+OK
+OK
+OK
+         ITEM |
+--------------+-------------
+            1 |       11.40
+            2 |       24.00
+(2 rows)
+           |
+-----------+-------------
+     20.00 |        NULL
+(1 row)
+```
+
+Rules refused, and an invocation that fails:
+
+```sql
+CREATE FUNCTION PEEK () RETURNS INTEGER CONTAINS SQL
+  RETURN (SELECT COUNT(*) FROM PRICES);
+CREATE FUNCTION TAXED (AMOUNT INTEGER) RETURNS INTEGER CONTAINS SQL RETURN AMOUNT;
+CREATE FUNCTION TINY (N SMALLINT) RETURNS SMALLINT CONTAINS SQL RETURN N;
+SELECT TINY(100000) FROM (VALUES (0)) AS ONE (X);
+```
+
+```
+turborel: SQLCODE -103 (SQLSTATE 2A000): the body of ANN.PEEK possibly reads SQL-data, and it is CONTAINS SQL (IA076) [ISO/IEC 9075-2:2023 §11.60 SR23d]
+turborel: SQLCODE -900 (SQLSTATE 0A000): schema ANN has a routine TAXED already: overloading (Feature T341) is not supported [ISO/IEC 9075-2:2023 §11.60 CR2] (at character 16)
+OK
+turborel: SQLCODE -301 (SQLSTATE 22003): 100000 does not fit SMALLINT without losing leading digits [ISO/IEC 9075-2:2023 §9.18 GR4a ii; ISO/IEC 9075:1992 §9.2 GR3k]
+```
+
+## STANDARD
+
+ISO/IEC 9075-2:2023 §11.60, §9.18, §10.4, §16.2, §4.35, Feature T321
+(subfeatures 01, 03 and 05), B128, S203 and S204. SQL-86 and SQL-92
+have no SQL-invoked routines.
+
+## SEE ALSO
+
+[CREATE PROCEDURE](create-procedure.md), [RETURN](return.md),
+[DROP ROUTINE](drop-routine.md), [GRANT](grant.md),
+[CREATE TYPE](create-type.md), [Information Schema](../information-schema.md)

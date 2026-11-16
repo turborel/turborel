@@ -12,6 +12,7 @@ mod counterparts;
 mod dynamic;
 mod expr;
 mod fixpoint;
+mod invoked;
 mod limit;
 mod pattern;
 mod pushed;
@@ -28,12 +29,13 @@ pub use expr::{
     map_expr_columns, or_all, split_and,
 };
 pub use fixpoint::Fixpoint;
+pub use invoked::Invocation;
 pub use limit::{Fetch, Limit, Most};
 pub use pattern::{Matching, Navigated, PatternAggregate, PatternValue, Recognize, RowsPerMatch, Skip, Slotted, Variable, WindowMatching};
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
-pub use subquery::{Decorrelated, Subquery, map_plan_exprs, plan_has_outer};
+pub use subquery::{Decorrelated, Subquery, bound_expr, map_plan_exprs, plan_has_outer};
 pub use window::{Bound, Exclusion, Frame, Marker, Nested, Offset, Pick, Units, Valued, Window, WindowCall, WindowKind};
 
 use crate::catalog::QualifiedName;
@@ -471,8 +473,8 @@ impl LogicalPlan {
         for input in self.inputs() {
             input.collect_tables(out);
         }
-        // A subquery's tables are read too.
-        for s in self.subqueries() {
+        // A subquery's tables are read too, and an invoked function's.
+        for s in self.subqueries_of(true) {
             s.plan.collect_tables(out);
         }
     }

@@ -26,12 +26,16 @@ CREATE SCHEMA: define a schema
     | <view definition>
     | <domain definition>
     | <assertion definition>
+    | <SQL-invoked routine>
     | <grant statement>
 ```
 
 Each element is the statement of its own page: [CREATE TABLE](create-table.md),
 [CREATE VIEW](create-view.md), [CREATE DOMAIN](create-domain.md),
-[CREATE ASSERTION](create-assertion.md) and [GRANT](grant.md).
+[CREATE ASSERTION](create-assertion.md), [CREATE FUNCTION](create-function.md),
+[CREATE PROCEDURE](create-procedure.md) and [GRANT](grant.md). The
+routines are made after the tables, views and assertions, and a GRANT
+of EXECUTE on one of them is applied once they are made.
 
 ## DESCRIPTION
 

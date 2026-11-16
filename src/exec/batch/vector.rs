@@ -76,7 +76,8 @@ fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b
         | Expr::Domain(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
-        | Expr::NextValue(_) => {
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => {
             return None;
         }
     })

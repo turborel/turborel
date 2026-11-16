@@ -28,10 +28,11 @@ behind it, and each can be replaced or added to.
   on many threads at once and survive a crash with multi-version concurrency
   control, a write-ahead log, checkpoints and recovery.
 - Row and columnar storage, chosen per table.
-- Indexes as plug-ins. B-link trees and linear hash tables are built in,
-  any other method registers with its own options, and a cost-based
-  planner chooses among them. Zone maps and Bloom filters skip what a scan
-  cannot match.
+- Indexes as plug-ins. B-link trees, linear hash tables and R-trees over
+  points and rectangles are built in. Any other method registers with its
+  own options, and a cost-based planner chooses among them for filters
+  and inner joins. Zone maps and Bloom filters skip what a scan cannot
+  match.
 - Collations, from binary order through case-insensitive to the Unicode
   Collation Algorithm and CLDR's tailorings for 48 languages, so text sorts
   and compares as its readers expect.

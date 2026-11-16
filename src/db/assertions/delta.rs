@@ -210,7 +210,8 @@ impl State {
                 | Expr::Domain(..)
                 | Expr::Subquery(..)
                 | Expr::Truth(_)
-                | Expr::NextValue(_) => None,
+                | Expr::NextValue(_)
+                | Expr::Invoked(_) => None,
             })
             .collect()
     }

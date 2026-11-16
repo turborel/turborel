@@ -211,7 +211,7 @@ impl State {
             bind_when(cx(), when)?;
         }
         for stmt in &t.action {
-            allowed(stmt, t.time)?;
+            allowed(self, stmt, (t.time, &desc.schema))?;
             self.bind_triggered(cx(), stmt, (owner, &params))?;
         }
         let reads = named(&t.action, t.when.as_ref(), (&desc.schema, &desc.names));
@@ -246,9 +246,9 @@ impl State {
         bind_merge(cx, m, &objects, none.as_ref()).map(drop)
     }
 
-    /// `stmt` of a triggered action bound in `cx` as its owner `owner`
-    /// would with `params`.
-    fn bind_triggered(&self, cx: Context<'_>, stmt: &SqlStatement, (owner, params): (&str, &Params)) -> Result<()> {
+    /// `stmt` of a triggered action, or of the body of an SQL-invoked
+    /// procedure, bound in `cx` as its owner `owner` would with `params`.
+    pub(in crate::db) fn bind_triggered(&self, cx: Context<'_>, stmt: &SqlStatement, (owner, params): (&str, &Params)) -> Result<()> {
         // A change of a view only its INSTEAD OF triggers change.
         if bind_taken(cx, stmt)? {
             return Ok(());
@@ -267,7 +267,11 @@ impl State {
                 check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")
             }
             SqlStatement::GetDiagnostics(_) => Ok(()),
-            SqlStatement::Close(_)
+            // [ISO/IEC 9075-2:2023 §11.49 SR13] a <call statement> is an
+            // <SQL procedure statement> a triggered action may contain.
+            SqlStatement::Call(call) => Self::bind_call(cx, call).map(drop),
+            SqlStatement::Return(_)
+            | SqlStatement::Close(_)
             | SqlStatement::SetCollation(_)
             | SqlStatement::Commit
             | SqlStatement::DeletePositioned { .. }
@@ -343,13 +347,15 @@ fn event_of(e: &Written) -> TriggerEvent {
     }
 }
 
-/// [ISO/IEC 9075-2:2023 §11.49 SR13, SR14a] That `stmt` is one a triggered
-/// action of a trigger of action time `time` may run (IA046, IA047).
-fn allowed(stmt: &SqlStatement, time: ActionTime) -> Result<()> {
+/// [ISO/IEC 9075-2:2023 §11.49 SR13, SR14a] That `stmt`, its names in
+/// schema `schema`, is one a triggered action of a trigger of action time
+/// `time` may run (IA046, IA047): of a BEFORE trigger, no CALL of a
+/// procedure that possibly modifies SQL-data either.
+fn allowed(st: &State, stmt: &SqlStatement, (time, schema): (ActionTime, &str)) -> Result<()> {
     let changes = matches!(
         stmt,
         SqlStatement::Insert(_) | SqlStatement::Merge(_) | SqlStatement::UpdateSearched { .. } | SqlStatement::DeleteSearched { .. }
-    );
+    ) || matches!(stmt, SqlStatement::Call(call) if st.call_modifies(call, schema));
     if changes && time == ActionTime::Before {
         let msg = "[ISO/IEC 9075-2:2023 §11.49 SR14a] the triggered action of a BEFORE trigger changes no SQL-data (IA047)";
         return Err(rule(msg));
@@ -362,6 +368,6 @@ fn allowed(stmt: &SqlStatement, time: ActionTime) -> Result<()> {
 fn refused() -> SqlError {
     SqlError::new(
         Code::SyntaxRule,
-        "[ISO/IEC 9075-2:2023 §11.49 SR13] a triggered action contains only INSERT, UPDATE, DELETE, MERGE, SELECT INTO and GET DIAGNOSTICS (IA046)",
+        "[ISO/IEC 9075-2:2023 §11.49 SR13] a triggered action contains only INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL and GET DIAGNOSTICS (IA046)",
     )
 }

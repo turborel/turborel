@@ -24,26 +24,16 @@ impl Parser {
     pub fn schema(&mut self) -> Result<Schema> {
         self.expect_kw(kw::CREATE)?;
         self.expect_kw(kw::SCHEMA)?;
-        // <schema name clause> ::= <schema name> | AUTHORIZATION <schema
-        // authorization identifier> | <schema name> AUTHORIZATION <schema
-        // authorization identifier>
-        let named = if self.is_kw(kw::AUTHORIZATION) { None } else { Some(self.schema_name()?) };
-        let auth = if self.accept_kw(kw::AUTHORIZATION) { Some(self.identifier()?) } else { None };
-        // [§11.1 SR1] no <schema name>: the <schema authorization identifier>.
-        let (catalog, name) = match (named, &auth) {
-            (Some((catalog, name, _)), _) => (catalog, name),
-            (None, Some(auth)) => (None, auth.clone()),
-            (None, None) => return Err(self.syntax("expected a <schema name> or AUTHORIZATION")),
-        };
+        let (catalog, name, auth) = self.schema_name_clause()?;
         self.schema_character_set()?;
 
         // <schema element> ::= <domain definition> | <table definition> | <view definition>
         //     | <grant statement> | <assertion definition> | <character set definition>
         //     | <collation definition> | <translation definition>
-        //     | <trigger definition> [ISO/IEC 9075-2:2023 §11.1]
+        //     | <trigger definition> | <schema routine> [ISO/IEC 9075-2:2023 §11.1]
         let (mut domains, mut tables, mut views, mut privileges) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut collations, mut sequences, mut types) = (Vec::new(), Vec::new(), Vec::new());
-        let (mut assertions, mut triggers) = (Vec::new(), Vec::new());
+        let (mut assertions, mut triggers, mut routines) = (Vec::new(), Vec::new(), Vec::new());
         loop {
             if self.is_kw(kw::GRANT) {
                 privileges.push(self.privilege_definition()?);
@@ -67,12 +57,33 @@ impl Parser {
                 assertions.push(self.assertion_definition()?);
             } else if self.next_is_trigger() {
                 triggers.push(self.trigger_definition()?);
+            } else if self.next_is_routine() {
+                routines.push(self.routine_definition()?);
             } else {
                 tables.push(self.table_definition()?);
             }
         }
         self.end()?;
-        Ok(Schema { catalog, name, auth, collations, sequences, types, domains, assertions, tables, views, privileges, triggers })
+        Ok(Schema { catalog, name, auth, collations, sequences, types, domains, assertions, tables, views, privileges, triggers, routines })
+    }
+
+    /// [§11.1] `<schema name clause>` ::= `<schema name>` | AUTHORIZATION
+    /// `<schema authorization identifier>` | `<schema name>` AUTHORIZATION
+    /// `<schema authorization identifier>`: the catalog's name, if written,
+    /// the schema's, the `<schema authorization identifier>` if written
+    /// and, without a `<schema name>`, the schema's name too \[SR1\].
+    ///
+    /// # Errors
+    ///
+    /// The text is not one.
+    fn schema_name_clause(&mut self) -> Result<(Option<String>, String, Option<String>)> {
+        let named = if self.is_kw(kw::AUTHORIZATION) { None } else { Some(self.schema_name()?) };
+        let auth = if self.accept_kw(kw::AUTHORIZATION) { Some(self.identifier()?) } else { None };
+        match (named, auth) {
+            (Some((catalog, name, _)), auth) => Ok((catalog, name, auth)),
+            (None, Some(auth)) => Ok((None, auth.clone(), Some(auth))),
+            (None, None) => Err(self.syntax("expected a <schema name> or AUTHORIZATION")),
+        }
     }
 
     /// [§11.1] `<schema character set specification>` ::= DEFAULT
@@ -149,6 +160,8 @@ impl Parser {
             SchemaStatement::Type(self.type_definition()?)
         } else if self.next_is_trigger() {
             SchemaStatement::Trigger(self.trigger_definition()?)
+        } else if self.next_is_routine() {
+            SchemaStatement::Routine(Box::new(self.routine_definition()?))
         } else {
             SchemaStatement::Table(self.table_definition()?)
         };
@@ -449,37 +462,24 @@ impl Parser {
             PrivilegeObject::Sequence
         } else if self.accept_word(super::user_types::TYPE) {
             PrivilegeObject::Type
-        } else if let Some(object) = self.routine_designator() {
-            object
+        } else if self.next_is_routine_designator() {
+            let designator = self.routine_designator()?;
+            let object = if designator.specific {
+                PrivilegeObject::SpecificRoutine(designator.routine_type)
+            } else {
+                PrivilegeObject::Routine(designator.routine_type)
+            };
+            return Ok((designator.name, object, designator.parameters));
         } else {
             self.accept_kw(kw::TABLE);
             PrivilegeObject::Table
         };
-        let name = self.table_name()?;
-        let parameters =
-            if object == PrivilegeObject::Routine && self.is_delim(delim::LEFT_PAREN) { Some(self.data_type_list()?) } else { None };
-        Ok((name, object, parameters))
-    }
-
-    /// [ISO/IEC 9075-2:2023 §12.3, §10.6] The `<routine type>` of a
-    /// `<specific routine designator>`, if one is next: SPECIFIC before it,
-    /// then FUNCTION or ROUTINE, the routines this implementation has.
-    fn routine_designator(&mut self) -> Option<PrivilegeObject> {
-        let specific = self.is_word("SPECIFIC");
-        let routine = |w: &Tok| matches!(w, Tok::Identifier(w) if w == "FUNCTION" || w == "ROUTINE");
-        if !(routine(self.peek()) || (specific && routine(self.peek_at(1)))) {
-            return None;
-        }
-        if specific {
-            self.advance();
-        }
-        self.advance();
-        Some(if specific { PrivilegeObject::SpecificRoutine } else { PrivilegeObject::Routine })
+        Ok((self.table_name()?, object, None))
     }
 
     /// [ISO/IEC 9075-2:2023 §10.6] `<data type list>` ::= ( \[`<data type>`
     /// \[{, `<data type>`}...\]\] ).
-    fn data_type_list(&mut self) -> Result<Vec<TypeName>> {
+    pub(super) fn data_type_list(&mut self) -> Result<Vec<TypeName>> {
         self.expect_delim(delim::LEFT_PAREN)?;
         let mut types = Vec::new();
         if !self.accept_delim(delim::RIGHT_PAREN) {

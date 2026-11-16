@@ -13,8 +13,8 @@
 use super::Parser;
 use super::diagnostics::STATEMENT;
 use crate::ast::{
-    ActionTime, DropBehavior, DropObject, ParameterSpecification, Referencing, SearchCondition, SqlStatement, TriggerDefinition,
-    TriggerEvent, TriggerLevel,
+    ActionTime, DropBehavior, DropObject, ParameterSpecification, Referencing, SearchCondition, SqlStatement, TargetKind,
+    TriggerDefinition, TriggerEvent, TriggerLevel,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -122,6 +122,9 @@ enum ActionStatement {
     Changing,
     /// TRUNCATE TABLE.
     Truncating,
+    /// CALL, an `<SQL procedure statement>` [§11.49 SR13], whose
+    /// procedure's SQL-data access the catalog knows.
+    Calling,
     /// A statement of a kind §11.49 SR13 names, as the standard calls it.
     Refused(&'static str),
     /// A cursor statement: the rule its `<cursor name>` breaks and the
@@ -177,9 +180,13 @@ fn cursor_refused(rule: &str, what: &str, at: usize) -> SqlError {
     SqlError::at(Code::SyntaxRule, at, msg)
 }
 
-/// What a statement begun by the identifier `word` is. MERGE and TRUNCATE
-/// are the words that begin statements a trigger may hold.
+/// What a statement begun by the identifier `word` is. MERGE, TRUNCATE and
+/// CALL are the words that begin statements a trigger may hold; RETURN,
+/// of a function's body alone [§16.2 SR1], is not one.
 fn word_statement_kind(word: &str) -> ActionStatement {
+    if word == super::routines::CALL {
+        return ActionStatement::Calling;
+    }
     if word == super::data_statements::MERGE {
         return ActionStatement::Changing;
     }
@@ -435,7 +442,7 @@ impl Parser {
         let at = self.here();
         let before = time == ActionTime::Before;
         match self.action_statement() {
-            ActionStatement::Reading => self.cursorless_statement(),
+            ActionStatement::Reading | ActionStatement::Calling => self.cursorless_statement(),
             ActionStatement::Changing => {
                 if before {
                     return Err(SqlError::at(Code::SyntaxRule, at, MODIFIES_BEFORE));
@@ -539,7 +546,7 @@ impl Parser {
             self.advance();
             self.advance();
             let name = self.identifier()?;
-            return Ok(ParameterSpecification { name, indicator: None, at, transition: true });
+            return Ok(ParameterSpecification { name, indicator: None, at, kind: TargetKind::Transition });
         }
         let identifier = matches!(self.peek(), Tok::Identifier(_));
         if identifier && *self.peek_at(1) == Tok::Delimiter(delim::PERIOD) {

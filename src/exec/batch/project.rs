@@ -34,12 +34,12 @@ pub(super) enum Place {
     Expr(Expr, Vec<usize>),
 }
 
-/// Whether `e` reads nothing but its row: no subquery, nor an outer
-/// reference, in it or in the conditions of a CASE in it.
+/// Whether `e` reads nothing but its row: no subquery, routine invoked
+/// nor outer reference, in it or in the conditions of a CASE in it.
 fn plain(e: &Expr) -> bool {
     let own = match e {
         // A value drawn for each row, in the row's order [ISO/IEC 9075-2:2023 §6.14 GR1].
-        Expr::Subquery(..) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::NextValue(_) => false,
+        Expr::Subquery(..) | Expr::Invoked(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::NextValue(_) => false,
         Expr::Case(whens, _) => whens.iter().all(|(c, _)| c.subqueries().is_empty()),
         Expr::Truth(c) => c.subqueries().is_empty(),
         Expr::Column(_)
@@ -77,7 +77,8 @@ pub(super) fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
         | Expr::Domain(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
-        | Expr::NextValue(_) => {
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => {
             if !plain(e) {
                 return None;
             }

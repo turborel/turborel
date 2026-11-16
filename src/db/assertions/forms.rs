@@ -398,7 +398,8 @@ pub(super) fn never_null(x: &Expr, (table, steps): (&QualifiedName, &[Step]), ca
         | Expr::Domain(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
-        | Expr::NextValue(_) => false,
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => false,
     }
 }
 
@@ -473,7 +474,8 @@ fn strict(e: &Expr, at: usize) -> bool {
         | Expr::Domain(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
-        | Expr::NextValue(_) => false,
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => false,
     }
 }
 
@@ -505,7 +507,8 @@ pub(super) fn row_expr(e: &Expr) -> bool {
         | Expr::SortKey(..)
         | Expr::Domain(..)
         | Expr::Subquery(..)
-        | Expr::NextValue(_) => false,
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => false,
     }
 }
 

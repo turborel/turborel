@@ -50,16 +50,13 @@ Nothing is open.
   TRIGGER_COLUMN_USAGE, TRIGGER_ROUTINE_USAGE and
   TRIGGER_SEQUENCE_USAGE, and the trigger descriptors of the Definition
   Schema they are views of, so tools can list a schema's triggers.
-- Function overloading (D53). Each name registers one scalar function today.
-  Overloading is shared with SQL-invoked functions, and should follow their
-  resolution, with candidates by number of arguments and store assignment
-  [ISO/IEC 9075:1992 §9.2 SR2], the most specific chosen and an ambiguous
-  call refused.
-- SQL-invoked routines (T321) [§4.35, §11.60, §11.62, §10.4, §16.1].
-  CREATE PROCEDURE and CREATE FUNCTION of a body of one SQL procedure
-  statement, CALL, RETURN, and DROP ROUTINE, each running as its owner,
-  as Part 2 defines them, the WHEN condition of a trigger reading one
-  among them [§11.49 SR11].
+- Function overloading (D53, T341) [§9.18 SR10, §11.60 CR2]. Each name
+  registers one scalar function today, and a schema holds one SQL-invoked
+  routine of a name, a second refused with SQLCODE -900. Overloading
+  extends the resolution SQL-invoked routines have, with candidates by
+  number of arguments and store assignment [ISO/IEC 9075:1992 §9.2 SR2],
+  the most specific chosen and an ambiguous call refused, for registered
+  and SQL-invoked functions alike.
 - Stored procedures (SQL/PSM, ISO/IEC 9075-4:2023). Compound statements,
   local variables, cursors and handlers, and the control statements, IF,
   CASE, LOOP, WHILE, REPEAT, FOR, LEAVE and ITERATE, in a routine's body
@@ -67,16 +64,18 @@ Nothing is open.
 - Array element assignment (S097) [§6.4 SR7, SR8; §14.5 GR; §14.7 GR].
   A FETCH INTO or SELECT INTO target `A[i]`, which writes one element of
   an array. Its array is an SQL parameter or a new transition variable's
-  column, never a host parameter. A BEFORE row trigger's new transition
-  variable is one now, so `NEW.A[i]` can be taken first.
+  column, never a host parameter. Both are there now, a procedure's
+  parameter and a BEFORE row trigger's new transition variable, so
+  `P[i]` and `NEW.A[i]` can be taken together.
 - Enhanced derived column names (T285) [§7.16 SR17c, CR6]. A select list
   item that is a single SQL parameter reference names its column for the
   parameter. Any other item without an `<as clause>` that is not a column
-  reference is unnamed with or without it [SR17d] (UV087), so it waits for
-  SQL-invoked routines.
+  reference is unnamed with or without it [SR17d] (UV087). An SQL
+  parameter's column is seen in no query until a routine's body may hold
+  a cursor, so it waits for Part 4.
 - Polymorphic table functions (B200 to B209) [§4.35.4, §7.6, §9.24, §9.25].
-  A function in FROM whose result's columns depend on its arguments. It
-  needs SQL-invoked routines.
+  A function in FROM whose result's columns depend on its arguments, on
+  the SQL-invoked functions there are.
 - Roles (T331, T332) [§12.4 to §12.6]. SQL-92 has none, and ROLE is only a
   potential reserved word [ISO/IEC 9075:1992 §5.2].
 
@@ -93,8 +92,8 @@ Nothing is open.
   COLLECT. Arrays already give a collection type to build on.
 - Structured types (S023 to S026, S051, S151, S161, S261) [§4.9.3,
   §11.51]. CREATE TYPE AS a list of attributes, methods, subtypes under
-  their supertypes, typed tables, IS OF and TREAT. They need SQL-invoked
-  routines for their methods.
+  their supertypes, typed tables, IS OF and TREAT. Their methods are
+  SQL-invoked routines.
 - Reference types (S041, S043, S162, S094) [§4.11]. REF of a structured
   type, a typed table's self-referencing column and dereference. They
   need structured types and typed tables.

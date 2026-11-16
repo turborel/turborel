@@ -13,7 +13,7 @@ use super::super::definitions::Defined;
 use super::super::generated::Column;
 use super::super::revoke::Abandoned;
 use super::super::{Completion, State, rule};
-use crate::ast::{Action, DropBehavior, PrivilegeObject, RevokeStatement, TableName, TypeName};
+use crate::ast::{Action, DropBehavior, PrivilegeObject, RevokeStatement, RoutineType, TableName, TypeName};
 use crate::binder::qualify;
 use crate::catalog::{QualifiedName, Routine, UsageDesc, UserTypeDesc, based_on, owner_of};
 use crate::error::{At, Code, Result, SqlError, SqlState};
@@ -92,6 +92,12 @@ impl State {
     /// SQLCODE -103 if it grants another privilege [§12.3 SR4], or names no
     /// type or routine; -104 if `auth` holds no such privilege \[AR1\].
     pub(in crate::db) fn grant_on_type(&mut self, auth: &str, schema: &str, p: &crate::ast::PrivilegeDefinition) -> Result<Defined> {
+        // [ISO/IEC 9075-2:2023 §10.6] of an SQL routine, if one is named.
+        if let Some(routine) =
+            self.sql_routine_named((auth, schema), (&p.table, p.object, p.parameters.as_deref(), p.actions.as_deref()))?
+        {
+            return self.grant_on_routine(auth, routine, p);
+        }
         let (mut desc, held) =
             self.privilege_object((auth, schema), (&p.table, p.object, p.parameters.as_deref(), p.actions.as_deref()))?;
         let owner = owner_of(&*self.catalog, &desc.name.auth).to_owned();
@@ -127,6 +133,11 @@ impl State {
     /// no type or routine; with RESTRICT, -103 and SQLSTATE 2B000 if it
     /// abandons anything \[GR12q\].
     pub(in crate::db) fn revoke_on_type(&mut self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Result<Defined> {
+        if let Some(routine) =
+            self.sql_routine_named((auth, schema), (&r.table, r.object, r.parameters.as_deref(), r.actions.as_deref()))?
+        {
+            return self.revoke_on_routine(auth, routine, r);
+        }
         let revoked = self.type_revoked((auth, schema), r)?;
         let lost = self.columns_revoked(&revoked);
         if r.behavior == DropBehavior::Restrict
@@ -168,6 +179,11 @@ impl State {
     ///
     /// As `revoke_on_type`, but for RESTRICT's.
     pub(in crate::db) fn type_columns_revoked(&self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Result<Vec<Column>> {
+        if let Some(routine) =
+            self.sql_routine_named((auth, schema), (&r.table, r.object, r.parameters.as_deref(), r.actions.as_deref()))?
+        {
+            return Ok(self.routine_columns_revoked(auth, routine, r));
+        }
         Ok(self.columns_revoked(&self.type_revoked((auth, schema), r)?))
     }
 
@@ -275,11 +291,21 @@ impl State {
         auth: &str,
     ) -> Result<(UserTypeDesc, Routine)> {
         let mut found = Vec::new();
-        for t in self.catalog.user_types().into_iter().filter(|t| t.name.auth == qn.auth) {
+        let (specific, routine_type) = match object {
+            PrivilegeObject::SpecificRoutine(t) => (true, Some(t)),
+            PrivilegeObject::Routine(t) => (false, Some(t)),
+            PrivilegeObject::Table
+            | PrivilegeObject::Domain
+            | PrivilegeObject::Collation
+            | PrivilegeObject::Sequence
+            | PrivilegeObject::Type => (false, None),
+        };
+        // [SR4] A distinct type's functions are no procedures.
+        let functions = routine_type.is_some_and(|t| t != RoutineType::Procedure);
+        for t in self.catalog.user_types().into_iter().filter(|t| functions && t.name.auth == qn.auth) {
             for which in [Routine::ToDistinct, Routine::ToSource] {
                 let routine = t.routine(which);
-                let named =
-                    if object == PrivilegeObject::SpecificRoutine { routine.specific == qn.ident } else { routine.name == qn.ident };
+                let named = if specific { routine.specific == qn.ident } else { routine.name == qn.ident };
                 if named {
                     found.push((t.clone(), which));
                 }
@@ -293,9 +319,7 @@ impl State {
         }
         match found.as_slice() {
             [one] => Ok(one.clone()),
-            [] if object == PrivilegeObject::SpecificRoutine => {
-                Err(rule(format!("[ISO/IEC 9075-2:2023 §10.6 SR1] there is no routine of specific name {qn}")))
-            }
+            [] if specific => Err(rule(format!("[ISO/IEC 9075-2:2023 §10.6 SR1] there is no routine of specific name {qn}"))),
             _ => Err(rule(format!("[ISO/IEC 9075-2:2023 §10.6 SR3c] {qn} designates not exactly one function"))),
         }
     }

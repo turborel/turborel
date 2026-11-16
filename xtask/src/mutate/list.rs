@@ -31,6 +31,7 @@ mod readers;
 mod reads;
 mod regex;
 mod rekey;
+mod routines;
 mod rtree;
 mod search_cycle;
 mod sequences;
@@ -70,7 +71,7 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 33] = [
+    let areas: [&[Mutation]; 34] = [
         &predicates::PREDICATES,
         &sequences::SEQUENCES,
         &generated::GENERATED,
@@ -103,6 +104,7 @@ pub fn all() -> Vec<Mutation> {
         &merge::MERGE,
         &diagnostics::DIAGNOSTICS,
         &triggers::TRIGGERS,
+        &routines::ROUTINES,
         &view_defaults::VIEW_DEFAULTS,
     ];
     core.into_iter()

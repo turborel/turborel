@@ -284,8 +284,9 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
         // [ISO/IEC 9075:1992 §21.1] SELECT on a system table is PUBLIC's.
         require(cx.db, cx.auth, &desc, &Actions { select: true, ..Actions::default() }, b.clause)?;
     }
-    // A triggered action's statement sees what its trigger saw.
-    let horizon = if cx.params.transitions().is_some() { cx.params.horizon() } else { cx.horizon };
+    // A triggered action's statement sees what its trigger saw, and a
+    // procedure body's what the procedure saw.
+    let horizon = if cx.params.horizoned() { cx.params.horizon() } else { cx.horizon };
     let (mut desc, source) = seen(horizon, &name, (desc, source));
     if let Some(names) = &t.columns {
         renamed(&mut desc.columns, names)?;

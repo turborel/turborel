@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use super::{
-    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, TableDesc, TriggerDesc,
-    UserTypeDesc, ViewDesc,
+    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, SqlRoutineDesc, TableDesc,
+    TriggerDesc, UserTypeDesc, ViewDesc,
 };
 use crate::hash::murmur::MurmurMap;
 
@@ -23,6 +23,8 @@ pub struct MemoryCatalog {
     user_types: HashMap<QualifiedName, UserTypeDesc>,
     assertions: HashMap<QualifiedName, ConstraintDesc>,
     triggers: HashMap<QualifiedName, TriggerDesc>,
+    /// Each SQL-invoked routine, by its specific name.
+    routines: HashMap<QualifiedName, SqlRoutineDesc>,
 }
 
 impl Catalog for MemoryCatalog {
@@ -204,5 +206,31 @@ impl Catalog for MemoryCatalog {
     }
     fn remove_trigger(&mut self, name: &QualifiedName) {
         self.triggers.remove(name);
+    }
+    fn put_routine(&mut self, routine: SqlRoutineDesc) {
+        self.routines.insert(routine.specific.clone(), routine);
+    }
+    fn routine(&self, specific: &QualifiedName) -> Option<&SqlRoutineDesc> {
+        self.routines.get(specific)
+    }
+    fn any_routines(&self) -> bool {
+        !self.routines.is_empty()
+    }
+    fn routines(&self) -> Vec<&SqlRoutineDesc> {
+        let mut routines: Vec<&SqlRoutineDesc> = self.routines.values().collect();
+        routines.sort_by_key(|r| r.created);
+        routines
+    }
+    fn routines_named(&self, name: &QualifiedName) -> Vec<&SqlRoutineDesc> {
+        // No routine, the common case, costs a function call nothing more.
+        if self.routines.is_empty() {
+            return Vec::new();
+        }
+        let mut routines: Vec<&SqlRoutineDesc> = self.routines.values().filter(|r| r.name == *name).collect();
+        routines.sort_by_key(|r| r.created);
+        routines
+    }
+    fn remove_routine(&mut self, specific: &QualifiedName) {
+        self.routines.remove(specific);
     }
 }

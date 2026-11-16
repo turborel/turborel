@@ -66,6 +66,7 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
         | Expr::SortKey(..)
         | Expr::Truth(_)
         | Expr::NextValue(_)
+        | Expr::Invoked(_)
         | Expr::Subquery(..) => eval_rest(e, row, subqueries),
     }
 }
@@ -82,6 +83,7 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
             f.0.call(&values)
         }
         Expr::Outer(_, name) => Err(broken(&format!("the outer reference {name} has no value"))),
+        Expr::Invoked(i) => super::invoked::invoke(i, row, subqueries),
         Expr::Dynamic(slot) => Err(broken(&format!("<dynamic parameter specification> {} has no value", slot.index.saturating_add(1)))),
         // [ISO/IEC 9075:1992 §6.9 GR2] the first WHEN true gives the result,
         // the others not evaluated; else the ELSE.

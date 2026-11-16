@@ -31,8 +31,10 @@ GRANT: give privileges
     | COLLATION <collation name>
     | SEQUENCE <sequence generator name>
     | TYPE <user-defined type name>
-    | SPECIFIC FUNCTION <specific name>
-    | FUNCTION <function name> [ ( [ <data type> [ { , <data type> }... ] ] ) ]
+    | SPECIFIC <routine type> <specific name>
+    | <routine type> <routine name> [ ( [ <data type> [ { , <data type> }... ] ] ) ]
+
+<routine type> ::= ROUTINE | FUNCTION | PROCEDURE
 
 <grantee> ::= PUBLIC | <authorization identifier>
 ```
@@ -41,7 +43,8 @@ GRANT: give privileges
 
 GRANT gives each grantee privileges on a table, a view, a domain, a
 collation CREATE COLLATION made, a sequence generator, a distinct type,
-or a function a distinct type's definition made:
+a function a distinct type's definition made, or a function or procedure
+CREATE FUNCTION or CREATE PROCEDURE made:
 
 | Privilege | Lets its holder |
 |---|---|
@@ -52,11 +55,13 @@ or a function a distinct type's definition made:
 | REFERENCES | name the table, or the columns, in a constraint: a foreign key that references them, a CHECK or an assertion that reads them |
 | TRIGGER | define a trigger on the table, in a schema of its own (see [CREATE TRIGGER](create-trigger.md)) |
 | USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR; use the distinct type: name it as a column's type or a CAST's |
-| EXECUTE | invoke the function, by name or by a CAST to or from its distinct type |
+| EXECUTE | invoke the function, by name or by a CAST to or from its distinct type; run the procedure by CALL |
 
-A function is named by its specific name, the type's name and
-_TO_DISTINCT or _TO_SOURCE, or by its name and, if more than one function
-of the schema has it, its parameter's type.
+A routine is named by its specific name, or by its name and, if more
+than one routine of the schema has it, its parameters' types. A
+distinct type's functions have the specific names of the type's name
+and _TO_DISTINCT or _TO_SOURCE. ROUTINE names a function or a
+procedure, FUNCTION only a function and PROCEDURE only a procedure.
 INSERT, UPDATE or REFERENCES without columns is the privilege on the
 table and on each of its columns, and on each column added to it later.
 ALL PRIVILEGES is every privilege its user may grant on the object.
@@ -64,7 +69,8 @@ PUBLIC is every authorization identifier, present and to come.
 
 The privileges granted are those its user holds with grant option: the
 owner of the object's schema holds every privilege on a base table
-with grant option, and those of a view as the tables below give them,
+with grant option, EXECUTE on a routine of it with grant option if the
+routine's body needs only privileges it holds with grant option, and those of a view as the tables below give them,
 with TRIGGER on its own views too, but without grant option. An INSTEAD
 OF trigger gives the owner of its schema the privilege of its event on
 its view, with grant option.
@@ -82,8 +88,9 @@ privileges.
 1. The object exists. A table named without a schema is of the
    session's default schema.
 2. Of a domain, a collation, a sequence generator or a type, USAGE alone
-   is granted, and of a function EXECUTE alone; of a table, neither.
-3. A function's name designates exactly one function.
+   is granted, and of a routine EXECUTE alone. Neither is granted of a
+   table.
+3. A routine's name designates exactly one routine of its routine type.
 4. Each column named is the table's.
 5. Of a temporary table, ALL PRIVILEGES alone is granted.
 6. The transaction is not READ ONLY.

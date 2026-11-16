@@ -580,7 +580,8 @@ impl Rule for RemoveRedundantDistinct {
                 | Expr::Domain(..)
                 | Expr::Subquery(..)
                 | Expr::Truth(_)
-                | Expr::NextValue(_) => None,
+                | Expr::NextValue(_)
+                | Expr::Invoked(_) => None,
             })
             .collect();
         // A UNIQUE column may be null [ISO/IEC 9075:1992 §8.9], and rows

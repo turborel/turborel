@@ -64,15 +64,16 @@ Two views of ISO/IEC 9075-11 describe the parts of array and row types
 
 Six more of ISO/IEC 9075-11 describe distinct types and the two functions
 each one's definition makes ([CREATE TYPE](statements/create-type.md)),
-those the user, or PUBLIC, holds a privilege on:
+and the functions and procedures CREATE FUNCTION and CREATE PROCEDURE
+make, those the user, or PUBLIC, holds a privilege on:
 
 | View | One row of each |
 |---|---|
 | USER_DEFINED_TYPES | distinct type: USER_DEFINED_TYPE_CATEGORY DISTINCT, IS_INSTANTIABLE and IS_FINAL YES, ORDERING_FORM FULL and ORDERING_CATEGORY MAP with the specific name of its function to its source in ORDERING_ROUTINE_CATALOG, _SCHEMA and _NAME, or NONE of an array source, and the source type, as COLUMNS gives a type, its DTD_IDENTIFIER in SOURCE_DTD_IDENTIFIER |
 | UDT_PRIVILEGES | privilege on a distinct type, its PRIVILEGE_TYPE TYPE USAGE |
-| ROUTINES | function: its specific name and its name, ROUTINE_TYPE FUNCTION, its result type, as COLUMNS gives a type, the type's name in TYPE_UDT_CATALOG, _SCHEMA and _NAME, ROUTINE_BODY SQL, IS_DETERMINISTIC YES, SQL_DATA_ACCESS CONTAINS SQL, IS_NULL_CALL NO, SCHEMA_LEVEL_ROUTINE YES and SECURITY_TYPE DEFINER |
-| PARAMETERS | function's parameter, of ORDINAL_POSITION 1, PARAMETER_MODE IN, and its type |
-| ROUTINE_PRIVILEGES | privilege on a function, its PRIVILEGE_TYPE EXECUTE |
+| ROUTINES | routine: its specific name and its name, ROUTINE_TYPE FUNCTION or PROCEDURE, a function's result type, as COLUMNS gives a type, the type's name in TYPE_UDT_CATALOG, _SCHEMA and _NAME, null of a procedure, ROUTINE_BODY SQL, ROUTINE_DEFINITION its body to the owner of its schema and null to others, IS_DETERMINISTIC, SQL_DATA_ACCESS CONTAINS SQL, READS SQL DATA or MODIFIES SQL DATA, a function's IS_NULL_CALL, SCHEMA_LEVEL_ROUTINE YES and SECURITY_TYPE DEFINER. A distinct type's function is DETERMINISTIC, CONTAINS SQL and not null-call |
+| PARAMETERS | routine's parameter: its ORDINAL_POSITION, from 1, PARAMETER_MODE IN, OUT or INOUT, its name and its type |
+| ROUTINE_PRIVILEGES | privilege on a routine, its PRIVILEGE_TYPE EXECUTE, the owner's of _SYSTEM among them |
 | TRANSFORMS | distinct type's transform, its GROUP_NAME the name of the function from its source, of TRANSFORM_TYPE FROM SQL, its function to its source, and TO SQL, its function from it |
 
 COLUMNS, ELEMENT_TYPES and FIELDS have three more columns, UDT_CATALOG,

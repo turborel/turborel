@@ -85,9 +85,9 @@ The condition information items, of condition 1:
 | CATALOG_NAME, SCHEMA_NAME, TABLE_NAME, COLUMN_NAME | character | The table the condition is about, and the column, where it is about one |
 | CURSOR_NAME | character | The cursor the condition is about |
 | SERVER_NAME, CONNECTION_NAME | character | `DEFAULT`: a session embedded in a program is on the default connection |
-| ROUTINE_CATALOG, ROUTINE_SCHEMA, ROUTINE_NAME, SPECIFIC_NAME | character | Empty. A condition of a distinct type's function is one of the CAST it stands for |
-| PARAMETER_MODE, PARAMETER_NAME | character | Empty |
-| PARAMETER_ORDINAL_POSITION | exact | 0 |
+| ROUTINE_CATALOG, ROUTINE_SCHEMA, ROUTINE_NAME, SPECIFIC_NAME | character | Of SQLSTATE 2F005, or of an argument stored in its parameter, the function or procedure; else empty. A condition of a distinct type's function is one of the CAST it stands for |
+| PARAMETER_MODE, PARAMETER_NAME | character | Of an argument stored in its parameter, the parameter's mode and name; else empty |
+| PARAMETER_ORDINAL_POSITION | exact | Of an argument stored in its parameter, the parameter's position, from 1; else 0 |
 | TRIGGER_CATALOG, TRIGGER_SCHEMA, TRIGGER_NAME | character | Of SQLSTATE 09000, the trigger whose action failed; else empty |
 
 An item that does not apply is empty, or 0. Of SQLSTATE 09000, CATALOG_NAME,

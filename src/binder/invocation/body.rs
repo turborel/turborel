@@ -1,0 +1,226 @@
+//! [ISO/IEC 9075-2:2023 §11.60, §16.2, §6.6 SR8] The SQL routine body of
+//! an SQL-invoked function, bound: its `<return statement>`'s value as a
+//! subquery over the row of the function's parameters (RULES.md D73).
+//!
+//! The body is bound as the owner of the routine's schema binds it, its
+//! routine authorization identifier [§11.60 GR3u], with the names it
+//! writes with no schema of the schema it was defined with, and no
+//! statement parameter: its parameters are the columns of the one row of
+//! a FROM clause enclosing it, named by the routine's name as correlation
+//! name. So a parameter `P` is referenced as `P` or `F.P` [§6.6 SR8], and
+//! a column of a table of the body's own FROM clause hides it, the most
+//! local scope first [§6.6 SR4]. Each reference is an outer reference
+//! of the body's subquery, whose outer expression is the parameter's
+//! column of that row.
+
+use std::cell::RefCell;
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+use super::super::from::FromItem;
+use super::super::subquery::Use;
+use super::super::views::Source;
+use super::super::{Binder, Context, Invoked, Purpose, Scope, assignable, rule};
+use crate::ast::{
+    self, QueryExpression, ReturnStatement, RoutineDefinition, RowElement, SchemaStatement, SqlStatement, ValueExpression, ValuesRow,
+};
+use crate::catalog::{ColumnDesc, DataAccess, QualifiedName, SqlRoutineDesc, TableDesc, owner_of};
+use crate::error::{Code, Result, SqlError};
+use crate::logical::{LogicalPlan, Subquery};
+use crate::params::Params;
+use crate::parser::{MAX_NESTING_DEPTH, Parser};
+use crate::value::DataType;
+use crate::value::precedence::in_precedence_list;
+
+/// \[DESIGN\] What a function's body is bound as: its value, and what it
+/// possibly does with SQL-data.
+#[derive(Debug, Clone)]
+pub struct FunctionBody {
+    /// The value of its `<return statement>`: a subquery of one row and one
+    /// column over the row of the function's parameters, each parameter's
+    /// outer expression `Expr::Column` of its ordinal position. None of a
+    /// body that is no `<return statement>`, which returns no value
+    /// [§9.18 GR8b ix].
+    pub body: Option<Arc<Subquery>>,
+    /// What the body possibly does: reads SQL-data if it reads a table or
+    /// invokes a routine that possibly reads SQL-data; modifies it if it
+    /// invokes one that possibly modifies it; else neither.
+    pub access: DataAccess,
+}
+
+/// The `<SQL-invoked routine>` a routine descriptor keeps as `text`, read
+/// again, to bind its body.
+///
+/// # Errors
+///
+/// It does not parse, or is no `<SQL-invoked routine>`.
+pub fn routine_definition(text: &str) -> Result<RoutineDefinition> {
+    let SqlStatement::Schema { statement: SchemaStatement::Routine(r), .. } = Parser::new(text)?.of_definition().sql_statement()? else {
+        return Err(SqlError::new(Code::Api, "[DESIGN] a routine's text is no <SQL-invoked routine>"));
+    };
+    Ok(*r)
+}
+
+/// [ISO/IEC 9075-2:2023 §11.60, §16.2] The body `definition` holds of the
+/// function `desc`, bound as the owner of its schema binds it, with the
+/// database, instant and settings of `cx`; the routines it invokes noted
+/// where `cx` notes them, and the columns it references where `cx` notes
+/// those.
+///
+/// # Errors
+///
+/// SQLCODE -103 if its value is not assignable to the result type
+/// [§16.2 SR4], or does not bind.
+pub fn bind_function_body(cx: Context<'_>, desc: &SqlRoutineDesc, definition: &RoutineDefinition) -> Result<FunctionBody> {
+    let (bound, invoked) = bind_body(cx, (desc, definition), chain_of(cx.invoked))?;
+    if let Some(i) = cx.invoked {
+        i.borrow_mut().extend(invoked);
+    }
+    Ok(bound)
+}
+
+/// The specific names of the functions whose bodies are being bound, the
+/// outermost first: what `invoked` holds before its entry of no schema,
+/// which marks where the routines a body invokes begin. None if it has
+/// none, as a statement's own list has not.
+pub(super) fn chain_of(invoked: Option<&Invoked>) -> Vec<QualifiedName> {
+    let Some(list) = invoked.map(RefCell::borrow) else { return Vec::new() };
+    let end = list.iter().position(|q| q.auth.is_empty()).unwrap_or(0);
+    list.get(..end).unwrap_or_default().to_vec()
+}
+
+/// `bind_function_body`, within the bodies of the functions of `chain`;
+/// with the specific names of the routines the body invokes.
+pub(super) fn bind_body(
+    cx: Context<'_>,
+    (desc, definition): (&SqlRoutineDesc, &RoutineDefinition),
+    mut chain: Vec<QualifiedName>,
+) -> Result<(FunctionBody, Vec<QualifiedName>)> {
+    if chain.contains(&desc.specific) {
+        return Err(rule(format!("[DESIGN] function {} invokes itself, through the functions its body invokes", desc.name)));
+    }
+    if chain.len() >= MAX_NESTING_DEPTH {
+        let msg = format!("[DESIGN] the bodies of functions invoking functions nest at most {MAX_NESTING_DEPTH} deep");
+        return Err(SqlError::new(Code::Unsupported, msg));
+    }
+    chain.push(desc.specific.clone());
+    let depth = chain.len();
+    // The entry of no schema that ends the chain (`chain_of`).
+    chain.push(QualifiedName { auth: String::new(), ident: String::new() });
+    let noted: Invoked = RefCell::new(chain);
+    let params = Params::new();
+    let owner = owner_of(&*cx.db.catalog, &desc.name.auth);
+    let body_cx = Context {
+        auth: owner,
+        user: owner,
+        schema: &desc.schema,
+        params: &params,
+        purpose: Purpose::Query,
+        collation: None,
+        horizon: &desc.horizon,
+        definitions: false,
+        selected: None,
+        referencing: None,
+        draws: false,
+        queries: None,
+        invoked: Some(&noted),
+        ..cx
+    };
+    // [§9.18 GR8b ix] any other statement returns no value: raised as the
+    // function is invoked, not as it is defined.
+    let body = if let SqlStatement::Return(r) = &*definition.body { Some(returned(body_cx, (desc, definition), r)?) } else { None };
+    let invoked = noted.into_inner().split_off(depth.saturating_add(1));
+    let access = access_of(cx, body.as_deref(), &invoked);
+    Ok((FunctionBody { body, access }, invoked))
+}
+
+/// [ISO/IEC 9075-2:2023 §16.2] The value of the `<return statement>` `r`
+/// of the body of `desc`, bound in `cx` as `(VALUES (v))`, a subquery of
+/// the row of the parameters.
+fn returned(cx: Context<'_>, (desc, definition): (&SqlRoutineDesc, &RoutineDefinition), r: &ReturnStatement) -> Result<Arc<Subquery>> {
+    let Some(result) = &desc.returns else {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §16.2 SR1] {} is no function: it has no <returns data type>", desc.name)));
+    };
+    // [SR2] RETURN NULL is CAST (NULL AS RDT).
+    let value = match (&r.value, &definition.returns) {
+        (Some(v), _) => v.clone(),
+        (None, Some(rdt)) => ValueExpression::Cast { operand: None, target: rdt.clone(), format: None, at: r.at },
+        (None, None) => return Err(rule(format!("[ISO/IEC 9075-2:2023 §16.2 SR1] {} has no <returns data type>", desc.name))),
+    };
+    let item = parameters_item(desc);
+    let names = item.row_names();
+    let visible = (0..desc.parameters.len()).map(|k| (0, k)).collect();
+    let binder = Binder::new(cx, None, (vec![item], names, visible), BTreeSet::new());
+    let query = QueryExpression::Values(vec![ValuesRow { elements: vec![RowElement::Value(value, r.at)], at: r.at }]);
+    let scope = Scope::Rows("[ISO/IEC 9075-2:2023 §16.2] a <return value> is of one row, so it contains no set function of the parameters");
+    let (body, types) = binder.subquery(&ast::Subquery { query, at: r.at }, scope, Use::Rows)?;
+    // [SR4] its value is stored in an item of the result type.
+    let fits = |t: &DataType| in_precedence_list(result, t) && assignable(result, t);
+    match types.as_slice() {
+        [t] if fits(t) => Ok(body),
+        [t] => Err(rule(format!("[ISO/IEC 9075-2:2023 §16.2 SR4] function {} returns {result}, not {t}", desc.name))),
+        _ => Err(rule("[ISO/IEC 9075-2:2023 §16.2 SR3] a <return value> is one value")),
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §6.6 SR8] The row of the parameters of `desc`, as
+/// a table of no schema whose correlation name is the routine's name: a
+/// column of each parameter, in order, of its declared type.
+fn parameters_item(desc: &SqlRoutineDesc) -> FromItem {
+    let columns: Vec<ColumnDesc> = desc
+        .parameters
+        .iter()
+        .map(|p| ColumnDesc {
+            name: p.name.clone(),
+            data_type: p.data_type.clone(),
+            not_null: false,
+            default: None,
+            domain: None,
+            collation: None,
+            generated: None,
+        })
+        .collect();
+    let types = columns.iter().map(|c| c.data_type.clone()).collect();
+    let name = QualifiedName { auth: String::new(), ident: desc.name.ident.clone() };
+    let table = TableDesc {
+        name: name.clone(),
+        columns,
+        constraints: Vec::new(),
+        engine: String::new(),
+        options: Vec::new(),
+        generation: 0,
+        temporary: None,
+    };
+    // Its rows are never read: the values of the parameters come as the
+    // outer values of the body, as each invocation runs it.
+    let source = Source::Derived(LogicalPlan::Values { rows: Vec::new(), types });
+    FromItem { correlation: Some(desc.name.ident.clone()), ..FromItem::alone(name, 0, (table, source)) }
+}
+
+/// [ISO/IEC 9075-2:2023 §4.35.2] What a body of value `body`, invoking the
+/// routines `invoked`, possibly does with SQL-data, of the database of
+/// `cx`.
+fn access_of(cx: Context<'_>, body: Option<&Subquery>, invoked: &[QualifiedName]) -> DataAccess {
+    let accesses: Vec<DataAccess> = invoked.iter().filter_map(|s| cx.db.catalog.routine(s)).map(|r| r.access).collect();
+    if accesses.contains(&DataAccess::Modifies) {
+        return DataAccess::Modifies;
+    }
+    if accesses.contains(&DataAccess::Reads) || body.is_some_and(|b| reads(&b.plan)) {
+        return DataAccess::Reads;
+    }
+    DataAccess::Contains
+}
+
+/// Whether `plan` reads a base table or a system table, at any node or
+/// subquery. A worklist, not recursion, so no depth bounds it.
+fn reads(plan: &LogicalPlan) -> bool {
+    let mut work = vec![plan];
+    while let Some(p) = work.pop() {
+        if matches!(p, LogicalPlan::Scan { .. } | LogicalPlan::System { .. }) {
+            return true;
+        }
+        work.extend(p.inputs());
+        work.extend(p.subqueries().into_iter().map(|s| &s.plan));
+    }
+    false
+}

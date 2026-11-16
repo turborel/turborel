@@ -405,7 +405,7 @@ impl Session {
         match fetched {
             // [X3.135-1986 §8.6 GR2] positioned after the last row; SQLCODE 100.
             None => Ok(Completion::NoData),
-            Some((_, values)) => assign_targets(&values, targets, params, "§8.6 GR8", "§8.6 GR10"),
+            Some((_, values)) => assign_targets(&values, targets, params, "X3.135-1986 §8.6 GR8", "X3.135-1986 §8.6 GR10"),
         }
     }
 
@@ -491,7 +491,7 @@ impl Session {
             [row] => {
                 let mut row = row.clone();
                 show_in(&mut row, self.now.get().zone);
-                assign_targets(&row, targets, params, "§8.10 GR8", "§8.10 GR9")
+                assign_targets(&row, targets, params, "X3.135-1986 §8.10 GR8", "X3.135-1986 §8.10 GR9")
             }
             [_, _, ..] => fail(Code::Cardinality, "[X3.135-1986 §8.10 GR2] the result has more than one row"),
         }

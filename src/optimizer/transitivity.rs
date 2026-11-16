@@ -79,7 +79,8 @@ fn compared(c: &Cond) -> Option<Compared> {
             | Expr::Domain(..)
             | Expr::Subquery(..)
             | Expr::Truth(_)
-            | Expr::NextValue(_),
+            | Expr::NextValue(_)
+            | Expr::Invoked(_),
             _,
         ) => return None,
     };

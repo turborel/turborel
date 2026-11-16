@@ -152,9 +152,21 @@ impl Params {
     }
 
     /// The columns a triggered action sees of each base table it reads,
-    /// as its trigger was defined; of other parameters, every column.
+    /// as its trigger was defined, and those the body of an SQL-invoked
+    /// procedure sees, as it was defined; of other parameters, every
+    /// column.
     pub(crate) fn horizon(&self) -> &Horizon {
-        self.transitions.as_ref().map_or(&WHOLE, |t| &t.horizon)
+        match (&self.transitions, self.routine_scope()) {
+            (Some(t), _) => &t.horizon,
+            (None, Some(r)) => &r.horizon,
+            (None, None) => &WHOLE,
+        }
+    }
+
+    /// Whether these are a triggered action's or a procedure body's, which
+    /// see the columns of `horizon`, not those of the statement's context.
+    pub(crate) fn horizoned(&self) -> bool {
+        self.transitions.is_some() || self.routine_scope().is_some()
     }
 
     /// The type of column `name` of the new row a target may assign, if

@@ -49,6 +49,7 @@ mod pattern;
 mod primary;
 mod query;
 mod regex;
+mod routines;
 mod schema;
 mod search_cycle;
 mod sequences;
@@ -118,6 +119,8 @@ pub struct Parser {
     read_values: HashMap<usize, (Result<ValueExpression>, usize, Option<usize>)>,
     /// [ISO/IEC 9075-2:2023 §11.49] Of a `<triggered action>` being read, what it knows.
     trigger: Option<triggers::TriggerScope>,
+    /// [ISO/IEC 9075-2:2023 §11.60] Of an `<SQL routine body>` being read, what it knows.
+    routine: Option<routines::RoutineScope>,
 }
 
 /// How a parser takes a `<catalog name>` written in a qualified name or a
@@ -197,6 +200,7 @@ impl Parser {
             implicit: None,
             read_values: HashMap::new(),
             trigger: None,
+            routine: None,
         })
     }
 
@@ -323,8 +327,8 @@ impl Parser {
     /// semicolon, if written; then the refusal of valid SQL not implemented
     /// read in it, if any (`refuse_later`).
     fn end(&mut self) -> Result<()> {
-        // A statement of a <triggered action> ends where its Format does.
-        if self.trigger.is_some() {
+        // A statement of a trigger's action or a routine's body ends where its Format does.
+        if self.trigger.is_some() || self.routine.is_some() {
             return Ok(());
         }
         self.accept_delim(delim::SEMICOLON);
@@ -475,7 +479,7 @@ impl Parser {
         } else {
             None
         };
-        Ok(ParameterSpecification { name, indicator, at, transition: false })
+        Ok(ParameterSpecification { name, indicator, at, kind: crate::ast::TargetKind::Parameter })
     }
 
     /// [X3.135-1986 §8.6, §8.10] `<fetch target list>` and `<select target list>`
@@ -491,8 +495,8 @@ impl Parser {
     /// [X3.135-1986 §5.6] `<target specification>` ::= `<parameter specification>`
     /// (not implemented: `<variable specification>`, which is embedded SQL)
     fn target_specification(&mut self) -> Result<ParameterSpecification> {
-        if self.trigger.is_some() {
-            return self.transition_target();
+        if self.trigger.is_some() || self.routine.is_some() {
+            return self.scoped_target();
         }
         if self.is_delim(delim::COLON) {
             return Err(self.unsupported("<variable specification> (embedded SQL)"));

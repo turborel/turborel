@@ -302,7 +302,8 @@ fn alike(a: &Expr, b: &Expr) -> bool {
             | Expr::Case(..)
             | Expr::Subquery(..)
             | Expr::Truth(_)
-            | Expr::NextValue(_),
+            | Expr::NextValue(_)
+            | Expr::Invoked(_),
             _,
         ) => false,
     }

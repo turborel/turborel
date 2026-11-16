@@ -40,6 +40,7 @@ pub fn render_expr(e: &Expr, names: &[String]) -> String {
             format!("CAST({} AS {})", render_expr(operand, names), d.domain)
         }
         Expr::Subquery(_, column) => format!("(<subquery>).{}", column.saturating_add(1)),
+        Expr::Invoked(i) => format!("{}({})", i.name, i.args.iter().map(|a| render_expr(a, names)).collect::<Vec<_>>().join(", ")),
         Expr::Truth(c) => format!("({})", render_cond(c, names)),
         Expr::NextValue(seq) => format!("NEXT VALUE FOR {}", seq.name),
     }

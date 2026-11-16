@@ -193,10 +193,11 @@ impl State {
         self.catalog = Arc::from(catalog);
         // [ISO/IEC 9075-2:2023 §11.26 SR13a, SR13c, SR13e, GR1, GR3, GR4]
         // the constraints, views and assertions that bind by it;
-        // [SR13f, GR5] the triggers.
+        // [SR13f, GR5] the triggers; [SR13d, GR2] the routines.
         let cascade = behavior == DropBehavior::Cascade;
         dropped.absorb(self.drop_constraint_dependents(&before, qn, cascade)?);
         dropped.absorb(self.drop_constraint_triggering(&before, qn, cascade)?);
+        dropped.absorb(self.drop_constraint_routining(&before, qn, cascade)?);
         Ok(dropped)
     }
 }

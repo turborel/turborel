@@ -25,7 +25,7 @@ use super::area::commands::{self, Command};
 use super::collations::Collating;
 use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
-use crate::ast::{SearchCondition, SetClause, SqlStatement, TableName};
+use crate::ast::{InsertStatement, SearchCondition, SetClause, SqlStatement, TableName};
 use crate::binder::{self, DescribedKey, OutColumn, WriteKind, bind_write};
 use crate::catalog::{QualifiedName, WHOLE};
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -309,6 +309,16 @@ impl Session {
         Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, key, plans: Arc::default(), single_row, cursor, implicit })
     }
 
+    /// INSERT `ins`, bound as `bind_only` binds it: its target, and its
+    /// query if its rows are one's.
+    fn insert_only(&self, st: &State, ins: &InsertStatement, params: &Params) -> Result<()> {
+        let target = self.insert_target(st, ins, (None, &WHOLE))?;
+        if let crate::ast::InsertSource::Query(query) = &ins.source {
+            self.bound_insert(st, &target, query, params)?;
+        }
+        Ok(())
+    }
+
     /// An UPDATE or DELETE of `kind`, on `table`, of SET clauses `set` and
     /// search condition `cond`, bound as `bind_only` binds it.
     fn write_only(
@@ -324,12 +334,7 @@ impl Session {
     /// would be run, without running it: so each `?` takes its type.
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
         match stmt {
-            SqlStatement::Insert(ins) => {
-                let target = self.insert_target(st, ins, (None, &WHOLE))?;
-                if let crate::ast::InsertSource::Query(query) = &ins.source {
-                    self.bound_insert(st, &target, query, params)?;
-                }
-            }
+            SqlStatement::Insert(ins) => self.insert_only(st, ins, params)?,
             SqlStatement::UpdateSearched { table, set, where_clause } => {
                 self.write_only(st, params, (WriteKind::UpdateSearched, table, set, where_clause.as_ref()))?;
             }
@@ -358,6 +363,9 @@ impl Session {
             SqlStatement::GetDiagnostics(_) => return Err(not_preparable("a <get diagnostics statement>")),
             SqlStatement::Dynamic(_) | SqlStatement::Execute(_) => return Err(not_preparable("an <SQL dynamic statement>")),
             SqlStatement::DeclareTable(_) => return Err(not_preparable("a <temporary table declaration>")),
+            SqlStatement::Call(call) => drop(self.bound(st, params, |cx| State::bind_call(cx, call))?),
+            // [ISO/IEC 9075-2:2023 §16.2 SR1] only in a function's body.
+            SqlStatement::Return(r) => return Err(super::routines::return_outside(r)),
             SqlStatement::Commit
             | SqlStatement::Rollback
             | SqlStatement::SetConstraints { .. }

@@ -170,6 +170,11 @@ impl Binder<'_> {
             // function, a CASE or a search condition.
             ValueExpression::SetFunction(sf) => self.drawing(false, || self.set_function(sf, scope)).or_at(sf.at),
             ValueExpression::Call { schema, name, args, at, extension } => {
+                // [ISO/IEC 9075-2:2023 §10.4] an SQL-invoked function of an
+                // SQL routine body first, then a distinct type's (D69).
+                if let Some(invoked) = self.invocation((schema.as_deref(), name), args, scope).or_at(*at)? {
+                    return Ok(invoked);
+                }
                 if let Some(called) = self.routine_call((schema.as_deref(), name), args, scope).or_at(*at)? {
                     return Ok(called);
                 }

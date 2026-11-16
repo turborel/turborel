@@ -24,6 +24,22 @@ pub struct Subject {
     /// [ISO/IEC 9075-2:2023 §23.1 GR4g] The trigger whose triggered action
     /// failed, of a triggered action exception.
     pub trigger: Option<(String, String)>,
+    /// [ISO/IEC 9075-2:2023 §23.1 GR4l, GR4q] The SQL-invoked routine of
+    /// an SQL routine exception, or of an assignment to an SQL parameter.
+    pub routine: Option<RoutineSubject>,
+}
+
+/// [ISO/IEC 9075-2:2023 §23.1 GR4l, GR4q] The SQL-invoked routine a
+/// condition names, and the parameter it is related to, if any.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoutineSubject {
+    /// Its schema's name and its `<routine name>`'s identifier.
+    pub name: (String, String),
+    /// Its `<specific name>`'s identifier.
+    pub specific: String,
+    /// The parameter the condition is related to: its ordinal position,
+    /// its `<parameter mode>` and its name.
+    pub parameter: Option<(usize, &'static str, String)>,
 }
 
 impl Subject {
@@ -51,6 +67,19 @@ impl Subject {
     /// `table`.
     pub fn trigger(trigger: (String, String), table: (String, String)) -> Subject {
         Subject { trigger: Some(trigger), table: Some(table), ..Subject::default() }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §23.1 GR4l] The SQL-invoked routine `name`,
+    /// of the specific name `specific`.
+    pub fn routine(name: (String, String), specific: (String, String)) -> Subject {
+        Subject { routine: Some(RoutineSubject { name, specific: specific.1, parameter: None }), ..Subject::default() }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §23.1 GR4q] The parameter `parameter`, its
+    /// ordinal position, mode and name, of the SQL-invoked routine `name`
+    /// of the specific name `specific`.
+    pub fn parameter(name: (String, String), specific: (String, String), parameter: (usize, &'static str, String)) -> Subject {
+        Subject { routine: Some(RoutineSubject { name, specific: specific.1, parameter: Some(parameter) }), ..Subject::default() }
     }
 
     /// The cursor `name` \[GR3h\].

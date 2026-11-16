@@ -7,8 +7,8 @@
 use std::slice;
 
 use crate::ast::{
-    InsertSource, MatchedAction, MergeStatement, MergeWhen, QueryExpression, RowElement, SearchCondition, SetClause, SqlStatement,
-    Subquery, TableName, UpdateSource, ValuesRow, from_table_names,
+    InsertSource, MatchedAction, MergeStatement, MergeWhen, QueryExpression, RowElement, SearchCondition, SetClause, SqlArgument,
+    SqlStatement, Subquery, TableName, UpdateSource, ValueExpression, ValuesRow, from_table_names,
 };
 use crate::binder::qualify;
 use crate::catalog::{QualifiedName, TransitionNames};
@@ -16,7 +16,7 @@ use crate::catalog::{QualifiedName, TransitionNames};
 /// The tables and views the statements `action` and the condition `when`
 /// name, once each, those written without a schema in `schema`; not a
 /// transition table name of `names`.
-pub(super) fn named(
+pub(in crate::db) fn named(
     action: &[SqlStatement],
     when: Option<&SearchCondition>,
     (schema, names): (&str, &TransitionNames),
@@ -59,6 +59,9 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
             if_condition(where_clause.as_ref(), out);
         }
         SqlStatement::Merge(m) => merge(m, out),
+        SqlStatement::Call(call) => values(call.arguments.iter().filter_map(argued), out),
+        // [ISO/IEC 9075-2:2023 §16.2] A function's `<return value>`.
+        SqlStatement::Return(r) => values(r.value.iter(), out),
         // What a triggered action may not contain names nothing it reads.
         SqlStatement::GetDiagnostics(_)
         | SqlStatement::Close(_)
@@ -88,6 +91,19 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
         | SqlStatement::Served(_)
         | SqlStatement::SetConstraints { .. }
         | SqlStatement::UpdatePositioned { .. } => {}
+    }
+}
+
+/// The value expression of a CALL's argument `a`, if it is one.
+fn argued(a: &SqlArgument) -> Option<&ValueExpression> {
+    if let SqlArgument::Value(v) = a { Some(v) } else { None }
+}
+
+/// Adds to `out` the table names written in the subqueries of `of`: a
+/// CALL's arguments, or a RETURN's value.
+fn values<'v>(of: impl Iterator<Item = &'v ValueExpression>, out: &mut Vec<TableName>) {
+    for v in of {
+        v.for_each_subquery(&mut |s| subquery(s, out));
     }
 }
 

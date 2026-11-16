@@ -96,6 +96,7 @@ impl Filling<'_> {
             | Expr::Cast(..)
             | Expr::SortKey(..)
             | Expr::NextValue(_)
+            | Expr::Invoked(_)
             | Expr::Domain(..)) => other.map_children(&mut |child| self.expr(child)),
         }
     }

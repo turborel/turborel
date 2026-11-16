@@ -155,7 +155,8 @@ pub(super) fn never_null_in(plan: &LogicalPlan, x: &Expr, known: &Known<'_>) -> 
         | Expr::Domain(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
-        | Expr::NextValue(_) => false,
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => false,
     }
 }
 

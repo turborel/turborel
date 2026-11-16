@@ -84,7 +84,7 @@ impl State {
     /// GR5]. And the columns a type it drops loses, of a type based on it
     /// or whose generation expressions reference it [ISO/IEC 9075-2:2023
     /// §12.7 GR12h], as revoking every privilege on it loses them [§11.59
-    /// GR7].
+    /// GR7]. And those that invoke a routine it drops [§11.62 GR1].
     pub(in crate::db) fn generations_dropped(&self, target: &DropTarget) -> Vec<Column> {
         match target {
             DropTarget::Domain(qn) => self.generations_naming(Named::Domain(qn), &|_| true),
@@ -107,6 +107,9 @@ impl State {
             DropTarget::Table(_) | DropTarget::View(_) | DropTarget::Assertion(_) | DropTarget::Sequence(_) | DropTarget::Trigger(_) => {
                 Vec::new()
             }
+            // [ISO/IEC 9075-2:2023 §11.62 GR1] Those that invoke it, or a
+            // routine that does.
+            DropTarget::Routine(specific) => self.invoking(&self.invokers_of(std::slice::from_ref(specific))).columns,
         }
     }
 
@@ -124,7 +127,7 @@ impl State {
             self.domain_generations_revoked((auth, schema), r)
         } else if r.object == PrivilegeObject::Collation {
             self.collation_generations_revoked(auth, r)
-        } else if matches!(r.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine | PrivilegeObject::Routine) {
+        } else if matches!(r.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_)) {
             self.type_columns_revoked((auth, schema), r)
         } else {
             Ok(Vec::new())

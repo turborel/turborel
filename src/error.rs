@@ -10,7 +10,7 @@ mod warnings;
 use std::fmt;
 
 pub use state::SqlState;
-pub use subject::Subject;
+pub use subject::{RoutineSubject, Subject};
 pub use warnings::Warnings;
 
 /// The kinds of error, each with its negative SQLCODE as its discriminant.

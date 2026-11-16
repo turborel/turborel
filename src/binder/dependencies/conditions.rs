@@ -9,7 +9,7 @@ use crate::logical::{Cond, Expr, OuterJoin, cond_columns, expr_columns};
 use crate::value::CompOp;
 
 /// Whether `e` gives one value of one row: no subquery, no NEXT VALUE FOR
-/// and no function that is not deterministic [§9.16]. A parameter and an
+/// and no function or routine that is not deterministic [§9.16]. A parameter and an
 /// outer reference are one value in each evaluation, as is a datetime
 /// value function in a statement.
 pub(in crate::binder) fn deterministic(e: &Expr) -> bool {
@@ -21,6 +21,9 @@ pub(in crate::binder) fn deterministic(e: &Expr) -> bool {
         Expr::Case(arms, other) => arms.iter().all(|(c, v)| deterministic_cond(c) && deterministic(v)) && deterministic(other),
         Expr::Truth(c) => deterministic_cond(c),
         Expr::Subquery(..) | Expr::NextValue(_) => false,
+        // [ISO/IEC 9075-2:2023 §9.16 GR1] a deterministic routine's value
+        // is the one of the same arguments.
+        Expr::Invoked(i) => i.deterministic && i.args.iter().all(deterministic),
     }
 }
 
@@ -73,7 +76,8 @@ fn bare_column(e: &Expr) -> Option<usize> {
         | Expr::Domain(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
-        | Expr::NextValue(_) => None,
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => None,
     }
 }
 
@@ -100,7 +104,8 @@ impl Known {
             | Expr::Domain(..)
             | Expr::Subquery(..)
             | Expr::Truth(_)
-            | Expr::NextValue(_) => None,
+            | Expr::NextValue(_)
+            | Expr::Invoked(_) => None,
         }
     }
 

@@ -2,8 +2,8 @@
 //! ISO/IEC 9075:1992 §11].
 
 use super::{
-    AlterSequence, DatetimeFunction, DropBehavior, Literal, QueryExpression, SearchCondition, SequenceDefinition, TableName,
-    TriggerDefinition, TypeDefinition, UserFunction,
+    AlterSequence, DatetimeFunction, DropBehavior, Literal, QueryExpression, RoutineDefinition, RoutineType, SearchCondition,
+    SequenceDefinition, TableName, TriggerDefinition, TypeDefinition, UserFunction,
 };
 use crate::value::DataType;
 use crate::value::collation::Pad;
@@ -47,6 +47,8 @@ pub struct Schema {
     pub privileges: Vec<PrivilegeDefinition>,
     /// The `<trigger definition>`s, in order [ISO/IEC 9075-2:2023 §11.49].
     pub triggers: Vec<TriggerDefinition>,
+    /// The `<schema routine>`s, in order [ISO/IEC 9075-2:2023 §11.60].
+    pub routines: Vec<RoutineDefinition>,
 }
 
 /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1] An `<SQL schema statement>` of
@@ -82,6 +84,8 @@ pub enum SchemaStatement {
     Type(TypeDefinition),
     /// A `<trigger definition>` [ISO/IEC 9075-2:2023 §11.49].
     Trigger(TriggerDefinition),
+    /// A `<schema routine>` [ISO/IEC 9075-2:2023 §11.60].
+    Routine(Box<RoutineDefinition>),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION
@@ -110,12 +114,12 @@ pub enum PrivilegeObject {
     Sequence,
     /// A user-defined type [ISO/IEC 9075-2:2023 §12.3].
     Type,
-    /// [ISO/IEC 9075-2:2023 §12.3] SPECIFIC FUNCTION or SPECIFIC ROUTINE
+    /// [ISO/IEC 9075-2:2023 §12.3, §10.6] SPECIFIC `<routine type>`
     /// `<specific name>`.
-    SpecificRoutine,
-    /// [ISO/IEC 9075-2:2023 §12.3] FUNCTION or ROUTINE `<member name>`,
+    SpecificRoutine(RoutineType),
+    /// [ISO/IEC 9075-2:2023 §12.3, §10.6] `<routine type>` `<member name>`,
     /// its `<data type list>` if written.
-    Routine,
+    Routine(RoutineType),
 }
 
 /// [ISO/IEC 9075:1992 §11.34] `<assertion definition>` ::= CREATE ASSERTION

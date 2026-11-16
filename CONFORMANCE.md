@@ -483,7 +483,8 @@ What SQL:2023 adds beyond collations, written from ISO/IEC 9075-2:2023
 
 T285 (Enhanced derived column names) is not claimed. It names a column
 of a single SQL parameter reference for the parameter [§7.16 SR17c,
-CR6], and turborel has no SQL parameters. A column of any other
+CR6], and the column of an SQL parameter is seen in no query turborel
+runs, since a routine's body holds no cursor. A column of any other
 expression without an `<as clause>` is unnamed, the name SR17d leaves
 implementation-dependent (UV087).
 
@@ -957,7 +958,7 @@ adds to it [§23.1].
 | Transaction counts | GR2h, GR2i, GR2j, CR2 | TRANSACTIONS_COMMITTED and TRANSACTIONS_ROLLED_BACK count the transactions the statement committed and rolled back, by COMMIT, ROLLBACK, EXECUTE IMMEDIATE of either or the Rust API. A COMMIT that fails rolls back, and is counted so. TRANSACTION_ACTIVE is 1 while a transaction is active. |
 | Codes | GR2c to GR2e, Table 39 | COMMAND_FUNCTION_CODE and DYNAMIC_FUNCTION_CODE give each statement's code, 0 of one that did not parse and of none prepared. |
 | CONDITION | Format | CONDITION n reads a condition as SQL-92's EXCEPTION n does. |
-| Routines and triggers | GR4g, GR4l, GR4q, GR5 | Of 09000, the trigger items name the trigger whose action failed, and CATALOG_NAME, SCHEMA_NAME and TABLE_NAME its table (see [Triggers](#triggers)). The routine items are zero-length strings, and PARAMETER_ORDINAL_POSITION 0, a condition of a distinct type's function read as one of CAST (see [Readings](#readings-of-ambiguous-text)). |
+| Routines and triggers | GR4g, GR4l, GR4q, GR5 | Of 09000, the trigger items name the trigger whose action failed, and CATALOG_NAME, SCHEMA_NAME and TABLE_NAME its table (see [Triggers](#triggers)). Of 2F005 and of an argument stored in its parameter, the routine items name the function or procedure, and the parameter items the parameter (see [SQL-invoked routines](#sql-invoked-routines)). Else the routine items are zero-length strings, and PARAMETER_ORDINAL_POSITION 0, a condition of a distinct type's function read as one of CAST (see [Readings](#readings-of-ambiguous-text)). |
 
 COMMAND_FUNCTION and DYNAMIC_FUNCTION keep SQL-92's identifiers [92
 §18.1 Table 22], and the codes are SQL:2023's, so a code tells apart
@@ -1417,9 +1418,9 @@ types), which it implies, and with it S095 (Array constructors by query),
 S096 (Optional array bounds) and S098 (ARRAY_AGG), each processed as the
 table says. S097 (Array element assignment) is not claimed. Its target's
 array is an SQL parameter or a new transition variable's column [§6.4
-SR7]. turborel has no SQL-invoked routines with parameters, and a BEFORE
-row trigger's target `NEW.A[i]` is not taken yet. ARRAY, ROW, UNNEST and the functions are key words only where
-they are read (Appendix B).
+SR7], and neither a procedure's target `P[i]` nor a BEFORE row trigger's
+`NEW.A[i]` is taken yet. ARRAY, ROW, UNNEST and the functions are key
+words only where they are read (Appendix B).
 
 ### Distinct types
 
@@ -1459,9 +1460,9 @@ refused before it drops any [§11.23 SR4]. TYPE, FINAL, INSTANTIABLE,
 UNDER, SOURCE, REF, SPECIFIC and FUNCTION are no key words of SQL-92, so
 each stays an identifier, a key word only where CREATE TYPE, DROP TYPE,
 GRANT and REVOKE read it. A function named by a key word, as FNSDT of a
-NUMERIC source is, is invoked delimited, `"NUMERIC"(p)`. Structured types,
-SET TRANSFORM GROUP and SQL-invoked routines a user defines are not
-implemented.
+NUMERIC source is, is invoked delimited, `"NUMERIC"(p)`. Structured types
+and SET TRANSFORM GROUP are not implemented. The routines a user defines
+are those of [SQL-invoked routines](#sql-invoked-routines).
 
 ### Triggers
 
@@ -1512,6 +1513,45 @@ ROW, EACH, STATEMENT and ATOMIC are no key words of SQL-92, so each
 stays an identifier, a key word only where a trigger's statements read
 it. The Information Schema's views of triggers [ISO/IEC 9075-11] are
 not implemented.
+
+### SQL-invoked routines
+
+Features T321 (Basic SQL-invoked routines), its subfeatures 01 to 05,
+B128 (Routine language SQL), S203 (Array parameters) and S204 (Array as
+result type of functions). CREATE FUNCTION and CREATE PROCEDURE define a
+routine of an SQL routine body [§11.60], DROP ROUTINE, FUNCTION and
+PROCEDURE drop one [§11.62], a function is invoked in a value expression
+[§9.18, §10.4], a procedure by CALL [§16.1], and a function's body is a
+RETURN [§16.2].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Definition | §11.60 SR1 to SR9, SR13 to SR16, SR19, AR1, CR2 | The schema exists (3F000) and its user owns it (-104). Each characteristic at most once, the SQL-data access written, NO SQL refused. A function's parameters have no mode, and a procedure has no null-call clause, a function no DYNAMIC RESULT SETS. Each parameter named, no two alike, none of a domain or a row type. The body has no host, dynamic or embedded parameter. Each rule broken is SQLCODE -103. A second routine of a name in a schema, or a distinct type's function of it, is overloading, Feature T341, SQLCODE -900. |
+| Specific names | SR9s, SR9t, SR9u, UV102 | SPECIFIC names the routine apart from its name, of its schema, new in it. Without it, the name is the routine's name, an underscore and its creation's sequence number, with a further `_n` if that is taken. |
+| The body | SR20, SR23, §16.2 SR1 to SR4, IA075, IA076, IA078 | Bound once as the routine is defined, as the owner of its schema, of that schema, so its rules and privileges are checked then and its names fixed [§4.35]. A function's body is a RETURN, of a type its result type stores, RETURN NULL a null of it. A procedure's is INSERT, searched UPDATE or DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS or CALL, and no RETURN. A schema, transaction, connection, session or dynamic statement is refused (IA078). A body of CONTAINS SQL that reads a table, or of READS SQL DATA that changes one, is refused (IA076, IA075). Each is SQLCODE -103. |
+| Determinism | IA077 | DETERMINISTIC is taken as written: a body is not checked for a source of non-determinism. |
+| Privileges | GR1, §12.3, §12.7 GR12o, GR12q | The owner holds EXECUTE from _SYSTEM, grantable if it holds grantable every SELECT, INSERT, UPDATE and DELETE on each table the body reads and EXECUTE on each routine it invokes. EXECUTE is granted and revoked as `<specific routine designator>` designates a routine, ALL PRIVILEGES on one being EXECUTE, and ROUTINE_PRIVILEGES shows it. A revoke that leaves the owner without a privilege the body needs, or EXECUTE on a routine it invokes, abandons the routine: RESTRICT refuses it (2B000), and CASCADE drops it and what invokes it. |
+| Invocation | §9.18 SR5, SR6, SR10, GR3 to GR10, ID047 | The function of the name in the qualifying schema, else the statement's default schema, of as many parameters as there are arguments, each argument's type one its parameter takes. Without EXECUTE on it, SQLCODE -104. A routine is found before a built-in function of the name. Each argument is stored in its parameter, then a null-call function given a null returns null without its body, else the body's value is stored in the result type. Its errors are those of store assignment, 22001 and 22003, the parameter named in the condition [§23.1 GR4q]. A body that is no RETURN raises 2F005 [GR8b ix 1], without executing it, since the exception undoes what it would have done. |
+| Parameters | §6.6 SR8, SR9, §6.8 | A parameter is named by its name, or by the routine's name and its name. A column of a table the body reads hides a parameter of its name. A function's body is a subquery of the row of its parameters, a VALUES of one value evaluated where it is, so a function that reads no table may be invoked where no subquery may run. |
+| Where a function may be | §7.17 SR25, §11.9 SR6, §11.47 SR8, §11.4 SR10d, SR10e, §9.16 SR1am | A function that possibly modifies SQL-data is invoked in no value expression. One that is not deterministic, or possibly reads SQL-data, is invoked in no CHECK, assertion or generation expression. Each is SQLCODE -103. |
+| CALL | §16.1, §9.18 SR9, GR3 to GR14, §10.4 CR6, CR7 | The procedure of the name and arity, with EXECUTE. An IN parameter's argument is a value expression it stores, an OUT or INOUT one's a target: a host parameter, a parameter of the procedure whose body the CALL is, or a column of a BEFORE row trigger's new transition variable, not an AFTER trigger's [SR9h iii 3]. NULL or DEFAULT of an IN parameter, and DEFAULT of an INOUT one, are of Features T522 and T523, SQLCODE -900. OUT parameters start null. The body runs as the schema's owner, of its schema, with a diagnostics area of its own, within the CALL statement and its instant (US037, US038). Each OUT and INOUT value is then assigned to its target [GR10b]. A BEFORE trigger's action calls no procedure that possibly modifies SQL-data [§11.49 SR14a]. |
+| Dropping | §11.62, §11.2 SR4l, GR10, §11.23 SR7c, §11.31 SR7e, §11.33 SR5d, §11.59 SR4g | DROP names the routine by its name, with its parameters' types or without, or by its specific name, of the routine type written, by the owner of its schema. RESTRICT refuses it if a view, constraint, assertion, generated column, trigger or routine invokes it. CASCADE drops each, and what invokes those. A table, view or column a body reads, a distinct type a routine is typed by or its body uses, and a schema holding a routine, are dropped only with CASCADE, which drops the routine. |
+| Kept | §11.60 GR3, §4.35.5 | The descriptor is logged as its definition and kept in a checkpoint's snapshot, with its EXECUTE privileges. ROUTINES, PARAMETERS and ROUTINE_PRIVILEGES show it, ROUTINE_DEFINITION to the owner of its schema alone. |
+
+SQL SECURITY (Feature T324), a parameter's default and named arguments
+(T521, T522, T524, T525), RETURNS TABLE (T326), DYNAMIC RESULT SETS
+above 0 (T471), NEW SAVEPOINT LEVEL (T272), a language other than SQL
+and overloading (T341) are refused with SQLCODE -900. A routine's
+behaviour is always DEFINER's, as SR23b leaves it without T324.
+Routines do not recurse: a body binds before its routine exists, and a
+chain of functions invoking functions is refused at 64. Procedures and
+triggered actions nest at most 16 deep (see [Limits](#limits)). The
+static rules leave nothing for 2F002, 2F003 and 2F004 to catch as a
+routine runs [§9.18 GR6h, GR8b], so they are never raised. FUNCTION,
+RETURNS, RETURN, CALL, SPECIFIC, ROUTINE, DETERMINISTIC, READS,
+MODIFIES, CONTAINS, OUT and INOUT are no key words of SQL-92, so each
+stays an identifier, read as a word where a routine's statements read
+it.
 
 ---
 
@@ -1938,7 +1978,7 @@ SQLCODE -900 (RULES.md D18).
 | Regular expression size | 8,192 instructions compiled, about as many characters and quantified repeats, and groups 64 deep | §9.28 sets no limit. A counted repeat is compiled once for each count, so `a{9000}` passes it. | `regex/compile.rs`, `regex/parse.rs` |
 | Regular expression steps | 10,000,000, of a search with back-references | A back-reference matches no automaton, so its search goes back and can take time exponential in the string. One without any takes time linear in it, with no limit. | `regex/backtrack.rs` |
 | Grouping sets | 4,096 of a GROUP BY, and GROUPING of 59 columns | 2023 §7.13 SR14 and SR16 set no maximum, and a CUBE of n sets stands for 2 to the n. GROUPING's value is of 18 digits [§6.9 SR10b], which 2 to the 59 fits and 2 to the 60 does not. | `binder/grouping_sets.rs`, `binder/grouping_sets/expansion.rs` |
-| Trigger nesting | 16 levels of triggers executed within triggers, past which the statement fails with SQLSTATE 09000, SQLCODE -900 | §15.21 sets no limit, and a trigger whose action executes it again would recurse until the stack overflowed. 16 levels run in half of Rust's default 2 MiB thread stack. | `db/triggers.rs`, `db/triggers/run.rs` |
+| Trigger and procedure nesting | 16 levels of triggered actions and procedures executed within each other, past which the statement fails with SQLCODE -900, of a trigger's action SQLSTATE 09000 | §15.21 and §9.18 set no limit, and a trigger whose action executes it again would recurse until the stack overflowed. 16 levels run in half of Rust's default 2 MiB thread stack. | `db/nested.rs` |
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
 
 An index entry is an encoded key plus an 8-byte row id, and has its own limit.

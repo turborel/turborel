@@ -211,6 +211,20 @@ impl SqlState {
     /// Prohibited statement encountered during trigger execution [ISO/IEC
     /// 9075-2:2023 §15.21 GR6e iii, GR6h].
     pub const PROHIBITED_STATEMENT_IN_TRIGGER: SqlState = SqlState("0W000");
+    /// SQL routine exception [ISO/IEC 9075-2:2023 §24.1, Table 41].
+    pub const SQL_ROUTINE_EXCEPTION: SqlState = SqlState("2F000");
+    /// SQL routine exception: modifying SQL-data not permitted [ISO/IEC
+    /// 9075-2:2023 §9.18 GR8b i].
+    pub const MODIFYING_DATA_NOT_PERMITTED: SqlState = SqlState("2F002");
+    /// SQL routine exception: prohibited SQL-statement attempted [ISO/IEC
+    /// 9075-2:2023 §9.18 GR8b iii to vi].
+    pub const PROHIBITED_ROUTINE_STATEMENT: SqlState = SqlState("2F003");
+    /// SQL routine exception: reading SQL-data not permitted [ISO/IEC
+    /// 9075-2:2023 §9.18 GR8b ii].
+    pub const READING_DATA_NOT_PERMITTED: SqlState = SqlState("2F004");
+    /// SQL routine exception: function executed no return statement
+    /// [ISO/IEC 9075-2:2023 §9.18 GR8b ix].
+    pub const NO_RETURN_STATEMENT: SqlState = SqlState("2F005");
     /// Invalid cursor state.
     pub const INVALID_CURSOR_STATE: SqlState = SqlState("24000");
     /// Invalid transaction state.

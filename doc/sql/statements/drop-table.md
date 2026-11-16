@@ -22,6 +22,8 @@ constraint of another table or an assertion refers to it. CASCADE drops
 those views, and the views that read them, however far; drops the
 assertions; and takes from each other table the constraints that refer
 to it, a foreign key that references it among them, leaving the table.
+A function or procedure whose body reads the table is refused the same
+way, and dropped by CASCADE with what invokes it.
 
 DROP TABLE runs within the session's transaction: ROLLBACK undoes it.
 Until the transaction ends, others read the table as it was; one that

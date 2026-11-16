@@ -3,7 +3,8 @@
 //! and index reopened by its locator, and only the definitions logged since
 //! replayed; not from every definition ever made. The schemas, domains,
 //! assertions, tables with their generations, views, indexes, sequence
-//! generators, user-defined types, privileges and triggers of the catalog, the
+//! generators, user-defined types, privileges, triggers and SQL-invoked
+//! routines of the catalog, the
 //! database's settings, in the forms of `catalog/codec.rs`; its users and
 //! owner (`db/users.rs`); and the counters of its sequence generators,
 //! settled, with the last epoch given (`db/sequences/counters.rs`,
@@ -21,7 +22,8 @@
 //!           verifier bytes), owner (u8 1 and str, or u8 0 for none), the
 //!           last epoch given (u64), counters (count u32, each a name, its
 //!           epoch u64 and its base i128), triggers (count u32, each a
-//!           trigger, in the order of their timestamps of creation)
+//!           trigger, in the order of their timestamps of creation),
+//!           routines (count u32, each a routine, likewise)
 //! ```
 
 use std::sync::Arc;
@@ -31,11 +33,12 @@ use super::{State, api};
 use crate::bytes::{Put, Reader};
 use crate::catalog::codec::{
     collation, constraint, domain, index, privilege, put_collation, put_constraint, put_domain, put_index, put_name, put_privilege,
-    put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, sequence, table, trigger, user_type, view,
+    put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, routine, sequence, table, trigger, user_type,
+    view,
 };
 use crate::catalog::{
-    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, TableDesc, TriggerDesc,
-    UserTypeDesc, ViewDesc,
+    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, SqlRoutineDesc, TableDesc,
+    TriggerDesc, UserTypeDesc, ViewDesc,
 };
 use crate::error::Result;
 use crate::settings;
@@ -69,12 +72,14 @@ pub(super) struct Snapshot {
     counters: Vec<Settled>,
     /// The triggers, oldest first.
     triggers: Vec<TriggerDesc>,
+    /// The SQL-invoked routines, oldest first.
+    routines: Vec<SqlRoutineDesc>,
 }
 
 impl Snapshot {
     /// The definitions of `st`, in an order that does not depend on how
-    /// they are held: each kind by name, the triggers by their timestamps
-    /// of creation. The counters of its sequence
+    /// they are held: each kind by name, the triggers and routines by their
+    /// timestamps of creation. The counters of its sequence
     /// generators settled.
     ///
     /// # Errors
@@ -126,6 +131,7 @@ impl Snapshot {
             epochs,
             counters,
             triggers: st.catalog.triggers().into_iter().cloned().collect(),
+            routines: st.catalog.routines().into_iter().cloned().collect(),
         })
     }
 
@@ -178,7 +184,7 @@ impl Snapshot {
         self.put_rest(out);
     }
 
-    /// Its owner, epochs, counters and triggers in bytes, the last of
+    /// Its owner, epochs, counters, triggers and routines in bytes, the last of
     /// what `put` writes.
     fn put_rest(&self, out: &mut Vec<u8>) {
         let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
@@ -195,6 +201,8 @@ impl Snapshot {
         }
         out.put_u32(count(self.triggers.len()));
         self.triggers.iter().for_each(|t| put_trigger(out, t));
+        out.put_u32(count(self.routines.len()));
+        self.routines.iter().for_each(|t| put_routine(out, t));
     }
 
     /// The snapshot `put` wrote.
@@ -220,6 +228,7 @@ impl Snapshot {
         let epochs = r.u64()?;
         let counters = (0..r.u32()?).map(|_| Ok((qualified(r)?, r.u64()?, r.i128()?))).collect::<Result<_>>()?;
         let triggers = (0..r.u32()?).map(|_| trigger(r)).collect::<Result<_>>()?;
+        let routines = (0..r.u32()?).map(|_| routine(r)).collect::<Result<_>>()?;
         Ok(Snapshot {
             schemas,
             domains,
@@ -238,6 +247,7 @@ impl Snapshot {
             epochs,
             counters,
             triggers,
+            routines,
         })
     }
 }
@@ -330,13 +340,15 @@ fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.user_types.iter().cloned().for_each(|t| catalog.put_user_type(t));
 }
 
-/// The assertions, views, privileges and triggers of `snapshot`, put in
-/// `catalog`: each depends on a table, so they follow the tables.
+/// The assertions, views, privileges, triggers and SQL-invoked routines
+/// of `snapshot`, put in `catalog`: each depends on a table, so they
+/// follow the tables.
 fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.assertions.iter().cloned().for_each(|a| catalog.put_assertion(a));
     catalog.add_views(snapshot.views.clone());
     catalog.grant(snapshot.privileges.clone());
     snapshot.triggers.iter().cloned().for_each(|t| catalog.put_trigger(t));
+    snapshot.routines.iter().cloned().for_each(|r| catalog.put_routine(r));
 }
 
 #[cfg(test)]
@@ -347,8 +359,8 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D25, D43, D62, a snapshot of the
     /// definitions: of every kind of table, column, constraint, view, index,
-    /// sequence generator, privilege, setting, user and owner there is, and
-    /// of the counters, it reads back exactly as written.
+    /// sequence generator, privilege, SQL-invoked routine, setting, user and
+    /// owner there is, and of the counters, it reads back exactly as written.
     #[test]
     fn a_snapshot_reads_back_as_written() {
         let db = Database::new();
@@ -364,7 +376,12 @@ mod tests {
                GRANT SELECT, UPDATE (V) ON C TO B WITH GRANT OPTION
                GRANT REFERENCES (K) ON P TO PUBLIC
                CREATE SEQUENCE Q AS SMALLINT START WITH 5 INCREMENT BY -2 MINVALUE -9 MAXVALUE 9 CYCLE
-               GRANT USAGE ON SEQUENCE Q TO B",
+               GRANT USAGE ON SEQUENCE Q TO B
+               CREATE FUNCTION TOP (X NUMERIC(9, 2)) RETURNS INTEGER SPECIFIC TOP_ONE
+                 DETERMINISTIC READS SQL DATA RETURNS NULL ON NULL INPUT RETURN (SELECT MAX(K) FROM C WHERE V > X)
+               CREATE PROCEDURE PUT (IN K INTEGER, OUT N INTEGER, INOUT M INTEGER) MODIFIES SQL DATA
+                 INSERT INTO P (K) VALUES (K)
+               GRANT EXECUTE ON FUNCTION TOP TO B WITH GRANT OPTION",
         )
         .unwrap();
         let a = db.session("A");
@@ -377,6 +394,7 @@ mod tests {
         db.set_owner("ANN").unwrap();
         let snapshot = Snapshot::of(&db.snapshot().unwrap()).unwrap();
         assert!(!snapshot.tables.is_empty() && snapshot.views.len() == 2 && snapshot.privileges.len() >= 2);
+        assert_eq!(snapshot.routines.iter().map(|r| r.execute.len()).collect::<Vec<_>>(), [2, 1]);
         assert_eq!((snapshot.users.len(), snapshot.owner.as_deref()), (2, Some("ANN")));
         let q = QualifiedName { auth: "A".into(), ident: "Q".into() };
         assert_eq!((snapshot.sequences.len(), snapshot.counters.clone()), (1, vec![(q, snapshot.epochs, 3)]));

@@ -150,18 +150,19 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
         let st = call.state();
+        let done = |r: Result<()>| r.map(|()| Completion::Success);
         let tx = match stmt {
-            SqlStatement::Commit => return self.db.noted(self.commit_in(call)).map(|()| Completion::Success),
+            SqlStatement::Commit => return done(self.db.noted(self.commit_in(call))),
             // [ISO/IEC 9075:1992 §4.22.7] not transaction initiating.
             SqlStatement::SetConstraints { names, deferred } => return self.set_constraints(call, names.as_deref(), *deferred),
-            SqlStatement::Rollback => return self.db.noted(self.rollback_in(st)).map(|()| Completion::Success),
+            SqlStatement::Rollback => return done(self.db.noted(self.rollback_in(st))),
             // [ISO/IEC 9075:1992 §4.28, §4.30] not transaction initiating.
-            SqlStatement::SetTransaction(modes) => return self.set_transaction(modes, params).map(|()| Completion::Success),
-            SqlStatement::SetSchema(v) => return self.set_schema(st, v, params).map(|()| Completion::Success),
-            SqlStatement::SetCollation(v) => return self.set_collation(st, v.as_ref(), params).map(|()| Completion::Success),
-            SqlStatement::SetCatalog(v) => return self.set_catalog(st, v, params).map(|()| Completion::Success),
+            SqlStatement::SetTransaction(modes) => return done(self.set_transaction(modes, params)),
+            SqlStatement::SetSchema(v) => return done(self.set_schema(st, v, params)),
+            SqlStatement::SetCollation(v) => return done(self.set_collation(st, v.as_ref(), params)),
+            SqlStatement::SetCatalog(v) => return done(self.set_catalog(st, v, params)),
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
-            SqlStatement::SetSessionAuthorization(v) => return self.set_session_authorization(v, params).map(|()| Completion::Success),
+            SqlStatement::SetSessionAuthorization(v) => return done(self.set_session_authorization(v, params)),
             // [ISO/IEC 9075:1992 §15] the SQL-agent's, a client's.
             SqlStatement::Connection(_) => {
                 return fail(
@@ -170,13 +171,9 @@ impl Session {
                 );
             }
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
-            SqlStatement::SetTimeZone(v) => return self.set_time_zone(st, v.as_ref(), params).map(|()| Completion::Success),
-            SqlStatement::SetSetting { name, value } => {
-                return self.set_named(st, name, value.as_ref(), params).map(|()| Completion::Success);
-            }
-            SqlStatement::SetDatabase { name, value } => {
-                return self.set_database(st, name, value.as_ref(), params).map(|()| Completion::Success);
-            }
+            SqlStatement::SetTimeZone(v) => return done(self.set_time_zone(st, v.as_ref(), params)),
+            SqlStatement::SetSetting { name, value } => return done(self.set_named(st, name, value.as_ref(), params)),
+            SqlStatement::SetDatabase { name, value } => return done(self.set_database(st, name, value.as_ref(), params)),
             SqlStatement::Index(index) => return self.index_statement(st, index),
             SqlStatement::User(user) => return self.user_statement(user),
             SqlStatement::Served(served) => return self.served_statement(served),
@@ -202,7 +199,9 @@ impl Session {
             // [ISO/IEC 9075:1992 §4.22.6] transaction initiating; EXECUTE
             // never reaches here (`execute_as`).
             | SqlStatement::Dynamic(_)
-            | SqlStatement::Execute(_) => self.ensure_transaction(st),
+            | SqlStatement::Execute(_)
+            | SqlStatement::Call(_)
+            | SqlStatement::Return(_) => self.ensure_transaction(st),
         };
         call.runs(&tx);
         self.may_run(st, stmt)?;
@@ -299,6 +298,8 @@ impl Session {
             SqlStatement::Drop { object, behavior } => self.drop_object(st, tx, object, *behavior),
             SqlStatement::AlterTable { table, action, text } => self.alter_table(st, tx, (table, action, text)),
             SqlStatement::Schema { statement, text } => self.schema_statement(st, tx, statement, text),
+            SqlStatement::Call(call) => self.call_statement(cx, call, params),
+            SqlStatement::Return(r) => super::routines::return_statement(r),
             // `execute_parsed` runs these itself, and never here.
             SqlStatement::Commit
             | SqlStatement::Rollback
@@ -315,9 +316,11 @@ impl Session {
             | SqlStatement::Index(_)
             | SqlStatement::User(_)
             | SqlStatement::Served(_)
-            | SqlStatement::GetDiagnostics(_)
             | SqlStatement::Execute(_)
             | SqlStatement::DeclareTable(_) => Ok(Completion::Success),
+            // [ISO/IEC 9075-2:2023 §15.21 GR6a, §9.18 GR6f] of a triggered
+            // action's or a procedure body's own diagnostics area.
+            SqlStatement::GetDiagnostics(get) => self.get_diagnostics(st, get, params),
         }
     }
 }
@@ -372,6 +375,8 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::SetDatabase { .. }
         | SqlStatement::User(_)
         | SqlStatement::Execute(_)
+        | SqlStatement::Call(_)
+        | SqlStatement::Return(_)
         | SqlStatement::SetConstraints { .. } => None,
     }
 }
@@ -393,7 +398,8 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::Collation(_)
         | SchemaStatement::Sequence(_)
         | SchemaStatement::AlterSequence(_)
-        | SchemaStatement::Type(_) => None,
+        | SchemaStatement::Type(_)
+        | SchemaStatement::Routine(_) => None,
     }
 }
 
@@ -433,6 +439,7 @@ fn schema_command(s: &SchemaStatement) -> Command {
         SchemaStatement::AlterSequence(_) => commands::ALTER_SEQUENCE,
         SchemaStatement::Type(_) => commands::CREATE_TYPE,
         SchemaStatement::Trigger(_) => commands::CREATE_TRIGGER,
+        SchemaStatement::Routine(_) => commands::CREATE_ROUTINE,
     }
 }
 
@@ -449,6 +456,7 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::Sequence(_) => commands::DROP_SEQUENCE,
         DropObject::Type(_) => commands::DROP_TYPE,
         DropObject::Trigger(_) => commands::DROP_TRIGGER,
+        DropObject::Routine(_) => commands::DROP_ROUTINE,
     }
 }
 
@@ -498,5 +506,7 @@ fn command_of(stmt: &SqlStatement) -> Command {
         SqlStatement::User(UserStatement::Owner { .. } | UserStatement::Members { .. }) => commands::ALTER_DATABASE,
         SqlStatement::Served(ServedStatement::End { .. }) => commands::END_CONNECTION,
         SqlStatement::Served(ServedStatement::Cancel { .. }) => commands::CANCEL_CONNECTION,
+        SqlStatement::Call(_) => commands::CALL,
+        SqlStatement::Return(_) => commands::RETURN,
     }
 }

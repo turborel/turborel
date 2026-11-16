@@ -13,7 +13,7 @@
 use super::Parser;
 use crate::ast::{
     DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, FetchOrientation, GetDescriptor, HeaderItem,
-    ParameterSpecification, Scope, SetDescriptor, SqlStatement, TableName, UsingClause, ValueSpecification,
+    ParameterSpecification, Scope, SetDescriptor, SqlStatement, TableName, TargetKind, UsingClause, ValueSpecification,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -66,7 +66,7 @@ impl Parser {
         if !self.params.contains(&name) {
             return Err(Self::rule_at(at, format!("[X3.135-1986 §7.3 SR3] parameter {name} is not declared")));
         }
-        Ok(ParameterSpecification { name, indicator: None, at, transition: false })
+        Ok(ParameterSpecification { name, indicator: None, at, kind: TargetKind::Parameter })
     }
 
     /// [§6.2] `<simple value specification>` ::= `<parameter name>` |

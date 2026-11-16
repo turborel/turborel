@@ -3,7 +3,7 @@
 //! CONDITION.
 
 use super::Parser;
-use crate::ast::{AllQualifier, ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, ValueSpecification};
+use crate::ast::{AllQualifier, ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, TargetKind, ValueSpecification};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
@@ -99,12 +99,16 @@ impl Parser {
         if self.trigger.is_some() {
             return self.transition_target();
         }
+        // [ISO/IEC 9075-2:2023 §6.8 SR1] of an <SQL routine body>.
+        if self.routine.is_some() {
+            return self.routine_target();
+        }
         let at = self.here();
         let name = self.identifier()?;
         if !self.params.contains(&name) {
             return Err(SqlError::at(Code::SyntaxRule, at, format!("[X3.135-1986 §7.3 SR3] parameter {name} is not declared")));
         }
-        Ok(ParameterSpecification { name, indicator: None, at, transition: false })
+        Ok(ParameterSpecification { name, indicator: None, at, kind: TargetKind::Parameter })
     }
 }
 

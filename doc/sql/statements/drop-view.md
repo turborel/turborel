@@ -20,7 +20,8 @@ DROP VIEW drops a view and the privileges on it; no row of any table
 changes. RESTRICT refuses the drop if another view reads it, or a
 constraint or an assertion refers to it. CASCADE drops those views, and
 the views that read them, however far, and the constraints and
-assertions.
+assertions. A function or procedure whose body reads the view is
+refused the same way, and dropped by CASCADE with what invokes it.
 
 DROP VIEW runs within the session's transaction: ROLLBACK undoes it.
 
@@ -28,7 +29,8 @@ DROP VIEW runs within the session's transaction: ROLLBACK undoes it.
 
 1. The view exists, and is a view, not a base table.
 2. Its user owns the view's schema.
-3. RESTRICT: no other view, no constraint and no assertion refers to it.
+3. RESTRICT: no other view, no constraint, no assertion and no routine
+   refers to it.
 4. No cursor of the transaction reads the view.
 5. The transaction is not READ ONLY.
 

@@ -199,11 +199,13 @@ impl State {
             }
         };
         // [§11.15 SR4] the assertions that refer to a column dropped;
-        // [ISO/IEC 9075-2:2023 §11.23 SR7e, GR1] the triggers.
+        // [ISO/IEC 9075-2:2023 §11.23 SR7e, GR1] the triggers; [SR7c, GR2]
+        // the routines.
         let asserting = if let (AlterAction::DropColumn { behavior, .. }, Reshape::Remove(at)) = (action, reshape) {
             let cascade = *behavior == DropBehavior::Cascade;
             let mut asserting = self.drop_column_asserting(&desc, at, cascade)?;
             asserting.absorb(self.drop_column_triggering(&desc, at, cascade)?);
+            asserting.absorb(self.drop_column_routining(&desc, at, cascade)?);
             asserting
         } else {
             Dropped::default()
@@ -410,7 +412,8 @@ impl State {
             catalog.revoke_all(view);
         }
         self.catalog = Arc::from(catalog);
-        let dropped = self.drop_triggering(&gone.iter().collect::<Vec<_>>(), (true, false))?;
+        let mut dropped = self.drop_triggering(&gone.iter().collect::<Vec<_>>(), (true, false))?;
+        dropped.absorb(self.drop_routining(&gone.iter().collect::<Vec<_>>(), (true, false))?);
         let kept: Vec<ViewDesc> = views.into_iter().filter(|v| !gone.contains(&v.name)).collect();
         self.move_view_columns(&kept, table, reshape)?;
         Ok(dropped)

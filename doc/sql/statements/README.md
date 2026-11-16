@@ -12,6 +12,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER SEQUENCE](alter-sequence.md): change a sequence generator
 - [ALTER TABLE](alter-table.md): change a base table
 - [ALTER USER](alter-user.md): change a user's password
+- [CALL](call.md): run an SQL-invoked procedure
 - [CANCEL CONNECTION](cancel-connection.md): cancel what a connection of the server runs
 - [CLOSE](close.md): close a cursor
 - [COMMIT](commit.md): end a transaction, keeping its changes
@@ -19,7 +20,9 @@ One reference page for each statement, in alphabetical order.
 - [CREATE ASSERTION](create-assertion.md): define an assertion
 - [CREATE COLLATION](create-collation.md): define a collation
 - [CREATE DOMAIN](create-domain.md): define a domain
+- [CREATE FUNCTION](create-function.md): define an SQL-invoked function
 - [CREATE INDEX](create-index.md): define an index
+- [CREATE PROCEDURE](create-procedure.md): define an SQL-invoked procedure
 - [CREATE SCHEMA](create-schema.md): define a schema
 - [CREATE SEQUENCE](create-sequence.md): define a sequence generator
 - [CREATE TABLE](create-table.md): define a base table
@@ -38,6 +41,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP COLLATION](drop-collation.md): drop a collation
 - [DROP DOMAIN](drop-domain.md): drop a domain
 - [DROP INDEX](drop-index.md): drop an index
+- [DROP ROUTINE](drop-routine.md): drop an SQL-invoked function or procedure
 - [DROP SCHEMA](drop-schema.md): drop a schema
 - [DROP SEQUENCE](drop-sequence.md): drop a sequence generator
 - [DROP TABLE](drop-table.md): drop a base table
@@ -56,6 +60,7 @@ One reference page for each statement, in alphabetical order.
 - [MERGE](merge.md): update, delete and insert rows of a table from one source
 - [OPEN](open.md): open a cursor
 - [PREPARE](prepare.md): prepare a statement, by name
+- [RETURN](return.md): give the value of an SQL-invoked function
 - [REVOKE](revoke.md): revoke privileges
 - [ROLLBACK](rollback.md): end a transaction, undoing its changes
 - [SELECT](select.md): read rows

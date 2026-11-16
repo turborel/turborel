@@ -110,6 +110,7 @@ verification approach DO-178C expects (§8).
 | D70 | SEARCH and CYCLE are their expansion, its growing columns widened |
 | D71 | Triggered actions run inside their statement, nested to a bound |
 | D72 | Spatial pages use R-link split stamps and R* partitioning |
+| D73 | SQL-invoked routines are bound as their owner, a function's body a subquery of its parameters |
 
 ### The project
 
@@ -694,9 +695,11 @@ asks, and the new savepoint level of §15.21 GR6 holds nothing, since
 there is no SAVEPOINT. The action shares its statement's instant [§9.17
 GR5].
 
-Nesting is bounded by `MAX_TRIGGER_DEPTH`, 16, so the deepest chain runs
-on half the default stack. A deeper one fails with SQLCODE -900, raised
-as SQLSTATE 09000. A trigger that writes its own table recurses until its
+Nesting is bounded by `MAX_NESTING`, 16, so the deepest chain runs on
+half the default stack (`db/nested.rs`). Triggered actions and the
+procedures CALL runs (D73) count against the one bound, each a context
+pushed with its owner, schema and diagnostics area. A deeper one fails
+with SQLCODE -900, raised as SQLSTATE 09000 of a trigger's action. A trigger that writes its own table recurses until its
 WHEN condition stops it or the bound does.
 
 A state change's transitions are held rows (D38), spilled past the work
@@ -709,9 +712,43 @@ seen by no action.
 
 A BEFORE trigger changes its new row only through a `SELECT ... INTO` or
 GET DIAGNOSTICS whose target is a new transition variable [§6.4 SR7, §6.6
-SR13], since Part 2 gives it no assignment statement. A MERGE or a
-positioned UPDATE or DELETE into a view with an INSTEAD OF trigger is not
-supported (SQLCODE -900) rather than written through the view.
+SR13], since Part 2 gives it no assignment statement. A change of a view
+with an INSTEAD OF trigger of its event, by INSERT, a searched or
+positioned UPDATE or DELETE, a MERGE's clause, or through an updatable
+view over it, executes the trigger and writes nothing through the view
+[§14.12 GR6a, §15.6 GR11b, §15.7 GR17b, §15.12 GR2b].
+
+#### D73. SQL-invoked routines are bound as their owner, a function's body a subquery of its parameters
+
+A routine of an SQL routine body keeps its definition's text, as a
+trigger does, and is bound again from it as it is invoked, under the
+owner of its schema, of that schema [ISO/IEC 9075-2:2023 §4.35, §11.60
+SR23b]. Its body is bound once more as it is defined, which checks its
+rules, its privileges and its SQL-data access then, and records the
+tables it reads and the routines it invokes (`db/routines/body.rs`). So
+the drops and revokes that abandon a routine find it by those lists, or
+by binding its body again without what they take away, as views and
+constraints are found.
+
+A function's body is a RETURN, bound as `(VALUES (v))`, a subquery whose
+outer references are the parameters, a row named for the function
+(`binder/invocation/body.rs`). An invocation is `Expr::Invoked`: its
+arguments, stored in their parameters, then the body run with their
+values as its outer values (`exec/invoked.rs`). A body of one value
+reading no table is evaluated in place, its outer references replaced
+by the values, so a function may be invoked in a CHECK or a generated
+column, where no subquery runs. A column of the body's query hides a
+parameter of its name, as an inner scope hides an outer.
+
+A procedure's body is any statement a triggered action may be, or a
+CALL, run by `run_statement` as a nested context (D71), its parameters
+the dynamic values of a routine scope (`params/routine.rs`). SELECT
+INTO, GET DIAGNOSTICS and a nested CALL assign an OUT or INOUT one, and
+CALL then assigns each to its target. A routine runs with its owner's
+privileges, SQL SECURITY DEFINER the only behaviour, since T324 is not
+claimed. A schema holds one routine of a name: overloading (T341, D53)
+is refused with SQLCODE -900, so resolution finds one candidate by name
+and arity.
 
 #### D33. Schema changes are transactional
 

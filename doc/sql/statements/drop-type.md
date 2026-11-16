@@ -19,13 +19,15 @@ DROP TYPE: drop a distinct type
 DROP TYPE drops a distinct type, its two functions and the privileges on
 them. RESTRICT refuses the drop if a column is of the type, an array of
 it or a type based on it, if another type's source is based on it, or if
-a view, a constraint, an assertion or a generated column names it or
-invokes one of its functions.
+a view, a constraint, an assertion, a generated column or a routine
+names it or invokes one of its functions, or a routine's parameter or
+result is of it.
 
 CASCADE drops it all the same, with every type based on it. Each column
 of one of those types, and each generated column that names one, is
 dropped first, as ALTER TABLE DROP COLUMN with CASCADE drops it, and
-the views, constraints and assertions that name one are dropped. A drop
+the views, constraints and assertions that name one are dropped, and
+the routines of one or that use one, with what invokes them. A drop
 that would drop every column of a table is refused before it drops any.
 
 DROP TYPE runs within the session's transaction: ROLLBACK undoes it.

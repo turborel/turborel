@@ -99,11 +99,13 @@ mod log_sync;
 mod long_texts;
 mod maintenance;
 mod merge;
+mod nested;
 mod position;
 mod prepared;
 mod recovery;
 mod rekey;
 mod revoke;
+mod routines;
 mod schema;
 mod scroll;
 mod sealing;
@@ -286,6 +288,9 @@ pub struct Session {
     /// [ISO/IEC 9075-2:2023 §15.21] The triggered actions it is executing,
     /// and their plans (`db/triggers/run.rs`).
     triggering: triggers::Triggering,
+    /// [ISO/IEC 9075-2:2023 §15.21 GR6, §9.18 GR6] The contexts of the
+    /// triggers and procedures it is executing (`db/nested.rs`).
+    nesting: nested::Nesting,
 }
 
 /// One call on a session: the snapshot it runs against, and the session
@@ -362,6 +367,7 @@ impl Session {
             conflict: RefCell::new(None),
             now: Cell::default(),
             triggering: triggers::Triggering::default(),
+            nesting: nested::Nesting::default(),
         }
     }
 

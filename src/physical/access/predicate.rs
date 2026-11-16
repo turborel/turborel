@@ -71,7 +71,8 @@ fn constant(expr: &Expr, values: Option<&[Value]>) -> Option<(Value, Option<Slot
         | Expr::SortKey(..)
         | Expr::Domain(..)
         | Expr::Truth(_)
-        | Expr::NextValue(_) => None,
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => None,
     }
 }
 
