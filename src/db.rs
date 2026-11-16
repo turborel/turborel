@@ -99,6 +99,7 @@ mod log_sync;
 mod long_texts;
 mod maintenance;
 mod merge;
+mod modules;
 mod nested;
 mod position;
 mod prepared;

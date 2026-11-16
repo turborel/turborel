@@ -260,7 +260,7 @@ impl ProgramBinder<'_> {
             ColumnDefault::Value(Value::Null) => return Ok(Initial::Null),
             ColumnDefault::Value(v) => {
                 let plan = LogicalPlan::Values { rows: vec![vec![Expr::Const(v.clone())]], types: vec![t.clone()] };
-                return Ok(Initial::Value(Leaf { query: Arc::new(Subquery { plan, outer: Vec::new() }), at }));
+                return Ok(Initial::Value(Leaf { query: Arc::new(Subquery::new(plan, Vec::new())), at }));
             }
             ColumnDefault::User(f) => ValueExpression::Value(ValueSpecification::User(*f)),
             ColumnDefault::Datetime(moment, p) => ValueExpression::Datetime(ast::DatetimeFunction { moment: *moment, precision: Some(*p) }),

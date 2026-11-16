@@ -147,7 +147,7 @@ mod tests {
     }
 
     fn exists() -> Cond {
-        Cond::Exists(Arc::new(Subquery { plan: *scan(), outer: vec![Expr::Column(0)] }))
+        Cond::Exists(Arc::new(Subquery::new(*scan(), vec![Expr::Column(0)])))
     }
 
     /// `rule` applied to a filter of `cond` over `node` made of a scan.
@@ -194,8 +194,7 @@ mod tests {
             assert!(matches!(applied(&PushFilterThroughDistinct, cond.clone(), distinct), Some(LogicalPlan::Distinct { .. })), "{cond:?}");
         }
         let like = Cond::Like(Expr::Column(0), Expr::Const(Value::Char("A%".into())), None);
-        let quantified =
-            Cond::Quantified(vec![Expr::Column(0)], CompOp::Eq, Quantifier::Some, Arc::new(Subquery { plan: *scan(), outer: vec![] }));
+        let quantified = Cond::Quantified(vec![Expr::Column(0)], CompOp::Eq, Quantifier::Some, Arc::new(Subquery::new(*scan(), vec![])));
         let call = Expr::Call(ScalarRef(Arc::new(Identity)), vec![Expr::Column(0)]);
         let left = [
             like,

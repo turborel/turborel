@@ -65,7 +65,7 @@ fn filtered(cond: Cond) -> LogicalPlan {
 }
 
 fn subquery(plan: LogicalPlan) -> Arc<Subquery> {
-    Arc::new(Subquery { plan, outer: Vec::new() })
+    Arc::new(Subquery::new(plan, Vec::new()))
 }
 
 /// `NOT EXISTS (SELECT exprs FROM rows)`.
@@ -268,7 +268,7 @@ fn other_shapes_have_no_form() {
         none_of(vec![number(1)], filtered(Cond::IsNull(cast.clone(), false))),
         none_of(vec![number(1)], filtered(inner)),
         none_of(vec![raising], scan()),
-        Cond::Not(Box::new(Cond::Exists(Arc::new(Subquery { plan: scan(), outer: vec![Expr::Column(0)] })))),
+        Cond::Not(Box::new(Cond::Exists(Arc::new(Subquery::new(scan(), vec![Expr::Column(0)]))))),
         Cond::Not(Box::new(Cond::Const(Truth::True))),
         counted(count.clone(), None, grouped, CompOp::Le),
         counted(max.clone(), None, scan(), CompOp::Lt),

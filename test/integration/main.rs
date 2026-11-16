@@ -144,6 +144,8 @@ mod merge;
 mod merge_concurrency;
 mod merge_rows;
 mod merge_rules;
+mod modules;
+mod modules_privileges;
 mod mvcc;
 mod named_schemas;
 mod null_ordering;

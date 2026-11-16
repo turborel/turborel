@@ -82,6 +82,7 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         | SchemaStatement::Role(_) => None,
         // [ISO/IEC 9075-2:2023 §11.60 GR5]
         SchemaStatement::Routine(r) => long(&r.body_text).then_some(SqlState::STATEMENT_TOO_LONG),
+        SchemaStatement::Module(m) => m.routines.iter().find(|r| long(&r.body_text)).map(|_| SqlState::STATEMENT_TOO_LONG),
     }
 }
 

@@ -30,7 +30,7 @@ impl ProgramBinder<'_> {
         let program = bind_procedure_program(self.cx, &bound.desc)?;
         let at = call.name.at;
         let plan = LogicalPlan::Values { rows: vec![bound.inputs], types: bound.desc.parameter_types() };
-        let inputs = Leaf { query: Arc::new(Subquery { plan, outer: Vec::new() }), at };
+        let inputs = Leaf { query: Arc::new(Subquery::new(plan, Vec::new())), at };
         let desc = bound.desc;
         let parameters = desc.parameters.iter().map(|p| (p.name.clone(), p.mode, p.data_type.clone())).collect();
         let called = Called {

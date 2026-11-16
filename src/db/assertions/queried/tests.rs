@@ -78,7 +78,7 @@ fn grouped(f: AggregateRef, (arg, result): (Option<Expr>, DataType)) -> LogicalP
 
 /// The forms of an assertion `NOT EXISTS (SELECT 1 FROM rows)`.
 fn none_of(rows: LogicalPlan, functions: &Registry) -> Option<Vec<Form>> {
-    let s = Arc::new(Subquery { plan: LogicalPlan::Project { exprs: vec![number(1)], input: Box::new(rows) }, outer: Vec::new() });
+    let s = Arc::new(Subquery::new(LogicalPlan::Project { exprs: vec![number(1)], input: Box::new(rows) }, Vec::new()));
     asserted(Cond::Not(Box::new(Cond::Exists(s))), functions)
 }
 
@@ -109,8 +109,7 @@ fn bounded(f: AggregateRef, x: Expr, rows: LogicalPlan, op: CompOp) -> Cond {
     let agg = AggCall { func: f, arg: Some(x), distinct: false, result: COUNTED, filter: None, distribution: None, label: "F".into() };
     let aggregate =
         LogicalPlan::Aggregate { collations: Vec::new(), groups: Vec::new(), aggs: vec![agg], seeds: Vec::new(), input: Box::new(rows) };
-    let s =
-        Arc::new(Subquery { plan: LogicalPlan::Project { exprs: vec![Expr::Column(0)], input: Box::new(aggregate) }, outer: Vec::new() });
+    let s = Arc::new(Subquery::new(LogicalPlan::Project { exprs: vec![Expr::Column(0)], input: Box::new(aggregate) }, Vec::new()));
     Cond::Compare(Expr::Subquery(s, 0), op, number(10))
 }
 

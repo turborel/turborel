@@ -58,6 +58,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
         access: DataAccess::Contains,
         null_call: false,
         text: format!("CREATE FUNCTION S.{name} ({}) RETURNS INTEGER DETERMINISTIC CONTAINS SQL RETURN {value}", declared.join(", ")),
+        module: None,
         body: format!("RETURN {value}"),
         schema: "S".into(),
         reads: Vec::new(),

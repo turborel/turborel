@@ -199,7 +199,7 @@ fn keyed_subquery(s: &Arc<Subquery>, collations: &[Option<CollationRef>]) -> Arc
         None => Expr::Column(i),
     };
     let exprs = collations.iter().enumerate().map(keyed).collect();
-    Arc::new(Subquery { plan: LogicalPlan::Project { exprs, input: Box::new(s.plan.clone()) }, outer: s.outer.clone() })
+    Arc::new(Subquery::new(LogicalPlan::Project { exprs, input: Box::new(s.plan.clone()) }, s.outer.clone()))
 }
 
 impl Binder<'_> {

@@ -394,7 +394,7 @@ impl Binder<'_> {
         let nesting = Nesting::Subquery { outer: &outer, result };
         let bound = bind_query_expression(cx, &s.query, &nesting)?;
         self.note_subquery(s, &bound.columns);
-        let subquery = Subquery { plan: bound.plan, outer: outer.captured.into_inner() };
+        let subquery = Subquery::new(bound.plan, outer.captured.into_inner());
         Ok((Arc::new(subquery), bound.columns))
     }
 
@@ -445,7 +445,7 @@ impl Binder<'_> {
             seeds: Vec::new(),
             input: Box::new(ordered.plan),
         };
-        let subquery = Subquery { plan, outer: outer.captured.into_inner() };
+        let subquery = Subquery::new(plan, outer.captured.into_inner());
         Ok((Expr::Subquery(Arc::new(subquery), 0), result))
     }
 }

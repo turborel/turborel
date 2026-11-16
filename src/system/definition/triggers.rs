@@ -72,7 +72,7 @@ fn triggers_columns() -> Vec<ColumnDesc> {
 
 /// [ISO/IEC 9075-11:2006 draft §5.6] A column `name` of TIME_STAMP, which
 /// may be null.
-fn time_stamp(name: &str) -> ColumnDesc {
+pub(super) fn time_stamp(name: &str) -> ColumnDesc {
     ColumnDesc {
         name: name.to_owned(),
         data_type: DataType::Timestamp { precision: TIME_STAMP_PRECISION, zoned: true },

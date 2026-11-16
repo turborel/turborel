@@ -45,10 +45,6 @@ Nothing is open.
 
 ### Triggers, routines and roles
 
-- SQL-server modules (P001, P003) [ISO/IEC 9075-4:2006 draft §9.21,
-  §9.22, Clause 18]. CREATE MODULE and DROP MODULE, a module's routines,
-  temporary tables and path, its privileges, and the MODULE_ views of
-  the Information Schema.
 - Polymorphic table functions (B200 to B209) [§4.35.4, §7.6, §9.24, §9.25].
   A function in FROM whose result's columns depend on its arguments, on
   the SQL-invoked functions there are.

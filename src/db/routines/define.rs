@@ -20,7 +20,7 @@ use super::super::{Completion, Session, State, rule};
 use crate::ast::{
     ParameterDeclaration, PrivilegeDefinition, PrivilegeObject, RoutineDefinition, RoutineDesignator, Schema, TableName, TypeName,
 };
-use crate::binder::{alike, qualify, routine_definition};
+use crate::binder::{alike, definition_of, qualify};
 use crate::catalog::{
     Horizon, ParameterMode, QualifiedName, Routine, RoutineKind, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, UsageDesc, UserTypeDesc,
     owner_of, sole,
@@ -35,6 +35,17 @@ fn listed(types: &[DataType]) -> String {
     types.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
 }
 
+/// Where a routine is defined: the schema its name is of if written
+/// without one, `schema`; that of the other names its definition writes
+/// without one, `names`; and the SQL-server module it is of, if one
+/// [ISO/IEC 9075-4:2006 draft §9.21 SR7, §9.24 SR3].
+#[derive(Clone, Copy)]
+pub(in crate::db) struct Home<'a> {
+    pub(in crate::db) schema: &'a str,
+    pub(in crate::db) names: &'a str,
+    pub(in crate::db) module: Option<&'a str>,
+}
+
 impl State {
     /// [ISO/IEC 9075-2:2023 §11.60] CREATE FUNCTION or CREATE PROCEDURE
     /// `r`, its names without a schema in `schema`: its routine descriptor
@@ -47,12 +58,24 @@ impl State {
     /// SR23]; -900 if a routine of its name is in its schema [CR2]; a
     /// parameter's type's, or its body's, bound.
     pub(in crate::db) fn create_routine(&mut self, schema: &str, r: &RoutineDefinition) -> Result<Defined> {
+        self.routine_in(Home { schema, names: schema, module: None }, r).map(|(defined, _)| defined)
+    }
+
+    /// The routine `r` defined in `home`: as `create_routine` defines it,
+    /// and of a module, of its module, with no privilege of its own [§11.60
+    /// GR1]. Whether the privileges its body needs are held grantably.
+    ///
+    /// # Errors
+    ///
+    /// As `create_routine`'s.
+    pub(in crate::db) fn routine_in(&mut self, home: Home<'_>, r: &RoutineDefinition) -> Result<(Defined, bool)> {
+        let Home { schema, names, module } = home;
         let name = qualify(&r.name, schema);
         if !self.catalog.schema_exists(&name.auth) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.60 SR9p] there is no schema {}", name.auth)).or_at(r.name.at));
         }
         let owner = owner_of(&*self.catalog, &name.auth).to_owned();
-        let parameters = self.parameters(r, (schema, &owner))?;
+        let parameters = self.parameters(r, (names, &owner))?;
         self.told_apart(&name, r.kind, &parameters).or_at(r.name.at)?;
         let created = self.catalog.routines().iter().map(|d| d.created).max().unwrap_or(0).saturating_add(1);
         let mut desc = SqlRoutineDesc {
@@ -60,26 +83,31 @@ impl State {
             name,
             kind: r.kind,
             parameters,
-            returns: r.returns.as_ref().map(|t| self.parameter_type(t, (schema, &owner))).transpose()?,
+            returns: r.returns.as_ref().map(|t| self.parameter_type(t, (names, &owner))).transpose()?,
             deterministic: r.deterministic,
             access: r.access,
             null_call: r.null_call,
             text: r.text.clone(),
             body: r.body_text.clone(),
-            schema: schema.to_owned(),
+            schema: names.to_owned(),
             reads: Vec::new(),
             horizon: Horizon::default(),
             sequences: Vec::new(),
             execute: Vec::new(),
             created,
+            module: module.map(str::to_owned),
         };
         let bound = self.bind_routine_body(&desc, r)?;
         desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes);
         (desc.reads, desc.sequences) = (bound.reads, bound.sequences);
-        desc.execute = vec![UsageDesc { grantor: SYSTEM_GRANTOR.to_owned(), grantee: Some(owner), grantable: bound.grantable }];
+        // [ISO/IEC 9075-4:2006 draft §9.21 GR2] of a module's, the
+        // privilege is on the module.
+        if module.is_none() {
+            desc.execute = vec![UsageDesc { grantor: SYSTEM_GRANTOR.to_owned(), grantee: Some(owner), grantable: bound.grantable }];
+        }
         let locks = desc.reads.iter().map(|t| (t.clone(), LockMode::Shared)).collect();
         self.put_routine(desc);
-        Ok(Defined { locks, ..Defined::default() })
+        Ok((Defined { locks, ..Defined::default() }, bound.grantable))
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 SR20] That a routine `name` of kind
@@ -219,7 +247,7 @@ impl State {
     ///
     /// As `create_routine`'s, of its body.
     pub(in crate::db) fn routine_binds(&self, r: &SqlRoutineDesc) -> Result<()> {
-        let definition = routine_definition(&r.text)?;
+        let definition = definition_of(r)?;
         self.bind_routine_body(r, &definition).map(drop)
     }
 
@@ -254,13 +282,35 @@ impl State {
         let Some(desc) = self.catalog.routine(specific).cloned() else {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.62 SR1] there is no routine of specific name {specific}")));
         };
-        let gone = self.invokers_of(std::slice::from_ref(specific));
+        // [ISO/IEC 9075-4:2006 draft §9.2 GR2a, §10.3 GR7] with its module.
+        if let Some(module) = desc.module_name() {
+            return self.drop_module(&module, cascade);
+        }
+        let refused =
+            |first: String| format!("[ISO/IEC 9075-2:2023 §11.62 SR4c] {first} invokes routine {}: drop it with CASCADE", desc.name);
+        self.drop_invoked(std::slice::from_ref(specific), cascade, &refused)
+    }
+
+    /// The routines of specific names `own` dropped, with CASCADE each
+    /// routine that invokes one and each view, constraint, generated
+    /// column and trigger that does, and the modules of those routines, as
+    /// `module_closure` says: what was taken away.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103, not `cascade`, if anything invokes one of them, as
+    /// `refused` of the first says.
+    pub(in crate::db) fn drop_invoked(
+        &mut self,
+        own: &[QualifiedName],
+        cascade: bool,
+        refused: &dyn Fn(String) -> String,
+    ) -> Result<Dropped> {
+        let (gone, modules) = self.module_closure(self.invokers_of(own));
         let mut abandoned = self.invoking(&gone);
-        abandoned.routines = gone.iter().filter(|s| *s != specific).cloned().collect();
+        abandoned.routines = gone.iter().filter(|s| !own.contains(s)).cloned().collect();
         if !cascade && !abandoned.is_empty() {
-            let msg =
-                format!("[ISO/IEC 9075-2:2023 §11.62 SR4c] {} invokes routine {}: drop it with CASCADE", abandoned.first(), desc.name);
-            return Err(rule(msg));
+            return Err(rule(refused(abandoned.first())));
         }
         let after = self.without_routines(&gone);
         abandoned.routines.clear();
@@ -271,6 +321,7 @@ impl State {
         let read: Vec<&QualifiedName> = views.iter().collect();
         dropped.absorb(self.drop_triggering(&read, (true, false))?);
         dropped.absorb(self.drop_routining(&read, (true, false))?);
+        dropped.absorb(self.remove_modules(&modules)?);
         dropped.names.extend(locks.into_iter().map(|(name, _)| name));
         dropped.names.extend(gone);
         Ok(dropped)
@@ -298,6 +349,13 @@ impl Session {
         let Some(desc) = st.sql_routine_named((&auth, &schema), named)? else {
             return Err(no_routine(&designator.name, &schema));
         };
+        if let Some(module) = desc.module_name() {
+            let msg = format!(
+                "[ISO/IEC 9075-2:2023 §11.62 SR2] routine {} is of module {module}, not a schema-level routine: it goes with DROP MODULE",
+                desc.name
+            );
+            return Err(rule(msg).or_at(designator.name.at));
+        }
         if !self.owns_schema(st, &desc.name.auth) {
             let msg = format!(
                 "[ISO/IEC 9075-2:2023 §11.62 AR1] routine {} is in schema {}, which {auth} does not own",
@@ -320,6 +378,7 @@ pub(in crate::db) fn of_schema_routine(s: &Schema, p: &PrivilegeDefinition) -> b
         | PrivilegeObject::Domain
         | PrivilegeObject::Collation
         | PrivilegeObject::Sequence
+        | PrivilegeObject::Module
         | PrivilegeObject::Type => false,
     };
     s.routines.iter().any(of)

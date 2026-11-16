@@ -89,7 +89,10 @@ pub use counterparts::defaulted_columns;
 pub use cursor::bind_cursor;
 use from::FromItem;
 pub use generated::{bind_generation, generations, noting_generation};
-pub use invocation::{Candidate, FunctionBody, alike, bind_function_body, functions_named, resolve_procedure, routine_definition};
+pub use invocation::{
+    Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
+    routine_definition,
+};
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 pub use parameters::bind_argument;
 pub(crate) use psm::{Frame, bind_program};

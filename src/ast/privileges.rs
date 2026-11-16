@@ -23,6 +23,8 @@ pub enum PrivilegeObject {
     /// [ISO/IEC 9075-2:2023 §12.3, §10.6] `<routine type>` `<member name>`,
     /// its `<data type list>` if written.
     Routine(RoutineType),
+    /// [ISO/IEC 9075-4:2006 draft §10.2] MODULE `<module name>`.
+    Module,
 }
 
 /// [ISO/IEC 9075:1992 §11.37] `<revoke statement>` ::= REVOKE \[GRANT

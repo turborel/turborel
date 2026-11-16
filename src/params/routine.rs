@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use super::Params;
-use crate::catalog::{Horizon, ParameterMode, QualifiedName};
+use crate::catalog::{Horizon, ParameterMode, QualifiedName, SqlRoutineDesc};
 use crate::error::{Code, Result, SqlError};
 use crate::value::{DataType, Value, assign};
 
@@ -45,6 +45,11 @@ pub(crate) struct RoutineScope {
     /// innermost last: each `<cursor name>` and the session's key of the
     /// cursor it names in this execution of the routine.
     pub(crate) cursors: Vec<(String, String)>,
+    /// [ISO/IEC 9075-4:2006 draft §9.21 SR6] Of a routine of an SQL-server
+    /// module, the module's SQL-path, the schemas a name of a routine its
+    /// body invokes is of, if written without one; else none, and the name
+    /// is of the routine's schema.
+    pub(crate) path: Vec<String>,
 }
 
 /// [ISO/IEC 9075-4:2006 draft §14.4] An SQL variable in scope.
@@ -72,6 +77,20 @@ impl RoutineScope {
             horizon,
             variables: Vec::new(),
             cursors: Vec::new(),
+            path: Vec::new(),
+        }
+    }
+
+    /// The scope of the body of the routine `desc`, of the module SQL-path
+    /// `path` if of a module: its parameters, and none of its variables yet.
+    pub(crate) fn of(desc: &SqlRoutineDesc, path: Vec<String>) -> RoutineScope {
+        RoutineScope {
+            name: desc.name.clone(),
+            parameters: desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone(), p.mode)).collect(),
+            horizon: desc.horizon.clone(),
+            variables: Vec::new(),
+            cursors: Vec::new(),
+            path,
         }
     }
 
@@ -161,6 +180,21 @@ impl Params {
     /// parameters of, if they are a procedure's.
     pub(crate) fn routine_scope(&self) -> Option<&RoutineScope> {
         self.routine.as_deref()
+    }
+
+    /// [ISO/IEC 9075-4:2006 draft §9.21 SR6] The schemas a routine named
+    /// without one is of here: the module SQL-path of the routine whose
+    /// body these are the parameters of, if it is of a module; else none.
+    pub(crate) fn routine_path(&self) -> &[String] {
+        self.routine.as_ref().map_or(self.path.as_slice(), |r| r.path.as_slice())
+    }
+
+    /// These parameters, of the body of a function of a module of SQL-path
+    /// `path` bound inline, with no parameters of their own.
+    #[must_use]
+    pub(crate) fn with_path(mut self, path: Vec<String>) -> Params {
+        self.path = path;
+        self
     }
 
     /// The declared type of the SQL parameter or variable `name`, qualified

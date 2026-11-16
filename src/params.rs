@@ -59,6 +59,10 @@ pub struct Params {
     /// execution: what tells its local cursors from those of another
     /// running in the session (`params/routine.rs`).
     execution: usize,
+    /// [ISO/IEC 9075-4:2006 draft §9.21 SR6] Of the body of a function of
+    /// an SQL-server module bound inline, the module's SQL-path, which
+    /// `routine` gives of any other routine's (`params/routine.rs`).
+    path: Vec<String>,
 }
 
 fn api(msg: impl Into<String>) -> SqlError {

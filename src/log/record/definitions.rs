@@ -19,6 +19,7 @@ const DROPPED_SEQUENCE: u8 = 7;
 const DROPPED_TYPE: u8 = 8;
 const DROPPED_TRIGGER: u8 = 9;
 const DROPPED_ROUTINE: u8 = 10;
+const DROPPED_MODULE: u8 = 11;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +45,8 @@ pub enum DropTarget {
     /// An SQL-invoked routine, by its specific name [ISO/IEC 9075-2:2023
     /// §11.62].
     Routine(QualifiedName),
+    /// An SQL-server module [ISO/IEC 9075-4:2006 draft §9.22].
+    Module(QualifiedName),
 }
 
 /// A schema's text, the engine of each table it created, its
@@ -163,6 +166,7 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::Type(user_type) => (DROPPED_TYPE, user_type),
         DropTarget::Trigger(trigger) => (DROPPED_TRIGGER, trigger),
         DropTarget::Routine(specific) => (DROPPED_ROUTINE, specific),
+        DropTarget::Module(module) => (DROPPED_MODULE, module),
     };
     out.put_u8(tag);
     put_table(out, name);
@@ -182,6 +186,7 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_TYPE => Ok(DropTarget::Type(table(r)?)),
         DROPPED_TRIGGER => Ok(DropTarget::Trigger(table(r)?)),
         DROPPED_ROUTINE => Ok(DropTarget::Routine(table(r)?)),
+        DROPPED_MODULE => Ok(DropTarget::Module(table(r)?)),
         other => Err(SqlError::new(Code::Corrupt, format!("[DESIGN] a log record drops an unknown kind of object, {other}"))),
     }
 }

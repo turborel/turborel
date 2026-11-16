@@ -481,7 +481,7 @@ mod tests {
         assert_eq!(eval(&cut, &Vec::new(), &Heard(&warnings)).unwrap().to_string(), "A");
         assert_eq!(warnings.take(), Some(SqlState::STRING_TRUNCATED));
         let plan = LogicalPlan::Scan { table: missing_table(), names: vec![], needed: vec![], located: false };
-        let scalar = Expr::Subquery(Arc::new(Subquery { plan, outer: vec![] }), 0);
+        let scalar = Expr::Subquery(Arc::new(Subquery::new(plan, vec![])), 0);
         assert_eq!(eval(&scalar, &Vec::new(), &Heard(&warnings)).err().map(|e| e.code), Some(Code::Api));
     }
 }

@@ -11,8 +11,13 @@
 //! nested inside are in this plan's rows, so they are replaced too, and its
 //! own plan is not.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use super::{Cond, Expr, LogicalPlan, and_all, split_and};
 use crate::value::{CompOp, Value};
+
+/// The identity the next subquery made takes.
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 /// \[DESIGN\] A bound subquery.
 #[derive(Debug, Clone)]
@@ -24,6 +29,12 @@ pub struct Subquery {
     /// The expressions, over the rows it is applied to, whose values its
     /// outer reference slots take.
     pub outer: Vec<Expr>,
+    /// \[DESIGN\] Its identity, which no other plan's subquery has: what a
+    /// runner keeps its rows by, with its outer values (`exec/subquery.rs`).
+    /// A copy whose outer expressions alone differ keeps it, its plan the
+    /// same; an address would not do, as one a subquery made for a row
+    /// freed is another's after.
+    id: u64,
 }
 
 /// `e` with every outer reference slot replaced by its value in `values`;
@@ -111,9 +122,21 @@ fn plan_can_raise(plan: &LogicalPlan) -> bool {
 }
 
 impl Subquery {
-    /// It, its outer expressions replaced by `f` of each.
+    /// The subquery of `plan` whose outer reference slots take the values
+    /// of `outer`, of an identity of its own.
+    pub fn new(plan: LogicalPlan, outer: Vec<Expr>) -> Subquery {
+        Subquery { plan, outer, id: NEXT_ID.fetch_add(1, Ordering::Relaxed) }
+    }
+
+    /// Its identity, which no subquery of another plan has.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// It, its outer expressions replaced by `f` of each, its plan and so
+    /// its identity kept.
     pub fn map_outer(&self, f: &mut dyn FnMut(Expr) -> Expr) -> std::sync::Arc<Subquery> {
-        std::sync::Arc::new(Subquery { plan: self.plan.clone(), outer: self.outer.iter().cloned().map(f).collect() })
+        std::sync::Arc::new(Subquery { plan: self.plan.clone(), outer: self.outer.iter().cloned().map(f).collect(), id: self.id })
     }
 
     /// Whether running it can raise a run-time error, or computing its
@@ -271,7 +294,7 @@ mod tests {
     /// The subquery selecting `select` from U where `cond`.
     fn subquery(select: Expr, cond: Cond) -> Subquery {
         let filter = LogicalPlan::Filter { cond, input: Box::new(scan()) };
-        Subquery { plan: LogicalPlan::Project { exprs: vec![select], input: Box::new(filter) }, outer: vec![Expr::Column(0)] }
+        Subquery::new(LogicalPlan::Project { exprs: vec![select], input: Box::new(filter) }, vec![Expr::Column(0)])
     }
 
     /// Verifies: [DESIGN] RULES.md D35: a subquery whose outer references
@@ -310,7 +333,7 @@ mod tests {
     fn outer_references_elsewhere_keep_a_subquery_correlated() {
         let key = Cond::Compare(Expr::Column(0), CompOp::Eq, outer());
         let with = |c: Cond| Cond::And(Box::new(key.clone()), Box::new(c));
-        let nested = Arc::new(Subquery { plan: scan(), outer: vec![outer()] });
+        let nested = Arc::new(Subquery::new(scan(), vec![outer()]));
         let neg = Expr::Neg(Box::new(outer()));
         let arith = Expr::Arith(Box::new(Expr::Column(1)), ArithOp::Add, Box::new(outer()));
         let conds = [
@@ -320,7 +343,7 @@ mod tests {
             Cond::Not(Box::new(Cond::Compare(neg, CompOp::Lt, one()))),
             Cond::Exists(Arc::clone(&nested)),
             Cond::Quantified(vec![Expr::Column(1)], CompOp::Eq, Quantifier::Some, nested),
-            Cond::Quantified(vec![outer()], CompOp::Eq, Quantifier::Some, Arc::new(Subquery { plan: scan(), outer: vec![] })),
+            Cond::Quantified(vec![outer()], CompOp::Eq, Quantifier::Some, Arc::new(Subquery::new(scan(), vec![]))),
             Cond::Compare(arith, CompOp::Gt, Expr::Const(Value::Null)),
         ];
         for c in conds {
@@ -329,7 +352,7 @@ mod tests {
         }
         let below = |plan: LogicalPlan| {
             let filter = LogicalPlan::Filter { cond: key.clone(), input: Box::new(plan) };
-            Subquery { plan: LogicalPlan::Project { exprs: vec![Expr::Column(1)], input: Box::new(filter) }, outer: vec![] }
+            Subquery::new(LogicalPlan::Project { exprs: vec![Expr::Column(1)], input: Box::new(filter) }, vec![])
         };
         let inner_filter = LogicalPlan::Filter { cond: Cond::IsNull(outer(), false), input: Box::new(scan()) };
         let plans = [
@@ -348,8 +371,7 @@ mod tests {
             assert!(below(plan.clone()).decorrelated().is_none(), "{plan:?}");
         }
         let reversed = Cond::Compare(outer(), CompOp::Eq, Expr::Column(0));
-        let distinct =
-            Subquery { plan: LogicalPlan::Distinct { input: Box::new(subquery(Expr::Column(1), reversed).plan) }, outer: vec![] };
+        let distinct = Subquery::new(LogicalPlan::Distinct { input: Box::new(subquery(Expr::Column(1), reversed).plan) }, vec![]);
         let d = distinct.decorrelated().unwrap();
         let LogicalPlan::Distinct { input } = &d.plan else { panic!("{:?}", d.plan) };
         let LogicalPlan::Project { input: rows, .. } = &**input else { panic!("{input:?}") };

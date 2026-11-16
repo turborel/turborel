@@ -42,6 +42,7 @@ impl Parser {
             roles: Vec::new(),
             triggers: Vec::new(),
             routines: Vec::new(),
+            modules: Vec::new(),
         };
         while self.schema_element(&mut schema)? {}
         self.end()?;
@@ -84,6 +85,9 @@ impl Parser {
             s.triggers.push(self.trigger_definition()?);
         } else if self.next_is_routine() {
             s.routines.push(self.routine_definition()?);
+        } else if self.next_is_module() {
+            let schema = s.name.clone();
+            s.modules.push(self.module_definition(Some(&schema))?);
         } else {
             s.tables.push(self.table_definition()?);
         }
@@ -187,6 +191,8 @@ impl Parser {
             SchemaStatement::Trigger(self.trigger_definition()?)
         } else if self.next_is_routine() {
             SchemaStatement::Routine(Box::new(self.routine_definition()?))
+        } else if self.next_is_module() {
+            SchemaStatement::Module(Box::new(self.module_definition(None)?))
         } else {
             SchemaStatement::Table(self.table_definition()?)
         };
@@ -303,7 +309,7 @@ impl Parser {
         let at = self.here();
         self.expect_kw(kw::MODULE)?;
         self.expect_delim(delim::PERIOD)?;
-        let name = TableName { auth: Some(kw::MODULE.to_owned()), ident: self.identifier()?, at };
+        let name = TableName { auth: Some(self.module_qualifier()), ident: self.identifier()?, at };
         let elements = self.table_element_list()?;
         let delete_rows = self.on_commit()?.unwrap_or(true);
         let temporary = Some(Temporary { kind: TemporaryKind::Declared, delete_rows });
@@ -490,6 +496,10 @@ impl Parser {
             PrivilegeObject::Sequence
         } else if self.accept_word(super::user_types::TYPE) {
             PrivilegeObject::Type
+        } else if self.is_kw(kw::MODULE) && !matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD)) {
+            // [ISO/IEC 9075-4:2006 draft §10.2] MODULE <module name>.
+            self.advance();
+            PrivilegeObject::Module
         } else if self.next_is_routine_designator() {
             let designator = self.routine_designator()?;
             let object = if designator.specific {

@@ -16,8 +16,11 @@
 //! after END, as in END IF, opens none. The block ends with the END of its
 //! BEGIN. A statement whose first word, after a label and its colon if one
 //! is written, is IF, CASE, LOOP, REPEAT, WHILE or FOR is a control
-//! statement run alone, whose openers open levels as a block's do. Words
-//! are matched in any case, never in a string, an identifier or a comment.
+//! statement run alone, whose openers open levels as a block's do. MODULE
+//! after CREATE opens a level, which END MODULE closes, so an
+//! `<SQL-server module definition>` [ISO/IEC 9075-4:2006 draft §9.21] is
+//! one statement with its routines. Words are matched in any case, never
+//! in a string, an identifier or a comment.
 
 /// BEGIN, which opens a block, or a level in one.
 const BEGIN: &str = "BEGIN";
@@ -25,6 +28,10 @@ const BEGIN: &str = "BEGIN";
 const OPENERS: [&str; 5] = ["CASE", "IF", "LOOP", "REPEAT", "DO"];
 /// END, which closes a block or a level in one.
 const END: &str = "END";
+/// CREATE, which, before MODULE, begins an SQL-server module definition.
+const CREATE: &str = "CREATE";
+/// MODULE, which opens a level after CREATE.
+const MODULE: &str = "MODULE";
 /// The first words of a control statement run alone, but BEGIN.
 const CONTROL: [&str; 6] = ["IF", "CASE", "LOOP", "REPEAT", "WHILE", "FOR"];
 
@@ -47,6 +54,9 @@ enum State {
 enum Last {
     /// The word END, with only separators after it.
     End,
+    /// The word CREATE, with only separators after it, which MODULE after
+    /// makes open a level.
+    Create,
     /// Anything else, or nothing.
     #[default]
     Other,
@@ -172,14 +182,22 @@ impl Splitter {
             Lead::One | Lead::Other => Lead::Other,
             Lead::Control => Lead::Control,
         };
-        let opens =
-            is(BEGIN) || ((self.depth > 0 || self.lead == Lead::Control) && self.last != Last::End && OPENERS.iter().any(|w| is(w)));
+        let module = self.last == Last::Create && is(MODULE);
+        let opens = is(BEGIN)
+            || module
+            || ((self.depth > 0 || self.lead == Lead::Control) && self.last != Last::End && OPENERS.iter().any(|w| is(w)));
         if opens {
             self.depth = self.depth.saturating_add(1);
         } else if is(END) {
             self.depth = self.depth.saturating_sub(1);
         }
-        self.last = if is(END) { Last::End } else { Last::Other };
+        self.last = if is(END) {
+            Last::End
+        } else if is(CREATE) {
+            Last::Create
+        } else {
+            Last::Other
+        };
     }
 
     /// The statement read so far, if it is one; the text begun anew.
@@ -298,6 +316,24 @@ mod tests {
         assert_eq!(
             split("DROP TABLE IF; SELECT LOOP, REPEAT, DO FROM T; SELECT 2"),
             ["DROP TABLE IF", "SELECT LOOP, REPEAT, DO FROM T", "SELECT 2"]
+        );
+    }
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-4:2006 draft §9.21] a `;` in a
+    /// CREATE MODULE, after a routine of it or in a body, ends no
+    /// statement; END MODULE closes it, a module in a schema definition
+    /// too; MODULE alone, as in MODULE.T, opens nothing.
+    #[test]
+    fn semicolons_in_a_module_end_no_statement() {
+        let module = "create module M PROCEDURE P () BEGIN SET X = 1; END; \
+                      FUNCTION F () RETURNS INTEGER RETURN CASE WHEN 1 = 1 THEN 1 END; END MODULE";
+        assert_eq!(split(&format!("{module}; SELECT 2")), [module, "SELECT 2"]);
+        let schema = "CREATE SCHEMA S CREATE TABLE T (A INT) CREATE MODULE M PROCEDURE P () DELETE FROM T; END MODULE";
+        assert_eq!(split(&format!("{schema}; SELECT 2")), [schema, "SELECT 2"]);
+        assert_eq!(split("SELECT * FROM MODULE.T; SELECT 2"), ["SELECT * FROM MODULE.T", "SELECT 2"]);
+        assert_eq!(
+            split("SELECT CREATE_ FROM T; DROP MODULE M CASCADE; SELECT 2"),
+            ["SELECT CREATE_ FROM T", "DROP MODULE M CASCADE", "SELECT 2"]
         );
     }
 

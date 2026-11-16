@@ -31,7 +31,9 @@ use super::super::{Binder, Context, Invoked, Purpose, Scope, assignable, rule};
 use crate::ast::{
     self, QueryExpression, ReturnStatement, RoutineDefinition, RowElement, SchemaStatement, SqlStatement, ValueExpression, ValuesRow,
 };
-use crate::catalog::{ColumnDesc, DataAccess, Principal, QualifiedName, SqlRoutineDesc, TableDesc, Who, owner_of};
+use crate::catalog::{
+    ColumnDesc, DataAccess, Principal, QualifiedName, SqlRoutineDesc, TableDesc, Who, module_schema, owner_of, routine_path,
+};
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{LogicalPlan, Program, Subquery};
 use crate::params::{Params, RoutineScope};
@@ -64,11 +66,24 @@ pub struct FunctionBody {
 /// # Errors
 ///
 /// It does not parse, or is no `<SQL-invoked routine>`.
-pub fn routine_definition(text: &str) -> Result<RoutineDefinition> {
-    let SqlStatement::Schema { statement: SchemaStatement::Routine(r), .. } = Parser::new(text)?.of_definition().sql_statement()? else {
+pub fn routine_definition(text: &str, module: Option<String>) -> Result<RoutineDefinition> {
+    let parser = Parser::new(text)?.of_definition().in_module(module);
+    let SqlStatement::Schema { statement: SchemaStatement::Routine(r), .. } = { parser }.sql_statement()? else {
         return Err(SqlError::new(Code::Api, "[DESIGN] a routine's text is no <SQL-invoked routine>"));
     };
     Ok(*r)
+}
+
+/// The `<SQL-invoked routine>` of the routine `desc`, read again from its
+/// text: of a module's, in the module, so MODULE.T names its declared
+/// tables [ISO/IEC 9075-4:2006 draft §12.8 GR3b].
+///
+/// # Errors
+///
+/// As `routine_definition`'s.
+pub fn definition_of(desc: &SqlRoutineDesc) -> Result<RoutineDefinition> {
+    let module = desc.module.as_ref().map(|m| module_schema(&QualifiedName { auth: desc.name.auth.clone(), ident: m.clone() }));
+    routine_definition(&desc.text, module)
 }
 
 /// [ISO/IEC 9075-2:2023 §11.60, §16.2] The body `definition` holds of the
@@ -114,7 +129,8 @@ pub(super) fn bind_body(
         // One that possibly modifies SQL-data is run by the session, its
         // RETURN a program's (`exec/invoked.rs`).
         if matches!(stmt, SqlStatement::Control(_) | SqlStatement::Signal(_) | SqlStatement::Return(_)) {
-            return Ok((None, Some(Arc::new(bind_program(body_cx, stmt, inline_frame(desc))?))));
+            let path = routine_path(&*body_cx.db.catalog, desc);
+            return Ok((None, Some(Arc::new(bind_program(body_cx, stmt, inline_frame(desc, path))?))));
         }
         // [§9.18 GR8b ix] any other statement returns no value: raised as
         // the function is invoked, not as it is defined.
@@ -134,9 +150,11 @@ pub(super) fn bind_body(
 /// SQLCODE -103 if it invokes itself through the bodies it invokes; its
 /// own, bound.
 pub(crate) fn bind_procedure_program(cx: Context<'_>, desc: &SqlRoutineDesc) -> Result<Arc<Program>> {
-    let definition = routine_definition(&desc.text)?;
-    let (program, invoked) =
-        within_body(cx, desc, chain_of(cx.invoked), |body_cx| bind_program(body_cx, &definition.body, inline_frame(desc)))?;
+    let definition = definition_of(desc)?;
+    let (program, invoked) = within_body(cx, desc, chain_of(cx.invoked), |body_cx| {
+        let path = routine_path(&*body_cx.db.catalog, desc);
+        bind_program(body_cx, &definition.body, inline_frame(desc, path))
+    })?;
     if let Some(i) = cx.invoked {
         i.borrow_mut().extend(invoked);
     }
@@ -145,14 +163,8 @@ pub(crate) fn bind_procedure_program(cx: Context<'_>, desc: &SqlRoutineDesc) -> 
 
 /// [ISO/IEC 9075-4:2006 draft §11.2] What the body of `desc`, an SQL control
 /// statement, is bound over: its parameters, its CALLs bound with it.
-fn inline_frame(desc: &SqlRoutineDesc) -> Frame {
-    let scope = RoutineScope {
-        name: desc.name.clone(),
-        parameters: desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone(), p.mode)).collect(),
-        horizon: desc.horizon.clone(),
-        variables: Vec::new(),
-        cursors: Vec::new(),
-    };
+fn inline_frame(desc: &SqlRoutineDesc, path: Vec<String>) -> Frame {
+    let scope = RoutineScope::of(desc, path);
     Frame { base: desc.parameters.len(), scope: Arc::new(scope), transitions: None, returns: desc.returns.clone(), inline: true }
 }
 
@@ -177,7 +189,7 @@ fn within_body<T>(
     // The entry of no schema that ends the chain (`chain_of`).
     chain.push(QualifiedName { auth: String::new(), ident: String::new() });
     let noted: Invoked = RefCell::new(chain);
-    let params = Params::new();
+    let params = Params::new().with_path(routine_path(&*cx.db.catalog, desc));
     let owner = owner_of(&*cx.db.catalog, &desc.name.auth);
     let body_cx = Context {
         auth: owner,

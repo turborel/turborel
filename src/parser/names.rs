@@ -45,7 +45,7 @@ impl Parser {
     pub(super) fn qualifier(&mut self) -> Result<String> {
         if self.is_kw(kw::MODULE) && matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD)) {
             self.advance();
-            return Ok(kw::MODULE.to_owned());
+            return Ok(self.module_qualifier());
         }
         self.identifier()
     }

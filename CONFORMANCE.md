@@ -1594,16 +1594,15 @@ stands alone, so a column of that name is read qualified.
 
 Persistent stored modules, ISO/IEC 9075-4, written from its 2006 draft
 (`5CD2-04-PSM-2006-01`), its clause numbers cited with that edition
-(RULES.md D76). Part 4 adds to Part 2's routines and triggers the
+(RULES.md D76, D77). Part 4 adds to Part 2's routines and triggers the
 compound statement, local variables, conditions, cursors and handlers,
-the control statements, and SIGNAL and RESIGNAL.
+the control statements, SIGNAL and RESIGNAL, and SQL-server modules.
 
 Features P002 (Computational completeness), P004 (Extended CASE
 statement), P005 (Qualified SQL variable references), P006 (Multiple
 assignment), P007 (Enhanced diagnostics management) and P008
-(Comma-separated predicates in simple CASE statement) are claimed. P001
-(Stored modules) and P003 (Information Schema views), whose views
-describe modules, are not.
+(Comma-separated predicates in simple CASE statement) are claimed, and
+P001 (Stored modules) and P003 (Information Schema views).
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1621,6 +1620,14 @@ describe modules, are not.
 | Diagnostics | §17.1, ISO/IEC 9075-2:2023 §23.2 | Each statement of a program empties the first diagnostics area and places its condition there. A handler's activation pushes the stack, so GET STACKED DIAGNOSTICS reads the condition handled and GET CURRENT, the default, its action's last statement (P007). STACKED where no handler is active is SQLSTATE 0Z002. |
 | Functions | §11.2, ISO/IEC 9075-2:2023 §9.18 GR8b | A function's body may be a compound statement. One that does not possibly modify SQL-data runs where the query invoking it is evaluated, its local cursors over its queries' rows, and may CALL a procedure that changes none. One that possibly modifies SQL-data runs where the session runs its statements (D76), placed as [SQL-invoked routines](#sql-invoked-routines) says. A body that ends without RETURN raises 2F005. |
 | Data access | ISO/IEC 9075-2:2023 §11.60 SR23 | The greatest of every statement in the body, nested ones and handlers' actions among them. |
+| CREATE MODULE | §9.21 SR1 to SR8, GR1 to GR3, §9.24 | A module of a schema its user owns, in a `<schema definition>` of the schema defined, else SQLCODE -103 [SR1]. No second module of its name [SR2]. NAMES ARE SQL_TEXT, the one character set, another SQLCODE -900. Its routines are of its schema [§9.24 SR3], each defined as CREATE FUNCTION or CREATE PROCEDURE defines it, as the owner of the schema, and invoked by its name in the schema. Its definition is kept as written. |
+| A module's routines | §9.24 GR1, ISO/IEC 9075-2:2023 §11.62 SR2 | No schema-level routines, so no DROP ROUTINE, GRANT or REVOKE names one, SQLCODE -103, and ROUTINES shows SCHEMA_LEVEL_ROUTINE NO and the module's name. |
+| Names in a module | §9.21 SR4 to SR7, §8.1 SR2, SR4, ISO/IEC 9075-2:2023 §10.3 SR1 | A name of no schema other than a routine's is of the module's SCHEMA, else its own schema. A routine named of no schema is of the first schema of PATH that has one the invocation fits, PATH naming each schema once, of this catalog, else SQLCODE -103. With no PATH, the path is the module's schema alone. |
+| Declared tables of a module | §12.8, ISO/IEC 9075:1992 §13.11 | Named MODULE.T within the module alone, each session's instance its own, ON COMMIT DELETE ROWS the default. In no view of the Information Schema. A module declaring one twice, SQLCODE -103. |
+| EXECUTE on a module | §8.1 SR1, §10.1 to §10.3, §9.21 GR2 | What invokes a module's routine needs EXECUTE on the module, read so where §8.1 SR1 names the routine's privilege, as §10.3 GR5 abandons what invokes one at its revoke. Of a module, EXECUTE alone is granted or revoked [§10.2 SR1], else SQLCODE -103. The owner of its schema holds it of `_SYSTEM`, grantable once it holds grantably each privilege the routines need [§10.1 GR1]. A revoke abandons the views, constraints, generated columns, triggers and routines whose owners it leaves without it, RESTRICT refusing it with SQLSTATE 2B000. |
+| DROP MODULE | §9.22 SR1 to SR3, GR1, GR2 | Of a module of a schema its user owns. RESTRICT refused while anything outside the module invokes a routine of it, SQLCODE -103. CASCADE drops those too. |
+| What else drops a module | §9.2 GR1 to GR3, §9.25, §10.3 GR7 | A drop or revoke that takes one of its routines takes the whole module, its other routines with it. DROP SCHEMA with CASCADE drops the schema's modules, RESTRICT refused naming the first, and with either those of other schemas whose SCHEMA or PATH names it. |
+| Views of modules | §18.1 to §18.4, §18.6, §18.7, §19.1 to §19.4; ISO/IEC 9075-11:2006 draft §5.47, §6.40 | MODULES, MODULE_PRIVILEGES, MODULE_TABLE_USAGE, MODULE_COLUMN_USAGE and ROLE_MODULE_GRANTS, with the draft's definitions, over the Definition Schema's MODULES, MODULE_PRIVILEGES, MODULE_TABLE_USAGE and MODULE_COLUMN_USAGE. ROUTINES gains MODULE_CATALOG, MODULE_SCHEMA and MODULE_NAME, and shows a module's routine to who holds EXECUTE on the module [§18.7], PARAMETERS following, as it reads ROUTINES. MODULE_AUTHORIZATION is null, as a server module has no `<module authorization clause>` [§19.4 Description 5]. CREATED and LAST_ALTERED are null, as no timestamp is kept. MODULES shows them as MODULE_CREATED and MODULE_LAST_ALTERED, the names its Conformance Rules give them. The usage views show a table or column as its routines' bodies bind now, not the module's own declared tables. |
 
 The words of Part 4 that are no key words of SQL-92, IF, ELSEIF, LOOP,
 WHILE, REPEAT, UNTIL, LEAVE, ITERATE, DO, HANDLER, EXIT, UNDO, SIGNAL,

@@ -31,6 +31,7 @@ fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> Sql
         text: "CREATE FUNCTION F (X NUMERIC) RETURNS NUMERIC RETURN (SELECT K FROM T)".into(),
         body: "RETURN (SELECT K FROM T)".into(),
         schema: "A".into(),
+        module: Some("SHOP".into()),
         reads: vec![name("T"), name("V")],
         horizon: Horizon { widths: vec![(name("T"), 2)], routines: Some(vec![name("G_1")]) },
         sequences: vec![name("Q"), name("R")],

@@ -68,9 +68,19 @@ pub struct SqlRoutineDesc {
     /// \[DESIGN\] Its timestamp of creation \[GR3t\], as an order: one more
     /// than the greatest of the routines there were as it was created.
     pub created: u64,
+    /// [ISO/IEC 9075-4:2006 draft §9.24 GR1] The name of the SQL-server
+    /// module that includes it, in its schema, if one does: else it is a
+    /// schema-level routine.
+    pub module: Option<String>,
 }
 
 impl SqlRoutineDesc {
+    /// [ISO/IEC 9075-4:2006 draft §9.24 GR1] The name of the SQL-server
+    /// module it is of, if it is not a schema-level routine.
+    pub fn module_name(&self) -> Option<QualifiedName> {
+        self.module.as_ref().map(|m| QualifiedName { auth: self.name.auth.clone(), ident: m.clone() })
+    }
+
     /// Whether it is a function.
     pub fn function(&self) -> bool {
         self.kind == RoutineKind::Function

@@ -25,7 +25,9 @@
 //!           trigger, in the order of their timestamps of creation),
 //!           routines (count u32, each a routine, likewise), roles (as
 //!           `catalog/codec/roles.rs` writes them), the users allowed to
-//!           create roles (count u32, each str)
+//!           create roles (count u32, each str), SQL-server modules (count
+//!           u32, each a module, in the order of their timestamps of
+//!           creation)
 //! ```
 
 use std::sync::Arc;
@@ -34,13 +36,13 @@ use super::sequences::Settled;
 use super::{State, api};
 use crate::bytes::{Put, Reader};
 use crate::catalog::codec::{
-    collation, constraint, domain, index, privilege, put_collation, put_constraint, put_domain, put_index, put_name, put_privilege,
-    put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine, sequence, table,
-    trigger, user_type, view,
+    collation, constraint, domain, index, module, privilege, put_collation, put_constraint, put_domain, put_index, put_module, put_name,
+    put_privilege, put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine,
+    sequence, table, trigger, user_type, view,
 };
 use crate::catalog::{
-    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SqlRoutineDesc,
-    TableDesc, TriggerDesc, UserTypeDesc, ViewDesc,
+    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
+    SqlRoutineDesc, TableDesc, TriggerDesc, UserTypeDesc, ViewDesc, module_of_schema,
 };
 use crate::error::Result;
 use crate::settings;
@@ -80,6 +82,8 @@ pub(super) struct Snapshot {
     roles: Roles,
     /// The users allowed to create roles, by name.
     creators: Vec<String>,
+    /// The SQL-server modules, oldest first.
+    modules: Vec<ModuleDesc>,
 }
 
 impl Snapshot {
@@ -140,6 +144,7 @@ impl Snapshot {
             routines: st.catalog.routines().into_iter().cloned().collect(),
             roles: st.catalog.roles().clone(),
             creators: st.users.creators().cloned().collect(),
+            modules: st.catalog.modules().into_iter().cloned().collect(),
         })
     }
 
@@ -214,6 +219,8 @@ impl Snapshot {
         put_roles(out, &self.roles);
         out.put_u32(count(self.creators.len()));
         self.creators.iter().for_each(|c| out.put_str(c));
+        out.put_u32(count(self.modules.len()));
+        self.modules.iter().for_each(|m| put_module(out, m));
     }
 
     /// The snapshot `put` wrote.
@@ -242,6 +249,7 @@ impl Snapshot {
         let routines = (0..r.u32()?).map(|_| routine(r)).collect::<Result<_>>()?;
         let roles = roles(r)?;
         let creators = (0..r.u32()?).map(|_| r.str()).collect::<Result<_>>()?;
+        let modules = (0..r.u32()?).map(|_| module(r)).collect::<Result<_>>()?;
         Ok(Snapshot {
             schemas,
             domains,
@@ -263,6 +271,7 @@ impl Snapshot {
             routines,
             roles,
             creators,
+            modules,
         })
     }
 }
@@ -283,6 +292,7 @@ impl State {
         for (schema, owner) in &snapshot.schemas {
             catalog.create_schema(schema, owner, snapshot.tables.iter().filter(|t| t.name.auth == *schema).cloned().collect());
         }
+        put_module_tables(&mut *catalog, snapshot);
         put_described(&mut *catalog, snapshot);
         self.install_counters(snapshot)?;
         // Before the indexes, whose keys are by them.
@@ -366,6 +376,15 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     catalog.grant(snapshot.privileges.clone());
     snapshot.triggers.iter().cloned().for_each(|t| catalog.put_trigger(t));
     snapshot.routines.iter().cloned().for_each(|r| catalog.put_routine(r));
+    snapshot.modules.iter().cloned().for_each(|m| catalog.put_module(m));
+}
+
+/// [ISO/IEC 9075-4:2006 draft §12.8] Puts in `catalog` the declared tables
+/// of the modules of `snapshot`, each in its module's own schema.
+fn put_module_tables(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
+    for t in snapshot.tables.iter().filter(|t| module_of_schema(&t.name.auth).is_some()) {
+        catalog.add_table(t.clone());
+    }
 }
 
 #[cfg(test)]

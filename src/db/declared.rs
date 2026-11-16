@@ -16,7 +16,7 @@ use super::constraints::Within;
 use super::schema::constraint_index_name;
 use super::{Completion, Session, State, rule};
 use crate::ast::{PrivilegeDefinition, RevokeStatement, SchemaStatement, TableDefinition};
-use crate::catalog::{Catalog, IndexDesc, QualifiedName, TableDesc, TemporaryKind};
+use crate::catalog::{Catalog, IndexDesc, QualifiedName, TableDesc, TemporaryKind, module_of_schema};
 use crate::error::{At, Result};
 use crate::lexer::kw;
 use crate::sync::lock_builtin;
@@ -87,6 +87,7 @@ impl Session {
             | SchemaStatement::Type(_)
             | SchemaStatement::Trigger(_)
             | SchemaStatement::Routine(_)
+            | SchemaStatement::Module(_)
             | SchemaStatement::Role(_) => Ok(()),
         }
     }
@@ -166,15 +167,17 @@ fn indexes_of(desc: &TableDesc, method: &str) -> Vec<IndexDesc> {
 }
 
 impl State {
-    /// These definitions without the session's declared local temporary
-    /// tables, as the Information Schema shows them [ISO/IEC 9075:1992
-    /// §13.11 GR5]; none if they have none.
+    /// These definitions without the declared local temporary tables, the
+    /// session's and those of SQL-server modules, as the Information Schema
+    /// shows them [ISO/IEC 9075:1992 §13.11 GR5; ISO/IEC 9075-4:2006 draft
+    /// §12.8]; none if they have none.
     pub(crate) fn without_declared(&self) -> Option<State> {
         if !self.catalog.temporary_tables().iter().any(|t| t.temporary.is_some_and(|t| t.kind == TemporaryKind::Declared)) {
             return None;
         }
         let mut catalog = self.catalog.duplicate();
-        for desc in self.catalog.tables().into_iter().filter(|t| t.name.auth == kw::MODULE) {
+        let declared = |t: &&TableDesc| t.name.auth == kw::MODULE || module_of_schema(&t.name.auth).is_some();
+        for desc in self.catalog.tables().into_iter().filter(declared) {
             self.catalog.indexes(&desc.name).iter().for_each(|ix| catalog.remove_index(&ix.name));
             catalog.revoke_all(&desc.name);
             catalog.remove_table(&desc.name);

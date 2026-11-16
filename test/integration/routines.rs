@@ -223,3 +223,21 @@ fn a_when_condition_invokes_a_function_11_49() {
     a.run("INSERT INTO T VALUES (3, 0), (7, 0), (9, 0)").unwrap();
     assert_eq!(rows(&a, "SELECT K FROM L ORDER BY K"), ["7", "9"]);
 }
+
+/// Verifies: [DESIGN] [ISO/IEC 9075-2:2023 §9.18 GR8b ix 2] two functions whose bodies are
+/// subqueries of no outer reference, invoked in one select list, each give
+/// their own value, where the second gave the first's, the runner keeping a
+/// subquery's rows by the address of one made for the first and freed
+/// (regression).
+#[test]
+fn functions_of_subquery_bodies_give_their_own_values() {
+    let db = defined();
+    let a = db.session("A");
+    a.run("CREATE TABLE NONE_ (V INTEGER)").unwrap();
+    a.run("CREATE TABLE ONE_ (V INTEGER)").unwrap();
+    a.run("INSERT INTO ONE_ VALUES (1)").unwrap();
+    a.run("CREATE FUNCTION F0 () RETURNS INTEGER READS SQL DATA RETURN (SELECT COUNT(*) FROM NONE_)").unwrap();
+    a.run("CREATE FUNCTION F1 () RETURNS INTEGER READS SQL DATA RETURN (SELECT COUNT(*) FROM ONE_)").unwrap();
+    assert_eq!(rows(&a, "SELECT F0(), F1() FROM (VALUES (0)) AS X (Z)"), ["0,1"]);
+    assert_eq!(rows(&a, "SELECT F1(), F0() FROM (VALUES (0)) AS X (Z)"), ["1,0"]);
+}

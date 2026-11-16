@@ -22,6 +22,7 @@ mod constraints;
 mod domains;
 mod keys;
 mod memory;
+mod modules;
 mod privileges;
 mod roles;
 mod routines;
@@ -36,6 +37,7 @@ pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, Fore
 pub use domains::{DomainDesc, UsageDesc, usage_held};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
+pub use modules::{ModuleDesc, module_of_schema, module_schema, routine_path};
 pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, applicable, merged};
 pub use roles::{Authorization, Principal, RoleAuthorization, Roles, Who};
 pub use routines::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc};
@@ -458,6 +460,17 @@ pub trait Catalog: Send + Sync {
     /// Forget the SQL-invoked routine of this specific name: one dropped
     /// [§11.62 GR2].
     fn remove_routine(&mut self, specific: &QualifiedName);
+    /// Record the SQL-server module `module`, in place of any of its name
+    /// [ISO/IEC 9075-4:2006 draft §9.21 GR3].
+    fn put_module(&mut self, module: ModuleDesc);
+    /// The SQL-server module of this name, if any.
+    fn module(&self, name: &QualifiedName) -> Option<&ModuleDesc>;
+    /// Every SQL-server module, in the order of their timestamps of
+    /// creation.
+    fn modules(&self) -> Vec<&ModuleDesc>;
+    /// Forget the SQL-server module of this name: one dropped [§9.22 GR2].
+    /// Its routines and tables are removed by the caller.
+    fn remove_module(&mut self, name: &QualifiedName);
     /// [ISO/IEC 9075-2:2023 §4.42.3] The roles and role authorizations.
     fn roles(&self) -> &Roles;
     /// Make `roles` the roles and role authorizations, in place of those
@@ -474,7 +487,12 @@ pub trait Catalog: Send + Sync {
 /// not keep, a system table's or none, an identifier of its own name, as
 /// every schema's owner was in SQL-86 [X3.135-1986 §4.15].
 pub fn owner_of<'a>(catalog: &'a dyn Catalog, schema: &'a str) -> &'a str {
-    catalog.schema_owner(schema).unwrap_or(schema)
+    if let Some(owner) = catalog.schema_owner(schema) {
+        return owner;
+    }
+    // [ISO/IEC 9075-4:2006 draft §12.8 GR3b] A module's declared tables'
+    // owner is its schema's.
+    module_of_schema(schema).and_then(|module| catalog.schema_owner(&module.auth)).unwrap_or(schema)
 }
 
 /// [ISO/IEC 9075-2:2023 §4.42.4] The cell of `auth` alone, against the

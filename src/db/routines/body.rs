@@ -29,8 +29,8 @@ use std::sync::Arc;
 
 use super::super::{State, rule, triggers::named};
 use crate::ast::{RoutineDefinition, SqlStatement};
-use crate::binder::{Context, DrawnFrom, Invoked, Uses, bind_function_body};
-use crate::catalog::{DataAccess, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of, sole};
+use crate::binder::{Context, DrawnFrom, Invoked, Uses, bind_function_body, definition_of, grantably_held, once_each};
+use crate::catalog::{DataAccess, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of, routine_path, sole};
 use crate::error::{Code, Result, SqlError};
 use crate::params::{Params, RoutineScope};
 use crate::value::Value;
@@ -45,6 +45,8 @@ pub(super) struct BodyBound {
     pub(super) sequences: Vec<QualifiedName>,
     /// Whether its owner's EXECUTE on the routine is grantable [GR1].
     pub(super) grantable: bool,
+    /// The columns of tables and views it references, each once.
+    pub(super) columns: Vec<(QualifiedName, String)>,
 }
 
 /// The order of what a body possibly does with SQL-data, least first.
@@ -153,13 +155,7 @@ impl State {
         allowed(desc, stmt)?;
         let owner = owner_of(&*self.catalog, &desc.name.auth).to_owned();
         let (uses, invoked, drawn): (Uses, Invoked, DrawnFrom) = (Uses::default(), RefCell::new(Vec::new()), RefCell::new(Vec::new()));
-        let scope = RoutineScope {
-            name: desc.name.clone(),
-            parameters: desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone(), p.mode)).collect(),
-            horizon: desc.horizon.clone(),
-            variables: Vec::new(),
-            cursors: Vec::new(),
-        };
+        let scope = RoutineScope::of(desc, routine_path(&*self.catalog, desc));
         let params = Params::of_routine(vec![Value::Null; desc.parameters.len()], Arc::new(scope));
         let cx = Context {
             schema: &desc.schema,
@@ -191,17 +187,36 @@ impl State {
             access = DataAccess::Reads;
         }
         within(desc, access)?;
-        let grantable = self.execute_grantable(&owner, &reads, &invocations);
+        let grantable = self.execute_grantable((&owner, desc.module_name()), &reads, &invocations);
         let mut sequences = drawn.into_inner();
         sequences.sort();
         sequences.dedup();
-        Ok(BodyBound { reads, invokes: invocations, sequences, grantable })
+        let columns = once_each(uses.into_inner());
+        Ok(BodyBound { reads, invokes: invocations, sequences, grantable, columns })
     }
 
-    /// [ISO/IEC 9075-2:2023 §11.60 GR1] Whether `owner` holds grantable
-    /// every privilege the body that names `reads` and invokes `invokes`
-    /// may use, as the module says.
-    fn execute_grantable(&self, owner: &str, reads: &[QualifiedName], invokes: &[QualifiedName]) -> bool {
+    /// The columns of tables and views the body of the routine `r`
+    /// references, each once, as it binds now: those an SQL-server module's
+    /// routines reference [ISO/IEC 9075-4:2006 draft §19.1].
+    ///
+    /// # Errors
+    ///
+    /// The body does not bind.
+    pub(crate) fn routine_columns(&self, r: &SqlRoutineDesc) -> Result<Vec<(QualifiedName, String)>> {
+        Ok(self.bind_routine_body(r, &definition_of(r)?)?.columns)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.60 GR1; ISO/IEC 9075-4:2006 draft §9.21
+    /// GR2] Whether `owner` holds grantable every privilege the body that
+    /// names `reads` and invokes `invokes` may use, as the module says: of
+    /// a routine of the module `module`, the routines of the module it
+    /// invokes aside, whose privilege is the one decided.
+    pub(in crate::db) fn execute_grantable(
+        &self,
+        (owner, module): (&str, Option<QualifiedName>),
+        reads: &[QualifiedName],
+        invokes: &[QualifiedName],
+    ) -> bool {
         let tables = reads.iter().all(|t| {
             let (held, grantable) = applicable(&*self.catalog, sole(&*self.catalog, owner), t);
             (!held.select || grantable.select)
@@ -209,7 +224,8 @@ impl State {
                 && held.insert.is_subset(&grantable.insert)
                 && held.update.is_subset(&grantable.update)
         });
-        tables && invokes.iter().filter_map(|s| self.catalog.routine(s)).all(|r| r.execute_of(sole(&*self.catalog, owner)).1)
+        let others = invokes.iter().filter_map(|s| self.catalog.routine(s)).filter(|r| module.is_none() || r.module_name() != module);
+        tables && others.into_iter().all(|r| grantably_held(self, r, sole(&*self.catalog, owner)))
     }
 }
 

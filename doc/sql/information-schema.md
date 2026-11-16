@@ -75,7 +75,7 @@ make, those the user, or PUBLIC, holds a privilege on:
 |---|---|
 | USER_DEFINED_TYPES | distinct type: USER_DEFINED_TYPE_CATEGORY DISTINCT, IS_INSTANTIABLE and IS_FINAL YES, ORDERING_FORM FULL and ORDERING_CATEGORY MAP with the specific name of its function to its source in ORDERING_ROUTINE_CATALOG, _SCHEMA and _NAME, or NONE of an array source, and the source type, as COLUMNS gives a type, its DTD_IDENTIFIER in SOURCE_DTD_IDENTIFIER |
 | UDT_PRIVILEGES | privilege on a distinct type, its PRIVILEGE_TYPE TYPE USAGE |
-| ROUTINES | routine: its specific name and its name, ROUTINE_TYPE FUNCTION or PROCEDURE, a function's result type, as COLUMNS gives a type, the type's name in TYPE_UDT_CATALOG, _SCHEMA and _NAME, null of a procedure, ROUTINE_BODY SQL, ROUTINE_DEFINITION its body to the owner of its schema and null to others, IS_DETERMINISTIC, SQL_DATA_ACCESS CONTAINS SQL, READS SQL DATA or MODIFIES SQL DATA, a function's IS_NULL_CALL, SCHEMA_LEVEL_ROUTINE YES and SECURITY_TYPE DEFINER. A distinct type's function is DETERMINISTIC, CONTAINS SQL and not null-call |
+| ROUTINES | routine: its specific name and its name, ROUTINE_TYPE FUNCTION or PROCEDURE, a function's result type, as COLUMNS gives a type, the type's name in TYPE_UDT_CATALOG, _SCHEMA and _NAME, null of a procedure, ROUTINE_BODY SQL, ROUTINE_DEFINITION its body to the owner of its schema and null to others, IS_DETERMINISTIC, SQL_DATA_ACCESS CONTAINS SQL, READS SQL DATA or MODIFIES SQL DATA, a function's IS_NULL_CALL, MODULE_CATALOG, MODULE_SCHEMA and MODULE_NAME the module of a module's routine, null of another, SCHEMA_LEVEL_ROUTINE YES, or NO of a module's routine, and SECURITY_TYPE DEFINER. A distinct type's function is DETERMINISTIC, CONTAINS SQL and not null-call |
 | PARAMETERS | routine's parameter: its ORDINAL_POSITION, from 1, PARAMETER_MODE IN, OUT or INOUT, its name and its type |
 | ROUTINE_PRIVILEGES | privilege on a routine, its PRIVILEGE_TYPE EXECUTE, the owner's of _SYSTEM among them |
 | TRANSFORMS | distinct type's transform, its GROUP_NAME the name of the function from its source, of TRANSFORM_TYPE FROM SQL, its function to its source, and TO SQL, its function from it |
@@ -184,6 +184,54 @@ OK
  TRIGGER_NAME                                                 | SEQUENCE_NAME
 --------------------------------------------------------------+--------------------------------------------------------------
  LOGGED                                                       | S
+(1 row)
+```
+
+Five more of ISO/IEC 9075-4 describe SQL-server modules ([CREATE
+MODULE](statements/create-module.md)):
+
+| View | One row of each |
+|---|---|
+| MODULES | module the user, an enabled role or PUBLIC holds EXECUTE on: DEFAULT_CHARACTER_SET_CATALOG, _SCHEMA and _NAME SQL_TEXT's, DEFAULT_SCHEMA_CATALOG and _NAME its SCHEMA, MODULE_DEFINITION its text to the owner of its schema and null to others, MODULE_AUTHORIZATION null, SQL_PATH its PATH as written, null if none, and MODULE_CREATED and MODULE_LAST_ALTERED, null, as no timestamp is kept |
+| MODULE_PRIVILEGES | privilege on a module, its PRIVILEGE_TYPE EXECUTE, the owner's of _SYSTEM among them, granted or granted by the user or an enabled role |
+| ROLE_MODULE_GRANTS | such a privilege granted to or by an enabled role |
+| MODULE_TABLE_USAGE | table or view a module's routine names, of a schema the user, or an enabled role, owns |
+| MODULE_COLUMN_USAGE | column of such a table a module's routine names |
+
+A module's declared temporary tables are in no view.
+
+Run by ANN, the owner of these:
+
+```sql
+CREATE TABLE SALES (ID INTEGER, AMOUNT INTEGER);
+CREATE MODULE SHOP
+  PROCEDURE PLACE (IN ID INTEGER, IN AMOUNT INTEGER) MODIFIES SQL DATA INSERT INTO SALES VALUES (ID, AMOUNT);
+  FUNCTION TOTAL () RETURNS INTEGER READS SQL DATA RETURN (SELECT SUM(AMOUNT) FROM SALES);
+END MODULE;
+GRANT EXECUTE ON MODULE SHOP TO PUBLIC;
+COMMIT;
+SELECT MODULE_NAME, DEFAULT_SCHEMA_NAME, SQL_PATH FROM INFORMATION_SCHEMA.MODULES;
+SELECT GRANTOR, GRANTEE, PRIVILEGE_TYPE, IS_GRANTABLE FROM INFORMATION_SCHEMA.MODULE_PRIVILEGES ORDER BY 1;
+SELECT MODULE_NAME, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.MODULE_COLUMN_USAGE ORDER BY 3;
+```
+
+```
+OK
+OK
+OK
+OK
+ MODULE_NAME                                                  | DEFAULT_SCHEMA_NAME                                          | SQL_PATH
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ SHOP                                                         | ANN                                                          | NULL
+(1 row)
+ GRANTOR                                                      | GRANTEE                                                      | PRIVILEGE_TYPE                                               | IS_GRANTABLE
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ ANN                                                          | PUBLIC                                                       | EXECUTE                                                      | NO
+ _SYSTEM                                                      | ANN                                                          | EXECUTE                                                      | YES
+(2 rows)
+ MODULE_NAME                                                  | TABLE_NAME                                                   | COLUMN_NAME
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ SHOP                                                         | SALES                                                        | AMOUNT
 (1 row)
 ```
 

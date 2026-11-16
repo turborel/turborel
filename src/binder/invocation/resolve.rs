@@ -36,9 +36,11 @@ pub(in crate::binder) fn note(invoked: Option<&Invoked>, specific: &QualifiedNam
 /// `arity` arguments \[SR9b\]; -104 if the authorization identifier holds no
 /// EXECUTE on the one that does \[SR6\].
 pub fn resolve_procedure(cx: Context<'_>, name: &TableName, arity: usize) -> Result<SqlRoutineDesc> {
-    let qn = qualify(name, cx.schema);
-    let mut named: Vec<&SqlRoutineDesc> =
-        cx.db.catalog.routines_named(&qn).into_iter().filter(|r| r.kind == RoutineKind::Procedure).collect();
+    let path = cx.params.routine_path();
+    let schemas = if name.auth.is_none() && !path.is_empty() { path.to_vec() } else { vec![qualify(name, cx.schema).auth] };
+    let qn = QualifiedName { auth: schemas.first().cloned().unwrap_or_default(), ident: name.ident.clone() };
+    let of_schema = |s: &String| cx.db.catalog.routines_named(&QualifiedName { auth: s.clone(), ident: name.ident.clone() });
+    let mut named: Vec<&SqlRoutineDesc> = schemas.iter().flat_map(of_schema).filter(|r| r.kind == RoutineKind::Procedure).collect();
     let horizon = if cx.params.horizoned() { cx.params.horizon() } else { cx.horizon };
     if let Some(fixed) = horizon.subjects() {
         named.retain(|r| fixed.contains(&r.specific));
@@ -46,7 +48,9 @@ pub fn resolve_procedure(cx: Context<'_>, name: &TableName, arity: usize) -> Res
     if named.is_empty() {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR9e] there is no procedure {qn}")));
     }
-    let Some(r) = named.iter().copied().find(|r| r.parameters.len() == arity) else {
+    // [ISO/IEC 9075-4:2006 draft §8.1 SR2] of the schema first in the path.
+    let rank = |r: &&SqlRoutineDesc| schemas.iter().position(|s| *s == r.name.auth);
+    let Some(r) = named.iter().copied().filter(|r| r.parameters.len() == arity).min_by_key(rank) else {
         let mut arities: Vec<String> = named.iter().map(|r| r.parameters.len().to_string()).collect();
         arities.sort_unstable();
         return Err(rule(format!(

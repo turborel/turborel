@@ -157,6 +157,14 @@ impl SqlError {
         self
     }
 
+    /// This error, of a text read again that begins `by` characters into
+    /// the statement: its position, if it has one, in the statement.
+    #[must_use]
+    pub fn shifted(mut self, by: usize) -> Self {
+        self.pos = self.pos.map(|p| p.saturating_add(by));
+        self
+    }
+
     /// This error, with the SQLSTATE `state` [ISO/IEC 9075:1992 §22.1].
     #[must_use]
     pub fn with_state(mut self, state: SqlState) -> Self {

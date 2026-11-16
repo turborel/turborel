@@ -59,8 +59,8 @@ fn tables_and_columns_are_described_21_2_7() {
     let own = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'INFORMATION_SCHEMA'";
     assert_eq!(
         seen(&db.session("NOBODY"), own),
-        ["57"],
-        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 8 of roles, the 6 of triggers, TABLE_OPTIONS, INDEXES, INDEX_OPTIONS, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS and ASSERTION_TOTALS"
+        ["62"],
+        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 8 of roles, the 6 of triggers, the 5 of modules, TABLE_OPTIONS, INDEXES, INDEX_OPTIONS, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS and ASSERTION_TOTALS"
     );
     assert_eq!(
         seen(&owner, "SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.SCHEMATA"),

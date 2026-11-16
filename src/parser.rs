@@ -44,6 +44,7 @@ mod interval;
 mod listagg;
 mod literal;
 mod merge;
+mod modules;
 mod names;
 mod pattern;
 mod primary;
@@ -126,6 +127,8 @@ pub struct Parser {
     routine: Option<routines::RoutineScope>,
     /// [ISO/IEC 9075-4:2006 draft §14.1] The SQL control statements being read, the outermost first.
     blocks: Vec<psm::Block>,
+    /// [ISO/IEC 9075-4:2006 draft §12.8] In an SQL-server module, its own schema, which MODULE names.
+    module: Option<String>,
 }
 
 /// How a parser takes a `<catalog name>` written in a qualified name or a
@@ -207,6 +210,7 @@ impl Parser {
             trigger: None,
             routine: None,
             blocks: Vec::new(),
+            module: None,
         })
     }
 

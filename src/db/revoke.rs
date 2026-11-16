@@ -173,6 +173,24 @@ impl Abandoned {
 }
 
 impl State {
+    /// REVOKE `r` by `auth`, its names in schema `schema`, of an object
+    /// other than a table or view: a collation, a domain, a sequence
+    /// generator, a module, a type or a routine, each as its own revoke
+    /// takes it; none of a table or view.
+    fn revoke_of_other(&mut self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Option<Result<Defined>> {
+        let revoked = match r.object {
+            PrivilegeObject::Collation => self.revoke_collation_usage((auth, schema), r),
+            PrivilegeObject::Domain => self.revoke_usage((auth, schema), r).or_at(r.table.at),
+            PrivilegeObject::Sequence => self.revoke_sequence_usage((auth, schema), r).or_at(r.table.at),
+            PrivilegeObject::Module => self.revoke_on_module((auth, schema), r).or_at(r.table.at),
+            PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) => {
+                self.revoke_on_type((auth, schema), r).or_at(r.table.at)
+            }
+            PrivilegeObject::Table => return None,
+        };
+        Some(revoked)
+    }
+
     /// [ISO/IEC 9075:1992 §11.37] REVOKE `r` by `auth`, its names in
     /// schema `schema`.
     ///
@@ -183,17 +201,8 @@ impl State {
     /// option goes depends on it (SQLSTATE 2B000) [GR2b]; -104 if `auth`
     /// holds no privilege on the object [AR1].
     pub(super) fn revoke(&mut self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Result<Defined> {
-        if r.object == PrivilegeObject::Collation {
-            return self.revoke_collation_usage((auth, schema), r);
-        }
-        if r.object == PrivilegeObject::Domain {
-            return self.revoke_usage((auth, schema), r).or_at(r.table.at);
-        }
-        if r.object == PrivilegeObject::Sequence {
-            return self.revoke_sequence_usage((auth, schema), r).or_at(r.table.at);
-        }
-        if matches!(r.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_)) {
-            return self.revoke_on_type((auth, schema), r).or_at(r.table.at);
+        if let Some(revoked) = self.revoke_of_other((auth, schema), r) {
+            return revoked;
         }
         let name = qualify(&r.table, schema);
         let table = self.object(&name).or_at(r.table.at)?;

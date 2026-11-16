@@ -34,8 +34,8 @@ mod resolve;
 mod tests;
 
 pub(crate) use body::bind_procedure_program;
-pub use body::{FunctionBody, bind_function_body, routine_definition};
-pub use candidates::{Candidate, alike, functions_named};
+pub use body::{FunctionBody, bind_function_body, definition_of, routine_definition};
+pub use candidates::{Candidate, alike, functions_named, grantably_held, held};
 pub(super) use resolve::note as note_specific;
 pub use resolve::resolve_procedure;
 
@@ -87,19 +87,32 @@ impl Binder<'_> {
     /// statement's authorization identifier holds no EXECUTE on the
     /// subject routine of a definition \[SR6\]; an argument's.
     pub(super) fn invocation(&self, (schema, name): (Option<&str>, &str), args: &[ValueExpression], scope: Scope<'_>) -> Result<Called> {
-        let qn = QualifiedName { auth: schema.unwrap_or(self.schema).to_owned(), ident: name.to_owned() };
-        let named = functions_named(self.db, &qn);
+        let path = self.routine_schemas(schema);
+        let named: Vec<Candidate<'_>> =
+            path.iter().flat_map(|s| functions_named(self.db, &QualifiedName { auth: s.clone(), ident: name.to_owned() })).collect();
         if named.is_empty() {
             return Ok(Called::Pass(Passed::default()));
         }
         let bound = self.prebound(args, scope)?;
         let types: Vec<Option<DataType>> = bound.iter().map(|b| b.as_ref().map(|(_, t)| t.clone())).collect();
         let shown = schema.map_or_else(|| name.to_owned(), |s| format!("{s}.{name}"));
-        match self.subject_function(named, &types, &shown)? {
+        match self.subject_function(named, (&types, &path), &shown)? {
             Chosen::One(Candidate::Sql(desc)) => self.sql_invocation(desc, args, bound, scope).map(Called::Done),
             Chosen::One(Candidate::Cast(t, which)) => self.cast_invocation((t, which), args, bound, scope).map(Called::Done),
             Chosen::Refused(e) => Ok(Called::Pass(Passed { bound: Some(bound), refusal: Some(e) })),
             Chosen::Nothing => Ok(Called::Pass(Passed { bound: Some(bound), refusal: None })),
+        }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §9.18 SR10b; ISO/IEC 9075-4:2006 draft §8.1
+    /// SR4] The schemas a function named here is of: `schema`, if written;
+    /// else those of the SQL-path of the module of the routine whose body
+    /// this is, if of one; else the statement's default schema's alone.
+    fn routine_schemas(&self, schema: Option<&str>) -> Vec<String> {
+        match schema {
+            Some(s) => vec![s.to_owned()],
+            None if !self.params.routine_path().is_empty() => self.params.routine_path().to_vec(),
+            None => vec![self.schema.to_owned()],
         }
     }
 
@@ -118,7 +131,7 @@ impl Binder<'_> {
         let (args, params) = self.routine_arguments(desc, args, bound, scope)?;
         let qn = &desc.name;
         let result = desc.returns.clone().ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR10e] {qn} is no function")))?;
-        let definition = routine_definition(&desc.text)?;
+        let definition = definition_of(desc)?;
         let cx = super::Context { uses: None, selected: None, referencing: None, draws: false, invoked: self.invoked, ..self.context() };
         let (bound_body, _) = body::bind_body(cx, (desc, &definition), body::chain_of(self.invoked))?;
         resolve::note(self.invoked, &desc.specific);

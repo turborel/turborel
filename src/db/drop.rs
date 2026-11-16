@@ -45,6 +45,7 @@ impl State {
             DropTarget::Type(qn) => self.drop_user_type(qn, cascade),
             DropTarget::Trigger(qn) => self.drop_trigger(qn),
             DropTarget::Routine(specific) => self.drop_routine(specific, cascade),
+            DropTarget::Module(qn) => self.drop_module(qn, cascade),
         }
     }
 
@@ -59,7 +60,7 @@ impl State {
     /// local temporary table is refused before [SR3], `drop_target`), or, not
     /// `cascade`, a view or a constraint of another table refers to it
     /// [SR4].
-    fn drop_table(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
+    pub(super) fn drop_table(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         if self.catalog.table(qn).is_none() {
             let (what, clause) = if self.catalog.view(qn).is_some() { ("a view, not a base table", "SR2") } else { ("not defined", "SR1") };
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.18 {clause}] {qn} is {what}")));
@@ -105,6 +106,23 @@ impl State {
         Ok(dropped)
     }
 
+    /// [ISO/IEC 9075-4:2006 draft §9.2 GR1, GR3] The modules `modules` of a
+    /// schema dropped, and those whose descriptors name it, each as DROP
+    /// MODULE ... CASCADE drops it, but those a drop before took.
+    ///
+    /// # Errors
+    ///
+    /// As each drop's.
+    fn drop_modules_naming(&mut self, modules: &[QualifiedName]) -> Result<Dropped> {
+        let mut dropped = Dropped::default();
+        for m in modules {
+            if self.catalog.module(m).is_some() {
+                dropped.absorb(self.drop_module(m, true)?);
+            }
+        }
+        Ok(dropped)
+    }
+
     /// [ISO/IEC 9075:1992 §11.2] Drops schema `auth`: each of its tables,
     /// then each of its views left, as DROP TABLE and DROP VIEW with
     /// CASCADE do [GR1, GR2], then its domains, as DROP DOMAIN with CASCADE
@@ -134,16 +152,16 @@ impl State {
         let types = self.schema_user_types(auth);
         let triggers = self.schema_triggers_of(auth);
         let routines = self.schema_routines_of(auth);
-        let held = (tables.first().or(views.first()).or(domains.first()).or(assertions.first())).or(collations
-            .first()
-            .or(sequences.first())
-            .or(types.first())
-            .or(triggers.first())
-            .or(routines.first()));
+        let modules = self.modules_of_schema(auth);
+        // [ISO/IEC 9075-4:2006 draft §9.2 SR1] a module of it named first.
+        let held =
+            (modules.iter().find(|m| m.auth == auth).or(tables.first()).or(views.first()).or(domains.first()).or(assertions.first()))
+                .or(collations.first().or(sequences.first()).or(types.first()).or(triggers.first()).or(routines.first()));
         if let (Some(first), false) = (held, cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {first}, so it is dropped only with CASCADE")));
         }
         let mut dropped = self.drop_named_in(auth, cascade)?;
+        dropped.absorb(self.drop_modules_naming(&modules)?);
         for table in &tables {
             dropped.absorb(self.drop_table(table, true)?);
         }
@@ -316,7 +334,8 @@ impl Session {
             | DropTarget::Sequence(_)
             | DropTarget::Type(_)
             | DropTarget::Trigger(_)
-            | DropTarget::Routine(_) => Vec::new(),
+            | DropTarget::Routine(_)
+            | DropTarget::Module(_) => Vec::new(),
         };
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
@@ -377,6 +396,7 @@ impl Session {
             DropObject::Type(name) => Ok(DropTarget::Type(self.owned(st, name, "ISO/IEC 9075-2:2023 §11.59 AR1")?)),
             DropObject::Trigger(name) => Ok(DropTarget::Trigger(self.owned(st, name, "ISO/IEC 9075-2:2023 §11.50 AR1")?)),
             DropObject::Routine(designator) => self.routine_target(st, designator),
+            DropObject::Module(name) => Ok(DropTarget::Module(self.owned(st, name, "ISO/IEC 9075-4:2006 draft §9.22 AR1")?)),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {

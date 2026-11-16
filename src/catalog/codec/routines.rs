@@ -10,10 +10,15 @@
 //!             SQL DATA, 2 MODIFIES SQL DATA), null-call u8, text (str),
 //!             body (str), schema (str), reads (count u32, names),
 //!             horizon, invokes (count u32, names), sequences (count u32,
-//!             names), execute (as a domain's usage), created u64
+//!             names), execute (as a domain's usage), created u64,
+//!             module (0 none, or 1 and its name (str))
+//! module:     name, default schema (str), path (count u32, each a schema
+//!             (str)), path as written (0 none, or 1 and str), temporary
+//!             tables (count u32, names), text (str), execute (as a
+//!             domain's usage), created u64
 //! ```
 
-use super::super::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc};
+use super::super::{DataAccess, ModuleDesc, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc};
 use super::{flag, get_all, horizon, put_all, put_flag, put_horizon, put_name, put_usage, qualified, usage};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -76,6 +81,10 @@ pub(crate) fn put_routine(out: &mut Vec<u8>, routine: &SqlRoutineDesc) {
     put_all(out, routine.sequences.iter(), put_name);
     put_usage(out, &routine.execute);
     out.put_u64(routine.created);
+    put_flag(out, routine.module.is_some());
+    if let Some(module) = &routine.module {
+        out.put_str(module);
+    }
 }
 
 /// The routine descriptor `put_routine` wrote.
@@ -103,6 +112,7 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
     let (text, body, schema) = (r.str()?, r.str()?, r.str()?);
     let (reads, horizon, sequences) = (get_all(r, qualified)?, horizon(r)?, get_all(r, qualified)?);
     let (execute, created) = (usage(r)?, r.u64()?);
+    let module = if flag(r)? { Some(r.str()?) } else { None };
     Ok(SqlRoutineDesc {
         name,
         specific,
@@ -120,7 +130,37 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
         sequences,
         execute,
         created,
+        module,
     })
+}
+
+/// [ISO/IEC 9075-4:2006 draft §9.21 GR3] `module` in bytes: every part of
+/// its descriptor.
+pub(crate) fn put_module(out: &mut Vec<u8>, module: &ModuleDesc) {
+    put_name(out, &module.name);
+    out.put_str(&module.schema);
+    put_all(out, module.path.iter(), |out, s| out.put_str(s));
+    put_flag(out, module.path_text.is_some());
+    if let Some(text) = &module.path_text {
+        out.put_str(text);
+    }
+    put_all(out, module.temporaries.iter(), put_name);
+    out.put_str(&module.text);
+    put_usage(out, &module.execute);
+    out.put_u64(module.created);
+}
+
+/// The module descriptor `put_module` wrote.
+///
+/// # Errors
+///
+/// SQLCODE -910 if the bytes are not a module descriptor.
+pub(crate) fn module(r: &mut Reader<'_>) -> Result<ModuleDesc> {
+    let (name, schema) = (qualified(r)?, r.str()?);
+    let path = get_all(r, schema_name)?;
+    let path_text = if flag(r)? { Some(r.str()?) } else { None };
+    let (temporaries, text, execute, created) = (get_all(r, qualified)?, r.str()?, usage(r)?, r.u64()?);
+    Ok(ModuleDesc { name, schema, path, path_text, temporaries, text, execute, created })
 }
 
 /// An SQL parameter: its name, declared type and mode.
@@ -144,4 +184,13 @@ fn parameter(r: &mut Reader<'_>) -> Result<SqlParameter> {
         _ => return Err(r.corrupt("not a parameter mode")),
     };
     Ok(SqlParameter { name, data_type, mode })
+}
+
+/// A schema's name of a module's path.
+///
+/// # Errors
+///
+/// SQLCODE -910 if the bytes are not one.
+fn schema_name(r: &mut Reader<'_>) -> Result<String> {
+    r.str()
 }

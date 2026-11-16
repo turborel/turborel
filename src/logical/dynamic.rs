@@ -103,7 +103,7 @@ impl Filling<'_> {
 
     fn subquery(&mut self, s: &Subquery) -> Arc<Subquery> {
         let outer = s.outer.iter().cloned().map(|e| self.expr(e)).collect();
-        Arc::new(Subquery { plan: self.plan(s.plan.clone()), outer })
+        Arc::new(Subquery::new(self.plan(s.plan.clone()), outer))
     }
 
     fn exprs(&mut self, exprs: Vec<Expr>) -> Vec<Expr> {
@@ -223,7 +223,7 @@ mod tests {
     /// A subquery of U whose condition and outer expression have slot 1.
     fn subquery() -> Arc<Subquery> {
         let cond = Cond::Compare(Expr::Column(0), CompOp::Eq, slot(1));
-        Arc::new(Subquery { plan: LogicalPlan::Filter { cond, input: Box::new(scan()) }, outer: vec![slot(1)] })
+        Arc::new(Subquery::new(LogicalPlan::Filter { cond, input: Box::new(scan()) }, vec![slot(1)]))
     }
 
     /// Whether a slot is left anywhere in `plan`, its subqueries' too.

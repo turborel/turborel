@@ -40,7 +40,9 @@ trigger of the grantee's that needs the privilege: TRIGGER on its table,
 SELECT on it if the trigger names a transition variable or table, or one
 its action's statements need. A function or procedure of a schema whose
 owner loses a privilege its body needs, or EXECUTE on a routine its body
-invokes, is abandoned too, with what invokes it. RESTRICT refuses the
+invokes, is abandoned too, with what invokes it. A routine of a module
+goes with its module, and what invokes a module's routine needs EXECUTE
+on the module ([CREATE MODULE](create-module.md)). RESTRICT refuses the
 revoke (SQLSTATE 2B000) if
 anything would be abandoned; CASCADE destroys what is abandoned, and
 what that abandons in turn.

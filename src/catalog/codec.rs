@@ -68,7 +68,7 @@ use columns::{collation_name, column, put_collation_name, put_column};
 pub(crate) use columns::{default, put_default};
 pub(crate) use objects::{collation, put_collation, put_sequence, put_user_type, sequence, user_type};
 pub(crate) use roles::{put_roles, roles};
-pub(crate) use routines::{put_routine, routine};
+pub(crate) use routines::{module, put_module, put_routine, routine};
 pub(crate) use triggers::{put_trigger, trigger};
 
 /// A count, or a position, as a u32.

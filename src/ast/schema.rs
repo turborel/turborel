@@ -2,8 +2,8 @@
 //! ISO/IEC 9075:1992 §11].
 
 use super::{
-    AlterSequence, DatetimeFunction, Literal, PrivilegeDefinition, QueryExpression, RevokeStatement, RoleStatement, RoutineDefinition,
-    SearchCondition, SequenceDefinition, TableName, TriggerDefinition, TypeDefinition, UserFunction,
+    AlterSequence, DatetimeFunction, Literal, ModuleDefinition, PrivilegeDefinition, QueryExpression, RevokeStatement, RoleStatement,
+    RoutineDefinition, SearchCondition, SequenceDefinition, TableName, TriggerDefinition, TypeDefinition, UserFunction,
 };
 use crate::value::DataType;
 use crate::value::collation::Pad;
@@ -52,6 +52,9 @@ pub struct Schema {
     pub triggers: Vec<TriggerDefinition>,
     /// The `<schema routine>`s, in order [ISO/IEC 9075-2:2023 §11.60].
     pub routines: Vec<RoutineDefinition>,
+    /// The `<SQL-server module definition>`s, in order [ISO/IEC
+    /// 9075-4:2006 draft §9.21].
+    pub modules: Vec<ModuleDefinition>,
 }
 
 /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1] An `<SQL schema statement>` of
@@ -91,6 +94,9 @@ pub enum SchemaStatement {
     Routine(Box<RoutineDefinition>),
     /// A statement of roles [ISO/IEC 9075-2:2023 §12.4 to §12.7].
     Role(RoleStatement),
+    /// An `<SQL-server module definition>` [ISO/IEC 9075-4:2006 draft
+    /// §9.21].
+    Module(Box<ModuleDefinition>),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION

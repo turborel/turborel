@@ -27,6 +27,8 @@ pub enum DropObject {
     /// An SQL-invoked routine [ISO/IEC 9075-2:2023 §11.62], by its
     /// `<specific routine designator>`.
     Routine(RoutineDesignator),
+    /// An SQL-server module [ISO/IEC 9075-4:2006 draft §9.22].
+    Module(TableName),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
     /// schema name>` [§5.4].
     Schema {
@@ -50,7 +52,8 @@ impl DropObject {
             | DropObject::Domain(name)
             | DropObject::Assertion(name)
             | DropObject::Type(name)
-            | DropObject::Trigger(name) => name.at,
+            | DropObject::Trigger(name)
+            | DropObject::Module(name) => name.at,
             DropObject::Routine(designator) => designator.name.at,
             DropObject::Schema { at, .. } => *at,
         }

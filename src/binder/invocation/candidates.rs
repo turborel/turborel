@@ -45,15 +45,43 @@ impl Candidate<'_> {
         }
     }
 
+    /// The name of the schema that includes it.
+    pub fn schema(&self) -> &str {
+        match self {
+            Candidate::Sql(r) => &r.name.auth,
+            Candidate::Cast(t, _) => &t.name.auth,
+        }
+    }
+
     /// [ISO/IEC 9075-2:2023 §9.18 SR6, §12.3] Whether `who` holds EXECUTE
     /// on it in `db`: a cell enabling the owner of its schema does [§11.60
     /// GR1]; another if it was granted an identifier the cell enables or
     /// PUBLIC \[§4.42.4\].
     pub fn executable(&self, db: &State, who: Who<'_>) -> bool {
         match self {
-            Candidate::Sql(r) => who.includes(owner_of(&*db.catalog, &r.name.auth)) || r.execute_of(who).0,
+            Candidate::Sql(r) => who.includes(owner_of(&*db.catalog, &r.name.auth)) || held(db, r, who),
             Candidate::Cast(t, which) => t.execute_of(*which, who, owner_of(&*db.catalog, &t.name.auth)).0,
         }
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §12.3; ISO/IEC 9075-4:2006 draft §8.1 SR1] Whether
+/// `who` holds EXECUTE on the routine `r` as granted, not as its owner: on
+/// its module, if it is of one, the routines of a module invoked with the
+/// privilege on the module alone.
+pub fn held(db: &State, r: &SqlRoutineDesc, who: Who<'_>) -> bool {
+    match r.module_name() {
+        Some(m) => db.catalog.module(&m).is_some_and(|m| m.execute_of(who).0),
+        None => r.execute_of(who).0,
+    }
+}
+
+/// Whether `who` holds EXECUTE on the routine `r` grantably, as `held`
+/// says it holds it.
+pub fn grantably_held(db: &State, r: &SqlRoutineDesc, who: Who<'_>) -> bool {
+    match r.module_name() {
+        Some(m) => db.catalog.module(&m).is_some_and(|m| m.execute_of(who).1),
+        None => r.execute_of(who).1,
     }
 }
 
@@ -129,7 +157,7 @@ impl Binder<'_> {
     pub(in crate::binder) fn subject_function<'c>(
         &self,
         named: Vec<Candidate<'c>>,
-        args: &[Option<DataType>],
+        (args, path): (&[Option<DataType>], &[String]),
         shown: &str,
     ) -> Result<Chosen<'c>> {
         let pool = match self.subjects() {
@@ -148,7 +176,7 @@ impl Binder<'_> {
         let held: Vec<Candidate<'c>> = fitting.iter().copied().filter(|c| fixed || c.executable(self.db, self.who())).collect();
         let types: Vec<Vec<DataType>> = held.iter().map(Candidate::parameters).collect();
         let lists: Vec<&[DataType]> = types.iter().map(Vec::as_slice).collect();
-        match subject_routines(&lists, args).as_slice() {
+        match earliest(subject_routines(&lists, args), &held, path).as_slice() {
             [one] => self.held_subject(held.get(*one).copied(), shown),
             [] if !fitting.is_empty() => Ok(Chosen::Refused(SqlError::new(
                 Code::Privilege,
@@ -208,4 +236,14 @@ impl Binder<'_> {
             None => Ok(()),
         }
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §9.18 SR10h; ISO/IEC 9075-4:2006 draft §8.1 SR4]
+/// Of the subject routines `subjects`, places among `candidates`, those
+/// of the schema first in the SQL-path `path`; all of them of a path of
+/// one schema.
+fn earliest(subjects: Vec<usize>, candidates: &[Candidate<'_>], path: &[String]) -> Vec<usize> {
+    let rank = |k: &usize| candidates.get(*k).and_then(|c| path.iter().position(|s| s == c.schema()));
+    let Some(first) = subjects.iter().filter_map(rank).min() else { return subjects };
+    subjects.into_iter().filter(|k| rank(k) == Some(first)).collect()
 }

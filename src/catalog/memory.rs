@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use super::{
-    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SqlRoutineDesc,
-    TableDesc, TriggerDesc, UserTypeDesc, ViewDesc,
+    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
+    SqlRoutineDesc, TableDesc, TriggerDesc, UserTypeDesc, ViewDesc,
 };
 use crate::hash::murmur::MurmurMap;
 
@@ -25,6 +25,8 @@ pub struct MemoryCatalog {
     triggers: HashMap<QualifiedName, TriggerDesc>,
     /// Each SQL-invoked routine, by its specific name.
     routines: HashMap<QualifiedName, SqlRoutineDesc>,
+    /// Each SQL-server module, by its name.
+    modules: HashMap<QualifiedName, ModuleDesc>,
     /// The roles and role authorizations.
     roles: Roles,
 }
@@ -240,5 +242,19 @@ impl Catalog for MemoryCatalog {
     }
     fn remove_routine(&mut self, specific: &QualifiedName) {
         self.routines.remove(specific);
+    }
+    fn put_module(&mut self, module: ModuleDesc) {
+        self.modules.insert(module.name.clone(), module);
+    }
+    fn module(&self, name: &QualifiedName) -> Option<&ModuleDesc> {
+        self.modules.get(name)
+    }
+    fn modules(&self) -> Vec<&ModuleDesc> {
+        let mut modules: Vec<&ModuleDesc> = self.modules.values().collect();
+        modules.sort_by_key(|m| m.created);
+        modules
+    }
+    fn remove_module(&mut self, name: &QualifiedName) {
+        self.modules.remove(name);
     }
 }

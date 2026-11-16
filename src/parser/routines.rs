@@ -163,6 +163,12 @@ impl Parser {
     pub(super) fn routine_definition(&mut self) -> Result<RoutineDefinition> {
         let start = self.here();
         self.expect_kw(kw::CREATE)?;
+        self.invoked_routine(start)
+    }
+
+    /// `<SQL-invoked procedure>` or `<SQL-invoked function>`, from
+    /// PROCEDURE or FUNCTION, its text from `start`.
+    pub(super) fn invoked_routine(&mut self, start: usize) -> Result<RoutineDefinition> {
         let kind = if self.accept_kw(kw::PROCEDURE) {
             RoutineKind::Procedure
         } else {

@@ -235,7 +235,7 @@ fn a_projection_keeps_and_computes() {
     let db = database(vec![constraint(unique(vec![0], (true, true)), false)]);
     let project = |exprs: Vec<Expr>, input: LogicalPlan| of(&db, &LogicalPlan::Project { exprs, input: Box::new(input) });
     let neg = Expr::Neg(Box::new(Expr::Column(1)));
-    let sub = Expr::Subquery(Arc::new(Subquery { plan: scan(), outer: vec![] }), 0);
+    let sub = Expr::Subquery(Arc::new(Subquery::new(scan(), vec![])), 0);
     let k = project(vec![Expr::Column(0), neg, dice(Expr::Column(1)), sub], scan());
     assert!(k.determines(&[0], 1) && !k.determines(&[0], 2) && !k.determines(&[0], 3));
     let alike = project(vec![coalesce(0, 1), Expr::Column(2)], scan());

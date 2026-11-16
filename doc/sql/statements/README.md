@@ -24,6 +24,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE DOMAIN](create-domain.md): define a domain
 - [CREATE FUNCTION](create-function.md): define an SQL-invoked function
 - [CREATE INDEX](create-index.md): define an index
+- [CREATE MODULE](create-module.md): define an SQL-server module
 - [CREATE PROCEDURE](create-procedure.md): define an SQL-invoked procedure
 - [CREATE ROLE](create-role.md): define a role
 - [CREATE SCHEMA](create-schema.md): define a schema
@@ -45,6 +46,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP COLLATION](drop-collation.md): drop a collation
 - [DROP DOMAIN](drop-domain.md): drop a domain
 - [DROP INDEX](drop-index.md): drop an index
+- [DROP MODULE](drop-module.md): drop an SQL-server module
 - [DROP ROLE](drop-role.md): drop a role
 - [DROP ROUTINE](drop-routine.md): drop an SQL-invoked function or procedure
 - [DROP SCHEMA](drop-schema.md): drop a schema

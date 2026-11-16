@@ -40,14 +40,15 @@ at any remove.
 A routine is dropped too, with CASCADE, with a table, view or column
 its body reads, a distinct type it is typed by, its schema, or a
 privilege its owner needs for its body. Without CASCADE such a drop or
-revoke is refused.
+revoke is refused. A routine of a module that invokes it goes with its
+whole module ([DROP MODULE](drop-module.md)).
 
 DROP ROUTINE runs within the session's transaction: ROLLBACK undoes it.
 
 ## RULES
 
-1. The routine exists and is of the routine type named, and its user
-   owns its schema. A name alone of overloads designates none, so one
+1. The routine exists, of the routine type named and of no module, and
+   its user owns its schema. A name alone of overloads designates none, so one
    is named by its parameters' types or its specific name.
 2. With RESTRICT, no view, constraint, assertion, generated column,
    trigger or routine invokes it.
@@ -94,4 +95,4 @@ no SQL-invoked routines.
 ## SEE ALSO
 
 [CREATE FUNCTION](create-function.md), [CREATE PROCEDURE](create-procedure.md),
-[REVOKE](revoke.md)
+[DROP MODULE](drop-module.md), [REVOKE](revoke.md)

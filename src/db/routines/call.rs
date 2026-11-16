@@ -28,8 +28,8 @@ use super::program::{Hosted, hosted_rows};
 use crate::ast::{
     CallStatement, Composite, ElementPosition, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification,
 };
-use crate::binder::{Context, OutColumn, assignable, bind_argument, qualify, resolve_procedure, routine_definition};
-use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of};
+use crate::binder::{Context, OutColumn, assignable, bind_argument, definition_of, qualify, resolve_procedure};
+use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of, routine_path};
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::exec::execute;
 use crate::logical::{Expr, LogicalPlan};
@@ -211,15 +211,9 @@ impl Session {
         let bound = self.bound(cx.st, params, |b| State::bind_call(b, call))?;
         let values = call_values((self, cx), &bound)?;
         let desc = &bound.desc;
-        let scope = RoutineScope {
-            name: desc.name.clone(),
-            parameters: desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone(), p.mode)).collect(),
-            horizon: desc.horizon.clone(),
-            variables: Vec::new(),
-            cursors: Vec::new(),
-        };
+        let scope = RoutineScope::of(desc, routine_path(&*cx.st.catalog, desc));
         let mut inner = Params::of_routine(values, Arc::new(scope));
-        let body = routine_definition(&desc.text)?.body;
+        let body = definition_of(desc)?.body;
         let owner = owner_of(&*cx.st.catalog, &desc.name.auth).to_owned();
         {
             let _pushed = self.push(&desc.name, (owner, desc.schema.clone()))?;

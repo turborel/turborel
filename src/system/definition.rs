@@ -34,6 +34,7 @@
 
 mod constraints;
 mod descriptors;
+mod modules;
 mod options;
 mod privileges;
 mod roles;
@@ -100,6 +101,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(routines::tables());
     tables.extend(roles::tables());
     tables.extend(triggers::tables());
+    tables.extend(modules::tables());
     tables
 }
 

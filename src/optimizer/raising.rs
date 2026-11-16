@@ -90,7 +90,7 @@ pub(super) fn guarded(at: usize, conds: Vec<Cond>, operands: &[&LogicalPlan]) ->
     let operand = (*operands.get(at)?).clone();
     let Some(cond) = and_all(conds) else { return Some(operand) };
     let others = operands.iter().enumerate().filter(|(n, _)| *n != at);
-    let exists = others.map(|(_, o)| Cond::Exists(Arc::new(Subquery { plan: (*o).clone(), outer: Vec::new() }))).collect();
+    let exists = others.map(|(_, o)| Cond::Exists(Arc::new(Subquery::new((*o).clone(), Vec::new())))).collect();
     let row = LogicalPlan::Values { rows: vec![Vec::new()], types: Vec::new() };
     let guard = wrap(row, exists);
     Some(LogicalPlan::Filter { cond, input: Box::new(LogicalPlan::Product { left: Box::new(operand), right: Box::new(guard) }) })

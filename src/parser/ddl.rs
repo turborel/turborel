@@ -61,6 +61,11 @@ impl Parser {
         if self.accept_word(super::user_types::TYPE) {
             return Ok(Some(DropObject::Type(self.table_name()?)));
         }
+        // [ISO/IEC 9075-4:2006 draft §9.22] MODULE <SQL-server module name>.
+        if self.is_kw(kw::MODULE) && !matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD)) {
+            self.advance();
+            return Ok(Some(DropObject::Module(self.table_name()?)));
+        }
         Ok(None)
     }
 
@@ -76,7 +81,8 @@ impl Parser {
         if self.at_role_definition() {
             return self.schema_statement();
         }
-        let defines = DEFINED.iter().any(|w| self.next_is_kw(w)) || self.next_is_trigger() || self.next_is_routine();
+        let defines =
+            DEFINED.iter().any(|w| self.next_is_kw(w)) || self.next_is_trigger() || self.next_is_routine() || self.next_is_module();
         let altered = self.next_is_kw(kw::DOMAIN) || self.next_is_sequence();
         if (self.is_kw(kw::CREATE) && (defines || self.next_is_sequence() || self.next_is_type())) || (self.is_kw(kw::ALTER) && altered) {
             return self.schema_statement();

@@ -35,6 +35,7 @@ mod dynamic;
 mod expression;
 mod generated;
 mod merge;
+mod modules;
 mod ordered;
 mod pattern;
 mod privileges;
@@ -67,6 +68,7 @@ pub use expression::{
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use merge::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
+pub use modules::ModuleDefinition;
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
 pub use pattern::{
     Definition, EmptyMatches, Logical, Measure, Navigation, PatternCommon, Physical, Quantified, RecognizedTable, RowPattern,

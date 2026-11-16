@@ -114,6 +114,7 @@ verification approach DO-178C expects (§8).
 | D74 | Overloads are chosen by one place per kind of number |
 | D75 | Roles: one authorization cell, applicable roles by fixed point |
 | D76 | Routine bodies: one program, two hosts |
+| D77 | SQL-server modules: catalog routines of a module, its tables in a schema of its own |
 
 ### The project
 
@@ -900,6 +901,44 @@ local cursor's name is its declaration's with the number of the
 execution that declared it (`params::local_key`). A loop checks for
 cancellation on every iteration (D44). Nesting is D71's bound, which
 programs count against as procedures do.
+
+#### D77. SQL-server modules: catalog routines of a module, its tables in a schema of its own
+
+A module's routines are the catalog's routines, each marked with its
+module (`SqlRoutineDesc::module`), so CALL, invocation, binding as the
+owner, dependencies and the Definition Schema treat them as D73 treats
+any routine [ISO/IEC 9075-4:2006 draft §9.24 GR1]. Each keeps its text
+as the `<schema routine>` it would be, CREATE then the routine, read
+again within its module (`binder::definition_of`). The module descriptor
+keeps its definition, default schema, path and the grants of EXECUTE on
+it (`catalog/modules.rs`). EXECUTE on the module stands for EXECUTE on
+each routine (`binder::held`), and a module's routine has no grants of
+its own.
+
+A module's declared temporary tables are the catalog's declared tables
+in a schema no name reaches, `MODULE`, its schema and name, a line feed
+between each (`catalog::module_schema`). The parser of a module's text
+maps MODULE.T there (`Parser::in_module`), and outside it MODULE.T is the
+session's own (§13.11). Each session has its own instance of each, as of
+any temporary table (D49), and the Information Schema shows none
+(`State::without_declared`).
+
+The module's path is a list of schemas the body's routine names are
+looked in (`params::RoutineScope::path`). A function's candidates are
+gathered over the path and its subject routines kept of the earliest
+schema that has one [§10.4 SR2]. A procedure is the one of its arity
+in the earliest schema.
+
+A drop never takes part of a module [§9.2 GR2a, §10.3 GR7]. The routines
+a drop or revoke takes are widened to their whole modules and what
+invokes those, to a fixed point (`State::module_closure`), then dropped
+as any routines are, with the module's tables and descriptor last.
+
+A subquery has an identity of its own (`Subquery::id`), kept by a copy
+whose outer expressions alone differ. A runner keeps a subquery's rows
+by it with its outer values (`exec/subquery.rs`). An address would not
+do, as one made for a row and freed is another's after, and two
+functions' bodies then read each other's rows.
 
 #### D33. Schema changes are transactional
 

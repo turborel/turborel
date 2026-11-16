@@ -42,6 +42,7 @@ GRANT: give privileges, or roles
     | COLLATION <collation name>
     | SEQUENCE <sequence generator name>
     | TYPE <user-defined type name>
+    | MODULE <SQL-server module name>
     | SPECIFIC <routine type> <specific name>
     | <routine type> <routine name> [ ( [ <data type> [ { , <data type> }... ] ] ) ]
 
@@ -54,8 +55,9 @@ GRANT: give privileges, or roles
 
 GRANT gives each grantee privileges on a table, a view, a domain, a
 collation CREATE COLLATION made, a sequence generator, a distinct type,
-a function a distinct type's definition made, or a function or procedure
-CREATE FUNCTION or CREATE PROCEDURE made:
+a function a distinct type's definition made, a function or procedure
+CREATE FUNCTION or CREATE PROCEDURE made, or a module CREATE MODULE
+made:
 
 | Privilege | Lets its holder |
 |---|---|
@@ -66,7 +68,7 @@ CREATE FUNCTION or CREATE PROCEDURE made:
 | REFERENCES | name the table, or the columns, in a constraint: a foreign key that references them, a CHECK or an assertion that reads them |
 | TRIGGER | define a trigger on the table, in a schema of its own (see [CREATE TRIGGER](create-trigger.md)) |
 | USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR; use the distinct type: name it as a column's type or a CAST's |
-| EXECUTE | invoke the function, by name or by a CAST to or from its distinct type; run the procedure by CALL |
+| EXECUTE | invoke the function, by name or by a CAST to or from its distinct type; run the procedure by CALL; invoke each routine of the module |
 
 A routine is named by its specific name, or by its name and, if more
 than one routine of the schema has it, its parameters' types. A
@@ -80,8 +82,10 @@ PUBLIC is every authorization identifier, present and to come.
 
 The privileges granted are those its user holds with grant option: the
 owner of the object's schema holds every privilege on a base table
-with grant option, EXECUTE on a routine of it with grant option if the
-routine's body needs only privileges it holds with grant option, and those of a view as the tables below give them,
+with grant option, EXECUTE on a routine or a module of it with grant
+option if the routine's body, or each of the module's, needs only
+privileges it holds with grant option, and those of a view as the
+tables below give them,
 with TRIGGER on its own views too, but without grant option. An INSTEAD
 OF trigger gives the owner of its schema the privilege of its event on
 its view, with grant option.
@@ -105,16 +109,16 @@ is applicable for that role, so its privileges are the role's too.
 
 GRANT runs within the session's transaction: ROLLBACK undoes it.
 INFORMATION_SCHEMA.TABLE_PRIVILEGES, COLUMN_PRIVILEGES,
-USAGE_PRIVILEGES, UDT_PRIVILEGES and ROUTINE_PRIVILEGES show the
-privileges.
+USAGE_PRIVILEGES, UDT_PRIVILEGES, ROUTINE_PRIVILEGES and
+MODULE_PRIVILEGES show the privileges.
 
 ## RULES
 
 1. The object exists. A table named without a schema is of the
    session's default schema.
 2. Of a domain, a collation, a sequence generator or a type, USAGE alone
-   is granted, and of a routine EXECUTE alone. Neither is granted of a
-   table.
+   is granted, and of a routine or a module EXECUTE alone. Neither is
+   granted of a table. No privilege is granted of a module's routine.
 3. A routine's name designates exactly one routine of its routine type,
    counting the functions of distinct types. A name alone of overloads
    designates none, so one is named by its parameters' types or its

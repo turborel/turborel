@@ -213,8 +213,9 @@ impl State {
         let mut built = self.apply_schema(&*with_views, &descs, granted.concat(), made)?;
         let asserted = self.schema_assertions(&s, (made, &mut built))?;
         let routines_warned = self.schema_routines(&s, &owner)?;
+        let modules_warned = self.schema_modules(&s, zone, (made, epochs), &mut built)?;
         self.schema_triggers(&s)?;
-        let warned = warned.contains(&true) || routines_warned;
+        let warned = warned.contains(&true) || routines_warned || modules_warned;
         Ok((owner, descs.into_iter().map(|d| (d.name.ident, d.engine)).collect(), warned, asserted, built))
     }
 
@@ -236,6 +237,8 @@ impl State {
                 PrivilegeObject::Domain => self.grant_usage(owner, &s.name, p),
                 PrivilegeObject::Collation => self.grant_collation_usage(owner, p),
                 PrivilegeObject::Sequence => self.grant_sequence_usage(owner, &s.name, p),
+                // Granted once the schema's modules are made.
+                PrivilegeObject::Module => continue,
                 // Granted once the schema's routines are made.
                 PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) if of_schema_routine(s, p) => continue,
                 PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) => {

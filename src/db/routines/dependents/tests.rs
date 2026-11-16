@@ -37,6 +37,7 @@ fn routine(
         text: "CREATE FUNCTION F (X NUMERIC) RETURNS NUMERIC RETURN X".into(),
         body: "RETURN X".into(),
         schema: specific.auth.clone(),
+        module: None,
         reads: reads.to_vec(),
         horizon: Horizon::default().invoking(invokes.to_vec()),
         sequences: Vec::new(),

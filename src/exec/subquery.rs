@@ -192,9 +192,9 @@ impl Subqueries for NoSubqueries {
     }
 }
 
-/// The key a subquery's rows are kept under: the subquery, by address, and
+/// The key a subquery's rows are kept under: the subquery, by identity, and
 /// its outer values as compared [X3.135-1986 §5.11 GR7].
-type Run = (usize, Vec<NormKey>);
+type Run = (u64, Vec<NormKey>);
 
 /// `v` as a run's key: a string as it is, since a subquery may tell apart
 /// strings that compare equal, by a collation of NO PAD or CHAR_LENGTH.
@@ -254,7 +254,7 @@ pub struct Runner {
     /// The bytes `done` holds: its keys and entries, the rows held in
     /// memory, and the areas of those that spilled.
     kept: Cell<usize>,
-    seen: RefCell<HashMap<usize, Seen>>,
+    seen: RefCell<HashMap<u64, Seen>>,
     /// Its transaction's session's, whose warnings it hears, found the
     /// first time one is raised.
     stop: OnceCell<Option<Arc<Stop>>>,
@@ -278,7 +278,7 @@ impl Runner {
     /// The rows of `subquery`, at `at`, by key, once it ran
     /// EXECUTOR.DECORRELATE_AFTER_RUNS times, if it can be decorrelated; this run is
     /// counted.
-    fn keyed(&self, subquery: &Subquery, at: usize) -> Result<Option<Arc<Keyed>>> {
+    fn keyed(&self, subquery: &Subquery, at: u64) -> Result<Option<Arc<Keyed>>> {
         let runs = {
             let mut seen = self.seen.borrow_mut();
             let s = seen.entry(at).or_default();
@@ -368,7 +368,7 @@ fn rows_for(keyed: &Keyed, outer: &[Value], (limit, work): (Option<usize>, &mut 
 
 impl Subqueries for Runner {
     fn rows(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> Result<SubqueryRows> {
-        let at = std::ptr::from_ref(subquery).addr();
+        let at = subquery.id();
         let key = (at, outer.iter().map(exact_norm).collect());
         if let Some(rows) = self.done.borrow().get(&key) {
             return Ok(rows.clone());
@@ -422,7 +422,7 @@ mod tests {
     #[test]
     fn no_subqueries_refuses_to_run_one() {
         let table = QualifiedName { auth: "A".into(), ident: "T".into() };
-        let s = Subquery { plan: LogicalPlan::Scan { table, names: vec![], needed: vec![], located: false }, outer: vec![] };
+        let s = Subquery::new(LogicalPlan::Scan { table, names: vec![], needed: vec![], located: false }, vec![]);
         assert_eq!(NoSubqueries.rows(&s, &[], None).err().map(|e| e.code), Some(crate::error::Code::Api));
     }
 }

@@ -165,6 +165,7 @@ impl Session {
             SchemaStatement::Type(d) => self.own_object(st, &d.name, (schema, "ISO/IEC 9075-2:2023 §11.51 AR1")),
             SchemaStatement::Trigger(t) => self.own_object(st, &t.name, (schema, "ISO/IEC 9075-2:2023 §11.49 AR1")),
             SchemaStatement::Routine(r) => self.own_object(st, &r.name, (schema, "ISO/IEC 9075-2:2023 §11.60 AR1")),
+            SchemaStatement::Module(m) => self.own_object(st, &m.name, (schema, "ISO/IEC 9075-4:2006 draft §9.21 AR1")),
             SchemaStatement::AlterSequence(a) => {
                 let qn = qualify(&a.name, schema);
                 // [ISO/IEC 9075-2:2023 §11.73 AR1] only the owner of its
@@ -235,6 +236,7 @@ impl State {
             SchemaStatement::Grant(p) => {
                 let a = self.cell_grantor((auth, role), p.grantor).or_at(p.table.at)?;
                 let mut defined = self.grant(&a, schema, p)?;
+                self.module_grants_upgraded();
                 // So no role is created of a grantee's name meanwhile.
                 defined.locks.push((super::roles::roles_lock(), LockMode::Shared));
                 Ok(defined)
@@ -253,6 +255,7 @@ impl State {
             SchemaStatement::Type(d) => self.create_user_type(schema, d),
             SchemaStatement::Trigger(t) => self.create_trigger(schema, t),
             SchemaStatement::Routine(r) => self.create_routine(schema, r),
+            SchemaStatement::Module(m) => self.create_module((schema, zone), m, (made, epochs)),
         }
     }
 
@@ -371,6 +374,9 @@ impl State {
         }
         if p.object == PrivilegeObject::Sequence {
             return self.grant_sequence_usage(auth, schema, p).or_at(p.table.at);
+        }
+        if p.object == PrivilegeObject::Module {
+            return self.grant_on_module(auth, schema, p).or_at(p.table.at);
         }
         if matches!(p.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_)) {
             return self.grant_on_type(auth, schema, p).or_at(p.table.at);

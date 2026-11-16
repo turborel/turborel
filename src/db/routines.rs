@@ -11,7 +11,7 @@ mod dependents;
 mod privileges;
 mod program;
 
-pub(super) use define::of_schema_routine;
+pub(super) use define::{Home, of_schema_routine};
 pub(super) use program::atomic;
 pub(crate) use program::run_unhosted;
 pub(super) use program::{Hosted, hosted_rows};

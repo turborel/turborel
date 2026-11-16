@@ -79,6 +79,10 @@ pub(in crate::db) const DROP_COLLATION: Command = command("DROP COLLATION", 26);
 pub(in crate::db) const DROP_ROLE: Command = command("DROP ROLE", 29);
 /// `<drop routine statement>` [ISO/IEC 9075-2:2023 Table 39].
 pub(in crate::db) const DROP_ROUTINE: Command = command("DROP ROUTINE", 30);
+/// `<drop module statement>` [ISO/IEC 9075-4:2006 draft §17.1 Table 2].
+pub(in crate::db) const DROP_MODULE: Command = command("DROP MODULE", 28);
+/// `<SQL-server module definition>` [ISO/IEC 9075-4:2006 draft §17.1 Table 2].
+pub(in crate::db) const CREATE_MODULE: Command = command("CREATE MODULE", 51);
 /// `<schema routine>` [ISO/IEC 9075-2:2023 Table 39].
 pub(in crate::db) const CREATE_ROUTINE: Command = command("CREATE ROUTINE", 14);
 /// `<return statement>` [ISO/IEC 9075-2:2023 Table 39].

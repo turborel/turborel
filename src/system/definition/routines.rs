@@ -13,7 +13,9 @@
 //! descriptor columns, its DTD_IDENTIFIER and its IS_NULL_CALL are null
 //! [§11.60 SR9f i]. Each SQL-invoked routine is of SQL SECURITY DEFINER
 //! [§11.60 SR23b], and its ROUTINE_DEFINITION is its `<SQL routine body>`
-//! as written, null when longer than CHARACTER_DATA holds.
+//! as written, null when longer than CHARACTER_DATA holds. A routine of an
+//! SQL-server module names it, and is no schema-level routine [ISO/IEC
+//! 9075-4:2006 draft §19.5].
 
 use std::sync::Arc;
 
@@ -73,7 +75,12 @@ fn access(a: DataAccess) -> &'static str {
 // ---------------------------------------------------------------------------
 
 fn routines_columns() -> Vec<ColumnDesc> {
-    let columns = Columns::of().ids("SPECIFIC", true).ids("ROUTINE", true).data("ROUTINE_TYPE", true).id("DTD_IDENTIFIER", false);
+    let columns = Columns::of()
+        .ids("SPECIFIC", true)
+        .ids("ROUTINE", true)
+        .ids("MODULE", false)
+        .data("ROUTINE_TYPE", true)
+        .id("DTD_IDENTIFIER", false);
     described_as(columns, false)
         .data("ROUTINE_BODY", true)
         .data("ROUTINE_DEFINITION", false)
@@ -95,7 +102,11 @@ fn routines(seen: &Seen<'_>) -> Vec<Row> {
         for f in functions(t) {
             let (_, _, result) = signature(f);
             let named = QualifiedName { auth: t.name.auth.clone(), ident: t.routine(f.1).name.clone() };
-            let head = [ids(&catalog, &specific(f)).to_vec(), ids(&catalog, &named).to_vec(), vec![text("FUNCTION"), text(RESULT_DTD)]];
+            let head = [
+                ids(&catalog, &specific(f)).to_vec(),
+                ids(&catalog, &named).to_vec(),
+                vec![Value::Null, Value::Null, Value::Null, text("FUNCTION"), text(RESULT_DTD)],
+            ];
             let tail = vec![text("SQL"), Value::Null, yes(true), text("CONTAINS SQL"), yes(false), yes(true), text("DEFINER")];
             rows.push([head.concat(), data_type(&catalog, &result, None), tail].concat());
         }
@@ -110,8 +121,12 @@ fn routine(catalog: &Value, r: &SqlRoutineDesc) -> Row {
         Some(t) => ("FUNCTION", text(RESULT_DTD), data_type(catalog, t, None), yes(r.null_call)),
         None => ("PROCEDURE", Value::Null, vec![Value::Null; DESCRIBED], Value::Null),
     };
-    let head = [ids(catalog, &r.specific).to_vec(), ids(catalog, &r.name).to_vec(), vec![text(kind), dtd]].concat();
-    let tail = vec![text("SQL"), long(&r.body), yes(r.deterministic), text(access(r.access)), null_call, yes(true), text("DEFINER")];
+    // [ISO/IEC 9075-4:2006 draft §19.5 Description 1] its module's name, if
+    // it is of one.
+    let module = r.module_name().map_or_else(|| vec![Value::Null; 3], |m| ids(catalog, &m).to_vec());
+    let head = [ids(catalog, &r.specific).to_vec(), ids(catalog, &r.name).to_vec(), module, vec![text(kind), dtd]].concat();
+    let level = yes(r.module.is_none());
+    let tail = vec![text("SQL"), long(&r.body), yes(r.deterministic), text(access(r.access)), null_call, level, text("DEFINER")];
     [head, described, tail].concat()
 }
 

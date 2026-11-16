@@ -70,6 +70,7 @@ impl State {
             | PrivilegeObject::Domain
             | PrivilegeObject::Collation
             | PrivilegeObject::Sequence
+            | PrivilegeObject::Module
             | PrivilegeObject::Type => return Ok(None),
         };
         let qn = qualify(name, schema);
@@ -143,6 +144,7 @@ impl State {
     ///
     /// SQLCODE -104 if `auth` holds no EXECUTE on it \[AR1\].
     pub(in crate::db) fn grant_on_routine(&mut self, auth: &str, mut desc: SqlRoutineDesc, p: &PrivilegeDefinition) -> Result<Defined> {
+        of_schema_level(&desc).or_at(p.table.at)?;
         let (held, grantable) = desc.execute_of(sole(&*self.catalog, auth));
         if !held {
             let msg = format!("[ISO/IEC 9075-2:2023 §12.2 AR1] {auth} holds no EXECUTE on routine {}", desc.name);
@@ -173,6 +175,7 @@ impl State {
     /// With RESTRICT, SQLCODE -103 and SQLSTATE 2B000 if it abandons
     /// anything \[GR12q\]; as each drop's.
     pub(in crate::db) fn revoke_on_routine(&mut self, auth: &str, desc: SqlRoutineDesc, r: &RevokeStatement) -> Result<Defined> {
+        of_schema_level(&desc).or_at(r.table.at)?;
         let revoked = self.routine_revoked(auth, desc, r);
         if r.behavior == DropBehavior::Restrict && (revoked.lost || !revoked.abandoned.is_empty()) {
             let what = if revoked.abandoned.is_empty() { "a grant of it".to_owned() } else { revoked.abandoned.first() };
@@ -243,5 +246,23 @@ impl State {
         let mut catalog = self.catalog.duplicate();
         catalog.put_routine(desc);
         self.catalog = Arc::from(catalog);
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §11.60 GR1; ISO/IEC 9075-4:2006 draft §10.2] That
+/// the routine `desc` is a schema-level routine, of which a privilege is
+/// granted or revoked: one of a module has none, EXECUTE on its module
+/// invoking it.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is of a module.
+fn of_schema_level(desc: &SqlRoutineDesc) -> Result<()> {
+    match desc.module_name() {
+        Some(m) => Err(rule(format!(
+            "[ISO/IEC 9075-2:2023 §11.60 GR1; ISO/IEC 9075-4:2006 draft §10.2] routine {} is of module {m}, whose EXECUTE privilege invokes it",
+            desc.name
+        ))),
+        None => Ok(()),
     }
 }

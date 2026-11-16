@@ -85,7 +85,7 @@ pub(super) fn flag(sides: &Sides<'_>, sc1: &Cond, scj: Cond) -> Expr {
     let cond = either.map_exprs(&mut |e| sides.correlated(e));
     let plan = LogicalPlan::Filter { cond, input: Box::new(sides.target(false)) };
     let outer = (0..sides.source_width).map(Expr::Column).collect();
-    Expr::Truth(Box::new(Cond::Not(Box::new(Cond::Exists(Arc::new(Subquery { plan, outer }))))))
+    Expr::Truth(Box::new(Cond::Not(Box::new(Cond::Exists(Arc::new(Subquery::new(plan, outer)))))))
 }
 
 /// [GR5] The rows of a MERGE: each row of the source's plan `source`,

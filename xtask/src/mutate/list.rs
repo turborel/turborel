@@ -23,6 +23,7 @@ mod kept;
 mod limits;
 mod listagg;
 mod merge;
+mod modules;
 mod near;
 mod null_ordering;
 mod nulls;

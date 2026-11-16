@@ -109,7 +109,19 @@ impl State {
             }
             // [ISO/IEC 9075-2:2023 §11.62 GR1] Those that invoke it, or a
             // routine that does.
-            DropTarget::Routine(specific) => self.invoking(&self.invokers_of(std::slice::from_ref(specific))).columns,
+            DropTarget::Routine(specific) => self.columns_invoking(std::slice::from_ref(specific)),
+            // [ISO/IEC 9075-4:2006 draft §9.22 GR1] those that invoke a
+            // routine of it.
+            DropTarget::Module(qn) => {
+                let own: Vec<QualifiedName> = self
+                    .catalog
+                    .routines()
+                    .into_iter()
+                    .filter(|r| r.module_name().as_ref() == Some(qn))
+                    .map(|r| r.specific.clone())
+                    .collect();
+                self.columns_invoking(&own)
+            }
         }
     }
 
@@ -129,9 +141,21 @@ impl State {
             self.collation_generations_revoked(auth, r)
         } else if matches!(r.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_)) {
             self.type_columns_revoked((auth, schema), r)
+        } else if r.object == PrivilegeObject::Module {
+            self.module_columns_revoked((auth, schema), r)
         } else {
             Ok(Vec::new())
         }
+    }
+}
+
+impl State {
+    /// The generated columns that invoke a routine of specific names
+    /// `specifics`, or a routine that does, or one of a module one of those
+    /// is of [ISO/IEC 9075-2:2023 §11.62 GR1; ISO/IEC 9075-4:2006 draft
+    /// §9.22 GR1].
+    fn columns_invoking(&self, specifics: &[QualifiedName]) -> Vec<Column> {
+        self.invoking(&self.module_closure(self.invokers_of(specifics)).0).columns
     }
 }
 

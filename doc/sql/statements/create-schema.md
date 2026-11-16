@@ -27,6 +27,7 @@ CREATE SCHEMA: define a schema
     | <domain definition>
     | <assertion definition>
     | <SQL-invoked routine>
+    | <SQL-server module definition>
     | <role definition>
     | <grant statement>
 ```
@@ -37,9 +38,10 @@ and a `<role definition>` is [CREATE ROLE](create-role.md).
 Each element is the statement of its own page: [CREATE TABLE](create-table.md),
 [CREATE VIEW](create-view.md), [CREATE DOMAIN](create-domain.md),
 [CREATE ASSERTION](create-assertion.md), [CREATE FUNCTION](create-function.md),
-[CREATE PROCEDURE](create-procedure.md) and [GRANT](grant.md). The
-routines are made after the tables, views and assertions, and a GRANT
-of EXECUTE on one of them is applied once they are made.
+[CREATE PROCEDURE](create-procedure.md), [CREATE MODULE](create-module.md)
+and [GRANT](grant.md). The routines are made after the tables, views and
+assertions, the modules after the routines, and a GRANT of EXECUTE on
+one of them is applied once they are made.
 
 ## DESCRIPTION
 

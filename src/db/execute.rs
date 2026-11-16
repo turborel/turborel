@@ -442,6 +442,7 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::AlterSequence(_)
         | SchemaStatement::Type(_)
         | SchemaStatement::Routine(_)
+        | SchemaStatement::Module(_)
         | SchemaStatement::Role(_) => None,
     }
 }
@@ -487,6 +488,7 @@ fn schema_command(s: &SchemaStatement) -> Command {
         SchemaStatement::Type(_) => commands::CREATE_TYPE,
         SchemaStatement::Trigger(_) => commands::CREATE_TRIGGER,
         SchemaStatement::Routine(_) => commands::CREATE_ROUTINE,
+        SchemaStatement::Module(_) => commands::CREATE_MODULE,
     }
 }
 
@@ -504,6 +506,7 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::Type(_) => commands::DROP_TYPE,
         DropObject::Trigger(_) => commands::DROP_TRIGGER,
         DropObject::Routine(_) => commands::DROP_ROUTINE,
+        DropObject::Module(_) => commands::DROP_MODULE,
     }
 }
 
