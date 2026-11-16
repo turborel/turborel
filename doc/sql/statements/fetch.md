@@ -26,7 +26,9 @@ FETCH: move a cursor and read its row *(in a program)*
 ```
 
 The `<dynamic cursor name>` is [OPEN](open.md)'s, the `<descriptor
-name>` [ALLOCATE DESCRIPTOR](allocate-descriptor.md)'s.
+name>` [ALLOCATE DESCRIPTOR](allocate-descriptor.md)'s. In a polymorphic
+table function's fulfill component, PTF and a name are of its cursors
+and its areas ([CREATE FUNCTION](create-function.md)).
 
 ## DESCRIPTION
 
@@ -43,6 +45,12 @@ statement run directly. Its name is the compound statement's own, in
 scope there alone, and the cursor is destroyed as the compound
 statement ends. Its targets are SQL variables and SQL
 parameters, and a NOT FOUND handler takes its no data.
+
+A fulfill component fetches, NEXT alone, from the cursor of each table
+argument it is passed the name of, FETCH FROM PTF and that name. Its
+rows are the partition's, in the argument's ORDER BY, each the columns
+the describe component requested, then of PASS THROUGH a BIGINT that
+[PIPE ROW](pipe-row.md) gives back to name the row.
 
 A null value sets the target's indicator to -1. A character string
 longer than its target is cut to fit, and the indicator holds its

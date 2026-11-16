@@ -83,7 +83,7 @@ mod definitions;
 mod direct;
 mod domains;
 mod drop;
-mod dynamic;
+pub(crate) mod dynamic;
 mod execute;
 mod explain;
 mod export;
@@ -103,6 +103,7 @@ mod modules;
 mod nested;
 mod position;
 mod prepared;
+pub(crate) mod ptf;
 mod recovery;
 mod rekey;
 mod revoke;
@@ -309,6 +310,9 @@ pub struct Session {
     /// [ISO/IEC 9075-2:2023 §15.21 GR6, §9.18 GR6] The contexts of the
     /// triggers and procedures it is executing (`db/nested.rs`).
     nesting: nested::Nesting,
+    /// [ISO/IEC 9075-2:2023 §9.24] The database and transaction of the
+    /// statement running, which a PTF describe component procedure reads.
+    compile: RefCell<Option<crate::binder::Compile>>,
 }
 
 /// One call on a session: the snapshot it runs against, and the session
@@ -390,6 +394,7 @@ impl Session {
             now: Cell::default(),
             triggering: triggers::Triggering::default(),
             nesting: nested::Nesting::default(),
+            compile: RefCell::new(None),
             running: RefCell::new(None),
         }
     }

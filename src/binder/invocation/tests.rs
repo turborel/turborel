@@ -46,7 +46,8 @@ fn column(name: &str) -> ColumnDesc {
 /// returning INTEGER, deterministic and of CONTAINS SQL, its body RETURN
 /// `value`; EXECUTE granted to no one.
 fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc {
-    let parameters = params.iter().map(|(n, t)| SqlParameter { name: (*n).into(), data_type: ty(t), mode: ParameterMode::In }).collect();
+    let parameters =
+        params.iter().map(|(n, t)| SqlParameter { name: (*n).into(), data_type: ty(t), mode: ParameterMode::In, generic: None }).collect();
     let declared: Vec<String> = params.iter().map(|(n, t)| format!("{n} {t}")).collect();
     SqlRoutineDesc {
         name: qn("S", name),
@@ -59,6 +60,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
         null_call: false,
         text: format!("CREATE FUNCTION S.{name} ({}) RETURNS INTEGER DETERMINISTIC CONTAINS SQL RETURN {value}", declared.join(", ")),
         module: None,
+        ptf: None,
         body: format!("RETURN {value}"),
         schema: "S".into(),
         reads: Vec::new(),
@@ -104,7 +106,7 @@ fn defined(desc: &SqlRoutineDesc, statement: SqlStatement) -> RoutineDefinition 
         deterministic: desc.deterministic,
         access: desc.access,
         null_call: desc.null_call,
-        body: Box::new(statement),
+        body: crate::ast::RoutineBody::Sql(Box::new(statement)),
         text: desc.text.clone(),
         body_text: desc.body.clone(),
     }

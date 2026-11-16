@@ -2,14 +2,15 @@
 //! with the `<SQL argument>`s turborel takes, and the `<return
 //! statement>`, which is in a function's body alone.
 
-use super::{CALL, RETURN, RoutineScope, not_supported};
+use super::{CALL, COPARTITION, RETURN, RoutineScope, not_supported};
 use crate::ast::{CallStatement, ReturnStatement, RoutineKind, SqlArgument};
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
 use crate::parser::Parser;
 
-/// COPARTITION, which begins a `<co-partition clause>`.
-const COPARTITION: &str = "COPARTITION";
+/// [ISO/IEC 9075-2:2023 §9.18 SR9a] What no CALL's invocation holds.
+const SR9A: &str = "[ISO/IEC 9075-2:2023 §9.18 SR9a] the <routine invocation> of a CALL holds no <table argument>, <descriptor argument> or \
+     <co-partition clause>";
 
 impl Parser {
     /// Whether a `<call statement>` begins here.
@@ -39,9 +40,7 @@ impl Parser {
             }
         }
         if self.is_word(COPARTITION) {
-            let msg = "[ISO/IEC 9075-2:2023 §10.4 CR10] a <co-partition clause> needs Feature B200, “Polymorphic table functions”, which \
-                       turborel does not support";
-            return Err(not_supported(self.here(), msg));
+            return Err(self.rule(SR9A));
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(CallStatement { name, arguments })
@@ -61,10 +60,8 @@ impl Parser {
             self.advance();
             self.advance();
         }
-        if self.is_kw(kw::TABLE) {
-            let msg = "[ISO/IEC 9075-2:2023 §10.4 CR10] a <table argument> needs Feature B200, “Polymorphic table functions”, which \
-                       turborel does not support";
-            return Err(not_supported(at, msg));
+        if self.is_kw(kw::TABLE) || self.is_kw(kw::DESCRIPTOR) || (self.is_kw(kw::CAST) && self.next_is_null_descriptor()) {
+            return Err(self.rule(SR9A));
         }
         if self.accept_kw(kw::DEFAULT) {
             return Ok(SqlArgument::Default(at));

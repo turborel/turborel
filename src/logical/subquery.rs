@@ -82,6 +82,10 @@ pub fn map_plan_exprs(plan: LogicalPlan, f: &mut dyn FnMut(Expr) -> Expr) -> Log
             LogicalPlan::Recognize(r)
         }
         LogicalPlan::Limit { limit, input } => LogicalPlan::Limit { limit: limit.map_exprs(f), input },
+        LogicalPlan::Polymorphic(mut p) => {
+            p.arguments = std::mem::take(&mut p.arguments).into_iter().map(&mut *f).collect();
+            LogicalPlan::Polymorphic(p)
+        }
         other @ (LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Product { .. }
@@ -107,8 +111,9 @@ fn plan_can_raise(plan: &LogicalPlan) -> bool {
         LogicalPlan::Window(w) => w.can_raise(),
         LogicalPlan::Recognize(r) => r.can_raise(),
         // Past EXECUTOR.MAX_ITERATIONS, its iteration is refused; a count
-        // not a row count raises [ISO/IEC 9075-2:2023 §7.17 GR6b, GR7c].
-        LogicalPlan::Recursive { .. } | LogicalPlan::Limit { .. } => true,
+        // not a row count raises [ISO/IEC 9075-2:2023 §7.17 GR6b, GR7c]; a
+        // component procedure may raise any exception.
+        LogicalPlan::Recursive { .. } | LogicalPlan::Limit { .. } | LogicalPlan::Polymorphic(_) => true,
         LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Product { .. }
@@ -197,6 +202,7 @@ pub fn plan_has_outer(plan: &LogicalPlan) -> bool {
         // with the plans that hold none.
         LogicalPlan::Window(w) => w.calls.iter().any(|c| c.exprs().chain(c.frame.offsets()).any(expr_has_outer)),
         LogicalPlan::Limit { limit, .. } => limit.exprs().any(expr_has_outer),
+        LogicalPlan::Polymorphic(p) => p.arguments.iter().any(expr_has_outer),
         LogicalPlan::Recognize(_)
         | LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }

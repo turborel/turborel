@@ -275,8 +275,21 @@ impl Session {
 
     /// Runs a statement that runs in the transaction `tx`: not COMMIT,
     /// ROLLBACK or another that `execute_parsed` runs itself; of a prepared
-    /// statement, with the plans it keeps.
+    /// statement, with the plans it keeps. As it runs, a PTF describe
+    /// component procedure its binding runs reads SQL-data in `tx`.
     pub(super) fn run_statement(
+        &self,
+        cx: StatementContext<'_>,
+        stmt: &SqlStatement,
+        params: &mut Params,
+        keeping: Option<&Keeping<'_>>,
+    ) -> Result<Completion> {
+        let _compiling = self.compiling(cx.st, cx.tx.id);
+        self.run_compiling(cx, stmt, params, keeping)
+    }
+
+    /// `run_statement`'s statement run.
+    fn run_compiling(
         &self,
         cx: StatementContext<'_>,
         stmt: &SqlStatement,

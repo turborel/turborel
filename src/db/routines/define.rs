@@ -18,7 +18,8 @@ use super::super::ddl::Dropped;
 use super::super::definitions::Defined;
 use super::super::{Completion, Session, State, rule};
 use crate::ast::{
-    ParameterDeclaration, PrivilegeDefinition, PrivilegeObject, RoutineDefinition, RoutineDesignator, Schema, TableName, TypeName,
+    ParameterDeclaration, PrivilegeDefinition, PrivilegeObject, RoutineBody, RoutineDefinition, RoutineDesignator, Schema, TableName,
+    TypeName,
 };
 use crate::binder::{alike, definition_of, qualify};
 use crate::catalog::{
@@ -96,6 +97,10 @@ impl State {
             execute: Vec::new(),
             created,
             module: module.map(str::to_owned),
+            ptf: match &r.body {
+                RoutineBody::Polymorphic(def) => Some(Box::new(self.ptf_desc(def, (names, &owner))?)),
+                RoutineBody::Sql(_) => None,
+            },
         };
         let bound = self.bind_routine_body(&desc, r)?;
         desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes);
@@ -196,15 +201,15 @@ impl State {
     /// IN unless written otherwise [SR16d], of its declared type.
     fn parameters(&self, r: &RoutineDefinition, (schema, owner): (&str, &str)) -> Result<Vec<SqlParameter>> {
         let declared = |p: &ParameterDeclaration| {
-            let data_type = self.parameter_type(&p.data_type, (schema, owner)).or_at(p.at)?;
-            Ok(SqlParameter { name: p.name.clone(), data_type, mode: p.mode.unwrap_or(ParameterMode::In) })
+            let (data_type, generic) = self.ptf_parameter(&p.data_type, (schema, owner)).or_at(p.at)?;
+            Ok(SqlParameter { name: p.name.clone(), data_type, mode: p.mode.unwrap_or(ParameterMode::In), generic })
         };
         r.parameters.iter().map(declared).collect()
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 SR16, §6.1 AR1] The `<parameter type>`
     /// or `<returns data type>` `t`, a `<data type>`, no domain.
-    fn parameter_type(&self, t: &TypeName, (schema, owner): (&str, &str)) -> Result<DataType> {
+    pub(super) fn parameter_type(&self, t: &TypeName, (schema, owner): (&str, &str)) -> Result<DataType> {
         match self.resolve_type(t, (schema, sole(&*self.catalog, owner)))? {
             (_, Some(d)) => Err(rule(format!(
                 "[ISO/IEC 9075-2:2023 §11.60 SR16] a parameter's or result's type is a <data type>, not domain {}",

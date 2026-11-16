@@ -189,6 +189,19 @@ impl Item {
         self.extension = None;
     }
 
+    /// [ISO/IEC 9075-2:2023 §20.5 GR4c iii 1] The default collation of
+    /// SQL_TEXT, its own name, in its COLLATION fields.
+    pub(super) fn default_collation(&mut self, catalog: &str) {
+        self.sql_text(COLLATION, catalog);
+    }
+
+    /// [ISO/IEC 9075-2:2023 §20.6 GR7h iii 2] The type `other` describes
+    /// beyond its fields, of a type of this implementation, described by
+    /// it too.
+    pub(super) fn copy_described(&mut self, other: &Item) {
+        self.extension.clone_from(&other.extension);
+    }
+
     /// The `<character set name>` of SQL_TEXT in the fields `fields`.
     fn sql_text(&mut self, fields: [DescriptorItem; 3], catalog: &str) {
         for (f, part) in fields.into_iter().zip([catalog, INFORMATION_SCHEMA, SQL_TEXT]) {

@@ -115,6 +115,7 @@ verification approach DO-178C expects (§8).
 | D75 | Roles: one authorization cell, applicable roles by fixed point |
 | D76 | Routine bodies: one program, two hosts |
 | D77 | SQL-server modules: catalog routines of a module, its tables in a schema of its own |
+| D78 | Polymorphic table functions: compiled as bound, run whole as the cursor opens |
 
 ### The project
 
@@ -939,6 +940,42 @@ whose outer expressions alone differ. A runner keeps a subquery's rows
 by it with its outer values (`exec/subquery.rs`). An address would not
 do, as one made for a row and freed is another's after, and two
 functions' bodies then read each other's rows.
+
+#### D78. Polymorphic table functions: compiled as bound, run whole as the cursor opens
+
+A `<PTF derived table>` is a plan node, `LogicalPlan::Polymorphic`, whose
+inputs are its table arguments' plans, as a derived table's query is
+its input (`logical/ptf.rs`). A data argument is an expression of no
+row. The invocation is compiled as it is bound [§9.24]: its PTF data
+area made, its describe component procedure run on it, and the
+requested row types and proper result columns it leaves checked
+(`db/ptf/compile.rs`). What compilation leaves rides in the node
+(`db::ptf::Call`), so the plan of a statement, a view or a routine body
+carries the result row type it was bound with [§4.35.4].
+
+A describe component procedure that reads SQL-data reads it in the
+transaction of the statement being bound (`binder::Compile`, set by
+`Session::compiling` while a statement runs). Where none runs, as a
+definition is bound, a read is refused, SQLCODE -900.
+
+As the cursor opens, each table argument's rows are read whole and the
+partitions found [§9.25 GR13 to GR16]. A virtual processor is run for
+each in turn, on a copy of the data area compilation left (UA056,
+`db/ptf/execute.rs`). Its component procedures run on the program of
+D76, the executor host, with the data area beside the frame
+(`run_component`). Their statements of a PTF data area are run there
+alone (`db/ptf/statements.rs`).
+
+A pass-through surrogate is a row's place among its table's rows,
+BIGINT (UV133). The rows piped are kept, then mapped to the node's row:
+the proper columns, then of each table argument of PASS THROUGH the
+columns of the row its surrogate names, else its partitioning columns,
+in the table's order [§7.6 SR12a].
+
+A `<PTF derived table>`'s range variables, its correlation name's and
+each table argument's, are items of the FROM row together, a group
+whose first item holds the plan and the others `Source::Argument`
+(`binder/ptf.rs`). Each names its own columns of the one node.
 
 #### D33. Schema changes are transactional
 

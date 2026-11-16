@@ -328,6 +328,7 @@ impl Rule for ConstantFolding {
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
+            | LogicalPlan::Polymorphic(..)
             | LogicalPlan::WorkTable { .. }
             | LogicalPlan::Transition { .. } => None,
         }
@@ -550,6 +551,7 @@ fn base_table(plan: &LogicalPlan) -> Option<&LogicalPlan> {
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
         | LogicalPlan::Recognize(..)
+        | LogicalPlan::Polymorphic(..)
         | LogicalPlan::WorkTable { .. }
         | LogicalPlan::Transition { .. } => None,
     }

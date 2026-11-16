@@ -16,9 +16,10 @@ mod call;
 mod characteristics;
 
 use super::Parser;
+use super::ptf::{ReturnsTable, has_table_parameter};
 use crate::ast::{
-    ParameterDeclaration, ParameterMode, ParameterSpecification, RoutineDefinition, RoutineDesignator, RoutineKind, RoutineType,
-    SqlStatement, TargetKind, TypeName,
+    ParameterDeclaration, ParameterMode, ParameterSpecification, ParameterType, RoutineBody, RoutineDefinition, RoutineDesignator,
+    RoutineKind, RoutineType, SqlStatement, TargetKind, TypeName,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -39,15 +40,15 @@ pub(super) const RETURN: &str = "RETURN";
 /// RETURNS, of a `<returns clause>` and of RETURNS NULL ON NULL INPUT.
 const RETURNS: &str = "RETURNS";
 /// OUT, a `<parameter mode>`.
-const OUT: &str = "OUT";
+pub(super) const OUT: &str = "OUT";
 /// INOUT, a `<parameter mode>`.
-const INOUT: &str = "INOUT";
+pub(super) const INOUT: &str = "INOUT";
 /// RESULT, after a `<parameter type>` and of DYNAMIC RESULT SETS.
-const RESULT: &str = "RESULT";
+pub(super) const RESULT: &str = "RESULT";
 /// LOCATOR, of a `<locator indication>`.
 const LOCATOR: &str = "LOCATOR";
 /// STATIC, of a `<dispatch clause>`.
-const STATIC: &str = "STATIC";
+pub(super) const STATIC: &str = "STATIC";
 /// DISPATCH, of a `<dispatch clause>`.
 const DISPATCH: &str = "DISPATCH";
 /// SECURITY, of a `<rights clause>`.
@@ -57,11 +58,13 @@ const INVOKER: &str = "INVOKER";
 /// DEFINER, of a `<rights clause>`.
 const DEFINER: &str = "DEFINER";
 /// PRIVATE, which begins `<PTF private parameters>`.
-const PRIVATE: &str = "PRIVATE";
+pub(super) const PRIVATE: &str = "PRIVATE";
 /// START, of START WITH in a `<polymorphic table function body>`.
-const START: &str = "START";
+pub(super) const START: &str = "START";
 /// FULFILL, of FULFILL WITH in a `<polymorphic table function body>`.
-const FULFILL: &str = "FULFILL";
+pub(super) const FULFILL: &str = "FULFILL";
+/// COPARTITION, which begins a `<co-partition clause>` [§10.4].
+pub(super) const COPARTITION: &str = "COPARTITION";
 
 /// [ISO/IEC 9075-2:2023 §11.60] What the reading of an `<SQL routine
 /// body>` knows of its routine.
@@ -92,7 +95,7 @@ fn parameter_refused(at: usize) -> SqlError {
 
 /// The refusal at `at` of valid SQL turborel does not support, `msg`
 /// citing the rule that names it.
-fn not_supported(at: usize, msg: &str) -> SqlError {
+pub(super) fn not_supported(at: usize, msg: &str) -> SqlError {
     SqlError::at(Code::Unsupported, at, msg)
 }
 
@@ -180,13 +183,22 @@ impl Parser {
         // given once the <language clause> shows the routine an SQL one.
         let mut sql_only = None;
         let parameters = self.parameter_declaration_list(kind, &mut sql_only)?;
-        let returns = if kind == RoutineKind::Function { Some(self.returns_clause(&mut sql_only)?) } else { None };
-        let traits = self.routine_characteristics(kind, sql_only)?;
-        self.routine_spec(kind)?;
-        let scope =
-            RoutineScope { kind, name: name.ident.clone(), parameters: parameters.iter().map(|p| p.name.clone()).collect(), direct: false };
+        let (returns, table) = if kind == RoutineKind::Function { self.returns_clause(&mut sql_only)? } else { (None, None) };
+        let table = self.polymorphic(&parameters, table)?;
+        let traits = self.routine_characteristics(kind, sql_only, table.as_ref().map(|_| has_table_parameter(&parameters)))?;
         let body_start = self.here();
-        let body = self.routine_body(scope)?;
+        let body = if let Some(table) = table {
+            RoutineBody::Polymorphic(Box::new(self.polymorphic_body(table)?))
+        } else {
+            self.routine_spec(kind)?;
+            let scope = RoutineScope {
+                kind,
+                name: name.ident.clone(),
+                parameters: parameters.iter().map(|p| p.name.clone()).collect(),
+                direct: false,
+            };
+            RoutineBody::Sql(Box::new(self.routine_body(scope)?))
+        };
         let body_text = self.text_from(body_start);
         Ok(RoutineDefinition {
             kind,
@@ -197,7 +209,7 @@ impl Parser {
             deterministic: traits.deterministic,
             access: traits.access,
             null_call: traits.null_call,
-            body: Box::new(body),
+            body,
             text: self.text_from(start),
             body_text,
         })
@@ -256,7 +268,7 @@ impl Parser {
             self.advance();
         }
         if self.is_kw(kw::DEFAULT) {
-            self.parameter_default(kind, mode)?;
+            self.parameter_default(kind, mode, &data_type)?;
         }
         Ok(ParameterDeclaration { mode, name, data_type, at })
     }
@@ -291,20 +303,18 @@ impl Parser {
         }
     }
 
-    /// `<parameter type>` ::= `<data type>` \[`<locator indication>`\], of
-    /// those implemented.
-    fn parameter_type(&mut self, sql_only: &mut Option<SqlError>) -> Result<TypeName> {
+    /// `<parameter type>` ::= `<data type>` \[`<locator indication>`\] |
+    /// `<generic table parameter type>` | `<descriptor parameter type>`.
+    fn parameter_type(&mut self, sql_only: &mut Option<SqlError>) -> Result<ParameterType> {
         if self.at_row_type() {
             return Err(self.rule("[ISO/IEC 9075-2:2023 §11.60 SR16a] the <parameter type> of an SQL parameter shall not specify ROW"));
         }
-        if self.is_kw(kw::TABLE) || self.is_kw(kw::DESCRIPTOR) {
-            let msg = "[ISO/IEC 9075-2:2023 §11.60 SR4a] a <generic table parameter type> or a <descriptor parameter type> makes a \
-                       polymorphic table function, Feature B200, which turborel does not support";
-            return Err(not_supported(self.here(), msg));
+        if let Some(generic) = self.generic_parameter_type()? {
+            return Ok(generic);
         }
         let data_type = self.type_name()?;
         self.locator_indication("SR16b i", sql_only)?;
-        Ok(data_type)
+        Ok(ParameterType::Data(data_type))
     }
 
     /// \[`<locator indication>`\] ::= AS LOCATOR, which `rule` lets an
@@ -322,15 +332,32 @@ impl Parser {
     /// DEFAULT `<parameter default>`, of a parameter of `mode` of a `kind`:
     /// read, then refused once the statement is, or at once if a Syntax
     /// Rule forbids it.
-    fn parameter_default(&mut self, kind: RoutineKind, mode: Option<ParameterMode>) -> Result<()> {
+    ///
+    /// Of a generic table parameter none is written [SR10g ii 1]; of a
+    /// descriptor parameter it is a `<descriptor value constructor>`, which
+    /// no other's is [SR10g iii].
+    fn parameter_default(&mut self, kind: RoutineKind, mode: Option<ParameterMode>, of: &ParameterType) -> Result<()> {
         let refused = default_refusal(kind, mode, self.here());
         if refused.code == Code::SyntaxRule {
             return Err(refused);
         }
+        if let ParameterType::Table(_) = of {
+            return Err(self.rule("[ISO/IEC 9075-2:2023 §11.60 SR10g ii 1] a generic table parameter has no <parameter default>"));
+        }
         self.expect_kw(kw::DEFAULT)?;
+        let descriptor = matches!(of, ParameterType::Descriptor);
+        if descriptor != self.is_kw(kw::DESCRIPTOR) {
+            return Err(self.rule(
+                "[ISO/IEC 9075-2:2023 §11.60 SR10g iii] the <parameter default> of a descriptor parameter, and of no other, is a \
+                 <descriptor value constructor>",
+            ));
+        }
         // <parameter default> ::= <value expression> | <contextually typed
-        // value specification>, of which NULL is not a value expression.
-        if !self.accept_kw(kw::NULL) {
+        // value specification> | <descriptor value constructor>, of which
+        // NULL is not a value expression.
+        if descriptor {
+            self.descriptor_value_constructor()?;
+        } else if !self.accept_kw(kw::NULL) {
             self.value_expression()?;
         }
         self.refuse_later(refused);
@@ -340,12 +367,10 @@ impl Parser {
     /// `<returns clause>` ::= RETURNS `<returns data type>`, of those
     /// implemented: no `<returns table type>`, and of an SQL routine no
     /// `<result cast>` \[SR9m i\].
-    fn returns_clause(&mut self, sql_only: &mut Option<SqlError>) -> Result<TypeName> {
+    fn returns_clause(&mut self, sql_only: &mut Option<SqlError>) -> Result<(Option<TypeName>, Option<ReturnsTable>)> {
         self.expect_word(RETURNS)?;
-        if self.is_kw(kw::TABLE) || self.is_kw(kw::ONLY) {
-            let msg = "[ISO/IEC 9075-2:2023 §11.60 CR25] a <returns table type> needs Feature T326, “Table functions”, which turborel does \
-                       not support";
-            return Err(not_supported(self.here(), msg));
+        if self.at_returns_table() {
+            return Ok((None, Some(self.returns_table_type()?)));
         }
         let data_type = self.type_name()?;
         self.locator_indication("SR9v i", sql_only)?;
@@ -357,7 +382,7 @@ impl Parser {
             let msg = "[ISO/IEC 9075-2:2023 §11.60 SR9m i] the <returns clause> of an SQL routine has no <result cast>";
             sql_only.get_or_insert_with(|| SqlError::at(Code::SyntaxRule, at, msg));
         }
-        Ok(data_type)
+        Ok((Some(data_type), None))
     }
 
     /// What may stand between the `<routine characteristics>` of a `kind`
@@ -388,18 +413,14 @@ impl Parser {
             );
         }
         if self.at_ptf_body() {
-            let msg = "[ISO/IEC 9075-2:2023 §11.60 SR7c] a <polymorphic table function body> needs Feature B200, “Polymorphic table \
-                       functions”, which turborel does not support";
-            return Err(not_supported(at, msg));
+            return Err(SqlError::at(
+                Code::SyntaxRule,
+                at,
+                "[ISO/IEC 9075-2:2023 §11.60 SR7c] only a polymorphic table function, which returns a table, has a <polymorphic table \
+                 function body>",
+            ));
         }
         Ok(())
-    }
-
-    /// Whether a `<polymorphic table function body>` begins here: PRIVATE,
-    /// or DESCRIBE, START or FULFILL before WITH.
-    fn at_ptf_body(&self) -> bool {
-        let component = self.is_kw(kw::DESCRIBE) || self.is_word(START) || self.is_word(FULFILL);
-        self.is_word(PRIVATE) || (component && self.next_is_kw(kw::WITH))
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60] `<SQL routine body>` ::= `<SQL
@@ -416,12 +437,14 @@ impl Parser {
         let dynamic = self.dynamic.take();
         let blocks = std::mem::take(&mut self.blocks);
         let outer = self.routine.replace(scope);
+        let body_start = self.here();
         let result = self.sql_statement();
         self.routine = outer;
         self.blocks = blocks;
         self.params = params;
         self.dynamic = dynamic;
         let body = result.map_err(|e| self.body_parameter_refusal(e))?;
+        Self::dynamic_allowed(&body, body_start)?;
         if let SqlStatement::UpdatePositioned { cursor: (_, cursor), .. } = &body {
             return Err(cursor_refused("§14.13 SR1", "an <update statement: positioned>", *cursor));
         }
@@ -438,7 +461,9 @@ impl Parser {
         if self.is_kw(kw::OPEN) {
             return Some(cursor_refused("§14.4 SR1", "an <open statement>", at));
         }
-        if self.is_kw(kw::FETCH) {
+        // [ISO/IEC 9075-2:2023 §20.12] a <dynamic fetch statement> of a
+        // <PTF cursor name> is of a PTF component procedure's body.
+        if self.is_kw(kw::FETCH) && !self.at_ptf_fetch() {
             return Some(cursor_refused("§14.5 SR3", "a <fetch statement>", at));
         }
         self.is_kw(kw::CLOSE).then(|| cursor_refused("§14.6 SR1", "a <close statement>", at))

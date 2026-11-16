@@ -86,6 +86,21 @@ pub fn definition_of(desc: &SqlRoutineDesc) -> Result<RoutineDefinition> {
     routine_definition(&desc.text, module)
 }
 
+/// The `<SQL procedure statement>` of the body of `definition`.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is a polymorphic table function's, which is invoked
+/// in a `<PTF derived table>` alone [ISO/IEC 9075-2:2023 §9.18 SR12a].
+pub fn sql_statement(definition: &RoutineDefinition) -> Result<&SqlStatement> {
+    definition.body.statement().ok_or_else(|| {
+        SqlError::new(
+            Code::SyntaxRule,
+            "[ISO/IEC 9075-2:2023 §9.18 SR12a] a polymorphic table function is invoked in a <PTF derived table> alone",
+        )
+    })
+}
+
 /// [ISO/IEC 9075-2:2023 §11.60, §16.2] The body `definition` holds of the
 /// function `desc`, bound as the owner of its schema binds it, with the
 /// database, instant and settings of `cx`; the routines it invokes noted
@@ -122,7 +137,7 @@ pub(super) fn bind_body(
     chain: Vec<QualifiedName>,
 ) -> Result<(FunctionBody, Vec<QualifiedName>)> {
     let ((body, program), invoked) = within_body(cx, desc, chain, |body_cx| {
-        let stmt = &*definition.body;
+        let stmt = sql_statement(definition)?;
         if let (SqlStatement::Return(r), false) = (stmt, desc.access == DataAccess::Modifies) {
             return Ok((Some(returned(body_cx, (desc, definition), r)?), None));
         }
@@ -153,7 +168,7 @@ pub(crate) fn bind_procedure_program(cx: Context<'_>, desc: &SqlRoutineDesc) -> 
     let definition = definition_of(desc)?;
     let (program, invoked) = within_body(cx, desc, chain_of(cx.invoked), |body_cx| {
         let path = routine_path(&*body_cx.db.catalog, desc);
-        bind_program(body_cx, &definition.body, inline_frame(desc, path))
+        bind_program(body_cx, sql_statement(&definition)?, inline_frame(desc, path))
     })?;
     if let Some(i) = cx.invoked {
         i.borrow_mut().extend(invoked);

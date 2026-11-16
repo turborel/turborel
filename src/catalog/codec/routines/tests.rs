@@ -18,7 +18,7 @@ fn numeric() -> DataType {
 /// A routine of these parts, with a parameter of each mode, a horizon,
 /// routines it invokes and EXECUTE grants to PUBLIC and to a user.
 fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> SqlRoutineDesc {
-    let parameter = |n: &str, mode| SqlParameter { name: n.into(), data_type: numeric(), mode };
+    let parameter = |n: &str, mode| SqlParameter { name: n.into(), data_type: numeric(), mode, generic: None };
     SqlRoutineDesc {
         name: name("F"),
         specific: name("F_1"),
@@ -40,6 +40,51 @@ fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> Sql
             UsageDesc { grantor: "A".into(), grantee: Some("B".into()), grantable: true },
         ],
         created: 7,
+        ptf: None,
+    }
+}
+
+/// A polymorphic table function of a parameter of each kind, private
+/// parameters and every component procedure, or of RETURNS ONLY PASS
+/// THROUGH and a fulfill component procedure alone.
+fn polymorphic(only_pass_through: bool) -> SqlRoutineDesc {
+    let varying = DataType::Varying { length: 128, units: crate::value::CharUnits::Characters };
+    let generic = |n: &str, g| SqlParameter { name: n.into(), data_type: varying.clone(), mode: ParameterMode::In, generic: Some(g) };
+    let table = |pass_through, semantics| GenericParameter::Table(GenericTable { pass_through, semantics });
+    let parameters = vec![
+        generic("R", table(true, TableSemantics::Row)),
+        generic("K", table(false, TableSemantics::Set { prune: false })),
+        generic("P", table(true, TableSemantics::Set { prune: true })),
+        generic("D", GenericParameter::Descriptor),
+        SqlParameter { name: "N".into(), data_type: numeric(), mode: ParameterMode::In, generic: None },
+    ];
+    let private = vec![SqlParameter { name: "C".into(), data_type: numeric(), mode: ParameterMode::InOut, generic: None }];
+    let ptf = if only_pass_through {
+        PtfDesc { columns: None, only_pass_through, private: Vec::new(), describe: None, start: None, fulfill: name("FF"), finish: None }
+    } else {
+        PtfDesc {
+            columns: Some(vec![("A".into(), numeric()), ("B".into(), DataType::Boolean)]),
+            only_pass_through,
+            private,
+            describe: Some(name("FD")),
+            start: Some(name("FS")),
+            fulfill: name("FF"),
+            finish: Some(name("FN")),
+        }
+    };
+    SqlRoutineDesc { parameters, returns: None, ptf: Some(Box::new(ptf)), ..desc(RoutineKind::Function, DataAccess::Reads, None) }
+}
+
+/// Verifies: [DESIGN] RULES.md D25, [ISO/IEC 9075-2:2023 §4.35.4] a
+/// polymorphic table function reads back as written: its generic table
+/// parameters of each pass through and semantics, its descriptor
+/// parameter, its result columns, private parameters and component
+/// procedures.
+#[test]
+fn a_polymorphic_table_function_reads_back_as_written() {
+    for only_pass_through in [false, true] {
+        let original = polymorphic(only_pass_through);
+        assert_eq!(format!("{:?}", again(&original)), format!("{original:?}"));
     }
 }
 

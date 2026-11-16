@@ -291,6 +291,11 @@ impl State {
             // [ISO/IEC 9075-2:2023 §11.49 SR13] a <call statement> is an
             // <SQL procedure statement> a triggered action may contain.
             SqlStatement::Call(call) => Self::bind_call(cx, call).map(drop),
+            // [ISO/IEC 9075-2:2023 §11.60 SR23f] (IA078) of a procedure's
+            // body, the statements of a PTF component procedure, on the
+            // names of its PTF data area: its operands are its own SQL
+            // variables, parameters and literals, found as it was read.
+            SqlStatement::Dynamic(_) if params.routine_scope().is_some_and(|s| !s.name.ident.is_empty()) => Ok(()),
             SqlStatement::Return(_)
             | SqlStatement::Close(_)
             | SqlStatement::SetCollation(_)

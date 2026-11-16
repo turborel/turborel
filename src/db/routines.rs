@@ -10,11 +10,12 @@ mod define;
 mod dependents;
 mod privileges;
 mod program;
+mod ptf;
 
 pub(super) use define::{Home, of_schema_routine};
 pub(super) use program::atomic;
-pub(crate) use program::run_unhosted;
 pub(super) use program::{Hosted, hosted_rows};
+pub(crate) use program::{run_component, run_unhosted};
 
 use super::Completion;
 use crate::ast::ReturnStatement;

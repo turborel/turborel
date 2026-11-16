@@ -299,7 +299,7 @@ pub(super) fn bind_set_clause(
     }
     let base = match &item.source {
         Source::Base(vb) => vb.base.columns.get(position),
-        Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) => Some(col),
+        Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) | Source::Argument => Some(col),
     };
     // [ISO/IEC 9075-2:2023 §14.15 SR5] a generated column, or an identity
     // column always generated, set only to DEFAULT.

@@ -25,11 +25,23 @@ GET DESCRIPTOR: read fields of an SQL descriptor area *(in a program)*
     | LEVEL | DEGREE | CARDINALITY | RETURNED_CARDINALITY | KEY_MEMBER
     | COLLATION_CATALOG | COLLATION_SCHEMA | COLLATION_NAME
     | CHARACTER_SET_CATALOG | CHARACTER_SET_SCHEMA | CHARACTER_SET_NAME
+    | SORT_DIRECTION | NULL_ORDERING
+
+<descriptor name> ::= <simple value specification> | PTF <simple value specification>
 ```
 
-The `<descriptor name>` is [ALLOCATE DESCRIPTOR](allocate-descriptor.md)'s.
+The `<descriptor name>` is [ALLOCATE DESCRIPTOR](allocate-descriptor.md)'s,
+or PTF and the name of an area of a polymorphic table function's
+component procedure, which reads it into its SQL variables.
 
 ## DESCRIPTION
+
+Of PTF, the area is one a polymorphic table function's component
+procedure is passed the name of ([CREATE FUNCTION](create-function.md)):
+a table argument's row type, the columns a component reads of it, the
+result's row type, or a table argument's partitioning or ordering. Of an
+ordering, SORT_DIRECTION is 1 of ASC and -1 of DESC, NULL_ORDERING 1 of
+NULLS FIRST and -1 of NULLS LAST.
 
 GET DESCRIPTOR copies COUNT, TOP_LEVEL_COUNT, KEY_TYPE, or fields of the item descriptor area of
 the number given, from 1, into parameters. An item beyond COUNT is no

@@ -24,6 +24,11 @@ type Using = (bool, UsingClause, usize);
 
 /// [ISO/IEC 9075:1992 §17.5 SR3; ISO/IEC 9075-2:2023 §20.5 SR3a] The
 /// `<descriptor item name>`s a `<set descriptor statement>` shall not set.
+/// [ISO/IEC 9075-2:2023 §20.5 SR3b] The items of `NOT_SET` set of a PTF
+/// descriptor area.
+const PTF_SET: [DescriptorItem; 4] =
+    [DescriptorItem::Name, DescriptorItem::CollationCatalog, DescriptorItem::CollationSchema, DescriptorItem::CollationName];
+
 const NOT_SET: [DescriptorItem; 11] = [
     DescriptorItem::ReturnedLength,
     DescriptorItem::ReturnedCardinality,
@@ -72,7 +77,10 @@ impl Parser {
     /// [§6.2] `<simple value specification>` ::= `<parameter name>` |
     /// `<embedded variable name>` | `<literal>`; an embedded variable is
     /// embedded SQL's, which is not implemented (SQLCODE -900).
-    fn simple_value(&mut self) -> Result<ValueSpecification> {
+    pub(super) fn simple_value(&mut self) -> Result<ValueSpecification> {
+        if self.routine.is_some() || self.trigger.is_some() {
+            return self.scoped_value();
+        }
         if self.is_delim(delim::COLON) {
             return Err(self.unsupported("<embedded variable name> (embedded SQL)"));
         }
@@ -85,6 +93,9 @@ impl Parser {
     /// [§6.2] `<simple target specification>` ::= `<parameter name>` |
     /// `<embedded variable name>`.
     fn simple_target(&mut self) -> Result<ParameterSpecification> {
+        if self.routine.is_some() || self.trigger.is_some() {
+            return self.scoped_target();
+        }
         if self.is_delim(delim::COLON) {
             return Err(self.unsupported("<embedded variable name> (embedded SQL)"));
         }
@@ -94,9 +105,22 @@ impl Parser {
         self.parameter_name()
     }
 
+    /// [ISO/IEC 9075-2:2023 §6.4] A `<simple value specification>` in an
+    /// SQL routine's body or a triggered action: an SQL variable or
+    /// parameter reference, or a `<literal>`.
+    fn scoped_value(&mut self) -> Result<ValueSpecification> {
+        if let Some(variable) = self.variable_target() {
+            return Ok(ValueSpecification::Parameter(variable));
+        }
+        if self.parameter_reference().is_some() {
+            return self.routine_target().map(ValueSpecification::Parameter);
+        }
+        self.literal().map(ValueSpecification::Literal)
+    }
+
     /// [§5.4] `<descriptor name>`, or an extended name ::= \[`<scope
     /// option>`\] `<simple value specification>`.
-    fn extended_name(&mut self) -> Result<ExtendedName> {
+    pub(super) fn extended_name(&mut self) -> Result<ExtendedName> {
         let at = self.here();
         let scope = if self.accept_kw(kw::GLOBAL) {
             Scope::Global
@@ -147,7 +171,7 @@ impl Parser {
         }
         if self.accept_kw(kw::SQL) {
             self.expect_kw(kw::DESCRIPTOR)?;
-            return Ok(Some((into, UsingClause::Descriptor(self.extended_name()?), at)));
+            return Ok(Some((into, UsingClause::Descriptor(self.descriptor_name()?), at)));
         }
         Ok(Some((into, UsingClause::Arguments(self.target_list()?), at)))
     }
@@ -223,7 +247,7 @@ impl Parser {
     /// a `<header item name>` COUNT, TOP_LEVEL_COUNT or KEY_TYPE.
     pub(super) fn get_descriptor(&mut self) -> Result<SqlStatement> {
         self.expect_kw(kw::DESCRIPTOR)?;
-        let name = self.extended_name()?;
+        let name = self.descriptor_name()?;
         if !self.accept_kw(kw::VALUE) {
             let mut header = Vec::new();
             loop {
@@ -263,7 +287,8 @@ impl Parser {
     /// items \[SR3\] allows, each once.
     pub(super) fn set_descriptor(&mut self) -> Result<SqlStatement> {
         self.expect_kw(kw::DESCRIPTOR)?;
-        let name = self.extended_name()?;
+        let name = self.descriptor_name()?;
+        let ptf = name.scope == Scope::Ptf;
         if !self.accept_kw(kw::VALUE) {
             let at = self.here();
             if self.accept_word(TOP_LEVEL_COUNT) || self.accept_word(KEY_TYPE) {
@@ -278,8 +303,11 @@ impl Parser {
         loop {
             let at = self.here();
             let item = self.descriptor_item()?;
-            if NOT_SET.contains(&item) || items.iter().any(|(set, _)| *set == item) {
-                let msg = format!("[ISO/IEC 9075:1992 §17.5 SR3] {} is not set here, or is set twice", item.name());
+            // [ISO/IEC 9075-2:2023 §20.5 SR3b] NAME and the collation's
+            // are set of a PTF descriptor area alone.
+            let of_ptf = ptf && PTF_SET.contains(&item);
+            if (NOT_SET.contains(&item) && !of_ptf) || items.iter().any(|(set, _)| *set == item) {
+                let msg = format!("[ISO/IEC 9075-2:2023 §20.5 SR3] {} is not set here, or is set twice", item.name());
                 return Err(Self::rule_at(at, msg));
             }
             self.expect_delim(delim::EQUALS)?;
@@ -335,7 +363,7 @@ impl Parser {
         }
         self.expect_kw(kw::SQL)?;
         self.expect_kw(kw::DESCRIPTOR)?;
-        let descriptor = self.extended_name()?;
+        let descriptor = self.descriptor_name()?;
         if into {
             let msg = "[ISO/IEC 9075:1992 §17.9 SR1] INTO is of a <dynamic fetch statement> or a <result using clause> alone";
             return Err(Self::rule_at(at, msg.to_owned()));
@@ -398,10 +426,12 @@ impl Parser {
     pub(super) fn dynamic_fetch(&mut self, orientation: FetchOrientation) -> Result<std::result::Result<SqlStatement, FetchOrientation>> {
         let into_descriptor = matches!(self.peek_at(1), Tok::KeyWord(kw::INTO)) && matches!(self.peek_at(2), Tok::KeyWord(kw::SQL));
         let named_dynamic = matches!(self.peek_at(1), Tok::KeyWord(kw::USING)) || into_descriptor;
-        if self.at_plain_name() && !named_dynamic {
+        let ptf = self.at_ptf_name();
+        if self.at_plain_name() && !named_dynamic && !ptf {
             return Ok(Err(orientation));
         }
-        let cursor = self.dynamic_name()?;
+        // [ISO/IEC 9075-2:2023 §5.4] a <PTF cursor name>.
+        let cursor = if ptf { DynamicName::Extended(self.descriptor_name()?) } else { self.dynamic_name()? };
         match self.using_clause()? {
             Some((true, using, _)) => Ok(Ok(dynamic(DynamicStatement::Fetch { cursor, orientation, using }))),
             Some((false, _, at)) => {

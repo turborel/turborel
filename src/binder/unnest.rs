@@ -213,6 +213,14 @@ pub(super) fn placed(binder: &Binder<'_>, tree: &Tree, prefix: Option<Placed>) -
             }
         }
         Tree::Join(j) => joined(binder, j, first(tree, items), prefix),
+        // [§7.6 SR15a] its first item's plan gives its columns all.
+        Tree::Group(ids) => {
+            let it = ids.first().and_then(|&i| items.get(i)).ok_or_else(|| broken("a FROM item is gone"))?;
+            match prefix {
+                Some(_) => Err(broken("a table reads the columns before it")),
+                None => Ok(Placed { plan: leaf(binder, it)?, base: it.offset }),
+            }
+        }
     }
 }
 

@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use super::super::{State, rule, triggers::named};
 use crate::ast::{RoutineDefinition, SqlStatement};
-use crate::binder::{Context, DrawnFrom, Invoked, Uses, bind_function_body, definition_of, grantably_held, once_each};
+use crate::binder::{Context, DrawnFrom, Invoked, Uses, bind_function_body, definition_of, grantably_held, once_each, sql_statement};
 use crate::catalog::{DataAccess, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of, routine_path, sole};
 use crate::error::{Code, Result, SqlError};
 use crate::params::{Params, RoutineScope};
@@ -81,7 +81,11 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         // [ISO/IEC 9075-4:2006 draft §11.60 SR23] each statement within is
         // one a body may contain, as the parser read it.
         | SqlStatement::Control(_)
-        | SqlStatement::Signal(_) => true,
+        | SqlStatement::Signal(_)
+        // [ISO/IEC 9075-2:2023 §11.60 SR23f] (IA078) a statement of a PTF
+        // data area alone, as the parser read it, of a PTF component
+        // procedure.
+        | SqlStatement::Dynamic(_) => true,
         SqlStatement::Return(_) => return returning(desc),
         SqlStatement::Close(_)
         | SqlStatement::SetCollation(_)
@@ -92,7 +96,6 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         | SqlStatement::Drop { .. }
         | SqlStatement::Schema { .. }
         | SqlStatement::Fetch { .. }
-        | SqlStatement::Dynamic(_)
         | SqlStatement::Execute(_)
         | SqlStatement::DeclareTable(_)
         | SqlStatement::Open(_)
@@ -116,7 +119,7 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         return Ok(());
     }
     Err(rule(
-        "[ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23] an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL or a function's RETURN (IA078)",
+        "[ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23] an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL, a statement of a PTF data area or a function's RETURN (IA078)",
     ))
 }
 
@@ -151,7 +154,10 @@ impl State {
     /// SQL-data than its SQL-data access indication allows; its own,
     /// bound, under the routine's owner.
     pub(super) fn bind_routine_body(&self, desc: &SqlRoutineDesc, definition: &RoutineDefinition) -> Result<BodyBound> {
-        let stmt = &*definition.body;
+        if let Some(ptf) = &desc.ptf {
+            return self.bind_ptf_body(desc, ptf);
+        }
+        let stmt = sql_statement(definition)?;
         allowed(desc, stmt)?;
         let owner = owner_of(&*self.catalog, &desc.name.auth).to_owned();
         let (uses, invoked, drawn): (Uses, Invoked, DrawnFrom) = (Uses::default(), RefCell::new(Vec::new()), RefCell::new(Vec::new()));

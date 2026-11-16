@@ -108,6 +108,10 @@ impl Parser {
             SqlStatement::Call(self.call_statement()?)
         } else if self.at_return() {
             SqlStatement::Return(self.return_statement()?)
+        } else if self.at_copy_descriptor() {
+            self.copy_descriptor()?
+        } else if self.at_pipe_row() {
+            self.pipe_row()?
         } else {
             return Ok(None);
         };

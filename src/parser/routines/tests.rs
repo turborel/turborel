@@ -73,7 +73,7 @@ fn statement(text: &str) -> Result<SqlStatement> {
 
 /// The body of the procedure `text` defines, which must parse.
 fn body(text: &str) -> SqlStatement {
-    *routine(text).body
+    routine(text).body.statement().cloned().expect("an SQL routine body")
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60] a `<schema procedure>` is read:
@@ -94,7 +94,7 @@ fn procedure_is_read_11_60() {
     assert!(definition.returns.is_none() && definition.specific.is_none());
     assert_eq!(definition.access, DataAccess::Modifies);
     assert!(!definition.deterministic && !definition.null_call);
-    assert!(matches!(*definition.body, SqlStatement::Insert(_)));
+    assert!(matches!(definition.body.statement(), Some(SqlStatement::Insert(_))));
     assert_eq!(definition.body_text, "INSERT INTO T VALUES (A)");
     assert_eq!((definition.text.as_str(), written.as_str()), (text, text));
 }
@@ -111,12 +111,12 @@ fn function_is_read_11_60() {
     assert!(definition.returns.is_some() && definition.deterministic && definition.null_call);
     assert_eq!(definition.specific.map(|s| (s.auth, s.ident)), Some((Some("S".to_owned()), "F1".to_owned())));
     assert_eq!(definition.access, DataAccess::Contains);
-    assert!(matches!(*definition.body, SqlStatement::Return(ReturnStatement { value: Some(_), .. })));
+    assert!(matches!(definition.body.statement(), Some(SqlStatement::Return(ReturnStatement { value: Some(_), .. }))));
     assert_eq!(definition.body_text, "RETURN X + 1");
     let null = routine("CREATE FUNCTION F () RETURNS INT NOT DETERMINISTIC CALLED ON NULL INPUT READS SQL DATA RETURN NULL");
     assert!(!null.deterministic && !null.null_call && null.parameters.is_empty());
     assert_eq!(null.access, DataAccess::Reads);
-    let SqlStatement::Return(ReturnStatement { value: None, at }) = *null.body else { panic!("no RETURN NULL") };
+    let Some(SqlStatement::Return(ReturnStatement { value: None, at })) = null.body.statement().cloned() else { panic!("no RETURN NULL") };
     assert_eq!(at, null.text.find("RETURN NULL").unwrap());
 }
 
@@ -250,11 +250,9 @@ fn external_routine_is_not_supported_11_60() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 CR1, CR5, CR24, CR25, CR32, CR33,
-/// CR34, SR4a, SR7c, SR9r] the features of routines turborel does not
-/// support are valid SQL refused with SQLCODE -900. MC/DC of the
-/// disjunctions that find them: each of TABLE and ONLY after RETURNS,
-/// TABLE and DESCRIPTOR as a parameter type, and each word that begins a
-/// `<polymorphic table function body>`, alone true.
+/// CR34, SR4b, SR9r] the features of routines turborel does not support
+/// are valid SQL refused with SQLCODE -900: a monomorphic table function
+/// among them, which needs Feature T326.
 #[test]
 fn routine_features_are_not_supported_11_60() {
     let rule = |r: &str| format!("ISO/IEC 9075-2:2023 §11.60 {r}");
@@ -262,18 +260,31 @@ fn routine_features_are_not_supported_11_60() {
     unsupported("CREATE FUNCTION F (X INT RESULT) RETURNS INT CONTAINS SQL RETURN 1", &rule("CR5"));
     unsupported("CREATE PROCEDURE P () CONTAINS SQL SQL SECURITY DEFINER DELETE FROM T", &rule("CR24"));
     unsupported("CREATE FUNCTION F () RETURNS INT CONTAINS SQL SQL SECURITY INVOKER RETURN 1", &rule("CR24"));
-    unsupported("CREATE FUNCTION F () RETURNS TABLE (A INT) READS SQL DATA RETURN NULL", &rule("CR25"));
+    unsupported("CREATE FUNCTION F () RETURNS TABLE (A INT) READS SQL DATA RETURN NULL", &rule("SR4b, CR25"));
     unsupported("CREATE PROCEDURE P (X INT DEFAULT 1) CONTAINS SQL DELETE FROM T", &rule("CR32"));
     unsupported("CREATE PROCEDURE P (IN X INT DEFAULT 1) CONTAINS SQL DELETE FROM T", &rule("CR32"));
     unsupported("CREATE PROCEDURE P (INOUT X INT DEFAULT 1) CONTAINS SQL DELETE FROM T", &rule("CR33"));
     unsupported("CREATE FUNCTION F (X INT DEFAULT 1) RETURNS INT CONTAINS SQL RETURN X", &rule("CR34"));
-    unsupported("CREATE FUNCTION F () RETURNS ONLY PASS THROUGH READS SQL DATA RETURN NULL", &rule("CR25"));
-    unsupported("CREATE FUNCTION F (X TABLE) RETURNS INT CONTAINS SQL RETURN 1", &rule("SR4a"));
-    unsupported("CREATE FUNCTION F (X DESCRIPTOR) RETURNS INT CONTAINS SQL RETURN 1", &rule("SR4a"));
-    for body in ["FULFILL WITH SPECIFIC PROCEDURE Q", "DESCRIBE WITH SPECIFIC PROCEDURE Q", "START WITH Q", "PRIVATE (X INT)"] {
-        unsupported(&format!("CREATE FUNCTION F () RETURNS INT CONTAINS SQL {body}"), &rule("SR7c"));
-    }
     unsupported("CREATE FUNCTION F (X INT) RETURNS INT CONTAINS SQL STATIC DISPATCH RETURN X", &rule("SR9r"));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 SR7a, SR7c, SR10a, SR10d] (Feature B200) a
+/// generic table or descriptor parameter belongs to a polymorphic table
+/// function alone, a `<polymorphic table function body>` too, which such a
+/// function has and no `<dispatch clause>` before it, each SQLCODE -103.
+/// MC/DC of the disjunctions that find them: TABLE and DESCRIPTOR as a
+/// parameter type, and each word that begins a body, alone true.
+#[test]
+fn polymorphic_table_function_rules_11_60() {
+    let rule = |r: &str| format!("ISO/IEC 9075-2:2023 §11.60 {r}");
+    refused_with("CREATE FUNCTION F () RETURNS ONLY PASS THROUGH READS SQL DATA RETURN NULL", Code::SyntaxRule, &rule("SR10d"));
+    refused_with("CREATE FUNCTION F (X TABLE) RETURNS INT CONTAINS SQL RETURN 1", Code::SyntaxRule, &rule("SR7a"));
+    refused_with("CREATE FUNCTION F (X DESCRIPTOR) RETURNS INT CONTAINS SQL RETURN 1", Code::SyntaxRule, &rule("SR7a"));
+    for body in ["FULFILL WITH SPECIFIC PROCEDURE Q", "DESCRIBE WITH SPECIFIC PROCEDURE Q", "START WITH Q", "PRIVATE (X INT)"] {
+        refused_with(&format!("CREATE FUNCTION F () RETURNS INT CONTAINS SQL {body}"), Code::SyntaxRule, &rule("SR7c"));
+    }
+    let dispatched = "CREATE FUNCTION F (T TABLE) RETURNS ONLY PASS THROUGH READS SQL DATA STATIC DISPATCH FULFILL WITH Q";
+    refused_with(dispatched, Code::SyntaxRule, &rule("SR10a"));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60] text that breaks the Format is a
@@ -387,20 +398,21 @@ fn call_is_read_16_1() {
     assert!(matches!(body, SqlStatement::Call(_)));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.4 CR1, CR5, CR10] a named argument
-/// (Feature T521), a `<generalized expression>` (S023), a `<table
-/// argument>` and a `<co-partition clause>` (B200) are valid SQL refused
-/// with SQLCODE -900; a CALL that breaks the Format is a syntax error.
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.4 CR1, CR5; §9.18 SR9a] a named
+/// argument (Feature T521) and a `<generalized expression>` (S023) are
+/// valid SQL refused with SQLCODE -900; a `<table argument>` and a
+/// `<co-partition clause>`, of a polymorphic table function's invocation
+/// alone, break SR9a in a CALL; a CALL that breaks the Format is a syntax
+/// error.
 #[test]
 fn call_features_are_not_supported_10_4() {
-    for (text, rule) in [
-        ("CALL P (A => 1)", "ISO/IEC 9075-2:2023 §10.4 CR5"),
-        ("CALL P (1 AS T)", "ISO/IEC 9075-2:2023 §10.4 CR1"),
-        ("CALL P (TABLE (T))", "ISO/IEC 9075-2:2023 §10.4 CR10"),
-        ("CALL P (1 COPARTITION (A, B))", "ISO/IEC 9075-2:2023 §10.4 CR10"),
-    ] {
+    for (text, rule) in [("CALL P (A => 1)", "ISO/IEC 9075-2:2023 §10.4 CR5"), ("CALL P (1 AS T)", "ISO/IEC 9075-2:2023 §10.4 CR1")] {
         let e = statement(text).unwrap_err();
         assert_eq!((e.code, e.rule.as_deref()), (Code::Unsupported, Some(rule)), "{text}");
+    }
+    for text in ["CALL P (TABLE (T))", "CALL P (1 COPARTITION (A, B))", "CALL P (DESCRIPTOR (A))"] {
+        let e = statement(text).unwrap_err();
+        assert_eq!((e.code, e.rule.as_deref()), (Code::SyntaxRule, Some("ISO/IEC 9075-2:2023 §9.18 SR9a")), "{text}");
     }
     for text in ["CALL P", "CALL P (1", "CALL P (A => )", "CALL P (1,)"] {
         assert_eq!(statement(text).unwrap_err().code, Code::Syntax, "{text}");

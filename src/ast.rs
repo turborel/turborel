@@ -40,6 +40,7 @@ mod ordered;
 mod pattern;
 mod privileges;
 mod psm;
+mod ptf;
 mod query;
 mod roles;
 mod routines;
@@ -60,8 +61,8 @@ pub use cursor::{DeclareCursor, FetchOrientation};
 pub use diagnostics::{AllQualifier, ConditionItem, DiagnosticsInformation, GetDiagnostics, StatementItem};
 pub use drop::{DropBehavior, DropObject};
 pub use dynamic::{
-    DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, HeaderItem, Scope, SetDescriptor,
-    UsingClause,
+    CopiedItem, CopyOptions, DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, HeaderItem,
+    Scope, SetDescriptor, UsingClause,
 };
 pub use expression::{
     CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression, WhenOperand,
@@ -86,6 +87,10 @@ pub use psm::{
     Assignment, AssignmentSource, AssignmentTarget, CaseStatement, CaseWhen, CompoundStatement, ConditionDeclaration, ConditionValue,
     ControlStatement, ForStatement, HandlerDeclaration, HandlerType, IfStatement, Iterated, Iteration, Label, LocalCursor,
     LocalDeclaration, SignalStatement, SignalValue, VariableDeclaration,
+};
+pub use ptf::{
+    DescriptorColumn, GenericTable, ParameterType, PrivateParameter, PtfArgument, PtfDefinition, PtfInvocation, PtfTable, RoutineBody,
+    TableArgument, TableArgumentProper, TableSemantics,
 };
 pub use roles::{Grantor, RoleStatement, SetRole};
 pub use routines::{

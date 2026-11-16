@@ -19,10 +19,11 @@ One reference page for each statement, in alphabetical order.
 - [CLOSE](close.md): close a cursor
 - [COMMIT](commit.md): end a transaction, keeping its changes
 - [CONNECT](connect.md): connect to a server
+- [COPY DESCRIPTOR](copy-descriptor.md): copy a descriptor area, or an item's fields, to a PTF descriptor area *(in a component procedure)*
 - [CREATE ASSERTION](create-assertion.md): define an assertion
 - [CREATE COLLATION](create-collation.md): define a collation
 - [CREATE DOMAIN](create-domain.md): define a domain
-- [CREATE FUNCTION](create-function.md): define an SQL-invoked function
+- [CREATE FUNCTION](create-function.md): define an SQL-invoked function, or a polymorphic table function
 - [CREATE INDEX](create-index.md): define an index
 - [CREATE MODULE](create-module.md): define an SQL-server module
 - [CREATE PROCEDURE](create-procedure.md): define an SQL-invoked procedure
@@ -72,6 +73,7 @@ One reference page for each statement, in alphabetical order.
 - [LOOP](loop.md): run statements again and again until something leaves
 - [MERGE](merge.md): update, delete and insert rows of a table from one source
 - [OPEN](open.md): open a cursor
+- [PIPE ROW](pipe-row.md): give a row of a polymorphic table function's result *(in a component procedure)*
 - [PREPARE](prepare.md): prepare a statement, by name
 - [REPEAT](repeat.md): run statements until a condition is true
 - [RESIGNAL](resignal.md): raise again the condition a handler handles *(in a handler)*

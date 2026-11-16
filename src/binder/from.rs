@@ -79,7 +79,9 @@ impl FromItem {
     pub(super) fn width(&self) -> usize {
         match &self.source {
             Source::Base(vb) => vb.base.columns.len(),
-            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) => self.desc.columns.len(),
+            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) | Source::Argument => {
+                self.desc.columns.len()
+            }
         }
     }
 
@@ -88,7 +90,7 @@ impl FromItem {
     pub(super) fn position(&self, i: usize) -> usize {
         match &self.source {
             Source::Base(vb) => vb.map.get(i).copied().unwrap_or(i),
-            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) => i,
+            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) | Source::Argument => i,
         }
     }
 
@@ -106,7 +108,7 @@ impl FromItem {
                     vb.map.iter().position(|&m| m == b).and_then(named).unwrap_or_else(|| format!("{}.{}", vb.base.name.ident, c.name))
                 })
                 .collect(),
-            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) => {
+            Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) | Source::Argument => {
                 (0..self.desc.columns.len()).filter_map(named).collect()
             }
         }
@@ -128,6 +130,10 @@ pub(super) enum Tree {
     Item(usize),
     /// A joined table.
     Join(Box<Join>),
+    /// [ISO/IEC 9075-2:2023 §7.6 SR15a] The range variables of a `<PTF
+    /// derived table>`, the items at these indexes, in order: the rows of
+    /// the first, whose plan gives the columns of them all.
+    Group(Vec<usize>),
 }
 
 /// [ISO/IEC 9075:1992 §7.5] A joined table, bound.
@@ -175,6 +181,7 @@ impl From {
 pub(super) fn columns(tree: &Tree, items: &[FromItem]) -> Vec<(usize, usize)> {
     match tree {
         Tree::Item(i) => (0..items.get(*i).map_or(0, |it| it.desc.columns.len())).map(|c| (*i, c)).collect(),
+        Tree::Group(ids) => ids.iter().flat_map(|&i| columns(&Tree::Item(i), items)).collect(),
         Tree::Join(j) => {
             let (left, right) = (columns(&j.left, items), columns(&j.right, items));
             let Some((common, _)) = &j.common else { return [left, right].concat() };
@@ -199,6 +206,7 @@ pub(super) fn column_name(items: &[FromItem], i: usize, c: usize) -> &str {
 pub(super) fn tree_items(tree: &Tree, out: &mut Vec<usize>) {
     match tree {
         Tree::Item(i) => out.push(*i),
+        Tree::Group(ids) => out.extend(ids.iter().copied()),
         Tree::Join(j) => {
             tree_items(&j.left, out);
             tree_items(&j.right, out);
@@ -252,6 +260,7 @@ pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, fr
         TableReference::Joined(j) => return bind_join(b, j, start, from).or_at(j.at),
         TableReference::Unnest(u) => unnest_item(b, u, start, from).or_at(u.at)?,
         TableReference::Recognized(r) => super::pattern::recognized(b, r, start).or_at(r.at)?,
+        TableReference::Polymorphic(p) => return super::ptf::ptf_reference(b, p, start, from),
     };
     from.items.push(item);
     Ok(Tree::Item(from.items.len().saturating_sub(1)))
@@ -525,6 +534,9 @@ pub(super) fn leaf(binder: &Binder<'_>, it: &FromItem) -> Result<LogicalPlan> {
         Source::Derived(view) => view.clone(),
         Source::Common => return Err(SqlError::new(Code::Api, "[DESIGN] common columns are a join's, not a table's")),
         Source::Unnest(_) => return Err(SqlError::new(Code::Api, "[DESIGN] a collection derived table is planned over its input")),
+        Source::Argument => {
+            return Err(SqlError::new(Code::Api, "[DESIGN] a table argument's range variable is planned by its group's first item"));
+        }
         Source::System(table) => {
             let read = SystemRead { table: Arc::clone(table), user: binder.user.cell.auth.to_owned(), own: binder.own.clone() };
             LogicalPlan::System { read, names: item_names.to_vec() }

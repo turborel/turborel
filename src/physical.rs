@@ -35,13 +35,15 @@ pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DE
 pub use kept::{Place, ProbeSlot};
 pub(crate) use kept::{filled_plan, keepable, same_shape};
 
+use std::sync::Arc;
+
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::exec::{TransitionRows, WorkRows};
 use crate::index::Probe;
 use crate::logical::{
-    AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, Recognize, SetOp, SortKey, Unnest, Window, column_name,
-    judged_by_sets, render_cond, render_expr, render_keys, split_and,
+    AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, Polymorphic, Recognize, SetOp, SortKey, Unnest, Window,
+    column_name, judged_by_sets, render_cond, render_expr, render_keys, split_and,
 };
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -353,6 +355,10 @@ pub enum Plan {
         /// The partitioning, ordering, measures and pattern, as text.
         detail: String,
     },
+    /// [ISO/IEC 9075-2:2023 §7.6, §9.25] A `<PTF derived table>`: its
+    /// component procedures run on its table arguments' rows, each read
+    /// whole first (`exec/ptf.rs`).
+    Polymorphic(Box<Polymorphic<Plan>>),
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's
@@ -460,6 +466,14 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::Unnest(u) => self.unnest(u),
             LogicalPlan::Window(w) => self.window(w, want),
             LogicalPlan::Recognize(r) => self.recognize(r),
+            // Each input is read whole, in no order of its own: its rows are
+            // partitioned and ordered as the function says.
+            LogicalPlan::Polymorphic(p) => Built::unordered(Plan::Polymorphic(Box::new(Polymorphic {
+                call: Arc::clone(&p.call),
+                arguments: p.arguments.clone(),
+                inputs: p.inputs.iter().map(|input| self.build(input, &[]).plan).collect(),
+                names: p.names.clone(),
+            }))),
         }
     }
 

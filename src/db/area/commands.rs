@@ -280,3 +280,8 @@ pub(in crate::db) const END_CONNECTION: Command = command("END CONNECTION", -12)
 pub(in crate::db) const CANCEL_CONNECTION: Command = command("CANCEL CONNECTION", -13);
 /// \[EXTENSION\] EXPLAIN.
 pub(in crate::db) const EXPLAIN: Command = command("EXPLAIN", -14);
+/// [ISO/IEC 9075-2:2023 §20.6] COPY DESCRIPTOR, which Table 39 has no row
+/// for.
+pub(in crate::db) const COPY_DESCRIPTOR: Command = command("COPY DESCRIPTOR", -15);
+/// [ISO/IEC 9075-2:2023 §20.28] PIPE ROW, which Table 39 has no row for.
+pub(in crate::db) const PIPE_ROW: Command = command("PIPE ROW", -16);

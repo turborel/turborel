@@ -14,8 +14,10 @@ impl Plan {
             Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::WorkTable { .. } | Plan::Transition { .. } => false,
             // Past EXECUTOR.MAX_ITERATIONS a recursive query is refused,
             // a system table may fail to make its rows, and a count not a
-            // row count raises [ISO/IEC 9075-2:2023 §7.17 GR6b, GR7c].
-            Plan::Recursive { .. } | Plan::System { .. } | Plan::Limit { .. } => true,
+            // row count raises [ISO/IEC 9075-2:2023 §7.17 GR6b, GR7c]; a
+            // polymorphic table function's component procedure may raise
+            // any exception.
+            Plan::Recursive { .. } | Plan::System { .. } | Plan::Limit { .. } | Plan::Polymorphic(_) => true,
             Plan::Filter { cond, input, .. } => cond.can_raise() || input.can_raise(),
             Plan::Project { exprs, input, .. } => exprs.iter().any(Expr::can_raise) || input.can_raise(),
             Plan::Aggregate { aggs, input, .. } => !aggs.is_empty() || input.can_raise(),

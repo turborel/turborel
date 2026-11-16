@@ -23,7 +23,7 @@ use super::descriptors::{data_type, described, described_as};
 use super::privileges::PUBLIC;
 use super::user_types::{RESULT_DTD, functions, holders, signature, specific};
 use super::{Columns, catalog_name, defined, ids, long, number, text};
-use crate::catalog::{ColumnDesc, DataAccess, QualifiedName, SqlRoutineDesc};
+use crate::catalog::{ColumnDesc, DataAccess, GenericParameter, QualifiedName, SqlRoutineDesc};
 use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable, yes};
 use crate::value::{DataType, Value};
@@ -51,7 +51,8 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
 pub(super) fn heads(seen: &Seen<'_>) -> Vec<(QualifiedName, &'static str, String, DataType)> {
     let mut heads = Vec::new();
     for r in seen.state.catalog.routines() {
-        for (at, p) in r.parameters.iter().enumerate() {
+        // A generic table or descriptor parameter is of no data type.
+        for (at, p) in r.parameters.iter().enumerate().filter(|(_, p)| p.generic.is_none()) {
             heads.push((r.specific.clone(), "ROUTINE", at.saturating_add(1).to_string(), p.data_type.clone()));
         }
         if let Some(t) = &r.returns {
@@ -117,9 +118,13 @@ fn routines(seen: &Seen<'_>) -> Vec<Row> {
 
 /// [§11.60 GR3] The row of the SQL-invoked routine `r`.
 fn routine(catalog: &Value, r: &SqlRoutineDesc) -> Row {
-    let (kind, dtd, described, null_call) = match &r.returns {
-        Some(t) => ("FUNCTION", text(RESULT_DTD), data_type(catalog, t, None), yes(r.null_call)),
-        None => ("PROCEDURE", Value::Null, vec![Value::Null; DESCRIBED], Value::Null),
+    let (kind, dtd, described, null_call) = match (&r.returns, r.function()) {
+        (Some(t), _) => ("FUNCTION", text(RESULT_DTD), data_type(catalog, t, None), yes(r.null_call)),
+        // [DESIGN] A polymorphic table function returns a table of no one
+        // data type: of no data type descriptor, as the 2006 draft has
+        // none for it.
+        (None, true) => ("FUNCTION", Value::Null, vec![Value::Null; DESCRIBED], yes(r.null_call)),
+        (None, false) => ("PROCEDURE", Value::Null, vec![Value::Null; DESCRIBED], Value::Null),
     };
     // [ISO/IEC 9075-4:2006 draft §19.5 Description 1] its module's name, if
     // it is of one.
@@ -163,8 +168,24 @@ fn parameters(seen: &Seen<'_>) -> Vec<Row> {
         for (at, p) in r.parameters.iter().enumerate() {
             let position = at.saturating_add(1);
             let head = vec![number(position), text(p.mode.name()), yes(false), yes(false), text(&p.name)];
-            let described = data_type(&catalog, &p.data_type, None);
-            rows.push([ids(&catalog, &r.specific).to_vec(), head, described, vec![text(&position.to_string())]].concat());
+            let dtd = text(&position.to_string());
+            let described = match p.generic {
+                None => data_type(&catalog, &p.data_type, None),
+                // [EXTENSION] A generic table or descriptor parameter is of
+                // no data type: DATA_TYPE the key word of its <parameter
+                // type>, TABLE or DESCRIPTOR, as the 2006 draft has none.
+                Some(g) => {
+                    let mut none = vec![Value::Null; DESCRIBED];
+                    if let Some(first) = none.first_mut() {
+                        *first = text(match g {
+                            GenericParameter::Table(_) => "TABLE",
+                            GenericParameter::Descriptor => "DESCRIPTOR",
+                        });
+                    }
+                    none
+                }
+            };
+            rows.push([ids(&catalog, &r.specific).to_vec(), head, described, vec![dtd]].concat());
         }
     }
     rows

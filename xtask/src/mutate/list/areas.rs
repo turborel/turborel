@@ -3,11 +3,12 @@
 use super::Mutation;
 
 /// Every area's mutations, in order.
-pub fn all() -> [&'static [Mutation]; 40] {
+pub fn all() -> [&'static [Mutation]; 41] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
         &super::modules::MODULES,
+        &super::ptf::PTF,
         &super::sequences::SEQUENCES,
         &super::generated::GENERATED,
         &super::truncate::TRUNCATE,

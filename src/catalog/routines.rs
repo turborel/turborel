@@ -2,7 +2,7 @@
 //! [ISO/IEC 9075-2:2023 §4.35.5, §11.60 GR3] (Feature T321).
 
 use super::{Horizon, QualifiedName, UsageDesc, Who};
-pub use crate::ast::{DataAccess, ParameterMode, RoutineKind};
+pub use crate::ast::{DataAccess, GenericTable, ParameterMode, RoutineKind, TableSemantics};
 use crate::value::DataType;
 
 /// [ISO/IEC 9075-2:2023 §4.35.5] An SQL parameter of a routine: its name,
@@ -16,6 +16,75 @@ pub struct SqlParameter {
     /// IN, OUT or INOUT; IN of every parameter of a function [§11.60
     /// SR16d] \[GR3j iv\].
     pub mode: ParameterMode,
+    /// Of a polymorphic table function, whether it is a generic table
+    /// parameter or a descriptor parameter [§4.35.4]: its `data_type` is
+    /// then that of the name of its table or descriptor in the function's
+    /// component procedures, VARCHAR(128) [§9.26] (IL058).
+    pub generic: Option<GenericParameter>,
+}
+
+/// [ISO/IEC 9075-2:2023 §9.26 SR2a vi] (IL058) The maximum length of a
+/// PTF extended name, in characters.
+pub const PTF_NAME_LENGTH: u32 = 128;
+
+/// [ISO/IEC 9075-2:2023 §9.26 SR2a x] The length of a PTF component
+/// procedure's status parameter, an SQLSTATE value.
+pub const PTF_STATUS_LENGTH: u32 = 5;
+
+/// [ISO/IEC 9075-2:2023 §9.26 SR2a vii] VARCHAR(L): the declared type of a
+/// PTF component procedure's parameter that names a PTF descriptor area or
+/// PTF cursor, and of a generic table or descriptor parameter.
+pub fn ptf_name_type() -> DataType {
+    DataType::Varying { length: PTF_NAME_LENGTH, units: crate::value::CharUnits::Characters }
+}
+
+/// [ISO/IEC 9075-2:2023 §9.26 SR2a x] CHARACTER(5): the declared type of a
+/// PTF component procedure's status parameter.
+pub fn ptf_status_type() -> DataType {
+    DataType::Character { length: PTF_STATUS_LENGTH, units: crate::value::CharUnits::Characters }
+}
+
+/// [ISO/IEC 9075-2:2023 §4.35.4] What a parameter of a polymorphic table
+/// function is that is of no `<data type>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenericParameter {
+    /// A generic table parameter, its pass through and semantics
+    /// explicit.
+    Table(GenericTable),
+    /// A descriptor parameter.
+    Descriptor,
+}
+
+/// [ISO/IEC 9075-2:2023 §4.35.4, §11.60 GR3] What the routine descriptor
+/// of a polymorphic table function has that another's has not.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PtfDesc {
+    /// Its proper result columns' names and types, of a `<table function
+    /// column list>`: none if they are found as it is invoked, by its PTF
+    /// describe component procedure, or of RETURNS ONLY PASS THROUGH.
+    pub columns: Option<Vec<(String, DataType)>>,
+    /// Whether it returns only pass-through columns.
+    pub only_pass_through: bool,
+    /// Its PTF private parameters, each INOUT \[SR10e\].
+    pub private: Vec<SqlParameter>,
+    /// The specific names of its PTF describe, start, fulfill and finish
+    /// component procedures, as written of each.
+    pub describe: Option<QualifiedName>,
+    /// Its PTF start component procedure's, if written.
+    pub start: Option<QualifiedName>,
+    /// Its PTF fulfill component procedure's.
+    pub fulfill: QualifiedName,
+    /// Its PTF finish component procedure's, if written.
+    pub finish: Option<QualifiedName>,
+}
+
+impl PtfDesc {
+    /// The specific names of its component procedures, in the order
+    /// describe, start, fulfill and finish, of those it has.
+    pub fn components(&self) -> Vec<&QualifiedName> {
+        let fulfill = Some(&self.fulfill);
+        [self.describe.as_ref(), self.start.as_ref(), fulfill, self.finish.as_ref()].into_iter().flatten().collect()
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §4.35.5, §11.60 GR3] A routine descriptor, of an
@@ -72,6 +141,9 @@ pub struct SqlRoutineDesc {
     /// module that includes it, in its schema, if one does: else it is a
     /// schema-level routine.
     pub module: Option<String>,
+    /// Of a polymorphic table function [§4.35.4], what its descriptor has
+    /// more.
+    pub ptf: Option<Box<PtfDesc>>,
 }
 
 impl SqlRoutineDesc {
@@ -99,6 +171,18 @@ impl SqlRoutineDesc {
     pub fn execute_of(&self, who: Who<'_>) -> (bool, bool) {
         let granted = self.execute.iter().filter(|u| who.holds(u.grantee.as_deref()));
         granted.fold((false, false), |(_, grantable), u| (true, grantable || u.grantable))
+    }
+
+    /// Whether it is a polymorphic table function [§4.35.4].
+    pub fn polymorphic(&self) -> bool {
+        self.ptf.is_some()
+    }
+
+    /// Whether it has a generic table parameter or a descriptor parameter,
+    /// which no `<value expression>` is an argument of [§9.18 SR10d ii,
+    /// iii].
+    pub fn generic(&self) -> bool {
+        self.parameters.iter().any(|p| p.generic.is_some())
     }
 
     /// Its parameters' declared types, in order.

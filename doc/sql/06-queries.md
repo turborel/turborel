@@ -157,6 +157,75 @@ OK
 (2 rows)
 ```
 
+## Polymorphic table functions
+
+TABLE ( an invocation ) in the FROM clause invokes a polymorphic table
+function ([CREATE FUNCTION](statements/create-function.md)). Each table
+argument is TABLE ( a table's name ), TABLE ( a query ), or an
+invocation of another such function. Its correlation name, else its
+table's name, names its columns in the query. A table argument of a
+parameter of set semantics may be partitioned and ordered:
+
+```
+<table argument> ::=
+    { TABLE ( <table name> ) | TABLE ( <query expression> ) | <routine invocation> }
+    [ [ AS ] <correlation name> [ ( <column name> [ , ... ] ) ] ]
+    [ PARTITION BY { <column reference> | ( <column reference> [ , ... ] ) } ]
+    [ PRUNE WHEN EMPTY | KEEP WHEN EMPTY ]
+    [ ORDER BY { <column reference> | ( <column reference> [ ASC | DESC ] [ NULLS FIRST | NULLS LAST ] [ , ... ] ) } ]
+
+<descriptor argument> ::= DESCRIPTOR ( <column name> [ <data type> ] [ , ... ] )
+
+<co-partition clause> ::= COPARTITION ( <range variable> , <range variable> [ , ... ] ) [ , ( ... ) ]...
+```
+
+The function is run once for each partition. Tables co-partitioned share
+their partitions, each value either has, and the partitions of
+partitioned tables otherwise cross. The result has the function's own
+columns, of its correlation name, then each table argument's columns of
+PASS THROUGH, or else its partitioning columns, of its own name. A
+function of RETURNS ONLY PASS THROUGH has no correlation name.
+
+```sql
+CREATE TABLE SALES (REGION CHAR(4), AMOUNT INTEGER);
+INSERT INTO SALES VALUES ('EAST', 10), ('EAST', 30), ('WEST', 5);
+CREATE PROCEDURE TOTAL_F (IN CR VARCHAR(128), IN PT VARCHAR(128), IN OD VARCHAR(128),
+                          IN CU VARCHAR(128), IN RR VARCHAR(128), INOUT ST CHAR(5))
+  CONTAINS SQL
+BEGIN
+  DECLARE R CHAR(4);
+  DECLARE A INTEGER;
+  DECLARE N, T INTEGER DEFAULT 0;
+  DECLARE DONE BOOLEAN DEFAULT FALSE;
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET DONE = TRUE;
+  L: LOOP
+    FETCH NEXT FROM PTF CU INTO R, A;
+    IF DONE THEN LEAVE L; END IF;
+    SET N = N + 1;
+    SET T = T + A;
+  END LOOP L;
+  SET DESCRIPTOR PTF RR VALUE 1 DATA = N;
+  SET DESCRIPTOR PTF RR VALUE 2 DATA = T;
+  PIPE ROW PTF RR;
+END;
+CREATE FUNCTION TOTALS (T TABLE WITH SET SEMANTICS) RETURNS TABLE (ROWS_SEEN INTEGER, TOTAL INTEGER)
+  CONTAINS SQL FULFILL WITH PROCEDURE TOTAL_F;
+SELECT S.REGION, P.ROWS_SEEN, P.TOTAL
+  FROM TABLE (TOTALS (TABLE (SALES) AS S PARTITION BY REGION)) AS P ORDER BY S.REGION;
+```
+
+```
+OK
+OK
+OK
+OK
+ REGION |    ROWS_SEEN |        TOTAL
+--------+--------------+--------------
+ EAST   |            2 |           40
+ WEST   |            1 |            5
+(2 rows)
+```
+
 ## Row pattern recognition
 
 MATCH_RECOGNIZE after a table in the FROM clause finds runs of its rows

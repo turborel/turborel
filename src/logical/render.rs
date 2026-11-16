@@ -153,6 +153,7 @@ impl LogicalPlan {
             LogicalPlan::Recursive { member, fixpoint, .. } => writeln!(out, "{pad}Recursive member {member} {}", fixpoint.word()),
             LogicalPlan::WorkTable { member, .. } => writeln!(out, "{pad}Work table of member {member}"),
             LogicalPlan::Transition { names, .. } => writeln!(out, "{pad}Transition table ({})", names.join(", ")),
+            LogicalPlan::Polymorphic(p) => writeln!(out, "{pad}Polymorphic table function {} ({})", p.function(), p.names.join(", ")),
             LogicalPlan::Unnest(u) => {
                 let n = inner(&u.input);
                 let c: Vec<String> = u.collections.iter().map(|e| render_expr(e, &n)).collect();

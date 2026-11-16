@@ -5,7 +5,7 @@
 
 use super::ordered::OrderedQuery;
 use super::{
-    ColumnSpecification, CycleClause, RecognizedTable, SearchClause, SearchCondition, Subquery, TableName, ValueExpression,
+    ColumnSpecification, CycleClause, PtfTable, RecognizedTable, SearchClause, SearchCondition, Subquery, TableName, ValueExpression,
     WindowDefinition,
 };
 // ---------------------------------------------------------------------------
@@ -272,6 +272,11 @@ fn named_in_from<'a>(
                     c.for_each_subquery(&mut |s| subqueries.push(s));
                 }
             }
+            // [§7.6, §10.4] Its table arguments name tables and queries.
+            TableReference::Polymorphic(p) => {
+                let named = |t: &NamedTable| t.table.auth.is_none() && scope.contains(&t.table.ident.as_str());
+                p.invocation.for_each_operand(&mut |t| each(t, named(t)), &mut |s| subqueries.push(s));
+            }
         }
     }
 }
@@ -479,6 +484,9 @@ pub enum TableReference {
     /// [ISO/IEC 9075-2:2023 §7.6, §7.7] A table or a derived table, then a
     /// `<row pattern recognition clause and name>`.
     Recognized(Box<RecognizedTable>),
+    /// [ISO/IEC 9075-2:2023 §7.6] A `<PTF derived table>` and its
+    /// `<correlation or recognition>`.
+    Polymorphic(Box<PtfTable>),
 }
 
 impl TableReference {

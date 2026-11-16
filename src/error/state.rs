@@ -108,6 +108,12 @@ impl SqlState {
     /// [ISO/IEC 9075-2:2023 §20.5 GR4b] Dynamic SQL error: invalid LEVEL
     /// value.
     pub const INVALID_LEVEL_VALUE: SqlState = SqlState(*b"0700E");
+    /// [ISO/IEC 9075-2:2023 §20.28 GR11b ii] Dynamic SQL error: invalid
+    /// pass-through surrogate value.
+    pub const INVALID_SURROGATE: SqlState = SqlState(*b"0700G");
+    /// [ISO/IEC 9075-2:2023 §20.28 GR1] Dynamic SQL error: PIPE ROW not
+    /// during PTF execution.
+    pub const PIPE_ROW_OUTSIDE: SqlState = SqlState(*b"0700H");
     /// Warning: insufficient item descriptor areas.
     pub const INSUFFICIENT_ITEM_DESCRIPTOR_AREAS: SqlState = SqlState(*b"01005");
     /// Invalid SQL statement name.

@@ -190,6 +190,7 @@ pub(super) fn ordered_ids(plan: Plan, st: &Arc<State>, tx: TxId) -> Result<HeldR
             | Plan::Recursive { .. }
             | Plan::Unnest(..)
             | Plan::Window { .. }
+            | Plan::Polymorphic(..)
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
             | Plan::Transition { .. }) => {
@@ -244,6 +245,7 @@ fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
             | Plan::Recursive { .. }
             | Plan::Unnest(..)
             | Plan::Window { .. }
+            | Plan::Polymorphic(..)
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
             | Plan::Transition { .. }) => {

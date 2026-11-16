@@ -20,7 +20,9 @@ SET DESCRIPTOR: set fields of an SQL descriptor area
 ```
 
 The `<descriptor name>` is [ALLOCATE DESCRIPTOR](allocate-descriptor.md)'s,
-the `<descriptor item name>`s [GET DESCRIPTOR](get-descriptor.md)'s.
+or PTF and the name of an area of a polymorphic table function's
+component procedure, the `<descriptor item name>`s
+[GET DESCRIPTOR](get-descriptor.md)'s.
 
 ## DESCRIPTION
 
@@ -34,7 +36,7 @@ DATETIME_INTERVAL_PRECISION, PRECISION, SCALE, CHARACTER_SET_CATALOG,
 CHARACTER_SET_SCHEMA, CHARACTER_SET_NAME, LENGTH, INDICATOR, DEGREE,
 CARDINALITY and DATA, whatever the order written. Setting a field other
 than DATA makes DATA undefined. Setting TYPE makes the other fields
-undefined but LEVEL and these:
+undefined but LEVEL, NAME and these:
 
 | TYPE | Set with it |
 |---|---|
@@ -68,6 +70,13 @@ of that type, a FLOAT or a DECFLOAT of its PRECISION; a string of its LENGTH, a
 CHARACTER of CHARACTER, a CHARACTER VARYING of CHARACTER VARYING; a
 datetime or interval of its type.
 
+Of PTF, a component procedure ([CREATE FUNCTION](create-function.md))
+sets an area it is passed the name of, its values its SQL variables,
+parameters or literals: the columns a describe component requests of a
+table argument, by NAME, the result's row type, or a piped row's DATA
+([PIPE ROW](pipe-row.md)). NAME may be set of such an area, after LEVEL
+and before TYPE.
+
 SET DESCRIPTOR runs in direct SQL as well as in a program, its values
 literals or parameters. It begins a transaction if none is active.
 
@@ -80,7 +89,7 @@ literals or parameters. It begins a transaction if none is active.
    or of a character set's name a character string; DATA to a value of
    the item's type.
 4. LEVEL is set in the order above.
-5. Neither TOP_LEVEL_COUNT, KEY_TYPE, NAME, UNNAMED, NULLABLE, OCTET_LENGTH, RETURNED_LENGTH,
+5. Neither TOP_LEVEL_COUNT, KEY_TYPE, NAME (but of PTF), UNNAMED, NULLABLE, OCTET_LENGTH, RETURNED_LENGTH,
    RETURNED_OCTET_LENGTH, RETURNED_CARDINALITY, KEY_MEMBER nor the collation's
    fields is set; no field twice.
 6. DATA is not set of an item of TYPE ROW, nor of an item that is part of
@@ -132,7 +141,7 @@ SET DESCRIPTOR 'STAFF' COUNT = 1;
 ```
 turborel: SQLCODE -301 (SQLSTATE 22005): CHARACTER(6) does not match the type the item describes [ISO/IEC 9075:1992 §17.5 GR5, §17.1 SR2]
 turborel: SQLCODE -921 (SQLSTATE 07009): item 4 is not of 1 to 3, the area's occurrences [ISO/IEC 9075:1992 §17.5 GR2]
-turborel: SQLCODE -103 (SQLSTATE 2A000): NAME is not set here, or is set twice [ISO/IEC 9075:1992 §17.5 SR3] (at character 35)
+turborel: SQLCODE -103 (SQLSTATE 2A000): NAME is not set here, or is set twice [ISO/IEC 9075-2:2023 §20.5 SR3] (at character 35)
 turborel: SQLCODE -921 (SQLSTATE 33000): no SQL descriptor area 'STAFF' is allocated [ISO/IEC 9075:1992 §17.5 GR1]
 ```
 

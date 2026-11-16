@@ -62,6 +62,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
+        | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => false,

@@ -21,11 +21,13 @@ use super::super::super::cursor::movement;
 use super::super::super::cursor_error;
 use super::super::super::position::{Places, Position, Slot, fetch};
 use super::{diagnostics, step_command};
-use crate::ast::{FetchOrientation, SqlStatement};
+use crate::ast::{DynamicStatement, FetchOrientation, SqlStatement};
 use crate::binder;
-use crate::catalog::{Principal, owner_of};
+use crate::catalog::{Principal, Roles, owner_of};
+use crate::db::dynamic::no_ptf_area_here;
+use crate::db::ptf::{DataArea, run_statement};
 use crate::db::{Completion, State};
-use crate::error::{Code, Result, SqlError};
+use crate::error::{Code, Result, SqlError, SqlState};
 use crate::exec::{Ended, Host, Subqueries, rows, run_program};
 use crate::logical::{Contained, Cursor, Leaf, Program, Step};
 use crate::params::Params;
@@ -43,11 +45,33 @@ use crate::value::Value;
 pub(crate) fn run_unhosted(program: &Program, mut values: Vec<Value>, subqueries: &dyn Subqueries) -> Result<Option<Value>> {
     values.resize(program.base.saturating_add(program.variables.len()), Value::Null);
     let mut frame = Params::of_routine(values, Arc::clone(&program.scope));
-    let mut host = Executor { subqueries, area: Area::default(), cursors: HashMap::new(), executions: 0 };
+    let mut host = Executor { subqueries, area: Area::default(), cursors: HashMap::new(), executions: 0, ptf: None };
     match run_program(program, &mut frame, &mut host)? {
         Ended::Returned(v) => Ok(Some(v)),
         Ended::Completed(_) => Ok(None),
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §9.27 GR4, §9.18 GR8] The PTF component procedure
+/// whose body is `program` run of the arguments `values` on the PTF data
+/// area `ptf`, where `subqueries` runs a query's subqueries: the values of
+/// its parameters after, of which its INOUT ones give the area's private
+/// variables and status variable their values.
+///
+/// # Errors
+///
+/// An exception of it no handler of it handles.
+pub(crate) fn run_component(
+    program: &Program,
+    mut values: Vec<Value>,
+    subqueries: &dyn Subqueries,
+    ptf: &mut DataArea,
+) -> Result<Vec<Value>> {
+    values.resize(program.base.saturating_add(program.variables.len()), Value::Null);
+    let mut frame = Params::of_routine(values, Arc::clone(&program.scope));
+    let mut host = Executor { subqueries, area: Area::default(), cursors: HashMap::new(), executions: 0, ptf: Some(ptf) };
+    run_program(program, &mut frame, &mut host)?;
+    Ok(frame.dynamic_values().to_vec())
 }
 
 /// \[DESIGN\] A query's evaluation as a function's host.
@@ -58,6 +82,10 @@ struct Executor<'s> {
     /// open, its rows and where it is among them.
     cursors: HashMap<String, Option<(Vec<Row>, Position)>>,
     executions: usize,
+    /// [ISO/IEC 9075-2:2023 §9.27] The PTF data area of the PTF component
+    /// procedure it runs, if it runs one: what the SQL dynamic statements
+    /// of its body name (`db/ptf/statements.rs`).
+    ptf: Option<&'s mut DataArea>,
 }
 
 /// The rows of an open local cursor, as a FETCH moves through them.
@@ -85,7 +113,12 @@ impl Executor<'_> {
     /// SQLCODE -910 where no statement runs, as in a constraint, where no
     /// function that needs it is invoked.
     fn state(&self) -> Result<&State> {
-        self.subqueries
+        Self::state_in(self.subqueries)
+    }
+
+    /// The database `subqueries` run in, as `state` gives it.
+    fn state_in(subqueries: &dyn Subqueries) -> Result<&State> {
+        subqueries
             .state()
             .map(|st| &**st)
             .ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a function's body reads the database where no statement runs"))
@@ -127,6 +160,25 @@ impl Host for Executor<'_> {
         frame.set_routine(Arc::clone(&c.scope));
         if let SqlStatement::GetDiagnostics(_) = c.statement {
             return self.get_diagnostics(c, frame);
+        }
+        if let SqlStatement::Dynamic(d) = &c.statement {
+            // [DESIGN] A describe component procedure runs as a definition
+            // is bound too, where no statement runs: its operands, SQL
+            // variables, parameters and literals, need no role.
+            let none = Roles::default();
+            let roles = Self::state_in(self.subqueries).map_or(&none, |st| st.catalog.roles());
+            let user = Principal::sole(roles, &c.scope.name.auth);
+            if let Some(area) = self.ptf.as_deref_mut() {
+                return run_statement(area, d, frame, user);
+            }
+            // [ISO/IEC 9075-2:2023 §20.28 GR1, §5.4] of a routine run where
+            // no PTF component procedure runs.
+            if let DynamicStatement::PipeRow(_) = &**d {
+                let msg =
+                    "[ISO/IEC 9075-2:2023 §20.28 GR1] PIPE ROW is executed by a PTF start, fulfill or finish component procedure alone";
+                return Err(SqlError::new(Code::Dynamic, msg).with_state(SqlState::PIPE_ROW_OUTSIDE));
+            }
+            return Err(no_ptf_area_here());
         }
         let msg = "[DESIGN] a statement that changes SQL-data in the body of a function run where a query evaluates it";
         Err(SqlError::new(Code::Api, msg))

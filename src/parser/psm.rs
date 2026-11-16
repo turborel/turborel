@@ -333,7 +333,8 @@ impl Parser {
         }
         let at = self.here();
         let cursor = self.is_kw(kw::OPEN) || self.is_kw(kw::FETCH) || self.is_kw(kw::CLOSE);
-        let statement = if cursor && self.blocks.iter().any(|b| !b.cursors.is_empty()) {
+        let statement = if (cursor && self.blocks.iter().any(|b| !b.cursors.is_empty())) || (self.routine.is_some() && self.at_ptf_fetch())
+        {
             self.sql_statement()?
         } else if let Some(t) = &self.trigger {
             let time = t.time;
@@ -345,6 +346,9 @@ impl Parser {
             self.sql_statement()?
         };
         self.statement_allowed(&statement, at)?;
+        if self.routine.is_some() {
+            Self::dynamic_allowed(&statement, at)?;
+        }
         Ok(statement)
     }
 

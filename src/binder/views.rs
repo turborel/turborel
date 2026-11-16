@@ -62,6 +62,10 @@ pub(super) enum Source {
     /// [ISO/IEC 9075-2:2023 §7.6 SR8] A collection derived table
     /// (`binder/unnest.rs`).
     Unnest(Box<Unnested>),
+    /// [ISO/IEC 9075-2:2023 §7.6 SR15a] A range variable of a `<table
+    /// argument>` of a `<PTF derived table>`, whose rows the plan of the
+    /// first item of its group gives (`binder/ptf.rs`).
+    Argument,
 }
 
 /// A table or view by name: its description (a view's columns, with no
@@ -314,6 +318,7 @@ fn collapse(db: &State, plan: LogicalPlan, has_where: bool) -> Result<ViewBase> 
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
+            | LogicalPlan::Polymorphic(..)
             | LogicalPlan::WorkTable { .. }
             | LogicalPlan::Transition { .. }) => return Err(broken(&format!("an updatable view reads {}", other.explain()))),
         }
@@ -384,7 +389,7 @@ pub fn write_target(
             let (base, map, cond) = (vb.base.clone(), vb.map.clone(), vb.cond.clone());
             Ok(WriteTarget { named: desc, base, map, checks, cond, source })
         }
-        Source::Derived(_) | Source::Common | Source::Unnest(_) => {
+        Source::Derived(_) | Source::Common | Source::Unnest(_) | Source::Argument => {
             Err(rule(format!("[{read_only}; X3.135-1986 §4.4] {name} is a read-only table")))
         }
         Source::System(_) => Err(SqlError::new(
@@ -506,7 +511,7 @@ fn updates(cx: Context<'_>, spec: &QuerySpecification, reads: &[QualifiedName]) 
     let leaf = match &source {
         Source::Table => &name,
         Source::Base(vb) => &vb.base.name,
-        Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) => return Ok(None),
+        Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) | Source::Argument => return Ok(None),
     };
     if reads.contains(leaf) {
         return Ok(None);

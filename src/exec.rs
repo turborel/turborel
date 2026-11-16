@@ -28,6 +28,7 @@ mod limit;
 mod partition;
 mod pattern;
 mod program;
+mod ptf;
 mod recursive;
 mod scan;
 mod set;
@@ -124,6 +125,8 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         // [ISO/IEC 9075-2:2023 §7.15] each row of its input with its window functions' values.
         Plan::Window { .. } => window::windowed,
         Plan::Recognize { .. } => pattern::recognized,
+        // [ISO/IEC 9075-2:2023 §9.25] its component procedures run as it opens.
+        Plan::Polymorphic(..) => ptf::polymorphic,
     };
     run(plan, db, tx)
 }
@@ -152,6 +155,7 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
+        | Plan::Polymorphic(..)
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => failed(broken("a join is not one")),
     }

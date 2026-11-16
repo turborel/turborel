@@ -13,6 +13,10 @@ pub enum Scope {
     Local,
     /// GLOBAL: of the SQL-session.
     Global,
+    /// [ISO/IEC 9075-2:2023 §5.4] PTF: a `<PTF descriptor name>` or `<PTF
+    /// cursor name>`, of the PTF data area of the polymorphic table
+    /// function whose component procedure runs (Feature B209).
+    Ptf,
 }
 
 /// [ISO/IEC 9075:1992 §5.4] An `<extended statement name>`, `<extended
@@ -120,10 +124,17 @@ pub enum DescriptorItem {
     /// [ISO/IEC 9075-2:2023 §20.1, Table 29] KEY_MEMBER: 1 of a column of
     /// the key KEY_TYPE says [§20.10 GR7c i 3], else 0.
     KeyMember,
+    /// [ISO/IEC 9075-2:2023 §9.24 GR2b iii 2 D III, Table 29]
+    /// SORT_DIRECTION, of an ordering column of a table argument: 1 of
+    /// ASC, -1 of DESC (Feature B209).
+    SortDirection,
+    /// [ISO/IEC 9075-2:2023 §9.24 GR2b iii 2 D IV, Table 29]
+    /// NULL_ORDERING: 1 of NULLS FIRST, -1 of NULLS LAST (Feature B209).
+    NullOrdering,
 }
 
 /// [ISO/IEC 9075:1992 §17.4] Each `<descriptor item name>`, as written.
-const ITEM_NAMES: [(&str, DescriptorItem); 29] = [
+const ITEM_NAMES: [(&str, DescriptorItem); 31] = [
     ("TYPE", DescriptorItem::Type),
     ("LENGTH", DescriptorItem::Length),
     ("OCTET_LENGTH", DescriptorItem::OctetLength),
@@ -153,6 +164,8 @@ const ITEM_NAMES: [(&str, DescriptorItem); 29] = [
     ("USER_DEFINED_TYPE_NAME", DescriptorItem::UserDefinedTypeName),
     ("USER_DEFINED_TYPE_CODE", DescriptorItem::UserDefinedTypeCode),
     ("KEY_MEMBER", DescriptorItem::KeyMember),
+    ("SORT_DIRECTION", DescriptorItem::SortDirection),
+    ("NULL_ORDERING", DescriptorItem::NullOrdering),
 ];
 
 impl DescriptorItem {
@@ -335,4 +348,46 @@ pub enum DynamicStatement {
         /// The `<extended cursor name>`.
         cursor: ExtendedName,
     },
+    /// [ISO/IEC 9075-2:2023 §20.6] `<copy descriptor statement>`: COPY
+    /// `<source descriptor name>` TO `<target descriptor name>`, whole or
+    /// one item (Feature B209).
+    CopyDescriptor {
+        /// The `<source descriptor name>`.
+        source: ExtendedName,
+        /// The `<target descriptor name>`, a `<PTF descriptor name>`.
+        target: ExtendedName,
+        /// Of a `<copy item descriptor statement>`, its item numbers and
+        /// what it copies.
+        item: Option<Box<CopiedItem>>,
+    },
+    /// [ISO/IEC 9075-2:2023 §20.28] `<pipe row statement>` ::= PIPE ROW
+    /// `<PTF descriptor name>` (Feature B209).
+    PipeRow(ExtendedName),
+}
+
+/// [ISO/IEC 9075-2:2023 §20.6] What a `<copy item descriptor statement>`
+/// copies: VALUE `<item number 1>` ( `<copy descriptor options>` ) of the
+/// source, to VALUE `<item number 2>` of the target.
+#[derive(Debug, Clone)]
+pub struct CopiedItem {
+    /// `<item number 1>`.
+    pub from: ValueSpecification,
+    /// `<item number 2>`.
+    pub to: ValueSpecification,
+    /// `<copy descriptor options>`.
+    pub options: CopyOptions,
+}
+
+/// [ISO/IEC 9075-2:2023 §20.6] `<copy descriptor options>` ::= NAME | TYPE
+/// | NAME , TYPE | DATA.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyOptions {
+    /// NAME.
+    Name,
+    /// TYPE.
+    Type,
+    /// NAME , TYPE.
+    NameType,
+    /// DATA.
+    Data,
 }

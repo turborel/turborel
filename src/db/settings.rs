@@ -536,7 +536,9 @@ impl Session {
         let authorization = self.authorization();
         let user = authorization.of(st.catalog.roles());
         let base = Context::new(st, &authorization.auth, params);
-        bind(Context { role: user.cell.role, user, own: &own, schema: &schema, now, collation: collation.as_ref(), ..base })
+        let compile = self.compile.borrow().clone();
+        let compile = compile.as_ref();
+        bind(Context { role: user.cell.role, user, own: &own, schema: &schema, now, collation: collation.as_ref(), compile, ..base })
     }
 
     /// What ends its open transaction when it ends (`SESSION.COMMIT_AT_END`).

@@ -140,6 +140,14 @@ impl LogicalPlan {
                 out.extend(r.conds().flat_map(|c| cond_subqueries(c, bodies)));
             }
             LogicalPlan::Limit { limit, .. } => limit.exprs().for_each(|e| expr_subqueries(e, &mut out, bodies)),
+            LogicalPlan::Polymorphic(p) => {
+                p.arguments.iter().for_each(|e| expr_subqueries(e, &mut out, bodies));
+                // [ISO/IEC 9075-2:2023 §9.25 GR20] its start, fulfill and
+                // finish component procedures' leaves.
+                if bodies {
+                    out.extend(p.call.programs().flat_map(|program| program.all_leaves()).map(|l| &*l.query));
+                }
+            }
             LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Product { .. }

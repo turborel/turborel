@@ -77,6 +77,7 @@ impl Session {
         let tx = self.ensure_transaction(st);
         call.runs(&tx);
         tx.begin_statement(|| !self.cursors_open())?;
+        let _compiling = self.compiling(st, tx.id);
         let (columns, rows) = rows(st, &tx).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e))?;
         let rows = Arc::new(Mutex::new(Some(rows)));
         self.inner.borrow_mut().anonymous.push(Arc::downgrade(&rows));

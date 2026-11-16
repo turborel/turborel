@@ -25,7 +25,7 @@ mod executor;
 mod host;
 mod hosted;
 
-pub(crate) use executor::run_unhosted;
+pub(crate) use executor::{run_component, run_unhosted};
 pub(in crate::db) use hosted::{Hosted, hosted_rows};
 
 use host::SessionHost;

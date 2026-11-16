@@ -103,6 +103,7 @@ impl Plan {
                 if u.ordinality { " with ordinality" } else { "" }
             ),
             Plan::Window { detail, .. } | Plan::Recognize { detail, .. } => writeln!(out, "{pad}{detail}"),
+            Plan::Polymorphic(p) => writeln!(out, "{pad}Polymorphic table function {}", p.function()),
         };
         self.write_inputs(out, depth.saturating_add(1));
     }
@@ -140,6 +141,7 @@ impl Plan {
             Plan::Unnest(u) => u.input.write(out, depth),
             Plan::Window { window, .. } => window.input.write(out, depth),
             Plan::Recognize { recognize, .. } => recognize.input.write(out, depth),
+            Plan::Polymorphic(p) => p.inputs.iter().for_each(|input| input.write(out, depth)),
         }
     }
 }

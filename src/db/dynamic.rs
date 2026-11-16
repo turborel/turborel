@@ -33,11 +33,13 @@ mod cursors;
 mod descriptor;
 mod nested;
 mod positioned;
+pub(crate) mod ptf;
 mod statements;
 mod using;
 
+pub(crate) use areas::{Operands, get_from, set_into};
 pub(crate) use cursors::declared_statement;
-pub(super) use descriptor::Descriptor;
+pub(crate) use descriptor::Descriptor;
 
 /// [ISO/IEC 9075:1992 §5.4 SR14-SR16] The longest value of an extended
 /// name or `<descriptor name>`, in octets.
@@ -162,8 +164,31 @@ impl Session {
             DynamicStatement::Close(cursor) => self.dynamic_close(cursor, params),
             DynamicStatement::DeletePositioned { table, cursor } => self.dynamic_delete(cx, table, cursor, params),
             DynamicStatement::UpdatePositioned { table, set, cursor } => self.dynamic_update(cx, (table, set), cursor, params),
+            // [ISO/IEC 9075-2:2023 §20.6 GR1] run directly, no PTF data area
+            // is: its target identifies none.
+            DynamicStatement::CopyDescriptor { target, .. } => Err(no_ptf_area(target)),
+            DynamicStatement::PipeRow(_) => {
+                let msg =
+                    "[ISO/IEC 9075-2:2023 §20.28 GR1] PIPE ROW is executed by a PTF start, fulfill or finish component procedure alone";
+                Err(dynamic_error(SqlState::PIPE_ROW_OUTSIDE, msg.to_owned()))
+            }
         }
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §5.4 SR11] The `<PTF descriptor name>` or `<PTF
+/// cursor name>` `name` identifies nothing where no PTF component
+/// procedure runs, which alone has a PTF data area (33000, or 34000 of a
+/// cursor's).
+pub(super) fn no_ptf_area(name: &ExtendedName) -> SqlError {
+    no_ptf_area_here().or_at(name.at)
+}
+
+/// `no_ptf_area`, of no place in the statement.
+pub(crate) fn no_ptf_area_here() -> SqlError {
+    let msg = "[ISO/IEC 9075-2:2023 §5.4] a PTF descriptor or cursor name identifies one of the PTF data area of the PTF component \
+               procedure running, and none runs";
+    dynamic_error(SqlState::INVALID_DESCRIPTOR_NAME, msg.to_owned())
 }
 
 /// [ISO/IEC 9075:1992 §18.1 GR1c, Table 22; ISO/IEC 9075-2:2023 §23.1
@@ -183,6 +208,8 @@ pub(super) fn command(d: &DynamicStatement) -> Command {
         DynamicStatement::Close(_) => commands::DYNAMIC_CLOSE,
         DynamicStatement::DeletePositioned { .. } => commands::DYNAMIC_DELETE_CURSOR,
         DynamicStatement::UpdatePositioned { .. } => commands::DYNAMIC_UPDATE_CURSOR,
+        DynamicStatement::CopyDescriptor { .. } => commands::COPY_DESCRIPTOR,
+        DynamicStatement::PipeRow(_) => commands::PIPE_ROW,
     }
 }
 
@@ -203,7 +230,9 @@ pub(super) fn changed_table(d: &DynamicStatement) -> Option<(&TableName, &'stati
         | DynamicStatement::AllocateCursor { .. }
         | DynamicStatement::Open { .. }
         | DynamicStatement::Fetch { .. }
-        | DynamicStatement::Close(_) => None,
+        | DynamicStatement::Close(_)
+        | DynamicStatement::CopyDescriptor { .. }
+        | DynamicStatement::PipeRow(_) => None,
     }
 }
 

@@ -3,7 +3,7 @@
 //! CREATE PROCEDURE of an SQL routine body, the `<specific routine
 //! designator>` DROP and GRANT name one by, CALL and RETURN.
 
-use super::{SqlStatement, TableName, TypeName, ValueExpression};
+use super::{ParameterType, RoutineBody, TableName, TypeName, ValueExpression};
 
 /// [ISO/IEC 9075-2:2023 §11.60] Whether an `<SQL-invoked routine>` is a
 /// `<schema procedure>` or a `<schema function>`.
@@ -77,7 +77,7 @@ pub struct ParameterDeclaration {
     /// parameter by \[SR14\].
     pub name: String,
     /// The `<parameter type>`.
-    pub data_type: TypeName,
+    pub data_type: ParameterType,
     /// Where it is written.
     pub at: usize,
 }
@@ -107,7 +107,8 @@ pub struct RoutineDefinition {
     pub name: TableName,
     /// The `<SQL parameter declaration>`s, in order.
     pub parameters: Vec<ParameterDeclaration>,
-    /// Of a function, the `<returns data type>`.
+    /// Of a function, the `<returns data type>`; none of a polymorphic
+    /// table function's `<returns table type>`, which its body has.
     pub returns: Option<TypeName>,
     /// The `<specific name>` of SPECIFIC, if written.
     pub specific: Option<TableName>,
@@ -119,8 +120,9 @@ pub struct RoutineDefinition {
     /// RETURNS NULL ON NULL INPUT was written: a null-call function;
     /// CALLED ON NULL INPUT is the default \[SR9f ii\].
     pub null_call: bool,
-    /// The `<SQL procedure statement>` of its `<SQL routine body>`.
-    pub body: Box<SqlStatement>,
+    /// Its `<routine body>`: the `<SQL procedure statement>` of its `<SQL
+    /// routine body>`, or a polymorphic table function's.
+    pub body: RoutineBody,
     /// \[DESIGN\] The `<SQL-invoked routine>` as written, alone even in a
     /// `<schema definition>`: what the routine descriptor keeps, to read
     /// its body again.

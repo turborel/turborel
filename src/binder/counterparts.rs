@@ -51,7 +51,7 @@ pub(super) fn defaulted(db: &State, columns: Vec<ColumnDesc>, source: &Source) -
             .collect(),
         // An updatable view's column is a column of its base table.
         Source::Base(vb) => vb.map.iter().map(|&k| vb.base.columns.get(k).cloned()).collect(),
-        Source::Common | Source::System(_) | Source::Unnest(_) => Vec::new(),
+        Source::Common | Source::System(_) | Source::Unnest(_) | Source::Argument => Vec::new(),
     };
     columns
         .into_iter()

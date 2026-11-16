@@ -38,6 +38,7 @@ impl<'a> Context<'a> {
             invoked: None,
             drawn: None,
             hosts: false,
+            compile: None,
         }
     }
 }

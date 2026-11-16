@@ -1545,7 +1545,7 @@ RETURN [§16.2].
 | Kept | §11.60 GR3, §4.35.5 | The descriptor is logged as its definition and kept in a checkpoint's snapshot, with its EXECUTE privileges. ROUTINES, PARAMETERS and ROUTINE_PRIVILEGES show it, ROUTINE_DEFINITION to the owner of its schema alone. |
 
 SQL SECURITY (Feature T324), a parameter's default and named arguments
-(T521, T522, T524, T525), RETURNS TABLE (T326), DYNAMIC RESULT SETS
+(T521, T522, T524, T525), a monomorphic table function's RETURNS TABLE (T326), DYNAMIC RESULT SETS
 above 0 (T471), NEW SAVEPOINT LEVEL (T272) and a language other than SQL
 are refused with SQLCODE -900. A routine's
 behaviour is always DEFINER's, as SR23b leaves it without T324.
@@ -1558,6 +1558,29 @@ RETURNS, RETURN, CALL, SPECIFIC, ROUTINE, DETERMINISTIC, READS,
 MODIFIES, CONTAINS, OUT and INOUT are no key words of SQL-92, so each
 stays an identifier, read as a word where a routine's statements read
 it.
+
+### Polymorphic table functions
+
+Features B200 (Polymorphic table functions), B201 (More than one PTF
+generic table parameter), B202 (PTF copartitioning), B203 (More than one
+copartition specification), B204 (PRUNE WHEN EMPTY), B205 (Pass-through
+columns), B206 (PTF descriptor parameters), B207 (Cross products of
+partitionings), B208 (PTF component procedure interface) and B209 (PTF
+extended names). CREATE FUNCTION defines a polymorphic table function of
+generic table and descriptor parameters, whose body names its component
+procedures [§11.60], and a `<PTF derived table>` in FROM invokes it [§7.6,
+§9.18]. RULES.md D78 says how.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Definition | §11.60 SR4, SR7, SR10, AR3 | RETURNS TABLE of a column list, or of none, or ONLY PASS THROUGH. A generic table parameter is of row or set semantics, set semantics KEEP ON EMPTY or PRUNE ON EMPTY, PASS THROUGH or not. Private parameters, their defaults store-assignable to them. Each component procedure designated is one SQL-invoked procedure, of the parameter list §9.26 gives it, its modes and types alike [SR10h], of no MODIFIES SQL DATA nor more access than the function's [SR10j], describe deterministic [SR10k], each deterministic if the function is [SR10l]. A function of no column list and not ONLY PASS THROUGH has a describe component [SR10m]. The owner holds EXECUTE on each [AR3]. Each rule broken is SQLCODE -103. |
+| Signatures | §9.26 | The private parameters first, INOUT, IN of the finish component. Then of each data parameter its value, of a descriptor parameter its area's name, of each generic table its full and requested row type's names to describe, its cursor row type's and its cursor's to fulfill, its partitioning and ordering descriptors' if of set semantics. Then the result row type's name, to describe only if it has no column list, and the status, INOUT CHARACTER(5). Each name VARCHAR(128) (IL058). Items viii and ix call the result name's type "of Pp", which names no parameter; it is read as VARCHAR(128) too. |
+| Invocation | §7.6 SR7, SR12a, SR15a, §9.18 SR5e, SR6, SR12 | In FROM, TABLE ( a routine invocation ) and a correlation name, none of ONLY PASS THROUGH [SR7d]. A derived column list names each proper result column once. A table argument is TABLE ( name ), TABLE ( query ), or a nested invocation, up to 32 deep. Its range variable is its correlation name, else its table's name, else none (UV095), and no two are alike [SR12c]. PARTITION BY and ORDER BY are of set semantics alone, PRUNE or KEEP WHEN EMPTY of KEEP ON EMPTY alone [SR12b]. COPARTITION's tables have as many partitioning columns, each comparable [SR12d]. A descriptor argument is DESCRIPTOR ( columns ) or CAST ( NULL AS DESCRIPTOR ). A function of a generic parameter is no candidate of a value expression's invocation [SR5e]. EXECUTE on the function is needed, not on its components [SR6]. Each rule broken is SQLCODE -103, EXECUTE held not -104. |
+| Compilation | §9.24, §9.18 SR12e to SR12n, IA062, IL056, IL057 | As the statement is bound. A data argument of no column reference, subquery, dynamic parameter, NEXT VALUE FOR or routine invocation is evaluated then (IA062), any other passed null to describe. The describe component runs on the PTF data area; an exception it raises, or a status other than 00000, is SQLCODE -103 [SR12i, SR12j]. The requested row types name distinct columns of their tables [SR12k], the initial result row type distinct named columns, at most 1000 (IL056, IL057). Without a describe component the requested row type is the full one. A describe component that reads SQL-data reads it in the statement's transaction, and in a definition bound where no statement runs is refused, SQLCODE -900. |
+| Execution | §9.25, UA056, UV133 | As the cursor opens. An empty table of row semantics, or a pruned one, gives no row [GR4]. Of each co-partitioned set its distinct values, of each other partitioned table its own, then their cross product, one partition of nulls for an empty kept table [GR13 to GR16]. For each partition in turn, on a copy of compilation's data area, start runs, the cursors open on the partition's rows in its ordering, fulfill runs, they close, finish runs, the status checked after each [GR17 to GR20]. A table argument of row semantics is not split (UA056). A pass-through surrogate is BIGINT, its row's place in its table (UV133). |
+| PTF statements | §5.4, §20.4 to §20.6, §20.13, §20.28, UV131 | In a component procedure, GET and SET DESCRIPTOR of a `<PTF descriptor name>`, COPY DESCRIPTOR to one, FETCH from a `<PTF cursor name>` into variables or a descriptor, and PIPE ROW. Each name is PTF and a value naming one of the area's (UV131), and a name of none is 33000, of a cursor 34000. PIPE ROW where no start, fulfill or finish runs is 0700H, of another than the intermediate result row type 33000, of a surrogate naming no row 0700G. GET DESCRIPTOR of SORT_DIRECTION and NULL_ORDERING reads an ordering descriptor. No other dynamic statement is in a routine's body (IA078), so DESCRIBE never names a PTF descriptor area. |
+| The result | §7.6 SR12a, §20.28 GR7 to GR11 | Its proper result columns, then of each table argument of PASS THROUGH its columns, those of the row the surrogate names, null of a null one, its partitioning columns the partition's values. Of another, its partitioning columns, in the table's order. Each range variable names its own. |
+| Kept | §11.60 GR3, §11.62 SR4b | The function, its components and what invokes it are logged and checkpointed as any routine. RESTRICT refuses to drop a component while a function names it, or a function a view invokes. ROUTINES shows it a FUNCTION of no data type. [EXTENSION] PARAMETERS shows a generic parameter's DATA_TYPE TABLE or DESCRIPTOR. |
 
 ### Roles
 
@@ -1985,6 +2008,18 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §17.1 Table 18 the code of an implementation-defined data type | -1, of every plug-in's type (RULES.md D53). An item of it described keeps its type, which no other field gives. | `db/dynamic/descriptor.rs` |
 | §17.2 GR2, §17.4 GR7c, §17.5 GR5, §17.9 GR3e, GR4e (implementation-dependent) a field not set, NAME of an unnamed column and of a dynamic parameter, the fields TYPE leaves | 0, or the empty string, DATA the null value; the empty string, UNNAMED 1; undefined | `db/dynamic/descriptor.rs`, `db/dynamic/areas.rs` |
 | §17.5 GR7 restrictions on changing what DESCRIBE set | None. The fields set are those EXECUTE, OPEN and FETCH use. | `db/dynamic/areas.rs` |
+
+### Polymorphic table functions
+
+| Rule | Choice | Where |
+|---|---|---|
+| 2023 §9.18 SR12b ii (UV095) the range variable of a table argument of no correlation name nor table name | None. Its columns are named by their names alone. | `binder/ptf.rs` |
+| 2023 §9.18 SR12e to SR12h, IA062, whether a value expression is evaluated during compilation | Yes, of one of no column reference, subquery, dynamic parameter, NEXT VALUE FOR or routine invocation | `binder/ptf/call.rs` |
+| 2023 §9.24 GR2, IL056 and IL057, the most items of the initial and the intermediate result row types | 1,000 each | `db/dynamic/ptf.rs` |
+| 2023 §9.26, IL058, the longest PTF extended name | 128 characters, VARCHAR(128) | `catalog/routines.rs` |
+| 2023 §9.24 GR2 (UV131) the names of the private variables, the PTF extended names and the status variable | PTF_FULL_ROW_t, PTF_PARTITIONING_t, PTF_ORDERING_t, PTF_REQUESTED_ROW_t, PTF_CURSOR_ROW_t, PTF_CURSOR_t of the t-th generic table, PTF_DESCRIPTOR_p of the p-th parameter, PTF_INITIAL_RESULT and PTF_INTERMEDIATE_RESULT | `db/ptf/area.rs` |
+| 2023 §9.25 GR10, GR11 (UV133) the names and declared type of the pass-through input surrogate columns | PTF_PASS_THROUGH_t, an underscore added until no column of the table has it; BIGINT, the row's place among its table's rows | `db/ptf/compile.rs`, `db/ptf/execute.rs` |
+| 2023 §9.25 (UA056) the partitioning of a table argument of row semantics | One partition of all its rows, its virtual processors one | `db/ptf/execute.rs` |
 
 ### Sessions, users and connections
 

@@ -40,7 +40,10 @@ pub use memory::MemoryCatalog;
 pub use modules::{ModuleDesc, module_of_schema, module_schema, routine_path};
 pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, applicable, merged};
 pub use roles::{Authorization, Principal, RoleAuthorization, Roles, Who};
-pub use routines::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc};
+pub use routines::{
+    DataAccess, GenericParameter, GenericTable, PTF_NAME_LENGTH, ParameterMode, PtfDesc, RoutineKind, SqlParameter, SqlRoutineDesc,
+    TableSemantics, ptf_name_type, ptf_status_type,
+};
 pub use sequences::SequenceDesc;
 pub use triggers::{ActionTime, TransitionNames, TriggerDesc, TriggerEvent, TriggerLevel};
 pub use user_types::{Routine, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, based_on, types_in};

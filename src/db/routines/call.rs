@@ -28,7 +28,7 @@ use super::program::{Hosted, hosted_rows};
 use crate::ast::{
     CallStatement, Composite, ElementPosition, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification,
 };
-use crate::binder::{Context, OutColumn, assignable, bind_argument, definition_of, qualify, resolve_procedure};
+use crate::binder::{Context, OutColumn, assignable, bind_argument, definition_of, qualify, resolve_procedure, sql_statement};
 use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of, routine_path};
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::exec::execute;
@@ -213,11 +213,12 @@ impl Session {
         let desc = &bound.desc;
         let scope = RoutineScope::of(desc, routine_path(&*cx.st.catalog, desc));
         let mut inner = Params::of_routine(values, Arc::new(scope));
-        let body = definition_of(desc)?.body;
+        let definition = definition_of(desc)?;
+        let body = sql_statement(&definition)?;
         let owner = owner_of(&*cx.st.catalog, &desc.name.auth).to_owned();
         {
             let _pushed = self.push(&desc.name, (owner, desc.schema.clone()))?;
-            self.run_body(cx, &body, &mut inner)?;
+            self.run_body(cx, body, &mut inner)?;
         }
         let out = inner.dynamic_values();
         let returned: Vec<Value> = bound.targets.iter().map(|(k, _)| out.get(*k).cloned().unwrap_or(Value::Null)).collect();

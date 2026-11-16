@@ -174,6 +174,14 @@ impl<'w> Rules<'w> {
                 r.clause.for_each_subquery(&mut |s| n = n.saturating_add(self.refs(&s.query, scope)));
                 n
             }
+            TableReference::Polymorphic(p) => {
+                let mut n = 0_usize;
+                let subqueries = p.invocation.subqueries(&mut |t| {
+                    let named = t.table.auth.is_none() && !scope.contains(&t.table.ident.as_str());
+                    n = n.saturating_add(usize::from(named && self.names.contains(&t.table.ident.as_str())));
+                });
+                subqueries.into_iter().fold(n, |n, s| n.saturating_add(self.refs(&s.query, scope)))
+            }
             TableReference::Joined(j) => {
                 let mut n = self.reference_refs(&j.left, scope).saturating_add(self.reference_refs(&j.right, scope));
                 if let Some(JoinSpecification::On(c)) = &j.on {
@@ -317,6 +325,10 @@ impl<'w> Rules<'w> {
                 self.reference(&r.input, (place, scope))?;
                 self.elsewhere(subqueries, scope)
             }
+            // A table argument that names a member is a <query name> in
+            // the <from clause>; its subqueries are not derived tables
+            // [SR3j ix 5 B].
+            TableReference::Polymorphic(p) => self.elsewhere(p.invocation.subqueries(&mut |_| {}), scope),
             TableReference::Joined(j) => {
                 let (left, right) = (self.reference_refs(&j.left, scope), self.reference_refs(&j.right, scope));
                 let refused = match j.kind {
@@ -503,6 +515,9 @@ fn any_query(q: &QueryExpression, pred: &dyn Fn(&QueryExpression) -> bool) -> bo
                         refs.push(&r.input);
                         r.clause.for_each_subquery(&mut |s| nested.push(&s.query));
                     }
+                    TableReference::Polymorphic(p) => {
+                        nested.extend(p.invocation.subqueries(&mut |_| {}).into_iter().map(|s| &s.query));
+                    }
                 }
             }
         }
@@ -532,7 +547,7 @@ fn recognizes(q: &QueryExpression) -> bool {
         match r {
             TableReference::Recognized(_) => return true,
             TableReference::Joined(j) => refs.extend([&j.left, &j.right]),
-            TableReference::Table(_) | TableReference::Derived(_) | TableReference::Unnest(_) => {}
+            TableReference::Table(_) | TableReference::Derived(_) | TableReference::Unnest(_) | TableReference::Polymorphic(_) => {}
         }
     }
     false

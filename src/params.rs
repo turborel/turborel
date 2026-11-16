@@ -22,7 +22,7 @@ pub(crate) use transition::Transitions;
 use dynamic::Dynamic;
 pub use dynamic::ParameterType;
 
-use crate::ast::ParameterSpecification;
+use crate::ast::{ParameterSpecification, TargetKind};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, lex};
 use crate::value::Spelled;
@@ -159,6 +159,14 @@ impl Params {
     /// [X3.135-1986 §5.6 GR1] the value specified by a <parameter
     /// specification>: null if its indicator is negative, else the argument.
     pub(crate) fn input(&self, spec: &ParameterSpecification) -> Result<(Value, DataType)> {
+        // [ISO/IEC 9075-2:2023 §6.4, §6.7] an SQL parameter or variable of
+        // the routine whose body this is: its value, of its declared type.
+        if spec.kind == TargetKind::Routine {
+            let qualifier = spec.qualifier.as_deref();
+            let found = self.routine_type(qualifier, &spec.name).zip(self.routine_value(qualifier, &spec.name));
+            let msg = || format!("[ISO/IEC 9075-2:2023 §6.4 SR7] {} is no SQL parameter or variable of the routine", spec.name);
+            return found.map(|(t, v)| (v, t)).ok_or_else(|| SqlError::new(Code::SyntaxRule, msg()));
+        }
         let p = self
             .get(&spec.name)
             .ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[X3.135-1986 §7.3 SR3] parameter {} is not declared", spec.name)))?;

@@ -64,6 +64,7 @@ mod partitioned;
 mod pattern;
 mod predicates;
 mod psm;
+mod ptf;
 mod purpose;
 mod query;
 mod recursive;
@@ -91,7 +92,7 @@ use from::FromItem;
 pub use generated::{bind_generation, generations, noting_generation};
 pub use invocation::{
     Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
-    routine_definition,
+    routine_definition, sql_statement,
 };
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 pub use parameters::bind_argument;
@@ -210,9 +211,14 @@ pub struct Context<'a> {
     /// constructor>` may invoke a function that possibly modifies SQL-data:
     /// of an INSERT's, or a program's value (`Binder::hosting`).
     pub hosts: bool,
+    /// [ISO/IEC 9075-2:2023 §9.24] The database and transaction of the
+    /// statement it is bound in, if one runs: where a PTF describe
+    /// component procedure reads SQL-data. None as a definition is bound.
+    pub compile: Option<&'a Compile>,
 }
 
 pub use noted::{DrawnFrom, Invoked, Selected, Uses};
+pub use ptf::Compile;
 pub use purpose::Purpose;
 pub use referencing::Referencing;
 
@@ -388,6 +394,8 @@ struct Binder<'a> {
     hosting: Cell<bool>,
     /// The query names in scope (`Context::queries`).
     queries: Option<&'a Queries<'a>>,
+    /// What a PTF describe component procedure reads SQL-data with (`Context::compile`).
+    compile: Option<&'a Compile>,
     /// Where it notes the routines it invokes (`Context::invoked`).
     invoked: Option<&'a Invoked>,
     /// Where it notes the sequence generators it draws from (`Context::drawn`).
@@ -442,6 +450,7 @@ impl<'a> Binder<'a> {
             drawing: Cell::new(false),
             hosting: Cell::new(false),
             queries: cx.queries,
+            compile: cx.compile,
             invoked: cx.invoked,
             drawn: cx.drawn,
             windowing: RefCell::new(None),
@@ -477,6 +486,7 @@ impl<'a> Binder<'a> {
             invoked: self.invoked,
             drawn: self.drawn,
             hosts: false,
+            compile: self.compile,
         }
     }
 }

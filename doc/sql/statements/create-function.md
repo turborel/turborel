@@ -24,11 +24,29 @@ CREATE FUNCTION: define an SQL-invoked function
     | RETURNS NULL ON NULL INPUT | CALLED ON NULL INPUT
 
 <return statement> ::= RETURN { <value expression> | NULL }
+
+<polymorphic table function> ::=
+    CREATE FUNCTION <schema qualified routine name>
+    ( [ <PTF parameter> [ , <PTF parameter> ]... ] )
+    RETURNS { TABLE [ ( <column name> <data type> [ , ... ] ) ] | ONLY PASS THROUGH }
+    [ <routine characteristic> ]...
+    [ PRIVATE [ DATA ] ( [ <parameter name> <data type> [ DEFAULT <value expression> ] [ , ... ] ] ) ]
+    [ DESCRIBE WITH <specific routine designator> ]
+    [ START WITH <specific routine designator> ]
+    FULFILL WITH <specific routine designator>
+    [ FINISH WITH <specific routine designator> ]
+
+<PTF parameter> ::=
+      <parameter name> <data type>
+    | <parameter name> TABLE [ [ NO ] PASS THROUGH ]
+        [ WITH ROW SEMANTICS | WITH SET SEMANTICS [ PRUNE ON EMPTY | KEEP ON EMPTY ] ]
+    | <parameter name> DESCRIPTOR
 ```
 
-FUNCTION, RETURNS, RETURN, SPECIFIC, DETERMINISTIC, CONTAINS, READS and
-MODIFIES are read as words, not key words, so a table or column may
-still be named by one.
+FUNCTION, RETURNS, RETURN, SPECIFIC, DETERMINISTIC, CONTAINS, READS,
+MODIFIES, PASS, THROUGH, SEMANTICS, PRUNE, KEEP, EMPTY, PRIVATE, START,
+FULFILL and FINISH are read as words, not key words, so a table or
+column may still be named by one.
 
 ## DESCRIPTION
 
@@ -97,6 +115,46 @@ else it is the function's name, an underscore and a number.
 CREATE FUNCTION runs within the session's transaction: ROLLBACK undoes
 it.
 
+### Polymorphic table functions
+
+A function of a generic table parameter, TABLE, or a descriptor
+parameter, DESCRIPTOR, is a polymorphic table function. It is invoked
+in FROM ([SELECT](select.md)), each table argument a table it reads, and
+its result is a table whose columns may depend on its arguments. Its
+body names procedures, its component procedures, which do the work.
+
+A table parameter of row semantics is given its rows in no partition,
+the whole table to one run of the components. One of set semantics, the default, is
+given them partitioned by its argument's PARTITION BY, each partition
+to one run of the components, in its ORDER BY's order. Of PRUNE ON
+EMPTY, an empty table gives no row, as does an empty table of row
+semantics. Of KEEP ON EMPTY, the default, an argument may say PRUNE or
+KEEP WHEN EMPTY. A table of PASS THROUGH gives the result its columns,
+of the row each result row names. Else the result has its partitioning
+columns.
+
+RETURNS TABLE with columns gives the proper result columns. Without
+them, the describe component gives them as each invocation is bound.
+RETURNS ONLY PASS THROUGH gives none, the result its tables' columns.
+
+The describe component runs as an invocation is bound. It reads the
+row type of each table argument and says the columns of it the other
+components read. The start component runs first for each partition,
+then the fulfill component, which reads the rows by FETCH and gives
+result rows by [PIPE ROW](pipe-row.md), then the finish component.
+Each is a procedure whose parameters follow a fixed list. The private
+parameters first, INOUT, IN of finish. Then of each data parameter its
+value, of a descriptor parameter its descriptor area's name. Of each
+table parameter, describe takes its row type's and its requested row
+type's names, fulfill its cursor row type's and its cursor's, each the
+partitioning and ordering descriptors' if of set semantics. Then the
+result row type's name, which describe takes only if RETURNS TABLE has
+no columns. Last the status, INOUT CHARACTER(5). Each name is
+VARCHAR(128). A component reads and sets these by
+[GET DESCRIPTOR](get-descriptor.md), [SET DESCRIPTOR](set-descriptor.md),
+[COPY DESCRIPTOR](copy-descriptor.md) and [FETCH](fetch.md) of PTF and
+the name. A status it leaves other than `00000` raises that SQLSTATE.
+
 ## RULES
 
 1. The function's schema exists and its user owns it. A function named
@@ -122,14 +180,24 @@ it.
 7. An invocation of a function of MODIFIES SQL DATA is where the
    paragraph above lets it be.
 8. LANGUAGE is SQL. Any other language, SQL SECURITY, a parameter's
-   default, RETURNS TABLE, NO SQL and NEW SAVEPOINT LEVEL are not
-   supported.
+   default, RETURNS TABLE of a function of no table or descriptor
+   parameter, NO SQL and NEW SAVEPOINT LEVEL are not supported.
 9. The transaction is not READ ONLY.
+10. Only a polymorphic table function has a table or descriptor
+    parameter, and it has a body of component procedures. Its result
+    columns are named apart, a private parameter's default stored in
+    it.
+11. Each component designated is one procedure, of the parameter list
+    above, its modes and types alike, of no MODIFIES SQL DATA nor more
+    SQL-data access than the function's. Describe is deterministic, and
+    each is if the function is. A function of RETURNS TABLE of no
+    columns has a describe component.
 
 ## PRIVILEGES
 
 The schema is its user's. The owner holds the privileges the body needs,
-and EXECUTE on each function it invokes.
+and EXECUTE on each function it invokes. The owner of a polymorphic
+table function holds EXECUTE on each of its components.
 
 ## ERRORS
 
@@ -153,6 +221,13 @@ in it raises. GET DIAGNOSTICS shows the
 function as ROUTINE_SCHEMA, ROUTINE_NAME and SPECIFIC_NAME, and of an
 argument the parameter as PARAMETER_NAME, PARAMETER_MODE and
 PARAMETER_ORDINAL_POSITION.
+
+A `<PTF derived table>` that breaks a rule of its invocation, or whose
+describe component raises an exception or leaves a status other than
+`00000`, fails with SQLCODE -103 as it is bound. One whose describe
+component reads SQL-data, in a view's definition, fails with -900. As
+it runs, a component's exception, or the status it leaves, is the
+query's SQLSTATE.
 
 ## EXAMPLES
 
@@ -275,11 +350,63 @@ OK
 turborel: SQLCODE -301 (SQLSTATE 22003): 100000 does not fit SMALLINT without losing leading digits [ISO/IEC 9075-2:2023 §9.18 GR4a ii; ISO/IEC 9075:1992 §9.2 GR3k]
 ```
 
+A polymorphic table function, and the rules its definition and its
+invocation keep. Its fulfill component gives each row of its table
+doubled, the table's columns passed through ([PIPE ROW](pipe-row.md)
+and [SELECT](select.md) show more):
+
+```sql
+CREATE TABLE T (K INTEGER, N INTEGER);
+INSERT INTO T VALUES (1, 10), (2, 20);
+CREATE PROCEDURE TWICE_F (IN CR VARCHAR(128), IN CU VARCHAR(128), IN RR VARCHAR(128), INOUT ST CHAR(5))
+  CONTAINS SQL
+BEGIN
+  DECLARE K, N, D INTEGER;
+  DECLARE S BIGINT;
+  DECLARE DONE BOOLEAN DEFAULT FALSE;
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET DONE = TRUE;
+  L: LOOP
+    FETCH NEXT FROM PTF CU INTO K, N, S;
+    IF DONE THEN LEAVE L; END IF;
+    SET D = N * 2;
+    SET DESCRIPTOR PTF RR VALUE 1 DATA = D;
+    SET DESCRIPTOR PTF RR VALUE 2 DATA = S;
+    PIPE ROW PTF RR;
+  END LOOP L;
+END;
+CREATE FUNCTION TWICE (T TABLE PASS THROUGH WITH ROW SEMANTICS) RETURNS TABLE (D INTEGER)
+  CONTAINS SQL FULFILL WITH PROCEDURE TWICE_F;
+SELECT P.D, X.K, X.N FROM TABLE (TWICE (TABLE (T) AS X)) AS P ORDER BY X.K;
+CREATE FUNCTION UNDESCRIBED (T TABLE PASS THROUGH WITH ROW SEMANTICS) RETURNS TABLE
+  CONTAINS SQL FULFILL WITH PROCEDURE TWICE_F;
+CREATE FUNCTION BY_SET (T TABLE PASS THROUGH) RETURNS TABLE (D INTEGER)
+  CONTAINS SQL FULFILL WITH PROCEDURE TWICE_F;
+SELECT * FROM TABLE (TWICE (TABLE (T)));
+SELECT * FROM TABLE (TWICE (TABLE (T) PARTITION BY K)) AS P;
+```
+
+```
+OK
+OK
+OK
+OK
+            D |            K |            N
+--------------+--------------+--------------
+           20 |            1 |           10
+           40 |            2 |           20
+(2 rows)
+turborel: SQLCODE -103 (SQLSTATE 2A000): a polymorphic table function of no <table function column list> nor ONLY PASS THROUGH has a PTF describe component procedure [ISO/IEC 9075-2:2023 §11.60 SR10m]
+turborel: SQLCODE -103 (SQLSTATE 2A000): the parameters of PTF fulfill component procedure ANN.TWICE_F do not conform to (IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), INOUT CHARACTER(5)) [ISO/IEC 9075-2:2023 §11.60 SR10h]
+turborel: SQLCODE -103 (SQLSTATE 2A000): a <PTF derived table> has a correlation name [ISO/IEC 9075-2:2023 §7.6 SR7d ii] (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 2A000): a table argument of a parameter of row semantics has no PARTITION BY [ISO/IEC 9075-2:2023 §9.18 SR12b iii 1] (at character 28)
+```
+
 ## STANDARD
 
 ISO/IEC 9075-2:2023 §11.60, §9.18, §10.4, §16.2, §4.35, Feature T321
-(subfeatures 01, 03 and 05), T341, B033, B128, S203 and S204, and §9.6,
-§9.7 and §11.60 SR20 of overloads. A body of a control statement is
+(subfeatures 01, 03 and 05), T341, B033, B128, S203 and S204. Polymorphic
+table functions are §4.35.4, §9.24 to §9.27 and Features B200 to B209.
+§9.6, §9.7 and §11.60 SR20 are of overloads. A body of a control statement is
 ISO/IEC 9075-4:2006 draft §11.2, Feature P002, and where a function of
 MODIFIES SQL DATA may be invoked §4.35.2, §7.17 SR25 and §6.12 SR1a.
 SQL-86 and SQL-92 have no SQL-invoked routines.
@@ -289,4 +416,5 @@ SQL-86 and SQL-92 have no SQL-invoked routines.
 [CREATE PROCEDURE](create-procedure.md), [RETURN](return.md),
 [DROP ROUTINE](drop-routine.md), [GRANT](grant.md),
 [CREATE TYPE](create-type.md), [Information Schema](../information-schema.md),
-[BEGIN](begin.md)
+[BEGIN](begin.md), [PIPE ROW](pipe-row.md), [COPY DESCRIPTOR](copy-descriptor.md),
+[SELECT](select.md)

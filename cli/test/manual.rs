@@ -378,8 +378,9 @@ fn the_routine_examples_run_as_printed() {
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8: the examples of the SQL/PSM
 /// statements, BEGIN, DECLARE HANDLER, SET, CASE, IF, LOOP, WHILE,
-/// REPEAT, FOR, LEAVE, ITERATE, SIGNAL and RESIGNAL, each page in a
-/// database of its own, run as printed, as ANN.
+/// REPEAT, FOR, LEAVE, ITERATE, SIGNAL and RESIGNAL, and of the PTF
+/// statements, PIPE ROW and COPY DESCRIPTOR, each page in a database of
+/// its own, run as printed, as ANN.
 #[test]
 fn the_psm_examples_run_as_printed() {
     let pages = [
@@ -396,6 +397,8 @@ fn the_psm_examples_run_as_printed() {
         "sql/statements/iterate.md",
         "sql/statements/signal.md",
         "sql/statements/resignal.md",
+        "sql/statements/pipe-row.md",
+        "sql/statements/copy-descriptor.md",
     ];
     for page in pages {
         let db = Database::new();

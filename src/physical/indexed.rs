@@ -255,6 +255,7 @@ impl PhysicalPlanner<'_> {
             // At most a row for each of its input's, or one for each match.
             LogicalPlan::Recognize(r) => self.rows_of(&r.input),
             LogicalPlan::OuterJoin { .. }
+            | LogicalPlan::Polymorphic(..)
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::System { .. }
@@ -300,6 +301,7 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
+            | LogicalPlan::Polymorphic(..)
             | LogicalPlan::WorkTable { .. }
             | LogicalPlan::Transition { .. } => None,
         }
@@ -329,6 +331,7 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
+            | LogicalPlan::Polymorphic(..)
             | LogicalPlan::WorkTable { .. }
             | LogicalPlan::Transition { .. } => None,
         }
@@ -386,6 +389,7 @@ fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
+        | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => None,
@@ -437,6 +441,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
         | LogicalPlan::Recognize(..)
+        | LogicalPlan::Polymorphic(..)
         | LogicalPlan::WorkTable { .. }
         | LogicalPlan::Transition { .. } => None,
     }

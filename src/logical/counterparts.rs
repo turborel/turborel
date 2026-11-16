@@ -59,7 +59,8 @@ impl LogicalPlan {
             | LogicalPlan::Values { .. }
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::WorkTable { .. }
-            | LogicalPlan::Transition { .. } => vec![None; self.width()],
+            | LogicalPlan::Transition { .. }
+            | LogicalPlan::Polymorphic(_) => vec![None; self.width()],
         }
     }
 

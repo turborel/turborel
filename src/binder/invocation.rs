@@ -34,7 +34,7 @@ mod resolve;
 mod tests;
 
 pub(crate) use body::bind_procedure_program;
-pub use body::{FunctionBody, bind_function_body, definition_of, routine_definition};
+pub use body::{FunctionBody, bind_function_body, definition_of, routine_definition, sql_statement};
 pub use candidates::{Candidate, alike, functions_named, grantably_held, held};
 pub(super) use resolve::note as note_specific;
 pub use resolve::resolve_procedure;
@@ -88,8 +88,14 @@ impl Binder<'_> {
     /// subject routine of a definition \[SR6\]; an argument's.
     pub(super) fn invocation(&self, (schema, name): (Option<&str>, &str), args: &[ValueExpression], scope: Scope<'_>) -> Result<Called> {
         let path = self.routine_schemas(schema);
-        let named: Vec<Candidate<'_>> =
-            path.iter().flat_map(|s| functions_named(self.db, &QualifiedName { auth: s.clone(), ident: name.to_owned() })).collect();
+        // [§9.18 SR5e] A polymorphic table function of a generic table or
+        // descriptor parameter is invoked with a table or descriptor
+        // argument, which no value expression's invocation has.
+        let named: Vec<Candidate<'_>> = path
+            .iter()
+            .flat_map(|s| functions_named(self.db, &QualifiedName { auth: s.clone(), ident: name.to_owned() }))
+            .filter(|c| !matches!(c, Candidate::Sql(r) if r.generic()))
+            .collect();
         if named.is_empty() {
             return Ok(Called::Pass(Passed::default()));
         }
@@ -226,7 +232,7 @@ impl Binder<'_> {
 /// # Errors
 ///
 /// SQLCODE -103 if it may not.
-fn constraint_permits(desc: &SqlRoutineDesc) -> Result<()> {
+pub(super) fn constraint_permits(desc: &SqlRoutineDesc) -> Result<()> {
     if !desc.deterministic {
         return Err(nondeterministic_source("am", &format!("an invocation of function {}, which is not deterministic", desc.name)));
     }
@@ -246,7 +252,7 @@ fn constraint_permits(desc: &SqlRoutineDesc) -> Result<()> {
 /// # Errors
 ///
 /// SQLCODE -103 if it may not.
-fn generation_permits(desc: &SqlRoutineDesc) -> Result<()> {
+pub(super) fn generation_permits(desc: &SqlRoutineDesc) -> Result<()> {
     if !desc.deterministic {
         return Err(rule(format!(
             "[ISO/IEC 9075-2:2023 §11.4 SR10d, §9.16 SR1am] a generation expression shall not invoke function {}, which is not deterministic",

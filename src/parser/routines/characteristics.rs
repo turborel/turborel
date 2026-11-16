@@ -102,6 +102,39 @@ fn broken(rule: &str, at: usize, msg: &str) -> SqlError {
 }
 
 impl Written {
+    /// [ISO/IEC 9075-2:2023 §11.60 SR10a to SR10c] The characteristics of
+    /// a polymorphic table function, of a generic table parameter if
+    /// `tables`: no `<language clause>`, `<parameter style clause>`,
+    /// `<null-call clause>`, `<returned result sets characteristic>` or
+    /// `<savepoint level indication>` [SR10a]; READS SQL DATA if of a
+    /// generic table parameter and none is written, else CONTAINS SQL
+    /// [SR10b]; never MODIFIES SQL DATA [SR10c].
+    fn polymorphic(self, tables: bool) -> Result<Characteristics> {
+        let refused = [
+            self.language.as_ref().map(|(_, at)| *at),
+            self.style.map(|((), at)| at),
+            self.null_call.map(|(_, at)| at),
+            self.result_sets.map(|(_, at)| at),
+            self.savepoint.map(|(_, at)| at),
+        ];
+        if let Some(at) = refused.into_iter().flatten().min() {
+            let msg = "a polymorphic table function has no <language clause>, <parameter style clause>, <null-call clause>, <returned \
+                       result sets characteristic> or <savepoint level indication>";
+            return Err(broken("SR10a", at, msg));
+        }
+        let access = match self.access {
+            None if tables => DataAccess::Reads,
+            None => DataAccess::Contains,
+            Some((Access::Of(DataAccess::Modifies), at)) => {
+                return Err(broken("SR10c", at, "a polymorphic table function is not MODIFIES SQL DATA"));
+            }
+            Some((Access::Of(access), _)) => access,
+            Some((Access::NoSql, at)) => return Err(broken("SR9m ii", at, "an SQL routine is not NO SQL")),
+        };
+        let deterministic = self.deterministic.is_some_and(|(deterministic, _)| deterministic);
+        Ok(Characteristics { specific: self.specific.map(|(name, _)| name), deterministic, access, null_call: false })
+    }
+
     /// [ISO/IEC 9075-2:2023 §11.60 SR9c, SR9f, SR9j, SR9l] The rules on
     /// which characteristics a `kind` may have together.
     fn check(&self, kind: RoutineKind) -> Result<()> {
@@ -134,9 +167,17 @@ impl Parser {
     /// [ISO/IEC 9075-2:2023 §11.60] `<routine characteristics>` of a
     /// `kind`, checked: `sql_only` is the first refusal of what an external
     /// routine alone may have, given if the routine is an SQL one.
-    pub(super) fn routine_characteristics(&mut self, kind: RoutineKind, sql_only: Option<SqlError>) -> Result<Characteristics> {
+    pub(super) fn routine_characteristics(
+        &mut self,
+        kind: RoutineKind,
+        sql_only: Option<SqlError>,
+        ptf: Option<bool>,
+    ) -> Result<Characteristics> {
         let mut written = Written::default();
         while self.routine_characteristic(&mut written)? {}
+        if let Some(tables) = ptf {
+            return written.polymorphic(tables);
+        }
         if let Some((Some(language), at)) = &written.language {
             let msg =
                 format!("[ISO/IEC 9075-2:2023 §11.60 SR9i] LANGUAGE {language} makes an external routine, which turborel does not support");

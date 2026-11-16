@@ -181,6 +181,10 @@ impl Filling<'_> {
                 LogicalPlan::Recognize(r)
             }
             LogicalPlan::Limit { limit, input } => LogicalPlan::Limit { limit: limit.map_exprs(&mut |e| self.expr(e)), input },
+            LogicalPlan::Polymorphic(mut p) => {
+                p.arguments = self.exprs(std::mem::take(&mut p.arguments));
+                LogicalPlan::Polymorphic(p)
+            }
             other @ (LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Product { .. }

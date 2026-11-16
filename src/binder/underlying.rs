@@ -163,6 +163,16 @@ fn reference_leaves(cx: Context<'_>, r: &TableReference, leaves: &mut Vec<Qualif
         // operands.
         TableReference::Unnest(_) => {}
         TableReference::Recognized(r) => reference_leaves(cx, &r.input, leaves),
+        // [ISO/IEC 9075-2:2023 §10.4] Its table arguments are its operands;
+        // its other arguments' subqueries are not.
+        TableReference::Polymorphic(p) => {
+            let mut queries = Vec::new();
+            p.invocation.for_each_operand(&mut |t| add_new(leaves, named_leaves(cx, &t.table)), &mut |_| {});
+            p.invocation.for_each_table_query(&mut |q| queries.push(q));
+            for q in queries {
+                query_leaves(cx, &q.query, leaves);
+            }
+        }
         TableReference::Joined(j) => {
             reference_leaves(cx, &j.left, leaves);
             reference_leaves(cx, &j.right, leaves);

@@ -79,6 +79,7 @@ fn joined(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
         | LogicalPlan::Recognize(..)
+        | LogicalPlan::Polymorphic(..)
         | LogicalPlan::WorkTable { .. }
         | LogicalPlan::Transition { .. } => false,
     }
@@ -124,6 +125,7 @@ fn grouped(plan: &LogicalPlan, known: &Known<'_>) -> Option<Shape> {
             | LogicalPlan::Unnest(..)
             | LogicalPlan::Window(..)
             | LogicalPlan::Recognize(..)
+            | LogicalPlan::Polymorphic(..)
             | LogicalPlan::WorkTable { .. }
             | LogicalPlan::Transition { .. } => return None,
         }
@@ -194,6 +196,7 @@ fn column_never_null(plan: &LogicalPlan, at: usize, known: &Known<'_>) -> bool {
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
         | LogicalPlan::Recognize(..)
+        | LogicalPlan::Polymorphic(..)
         | LogicalPlan::WorkTable { .. }
         | LogicalPlan::Transition { .. } => false,
     }
@@ -265,6 +268,7 @@ pub(super) fn of_groups(plan: LogicalPlan, (keys, types): (&[Row], Option<&[Data
         | LogicalPlan::Unnest(..)
         | LogicalPlan::Window(..)
         | LogicalPlan::Recognize(..)
+        | LogicalPlan::Polymorphic(..)
         | LogicalPlan::WorkTable { .. }
         | LogicalPlan::Transition { .. } => plan,
     }

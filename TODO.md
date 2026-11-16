@@ -45,9 +45,7 @@ Nothing is open.
 
 ### Triggers, routines and roles
 
-- Polymorphic table functions (B200 to B209) [§4.35.4, §7.6, §9.24, §9.25].
-  A function in FROM whose result's columns depend on its arguments, on
-  the SQL-invoked functions there are.
+Nothing is open.
 
 ### Types
 

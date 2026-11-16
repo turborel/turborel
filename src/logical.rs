@@ -16,6 +16,7 @@ mod invoked;
 mod limit;
 mod pattern;
 mod program;
+mod ptf;
 mod pushed;
 mod render;
 mod sets;
@@ -37,6 +38,7 @@ pub(crate) use program::{
     Assign, Block, Branches, Called, Contained, Cursor, CursorAction, CursorStep, Declared, ForEach, Handled, Handler, Initial, Into, Leaf,
     Looped, Program, Repeating, Signal, Step, Target,
 };
+pub use ptf::Polymorphic;
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
@@ -297,6 +299,10 @@ pub enum LogicalPlan {
     /// [ISO/IEC 9075-2:2023 §7.7] A `<row pattern recognition clause>` over
     /// the rows of `input`.
     Recognize(Box<Recognize<LogicalPlan>>),
+    /// [ISO/IEC 9075-2:2023 §7.6, §9.25] A `<PTF derived table>`: the rows
+    /// the component procedures of a polymorphic table function pipe, of
+    /// its table arguments' rows.
+    Polymorphic(Box<Polymorphic<LogicalPlan>>),
 }
 
 /// [ISO/IEC 9075-2:2023 §7.6 SR8] A `<collection derived table>` over the
@@ -415,6 +421,7 @@ impl LogicalPlan {
             LogicalPlan::Window(w) => (Some(&w.input), None, &[]),
             LogicalPlan::Recognize(r) => (Some(&r.input), None, &[]),
             LogicalPlan::Recursive { fixpoint, .. } => fixpoint.plans(),
+            LogicalPlan::Polymorphic(p) => (None, None, &p.inputs),
         };
         first.into_iter().chain(second).chain(rest)
     }
@@ -427,6 +434,7 @@ impl LogicalPlan {
             | LogicalPlan::Recursive { names, .. }
             | LogicalPlan::WorkTable { names, .. }
             | LogicalPlan::Transition { names, .. } => names.clone(),
+            LogicalPlan::Polymorphic(p) => p.names.clone(),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => {
                 let mut n = left.names();
                 n.extend(right.names());
@@ -517,6 +525,7 @@ impl LogicalPlan {
             | LogicalPlan::WorkTable { .. }
             | LogicalPlan::Transition { .. } => {}
             LogicalPlan::Recursive { fixpoint, .. } => fixpoint.for_each_mut(f),
+            LogicalPlan::Polymorphic(p) => p.inputs.iter_mut().for_each(f),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
                 f(left);
                 f(right);
