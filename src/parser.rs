@@ -59,6 +59,7 @@ mod window;
 pub(crate) use data_statements::{TRUNCATE, begins_word_statement};
 pub(crate) use served::CANCEL;
 mod session;
+mod target;
 mod triggers;
 mod users;
 
@@ -479,32 +480,7 @@ impl Parser {
         } else {
             None
         };
-        Ok(ParameterSpecification { name, indicator, at, kind: crate::ast::TargetKind::Parameter })
-    }
-
-    /// [X3.135-1986 §8.6, §8.10] `<fetch target list>` and `<select target list>`
-    /// ::= `<target specification>` \[{, `<target specification>`}...\]
-    pub(super) fn target_list(&mut self) -> Result<Vec<ParameterSpecification>> {
-        let mut list = vec![self.target_specification()?];
-        while self.accept_delim(delim::COMMA) {
-            list.push(self.target_specification()?);
-        }
-        Ok(list)
-    }
-
-    /// [X3.135-1986 §5.6] `<target specification>` ::= `<parameter specification>`
-    /// (not implemented: `<variable specification>`, which is embedded SQL)
-    fn target_specification(&mut self) -> Result<ParameterSpecification> {
-        if self.trigger.is_some() || self.routine.is_some() {
-            return self.scoped_target();
-        }
-        if self.is_delim(delim::COLON) {
-            return Err(self.unsupported("<variable specification> (embedded SQL)"));
-        }
-        if !matches!(self.peek(), Tok::Identifier(_)) {
-            return Err(self.syntax("expected a <target specification>"));
-        }
-        self.parameter_specification()
+        Ok(ParameterSpecification { name, indicator, at, kind: crate::ast::TargetKind::Parameter, element: None })
     }
 
     // =====================================================================

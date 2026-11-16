@@ -67,6 +67,13 @@ impl Params {
         self.routine.as_ref()?.parameter(None, name).map(|(_, t)| t)
     }
 
+    /// The value the SQL parameter `name` of the procedure holds, if it
+    /// has one.
+    pub(crate) fn routine_value(&self, name: &str) -> Option<Value> {
+        let (at, _) = self.routine.as_ref()?.parameter(None, name)?;
+        self.dynamic_values().get(at).cloned()
+    }
+
     /// [ISO/IEC 9075-2:2023 §9.2] Stores `value` in the SQL parameter
     /// `name`, as `rule`, cited in full, assigns it.
     ///

@@ -221,9 +221,9 @@ pub enum ExecuteStatement {
         /// The `<SQL statement name>`.
         name: DynamicName,
         /// The `<result using clause>`, of INTO, if written.
-        result: Option<UsingClause>,
+        result: Option<Box<UsingClause>>,
         /// The `<parameter using clause>`, of USING, if written.
-        parameters: Option<UsingClause>,
+        parameters: Option<Box<UsingClause>>,
     },
     /// [§17.11] EXECUTE IMMEDIATE `<SQL statement variable>`.
     Immediate(ValueSpecification),

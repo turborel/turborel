@@ -43,6 +43,14 @@ parameter is named by its name, or by the procedure's name and its
 name, and SELECT INTO, GET DIAGNOSTICS and a nested CALL may assign one
 of OUT or INOUT.
 
+A target of SELECT INTO, or the argument of a nested CALL's OUT or
+INOUT parameter, may be one element of a parameter's array, `P[i]`. Its
+position is an integer literal or a parameter of an exact numeric type
+of scale 0. The element is assigned as UPDATE's `SET A[i] = v` assigns
+it. Past the array's cardinality the array grows, nulls filling the
+elements between. A position below 1 or past the maximum cardinality
+is SQLSTATE 2202E, and an element of a null array SQLSTATE 2200E.
+
 The body runs as the owner of the procedure's schema, of that schema:
 CURRENT_USER in it is that owner, and it uses the owner's privileges,
 whoever calls it. It is bound as it is defined, and sees the tables and
@@ -148,7 +156,9 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): an SQL routine body is an INSERT, UPDAT
 ## STANDARD
 
 ISO/IEC 9075-2:2023 §11.60, §9.18, §4.35, Feature T321 (subfeatures 02
-and 04), T341, B128. SQL-86 and SQL-92 have no SQL-invoked routines.
+and 04), T341, B128. An element target `P[i]` is the `<target array
+element specification>` of §6.4, Feature S097. SQL-86 and SQL-92 have
+no SQL-invoked routines.
 
 ## SEE ALSO
 

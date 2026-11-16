@@ -24,7 +24,9 @@ An argument of an IN parameter is a value expression, whose value is
 stored in the parameter's type. An argument of an OUT or INOUT parameter
 is a target: a host or embedded variable, a parameter of the procedure
 whose body the CALL is, or, in a BEFORE row trigger, a column of its
-new transition variable. An OUT parameter starts null. An INOUT
+new transition variable. Of the last two it may be one element of the
+array, `P[i]` or `N.C[i]`, as [CREATE PROCEDURE](create-procedure.md)
+says. An OUT parameter starts null. An INOUT
 parameter starts with its target's value. Once the body has run, the
 value of each OUT and INOUT parameter is assigned to its target, as
 SELECT INTO assigns a value.
@@ -123,8 +125,9 @@ turborel: SQLCODE -301 (SQLSTATE 22003): 99999999999 does not fit INTEGER withou
 
 ## STANDARD
 
-ISO/IEC 9075-2:2023 §16.1, §9.18, §10.4, Feature T321-04. SQL-86 and
-SQL-92 have no CALL.
+ISO/IEC 9075-2:2023 §16.1, §9.18, §10.4, Feature T321-04. An argument
+`P[i]` is a `<target array element specification>` [§6.4], Feature
+S097. SQL-86 and SQL-92 have no CALL.
 
 ## SEE ALSO
 

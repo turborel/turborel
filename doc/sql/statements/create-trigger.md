@@ -107,7 +107,8 @@ it.
    transition variable.
 8. A target of SELECT INTO, GET DIAGNOSTICS or an output parameter of
    CALL is a column of the new transition variable, and only of a BEFORE
-   row trigger.
+   row trigger. One of SELECT INTO or CALL may be an element of the
+   column's array, `N.C[i]`, at an integer literal position.
 9. The transaction is not READ ONLY.
 
 ## PRIVILEGES
@@ -200,6 +201,30 @@ OK
 (1 row)
 ```
 
+A BEFORE trigger that assigns one element of an array column. The new
+row of a null array fails:
+
+```sql
+CREATE TABLE POSTS (ID INTEGER, TAGS VARCHAR(10) ARRAY[3]);
+CREATE TRIGGER TAGGED BEFORE INSERT ON POSTS
+  REFERENCING NEW AS N FOR EACH ROW
+  SELECT 'new' INTO N.TAGS[1] FROM (VALUES (1)) AS ONE (X);
+INSERT INTO POSTS VALUES (1, ARRAY['draft', 'today']);
+INSERT INTO POSTS VALUES (2, NULL);
+SELECT * FROM POSTS;
+```
+
+```
+OK
+OK
+OK
+turborel: SQLCODE -301 (SQLSTATE 09000): the triggered action of trigger ANN.TAGGED failed: SQLSTATE 2200E: an element of a null array is assigned [ISO/IEC 9075-2:2023 §14.5 GR5b i 1 A, §14.7 GR4b ii 1 A, §10.4 GR10b ii 1 A] [ISO/IEC 9075-2:2023 §15.21 GR6m]
+           ID | TAGS
+--------------+---------------------------------------------
+            1 | ARRAY['new', 'today']
+(1 row)
+```
+
 An INSTEAD OF trigger makes a grouped view take a DELETE:
 
 ```sql
@@ -246,8 +271,9 @@ turborel: SQLCODE -201 (SQLSTATE 09000): the triggered action of trigger ANN.LIM
 ISO/IEC 9075-2:2023 §11.49, §4.46, §15.19 to §15.21, Features T200,
 T211 to T218. An INSTEAD OF trigger takes INSERT, UPDATE, DELETE and
 MERGE of its view, an UPDATE or DELETE WHERE CURRENT OF a cursor over
-it, and a change of an updatable view over it. SQL-86 and SQL-92 have
-no triggers.
+it, and a change of an updatable view over it. A target `N.C[i]` is
+the `<target array element specification>` of §6.4, Feature S097.
+SQL-86 and SQL-92 have no triggers.
 
 ## SEE ALSO
 

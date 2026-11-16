@@ -165,7 +165,7 @@ impl Session {
         self.emptied((command, commands::UNRECOGNIZED));
         let done = match e {
             ExecuteStatement::Prepared { name, result, parameters } => {
-                self.execute_named(name, (result.as_ref(), parameters.as_ref()), params)
+                self.execute_named(name, (result.as_deref(), parameters.as_deref()), params)
             }
             ExecuteStatement::Immediate(source) => self.execute_immediate(source, params),
         };

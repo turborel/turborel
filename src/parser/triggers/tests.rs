@@ -5,7 +5,7 @@
 //! as targets [§6.4 SR7, §6.6 SR13], and each refusal with its code.
 
 use super::*;
-use crate::ast::{GetDiagnostics, SchemaStatement, TargetKind};
+use crate::ast::{ElementPosition, GetDiagnostics, Literal, SchemaStatement, TargetKind};
 
 /// `text`, parsed as one statement: its trigger definition and the
 /// statement's text, if it is one.
@@ -365,4 +365,20 @@ fn action_may_call_a_procedure_11_49() {
     let text = "CREATE TRIGGER TR BEFORE INSERT ON T REFERENCING NEW N FOR EACH ROW BEGIN ATOMIC CALL P (N.A); CALL Q (); END";
     assert_eq!(trigger(text).action.len(), 2);
     syntax_error("CREATE TRIGGER TR AFTER INSERT ON T RETURN 1");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.4] in a BEFORE row
+/// trigger, N.C[i] is a target: an element of the new row's column C, at
+/// a literal position; a position that is a name is refused, the action
+/// holding no SQL parameter.
+#[test]
+fn an_element_of_the_new_row_is_a_target_6_4() {
+    let text = "CREATE TRIGGER TR BEFORE INSERT ON T REFERENCING NEW AS N FOR EACH ROW SELECT A INTO N.B[2] FROM U";
+    let definition = trigger(text);
+    let SqlStatement::Select { targets, .. } = &definition.action[0] else { panic!("{:?}", definition.action) };
+    let target = &targets[0];
+    assert_eq!((target.name.as_str(), target.kind), ("B", TargetKind::Transition));
+    assert!(matches!(target.element.as_deref(), Some(ElementPosition::Literal(Literal::Exact(d))) if d.units == 2), "{target:?}");
+    let named = "CREATE TRIGGER TR BEFORE INSERT ON T REFERENCING NEW AS N FOR EACH ROW SELECT A INTO N.B[N.K] FROM U";
+    refused_by(named, "ISO/IEC 9075-2:2023 §6.4");
 }

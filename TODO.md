@@ -54,12 +54,6 @@ Nothing is open.
   local variables, cursors and handlers, and the control statements, IF,
   CASE, LOOP, WHILE, REPEAT, FOR, LEAVE and ITERATE, in a routine's body
   and a trigger's action, as Part 4 defines them on Part 2's routines.
-- Array element assignment (S097) [§6.4 SR7, SR8; §14.5 GR; §14.7 GR].
-  A FETCH INTO or SELECT INTO target `A[i]`, which writes one element of
-  an array. Its array is an SQL parameter or a new transition variable's
-  column, never a host parameter. Both are there now, a procedure's
-  parameter and a BEFORE row trigger's new transition variable, so
-  `P[i]` and `NEW.A[i]` can be taken together.
 - Enhanced derived column names (T285) [§7.16 SR17c, CR6]. A select list
   item that is a single SQL parameter reference names its column for the
   parameter. Any other item without an `<as clause>` that is not a column

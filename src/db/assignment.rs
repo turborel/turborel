@@ -4,6 +4,8 @@
 //! §8.12], and assignment to FETCH and SELECT targets [X3.135-1986 §8.6,
 //! §8.10].
 
+mod element;
+
 use super::write::Written;
 use super::{Completion, api, rule};
 use crate::ast::{ParameterSpecification, TargetKind};
@@ -161,9 +163,11 @@ pub(super) fn check_targets(
     Ok(())
 }
 
-/// Whether column `c` can be assigned to target `t`, as `type_rule` says.
+/// Whether column `c` can be assigned to target `t`, as `type_rule` says:
+/// of an element of an array, to the element type [ISO/IEC 9075-2:2023
+/// §6.4 SR8b].
 fn check_target(c: &OutColumn, t: &ParameterSpecification, params: &Params, type_rule: &str) -> Result<()> {
-    let target = declared_type(params, &t.name)?;
+    let target = element::target_type(params, t, declared_type(params, &t.name)?)?;
     // [ISO/IEC 9075-2:2023 §9.2 SR2] a new transition variable column, or
     // an SQL parameter, is a site of store assignment.
     let site = match t.kind {
@@ -178,7 +182,8 @@ fn check_target(c: &OutColumn, t: &ParameterSpecification, params: &Params, type
         if crate::binder::assignable(&target, &c.data_type) {
             return Ok(());
         }
-        let msg = format!("[ISO/IEC 9075-2:2023 §9.2 SR2] a {} column cannot be stored in {site} {} ({target})", c.data_type, t.name);
+        let of = if t.element.is_some() { "an element of " } else { "" };
+        let msg = format!("[ISO/IEC 9075-2:2023 §9.2 SR2] a {} column cannot be stored in {of}{site} {} ({target})", c.data_type, t.name);
         return Err(rule(msg));
     }
     // [ISO/IEC 9075:1992 §9.1 SR2] a character string to a character
@@ -228,16 +233,19 @@ fn assign_target(
 ) -> Result<Option<SqlState>> {
     let int = |n: i64| Value::Exact(Decimal::new(i128::from(n), 0));
     // [ISO/IEC 9075-2:2023 §6.4 SR7, §9.2] a new transition variable
-    // column takes the value by store assignment, null too.
+    // column takes the value by store assignment, null too; of an element,
+    // the array with that element the value [§14.5 GR5b i 1].
     match spec.kind {
         TargetKind::Parameter => {}
         TargetKind::Transition => {
-            params.assign_transition(&spec.name, fetched.clone(), "ISO/IEC 9075-2:2023 §9.2")?;
+            let value = element::assigned(params, spec, fetched.clone())?;
+            params.assign_transition(&spec.name, value, "ISO/IEC 9075-2:2023 §9.2")?;
             return Ok(None);
         }
         // [ISO/IEC 9075-2:2023 §9.2] an SQL parameter, null too.
         TargetKind::Routine => {
-            params.assign_routine(&spec.name, fetched.clone(), "ISO/IEC 9075-2:2023 §9.2")?;
+            let value = element::assigned(params, spec, fetched.clone())?;
+            params.assign_routine(&spec.name, value, "ISO/IEC 9075-2:2023 §9.2")?;
             return Ok(None);
         }
     }

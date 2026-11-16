@@ -1404,6 +1404,7 @@ of a name and a type [§4.10].
 | Ordering and grouping | §9.12 SR3, §9.14 SR3 | An array in ORDER BY, GROUP BY, DISTINCT, UNION but UNION ALL, EXCEPT, INTERSECT, MAX, MIN, a key, an index or `<`, `<=`, `>`, `>=`, BETWEEN, GREATEST or LEAST is SQLCODE -103. A named columns join (NATURAL or USING) of array columns is valid, its columns compared for equality (F402). Rows are ordered and grouped field by field. |
 | Assignment and CAST | §9.2, §6.13 | Element by element and field by field, an array of more non-null elements than its target's maximum SQLSTATE 2202F. Nothing else is assigned or cast to or from an array or a row. |
 | `SET A[i] = v` | §14.15 GR10b | Past the cardinality the array is extended with nulls; index 0 or past the maximum is SQLSTATE 2202E, a null array SQLSTATE 2200E. |
+| Target `A[i]` | §6.4 SR7, SR8, §14.7 GR4b ii 1, §10.4 GR10b ii 1 | A SELECT INTO target or a CALL output argument in a procedure's body, of an SQL parameter's array, or in a BEFORE row trigger's action, of a new row column's. The array is of an array type or a distinct type whose source is one, and the position a literal or, in a body, an SQL parameter, exact numeric of scale 0 (SQLCODE -103). The element is assigned as `SET A[i] = v` assigns it, with the same SQLSTATEs. FETCH reads its targets alike, but neither a body nor an action may hold a FETCH. |
 | UNNEST | §7.6 SR8, §7.10 | `UNNEST(a, ...) [WITH ORDINALITY] AS t [(names)]` of the rows of its arrays' elements, padded with nulls to the longest, each array of rows spread into its fields. The ordinality column is INTEGER (IV158). It reads the FROM items before it, after a comma or as the second operand of CROSS, INNER and LEFT joins; as that of a RIGHT or FULL join it may read none of the first (SQLCODE -103). |
 | Dynamic SQL | §20.1, §20.9 to §20.12 | An item of a composite type is followed by items of its parts, of LEVEL one greater, with DEGREE, CARDINALITY and RETURNED_CARDINALITY, and KEY_MEMBER 0. TOP_LEVEL_COUNT counts the items of LEVEL 0. DESCRIBE takes WITH NESTING and WITHOUT NESTING. DATA of an item of a row or of an array's element is SQLSTATE 0700C to get and 0700D to set; a LEVEL set out of order SQLSTATE 0700E. |
 | Its description | ISO/IEC 9075-11 | COLUMNS and DOMAINS give MAXIMUM_CARDINALITY and DTD_IDENTIFIER, and ELEMENT_TYPES and FIELDS describe the parts. A column's DTD_IDENTIFIER is its ordinal position, a domain's 1, and a part's its parent's, a point, and its field's place, or 1 for an element. |
@@ -1415,12 +1416,9 @@ table reference outside the join, or nested in a LEFT join's second
 operand and reading its first, is valid SQL not supported (SQLCODE -900).
 S091 (Basic array support) is claimed with S093 (Arrays of distinct
 types), which it implies, and with it S095 (Array constructors by query),
-S096 (Optional array bounds) and S098 (ARRAY_AGG), each processed as the
-table says. S097 (Array element assignment) is not claimed. Its target's
-array is an SQL parameter or a new transition variable's column [§6.4
-SR7], and neither a procedure's target `P[i]` nor a BEFORE row trigger's
-`NEW.A[i]` is taken yet. ARRAY, ROW, UNNEST and the functions are key
-words only where they are read (Appendix B).
+S096 (Optional array bounds), S097 (Array element assignment) and S098
+(ARRAY_AGG), each processed as the table says. ARRAY, ROW, UNNEST and
+the functions are key words only where they are read (Appendix B).
 
 ### Distinct types
 

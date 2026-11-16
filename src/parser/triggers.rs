@@ -546,7 +546,7 @@ impl Parser {
             self.advance();
             self.advance();
             let name = self.identifier()?;
-            return Ok(ParameterSpecification { name, indicator: None, at, kind: TargetKind::Transition });
+            return Ok(ParameterSpecification::of(name, TargetKind::Transition, at));
         }
         let identifier = matches!(self.peek(), Tok::Identifier(_));
         if identifier && *self.peek_at(1) == Tok::Delimiter(delim::PERIOD) {

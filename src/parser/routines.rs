@@ -477,7 +477,7 @@ impl Parser {
                 self.advance();
                 self.advance();
             }
-            return Ok(ParameterSpecification { name, indicator: None, at, kind: TargetKind::Routine });
+            return Ok(ParameterSpecification::of(name, TargetKind::Routine, at));
         }
         if let Tok::Identifier(name) = self.peek() {
             let msg = format!(
@@ -492,7 +492,7 @@ impl Parser {
     /// The `<SQL parameter reference>` next, `P` or `R`.`P` of a parameter
     /// P of the routine R whose body is read, and whether it is the
     /// latter; none if none is next.
-    fn parameter_reference(&self) -> Option<(String, bool)> {
+    pub(super) fn parameter_reference(&self) -> Option<(String, bool)> {
         let scope = self.routine.as_ref()?;
         let Tok::Identifier(first) = self.peek() else { return None };
         let period = *self.peek_at(1) == Tok::Delimiter(delim::PERIOD);

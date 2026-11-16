@@ -66,7 +66,7 @@ impl Parser {
         if !self.params.contains(&name) {
             return Err(Self::rule_at(at, format!("[X3.135-1986 §7.3 SR3] parameter {name} is not declared")));
         }
-        Ok(ParameterSpecification { name, indicator: None, at, kind: TargetKind::Parameter })
+        Ok(ParameterSpecification::of(name, TargetKind::Parameter, at))
     }
 
     /// [§6.2] `<simple value specification>` ::= `<parameter name>` |
@@ -315,7 +315,7 @@ impl Parser {
         } else {
             let name = self.dynamic_name()?;
             let (result, parameters) = self.execute_clauses()?;
-            ExecuteStatement::Prepared { name, result, parameters }
+            ExecuteStatement::Prepared { name, result: result.map(Box::new), parameters: parameters.map(Box::new) }
         };
         Ok(SqlStatement::Execute(Box::new(execute)))
     }

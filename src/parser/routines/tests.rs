@@ -5,7 +5,9 @@
 //! as targets [§6.6 SR16], and each refusal with its code.
 
 use super::*;
-use crate::ast::{DataAccess, DropObject, GetDiagnostics, PrivilegeObject, ReturnStatement, SchemaStatement, SqlArgument};
+use crate::ast::{
+    DataAccess, DropObject, ElementPosition, GetDiagnostics, Literal, PrivilegeObject, ReturnStatement, SchemaStatement, SqlArgument,
+};
 
 /// `text`, parsed by `parser` as one statement: its routine definition and
 /// the statement's text, if it is one.
@@ -313,6 +315,33 @@ fn body_holds_no_schema_or_cursor_11_60() {
     refused_by(&procedure("CLOSE C"), "ISO/IEC 9075-2:2023 §14.6 SR1");
     refused_by(&procedure("DELETE FROM T WHERE CURRENT OF C"), "ISO/IEC 9075-2:2023 §14.8 SR1");
     refused_by(&procedure("UPDATE T SET A = 1 WHERE CURRENT OF C"), "ISO/IEC 9075-2:2023 §14.13 SR1");
+}
+
+/// The position of the element target `t` assigns, as written: a literal
+/// integer's digits, or an SQL parameter's name; empty if none.
+fn element_of(t: &ParameterSpecification) -> String {
+    match t.element.as_deref() {
+        Some(ElementPosition::Literal(Literal::Exact(d))) => d.units.to_string(),
+        Some(ElementPosition::Parameter(p)) => p.clone(),
+        Some(ElementPosition::Literal(_)) | None => String::new(),
+    }
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.4, §5.1] a SELECT INTO
+/// target in a body may be a <target array element specification>, its
+/// position a literal or an SQL parameter reference, `P` or `R`.`P`,
+/// within brackets or their trigraphs; a position that is a name of no
+/// parameter is refused, and a dynamic parameter, as anywhere in a body
+/// [§11.60 SR19].
+#[test]
+fn an_element_is_a_target_6_4() {
+    let text = "CREATE PROCEDURE P (OUT A INT ARRAY[3], IN I INT) READS SQL DATA SELECT X, Y, Z INTO A[-2], A??(I??), P.A[P.I] FROM T";
+    let SqlStatement::Select { targets, .. } = body(text) else { panic!("no SELECT") };
+    let read: Vec<_> = targets.iter().map(|t| (t.name.as_str(), t.kind, element_of(t))).collect();
+    let routine = TargetKind::Routine;
+    assert_eq!(read, vec![("A", routine, "-2".to_owned()), ("A", routine, "I".to_owned()), ("A", routine, "I".to_owned())]);
+    refused_by("CREATE PROCEDURE P (OUT A INT ARRAY[3]) READS SQL DATA SELECT X INTO A[Q] FROM T", "ISO/IEC 9075-2:2023 §6.4");
+    refused_by("CREATE PROCEDURE P (OUT A INT ARRAY[3]) READS SQL DATA SELECT X INTO A[?] FROM T", "ISO/IEC 9075-2:2023 §11.60 SR19");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.6 SR9a ii 1 C, SR16] a target in a

@@ -79,6 +79,53 @@ pub(crate) fn truncated<T>(rule: &str, cardinality: usize, max: u32) -> Result<T
     )
 }
 
+/// [ISO/IEC 9075-2:2023 §15.5 GR3b i, §14.5 GR5b i 1, §14.7 GR4b ii 1,
+/// §10.4 GR10b ii 1] The array an assignment of `value` to element `i` of
+/// `array` leaves, at a site of maximum cardinality `max`: the element at
+/// the position replaced, if within the cardinality; else the array
+/// extended with nulls up to it, if within the maximum cardinality. The
+/// value is already assigned to the element type.
+///
+/// # Errors
+///
+/// SQLSTATE 2200E if the array is null, citing `rules.0`; 2202E if the
+/// position is null, below 1 or past the maximum cardinality, citing
+/// `rules.1`.
+pub(crate) fn with_element(array: &Value, i: Option<i128>, (max, value): (u32, Value), rules: (&str, &str)) -> Result<Value> {
+    let given = match array {
+        Value::Array(e) => e,
+        Value::Null => {
+            let msg = format!("[ISO/IEC 9075-2:2023 {}] an element of a null array is assigned", rules.0);
+            return fail_with(Code::Data, SqlState::NULL_VALUE_IN_ARRAY_TARGET, msg);
+        }
+        other @ (Value::Char(_)
+        | Value::Exact(_)
+        | Value::Approx(_)
+        | Value::DecFloat(_)
+        | Value::Binary(_)
+        | Value::Bool(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Row(_)
+        | Value::Extension(_)) => {
+            return Err(SqlError::new(Code::Api, format!("[DESIGN] an element of {other}, not an array, is assigned")));
+        }
+    };
+    let Some(at) = i.and_then(|i| usize::try_from(i).ok()).and_then(|i| i.checked_sub(1)).filter(|&at| at < bound(max)) else {
+        let shown = i.map_or_else(|| "NULL".to_owned(), |i| i.to_string());
+        let msg = format!("[ISO/IEC 9075-2:2023 {}] element {shown} of an array of maximum cardinality {max} is assigned", rules.1);
+        return fail_with(Code::Data, SqlState::ARRAY_ELEMENT_ERROR, msg);
+    };
+    let mut assigned = given.to_vec();
+    if at >= assigned.len() {
+        assigned.resize(at.saturating_add(1), Value::Null);
+    }
+    if let Some(slot) = assigned.get_mut(at) {
+        *slot = value;
+    }
+    Ok(Value::Array(assigned.into()))
+}
+
 impl SqlType for ArrayKind {
     fn name(&self) -> &'static str {
         ARRAY_NAME

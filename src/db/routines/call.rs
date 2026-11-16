@@ -24,7 +24,9 @@ use std::sync::Arc;
 use super::super::assignment::{assign_targets, check_targets};
 use super::super::compiled::plan;
 use super::super::{Completion, Session, State, StatementContext, rule};
-use crate::ast::{CallStatement, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification};
+use crate::ast::{
+    CallStatement, Composite, ElementPosition, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification,
+};
 use crate::binder::{Context, OutColumn, assignable, bind_argument, qualify, resolve_procedure, routine_definition};
 use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of};
 use crate::error::{At, Code, Result, SqlError, Subject};
@@ -48,14 +50,21 @@ pub(in crate::db) struct BoundCall {
 
 /// [ISO/IEC 9075-2:2023 §9.18 SR9h iii] The `<target specification>` the
 /// argument `v` is, in `cx`: a host parameter, an SQL parameter of the
-/// procedure whose body it is in, or a column of a BEFORE trigger's new
-/// transition variable. None if it is none of them.
+/// procedure whose body it is in, a column of a BEFORE trigger's new
+/// transition variable, or an element of the array either of the last two
+/// holds [§6.4]. None if it is none of them.
 fn target_of(cx: Context<'_>, v: &ValueExpression) -> Option<ParameterSpecification> {
     if let ValueExpression::Value(ValueSpecification::Parameter(p)) = v {
         return Some(p.clone());
     }
     if let ValueExpression::Nested(inner) = v {
         return target_of(cx, inner);
+    }
+    if let ValueExpression::Composite(c, _) = v {
+        let Composite::Element(array, index) = &**c else { return None };
+        let mut spec = target_of(cx, array).filter(|s| s.kind != TargetKind::Parameter && s.element.is_none())?;
+        spec.element = Some(Box::new(position_of(cx, index)?));
+        return Some(spec);
     }
     let ValueExpression::Column(cs) = v else { return None };
     if cs.catalog.is_some() {
@@ -65,13 +74,29 @@ fn target_of(cx: Context<'_>, v: &ValueExpression) -> Option<ParameterSpecificat
     if cs.qualifier.as_ref().is_some_and(|q| q.auth.is_some()) {
         return None;
     }
-    let spec = |kind| Some(ParameterSpecification { name: cs.column.clone(), indicator: None, kind, at: cs.at });
+    let spec = |kind| Some(ParameterSpecification::of(cs.column.clone(), kind, cs.at));
     if cx.params.routine_scope().is_some_and(|s| s.parameter(qualifier, &cs.column).is_some()) {
         return spec(TargetKind::Routine);
     }
     // [SR9h iii 3] Not of an AFTER trigger, whose new row is not assigned.
     let transitions = cx.params.transitions().filter(|t| t.assigns)?;
     (qualifier.is_some() && transitions.new_row.as_deref() == qualifier).then(|| spec(TargetKind::Transition)).flatten()
+}
+
+/// [ISO/IEC 9075-2:2023 §6.4] The `<simple value specification>` `v`, the
+/// position of an element of a target array, in `cx`: a `<literal>`, its
+/// sign written against its digits, or an `<SQL parameter reference>` of
+/// the procedure whose body it is in. None if it is neither.
+fn position_of(cx: Context<'_>, v: &ValueExpression) -> Option<ElementPosition> {
+    if let ValueExpression::Value(ValueSpecification::Literal(l)) = v {
+        return Some(ElementPosition::Literal(l.clone()));
+    }
+    let ValueExpression::Column(cs) = v else { return None };
+    if cs.catalog.is_some() || cs.qualifier.as_ref().is_some_and(|q| q.auth.is_some()) {
+        return None;
+    }
+    let qualifier = cs.qualifier.as_ref().map(|q| q.ident.as_str());
+    cx.params.routine_scope()?.parameter(qualifier, &cs.column).map(|_| ElementPosition::Parameter(cs.column.clone()))
 }
 
 /// [ISO/IEC 9075-2:2023 §9.18 SR9h iii 1, 2] An argument of an output

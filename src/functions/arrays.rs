@@ -11,6 +11,7 @@ use super::{Accumulator, AggregateFunction, ScalarFunction};
 use crate::error::{Code, Result, SqlError, SqlState, fail, fail_with};
 use crate::value::collation::CollationRef;
 use crate::value::types::MAX_ARRAY_CARDINALITY;
+use crate::value::types::array::with_element;
 use crate::value::types::composite::array_ordered;
 use crate::value::{DataType, Decimal, SortOrder, Value};
 
@@ -172,27 +173,8 @@ impl ScalarFunction for AssignElement {
         Ok(self.0.clone())
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
-        let Some(array) = elements(args.first(), ASSIGN_ELEMENT)? else {
-            return fail_with(
-                Code::Data,
-                SqlState::NULL_VALUE_IN_ARRAY_TARGET,
-                "[ISO/IEC 9075-2:2023 §15.5 GR3b i 1] an element of a null array is assigned",
-            );
-        };
-        let max = usize::try_from(self.1).unwrap_or(usize::MAX);
-        let i = whole(args.get(1))?;
-        let Some(at) = i.and_then(|i| usize::try_from(i).ok()).and_then(|i| i.checked_sub(1)).filter(|&at| at < max) else {
-            let shown = i.map_or_else(|| "NULL".to_owned(), |i| i.to_string());
-            return element_error("§15.5 GR3b i 4", &format!("element {shown} of an array of maximum cardinality {max} is assigned"));
-        };
-        let mut assigned = array.to_vec();
-        if at >= assigned.len() {
-            assigned.resize(at.saturating_add(1), Value::Null);
-        }
-        if let Some(slot) = assigned.get_mut(at) {
-            *slot = args.get(2).cloned().unwrap_or(Value::Null);
-        }
-        Ok(Value::Array(assigned.into()))
+        let (array, value) = (args.first().unwrap_or(&Value::Null), args.get(2).cloned().unwrap_or(Value::Null));
+        with_element(array, whole(args.get(1))?, (self.1, value), ("§15.5 GR3b i 1", "§15.5 GR3b i 4"))
     }
 }
 

@@ -586,6 +586,11 @@ the catalog and from the protocol, so every walk is bounded (R-CF-6). An
 array's maximum cardinality is at most `MAX_ARRAY_CARDINALITY`, which is
 also the maximum of one written without it [IL008].
 
+One element is assigned the same way wherever it is written, by UPDATE's
+`SET A[i] = v` [§15.5 GR3b] or by a target `A[i]` of SELECT INTO, FETCH
+or CALL [§6.4]. Both build the array anew with `with_element`, so the
+extension with nulls and the SQLSTATEs 2200E and 2202E are written once.
+
 Arrays take part in equality alone [§9.11]. The binder refuses an array
 wherever values are ordered or grouped [§9.12 SR3, §9.14 SR3], keys and
 indexes among them, so no array is ever keyed and its kind gives no key

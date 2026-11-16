@@ -175,6 +175,13 @@ impl Params {
         self.assignable(name).map(|(_, t)| t)
     }
 
+    /// The value column `name` of the new row a target may assign holds,
+    /// if it has one.
+    pub(crate) fn transition_value(&self, name: &str) -> Option<Value> {
+        let (at, _) = self.assignable(name)?;
+        self.dynamic_values().get(at).cloned()
+    }
+
     /// [ISO/IEC 9075-2:2023 §11.49 SR14c] Checks that column `name` of the
     /// new row is one a target may assign.
     ///

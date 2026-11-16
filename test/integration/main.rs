@@ -47,6 +47,7 @@ mod ident;
 #[path = "../../support/src/logs.rs"]
 mod logs;
 
+mod array_targets;
 mod arrays;
 mod assertion_changes;
 mod assertion_forms;

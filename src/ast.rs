@@ -43,6 +43,7 @@ mod schema;
 mod search_cycle;
 mod sequences;
 mod set_functions;
+mod target;
 mod triggers;
 mod user_types;
 mod users;
@@ -89,6 +90,7 @@ pub use schema::{
 pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
 pub use set_functions::{Listagg, Overflow, SetArg, SetFunctionSpecification};
+pub use target::{ElementPosition, ParameterSpecification, TargetKind};
 pub use triggers::{ActionTime, Referencing, TriggerDefinition, TriggerEvent, TriggerLevel};
 pub use user_types::{TypeDefinition, TypeOption};
 pub use users::UserStatement;
@@ -175,38 +177,6 @@ pub enum UserFunction {
     Session,
     /// SYSTEM_USER: the operating system user's \[GR11\].
     System,
-}
-
-/// [X3.135-1986 §5.6] `<parameter specification>` ::= `<parameter name>` \[`<indicator parameter>`\]
-/// `<indicator parameter>` ::= \[INDICATOR\] `<parameter name>`
-///
-/// Also the only implemented form of `<target specification>`.
-#[derive(Debug, Clone)]
-pub struct ParameterSpecification {
-    /// The `<parameter name>`.
-    pub name: String,
-    /// The `<indicator parameter>`'s name, if written.
-    pub indicator: Option<String>,
-    /// What it names: a parameter, a column of a new transition variable,
-    /// or an SQL parameter.
-    pub kind: TargetKind,
-    /// Where it begins in the statement: a character offset, for the
-    /// positions of errors (`SqlError::or_at`).
-    pub at: usize,
-}
-
-/// [ISO/IEC 9075-2:2023 §6.4] What a `<target specification>` names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TargetKind {
-    /// A `<host parameter specification>`: `name` is a parameter of the
-    /// procedure the statement is of [X3.135-1986 §5.6].
-    Parameter,
-    /// [§6.4 SR7, §6.6 SR13] A new transition variable column reference of
-    /// a BEFORE trigger: `name` is the column of the new row it assigns.
-    Transition,
-    /// [§6.8 SR1, §6.6 SR8] An `<SQL parameter reference>` in the body of
-    /// an SQL-invoked procedure: `name` is the SQL parameter it assigns.
-    Routine,
 }
 
 /// [X3.135-1986 §5.2; ISO/IEC 9075:1992 §5.3; ISO/IEC 9075-2:2023 §5.3]
