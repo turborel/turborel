@@ -121,15 +121,24 @@ fn flag(r: &mut Reader<'_>) -> Result<bool> {
     }
 }
 
-fn put_horizon(out: &mut Vec<u8>, horizon: &Horizon) {
-    put_all(out, horizon.0.iter(), |out, (table, degree)| {
+/// A horizon: the columns seen of each table, then whether the subject
+/// routines are fixed, and if so their specific names.
+pub(super) fn put_horizon(out: &mut Vec<u8>, horizon: &Horizon) {
+    put_all(out, horizon.widths.iter(), |out, (table, degree)| {
         put_name(out, table);
         out.put_u32(count(*degree));
     });
+    put_flag(out, horizon.routines.is_some());
+    if let Some(routines) = &horizon.routines {
+        put_all(out, routines.iter(), put_name);
+    }
 }
 
-fn horizon(r: &mut Reader<'_>) -> Result<Horizon> {
-    Ok(Horizon(get_all(r, |r| Ok((qualified(r)?, position(r)?)))?))
+/// What `put_horizon` wrote.
+pub(super) fn horizon(r: &mut Reader<'_>) -> Result<Horizon> {
+    let widths = get_all(r, |r| Ok((qualified(r)?, position(r)?)))?;
+    let routines = if flag(r)? { Some(get_all(r, qualified)?) } else { None };
+    Ok(Horizon { widths, routines })
 }
 
 /// The tag of `action`, and the action of a tag.
@@ -508,7 +517,8 @@ mod tests {
             usage: Vec::new(),
         };
         let identity = Generated::Identity(Identity { always: true, sequence });
-        let expression = Generated::Expression(Generation { text: "K + 1".into(), names: "A".into() });
+        let horizon = Horizon::default().invoking(vec![QualifiedName { auth: "A".into(), ident: "F_1".into() }]);
+        let expression = Generated::Expression(Generation { text: "K + 1".into(), names: "A".into(), horizon });
         for generated in [None, Some(identity), Some(expression)] {
             let c = ColumnDesc {
                 name: "C".into(),

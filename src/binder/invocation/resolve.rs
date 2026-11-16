@@ -1,10 +1,12 @@
-//! [ISO/IEC 9075-2:2023 §9.18 SR5, SR6, SR9, SR10] The subject routine of
-//! a `<routine invocation>` of an SQL routine, by its name, its kind and
-//! the number of its arguments, with no overloading (Feature T341 not
-//! supported): CREATE makes at most one routine of a name in a schema.
+//! [ISO/IEC 9075-2:2023 §9.18 SR5a, SR6, SR9] The subject routine of a
+//! `<call statement>`'s `<routine invocation>`: the procedure of its name
+//! of as many parameters as it has arguments, of which a schema holds one
+//! at most [§11.60 SR20a] (Feature T341). Of a definition, a procedure
+//! body's or a triggered action's, the one it invoked as it was defined
+//! [§4.35.2] (RULES.md D73).
 //!
 //! A name not qualified is of the schema the statement's names are of,
-//! the SQL-path [SR9c, SR10b] (ID047).
+//! the SQL-path [SR9c] (ID047).
 
 use super::super::{Context, Invoked, qualify, rule};
 use crate::ast::TableName;
@@ -26,10 +28,11 @@ pub(super) fn holds_execute(db: &State, auth: &str, r: &SqlRoutineDesc) -> bool 
     auth == owner_of(&*db.catalog, &r.name.auth) || r.execute.iter().any(|u| u.grantee.as_deref().is_none_or(|g| g == auth))
 }
 
-/// Notes the specific name of `r` in `invoked`, if anywhere [§11.60 GR1].
-pub(super) fn note(invoked: Option<&Invoked>, r: &SqlRoutineDesc) {
+/// Notes the specific name `specific` of a routine invoked in `invoked`,
+/// if anywhere [§11.60 GR1, §4.35.2].
+pub(in crate::binder) fn note(invoked: Option<&Invoked>, specific: &QualifiedName) {
     if let Some(i) = invoked {
-        i.borrow_mut().push(r.specific.clone());
+        i.borrow_mut().push(specific.clone());
     }
 }
 
@@ -84,7 +87,11 @@ pub(super) fn subject<'a>(
 /// authorization identifier holds no EXECUTE on it \[SR6\].
 pub fn resolve_routine(cx: Context<'_>, name: &TableName, kind: RoutineKind, arity: usize) -> Result<SqlRoutineDesc> {
     let qn = qualify(name, cx.schema);
-    let named = possibly_candidates(cx.db, &qn, kind);
+    let mut named = possibly_candidates(cx.db, &qn, kind);
+    let horizon = if cx.params.horizoned() { cx.params.horizon() } else { cx.horizon };
+    if let Some(fixed) = horizon.subjects() {
+        named.retain(|r| fixed.contains(&r.specific));
+    }
     if named.is_empty() {
         let rule_of = match kind {
             RoutineKind::Function => "§9.18 SR10h iv",
@@ -93,6 +100,6 @@ pub fn resolve_routine(cx: Context<'_>, name: &TableName, kind: RoutineKind, ari
         return Err(rule(format!("[ISO/IEC 9075-2:2023 {rule_of}] there is no {} {qn}", word(kind))));
     }
     let r = subject((cx.db, cx.auth), &named, (&qn, kind), arity)?;
-    note(cx.invoked, r);
+    note(cx.invoked, &r.specific);
     Ok(r.clone())
 }

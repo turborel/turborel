@@ -10,6 +10,8 @@
 //! (`ConstraintDesc::domain`); ALTER DOMAIN adds or drops the copies, and
 //! DROP DOMAIN leaves them as the table's own constraints [§11.27 GR1c].
 
+mod value;
+
 use std::sync::Arc;
 
 use super::collations::is_made;
@@ -24,8 +26,6 @@ use crate::binder::qualify;
 use crate::catalog::{ColumnDesc, ColumnDomain, ConstraintDesc, ConstraintKind, DomainDesc, Horizon, QualifiedName, TableDesc, owner_of};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, delim, kw, lex};
-use crate::logical::Cond;
-use crate::parser::VALUE_COLUMN;
 use crate::txn::LockMode;
 use crate::value::DataType;
 
@@ -52,8 +52,11 @@ fn on_column(text: &str, column: &str) -> String {
 fn copy_of(dc: &ConstraintDesc, table: &QualifiedName, column: &str) -> ConstraintDesc {
     let name = QualifiedName { auth: table.auth.clone(), ident: format!("{} ON {}.{column}", dc.name.ident, table.ident) };
     let kind = match &dc.kind {
-        ConstraintKind::Check { text, names, .. } => {
-            ConstraintKind::Check { text: on_column(text, column), names: names.clone(), reads: Vec::new(), horizon: Horizon::default() }
+        // [ISO/IEC 9075-2:2023 §4.35.2] of the domain constraint's subject
+        // routines.
+        ConstraintKind::Check { text, names, horizon, .. } => {
+            let horizon = Horizon { widths: Vec::new(), routines: horizon.routines.clone() };
+            ConstraintKind::Check { text: on_column(text, column), names: names.clone(), reads: Vec::new(), horizon }
         }
         other @ (ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_)) => other.clone(),
     };
@@ -249,93 +252,18 @@ impl State {
                 rule(format!("[ISO/IEC 9075:1992 §10.6 SR2] constraint {name} is not a new one of schema {}", name.auth)).or_at(c.at)
             );
         }
-        let reads = if bound { self.bound_on_value(domain, data_type, (&check.text, names)).or_at(c.at)? } else { Vec::new() };
+        let (reads, horizon) = if bound {
+            let (reads, invoked) = self.bound_on_value(domain, data_type, (&check.text, names, &Horizon::default())).or_at(c.at)?;
+            (reads, Horizon::default().invoking(invoked))
+        } else {
+            (Vec::new(), Horizon::default())
+        };
         Ok(ConstraintDesc {
             name,
-            kind: ConstraintKind::Check { text: check.text.clone(), names: names.to_owned(), reads, horizon: Horizon::default() },
+            kind: ConstraintKind::Check { text: check.text.clone(), names: names.to_owned(), reads, horizon },
             attributes: c.attributes,
             domain: None,
         })
-    }
-
-    /// The tables a domain constraint's condition `text`, its names of
-    /// schema `names`, reads, bound over a column VALUE of `data_type` of a
-    /// table of the domain's schema, that is no other: as each copy of it
-    /// will be bound.
-    pub(super) fn bound_on_value(
-        &self,
-        domain: &QualifiedName,
-        data_type: DataType,
-        (text, names): (&str, &str),
-    ) -> Result<Vec<QualifiedName>> {
-        let (cond, probe) = self.on_value(domain, data_type, (text, names))?;
-        Ok(cond.tables().into_iter().filter(|t| *t != probe).collect())
-    }
-
-    /// [ISO/IEC 9075:1992 §6.10 GR13] The constraints of `domain`, each
-    /// bound over a row of a value alone, VALUE its one column: what a CAST
-    /// to it checks [§4.10.3].
-    ///
-    /// # Errors
-    ///
-    /// A condition no longer binds.
-    pub(crate) fn cast_checks(&self, domain: &DomainDesc) -> Result<Vec<(QualifiedName, Cond)>> {
-        let mut out = Vec::new();
-        for c in &domain.constraints {
-            let ConstraintKind::Check { text, names, .. } = &c.kind else { continue };
-            out.push((c.name.clone(), self.on_value(&domain.name, domain.data_type.clone(), (text, names))?.0));
-        }
-        Ok(out)
-    }
-
-    /// The domain constraint `text` of `domain`, its names of schema
-    /// `names`, bound over the one column VALUE, of `data_type`, of a table
-    /// of the domain's schema made for it, and that table's name.
-    fn on_value(&self, domain: &QualifiedName, data_type: DataType, (text, names): (&str, &str)) -> Result<(Cond, QualifiedName)> {
-        let (staged, probe) = self.with_value(domain, data_type);
-        let cond = staged.value_condition(&probe, (&on_column(text, VALUE_COLUMN), names, &Horizon(vec![(probe.clone(), 1)])))?;
-        Ok((cond, probe))
-    }
-
-    /// [ISO/IEC 9075:1992 §11.21 GR4] The columns the domain constraint
-    /// `text` of `domain`, its names of schema `names`, references, bound
-    /// as `on_value` binds it.
-    ///
-    /// # Errors
-    ///
-    /// The condition no longer binds.
-    pub(super) fn domain_constraint_uses(&self, domain: &DomainDesc, (text, names): (&str, &str)) -> Result<Vec<(QualifiedName, String)>> {
-        let (staged, probe) = self.with_value(&domain.name, domain.data_type.clone());
-        staged.value_uses(&probe, (&on_column(text, VALUE_COLUMN), names, &Horizon(vec![(probe.clone(), 1)])))
-    }
-
-    /// This state with a table of `domain`'s schema made for its constraints:
-    /// of one column VALUE, of `data_type`; and that table's name.
-    fn with_value(&self, domain: &QualifiedName, data_type: DataType) -> (State, QualifiedName) {
-        let column = ColumnDesc {
-            name: VALUE_COLUMN.to_owned(),
-            data_type,
-            not_null: false,
-            default: None,
-            domain: None,
-            collation: None,
-            generated: None,
-        };
-        let probe = QualifiedName { auth: domain.auth.clone(), ident: format!("{} VALUE", domain.ident) };
-        let desc = TableDesc {
-            name: probe.clone(),
-            columns: vec![column],
-            constraints: Vec::new(),
-            engine: String::new(),
-            options: Vec::new(),
-            generation: 0,
-            temporary: None,
-        };
-        let mut staged = State::clone(self);
-        let mut catalog = staged.catalog.duplicate();
-        catalog.add_table(desc);
-        staged.catalog = Arc::from(catalog);
-        (staged, probe)
     }
 
     /// [ISO/IEC 9075:1992 §11.1 GR3] The constraints of the domains of
@@ -349,8 +277,12 @@ impl State {
         let mut domains: Vec<DomainDesc> = self.catalog.domains().into_iter().filter(|d| d.name.auth == schema).cloned().collect();
         for d in &mut domains {
             for c in &mut d.constraints {
-                let ConstraintKind::Check { text, names, reads, .. } = &mut c.kind else { continue };
-                *reads = self.bound_on_value(&d.name, d.data_type.clone(), (text, names))?;
+                let ConstraintKind::Check { text, names, reads, horizon } = &mut c.kind else { continue };
+                let (read, invoked) = self.bound_on_value(&d.name, d.data_type.clone(), (text, names, horizon))?;
+                *reads = read;
+                if horizon.routines.is_none() {
+                    *horizon = std::mem::take(horizon).invoking(invoked);
+                }
             }
         }
         let mut catalog = self.catalog.duplicate();

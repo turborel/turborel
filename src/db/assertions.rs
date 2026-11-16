@@ -30,7 +30,7 @@ use super::ddl::Dropped;
 use super::definitions::Defined;
 use super::{State, plan, rule};
 use crate::ast::{AssertionDefinition, Schema};
-use crate::binder::{self, Context, Purpose, Referencing, Uses, bind_cursor, qualify};
+use crate::binder::{self, Context, Invoked, Purpose, Referencing, Uses, bind_cursor, qualify};
 use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, TableDesc, owner_of};
 use crate::error::{At, Code, Result, SqlError, SqlState, Subject};
 use crate::exec::execute;
@@ -72,10 +72,12 @@ impl State {
         let kind =
             ConstraintKind::Check { text: a.check.text.clone(), names: schema.to_owned(), reads: Vec::new(), horizon: Horizon::default() };
         let mut desc = ConstraintDesc { name: name.clone(), kind, attributes: a.attributes, domain: None };
-        let plan = self.assertion_plan(&desc).or_at(a.name.at)?;
+        let invoked = Invoked::default();
+        let plan = self.bind_assertion(&desc, (None, Some(&invoked))).or_at(a.name.at)?;
         let reads = plan.tables();
-        // The columns it sees of each: those of now, as a CHECK's.
-        let seen = Horizon::of(&*self.catalog, &reads);
+        // The columns it sees of each: those of now, as a CHECK's; and
+        // [ISO/IEC 9075-2:2023 §4.35.2] its subject routines from now on.
+        let seen = Horizon::of(&*self.catalog, &reads).invoking(invoked.take());
         // [SR5] no temporary table.
         if let Some(t) = reads.iter().find(|t| self.catalog.table(t).is_some_and(|d| d.temporary.is_some())) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.34 SR5] assertion {name} reads {t}, a temporary table")));
@@ -124,7 +126,7 @@ impl State {
     ///
     /// Its condition does not parse, or breaks a rule of a CHECK's.
     pub(super) fn assertion_plan(&self, a: &ConstraintDesc) -> Result<LogicalPlan> {
-        self.bind_assertion(a, None)
+        self.bind_assertion(a, (None, None))
     }
 
     /// [ISO/IEC 9075:1992 §21.3.18] The columns assertion `a` references,
@@ -135,13 +137,13 @@ impl State {
     /// It does not bind, as `assertion_plan`.
     pub(crate) fn assertion_uses(&self, a: &ConstraintDesc) -> Result<Vec<(QualifiedName, String)>> {
         let uses = Uses::default();
-        self.bind_assertion(a, Some(&uses))?;
+        self.bind_assertion(a, (Some(&uses), None))?;
         Ok(binder::once_each(uses.into_inner()))
     }
 
     /// Assertion `a`, bound as `assertion_plan` says, its column references
-    /// noted in `uses`, if given.
-    fn bind_assertion(&self, a: &ConstraintDesc, uses: Option<&Uses>) -> Result<LogicalPlan> {
+    /// noted in `uses`, if given, and the routines it invokes in `invoked`.
+    fn bind_assertion(&self, a: &ConstraintDesc, (uses, invoked): (Option<&Uses>, Option<&Invoked>)) -> Result<LogicalPlan> {
         let ConstraintKind::Check { text, names, horizon, .. } = &a.kind else {
             return Err(rule(format!("[DESIGN] assertion {} is no CHECK", a.name)));
         };
@@ -156,6 +158,7 @@ impl State {
             uses,
             schema: names,
             referencing: Some(&referencing),
+            invoked,
             ..Context::new(self, owner, &params)
         };
         // A position in the query made of its text is none of a statement's.

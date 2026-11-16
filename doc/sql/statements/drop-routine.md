@@ -30,7 +30,9 @@ is named by its name, with its parameters' types or without, or by its
 specific name. ROUTINE names either kind. FUNCTION and PROCEDURE name
 only their own.
 
-With RESTRICT, a routine anything invokes is not dropped. With CASCADE,
+With RESTRICT, a routine anything invokes is not dropped. What invokes
+a routine is what invoked it when it was made, so a view that invokes
+one overload of a name does not hold back the drop of another. With CASCADE,
 what invokes it is dropped too: views, constraints, assertions,
 generated columns, triggers and other routines, and what invokes those,
 at any remove.
@@ -45,7 +47,8 @@ DROP ROUTINE runs within the session's transaction: ROLLBACK undoes it.
 ## RULES
 
 1. The routine exists and is of the routine type named, and its user
-   owns its schema.
+   owns its schema. A name alone of overloads designates none, so one
+   is named by its parameters' types or its specific name.
 2. With RESTRICT, no view, constraint, assertion, generated column,
    trigger or routine invokes it.
 3. The transaction is not READ ONLY.

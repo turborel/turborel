@@ -22,8 +22,8 @@ pub(super) use rows::{Generating, Inserted, check_override};
 use super::State;
 use super::sequences::{Epochs, generator};
 use crate::ast::{ColumnDefinition, ColumnGeneration, References, ReferentialAction};
-use crate::binder::{assignable, bind_generation};
-use crate::catalog::{ColumnDesc, Generated, Generation, Identity, QualifiedName, TableDesc};
+use crate::binder::{Invoked, assignable, bind_generation, noting_generation};
+use crate::catalog::{ColumnDesc, Generated, Generation, Horizon, Identity, QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlError};
 use crate::logical::expr_columns;
 use crate::value::DataType;
@@ -91,8 +91,15 @@ impl State {
         let names = desc.columns.iter().map(|c| c.generation().map(|g| g.names.clone())).collect::<Vec<_>>();
         for (at, def) in defs {
             let Some(Some(schema)) = names.get(at) else { continue };
-            let (_, t) = generation_type(self, desc, at).or_at(def.at)?;
+            let invoked = Invoked::default();
+            let (_, t) = generation_type(self, desc, (at, &invoked)).or_at(def.at)?;
             let Some(column) = desc.columns.get_mut(at) else { continue };
+            // [ISO/IEC 9075-2:2023 §4.35.2] its subject routines from now on.
+            if let Some(Generated::Expression(g)) = &mut column.generated
+                && g.horizon.routines.is_none()
+            {
+                g.horizon = Horizon::default().invoking(invoked.take());
+            }
             if def.data_type.is_none() {
                 column.data_type = t.clone();
                 column.collation = self.declared_collation(schema, (t, None), def.collate.as_ref()).or_at(def.at)?;
@@ -217,20 +224,22 @@ fn generated_of(table: &QualifiedName, (names, t): (&str, DataType), g: &ColumnG
             }
             Ok(Generated::Identity(Identity { always: *always, sequence: generator(table.clone(), t, options, *at)? }))
         }
-        ColumnGeneration::Expression { text, .. } => Ok(Generated::Expression(Generation { text: text.clone(), names: names.to_owned() })),
+        ColumnGeneration::Expression { text, .. } => {
+            Ok(Generated::Expression(Generation { text: text.clone(), names: names.to_owned(), horizon: Horizon::default() }))
+        }
     }
 }
 
 /// The generation expression of the column at `at` of `desc`, bound, and
-/// its type.
+/// its type, the routines it invokes noted in `invoked`.
 ///
 /// # Errors
 ///
 /// As `bind_generation`; SQLCODE -910 if the column is no generated column.
-fn generation_type(st: &State, desc: &TableDesc, at: usize) -> Result<(crate::logical::Expr, DataType)> {
+fn generation_type(st: &State, desc: &TableDesc, (at, invoked): (usize, &Invoked)) -> Result<(crate::logical::Expr, DataType)> {
     let g = desc.columns.get(at).and_then(ColumnDesc::generation).cloned();
     let g = g.ok_or_else(|| super::api(format!("[DESIGN] column {at} of {} is no generated column", desc.name)))?;
-    bind_generation(st, desc, (at, &g))
+    noting_generation(st, desc, (at, &g), Some(invoked))
 }
 
 /// [ISO/IEC 9075-2:2023 §11.8 SR14] That the referential actions of the

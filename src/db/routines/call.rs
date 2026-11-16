@@ -101,11 +101,10 @@ fn defaulted<T>(feature: &str, rule_of: u8, at: usize) -> Result<T> {
 }
 
 /// [ISO/IEC 9075-2:2023 §9.18 SR9h iv, v, §9.2 SR2] The value expression
-/// `v` of an input parameter `k` of `desc`, bound in `cx`: its type one
-/// the parameter's may take by store assignment.
-fn input(cx: Context<'_>, desc: &SqlRoutineDesc, k: usize, v: &ValueExpression) -> Result<Expr> {
-    let (bound, t) = bind_argument(cx, v)?;
-    let Some(p) = desc.parameters.get(k) else { return Ok(bound) };
+/// `v` of the input parameter `p`, bound in `cx`: its type one the
+/// parameter's may take by store assignment, a `?` of the parameter's.
+fn input(cx: Context<'_>, p: &SqlParameter, v: &ValueExpression) -> Result<Expr> {
+    let (bound, t) = bind_argument(cx, v, &p.data_type)?;
     if assignable(&p.data_type, &t) {
         return Ok(bound);
     }
@@ -132,7 +131,7 @@ impl State {
                 SqlArgument::Default(_) | SqlArgument::Null(_) => None,
             };
             let value = match (p.mode, a, target) {
-                (ParameterMode::In, SqlArgument::Value(v), _) => input(cx, &desc, k, v)?,
+                (ParameterMode::In, SqlArgument::Value(v), _) => input(cx, p, v)?,
                 (ParameterMode::In, SqlArgument::Default(at) | SqlArgument::Null(at), _) => return defaulted("T522", 6, *at),
                 (ParameterMode::InOut, SqlArgument::Default(at), _) => return defaulted("T523", 7, *at),
                 (ParameterMode::Out, _, Some(t)) => {
@@ -141,7 +140,7 @@ impl State {
                 }
                 (ParameterMode::InOut, SqlArgument::Value(v), Some(t)) => {
                     targets.push((k, t));
-                    input(cx, &desc, k, v)?
+                    input(cx, p, v)?
                 }
                 (ParameterMode::Out, _, None)
                 | (ParameterMode::InOut, SqlArgument::Value(_), None)
@@ -159,10 +158,12 @@ impl State {
     }
 
     /// Whether `call`, its names in schema `schema`, invokes a procedure
-    /// that possibly modifies SQL-data: one of the name that does.
+    /// that possibly modifies SQL-data: the one of the name of as many
+    /// parameters as it has arguments [§9.18 SR9, §11.60 SR20a].
     pub(in crate::db) fn call_modifies(&self, call: &CallStatement, schema: &str) -> bool {
         let name = qualify(&call.name, schema);
-        self.catalog.routines_named(&name).iter().any(|r| r.kind == RoutineKind::Procedure && r.access == DataAccess::Modifies)
+        let invoked = |r: &&SqlRoutineDesc| r.kind == RoutineKind::Procedure && r.parameters.len() == call.arguments.len();
+        self.catalog.routines_named(&name).into_iter().filter(invoked).any(|r| r.access == DataAccess::Modifies)
     }
 }
 

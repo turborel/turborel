@@ -9,7 +9,7 @@ use super::body::{bind_body, chain_of};
 use super::*;
 use crate::ast::{CallStatement, ReturnStatement, RoutineDefinition, SqlStatement, TableName, TypeName};
 use crate::binder::{Context, Invoked};
-use crate::catalog::{Catalog, ColumnDesc, Horizon, MemoryCatalog, SqlParameter, TableDesc, UsageDesc};
+use crate::catalog::{Catalog, ColumnDesc, Horizon, MemoryCatalog, RoutineKind, SqlParameter, TableDesc, UsageDesc};
 use crate::catalog::{ParameterMode, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, SqlError};
@@ -61,8 +61,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
         body: format!("RETURN {value}"),
         schema: "S".into(),
         reads: Vec::new(),
-        horizon: Horizon(Vec::new()),
-        invokes: Vec::new(),
+        horizon: Horizon::default(),
         execute: Vec::new(),
         created: 1,
     }
@@ -120,6 +119,14 @@ fn body_of(st: &State, desc: &SqlRoutineDesc, definition: &RoutineDefinition) ->
     bind_function_body(Context::new(st, "S", &params), desc, definition)
 }
 
+/// The function an invocation invokes, bound, if one of its schema.
+fn done(called: Called) -> Option<(Expr, DataType)> {
+    match called {
+        Called::Done(invoked) => Some(invoked),
+        Called::Pass(_) => None,
+    }
+}
+
 /// The invocation `sql`, a `<routine invocation>`, bound in `st` under
 /// `auth`, for `purpose`.
 fn invoked(st: &State, (auth, purpose): (&str, Purpose), sql: &str) -> Result<Option<(Expr, DataType)>> {
@@ -127,7 +134,15 @@ fn invoked(st: &State, (auth, purpose): (&str, Purpose), sql: &str) -> Result<Op
     let cx = Context { purpose, schema: "S", ..Context::new(st, auth, &params) };
     let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
     let (schema, name, args) = call(sql);
-    binder.invocation((schema.as_deref(), &name), &args, Scope::Rows("no set function"))
+    binder.invocation((schema.as_deref(), &name), &args, Scope::Rows("no set function")).and_then(passed_on)
+}
+
+/// `done`, a refusal an invocation passes on as its error.
+fn passed_on(called: Called) -> Result<Option<(Expr, DataType)>> {
+    match called {
+        Called::Pass(Passed { refusal: Some(e), .. }) => Err(e),
+        other @ (Called::Done(_) | Called::Pass(_)) => Ok(done(other)),
+    }
 }
 
 /// The `<routine invocation>` `sql`: its schema, name and arguments.
@@ -385,7 +400,7 @@ fn invocation_is_bound() {
     let cx = Context { schema: "S", invoked: Some(&noted), ..Context::new(&st, "S", &params) };
     let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
     let (schema, name, args) = call("F(2)");
-    let (e, t) = binder.invocation((schema.as_deref(), &name), &args, Scope::Rows("no set function")).unwrap().unwrap();
+    let (e, t) = done(binder.invocation((schema.as_deref(), &name), &args, Scope::Rows("no set function")).unwrap()).unwrap();
     assert_eq!(t, integer());
     let Expr::Invoked(i) = e else { panic!("an invocation") };
     assert_eq!((i.args.len(), i.params.clone(), i.result.clone()), (1, vec![("P".to_owned(), integer())], integer()));

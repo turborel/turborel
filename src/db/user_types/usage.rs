@@ -13,7 +13,7 @@ use super::super::definitions::Defined;
 use super::super::generated::Column;
 use super::super::revoke::Abandoned;
 use super::super::{Completion, State, rule};
-use crate::ast::{Action, DropBehavior, PrivilegeObject, RevokeStatement, RoutineType, TableName, TypeName};
+use crate::ast::{Action, DropBehavior, PrivilegeObject, RevokeStatement, TableName, TypeName};
 use crate::binder::qualify;
 use crate::catalog::{QualifiedName, Routine, UsageDesc, UserTypeDesc, based_on, owner_of};
 use crate::error::{At, Code, Result, SqlError, SqlState};
@@ -290,7 +290,6 @@ impl State {
         (object, parameters): (PrivilegeObject, Option<&[TypeName]>),
         auth: &str,
     ) -> Result<(UserTypeDesc, Routine)> {
-        let mut found = Vec::new();
         let (specific, routine_type) = match object {
             PrivilegeObject::SpecificRoutine(t) => (true, Some(t)),
             PrivilegeObject::Routine(t) => (false, Some(t)),
@@ -300,23 +299,11 @@ impl State {
             | PrivilegeObject::Sequence
             | PrivilegeObject::Type => (false, None),
         };
-        // [SR4] A distinct type's functions are no procedures.
-        let functions = routine_type.is_some_and(|t| t != RoutineType::Procedure);
-        for t in self.catalog.user_types().into_iter().filter(|t| functions && t.name.auth == qn.auth) {
-            for which in [Routine::ToDistinct, Routine::ToSource] {
-                let routine = t.routine(which);
-                let named = if specific { routine.specific == qn.ident } else { routine.name == qn.ident };
-                if named {
-                    found.push((t.clone(), which));
-                }
-            }
-        }
-        if let Some(list) = parameters {
-            let types = list.iter().map(|t| self.data_type_of(t, (&qn.auth, auth))).collect::<Result<Vec<_>>>()?;
-            let parameter =
-                |(t, which): &(UserTypeDesc, Routine)| if *which == Routine::ToDistinct { t.source.clone() } else { t.data_type() };
-            found.retain(|f| types.len() == 1 && types.first() == Some(&parameter(f)));
-        }
+        let types = match parameters {
+            Some(list) => Some(list.iter().map(|t| self.data_type_of(t, (&qn.auth, auth))).collect::<Result<Vec<_>>>()?),
+            None => None,
+        };
+        let found = self.type_functions(qn, (specific, routine_type), types.as_deref());
         match found.as_slice() {
             [one] => Ok(one.clone()),
             [] if specific => Err(rule(format!("[ISO/IEC 9075-2:2023 §10.6 SR1] there is no routine of specific name {qn}"))),

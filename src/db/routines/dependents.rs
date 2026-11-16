@@ -4,15 +4,15 @@
 //! parameters or result are of [ISO/IEC 9075-2:2023 §11.2, §11.23,
 //! §11.26, §11.31, §11.33, §11.59]. Each is dropped with it, as DROP
 //! ROUTINE ... CASCADE drops it, or refuses it under RESTRICT. And what
-//! invokes a routine dropped [§11.62 SR4c, GR1], found by binding again
-//! without it, as revoking EXECUTE on it abandons it [§12.7 GR12o].
+//! invokes a routine dropped [§11.62 SR4c, GR1], read from the subject
+//! routines each definition fixed as it was defined [§4.35.2].
 
 use std::sync::Arc;
 
 use super::super::ddl::Dropped;
 use super::super::revoke::Abandoned;
 use super::super::{State, rule};
-use crate::catalog::{QualifiedName, SqlRoutineDesc, TableDesc, based_on};
+use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, SqlRoutineDesc, TableDesc, based_on};
 use crate::error::Result;
 
 #[cfg(test)]
@@ -124,24 +124,34 @@ impl State {
 
     /// [ISO/IEC 9075-2:2023 §11.62 SR4c, GR1, §12.7 GR12o] What invokes
     /// one of the routines of specific names `gone`, of what is not among
-    /// them: the views, CHECKs, domain constraints, assertions and
-    /// generated columns that bind no more without them, the triggers
-    /// whose actions bind no more, and the routines whose bodies invoke
-    /// one. A routine's subject routines were fixed as it was defined
-    /// [§4.35.2], so they are read from its descriptor, never found
-    /// again among those left.
+    /// them: the views, CHECKs, domain constraints, assertions, generated
+    /// columns, triggers and routines whose subject routines include one.
+    /// Each definition's were fixed as it was defined [§4.35.2] (RULES.md
+    /// D73), so they are read from its descriptor, never found again among
+    /// those left.
     pub(in crate::db) fn invoking(&self, gone: &[QualifiedName]) -> Abandoned {
-        let after = self.without_routines(gone);
-        let mut abandoned = self.unbound_in(&after, &|_| true, &|_| true);
-        abandoned.triggers =
-            self.catalog.triggers().into_iter().filter(|t| after.trigger_binds(t).is_err()).map(|t| t.name.clone()).collect();
-        let invoker = |r: &&SqlRoutineDesc| !gone.contains(&r.specific) && r.invokes.iter().any(|s| gone.contains(s));
+        let on = |h: &Horizon| h.subjects().is_some_and(|s| s.iter().any(|r| gone.contains(r)));
+        let checks = |c: &ConstraintDesc| matches!(&c.kind, ConstraintKind::Check { horizon, .. } if on(horizon));
+        let mut abandoned = Abandoned::default();
+        abandoned.views = self.catalog.views().into_iter().filter(|v| on(&v.horizon)).map(|v| v.name.clone()).collect();
+        for t in self.catalog.tables() {
+            let constraints = t.constraints.iter().filter(|c| c.domain.is_none() && checks(c));
+            abandoned.constraints.extend(constraints.map(|c| (t.name.clone(), c.clone())));
+            let generated = t.columns.iter().filter(|c| c.generation().is_some_and(|g| on(&g.horizon)));
+            abandoned.columns.extend(generated.map(|c| (t.name.clone(), c.name.clone())));
+        }
+        for d in self.catalog.domains() {
+            abandoned.domain_constraints.extend(d.constraints.iter().filter(|c| checks(c)).map(|c| (d.name.clone(), c.name.clone())));
+        }
+        abandoned.assertions = self.catalog.assertions().into_iter().filter(|a| checks(a)).map(|a| a.name.clone()).collect();
+        abandoned.triggers = self.catalog.triggers().into_iter().filter(|t| on(&t.horizon)).map(|t| t.name.clone()).collect();
+        let invoker = |r: &&SqlRoutineDesc| !gone.contains(&r.specific) && on(&r.horizon);
         abandoned.routines = self.catalog.routines().into_iter().filter(invoker).map(|r| r.specific.clone()).collect();
         abandoned
     }
 
-    /// The definitions without the routines of specific names `gone`: what
-    /// `invoking` binds again in, and the catalog `destroy` is given.
+    /// The definitions without the routines of specific names `gone`: the
+    /// catalog `destroy` is given.
     pub(in crate::db) fn without_routines(&self, gone: &[QualifiedName]) -> State {
         let mut after = self.clone();
         let mut catalog = self.catalog.duplicate();

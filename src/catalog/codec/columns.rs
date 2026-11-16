@@ -3,7 +3,7 @@
 //! collation, and how its values are generated.
 
 use super::super::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, Identity, QualifiedName};
-use super::{data_type, flag, put_flag, put_name, put_sequence, put_type, qualified, sequence};
+use super::{data_type, flag, horizon, put_flag, put_horizon, put_name, put_sequence, put_type, qualified, sequence};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::codec::{put_value, value};
@@ -40,10 +40,11 @@ fn put_generated(out: &mut Vec<u8>, generated: Option<&Generated>) {
             put_flag(out, *always);
             put_sequence(out, sequence);
         }
-        Some(Generated::Expression(Generation { text, names })) => {
+        Some(Generated::Expression(Generation { text, names, horizon })) => {
             out.put_u8(2);
             out.put_str(text);
             out.put_str(names);
+            put_horizon(out, horizon);
         }
     }
 }
@@ -53,7 +54,7 @@ fn generated(r: &mut Reader<'_>) -> Result<Option<Generated>> {
     Ok(match r.u8()? {
         0 => None,
         1 => Some(Generated::Identity(Identity { always: flag(r)?, sequence: sequence(r)? })),
-        2 => Some(Generated::Expression(Generation { text: r.str()?, names: r.str()? })),
+        2 => Some(Generated::Expression(Generation { text: r.str()?, names: r.str()?, horizon: horizon(r)? })),
         _ => return Err(r.corrupt("not how a column's values are generated")),
     })
 }

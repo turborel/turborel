@@ -299,10 +299,19 @@ A program may add scalar functions, and set functions, of its own:
 `register_scalar_function` takes an implementation of the trait
 `ScalarFunction`, of a name, the type of its result for the types of
 its arguments, and the value of a call; `register_aggregate_function` a
-set function's, and replaces a standard one of its name. A scalar
-function is one for each name, whatever its arguments' types: a second
-of a name already registered, a standard one's such as UPPER too, is
-refused (SQLCODE -910), and the first stays. A call,
+set function's, and replaces a standard one of its name. Several
+scalar functions may share a name as overloads, if each declares the
+types of its parameters (`ScalarFunction::parameter_types`) and no call
+could invoke two of them alike. A call then invokes the one its
+arguments' types choose, as an SQL-invoked function's does, and each
+argument is stored in its parameter's type first. Any other second
+function of a name already registered, a standard one's such as UPPER
+too, is refused (SQLCODE -910), and the first stays. Overloads share
+the settings under their name, each as the first to declare it
+declared it. A function of the session's default schema that takes a
+call's arguments is invoked before a registered one of its name. An
+index method that knows a predicate's function by its name should look
+at its parameter types too. A call,
 `NAME(arguments)`, is syntax the standards do not have *(extension)*:
 a session takes it only once its setting SQL.FUNCTION_CALLS is ON, and
 refuses it until then, as SQL does (SQLCODE -102).

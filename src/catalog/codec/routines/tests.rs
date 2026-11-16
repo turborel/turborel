@@ -32,8 +32,7 @@ fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> Sql
         body: "RETURN (SELECT K FROM T)".into(),
         schema: "A".into(),
         reads: vec![name("T"), name("V")],
-        horizon: Horizon(vec![(name("T"), 2)]),
-        invokes: vec![name("G_1")],
+        horizon: Horizon { widths: vec![(name("T"), 2)], routines: Some(vec![name("G_1")]) },
         execute: vec![
             UsageDesc { grantor: "A".into(), grantee: None, grantable: false },
             UsageDesc { grantor: "A".into(), grantee: Some("B".into()), grantable: true },
@@ -88,7 +87,6 @@ fn an_empty_routine_reads_back_as_written() {
     original.parameters.clear();
     original.reads.clear();
     original.horizon = Horizon::default();
-    original.invokes.clear();
     original.execute.clear();
     (original.deterministic, original.null_call) = (false, false);
     assert_eq!(format!("{:?}", again(&original)), format!("{original:?}"));

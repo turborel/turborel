@@ -111,6 +111,7 @@ verification approach DO-178C expects (§8).
 | D71 | Triggered actions run inside their statement, nested to a bound |
 | D72 | Spatial pages use R-link split stamps and R* partitioning |
 | D73 | SQL-invoked routines are bound as their owner, a function's body a subquery of its parameters |
+| D74 | Overloads are chosen by one place per kind of number |
 
 ### The project
 
@@ -725,10 +726,21 @@ trigger does, and is bound again from it as it is invoked, under the
 owner of its schema, of that schema [ISO/IEC 9075-2:2023 §4.35, §11.60
 SR23b]. Its body is bound once more as it is defined, which checks its
 rules, its privileges and its SQL-data access then, and records the
-tables it reads and the routines it invokes (`db/routines/body.rs`). So
-the drops and revokes that abandon a routine find it by those lists, or
-by binding its body again without what they take away, as views and
-constraints are found.
+tables it reads (`db/routines/body.rs`). So the drops and revokes that
+abandon a routine find it by that list, or by binding its body again
+without what they take away, as views and constraints are found.
+
+Each definition that invokes a routine, a view, a CHECK, a domain
+constraint, an assertion, a trigger, a generated column or a routine
+body, records the specific names of those it invoked as it was defined
+in its horizon (`catalog::Horizon`), and bound again it chooses among
+those alone [§4.35.2]. A function created later, or EXECUTE granted
+later, never changes what it invokes, and as each choice was the first
+of a set that still holds it, the choice is the same. A routine it
+recorded that is gone makes it bind no more, never invoke another of
+the name. DROP ROUTINE finds what invokes a routine from those lists
+[§11.62 GR1]. EXECUTE does not narrow the choice there, so a revoke of
+EXECUTE on a routine a definition invokes abandons it [§12.7 GR12o].
 
 A function's body is a RETURN, bound as `(VALUES (v))`, a subquery whose
 outer references are the parameters, a row named for the function
@@ -746,9 +758,40 @@ the dynamic values of a routine scope (`params/routine.rs`). SELECT
 INTO, GET DIAGNOSTICS and a nested CALL assign an OUT or INOUT one, and
 CALL then assigns each to its target. A routine runs with its owner's
 privileges, SQL SECURITY DEFINER the only behaviour, since T324 is not
-claimed. A schema holds one routine of a name: overloading (T341, D53)
-is refused with SQLCODE -900, so resolution finds one candidate by name
-and arity.
+claimed. A schema holds procedures of a name each of another number of
+parameters, and functions of a name each told apart by the types of its
+parameters [§11.60 SR20] (Feature T341, D74).
+
+#### D74. Overloads are chosen by one place per kind of number
+
+Of the functions of a name, an invocation invokes the one its
+arguments' types choose [ISO/IEC 9075-2:2023 §9.18 SR10, §9.6]. The
+candidates are the schema's SQL-invoked functions and its distinct
+types' functions together, each taking as many arguments as it has
+parameters, and each typed argument's precedence list holding its
+parameter's designator [§9.7]. Left to right, those whose parameter's
+designator comes first in the argument's list are kept, and one must be
+left. A `?` decides nothing and takes its parameter's type once one is
+chosen [§20.7] (Feature B033). Two functions that differ only where a
+call has `?` are refused as alike.
+
+Each exact numeric type is of the place NUMERIC and each approximate one
+of FLOAT (`value/precedence.rs`). Every exact type is one type of a
+precision and a scale here, whatever its name, so SMALLINT, INTEGER,
+BIGINT, NUMERIC and DECIMAL could not choose among themselves without
+their spellings deciding a call. So F(INTEGER) beside F(BIGINT) is
+refused as not told apart [§11.60 SR20b], while F(INTEGER) beside
+F(DOUBLE PRECISION) is taken, an exact argument invoking the first. A
+literal keeps its own type. SR20b's values "arbitrarily
+selected" of each parameter's type are taken to be of that type itself,
+as of another type a function might not take its own arguments.
+
+A registered scalar function overloads too, if it declares the types of
+its parameters (`ScalarFunction::parameter_types`), chosen the same way.
+The functions of the schema are searched first, and the registered ones
+only if none of the schema the caller holds EXECUTE on takes the
+arguments [§9.18 SR10h iv 1], so a function of the schema of another
+type never hides a registered one.
 
 #### D33. Schema changes are transactional
 
@@ -866,9 +909,10 @@ client without the plug-in holds a value as `Unregistered` and returns it
 unchanged. No privilege is needed to use a plug-in type, because it has no
 schema or owner [§4.26, §11.36 SR1].
 
-There is one scalar function per name, never chosen by argument types.
-Registering a name again is refused (SQLCODE -910), so no session's calls
-change under it. The five set functions alone can be replaced by an
+A scalar function of a name is registered again only as an overload,
+each of its name declaring the types of its parameters and none alike
+(D74). Any other is refused (SQLCODE -910), and none is replaced, so no
+session's calls change under it. The five set functions alone can be replaced by an
 aggregate of their name. Set functions may write and merge their state
 (`Accumulator::write_state`, `merge`), and a grouping uses that only if
 all of its functions can (D31, D38).

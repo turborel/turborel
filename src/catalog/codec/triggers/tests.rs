@@ -22,7 +22,7 @@ fn desc(time: ActionTime, level: TriggerLevel, event: TriggerEvent, names: Trans
         text: "CREATE TRIGGER TR AFTER INSERT ON T FOR EACH ROW DELETE FROM U".into(),
         schema: "A".into(),
         reads: vec![name("T"), name("U")],
-        horizon: Horizon(vec![(name("T"), 2), (name("U"), 3)]),
+        horizon: Horizon { widths: vec![(name("T"), 2), (name("U"), 3)], routines: Some(vec![name("F_1")]) },
         columns: vec![(name("T"), "K".into()), (name("U"), "V".into())],
         created: 7,
     }

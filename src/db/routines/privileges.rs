@@ -14,9 +14,10 @@ use super::super::revoke::Abandoned;
 use super::super::{Completion, State, rule};
 use crate::ast::{Action, DropBehavior, PrivilegeDefinition, PrivilegeObject, RevokeStatement, RoutineType, TableName, TypeName};
 use crate::binder::qualify;
-use crate::catalog::{RoutineKind, SqlRoutineDesc, UsageDesc};
+use crate::catalog::{QualifiedName, Routine, RoutineKind, SqlRoutineDesc, UsageDesc, UserTypeDesc};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::system::SYSTEM_GRANTOR;
+use crate::value::DataType;
 
 /// What a GRANT or REVOKE names: its object, its kind, its routine's
 /// `<data type list>` if written, and its actions, or ALL PRIVILEGES.
@@ -52,12 +53,14 @@ impl State {
     /// `schema`, if it names a routine and one has the name: by its
     /// specific name \[SR1\], else of its name, the one of it of its
     /// `<routine type>` [SR3c ii, SR4], or the one whose parameters' types
-    /// are those of its `<data type list>` [SR3c i, §9.30].
+    /// are those of its `<data type list>` [SR3c i, §9.30]. None if what it
+    /// designates is a distinct type's function (`type_functions`).
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if not exactly one of its type is designated [SR3c,
-    /// SR4], or it grants or revokes another privilege [§12.3 SR4d].
+    /// SQLCODE -103 if not exactly one of its type is designated, of the
+    /// SQL-invoked routines and the distinct types' functions together
+    /// [SR3c, SR4], or it grants or revokes another privilege [§12.3 SR4d].
     pub(in crate::db) fn sql_routine_named(&self, (auth, schema): (&str, &str), named: Named<'_>) -> Result<Option<SqlRoutineDesc>> {
         let (name, object, parameters, actions) = named;
         let (specific, wanted) = match object {
@@ -80,20 +83,51 @@ impl State {
                 rule("[ISO/IEC 9075-2:2023 §12.3 SR4d] of a routine, EXECUTE alone is granted or revoked".to_owned()).or_at(name.at)
             );
         }
+        let types = match parameters {
+            Some(list) => Some(list.iter().map(|t| self.data_type_of(t, (&qn.auth, auth))).collect::<Result<Vec<_>>>().or_at(name.at)?),
+            None => None,
+        };
+        let casts = self.type_functions(&qn, (specific, Some(wanted)), types.as_deref());
         found.retain(|r| of_type(wanted, r.kind));
-        if found.is_empty() {
+        if found.is_empty() && casts.is_empty() {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §10.6 SR4] routine {qn} is not of the <routine type> named")).or_at(name.at));
         }
-        if let Some(list) = parameters {
-            let types = list.iter().map(|t| self.data_type_of(t, (&qn.auth, auth))).collect::<Result<Vec<_>>>().or_at(name.at)?;
-            found.retain(|r| r.parameter_types() == types);
+        if let Some(types) = &types {
+            found.retain(|r| r.parameter_types() == *types);
         }
-        match found.as_slice() {
-            [one] => Ok(Some((*one).clone())),
-            [] | [_, _, ..] => {
+        match (found.as_slice(), casts.len()) {
+            ([one], 0) => Ok(Some((*one).clone())),
+            ([], 1) => Ok(None),
+            ([] | [_, ..], _) => {
                 Err(rule(format!("[ISO/IEC 9075-2:2023 §10.6 SR3c] {qn} designates not exactly one routine")).or_at(name.at))
             }
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §10.6 SR1, SR3c, SR4] The functions of
+    /// distinct types `qn` designates: by their specific names, if
+    /// `specific`, else by their names; none if `routine_type` is
+    /// PROCEDURE, as none is a procedure, or there is none; of those, if
+    /// `types` is given, the ones of one parameter of its one type [§9.30].
+    pub(in crate::db) fn type_functions(
+        &self,
+        qn: &QualifiedName,
+        (specific, routine_type): (bool, Option<RoutineType>),
+        types: Option<&[DataType]>,
+    ) -> Vec<(UserTypeDesc, Routine)> {
+        let functions = routine_type.is_some_and(|t| t != RoutineType::Procedure);
+        let mut found = Vec::new();
+        for t in self.catalog.user_types().into_iter().filter(|t| functions && t.name.auth == qn.auth) {
+            for which in [Routine::ToDistinct, Routine::ToSource] {
+                let routine = t.routine(which);
+                let named = if specific { routine.specific == qn.ident } else { routine.name == qn.ident };
+                let parameter = if which == Routine::ToDistinct { t.source.clone() } else { t.data_type() };
+                if named && types.is_none_or(|list| list == std::slice::from_ref(&parameter)) {
+                    found.push((t.clone(), which));
+                }
+            }
+        }
+        found
     }
 
     /// [ISO/IEC 9075-2:2023 §12.2] GRANT EXECUTE `p` on the routine `desc`

@@ -38,8 +38,7 @@ fn routine(
         body: "RETURN X".into(),
         schema: specific.auth.clone(),
         reads: reads.to_vec(),
-        horizon: Horizon::default(),
-        invokes: invokes.to_vec(),
+        horizon: Horizon::default().invoking(invokes.to_vec()),
         execute: Vec::new(),
         created: 1,
     }

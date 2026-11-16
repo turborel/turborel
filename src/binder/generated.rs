@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 
 use super::views::Source;
-use super::{Binder, Context, FromItem, Purpose, Scope};
+use super::{Binder, Context, FromItem, Invoked, Purpose, Scope};
 use crate::catalog::{Generation, TableDesc, owner_of};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
@@ -26,14 +26,30 @@ use crate::value::DataType;
 /// \[SR10f\] or a potential source of non-determinism \[SR10d\], or
 /// references a column other than a base column of the table \[SR10c\].
 pub fn bind_generation(db: &State, desc: &TableDesc, (at, g): (usize, &Generation)) -> Result<(Expr, DataType)> {
+    noting_generation(db, desc, (at, g), None)
+}
+
+/// `bind_generation`, the specific names of the routines it invokes noted
+/// in `invoked`, if given: as its column is defined, its subject routines
+/// from then on [ISO/IEC 9075-2:2023 §4.35.2].
+///
+/// # Errors
+///
+/// As `bind_generation`.
+pub fn noting_generation(
+    db: &State,
+    desc: &TableDesc,
+    (at, g): (usize, &Generation),
+    invoked: Option<&Invoked>,
+) -> Result<(Expr, DataType)> {
     let column = desc.columns.get(at).map_or("?", |c| c.name.as_str());
     let about =
         |e: SqlError| SqlError { msg: format!("the generation expression of column {column} of {}: {}", desc.name, e.msg), pos: None, ..e };
-    bound(db, desc, g).map_err(about)
+    bound(db, desc, g, invoked).map_err(about)
 }
 
-/// `bind_generation`, its errors not yet said to be of the column.
-fn bound(db: &State, desc: &TableDesc, g: &Generation) -> Result<(Expr, DataType)> {
+/// `noting_generation`, its errors not yet said to be of the column.
+fn bound(db: &State, desc: &TableDesc, g: &Generation, invoked: Option<&Invoked>) -> Result<(Expr, DataType)> {
     let value = Parser::new(&g.text)?.of_definition().generation_expression()?;
     let mut queried = false;
     value.for_each_subquery(&mut |_| queried = true);
@@ -42,7 +58,7 @@ fn bound(db: &State, desc: &TableDesc, g: &Generation) -> Result<(Expr, DataType
     }
     let params = Params::new();
     let owner = owner_of(&*db.catalog, &desc.name.auth);
-    let cx = Context { purpose: Purpose::Generation, schema: &g.names, ..Context::new(db, owner, &params) };
+    let cx = Context { purpose: Purpose::Generation, schema: &g.names, horizon: &g.horizon, invoked, ..Context::new(db, owner, &params) };
     let item = FromItem::alone(desc.name.clone(), 0, (desc.clone(), Source::Table));
     let visible = (0..desc.columns.len()).map(|k| (0, k)).collect();
     let names = item.row_names();

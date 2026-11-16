@@ -24,6 +24,7 @@ mod near;
 mod null_ordering;
 mod nulls;
 mod order_by;
+mod overloading;
 mod partitioned_joins;
 mod patterns;
 mod predicates;
@@ -71,7 +72,7 @@ pub use zones::ZONES;
 pub fn all() -> Vec<Mutation> {
     let core: [&[Mutation]; 10] =
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    let areas: [&[Mutation]; 34] = [
+    let areas: [&[Mutation]; 35] = [
         &predicates::PREDICATES,
         &sequences::SEQUENCES,
         &generated::GENERATED,
@@ -105,6 +106,7 @@ pub fn all() -> Vec<Mutation> {
         &diagnostics::DIAGNOSTICS,
         &triggers::TRIGGERS,
         &routines::ROUTINES,
+        &overloading::OVERLOADING,
         &view_defaults::VIEW_DEFAULTS,
     ];
     core.into_iter()
@@ -314,7 +316,7 @@ pub const MUTATIONS: [Mutation; 43] = [
         name: "assertion-count-replaced",
         package: Package::Core,
         breaks: "assertions checked from changes: a COUNT a plug-in replaced held as the standard one",
-        file: "src/functions.rs",
+        file: "src/functions/registry.rs",
         original: "is_some_and(|s| std::ptr::addr_eq(Arc::as_ptr(&f.0), Arc::as_ptr(&s.0)));",
         replacement: "is_some_and(|s| s.0.name() == f.0.name());",
         integration: &["assertion_changes::a_count_replaced_is_checked_whole_11_34"],

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::{State, rule};
 use crate::ast::ViewDefinition;
-use crate::binder::{BoundView, Context, bind_view, underlying};
+use crate::binder::{BoundView, Context, Invoked, bind_view, underlying};
 use crate::catalog::{ColumnDesc, Horizon, QualifiedName, TemporaryKind, ViewDesc, owner_of};
 use crate::error::{At, Result};
 use crate::params::Params;
@@ -40,8 +40,10 @@ impl State {
         }
         // [X3.135-1986 §6.6 SR3a i] its tables are read with the privileges
         // of the schema's owner.
-        let params = Params::new();
-        let cx = Context { schema: names, ..Context::new(self, owner_of(&*self.catalog, auth), &params) };
+        // [ISO/IEC 9075-2:2023 §4.35.2] the routines it invokes, its
+        // subject routines from now on.
+        let (params, invoked) = (Params::new(), Invoked::default());
+        let cx = Context { schema: names, invoked: Some(&invoked), ..Context::new(self, owner_of(&*self.catalog, auth), &params) };
         let BoundView { bound, grouped, updates, reads } = bind_view(cx, &v.query)?;
         let titles = view_column_names(&name, v.columns.as_deref(), bound.columns.iter().map(|c| c.name.clone()).collect())?;
         // [SR7] its columns are those of the query, as named.
@@ -71,9 +73,9 @@ impl State {
         if let Some(t) = reads.iter().find(|t| declared(t)) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.19 SR5] view {name} names {t}, a declared local temporary table")));
         }
-        let horizon = Horizon::of(&*self.catalog, &reads);
         // [ISO/IEC 9075:1992 §11.19 GR6] what its owner's REFERENCES on it are found from.
         let underlying = Some(underlying(cx, &v.query)?);
+        let horizon = Horizon::of(&*self.catalog, &reads).invoking(invoked.take());
         let (query, names) = (v.text.clone(), names.to_owned());
         Ok(ViewDesc { name, columns, query, names, check_option: v.check_option, grouped, updates, reads, horizon, underlying })
     }

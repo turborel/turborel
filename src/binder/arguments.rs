@@ -7,12 +7,14 @@
 use std::sync::Arc;
 
 use super::expression::dynamic_of;
+use super::invocation::Prebound;
 use super::statements::assignable;
 use super::{Binder, Scope, datetime, rule};
 use crate::ast::ValueExpression;
 use crate::error::Result;
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::logical::Expr;
+use crate::value::precedence::{subject_routines, takes};
 use crate::value::{DataType, Value, assign};
 
 /// The rule an argument's assignment cites: store assignment's, a
@@ -60,7 +62,7 @@ impl Binder<'_> {
 
     /// `args` bound, each but a `<dynamic parameter specification>`, which
     /// takes its type from the others.
-    pub(super) fn prebound(&self, args: &[ValueExpression], scope: Scope<'_>) -> Result<Vec<Option<(Expr, DataType)>>> {
+    pub(super) fn prebound(&self, args: &[ValueExpression], scope: Scope<'_>) -> Result<Prebound> {
         args.iter().map(|a| if dynamic_of(a).is_some() { Ok(None) } else { self.value_expression(a, scope).map(Some) }).collect()
     }
 
@@ -69,7 +71,7 @@ impl Binder<'_> {
         &self,
         f: &dyn ScalarFunction,
         args: &[ValueExpression],
-        bound: Vec<Option<(Expr, DataType)>>,
+        bound: Prebound,
         scope: Scope<'_>,
     ) -> Result<(Vec<Expr>, Vec<DataType>)> {
         let known: Vec<Option<DataType>> = bound.iter().map(|b| b.as_ref().map(|(_, t)| t.clone())).collect();
@@ -111,5 +113,35 @@ impl Binder<'_> {
         }
         let stored = datetime::stored(e, t, &to.clone(), self.now);
         Ok((Expr::Call(ScalarRef(Arc::new(Assigned { to: to.clone() })), vec![stored]), to))
+    }
+}
+
+/// \[EXTENSION\] [ISO/IEC 9075-2:2023 §9.18 SR10, §9.6] Of `registered`,
+/// the scalar functions registered of `name`, the one a call with
+/// arguments `bound`, each but a `?` bound, invokes: one that declares
+/// no parameter types, alone of its name; else of those whose
+/// parameters take the arguments, the one subject routine (RULES.md
+/// D74). None if none takes them.
+///
+/// # Errors
+///
+/// SQLCODE -103 if more than one is alike.
+pub(super) fn registered_subject(name: &str, registered: Vec<ScalarRef>, bound: &Prebound) -> Result<Option<ScalarRef>> {
+    if let [only] = registered.as_slice()
+        && only.0.parameter_types().is_none()
+    {
+        return Ok(Some(only.clone()));
+    }
+    let types: Vec<Option<DataType>> = bound.iter().map(|b| b.as_ref().map(|(_, t)| t.clone())).collect();
+    let declared: Vec<(ScalarRef, Vec<DataType>)> =
+        registered.into_iter().filter_map(|f| f.0.parameter_types().map(|p| (f, p))).filter(|(_, p)| takes(p, &types)).collect();
+    let lists: Vec<&[DataType]> = declared.iter().map(|(_, p)| p.as_slice()).collect();
+    match subject_routines(&lists, &types).as_slice() {
+        [one] => Ok(declared.get(*one).map(|(f, _)| f.clone())),
+        [] => Ok(None),
+        [_, _, ..] => Err(rule(format!(
+            "[EXTENSION] [ISO/IEC 9075-2:2023 §9.6] more than one function {name} registered takes arguments of ({}) alike",
+            super::invocation::shown_types(&types)
+        ))),
     }
 }

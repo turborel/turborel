@@ -86,8 +86,8 @@ impl State {
         let mut found = Vec::new();
         for d in self.catalog.domains() {
             for c in &d.constraints {
-                let ConstraintKind::Check { text, names, reads, .. } = &c.kind else { continue };
-                let binds = |st: &State| st.bound_on_value(&d.name, d.data_type.clone(), (text, names)).is_ok();
+                let ConstraintKind::Check { text, names, reads, horizon } = &c.kind else { continue };
+                let binds = |st: &State| st.bound_on_value(&d.name, d.data_type.clone(), (text, names, horizon)).is_ok();
                 if reads.contains(qn) && binds(before) && !binds(self) {
                     found.push((d.name.clone(), c.name.clone()));
                 }

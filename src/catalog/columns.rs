@@ -2,7 +2,7 @@
 //! domain and collation; and of an identity column [ISO/IEC 9075-2:2023
 //! §4.17.12] or a generated column [§4.17.13], how its values are given.
 
-use super::{QualifiedName, SequenceDesc};
+use super::{Horizon, QualifiedName, SequenceDesc};
 use crate::value::DataType;
 use crate::value::Value;
 use crate::value::datetime::{Clocked, Moment};
@@ -69,6 +69,10 @@ pub struct Generation {
     /// its table's, in a `<schema definition>`; else the session's default
     /// schema as it was defined.
     pub names: String,
+    /// [ISO/IEC 9075-2:2023 §4.35.2] The subject routines of its
+    /// invocations, fixed as its column was defined (RULES.md D73); of no
+    /// table's columns, as it sees its own row alone.
+    pub horizon: Horizon,
 }
 
 /// [ISO/IEC 9075:1992 §11.4 GR5] The domain a column is of.

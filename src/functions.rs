@@ -15,7 +15,6 @@
 //! The engine, not the plugin, applies [X3.135-1986 §5.8 GR1, GR2]: nulls are removed from
 //! the argument, and duplicates too for DISTINCT, before `update` is called.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -50,6 +49,7 @@ mod ints;
 mod listagg;
 pub use listagg::{LISTAGG, Listagg, ListaggSpec, MAX_LISTAGG_LENGTH, Truncation};
 mod regex;
+mod registry;
 mod rows;
 pub use rows::{FieldOf, RowOf};
 mod strings;
@@ -63,6 +63,8 @@ pub use regex::{
     AFTER, CHARACTERS, FLAG, LIKE_REGEX, LikeRegex, OCCURRENCE, OCCURRENCES_REGEX, OCTETS, POSITION_REGEX, REGEX_FUNCTIONS, START,
     SUBSTRING_REGEX, TRANSLATE_REGEX, regex_function, subject_of,
 };
+pub use registry::Registry;
+pub(crate) use registry::Standard;
 pub use strings::{CONCATENATION, using};
 pub use trim::{BTRIM, LPAD, LTRIM, RPAD, RTRIM, TRIMS_AND_PADS, Trim, source_of, trim_named};
 pub use truths::EVERY;
@@ -82,6 +84,9 @@ pub use width_bucket::{WIDTH_BUCKET, width_bucket};
 ///   CHARACTER no longer than its length, a number within its precision and
 ///   scale. A longer string is a data exception when stored.
 /// * `deterministic` is true only if equal arguments always give equal results.
+/// * Of a name, several functions are registered only if each declares the
+///   types of its parameters (`parameter_types`) and no call could have
+///   two of them as its subject (RULES.md D74).
 /// * Methods may be called from several threads at once (`Send + Sync`): an
 ///   implementation guards its own state.
 /// * No method may call back into the `Database` or its sessions (RULES.md
@@ -130,9 +135,20 @@ pub trait ScalarFunction: Send + Sync {
     /// §9.2] before `call` sees it, so a character string reaches a type
     /// beyond the standard that takes one (`SqlType::assigns_text`, RULES.md
     /// D53); one that cannot be \[SR2\] is refused as the statement is
-    /// bound (SQLCODE -103). By default none: each argument is given as it
-    /// is, its type checked by `return_type` alone.
-    fn argument_type(&self, _position: usize, _args: &[Option<DataType>]) -> Option<DataType> {
+    /// bound (SQLCODE -103). By default the type of its parameter there, if
+    /// it declares them (`parameter_types`); else none: each argument is
+    /// given as it is, its type checked by `return_type` alone.
+    fn argument_type(&self, position: usize, _args: &[Option<DataType>]) -> Option<DataType> {
+        self.parameter_types().and_then(|types| types.into_iter().nth(position))
+    }
+    /// \[EXTENSION\] [ISO/IEC 9075-2:2023 §9.18 SR10] The types of its
+    /// parameters, if it declares them: it takes as many arguments, each
+    /// of a type whose precedence list holds its parameter's designator
+    /// [§9.7], stored in it as by `argument_type`; and of the functions of
+    /// its name registered, a call invokes the one its arguments' types
+    /// choose [§9.6] (RULES.md D74). By default none: it is alone of its
+    /// name, its arguments' types checked by `return_type`.
+    fn parameter_types(&self) -> Option<Vec<DataType>> {
         None
     }
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.6 GR5] The type a `<dynamic
@@ -289,111 +305,6 @@ impl fmt::Debug for ScalarRef {
 impl fmt::Debug for AggregateRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0.name())
-    }
-}
-
-/// The functions a database knows, by name: scalar and aggregate names never
-/// overlap.
-#[derive(Clone)]
-pub struct Registry {
-    scalars: HashMap<String, ScalarRef>,
-    aggregates: HashMap<String, AggregateRef>,
-    /// The standard COUNT, MAX, MIN, SUM and AVG, in `Standard`'s order,
-    /// which a plug-in of its name may replace.
-    standard: [AggregateRef; 5],
-}
-
-/// A set function a `Registry` holds as the standard defines it, no
-/// plug-in of its name [ISO/IEC 9075:1992 §6.5].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Standard {
-    /// COUNT.
-    Count,
-    /// MAX.
-    Max,
-    /// MIN.
-    Min,
-    /// SUM.
-    Sum,
-    /// AVG.
-    Avg,
-}
-
-impl Registry {
-    /// A registry holding the five SQL-86 set functions, EVERY, ANY and
-    /// SOME [ISO/IEC 9075-2:2023 §10.9], and the string functions of
-    /// SQL-92 [ISO/IEC 9075:1992 §6.6, §6.7, §6.13].
-    pub fn with_set_functions() -> Registry {
-        let standard = [
-            AggregateRef(Arc::new(Count)),
-            AggregateRef(Arc::new(Extreme { max: true })),
-            AggregateRef(Arc::new(Extreme { max: false })),
-            AggregateRef(Arc::new(Sum)),
-            AggregateRef(Arc::new(Avg)),
-        ];
-        let scalars = strings::functions().into_iter().chain(trim::functions()).map(|f| (f.name().to_string(), ScalarRef(f))).collect();
-        let truths = [Truths::EVERY, Truths::ANY, Truths::SOME].map(|t| AggregateRef(Arc::new(t)));
-        let any_value = [AggregateRef(Arc::new(any_value::AnyValue))];
-        let aggregates = standard.iter().chain(&truths).chain(&any_value).map(|f| (f.0.name().to_string(), f.clone())).collect();
-        Registry { scalars, aggregates, standard }
-    }
-
-    /// Adds a scalar function, one for each name (RULES.md D53).
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if the name is an aggregate function's (a call could not
-    /// tell which is meant), or a scalar function's, a standard one's too.
-    pub fn add_scalar(&mut self, f: Arc<dyn ScalarFunction>) -> Result<()> {
-        let name = f.name().to_string();
-        if self.aggregates.contains_key(&name) {
-            return fail(Code::Api, format!("[EXTENSION] {name} is already an aggregate function; a name cannot be both"));
-        }
-        if self.scalars.contains_key(&name) {
-            return fail(Code::Api, format!("[EXTENSION] {name} is already a scalar function, and is not replaced"));
-        }
-        self.scalars.insert(name, ScalarRef(f));
-        Ok(())
-    }
-
-    /// Adds or replaces an aggregate function, including the five set functions.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if the name is a scalar function's.
-    pub fn add_aggregate(&mut self, f: Arc<dyn AggregateFunction>) -> Result<()> {
-        let name = f.name().to_string();
-        if self.scalars.contains_key(&name) {
-            return fail(Code::Api, format!("[EXTENSION] {name} is already a scalar function; a name cannot be both"));
-        }
-        self.aggregates.insert(name, AggregateRef(f));
-        Ok(())
-    }
-
-    /// Each function registered that declares settings (RULES.md D36).
-    pub(crate) fn configurables(&self) -> impl Iterator<Item = &dyn crate::settings::Configurable> {
-        let scalars = self.scalars.values().filter_map(|f| f.0.configurable());
-        scalars.chain(self.aggregates.values().filter_map(|f| f.0.configurable()))
-    }
-
-    /// The scalar function named `name`, if one is registered.
-    pub fn scalar(&self, name: &str) -> Option<ScalarRef> {
-        self.scalars.get(name).cloned()
-    }
-
-    /// The aggregate function named `name`, if one is registered.
-    pub fn aggregate(&self, name: &str) -> Option<AggregateRef> {
-        self.aggregates.get(name).cloned()
-    }
-
-    /// Which of the standard COUNT, MAX, MIN, SUM and AVG [X3.135-1986
-    /// §5.8] `f` is, if it is one, no plug-in of its name.
-    pub(crate) fn standard(&self, f: &AggregateRef) -> Option<Standard> {
-        let held = |at: usize| self.standard.get(at).is_some_and(|s| std::ptr::addr_eq(Arc::as_ptr(&f.0), Arc::as_ptr(&s.0)));
-        [Standard::Count, Standard::Max, Standard::Min, Standard::Sum, Standard::Avg]
-            .into_iter()
-            .enumerate()
-            .find_map(|(at, s)| held(at).then_some(s))
     }
 }
 

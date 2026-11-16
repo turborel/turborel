@@ -20,22 +20,19 @@ use super::super::{Completion, Session, State, rule};
 use crate::ast::{
     ParameterDeclaration, PrivilegeDefinition, PrivilegeObject, RoutineDefinition, RoutineDesignator, Schema, TableName, TypeName,
 };
-use crate::binder::{qualify, routine_definition};
+use crate::binder::{alike, qualify, routine_definition};
 use crate::catalog::{
-    Horizon, ParameterMode, QualifiedName, Routine, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, UsageDesc, UserTypeDesc, owner_of,
+    Horizon, ParameterMode, QualifiedName, Routine, RoutineKind, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, UsageDesc, UserTypeDesc,
+    owner_of,
 };
 use crate::error::{At, Code, Result, SqlError};
 use crate::log::record::DropTarget;
 use crate::txn::LockMode;
 use crate::value::DataType;
 
-/// A routine of a name, of a feature not supported.
-fn overloaded(name: &QualifiedName, other: &str) -> SqlError {
-    let msg = format!(
-        "[ISO/IEC 9075-2:2023 §11.60 CR2] schema {} has {other} {} already: overloading (Feature T341) is not supported",
-        name.auth, name.ident
-    );
-    SqlError::new(Code::Unsupported, msg)
+/// The types `types`, as a message lists them.
+fn listed(types: &[DataType]) -> String {
+    types.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
 }
 
 impl State {
@@ -54,14 +51,15 @@ impl State {
         if !self.catalog.schema_exists(&name.auth) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.60 SR9p] there is no schema {}", name.auth)).or_at(r.name.at));
         }
-        self.unique_name(&name).or_at(r.name.at)?;
         let owner = owner_of(&*self.catalog, &name.auth).to_owned();
+        let parameters = self.parameters(r, (schema, &owner))?;
+        self.told_apart(&name, r.kind, &parameters).or_at(r.name.at)?;
         let created = self.catalog.routines().iter().map(|d| d.created).max().unwrap_or(0).saturating_add(1);
         let mut desc = SqlRoutineDesc {
             specific: self.specific_name(r, &name, created)?,
             name,
             kind: r.kind,
-            parameters: self.parameters(r, (schema, &owner))?,
+            parameters,
             returns: r.returns.as_ref().map(|t| self.parameter_type(t, (schema, &owner))).transpose()?,
             deterministic: r.deterministic,
             access: r.access,
@@ -71,33 +69,56 @@ impl State {
             schema: schema.to_owned(),
             reads: Vec::new(),
             horizon: Horizon::default(),
-            invokes: Vec::new(),
             execute: Vec::new(),
             created,
         };
         let bound = self.bind_routine_body(&desc, r)?;
-        desc.horizon = Horizon::of(&*self.catalog, &bound.reads);
-        (desc.reads, desc.invokes) = (bound.reads, bound.invokes);
+        desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes);
+        desc.reads = bound.reads;
         desc.execute = vec![UsageDesc { grantor: SYSTEM_GRANTOR.to_owned(), grantee: Some(owner), grantable: bound.grantable }];
         let locks = desc.reads.iter().map(|t| (t.clone(), LockMode::Shared)).collect();
         self.put_routine(desc);
         Ok(Defined { locks, ..Defined::default() })
     }
 
-    /// [ISO/IEC 9075-2:2023 §11.60 CR2] That no routine of schema of
-    /// `name` is of its `<qualified identifier>`: no SQL-invoked routine,
-    /// nor a function a distinct type's definition made.
-    fn unique_name(&self, name: &QualifiedName) -> Result<()> {
-        if !self.catalog.routines_named(name).is_empty() {
-            return Err(overloaded(name, "a routine"));
+    /// [ISO/IEC 9075-2:2023 §11.60 SR20] That a routine `name` of kind
+    /// `kind` and of the SQL parameters `parameters` is told apart from the
+    /// other routines of its name in its schema (Feature T341): a procedure
+    /// from each procedure of as many parameters [SR20a]; a function from
+    /// each function, an SQL-invoked function's or a distinct type's, by
+    /// the types of its parameters [SR20b].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it is not.
+    fn told_apart(&self, name: &QualifiedName, kind: RoutineKind, parameters: &[SqlParameter]) -> Result<()> {
+        match kind {
+            RoutineKind::Procedure => {
+                let arity = |d: &&SqlRoutineDesc| d.kind == RoutineKind::Procedure && d.parameters.len() == parameters.len();
+                match self.catalog.routines_named(name).into_iter().find(arity) {
+                    Some(other) => Err(rule(format!(
+                        "[ISO/IEC 9075-2:2023 §11.60 SR20a] schema {} has procedure {} of {} parameters already, of specific name {}",
+                        name.auth,
+                        name.ident,
+                        parameters.len(),
+                        other.specific
+                    ))),
+                    None => Ok(()),
+                }
+            }
+            RoutineKind::Function => {
+                let types: Vec<DataType> = parameters.iter().map(|p| p.data_type.clone()).collect();
+                match alike(self, name, &types) {
+                    Some(other) => Err(rule(format!(
+                        "[ISO/IEC 9075-2:2023 §11.60 SR20b] function {name} ({}) is not told apart from function {} ({}), as an invocation of arguments of its types would invoke either",
+                        listed(&types),
+                        other.specific(),
+                        listed(&other.parameters())
+                    ))),
+                    None => Ok(()),
+                }
+            }
         }
-        let of_type = |t: &UserTypeDesc| {
-            t.name.auth == name.auth && [Routine::ToDistinct, Routine::ToSource].iter().any(|w| t.routine(*w).name == name.ident)
-        };
-        if self.catalog.user_types().into_iter().any(of_type) {
-            return Err(overloaded(name, "a distinct type's function"));
-        }
-        Ok(())
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 SR9s, SR9t, SR9u] The specific name of
@@ -209,7 +230,7 @@ impl State {
         let mut at = 0;
         while let Some(s) = all.get(at).cloned() {
             for r in self.catalog.routines() {
-                if r.invokes.contains(&s) && !all.contains(&r.specific) {
+                if r.invokes().contains(&s) && !all.contains(&r.specific) {
                     all.push(r.specific.clone());
                 }
             }

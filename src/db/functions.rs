@@ -12,12 +12,18 @@ use crate::functions::{AggregateFunction, ScalarFunction};
 impl Database {
     /// \[EXTENSION\] Register a scalar function. Callable only from sessions
     /// that take the function call syntax (SQL.FUNCTION_CALLS ON).
+    /// Of a name already a scalar function's, it is one more, overloading
+    /// it, only if each declares the types of its parameters and no call
+    /// could invoke two of them alike (RULES.md D74); they share the
+    /// settings under the name, each setting as the first to declare it
+    /// declared it.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if an aggregate function has the same name, or a
-    /// scalar function, a standard one too: none is replaced (RULES.md
-    /// D53); or a setting it declares is refused (D36).
+    /// scalar function, a standard one too, and the two are not so told
+    /// apart: none is replaced (RULES.md D53); or a setting it declares is
+    /// refused (D36).
     pub fn register_scalar_function(&self, f: Box<dyn ScalarFunction>) -> Result<()> {
         let (name, f): (String, Arc<dyn ScalarFunction>) = (f.name().to_owned(), Arc::from(f));
         let done = self.change(|st| {

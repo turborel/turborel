@@ -72,8 +72,9 @@ the functions.
 3. Each option is written at most once. NOT FINAL, INSTANTIABLE, UNDER,
    REF and the CASTs to REF and TYPE, which are of structured types, are
    refused.
-4. No function of the schema of the name of one of its functions takes a
-   parameter of the same kind of type.
+4. Each of its two functions is told apart from every other function of
+   its name in the schema, an SQL-invoked function's or another type's,
+   as [CREATE FUNCTION](create-function.md) tells overloads apart.
 5. A column of the type defaults to NULL alone, or to ARRAY[] if the
    source is an array type.
 

@@ -46,13 +46,30 @@ the body's RETURN is then stored in the result type in the same way.
 A body that is no RETURN raises SQLSTATE 2F005 each time the function
 is invoked.
 
+A schema may hold several functions of one name, overloads, each of
+other types of parameters or another number of them. An invocation
+invokes the one its arguments' types choose. The candidates are those
+the invoker holds EXECUTE on that take as many arguments as they have
+parameters, each argument of a type that may be given to its
+parameter. Then, argument by argument from the left, those whose
+parameter's type comes first for the argument's type are kept, and one
+must be left. CHARACTER comes before CHARACTER VARYING for a fixed-length
+string, and for an exact number every exact type comes first, then the
+approximate types, then DECFLOAT. A `?` argument chooses nothing, and
+takes the type of the parameter of the function chosen. A function of
+the schema that takes the arguments is invoked before a registered
+function of the name.
+
 In the body, a parameter is named by its name, or by the function's
 name and its name. A column of a table the body reads hides a parameter
 of its name.
 
 The body is bound as the owner of the function's schema binds it, of
 that schema: it uses the owner's privileges, whoever invokes it, and
-sees the tables and functions there were when it was made. A function
+sees the tables and functions there were when it was made. A view,
+constraint, trigger, generated column or routine that invokes a
+function keeps invoking the one it invoked when it was made, even once
+an overload that would suit its arguments better is created. A function
 defined in CREATE SCHEMA may be granted on in the same definition.
 
 The SQL-data access, always written, says what the body may do:
@@ -76,9 +93,12 @@ it.
 1. The function's schema exists and its user owns it. A function named
    without a schema is of the session's default schema. In CREATE
    SCHEMA, it is of the schema made.
-2. The schema has no other routine, and no distinct type's function, of
-   the name: a second function of a name is overloading, of Feature
-   T341, not supported (SQLCODE -900).
+2. Each other function of the name in the schema, a distinct type's
+   among them, is told apart from it. Given arguments of the types of
+   this function's parameters, this function alone is chosen. So
+   F(INTEGER) beside F(BIGINT) or F(DECIMAL(5,2)) is refused, as every
+   exact type comes first alike, while F(INTEGER) beside F(DOUBLE
+   PRECISION), F(CHARACTER(3)) or F(INTEGER, INTEGER) is taken.
 3. The specific name, if written, is of the function's schema, and no
    routine of the schema has it.
 4. Each characteristic is written at most once, and the SQL-data access
@@ -107,10 +127,14 @@ and EXECUTE on each function it invokes.
 | 2A000 | -102 | The definition is not well formed |
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the schema, or the owner lacks a privilege the body needs |
-| 0A000 | -900 | Another routine of the name is in the schema, or a feature not supported is used |
+| 0A000 | -900 | A feature not supported is used |
 | 25000 | -917 | The transaction is READ ONLY |
 
-Once made, an invocation fails with the SQLSTATE of what fails in it:
+An invocation of a name no function of the schema or registered
+function takes fails with SQLCODE -103, as does one two functions take
+alike, and one only functions the invoker holds no EXECUTE on take
+with -104. Once made, an invocation fails with the SQLSTATE of what
+fails in it:
 22001 or 22003 of a value an argument or the result cannot be stored
 in, 2F005 of a body that is no RETURN. GET DIAGNOSTICS shows the
 function as ROUTINE_SCHEMA, ROUTINE_NAME and SPECIFIC_NAME, and of an
@@ -149,6 +173,28 @@ OK
 (1 row)
 ```
 
+Overloads of one name, each invoked by the types of its arguments:
+
+```sql
+CREATE FUNCTION DESCRIBED (N INTEGER) RETURNS VARCHAR(20) CONTAINS SQL
+  RETURN 'exact';
+CREATE FUNCTION DESCRIBED (N DOUBLE PRECISION) RETURNS VARCHAR(20) CONTAINS SQL
+  RETURN 'approximate';
+CREATE FUNCTION DESCRIBED (S VARCHAR(10)) RETURNS VARCHAR(20) CONTAINS SQL
+  RETURN 'text';
+SELECT DESCRIBED(1), DESCRIBED(2.5E0), DESCRIBED('a') FROM (VALUES (0)) AS ONE (X);
+```
+
+```
+OK
+OK
+OK
+                      |                      |
+----------------------+----------------------+----------------------
+ exact                | approximate          | text
+(1 row)
+```
+
 Rules refused, and an invocation that fails:
 
 ```sql
@@ -161,7 +207,7 @@ SELECT TINY(100000) FROM (VALUES (0)) AS ONE (X);
 
 ```
 turborel: SQLCODE -103 (SQLSTATE 2A000): the body of ANN.PEEK possibly reads SQL-data, and it is CONTAINS SQL (IA076) [ISO/IEC 9075-2:2023 §11.60 SR23d]
-turborel: SQLCODE -900 (SQLSTATE 0A000): schema ANN has a routine TAXED already: overloading (Feature T341) is not supported [ISO/IEC 9075-2:2023 §11.60 CR2] (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 2A000): function ANN.TAXED (INTEGER) is not told apart from function ANN.TAXED_1 (DECIMAL(7,2)), as an invocation of arguments of its types would invoke either [ISO/IEC 9075-2:2023 §11.60 SR20b] (at character 16)
 OK
 turborel: SQLCODE -301 (SQLSTATE 22003): 100000 does not fit SMALLINT without losing leading digits [ISO/IEC 9075-2:2023 §9.18 GR4a ii; ISO/IEC 9075:1992 §9.2 GR3k]
 ```
@@ -169,7 +215,8 @@ turborel: SQLCODE -301 (SQLSTATE 22003): 100000 does not fit SMALLINT without lo
 ## STANDARD
 
 ISO/IEC 9075-2:2023 §11.60, §9.18, §10.4, §16.2, §4.35, Feature T321
-(subfeatures 01, 03 and 05), B128, S203 and S204. SQL-86 and SQL-92
+(subfeatures 01, 03 and 05), T341, B033, B128, S203 and S204, and §9.6,
+§9.7 and §11.60 SR20 of overloads. SQL-86 and SQL-92
 have no SQL-invoked routines.
 
 ## SEE ALSO

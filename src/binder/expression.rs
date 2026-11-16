@@ -6,8 +6,10 @@
 
 use std::sync::Arc;
 
+use super::arguments::registered_subject;
 use super::arithmetic::distinct_operand;
 use super::composite::{grouping_operand, ordering_operand};
+use super::invocation::{Called, Passed};
 use super::set_functions::column_references;
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
@@ -41,7 +43,7 @@ pub(super) fn dynamic_of(e: &ValueExpression) -> Option<(usize, usize)> {
 impl Binder<'_> {
     /// [ISO/IEC 9075:1992 §17.6 GR5] `e` bound, a `<dynamic parameter
     /// specification>` taking the type `taken` its context gives it.
-    pub(super) fn typed(&self, e: &ValueExpression, taken: ParameterType, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+    pub(in crate::binder) fn typed(&self, e: &ValueExpression, taken: ParameterType, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         // [ISO/IEC 9075-2:2023 §6.5 SR1] ARRAY[] of the array type its
         // context gives, or of the distinct type whose source type it is
         // [§6.13 SR6, §11.5 SR4e], an empty array.
@@ -170,16 +172,16 @@ impl Binder<'_> {
             // function, a CASE or a search condition.
             ValueExpression::SetFunction(sf) => self.drawing(false, || self.set_function(sf, scope)).or_at(sf.at),
             ValueExpression::Call { schema, name, args, at, extension } => {
-                // [ISO/IEC 9075-2:2023 §10.4] an SQL-invoked function of an
-                // SQL routine body first, then a distinct type's (D69).
-                if let Some(invoked) = self.invocation((schema.as_deref(), name), args, scope).or_at(*at)? {
-                    return Ok(invoked);
-                }
-                if let Some(called) = self.routine_call((schema.as_deref(), name), args, scope).or_at(*at)? {
-                    return Ok(called);
-                }
+                // [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10h iv 1] a function of
+                // the schema, an SQL-invoked function or a distinct type's
+                // (D69), then one registered (D53, D74).
+                let passed = match self.invocation((schema.as_deref(), name), args, scope).or_at(*at)? {
+                    Called::Done(invoked) => return Ok(invoked),
+                    Called::Pass(passed) => passed,
+                };
                 let aggregate = self.db.functions.aggregate(name).is_some();
-                self.drawing(self.drawing.get() && !aggregate, || self.call((schema.as_deref(), name, *extension), args, scope)).or_at(*at)
+                let called = || self.call((schema.as_deref(), name, *extension), args, passed, scope);
+                self.drawing(self.drawing.get() && !aggregate, called).or_at(*at)
             }
             ValueExpression::Function { name, args, at } => self.function(name, args, scope).or_at(*at),
             ValueExpression::Window(w) => self.window_function(w, scope).or_at(w.at),
@@ -345,20 +347,30 @@ impl Binder<'_> {
 
     /// \[EXTENSION\] A call by name of a registered scalar or aggregate
     /// function, of no schema, read while the session took function calls
-    /// (`extension`).
+    /// (`extension`), no function of the schema being invoked: its
+    /// arguments as `passed` holds them if bound to choose among those.
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if it names a schema, which a routine invocation does
     /// and a call of a function registered does not; -104 if the session
     /// did not take function calls, as SQL-86 has none; -103 if no
-    /// function of the name is registered.
+    /// function of the name is registered, or none takes its arguments;
+    /// the refusal `passed` holds, of a function of the schema of the name,
+    /// if no function registered is of it.
     pub(super) fn call(
         &self,
         (schema, name, extension): (Option<&str>, &str, bool),
         args: &[ValueExpression],
+        passed: Passed,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
+        let Passed { bound, refusal } = passed;
+        let registered = self.db.functions.scalars(name);
+        let refusal = match refusal {
+            Some(refused) if schema.is_some() || registered.is_empty() || !extension => return Err(refused),
+            other => other,
+        };
         if let Some(s) = schema {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR10b] schema {s} has no function {name}")));
         }
@@ -368,8 +380,19 @@ impl Binder<'_> {
                 "[X3.135-1986 §5.9 F] function calls are not SQL-86 (they are an [EXTENSION], taken while SQL.FUNCTION_CALLS is ON); expected a <value expression>",
             ));
         }
-        if let Some(f) = self.db.functions.scalar(name) {
-            let (exprs, types) = self.arguments(&*f.0, args, scope)?;
+        if !registered.is_empty() {
+            let bound = match bound {
+                Some(b) => b,
+                None => self.prebound(args, scope)?,
+            };
+            let Some(f) = registered_subject(name, registered, &bound)? else {
+                let types = bound.iter().map(|b| b.as_ref().map(|(_, t)| t.clone())).collect::<Vec<_>>();
+                let shown = super::invocation::shown_types(&types);
+                return Err(
+                    refusal.unwrap_or_else(|| rule(format!("[EXTENSION] no function {name} registered takes arguments of ({shown})")))
+                );
+            };
+            let (exprs, types) = self.arguments_of(&*f.0, args, bound, scope)?;
             let t = f.0.return_type(&types)?;
             return Ok((Expr::Call(f, exprs), t));
         }

@@ -17,11 +17,10 @@ use super::ddl::Dropped;
 use super::definitions::Defined;
 use super::{State, rule};
 use crate::ast::{TypeDefinition, TypeName, TypeOption};
-use crate::binder::qualify;
+use crate::binder::{alike, qualify};
 use crate::catalog::{QualifiedName, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, owner_of, types_in};
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::txn::LockMode;
-use crate::value::precedence::in_precedence_list;
 use crate::value::{DataType, Spelled};
 
 impl State {
@@ -89,15 +88,17 @@ impl State {
             Some(n) => n,
             None => type_name_of(&source).ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §9.9] {source} has no type name")))?.to_owned(),
         };
-        self.routine_unique(&qn, &to_distinct, &source).or_at(d.name.at)?;
         let routine = |name: String, suffix: &str| RoutineDesc { name, specific: format!("{}{suffix}", qn.ident), execute: Vec::new() };
-        Ok(UserTypeDesc {
+        let desc = UserTypeDesc {
             to_distinct: routine(to_distinct, TO_DISTINCT_SUFFIX),
             to_source: routine(to_source, TO_SOURCE_SUFFIX),
             name: qn,
             source,
             usage: Vec::new(),
-        })
+        };
+        self.routine_unique(&desc.name, &desc.to_distinct.name, &desc.source).or_at(d.name.at)?;
+        self.routine_unique(&desc.name, &desc.to_source.name, &desc.data_type()).or_at(d.name.at)?;
+        Ok(desc)
     }
 
     /// [ISO/IEC 9075-2:2023 §11.51 SR5a, SR7a] The type PSDT `of` names, in
@@ -120,23 +121,18 @@ impl State {
         }
     }
 
-    /// [ISO/IEC 9075-2:2023 §11.60 SR20b] That no other function of schema
-    /// `qn`'s, of the name `name`, takes a parameter of the type designator
-    /// of `source`, as FNUDT of `qn` would: of the one parameter each takes,
-    /// only another distinct type's FNUDT may, its source's designator the
-    /// same, so neither would be the one subject routine of a call [§9.6].
-    /// FNSDT's parameter is of the type itself, as no other's is.
-    fn routine_unique(&self, qn: &QualifiedName, name: &str, source: &DataType) -> Result<()> {
-        let same = |t: &UserTypeDesc| {
-            t.name.auth == qn.auth
-                && t.to_distinct.name == name
-                && in_precedence_list(&t.source, source)
-                && in_precedence_list(source, &t.source)
-        };
-        match self.catalog.user_types().into_iter().find(|t| same(t)) {
-            Some(t) => Err(rule(format!(
-                "[ISO/IEC 9075-2:2023 §11.60 SR20b] function {}.{name} of type {} takes a parameter of the type designator of {source} already",
-                qn.auth, t.name
+    /// [ISO/IEC 9075-2:2023 §11.60 SR20b, §11.51 GR2b] That a function of
+    /// schema `qn`'s, the type's, named `name` with one parameter of the
+    /// type `parameter`, FNUDT or FNSDT of `qn`, is told apart from each
+    /// other function of its name there: an SQL-invoked function's, or a
+    /// distinct type's (Feature T341).
+    fn routine_unique(&self, qn: &QualifiedName, name: &str, parameter: &DataType) -> Result<()> {
+        let named = QualifiedName { auth: qn.auth.clone(), ident: name.to_owned() };
+        match alike(self, &named, std::slice::from_ref(parameter)) {
+            Some(other) => Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §11.60 SR20b] function {named} ({parameter}) of type {qn} is not told apart from function {} ({})",
+                other.specific(),
+                other.parameters().iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
             ))),
             None => Ok(()),
         }

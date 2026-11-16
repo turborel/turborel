@@ -56,10 +56,9 @@ pub struct SqlRoutineDesc {
     /// The tables and views its body names.
     pub reads: Vec<QualifiedName>,
     /// The columns its body sees of each base table it reads, as they were
-    /// when it was defined.
+    /// when it was defined, and the routines its body invokes, its subject
+    /// routines [§4.35.2].
     pub horizon: Horizon,
-    /// The specific names of the routines its body invokes.
-    pub invokes: Vec<QualifiedName>,
     /// The EXECUTE privileges on it [§12.3, §11.60 GR1], as a domain's
     /// USAGE are kept.
     pub execute: Vec<UsageDesc>,
@@ -72,6 +71,12 @@ impl SqlRoutineDesc {
     /// Whether it is a function.
     pub fn function(&self) -> bool {
         self.kind == RoutineKind::Function
+    }
+
+    /// The specific names of the routines its body invokes, its subject
+    /// routines, fixed as it was defined [§4.35.2].
+    pub fn invokes(&self) -> &[QualifiedName] {
+        self.horizon.subjects().unwrap_or_default()
     }
 
     /// [ISO/IEC 9075-2:2023 §12.3, §11.60 GR1] Whether `auth` holds

@@ -262,8 +262,8 @@ impl State {
         let lost = |r: Result<()>| r.is_err_and(|e| e.code == Code::Privilege);
         for d in self.catalog.domains() {
             for c in &d.constraints {
-                let ConstraintKind::Check { text, names, .. } = &c.kind else { continue };
-                if lost(bound.bound_on_value(&d.name, d.data_type.clone(), (text, names)).map(|_| ())) {
+                let ConstraintKind::Check { text, names, horizon, .. } = &c.kind else { continue };
+                if lost(bound.bound_on_value(&d.name, d.data_type.clone(), (text, names, horizon)).map(|_| ())) {
                     abandoned.domain_constraints.push((d.name.clone(), c.name.clone()));
                 }
             }

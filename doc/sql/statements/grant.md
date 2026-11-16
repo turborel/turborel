@@ -90,7 +90,10 @@ privileges.
 2. Of a domain, a collation, a sequence generator or a type, USAGE alone
    is granted, and of a routine EXECUTE alone. Neither is granted of a
    table.
-3. A routine's name designates exactly one routine of its routine type.
+3. A routine's name designates exactly one routine of its routine type,
+   counting the functions of distinct types. A name alone of overloads
+   designates none, so one is named by its parameters' types or its
+   specific name.
 4. Each column named is the table's.
 5. Of a temporary table, ALL PRIVILEGES alone is granted.
 6. The transaction is not READ ONLY.

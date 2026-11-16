@@ -13,7 +13,7 @@ use crate::ast::{
     References, SelectItem, SelectList, SelectSublist, TableConstraint, TableConstraintKind, TableElement, TableExpression, TableName,
     TableReference, ValueExpression, ValueSpecification,
 };
-use crate::binder::{self, Context, Purpose, Referencing, Uses, bind_select, qualify};
+use crate::binder::{self, Context, Invoked, Purpose, Referencing, Uses, bind_select, qualify};
 use crate::catalog::{
     ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, Horizon, QualifiedName, TableDesc, applicable, owner_of,
 };
@@ -444,19 +444,23 @@ impl State {
         let this = desc.clone();
         for c in &mut desc.constraints {
             let ConstraintKind::Check { text, names, reads, horizon } = &mut c.kind else { continue };
-            let cond = self.check_condition(&table, (text, names, horizon)).map_err(|e| SqlError {
-                msg: format!("CHECK {}: {}", c.name, e.msg),
-                pos: None,
-                ..e
-            })?;
+            let invoked = Invoked::default();
+            let cond = self
+                .bind_check(&table, (text, names, horizon), (None, &Referencing::default(), Some(&invoked)))
+                .map_err(|e| SqlError { msg: format!("CHECK {}: {}", c.name, e.msg), pos: None, ..e })?;
             // [ISO/IEC 9075:1992 §11.6 GR3] One whose subqueries read no table is checked of its table whole, as one reading one is.
             *reads = Some(cond.tables()).filter(|t| !t.is_empty() || !cond.has_subquery()).unwrap_or_else(|| vec![table.clone()]);
             for other in reads.iter().filter(|t| **t != table).filter_map(|t| self.catalog.table(t)) {
                 super::temporary::may_refer(&this, other, ("§11.9 SR3", "§11.9 SR4"))?;
             }
-            if horizon.0.is_empty() {
+            if horizon.widths.is_empty() {
                 let others: Vec<QualifiedName> = reads.iter().filter(|t| **t != table).cloned().collect();
-                *horizon = Horizon(std::iter::once((table.clone(), width)).chain(Horizon::of(&*self.catalog, &others).0).collect());
+                horizon.widths = std::iter::once((table.clone(), width)).chain(Horizon::of(&*self.catalog, &others).widths).collect();
+            }
+            // [ISO/IEC 9075-2:2023 §4.35.2] the routines it invokes, its
+            // subject routines from now on.
+            if horizon.routines.is_none() {
+                *horizon = std::mem::take(horizon).invoking(invoked.take());
             }
         }
         Ok(())
@@ -472,30 +476,20 @@ impl State {
     /// It does not parse or bind: its rules [§11.9 SR1, SR2, SR5, SR6,
     /// AR1].
     pub(in crate::db) fn check_condition(&self, table: &QualifiedName, check: (&str, &str, &Horizon)) -> Result<Cond> {
-        self.bind_check(table, check, (None, &Referencing::default()))
-    }
-
-    /// [ISO/IEC 9075:1992 §11.21, §11.9] The condition of a domain
-    /// constraint, bound over `probe`, a table of one column, VALUE's, as
-    /// `check_condition` binds a CHECK's: VALUE names no column [AR1].
-    ///
-    /// # Errors
-    ///
-    /// As `check_condition`'s.
-    pub(in crate::db) fn value_condition(&self, probe: &QualifiedName, check: (&str, &str, &Horizon)) -> Result<Cond> {
-        self.bind_check(probe, check, (None, &Referencing::of_value(probe)))
+        self.bind_check(table, check, (None, &Referencing::default(), None))
     }
 
     /// The columns the condition of a domain constraint, bound over
-    /// `probe` as `value_condition` binds it, references, once each: VALUE
+    /// `probe`, a table of one column, VALUE's, as `check_condition` binds a
+    /// CHECK's, VALUE naming no column [§11.21 AR1], references, once each: VALUE
     /// not among them.
     ///
     /// # Errors
     ///
-    /// As `value_condition`'s.
+    /// As `check_condition`'s.
     pub(in crate::db) fn value_uses(&self, probe: &QualifiedName, check: (&str, &str, &Horizon)) -> Result<Vec<(QualifiedName, String)>> {
         let uses = Uses::default();
-        self.bind_check(probe, check, (Some(&uses), &Referencing::of_value(probe)))?;
+        self.bind_check(probe, check, (Some(&uses), &Referencing::of_value(probe), None))?;
         Ok(binder::once_each(uses.into_inner()).into_iter().filter(|(table, _)| table != probe).collect())
     }
 
@@ -508,18 +502,19 @@ impl State {
     /// It does not bind, as `check_condition`.
     pub(crate) fn check_uses(&self, table: &QualifiedName, check: (&str, &str, &Horizon)) -> Result<Vec<(QualifiedName, String)>> {
         let uses = Uses::default();
-        self.bind_check(table, check, (Some(&uses), &Referencing::default()))?;
+        self.bind_check(table, check, (Some(&uses), &Referencing::default(), None))?;
         Ok(binder::once_each(uses.into_inner()))
     }
 
     /// The CHECK `text` of `table`, bound as `check_condition` says, its
     /// column references noted in `uses`, if given, what its REFERENCES
-    /// depend on in `referencing` [§11.9 AR1].
-    fn bind_check(
+    /// depend on in `referencing` [§11.9 AR1], the routines it invokes in
+    /// `invoked`, if given.
+    pub(in crate::db) fn bind_check(
         &self,
         table: &QualifiedName,
         (text, names, horizon): (&str, &str, &Horizon),
-        (uses, referencing): (Option<&Uses>, &Referencing),
+        (uses, referencing, invoked): (Option<&Uses>, &Referencing, Option<&Invoked>),
     ) -> Result<Cond> {
         let condition = Parser::new(text)?.of_definition().check_condition()?;
         let from = TableReference::Table(NamedTable {
@@ -542,6 +537,7 @@ impl State {
             uses,
             schema: names,
             referencing: Some(referencing),
+            invoked,
             ..Context::new(self, owner, &params)
         };
         // A position in the condition's own text is none of a statement's.

@@ -39,12 +39,15 @@ impl Binder<'_> {
 }
 
 /// [ISO/IEC 9075-2:2023 §10.4, §16.1] An `<SQL argument>` of a CALL that
-/// is a `<value expression>`, of no table: bound, and its type.
+/// is a `<value expression>`, of no table, of an input parameter of the
+/// type `parameter`: bound, and its type; a `?` of the parameter's type
+/// [§20.7 SR xxx] (Feature B033).
 ///
 /// # Errors
 ///
 /// It does not bind.
-pub fn bind_argument(cx: Context<'_>, v: &ValueExpression) -> Result<(Expr, DataType)> {
+pub fn bind_argument(cx: Context<'_>, v: &ValueExpression, parameter: &DataType) -> Result<(Expr, DataType)> {
     let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
-    binder.value_expression(v, Scope::Rows("[ISO/IEC 9075-2:2023 §10.9 SR2] an SQL argument of CALL has no set function"))
+    let scope = Scope::Rows("[ISO/IEC 9075-2:2023 §10.9 SR2] an SQL argument of CALL has no set function");
+    binder.typed(v, ParameterType::Of(parameter.clone()), scope)
 }

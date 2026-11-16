@@ -67,8 +67,10 @@ it.
 1. The procedure's schema exists and its user owns it. A procedure
    named without a schema is of the session's default schema. In CREATE
    SCHEMA, it is of the schema made.
-2. The schema has no other routine of the name: overloading is of
-   Feature T341, not supported (SQLCODE -900).
+2. No other procedure of the name in the schema has as many
+   parameters. Procedures of one name, overloads, are told apart by
+   their number of parameters alone, and CALL invokes the one of as many
+   parameters as it has arguments.
 3. The specific name, if written, is of the procedure's schema, and no
    routine of the schema has it.
 4. Each characteristic is written at most once, and the SQL-data access
@@ -96,7 +98,7 @@ and EXECUTE on each routine it invokes.
 | 2A000 | -102 | The definition is not well formed |
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the schema, or the owner lacks a privilege the body needs |
-| 0A000 | -900 | Another routine of the name is in the schema, or a feature not supported is used |
+| 0A000 | -900 | A feature not supported is used |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -132,21 +134,21 @@ Rules refused:
 ```sql
 CREATE PROCEDURE SNEAKY (IN ID INTEGER) READS SQL DATA
   DELETE FROM ORDERS WHERE ORDERS.ID = ID;
-CREATE PROCEDURE PLACE (IN ID INTEGER) MODIFIES SQL DATA
+CREATE PROCEDURE PLACE (IN ITEM INTEGER, IN AMOUNT DECIMAL(5,2)) MODIFIES SQL DATA
   DELETE FROM ORDERS;
 CREATE PROCEDURE ENDED () MODIFIES SQL DATA COMMIT;
 ```
 
 ```
 turborel: SQLCODE -103 (SQLSTATE 2A000): the body of ANN.SNEAKY possibly modifies SQL-data, and it is READS SQL DATA (IA075) [ISO/IEC 9075-2:2023 §11.60 SR23c]
-turborel: SQLCODE -900 (SQLSTATE 0A000): schema ANN has a routine PLACE already: overloading (Feature T341) is not supported [ISO/IEC 9075-2:2023 §11.60 CR2] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 2A000): schema ANN has procedure PLACE of 2 parameters already, of specific name ANN.PLACE_7 [ISO/IEC 9075-2:2023 §11.60 SR20a] (at character 17)
 turborel: SQLCODE -103 (SQLSTATE 2A000): an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS or a function's RETURN (IA078) [ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g]
 ```
 
 ## STANDARD
 
 ISO/IEC 9075-2:2023 §11.60, §9.18, §4.35, Feature T321 (subfeatures 02
-and 04), B128. SQL-86 and SQL-92 have no SQL-invoked routines.
+and 04), T341, B128. SQL-86 and SQL-92 have no SQL-invoked routines.
 
 ## SEE ALSO
 

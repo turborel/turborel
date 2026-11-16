@@ -50,13 +50,6 @@ Nothing is open.
   TRIGGER_COLUMN_USAGE, TRIGGER_ROUTINE_USAGE and
   TRIGGER_SEQUENCE_USAGE, and the trigger descriptors of the Definition
   Schema they are views of, so tools can list a schema's triggers.
-- Function overloading (D53, T341) [§9.18 SR10, §11.60 CR2]. Each name
-  registers one scalar function today, and a schema holds one SQL-invoked
-  routine of a name, a second refused with SQLCODE -900. Overloading
-  extends the resolution SQL-invoked routines have, with candidates by
-  number of arguments and store assignment [ISO/IEC 9075:1992 §9.2 SR2],
-  the most specific chosen and an ambiguous call refused, for registered
-  and SQL-invoked functions alike.
 - Stored procedures (SQL/PSM, ISO/IEC 9075-4:2023). Compound statements,
   local variables, cursors and handlers, and the control statements, IF,
   CASE, LOOP, WHILE, REPEAT, FOR, LEAVE and ITERATE, in a routine's body

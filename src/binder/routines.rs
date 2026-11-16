@@ -3,13 +3,16 @@
 //! from its source type, and FNSDT, to it (RULES.md D69). A name not
 //! qualified is found in the schema the statement's names are of, the
 //! SQL-path [§9.18 SR10b] (ID047); a routine of the name is found before
-//! a function registered [EXTENSION] (RULES.md D53).
+//! a function registered [EXTENSION] (RULES.md D53). Which function of a
+//! name a call invokes is chosen among these and the schema's SQL-invoked
+//! functions (`invocation/candidates.rs`).
 //!
 //! Each function's body is the change of representation its cast is
 //! [§11.51 GR2b], which none is, a distinct type's value being its
 //! source's (UV103): FNUDT binds as its argument assigned to the source
 //! type, and FNSDT as its argument, typed as the source.
 
+use super::invocation::{Prebound, functions_named};
 use super::{Binder, Scope, rule};
 use crate::ast::ValueExpression;
 use crate::catalog::{QualifiedName, Routine, UserTypeDesc, owner_of};
@@ -18,128 +21,61 @@ use crate::error::{Code, Result, SqlError};
 use crate::logical::Expr;
 use crate::params::ParameterType;
 use crate::value::DataType;
-use crate::value::precedence::in_precedence_list;
 
 /// A function a distinct type's definition makes: its type, and which.
 type Function<'a> = (&'a UserTypeDesc, Routine);
 
-/// The declared type of the one SQL parameter of `f` [§11.51 GR2a].
-fn parameter((t, which): Function<'_>) -> DataType {
-    match which {
-        Routine::ToDistinct => t.source.clone(),
-        Routine::ToSource => t.data_type(),
-    }
-}
-
-/// [ISO/IEC 9075-2:2023 §9.7] The place of `p`'s designator in a type
-/// precedence list it is in, among those a parameter of the type of
-/// another function may be: a fixed-length string's before a varying
-/// one's, an exact number's before an approximate one's, both before
-/// DECFLOAT's [SR5 to SR9]. One designator alone is in any other list.
-fn rank(p: &DataType) -> u8 {
-    match p {
-        DataType::Varying { .. } | DataType::VarBinary { .. } | DataType::Approximate { .. } => 1,
-        DataType::DecFloat { .. } => 2,
-        DataType::Character { .. }
-        | DataType::Binary { .. }
-        | DataType::Exact { .. }
-        | DataType::Boolean
-        | DataType::Date
-        | DataType::Time { .. }
-        | DataType::Timestamp { .. }
-        | DataType::Interval(_)
-        | DataType::Array(_)
-        | DataType::Row(_)
-        | DataType::Distinct(_)
-        | DataType::Extension(_) => 0,
-    }
-}
-
 /// Whether a call of `name` of no schema, in a statement whose names are
-/// of schema `path`, is of a routine: none of a function registered.
+/// of schema `path`, is of a function of the schema, not of an aggregate
+/// registered: an SQL-invoked function's or a distinct type's of the name.
 pub(super) fn names_routine(db: &State, path: &str, name: &str) -> bool {
-    db.catalog.user_types().into_iter().any(|t| t.name.auth == path && (t.to_distinct.name == name || t.to_source.name == name))
+    !functions_named(db, &QualifiedName { auth: path.to_owned(), ident: name.to_owned() }).is_empty()
 }
 
 impl Binder<'_> {
-    /// [ISO/IEC 9075-2:2023 §9.18 SR5f, SR10b] The functions named `name`
-    /// of schema `schema`, else of the SQL-path: the possibly candidate
-    /// routines of a call.
-    fn functions_named(&self, schema: Option<&str>, name: &str) -> Vec<Function<'_>> {
-        let schema = schema.unwrap_or(self.schema);
-        let mut found = Vec::new();
-        for t in self.db.catalog.user_types().into_iter().filter(|t| t.name.auth == schema) {
-            found.extend([Routine::ToDistinct, Routine::ToSource].into_iter().filter(|w| t.routine(*w).name == name).map(|w| (t, w)));
-        }
-        found
-    }
-
-    /// [ISO/IEC 9075-2:2023 §10.4] The `<routine invocation>` `name`
-    /// (`args`), of schema `schema` if written, if it names a routine.
+    /// [ISO/IEC 9075-2:2023 §9.18 SR10l iii, §20.7 SR xxx, §11.51 GR2b]
+    /// The invocation of `f`, a distinct type's function, with `args`, the
+    /// one argument bound as `bound` unless a `?`, which takes the
+    /// parameter's type: FNUDT its argument assigned to the source type,
+    /// typed as the distinct type; FNSDT its argument, typed as the source.
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if no function of the name takes `args` [§9.18 SR10],
-    /// or more than one alike [§9.6]; -104 if those that do are none the
-    /// statement's authorization identifier holds EXECUTE on [SR6].
-    pub(super) fn routine_call(
+    /// SQLCODE -103 if the argument cannot be stored in the parameter.
+    pub(super) fn cast_invocation(
         &self,
-        (schema, name): (Option<&str>, &str),
+        f: Function<'_>,
         args: &[ValueExpression],
+        bound: Prebound,
         scope: Scope<'_>,
-    ) -> Result<Option<(Expr, DataType)>> {
-        let named = self.functions_named(schema, name);
-        if named.is_empty() {
-            return Ok(None);
-        }
-        let shown = schema.map_or_else(|| name.to_owned(), |s| format!("{s}.{name}"));
-        // [SR10a] each function takes one argument.
-        let [arg] = args else {
-            return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR10a] function {shown} takes one argument, not {}", args.len())));
+    ) -> Result<(Expr, DataType)> {
+        let (t, which) = f;
+        let parameter = match which {
+            Routine::ToDistinct => t.source.clone(),
+            Routine::ToSource => t.data_type(),
         };
-        // [SR10h i] a `?` takes the parameter's type, of one function alone.
-        let (e, t) = match named.as_slice() {
-            [one] => self.typed(arg, ParameterType::Of(parameter(*one)), scope)?,
-            _ if super::expression::dynamic_of(arg).is_some() => {
-                return Err(rule(format!(
-                    "[ISO/IEC 9075-2:2023 §9.18 SR10h] a ? argument of {shown} has no type, as more than one function is of the name"
-                )));
+        let (e, given) = match (bound.into_iter().next().flatten(), args.first()) {
+            (Some(done), _) => done,
+            (None, Some(arg)) => self.typed(arg, ParameterType::Of(parameter.clone()), scope)?,
+            (None, None) => {
+                return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR10a] function {} takes one argument", t.routine(which).name)));
             }
-            _ => self.value_expression(arg, scope)?,
         };
-        let f = self.subject_routine(&named, &t, &shown)?;
-        Ok(Some(match f.1 {
+        if !super::statements::assignable(&parameter, &given) {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §9.18 SR10l iii, §9.2 SR2] the parameter of function {} is of {parameter}, which an argument of {given} cannot be stored in",
+                t.routine(which).name
+            )));
+        }
+        let specific = QualifiedName { auth: t.name.auth.clone(), ident: t.routine(which).specific.clone() };
+        super::invocation::note_specific(self.invoked, &specific);
+        Ok(match which {
             Routine::ToDistinct => {
-                let source = &f.0.source;
-                let assigned = if *source == t { e } else { Expr::Cast(Box::new(e), source.clone()) };
-                (assigned, f.0.data_type())
+                let assigned = if t.source == given { e } else { Expr::Cast(Box::new(e), t.source.clone()) };
+                (assigned, t.data_type())
             }
-            Routine::ToSource => (e, f.0.source.clone()),
-        }))
-    }
-
-    /// [ISO/IEC 9075-2:2023 §9.18 SR6, SR10d, SR10h; §9.6] Of `named`, the
-    /// function a call of an argument of type `t` invokes: of those whose
-    /// parameter's type designator is in `t`'s type precedence list, and
-    /// to whose parameter `t` is assignable, the one whose designator is
-    /// first in it; of those, the ones the statement's authorization
-    /// identifier holds EXECUTE on.
-    fn subject_routine<'f>(&self, named: &[Function<'f>], t: &DataType, shown: &str) -> Result<Function<'f>> {
-        let takes = |f: &Function<'_>| in_precedence_list(&parameter(*f), t) && super::statements::assignable(&parameter(*f), t);
-        let candidates: Vec<Function<'f>> = named.iter().copied().filter(takes).collect();
-        let executable: Vec<Function<'f>> = candidates.iter().copied().filter(|f| self.holds_execute(*f)).collect();
-        let first = executable.iter().map(|f| rank(&parameter(*f))).min();
-        let subject: Vec<Function<'f>> = executable.iter().copied().filter(|f| Some(rank(&parameter(*f))) == first).collect();
-        match (subject.as_slice(), candidates.is_empty()) {
-            ([one], _) => Ok(*one),
-            ([], true) => Err(rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR10h iv] no function {shown} takes an argument of {t}"))),
-            ([], false) => {
-                let msg =
-                    format!("[ISO/IEC 9075-2:2023 §9.18 SR6] {} holds EXECUTE on no function {shown} of an argument of {t}", self.auth);
-                Err(SqlError::new(Code::Privilege, msg))
-            }
-            (_, _) => Err(rule(format!("[ISO/IEC 9075-2:2023 §9.6] more than one function {shown} takes an argument of {t} alike"))),
-        }
+            Routine::ToSource => (e, t.source.clone()),
+        })
     }
 
     /// Whether the statement's authorization identifier holds EXECUTE on

@@ -170,15 +170,17 @@ fn the_data_access_indication_is_checked_11_60() {
     a.run("CREATE PROCEDURE ONE (OUT N INTEGER) READS SQL DATA SELECT K INTO N FROM T WHERE K = 1").unwrap();
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 CR2, SR9u] a second routine of a
-/// name in a schema is of Feature T341, not supported; a specific name a
-/// routine of the schema has already is refused.
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 SR20, SR9u] a second
+/// function of a name in a schema is defined if told apart by the types
+/// of its parameters (Feature T341), and refused if not; a specific name
+/// a routine of the schema has already is refused.
 #[test]
 fn names_are_unique_11_60() {
     let db = defined();
     let a = db.session("A");
     a.run("CREATE FUNCTION F (X INTEGER) RETURNS INTEGER SPECIFIC FS CONTAINS SQL RETURN X").unwrap();
-    assert_eq!(code(&a, "CREATE FUNCTION F (X CHARACTER(1)) RETURNS INTEGER CONTAINS SQL RETURN 1"), Code::Unsupported);
+    a.run("CREATE FUNCTION F (X CHARACTER(1)) RETURNS INTEGER CONTAINS SQL RETURN 1").unwrap();
+    assert_eq!(code(&a, "CREATE FUNCTION F (Y INTEGER) RETURNS INTEGER CONTAINS SQL RETURN 2"), Code::SyntaxRule);
     assert_eq!(code(&a, "CREATE PROCEDURE P (X INTEGER) SPECIFIC FS CONTAINS SQL GET DIAGNOSTICS X = NUMBER"), Code::SyntaxRule);
     assert_eq!(code(&a, "CREATE FUNCTION G (X INTEGER) RETURNS INTEGER SPECIFIC B.GS CONTAINS SQL RETURN X"), Code::SyntaxRule);
 }

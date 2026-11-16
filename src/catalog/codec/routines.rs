@@ -73,7 +73,6 @@ pub(crate) fn put_routine(out: &mut Vec<u8>, routine: &SqlRoutineDesc) {
     out.put_str(&routine.schema);
     put_all(out, routine.reads.iter(), put_name);
     put_horizon(out, &routine.horizon);
-    put_all(out, routine.invokes.iter(), put_name);
     put_usage(out, &routine.execute);
     out.put_u64(routine.created);
 }
@@ -101,7 +100,7 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
     };
     let null_call = flag(r)?;
     let (text, body, schema) = (r.str()?, r.str()?, r.str()?);
-    let (reads, horizon, invokes) = (get_all(r, qualified)?, horizon(r)?, get_all(r, qualified)?);
+    let (reads, horizon) = (get_all(r, qualified)?, horizon(r)?);
     let (execute, created) = (usage(r)?, r.u64()?);
     Ok(SqlRoutineDesc {
         name,
@@ -117,7 +116,6 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
         schema,
         reads,
         horizon,
-        invokes,
         execute,
         created,
     })

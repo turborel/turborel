@@ -1,7 +1,11 @@
-//! [ISO/IEC 9075-2:2023 §9.18, §10.4] A `<routine invocation>` of an
-//! SQL-invoked function of an SQL routine body, bound (Feature T321): its
-//! subject routine, its arguments, each assigned to its parameter's
-//! declared type, and its body (`invocation/body.rs`).
+//! [ISO/IEC 9075-2:2023 §9.18, §10.4] A `<routine invocation>` of a
+//! function of a schema, bound: its subject routine among the functions of
+//! its name (`invocation/candidates.rs`, Feature T341), then, of an
+//! SQL-invoked function of an SQL routine body (Feature T321), its
+//! arguments, each assigned to its parameter's declared type, and its body
+//! (`invocation/body.rs`); of a distinct type's, its cast
+//! (`binder/routines.rs`). Of none, the call is of a function registered
+//! (RULES.md D53, D74).
 //!
 //! What contains the invocation decides which functions it may invoke.
 //! One that possibly modifies SQL-data is in no query expression [§7.17
@@ -17,96 +21,144 @@ use std::sync::Arc;
 use super::expression::nondeterministic_source;
 use super::{Binder, Purpose, Scope, rule};
 use crate::ast::ValueExpression;
-use crate::catalog::{DataAccess, QualifiedName, RoutineKind, SqlRoutineDesc};
-use crate::error::Result;
+use crate::catalog::{DataAccess, QualifiedName, SqlRoutineDesc};
+use crate::error::{Result, SqlError};
 use crate::logical::{Expr, Invocation};
 use crate::params::ParameterType;
 use crate::value::DataType;
-use crate::value::precedence::in_precedence_list;
 
 mod body;
+mod candidates;
 mod resolve;
 #[cfg(test)]
 mod tests;
 
 pub use body::{FunctionBody, bind_function_body, routine_definition};
+pub use candidates::{Candidate, alike, functions_named};
+pub(super) use resolve::note as note_specific;
 pub use resolve::resolve_routine;
+
+use candidates::Chosen;
+pub(super) use candidates::shown_types;
 
 /// The arguments of an invocation, bound, and the name and declared type
 /// of each parameter.
 type Arguments = (Vec<Expr>, Vec<(String, DataType)>);
 
+/// An argument bound, and its type: none of a `<dynamic parameter
+/// specification>` until its function is chosen [§20.7 SR xxx].
+pub(super) type Prebound = Vec<Option<(Expr, DataType)>>;
+
+/// What an invocation of a name is, of the functions of its schema.
+pub(super) enum Called {
+    /// One of them, bound, and its result type.
+    Done((Expr, DataType)),
+    /// None: a function registered may be, of the arguments bound if they
+    /// were (`Passed`).
+    Pass(Passed),
+}
+
+/// The arguments of an invocation no function of its schema is, as bound
+/// to choose among them, and why none of them is, if one is of the name.
+#[derive(Default)]
+pub(super) struct Passed {
+    /// The arguments, bound if they were.
+    pub(super) bound: Option<Prebound>,
+    /// Why no function of the schema of the name is invoked, if one is of
+    /// it: the error if no function registered is either.
+    pub(super) refusal: Option<SqlError>,
+}
+
 impl Binder<'_> {
-    /// [ISO/IEC 9075-2:2023 §10.4] The invocation of `name`, of schema
-    /// `schema` if written, with `args`, in `scope`, if it invokes an
-    /// SQL-invoked function of an SQL routine body: bound, and its result
-    /// type. None if no such function is of the name.
+    /// [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10] The invocation of `name`, of
+    /// schema `schema` if written, with `args`, in `scope`, of a function of
+    /// the schema, else of the statement's default schema, the SQL-path
+    /// [SR10b] (ID047): an SQL-invoked function of an SQL routine body, or
+    /// one of a distinct type's, the subject routine among those of the
+    /// name (`candidates.rs`), bound with its result type. If none is,
+    /// what a function registered of the name is given.
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if the function takes another number of arguments
-    /// [§9.18 SR10a], an argument is not of a type its parameter takes
-    /// [SR10d, SR10h v], or what contains the invocation may not invoke
-    /// the function; -104 if the statement's authorization identifier
-    /// holds no EXECUTE on it \[SR6\].
-    pub(super) fn invocation(
-        &self,
-        (schema, name): (Option<&str>, &str),
-        args: &[ValueExpression],
-        scope: Scope<'_>,
-    ) -> Result<Option<(Expr, DataType)>> {
-        // Every function call is first tried here: of a database of no
-        // routine, none is invoked.
-        if !self.db.catalog.any_routines() {
-            return Ok(None);
-        }
-        // [§9.18 SR10b] of the schema written, else of the SQL-path, the
-        // schema of the statement's names (ID047).
+    /// SQLCODE -103 if more than one function of the name is alike [§9.6],
+    /// an argument cannot be stored in its parameter [SR10l iii], or what
+    /// contains the invocation may not invoke the function; -104 if the
+    /// statement's authorization identifier holds no EXECUTE on the
+    /// subject routine of a definition \[SR6\]; an argument's.
+    pub(super) fn invocation(&self, (schema, name): (Option<&str>, &str), args: &[ValueExpression], scope: Scope<'_>) -> Result<Called> {
         let qn = QualifiedName { auth: schema.unwrap_or(self.schema).to_owned(), ident: name.to_owned() };
-        let named = resolve::possibly_candidates(self.db, &qn, RoutineKind::Function);
+        let named = functions_named(self.db, &qn);
         if named.is_empty() {
-            return Ok(None);
+            return Ok(Called::Pass(Passed::default()));
         }
-        let desc = resolve::subject((self.db, self.auth), &named, (&qn, RoutineKind::Function), args.len())?;
+        let bound = self.prebound(args, scope)?;
+        let types: Vec<Option<DataType>> = bound.iter().map(|b| b.as_ref().map(|(_, t)| t.clone())).collect();
+        let shown = schema.map_or_else(|| name.to_owned(), |s| format!("{s}.{name}"));
+        match self.subject_function(named, &types, &shown)? {
+            Chosen::One(Candidate::Sql(desc)) => self.sql_invocation(desc, args, bound, scope).map(Called::Done),
+            Chosen::One(Candidate::Cast(t, which)) => self.cast_invocation((t, which), args, bound, scope).map(Called::Done),
+            Chosen::Refused(e) => Ok(Called::Pass(Passed { bound: Some(bound), refusal: Some(e) })),
+            Chosen::Nothing => Ok(Called::Pass(Passed { bound: Some(bound), refusal: None })),
+        }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §9.18, §10.4] The invocation of `desc`, an
+    /// SQL-invoked function of an SQL routine body, with `args`, those
+    /// but a `?` bound as `bound`: its arguments, its body and its result
+    /// type (Feature T321).
+    fn sql_invocation(
+        &self,
+        desc: &SqlRoutineDesc,
+        args: &[ValueExpression],
+        bound: Prebound,
+        scope: Scope<'_>,
+    ) -> Result<(Expr, DataType)> {
         self.permitted(desc)?;
-        let (args, params) = self.routine_arguments(desc, args, scope)?;
+        let (args, params) = self.routine_arguments(desc, args, bound, scope)?;
+        let qn = &desc.name;
         let result = desc.returns.clone().ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR10e] {qn} is no function")))?;
         let definition = routine_definition(&desc.text)?;
         let cx = super::Context { uses: None, selected: None, referencing: None, draws: false, invoked: self.invoked, ..self.context() };
-        let (bound, _) = body::bind_body(cx, (desc, &definition), body::chain_of(self.invoked))?;
-        resolve::note(self.invoked, desc);
+        let (bound_body, _) = body::bind_body(cx, (desc, &definition), body::chain_of(self.invoked))?;
+        resolve::note(self.invoked, &desc.specific);
         let invocation = Invocation {
             name: desc.name.clone(),
             specific: desc.specific.clone(),
             args,
             params,
-            body: bound.body,
+            body: bound_body.body,
             result: result.clone(),
             null_call: desc.null_call,
             deterministic: desc.deterministic,
         };
-        Ok(Some((Expr::Invoked(Arc::new(invocation)), result)))
+        Ok((Expr::Invoked(Arc::new(invocation)), result))
     }
 
-    /// [ISO/IEC 9075-2:2023 §9.18 SR10d, SR10h v] The arguments `args` of
-    /// an invocation of `desc`, bound in `scope`, a `?` of its parameter's
-    /// declared type; and the name and type of each parameter.
-    fn routine_arguments(&self, desc: &SqlRoutineDesc, args: &[ValueExpression], scope: Scope<'_>) -> Result<Arguments> {
-        let mut bound = Vec::with_capacity(args.len());
-        for (arg, p) in args.iter().zip(&desc.parameters) {
-            let (e, t) = self.typed(arg, ParameterType::Of(p.data_type.clone()), scope)?;
-            // [SR10d iv] its designator in the argument's type precedence
-            // list, [SR10h v] and the argument assignable to it.
-            if !in_precedence_list(&p.data_type, &t) || !super::assignable(&p.data_type, &t) {
+    /// [ISO/IEC 9075-2:2023 §9.18 SR10l iii, §20.7 SR xxx] The arguments
+    /// `args` of an invocation of `desc`, bound as `bound`, each but a `?`,
+    /// which takes its parameter's declared type; and the name and type of
+    /// each parameter.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if an argument cannot be stored in its parameter.
+    fn routine_arguments(&self, desc: &SqlRoutineDesc, args: &[ValueExpression], bound: Prebound, scope: Scope<'_>) -> Result<Arguments> {
+        let mut out = Vec::with_capacity(args.len());
+        for ((arg, slot), p) in args.iter().zip(bound).zip(&desc.parameters) {
+            let (e, t) = match slot {
+                Some(given) => given,
+                None => self.typed(arg, ParameterType::Of(p.data_type.clone()), scope)?,
+            };
+            if !super::assignable(&p.data_type, &t) {
                 return Err(rule(format!(
-                    "[ISO/IEC 9075-2:2023 §9.18 SR10d] parameter {} of function {} is of {}, which an argument of {t} is not assignable to",
+                    "[ISO/IEC 9075-2:2023 §9.18 SR10l iii, §9.2 SR2] parameter {} of function {} is of {}, which an argument of {t} cannot be stored in",
                     p.name, desc.name, p.data_type
                 )));
             }
-            bound.push(e);
+            out.push(e);
         }
         let params = desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone())).collect();
-        Ok((bound, params))
+        Ok((out, params))
     }
 
     /// That what the invocation is bound for may invoke `desc`: one that

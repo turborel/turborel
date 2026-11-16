@@ -25,7 +25,7 @@ use crate::ast::{
 };
 use crate::binder::{BoundView, Context, bind_view, qualify, table_columns};
 use crate::catalog::{
-    ColumnDefault, ColumnDesc, Generated, Generation, Identity, QualifiedName, SequenceDesc, TableDesc, TemporaryKind, applicable,
+    ColumnDefault, ColumnDesc, Generated, Generation, Horizon, Identity, QualifiedName, SequenceDesc, TableDesc, TemporaryKind, applicable,
 };
 use crate::error::{At, Code, Result, SqlError};
 use crate::lexer::{Tok, delim, lex};
@@ -152,7 +152,7 @@ impl State {
             }
             if let (Some(true), Some(g)) = (like.generated, c.generation()) {
                 let text = renamed(&g.text, table)?;
-                kept.generated = Some(Generated::Expression(Generation { text, names: g.names.clone() }));
+                kept.generated = Some(Generated::Expression(Generation { text, names: g.names.clone(), horizon: Horizon::default() }));
             }
             copied.push((TableElement::Column(defined(c, like.at)), kept));
         }

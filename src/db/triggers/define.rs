@@ -27,7 +27,7 @@ use super::rerouted::bind_taken;
 use super::run::{parsed, transitions_of};
 use crate::ast::{InsertSource, InsertStatement, MergeStatement, Schema, SqlStatement, TriggerDefinition, TriggerEvent as Written};
 use crate::binder::{
-    Context, ObjectColumn, Uses, WriteKind, bind_insert_query, bind_merge, bind_select, bind_when, bind_write, once_each, qualify,
+    Context, Invoked, ObjectColumn, Uses, WriteKind, bind_insert_query, bind_merge, bind_select, bind_when, bind_write, once_each, qualify,
 };
 use crate::catalog::{ActionTime, Horizon, QualifiedName, TransitionNames, TriggerDesc, TriggerEvent, ViewDesc, applicable, owner_of};
 use crate::error::{At, Code, Result, SqlError, Subject};
@@ -83,9 +83,11 @@ impl State {
             columns: Vec::new(),
             created,
         };
-        let (reads, columns) = self.bind_action(&desc, t, &owner)?;
+        let invoked = Invoked::default();
+        let (reads, columns) = self.bind_action(&desc, t, (&owner, &invoked))?;
         let seen: Vec<QualifiedName> = reads.iter().chain([&table]).cloned().collect();
-        desc.horizon = Horizon::of(&*self.catalog, &seen);
+        // [ISO/IEC 9075-2:2023 §4.35.2] and its subject routines from now on.
+        desc.horizon = Horizon::of(&*self.catalog, &seen).invoking(invoked.take());
         (desc.reads, desc.columns) = (reads, columns);
         let locks = desc.reads.iter().map(|r| (r.clone(), LockMode::Shared)).chain([(table, LockMode::Exclusive)]).collect();
         let mut catalog = self.catalog.duplicate();
@@ -199,14 +201,14 @@ impl State {
     }
 
     /// The action of `t`, whose descriptor `desc` is, its WHEN condition
-    /// and its statements bound under `owner`, as the module says: what it
-    /// names.
-    fn bind_action(&self, desc: &TriggerDesc, t: &TriggerDefinition, owner: &str) -> Result<Reads> {
+    /// and its statements bound under `owner`, as the module says, the
+    /// routines they invoke noted in `invoked`: what it names.
+    fn bind_action(&self, desc: &TriggerDesc, t: &TriggerDefinition, (owner, invoked): (&str, &Invoked)) -> Result<Reads> {
         let transitions = Arc::new(transitions_of(self, desc)?);
         let width = transitions.columns.len().saturating_mul(2);
         let params = Params::transitional(vec![Value::Null; width], transitions);
         let uses = Uses::default();
-        let cx = || Context { schema: &desc.schema, uses: Some(&uses), ..Context::new(self, owner, &params) };
+        let cx = || Context { schema: &desc.schema, uses: Some(&uses), invoked: Some(invoked), ..Context::new(self, owner, &params) };
         if let Some(when) = &t.when {
             bind_when(cx(), when)?;
         }
@@ -311,7 +313,7 @@ impl State {
         let definition = parsed(&t.text)?;
         let owner = owner_of(&*self.catalog, &t.name.auth).to_owned();
         self.trigger_privileges(&owner, &t.table, &t.names)?;
-        self.bind_action(t, &definition, &owner).map(drop)
+        self.bind_action(t, &definition, (&owner, &Invoked::default())).map(drop)
     }
 
     /// [ISO/IEC 9075-2:2023 §11.50] DROP TRIGGER `qn`: its descriptor

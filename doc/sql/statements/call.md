@@ -43,7 +43,9 @@ as PARAMETER_NAME, PARAMETER_MODE and PARAMETER_ORDINAL_POSITION.
 ## RULES
 
 1. There is a procedure of the name with as many parameters as there
-   are arguments.
+   are arguments. Procedures of one name each have another number of
+   parameters, so it is the one invoked. A `?` argument of an IN
+   parameter takes the parameter's type.
 2. Each argument is as its parameter's mode allows, and its type is one
    its parameter's or its target's takes.
 3. NULL or DEFAULT as an argument of an IN parameter, and DEFAULT of an

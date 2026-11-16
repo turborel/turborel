@@ -65,8 +65,8 @@ impl State {
     pub(crate) fn owner_grantable(&self, domain: &DomainDesc) -> Result<bool> {
         let owner = owner_of(&*self.catalog, &domain.name.auth);
         for c in &domain.constraints {
-            let ConstraintKind::Check { text, names, .. } = &c.kind else { continue };
-            for (table, column) in self.domain_constraint_uses(domain, (text, names))? {
+            let ConstraintKind::Check { text, names, horizon, .. } = &c.kind else { continue };
+            for (table, column) in self.domain_constraint_uses(domain, (text, names, horizon))? {
                 let grantable = applicable(&*self.catalog, owner, &table).1;
                 if !position(&*self.catalog, &table, &column).is_some_and(|at| grantable.references.contains(&at)) {
                     return Ok(false);
