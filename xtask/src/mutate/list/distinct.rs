@@ -75,7 +75,7 @@ pub const DISTINCT: [Mutation; 11] = [
         unit: &[],
     },
     Mutation {
-        name: "distinct-overload-untyped",
+        name: "distinct-source-parameter",
         package: Package::Core,
         breaks: "a function of a name is chosen by its source type, FNSDT's parameter taken to be the source's, not the distinct type's",
         file: "src/binder/invocation/candidates.rs",

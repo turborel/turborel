@@ -1719,7 +1719,10 @@ each declare the types of their parameters and that no call could invoke two
 of alike, chosen by the arguments' types as an SQL-invoked function is
 (RULES.md D53, D74). Any other second registration of a name is refused. A
 function of the default schema that takes the arguments is invoked before a
-registered one.
+registered one. A call of a registered aggregate's name is the
+aggregate's unless a function of the default schema of the name has as
+many parameters as the call has arguments, as that is told before the
+arguments are bound.
 
 ---
 

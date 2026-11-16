@@ -36,7 +36,7 @@ mod tests;
 pub use body::{FunctionBody, bind_function_body, routine_definition};
 pub use candidates::{Candidate, alike, functions_named};
 pub(super) use resolve::note as note_specific;
-pub use resolve::resolve_routine;
+pub use resolve::resolve_procedure;
 
 use candidates::Chosen;
 pub(super) use candidates::shown_types;

@@ -25,7 +25,7 @@ use super::super::assignment::{assign_targets, check_targets};
 use super::super::compiled::plan;
 use super::super::{Completion, Session, State, StatementContext, rule};
 use crate::ast::{CallStatement, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification};
-use crate::binder::{Context, OutColumn, assignable, bind_argument, qualify, resolve_routine, routine_definition};
+use crate::binder::{Context, OutColumn, assignable, bind_argument, qualify, resolve_procedure, routine_definition};
 use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of};
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::exec::execute;
@@ -123,7 +123,7 @@ impl State {
     /// argument is not as its parameter's mode allows; -104 without
     /// EXECUTE on it; an argument's, bound.
     pub(in crate::db) fn bind_call(cx: Context<'_>, call: &CallStatement) -> Result<BoundCall> {
-        let desc = resolve_routine(cx, &call.name, RoutineKind::Procedure, call.arguments.len())?;
+        let desc = resolve_procedure(cx, &call.name, call.arguments.len())?;
         let (mut inputs, mut targets) = (Vec::new(), Vec::new());
         for (k, (p, a)) in desc.parameters.iter().zip(&call.arguments).enumerate() {
             let target = match a {

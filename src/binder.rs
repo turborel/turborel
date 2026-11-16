@@ -86,7 +86,7 @@ pub use counterparts::defaulted_columns;
 pub use cursor::bind_cursor;
 use from::FromItem;
 pub use generated::{bind_generation, generations, noting_generation};
-pub use invocation::{Candidate, FunctionBody, alike, bind_function_body, functions_named, resolve_routine, routine_definition};
+pub use invocation::{Candidate, FunctionBody, alike, bind_function_body, functions_named, resolve_procedure, routine_definition};
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 pub use parameters::bind_argument;
 use query::bind_query_specification;

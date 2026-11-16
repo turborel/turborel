@@ -791,7 +791,11 @@ its parameters (`ScalarFunction::parameter_types`), chosen the same way.
 The functions of the schema are searched first, and the registered ones
 only if none of the schema the caller holds EXECUTE on takes the
 arguments [§9.18 SR10h iv 1], so a function of the schema of another
-type never hides a registered one.
+type never hides a registered scalar function. Whether a call is of a
+registered aggregate is told before its arguments are bound, since
+whether its query is grouped depends on it. So it is the aggregate's
+unless a function of the schema of the name has as many parameters as
+the call has arguments, whatever their types.
 
 #### D33. Schema changes are transactional
 

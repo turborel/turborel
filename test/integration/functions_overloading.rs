@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex};
 
 use turborel::db::Database;
 use turborel::error::{Code, Result};
-use turborel::functions::ScalarFunction;
+use turborel::functions::{Accumulator, AggregateFunction, ScalarFunction};
 use turborel::params::ParameterType;
 use turborel::settings::Configurable;
-use turborel::value::{BIGINT_PRECISION, DOUBLE_PRECISION, DataType, Decimal, INTEGER_PRECISION, Spelled, Value};
+use turborel::value::{BIGINT_PRECISION, DOUBLE_PRECISION, DataType, Decimal, INTEGER_PRECISION, MAX_EXACT_PRECISION, Spelled, Value};
 
 use crate::common::{Noted, code, function_calls, rows, setup, whole};
 
@@ -238,4 +238,55 @@ fn overloads_share_their_settings() {
     assert_eq!((first.told(), second.told()), (1, 1), "the default");
     db.set_setting("HALF.DEPTH", &whole(4)).unwrap();
     assert_eq!((first.told(), second.told()), (4, 4), "one setting, told to both");
+}
+
+/// An aggregate TALLY, the number of values it is given.
+struct Tally;
+
+/// The count a `Tally` has made.
+struct Counted(i128);
+
+impl AggregateFunction for Tally {
+    fn name(&self) -> &'static str {
+        "TALLY"
+    }
+    fn result_type(&self, _arg: Option<DataType>) -> Result<DataType> {
+        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
+    }
+    fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
+        Box::new(Counted(0))
+    }
+}
+
+impl Accumulator for Counted {
+    fn update(&mut self, _v: &Value) -> Result<()> {
+        self.0 += 1;
+        Ok(())
+    }
+    fn finish(&self) -> Result<Value> {
+        Ok(Value::Exact(Decimal::new(self.0, 0)))
+    }
+}
+
+/// Verifies: [EXTENSION] RULES.md D74 a call of a registered aggregate's
+/// name is the aggregate's unless a function of the default schema of the
+/// name has as many parameters as it has arguments: an SQL-invoked
+/// function TALLY of two parameters leaves TALLY(ID) to the aggregate,
+/// and is invoked by TALLY(1, 2); one of one parameter takes the name,
+/// so TALLY(ID) of a DATE parameter is refused (SQLCODE -103), as which
+/// it is is told before its argument is bound.
+#[test]
+fn a_registered_aggregate_is_hidden_only_by_a_function_of_its_arity() {
+    let db = setup();
+    db.register_aggregate_function(Box::new(Tally)).unwrap();
+    let s = db.session("APP");
+    s.run("CREATE FUNCTION TALLY (A INTEGER, B INTEGER) RETURNS INTEGER CONTAINS SQL RETURN A + B").unwrap();
+    s.commit().unwrap();
+    function_calls(&s);
+    let counted = rows(&s, "SELECT COUNT(*) FROM T");
+    assert_eq!(rows(&s, "SELECT TALLY(ID) FROM T"), counted, "the aggregate");
+    assert_eq!(rows(&s, "SELECT TALLY(1, 2) FROM T WHERE ID = 1"), Ok(vec!["3".to_owned()]), "the schema's");
+    s.run("CREATE FUNCTION TALLY (D DATE) RETURNS INTEGER CONTAINS SQL RETURN 0").unwrap();
+    s.commit().unwrap();
+    assert_eq!(code(&s, "SELECT TALLY(ID) FROM T"), Code::SyntaxRule);
 }

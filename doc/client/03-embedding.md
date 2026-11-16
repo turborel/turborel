@@ -309,7 +309,9 @@ function of a name already registered, a standard one's such as UPPER
 too, is refused (SQLCODE -910), and the first stays. Overloads share
 the settings under their name, each as the first to declare it
 declared it. A function of the session's default schema that takes a
-call's arguments is invoked before a registered one of its name. An
+call's arguments is invoked before a registered one of its name, and
+one of as many parameters as a call has arguments takes the call from
+a registered aggregate of its name, whatever their types. An
 index method that knows a predicate's function by its name should look
 at its parameter types too. A call,
 `NAME(arguments)`, is syntax the standards do not have *(extension)*:

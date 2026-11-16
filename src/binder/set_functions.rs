@@ -45,8 +45,8 @@ pub(super) fn column_references<'v>(v: &'v ValueExpression, out: &mut Vec<&'v Va
 pub(super) fn is_aggregate_call(v: &ValueExpression, (db, path): (&State, &str)) -> bool {
     match v {
         ValueExpression::SetFunction(_) => true,
-        ValueExpression::Call { schema: None, name, extension: true, .. } => {
-            db.functions.aggregate(name).is_some() && !super::routines::names_routine(db, path, name)
+        ValueExpression::Call { schema: None, name, args, extension: true, .. } => {
+            db.functions.aggregate(name).is_some() && !super::routines::names_routine(db, path, (name, args.len()))
         }
         ValueExpression::Call { .. }
         | ValueExpression::Dyadic(..)

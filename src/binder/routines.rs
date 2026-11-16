@@ -12,10 +12,10 @@
 //! source's (UV103): FNUDT binds as its argument assigned to the source
 //! type, and FNSDT as its argument, typed as the source.
 
-use super::invocation::{Prebound, functions_named};
+use super::invocation::{Candidate, Prebound, functions_named};
 use super::{Binder, Scope, rule};
 use crate::ast::ValueExpression;
-use crate::catalog::{QualifiedName, Routine, UserTypeDesc, owner_of};
+use crate::catalog::{QualifiedName, Routine, UserTypeDesc};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::Expr;
@@ -25,11 +25,15 @@ use crate::value::DataType;
 /// A function a distinct type's definition makes: its type, and which.
 type Function<'a> = (&'a UserTypeDesc, Routine);
 
-/// Whether a call of `name` of no schema, in a statement whose names are
-/// of schema `path`, is of a function of the schema, not of an aggregate
-/// registered: an SQL-invoked function's or a distinct type's of the name.
-pub(super) fn names_routine(db: &State, path: &str, name: &str) -> bool {
-    !functions_named(db, &QualifiedName { auth: path.to_owned(), ident: name.to_owned() }).is_empty()
+/// Whether a call of `name` of no schema with `arity` arguments, in a
+/// statement whose names are of schema `path`, is of a function of the
+/// schema, not of an aggregate registered: an SQL-invoked function's or a
+/// distinct type's of the name and of as many parameters (RULES.md D74).
+/// \[DESIGN\] It is told before the arguments are bound, as whether a
+/// query is grouped depends on it, so their types do not decide.
+pub(super) fn names_routine(db: &State, path: &str, (name, arity): (&str, usize)) -> bool {
+    let named = functions_named(db, &QualifiedName { auth: path.to_owned(), ident: name.to_owned() });
+    named.iter().any(|f| f.parameters().len() == arity)
 }
 
 impl Binder<'_> {
@@ -78,13 +82,6 @@ impl Binder<'_> {
         })
     }
 
-    /// Whether the statement's authorization identifier holds EXECUTE on
-    /// `f` [ISO/IEC 9075-2:2023 §9.18 SR6a, SR6b]: the owner of the schema
-    /// it is of, of a statement there, as the view or constraint binds it.
-    fn holds_execute(&self, (t, which): Function<'_>) -> bool {
-        t.execute_of(which, self.auth, owner_of(&*self.db.catalog, &t.name.auth)).0
-    }
-
     /// [ISO/IEC 9075-2:2023 §6.13 AR2] That the statement's authorization
     /// identifier holds EXECUTE on the cast function of CAST from `from`
     /// to `to`, if a distinct type's: FNUDT to it, FNSDT from it
@@ -106,7 +103,7 @@ impl Binder<'_> {
         };
         let qn = QualifiedName { auth: d.schema.clone(), ident: d.name.clone() };
         let t = self.db.catalog.user_type(&qn).ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §6.1] there is no type {qn}")))?;
-        if self.holds_execute((t, which)) {
+        if Candidate::Cast(t, which).executable(self.db, self.auth) {
             return Ok(());
         }
         let msg =

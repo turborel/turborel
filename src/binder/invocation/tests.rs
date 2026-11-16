@@ -291,20 +291,32 @@ fn argument_not_assignable_is_refused() {
     assert_eq!((e.code, e.rule.as_deref()), (Code::SyntaxRule, Some("ISO/IEC 9075-2:2023 §9.18 SR10d")));
 }
 
+/// Procedure S.`name` of no parameters, as `function` makes a function.
+fn procedure(name: &str) -> SqlRoutineDesc {
+    SqlRoutineDesc {
+        kind: RoutineKind::Procedure,
+        returns: None,
+        access: DataAccess::Reads,
+        text: format!("CREATE PROCEDURE S.{name} () READS SQL DATA SELECT 1 INTO N FROM T"),
+        body: "SELECT 1 INTO N FROM T".into(),
+        ..function(name, &[], "1")
+    }
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.18 SR6] an authorization
-/// identifier that holds no EXECUTE on the function is refused (SQLCODE
+/// identifier that holds no EXECUTE on the procedure is refused (SQLCODE
 /// -104); the owner of its schema, one granted it and any, if PUBLIC is,
 /// hold it.
 #[test]
 fn execute_is_required() {
-    let owned = database(vec![function("F", &[], "1")]);
+    let owned = database(vec![procedure("P")]);
     let params = Params::new();
-    let name = TableName { auth: Some("S".into()), ident: "F".into(), at: 0 };
-    let as_of = |auth: &'static str, db: &State| resolve_routine(Context::new(db, auth, &params), &name, RoutineKind::Function, 0);
+    let name = TableName { auth: Some("S".into()), ident: "P".into(), at: 0 };
+    let as_of = |auth: &'static str, db: &State| resolve_procedure(Context::new(db, auth, &params), &name, 0);
     let e = failure(as_of("R", &owned));
     assert_eq!((e.code, e.rule.as_deref()), (Code::Privilege, Some("ISO/IEC 9075-2:2023 §9.18 SR6")));
     assert!(as_of("S", &owned).is_ok());
-    let mut granted = function("F", &[], "1");
+    let mut granted = procedure("P");
     granted.execute.push(UsageDesc { grantor: "S".into(), grantee: Some("R".into()), grantable: false });
     let to_r = database(vec![granted.clone()]);
     assert!(as_of("R", &to_r).is_ok());
@@ -314,24 +326,29 @@ fn execute_is_required() {
     assert!(as_of("Q", &to_public).is_ok());
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.18 SR9e, SR10b] a name of
-/// no schema is of the statement's default schema; of another, there is
-/// no routine of the name (SQLCODE -103); a procedure is no function. The
-/// routine found is noted among those the statement invokes.
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.18 SR9b, SR9e, SR9c] a
+/// name of no schema is of the statement's default schema; of another,
+/// there is no procedure of the name (SQLCODE -103); a function is no
+/// procedure; a CALL of another number of arguments is refused, naming
+/// the numbers the procedures of the name have. The procedure found is
+/// noted among those the statement invokes.
 #[test]
 fn unqualified_name_is_of_the_default_schema() {
-    let st = database(vec![function("F", &[], "1")]);
+    let st = database(vec![procedure("P"), function("F", &[], "1")]);
     let params = Params::new();
-    let name = TableName { auth: None, ident: "F".into(), at: 0 };
+    let name = TableName { auth: None, ident: "P".into(), at: 0 };
     let noted: Invoked = RefCell::new(Vec::new());
     let cx = Context { schema: "S", invoked: Some(&noted), ..Context::new(&st, "S", &params) };
-    assert_eq!(resolve_routine(cx, &name, RoutineKind::Function, 0).unwrap().specific, qn("S", "F"));
-    assert_eq!(*noted.borrow(), vec![qn("S", "F")]);
+    assert_eq!(resolve_procedure(cx, &name, 0).unwrap().specific, qn("S", "P"));
+    assert_eq!(*noted.borrow(), vec![qn("S", "P")]);
     let elsewhere = Context { schema: "R", ..cx };
-    let absent = failure(resolve_routine(elsewhere, &name, RoutineKind::Function, 0));
-    assert_eq!((absent.code, absent.rule.as_deref()), (Code::SyntaxRule, Some("ISO/IEC 9075-2:2023 §9.18 SR10h iv")));
-    let no_procedure = failure(resolve_routine(cx, &name, RoutineKind::Procedure, 0));
-    assert_eq!(no_procedure.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.18 SR9e"));
+    let absent = failure(resolve_procedure(elsewhere, &name, 0));
+    assert_eq!((absent.code, absent.rule.as_deref()), (Code::SyntaxRule, Some("ISO/IEC 9075-2:2023 §9.18 SR9e")));
+    let function = TableName { auth: None, ident: "F".into(), at: 0 };
+    assert_eq!(failure(resolve_procedure(cx, &function, 0)).rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.18 SR9e"));
+    let more = failure(resolve_procedure(cx, &name, 2));
+    assert_eq!(more.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.18 SR9b"));
+    assert!(more.msg.contains("have 0"), "{}", more.msg);
 }
 
 /// A database of function S.F, of `access`, deterministic if

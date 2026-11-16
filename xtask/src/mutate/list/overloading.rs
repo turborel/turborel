@@ -8,8 +8,9 @@
 //! choosing afresh, its routines not kept in the catalog, and what invokes
 //! a routine not found from them. Of registered functions: one not told
 //! apart taken, an argument not stored in its declared type, and the
-//! refusal of a function of the schema winning over one registered; and
-//! the rule a refusal cites.
+//! refusal of a function of the schema winning over one registered, and a
+//! registered aggregate hidden by a function of the schema of another
+//! number of parameters; and the rule a refusal cites.
 
 use super::{Mutation, Package};
 
@@ -23,11 +24,13 @@ const DEFINE: &str = "src/db/routines/define.rs";
 const FUNCTIONS: &str = "src/functions.rs";
 /// The test of the choice by argument types.
 const CHOSEN: &str = "routines_overloading::an_argument_type_chooses_the_function_9_18";
+/// The test of a registered aggregate beside functions of its name.
+const AGGREGATE: &str = "functions_overloading::a_registered_aggregate_is_hidden_only_by_a_function_of_its_arity";
 /// The test of a view's subject routine kept.
 const VIEW_KEPT: &str = "routines_fixed::a_view_keeps_its_subject_routine_4_35_2";
 
 /// The mutations of overloading.
-pub const OVERLOADING: [Mutation; 16] = [
+pub const OVERLOADING: [Mutation; 18] = [
     Mutation {
         name: "overloading-approximate-first",
         package: Package::Core,
@@ -193,6 +196,26 @@ pub const OVERLOADING: [Mutation; 16] = [
         original: "[] if !pool.iter().any(|c| c.parameters().len() == args.len()) => {",
         replacement: "[] if pool.iter().any(|c| c.parameters().len() == args.len()) => {",
         integration: &["routines_overloading::invocations_without_one_subject_are_refused_9_18"],
+        unit: &[],
+    },
+    Mutation {
+        name: "overloading-aggregate-any-arity",
+        package: Package::Core,
+        breaks: "a function of the schema of a registered aggregate's name hides it whatever its number of parameters",
+        file: "src/binder/routines.rs",
+        original: "named.iter().any(|f| f.parameters().len() == arity)",
+        replacement: "{ let _ = arity; !named.is_empty() }",
+        integration: &[AGGREGATE],
+        unit: &[],
+    },
+    Mutation {
+        name: "overloading-aggregate-bound-as-routine",
+        package: Package::Core,
+        breaks: "a call grouping reads as a registered aggregate's is bound to the schema's function of the name, and refused",
+        file: "src/binder/expression.rs",
+        original: "let passed = if is_aggregate_call(v, (self.db, self.schema)) {",
+        replacement: "let passed = if is_aggregate_call(v, (self.db, self.schema)) && false {",
+        integration: &[AGGREGATE],
         unit: &[],
     },
 ];

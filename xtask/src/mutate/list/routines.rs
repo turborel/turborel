@@ -87,9 +87,9 @@ pub const ROUTINES: [Mutation; 22] = [
         name: "routines-execute-unchecked",
         package: Package::Core,
         breaks: "a routine is invoked by one who holds no EXECUTE on it",
-        file: "src/binder/invocation/resolve.rs",
-        original: "if !holds_execute(db, auth, r) {",
-        replacement: "if !holds_execute(db, auth, r) && false {",
+        file: "src/binder/invocation/candidates.rs",
+        original: "Candidate::Sql(r) => auth == owner_of(&*db.catalog, &r.name.auth) || r.execute_of(auth).0,",
+        replacement: "Candidate::Sql(r) => { let _ = (r, db, auth); true }",
         integration: &[
             "routines_privileges::execute_is_granted_and_revoked_12_3",
             "routines_call::call_needs_execute_and_runs_as_the_owner_12_3",

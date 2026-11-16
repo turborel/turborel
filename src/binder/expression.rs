@@ -10,7 +10,7 @@ use super::arguments::registered_subject;
 use super::arithmetic::distinct_operand;
 use super::composite::{grouping_operand, ordering_operand};
 use super::invocation::{Called, Passed};
-use super::set_functions::column_references;
+use super::set_functions::{column_references, is_aggregate_call};
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
 use crate::ast::{Composite, Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
@@ -174,10 +174,15 @@ impl Binder<'_> {
             ValueExpression::Call { schema, name, args, at, extension } => {
                 // [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10h iv 1] a function of
                 // the schema, an SQL-invoked function or a distinct type's
-                // (D69), then one registered (D53, D74).
-                let passed = match self.invocation((schema.as_deref(), name), args, scope).or_at(*at)? {
-                    Called::Done(invoked) => return Ok(invoked),
-                    Called::Pass(passed) => passed,
+                // (D69), then one registered (D53, D74); of a call grouping
+                // reads as a registered aggregate's, that aggregate.
+                let passed = if is_aggregate_call(v, (self.db, self.schema)) {
+                    Passed::default()
+                } else {
+                    match self.invocation((schema.as_deref(), name), args, scope).or_at(*at)? {
+                        Called::Done(invoked) => return Ok(invoked),
+                        Called::Pass(passed) => passed,
+                    }
                 };
                 let aggregate = self.db.functions.aggregate(name).is_some();
                 let called = || self.call((schema.as_deref(), name, *extension), args, passed, scope);
