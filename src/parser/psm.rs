@@ -326,7 +326,10 @@ impl Parser {
         // A triggered action's refuses them by its own rule [ISO/IEC
         // 9075-2:2023 §11.49 SR13].
         if (self.is_kw(kw::COMMIT) || self.is_kw(kw::ROLLBACK)) && self.trigger.is_none() {
-            return Err(self.transaction_end_refused());
+            if let Some(refused) = self.transaction_end_refused() {
+                return Err(refused);
+            }
+            return Ok(self.transaction_end());
         }
         let at = self.here();
         let cursor = self.is_kw(kw::OPEN) || self.is_kw(kw::FETCH) || self.is_kw(kw::CLOSE);
@@ -345,24 +348,22 @@ impl Parser {
         Ok(statement)
     }
 
-    /// Why the COMMIT or ROLLBACK next is refused: none is in an ATOMIC
-    /// compound statement [§14.1 SR6] or a FOR [§14.13 SR9]; a routine's
-    /// body holds none (IA078) [ISO/IEC 9075-2:2023 §11.60 SR23f]; and, of
-    /// a compound statement NOT ATOMIC run directly, ending the
-    /// transaction the statement runs in is not implemented.
-    fn transaction_end_refused(&self) -> SqlError {
+    /// Why the COMMIT or ROLLBACK next is refused, if it is: none is in an
+    /// ATOMIC compound statement [§14.1 SR6] or a FOR [§14.13 SR9], and a
+    /// routine's body holds none (IA078) [ISO/IEC 9075-2:2023 §11.60
+    /// SR23f]. An SQL control statement NOT ATOMIC run directly may hold
+    /// one, which ends the transaction it runs in [§4.10.4].
+    fn transaction_end_refused(&self) -> Option<SqlError> {
         let at = self.here();
         if self.blocks.iter().any(|b| b.kind == BlockKind::Atomic || b.held.is_some() || b.open()) {
             let msg = "[ISO/IEC 9075-4:2006 draft §14.1 SR6, §14.13 SR9] an ATOMIC compound statement or a FOR holds no COMMIT or \
                        ROLLBACK";
-            return rule_at(at, msg);
+            return Some(rule_at(at, msg));
         }
         if self.routine.as_ref().is_some_and(|r| !r.direct) {
-            return rule_at(at, "[ISO/IEC 9075-2:2023 §11.60 SR23f] an SQL routine body holds no COMMIT or ROLLBACK (IA078)");
+            return Some(rule_at(at, "[ISO/IEC 9075-2:2023 §11.60 SR23f] an SQL routine body holds no COMMIT or ROLLBACK (IA078)"));
         }
-        let msg = "[ISO/IEC 9075-4:2006 draft §4.10.4] COMMIT or ROLLBACK in a compound statement NOT ATOMIC run directly is valid SQL but is \
-                   not implemented";
-        SqlError::at(Code::Unsupported, at, msg)
+        None
     }
 
     /// That `statement`, at `at`, may be where it is: its cursor declared

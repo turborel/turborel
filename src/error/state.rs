@@ -247,6 +247,9 @@ impl SqlState {
     pub const INVALID_CURSOR_STATE: SqlState = SqlState(*b"24000");
     /// Invalid transaction state.
     pub const INVALID_TRANSACTION_STATE: SqlState = SqlState(*b"25000");
+    /// Invalid transaction termination [ISO/IEC 9075-2:2023 §17.7 GR2,
+    /// §17.8 GR2].
+    pub const INVALID_TRANSACTION_TERMINATION: SqlState = SqlState(*b"2D000");
     /// Invalid transaction state: active SQL-transaction [ISO/IEC
     /// 9075-2:2023 §19.3 GR1].
     pub const ACTIVE_TRANSACTION: SqlState = SqlState(*b"25001");

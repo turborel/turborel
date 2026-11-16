@@ -80,6 +80,19 @@ ATOMIC, the changes of the statements before an exception no handler
 handles stay. Of one ATOMIC, they are all undone. A trigger's compound
 statement is ATOMIC.
 
+A compound statement NOT ATOMIC run directly may hold COMMIT and
+ROLLBACK, which end the transaction it runs in. The statements after
+run in a new transaction, begun as the first of them needs one. COMMIT
+closes every cursor open, the compound statement's own among them, so
+one must be opened again before it is fetched from. A COMMIT last leaves
+no transaction active. A statement sees the tables and other objects
+that the statements before it defined.
+
+A handler's action may hold COMMIT too. It runs while the statement
+that raised the condition runs, so if that is an ATOMIC compound
+statement within the handler's own, COMMIT or ROLLBACK raises invalid
+transaction termination, and the ATOMIC statement is undone.
+
 A compound statement run directly is read as the body of a procedure
 of no parameters. Its statements run with the privileges of the
 session's user. In the body of a routine they run with those of the
@@ -104,8 +117,7 @@ true, is cancelled as any statement is, with SQLCODE -920.
 5. A default is a value of the variable's type. ARRAY[] is the default
    of an array type alone.
 6. An ATOMIC compound statement holds no COMMIT or ROLLBACK, nor does
-   the body of a routine. In one NOT ATOMIC run directly, COMMIT and
-   ROLLBACK are not implemented.
+   a FOR within it, nor the body of a routine.
 7. A compound statement is not preparable.
 
 ## PRIVILEGES
@@ -118,7 +130,8 @@ Those of each statement within, as above.
 |---|---|---|
 | 2A000 | -102 | It is not well formed, or a declaration follows a statement |
 | 2A000 | -103 | A rule above is broken |
-| 0A000 | -900 | It is run directly, NOT ATOMIC, and holds COMMIT or ROLLBACK |
+| 2D000 | -917 | COMMIT or ROLLBACK runs while an ATOMIC compound statement does |
+| 24000 | -501 | A cursor COMMIT or ROLLBACK closed is fetched from |
 | TB920 | -920 | It is cancelled |
 
 An exception a statement within raises, which no handler handles, ends
@@ -176,6 +189,34 @@ turborel: SQLCODE -401 (SQLSTATE 75001): stopped (at character 47)
 (1 row)
 ```
 
+COMMIT keeps what came before it, and ROLLBACK undoes only what came
+after:
+
+```sql
+DELETE FROM STEPS;
+COMMIT;
+BEGIN
+  INSERT INTO STEPS VALUES (5);
+  COMMIT;
+  INSERT INTO STEPS VALUES (6);
+  ROLLBACK;
+  INSERT INTO STEPS VALUES (7);
+  COMMIT;
+END;
+SELECT K FROM STEPS ORDER BY K;
+```
+
+```
+OK
+OK
+OK
+            K
+--------------
+            5
+            7
+(2 rows)
+```
+
 Rules refused:
 
 ```sql
@@ -183,7 +224,6 @@ B1: BEGIN END B2;
 BEGIN INSERT INTO STEPS VALUES (3); DECLARE Y INTEGER; END;
 BEGIN DECLARE Y INTEGER; DECLARE Y INTEGER; END;
 BEGIN ATOMIC INSERT INTO STEPS VALUES (4); COMMIT; END;
-BEGIN INSERT INTO STEPS VALUES (5); COMMIT; END;
 ```
 
 ```
@@ -191,7 +231,6 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): the <ending label> B2 is not B1 [ISO/IE
 turborel: SQLCODE -102 (SQLSTATE 2A000): a compound statement declares its variables and conditions, then its cursors, then its handlers, before its statements, found DECLARE [ISO/IEC 9075-4:2006 draft §14.1] (at character 36)
 turborel: SQLCODE -103 (SQLSTATE 2A000): the compound statement declares the variable Y twice [ISO/IEC 9075-4:2006 draft §14.1 SR10] (at character 33)
 turborel: SQLCODE -103 (SQLSTATE 2A000): an ATOMIC compound statement or a FOR holds no COMMIT or ROLLBACK [ISO/IEC 9075-4:2006 draft §14.1 SR6, §14.13 SR9] (at character 43)
-turborel: SQLCODE -900 (SQLSTATE 0A000): COMMIT or ROLLBACK in a compound statement NOT ATOMIC run directly is valid SQL but is not implemented [ISO/IEC 9075-4:2006 draft §4.10.4] (at character 36)
 ```
 
 ## STANDARD
@@ -199,7 +238,9 @@ turborel: SQLCODE -900 (SQLSTATE 0A000): COMMIT or ROLLBACK in a compound statem
 ISO/IEC 9075-4:2006 draft §14.1, with §14.3 for conditions, §14.4 for
 variables and §12.1 for local cursors, Feature P002. `L.V` is Feature
 P005. Atomicity is that of §4.10.4, and a compound statement is not
-preparable by §4.10.6. SQL-86 and SQL-92 have no such statement.
+preparable by §4.10.6. COMMIT and ROLLBACK are those of ISO/IEC
+9075-2:2023 §17.7 and §17.8, invalid in an atomic execution context by
+their GR2. SQL-86 and SQL-92 have no such statement.
 
 ## SEE ALSO
 

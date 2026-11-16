@@ -216,18 +216,20 @@ fn control_statements_are_not_preparable_4_10_6() {
     assert!(matches!(prepared("SIGNAL SQLSTATE '75001'"), Ok(SqlStatement::Signal(_))));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-4:2006 draft §14.1 SR6, §4.10.4; ISO/IEC
+/// Verifies: [EXTENSION] [ISO/IEC 9075-4:2006 draft §14.1 SR6, §14.13 SR9, §4.10.4; ISO/IEC
 /// 9075-2:2023 §11.60 SR23f] COMMIT or ROLLBACK in an ATOMIC compound
-/// statement breaks SR6, in a routine's body is refused (IA078), and in a
-/// compound statement NOT ATOMIC run directly is not implemented, never
-/// taken and ignored.
+/// statement breaks SR6, in a FOR SR9, and in a routine's body is refused
+/// (IA078); in an SQL control statement NOT ATOMIC run directly it is
+/// read.
 #[test]
-fn commit_and_rollback_in_a_program_are_refused_14_1() {
+fn commit_and_rollback_in_a_program_14_1() {
     let atomic = refusal("BEGIN ATOMIC COMMIT; END");
     assert!(atomic.code == Code::SyntaxRule && atomic.msg.contains("ATOMIC"), "{atomic:?}");
+    let held = refusal("BEGIN FOR SELECT 1 AS X FROM (VALUES (1)) AS O (Y) DO ROLLBACK; END FOR; END");
+    assert!(held.code == Code::SyntaxRule && held.rule.as_deref().is_some_and(|r| r.contains("SR9")), "{held:?}");
     let body = refusal("CREATE PROCEDURE P () MODIFIES SQL DATA BEGIN ROLLBACK; END");
     assert!(body.code == Code::SyntaxRule && body.msg.contains("IA078"), "{body:?}");
-    for text in ["BEGIN COMMIT; END", "BEGIN NOT ATOMIC IF 1 = 1 THEN ROLLBACK WORK; END IF; END", "L: LOOP COMMIT; END LOOP"] {
-        assert_eq!(refusal(text).code, Code::Unsupported, "{text}");
+    for text in ["BEGIN COMMIT; END", "BEGIN NOT ATOMIC IF 1 = 1 THEN ROLLBACK WORK; END IF; END", "L: LOOP COMMIT; LEAVE L; END LOOP"] {
+        control(text);
     }
 }

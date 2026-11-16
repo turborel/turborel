@@ -32,6 +32,12 @@ The transaction ends even if a change cannot be undone. The transaction's
 locks are released once it ends, and the next statement that needs a
 transaction begins a new one.
 
+ROLLBACK may be a statement of a compound statement, or of another SQL
+control statement, NOT ATOMIC and run directly. It ends the
+transaction there, and the statements after it run in a new one (see
+[BEGIN](begin.md)). It may not be in an ATOMIC compound statement, a
+FOR, or the body of a routine or trigger.
+
 ## PRIVILEGES
 
 None.
@@ -40,6 +46,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
+| 2D000 | -917 | It runs in a handler's action while an ATOMIC compound statement runs |
 | TB914 | -914 | A change could not be undone. The transaction still ends; each table concerned is damaged, and refuses every later statement but DROP TABLE until it is repaired |
 
 ## EXAMPLES
@@ -70,7 +77,11 @@ DELETE ROWS at ROLLBACK is this implementation's choice: the rows the
 transaction wrote are undone, and those before it were emptied when the
 transaction before ended. TB914 is this implementation's own.
 
+ISO/IEC 9075-4:2006 draft §4.10.4 makes a compound statement NOT
+ATOMIC a non-atomic execution context, where ROLLBACK may run, and
+ISO/IEC 9075-2:2023 §17.8 GR2 raises 2D000 in an atomic one.
+
 ## SEE ALSO
 
-[COMMIT](commit.md), [SET TRANSACTION](set-transaction.md),
+[BEGIN](begin.md), [COMMIT](commit.md), [SET TRANSACTION](set-transaction.md),
 [Transactions](../../user/06-transactions.md)

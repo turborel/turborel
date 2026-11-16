@@ -139,9 +139,8 @@ impl Session {
     /// SQLCODE -913, SQLSTATE 40002 (transaction rollback: integrity
     /// constraint violation), if one is not satisfied: the caller rolls
     /// back.
-    pub(super) fn check_at_commit(&self, call: &Call<'_>, tx: &Arc<Txn>) -> Result<()> {
-        call.runs(tx);
-        let st = call.state();
+    pub(super) fn check_at_commit(&self, st: &Arc<State>, tx: &Arc<Txn>) -> Result<()> {
+        self.runs(tx);
         // [§14.3 GR3] The rows of a temporary table of ON COMMIT DELETE ROWS
         // are deleted first, so what they would break holds; and no table
         // that keeps its rows refers to one [§11.8 SR5, §11.9 SR4].

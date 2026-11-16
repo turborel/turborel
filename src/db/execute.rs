@@ -152,7 +152,7 @@ impl Session {
         let st = call.state();
         let done = |r: Result<()>| r.map(|()| Completion::Success);
         let tx = match stmt {
-            SqlStatement::Commit => return done(self.db.noted(self.commit_in(call))),
+            SqlStatement::Commit => return done(self.db.noted(self.commit_in(st))),
             // [ISO/IEC 9075:1992 §4.22.7] not transaction initiating.
             SqlStatement::SetConstraints { names, deferred } => return self.set_constraints(call, names.as_deref(), *deferred),
             SqlStatement::Rollback => return done(self.db.noted(self.rollback_in(st))),

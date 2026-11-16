@@ -71,6 +71,9 @@ pub(super) struct Run<'p, 'h, H: Host> {
     /// The conditions the handlers being executed handle, the innermost
     /// last: RESIGNAL resignals the last [§17.3].
     pub(super) handling: Vec<SqlError>,
+    /// How many ATOMIC compound statements, out of scope of the handlers
+    /// being executed, are being executed all the same.
+    hidden_atomic: usize,
 }
 
 /// [ISO/IEC 9075-4:2006 draft Clause 14] Runs `program` over `frame` in
@@ -82,7 +85,7 @@ pub(super) struct Run<'p, 'h, H: Host> {
 /// SQLSTATE value, SQLSTATE 45000 [§17.3 GR6b iii].
 pub(crate) fn run_program<H: Host>(program: &Program, frame: &mut Params, host: &mut H) -> Result<Ended> {
     frame.set_execution(host.execution());
-    let mut run = Run { program, host, frame, scopes: Vec::new(), handling: Vec::new() };
+    let mut run = Run { program, host, frame, scopes: Vec::new(), handling: Vec::new(), hidden_atomic: 0 };
     match run.list(std::slice::from_ref(&program.body)) {
         Ok((Flow::Return(v), _)) => Ok(Ended::Returned(v)),
         Ok((Flow::Next | Flow::Leave(_) | Flow::Iterate(_), completion)) => Ok(Ended::Completed(completion)),
@@ -144,7 +147,10 @@ impl<'p, H: Host> Run<'p, '_, H> {
         // Its action is in scope of the handlers outside its compound
         // statement alone.
         let hidden = self.scopes.split_off(k);
+        let atomic = hidden.iter().filter(|s| s.mark.is_some()).count();
+        self.hidden_atomic = self.hidden_atomic.saturating_add(atomic);
         let ran = self.list(std::slice::from_ref(&handler.action));
+        self.hidden_atomic = self.hidden_atomic.saturating_sub(atomic);
         self.scopes.extend(hidden);
         self.handling.pop();
         self.host.pop_area();
@@ -192,9 +198,27 @@ impl<'p, H: Host> Run<'p, '_, H> {
             // [ISO/IEC 9075-2:2023 §4.41.5] CALL is not atomic: each statement
             // of the procedure is undone alone.
             Step::Statement(c) if matches!(c.statement, SqlStatement::Call(_)) => next(self.host.run(c, self.frame)),
+            // [ISO/IEC 9075-2:2023 §4.41.5] Nor are COMMIT and ROLLBACK, which
+            // end the transaction a mark would be of.
+            Step::Statement(c) if matches!(c.statement, SqlStatement::Commit | SqlStatement::Rollback) => {
+                next(self.atomic_context().and_then(|()| self.host.run(c, self.frame)))
+            }
             Step::Statement(c) => next(self.atomic(|run| run.host.run(c, run.frame))),
             Step::Call(c) => next(called::call(self.host, c, self.frame)),
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §17.7 GR2, §17.8 GR2] That no atomic execution
+    /// context is active, for COMMIT or ROLLBACK: none is in an ATOMIC
+    /// compound statement [ISO/IEC 9075-4:2006 draft §14.1 SR6], but the
+    /// action of a handler of a compound statement around one runs while
+    /// it does.
+    fn atomic_context(&self) -> Result<()> {
+        if self.hidden_atomic == 0 && self.scopes.iter().all(|s| s.mark.is_none()) {
+            return Ok(());
+        }
+        let msg = "[ISO/IEC 9075-2:2023 §17.7 GR2, §17.8 GR2] COMMIT or ROLLBACK while an ATOMIC compound statement is executed";
+        Err(SqlError::new(Code::TransactionState, msg).with_state(SqlState::INVALID_TRANSACTION_TERMINATION))
     }
 
     /// `f` run as an atomic statement: undone if it fails [ISO/IEC

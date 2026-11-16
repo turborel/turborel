@@ -872,6 +872,17 @@ its cursors as rows it fetched, and changes nothing, so it needs no mark.
 A procedure that function CALLs is bound into the function's program and
 run there too (`binder/psm/inline.rs`).
 
+A program of a routine, a trigger or a function runs in the state and
+transaction of the statement that runs it. A control statement NOT
+ATOMIC run directly holds its own (`db/routines/program/host.rs`), as
+its COMMIT or ROLLBACK ends its transaction [ISO/IEC 9075-4:2006 draft
+§4.10.4]. The statements after it run in a new transaction, begun as the
+first of them needs one, and the session, not the call, records the
+transaction that runs on the thread (`db/running.rs`). COMMIT and
+ROLLBACK take no mark, which would be of the transaction ended. Its
+state is taken anew after a transaction ends or a definition changes,
+so a statement sees what those before it defined.
+
 A function that possibly modifies SQL-data is placed only where Part 2
 lets a statement invoke one, not in a query expression, a search
 condition or a CASE abbreviation [§7.17 SR25, §6.12 SR1a]. The binder

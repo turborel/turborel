@@ -8,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of SQL/PSM, in the order they run.
-pub const PSM: [Mutation; 20] = [
+pub const PSM: [Mutation; 23] = [
     Mutation {
         name: "psm-handler-general-first",
         package: Package::Core,
@@ -120,14 +120,44 @@ pub const PSM: [Mutation; 20] = [
         unit: &[],
     },
     Mutation {
-        name: "psm-direct-commit-ignored",
+        name: "psm-direct-commit-refused",
         package: Package::Core,
-        breaks: "COMMIT or ROLLBACK in a compound statement NOT ATOMIC run directly is taken, and then ignored [§4.10.4]",
+        breaks: "COMMIT in an SQL control statement NOT ATOMIC run directly is refused as in a routine's body [§4.10.4]",
         file: "src/parser/psm.rs",
-        original: "        if (self.is_kw(kw::COMMIT) || self.is_kw(kw::ROLLBACK)) && self.trigger.is_none() {",
-        replacement: "        if (self.is_kw(kw::COMMIT) || self.is_kw(kw::ROLLBACK)) && self.routine.as_ref().is_none_or(|r| !r.direct) {",
-        integration: &[],
-        unit: &["parser::psm::tests::commit_and_rollback_in_a_program_are_refused_14_1"],
+        original: "        if self.routine.as_ref().is_some_and(|r| !r.direct) {",
+        replacement: "        if self.routine.is_some() {",
+        integration: &["psm_transactions::commit_and_rollback_end_the_transaction_within_4_10_4"],
+        unit: &["parser::psm::tests::commit_and_rollback_in_a_program_14_1"],
+    },
+    Mutation {
+        name: "psm-direct-commit-keeps-transaction",
+        package: Package::Core,
+        breaks: "after COMMIT in a control statement run directly, its statements run on in the transaction ended [§17.7 GR9]",
+        file: "src/db/routines/program/host.rs",
+        original: "        tx.borrow_mut().take();",
+        replacement: "        let _ = tx;",
+        integration: &["psm_transactions::commit_and_rollback_end_the_transaction_within_4_10_4"],
+        unit: &[],
+    },
+    Mutation {
+        name: "psm-atomic-context-commits",
+        package: Package::Core,
+        breaks: "COMMIT in a handler's action while an ATOMIC compound statement is executed is taken [§17.7 GR2]",
+        file: "src/exec/program/run.rs",
+        original: "        if self.hidden_atomic == 0 && self.scopes.iter().all(|s| s.mark.is_none()) {",
+        replacement: "        if self.scopes.iter().all(|s| s.mark.is_none()) {",
+        integration: &["psm_transactions::commit_in_an_atomic_context_is_invalid_17_7"],
+        unit: &[],
+    },
+    Mutation {
+        name: "psm-definitions-unseen",
+        package: Package::Core,
+        breaks: "a statement of a control statement run directly reads the state it began with, not a table created before it [§14.1 GR3]",
+        file: "src/db/routines/program/host.rs",
+        original: "        if defines(&c.statement) {",
+        replacement: "        if matches!(c.statement, SqlStatement::Commit) {",
+        integration: &["psm_transactions::a_statement_sees_the_definitions_before_it_14_1"],
+        unit: &[],
     },
     Mutation {
         name: "psm-program-tables-unread",

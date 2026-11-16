@@ -107,6 +107,7 @@ mod rekey;
 mod revoke;
 mod roles;
 mod routines;
+mod running;
 mod schema;
 mod scroll;
 mod sealing;
@@ -298,6 +299,9 @@ pub struct Session {
     /// The instant of the statement running, and the session's time zone
     /// [ISO/IEC 9075:1992 §6.8 GR3, §4.5.1], set as it begins.
     now: Cell<crate::value::datetime::Now>,
+    /// The transaction its running call runs on this thread, once it has
+    /// one (`db/running.rs`).
+    running: RefCell<Option<Arc<Txn>>>,
     /// [ISO/IEC 9075-2:2023 §15.21] The triggered actions it is executing,
     /// and their plans (`db/triggers/run.rs`).
     triggering: triggers::Triggering,
@@ -311,8 +315,6 @@ pub struct Session {
 struct Call<'a> {
     session: &'a Session,
     snapshot: Arc<State>,
-    /// The transaction this call runs on this thread, once it has one.
-    running: RefCell<Option<Arc<Txn>>>,
     /// Open while the call runs: what it runs may be cancelled.
     _window: Window<'a>,
     /// The statement it runs, timed, to tell if it is slow (`db/slow.rs`).
@@ -328,16 +330,13 @@ impl Call<'_> {
     /// another transaction never waits on this thread for its locks
     /// (`txn/locks.rs`).
     fn runs(&self, tx: &Arc<Txn>) {
-        tx.runs_on(Some(std::thread::current().id()));
-        *self.running.borrow_mut() = Some(Arc::clone(tx));
+        self.session.runs(tx);
     }
 }
 
 impl Drop for Call<'_> {
     fn drop(&mut self) {
-        if let Some(tx) = self.running.borrow_mut().take() {
-            tx.runs_on(None);
-        }
+        self.session.ran();
         self.session.busy.set(false);
         if let Some(timed) = self.timed.take() {
             timed.done(&self.session.db);
@@ -390,6 +389,7 @@ impl Session {
             now: Cell::default(),
             triggering: triggers::Triggering::default(),
             nesting: nested::Nesting::default(),
+            running: RefCell::new(None),
         }
     }
 
@@ -407,19 +407,13 @@ impl Session {
         if already_busy {
             return fail(Code::Api, "[DESIGN] the session is already running a call: a plug-in called back into it (RULES.md R-ERR-4)");
         }
-        let retired = |st: Arc<State>| match st.tx.held() {
-            Some(crate::txn::Held::Retired) => Err(crate::txn::Held::Retired.refusal()),
-            Some(crate::txn::Held::Following | crate::txn::Held::Deposed) | None => Ok(st),
-        };
-        let published = self.db.refuse_earlier(self.service).and_then(|()| self.db.snapshot()).and_then(retired);
-        match published.and_then(|published| self.definitions(published)) {
+        match self.current_state() {
             Ok(snapshot) => {
-                let snapshot = self.with_own(self.with_temporaries(snapshot));
                 self.now.set(snapshot.now(&self.own.borrow()));
                 let millis = |key| u64::try_from(snapshot.settings.integer(key)).unwrap_or(0);
                 self.stop.set_timeout(millis(STATEMENT_TIMEOUT_MS));
                 self.stop.set_lock_timeout(millis(LOCKS_TIMEOUT_MS));
-                Ok(Call { session: self, snapshot, running: RefCell::new(None), _window: self.stop.window(), timed: None })
+                Ok(Call { session: self, snapshot, _window: self.stop.window(), timed: None })
             }
             Err(e) => {
                 self.busy.set(false);
@@ -471,14 +465,13 @@ impl Session {
     pub fn commit(&self) -> Result<()> {
         let call = self.enter()?;
         self.emptied((commands::COMMIT_WORK, commands::UNRECOGNIZED));
-        self.diagnosed(self.db.noted(self.commit_in(&call)), |()| SqlState::SUCCESSFUL_COMPLETION)
+        self.diagnosed(self.db.noted(self.commit_in(call.state())), |()| SqlState::SUCCESSFUL_COMPLETION)
     }
 
-    fn commit_in(&self, call: &Call<'_>) -> Result<()> {
-        let st = call.state();
+    fn commit_in(&self, st: &Arc<State>) -> Result<()> {
         let open = self.inner.borrow().tx.clone();
         if let Some(tx) = open
-            && let Err(e) = self.check_at_commit(call, &tx)
+            && let Err(e) = self.check_at_commit(st, &tx)
         {
             // [ISO/IEC 9075:1992 §14.3 GR5a] its changes canceled.
             self.rollback_in(st)?;
@@ -577,7 +570,7 @@ impl Drop for Session {
         // Drop cannot return an error. A failed commit has rolled back, and a
         // failed undo has marked its tables damaged, so neither goes unnoticed.
         let _ = match self.session_end(st) {
-            SessionEnd::Commit => self.commit_in(&call),
+            SessionEnd::Commit => self.commit_in(st),
             SessionEnd::Rollback => self.rollback_in(st),
         };
     }

@@ -22,27 +22,27 @@
 mod checked;
 mod cursors;
 mod executor;
+mod host;
 mod hosted;
 
 pub(crate) use executor::run_unhosted;
 pub(in crate::db) use hosted::{Hosted, hosted_rows};
+
+use host::SessionHost;
 
 use std::sync::Arc;
 
 use super::super::area::commands::{self, Command};
 use super::super::execute::command_of;
 use super::super::{Completion, Session, StatementContext};
-use crate::ast::{ControlStatement, FetchOrientation, SqlStatement};
+use crate::ast::{ControlStatement, SqlStatement};
 use crate::binder::{Frame, bind_program};
 use crate::catalog::{DataAccess, WHOLE};
-use crate::error::{Result, SqlError};
-use crate::exec::{Ended, Host, rows, run_program};
-use crate::logical::{Contained, Cursor, Leaf, Program, Step};
+use crate::error::Result;
+use crate::exec::{Ended, run_program};
+use crate::logical::{Program, Step};
 use crate::params::{Params, RoutineScope};
-use crate::storage::Row;
-use crate::txn::Mark;
 use crate::value::Value;
-use crate::value::datetime::show_in;
 
 /// [ISO/IEC 9075-2:2023 §4.41.5; ISO/IEC 9075-4:2006 draft §4.10.4]
 /// Whether `stmt` is atomic: undone whole if it fails. CALL, RETURN, a
@@ -84,7 +84,8 @@ impl Session {
     /// [ISO/IEC 9075-4:2006 draft Clause 14] The SQL control statement, or
     /// SIGNAL or RESIGNAL, `stmt` in `cx`, of the procedure, triggered
     /// action or session `params` are of: bound and run, the parameters'
-    /// values as it left them.
+    /// values as it left them. Run directly, of the session's own, it runs
+    /// in a context of its own, as it may end its transaction [§4.10.4].
     ///
     /// # Errors
     ///
@@ -98,6 +99,7 @@ impl Session {
         let base = params.dynamic_values().len();
         let scope = params.routine_scope().map_or_else(|| RoutineScope::unnamed(WHOLE.clone()), RoutineScope::clone);
         let transitions = params.transitions_shared();
+        let direct = params.routine_scope().is_none() && transitions.is_none();
         let frame = Frame { base, scope: Arc::new(scope), transitions: transitions.clone(), returns: None, inline: false };
         let shared = Arc::clone(&frame.scope);
         let program = self.bound(cx.st, params, |b| bind_program(b, stmt, frame))?;
@@ -107,7 +109,11 @@ impl Session {
         if let Some(t) = transitions {
             inner = inner.with_transitions(t);
         }
-        let ended = self.run_hosted(cx, &program, &mut inner)?;
+        let ended = if direct {
+            run_program(&program, &mut inner, &mut SessionHost::direct(self, cx))?
+        } else {
+            self.run_hosted(cx, &program, &mut inner)?
+        };
         for (k, v) in inner.dynamic_values().iter().take(base).enumerate() {
             params.set_slot(k, v.clone())?;
         }
@@ -144,14 +150,8 @@ impl Session {
     ///
     /// An exception no handler of it handles.
     pub(in crate::db) fn run_hosted(&self, cx: StatementContext<'_>, program: &Program, frame: &mut Params) -> Result<Ended> {
-        run_program(program, frame, &mut SessionHost { session: self, cx })
+        run_program(program, frame, &mut SessionHost::within(self, cx))
     }
-}
-
-/// \[DESIGN\] The session as a program's host.
-struct SessionHost<'s, 'c> {
-    session: &'s Session,
-    cx: StatementContext<'c>,
 }
 
 /// [ISO/IEC 9075-4:2006 draft §17.1 Table 2] How the diagnostics area names
@@ -188,90 +188,4 @@ pub(super) fn step_command(step: &Step) -> Command {
 /// Whether `step` is GET DIAGNOSTICS, which leaves the area as it was.
 pub(super) fn diagnostics(step: &Step) -> bool {
     matches!(step, Step::Statement(c) if matches!(c.statement, SqlStatement::GetDiagnostics(_)))
-}
-
-impl Host for SessionHost<'_, '_> {
-    type Mark = Mark;
-
-    fn rows(&self, leaf: &Leaf, frame: &Params, limit: Option<usize>) -> Result<Vec<Row>> {
-        for t in leaf.query.plan.tables() {
-            self.cx.st.read_lock(self.cx.tx, &t)?;
-        }
-        // A runner of its own, so no rows kept are read after a statement
-        // changed them.
-        rows(&Hosted::new(Some(self.session), self.cx), leaf, frame, limit)
-    }
-
-    fn present(&self, row: &mut Row) {
-        show_in(row, self.session.now.get().zone);
-    }
-
-    fn interrupted(&self) -> Result<()> {
-        self.session.stop.check()
-    }
-
-    fn run(&mut self, c: &Contained, frame: &mut Params) -> Result<Completion> {
-        frame.set_routine(Arc::clone(&c.scope));
-        self.session.may_run(self.cx.st, &c.statement)?;
-        self.session.run_statement(self.cx, &c.statement, frame, None)
-    }
-
-    fn execution(&mut self) -> usize {
-        self.session.nesting.execution()
-    }
-
-    fn declare(&mut self, key: &str, cursor: &Cursor) -> Result<()> {
-        self.session.declare_local(key, cursor)
-    }
-
-    fn open(&mut self, key: &str, cursor: &Cursor, frame: &mut Params) -> Result<()> {
-        frame.set_routine(Arc::clone(&cursor.scope));
-        self.session.open_local(self.cx, key, cursor, frame)
-    }
-
-    fn fetch(&mut self, key: &str, orientation: &FetchOrientation, frame: &Params) -> Result<Option<Row>> {
-        self.session.fetch_local(self.cx, key, orientation, frame)
-    }
-
-    fn close(&mut self, key: &str) -> Result<()> {
-        self.session.close_local(key)
-    }
-
-    fn destroy(&mut self, key: &str) {
-        self.session.destroy_local(key);
-    }
-
-    fn mark(&mut self) -> Result<Option<Mark>> {
-        self.cx.tx.mark().map(Some)
-    }
-
-    fn undo(&mut self, mark: Mark, failure: &SqlError) -> Result<()> {
-        self.cx.st.undo_to(self.cx.tx, mark, failure)
-    }
-
-    fn release(&mut self, mark: Mark) {
-        self.cx.tx.release_mark(mark);
-    }
-
-    fn begin(&mut self, step: &Step) {
-        if !diagnostics(step) {
-            self.session.emptied((step_command(step), commands::UNRECOGNIZED));
-        }
-    }
-
-    fn end(&mut self, step: &Step, outcome: &Result<Completion>) {
-        if diagnostics(step) {
-            return;
-        }
-        let outcome = outcome.as_ref().map(|c| *c).map_err(SqlError::clone);
-        let _ = self.session.diagnosed(outcome, |done| done.sqlstate());
-    }
-
-    fn push_area(&mut self) {
-        self.session.push_area();
-    }
-
-    fn pop_area(&mut self) {
-        self.session.pop_area();
-    }
 }

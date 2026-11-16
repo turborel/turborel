@@ -39,6 +39,12 @@ As COMMIT runs:
 The transaction's locks are released once it ends, and the next statement
 that needs a transaction begins a new one.
 
+COMMIT may be a statement of a compound statement, or of another SQL
+control statement, NOT ATOMIC and run directly. It ends the
+transaction there, and the statements after it run in a new one (see
+[BEGIN](begin.md)). It may not be in an ATOMIC compound statement, a
+FOR, or the body of a routine or trigger.
+
 ## PRIVILEGES
 
 None.
@@ -47,6 +53,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
+| 2D000 | -917 | It runs in a handler's action while an ATOMIC compound statement runs |
 | 40002 | -913 | A deferred constraint is not satisfied: the transaction was rolled back |
 | 40001 | -911 | It conflicts with a transaction that committed first: it was rolled back, and may be run again |
 | 40000 | -913 | An engine refused to commit, an earlier statement of the transaction could not be undone, or the commit record could not be written to the log, or a sync of the log failed earlier, so the database takes no change until it is opened again: the transaction was rolled back |
@@ -105,8 +112,12 @@ standard's transaction resolution unknown [§4.29]: whether the
 transaction committed cannot be verified until the database is opened
 again.
 
+ISO/IEC 9075-4:2006 draft §4.10.4 makes a compound statement NOT
+ATOMIC a non-atomic execution context, where COMMIT may run, and
+ISO/IEC 9075-2:2023 §17.7 GR2 raises 2D000 in an atomic one.
+
 ## SEE ALSO
 
-[ROLLBACK](rollback.md), [SET CONSTRAINTS](set-constraints.md),
+[BEGIN](begin.md), [ROLLBACK](rollback.md), [SET CONSTRAINTS](set-constraints.md),
 [SET TRANSACTION](set-transaction.md),
 [Transactions](../../user/06-transactions.md)

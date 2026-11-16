@@ -166,6 +166,7 @@ mod psm_compound;
 mod psm_control;
 mod psm_functions;
 mod psm_handlers;
+mod psm_transactions;
 mod queries;
 mod query_expressions;
 mod random_queries;

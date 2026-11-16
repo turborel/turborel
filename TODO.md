@@ -45,11 +45,6 @@ Nothing is open.
 
 ### Triggers, routines and roles
 
-- COMMIT and ROLLBACK in an SQL control statement NOT ATOMIC run
-  directly [ISO/IEC 9075-4:2006 draft §4.10.4; ISO/IEC 9075-2:2023
-  §17.7, §17.8]. The transaction ends within the statement, its
-  non-holdable local cursors closed, and the program goes on in a new
-  one. Refused now as not implemented.
 - SQL-server modules (P001, P003) [ISO/IEC 9075-4:2006 draft §9.21,
   §9.22, Clause 18]. CREATE MODULE and DROP MODULE, a module's routines,
   temporary tables and path, its privileges, and the MODULE_ views of
