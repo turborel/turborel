@@ -23,7 +23,6 @@ use std::fmt;
 use super::area::commands::{self, Command};
 use super::{Completion, Prepared, Session, StatementContext};
 use crate::ast::{DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, Scope, TableName, ValueSpecification};
-use crate::binder;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, Token, lex};
 use crate::params::Params;
@@ -91,7 +90,7 @@ pub(super) fn dynamic_error(state: SqlState, msg: String) -> SqlError {
 /// The value of `v`, a `<simple value specification>` that is a parameter
 /// or a `<literal>`, and its type.
 pub(super) fn value_of(session: &Session, v: &ValueSpecification, params: &Params) -> Result<(Value, crate::value::DataType)> {
-    binder::value_specification(v, &session.auth(), params)
+    session.value_now(v, params, None)
 }
 
 /// The value of `v`, exact with scale 0, as `rule` says it is, as an

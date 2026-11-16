@@ -10,7 +10,7 @@
 //! of its horizon, held or not, as no other is a subject routine of it.
 
 use super::super::{Binder, rule};
-use crate::catalog::{QualifiedName, Routine, RoutineKind, SqlRoutineDesc, UserTypeDesc, owner_of};
+use crate::catalog::{QualifiedName, Routine, RoutineKind, SqlRoutineDesc, UserTypeDesc, Who, owner_of};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::value::DataType;
@@ -45,13 +45,14 @@ impl Candidate<'_> {
         }
     }
 
-    /// [ISO/IEC 9075-2:2023 §9.18 SR6, §12.3] Whether `auth` holds EXECUTE
-    /// on it in `db`: the owner of its schema does [§11.60 GR1]; another if
-    /// it was granted it or PUBLIC.
-    pub fn executable(&self, db: &State, auth: &str) -> bool {
+    /// [ISO/IEC 9075-2:2023 §9.18 SR6, §12.3] Whether `who` holds EXECUTE
+    /// on it in `db`: a cell enabling the owner of its schema does [§11.60
+    /// GR1]; another if it was granted an identifier the cell enables or
+    /// PUBLIC \[§4.42.4\].
+    pub fn executable(&self, db: &State, who: Who<'_>) -> bool {
         match self {
-            Candidate::Sql(r) => auth == owner_of(&*db.catalog, &r.name.auth) || r.execute_of(auth).0,
-            Candidate::Cast(t, which) => t.execute_of(*which, auth, owner_of(&*db.catalog, &t.name.auth)).0,
+            Candidate::Sql(r) => who.includes(owner_of(&*db.catalog, &r.name.auth)) || r.execute_of(who).0,
+            Candidate::Cast(t, which) => t.execute_of(*which, who, owner_of(&*db.catalog, &t.name.auth)).0,
         }
     }
 }
@@ -144,7 +145,7 @@ impl Binder<'_> {
         };
         let fixed = self.subjects().is_some();
         let fitting: Vec<Candidate<'c>> = pool.iter().copied().filter(|c| takes(&c.parameters(), args)).collect();
-        let held: Vec<Candidate<'c>> = fitting.iter().copied().filter(|c| fixed || c.executable(self.db, self.auth)).collect();
+        let held: Vec<Candidate<'c>> = fitting.iter().copied().filter(|c| fixed || c.executable(self.db, self.who())).collect();
         let types: Vec<Vec<DataType>> = held.iter().map(Candidate::parameters).collect();
         let lists: Vec<&[DataType]> = types.iter().map(Vec::as_slice).collect();
         match subject_routines(&lists, args).as_slice() {
@@ -180,7 +181,7 @@ impl Binder<'_> {
     /// SQLCODE -104 if it does not hold it [§9.18 SR6, §12.7 GR12o].
     fn held_subject<'c>(&self, c: Option<Candidate<'c>>, shown: &str) -> Result<Chosen<'c>> {
         let Some(c) = c else { return Ok(Chosen::Nothing) };
-        if !c.executable(self.db, self.auth) {
+        if !c.executable(self.db, self.who()) {
             let msg = format!("[ISO/IEC 9075-2:2023 §9.18 SR6] {} holds no EXECUTE on function {shown}", self.auth);
             return Err(SqlError::new(Code::Privilege, msg));
         }

@@ -25,7 +25,8 @@ use crate::ast::{
 };
 use crate::binder::{BoundView, Context, bind_view, qualify, table_columns};
 use crate::catalog::{
-    ColumnDefault, ColumnDesc, Generated, Generation, Horizon, Identity, QualifiedName, SequenceDesc, TableDesc, TemporaryKind, applicable,
+    ColumnDefault, ColumnDesc, Generated, Generation, Horizon, Identity, Principal, QualifiedName, SequenceDesc, TableDesc, TemporaryKind,
+    applicable, sole,
 };
 use crate::error::{At, Code, Result, SqlError};
 use crate::lexer::{Tok, delim, lex};
@@ -172,14 +173,14 @@ impl State {
         if let Some(lt) = earlier.iter().find(|d| d.name == *source) {
             return Ok((lt.clone(), false));
         }
-        let lt = table_columns(self, source, owner)?;
+        let lt = table_columns(self, source, Principal::sole(self.catalog.roles(), owner))?;
         if within != Within::Declared && lt.temporary.is_some_and(|t| t.kind == TemporaryKind::Declared) {
             return Err(rule(format!(
                 "[DESIGN] {source} is a declared local temporary table, the session's alone: a definition the log keeps names none"
             )));
         }
         let in_catalog = self.catalog.table(source).is_some() || self.catalog.view(source).is_some();
-        if in_catalog && !applicable(&*self.catalog, owner, source).0.select {
+        if in_catalog && !applicable(&*self.catalog, sole(&*self.catalog, owner), source).0.select {
             let msg = format!(
                 "[ISO/IEC 9075-2:2023 §11.3 AR2] {owner} has no SELECT privilege on {source}, whose columns the <like clause> copies"
             );

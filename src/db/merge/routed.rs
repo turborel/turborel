@@ -26,7 +26,7 @@ use super::super::{Session, State, StatementContext, api};
 use super::decide::{Merge, Planned, target_part};
 use crate::ast::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 use crate::binder::{ObjectColumn, defaulted_columns, qualify};
-use crate::catalog::{Actions, ColumnDesc, QualifiedName, applicable};
+use crate::catalog::{Actions, ColumnDesc, Principal, QualifiedName, applicable};
 use crate::error::{Code, Result, SqlError, Subject};
 use crate::exec::{HeldRows, Subqueries, TransitionRows};
 use crate::storage::{Row, RowId, located};
@@ -140,15 +140,15 @@ impl Inserting {
     }
 
     /// It, as a prepared statement's kept plan takes it again: its
-    /// defaults those of a statement run under `auth` at `now`.
+    /// defaults those of a statement `user`'s at `now`.
     ///
     /// # Errors
     ///
     /// As `Target::refreshed`.
-    pub(super) fn refreshed(self, auth: &str, now: Now) -> Result<Inserting> {
+    pub(super) fn refreshed(self, user: Principal<'_>, now: Now) -> Result<Inserting> {
         match self {
-            Inserting::Table(t) => Ok(Inserting::Table(Box::new(t.refreshed(auth, now)?))),
-            Inserting::Instead(v) => Ok(Inserting::Instead(ViewRows { defaults: defaults_of(&v.columns, auth, now)?, ..v })),
+            Inserting::Table(t) => Ok(Inserting::Table(Box::new(t.refreshed(user, now)?))),
+            Inserting::Instead(v) => Ok(Inserting::Instead(ViewRows { defaults: defaults_of(&v.columns, user, now)?, ..v })),
         }
     }
 
@@ -177,18 +177,18 @@ pub(super) fn view_rows_of(
     st: &State,
     (name, insert, rules): (&QualifiedName, &MergeInsert, &InsertRules),
     (instead, held): (&Instead, bool),
-    (user, now): (&str, Now),
+    (user, now): (Principal<'_>, Now),
 ) -> Result<ViewRows> {
     let named = st.catalog.view(name).ok_or_else(|| api(format!("[DESIGN] {name} is no view of an INSTEAD OF trigger")))?;
     let listed = match insert.columns.as_deref() {
         None => (0..named.columns.len()).collect(),
         Some(list) => object_columns(name, &named.columns, list, rules)?,
     };
-    let (holds, _) = applicable(&*st.catalog, user, name);
+    let (holds, _) = applicable(&*st.catalog, user.cell, name);
     let wanted = Actions { insert: listed.iter().copied().collect(), ..Actions::default() };
     let column_names: Vec<String> = named.columns.iter().map(|c| c.name.clone()).collect();
     if let Some(lacked) = holds.missing(&wanted, &column_names) {
-        let msg = format!("[{INSERT_PRIVILEGE}] {user} lacks {lacked} on {name}");
+        let msg = format!("[{INSERT_PRIVILEGE}] {} lacks {lacked} on {name}", user.cell.auth);
         return Err(SqlError::new(Code::Privilege, msg).about(Subject::table(name.parts())));
     }
     let base = match (&instead.base, held) {
@@ -214,10 +214,10 @@ pub(super) fn view_rows_of(
     Ok(ViewRows { objects, columns, defaults, given })
 }
 
-/// The default value of each of `columns`, of a statement run under `auth`
-/// at `now`.
-fn defaults_of(columns: &[ColumnDesc], auth: &str, now: Now) -> Result<Row> {
-    columns.iter().map(|c| default_value(c, auth, now)).collect()
+/// The default value of each of `columns`, of a statement `user`'s at
+/// `now`.
+fn defaults_of(columns: &[ColumnDesc], user: Principal<'_>, now: Now) -> Result<Row> {
+    columns.iter().map(|c| default_value(c, user, now)).collect()
 }
 
 /// [ISO/IEC 9075-2:2023 §15.10 GR3a, §15.13 GR3a, §15.16 GR3a] The rows of

@@ -25,7 +25,7 @@ use super::area::commands::{self, Command};
 use super::collations::Collating;
 use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
-use crate::ast::{InsertStatement, SearchCondition, SetClause, SqlStatement, TableName};
+use crate::ast::{InsertStatement, SearchCondition, SetClause, SetRole, SqlStatement, TableName};
 use crate::binder::{self, DescribedKey, OutColumn, WriteKind, bind_write};
 use crate::catalog::{QualifiedName, WHOLE};
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -350,8 +350,9 @@ impl Session {
             SqlStatement::SetCollation(Some(v))
             | SqlStatement::SetSchema(v)
             | SqlStatement::SetCatalog(v)
-            | SqlStatement::SetSessionAuthorization(v) => {
-                drop(binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?);
+            | SqlStatement::SetSessionAuthorization(v)
+            | SqlStatement::SetRole(SetRole::Role(v)) => {
+                drop(self.value_in(st, v, params, Some(ParameterType::Varying))?);
             }
             SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),
             // Of a module's cursors and targets: FETCH and SELECT ... INTO
@@ -381,6 +382,7 @@ impl Session {
             | SqlStatement::Index(_)
             | SqlStatement::User(_)
             | SqlStatement::SetCollation(None)
+            | SqlStatement::SetRole(SetRole::None)
             | SqlStatement::Served(_) => {}
         }
         Ok(())

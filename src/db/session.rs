@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::{Session, State};
 use crate::ast::{AccessMode, IsolationLevel, SqlStatement, TableName, TransactionModes, ValueSpecification};
-use crate::binder::{self, qualify};
+use crate::binder::qualify;
 use crate::error::{Code, Result, SqlError, SqlState, fail, fail_with};
 use crate::lexer::{Tok, authorization_identifier, delim, lex};
 use crate::params::{ParameterType, Params};
@@ -75,7 +75,7 @@ impl Session {
             return fail(Code::TransactionState, "[ISO/IEC 9075:1992 §14.1 GR1] SET TRANSACTION while a transaction is active".to_owned());
         }
         if let Some(size) = &modes.diagnostics {
-            let (n, data_type) = binder::value_specification(size, &self.auth(), params)?;
+            let (n, data_type) = self.value_now(size, params, None)?;
             if !matches!(data_type, DataType::Exact { scale: 0, .. }) {
                 return fail(
                     Code::SyntaxRule,
@@ -142,6 +142,7 @@ impl Session {
             | SqlStatement::SetCatalog(_)
             | SqlStatement::SetTimeZone(_)
             | SqlStatement::SetSessionAuthorization(_)
+            | SqlStatement::SetRole(_)
             | SqlStatement::Connection(_)
             | SqlStatement::SetSetting { .. }
             | SqlStatement::SetDatabase { .. }
@@ -184,7 +185,7 @@ impl Session {
     /// another catalog (3D000).
     pub(super) fn set_schema(&self, st: &State, v: &ValueSpecification, params: &Params) -> Result<()> {
         // [ISO/IEC 9075:1992 §17.6 GR5u] a `?` is CHARACTER VARYING.
-        let (value, data_type) = binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?;
+        let (value, data_type) = self.value_in(st, v, params, Some(ParameterType::Varying))?;
         if !data_type.is_character() {
             return fail(Code::SyntaxRule, "[ISO/IEC 9075:1992 §16.2 SR1] SET SCHEMA takes a character string".to_owned());
         }
@@ -226,7 +227,7 @@ impl Session {
     /// SQLCODE -103 if `v` is no character string \[SR1\]; SQLSTATE 3D000
     /// if its value, trimmed, is not the one catalog's name.
     pub(super) fn set_catalog(&self, st: &State, v: &ValueSpecification, params: &Params) -> Result<()> {
-        let (value, data_type) = binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?;
+        let (value, data_type) = self.value_in(st, v, params, Some(ParameterType::Varying))?;
         if !data_type.is_character() {
             return fail(Code::SyntaxRule, "[ISO/IEC 9075:1992 §16.1 SR1] SET CATALOG takes a character string".to_owned());
         }
@@ -250,18 +251,21 @@ impl Session {
 
     /// [ISO/IEC 9075:1992 §16.4] SET SESSION AUTHORIZATION `v`: the
     /// session's authorization identifier the identifier `v`'s value,
-    /// trimmed, writes. A session sets the one it began with; one begun
-    /// by the database's owner, any other (RULES.md D43) \[GR4\]. It begins
-    /// no transaction.
+    /// trimmed, writes, its SQL-session user identifier and its current
+    /// user identifier both, and no current role [ISO/IEC 9075-2:2023 §19.2
+    /// GR8]. A session sets the one it began with; one begun by the
+    /// database's owner, any other (RULES.md D43) \[GR4\]. It begins no
+    /// transaction.
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if `v` is not a character string \[SR1\]; SQLSTATE
     /// 25000 in a transaction \[GR1\]; 28000 if its value is no
-    /// `<authorization identifier>` \[GR3\], or the session was not begun
+    /// `<authorization identifier>` \[GR3\], is a role's name, not a user's
+    /// [ISO/IEC 9075-2:2023 §19.2 GR5, IA165], or the session was not begun
     /// by the owner and names another \[GR5\].
     pub(super) fn set_session_authorization(&self, v: &ValueSpecification, params: &Params) -> Result<()> {
-        let (value, data_type) = binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?;
+        let (value, data_type) = self.value_now(v, params, Some(ParameterType::Varying))?;
         if !data_type.is_character() {
             return fail(Code::SyntaxRule, "[ISO/IEC 9075:1992 §16.4 SR1] SET SESSION AUTHORIZATION takes a character string".to_owned());
         }
@@ -273,6 +277,9 @@ impl Session {
         let Some(name) = named else {
             return refused(format!("[ISO/IEC 9075:1992 §16.4 GR3] {} is not an <authorization identifier>", value.to_literal()));
         };
+        if self.db.snapshot()?.catalog.roles().is_role(&name) {
+            return refused(format!("[ISO/IEC 9075-2:2023 §19.2 GR5] {name} is a role's name, not a user identifier"));
+        }
         let owner = self.db.owner()?;
         if name != self.started && owner.as_deref() != Some(self.started.as_str()) {
             let msg = format!(
@@ -281,7 +288,9 @@ impl Session {
             );
             return refused(msg);
         }
+        self.user_identifier.replace(name.clone());
         self.auth.replace(name);
+        self.role.replace(None);
         Ok(())
     }
 
@@ -304,7 +313,7 @@ impl Session {
             let msg = format!("[DESIGN] {} is the database's, which a session does not set for itself", definition.name);
             return fail(Code::SyntaxRule, msg);
         }
-        let given = value.map(|v| binder::value_specification(v, &self.auth(), params)).transpose()?;
+        let given = value.map(|v| self.value_now(v, params, None)).transpose()?;
         if let Some((v, _)) = &given {
             crate::settings::accepted(&definition.name, &definition.kind, v).map_err(|e| SqlError { code: Code::Data, ..e })?;
         }
@@ -335,7 +344,7 @@ impl Session {
             return fail(Code::SyntaxRule, refused);
         }
         let Some(given) = value else { return self.db.reset_setting(&definition.name) };
-        let (v, _) = binder::value_specification(given, &self.auth(), params)?;
+        let (v, _) = self.value_in(st, given, params, None)?;
         crate::settings::accepted(&definition.name, &definition.kind, &v).map_err(|e| SqlError { code: Code::Data, ..e })?;
         // A value the database refuses, as a name nothing is registered
         // under, is the statement's data exception, not the API's misuse.

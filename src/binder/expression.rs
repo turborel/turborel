@@ -111,7 +111,7 @@ impl Binder<'_> {
     pub(super) fn value_specification(&self, vs: &ValueSpecification) -> Result<(Value, DataType)> {
         if self.purpose.constrains() && matches!(vs, ValueSpecification::User(_)) {
             return Err(rule(
-                "[ISO/IEC 9075:1992 §11.9 SR5, §11.34 SR6] a constraint's condition shall not contain USER, CURRENT_USER, SESSION_USER or SYSTEM_USER",
+                "[ISO/IEC 9075:1992 §11.9 SR5, §11.34 SR6; ISO/IEC 9075-2:2023 §11.9 SR5, §11.47 SR7] a constraint's condition shall not contain USER, CURRENT_USER, CURRENT_ROLE, SESSION_USER or SYSTEM_USER",
             ));
         }
         if let ValueSpecification::Literal(Literal::Datetime(w)) = vs {

@@ -27,8 +27,12 @@ CREATE SCHEMA: define a schema
     | <domain definition>
     | <assertion definition>
     | <SQL-invoked routine>
+    | <role definition>
     | <grant statement>
 ```
+
+A `<grant statement>` grants privileges or roles (see [GRANT](grant.md)),
+and a `<role definition>` is [CREATE ROLE](create-role.md).
 
 Each element is the statement of its own page: [CREATE TABLE](create-table.md),
 [CREATE VIEW](create-view.md), [CREATE DOMAIN](create-domain.md),
@@ -43,7 +47,10 @@ CREATE SCHEMA defines a schema, and the tables, views, domains,
 assertions and privileges written in it. Without a name, the schema is
 named as its authorization identifier. Its owner is its AUTHORIZATION,
 or, written without one, the session's authorization identifier; a
-session creates only its own schemas.
+session creates only its own schemas, and those of the role it has set
+(see [SET ROLE](set-role.md)) or of a role applicable for it. A schema a
+role owns is used by each session that has set the role. Its roles are
+created and granted first, by its owner.
 
 A name written without a schema in an element is of this schema. The
 elements are made together: a view may read a table written after it, a
@@ -66,7 +73,8 @@ transaction, or when SET TRANSACTION has made the next one READ ONLY.
    only delimited, `"MODULE"`.
 2. A catalog named is the one catalog.
 3. Run by a session, its AUTHORIZATION, if written, is the session's
-   authorization identifier.
+   authorization identifier, its current role, or a role applicable for
+   that role.
 4. Each element names its objects in this schema, if it names their
    schema.
 5. Each element follows its own statement's rules.
@@ -85,7 +93,7 @@ None, beyond rule 3; each element's own.
 |---|---|---|
 | 2A000 | -103 | A schema of the name exists, or the name is MODULE; an element names an object in another schema; an element breaks a rule of its own |
 | 3D000 | -103 | It names a catalog other than the one there is |
-| 2A000 | -104 | Run by a session, its AUTHORIZATION is another's |
+| 2A000 | -104 | Run by a session, its AUTHORIZATION is another's, not a role the session has enabled |
 | 25000 | -917 | The transaction, active or next, is READ ONLY |
 | TB911 | -911 | Another transaction holds the schema's name, and locking is no-wait |
 | 0A000 | -900 | It names a character set other than SQL_TEXT |

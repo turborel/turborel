@@ -25,7 +25,7 @@ use super::{Completion, Session, State, StatementContext, api, plan};
 use crate::ast::{MergeStatement, MergeWhen};
 use crate::binder::qualify;
 use crate::binder::{self, BoundAction, BoundMerge, BoundWhen, ObjectColumn};
-use crate::catalog::QualifiedName;
+use crate::catalog::{Principal, QualifiedName};
 use crate::error::Result;
 use crate::exec::{Runner, TransitionRows};
 use crate::logical::{Expr, LogicalPlan, SortKey, filled, filled_cond, filled_expr};
@@ -131,8 +131,9 @@ impl Session {
         params: &Params,
         held: Option<&TransitionRows>,
     ) -> Result<(BoundMerge, Vec<Inserting>)> {
-        let (auth, schema) = (self.auth(), self.default_schema());
-        let (targets, routed) = inserting(st, stmt, ((&auth, &schema, self.now.get()), params))?;
+        let (authorization, schema) = (self.authorization(), self.default_schema());
+        let user = authorization.of(st.catalog.roles());
+        let (targets, routed) = inserting(st, stmt, ((user, &schema, self.now.get()), params))?;
         let objects: Vec<Vec<ObjectColumn>> = targets.iter().map(Inserting::objects).collect();
         let none = routed.then(|| TransitionRows::new(st.list_space()));
         let rows = held.or(none.as_ref()).filter(|_| routed);
@@ -157,8 +158,9 @@ impl Session {
             return Ok((filled_merge(&bound, values)?, targets));
         }
         if let Some(KeptPlan::Merge(bound, targets)) = keeping.map(Keeping::plan).transpose()?.flatten() {
-            let now = self.now.get();
-            let targets = targets.iter().map(|t| t.clone().refreshed(&self.auth(), now)).collect::<Result<Vec<_>>>()?;
+            let (now, authorization) = (self.now.get(), self.authorization());
+            let user = authorization.of(st.catalog.roles());
+            let targets = targets.iter().map(|t| t.clone().refreshed(user, now)).collect::<Result<Vec<_>>>()?;
             return Ok((filled_merge(&bound, values)?, targets));
         }
         let kept = keeping.map(|_| params.keeping());
@@ -171,7 +173,7 @@ impl Session {
 }
 
 /// Where each WHEN NOT MATCHED clause of `stmt` inserts, in order, of a
-/// statement run under `auth`, its unqualified names in `schema`, its
+/// statement `user`'s, its unqualified names in `schema`, its
 /// defaults those of `now`, bound with `params`: the table, or the INSTEAD
 /// OF trigger that takes it (`merge/routed.rs`); and whether T is a view
 /// its triggers take whole, read as its rows.
@@ -182,7 +184,7 @@ impl Session {
 pub(super) fn inserting(
     st: &State,
     stmt: &MergeStatement,
-    ((auth, schema, now), params): ((&str, &str, Now), &Params),
+    ((user, schema, now), params): ((Principal<'_>, &str, Now), &Params),
 ) -> Result<(Vec<Inserting>, bool)> {
     let routed = routing(st, stmt, schema);
     let name = qualify(&stmt.target, schema);
@@ -191,7 +193,7 @@ pub(super) fn inserting(
         let MergeWhen::NotMatched { insert, .. } = clause else { continue };
         if let Some(instead) = route {
             let into = (&name, insert, &MERGE_INSERT_RULES);
-            targets.push(Inserting::Instead(view_rows_of(st, into, (instead, routed.held), (auth, now))?));
+            targets.push(Inserting::Instead(view_rows_of(st, into, (instead, routed.held), (user, now))?));
             continue;
         }
         let into = InsertInto {
@@ -201,7 +203,7 @@ pub(super) fn inserting(
             rules: &MERGE_INSERT_RULES,
             horizon: params.horizon(),
         };
-        targets.push(Inserting::Table(Box::new(insert_target_in(st, &into, (auth, schema, now), params.noted())?)));
+        targets.push(Inserting::Table(Box::new(insert_target_in(st, &into, (user, schema, now), params.noted())?)));
     }
     Ok((targets, routed.held))
 }

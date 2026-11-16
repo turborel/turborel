@@ -8,7 +8,7 @@
 //! database's settings, in the forms of `catalog/codec.rs`; its users and
 //! owner (`db/users.rs`); and the counters of its sequence generators,
 //! settled, with the last epoch given (`db/sequences/counters.rs`,
-//! RULES.md D62).
+//! RULES.md D62); its roles, and the users who may create them.
 //!
 //! ```text
 //! snapshot: schemas (count u32, each its name and its owner, str),
@@ -23,7 +23,9 @@
 //!           last epoch given (u64), counters (count u32, each a name, its
 //!           epoch u64 and its base i128), triggers (count u32, each a
 //!           trigger, in the order of their timestamps of creation),
-//!           routines (count u32, each a routine, likewise)
+//!           routines (count u32, each a routine, likewise), roles (as
+//!           `catalog/codec/roles.rs` writes them), the users allowed to
+//!           create roles (count u32, each str)
 //! ```
 
 use std::sync::Arc;
@@ -33,12 +35,12 @@ use super::{State, api};
 use crate::bytes::{Put, Reader};
 use crate::catalog::codec::{
     collation, constraint, domain, index, privilege, put_collation, put_constraint, put_domain, put_index, put_name, put_privilege,
-    put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, routine, sequence, table, trigger, user_type,
-    view,
+    put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine, sequence, table,
+    trigger, user_type, view,
 };
 use crate::catalog::{
-    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, SqlRoutineDesc, TableDesc,
-    TriggerDesc, UserTypeDesc, ViewDesc,
+    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SqlRoutineDesc,
+    TableDesc, TriggerDesc, UserTypeDesc, ViewDesc,
 };
 use crate::error::Result;
 use crate::settings;
@@ -74,6 +76,10 @@ pub(super) struct Snapshot {
     triggers: Vec<TriggerDesc>,
     /// The SQL-invoked routines, oldest first.
     routines: Vec<SqlRoutineDesc>,
+    /// The roles and role authorizations, in the order made.
+    roles: Roles,
+    /// The users allowed to create roles, by name.
+    creators: Vec<String>,
 }
 
 impl Snapshot {
@@ -132,6 +138,8 @@ impl Snapshot {
             counters,
             triggers: st.catalog.triggers().into_iter().cloned().collect(),
             routines: st.catalog.routines().into_iter().cloned().collect(),
+            roles: st.catalog.roles().clone(),
+            creators: st.users.creators().cloned().collect(),
         })
     }
 
@@ -203,6 +211,9 @@ impl Snapshot {
         self.triggers.iter().for_each(|t| put_trigger(out, t));
         out.put_u32(count(self.routines.len()));
         self.routines.iter().for_each(|t| put_routine(out, t));
+        put_roles(out, &self.roles);
+        out.put_u32(count(self.creators.len()));
+        self.creators.iter().for_each(|c| out.put_str(c));
     }
 
     /// The snapshot `put` wrote.
@@ -229,6 +240,8 @@ impl Snapshot {
         let counters = (0..r.u32()?).map(|_| Ok((qualified(r)?, r.u64()?, r.i128()?))).collect::<Result<_>>()?;
         let triggers = (0..r.u32()?).map(|_| trigger(r)).collect::<Result<_>>()?;
         let routines = (0..r.u32()?).map(|_| routine(r)).collect::<Result<_>>()?;
+        let roles = roles(r)?;
+        let creators = (0..r.u32()?).map(|_| r.str()).collect::<Result<_>>()?;
         Ok(Snapshot {
             schemas,
             domains,
@@ -248,6 +261,8 @@ impl Snapshot {
             counters,
             triggers,
             routines,
+            roles,
+            creators,
         })
     }
 }
@@ -311,6 +326,8 @@ impl State {
         if let Some(owner) = &snapshot.owner {
             self.users.replay_owner(owner);
         }
+        snapshot.creators.iter().for_each(|c| self.users.replay_creator(c, true));
+        catalog.set_roles(snapshot.roles.clone());
         self.catalog = Arc::from(catalog);
         Ok(())
     }

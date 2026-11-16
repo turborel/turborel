@@ -185,6 +185,7 @@ impl Analysis {
             | Change::Setting { .. }
             | Change::User { .. }
             | Change::Owner { .. }
+            | Change::RoleCreator { .. }
             | Change::Reconfiguration { .. }
             | Change::Sequence { .. }
             | Change::Checkpoint
@@ -318,6 +319,7 @@ impl Database {
             | Change::Setting { .. }
             | Change::User { .. }
             | Change::Owner { .. }
+            | Change::RoleCreator { .. }
             | Change::Sequence { .. }
             | Change::Reconfiguration { .. }) => {
                 self.definition_at((lsn, tx), definition, replaying, report)?;
@@ -415,6 +417,7 @@ impl Database {
                 Change::Setting { name, value } => st.settings.set(name, value.as_ref())?,
                 Change::User { name, verifier } => st.users.replay_user(name, verifier.clone()),
                 Change::Owner { name } => st.users.replay_owner(name),
+                Change::RoleCreator { name, allowed } => st.users.replay_creator(name, *allowed),
                 // The group's, not the database's: the replica knows it.
                 Change::Reconfiguration { .. } => {}
                 // [DESIGN] RULES.md D62: its counter goes on from there.

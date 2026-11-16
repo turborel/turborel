@@ -9,9 +9,11 @@
 //! against it. Users and the owner are definitions, logged and kept with
 //! the others, made outside any transaction. The owner, a user, is the one
 //! who manages the users in SQL (RULES.md D43); the host program's Rust
-//! API manages them unrestricted.
+//! API manages them unrestricted. Who may create roles is
+//! implementation-defined [ISO/IEC 9075-2:2023 §12.4, IW141]: the owner,
+//! and each user it allows (`creators`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, PoisonError};
 
 use super::{Completion, Database, Session, State, api};
@@ -52,6 +54,8 @@ pub trait Credentials: Send + Sync {
 pub(crate) struct Users {
     owner: Option<String>,
     verifiers: Arc<BTreeMap<String, Vec<u8>>>,
+    /// The users the owner allows to create roles.
+    creators: Arc<BTreeSet<String>>,
 }
 
 impl Users {
@@ -83,6 +87,28 @@ impl Users {
     /// The owner set, as a log record says: checked when it was made.
     pub(crate) fn replay_owner(&mut self, name: &str) {
         self.owner = Some(name.to_owned());
+    }
+
+    /// The users allowed to create roles, in order of name.
+    pub(crate) fn creators(&self) -> impl Iterator<Item = &String> {
+        self.creators.iter()
+    }
+
+    /// [ISO/IEC 9075-2:2023 §12.4, IW141] Whether `name` may create a role:
+    /// the owner, or a user it allows.
+    pub(crate) fn creates_roles(&self, name: &str) -> bool {
+        self.owner.as_deref() == Some(name) || self.creators.contains(name)
+    }
+
+    /// `name` allowed to create roles, or no more, as a log record says:
+    /// checked when it was made.
+    pub(crate) fn replay_creator(&mut self, name: &str, allowed: bool) {
+        let creators = Arc::make_mut(&mut self.creators);
+        if allowed {
+            creators.insert(name.to_owned());
+        } else {
+            creators.remove(name);
+        }
     }
 }
 
@@ -116,9 +142,28 @@ impl State {
         if act == Act::Drop && self.users.owner() == Some(name) {
             return Err(refused(&format!("{name} owns the database: give it another owner first")));
         }
+        // [ISO/IEC 9075-2:2023 §12.4 SR1] a role's name is no user's.
+        if act == Act::Create && self.catalog.roles().is_role(name) {
+            return Err(refused(&format!("{name} is a role's name, which no user takes")));
+        }
         let kept = verifier.map(<[u8]>::to_vec);
         self.users.replay_user(name, kept.clone());
-        self.log_definition(None, Change::User { name: name.to_owned(), verifier: kept })
+        self.log_definition(None, Change::User { name: name.to_owned(), verifier: kept })?;
+        // A user dropped may create roles no more.
+        if act == Act::Drop && self.users.creators.contains(name) {
+            self.define_creator(name, false)?;
+        }
+        Ok(())
+    }
+
+    /// Allows the user `name` to create roles, or no more, as `allowed`
+    /// says, and logs it.
+    fn define_creator(&mut self, name: &str, allowed: bool) -> Result<()> {
+        if !self.users.exists(name) {
+            return Err(refused(&format!("there is no user {name}")));
+        }
+        self.users.replay_creator(name, allowed);
+        self.log_definition(None, Change::RoleCreator { name: name.to_owned(), allowed })
     }
 
     /// Makes the user `name` the owner, and logs it.
@@ -183,6 +228,17 @@ impl Database {
         self.user(name, None, Act::Drop)
     }
 
+    /// \[EXTENSION\] Allows the user `name` to create roles, or no more, as
+    /// `allowed` says [ISO/IEC 9075-2:2023 §12.4, IW141]: the owner always
+    /// may.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if there is no such user; the log's errors.
+    pub fn allow_role_creator(&self, name: &str, allowed: bool) -> Result<()> {
+        self.change(|st| st.define_creator(name, allowed))
+    }
+
     /// \[EXTENSION\] The verifier of the user `name`, if there is one.
     ///
     /// # Errors
@@ -200,6 +256,17 @@ impl Database {
     /// SQLCODE -910 if the database is closed.
     pub fn is_user(&self, name: &str) -> Result<bool> {
         Ok(self.snapshot()?.users.exists(name))
+    }
+
+    /// Whether `name` is a role's [ISO/IEC 9075-2:2023 §4.42.3]: so a
+    /// server signs in no session as one, whose SQL-session user identifier
+    /// is a user's [§19.2 GR5].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed.
+    pub fn is_role(&self, name: &str) -> Result<bool> {
+        Ok(self.snapshot()?.catalog.roles().is_role(name))
     }
 
     /// \[EXTENSION\] Every user, in order of name.
@@ -348,6 +415,7 @@ impl Session {
         match stmt {
             UserStatement::Create { name: (name, at), password } => self.db.create_user(name, &verified(name, password)?).or_at(*at)?,
             UserStatement::Alter { name: (name, at), password } => self.db.set_verifier(name, &verified(name, password)?).or_at(*at)?,
+            UserStatement::RoleCreator { name: (name, at), allowed } => self.db.allow_role_creator(name, *allowed).or_at(*at)?,
             UserStatement::Drop { name: (name, at) } => self.db.drop_user(name).or_at(*at)?,
             UserStatement::Owner { name: (name, at) } => self.set_owner(name).or_at(*at)?,
             UserStatement::Members { members: (members, at) } => self.reconfigure(members).or_at(*at)?,

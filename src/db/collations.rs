@@ -18,10 +18,10 @@ use super::generated::Named;
 use super::revoke::Abandoned;
 use super::{Session, State};
 use crate::ast::{CollationDefinition, TableName, ValueSpecification};
-use crate::binder::{self, qualify};
+use crate::binder::qualify;
 use crate::catalog::{
     Catalog, CollationDesc, ColumnDesc, ColumnDomain, ConstraintDesc, ConstraintKind, DomainDesc, IndexDesc, QualifiedName, TableDesc,
-    ViewDesc, owner_of,
+    ViewDesc, Who, owner_of, sole,
 };
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::lexer::{Tok, delim, kw, lex};
@@ -71,7 +71,7 @@ impl Session {
             self.collation.replace(None);
             return Ok(());
         };
-        let (value, t) = binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?;
+        let (value, t) = self.value_in(st, v, params, Some(ParameterType::Varying))?;
         let Value::Char(text) = value.clone() else {
             return Err(SqlError::new(
                 Code::SyntaxRule,
@@ -161,16 +161,16 @@ impl State {
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if there is none; -104 if `auth`, its schema's owner or
-    /// the session's identifier, holds no USAGE on it [§10.7 AR1].
-    pub(crate) fn collation_of(&self, name: &TableName, auth: &str) -> Result<QualifiedName> {
+    /// SQLCODE -103 if there is none; -104 if `who`, its schema's owner
+    /// alone or the session's cell, holds no USAGE on it [§10.7 AR1].
+    pub(crate) fn collation_of(&self, name: &TableName, who: Who<'_>) -> Result<QualifiedName> {
         let qn = collation_name(name);
         if self.collation_named(&qn).is_none() {
             return Err(SqlError::new(Code::SyntaxRule, format!("[ISO/IEC 9075-2:2023 §10.7 SR1] no collation {qn}")).or_at(name.at));
         }
-        let holds = self.catalog.collation(&qn).is_none_or(|c| c.usage_of(auth, owner_of(&*self.catalog, &qn.auth)).0);
+        let holds = self.catalog.collation(&qn).is_none_or(|c| c.usage_of(who, owner_of(&*self.catalog, &qn.auth)).0);
         if !holds {
-            let msg = format!("[ISO/IEC 9075-2:2023 §10.7 AR1] {auth} holds no USAGE on collation {qn}");
+            let msg = format!("[ISO/IEC 9075-2:2023 §10.7 AR1] {} holds no USAGE on collation {qn}", who.auth);
             return Err(SqlError::new(Code::Privilege, msg).or_at(name.at));
         }
         Ok(qn)
@@ -199,7 +199,7 @@ impl State {
                 format!("[ISO/IEC 9075-2:2023 §6.1 SR3] a <collate clause> is of a character string, not {t}"),
             ));
         }
-        self.collation_of(name, owner_of(&*self.catalog, schema)).map(Some)
+        self.collation_of(name, sole(&*self.catalog, owner_of(&*self.catalog, schema))).map(Some)
     }
 
     /// [ISO/IEC 9075-2:2023 §11.43] CREATE COLLATION `c` by `auth`, its name
@@ -217,7 +217,7 @@ impl State {
                 SqlError::new(Code::SyntaxRule, format!("[ISO/IEC 9075-2:2023 §11.43 SR3] collation {name} exists")).or_at(c.name.at)
             );
         }
-        let from = self.collation_of(&c.from, auth)?;
+        let from = self.collation_of(&c.from, sole(&*self.catalog, auth))?;
         let source = self.collation_named(&from).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no collation {from}")))?;
         let desc = CollationDesc { name, base: source.collation.name().to_owned(), pad: c.pad.unwrap_or(source.pad), usage: Vec::new() };
         let mut catalog = self.catalog.duplicate();
@@ -263,7 +263,7 @@ impl State {
     /// a view by its own, a table's or domain's constraint by the table's
     /// or domain's, an assertion by its own, a generated column by its
     /// table's (`db/generated/named.rs`).
-    fn naming_collation(&self, qn: &QualifiedName, within: &dyn Fn(&str) -> bool) -> Abandoned {
+    pub(in crate::db) fn naming_collation(&self, qn: &QualifiedName, within: &dyn Fn(&str) -> bool) -> Abandoned {
         let names = |c: &ConstraintDesc| matches!(&c.kind, ConstraintKind::Check { text, .. } if collates(text, qn));
         let mut abandoned = Abandoned::default();
         let views = self.catalog.views().into_iter().filter(|v| within(&v.name.auth) && collates(&v.query, qn));
@@ -285,7 +285,7 @@ impl State {
     /// The views of a schema `within` takes with a column of collation
     /// `qn`, those columns made of the character set's [ISO/IEC 9075-2:2023
     /// §11.44 GR2, §12.7 GR12ad].
-    fn views_collated(&self, qn: &QualifiedName, within: &dyn Fn(&str) -> bool) -> Vec<ViewDesc> {
+    pub(in crate::db) fn views_collated(&self, qn: &QualifiedName, within: &dyn Fn(&str) -> bool) -> Vec<ViewDesc> {
         let of = |v: &&ViewDesc| within(&v.name.auth) && v.columns.iter().any(|c| c.collation.as_ref() == Some(qn));
         let mut views: Vec<ViewDesc> = self.catalog.views().into_iter().filter(of).cloned().collect();
         for view in &mut views {

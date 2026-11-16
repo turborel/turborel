@@ -15,7 +15,7 @@ use crate::ast::{
 };
 use crate::binder::{self, Context, Invoked, Purpose, Referencing, Uses, bind_select, qualify};
 use crate::catalog::{
-    ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, Horizon, QualifiedName, TableDesc, applicable, owner_of,
+    ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, Horizon, QualifiedName, TableDesc, applicable, owner_of, sole,
 };
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::lexer::kw;
@@ -411,7 +411,7 @@ impl State {
             }
         }
         // [AR1] REFERENCES on each referenced column.
-        let (held, _) = applicable(&*self.catalog, auth, &target);
+        let (held, _) = applicable(&*self.catalog, sole(&*self.catalog, auth), &target);
         if let Some(column) = referenced.iter().find(|c| !held.references.contains(c)) {
             let name = parent.columns.get(*column).map_or("?", |c| c.name.as_str());
             // [§18.1 GR3g] about the column, of the table referenced.

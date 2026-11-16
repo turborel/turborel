@@ -29,10 +29,13 @@ const DATABASE: &str = "DATABASE";
 
 impl Parser {
     /// A statement that begins with SET: SET of a setting, SET DATABASE,
-    /// SET TRANSACTION, SET CONNECTION, SET SESSION AUTHORIZATION, SET
+    /// SET TRANSACTION, SET CONNECTION, SET SESSION AUTHORIZATION, SET ROLE, SET
     /// DESCRIPTOR, SET NAMES, SET TIME ZONE, SET CATALOG, SET SCHEMA, SET
     /// COLLATION, SET NO COLLATION, or SET CONSTRAINTS.
     pub(super) fn set_statement(&mut self) -> Result<SqlStatement> {
+        if self.at_set_role() {
+            return self.set_role();
+        }
         let database = *self.peek_at(1) == Tok::Identifier(DATABASE.to_owned()) && self.at_setting_name(2);
         if database {
             self.advance();

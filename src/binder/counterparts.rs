@@ -13,7 +13,7 @@
 
 use super::Purpose;
 use super::views::{Named, Reader, Source, named};
-use crate::catalog::{ColumnDefault, ColumnDesc, QualifiedName};
+use crate::catalog::{ColumnDefault, ColumnDesc, Principal, QualifiedName};
 use crate::db::State;
 use crate::error::Result;
 use crate::settings;
@@ -26,7 +26,7 @@ use crate::value::datetime::Clocked;
 /// # Errors
 ///
 /// `name` is not defined, or a view it reads breaks a rule.
-pub fn defaulted_columns(db: &State, name: &QualifiedName, user: &str) -> Result<Vec<ColumnDesc>> {
+pub fn defaulted_columns(db: &State, name: &QualifiedName, user: Principal<'_>) -> Result<Vec<ColumnDesc>> {
     let reader = Reader {
         purpose: Purpose::Query,
         own: &settings::NONE,

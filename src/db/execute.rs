@@ -12,8 +12,8 @@ use super::triggers::{Event, instead_for};
 use super::write::{Written, delete_searched, update_searched};
 use super::{Call, Completion, Session, StatementContext, slow};
 use crate::ast::{
-    AlterAction, ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, PrivilegeObject, RevokeStatement, SchemaStatement,
-    SearchCondition, ServedStatement, SetClause, SqlStatement, TableName, TableStorage, UserStatement,
+    AlterAction, ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, PrivilegeObject, RevokeStatement, RoleStatement,
+    SchemaStatement, SearchCondition, ServedStatement, SetClause, SqlStatement, TableName, TableStorage, UserStatement,
 };
 use crate::binder::{Context, WriteKind, bind_write, qualify};
 use crate::error::{Code, Result, SqlState, fail};
@@ -163,6 +163,8 @@ impl Session {
             SqlStatement::SetCatalog(v) => return done(self.set_catalog(st, v, params)),
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
             SqlStatement::SetSessionAuthorization(v) => return done(self.set_session_authorization(v, params)),
+            // [ISO/IEC 9075-2:2023 §19.3 GR1] in no transaction, so begins none.
+            SqlStatement::SetRole(role) => return done(self.set_role(role, params)),
             // [ISO/IEC 9075:1992 §15] the SQL-agent's, a client's.
             SqlStatement::Connection(_) => {
                 return fail(
@@ -310,6 +312,7 @@ impl Session {
             | SqlStatement::SetCatalog(_)
             | SqlStatement::SetTimeZone(_)
             | SqlStatement::SetSessionAuthorization(_)
+            | SqlStatement::SetRole(_)
             | SqlStatement::Connection(_)
             | SqlStatement::SetSetting { .. }
             | SqlStatement::SetDatabase { .. }
@@ -369,6 +372,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::SetCollation(_)
         | SqlStatement::SetTimeZone(_)
         | SqlStatement::SetSessionAuthorization(_)
+        | SqlStatement::SetRole(_)
         | SqlStatement::Connection(_)
         | SqlStatement::Served(_)
         | SqlStatement::SetSetting { .. }
@@ -399,7 +403,8 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::Sequence(_)
         | SchemaStatement::AlterSequence(_)
         | SchemaStatement::Type(_)
-        | SchemaStatement::Routine(_) => None,
+        | SchemaStatement::Routine(_)
+        | SchemaStatement::Role(_) => None,
     }
 }
 
@@ -435,6 +440,10 @@ fn schema_command(s: &SchemaStatement) -> Command {
         SchemaStatement::View(_) => commands::CREATE_VIEW,
         SchemaStatement::Grant(_) => commands::GRANT,
         SchemaStatement::Revoke(_) => commands::REVOKE,
+        SchemaStatement::Role(RoleStatement::Create { .. }) => commands::CREATE_ROLE,
+        SchemaStatement::Role(RoleStatement::Grant { .. }) => commands::GRANT_ROLE,
+        SchemaStatement::Role(RoleStatement::Revoke { .. }) => commands::REVOKE_ROLE,
+        SchemaStatement::Role(RoleStatement::Drop { .. }) => commands::DROP_ROLE,
         SchemaStatement::Sequence(_) => commands::CREATE_SEQUENCE,
         SchemaStatement::AlterSequence(_) => commands::ALTER_SEQUENCE,
         SchemaStatement::Type(_) => commands::CREATE_TYPE,
@@ -489,6 +498,7 @@ fn command_of(stmt: &SqlStatement) -> Command {
         SqlStatement::SetCatalog(_) => commands::SET_CATALOG,
         SqlStatement::SetTimeZone(_) => commands::SET_TIME_ZONE,
         SqlStatement::SetSessionAuthorization(_) => commands::SET_SESSION_AUTHORIZATION,
+        SqlStatement::SetRole(_) => commands::SET_ROLE,
         SqlStatement::Connection(ConnectionStatement::Connect { .. } | ConnectionStatement::ConnectDefault) => commands::CONNECT,
         SqlStatement::Connection(ConnectionStatement::Set(_)) => commands::SET_CONNECTION,
         SqlStatement::Connection(ConnectionStatement::Disconnect(_)) => commands::DISCONNECT,
@@ -501,7 +511,7 @@ fn command_of(stmt: &SqlStatement) -> Command {
         SqlStatement::Index(IndexStatement::Drop { .. }) => commands::DROP_INDEX,
         SqlStatement::Index(IndexStatement::Alter { .. }) => commands::ALTER_INDEX,
         SqlStatement::User(UserStatement::Create { .. }) => commands::CREATE_USER,
-        SqlStatement::User(UserStatement::Alter { .. }) => commands::ALTER_USER,
+        SqlStatement::User(UserStatement::Alter { .. } | UserStatement::RoleCreator { .. }) => commands::ALTER_USER,
         SqlStatement::User(UserStatement::Drop { .. }) => commands::DROP_USER,
         SqlStatement::User(UserStatement::Owner { .. } | UserStatement::Members { .. }) => commands::ALTER_DATABASE,
         SqlStatement::Served(ServedStatement::End { .. }) => commands::END_CONNECTION,

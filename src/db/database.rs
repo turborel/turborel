@@ -577,6 +577,9 @@ impl Database {
 
     /// Start a session whose authorization identifier plays the role of the
     /// `<module authorization identifier>` [X3.135-1986 §5.4 SR2b, §5.6 GR4, §6.6 SR3].
+    /// \[DESIGN\] Of a role's name, its cell holds that role alone, and no
+    /// current user identifier [ISO/IEC 9075-2:2023 §4.42.1.2]; the server
+    /// signs in no role (`Database::is_role`).
     pub fn session(&self, auth: &str) -> Session {
         Session::new(self.clone(), auth)
     }

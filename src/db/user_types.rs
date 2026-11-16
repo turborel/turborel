@@ -18,7 +18,7 @@ use super::definitions::Defined;
 use super::{State, rule};
 use crate::ast::{TypeDefinition, TypeName, TypeOption};
 use crate::binder::{alike, qualify};
-use crate::catalog::{QualifiedName, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, owner_of, types_in};
+use crate::catalog::{QualifiedName, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, owner_of, sole, types_in};
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::txn::LockMode;
 use crate::value::{DataType, Spelled};
@@ -117,7 +117,7 @@ impl State {
             TypeName::Data(DataType::Extension(t)) => refused(t.kind.name(), 0),
             TypeName::Data(t) => Ok(t.clone()),
             TypeName::Domain(name) | TypeName::Extension { name, .. } => refused(&name.ident, name.at),
-            TypeName::Array(..) => self.data_type_of(of, (schema, owner)),
+            TypeName::Array(..) => self.data_type_of(of, (schema, sole(&*self.catalog, owner))),
         }
     }
 

@@ -73,6 +73,8 @@ pub(in crate::db) const CREATE_DOMAIN: Command = command("CREATE DOMAIN", 23);
 pub(in crate::db) const DROP_ASSERTION: Command = command("DROP ASSERTION", 24);
 /// `<drop collation statement>`.
 pub(in crate::db) const DROP_COLLATION: Command = command("DROP COLLATION", 26);
+/// `<drop role statement>`.
+pub(in crate::db) const DROP_ROLE: Command = command("DROP ROLE", 29);
 /// `<drop routine statement>` [ISO/IEC 9075-2:2023 Table 39].
 pub(in crate::db) const DROP_ROUTINE: Command = command("DROP ROUTINE", 30);
 /// `<schema routine>` [ISO/IEC 9075-2:2023 Table 39].
@@ -113,6 +115,8 @@ pub(in crate::db) const FETCH: Command = command("FETCH", 45);
 pub(in crate::db) const GET_DESCRIPTOR: Command = command("GET DESCRIPTOR", 47);
 /// `<grant privilege statement>`.
 pub(in crate::db) const GRANT: Command = command("GRANT", 48);
+/// `<grant role statement>`.
+pub(in crate::db) const GRANT_ROLE: Command = command("GRANT ROLE", 49);
 /// `<insert statement>`.
 pub(in crate::db) const INSERT: Command = command("INSERT", 50);
 /// `<open statement>`.
@@ -127,6 +131,10 @@ pub(in crate::db) const PREPARABLE_UPDATE_CURSOR: Command = command("DYNAMIC UPD
 pub(in crate::db) const PREPARE: Command = command("PREPARE", 56);
 /// `<revoke privilege statement>`.
 pub(in crate::db) const REVOKE: Command = command("REVOKE", 59);
+/// `<role definition>`.
+pub(in crate::db) const CREATE_ROLE: Command = command("CREATE ROLE", 61);
+/// `<revoke role statement>`.
+pub(in crate::db) const REVOKE_ROLE: Command = command("REVOKE ROLE", 129);
 /// `<rollback statement>`.
 pub(in crate::db) const ROLLBACK_WORK: Command = command("ROLLBACK WORK", 62);
 /// `<schema definition>`.
@@ -143,6 +151,8 @@ pub(in crate::db) const SET_CONSTRAINT: Command = command("SET CONSTRAINT", 68);
 pub(in crate::db) const SET_DESCRIPTOR: Command = command("SET DESCRIPTOR", 70);
 /// `<set local time zone statement>`.
 pub(in crate::db) const SET_TIME_ZONE: Command = command("SET TIME ZONE", 71);
+/// `<set role statement>`.
+pub(in crate::db) const SET_ROLE: Command = command("SET ROLE", 73);
 /// `<set schema statement>`.
 pub(in crate::db) const SET_SCHEMA: Command = command("SET SCHEMA", 74);
 /// `<set transaction statement>`.

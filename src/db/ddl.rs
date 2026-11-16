@@ -113,8 +113,8 @@ impl State {
                 let action = Parser::new(action)?.of_definition().alter_table_action()?;
                 Ok(self.alter_table((table, schema, *zone), &action, (made, None, &mut Epochs::logged(epochs)))?.0)
             }
-            Change::Defined { auth, schema, zone, sql, placed, epochs } => {
-                self.redefine((auth, schema, *zone), sql, (placed.as_ref(), made, epochs))
+            Change::Defined { auth, role, schema, zone, sql, placed, epochs } => {
+                self.redefine(((auth, role.as_deref()), schema, *zone), sql, (placed.as_ref(), made, epochs))
             }
             Change::Schema { sql, owner, engines, zone, epochs } => self.reschema((sql, owner, *zone), engines, made, epochs),
             Change::Insert { .. }
@@ -131,6 +131,7 @@ impl State {
             | Change::Setting { .. }
             | Change::User { .. }
             | Change::Owner { .. }
+            | Change::RoleCreator { .. }
             | Change::Sequence { .. }
             | Change::Reconfiguration { .. } => Err(api(format!("[DESIGN] {change:?} is not a change a transaction makes"))),
         }
@@ -168,6 +169,7 @@ impl State {
                 | Change::Setting { .. }
                 | Change::User { .. }
                 | Change::Owner { .. }
+                | Change::RoleCreator { .. }
                 | Change::Sequence { .. }
                 | Change::Reconfiguration { .. } => Vec::new(),
             };
@@ -406,7 +408,7 @@ pub(super) fn copy_rows(
         | AlterAction::Truncate { .. }
         | AlterAction::Storage(_) => None,
     };
-    let fill = added.as_ref().map(|c| default_value(c, effects.user(), effects.now)).transpose()?;
+    let fill = added.as_ref().map(|c| default_value(c, effects.user().of(next.catalog.roles()), effects.now)).transpose()?;
     effects.rewritten(table);
     // [ISO/IEC 9075-2:2023 §11.11 GR2a, GR2b] or, of an identity column,
     // its generator's next value, of a generated column, its expression's.

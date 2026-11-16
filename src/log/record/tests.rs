@@ -65,6 +65,8 @@ fn every_kind() -> Vec<Record> {
         Change::User { name: "ANN".into(), verifier: Some(vec![]) },
         Change::User { name: "ANN".into(), verifier: None },
         Change::Owner { name: "ANN".into() },
+        Change::RoleCreator { name: "ANN".into(), allowed: true },
+        Change::RoleCreator { name: String::new(), allowed: false },
         Change::Reconfiguration { members: "1=db1:7423,2=db2:7423".into() },
         Change::Sequence { name: table(), epoch: u64::MAX, resume: i128::MIN },
         Change::Sequence { name: table(), epoch: 1, resume: i128::MAX },
@@ -86,6 +88,7 @@ fn definitions() -> Vec<Change> {
         },
         Change::Defined {
             auth: "A".into(),
+            role: Some("R\u{e9}".into()),
             schema: "B".into(),
             zone: 780,
             sql: "CREATE TABLE T (K INTEGER)".into(),
@@ -94,6 +97,7 @@ fn definitions() -> Vec<Change> {
         },
         Change::Defined {
             auth: String::new(),
+            role: None,
             schema: String::new(),
             zone: 0,
             sql: "GRANT SELECT ON T TO B".into(),

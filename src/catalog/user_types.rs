@@ -2,8 +2,8 @@
 //! §4.9]: distinct types alone, each with the two functions, casts and
 //! transform its definition implies [§11.51 GR2] (RULES.md D69).
 
-use super::QualifiedName;
 use super::domains::{UsageDesc, usage_held};
+use super::{QualifiedName, Who};
 use crate::value::DataType;
 
 /// The suffix of the specific name of a distinct type's function from its
@@ -113,10 +113,10 @@ impl UserTypeDesc {
         DataType::distinct(&self.name.auth, &self.name.ident, self.source.clone())
     }
 
-    /// Whether `auth` holds USAGE on it, and whether grantably, as of a
+    /// Whether `who` holds USAGE on it, and whether grantably, as of a
     /// domain (`DomainDesc::usage_of`).
-    pub fn usage_of(&self, auth: &str, owner: &str) -> (bool, bool) {
-        usage_held(&self.usage, auth, owner)
+    pub fn usage_of(&self, who: Who<'_>, owner: &str) -> (bool, bool) {
+        usage_held(&self.usage, who, owner)
     }
 
     /// The routine `which`.
@@ -135,9 +135,9 @@ impl UserTypeDesc {
         }
     }
 
-    /// Whether `auth` holds EXECUTE on routine `which`, and whether
+    /// Whether `who` holds EXECUTE on routine `which`, and whether
     /// grantably: its schema's owner `owner` grantably [§11.60 GR].
-    pub fn execute_of(&self, which: Routine, auth: &str, owner: &str) -> (bool, bool) {
-        usage_held(&self.routine(which).execute, auth, owner)
+    pub fn execute_of(&self, which: Routine, who: Who<'_>, owner: &str) -> (bool, bool) {
+        usage_held(&self.routine(which).execute, who, owner)
     }
 }

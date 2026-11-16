@@ -185,6 +185,7 @@ fn scope(record: &Record) -> Scope {
         | Change::Setting { .. }
         | Change::User { .. }
         | Change::Owner { .. }
+        | Change::RoleCreator { .. }
         | Change::Reconfiguration { .. }
         | Change::Sequence { .. }
         | Change::Checkpoint

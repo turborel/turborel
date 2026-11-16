@@ -148,3 +148,19 @@ fn a_mechanism_has_one_authenticator() {
     assert_eq!(server.add_authenticator(Arc::new(Trusted)).err().map(|e| e.code), Some(Code::Api));
     server.add_authenticator(Arc::new(Echo)).unwrap();
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §19.2 GR5, §4.42.1.2] a role's name
+/// signs in no session, though an authenticator accepts it: a session's
+/// user is a user's identifier (SQLSTATE 28000); a user's signs in.
+#[test]
+fn a_role_signs_in_no_session() {
+    let db = Database::new();
+    db.create_user("ANN", b"x").unwrap();
+    let ann = db.session("ANN");
+    ann.run("CREATE ROLE R").unwrap();
+    ann.commit().unwrap();
+    let server = start(&db, &[]);
+    let refused = connection::connect(server.address, "R", &mut Trust).err().unwrap();
+    assert_eq!(state(&refused), ("28000", -919));
+    assert_eq!(server.connect("ANN").authorization(), "ANN");
+}

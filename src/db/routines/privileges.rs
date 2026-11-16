@@ -14,7 +14,7 @@ use super::super::revoke::Abandoned;
 use super::super::{Completion, State, rule};
 use crate::ast::{Action, DropBehavior, PrivilegeDefinition, PrivilegeObject, RevokeStatement, RoutineType, TableName, TypeName};
 use crate::binder::qualify;
-use crate::catalog::{QualifiedName, Routine, RoutineKind, SqlRoutineDesc, UsageDesc, UserTypeDesc};
+use crate::catalog::{QualifiedName, Routine, RoutineKind, SqlRoutineDesc, UsageDesc, UserTypeDesc, sole};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::system::SYSTEM_GRANTOR;
 use crate::value::DataType;
@@ -84,7 +84,12 @@ impl State {
             );
         }
         let types = match parameters {
-            Some(list) => Some(list.iter().map(|t| self.data_type_of(t, (&qn.auth, auth))).collect::<Result<Vec<_>>>().or_at(name.at)?),
+            Some(list) => Some(
+                list.iter()
+                    .map(|t| self.data_type_of(t, (&qn.auth, sole(&*self.catalog, auth))))
+                    .collect::<Result<Vec<_>>>()
+                    .or_at(name.at)?,
+            ),
             None => None,
         };
         let casts = self.type_functions(&qn, (specific, Some(wanted)), types.as_deref());
@@ -138,7 +143,7 @@ impl State {
     ///
     /// SQLCODE -104 if `auth` holds no EXECUTE on it \[AR1\].
     pub(in crate::db) fn grant_on_routine(&mut self, auth: &str, mut desc: SqlRoutineDesc, p: &PrivilegeDefinition) -> Result<Defined> {
-        let (held, grantable) = desc.execute_of(auth);
+        let (held, grantable) = desc.execute_of(sole(&*self.catalog, auth));
         if !held {
             let msg = format!("[ISO/IEC 9075-2:2023 §12.2 AR1] {auth} holds no EXECUTE on routine {}", desc.name);
             return Err(SqlError::new(Code::Privilege, msg).or_at(p.table.at));
@@ -206,7 +211,7 @@ impl State {
         // at least, so there are no more than grants.
         for _ in 0..before.len() {
             let kept = desc.clone();
-            desc.execute.retain(|u| u.grantor == SYSTEM_GRANTOR || kept.execute_of(&u.grantor).1);
+            desc.execute.retain(|u| u.grantor == SYSTEM_GRANTOR || kept.execute_of(sole(&*self.catalog, &u.grantor)).1);
             if desc.execute.len() == kept.execute.len() {
                 break;
             }

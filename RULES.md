@@ -112,6 +112,7 @@ verification approach DO-178C expects (§8).
 | D72 | Spatial pages use R-link split stamps and R* partitioning |
 | D73 | SQL-invoked routines are bound as their owner, a function's body a subquery of its parameters |
 | D74 | Overloads are chosen by one place per kind of number |
+| D75 | Roles: one authorization cell, applicable roles by fixed point |
 
 ### The project
 
@@ -801,6 +802,46 @@ registered aggregate is told before its arguments are bound, since
 whether its query is grouped depends on it. So it is the aggregate's
 unless a function of the schema of the name has as many parameters as
 the call has arguments, whatever their types.
+
+#### D75. Roles: one authorization cell, applicable roles by fixed point
+
+Every privilege check reads one cell, `catalog::Who`: the top cell of
+the authorization stack [ISO/IEC 9075-2:2023 §4.42.1.2], a user
+identifier, a role name or both, and the roles it is read against. Its
+enabled identifiers are its user, its role, and each role applicable for
+the role [§4.42.4]: those granted to it, to PUBLIC, or to a role found
+so, to a fixed point (`Roles::applicable`). With no role authorization
+at all, the check is the one comparison it was before roles, building
+no set, so binding costs no more.
+
+A statement is checked with the session's cell, its current privileges.
+A definition, an abandonment and a grantor are checked with a cell of
+their owner or grantor alone (`Who::sole`), its applicable privileges,
+which take in roles only if it is a role itself. So the role a session
+sets helps what it runs, never what it defines in a user's schema, and
+a view stands or falls with its owner's privileges whoever made it. A
+trigger or routine runs as its schema's owner alone, CURRENT_USER null
+if that is a role, while SESSION_USER stays the session's
+(`db/nested.rs`).
+
+Role statements are SQL-schema statements, in the transaction, each
+taking one lock on no object exclusive, and GRANT of privileges taking
+it shared (`db/roles.rs`). The log keeps each definition's cell, the
+role beside the identifier, so a definition GRANTED BY CURRENT_ROLE or
+made in a role's schema replays as it ran. Who may create a role
+(IW141) is the database's owner and the users it allows, a right logged
+and kept with the users (`ALTER USER ... CREATE ROLE`).
+
+A REVOKE or DROP ROLE builds the role dependency graph [§12.7 GR5 to
+GR7], then settles every privilege of every kind against the role
+authorizations it leaves, to a fixed point, as each kind's own revoke
+settles it (`db/roles/settle.rs`). What then binds no more as its
+owner's, or needs a USAGE its owner holds no more, is abandoned as those
+revokes find it. DROP ROLE takes every authorization and privilege
+granted to the role or by it, by any grantor, so no descriptor names a
+role that is gone and its name may be taken again; with RESTRICT it is
+refused while the role granted any, and it never drops a schema's owner,
+since no statement gives a schema another owner.
 
 #### D33. Schema changes are transactional
 

@@ -56,3 +56,18 @@ fn users_and_check_tables_are_described() {
     // first [ISO/IEC 9075:1992 §17.6 GR5q].
     assert_eq!(rows_of(&db, "CHECK_TABLE_USAGE"), ["TURBOREL|S|IN_P|TURBOREL|S|P", "TURBOREL|S|IN_P|TURBOREL|S|C"]);
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.3.3; ISO/IEC 9075-2:2023
+/// §4.42.3]: USERS has each role, and each grantor and grantee of a role
+/// authorization, as authorization identifiers known.
+#[test]
+fn users_has_roles_and_their_grantees() {
+    let db = database();
+    db.create_user("O", b"x").unwrap();
+    let o = db.session("O");
+    o.run("CREATE ROLE RR").unwrap();
+    o.run("GRANT RR TO Q").unwrap();
+    o.commit().unwrap();
+    let users = rows_of(&db, "USERS");
+    assert!(["O", "Q", "RR"].iter().all(|u| users.iter().any(|x| x == u)), "{users:?}");
+}

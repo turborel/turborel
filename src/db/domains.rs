@@ -23,7 +23,9 @@ use super::sequences::Epochs;
 use super::{State, rule};
 use crate::ast::{AlterDomain, AlterDomainAction, DomainDefinition, Schema, TableConstraint, TableConstraintKind, TypeName};
 use crate::binder::qualify;
-use crate::catalog::{ColumnDesc, ColumnDomain, ConstraintDesc, ConstraintKind, DomainDesc, Horizon, QualifiedName, TableDesc, owner_of};
+use crate::catalog::{
+    ColumnDesc, ColumnDomain, ConstraintDesc, ConstraintKind, DomainDesc, Horizon, QualifiedName, TableDesc, Who, owner_of, sole,
+};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, delim, kw, lex};
 use crate::txn::LockMode;
@@ -139,22 +141,22 @@ impl State {
     /// SQLCODE -103 if no such domain is; -104 if the schema's owner holds
     /// no USAGE on it.
     pub(super) fn column_type(&self, schema: &str, of: &TypeName) -> Result<(DataType, Option<ColumnDomain>)> {
-        let (t, domain) = self.resolve_type(of, (schema, owner_of(&*self.catalog, schema)))?;
+        let (t, domain) = self.resolve_type(of, (schema, sole(&*self.catalog, owner_of(&*self.catalog, schema))))?;
         Ok((t, domain.map(|d| ColumnDomain { name: d.name.clone(), default: d.default.clone() })))
     }
 
-    /// [ISO/IEC 9075:1992 §11.4 AR1, §6.10 AR1] The domain `qn`, if `auth`
-    /// holds USAGE on it.
+    /// [ISO/IEC 9075:1992 §11.4 AR1, §6.10 AR1] The domain `qn`, if the cell
+    /// `who` holds USAGE on it.
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if no such domain is; -104 if `auth` holds no USAGE.
-    pub(crate) fn usable_domain(&self, qn: &QualifiedName, auth: &str) -> Result<&DomainDesc> {
+    /// SQLCODE -103 if no such domain is; -104 if `who` holds no USAGE.
+    pub(crate) fn usable_domain(&self, qn: &QualifiedName, who: Who<'_>) -> Result<&DomainDesc> {
         let domain = self.catalog.domain(qn).ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.4 SR4] there is no domain {qn}")))?;
-        if !domain.usage_of(auth, owner_of(&*self.catalog, &qn.auth)).0 {
+        if !domain.usage_of(who, owner_of(&*self.catalog, &qn.auth)).0 {
             return Err(SqlError::new(
                 Code::Privilege,
-                format!("[ISO/IEC 9075:1992 §11.4 AR1, §6.10 AR1] {auth} holds no USAGE on domain {qn}"),
+                format!("[ISO/IEC 9075:1992 §11.4 AR1, §6.10 AR1] {} holds no USAGE on domain {qn}", who.auth),
             ));
         }
         Ok(domain)

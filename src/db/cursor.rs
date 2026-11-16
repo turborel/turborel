@@ -10,6 +10,7 @@ use super::compiled::Compiled;
 use super::dynamic::Name;
 use super::position::{Move, Position};
 use super::prepared::Keeping;
+use super::roles::Valued;
 use super::write::Written;
 use super::{
     Completion, CursorRows, DeclaredCursor, Kept, OpenCursor, Session, State, StatementContext, Stream, Updatable, api, assign_targets,
@@ -105,21 +106,20 @@ fn settable(desc: &TableDesc, updatability: Option<&Updatability>) -> Result<Vec
 }
 
 /// [ISO/IEC 9075:1992 §13.3 SR3, SR4, GR2] Where FETCH `orientation` moves
-/// a cursor, SCROLL if `scroll`, its J's value read from `params` by
-/// `auth`.
+/// a cursor, SCROLL if `scroll`, its J's value as `valued` gives it.
 ///
 /// # Errors
 ///
 /// SQLCODE -103 if it is not NEXT and the cursor is not SCROLL \[SR3\], or
 /// its J is not exact numeric with scale 0 \[SR4\]; -301 if J is null.
-fn movement(orientation: &FetchOrientation, scroll: bool, (auth, params): (&str, &Params)) -> Result<Move> {
+fn movement(orientation: &FetchOrientation, scroll: bool, valued: &Valued<'_>) -> Result<Move> {
     let to = match orientation {
         FetchOrientation::Next => Move::Next,
         FetchOrientation::Prior => Move::Prior,
         FetchOrientation::First => Move::First,
         FetchOrientation::Last => Move::Last,
-        FetchOrientation::Absolute(j) => Move::Absolute(how_far(j, auth, params)?),
-        FetchOrientation::Relative(j) => Move::Relative(how_far(j, auth, params)?),
+        FetchOrientation::Absolute(j) => Move::Absolute(how_far(j, valued)?),
+        FetchOrientation::Relative(j) => Move::Relative(how_far(j, valued)?),
     };
     if !scroll && !matches!(to, Move::Next) {
         return Err(rule("[ISO/IEC 9075:1992 §13.3 SR3] the cursor is not SCROLL: it fetches NEXT alone".to_owned()));
@@ -128,9 +128,9 @@ fn movement(orientation: &FetchOrientation, scroll: bool, (auth, params): (&str,
 }
 
 /// [ISO/IEC 9075:1992 §13.3 SR4, GR2a] The value J of ABSOLUTE or RELATIVE.
-fn how_far(j: &ValueSpecification, auth: &str, params: &Params) -> Result<i128> {
+fn how_far(j: &ValueSpecification, valued: &Valued<'_>) -> Result<i128> {
     let not_exact = || rule("[ISO/IEC 9075:1992 §13.3 SR4] ABSOLUTE and RELATIVE take an exact numeric with scale 0".to_owned());
-    let (value, data_type) = binder::value_specification(j, auth, params)?;
+    let (value, data_type) = valued(j)?;
     if !matches!(data_type, DataType::Exact { scale: 0, .. }) {
         return Err(not_exact());
     }
@@ -423,7 +423,7 @@ impl Session {
         let (to, columns) = {
             let inner = self.inner.borrow();
             let c = inner.cursors.get(name).ok_or_else(|| rule(format!("[X3.135-1986 §8.6 SR1] no cursor {name} is declared")))?;
-            let to = movement(orientation, c.scroll, (&self.auth(), params))?;
+            let to = movement(orientation, c.scroll, &|v| self.value_now(v, params, None))?;
             let Some(open) = c.open.as_ref() else {
                 return cursor_error(&name.name, format!("[X3.135-1986 §8.6 GR1] cursor {name} is not open"));
             };

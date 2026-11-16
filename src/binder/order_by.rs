@@ -455,7 +455,7 @@ impl Ordered {
                 super::composite::ordering_operand(&c.data_type, "ORDER BY")?;
             }
         }
-        self.collations = super::collation::sort_collations((cx.db, cx.auth, cx.collation), order_by, &keys, &self.all)?;
+        self.collations = super::collation::sort_collations((cx.db, cx.who(), cx.collation), order_by, &keys, &self.all)?;
         self.keys = keys;
         Ok(())
     }

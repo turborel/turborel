@@ -414,7 +414,7 @@ impl Binder<'_> {
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
         // [§6.10 SR1, AR1] a domain's data type, if USAGE on it is held.
-        let (target, domain) = self.db.resolve_type(named, (self.schema, self.auth))?;
+        let (target, domain) = self.db.resolve_type(named, (self.schema, self.who()))?;
         let (e, t) = match format {
             Some(template) => self.formatted(operand, target, template, scope)?,
             None => self.cast_to(operand, target, scope)?,

@@ -1,7 +1,7 @@
 //! The routine descriptor of an SQL-invoked routine of an SQL routine body
 //! [ISO/IEC 9075-2:2023 §4.35.5, §11.60 GR3] (Feature T321).
 
-use super::{Horizon, QualifiedName, UsageDesc};
+use super::{Horizon, QualifiedName, UsageDesc, Who};
 pub use crate::ast::{DataAccess, ParameterMode, RoutineKind};
 use crate::value::DataType;
 
@@ -79,11 +79,12 @@ impl SqlRoutineDesc {
         self.horizon.subjects().unwrap_or_default()
     }
 
-    /// [ISO/IEC 9075-2:2023 §12.3, §11.60 GR1] Whether `auth` holds
-    /// EXECUTE on it, and whether grantably: as granted it or PUBLIC, its
-    /// owner by the grant of `_SYSTEM` its definition made.
-    pub fn execute_of(&self, auth: &str) -> (bool, bool) {
-        let granted = self.execute.iter().filter(|u| u.grantee.as_deref().is_none_or(|g| g == auth));
+    /// [ISO/IEC 9075-2:2023 §12.3, §11.60 GR1] Whether `who` holds
+    /// EXECUTE on it, and whether grantably: as granted an identifier it
+    /// enables or PUBLIC \[§4.42.4\], its owner by the grant of `_SYSTEM`
+    /// its definition made.
+    pub fn execute_of(&self, who: Who<'_>) -> (bool, bool) {
+        let granted = self.execute.iter().filter(|u| who.holds(u.grantee.as_deref()));
         granted.fold((false, false), |(_, grantable), u| (true, grantable || u.grantable))
     }
 

@@ -49,6 +49,7 @@ mod pattern;
 mod primary;
 mod query;
 mod regex;
+mod roles;
 mod routines;
 mod schema;
 mod search_cycle;

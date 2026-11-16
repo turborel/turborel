@@ -82,7 +82,7 @@ pub const CONTENTS: [Mutation; 24] = [
         package: Package::Core,
         breaks: "LIKE copies a table its schema's owner may not select from",
         file: "src/db/contents.rs",
-        original: "        if in_catalog && !applicable(&*self.catalog, owner, source).0.select {",
+        original: "        if in_catalog && !applicable(&*self.catalog, sole(&*self.catalog, owner), source).0.select {",
         replacement: "        if false {",
         integration: &["table_contents::like_rules_11_3"],
         unit: &[],

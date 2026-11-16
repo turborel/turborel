@@ -126,9 +126,8 @@ impl State {
     /// generated columns of the tables of a schema `within` takes, lost.
     pub(in crate::db) fn unbound_in(&self, after: &State, lost: &dyn Fn(&SqlError) -> bool, within: &dyn Fn(&str) -> bool) -> Abandoned {
         let gone = |r: Result<()>| r.is_err_and(|e| lost(&e));
-        let mut abandoned = Abandoned::default();
-        abandoned.views =
-            self.catalog.views().into_iter().filter(|v| gone(view_degree(after, v).map(|_| ()))).map(|v| v.name.clone()).collect();
+        let views = self.catalog.views().into_iter().filter(|v| gone(view_degree(after, v).map(|_| ()))).map(|v| v.name.clone()).collect();
+        let mut abandoned = Abandoned { views, ..Abandoned::default() };
         for t in self.catalog.tables() {
             for c in t.constraints.iter().filter(|c| c.domain.is_none()) {
                 let ConstraintKind::Check { text, names, horizon, .. } = &c.kind else { continue };

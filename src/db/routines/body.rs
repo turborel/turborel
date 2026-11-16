@@ -30,7 +30,7 @@ use std::sync::Arc;
 use super::super::{State, rule, triggers::named};
 use crate::ast::{RoutineDefinition, SqlStatement};
 use crate::binder::{Context, Invoked, Uses, bind_function_body};
-use crate::catalog::{DataAccess, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of};
+use crate::catalog::{DataAccess, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of, sole};
 use crate::error::{Code, Result, SqlError};
 use crate::params::{Params, RoutineScope};
 use crate::value::Value;
@@ -54,6 +54,15 @@ fn rank(a: DataAccess) -> u8 {
     }
 }
 
+/// [ISO/IEC 9075-2:2023 §16.2 SR1] That `desc`, whose body is a `<return
+/// statement>`, is a function.
+fn returning(desc: &SqlRoutineDesc) -> Result<()> {
+    if desc.function() {
+        return Ok(());
+    }
+    Err(rule(format!("[ISO/IEC 9075-2:2023 §16.2 SR1] procedure {} contains a <return statement>: only a function's does", desc.name)))
+}
+
 /// [ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g, §16.2 SR1] That `stmt` is one
 /// the body of `desc` may be (IA078).
 fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
@@ -65,14 +74,7 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         | SqlStatement::Select { .. }
         | SqlStatement::GetDiagnostics(_)
         | SqlStatement::Call(_) => true,
-        SqlStatement::Return(_) => {
-            if desc.function() {
-                return Ok(());
-            }
-            let msg =
-                format!("[ISO/IEC 9075-2:2023 §16.2 SR1] procedure {} contains a <return statement>: only a function's does", desc.name);
-            return Err(rule(msg));
-        }
+        SqlStatement::Return(_) => return returning(desc),
         SqlStatement::Close(_)
         | SqlStatement::SetCollation(_)
         | SqlStatement::Commit
@@ -92,6 +94,7 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         | SqlStatement::SetSchema(_)
         | SqlStatement::SetTimeZone(_)
         | SqlStatement::SetSessionAuthorization(_)
+        | SqlStatement::SetRole(_)
         | SqlStatement::Connection(_)
         | SqlStatement::SetSetting { .. }
         | SqlStatement::SetDatabase { .. }
@@ -176,13 +179,13 @@ impl State {
     /// may use, as the module says.
     fn execute_grantable(&self, owner: &str, reads: &[QualifiedName], invokes: &[QualifiedName]) -> bool {
         let tables = reads.iter().all(|t| {
-            let (held, grantable) = applicable(&*self.catalog, owner, t);
+            let (held, grantable) = applicable(&*self.catalog, sole(&*self.catalog, owner), t);
             (!held.select || grantable.select)
                 && (!held.delete || grantable.delete)
                 && held.insert.is_subset(&grantable.insert)
                 && held.update.is_subset(&grantable.update)
         });
-        tables && invokes.iter().filter_map(|s| self.catalog.routine(s)).all(|r| r.execute_of(owner).1)
+        tables && invokes.iter().filter_map(|s| self.catalog.routine(s)).all(|r| r.execute_of(sole(&*self.catalog, owner)).1)
     }
 }
 

@@ -10,9 +10,15 @@ use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::{Decimal, MAX_EXACT_PRECISION};
 
+/// [ISO/IEC 9075-2:2023 §6.4] CURRENT_ROLE, a `<reserved word>` there:
+/// \[DESIGN\] here a `<regular identifier>` that stands alone, so the
+/// columns and names that spell it before roles keep their meaning (RULES.md
+/// D75).
+pub(crate) const CURRENT_ROLE: &str = "CURRENT_ROLE";
+
 impl Parser {
     /// [X3.135-1986 §5.6] `<value specification>` ::= `<literal>` | USER
-    /// | CURRENT_USER | SESSION_USER | SYSTEM_USER | `<parameter
+    /// | CURRENT_USER | CURRENT_ROLE | SESSION_USER | SYSTEM_USER | `<parameter
     /// specification>` | `<dynamic parameter specification>` [ISO/IEC
     /// 9075:1992 §6.2]
     pub(super) fn value_specification(&mut self) -> Result<ValueSpecification> {
@@ -42,8 +48,15 @@ impl Parser {
     }
 
     /// [ISO/IEC 9075:1992 §6.2] USER, CURRENT_USER, SESSION_USER or
-    /// SYSTEM_USER, taken, if one is next.
+    /// SYSTEM_USER, taken, if one is next; [ISO/IEC 9075-2:2023 §6.4]
+    /// CURRENT_ROLE, too, written as a `<regular identifier>` that no
+    /// period or left parenthesis follows: a column's or a routine's name
+    /// otherwise, and a `<delimited identifier>` always.
     pub(super) fn user_function(&mut self) -> Option<UserFunction> {
+        if self.at_current_role() {
+            self.advance();
+            return Some(UserFunction::Role);
+        }
         let user = match self.peek() {
             // [SR3] USER is CURRENT_USER.
             Tok::KeyWord(kw::USER) | Tok::KeyWord(kw::CURRENT_USER) => UserFunction::Current,
@@ -61,6 +74,16 @@ impl Parser {
         };
         self.advance();
         Some(user)
+    }
+
+    /// Whether CURRENT_ROLE is next, as `user_function` reads it: its token
+    /// as wide as the word, so not delimited by double quotes.
+    pub(super) fn at_current_role(&self) -> bool {
+        let t = self.token_at(0);
+        let regular = t.end.checked_sub(t.start) == Some(CURRENT_ROLE.len());
+        matches!(&t.tok, Tok::Identifier(w) if w == CURRENT_ROLE)
+            && regular
+            && !matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD | delim::LEFT_PAREN))
     }
 
     /// Is the current "+" or "-" written directly against a numeric literal?

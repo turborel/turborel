@@ -67,7 +67,7 @@ fn unreferenced(auth: &str, name: &QualifiedName) -> SqlError {
 ///
 /// SQLCODE -104 if it holds none and there is nowhere to note it.
 pub(super) fn table_read(cx: &Context<'_>, name: &QualifiedName) -> Result<()> {
-    if !applicable(&*cx.db.catalog, cx.auth, name).0.references.is_empty() {
+    if !applicable(&*cx.db.catalog, cx.who(), name).0.references.is_empty() {
         return Ok(());
     }
     let Some(referencing) = cx.referencing else { return Err(unreferenced(cx.auth, name)) };

@@ -24,8 +24,11 @@ The simplest values are:
 - a literal, `42`, `'Ada'` or `TRUE` ([Lexical Elements](01-lexical.md));
 - a column, `NAME` or `S.NAME` ([Names](03-names.md));
 - USER, the same as CURRENT_USER, the session's authorization
-  identifier; SESSION_USER and SYSTEM_USER, which are the same here, a
-  session having no other;
+  identifier; CURRENT_ROLE, the role the session has set (see
+  [SET ROLE](statements/set-role.md)), null if none; SESSION_USER and
+  SYSTEM_USER, which are the same here, the session's user. In a trigger
+  or a routine of a schema a role owns, CURRENT_USER is null and
+  CURRENT_ROLE the role, while SESSION_USER stays the session's;
 - CURRENT_DATE, CURRENT_TIME(p) and CURRENT_TIMESTAMP(p), the instant
   the statement began, the last two WITH TIME ZONE, in the session's;
 - in a program, a parameter, or a `?` of a prepared statement;

@@ -19,7 +19,7 @@ use crate::ast::{
     CaseExpression, ColumnSpecification, RowValue, SetArg, SortSpecification, Subquery as AstSubquery, TableName, ValueExpression,
     WindowKind,
 };
-use crate::catalog::QualifiedName;
+use crate::catalog::{QualifiedName, Who};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::{Escape, like_escape};
@@ -208,7 +208,7 @@ impl Binder<'_> {
         Ok(match e {
             ValueExpression::Column(cs) => self.column_derived(cs)?,
             ValueExpression::Nested(x) | ValueExpression::Monadic(_, x) => self.derived(x)?,
-            ValueExpression::Collated(_, name) => Derived::Explicit(self.db.collation_of(name, self.auth)?),
+            ValueExpression::Collated(_, name) => Derived::Explicit(self.db.collation_of(name, self.who())?),
             // [ISO/IEC 9075-2:2023 §6.33 SR14d, SR15c, SR16e] a trim's or
             // pad's, its source's.
             ValueExpression::Function { name, args, .. } => match source_of(name).and_then(|i| args.get(i)) {
@@ -334,7 +334,7 @@ impl Binder<'_> {
     /// The collation an explicit `collate`, or else a column's `implicit`,
     /// gives.
     pub(super) fn chosen(&self, collate: Option<&TableName>, implicit: Derived) -> Result<Option<CollationRef>> {
-        let derived = collate.map_or(Ok(implicit), |name| self.db.collation_of(name, self.auth).map(Derived::Explicit))?;
+        let derived = collate.map_or(Ok(implicit), |name| self.db.collation_of(name, self.who()).map(Derived::Explicit))?;
         self.collation_of(&[derived])
     }
 
@@ -449,7 +449,7 @@ impl Binder<'_> {
 /// The collation each of the `<sort specification>`s `order_by` sorts by,
 /// of the columns `keys` found among `columns`.
 pub(super) fn sort_collations(
-    (db, auth, session): (&State, &str, Option<&CollationRef>),
+    (db, who, session): (&State, Who<'_>, Option<&CollationRef>),
     order_by: &[SortSpecification],
     keys: &[SortKey],
     columns: &[OutColumn],
@@ -460,7 +460,7 @@ pub(super) fn sort_collations(
         .map(|(s, key)| {
             let Some(column) = columns.get(key.column).filter(|c| c.data_type.is_character()) else { return Ok(None) };
             let derived = match &s.collate {
-                Some(name) => Derived::Explicit(db.collation_of(name, auth)?),
+                Some(name) => Derived::Explicit(db.collation_of(name, who)?),
                 None => Derived::Implicit(column.collation.clone()),
             };
             determined(db, session, &[derived])

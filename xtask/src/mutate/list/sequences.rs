@@ -102,7 +102,7 @@ pub const SEQUENCES: [Mutation; 14] = [
         package: Package::Core,
         breaks: "NEXT VALUE FOR draws from a generator the current user holds no USAGE on",
         file: "src/binder/sequences.rs",
-        original: "if !seq.usage_of(self.auth, owner_of(&*self.db.catalog, &qn.auth)).0 {",
+        original: "if !seq.usage_of(self.who(), owner_of(&*self.db.catalog, &qn.auth)).0 {",
         replacement: "if false {",
         integration: &["sequences::usage_on_a_sequence_12_2"],
         unit: &[],

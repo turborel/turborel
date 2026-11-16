@@ -216,6 +216,10 @@ async fn authenticate(
     };
     let exchange = authenticator.begin(&user, peer);
     let authorization = exchanged(wire, (peer, present), services, (exchange, initial)).await?;
+    if db.is_role(&authorization)? {
+        let msg = format!("[ISO/IEC 9075-2:2023 §19.2 GR5] {authorization} is a role's name, and a session's user is a user's");
+        return Err(refused(msg));
+    }
     // A user's session lasts while the user does (RULES.md D43).
     let member = db.is_user(&authorization)?.then(|| authorization.clone());
     let session = db.session(&authorization);

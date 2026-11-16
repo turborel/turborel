@@ -29,10 +29,11 @@ choices:
 | An interval's leading field | at most 9 digits |
 | The difference of two datetimes | truncated, toward 0, to its least field |
 | A session's time zone | the setting SESSION.TIME_ZONE, +00:00 unless set |
-| CURRENT_USER, SESSION_USER, SYSTEM_USER | each the session's authorization identifier |
+| CURRENT_USER, SESSION_USER, SYSTEM_USER | CURRENT_USER the session's authorization identifier, or null in a trigger or routine of a schema a role owns; SESSION_USER and SYSTEM_USER the session's user |
+| Who may create a role | the database's owner, and each user it allows by ALTER USER ... CREATE ROLE |
 | The default schema | the session's authorization identifier, until SET SCHEMA |
 | The catalog's name | the setting CATALOG.NAME, TURBOREL unless set |
-| What a CREATE SCHEMA needs | a session's own schema, its AUTHORIZATION its own identifier |
+| What a CREATE SCHEMA needs | a session's own schema, its AUTHORIZATION its own identifier or the role it has set |
 | Whether a session may SET SESSION AUTHORIZATION | a session begun by the database's owner, to any; any other, only to its own |
 | The isolation levels | SERIALIZABLE as itself; REPEATABLE READ as snapshot isolation; READ COMMITTED and READ UNCOMMITTED with a snapshot of each statement |
 | A session's end with a transaction open | COMMIT, or ROLLBACK, as the setting SESSION.COMMIT_AT_END says |

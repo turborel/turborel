@@ -3,8 +3,11 @@
 //!
 //! As its statements run, the session's diagnostics area is one of its
 //! own, discarded after, so the statement that caused it reads its own
-//! [§15.21 GR6a, GR6k; §9.18 GR6f, GR14]. Its authorization identifier is
-//! the owner of its schema [§15.21 GR6b; §9.18 GR6i i, SR23b], its
+//! [§15.21 GR6a, GR6k; §9.18 GR6f, GR14]. The top cell of its
+//! authorization stack holds the owner of its schema alone, a user
+//! identifier or a role name [§15.21 GR6b; §9.18 GR6i i, GR6l ii 1,
+//! SR23b; §4.42.1.2], the SQL-session user identifier staying as it was;
+//! its
 //! default schema the one its names were defined in, and no session
 //! collation applies, as of a view. What the session was is put back as
 //! the context is popped.
@@ -44,6 +47,7 @@ impl Nesting {
 pub(in crate::db) struct Pushed<'s> {
     session: &'s Session,
     auth: String,
+    role: Option<String>,
     schema: String,
     collating: Collating,
     area: area::Area,
@@ -53,6 +57,7 @@ impl Drop for Pushed<'_> {
     fn drop(&mut self) {
         let s = self.session;
         *s.auth.borrow_mut() = std::mem::take(&mut self.auth);
+        *s.role.borrow_mut() = self.role.take();
         *s.schema.borrow_mut() = std::mem::take(&mut self.schema);
         s.prepared_collation.replace(std::mem::replace(&mut self.collating, Collating::AsSet));
         s.inner.borrow_mut().area = std::mem::take(&mut self.area);
@@ -79,6 +84,7 @@ impl Session {
         Ok(Pushed {
             session: self,
             auth: self.auth.replace(owner),
+            role: self.role.take(),
             schema: self.schema.replace(schema),
             collating: self.prepared_collation.replace(Collating::Fixed(None)),
             area: std::mem::take(&mut self.inner.borrow_mut().area),

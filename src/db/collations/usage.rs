@@ -16,7 +16,7 @@ use super::super::usage::usage_alone;
 use super::super::{Completion, State, api};
 use super::collation_name;
 use crate::ast::{DropBehavior, PrivilegeDefinition, RevokeStatement};
-use crate::catalog::{CollationDesc, ColumnDesc, DomainDesc, QualifiedName, UsageDesc, owner_of};
+use crate::catalog::{CollationDesc, ColumnDesc, DomainDesc, QualifiedName, UsageDesc, owner_of, sole};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::txn::LockMode;
 
@@ -37,7 +37,7 @@ struct Revoked {
 impl Revoked {
     /// Whether the owner of schema `schema` holds no USAGE on it.
     fn loses(&self, st: &State, schema: &str) -> bool {
-        !self.desc.usage_of(owner_of(&*st.catalog, schema), &self.owner).0
+        !self.desc.usage_of(sole(&*st.catalog, owner_of(&*st.catalog, schema)), &self.owner).0
     }
 }
 
@@ -53,7 +53,7 @@ impl State {
         let qn = collation_name(&p.table);
         let mut desc = self.made_collation(&qn)?;
         let owner = owner_of(&*self.catalog, &qn.auth).to_owned();
-        let (held, grantable) = desc.usage_of(auth, &owner);
+        let (held, grantable) = desc.usage_of(sole(&*self.catalog, auth), &owner);
         if !held {
             return Err(SqlError::new(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.36 AR1] {auth} holds no USAGE on collation {qn}")));
         }
@@ -94,7 +94,7 @@ impl State {
         }
         loop {
             let held = desc.clone();
-            desc.usage.retain(|u| held.usage_of(&u.grantor, &owner).1);
+            desc.usage.retain(|u| held.usage_of(sole(&*self.catalog, &u.grantor), &owner).1);
             if desc.usage.len() == held.usage.len() {
                 break;
             }
@@ -196,8 +196,10 @@ fn refuse_abandoning(after: &Revoked, impacted: Option<&QualifiedName>, abandone
     }
     if after.lost > 0 || !abandoned.is_empty() {
         let what = if abandoned.is_empty() { "a grant of it".to_owned() } else { abandoned.first() };
-        let msg = format!("[ISO/IEC 9075:1992 §11.37 SR18] revoking USAGE on {qn} abandons {what}: revoke it with CASCADE");
-        return Err(SqlError::new(Code::SyntaxRule, msg));
+        let msg = format!(
+            "[ISO/IEC 9075-2:2023 §12.7 GR12q; ISO/IEC 9075:1992 §11.37 SR18] revoking USAGE on {qn} abandons {what}: revoke it with CASCADE"
+        );
+        return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::DEPENDENT_PRIVILEGES));
     }
     Ok(())
 }

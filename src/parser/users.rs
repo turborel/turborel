@@ -8,6 +8,7 @@
 //!       CREATE USER <authorization identifier> [ WITH ] PASSWORD <character string literal>
 //! <alter user statement> ::=
 //!       ALTER USER <authorization identifier> [ WITH ] PASSWORD <character string literal>
+//!     | ALTER USER <authorization identifier> [ NO ] CREATE ROLE
 //! <drop user statement> ::=
 //!       DROP USER <authorization identifier>
 //! <alter database statement> ::=
@@ -15,7 +16,7 @@
 //! ```
 //!
 //! An `<authorization identifier>` is an `<identifier>` [§5.4]. DATABASE,
-//! PASSWORD and OWNER are `<non-reserved word>`s of these extensions. Split
+//! PASSWORD, OWNER and ROLE are `<non-reserved word>`s of these extensions. Split
 //! from parser.rs (RULES.md R-SIZE-2).
 
 use super::Parser;
@@ -30,6 +31,10 @@ pub(super) const DATABASE: &str = "DATABASE";
 const OWNER: &str = "OWNER";
 const REPLICATION: &str = "REPLICATION";
 const MEMBERS: &str = "MEMBERS";
+
+/// The `<non-reserved word>` after CREATE of an `<alter user statement>`,
+/// and of the statements of roles [ISO/IEC 9075-2:2023 §12.4].
+pub(super) const ROLE: &str = "ROLE";
 
 impl Parser {
     /// `<user definition>`, after CREATE USER.
@@ -47,6 +52,16 @@ impl Parser {
         let name = (self.identifier()?, at);
         if !alter {
             return Ok(SqlStatement::User(UserStatement::Drop { name }));
+        }
+        let allowed = !self.accept_kw(kw::NO);
+        if self.accept_kw(kw::CREATE) {
+            if !self.accept_word(ROLE) {
+                return Err(self.syntax("expected ROLE"));
+            }
+            return Ok(SqlStatement::User(UserStatement::RoleCreator { name, allowed }));
+        }
+        if !allowed {
+            return Err(self.syntax("expected CREATE ROLE"));
         }
         let password = self.password()?;
         Ok(SqlStatement::User(UserStatement::Alter { name, password }))

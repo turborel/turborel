@@ -216,7 +216,7 @@ there only the statements whose operands may be `<literal>`s are of use.
 | Constraints | §11.4, §11.6–§11.9, §10.6 | NOT NULL, UNIQUE (whose columns may be null), PRIMARY KEY, FOREIGN KEY with MATCH FULL, PARTIAL or neither and every referential action, and CHECK, with subqueries too. Each is named, by the definition or the implementation. |
 | A constraint's schema | §5.4 SR8 | A name written without a schema is of the `<schema definition>`'s schema, else of the session's default schema, which may differ from its table's or domain's (RULES.md D47). A declared local temporary table's is of MODULE. |
 | When constraints are checked | §14.2 | At the end of each statement. Deferred ones, by SET CONSTRAINTS or INITIALLY DEFERRED, at commit. |
-| Defaults | §11.5 | A literal, NULL, USER, CURRENT_USER, SESSION_USER, SYSTEM_USER, or a datetime value function. Used by INSERT, DEFAULT VALUES, `SET ... = DEFAULT`, columns added, and the referential action SET DEFAULT. |
+| Defaults | §11.5 | A literal, NULL, USER, CURRENT_USER, CURRENT_ROLE, SESSION_USER, SYSTEM_USER, or a datetime value function. Used by INSERT, DEFAULT VALUES, `SET ... = DEFAULT`, columns added, and the referential action SET DEFAULT. |
 | DROP SCHEMA, DROP TABLE, DROP VIEW | §11.2, §11.18, §11.20 | CASCADE and RESTRICT, inside transactions (RULES.md D33). DROP SCHEMA RESTRICT is refused, and CASCADE drops them, while constraints named in the schema are of tables or domains of another (D47). RESTRICT is refused while the schema holds a collation [§11.2 SR3]. |
 | ALTER TABLE | §11.10–§11.17 | ADD and DROP COLUMN, ALTER COLUMN defaults, ADD and DROP CONSTRAINT, CASCADE and RESTRICT, inside transactions (D33). |
 | Views | §11.19, §11.11 GR2 | Of any query expression. WITH LOCAL or CASCADED CHECK OPTION, checked against every view an update spans [GR11]. A view keeps the columns it saw when defined, whatever columns are added later. |
@@ -1484,7 +1484,7 @@ CREATE TRIGGER defines a trigger [§11.49] and DROP TRIGGER drops one
 | BEFORE | §15.19, §15.21 GR4, §15.11 GR4, GR6a, §15.14 GR5, GR9, §15.8 GR2 | Once the rows are decided, before any is written: of an INSERT its rows given their values and identities, then computed again by their generated columns as the triggers left them; of an UPDATE its pairs of rows, the same; of a DELETE its rows. A statement trigger once for its state change, a row trigger for each transition. |
 | AFTER | §15.20, §9.17 GR17b | At the end of the statement, after its referential actions and once its immediate constraints hold, over every state change it made, each trigger's transition tables whole. |
 | Order | §4.46.1, §15.21 GR4, IS003, US048 | Triggers of one action time execute in the order created, their timestamps of creation never equal. A row trigger takes the transitions in the order the statement changed the rows. |
-| Execution | §15.21 GR6, §9.17 GR5 | Each statement of the action runs as one of its own, with its referential actions, its immediate checks and its own triggers, as the schema's owner, CURRENT_USER that owner, under the triggering statement's instant, in a diagnostics area of its own. The WHEN condition is evaluated for each run, and its exception is 09000. |
+| Execution | §15.21 GR6, §9.17 GR5 | Each statement of the action runs as one of its own, with its referential actions, its immediate checks and its own triggers, as the schema's owner alone, CURRENT_USER that owner, or CURRENT_ROLE if it is a role, SESSION_USER the session's, under the triggering statement's instant, in a diagnostics area of its own. The WHEN condition is evaluated for each run, and its exception is 09000. |
 | Failure | §15.21 GR6m, §23.1 GR4g, IA079 | SQLSTATE 09000, SQLCODE the cause's, the message naming the trigger and the cause's SQLSTATE and message. Nothing the statement did is kept. TRIGGER_SCHEMA and TRIGGER_NAME name the trigger, SCHEMA_NAME and TABLE_NAME its table, and MORE is Y, the cause's condition left out. |
 | Referential actions | §15.17, §15.18 | The rows a referential action deletes or updates execute their table's BEFORE triggers before each change and its AFTER triggers with the statement's. |
 | MERGE | §14.12 GR6a | Clause by clause, each clause's BEFORE triggers on its own rows before its changes, a statement trigger once for each event, then the AFTER triggers over all of them. |
@@ -1553,6 +1553,32 @@ RETURNS, RETURN, CALL, SPECIFIC, ROUTINE, DETERMINISTIC, READS,
 MODIFIES, CONTAINS, OUT and INOUT are no key words of SQL-92, so each
 stays an identifier, read as a word where a routine's statements read
 it.
+
+### Roles
+
+Features T331 (Basic roles) and T332 (Extended roles). CREATE ROLE
+[§12.4], GRANT and REVOKE of roles [§12.5, §12.7], DROP ROLE [§12.6],
+SET ROLE [§19.3], CURRENT_ROLE [§6.4], GRANTED BY of privileges and
+roles [§12.8], and a role as the owner of a schema (RULES.md D75).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Authorization cell | §4.42.1.2, §4.42.4 | A session's statements run as its user and the role it set. Their privileges are those of the user, the role, and each role applicable for the role: granted to it, to PUBLIC, or to a role found so. A definition, an abandonment and a grantor are checked with the privileges of the one identifier alone, which take in roles only if it is a role. A trigger or routine runs as its schema's owner alone, and SESSION_USER stays the session's. |
+| CREATE ROLE | §12.4 SR1 to SR3, GR2, AR1, IW141 | The name is no authorization identifier known: no user's, role's, schema owner's, grantor's or grantee's, nor PUBLIC or _SYSTEM (-103). The role is granted WITH ADMIN OPTION by _SYSTEM to the current user, or with WITH ADMIN CURRENT_ROLE to the current role, one that is there (-103). The database's owner creates roles, and each user it allows by ALTER USER ... CREATE ROLE (-104). No user is created of a role's name. |
+| GRANT of roles | §12.5 SR1, GR1 to GR5 | Each role exists. No grantee is the role or a role applicable for it, a cycle (-103). The grantor holds each WITH ADMIN OPTION, granted so to it or to a role applicable for it, else 0P000. A grant the same but for the admin option makes it grantable; one the same is not added. |
+| REVOKE of roles | §12.7 AR1b, GR1b, GR5 to GR9, GR12q, GR12s ii | The revoker holds each role WITH ADMIN OPTION (-104). The role authorizations it granted of the roles to the grantees are destroyed, or with ADMIN OPTION FOR made not grantable. Those then reached from no independent one are abandoned. Every privilege of every kind is settled against what is left, and what needs one gone is abandoned as REVOKE of privileges finds it. RESTRICT refuses an abandoned privilege or object (2B000) and keeps an abandoned role authorization; CASCADE destroys them. No warning is raised for a role not granted, as GR12ai raises one only of privileges. |
+| DROP ROLE | §12.6 AR1, GR1, GR2 | An enabled identifier holds the role WITH ADMIN OPTION (-104). The role is revoked from each grantee by any grantor, and so are the roles granted to it, the privileges granted to it, and the privileges and roles it granted, so no descriptor names it and its name is free again. RESTRICT refuses it while it granted any, or something would be abandoned (2B000). A role that owns a schema is not dropped (2B000), as no statement gives a schema another owner. |
+| SET ROLE | §19.3 SR1, GR1 to GR5 | 25001 in a transaction. The value is a character string (-103), trimmed and read as an identifier. 0P000 if the cell holds no user, or no authorization of the role is granted to the user or to PUBLIC. NONE removes the role. SET SESSION AUTHORIZATION removes it too [§19.2 GR8], and takes no role's name (28000). |
+| Grantor | §12.8, §12.2, §12.3 | GRANTED BY CURRENT_USER is the current user and CURRENT_ROLE the current role, each one that is there (-103). Omitted, the grantor is the current user, else the current role. A privilege a role granted stands while the role holds it grantably, through its applicable roles too [§12.7 GR2b i 2]. |
+| Schemas | §11.1 SR2b, §4.42.4 | CREATE SCHEMA AUTHORIZATION names a role the session has enabled. A `<schema definition>`'s CREATE ROLE and GRANT of roles run as its owner, before its other elements. |
+| Kept | §4.42.3 | Roles and role authorizations are logged with their statements, each definition's cell beside it, and kept in a checkpoint's snapshot. DEFINITION_SCHEMA.USERS lists each role. A server signs in no session as a role (28000). |
+
+The Information Schema's views of roles [ISO/IEC 9075-11] are not
+implemented, and its views of privileges read the session's user alone.
+ROLE, ADMIN, GRANTED and NONE are no key words of SQL-92, so each stays
+an identifier, read as a word where a statement of roles reads it.
+CURRENT_ROLE stays an identifier too, read as the value function where it
+stands alone, so a column of that name is read qualified.
 
 ---
 
@@ -1624,12 +1650,15 @@ the database's owner.
 ```
 CREATE USER name [WITH] PASSWORD 'literal'
 ALTER USER name [WITH] PASSWORD 'literal'
+ALTER USER name [NO] CREATE ROLE
 DROP USER name
 ALTER DATABASE OWNER TO name
 ```
 
-Rust has `Database::create_user`, `set_verifier`, `drop_user` and `set_owner`,
-and `Session::set_owner`. The view is INFORMATION_SCHEMA.USERS. A `Credentials`
+ALTER USER ... CREATE ROLE allows the user to create roles, and NO CREATE
+ROLE allows it no more (IW141). Rust has `Database::create_user`,
+`set_verifier`, `allow_role_creator`, `drop_user` and `set_owner`, and
+`Session::set_owner`. The view is INFORMATION_SCHEMA.USERS. A `Credentials`
 plug-in makes a verifier of a password. The server's is PBKDF2-HMAC-SHA256,
 keeping SCRAM-SHA-256's StoredKey and ServerKey.
 
@@ -1908,7 +1937,8 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | 86 §3.4 binding of programs to modules | `Session` and `Params` | `db.rs`, `params.rs` |
 | 86 §7.1 GR2 the end of a session with a transaction open | COMMIT, or ROLLBACK, as the setting SESSION.COMMIT_AT_END says | `txn.rs`, `db.rs` |
 | 86 §5.6 SR6 length of USER | The identifier's own length | `binder.rs` |
-| §6.2 SR4, GR10, GR11 CURRENT_USER, SESSION_USER, SYSTEM_USER | Each is the session's authorization identifier. A session has no other, and a library runs under no operating system user of its own. | `binder.rs`, `catalog.rs` |
+| ISO/IEC 9075-2:2023 §6.4 GR6 to GR9 CURRENT_USER, CURRENT_ROLE, SESSION_USER, SYSTEM_USER | CURRENT_USER is the top cell's user, null in a trigger or routine of a schema a role owns; CURRENT_ROLE its role. SESSION_USER and SYSTEM_USER are the session's user identifier, which SET SESSION AUTHORIZATION sets: a library runs under no operating system user of its own. | `catalog/roles.rs`, `binder/values.rs` |
+| ISO/IEC 9075-2:2023 §12.4 IW141 who may create a role | The database's owner, and each user it allows by ALTER USER ... CREATE ROLE. | `db/roles.rs`, `db/users.rs` |
 | §5.4; Annex B, item 41 which `<identifier>`s are valid `<authorization identifier>`s | Any, for a session the host program starts. A server's client is one of the users the database keeps (RULES.md D43), or one its authenticator accepts, the name it gives read as an `<identifier>`. | `db/users.rs`, `lexer.rs` |
 | §4.30, §15.1 GR8a the authorization identifier a session begins with, and the default SQL-server | The user the client connects as, at a server. For a session the host program starts, the identifier it names. DEFAULT is the server the command line names, connected to as it starts. | `db.rs`, `cli/src/dial.rs` |
 | §15.1 SR1, GR4 the implicit `<user name>`, and restrictions on one | The user the command line names. One named is proved as the command line says, a password typed asked for again, and the server accepts or refuses it (RULES.md D43). | `cli/src/dial.rs` |

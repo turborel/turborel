@@ -17,7 +17,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
 use crate::ast::{ColumnSpecification, TableName, ValueExpression};
-use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc, WHOLE, applicable};
+use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc, WHOLE, Who, applicable};
 use crate::db::State;
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::logical::{AggCall, Expr, LogicalPlan};
@@ -142,14 +142,19 @@ pub struct Context<'a> {
     /// whose privileges the query is bound with; a view's owner, within the
     /// view.
     pub auth: &'a str,
+    /// [ISO/IEC 9075-2:2023 §4.42.1.2] The current role name, of a cell
+    /// whose `auth` is a user identifier: the session's after SET ROLE;
+    /// none within a view, nor of a definition, bound as its owner alone.
+    pub role: Option<&'a str>,
     /// The schema an unqualified name is of [X3.135-1986 §5.4 SR2]: the
     /// session's default [ISO/IEC 9075:1992 §4.30, §16.2], `auth`'s unless
     /// SET SCHEMA set another; a view's owner's, within the view.
     pub schema: &'a str,
-    /// [ISO/IEC 9075:1992 §4.26, §6.2 GR9] The current authorization
-    /// identifier, the value of CURRENT_USER: the statement's, within a view
-    /// it reads too.
-    pub user: &'a str,
+    /// [ISO/IEC 9075:1992 §4.26, §6.2 GR9; ISO/IEC 9075-2:2023 §6.4 GR6
+    /// to GR9] Whose the statement is, what CURRENT_USER, CURRENT_ROLE,
+    /// SESSION_USER and SYSTEM_USER give: the statement's, within a view it
+    /// reads too.
+    pub user: Principal<'a>,
     /// The procedure's parameters [X3.135-1986 §7.3].
     pub params: &'a Params,
     /// What the query is bound for.
@@ -209,6 +214,12 @@ pub type Selected = RefCell<Vec<Vec<(QualifiedName, String)>>>;
 pub type Invoked = RefCell<Vec<QualifiedName>>;
 
 impl<'a> Context<'a> {
+    /// [ISO/IEC 9075-2:2023 §4.42.1.2] The cell whose privileges it is
+    /// bound with: `auth`, and `role`.
+    pub fn who(&self) -> Who<'a> {
+        Who { auth: self.auth, role: self.role, roles: self.db.catalog.roles() }
+    }
+
     /// A statement's query, run under `auth` with `params`.
     pub fn new(db: &'a State, auth: &'a str, params: &'a Params) -> Context<'a> {
         let (purpose, own) = (Purpose::Query, &settings::NONE);
@@ -216,8 +227,9 @@ impl<'a> Context<'a> {
             now: db.now(own).into(),
             db,
             auth,
+            role: None,
             schema: auth,
-            user: auth,
+            user: Principal::sole(db.catalog.roles(), auth),
             params,
             purpose,
             collation: None,
@@ -265,15 +277,15 @@ fn nondeterministic(rules: &str, what: &str) -> SqlError {
     ))
 }
 
-/// [X3.135-1986 §6.6 SR3] Whether the applicable privileges of `auth` on
+/// [X3.135-1986 §6.6 SR3] Whether the current privileges of `who` on
 /// `table` include `needed`, as the Syntax Rule `clause` (e.g. "X3.135-1986 §8.7 SR1"), cited in full,
 /// requires.
 ///
 /// # Errors
 ///
 /// SQLCODE -104 if they do not.
-pub fn require(db: &State, auth: &str, table: &TableDesc, needed: &Actions, clause: &str) -> Result<()> {
-    let (held, _) = applicable(&*db.catalog, auth, &table.name);
+pub fn require(db: &State, who: Who<'_>, table: &TableDesc, needed: &Actions, clause: &str) -> Result<()> {
+    let (held, _) = applicable(&*db.catalog, who, &table.name);
     let columns: Vec<String> = table.columns.iter().map(|c| c.name.clone()).collect();
     match held.missing(needed, &columns) {
         None => Ok(()),
@@ -283,7 +295,7 @@ pub fn require(db: &State, auth: &str, table: &TableDesc, needed: &Actions, clau
             let subject = Subject { column, ..Subject::table(table.name.parts()) };
             Err(SqlError::new(
                 Code::Privilege,
-                format!("[{clause}; X3.135-1986 §6.6 SR3] {auth} has no {missing} privilege on {}", table.name),
+                format!("[{clause}; X3.135-1986 §6.6 SR3] {} has no {missing} privilege on {}", who.auth, table.name),
             )
             .about(subject))
         }
@@ -348,6 +360,8 @@ struct Binder<'a> {
     db: &'a State,
     params: &'a Params,
     auth: &'a str,
+    /// The current role name (`Context::role`).
+    role: Option<&'a str>,
     /// The schema of unqualified names (`Context::schema`).
     schema: &'a str,
     items: Vec<FromItem>,
@@ -370,8 +384,8 @@ struct Binder<'a> {
     horizon: &'a Horizon,
     /// Its session's own settings (`Context::own`).
     own: &'a Own,
-    /// The current authorization identifier (`Context::user`).
-    user: &'a str,
+    /// Whose the statement is (`Context::user`).
+    user: Principal<'a>,
     /// Whether it may read the Definition Schema (`Context::definitions`).
     definitions: bool,
     /// Where it notes the columns it references (`Context::uses`).
@@ -426,6 +440,7 @@ impl<'a> Binder<'a> {
             db: cx.db,
             params: cx.params,
             auth: cx.auth,
+            role: cx.role,
             schema: cx.schema,
             items,
             names,
@@ -457,12 +472,13 @@ impl<'a> Binder<'a> {
 
     /// What its subqueries are bound with: what it is.
     fn context(&self) -> Context<'a> {
-        let (db, auth, schema, user, params) = (self.db, self.auth, self.schema, self.user, self.params);
+        let (db, auth, role, schema, user, params) = (self.db, self.auth, self.role, self.schema, self.user, self.params);
         let (purpose, horizon, own, definitions) = (self.purpose, self.horizon, self.own, self.definitions);
         let (referencing, now, collation) = (self.referencing, self.now, self.session_collation);
         Context {
             db,
             auth,
+            role,
             schema,
             user,
             params,
@@ -479,6 +495,13 @@ impl<'a> Binder<'a> {
             queries: self.queries,
             invoked: self.invoked,
         }
+    }
+}
+
+impl<'a> Binder<'a> {
+    /// The cell whose privileges it binds with (`Context::who`).
+    fn who(&self) -> Who<'a> {
+        Who { auth: self.auth, role: self.role, roles: self.db.catalog.roles() }
     }
 }
 
@@ -513,7 +536,7 @@ impl Binder<'_> {
         if self.purpose == Purpose::Constraint {
             if !item.table.auth.is_empty() {
                 let needed = Actions { references: std::iter::once(i).collect(), ..Actions::default() };
-                require(self.db, self.auth, &item.desc, &needed, "ISO/IEC 9075:1992 §11.9 AR1a")?;
+                require(self.db, self.who(), &item.desc, &needed, "ISO/IEC 9075:1992 §11.9 AR1a")?;
             }
             if let Some(r) = self.referencing {
                 r.column_named(&item.table);

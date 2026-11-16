@@ -1,7 +1,7 @@
 //! \[EXTENSION\] Domains, as the catalog describes them [ISO/IEC 9075:1992
 //! §11.21].
 
-use super::{ColumnDefault, ConstraintDesc, QualifiedName};
+use super::{ColumnDefault, ConstraintDesc, QualifiedName, Who};
 use crate::value::DataType;
 
 /// [ISO/IEC 9075:1992 §11.21 GR3] A domain's descriptor.
@@ -36,21 +36,22 @@ pub struct UsageDesc {
 }
 
 impl DomainDesc {
-    /// Whether `auth` holds USAGE on it, and whether grantably: its
+    /// Whether `who` holds USAGE on it, and whether grantably: its
     /// schema's owner, `owner`, holds it grantably [§11.21 GR4]; another
     /// holds what is granted it or PUBLIC [§10.3 GR2].
-    pub fn usage_of(&self, auth: &str, owner: &str) -> (bool, bool) {
-        usage_held(&self.usage, auth, owner)
+    pub fn usage_of(&self, who: Who<'_>, owner: &str) -> (bool, bool) {
+        usage_held(&self.usage, who, owner)
     }
 }
 
-/// Whether `auth` holds USAGE by `usage`, and whether grantably: an object's
-/// schema's owner, `owner`, holds it grantably; another holds what is
-/// granted it or PUBLIC [§10.3 GR2].
-pub(super) fn usage_held(usage: &[UsageDesc], auth: &str, owner: &str) -> (bool, bool) {
-    if auth == owner {
+/// Whether `who` holds USAGE by `usage`, and whether grantably: of an
+/// object whose schema's owner, `owner`, it enables, grantably; else as
+/// granted an identifier it enables or PUBLIC [§10.3 GR2; ISO/IEC
+/// 9075-2:2023 §4.42.4].
+pub fn usage_held(usage: &[UsageDesc], who: Who<'_>, owner: &str) -> (bool, bool) {
+    if who.includes(owner) {
         return (true, true);
     }
-    let granted = usage.iter().filter(|u| u.grantee.as_deref().is_none_or(|g| g == auth));
+    let granted = usage.iter().filter(|u| who.holds(u.grantee.as_deref()));
     granted.fold((false, false), |(_, grantable), u| (true, grantable || u.grantable))
 }

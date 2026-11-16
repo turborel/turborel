@@ -24,7 +24,7 @@ use super::super::{Binder, Context, Invoked, Purpose, Scope, assignable, rule};
 use crate::ast::{
     self, QueryExpression, ReturnStatement, RoutineDefinition, RowElement, SchemaStatement, SqlStatement, ValueExpression, ValuesRow,
 };
-use crate::catalog::{ColumnDesc, DataAccess, QualifiedName, SqlRoutineDesc, TableDesc, owner_of};
+use crate::catalog::{ColumnDesc, DataAccess, Principal, QualifiedName, SqlRoutineDesc, TableDesc, Who, owner_of};
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{LogicalPlan, Subquery};
 use crate::params::Params;
@@ -112,7 +112,10 @@ pub(super) fn bind_body(
     let owner = owner_of(&*cx.db.catalog, &desc.name.auth);
     let body_cx = Context {
         auth: owner,
-        user: owner,
+        role: None,
+        // [ISO/IEC 9075-2:2023 §9.18 GR6l ii 1] the cell of its routine
+        // authorization identifier alone; the SQL-session's user stays.
+        user: Principal { cell: Who::sole(cx.db.catalog.roles(), owner), session: cx.user.session },
         schema: &desc.schema,
         params: &params,
         purpose: Purpose::Query,

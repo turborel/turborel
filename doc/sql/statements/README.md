@@ -11,7 +11,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER INDEX](alter-index.md): change an index's options
 - [ALTER SEQUENCE](alter-sequence.md): change a sequence generator
 - [ALTER TABLE](alter-table.md): change a base table
-- [ALTER USER](alter-user.md): change a user's password
+- [ALTER USER](alter-user.md): change a user's password, or whether it may create roles
 - [CALL](call.md): run an SQL-invoked procedure
 - [CANCEL CONNECTION](cancel-connection.md): cancel what a connection of the server runs
 - [CLOSE](close.md): close a cursor
@@ -23,6 +23,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE FUNCTION](create-function.md): define an SQL-invoked function
 - [CREATE INDEX](create-index.md): define an index
 - [CREATE PROCEDURE](create-procedure.md): define an SQL-invoked procedure
+- [CREATE ROLE](create-role.md): define a role
 - [CREATE SCHEMA](create-schema.md): define a schema
 - [CREATE SEQUENCE](create-sequence.md): define a sequence generator
 - [CREATE TABLE](create-table.md): define a base table
@@ -41,6 +42,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP COLLATION](drop-collation.md): drop a collation
 - [DROP DOMAIN](drop-domain.md): drop a domain
 - [DROP INDEX](drop-index.md): drop an index
+- [DROP ROLE](drop-role.md): drop a role
 - [DROP ROUTINE](drop-routine.md): drop an SQL-invoked function or procedure
 - [DROP SCHEMA](drop-schema.md): drop a schema
 - [DROP SEQUENCE](drop-sequence.md): drop a sequence generator
@@ -56,13 +58,13 @@ One reference page for each statement, in alphabetical order.
 - [FETCH](fetch.md): move a cursor and read its row
 - [GET DESCRIPTOR](get-descriptor.md): read fields of an SQL descriptor area
 - [GET DIAGNOSTICS](get-diagnostics.md): read the diagnostics area
-- [GRANT](grant.md): grant privileges
+- [GRANT](grant.md): grant privileges, or roles
 - [INSERT](insert.md): insert rows
 - [MERGE](merge.md): update, delete and insert rows of a table from one source
 - [OPEN](open.md): open a cursor
 - [PREPARE](prepare.md): prepare a statement, by name
 - [RETURN](return.md): give the value of an SQL-invoked function
-- [REVOKE](revoke.md): revoke privileges
+- [REVOKE](revoke.md): revoke privileges, or roles
 - [ROLLBACK](rollback.md): end a transaction, undoing its changes
 - [SELECT](select.md): read rows
 - [SET](set-setting.md): change a session setting
@@ -71,6 +73,7 @@ One reference page for each statement, in alphabetical order.
 - [SET CONSTRAINTS](set-constraints.md): set constraint modes
 - [SET DATABASE](set-database.md): change a database setting
 - [SET DESCRIPTOR](set-descriptor.md): set fields of an SQL descriptor area
+- [SET ROLE](set-role.md): set the session's current role
 - [SET COLLATION](set-collation.md): set the session's collation
 - [SET SCHEMA](set-schema.md): set the default schema
 - [SET SESSION AUTHORIZATION](set-session-authorization.md): set the session's authorization identifier

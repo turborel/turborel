@@ -37,7 +37,9 @@ mod generated;
 mod merge;
 mod ordered;
 mod pattern;
+mod privileges;
 mod query;
+mod roles;
 mod routines;
 mod schema;
 mod search_cycle;
@@ -76,16 +78,17 @@ pub use query::{
     WithQuery, from_table_names,
 };
 
+pub use privileges::{Action, PrivilegeDefinition, PrivilegeObject, RevokeStatement};
+pub use roles::{Grantor, RoleStatement, SetRole};
 pub use routines::{
     CallStatement, DataAccess, ParameterDeclaration, ParameterMode, ReturnStatement, RoutineDefinition, RoutineDesignator, RoutineKind,
     RoutineType, SqlArgument,
 };
 pub use schema::{
-    Action, AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, ColumnConstraint,
-    ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, MatchType,
-    OptionValue, PrivilegeDefinition, PrivilegeObject, References, ReferentialAction, RevokeStatement, Schema, SchemaStatement,
-    TableConstraint, TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage, Temporary, TemporaryKind,
-    TypeName, ViewDefinition,
+    AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, ColumnConstraint, ColumnConstraintKind,
+    ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, MatchType, OptionValue, References,
+    ReferentialAction, Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition, TableElement, TableOptionValue,
+    TableStorage, Temporary, TemporaryKind, TypeName, ViewDefinition,
 };
 pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
@@ -177,6 +180,9 @@ pub enum UserFunction {
     Session,
     /// SYSTEM_USER: the operating system user's \[GR11\].
     System,
+    /// [ISO/IEC 9075-2:2023 §6.4 GR8] CURRENT_ROLE: the current role name,
+    /// or the null value (Feature T332).
+    Role,
 }
 
 /// [X3.135-1986 §5.2; ISO/IEC 9075:1992 §5.3; ISO/IEC 9075-2:2023 §5.3]
@@ -354,6 +360,8 @@ pub enum SqlStatement {
     /// [ISO/IEC 9075:1992 §16.4] `<set session authorization identifier
     /// statement>` ::= SET SESSION AUTHORIZATION `<value specification>`
     SetSessionAuthorization(ValueSpecification),
+    /// [ISO/IEC 9075-2:2023 §19.3] `<set role statement>`.
+    SetRole(SetRole),
     /// [ISO/IEC 9075:1992 §15] A statement of connections, the SQL-agent's:
     /// a client runs it, never a session.
     Connection(ConnectionStatement),

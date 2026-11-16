@@ -521,8 +521,10 @@ impl Session {
     }
 
     /// What `bind` gives, given the context of a statement of this session
-    /// against `st` with `params`: its user and its own settings, which the
-    /// system tables show.
+    /// against `st` with `params`: the top cell of its authorization stack,
+    /// whose privileges it binds with [ISO/IEC 9075-2:2023 §4.42.1.2], its
+    /// SQL-session user identifier, and its own settings, which the system
+    /// tables show.
     ///
     /// # Errors
     ///
@@ -531,7 +533,10 @@ impl Session {
         let (own, schema) = (self.own.borrow(), self.schema.borrow());
         let now = Clocked::new(self.now.get(), params.noted());
         let collation = self.session_collation(st)?;
-        bind(Context { own: &own, schema: &schema, now, collation: collation.as_ref(), ..Context::new(st, &self.auth(), params) })
+        let authorization = self.authorization();
+        let user = authorization.of(st.catalog.roles());
+        let base = Context::new(st, &authorization.auth, params);
+        bind(Context { role: user.cell.role, user, own: &own, schema: &schema, now, collation: collation.as_ref(), ..base })
     }
 
     /// What ends its open transaction when it ends (`SESSION.COMMIT_AT_END`).

@@ -178,8 +178,11 @@ fn a_one_sided_revert_checks_the_key_again() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §12.7 GR12a, GR12c, GR12t,
 /// GR12v; ISO/IEC 9075:1992 §11.37 SR13, SR14, SR18] a view and a CHECK of
 /// a schema left without USAGE that name the collation are abandoned:
-/// RESTRICT is refused (SQLSTATE 2A000), CASCADE drops them; the owner's
+/// RESTRICT is refused (SQLSTATE 2B000), CASCADE drops them; the owner's
 /// own view naming it stays.
+///
+/// Regression test (R-TEST-7): the refusal of abandoning gave SQLSTATE
+/// 2A000, not 2B000 [ISO/IEC 9075-2:2023 §12.7 GR12q].
 #[test]
 fn revoke_usage_abandons_what_names_the_collation_12_7() {
     let db = Database::new();
@@ -193,7 +196,7 @@ fn revoke_usage_abandons_what_names_the_collation_12_7() {
     let a = db.session("A");
     a.run("CREATE VIEW AV AS SELECT C FROM OWN WHERE C COLLATE A.FOLD = 'ann'").unwrap();
     a.commit().unwrap();
-    assert_eq!(refused(a.run("REVOKE USAGE ON COLLATION A.FOLD FROM B RESTRICT")), (Some(Code::SyntaxRule), "2A000".to_owned()));
+    assert_eq!(refused(a.run("REVOKE USAGE ON COLLATION A.FOLD FROM B RESTRICT")), (Some(Code::SyntaxRule), "2B000".to_owned()));
     a.rollback().unwrap();
     a.run("REVOKE USAGE ON COLLATION A.FOLD FROM B CASCADE").unwrap();
     a.commit().unwrap();
@@ -207,7 +210,8 @@ fn revoke_usage_abandons_what_names_the_collation_12_7() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.37 SR7, SR18; ISO/IEC
 /// 9075-2:2023 §12.7 GR12q] a grant option taken from B takes the grant B
 /// made C with it: RESTRICT is refused, first for C's column impacted
-/// (SQLSTATE 2B000), then, with none, for the grant lost (2A000); CASCADE
+/// (SQLSTATE 2B000), then, with none, for the grant lost (2B000 too);
+/// CASCADE
 /// reverts C's column, and C holds USAGE no longer while B does.
 #[test]
 fn a_grant_option_lost_takes_a_collations_grants_with_it_11_37() {
@@ -226,7 +230,7 @@ fn a_grant_option_lost_takes_a_collations_grants_with_it_11_37() {
     let c = db.session("C");
     c.run("DROP TABLE K CASCADE").unwrap();
     c.commit().unwrap();
-    assert_eq!(refused(a.run(&format!("{revoke} RESTRICT"))), (Some(Code::SyntaxRule), "2A000".to_owned()), "the grant to C");
+    assert_eq!(refused(a.run(&format!("{revoke} RESTRICT"))), (Some(Code::SyntaxRule), "2B000".to_owned()), "the grant to C");
     a.rollback().unwrap();
     c.run("CREATE TABLE K (C VARCHAR(9) COLLATE A.FOLD)").unwrap();
     c.run("INSERT INTO K VALUES ('Cy')").unwrap();

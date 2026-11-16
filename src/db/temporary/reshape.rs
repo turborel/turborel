@@ -158,7 +158,7 @@ impl Session {
         let deferral = RefCell::new(Deferral { all: Some(false), ..Deferral::default() });
         let conflict = RefCell::new(None);
         let cursors = Cursored { rows: Vec::new(), conflict: &conflict };
-        let mut effects = Effects::new(&self.auth(), &deferral, cursors, st.list_space());
+        let mut effects = Effects::new(self.authorization(), &deferral, cursors, st.list_space());
         effects.now = self.now.get();
         run(effects)
     }

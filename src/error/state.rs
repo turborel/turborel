@@ -74,6 +74,9 @@ impl SqlState {
     pub const CONNECTION_FAILURE: SqlState = SqlState("08006");
     /// Invalid authorization specification.
     pub const INVALID_AUTHORIZATION: SqlState = SqlState("28000");
+    /// [ISO/IEC 9075-2:2023 §12.5 GR1, §19.3 GR3, GR4] Invalid role
+    /// specification.
+    pub const INVALID_ROLE_SPECIFICATION: SqlState = SqlState("0P000");
     /// Dynamic SQL error [ISO/IEC 9075:1992 §22.1, Table 23].
     pub const DYNAMIC_SQL_ERROR: SqlState = SqlState("07000");
     /// Dynamic SQL error: using clause does not match dynamic parameter
@@ -229,6 +232,9 @@ impl SqlState {
     pub const INVALID_CURSOR_STATE: SqlState = SqlState("24000");
     /// Invalid transaction state.
     pub const INVALID_TRANSACTION_STATE: SqlState = SqlState("25000");
+    /// Invalid transaction state: active SQL-transaction [ISO/IEC
+    /// 9075-2:2023 §19.3 GR1].
+    pub const ACTIVE_TRANSACTION: SqlState = SqlState("25001");
     /// Invalid transaction state: read-only SQL-transaction [ISO/IEC
     /// 9075-2:2023 §14.10 GR1].
     pub const READ_ONLY_TRANSACTION: SqlState = SqlState("25006");

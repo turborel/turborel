@@ -3,7 +3,9 @@
 
 use super::datetime;
 use crate::ast::{Literal, ValueSpecification};
+use crate::catalog::Principal;
 use crate::error::{At, Result};
+use crate::lexer::MAX_IDENTIFIER_LENGTH;
 use crate::params::{ParameterType, Params};
 use crate::value::{CharUnits, DOUBLE_PRECISION, DataType, Spelled, Value};
 
@@ -13,7 +15,7 @@ use crate::value::{CharUnits, DOUBLE_PRECISION, DataType, Spelled, Value};
 ///
 /// A parameter is undeclared, its indicator is not exact with scale 0, or its
 /// argument does not suit it.
-pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) -> Result<(Value, DataType)> {
+pub fn value_specification(v: &ValueSpecification, user: Principal<'_>, params: &Params) -> Result<(Value, DataType)> {
     Ok(match v {
         // [X3.135-1986 §5.6 GR1]
         ValueSpecification::Parameter(p) => params.input(p).or_at(p.at)?,
@@ -37,15 +39,16 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
         // [ISO/IEC 9075-2:2023 §5.3 SR47, GR14] TRUE, FALSE or UNKNOWN, a BOOLEAN,
         // UNKNOWN being its null value [§4.6.1].
         ValueSpecification::Literal(Literal::Boolean(b)) => (b.map_or(Value::Null, Value::Bool), DataType::Boolean),
-        // [X3.135-1986 §5.6 GR4] USER is the current authorization identifier.
-        // [X3.135-1986 §5.6 SR6] its length is implementor-defined; we use the identifier's own length.
-        // [ISO/IEC 9075:1992 §6.2 GR10, GR11] So are SESSION_USER, there
-        // being no other in a session, and SYSTEM_USER, the
-        // implementation-defined string being it: a library runs under no
-        // operating system user of its own.
-        ValueSpecification::User(_) => {
-            (Value::Char(auth.to_string()), DataType::Character { length: char_length(auth), units: CharUnits::Characters })
-        }
+        // [X3.135-1986 §5.6 GR4] USER is the current authorization
+        // identifier; [ISO/IEC 9075-2:2023 §6.4 GR6 to GR9] each, of
+        // `Principal::value`. [X3.135-1986 §5.6 SR6, ISO/IEC 9075-2:2023
+        // §6.4 SR4] its type is implementation-defined (IV133): CHARACTER
+        // of the identifier's own length, or of a null value, CHARACTER
+        // VARYING of the longest identifier.
+        ValueSpecification::User(f) => match user.value(*f) {
+            Some(s) => (Value::Char(s.to_owned()), DataType::Character { length: char_length(s), units: CharUnits::Characters }),
+            None => (Value::Null, DataType::varying(u32::try_from(MAX_IDENTIFIER_LENGTH).unwrap_or(u32::MAX))),
+        },
         // [ISO/IEC 9075:1992 §17.6 GR4] where nothing gives it a type: the
         // contexts that do bind it by `Binder::typed`.
         ValueSpecification::Dynamic { index, at } => params.dynamic_value(*index, None).or_at(*at)?,
@@ -59,11 +62,16 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
 /// # Errors
 ///
 /// As `value_specification`.
-pub fn value_specification_as(v: &ValueSpecification, auth: &str, params: &Params, taken: ParameterType) -> Result<(Value, DataType)> {
+pub fn value_specification_as(
+    v: &ValueSpecification,
+    user: Principal<'_>,
+    params: &Params,
+    taken: ParameterType,
+) -> Result<(Value, DataType)> {
     if let ValueSpecification::Dynamic { index, at } = v {
         return params.dynamic_value(*index, Some(taken)).or_at(*at);
     }
-    value_specification(v, auth, params)
+    value_specification(v, user, params)
 }
 
 /// The length of `s` in characters, as a CHARACTER type's length. A string

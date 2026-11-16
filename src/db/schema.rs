@@ -14,7 +14,7 @@ use super::sequences::Epochs;
 use super::{Completion, Database, State, api};
 use crate::ast::{PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
 use crate::binder::qualify;
-use crate::catalog::{Catalog, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, TemporaryKind, applicable, merged};
+use crate::catalog::{Catalog, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, TemporaryKind, applicable, merged, sole};
 use crate::engine::rows::ROW_STORE;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::index::Index;
@@ -178,6 +178,8 @@ impl State {
             );
         };
         self.unused_schema_name(&s.name)?;
+        // [ISO/IEC 9075-2:2023 §11.1] its roles, of its owner's cell.
+        self.schema_roles(&owner, &s.roles)?;
         self.schema_domains(&s, (&owner, zone), epochs)?;
         let (mut descs, mut pending): (Vec<TableDesc>, Vec<Vec<Pending>>) = (Vec::new(), Vec::new());
         for table in &s.tables {
@@ -331,7 +333,7 @@ impl State {
         if table.temporary.is_some() && p.actions.is_some() {
             return rule(format!("[ISO/IEC 9075:1992 §10.3 SR2] {name} is temporary: its privileges are granted as ALL PRIVILEGES"));
         }
-        let (held, grantable) = applicable(&*self.catalog, grantor, &table.name);
+        let (held, grantable) = applicable(&*self.catalog, sole(&*self.catalog, grantor), &table.name);
         if held.is_empty() {
             return fail(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.36 AR1] {grantor} holds no privilege on {name}"));
         }

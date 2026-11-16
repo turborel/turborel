@@ -22,6 +22,15 @@ pub enum UserStatement {
         /// The new password.
         password: String,
     },
+    /// `<alter user statement>` ::= ALTER USER `<authorization identifier>`
+    /// \[NO\] CREATE ROLE: the user allowed, or no more, to create roles
+    /// [ISO/IEC 9075-2:2023 §12.4, IW141].
+    RoleCreator {
+        /// The `<authorization identifier>`, and where it begins.
+        name: (String, usize),
+        /// Whether it may: not of NO.
+        allowed: bool,
+    },
     /// `<drop user statement>` ::= DROP USER `<authorization identifier>`
     Drop {
         /// The `<authorization identifier>`, and where it begins.

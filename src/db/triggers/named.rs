@@ -83,6 +83,7 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
         | SqlStatement::SetSchema(_)
         | SqlStatement::SetTimeZone(_)
         | SqlStatement::SetSessionAuthorization(_)
+        | SqlStatement::SetRole(_)
         | SqlStatement::Connection(_)
         | SqlStatement::SetSetting { .. }
         | SqlStatement::SetDatabase { .. }

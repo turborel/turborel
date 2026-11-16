@@ -2,7 +2,8 @@
 //! domain and collation; and of an identity column [ISO/IEC 9075-2:2023
 //! §4.17.12] or a generated column [§4.17.13], how its values are given.
 
-use super::{Horizon, QualifiedName, SequenceDesc};
+use super::{Horizon, Principal, QualifiedName, SequenceDesc};
+use crate::ast::UserFunction;
 use crate::value::DataType;
 use crate::value::Value;
 use crate::value::datetime::{Clocked, Moment};
@@ -91,10 +92,10 @@ pub struct ColumnDomain {
 pub enum ColumnDefault {
     /// That of a `<literal>`, or the null value \[GR1a, b\].
     Value(Value),
-    /// CURRENT_USER, SESSION_USER or SYSTEM_USER, whichever it is when the
-    /// default is taken \[GR1c\]: in this implementation, the authorization
-    /// identifier the statement runs under, each.
-    User,
+    /// CURRENT_USER, SESSION_USER, SYSTEM_USER or [ISO/IEC 9075-2:2023
+    /// §11.5 GR3e] CURRENT_ROLE, whichever it is when the default is taken
+    /// \[GR1c\], of the statement that takes it.
+    User(UserFunction),
     /// [ISO/IEC 9075:1992 §6.8] CURRENT_DATE, CURRENT_TIME or
     /// CURRENT_TIMESTAMP, of `precision`: the instant of the statement that
     /// takes the default \[GR1d\].
@@ -102,13 +103,13 @@ pub enum ColumnDefault {
 }
 
 impl ColumnDesc {
-    /// [ISO/IEC 9075:1992 §11.5 GR2] Its default value, for a statement run
-    /// under the authorization identifier `auth` at `now`, whose instant
+    /// [ISO/IEC 9075:1992 §11.5 GR2] Its default value, for a statement
+    /// `user`'s at `now`, whose instant
     /// only a datetime default reads: before store assignment pads a
     /// fixed-length string \[GR1b iii, GR1c ii\]. [ISO/IEC 9075-2:2023
     /// §11.5 GR3a] Of an identity column or a generated column, the null
     /// value, its site unassigned until its value is given it.
-    pub fn default_value(&self, auth: &str, now: Clocked<'_>) -> Value {
+    pub fn default_value(&self, user: Principal<'_>, now: Clocked<'_>) -> Value {
         if self.generated.is_some() {
             return Value::Null;
         }
@@ -116,7 +117,7 @@ impl ColumnDesc {
         let of_domain = self.domain.as_ref().and_then(|d| d.default.as_ref());
         match self.default.as_ref().or(of_domain) {
             Some(ColumnDefault::Value(v)) => v.clone(),
-            Some(ColumnDefault::User) => Value::Char(auth.to_string()),
+            Some(ColumnDefault::User(f)) => user.value(*f).map_or(Value::Null, |s| Value::Char(s.to_owned())),
             Some(ColumnDefault::Datetime(moment, precision)) => current(*moment, *precision, now.instant()),
             None => Value::Null,
         }

@@ -4,8 +4,8 @@
 //! built-ins themselves are in `value/collation.rs`, each in the schema
 //! INFORMATION_SCHEMA.
 
-use super::QualifiedName;
 use super::domains::{UsageDesc, usage_held};
+use super::{QualifiedName, Who};
 use crate::value::collation::Pad;
 
 /// [ISO/IEC 9075-2:2023 §4.3.6, §11.43 GR5] A collation's descriptor.
@@ -22,9 +22,9 @@ pub struct CollationDesc {
 }
 
 impl CollationDesc {
-    /// Whether `auth` holds USAGE on it, and whether grantably, as of a
+    /// Whether `who` holds USAGE on it, and whether grantably, as of a
     /// domain (`DomainDesc::usage_of`).
-    pub fn usage_of(&self, auth: &str, owner: &str) -> (bool, bool) {
-        usage_held(&self.usage, auth, owner)
+    pub fn usage_of(&self, who: Who<'_>, owner: &str) -> (bool, bool) {
+        usage_held(&self.usage, who, owner)
     }
 }

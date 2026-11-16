@@ -60,12 +60,14 @@ use crate::value::codec::{put_value, value};
 
 mod columns;
 mod objects;
+mod roles;
 mod routines;
 mod triggers;
 use crate::value::types::tags::{data_type, put_type};
 use columns::{collation_name, column, put_collation_name, put_column};
 pub(crate) use columns::{default, put_default};
 pub(crate) use objects::{collation, put_collation, put_sequence, put_user_type, sequence, user_type};
+pub(crate) use roles::{put_roles, roles};
 pub(crate) use routines::{put_routine, routine};
 pub(crate) use triggers::{put_trigger, trigger};
 

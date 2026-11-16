@@ -29,7 +29,9 @@ use crate::ast::{InsertSource, InsertStatement, MergeStatement, Schema, SqlState
 use crate::binder::{
     Context, Invoked, ObjectColumn, Uses, WriteKind, bind_insert_query, bind_merge, bind_select, bind_when, bind_write, once_each, qualify,
 };
-use crate::catalog::{ActionTime, Horizon, QualifiedName, TransitionNames, TriggerDesc, TriggerEvent, ViewDesc, applicable, owner_of};
+use crate::catalog::{
+    ActionTime, Horizon, Principal, QualifiedName, TransitionNames, TriggerDesc, TriggerEvent, ViewDesc, applicable, owner_of, sole,
+};
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::exec::TransitionRows;
 use crate::params::Params;
@@ -186,7 +188,7 @@ impl State {
     /// [ISO/IEC 9075-2:2023 §11.49 AR2, AR3] That `owner` holds TRIGGER on
     /// `table`, and SELECT if `names` gives a transition name.
     fn trigger_privileges(&self, owner: &str, table: &QualifiedName, names: &TransitionNames) -> Result<()> {
-        let (held, _) = applicable(&*self.catalog, owner, table);
+        let (held, _) = applicable(&*self.catalog, sole(&*self.catalog, owner), table);
         let lacks = |what: &str, rule: &str| {
             let msg = format!("[ISO/IEC 9075-2:2023 §11.49 {rule}] {owner}, the owner of the trigger's schema, lacks {what} on {table}");
             Err(SqlError::new(Code::Privilege, msg).about(Subject::table(table.parts())))
@@ -231,7 +233,7 @@ impl State {
             rules: &INSERT_RULES,
             horizon: params.horizon(),
         };
-        let target = insert_target_in(self, &into, (owner, cx.schema, Now::default()), None)?;
+        let target = insert_target_in(self, &into, (Principal::sole(self.catalog.roles(), owner), cx.schema, Now::default()), None)?;
         if let InsertSource::Query(q) = &ins.source {
             bind_insert_query(cx, q, &target.objects())?;
         }
@@ -241,7 +243,7 @@ impl State {
     /// The MERGE `m` of a triggered action bound in `cx` as its owner
     /// `owner` would with `params`.
     fn bind_triggered_merge(&self, cx: Context<'_>, m: &MergeStatement, (owner, params): (&str, &Params)) -> Result<()> {
-        let (targets, held) = inserting(self, m, ((owner, cx.schema, Now::default()), params))?;
+        let (targets, held) = inserting(self, m, ((Principal::sole(self.catalog.roles(), owner), cx.schema, Now::default()), params))?;
         let objects: Vec<Vec<ObjectColumn>> = targets.iter().map(Inserting::objects).collect();
         // Of a view its triggers take whole, over its rows, none read.
         let none = held.then(|| TransitionRows::new(self.list_space()));
@@ -292,6 +294,7 @@ impl State {
             | SqlStatement::SetSchema(_)
             | SqlStatement::SetTimeZone(_)
             | SqlStatement::SetSessionAuthorization(_)
+            | SqlStatement::SetRole(_)
             | SqlStatement::Connection(_)
             | SqlStatement::SetSetting { .. }
             | SqlStatement::SetDatabase { .. }

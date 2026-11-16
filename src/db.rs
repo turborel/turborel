@@ -53,7 +53,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use self::area::commands;
 use crate::binder::OutColumn;
-use crate::catalog::QualifiedName;
+use crate::catalog::{Authorization, QualifiedName};
 use crate::error::{Code, Result, SqlError, SqlState, fail};
 use crate::settings::{COMMIT_SYNC, LOCKS_TIMEOUT_MS, STATEMENT_TIMEOUT_MS};
 use crate::sync::lock_builtin;
@@ -105,6 +105,7 @@ mod prepared;
 mod recovery;
 mod rekey;
 mod revoke;
+mod roles;
 mod routines;
 mod schema;
 mod scroll;
@@ -248,9 +249,16 @@ pub struct Session {
     db: Database,
     /// The service of its database it began in (`database/service.rs`).
     service: u64,
-    /// Its authorization identifier [ISO/IEC 9075:1992 §4.30], which SET
-    /// SESSION AUTHORIZATION sets [§16.4].
+    /// Its current authorization identifier [ISO/IEC 9075:1992 §4.30], which
+    /// SET SESSION AUTHORIZATION sets [§16.4]: of the top cell of its
+    /// authorization stack, a trigger's or a procedure's owner as it runs.
     auth: RefCell<String>,
+    /// [ISO/IEC 9075-2:2023 §4.42.1.2, §19.3] The current role name, which
+    /// SET ROLE sets: none in a trigger's or a procedure's owner's cell.
+    role: RefCell<Option<String>>,
+    /// [ISO/IEC 9075-2:2023 §4.42.1.2, §19.2 GR6] The SQL-session user
+    /// identifier, SESSION_USER, which no trigger or procedure changes.
+    user_identifier: RefCell<String>,
     /// The authorization identifier it began with [§16.4 GR4].
     started: String,
     inner: RefCell<SessionState>,
@@ -347,11 +355,20 @@ impl Session {
         self.auth.borrow()
     }
 
+    /// The top cell of its authorization stack and its SQL-session user
+    /// identifier, as they are now [ISO/IEC 9075-2:2023 §4.42.1.2].
+    pub(crate) fn authorization(&self) -> Authorization {
+        let (auth, role, session) = (self.auth.borrow().clone(), self.role.borrow().clone(), self.user_identifier.borrow().clone());
+        Authorization { auth, role, session }
+    }
+
     fn new(db: Database, auth: &str) -> Session {
         Session {
             service: db.service(),
             db,
             auth: RefCell::new(auth.to_string()),
+            role: RefCell::new(None),
+            user_identifier: RefCell::new(auth.to_string()),
             started: auth.to_string(),
             inner: RefCell::new(SessionState::default()),
             busy: Cell::new(false),

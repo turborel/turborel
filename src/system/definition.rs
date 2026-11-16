@@ -46,6 +46,7 @@ use super::{
     DEFINITION_SCHEMA, Defined, INFORMATION_SCHEMA, Rows, Seen, SystemTable, cardinal, catalog_name, desc_of, identifier, number, text,
     text_column, yes,
 };
+use crate::ast::UserFunction;
 use crate::binder::{system_view_columns, view_uses};
 use crate::catalog::{CheckLevels, ColumnDefault, ColumnDesc, ConstraintDesc, QualifiedName, TemporaryKind, owner_of};
 use crate::error::Result;
@@ -296,7 +297,12 @@ fn default_text(default: Option<&ColumnDefault>) -> Value {
     match default {
         None => Value::Null,
         Some(ColumnDefault::Value(v)) => long(&v.to_literal()),
-        Some(ColumnDefault::User) => text("CURRENT_USER"),
+        Some(ColumnDefault::User(f)) => text(match f {
+            UserFunction::Current => "CURRENT_USER",
+            UserFunction::Session => "SESSION_USER",
+            UserFunction::System => "SYSTEM_USER",
+            UserFunction::Role => "CURRENT_ROLE",
+        }),
         Some(ColumnDefault::Datetime(moment, precision)) => text(&match moment {
             Moment::Date => "CURRENT_DATE".to_owned(),
             Moment::Time => format!("CURRENT_TIME({precision})"),

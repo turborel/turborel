@@ -32,7 +32,8 @@ use super::{Completion, State, api, rule};
 use crate::ast::{AlterDomain, AlterDomainAction, DropBehavior, PrivilegeObject, RevokeStatement, TableName};
 use crate::binder::qualify;
 use crate::catalog::{
-    Actions, Catalog, ConstraintDesc, ConstraintKind, Privilege, PrivilegeDesc, QualifiedName, SYSTEM_GRANTOR, applicable, merged, owner_of,
+    Actions, Catalog, ConstraintDesc, ConstraintKind, Privilege, PrivilegeDesc, QualifiedName, SYSTEM_GRANTOR, applicable, merged,
+    owner_of, sole,
 };
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::txn::LockMode;
@@ -40,16 +41,16 @@ use crate::txn::LockMode;
 /// One privilege granted, as SQL-92's privilege descriptors are
 /// [ISO/IEC 9075:1992 §11.36 GR2, GR3].
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Granted {
-    grantor: String,
-    grantee: Option<String>,
-    table: QualifiedName,
-    privilege: Privilege,
-    grantable: bool,
+pub(in crate::db) struct Granted {
+    pub(in crate::db) grantor: String,
+    pub(in crate::db) grantee: Option<String>,
+    pub(in crate::db) table: QualifiedName,
+    pub(in crate::db) privilege: Privilege,
+    pub(in crate::db) grantable: bool,
 }
 
 /// Every privilege granted on every table and view of `catalog`.
-fn granted(catalog: &dyn Catalog) -> Vec<Granted> {
+pub(in crate::db) fn granted(catalog: &dyn Catalog) -> Vec<Granted> {
     let names = catalog.tables().into_iter().map(|t| t.name.clone()).chain(catalog.views().into_iter().map(|v| v.name.clone()));
     let mut all = Vec::new();
     for name in names {
@@ -67,7 +68,7 @@ fn granted(catalog: &dyn Catalog) -> Vec<Granted> {
 }
 
 /// `catalog`, the privileges granted on its tables and views `grants`.
-fn with_grants(catalog: &dyn Catalog, grants: &[&Granted]) -> Box<dyn Catalog> {
+pub(in crate::db) fn with_grants(catalog: &dyn Catalog, grants: &[&Granted]) -> Box<dyn Catalog> {
     let mut next = catalog.duplicate();
     let names = catalog.tables().into_iter().map(|t| t.name.clone()).chain(catalog.views().into_iter().map(|v| v.name.clone()));
     for name in names {
@@ -85,14 +86,16 @@ fn with_grants(catalog: &dyn Catalog, grants: &[&Granted]) -> Box<dyn Catalog> {
 
 /// Which of `grants` stand in `catalog`: each whose grantor holds its
 /// privilege with grant option by those that stand, found from none up.
-fn standing(catalog: &dyn Catalog, grants: &[Granted]) -> Vec<bool> {
+pub(in crate::db) fn standing(catalog: &dyn Catalog, grants: &[Granted]) -> Vec<bool> {
     let mut stands = vec![false; grants.len()];
     loop {
         let now: Vec<&Granted> = grants.iter().zip(&stands).filter(|(_, s)| **s).map(|(g, _)| g).collect();
         let held = with_grants(catalog, &now);
         // [ISO/IEC 9075-2:2023 §11.49 GR6] one of the special grantor
         // stands as its trigger does.
-        let holds = |g: &Granted| g.grantor == SYSTEM_GRANTOR || applicable(&*held, &g.grantor, &g.table).1.each().contains(&g.privilege);
+        let holds = |g: &Granted| {
+            g.grantor == SYSTEM_GRANTOR || applicable(&*held, sole(&*held, &g.grantor), &g.table).1.each().contains(&g.privilege)
+        };
         let next: Vec<bool> = grants.iter().map(holds).collect();
         if next == stands {
             return stands;
@@ -103,30 +106,30 @@ fn standing(catalog: &dyn Catalog, grants: &[Granted]) -> Vec<bool> {
 
 /// What a revoke would abandon [ISO/IEC 9075:1992 §11.37 SR11-SR16].
 #[derive(Default)]
-pub(super) struct Abandoned {
-    grants: Vec<Granted>,
-    pub(super) views: Vec<QualifiedName>,
+pub(in crate::db) struct Abandoned {
+    pub(in crate::db) grants: Vec<Granted>,
+    pub(in crate::db) views: Vec<QualifiedName>,
     /// Privileges of views' owners on their views, lost.
-    owners: Vec<QualifiedName>,
+    pub(in crate::db) owners: Vec<QualifiedName>,
     /// Table constraints, each with its table [SR14].
-    pub(super) constraints: Vec<(QualifiedName, ConstraintDesc)>,
+    pub(in crate::db) constraints: Vec<(QualifiedName, ConstraintDesc)>,
     /// Domain constraints, each with its domain [SR16].
-    pub(super) domain_constraints: Vec<(QualifiedName, QualifiedName)>,
-    pub(super) assertions: Vec<QualifiedName>,
+    pub(in crate::db) domain_constraints: Vec<(QualifiedName, QualifiedName)>,
+    pub(in crate::db) assertions: Vec<QualifiedName>,
     /// \[DESIGN\] Generated columns whose generation expressions name the
     /// object, each with its table, lost (`db/generated/named.rs`).
-    pub(super) columns: Vec<Column>,
+    pub(in crate::db) columns: Vec<Column>,
     /// [ISO/IEC 9075-2:2023 §12.7 SR3b] Triggers whose owner loses a
     /// privilege their definition needs.
-    pub(super) triggers: Vec<QualifiedName>,
+    pub(in crate::db) triggers: Vec<QualifiedName>,
     /// [ISO/IEC 9075-2:2023 §12.7 GR12o, §11.62 GR1] SQL-invoked routines,
     /// by specific name, whose owner loses a privilege their bodies need,
     /// or whose bodies invoke a routine dropped.
-    pub(super) routines: Vec<QualifiedName>,
+    pub(in crate::db) routines: Vec<QualifiedName>,
 }
 
 impl Abandoned {
-    pub(super) fn is_empty(&self) -> bool {
+    pub(in crate::db) fn is_empty(&self) -> bool {
         self.grants.is_empty()
             && self.views.is_empty()
             && self.owners.is_empty()
@@ -139,7 +142,7 @@ impl Abandoned {
     }
 
     /// The first of them, named for a refusal.
-    pub(super) fn first(&self) -> String {
+    pub(in crate::db) fn first(&self) -> String {
         if let Some(g) = self.grants.first() {
             let grantee = g.grantee.as_deref().unwrap_or("PUBLIC");
             return format!("a privilege {} granted {grantee} on {}", g.grantor, g.table);
@@ -194,7 +197,7 @@ impl State {
         }
         let name = qualify(&r.table, schema);
         let table = self.object(&name).or_at(r.table.at)?;
-        let (held, grantable) = applicable(&*self.catalog, auth, &name);
+        let (held, grantable) = applicable(&*self.catalog, sole(&*self.catalog, auth), &name);
         if held.is_empty() {
             return Err(SqlError::new(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.37 AR1] {auth} holds no privilege on {name}")));
         }
@@ -236,15 +239,16 @@ impl State {
     /// The views and constraints abandoned in `after`, the catalog with
     /// the privileges that stand [ISO/IEC 9075:1992 §11.37 SR13, SR14]; and
     /// the privileges of views' owners on them lost [SR11].
-    fn abandoned(&self, after: &dyn Catalog) -> Abandoned {
+    pub(in crate::db) fn abandoned(&self, after: &dyn Catalog) -> Abandoned {
         let mut abandoned = Abandoned::default();
         for v in self.catalog.views() {
             let owner = owner_of(&*self.catalog, &v.name.auth);
-            if v.reads.iter().any(|t| !applicable(after, owner, t).0.select) {
+            if v.reads.iter().any(|t| !applicable(after, sole(after, owner), t).0.select) {
                 abandoned.views.push(v.name.clone());
                 continue;
             }
-            let (before, now) = (applicable(&*self.catalog, owner, &v.name).0, applicable(after, owner, &v.name).0);
+            let (before, now) =
+                (applicable(&*self.catalog, sole(&*self.catalog, owner), &v.name).0, applicable(after, sole(after, owner), &v.name).0);
             if before.common(&now) != before {
                 abandoned.owners.push(v.name.clone());
             }
@@ -315,7 +319,7 @@ impl State {
     fn referenceable(&self, after: &dyn Catalog, table: &QualifiedName, c: &ConstraintDesc) -> bool {
         match &c.kind {
             ConstraintKind::ForeignKey(fk) => {
-                let held = applicable(after, &table.auth, &fk.table).0;
+                let held = applicable(after, sole(after, owner_of(after, &table.auth)), &fk.table).0;
                 fk.referenced.iter().all(|column| held.references.contains(column))
             }
             ConstraintKind::Check { text, names, horizon, .. } => {
@@ -336,7 +340,11 @@ impl State {
     ///
     /// As each drop's; SQLCODE -910 if it abandons a generated column,
     /// which goes first.
-    pub(super) fn destroy(&mut self, after: Arc<dyn Catalog>, abandoned: &Abandoned) -> Result<(Dropped, Vec<(QualifiedName, LockMode)>)> {
+    pub(in crate::db) fn destroy(
+        &mut self,
+        after: Arc<dyn Catalog>,
+        abandoned: &Abandoned,
+    ) -> Result<(Dropped, Vec<(QualifiedName, LockMode)>)> {
         // Dropped first, as their rows are copied (`db/generated/named.rs`).
         if let Some((t, c)) = abandoned.columns.first() {
             return Err(api(format!("[DESIGN] generated column {t}.{c} is lost, and was not dropped first")));
@@ -453,7 +461,7 @@ fn dependents(all: &[Granted], identified: &dyn Fn(&Granted) -> bool) -> Result<
 
 /// [ISO/IEC 9075-2:2023 §12.7 GR12q] The refusal of a REVOKE with RESTRICT
 /// that would abandon what `abandoned` holds: SQLSTATE 2B000.
-fn abandoning(abandoned: &Abandoned) -> SqlError {
+pub(in crate::db) fn abandoning(abandoned: &Abandoned) -> SqlError {
     let msg =
         format!("[ISO/IEC 9075-2:2023 §12.7 GR12q; ISO/IEC 9075:1992 §11.37 SR18] REVOKE ... RESTRICT would abandon {}", abandoned.first());
     rule(msg).with_state(SqlState::DEPENDENT_PRIVILEGES)

@@ -1,10 +1,12 @@
 //! [X3.135-1986 §4.15, §6.6] Privileges: what a `<privilege definition>`
 //! grants, as the catalog keeps it, and the applicable privileges of an
-//! `<authorization identifier>` on a table [X3.135-1986 §6.6 SR3].
+//! `<authorization identifier>` on a table [X3.135-1986 §6.6 SR3], and
+//! the current privileges of an authorization stack's top cell [ISO/IEC
+//! 9075-2:2023 §4.42.4].
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Catalog, QualifiedName, ViewDesc};
+use super::{Catalog, QualifiedName, ViewDesc, Who};
 
 /// [X3.135-1986 §6.6] A set of privileges on one table: the `<action>`s,
 /// UPDATE per column [X3.135-1986 §6.6 SR2], and INSERT and REFERENCES
@@ -201,8 +203,11 @@ pub fn merged(descs: Vec<PrivilegeDesc>) -> Vec<PrivilegeDesc> {
     merged
 }
 
-/// [X3.135-1986 §6.6 SR3] The applicable privileges of `auth` on the
-/// table or view `name`, and those of them that are grantable.
+/// [X3.135-1986 §6.6 SR3] The applicable privileges of `who` on the
+/// table or view `name`, and those of them that are grantable: of a cell
+/// of more than one enabled authorization identifier, the current
+/// privileges, those applicable for any of them [ISO/IEC 9075-2:2023
+/// §4.42.4].
 ///
 /// The owner, the `<authorization identifier>` that owns its schema
 /// (`owner_of`), has every
@@ -210,43 +215,52 @@ pub fn merged(descs: Vec<PrivilegeDesc>) -> Vec<PrivilegeDesc> {
 /// view, SELECT, grantable if its SELECT on every table the view names is
 /// \[SR3b i 2\]; on an updatable view, those it has on the table the view's
 /// `<from clause>` names, column for column \[SR3b i 3\]. Anyone else has
-/// those of every `<privilege definition>` on it whose grantees are `auth`
-/// or PUBLIC \[SR3b ii\], grantable if one of them says WITH GRANT OPTION:
+/// those of every `<privilege definition>` on it whose grantees are
+/// enabled or PUBLIC \[SR3b ii\], grantable if one of them says WITH GRANT OPTION:
 /// SQL-92's applicable privileges are those of PUBLIC too [ISO/IEC
 /// 9075:1992 §10.3 GR2], and a grant to PUBLIC permits one by anyone
-/// [§11.37 SR7a ii], where SQL-86 took only one naming `auth` itself. On a table of INFORMATION_SCHEMA, everyone has
+/// [§11.37 SR7a ii], where SQL-86 took only one naming its grantee itself. On a table of INFORMATION_SCHEMA, everyone has
 /// SELECT, grantable, "so that SELECT privilege can be further granted on
 /// views that reference" it, and no other privilege [ISO/IEC 9075:1992
 /// §21.1].
-pub fn applicable(catalog: &dyn Catalog, auth: &str, name: &QualifiedName) -> (Actions, Actions) {
+pub fn applicable(catalog: &dyn Catalog, who: Who<'_>, name: &QualifiedName) -> (Actions, Actions) {
     if name.auth == crate::system::INFORMATION_SCHEMA {
         let select = Actions { select: true, ..Actions::default() };
         return (select.clone(), select);
     }
-    if super::owner_of(catalog, &name.auth) != auth {
-        return granted(catalog, auth, name);
+    let owner = super::owner_of(catalog, &name.auth);
+    if !who.includes(owner) {
+        return granted(catalog, who, name);
     }
     if let Some(table) = catalog.table(name) {
         let all = Actions::all(table.columns.len());
         return (all.clone(), all);
     }
     let Some(view) = catalog.view(name) else { return (Actions::default(), Actions::default()) };
-    let (mut held, mut grantable) = derived(catalog, auth, view);
+    let sole = Who::sole(who.roles, owner);
+    let (mut held, mut grantable) = derived(catalog, sole, view);
     // [ISO/IEC 9075-2:2023 §11.32 GR5] TRIGGER on its view, not grantable.
     (held.trigger, grantable.trigger) = (true, false);
-    system_granted(catalog, auth, name, (held, grantable))
+    let (mut held, mut grantable) = system_granted(catalog, sole, name, (held, grantable));
+    // [ISO/IEC 9075-2:2023 §4.42.4] And those granted another enabled one.
+    if who.auth != owner || who.role.is_some() {
+        let (more, more_grantable) = granted(catalog, who, name);
+        held.add(&more);
+        grantable.add(&more_grantable);
+    }
+    (held, grantable)
 }
 
 /// [ISO/IEC 9075-2:2023 §11.49 GR6] `held` and `grantable`, the privileges
-/// of `auth`, the owner, on view `name`, with those granted it by
+/// of `owner`, alone in its cell, on view `name`, with those granted it by
 /// `SYSTEM_GRANTOR` for its INSTEAD OF triggers.
 fn system_granted(
     catalog: &dyn Catalog,
-    auth: &str,
+    owner: Who<'_>,
     name: &QualifiedName,
     (mut held, mut grantable): (Actions, Actions),
 ) -> (Actions, Actions) {
-    for p in catalog.privileges(name).into_iter().filter(|p| p.grantor == SYSTEM_GRANTOR && p.grantee.as_deref() == Some(auth)) {
+    for p in catalog.privileges(name).into_iter().filter(|p| p.grantor == SYSTEM_GRANTOR && p.grantee.as_deref() == Some(owner.auth)) {
         held.add(&p.actions);
         if p.grantable {
             grantable.add(&p.actions);
@@ -255,18 +269,19 @@ fn system_granted(
     (held, grantable)
 }
 
-/// The privileges of `auth`, the owner of view `view`, that the view's
-/// definition gives it, and those of them grantable, as `applicable` says.
-fn derived(catalog: &dyn Catalog, auth: &str, view: &ViewDesc) -> (Actions, Actions) {
+/// The privileges of `owner`, alone in its cell, the owner of view `view`,
+/// that the view's definition gives it, and those of them grantable, as
+/// `applicable` says.
+fn derived(catalog: &dyn Catalog, owner: Who<'_>, view: &ViewDesc) -> (Actions, Actions) {
     let (mut held, mut grantable) = if let Some((table, columns)) = &view.updates {
-        let (on_table, with_option) = applicable(catalog, auth, table);
+        let (on_table, with_option) = applicable(catalog, owner, table);
         (through(&on_table, columns), through(&with_option, columns))
     } else {
         let select = Actions { select: true, ..Actions::default() };
-        let all_grantable = view.reads.iter().all(|t| applicable(catalog, auth, t).1.select);
+        let all_grantable = view.reads.iter().all(|t| applicable(catalog, owner, t).1.select);
         (select.clone(), if all_grantable { select } else { Actions::default() })
     };
-    (held.references, grantable.references) = view_references(catalog, auth, view);
+    (held.references, grantable.references) = view_references(catalog, owner, view);
     (held, grantable)
 }
 
@@ -276,13 +291,13 @@ fn derived(catalog: &dyn Catalog, auth: &str, view: &ViewDesc) -> (Actions, Acti
 /// it holds REFERENCES on, grantable if all are, when it holds REFERENCES
 /// on some column of every leaf underlying table. None if what the view
 /// is drawn from is not recorded.
-fn view_references(catalog: &dyn Catalog, auth: &str, view: &ViewDesc) -> (BTreeSet<usize>, BTreeSet<usize>) {
+fn view_references(catalog: &dyn Catalog, owner: Who<'_>, view: &ViewDesc) -> (BTreeSet<usize>, BTreeSet<usize>) {
     let Some(u) = &view.underlying else { return (BTreeSet::new(), BTreeSet::new()) };
-    let leaves: Vec<(&QualifiedName, (Actions, Actions))> = u.leaves.iter().map(|t| (t, applicable(catalog, auth, t))).collect();
+    let leaves: Vec<(&QualifiedName, (Actions, Actions))> = u.leaves.iter().map(|t| (t, applicable(catalog, owner, t))).collect();
     if !leaves.iter().all(|(_, (held, _))| !held.references.is_empty()) {
         return (BTreeSet::new(), BTreeSet::new());
     }
-    // Whether `auth` holds REFERENCES on column `c` of leaf `t`, grantable if `grantable`.
+    // Whether `owner` holds REFERENCES on column `c` of leaf `t`, grantable if `grantable`.
     let holds = |(t, c): &(QualifiedName, String), grantable: bool| {
         let Some(at) = column_at(catalog, t, c) else { return false };
         leaves.iter().find(|(l, _)| *l == t).is_some_and(|(_, (held, with))| if grantable { with } else { held }.references.contains(&at))
@@ -301,16 +316,14 @@ fn column_at(catalog: &dyn Catalog, t: &QualifiedName, c: &str) -> Option<usize>
 }
 
 /// [X3.135-1986 §6.6 SR3b ii] Those of every `<privilege definition>` on
-/// `name` granted to `auth` or PUBLIC, and those of them granted WITH GRANT
-/// OPTION [ISO/IEC 9075:1992 §10.3 GR2, §11.37 SR7a ii].
-fn granted(catalog: &dyn Catalog, auth: &str, name: &QualifiedName) -> (Actions, Actions) {
+/// `name` granted to an identifier `who` enables or to PUBLIC, and those of
+/// them granted WITH GRANT OPTION [ISO/IEC 9075:1992 §10.3 GR2, §11.37 SR7a
+/// ii; ISO/IEC 9075-2:2023 §4.42.4].
+fn granted(catalog: &dyn Catalog, who: Who<'_>, name: &QualifiedName) -> (Actions, Actions) {
     let (mut held, mut grantable) = (Actions::default(), Actions::default());
-    for p in catalog.privileges(name) {
-        let named = p.grantee.as_deref() == Some(auth);
-        if named || p.grantee.is_none() {
-            held.add(&p.actions);
-        }
-        if (named || p.grantee.is_none()) && p.grantable {
+    for p in catalog.privileges(name).into_iter().filter(|p| who.holds(p.grantee.as_deref())) {
+        held.add(&p.actions);
+        if p.grantable {
             grantable.add(&p.actions);
         }
     }

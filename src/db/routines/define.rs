@@ -23,7 +23,7 @@ use crate::ast::{
 use crate::binder::{alike, qualify, routine_definition};
 use crate::catalog::{
     Horizon, ParameterMode, QualifiedName, Routine, RoutineKind, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, UsageDesc, UserTypeDesc,
-    owner_of,
+    owner_of, sole,
 };
 use crate::error::{At, Code, Result, SqlError};
 use crate::log::record::DropTarget;
@@ -176,7 +176,7 @@ impl State {
     /// [ISO/IEC 9075-2:2023 §11.60 SR16, §6.1 AR1] The `<parameter type>`
     /// or `<returns data type>` `t`, a `<data type>`, no domain.
     fn parameter_type(&self, t: &TypeName, (schema, owner): (&str, &str)) -> Result<DataType> {
-        match self.resolve_type(t, (schema, owner))? {
+        match self.resolve_type(t, (schema, sole(&*self.catalog, owner)))? {
             (_, Some(d)) => Err(rule(format!(
                 "[ISO/IEC 9075-2:2023 §11.60 SR16] a parameter's or result's type is a <data type>, not domain {}",
                 d.name

@@ -63,8 +63,12 @@ Nothing is open.
 - Polymorphic table functions (B200 to B209) [§4.35.4, §7.6, §9.24, §9.25].
   A function in FROM whose result's columns depend on its arguments, on
   the SQL-invoked functions there are.
-- Roles (T331, T332) [§12.4 to §12.6]. SQL-92 has none, and ROLE is only a
-  potential reserved word [ISO/IEC 9075:1992 §5.2].
+- The Information Schema's views of roles (ISO/IEC 9075-11:2023):
+  ENABLED_ROLES, APPLICABLE_ROLES, ADMINISTRABLE_ROLE_AUTHORIZATIONS and
+  ROLE_TABLE_GRANTS, ROLE_COLUMN_GRANTS, ROLE_USAGE_GRANTS,
+  ROLE_UDT_GRANTS and ROLE_ROUTINE_GRANTS, and the privilege views as they
+  read the enabled roles, so tools can list who holds what through a
+  role. The privilege views read the session's user alone today.
 
 ### Types
 

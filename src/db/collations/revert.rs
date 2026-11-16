@@ -92,7 +92,8 @@ impl Session {
             return Ok(());
         }
         let fresh = self.definitions(self.db.snapshot()?)?;
-        let (qn, tables) = fresh.impacted_tables(&self.auth(), r).or_at(r.table.at)?;
+        let a = self.grantor(&fresh, r.grantor)?;
+        let (qn, tables) = fresh.impacted_tables(&a, r).or_at(r.table.at)?;
         if tables.is_empty() {
             return Ok(());
         }
@@ -100,7 +101,7 @@ impl Session {
         // Refused once its columns are reverted: the transaction only
         // rolls back.
         let after = self.definitions(self.db.snapshot()?)?;
-        let made = State::clone(&after).revoke((&self.auth(), &self.default_schema()), r).map(|_| ());
+        let made = State::clone(&after).revoke((&a, &self.default_schema()), r).map(|_| ());
         if made.is_err() {
             tx.doom("a REVOKE failed with a collation's columns reverted");
         }

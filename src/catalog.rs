@@ -23,6 +23,7 @@ mod domains;
 mod keys;
 mod memory;
 mod privileges;
+mod roles;
 mod routines;
 mod sequences;
 mod triggers;
@@ -32,10 +33,11 @@ use crate::value::collation::CollationRef;
 pub use collations::CollationDesc;
 pub use columns::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, Identity};
 pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, MatchType, ReferentialAction};
-pub use domains::{DomainDesc, UsageDesc};
+pub use domains::{DomainDesc, UsageDesc, usage_held};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, applicable, merged};
+pub use roles::{Authorization, Principal, RoleAuthorization, Roles, Who};
 pub use routines::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc};
 pub use sequences::SequenceDesc;
 pub use triggers::{ActionTime, TransitionNames, TriggerDesc, TriggerEvent, TriggerLevel};
@@ -456,6 +458,13 @@ pub trait Catalog: Send + Sync {
     /// Forget the SQL-invoked routine of this specific name: one dropped
     /// [§11.62 GR2].
     fn remove_routine(&mut self, specific: &QualifiedName);
+    /// [ISO/IEC 9075-2:2023 §4.42.3] The roles and role authorizations.
+    fn roles(&self) -> &Roles;
+    /// Make `roles` the roles and role authorizations, in place of those
+    /// there were: what a `<role definition>`, a `<grant role statement>`,
+    /// a `<revoke role statement>` or a `<drop role statement>` left
+    /// [§12.4 to §12.7].
+    fn set_roles(&mut self, roles: Roles);
     /// An independent copy of this catalog.
     fn duplicate(&self) -> Box<dyn Catalog>;
 }
@@ -466,4 +475,11 @@ pub trait Catalog: Send + Sync {
 /// every schema's owner was in SQL-86 [X3.135-1986 §4.15].
 pub fn owner_of<'a>(catalog: &'a dyn Catalog, schema: &'a str) -> &'a str {
     catalog.schema_owner(schema).unwrap_or(schema)
+}
+
+/// [ISO/IEC 9075-2:2023 §4.42.4] The cell of `auth` alone, against the
+/// roles `catalog` keeps: whose privileges are those applicable for `auth`,
+/// as a definition's owner's and a grantor's are.
+pub fn sole<'a>(catalog: &'a dyn Catalog, auth: &'a str) -> Who<'a> {
+    Who::sole(catalog.roles(), auth)
 }

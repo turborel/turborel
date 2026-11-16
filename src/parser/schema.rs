@@ -27,44 +27,67 @@ impl Parser {
         let (catalog, name, auth) = self.schema_name_clause()?;
         self.schema_character_set()?;
 
-        // <schema element> ::= <domain definition> | <table definition> | <view definition>
-        //     | <grant statement> | <assertion definition> | <character set definition>
-        //     | <collation definition> | <translation definition>
-        //     | <trigger definition> | <schema routine> [ISO/IEC 9075-2:2023 §11.1]
-        let (mut domains, mut tables, mut views, mut privileges) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let (mut collations, mut sequences, mut types) = (Vec::new(), Vec::new(), Vec::new());
-        let (mut assertions, mut triggers, mut routines) = (Vec::new(), Vec::new(), Vec::new());
-        loop {
-            if self.is_kw(kw::GRANT) {
-                privileges.push(self.privilege_definition()?);
-                continue;
-            }
-            if !self.is_kw(kw::CREATE) {
-                break;
-            }
-            if self.character_set_element(&mut collations)? {
-                continue;
-            }
-            if self.next_is_sequence() {
-                sequences.push(self.sequence_definition()?);
-            } else if self.next_is_type() {
-                types.push(self.type_definition()?);
-            } else if matches!(self.peek_at(1), Tok::KeyWord(kw::VIEW)) {
-                views.push(self.view_definition()?);
-            } else if matches!(self.peek_at(1), Tok::KeyWord(kw::DOMAIN)) {
-                domains.push(self.domain_definition()?);
-            } else if matches!(self.peek_at(1), Tok::KeyWord(kw::ASSERTION)) {
-                assertions.push(self.assertion_definition()?);
-            } else if self.next_is_trigger() {
-                triggers.push(self.trigger_definition()?);
-            } else if self.next_is_routine() {
-                routines.push(self.routine_definition()?);
-            } else {
-                tables.push(self.table_definition()?);
-            }
-        }
+        let mut schema = Schema {
+            catalog,
+            name,
+            auth,
+            collations: Vec::new(),
+            sequences: Vec::new(),
+            types: Vec::new(),
+            domains: Vec::new(),
+            assertions: Vec::new(),
+            tables: Vec::new(),
+            views: Vec::new(),
+            privileges: Vec::new(),
+            roles: Vec::new(),
+            triggers: Vec::new(),
+            routines: Vec::new(),
+        };
+        while self.schema_element(&mut schema)? {}
         self.end()?;
-        Ok(Schema { catalog, name, auth, collations, sequences, types, domains, assertions, tables, views, privileges, triggers, routines })
+        Ok(schema)
+    }
+
+    /// A `<schema element>` of `s`, taken into it, if one is next: whether
+    /// it was.
+    ///
+    /// `<schema element>` ::= `<domain definition>` | `<table definition>`
+    /// | `<view definition>` | `<grant statement>` | `<assertion
+    /// definition>` | `<character set definition>` | `<collation
+    /// definition>` | `<translation definition>` | `<trigger definition>` |
+    /// `<schema routine>` | `<sequence generator definition>` |
+    /// `<user-defined type definition>` | `<role definition>` [ISO/IEC
+    /// 9075-2:2023 §11.1], a `<grant statement>` a `<grant privilege
+    /// statement>` or a `<grant role statement>` [§12.1].
+    fn schema_element(&mut self, s: &mut Schema) -> Result<bool> {
+        if self.is_kw(kw::GRANT) && self.at_role_grant() {
+            s.roles.push(self.grant_role()?);
+        } else if self.is_kw(kw::GRANT) {
+            s.privileges.push(self.privilege_definition()?);
+        } else if self.is_kw(kw::CREATE) && self.at_role_definition() {
+            s.roles.push(self.role_definition()?);
+        } else if !self.is_kw(kw::CREATE) {
+            return Ok(false);
+        } else if self.character_set_element(&mut s.collations)? {
+            return Ok(true);
+        } else if self.next_is_sequence() {
+            s.sequences.push(self.sequence_definition()?);
+        } else if self.next_is_type() {
+            s.types.push(self.type_definition()?);
+        } else if matches!(self.peek_at(1), Tok::KeyWord(kw::VIEW)) {
+            s.views.push(self.view_definition()?);
+        } else if matches!(self.peek_at(1), Tok::KeyWord(kw::DOMAIN)) {
+            s.domains.push(self.domain_definition()?);
+        } else if matches!(self.peek_at(1), Tok::KeyWord(kw::ASSERTION)) {
+            s.assertions.push(self.assertion_definition()?);
+        } else if self.next_is_trigger() {
+            s.triggers.push(self.trigger_definition()?);
+        } else if self.next_is_routine() {
+            s.routines.push(self.routine_definition()?);
+        } else {
+            s.tables.push(self.table_definition()?);
+        }
+        Ok(true)
     }
 
     /// [§11.1] `<schema name clause>` ::= `<schema name>` | AUTHORIZATION
@@ -136,7 +159,9 @@ impl Parser {
     /// definition>`, on its own: with its text.
     pub(super) fn schema_statement(&mut self) -> Result<SqlStatement> {
         let start = self.here();
-        let statement = if self.is_kw(kw::GRANT) {
+        let statement = if let Some(r) = self.role_statement()? {
+            SchemaStatement::Role(r)
+        } else if self.is_kw(kw::GRANT) {
             SchemaStatement::Grant(self.privilege_definition()?)
         } else if self.is_kw(kw::REVOKE) {
             SchemaStatement::Revoke(self.revoke_statement()?)
@@ -170,7 +195,8 @@ impl Parser {
 
     /// [ISO/IEC 9075:1992 §11.37] `<revoke statement>` ::= REVOKE \[GRANT
     /// OPTION FOR\] `<privileges>` ON `<object name>` FROM `<grantee>` \[{,
-    /// `<grantee>`}...\] `<drop behavior>`
+    /// `<grantee>`}...\] \[GRANTED BY `<grantor>`\] `<drop behavior>`
+    /// [ISO/IEC 9075-2:2023 §12.7]
     fn revoke_statement(&mut self) -> Result<RevokeStatement> {
         self.expect_kw(kw::REVOKE)?;
         let grant_option_for = self.accept_kw(kw::GRANT);
@@ -182,7 +208,8 @@ impl Parser {
         let (table, object, parameters) = self.object_name()?;
         self.expect_kw(kw::FROM)?;
         let grantees = self.grantees()?;
-        Ok(RevokeStatement { grant_option_for, actions, table, object, parameters, grantees, behavior: self.drop_behavior()? })
+        let grantor = self.granted_by()?;
+        Ok(RevokeStatement { grant_option_for, actions, table, object, parameters, grantees, grantor, behavior: self.drop_behavior()? })
     }
 
     /// [X3.135-1986 §6.5; ISO/IEC 9075:1992 §11.19] `<view definition>` ::=
@@ -380,7 +407,8 @@ impl Parser {
     /// [X3.135-1986 §6.6] `<privilege definition>` ::= GRANT `<privileges>`
     /// ON `<table name>` TO `<grantee>` \[{, `<grantee>`}...\] \[WITH GRANT
     /// OPTION\]; [ISO/IEC 9075:1992 §11.36] `<grant statement>`, its
-    /// `<object name>` \[TABLE\] `<table name>`.
+    /// `<object name>` \[TABLE\] `<table name>`; [ISO/IEC 9075-2:2023
+    /// §12.2] \[GRANTED BY `<grantor>`\].
     fn privilege_definition(&mut self) -> Result<PrivilegeDefinition> {
         self.expect_kw(kw::GRANT)?;
         let actions = self.privileges()?;
@@ -392,7 +420,7 @@ impl Parser {
             self.expect_kw(kw::GRANT)?;
             self.expect_kw(kw::OPTION)?;
         }
-        Ok(PrivilegeDefinition { actions, table, object, parameters, grantees, grant_option })
+        Ok(PrivilegeDefinition { actions, table, object, parameters, grantees, grant_option, grantor: self.granted_by()? })
     }
 
     /// `<action>` ::= SELECT | DELETE | INSERT \[(`<privilege column
@@ -493,7 +521,7 @@ impl Parser {
     }
 
     /// `<grantee>` \[{, `<grantee>`}...\]
-    fn grantees(&mut self) -> Result<Vec<Option<String>>> {
+    pub(super) fn grantees(&mut self) -> Result<Vec<Option<String>>> {
         let mut grantees = vec![self.grantee()?];
         while self.accept_delim(delim::COMMA) {
             grantees.push(self.grantee()?);

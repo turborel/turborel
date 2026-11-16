@@ -160,6 +160,10 @@ impl Parser {
     /// A `<primary>` that starts with an `<identifier>`: a function call, a
     /// `<parameter specification>`, or a `<column specification>`.
     fn identifier_primary(&mut self) -> Result<ValueExpression> {
+        // [ISO/IEC 9075-2:2023 §6.4] CURRENT_ROLE standing alone.
+        if self.at_current_role() {
+            return Ok(ValueExpression::Value(self.value_specification()?));
+        }
         if let Some(special) = self.composite_pattern_or_aggregate()? {
             return Ok(special);
         }

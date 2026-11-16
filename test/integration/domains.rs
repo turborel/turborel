@@ -222,6 +222,9 @@ fn domains_in_the_information_schema_21_2() {
 /// RESTRICT, and goes with it under CASCADE; one of a schema whose owner
 /// loses USAGE on it keeps the revoke from RESTRICT, and goes under
 /// CASCADE.
+///
+/// Regression test (R-TEST-7): the refusal gave SQLSTATE 2A000, not 2B000
+/// [ISO/IEC 9075-2:2023 §12.7 GR12q].
 #[test]
 fn views_that_cast_to_a_domain_11_27() {
     let db = domains();
@@ -232,7 +235,8 @@ fn views_that_cast_to_a_domain_11_27() {
     a.commit().unwrap();
     b.run("CREATE VIEW W AS SELECT CAST(N AS A.AMOUNT) AS M FROM A.T").unwrap();
     b.commit().unwrap();
-    assert_eq!(exec(&a, "REVOKE USAGE ON DOMAIN AMOUNT FROM B RESTRICT").err(), Some(Code::SyntaxRule), "W is abandoned");
+    let refused = a.run("REVOKE USAGE ON DOMAIN AMOUNT FROM B RESTRICT").expect_err("W is abandoned");
+    assert_eq!((refused.code, refused.sqlstate().as_str()), (Code::SyntaxRule, "2B000"), "W is abandoned");
     a.run("REVOKE USAGE ON DOMAIN AMOUNT FROM B CASCADE").unwrap();
     a.commit().unwrap();
     assert_eq!(code(&b, "SELECT M FROM W"), Code::SyntaxRule, "W went");

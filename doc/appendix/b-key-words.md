@@ -142,6 +142,12 @@ words only where CREATE TRIGGER, DROP TRIGGER, and GRANT and REVOKE of
 TRIGGER write them, and where another statement above does. A table or
 column may be named any of them.
 
+ROLE, ADMIN, GRANTED and NONE, which SQL-92 does not reserve, are
+identifiers, key words only where CREATE ROLE, DROP ROLE, SET ROLE, and
+GRANT and REVOKE of roles and GRANTED BY write them. CURRENT_ROLE is an
+identifier too, read as the value function where it stands alone: a
+column named CURRENT_ROLE is read qualified, as T.CURRENT_ROLE.
+
 SEQUENCE, INCREMENT, MAXVALUE, MINVALUE and RESTART, which SQL:2023 does
 not reserve, and CYCLE and START are key words only in CREATE, ALTER and
 DROP SEQUENCE, GRANT and REVOKE ON SEQUENCE, so a table may have columns of

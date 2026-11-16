@@ -4,20 +4,28 @@
 
 ## NAME
 
-REVOKE: take privileges away
+REVOKE: take privileges, or roles, away
 
 ## SYNOPSIS
 
 ```
-<revoke statement> ::=
+<revoke statement> ::= <revoke privilege statement> | <revoke role statement>
+
+<revoke privilege statement> ::=
     REVOKE [ GRANT OPTION FOR ] <privileges> ON <object name>
-    FROM <grantee> [ { , <grantee> }... ] <drop behavior>
+    FROM <grantee> [ { , <grantee> }... ]
+    [ GRANTED BY <grantor> ] <drop behavior>
+
+<revoke role statement> ::=
+    REVOKE [ ADMIN OPTION FOR ] <role name> [ { , <role name> }... ]
+    FROM <grantee> [ { , <grantee> }... ]
+    [ GRANTED BY <grantor> ] <drop behavior>
 
 <drop behavior> ::= CASCADE | RESTRICT
 ```
 
-The `<privileges>`, `<object name>` and `<grantee>` are those of
-[GRANT](grant.md).
+The `<privileges>`, `<object name>`, `<grantee>` and `<grantor>` are
+those of [GRANT](grant.md).
 
 ## DESCRIPTION
 
@@ -66,17 +74,34 @@ of a table is refused before it drops any.
 A privilege named that its user had not granted the grantee is not
 taken, and the statement completes with the warning SQLSTATE 01006.
 
+The revoker is the grantor GRANT would be: the session's user, or, with
+GRANTED BY CURRENT_ROLE, its role.
+
+REVOKE of roles takes each role from each grantee, as the revoker
+granted it; ADMIN OPTION FOR takes only the admin option, leaving the
+role. The revoker holds each role WITH ADMIN OPTION. A grant of the role
+the grantee made by the admin option it loses is abandoned, unless the
+grantee holds the admin option another way. So is a privilege a role
+granted that it held only through a role it no longer has, and what
+needs that privilege, as for privileges taken. RESTRICT refuses the
+revoke (SQLSTATE 2B000) if a privilege or an object would be abandoned,
+and leaves an abandoned grant of a role as it is; CASCADE destroys what
+is abandoned, grants of roles among them.
+
 REVOKE runs within the session's transaction: ROLLBACK undoes it.
 
 ## RULES
 
-1. The object exists, as for [GRANT](grant.md).
+1. The object exists, as for [GRANT](grant.md); each role named exists.
 2. RESTRICT: nothing is abandoned, and no column or domain is impacted.
-3. The transaction is not READ ONLY.
+3. Of GRANTED BY CURRENT_USER, the session has a current user; of
+   GRANTED BY CURRENT_ROLE, it has set a role.
+4. The transaction is not READ ONLY.
 
 ## PRIVILEGES
 
-None: a user revokes only what it granted.
+None of privileges: a user revokes only what it granted. Of roles, the
+revoker holds each WITH ADMIN OPTION.
 
 ## ERRORS
 
@@ -84,6 +109,7 @@ None: a user revokes only what it granted.
 |---|---|---|
 | 2A000 | -102 | No `<drop behavior>` is written, or the statement is not written as the synopsis shows |
 | 2A000 | -103 | A rule above is broken |
+| 2A000 | -104 | The revoker holds a role named not WITH ADMIN OPTION |
 | 2B000 | -103 | RESTRICT, and a privilege, view, constraint, assertion, trigger or routine would be abandoned, a column or domain of a schema left without USAGE is of the collation, a grant of USAGE on the sequence generator would be abandoned, or a column, view, constraint, generated column or grant would be lost or abandoned with a privilege on a distinct type or its function |
 | 23000 | -201 | A constraint no longer holds of the rows of a table reverted |
 | 25000 | -917 | The transaction is READ ONLY |
@@ -161,6 +187,30 @@ OK
 
 N compares by the default collation now, so 'bob' is not Bob.
 
+Of roles: ANN granted SENIOR to BOB WITH ADMIN OPTION, and BOB granted
+it to CAROL by that option (see [GRANT](grant.md)). Run by ANN:
+
+```sql
+REVOKE SENIOR FROM BOB CASCADE;
+COMMIT;
+```
+
+```
+OK
+OK
+```
+
+CAROL's grant, made by the admin option BOB lost, was abandoned and
+destroyed with it:
+
+```sql
+SET ROLE 'SENIOR';
+```
+
+```
+turborel: SQLCODE -104 (SQLSTATE 0P000): no role SENIOR is granted to CAROL or to PUBLIC [ISO/IEC 9075-2:2023 §19.3 GR3, GR4]
+```
+
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.37. Of a collation, ISO/IEC 9075-2:2023 §12.7,
@@ -168,7 +218,9 @@ as SQL-92 has no rule for a column of one; of a sequence generator, which
 SQL-92 lacks, the same. SQL-86 has no REVOKE. ISO/IEC 9075-2:2023 §12.7
 GR12h loses a generated column only when its generation expression loses
 EXECUTE on a routine. Losing it over USAGE on a domain or collation is
-turborel's reading, as the expression would no longer bind.
+turborel's reading, as the expression would no longer bind. REVOKE of
+roles is ISO/IEC 9075-2:2023 §12.7 (Feature T331), and GRANTED BY §12.8
+(T332).
 
 ## SEE ALSO
 

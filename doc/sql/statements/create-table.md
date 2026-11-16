@@ -45,7 +45,7 @@ CREATE TABLE: define a base table
 
 <default option> ::=
       <literal>
-    | USER | CURRENT_USER | SESSION_USER | SYSTEM_USER
+    | USER | CURRENT_USER | CURRENT_ROLE | SESSION_USER | SYSTEM_USER
     | CURRENT_DATE | CURRENT_TIME [ ( <precision> ) ] | CURRENT_TIMESTAMP [ ( <precision> ) ]
     | NULL
 
@@ -206,7 +206,8 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
 5. A foreign key's referenced table is a base table, its referenced
    columns those of a unique constraint, as many as the referencing
    ones, each of the same type.
-6. A CHECK contains no USER, CURRENT_USER, SESSION_USER or SYSTEM_USER,
+6. A CHECK contains no USER, CURRENT_USER, CURRENT_ROLE, SESSION_USER or
+   SYSTEM_USER,
    no CURRENT_DATE, CURRENT_TIME or CURRENT_TIMESTAMP, and is not
    possibly non-deterministic.
 7. A default is of the column's type: a literal it can hold, a user

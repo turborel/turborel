@@ -40,7 +40,7 @@ undoes it.
 
 1. The session has no transaction open: COMMIT or ROLLBACK first.
 2. Its user is the database's owner.
-3. No user has the identifier.
+3. No user has the identifier, and no role (see [CREATE ROLE](create-role.md)).
 4. The database has a credentials plug-in to make a verifier: a server
    always has one.
 
@@ -54,31 +54,36 @@ The database's owner's alone.
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
 | 2A000 | -102 | PASSWORD, or its literal, is not written |
-| 2A000 | -103 | A user has the identifier |
+| 2A000 | -103 | A user, or a role, has the identifier |
 | 2A000 | -104 | Its user is not the database's owner |
 | TB910 | -910 | An embedded database has no credentials plug-in |
 
 ## EXAMPLES
 
-Run by ANN, the database's owner, of users ANN and BOB:
+Run by ANN, the database's owner, of users ANN and BOB and the role
+CLERK:
 
 ```sql
 CREATE USER CAROL WITH PASSWORD 'correct horse';
 SELECT * FROM INFORMATION_SCHEMA.USERS ORDER BY USER_NAME;
+COMMIT;
 CREATE USER BOB PASSWORD 'x';
 CREATE USER DAVE;
+CREATE USER CLERK PASSWORD 'x';
 ```
 
 ```
 OK
- USER_NAME                                                    | IS_OWNER
---------------------------------------------------------------+----------
- ANN                                                          | YES
- BOB                                                          | NO
- CAROL                                                        | NO
+ USER_NAME                                                    | IS_OWNER | CREATE_ROLE
+--------------------------------------------------------------+----------+-------------
+ ANN                                                          | YES      | YES
+ BOB                                                          | NO       | NO
+ CAROL                                                        | NO       | NO
 (3 rows)
+OK
 turborel: SQLCODE -103 (SQLSTATE 2A000): a user BOB exists already (at character 12)
 turborel: SQLCODE -102 (SQLSTATE 2A000): expected PASSWORD, found end of statement (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 2A000): CLERK is a role's name, which no user takes (at character 12)
 ```
 
 Run by BOB:

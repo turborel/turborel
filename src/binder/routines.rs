@@ -103,7 +103,7 @@ impl Binder<'_> {
         };
         let qn = QualifiedName { auth: d.schema.clone(), ident: d.name.clone() };
         let t = self.db.catalog.user_type(&qn).ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §6.1] there is no type {qn}")))?;
-        if Candidate::Cast(t, which).executable(self.db, self.auth) {
+        if Candidate::Cast(t, which).executable(self.db, self.who()) {
             return Ok(());
         }
         let msg =

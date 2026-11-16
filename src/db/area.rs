@@ -21,9 +21,10 @@ mod all;
 
 use self::commands::Command;
 use super::assignment::{assign_targets, declared_type};
+use super::roles::Valued;
 use super::{Completion, Session, State, rule};
 use crate::ast::{AllQualifier, ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, ValueSpecification};
-use crate::binder::{self, assignable};
+use crate::binder::assignable;
 use crate::catalog::{QualifiedName, applicable, owner_of};
 use crate::error::{Code, Result, RoutineSubject, SqlState, Subject, fail_with};
 use crate::lexer::kw;
@@ -196,7 +197,7 @@ impl Session {
         let (targets, values) = match get {
             GetDiagnostics::Statement(items) => typed(items.iter().map(|(t, item)| (t, item.numeric(), statement(*item))), params)?,
             GetDiagnostics::Condition { number, items } => {
-                let (n, condition) = area.numbered(number, &self.auth(), params)?;
+                let (n, condition) = area.numbered(number, &|v| self.value_in(st, v, params, None))?;
                 let shown = self.shown(st, condition);
                 typed(items.iter().map(|(t, item)| (t, item.numeric(), shown.value(*item, (n, condition)))), params)?
             }
@@ -231,7 +232,7 @@ impl Session {
             AllQualifier::Statement => Vec::new(),
             AllQualifier::Everything | AllQualifier::Condition(None) => area.conditions().map(|(n, c)| (true, n, c)).collect(),
             AllQualifier::Condition(Some(number)) => {
-                let (n, condition) = area.numbered(number, &self.auth(), params)?;
+                let (n, condition) = area.numbered(number, &|v| self.value_in(st, v, params, None))?;
                 vec![(false, n, condition)]
             }
         };
@@ -254,9 +255,10 @@ impl Session {
         // on which the identifier holds no privilege, and a constraint of
         // one, are not named.
         let access = condition.state.is_syntax_or_access();
+        let authorization = self.authorization();
         let visible = |(schema, ident): &(String, String)| {
             let name = QualifiedName { auth: schema.clone(), ident: ident.clone() };
-            access || !applicable(&*st.catalog, &self.auth(), &name).0.is_empty()
+            access || !applicable(&*st.catalog, authorization.of(st.catalog.roles()).cell, &name).0.is_empty()
         };
         let Subject { constraint, table, column, cursor, assertion, trigger, routine } = &condition.subject;
         let named = table.is_some();
@@ -264,7 +266,11 @@ impl Session {
         // [GR3j iii] a table constraint goes with its table; [GR3j iv] an
         // assertion is shown to its schema's owner.
         let shown_constraint = |(schema, _): &(String, String)| {
-            if *assertion { owner_of(&*st.catalog, schema) == *self.auth() } else { !named || table.is_some() }
+            if *assertion {
+                authorization.of(st.catalog.roles()).cell.includes(owner_of(&*st.catalog, schema))
+            } else {
+                !named || table.is_some()
+            }
         };
         let constraint = constraint.clone().filter(shown_constraint);
         let column = column.clone().filter(|_| table.is_some());
@@ -299,8 +305,8 @@ impl Area {
 
     /// [ISO/IEC 9075-2:2023 §23.1 SR3, GR3] The condition the `<condition
     /// number>` `n` names, and its number.
-    fn numbered(&self, n: &ValueSpecification, auth: &str, params: &Params) -> Result<(i128, &Condition)> {
-        let n = condition_number(n, auth, params)?;
+    fn numbered(&self, n: &ValueSpecification, valued: &Valued<'_>) -> Result<(i128, &Condition)> {
+        let n = condition_number(n, valued)?;
         if let Some((_, condition)) = self.conditions().find(|(at, _)| *at == n) {
             return Ok((n, condition));
         }
@@ -439,9 +445,9 @@ fn all_target(target: &ParameterSpecification, params: &Params) -> Result<Parame
 }
 
 /// [ISO/IEC 9075-2:2023 §23.1 SR3] The `<condition number>` `n`'s value.
-fn condition_number(n: &ValueSpecification, auth: &str, params: &Params) -> Result<i128> {
+fn condition_number(n: &ValueSpecification, valued: &Valued<'_>) -> Result<i128> {
     let not_exact = || rule("[ISO/IEC 9075-2:2023 §23.1 SR3] the <condition number> is exact numeric with scale 0".to_owned());
-    let (value, data_type) = binder::value_specification(n, auth, params)?;
+    let (value, data_type) = valued(n)?;
     if !matches!(data_type, DataType::Exact { scale: 0, .. }) {
         return Err(not_exact());
     }

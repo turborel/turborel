@@ -29,8 +29,9 @@
 //! uncommitted ones and privileges granted and revoked among them, and
 //! which the session's declared local temporary tables make anew only when
 //! they or the catalog under them change (`db/declared.rs`); the
-//! authorization identifier, which privileges are checked and CURRENT_USER
-//! is valued by; the default schema; the time zone displacement; the
+//! top cell of the authorization stack, its identifier and its role, which
+//! privileges are checked and CURRENT_USER and CURRENT_ROLE are valued by,
+//! and the SQL-session user identifier, SESSION_USER's; the default schema; the time zone displacement; the
 //! session's own settings, SQL.FUNCTION_CALLS among them. An execution
 //! that finds any of them changed binds the statement again, so its
 //! Syntax and Access Rules are checked again, against the definitions of
@@ -160,6 +161,8 @@ struct Key {
     generation: u64,
     catalog: Weak<dyn Catalog>,
     auth: String,
+    role: Option<String>,
+    session_user: String,
     schema: String,
     zone: i16,
     own: Own,
@@ -179,8 +182,9 @@ impl Keeping<'_> {
     fn holds(&self, key: &Key) -> bool {
         let definitions =
             key.generation == self.st.generation && std::ptr::addr_eq(Weak::as_ptr(&key.catalog), Arc::as_ptr(&self.st.catalog));
-        let session =
-            key.auth == *self.session.auth() && key.schema == *self.session.schema.borrow() && key.zone == self.session.now.get().zone;
+        let s = self.session;
+        let cell = key.auth == *s.auth() && key.role == *s.role.borrow() && key.session_user == *s.user_identifier.borrow();
+        let session = cell && key.schema == *s.schema.borrow() && key.zone == s.now.get().zone;
         definitions && session && key.own.same_as(&self.session.own.borrow())
     }
 
@@ -190,6 +194,8 @@ impl Keeping<'_> {
             generation: self.st.generation,
             catalog: Arc::downgrade(&self.st.catalog),
             auth: self.session.auth().clone(),
+            role: self.session.role.borrow().clone(),
+            session_user: self.session.user_identifier.borrow().clone(),
             schema: self.session.default_schema(),
             zone: self.session.now.get().zone,
             own: self.session.own.borrow().clone(),

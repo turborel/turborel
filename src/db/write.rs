@@ -16,7 +16,7 @@ use crate::ast::{
     ColumnName, InsertSource, InsertStatement, Overriding, QueryExpression, RowElement, SelectList, SelectSublist, TableName,
 };
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
-use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc};
+use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
 use crate::error::{At, Result};
 use crate::exec::{HeldRows, Runner, Subqueries, eval_cond, execute, row_entries};
 use crate::logical::{Expr, LogicalPlan, Truth, filled, filled_cond, filled_expr};
@@ -82,14 +82,14 @@ impl Target {
             .collect()
     }
 
-    /// It, its defaults those of a statement run under `auth` at `now`: as
-    /// a prepared statement's kept plan takes it again (RULES.md D45).
+    /// It, its defaults those of a statement `user`'s at `now`: as a
+    /// prepared statement's kept plan takes it again (RULES.md D45).
     ///
     /// # Errors
     ///
     /// As `default_row`.
-    pub(super) fn refreshed(self, auth: &str, now: Now) -> Result<Target> {
-        Ok(Target { defaults: default_row(&self.desc, auth, now)?, ..self })
+    pub(super) fn refreshed(self, user: Principal<'_>, now: Now) -> Result<Target> {
+        Ok(Target { defaults: default_row(&self.desc, user, now)?, ..self })
     }
 
     /// [X3.135-1986 §8.7 GR1a, b, GR5, GR7] the candidate row for the
@@ -239,7 +239,8 @@ impl Session {
     ) -> Result<(Target, Option<LogicalPlan>)> {
         let values = params.dynamic_values();
         if let Some(KeptPlan::Insert(target, query)) = keeping.map(Keeping::plan).transpose()?.flatten() {
-            let target = target.refreshed(&self.auth(), self.now.get())?;
+            let authorization = self.authorization();
+            let target = target.refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
             return Ok((target, query.map(|q| filled(q, values)).transpose()?));
         }
         let kept = keeping.map(|_| params.keeping());
@@ -278,7 +279,8 @@ impl Session {
     /// columns, as `insert_target` gives them, of an INSERT or of a
     /// MERGE's WHEN NOT MATCHED clause, each citing its own rules.
     pub(super) fn insert_target_of(&self, st: &State, into: &InsertInto<'_>, noted: Option<&Cell<bool>>) -> Result<Target> {
-        insert_target_in(st, into, (&self.auth(), &self.default_schema(), self.now.get()), noted)
+        let authorization = self.authorization();
+        insert_target_in(st, into, (authorization.of(st.catalog.roles()), &self.default_schema(), self.now.get()), noted)
     }
 
     /// [X3.135-1986 §8.7 SR5, SR6] The `<query expression>` `query` of an
@@ -529,17 +531,17 @@ fn degree_at(query: &QueryExpression, m: usize) -> Option<usize> {
 }
 
 /// The table `into` inserts into, as `Session::insert_target_of` gives
-/// it, of a statement run under `auth`, its unqualified names in `schema`,
-/// its defaults those of `now`.
+/// it, of a statement `user`'s, its unqualified names in `schema`, its
+/// defaults those of `now`.
 pub(super) fn insert_target_in(
     st: &State,
     into: &InsertInto<'_>,
-    (auth, schema, now): (&str, &str, Now),
+    (user, schema, now): (Principal<'_>, &str, Now),
     noted: Option<&Cell<bool>>,
 ) -> Result<Target> {
     let rules = into.rules;
     let name = qualify(into.table, schema);
-    let target = binder::write_target(st, &name, (rules.read_only, auth), noted).or_at(into.table.at)?;
+    let target = binder::write_target(st, &name, (rules.read_only, user), noted).or_at(into.table.at)?;
     let desc = &target.named;
     let object: Vec<usize> = match into.columns {
         None => (0..into.horizon.width(&name).map_or(desc.columns.len(), |w| w.min(desc.columns.len()))).collect(),
@@ -548,10 +550,10 @@ pub(super) fn insert_target_in(
     // [ISO/IEC 9075:1992 §13.8 AR1; ISO/IEC 9075-2:2023 §14.12 AR1b
     // iii] INSERT on each column named, or on each of the table's.
     let needed = Actions { insert: object.iter().copied().collect(), ..Actions::default() };
-    binder::require(st, auth, desc, &needed, rules.privilege).or_at(into.table.at)?;
+    binder::require(st, user.cell, desc, &needed, rules.privilege).or_at(into.table.at)?;
     // [X3.135-1986 §8.7 GR1a] the candidate row is one of the base table.
     let object: Vec<usize> = object.iter().filter_map(|&i| target.map.get(i).copied()).collect();
-    let defaults = default_row(&target.base, auth, now)?;
+    let defaults = default_row(&target.base, user, now)?;
     // [ISO/IEC 9075-2:2023 §14.11 SR12, SR13, §14.12 SR18f, SR18h] its
     // identity column and generated columns given values only as its
     // override says.

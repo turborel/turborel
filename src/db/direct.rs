@@ -61,7 +61,8 @@ impl Session {
     /// definition>` needs are implementation-defined: through a session, the
     /// schema, of any name, must be the session's own, its AUTHORIZATION
     /// the session's authorization identifier, written or implicit
-    /// \[SR2b\], so a user cannot create objects in another's name.
+    /// \[SR2b\], or a role enabled for it [ISO/IEC 9075-2:2023 §4.42.4],
+    /// so a user cannot create objects in another's name.
     /// `Database::schema`, the operator's, may create any.
     fn own_schema(&self, sql: &str) -> Result<Completion> {
         self.emptied((commands::CREATE_SCHEMA, commands::UNRECOGNIZED));
@@ -82,7 +83,9 @@ impl Session {
             );
         }
         let schema = Parser::new(sql)?.of_definition().schema()?;
-        if let Some(other) = schema.auth.as_ref().filter(|a| **a != *self.auth()) {
+        let (st, authorization) = (self.db.snapshot()?, self.authorization());
+        let cell = authorization.of(st.catalog.roles()).cell;
+        if let Some(other) = schema.auth.as_ref().filter(|a| !cell.includes(a)) {
             return fail(
                 Code::Privilege,
                 format!("[ISO/IEC 9075:1992 §11.1 AR1] {} may create its own schema only, not {other}'s", self.auth()),

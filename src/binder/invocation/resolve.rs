@@ -54,7 +54,7 @@ pub fn resolve_procedure(cx: Context<'_>, name: &TableName, arity: usize) -> Res
             arities.join(" or ")
         )));
     };
-    if !Candidate::Sql(r).executable(cx.db, cx.auth) {
+    if !Candidate::Sql(r).executable(cx.db, cx.who()) {
         let msg = format!("[ISO/IEC 9075-2:2023 §9.18 SR6] {} holds no EXECUTE on procedure {qn}", cx.auth);
         return Err(SqlError::new(Code::Privilege, msg));
     }

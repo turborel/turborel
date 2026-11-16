@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::sequences::Epochs;
 use super::{State, rule};
 use crate::ast::{AlterColumnAction, DefaultOption, Literal};
-use crate::catalog::{ColumnDefault, ColumnDesc, QualifiedName, TableDesc};
+use crate::catalog::{ColumnDefault, ColumnDesc, Principal, QualifiedName, TableDesc};
 use crate::error::Result;
 use crate::storage::Row;
 use crate::value::datetime::Now;
@@ -43,7 +43,7 @@ pub(super) fn default_of(subject: &DataType, option: &DefaultOption, zone: i16) 
             }
             return Ok(ColumnDefault::Value(Value::Array(Arc::from(Vec::new()))));
         }
-        DefaultOption::User(_) => {
+        DefaultOption::User(f) => {
             let long = if let DataType::Character { length, .. } | DataType::Varying { length, .. } = subject {
                 *length >= USER_LENGTH
             } else {
@@ -54,7 +54,7 @@ pub(super) fn default_of(subject: &DataType, option: &DefaultOption, zone: i16) 
                     "[ISO/IEC 9075:1992 §11.5 SR3b] an authorization identifier is the default only of a character string of at least {USER_LENGTH} characters, not {subject}"
                 )));
             }
-            return Ok(ColumnDefault::User);
+            return Ok(ColumnDefault::User(*f));
         }
         // [SR3c] of the same fields as the column; [GR1d] taken as the
         // statement that takes it runs.
@@ -201,8 +201,8 @@ fn character_default(s: &str, subject: &DataType) -> Option<Result<Value>> {
 ///
 /// SQLSTATE 22001 if the authorization identifier is longer than a column
 /// whose default it is.
-pub(super) fn default_row(desc: &TableDesc, auth: &str, now: Now) -> Result<Row> {
-    desc.columns.iter().map(|c| default_value(c, auth, now)).collect()
+pub(super) fn default_row(desc: &TableDesc, user: Principal<'_>, now: Now) -> Result<Row> {
+    desc.columns.iter().map(|c| default_value(c, user, now)).collect()
 }
 
 /// The default value of column `c`, as `default_row` gives it.
@@ -210,8 +210,8 @@ pub(super) fn default_row(desc: &TableDesc, auth: &str, now: Now) -> Result<Row>
 /// # Errors
 ///
 /// As `default_row`.
-pub(super) fn default_value(c: &ColumnDesc, auth: &str, now: Now) -> Result<Value> {
-    assign(c.default_value(auth, now.into()), &c.data_type, "ISO/IEC 9075:1992 §11.5 GR2")
+pub(super) fn default_value(c: &ColumnDesc, user: Principal<'_>, now: Now) -> Result<Value> {
+    assign(c.default_value(user, now.into()), &c.data_type, "ISO/IEC 9075:1992 §11.5 GR2")
 }
 
 impl State {

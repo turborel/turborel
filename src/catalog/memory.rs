@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use super::{
-    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, SequenceDesc, SqlRoutineDesc, TableDesc,
-    TriggerDesc, UserTypeDesc, ViewDesc,
+    Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SqlRoutineDesc,
+    TableDesc, TriggerDesc, UserTypeDesc, ViewDesc,
 };
 use crate::hash::murmur::MurmurMap;
 
@@ -25,11 +25,19 @@ pub struct MemoryCatalog {
     triggers: HashMap<QualifiedName, TriggerDesc>,
     /// Each SQL-invoked routine, by its specific name.
     routines: HashMap<QualifiedName, SqlRoutineDesc>,
+    /// The roles and role authorizations.
+    roles: Roles,
 }
 
 impl Catalog for MemoryCatalog {
     fn duplicate(&self) -> Box<dyn Catalog> {
         Box::new(self.clone())
+    }
+    fn roles(&self) -> &Roles {
+        &self.roles
+    }
+    fn set_roles(&mut self, roles: Roles) {
+        self.roles = roles;
     }
     fn schema_exists(&self, schema: &str) -> bool {
         self.schemas.iter().any(|(s, _)| s == schema)

@@ -74,10 +74,15 @@ impl Session {
             && r.behavior == DropBehavior::Cascade
         {
             let fresh = self.definitions(self.db.snapshot()?)?;
-            lost = fresh.generations_revoked((&self.auth(), &schema), r).or_at(r.table.at)?;
+            let a = self.grantor(&fresh, r.grantor)?;
+            lost = fresh.generations_revoked((&a, &schema), r).or_at(r.table.at)?;
+        }
+        if let SchemaStatement::Role(r) = statement {
+            lost = self.role_generations(r)?;
         }
         self.dropping_generations(tx, &lost, || {
             self.revert_impacted(tx, statement)?;
+            self.revert_role_impacted(tx, statement)?;
             self.staged_statement(tx, statement, (text, object))
         })
     }
@@ -96,7 +101,8 @@ impl Session {
             let fresh = self.definitions(self.db.snapshot()?)?;
             let mut next = State::clone(&fresh);
             let mut epochs = Epochs::fresh();
-            let defined = next.define((&self.auth(), &schema, zone), statement, (None, None, &mut epochs))?;
+            let (auth, role) = (self.auth(), self.role.borrow().clone());
+            let defined = next.define(((&auth, role.as_deref()), &schema, zone), statement, (None, None, &mut epochs))?;
             let wanted: Vec<(QualifiedName, LockMode)> = defined.locks.iter().filter(|l| !held.contains(l)).cloned().collect();
             if wanted.is_empty() {
                 let next = Arc::new(next);
@@ -122,8 +128,8 @@ impl Session {
                     // Checked whole, so not again of rows written before.
                     self.deferral.borrow_mut().forget(a, next.list_space())?;
                 }
-                let (auth, sql, placed, epochs) = (self.auth().clone(), text.to_owned(), defined.placed, epochs.given());
-                let change = Change::Defined { auth, schema, zone, sql, placed, epochs };
+                let (sql, placed, epochs) = (text.to_owned(), defined.placed, epochs.given());
+                let change = Change::Defined { auth: auth.clone(), role: role.clone(), schema, zone, sql, placed, epochs };
                 self.stage(&fresh, tx, Changed { next, change, made: defined.made })?;
                 // [§14.11 GR3] no row inserted is no data.
                 let completion = if filled == Some(0) { Completion::NoData } else { defined.completion };
@@ -151,6 +157,7 @@ impl Session {
             SchemaStatement::View(v) => self.own_object(st, &v.name, (schema, "ISO/IEC 9075:1992 §11.19 AR1")),
             SchemaStatement::Grant(p) => Ok(qualify(&p.table, schema)),
             SchemaStatement::Revoke(r) => Ok(qualify(&r.table, schema)),
+            SchemaStatement::Role(r) => self.role_access(st, r),
             SchemaStatement::Domain(d) => self.own_object(st, &d.name, (schema, "ISO/IEC 9075:1992 §11.21 AR1")),
             SchemaStatement::Assertion(a) => self.own_object(st, &a.name, (schema, "ISO/IEC 9075:1992 §11.34 AR1")),
             SchemaStatement::Collation(c) => self.own_object(st, &c.name, (schema, "ISO/IEC 9075-2:2023 §11.43 SR1")),
@@ -197,32 +204,46 @@ impl Session {
 }
 
 impl Session {
-    /// Whether the session's authorization identifier owns the schema
-    /// `schema` [ISO/IEC 9075:1992 §11.1 GR2] (`owner_of`): the Access Rule
+    /// Whether an enabled authorization identifier of the session owns the
+    /// schema `schema` [ISO/IEC 9075:1992 §11.1 GR2; ISO/IEC 9075-2:2023
+    /// §4.42.4] (`owner_of`): its user, its role, or a role applicable for
+    /// that role. It is the Access Rule
     /// of every statement that defines or changes what is in it. None owns
     /// DEFINITION_SCHEMA, the database's own, whose tables of kept totals
     /// (`db/assertions/kept.rs`) no statement names [§21.1].
     pub(super) fn owns_schema(&self, st: &State, schema: &str) -> bool {
-        schema != crate::system::DEFINITION_SCHEMA && owner_of(&*st.catalog, schema) == *self.auth()
+        let authorization = self.authorization();
+        schema != crate::system::DEFINITION_SCHEMA && authorization.of(st.catalog.roles()).cell.includes(owner_of(&*st.catalog, schema))
     }
 }
 
 impl State {
-    /// Makes `statement` of `auth`, its names in schema `schema`; a table
+    /// Makes `statement` of the cell `auth` and `role` [ISO/IEC 9075-2:2023
+    /// §4.42.1.2], its names in schema `schema`; a table
     /// it creates given `placed`'s engine and generation and `made`'s
     /// storage, if given; a sequence generator it defines or restarts its
     /// epoch from `epochs`.
     pub(super) fn define(
         &mut self,
-        (auth, schema, zone): (&str, &str, i16),
+        ((auth, role), schema, zone): ((&str, Option<&str>), &str, i16),
         statement: &SchemaStatement,
         (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &mut Epochs),
     ) -> Result<Defined> {
         match statement {
             SchemaStatement::Table(t) => self.create_table((schema, zone), t, (placed, made, epochs)),
             SchemaStatement::View(v) => self.create_view(schema, v),
-            SchemaStatement::Grant(p) => self.grant(auth, schema, p),
-            SchemaStatement::Revoke(r) => self.revoke((auth, schema), r),
+            SchemaStatement::Grant(p) => {
+                let a = self.cell_grantor((auth, role), p.grantor).or_at(p.table.at)?;
+                let mut defined = self.grant(&a, schema, p)?;
+                // So no role is created of a grantee's name meanwhile.
+                defined.locks.push((super::roles::roles_lock(), LockMode::Shared));
+                Ok(defined)
+            }
+            SchemaStatement::Revoke(r) => {
+                let a = self.cell_grantor((auth, role), r.grantor).or_at(r.table.at)?;
+                self.revoke((&a, schema), r)
+            }
+            SchemaStatement::Role(r) => self.role_statement((auth, role), r),
             SchemaStatement::Domain(d) => self.create_domain((schema, zone), d),
             SchemaStatement::Assertion(a) => self.create_assertion(schema, a, made),
             SchemaStatement::Collation(c) => self.create_collation((auth, schema), c),
@@ -244,14 +265,14 @@ impl State {
     /// The statement's own; SQLCODE -910 if it is not a schema statement.
     pub(super) fn redefine(
         &mut self,
-        (auth, schema, zone): (&str, &str, i16),
+        (cell, schema, zone): ((&str, Option<&str>), &str, i16),
         sql: &str,
         (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &[u64]),
     ) -> Result<Dropped> {
         let SqlStatement::Schema { statement, .. } = Parser::new(sql)?.of_definition().sql_statement()? else {
             return Err(api(format!("[DESIGN] {sql} is not a schema statement")));
         };
-        Ok(self.define((auth, schema, zone), &statement, (placed, made, &mut Epochs::logged(epochs)))?.dropped)
+        Ok(self.define((cell, schema, zone), &statement, (placed, made, &mut Epochs::logged(epochs)))?.dropped)
     }
 
     /// [ISO/IEC 9075:1992 §11.3] Creates base table `t` in schema `schema`,

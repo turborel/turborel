@@ -4,8 +4,8 @@
 //! that \[§4.29.1\]. It is the counter of `db/sequences/counters.rs`, which
 //! the descriptor names by its epoch.
 
-use super::QualifiedName;
 use super::domains::{UsageDesc, usage_held};
+use super::{QualifiedName, Who};
 use crate::value::DataType;
 
 /// [ISO/IEC 9075-2:2023 §4.29.1] A sequence generator's descriptor.
@@ -36,10 +36,10 @@ pub struct SequenceDesc {
 }
 
 impl SequenceDesc {
-    /// Whether `auth` holds USAGE on it, and whether grantably, as of a
+    /// Whether `who` holds USAGE on it, and whether grantably, as of a
     /// domain (`DomainDesc::usage_of`).
-    pub fn usage_of(&self, auth: &str, owner: &str) -> (bool, bool) {
-        usage_held(&self.usage, auth, owner)
+    pub fn usage_of(&self, who: Who<'_>, owner: &str) -> (bool, bool) {
+        usage_held(&self.usage, who, owner)
     }
 
     /// Whether it ascends: its increment is positive \[§4.29.1\].

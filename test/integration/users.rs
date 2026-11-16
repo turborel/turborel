@@ -258,7 +258,7 @@ fn the_users_table_shows_each_who_it_may() {
     assert_eq!(shown("DAVE"), Vec::<String>::new());
     assert_eq!(
         rows(&db.session("ANN"), "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'USERS'"),
-        Ok(vec!["2".into()])
+        Ok(vec!["3".into()])
     );
 }
 

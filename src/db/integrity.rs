@@ -43,7 +43,7 @@ use self::keys::KeyCheck;
 pub(super) use self::modes::{Deferral, Whole};
 use super::assertions::Asserted;
 use super::{State, api, plan};
-use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, ReferentialAction, TableDesc};
+use crate::catalog::{Authorization, ConstraintDesc, ConstraintKind, Horizon, QualifiedName, ReferentialAction, TableDesc};
 use crate::error::{Code, Result, SqlError, Subject, fail};
 use crate::exec::{Heard, HeldRows, eval_cond, execute};
 use crate::logical::{Cond, LogicalPlan, Truth};
@@ -83,7 +83,7 @@ enum Effect {
 pub(super) struct Effects<'a> {
     done: HeldRows<Effect>,
     space: ListSpace,
-    user: String,
+    user: Authorization,
     /// The statement's instant and its session's time zone, of the
     /// defaults its referential actions give.
     pub(super) now: crate::value::datetime::Now,
@@ -118,17 +118,18 @@ impl Cursored<'_> {
 }
 
 impl<'a> Effects<'a> {
-    /// Nothing yet done by a statement run under `user`, in a session whose
+    /// Nothing yet done by a statement `user`'s, in a session whose
     /// constraint modes are `deferral`'s, and whose cursors `cursors` say,
     /// what it did held in `space`.
-    pub(super) fn new(user: &str, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>, space: ListSpace) -> Effects<'a> {
+    pub(super) fn new(user: Authorization, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>, space: ListSpace) -> Effects<'a> {
         let now = crate::value::datetime::Now::default();
         let (done, rewritten) = (HeldRows::new(space.clone()), Vec::new());
-        Effects { done, space, user: user.to_string(), now, deferral, cursors, rewritten, triggered: None }
+        Effects { done, space, user, now, deferral, cursors, rewritten, triggered: None }
     }
 
-    /// The authorization identifier the statement runs under.
-    pub(super) fn user(&self) -> &str {
+    /// Whose the statement is: the top cell of its authorization stack
+    /// and its SQL-session user identifier.
+    pub(super) fn user(&self) -> &Authorization {
         &self.user
     }
 

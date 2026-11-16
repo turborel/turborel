@@ -145,7 +145,11 @@ impl State {
             return Ok(());
         }
         // [GR5a iii, GR6a iii] SET DEFAULT gives the child's defaults [§11.5 GR2].
-        let defaults = if action == ReferentialAction::SetDefault { default_row(child, &effects.user, effects.now)? } else { Vec::new() };
+        let defaults = if action == ReferentialAction::SetDefault {
+            default_row(child, effects.user.of(self.catalog.roles()), effects.now)?
+        } else {
+            Vec::new()
+        };
         // None the statement deleted: the transaction reads its own changes.
         let matching = self.matching_rows(tx, (child, fk), &key, effects.space.clone())?;
         let draws = action == ReferentialAction::SetDefault

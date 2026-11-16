@@ -361,7 +361,7 @@ pub fn bind_write(
             Actions { update: set.iter().filter_map(|s| desc.column(&s.column)).collect(), ..Actions::default() }
         }
     };
-    require(db, auth, desc, &needed, &format!("X3.135-1986 {clause} SR1")).or_at(table.at)?;
+    require(db, cx.who(), desc, &needed, &format!("X3.135-1986 {clause} SR1")).or_at(table.at)?;
     // [X3.135-1986 §8.5 SR3, §8.12 SR5, §8.11 SR7] the scope of the <table name> is the whole statement.
     let item = FromItem::alone(name.clone(), table.at, (desc.clone(), target.source.clone()));
     let visible = (0..desc.columns.len()).map(|k| (0, k)).collect();

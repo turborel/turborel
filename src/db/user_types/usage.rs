@@ -15,7 +15,7 @@ use super::super::revoke::Abandoned;
 use super::super::{Completion, State, rule};
 use crate::ast::{Action, DropBehavior, PrivilegeObject, RevokeStatement, TableName, TypeName};
 use crate::binder::qualify;
-use crate::catalog::{QualifiedName, Routine, UsageDesc, UserTypeDesc, based_on, owner_of};
+use crate::catalog::{QualifiedName, Routine, UsageDesc, UserTypeDesc, Who, based_on, owner_of, sole};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 
 /// Which privilege on a distinct type, or on one of its routines.
@@ -47,12 +47,12 @@ fn grants_mut(desc: &mut UserTypeDesc, held: Held) -> &mut Vec<UsageDesc> {
     }
 }
 
-/// Whether `auth` holds `held` of `desc`, and whether grantably, its
-/// schema's owner `owner` grantably.
-fn holds(desc: &UserTypeDesc, held: Held, auth: &str, owner: &str) -> (bool, bool) {
+/// Whether `who` holds `held` of `desc`, and whether grantably, a cell
+/// enabling its schema's owner `owner` grantably.
+fn holds(desc: &UserTypeDesc, held: Held, who: Who<'_>, owner: &str) -> (bool, bool) {
     match held {
-        Held::Usage => desc.usage_of(auth, owner),
-        Held::Execute(which) => desc.execute_of(which, auth, owner),
+        Held::Usage => desc.usage_of(who, owner),
+        Held::Execute(which) => desc.execute_of(which, who, owner),
     }
 }
 
@@ -101,7 +101,7 @@ impl State {
         let (mut desc, held) =
             self.privilege_object((auth, schema), (&p.table, p.object, p.parameters.as_deref(), p.actions.as_deref()))?;
         let owner = owner_of(&*self.catalog, &desc.name.auth).to_owned();
-        let (held_now, grantable) = holds(&desc, held, auth, &owner);
+        let (held_now, grantable) = holds(&desc, held, sole(&*self.catalog, auth), &owner);
         if !held_now {
             let msg = format!("[ISO/IEC 9075-2:2023 §12.2 AR1] {auth} holds no {}", described(&desc, held));
             return Err(SqlError::new(Code::Privilege, msg));
@@ -192,7 +192,7 @@ impl State {
         let mut columns = revoked.abandoned.columns.clone();
         if revoked.held == Held::Usage {
             let owner = owner_of(&*self.catalog, &revoked.desc.name.auth).to_owned();
-            let unheld = |s: &str| !revoked.desc.usage_of(owner_of(&*self.catalog, s), &owner).0;
+            let unheld = |s: &str| !revoked.desc.usage_of(sole(&*self.catalog, owner_of(&*self.catalog, s)), &owner).0;
             for t in self.catalog.tables().into_iter().filter(|t| unheld(&t.name.auth)) {
                 let of = t.columns.iter().filter(|c| based_on(&c.data_type, &revoked.desc.name));
                 columns.extend(of.map(|c| (t.name.clone(), c.name.clone())));
@@ -224,7 +224,7 @@ impl State {
         // each pass takes one at least, so there are no more than grants.
         for _ in 0..before.len() {
             let kept = desc.clone();
-            grants_mut(&mut desc, held).retain(|u| holds(&kept, held, &u.grantor, &owner).1);
+            grants_mut(&mut desc, held).retain(|u| holds(&kept, held, sole(&*self.catalog, &u.grantor), &owner).1);
             if grants(&desc, held).len() == grants(&kept, held).len() {
                 break;
             }
@@ -242,8 +242,8 @@ impl State {
     /// [ISO/IEC 9075-2:2023 §12.7 GR12j] The types other than `desc`'s
     /// whose sources are based on it, of the schemas whose owners hold no
     /// USAGE on it, its schema's owner `owner`.
-    fn types_unheld(&self, desc: &UserTypeDesc, owner: &str) -> Vec<QualifiedName> {
-        let unheld = |s: &str| !desc.usage_of(owner_of(&*self.catalog, s), owner).0;
+    pub(in crate::db) fn types_unheld(&self, desc: &UserTypeDesc, owner: &str) -> Vec<QualifiedName> {
+        let unheld = |s: &str| !desc.usage_of(sole(&*self.catalog, owner_of(&*self.catalog, s)), owner).0;
         let of = self.catalog.user_types().into_iter().filter(|t| t.name != desc.name && unheld(&t.name.auth));
         of.filter(|t| based_on(&t.source, &desc.name)).map(|t| t.name.clone()).collect()
     }
@@ -300,7 +300,9 @@ impl State {
             | PrivilegeObject::Type => (false, None),
         };
         let types = match parameters {
-            Some(list) => Some(list.iter().map(|t| self.data_type_of(t, (&qn.auth, auth))).collect::<Result<Vec<_>>>()?),
+            Some(list) => {
+                Some(list.iter().map(|t| self.data_type_of(t, (&qn.auth, sole(&*self.catalog, auth)))).collect::<Result<Vec<_>>>()?)
+            }
             None => None,
         };
         let found = self.type_functions(qn, (specific, routine_type), types.as_deref());

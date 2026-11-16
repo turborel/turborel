@@ -17,7 +17,7 @@ use super::statements::updatable_query;
 use super::unnest::Unnested;
 use super::{Bound, Context, OutColumn, Purpose, Uses, qualify, rule};
 use crate::ast::{QueryExpression, QuerySpecification, SelectItem, SelectList, SelectSublist, TableReference, ValueExpression};
-use crate::catalog::{CheckLevels, ColumnDesc, QualifiedName, TableDesc, ViewDesc, owner_of};
+use crate::catalog::{CheckLevels, ColumnDesc, Principal, QualifiedName, TableDesc, ViewDesc, owner_of};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, Subject};
 use crate::logical::{Cond, Expr, LogicalPlan, and_all};
@@ -84,7 +84,7 @@ fn broken(what: &str) -> SqlError {
 pub(super) struct Reader<'a> {
     pub(super) purpose: Purpose,
     pub(super) own: &'a Own,
-    pub(super) user: &'a str,
+    pub(super) user: Principal<'a>,
     pub(super) definitions: bool,
     pub(super) now: Clocked<'a>,
 }
@@ -132,7 +132,7 @@ pub(super) fn named(db: &State, name: &QualifiedName, reader: Reader<'_>) -> Res
 /// # Errors
 ///
 /// As a `<table reference>` that names it.
-pub fn table_columns(db: &State, name: &QualifiedName, user: &str) -> Result<TableDesc> {
+pub fn table_columns(db: &State, name: &QualifiedName, user: Principal<'_>) -> Result<TableDesc> {
     let reader = Reader {
         purpose: Purpose::Query,
         own: &settings::NONE,
@@ -191,7 +191,7 @@ pub(crate) fn system_view_columns(db: &State, view: &SystemView) -> Result<Vec<C
     let reader = Reader {
         purpose: Purpose::Query,
         own: &settings::NONE,
-        user: INFORMATION_SCHEMA,
+        user: Principal::sole(db.catalog.roles(), INFORMATION_SCHEMA),
         definitions: true,
         now: db.now(&settings::NONE).into(),
     };
@@ -350,7 +350,12 @@ pub struct WriteTarget {
 /// `name` is not defined [X3.135-1986 §5.4 SR5], or is a read-only table,
 /// which the rule `read_only` (e.g. "X3.135-1986 §8.7 SR2") forbids. A view's instant read is
 /// noted in `noted`, if given (`Clocked`).
-pub fn write_target(db: &State, name: &QualifiedName, (read_only, user): (&str, &str), noted: Option<&Cell<bool>>) -> Result<WriteTarget> {
+pub fn write_target(
+    db: &State,
+    name: &QualifiedName,
+    (read_only, user): (&str, Principal<'_>),
+    noted: Option<&Cell<bool>>,
+) -> Result<WriteTarget> {
     if [INFORMATION_SCHEMA, DEFINITION_SCHEMA].contains(&name.auth.as_str()) {
         return Err(SqlError::new(
             Code::Privilege,
@@ -398,7 +403,7 @@ pub fn write_target(db: &State, name: &QualifiedName, (read_only, user): (&str, 
 /// # Errors
 ///
 /// `name` is not defined, or a view it reads breaks a rule.
-pub(super) fn trigger_target(db: &State, name: &QualifiedName, user: &str, noted: Option<&Cell<bool>>) -> Result<WriteTarget> {
+pub(super) fn trigger_target(db: &State, name: &QualifiedName, user: Principal<'_>, noted: Option<&Cell<bool>>) -> Result<WriteTarget> {
     let reader = Reader {
         purpose: Purpose::Query,
         own: &settings::NONE,
@@ -433,7 +438,7 @@ pub struct ViewCheck {
 /// [ISO/IEC 9075:1992 §11.19 GR9, GR11] The views WITH CHECK OPTION the
 /// updatable view `name`, read as `vb`, spans: itself, and each view under
 /// it, down to the base table, read as `user` reads it.
-fn spanned(db: &State, name: &QualifiedName, (vb, user): (&ViewBase, &str), noted: Option<&Cell<bool>>) -> Result<Vec<ViewCheck>> {
+fn spanned(db: &State, name: &QualifiedName, (vb, user): (&ViewBase, Principal<'_>), noted: Option<&Cell<bool>>) -> Result<Vec<ViewCheck>> {
     let now = Clocked::new(db.now(&settings::NONE), noted);
     let reader = Reader { purpose: Purpose::Query, own: &settings::NONE, user, definitions: false, now };
     let mut checks = Vec::new();

@@ -282,7 +282,7 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
         super::referencing::table_read(&cx, &name)?;
     } else if !matches!(source, Source::System(_)) {
         // [ISO/IEC 9075:1992 §21.1] SELECT on a system table is PUBLIC's.
-        require(cx.db, cx.auth, &desc, &Actions { select: true, ..Actions::default() }, b.clause)?;
+        require(cx.db, cx.who(), &desc, &Actions { select: true, ..Actions::default() }, b.clause)?;
     }
     // A triggered action's statement sees what its trigger saw, and a
     // procedure body's what the procedure saw.
@@ -526,7 +526,7 @@ pub(super) fn leaf(binder: &Binder<'_>, it: &FromItem) -> Result<LogicalPlan> {
         Source::Common => return Err(SqlError::new(Code::Api, "[DESIGN] common columns are a join's, not a table's")),
         Source::Unnest(_) => return Err(SqlError::new(Code::Api, "[DESIGN] a collection derived table is planned over its input")),
         Source::System(table) => {
-            let read = SystemRead { table: Arc::clone(table), user: binder.user.to_owned(), own: binder.own.clone() };
+            let read = SystemRead { table: Arc::clone(table), user: binder.user.cell.auth.to_owned(), own: binder.own.clone() };
             LogicalPlan::System { read, names: item_names.to_vec() }
         }
     })

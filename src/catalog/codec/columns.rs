@@ -4,6 +4,7 @@
 
 use super::super::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, Identity, QualifiedName};
 use super::{data_type, flag, horizon, put_flag, put_horizon, put_name, put_sequence, put_type, qualified, sequence};
+use crate::ast::UserFunction;
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::codec::{put_value, value};
@@ -82,7 +83,15 @@ pub(crate) fn put_default(out: &mut Vec<u8>, default: Option<&ColumnDefault>) {
             out.put_u8(1);
             put_value(out, v);
         }
-        Some(ColumnDefault::User) => out.put_u8(2),
+        Some(ColumnDefault::User(f)) => {
+            out.put_u8(2);
+            out.put_u8(match f {
+                UserFunction::Current => 0,
+                UserFunction::Session => 1,
+                UserFunction::System => 2,
+                UserFunction::Role => 3,
+            });
+        }
         Some(ColumnDefault::Datetime(moment, precision)) => {
             out.put_u8(3);
             out.put_u8(match moment {
@@ -100,7 +109,13 @@ pub(crate) fn default(r: &mut Reader<'_>) -> Result<Option<ColumnDefault>> {
     Ok(match r.u8()? {
         0 => None,
         1 => Some(ColumnDefault::Value(value(r)?)),
-        2 => Some(ColumnDefault::User),
+        2 => Some(ColumnDefault::User(match r.u8()? {
+            0 => UserFunction::Current,
+            1 => UserFunction::Session,
+            2 => UserFunction::System,
+            3 => UserFunction::Role,
+            _ => return Err(r.corrupt("not a user value function")),
+        })),
         3 => {
             let moment = match r.u8()? {
                 0 => Moment::Date,

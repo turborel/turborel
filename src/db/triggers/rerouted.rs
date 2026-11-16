@@ -33,7 +33,7 @@ use crate::ast::{
     SelectSublist, SetClause, SqlStatement, TableExpression, TableName, TableReference, UpdateSource, ValueExpression,
 };
 use crate::binder::{Context, ObjectColumn, bind_insert_query, bind_select, defaulted_columns, qualify};
-use crate::catalog::{Actions, ColumnDesc, ViewDesc, applicable, owner_of};
+use crate::catalog::{Actions, ColumnDesc, Principal, ViewDesc, Who, applicable, owner_of};
 use crate::error::{Code, Result, SqlError, Subject};
 use crate::exec::{HeldRows, TransitionRows, execute};
 use crate::logical::LogicalPlan;
@@ -109,7 +109,8 @@ impl Session {
         (view, set): (&ViewDesc, &[SetClause]),
         (where_clause, params): (Option<&SearchCondition>, &Params),
     ) -> Result<HeldRows<(RowId, Row, Row)>> {
-        let (spec, columns) = changed_spec(cx.st, &self.auth(), (view, set, where_clause))?;
+        let authorization = self.authorization();
+        let (spec, columns) = changed_spec(cx.st, authorization.of(cx.st.catalog.roles()).cell, (view, set, where_clause))?;
         let rows = view_rows(cx, view)?;
         let over = params.clone().with_transitions(Arc::new(read_as(view, rows, params)));
         let bound = self.bound(cx.st, &over, |b| bind_select(b, &spec))?;
@@ -137,9 +138,11 @@ impl Session {
         (view, i): (&ViewDesc, &InsertStatement),
         params: &Params,
     ) -> Result<HeldRows<(RowId, Row, Row)>> {
-        let columns = defaulted_columns(cx.st, &view.name, &self.auth())?;
-        let defaults = self.defaults_of(&columns)?;
-        let (named, objects) = inserted_objects(cx.st, &self.auth(), (view, i), (&columns, &defaults))?;
+        let authorization = self.authorization();
+        let user = authorization.of(cx.st.catalog.roles());
+        let columns = defaulted_columns(cx.st, &view.name, user)?;
+        let defaults = self.defaults_of(user, &columns)?;
+        let (named, objects) = inserted_objects(cx.st, user.cell, (view, i), (&columns, &defaults))?;
         let mut out = HeldRows::new(cx.st.list_space());
         let InsertSource::Query(q) = &i.source else {
             out.push((0, Row::new(), defaults))?;
@@ -164,14 +167,16 @@ impl Session {
     ///
     /// The view does not bind; a default does not fit its column.
     pub(in crate::db) fn view_defaults(&self, st: &State, name: &crate::catalog::QualifiedName) -> Result<Row> {
-        self.defaults_of(&defaulted_columns(st, name, &self.auth())?)
+        let authorization = self.authorization();
+        let user = authorization.of(st.catalog.roles());
+        self.defaults_of(user, &defaulted_columns(st, name, user)?)
     }
 
-    /// The default value of each of `columns`, of this statement: its
-    /// user's, at its instant.
-    fn defaults_of(&self, columns: &[ColumnDesc]) -> Result<Row> {
-        let (auth, now) = (self.auth(), self.now.get());
-        columns.iter().map(|c| default_value(c, &auth, now)).collect()
+    /// The default value of each of `columns`, of this statement, `user`'s,
+    /// at its instant.
+    fn defaults_of(&self, user: Principal<'_>, columns: &[ColumnDesc]) -> Result<Row> {
+        let now = self.now.get();
+        columns.iter().map(|c| default_value(c, user, now)).collect()
     }
 }
 
@@ -182,7 +187,7 @@ impl Session {
 /// the view, and SELECT if a WHERE clause is written.
 fn changed_spec(
     st: &State,
-    user: &str,
+    user: Who<'_>,
     (view, set, where_clause): (&ViewDesc, &[SetClause], Option<&SearchCondition>),
 ) -> Result<(QuerySpecification, Vec<usize>)> {
     let columns = set_columns(view, set)?;
@@ -203,7 +208,7 @@ fn changed_spec(
 /// [§11.5 GR3d]. `user` holds INSERT on each.
 fn inserted_objects(
     st: &State,
-    user: &str,
+    user: Who<'_>,
     (view, i): (&ViewDesc, &InsertStatement),
     (columns, defaults): (&[ColumnDesc], &[Value]),
 ) -> Result<(Vec<usize>, Vec<ObjectColumn>)> {
@@ -247,7 +252,7 @@ pub(in crate::db) fn bind_taken(cx: Context<'_>, stmt: &SqlStatement) -> Result<
         return Ok(false);
     }
     if let SqlStatement::Insert(i) = stmt {
-        let (_, objects) = inserted_objects(cx.db, cx.auth, (view, i), (&view.columns, &[]))?;
+        let (_, objects) = inserted_objects(cx.db, cx.who(), (view, i), (&view.columns, &[]))?;
         if let InsertSource::Query(q) = &i.source {
             bind_insert_query(cx, q, &objects)?;
         }
@@ -262,17 +267,17 @@ pub(in crate::db) fn bind_taken(cx: Context<'_>, stmt: &SqlStatement) -> Result<
 /// An UPDATE of `view` by `set`, or a DELETE if `set` is empty, where
 /// `where_clause`, bound in `cx` over the view's rows, none read.
 fn bind_changed(cx: Context<'_>, view: &ViewDesc, (set, where_clause): (&[SetClause], Option<&SearchCondition>)) -> Result<()> {
-    let (spec, _) = changed_spec(cx.db, cx.auth, (view, set, where_clause))?;
+    let (spec, _) = changed_spec(cx.db, cx.who(), (view, set, where_clause))?;
     let over = cx.params.clone().with_transitions(Arc::new(read_as(view, HeldRows::new(cx.db.list_space()), cx.params)));
     bind_select(Context { params: &over, ..cx }, &spec).map(drop)
 }
 
-/// That `user` holds `wanted` on `view`.
-fn held(st: &State, user: &str, view: &ViewDesc, wanted: &Actions) -> Result<()> {
+/// That the cell `user` holds `wanted` on `view`.
+fn held(st: &State, user: Who<'_>, view: &ViewDesc, wanted: &Actions) -> Result<()> {
     let (holds, _) = applicable(&*st.catalog, user, &view.name);
     let names: Vec<String> = view.columns.iter().map(|c| c.name.clone()).collect();
     let Some(lacked) = holds.missing(wanted, &names) else { return Ok(()) };
-    let msg = format!("[ISO/IEC 9075-2:2023 §14.9 AR1, §14.11 AR1, §14.14 AR1] {user} lacks {lacked} on {}", view.name);
+    let msg = format!("[ISO/IEC 9075-2:2023 §14.9 AR1, §14.11 AR1, §14.14 AR1] {} lacks {lacked} on {}", user.auth, view.name);
     Err(SqlError::new(Code::Privilege, msg).about(Subject::table(view.name.parts())))
 }
 

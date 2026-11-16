@@ -4,15 +4,26 @@
 
 ## NAME
 
-GRANT: give privileges
+GRANT: give privileges, or roles
 
 ## SYNOPSIS
 
 ```
-<grant statement> ::=
+<grant statement> ::= <grant privilege statement> | <grant role statement>
+
+<grant privilege statement> ::=
     GRANT <privileges> ON <object name>
     TO <grantee> [ { , <grantee> }... ]
     [ WITH GRANT OPTION ]
+    [ GRANTED BY <grantor> ]
+
+<grant role statement> ::=
+    GRANT <role name> [ { , <role name> }... ]
+    TO <grantee> [ { , <grantee> }... ]
+    [ WITH ADMIN OPTION ]
+    [ GRANTED BY <grantor> ]
+
+<grantor> ::= CURRENT_USER | CURRENT_ROLE
 
 <privileges> ::= ALL PRIVILEGES | <action> [ { , <action> }... ]
 
@@ -78,6 +89,20 @@ A privilege it does not hold with grant option is not granted, and the
 statement completes with the warning SQLSTATE 01007. WITH GRANT OPTION
 lets the grantees grant the privileges in turn.
 
+The grantor is the session's user, or, with GRANTED BY CURRENT_ROLE,
+the role it has set (see [SET ROLE](set-role.md)); without a user, as
+in a trigger of a schema a role owns, the role. The privileges a grantor
+holds are its own, and, of a role, those of each role applicable for it.
+A privilege a role granted stands while the role holds it with grant
+option, through its roles too.
+
+GRANT of roles grants each role to each grantee, a user, a role or
+PUBLIC. The grantor holds each role WITH ADMIN OPTION: granted so to it,
+or to a role applicable for it. WITH ADMIN OPTION lets the grantees grant
+the role, revoke it and drop it in turn. A role granted to a user brings
+its privileges once the user's session sets it; a role granted to a role
+is applicable for that role, so its privileges are the role's too.
+
 GRANT runs within the session's transaction: ROLLBACK undoes it.
 INFORMATION_SCHEMA.TABLE_PRIVILEGES, COLUMN_PRIVILEGES,
 USAGE_PRIVILEGES, UDT_PRIVILEGES and ROUTINE_PRIVILEGES show the
@@ -96,12 +121,17 @@ privileges.
    specific name.
 4. Each column named is the table's.
 5. Of a temporary table, ALL PRIVILEGES alone is granted.
-6. The transaction is not READ ONLY.
+6. Of GRANTED BY CURRENT_USER, the session has a current user; of
+   GRANTED BY CURRENT_ROLE, it has set a role.
+7. Each role granted exists, and no grantee is the role or a role
+   applicable for it: no role is granted to itself, in a cycle.
+8. The transaction is not READ ONLY.
 
 ## PRIVILEGES
 
-Each privilege granted is held by its user with grant option, or it is
-not granted (rule above, SQLSTATE 01007).
+Each privilege granted is held by its grantor with grant option, or it
+is not granted (SQLSTATE 01007). Each role granted is held by its
+grantor WITH ADMIN OPTION (SQLSTATE 0P000).
 
 ## ERRORS
 
@@ -110,6 +140,7 @@ not granted (rule above, SQLSTATE 01007).
 | 2A000 | -102 | The statement is not written as the synopsis shows: a column list of SELECT, among others |
 | 2A000 | -103 | A rule above is broken |
 | 0A000 | -900 | The object is a character set or a translation |
+| 0P000 | -104 | The grantor holds a role granted not WITH ADMIN OPTION |
 | 25000 | -917 | The transaction is READ ONLY |
 | 01007 | 0 | Not an error: a privilege was not held with grant option, and is not granted |
 
@@ -176,15 +207,52 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): USAGE is granted on a domain, not on ta
 turborel: SQLCODE -102 (SQLSTATE 2A000): expected ON, found "(" (at character 13)
 ```
 
+Roles, by ANN, who may create them:
+
+```sql
+CREATE ROLE CLERK;
+CREATE ROLE SENIOR;
+GRANT CLERK TO SENIOR;
+GRANT SENIOR TO BOB WITH ADMIN OPTION;
+GRANT SENIOR TO CLERK;
+COMMIT;
+```
+
+```
+OK
+OK
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): CLERK is SENIOR or a role applicable for it, a cycle [ISO/IEC 9075-2:2023 §12.5 SR1] (at character 6)
+OK
+```
+
+Then by BOB, who holds SENIOR WITH ADMIN OPTION but not CLERK, though
+CLERK is applicable for SENIOR:
+
+```sql
+GRANT SENIOR TO CAROL;
+GRANT CLERK TO CAROL;
+COMMIT;
+```
+
+```
+OK
+turborel: SQLCODE -104 (SQLSTATE 0P000): BOB holds CLERK WITH ADMIN OPTION by none of its applicable roles [ISO/IEC 9075-2:2023 §12.5 GR1] (at character 6)
+OK
+```
+
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.36, and X3.135-1986 §6.6 (the `<privilege
 definition>` of a `<schema>`), whose privileges are on tables, with
 UPDATE alone of a column list. Outside a `<schema definition>`, GRANT is
 SQL-92's `<SQL schema statement>` [§20.1]. Of a collation or a sequence
-generator, ISO/IEC 9075-2:2023 §12.2 and §12.3.
+generator, ISO/IEC 9075-2:2023 §12.2 and §12.3. GRANT of roles is
+ISO/IEC 9075-2:2023 §12.5 (Feature T331), and GRANTED BY §12.8 (T332).
 
 ## SEE ALSO
 
 [REVOKE](revoke.md), [CREATE SCHEMA](create-schema.md),
-[CREATE USER](create-user.md)
+[CREATE USER](create-user.md), [CREATE ROLE](create-role.md),
+[SET ROLE](set-role.md)

@@ -132,8 +132,8 @@ impl State {
     pub(in crate::db) fn invoking(&self, gone: &[QualifiedName]) -> Abandoned {
         let on = |h: &Horizon| h.subjects().is_some_and(|s| s.iter().any(|r| gone.contains(r)));
         let checks = |c: &ConstraintDesc| matches!(&c.kind, ConstraintKind::Check { horizon, .. } if on(horizon));
-        let mut abandoned = Abandoned::default();
-        abandoned.views = self.catalog.views().into_iter().filter(|v| on(&v.horizon)).map(|v| v.name.clone()).collect();
+        let views = self.catalog.views().into_iter().filter(|v| on(&v.horizon)).map(|v| v.name.clone()).collect();
+        let mut abandoned = Abandoned { views, ..Abandoned::default() };
         for t in self.catalog.tables() {
             let constraints = t.constraints.iter().filter(|c| c.domain.is_none() && checks(c));
             abandoned.constraints.extend(constraints.map(|c| (t.name.clone(), c.clone())));

@@ -68,7 +68,7 @@ struct Writer {
 /// For every kind of record, a statement that writes it. Records that are
 /// not synced as written (an abort record) are followed by a commit, whose
 /// sync makes them durable.
-const WRITERS: [Writer; 19] = [
+const WRITERS: [Writer; 20] = [
     Writer { kind: 1, run: |db| committed(db, &["INSERT INTO T VALUES (100, 'new')"]) },
     Writer { kind: 2, run: |db| committed(db, &["UPDATE T SET V = 'changed' WHERE K = 1"]) },
     Writer { kind: 3, run: |db| committed(db, &["DELETE FROM T WHERE K = 2"]) },
@@ -128,6 +128,13 @@ const WRITERS: [Writer; 19] = [
     Writer {
         kind: 20,
         run: |db| committed(db, &["CREATE SEQUENCE Q START WITH 200", "INSERT INTO T (K, V) VALUES (NEXT VALUE FOR Q, 'drawn')"]),
+    },
+    Writer {
+        kind: 21,
+        run: |db| {
+            db.create_user("C", b"verifier").unwrap();
+            db.allow_role_creator("C", true).unwrap();
+        },
     },
 ];
 

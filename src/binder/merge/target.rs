@@ -89,10 +89,10 @@ fn required(cx: Context<'_>, stmt: &MergeStatement, named: &TableDesc) -> Result
         }
     }
     if updates {
-        require(cx.db, cx.auth, named, &update, UPDATE_PRIVILEGE)?;
+        require(cx.db, cx.who(), named, &update, UPDATE_PRIVILEGE)?;
     }
     if deletes {
-        require(cx.db, cx.auth, named, &Actions { delete: true, ..Actions::default() }, DELETE_PRIVILEGE)?;
+        require(cx.db, cx.who(), named, &Actions { delete: true, ..Actions::default() }, DELETE_PRIVILEGE)?;
     }
     Ok(())
 }

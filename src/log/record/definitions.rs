@@ -71,15 +71,20 @@ pub(super) fn schema(r: &mut Reader<'_>) -> Result<Change> {
     Ok(Change::Schema { sql, owner, engines, zone: zone(r)?, epochs: epochs(r)? })
 }
 
-/// A schema statement's authorizer, default schema, text, created table's
-/// engine and generation, displacement, and the epochs it gave.
+/// A schema statement's authorizer and its role (u8 1 and str, or u8 0 for
+/// none), default schema, text, created table's engine and generation,
+/// displacement, and the epochs it gave.
 pub(super) fn put_defined(
     out: &mut Vec<u8>,
-    (auth, schema, sql, zone): (&str, &str, &str, i16),
+    ((auth, role), schema, sql, zone): ((&str, Option<&str>), &str, &str, i16),
     placed: Option<&(String, u32)>,
     epochs: &[u64],
 ) {
     out.put_str(auth);
+    out.put_u8(u8::from(role.is_some()));
+    if let Some(role) = role {
+        out.put_str(role);
+    }
     out.put_str(schema);
     out.put_str(sql);
     out.put_u8(u8::from(placed.is_some()));
@@ -103,9 +108,11 @@ pub(super) fn put_altered(out: &mut Vec<u8>, (table, action, schema, zone): (&Qu
 
 /// What `put_defined` wrote, as a change.
 pub(super) fn defined(r: &mut Reader<'_>) -> Result<Change> {
-    let (auth, schema, sql) = (r.str()?, r.str()?, r.str()?);
+    let auth = r.str()?;
+    let role = if r.u8()? == 0 { None } else { Some(r.str()?) };
+    let (schema, sql) = (r.str()?, r.str()?);
     let placed = if r.u8()? == 0 { None } else { Some((r.str()?, r.u32()?)) };
-    Ok(Change::Defined { auth, schema, zone: zone(r)?, sql, placed, epochs: epochs(r)? })
+    Ok(Change::Defined { auth, role, schema, zone: zone(r)?, sql, placed, epochs: epochs(r)? })
 }
 
 /// The epochs of sequence generators' counters: a count u32, and each.

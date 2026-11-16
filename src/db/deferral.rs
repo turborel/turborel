@@ -28,7 +28,7 @@ impl Session {
     /// work areas of `st` (RULES.md D38).
     pub(super) fn effects(&self, st: &State) -> Effects<'_> {
         let cursors = Cursored { rows: self.cursor_changes(), conflict: &self.conflict };
-        let mut effects = Effects::new(&self.auth(), &self.deferral, cursors, st.list_space());
+        let mut effects = Effects::new(self.authorization(), &self.deferral, cursors, st.list_space());
         effects.now = self.now.get();
         effects.triggered = super::triggers::Triggered::of(self, st);
         effects

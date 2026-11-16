@@ -8,7 +8,7 @@ use super::super::usage::usage_alone;
 use super::super::{Completion, State};
 use crate::ast::{DropBehavior, PrivilegeDefinition, RevokeStatement};
 use crate::binder::qualify;
-use crate::catalog::{UsageDesc, owner_of};
+use crate::catalog::{UsageDesc, owner_of, sole};
 use crate::error::{Code, Result, SqlError, SqlState};
 
 impl State {
@@ -25,7 +25,7 @@ impl State {
         usage_alone(p.actions.as_deref())?;
         let mut seq = self.sequence_named(&qualify(&p.table, schema), "§12.2 SR2")?;
         let owner = owner_of(&*self.catalog, &seq.name.auth).to_owned();
-        let (held, grantable) = seq.usage_of(auth, &owner);
+        let (held, grantable) = seq.usage_of(sole(&*self.catalog, auth), &owner);
         if !held {
             let msg = format!("[ISO/IEC 9075-2:2023 §12.2 AR1] {auth} holds no USAGE on sequence generator {}", seq.name);
             return Err(SqlError::new(Code::Privilege, msg));
@@ -69,7 +69,7 @@ impl State {
         }
         loop {
             let held = seq.clone();
-            seq.usage.retain(|u| held.usage_of(&u.grantor, &owner).1);
+            seq.usage.retain(|u| held.usage_of(sole(&*self.catalog, &u.grantor), &owner).1);
             if seq.usage.len() == held.usage.len() {
                 break;
             }

@@ -30,11 +30,13 @@
 //! stale (15):  checkpoint's position u64 | index | row id u64 | key row
 //! user (16):   authorization identifier | kept u8 | verifier bytes, if kept
 //! owner (17):  authorization identifier
-//! defined (18): authorization identifier | default schema | the
+//! defined (18): authorization identifier | role u8, 1 for one, then its
+//!              name | default schema | the
 //!              statement's text | placed u8, 1 for a table created, then
 //!              its engine and its storage's generation u32 | zone | epochs
 //! reconfiguration (19): members
 //! sequence (20): sequence generator, as a table | epoch u64 | resume i128
+//! role creator (21): authorization identifier | allowed u8
 //! table:   authorization identifier | identifier
 //! options: count u32, each: name | value
 //! zone:    time zone displacement in minutes, i128
@@ -68,7 +70,7 @@ use definitions::{defined, dropped, put_altered, put_defined, put_dropped, put_s
 
 use kinds::{
     ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, OWNER, RECONFIGURATION,
-    SCHEMA, SEQUENCE, SETTING, STALE, STATEMENT_UNDONE, UPDATE, USER,
+    ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, STALE, STATEMENT_UNDONE, UPDATE, USER,
 };
 pub use kinds::{KINDS, REPLICATED};
 
@@ -221,8 +223,13 @@ pub enum Change {
     /// of its transaction (`ast::SchemaStatement`), which the definitions
     /// hold once it commits: made again from its text.
     Defined {
-        /// The authorization identifier that ran it.
+        /// The authorization identifier that ran it: the identifier of the
+        /// top cell of its session's authorization stack.
         auth: String,
+        /// [ISO/IEC 9075-2:2023 §4.42.1.2] The cell's role name, if it held
+        /// a user identifier and a role: what CURRENT_ROLE named, and a
+        /// grantor of the cell is determined from [§12.8].
+        role: Option<String>,
         /// The session's default schema as it ran.
         schema: String,
         /// The session's time zone displacement as it ran, in minutes
@@ -271,6 +278,15 @@ pub enum Change {
         /// The owner's authorization identifier.
         name: String,
     },
+    /// \[EXTENSION\] A user allowed, or no more allowed, to create roles
+    /// [ISO/IEC 9075-2:2023 §12.4, IW141] (`db/users.rs`). Made outside any
+    /// transaction.
+    RoleCreator {
+        /// The user's authorization identifier.
+        name: String,
+        /// Whether it may.
+        allowed: bool,
+    },
     /// \[EXTENSION\] The group of replicas keeping the database
     /// reconfigured to `members`, as ALTER DATABASE REPLICATION MEMBERS
     /// names them (RULES.md D57): the last record of its epoch, written
@@ -313,8 +329,8 @@ impl Record {
                 put_row(&mut out, key);
             }
             Change::Schema { sql, owner, engines, zone, epochs } => put_schema(&mut out, (owner, sql, *zone), engines, epochs),
-            Change::Defined { auth, schema, zone, sql, placed, epochs } => {
-                put_defined(&mut out, (auth, schema, sql, *zone), placed.as_ref(), epochs);
+            Change::Defined { auth, role, schema, zone, sql, placed, epochs } => {
+                put_defined(&mut out, ((auth, role.as_deref()), schema, sql, *zone), placed.as_ref(), epochs);
             }
             Change::Sequence { name, epoch, resume } => put_sequence(&mut out, name, *epoch, *resume),
             Change::CreateIndex { name, table, columns, method, options } => {
@@ -336,6 +352,10 @@ impl Record {
                 put_value(&mut out, value.as_ref().unwrap_or(&Value::Null));
             }
             Change::User { name, verifier } => put_user(&mut out, name, verifier.as_deref()),
+            Change::RoleCreator { name, allowed } => {
+                out.put_str(name);
+                out.put_u8(u8::from(*allowed));
+            }
         }
         out
     }
@@ -393,6 +413,7 @@ impl Record {
             SETTING => Change::Setting { name: r.str()?, value: Some(value(&mut r)?).filter(|v| !v.is_null()) },
             USER => user(&mut r)?,
             OWNER => Change::Owner { name: r.str()? },
+            ROLE_CREATOR => Change::RoleCreator { name: r.str()?, allowed: r.u8()? != 0 },
             RECONFIGURATION => Change::Reconfiguration { members: r.str()? },
             other => return Err(r.corrupt(&format!("no kind of record has tag {other}"))),
         };

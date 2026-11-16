@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::{Columns, Object, defined, ids, objects, schemas, sql_text, usage};
-use crate::catalog::{Actions, ColumnDesc, QualifiedName, applicable, owner_of};
+use crate::catalog::{Actions, ColumnDesc, QualifiedName, applicable, owner_of, sole};
 use crate::error::Result;
 use crate::storage::Row;
 use crate::system::{Rows, SYSTEM_GRANTOR, Seen, SystemTable, catalog_name, text, yes};
@@ -55,7 +55,7 @@ fn descriptors(seen: &Seen<'_>) -> Result<BTreeMap<Descriptor, bool>> {
             continue;
         }
         let schema_owner = owner_of(catalog, &o.name.auth);
-        let (held, grantable) = applicable(catalog, schema_owner, &o.name);
+        let (held, grantable) = applicable(catalog, sole(catalog, schema_owner), &o.name);
         add(&mut all, (SYSTEM_GRANTOR, schema_owner, &o), (&held, &grantable));
         // One grantor's privileges to one grantee taken together: UPDATE
         // on every column, on some grantable, is UPDATE on the table.
@@ -117,12 +117,18 @@ fn users_columns() -> Vec<ColumnDesc> {
 }
 
 /// Every `<authorization identifier>` known: of each schema's owner, and
-/// each grantor and grantee, "_SYSTEM" and PUBLIC among them, in order.
+/// each grantor and grantee, "_SYSTEM" and PUBLIC among them, and each
+/// role [ISO/IEC 9075-2:2023 §4.42.3], in order.
 fn users(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let mut known: BTreeSet<String> = schemas(seen).into_iter().collect();
     known.extend([SYSTEM_GRANTOR.to_owned(), PUBLIC.to_owned()]);
     for (grantor, grantee, ..) in descriptors(seen)?.into_keys() {
         known.extend([grantor, grantee]);
+    }
+    let roles = seen.state.catalog.roles();
+    known.extend(roles.names.iter().cloned());
+    for a in &roles.authorizations {
+        known.extend([a.grantor.clone(), a.grantee.clone().unwrap_or_else(|| PUBLIC.to_owned())]);
     }
     Ok(known.iter().map(|u| vec![text(u)]).collect())
 }
