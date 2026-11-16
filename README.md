@@ -46,6 +46,11 @@ behind it, and each can be replaced or added to.
   with SEARCH and CYCLE, and row pattern recognition (MATCH_RECOGNIZE).
 - Arrays, row types, distinct types, DECFLOAT, regular expressions,
   sequences and identity columns.
+- Stored procedures and functions in SQL/PSM, with variables, cursors,
+  handlers, loops and SIGNAL, grouped into modules if wished, and
+  polymorphic table functions that take whole tables as arguments.
+- Triggers before, after and instead of a change, for each row or
+  statement, and roles with privileges granted and revoked.
 - Domains, assertions, temporary tables, scrollable cursors and dynamic SQL.
 - Import of CSV and tab-separated files through the client.
 - Library, embedded modes
