@@ -9,7 +9,10 @@ grant SELECT on views of it. It is read like any table, in the
 session's transaction, as of its snapshot; it is never written.
 
 Each view shows only what the session's user may see: an object it
-owns, or holds a privilege on, or that PUBLIC does.
+owns, or holds a privilege on, or that PUBLIC does. Once the session
+sets a role ([SET ROLE](statements/set-role.md)), each view shows too
+what that role, and every role applicable for it, owns or holds a
+privilege on, as the session's statements may use it.
 
 ```sql
 SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'ANN';
@@ -75,6 +78,65 @@ make, those the user, or PUBLIC, holds a privilege on:
 | PARAMETERS | routine's parameter: its ORDINAL_POSITION, from 1, PARAMETER_MODE IN, OUT or INOUT, its name and its type |
 | ROUTINE_PRIVILEGES | privilege on a routine, its PRIVILEGE_TYPE EXECUTE, the owner's of _SYSTEM among them |
 | TRANSFORMS | distinct type's transform, its GROUP_NAME the name of the function from its source, of TRANSFORM_TYPE FROM SQL, its function to its source, and TO SQL, its function from it |
+
+Eight more of ISO/IEC 9075-11 describe roles ([CREATE
+ROLE](statements/create-role.md)) and the privileges granted to them:
+
+| View | One row of each |
+|---|---|
+| ENABLED_ROLES | role the session has enabled: the role SET ROLE set, each role granted to it or to PUBLIC, and each granted to one of those in turn. None until a role is set |
+| APPLICABLE_ROLES | grant of a role to the user, to PUBLIC, or to an enabled role, and of a role to one of those roles in turn, set or not: GRANTEE, ROLE_NAME, IS_GRANTABLE YES if granted WITH ADMIN OPTION |
+| ADMINISTRABLE_ROLE_AUTHORIZATIONS | grant of a role the user may grant, revoke and drop, holding it WITH ADMIN OPTION through APPLICABLE_ROLES: GRANTEE, ROLE_NAME, IS_GRANTABLE |
+| ROLE_TABLE_GRANTS | privilege on a table granted to an enabled role, or by one, with the columns of TABLE_PRIVILEGES |
+| ROLE_COLUMN_GRANTS | such a privilege on a column, with the columns of COLUMN_PRIVILEGES |
+| ROLE_USAGE_GRANTS | such USAGE, with the columns of USAGE_PRIVILEGES |
+| ROLE_UDT_GRANTS | such a privilege on a distinct type, with the columns of UDT_PRIVILEGES |
+| ROLE_ROUTINE_GRANTS | such a privilege on a routine, with the columns of ROUTINE_PRIVILEGES |
+
+A role's creator holds it WITH ADMIN OPTION by a grant from `_SYSTEM`,
+which APPLICABLE_ROLES shows. ANN, the owner of table STAFF, has granted
+SELECT on it to the role CLERK, CLERK to the role SENIOR, and SENIOR to
+BOB WITH ADMIN OPTION. Run by BOB:
+
+```sql
+SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'ANN';
+SELECT ROLE_NAME FROM INFORMATION_SCHEMA.ENABLED_ROLES;
+COMMIT;
+SET ROLE 'SENIOR';
+SELECT ROLE_NAME FROM INFORMATION_SCHEMA.ENABLED_ROLES ORDER BY 1;
+SELECT GRANTEE, ROLE_NAME FROM INFORMATION_SCHEMA.APPLICABLE_ROLES ORDER BY 2;
+SELECT GRANTEE, TABLE_NAME, PRIVILEGE_TYPE FROM INFORMATION_SCHEMA.ROLE_TABLE_GRANTS;
+SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'ANN';
+```
+
+```
+ TABLE_NAME
+--------------------------------------------------------------
+(0 rows)
+ ROLE_NAME
+--------------------------------------------------------------
+(0 rows)
+OK
+OK
+ ROLE_NAME
+--------------------------------------------------------------
+ CLERK
+ SENIOR
+(2 rows)
+ GRANTEE                                                      | ROLE_NAME
+--------------------------------------------------------------+--------------------------------------------------------------
+ SENIOR                                                       | CLERK
+ BOB                                                          | SENIOR
+(2 rows)
+ GRANTEE                                                      | TABLE_NAME                                                   | PRIVILEGE_TYPE
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ CLERK                                                        | STAFF                                                        | SELECT
+(1 row)
+ TABLE_NAME
+--------------------------------------------------------------
+ STAFF
+(1 row)
+```
 
 COLUMNS, ELEMENT_TYPES and FIELDS have three more columns, UDT_CATALOG,
 UDT_SCHEMA and UDT_NAME, the name of a distinct type the column or part
@@ -168,4 +230,6 @@ they show no connection, and counts of none, while it does not serve.
 JOBS.POLICY says how the jobs JOBS lists are run
 ([Settings](../appendix/c-settings.md)).
 
-The standard: ISO/IEC 9075:1992 §21.1, §21.2.
+The standard: ISO/IEC 9075:1992 §21.1, §21.2; the views of roles, and
+how each view reads the enabled roles, the 2006 draft of ISO/IEC 9075-11,
+Clause 5.

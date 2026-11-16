@@ -71,3 +71,22 @@ fn users_has_roles_and_their_grantees() {
     let users = rows_of(&db, "USERS");
     assert!(["O", "Q", "RR"].iter().all(|u| users.iter().any(|x| x == u)), "{users:?}");
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-11:2006 draft §6.34 Description 1
+/// to 4; ISO/IEC 9075-2:2023 §12.4 GR2]: ROLE_AUTHORIZATION_DESCRIPTORS has
+/// a row of each role authorization: the one a role's creator holds of
+/// "_SYSTEM", grantable, and each grant, PUBLIC the grantee of one granted
+/// to all, grantable WITH ADMIN OPTION alone.
+#[test]
+fn role_authorizations_are_described() {
+    let db = database();
+    db.create_user("O", b"x").unwrap();
+    let o = db.session("O");
+    for sql in ["CREATE ROLE RR", "GRANT RR TO PUBLIC", "GRANT RR TO Q WITH ADMIN OPTION"] {
+        o.run(sql).unwrap();
+    }
+    o.commit().unwrap();
+    let mut described = rows_of(&db, "ROLE_AUTHORIZATION_DESCRIPTORS");
+    described.sort();
+    assert_eq!(described, ["RR|O|_SYSTEM|YES", "RR|PUBLIC|O|NO", "RR|Q|O|YES"]);
+}

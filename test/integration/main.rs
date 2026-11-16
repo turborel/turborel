@@ -174,6 +174,7 @@ mod rekeying;
 mod reopen;
 mod replicated_state;
 mod revoke;
+mod role_views;
 mod roles;
 mod roles_revoke;
 mod roles_session;

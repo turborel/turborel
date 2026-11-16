@@ -411,7 +411,7 @@ Cursors follow §13.1, §13.3.
 | SET SESSION AUTHORIZATION | §16.4, §4.30 | The session's authorization identifier, the value trimmed and read as an `<authorization identifier>`. Refused in a transaction. The default schema stays as it was. |
 | Connections | §15 | CONNECT TO a server AS a name, USER a user, or TO DEFAULT. SET CONNECTION to a name or DEFAULT. DISCONNECT a name, DEFAULT, CURRENT or ALL. The client library is the SQL-agent (`turborel_client::agent`), and so the command-line client is. A server or a session refuses them (SQLCODE -900) (RULES.md D46). No transaction spans servers (SQLSTATE 0A001). |
 | COMMIT and ROLLBACK | §14.3, §14.4 | Without WORK too. |
-| The Information Schema | §21 | Its 23 views, with the standard's own definitions, over the Definition Schema (RULES.md D37). |
+| The Information Schema | §21 | Its 23 views, with the standard's own definitions, over the Definition Schema (RULES.md D37). Each also shows what the enabled roles own or hold (see Roles). |
 
 Isolation levels behave as follows (RULES.md D29). No level reads uncommitted
 changes, and constraints are checked serializably at every level.
@@ -1572,9 +1572,14 @@ roles [§12.8], and a role as the owner of a schema (RULES.md D75).
 | Grantor | §12.8, §12.2, §12.3 | GRANTED BY CURRENT_USER is the current user and CURRENT_ROLE the current role, each one that is there (-103). Omitted, the grantor is the current user, else the current role. A privilege a role granted stands while the role holds it grantably, through its applicable roles too [§12.7 GR2b i 2]. |
 | Schemas | §11.1 SR2b, §4.42.4 | CREATE SCHEMA AUTHORIZATION names a role the session has enabled. A `<schema definition>`'s CREATE ROLE and GRANT of roles run as its owner, before its other elements. |
 | Kept | §4.42.3 | Roles and role authorizations are logged with their statements, each definition's cell beside it, and kept in a checkpoint's snapshot. DEFINITION_SCHEMA.USERS lists each role. A server signs in no session as a role (28000). |
+| Role authorizations described | 11:2006 draft §6.34 | DEFINITION_SCHEMA.ROLE_AUTHORIZATION_DESCRIPTORS has a row of each role authorization, PUBLIC the grantee of one granted to all and _SYSTEM the grantor of a creator's. |
+| ENABLED_ROLES | 11:2006 draft §5.30, §4.42.4 | The current role, each role granted to it or to PUBLIC, and each granted to one of those in turn. The draft's text is corrected to §4.42.4 in two places. A null current role gives no row, since it enables no role. The roles granted to PUBLIC are enabled with the current role, as they are applicable for it. |
+| APPLICABLE_ROLES, ADMINISTRABLE_ROLE_AUTHORIZATIONS | 11:2006 draft §5.9, §5.8 | As the draft defines them. A RECURSIVE view is written as the WITH RECURSIVE it is equivalent to [§11.32 SR9e]. |
+| ROLE_ grants views | 11:2006 draft §5.38 to §5.40, §5.42, §5.43 | ROLE_TABLE_GRANTS, ROLE_COLUMN_GRANTS, ROLE_USAGE_GRANTS, ROLE_UDT_GRANTS and ROLE_ROUTINE_GRANTS, each privilege granted to or by an enabled role. ROLE_TABLE_GRANTS has no WITH_HIERARCHY, as there are no tables of structured types. ROLE_TABLE_METHOD_GRANTS [§5.41] is not defined, for the same reason. ROLE_ROUTINE_GRANTS takes the routine's name from the privilege table, which holds it, and its last subquery is closed as the draft leaves it open. |
+| Other views | 11:2006 draft Clause 5 | Where a view of ISO/IEC 9075:1992 tests CURRENT_USER as a grantee, a grantor or a schema's owner, an enabled role passes the test too, as the draft's views read ENABLED_ROLES. The privilege views test grantee and grantor together before the catalog, as the draft parenthesizes them. |
 
-The Information Schema's views of roles [ISO/IEC 9075-11] are not
-implemented, and its views of privileges read the session's user alone.
+The Information Schema's views of roles follow the 2006 draft of ISO/IEC
+9075-11, its clause numbers cited with that edition.
 ROLE, ADMIN, GRANTED and NONE are no key words of SQL-92, so each stays
 an identifier, read as a word where a statement of roles reads it.
 CURRENT_ROLE stays an identifier too, read as the value function where it

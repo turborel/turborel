@@ -1,6 +1,7 @@
 //! \[EXTENSION\] The views of the Information Schema that ISO/IEC 9075
 //! does not define, each over the Definition Schema's tables of its kind
-//! [ISO/IEC 9075:1992 §21.1].
+//! [ISO/IEC 9075:1992 §21.1]. Each shows what the current user, PUBLIC or
+//! an enabled role holds a privilege on, as TABLES does.
 
 use super::SystemView;
 
@@ -20,11 +21,13 @@ pub(super) const VIEWS: &[SystemView] = &[
            IN (
                SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
                 FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
                UNION
                SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
                 FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND TABLE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -40,11 +43,13 @@ pub(super) const VIEWS: &[SystemView] = &[
            IN (
                SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
                 FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
                UNION
                SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
                 FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND TABLE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -61,11 +66,13 @@ pub(super) const VIEWS: &[SystemView] = &[
            IN (
                SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
                 FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
                UNION
                SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
                 FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND TABLE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },

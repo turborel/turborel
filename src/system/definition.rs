@@ -28,12 +28,14 @@
 //! index options and of indexes in `definition/options.rs`, of sequence
 //! generators in `definition/sequences.rs`, of user-defined types in
 //! `definition/user_types.rs`, and of SQL-invoked routines in
-//! `definition/routines.rs` (RULES.md R-SIZE-2).
+//! `definition/routines.rs`; and the base table of role authorizations, of
+//! ISO/IEC 9075-11, in `definition/roles.rs` (RULES.md R-SIZE-2).
 
 mod constraints;
 mod descriptors;
 mod options;
 mod privileges;
+mod roles;
 mod routines;
 mod sequences;
 #[cfg(test)]
@@ -94,6 +96,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(sequences::tables());
     tables.extend(user_types::tables());
     tables.extend(routines::tables());
+    tables.extend(roles::tables());
     tables
 }
 

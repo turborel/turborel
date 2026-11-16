@@ -7,7 +7,10 @@
 //! grantor rule turned, RESTRICT not refusing, the settling of USAGE on a
 //! sequence skipped, a dropped role's name kept. Of the log: a definition
 //! replayed without its role, the right to create roles replayed as not
-//! given. Of the parser: CURRENT_ROLE read as a column.
+//! given. Of the parser: CURRENT_ROLE read as a column. Of the Information
+//! Schema: a role granted to PUBLIC not enabled, a null current role
+//! enabled, SCHEMATA blind to an enabled role, a role granted to PUBLIC
+//! described with no grantee.
 
 use super::{Mutation, Package};
 
@@ -43,9 +46,15 @@ const KEPT: &str = "roles_revoke::roles_are_kept_as_the_database_opens_again";
 const APPLICABLE: &str = "catalog::roles::tests::applicable_roles_follow_chains_and_public";
 /// The unit test of the enabled identifiers.
 const ENABLED: &str = "catalog::roles::tests::enabled_identifiers_of_each_cell";
+/// The file of the Information Schema's views of roles.
+const VIEWS: &str = "src/system/information/roles.rs";
+/// The test of the views of roles.
+const ROLE_VIEWS: &str = "role_views::enabled_applicable_and_administrable_roles_5_30";
+/// The test of the other views as they read the enabled roles.
+const READ: &str = "role_views::views_read_the_enabled_roles_5_61";
 
 /// The mutations of roles.
-pub const ROLES: [Mutation; 16] = [
+pub const ROLES: [Mutation; 20] = [
     Mutation {
         name: "roles-closure-without-public",
         package: Package::Core,
@@ -205,5 +214,45 @@ pub const ROLES: [Mutation; 16] = [
         replacement: "matches!(&t.tok, Tok::Identifier(w) if w == \"CURRENT ROLE\")",
         integration: &[SET, DEFAULT],
         unit: &[],
+    },
+    Mutation {
+        name: "roles-views-public-not-enabled",
+        package: Package::Core,
+        breaks: "ENABLED_ROLES lacks a role granted to PUBLIC, applicable for the current role",
+        file: VIEWS,
+        original: "WHERE RAD.GRANTEE = 'PUBLIC'",
+        replacement: "WHERE RAD.GRANTEE = 'NOBODY'",
+        integration: &[ROLE_VIEWS],
+        unit: &[],
+    },
+    Mutation {
+        name: "roles-views-null-role-enabled",
+        package: Package::Core,
+        breaks: "ENABLED_ROLES has a row of a null current role",
+        file: VIEWS,
+        original: "WHERE C.ROLE_NAME IS NOT NULL",
+        replacement: "WHERE 1 = 1",
+        integration: &[ROLE_VIEWS],
+        unit: &[],
+    },
+    Mutation {
+        name: "roles-views-schemata-blind",
+        package: Package::Core,
+        breaks: "SCHEMATA shows no schema an enabled role owns",
+        file: "src/system/information.rs",
+        original: "WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )\n         AND CATALOG_NAME",
+        replacement: "WHERE SCHEMA_OWNER = CURRENT_USER\n         AND CATALOG_NAME",
+        integration: &[READ],
+        unit: &[],
+    },
+    Mutation {
+        name: "roles-described-without-public",
+        package: Package::Core,
+        breaks: "a role granted to PUBLIC is described with an empty grantee, so no view finds it",
+        file: "src/system/definition/roles.rs",
+        original: "text(a.grantee.as_deref().unwrap_or(PUBLIC))",
+        replacement: "text(a.grantee.as_deref().unwrap_or(\"\"))",
+        integration: &[ROLE_VIEWS],
+        unit: &["system::definition::tests::role_authorizations_are_described"],
     },
 ];

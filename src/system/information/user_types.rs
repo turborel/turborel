@@ -8,11 +8,13 @@
 //! `definition/routines.rs`). Their text is this implementation's, as
 //! ISO/IEC 9075:1992 has none of them.
 //!
-//! A type is shown to the current user if it or PUBLIC holds a privilege
-//! on it, as DOMAINS shows domains [ISO/IEC 9075:1992 §21.2.5], and a
-//! function likewise. A privilege is shown to its grantee and its grantor,
-//! as TABLE_PRIVILEGES shows one [§21.2.10]. A routine's definition is
-//! shown to the owner of its schema alone, as a view's is [§21.2.8]. Each view shows a data type
+//! A type is shown to the current user if it, PUBLIC or an enabled role
+//! holds a privilege on it, as DOMAINS shows domains [ISO/IEC 9075:1992
+//! §21.2.5], and a function likewise. A privilege is shown to its grantee
+//! and its grantor, as TABLE_PRIVILEGES shows one [§21.2.10]. A routine's
+//! definition is shown to the owner of its schema alone, as a view's is
+//! [§21.2.8]. An enabled role counts as the current user does, as the
+//! views of ISO/IEC 9075-11:2006 draft Clause 5 count it. Each view shows a data type
 //! descriptor's character set, which the descriptor's collation is of, and
 //! the columns ISO/IEC 9075-11 names for a user-defined type's name.
 
@@ -44,7 +46,8 @@ pub(super) const VIEWS: &[SystemView] = &[
                  U.USER_DEFINED_TYPE_NAME )
              IN ( SELECT UDT_CATALOG, UDT_SCHEMA, UDT_NAME
                     FROM DEFINITION_SCHEMA.UDT_PRIVILEGES
-                    WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                    WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                            OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND U.USER_DEFINED_TYPE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -55,7 +58,9 @@ pub(super) const VIEWS: &[SystemView] = &[
          PRIVILEGE_TYPE, IS_GRANTABLE
      FROM DEFINITION_SCHEMA.UDT_PRIVILEGES
          WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
-                 OR GRANTOR = CURRENT_USER )
+              OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES )
+              OR GRANTOR = CURRENT_USER
+              OR GRANTOR IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND UDT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -73,9 +78,11 @@ pub(super) const VIEWS: &[SystemView] = &[
        R.USER_DEFINED_TYPE_SCHEMA AS TYPE_UDT_SCHEMA,
        R.USER_DEFINED_TYPE_NAME AS TYPE_UDT_NAME,
        R.MAXIMUM_CARDINALITY, R.DTD_IDENTIFIER, R.ROUTINE_BODY,
-       CASE WHEN ( R.ROUTINE_CATALOG, R.ROUTINE_SCHEMA, CURRENT_USER )
-                   IN ( SELECT CATALOG_NAME, SCHEMA_NAME, SCHEMA_OWNER
-                               FROM DEFINITION_SCHEMA.SCHEMATA )
+       CASE WHEN ( R.ROUTINE_CATALOG, R.ROUTINE_SCHEMA )
+                   IN ( SELECT CATALOG_NAME, SCHEMA_NAME
+                               FROM DEFINITION_SCHEMA.SCHEMATA
+                               WHERE ( SCHEMA_OWNER = CURRENT_USER
+                                    OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
             THEN R.ROUTINE_DEFINITION
             ELSE NULL
        END AS ROUTINE_DEFINITION,
@@ -90,7 +97,8 @@ pub(super) const VIEWS: &[SystemView] = &[
          WHERE ( R.SPECIFIC_CATALOG, R.SPECIFIC_SCHEMA, R.SPECIFIC_NAME )
              IN ( SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME
                     FROM DEFINITION_SCHEMA.ROUTINE_PRIVILEGES
-                    WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                    WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                            OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND R.SPECIFIC_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -127,7 +135,9 @@ pub(super) const VIEWS: &[SystemView] = &[
          PRIVILEGE_TYPE, IS_GRANTABLE
      FROM DEFINITION_SCHEMA.ROUTINE_PRIVILEGES
          WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
-                 OR GRANTOR = CURRENT_USER )
+              OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES )
+              OR GRANTOR = CURRENT_USER
+              OR GRANTOR IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND SPECIFIC_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },

@@ -6,9 +6,21 @@
 //! correction noted. Its assertion [§21.2.3] holds of the table, which has one
 //! row; its domains [§21.2.27-§21.2.29] are not defined as domains: its
 //! columns are of their types (`system.rs`).
+//!
+//! Where a view of ISO/IEC 9075:1992 chooses what to show by CURRENT_USER,
+//! as a privilege's grantee or grantor or a schema's owner, each enabled
+//! role chooses too, read from ENABLED_ROLES (`information/roles.rs`), as
+//! the views of ISO/IEC 9075-11:2006 draft Clause 5 read it: what a role a
+//! session has set brings it is shown as its privileges are current
+//! [ISO/IEC 9075-2:2023 §4.42.4]. So TABLE_PRIVILEGES, COLUMN_PRIVILEGES
+//! and USAGE_PRIVILEGES take their grantee or grantor test together in
+//! parentheses, as the draft does [§5.19, §5.60, §5.71], before AND tests
+//! the catalog, and the owner of a schema is tested by CURRENT_USER where
+//! COLUMNS wrote USER, which is the same [ISO/IEC 9075:1992 §6.2 SR3].
 
 mod composites;
 mod extensions;
+mod roles;
 mod user_types;
 
 use std::sync::OnceLock;
@@ -52,11 +64,12 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// The views of the Information Schema, in the standard's order, then this
 /// implementation's: those of ISO/IEC 9075:1992, those of arrays and
 /// row types (`information/composites.rs`), those of user-defined types
-/// and their routines (`information/user_types.rs`), then the extensions
+/// and their routines (`information/user_types.rs`), those of roles
+/// (`information/roles.rs`), then the extensions
 /// (`information/extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
-    ALL.get_or_init(|| [VIEWS, composites::VIEWS, user_types::VIEWS, extensions::VIEWS].concat())
+    ALL.get_or_init(|| [VIEWS, composites::VIEWS, user_types::VIEWS, roles::VIEWS, extensions::VIEWS].concat())
 }
 
 /// The views of ISO/IEC 9075:1992 [§21.2.4-§21.2.26].
@@ -69,7 +82,7 @@ const VIEWS: &[SystemView] = &[
          DEFAULT_CHARACTER_SET_CATALOG, DEFAULT_CHARACTER_SET_SCHEMA,
          DEFAULT_CHARACTER_SET_NAME
        FROM DEFINITION_SCHEMA.SCHEMATA
-       WHERE SCHEMA_OWNER = CURRENT_USER
+       WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND CATALOG_NAME
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -101,7 +114,8 @@ const VIEWS: &[SystemView] = &[
                IN
                ( SELECT OBJECT_CATALOG, OBJECT_SCHEMA, OBJECT_NAME, OBJECT_TYPE
                  FROM DEFINITION_SCHEMA.USAGE_PRIVILEGES
-                   WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                   WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                           OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
                OR
                ( DOMAIN_CATALOG, DOMAIN_SCHEMA, DOMAIN_NAME ) IN
                  ( SELECT DOMAIN_CATALOG, DOMAIN_SCHEMA, DOMAIN_NAME
@@ -123,7 +137,7 @@ const VIEWS: &[SystemView] = &[
                ( ( CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA )
                = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
        WHERE
-         SCHEMA_OWNER = CURRENT_USER
+         ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND CONSTRAINT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -137,11 +151,13 @@ const VIEWS: &[SystemView] = &[
            IN (
                SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
                 FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
                UNION
                SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
                 FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
-                  WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND TABLE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -150,9 +166,11 @@ const VIEWS: &[SystemView] = &[
         name: "VIEWS",
         query: r"SELECT
        TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME,
-       CASE WHEN ( TABLE_CATALOG, TABLE_SCHEMA, CURRENT_USER )
-                   IN ( SELECT CATALOG_NAME, SCHEMA_NAME, SCHEMA_OWNER
-                               FROM DEFINITION_SCHEMA.SCHEMATA )
+       CASE WHEN ( TABLE_CATALOG, TABLE_SCHEMA )
+                   IN ( SELECT CATALOG_NAME, SCHEMA_NAME
+                               FROM DEFINITION_SCHEMA.SCHEMATA
+                               WHERE ( SCHEMA_OWNER = CURRENT_USER
+                                    OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
             THEN VIEW_DEFINITION
             ELSE NULL
        END AS VIEW_DEFINITION,
@@ -177,7 +195,7 @@ const VIEWS: &[SystemView] = &[
               FROM DEFINITION_SCHEMA.SCHEMATA AS S
               WHERE ( TABLE_CATALOG, TABLE_SCHEMA )
                   = (S.CATALOG_NAME, S.SCHEMA_NAME )
-                AND SCHEMA_OWNER = USER )
+                AND ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
              THEN COLUMN_DEFAULT
             ELSE NULL
        END AS COLUMN_DEFAULT,
@@ -243,7 +261,8 @@ const VIEWS: &[SystemView] = &[
            IN
              ( SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
                   FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
-                    WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                    WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                            OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND C.TABLE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -254,8 +273,10 @@ const VIEWS: &[SystemView] = &[
        GRANTOR, GRANTEE, TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME,
          PRIVILEGE_TYPE, IS_GRANTABLE
      FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
-         WHERE   GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+         WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+              OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES )
               OR GRANTOR = CURRENT_USER
+              OR GRANTOR IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND TABLE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -266,8 +287,10 @@ const VIEWS: &[SystemView] = &[
        GRANTOR, GRANTEE, TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME,
          PRIVILEGE_TYPE, IS_GRANTABLE
      FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
-         WHERE   GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+         WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+              OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES )
               OR GRANTOR = CURRENT_USER
+              OR GRANTOR IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND TABLE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -278,8 +301,10 @@ const VIEWS: &[SystemView] = &[
        GRANTOR, GRANTEE, OBJECT_CATALOG, OBJECT_SCHEMA, OBJECT_NAME,
          OBJECT_TYPE, 'USAGE' AS PRIVILEGE_TYPE, IS_GRANTABLE
      FROM DEFINITION_SCHEMA.USAGE_PRIVILEGES
-         WHERE   GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+         WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+              OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES )
               OR GRANTOR = CURRENT_USER
+              OR GRANTOR IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND OBJECT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -297,7 +322,7 @@ const VIEWS: &[SystemView] = &[
             ON
              ( ( CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA )
              = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
-          WHERE SCHEMA_OWNER = CURRENT_USER
+          WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND CONSTRAINT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -314,7 +339,7 @@ const VIEWS: &[SystemView] = &[
             ON
              ( ( CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA )
              = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
-          WHERE SCHEMA_OWNER = CURRENT_USER
+          WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND CONSTRAINT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -329,7 +354,7 @@ const VIEWS: &[SystemView] = &[
             ON
              ( ( CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA )
              = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
-          WHERE SCHEMA_OWNER = CURRENT_USER
+          WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND CONSTRAINT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -345,7 +370,7 @@ const VIEWS: &[SystemView] = &[
             ON
              ( ( CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA )
              = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
-          WHERE SCHEMA_OWNER = CURRENT_USER
+          WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND CONSTRAINT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -361,7 +386,7 @@ const VIEWS: &[SystemView] = &[
             ON
              ( ( CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA )
              = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
-          WHERE SCHEMA_OWNER = CURRENT_USER
+          WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND CONSTRAINT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -377,7 +402,8 @@ const VIEWS: &[SystemView] = &[
              IN
              ( SELECT OBJECT_CATALOG, OBJECT_SCHEMA, OBJECT_NAME, OBJECT_TYPE
                  FROM DEFINITION_SCHEMA.USAGE_PRIVILEGES
-                 WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                 WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                         OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND CHARACTER_SET_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -393,7 +419,8 @@ const VIEWS: &[SystemView] = &[
              IN
              ( SELECT OBJECT_CATALOG, OBJECT_SCHEMA, OBJECT_NAME, OBJECT_TYPE
                  FROM DEFINITION_SCHEMA.USAGE_PRIVILEGES
-                 WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                 WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                         OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND COLLATION_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -410,7 +437,8 @@ const VIEWS: &[SystemView] = &[
              IN
              ( SELECT OBJECT_CATALOG, OBJECT_SCHEMA, OBJECT_NAME, OBJECT_TYPE
                  FROM DEFINITION_SCHEMA.USAGE_PRIVILEGES
-                 WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                 WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                         OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND SEQUENCE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -428,7 +456,8 @@ const VIEWS: &[SystemView] = &[
              IN
              ( SELECT OBJECT_CATALOG, OBJECT_SCHEMA, OBJECT_NAME, OBJECT_TYPE
                  FROM DEFINITION_SCHEMA.USAGE_PRIVILEGES
-                 WHERE GRANTEE IN ( 'PUBLIC', CURRENT_USER ) )
+                 WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                         OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
          AND TRANSLATION_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -444,7 +473,7 @@ const VIEWS: &[SystemView] = &[
          ON
            ( ( TABLE_CATALOG, TABLE_SCHEMA ) =
            ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
-       WHERE SCHEMA_OWNER = CURRENT_USER
+       WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND VIEW_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -459,7 +488,7 @@ const VIEWS: &[SystemView] = &[
            ON
            ( ( TABLE_CATALOG, TABLE_SCHEMA ) =
            ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
-       WHERE SCHEMA_OWNER = CURRENT_USER
+       WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND VIEW_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -490,7 +519,7 @@ const VIEWS: &[SystemView] = &[
           ON
            ( ( TABLE_CATALOG, TABLE_SCHEMA ) =
            ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
-       WHERE S.SCHEMA_OWNER = CURRENT_USER
+       WHERE ( S.SCHEMA_OWNER = CURRENT_USER OR S.SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND CONSTRAINT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -514,7 +543,7 @@ const VIEWS: &[SystemView] = &[
           ON
            ( ( TABLE_CATALOG, TABLE_SCHEMA ) =
            ( CATALOG_NAME, SCHEMA_NAME ) )
-         WHERE SCHEMA_OWNER = CURRENT_USER
+         WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND CONSTRAINT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
@@ -533,7 +562,7 @@ const VIEWS: &[SystemView] = &[
                 = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
           ON ( ( D.DOMAIN_CATALOG, D.DOMAIN_SCHEMA, D.DOMAIN_NAME )
                 = ( C.DOMAIN_CATALOG, C.DOMAIN_SCHEMA, C.DOMAIN_NAME ) )
-       WHERE SCHEMA_OWNER = CURRENT_USER
+       WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
          AND C.DOMAIN_NAME IS NOT NULL
          AND D.DOMAIN_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
