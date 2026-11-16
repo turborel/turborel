@@ -1,12 +1,14 @@
 //! The mutations of sequence generators (RULES.md R-TEST-9, D62): the
 //! values issued, the reservations logged before them, the counters a
 //! checkpoint settles and an image holds, the epochs a record logs, and
-//! where NEXT VALUE FOR may be.
+//! where NEXT VALUE FOR may be. Of DROP SEQUENCE: RESTRICT not refusing a
+//! trigger or routine that draws from it, and the generators a definition
+//! draws from not noted.
 
 use super::{Mutation, Package};
 
 /// The mutations of sequence generators, in the order they run.
-pub const SEQUENCES: [Mutation; 14] = [
+pub const SEQUENCES: [Mutation; 16] = [
     Mutation {
         name: "sequence-cycle-inverted",
         package: Package::Core,
@@ -145,6 +147,29 @@ pub const SEQUENCES: [Mutation; 14] = [
         original: "PrivilegeObject::Sequence => self.grant_sequence_usage(owner, &s.name, p),",
         replacement: "PrivilegeObject::Sequence => self.grant_collation_usage(owner, p),",
         integration: &["sequences::in_a_schema_definition_11_72"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sequence-drop-restrict-unrefused",
+        package: Package::Core,
+        breaks: "DROP SEQUENCE with RESTRICT drops a generator a trigger or routine draws from, and those that draw from it",
+        file: "src/db/sequences.rs",
+        original: "let mut dropped = self.drop_drawing(qn, cascade)?;",
+        replacement: "let mut dropped = self.drop_drawing(qn, true)?;",
+        integration: &["trigger_views::drop_sequence_takes_what_draws_from_it_11_74"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sequence-drawn-not-noted",
+        package: Package::Core,
+        breaks: "a definition notes no generator it draws from, so DROP SEQUENCE leaves it to fail",
+        file: "src/binder/sequences.rs",
+        original: "drawn.borrow_mut().push(qn);",
+        replacement: "let _ = (drawn, qn);",
+        integration: &[
+            "trigger_views::drop_sequence_takes_what_draws_from_it_11_74",
+            "trigger_views::what_triggers_name_is_described_5_68",
+        ],
         unit: &[],
     },
 ];

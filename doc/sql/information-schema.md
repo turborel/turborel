@@ -3,7 +3,8 @@
 [Contents](README.md)
 
 The schema INFORMATION_SCHEMA describes the database in tables: its
-schemas, tables, columns, constraints and privileges, and, of turborel's
+schemas, tables, columns, constraints, privileges, roles and triggers,
+and, of turborel's
 own, its indexes, settings and users. Every user may read it, and may
 grant SELECT on views of it. It is read like any table, in the
 session's transaction, as of its snapshot; it is never written.
@@ -138,6 +139,54 @@ OK
 (1 row)
 ```
 
+Six more of ISO/IEC 9075-11 describe triggers ([CREATE
+TRIGGER](statements/create-trigger.md)):
+
+| View | One row of each |
+|---|---|
+| TRIGGERS | trigger on a table the user, or an enabled role, holds a privilege other than SELECT on: EVENT_MANIPULATION INSERT, DELETE or UPDATE, its subject table in EVENT_OBJECT_CATALOG, _SCHEMA and _TABLE, ACTION_ORDER its place, from 1, among the triggers of that table, event, time and orientation in the order they run, ACTION_CONDITION and ACTION_STATEMENT its WHEN condition and its action as written, to the owner of its schema and null to others, ACTION_ORIENTATION ROW or STATEMENT, ACTION_TIMING BEFORE, AFTER or INSTEAD OF, its transition names in ACTION_REFERENCE_OLD_TABLE, _NEW_TABLE, _OLD_ROW and _NEW_ROW, and CREATED, null, as no timestamp is kept |
+| TRIGGERED_UPDATE_COLUMNS | column of the column list of an UPDATE OF trigger, of a column the user holds a privilege other than SELECT on |
+| TRIGGER_TABLE_USAGE | table or view a trigger's action reads, of a trigger of a schema the user, or an enabled role, owns |
+| TRIGGER_COLUMN_USAGE | column a trigger's action names, its transition variables' among them, of such a trigger |
+| TRIGGER_ROUTINE_USAGE | function or procedure a trigger's action invokes, by its specific name, of such a trigger |
+| TRIGGER_SEQUENCE_USAGE | sequence generator a trigger's action draws from, of such a trigger |
+
+Run by ANN, the owner of these:
+
+```sql
+CREATE TABLE ORDERS (ID INTEGER, AMOUNT INTEGER);
+CREATE TABLE AUDIT (N INTEGER, ID INTEGER);
+CREATE SEQUENCE S;
+CREATE TRIGGER LOGGED AFTER INSERT ON ORDERS REFERENCING NEW ROW AS R FOR EACH ROW WHEN (R.AMOUNT > 100) INSERT INTO AUDIT VALUES (NEXT VALUE FOR S, R.ID);
+CREATE TRIGGER CHANGED AFTER UPDATE OF AMOUNT ON ORDERS FOR EACH STATEMENT DELETE FROM AUDIT;
+COMMIT;
+SELECT TRIGGER_NAME, EVENT_MANIPULATION, ACTION_ORIENTATION, ACTION_CONDITION FROM INFORMATION_SCHEMA.TRIGGERS ORDER BY 1;
+SELECT TRIGGER_NAME, EVENT_OBJECT_COLUMN FROM INFORMATION_SCHEMA.TRIGGERED_UPDATE_COLUMNS;
+SELECT TRIGGER_NAME, SEQUENCE_NAME FROM INFORMATION_SCHEMA.TRIGGER_SEQUENCE_USAGE;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+ TRIGGER_NAME                                                 | EVENT_MANIPULATION                                           | ACTION_ORIENTATION                                           | ACTION_CONDITION
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ CHANGED                                                      | UPDATE                                                       | STATEMENT                                                    |
+ LOGGED                                                       | INSERT                                                       | ROW                                                          | R.AMOUNT > 100
+(2 rows)
+ TRIGGER_NAME                                                 | EVENT_OBJECT_COLUMN
+--------------------------------------------------------------+--------------------------------------------------------------
+ CHANGED                                                      | AMOUNT
+(1 row)
+ TRIGGER_NAME                                                 | SEQUENCE_NAME
+--------------------------------------------------------------+--------------------------------------------------------------
+ LOGGED                                                       | S
+(1 row)
+```
+
 COLUMNS, ELEMENT_TYPES and FIELDS have three more columns, UDT_CATALOG,
 UDT_SCHEMA and UDT_NAME, the name of a distinct type the column or part
 is of, its DATA_TYPE then USER-DEFINED. They are null of another type.
@@ -230,6 +279,6 @@ they show no connection, and counts of none, while it does not serve.
 JOBS.POLICY says how the jobs JOBS lists are run
 ([Settings](../appendix/c-settings.md)).
 
-The standard: ISO/IEC 9075:1992 §21.1, §21.2; the views of roles, and
-how each view reads the enabled roles, the 2006 draft of ISO/IEC 9075-11,
-Clause 5.
+The standard: ISO/IEC 9075:1992 §21.1, §21.2; the views of roles and of
+triggers, and how each view reads the enabled roles, the 2006 draft of
+ISO/IEC 9075-11, Clauses 5 and 6.

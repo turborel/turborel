@@ -65,6 +65,8 @@ enum Transition {
     NewTable,
 }
 
+/// A clause parsed, with its text as written.
+type Written<T> = (T, String);
 impl Transition {
     /// The kind as written, for messages.
     fn written(self) -> &'static str {
@@ -237,7 +239,8 @@ impl Parser {
         let new_row = if time == ActionTime::Before { referencing.new_row.as_ref().map(|(new_row, _)| new_row.clone()) } else { None };
         let (when, action, action_text) = self.in_triggered_action(TriggerScope { new_row }, |p| p.triggered_action(time))?;
         let text = self.text_from(start);
-        Ok(TriggerDefinition { name, time, event, table, referencing, level, when, action, action_text, text })
+        let (when, when_text) = when.map_or((None, None), |(c, written)| (Some(c), Some(written)));
+        Ok(TriggerDefinition { name, time, event, table, referencing, level, when, when_text, action, action_text, text })
     }
 
     /// `<trigger action time>` ::= BEFORE | AFTER | INSTEAD OF
@@ -404,16 +407,18 @@ impl Parser {
     /// `<triggered action>` after FOR EACH: \[`<triggered when clause>`\]
     /// `<triggered SQL statement>`, of a trigger at `time`, with the
     /// latter's text.
-    fn triggered_action(&mut self, time: ActionTime) -> Result<(Option<SearchCondition>, Vec<SqlStatement>, String)> {
+    fn triggered_action(&mut self, time: ActionTime) -> Result<(Option<Written<SearchCondition>>, Vec<SqlStatement>, String)> {
         let when = if self.is_kw(kw::WHEN) {
             if time == ActionTime::InsteadOf {
                 return Err(self.rule("[ISO/IEC 9075-2:2023 §11.49 SR15a] an INSTEAD OF trigger has no <triggered when clause>"));
             }
             self.advance();
             self.expect_delim(delim::LEFT_PAREN)?;
+            let start = self.here();
             let condition = self.search_condition()?;
+            let written = self.text_from(start);
             self.expect_delim(delim::RIGHT_PAREN)?;
-            Some(condition)
+            Some((condition, written))
         } else {
             None
         };

@@ -45,11 +45,6 @@ Nothing is open.
 
 ### Triggers, routines and roles
 
-- The Information Schema's views of triggers (ISO/IEC 9075-11:2023):
-  TRIGGERS, TRIGGERED_UPDATE_COLUMNS, TRIGGER_TABLE_USAGE,
-  TRIGGER_COLUMN_USAGE, TRIGGER_ROUTINE_USAGE and
-  TRIGGER_SEQUENCE_USAGE, and the trigger descriptors of the Definition
-  Schema they are views of, so tools can list a schema's triggers.
 - Stored procedures (SQL/PSM, ISO/IEC 9075-4:2023). Compound statements,
   local variables, cursors and handlers, and the control statements, IF,
   CASE, LOOP, WHILE, REPEAT, FOR, LEAVE and ITERATE, in a routine's body

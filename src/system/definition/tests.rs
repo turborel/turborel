@@ -8,14 +8,18 @@ use crate::db::Database;
 use crate::system::SystemRead;
 
 /// A schema with a key, a referential constraint, a CHECK reading another
-/// table, and a privilege granted.
+/// table, a privilege granted, and a trigger of a trigger column list and
+/// a condition, drawing from a sequence generator.
 fn database() -> Database {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION S
            CREATE TABLE P (K INTEGER PRIMARY KEY)
            CREATE TABLE C (A INTEGER REFERENCES P, CONSTRAINT IN_P CHECK (A IN (SELECT K FROM P)))
-           GRANT SELECT ON C TO R",
+           GRANT SELECT ON C TO R
+           CREATE SEQUENCE Q
+           CREATE TRIGGER TR AFTER UPDATE OF A ON C REFERENCING NEW ROW AS N FOR EACH ROW
+             WHEN (N.A > 0) INSERT INTO P VALUES (NEXT VALUE FOR Q)",
     )
     .unwrap();
     db

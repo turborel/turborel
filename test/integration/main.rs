@@ -227,6 +227,7 @@ mod timestamps;
 mod transaction_memory;
 mod transactions;
 mod trees;
+mod trigger_views;
 mod triggers;
 mod triggers_defaults;
 mod triggers_drops;

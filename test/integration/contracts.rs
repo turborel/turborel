@@ -205,6 +205,7 @@ fn trigger_desc(ident: &str, table: &QualifiedName, created: u64) -> TriggerDesc
         reads: vec![table.clone()],
         horizon: Horizon::default(),
         columns: Vec::new(),
+        sequences: Vec::new(),
         created,
     }
 }

@@ -24,6 +24,9 @@ pub struct TriggerDefinition {
     /// The `<search condition>` of the `<triggered when clause>`, if
     /// written.
     pub when: Option<SearchCondition>,
+    /// That `<search condition>` as written, which the Information Schema
+    /// shows [ISO/IEC 9075-11:2006 draft §6.58 Description 10].
+    pub when_text: Option<String>,
     /// The `<SQL procedure statement>`s of the `<triggered SQL
     /// statement>`, in order: one, or those of a `<compound triggered SQL
     /// statement>`.

@@ -24,6 +24,7 @@ fn desc(time: ActionTime, level: TriggerLevel, event: TriggerEvent, names: Trans
         reads: vec![name("T"), name("U")],
         horizon: Horizon { widths: vec![(name("T"), 2), (name("U"), 3)], routines: Some(vec![name("F_1")]) },
         columns: vec![(name("T"), "K".into()), (name("U"), "V".into())],
+        sequences: vec![name("Q")],
         created: 7,
     }
 }

@@ -18,7 +18,8 @@
 //! CHECK OPTION over one, a triggered action refused when it changes one,
 //! and a statement of it blind to its action's transition variables or
 //! tables. A MERGE's BEFORE trigger given the source's columns as its old
-//! row.
+//! row. Of the Information Schema: a trigger's place counted across row and
+//! statement triggers, and its condition kept as nothing.
 //!
 //! An AFTER DELETE of a positioned statement is no separate mutation. It
 //! records its transition through the call that also keeps the row's
@@ -59,7 +60,7 @@ const POSITIONED: &str = "triggers_routed::a_positioned_change_of_a_view_runs_it
 const ACTION: &str = "triggers_routed::a_triggered_action_changes_a_trigger_view";
 
 /// The mutations of triggers, in the order they run.
-pub const TRIGGERS: [Mutation; 38] = [
+pub const TRIGGERS: [Mutation; 40] = [
     Mutation {
         name: "triggers-before-insert-skipped",
         package: Package::Core,
@@ -439,5 +440,25 @@ pub const TRIGGERS: [Mutation; 38] = [
         replacement: "return None;",
         integration: &[ACTION],
         unit: &[],
+    },
+    Mutation {
+        name: "trigger-order-across-levels",
+        package: Package::Core,
+        breaks: "ACTION_ORDER counts a row trigger among the statement triggers of its table and event",
+        file: "src/system/definition/triggers.rs",
+        original: "&& o.time == t.time && o.level == t.level",
+        replacement: "&& o.time == t.time",
+        integration: &["trigger_views::triggers_are_described_5_69"],
+        unit: &[],
+    },
+    Mutation {
+        name: "trigger-condition-unkept",
+        package: Package::Core,
+        breaks: "a trigger's WHEN condition is kept as nothing, so ACTION_CONDITION shows none",
+        file: "src/parser/triggers.rs",
+        original: "Some((condition, written))",
+        replacement: "Some((condition, String::new()))",
+        integration: &["trigger_views::triggers_are_described_5_69"],
+        unit: &["parser::triggers::tests::the_when_condition_is_kept_as_written"],
     },
 ];

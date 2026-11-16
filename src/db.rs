@@ -153,7 +153,6 @@ pub const REKEY_BYTES_PER_SECOND: u64 = 8 << 20;
 pub use checkpoint::OVERDUE;
 pub use completion::{Completion, SQLCODE_NO_DATA};
 pub use database::Database;
-pub(crate) use database::WeakDatabase;
 pub use export::{ExportedFile, RECORDS_FILE, StateSource, decode_records};
 pub use files::{CHECKPOINT_AFTER, CHECKPOINT_BYTES, OpenOptions, Opened, POOL_BYTES};
 pub use formats::FileFormats;
@@ -164,6 +163,7 @@ pub use recovery::RecoveryReport;
 pub use session::TransactionMode;
 pub use standby::Standby;
 pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, OpenedLog, StorePlace};
+pub(crate) use {database::WeakDatabase, triggers::trigger_texts};
 
 /// The state and transaction a statement runs in.
 #[derive(Clone, Copy)]

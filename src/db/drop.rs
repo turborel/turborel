@@ -41,7 +41,7 @@ impl State {
             DropTarget::Domain(qn) => self.drop_domain(qn, cascade),
             DropTarget::Assertion(qn) => self.drop_assertion(qn),
             DropTarget::Collation(qn) => self.drop_collation(qn, cascade),
-            DropTarget::Sequence(qn) => self.drop_sequence(qn),
+            DropTarget::Sequence(qn) => self.drop_sequence(qn, cascade),
             DropTarget::Type(qn) => self.drop_user_type(qn, cascade),
             DropTarget::Trigger(qn) => self.drop_trigger(qn),
             DropTarget::Routine(specific) => self.drop_routine(specific, cascade),

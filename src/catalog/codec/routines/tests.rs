@@ -33,6 +33,7 @@ fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> Sql
         schema: "A".into(),
         reads: vec![name("T"), name("V")],
         horizon: Horizon { widths: vec![(name("T"), 2)], routines: Some(vec![name("G_1")]) },
+        sequences: vec![name("Q"), name("R")],
         execute: vec![
             UsageDesc { grantor: "A".into(), grantee: None, grantable: false },
             UsageDesc { grantor: "A".into(), grantee: Some("B".into()), grantable: true },

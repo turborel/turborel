@@ -5,8 +5,10 @@
 //! the whole query of a cursor, a SELECT INTO or an INSERT, in the rows an
 //! INSERT's VALUES gives, or in an UPDATE's SET source \[SR1\]; never in a
 //! CASE, a search condition, ORDER BY, a set function, a grouped query or
-//! one of DISTINCT \[SR2\]. So no view, constraint or default holds one, and
-//! nothing a schema holds depends on a sequence generator.
+//! one of DISTINCT \[SR2\]. So no view, constraint or default holds one;
+//! a triggered action and an SQL routine body may, and each notes the
+//! generators it draws from (`Context::drawn`), which DROP SEQUENCE with
+//! RESTRICT refuses to drop [§11.74 SR3].
 
 use std::sync::Arc;
 
@@ -38,6 +40,9 @@ impl Binder<'_> {
         if !seq.usage_of(self.who(), owner_of(&*self.db.catalog, &qn.auth)).0 {
             let msg = format!("[ISO/IEC 9075-2:2023 §6.14 AR1b] {} holds no USAGE on sequence generator {qn}", self.auth);
             return Err(SqlError::new(Code::Privilege, msg));
+        }
+        if let Some(drawn) = self.drawn {
+            drawn.borrow_mut().push(qn);
         }
         let t = seq.data_type.clone();
         Ok((Expr::NextValue(Arc::new(seq)), t))

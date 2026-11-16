@@ -39,6 +39,7 @@ fn routine(
         schema: specific.auth.clone(),
         reads: reads.to_vec(),
         horizon: Horizon::default().invoking(invokes.to_vec()),
+        sequences: Vec::new(),
         execute: Vec::new(),
         created: 1,
     }

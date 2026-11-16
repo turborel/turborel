@@ -56,6 +56,7 @@ mod hypothetical;
 mod invariant;
 mod limit;
 mod natural;
+mod noted;
 mod order_by;
 mod parameters;
 mod partitioned;
@@ -197,21 +198,13 @@ pub struct Context<'a> {
     /// Where to note the specific names of the SQL-invoked routines it
     /// invokes [ISO/IEC 9075-2:2023 §11.60 GR1], if anywhere.
     pub invoked: Option<&'a Invoked>,
+    /// Where to note the sequence generators it draws from, if anywhere.
+    pub drawn: Option<&'a DrawnFrom>,
 }
 
+pub use noted::{DrawnFrom, Invoked, Selected, Uses};
 pub use purpose::Purpose;
 pub use referencing::Referencing;
-
-/// The columns a query references, each as its table or view and column
-/// name, in the order referenced, once or more.
-pub type Uses = RefCell<Vec<(QualifiedName, String)>>;
-
-/// The columns each item of a select list references, as `Uses` notes
-/// them, its subqueries' too.
-pub type Selected = RefCell<Vec<Vec<(QualifiedName, String)>>>;
-
-/// The specific names of the SQL-invoked routines a statement invokes.
-pub type Invoked = RefCell<Vec<QualifiedName>>;
 
 impl<'a> Context<'a> {
     /// [ISO/IEC 9075-2:2023 §4.42.1.2] The cell whose privileges it is
@@ -242,6 +235,7 @@ impl<'a> Context<'a> {
             draws: false,
             queries: None,
             invoked: None,
+            drawn: None,
         }
     }
 }
@@ -413,6 +407,8 @@ struct Binder<'a> {
     queries: Option<&'a Queries<'a>>,
     /// Where it notes the routines it invokes (`Context::invoked`).
     invoked: Option<&'a Invoked>,
+    /// Where it notes the sequence generators it draws from (`Context::drawn`).
+    drawn: Option<&'a DrawnFrom>,
     /// The window functions of its select list (`binder/window.rs`).
     windowing: RefCell<Option<window::Windowing>>,
     /// The names of its result's columns, while its sort keys are bound
@@ -463,6 +459,7 @@ impl<'a> Binder<'a> {
             drawing: Cell::new(false),
             queries: cx.queries,
             invoked: cx.invoked,
+            drawn: cx.drawn,
             windowing: RefCell::new(None),
             sort_names: RefCell::new(order_by::SortNames::default()),
             rows: RefCell::new(invariant::Rows::default()),
@@ -494,6 +491,7 @@ impl<'a> Binder<'a> {
             draws: false,
             queries: self.queries,
             invoked: self.invoked,
+            drawn: self.drawn,
         }
     }
 }

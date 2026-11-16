@@ -813,7 +813,7 @@ are, and NEXT VALUE FOR takes its next value [§6.14].
 | Definition | §9.36, §11.72 | Each option at most once. The type exact numeric of scale 0, NUMERIC(18) by default (ID157). Each value whole and held by the type, the increment not 0, the maximum above the minimum, the start within them, else SQLCODE -103. Of NO MAXVALUE, the type's greatest value ascending and -1 descending (ID112); of NO MINVALUE, 1 ascending and the type's least value descending (ID113). |
 | Values | §9.35 | The first of the current base value plus a multiple of the increment within the bounds. Past them, 2200H of NO CYCLE, else the minimum ascending, the maximum descending. |
 | Alteration | §9.37, §11.73 | RESTART goes on from the start, RESTART WITH from its value, and neither from the current base value, which is checked to be within the new bounds. |
-| Drop | §11.74 | Nothing can depend on a generator, so RESTRICT and CASCADE are alike. USAGE on it goes with it. |
+| Drop | §11.74 SR3, GR1, §11.2 GR12 | A trigger's action or a routine's body that draws from the generator refuses RESTRICT (SQLCODE -103). CASCADE drops each such trigger, and each such routine with CASCADE, then the generator. USAGE on it goes with it. DROP SCHEMA drops each of its generators with CASCADE. |
 | Placement | §6.14 SR1, SR2 | In a select list of a cursor's query, a SELECT INTO's and an INSERT's, in an INSERT's VALUES and an UPDATE's SET; elsewhere SQLCODE -103, a sort key among them. A default takes no value expression, so there it is a syntax error. |
 | One value a row | §6.14 GR1, §4.29.1 | Every NEXT VALUE FOR of one generator in a row gives the row's one value. |
 | USAGE | §6.14 AR1, §11.72 GR2, §12.2, §12.7 | The schema's owner holds it grantably. GRANT and REVOKE ON SEQUENCE give and take it, and REVOKE with RESTRICT is 2B000 while a grant made by it would be abandoned [§12.7 GR12q]. INFORMATION_SCHEMA.USAGE_PRIVILEGES shows it, of OBJECT_TYPE SEQUENCE. |
@@ -1497,6 +1497,9 @@ CREATE TRIGGER defines a trigger [§11.49] and DROP TRIGGER drops one
 | Actions changing trigger views | §15.10, §15.13, §15.16, §15.21 GR6 | A triggered action may insert into, update or delete from a view that is not updatable but has an INSTEAD OF trigger of the event. It is bound against that view's rows when the trigger is defined, and the action's own transition variables and tables stay in scope within it. |
 | Dropping | §11.2 SR4j, GR9, §11.23 SR7e, GR1, §11.26 SR13f, GR5, §11.31 SR7g, GR4b, §11.33 SR5c, GR3b | A trigger goes with its subject table or view. A table or view its action names, a column of its column list or of its action, and a constraint its action binds by, are dropped only with CASCADE, which drops the trigger, else SQLCODE -103. A schema holding a trigger is dropped only with CASCADE. |
 | What it sees | §11.21 Note 561 | The action sees the columns its tables and its subject table had when it was defined: a column added later is not among those of its `*`, its INSERT without a column list or its transition rows. |
+| Trigger descriptors described | 11:2006 draft §6.53 to §6.58 | The Definition Schema has a row of each trigger in TRIGGERS, of each column of a trigger column list in TRIGGERED_UPDATE_COLUMNS, and of each table, column, subject routine and sequence generator its action names in TRIGGER_TABLE_USAGE, TRIGGER_COLUMN_USAGE, TRIGGER_ROUTINE_USAGE and TRIGGER_SEQUENCE_USAGE. ACTION_ORDER counts from 1 among the triggers of one table, event, time and orientation in the order of creation. ACTION_TIMING is INSTEAD OF of a trigger on a view, which the draft precedes. ACTION_CONDITION and ACTION_STATEMENT are as written, null if longer than CHARACTER_DATA holds, so ACTION_STATEMENT may be null, where the draft has it NOT NULL. CREATED is null, as a trigger keeps an order of creation and no timestamp. |
+| TRIGGERS, TRIGGERED_UPDATE_COLUMNS | 11:2006 draft §5.69, §5.64 | As the draft defines them: each trigger on a table, and each column of a column list, the user or an enabled role holds a privilege other than SELECT on, the condition and statement shown only where an enabled identifier owns the trigger's schema. |
+| Trigger usage views | 11:2006 draft §5.65 to §5.68 | TRIGGER_TABLE_USAGE, TRIGGER_COLUMN_USAGE, TRIGGER_ROUTINE_USAGE and TRIGGER_SEQUENCE_USAGE, as the draft defines them, of the triggers of schemas an enabled identifier owns. |
 
 The action is bound again only when the definitions change, and kept
 for each level of nesting it runs at. A trigger whose action executes
@@ -1509,8 +1512,8 @@ which turborel has none of. TRUNCATE TABLE executes no trigger [§14.10
 GR]. TRIGGER, BEFORE, AFTER, INSTEAD, REFERENCING, OLD, NEW,
 ROW, EACH, STATEMENT and ATOMIC are no key words of SQL-92, so each
 stays an identifier, a key word only where a trigger's statements read
-it. The Information Schema's views of triggers [ISO/IEC 9075-11] are
-not implemented.
+it. The Information Schema's views of triggers follow the 2006 draft of
+ISO/IEC 9075-11, its clause numbers cited with that edition.
 
 ### SQL-invoked routines
 

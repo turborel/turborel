@@ -9,7 +9,7 @@
 //!             row, new row, old table and new table names (each 0, or 1
 //!             and str), text (str), schema (str), reads (count u32,
 //!             names), horizon, columns (count u32, each a name and str),
-//!             created u64
+//!             sequences (count u32, names), created u64
 //! ```
 
 use super::super::{ActionTime, TransitionNames, TriggerDesc, TriggerEvent, TriggerLevel};
@@ -79,6 +79,7 @@ pub(crate) fn put_trigger(out: &mut Vec<u8>, trigger: &TriggerDesc) {
         put_name(out, table);
         out.put_str(column);
     });
+    put_all(out, trigger.sequences.iter(), put_name);
     out.put_u64(trigger.created);
 }
 
@@ -109,8 +110,8 @@ pub(crate) fn trigger(r: &mut Reader<'_>) -> Result<TriggerDesc> {
     let (old_row, new_row, old_table, new_table) = (optional(r)?, optional(r)?, optional(r)?, optional(r)?);
     let names = TransitionNames { old_row, new_row, old_table, new_table };
     let (text, schema, reads, horizon) = (r.str()?, r.str()?, get_all(r, qualified)?, horizon(r)?);
-    let columns = get_all(r, |r| Ok((qualified(r)?, r.str()?)))?;
-    Ok(TriggerDesc { name, table, time, level, event, names, text, schema, reads, horizon, columns, created: r.u64()? })
+    let (columns, sequences) = (get_all(r, |r| Ok((qualified(r)?, r.str()?)))?, get_all(r, qualified)?);
+    Ok(TriggerDesc { name, table, time, level, event, names, text, schema, reads, horizon, columns, sequences, created: r.u64()? })
 }
 
 /// A name that may be absent: 0, or 1 and the name.

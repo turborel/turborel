@@ -382,3 +382,15 @@ fn an_element_of_the_new_row_is_a_target_6_4() {
     let named = "CREATE TRIGGER TR BEFORE INSERT ON T REFERENCING NEW AS N FOR EACH ROW SELECT A INTO N.B[N.K] FROM U";
     refused_by(named, "ISO/IEC 9075-2:2023 §6.4");
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-11:2006 draft §6.58 Description 10]:
+/// the `<search condition>` of a `<triggered when clause>` is kept as
+/// written, inside its parentheses, a subquery's own among it; a trigger
+/// without one keeps none.
+#[test]
+fn the_when_condition_is_kept_as_written() {
+    let when =
+        trigger("CREATE TRIGGER TR AFTER UPDATE ON T REFERENCING NEW ROW AS N FOR EACH ROW WHEN ( N.A > (SELECT 1 FROM U) ) DELETE FROM U");
+    assert_eq!(when.when_text.as_deref(), Some("N.A > (SELECT 1 FROM U)"));
+    assert_eq!(trigger("CREATE TRIGGER TR AFTER INSERT ON T DELETE FROM U").when_text, None);
+}

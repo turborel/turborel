@@ -62,6 +62,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
         schema: "S".into(),
         reads: Vec::new(),
         horizon: Horizon::default(),
+        sequences: Vec::new(),
         execute: Vec::new(),
         created: 1,
     }

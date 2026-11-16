@@ -27,7 +27,8 @@ use super::rerouted::bind_taken;
 use super::run::{parsed, transitions_of};
 use crate::ast::{InsertSource, InsertStatement, MergeStatement, Schema, SqlStatement, TriggerDefinition, TriggerEvent as Written};
 use crate::binder::{
-    Context, Invoked, ObjectColumn, Uses, WriteKind, bind_insert_query, bind_merge, bind_select, bind_when, bind_write, once_each, qualify,
+    Context, DrawnFrom, Invoked, ObjectColumn, Uses, WriteKind, bind_insert_query, bind_merge, bind_select, bind_when, bind_write,
+    once_each, qualify,
 };
 use crate::catalog::{
     ActionTime, Horizon, Principal, QualifiedName, TransitionNames, TriggerDesc, TriggerEvent, ViewDesc, applicable, owner_of, sole,
@@ -39,9 +40,10 @@ use crate::txn::LockMode;
 use crate::value::Value;
 use crate::value::datetime::Now;
 
-/// What a triggered action names: the tables and views, and the columns,
-/// its triggered action column set.
-type Reads = (Vec<QualifiedName>, Vec<(QualifiedName, String)>);
+/// What a triggered action names: the tables and views, the columns, its
+/// triggered action column set, and the sequence generators it draws from,
+/// each once.
+type Reads = (Vec<QualifiedName>, Vec<(QualifiedName, String)>, Vec<QualifiedName>);
 
 impl State {
     /// [ISO/IEC 9075-2:2023 §11.49] CREATE TRIGGER `t`, its names without
@@ -83,14 +85,15 @@ impl State {
             reads: Vec::new(),
             horizon: Horizon::default(),
             columns: Vec::new(),
+            sequences: Vec::new(),
             created,
         };
         let invoked = Invoked::default();
-        let (reads, columns) = self.bind_action(&desc, t, (&owner, &invoked))?;
+        let (reads, columns, sequences) = self.bind_action(&desc, t, (&owner, &invoked))?;
         let seen: Vec<QualifiedName> = reads.iter().chain([&table]).cloned().collect();
         // [ISO/IEC 9075-2:2023 §4.35.2] and its subject routines from now on.
         desc.horizon = Horizon::of(&*self.catalog, &seen).invoking(invoked.take());
-        (desc.reads, desc.columns) = (reads, columns);
+        (desc.reads, desc.columns, desc.sequences) = (reads, columns, sequences);
         let locks = desc.reads.iter().map(|r| (r.clone(), LockMode::Shared)).chain([(table, LockMode::Exclusive)]).collect();
         let mut catalog = self.catalog.duplicate();
         let instead = desc.instead().then(|| desc.clone());
@@ -209,8 +212,14 @@ impl State {
         let transitions = Arc::new(transitions_of(self, desc)?);
         let width = transitions.columns.len().saturating_mul(2);
         let params = Params::transitional(vec![Value::Null; width], transitions);
-        let uses = Uses::default();
-        let cx = || Context { schema: &desc.schema, uses: Some(&uses), invoked: Some(invoked), ..Context::new(self, owner, &params) };
+        let (uses, drawn) = (Uses::default(), DrawnFrom::default());
+        let cx = || Context {
+            schema: &desc.schema,
+            uses: Some(&uses),
+            invoked: Some(invoked),
+            drawn: Some(&drawn),
+            ..Context::new(self, owner, &params)
+        };
         if let Some(when) = &t.when {
             bind_when(cx(), when)?;
         }
@@ -219,7 +228,10 @@ impl State {
             self.bind_triggered(cx(), stmt, (owner, &params))?;
         }
         let reads = named(&t.action, t.when.as_ref(), (&desc.schema, &desc.names));
-        Ok((reads, once_each(uses.into_inner())))
+        let mut sequences = drawn.into_inner();
+        sequences.sort();
+        sequences.dedup();
+        Ok((reads, once_each(uses.into_inner()), sequences))
     }
 
     /// The INSERT `ins` of a triggered action bound in `cx` as its owner

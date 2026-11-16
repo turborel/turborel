@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use super::super::{State, rule, triggers::named};
 use crate::ast::{RoutineDefinition, SqlStatement};
-use crate::binder::{Context, Invoked, Uses, bind_function_body};
+use crate::binder::{Context, DrawnFrom, Invoked, Uses, bind_function_body};
 use crate::catalog::{DataAccess, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of, sole};
 use crate::error::{Code, Result, SqlError};
 use crate::params::{Params, RoutineScope};
@@ -41,6 +41,8 @@ pub(super) struct BodyBound {
     pub(super) reads: Vec<QualifiedName>,
     /// The specific names of the routines it invokes.
     pub(super) invokes: Vec<QualifiedName>,
+    /// The sequence generators it draws from, each once.
+    pub(super) sequences: Vec<QualifiedName>,
     /// Whether its owner's EXECUTE on the routine is grantable [GR1].
     pub(super) grantable: bool,
 }
@@ -141,7 +143,7 @@ impl State {
         let stmt = &*definition.body;
         allowed(desc, stmt)?;
         let owner = owner_of(&*self.catalog, &desc.name.auth).to_owned();
-        let (uses, invoked): (Uses, Invoked) = (Uses::default(), RefCell::new(Vec::new()));
+        let (uses, invoked, drawn): (Uses, Invoked, DrawnFrom) = (Uses::default(), RefCell::new(Vec::new()), RefCell::new(Vec::new()));
         let scope = RoutineScope {
             name: desc.name.clone(),
             parameters: desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone(), p.mode)).collect(),
@@ -153,6 +155,7 @@ impl State {
             horizon: &desc.horizon,
             uses: Some(&uses),
             invoked: Some(&invoked),
+            drawn: Some(&drawn),
             ..Context::new(self, &owner, &params)
         };
         let mut access = written(stmt);
@@ -171,7 +174,10 @@ impl State {
         }
         within(desc, access)?;
         let grantable = self.execute_grantable(&owner, &reads, &invocations);
-        Ok(BodyBound { reads, invokes: invocations, grantable })
+        let mut sequences = drawn.into_inner();
+        sequences.sort();
+        sequences.dedup();
+        Ok(BodyBound { reads, invokes: invocations, sequences, grantable })
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 GR1] Whether `owner` holds grantable

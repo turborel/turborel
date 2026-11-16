@@ -59,6 +59,9 @@ pub struct SqlRoutineDesc {
     /// when it was defined, and the routines its body invokes, its subject
     /// routines [§4.35.2].
     pub horizon: Horizon,
+    /// The sequence generators its body draws from, which DROP SEQUENCE
+    /// with RESTRICT may not drop [§11.74 SR3a], each once.
+    pub sequences: Vec<QualifiedName>,
     /// The EXECUTE privileges on it [§12.3, §11.60 GR1], as a domain's
     /// USAGE are kept.
     pub execute: Vec<UsageDesc>,

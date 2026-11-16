@@ -209,6 +209,18 @@ pub(super) fn parsed(text: &str) -> Result<TriggerDefinition> {
     Ok(t)
 }
 
+/// [ISO/IEC 9075-11:2006 draft §6.58 Description 10, 11] The `<search
+/// condition>` of trigger `t`'s `<triggered when clause>`, if it has one,
+/// and its `<triggered SQL statement>`, each as written.
+///
+/// # Errors
+///
+/// Its text is no `<trigger definition>`: a defect.
+pub(crate) fn trigger_texts(t: &TriggerDesc) -> Result<(Option<String>, String)> {
+    let definition = parsed(&t.text)?;
+    Ok((definition.when_text, definition.action_text))
+}
+
 /// [ISO/IEC 9075-2:2023 §15.21 GR6m, §23.1 GR4g] The triggered action
 /// exception of trigger `t`, raised for `cause`: SQLSTATE 09000, about the
 /// trigger and its table, its SQLCODE and its text the cause's.

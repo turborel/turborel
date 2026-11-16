@@ -69,12 +69,13 @@ impl State {
             schema: schema.to_owned(),
             reads: Vec::new(),
             horizon: Horizon::default(),
+            sequences: Vec::new(),
             execute: Vec::new(),
             created,
         };
         let bound = self.bind_routine_body(&desc, r)?;
         desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes);
-        desc.reads = bound.reads;
+        (desc.reads, desc.sequences) = (bound.reads, bound.sequences);
         desc.execute = vec![UsageDesc { grantor: SYSTEM_GRANTOR.to_owned(), grantee: Some(owner), grantable: bound.grantable }];
         let locks = desc.reads.iter().map(|t| (t.clone(), LockMode::Shared)).collect();
         self.put_routine(desc);

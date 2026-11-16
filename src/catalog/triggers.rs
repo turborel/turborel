@@ -65,6 +65,9 @@ pub struct TriggerDesc {
     /// The triggered action column set \[GR5i\]: every column its triggered
     /// action names, by its table and its name.
     pub columns: Vec<(QualifiedName, String)>,
+    /// The sequence generators its triggered action draws from, which
+    /// DROP SEQUENCE with RESTRICT may not drop [§11.74 SR3b], each once.
+    pub sequences: Vec<QualifiedName>,
     /// \[DESIGN\] Its timestamp of creation \[GR5j\], as an order: one more
     /// than the greatest of the triggers there were as it was created, so
     /// no two triggers of a catalog share one (IS003 none). Triggers

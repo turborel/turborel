@@ -21,6 +21,7 @@
 mod composites;
 mod extensions;
 mod roles;
+mod triggers;
 mod user_types;
 
 use std::sync::OnceLock;
@@ -65,11 +66,12 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// implementation's: those of ISO/IEC 9075:1992, those of arrays and
 /// row types (`information/composites.rs`), those of user-defined types
 /// and their routines (`information/user_types.rs`), those of roles
-/// (`information/roles.rs`), then the extensions
+/// (`information/roles.rs`) and of triggers (`information/triggers.rs`),
+/// then the extensions
 /// (`information/extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
-    ALL.get_or_init(|| [VIEWS, composites::VIEWS, user_types::VIEWS, roles::VIEWS, extensions::VIEWS].concat())
+    ALL.get_or_init(|| [VIEWS, composites::VIEWS, user_types::VIEWS, roles::VIEWS, triggers::VIEWS, extensions::VIEWS].concat())
 }
 
 /// The views of ISO/IEC 9075:1992 [§21.2.4-§21.2.26].

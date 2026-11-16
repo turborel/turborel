@@ -196,27 +196,64 @@ impl State {
     }
 
     /// [ISO/IEC 9075-2:2023 §11.74] Drops sequence generator `qn`, and USAGE
-    /// on it \[GR1\]. Nothing names one that RESTRICT refuses \[SR3\]: no
-    /// view, constraint or default holds NEXT VALUE FOR [§6.14 SR1].
+    /// on it \[GR1\], with the triggers and SQL-invoked routines that draw
+    /// from it if `cascade`. No view, constraint or default holds NEXT VALUE
+    /// FOR [§6.14 SR1].
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if there is no such sequence generator \[SR2\].
-    pub(super) fn drop_sequence(&mut self, qn: &QualifiedName) -> Result<Dropped> {
+    /// SQLCODE -103 if there is no such sequence generator \[SR2\], or, not
+    /// `cascade`, a trigger or routine draws from it \[SR3\].
+    pub(super) fn drop_sequence(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         self.sequence_named(qn, "§11.74 SR2")?;
+        let mut dropped = self.drop_drawing(qn, cascade)?;
         let mut catalog = self.catalog.duplicate();
         catalog.remove_sequence(qn);
         self.catalog = Arc::from(catalog);
-        // Held exclusive, so no definition that draws from it is pending.
-        Ok(Dropped { names: vec![qn.clone()], ..Dropped::default() })
+        // Held exclusive, so no statement that draws from it is pending.
+        dropped.names.push(qn.clone());
+        Ok(dropped)
     }
 
-    /// [ISO/IEC 9075-2:2023 §11.2 GR3] The sequence generators of schema
-    /// `auth`, which is being dropped, each dropped.
+    /// [ISO/IEC 9075-2:2023 §11.74 SR3, GR1] The triggers and routines that
+    /// draw from sequence generator `qn`, each dropped if `cascade`, as the
+    /// REVOKE of USAGE on it from its schema's owner, CASCADE, abandons
+    /// them: what goes with them goes too.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103, not `cascade`, if there is one \[SR3a, SR3b\]; what
+    /// dropping one gives.
+    fn drop_drawing(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
+        let mut dropped = Dropped::default();
+        loop {
+            let trigger = self.catalog.triggers().iter().find(|t| t.sequences.contains(qn)).map(|t| t.name.clone());
+            let routine = self.catalog.routines().iter().find(|r| r.sequences.contains(qn)).map(|r| r.specific.clone());
+            let what = match (&trigger, &routine) {
+                (Some(t), _) => format!("the triggered action of trigger {t}"),
+                (None, Some(r)) => format!("the body of routine {r}"),
+                (None, None) => return Ok(dropped),
+            };
+            if !cascade {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §11.74 SR3] {what} draws from sequence generator {qn}, so it is dropped only with CASCADE"
+                )));
+            }
+            match (trigger, routine) {
+                (Some(t), _) => dropped.absorb(self.drop_trigger(&t)?),
+                (None, Some(r)) => dropped.absorb(self.drop_routine(&r, true)?),
+                (None, None) => return Ok(dropped),
+            }
+        }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.2 GR12] The sequence generators of schema
+    /// `auth`, which is being dropped, each dropped as DROP SEQUENCE ...
+    /// CASCADE drops it.
     pub(super) fn drop_schema_sequences(&mut self, auth: &str) -> Result<Dropped> {
         let mut dropped = Dropped::default();
         for qn in self.schema_sequences(auth) {
-            dropped.absorb(self.drop_sequence(&qn)?);
+            dropped.absorb(self.drop_sequence(&qn, true)?);
         }
         Ok(dropped)
     }

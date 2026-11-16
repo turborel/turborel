@@ -22,3 +22,4 @@ pub(super) use named::named;
 pub(super) use rerouted::view_rows;
 pub(super) use routed::{Instead, instead_for, updatable};
 pub(super) use run::Triggering;
+pub(crate) use run::trigger_texts;
