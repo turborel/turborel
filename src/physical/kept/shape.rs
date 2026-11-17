@@ -21,10 +21,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
     match one {
         Plan::SeqScan { .. } => same_scan(one, other),
         Plan::IndexScan { .. } => same_index_scan(one, other),
-        Plan::Nearest(a) => {
-            let Plan::Nearest(b) = other else { return false };
-            same_nearest(a, b)
-        }
+        Plan::Nearest(_) => same_nearest(one, other),
         Plan::Filter { input, .. } => {
             let Plan::Filter { input: input2, .. } = other else { return false };
             same_shape(input, input2)
@@ -90,7 +87,9 @@ fn same_index_scan(one: &Plan, other: &Plan) -> bool {
     read && columns == columns2 && covering == covering2 && same_probe(probe, probe2)
 }
 
-fn same_nearest(a: &crate::physical::NearestRead, b: &crate::physical::NearestRead) -> bool {
+fn same_nearest(one: &Plan, other: &Plan) -> bool {
+    let Plan::Nearest(a) = one else { return false };
+    let Plan::Nearest(b) = other else { return false };
     let (Some((column, argument, function, _)), Some((other_column, other_argument, other_function, _))) =
         (crate::physical::distance_call(&a.measure), crate::physical::distance_call(&b.measure))
     else {
