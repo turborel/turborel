@@ -87,6 +87,22 @@ const LOB_TAG: u8 = 12;
 /// order of the elements.
 const BAG_TAG: u8 = 13;
 
+/// Appends the normalized key of `v`, a value of a type beyond the
+/// standard or an XML value, as `NormKey::Extension` holds it: its kind's
+/// name, then its bytes after their count.
+fn put_norm_named(v: &Value, out: &mut Vec<u8>) {
+    let (name, bytes) = if let Value::Extension(e) = v {
+        (e.kind.name(), e.bytes.to_vec())
+    } else if let Value::Xml(x) = v {
+        (crate::value::types::XML_NAME, x.octets())
+    } else {
+        return;
+    };
+    text(out, EXTENSION_TAG, name);
+    out.extend_from_slice(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
+    out.extend_from_slice(&bytes);
+}
+
 /// Appends `v`'s normalized key to `out`: the bytes `norm_key` gives of
 /// `v.norm()`, made without making it.
 pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
@@ -119,11 +135,7 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
             out.push(SPAN_TAG);
             out.extend_from_slice(&i.units.to_le_bytes());
         }
-        Value::Extension(e) => {
-            text(out, EXTENSION_TAG, e.kind.name());
-            out.extend_from_slice(&u64::try_from(e.bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
-            out.extend_from_slice(&e.bytes);
-        }
+        Value::Extension(_) | Value::Xml(_) => put_norm_named(v, out),
         Value::Array(parts) | Value::Row(parts) => {
             out.push(COMPOSITE_TAG);
             out.extend_from_slice(&u64::try_from(parts.len()).unwrap_or(u64::MAX).to_le_bytes());

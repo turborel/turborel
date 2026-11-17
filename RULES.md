@@ -2818,12 +2818,17 @@ Namespace declarations are kept on the element that makes them, as the
 data model allows.
 
 Nothing recurses. Entities are read on a stack of texts, elements on a
-stack of open elements, content models on a stack of groups. Two bounds
-keep each finite, and a text past either is SQLCODE -900 (D18):
+stack of open elements, content models on a stack of groups. These bounds
+keep each finite, and a value past one is SQLCODE -900 (D18):
 
 - `MAX_NESTING`, 512: how deep elements, and content-model groups, nest.
 - `MAX_TEXT`, 16 MiB: a tree's text, and what entities' replacement texts
   add to a parse, so nested entities cannot expand without end.
+- `MAX_NODES`, 1,048,576: a tree's nodes and namespace bindings, as a text
+  of little but markup makes many nodes of little text.
+- `MAX_INPUT`, 64 MiB: the text XMLPARSE reads, a large object's whole.
+- `MAX_STORED`, 64 MiB: a value's stored form, read whole when its nodes
+  are needed.
 
 An XML value is a sequence (`xml::Sequence`) of items, each a node or an
 atomic value. A node is its tree, shared, and its place in it, so the
@@ -2839,9 +2844,24 @@ table of its names, each once, then its nodes as events: document,
 element (with its bindings and attributes), end, text, comment and
 processing instruction. Its fields are D30's. A node below the root of its
 tree is stored as a copy, an element declaring every binding in its scope.
-The XML type keeps this form in the row when it is small and as D79's
-chunks otherwise. XML indexes (the primary, path, value and property
-indexes of Pal et al.) come with XQuery.
+XML indexes (the primary, path, value and property indexes of Pal et
+al.) come with XQuery.
+
+The XML type's values are `Value::Xml` (`value::XmlValue`), held in one
+of three forms: a sequence; a binary large object of the stored form, as a
+table keeps it; or its serialization, as the protocol carries it. Each is
+turned into another only when needed. A table keeps the stored form as it
+keeps a BLOB (D79): in the record when short, else as its own large
+objects, logged chunk by chunk, so recovery and replication need nothing
+of their own. A value is held whole when read, at most `MAX_STORED`, the
+one place XML departs from D79, as a value must be a tree to be read.
+
+XML values are not comparable, so they have no key, bucket or order, and
+the binder refuses them where an equality, grouping or ordering operation
+would take one. Over a connection a value is its serialization as
+CONTENT, and a client parses it as CONTENT when it needs its nodes. A
+column is described with the type's modifiers. The column store keeps no
+XML value, as it keeps no large object.
 
 ## 2. Project layout
 

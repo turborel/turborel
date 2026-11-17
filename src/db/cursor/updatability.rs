@@ -133,7 +133,8 @@ fn how_far(j: &ValueSpecification, valued: &Valued<'_>) -> Result<i128> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
-        | Value::Extension(_) => Err(not_exact()),
+        | Value::Extension(_)
+        | Value::Xml(_) => Err(not_exact()),
     }
 }
 

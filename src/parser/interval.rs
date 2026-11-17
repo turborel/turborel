@@ -157,7 +157,7 @@ impl Parser {
         }
         if matches!(primary, ValueExpression::Value(crate::ast::ValueSpecification::Dynamic { .. })) {
             let target = TypeName::Data(DataType::Interval(self.interval_qualifier()?));
-            return Ok(ValueExpression::Cast { operand: Some(Box::new(primary)), target, format: None, at });
+            return Ok(ValueExpression::Cast { operand: Some(Box::new(primary)), target, format: None, passing: None, at });
         }
         Ok(primary)
     }

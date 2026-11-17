@@ -163,7 +163,8 @@ fn structured_in(t: &DataType, into: &mut Vec<StructuredType>, depth: usize) {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Reference(_)
-        | DataType::Extension(_) => {}
+        | DataType::Extension(_)
+        | DataType::Xml(_) => {}
     }
 }
 

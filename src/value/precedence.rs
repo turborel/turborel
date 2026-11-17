@@ -74,7 +74,7 @@ pub fn position(p: &DataType, t: &DataType) -> Option<u8> {
         }
         // [SR4] a user-defined type's own name, as no distinct type has a
         // proper supertype; [SR19] a row type is no parameter's type.
-        DataType::Distinct(_) | DataType::Row(_) | DataType::Extension(_) => (p == t).then_some(FIRST),
+        DataType::Distinct(_) | DataType::Row(_) | DataType::Extension(_) | DataType::Xml(_) => (p == t).then_some(FIRST),
     }
 }
 
@@ -164,7 +164,8 @@ fn of_string(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     };
     let (own, of) = (rank(t)?, rank(p)?);
     [FIRST, SECOND, THIRD].get(usize::from(of.checked_sub(own)?)).copied()
@@ -211,7 +212,8 @@ fn of_number(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     }
 }
 

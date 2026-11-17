@@ -161,7 +161,13 @@ fn point_in_time(binder: &Binder<'_>, v: &ValueExpression, (start_type, at): (&D
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §7.6] a <point in time> is a <datetime value expression>, not {t}")).or_at(at));
         }
     }
-    let cast = ValueExpression::Cast { operand: Some(Box::new(v.clone())), target: TypeName::Data(start_type.clone()), format: None, at };
+    let cast = ValueExpression::Cast {
+        operand: Some(Box::new(v.clone())),
+        target: TypeName::Data(start_type.clone()),
+        format: None,
+        passing: None,
+        at,
+    };
     let (e, _) = binder.value_expression(&cast, scope)?;
     let mut columns = Vec::new();
     crate::logical::expr_columns(&e, &mut columns);

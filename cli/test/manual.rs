@@ -270,6 +270,16 @@ fn the_reference_manuals_examples_run_as_printed() {
     }
 }
 
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.8, §6.16] [DESIGN] RULES.md
+/// R-DOC-8, D86: the examples of XML values run as printed, as ANN.
+#[test]
+fn the_xml_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/xml.md") > 0, "it shows its examples' output");
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D64: the examples of TRUNCATE
 /// TABLE run as printed, as ANN.
 #[test]

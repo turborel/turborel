@@ -58,6 +58,7 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, (db, path): (&State, &str))
         | ValueExpression::CollationFor(_)
         | ValueExpression::Case(_)
         | ValueExpression::Cast { .. }
+        | ValueExpression::Xml(..)
         | ValueExpression::Subquery(_)
         | ValueExpression::Datetime(_)
         | ValueExpression::Extract { .. }
@@ -122,6 +123,7 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::CollationFor(_)
         | ValueExpression::Case(_)
         | ValueExpression::Cast { .. }
+        | ValueExpression::Xml(..)
         | ValueExpression::Subquery(_)
         | ValueExpression::Datetime(_)
         | ValueExpression::Extract { .. }

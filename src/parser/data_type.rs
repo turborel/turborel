@@ -98,6 +98,11 @@ impl Parser {
         if self.at_decfloat_type() {
             return self.decfloat_type().map(Some);
         }
+        // [ISO/IEC 9075-14:2006 draft §6.1] The XML type, its name no key
+        // word of SQL-92.
+        if self.at_xml_type() {
+            return self.xml_type().map(Some);
+        }
         // [SR1] CLOB, NCLOB and BLOB, CHARACTER LARGE OBJECT, NATIONAL
         // CHARACTER LARGE OBJECT and BINARY LARGE OBJECT by other names.
         if let Tok::Identifier(name) = self.peek() {

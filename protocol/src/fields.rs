@@ -9,6 +9,7 @@ use turborel::storage::Row;
 use turborel::value::datetime::Moment;
 use turborel::value::lob::{Lob, LobKind};
 use turborel::value::types::{ExtensionType, Field, TypeParams};
+use turborel::value::xml::XmlValue;
 use turborel::value::{DataType, SqlType, Value, types};
 
 use crate::{Column, Failure};
@@ -70,6 +71,11 @@ const STRUCTURED: u8 = 23;
 /// [ISO/IEC 9075-2:2023 §4.11] A reference type, then its referenced type
 /// as a structured type's names and its scope; a reference, its octets.
 const REFERENCE: u8 = 24;
+/// [ISO/IEC 9075-14:2006 draft §4.2] An XML type, then its primary and
+/// secondary modifiers; an XML value, its serialization as CONTENT, a
+/// string, which a client parses as CONTENT when it needs its nodes
+/// (RULES.md D86).
+const XML: u8 = 25;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -152,6 +158,7 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
         DataType::Distinct(d) => return put_type(b, &d.source),
         DataType::Structured(_) => b.put_u8(STRUCTURED),
         DataType::Reference(_) => b.put_u8(REFERENCE),
+        DataType::Xml(_) => b.put_u8(XML),
         DataType::Extension(e) => return put_extension_type(b, e),
     }
     t.kind().put_params(t, b);
@@ -205,6 +212,7 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         BLOB => Some(&types::BLOB),
         STRUCTURED => Some(&types::STRUCTURED),
         REFERENCE => Some(&types::REFERENCE),
+        XML => Some(&types::XML),
         _ => None,
     }
 }
@@ -319,6 +327,13 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
             return;
         }
         Value::Extension(e) => return put_extension_value(b, (v, e)),
+        // A server serializes it as it places a row (`server/native/lobs.rs`),
+        // so one with no serialization is refused there, before it is sent.
+        Value::Xml(x) => {
+            b.put_u8(XML);
+            b.put_str(&x.text().unwrap_or_default());
+            return;
+        }
     };
     b.put_u8(tag);
     if let Some(kind) = v.kind() {
@@ -367,6 +382,7 @@ fn value(r: &mut Reader<'_>) -> Result<Value> {
         ARRAY => r.nested(|r| Ok(Value::Array(counted(r, value)?.into()))),
         MULTISET => r.nested(|r| multiset(counted(r, value)?, r)),
         ROW => r.nested(|r| Ok(Value::Row(counted(r, value)?.into()))),
+        XML => Ok(Value::Xml(XmlValue::serialized(&r.str()?))),
         STRUCTURED => r.nested(|r| {
             let of = types::UdtName { schema: r.str()?, name: r.str()? };
             Ok(Value::Structured(std::sync::Arc::new(types::Structured::new(std::sync::Arc::new(of), counted(r, value)?.into()))))
@@ -437,7 +453,7 @@ pub fn row_size(row: &Row) -> usize {
         Value::Interval(_) => 33,
         // Its tag, then its octets after their count.
         Value::Reference(r) => r.bytes().len().saturating_add(5),
-        Value::Array(_) | Value::Multiset(_) | Value::Row(_) | Value::Structured(_) | Value::Extension(_) => {
+        Value::Array(_) | Value::Multiset(_) | Value::Row(_) | Value::Structured(_) | Value::Extension(_) | Value::Xml(_) => {
             let mut b = Vec::new();
             put_value(&mut b, v);
             b.len()

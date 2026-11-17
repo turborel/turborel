@@ -19,7 +19,7 @@ in `86 §5.5 SR3`. One marked `2023` is ISO/IEC 9075-2:2023, as in
 Contents: [The claim](#the-claim) ·
 [SQL-86, clause by clause](#sql-86-clause-by-clause) ·
 [SQL-92](#sql-92) · [Collations](#collations) · [SQL:2023](#sql2023) ·
-[SQL/PSM](#sqlpsm) · [Extensions](#extensions) ·
+[SQL/PSM](#sqlpsm) · [SQL/XML](#sqlxml) · [Extensions](#extensions) ·
 [Implementation-defined choices](#implementation-defined-choices) ·
 [Limits](#limits) · [Readings of ambiguous text](#readings-of-ambiguous-text)
 
@@ -1852,6 +1852,60 @@ RESIGNAL, SQLEXCEPTION, SQLWARNING, CONDITION and STACKED, stay
 identifiers, read as words where a program reads them. Those Part 4
 reserves are never a correlation name written without AS.
 
+
+## SQL/XML
+
+XML-related specifications, ISO/IEC 9075-14, written from its 2006 draft
+(`5CD2-14-XML-2006-01`), its clause numbers cited with that edition, and
+from the W3C texts the draft names, at the editions it names (RULES.md
+D86). Part 14 adds the XML type, whose values are XQuery sequences, and
+the operators that make them and write them.
+
+Features X010 (XML type), X016 (Persistent XML values), X060 and X061
+(XMLParse: character string input and CONTENT, DOCUMENT option), X065 and
+X066 (XMLParse: BLOB input and CONTENT, DOCUMENT option), X070 to X072
+(XMLSerialize: character string serialization), X073 to X075
+(XMLSerialize: BLOB serialization), X076 (XMLSerialize: VERSION), X077
+(XMLSerialize: explicit ENCODING option), X078 (XMLSerialize: explicit XML
+declaration), X181 and X182 (XML(DOCUMENT(UNTYPED)) and XML(DOCUMENT(ANY))
+types), X190 (XML(SEQUENCE) type), X211 (XML 1.1 support), X231 and X232
+(XML(CONTENT(UNTYPED)) and XML(CONTENT(ANY)) types), and X251 to X255
+(Persistent XML values of each XML type) are claimed.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| The XML types | §4.2.2, §6.1 SR1 to SR3 | XML(DOCUMENT), XML(CONTENT), each UNTYPED or ANY, and XML(SEQUENCE). XML alone is XML(SEQUENCE), and DOCUMENT or CONTENT alone is ANY [SR2, SR3b]. XMLSCHEMA is valid SQL not yet taken, SQLCODE -900. |
+| XML values | §4.2.3 | An XQuery sequence of nodes and atomic values. A value held in a column is its stored form (RULES.md D86): in the row when short, else as the table's large objects, logged and recovered as large objects are. |
+| Assignment | §4.2.4, §10.2 SR1, GR1 | An XML value to an XML site alone, an UNTYPED one's of an UNTYPED type, else SQLCODE -103. A DOCUMENT site takes a document, else SQLSTATE 2200L; a CONTENT site one document node, else 2200U. A value stored is a copy. |
+| Not comparable | §4.2.4, §10.8 SR1 to §10.11 SR1 | No equality, grouping or ordering operation takes an XML value: comparisons, IN, quantified comparisons, MATCH, UNIQUE, DISTINCT, IS DISTINCT FROM, NULLIF, a simple CASE, GROUP BY, ORDER BY, set operations but UNION ALL, MIN and MAX, a NATURAL or USING join's common column, keys and indexes, SQLCODE -103. |
+| Types brought together | §10.3 SR1 | XML types with XML types alone, of the type SR1b gives: SEQUENCE if one is, the one type, DOCUMENT(UNTYPED) if all are, CONTENT(UNTYPED) if all are UNTYPED, else CONTENT(ANY). |
+| CAST | §6.5 SR1 to SR4, GR1 | Of an XML type to an XML type alone [SR3]. BY REF is implicit [SR2], to an UNTYPED type of an UNTYPED one [SR4a]. BY VALUE copies the value. To a DOCUMENT or CONTENT type, as assignment checks it. |
+| XMLPARSE | §6.16, §10.16 | Of a character string or a binary string, large objects too. DOCUMENT parses a textual XML 1.0 or XML 1.1 document, else 2200M; CONTENT a document or an external parsed entity, else 2200N [GR6a]. The internal DTD subset's entities are expanded and its attribute defaults applied [GR7c, GR7d]. STRIP WHITESPACE removes text of white space alone by `xml:space` [GR8]. Its type is XML(DOCUMENT(UNTYPED)) or XML(CONTENT(UNTYPED)) [SR1]. |
+| XMLSERIALIZE | §6.8, §10.15 | To a character or a binary string, by the XML output method of XSLT 2.0 and XQuery 1.0 Serialization, after its sequence normalization. CONTENT if neither is written. DOCUMENT of a document alone, else 2200L. VERSION '1.0' or '1.1'. A binary string in UTF8 or UTF16. INCLUDING and EXCLUDING XMLDECLARATION. The result is stored in its type as assignment stores it, too long 22001. A value with no serialization, an attribute alone among others, is 2200W. |
+| Over a connection | RULES.md D86 | A column of an XML type is described with its modifiers. A value is sent as its serialization as CONTENT, refused with 2200W if it has none, and a client parses it as CONTENT when it needs its nodes. A value sent as a parameter is kept as sent. |
+| Descriptor areas | §17.1 GR1, Table 12 | XML is code 137. An item of it matches any XML type. |
+
+| Choice | Rules | turborel |
+|---|---|---|
+| XML alone; DOCUMENT and CONTENT alone | §6.1 SR2, SR3b | XML(SEQUENCE); ANY. |
+| The type of XMLPARSE | §6.16 SR1 | UNTYPED, as every node a parse makes is. |
+| CAST's passing mechanism | §6.5 SR2 | BY REF. |
+| XMLSERIALIZE's version and encoding | §6.8 SR2d, SR4d, SR4e | '1.0'. The encodings are UTF8, the default, and UTF16. |
+| A byte order mark | §10.15 GR4a ii | Before UTF16 alone. |
+| The standalone declaration | §10.15 GR7 | None is written. |
+| An XML declaration not asked for | §10.15 GR8c ii | None, of a document of XML 1.0 in UTF8 or UTF16; one of a document of XML 1.1 [GR8c i]. |
+| Prefixes undeclared | §10.15 GR9b | Of XML 1.1, written so. |
+| The other serialization parameters | §10.15 GR10 | No CDATA section, document type declaration, indentation, URI escaping, content type, Unicode normalization or character map. |
+| Notations and unparsed entities | §10.16 GR7a ii, iii | Not kept. |
+| Base URI | §10.16 GR7b | None. |
+| External DTD | §10.16 GR7e | Not read, nor any external entity, so no parse opens a file or a URL. A reference that needs one, or a declaration not read, is the exception GR6 raises, as the data model has every entity expanded. |
+| The encoding of a binary string parsed | XML §4.3.3 | UTF-8, UTF-16 with its byte order mark, UTF-16BE and UTF-16LE that declare themselves, ISO-8859-1 and US-ASCII; another is refused. |
+
+The words of Part 14, XML and the operators' names among its reserved
+words, are no key words of SQL-92, so each stays an identifier, read as a
+word where SQL/XML reads it. A column named DOCUMENT or CONTENT is read as
+the column where what follows it ends a value expression.
+
 ---
 
 ## Extensions
@@ -2444,6 +2498,7 @@ SQLCODE -900 (RULES.md D18).
 | Regular expression steps | 10,000,000, of a search with back-references | A back-reference matches no automaton, so its search goes back and can take time exponential in the string. One without any takes time linear in it, with no limit. | `regex/backtrack.rs` |
 | Grouping sets | 4,096 of a GROUP BY, and GROUPING of 59 columns | 2023 §7.13 SR14 and SR16 set no maximum, and a CUBE of n sets stands for 2 to the n. GROUPING's value is of 18 digits [§6.9 SR10b], which 2 to the 59 fits and 2 to the 60 does not. | `binder/grouping_sets.rs`, `binder/grouping_sets/expansion.rs` |
 | Trigger and procedure nesting | 16 levels of triggered actions and procedures executed within each other, past which the statement fails with SQLCODE -900, of a trigger's action SQLSTATE 09000 | §15.21 and §9.18 set no limit, and a trigger whose action executes it again would recurse until the stack overflowed. 16 levels run in half of Rust's default 2 MiB thread stack. | `db/nested.rs` |
+| XML text and values | Elements and content models nest 512 deep; a tree holds 16 MiB of text and 1,048,576 nodes and namespace bindings; XMLPARSE reads 16 MiB more of entities' replacement texts and 64 MiB of input; a value's stored form is 64 MiB | XML 1.0 and Part 14 set no limit, and nested entities expand without end. A walk of a tree keeps a stack of its ancestors. | `xml.rs` |
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
 
 An index entry is an encoded key plus an 8-byte row id, and has its own limit.

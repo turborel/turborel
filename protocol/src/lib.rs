@@ -50,7 +50,8 @@
 //!             u64; 13 interval, its qualifier
 //!             as its data type's, then units i128; 14 truth value, 0 or
 //!             1 u8; 15 decimal floating point, coefficient i128 then
-//!             exponent, an i32's bits in a u32
+//!             exponent, an i32's bits in a u32; 25 XML, its serialization
+//!             as CONTENT, a string
 //! data type:  tag u8: 1 character, 5 character varying, 6 binary, 7
 //!             binary varying, each length u32; 2 exact, precision u32 then scale
 //!             u32; 3 approximate, precision u32; 4 beyond the standard, its
@@ -58,7 +59,9 @@
 //!             10 time with time zone, 11 timestamp, 12 timestamp with time
 //!             zone, each precision u32; 13 interval, start field, end field,
 //!             leading precision and fractional precision, each u32; 14
-//!             boolean; 15 decfloat, precision u32
+//!             boolean; 15 decfloat, precision u32; 25 XML, its primary
+//!             modifier u8 (0 DOCUMENT, 1 CONTENT, 2 SEQUENCE), then its
+//!             secondary u8 (0 UNTYPED or none, 1 ANY)
 //! parameter:  varying u8 (CHARACTER VARYING if 1); data type
 //! column:     named u8, its name if 1; data type; not null u8
 //! failure:    sqlcode i32 as u32; sqlstate, a string of 5; message;

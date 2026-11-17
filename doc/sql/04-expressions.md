@@ -824,6 +824,22 @@ OK
 (1 row)
 ```
 
+## XML values
+
+XMLPARSE makes an XML value of a string, and XMLSERIALIZE writes one as a
+string. [XML Values](xml.md) gives their syntax.
+
+```sql
+VALUES (XMLSERIALIZE(XMLPARSE(CONTENT 'tea <b>and</b> cups' PRESERVE WHITESPACE) AS VARCHAR(40)));
+```
+
+```
+
+------------------------------------------
+ tea <b>and</b> cups
+(1 row)
+```
+
 ## Conditions as values
 
 A [condition](05-predicates.md), such as `SALARY > 6000` or `DEPT IS

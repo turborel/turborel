@@ -25,17 +25,13 @@ impl ValueExpression {
                 n.physical.iter().filter_map(|p| p.offset.as_deref()).for_each(&mut *f);
             }
             ValueExpression::Extract { source, .. } => f(source),
-            ValueExpression::Difference { minuend, subtrahend, .. } => {
-                f(minuend);
-                f(subtrahend);
-            }
             ValueExpression::AtZone { source, zone, .. } => {
                 f(source);
                 if let Some(z) = zone {
                     f(z);
                 }
             }
-            ValueExpression::Dyadic(a, _, b) => {
+            ValueExpression::Dyadic(a, _, b) | ValueExpression::Difference { minuend: a, subtrahend: b, .. } => {
                 f(a);
                 f(b);
             }
@@ -53,6 +49,7 @@ impl ValueExpression {
                 sf.filter.iter().for_each(|c| c.for_each_value(f));
             }
             ValueExpression::Cast { operand, .. } => operand.iter().for_each(|x| f(x)),
+            ValueExpression::Xml(x, _) => x.for_each_child(f),
             ValueExpression::Function { args, .. } | ValueExpression::Call { args, .. } => args.iter().for_each(f),
             ValueExpression::Case(case) => case.for_each_child(f),
             ValueExpression::Boolean(c) => c.for_each_value(f),

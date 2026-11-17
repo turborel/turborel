@@ -46,7 +46,8 @@ fn finished(function: &dyn AggregateFunction, result: DataType, values: &[Value]
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
-            | Value::Extension(_) => None,
+            | Value::Extension(_)
+            | Value::Xml(_) => None,
         })
         .collect();
     if let Some(units) = units {

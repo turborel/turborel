@@ -432,6 +432,7 @@ pub fn heap_bytes(v: &Value) -> usize {
         Value::Char(s) => s.len(),
         Value::Binary(b) => b.bytes().len(),
         Value::Extension(e) => e.bytes.len(),
+        Value::Xml(x) => x.held_bytes(),
         // Its parts, and the octets of those held inline: never its
         // length, which a source keeps (RULES.md D79).
         Value::Lob(l) => l.held_bytes(),

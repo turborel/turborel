@@ -82,7 +82,8 @@ impl<'v> Subject<'v> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
-            | Value::Extension(_) => Body::Chars(text(value)?.unwrap_or_default().chars().collect()),
+            | Value::Extension(_)
+            | Value::Xml(_) => Body::Chars(text(value)?.unwrap_or_default().chars().collect()),
         };
         Ok(Some(Subject { body, value, octets }))
     }

@@ -85,6 +85,7 @@ fn character(v: &Value) -> Result<Character<'_>> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
-        | Value::Extension(_) => not_character(),
+        | Value::Extension(_)
+        | Value::Xml(_) => not_character(),
     }
 }

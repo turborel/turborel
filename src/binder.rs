@@ -95,6 +95,7 @@ mod values;
 mod views;
 mod window;
 mod with;
+mod xml;
 
 pub use counterparts::defaulted_columns;
 pub use cursor::bind_cursor;

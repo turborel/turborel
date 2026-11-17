@@ -133,7 +133,9 @@ pub fn check_assignment(col: &ColumnDesc, t: &DataType, r: AssignRule) -> Result
 /// degree, field by field. [§4.9.5, §4.13, §9.2
 /// SR3] A distinct type's value in a site of it, or of its source type
 /// alone; in a site of it, a value of it, or one its function from its
-/// source takes, implicitly invocable (`distinct_assignable`).
+/// source takes, implicitly invocable (`distinct_assignable`). [ISO/IEC
+/// 9075-14:2006 draft §10.2 SR1b] An XML value in an XML site alone, an
+/// UNTYPED one's of an UNTYPED type.
 pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     if let Some(fits) = distinct_assignable(target, t) {
         return fits;
@@ -149,6 +151,14 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     }
     let composite = |either: &DataType| matches!(either, DataType::Array(_) | DataType::Multiset(_) | DataType::Row(_));
     if composite(target) || composite(t) {
+        return false;
+    }
+    // [ISO/IEC 9075-14:2006 draft §10.2 SR1b] An XML value to an XML site
+    // alone, an UNTYPED one taking a value of an UNTYPED type alone.
+    if let (DataType::Xml(x), DataType::Xml(y)) = (target, t) {
+        return x.takes(*y);
+    }
+    if matches!(target, DataType::Xml(_)) || matches!(t, DataType::Xml(_)) {
         return false;
     }
     if let DataType::Extension(e) = target {

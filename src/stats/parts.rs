@@ -242,7 +242,8 @@ pub fn sampled(value: &Value) -> Value {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
-        | Value::Extension(_) => value.clone(),
+        | Value::Extension(_)
+        | Value::Xml(_) => value.clone(),
     }
 }
 

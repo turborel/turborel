@@ -43,14 +43,33 @@ use crate::error::{Code, SqlError};
 /// the nesting of the documents and messages an application stores.
 pub const MAX_NESTING: usize = 512;
 
-/// \[DESIGN\] How many octets of text a tree holds at most, its names and
-/// the characters of its text, comment, processing instruction and
-/// attribute nodes, and how many characters entities' replacement texts
-/// add to a parse, so a value is bounded in memory and entities that
-/// expand to more are refused rather than read for ever (RULES.md D18,
-/// D86). It is the bound geometry's readers have, `geometry::MAX_BYTES`
-/// (D85).
+/// \[DESIGN\] How many octets of text a tree holds at most, its names, its
+/// namespace bindings and the characters of its text, comment, processing
+/// instruction and attribute nodes, and how many characters entities'
+/// replacement texts add to a parse, so a value is bounded in memory and
+/// entities that expand to more are refused rather than read for ever
+/// (RULES.md D18, D86). It is the bound geometry's readers have,
+/// `geometry::MAX_BYTES` (D85).
 pub const MAX_TEXT: usize = 16 * 1024 * 1024;
+
+/// \[DESIGN\] How many nodes and namespace bindings a tree has at most, so
+/// a text of little but markup, which `MAX_TEXT` does not bound, makes a
+/// tree of bounded size (RULES.md D18, D86). The value is no measurement:
+/// it is the nodes of the largest documents an application stores, each
+/// element a few nodes.
+pub const MAX_NODES: usize = 1 << 20;
+
+/// \[DESIGN\] How many octets of text XMLPARSE reads at most, so a string
+/// of a large object is read whole within a bound (RULES.md D18, D86); a
+/// text within it makes a tree within `MAX_TEXT` and `MAX_NODES`, or is
+/// refused by them.
+pub const MAX_INPUT: usize = 64 * 1024 * 1024;
+
+/// \[DESIGN\] How many octets a value's stored form has at most (RULES.md
+/// D86). A value whose form is longer is refused as it is stored, SQLCODE
+/// -900, so every value stored is read back whole, and stored bytes longer
+/// are corrupt. One tree within `MAX_TEXT` and `MAX_NODES` stores in less.
+pub const MAX_STORED: usize = 64 * 1024 * 1024;
 
 /// The error of an XML value beyond turborel's limits, `why` (RULES.md
 /// D18).

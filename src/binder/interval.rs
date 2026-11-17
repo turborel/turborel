@@ -43,7 +43,8 @@ fn fits(t: &DataType, q: Qualifier) -> bool {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => false,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => false,
     };
     q.fields().all(has)
 }
@@ -126,7 +127,8 @@ fn zoned(t: DataType) -> DataType {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => t,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => t,
     }
 }
 

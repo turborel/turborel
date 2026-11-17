@@ -1,0 +1,251 @@
+//! The grammar of SQL/XML [ISO/IEC 9075-14:2006 draft §6]: the XML type
+//! [§6.1], XMLPARSE [§6.16], XMLSERIALIZE [§6.8], and CAST's `<XML passing
+//! mechanism>` [§6.5].
+//!
+//! [§5.1] XML and the names of the operators are reserved words of
+//! SQL/XML, and its other words non-reserved; as SQL-92's are the key
+//! words this lexer reads (CONFORMANCE.md), each is read as an identifier
+//! where the grammar takes it, as BOOLEAN and CLOB are.
+
+use super::Parser;
+use crate::ast::{Passing, ValueExpression, XmlOperator};
+use crate::error::{Code, Result, SqlError};
+use crate::lexer::{Tok, delim, kw};
+use crate::value::DataType;
+use crate::value::types::{REF_NAME, XML_NAME};
+use crate::value::xml::{IMPLICIT, IMPLICIT_TYPING, Typing, XmlType};
+use crate::xml::{Syntax, Whitespace};
+
+// [§5.1] The words of SQL/XML this grammar reads.
+/// `<XML parse>`'s.
+pub const XMLPARSE: &str = "XMLPARSE";
+/// `<XML character string serialization>`'s.
+pub const XMLSERIALIZE: &str = "XMLSERIALIZE";
+/// DOCUMENT.
+const DOCUMENT: &str = "DOCUMENT";
+/// CONTENT.
+const CONTENT: &str = "CONTENT";
+/// SEQUENCE.
+const SEQUENCE: &str = "SEQUENCE";
+/// UNTYPED.
+const UNTYPED: &str = "UNTYPED";
+/// XMLSCHEMA.
+const XMLSCHEMA: &str = "XMLSCHEMA";
+/// STRIP, of STRIP WHITESPACE.
+const STRIP: &str = "STRIP";
+/// WHITESPACE.
+const WHITESPACE: &str = "WHITESPACE";
+/// ENCODING.
+const ENCODING: &str = "ENCODING";
+/// VERSION.
+const VERSION: &str = "VERSION";
+/// INCLUDING, of INCLUDING XMLDECLARATION.
+const INCLUDING: &str = "INCLUDING";
+/// EXCLUDING.
+const EXCLUDING: &str = "EXCLUDING";
+/// XMLDECLARATION.
+const XMLDECLARATION: &str = "XMLDECLARATION";
+/// [§11.6] ID, of a registered XML Schema.
+const ID: &str = "ID";
+/// URI.
+const URI: &str = "URI";
+/// LOCATION.
+const LOCATION: &str = "LOCATION";
+/// NAMESPACE.
+const NAMESPACE: &str = "NAMESPACE";
+/// ELEMENT.
+const ELEMENT: &str = "ELEMENT";
+
+impl Parser {
+    /// Whether the `<XML type>` is next [§6.1].
+    pub(super) fn at_xml_type(&self) -> bool {
+        self.is_word(XML_NAME)
+    }
+
+    /// [§6.1] `<XML type>` ::= XML \[( `<XML type modifier>` )\]: XML alone
+    /// \[SR2\], and DOCUMENT or CONTENT alone \[SR3b\], the implicit types
+    /// (`value::xml::IMPLICIT`).
+    pub(super) fn xml_type(&mut self) -> Result<DataType> {
+        self.expect_word(XML_NAME)?;
+        if !self.accept_delim(delim::LEFT_PAREN) {
+            return Ok(DataType::Xml(IMPLICIT));
+        }
+        let t = if self.accept_word(SEQUENCE) {
+            XmlType::Sequence
+        } else if self.accept_word(DOCUMENT) {
+            XmlType::Document(self.secondary_modifier()?)
+        } else if self.accept_word(CONTENT) {
+            XmlType::Content(self.secondary_modifier()?)
+        } else {
+            return Err(self.syntax("expected DOCUMENT, CONTENT or SEQUENCE [ISO/IEC 9075-14:2006 draft §6.1]"));
+        };
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(DataType::Xml(t))
+    }
+
+    /// [§6.1] \[( `<secondary XML type modifier>` )\], after DOCUMENT or
+    /// CONTENT: ANY or UNTYPED. XMLSCHEMA waits for registered XML Schemas.
+    fn secondary_modifier(&mut self) -> Result<Typing> {
+        if !self.accept_delim(delim::LEFT_PAREN) {
+            return Ok(IMPLICIT_TYPING);
+        }
+        let typing = if self.accept_kw(kw::ANY) {
+            Typing::Any
+        } else if self.accept_word(UNTYPED) {
+            Typing::Untyped
+        } else if self.is_word(XMLSCHEMA) {
+            let refused = self.unsupported("an XML type of XMLSCHEMA [ISO/IEC 9075-14:2006 draft §6.1]");
+            self.advance();
+            self.xml_schema_reference()?;
+            self.refuse_later(refused);
+            Typing::Any
+        } else {
+            return Err(self.syntax("expected ANY, UNTYPED or XMLSCHEMA [ISO/IEC 9075-14:2006 draft §6.1]"));
+        };
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(typing)
+    }
+
+    /// [§11.6] `<XML valid according to what>` \[`<XML valid element
+    /// clause>`\], after XMLSCHEMA, read: URI `<XML URI>` \[LOCATION
+    /// `<XML URI>`\], NO NAMESPACE \[LOCATION `<XML URI>`\], or ID
+    /// `<registered XML Schema name>`; then ELEMENT `<identifier>`, or NO
+    /// NAMESPACE or NAMESPACE `<XML URI>`, each \[ELEMENT
+    /// `<identifier>`\].
+    fn xml_schema_reference(&mut self) -> Result<()> {
+        if self.accept_word(ID) {
+            self.table_name()?;
+        } else {
+            if self.accept_word(URI) {
+                self.character_string_literal("<XML valid target namespace URI>")?;
+            } else {
+                self.expect_kw(kw::NO)?;
+                self.expect_word(NAMESPACE)?;
+            }
+            if self.accept_word(LOCATION) {
+                self.character_string_literal("<XML valid schema location URI>")?;
+            }
+        }
+        if self.accept_kw(kw::NO) {
+            self.expect_word(NAMESPACE)?;
+        } else if self.accept_word(NAMESPACE) {
+            self.character_string_literal("<XML valid element namespace URI>")?;
+        }
+        if self.accept_word(ELEMENT) {
+            self.identifier()?;
+        }
+        Ok(())
+    }
+
+    /// Whether the SQL/XML operator `name` is next: its word, then "(".
+    pub(super) fn at_xml(&self, name: &str) -> bool {
+        self.is_word(name) && matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))
+    }
+
+    /// [§6.10] An `<XML value function>`, or [§6.8] XMLSERIALIZE, if one
+    /// is next: its word, no key word of SQL-92, then "(".
+    pub(super) fn xml_primary(&mut self) -> Result<Option<ValueExpression>> {
+        if self.at_xml(XMLPARSE) {
+            return self.xml_parse().map(Some);
+        }
+        if self.at_xml(XMLSERIALIZE) {
+            return self.xml_serialize().map(Some);
+        }
+        Ok(None)
+    }
+
+    /// [§6.16] `<XML parse>` ::= XMLPARSE ( `<document or content>`
+    /// `<string value expression>` `<XML whitespace option>` ), and
+    /// `<XML whitespace option>` ::= { PRESERVE | STRIP } WHITESPACE.
+    pub(super) fn xml_parse(&mut self) -> Result<ValueExpression> {
+        let at = self.here();
+        self.expect_word(XMLPARSE)?;
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let syntax =
+            self.document_or_content().ok_or_else(|| self.syntax("expected DOCUMENT or CONTENT [ISO/IEC 9075-14:2006 draft §6.16]"))?;
+        let operand = self.value_expression()?;
+        let whitespace = if self.accept_kw(kw::PRESERVE) {
+            Whitespace::Preserve
+        } else if self.accept_word(STRIP) {
+            Whitespace::Strip
+        } else {
+            return Err(self.syntax("expected PRESERVE or STRIP [ISO/IEC 9075-14:2006 draft §6.16]"));
+        };
+        self.expect_word(WHITESPACE)?;
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::Xml(Box::new(XmlOperator::Parse { syntax, operand, whitespace }), at))
+    }
+
+    /// [§6.8] `<document or content>`, if next. DOCUMENT and CONTENT are
+    /// no reserved words, so one is a column of that name if what follows
+    /// it ends a value expression: AS, ",", ")" or ".".
+    fn document_or_content(&mut self) -> Option<Syntax> {
+        let syntax = if self.is_word(DOCUMENT) {
+            Syntax::Document
+        } else if self.is_word(CONTENT) {
+            Syntax::Content
+        } else {
+            return None;
+        };
+        let ends = matches!(self.peek_at(1), Tok::KeyWord(kw::AS) | Tok::Delimiter(delim::COMMA | delim::RIGHT_PAREN | delim::PERIOD));
+        if ends {
+            return None;
+        }
+        self.advance();
+        Some(syntax)
+    }
+
+    /// [§6.8] `<XML character string serialization>` and `<XML binary
+    /// string serialization>` ::= XMLSERIALIZE ( \[`<document or
+    /// content>`\] `<XML value expression>` AS `<data type>` \[ENCODING
+    /// `<XML encoding name>`\] \[VERSION `<character string literal>`\]
+    /// \[{INCLUDING | EXCLUDING} XMLDECLARATION\] ): CONTENT if neither is
+    /// written \[SR2a, SR4a\].
+    pub(super) fn xml_serialize(&mut self) -> Result<ValueExpression> {
+        let at = self.here();
+        self.expect_word(XMLSERIALIZE)?;
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let syntax = self.document_or_content().unwrap_or(Syntax::Content);
+        let operand = self.value_expression()?;
+        self.expect_kw(kw::AS)?;
+        let target = self.data_type()?;
+        let encoding = if self.accept_word(ENCODING) { Some(self.encoding_name()?) } else { None };
+        let version = if self.accept_word(VERSION) { Some(self.character_string_literal("<XML serialize version>")?) } else { None };
+        let declaration = if self.accept_word(INCLUDING) {
+            self.expect_word(XMLDECLARATION)?;
+            Some(true)
+        } else if self.accept_word(EXCLUDING) {
+            self.expect_word(XMLDECLARATION)?;
+            Some(false)
+        } else {
+            None
+        };
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::Xml(Box::new(XmlOperator::Serialize { syntax, operand, target, encoding, version, declaration }), at))
+    }
+
+    /// [§6.5, §6.18] `<XML passing mechanism>` ::= BY REF | BY VALUE, if
+    /// next.
+    pub(super) fn passing_mechanism(&mut self) -> Result<Option<Passing>> {
+        if !self.accept_kw(kw::BY) {
+            return Ok(None);
+        }
+        if self.accept_word(REF_NAME) {
+            return Ok(Some(Passing::ByRef));
+        }
+        if self.accept_kw(kw::VALUE) {
+            return Ok(Some(Passing::ByValue));
+        }
+        Err(self.syntax("expected REF or VALUE [ISO/IEC 9075-14:2006 draft §6.5]"))
+    }
+
+    /// [§6.8] `<XML encoding name>` ::= `<SQL language identifier>`.
+    fn encoding_name(&mut self) -> Result<String> {
+        if let Tok::Identifier(name) = self.peek() {
+            let name = name.clone();
+            self.advance();
+            return Ok(name);
+        }
+        Err(SqlError::at(Code::Syntax, self.here(), "expected an <XML encoding name> [ISO/IEC 9075-14:2006 draft §6.8]"))
+    }
+}

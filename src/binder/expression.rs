@@ -155,7 +155,8 @@ impl Binder<'_> {
             | ValueExpression::Structured(..)
             | ValueExpression::Navigation(_)
             | ValueExpression::Classifier { .. }
-            | ValueExpression::MatchNumber { .. } => self.decorated(v, scope),
+            | ValueExpression::MatchNumber { .. }
+            | ValueExpression::Xml(..) => self.decorated(v, scope),
         }
     }
 
@@ -179,8 +180,8 @@ impl Binder<'_> {
             ValueExpression::Window(w) => self.window_function(w, scope).or_at(w.at),
             ValueExpression::NestedWindow(n) => self.nested_window(n, scope).or_at(n.at),
             ValueExpression::Case(case) => self.drawing(false, || self.case(case, scope)),
-            ValueExpression::Cast { operand, target, format, at } => {
-                self.cast(operand.as_deref(), target, format.as_deref(), scope).or_at(*at)
+            ValueExpression::Cast { operand, target, format, passing, at } => {
+                self.cast(operand.as_deref(), target, (format.as_deref(), *passing), scope).or_at(*at)
             }
             // [ISO/IEC 9075-2:2023 §6.46 SR1] A truth value, of type BOOLEAN.
             ValueExpression::Boolean(c) => {
@@ -198,6 +199,7 @@ impl Binder<'_> {
             ValueExpression::Navigation(n) => self.navigation(n, scope).or_at(n.at),
             ValueExpression::Classifier { variable, at } => self.classifier(variable.as_deref(), scope).or_at(*at),
             ValueExpression::MatchNumber { at } => self.match_number(scope).or_at(*at),
+            ValueExpression::Xml(x, at) => self.xml_operator(x, scope).or_at(*at),
             ValueExpression::Column(_)
             | ValueExpression::Nested(_)
             | ValueExpression::CollationFor(_)

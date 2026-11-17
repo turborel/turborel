@@ -85,8 +85,10 @@ fn corresponding(
     let lost = || SqlError::new(Code::Api, "[DESIGN] a join operand lost a column");
     let (first, second) = (items.get(left_item).ok_or_else(lost)?, items.get(right_item).ok_or_else(lost)?);
     let (c1, c2) = (first.desc.columns.get(left_column).ok_or_else(lost)?, second.desc.columns.get(right_column).ok_or_else(lost)?);
-    // [SR6c] comparable.
+    // [SR6c] comparable; [ISO/IEC 9075-14:2006 draft §10.8 SR1] neither
+    // XML-ordered, as their equality is an equality operation.
     let common = set_type(&[c1.data_type.clone(), c2.data_type.clone()], "§7.5 SR6c")?;
+    super::composite::not_xml(&common, &format!("the join on {}", c1.name), "compares", "§10.8 SR1")?;
     let at1 = first.offset.saturating_add(first.position(left_column));
     let at2 = second.offset.saturating_add(second.position(right_column));
     let (local1, local2) = (at1.saturating_sub(start), at2.saturating_sub(start));

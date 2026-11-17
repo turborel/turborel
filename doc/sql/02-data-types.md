@@ -20,7 +20,7 @@ lines, polygons and collections, registered by the embedding program.
     | <exact numeric type> | <approximate numeric type>
     | <decimal floating-point type>
     | <datetime type> | <interval type>
-    | <row type> | <array type> | <reference type>
+    | <row type> | <array type> | <reference type> | <XML type>
     | <path-resolved user-defined type name>
 ```
 
@@ -47,6 +47,7 @@ lines, polygons and collections, registered by the embedding program.
 | INTERVAL q | a span of time, of the fields its qualifier names | INTERVAL '3' DAY |
 | ROW(f t, ...) | a value of each field f, of type t | |
 | t ARRAY[n] | up to n values of type t, in order | t ARRAY is t ARRAY[65535] |
+| XML(SEQUENCE) | an XML document, fragment or sequence | XML; XML(DOCUMENT), XML(CONTENT); see [XML Values](xml.md) |
 
 The longest string is 32,767 characters, the longest binary string 32,767
 octets, the longest large object 4G characters or octets, an exact number holds at most 18 digits and a DECFLOAT at most
@@ -624,6 +625,12 @@ method of it, and `DEREF(r)` gives the row as a value of `t`, each a
 null value if no row is identified. A reference without a scope is not
 dereferenced (SQLSTATE 2A000). References compare for equality alone,
 and may be elements of arrays and multisets.
+
+## XML
+
+XML, XML(DOCUMENT), XML(CONTENT) and XML(SEQUENCE) hold XML documents
+and fragments of them. [XML Values](xml.md) describes them, and XMLPARSE
+and XMLSERIALIZE, which make and write them.
 
 ## Assignment and CAST
 

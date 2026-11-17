@@ -266,7 +266,7 @@ fn returned(cx: Context<'_>, (desc, definition): (&SqlRoutineDesc, &RoutineDefin
     // [SR2] RETURN NULL is CAST (NULL AS RDT).
     let value = match (&r.value, &definition.returns) {
         (Some(v), _) => v.clone(),
-        (None, Some(rdt)) => ValueExpression::Cast { operand: None, target: rdt.clone(), format: None, at: r.at },
+        (None, Some(rdt)) => ValueExpression::Cast { operand: None, target: rdt.clone(), format: None, passing: None, at: r.at },
         (None, None) => return Err(rule(format!("[ISO/IEC 9075-2:2023 §16.2 SR1] {} has no <returns data type>", desc.name))),
     };
     let item = parameters_item(desc);

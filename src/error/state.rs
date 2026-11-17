@@ -224,6 +224,12 @@ impl SqlState {
     /// Data exception: invalid XQuery replacement string [ISO/IEC
     /// 9075-2:2023 §9.29 GR5].
     pub const INVALID_XQUERY_REPLACEMENT_STRING: SqlState = SqlState(*b"2201V");
+    /// Data exception: not an XML document [ISO/IEC 9075-14:2006 draft
+    /// §10.2 GR1a i, §10.15 GR3, §23.1].
+    pub const NOT_AN_XML_DOCUMENT: SqlState = SqlState(*b"2200L");
+    /// Data exception: not an XQuery document node [ISO/IEC 9075-14:2006
+    /// draft §10.2 GR1a ii, §23.1].
+    pub const NOT_AN_XQUERY_DOCUMENT_NODE: SqlState = SqlState(*b"2200U");
     /// Data exception: invalid XML document [ISO/IEC 9075-14:2006 draft
     /// §10.16 GR6a i, §23.1].
     pub const INVALID_XML_DOCUMENT: SqlState = SqlState(*b"2200M");

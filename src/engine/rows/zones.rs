@@ -210,7 +210,8 @@ fn kept(t: &DataType) -> bool {
         | DataType::Structured(_)
         | DataType::Reference(_)
         | DataType::Row(_)
-        | DataType::Extension(_) => false,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => false,
     }
 }
 

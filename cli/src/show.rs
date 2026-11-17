@@ -102,9 +102,12 @@ fn measured(t: &DataType, depth: usize) -> (usize, bool) {
         // A multiset, of no maximum cardinality [ISO/IEC 9075-2:2023
         // §6.52], as wide as a column may be; a structured value, whose
         // attributes the catalog holds, and a reference, as wide too.
-        DataType::Extension(_) | DataType::Lob { .. } | DataType::Multiset(_) | DataType::Structured(_) | DataType::Reference(_) => {
-            (MAX_WIDTH, false)
-        }
+        DataType::Extension(_)
+        | DataType::Xml(_)
+        | DataType::Lob { .. }
+        | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_) => (MAX_WIDTH, false),
     };
     (width.min(MAX_WIDTH), right)
 }
@@ -183,7 +186,8 @@ impl Sink for Table<'_> {
                     | Value::Reference(_)
                     | Value::Row(_)
                     | Value::Lob(_)
-                    | Value::Extension(_) => v.to_string(),
+                    | Value::Extension(_)
+                    | Value::Xml(_) => v.to_string(),
                 })
                 .collect();
             let line = self.line(cells.iter().map(String::as_str));

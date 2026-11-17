@@ -34,7 +34,8 @@ fn got(v: Value) -> Got {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Lob(_)
-        | Value::Extension(_)) => panic!("{other:?}"),
+        | Value::Extension(_)
+        | Value::Xml(_)) => panic!("{other:?}"),
     }
 }
 

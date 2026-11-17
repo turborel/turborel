@@ -201,3 +201,39 @@ fn a_dropped_tables_objects_go_with_the_last_reader() {
     drop(held);
     assert!(in_use() < tree_pages, "its objects' pages freed");
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3] [DESIGN] RULES.md D79,
+/// D86: an XML value held as its sequence is kept as its stored form: a
+/// long one as the table's objects, each chunk logged once, read back the
+/// same value; a short one in its record, making no object.
+#[test]
+fn xml_values_are_kept_as_large_objects() {
+    use crate::value::xml::{XmlType, XmlValue};
+    use crate::xml::{Sequence, Syntax, Whitespace, parse};
+    let fs = crate::disk::memory::MemoryFileSystem::new();
+    let pager = Arc::new(
+        Pager::create(&fs, std::path::Path::new("/rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap(),
+    );
+    let pool = Arc::new(BufferPool::new(64, Box::new(Clock::new(64))).unwrap());
+    let file = pool.add_pager(Arc::clone(&pager));
+    let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
+    let table = RowTable::create(&files, &[DataType::Xml(XmlType::Sequence)], TableOptions::default()).unwrap();
+    let document = |text: &str| Value::Xml(XmlValue::of(Sequence::document(parse(text, Syntax::Document, Whitespace::Preserve).unwrap())));
+    let long_text = format!("<a>{}</a>", long(400_000, 'x'));
+    let mut logged = 0;
+    table.begin(10, 1).unwrap();
+    let long_row = kept(&table, 10, None, vec![document(&long_text)], &mut logged);
+    let Value::Xml(x) = &long_row[0] else { panic!("{long_row:?}") };
+    assert!(x.stored_lob().is_some_and(|l| l.inline().is_none()), "kept as objects, not in the record");
+    assert!(logged > 1, "a directory and its segments, each logged");
+    let id = table.insert(10, long_row).unwrap();
+    let before = (logged, objects(&table));
+    let short_row = kept(&table, 10, None, vec![document("<b/>")], &mut logged);
+    table.insert(10, short_row).unwrap();
+    assert_eq!((logged, objects(&table)), before, "a short one is held in its record");
+    table.validate(10, 2).unwrap();
+    table.commit(10, 2);
+    let read = table.get(NO_TRANSACTION, id).unwrap().unwrap();
+    let Value::Xml(back) = &read[0] else { panic!("{read:?}") };
+    assert_eq!(back.text().unwrap(), long_text);
+}

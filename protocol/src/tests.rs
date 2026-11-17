@@ -297,6 +297,35 @@ fn later_types_and_values_read_back_as_written() {
     assert_eq!((l.locator(), l.octets()), (Some(0), 9), "neither held nor located: locator 0");
 }
 
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.2, §4.2.3] [DESIGN] RULES.md
+/// D42, D86: XML types read back with their modifiers, and XML values as
+/// their serialization, the text a value held in its tree is serialized
+/// to; `row_size` is the bytes each row takes.
+#[test]
+fn xml_types_and_values_read_back_as_written() {
+    use turborel::value::xml::{Typing, XmlType, XmlValue};
+    use turborel::xml::{Sequence, Syntax, Whitespace, parse};
+    let column = |name: &str, x: XmlType| Column { name: Some(name.into()), data_type: DataType::Xml(x), not_null: false };
+    let types = [
+        XmlType::Sequence,
+        XmlType::Document(Typing::Untyped),
+        XmlType::Document(Typing::Any),
+        XmlType::Content(Typing::Untyped),
+        XmlType::Content(Typing::Any),
+    ];
+    reply_round_trip(&Reply::Description(types.iter().map(|&x| column("X", x)).collect()));
+    let held = Value::Xml(XmlValue::of(Sequence::document(parse("<a>&lt;</a>", Syntax::Document, Whitespace::Preserve).unwrap())));
+    let rows: Vec<Row> = vec![vec![Value::Xml(XmlValue::serialized("<b/>")), held, Value::Null]];
+    reply_round_trip(&Reply::Rows(rows.clone()));
+    let mut sized = Vec::new();
+    Reply::Rows(rows.clone()).encode(&mut sized);
+    assert_eq!(HEADER + 4 + rows.iter().map(row_size).sum::<usize>(), sized.len(), "row_size is what a row takes");
+    let (kind, body) = unframed(&sized, MAX_BODY).unwrap();
+    let Reply::Rows(read) = Reply::decode(kind, body).unwrap() else { panic!("not rows") };
+    let texts: Vec<String> = read[0].iter().map(ToString::to_string).collect();
+    assert_eq!(texts, ["<b/>", "<a>&lt;</a>", "NULL"]);
+}
+
 /// Verifies: [DESIGN] RULES.md D42, R-ERR-1: a malformed value or type of
 /// the later kinds is a connection failure: a large object of no kind, a
 /// character one not UTF-8, an array type of no maximum cardinality, and a

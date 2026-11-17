@@ -107,7 +107,8 @@ impl SqlType for Approximate {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
-            | Value::Extension(_) => uncastable(&v, t),
+            | Value::Extension(_)
+            | Value::Xml(_) => uncastable(&v, t),
         }
     }
 

@@ -40,6 +40,7 @@ pub(crate) mod structured;
 pub(crate) mod tags;
 mod unregistered;
 mod varying;
+pub(crate) mod xml;
 
 pub use approximate::{APPROXIMATE, Approximate};
 pub use array::{ARRAY, ARRAY_NAME, ArrayKind, ArrayType, MAX_ARRAY_CARDINALITY};
@@ -61,6 +62,7 @@ pub use row::{Field, ROW, ROW_NAME, RowKind, RowType};
 pub use structured::{STRUCTURED, Structured, StructuredKind, StructuredType, UdtName};
 pub use unregistered::{UNREGISTERED, UNREGISTERED_KIND, Unregistered, parts, unregistered};
 pub use varying::{VARYING, Varying};
+pub use xml::{XML, XML_NAME, XmlKind};
 
 /// \[DESIGN\] How deep arrays and rows may be nested within a type, as
 /// it is written and as its bytes or a value's are read (RULES.md R-CF-6).
@@ -375,6 +377,7 @@ impl DataType {
         match self {
             DataType::Character { .. } => &CHARACTER,
             DataType::Varying { .. } => &VARYING,
+            DataType::Xml(_) => &XML,
             DataType::Binary { .. } => &BINARY,
             DataType::VarBinary { .. } => &BINARY_VARYING,
             DataType::Lob { kind: crate::value::lob::LobKind::Character, .. } => &CLOB,
@@ -412,6 +415,7 @@ impl DataType {
         match self {
             DataType::Character { .. } => CHARACTER.encode_record(v, self),
             DataType::Varying { .. } => VARYING.encode_record(v, self),
+            DataType::Xml(_) => XML.encode_record(v, self),
             DataType::Binary { .. } => BINARY.encode_record(v, self),
             DataType::VarBinary { .. } => BINARY_VARYING.encode_record(v, self),
             DataType::Boolean
@@ -438,6 +442,7 @@ impl DataType {
         match self {
             DataType::Character { .. } => CHARACTER.decode_record(field, self),
             DataType::Varying { .. } => VARYING.decode_record(field, self),
+            DataType::Xml(_) => XML.decode_record(field, self),
             DataType::Binary { .. } => BINARY.decode_record(field, self),
             DataType::VarBinary { .. } => BINARY_VARYING.decode_record(field, self),
             DataType::Boolean
@@ -468,6 +473,7 @@ impl DataType {
         match self {
             DataType::Character { .. } => CHARACTER.encode_key(v, self, out),
             DataType::Varying { .. } => VARYING.encode_key(v, self, out),
+            DataType::Xml(_) => XML.encode_key(v, self, out),
             DataType::Binary { .. } => BINARY.encode_key(v, self, out),
             DataType::VarBinary { .. } => BINARY_VARYING.encode_key(v, self, out),
             DataType::Boolean
@@ -498,6 +504,7 @@ impl DataType {
         match self {
             DataType::Character { .. } => CHARACTER.decode_key(rest, self),
             DataType::Varying { .. } => VARYING.decode_key(rest, self),
+            DataType::Xml(_) => XML.decode_key(rest, self),
             DataType::Binary { .. } => BINARY.decode_key(rest, self),
             DataType::VarBinary { .. } => BINARY_VARYING.decode_key(rest, self),
             DataType::Boolean
@@ -527,6 +534,7 @@ impl Value {
         match self {
             Value::Null => None,
             Value::Char(_) => Some(&CHARACTER),
+            Value::Xml(_) => Some(&XML),
             Value::Exact(_) => Some(&EXACT),
             Value::Approx(_) => Some(&APPROXIMATE),
             Value::DecFloat(_) => Some(&DECFLOAT),

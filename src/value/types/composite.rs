@@ -68,7 +68,8 @@ fn ordered_by(t: &DataType, member: fn(&DataType) -> bool) -> bool {
             | DataType::Interval(_)
             | DataType::Structured(_)
             | DataType::Reference(_)
-            | DataType::Extension(_) => false,
+            | DataType::Extension(_)
+            | DataType::Xml(_) => false,
         }
 }
 
@@ -89,12 +90,21 @@ pub(crate) fn multiset_ordered(t: &DataType) -> bool {
     ordered_by(t, |t| matches!(t, DataType::Multiset(_)))
 }
 
+/// [ISO/IEC 9075-14:2006 draft §4.1.4] Whether `t` is XML-ordered: an XML
+/// type, or one an XML type is part of, as `ordered_by` finds it.
+pub(crate) fn xml_ordered(t: &DataType) -> bool {
+    ordered_by(t, |t| matches!(t, DataType::Xml(_)))
+}
+
 /// [ISO/IEC 9075-2:2023 §9.12 SR3, §9.13 SR3, §9.14 SR3] What in `t` no
-/// ordering or grouping operation takes, named in the plural: large
-/// objects, of a LOB-ordered type, arrays, of an array-ordered one, or
-/// multisets, of a multiset-ordered one; none of another.
+/// ordering or grouping operation takes, named in the plural: XML values,
+/// of an XML-ordered type [ISO/IEC 9075-14:2006 draft §10.9 to §10.11],
+/// large objects, of a LOB-ordered type, arrays, of an array-ordered one,
+/// or multisets, of a multiset-ordered one; none of another.
 pub(crate) fn unordered(t: &DataType) -> Option<&'static str> {
-    if lob_ordered(t) {
+    if xml_ordered(t) {
+        Some("XML values")
+    } else if lob_ordered(t) {
         Some("large objects")
     } else if array_ordered(t) {
         Some("arrays")
@@ -138,7 +148,8 @@ pub(crate) fn nesting(t: &DataType) -> usize {
         | DataType::Interval(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
-        | DataType::Extension(_) => 0,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => 0,
     }
 }
 

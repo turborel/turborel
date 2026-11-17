@@ -131,7 +131,8 @@ fn shown(v: &Value) -> String {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
-        | Value::Extension(_) => format!("{v:?}"),
+        | Value::Extension(_)
+        | Value::Xml(_) => format!("{v:?}"),
     }
 }
 

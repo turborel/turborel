@@ -21,7 +21,7 @@ impl State {
     /// `tx`, or to replace its row `replacing`, one the table keeps for
     /// it, logging each object it makes.
     pub(crate) fn keep_lobs(&self, tx: &Txn, table: &QualifiedName, replacing: Option<RowId>, row: &mut Row) -> Result<()> {
-        if !row.iter().any(|v| matches!(v, crate::value::Value::Lob(_))) {
+        if !row.iter().any(crate::value::Value::is_lob_stored) {
             return Ok(());
         }
         let storage = Arc::clone(self.storage_of(table)?);

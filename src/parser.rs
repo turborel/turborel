@@ -66,6 +66,7 @@ mod served;
 mod structured;
 mod user_types;
 mod window;
+mod xml;
 pub(crate) use data_statements::{EXPLAIN, TRUNCATE, begins_word_statement};
 pub(crate) use served::CANCEL;
 mod session;

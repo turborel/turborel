@@ -11,6 +11,7 @@ use turborel::error::Result;
 use turborel::storage::Row;
 use turborel::value::Value;
 use turborel::value::lob::{Lob, LobKind};
+use turborel::value::xml::XmlValue;
 use turborel_protocol::{LobReply, LobRequest, Reply};
 
 use super::requests::Held;
@@ -33,7 +34,7 @@ pub(super) fn placed_row(session: &Session, row: Row, inline: usize, located: &m
 /// Whether `v` is or holds a large object.
 fn holds_lob(v: &Value) -> bool {
     match v {
-        Value::Lob(_) => true,
+        Value::Lob(_) | Value::Xml(_) => true,
         Value::Array(items) | Value::Multiset(items) => items.iter().any(holds_lob),
         Value::Row(fields) => fields.iter().any(holds_lob),
         Value::Structured(s) => s.attributes.iter().any(holds_lob),
@@ -55,6 +56,9 @@ fn holds_lob(v: &Value) -> bool {
 fn placed(session: &Session, v: Value, inline: usize, located: &mut bool) -> Result<Value> {
     match v {
         Value::Lob(l) => placed_lob(session, l, inline, located).map(Value::Lob),
+        // [ISO/IEC 9075-14:2006 draft §10.15] Serialized as the protocol
+        // carries it (RULES.md D86): one with none refused, 2200W.
+        Value::Xml(x) => x.text().map(|text| Value::Xml(XmlValue::serialized(&text))),
         Value::Array(items) => {
             Ok(Value::Array(items.iter().cloned().map(|i| placed(session, i, inline, located)).collect::<Result<Vec<_>>>()?.into()))
         }

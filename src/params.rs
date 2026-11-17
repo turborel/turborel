@@ -198,7 +198,7 @@ impl Params {
 /// suits one no longer than its length, an exact number an exact
 /// parameter, any number an approximate or decimal floating-point one. A
 /// binary string, a truth value, a datetime, an interval, a large object,
-/// a structured value, a reference or a plug-in type's value suits a
+/// a structured value, a reference, an XML value or a plug-in type's value suits a
 /// parameter of its kind, a character or binary string a large object of
 /// its kind, and a value of a distinct type's source type a parameter of
 /// the distinct type, its length, fields and precision then as its
@@ -244,5 +244,6 @@ fn argument_fits(value: &Value, data_type: &DataType, depth: usize) -> bool {
             | (Value::Datetime(_), DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. })
             | (Value::Interval(_), DataType::Interval(_))
             | (Value::Extension(_), DataType::Extension(_))
+            | (Value::Xml(_), DataType::Xml(_))
     )
 }

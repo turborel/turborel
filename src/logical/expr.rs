@@ -84,7 +84,8 @@ impl Truth {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
-            | Value::Extension(_) => Truth::Unknown,
+            | Value::Extension(_)
+            | Value::Xml(_) => Truth::Unknown,
         }
     }
 }

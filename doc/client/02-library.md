@@ -209,6 +209,28 @@ conn.query("COMMIT")?;
 An import sends a field longer than 64 KiB for a CLOB or BLOB column
 by `create_lob`, so no message carries more.
 
+## XML values
+
+An XML value comes as a `Value::Xml`, its serialization: `text` gives it,
+and `sequence` parses it for its nodes. To send one as a parameter of an
+XML type, make it of its text with `XmlValue::serialized`. A value the
+server cannot serialize, such as an attribute standing alone, fails the
+fetch with SQLSTATE 2200W.
+
+```rust
+use turborel::value::xml::XmlValue;
+
+let insert = conn.prepare("INSERT INTO ORDERS VALUES (?, ?)")?;
+let order = XmlValue::serialized("<order no=\"18\"><item>jam</item></order>");
+conn.execute(&insert, &[Value::Exact(Decimal::new(18, 0)), Value::Xml(order)])?;
+if let Outcome::Rows { rows, .. } = conn.query("SELECT BODY FROM ORDERS WHERE ID = 18")? {
+    if let Value::Xml(body) = &rows[0][0] {
+        let text = body.text()?;
+        // text: <order no="18"><item>jam</item></order>
+    }
+}
+```
+
 ## Importing
 
 `import::import` inserts the rows of a `Source` into a table over a

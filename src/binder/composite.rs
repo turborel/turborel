@@ -19,7 +19,7 @@ use crate::functions::{
 };
 use crate::logical::Expr;
 use crate::params::ParameterType;
-use crate::value::types::composite::{nesting, unordered};
+use crate::value::types::composite::{nesting, unordered, xml_ordered};
 use crate::value::types::{Field, MAX_ARRAY_CARDINALITY, MAX_TYPE_NESTING};
 use crate::value::{DataType, Decimal, INTEGER_PRECISION, Spelled, Value};
 
@@ -34,6 +34,20 @@ fn call(f: impl crate::functions::ScalarFunction + 'static, args: Vec<Expr>) -> 
     Expr::Call(ScalarRef(Arc::new(f)), args)
 }
 
+/// [ISO/IEC 9075-14:2006 draft §10.8 SR1 to §10.11 SR1] The error of an
+/// operand, `what`, of type `t`, of an operation that `verb` its values,
+/// by the rule `clause`, if `t` is XML-ordered: no XML value is compared.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is.
+pub(crate) fn not_xml(t: &DataType, what: &str, verb: &str, clause: &str) -> Result<()> {
+    if xml_ordered(t) {
+        return Err(rule(format!("[ISO/IEC 9075-14:2006 draft {clause}] {what} {verb} values of {t}, and XML values are not comparable")));
+    }
+    Ok(())
+}
+
 /// [ISO/IEC 9075-2:2023 §9.14 SR3] An operand of an ordering operation,
 /// `what`, of type `t`, is neither LOB-ordered nor array-ordered.
 ///
@@ -42,6 +56,7 @@ fn call(f: impl crate::functions::ScalarFunction + 'static, args: Vec<Expr>) -> 
 /// SQLCODE -103 if it is.
 pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
     super::structured::udt_operand(db, t, super::structured::Need::Ordering, what)?;
+    not_xml(t, what, "orders", "§10.11 SR1")?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!(
             "[ISO/IEC 9075-2:2023 §9.14 SR3] {what} orders values of {t}, and {these} are compared for equality alone"
@@ -58,6 +73,7 @@ pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<(
 /// SQLCODE -103 if it is.
 pub(crate) fn grouping_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
     super::structured::udt_operand(db, t, super::structured::Need::Grouping, what)?;
+    not_xml(t, what, "groups", "§10.9 SR1")?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and {these} are grouped by no operation")));
     }
@@ -79,6 +95,7 @@ pub(crate) fn key_operand(t: &DataType, what: &str) -> Result<()> {
         );
         return Err(SqlError::new(Code::Unsupported, msg));
     }
+    not_xml(t, what, "keys", "§10.9 SR1")?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and {these} are grouped by no operation")));
     }
@@ -135,7 +152,8 @@ fn collection_element(t: &DataType) -> Option<&DataType> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     }
 }
 

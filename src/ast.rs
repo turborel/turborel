@@ -59,6 +59,7 @@ mod triggers;
 mod user_types;
 mod users;
 mod window;
+mod xml;
 
 pub use alter::AlterAction;
 pub use composite::{Composite, ValueOrder};
@@ -131,6 +132,7 @@ pub use window::{
     Exclusion, Frame, FrameBound, FrameUnits, NestedWindow, OffsetFunction, RankKind, RowMarker, ValueFunction, Which, WindowDefinition,
     WindowFunction, WindowKind, WindowOver, WindowSpecification,
 };
+pub use xml::{Passing, XmlOperator};
 
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.7] <insert statement>

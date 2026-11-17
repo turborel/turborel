@@ -296,3 +296,22 @@ fn a_distinct_type_of_an_array_compares_with_nothing() {
     let b = DataType::distinct("S", "B", integer());
     assert!(a.comparable(&a) && !a.comparable(&b) && !a.comparable(&integer()) && !integer().comparable(&a));
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.4] [DESIGN] RULES.md R-SAFE-3,
+/// D53, D86: each XML type keeps the `SqlType` contract but for keys and
+/// anchors, which no XML value has: on documents, content and a value its
+/// serialization gives.
+#[test]
+fn xml_keeps_the_type_contract() {
+    use turborel::value::xml::{Typing, XmlType, XmlValue};
+    use turborel::xml::{Sequence, Syntax, Whitespace, parse};
+    let tree = |text: &str| Value::Xml(XmlValue::of(Sequence::document(parse(text, Syntax::Content, Whitespace::Preserve).unwrap())));
+    let documents = [tree("<a/>"), tree("<?p x?><b xmlns='u' y=\"1\">t</b>"), Value::Xml(XmlValue::serialized("<c/>"))];
+    for t in [XmlType::Sequence, XmlType::Document(Typing::Any), XmlType::Content(Typing::Untyped)] {
+        let t = DataType::Xml(t);
+        for v in codec_contract(&t, &documents) {
+            assert!(t.kind().encode_key(&v, &t, &mut Vec::new()).is_err(), "{v} has no key");
+        }
+    }
+    codec_contract(&DataType::Xml(XmlType::Content(Typing::Any)), &[tree("t<a/>"), tree("")]);
+}

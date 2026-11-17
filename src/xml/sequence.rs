@@ -107,6 +107,19 @@ impl Sequence {
         Sequence { items: vec![Item::Node(Node::root(tree))] }
     }
 
+    /// \[DESIGN\] How many octets it holds, about: each item's tree, counted
+    /// by every item that shares it, so never too few, or atomic value.
+    #[must_use]
+    pub fn held_bytes(&self) -> usize {
+        self.items
+            .iter()
+            .map(|item| match item {
+                Item::Node(node) => node.tree().held_bytes(),
+                Item::Atomic(atomic) => atomic.lexical.len(),
+            })
+            .fold(0, usize::saturating_add)
+    }
+
     /// Its items, in order.
     #[must_use]
     pub fn items(&self) -> &[Item] {

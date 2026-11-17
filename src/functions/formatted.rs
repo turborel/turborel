@@ -49,7 +49,8 @@ fn target(t: &DataType) -> Option<Target> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     }
 }
 
@@ -76,7 +77,8 @@ fn string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     }
 }
 
@@ -169,7 +171,8 @@ impl ScalarFunction for Formatted {
                 | Value::Structured(_)
                 | Value::Reference(_)
                 | Value::Row(_)
-                | Value::Extension(_)),
+                | Value::Extension(_)
+                | Value::Xml(_)),
             ) => fail(Code::Api, format!("[DESIGN] a formatted CAST of a datetime was given {v:?}")),
         }
     }

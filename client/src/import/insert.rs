@@ -342,7 +342,8 @@ impl<S: Read + Write> Run<'_, S> {
                     | Value::Reference(_)
                     | Value::Row(_)
                     | Value::Lob(_)
-                    | Value::Extension(_) => return Ok(v),
+                    | Value::Extension(_)
+                    | Value::Xml(_) => return Ok(v),
                 };
                 let mut writer = self.connection.create_lob(kind)?;
                 writer.write_all(bytes).map_err(|e| Failure::from(&SqlError::new(Code::Data, e.to_string())))?;

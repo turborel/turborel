@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use super::{Binding, Kind, NONE, Node, QName, Tree};
 use crate::error::Result;
-use crate::xml::{MAX_NESTING, MAX_TEXT, beyond};
+use crate::xml::{MAX_NESTING, MAX_NODES, MAX_TEXT, beyond};
 
 /// An attribute of an element being started.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +49,7 @@ pub struct Builder {
     tree: Tree,
     open: Vec<Open>,
     interned: HashMap<QName, u32>,
-    /// The octets of the names interned so far.
+    /// The octets of the names interned and the bindings added so far.
     names_text: usize,
     /// How many nodes are open before any element is: one, the document
     /// node, or none for a tree whose root has no parent.
@@ -123,6 +123,17 @@ impl Builder {
         if total.is_some_and(|t| t <= MAX_TEXT) { Ok(()) } else { Err(beyond("its text is longer than its limit")) }
     }
 
+    /// The error if `more` nodes or bindings would make the tree hold more
+    /// than `MAX_NODES` of them.
+    fn room_for(&self, more: usize) -> Result<()> {
+        let held = self.tree.nodes.len().saturating_add(self.tree.bindings.len());
+        if held.saturating_add(more) > MAX_NODES {
+            Err(beyond(&format!("it has more than {MAX_NODES} nodes and bindings")))
+        } else {
+            Ok(())
+        }
+    }
+
     /// `text` added to the tree's text, as a range of it.
     fn push_text(&mut self, text: &str) -> Result<std::ops::Range<u32>> {
         self.text_grows(text.len())?;
@@ -134,6 +145,7 @@ impl Builder {
     /// A node of `kind` added as the last child of the open node, or, for
     /// an attribute, after its element; its index.
     fn add(&mut self, kind: Kind, name: u32, text: std::ops::Range<u32>) -> Result<u32> {
+        self.room_for(1)?;
         let at = link(self.tree.nodes.len())?;
         let open = self.open.last().copied();
         if open.is_none() && !self.tree.nodes.is_empty() {
@@ -189,6 +201,10 @@ impl Builder {
         }
         let name = self.intern(&start.name)?;
         let element = self.add(Kind::Element, name, 0..0)?;
+        self.room_for(start.bindings.len())?;
+        let octets = start.bindings.iter().map(|b| b.uri.len().saturating_add(b.prefix.as_ref().map_or(0, |p| p.len()))).sum::<usize>();
+        self.text_grows(octets)?;
+        self.names_text = self.names_text.saturating_add(octets);
         let first = link(self.tree.bindings.len())?;
         self.tree.bindings.extend(start.bindings);
         let bindings = first..link(self.tree.bindings.len())?;

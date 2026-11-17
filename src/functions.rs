@@ -71,6 +71,7 @@ mod sum;
 mod trim;
 mod truths;
 mod width_bucket;
+mod xml;
 use sum::{AvgAcc, SumAcc};
 
 pub use regex::{
@@ -84,6 +85,7 @@ pub use trim::{BTRIM, LPAD, LTRIM, RPAD, RTRIM, TRIMS_AND_PADS, Trim, source_of,
 pub use truths::EVERY;
 use truths::Truths;
 pub use width_bucket::{WIDTH_BUCKET, width_bucket};
+pub use xml::{Serialization, XmlCopy, XmlParse, XmlSerialize};
 
 /// \[EXTENSION\] A function callable with the opt-in call syntax.
 ///
@@ -490,7 +492,8 @@ impl AggregateFunction for Sum {
             | DataType::Reference(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
-            | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
+            | DataType::Extension(_)
+            | DataType::Xml(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
@@ -534,7 +537,8 @@ impl AggregateFunction for Avg {
             | DataType::Reference(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
-            | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
+            | DataType::Extension(_)
+            | DataType::Xml(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {

@@ -302,11 +302,17 @@ pub enum ValueExpression {
         target: TypeName,
         /// The `<cast template>`'s string, if written [Feature T839].
         format: Option<String>,
+        /// [ISO/IEC 9075-14:2006 draft §6.5] The `<XML passing
+        /// mechanism>`, if written.
+        passing: Option<super::Passing>,
         /// Where it begins in the statement.
         at: usize,
     },
     /// [ISO/IEC 9075:1992 §7.11] A `<scalar subquery>`.
     Subquery(Box<Subquery>),
+    /// [ISO/IEC 9075-14:2006 draft §6.8, §6.16] An SQL/XML operator,
+    /// XMLPARSE or XMLSERIALIZE, and where it begins.
+    Xml(Box<super::XmlOperator>, usize),
     /// [ISO/IEC 9075:1992 §6.6, §6.7, §6.13] A string function, or
     /// concatenation, read with its own syntax: the function registered
     /// under `name`, called with its operands in order.

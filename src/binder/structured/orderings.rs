@@ -70,7 +70,8 @@ fn ordering_of<'d>(db: &'d State, t: &DataType) -> Option<(QualifiedName, Option
         | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Reference(_)
-        | DataType::Extension(_) => return None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => return None,
     };
     let ordering = db.catalog.ordering(&qn);
     Some((qn, ordering))

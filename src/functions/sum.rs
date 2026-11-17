@@ -78,7 +78,8 @@ impl Total {
                 | Value::Structured(_)
                 | Value::Reference(_)
                 | Value::Row(_)
-                | Value::Extension(_),
+                | Value::Extension(_)
+                | Value::Xml(_),
             ) => Total::Other(v.clone()),
             (Total::Exact(_) | Total::Approx(_) | Total::Interval(_) | Total::DecFloat(_) | Total::Other(_), _) => {
                 Total::Other(arith(ArithOp::Add, &self.value(), v)?)

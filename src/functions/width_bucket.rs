@@ -232,7 +232,8 @@ fn decfloat_floor(wbc: i128, operands: [&Value; 4]) -> Option<i128> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
-        | Value::Extension(_) => None,
+        | Value::Extension(_)
+        | Value::Xml(_) => None,
     };
     let [operand, start, low, high] = operands.map(decfloat);
     let signed = operand?.minus(start?)?;

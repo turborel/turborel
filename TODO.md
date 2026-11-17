@@ -132,11 +132,9 @@ data model, XQuery 1.0, its functions and operators, its serialization,
 and XML Schema 1.0. Each series below stands alone, by the draft's
 features.
 
-- The XML type and its values: XML(DOCUMENT), XML(CONTENT) and
-  XML(SEQUENCE), UNTYPED and ANY, kept in tables (X010, X016, X181,
-  X182, X190, X231, X232, X251 to X255); XMLPARSE,
-  XMLSERIALIZE, XMLDOCUMENT and XMLCAST, the document and content
-  predicates, and XML 1.1 (X025, X030, X060 to X078, X090, X091, X211).
+- The rest of the XML type: the Information Schema's XML_PRIMARY_MODIFIER,
+  XML_SECONDARY_MODIFIER and their views; XMLDOCUMENT and XMLCAST, and the
+  document and content predicates (X025, X030, X090, X091).
 - Publishing: XMLELEMENT, XMLATTRIBUTES, XMLFOREST, XMLCONCAT, XMLAGG,
   XMLCOMMENT, XMLPI and XMLTEXT, their null handling and RETURNING
   clauses, namespaces and XMLBINARY (X020, X031 to X038, X080 to X086,

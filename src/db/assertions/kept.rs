@@ -287,7 +287,8 @@ pub(super) fn row_totals(form: &Form, row: &Row, tx: &Txn) -> Result<Totals> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
-            | Value::Extension(_)) => {
+            | Value::Extension(_)
+            | Value::Xml(_)) => {
                 return Err(SqlError::new(Code::Api, format!("[DESIGN] {other:?} is no exact number of a SUM or AVG kept")));
             }
         }

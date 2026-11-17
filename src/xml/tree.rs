@@ -157,6 +157,15 @@ impl Tree {
         (link != NONE).then_some(NodeId(link)).filter(|id| id.index() < self.nodes.len())
     }
 
+    /// \[DESIGN\] How many octets it holds, about: its nodes, names,
+    /// bindings and text, for what a spill counts.
+    #[must_use]
+    pub fn held_bytes(&self) -> usize {
+        let names: usize = self.names.iter().map(|n| n.local.len().saturating_add(n.uri.as_ref().map_or(0, |u| u.len()))).sum();
+        let bindings: usize = self.bindings.iter().map(|b| b.uri.len().saturating_add(size_of::<Binding>())).sum();
+        self.nodes.len().saturating_mul(size_of::<Node>()).saturating_add(names).saturating_add(bindings).saturating_add(self.text.len())
+    }
+
     /// How many nodes it has.
     #[must_use]
     pub fn len(&self) -> usize {

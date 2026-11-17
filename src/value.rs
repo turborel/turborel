@@ -25,6 +25,7 @@ pub mod precedence;
 mod spelled;
 pub mod types;
 mod units;
+pub mod xml;
 pub use units::CharUnits;
 
 pub use binary::{BYTE_BITS, Binary};
@@ -193,6 +194,9 @@ pub enum DataType {
     Structured(Arc<types::StructuredType>),
     /// [ISO/IEC 9075-2:2023 §4.11] REF(T), a reference type.
     Reference(Arc<types::RefType>),
+    /// [ISO/IEC 9075-14:2006 draft §6.1] XML(...), an XML type (RULES.md
+    /// D86).
+    Xml(xml::XmlType),
     /// A type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionType),
 }
@@ -303,6 +307,9 @@ pub enum Value {
     Structured(Arc<types::Structured>),
     /// [ISO/IEC 9075-2:2023 §4.11] A reference: its octets.
     Reference(Binary),
+    /// [ISO/IEC 9075-14:2006 draft §4.2.3] An XML value: an XQuery
+    /// sequence (RULES.md D86).
+    Xml(xml::XmlValue),
     /// A value of a type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionValue),
 }
@@ -331,7 +338,8 @@ impl Value {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
-            | Value::Extension(_) => None,
+            | Value::Extension(_)
+            | Value::Xml(_) => None,
         }
     }
 
@@ -354,7 +362,8 @@ impl Value {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
-            | Value::Extension(_) => self.clone(),
+            | Value::Extension(_)
+            | Value::Xml(_) => self.clone(),
         }
     }
 
@@ -393,6 +402,9 @@ impl Value {
             // Equal values of a kind beyond the standard have the same bytes
             // (`SqlType`'s contract).
             Value::Extension(e) => NormKey::Extension(Box::new((e.kind.name().to_owned(), e.bytes.to_vec()))),
+            // No XML value is grouped [ISO/IEC 9075-14:2006 draft §10.9 SR1]:
+            // its stored form, for a key it is never given.
+            Value::Xml(x) => NormKey::Extension(Box::new((types::XML_NAME.to_owned(), x.octets()))),
         }
     }
 }
@@ -402,6 +414,7 @@ impl fmt::Display for Value {
         match self {
             Value::Null => write!(f, "NULL"),
             Value::Char(s) => write!(f, "{s}"),
+            Value::Xml(_) => f.write_str(&types::XML.text(self)),
             Value::Exact(d) => write!(f, "{d}"),
             // Written as an <approximate numeric literal>: <mantissa>E<exponent>.
             Value::Approx(x) => write!(f, "{x:E}"),

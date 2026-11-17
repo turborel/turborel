@@ -75,7 +75,8 @@ fn shape(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     }
 }
 
@@ -190,7 +191,8 @@ pub fn cast_at(v: Value, t: &DataType, now: Now) -> Result<Value> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
-        | Value::Extension(_) => uncastable(&v, t),
+        | Value::Extension(_)
+        | Value::Xml(_) => uncastable(&v, t),
     }
 }
 

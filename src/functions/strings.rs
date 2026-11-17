@@ -118,9 +118,8 @@ pub(super) fn character(name: &str, t: &DataType) -> Result<u32> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => {
-            fail(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.7, §6.13] {name} takes a character string, not {t}"))
-        }
+        | DataType::Extension(_)
+        | DataType::Xml(_) => fail(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.7, §6.13] {name} takes a character string, not {t}")),
     }
 }
 
@@ -154,7 +153,8 @@ fn binary_string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     }
 }
 
@@ -181,7 +181,8 @@ fn integer(name: &str, t: &DataType) -> Result<()> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
-        | DataType::Extension(_) => fail(
+        | DataType::Extension(_)
+        | DataType::Xml(_) => fail(
             Code::SyntaxRule,
             format!("[ISO/IEC 9075:1992 §6.7 SR1] the start position and length of {name} are exact numbers of scale 0, not {t}"),
         ),
@@ -206,7 +207,8 @@ pub(super) fn text(v: &Value) -> Result<Option<&str>> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
-        | Value::Extension(_) => fail(Code::Api, "[DESIGN] a string function was given a value not a character string"),
+        | Value::Extension(_)
+        | Value::Xml(_) => fail(Code::Api, "[DESIGN] a string function was given a value not a character string"),
     }
 }
 
@@ -236,7 +238,8 @@ pub(super) fn whole(v: Option<&Value>) -> Result<Option<i128>> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
-            | Value::Extension(_),
+            | Value::Extension(_)
+            | Value::Xml(_),
         ) => not_integer(),
     }
 }

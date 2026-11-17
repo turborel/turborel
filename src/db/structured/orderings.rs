@@ -189,7 +189,8 @@ impl State {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Reference(_)
-            | DataType::Extension(_) => false,
+            | DataType::Extension(_)
+            | DataType::Xml(_) => false,
         }
     }
 

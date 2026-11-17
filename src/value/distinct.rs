@@ -104,7 +104,8 @@ fn null_bucket(v: &Value, depth: usize) -> Result<Option<Bucket>> {
         | Value::Interval(_)
         | Value::Structured(_)
         | Value::Reference(_)
-        | Value::Extension(_) => Ok(bucket(v)),
+        | Value::Extension(_)
+        | Value::Xml(_) => Ok(bucket(v)),
     }
 }
 

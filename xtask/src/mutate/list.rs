@@ -68,6 +68,7 @@ mod window_nested;
 mod window_values;
 mod windows;
 mod with;
+mod xml;
 mod zones;
 
 use super::{Mutation, Package};
@@ -91,7 +92,7 @@ pub fn all() -> Vec<Mutation> {
     core.into_iter()
         .chain(areas::all())
         .chain([projection::PROJECTION.as_slice()])
-        .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
+        .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &xml::XML, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()
         .copied()
         .collect()
