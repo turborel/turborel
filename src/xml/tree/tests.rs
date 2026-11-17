@@ -125,3 +125,34 @@ fn attribute_flags_and_absent_nodes() {
     assert_eq!(tree.string_value(absent), "");
     assert_eq!(tree.string_value(tree.attributes(a).next().unwrap()), "v");
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.18] [XQueryDM §6.2.1,
+/// §6.3.1] [DESIGN] RULES.md D86: a tree's root may be a node with no
+/// parent, an element or an attribute alone among others; it has one
+/// root, an attribute alone is its only node, and a tree has a node.
+#[test]
+fn trees_rooted_in_parentless_nodes() {
+    let mut element = Builder::parentless();
+    element.start_element(element_start("a")).unwrap();
+    element.text("t").unwrap();
+    element.end_element().unwrap();
+    assert_eq!(element.text("u").unwrap_err().sqlcode(), -900_i32);
+    let tree = element.finish().unwrap();
+    assert_eq!(
+        (tree.kind(NodeId::ROOT), tree.parent(NodeId::ROOT), tree.string_value(NodeId::ROOT)),
+        (Some(Kind::Element), None, "t".to_owned())
+    );
+    let mut attribute = Builder::parentless();
+    let alone = Specified { name: QName::local("x"), value: "v".into(), is_id: true, is_idrefs: false };
+    attribute.attribute(&alone).unwrap();
+    assert_eq!(attribute.attribute(&alone).unwrap_err().sqlcode(), -900_i32);
+    let lone = attribute.finish().unwrap();
+    assert!(lone.is_id(NodeId::ROOT) && lone.kind(NodeId::ROOT) == Some(Kind::Attribute));
+    assert_eq!(Builder::document().attribute(&alone).unwrap_err().sqlcode(), -900_i32);
+    assert_eq!(Builder::parentless().finish().unwrap_err().sqlcode(), -900_i32);
+    assert_eq!(Builder::parentless().end_element().unwrap_err().sqlcode(), -900_i32);
+}
+
+fn element_start(name: &str) -> ElementStart {
+    element(name, &[])
+}

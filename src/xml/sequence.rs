@@ -24,7 +24,7 @@ impl Node {
         Node { tree, id }
     }
 
-    /// The document node a parse made, the root of `tree`.
+    /// The root of `tree`: the document node, of a tree a parse makes.
     #[must_use]
     pub fn root(tree: Tree) -> Node {
         Node { tree: Arc::new(tree), id: NodeId::ROOT }

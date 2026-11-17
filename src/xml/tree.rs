@@ -26,7 +26,8 @@ use std::ops::Range;
 pub struct NodeId(u32);
 
 impl NodeId {
-    /// The document node, the root of every tree a parse makes.
+    /// The root of every tree, its first node: the document node of a
+    /// tree a parse makes.
     pub const ROOT: NodeId = NodeId(0);
 
     /// The node at `index`, if a tree may hold one there.

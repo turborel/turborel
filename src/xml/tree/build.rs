@@ -51,6 +51,9 @@ pub struct Builder {
     interned: HashMap<QName, u32>,
     /// The octets of the names interned so far.
     names_text: usize,
+    /// How many nodes are open before any element is: one, the document
+    /// node, or none for a tree whose root has no parent.
+    base: usize,
 }
 
 /// A count of a tree's tables as a link, or the error of a tree too big
@@ -80,14 +83,23 @@ impl Builder {
             open: vec![Open { node: 0, last_child: NONE }],
             interned: HashMap::new(),
             names_text: 0,
+            base: 1,
         }
     }
 
-    /// How deep the node whose children are being read is: 0 for the
-    /// document node.
+    /// A tree with no node yet, whose first node is its root and has no
+    /// parent: an element, attribute, text, comment or processing
+    /// instruction node standing alone [XQueryDM §6.2.1, §6.3.1].
+    #[must_use]
+    pub fn parentless() -> Builder {
+        Builder { tree: Tree::default(), open: Vec::new(), interned: HashMap::new(), names_text: 0, base: 0 }
+    }
+
+    /// How many elements are open: how deep the node whose children are
+    /// being read is below the root, or the document node.
     #[must_use]
     pub fn depth(&self) -> usize {
-        self.open.len().saturating_sub(1)
+        self.open.len().saturating_sub(self.base)
     }
 
     /// The index of `name` in the tree's names, kept there once.
@@ -123,11 +135,14 @@ impl Builder {
     /// an attribute, after its element; its index.
     fn add(&mut self, kind: Kind, name: u32, text: std::ops::Range<u32>) -> Result<u32> {
         let at = link(self.tree.nodes.len())?;
-        let open = self.open.last().copied().ok_or_else(|| beyond("its tree is closed"))?;
+        let open = self.open.last().copied();
+        if open.is_none() && !self.tree.nodes.is_empty() {
+            return Err(beyond("a tree has one root"));
+        }
         let node = Node {
             kind,
             name,
-            parent: open.node,
+            parent: open.map_or(NONE, |o| o.node),
             first_child: NONE,
             next_sibling: NONE,
             attributes: 0,
@@ -137,8 +152,8 @@ impl Builder {
             is_idrefs: false,
         };
         self.tree.nodes.push(node);
-        if kind != Kind::Attribute {
-            self.link_child(open, at);
+        if let Some(parent) = open.filter(|_| kind != Kind::Attribute) {
+            self.link_child(parent, at);
         }
         Ok(at)
     }
@@ -201,7 +216,7 @@ impl Builder {
     ///
     /// SQLCODE -900 if no element is open, which no parse leads to.
     pub fn end_element(&mut self) -> Result<()> {
-        if self.open.len() <= 1 {
+        if self.open.len() <= self.base {
             return Err(beyond("an element is closed that was not started"));
         }
         self.open.pop();
@@ -256,14 +271,35 @@ impl Builder {
         self.add(Kind::ProcessingInstruction, name, range).map(|_| ())
     }
 
+    /// An attribute standing alone, the root of a tree with no node yet
+    /// [XQueryDM §6.3.1].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 if the tree has a node, which no attribute is added to
+    /// but by `start_element`, or the tree's text would pass `MAX_TEXT`.
+    pub fn attribute(&mut self, attribute: &Specified) -> Result<()> {
+        if !self.open.is_empty() || !self.tree.nodes.is_empty() {
+            return Err(beyond("an attribute stands alone or is its element's"));
+        }
+        let name = self.intern(&attribute.name)?;
+        let text = self.push_text(&attribute.value)?;
+        let at = self.add(Kind::Attribute, name, text)?;
+        if let Some(n) = self.tree.nodes.get_mut(super::wide(at)) {
+            n.is_id = attribute.is_id;
+            n.is_idrefs = attribute.is_idrefs;
+        }
+        Ok(())
+    }
+
     /// The tree built.
     ///
     /// # Errors
     ///
     /// SQLCODE -900 if an element is still open, which no parse leads to.
     pub fn finish(self) -> Result<Tree> {
-        if self.open.len() != 1 {
-            return Err(beyond("an element was started and not closed"));
+        if self.open.len() != self.base || self.tree.nodes.is_empty() {
+            return Err(beyond("an element was started and not closed, or no node was added"));
         }
         Ok(self.tree)
     }

@@ -2833,9 +2833,15 @@ XSLT 2.0 and XQuery 1.0 Serialization, after its sequence normalization.
 It writes no CDATA section, document type declaration or indentation, and
 writes as character references what a parse would otherwise change.
 
-The stored form of an XML value and its indexes (the primary, path, value
-and property indexes of Pal et al.) are not decided here. They come with
-the XML type and are agreed before they land.
+A value's stored form (`xml::encode`, version 1) is binary and read in one
+pass, in document order, as Pal et al. store XML. Each node item has a
+table of its names, each once, then its nodes as events: document,
+element (with its bindings and attributes), end, text, comment and
+processing instruction. Its fields are D30's. A node below the root of its
+tree is stored as a copy, an element declaring every binding in its scope.
+The XML type keeps this form in the row when it is small and as D79's
+chunks otherwise. XML indexes (the primary, path, value and property
+indexes of Pal et al.) come with XQuery.
 
 ## 2. Project layout
 
