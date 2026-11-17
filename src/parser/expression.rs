@@ -9,7 +9,7 @@ use super::{Parser, furthest};
 use crate::ast::{Predicate, RowValue, SearchCondition, Subquery, ValueExpression, WhenOperand};
 use crate::catalog::MatchType;
 use crate::error::Result;
-use crate::functions::{FLAG, LIKE_REGEX, MEMBER, SUBMULTISET};
+use crate::functions::{FLAG, JSON_EXISTS, LIKE_REGEX, MEMBER, SUBMULTISET};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::CompOp;
 
@@ -83,6 +83,11 @@ impl Parser {
             return self.subquery_predicate();
         }
         let at = self.here();
+        // [ISO/IEC 9075-2:2023 §8.23] JSON_EXISTS, no key word of SQL-92,
+        // before "(" the <JSON exists predicate>.
+        if self.at_json(JSON_EXISTS) {
+            return Ok(SearchCondition::Predicate(Box::new(self.json_exists()?), at));
+        }
         // [ISO/IEC 9075-2:2023 §8.20] a <period predicate> of PERIOD ( start
         // , end ).
         if self.at_written_period() {

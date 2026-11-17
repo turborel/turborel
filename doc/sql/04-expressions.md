@@ -824,6 +824,163 @@ OK
 (1 row)
 ```
 
+## SQL/JSON
+
+JSON_VALUE and JSON_QUERY take a value out of JSON text, a character
+string, by an SQL/JSON path expression;
+[JSON_EXISTS](05-predicates.md#json_exists) tests whether the path
+finds anything. Each is written as
+
+```
+JSON_VALUE(text [FORMAT JSON], 'path' [PASSING value [FORMAT JSON] AS name, ...]
+           [RETURNING type] [behavior ON EMPTY] [behavior ON ERROR])
+JSON_QUERY(text [FORMAT JSON], 'path' [PASSING ...] [RETURNING type [FORMAT JSON]]
+           [WITHOUT [ARRAY] | WITH [CONDITIONAL | UNCONDITIONAL] [ARRAY] WRAPPER]
+           [KEEP | OMIT QUOTES [ON SCALAR STRING]] [behavior ON EMPTY] [behavior ON ERROR])
+```
+
+The path is a character string literal, read as the statement is
+prepared, so a path that is none is refused then.
+
+| Function | Value |
+|---|---|
+| JSON_VALUE | the one scalar the path finds, a string, number, truth value or datetime, cast to the RETURNING type: a character string, numeric, BOOLEAN or datetime type, CHARACTER VARYING(32767) if none is written |
+| JSON_QUERY | the one item the path finds, an array or object too, written as JSON text of the RETURNING type, a character string type, CHARACTER VARYING(32767) if none is written |
+
+Either is null if the text is. A behavior ON EMPTY says what the value
+is if the path finds nothing, and one ON ERROR what it is in place of a
+data exception, as text that is no JSON, two items found, or an array
+for JSON_VALUE. Each is NULL if not written. JSON_VALUE takes ERROR,
+NULL or DEFAULT and a value expression, cast to the RETURNING type;
+JSON_QUERY takes ERROR, NULL, EMPTY ARRAY or EMPTY OBJECT. ERROR ON
+EMPTY makes an empty result an error that ON ERROR then replaces, so
+ERROR ON EMPTY alone is null of no item. Only a data exception, an
+SQLSTATE of class 22, is replaced: an error of a limit, SQLCODE -900, is
+raised whatever ON ERROR says.
+
+```sql
+CREATE TABLE PURCHASES (ID INTEGER PRIMARY KEY, DOC VARCHAR(200));
+INSERT INTO PURCHASES VALUES (1, '{"buyer":"Ada","items":[{"sku":"A1","qty":2},{"sku":"B7","qty":1}]}'),
+                             (2, '{"buyer":"Grace","items":[],"note":null}');
+SELECT ID, JSON_VALUE(DOC, 'lax $.buyer' RETURNING VARCHAR(10)), JSON_VALUE(DOC, 'lax $.items.size()' RETURNING INTEGER),
+       JSON_VALUE(DOC, 'strict $.items[0].qty' RETURNING INTEGER DEFAULT 0 ON ERROR)
+  FROM PURCHASES ORDER BY ID;
+```
+
+```
+OK
+OK
+           ID |            |              |
+--------------+------------+--------------+--------------
+            1 | Ada        |            2 |            2
+            2 | Grace      |            0 |            0
+(2 rows)
+```
+
+JSON_QUERY without a wrapper finds one item, and WITH ARRAY WRAPPER
+puts all it finds in an array. WITH CONDITIONAL ARRAY WRAPPER does so
+unless the path finds one array or object, so a lone string or number is
+wrapped. OMIT QUOTES gives a string found alone as it is, where KEEP
+QUOTES, the default, writes it as JSON, in quotation marks. A wrapper
+WITH and a QUOTES clause are not written together.
+
+```sql
+SELECT ID, JSON_QUERY(DOC, 'lax $.items[*].sku' RETURNING VARCHAR(20) WITH ARRAY WRAPPER),
+       JSON_QUERY(DOC, 'lax $.items[0]' RETURNING VARCHAR(30) EMPTY OBJECT ON EMPTY),
+       JSON_QUERY(DOC, 'lax $.buyer' RETURNING VARCHAR(10) OMIT QUOTES)
+  FROM PURCHASES ORDER BY ID;
+```
+
+```
+           ID |                      |                                |
+--------------+----------------------+--------------------------------+------------
+            1 | ["A1","B7"]          | {"sku":"A1","qty":2}           | Ada
+            2 | NULL                 | {}                             | Grace
+(2 rows)
+```
+
+### The path language
+
+A path begins with its mode, `lax` or `strict`, then `$`, the text, and
+its accessors: `.name` or `."name"` a member of an object, `.*` every
+member's value, `[n]`, `[n to m]` and `[last]` elements of an array,
+counted from 0, `[*]` every element, and the item methods. `.type()`
+names an item's kind and `.size()` counts an array's elements;
+`.double()`, `.ceiling()`, `.floor()` and `.abs()` compute; `.bigint()`,
+`.integer()`, `.decimal(p, s)`, `.number()`, `.boolean()`, `.string()`,
+`.date()`, `.time(p)`, `.time_tz(p)`, `.timestamp(p)` and
+`.timestamp_tz(p)` cast an item as CAST does, the precisions optional;
+`.datetime()` reads a string as the date, time or timestamp it is; and
+`.keyvalue()` gives an object's members, each as an object of its
+`key`, its `value` and an `id`. A number may be written in hexadecimal,
+`0x1F`. A
+filter, `? (predicate)`, keeps the items its predicate is true of, `@`
+being the item tested: `==`, `!=`, `<>`, `<`, `<=`, `>` and `>=`
+compare, `exists (path)`, `starts with` and `like_regex` test, and
+`&&`, `||`, `!` and `(...) is unknown` combine. `+`, `-`, `*`, `/` and
+`%` compute with numbers. Unlike SQL, the language is case-sensitive:
+`$.Buyer` is not `$.buyer`, and `true`, `null` and the methods are lower
+case.
+
+Lax mode takes an array for its elements where an object or a single
+item is wanted, and a single item for an array, and a member or element
+that is not there for nothing. Strict mode takes them as errors, which
+ON ERROR then replaces.
+
+```sql
+VALUES (JSON_VALUE('{"a":[1,2]}', 'lax $.a[*]' RETURNING INTEGER), JSON_VALUE('{"a":[1,2]}', 'lax $.a[last]' RETURNING INTEGER),
+        JSON_VALUE('{"a":[1,2]}', 'lax $.a.type()' RETURNING VARCHAR(10)), JSON_VALUE('[{"a":3}]', 'lax $.a' RETURNING INTEGER),
+        JSON_VALUE('[{"a":3}]', 'strict $.a' RETURNING INTEGER));
+VALUES JSON_VALUE('[1,2]', 'lax $[*]' RETURNING INTEGER ERROR ON ERROR);
+VALUES JSON_VALUE('{}', 'strict $.a' RETURNING INTEGER ERROR ON ERROR);
+VALUES JSON_VALUE('{}', 'lax $.a' RETURNING INTEGER ERROR ON EMPTY);
+```
+
+```
+              |              |            |              |
+--------------+--------------+------------+--------------+--------------
+         NULL |            2 | array      |            3 |         NULL
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22034): the SQL/JSON path expression gives more than one SQL/JSON item [ISO/IEC 9075-2:2023 §9.48 GR4a]
+turborel: SQLCODE -301 (SQLSTATE 2203A): an SQL/JSON item is not an object with a member of the key a [ISO/IEC 9075-2:2023 §9.46 GR11g ii 1 B II]
+
+--------------
+         NULL
+(1 row)
+```
+
+PASSING gives the path variables: `PASSING value AS name` is `$name` in
+the path, a string, number, truth value or datetime as it is, and with
+FORMAT JSON a string's JSON text, parsed. The name is the identifier's
+value, as SQL reads one: a regular identifier is upper case, so
+`PASSING 2 AS n` is `$N`, and a delimited one is as written, so
+`PASSING 'B' AS "p"` is `$p`. A variable the path names and PASSING
+does not is an error as the statement is prepared.
+
+```sql
+SELECT ID, JSON_VALUE(DOC, 'lax $.items[*] ? (@.qty >= $N).sku' PASSING 2 AS N RETURNING VARCHAR(5)),
+       JSON_VALUE(DOC, 'lax $.items[*] ? (@.sku starts with $p).qty' PASSING 'B' AS "p" RETURNING INTEGER)
+  FROM PURCHASES ORDER BY ID;
+VALUES JSON_VALUE('{}', 'lax $n' PASSING 2 AS n);
+```
+
+```
+           ID |       |
+--------------+-------+--------------
+            1 | A1    |            1
+            2 | NULL  |         NULL
+(2 rows)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the named variable $n of the SQL/JSON path expression is passed no value [ISO/IEC 9075-2:2023 §9.46 SR4] (at character 24)
+```
+
+A cast that cuts a string to the RETURNING type completes with the
+warning 01004, as CAST does. A binary string's JSON text, FORMAT JSON
+ENCODING, is valid SQL turborel does not process: SQLCODE -900.
+[Appendix A](../appendix/a-sqlstate.md) lists the SQLSTATEs of
+SQL/JSON, 22032 to 2203G, and [Limits](../appendix/d-limits.md) how deep
+JSON text and a path may nest. The functions' names and the words of
+their clauses are not reserved, so a column may be named any of them.
+
 ## Conditions as values
 
 A [condition](05-predicates.md), such as `SALARY > 6000` or `DEPT IS

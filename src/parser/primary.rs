@@ -4,7 +4,8 @@
 //! functions [§6.6, §6.7], EXTRACT [§6.6], the datetime value functions
 //! [§6.8], VALUE of a domain constraint [§6.2], NEXT VALUE FOR [ISO/IEC
 //! 9075-2:2023 §6.14], WIDTH_BUCKET [§6.31], the ordered set functions
-//! [§10.9], the \[EXTENSION\] function call, and, by `pattern/navigation.rs`,
+//! [§10.9], JSON_VALUE and JSON_QUERY [§6.28, §6.35] by `json.rs`, the
+//! \[EXTENSION\] function call, and, by `pattern/navigation.rs`,
 //! row pattern matching's expressions [§6.27, §6.31, §6.33].
 
 mod strings;
@@ -16,7 +17,8 @@ use crate::ast::{
 };
 use crate::error::Result;
 use crate::functions::{
-    ANY_VALUE, EVERY, FORMAT, GREATEST, LEAST, LISTAGG, LPAD, OVERLAY, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS, WIDTH_BUCKET,
+    ANY_VALUE, EVERY, FORMAT, GREATEST, JSON_QUERY, JSON_VALUE, LEAST, LISTAGG, LPAD, OVERLAY, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS,
+    WIDTH_BUCKET,
 };
 use crate::lexer::{Tok, delim, kw};
 
@@ -254,7 +256,8 @@ impl Parser {
     /// row expression [ISO/IEC 9075-2:2023 §6.47, §7.1], one of
     /// user-defined types [§6.19, §6.20, §6.23, §6.24], an expression of
     /// row pattern matching [§6.9, §6.10, §6.27, §6.31, §6.33], or an
-    /// aggregate of a name no key word of SQL-92 [§10.9], if one is next.
+    /// aggregate of a name no key word of SQL-92 [§10.9], or JSON_VALUE or
+    /// JSON_QUERY [§6.28, §6.35], if one is next.
     fn composite_pattern_or_aggregate(&mut self) -> Result<Option<ValueExpression>> {
         if let Some(composite) = self.composite_primary()? {
             return Ok(Some(composite));
@@ -266,6 +269,14 @@ impl Parser {
         // DEREF, T::M and the transform groups, no key words of SQL-92.
         if let Some(structured) = self.structured_primary()? {
             return Ok(Some(structured));
+        }
+        // [ISO/IEC 9075-2:2023 §6.28, §6.35] JSON_VALUE and JSON_QUERY, no
+        // key words of SQL-92, before "(" the operators.
+        if self.at_json(JSON_VALUE) {
+            return self.json_value().map(Some);
+        }
+        if self.at_json(JSON_QUERY) {
+            return self.json_query().map(Some);
         }
         // [ISO/IEC 9075-2:2023 §10.9] EVERY and ANY_VALUE, no key words of
         // SQL-92, before "(" set functions, and LISTAGG the <listagg set

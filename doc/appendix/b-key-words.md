@@ -59,7 +59,7 @@ only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
 SQL:2023 reserves ANY_VALUE, BEGIN_FRAME, BEGIN_PARTITION, BIGINT, BINARY, BOOLEAN, BTRIM, CONDITION, CUBE, CUME_DIST, CURRENT_ROW, CYCLE, DECFLOAT,
-DENSE_RANK, END_FRAME, END_PARTITION, EVERY, FILTER, FIRST_VALUE, FRAME_ROW, GREATEST, GROUPING, GROUPS, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
+DENSE_RANK, END_FRAME, END_PARTITION, EVERY, FILTER, FIRST_VALUE, FRAME_ROW, GREATEST, GROUPING, GROUPS, JSON_EXISTS, JSON_QUERY, JSON_VALUE, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
 LISTAGG, LPAD, LTRIM, NTH_VALUE, NTILE, OCCURRENCES_REGEX, OVER, PARTITION, PERCENTILE_CONT, PERCENTILE_DISC, PERCENT_RANK, POSITION_REGEX,
 RANGE, RANK, ROLLUP, ROW_NUMBER, RPAD, RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX, VALUE_OF, VARBINARY, WIDTH_BUCKET, WINDOW
 and WITHIN, which SQL-92 does not, so
@@ -224,5 +224,14 @@ MODIFIES, CONTAINS, OUT and INOUT, which SQL-92 does not reserve, are
 read as words where a routine is defined, called, dropped, granted or
 revoked, so a table or column may still be named by one. PROCEDURE and
 IN are SQL-92 key words.
+
+JSON_EXISTS, JSON_VALUE and JSON_QUERY are the SQL/JSON query operators
+only before a parenthesis, so `SELECT JSON_VALUE FROM T` names a column.
+Within them PASSING, RETURNING, FORMAT, JSON, ENCODING, ERROR, EMPTY,
+ARRAY, OBJECT, WITHOUT, CONDITIONAL, UNCONDITIONAL, WRAPPER, KEEP, OMIT,
+QUOTES, SCALAR and STRING are read only where the operators take them,
+so `JSON_VALUE(J, 'lax $.a' DEFAULT ERROR ON EMPTY)` gives a column
+ERROR's value of no item. The words of an SQL/JSON path, within its
+literal, are the path language's, none reserved, and case-sensitive.
 
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

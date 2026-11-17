@@ -1335,9 +1335,21 @@ JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG [§6.34, §10.11] are there
 alike (`json/predicate.rs`, `json/construct.rs`), the aggregates as
 states the executor is to drive, given their rows in the order to keep.
 
-No SQL statement reads a path yet. The operators' syntax is to be bound
-to these functions, and until it is the engine is reached through the
-library alone (`turborel::json`).
+The three query operators' syntax is bound to these functions, as SQL
+reaches the regular expressions (D61): JSON_EXISTS, JSON_VALUE and
+JSON_QUERY are each a call of a function of its own
+(`functions/json.rs`), made by the binder (`binder/json.rs`) and
+registered nowhere. The binder parses the path specification, a literal,
+once, so a bad path is refused as the statement is prepared, and checks
+§9.46 SR4 and SR8 of the parsed path then. The call holds the path and
+the clauses, the operands are its arguments, and the name it shows
+spells every clause, so two calls of other clauses are never taken for
+one expression. A PASSING argument's identifier names the variable of
+its value as SQL defines it, upper case unless delimited [§9.46 SR4]. A
+cast's warning reaches the statement through
+`ScalarFunction::call_warned`, as a CAST's does. The syntax of IS JSON
+and of the constructors is not read yet, so no statement reaches their
+rules; JSON_TABLE is to call the same engine as the query operators.
 
 #### D33. Schema changes are transactional
 

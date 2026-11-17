@@ -24,25 +24,21 @@ impl ValueExpression {
                 n.logical.iter().filter_map(|l| l.offset.as_deref()).for_each(&mut *f);
                 n.physical.iter().filter_map(|p| p.offset.as_deref()).for_each(&mut *f);
             }
-            ValueExpression::Extract { source, .. } => f(source),
-            ValueExpression::Difference { minuend, subtrahend, .. } => {
-                f(minuend);
-                f(subtrahend);
-            }
             ValueExpression::AtZone { source, zone, .. } => {
                 f(source);
                 if let Some(z) = zone {
                     f(z);
                 }
             }
-            ValueExpression::Dyadic(a, _, b) => {
+            ValueExpression::Dyadic(a, _, b) | ValueExpression::Difference { minuend: a, subtrahend: b, .. } => {
                 f(a);
                 f(b);
             }
             ValueExpression::Monadic(_, x)
             | ValueExpression::Nested(x)
             | ValueExpression::Collated(x, _)
-            | ValueExpression::CollationFor(x) => f(x),
+            | ValueExpression::CollationFor(x)
+            | ValueExpression::Extract { source: x, .. } => f(x),
             ValueExpression::SetFunction(sf) => {
                 match &sf.arg {
                     SetArg::CountStar | SetArg::Variable(..) => {}
@@ -58,6 +54,7 @@ impl ValueExpression {
             ValueExpression::Boolean(c) => c.for_each_value(f),
             ValueExpression::Composite(c, _) => c.for_each_child(f),
             ValueExpression::Structured(s, _) => s.for_each_child(f),
+            ValueExpression::Json(j, _) => j.for_each_child(f),
             ValueExpression::Window(w) => w.for_each_child(f),
             ValueExpression::NestedWindow(n) => n.for_each_child(f),
         }
@@ -226,6 +223,7 @@ impl Predicate {
                 left.for_each_value(f);
                 right.for_each_value(f);
             }
+            Predicate::JsonExists(j) => j.for_each_child(f),
             Predicate::Exists(_) | Predicate::Unique { .. } => {}
         }
     }
@@ -245,6 +243,7 @@ impl Predicate {
             | Predicate::InList { .. }
             | Predicate::Like { .. }
             | Predicate::LikeRegex { .. }
+            | Predicate::JsonExists(_)
             | Predicate::Distinct { .. }
             | Predicate::Member { .. }
             | Predicate::Submultiset { .. }

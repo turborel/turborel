@@ -163,6 +163,37 @@ FF, CR, NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR and CRLF, which counts
 as one. [Limits](../appendix/d-limits.md) gives the size a pattern may
 have.
 
+## JSON_EXISTS
+
+`JSON_EXISTS(text, 'path' [PASSING ...] [behavior ON ERROR])` is true if
+the SQL/JSON path finds an item in the JSON text, false if it finds
+none, and unknown if the text is null. The path and PASSING are as
+[JSON_VALUE](04-expressions.md#sqljson) reads them. In place of a data
+exception, as text that is no JSON or a strict path's member that is
+not there, it is FALSE, the default, TRUE, UNKNOWN or the ERROR raised,
+as ON ERROR says.
+
+```sql
+SELECT ID FROM PURCHASES WHERE JSON_EXISTS(DOC, 'lax $.items[*] ? (@.qty > 1)') ORDER BY ID;
+SELECT ID, JSON_EXISTS(DOC, 'lax $.note'), JSON_EXISTS(DOC, 'strict $.note.x'),
+       JSON_EXISTS(DOC, 'strict $.note.x' UNKNOWN ON ERROR) FROM PURCHASES ORDER BY ID;
+```
+
+```
+           ID
+--------------
+            1
+(1 row)
+           ID |       |       |
+--------------+-------+-------+-------
+            1 | FALSE | FALSE | NULL
+            2 | TRUE  | FALSE | NULL
+(2 rows)
+```
+
+A member whose value is JSON's null is there, so `lax $.note` is true of
+the second row.
+
 ## NULL
 
 `x IS NULL` is true if x is null; `IS NOT NULL` if it is not. It is

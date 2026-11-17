@@ -86,6 +86,25 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2202J | Invalid argument for row pattern navigation function: a logical or physical offset of PREV, NEXT, FIRST or LAST below 0, or null |
 | 2202K | Skip to non-existent row: AFTER MATCH SKIP TO a variable no row of the match is mapped to |
 | 2202L | Skip to first row of match: AFTER MATCH SKIP TO a variable whose row it names is the match's first |
+| 2202V | Non-Boolean SQL/JSON item: a path's boolean() of an item neither a truth value nor a string |
+| 2202W | Non-date SQL/JSON item: a path's date() of an item that is no string |
+| 2202X | Non-string SQL/JSON item: a path's string() of an array, an object or the SQL/JSON null |
+| 2202Y | Non-time SQL/JSON item: a path's time() of an item that is no string, or time_tz() of one neither a string nor a number |
+| 2202Z | Non-timestamp SQL/JSON item: a path's timestamp() of an item that is no string, or timestamp_tz() of one neither a string nor a number |
+| 22031 | Invalid argument for SQL/JSON datetime function: a path's datetime() of an item that is no character string, or of a string that is no date, time or timestamp |
+| 22032 | Invalid JSON text: a context item or PASSING argument of JSON_EXISTS, JSON_VALUE or JSON_QUERY that is no JSON text, or an item JSON_QUERY serializes that has none, as a datetime |
+| 22033 | Invalid SQL/JSON subscript: an array subscript of a path that is not one number, or in strict mode outside the array |
+| 22034 | More than one SQL/JSON item: JSON_VALUE, or JSON_QUERY without a wrapper, of a path that gives two items or more |
+| 22035 | No SQL/JSON item: JSON_VALUE or JSON_QUERY of ERROR ON EMPTY, of a path that gives no item |
+| 22036 | Non-numeric SQL/JSON item: a path's double(), bigint(), integer(), decimal() or number() of an item neither a number nor a string, or ceiling(), floor() or abs() of one no number |
+| 22037 | Non-unique keys in a JSON object: JSON text WITH UNIQUE KEYS of an object of a key twice |
+| 22038 | Singleton SQL/JSON item required: an operand of a path's arithmetic that is not one number |
+| 22039 | SQL/JSON array not found: an array accessor, or in strict mode size(), of an item that is no array |
+| 2203A | SQL/JSON member not found: in strict mode, a member accessor of an item that is no object with the member |
+| 2203B | SQL/JSON number not found: a path's sign of an item that is no number |
+| 2203C | SQL/JSON object not found: in strict mode, `.*` of an item that is no object |
+| 2203F | SQL/JSON scalar required: JSON_VALUE of an array or an object |
+| 2203G | SQL/JSON item cannot be cast to target type: JSON_VALUE of an item whose type does not cast to the returned type, as true to INTEGER |
 | 23000 | Integrity constraint violation |
 | 24000 | Invalid cursor state |
 | 25000 | Invalid transaction state |

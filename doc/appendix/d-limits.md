@@ -43,6 +43,12 @@ pattern with a back-reference goes back to try each way and stops past
 10,000,000 steps; one without any takes time linear in the string, with
 no limit. Each is SQLCODE -900.
 
+JSON text nests arrays and objects at most 128 deep, and an SQL/JSON
+path expression is at most 64 deep, of parentheses, filters, subscripts
+and signs, or of accessors and operators in a row. A deeper one is
+SQLCODE -900, which ON ERROR does not replace. JSON text in a large
+object is read at most 262,144 octets long, a chunk.
+
 ## Grouping
 
 A GROUP BY stands for at most 4,096 grouping sets: a CUBE of 12 columns

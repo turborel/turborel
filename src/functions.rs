@@ -19,6 +19,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::error::{Code, Result, fail};
+use crate::json::Warned;
 use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::storage::{Floats, Ints, Texts};
@@ -58,6 +59,8 @@ pub use octet_like::OctetLike;
 pub use periods::PeriodTest;
 pub mod lobs;
 pub use listagg::{LISTAGG, Listagg, ListaggSpec, MAX_LISTAGG_LENGTH, Truncation};
+mod json;
+pub use json::{JSON_EXISTS, JSON_QUERY, JSON_VALUE, JsonCall, JsonOperation, ValueSlot};
 mod regex;
 mod registry;
 mod rows;
@@ -153,6 +156,24 @@ pub trait ScalarFunction: Send + Sync {
             [left, right] => self.call_with(&[(*left).clone(), (*right).clone()], temp),
             _ => self.call_with(&args.iter().map(|value| (*value).clone()).collect::<Vec<_>>(), temp),
         }
+    }
+
+    /// \[DESIGN\] As `call_with`, and the completion condition the call
+    /// raised, a warning [ISO/IEC 9075:1992 §3.3.4.1], if one: as a cast
+    /// within it raises one, which the statement completes with, as of
+    /// `Expr::Cast`. Default: `call_with`, raising none.
+    ///
+    /// # Errors
+    ///
+    /// As `call`.
+    fn call_warned(&self, args: &[Value], temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Warned> {
+        self.call_with(args, temp).map(|value| (value, None))
+    }
+    /// \[DESIGN\] Whether a call may raise a warning, so that it is made
+    /// by `call_warned` and not by the calls that borrow their arguments
+    /// (`exec/eval.rs`). Default: no.
+    fn warns(&self) -> bool {
+        false
     }
     /// \[EXTENSION\] Whether an index may find rows for this function in
     /// a WHERE filter, such as `f(column, ?)` (RULES.md D34).

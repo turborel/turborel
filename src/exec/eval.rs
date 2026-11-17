@@ -82,7 +82,13 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
         // As `eval` evaluates them.
         Expr::Column(_) | Expr::Const(_) | Expr::Arith(..) => eval(e, row, subqueries),
         Expr::Neg(x) => Ok(eval(x, row, subqueries)?.negate()),
-        Expr::Call(f, args) => called(f, args, row, subqueries),
+        Expr::Call(f, args) => {
+            if f.0.warns() {
+                called_warned(f, args, row, subqueries)
+            } else {
+                called(f, args, row, subqueries)
+            }
+        }
         Expr::Outer(_, name) => Err(broken(&format!("the outer reference {name} has no value"))),
         Expr::Invoked(i) => super::invoked::invoke(i, row, subqueries),
         Expr::Dynamic(slot) => Err(broken(&format!("<dynamic parameter specification> {} has no value", slot.index.saturating_add(1)))),
@@ -121,6 +127,18 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
             }
         }
     }
+}
+
+/// A call of a function that may raise a warning (`ScalarFunction::warns`)
+/// [ISO/IEC 9075:1992 §3.3.4.1]: its result, the warning raised, if any,
+/// as a CAST's is.
+fn called_warned(function: &ScalarRef, args: &[Expr], row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
+    let values = args.iter().map(|arg| eval(arg, row, subqueries)).collect::<Result<Vec<_>>>()?;
+    let (value, warning) = function.0.call_warned(&values, subqueries.temp_lobs())?;
+    if let Some(state) = warning {
+        warn(subqueries, state);
+    }
+    Ok(value)
 }
 
 /// The usual unary and binary calls need no heap allocation for their

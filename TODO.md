@@ -62,18 +62,20 @@ Nothing is open.
   datetime type, whether it is dated, timed or zoned and its fraction's
   precision, from the formatted cast's template reader
   (`src/functions/formatted/template.rs`), which does not give it outside
-  its module yet. The lexer, parser and evaluator of the rest are in
-  `src/json/` (RULES.md D84), and no SQL statement reads them until the
-  functions below do.
-- SQL/JSON functions over character strings (T803, T811 to T830) [§4.48,
-  §6.28, §6.34, §6.35, §7.11, §8.22, §8.23, §10.11]. JSON_OBJECT,
-  JSON_ARRAY and their aggregates, JSON_VALUE, JSON_QUERY, JSON_EXISTS, IS
-  JSON and JSON_TABLE, with PASSING, ON EMPTY and ON ERROR. The General
-  Rules of JSON_EXISTS, JSON_VALUE and JSON_QUERY (`src/json/query.rs`),
-  of IS JSON (`src/json/predicate.rs`) and of JSON_OBJECT, JSON_ARRAY,
-  JSON_OBJECTAGG and JSON_ARRAYAGG (`src/json/construct.rs`) are written;
-  their syntax, binding and manual pages come first, and with them the
-  features are claimed. JSON_TABLE is not begun.
+  its module yet.
+- The syntax of IS JSON (T821, T822) [§8.22] and of the constructor
+  functions JSON_OBJECT and JSON_ARRAY and the aggregates JSON_OBJECTAGG
+  and JSON_ARRAYAGG (T803, T811 to T814, T830) [§6.34, §10.11]: read,
+  bound and documented, as JSON_EXISTS, JSON_VALUE and JSON_QUERY are.
+  Their General Rules are written (`src/json/predicate.rs`,
+  `src/json/construct.rs`, RULES.md D84), the aggregates as states the
+  executor is to drive. With them T803 is claimed.
+- JSON_TABLE (T821, T824, T827) [§7.11], over the path engine the query
+  operators use. With it and IS JSON, T821 is claimed, and T825 and T826,
+  whose JSON_TABLE clauses are all they lack. It is not begun.
+- JSON text in binary strings, FORMAT JSON ENCODING UTF8, UTF16 or UTF32
+  [§10.12, §10.13], of a context item, an argument and JSON_QUERY's
+  RETURNING. Each is SQLCODE -900 today.
 - The JSON type (T801, T802) [§4.8, §6.1, §6.37, §6.40, §6.41], stored
   parsed so a query does not parse text again.
 - The simplified accessor (T860 to T864) [§6.36], as `doc.items[0].name`.
