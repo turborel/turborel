@@ -51,6 +51,12 @@ and signs, or of accessors and operators in a row. A deeper one is
 SQLCODE -900, which ON ERROR does not replace. JSON text, or a PASSING
 argument, in a large object is read at most 262,144 octets long, a chunk.
 
+A JSON object JSON_OBJECT or JSON_OBJECTAGG makes has at most 1,048,576
+members, and an array JSON_ARRAY or JSON_ARRAYAGG makes at most
+1,048,576 elements, those left out ABSENT ON NULL not counted; one more
+is SQLSTATE 2203E or 2203D. JSON_ARRAYAGG holds the rows of a group
+until it orders them, so it holds no more than that.
+
 ## Grouping
 
 A GROUP BY stands for at most 4,096 grouping sets: a CUBE of 12 columns

@@ -3,31 +3,10 @@
 //! of the `<JSON API common syntax>` [§10.14], with PASSING, RETURNING,
 //! the wrappers, the quotes and ON EMPTY and ON ERROR, in statements.
 
-use turborel::db::Session;
-use turborel::error::{SqlError, SqlState};
+use turborel::error::SqlState;
 use turborel::value::Value;
 
-use crate::common::{exec, expected, rows, setup};
-
-/// The error `sql` raises as it is prepared, opened or read.
-fn failed(s: &Session, sql: &str) -> SqlError {
-    let read = s.open_cursor(sql).and_then(|mut c| {
-        while c.fetch()?.is_some() {}
-        Ok(())
-    });
-    read.expect_err(sql)
-}
-
-/// The SQLCODE, the SQLSTATE and the rule of the error `sql` raises.
-fn refused(s: &Session, sql: &str) -> (i32, String, Option<String>) {
-    let e = failed(s, sql);
-    (e.sqlcode(), e.sqlstate().as_str().to_owned(), e.rule)
-}
-
-/// `refused`, of a rule of ISO/IEC 9075-2:2023 `cited`.
-fn broke(code: i32, state: &str, cited: &str) -> (i32, String, Option<String>) {
-    (code, state.to_owned(), Some(format!("ISO/IEC 9075-2:2023 {cited}")))
-}
+use crate::common::{broke, exec, expected, failed, refused, rows, setup};
 
 /// Verifies: [ISO/IEC 9075-2:2023 §6.28 SR1, SR3, SR4, SR5,
 /// GR2, GR5; §9.48 GR4b] JSON_VALUE is the one scalar its path gives, cast
@@ -315,31 +294,40 @@ fn warnings_9_48() {
     assert_eq!(s.warning(), None);
 }
 
-/// Verifies: [ISO/IEC 9075-2:2023 §8.23, §6.28, §6.35; §20.7
-/// GR5a] The operators where an expression may be: a query's select list
-/// and WHERE, a view, a CHECK constraint, which refuses a row it is false
-/// of, and a generated column; a `?` context item or argument FORMAT JSON
-/// is CHARACTER VARYING, a DEFAULT the returned type, and an argument
-/// without FORMAT JSON refused; two calls of the same operands but other
-/// clauses are two expressions, as two sums of them.
+/// Verifies: [ISO/IEC 9075-2:2023 §9.16 SR1g, SR1h, SR1al; §11.9 CR2;
+/// §8.23, §6.28, §6.35; §20.7 GR5a] The operators where an expression may
+/// be: a query's select list and WHERE, and a view; each a potential
+/// source of non-determinism, so a CHECK constraint or a generation
+/// expression with one is SQLCODE -103; a `?` context item or argument
+/// FORMAT JSON is CHARACTER VARYING, a DEFAULT the returned type, and an
+/// argument without FORMAT JSON refused; two calls of the same operands
+/// but other clauses are two expressions, as two sums of them.
 #[test]
 fn where_written_8_23() {
     let db = setup();
     let s = db.session("APP");
-    let table = "CREATE TABLE DOCS (ID INTEGER, J VARCHAR(100) CHECK (JSON_EXISTS(J, 'strict $.id' ERROR ON ERROR)), \
-                 N INTEGER GENERATED ALWAYS AS (JSON_VALUE(J, 'lax $.n' RETURNING INTEGER)))";
-    exec(&s, table).unwrap();
+    exec(&s, "CREATE TABLE DOCS (ID INTEGER, J VARCHAR(100))").unwrap();
     exec(&s, r#"INSERT INTO DOCS (ID, J) VALUES (1, '{"id":1,"n":5,"tags":["a","b"]}'), (2, '{"id":2,"n":7}')"#).unwrap();
-    assert_eq!(s.run(r#"INSERT INTO DOCS (ID, J) VALUES (3, '{"n":7}')"#).unwrap_err().sqlstate().as_str(), "2203A");
-    exec(&s, "CREATE VIEW TAGGED AS SELECT ID, N, JSON_QUERY(J, 'lax $.tags' RETURNING VARCHAR(20)) AS TAGS FROM DOCS").unwrap();
+    let source = |item: &str| broke(-103, "2A000", &format!("§9.16 SR1{item}, §11.9 CR2"));
+    for (sql, item) in [
+        ("CREATE TABLE C1 (J VARCHAR(9) CHECK (JSON_EXISTS(J, 'strict $.id')))", "al"),
+        ("CREATE TABLE C2 (J VARCHAR(9) CHECK (JSON_VALUE(J, 'lax $.n' RETURNING INTEGER) > 0))", "g"),
+        ("CREATE TABLE C3 (J VARCHAR(9), N VARCHAR(9) GENERATED ALWAYS AS (JSON_QUERY(J, 'lax $.n')))", "h"),
+    ] {
+        let e = s.run(sql).unwrap_err();
+        assert_eq!((e.sqlcode(), e.sqlstate().as_str().to_owned(), e.rule), source(item), "{sql}");
+    }
+    exec(
+        &s,
+        "CREATE VIEW TAGGED AS SELECT ID, JSON_VALUE(J, 'lax $.n' RETURNING INTEGER) AS N, \
+              JSON_QUERY(J, 'lax $.tags' RETURNING VARCHAR(20)) AS TAGS FROM DOCS",
+    )
+    .unwrap();
     assert_eq!(rows(&s, "SELECT ID, N, TAGS FROM TAGGED ORDER BY ID"), expected(&[r#"1,5,["a","b"]"#, "2,7,NULL"]));
     assert_eq!(rows(&s, "SELECT ID FROM DOCS WHERE JSON_EXISTS(J, 'lax $.tags')"), expected(&["1"]));
     let q = "SELECT SUM(JSON_VALUE(J, 'lax $.n' RETURNING INTEGER)), SUM(JSON_VALUE(J, 'lax $.id' RETURNING INTEGER)), \
              SUM(JSON_VALUE(J, 'lax $.n' RETURNING INTEGER DEFAULT 1 ON EMPTY)) FROM DOCS";
     assert_eq!(rows(&s, q), expected(&["12,3,12"]));
-    exec(&s, "CREATE TABLE CK (J VARCHAR(20) CHECK (JSON_VALUE(J, 'lax $.n' RETURNING INTEGER) > 0))").unwrap();
-    exec(&s, r#"INSERT INTO CK VALUES ('{"n":1}')"#).unwrap();
-    assert_eq!(s.run(r#"INSERT INTO CK VALUES ('{"n":0}')"#).unwrap_err().sqlcode(), -201);
     let p = s.prepare("VALUES JSON_VALUE(?, 'lax $.a' PASSING ? FORMAT JSON AS B RETURNING INTEGER DEFAULT ? ON EMPTY)").unwrap();
     let text = |t: &str| Value::Char(t.to_owned());
     let mut c = s.open_prepared(&p, &[text(r#"{"a":3}"#), text("1"), text("9")]).unwrap();

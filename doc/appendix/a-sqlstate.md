@@ -56,6 +56,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22001 | String data, right truncation: a string too long for its type |
 | 22002 | Null value, no indicator parameter |
 | 22003 | Numeric value out of range |
+| 22004 | Null value not allowed: a null name of a member of JSON_OBJECT or JSON_OBJECTAGG |
 | 22005 | Error in assignment |
 | 22007 | Invalid datetime format |
 | 22008 | Datetime field overflow |
@@ -91,18 +92,21 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2202X | Non-string SQL/JSON item: a path's string() of an array, an object or the SQL/JSON null |
 | 2202Y | Non-time SQL/JSON item: a path's time() of an item that is no string, or time_tz() of one neither a string nor a number |
 | 2202Z | Non-timestamp SQL/JSON item: a path's timestamp() of an item that is no string, or timestamp_tz() of one neither a string nor a number |
+| 22030 | Duplicate JSON object key value: JSON_OBJECT or JSON_OBJECTAGG WITH UNIQUE KEYS of two members of one name |
 | 22031 | Invalid argument for SQL/JSON datetime function: a path's datetime() of an item that is no character string, or of a string that is no date, time or timestamp, or that its template does not read |
-| 22032 | Invalid JSON text: a context item or PASSING argument of JSON_EXISTS, JSON_VALUE or JSON_QUERY that is no JSON text, or an item JSON_QUERY serializes that has none, as a datetime |
+| 22032 | Invalid JSON text: a context item or PASSING argument of JSON_EXISTS, JSON_VALUE or JSON_QUERY, or a value FORMAT JSON of a constructor, that is no JSON text, or an item JSON_QUERY serializes that has none, as a datetime |
 | 22033 | Invalid SQL/JSON subscript: an array subscript of a path that is not one number, or in strict mode outside the array |
 | 22034 | More than one SQL/JSON item: JSON_VALUE, or JSON_QUERY without a wrapper, of a path that gives two items or more |
 | 22035 | No SQL/JSON item: JSON_VALUE or JSON_QUERY of ERROR ON EMPTY, of a path that gives no item |
 | 22036 | Non-numeric SQL/JSON item: a path's double(), bigint(), integer(), decimal() or number() of an item neither a number nor a string, or ceiling(), floor() or abs() of one no number |
-| 22037 | Non-unique keys in a JSON object: JSON text WITH UNIQUE KEYS of an object of a key twice |
+| 22037 | Non-unique keys in a JSON object: JSON text WITH UNIQUE KEYS of an object of a key twice, as a value FORMAT JSON of JSON_OBJECT WITH UNIQUE KEYS |
 | 22038 | Singleton SQL/JSON item required: an operand of a path's arithmetic that is not one number |
 | 22039 | SQL/JSON array not found: an array accessor, or in strict mode size(), of an item that is no array |
 | 2203A | SQL/JSON member not found: in strict mode, a member accessor of an item that is no object with the member |
 | 2203B | SQL/JSON number not found: a path's sign of an item that is no number |
 | 2203C | SQL/JSON object not found: in strict mode, `.*` of an item that is no object |
+| 2203D | Too many JSON array elements: JSON_ARRAY or JSON_ARRAYAGG of more than 1,048,576 elements |
+| 2203E | Too many JSON object members: JSON_OBJECT or JSON_OBJECTAGG of more than 1,048,576 members |
 | 2203F | SQL/JSON scalar required: JSON_VALUE of an array or an object |
 | 2203G | SQL/JSON item cannot be cast to target type: JSON_VALUE of an item whose type does not cast to the returned type, as true to INTEGER |
 | 23000 | Integrity constraint violation |

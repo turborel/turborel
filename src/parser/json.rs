@@ -7,16 +7,20 @@
 //! operator only before "(", as the regular expression functions' are;
 //! and every word of their Formats that is none either, as PASSING, ERROR
 //! and EMPTY, is read as that word only where the Format has it, so a
-//! column of any of those names stays one.
+//! column of any of those names stays one. The constructor functions and
+//! IS JSON are in `json/construct.rs`.
+
+mod construct;
 
 use super::Parser;
 use super::dynamic::WITHOUT;
 use super::ptf::KEEP;
 use crate::ast::{
-    JsonArgument, JsonClauses, JsonCommon, JsonFormat, JsonInput, JsonOperator, JsonValueBehavior, Predicate, ValueExpression,
+    JsonArgument, JsonClauses, JsonCommon, JsonExpression, JsonFormat, JsonInput, JsonOperator, JsonOutput, JsonValueBehavior, Predicate,
+    ValueExpression,
 };
 use crate::error::{Code, Result, SqlError};
-use crate::functions::{FORMAT, JSON_EXISTS};
+use crate::functions::{FORMAT, JSON_ARRAY, JSON_ARRAYAGG, JSON_EXISTS, JSON_OBJECT, JSON_OBJECTAGG, JSON_QUERY, JSON_VALUE};
 use crate::json::{ExistsBehavior, QueryBehavior, Quotes, Wrapper};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::types::array::ARRAY_NAME;
@@ -59,6 +63,39 @@ impl Parser {
     /// "(".
     pub(super) fn at_json(&self, name: &str) -> bool {
         self.is_word(name) && matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN))
+    }
+
+    /// The SQL/JSON function that is a primary, if one is next:
+    /// JSON_VALUE [§6.28], JSON_QUERY [§6.35], JSON_OBJECT or JSON_ARRAY
+    /// [§6.34], or the set function JSON_OBJECTAGG or JSON_ARRAYAGG
+    /// [§10.11], each its name before "(".
+    pub(super) fn json_primary(&mut self) -> Result<Option<ValueExpression>> {
+        let primary = if self.at_json(JSON_VALUE) {
+            self.json_value()?
+        } else if self.at_json(JSON_QUERY) {
+            self.json_query()?
+        } else if self.at_json(JSON_OBJECT) {
+            self.json_object()?
+        } else if self.at_json(JSON_ARRAY) {
+            self.json_array()?
+        } else if self.at_json(JSON_OBJECTAGG) {
+            ValueExpression::SetFunction(self.json_objectagg()?)
+        } else if self.at_json(JSON_ARRAYAGG) {
+            ValueExpression::SetFunction(self.json_arrayagg()?)
+        } else {
+            return Ok(None);
+        };
+        Ok(Some(primary))
+    }
+
+    /// [§10.13] `<JSON output clause>` ::= RETURNING `<data type>` \[FORMAT
+    /// `<JSON representation>`\], if one is next.
+    fn json_output(&mut self) -> Result<Option<JsonOutput>> {
+        if !self.accept_word(RETURNING) {
+            return Ok(None);
+        }
+        let to = self.type_name()?;
+        Ok(Some((to, if self.accept_word(FORMAT) { Some(self.json_representation()?) } else { None })))
     }
 
     /// [§8.23] `<JSON exists predicate>` ::= JSON_EXISTS ( `<JSON API
@@ -105,7 +142,7 @@ impl Parser {
         let (on_empty, on_error) = self.behaviors(Self::value_behavior)?;
         self.expect_delim(delim::RIGHT_PAREN)?;
         let clauses = JsonClauses::Value { returning, on_empty, on_error };
-        Ok(ValueExpression::Json(Box::new(JsonOperator { common, clauses }), at))
+        Ok(ValueExpression::Json(Box::new(JsonExpression::Query(Box::new(JsonOperator { common, clauses }))), at))
     }
 
     /// [§6.28] A `<JSON value empty behavior>` or `<JSON value error
@@ -155,14 +192,7 @@ impl Parser {
         self.advance();
         self.expect_delim(delim::LEFT_PAREN)?;
         let common = self.json_common()?;
-        // [§10.13] <JSON output clause> ::= RETURNING <data type> [FORMAT
-        // <JSON representation>]
-        let returning = if self.accept_word(RETURNING) {
-            let to = self.type_name()?;
-            Some((to, if self.accept_word(FORMAT) { Some(self.json_representation()?) } else { None }))
-        } else {
-            None
-        };
+        let returning = self.json_output()?;
         let wrapper = self.wrapper_behavior()?;
         let quotes_at = self.here();
         let quotes = self.quotes_behavior()?;
@@ -176,7 +206,7 @@ impl Parser {
         let (on_empty, on_error) = self.behaviors(Self::query_behavior)?;
         self.expect_delim(delim::RIGHT_PAREN)?;
         let clauses = JsonClauses::Query { returning, wrapper, quotes, on_empty, on_error };
-        Ok(ValueExpression::Json(Box::new(JsonOperator { common, clauses }), at))
+        Ok(ValueExpression::Json(Box::new(JsonExpression::Query(Box::new(JsonOperator { common, clauses }))), at))
     }
 
     /// [§6.35] `<JSON query wrapper behavior>` WRAPPER, if one is next:
@@ -277,9 +307,17 @@ impl Parser {
 
     /// [§10.12] `<JSON input expression>` ::= `<value expression>`
     /// \[FORMAT `<JSON representation>`\].
+    ///
+    /// \[SR4a\] Of a JSON-returning function [§4.48.4], a constructor or
+    /// JSON_QUERY, whose `<JSON output clause>` is FORMAT JSON, explicit or
+    /// implicit, the `<JSON input clause>` FORMAT JSON is implicit.
     fn json_input(&mut self) -> Result<JsonInput> {
         let value = self.value_expression()?;
-        let format = if self.accept_word(FORMAT) { Some(self.json_representation()?) } else { None };
+        let format = if self.accept_word(FORMAT) {
+            Some(self.json_representation()?)
+        } else {
+            json_returning(&value).then_some(JsonFormat { encoding: None })
+        };
         Ok(JsonInput { value, format })
     }
 
@@ -292,5 +330,44 @@ impl Parser {
         }
         let encoding = ENCODINGS.into_iter().find(|e| self.accept_word(e));
         encoding.map(|e| JsonFormat { encoding: Some(e) }).ok_or_else(|| self.syntax("expected UTF8, UTF16 or UTF32"))
+    }
+}
+
+/// [§4.48.4] Whether `value` is a JSON-returning function: an SQL/JSON
+/// constructor function, a JSON_OBJECTAGG or JSON_ARRAYAGG among them, or
+/// JSON_QUERY. \[DESIGN\] turborel has no JSON type, so no other value
+/// expression is one.
+fn json_returning(value: &ValueExpression) -> bool {
+    match value {
+        ValueExpression::Json(j, _) => match &**j {
+            JsonExpression::Constructor(_) => true,
+            JsonExpression::Query(operator) => matches!(operator.clauses, JsonClauses::Query { .. }),
+        },
+        ValueExpression::SetFunction(sf) => sf.json.is_some(),
+        ValueExpression::Dyadic(..)
+        | ValueExpression::Monadic(..)
+        | ValueExpression::Value(_)
+        | ValueExpression::Column(_)
+        | ValueExpression::Nested(_)
+        | ValueExpression::Boolean(_)
+        | ValueExpression::Collated(..)
+        | ValueExpression::CollationFor(_)
+        | ValueExpression::NextValue { .. }
+        | ValueExpression::Case(_)
+        | ValueExpression::Cast { .. }
+        | ValueExpression::Subquery(_)
+        | ValueExpression::Function { .. }
+        | ValueExpression::Datetime(_)
+        | ValueExpression::Navigation(_)
+        | ValueExpression::Classifier { .. }
+        | ValueExpression::MatchNumber { .. }
+        | ValueExpression::Difference { .. }
+        | ValueExpression::AtZone { .. }
+        | ValueExpression::Extract { .. }
+        | ValueExpression::Composite(..)
+        | ValueExpression::Call { .. }
+        | ValueExpression::Structured(..)
+        | ValueExpression::Window(_)
+        | ValueExpression::NestedWindow(_) => false,
     }
 }

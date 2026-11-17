@@ -23,8 +23,9 @@ use crate::ast::{
 use crate::error::{At, Result, SqlState};
 use crate::functions::{AggregateFunction, AggregateRef, ArrayAggregate, Gathering, MultisetAggregate, RowOf, ScalarRef};
 use crate::logical::{AggCall, Expr, LogicalPlan, SortKey, Subquery, render_expr};
+use crate::value::collation::CollationRef;
 use crate::value::types::{Field, MAX_ARRAY_CARDINALITY};
-use crate::value::{DataType, Decimal};
+use crate::value::{DataType, Decimal, SortOrder};
 
 /// The query a subquery is bound in, as its subquery sees it: the binder,
 /// the scope the subquery's predicate is in, and the outer references the
@@ -445,16 +446,35 @@ impl Binder<'_> {
     /// `<sort key>` its one column [§7.17, NOTE 207]; of no rows, an empty
     /// array.
     pub(super) fn array_query(&self, s: &ast::Subquery, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        self.query_aggregate(s, scope, ("§6.49 SR3a", "ARRAY"), |element, orders, collations| {
+            let func = ArrayAggregate { orders, collations, by_query: true };
+            let result = super::composite::bounded(DataType::array(element.clone(), MAX_ARRAY_CARDINALITY))?;
+            let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
+            Ok((AggregateRef(Arc::new(func)), result, label))
+        })
+    }
+
+    /// The aggregate `made` makes, of the element type, the orders and the
+    /// collations of the sort keys of the query `s`, of the row of each
+    /// row's value and sort keys, over its rows sorted and limited first,
+    /// if its query has OFFSET or FETCH FIRST, so its values are aggregated
+    /// in its order [§6.49 NOTE 207, ISO/IEC 9075-2:2023 §6.34 GR4]; its
+    /// query of degree one, as the rule `cited` of `word` says.
+    pub(super) fn query_aggregate(
+        &self,
+        s: &ast::Subquery,
+        scope: Scope<'_>,
+        (cited, word): (&str, &str),
+        made: impl FnOnce(&DataType, Vec<SortOrder>, Vec<Option<CollationRef>>) -> Result<(AggregateRef, DataType, String)>,
+    ) -> Result<(Expr, DataType)> {
         let cx = self.context();
         let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
         let nesting = Nesting::Subquery { outer: &outer, result: None };
-        // Its rows sorted and limited first, if its query has OFFSET or
-        // FETCH FIRST, then its elements in that order [§6.49 NOTE 207].
         let ordered = ordered_query(cx, &s.query, (&[], &nesting), cx.draws).or_at(s.at)?.limited();
         let own = ordered.all.get(..ordered.visible).unwrap_or_default();
         self.note_subquery(s, own);
         let [column] = own else {
-            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.49 SR3a] the query of ARRAY is of degree one, not {}", own.len())));
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 {cited}] the query of {word} is of degree one, not {}", own.len())));
         };
         let element = column.data_type.clone();
         // Each row's value, then its value of each sort key.
@@ -467,10 +487,8 @@ impl Binder<'_> {
         }
         let arg = Expr::Call(ScalarRef(Arc::new(RowOf(DataType::row(fields)))), args);
         let orders = ordered.keys.iter().map(SortKey::order).collect();
-        let func = ArrayAggregate { orders, collations: ordered.collations, by_query: true };
-        let result = super::composite::bounded(DataType::array(element, MAX_ARRAY_CARDINALITY))?;
-        let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
-        Ok(aggregated((AggregateRef(Arc::new(func)), arg, label), result, ordered.plan, outer))
+        let (func, result, label) = made(&element, orders, ordered.collations)?;
+        Ok(aggregated((func, arg, label), result, ordered.plan, outer))
     }
 
     /// [ISO/IEC 9075-2:2023 §6.52 SR1, SR4, GR3] `<multiset value

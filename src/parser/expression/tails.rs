@@ -80,6 +80,10 @@ impl Parser {
     /// follows.
     pub(super) fn predicate_of(&mut self, value: RowValue, at: usize) -> Result<SearchCondition> {
         let predicate = |p: Predicate| SearchCondition::Predicate(Box::new(p), at);
+        // [ISO/IEC 9075-2:2023 §8.22] a <JSON predicate>.
+        if self.at_is_json() {
+            return self.is_json(value).map(predicate);
+        }
         if self.at_is_predicate() {
             return self.is_predicate(value).map(predicate);
         }

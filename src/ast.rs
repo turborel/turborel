@@ -78,7 +78,10 @@ pub use expression::{
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
-pub use json::{JsonArgument, JsonClauses, JsonCommon, JsonFormat, JsonInput, JsonOperator, JsonValueBehavior};
+pub use json::{
+    IsJson, JsonAggregate, JsonArgument, JsonClauses, JsonCommon, JsonConstructor, JsonExpression, JsonFormat, JsonInput, JsonMember,
+    JsonOperator, JsonOutput, JsonValueBehavior,
+};
 pub use merge::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use modules::ModuleDefinition;
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};

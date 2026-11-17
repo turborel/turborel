@@ -285,6 +285,7 @@ impl Parser {
             arg: SetArg::All(Box::new(value)),
             order_by,
             listagg: None,
+            json: None,
             filter: None,
             semantics: None,
             at,

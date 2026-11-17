@@ -71,6 +71,11 @@ impl ValueExpression {
         {
             f(s);
         }
+        if let ValueExpression::Json(j, _) = self
+            && let Some(s) = j.subquery()
+        {
+            f(s);
+        }
         if let ValueExpression::Case(case) = self
             && let CaseExpression::Searched { whens, .. } = &**case
         {
@@ -224,6 +229,7 @@ impl Predicate {
                 right.for_each_value(f);
             }
             Predicate::JsonExists(j) => j.for_each_child(f),
+            Predicate::IsJson(j) => f(&j.input.value),
             Predicate::Exists(_) | Predicate::Unique { .. } => {}
         }
     }
@@ -244,6 +250,7 @@ impl Predicate {
             | Predicate::Like { .. }
             | Predicate::LikeRegex { .. }
             | Predicate::JsonExists(_)
+            | Predicate::IsJson(_)
             | Predicate::Distinct { .. }
             | Predicate::Member { .. }
             | Predicate::Submultiset { .. }

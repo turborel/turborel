@@ -370,6 +370,8 @@ a query reads, or of each group of its GROUP BY.
 | ANY(x), SOME(x) | of a BOOLEAN x, TRUE if an x is TRUE, else FALSE |
 | ANY_VALUE(x) | one of the values of x, the first one read |
 | LISTAGG(x, 'sep') WITHIN GROUP (ORDER BY ...) | the strings x joined by the separator in the order ORDER BY gives, CHARACTER VARYING(32767) |
+| JSON_ARRAYAGG(x [ORDER BY ...]) | the JSON text of an array of every x, in the order ORDER BY gives; null of no rows |
+| JSON_OBJECTAGG(name VALUE x) | the JSON text of an object of each row's member, name a character string; null of no rows |
 | PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY x) | the value a fraction p of the way through the sorted x, between two of them if it falls between |
 | PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY x) | the first of the sorted x whose share of the values up to it is at least p |
 
@@ -636,6 +638,36 @@ SELECT LISTAGG(NAME, ', ' ON OVERFLOW TRUNCATE '...' WITH COUNT) WITHIN GROUP (O
 
 --------------------------------------------------------------
  Ada, Grace, Edsger, Barbara
+(1 row)
+```
+
+JSON_ARRAYAGG and JSON_OBJECTAGG make JSON text of a group's rows, as
+[JSON_ARRAY and JSON_OBJECT](#json_object-and-json_array) do of their
+operands, and keep the nulls the other set functions leave out.
+JSON_ARRAYAGG takes ORDER BY within its parentheses, as ARRAY_AGG does,
+and without one its order is that of the rows read. Each takes FILTER
+and OVER, and the clauses of its constructor: `NULL ON NULL` or
+`ABSENT ON NULL`, ABSENT ON NULL by default of JSON_ARRAYAGG and NULL ON
+NULL of JSON_OBJECTAGG; of JSON_OBJECTAGG, `WITH UNIQUE KEYS`; FORMAT
+JSON after the value; and `RETURNING type`. A null name is SQLSTATE
+22004.
+
+```sql
+SELECT DEPT, JSON_ARRAYAGG(NAME ORDER BY SALARY DESC RETURNING VARCHAR(20)) AS BY_PAY,
+    JSON_OBJECTAGG(NAME VALUE SALARY RETURNING VARCHAR(40)) AS PAY FROM STAFF GROUP BY DEPT ORDER BY DEPT;
+SELECT JSON_ARRAYAGG(SALARY ORDER BY ID NULL ON NULL RETURNING VARCHAR(40)) FROM STAFF;
+```
+
+```
+ DEPT | BY_PAY               | PAY
+------+----------------------+------------------------------------------
+ ENG  | ["Grace","Ada"]      | {"Ada":7200.00,"Grace":8100.00}
+ OPS  | ["Edsger"]           | {"Edsger":5400.00}
+ NULL | ["Barbara"]          | {"Barbara":null}
+(3 rows)
+
+------------------------------------------
+ [7200.00,8100.00,5400.00,null]
 (1 row)
 ```
 
@@ -926,6 +958,24 @@ compare, `exists (path)`, `starts with` and `like_regex` test, and
 `$.Buyer` is not `$.buyer`, and `true`, `null` and the methods are lower
 case.
 
+The casting methods take what CAST takes, and an item of another kind
+is an exception ON ERROR replaces, as `.date()` of a string that is no
+date:
+
+```sql
+VALUES (JSON_VALUE('{"n":"12.345"}', 'lax $.n.decimal(4,2)' RETURNING DECIMAL(4,2)), JSON_VALUE('"2024-02-29"', 'lax $.date()' RETURNING DATE),
+        JSON_VALUE('{}', 'lax 0x1F' RETURNING INTEGER));
+VALUES JSON_VALUE('"x"', 'lax $.date()' ERROR ON ERROR);
+```
+
+```
+        |            |
+--------+------------+--------------
+  12.34 | 2024-02-29 |           31
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22018): 'x' is no DATE literal's string [ISO/IEC 9075:1992 §6.10 GR9a ii, GR10a ii, GR11a ii]
+```
+
 Lax mode takes an array for its elements where an object or a single
 item is wanted, and a single item for an array, and a member or element
 that is not there for nothing. Strict mode takes them as errors, which
@@ -996,6 +1046,63 @@ ENCODING, is valid SQL turborel does not process: SQLCODE -900.
 SQL/JSON, 22032 to 2203G, and [Limits](../appendix/d-limits.md) how deep
 JSON text and a path may nest. The functions' names and the words of
 their clauses are not reserved, so a column may be named any of them.
+
+### JSON_OBJECT and JSON_ARRAY
+
+JSON_OBJECT and JSON_ARRAY make JSON text of their operands:
+
+```
+JSON_OBJECT([[KEY] name VALUE value [FORMAT JSON] | name : value [FORMAT JSON], ...
+            [NULL ON NULL | ABSENT ON NULL] [WITH UNIQUE [KEYS] | WITHOUT UNIQUE [KEYS]]]
+            [RETURNING type [FORMAT JSON]])
+JSON_ARRAY([value [FORMAT JSON], ... [NULL ON NULL | ABSENT ON NULL]] [RETURNING type [FORMAT JSON]])
+JSON_ARRAY(query [FORMAT JSON] [NULL ON NULL | ABSENT ON NULL] [RETURNING type [FORMAT JSON]])
+```
+
+A name is a character string, and a null one is SQLSTATE 22004. A value
+that is a string, a number or a truth value is kept, one of another
+type, as a date, written as a string, and a value FORMAT JSON is the
+JSON text it holds, parsed. A value that is itself a constructor or a
+JSON_QUERY is FORMAT JSON of itself, so constructors nest. NULL ON NULL
+keeps a null value as JSON's null, ABSENT ON NULL leaves it out;
+JSON_OBJECT keeps it by default, JSON_ARRAY leaves it out. WITH UNIQUE
+KEYS makes two members of one name SQLSTATE 22030. JSON_ARRAY of a query
+is an array of its one column's values, in the order its ORDER BY gives,
+`[]` of no rows; a lone subquery in parentheses is so too. Each is
+CHARACTER VARYING(32767) without RETURNING, and text longer than its
+type is SQLSTATE 22001.
+
+```sql
+SELECT JSON_OBJECT('id' VALUE ID, 'buyer' : JSON_VALUE(DOC, 'lax $.buyer'), 'note' VALUE JSON_QUERY(DOC, 'lax $.note')
+                   ABSENT ON NULL RETURNING VARCHAR(40))
+  FROM PURCHASES ORDER BY ID;
+VALUES (JSON_ARRAY(1, 'two', CAST(NULL AS INTEGER), JSON_ARRAY(3, 4) RETURNING VARCHAR(20)),
+        JSON_ARRAY(SELECT ID FROM PURCHASES ORDER BY ID DESC RETURNING VARCHAR(10)));
+VALUES JSON_OBJECT('a' VALUE 1, 'a' VALUE 2 WITH UNIQUE KEYS);
+```
+
+```
+
+------------------------------------------
+ {"id":1,"buyer":"Ada"}
+ {"id":2,"buyer":"Grace"}
+(2 rows)
+                      |
+----------------------+------------
+ [1,"two",[3,4]]      | [2,1]
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22030): two members of a JSON object WITH UNIQUE KEYS have the key "a" [ISO/IEC 9075-2:2023 §6.34 GR2d ii 2]
+```
+
+Grace's note is JSON's null, which JSON_QUERY gives as the text `null`
+and JSON_OBJECT, of it FORMAT JSON, leaves out ABSENT ON NULL. In
+JSON_ARRAY of a query whose FROM clause ends in a table of no
+correlation name, FORMAT is read as that table's correlation name:
+write `JSON_ARRAY(SELECT J FROM T AS T FORMAT JSON)`, or the query in
+parentheses. The standard counts JSON_VALUE, JSON_QUERY and JSON_EXISTS
+as possibly non-deterministic, so a CHECK constraint or a generated
+column holds none of them, SQLCODE -103; the constructors and [IS
+JSON](05-predicates.md#is-json) may be there.
 
 ## Conditions as values
 

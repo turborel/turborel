@@ -11,22 +11,40 @@
 //! value, a `<regular identifier>` in upper case or a `<delimited
 //! identifier>`'s body [ISO/IEC 9075:1992 §5.2 SR10, SR11], is the
 //! variable's name, which the path language writes case-sensitively: so
-//! `PASSING 1 AS x` is `$X`, and `PASSING 1 AS "x"` is `$x`.
+//! `PASSING 1 AS x` is `$X`, and `PASSING 1 AS "x"` is `$x`. Each is a
+//! potential source of non-determinism [§9.16 SR1g, SR1h, SR1al], so a
+//! constraint or a generation expression does not contain one.
+//!
+//! The constructors, the aggregates and IS JSON are bound in
+//! `binder/json/construct.rs`.
+
+mod construct;
 
 use std::sync::Arc;
 
+use super::expression::nondeterministic_source;
 use super::{Binder, Scope, rule};
-use crate::ast::{JsonClauses, JsonFormat, JsonInput, JsonOperator, JsonValueBehavior, TypeName, ValueExpression};
-use crate::error::{At, Code, Result, SqlError};
-use crate::functions::{JsonCall, JsonOperation, ScalarRef, ValueSlot};
+use crate::ast::{JsonClauses, JsonExpression, JsonOperator, JsonValueBehavior, TypeName, ValueExpression};
+use crate::error::{At, Result};
+use crate::functions::{
+    JSON_EXISTS, JSON_QUERY, JSON_VALUE, JsonCall, JsonOperation, ScalarRef, ValueSlot, input_type, json_text, output_type,
+};
 use crate::json::{
     Accessor, ExistsBehavior, Expr as PathExpr, IMPLICIT_RETURNING, Path, Predicate, QueryBehavior, Quotes, Wrapper, parse_path,
 };
 use crate::logical::Expr;
 use crate::value::DataType;
-use crate::value::lob::LobKind;
 
 impl Binder<'_> {
+    /// [§6.28, §6.34, §6.35] The SQL/JSON function `j` that is a value: a
+    /// query operator, or a constructor (`binder/json/construct.rs`).
+    pub(super) fn json_expression(&self, j: &JsonExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        match j {
+            JsonExpression::Query(operator) => self.json_operator(operator, scope),
+            JsonExpression::Constructor(constructor) => self.json_constructor(constructor, scope),
+        }
+    }
+
     /// [§8.23, §6.28, §6.35] The SQL/JSON query operator `j`: a call of
     /// its function, and its declared type.
     ///
@@ -38,6 +56,16 @@ impl Binder<'_> {
     /// DEFAULT is not cast to the returned type; -900 of a binary string's
     /// JSON text, or a value or a type turborel does not implement here.
     pub(super) fn json_operator(&self, j: &JsonOperator, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        // [§9.16 SR1g, SR1h, SR1al] each a potential source of
+        // non-determinism, which a constraint does not contain.
+        if self.purpose.constrains() {
+            let (item, name) = match &j.clauses {
+                JsonClauses::Exists { .. } => ("al", JSON_EXISTS),
+                JsonClauses::Value { .. } => ("g", JSON_VALUE),
+                JsonClauses::Query { .. } => ("h", JSON_QUERY),
+            };
+            return Err(nondeterministic_source(item, name));
+        }
         let common = &j.common;
         let path = parse_path(&common.path, self.now).or_at(common.path_at)?;
         let names: Vec<&str> = common.passing.iter().map(|argument| argument.name.as_str()).collect();
@@ -65,7 +93,7 @@ impl Binder<'_> {
         // The first type is the context item's, the next the arguments'.
         types.iter().take(1).try_for_each(|context| json_text(context, j.common.context.format, CONTEXT_RULE))?;
         for (argument, t) in j.common.passing.iter().zip(types.iter().skip(1)) {
-            argument_type(t, &argument.input).or_at(argument.at)?;
+            input_type(t, argument.input.format, PASSED).or_at(argument.at)?;
         }
         starts_with_arguments(j, path, types)?;
         let JsonClauses::Value { returning, .. } = &j.clauses else { return Ok(()) };
@@ -100,7 +128,7 @@ fn operation(clauses: &JsonClauses) -> Result<(JsonOperation, Vec<&ValueExpressi
         }
         JsonClauses::Query { returning, wrapper, quotes, on_empty, on_error } => {
             let operation = JsonOperation::Query {
-                returning: query_type(returning.as_ref())?,
+                returning: output_type(returning.as_ref(), JSON_QUERY)?,
                 // [§6.35 SR6] WITHOUT ARRAY if none is written.
                 wrapper: wrapper.unwrap_or(Wrapper::Without),
                 // [§6.35 SR9] KEEP if none is written.
@@ -164,109 +192,10 @@ fn returnable(t: &DataType) -> bool {
     t.is_character() || t.is_numeric() || t.is_datetime() || matches!(t, DataType::Boolean)
 }
 
-/// [§6.35 SR1b, §10.13 SR2] The type JSON_QUERY returns: that of its
-/// `<JSON output clause>`, `written`, a character string type, FORMAT JSON
-/// explicit or implicit \[SR1\]; without one, the implementation-defined
-/// `IMPLICIT_RETURNING` (ID101).
-///
-/// # Errors
-///
-/// SQLCODE -103 if `written` is of no string type \[SR2\] or a character
-/// string type of ENCODING \[SR2a\]; -900 of a binary string type, whose
-/// encodings turborel does not implement.
-fn query_type(written: Option<&(TypeName, Option<JsonFormat>)>) -> Result<DataType> {
-    let Some((written, format)) = written else { return Ok(IMPLICIT_RETURNING) };
-    let TypeName::Data(t) = written else {
-        return Err(rule("[ISO/IEC 9075-2:2023 §10.13 SR2] the <JSON output clause> of JSON_QUERY is of a string type"));
-    };
-    if t.is_binary() {
-        return Err(binary(&format!("JSON_QUERY RETURNING {t}")));
-    }
-    if !t.is_character() {
-        return Err(rule(format!("[ISO/IEC 9075-2:2023 §10.13 SR2] the <JSON output clause> of JSON_QUERY is of a string type, not {t}")));
-    }
-    if format.is_some_and(|f| f.encoding.is_some()) {
-        return Err(rule(format!("[ISO/IEC 9075-2:2023 §10.13 SR2a] JSON_QUERY RETURNING {t}, a character string type, has no ENCODING")));
-    }
-    Ok(t.clone())
-}
-
 /// The Syntax Rule a context item of another type than a string's breaks.
 const CONTEXT_RULE: &str = "[ISO/IEC 9075-2:2023 §10.14 SR1] the context item of an SQL/JSON query operator is of a string type";
-/// The Syntax Rule an argument FORMAT JSON of another type breaks.
-const FORMATTED_RULE: &str = "[ISO/IEC 9075-2:2023 §10.12 SR6] a PASSING argument FORMAT JSON is of a string type";
-
-/// [§10.12 SR6, SR8] That JSON text of the type `t`, with the `<JSON input
-/// clause>` `format`, is a character string's, of no ENCODING; `cited` is
-/// the rule that makes it a string.
-///
-/// # Errors
-///
-/// SQLCODE -900 if `t` is a binary string type, whose encodings turborel
-/// does not implement; -103 if it is of no string type, or ENCODING is
-/// written \[SR8\].
-fn json_text(t: &DataType, format: Option<JsonFormat>, cited: &str) -> Result<()> {
-    if t.is_binary() {
-        return Err(binary(&format!("JSON text of {t}")));
-    }
-    if !t.is_character() {
-        return Err(rule(format!("{cited}, not {t}")));
-    }
-    if format.is_some_and(|f| f.encoding.is_some()) {
-        return Err(rule(format!("[ISO/IEC 9075-2:2023 §10.12 SR8] JSON text of {t}, a character string type, has no ENCODING")));
-    }
-    Ok(())
-}
-
-/// [§10.12 SR3, SR6 to SR8] That the PASSING argument `input`, of type
-/// `t`, is of a type it may be: FORMAT JSON, a character string's JSON
-/// text; else a character string, a number, a datetime, a truth value or
-/// an interval, which is cast to a character string [§9.46 GR11b i 2 B].
-///
-/// # Errors
-///
-/// As `json_text` of an argument FORMAT JSON; else SQLCODE -103 of a
-/// binary string \[SR7\], an array, a multiset or a row, which CAST takes
-/// to no character string \[SR3\]; -900 of a user-defined type, a
-/// reference or a type beyond the standard, whose casts turborel does not
-/// apply here.
-fn argument_type(t: &DataType, input: &JsonInput) -> Result<()> {
-    if input.format.is_some() {
-        return json_text(t, input.format, FORMATTED_RULE);
-    }
-    match t {
-        DataType::Character { .. }
-        | DataType::Varying { .. }
-        | DataType::Exact { .. }
-        | DataType::Approximate { .. }
-        | DataType::DecFloat { .. }
-        | DataType::Boolean
-        | DataType::Date
-        | DataType::Time { .. }
-        | DataType::Timestamp { .. }
-        | DataType::Interval(_)
-        | DataType::Lob { kind: LobKind::Character, .. } => Ok(()),
-        DataType::Binary { .. } | DataType::VarBinary { .. } | DataType::Lob { kind: LobKind::Binary, .. } => {
-            Err(rule(format!("[ISO/IEC 9075-2:2023 §10.12 SR7] a PASSING argument of the binary string type {t} is FORMAT JSON")))
-        }
-        DataType::Array(_) | DataType::Multiset(_) | DataType::Row(_) => {
-            Err(rule(format!("[ISO/IEC 9075-2:2023 §10.12 SR3] a PASSING argument is of a type CAST takes to a character string, not {t}")))
-        }
-        DataType::Distinct(_) | DataType::Structured(_) | DataType::Reference(_) | DataType::Extension(_) => Err(SqlError::new(
-            Code::Unsupported,
-            format!("[DESIGN] a PASSING argument of {t}, cast to a character string, is valid SQL but is not implemented (RULES.md D18)"),
-        )),
-    }
-}
-
-/// The error of `what`, of a binary string type, valid but not
-/// implemented (RULES.md D18).
-fn binary(what: &str) -> SqlError {
-    SqlError::new(
-        Code::Unsupported,
-        format!("[DESIGN] {what}, a binary string type, FORMAT JSON ENCODING, is valid SQL but is not implemented (RULES.md D18)"),
-    )
-}
+/// What a PASSING argument is, in the errors of its type.
+const PASSED: &str = "a PASSING argument";
 
 /// [§9.46 SR8] That each named variable of `path` that is a `<JSON starts
 /// with initial>` is equivalent to an argument of `j` that is a character

@@ -6,9 +6,22 @@
 //! implicit. It applies the operator's General Rules (`json.rs`) to its
 //! operands' values.
 //!
+//! The constructor functions, the aggregates and IS JSON are in
+//! `functions/json/construct.rs` and `functions/json/aggregate.rs`, and
+//! the Syntax Rules of their operands' types and the query operators' in
+//! `functions/json/operands.rs`.
+//!
 //! A call's arguments are its operands' values in this order: the context
 //! item's, each PASSING argument's, then the DEFAULT values of ON EMPTY
 //! and of ON ERROR, of those that are DEFAULT.
+
+mod aggregate;
+mod construct;
+mod operands;
+
+pub use aggregate::{JsonArrayAggregate, JsonObjectAggregate};
+pub use construct::{Construction, IsJsonCall, JSON_ARRAY, JSON_ARRAYAGG, JSON_OBJECT, JSON_OBJECTAGG, JsonConstruct};
+pub(crate) use operands::{input_type, json_text, name_type, output_type};
 
 use super::ScalarFunction;
 use crate::error::{Code, Result, SqlError};

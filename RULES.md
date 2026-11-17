@@ -1348,9 +1348,24 @@ spells every clause, so two calls of other clauses are never taken for
 one expression. A PASSING argument's identifier names the variable of
 its value as SQL defines it, upper case unless delimited [§9.46 SR4]. A
 cast's warning reaches the statement through
-`ScalarFunction::call_warned`, as a CAST's does. The syntax of IS JSON
-and of the constructors is not read yet, so no statement reaches their
-rules; JSON_TABLE is to call the same engine as the query operators.
+`ScalarFunction::call_warned`, as a CAST's does. The query operators
+are potential sources of non-determinism [§9.16 SR1g, SR1h, SR1al], so a
+constraint or a generation expression holds none.
+
+IS JSON, JSON_OBJECT and JSON_ARRAY by enumeration are bound alike, each
+a call of a function of its own holding its clauses. The aggregates are
+set functions of a row, which is never the null value, as ARRAY_AGG is:
+JSON_OBJECTAGG's of its name and value, JSON_ARRAYAGG's of its value and
+sort keys, so the null values their rules keep reach the accumulator and
+the executor's grouping, FILTER, windows and spilling serve them as they
+serve every set function. JSON_ARRAYAGG orders its rows when it is
+finished, stably, as ARRAY_AGG does, and JSON_ARRAY by query is that
+aggregate of its query's rows, as ARRAY by query is. What an aggregate
+holds is bounded by the members and elements one may make, `MAX_MEMBERS`
+and `MAX_ELEMENTS`. An input that is a JSON-returning function, a
+constructor or JSON_QUERY, is FORMAT JSON implicitly [§10.12 SR4a], so
+constructors nest. JSON_TABLE is to call the same engine as the query
+operators.
 
 #### D33. Schema changes are transactional
 

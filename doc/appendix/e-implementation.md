@@ -68,6 +68,10 @@ choices:
 | Which error datetime() raises of several items in error | the first item's |
 | A path whose evaluation must raise an exception, as `strict $[last+1]` | accepted, the exception raised as it is evaluated |
 | An SQL/JSON item as JSON text | no white space between tokens; members in the order kept; only `"`, `\` and control characters escaped; a DECFLOAT without an exponent |
+| JSON_OBJECT, JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG of no RETURNING | CHARACTER VARYING(32767) |
+| A constructor's input of a type it does not keep, as a date | cast to CHARACTER VARYING(32767) |
+| An element FORMAT JSON of JSON_ARRAY or JSON_ARRAYAGG | parsed WITHOUT UNIQUE KEYS |
+| The order of JSON_ARRAYAGG's elements without ORDER BY | as the rows are read |
 
 [CONFORMANCE.md](../../CONFORMANCE.md) lists each choice with the rule
 it is of.

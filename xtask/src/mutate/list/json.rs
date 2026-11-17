@@ -1,13 +1,16 @@
-//! The mutations of the SQL/JSON query operators (RULES.md R-TEST-9,
-//! D84): what ON ERROR replaces, lax mode's unwrapping, JSON_QUERY's
+//! The mutations of SQL/JSON (RULES.md R-TEST-9, D84): of the query
+//! operators, what ON ERROR replaces, lax mode's unwrapping, JSON_QUERY's
 //! conditional wrapper, the Syntax Rules the binder checks of a path, the
-//! PASSING identifier's value, the warning of a call, and the name that
-//! tells two calls apart.
+//! PASSING identifier's value, the warning of a call, the name that tells
+//! two calls apart and their refusal in a constraint; of the constructors,
+//! ABSENT ON NULL, WITH UNIQUE KEYS, a null name, the implicit FORMAT JSON
+//! of a JSON-returning function; IS JSON's kind; and JSON_ARRAYAGG's
+//! order and its result of no rows.
 
 use super::{Mutation, Package};
 
-/// The mutations of the SQL/JSON query operators, in the order they run.
-pub const JSON: [Mutation; 8] = [
+/// The mutations of SQL/JSON, in the order they run.
+pub const JSON: [Mutation; 16] = [
     Mutation {
         name: "json-on-error-catches-every-error",
         package: Package::Core,
@@ -86,6 +89,86 @@ pub const JSON: [Mutation; 8] = [
         original: "    format!(\"{shown} {clauses}\")",
         replacement: "    name.to_owned()",
         integration: &["json_functions::where_written_8_23"],
+        unit: &[],
+    },
+    Mutation {
+        name: "json-operators-in-a-constraint",
+        package: Package::Core,
+        breaks: "JSON_VALUE, JSON_QUERY and JSON_EXISTS, potential sources of non-determinism, are taken in a CHECK constraint",
+        file: "src/binder/json.rs",
+        original: "        if self.purpose.constrains() {",
+        replacement: "        if false {",
+        integration: &["json_functions::where_written_8_23"],
+        unit: &[],
+    },
+    Mutation {
+        name: "json-absent-on-null-keeps-nulls",
+        package: Package::Core,
+        breaks: "JSON_OBJECT ABSENT ON NULL keeps a member bound to the SQL/JSON null",
+        file: "src/json/construct/object.rs",
+        original: "        if self.on_null == OnNull::Absent && matches!(bound, Item::Null) {",
+        replacement: "        if false {",
+        integration: &["json_constructors::json_object_6_34"],
+        unit: &[],
+    },
+    Mutation {
+        name: "json-unique-keys-unchecked",
+        package: Package::Core,
+        breaks: "WITH UNIQUE KEYS notes no name, so two members of one name are no exception 22030",
+        file: "src/json/construct/object.rs",
+        original: "        if self.keys == Keys::Unique {",
+        replacement: "        if false {",
+        integration: &["json_constructors::json_object_errors_6_34"],
+        unit: &[],
+    },
+    Mutation {
+        name: "json-null-name-of-another-state",
+        package: Package::Core,
+        breaks: "a null name of a member is SQLSTATE 22000, not null value not allowed, 22004",
+        file: "src/json/construct.rs",
+        original: "        .with_state(SqlState::NULL_VALUE_NOT_ALLOWED)),",
+        replacement: "        .with_state(SqlState::DATA_EXCEPTION)),",
+        integration: &["json_constructors::json_object_errors_6_34"],
+        unit: &[],
+    },
+    Mutation {
+        name: "json-returning-function-not-format-json",
+        package: Package::Core,
+        breaks: "a JSON-returning function as an input is a string, not FORMAT JSON implicitly, so JSON_ARRAY(JSON_ARRAY(1, 2)) is [\"[1,2]\"]",
+        file: "src/parser/json.rs",
+        original: "json_returning(&value).then_some(JsonFormat { encoding: None })",
+        replacement: "None",
+        integration: &["json_constructors::json_array_6_34", "json_constructors::json_object_6_34"],
+        unit: &[],
+    },
+    Mutation {
+        name: "json-is-json-array-of-anything",
+        package: Package::Core,
+        breaks: "IS JSON ARRAY is true of any JSON text, an object too",
+        file: "src/json/predicate.rs",
+        original: "        JsonType::Array => matches!(item, Item::Array(_)),",
+        replacement: "        JsonType::Array => true,",
+        integration: &["json_constructors::is_json_8_22"],
+        unit: &[],
+    },
+    Mutation {
+        name: "json-arrayagg-of-no-rows-empty",
+        package: Package::Core,
+        breaks: "JSON_ARRAYAGG of no rows is an empty array, not the null value",
+        file: "src/functions/json/aggregate.rs",
+        original: "        if !self.any && !self.by_query {",
+        replacement: "        if false {",
+        integration: &["json_constructors::json_aggregates_10_11"],
+        unit: &[],
+    },
+    Mutation {
+        name: "json-arrayagg-order-ignored",
+        package: Package::Core,
+        breaks: "JSON_ARRAYAGG keeps the order its rows came in, not its ORDER BY's",
+        file: "src/functions/json/aggregate.rs",
+        original: "        rows.sort_by(|a, b| Elements::order(a, b, &self.orders));",
+        replacement: "        let _ = &self.orders;",
+        integration: &["json_constructors::json_aggregates_10_11", "json_constructors::json_array_6_34"],
         unit: &[],
     },
 ];

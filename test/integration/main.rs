@@ -136,6 +136,7 @@ mod intervals;
 mod isolation;
 mod joined_tables;
 mod joins;
+mod json_constructors;
 mod json_functions;
 mod kept_plans;
 mod language;

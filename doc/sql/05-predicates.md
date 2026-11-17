@@ -194,6 +194,30 @@ SELECT ID, JSON_EXISTS(DOC, 'lax $.note'), JSON_EXISTS(DOC, 'strict $.note.x'),
 A member whose value is JSON's null is there, so `lax $.note` is true of
 the second row.
 
+## IS JSON
+
+`s [FORMAT JSON] IS [NOT] JSON [VALUE | ARRAY | OBJECT | SCALAR] [WITH
+UNIQUE [KEYS] | WITHOUT UNIQUE [KEYS]]` is true if the character string
+s is JSON text of the kind named, any kind, VALUE, if none is: an array,
+an object, or a scalar, which is neither. It is false of text of
+another kind or no JSON text, and WITH UNIQUE KEYS of an object with two
+members of one name. It is unknown if s is null. IS NOT JSON is its
+negation.
+
+```sql
+SELECT ID, DOC IS JSON OBJECT, DOC IS JSON ARRAY, 'nope' IS NOT JSON, '{"a":1,"a":2}' IS JSON WITH UNIQUE KEYS FROM PURCHASES ORDER BY ID;
+```
+
+```
+           ID |       |       |       |
+--------------+-------+-------+-------+-------
+            1 | TRUE  | FALSE | TRUE  | FALSE
+            2 | TRUE  | FALSE | TRUE  | FALSE
+(2 rows)
+```
+
+A CHECK constraint may hold it, as `CHECK (DOC IS JSON OBJECT)`.
+
 ## NULL
 
 `x IS NULL` is true if x is null; `IS NOT NULL` if it is not. It is

@@ -1,13 +1,18 @@
 //! Abstract syntax of the SQL/JSON query operators [ISO/IEC 9075-2:2023
 //! §4.48.4]: JSON_VALUE [§6.28] and JSON_QUERY [§6.35], each a
-//! `ValueExpression::Json`, and JSON_EXISTS [§8.23], a
+//! `JsonExpression::Query` of a `ValueExpression::Json`, and JSON_EXISTS [§8.23], a
 //! `Predicate::JsonExists`; and the `<JSON API common syntax>` they share
 //! [§10.14], with its `<JSON input expression>`s [§10.12].
 //!
 //! A clause not written is none here; the binder applies the Syntax Rules
-//! that make one implicit.
+//! that make one implicit. The constructors and IS JSON are in
+//! `ast/json/construct.rs`.
 
-use super::{TypeName, ValueExpression};
+mod construct;
+
+pub use construct::{IsJson, JsonAggregate, JsonConstructor, JsonMember, JsonOutput};
+
+use super::{Subquery, TypeName, ValueExpression};
 use crate::json::{ExistsBehavior, QueryBehavior, Quotes, Wrapper};
 
 /// [§10.12, §10.13] `<JSON representation>`: JSON, of the encoding
@@ -128,6 +133,35 @@ impl JsonOperator {
                     f(value);
                 }
             }
+        }
+    }
+}
+
+/// An SQL/JSON function that is a value: JSON_VALUE or JSON_QUERY, or a
+/// constructor, JSON_OBJECT or JSON_ARRAY.
+#[derive(Debug, Clone)]
+pub enum JsonExpression {
+    /// JSON_VALUE or JSON_QUERY.
+    Query(Box<JsonOperator>),
+    /// JSON_OBJECT or JSON_ARRAY [§6.34].
+    Constructor(JsonConstructor),
+}
+
+impl JsonExpression {
+    /// Calls `f` with each value expression of it, as its kind's
+    /// `for_each_child` does.
+    pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
+        match self {
+            JsonExpression::Query(j) => j.for_each_child(f),
+            JsonExpression::Constructor(c) => c.for_each_child(f),
+        }
+    }
+
+    /// The `<query expression>` of a JSON_ARRAY by query, if it is one.
+    pub fn subquery(&self) -> Option<&Subquery> {
+        match self {
+            JsonExpression::Constructor(JsonConstructor::ArrayQuery { query, .. }) => Some(query),
+            JsonExpression::Query(_) | JsonExpression::Constructor(JsonConstructor::Object { .. } | JsonConstructor::Array { .. }) => None,
         }
     }
 }
