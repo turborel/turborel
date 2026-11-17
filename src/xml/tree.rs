@@ -188,10 +188,22 @@ impl Tree {
         self.node(id).and_then(|n| self.linked(n.parent))
     }
 
+    /// The first child of `id`, if it has children.
+    #[must_use]
+    pub fn first_child(&self, id: NodeId) -> Option<NodeId> {
+        self.node(id).and_then(|n| self.linked(n.first_child))
+    }
+
+    /// The next sibling of `id`, if it has one: the child after it of its
+    /// parent.
+    #[must_use]
+    pub fn next_sibling(&self, id: NodeId) -> Option<NodeId> {
+        self.node(id).and_then(|n| self.linked(n.next_sibling))
+    }
+
     /// The children of `id` [XQueryDM §5.3], in document order.
     pub fn children(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        let first = self.node(id).and_then(|n| self.linked(n.first_child));
-        std::iter::successors(first, move |&c| self.node(c).and_then(|n| self.linked(n.next_sibling)))
+        std::iter::successors(self.first_child(id), move |&c| self.next_sibling(c))
     }
 
     /// The attributes of element `id` [XQueryDM §5.1], in the order they

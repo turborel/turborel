@@ -230,6 +230,9 @@ impl SqlState {
     /// Data exception: invalid XML content [ISO/IEC 9075-14:2006 draft
     /// §10.16 GR6a ii, §23.1].
     pub const INVALID_XML_CONTENT: SqlState = SqlState(*b"2200N");
+    /// Data exception: XQuery serialization error [ISO/IEC 9075-14:2006
+    /// draft §10.15 GR11, §23.1].
+    pub const XQUERY_SERIALIZATION_ERROR: SqlState = SqlState(*b"2200W");
     /// Data exception: sequence generator limit exceeded [ISO/IEC
     /// 9075-2:2023 §9.35 GR3a].
     pub const SEQUENCE_GENERATOR_LIMIT_EXCEEDED: SqlState = SqlState(*b"2200H");

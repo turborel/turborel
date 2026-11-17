@@ -19,6 +19,8 @@
 
 mod chars;
 mod parse;
+mod sequence;
+mod serialize;
 mod tree;
 
 pub use chars::{
@@ -26,6 +28,8 @@ pub use chars::{
     is_pubid_char, is_restricted, is_space,
 };
 pub use parse::{Syntax, Whitespace, parse, parse_bytes};
+pub use sequence::{Atomic, AtomicType, Item, Node, Sequence};
+pub use serialize::{Parameters, serialize};
 pub use tree::{Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree};
 
 use crate::error::{Code, SqlError};

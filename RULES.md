@@ -2825,6 +2825,14 @@ keep each finite, and a text past either is SQLCODE -900 (D18):
 - `MAX_TEXT`, 16 MiB: a tree's text, and what entities' replacement texts
   add to a parse, so nested entities cannot expand without end.
 
+An XML value is a sequence (`xml::Sequence`) of items, each a node or an
+atomic value. A node is its tree, shared, and its place in it, so the
+nodes one tree gives many values keep their identity; storing a value
+copies it. `xml::serialize` writes a value by the XML output method of
+XSLT 2.0 and XQuery 1.0 Serialization, after its sequence normalization.
+It writes no CDATA section, document type declaration or indentation, and
+writes as character references what a parse would otherwise change.
+
 The stored form of an XML value and its indexes (the primary, path, value
 and property indexes of Pal et al.) are not decided here. They come with
 the XML type and are agreed before they land.
