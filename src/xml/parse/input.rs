@@ -20,7 +20,7 @@ const LINE_SEPARATOR: char = '\u{2028}';
 /// each carriage return and line feed, and each carriage return alone, a
 /// line feed; of XML 1.1 also each carriage return and next line, each
 /// next line alone and each line separator.
-pub(super) fn normalized(version: Version, chars: &[char]) -> Vec<char> {
+pub(crate) fn normalized(version: Version, chars: &[char]) -> Vec<char> {
     let mut out = Vec::with_capacity(chars.len());
     let mut after_return = false;
     for &c in chars {

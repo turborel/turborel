@@ -37,6 +37,9 @@ mod input;
 mod names;
 mod refs;
 
+pub(crate) use input::normalized;
+pub(crate) use refs::predefined;
+
 use std::rc::Rc;
 
 use super::chars::Version;

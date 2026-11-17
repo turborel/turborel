@@ -70,6 +70,7 @@ mod windows;
 mod with;
 mod xml;
 mod xml_publishing;
+mod xquery;
 mod zones;
 
 use super::{Mutation, Package};
@@ -92,7 +93,7 @@ pub fn all() -> Vec<Mutation> {
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
     core.into_iter()
         .chain(areas::all())
-        .chain([projection::PROJECTION.as_slice()])
+        .chain([projection::PROJECTION.as_slice(), &xquery::XQUERY])
         .chain([xml_publishing::XML_PUBLISHING.as_slice()])
         .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &xml::XML, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()

@@ -65,6 +65,7 @@ pub mod threads;
 pub mod txn;
 pub mod value;
 pub mod xml;
+pub mod xquery;
 
 /// The manual's chapter on embedding the database (`doc/client/`), whose
 /// examples run as its doc tests (RULES.md R-DOC-8).

@@ -27,7 +27,7 @@ pub(super) enum Expansion {
 
 /// The character the predefined entity `name` stands for, if it is one
 /// [XML §4.6].
-pub(super) fn predefined(name: &str) -> Option<char> {
+pub(crate) fn predefined(name: &str) -> Option<char> {
     match name {
         "lt" => Some('<'),
         "gt" => Some('>'),

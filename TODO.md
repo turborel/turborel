@@ -141,7 +141,12 @@ features.
 - XQuery: XMLQUERY, XMLEXISTS and XMLTABLE over the XQuery 1.0 data
   model, its functions and operators, passed BY VALUE or BY REF (X096,
   X200 to X206, X221, X222, X300 to X305). An index of documents' paths
-  and values follows ([Index structures](#index-structures)).
+  and values follows ([Index structures](#index-structures)). The parser
+  exists (`src/xquery.rs`): the whole XQuery 1.0 grammar into a tree,
+  written back as text, with the static errors the text alone shows.
+  Left: the static context (namespaces, names, types, the boundary-space
+  policy applied), evaluation, and the imports, which are parsed and
+  refused.
 - XML Schema: registered XML schemas, XML(DOCUMENT(XMLSCHEMA)) and
   XML(CONTENT(XMLSCHEMA)), XMLVALIDATE and IS VALID, and their
   Information Schema (X141 to X161, X191, X192, X256, X257, X260 to X286).

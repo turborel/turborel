@@ -248,8 +248,9 @@ impl SqlState {
     /// Data exception: XML value overflow [ISO/IEC 9075-14:2006 draft §11.2
     /// GR1, §23.1].
     pub const XML_VALUE_OVERFLOW: SqlState = SqlState(*b"2200R");
-    /// XQuery error [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j, §6.13
-    /// GR8, §23.1].
+    /// XQuery error: a static error, type error or dynamic error XQuery
+    /// raises [ISO/IEC 9075-14:2006 draft §3.1.3.56, §6.6 GR3d vi, GR4j,
+    /// §6.13 GR8, §6.18 GR3, §23.1].
     pub const XQUERY_ERROR: SqlState = SqlState(*b"10000");
     /// SQL/XML mapping error: invalid XML character [ISO/IEC 9075-14:2006
     /// draft §9.8 GR9a ii, §23.1].

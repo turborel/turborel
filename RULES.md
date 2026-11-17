@@ -2863,6 +2863,34 @@ objects, logged chunk by chunk, so recovery and replication need nothing
 of their own. A value is held whole when read, at most `MAX_STORED`, the
 one place XML departs from D79, as a value must be a tree to be read.
 
+XQuery 1.0, the text XMLQUERY evaluates, is parsed by `xquery::parse`,
+written here as D3 requires, by the lexical rules of XML 1.1 or 1.0
+(XMLQUERY reads by XML 1.1's, as turborel has Feature X211). Its lexer
+reads tokens as the parser asks for them, so each part of a query is
+read in the state the grammar puts it in: whitespace and nested comments
+separate the tokens of expressions, where a keyword is a name the parser
+recognizes by what follows it; a direct constructor's tags, attribute
+values and content are read character by character, and each enclosed
+expression as tokens again. The parser is recursive descent, one method
+a production, and makes a tree of the grammar's productions that writes
+itself back as text parsing to the same tree. A chain of operators of
+one precedence is one node, so a long chain makes no deep tree. The
+parser raises what the text alone shows, as SQLSTATE 10000, XQuery
+error, naming the XQuery error code: syntax errors (err:XPST0003), and
+the static errors of the prolog and of direct constructors' attributes
+that need no static context. Imports and library modules are parsed and
+refused, as turborel supports neither the Schema Import nor the Module
+Feature.
+
+The parser recurses, so its depth is bounded (R-CF-6): each
+`ExprSingle`, each direct element constructor and each operator's right
+operand of a higher precedence counts one level, and a query deeper than
+`xquery::MAX_NESTING`, 64, is SQLCODE -900 (D18). Every walk of the tree
+it makes is bounded with it. The functions the recursion passes through
+hold only what it needs, so the deepest query of each shape parses, is
+written back and is dropped within half of a thread's default stack, as
+a test checks.
+
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation
 would take one. Over a connection a value is its serialization as
