@@ -1981,6 +1981,7 @@ CREATE TABLE ... USING engine WITH (name = value, ...)
 ALTER TABLE ... SET (...)
 ALTER TABLE ... USING engine WITH (...)
 ALTER TABLE ... RESEAL
+ALTER TABLE ... RENAME [COLUMN] ... TO ...
 ```
 
 The row store takes OUT_OF_LINE and the options beginning STATISTICS. and
@@ -1992,6 +1993,14 @@ The database declares ENCODINGS for every table. These are the registered
 encodings its rows pass through, such as LZ4, or AES-256-GCM or
 ChaCha20-Poly1305 with its key (RULES.md D48). RESEAL copies a table's rows
 through those it names now, and is a non-reserved word.
+
+RENAME COLUMN gives a column a new name in place (RULES.md D83), which
+SQL:2023 has no statement for [§11.10]. RENAME is a non-reserved word.
+The rename changes the column's descriptor, the periods it bounds and
+the table options that name it, and is refused while a view, CHECK,
+assertion, trigger, routine or generation expression reading the table
+names the column or its new name, or a view selects `*` of it, SQLCODE
+-103, as is one of a typed or system-versioned table.
 
 ### Views of the running system
 

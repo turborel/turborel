@@ -120,6 +120,7 @@ verification approach DO-178C expects (§8).
 | D80 | Multisets are unordered values, paired by classes and a matching |
 | D81 | Structured types: values name their type, typed tables keep their own rows, references are octets |
 | D82 | System-versioned tables keep their historical rows in a hidden table of their own |
+| D83 | A column is renamed in place, refused while a text names it |
 
 ### The project
 
@@ -1254,6 +1255,31 @@ period, versioned or not, stamps the rows written to it with it: an
 insert as BEFORE triggers would see the row, an update where the row is
 written, both as the period's start, the end the highest value of the
 column's type.
+
+#### D83. A column is renamed in place, refused while a text names it
+
+SQL:2023 renames no column [ISO/IEC 9075-2:2023 §11.10], so ALTER TABLE
+… RENAME \[COLUMN\] … TO … is an extension. It changes the column's name
+in the table's descriptor and nothing of its rows, so it copies none and
+gives the table no new storage generation. What refers to a column by
+its place, a key, a NOT NULL, an index, a privilege or a statistic, is
+unchanged. What refers to it by its name as data changes with it: the
+start or end of a period, its period constraint's text, written again
+of the period's names, and each table option of columns, as
+COLUMNSTORE.ORDER (D31).
+
+What names a column in SQL text read again, a view's query, a CHECK, an
+assertion, a trigger, a routine's body or a generation expression, is
+not rewritten, for a name in a text may be captured by another scope
+once changed. While a text that reads the table names the column or its
+new name as an identifier, or a view that reads it selects `*` after
+SELECT or a qualifier, the rename is refused, as DROP COLUMN RESTRICT is
+[ISO/IEC 9075:1992 §11.15 SR4]. The test is of the text's tokens, so it
+is conservative: a name of another table's column of the same spelling
+refuses it too. A typed table's columns are its type's attributes, and a
+system-versioned table's are not altered [§11.12 SR2], so neither is
+renamed. The rename is logged as the action written, as every ALTER
+TABLE is (D33), so recovery and a standby apply it again.
 
 #### D33. Schema changes are transactional
 

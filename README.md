@@ -68,6 +68,7 @@ behind it, and each can be replaced or added to.
 - Triggers before, after and instead of a change, for each row or
   statement, and roles with privileges granted and revoked.
 - Domains, assertions, temporary tables, scrollable cursors and dynamic SQL.
+- Columns renamed in place, without copying their rows.
 - Import of CSV and tab-separated files through the client.
 - Library, embedded modes
 - A server over TCP, Unix sockets or Windows named pipes, with TLS,

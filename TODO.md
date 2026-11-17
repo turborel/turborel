@@ -80,14 +80,7 @@ Nothing is open.
 
 ## Storage and durability
 
-- Renaming a column [EXTENSION], ALTER TABLE … RENAME COLUMN … TO …,
-  with COLUMNSTORE.ORDER following it (D31). SQL:2023 renames no column
-  [§11.10], so today a new name takes a new column and a copy of its data.
-  A view, a constraint or a generated column that names the column by its
-  text keeps the old name, so the rename refuses while one depends on it,
-  as DROP COLUMN RESTRICT does [§11.23 SR7], and changes the column's
-  descriptor, the information schema and COLUMNSTORE.ORDER in one
-  transaction, durable and replicated as other schema changes are.
+Nothing is open.
 
 ---
 

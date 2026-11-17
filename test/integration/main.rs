@@ -204,6 +204,7 @@ mod refusals;
 mod regex_functions;
 mod regular_expressions;
 mod rekeying;
+mod renamed_columns;
 mod reopen;
 mod replicated_state;
 mod restrict;

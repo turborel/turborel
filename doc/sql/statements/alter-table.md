@@ -26,6 +26,7 @@ ALTER TABLE: change a base table
     | SET ( <table option> [ { , <table option> }... ] )
     | USING <engine name> [ WITH ( <table option> [ { , <table option> }... ] ) ]
     | RESEAL
+    | RENAME [ COLUMN ] <column name> TO <column name>
 
 <alter column action> ::=
       SET DEFAULT <default option>
@@ -81,6 +82,14 @@ its referenced type, so that `->` and DEREF find the rows its values
 identify. DROP SCOPE removes it, with RESTRICT refused while a view,
 constraint or routine dereferences the column, and with CASCADE
 dropping those.
+
+**RENAME COLUMN** *(extension)* gives a column a new name, its values,
+place, keys, indexes and privileges kept, and its rows not copied. A
+period it bounds and a table option that names it, such as
+COLUMNSTORE.ORDER, name it anew. A view, CHECK, assertion, trigger,
+routine or generation expression that reads the table and names the
+column, or its new name, refuses it, as does a view that selects `*`
+of the table: drop or change those first.
 
 **DROP COLUMN** removes the column and its values; the columns after it
 move up one place. A table constraint that reads that column alone goes
@@ -214,6 +223,10 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
    no row and is every session's at once. The table's constraints, a
    constraint added among them, hold of each session's rows, read as
    that session sees the other temporary tables: its own rows of them.
+15. RENAME COLUMN: the table has the column, and no column or period
+    of the new name. It is no typed table and not system-versioned, and
+    nothing the RENAME COLUMN paragraph above lists names the column or
+    the new name.
 10. No cursor of the transaction reads the table.
 11. The transaction is not READ ONLY.
 
@@ -356,6 +369,25 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.NOPE is not defined [ISO/IEC 9075:1
 turborel: SQLCODE -102 (SQLSTATE 2A000): expected CASCADE or RESTRICT, found end of statement (at character 34)
 ```
 
+A column renamed, and a rename a view refuses:
+
+```sql
+ALTER TABLE STAFF RENAME COLUMN NAME TO FULL_NAME;
+CREATE VIEW WHO AS SELECT FULL_NAME FROM STAFF;
+ALTER TABLE STAFF RENAME COLUMN FULL_NAME TO GIVEN;
+SELECT ID, FULL_NAME FROM STAFF WHERE ID = 1;
+```
+
+```
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.WHO names ANN.STAFF.FULL_NAME or GIVEN in its text, so the column is renamed only once nothing does (at character 32)
+           ID | FULL_NAME
+--------------+--------------------------------
+            1 | Ada
+(1 row)
+```
+
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.10 to §11.17. A column dropped takes a table
@@ -368,7 +400,8 @@ period keeps of its columns §11.23 SR6 and §11.26 SR10. ADD and DROP
 SYSTEM VERSIONING are §11.29 and §11.30, Feature T180, the start given
 existing rows by ADD PERIOD FOR SYSTEM_TIME the transaction timestamp
 (IV181). SET,
-USING and RESEAL are extensions. SQL-86 has no ALTER TABLE.
+USING, RESEAL and RENAME COLUMN are extensions; SQL:2023 renames no
+column. SQL-86 has no ALTER TABLE.
 
 ## SEE ALSO
 

@@ -26,6 +26,7 @@ mod constraints;
 mod depending;
 mod identity;
 mod periods;
+mod rename;
 mod scope;
 mod storage;
 mod truncate;
@@ -158,6 +159,10 @@ impl State {
             }
             AlterAction::AlterColumn { column, at, action: a @ (AlterColumnAction::AddScope(_) | AlterColumnAction::DropScope(_)) } => {
                 Ok((self.alter_scope((qn, names), column, a).or_at(*at)?, Made::default(), None))
+            }
+            AlterAction::AlterColumn { column, at, action: AlterColumnAction::Rename(to) } => {
+                self.rename_column(qn, column, to).or_at(*at)?;
+                Ok((Dropped::default(), Made::default(), None))
             }
             AlterAction::AlterColumn { column, at, action } => {
                 self.alter_column((qn, zone), (column, *at), (action, epochs)).or_at(*at)?;

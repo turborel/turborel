@@ -79,6 +79,9 @@ pub enum AlterColumnAction {
     /// [§11.18] `<drop column scope clause>` ::= DROP SCOPE `<drop
     /// behavior>`
     DropScope(DropBehavior),
+    /// \[EXTENSION\] RENAME \[COLUMN\] `<column name>` TO `<column
+    /// name>`: the new name (`db/alter/rename.rs`).
+    Rename(String),
 }
 
 /// [ISO/IEC 9075-2:2023 §14.11] `<override clause>` ::= OVERRIDING USER

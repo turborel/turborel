@@ -40,6 +40,7 @@ mod readers;
 mod reads;
 mod regex;
 mod rekey;
+mod rename;
 mod roles;
 mod routines;
 mod rtree;

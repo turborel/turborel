@@ -21,7 +21,9 @@
 //! now.
 
 use super::Parser;
-use crate::ast::{AlterAction, DropBehavior, DropObject, IndexStatement, OptionValue, SqlStatement, TableOptionValue, TableStorage};
+use crate::ast::{
+    AlterAction, AlterColumnAction, DropBehavior, DropObject, IndexStatement, OptionValue, SqlStatement, TableOptionValue, TableStorage,
+};
 use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
@@ -29,6 +31,10 @@ use crate::lexer::{Tok, delim, kw};
 /// \[EXTENSION\] The `<non-reserved word>` of `<alter table storage>` that
 /// seals a table's rows again (RULES.md D48).
 pub const RESEAL: &str = "RESEAL";
+
+/// \[EXTENSION\] The `<non-reserved word>` that begins RENAME \[COLUMN\]
+/// `<column name>` TO `<column name>` (`db/alter/rename.rs`).
+const RENAME: &str = "RENAME";
 
 /// The key words after CREATE that begin a definition `schema_statement`
 /// reads.
@@ -291,8 +297,28 @@ impl Parser {
             let column = self.identifier()?;
             return Ok(AlterAction::AlterColumn { column, at, action: self.alter_column_action()? });
         }
+        if let Some(rename) = self.rename_action()? {
+            return Ok(rename);
+        }
         self.expect_kw(kw::DROP)?;
         self.drop_action()
+    }
+
+    /// \[EXTENSION\] RENAME \[COLUMN\] `<column name>` TO `<column
+    /// name>`, if RENAME begins it (`db/alter/rename.rs`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it is not written so.
+    fn rename_action(&mut self) -> Result<Option<AlterAction>> {
+        if !self.accept_word(RENAME) {
+            return Ok(None);
+        }
+        self.accept_kw(kw::COLUMN);
+        let at = self.here();
+        let column = self.identifier()?;
+        self.expect_kw(kw::TO)?;
+        Ok(Some(AlterAction::AlterColumn { column, at, action: AlterColumnAction::Rename(self.identifier()?) }))
     }
 
     /// The `<alter table action>` that DROP begins, after DROP.
