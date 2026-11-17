@@ -214,6 +214,7 @@ pub(super) fn query_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result
     }
     let name = QualifiedName { auth: String::new(), ident: t.table.ident.clone() };
     let desc = TableDesc {
+        typed: None,
         name: name.clone(),
         columns,
         constraints: Vec::new(),
@@ -232,6 +233,7 @@ pub(super) fn query_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result
         nullable: false,
         common: Vec::new(),
         drawn: query.underlying.map(Box::new),
+        family: Vec::new(),
     }))
 }
 

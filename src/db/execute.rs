@@ -9,20 +9,29 @@ use super::dynamic::{self, Name};
 use super::integrity::Effects;
 use super::prepared::{Keeping, Plans};
 use super::triggers::{Event, instead_for};
-use super::write::{Written, delete_searched, update_searched};
+use super::write::{Written, delete_rows, update_rows};
 use super::{Call, Completion, Session, StatementContext, slow};
 use crate::ast::{
-    AlterAction, ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, PrivilegeObject, RevokeStatement, RoleStatement,
-    SchemaStatement, SearchCondition, ServedStatement, SetClause, SqlStatement, TableName, TableStorage, UserStatement,
+    AlterAction, DropObject, IndexStatement, PrivilegeDefinition, PrivilegeObject, RevokeStatement, SchemaStatement, SearchCondition,
+    SetClause, SqlStatement, TableName, TableStorage,
 };
-use crate::binder::{Context, WriteKind, bind_write, qualify};
-use crate::error::{Code, Result, SqlError, SqlState, fail};
-use crate::lexer::{Tok, Token, kw, lex};
+use crate::binder::{Context, WriteKind, bind_member_write, bind_write, qualify};
+use crate::catalog::proper_subtables;
+use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::params::Params;
 use crate::settings::FUNCTION_CALLS;
 
+mod command;
+
+pub(in crate::db) use command::command_of;
+use command::{diagnostics_statement, prepared_command};
+
 /// A positioned DELETE or UPDATE run through a cursor (`Session::positioned`).
 type Positioned = fn(&Session, StatementContext<'_>, (&Name, usize), &Written) -> Result<Completion>;
+
+/// How a searched UPDATE or DELETE writes the rows of one table, its
+/// statement not yet ended (`write::update_rows`, `write::delete_rows`).
+type RowsRun = fn(StatementContext<'_>, Written, &mut Effects<'_>) -> Result<Option<usize>>;
 
 impl Session {
     /// Execute an `<SQL statement>` [X3.135-1986 §7.3]. `params` plays the part
@@ -160,6 +169,7 @@ impl Session {
             SqlStatement::SetTransaction(modes) => return done(self.set_transaction(modes, params)),
             SqlStatement::SetSchema(v) => return done(self.set_schema(st, v, params)),
             SqlStatement::SetCollation(v) => return done(self.set_collation(st, v.as_ref(), params)),
+            SqlStatement::SetTransformGroup(g) => return done(self.set_transform_group(st, g)),
             SqlStatement::SetCatalog(v) => return done(self.set_catalog(st, v, params)),
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
             SqlStatement::SetSessionAuthorization(v) => return done(self.set_session_authorization(v, params)),
@@ -225,11 +235,11 @@ impl Session {
         stmt: &SqlStatement,
         by: (&Params, Option<&Keeping<'_>>),
     ) -> Result<Completion> {
-        if let SqlStatement::UpdatePositioned { table, set, cursor } = stmt {
-            return self.positioned(cx, (table, set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), by);
+        if let SqlStatement::UpdatePositioned { table, only, set, cursor } = stmt {
+            return self.positioned(cx, ((table, *only), set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), by);
         }
-        if let SqlStatement::DeletePositioned { table, cursor } = stmt {
-            return self.positioned(cx, (table, &[]), (WriteKind::DeletePositioned, cursor, Self::delete_positioned), by);
+        if let SqlStatement::DeletePositioned { table, only, cursor } = stmt {
+            return self.positioned(cx, ((table, *only), &[]), (WriteKind::DeletePositioned, cursor, Self::delete_positioned), by);
         }
         Err(SqlError::new(Code::Api, "[DESIGN] a positioned statement is an UPDATE or a DELETE"))
     }
@@ -237,13 +247,19 @@ impl Session {
     fn positioned(
         &self,
         cx: StatementContext<'_>,
-        (table, set): (&TableName, &[SetClause]),
+        (table, set): ((&TableName, bool), &[SetClause]),
         (kind, cursor, run): (WriteKind, &(String, usize), Positioned),
         (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<Completion> {
         let w = self.write_bound(cx.st, params, keeping, |b| bind_write(b, kind, table, set, None))?;
         let local = params.local_cursor(&cursor.0).map(|key| Name::plain(&key));
         let at = (&local.unwrap_or_else(|| self.positioned_key(&cursor.0)), cursor.1);
+        // [ISO/IEC 9075-2:2023 §15.6 GR9, §15.7 GR9] the row of a proper
+        // subtable the cursor is on, of its table read with them.
+        let w = match self.positioned_member(cx.st, (at.0, &w.bound.table, table.1)).or_at(cursor.1)? {
+            Some(member) => self.write_bound(cx.st, params, None, |b| bind_member_write(b, kind, (table.0, &member), set, None))?,
+            None => w,
+        };
         // [ISO/IEC 9075-2:2023 §15.6 GR11b, §15.7 GR17b] the INSTEAD OF
         // trigger of a view the cursor's row is of, in place of the change.
         if let Some(instead) = instead_for(cx.st, &w.bound.named, event_of(kind)) {
@@ -257,11 +273,14 @@ impl Session {
     /// A searched UPDATE or DELETE, `kind`, of `table` giving `set` where
     /// `where_clause` is true, bound and run in `cx` by `run`; of a
     /// prepared statement, bound as it keeps it (`keeping`, RULES.md D45).
+    /// [ISO/IEC 9075-2:2023 §14.9 GR4, §14.14 GR6; §15.7, §15.13] Of a
+    /// typed table named without ONLY, the rows of each proper subtable
+    /// too, by their superrows, in the one statement.
     fn searched(
         &self,
         cx: StatementContext<'_>,
-        (kind, table, set, where_clause): (WriteKind, &TableName, &[SetClause], Option<&SearchCondition>),
-        run: fn(StatementContext<'_>, Written, Effects<'_>) -> Result<usize>,
+        (kind, table, set, where_clause): (WriteKind, (&TableName, bool), &[SetClause], Option<&SearchCondition>),
+        run: RowsRun,
         (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<Completion> {
         let bind = |b: Context<'_>| bind_write(b, kind, table, set, where_clause);
@@ -272,8 +291,22 @@ impl Session {
         if let Some(instead) = instead_for(cx.st, &w.bound.named, event_of(kind)) {
             return self.searched_instead(cx, w, &instead).map(|n| self.affected(n));
         }
+        let typed = cx.st.catalog.table(&w.bound.table).is_some_and(|d| d.typed.is_some());
+        let members = if typed && !table.1 { proper_subtables(&*cx.st.catalog, &w.bound.table) } else { Vec::new() };
         self.settle_cursors(cx.st, &w.bound.table);
-        run(cx, w, self.effects(cx.st)).map(|n| self.affected(n))
+        let mut effects = self.effects(cx.st);
+        let mut done = run(cx, w, &mut effects)?;
+        for member in &members {
+            let bound = |b: Context<'_>| bind_member_write(b, kind, (table.0, member), set, where_clause);
+            let written = self.write_bound(cx.st, params, None, bound)?;
+            self.settle_cursors(cx.st, member);
+            if let Some(n) = run(cx, written, &mut effects)? {
+                done = Some(done.unwrap_or(0).saturating_add(n));
+            }
+        }
+        let Some(n) = done else { return Ok(self.affected(0)) };
+        cx.st.end_statement(cx.tx, effects)?;
+        Ok(self.affected(n))
     }
 
     /// Runs a statement that runs in the transaction `tx`: not COMMIT,
@@ -323,16 +356,16 @@ impl Session {
         match stmt {
             SqlStatement::Insert(ins) => self.insert_statement(cx, ins, params, keeping).map(|n| self.affected(n)),
             SqlStatement::Merge(merge) => self.merge_completed(cx, merge, params, keeping),
-            SqlStatement::UpdateSearched { table, set, where_clause } => {
-                self.searched(cx, (WriteKind::UpdateSearched, table, set, where_clause.as_ref()), update_searched, (&*params, keeping))
+            SqlStatement::UpdateSearched { table, only, set, where_clause } => {
+                self.searched(cx, (WriteKind::UpdateSearched, (table, *only), set, where_clause.as_ref()), update_rows, (&*params, keeping))
             }
-            SqlStatement::DeleteSearched { table, where_clause } => {
-                self.searched(cx, (WriteKind::DeleteSearched, table, &[], where_clause.as_ref()), delete_searched, (&*params, keeping))
+            SqlStatement::DeleteSearched { table, only, where_clause } => {
+                self.searched(cx, (WriteKind::DeleteSearched, (table, *only), &[], where_clause.as_ref()), delete_rows, (&*params, keeping))
             }
             SqlStatement::UpdatePositioned { .. } | SqlStatement::DeletePositioned { .. } => {
                 self.positioned_statement(cx, stmt, (params, keeping))
             }
-            SqlStatement::Truncate { table, restart } => self.truncate_table(cx, (table, *restart), params),
+            SqlStatement::Truncate { table, only, restart } => self.truncate_table(cx, (table, *only, *restart), params),
             SqlStatement::Open(_) | SqlStatement::Fetch { .. } | SqlStatement::Close(_) => self.cursor_statement(cx, stmt, params),
             SqlStatement::Dynamic(d) => self.run_dynamic(cx, d, params),
             SqlStatement::Select { query, targets } => self.select_into(cx, query, targets, params),
@@ -350,6 +383,7 @@ impl Session {
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
             | SqlStatement::SetCollation(_)
+            | SqlStatement::SetTransformGroup(_)
             | SqlStatement::SetCatalog(_)
             | SqlStatement::SetTimeZone(_)
             | SqlStatement::SetSessionAuthorization(_)
@@ -436,6 +470,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::SetCatalog(_)
         | SqlStatement::SetSchema(_)
         | SqlStatement::SetCollation(_)
+        | SqlStatement::SetTransformGroup(_)
         | SqlStatement::SetTimeZone(_)
         | SqlStatement::Locator { .. }
         | SqlStatement::SetSessionAuthorization(_)
@@ -470,127 +505,14 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::Sequence(_)
         | SchemaStatement::AlterSequence(_)
         | SchemaStatement::Type(_)
+        | SchemaStatement::AlterType(_)
+        | SchemaStatement::Method(_)
+        | SchemaStatement::Cast(_)
+        | SchemaStatement::Ordering(_)
+        | SchemaStatement::Transform(_)
+        | SchemaStatement::AlterTransform(_)
         | SchemaStatement::Routine(_)
         | SchemaStatement::Module(_)
         | SchemaStatement::Role(_) => None,
-    }
-}
-
-/// [ISO/IEC 9075:1992 §18.1 GR1d, Table 22] How DYNAMIC_FUNCTION names
-/// `stmt`, prepared: a positioned DELETE or UPDATE prepared is a
-/// `<preparable dynamic delete statement: positioned>` or `<preparable
-/// dynamic update statement: positioned>` [§17.6, §17.19, §17.20]; any
-/// other as COMMAND_FUNCTION names it.
-fn prepared_command(stmt: &SqlStatement) -> Command {
-    if let SqlStatement::DeletePositioned { .. } = stmt {
-        return commands::PREPARABLE_DELETE_CURSOR;
-    }
-    if let SqlStatement::UpdatePositioned { .. } = stmt {
-        return commands::PREPARABLE_UPDATE_CURSOR;
-    }
-    command_of(stmt)
-}
-
-/// Whether `sql` begins as a `<get diagnostics statement>` does.
-fn diagnostics_statement(sql: &str) -> bool {
-    let tokens = lex(sql).unwrap_or_default();
-    matches!(tokens.as_slice(), [Token { tok: Tok::KeyWord(kw::GET), .. }, Token { tok: Tok::KeyWord(kw::DIAGNOSTICS), .. }, ..])
-}
-
-/// How COMMAND_FUNCTION names schema statement `s` (`command_of`).
-fn schema_command(s: &SchemaStatement) -> Command {
-    match s {
-        SchemaStatement::Assertion(_) => commands::CREATE_ASSERTION,
-        SchemaStatement::Collation(_) => commands::CREATE_COLLATION,
-        SchemaStatement::Domain(_) => commands::CREATE_DOMAIN,
-        SchemaStatement::AlterDomain(_) => commands::ALTER_DOMAIN,
-        SchemaStatement::Table(_) => commands::CREATE_TABLE,
-        SchemaStatement::View(_) => commands::CREATE_VIEW,
-        SchemaStatement::Grant(_) => commands::GRANT,
-        SchemaStatement::Revoke(_) => commands::REVOKE,
-        SchemaStatement::Role(RoleStatement::Create { .. }) => commands::CREATE_ROLE,
-        SchemaStatement::Role(RoleStatement::Grant { .. }) => commands::GRANT_ROLE,
-        SchemaStatement::Role(RoleStatement::Revoke { .. }) => commands::REVOKE_ROLE,
-        SchemaStatement::Role(RoleStatement::Drop { .. }) => commands::DROP_ROLE,
-        SchemaStatement::Sequence(_) => commands::CREATE_SEQUENCE,
-        SchemaStatement::AlterSequence(_) => commands::ALTER_SEQUENCE,
-        SchemaStatement::Type(_) => commands::CREATE_TYPE,
-        SchemaStatement::Trigger(_) => commands::CREATE_TRIGGER,
-        SchemaStatement::Routine(_) => commands::CREATE_ROUTINE,
-        SchemaStatement::Module(_) => commands::CREATE_MODULE,
-    }
-}
-
-/// [ISO/IEC 9075-2:2023 §23.1 GR2c, GR2d, Table 39] How COMMAND_FUNCTION
-/// and COMMAND_FUNCTION_CODE name the drop of `object`.
-fn drop_command(object: &DropObject) -> Command {
-    match object {
-        DropObject::Table(_) => commands::DROP_TABLE,
-        DropObject::View(_) => commands::DROP_VIEW,
-        DropObject::Schema { .. } => commands::DROP_SCHEMA,
-        DropObject::Domain(_) => commands::DROP_DOMAIN,
-        DropObject::Assertion(_) => commands::DROP_ASSERTION,
-        DropObject::Collation(_) => commands::DROP_COLLATION,
-        DropObject::Sequence(_) => commands::DROP_SEQUENCE,
-        DropObject::Type(_) => commands::DROP_TYPE,
-        DropObject::Trigger(_) => commands::DROP_TRIGGER,
-        DropObject::Routine(_) => commands::DROP_ROUTINE,
-        DropObject::Module(_) => commands::DROP_MODULE,
-    }
-}
-
-/// [ISO/IEC 9075:1992 §18.1 GR1c, Table 22; ISO/IEC 9075-2:2023 §23.1
-/// GR2c, GR2d, Table 39] How COMMAND_FUNCTION and COMMAND_FUNCTION_CODE
-/// name `stmt`.
-pub(in crate::db) fn command_of(stmt: &SqlStatement) -> Command {
-    match stmt {
-        SqlStatement::Control(c) => commands::control(c),
-        SqlStatement::Signal(s) => commands::signal(s.resignal),
-        SqlStatement::Close(_) => commands::CLOSE_CURSOR,
-        SqlStatement::Schema { statement, .. } => schema_command(statement),
-        SqlStatement::Commit => commands::COMMIT_WORK,
-        SqlStatement::DeletePositioned { .. } => commands::DELETE_CURSOR,
-        SqlStatement::DeleteSearched { .. } => commands::DELETE_WHERE,
-        SqlStatement::Truncate { .. } => commands::TRUNCATE_TABLE,
-        SqlStatement::AlterTable { .. } => commands::ALTER_TABLE,
-        SqlStatement::Drop { object, .. } => drop_command(object),
-        SqlStatement::Fetch { .. } => commands::FETCH,
-        SqlStatement::GetDiagnostics(_) => commands::GET_DIAGNOSTICS,
-        SqlStatement::Dynamic(d) => dynamic::command(d),
-        SqlStatement::Execute(e) => dynamic::execute_command(e),
-        SqlStatement::DeclareTable(_) => commands::DECLARE_TABLE,
-        SqlStatement::Insert(_) => commands::INSERT,
-        SqlStatement::Merge(_) => commands::MERGE,
-        SqlStatement::Open(_) => commands::OPEN,
-        SqlStatement::Rollback => commands::ROLLBACK_WORK,
-        SqlStatement::Select { .. } => commands::SELECT_ROW,
-        SqlStatement::SetTransaction(_) => commands::SET_TRANSACTION,
-        SqlStatement::SetSchema(_) => commands::SET_SCHEMA,
-        SqlStatement::SetCollation(_) => commands::SET_COLLATION,
-        SqlStatement::SetCatalog(_) => commands::SET_CATALOG,
-        SqlStatement::SetTimeZone(_) => commands::SET_TIME_ZONE,
-        SqlStatement::Locator { hold: false, .. } => commands::FREE_LOCATOR,
-        SqlStatement::Locator { hold: true, .. } => commands::HOLD_LOCATOR,
-        SqlStatement::SetSessionAuthorization(_) => commands::SET_SESSION_AUTHORIZATION,
-        SqlStatement::SetRole(_) => commands::SET_ROLE,
-        SqlStatement::Connection(ConnectionStatement::Connect { .. } | ConnectionStatement::ConnectDefault) => commands::CONNECT,
-        SqlStatement::Connection(ConnectionStatement::Set(_)) => commands::SET_CONNECTION,
-        SqlStatement::Connection(ConnectionStatement::Disconnect(_)) => commands::DISCONNECT,
-        SqlStatement::SetConstraints { .. } => commands::SET_CONSTRAINT,
-        SqlStatement::UpdatePositioned { .. } => commands::UPDATE_CURSOR,
-        SqlStatement::UpdateSearched { .. } => commands::UPDATE_WHERE,
-        SqlStatement::SetSetting { .. } => commands::SET_SETTING,
-        SqlStatement::SetDatabase { .. } => commands::SET_DATABASE,
-        SqlStatement::Index(IndexStatement::Create { .. }) => commands::CREATE_INDEX,
-        SqlStatement::Index(IndexStatement::Drop { .. }) => commands::DROP_INDEX,
-        SqlStatement::Index(IndexStatement::Alter { .. }) => commands::ALTER_INDEX,
-        SqlStatement::User(UserStatement::Create { .. }) => commands::CREATE_USER,
-        SqlStatement::User(UserStatement::Alter { .. } | UserStatement::RoleCreator { .. }) => commands::ALTER_USER,
-        SqlStatement::User(UserStatement::Drop { .. }) => commands::DROP_USER,
-        SqlStatement::User(UserStatement::Owner { .. } | UserStatement::Members { .. }) => commands::ALTER_DATABASE,
-        SqlStatement::Served(ServedStatement::End { .. }) => commands::END_CONNECTION,
-        SqlStatement::Served(ServedStatement::Cancel { .. }) => commands::CANCEL_CONNECTION,
-        SqlStatement::Call(_) => commands::CALL,
-        SqlStatement::Return(_) => commands::RETURN,
     }
 }

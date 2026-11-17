@@ -19,7 +19,7 @@ const MATCHED: &str = "MATCHED";
 
 impl Parser {
     /// [ISO/IEC 9075-2:2023 §14.12] `<merge statement>` ::= MERGE INTO
-    /// `<target table>` \[\[AS\] `<merge correlation name>`\] USING `<table
+    /// `<target table>`, a `<table name>` or ONLY ( `<table name>` ), \[\[AS\] `<merge correlation name>`\] USING `<table
     /// reference>` ON `<search condition>` `<merge operation
     /// specification>`, from MERGE, which begins here, to the end of its
     /// last `<merge when clause>`.
@@ -27,7 +27,7 @@ impl Parser {
         // MERGE, an identifier the caller has seen begin the statement.
         self.advance();
         self.expect_kw(kw::INTO)?;
-        let target = self.table_name()?;
+        let (target, only) = self.target_table()?;
         let correlation = self.merge_correlation()?;
         self.expect_kw(kw::USING)?;
         let source = self.table_reference()?;
@@ -39,7 +39,7 @@ impl Parser {
         while self.is_kw(kw::WHEN) {
             clauses.push(self.merge_when_clause()?);
         }
-        Ok(SqlStatement::Merge(Box::new(MergeStatement { target, correlation, source, on, clauses })))
+        Ok(SqlStatement::Merge(Box::new(MergeStatement { target, only, correlation, source, on, clauses })))
     }
 
     /// \[\[AS\] `<merge correlation name>`\], if written, and where it

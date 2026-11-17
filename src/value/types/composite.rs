@@ -66,6 +66,8 @@ fn ordered_by(t: &DataType, member: fn(&DataType) -> bool) -> bool {
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
+            | DataType::Structured(_)
+            | DataType::Reference(_)
             | DataType::Extension(_) => false,
         }
 }
@@ -103,6 +105,12 @@ pub(crate) fn unordered(t: &DataType) -> Option<&'static str> {
     }
 }
 
+/// [ISO/IEC 9075-2:2023 §4.2.4] Whether `t` is S-ordered of the set of
+/// structured types.
+pub(crate) fn structured_ordered(t: &DataType) -> bool {
+    ordered_by(t, |t| matches!(t, DataType::Structured(_)))
+}
+
 /// [ISO/IEC 9075-2:2023 §4.1] Whether `t` is row-ordered.
 pub(crate) fn row_ordered(t: &DataType) -> bool {
     ordered_by(t, |t| matches!(t, DataType::Row(_)))
@@ -128,6 +136,8 @@ pub(crate) fn nesting(t: &DataType) -> usize {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Extension(_) => 0,
     }
 }

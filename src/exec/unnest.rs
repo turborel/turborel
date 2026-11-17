@@ -89,6 +89,8 @@ fn collection(v: Value) -> Result<Option<Arc<[Value]>>> {
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => Err(broken("a collection value expression is not an array or a multiset")),
     }

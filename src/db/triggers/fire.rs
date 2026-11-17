@@ -22,7 +22,7 @@ use super::super::integrity::Effects;
 use super::super::{Session, State, StatementContext};
 use super::changes::{Event, StateChanges, activates};
 use super::run::{Invocation, subject_columns};
-use crate::catalog::{ActionTime, Catalog, QualifiedName, TriggerDesc, TriggerLevel};
+use crate::catalog::{ActionTime, Catalog, QualifiedName, TriggerDesc, TriggerLevel, proper_supertables};
 use crate::error::Result;
 use crate::exec::{HeldRows, Runner};
 use crate::storage::{Row, RowId};
@@ -57,18 +57,23 @@ impl<'a> Triggered<'a> {
 
     /// [ISO/IEC 9075-2:2023 §15.8 GR3, §15.11 GR5, §15.14 GR8] The
     /// transition `change` of `table`, whose update operation gave values
-    /// to `columns`, of an UPDATE, kept if an AFTER trigger may read it.
+    /// to `columns`, of an UPDATE, kept if an AFTER trigger may read it;
+    /// and, of a typed table, its superrow's in each proper supertable,
+    /// of the columns it has [§15.7 GR6, §15.13 GR7, §15.10] (a trigger
+    /// reads the first columns of a row, which are its table's).
     ///
     /// # Errors
     ///
     /// Its list's, spilled.
-    pub(in crate::db) fn record(&mut self, table: &QualifiedName, columns: &[usize], change: (RowId, Row, Row)) -> Result<()> {
-        if !self.after.contains(table) {
-            return Ok(());
+    pub(in crate::db) fn record(&mut self, table: &QualifiedName, columns: &[usize], change: &(RowId, Row, Row)) -> Result<()> {
+        let event = event_of(change);
+        for of in std::iter::once(table.clone()).chain(proper_supertables(&*self.catalog, table)) {
+            if self.after.contains(&of) {
+                let names = self.names(&of, columns);
+                self.changes.add((&of, event, &names), change.clone())?;
+            }
         }
-        let event = event_of(&change);
-        let names = self.names(table, columns);
-        self.changes.add((table, event, &names), change)
+        Ok(())
     }
 
     /// The names of `columns` of `table`.
@@ -284,10 +289,21 @@ impl Effects<'_> {
         mut changes: HeldRows<(RowId, Row, Row)>,
     ) -> Result<HeldRows<(RowId, Row, Row)>> {
         let Some(t) = &mut self.triggered else { return Ok(changes) };
-        t.changes.arise(of);
         let (session, catalog) = (t.session, Arc::clone(&t.catalog));
+        // [§15.7 GR6, §15.13 GR7] the state changes of the proper
+        // supertables of a typed table, of the columns each has.
+        let mut tables = vec![(of.0.clone(), of.2.to_vec())];
+        for s in proper_supertables(&*catalog, of.0) {
+            let has = |n: &String| catalog.table(&s).is_some_and(|d| d.column(n).is_some());
+            let names = of.2.iter().filter(|n| has(n)).cloned().collect();
+            tables.push((s, names));
+        }
+        for (s, names) in &tables {
+            t.changes.arise((s, of.1, names));
+        }
+        let activated = |tr: &TriggerDesc| tables.iter().any(|(s, names)| activates(tr, (s, of.1, names)));
         let mut altered = false;
-        for trigger in catalog.triggers().iter().filter(|tr| tr.time == ActionTime::Before && activates(tr, of)) {
+        for trigger in catalog.triggers().iter().filter(|tr| tr.time == ActionTime::Before && activated(tr)) {
             if trigger.level == TriggerLevel::Statement {
                 if !t.changes.executed(trigger) {
                     session.execute_trigger(cx, trigger, HeldRows::new(cx.st.list_space()))?;

@@ -92,10 +92,21 @@ impl State {
     /// SQLCODE -103 if it grants another privilege [§12.3 SR4], or names no
     /// type or routine; -104 if `auth` holds no such privilege \[AR1\].
     pub(in crate::db) fn grant_on_type(&mut self, auth: &str, schema: &str, p: &crate::ast::PrivilegeDefinition) -> Result<Defined> {
-        // [ISO/IEC 9075-2:2023 §10.6] of an SQL routine, if one is named.
-        if let Some(routine) =
-            self.sql_routine_named((auth, schema), (&p.table, p.object, p.parameters.as_deref(), p.actions.as_deref()))?
+        if let Some(granted) = self.grant_on_attribute_routine((auth, schema), p) {
+            return granted;
+        }
+        let named = (&p.table, p.object, p.parameters.as_deref(), p.actions.as_deref());
+        // [ISO/IEC 9075-2:2023 §10.6 SR3b] a method FOR its type.
+        if let Some(udt) = &p.udt
+            && let Some(method) = self.method_designated((auth, schema), named, udt)?
         {
+            return self.grant_on_routine(auth, method, p);
+        }
+        if p.object == PrivilegeObject::Type && self.catalog.structured_type(&qualify(&p.table, schema)).is_some() {
+            return self.grant_on_structured(auth, schema, p);
+        }
+        // [ISO/IEC 9075-2:2023 §10.6] of an SQL routine, if one is named.
+        if let Some(routine) = self.sql_routine_named((auth, schema), named)? {
             return self.grant_on_routine(auth, routine, p);
         }
         let (mut desc, held) =
@@ -133,6 +144,18 @@ impl State {
     /// no type or routine; with RESTRICT, -103 and SQLSTATE 2B000 if it
     /// abandons anything \[GR12q\].
     pub(in crate::db) fn revoke_on_type(&mut self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Result<Defined> {
+        if let Some(revoked) = self.revoke_on_attribute_routine((auth, schema), r) {
+            return revoked;
+        }
+        if let Some(udt) = &r.udt
+            && let Some(method) =
+                self.method_designated((auth, schema), (&r.table, r.object, r.parameters.as_deref(), r.actions.as_deref()), udt)?
+        {
+            return self.revoke_on_routine(auth, method, r);
+        }
+        if r.object == PrivilegeObject::Type && self.catalog.structured_type(&qualify(&r.table, schema)).is_some() {
+            return self.revoke_on_structured((auth, schema), r);
+        }
         if let Some(routine) =
             self.sql_routine_named((auth, schema), (&r.table, r.object, r.parameters.as_deref(), r.actions.as_deref()))?
         {
@@ -179,6 +202,18 @@ impl State {
     ///
     /// As `revoke_on_type`, but for RESTRICT's.
     pub(in crate::db) fn type_columns_revoked(&self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Result<Vec<Column>> {
+        if let Some(columns) = self.attribute_routine_columns((auth, schema), r) {
+            return columns;
+        }
+        if let Some(udt) = &r.udt
+            && let Some(method) =
+                self.method_designated((auth, schema), (&r.table, r.object, r.parameters.as_deref(), r.actions.as_deref()), udt)?
+        {
+            return Ok(self.routine_columns_revoked(auth, method, r));
+        }
+        if r.object == PrivilegeObject::Type && self.catalog.structured_type(&qualify(&r.table, schema)).is_some() {
+            return self.structured_columns_revoked((auth, schema), r);
+        }
         if let Some(routine) =
             self.sql_routine_named((auth, schema), (&r.table, r.object, r.parameters.as_deref(), r.actions.as_deref()))?
         {
@@ -194,7 +229,7 @@ impl State {
             let owner = owner_of(&*self.catalog, &revoked.desc.name.auth).to_owned();
             let unheld = |s: &str| !revoked.desc.usage_of(sole(&*self.catalog, owner_of(&*self.catalog, s)), &owner).0;
             for t in self.catalog.tables().into_iter().filter(|t| unheld(&t.name.auth)) {
-                let of = t.columns.iter().filter(|c| based_on(&c.data_type, &revoked.desc.name));
+                let of = t.columns.iter().filter(|c| crate::db::structured::names_type(&c.data_type, &revoked.desc.name));
                 columns.extend(of.map(|c| (t.name.clone(), c.name.clone())));
             }
         }
@@ -234,7 +269,7 @@ impl State {
         let mut catalog = self.catalog.duplicate();
         catalog.put_user_type(desc.clone());
         after.catalog = Arc::from(catalog);
-        let abandoned = self.unbound_in(&after, &|e| e.code == Code::Privilege, &|_| true);
+        let abandoned = self.abandoned_in(&after, &|e| e.code == Code::Privilege);
         let types = if held == Held::Usage { after.types_unheld(&desc, &owner) } else { Vec::new() };
         Ok(Revoked { desc, held, warned, lost, abandoned, types })
     }

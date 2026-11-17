@@ -1,6 +1,7 @@
 //! User-defined types, as the catalog describes them [ISO/IEC 9075-2:2023
 //! §4.9]: distinct types alone, each with the two functions, casts and
-//! transform its definition implies [§11.51 GR2] (RULES.md D69).
+//! transform its definition implies [§11.51 GR2] and the method
+//! specifications it has (RULES.md D69).
 
 use super::domains::{UsageDesc, usage_held};
 use super::{QualifiedName, Who};
@@ -30,6 +31,9 @@ pub struct UserTypeDesc {
     pub to_source: RoutineDesc,
     /// USAGE on it [§12.3, §11.51 GR1]: each grant.
     pub usage: Vec<UsageDesc>,
+    /// Its method specifications [§11.51 SR9, GR1g], in order: a
+    /// distinct type is FINAL, so each is original.
+    pub methods: Vec<super::MethodSpecDesc>,
 }
 
 /// [ISO/IEC 9075-2:2023 §4.35] A routine a distinct type's definition
@@ -61,10 +65,15 @@ pub enum Routine {
 pub fn based_on(t: &DataType, name: &QualifiedName) -> bool {
     match t {
         DataType::Distinct(d) => (d.schema == name.auth && d.name == name.ident) || based_on(&d.source, name),
+        // [§4.2] It, or of a subtype of it; of its attributes and subtypes
+        // the catalog knows (`Catalog::type_based_on`). A reference type is
+        // based on nothing, its referenced type usage-dependent on it.
+        DataType::Structured(s) => s.precedence().any(|n| n.schema == name.auth && n.name == name.ident),
         DataType::Array(a) => based_on(&a.element, name),
         DataType::Multiset(m) => based_on(&m.element, name),
         DataType::Row(r) => r.fields.iter().any(|f| based_on(&f.data_type, name)),
-        DataType::Character { .. }
+        DataType::Reference(_)
+        | DataType::Character { .. }
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
@@ -91,6 +100,10 @@ pub fn types_in(t: &DataType, into: &mut Vec<QualifiedName>) {
             }
             types_in(&d.source, into);
         }
+        // [ISO/IEC 9075-2:2023 §4.2] Those it is usage-dependent on: a
+        // structured type, the referenced type of a reference type.
+        DataType::Structured(s) => add_named(&s.name, into),
+        DataType::Reference(r) => add_named(&r.referenced.name, into),
         DataType::Array(a) => types_in(&a.element, into),
         DataType::Multiset(m) => types_in(&m.element, into),
         DataType::Row(r) => r.fields.iter().for_each(|f| types_in(&f.data_type, into)),
@@ -108,6 +121,14 @@ pub fn types_in(t: &DataType, into: &mut Vec<QualifiedName>) {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Extension(_) => {}
+    }
+}
+
+/// Adds the type `n` to `into`, if it is not in it.
+fn add_named(n: &crate::value::types::UdtName, into: &mut Vec<QualifiedName>) {
+    let name = QualifiedName { auth: n.schema.clone(), ident: n.name.clone() };
+    if !into.contains(&name) {
+        into.push(name);
     }
 }
 

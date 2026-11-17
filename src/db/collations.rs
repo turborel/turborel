@@ -415,6 +415,7 @@ mod tests {
             domain: None,
         };
         let table = TableDesc {
+            typed: None,
             name: QualifiedName { auth: "A".into(), ident: "T".into() },
             columns: vec![column("A"), column("B")],
             constraints: vec![key(0, false), key(1, true)],

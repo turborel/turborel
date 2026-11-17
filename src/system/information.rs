@@ -22,6 +22,7 @@ mod composites;
 mod extensions;
 mod modules;
 mod roles;
+mod structured;
 mod triggers;
 mod user_types;
 
@@ -66,14 +67,16 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// The views of the Information Schema, in the standard's order, then this
 /// implementation's: those of ISO/IEC 9075:1992, those of arrays and
 /// row types (`information/composites.rs`), those of user-defined types
-/// and their routines (`information/user_types.rs`), those of roles
+/// and their routines (`information/user_types.rs`), of structured types
+/// and typed tables (`information/structured.rs`), those of roles
 /// (`information/roles.rs`), of triggers (`information/triggers.rs`) and
 /// of SQL-server modules (`information/modules.rs`), then the extensions
 /// (`information/extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
     ALL.get_or_init(|| {
-        [VIEWS, composites::VIEWS, user_types::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS, extensions::VIEWS].concat()
+        [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS, extensions::VIEWS]
+            .concat()
     })
 }
 
@@ -146,11 +149,14 @@ const VIEWS: &[SystemView] = &[
          AND CONSTRAINT_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
-    // [ISO/IEC 9075:1992 §21.2.7] TABLES.
+    // [ISO/IEC 9075:1992 §21.2.7] TABLES; with what makes a table typed,
+    // as ISO/IEC 9075-11:2006 draft §5.61 adds it.
     SystemView {
         name: "TABLES",
         query: r"SELECT
-       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE
+       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE,
+       SELF_REFERENCING_COLUMN_NAME, REFERENCE_GENERATION,
+       USER_DEFINED_TYPE_CATALOG, USER_DEFINED_TYPE_SCHEMA, USER_DEFINED_TYPE_NAME, IS_TYPED
      FROM DEFINITION_SCHEMA.TABLES
          WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
            IN (
@@ -188,9 +194,9 @@ const VIEWS: &[SystemView] = &[
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
     // [ISO/IEC 9075:1992 §21.2.9] COLUMNS; [EXTENSION] with each column's
-    // identity and generation; with its maximum cardinality and, of a
-    // column of no domain, the identifier of its data type descriptor, as
-    // ISO/IEC 9075-11 adds them.
+    // identity and generation; with its maximum cardinality, its scope,
+    // whether it is self-referencing and, of a column of no domain, the
+    // identifier of its data type descriptor, as ISO/IEC 9075-11 adds them.
     SystemView {
         name: "COLUMNS",
         query: r"SELECT DISTINCT
@@ -233,6 +239,7 @@ const VIEWS: &[SystemView] = &[
        D1.USER_DEFINED_TYPE_CATALOG AS UDT_CATALOG,
        D1.USER_DEFINED_TYPE_SCHEMA AS UDT_SCHEMA,
        D1.USER_DEFINED_TYPE_NAME AS UDT_NAME,
+       D1.SCOPE_CATALOG, D1.SCOPE_SCHEMA, D1.SCOPE_NAME, IS_SELF_REFERENCING,
        IS_IDENTITY, IDENTITY_GENERATION, IDENTITY_START, IDENTITY_INCREMENT,
        IDENTITY_MAXIMUM, IDENTITY_MINIMUM, IDENTITY_CYCLE,
        IS_GENERATED, GENERATION_EXPRESSION,
@@ -276,7 +283,7 @@ const VIEWS: &[SystemView] = &[
         name: "TABLE_PRIVILEGES",
         query: r"SELECT
        GRANTOR, GRANTEE, TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME,
-         PRIVILEGE_TYPE, IS_GRANTABLE
+         PRIVILEGE_TYPE, IS_GRANTABLE, WITH_HIERARCHY
      FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
          WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
               OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES )

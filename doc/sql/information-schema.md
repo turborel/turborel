@@ -66,19 +66,33 @@ Two views of ISO/IEC 9075-11 describe the parts of array and row types
 | ELEMENT_TYPES | array or multiset type of a column, a domain, a distinct type's source, a function's parameter or result, or a part of one, with its OBJECT_TYPE TABLE, DOMAIN, USER-DEFINED TYPE or ROUTINE, COLLECTION_TYPE_IDENTIFIER the collection type's DTD_IDENTIFIER, and its element type, as COLUMNS gives a type |
 | FIELDS | field of a row type of a column, a domain or a part of either, with ROW_IDENTIFIER the row type's DTD_IDENTIFIER, FIELD_NAME, ORDINAL_POSITION, and the field's type |
 
-Six more of ISO/IEC 9075-11 describe distinct types and the two functions
-each one's definition makes ([CREATE TYPE](statements/create-type.md)),
+Six more of ISO/IEC 9075-11 describe user-defined types and the
+functions a distinct type's definition makes ([CREATE TYPE](statements/create-type.md)),
 and the functions and procedures CREATE FUNCTION and CREATE PROCEDURE
 make, those the user, or PUBLIC, holds a privilege on:
 
 | View | One row of each |
 |---|---|
-| USER_DEFINED_TYPES | distinct type: USER_DEFINED_TYPE_CATEGORY DISTINCT, IS_INSTANTIABLE and IS_FINAL YES, ORDERING_FORM FULL and ORDERING_CATEGORY MAP with the specific name of its function to its source in ORDERING_ROUTINE_CATALOG, _SCHEMA and _NAME, or NONE of an array or multiset source, and the source type, as COLUMNS gives a type, its DTD_IDENTIFIER in SOURCE_DTD_IDENTIFIER |
-| UDT_PRIVILEGES | privilege on a distinct type, its PRIVILEGE_TYPE TYPE USAGE |
+| USER_DEFINED_TYPES | structured type: USER_DEFINED_TYPE_CATEGORY STRUCTURED, IS_INSTANTIABLE and IS_FINAL as defined, its ordering's form, category and function, NONE if it has none, and its reference type's representation in REFERENCE_TYPE. Distinct type: USER_DEFINED_TYPE_CATEGORY DISTINCT, IS_INSTANTIABLE and IS_FINAL YES, ORDERING_FORM FULL and ORDERING_CATEGORY MAP with the specific name of its function to its source in ORDERING_ROUTINE_CATALOG, _SCHEMA and _NAME, or NONE of an array or multiset source, and the source type, as COLUMNS gives a type, its DTD_IDENTIFIER in SOURCE_DTD_IDENTIFIER |
+| UDT_PRIVILEGES | privilege on a user-defined type, its PRIVILEGE_TYPE TYPE USAGE or UNDER |
 | ROUTINES | routine: its specific name and its name, ROUTINE_TYPE FUNCTION or PROCEDURE, a function's result type, as COLUMNS gives a type, the type's name in TYPE_UDT_CATALOG, _SCHEMA and _NAME, null of a procedure, ROUTINE_BODY SQL, ROUTINE_DEFINITION its body to the owner of its schema and null to others, IS_DETERMINISTIC, SQL_DATA_ACCESS CONTAINS SQL, READS SQL DATA or MODIFIES SQL DATA, a function's IS_NULL_CALL, MODULE_CATALOG, MODULE_SCHEMA and MODULE_NAME the module of a module's routine, null of another, SCHEMA_LEVEL_ROUTINE YES, or NO of a module's routine, and SECURITY_TYPE DEFINER. A distinct type's function is DETERMINISTIC, CONTAINS SQL and not null-call. A polymorphic table function is a FUNCTION of a null result type |
 | PARAMETERS | routine's parameter: its ORDINAL_POSITION, from 1, PARAMETER_MODE IN, OUT or INOUT, its name and its type. [EXTENSION] A polymorphic table function's generic table parameter is of DATA_TYPE TABLE, its descriptor parameter DESCRIPTOR, their other type columns null |
 | ROUTINE_PRIVILEGES | privilege on a routine, its PRIVILEGE_TYPE EXECUTE, the owner's of _SYSTEM among them |
-| TRANSFORMS | distinct type's transform, its GROUP_NAME the name of the function from its source, of TRANSFORM_TYPE FROM SQL, its function to its source, and TO SQL, its function from it |
+| TRANSFORMS | transform: a distinct type's own, its GROUP_NAME the name of the function from its source, of TRANSFORM_TYPE FROM SQL, its function to its source, and TO SQL, its function from it, and each function of a group CREATE TRANSFORM made |
+
+Eight more describe structured types and typed tables
+([CREATE TYPE](statements/create-type.md), [CREATE TABLE](statements/create-table.md)):
+
+| View | One row of each |
+|---|---|
+| ATTRIBUTES | attribute of a structured type: its name, ORDINAL_POSITION, default and type, as COLUMNS gives a type |
+| DIRECT_SUPERTYPES | structured type and its direct supertype |
+| METHOD_SPECIFICATIONS | method specification: its specific name, its name, IS_STATIC, IS_OVERRIDING, IS_CONSTRUCTOR, its result type and characteristics |
+| METHOD_SPECIFICATION_PARAMETERS | parameter of a method specification, as PARAMETERS gives one |
+| DIRECT_SUPERTABLES | typed table or referenceable view and its direct supertable or superview |
+| REFERENCED_TYPES | reference type of a column, attribute, parameter or part of one: its referenced type, as ELEMENT_TYPES gives a part |
+| TABLE_METHOD_PRIVILEGES | privilege of SELECT on a method of a typed table's type, granted or held by the user or an enabled role |
+| ROLE_TABLE_METHOD_GRANTS | such a privilege granted to or by an enabled role |
 
 Eight more of ISO/IEC 9075-11 describe roles ([CREATE
 ROLE](statements/create-role.md)) and the privileges granted to them:
@@ -88,10 +102,10 @@ ROLE](statements/create-role.md)) and the privileges granted to them:
 | ENABLED_ROLES | role the session has enabled: the role SET ROLE set, each role granted to it or to PUBLIC, and each granted to one of those in turn. None until a role is set |
 | APPLICABLE_ROLES | grant of a role to the user, to PUBLIC, or to an enabled role, and of a role to one of those roles in turn, set or not: GRANTEE, ROLE_NAME, IS_GRANTABLE YES if granted WITH ADMIN OPTION |
 | ADMINISTRABLE_ROLE_AUTHORIZATIONS | grant of a role the user may grant, revoke and drop, holding it WITH ADMIN OPTION through APPLICABLE_ROLES: GRANTEE, ROLE_NAME, IS_GRANTABLE |
-| ROLE_TABLE_GRANTS | privilege on a table granted to an enabled role, or by one, with the columns of TABLE_PRIVILEGES |
+| ROLE_TABLE_GRANTS | privilege on a table granted to an enabled role, or by one, with the columns of TABLE_PRIVILEGES, WITH_HIERARCHY among them |
 | ROLE_COLUMN_GRANTS | such a privilege on a column, with the columns of COLUMN_PRIVILEGES |
 | ROLE_USAGE_GRANTS | such USAGE, with the columns of USAGE_PRIVILEGES |
-| ROLE_UDT_GRANTS | such a privilege on a distinct type, with the columns of UDT_PRIVILEGES |
+| ROLE_UDT_GRANTS | such a privilege on a user-defined type, with the columns of UDT_PRIVILEGES |
 | ROLE_ROUTINE_GRANTS | such a privilege on a routine, with the columns of ROUTINE_PRIVILEGES |
 
 A role's creator holds it WITH ADMIN OPTION by a grant from `_SYSTEM`,

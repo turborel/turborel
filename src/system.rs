@@ -155,6 +155,7 @@ pub(crate) fn builtin() -> SystemTables {
 /// The description of system table `table`: no constraints, no engine.
 pub(crate) fn desc_of(table: &dyn SystemTable) -> TableDesc {
     TableDesc {
+        typed: None,
         name: name_of(table),
         columns: table.columns(),
         constraints: Vec::new(),

@@ -54,6 +54,13 @@ pub fn updatable_in(c: &CursorSpecification, catalog: &dyn Catalog, schema: &str
     (catalog.table(&name).is_some() || catalog.view(&name).is_some_and(|v| v.updates.is_some())).then_some(name)
 }
 
+/// [ISO/IEC 9075-2:2023 §14.8 SR9] Whether the `<table reference>` of the
+/// updatable cursor specification `c` is ONLY.
+#[must_use]
+pub fn updatable_only(c: &CursorSpecification) -> bool {
+    updatable(c).and_then(|s| s.table_expression.from.first()?.named()).is_some_and(|n| n.only)
+}
+
 /// [X3.135-1986 §5.25 SR11c, SR11e] one `<table reference>`, naming a
 /// table [ISO/IEC 9075:1992 §7.5 SR10, §7.9 SR12c], and no GROUP BY or
 /// HAVING.
@@ -264,12 +271,24 @@ fn bind_set_clauses(binder: &Binder<'_>, kind: WriteKind, set: &[SetClause]) -> 
             assign: UPDATE_SEARCHED_RULE,
         },
     };
-    let mut bound_set: Vec<(usize, Option<Expr>)> = Vec::new();
+    bind_set_list(binder, set, &rules)
+}
+
+/// The `<set clause list>` `set` on the one table of `binder`, each clause
+/// bound after those before it: of a `<mutated set clause>` of a column an
+/// earlier one sets, that one deleted [ISO/IEC 9075-2:2023 §14.15 SR7c ii].
+pub(super) fn bind_set_list(binder: &Binder<'_>, set: &[SetClause], rules: &SetRules) -> Result<Vec<(usize, Option<Expr>)>> {
+    let mut done: Vec<(usize, Option<Expr>)> = Vec::new();
+    let mut mutated: Vec<usize> = Vec::new();
     for sc in set {
-        let bound = binder.hosting(true, || bind_set_clause(binder, sc, &rules, &bound_set)).or_at(sc.at)?;
-        bound_set.push(bound);
+        let bound = binder.hosting(true, || bind_set_clause(binder, sc, rules, (&done, &mutated))).or_at(sc.at)?;
+        if !sc.attributes.is_empty() {
+            done.retain(|(j, _)| *j != bound.0);
+            mutated.push(bound.0);
+        }
+        done.push(bound);
     }
-    Ok(bound_set)
+    Ok(done)
 }
 
 /// The rules a `<set clause>` cites: of a set function in its value, of its
@@ -283,13 +302,14 @@ pub(super) struct SetRules {
     pub(super) assign: AssignRule,
 }
 
-/// One `<set clause>` `sc`, after the clauses `done`: its object column's
+/// One `<set clause>` `sc`, after the clauses `done`, of which those of
+/// the columns at `mutated` are mutated set clauses: its object column's
 /// position in the row of the table changed, and its new value.
-pub(super) fn bind_set_clause(
+fn bind_set_clause(
     binder: &Binder<'_>,
     sc: &SetClause,
     rules: &SetRules,
-    done: &[(usize, Option<Expr>)],
+    (done, mutated): (&[(usize, Option<Expr>)], &[usize]),
 ) -> Result<(usize, Option<Expr>)> {
     let item = binder.items.first().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] an UPDATE binds its table first"))?;
     let (name, desc) = (&item.table, &item.desc);
@@ -298,21 +318,26 @@ pub(super) fn bind_set_clause(
         .ok_or_else(|| no_column(name, format!("[{}] {name} has no column {}", rules.column, sc.column), &sc.column))?;
     // An updatable view's column is a column of its base table.
     let position = item.position(i);
-    if done.iter().any(|(j, _)| *j == position) {
+    // [ISO/IEC 9075-2:2023 §14.15 SR7c ii, SR8] a column set twice, but by
+    // mutated set clauses, the later of which takes the earlier's value.
+    let folded = !sc.attributes.is_empty() && mutated.contains(&position);
+    if !folded && done.iter().any(|(j, _)| *j == position) {
         return Err(rule(format!("[{}] column {} is set twice", rules.column, sc.column)));
     }
-    let base = match &item.source {
-        Source::Base(vb) => vb.base.columns.get(position),
-        Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) | Source::Argument => Some(col),
+    let table = match &item.source {
+        Source::Base(vb) => &vb.base,
+        Source::Table | Source::Derived(_) | Source::Common | Source::System(_) | Source::Unnest(_) | Source::Argument => desc,
     };
-    // [ISO/IEC 9075-2:2023 §14.15 SR5] a generated column, or an identity
-    // column always generated, set only to DEFAULT.
-    if base.is_some_and(ColumnDesc::always_generated) && !matches!(sc.value, UpdateSource::Default) {
-        let msg = format!("[ISO/IEC 9075-2:2023 §14.15 SR5] column {} is generated always, so it is set only to DEFAULT", sc.column);
-        return Err(rule(msg));
-    }
+    let base = table.columns.get(position);
+    settable(table, base, sc)?;
     if let Some(index) = &sc.element {
         return Ok((position, Some(binder.element_assignment((sc, col), index, rules.set_function)?)));
+    }
+    if !sc.attributes.is_empty() {
+        let at = binder.note(item, i)?;
+        let earlier = done.iter().find(|(j, _)| folded && *j == position).map(|(_, e)| e.clone().unwrap_or(Expr::Const(Value::Null)));
+        let current = earlier.unwrap_or(Expr::Column(at));
+        return Ok((position, Some(binder.mutated_value((sc, at, &col.data_type), &current, rules.set_function)?)));
     }
     let value = match &sc.value {
         // NULL: SQL-86 refuses it for a NOT NULL column [X3.135-1986 §8.11
@@ -332,11 +357,39 @@ pub(super) fn bind_set_clause(
         UpdateSource::Value(v) => {
             // [ISO/IEC 9075:1992 §17.6 GR5w] a `?` takes its object column's type.
             let (e, t) = binder.typed(v, ParameterType::Of(col.data_type.clone()), Scope::Rows(rules.set_function))?;
-            check_assignment(col, &t.clone(), rules.assign)?;
-            Some(super::datetime::stored(e, t, &col.data_type.clone(), binder.now))
+            // [ISO/IEC 9075-2:2023 §9.2 GR2] by an appropriate cast.
+            if let Some(cast) = super::assignment_cast(&*binder.db.catalog, &t, &col.data_type) {
+                Some(binder.user_cast_invocation(cast, e)?.0)
+            } else {
+                check_assignment(col, &t.clone(), rules.assign)?;
+                Some(super::datetime::stored(e, t, &col.data_type.clone(), binder.now))
+            }
         }
     };
     Ok((position, value))
+}
+
+/// [ISO/IEC 9075-2:2023 §14.15 SR3, SR5] That `sc` may set the column
+/// `base` of `table`: not its self-referencing column, and of a generated
+/// column, or an identity column always generated, only to DEFAULT.
+fn settable(table: &TableDesc, base: Option<&ColumnDesc>, sc: &SetClause) -> Result<()> {
+    // [ISO/IEC 9075-2:2023 §14.15 SR3] no self-referencing column set.
+    if let Some(typed) = &table.typed
+        && base.is_some_and(|c| c.name == typed.self_referencing)
+    {
+        let msg = format!(
+            "[ISO/IEC 9075-2:2023 §14.15 SR3] column {} is the self-referencing column of {}, so no <set clause> sets it",
+            sc.column, table.name
+        );
+        return Err(rule(msg));
+    }
+    // [ISO/IEC 9075-2:2023 §14.15 SR5] a generated column, or an identity
+    // column always generated, set only to DEFAULT.
+    if base.is_some_and(ColumnDesc::always_generated) && (!matches!(sc.value, UpdateSource::Default) || !sc.attributes.is_empty()) {
+        let msg = format!("[ISO/IEC 9075-2:2023 §14.15 SR5] column {} is generated always, so it is set only to DEFAULT", sc.column);
+        return Err(rule(msg));
+    }
+    Ok(())
 }
 
 /// An UPDATE or DELETE of `table`, with the SET clauses `set` (none for
@@ -349,7 +402,46 @@ pub(super) fn bind_set_clause(
 pub fn bind_write(
     cx: Context<'_>,
     kind: WriteKind,
-    table: &TableName,
+    // [ISO/IEC 9075-2:2023 §14.9 SR8, §14.14 SR8] ONLY of a table that is
+    // not typed is the table's name alone; of a typed table, its own rows,
+    // which are all this binds (`bind_member_write` binds a subtable's).
+    (table, only): (&TableName, bool),
+    set: &[SetClause],
+    where_clause: Option<&SearchCondition>,
+) -> Result<BoundWrite> {
+    let w = bind_write_of(cx, kind, (table, None), set, where_clause)?;
+    if only {
+        let clause =
+            if matches!(kind, WriteKind::DeleteSearched | WriteKind::DeletePositioned) { "§14.9 AR1b ii" } else { "§14.14 AR1b ii" };
+        super::hierarchy::only_allowed(cx.db, cx.who(), &w.desc, clause).or_at(table.at)?;
+    }
+    Ok(w)
+}
+
+/// [ISO/IEC 9075-2:2023 §14.9 GR4, §14.14 GR6; §15.7, §15.13] The UPDATE
+/// or DELETE of a typed table `table`, named without ONLY, as it changes
+/// the rows of its proper subtable `member`: their superrows in it, read
+/// and written by its columns and privileges, which are the member's first
+/// columns, the rows the member's own.
+///
+/// # Errors
+///
+/// As `bind_write`.
+pub fn bind_member_write(
+    cx: Context<'_>,
+    kind: WriteKind,
+    (table, member): (&TableName, &QualifiedName),
+    set: &[SetClause],
+    where_clause: Option<&SearchCondition>,
+) -> Result<BoundWrite> {
+    bind_write_of(cx, kind, (table, Some(member)), set, where_clause)
+}
+
+/// `bind_write` of `table`'s rows, or of its proper subtable `member`'s.
+fn bind_write_of(
+    cx: Context<'_>,
+    kind: WriteKind,
+    (table, member): (&TableName, Option<&QualifiedName>),
     set: &[SetClause],
     where_clause: Option<&SearchCondition>,
 ) -> Result<BoundWrite> {
@@ -383,8 +475,12 @@ pub fn bind_write(
 
     // [ISO/IEC 9075-2:2023 §6.14 SR1e] an <update source> draws values.
     let bound_set = binder.drawing(true, || bind_set_clauses(&binder, kind, set))?;
-    let base = target.base;
+    let base = match member {
+        Some(m) => db.catalog.table(m).cloned().ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] subtable {m} is not there")))?,
+        None => target.base,
+    };
     let generated = super::generations(db, &base)?;
+    let names = if member.is_some() { base.columns.iter().map(|c| c.name.clone()).collect() } else { names };
     let mut rows = LogicalPlan::Scan { table: base.name.clone(), names, needed: (0..base.columns.len()).collect(), located: false };
     if let Some(cond) = and_all(target.cond.into_iter().chain(cond).collect()) {
         rows = LogicalPlan::Filter { cond, input: Box::new(rows) };

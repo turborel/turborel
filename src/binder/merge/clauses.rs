@@ -4,7 +4,7 @@
 //! source's alone.
 
 use super::super::datetime::stored;
-use super::super::statements::{AssignRule, SetRules, bind_set_clause};
+use super::super::statements::{AssignRule, SetRules, bind_set_list};
 use super::super::{Binder, ObjectColumn, Scope, rule};
 use super::target::CLAUSE;
 use super::{BoundAction, BoundWhen};
@@ -96,14 +96,7 @@ pub(super) fn bind_clauses(
 /// value, in order, no column twice [§14.15 SR8]. Its values may draw
 /// sequence values [§6.14 SR1e].
 fn set_clauses(both: &Binder<'_>, set: &[SetClause]) -> Result<Vec<(usize, Option<Expr>)>> {
-    both.drawing(true, || {
-        let mut done: Vec<(usize, Option<Expr>)> = Vec::new();
-        for sc in set {
-            let bound = both.hosting(true, || bind_set_clause(both, sc, &MERGE_SET, &done)).or_at(sc.at)?;
-            done.push(bound);
-        }
-        Ok(done)
-    })
+    both.drawing(true, || bind_set_list(both, set, &MERGE_SET))
 }
 
 /// [SR18] The merge insert value list of `insert` for its insert object

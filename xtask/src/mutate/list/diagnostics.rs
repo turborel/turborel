@@ -185,7 +185,7 @@ pub const DIAGNOSTICS: [Mutation; 19] = [
         name: "diagnostics-preparable-coded-dynamic",
         package: Package::Core,
         breaks: "a positioned DELETE prepared is coded as one of a dynamic cursor",
-        file: "src/db/execute.rs",
+        file: "src/db/execute/command.rs",
         original: "        return commands::PREPARABLE_DELETE_CURSOR;",
         replacement: "        return commands::DYNAMIC_DELETE_CURSOR;",
         integration: &["get_diagnostics_items::positioned_statements_of_dynamic_cursors_coded_23_1"],

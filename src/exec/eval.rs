@@ -423,6 +423,8 @@ pub(crate) fn like_escape(escape: Option<&Value>) -> Result<Escape> {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_),
         ) => {

@@ -71,18 +71,26 @@ pub fn bind_insert_query(cx: Context<'_>, query: &QueryExpression, columns: &[Ob
     let bound = bind_query_expression(Context { draws, hosts, ..cx }, query, &Nesting::Source { columns })?;
     // A time or timestamp without time zone, of the session's displacement
     // as a column WITH TIME ZONE takes it [§6.1 GR5].
+    // [ISO/IEC 9075-2:2023 §9.2 GR2] or by an appropriate cast.
+    let catalog = &*cx.db.catalog;
+    let cast = |c: &OutColumn, o: &ObjectColumn| crate::binder::assignment_cast(catalog, &c.data_type, &o.desc.data_type);
     let wanted = columns.len() == bound.columns.len()
-        && bound.columns.iter().zip(columns).any(|(c, o)| takes_zone(&c.data_type.clone(), &o.desc.data_type.clone()));
+        && bound
+            .columns
+            .iter()
+            .zip(columns)
+            .any(|(c, o)| takes_zone(&c.data_type.clone(), &o.desc.data_type.clone()) || cast(c, o).is_some());
     if !wanted {
         return Ok(bound);
     }
-    let exprs = bound
-        .columns
-        .iter()
-        .zip(columns)
-        .enumerate()
-        .map(|(i, (c, o))| stored(Expr::Column(i), c.data_type.clone(), &o.desc.data_type.clone(), now))
-        .collect();
+    let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
+    let mut exprs = Vec::with_capacity(columns.len());
+    for (i, (c, o)) in bound.columns.iter().zip(columns).enumerate() {
+        exprs.push(match cast(c, o) {
+            Some(f) => binder.user_cast_invocation(f, Expr::Column(i))?.0,
+            None => stored(Expr::Column(i), c.data_type.clone(), &o.desc.data_type.clone(), now),
+        });
+    }
     Ok(Bound { plan: LogicalPlan::Project { exprs, input: Box::new(bound.plan) }, columns: bound.columns })
 }
 
@@ -212,6 +220,23 @@ fn deciding(rows: &[ValuesRow], k: usize) -> Option<&ValueExpression> {
 }
 
 impl Binder<'_> {
+    /// [ISO/IEC 9075-2:2023 §9.2] The value `e`, of type `t`, of a row of
+    /// VALUES stored in the column `object`, if it is of one: by the
+    /// appropriate user-defined cast to its type where `t` is not
+    /// assignable to it [GR2], which it must be else [SR2]; and its type.
+    fn stored_value(
+        &self,
+        (e, t): (Expr, DataType),
+        object: Option<&ObjectColumn>,
+        assign: AssignRule,
+    ) -> Result<(Expr, Option<DataType>)> {
+        let Some(o) = object else { return Ok((e, Some(t))) };
+        if let Some(cast) = super::assignment_cast(&*self.db.catalog, &t, &o.desc.data_type) {
+            return Ok((self.user_cast_invocation(cast, e)?.0, Some(o.desc.data_type.clone())));
+        }
+        check_assignment(&o.desc, &t.clone(), assign)?;
+        Ok((e, Some(t)))
+    }
     /// [ISO/IEC 9075:1992 §17.6 GR5o, p] The type a `<dynamic parameter
     /// specification>` in each column of `rows` takes: the first row's whose
     /// value there is not one; or, if each is, the column's an INSERT
@@ -267,10 +292,7 @@ impl Binder<'_> {
                         None => self.value_expression(v, scope),
                     }
                     .or_at(*at)?;
-                    if let Some(o) = object {
-                        check_assignment(&o.desc, &t.clone(), assign).or_at(*at)?;
-                    }
-                    ((e, Some(t)), *at)
+                    (self.stored_value((e, t), object, assign).or_at(*at)?, *at)
                 }
                 RowElement::Null(at) => ((Expr::Const(Value::Null), None), *at),
                 RowElement::Default(at) => {
@@ -320,7 +342,7 @@ fn combined(cx: Context<'_>, s: &SetOperation, left: Bound, right: Bound) -> Res
         let collation = result_collation(a, b);
         columns.push(OutColumn { name, collation, data_type, not_null: a.not_null && b.not_null, origin: None });
     }
-    Ok(assembled(&cx, s, (left, right), columns))
+    assembled(&cx, s, (left, right), columns)
 }
 
 /// [ISO/IEC 9075:1992 §7.10 SR9, SR15] The operands `left` and `right` of
@@ -340,7 +362,7 @@ pub(super) fn aligned(cx: &Context<'_>, s: &SetOperation, (left, right): (Bound,
             SetOperator::Intersect => "INTERSECT",
         };
         let mut columns = left.columns.iter().chain(&right.columns);
-        columns.try_for_each(|c| super::composite::grouping_operand(&c.data_type, what))?;
+        columns.try_for_each(|c| super::composite::grouping_operand(cx.db, &c.data_type, what))?;
     }
     Ok(match &s.corresponding {
         Correspondence::Position => {
@@ -360,14 +382,25 @@ pub(super) fn aligned(cx: &Context<'_>, s: &SetOperation, (left, right): (Bound,
 /// [ISO/IEC 9075:1992 §7.10 GR1b] The set operation `s` of its operands
 /// `left` and `right`, aligned, its result's columns `columns`: each
 /// operand's brought to their types.
-pub(super) fn assembled(cx: &Context<'_>, s: &SetOperation, (left, right): (Bound, Bound), columns: Vec<OutColumn>) -> Bound {
+///
+/// # Errors
+///
+/// As `structured::keyed_columns`', of a column of a structured type.
+pub(super) fn assembled(cx: &Context<'_>, s: &SetOperation, (left, right): (Bound, Bound), columns: Vec<OutColumn>) -> Result<Bound> {
     let op = match s.op {
         SetOperator::Union => SetOp::Union,
         SetOperator::Except => SetOp::Except,
         SetOperator::Intersect => SetOp::Intersect,
     };
-    let (l, r) = (conform(left, &columns), conform(right, &columns));
-    Bound { plan: collated_set_operation(cx, (op, s.all), (l, r), &columns), columns }
+    let (mut l, mut r) = (conform(left, &columns), conform(right, &columns));
+    // [ISO/IEC 9075-2:2023 §9.12] rows compared by their keys of a type
+    // ordered by MAP.
+    if !(op == SetOp::Union && s.all) {
+        let types: Vec<DataType> = columns.iter().map(|c| c.data_type.clone()).collect();
+        l = super::structured::keyed_columns(*cx, l, &types, "a set operation")?;
+        r = super::structured::keyed_columns(*cx, r, &types, "a set operation")?;
+    }
+    Ok(Bound { plan: collated_set_operation(cx, (op, s.all), (l, r), &columns), columns })
 }
 
 /// The plan of `bound`, its columns cast to the types of `columns` where

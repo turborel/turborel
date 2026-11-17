@@ -26,10 +26,18 @@ impl State {
     ///
     /// SQLCODE -103 for a rule it breaks: its name is a column's [§11.4
     /// SR1], or a constraint's, or it is a second identity column [ISO/IEC
-    /// 9075-2:2023 §11.11 SR3]; -104 for a foreign key it may not make.
+    /// 9075-2:2023 §11.11 SR3], or the table is a referenceable one [SR2];
+    /// -104 for a foreign key it may not make.
     pub(in crate::db) fn add_column(&self, (desc, names, zone): (&TableDesc, &str, i16), def: &ColumnDefinition) -> Result<TableDesc> {
         if desc.column(&def.name).is_some() {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.4 SR1] {} already has a column {}", desc.name, def.name)));
+        }
+        // [ISO/IEC 9075-2:2023 §11.11 SR2] its columns are its type's.
+        if desc.typed.is_some() {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §11.11 SR2] {} is a referenceable table, to which no column is added",
+                desc.name
+            )));
         }
         let mut next = desc.clone();
         next.columns.push(self.column_of((&desc.name, names, zone), def)?);
@@ -57,6 +65,23 @@ impl State {
         next.generation = desc.generation.saturating_add(1);
         Ok(next)
     }
+    /// [ISO/IEC 9075:1992 §11.15 SR3; ISO/IEC 9075-2:2023 §11.23 SR3] That
+    /// `column` of `desc` may be dropped: named by no table option, of a
+    /// table of no structured type, and not its only column.
+    fn droppable(&self, desc: &TableDesc, column: &str) -> Result<()> {
+        self.unnamed_by_options(desc, column)?;
+        // [ISO/IEC 9075-2:2023 §11.23 SR3] its columns are its type's.
+        if desc.typed.is_some() {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §11.23 SR3] {} is a referenceable table, of which no column is dropped",
+                desc.name
+            )));
+        }
+        if desc.columns.len() == 1 {
+            return Err(rule(format!("[ISO/IEC 9075:1992 §11.15 SR3] {column} is the only column of {}", desc.name)));
+        }
+        Ok(())
+    }
 
     /// [ISO/IEC 9075:1992 §11.15] `desc` without the column `column`, of
     /// the next generation, the other columns renumbered [GR6]; and the
@@ -71,7 +96,7 @@ impl State {
     /// [SR3], or a constraint refers to it and other columns and
     /// `behavior` is RESTRICT [SR4], or a table option names it, or a
     /// generated column's expression references it [ISO/IEC 9075-2:2023
-    /// §11.23 SR7f].
+    /// §11.23 SR7f], or the table is a referenceable one [SR3].
     pub(in crate::db) fn drop_column(
         &self,
         desc: &TableDesc,
@@ -79,10 +104,7 @@ impl State {
         behavior: DropBehavior,
     ) -> Result<(TableDesc, Reshape, Vec<TableDesc>)> {
         let at = desc.column(column).ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.15 SR3] {} has no column {column}", desc.name)))?;
-        self.unnamed_by_options(desc, column)?;
-        if desc.columns.len() == 1 {
-            return Err(rule(format!("[ISO/IEC 9075:1992 §11.15 SR3] {column} is the only column of {}", desc.name)));
-        }
+        self.droppable(desc, column)?;
         // With CASCADE, its generated columns are dropped first
         // (`Session::alter_table`).
         self.no_generated_on(desc, (at, column))?;

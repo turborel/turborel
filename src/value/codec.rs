@@ -17,7 +17,11 @@
 //!          then its units i128 |
 //!        11 (truth value) 0 for False, 1 for True u8 |
 //!        12 (decimal floating point) coefficient i128, exponent i32 |
-//!        13 (array) | 14 (row): its parts u32, then each part's value |
+//!        13 (array) | 14 (row) | 17 (multiset): its parts u32, then each
+//!          part's value |
+//!        18 (structured) its type's schema and name, its attributes as a
+//!          row's parts, then 0, or 1 and its key |
+//!        19 (reference) its octets, their count u32 first |
 //!        15 (character large object) | 16 (binary large object): 0, then
 //!          its octets, their count u32 first, if its row holds it; or 1,
 //!          then the id its table keeps it by u64, its octets u64 and its
@@ -62,6 +66,11 @@ const CLOB: u8 = 15;
 const BLOB: u8 = 16;
 /// [ISO/IEC 9075-2:2023 §4.12.3] A multiset: its elements, as an array's.
 const MULTISET: u8 = 17;
+/// [ISO/IEC 9075-2:2023 §4.9.3] A value of a structured type: its type's
+/// name, then its attributes (`types::structured`).
+const STRUCTURED: u8 = 18;
+/// [ISO/IEC 9075-2:2023 §4.11] A reference: its octets.
+const REFERENCE: u8 = 19;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -95,6 +104,8 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
         Value::Array(_) => ARRAY,
         Value::Multiset(_) => MULTISET,
         Value::Row(_) => ROW,
+        Value::Structured(_) => STRUCTURED,
+        Value::Reference(_) => REFERENCE,
         Value::Extension(e) => {
             out.put_u8(EXTENSION);
             out.put_str(e.kind.name());
@@ -130,6 +141,8 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         ARRAY => &types::ARRAY,
         MULTISET => &types::MULTISET,
         ROW => &types::ROW,
+        STRUCTURED => &types::STRUCTURED,
+        REFERENCE => &types::REFERENCE,
         CLOB => &types::CLOB,
         BLOB => &types::BLOB,
         EXTENSION => {

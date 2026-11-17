@@ -6,8 +6,8 @@
 //! part is; so it is looked for only in a longer one.
 
 use crate::ast::{
-    AlterAction, AlterDomainAction, ColumnConstraintKind, ColumnDefinition, Schema, SchemaStatement, TableConstraint, TableConstraintKind,
-    TableDefinition, TableElement,
+    AlterAction, AlterDomainAction, ColumnConstraint, ColumnConstraintKind, ColumnDefinition, Schema, SchemaStatement, TableConstraint,
+    TableConstraintKind, TableDefinition, TableElement,
 };
 use crate::db::Completion;
 use crate::error::SqlState;
@@ -39,7 +39,12 @@ fn of_constraint(c: &TableConstraint) -> Option<SqlState> {
 
 /// Of a `<column definition>`'s constraints.
 fn of_column(c: &ColumnDefinition) -> Option<SqlState> {
-    c.constraints.iter().find_map(|k| if let ColumnConstraintKind::Check(check) = &k.kind { condition(&check.text) } else { None })
+    c.constraints.iter().find_map(of_column_constraint)
+}
+
+/// Of a `<column constraint definition>`'s CHECK.
+fn of_column_constraint(k: &ColumnConstraint) -> Option<SqlState> {
+    if let ColumnConstraintKind::Check(check) = &k.kind { condition(&check.text) } else { None }
 }
 
 /// Of a `<table definition>`'s CHECKs.
@@ -47,7 +52,8 @@ fn of_table(t: &TableDefinition) -> Option<SqlState> {
     t.elements.iter().find_map(|e| match e {
         TableElement::Column(c) => of_column(c),
         TableElement::Constraint(c) => of_constraint(c),
-        TableElement::Like(_) => None,
+        TableElement::Options(o) => o.constraints.iter().find_map(of_column_constraint),
+        TableElement::Like(_) | TableElement::SelfReferencing(..) => None,
     })
 }
 
@@ -79,8 +85,14 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         | SchemaStatement::Sequence(_)
         | SchemaStatement::AlterSequence(_)
         | SchemaStatement::Type(_)
+        | SchemaStatement::AlterType(_)
+        | SchemaStatement::Cast(_)
+        | SchemaStatement::Ordering(_)
+        | SchemaStatement::Transform(_)
+        | SchemaStatement::AlterTransform(_)
         | SchemaStatement::Role(_) => None,
         // [ISO/IEC 9075-2:2023 §11.60 GR5]
+        SchemaStatement::Method(m) => long(&m.body_text).then_some(SqlState::STATEMENT_TOO_LONG),
         SchemaStatement::Routine(r) => long(&r.body_text).then_some(SqlState::STATEMENT_TOO_LONG),
         SchemaStatement::Module(m) => m.routines.iter().find(|r| long(&r.body_text)).map(|_| SqlState::STATEMENT_TOO_LONG),
     }

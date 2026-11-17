@@ -90,6 +90,7 @@ pub(super) fn unnest_item(bounds: Bounds<'_>, table: &UnnestTable, offset: usize
     let columns = columns_of(&types, table)?;
     let name = QualifiedName { auth: String::new(), ident: table.correlation.clone() };
     let desc = TableDesc {
+        typed: None,
         name: name.clone(),
         columns,
         constraints: Vec::new(),
@@ -108,6 +109,7 @@ pub(super) fn unnest_item(bounds: Bounds<'_>, table: &UnnestTable, offset: usize
         nullable: false,
         common: Vec::new(),
         drawn: None,
+        family: Vec::new(),
     })
 }
 

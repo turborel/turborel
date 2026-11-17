@@ -7,7 +7,7 @@ use super::Parser;
 use super::generated::RESTART;
 use super::psm::{RESIGNAL, SIGNAL};
 use super::routines::{CALL, RETURN};
-use crate::ast::{DynamicStatement, SetClause, SqlStatement, UpdateSource, ValueExpression};
+use crate::ast::{DynamicStatement, SetClause, SqlStatement, TableName, UpdateSource, ValueExpression};
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
 
@@ -82,22 +82,22 @@ impl Parser {
         // positioned> of no table.
         if self.dynamic.is_some() && self.is_kw(kw::WHERE) {
             let (table, cursor) = self.preparable_positioned()?;
-            return Ok(SqlStatement::DeletePositioned { table, cursor });
+            return Ok(SqlStatement::DeletePositioned { table, only: false, cursor });
         }
         self.expect_kw(kw::FROM)?;
-        let table = self.table_name()?;
+        let (table, only) = self.target_table()?;
         if !self.accept_kw(kw::WHERE) {
-            return Ok(SqlStatement::DeleteSearched { table, where_clause: None });
+            return Ok(SqlStatement::DeleteSearched { table, only, where_clause: None });
         }
         if self.accept_kw(kw::CURRENT) {
             self.expect_kw(kw::OF)?;
             if let Some(cursor) = self.dynamic_current_of()? {
-                return Ok(SqlStatement::Dynamic(Box::new(DynamicStatement::DeletePositioned { table, cursor })));
+                return Ok(SqlStatement::Dynamic(Box::new(DynamicStatement::DeletePositioned { table, only, cursor })));
             }
             let at = self.here();
-            return Ok(SqlStatement::DeletePositioned { table, cursor: (self.identifier()?, at) });
+            return Ok(SqlStatement::DeletePositioned { table, only, cursor: (self.identifier()?, at) });
         }
-        Ok(SqlStatement::DeleteSearched { table, where_clause: Some(self.search_condition()?) })
+        Ok(SqlStatement::DeleteSearched { table, only, where_clause: Some(self.search_condition()?) })
     }
 
     /// The statement a word, no key word, begins, if one does, read to its
@@ -146,12 +146,12 @@ impl Parser {
     fn truncate_statement(&mut self) -> Result<SqlStatement> {
         self.advance();
         self.expect_kw(kw::TABLE)?;
-        let table = self.table_name()?;
+        let (table, only) = self.target_table()?;
         let restart = self.accept_word(RESTART);
         if restart || self.accept_kw(kw::CONTINUE) {
             self.expect_kw(kw::IDENTITY)?;
         }
-        Ok(SqlStatement::Truncate { table, restart })
+        Ok(SqlStatement::Truncate { table, only, restart })
     }
 
     /// [X3.135-1986 §8.11, §8.12] UPDATE `<table name>` SET `<set clause>` \[{,`<set clause>`}...\]
@@ -163,22 +163,35 @@ impl Parser {
         if self.dynamic.is_some() && self.is_kw(kw::SET) {
             let set = self.set_clause_list()?;
             let (table, cursor) = self.preparable_positioned()?;
-            return Ok(SqlStatement::UpdatePositioned { table, set, cursor });
+            return Ok(SqlStatement::UpdatePositioned { table, only: false, set, cursor });
         }
-        let table = self.table_name()?;
+        let (table, only) = self.target_table()?;
         let set = self.set_clause_list()?;
         if !self.accept_kw(kw::WHERE) {
-            return Ok(SqlStatement::UpdateSearched { table, set, where_clause: None });
+            return Ok(SqlStatement::UpdateSearched { table, only, set, where_clause: None });
         }
         if self.accept_kw(kw::CURRENT) {
             self.expect_kw(kw::OF)?;
             if let Some(cursor) = self.dynamic_current_of()? {
-                return Ok(SqlStatement::Dynamic(Box::new(DynamicStatement::UpdatePositioned { table, set, cursor })));
+                return Ok(SqlStatement::Dynamic(Box::new(DynamicStatement::UpdatePositioned { table, only, set, cursor })));
             }
             let at = self.here();
-            return Ok(SqlStatement::UpdatePositioned { table, set, cursor: (self.identifier()?, at) });
+            return Ok(SqlStatement::UpdatePositioned { table, only, set, cursor: (self.identifier()?, at) });
         }
-        Ok(SqlStatement::UpdateSearched { table, set, where_clause: Some(self.search_condition()?) })
+        Ok(SqlStatement::UpdateSearched { table, only, set, where_clause: Some(self.search_condition()?) })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §14.9] `<target table>` ::= `<table name>` |
+    /// ONLY ( `<table name>` ): the table, and whether ONLY was written.
+    pub(super) fn target_table(&mut self) -> Result<(TableName, bool)> {
+        if self.is_kw(kw::ONLY) && matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
+            self.advance();
+            self.expect_delim(delim::LEFT_PAREN)?;
+            let table = self.table_name()?;
+            self.expect_delim(delim::RIGHT_PAREN)?;
+            return Ok((table, true));
+        }
+        Ok((self.table_name()?, false))
     }
 
     /// SET `<set clause>` \[{, `<set clause>`}...\]
@@ -199,7 +212,13 @@ impl Parser {
     fn set_clause(&mut self) -> Result<SetClause> {
         let at = self.here();
         let column = self.identifier()?;
-        let element = if self.accept_delim(delim::LEFT_BRACKET) {
+        // [ISO/IEC 9075-2:2023 §14.15] a <mutated set clause>: the
+        // attributes the source is put in, by their mutators [SR7].
+        let mut attributes = Vec::new();
+        while self.accept_delim(delim::PERIOD) {
+            attributes.push(self.identifier()?);
+        }
+        let element = if attributes.is_empty() && self.accept_delim(delim::LEFT_BRACKET) {
             let index = ValueExpression::Value(self.value_specification()?);
             self.expect_delim(delim::RIGHT_BRACKET)?;
             Some(index)
@@ -214,6 +233,6 @@ impl Parser {
         } else {
             UpdateSource::Value(self.value_expression()?)
         };
-        Ok(SetClause { column, element, value, at })
+        Ok(SetClause { column, attributes, element, value, at })
     }
 }

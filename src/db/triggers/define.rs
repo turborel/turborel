@@ -279,10 +279,7 @@ impl State {
             }
             SqlStatement::GetDiagnostics(_) => Ok(()),
             SqlStatement::Control(_) | SqlStatement::Signal(_) => self.bind_program_checked(cx, stmt, (owner, params), None),
-            // [ISO/IEC 9075-4:2006 draft §12.5, §12.6] of a local cursor,
-            // which alone a statement within a compound statement names.
-            SqlStatement::UpdatePositioned { table, set, .. } => bind_write(cx, WriteKind::UpdatePositioned, table, set, None).map(drop),
-            SqlStatement::DeletePositioned { table, .. } => bind_write(cx, WriteKind::DeletePositioned, table, &[], None).map(drop),
+            SqlStatement::UpdatePositioned { .. } | SqlStatement::DeletePositioned { .. } => bind_positioned(cx, stmt),
             // [ISO/IEC 9075-2:2023 §11.49 SR13] a <call statement> is an
             // <SQL procedure statement> a triggered action may contain.
             SqlStatement::Call(call) => Self::bind_call(cx, call).map(drop),
@@ -294,6 +291,7 @@ impl State {
             SqlStatement::Return(_)
             | SqlStatement::Close(_)
             | SqlStatement::SetCollation(_)
+            | SqlStatement::SetTransformGroup(_)
             | SqlStatement::Commit
             | SqlStatement::Truncate { .. }
             | SqlStatement::AlterTable { .. }
@@ -395,11 +393,24 @@ fn refused() -> SqlError {
 
 /// `stmt`, a searched UPDATE or DELETE, bound as `bind_triggered` binds it.
 fn bind_searched(cx: Context<'_>, stmt: &SqlStatement) -> Result<()> {
-    if let SqlStatement::UpdateSearched { table, set, where_clause } = stmt {
-        return bind_write(cx, WriteKind::UpdateSearched, table, set, where_clause.as_ref()).map(drop);
+    if let SqlStatement::UpdateSearched { table, only, set, where_clause } = stmt {
+        return bind_write(cx, WriteKind::UpdateSearched, (table, *only), set, where_clause.as_ref()).map(drop);
     }
-    if let SqlStatement::DeleteSearched { table, where_clause } = stmt {
-        return bind_write(cx, WriteKind::DeleteSearched, table, &[], where_clause.as_ref()).map(drop);
+    if let SqlStatement::DeleteSearched { table, only, where_clause } = stmt {
+        return bind_write(cx, WriteKind::DeleteSearched, (table, *only), &[], where_clause.as_ref()).map(drop);
+    }
+    Ok(())
+}
+
+/// [ISO/IEC 9075-4:2006 draft §12.5, §12.6] The positioned UPDATE or
+/// DELETE `stmt`, of a local cursor, which alone a statement within a
+/// compound statement names, bound in `cx`.
+fn bind_positioned(cx: Context<'_>, stmt: &SqlStatement) -> Result<()> {
+    if let SqlStatement::UpdatePositioned { table, only, set, .. } = stmt {
+        return bind_write(cx, WriteKind::UpdatePositioned, (table, *only), set, None).map(drop);
+    }
+    if let SqlStatement::DeletePositioned { table, only, .. } = stmt {
+        return bind_write(cx, WriteKind::DeletePositioned, (table, *only), &[], None).map(drop);
     }
     Ok(())
 }

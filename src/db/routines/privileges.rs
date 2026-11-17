@@ -37,13 +37,16 @@ struct Revoked {
 }
 
 /// [ISO/IEC 9075-2:2023 §10.6 SR4] Whether a `<routine type>` of `wanted`
-/// designates a routine of kind `kind`.
-fn of_type(wanted: RoutineType, kind: RoutineKind) -> bool {
-    match (wanted, kind) {
-        (RoutineType::Routine, RoutineKind::Function | RoutineKind::Procedure)
-        | (RoutineType::Function, RoutineKind::Function)
-        | (RoutineType::Procedure, RoutineKind::Procedure) => true,
-        (RoutineType::Function, RoutineKind::Procedure) | (RoutineType::Procedure, RoutineKind::Function) => false,
+/// designates the routine `r`: METHOD of its kind an SQL-invoked method
+/// alone [SR2], FUNCTION a function no method [§11.60 SR5].
+fn of_type(wanted: RoutineType, r: &SqlRoutineDesc) -> bool {
+    match (wanted, r.kind) {
+        (RoutineType::Routine, RoutineKind::Function | RoutineKind::Procedure) | (RoutineType::Procedure, RoutineKind::Procedure) => true,
+        (RoutineType::Function, RoutineKind::Function) => r.method.is_none(),
+        (RoutineType::Method(kind), RoutineKind::Function) => r.method.as_ref().is_some_and(|(_, k)| *k == kind),
+        (RoutineType::Function, RoutineKind::Procedure)
+        | (RoutineType::Procedure, RoutineKind::Function)
+        | (RoutineType::Method(_), RoutineKind::Procedure) => false,
     }
 }
 
@@ -94,7 +97,7 @@ impl State {
             None => None,
         };
         let casts = self.type_functions(&qn, (specific, Some(wanted)), types.as_deref());
-        found.retain(|r| of_type(wanted, r.kind));
+        found.retain(|r| of_type(wanted, r));
         if found.is_empty() && casts.is_empty() {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §10.6 SR4] routine {qn} is not of the <routine type> named")).or_at(name.at));
         }

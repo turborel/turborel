@@ -4,21 +4,39 @@
 
 ## NAME
 
-CREATE TYPE: define a distinct type
+CREATE TYPE: define a distinct or structured type
 
 ## SYNOPSIS
 
 ```
 <user-defined type definition> ::=
-    CREATE TYPE <user-defined type name> AS <representation>
-    [ <type option>... ]
+    CREATE TYPE <user-defined type name> [ UNDER <supertype name> ]
+    [ AS <representation> ] [ <type option>... ]
+    [ <method specification> [ { , <method specification> }... ] ]
 
-<representation> ::= <predefined type> | <array type> | <multiset type>
+<representation> ::=
+      <predefined type> | <array type> | <multiset type>
+    | ( <attribute definition> [ { , <attribute definition> }... ] )
+
+<attribute definition> ::= <attribute name> <data type> [ DEFAULT <default option> ] [ COLLATE <collation name> ]
 
 <type option> ::=
-      FINAL
+      [ NOT ] INSTANTIABLE
+    | [ NOT ] FINAL
+    | REF IS SYSTEM GENERATED
+    | REF USING <predefined type>
+    | REF FROM ( <attribute name> [ { , <attribute name> }... ] )
+    | CAST ( SOURCE AS REF ) WITH <identifier>
+    | CAST ( REF AS SOURCE ) WITH <identifier>
     | CAST ( SOURCE AS DISTINCT ) WITH <function name>
     | CAST ( DISTINCT AS SOURCE ) WITH <function name>
+
+<method specification> ::=
+      [ INSTANCE | STATIC | CONSTRUCTOR ] METHOD <method name>
+      ( [ <SQL parameter declaration> [ { , <SQL parameter declaration> }... ] ] )
+      RETURNS <data type> [ SELF AS RESULT ] [ SPECIFIC <specific method name> ]
+      [ <method characteristic>... ]
+    | OVERRIDING [ INSTANCE ] METHOD <method name> ( ... ) RETURNS <data type>
 
 <routine invocation> ::= [ <schema name> . ] <function name> ( <value expression> )
 ```
@@ -58,7 +76,28 @@ INTEGER sources may each name their function to the source AMOUNT. Their
 specific names, which GRANT and REVOKE may name, are the type's name and
 _TO_DISTINCT or _TO_SOURCE.
 
-A client reads and writes a value of the type as a value of its source,
+A structured type is written AS a list of attributes, or UNDER a
+supertype whose attributes come first. A value has a value of each
+attribute, and is of a most specific type, the type it was made of. A
+value of a subtype is a value of its supertypes too, and is assigned to
+a site of any of them. NEW makes a value of the attributes' defaults,
+`v.a` observes an attribute and `v.a(x)` gives a copy with the
+attribute changed. An UPDATE sets one by `SET c.a = x`. A type NOT
+INSTANTIABLE has no value made of it but a subtype's, and one FINAL has
+no subtypes. A structured type compares by nothing until [CREATE
+ORDERING](create-ordering.md) gives it an ordering.
+
+The method specifications declare the type's methods, whose bodies
+[CREATE METHOD](create-method.md) gives. An OVERRIDING one gives a
+subtype its own body of a supertype's method. A distinct type may have
+methods too, but none OVERRIDING.
+
+A reference type specification says how a reference to a row of a
+typed table of the type is made, by the system, of a predefined type
+the user gives, or from attributes. [CREATE TABLE](create-table.md)
+`OF` the type makes such a table.
+
+A client reads and writes a value of a distinct type as a value of its source,
 and DESCRIBE describes it as TYPE 17, with the type's name.
 
 CREATE TYPE runs within the session's transaction, as other definitions
@@ -68,21 +107,30 @@ the functions.
 ## RULES
 
 1. The schema exists, and no type or domain of the schema has its name.
-2. The source is a predefined, an array or a multiset type, and no row type,
-   distinct type or domain.
+2. A distinct type's source is a predefined, an array or a multiset type,
+   and no row type, distinct type or domain.
 3. Each option is written at most once. NOT FINAL, INSTANTIABLE, UNDER,
-   REF and the CASTs to REF and TYPE, which are of structured types, are
-   refused.
-4. Each of its two functions is told apart from every other function of
+   REF and the CASTs to REF and TYPE are of structured types alone, and
+   the CASTs to DISTINCT and SOURCE of distinct types alone.
+4. A structured type is INSTANTIABLE unless NOT INSTANTIABLE is written,
+   and says FINAL or NOT FINAL. A supertype exists, is NOT FINAL and its
+   user holds UNDER on it. No attribute is of the type itself, nor named
+   as another of the type or a supertype.
+5. A method specification is told apart from every other of its name of
+   the type and its supertypes by its parameters' types, and an
+   OVERRIDING one matches a supertype's method. An original one says
+   CONTAINS SQL, READS SQL DATA or MODIFIES SQL DATA.
+6. Each of a distinct type's two functions is told apart from every other function of
    its name in the schema, an SQL-invoked function's or another type's,
    as [CREATE FUNCTION](create-function.md) tells overloads apart.
-5. A column of the type defaults to NULL alone, or to ARRAY[] if the
+7. A column of a distinct type defaults to NULL alone, or to ARRAY[] if the
    source is an array type, or MULTISET[] if it is a multiset type.
 
 ## PRIVILEGES
 
 Its schema's owner, who holds USAGE on the type and EXECUTE on its
-functions with grant option. Naming the type needs USAGE, and invoking a
+functions and methods with grant option, and UNDER on a structured
+type. A subtype needs UNDER on its supertype. Naming the type needs USAGE, and invoking a
 function, or a CAST to or from the type, needs EXECUTE on the function.
 
 ## ERRORS
@@ -92,7 +140,7 @@ function, or a CAST to or from the type, needs EXECUTE on the function.
 | 3F000 | -103 | The schema does not exist |
 | 2A000 | -103 | A rule above is broken, or a value of the type meets an operator or a type it is not taken by |
 | 2A000 | -104 | Its user does not own the schema, or lacks USAGE on the type or EXECUTE on a function |
-| 0A000 | -900 | The definition is of a structured type or has methods |
+| 0A000 | -900 | A method specification says SELF AS LOCATOR |
 
 ## EXAMPLES
 
@@ -144,12 +192,47 @@ CREATE TYPE BAD AS MONEY;
 turborel: SQLCODE -103 (SQLSTATE 2A000): a distinct type's representation is a <predefined type> or a <collection type>, not MONEY [ISO/IEC 9075-2:2023 §11.51 SR5a] (at character 19)
 ```
 
+A structured type and a subtype of it, and a value of each:
+
+```sql
+CREATE TYPE PLACE AS (NAME CHARACTER VARYING(20)) NOT FINAL;
+CREATE TYPE CITY UNDER PLACE AS (PEOPLE INTEGER) NOT FINAL;
+CREATE TABLE STOPS (K INTEGER, P PLACE);
+INSERT INTO STOPS VALUES (1, NEW PLACE().NAME('PASS')), (2, NEW CITY().NAME('OSLO').PEOPLE(700000));
+SELECT K, P.NAME, P IS OF (CITY) FROM STOPS ORDER BY K;
+SELECT TREAT(P AS CITY).PEOPLE FROM STOPS WHERE P IS OF (CITY);
+DROP TABLE STOPS CASCADE;
+DROP TYPE PLACE CASCADE;
+```
+
+```
+OK
+OK
+OK
+OK
+            K | NAME                 |
+--------------+----------------------+-------
+            1 | PASS                 | FALSE
+            2 | OSLO                 | TRUE
+(2 rows)
+
+--------------
+       700000
+(1 row)
+OK
+OK
+```
+
 ## STANDARD
 
-ISO/IEC 9075-2:2023 §4.9, §11.51, §9.18, §10.4, Features S011, S028,
-S401. See [CONFORMANCE.md](../../../CONFORMANCE.md#distinct-types).
+ISO/IEC 9075-2:2023 §4.9, §11.51, §9.18, §10.4, Features S011, S023,
+S024, S025, S026, S028, S401. See
+[CONFORMANCE.md](../../../CONFORMANCE.md#distinct-types) and
+[structured types](../../../CONFORMANCE.md#structured-types).
 
 ## SEE ALSO
 
-[DROP TYPE](drop-type.md), [GRANT](grant.md), [REVOKE](revoke.md),
+[DROP TYPE](drop-type.md), [ALTER TYPE](alter-type.md),
+[CREATE METHOD](create-method.md), [CREATE ORDERING](create-ordering.md),
+[CREATE CAST](create-cast.md), [GRANT](grant.md), [REVOKE](revoke.md),
 [Data Types](../02-data-types.md#distinct-types)

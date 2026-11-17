@@ -79,6 +79,8 @@ impl<'v> Subject<'v> {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_) => Body::Chars(text(value)?.unwrap_or_default().chars().collect()),
         };

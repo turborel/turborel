@@ -50,8 +50,8 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
             }
         }
         SqlStatement::Select { query: spec, .. } => query(&QueryExpression::Spec(spec.clone()), out),
-        SqlStatement::UpdateSearched { table, set, where_clause } => changed(table, set, where_clause.as_ref(), out),
-        SqlStatement::DeleteSearched { table, where_clause } => changed(table, &[], where_clause.as_ref(), out),
+        SqlStatement::UpdateSearched { table, set, where_clause, .. } => changed(table, set, where_clause.as_ref(), out),
+        SqlStatement::DeleteSearched { table, where_clause, .. } => changed(table, &[], where_clause.as_ref(), out),
         SqlStatement::Merge(m) => merge(m, out),
         SqlStatement::Call(call) => values(call.arguments.iter().filter_map(argued), out),
         // [ISO/IEC 9075-2:2023 §16.2] A function's `<return value>`.
@@ -66,6 +66,7 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
         | SqlStatement::Signal(_)
         | SqlStatement::Close(_)
         | SqlStatement::SetCollation(_)
+        | SqlStatement::SetTransformGroup(_)
         | SqlStatement::Commit
         | SqlStatement::Truncate { .. }
         | SqlStatement::AlterTable { .. }

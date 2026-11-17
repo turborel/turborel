@@ -400,6 +400,7 @@ mod tests {
             generated: None,
         };
         let desc = TableDesc {
+            typed: None,
             name: name.clone(),
             columns: vec![column],
             constraints: vec![],

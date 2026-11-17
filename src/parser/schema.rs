@@ -7,9 +7,8 @@
 
 use super::Parser;
 use crate::ast::{
-    Action, CheckLevels, CollationDefinition, ColumnDefinition, DefaultOption, PrivilegeDefinition, PrivilegeObject, QueryExpression,
-    RevokeStatement, Schema, SchemaStatement, SqlStatement, TableDefinition, TableElement, TableName, TableStorage, Temporary,
-    TemporaryKind, TypeName, ViewDefinition,
+    CheckLevels, CollationDefinition, ColumnDefinition, DefaultOption, QueryExpression, Schema, SchemaStatement, SqlStatement,
+    TableDefinition, TableElement, TableName, TableStorage, Temporary, TemporaryKind, TypeName, ViewDefinition,
 };
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
@@ -43,6 +42,7 @@ impl Parser {
             triggers: Vec::new(),
             routines: Vec::new(),
             modules: Vec::new(),
+            defined: Vec::new(),
         };
         while self.schema_element(&mut schema)? {}
         self.end()?;
@@ -57,9 +57,11 @@ impl Parser {
     /// definition>` | `<character set definition>` | `<collation
     /// definition>` | `<translation definition>` | `<trigger definition>` |
     /// `<schema routine>` | `<sequence generator definition>` |
-    /// `<user-defined type definition>` | `<role definition>` [ISO/IEC
-    /// 9075-2:2023 §11.1], a `<grant statement>` a `<grant privilege
-    /// statement>` or a `<grant role statement>` [§12.1].
+    /// `<user-defined type definition>` | `<user-defined cast definition>`
+    /// | `<user-defined ordering definition>` | `<transform definition>` |
+    /// `<role definition>` [ISO/IEC 9075-2:2023 §11.1], a `<grant
+    /// statement>` a `<grant privilege statement>` or a `<grant role
+    /// statement>` [§12.1], a `<schema routine>` of a method too.
     fn schema_element(&mut self, s: &mut Schema) -> Result<bool> {
         if self.is_kw(kw::GRANT) && self.at_role_grant() {
             s.roles.push(self.grant_role()?);
@@ -85,6 +87,10 @@ impl Parser {
             s.triggers.push(self.trigger_definition()?);
         } else if self.next_is_routine() {
             s.routines.push(self.routine_definition()?);
+        } else if self.next_is_of_type() {
+            let before = s.routines.len();
+            let Some(defined) = self.defined_for_type()? else { return Err(self.syntax("expected a method, cast, ordering or transform")) };
+            s.defined.push((before, defined));
         } else if self.next_is_module() {
             let schema = s.name.clone();
             s.modules.push(self.module_definition(Some(&schema))?);
@@ -185,8 +191,8 @@ impl Parser {
             SchemaStatement::AlterSequence(self.alter_sequence()?)
         } else if self.next_is_sequence() {
             SchemaStatement::Sequence(self.sequence_definition()?)
-        } else if self.next_is_type() {
-            SchemaStatement::Type(self.type_definition()?)
+        } else if let Some(defined) = self.defined_for_type()? {
+            defined
         } else if self.next_is_trigger() {
             SchemaStatement::Trigger(self.trigger_definition()?)
         } else if self.next_is_routine() {
@@ -199,25 +205,6 @@ impl Parser {
         Ok(SqlStatement::Schema { statement, text: self.text_from(start) })
     }
 
-    /// [ISO/IEC 9075:1992 §11.37] `<revoke statement>` ::= REVOKE \[GRANT
-    /// OPTION FOR\] `<privileges>` ON `<object name>` FROM `<grantee>` \[{,
-    /// `<grantee>`}...\] \[GRANTED BY `<grantor>`\] `<drop behavior>`
-    /// [ISO/IEC 9075-2:2023 §12.7]
-    fn revoke_statement(&mut self) -> Result<RevokeStatement> {
-        self.expect_kw(kw::REVOKE)?;
-        let grant_option_for = self.accept_kw(kw::GRANT);
-        if grant_option_for {
-            self.expect_kw(kw::OPTION)?;
-            self.expect_kw(kw::FOR)?;
-        }
-        let actions = self.privileges()?;
-        let (table, object, parameters) = self.object_name()?;
-        self.expect_kw(kw::FROM)?;
-        let grantees = self.grantees()?;
-        let grantor = self.granted_by()?;
-        Ok(RevokeStatement { grant_option_for, actions, table, object, parameters, grantees, grantor, behavior: self.drop_behavior()? })
-    }
-
     /// [X3.135-1986 §6.5; ISO/IEC 9075:1992 §11.19] `<view definition>` ::=
     /// CREATE VIEW `<table name>` \[(`<view column list>`)\] AS `<query
     /// expression>` \[WITH \[`<levels clause>`\] CHECK OPTION\]
@@ -225,8 +212,10 @@ impl Parser {
         self.expect_kw(kw::CREATE)?;
         self.expect_kw(kw::VIEW)?;
         let name = self.table_name()?;
+        // [ISO/IEC 9075-2:2023 §11.32] a <referenceable view specification>.
+        let typed = if self.accept_kw(kw::OF) { Some(Box::new(self.referenceable_view()?)) } else { None };
         // <view column list> ::= <column name> [{,<column name>}...]
-        let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.column_list()?) } else { None };
+        let columns = if typed.is_none() && self.is_delim(delim::LEFT_PAREN) { Some(self.column_list()?) } else { None };
         self.expect_kw(kw::AS)?;
         let start = self.here();
         let query = self.query_expression()?;
@@ -245,7 +234,7 @@ impl Parser {
         } else {
             None
         };
-        Ok(ViewDefinition { name, columns, query, text, check_option })
+        Ok(ViewDefinition { name, columns, query, text, check_option, typed })
     }
 
     /// The `<query expression>` of a view, as the catalog keeps it
@@ -278,7 +267,14 @@ impl Parser {
         }
         self.expect_kw(kw::TABLE)?;
         let name = self.table_name()?;
-        let (elements, subquery) = self.table_contents()?;
+        // [ISO/IEC 9075-2:2023 §11.3] a <typed table clause>.
+        let (elements, subquery, typed) = if self.accept_kw(kw::OF) {
+            let (typed, elements) = self.typed_table_clause(kind.is_some())?;
+            (elements, None, Some(typed))
+        } else {
+            let (elements, subquery) = self.table_contents()?;
+            (elements, subquery, None)
+        };
         let on_commit = self.on_commit()?;
         // [§11.3 SR3] ON COMMIT only of a temporary table; [SR4] DELETE
         // ROWS if not written.
@@ -294,7 +290,7 @@ impl Parser {
         if self.accept_kw(kw::WITH) {
             storage.options = self.table_options()?;
         }
-        Ok(TableDefinition { name, temporary, elements, subquery, storage })
+        Ok(TableDefinition { name, temporary, elements, subquery, storage, typed })
     }
 
     /// [ISO/IEC 9075:1992 §13.11] `<temporary table declaration>` ::=
@@ -313,7 +309,7 @@ impl Parser {
         let elements = self.table_element_list()?;
         let delete_rows = self.on_commit()?.unwrap_or(true);
         let temporary = Some(Temporary { kind: TemporaryKind::Declared, delete_rows });
-        Ok(TableDefinition { name, temporary, elements, subquery: None, storage: TableStorage::default() })
+        Ok(TableDefinition { name, temporary, elements, subquery: None, storage: TableStorage::default(), typed: None })
     }
 
     /// [ISO/IEC 9075:1992 §11.3] `<table element list>` ::= ( `<table
@@ -383,7 +379,7 @@ impl Parser {
     /// `<datetime value function>` | USER | CURRENT_USER | SESSION_USER |
     /// SYSTEM_USER | NULL, after DEFAULT; or [ISO/IEC 9075-2:2023 §11.5]
     /// an `<empty specification>`.
-    pub(super) fn default_option(&mut self) -> Result<DefaultOption> {
+    pub(crate) fn default_option(&mut self) -> Result<DefaultOption> {
         if self.accept_kw(kw::NULL) {
             return Ok(DefaultOption::Null);
         }
@@ -408,111 +404,6 @@ impl Parser {
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(columns)
-    }
-
-    /// [X3.135-1986 §6.6] `<privilege definition>` ::= GRANT `<privileges>`
-    /// ON `<table name>` TO `<grantee>` \[{, `<grantee>`}...\] \[WITH GRANT
-    /// OPTION\]; [ISO/IEC 9075:1992 §11.36] `<grant statement>`, its
-    /// `<object name>` \[TABLE\] `<table name>`; [ISO/IEC 9075-2:2023
-    /// §12.2] \[GRANTED BY `<grantor>`\].
-    fn privilege_definition(&mut self) -> Result<PrivilegeDefinition> {
-        self.expect_kw(kw::GRANT)?;
-        let actions = self.privileges()?;
-        let (table, object, parameters) = self.object_name()?;
-        self.expect_kw(kw::TO)?;
-        let grantees = self.grantees()?;
-        let grant_option = self.accept_kw(kw::WITH);
-        if grant_option {
-            self.expect_kw(kw::GRANT)?;
-            self.expect_kw(kw::OPTION)?;
-        }
-        Ok(PrivilegeDefinition { actions, table, object, parameters, grantees, grant_option, grantor: self.granted_by()? })
-    }
-
-    /// `<action>` ::= SELECT | DELETE | INSERT \[(`<privilege column
-    /// list>`)\] | UPDATE \[(`<grant column list>`)\] | REFERENCES
-    /// \[(`<privilege column list>`)\] | USAGE [ISO/IEC 9075:1992 §10.3] |
-    /// EXECUTE | UNDER | TRIGGER [ISO/IEC 9075-2:2023 §12.3]
-    fn action(&mut self) -> Result<Action> {
-        for (word, action) in
-            [(kw::SELECT, Action::Select), (kw::DELETE, Action::Delete), (kw::USAGE, Action::Usage), (kw::EXECUTE, Action::Execute)]
-        {
-            if self.accept_kw(word) {
-                return Ok(action);
-            }
-        }
-        if self.accept_word("UNDER") {
-            return Ok(Action::Under);
-        }
-        if self.accept_word("TRIGGER") {
-            return Ok(Action::Trigger);
-        }
-        let made = if self.accept_kw(kw::INSERT) {
-            Action::Insert
-        } else if self.accept_kw(kw::REFERENCES) {
-            Action::References
-        } else {
-            self.expect_kw(kw::UPDATE)?;
-            Action::Update
-        };
-        // <privilege column list> ::= <column name> [{,<column name>}...]
-        let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.column_list()?) } else { None };
-        Ok(made(columns))
-    }
-
-    /// `<privileges>` ::= ALL PRIVILEGES | `<action>` \[{,`<action>`}...\]:
-    /// none for ALL PRIVILEGES.
-    fn privileges(&mut self) -> Result<Option<Vec<Action>>> {
-        if self.accept_kw(kw::ALL) {
-            self.expect_kw(kw::PRIVILEGES)?;
-            return Ok(None);
-        }
-        let mut actions = vec![self.action()?];
-        while self.accept_delim(delim::COMMA) {
-            actions.push(self.action()?);
-        }
-        Ok(Some(actions))
-    }
-
-    /// ON `<object name>`: [ISO/IEC 9075:1992 §11.36] `<object name>` ::=
-    /// \[TABLE\] `<table name>` | DOMAIN `<domain name>` | COLLATION
-    /// `<collation name>` | SEQUENCE `<sequence generator name>` | TYPE
-    /// `<schema-resolved user-defined type name>` | `<specific routine
-    /// designator>` [ISO/IEC 9075-2:2023 §12.3], of those implemented: the
-    /// name, what it names, and a routine's `<data type list>` if written.
-    /// A character set or translation is read, its name left empty.
-    fn object_name(&mut self) -> Result<(TableName, PrivilegeObject, Option<Vec<TypeName>>)> {
-        self.expect_kw(kw::ON)?;
-        let at = self.here();
-        // A character set or translation: refused as the statement ends.
-        if self.character_set_object()? {
-            return Ok((TableName { auth: None, ident: String::new(), at }, PrivilegeObject::Domain, None));
-        }
-        let object = if self.accept_kw(kw::DOMAIN) {
-            PrivilegeObject::Domain
-        } else if self.accept_kw(kw::COLLATION) {
-            PrivilegeObject::Collation
-        } else if self.accept_word(super::sequences::SEQUENCE) {
-            PrivilegeObject::Sequence
-        } else if self.accept_word(super::user_types::TYPE) {
-            PrivilegeObject::Type
-        } else if self.is_kw(kw::MODULE) && !matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD)) {
-            // [ISO/IEC 9075-4:2006 draft §10.2] MODULE <module name>.
-            self.advance();
-            PrivilegeObject::Module
-        } else if self.next_is_routine_designator() {
-            let designator = self.routine_designator()?;
-            let object = if designator.specific {
-                PrivilegeObject::SpecificRoutine(designator.routine_type)
-            } else {
-                PrivilegeObject::Routine(designator.routine_type)
-            };
-            return Ok((designator.name, object, designator.parameters));
-        } else {
-            self.accept_kw(kw::TABLE);
-            PrivilegeObject::Table
-        };
-        Ok((self.table_name()?, object, None))
     }
 
     /// [ISO/IEC 9075-2:2023 §10.6] `<data type list>` ::= ( \[`<data type>`

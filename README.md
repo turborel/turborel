@@ -22,8 +22,8 @@ behind it, and each can be replaced or added to.
 
 ## What it has
 
-- Standard SQL as one language, SQL-86 in full, SQL-92 nearly so and
-  SQL:2023 being implemented. See [CONFORMANCE.md](CONFORMANCE.md).
+- Standard SQL as one language, from SQL-86 through SQL:2023. See
+  [CONFORMANCE.md](CONFORMANCE.md).
 - Transactions at READ COMMITTED by default, or up to SERIALIZABLE, that run
   on many threads at once and survive a crash with multi-version concurrency
   control, a write-ahead log, checkpoints and recovery.
@@ -50,6 +50,8 @@ behind it, and each can be replaced or added to.
   sequences and identity columns.
 - Multisets, with MULTISET UNION, EXCEPT and INTERSECT, MEMBER,
   SUBMULTISET and IS A SET, and COLLECT, FUSION and INTERSECTION.
+- Structured types with attributes, methods and subtypes, typed tables
+  in hierarchies, and references that are dereferenced.
 - Stored procedures and functions in SQL/PSM, with variables, cursors,
   handlers, loops and SIGNAL, grouped into modules if wished, and
   polymorphic table functions that take whole tables as arguments.

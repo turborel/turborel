@@ -27,6 +27,9 @@ pub enum RoutineType {
     Function,
     /// PROCEDURE: a procedure.
     Procedure,
+    /// [ISO/IEC 9075-2:2023 §10.6] \[INSTANCE | STATIC | CONSTRUCTOR\]
+    /// METHOD: an SQL-invoked method of its kind.
+    Method(super::MethodKind),
 }
 
 /// [ISO/IEC 9075-2:2023 §10.6] `<specific routine designator>` ::=
@@ -42,6 +45,8 @@ pub struct RoutineDesignator {
     pub name: TableName,
     /// The `<data type list>`, if written.
     pub parameters: Option<Vec<TypeName>>,
+    /// Of a method, FOR `<schema-resolved user-defined type name>`.
+    pub udt: Option<TableName>,
 }
 
 /// [ISO/IEC 9075-2:2023 §11.60] `<parameter mode>` ::= IN | OUT | INOUT

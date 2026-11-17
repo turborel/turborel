@@ -21,6 +21,11 @@
 //! them, and with RESTART IDENTITY the generator is restarted, as the ALTER
 //! TABLE that GR8 effectively executes restarts it.
 //!
+//! [GR5] Without ONLY, the rows of a typed table's proper subtables go
+//! too, as rows of the table, each subtable truncated as the table is;
+//! with ONLY, the table's own rows alone, which it keeps apart from its
+//! subtables' (`binder/hierarchy.rs`).
+//!
 //! A cursor of the transaction that reads the table refuses the statement
 //! [GR2, GR3], so none sees the rows go, nor is any row it changed deleted
 //! [GR6]. No row deleted is no data [GR7]. Each CHECK with a subquery, and
@@ -77,8 +82,9 @@ impl State {
 }
 
 impl Session {
-    /// [ISO/IEC 9075-2:2023 §14.10] TRUNCATE TABLE `table`, with RESTART
-    /// IDENTITY if `restart`, in `cx`, `params` those of the statement.
+    /// [ISO/IEC 9075-2:2023 §14.10] TRUNCATE TABLE `table`, of its own
+    /// rows alone if `only` \[GR5\], with RESTART IDENTITY if `restart`, in
+    /// `cx`, `params` those of the statement.
     ///
     /// # Errors
     ///
@@ -89,11 +95,31 @@ impl Session {
     pub(super) fn truncate_table(
         &self,
         cx: StatementContext<'_>,
-        (table, restart): (&TableName, bool),
+        (table, only, restart): (&TableName, bool, bool),
+        params: &Params,
+    ) -> Result<Completion> {
+        let qn = qualify(table, &self.default_schema());
+        let subtables = if only { Vec::new() } else { crate::catalog::proper_subtables(&*cx.st.catalog, &qn) };
+        let mut done = self.truncate_one(cx, (table, &qn, restart), params)?;
+        // [GR5b] each row of T, a subtable's among them.
+        for sub in &subtables {
+            let named = TableName { auth: Some(sub.auth.clone()), ident: sub.ident.clone(), at: table.at };
+            if self.truncate_one(cx, (&named, sub, restart), params)? == Completion::Success {
+                done = Completion::Success;
+            }
+        }
+        Ok(done)
+    }
+
+    /// `truncate_table`'s work of one table `qn`, written `table`.
+    fn truncate_one(
+        &self,
+        cx: StatementContext<'_>,
+        (table, qn, restart): (&TableName, &QualifiedName, bool),
         params: &Params,
     ) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
-        let qn = qualify(table, &self.default_schema());
+        let qn = qn.clone();
         // [AR1, AR2] only the owner of its schema truncates a table.
         if !self.owns_schema(st, &qn.auth) {
             return fail(Code::Privilege, format!("[ISO/IEC 9075-2:2023 §14.10 AR2] {qn} is in a schema {} does not own", self.auth()));
@@ -111,7 +137,7 @@ impl Session {
             self.alter_base_table(st, tx, (&qn, &action, &text), None)?;
             return Ok(if had { Completion::Success } else { Completion::NoData });
         }
-        let w = self.write_bound(st, params, None, |b: Context<'_>| bind_write(b, WriteKind::DeleteSearched, table, &[], None))?;
+        let w = self.write_bound(st, params, None, |b: Context<'_>| bind_write(b, WriteKind::DeleteSearched, (table, false), &[], None))?;
         let deleted = delete_searched(cx, w, self.effects(st))?;
         // [GR8] of a table with an identity column alone.
         if restart && desc.columns.iter().any(|c| c.identity().is_some()) {

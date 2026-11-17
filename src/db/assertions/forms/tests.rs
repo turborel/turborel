@@ -33,6 +33,7 @@ fn catalog() -> MemoryCatalog {
         constraint("K4", ConstraintKind::Unique { columns: vec![4], primary: false, nulls_distinct: true }, false),
     ];
     let desc = TableDesc {
+        typed: None,
         name: table(),
         columns: Vec::new(),
         constraints,

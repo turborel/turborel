@@ -29,6 +29,14 @@ pub enum DropObject {
     Routine(RoutineDesignator),
     /// An SQL-server module [ISO/IEC 9075-4:2006 draft §9.22].
     Module(TableName),
+    /// [ISO/IEC 9075-2:2023 §11.64] A user-defined cast, by its source and
+    /// target types, and where it begins.
+    Cast(Box<(super::TypeName, super::TypeName)>, usize),
+    /// [ISO/IEC 9075-2:2023 §11.66] A user-defined ordering, by its type.
+    Ordering(TableName),
+    /// [ISO/IEC 9075-2:2023 §11.71] A type's transform group, or all of
+    /// them.
+    Transform(TableName, Option<String>),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
     /// schema name>` [§5.4].
     Schema {
@@ -53,9 +61,11 @@ impl DropObject {
             | DropObject::Assertion(name)
             | DropObject::Type(name)
             | DropObject::Trigger(name)
-            | DropObject::Module(name) => name.at,
+            | DropObject::Module(name)
+            | DropObject::Ordering(name)
+            | DropObject::Transform(name, _) => name.at,
+            DropObject::Cast(_, at) | DropObject::Schema { at, .. } => *at,
             DropObject::Routine(designator) => designator.name.at,
-            DropObject::Schema { at, .. } => *at,
         }
     }
 }

@@ -50,6 +50,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
         params.iter().map(|(n, t)| SqlParameter { name: (*n).into(), data_type: ty(t), mode: ParameterMode::In, generic: None }).collect();
     let declared: Vec<String> = params.iter().map(|(n, t)| format!("{n} {t}")).collect();
     SqlRoutineDesc {
+        method: None,
         name: qn("S", name),
         specific: qn("S", name),
         kind: RoutineKind::Function,
@@ -75,6 +76,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
 fn database(routines: Vec<SqlRoutineDesc>) -> State {
     let mut catalog = MemoryCatalog::default();
     let table = TableDesc {
+        typed: None,
         name: qn("S", "T"),
         columns: vec![column("K"), column("P")],
         constraints: Vec::new(),

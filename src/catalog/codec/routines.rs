@@ -119,6 +119,7 @@ pub(crate) fn put_routine(out: &mut Vec<u8>, routine: &SqlRoutineDesc) {
     if let Some(ptf) = &routine.ptf {
         put_ptf(out, ptf);
     }
+    super::structured::put_method_of(out, routine.method.as_ref());
 }
 
 /// [ISO/IEC 9075-2:2023 §4.35.4] What the descriptor of a polymorphic
@@ -189,6 +190,7 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
     let (execute, created) = (usage(r)?, r.u64()?);
     let module = if flag(r)? { Some(r.str()?) } else { None };
     let ptf = if flag(r)? { Some(Box::new(ptf(r)?)) } else { None };
+    let method = super::structured::method_of(r)?;
     Ok(SqlRoutineDesc {
         name,
         specific,
@@ -207,6 +209,7 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
         execute,
         created,
         module,
+        method,
         ptf,
     })
 }
@@ -241,7 +244,7 @@ pub(crate) fn module(r: &mut Reader<'_>) -> Result<ModuleDesc> {
 }
 
 /// An SQL parameter: its name, declared type and mode.
-fn put_parameter(out: &mut Vec<u8>, p: &SqlParameter) {
+pub(super) fn put_parameter(out: &mut Vec<u8>, p: &SqlParameter) {
     out.put_str(&p.name);
     put_type(out, &p.data_type);
     out.put_u8(match p.mode {
@@ -265,7 +268,7 @@ fn put_parameter(out: &mut Vec<u8>, p: &SqlParameter) {
 }
 
 /// The SQL parameter `put_parameter` wrote.
-fn parameter(r: &mut Reader<'_>) -> Result<SqlParameter> {
+pub(super) fn parameter(r: &mut Reader<'_>) -> Result<SqlParameter> {
     let (name, data_type) = (r.str()?, data_type(r)?);
     let mode = match r.u8()? {
         IN => ParameterMode::In,

@@ -45,6 +45,8 @@ fn compare_lob(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_),
             _,
@@ -56,7 +58,10 @@ fn compare_lob(a: &Value, b: &Value) -> Option<Ordering> {
 /// because one side is null ([X3.135-1986 §5.11 GR2]), or the values are not comparable.
 pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     match (a, b) {
-        (Value::Array(_) | Value::Multiset(_) | Value::Row(_), _) | (_, Value::Array(_) | Value::Multiset(_) | Value::Row(_)) => compare_composites(a, b),
+        (Value::Structured(_) | Value::Reference(_) | Value::Array(_) | Value::Multiset(_) | Value::Row(_), _)
+        | (_, Value::Structured(_) | Value::Reference(_) | Value::Array(_) | Value::Multiset(_) | Value::Row(_)) => {
+            compare_composites(a, b)
+        }
         (Value::Lob(_), _) | (_, Value::Lob(_)) => compare_lob(a, b),
         // A null makes the comparison unknown [X3.135-1986 §5.11 GR2]; a character
         // string and a number are not comparable [X3.135-1986 §5.11 SR1], nor a
@@ -78,27 +83,6 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
         | (
             Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) | Value::Binary(_) | Value::Datetime(_),
             Value::Interval(_),
-        )
-        // [ISO/IEC 9075-2:2023 §4.6.2] a truth value with truth values alone.
-        | (
-            Value::Bool(_),
-            Value::Char(_)
-            | Value::Exact(_)
-            | Value::Approx(_)
-            | Value::DecFloat(_)
-            | Value::Binary(_)
-            | Value::Datetime(_)
-            | Value::Interval(_),
-        )
-        | (
-            Value::Char(_)
-            | Value::Exact(_)
-            | Value::Approx(_)
-            | Value::DecFloat(_)
-            | Value::Binary(_)
-            | Value::Datetime(_)
-            | Value::Interval(_),
-            Value::Bool(_),
         ) => None,
         (Value::Char(x), Value::Char(y)) => Some(compare_strings(x, y)),
         // [ISO/IEC 9075-2:2023 §4.5.1] any two numbers are comparable.
@@ -116,6 +100,8 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
         // A value of a kind beyond the standard compares as its kind says.
         (Value::Extension(e), _) => e.kind.compare(a, b),
         (_, Value::Extension(e)) => e.kind.compare(b, a).map(Ordering::reverse),
+        // [ISO/IEC 9075-2:2023 §4.6.2] a truth value with truth values alone.
+        (Value::Bool(_), _) | (_, Value::Bool(_)) => None,
     }
 }
 
@@ -216,14 +202,8 @@ fn holds_lob(v: &Value, depth: usize) -> Result<bool> {
     }
     match v {
         Value::Lob(_) => Ok(true),
-        Value::Array(parts) | Value::Multiset(parts) | Value::Row(parts) => {
-            for p in parts.iter() {
-                if holds_lob(p, depth.saturating_add(1))? {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
+        Value::Array(parts) | Value::Multiset(parts) | Value::Row(parts) => any_held(parts, depth),
+        Value::Structured(s) => any_held(&s.attributes, depth),
         Value::Null
         | Value::Char(_)
         | Value::Exact(_)
@@ -233,8 +213,19 @@ fn holds_lob(v: &Value, depth: usize) -> Result<bool> {
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Reference(_)
         | Value::Extension(_) => Ok(false),
     }
+}
+
+/// Whether any of `parts`, `depth` levels in, holds a large object.
+fn any_held(parts: &[Value], depth: usize) -> Result<bool> {
+    for p in parts {
+        if holds_lob(p, depth.saturating_add(1))? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// `proxies`, `depth` levels into arrays and rows, two large objects told
@@ -286,6 +277,14 @@ fn too_deep() -> SqlError {
 /// \[GR1b iii\], unequal as less; none if either is null, or of another
 /// kind [§4.10, §4.12.4].
 fn compare_composites(a: &Value, b: &Value) -> Option<Ordering> {
+    // [ISO/IEC 9075-2:2023 §4.9.5, §8.2 GR9] As their keys, or their
+    // identities (`types::structured`); references by their octets.
+    if let (Value::Structured(x), Value::Structured(y)) = (a, b) {
+        return super::types::structured::compare_structured(x, y);
+    }
+    if let (Value::Reference(x), Value::Reference(y)) = (a, b) {
+        return Some(x.bytes().cmp(y.bytes()));
+    }
     if let (Value::Multiset(x), Value::Multiset(y)) = (a, b) {
         return super::multisets::equal(x, y).map(|same| if same { Ordering::Equal } else { Ordering::Less });
     }
@@ -321,6 +320,8 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_),
             _,
@@ -334,6 +335,8 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Array(_)
             | Value::Multiset(_)
             | Value::Row(_)
@@ -392,6 +395,8 @@ pub fn bucket(v: &Value) -> Option<Bucket> {
         Value::Interval(i) => Some(Bucket::Span(i.units)),
         Value::Array(p) | Value::Row(p) => bucket_parts(p),
         Value::Multiset(p) => super::multisets::bag_bucket(p),
+        Value::Structured(s) => super::types::structured::bucket_structured(s),
+        Value::Reference(r) => Some(Bucket::Binary(r.bytes().into())),
         Value::Extension(e) => e.kind.bucket(v),
     }
 }
@@ -412,6 +417,8 @@ pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => {
             return None;

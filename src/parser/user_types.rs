@@ -1,33 +1,28 @@
 //! [ISO/IEC 9075-2:2023 §11.51] `<user-defined type definition>`, read
 //! whole: its options in any order [Feature S028], those a distinct type
-//! refuses read so a Syntax Rule refuses them as it is processed. A
-//! `<member list>` and a `<method specification list>` are of structured
-//! types and methods, which this implementation does not take.
+//! refuses read so a Syntax Rule refuses them as it is processed. Its
+//! `<member list>` and `<method specification list>`, of a structured
+//! type, are read in `structured.rs`.
 
 use super::Parser;
-use crate::ast::{TypeDefinition, TypeOption};
-use crate::error::{Code, Result, SqlError};
+use crate::ast::{RefRepresentation, TypeDefinition, TypeName, TypeOption};
+use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
 
 /// [ISO/IEC 9075-2:2023 §11.51] The words of a `<user-defined type
 /// definition>`, no key words of SQL-92.
 pub(super) const TYPE: &str = "TYPE";
-const UNDER: &str = "UNDER";
+/// UNDER, of a `<subtype clause>`, a `<subtable clause>` and a `<subview clause>`.
+pub(super) const UNDER: &str = "UNDER";
 const INSTANTIABLE: &str = "INSTANTIABLE";
 const FINAL: &str = "FINAL";
-const REF: &str = "REF";
+/// REF, of a `<reference type specification>` and a `<reference type>`.
+pub(super) const REF: &str = "REF";
 const SOURCE: &str = "SOURCE";
-const GENERATED: &str = "GENERATED";
-/// The words that begin a `<method specification>`.
-const METHOD_WORDS: [&str; 5] = ["METHOD", "INSTANCE", "STATIC", "CONSTRUCTOR", "OVERRIDING"];
+/// GENERATED, of SYSTEM GENERATED and USER GENERATED.
+pub(super) const GENERATED: &str = "GENERATED";
 
 impl Parser {
-    /// The refusal of `what`, valid SQL this implementation does not take,
-    /// at the token at hand.
-    fn not_taken(&self, what: &str) -> SqlError {
-        SqlError::at(Code::Unsupported, self.here(), format!("[DESIGN] {what} is valid SQL this implementation does not take"))
-    }
-
     /// Whether CREATE or DROP TYPE is next.
     pub(super) fn next_is_type(&self) -> bool {
         matches!(self.peek_at(1), Tok::Identifier(w) if w == TYPE)
@@ -41,30 +36,20 @@ impl Parser {
             return Err(self.syntax("expected TYPE"));
         }
         let name = self.table_name()?;
-        let under = if self.is_word(UNDER) {
-            let at = self.here();
-            self.advance();
-            self.table_name()?;
-            Some(at)
-        } else {
-            None
-        };
-        let representation = if self.accept_kw(kw::AS) {
-            if self.is_delim(delim::LEFT_PAREN) {
-                return Err(self.not_taken("a <member list>, which defines a structured type [ISO/IEC 9075-2:2023 §11.51 SR5b],"));
-            }
-            Some(self.type_name()?)
-        } else {
-            None
+        let under = if self.accept_word(UNDER) { Some(self.table_name()?) } else { None };
+        // [§11.51 SR5] a <member list> defines a structured type, any
+        // other <representation> a distinct type.
+        let (representation, members) = match (self.accept_kw(kw::AS), self.is_delim(delim::LEFT_PAREN)) {
+            (true, true) => (None, Some(self.member_list()?)),
+            (true, false) => (Some(self.type_name()?), None),
+            (false, _) => (None, None),
         };
         let mut options = Vec::new();
         while let Some(option) = self.type_option()? {
             options.push(option);
         }
-        if METHOD_WORDS.iter().any(|w| self.is_word(w)) {
-            return Err(self.not_taken("a <method specification list> [ISO/IEC 9075-2:2023 §11.51]"));
-        }
-        Ok(TypeDefinition { name, under, representation, options })
+        let methods = if self.at_method_specification() { self.method_specification_list(&name)? } else { Vec::new() };
+        Ok(TypeDefinition { name, under, representation, members, methods, options })
     }
 
     /// [ISO/IEC 9075-2:2023 §11.51] A `<user-defined type option>`, if one
@@ -85,8 +70,7 @@ impl Parser {
                 return Err(self.syntax("expected INSTANTIABLE or FINAL"));
             }
         } else if self.accept_word(REF) {
-            self.reference_type_specification()?;
-            TypeOption::Reference
+            TypeOption::Reference(self.reference_type_specification()?)
         } else if self.is_kw(kw::CAST) {
             self.advance();
             self.cast_option()?
@@ -99,18 +83,18 @@ impl Parser {
     /// [ISO/IEC 9075-2:2023 §11.51] The rest of a `<reference type
     /// specification>`, after REF: USING `<predefined type>`, FROM `<list of
     /// attributes>`, or IS SYSTEM GENERATED.
-    fn reference_type_specification(&mut self) -> Result<()> {
+    fn reference_type_specification(&mut self) -> Result<RefRepresentation> {
         if self.accept_kw(kw::USING) {
-            self.predefined_type()?;
-        } else if self.accept_kw(kw::FROM) {
-            self.column_list()?;
-        } else {
-            self.expect_kw(kw::IS)?;
-            if !self.accept_word("SYSTEM") || !self.accept_word(GENERATED) {
-                return Err(self.syntax("expected SYSTEM GENERATED"));
-            }
+            return Ok(RefRepresentation::User(TypeName::Data(self.predefined_type()?)));
         }
-        Ok(())
+        if self.accept_kw(kw::FROM) {
+            return Ok(RefRepresentation::Derived(self.column_list()?));
+        }
+        self.expect_kw(kw::IS)?;
+        if !self.accept_word("SYSTEM") || !self.accept_word(GENERATED) {
+            return Err(self.syntax("expected SYSTEM GENERATED"));
+        }
+        Ok(RefRepresentation::System)
     }
 
     /// [ISO/IEC 9075-2:2023 §11.51] The rest of a `<cast to ref>`, `<cast to
@@ -126,12 +110,12 @@ impl Parser {
         }
         self.expect_kw(kw::AS)?;
         let option = if from_source && self.accept_word(REF) {
-            TypeOption::CastToRef
+            TypeOption::CastToRef(String::new())
         } else if from_source {
             self.expect_kw(kw::DISTINCT)?;
             TypeOption::CastToDistinct(String::new())
         } else if self.accept_word(SOURCE) {
-            if from_ref { TypeOption::CastToType } else { TypeOption::CastToSource(String::new()) }
+            if from_ref { TypeOption::CastToType(String::new()) } else { TypeOption::CastToSource(String::new()) }
         } else {
             return Err(self.syntax("expected SOURCE"));
         };
@@ -141,9 +125,9 @@ impl Parser {
         Ok(match option {
             TypeOption::CastToDistinct(_) => TypeOption::CastToDistinct(identifier),
             TypeOption::CastToSource(_) => TypeOption::CastToSource(identifier),
-            TypeOption::Instantiable(_) | TypeOption::Final(_) | TypeOption::Reference | TypeOption::CastToRef | TypeOption::CastToType => {
-                option
-            }
+            TypeOption::CastToRef(_) => TypeOption::CastToRef(identifier),
+            TypeOption::CastToType(_) => TypeOption::CastToType(identifier),
+            TypeOption::Instantiable(_) | TypeOption::Final(_) | TypeOption::Reference(_) => option,
         })
     }
 }

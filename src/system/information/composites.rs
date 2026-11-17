@@ -5,9 +5,12 @@
 //! implementation's, as ISO/IEC 9075:1992 has neither. Each shows the
 //! descriptors subordinate to those of the tables the current user has a
 //! privilege on, as TABLES chooses them [ISO/IEC 9075:1992 §21.2.7], of
-//! the domains DOMAINS shows [§21.2.5], and of the user-defined types and
+//! the domains DOMAINS shows [§21.2.5], of the user-defined types and
 //! routines USER_DEFINED_TYPES and ROUTINES show
-//! (`information/user_types.rs`).
+//! (`information/user_types.rs`), and of the method specifications
+//! METHOD_SPECIFICATIONS shows (`information/structured.rs`). Each shows a
+//! reference type's scope, as ISO/IEC 9075-11:2006 draft §5.29 and §5.31
+//! do.
 
 use super::SystemView;
 
@@ -26,6 +29,7 @@ pub(super) const VIEWS: &[SystemView] = &[
        E.USER_DEFINED_TYPE_CATALOG AS UDT_CATALOG,
        E.USER_DEFINED_TYPE_SCHEMA AS UDT_SCHEMA,
        E.USER_DEFINED_TYPE_NAME AS UDT_NAME,
+       E.SCOPE_CATALOG, E.SCOPE_SCHEMA, E.SCOPE_NAME,
        E.MAXIMUM_CARDINALITY, E.DTD_IDENTIFIER
      FROM DEFINITION_SCHEMA.ELEMENT_TYPES AS E
          LEFT JOIN
@@ -47,7 +51,10 @@ pub(super) const VIEWS: &[SystemView] = &[
                    AND ( E.OBJECT_CATALOG, E.OBJECT_SCHEMA, E.OBJECT_NAME )
                      IN ( SELECT USER_DEFINED_TYPE_CATALOG,
                                  USER_DEFINED_TYPE_SCHEMA, USER_DEFINED_TYPE_NAME
-                            FROM USER_DEFINED_TYPES ) )
+                            FROM USER_DEFINED_TYPES
+                          UNION
+                          SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME
+                            FROM METHOD_SPECIFICATIONS ) )
                  OR
                  ( E.OBJECT_TYPE = 'ROUTINE'
                    AND ( E.OBJECT_CATALOG, E.OBJECT_SCHEMA, E.OBJECT_NAME )
@@ -69,6 +76,7 @@ pub(super) const VIEWS: &[SystemView] = &[
        F.USER_DEFINED_TYPE_CATALOG AS UDT_CATALOG,
        F.USER_DEFINED_TYPE_SCHEMA AS UDT_SCHEMA,
        F.USER_DEFINED_TYPE_NAME AS UDT_NAME,
+       F.SCOPE_CATALOG, F.SCOPE_SCHEMA, F.SCOPE_NAME,
        F.MAXIMUM_CARDINALITY, F.DTD_IDENTIFIER
      FROM DEFINITION_SCHEMA.FIELDS AS F
          LEFT JOIN
@@ -90,7 +98,10 @@ pub(super) const VIEWS: &[SystemView] = &[
                    AND ( F.OBJECT_CATALOG, F.OBJECT_SCHEMA, F.OBJECT_NAME )
                      IN ( SELECT USER_DEFINED_TYPE_CATALOG,
                                  USER_DEFINED_TYPE_SCHEMA, USER_DEFINED_TYPE_NAME
-                            FROM USER_DEFINED_TYPES ) )
+                            FROM USER_DEFINED_TYPES
+                          UNION
+                          SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME
+                            FROM METHOD_SPECIFICATIONS ) )
                  OR
                  ( F.OBJECT_TYPE = 'ROUTINE'
                    AND ( F.OBJECT_CATALOG, F.OBJECT_SCHEMA, F.OBJECT_NAME )

@@ -18,8 +18,8 @@ use crate::binder::{Binder, Context, rule};
 use crate::catalog::{ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlError};
 use crate::logical::{Expr, LogicalPlan, Recognize, RowsPerMatch, Slotted, SortKey};
-use crate::value::SortOrder;
 use crate::value::collation::CollationRef;
+use crate::value::{DataType, SortOrder};
 
 /// The row pattern input table bound: the binder of its table primary, its
 /// columns, the position of each in that binder's row, and its plan, of
@@ -32,11 +32,29 @@ struct Input<'a> {
 }
 
 /// The row pattern partitioning and ordering bound: of each partitioning
-/// column, its column of the input and its collation if it has one; of
-/// each sort key, its column, its collation and its order.
+/// column, its column of the input and, if it compares other than as it
+/// is, what it compares (its sort key under its collation, or of a
+/// structured type ordered by MAP its comparison key); of each sort key,
+/// its column, what it sorts by so and its order.
 struct Keys {
-    partition: Vec<(usize, Option<CollationRef>)>,
-    order: Vec<(usize, Option<CollationRef>, SortOrder)>,
+    partition: Vec<(usize, Option<Expr>)>,
+    order: Vec<(usize, Option<Expr>, SortOrder)>,
+}
+
+/// What the column `k` of type `t` compares in `b`, if other than itself:
+/// its sort key under `collation`, or its comparison key (`keyed_operand`).
+///
+/// # Errors
+///
+/// As `keyed_operand`'s.
+fn compared(b: &Binder<'_>, (k, t): (usize, &DataType), collation: Option<CollationRef>, what: &str) -> Result<Option<Expr>> {
+    if let Some(c) = collation {
+        return Ok(Some(Expr::sort_key(Expr::Column(k), &c)));
+    }
+    if crate::binder::structured::mapped(b.db, t) {
+        return Ok(Some(crate::binder::structured::keyed_operand(b.context(), (Expr::Column(k), t), what)?));
+    }
+    Ok(None)
 }
 
 /// [ISO/IEC 9075-2:2023 §7.6 SR8b i, GR1, §7.7] The table primary `r`,
@@ -94,7 +112,7 @@ fn input<'a>(b: Bounds<'a>, r: &RecognizedTable) -> Result<Input<'a>> {
 impl Input<'_> {
     /// The column of the input `v` references, if it is a column reference
     /// to one, and its type.
-    fn column(&self, v: &ValueExpression) -> Result<Option<(usize, crate::value::DataType)>> {
+    fn column(&self, v: &ValueExpression) -> Result<Option<(usize, DataType)>> {
         let ValueExpression::Column(cs) = v else { return Ok(None) };
         let Some((pos, t, _)) = self.binder.local(cs)? else { return Ok(None) };
         Ok(self.positions.iter().position(|&p| p == pos).map(|k| (k, t)))
@@ -120,7 +138,7 @@ fn keys(input: &Input<'_>, clause: &RowPatternRecognition) -> Result<Keys> {
                 ),
             ));
         };
-        grouping_operand(&t, "a <row pattern partition by>").or_at(g.column.at)?;
+        grouping_operand(input.binder.db, &t, "a <row pattern partition by>").or_at(g.column.at)?;
         if g.collate.is_some() && !t.is_character() {
             return Err(SqlError::at(
                 Code::SyntaxRule,
@@ -129,7 +147,7 @@ fn keys(input: &Input<'_>, clause: &RowPatternRecognition) -> Result<Keys> {
             ));
         }
         let collation = if t.is_character() { b.chosen(g.collate.as_ref(), b.derived(&column)?)? } else { None };
-        partition.push((k, collation));
+        partition.push((k, compared(b, (k, &t), collation, "a <row pattern partition by>")?));
     }
     let mut order = Vec::new();
     for o in &clause.order {
@@ -138,9 +156,9 @@ fn keys(input: &Input<'_>, clause: &RowPatternRecognition) -> Result<Keys> {
                 "[ISO/IEC 9075-2:2023 §7.7 SR4a iii] a sort key of a <row pattern order by> is a column reference to a column of the row pattern input table",
             ));
         };
-        ordering_operand(&t, "a <row pattern order by>")?;
+        ordering_operand(input.binder.db, &t, "a <row pattern order by>")?;
         let collation = if t.is_character() { b.collation_of(&[b.derived(&o.key)?])? } else { None };
-        order.push((k, collation, SortOrder::of(o.descending, o.nulls_first)));
+        order.push((k, compared(b, (k, &t), collation, "a <row pattern order by>")?, SortOrder::of(o.descending, o.nulls_first)));
     }
     Ok(Keys { partition, order })
 }
@@ -191,9 +209,9 @@ fn recognition(
 fn sorted(input: &Input<'_>, keys: &Keys) -> (LogicalPlan, Vec<usize>, Vec<SortKey>) {
     let width = input.columns.len();
     let mut exprs: Vec<Expr> = (0..width).map(Expr::Column).collect();
-    let mut place = |k: usize, collation: Option<&CollationRef>| match collation {
-        Some(c) => {
-            exprs.push(Expr::sort_key(Expr::Column(k), c));
+    let mut place = |k: usize, key: Option<&Expr>| match key {
+        Some(e) => {
+            exprs.push(e.clone());
             exprs.len().saturating_sub(1)
         }
         None => k,

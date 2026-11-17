@@ -18,6 +18,9 @@ const GENERATED: &str = "GENERATED";
 const ALWAYS: &str = "ALWAYS";
 /// The `<non-reserved word>` DROP EXPRESSION drops.
 const EXPRESSION: &str = "EXPRESSION";
+/// SCOPE, of an `<add column scope clause>` and a `<drop column scope
+/// clause>` [ISO/IEC 9075-2:2023 §11.17, §11.18].
+const SCOPE: &str = "SCOPE";
 /// The `<non-reserved word>` an `<override clause>` begins with.
 const OVERRIDING: &str = "OVERRIDING";
 /// The word of OVERRIDING SYSTEM VALUE, which only SQL:2023 reserves.
@@ -107,7 +110,18 @@ impl Parser {
             if self.accept_word(EXPRESSION) {
                 return Ok(AlterColumnAction::DropExpression);
             }
-            return Err(self.syntax("expected DEFAULT, IDENTITY or EXPRESSION"));
+            // [§11.18] DROP SCOPE <drop behavior>.
+            if self.accept_word(SCOPE) {
+                return Ok(AlterColumnAction::DropScope(self.drop_behavior()?));
+            }
+            return Err(self.syntax("expected DEFAULT, IDENTITY, EXPRESSION or SCOPE"));
+        }
+        // [§11.17] ADD SCOPE <table name>.
+        if self.accept_kw(kw::ADD) {
+            if !self.accept_word(SCOPE) {
+                return Err(self.syntax("expected SCOPE"));
+            }
+            return Ok(AlterColumnAction::AddScope(self.table_name()?));
         }
         if self.is_kw(kw::SET) && self.next_is_kw(kw::DEFAULT) {
             self.advance();

@@ -52,3 +52,18 @@ fn minus_and_comments_lex_as_they_did_5_3() {
     assert_eq!(toks("1--{-\n-1"), [n("1"), d(delim::MINUS), n("1")]);
     assert!(lex("A ` B").is_err(), "still no token");
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §5.2] `->`, the `<right arrow>`, and
+/// `::`, the `<double colon>`, are `<delimiter token>`s of two characters,
+/// longest first; a minus before a greater than sign apart, a single colon
+/// and a `<comment>` lex as they did.
+#[test]
+fn the_right_arrow_and_double_colon_5_2() {
+    let d = Tok::Delimiter;
+    let id = |s: &str| Tok::Identifier(s.to_owned());
+    assert_eq!(toks("R->A"), [id("R"), d(delim::RIGHT_ARROW), id("A")]);
+    assert_eq!(toks("T::M"), [id("T"), d(delim::DOUBLE_COLON), id("M")]);
+    assert_eq!(toks("A - > B"), [id("A"), d(delim::MINUS), d(delim::GREATER), id("B")]);
+    assert_eq!(toks(":V"), [d(delim::COLON), id("V")]);
+    assert_eq!(toks("A -->B\n"), [id("A")]);
+}

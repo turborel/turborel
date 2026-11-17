@@ -1,5 +1,5 @@
 //! The views of the Information Schema of roles [ISO/IEC 9075-11:2006
-//! draft §5.8, §5.9, §5.30, §5.38 to §5.40, §5.42, §5.43]: the roles
+//! draft §5.8, §5.9, §5.30, §5.38 to §5.43]: the roles
 //! enabled and applicable, the role authorizations administrable, and the
 //! privileges granted to or by an enabled role. Each reads
 //! DEFINITION_SCHEMA.ROLE_AUTHORIZATION_DESCRIPTORS
@@ -68,13 +68,11 @@ pub(super) const VIEWS: &[SystemView] = &[
              FROM INFORMATION_SCHEMA.APPLICABLE_ROLES
              WHERE IS_GRANTABLE = 'YES' )",
     },
-    // [ISO/IEC 9075-11:2006 draft §5.40] ROLE_TABLE_GRANTS; without
-    // WITH_HIERARCHY, of a table of a structured type, there being none, as
-    // TABLE_PRIVILEGES is.
+    // [ISO/IEC 9075-11:2006 draft §5.40] ROLE_TABLE_GRANTS.
     SystemView {
         name: "ROLE_TABLE_GRANTS",
         query: r"SELECT GRANTOR, GRANTEE, TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME,
-            PRIVILEGE_TYPE, IS_GRANTABLE
+            PRIVILEGE_TYPE, IS_GRANTABLE, WITH_HIERARCHY
      FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
      WHERE ( GRANTEE IN
               ( SELECT ROLE_NAME
@@ -167,5 +165,25 @@ pub(super) const VIEWS: &[SystemView] = &[
             RP.SPECIFIC_CATALOG
          = ( SELECT ISCN.CATALOG_NAME
               FROM INFORMATION_SCHEMA_CATALOG_NAME AS ISCN )",
+    },
+    // [ISO/IEC 9075-11:2006 draft §5.41] ROLE_TABLE_METHOD_GRANTS, as the
+    // draft writes it.
+    SystemView {
+        name: "ROLE_TABLE_METHOD_GRANTS",
+        query: r"SELECT GRANTOR, GRANTEE, TABLE_CATALOG,
+            TABLE_SCHEMA, TABLE_NAME, SPECIFIC_CATALOG,
+            SPECIFIC_SCHEMA, SPECIFIC_NAME, IS_GRANTABLE
+     FROM DEFINITION_SCHEMA.TABLE_METHOD_PRIVILEGES
+     WHERE ( GRANTEE IN
+              ( SELECT ROLE_NAME
+                FROM ENABLED_ROLES )
+           OR
+               GRANTOR IN
+               ( SELECT ROLE_NAME
+                 FROM ENABLED_ROLES ) )
+       AND
+           TABLE_CATALOG
+         = ( SELECT CATALOG_NAME
+              FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
 ];

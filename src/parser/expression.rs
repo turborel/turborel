@@ -109,12 +109,14 @@ impl Parser {
         self.row_value()
     }
 
-    /// Whether IS \[NOT\] NULL, IS \[NOT\] DISTINCT or IS \[NOT\] A SET is
-    /// next, IS \[NOT\] TRUE, FALSE or UNKNOWN being a `<boolean test>` of
+    /// Whether IS \[NOT\] NULL, IS \[NOT\] DISTINCT, IS \[NOT\] OF ( or IS
+    /// \[NOT\] A SET is next, IS \[NOT\] TRUE, FALSE or UNKNOWN being a `<boolean test>` of
     /// a predicand [ISO/IEC 9075-2:2023 §6.46].
     fn at_is_predicate(&self) -> bool {
         let word_at = |n: usize| {
             matches!(self.peek_at(n), Tok::KeyWord(kw::NULL | kw::DISTINCT))
+                || (matches!(self.peek_at(n), Tok::KeyWord(kw::OF))
+                    && matches!(self.peek_at(n.saturating_add(1)), Tok::Delimiter(delim::LEFT_PAREN)))
                 || (matches!(self.peek_at(n), Tok::Identifier(a) if a == A_WORD)
                     && matches!(self.peek_at(n.saturating_add(1)), Tok::KeyWord(kw::SET)))
         };
@@ -130,6 +132,11 @@ impl Parser {
         // [§8.6] <null predicate> ::= <row value constructor> IS [NOT] NULL
         if self.accept_kw(kw::NULL) {
             return Ok(Predicate::Null { value, not });
+        }
+        // [ISO/IEC 9075-2:2023 §8.19] <type predicate part 2> ::= IS [NOT]
+        // OF ( <type list> )
+        if self.accept_kw(kw::OF) {
+            return Ok(Predicate::Type { value, types: self.type_list()?, not });
         }
         // [ISO/IEC 9075-2:2023 §8.18] <set predicate part 2> ::= IS [NOT] A
         // SET

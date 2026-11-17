@@ -169,6 +169,8 @@ pub(super) fn prefix_of(value: &Value, order: SortOrder) -> Option<Prefix> {
         | Value::Lob(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => return None,
     };

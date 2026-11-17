@@ -32,7 +32,9 @@ pub(super) fn put_column(out: &mut Vec<u8>, column: &ColumnDesc) {
 /// [ISO/IEC 9075-2:2023 §11.4 GR5f, GR5j] How a column's values are
 /// generated: 0 for a base column that is no identity column; 1, ALWAYS u8
 /// and its sequence generator, for an identity column; 2, the text and its
-/// names' schema, for a generated column.
+/// names' schema, for a generated column; 3 and its sequence generator, for
+/// a system-generated self-referencing column; 4, the count and names of
+/// its derivational attributes, for a derived one.
 fn put_generated(out: &mut Vec<u8>, generated: Option<&Generated>) {
     match generated {
         None => out.put_u8(0),
@@ -47,6 +49,17 @@ fn put_generated(out: &mut Vec<u8>, generated: Option<&Generated>) {
             out.put_str(names);
             put_horizon(out, horizon);
         }
+        Some(Generated::SystemReference(sequence)) => {
+            out.put_u8(3);
+            put_sequence(out, sequence);
+        }
+        Some(Generated::DerivedReference(names)) => {
+            out.put_u8(4);
+            out.put_u32(u32::try_from(names.len()).unwrap_or(u32::MAX));
+            for n in names {
+                out.put_str(n);
+            }
+        }
     }
 }
 
@@ -56,6 +69,11 @@ fn generated(r: &mut Reader<'_>) -> Result<Option<Generated>> {
         0 => None,
         1 => Some(Generated::Identity(Identity { always: flag(r)?, sequence: sequence(r)? })),
         2 => Some(Generated::Expression(Generation { text: r.str()?, names: r.str()?, horizon: horizon(r)? })),
+        3 => Some(Generated::SystemReference(sequence(r)?)),
+        4 => {
+            let n = r.u32()?;
+            Some(Generated::DerivedReference((0..n).map(|_| r.str()).collect::<Result<_>>()?))
+        }
         _ => return Err(r.corrupt("not how a column's values are generated")),
     })
 }

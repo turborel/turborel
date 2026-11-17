@@ -374,6 +374,29 @@ OK
 (2 rows)
 ```
 
+## Type predicate
+
+`v IS OF (t, ...)` is true if the most specific type of the value of a
+structured type is one of the types or a subtype of one, and `ONLY t`
+names the type alone. IS NOT OF is its negation. Of the orders of
+[Structured values and references](04-expressions.md#structured-values-and-references):
+
+```sql
+SELECT N, TREAT(DEREF(WHAT) AS GIFT).WRAP FROM ORDERS WHERE DEREF(WHAT) IS OF (GIFT);
+SELECT N FROM ORDERS WHERE DEREF(WHAT) IS OF (ONLY ITEM);
+```
+
+```
+            N |
+--------------+------------
+            2 | RED
+(1 row)
+            N
+--------------
+            1
+(1 row)
+```
+
 ## Search conditions
 
 Predicates are joined by AND, OR and NOT, NOT binding tightest, then

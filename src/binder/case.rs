@@ -67,6 +67,13 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     if let Some(t) = string_set_type(types) {
         return Ok(t);
     }
+    Ok(numeric_set_type(types))
+}
+
+/// [ISO/IEC 9075-2:2023 §9.5 SR3c] The result type of numbers of `types`:
+/// of exact numbers, exact, of the greatest digits on each side of the
+/// point; else approximate.
+fn numeric_set_type(types: &[DataType]) -> DataType {
     let (mut whole, mut scale, mut exact) = (0_u32, 0_u32, true);
     for t in types {
         match t {
@@ -88,17 +95,19 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
             | DataType::Interval(_)
             | DataType::Array(_)
             | DataType::Multiset(_)
+            | DataType::Structured(_)
+            | DataType::Reference(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Extension(_) => {}
         }
     }
     let digits = whole.saturating_add(scale).min(MAX_EXACT_PRECISION);
-    Ok(if exact {
+    if exact {
         DataType::Exact { precision: digits, scale, spelled: Spelled::Numeric }
     } else {
         DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float }
-    })
+    }
 }
 
 /// [ISO/IEC 9075:1992 §9.3 SR3a; ISO/IEC 9075-2:2023 §9.5 SR3a iii, SR3b]
@@ -132,6 +141,8 @@ fn string_set_type(types: &[DataType]) -> Option<DataType> {
             | DataType::Interval(_)
             | DataType::Array(_)
             | DataType::Multiset(_)
+            | DataType::Structured(_)
+            | DataType::Reference(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Extension(_) => continue,
@@ -164,6 +175,9 @@ fn apart_set_type(types: &[DataType], clause: &str) -> Option<Result<DataType>> 
             ))));
         }
         return Some(Ok(d.clone()));
+    }
+    if let Some(t) = super::structured::user_defined_set_type(types, clause) {
+        return Some(t);
     }
     if let Some(t) = super::composite::composite_set_type(types, clause) {
         return Some(t);
@@ -394,6 +408,9 @@ impl Binder<'_> {
             return Err(rule(format!("[ISO/IEC 9075:1992 §6.9 SR4a, §8.2 SR3] {xt} and {yt} are not comparable")));
         }
         super::multisets::equality_operand(&xt, "the comparison")?;
+        // [ISO/IEC 9075-2:2023 §8.2 GR] of a user-defined type, by its
+        // ordering: by its key, or RF(V1, V2) and 0.
+        let ((x, xt), (y, yt)) = self.compared_pair((x, xt), (y, yt), super::structured::Need::Equality)?;
         let characters = xt.is_character() && yt.is_character();
         let by = if characters { self.collation_of(&[self.derived(a)?, self.derived(b)?])? } else { None };
         // A large object by its proxies (`binder/lobs.rs`).
@@ -464,6 +481,18 @@ impl Binder<'_> {
     /// CAST of `e`, bound, of type `t`, to `target` [ISO/IEC 9075:1992
     /// §6.10].
     pub(super) fn cast_bound(&self, (e, t): (Expr, DataType), target: DataType) -> Result<(Expr, DataType)> {
+        // [ISO/IEC 9075-2:2023 §6.13 SR12, SR13, GR3, GR4] of or to a
+        // user-defined or a reference type, by a user-defined cast or to a
+        // supertype.
+        let user_defined = |x: &DataType| matches!(x, DataType::Structured(_) | DataType::Distinct(_) | DataType::Reference(_));
+        let e = if t != target && (user_defined(&t) || user_defined(&target)) {
+            match self.user_cast((e, t.clone()), &target)? {
+                Ok(cast) => return Ok(cast),
+                Err(e) => e,
+            }
+        } else {
+            e
+        };
         if !super::composite::castable(&t, &target) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR5, SR6, SR7, SR8, SR12] CAST of {t} to {target} is not valid")));
         }

@@ -3,7 +3,9 @@
 
 use crate::ast::Action;
 use crate::binder::no_column;
-use crate::catalog::{Actions, TableDesc};
+use std::collections::BTreeSet;
+
+use crate::catalog::{Actions, QualifiedName, TableDesc};
 use crate::error::Result;
 
 use super::rule;
@@ -12,8 +14,9 @@ use super::rule;
 /// privileges the `<action>`s `list` specify on `table`: INSERT, UPDATE or
 /// REFERENCES on each column of a column list, which are columns of the
 /// table, or on every column without one; TRIGGER [ISO/IEC 9075-2:2023
-/// §12.3] of the table.
-pub(in crate::db) fn granted_actions(list: &[Action], table: &TableDesc) -> Result<Actions> {
+/// §12.3] of the table; SELECT on the table/method pair of each method of
+/// `methods`, of a `<privilege method list>` [§12.3 SR8b i].
+pub(in crate::db) fn granted_actions(list: &[Action], table: &TableDesc, methods: &BTreeSet<QualifiedName>) -> Result<Actions> {
     let mut actions = Actions::default();
     for a in list {
         match a {
@@ -36,6 +39,7 @@ pub(in crate::db) fn granted_actions(list: &[Action], table: &TableDesc) -> Resu
             Action::Under => {
                 return rule(format!("[ISO/IEC 9075-2:2023 §12.3 SR4c] UNDER on a table is of a typed table, which {} is not", table.name));
             }
+            Action::SelectMethods => actions.typed.methods.extend(methods.iter().cloned()),
         }
     }
     Ok(actions)

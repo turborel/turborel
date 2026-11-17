@@ -60,6 +60,9 @@ pub(super) struct FromItem {
     /// what a column referenced of it is drawn from [ISO/IEC 9075-2:2023
     /// §7.17 SR23b].
     pub(super) drawn: Option<Box<Underlying>>,
+    /// [ISO/IEC 9075-2:2023 §7.6 GR3b] Of a typed table named without
+    /// ONLY, its proper subtables, whose rows' superrows are its rows too.
+    pub(super) family: Vec<QualifiedName>,
 }
 
 impl FromItem {
@@ -67,7 +70,18 @@ impl FromItem {
     /// name, alone at the start of the row: of `desc`, its rows from
     /// `source`.
     pub(super) fn alone(table: QualifiedName, at: usize, (desc, source): (TableDesc, Source)) -> FromItem {
-        FromItem { table, at, correlation: None, desc, offset: 0, source, nullable: false, common: Vec::new(), drawn: None }
+        FromItem {
+            table,
+            at,
+            correlation: None,
+            desc,
+            offset: 0,
+            source,
+            nullable: false,
+            common: Vec::new(),
+            drawn: None,
+            family: Vec::new(),
+        }
     }
 
     pub(super) fn designator(&self) -> &str {
@@ -292,14 +306,19 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
     } else if !matches!(source, Source::System(_)) {
         // [ISO/IEC 9075:1992 §21.1] SELECT on a system table is PUBLIC's.
         require(cx.db, cx.who(), &desc, &Actions { select: true, ..Actions::default() }, b.clause)?;
+        if t.only {
+            super::hierarchy::only_allowed(cx.db, cx.who(), &desc, "§7.6 AR1b ii 2").or_at(t.table.at)?;
+        }
     }
     // A triggered action's statement sees what its trigger saw, and a
     // procedure body's what the procedure saw.
     let horizon = if cx.params.horizoned() { cx.params.horizon() } else { cx.horizon };
     let (mut desc, source) = seen(horizon, &name, (desc, source));
+    let source = super::referenceable::hierarchical(cx.db, (&name, source), (t.only, Reader::of(&cx)))?;
     if let Some(names) = &t.columns {
         renamed(&mut desc.columns, names)?;
     }
+    let family = super::hierarchy::family_of(cx.db, (&name, &desc, &source), t.only);
     Ok(FromItem {
         table: name,
         at: t.table.at,
@@ -310,6 +329,7 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
         nullable: false,
         common: Vec::new(),
         drawn: None,
+        family,
     })
 }
 
@@ -361,6 +381,7 @@ fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
     }
     let name = QualifiedName { auth: String::new(), ident: d.correlation.clone() };
     let desc = TableDesc {
+        typed: None,
         name: name.clone(),
         columns,
         constraints: Vec::new(),
@@ -379,6 +400,7 @@ fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
         nullable: false,
         common: Vec::new(),
         drawn: None,
+        family: Vec::new(),
     })
 }
 
@@ -517,6 +539,7 @@ pub(super) fn leaf(binder: &Binder<'_>, it: &FromItem) -> Result<LogicalPlan> {
         binder.names.get(it.offset..end).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] the FROM row lost a column name"))?;
     let mut needed: Vec<usize> = used.range(it.offset..end).map(|p| p.saturating_sub(it.offset)).collect();
     Ok(match &it.source {
+        Source::Table if !it.family.is_empty() => super::hierarchy::family_plan(binder.db, it, item_names, &needed),
         Source::Table => LogicalPlan::Scan { table: it.table.clone(), names: item_names.to_vec(), needed, located: false },
         // The views' conditions read columns of their own.
         Source::Base(vb) => {

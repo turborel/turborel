@@ -157,6 +157,7 @@ fn table(store: &RowStore, name: &str, length: u32) -> Arc<dyn TableStorage> {
         },
     ];
     let desc = TableDesc {
+        typed: None,
         name: QualifiedName { auth: "A".into(), ident: name.into() },
         columns,
         constraints: vec![],

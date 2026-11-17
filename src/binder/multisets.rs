@@ -65,7 +65,7 @@ pub(super) fn equality_operand(t: &DataType, what: &str) -> Result<()> {
 /// values that are not distinct may yet differ [§9.16 SR1n, SR1o, SR1aq].
 fn uncertain(t: &DataType) -> bool {
     match t {
-        DataType::Character { .. } | DataType::Varying { .. } | DataType::Distinct(_) => true,
+        DataType::Character { .. } | DataType::Varying { .. } | DataType::Distinct(_) | DataType::Structured(_) => true,
         DataType::Lob { .. } => t.is_character(),
         DataType::Time { zoned, .. } | DataType::Timestamp { zoned, .. } => *zoned,
         DataType::Array(a) => uncertain(&a.element),
@@ -79,6 +79,7 @@ fn uncertain(t: &DataType) -> bool {
         | DataType::Boolean
         | DataType::Date
         | DataType::Interval(_)
+        | DataType::Reference(_)
         | DataType::Extension(_) => false,
     }
 }
@@ -190,7 +191,10 @@ impl Binder<'_> {
         self.certain(mixed, ("m", &format!("{what} of datetimes with and without time zone")))?;
         self.certain(grouping && uncertain(&element), ("n", &format!("{what} of elements of {element}")))?;
         let t = bounded(DataType::multiset(element))?;
-        let args = vec![brought(first, &first_type, t.clone()), brought(second, &second_type, t.clone())];
+        let mut args = vec![brought(first, &first_type, t.clone()), brought(second, &second_type, t.clone())];
+        if grouping {
+            args = args.into_iter().map(|a| self.keyed_elements(a, &t, &what)).collect::<Result<_>>()?;
+        }
         Ok((call(MultisetCombination(op, distinct, t.clone()), args), t))
     }
 
@@ -203,7 +207,7 @@ impl Binder<'_> {
         grouped_elements(&element, "SET")?;
         self.certain(uncertain(&element), ("o", &format!("SET of a multiset of {element}")))?;
         let result = DataType::multiset(element);
-        let e = brought(e, &t, result.clone());
+        let e = self.keyed_elements(brought(e, &t, result.clone()), &result, "SET")?;
         Ok((call(SetOf(result.clone()), vec![e]), result))
     }
 
@@ -235,6 +239,10 @@ impl Binder<'_> {
         }
         equality_operand(&xt, "MEMBER")?;
         self.certain(zones_mixed(&xt, &element), ("aj", "MEMBER of datetimes with and without time zone"))?;
+        // [§9.11] X and the elements compared by their keys: X as the one
+        // element of MULTISET[X], keyed so.
+        let mve = self.keyed_elements(mve, &DataType::multiset(element), "MEMBER")?;
+        let xe = self.keyed_value(self.compared_as((xe, xt.clone()), super::structured::Need::Equality, "MEMBER")?.0, &xt, "MEMBER")?;
         Ok(negated(Cond::Value(call(MemberOf, vec![xe, mve])), not))
     }
 
@@ -260,6 +268,7 @@ impl Binder<'_> {
         grouped_elements(&x.element, "SUBMULTISET")?;
         grouped_elements(&y.element, "SUBMULTISET")?;
         self.certain(zones_mixed(&ct, &mt), ("ak", "SUBMULTISET of datetimes with and without time zone"))?;
+        let (c, m) = (self.keyed_elements(c, &ct, "SUBMULTISET")?, self.keyed_elements(m, &mt, "SUBMULTISET")?);
         Ok(negated(Cond::Value(call(SubmultisetOf, vec![c, m])), not))
     }
 
@@ -270,8 +279,9 @@ impl Binder<'_> {
         let [cve] = value.as_slice() else {
             return Err(rule("[ISO/IEC 9075-2:2023 §8.18 SR1] the operand of IS A SET is one value, not a row of several"));
         };
-        let (e, _, element) = self.multiset_operand(cve, None, "IS A SET", scope)?;
+        let (e, t, element) = self.multiset_operand(cve, None, "IS A SET", scope)?;
         grouped_elements(&element, "IS A SET")?;
+        let e = self.keyed_elements(e, &t, "IS A SET")?;
         Ok(negated(Cond::Value(call(IsASet, vec![e])), not))
     }
 

@@ -191,3 +191,6 @@ impl SqlType for DistinctKind {
         d.source.kind().anchor(v, &d.source)
     }
 }
+
+#[cfg(test)]
+mod tests;

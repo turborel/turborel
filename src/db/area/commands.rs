@@ -193,6 +193,24 @@ pub(in crate::db) const DROP_SEQUENCE: Command = command("DROP SEQUENCE", 135);
 pub(in crate::db) const SET_COLLATION: Command = command("SET COLLATION", 136);
 /// `<truncate table statement>`.
 pub(in crate::db) const TRUNCATE_TABLE: Command = command("TRUNCATE TABLE", 139);
+/// `<user-defined cast definition>`.
+pub(in crate::db) const CREATE_CAST: Command = command("CREATE CAST", 52);
+/// `<alter type statement>`.
+pub(in crate::db) const ALTER_TYPE: Command = command("ALTER TYPE", 60);
+/// `<drop user-defined cast statement>`.
+pub(in crate::db) const DROP_CAST: Command = command("DROP CAST", 78);
+/// `<user-defined ordering definition>`.
+pub(in crate::db) const CREATE_ORDERING: Command = command("CREATE ORDERING", 114);
+/// `<drop user-defined ordering statement>`.
+pub(in crate::db) const DROP_ORDERING: Command = command("DROP ORDERING", 115);
+/// `<drop transform statement>`.
+pub(in crate::db) const DROP_TRANSFORM: Command = command("DROP TRANSFORM", 116);
+/// `<transform definition>`.
+pub(in crate::db) const CREATE_TRANSFORM: Command = command("CREATE TRANSFORM", 117);
+/// `<set transform group statement>`.
+pub(in crate::db) const SET_TRANSFORM_GROUP: Command = command("SET TRANSFORM GROUP", 118);
+/// `<alter transform statement>`.
+pub(in crate::db) const ALTER_TRANSFORM: Command = command("ALTER TRANSFORM", 127);
 
 // [ISO/IEC 9075-4:2006 draft §17.1 GR3, Table 2] The SQL control
 // statements, SIGNAL and RESIGNAL.

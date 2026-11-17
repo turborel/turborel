@@ -66,6 +66,7 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, (db, path): (&State, &str))
         | ValueExpression::Boolean(_)
         | ValueExpression::Function { .. }
         | ValueExpression::Composite(..)
+        | ValueExpression::Structured(..)
         | ValueExpression::Window(_)
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
@@ -129,6 +130,7 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::Boolean(_)
         | ValueExpression::Function { .. }
         | ValueExpression::Composite(..)
+        | ValueExpression::Structured(..)
         | ValueExpression::Window(_)
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }

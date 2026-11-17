@@ -104,6 +104,8 @@ impl SqlType for Approximate {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_) => uncastable(&v, t),
         }

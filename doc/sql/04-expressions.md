@@ -767,6 +767,63 @@ VALUES ELEMENT(MULTISET[1, 2]);
 turborel: SQLCODE -811 (SQLSTATE 21000): ELEMENT of a multiset of 2 elements [ISO/IEC 9075-2:2023 §6.26 SR1, §7.11 GR1a]
 ```
 
+## Structured values and references
+
+A value of a structured type ([CREATE TYPE](statements/create-type.md))
+is made by NEW, `NEW t()` of its attributes' defaults or `NEW t(args)`
+by a constructor method. `v.a` observes an attribute and `v.a(x)` gives
+a copy with it changed, so a value is built a mutator at a time. A
+method is invoked of a value, `v.m(args)`, and runs by the value's most
+specific type. A static method is invoked of its type, `t::m(args)`.
+
+A reference identifies a row of a typed table. `r -> a` reads an
+attribute of the row, `r -> m(args)` invokes a method of it, and
+`DEREF(r)` gives the row as a value of its type, each null if the row
+is gone. `v.SPECIFICTYPE` names a value's most specific type, and
+`TREAT(v AS t)` takes it as a value of its subtype `t`.
+
+```sql
+CREATE TYPE ITEM AS (LABEL VARCHAR(10), GRAMS INTEGER) NOT FINAL REF IS SYSTEM GENERATED
+    METHOD KILOS () RETURNS DECIMAL(9,3) CONTAINS SQL;
+CREATE METHOD KILOS () RETURNS DECIMAL(9,3) FOR ITEM RETURN SELF.GRAMS / 1000.0;
+CREATE TYPE GIFT UNDER ITEM AS (WRAP VARCHAR(10)) NOT FINAL;
+CREATE TABLE ITEMS OF ITEM (REF IS ITEM_ID SYSTEM GENERATED);
+CREATE TABLE GIFTS OF GIFT UNDER ITEMS;
+INSERT INTO ITEMS (LABEL, GRAMS) VALUES ('LAMP', 1500);
+INSERT INTO GIFTS (LABEL, GRAMS, WRAP) VALUES ('BOOK', 400, 'RED');
+CREATE TABLE ORDERS (N INTEGER, WHAT REF(ITEM) SCOPE ITEMS);
+INSERT INTO ORDERS SELECT CASE LABEL WHEN 'LAMP' THEN 1 ELSE 2 END, ITEM_ID FROM ITEMS;
+SELECT N, WHAT -> LABEL, WHAT -> KILOS() FROM ORDERS ORDER BY N;
+SELECT N, (DEREF(WHAT)).SPECIFICTYPE FROM ORDERS ORDER BY N;
+SELECT NEW ITEM().LABEL('CUP').GRAMS(250).KILOS() FROM (VALUES (1)) AS T (X);
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+            N |            |
+--------------+------------+-------------
+            1 | LAMP       |       1.500
+            2 | BOOK       |       0.400
+(2 rows)
+            N |
+--------------+--------------------------------------------------------------
+            1 | "TURBOREL"."ANN"."ITEM"
+            2 | "TURBOREL"."ANN"."GIFT"
+(2 rows)
+
+-------------
+       0.250
+(1 row)
+```
+
 ## Conditions as values
 
 A [condition](05-predicates.md), such as `SALARY > 6000` or `DEPT IS

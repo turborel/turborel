@@ -35,14 +35,18 @@ impl Binder<'_> {
             ))
         })?;
         // [SR5] each an operand of an ordering operation [§9.14].
-        types.iter().try_for_each(|t| super::composite::ordering_operand(t, name))?;
+        types.iter().try_for_each(|t| super::composite::ordering_operand(self.db, t, name))?;
         let collation = if result.is_character() {
             let derived = args.iter().map(|v| self.derived(v)).collect::<Result<Vec<_>>>()?;
             self.collation_of(&derived)?
         } else {
             None
         };
-        let exprs = bound.into_iter().map(|(e, t)| brought(e, &t, result.clone())).collect();
+        // [§9.14] of a structured type, by its ordering's key.
+        let exprs = bound
+            .into_iter()
+            .map(|(e, t)| super::structured::keyed_operand(self.context(), (brought(e, &t, result.clone()), &result), name))
+            .collect::<Result<Vec<_>>>()?;
         let function = GreatestOrLeast { greatest, result: result.clone(), collation };
         Ok((Expr::Call(ScalarRef(Arc::new(function)), exprs), result))
     }

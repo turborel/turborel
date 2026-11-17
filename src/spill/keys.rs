@@ -129,14 +129,36 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
             out.extend_from_slice(&u64::try_from(parts.len()).unwrap_or(u64::MAX).to_le_bytes());
             parts.iter().for_each(|p| put_norm(p, out));
         }
-        Value::Multiset(parts) => {
-            let keys = parts.iter().map(|p| {
-                let mut key = Vec::new();
-                put_norm(p, &mut key);
-                key
-            });
-            put_bag(keys.collect(), out);
+        Value::Structured(st) => put_norm_structured(st, out),
+        Value::Reference(r) => {
+            out.push(BITS_TAG);
+            r.put_key(out);
         }
+        Value::Multiset(parts) => {
+            let keys = parts.iter().map(norm_key_of).collect();
+            put_bag(keys, out);
+        }
+    }
+}
+
+/// The normalized key of `v` alone.
+fn norm_key_of(v: &Value) -> Vec<u8> {
+    let mut key = Vec::new();
+    put_norm(v, &mut key);
+    key
+}
+
+/// Appends the normalized key of the value of a structured type `st`: of
+/// one ordered by MAP, its comparison key's; else its type's name and its
+/// attributes', as a row's (RULES.md D81).
+fn put_norm_structured(st: &crate::value::types::Structured, out: &mut Vec<u8>) {
+    if let Some(k) = &st.key {
+        put_norm(k, out);
+    } else {
+        out.push(COMPOSITE_TAG);
+        out.extend_from_slice(&u64::try_from(st.attributes.len().saturating_add(1)).unwrap_or(u64::MAX).to_le_bytes());
+        put_norm_text(&st.of.to_string(), out);
+        st.attributes.iter().for_each(|p| put_norm(p, out));
     }
 }
 
@@ -263,3 +285,6 @@ fn text(out: &mut Vec<u8>, tag: u8, s: &str) {
     out.extend_from_slice(&u64::try_from(s.len()).unwrap_or(u64::MAX).to_le_bytes());
     out.extend_from_slice(s.as_bytes());
 }
+
+#[cfg(test)]
+mod tests;

@@ -26,6 +26,7 @@ fn routine(
     invokes: &[QualifiedName],
 ) -> SqlRoutineDesc {
     SqlRoutineDesc {
+        method: None,
         name: name(&specific.auth, "F"),
         specific: specific.clone(),
         kind: RoutineKind::Function,

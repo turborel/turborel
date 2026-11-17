@@ -221,6 +221,8 @@ fn exact_norm(v: &Value) -> NormKey {
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => v.norm(),
     }

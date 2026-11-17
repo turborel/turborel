@@ -51,6 +51,8 @@ pub(crate) fn shape(t: &DataType) -> Option<Shape> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => return None,

@@ -55,6 +55,8 @@ fn ceiling(q: &Value, rows: usize) -> Result<Option<usize>> {
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => Err(broken("a percentage of the rows is not a number")),
     }

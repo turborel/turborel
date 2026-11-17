@@ -67,6 +67,7 @@ pub(super) fn natural(
         nullable: false,
         common: Vec::new(),
         drawn: None,
+        family: Vec::new(),
     });
     Ok((and_all(equal), Some((from.items.len().saturating_sub(1), exprs))))
 }

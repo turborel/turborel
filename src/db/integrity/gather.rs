@@ -7,7 +7,7 @@
 //! reading one [§11.34 GR2].
 
 use super::{Check, Effect, Effects};
-use crate::catalog::{ConstraintKind, QualifiedName, TableDesc};
+use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::HeldRows;
@@ -43,9 +43,9 @@ impl State {
             if !changed.contains(table) {
                 changed.push(table.clone());
             }
-            match (id, self.catalog.table(table)) {
-                (Some(id), Some(desc)) => row_checks(desc, id, columns, &mut out),
-                (None, _) | (_, None) => Ok(()),
+            match id {
+                Some(id) => row_checks((table, &self.constraints_of(table)), id, columns, &mut out),
+                None => Ok(()),
             }
         })?;
         // [§11.6 GR3, §11.34 GR2] a table whose rows it wrote again whole,
@@ -56,8 +56,10 @@ impl State {
             }
         }
         self.unique_checks(effects, &changed, &mut out)?;
+        // [ISO/IEC 9075-2:2023 §4.25.1] one of a supertable checked of each
+        // subtable's rows too.
         for desc in self.catalog.tables() {
-            for c in &desc.constraints {
+            for c in self.constraints_of(&desc.name) {
                 let ConstraintKind::Check { reads, .. } = &c.kind else { continue };
                 if !reads.is_empty() && (changed.contains(&desc.name) || reads.iter().any(|t| changed.contains(t))) {
                     out.push(Check::Table { table: desc.name.clone(), constraint: c.name.clone() })?;
@@ -83,7 +85,7 @@ impl State {
     /// The spill area's.
     fn unique_checks(&self, effects: &mut Effects<'_>, changed: &[QualifiedName], out: &mut HeldRows<Check>) -> Result<()> {
         for desc in changed.iter().filter_map(|t| self.catalog.table(t)) {
-            for c in &desc.constraints {
+            for c in self.constraints_of(&desc.name) {
                 let ConstraintKind::Unique { columns: of, .. } = &c.kind else { continue };
                 effects.done.visit(&mut |effect| match keyed(effect, desc, of) {
                     Some(id) => out.push(Check::Unique { table: desc.name.clone(), constraint: c.name.clone(), id }),
@@ -109,9 +111,14 @@ impl State {
         (old, id): (&Row, Option<RowId>),
         out: &mut HeldRows<Check>,
     ) -> Result<()> {
+        // [ISO/IEC 9075-2:2023 §4.17.9] a row of a subtable of the referenced
+        // table is a superrow's of it; and a child's foreign keys are its
+        // own and its supertables'. The row's id is of the referenced table's
+        // row alone.
         for child in self.catalog.tables() {
-            for (name, fk) in child.foreign_keys().filter(|(_, fk)| fk.table == *table) {
+            for (name, fk) in self.foreign_keys_of(&child.name).into_iter().filter(|(_, fk)| self.reaches(table, &fk.table)) {
                 if columns.is_none_or(|set| fk.referenced.iter().any(|r| set.contains(r))) {
+                    let id = id.filter(|_| fk.table == *table);
                     out.push(Check::Referenced { child: child.name.clone(), constraint: name.clone(), old: old.clone(), id })?;
                 }
             }
@@ -126,16 +133,21 @@ fn assigned(of: &[usize], columns: Option<&[usize]>) -> bool {
     columns.is_none_or(|set| of.iter().any(|x| set.contains(x)))
 }
 
-/// Adds to `out` the checks of row `id` of `desc` written, giving values
-/// to `columns`, or to every column if none: of the constraints of its
-/// table on a column given a value, but UNIQUE ones (`State::checks`), and
-/// of its CHECKs without a subquery.
+/// Adds to `out` the checks of row `id` of `table` written, giving values
+/// to `columns`, or to every column if none: of its `constraints` on a
+/// column given a value, but UNIQUE ones (`State::checks`), and of its
+/// CHECKs without a subquery.
 ///
 /// # Errors
 ///
 /// The spill area's.
-fn row_checks(desc: &TableDesc, id: RowId, columns: Option<&[usize]>, out: &mut HeldRows<Check>) -> Result<()> {
-    for c in &desc.constraints {
+fn row_checks(
+    (table, constraints): (&QualifiedName, &[&ConstraintDesc]),
+    id: RowId,
+    columns: Option<&[usize]>,
+    out: &mut HeldRows<Check>,
+) -> Result<()> {
+    for c in constraints {
         let of_row = match &c.kind {
             ConstraintKind::NotNull(at) => assigned(std::slice::from_ref(at), columns),
             ConstraintKind::ForeignKey(fk) => assigned(&fk.columns, columns),
@@ -143,7 +155,7 @@ fn row_checks(desc: &TableDesc, id: RowId, columns: Option<&[usize]>, out: &mut 
             ConstraintKind::Unique { .. } => false,
         };
         if of_row {
-            out.push(Check::Row { table: desc.name.clone(), constraint: c.name.clone(), id })?;
+            out.push(Check::Row { table: table.clone(), constraint: c.name.clone(), id })?;
         }
     }
     Ok(())

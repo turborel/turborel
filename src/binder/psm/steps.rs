@@ -10,10 +10,13 @@ use crate::ast::{
     self, AssignmentSource, AssignmentTarget, CaseExpression, CaseWhen, FetchOrientation, Iteration, Literal, QueryExpression,
     QuerySpecification, ReturnStatement, SignalStatement, SignalValue, SqlStatement, ValueExpression, ValueSpecification, ValuesRow,
 };
-use crate::binder::{assignable, rule};
+use crate::binder::{OutColumn, assignable, rule};
 use crate::db::{assignment_type, check_targets};
 use crate::error::{At, Result, SqlState};
-use crate::logical::{Assign, Branches, Cursor, CursorAction, CursorStep, ForEach, Into, Leaf, Looped, Repeating, Signal, Step, Target};
+use crate::logical::{
+    Assign, Branches, Cursor, CursorAction, CursorStep, Expr, ForEach, Into, Leaf, LogicalPlan, Looped, Modified, Repeating, Signal, Step,
+    Subquery, Target,
+};
 use crate::params::ScopedVariable;
 use crate::value::DataType;
 
@@ -43,13 +46,20 @@ impl ProgramBinder<'_> {
                 format!("[ISO/IEC 9075-4:2006 draft §14.5 SR1b] {} targets are assigned a row of degree {}", targets.len(), types.len());
             return Err(rule(msg).or_at(a.at));
         }
-        for (t, given) in targets.iter().zip(&types) {
-            if !assignable(&t.data_type, given) {
-                let msg =
-                    format!("[ISO/IEC 9075-2:2023 §9.2 SR2] a value of {given} cannot be stored in {} ({})", t.spec.name, t.data_type);
-                return Err(rule(msg).or_at(t.spec.at));
-            }
-        }
+        let sites: Vec<&DataType> = targets.iter().map(|t| &t.data_type).collect();
+        let source = if let Some(leaf) = source {
+            let Some(cast) = self.assigned_leaf(leaf, &types, &sites)? else {
+                // The first target whose value has neither its type nor a cast.
+                let first = targets.iter().zip(&types).find(|(t, given)| !assignable(&t.data_type, given));
+                let (what, at) = first.map_or((String::new(), a.at), |(t, given)| {
+                    (format!(" of {given} cannot be stored in {} ({})", t.spec.name, t.data_type), t.spec.at)
+                });
+                return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.2 SR2] a value{what}")).or_at(at));
+            };
+            Some(cast)
+        } else {
+            None
+        };
         Ok(Step::Assign(Box::new(Assign { targets, source, scope: Arc::clone(&self.scope), at: a.at })))
     }
 
@@ -73,6 +83,14 @@ impl ProgramBinder<'_> {
         let mut data_type = assignment_type(&params, &t.target).or_at(t.target.at)?;
         let mut fields = Vec::new();
         for field in &t.fields {
+            // [SR4, SR5] of a structured type, its attribute, which its
+            // mutator sets.
+            if let DataType::Structured(s) = &data_type {
+                let (index, attribute) = self.mutator_step(&s.name, &field.name).or_at(field.at)?;
+                fields.push(Modified::Attribute(index));
+                data_type = attribute;
+                continue;
+            }
             let DataType::Row(row) = data_type.represented() else {
                 let msg = format!(
                     "[ISO/IEC 9075-2:2023 §6.25 SR1] {} is of {data_type}, no row type, so it has no field {}",
@@ -83,7 +101,7 @@ impl ProgramBinder<'_> {
             let Some((k, f)) = row.fields.iter().enumerate().find(|(_, f)| f.name == field.name) else {
                 return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.25 SR2] {data_type} has no field {}", field.name)).or_at(field.at));
             };
-            fields.push(k);
+            fields.push(Modified::Field(k));
             data_type = f.data_type.clone();
         }
         if !t.fields.is_empty() && t.target.element.is_some() {
@@ -158,7 +176,7 @@ impl ProgramBinder<'_> {
     }
 
     /// `for_each`'s work, its cursor `leaf` of `columns`.
-    fn for_within(&mut self, f: &ast::ForStatement, leaf: Leaf, columns: Vec<crate::binder::OutColumn>) -> Result<Step> {
+    fn for_within(&mut self, f: &ast::ForStatement, leaf: Leaf, columns: Vec<OutColumn>) -> Result<Step> {
         let mut scope = (*self.scope).clone();
         let label = f.variable.as_ref().map(|v| v.name.clone());
         let mut slots = Vec::new();
@@ -228,8 +246,25 @@ impl ProgramBinder<'_> {
     /// rows, as many columns as targets, each assignable to its target.
     pub(super) fn select_into(&self, query: &QuerySpecification, targets: &[ast::ParameterSpecification]) -> Result<Step> {
         let at = targets.first().map_or(0, |t| t.at);
-        let (leaf, columns) = self.leaf(QueryExpression::Spec(Box::new(query.clone())), at)?;
-        check_targets(&columns, targets, &self.params(), "§8.10 SR3", "§8.10 SR4")?;
+        let (leaf, mut columns) = self.leaf(QueryExpression::Spec(Box::new(query.clone())), at)?;
+        // [ISO/IEC 9075-2:2023 §9.2 GR2] to an SQL variable or parameter by
+        // an appropriate user-defined cast, where its type is not assignable.
+        let params = self.params();
+        let sites = targets.iter().map(|t| assignment_type(&params, t)).collect::<Result<Vec<DataType>>>();
+        let leaf = match sites {
+            Ok(sites) if sites.len() == columns.len() => {
+                let types: Vec<DataType> = columns.iter().map(|c| c.data_type.clone()).collect();
+                match self.assigned_leaf(leaf.clone(), &types, &sites.iter().collect::<Vec<_>>())? {
+                    Some(cast) => {
+                        columns.iter_mut().zip(sites).for_each(|(c, s)| c.data_type = s);
+                        cast
+                    }
+                    None => leaf,
+                }
+            }
+            Ok(_) | Err(_) => leaf,
+        };
+        check_targets(&columns, targets, &params, "§8.10 SR3", "§8.10 SR4")?;
         Ok(Step::Into(Box::new(Into { query: leaf, targets: targets.to_vec(), scope: Arc::clone(&self.scope) })))
     }
 
@@ -243,9 +278,9 @@ impl ProgramBinder<'_> {
         };
         let Some(v) = &r.value else { return Ok(Step::Return(None)) };
         let (leaf, t) = self.value(v, r.at)?;
-        if !assignable(result, &t) {
+        let Some(leaf) = self.assigned_leaf(leaf, std::slice::from_ref(&t), &[result])? else {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §16.2 SR3] a value of {t} is not returned as {result}")).or_at(r.at));
-        }
+        };
         Ok(Step::Return(Some(leaf)))
     }
 
@@ -259,18 +294,40 @@ impl ProgramBinder<'_> {
         } else if let SqlStatement::Close(name) = s {
             (name, CursorAction::Close)
         } else if let SqlStatement::Fetch { cursor, orientation, targets } = s {
-            (cursor, CursorAction::Fetch(orientation.clone(), targets.clone(), Arc::clone(&self.scope)))
+            (cursor, CursorAction::Fetch(orientation.clone(), targets.clone(), Arc::clone(&self.scope), None))
         } else {
             return Ok(None);
         };
         let Some(cursor) = self.local_cursor(name) else { return Ok(None) };
-        if let (CursorAction::Fetch(orientation, targets, _), Some(declared)) = (&action, self.cursors.get(cursor)) {
+        let mut action = action;
+        if let (CursorAction::Fetch(orientation, targets, _, cast), Some(declared)) = (&mut action, self.cursors.get(cursor)) {
             if !declared.scroll && !matches!(orientation, FetchOrientation::Next) {
                 return Err(rule("[ISO/IEC 9075:1992 §13.3 SR3] the cursor is not SCROLL: it fetches NEXT alone"));
             }
-            let columns = self.cursor_columns.get(cursor).map_or(&[][..], Vec::as_slice);
-            check_targets(columns, targets, &self.params(), "§8.6 SR2", "§8.6 SR3")?;
+            let mut columns = self.cursor_columns.get(cursor).cloned().unwrap_or_default();
+            *cast = self.fetch_cast(&mut columns, targets)?;
+            check_targets(&columns, targets, &self.params(), "§8.6 SR2", "§8.6 SR3")?;
         }
         Ok(Some(Step::Cursor(Box::new(CursorStep { cursor, action }))))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §9.2 GR2] Of a FETCH of a row of `columns`
+    /// into SQL variables or parameters `targets`, a VALUES of each value
+    /// assigned, by an appropriate user-defined cast where its type is not
+    /// assignable, over the row's values in its outer reference slots; and
+    /// the columns of the types they take. None if every one is assignable,
+    /// or one is not assignable even so, as `check_targets` then says.
+    fn fetch_cast(&self, columns: &mut [OutColumn], targets: &[ast::ParameterSpecification]) -> Result<Option<Leaf>> {
+        let params = self.params();
+        let Ok(sites) = targets.iter().map(|t| assignment_type(&params, t)).collect::<Result<Vec<DataType>>>() else { return Ok(None) };
+        if sites.len() != columns.len() || columns.iter().zip(&sites).all(|(c, s)| assignable(s, &c.data_type)) {
+            return Ok(None);
+        }
+        let outer = columns.iter().enumerate().map(|(i, c)| Expr::Outer(i, c.name.clone().unwrap_or_default()));
+        let types: Vec<DataType> = columns.iter().map(|c| c.data_type.clone()).collect();
+        let Some(row) = self.cast_row(outer.collect(), &types, &sites)? else { return Ok(None) };
+        columns.iter_mut().zip(&sites).for_each(|(c, s)| c.data_type = s.clone());
+        let plan = LogicalPlan::Values { rows: vec![row], types: sites };
+        Ok(Some(Leaf { query: Arc::new(Subquery::new(plan, Vec::new())), at: targets.first().map_or(0, |t| t.at) }))
     }
 }

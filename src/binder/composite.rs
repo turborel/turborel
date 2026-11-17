@@ -11,6 +11,7 @@ use super::statements::assignable;
 use super::{Binder, Scope, rule};
 use crate::ast::{Collection, ColumnSpecification, Composite, SelectItem, SetClause, TableName, UpdateSource, ValueExpression};
 use crate::catalog::ColumnDesc;
+use crate::db::State;
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{
     ARRAY_MAX_CARDINALITY, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf, ElementOf, FieldOf, RowOf, ScalarRef,
@@ -39,7 +40,8 @@ fn call(f: impl crate::functions::ScalarFunction + 'static, args: Vec<Expr>) -> 
 /// # Errors
 ///
 /// SQLCODE -103 if it is.
-pub(super) fn ordering_operand(t: &DataType, what: &str) -> Result<()> {
+pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
+    super::structured::udt_operand(db, t, super::structured::Need::Ordering, what)?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!(
             "[ISO/IEC 9075-2:2023 §9.14 SR3] {what} orders values of {t}, and {these} are compared for equality alone"
@@ -54,7 +56,29 @@ pub(super) fn ordering_operand(t: &DataType, what: &str) -> Result<()> {
 /// # Errors
 ///
 /// SQLCODE -103 if it is.
-pub(crate) fn grouping_operand(t: &DataType, what: &str) -> Result<()> {
+pub(crate) fn grouping_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
+    super::structured::udt_operand(db, t, super::structured::Need::Grouping, what)?;
+    if let Some(these) = unordered(t) {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and {these} are grouped by no operation")));
+    }
+    Ok(())
+}
+
+/// [ISO/IEC 9075-2:2023 §9.12 SR2i, SR2j, SR3] A column of a unique or
+/// referential constraint or of an index, `what`, of type `t`: neither
+/// LOB-ordered nor array-ordered, nor of a structured type.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is LOB-ordered or array-ordered; -900 if it is of a
+/// structured type, whose values have no key of their own (RULES.md D81).
+pub(crate) fn key_operand(t: &DataType, what: &str) -> Result<()> {
+    if crate::value::types::composite::structured_ordered(t) {
+        let msg = format!(
+            "[DESIGN] {what} keys values of {t}, and a key of a structured type is valid SQL this implementation does not take (RULES.md D81)"
+        );
+        return Err(SqlError::new(Code::Unsupported, msg));
+    }
     if let Some(these) = unordered(t) {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and {these} are grouped by no operation")));
     }
@@ -107,6 +131,8 @@ fn collection_element(t: &DataType) -> Option<&DataType> {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,
@@ -215,7 +241,7 @@ impl Binder<'_> {
             Composite::Element(array, index) => self.element(array, index, scope),
             Composite::Field(value, name) => {
                 let bound = self.value_expression(value, scope)?;
-                field_of(bound, name)
+                self.refined(bound, name)
             }
             Composite::Chain(parts) => self.chain(parts, at, scope),
             Composite::Multiset(values) => self.multiset_of(values, scope),
@@ -252,7 +278,13 @@ impl Binder<'_> {
     /// constructor>`: a row of its values, each field of its value's type,
     /// named as `anonymous` names it.
     pub(super) fn row_of(&self, values: &[ValueExpression], scope: Scope<'_>) -> Result<(Expr, DataType)> {
-        let bound = values.iter().map(|v| self.value_expression(v, scope)).collect::<Result<Vec<_>>>()?;
+        let mut bound = values.iter().map(|v| self.value_expression(v, scope)).collect::<Result<Vec<_>>>()?;
+        // The sort keys of an aggregate's rows, each by its ordering's key.
+        if self.sorting.replace(false) {
+            for (e, t) in bound.iter_mut().skip(1) {
+                *e = super::structured::keyed_operand(self.context(), (std::mem::replace(e, Expr::Const(Value::Null)), t), "ORDER BY")?;
+            }
+        }
         let fields =
             bound.iter().enumerate().map(|(i, (_, t))| Field { name: anonymous(i), data_type: t.clone(), unnamed: true }).collect();
         let t = bounded(DataType::row(fields))?;
@@ -348,7 +380,7 @@ impl Binder<'_> {
             catalog: None,
             at: cs.at,
         };
-        let refinable = matches!(self.local(&basis), Ok(Some((_, DataType::Row(_), _))));
+        let refinable = matches!(self.local(&basis), Ok(Some((_, t, _))) if refinable(&t));
         if !refinable {
             return Ok(None);
         }
@@ -361,7 +393,7 @@ impl Binder<'_> {
             )));
         }
         let bound = self.column_expr(&basis, scope)?;
-        field_of(bound, &cs.column).map(Some).or_at(cs.at)
+        self.refined(bound, &cs.column).map(Some).or_at(cs.at)
     }
 }
 
@@ -449,13 +481,17 @@ impl Binder<'_> {
             }
             UpdateSource::Value(v) => {
                 let (e, t) = self.typed(v, ParameterType::Of(a.element.clone()), scope)?;
-                if !assignable(&a.element, &t) {
-                    return Err(rule(format!(
-                        "[ISO/IEC 9075-2:2023 §14.15 SR11a, §9.2 SR2] a {t} value is not assigned to an element of {}",
-                        col.data_type
-                    )));
+                if assignable(&a.element, &t) {
+                    super::datetime::stored(e, t, &a.element, self.now)
+                } else {
+                    // [ISO/IEC 9075-2:2023 §9.2 GR2] by an appropriate cast.
+                    self.assigned((e, &t), &a.element)?.ok_or_else(|| {
+                        rule(format!(
+                            "[ISO/IEC 9075-2:2023 §14.15 SR11a, §9.2 SR2] a {t} value is not assigned to an element of {}",
+                            col.data_type
+                        ))
+                    })?
                 }
-                super::datetime::stored(e, t, &a.element, self.now)
             }
         };
         let i = self.position(index, "§14.15 SR11a, §6.25 SR2", scope)?;
@@ -467,6 +503,30 @@ impl Binder<'_> {
 
 /// [ISO/IEC 9075-2:2023 §6.16] The field `name` of `bound`, a value of a
 /// row type \[SR2\]: of its type \[SR5\], none if the row is null \[GR2a\].
+/// [ISO/IEC 9075-2:2023 §6.6 SR6, SR7] Whether a column or SQL parameter
+/// of type `t` is refinable: of a row type or a structured type.
+pub(super) fn refinable(t: &DataType) -> bool {
+    matches!(t, DataType::Row(_) | DataType::Structured(_))
+}
+
+impl Binder<'_> {
+    /// [ISO/IEC 9075-2:2023 §6.6 SR11] `bound` . `name`: a field reference
+    /// of a row [§6.16], or of a value of a structured type its attribute's
+    /// observer or the method of the name of no argument [§6.18].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it is of neither, or has no such field, attribute
+    /// or method.
+    pub(super) fn refined(&self, bound: (Expr, DataType), name: &str) -> Result<(Expr, DataType)> {
+        if let DataType::Structured(t) = &bound.1 {
+            let t = Arc::clone(t);
+            return self.attribute_or_method(bound, (&t, name));
+        }
+        field_of(bound, name)
+    }
+}
+
 pub(super) fn field_of((row, row_type): (Expr, DataType), name: &str) -> Result<(Expr, DataType)> {
     let DataType::Row(described) = &row_type else {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.16 SR2] field {name} is referenced of a row, not of {row_type}")));

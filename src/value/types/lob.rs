@@ -82,6 +82,8 @@ pub(crate) fn as_lob(v: &Value, kind: LobKind) -> Option<Lob> {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_),
             _,
@@ -496,3 +498,6 @@ pub(crate) fn read_lob(r: &mut Reader<'_>, kind: LobKind) -> Result<Value> {
         _ => Err(super::malformed()),
     }
 }
+
+#[cfg(test)]
+mod tests;

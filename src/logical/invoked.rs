@@ -15,6 +15,7 @@ use std::sync::Arc;
 use super::{Expr, Program, Subquery};
 use crate::catalog::QualifiedName;
 use crate::value::DataType;
+use crate::value::types::UdtName;
 
 /// \[DESIGN\] A bound invocation of an SQL-invoked function.
 #[derive(Debug, Clone)]
@@ -46,9 +47,24 @@ pub struct Invocation {
     pub null_call: bool,
     /// Whether it is deterministic [§4.35.1, §9.16 GR1].
     pub deterministic: bool,
+    /// Of an instance SQL-invoked method, some: its value is null if its
+    /// first argument, SELF, is [ISO/IEC 9075-2:2023 §9.18 GR8a]; and,
+    /// invoked with dynamic dispatch, the method that overrides it for each
+    /// type of its subject's family whose values another method takes, by
+    /// that type's name, each of no arguments, as it takes these [GR3b v]
+    /// (RULES.md D81). None of any other routine.
+    pub overrides: Option<Vec<(UdtName, Arc<Invocation>)>>,
 }
 
 impl Invocation {
+    /// [ISO/IEC 9075-2:2023 §9.18 GR3b v] The method invoked of a subject
+    /// `self_value`: the one overriding it for the subject's most specific
+    /// type, if one does; else it.
+    pub fn dispatched(&self, self_value: Option<&crate::value::Value>) -> &Invocation {
+        let Some(crate::value::Value::Structured(s)) = self_value else { return self };
+        self.overrides.iter().flatten().find(|(t, _)| *t == *s.of).map_or(self, |(_, i)| i)
+    }
+
     /// It, its arguments replaced by `f` of each.
     pub fn map_args(&self, f: &mut dyn FnMut(Expr) -> Expr) -> Arc<Invocation> {
         Arc::new(Invocation { args: self.args.iter().cloned().map(f).collect(), ..self.clone() })

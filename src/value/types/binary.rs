@@ -51,6 +51,8 @@ fn length_of(t: &DataType) -> u32 {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => 0,
@@ -166,6 +168,8 @@ impl SqlType for BinaryKind {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_) => uncastable(&v, t).map(|cast| (cast, None)),
         }

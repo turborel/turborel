@@ -49,6 +49,7 @@ mod server;
 mod shadow;
 mod sql2023;
 mod stats;
+mod structured;
 mod tailorings;
 mod triggers;
 mod truncate;
@@ -204,8 +205,8 @@ pub const MUTATIONS: [Mutation; 43] = [
         package: Package::Core,
         breaks: "UNIQUE: two rows of one key are let in",
         file: "src/db/integrity/keys.rs",
-        original: "if holders > 1 {",
-        replacement: "if holders > 2 {",
+        original: "            }\n            if holders > 1 {",
+        replacement: "            }\n            if holders > 2 {",
         integration: &[
             "statements::insert_enforces_unique_and_not_null_4_5",
             "unique_checks::update_checks_the_unique_constraints_it_could_break_8_12",

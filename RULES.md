@@ -118,6 +118,7 @@ verification approach DO-178C expects (§8).
 | D78 | Polymorphic table functions: compiled as bound, run whole as the cursor opens |
 | D79 | Large objects stream: chunked, logged by chunk, read by range, reached by locators |
 | D80 | Multisets are unordered values, paired by classes and a matching |
+| D81 | Structured types: values name their type, typed tables keep their own rows, references are octets |
 
 ### The project
 
@@ -663,7 +664,8 @@ condition and each generation expression again, in the definitions
 without the type, or with the privileges a REVOKE leaves. One that no
 longer binds referenced it. DROP TYPE's RESTRICT counts a transform only
 if a CREATE TRANSFORM made it [§11.59 SR4e], since the one its definition
-makes goes with it [GR2], and turborel has no CREATE TRANSFORM. CASCADE
+makes goes with it [GR2], and a user-defined cast that names the type
+[SR4f iv] (D81). CASCADE
 drops each column of a type based on it first, as ALTER TABLE DROP COLUMN
 does, and refuses before dropping any where that would drop every column
 of a table [§11.23 SR4].
@@ -1104,6 +1106,120 @@ type, whose equal values may differ [§9.16 SR1n, SR1o, SR1aq]. Elements
 of a character set use its default collation, as arrays' do. The
 protocol carries a multiset as tag 22 (D45), and a descriptor area as
 TYPE 55 with its element's item after it [§20.1 Table 30].
+
+#### D81. Structured types: values name their type, typed tables keep their own rows, references are octets
+
+A structured type [ISO/IEC 9075-2:2023 §4.9.3] is a kind of the
+`SqlType` contract (D53, `value/types/structured.rs`). The type is known
+by its name alone. Its attributes, methods and ordering are the
+catalog's, so the binder alone reads them, and a column declared of the
+type is never stale as ALTER TYPE changes them. A value names its most
+specific type and holds its attributes in their ordinal positions, a
+supertype's first, so it is read without the catalog, as a log record
+is. Method dispatch [§9.18 GR3b], TREAT and IS OF [§6.17, §8.19] read
+that name. A hierarchy has at most `MAX_HIERARCHY_DEPTH` types, 256,
+which bounds every walk up or down it. ALTER TYPE ADD and DROP
+ATTRIBUTE are refused while a base table's column is of a type of the
+family, whose stored values keep their attributes.
+
+An ordering [§11.65] is applied as the binder binds. By MAP, each
+operand of a comparison, grouping or ordering operation carries its map
+function's value as its key (`functions::Keyed`), and compares, hashes
+and sorts by it. That covers ORDER BY, GROUP BY and grouping sets,
+DISTINCT, the set operations, windows, MAX and MIN, GREATEST, an
+aggregate's ORDER BY, UNIQUE, row patterns, polymorphic table
+functions' partitions, and the elements of a multiset. By STATE, a
+value compares by its most specific type and each attribute, as the
+value itself does. By RELATIVE, `x op y` is `RF(x, y) op 0`. A sort or
+a grouping of values ordered by RELATIVE has no key to sort or group by,
+so it is valid SQL refused (SQLCODE -900). A unique or referential
+constraint and an index refuse a column of a structured type too
+(SQLCODE -900). An index key decodes back to the value it keys, and
+neither a map function's value nor a STATE identity, whose attributes'
+types only the catalog holds, does.
+
+A typed table [§4.17.9] keeps its own rows. A row of a proper subtable
+has its superrow in each supertable, as the subtable's first columns.
+A table named without ONLY is read as its own rows and then each proper
+subtable's, cut to its columns (`binder/hierarchy.rs`). A searched
+UPDATE, DELETE, MERGE, TRUNCATE or cursor changes each row where it is.
+Every constraint of a supertable is checked of its subtables' rows at
+the same positions, and a key or a referenced row is looked for across
+the family (`db/integrity/inherited.rs`). A subtable is in its
+supertable's schema, whose owner holds every privilege on it, so UNDER
+and the inherited columns' privileges are not recorded. The owner of a
+typed table holds SELECT WITH HIERARCHY OPTION on it. A grant of it on
+a supertable gives its grantee SELECT on each proper subtable as the
+grant was, read from the grant as needed rather than recorded [§12.2
+GR8]. ONLY of a table that is not typed needs no privilege beyond its
+SELECT, as no subtable could be left out.
+
+A reference [§4.11] is `Value::Reference`, its octets, at most
+`REF_OCTETS`, 1024. A system-generated one is the number the family's
+sequence generator gives the row, so no REF is ever given twice, across
+a crash too. A user-defined one is its representation type's value as
+`value::codec` writes it, and a derived one its derivational
+attributes' values written as a row's (UV103, UA063). References compare
+by their octets alone. DEREF, `->` and a method reference are each an
+invocation whose body is a subquery of the scope table over the
+reference, as a function's body is (D73). The family is read most
+specific first, so the value's most specific type is its table's. A
+reference carries no type, so its most specific type is the reference
+type of the type of the table whose row it identifies. TREAT of a
+reference to a subtype [Feature S162] looks the row up in the scope's
+family, or with no scope in each table of the referenced type or a
+subtype, each read as its owner, as §6.17 has no Access Rules. One that
+identifies no row keeps its declared type.
+
+DROP SCOPE finds an impacted dereference by binding each definition
+again without the scope (`db/alter/depending.rs`). One whose reference
+comes from the column other than as a column reference, a subquery's
+result say, is of the same scope and binds no more either. It is taken
+as impacted too, so DROP SCOPE RESTRICT refuses a little more than
+§11.18 SR4 names. A referenceable view is read-only, its rows changed
+through its basis table (`db/views/referenceable.rs`). An UPDATE through
+an INSTEAD OF trigger whose later mutated set clause of a column reads
+that column is refused (SQLCODE -900). Its value would be the earlier
+clause's, substituted wherever the column is named [§14.15 SR7c ii],
+inside a subquery too, which the clauses rewritten as text do not reach.
+
+Methods [§11.51 SR10, §11.56] are of a structured type or a distinct
+type alike (`catalog::MethodHost`). A distinct type has no supertype, so
+its methods override none, and a generalized invocation of one names
+the type itself. A method, a cast, an ordering or a transform may be a
+schema element of CREATE SCHEMA [§11.1], made after the routines
+written before it.
+
+A table/method privilege [§4.42.2] is SELECT on a typed table and one
+method of its type, kept by the method's specific name. One granted by
+a `<privilege method list>` is recorded [§12.3 SR8b i]. One SELECT on
+the table grants [§12.2 GR6] is read from that grant as needed, for each
+method its grantor holds EXECUTE on WITH GRANT OPTION. So a method
+added later is covered at once, as the grant stays [§11.56 GR3]. The
+owner of a typed table holds the privilege on every method of its type,
+and the owner of a referenceable view does too, as it holds SELECT on
+the view by its definition. A method reference needs the privilege on
+the table that is the reference's scope [§6.23 AR1].
+
+A user-defined cast [§6.13 SR12, GR3] is applied as the binder binds.
+CAST to a supertype is the value itself. Any other CAST of or to a
+structured type invokes the cast whose source comes first in the
+operand's type precedence list, and casts its result again where the
+target is no user-defined type. A value is stored by a cast AS
+ASSIGNMENT [§9.2 GR2] where its type is not assignable to the site's.
+That covers INSERT, UPDATE, MERGE, a function's result, PSM's SET,
+SELECT INTO and FETCH, and a variable's default. An argument never
+needs one, as a routine is a candidate only if each parameter's type is
+in its argument's type precedence list [§9.18 SR10d].
+
+A transform group [§4.48.1] is read from the SQL-session's own state,
+set by SET TRANSFORM GROUP [§19.12, §19.13] and compared as a cached
+plan is chosen. Its functions are what a host language or an external
+routine [§4.9.6] crosses a value with, and turborel has neither, so a
+structured value crosses to a client whole, as the protocol's tag of
+its type writes it. A function that is an ordering's, a transform's or
+a cast's is dropped only with CASCADE, which drops what it is the
+function of [§11.62 SR4a, SR4d].
 
 #### D33. Schema changes are transactional
 
@@ -2439,7 +2555,7 @@ R-TEST-6 was withdrawn with the golden-file tests (D6).
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
+| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
 | R-TRACE-2 | Code implementing a requirement **shall** cite it (R-DOC-4). `cargo xtask trace '§8.6'` lists a clause's tests. | review; `xtask trace` |
 | R-TRACE-3 | CONFORMANCE.md **shall** change with the change implementing or changing a clause. | review |
 

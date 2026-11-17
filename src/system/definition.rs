@@ -28,21 +28,27 @@
 //! index options and of indexes in `definition/options.rs`, of sequence
 //! generators in `definition/sequences.rs`, of user-defined types in
 //! `definition/user_types.rs`, and of SQL-invoked routines in
-//! `definition/routines.rs`; and, of ISO/IEC 9075-11, the base table of
-//! role authorizations in `definition/roles.rs` and those of triggers in
-//! `definition/triggers.rs` (RULES.md R-SIZE-2).
+//! `definition/routines.rs`, with the routines each type's definition
+//! makes in `definition/implicit.rs`; and, of ISO/IEC 9075-11, the base
+//! table of role authorizations in `definition/roles.rs`, those of
+//! triggers in `definition/triggers.rs`, of structured types in
+//! `definition/structured.rs` and of typed tables in `definition/typed.rs`
+//! (RULES.md R-SIZE-2).
 
 mod constraints;
 mod descriptors;
+mod implicit;
 mod modules;
 mod options;
 mod privileges;
 mod roles;
 mod routines;
 mod sequences;
+mod structured;
 #[cfg(test)]
 mod tests;
 mod triggers;
+mod typed;
 mod user_types;
 
 use std::sync::{Arc, OnceLock};
@@ -102,6 +108,8 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(roles::tables());
     tables.extend(triggers::tables());
     tables.extend(modules::tables());
+    tables.extend(structured::tables());
+    tables.extend(typed::tables());
     tables
 }
 
@@ -370,12 +378,13 @@ fn languages(_: &Seen<'_>) -> Vec<Row> {
 // ---------------------------------------------------------------------------
 
 fn tables_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("TABLE", true).data("TABLE_TYPE", true).done()
+    typed::table_columns(Columns::of().ids("TABLE", true).data("TABLE_TYPE", true)).done()
 }
 
 /// Each table, a BASE TABLE, a VIEW, or a GLOBAL or LOCAL TEMPORARY table
 /// [§21.3.8]: a system table is a base table, as
-/// INFORMATION_SCHEMA_CATALOG_NAME is \[§21.2.2\].
+/// INFORMATION_SCHEMA_CATALOG_NAME is \[§21.2.2\]; and, of a typed table
+/// or view, what makes it typed (`typed::table_values`).
 fn described_tables(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let kind = |o: &Object| match (o.view, seen.state.catalog.table(&o.name).and_then(|t| t.temporary).map(|t| t.kind)) {
@@ -384,7 +393,10 @@ fn described_tables(seen: &Seen<'_>) -> Result<Vec<Row>> {
         (false, Some(TemporaryKind::Global)) => "GLOBAL TEMPORARY",
         (false, Some(TemporaryKind::CreatedLocal | TemporaryKind::Declared)) => "LOCAL TEMPORARY",
     };
-    let row = |o: Object| [ids(&catalog, &o.name).to_vec(), vec![text(kind(&o))]].concat();
+    let row = |o: Object| {
+        let typed = typed::table_values(&catalog, typed::typed(seen, &o.name));
+        [ids(&catalog, &o.name).to_vec(), vec![text(kind(&o))], typed].concat()
+    };
     Ok(objects(seen)?.into_iter().map(row).collect())
 }
 
@@ -425,22 +437,26 @@ fn columns_columns() -> Vec<ColumnDesc> {
         .number("ORDINAL_POSITION", true)
         .ids("DOMAIN", false)
         .data("COLUMN_DEFAULT", false)
-        .data("IS_NULLABLE", false);
+        .data("IS_NULLABLE", false)
+        .data("IS_SELF_REFERENCING", true);
     sequences::generation_columns(columns).done()
 }
 
 /// Each column of each table, at its position, from 1, with its domain;
 /// its own default as its `<default option>` would be written [§11.5],
 /// none if it has its domain's alone; nullable unless constrained NOT
-/// NULL; its identity and generation (`sequences::generation_values`).
+/// NULL; whether it is a typed table's self-referencing column
+/// (`typed::self_referencing`); its identity and generation
+/// (`sequences::generation_values`).
 fn columns(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
     for o in objects(seen)? {
+        let typed = typed::typed(seen, &o.name);
         for (at, c) in o.columns.iter().enumerate() {
             let null = || vec![Value::Null, Value::Null, Value::Null];
             let domain = c.domain.as_ref().map_or_else(null, |d| ids(&catalog, &d.name).to_vec());
-            let own = vec![default_text(c.default.as_ref()), yes(!c.not_null)];
+            let own = vec![default_text(c.default.as_ref()), yes(!c.not_null), typed::self_referencing(typed, &c.name)];
             let row = [vec![text(&c.name), number(at.saturating_add(1))], domain, own, sequences::generation_values(c)].concat();
             rows.push([ids(&catalog, &o.name).to_vec(), row].concat());
         }

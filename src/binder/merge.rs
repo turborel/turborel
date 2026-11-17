@@ -30,7 +30,9 @@ mod tests;
 /// - for each WHEN NOT MATCHED clause of a search condition, in order,
 ///   its flag (`BoundWhen::NotMatched`);
 /// - the target row's row id (`storage::located`), null of a source row
-///   no target row matches.
+///   no target row matches;
+/// - of a target with proper subtables (`members`), the table the target
+///   row is of: 0 for the table, k for the member k - 1.
 ///
 /// The conditions and expressions read only the first two parts.
 #[derive(Debug, Clone)]
@@ -65,6 +67,10 @@ pub struct BoundMerge {
     /// table, by its position, its generation expression bound over its
     /// row.
     pub generated: Vec<(usize, Expr)>,
+    /// [ISO/IEC 9075-2:2023 §14.12 GR6a i 1 A I] Of a typed table named
+    /// without ONLY, its proper subtables, whose rows it reads and changes
+    /// by their superrows; else none.
+    pub members: Vec<QualifiedName>,
 }
 
 /// [ISO/IEC 9075-2:2023 §14.12] A `<merge when clause>`, bound.
@@ -135,7 +141,7 @@ pub fn bind_merge(
     inserts: &[Vec<ObjectColumn>],
     held: Option<&TransitionRows>,
 ) -> Result<BoundMerge> {
-    let target::Target { name, write, item } = target::bind_target(cx, stmt, held.is_some())?;
+    let target::Target { name, write, item, members } = target::bind_target(cx, stmt, held.is_some())?;
     let tw = write.base.columns.len();
     let src = source::bind_source(cx, &stmt.source, (&item, tw))?;
     let names: Vec<String> = item.row_names().into_iter().chain(src.names.iter().cloned()).collect();
@@ -149,8 +155,19 @@ pub fn bind_merge(
     let sc1 = clauses::condition(&both, &stmt.on)?;
     let scopes = clauses::Scopes { both: &both, source: &alone, base: &write.base, flags: tw.saturating_add(src.width) };
     let (bound, flagged) = clauses::bind_clauses(&scopes, &stmt.clauses, inserts)?;
-    let sides =
-        rows::Sides { base: &write.base, names: &names, view: write.cond.as_ref(), target_width: tw, source_width: src.width, held };
+    let member_names: Vec<(QualifiedName, Vec<String>)> = members
+        .iter()
+        .map(|m| (m.clone(), cx.db.catalog.table(m).map(|d| d.columns.iter().map(|c| c.name.clone()).collect()).unwrap_or_default()))
+        .collect();
+    let sides = rows::Sides {
+        base: &write.base,
+        names: &names,
+        view: write.cond.as_ref(),
+        target_width: tw,
+        source_width: src.width,
+        held,
+        members: &member_names,
+    };
     let flags = flagged.into_iter().map(|scj| rows::flag(&sides, &sc1, scj)).collect();
     let rows = rows::joined(&sides, src.plan, flags, &sc1);
     // A target row changed since it was read is matched again by the ON
@@ -171,5 +188,6 @@ pub fn bind_merge(
         checks: write.checks,
         auth: cx.auth.to_owned(),
         generated,
+        members,
     })
 }

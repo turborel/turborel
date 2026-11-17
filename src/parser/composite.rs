@@ -292,10 +292,22 @@ impl Parser {
     }
 
     /// `primary` followed by each `<array element reference>` `[` `<numeric
-    /// value expression>` `]` [ISO/IEC 9075-2:2023 §6.25] and `<field
-    /// reference>` . `<field name>` [§6.16] that follows it, in order.
+    /// value expression>` `]` [ISO/IEC 9075-2:2023 §6.25], `<field
+    /// reference>` . `<field name>` [§6.16], and method invocation,
+    /// dereference or SPECIFICTYPE (`structured/values.rs`) that follows
+    /// it, in order.
     pub(super) fn postfixed(&mut self, mut primary: ValueExpression) -> Result<ValueExpression> {
         loop {
+            // [ISO/IEC 9075-2:2023 §6.18, §6.21, §6.40] a method, a
+            // dereference or SPECIFICTYPE, of a user-defined type.
+            primary = match self.structured_postfix(primary)? {
+                Ok(structured) => {
+                    self.deepen()?;
+                    primary = structured;
+                    continue;
+                }
+                Err(primary) => primary,
+            };
             let at = self.here();
             let part = if self.accept_delim(delim::LEFT_BRACKET) {
                 let index = self.nested(Parser::value_expression)?;

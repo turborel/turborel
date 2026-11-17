@@ -28,10 +28,17 @@ use crate::value::{Value, assign};
 /// An argument's, or its store assignment's, as the parameter's type takes
 /// its value not [§9.2]; SQLSTATE 2F005 of a body that is no `<return
 /// statement>`; the body's own; the result's store assignment's.
-pub(super) fn invoke(i: &Invocation, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
-    let mut values: Row = Vec::with_capacity(i.args.len());
-    for (k, (arg, (name, t))) in i.args.iter().zip(&i.params).enumerate() {
-        let assigned = assign(eval(arg, row, subqueries)?, t, "ISO/IEC 9075-2:2023 §9.18 GR4a ii");
+pub(super) fn invoke(invoked: &Invocation, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
+    let args = invoked.args.iter().map(|a| eval(a, row, subqueries)).collect::<Result<Vec<Value>>>()?;
+    // [ISO/IEC 9075-2:2023 §9.18 GR8a] of an instance method of a null
+    // SELF, the null value; [GR3b v] else the method for its type.
+    if invoked.overrides.is_some() && args.first().is_none_or(Value::is_null) {
+        return Ok(Value::Null);
+    }
+    let i = invoked.dispatched(args.first());
+    let mut values: Row = Vec::with_capacity(args.len());
+    for (k, (arg, (name, t))) in args.into_iter().zip(&i.params).enumerate() {
+        let assigned = assign(arg, t, "ISO/IEC 9075-2:2023 §9.18 GR4a ii");
         // [§23.1 GR4q] of an assignment to the parameter.
         let about = || Subject::parameter(i.name.parts(), i.specific.parts(), (k.saturating_add(1), "IN", name.clone()));
         values.push(assigned.map_err(|e| e.or_about(about()))?);

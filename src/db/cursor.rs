@@ -6,21 +6,18 @@
 
 use std::sync::{Arc, Weak};
 
-use super::compiled::Compiled;
 use super::dynamic::Name;
-use super::position::{Move, Position};
 use super::prepared::Keeping;
-use super::roles::Valued;
 use super::routines::Hosted;
 use super::write::Written;
 use super::{
-    Completion, CursorRows, DeclaredCursor, Kept, OpenCursor, Session, State, StatementContext, Stream, Updatable, api, assign_targets,
-    candidate, check_option, check_targets, cursor_error, plan, rule, set_columns,
+    Completion, CursorRows, DeclaredCursor, Kept, OpenCursor, Session, State, StatementContext, Stream, api, assign_targets, candidate,
+    check_option, check_targets, cursor_error, plan, rule, set_columns,
 };
-use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, QuerySpecification, Updatability, ValueSpecification};
+use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, QuerySpecification};
 use crate::binder::{self, OutColumn, bind_select};
-use crate::catalog::{QualifiedName, TableDesc};
-use crate::error::{At, Code, Result, SqlState, fail, fail_with};
+use crate::catalog::QualifiedName;
+use crate::error::{At, Code, Result, fail};
 use crate::exec::execute;
 use crate::params::Params;
 use crate::parser::Parser;
@@ -29,8 +26,6 @@ use crate::storage::{Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::Txn;
 use crate::value::datetime::show_in;
-use crate::value::{DataType, Value};
-use ordered::{ordered_columns, row_condition};
 
 /// The columns of a cursor and the row it is on, if it is on one.
 type Fetched = Option<(Vec<OutColumn>, Row)>;
@@ -40,167 +35,10 @@ type Fetched = Option<(Vec<OutColumn>, Row)>;
 const CARDINALITY_PROBE_ROWS: usize = 2;
 
 mod ordered;
+mod updatability;
 
-/// [ISO/IEC 9075:1992 §13.1 SR5, SR6] How a cursor's updatability is
-/// given: FOR READ ONLY, written or implicit; FOR UPDATE written; or FOR
-/// UPDATE implicit, the cursor then updatable if its table is.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Wanted {
-    ReadOnly,
-    Written,
-    Implicit,
-}
-
-/// [ISO/IEC 9075:1992 §13.1 SR5, SR12] How the cursor of `spec`, declared
-/// INSENSITIVE and SCROLL as `flags` say, gives its updatability.
-///
-/// # Errors
-///
-/// SQLCODE -103 if it is INSENSITIVE and FOR UPDATE \[SR12\].
-fn wanted(spec: &CursorSpecification, (insensitive, scroll): (bool, bool)) -> Result<Wanted> {
-    match &spec.updatability {
-        Some(Updatability::ReadOnly) => Ok(Wanted::ReadOnly),
-        Some(Updatability::Update(_)) => {
-            if insensitive {
-                return Err(rule("[ISO/IEC 9075:1992 §13.1 SR12] an INSENSITIVE cursor is not FOR UPDATE".to_owned()));
-            }
-            Ok(Wanted::Written)
-        }
-        // [SR5a] INSENSITIVE, SCROLL or ORDER BY: READ ONLY; so too OFFSET
-        // or FETCH FIRST, of a query not updatable [ISO/IEC 9075-2:2023
-        // §7.17 SR7].
-        None => Ok(if insensitive || scroll || spec.query.ordered().is_some() { Wanted::ReadOnly } else { Wanted::Implicit }),
-    }
-}
-
-/// [ISO/IEC 9075:1992 §13.1 SR6] Whether the cursor of `spec`, declared as
-/// `flags` say, is updatable, as far as its text tells: FOR UPDATE, or an
-/// updatable table.
-///
-/// # Errors
-///
-/// As `wanted`'s.
-pub(super) fn declared_updatable(spec: &CursorSpecification, flags: (bool, bool)) -> Result<bool> {
-    Ok(match wanted(spec, flags)? {
-        Wanted::ReadOnly => false,
-        Wanted::Written => true,
-        Wanted::Implicit => binder::updatable(spec).is_some(),
-    })
-}
-
-/// [ISO/IEC 9075:1992 §13.1 SR13, SR14] The columns of `table` (`desc`) a
-/// positioned UPDATE through the cursor may set: those its FOR UPDATE
-/// names, or, naming none, every one.
-///
-/// # Errors
-///
-/// SQLCODE -103 if it names a column `table` has not \[SR14\].
-fn settable(desc: &TableDesc, updatability: Option<&Updatability>) -> Result<Vec<usize>> {
-    let Some(Updatability::Update(Some(names))) = updatability else { return Ok((0..desc.columns.len()).collect()) };
-    names
-        .iter()
-        .map(|(name, at)| {
-            let refused = || rule(format!("[ISO/IEC 9075:1992 §13.1 SR14] {} has no column {name} to update", desc.name)).or_at(*at);
-            desc.columns.iter().position(|c| c.name == *name).ok_or_else(refused)
-        })
-        .collect()
-}
-
-/// [ISO/IEC 9075:1992 §13.3 SR3, SR4, GR2] Where FETCH `orientation` moves
-/// a cursor, SCROLL if `scroll`, its J's value as `valued` gives it.
-///
-/// # Errors
-///
-/// SQLCODE -103 if it is not NEXT and the cursor is not SCROLL \[SR3\], or
-/// its J is not exact numeric with scale 0 \[SR4\]; -301 if J is null.
-pub(super) fn movement(orientation: &FetchOrientation, scroll: bool, valued: &Valued<'_>) -> Result<Move> {
-    let to = match orientation {
-        FetchOrientation::Next => Move::Next,
-        FetchOrientation::Prior => Move::Prior,
-        FetchOrientation::First => Move::First,
-        FetchOrientation::Last => Move::Last,
-        FetchOrientation::Absolute(j) => Move::Absolute(how_far(j, valued)?),
-        FetchOrientation::Relative(j) => Move::Relative(how_far(j, valued)?),
-    };
-    if !scroll && !matches!(to, Move::Next) {
-        return Err(rule("[ISO/IEC 9075:1992 §13.3 SR3] the cursor is not SCROLL: it fetches NEXT alone".to_owned()));
-    }
-    Ok(to)
-}
-
-/// [ISO/IEC 9075:1992 §13.3 SR4, GR2a] The value J of ABSOLUTE or RELATIVE.
-fn how_far(j: &ValueSpecification, valued: &Valued<'_>) -> Result<i128> {
-    let not_exact = || rule("[ISO/IEC 9075:1992 §13.3 SR4] ABSOLUTE and RELATIVE take an exact numeric with scale 0".to_owned());
-    let (value, data_type) = valued(j)?;
-    if !matches!(data_type, DataType::Exact { scale: 0, .. }) {
-        return Err(not_exact());
-    }
-    match value {
-        Value::Exact(d) => Ok(d.units),
-        Value::Null => fail_with(
-            Code::Data,
-            SqlState::NULL_VALUE_NO_INDICATOR,
-            "[DESIGN] ABSOLUTE and RELATIVE take a number, not the null value".to_owned(),
-        ),
-        Value::Char(_)
-        | Value::Approx(_)
-        | Value::DecFloat(_)
-        | Value::Binary(_)
-        | Value::Lob(_)
-        | Value::Bool(_)
-        | Value::Datetime(_)
-        | Value::Interval(_)
-        | Value::Array(_)
-        | Value::Multiset(_)
-        | Value::Row(_)
-        | Value::Extension(_) => Err(not_exact()),
-    }
-}
-
-/// An updatable cursor of `spec`, compiled as `c`, its `<from clause>`
-/// naming `named`, which reads `table`: its rows may be updated or
-/// deleted through it, and its subqueries' tables are read.
-fn open_updatable(
-    st: &Arc<State>,
-    tx: &Txn,
-    spec: &CursorSpecification,
-    (named, c, table): (QualifiedName, Compiled, QualifiedName),
-) -> Result<OpenCursor> {
-    st.update_lock(tx, &table)?;
-    for t in c.optimized.subquery_tables() {
-        st.read_lock(tx, &t)?;
-    }
-    let projection: Vec<usize> = c
-        .columns
-        .iter()
-        .map(|col| col.origin.ok_or_else(|| api(format!("[DESIGN] a cursor's column is not a column of {table}"))))
-        .collect::<Result<_>>()?;
-    let settable = settable(&st.base_table(&table)?, spec.updatability.as_ref())?;
-    let ordered = ordered_columns(&c.optimized)?;
-    let condition = row_condition(&c.optimized);
-    let ids = super::scroll::ordered_ids(c.physical, st, tx.id)?;
-    let snapshot = Arc::clone(st);
-    let at = Position::Before(0);
-    let rows = Updatable { snapshot, named, table, ids, projection, condition, at, settable, ordered, changed: Vec::new(), on: None };
-    Ok(OpenCursor { columns: c.columns, rows: CursorRows::Updatable(Box::new(rows)) })
-}
-
-/// [ISO/IEC 9075:1992 §13.9 SR4, SR8] The columns a positioned UPDATE `w`
-/// through cursor `name`, updatable as `u`, sets are among those its FOR
-/// UPDATE names, and none of them is read by its ORDER BY. A positioned
-/// DELETE sets none.
-fn check_object_columns(u: &Updatable, w: &Written, name: &str) -> Result<()> {
-    for (column, _) in w.set() {
-        let named = || w.bound.desc.columns.get(*column).map_or_else(|| column.to_string(), |c| c.name.clone());
-        if !u.settable.contains(column) {
-            return Err(rule(format!("[ISO/IEC 9075:1992 §13.9 SR8] cursor {name} is not FOR UPDATE of {}", named())));
-        }
-        if u.ordered.contains(column) {
-            return Err(rule(format!("[ISO/IEC 9075:1992 §13.9 SR4] cursor {name} is ordered by {}, which it does not update", named())));
-        }
-    }
-    Ok(())
-}
+use updatability::{Wanted, check_object_columns, open_updatable, wanted};
+pub(super) use updatability::{declared_updatable, movement};
 
 impl Session {
     /// The row an updatable cursor is on. [X3.135-1986 §8.4 SR2, SR3, SR4, GR1]
@@ -225,9 +63,11 @@ impl Session {
                 }
                 check_object_columns(u, w, &name.name)?;
                 let storage = cx.st.storage_of(table)?;
+                // The row of the table `w` was bound for: the cursor's
+                // current row's (`Session::positioned_member`).
                 let live = match u.current() {
-                    Some(id) => storage.get(cx.tx.id, id)?.map(|_| id),
-                    None => None,
+                    Some((of, id)) if of == table => storage.get(cx.tx.id, id)?.map(|_| id),
+                    Some(_) | None => None,
                 };
                 match live {
                     Some(id) => Ok(id),
@@ -242,6 +82,37 @@ impl Session {
                 }
             }
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §14.8 SR9, §14.13 SR9] Of a positioned UPDATE
+    /// or DELETE of the typed table `table` through the updatable cursor
+    /// `name`, whose `<target table>` is ONLY if `only`: the proper subtable
+    /// whose row the cursor is on, of which it is bound (`bind_member_write`),
+    /// if it is on one [§15.6 GR9, §15.7 GR9].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900, SQLSTATE 42000, if the target is ONLY and the cursor's
+    /// table reference is not, or the other way about.
+    pub(super) fn positioned_member(
+        &self,
+        st: &State,
+        (name, table, only): (&Name, &QualifiedName, bool),
+    ) -> Result<Option<QualifiedName>> {
+        let inner = self.inner.borrow();
+        let Some(DeclaredCursor { open: Some(OpenCursor { rows: CursorRows::Updatable(u), .. }), .. }) = inner.cursors.get(name) else {
+            return Ok(None);
+        };
+        if u.table != *table {
+            return Ok(None);
+        }
+        if st.catalog.table(table).is_some_and(|d| d.typed.is_some()) && u.only != only {
+            let target = if only { "ONLY" } else { "not ONLY" };
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §14.8 SR9, §14.13 SR9] the target table {table} is {target}, as the table reference of cursor {name} is not"
+            )));
+        }
+        Ok(u.current().filter(|(of, _)| *of != table).map(|(of, _)| of.clone()))
     }
 
     pub(super) fn parse_cursor(st: &State, sql: &str, params: &Params) -> Result<CursorSpecification> {
@@ -274,7 +145,7 @@ impl Session {
         let mut rows = Vec::new();
         for (name, c) in &inner.cursors {
             if let Some(OpenCursor { rows: CursorRows::Updatable(u), .. }) = c.open.as_ref() {
-                rows.extend(u.changed.iter().map(|id| (name.name.clone(), u.table.clone(), *id)));
+                rows.extend(u.changed.iter().map(|(table, id)| (name.name.clone(), table.clone(), *id)));
             }
         }
         rows
@@ -282,11 +153,11 @@ impl Session {
 
     /// Notes row `id` changed through cursor `name` [ISO/IEC 9075:1992
     /// §11.8 GR8].
-    fn changed_through(&self, name: &Name, id: RowId) {
+    fn changed_through(&self, name: &Name, (table, id): (&QualifiedName, RowId)) {
         if let Some(DeclaredCursor { open: Some(OpenCursor { rows: CursorRows::Updatable(u), .. }), .. }) =
             self.inner.borrow_mut().cursors.get_mut(name)
         {
-            u.changed.push(id);
+            u.changed.push((table.clone(), id));
         }
     }
 
@@ -296,7 +167,7 @@ impl Session {
         let named = inner.cursors.values().filter_map(|c| c.open.as_ref()).any(|open| match &open.rows {
             CursorRows::Table(rows) => rows.reads(table),
             CursorRows::Kept(kept) => kept.stream.reads(table),
-            CursorRows::Updatable(u) => u.table == *table,
+            CursorRows::Updatable(u) => u.reads(table),
         });
         named || inner.anonymous.iter().filter_map(Weak::upgrade).any(|rows| lock_builtin(&rows).as_ref().is_some_and(|r| r.reads(table)))
     }
@@ -371,7 +242,7 @@ impl Session {
         let wanted = wanted(&spec, flags)?;
         let updatable = match (wanted, binder::updatable_in(&spec, &*st.catalog, &self.default_schema())) {
             (Wanted::Written | Wanted::Implicit, Some(named)) => {
-                self.updatable_plan(st, &spec, params, keeping)?.map(|(c, table)| (named, c, table))
+                self.updatable_plan(st, &spec, params, keeping)?.map(|updating| (named, updating))
             }
             (Wanted::ReadOnly, _) | (Wanted::Written | Wanted::Implicit, None) => None,
         };
@@ -519,7 +390,7 @@ impl Session {
         check_option(&w.bound.checks, [&new], ("X3.135-1986 §8.11 GR5", &runner))?;
         effects.updated(table, id, (old, &new), &set_columns(w))?;
         st.end_statement(tx, effects)?;
-        self.changed_through(cursor, id);
+        self.changed_through(cursor, (table, id));
         Ok(Completion::Success)
     }
 
@@ -541,7 +412,7 @@ impl Session {
             self.inner.borrow_mut().cursors.get_mut(cursor)
         {
             u.deleted();
-            u.changed.push(id);
+            u.changed.push((table.clone(), id));
         }
         Ok(Completion::Success)
     }

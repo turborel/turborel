@@ -198,6 +198,8 @@ fn character_default(s: &str, subject: &DataType) -> Option<Result<Value>> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_) => None,
     }
@@ -273,6 +275,9 @@ impl State {
             }
             AlterColumnAction::Identity { .. } | AlterColumnAction::DropIdentity | AlterColumnAction::DropExpression => {
                 self.alter_generation((qn, c), (action, at), epochs)?;
+            }
+            AlterColumnAction::AddScope(_) | AlterColumnAction::DropScope(_) => {
+                return Err(crate::db::api("[DESIGN] a scope is altered by db/alter/scope.rs"));
             }
         }
         let mut catalog = self.catalog.duplicate();

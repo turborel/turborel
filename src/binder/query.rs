@@ -103,7 +103,7 @@ pub(super) fn bind_ordered(
     let ((grouping, exprs, columns), keys, width) = selected_and_keys(&binder, &selected, (te, grouped, spec.distinct), order_by)?;
     let own = columns.get(..width).unwrap_or_default();
     if let Some(g) = &grouping {
-        super::grouping_sets::checked(g, te.group_by.as_ref(), own)?;
+        super::grouping_sets::checked(binder.db, g, te.group_by.as_ref(), own)?;
     }
     if cx.purpose.constrains() && spec.distinct && own.iter().any(|c| c.data_type.is_character()) {
         return Err(nondeterministic("§7.9 SR13a", "DISTINCT with a character string column"));
@@ -186,8 +186,13 @@ fn selected_plan(
     }
     // [ISO/IEC 9075-2:2023 §9.12 SR2e] each column an operand of a
     // grouping operation.
-    columns.iter().try_for_each(|c| super::composite::grouping_operand(&c.data_type, "DISTINCT"))?;
-    Ok(if windowed { plan } else { distinct(plan, (binder.db, binder.session_collation), columns) })
+    columns.iter().try_for_each(|c| super::composite::grouping_operand(binder.db, &c.data_type, "DISTINCT"))?;
+    if windowed {
+        return Ok(plan);
+    }
+    let types: Vec<crate::value::DataType> = columns.iter().map(|c| c.data_type.clone()).collect();
+    let plan = super::structured::keyed_columns(binder.context(), plan, &types, "DISTINCT")?;
+    Ok(distinct(plan, (binder.db, binder.session_collation), columns))
 }
 
 /// `plan`, of `columns`, DISTINCT: rows the same by each column's collation
@@ -274,6 +279,7 @@ fn bind_selected(
         collated: RefCell::new(Vec::new()),
         sets: None,
         determinants: vec![Vec::new()],
+        keyed: Vec::new(),
     });
     let (exprs, columns) = bind_select_list(binder, selected, select_scope(one.as_ref(), grouped))?;
     Ok((one, exprs, columns))
@@ -350,6 +356,7 @@ fn bound_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_
             | ValueExpression::Boolean(_)
             | ValueExpression::Subquery(_)
             | ValueExpression::Composite(..)
+            | ValueExpression::Structured(..)
             | ValueExpression::Window(_)
             | ValueExpression::Navigation(_)
             | ValueExpression::Classifier { .. }

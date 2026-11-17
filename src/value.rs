@@ -22,6 +22,7 @@ pub mod multisets;
 mod operators;
 mod order;
 pub mod precedence;
+mod spelled;
 pub mod types;
 mod units;
 pub use units::CharUnits;
@@ -36,6 +37,7 @@ pub use distinct::{distinct, key_bucket, key_equal};
 pub use like::{LikePattern, LikePatterns, OctetPattern, collated as like_collated, constant_pattern, constant_prefix, like};
 pub use operators::{ArithOp, CompOp, arith};
 pub use order::SortOrder;
+pub use spelled::{Spelled, spelling};
 pub use types::{Descriptor, SqlType};
 
 // ---------------------------------------------------------------------------
@@ -91,63 +93,6 @@ pub const MAX_CHARACTER_LENGTH: u32 = 32_767;
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §5.5] <data type>
 // ---------------------------------------------------------------------------
-
-/// [ISO/IEC 9075:1992 §6.1, §21.3.5] The name a number's type was
-/// written with, which its data type descriptor keeps: INTEGER is
-/// NUMERIC(10, 0), and REAL FLOAT(24), but each is shown as written. It is
-/// no part of what the type is: two types of one precision and scale are
-/// equal, however written, so a name changes no comparison, assignment or
-/// result. A type computed, as of a sum, is NUMERIC, or FLOAT.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum Spelled {
-    /// NUMERIC, or a type computed.
-    #[default]
-    Numeric,
-    /// DECIMAL or DEC.
-    Decimal,
-    /// INTEGER or INT.
-    Integer,
-    /// SMALLINT.
-    Smallint,
-    /// BIGINT [ISO/IEC 9075-2:2023 §6.1, Feature T071].
-    Bigint,
-    /// FLOAT, or an approximate type computed.
-    Float,
-    /// REAL.
-    Real,
-    /// DOUBLE PRECISION.
-    DoublePrecision,
-}
-
-/// How the number type `t` was written; NUMERIC of any other type.
-pub fn spelling(t: &DataType) -> Spelled {
-    match t {
-        DataType::Exact { spelled, .. } | DataType::Approximate { spelled, .. } => *spelled,
-        DataType::Character { .. }
-        | DataType::Varying { .. }
-        | DataType::Binary { .. }
-        | DataType::VarBinary { .. }
-        | DataType::Lob { .. }
-        | DataType::DecFloat { .. }
-        | DataType::Boolean
-        | DataType::Date
-        | DataType::Time { .. }
-        | DataType::Timestamp { .. }
-        | DataType::Interval(_)
-        | DataType::Array(_)
-        | DataType::Multiset(_)
-        | DataType::Row(_)
-        | DataType::Distinct(_)
-        | DataType::Extension(_) => Spelled::Numeric,
-    }
-}
-
-impl PartialEq for Spelled {
-    /// Always: the name is not the type.
-    fn eq(&self, _: &Spelled) -> bool {
-        true
-    }
-}
 
 /// A `<data type>` [X3.135-1986 §5.5].
 #[derive(Debug, Clone, PartialEq)]
@@ -243,6 +188,11 @@ pub enum DataType {
     /// [ISO/IEC 9075-2:2023 §4.9.2] A distinct type, a user-defined type of
     /// a source type (RULES.md D69).
     Distinct(Arc<types::DistinctType>),
+    /// [ISO/IEC 9075-2:2023 §4.9.3] A structured type, known by its name
+    /// (RULES.md D81).
+    Structured(Arc<types::StructuredType>),
+    /// [ISO/IEC 9075-2:2023 §4.11] REF(T), a reference type.
+    Reference(Arc<types::RefType>),
     /// A type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionType),
 }
@@ -348,6 +298,11 @@ pub enum Value {
     Multiset(Arc<[Value]>),
     /// [ISO/IEC 9075-2:2023 §4.10] A row: its fields' values, in order.
     Row(Arc<[Value]>),
+    /// [ISO/IEC 9075-2:2023 §4.9.3] A value of a structured type: its most
+    /// specific type and its attributes' values.
+    Structured(Arc<types::Structured>),
+    /// [ISO/IEC 9075-2:2023 §4.11] A reference: its octets.
+    Reference(Binary),
     /// A value of a type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionValue),
 }
@@ -373,6 +328,8 @@ impl Value {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_) => None,
         }
@@ -394,6 +351,8 @@ impl Value {
             | Value::Datetime(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_) => self.clone(),
         }
@@ -429,6 +388,8 @@ impl Value {
             Value::Interval(i) => NormKey::Span(i.units),
             Value::Array(p) | Value::Row(p) => types::composite::norm_parts(p),
             Value::Multiset(p) => multisets::norm_bag(p),
+            Value::Structured(s) => types::structured::norm_structured(s),
+            Value::Reference(r) => NormKey::Binary(r.clone()),
             // Equal values of a kind beyond the standard have the same bytes
             // (`SqlType`'s contract).
             Value::Extension(e) => NormKey::Extension(Box::new((e.kind.name().to_owned(), e.bytes.to_vec()))),
@@ -451,7 +412,9 @@ impl fmt::Display for Value {
             Value::Bool(b) => f.write_str(if *b { crate::lexer::kw::TRUE } else { crate::lexer::kw::FALSE }),
             Value::Datetime(d) => write!(f, "{d}"),
             Value::Interval(i) => write!(f, "{i}"),
-            Value::Array(_) | Value::Multiset(_) | Value::Row(_) => f.write_str(&self.to_literal()),
+            Value::Array(_) | Value::Multiset(_) | Value::Structured(_) | Value::Reference(_) | Value::Row(_) => {
+                f.write_str(&self.to_literal())
+            }
             Value::Extension(e) => f.write_str(&e.kind.text(self)),
         }
     }

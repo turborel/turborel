@@ -64,12 +64,12 @@ fn a_distinct_type_is_defined_11_51() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.51 SR1, SR2, SR3, SR4, SR5a,
-/// SR7b-SR7f; §11.34 SR3] CREATE TYPE is refused, each by its rule: of a
+/// SR7b-SR7f, SR8e; §11.34 SR3] CREATE TYPE is refused, each by its rule: of a
 /// schema not there (3F000), or another than its schema definition's; of
 /// a name a type or a domain of the schema has, and CREATE DOMAIN of a
 /// type's name; of an option written twice; of a row type, another
 /// distinct type or a structured type as its representation; and of each
-/// option of a structured type.
+/// option of a structured type, and a structured type of no finality.
 #[test]
 fn a_definition_is_refused_by_its_rules_11_51() {
     let db = money();
@@ -99,7 +99,9 @@ fn a_definition_is_refused_by_its_rules_11_51() {
         assert_eq!(code, Code::SyntaxRule, "{sql}");
         assert!(msg.contains(cited), "{sql}: {msg}");
     }
-    assert_eq!(refused("CREATE TYPE X AS (A INTEGER)").0, Code::Unsupported, "a structured type [SR5b]");
+    let (code, msg) = refused("CREATE TYPE X AS (A INTEGER)");
+    assert_eq!(code, Code::SyntaxRule, "a structured type of no finality [SR8e]");
+    assert!(msg.contains("SR8e"), "{msg}");
     assert_eq!(refused("CREATE DOMAIN D AS MONEY").0, Code::SyntaxRule, "a domain's type is a predefined type");
     assert_eq!(refused("CREATE DOMAIN D AS MONEY ARRAY[2]").0, Code::SyntaxRule);
 }

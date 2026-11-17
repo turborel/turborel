@@ -37,6 +37,9 @@ pub(super) struct Ordered {
     pub(super) visible: usize,
     pub(super) keys: Vec<SortKey>,
     pub(super) collations: Vec<Option<CollationRef>>,
+    /// [ISO/IEC 9075-2:2023 §9.14] Of each key of a structured type ordered
+    /// by MAP, its column given its comparison key (RULES.md D81).
+    pub(super) mapped: Vec<Option<Expr>>,
     pub(super) limit: Option<Limit>,
 }
 
@@ -44,7 +47,7 @@ impl Ordered {
     /// Of `bound`, not sorted.
     pub(super) fn unsorted(bound: Bound) -> Ordered {
         let visible = bound.columns.len();
-        Ordered { plan: bound.plan, all: bound.columns, visible, keys: Vec::new(), collations: Vec::new(), limit: None }
+        Ordered { plan: bound.plan, all: bound.columns, visible, keys: Vec::new(), collations: Vec::new(), mapped: Vec::new(), limit: None }
     }
 
     /// [X3.135-1986 §8.3 GR3b] Its rows sorted, then limited, and every
@@ -75,13 +78,17 @@ impl Ordered {
         let input = std::mem::replace(&mut self.plan, LogicalPlan::Values { rows: Vec::new(), types: Vec::new() });
         let mut exprs: Vec<Expr> = (0..width).map(Expr::Column).collect();
         let mut sorted = Vec::with_capacity(self.keys.len());
-        for (key, collation) in self.keys.iter().zip(&self.collations) {
-            sorted.push(match collation {
-                Some(c) => {
+        for (i, (key, collation)) in self.keys.iter().zip(&self.collations).enumerate() {
+            sorted.push(match (self.mapped.get(i).cloned().flatten(), collation) {
+                (Some(mapped), _) => {
+                    exprs.push(mapped);
+                    SortKey { column: exprs.len().saturating_sub(1), ..*key }
+                }
+                (None, Some(c)) => {
                     exprs.push(Expr::sort_key(Expr::Column(key.column), c));
                     SortKey { column: exprs.len().saturating_sub(1), ..*key }
                 }
-                None => *key,
+                (None, None) => *key,
             });
         }
         let made = exprs.len();
@@ -268,7 +275,7 @@ impl Keys {
         columns.truncate(visible);
         columns.extend(hidden_columns);
         let plan = plan(exprs, &columns)?;
-        Ok((Ordered { plan, all: columns, visible, keys: Vec::new(), collations: Vec::new(), limit: None }, places))
+        Ok((Ordered { plan, all: columns, visible, keys: Vec::new(), collations: Vec::new(), mapped: Vec::new(), limit: None }, places))
     }
 }
 
@@ -450,11 +457,19 @@ impl Ordered {
             keys.push(SortKey::new(column, SortOrder::of(s.descending, s.nulls_first)));
         }
         self.appending(extra);
+        let mut mapped = Vec::with_capacity(keys.len());
         for k in &keys {
-            if let Some(c) = self.all.get(k.column) {
-                super::composite::ordering_operand(&c.data_type, "ORDER BY")?;
+            let t = self.all.get(k.column).map(|c| c.data_type.clone());
+            if let Some(t) = &t {
+                super::composite::ordering_operand(cx.db, t, "ORDER BY")?;
             }
+            let keyed = match t.filter(|t| matches!(t, crate::value::DataType::Structured(_))) {
+                Some(t) => Some(super::structured::keyed_operand(cx, (Expr::Column(k.column), &t), "ORDER BY")?),
+                None => None,
+            };
+            mapped.push(keyed);
         }
+        self.mapped = mapped;
         self.collations = super::collation::sort_collations((cx.db, cx.who(), cx.collation), order_by, &keys, &self.all)?;
         self.keys = keys;
         Ok(())

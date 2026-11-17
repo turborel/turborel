@@ -52,7 +52,7 @@ use std::collections::BTreeSet;
 
 use super::{
     Actions, CheckLevels, ConstraintAttributes, ConstraintDesc, ConstraintKind, DomainDesc, ForeignKey, Horizon, IndexDesc, MatchType,
-    PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind, Underlying, UsageDesc, ViewDesc,
+    PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind, TypedActions, Underlying, UsageDesc, ViewDesc,
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -62,6 +62,7 @@ mod columns;
 mod objects;
 mod roles;
 mod routines;
+mod structured;
 mod triggers;
 use crate::value::types::tags::{data_type, put_type};
 use columns::{collation_name, column, put_collation_name, put_column};
@@ -69,6 +70,7 @@ pub(crate) use columns::{default, put_default};
 pub(crate) use objects::{collation, put_collation, put_sequence, put_user_type, sequence, user_type};
 pub(crate) use roles::{put_roles, roles};
 pub(crate) use routines::{module, put_module, put_routine, routine};
+pub(crate) use structured::{cast, ordering, put_cast, put_ordering, put_structured_type, put_transforms, structured_type, transforms};
 pub(crate) use triggers::{put_trigger, trigger};
 
 /// A count, or a position, as a u32.
@@ -234,6 +236,7 @@ pub(crate) fn put_table(out: &mut Vec<u8>, table: &TableDesc) {
             put_flag(out, delete_rows);
         }
     }
+    structured::put_typed(out, table.typed.as_ref());
 }
 
 /// The table `put_table` wrote.
@@ -249,7 +252,8 @@ pub(crate) fn table(r: &mut Reader<'_>) -> Result<TableDesc> {
         _ => return Err(r.corrupt("not a kind of table")),
     };
     let temporary = kind.map(|kind| flag(r).map(|delete_rows| Temporary { kind, delete_rows })).transpose()?;
-    Ok(TableDesc { name, columns, constraints, engine, options, generation, temporary })
+    let typed = structured::typed(r)?;
+    Ok(TableDesc { name, columns, constraints, engine, options, generation, temporary, typed })
 }
 
 /// A constraint: its name, kind and attributes, and the domain constraint
@@ -350,6 +354,7 @@ pub(crate) fn put_view(out: &mut Vec<u8>, view: &ViewDesc) {
             });
         }
     }
+    structured::put_typed(out, view.typed.as_ref());
 }
 
 /// The view `put_view` wrote.
@@ -371,7 +376,8 @@ pub(crate) fn view(r: &mut Reader<'_>) -> Result<ViewDesc> {
     } else {
         None
     };
-    Ok(ViewDesc { name, columns, query, names, check_option, grouped, updates, reads, horizon, underlying })
+    let typed = structured::typed(r)?;
+    Ok(ViewDesc { name, columns, query, names, check_option, grouped, updates, reads, horizon, typed, underlying })
 }
 
 /// `index` in bytes.
@@ -416,6 +422,8 @@ pub(crate) fn put_privilege(out: &mut Vec<u8>, privilege: &PrivilegeDesc) {
     put_positions(out, a.update.iter());
     put_positions(out, a.references.iter());
     put_flag(out, a.trigger);
+    put_flag(out, a.typed.hierarchy);
+    put_all(out, a.typed.methods.iter(), put_name);
     put_flag(out, privilege.grantable);
 }
 
@@ -427,7 +435,9 @@ pub(crate) fn privilege(r: &mut Reader<'_>) -> Result<PrivilegeDesc> {
     let (select, delete) = (flag(r)?, flag(r)?);
     let mut columns = || positions(r).map(|p| p.into_iter().collect::<BTreeSet<usize>>());
     let (insert, update, references) = (columns()?, columns()?, columns()?);
-    let actions = Actions { select, insert, delete, update, references, trigger: flag(r)? };
+    let (trigger, hierarchy) = (flag(r)?, flag(r)?);
+    let methods = get_all(r, qualified)?.into_iter().collect();
+    let actions = Actions { select, insert, delete, update, references, trigger, typed: TypedActions { hierarchy, methods } };
     Ok(PrivilegeDesc { grantor, grantee, table, actions, grantable: flag(r)? })
 }
 
@@ -501,8 +511,8 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D25, D63: how a column's values are
     /// generated reads back as written, of an identity column with its
-    /// sequence generator and of a generated column; another tag is
-    /// SQLCODE -916.
+    /// sequence generator, of a generated column, and of a system-generated
+    /// and a derived self-referencing column; another tag is SQLCODE -916.
     #[test]
     fn a_columns_generation_reads_back() {
         let t = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
@@ -518,10 +528,12 @@ mod tests {
             origin: 5,
             usage: Vec::new(),
         };
+        let system = Generated::SystemReference(sequence.clone());
+        let derived = Generated::DerivedReference(vec!["X".into(), "Y".into()]);
         let identity = Generated::Identity(Identity { always: true, sequence });
         let horizon = Horizon::default().invoking(vec![QualifiedName { auth: "A".into(), ident: "F_1".into() }]);
         let expression = Generated::Expression(Generation { text: "K + 1".into(), names: "A".into(), horizon });
-        for generated in [None, Some(identity), Some(expression)] {
+        for generated in [None, Some(identity), Some(expression), Some(system), Some(derived)] {
             let c = ColumnDesc {
                 name: "C".into(),
                 data_type: t.clone(),
@@ -536,7 +548,7 @@ mod tests {
             assert_eq!(column(&mut Reader::new(&out, "column")).unwrap().generated, c.generated);
             let mut bad = out.clone();
             if let Some(tag) = bad.iter_mut().rev().find(|_| c.generated.is_none()) {
-                *tag = 3;
+                *tag = 9;
                 assert_eq!(refused(&bad, column), Some(Code::Corrupt));
             }
         }
@@ -551,6 +563,7 @@ mod tests {
         let temporary = kinds.into_iter().flat_map(|kind| [true, false].map(|delete_rows| Some(Temporary { kind, delete_rows })));
         for of in std::iter::once(None).chain(temporary) {
             let desc = TableDesc {
+                typed: None,
                 name: QualifiedName { auth: "A".into(), ident: "T".into() },
                 columns: Vec::new(),
                 constraints: Vec::new(),

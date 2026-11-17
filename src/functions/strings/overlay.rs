@@ -51,6 +51,8 @@ impl Overlay {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_) => return fail(Code::Api, "[DESIGN] OVERLAY was given a replacement not a string"),
         })

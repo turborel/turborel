@@ -61,6 +61,11 @@ impl Parser {
         if self.accept_word(super::user_types::TYPE) {
             return Ok(Some(DropObject::Type(self.table_name()?)));
         }
+        // [ISO/IEC 9075-2:2023 §11.64, §11.66, §11.71] CAST, ORDERING,
+        // TRANSFORM.
+        if let Some(object) = self.dropped_of_type()? {
+            return Ok(Some(object));
+        }
         // [ISO/IEC 9075-4:2006 draft §9.22] MODULE <SQL-server module name>.
         if self.is_kw(kw::MODULE) && !matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD)) {
             self.advance();
@@ -81,9 +86,9 @@ impl Parser {
         if self.at_role_definition() {
             return self.schema_statement();
         }
-        let defines =
-            DEFINED.iter().any(|w| self.next_is_kw(w)) || self.next_is_trigger() || self.next_is_routine() || self.next_is_module();
-        let altered = self.next_is_kw(kw::DOMAIN) || self.next_is_sequence();
+        let other = self.next_is_module() || self.next_is_of_type();
+        let defines = DEFINED.iter().any(|w| self.next_is_kw(w)) || self.next_is_trigger() || self.next_is_routine() || other;
+        let altered = self.next_is_kw(kw::DOMAIN) || self.next_is_sequence() || self.next_is_type() || self.next_is_transform();
         if (self.is_kw(kw::CREATE) && (defines || self.next_is_sequence() || self.next_is_type())) || (self.is_kw(kw::ALTER) && altered) {
             return self.schema_statement();
         }

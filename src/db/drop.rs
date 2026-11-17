@@ -46,6 +46,9 @@ impl State {
             DropTarget::Trigger(qn) => self.drop_trigger(qn),
             DropTarget::Routine(specific) => self.drop_routine(specific, cascade),
             DropTarget::Module(qn) => self.drop_module(qn, cascade),
+            DropTarget::Cast(types) => self.drop_cast(&types.0, &types.1, cascade),
+            DropTarget::Ordering(qn) => self.drop_ordering(qn, cascade),
+            DropTarget::Transform(qn, group) => self.drop_transform(qn, group.as_deref(), cascade),
         }
     }
 
@@ -65,7 +68,9 @@ impl State {
             let (what, clause) = if self.catalog.view(qn).is_some() { ("a view, not a base table", "SR2") } else { ("not defined", "SR1") };
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.18 {clause}] {qn} is {what}")));
         }
-        let mut dropped = self.drop_dependents(qn, cascade, "§11.18 SR4")?;
+        // [ISO/IEC 9075-2:2023 §11.31 SR6, GR1] its subtables first.
+        let mut dropped = self.drop_subtables(qn, cascade)?;
+        dropped.absorb(self.drop_dependents(qn, cascade, "§11.18 SR4")?);
         let mut catalog = self.catalog.duplicate();
         for ix in self.catalog.indexes(qn) {
             catalog.remove_index(&ix.name);
@@ -97,7 +102,9 @@ impl State {
                 if self.catalog.table(qn).is_some() { ("a base table, not a view", "SR2") } else { ("not defined", "SR1") };
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.20 {clause}] {qn} is {what}")));
         }
-        let mut dropped = self.drop_dependents(qn, cascade, "§11.20 SR3")?;
+        // [ISO/IEC 9075-2:2023 §11.33 SR4, GR1] its subviews first.
+        let mut dropped = self.drop_subviews(qn, cascade)?;
+        dropped.absorb(self.drop_dependents(qn, cascade, "§11.20 SR3")?);
         let mut catalog = self.catalog.duplicate();
         catalog.remove_view(qn);
         catalog.revoke_all(qn);
@@ -162,8 +169,11 @@ impl State {
         }
         let mut dropped = self.drop_named_in(auth, cascade)?;
         dropped.absorb(self.drop_modules_naming(&modules)?);
+        // A subtable goes with its supertable, maybe before its turn.
         for table in &tables {
-            dropped.absorb(self.drop_table(table, true)?);
+            if self.catalog.table(table).is_some() {
+                dropped.absorb(self.drop_table(table, true)?);
+            }
         }
         // Those a table's drop took are gone already.
         for view in views.iter().filter(|v| self.catalog.view(v).is_some()).cloned().collect::<Vec<_>>() {
@@ -335,7 +345,10 @@ impl Session {
             | DropTarget::Type(_)
             | DropTarget::Trigger(_)
             | DropTarget::Routine(_)
-            | DropTarget::Module(_) => Vec::new(),
+            | DropTarget::Module(_)
+            | DropTarget::Cast(_)
+            | DropTarget::Ordering(_)
+            | DropTarget::Transform(..) => Vec::new(),
         };
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
@@ -397,6 +410,7 @@ impl Session {
             DropObject::Trigger(name) => Ok(DropTarget::Trigger(self.owned(st, name, "ISO/IEC 9075-2:2023 §11.50 AR1")?)),
             DropObject::Routine(designator) => self.routine_target(st, designator),
             DropObject::Module(name) => Ok(DropTarget::Module(self.owned(st, name, "ISO/IEC 9075-4:2006 draft §9.22 AR1")?)),
+            DropObject::Cast(..) | DropObject::Ordering(_) | DropObject::Transform(..) => self.type_drop_target(st, object),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {

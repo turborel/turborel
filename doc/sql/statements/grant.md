@@ -14,6 +14,7 @@ GRANT: give privileges, or roles
 <grant privilege statement> ::=
     GRANT <privileges> ON <object name>
     TO <grantee> [ { , <grantee> }... ]
+    [ WITH HIERARCHY OPTION ]
     [ WITH GRANT OPTION ]
     [ GRANTED BY <grantor> ]
 
@@ -32,8 +33,10 @@ GRANT: give privileges, or roles
     | INSERT [ ( <column name list> ) ]
     | UPDATE [ ( <column name list> ) ]
     | REFERENCES [ ( <column name list> ) ]
+    | SELECT ( <method name> [ ( [ <data type> [ { , <data type> }... ] ] ) ] [ { , ... }... ] )
     | TRIGGER
     | USAGE
+    | UNDER
     | EXECUTE
 
 <object name> ::=
@@ -42,6 +45,8 @@ GRANT: give privileges, or roles
     | COLLATION <collation name>
     | SEQUENCE <sequence generator name>
     | TYPE <user-defined type name>
+    | SPECIFIC METHOD <specific method name>
+    | [ INSTANCE | STATIC | CONSTRUCTOR ] METHOD <method name> ( [ <data type> [ { , <data type> }... ] ] ) FOR <user-defined type name>
     | MODULE <SQL-server module name>
     | SPECIFIC <routine type> <specific name>
     | <routine type> <routine name> [ ( [ <data type> [ { , <data type> }... ] ] ) ]
@@ -54,8 +59,8 @@ GRANT: give privileges, or roles
 ## DESCRIPTION
 
 GRANT gives each grantee privileges on a table, a view, a domain, a
-collation CREATE COLLATION made, a sequence generator, a distinct type,
-a function a distinct type's definition made, a function or procedure
+collation CREATE COLLATION made, a sequence generator, a user-defined
+type, a function a distinct type's definition made, a method, a function or procedure
 CREATE FUNCTION or CREATE PROCEDURE made, or a module CREATE MODULE
 made:
 
@@ -66,15 +71,31 @@ made:
 | UPDATE | update the table; on columns, set only those columns |
 | DELETE | delete rows |
 | REFERENCES | name the table, or the columns, in a constraint: a foreign key that references them, a CHECK or an assertion that reads them |
+| SELECT (methods) | invoke those methods of the typed table's type through a reference whose scope is the table, `r -> m()` |
+| UNDER | define a subtype of the type, or a subtable or subview of the typed table or view |
 | TRIGGER | define a trigger on the table, in a schema of its own (see [CREATE TRIGGER](create-trigger.md)) |
 | USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR; use the distinct type: name it as a column's type or a CAST's |
-| EXECUTE | invoke the function, by name or by a CAST to or from its distinct type; run the procedure by CALL; invoke each routine of the module |
+| EXECUTE | invoke the function, by name or by a CAST to or from its distinct type; run the procedure by CALL; invoke the method; invoke each routine of the module |
+
+SELECT WITH HIERARCHY OPTION on a typed table is SELECT on each of its
+subtables too, present and to come, and lets its holder name the table
+with ONLY, as `FROM ONLY (t)`. REVOKE HIERARCHY OPTION FOR SELECT takes
+the option back and leaves SELECT. SELECT on a typed table is SELECT on
+each method of its type whose EXECUTE its grantor holds with grant
+option.
 
 A routine is named by its specific name, or by its name and, if more
 than one routine of the schema has it, its parameters' types. A
 distinct type's functions have the specific names of the type's name
 and _TO_DISTINCT or _TO_SOURCE. ROUTINE names a function or a
 procedure, FUNCTION only a function and PROCEDURE only a procedure.
+EXECUTE on an attribute's observer lets its holder read the attribute,
+and on its mutator set it. Their specific names are the type's name,
+the attribute's and _OBSERVER or _MUTATOR, as POINT_X_OBSERVER, or they
+are named as
+`METHOD x () FOR t` and `METHOD x (type) FOR t`, of the type that
+defines the attribute. A subtype's inherited attribute is read and set
+by the same grants.
 INSERT, UPDATE or REFERENCES without columns is the privilege on the
 table and on each of its columns, and on each column added to it later.
 ALL PRIVILEGES is every privilege its user may grant on the object.
@@ -209,6 +230,26 @@ GRANT SELECT (NAME) ON STAFF TO BOB;
 turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 16)
 turborel: SQLCODE -103 (SQLSTATE 2A000): USAGE is granted on a domain, not on table ANN.STAFF [ISO/IEC 9075:1992 §11.36 SR1] (at character 15)
 turborel: SQLCODE -102 (SQLSTATE 2A000): expected ON, found "(" (at character 13)
+```
+
+EXECUTE on the observer and the mutator of an attribute of a type
+POINT, by ANN, the type's owner. Y has both, so METHOD Y names neither
+without its types:
+
+```sql
+CREATE TYPE POINT AS (X INTEGER, Y INTEGER) NOT FINAL;
+GRANT EXECUTE ON SPECIFIC FUNCTION POINT_X_OBSERVER TO BOB;
+GRANT EXECUTE ON METHOD X (INTEGER) FOR POINT TO BOB;
+GRANT EXECUTE ON METHOD Y FOR POINT TO BOB;
+COMMIT;
+```
+
+```
+OK
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): METHOD Y FOR ANN.POINT designates both the observer and the mutator of its attribute [ISO/IEC 9075-2:2023 §10.6 SR3c] (at character 24)
+OK
 ```
 
 Roles, by ANN, who may create them:

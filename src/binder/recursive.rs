@@ -348,7 +348,7 @@ fn planned(
             }
             let s = union_of(body)?;
             let operands = (bind_query_expression(within, &s.left, &nesting)?, bind_query_expression(within, &s.right, &nesting)?);
-            let united = assembled(&within, s, aligned(&within, s, operands)?, cols.clone());
+            let united = assembled(&within, s, aligned(&within, s, operands)?, cols.clone())?;
             // Its ORDER BY and OFFSET, of its result [§7.17 SR26 d ii].
             if let QueryExpression::Ordered(o) = body {
                 return Ok(super::limit::ordered_result(within, united, o)?.plan);

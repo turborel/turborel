@@ -52,3 +52,16 @@ pub fn bind_argument(cx: Context<'_>, v: &ValueExpression, parameter: &DataType)
     // [§4.35.2] it may invoke a function that possibly modifies SQL-data.
     binder.hosting(true, || binder.typed(v, ParameterType::Of(parameter.clone()), scope))
 }
+
+/// [ISO/IEC 9075-2:2023 §9.2 GR2] The argument `e`, of type `t`, bound in
+/// `cx`, as it is assigned to a parameter of type `parameter`: itself if
+/// `t` is assignable to it, else by the appropriate user-defined cast
+/// function; none if there is neither.
+///
+/// # Errors
+///
+/// SQLCODE -104 if EXECUTE is not held on the cast function.
+pub fn assigned_argument(cx: Context<'_>, (e, t): (Expr, &DataType), parameter: &DataType) -> Result<Option<Expr>> {
+    let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
+    binder.assigned((e, t), parameter)
+}

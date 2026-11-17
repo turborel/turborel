@@ -192,7 +192,13 @@ impl SqlType for Varying {
             Value::Char(s) => Ok(cut_to(&s)),
             // [ISO/IEC 9075-2:2023 §6.13 SR8] Neither a binary string, an
             // array nor a row.
-            Value::Binary(_) | Value::Lob(_) | Value::Array(_) | Value::Multiset(_) | Value::Row(_) => uncastable(&v, t).map(unwarned),
+            Value::Binary(_)
+            | Value::Lob(_)
+            | Value::Array(_)
+            | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
+            | Value::Row(_) => uncastable(&v, t).map(unwarned),
             Value::Bool(b) => super::boolean_text(b, t).map(unwarned),
             // [GR6e] its literal's string, as it shows.
             Value::Datetime(d) => super::datetime::as_string(&d, length, false).map(unwarned),

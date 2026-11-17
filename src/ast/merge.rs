@@ -11,6 +11,9 @@ use super::{ColumnName, Overriding, SearchCondition, SetClause, TableName, Table
 pub struct MergeStatement {
     /// The `<table name>` of the `<target table>` \[SR1\].
     pub target: TableName,
+    /// ONLY ( `<table name>` ) was written: of a typed table, its rows
+    /// that have no subrow in a proper subtable [GR6a i 1 A I].
+    pub only: bool,
     /// The `<merge correlation name>`, if written, and where \[SR8a\].
     pub correlation: Option<(String, usize)>,
     /// The `<table reference>` the source rows come from \[SR11\].

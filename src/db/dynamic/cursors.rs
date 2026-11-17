@@ -8,10 +8,10 @@
 
 use super::{Name, dynamic_error};
 use crate::ast::{DynamicName, ExtendedName, FetchOrientation, SetClause, TableName, UsingClause};
-use crate::binder::{WriteKind, bind_write};
+use crate::binder::{WriteKind, bind_member_write, bind_write};
 use crate::db::write::Written;
 use crate::db::{Completion, DeclaredCursor, Session, StatementContext, rule};
-use crate::error::{Result, SqlState};
+use crate::error::{At, Result, SqlState};
 use crate::lexer::{Tok, delim, lex};
 use crate::params::Params;
 use crate::value::DataType;
@@ -184,7 +184,13 @@ impl Session {
         params: &Params,
     ) -> Result<Completion> {
         let key = self.cursor_key(&DynamicName::Extended(cursor.clone()), params, "§17.17 SR2")?;
-        let w = self.bound(cx.st, params, |b| bind_write(b, WriteKind::DeletePositioned, table, &[], None))?;
+        let w = self.bound(cx.st, params, |b| bind_write(b, WriteKind::DeletePositioned, (table, false), &[], None))?;
+        let w = match self.positioned_member(cx.st, (&key, &w.table, false)).or_at(cursor.at)? {
+            Some(member) => {
+                self.bound(cx.st, params, |b| bind_member_write(b, WriteKind::DeletePositioned, (table, &member), &[], None))?
+            }
+            None => w,
+        };
         self.settle_cursors(cx.st, &w.table);
         self.delete_positioned(cx, (&key, cursor.at), &Written::of(w))
     }
@@ -204,7 +210,13 @@ impl Session {
         params: &Params,
     ) -> Result<Completion> {
         let key = self.cursor_key(&DynamicName::Extended(cursor.clone()), params, "§17.18 SR2")?;
-        let w = self.bound(cx.st, params, |b| bind_write(b, WriteKind::UpdatePositioned, table, set, None))?;
+        let w = self.bound(cx.st, params, |b| bind_write(b, WriteKind::UpdatePositioned, (table, false), set, None))?;
+        let w = match self.positioned_member(cx.st, (&key, &w.table, false)).or_at(cursor.at)? {
+            Some(member) => {
+                self.bound(cx.st, params, |b| bind_member_write(b, WriteKind::UpdatePositioned, (table, &member), set, None))?
+            }
+            None => w,
+        };
         self.settle_cursors(cx.st, &w.table);
         self.update_positioned(cx, (&key, cursor.at), &Written::of(w))
     }

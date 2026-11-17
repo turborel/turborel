@@ -9,7 +9,9 @@ use turborel::value::{DataType, Decimal, MAX_CHARACTER_LENGTH, Value};
 use crate::common::{count, exec, rows, setup};
 use turborel::value::Spelled;
 
-fn targets() -> Params {
+/// The host parameters of the cursor tests: ID_OUT, NAME_OUT with its
+/// indicator NAME_IND, and LIMIT, 1.
+pub(crate) fn targets() -> Params {
     Params::new()
         .declare("ID_OUT", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Null)
         .declare("NAME_OUT", DataType::character(2), Value::Null)
@@ -393,65 +395,6 @@ fn deleted_rows_are_skipped_4_12() {
     assert_eq!(s.execute("FETCH C INTO ID_OUT", &mut p).unwrap(), Completion::NoData);
 }
 
-/// Verifies: [X3.135-1986 §8.10] SELECT INTO assigns the values of its one row to the targets;
-/// [ISO/IEC 9075:1992 §9.1 GR3b] a name cut to fit its target is the warning 01004.
-#[test]
-fn select_into_assigns_the_row_8_10() {
-    let db = setup();
-    let s = db.session("APP");
-    let mut p = targets();
-    let done = s.execute("SELECT ID, NAME INTO ID_OUT, NAME_OUT NAME_IND FROM T WHERE ID = 1", &mut p).unwrap();
-    assert_eq!(done, Completion::Warning(SqlState::STRING_TRUNCATED));
-    assert_eq!(s.execute("SELECT ID INTO ID_OUT FROM T WHERE ID = 1", &mut p).unwrap(), Completion::Success);
-    assert_eq!(p.value("ID_OUT").to_string(), "1");
-}
-
-/// Verifies: [X3.135-1986 §8.10 GR2] SELECT INTO with no row gives SQLCODE 100
-/// and the targets keep their values.
-#[test]
-fn select_into_of_no_row_gives_sqlcode_100_8_10() {
-    let db = setup();
-    let s = db.session("APP");
-    let mut p = targets();
-    s.execute("SELECT ID, NAME INTO ID_OUT, NAME_OUT NAME_IND FROM T WHERE ID = 1", &mut p).unwrap();
-    // [X3.135-1986 §8.10 GR2] no row: SQLCODE 100 and the targets keep their values.
-    assert_eq!(s.execute("SELECT ID INTO ID_OUT FROM T WHERE ID = 99", &mut p).unwrap(), Completion::NoData);
-    assert_eq!(p.value("ID_OUT").to_string(), "1");
-}
-
-/// Verifies: [X3.135-1986 §8.10 GR2] SELECT INTO of more than one row is an error.
-#[test]
-fn select_into_of_several_rows_is_an_error_8_10() {
-    let db = setup();
-    let s = db.session("APP");
-    let mut p = targets();
-    // [X3.135-1986 §8.10 GR2] more than one row is an error.
-    assert_eq!(s.execute("SELECT ID INTO ID_OUT FROM T", &mut p).unwrap_err().code, Code::Cardinality);
-}
-
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §13.5, Leveling Rules] SELECT
-/// INTO may group, which SQL-86 refuses [X3.135-1986 §8.10 SR2], giving one
-/// row at most; set functions alone give one row.
-#[test]
-fn select_into_may_group_13_5() {
-    let db = setup();
-    let s = db.session("APP");
-    let mut p = targets();
-    assert_eq!(s.execute("SELECT COUNT(*) INTO ID_OUT FROM T GROUP BY NAME", &mut p).unwrap_err().code, Code::Cardinality, "three groups");
-    s.execute("SELECT COUNT(*) INTO ID_OUT FROM T WHERE ID = 1 GROUP BY NAME", &mut p).unwrap();
-    assert_eq!(p.value("ID_OUT").to_string(), "1");
-    assert_eq!(s.execute("SELECT COUNT(*) INTO ID_OUT FROM T", &mut p).unwrap(), Completion::Success);
-    assert_eq!(p.value("ID_OUT").to_string(), "3");
-}
-
-/// Verifies: [X3.135-1986 §8.10] a select statement needs INTO.
-#[test]
-fn a_select_statement_needs_into_8_10() {
-    let db = setup();
-    let s = db.session("APP");
-    assert_eq!(exec(&s, "SELECT ID FROM T"), Err(Code::Syntax)); // a <select statement> needs INTO
-}
-
 /// Verifies: [DESIGN] `MAX_CHARACTER_LENGTH` applies to parameters declared
 /// from Rust as to columns: a longer one is refused with SQLCODE -910 when used
 /// (`CHAR(4000000000)` was once accepted, and each value padded to it).
@@ -591,4 +534,35 @@ fn parameters_of_every_standard_type_5_6() {
     assert_eq!(count(&s, "SELECT * FROM W WHERE D = DATE '2026-10-30' AND B = X'0A00' AND I = INTERVAL '3' DAY"), 2);
     let mut wrong = Params::new().declare("PD", types[0].clone(), Value::Char("2026-10-30".into()));
     assert_eq!(s.execute("INSERT INTO W (D) VALUES (PD)", &mut wrong).err().map(|e| e.code), Some(Code::Api), "a string for a date");
+}
+
+/// Verifies: [X3.135-1986 §5.6 GR1]; [EXTENSION] [ISO/IEC 9075-2:2023
+/// §4.3, §4.4, §4.5.2, §4.7.5] a host program's argument of a decimal
+/// floating-point number, a large object, a string for a large object of
+/// its kind, or of a distinct type's source type suits a parameter of
+/// that type; a string for a binary large object does not (SQLCODE -910).
+#[test]
+fn parameters_of_large_objects_decfloat_and_distinct_types_5_6() {
+    let db = setup();
+    let s = db.session("APP");
+    s.run("CREATE TYPE MONEY AS DECIMAL(9,2) FINAL").unwrap();
+    s.run("CREATE TABLE L (F DECFLOAT(16), C CLOB(1K), B BLOB(1K), M MONEY)").unwrap();
+    s.run("INSERT INTO L VALUES (1.5, 'ABC', X'0A0B', CAST(2.5 AS MONEY))").unwrap();
+    let types: Vec<DataType> = s.prepare("SELECT F, C, B, M FROM L").unwrap().columns().iter().map(|c| c.data_type.clone()).collect();
+    let mut cursor = s.open_cursor("SELECT F, C, B, M FROM L").unwrap();
+    let row = cursor.fetch().unwrap().unwrap();
+    drop(cursor);
+    let mut p = Params::new();
+    for ((name, data_type), value) in ["PF", "PC", "PB", "PM"].into_iter().zip(types.iter().cloned()).zip(row.iter().cloned()) {
+        p = p.declare(name, data_type, value);
+    }
+    s.execute("INSERT INTO L VALUES (PF, PC, PB, PM)", &mut p).unwrap();
+    let mut given = Params::new()
+        .declare("PF", types[0].clone(), Value::Exact(Decimal::new(15, 1)))
+        .declare("PC", types[1].clone(), Value::Char("ABC".into()))
+        .declare("PM", types[3].clone(), Value::Exact(Decimal::new(250, 2)));
+    s.execute("INSERT INTO L (F, C, M) VALUES (PF, PC, PM)", &mut given).unwrap();
+    assert_eq!(count(&s, "SELECT * FROM L WHERE F = 1.5 AND C = 'ABC' AND M = CAST(2.5 AS MONEY)"), 3);
+    let mut wrong = Params::new().declare("PB", types[2].clone(), Value::Char("0A0B".into()));
+    assert_eq!(s.execute("INSERT INTO L (B) VALUES (PB)", &mut wrong).err().map(|e| e.code), Some(Code::Api), "a string for a BLOB");
 }

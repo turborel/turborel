@@ -122,3 +122,47 @@ fn an_import_sends_a_long_field_by_a_locator() {
     assert_eq!(all, long.as_bytes());
     c.terminate().unwrap();
 }
+
+/// Verifies: [DESIGN] RULES.md D45, D79: a value a result sends whole is
+/// read from itself, by ranges of octets or characters, past its end
+/// empty, and streamed; a value the server did not send, or one sent
+/// whole, has no locator to read, free or hold (SQLCODE -301); a BLOB
+/// written in pieces longer than an Append, then flushed, is inserted and
+/// read back whole.
+#[test]
+fn values_sent_whole_and_binary_values_written_in_pieces() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE B (K INTEGER, B BLOB)").unwrap();
+    let server = start(&db, &[]);
+    let mut c = server.connect("X");
+    let whole = Lob::of_text("aé€😀b");
+    assert_eq!(c.read_lob(&whole, (1, 2), true).unwrap(), "é€".as_bytes(), "characters");
+    assert_eq!(c.read_lob(&whole, (1, 2), false).unwrap(), "é".as_bytes(), "octets");
+    assert_eq!(c.read_lob(&whole, (100, 2), false).unwrap(), b"", "past the end");
+    let bytes = Lob::of_octets(&[1, 2, 3]);
+    assert_eq!(c.read_lob(&bytes, (1, 5), true).unwrap(), [2, 3], "a binary one's characters are its octets");
+    let mut streamed = Vec::new();
+    c.lob_reader(&whole).read_to_end(&mut streamed).unwrap();
+    assert_eq!(streamed, "aé€😀b".as_bytes());
+    assert_eq!(c.lob_reader(&whole).read(&mut []).unwrap(), 0, "nothing asked");
+    let unsent = Lob::of_reference(LobKind::Character, 1, (10, 10));
+    assert_eq!(state(&c.read_lob(&unsent, (0, 1), false).unwrap_err()).1, -301);
+    assert_eq!(state(&c.free_lob(&whole).unwrap_err()).1, -301);
+    assert_eq!(state(&c.hold_lob(&whole).unwrap_err()).1, -301);
+    let octets: Vec<u8> = (0..600_000_u32).map(|i| u8::try_from(i % 251).unwrap()).collect();
+    let mut writer = c.create_lob(LobKind::Binary).unwrap();
+    writer.write_all(&octets[..300_000]).unwrap();
+    writer.flush().unwrap();
+    writer.flush().unwrap();
+    writer.write_all(&octets[300_000..]).unwrap();
+    let made = writer.finish().unwrap();
+    assert_eq!((made.octets(), made.chars()), (600_000, 600_000));
+    let p = c.prepare("INSERT INTO B VALUES (1, ?)").unwrap();
+    assert_eq!(done(&c.execute(&p, &[Value::Lob(made)]).unwrap()), 0);
+    let Outcome::Rows { rows, .. } = c.query("SELECT B FROM B").unwrap() else { panic!("no rows") };
+    let Some(Value::Lob(read)) = rows.first().and_then(|r| r.first()) else { panic!("{rows:?}") };
+    let mut all = Vec::new();
+    c.lob_reader(read).read_to_end(&mut all).unwrap();
+    assert_eq!(all, octets);
+    c.terminate().unwrap();
+}

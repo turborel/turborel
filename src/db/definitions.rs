@@ -166,6 +166,12 @@ impl Session {
             SchemaStatement::Trigger(t) => self.own_object(st, &t.name, (schema, "ISO/IEC 9075-2:2023 §11.49 AR1")),
             SchemaStatement::Routine(r) => self.own_object(st, &r.name, (schema, "ISO/IEC 9075-2:2023 §11.60 AR1")),
             SchemaStatement::Module(m) => self.own_object(st, &m.name, (schema, "ISO/IEC 9075-4:2006 draft §9.21 AR1")),
+            SchemaStatement::AlterType(_)
+            | SchemaStatement::Method(_)
+            | SchemaStatement::Cast(_)
+            | SchemaStatement::Ordering(_)
+            | SchemaStatement::Transform(_)
+            | SchemaStatement::AlterTransform(_) => self.type_object(st, statement, schema),
             SchemaStatement::AlterSequence(a) => {
                 let qn = qualify(&a.name, schema);
                 // [ISO/IEC 9075-2:2023 §11.73 AR1] only the owner of its
@@ -256,6 +262,12 @@ impl State {
             SchemaStatement::Trigger(t) => self.create_trigger(schema, t),
             SchemaStatement::Routine(r) => self.create_routine(schema, r),
             SchemaStatement::Module(m) => self.create_module((schema, zone), m, (made, epochs)),
+            SchemaStatement::AlterType(a) => self.alter_user_type(schema, a),
+            SchemaStatement::Method(m) => self.create_method(schema, m),
+            SchemaStatement::Cast(c) => self.create_cast(schema, c),
+            SchemaStatement::Ordering(o) => self.create_ordering(schema, o),
+            SchemaStatement::Transform(t) => self.create_transform(schema, t),
+            SchemaStatement::AlterTransform(t) => self.alter_transform(schema, t),
         }
     }
 

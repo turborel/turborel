@@ -36,7 +36,7 @@ pub use limit::{Fetch, Limit, Most};
 pub use pattern::{Matching, Navigated, PatternAggregate, PatternValue, Recognize, RowsPerMatch, Skip, Slotted, Variable, WindowMatching};
 pub(crate) use program::{
     Assign, Block, Branches, Called, Contained, Cursor, CursorAction, CursorStep, Declared, ForEach, Handled, Handler, Initial, Into, Leaf,
-    Looped, Program, Repeating, Signal, Step, Target,
+    Looped, Modified, Program, Repeating, Signal, Step, Target,
 };
 pub use ptf::Polymorphic;
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};

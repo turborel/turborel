@@ -12,7 +12,6 @@
 //! call.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -34,7 +33,10 @@ mod exact;
 pub(crate) mod interval;
 pub(crate) mod lob;
 pub(crate) mod multiset;
+pub(crate) mod reference;
+mod registry;
 mod row;
+pub(crate) mod structured;
 pub(crate) mod tags;
 mod unregistered;
 mod varying;
@@ -53,7 +55,10 @@ pub use exact::{BIGINT_NAME, EXACT, Exact};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
 pub use lob::{BLOB, BLOB_NAME, CLOB, CLOB_NAME, LARGE_NAME, LobType, NCLOB_NAME, OBJECT_NAME};
 pub use multiset::{MAX_MULTISET_CARDINALITY, MULTISET, MULTISET_NAME, MultisetKind, MultisetType};
+pub use reference::{REF_NAME, REF_OCTETS, REFERENCE, RefType, ReferenceKind};
+pub use registry::{Kind, TypeRegistry};
 pub use row::{Field, ROW, ROW_NAME, RowKind, RowType};
+pub use structured::{STRUCTURED, Structured, StructuredKind, StructuredType, UdtName};
 pub use unregistered::{UNREGISTERED, UNREGISTERED_KIND, Unregistered, parts, unregistered};
 pub use varying::{VARYING, Varying};
 
@@ -253,57 +258,6 @@ pub trait SqlType: Send + Sync + fmt::Debug {
     fn anchor(&self, v: &Value, t: &DataType) -> Option<(Value, bool)>;
 }
 
-/// The kinds of type beyond the standard registered with a database
-/// (RULES.md D53), by name: cheap to clone, as each snapshot of the
-/// definitions, each transaction's undo and each spill holds them.
-#[derive(Debug, Clone, Default)]
-pub struct TypeRegistry {
-    /// The kinds, by name; none, reserving nothing, of a registry of no
-    /// kind, as each transaction's and list's begins.
-    kinds: Option<Arc<BTreeMap<String, Kind>>>,
-}
-
-/// A kind of type beyond the standard, by a thin reference, so a
-/// `DataType` of it stays small: the hot paths copy and compare types.
-pub type Kind = &'static &'static dyn SqlType;
-
-impl TypeRegistry {
-    /// The kind named `name`, if one is registered.
-    pub fn get(&self, name: &str) -> Option<&'static dyn SqlType> {
-        self.kinds.as_ref()?.get(name).map(|k| **k)
-    }
-
-    /// The kind named `name`, if one is registered, as a type of it holds
-    /// it.
-    pub fn kind(&self, name: &str) -> Option<Kind> {
-        self.kinds.as_ref()?.get(name).copied()
-    }
-
-    /// Each kind registered that declares settings (RULES.md D36).
-    pub(crate) fn configurables(&self) -> impl Iterator<Item = &dyn crate::settings::Configurable> {
-        self.kinds.iter().flat_map(|kinds| kinds.values()).filter_map(|k| k.configurable())
-    }
-
-    /// The names registered, in order.
-    pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.kinds.iter().flat_map(|kinds| kinds.keys()).map(String::as_str)
-    }
-
-    /// Registers `kind`.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if a kind of its name is registered already.
-    pub(crate) fn add(&mut self, kind: &'static dyn SqlType) -> Result<()> {
-        if self.kind(kind.name()).is_some() {
-            return Err(SqlError::new(Code::Api, format!("[DESIGN] a type {} is registered already", kind.name())));
-        }
-        let held: Kind = Box::leak(Box::new(kind));
-        Arc::make_mut(self.kinds.get_or_insert_with(Arc::default)).insert(kind.name().to_owned(), held);
-        Ok(())
-    }
-}
-
 /// A type beyond the standard (RULES.md D53): its kind, a plug-in's,
 /// registered with the database, and its parameters.
 #[derive(Debug, Clone, Copy)]
@@ -439,6 +393,8 @@ impl DataType {
             DataType::Multiset(_) => &MULTISET,
             DataType::Row(_) => &ROW,
             DataType::Distinct(_) => &DISTINCT,
+            DataType::Structured(_) => &STRUCTURED,
+            DataType::Reference(_) => &REFERENCE,
             DataType::Extension(e) => *e.kind,
         }
     }
@@ -467,7 +423,9 @@ impl DataType {
             | DataType::Array(_)
             | DataType::Multiset(_)
             | DataType::Row(_)
-            | DataType::Distinct(_) => self.kind().encode_record(v, self),
+            | DataType::Distinct(_)
+            | DataType::Structured(_)
+            | DataType::Reference(_) => self.kind().encode_record(v, self),
             DataType::Exact { .. } => EXACT.encode_record(v, self),
             DataType::Approximate { .. } => APPROXIMATE.encode_record(v, self),
             DataType::DecFloat { .. } => DECFLOAT.encode_record(v, self),
@@ -491,7 +449,9 @@ impl DataType {
             | DataType::Array(_)
             | DataType::Multiset(_)
             | DataType::Row(_)
-            | DataType::Distinct(_) => self.kind().decode_record(field, self),
+            | DataType::Distinct(_)
+            | DataType::Structured(_)
+            | DataType::Reference(_) => self.kind().decode_record(field, self),
             DataType::Exact { .. } => EXACT.decode_record(field, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_record(field, self),
             DataType::DecFloat { .. } => DECFLOAT.decode_record(field, self),
@@ -519,7 +479,9 @@ impl DataType {
             | DataType::Array(_)
             | DataType::Multiset(_)
             | DataType::Row(_)
-            | DataType::Distinct(_) => self.kind().encode_key(v, self, out),
+            | DataType::Distinct(_)
+            | DataType::Structured(_)
+            | DataType::Reference(_) => self.kind().encode_key(v, self, out),
             DataType::Exact { .. } => EXACT.encode_key(v, self, out),
             DataType::Approximate { .. } => APPROXIMATE.encode_key(v, self, out),
             DataType::DecFloat { .. } => DECFLOAT.encode_key(v, self, out),
@@ -547,7 +509,9 @@ impl DataType {
             | DataType::Array(_)
             | DataType::Multiset(_)
             | DataType::Row(_)
-            | DataType::Distinct(_) => self.kind().decode_key(rest, self),
+            | DataType::Distinct(_)
+            | DataType::Structured(_)
+            | DataType::Reference(_) => self.kind().decode_key(rest, self),
             DataType::Exact { .. } => EXACT.decode_key(rest, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_key(rest, self),
             DataType::DecFloat { .. } => DECFLOAT.decode_key(rest, self),
@@ -577,6 +541,8 @@ impl Value {
             Value::Array(_) => Some(&ARRAY),
             Value::Multiset(_) => Some(&MULTISET),
             Value::Row(_) => Some(&ROW),
+            Value::Structured(_) => Some(&STRUCTURED),
+            Value::Reference(_) => Some(&REFERENCE),
             Value::Extension(e) => Some(e.kind),
         }
     }

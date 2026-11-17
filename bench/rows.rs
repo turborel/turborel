@@ -112,6 +112,7 @@ fn table(bench: &Bench, long: usize) -> (RowStore, Arc<dyn TableStorage>) {
         options: Vec::new(),
         generation: 0,
         temporary: None,
+        typed: None,
     };
     let table = store.create_table(&desc).unwrap().into();
     (store, table)

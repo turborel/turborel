@@ -260,6 +260,7 @@ pub(super) fn ptf_reference(b: Bounds<'_>, t: &PtfTable, start: usize, from: &mu
             nullable: false,
             common: Vec::new(),
             drawn: None,
+            family: Vec::new(),
         }
     };
     if !first_named {

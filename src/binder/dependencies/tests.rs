@@ -32,6 +32,7 @@ fn unique(columns: Vec<usize>, (primary, nulls_distinct): (bool, bool)) -> Const
 fn database(constraints: Vec<ConstraintDesc>) -> State {
     let mut catalog = MemoryCatalog::default();
     catalog.add_table(TableDesc {
+        typed: None,
         name: QualifiedName { auth: "A".into(), ident: "T".into() },
         columns: vec![column("K"), column("V"), column("W")],
         constraints,

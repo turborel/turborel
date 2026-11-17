@@ -19,6 +19,7 @@ mod words;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::catalog::TransformNames;
 use crate::error::{Code, Result, SqlError};
 use crate::txn::Policy;
 use crate::value::{Value, pow10};
@@ -159,6 +160,8 @@ fn bytes(value: &Value, default: usize) -> usize {
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => default,
     }
@@ -462,22 +465,36 @@ impl Settings {
     }
 }
 
-/// A session's own values of the settings it may set for itself.
+/// A session's own values of the settings it may set for itself, and its
+/// transform group names [ISO/IEC 9075-2:2023 §4.48.1], which SET
+/// TRANSFORM GROUP sets [§19.12, §19.13].
 #[derive(Debug, Clone, Default)]
-pub struct Own(Vec<(Key, Value)>);
+pub struct Own(Vec<(Key, Value)>, TransformNames);
 
 /// No values of one's own: a statement of no session's.
-pub static NONE: Own = Own(Vec::new());
+pub static NONE: Own = Own(Vec::new(), TransformNames { default: String::new(), for_type: Vec::new() });
 
 impl Own {
     /// Whether it set no value.
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.0.is_empty() && self.1 == TransformNames::default()
     }
 
     /// Whether it sets the values `other` sets, of the same settings.
     pub fn same_as(&self, other: &Own) -> bool {
-        self.0.len() == other.0.len() && self.0.iter().all(|(k, v)| other.get(*k).is_some_and(|w| w.to_literal() == v.to_literal()))
+        self.1 == other.1
+            && self.0.len() == other.0.len()
+            && self.0.iter().all(|(k, v)| other.get(*k).is_some_and(|w| w.to_literal() == v.to_literal()))
+    }
+
+    /// Its transform group names.
+    pub fn transforms(&self) -> &TransformNames {
+        &self.1
+    }
+
+    /// Its transform group names, to be set.
+    pub fn transforms_mut(&mut self) -> &mut TransformNames {
+        &mut self.1
     }
 
     /// Its value of `key`, if it set one.

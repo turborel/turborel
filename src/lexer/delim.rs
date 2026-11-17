@@ -7,6 +7,12 @@ pub const NOT_EQUALS: &str = "<>";
 pub const GREATER_OR_EQUAL: &str = ">=";
 /// The less than or equals operator.
 pub const LESS_OR_EQUAL: &str = "<=";
+/// [ISO/IEC 9075-2:2023 §5.2] `<right arrow>`: the `<dereference
+/// operator>` [§6.21].
+pub const RIGHT_ARROW: &str = "->";
+/// [ISO/IEC 9075-2:2023 §5.2] `<double colon>`: of a `<static method
+/// invocation>` [§6.19].
+pub const DOUBLE_COLON: &str = "::";
 /// Comma.
 pub const COMMA: &str = ",";
 /// Left parenthesis.

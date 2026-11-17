@@ -438,6 +438,14 @@ pub fn heap_bytes(v: &Value) -> usize {
         Value::Array(parts) | Value::Multiset(parts) | Value::Row(parts) => {
             parts.iter().fold(size_of_val::<[Value]>(parts), |sum, p| sum.saturating_add(heap_bytes(p)))
         }
+        // Its type's name, its attributes and its key.
+        Value::Structured(s) => {
+            let named = s.of.schema.len().saturating_add(s.of.name.len());
+            let parts = s.attributes.iter().fold(size_of_val::<[Value]>(&s.attributes), |sum, p| sum.saturating_add(heap_bytes(p)));
+            let key = s.key.as_ref().map_or(0, heap_bytes);
+            named.saturating_add(parts).saturating_add(key)
+        }
+        Value::Reference(r) => r.bytes().len(),
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)

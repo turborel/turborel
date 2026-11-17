@@ -36,17 +36,17 @@ use crate::params::{Params, RoutineScope};
 use crate::value::Value;
 
 /// What a routine's body, bound, names and does.
-pub(super) struct BodyBound {
+pub(in crate::db) struct BodyBound {
     /// The tables and views it names.
-    pub(super) reads: Vec<QualifiedName>,
+    pub(in crate::db) reads: Vec<QualifiedName>,
     /// The specific names of the routines it invokes.
-    pub(super) invokes: Vec<QualifiedName>,
+    pub(in crate::db) invokes: Vec<QualifiedName>,
     /// The sequence generators it draws from, each once.
-    pub(super) sequences: Vec<QualifiedName>,
+    pub(in crate::db) sequences: Vec<QualifiedName>,
     /// Whether its owner's EXECUTE on the routine is grantable [GR1].
-    pub(super) grantable: bool,
+    pub(in crate::db) grantable: bool,
     /// The columns of tables and views it references, each once.
-    pub(super) columns: Vec<(QualifiedName, String)>,
+    pub(in crate::db) columns: Vec<(QualifiedName, String)>,
 }
 
 /// The order of what a body possibly does with SQL-data, least first.
@@ -89,6 +89,7 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         SqlStatement::Return(_) => return returning(desc),
         SqlStatement::Close(_)
         | SqlStatement::SetCollation(_)
+            | SqlStatement::SetTransformGroup(_)
         | SqlStatement::Commit
         | SqlStatement::DeletePositioned { .. }
         | SqlStatement::Truncate { .. }
@@ -154,7 +155,7 @@ impl State {
     /// SQLCODE -103 if it is no statement a body may be, or does more with
     /// SQL-data than its SQL-data access indication allows; its own,
     /// bound, under the routine's owner.
-    pub(super) fn bind_routine_body(&self, desc: &SqlRoutineDesc, definition: &RoutineDefinition) -> Result<BodyBound> {
+    pub(in crate::db) fn bind_routine_body(&self, desc: &SqlRoutineDesc, definition: &RoutineDefinition) -> Result<BodyBound> {
         if let Some(ptf) = &desc.ptf {
             return self.bind_ptf_body(desc, ptf);
         }

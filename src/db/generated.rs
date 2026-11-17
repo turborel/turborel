@@ -13,7 +13,7 @@
 //! row as it is written: its generation expression is kept as written and
 //! bound once for each statement that writes the table.
 
-mod named;
+pub(in crate::db) mod named;
 mod rows;
 
 pub(super) use named::{Column, Named};
@@ -128,8 +128,16 @@ impl State {
         defs: &[&ColumnDefinition],
     ) -> Result<Vec<ColumnDesc>> {
         let (constraints, options) = (Vec::new(), Vec::new());
-        let mut probe =
-            TableDesc { name: name.clone(), columns, constraints, engine: String::new(), options, generation: 0, temporary: None };
+        let mut probe = TableDesc {
+            typed: None,
+            name: name.clone(),
+            columns,
+            constraints,
+            engine: String::new(),
+            options,
+            generation: 0,
+            temporary: None,
+        };
         self.typed_generations(&mut probe, defs.iter().copied().enumerate())?;
         Self::one_identity(&probe)?;
         Ok(probe.columns)
@@ -150,17 +158,22 @@ impl State {
 
     /// [ISO/IEC 9075-2:2023 §11.4 GR4] The sequence generator of each
     /// identity column of `desc` given its epoch from `epochs`, as a
-    /// definition's (RULES.md D62).
+    /// definition's (RULES.md D62); [§11.3 GR4f iii] and that of a
+    /// system-generated self-referencing column of a maximal supertable. A
+    /// subtable's holds its maximal supertable's, its epoch given already.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if a record logged gives fewer epochs than it took.
     pub(super) fn give_epochs(&self, desc: &mut TableDesc, epochs: &mut Epochs) -> Result<()> {
         for column in &mut desc.columns {
-            if let Some(Generated::Identity(identity)) = &mut column.generated
-                && identity.sequence.epoch == 0
-            {
-                identity.sequence.epoch = epochs.next(&self.sequences)?;
+            let sequence = match &mut column.generated {
+                Some(Generated::Identity(identity)) => &mut identity.sequence,
+                Some(Generated::SystemReference(sequence)) => sequence,
+                Some(Generated::Expression(_) | Generated::DerivedReference(_)) | None => continue,
+            };
+            if sequence.epoch == 0 {
+                sequence.epoch = epochs.next(&self.sequences)?;
             }
         }
         Ok(())

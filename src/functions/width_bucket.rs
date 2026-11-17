@@ -229,6 +229,8 @@ fn decfloat_floor(wbc: i128, operands: [&Value; 4]) -> Option<i128> {
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => None,
     };

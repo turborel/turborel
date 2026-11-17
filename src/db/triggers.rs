@@ -11,6 +11,7 @@ mod define;
 mod dependents;
 mod fire;
 mod instead;
+mod mutated;
 mod named;
 mod rerouted;
 mod routed;

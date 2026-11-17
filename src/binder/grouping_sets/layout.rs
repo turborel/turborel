@@ -59,7 +59,7 @@ fn integer(n: usize) -> Value {
 /// grouping operands, and the collation it groups by.
 fn reference(binder: &Binder<'_>, gc: &GroupingColumn) -> Result<(usize, OutColumn, Reference)> {
     let (pos, data_type) = binder.resolve(&gc.column)?;
-    grouping_operand(&data_type, "GROUP BY").or_at(gc.column.at)?;
+    grouping_operand(binder.db, &data_type, "GROUP BY").or_at(gc.column.at)?;
     let collation = binder.grouped_by(gc)?;
     let named = data_type.is_character().then(|| binder.result_collation(&ValueExpression::Column(gc.column.clone()))).flatten();
     let column = OutColumn { name: Some(gc.column.column.clone()), collation: named, data_type, not_null: false, origin: Some(pos) };

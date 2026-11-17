@@ -51,6 +51,10 @@ impl Parser {
         if self.is_delim(delim::COMMA) {
             return self.row_constructor(e, at);
         }
+        // [ISO/IEC 9075-2:2023 §6.18] a <generalized invocation>.
+        if self.is_kw(kw::AS) {
+            return self.generalized_invocation(e, at);
+        }
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(ValueExpression::Nested(Box::new(e)))
     }
@@ -233,8 +237,9 @@ impl Parser {
         }
         // [ISO/IEC 9075-2:2023 §10.4] a <routine invocation>: its name,
         // perhaps of a schema, then "(".
+        // [ISO/IEC 9075-2:2023 §6.40] SPECIFICTYPE, no routine's name.
         let qualified = matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD))
-            && matches!(self.peek_at(2), Tok::Identifier(_))
+            && matches!(self.peek_at(2), Tok::Identifier(w) if w != super::structured::SPECIFICTYPE)
             && matches!(self.peek_at(3), Tok::Delimiter(delim::LEFT_PAREN));
         if qualified || matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
             return self.function_call();
@@ -246,7 +251,8 @@ impl Parser {
     }
 
     /// A `<primary>` that starts with an `<identifier>` and is an array or
-    /// row expression [ISO/IEC 9075-2:2023 §6.47, §7.1], an expression of
+    /// row expression [ISO/IEC 9075-2:2023 §6.47, §7.1], one of
+    /// user-defined types [§6.19, §6.20, §6.23, §6.24], an expression of
     /// row pattern matching [§6.9, §6.10, §6.27, §6.31, §6.33], or an
     /// aggregate of a name no key word of SQL-92 [§10.9], if one is next.
     fn composite_pattern_or_aggregate(&mut self) -> Result<Option<ValueExpression>> {
@@ -255,6 +261,11 @@ impl Parser {
         }
         if let Some(pattern) = self.row_pattern_primary_expression()? {
             return Ok(Some(pattern));
+        }
+        // [ISO/IEC 9075-2:2023 §6.4, §6.19, §6.20, §6.23, §6.24] NEW, TREAT,
+        // DEREF, T::M and the transform groups, no key words of SQL-92.
+        if let Some(structured) = self.structured_primary()? {
+            return Ok(Some(structured));
         }
         // [ISO/IEC 9075-2:2023 §10.9] EVERY and ANY_VALUE, no key words of
         // SQL-92, before "(" set functions, and LISTAGG the <listagg set

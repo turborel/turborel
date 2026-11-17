@@ -1490,8 +1490,9 @@ are, and paired by classes and a matching (RULES.md D80). MULTISET,
 MEMBER, SUBMULTISET, ELEMENT, COLLECT, FUSION and INTERSECTION are key
 words only where they are read, so a column may be named by any of them
 (Appendix B). `TABLE(query)` is processed though T326 (Table functions)
-is not claimed. S274 (Multisets of reference types) waits for reference
-types, and S233 (Multiset locators) for host languages that hold them.
+is not claimed. S274 (Multisets of reference types) is claimed with
+[reference types](#reference-types), and S233 (Multiset locators) waits
+for host languages that hold them.
 
 ### Distinct types
 
@@ -1505,15 +1506,16 @@ only with values of the same type [§4.9.5].
 
 | Feature | Rules | What turborel does |
 |---|---|---|
-| Definition | §11.51 SR1 to SR7 | `CREATE TYPE n AS <predefined type> \| <array type> [FINAL]` and the two CAST options, in any order, each at most once. The schema is there (3F000) and is its schema definition's, and no type or domain of the schema has the name, else SQLCODE -103. A row type, another distinct type or a type of an extension as its source is SQLCODE -103, as is each option of a structured type. A structured type is SQLCODE -900. |
+| Definition | §11.51 SR1 to SR7 | `CREATE TYPE n AS <predefined type> \| <array type> [FINAL]` and the two CAST options, in any order, each at most once. The schema is there (3F000) and is its schema definition's, and no type or domain of the schema has the name, else SQLCODE -103. A row type, another distinct type or a type of an extension as its source is SQLCODE -103, as is each option of a structured type but a method specification. |
 | Source type | §11.51 SR7a | An exact type is kept as NUMERIC of its precision and scale and an approximate one as FLOAT of its precision (IV223), so INTEGER is NUMERIC(10, 0). |
 | Comparison | §4.9.5, §8.2, §11.51 GR2c | Of values of one distinct type alone, as their source values compare. Ordered, grouped, made DISTINCT, kept unique and indexed so, unless the source is an array type, whose values compare with nothing. |
 | Assignment and CAST | §4.13, §9.2 SR3, §6.13 SR12 | To a distinct type, of a value of the type, or of a type whose type precedence list [§9.7] holds the source's designator and that is assignable to the source. From one, to exactly its source type, of the same precision and scale. Any other is SQLCODE -103. |
 | Operators | §6.30 SR3 and others | None but comparison. Arithmetic, a set function but COUNT, MAX and MIN, a string function, a predicate of strings, a Boolean operator, an element reference and CARDINALITY take no value of a distinct type, SQLCODE -103. |
 | Result type | §9.5 SR3l | Values of one distinct type are brought together with values of that type alone, in CASE, COALESCE, a set operation and a VALUES of more than one row. |
 | Functions | §11.51 GR2b, §9.18, §10.4 | FNUDT, named by the CAST (SOURCE AS DISTINCT) option or the type's name, and FNSDT, named by the CAST (DISTINCT AS SOURCE) option or the source type's name [§9.9], are invoked by name, a name not qualified found in the schema of the statement's names (ID047). They overload with the schema's SQL-invoked functions, and of the functions of one name the arguments' types choose, as an SQL-invoked function's invocation chooses. None that takes them, or two alike, is SQLCODE -103, and a ? argument of a name of two functions of one parameter is SQLCODE -103. A function of the name another function of the schema has, not told apart from it, is refused [§11.60 SR20b]. Their specific names are the type's name and _TO_DISTINCT or _TO_SOURCE. |
-| Privileges | §6.1 AR1, §6.13 AR2, §9.18 SR6, §12.2, §12.3, §12.7 | Naming the type needs USAGE on it, and a CAST to or from it, or invoking a function, EXECUTE on the function, each SQLCODE -104 if not held. The schema's owner holds them grantably. GRANT and REVOKE take USAGE ON TYPE and EXECUTE ON SPECIFIC FUNCTION n or FUNCTION n [(types)]. REVOKE with RESTRICT is 2B000 where it would abandon a column of a type based on the type, a view, constraint, assertion or generated column, or a grant. With CASCADE each goes, a column as ALTER TABLE DROP COLUMN drops it. UNDER is SQLCODE -103 of a distinct type. |
+| Privileges | §6.1 AR1, §6.13 AR2, §9.18 SR6, §12.2, §12.3, §12.7 | Naming the type needs USAGE on it, and a CAST to or from it, or invoking a function, EXECUTE on the function, each SQLCODE -104 if not held. The schema's owner holds them grantably. GRANT and REVOKE take USAGE ON TYPE and EXECUTE ON SPECIFIC FUNCTION n or FUNCTION n [(types)]. REVOKE with RESTRICT is 2B000 where it would abandon a column of a type based on the type, a view, constraint, assertion, generated column, trigger or routine, or a grant. A routine is abandoned when its owner loses USAGE on a parameter's or its result's type [GR12o]. With CASCADE each goes, a column as ALTER TABLE DROP COLUMN drops it. UNDER is SQLCODE -103 of a distinct type. |
 | Drop | §11.59 | RESTRICT refuses while a column, or another type's source, is based on the type, or a view, constraint, assertion or generated column references it or invokes its functions. CASCADE drops each, the types based on it among them, and is refused before it drops any if a table would lose every column [§11.23 SR4]. DROP SCHEMA CASCADE drops its types. |
+| Methods | §11.51 SR10, §11.56, §6.18 | Original method specifications, instance or static, with their bodies by CREATE METHOD, added by ALTER TYPE ADD and dropped by DROP METHOD. A distinct type has no supertype, so no method of one is OVERRIDING, and `(v AS t).m()` names the type itself. |
 | A default | §11.5 SR3, SR4e | A column of a distinct type has no default but NULL, and one of a type of an array source NULL or ARRAY[]. |
 | Transforms | §4.9.6, §20.11, §20.12 | A value goes to the host and to a client as its source's, and comes from one as a value of its source made the type (ID048). A dynamic USING argument or INTO target is of a type its source is assignable to and from, else 07006. The protocol describes a column of a distinct type as its source type. |
 | Dynamic SQL | §20.1, §20.10 GR7d viii | DESCRIBE gives TYPE 17 and USER_DEFINED_TYPE_CATALOG, _SCHEMA, _NAME and _CODE 1. Such an item is not valid [§20.1 SR6], so a FETCH or USING of it is 07002 or 07001 until its TYPE is set. |
@@ -1528,14 +1530,84 @@ leaves.
 Some readings fill gaps in the rules. DROP TYPE with RESTRICT [§11.59
 SR4e] refuses a type whose transforms are in a transform descriptor. The
 transform its own definition makes [§11.51 GR2b] goes with it [§11.59
-GR2], so only one a CREATE TRANSFORM made counts, and turborel has none. A CASCADE that would drop every column of a table is
+GR2], so only one a CREATE TRANSFORM made counts, as does a cast that
+names the type [SR4f iv]. A CASCADE that would drop every column of a table is
 refused before it drops any [§11.23 SR4]. TYPE, FINAL, INSTANTIABLE,
 UNDER, SOURCE, REF, SPECIFIC and FUNCTION are no key words of SQL-92, so
 each stays an identifier, a key word only where CREATE TYPE, DROP TYPE,
 GRANT and REVOKE read it. A function named by a key word, as FNSDT of a
-NUMERIC source is, is invoked delimited, `"NUMERIC"(p)`. Structured types
-and SET TRANSFORM GROUP are not implemented. The routines a user defines
-are those of [SQL-invoked routines](#sql-invoked-routines).
+NUMERIC source is, is invoked delimited, `"NUMERIC"(p)`. The routines a
+user defines are those of [SQL-invoked routines](#sql-invoked-routines),
+and casts, orderings and transforms those of [structured
+types](#structured-types).
+
+### Structured types
+
+Features S023 (Basic structured types), S024 (Enhanced structured types),
+S025 (Final structured types), S026 (Self-referencing structured types),
+S027 (Create method by specific method name), S028 (Permutable UDT
+options list), S081 (Subtables), S111 (ONLY in query expressions), S151
+(Type predicate), S161 (Subtype treatment), S211 (User-defined cast
+functions), S241 (Transform functions) and S261 (Specific type method).
+A structured type [§4.9.3] has attributes, methods and subtypes, and a
+value names its most specific type (RULES.md D81).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Definition | §11.51 | `CREATE TYPE n [UNDER s] AS (attributes) [NOT] INSTANTIABLE [NOT] FINAL`, its `<reference type specification>` and its method specifications, the options in any order. A supertype is FINAL or a type of no UNDER privilege, a cycle, an attribute of the type itself [SR8], or a name met twice is SQLCODE -103. |
+| Values | §6.6, §6.18, §6.20, §14.15 | NEW and the constructor function, each attribute's observer `v.a` and mutator `v.a(x)`, and SET of an attribute in UPDATE [§14.15 SR7c]. A type NOT INSTANTIABLE has no constructor. |
+| Methods | §6.18, §6.19, §9.18, §11.60 | Instance, static and constructor methods, CREATE METHOD by its signature or SPECIFIC METHOD [S027], OVERRIDING methods dispatched by the value's most specific type, `(v AS t).m()` invoking a supertype's, and SELF AS RESULT. |
+| ALTER TYPE | §11.53 to §11.58 | ADD and DROP ATTRIBUTE, ADD and DROP METHOD, ADD OVERRIDING. A change of an attribute while a base table's column is of a type of the family is SQLCODE -103. |
+| Predicates and treatment | §8.19, §6.17, §6.33 | `v IS [NOT] OF (t, ONLY u)`, `TREAT(v AS t)`, which raises 0D000 on a value of no subtype of t, and `v.SPECIFICTYPE` [S261]. |
+| Orderings | §11.65, §11.66, §8.2, §9.12, §9.14 | CREATE ORDERING EQUALS ONLY or FULL, BY MAP, STATE or RELATIVE, and DROP ORDERING. By MAP a value compares, groups and sorts by its map function's value, by STATE by its attributes, by RELATIVE by its function's sign. A grouping or sort by RELATIVE, a key, a unique or referential constraint and an index of a structured type are SQLCODE -900. A type of no ordering is compared by none (SQLCODE -103). |
+| Casts | §6.13 SR12, GR3, §9.2 GR2, §11.63, §11.64 | CREATE CAST and DROP CAST. CAST to a supertype is the value, any other by the cast whose source comes first in the type precedence list [§9.7], else SQLCODE -103. A cast AS ASSIGNMENT stores a value whose type is not assignable to its site. EXECUTE on the function is needed, else SQLCODE -104. |
+| Transforms | §11.67 to §11.71, §19.12, §19.13, §6.4 | CREATE, ALTER and DROP TRANSFORM, SET DEFAULT TRANSFORM GROUP and SET TRANSFORM GROUP FOR TYPE, CURRENT_DEFAULT_TRANSFORM_GROUP and CURRENT_TRANSFORM_GROUP_FOR_TYPE, which falls back on a supertype's group and then the default. No host language or external routine uses them, so a value crosses to a client whole. |
+| Schema elements | §11.1 | A method, a cast, an ordering and a transform are elements of CREATE SCHEMA, each made after the routines written before it. A method of a type of another schema is SQLCODE -103 [§11.60 SR9q]. |
+| Functions dropped | §11.62 SR4a, SR4d | DROP FUNCTION RESTRICT of an ordering, transform or cast function is SQLCODE -103, and CASCADE drops what it is the function of. |
+| Privileges | §12.3, §12.7, §6.23 AR1 | UNDER on a type, EXECUTE on a method, and the table/method privilege, granted by SELECT on a typed table or by a `<privilege method list>` [S024]. A method reference needs it on its scope. EXECUTE on an attribute's observer and mutator is granted and revoked by its specific name, or as METHOD of the attribute's name FOR its defining type [§10.6, §9.18 SR6], and held through each subtype. A grant of USAGE or UNDER whose grantor no longer holds it grantably is abandoned, at any remove [GR9]. RESTRICT refuses that, or a routine, constraint or view it abandons, with SQLSTATE 2B000 [GR12q], and CASCADE takes each. |
+| Drop | §11.59 | RESTRICT refuses while a subtype, a typed table, a transform group, a cast, an attribute or a column names the type. CASCADE drops each. |
+| Dynamic SQL | §20.1, §20.10 GR7d viii | DESCRIBE gives TYPE 17 and the type's name and USER_DEFINED_TYPE_CODE 2. |
+| Its description | ISO/IEC 9075-11 | USER_DEFINED_TYPES, with each type's ordering, ATTRIBUTES, DIRECT_SUPERTYPES, METHOD_SPECIFICATIONS, METHOD_SPECIFICATION_PARAMETERS, UDT_PRIVILEGES, TRANSFORMS, TABLE_METHOD_PRIVILEGES, DIRECT_SUPERTABLES and REFERENCED_TYPES. |
+
+SELF AS LOCATOR needs Feature S231 (Structured type locators), which is
+not claimed (SQLCODE -900). A method's text is kept and bound again as
+it is invoked, as a function's is.
+
+### Typed tables
+
+Features S051 (Create table of type), S081 (Subtables) and S111 (ONLY in
+query expressions). A typed table [§4.17.9] has a column of each
+attribute of its type and a self-referencing column, and a subtable
+keeps its own rows, a superrow of each in each supertable (RULES.md
+D81).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Definition | §11.3 | `CREATE TABLE t OF type [UNDER s] (REF IS c ..., column options)`, in a schema definition too. Its type's columns are its own, so ALTER TABLE adds and drops none [§11.23 SR3]. |
+| Reading | §7.6 | A table named without ONLY is read with each proper subtable's rows, cut to its columns. ONLY reads its own, which needs SELECT WITH HIERARCHY OPTION [AR1b ii 2]. |
+| Changing | §14.9 to §14.15 | INSERT into a subtable writes the superrows too. A searched UPDATE or DELETE, a cursor, MERGE and TRUNCATE change each row where it is, ONLY the table's own. |
+| Constraints | §4.17.9 | A supertable's constraints hold of its subtables' rows, and a key or referenced row is looked for across the family. |
+| Privileges | §12.2 GR8 | SELECT WITH HIERARCHY OPTION, granted and revoked, gives SELECT on each proper subtable. |
+| Drop | §11.31 | DROP TABLE RESTRICT of a supertable is refused, and CASCADE drops its subtables. |
+
+### Reference types
+
+Features S041 (Basic reference types), S043 (Enhanced reference types),
+S094 (Arrays of reference types), S162 (Subtype treatment for
+references) and S274 (Multisets of reference types). A reference
+[§4.11] is its octets (RULES.md D81).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Types | §6.1, §4.11 | `REF(type) [SCOPE table]`, of a column, an attribute, an array's or a multiset's element, a routine's parameter or result. |
+| Generation | §11.51, §11.3, §14.11 | SYSTEM GENERATED from the family's sequence generator, never given twice, a crash included; USER GENERATED of its representation type, given by INSERT with OVERRIDING USER or SYSTEM VALUE; DERIVED from attributes under a unique constraint. |
+| Dereference | §6.22, §6.23, §6.24 | `r -> a`, `r -> m(args)` and DEREF(r), each a lookup in the scope's family. One without a scope is SQLCODE -103. |
+| Treatment | §6.17 [S162] | TREAT of a reference to a subtype's reference type, with or without a scope. |
+| Scopes | §11.17, §11.18 | ALTER TABLE ... ADD SCOPE and DROP SCOPE, whose RESTRICT is refused while a dereference reads the column. |
+| Referenceable views | §11.32, §11.33 | `CREATE VIEW v OF type [UNDER w] (REF IS c ...)`, read with its subviews, read-only, its references through its basis table's. |
+| Comparison and CAST | §8.2, §6.13 SR13 | References compare for equality by their octets. CAST to a reference type of a compatible referenced type [GR4a], or by a user-defined cast. |
+
+`REFERENCES ARE CHECKED`, which SQL:1999 had, is not in SQL:2023.
 
 ### Triggers
 
@@ -1604,7 +1676,7 @@ RETURN [§16.2].
 | Feature | Rules | What turborel does |
 |---|---|---|
 | Definition | §11.60 SR1 to SR9, SR13 to SR16, SR19, AR1, CR2 | The schema exists (3F000) and its user owns it (-104). Each characteristic at most once, the SQL-data access written, NO SQL refused. A function's parameters have no mode, and a procedure has no null-call clause, a function no DYNAMIC RESULT SETS. Each parameter named, no two alike, none of a domain or a row type. The body has no host, dynamic or embedded parameter. Each rule broken is SQLCODE -103. |
-| Overloading | §11.60 SR20, §11.51 GR2b | A schema holds procedures of a name each of another number of parameters [SR20a], and functions of a name, its SQL-invoked functions and its distinct types' together, each told apart from the others [SR20b]. Of arguments of a function's own parameters' types, of the functions that take them, it must be the one subject routine, the values "arbitrarily selected" of SR20b ii taken to be of those types. Each exact numeric type is in NUMERIC's place of a precedence list and each approximate one in FLOAT's (RULES.md D74), so F(INTEGER) beside F(BIGINT) or F(DECIMAL(5, 2)) is refused, and beside F(DOUBLE PRECISION) is taken. CREATE TYPE checks its two functions so too. Each refusal is SQLCODE -103. |
+| Overloading | §11.60 SR20, SR22, §11.51 GR2b | A schema holds procedures of a name each of another number of parameters [SR20a], and functions of a name, its SQL-invoked functions and its distinct types' together, each told apart from the others [SR20b]. Of arguments of a function's own parameters' types, of the functions that take them, it must be the one subject routine, the values "arbitrarily selected" of SR20b ii taken to be of those types. Each exact numeric type is in NUMERIC's place of a precedence list and each approximate one in FLOAT's (RULES.md D74), so F(INTEGER) beside F(BIGINT) or F(DECIMAL(5, 2)) is refused, and beside F(DOUBLE PRECISION) is taken. CREATE TYPE checks its two functions so too. A regular function whose first parameter is of a user-defined type is told apart from each instance method of that type or a supertype of its name and schema, the others' types compatible [SR22]. Each refusal is SQLCODE -103. |
 | Specific names | SR9s, SR9t, SR9u, UV102 | SPECIFIC names the routine apart from its name, of its schema, new in it. Without it, the name is the routine's name, an underscore and its creation's sequence number, with a further `_n` if that is taken. |
 | The body | SR20, SR23, §16.2 SR1 to SR4, IA075, IA076, IA078 | Bound once as the routine is defined, as the owner of its schema, of that schema, so its rules and privileges are checked then and its names fixed [§4.35]. A function's body is a RETURN, of a type its result type stores, RETURN NULL a null of it. A procedure's is INSERT, searched UPDATE or DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS or CALL, and no RETURN. Either may be an SQL control statement, SIGNAL or RESIGNAL, of [SQL/PSM](#sqlpsm), whose nested statements count for its SQL-data access. A schema, transaction, connection, session or dynamic statement is refused (IA078). A body of CONTAINS SQL that reads a table, or of READS SQL DATA that changes one, is refused (IA076, IA075). Each is SQLCODE -103. |
 | Determinism | IA077 | DETERMINISTIC is taken as written: a body is not checked for a source of non-determinism. |
@@ -1676,7 +1748,7 @@ roles [§12.8], and a role as the owner of a schema (RULES.md D75).
 | Role authorizations described | 11:2006 draft §6.34 | DEFINITION_SCHEMA.ROLE_AUTHORIZATION_DESCRIPTORS has a row of each role authorization, PUBLIC the grantee of one granted to all and _SYSTEM the grantor of a creator's. |
 | ENABLED_ROLES | 11:2006 draft §5.30, §4.42.4 | The current role, each role granted to it or to PUBLIC, and each granted to one of those in turn. The draft's text is corrected to §4.42.4 in two places. A null current role gives no row, since it enables no role. The roles granted to PUBLIC are enabled with the current role, as they are applicable for it. |
 | APPLICABLE_ROLES, ADMINISTRABLE_ROLE_AUTHORIZATIONS | 11:2006 draft §5.9, §5.8 | As the draft defines them. A RECURSIVE view is written as the WITH RECURSIVE it is equivalent to [§11.32 SR9e]. |
-| ROLE_ grants views | 11:2006 draft §5.38 to §5.40, §5.42, §5.43 | ROLE_TABLE_GRANTS, ROLE_COLUMN_GRANTS, ROLE_USAGE_GRANTS, ROLE_UDT_GRANTS and ROLE_ROUTINE_GRANTS, each privilege granted to or by an enabled role. ROLE_TABLE_GRANTS has no WITH_HIERARCHY, as there are no tables of structured types. ROLE_TABLE_METHOD_GRANTS [§5.41] is not defined, for the same reason. ROLE_ROUTINE_GRANTS takes the routine's name from the privilege table, which holds it, and its last subquery is closed as the draft leaves it open. |
+| ROLE_ grants views | 11:2006 draft §5.38 to §5.40, §5.42, §5.43 | ROLE_TABLE_GRANTS, ROLE_TABLE_METHOD_GRANTS [§5.41], ROLE_COLUMN_GRANTS, ROLE_USAGE_GRANTS, ROLE_UDT_GRANTS and ROLE_ROUTINE_GRANTS, each privilege granted to or by an enabled role. ROLE_TABLE_GRANTS gives WITH_HIERARCHY of a SELECT. ROLE_ROUTINE_GRANTS takes the routine's name from the privilege table, which holds it, and its last subquery is closed as the draft leaves it open. |
 | Other views | 11:2006 draft Clause 5 | Where a view of ISO/IEC 9075:1992 tests CURRENT_USER as a grantee, a grantor or a schema's owner, an enabled role passes the test too, as the draft's views read ENABLED_ROLES. The privilege views test grantee and grantor together before the catalog, as the draft parenthesizes them. |
 
 The Information Schema's views of roles follow the 2006 draft of ISO/IEC

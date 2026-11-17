@@ -428,6 +428,8 @@ fn condition_number(n: &ValueSpecification, valued: &Valued<'_>) -> Result<i128>
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => Err(not_exact()),
     }

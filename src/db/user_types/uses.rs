@@ -32,7 +32,18 @@ impl State {
     /// anything references it [SR4]; -910 if, with `cascade`, a column of
     /// it is still there.
     pub(in crate::db) fn drop_user_type(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
-        self.user_type_named(qn, "§11.59 SR3")?;
+        match self.catalog.structured_type(qn).cloned() {
+            // [SR4c to SR4e, SR4f iv] What a structured type has more.
+            Some(d) if !cascade => self.structured_unreferenced(&d)?,
+            Some(_) => {}
+            None => {
+                self.user_type_named(qn, "§11.59 SR3")?;
+                // [SR4e, SR4f iv] Its transform groups and casts.
+                if !cascade {
+                    self.no_transform_or_cast(qn)?;
+                }
+            }
+        }
         let gone = self.types_based_on(qn);
         // [SR4g] The routines of them, or whose bodies reference them.
         let routines = self.routines_lost_with(&gone);
@@ -41,7 +52,9 @@ impl State {
                 "[ISO/IEC 9075-2:2023 §11.59 SR4g] routine {r} references type {qn}, so it is dropped only with CASCADE"
             )));
         }
-        let mut dropped = self.drop_routines(&routines)?;
+        // [SR4d] With CASCADE, the typed tables of them.
+        let mut dropped = self.drop_typed_tables(&gone)?;
+        dropped.absorb(self.drop_routines(&routines)?);
         let after = self.without_types(&gone);
         let abandoned = self.unbound_in(&after, &|_| true, &|_| true);
         let columns = self.columns_based_on(&gone, &|_| true);
@@ -91,18 +104,52 @@ impl State {
         columns
     }
 
-    /// `qn` and each user-defined type whose source type is based on it.
+    /// [ISO/IEC 9075-2:2023 §4.2] `qn` and each user-defined type based on
+    /// it: a distinct type whose source type is, a structured type that is
+    /// a subtype of it or has an attribute that is, and those based on
+    /// them in turn, each pass taking one more type at least.
     fn types_based_on(&self, qn: &QualifiedName) -> Vec<QualifiedName> {
         let catalog = &*self.catalog;
-        catalog.user_types().into_iter().filter(|t| t.name == *qn || based_on(&t.source, qn)).map(|t| t.name.clone()).collect()
+        let mut gone = vec![qn.clone()];
+        let distinct = catalog.user_types();
+        let structured = catalog.structured_types();
+        for _ in 0..=distinct.len().saturating_add(structured.len()) {
+            let on = |t: &crate::value::DataType| gone.iter().any(|g| based_on(t, g));
+            let mut next: Vec<QualifiedName> =
+                distinct.iter().filter(|t| !gone.contains(&t.name) && on(&t.source)).map(|t| t.name.clone()).collect();
+            let of = |t: &&&crate::catalog::StructuredDesc| {
+                !gone.contains(&t.name) && (gone.iter().any(|g| t.is_proper_subtype_of(g)) || t.attributes.iter().any(|a| on(&a.data_type)))
+            };
+            next.extend(structured.iter().filter(of).map(|t| t.name.clone()));
+            if next.is_empty() {
+                break;
+            }
+            gone.extend(next);
+        }
+        gone.retain(|t| catalog.user_type(t).is_some() || catalog.structured_type(t).is_some());
+        gone
     }
 
-    /// The definitions without the types `gone`.
+    /// The definitions without the types `gone`, their orderings,
+    /// transforms and the casts from and to them [§11.59 GR2 to GR6].
     fn without_types(&self, gone: &[QualifiedName]) -> State {
         let mut after = self.clone();
         let mut catalog = self.catalog.duplicate();
+        let casts: Vec<(crate::value::DataType, crate::value::DataType)> = (self.catalog.casts().into_iter())
+            .filter(|c| {
+                gone.iter()
+                    .any(|g| super::super::structured::names_type(&c.source, g) || super::super::structured::names_type(&c.target, g))
+            })
+            .map(|c| (c.source.clone(), c.target.clone()))
+            .collect();
+        for (source, target) in &casts {
+            catalog.remove_cast(source, target);
+        }
         for qn in gone {
             catalog.remove_user_type(qn);
+            catalog.remove_structured_type(qn);
+            catalog.remove_ordering(qn);
+            catalog.put_transforms(qn, Vec::new());
         }
         after.catalog = Arc::from(catalog);
         after
@@ -112,8 +159,10 @@ impl State {
     /// are based on any of `types`.
     fn columns_based_on(&self, types: &[QualifiedName], within: &dyn Fn(&str) -> bool) -> Vec<Column> {
         let mut columns = Vec::new();
-        for t in self.catalog.tables().into_iter().filter(|t| within(&t.name.auth)) {
-            let of = t.columns.iter().filter(|c| types.iter().any(|qn| based_on(&c.data_type, qn)));
+        // A typed table of a type lost goes whole, none of its columns alone.
+        let whole = |t: &crate::catalog::TableDesc| t.typed.as_ref().is_some_and(|d| types.contains(&d.udt));
+        for t in self.catalog.tables().into_iter().filter(|t| within(&t.name.auth) && !whole(t)) {
+            let of = t.columns.iter().filter(|c| types.iter().any(|qn| crate::db::structured::names_type(&c.data_type, qn)));
             columns.extend(of.map(|c| (t.name.clone(), c.name.clone())));
         }
         columns

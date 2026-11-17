@@ -28,7 +28,7 @@ use super::program::{Hosted, hosted_rows};
 use crate::ast::{
     CallStatement, Composite, ElementPosition, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification,
 };
-use crate::binder::{Context, OutColumn, assignable, bind_argument, definition_of, qualify, resolve_procedure, sql_statement};
+use crate::binder::{Context, OutColumn, bind_argument, definition_of, qualify, resolve_procedure, sql_statement};
 use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of, routine_path};
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::exec::execute;
@@ -131,8 +131,8 @@ fn defaulted<T>(feature: &str, rule_of: u8, at: usize) -> Result<T> {
 /// parameter's may take by store assignment, a `?` of the parameter's.
 fn input(cx: Context<'_>, p: &SqlParameter, v: &ValueExpression) -> Result<Expr> {
     let (bound, t) = bind_argument(cx, v, &p.data_type)?;
-    if assignable(&p.data_type, &t) {
-        return Ok(bound);
+    if let Some(assigned) = crate::binder::assigned_argument(cx, (bound, &t), &p.data_type)? {
+        return Ok(assigned);
     }
     Err(rule(format!(
         "[ISO/IEC 9075-2:2023 §9.18 SR9h v, §9.2 SR2] a {t} argument cannot be stored in parameter {} ({})",

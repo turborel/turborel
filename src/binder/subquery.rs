@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use super::composite::anonymous;
-use super::composite::field_of;
+use super::composite::refinable;
 use super::order_by::ordered_query;
 use super::query::Nesting;
 use super::set_functions::column_references;
@@ -204,6 +204,9 @@ impl Binder<'_> {
         if let Some(field) = self.field_chain(cs, scope)? {
             return Ok(field);
         }
+        if let Some(refined) = self.column_basis(cs, scope)? {
+            return Ok(refined);
+        }
         if let Some((pos, t, _)) = self.local(cs)? {
             return Ok((self.column_in(cs, (pos, &t), scope)?, t));
         }
@@ -301,14 +304,47 @@ impl Binder<'_> {
     pub(super) fn row_basis(&self, (first, second): (&str, &str), at: usize) -> Option<ColumnSpecification> {
         let qualifier = Some(TableName { auth: None, ident: first.to_owned(), at });
         let basis = ColumnSpecification { qualifier, column: second.to_owned(), catalog: None, at };
-        matches!(self.local(&basis), Ok(Some((_, DataType::Row(_), _)))).then_some(basis)
+        matches!(self.local(&basis), Ok(Some((_, t, _))) if refinable(&t)).then_some(basis)
+    }
+
+    /// The column `name`, of no table named, written at `at`, if it is a
+    /// refinable column of a table of this query [ISO/IEC 9075-2:2023 §6.6
+    /// SR6, SR9b]: the basis, of length 1, of a chain it begins.
+    pub(super) fn lone_basis(&self, name: &str, at: usize) -> Option<ColumnSpecification> {
+        let basis = ColumnSpecification { qualifier: None, column: name.to_owned(), catalog: None, at };
+        matches!(self.local(&basis), Ok(Some((_, t, _))) if refinable(&t)).then_some(basis)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.6 SR9b, SR9c, SR11] `cs` of two or three
+    /// `<identifier>`s whose first is a refinable column of this query, of
+    /// no table named: the rest its fields, attributes or methods in turn.
+    /// None if its first is no such column, so it is a column's.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it is also a column of the table its first names,
+    /// as exactly one basis is [SR9c].
+    fn column_basis(&self, cs: &ColumnSpecification, scope: Scope<'_>) -> Result<Option<(Expr, DataType)>> {
+        let (first, rest) = match (&cs.catalog, &cs.qualifier) {
+            (None, Some(TableName { auth: None, ident, .. })) => (ident, vec![cs.column.clone()]),
+            (None, Some(TableName { auth: Some(a), ident, .. })) => (a, vec![ident.clone(), cs.column.clone()]),
+            (Some(_), _) | (None, None) => return Ok(None),
+        };
+        let Some(basis) = self.lone_basis(first, cs.at) else { return Ok(None) };
+        if matches!(self.local(cs), Ok(Some(_))) {
+            let written = written(cs);
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §6.6 SR9c] {written} is both a column of a table and a refinement of column {first}"
+            )));
+        }
+        self.fields_of(&basis, &rest, scope).map(Some)
     }
 
     /// The column `basis` of a row type, then each of its `fields` in turn
     /// [ISO/IEC 9075-2:2023 §6.6 SR11, §6.16].
     pub(super) fn fields_of(&self, basis: &ColumnSpecification, fields: &[String], scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let bound = self.column_expr(basis, scope)?;
-        fields.iter().try_fold(bound, |b, f| field_of(b, f).or_at(basis.at))
+        fields.iter().try_fold(bound, |b, f| self.refined(b, f).or_at(basis.at))
     }
 
     /// [ISO/IEC 9075-2:2023 §6.6 SR9b iv 2, v, SR9c] `cs` of four
@@ -340,6 +376,11 @@ impl Binder<'_> {
         };
         if let Some(basis) = self.row_basis((first, second), at) {
             return self.fields_of(&basis, parts.get(2..).unwrap_or_default(), scope);
+        }
+        // [§6.6 SR9b] a basis of length 1: a refinable column of no table
+        // named, the rest its fields, attributes or methods.
+        if let Some(basis) = self.lone_basis(first, at) {
+            return self.fields_of(&basis, parts.get(1..).unwrap_or_default(), scope);
         }
         let Some(outer) = self.outer else {
             let written = parts.join(".");

@@ -57,6 +57,7 @@ impl ValueExpression {
             ValueExpression::Case(case) => case.for_each_child(f),
             ValueExpression::Boolean(c) => c.for_each_value(f),
             ValueExpression::Composite(c, _) => c.for_each_child(f),
+            ValueExpression::Structured(s, _) => s.for_each_child(f),
             ValueExpression::Window(w) => w.for_each_child(f),
             ValueExpression::NestedWindow(n) => n.for_each_child(f),
         }
@@ -201,6 +202,7 @@ impl Predicate {
             }
             Predicate::InSubquery { value, .. }
             | Predicate::Set { value, .. }
+            | Predicate::Type { value, .. }
             | Predicate::Null { value, .. }
             | Predicate::Quantified { value, .. }
             | Predicate::Match { value, .. } => {
@@ -228,6 +230,7 @@ impl Predicate {
             | Predicate::Member { .. }
             | Predicate::Submultiset { .. }
             | Predicate::Set { .. }
+            | Predicate::Type { .. }
             | Predicate::Null { .. } => None,
         }
     }

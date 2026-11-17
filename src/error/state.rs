@@ -156,6 +156,18 @@ impl SqlState {
     pub const ERROR_IN_ASSIGNMENT: SqlState = SqlState(*b"22005");
     /// Data exception: division by zero.
     pub const DIVISION_BY_ZERO: SqlState = SqlState(*b"22012");
+    /// [ISO/IEC 9075-2:2023 §24.1, Table 38] Data exception, most specific
+    /// type mismatch.
+    pub const MOST_SPECIFIC_TYPE_MISMATCH: SqlState = SqlState(*b"2200G");
+    /// [ISO/IEC 9075-2:2023 §24.1, Table 38] Data exception, null value
+    /// substituted for mutator subject parameter.
+    pub const NULL_MUTATOR_SUBJECT: SqlState = SqlState(*b"2202D");
+    /// [ISO/IEC 9075-2:2023 §24.1, Table 38] Invalid target type
+    /// specification.
+    pub const INVALID_TARGET_TYPE: SqlState = SqlState(*b"0D000");
+    /// [ISO/IEC 9075-2:2023 §24.1, Table 38] Invalid transform group name
+    /// specification.
+    pub const INVALID_TRANSFORM_GROUP_NAME: SqlState = SqlState(*b"0S000");
     /// Data exception: invalid preceding or following size in window
     /// function [ISO/IEC 9075-2:2023 §7.15 GR5b].
     pub const INVALID_PRECEDING_OR_FOLLOWING_SIZE: SqlState = SqlState(*b"22013");

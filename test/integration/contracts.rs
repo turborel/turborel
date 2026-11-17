@@ -57,6 +57,7 @@ fn table_desc(auth: &str, ident: &str, engine: &str) -> TableDesc {
         },
     ];
     TableDesc {
+        typed: None,
         name: QualifiedName { auth: auth.into(), ident: ident.into() },
         columns,
         constraints: vec![],
@@ -164,6 +165,7 @@ fn memory_catalog_keeps_the_catalog_contract() {
     assert!(grantees(&*copy, &t).is_empty(), "the duplicate is independent");
     let v = QualifiedName { auth: "A".into(), ident: "V".into() };
     let view = ViewDesc {
+        typed: None,
         name: v.clone(),
         columns: table_desc("A", "V", "").columns,
         query: "SELECT * FROM T".into(),

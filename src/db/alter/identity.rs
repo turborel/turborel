@@ -55,8 +55,11 @@ impl State {
                 }
                 c.generated = None;
             }
-            AlterColumnAction::SetDefault(_) | AlterColumnAction::DropDefault => {
-                return Err(crate::db::api("[DESIGN] a default is altered by db/defaults.rs"));
+            AlterColumnAction::SetDefault(_)
+            | AlterColumnAction::DropDefault
+            | AlterColumnAction::AddScope(_)
+            | AlterColumnAction::DropScope(_) => {
+                return Err(crate::db::api("[DESIGN] a default is altered by db/defaults.rs, a scope by db/alter/scope.rs"));
             }
         }
         Ok(())

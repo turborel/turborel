@@ -175,16 +175,17 @@ pub struct Assignment {
 }
 
 /// [ISO/IEC 9075-4:2006 draft §14.5] `<assignment target>` ::= `<target
-/// specification>` | `<modified field reference>`, of those implemented:
-/// no `<mutator reference>`, which is of a structured type.
+/// specification>` | `<modified field reference>` | `<mutator reference>`,
+/// which the binder tells apart by the type of each part.
 #[derive(Debug, Clone)]
 pub struct AssignmentTarget {
     /// The `<target specification>`: an SQL variable, an SQL parameter, a
     /// new transition variable's column, or an element of an array one of
     /// them holds.
     pub target: ParameterSpecification,
-    /// Of a `<modified field reference>`, each `<field name>` after the
-    /// target, the outermost first, and where it is written (Feature T051).
+    /// Of a `<modified field reference>` or a `<mutator reference>`, each
+    /// `<field name>` or `<method name>` after the target, the outermost
+    /// first, and where it is written (Features T051, S023).
     pub fields: Vec<Label>,
 }
 

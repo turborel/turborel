@@ -62,6 +62,14 @@ const LOB_LOCATOR: u8 = 21;
 /// count and then each element's value, in an order implementation-
 /// dependent [ISO/IEC 9075-2:2023 §4.12.3] (RULES.md D80).
 const MULTISET: u8 = 22;
+/// [ISO/IEC 9075-2:2023 §4.9.3] A structured type, then its name and its
+/// proper supertypes' names, their count first; a value of one, its most
+/// specific type's schema and name, then its attributes as a row's values
+/// (RULES.md D81).
+const STRUCTURED: u8 = 23;
+/// [ISO/IEC 9075-2:2023 §4.11] A reference type, then its referenced type
+/// as a structured type's names and its scope; a reference, its octets.
+const REFERENCE: u8 = 24;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -140,27 +148,35 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
             put_type(b, &m.element);
             return;
         }
-        DataType::Row(row) => {
-            b.put_u8(ROW);
-            put_count(b, row.fields.len());
-            for f in &row.fields {
-                b.put_str(&f.name);
-                put_type(b, &f.data_type);
-            }
-            return;
-        }
+        DataType::Row(row) => return put_row_type(b, row),
         DataType::Distinct(d) => return put_type(b, &d.source),
-        DataType::Extension(e) => {
-            b.put_u8(EXTENSION);
-            b.put_str(e.kind.name());
-            put_count(b, e.params.values().len());
-            for p in e.params.values() {
-                b.put_u32(*p);
-            }
-            return;
-        }
+        DataType::Structured(_) => b.put_u8(STRUCTURED),
+        DataType::Reference(_) => b.put_u8(REFERENCE),
+        DataType::Extension(e) => return put_extension_type(b, e),
     }
     t.kind().put_params(t, b);
+}
+
+/// A row type: its tag, then its fields' count, and each field's name and
+/// type.
+fn put_row_type(b: &mut Vec<u8>, row: &types::RowType) {
+    b.put_u8(ROW);
+    put_count(b, row.fields.len());
+    for f in &row.fields {
+        b.put_str(&f.name);
+        put_type(b, &f.data_type);
+    }
+}
+
+/// A type beyond the standard: its tag, its kind's name, then its
+/// parameters' count and each parameter.
+fn put_extension_type(b: &mut Vec<u8>, e: &ExtensionType) {
+    b.put_u8(EXTENSION);
+    b.put_str(e.kind.name());
+    put_count(b, e.params.values().len());
+    for p in e.params.values() {
+        b.put_u32(*p);
+    }
 }
 
 /// A parameter of a type beyond the standard.
@@ -187,6 +203,8 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         INTERVAL => Some(&types::INTERVAL_DAY_TIME),
         CLOB => Some(&types::CLOB),
         BLOB => Some(&types::BLOB),
+        STRUCTURED => Some(&types::STRUCTURED),
+        REFERENCE => Some(&types::REFERENCE),
         _ => None,
     }
 }
@@ -279,7 +297,15 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
             Moment::Timestamp => TIMESTAMP,
         },
         Value::Interval(_) => INTERVAL,
+        Value::Reference(_) => REFERENCE,
         Value::Lob(l) => return put_lob(b, l),
+        Value::Structured(st) => {
+            b.put_u8(STRUCTURED);
+            b.put_str(&st.of.schema);
+            b.put_str(&st.of.name);
+            put_row(b, &st.attributes);
+            return;
+        }
         Value::Array(parts) | Value::Multiset(parts) | Value::Row(parts) => {
             let tag = if matches!(v, Value::Array(_)) {
                 ARRAY
@@ -292,24 +318,27 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
             put_row(b, parts);
             return;
         }
-        Value::Extension(e) => {
-            b.put_u8(EXTENSION);
-            // One received unregistered goes back as it came.
-            let (name, text, bytes) = types::parts(v).filter(|_| e.kind.name() == types::UNREGISTERED.name()).unwrap_or_else(|| {
-                let mut bytes = Vec::new();
-                e.kind.put_value(v, &mut bytes);
-                (e.kind.name().to_owned(), e.kind.text(v), bytes)
-            });
-            b.put_str(&name);
-            b.put_str(&text);
-            b.put_bytes(&bytes);
-            return;
-        }
+        Value::Extension(e) => return put_extension_value(b, (v, e)),
     };
     b.put_u8(tag);
     if let Some(kind) = v.kind() {
         kind.put_value(v, b);
     }
+}
+
+/// A value of a type beyond the standard, `v` of the extension value
+/// `e`: its tag, its kind's name, the value as text and its kind's bytes;
+/// one received unregistered goes back as it came.
+fn put_extension_value(b: &mut Vec<u8>, (v, e): (&Value, &types::ExtensionValue)) {
+    b.put_u8(EXTENSION);
+    let (name, text, bytes) = types::parts(v).filter(|_| e.kind.name() == types::UNREGISTERED.name()).unwrap_or_else(|| {
+        let mut bytes = Vec::new();
+        e.kind.put_value(v, &mut bytes);
+        (e.kind.name().to_owned(), e.kind.text(v), bytes)
+    });
+    b.put_str(&name);
+    b.put_str(&text);
+    b.put_bytes(&bytes);
 }
 
 fn value(r: &mut Reader<'_>) -> Result<Value> {
@@ -338,6 +367,10 @@ fn value(r: &mut Reader<'_>) -> Result<Value> {
         ARRAY => r.nested(|r| Ok(Value::Array(counted(r, value)?.into()))),
         MULTISET => r.nested(|r| multiset(counted(r, value)?, r)),
         ROW => r.nested(|r| Ok(Value::Row(counted(r, value)?.into()))),
+        STRUCTURED => r.nested(|r| {
+            let of = types::UdtName { schema: r.str()?, name: r.str()? };
+            Ok(Value::Structured(std::sync::Arc::new(types::Structured::new(std::sync::Arc::new(of), counted(r, value)?.into()))))
+        }),
         tag => kind_of(tag).ok_or_else(|| r.corrupt("no value has this tag"))?.value(r),
     }
 }
@@ -402,7 +435,9 @@ pub fn row_size(row: &Row) -> usize {
         Value::Datetime(_) => 15,
         // Its tag, its qualifier's four words, and its units.
         Value::Interval(_) => 33,
-        Value::Array(_) | Value::Multiset(_) | Value::Row(_) | Value::Extension(_) => {
+        // Its tag, then its octets after their count.
+        Value::Reference(r) => r.bytes().len().saturating_add(5),
+        Value::Array(_) | Value::Multiset(_) | Value::Row(_) | Value::Structured(_) | Value::Extension(_) => {
             let mut b = Vec::new();
             put_value(&mut b, v);
             b.len()

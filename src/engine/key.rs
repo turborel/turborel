@@ -63,6 +63,8 @@ pub fn restores(t: &DataType) -> bool {
         | DataType::Approximate { .. }
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Extension(_) => false,
     }

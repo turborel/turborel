@@ -207,6 +207,8 @@ fn kept(t: &DataType) -> bool {
         | DataType::Lob { .. }
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Extension(_) => false,
     }

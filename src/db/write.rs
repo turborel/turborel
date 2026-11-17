@@ -316,6 +316,10 @@ impl Session {
         };
         if !matches!(query.body(), QueryExpression::Values(_)) {
             for (n, (out, col)) in bound.columns.iter().zip(target.columns()).enumerate() {
+                // [ISO/IEC 9075-2:2023 §9.2 SR3] or by an appropriate cast.
+                if binder::assignment_cast(&*st.catalog, &out.data_type, &col.data_type).is_some() {
+                    continue;
+                }
                 let checked = binder::check_assignment(col, &out.data_type.clone(), INSERT_RULE);
                 match written.get(n) {
                     Some(&at) => checked.or_at(at)?,
@@ -434,14 +438,16 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
     Ok((Written { bound, set, rows: ObjectRows::Bound, values }, entries))
 }
 
-/// [X3.135-1986 §8.12] the searched UPDATE bound as `w`: the rows it
-/// updated [ISO/IEC 9075:1992 §18.1 GR1e], none for no data [X3.135-1986
-/// §7.3 GR3a iv].
-pub(super) fn update_searched(cx: StatementContext<'_>, w: Written, mut effects: Effects<'_>) -> Result<usize> {
+/// [X3.135-1986 §8.12] the searched UPDATE bound as `w`, the number of
+/// rows it updated [ISO/IEC 9075:1992 §18.1 GR1e], none for no data
+/// [X3.135-1986 §7.3 GR3a iv], what it did noted in `effects`, the
+/// statement not yet ended. None if it found no row and no trigger may
+/// fire, so nothing is to be checked.
+pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Effects<'_>) -> Result<Option<usize>> {
     let StatementContext { st, tx } = cx;
     let (w, objects) = object_rows(st, tx, w)?;
     if objects.is_empty() && effects.triggered.is_none() {
-        return Ok(0);
+        return Ok(None);
     }
     let columns = set_columns(&w);
     let hosted = Hosted::new(effects.host, cx);
@@ -490,18 +496,29 @@ pub(super) fn update_searched(cx: StatementContext<'_>, w: Written, mut effects:
             None => checked(new),
         })?;
     }
-    st.end_statement(tx, effects)?;
-    Ok(changes.len().saturating_sub(again.values().filter(|r| r.is_none()).count()))
+    Ok(Some(changes.len().saturating_sub(again.values().filter(|r| r.is_none()).count())))
 }
 
 /// [X3.135-1986 §8.5] the searched DELETE bound as `w`: the rows it
 /// deleted [ISO/IEC 9075:1992 §18.1 GR1e], none for no data [X3.135-1986
 /// §7.3 GR3a iv].
 pub(super) fn delete_searched(cx: StatementContext<'_>, w: Written, mut effects: Effects<'_>) -> Result<usize> {
+    match delete_rows(cx, w, &mut effects)? {
+        Some(n) => {
+            cx.st.end_statement(cx.tx, effects)?;
+            Ok(n)
+        }
+        None => Ok(0),
+    }
+}
+
+/// `delete_searched`'s rows deleted, as `update_rows` updates them, the
+/// statement not yet ended.
+pub(super) fn delete_rows(cx: StatementContext<'_>, w: Written, effects: &mut Effects<'_>) -> Result<Option<usize>> {
     let StatementContext { st, tx } = cx;
     let (w, mut objects) = object_rows(st, tx, w)?;
     if objects.is_empty() && effects.triggered.is_none() {
-        return Ok(0);
+        return Ok(None);
     }
     // [ISO/IEC 9075-2:2023 §15.8 GR2] its BEFORE triggers first.
     effects.before_delete(cx, &w.bound.table, &mut objects)?;
@@ -517,8 +534,7 @@ pub(super) fn delete_searched(cx: StatementContext<'_>, w: Written, mut effects:
             count = count.saturating_add(1);
         }
     }
-    st.end_statement(tx, effects)?;
-    Ok(count)
+    Ok(Some(count))
 }
 
 /// Where an INSERT's `query` of another degree than its `m` columns is

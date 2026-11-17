@@ -400,6 +400,7 @@ mod tests {
     /// The description of `A.E`, of no columns.
     fn state_desc() -> TableDesc {
         TableDesc {
+            typed: None,
             name: QualifiedName { auth: "A".into(), ident: "E".into() },
             columns: vec![],
             constraints: vec![],

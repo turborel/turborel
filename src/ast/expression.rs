@@ -233,6 +233,16 @@ pub enum Predicate {
         /// IS NOT A SET was written \[SR3\].
         not: bool,
     },
+    /// [ISO/IEC 9075-2:2023 §8.19] `<type predicate>` ::= `<row value
+    /// predicand>` IS \[NOT\] OF ( `<type list>` )
+    Type {
+        /// The value tested: a row of one value \[SR1\].
+        value: RowValue,
+        /// The types.
+        types: super::TypeList,
+        /// IS NOT OF was written.
+        not: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +385,9 @@ pub enum ValueExpression {
         /// read, so it may call a function registered.
         extension: bool,
     },
+    /// [ISO/IEC 9075-2:2023 §6.18 to §6.24] An expression of user-defined
+    /// types and references, and where it begins in the statement.
+    Structured(Box<super::StructuredExpression>, usize),
     /// [ISO/IEC 9075-2:2023 §6.10] A `<window function>`.
     Window(Box<WindowFunction>),
     /// [ISO/IEC 9075-2:2023 §6.11] A `<nested window function>`.

@@ -7,7 +7,7 @@
 use super::*;
 use crate::ast::{
     DataAccess, DiagnosticsInformation, DropObject, ElementPosition, GetDiagnostics, Literal, PrivilegeObject, ReturnStatement,
-    SchemaStatement, SqlArgument,
+    RoutineType, SchemaStatement, SqlArgument,
 };
 
 /// `text`, parsed by `parser` as one statement: its routine definition and

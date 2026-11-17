@@ -39,7 +39,19 @@ impl State {
         // Those not null, which with no match type or FULL are all of them.
         let (columns, wanted): (Vec<usize>, Vec<Value>) =
             fk.referenced.iter().zip(values).filter(|(_, v)| !v.is_null()).map(|(&c, v)| (c, v.clone())).unzip();
-        self.has_row_with(tx, &fk.table, &columns, &wanted)
+        self.family_has_row_with(tx, &fk.table, &columns, &wanted)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §4.17.9] Whether `table`, or one of its proper
+    /// subtables, whose rows' superrows are its rows, has a row of `values`
+    /// in `columns`.
+    fn family_has_row_with(&self, tx: &Txn, table: &QualifiedName, columns: &[usize], values: &[Value]) -> Result<bool> {
+        for member in self.family(table) {
+            if self.has_row_with(tx, &member, columns, values)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether a row of `table` has `columns` equal to `values` [§8.2],
@@ -178,7 +190,7 @@ impl State {
                 return Ok(false);
             }
         }
-        if self.has_row_with(tx, &fk.table, &fk.referenced, &key)? {
+        if self.family_has_row_with(tx, &fk.table, &fk.referenced, &key)? {
             return Ok(false);
         }
         self.has_row_with(tx, &child.name, &fk.columns, &key)

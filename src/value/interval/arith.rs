@@ -78,6 +78,8 @@ pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> 
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => factor.clone(),
     };

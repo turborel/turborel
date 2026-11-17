@@ -240,3 +240,93 @@ fn assignment_rules_cite_their_standards() {
     assert_eq!(assignment_rule(sql92, sql2023), "ISO/IEC 9075:1992 §13.8 GR4b iii; ISO/IEC 9075-2:2023 §9.2 GR3b ix 2");
     assert_eq!(assignment_rule(x3, sql2023), "X3.135-1986 §8.7 GR7; ISO/IEC 9075-2:2023 §9.2 GR3b ix 2");
 }
+
+/// Verifies: [DESIGN] RULES.md D53: CHARACTER VARYING and DECFLOAT, given a
+/// value of another kind, refuse to store or key it as every built-in kind
+/// does.
+#[test]
+fn varying_and_decfloat_refuse_other_kinds() {
+    refuses(&DataType::varying(3), &Value::Exact(Decimal::new(1, 0)));
+    refuses(&DataType::DecFloat { precision: 16 }, &Value::Char("A".into()));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.13 GR6, §5.3, §4.2.3]
+/// CHARACTER VARYING's kind compares strings padded, buckets them without
+/// trailing spaces, writes a literal of its quotes doubled and has no
+/// position; CAST to it of an approximate number gives its literal, of a
+/// datetime its literal's string and of a value beyond the standard its
+/// text, cut to the length.
+#[test]
+fn varying_compares_buckets_and_casts() {
+    let (a, b) = (Value::Char("ab".into()), Value::Char("ab  ".into()));
+    assert_eq!(VARYING.compare(&a, &b), Some(Ordering::Equal));
+    assert_eq!(VARYING.compare(&a, &Value::Exact(Decimal::new(1, 0))), None);
+    assert_eq!(VARYING.bucket(&b), Some(Bucket::Char("ab".into())));
+    assert_eq!(VARYING.literal(&Value::Char("it's".into())), "'it''s'");
+    assert_eq!(VARYING.literal(&Value::Exact(Decimal::new(1, 0))), "1");
+    assert_eq!(VARYING.text(&a), "ab");
+    assert!(VARYING.position(&a).is_none());
+    let t = DataType::varying(10);
+    assert_eq!(VARYING.cast(Value::Approx(1.5), &t).unwrap().to_string(), "1.5E0");
+    let day = crate::value::datetime::parse(crate::value::datetime::Moment::Date, "2024-02-29").unwrap();
+    let date = Value::Datetime(crate::value::Datetime::of_local(crate::value::datetime::Moment::Date, day.local, 0, false, 0));
+    assert_eq!(VARYING.cast(date, &t).unwrap().to_string(), "2024-02-29");
+    assert_eq!(VARYING.cast(foreign(), &DataType::varying(2)).unwrap().to_string(), "AB", "its text, cut");
+    assert_eq!(code(VARYING.cast(Value::Binary(Binary::default()), &t)), Some(Code::Data));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.2 GR3b xv, §6.13 GR10]
+/// DECFLOAT's kind is named DECFLOAT, compares and buckets numbers of any
+/// kind as numbers, assigns a number rounded and refuses a value of
+/// another kind (22005); an exact number
+/// is its own anchor, an approximate one is none.
+#[test]
+fn decfloat_compares_assigns_and_anchors() {
+    let t = DataType::DecFloat { precision: 16 };
+    let (d, e) = (Value::DecFloat(crate::value::DecFloat::of_decimal(&Decimal::new(15, 1)).unwrap()), Value::Exact(Decimal::new(15, 1)));
+    assert_eq!(DECFLOAT.name(), DECFLOAT_NAME);
+    assert_eq!(DECFLOAT.compare(&d, &e), Some(Ordering::Equal));
+    assert_eq!(DECFLOAT.bucket(&d), crate::value::bucket(&e));
+    assert_eq!(DECFLOAT.text(&d), d.to_string());
+    assert_eq!(DECFLOAT.assign(e.clone(), &t, "store").unwrap().to_string(), d.to_string());
+    let state = |r: Result<Value>| r.unwrap_err().sqlstate().as_str().to_owned();
+    assert_eq!(state(DECFLOAT.assign(Value::Char("1".into()), &t, "store")), "22005");
+    let (anchor, exact) = DECFLOAT.anchor(&e, &t).unwrap();
+    assert!(exact && compare(&anchor, &e) == Some(Ordering::Equal));
+    assert!(DECFLOAT.anchor(&Value::Approx(1.5), &t).is_none());
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.10, §4.12, §8.2 GR1b,
+/// §9.12 SR3] the kinds of ROW, ARRAY and MULTISET: their names; values
+/// compared and bucketed part by part, a multiset's in any order; their
+/// text their literal; no position; no array or multiset in a key, so a
+/// key of one is malformed and each is its own anchor; a row's key of a
+/// field neither null nor present malformed; a row type of no fields, or
+/// an array type of no maximum cardinality, malformed.
+#[test]
+fn composite_kinds_compare_bucket_and_refuse_keys() {
+    let n = |u: i128| Value::Exact(Decimal::new(u, 0));
+    let row = Value::Row(vec![n(1), Value::Char("a".into())].into());
+    let array = Value::Array(vec![n(1), n(2)].into());
+    let bag = Value::Multiset(vec![n(2), n(1)].into());
+    let kinds: [(&dyn SqlType, &Value, &str); 3] = [(&ROW, &row, ROW_NAME), (&ARRAY, &array, ARRAY_NAME), (&MULTISET, &bag, MULTISET_NAME)];
+    for (k, v, name) in kinds {
+        assert_eq!(k.name(), name);
+        assert_eq!(k.compare(v, v), Some(Ordering::Equal), "{name}");
+        assert!(k.bucket(v).is_some(), "{name}");
+        assert_eq!(k.text(v), k.literal(v), "{name}");
+        assert!(k.position(v).is_none(), "{name}");
+    }
+    assert_eq!(MULTISET.bucket(&bag), MULTISET.bucket(&Value::Multiset(vec![n(1), n(2)].into())), "in any order");
+    let list = DataType::array(DataType::Boolean, 2);
+    assert_eq!(code(ARRAY.decode_key(&mut &[0_u8][..], &list)), Some(Code::Corrupt));
+    let (anchor, exact) = ARRAY.anchor(&array, &list).unwrap();
+    assert!(exact && anchor.to_literal() == array.to_literal());
+    let bags = DataType::multiset(DataType::Boolean);
+    assert_eq!(code(MULTISET.decode_key(&mut &[0_u8][..], &bags)), Some(Code::Corrupt));
+    assert!(MULTISET.anchor(&bag, &bags).is_some() && MULTISET.anchor(&n(1), &bags).is_none());
+    let pair = DataType::row(vec![Field { name: "X".into(), data_type: DataType::Boolean, unnamed: false }]);
+    assert_eq!(code(ROW.decode_key(&mut &[7_u8][..], &pair)), Some(Code::Corrupt), "neither null nor present");
+    assert_eq!(code(ROW.params(&mut Reader::new(&[0, 0, 0, 0], "parameters"))), Some(Code::Corrupt), "no fields");
+    assert_eq!(code(ARRAY.params(&mut Reader::new(&[0, 0, 0, 0], "parameters"))), Some(Code::Corrupt), "cardinality 0");
+}

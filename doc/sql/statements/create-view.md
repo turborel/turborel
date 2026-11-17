@@ -13,6 +13,10 @@ CREATE VIEW: define a viewed table
     CREATE VIEW <table name> [ ( <column name> [ { , <column name> }... ] ) ]
     AS <query expression>
     [ WITH [ CASCADED | LOCAL ] CHECK OPTION ]
+  | CREATE VIEW <table name> OF <user-defined type name> [ UNDER <superview name> ]
+    [ ( REF IS <column name> { USER GENERATED | SYSTEM GENERATED | DERIVED }
+        [ , <column name> WITH OPTIONS SCOPE <table name> ]... ) ]
+    AS <query expression>
 ```
 
 The `<query expression>` is any query; see [SELECT](select.md).
@@ -22,6 +26,12 @@ The `<query expression>` is any query; see [SELECT](select.md).
 CREATE VIEW defines a view: a table whose rows are those of its query,
 found again each time the view is read. The view's columns are named by
 its column list, or else as the query names them.
+
+A referenceable view, `OF` a structured type, has a self-referencing
+column and a column of each attribute, its query's columns in order,
+and `UNDER` a superview is its subview, read with it as a subtable is.
+Its references are made as REF IS says, USER GENERATED or DERIVED from
+its basis table's, and it is read-only.
 
 A view is updatable if its query is a query specification, of ORDER BY
 or none but of no OFFSET or FETCH FIRST, with no DISTINCT, whose select list names columns only, whose FROM clause names

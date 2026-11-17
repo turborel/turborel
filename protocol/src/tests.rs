@@ -248,3 +248,68 @@ fn a_failure_says_what_its_error_says() {
     assert_eq!(refused.to_string(), "SQLCODE -919 (SQLSTATE 08006): gone");
     assert_eq!((refused.sqlcode, refused.sqlstate.as_str(), refused.rule, refused.position), (-919_i32, "08006", None, None));
 }
+
+/// Verifies: [DESIGN] RULES.md D42, D45, D79: the types and values of the
+/// later kinds read back as written: DECFLOAT, CHARACTER VARYING, CLOB and
+/// BLOB, an array, a row and a distinct type, sent as its source; a large
+/// object held whole of each kind, one by its locator, and one neither,
+/// sent as locator 0; arrays, rows and a value of a type beyond the
+/// standard, unregistered; `row_size` is the bytes each row takes.
+#[test]
+fn later_types_and_values_read_back_as_written() {
+    use turborel::value::DecFloat;
+    use turborel::value::lob::{Lob, LobKind};
+    let column = |name: &str, data_type: DataType| Column { name: Some(name.into()), data_type, not_null: false };
+    let field = |name: &str, data_type: DataType| turborel::value::types::Field { name: name.into(), data_type, unnamed: false };
+    let columns = vec![
+        column("D", DataType::DecFloat { precision: 34 }),
+        column("V", DataType::varying(7)),
+        column("C", DataType::Lob { kind: LobKind::Character, length: 10, units: turborel::value::CharUnits::Octets }),
+        column("B", DataType::Lob { kind: LobKind::Binary, length: 1_048_576, units: turborel::value::CharUnits::Characters }),
+        column("A", DataType::array(DataType::array(DataType::Boolean, 2), 3)),
+        column("R", DataType::row(vec![field("X", DataType::character(1)), field("Y", DataType::Boolean)])),
+    ];
+    reply_round_trip(&Reply::Description(columns));
+    let distinct = DataType::distinct("S", "MONEY", DataType::varying(4));
+    let mut bytes = Vec::new();
+    Reply::Description(vec![column("M", distinct)]).encode(&mut bytes);
+    let mut source = Vec::new();
+    Reply::Description(vec![column("M", DataType::varying(4))]).encode(&mut source);
+    assert_eq!(bytes, source, "a distinct type is sent as its source");
+    let rows: Vec<Row> = vec![
+        vec![Value::DecFloat(DecFloat::of_decimal(&Decimal::new(-15, 1)).unwrap()), Value::Char("é".into())],
+        vec![Value::Lob(Lob::of_text("aé")), Value::Lob(Lob::of_octets(&[0, 0xff])), Value::Lob(Lob::empty(LobKind::Binary))],
+        vec![Value::Lob(Lob::of_locator(LobKind::Character, 7, (300, 200))), Value::Lob(Lob::of_reference(LobKind::Binary, 3, (9, 9)))],
+        vec![Value::Array(vec![Value::Bool(true), Value::Null].into()), Value::Row(vec![Value::Char("x".into())].into())],
+        vec![turborel::value::types::unregistered("POINT", "(1, 2)", &[1, 2])],
+    ];
+    reply_round_trip(&Reply::Rows(rows.clone()));
+    let mut sized = Vec::new();
+    Reply::Rows(rows.clone()).encode(&mut sized);
+    assert_eq!(HEADER + 4 + rows.iter().map(row_size).sum::<usize>(), sized.len(), "row_size is what a row takes");
+    let mut sent = Vec::new();
+    Reply::Rows(vec![vec![Value::Lob(Lob::of_reference(LobKind::Binary, 3, (9, 9)))]]).encode(&mut sent);
+    let (kind, body) = unframed(&sent, MAX_BODY).unwrap();
+    let Reply::Rows(read) = Reply::decode(kind, body).unwrap() else { panic!("not rows") };
+    let Some(Value::Lob(l)) = read.first().and_then(|r| r.first()) else { panic!("{read:?}") };
+    assert_eq!((l.locator(), l.octets()), (Some(0), 9), "neither held nor located: locator 0");
+}
+
+/// Verifies: [DESIGN] RULES.md D42, R-ERR-1: a malformed value or type of
+/// the later kinds is a connection failure: a large object of no kind, a
+/// character one not UTF-8, an array type of no maximum cardinality, and a
+/// row type of no fields.
+#[test]
+fn malformed_later_kinds_are_connection_failures() {
+    let failed = |e: SqlError| kind_of(&e);
+    // A Rows reply of one row of one value: the value's tag, then its bytes.
+    let one = |value: &[u8]| [&[1, 0, 0, 0, 1, 0, 0, 0][..], value].concat();
+    assert_eq!(Reply::decode(b'B', &one(&[20, 2, 0, 0, 0, 0])).map_err(failed).err(), Some(FAILED), "no such kind");
+    assert_eq!(Reply::decode(b'B', &one(&[20, 0, 1, 0, 0, 0, 0xff])).map_err(failed).err(), Some(FAILED), "not UTF-8");
+    assert!(Reply::decode(b'B', &one(&[20, 1, 1, 0, 0, 0, 0xff])).is_ok(), "a binary one of any octets");
+    // A Description of one unnamed column of the type given, nullable.
+    let described = |t: &[u8]| [&[1, 0, 0, 0, 0][..], t, &[0]].concat();
+    assert_eq!(Reply::decode(b'D', &described(&[16, 0, 0, 0, 0, 14])).map_err(failed).err(), Some(FAILED), "cardinality 0");
+    assert!(Reply::decode(b'D', &described(&[16, 1, 0, 0, 0, 14])).is_ok(), "cardinality 1");
+    assert_eq!(Reply::decode(b'D', &described(&[17, 0, 0, 0, 0])).map_err(failed).err(), Some(FAILED), "no fields");
+}

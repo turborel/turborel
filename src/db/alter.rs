@@ -25,6 +25,7 @@ mod columns;
 mod constraints;
 mod depending;
 mod identity;
+mod scope;
 mod storage;
 mod truncate;
 
@@ -38,7 +39,7 @@ use super::ddl::Dropped;
 use super::schema::constraint_index_name;
 use super::sequences::Epochs;
 use super::{State, api, rule};
-use crate::ast::{AlterAction, DropBehavior};
+use crate::ast::{AlterAction, AlterColumnAction, DropBehavior};
 use crate::binder::view_degree;
 use crate::catalog::{Actions, ConstraintKind, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, ViewDesc};
 use crate::error::{At, Result};
@@ -140,6 +141,9 @@ impl State {
             AlterAction::AddColumn(_) | AlterAction::DropColumn { .. } => {
                 let (dropped, built, reshape) = self.alter_columns((qn, names, zone), action, (made, epochs))?;
                 Ok((dropped, built, Some(reshape)))
+            }
+            AlterAction::AlterColumn { column, at, action: a @ (AlterColumnAction::AddScope(_) | AlterColumnAction::DropScope(_)) } => {
+                Ok((self.alter_scope((qn, names), column, a).or_at(*at)?, Made::default(), None))
             }
             AlterAction::AlterColumn { column, at, action } => {
                 self.alter_column((qn, zone), (column, *at), (action, epochs)).or_at(*at)?;

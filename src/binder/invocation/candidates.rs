@@ -10,7 +10,7 @@
 //! of its horizon, held or not, as no other is a subject routine of it.
 
 use super::super::{Binder, rule};
-use crate::catalog::{QualifiedName, Routine, RoutineKind, SqlRoutineDesc, UserTypeDesc, Who, owner_of};
+use crate::catalog::{QualifiedName, Routine, RoutineKind, SqlRoutineDesc, StructuredDesc, UserTypeDesc, Who, owner_of, usage_held};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::value::DataType;
@@ -24,6 +24,9 @@ pub enum Candidate<'a> {
     Sql(&'a SqlRoutineDesc),
     /// FNUDT or FNSDT of a distinct type.
     Cast(&'a UserTypeDesc, Routine),
+    /// [ISO/IEC 9075-2:2023 §11.51 GR3] The constructor function of an
+    /// instantiable structured type, of no parameter.
+    Constructor(&'a StructuredDesc),
 }
 
 impl Candidate<'_> {
@@ -34,6 +37,7 @@ impl Candidate<'_> {
             // [§11.51 GR2b] FNUDT's of the source type, FNSDT's of the type.
             Candidate::Cast(t, Routine::ToDistinct) => vec![t.source.clone()],
             Candidate::Cast(t, Routine::ToSource) => vec![t.data_type()],
+            Candidate::Constructor(_) => Vec::new(),
         }
     }
 
@@ -42,6 +46,9 @@ impl Candidate<'_> {
         match self {
             Candidate::Sql(r) => r.specific.clone(),
             Candidate::Cast(t, which) => QualifiedName { auth: t.name.auth.clone(), ident: t.routine(*which).specific.clone() },
+            Candidate::Constructor(t) => {
+                QualifiedName { auth: t.name.auth.clone(), ident: t.constructor.as_ref().map(|c| c.specific.clone()).unwrap_or_default() }
+            }
         }
     }
 
@@ -50,6 +57,7 @@ impl Candidate<'_> {
         match self {
             Candidate::Sql(r) => &r.name.auth,
             Candidate::Cast(t, _) => &t.name.auth,
+            Candidate::Constructor(t) => &t.name.auth,
         }
     }
 
@@ -61,6 +69,9 @@ impl Candidate<'_> {
         match self {
             Candidate::Sql(r) => who.includes(owner_of(&*db.catalog, &r.name.auth)) || held(db, r, who),
             Candidate::Cast(t, which) => t.execute_of(*which, who, owner_of(&*db.catalog, &t.name.auth)).0,
+            Candidate::Constructor(t) => {
+                t.constructor.as_ref().is_some_and(|c| usage_held(&c.execute, who, owner_of(&*db.catalog, &t.name.auth)).0)
+            }
         }
     }
 }
@@ -88,12 +99,22 @@ pub fn grantably_held(db: &State, r: &SqlRoutineDesc, who: Who<'_>) -> bool {
 /// [ISO/IEC 9075-2:2023 §9.18 SR5f] The functions named `name`: its
 /// schema's SQL-invoked functions of the name, then its distinct types'.
 pub fn functions_named<'a>(db: &'a State, name: &QualifiedName) -> Vec<Candidate<'a>> {
-    let mut found: Vec<Candidate<'a>> =
-        db.catalog.routines_named(name).into_iter().filter(|r| r.kind == RoutineKind::Function).map(Candidate::Sql).collect();
+    // [§10.4 SR] An SQL-invoked method is invoked by a method invocation
+    // alone, never by a routine invocation.
+    let mut found: Vec<Candidate<'a>> = db
+        .catalog
+        .routines_named(name)
+        .into_iter()
+        .filter(|r| r.kind == RoutineKind::Function && r.method.is_none())
+        .map(Candidate::Sql)
+        .collect();
     for t in db.catalog.user_types().into_iter().filter(|t| t.name.auth == name.auth) {
         let named = [Routine::ToDistinct, Routine::ToSource].into_iter().filter(|w| t.routine(*w).name == name.ident);
         found.extend(named.map(|w| Candidate::Cast(t, w)));
     }
+    // [§6.20 SR3] The constructor function of the type of the name.
+    let constructed = db.catalog.structured_type(name).filter(|t| t.constructor.as_ref().is_some_and(|c| c.name == name.ident));
+    found.extend(constructed.map(Candidate::Constructor));
     found
 }
 

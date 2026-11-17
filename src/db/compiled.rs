@@ -5,7 +5,7 @@
 use super::prepared::Keeping;
 use super::{Session, State};
 use crate::ast::CursorSpecification;
-use crate::binder::{DescribedKey, OutColumn, described_key};
+use crate::binder::{DescribedKey, OutColumn, described_key, family_in, member_plan};
 use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::logical::LogicalPlan;
@@ -64,15 +64,6 @@ impl Session {
         Ok(Compiled { columns, key, bound, trace, optimized, physical })
     }
 
-    /// `spec` compiled to run: of a prepared statement, from the plan it
-    /// keeps (`keeping`, RULES.md D45). Nothing is shown of it, so no text
-    /// is made.
-    fn compile_kept(&self, st: &State, spec: &CursorSpecification, params: &Params, keeping: Option<&Keeping<'_>>) -> Result<Compiled> {
-        let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
-        let (optimized, trace, physical) = plan(st, logical);
-        Ok(Compiled { columns, key: None, bound: String::new(), trace, optimized, physical })
-    }
-
     /// [X3.135-1986 §8.3 SR4b; ISO/IEC 9075:1992 §13.1 SR5, §7.9 SR12] The
     /// compiled specification of a cursor its text makes updatable, and
     /// the one table it reads, unless a subquery of its WHERE clause reads
@@ -84,18 +75,48 @@ impl Session {
         spec: &CursorSpecification,
         params: &Params,
         keeping: Option<&Keeping<'_>>,
-    ) -> Result<Option<(Compiled, QualifiedName)>> {
-        let c = self.compile_kept(st, spec, params, keeping)?;
-        let read = c.optimized.subquery_tables();
-        let own: Vec<QualifiedName> = c.optimized.tables().into_iter().filter(|t| !read.contains(t)).collect();
-        let [table] = own.as_slice() else { return Ok(None) };
+    ) -> Result<Option<Updating>> {
+        let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
+        // [ISO/IEC 9075-2:2023 §4.17.9] a typed table read with its proper
+        // subtables: each member's rows read by a plan of its own, the
+        // table's own first, as the cursor's.
+        let members = family_in(st, &logical).unwrap_or_default();
+        let others: Vec<LogicalPlan> = (1..members.len()).map(|k| member_plan(logical.clone(), &members, k)).collect();
+        let logical = if members.is_empty() { logical } else { member_plan(logical, &members, 0) };
+        let (optimized, trace, physical) = plan(st, logical);
+        let c = Compiled { columns, key: None, bound: String::new(), trace, optimized, physical };
+        let Some(table) = only_table(&c.optimized) else { return Ok(None) };
         // [ISO/IEC 9075-2:2023 §7.16 SR25c] every result column has a
         // counterpart in the table: not an outer reference, nor an SQL
         // parameter's or variable's column [SR17c].
         if c.columns.iter().any(|col| col.origin.is_none()) {
             return Ok(None);
         }
-        let table = table.clone();
-        Ok(Some((c, table)))
+        let mut subtables = Vec::new();
+        for (member, other) in members.iter().skip(1).zip(others) {
+            let (best, _, run) = plan(st, other);
+            if only_table(&best).as_ref() != Some(member) {
+                return Ok(None);
+            }
+            subtables.push((member.clone(), run));
+        }
+        Ok(Some(Updating { compiled: c, table, subtables }))
     }
+}
+
+/// The one table `optimized` reads but in a subquery, if it reads one.
+fn only_table(optimized: &LogicalPlan) -> Option<QualifiedName> {
+    let read = optimized.subquery_tables();
+    let own: Vec<QualifiedName> = optimized.tables().into_iter().filter(|t| !read.contains(t)).collect();
+    let [table] = own.as_slice() else { return None };
+    Some(table.clone())
+}
+
+/// The compiled specification of an updatable cursor, and what it reads:
+/// its one table, by `compiled`'s plan; and of a typed table read with its
+/// proper subtables, each subtable, by a plan of its own.
+pub(super) struct Updating {
+    pub(super) compiled: Compiled,
+    pub(super) table: QualifiedName,
+    pub(super) subtables: Vec<(QualifiedName, Plan)>,
 }

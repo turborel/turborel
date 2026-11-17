@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::catalog::{ConstraintKind, IndexDesc, QualifiedName, TableDesc};
+use crate::catalog::{ConstraintKind, IndexDesc, QualifiedName, TableDesc, proper_supertables};
 use crate::db::{State, api};
 use crate::error::{Code, Result, SqlError, Subject, fail};
 use crate::index::Key;
@@ -50,6 +50,13 @@ pub(in crate::db) struct KeyCheck<'s> {
     /// Of a PRIMARY KEY, the first failure of a row not for a null, told
     /// at its end.
     failed: Option<SqlError>,
+    /// [ISO/IEC 9075-2:2023 §4.17.9, §4.25.1] Of a constraint of a typed
+    /// table with proper subtables, every table of its family but
+    /// `desc`'s, whose rows are the constraint's too; and the unique index
+    /// of its columns, of the table whose constraint it is, which gives
+    /// each row's key. Empty of another.
+    family: Vec<QualifiedName>,
+    keyed: Option<&'s IndexDesc>,
 }
 
 impl<'s> KeyCheck<'s> {
@@ -68,9 +75,17 @@ impl<'s> KeyCheck<'s> {
         let ConstraintKind::Unique { columns, primary, nulls_distinct } = kind else { return Ok(None) };
         let storage = st.storage_of(&desc.name)?;
         let indexes = st.catalog.indexes(&desc.name).into_iter();
-        let unique = indexes.filter(|ix| ix.unique && ix.columns == *columns).collect();
+        let unique: Vec<&IndexDesc> = indexes.filter(|ix| ix.unique && ix.columns == *columns).collect();
         let (primary, nulls_distinct) = (*primary, *nulls_distinct);
-        Ok(Some(KeyCheck { st, txn, desc, storage, name, columns, primary, nulls_distinct, unique, failed: None }))
+        // The table whose constraint it is: `desc`'s, or a supertable's.
+        let owner = std::iter::once(desc.name.clone())
+            .chain(proper_supertables(&*st.catalog, &desc.name))
+            .find(|t| st.catalog.table(t).is_some_and(|d| d.constraints.iter().any(|c| c.name == *name)))
+            .unwrap_or_else(|| desc.name.clone());
+        let family: Vec<QualifiedName> = st.family(&owner).into_iter().filter(|t| *t != desc.name).collect();
+        let keyed =
+            st.catalog.indexes(&owner).into_iter().find(|ix| ix.unique && ix.columns == *columns).or_else(|| unique.first().copied());
+        Ok(Some(KeyCheck { st, txn, desc, storage, name, columns, primary, nulls_distinct, unique, failed: None, family, keyed }))
     }
 
     /// Whether it checks constraint `name`.
@@ -89,7 +104,7 @@ impl<'s> KeyCheck<'s> {
         // None whose entry was its key's only one as it was inserted
         // (`Txn::alone`): its index holds its key, and a row of its key
         // inserted after was not, and is read itself.
-        if self.unique.iter().any(|ix| self.txn.alone(&ix.name, id)) {
+        if self.family.is_empty() && self.unique.iter().any(|ix| self.txn.alone(&ix.name, id)) {
             return Ok(());
         }
         let Some(row) = self.storage.get(self.txn.id, id)? else { return Ok(()) };
@@ -129,7 +144,7 @@ impl<'s> KeyCheck<'s> {
 
     /// The key of `row`.
     fn key_of(&self, row: &Row) -> Result<Key> {
-        let key = match self.unique.first() {
+        let key = match self.keyed {
             Some(ix) => ix.key_of(row),
             None => project(row, self.columns).map(Key),
         };
@@ -140,6 +155,9 @@ impl<'s> KeyCheck<'s> {
     /// each unique index: the row's own entry alone, no other row may hold
     /// it.
     fn duplicate(&self, key: &Key) -> Result<()> {
+        if !self.family.is_empty() {
+            return self.family_duplicate(key);
+        }
         for ix in &self.unique {
             let found = self.st.index_of(&ix.name)?.rows(key)?;
             if found.len() < 2 {
@@ -155,6 +173,45 @@ impl<'s> KeyCheck<'s> {
             }
         }
         Ok(())
+    }
+}
+
+impl KeyCheck<'_> {
+    /// [ISO/IEC 9075-2:2023 §4.25.1] `duplicate`, of a constraint of a
+    /// typed table with proper subtables: `key` is held by no two rows of
+    /// the tables of its family, the row's own table first.
+    fn family_duplicate(&self, key: &Key) -> Result<()> {
+        let mut holders = 0_usize;
+        for table in std::iter::once(&self.desc.name).chain(&self.family) {
+            holders = holders.saturating_add(self.holders_in(table, key)?);
+            if holders > 1 {
+                return fail(Code::Constraint, duplicated(self.desc, self.columns));
+            }
+        }
+        Ok(())
+    }
+
+    /// How many rows of `table` hold `key`: through an index of exactly
+    /// the constraint's columns, if it has one, else read whole.
+    fn holders_in(&self, table: &QualifiedName, key: &Key) -> Result<usize> {
+        let storage = self.st.storage_of(table)?;
+        let indexed = self.st.catalog.indexes(table).into_iter().find(|ix| ix.columns == self.columns);
+        let mut holders = 0_usize;
+        if let Some(ix) = indexed {
+            for other in self.st.index_of(&ix.name)?.rows(key)? {
+                let newest = storage.newest(self.txn.id, other)?;
+                holders = holders.saturating_add(usize::from(holds(&newest, key, &|row| self.key_of(row))?));
+            }
+            return Ok(holders);
+        }
+        self.st.read_lock(self.txn, table)?;
+        let width = self.st.catalog.table(table).map_or(0, |d| d.columns.len());
+        let all: Vec<usize> = (0..width).collect();
+        for read in Arc::clone(storage).scan(self.txn.id, &all) {
+            let (_, row) = read?;
+            holders = holders.saturating_add(usize::from(self.key_of(&row)? == *key));
+        }
+        Ok(holders)
     }
 }
 

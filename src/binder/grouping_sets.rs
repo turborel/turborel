@@ -116,9 +116,10 @@ pub(super) fn grouping(binder: &Binder<'_>, group_by: Option<&GroupBy>) -> Resul
         Expansion::Sets(sets) => {
             let distinct = group_by.is_some_and(|g| g.distinct);
             let determinants = sets.iter().map(|s| determinants(binder, s)).collect::<Result<_>>()?;
+            let keyed = keyed_of(binder, &sets)?;
             let (columns, collations, sets) = layout::laid_out(binder, &sets, distinct)?;
             let (aggs, collated) = (RefCell::new(Vec::new()), RefCell::new(Vec::new()));
-            Ok(Grouping { columns, collations, aggs, collated, sets: Some(sets), determinants })
+            Ok(Grouping { columns, collations, aggs, collated, sets: Some(sets), determinants, keyed })
         }
     }
 }
@@ -132,16 +133,35 @@ fn determinants(binder: &Binder<'_>, set: &Set<'_>) -> Result<Vec<usize>> {
     set.iter().filter(|g| g.collate.is_none()).map(|g| binder.resolve(&g.column).map(|(pos, _)| pos)).collect()
 }
 
+/// [ISO/IEC 9075-2:2023 §9.12] Of the FROM-row columns grouping sets
+/// `sets` group by, each of a structured type with its value given its
+/// comparison key.
+fn keyed_of(binder: &Binder<'_>, sets: &[Set<'_>]) -> Result<Vec<(usize, Expr)>> {
+    let mut keyed: Vec<(usize, Expr)> = Vec::new();
+    for g in sets.iter().flatten() {
+        let (pos, t) = binder.resolve(&g.column)?;
+        if matches!(t, DataType::Structured(_)) && !keyed.iter().any(|(p, _)| *p == pos) {
+            keyed.push((pos, super::structured::keyed_operand(binder.context(), (Expr::Column(pos), &t), "GROUP BY").or_at(g.column.at)?));
+        }
+    }
+    Ok(keyed)
+}
+
 /// [SR10, SR11] The grouping of a primitive `<group by clause>` of
 /// `columns`.
 fn primitive(binder: &Binder<'_>, columns: &Set<'_>) -> Result<Grouping> {
     let mut at = Vec::new();
     let mut collations = Vec::new();
+    let mut keyed = Vec::new();
     for g in columns {
         // [X3.135-1986 §5.22 SR2] each grouping column references a column of T,
         // [ISO/IEC 9075-2:2023 §9.12 SR2a] an operand of a grouping operation,
         let (pos, t) = binder.resolve(&g.column)?;
-        super::composite::grouping_operand(&t, "GROUP BY").or_at(g.column.at)?;
+        super::composite::grouping_operand(binder.db, &t, "GROUP BY").or_at(g.column.at)?;
+        if matches!(t, DataType::Structured(_)) {
+            let e = super::structured::keyed_operand(binder.context(), (Expr::Column(pos), &t), "GROUP BY").or_at(g.column.at)?;
+            keyed.push((pos, e));
+        }
         at.push(pos);
         // [ISO/IEC 9075-2:2023 §9.15] grouped by its collation.
         collations.push(binder.grouped_by(g)?);
@@ -153,17 +173,18 @@ fn primitive(binder: &Binder<'_>, columns: &Set<'_>) -> Result<Grouping> {
         collated: RefCell::new(Vec::new()),
         sets: None,
         determinants: vec![determinants(binder, columns)?],
+        keyed,
     })
 }
 
 /// [ISO/IEC 9075-2:2023 §7.13 SR17n, §9.12 SR2a] Of GROUP BY DISTINCT of
 /// grouping sets, each result column `columns` an operand of the grouping
 /// operation its UNION DISTINCT is.
-pub(super) fn checked(g: &Grouping, group_by: Option<&GroupBy>, columns: &[OutColumn]) -> Result<()> {
+pub(super) fn checked(db: &crate::db::State, g: &Grouping, group_by: Option<&GroupBy>, columns: &[OutColumn]) -> Result<()> {
     if g.sets.is_none() || !group_by.is_some_and(|b| b.distinct) {
         return Ok(());
     }
-    columns.iter().try_for_each(|c| super::composite::grouping_operand(&c.data_type, "GROUP BY DISTINCT"))
+    columns.iter().try_for_each(|c| super::composite::grouping_operand(db, &c.data_type, "GROUP BY DISTINCT"))
 }
 
 /// [X3.135-1986 §5.22, §5.23, §5.25 GR1-GR2] `plan` grouped by `g`, the
@@ -182,7 +203,20 @@ pub(super) fn grouped(
     (g, having): (Grouping, Option<Cond>),
     (exprs, selected, once): (Vec<Expr>, &[OutColumn], bool),
 ) -> LogicalPlan {
-    let Grouping { columns: groups, collations, aggs, collated, sets, .. } = g;
+    let Grouping { columns: groups, collations, aggs, collated, sets, keyed, .. } = g;
+    // [ISO/IEC 9075-2:2023 §9.12] grouped by their keys, of a type ordered
+    // by MAP.
+    let plan = if keyed.is_empty() {
+        plan
+    } else {
+        let mut keyed_exprs: Vec<Expr> = (0..plan.width()).map(Expr::Column).collect();
+        for (pos, e) in keyed {
+            if let Some(slot) = keyed_exprs.get_mut(pos) {
+                *slot = e;
+            }
+        }
+        LogicalPlan::Project { exprs: keyed_exprs, input: Box::new(plan) }
+    };
     let aggs = aggs.into_inner();
     // [ISO/IEC 9075-2:2023 §9.20] Of a grouped windowed query, its windows
     // are over its groups, which its DISTINCT is of.

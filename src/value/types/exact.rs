@@ -148,6 +148,8 @@ impl SqlType for Exact {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_) => unassignable(&v, t, rule),
         }
@@ -173,6 +175,8 @@ impl SqlType for Exact {
             | Value::Datetime(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_) => uncastable(&v, t),
         }

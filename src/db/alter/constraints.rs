@@ -50,9 +50,11 @@ impl State {
         }
         Described::check_unique(&desc)?;
         desc.refresh_not_null();
+        self.inherited_nullability(&mut desc, &[]);
         let mut catalog = self.catalog.duplicate();
         catalog.replace_table(desc.clone());
         self.catalog = Arc::from(catalog);
+        self.renullified(qn);
         let mut built = Made::default();
         if let Some(columns) = unique {
             let name = (1..=self.catalog.indexes(qn).len().saturating_add(1))
@@ -189,8 +191,10 @@ impl State {
             }
         }
         desc.refresh_not_null();
+        self.inherited_nullability(&mut desc, &[]);
         catalog.replace_table(desc);
         self.catalog = Arc::from(catalog);
+        self.renullified(qn);
         // [ISO/IEC 9075-2:2023 §11.26 SR13a, SR13c, SR13e, GR1, GR3, GR4]
         // the constraints, views and assertions that bind by it;
         // [SR13f, GR5] the triggers; [SR13d, GR2] the routines.

@@ -58,7 +58,8 @@ pub(crate) fn sequence(r: &mut Reader<'_>) -> Result<SequenceDesc> {
 }
 
 /// [ISO/IEC 9075-2:2023 §4.9.2] `user_type` in bytes: its name, its source
-/// type, its two routines, and its USAGE grants.
+/// type, its two routines, its USAGE grants, and its method
+/// specifications.
 pub(crate) fn put_user_type(out: &mut Vec<u8>, user_type: &UserTypeDesc) {
     put_name(out, &user_type.name);
     put_type(out, &user_type.source);
@@ -68,6 +69,7 @@ pub(crate) fn put_user_type(out: &mut Vec<u8>, user_type: &UserTypeDesc) {
         put_usage(out, &routine.execute);
     }
     put_usage(out, &user_type.usage);
+    super::put_all(out, user_type.methods.iter(), super::structured::put_method);
 }
 
 /// The user-defined type `put_user_type` wrote.
@@ -77,5 +79,6 @@ pub(crate) fn user_type(r: &mut Reader<'_>) -> Result<UserTypeDesc> {
         Ok(RoutineDesc { name: from.str()?, specific: from.str()?, execute: usage(from)? })
     };
     let (to_distinct, to_source) = (routine(r)?, routine(r)?);
-    Ok(UserTypeDesc { name, source, to_distinct, to_source, usage: usage(r)? })
+    let usage = usage(r)?;
+    Ok(UserTypeDesc { name, source, to_distinct, to_source, usage, methods: super::get_all(r, super::structured::method)? })
 }

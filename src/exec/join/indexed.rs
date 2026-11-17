@@ -198,6 +198,7 @@ mod tests {
         assert_eq!(code(&empty, Plan::Values { rows: Vec::new(), detail: String::new() }), Some(Code::Api));
         assert_eq!(code(&empty, join_of_e()), Some(Code::Api), "no table");
         let desc = TableDesc {
+            typed: None,
             name: QualifiedName { auth: "A".into(), ident: "E".into() },
             columns: vec![],
             constraints: vec![],

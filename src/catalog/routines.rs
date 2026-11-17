@@ -141,6 +141,10 @@ pub struct SqlRoutineDesc {
     /// module that includes it, in its schema, if one does: else it is a
     /// schema-level routine.
     pub module: Option<String>,
+    /// [ISO/IEC 9075-2:2023 §4.35.1] Of an SQL-invoked method, the type it
+    /// is a method of and its kind: its first parameter is then SELF,
+    /// unless it is static [§11.60 SR6e].
+    pub method: Option<(QualifiedName, crate::ast::MethodKind)>,
     /// Of a polymorphic table function [§4.35.4], what its descriptor has
     /// more.
     pub ptf: Option<Box<PtfDesc>>,

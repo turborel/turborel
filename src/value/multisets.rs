@@ -138,6 +138,8 @@ fn holds_null(v: &Value) -> bool {
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Extension(_) => false,
     }
 }

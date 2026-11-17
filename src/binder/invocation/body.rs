@@ -29,7 +29,8 @@ use super::super::subquery::Use;
 use super::super::views::Source;
 use super::super::{Binder, Context, Invoked, Purpose, Scope, assignable, rule};
 use crate::ast::{
-    self, QueryExpression, ReturnStatement, RoutineDefinition, RowElement, SchemaStatement, SqlStatement, ValueExpression, ValuesRow,
+    self, QueryExpression, ReturnStatement, RoutineDefinition, RoutineKind, RowElement, SchemaStatement, SqlStatement, TableName, TypeName,
+    ValueExpression, ValuesRow,
 };
 use crate::catalog::{
     ColumnDesc, DataAccess, Principal, QualifiedName, SqlRoutineDesc, TableDesc, Who, module_schema, owner_of, routine_path,
@@ -68,10 +69,30 @@ pub struct FunctionBody {
 /// It does not parse, or is no `<SQL-invoked routine>`.
 pub fn routine_definition(text: &str, module: Option<String>) -> Result<RoutineDefinition> {
     let parser = Parser::new(text)?.of_definition().in_module(module);
-    let SqlStatement::Schema { statement: SchemaStatement::Routine(r), .. } = { parser }.sql_statement()? else {
+    let SqlStatement::Schema { statement, .. } = { parser }.sql_statement()? else {
         return Err(SqlError::new(Code::Api, "[DESIGN] a routine's text is no <SQL-invoked routine>"));
     };
-    Ok(*r)
+    if let SchemaStatement::Routine(r) = statement {
+        return Ok(*r);
+    }
+    let SchemaStatement::Method(m) = statement else {
+        return Err(SqlError::new(Code::Api, "[DESIGN] a routine's text is no <SQL-invoked routine>"));
+    };
+    // [ISO/IEC 9075-2:2023 §11.61] a method's body, its parameters and
+    // result the descriptor's, SELF first.
+    Ok(RoutineDefinition {
+        kind: RoutineKind::Function,
+        name: TableName { auth: None, ident: String::new(), at: m.at },
+        parameters: Vec::new(),
+        returns: None,
+        specific: None,
+        deterministic: false,
+        access: DataAccess::Contains,
+        null_call: false,
+        body: m.body,
+        text: m.text,
+        body_text: m.body_text,
+    })
 }
 
 /// The `<SQL-invoked routine>` of the routine `desc`, read again from its
@@ -83,7 +104,12 @@ pub fn routine_definition(text: &str, module: Option<String>) -> Result<RoutineD
 /// As `routine_definition`'s.
 pub fn definition_of(desc: &SqlRoutineDesc) -> Result<RoutineDefinition> {
     let module = desc.module.as_ref().map(|m| module_schema(&QualifiedName { auth: desc.name.auth.clone(), ident: m.clone() }));
-    routine_definition(&desc.text, module)
+    let mut definition = routine_definition(&desc.text, module)?;
+    // [§16.2 SR2] RETURN NULL of a method is of its descriptor's result type.
+    if desc.method.is_some() {
+        definition.returns = desc.returns.clone().map(TypeName::Data);
+    }
+    Ok(definition)
 }
 
 /// The `<SQL procedure statement>` of the body of `definition`.
@@ -254,7 +280,10 @@ fn returned(cx: Context<'_>, (desc, definition): (&SqlRoutineDesc, &RoutineDefin
     let fits = |t: &DataType| in_precedence_list(result, t) && assignable(result, t);
     match types.as_slice() {
         [t] if fits(t) => Ok(body),
-        [t] => Err(rule(format!("[ISO/IEC 9075-2:2023 §16.2 SR4] function {} returns {result}, not {t}", desc.name))),
+        // [ISO/IEC 9075-2:2023 §9.2 GR2] by an appropriate cast.
+        [t] => binder
+            .assigned_query(&body, std::slice::from_ref(t), &[result])?
+            .ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §16.2 SR4] function {} returns {result}, not {t}", desc.name))),
         _ => Err(rule("[ISO/IEC 9075-2:2023 §16.2 SR3] a <return value> is one value")),
     }
 }
@@ -279,6 +308,7 @@ fn parameters_item(desc: &SqlRoutineDesc) -> FromItem {
     let types = columns.iter().map(|c| c.data_type.clone()).collect();
     let name = QualifiedName { auth: String::new(), ident: desc.name.ident.clone() };
     let table = TableDesc {
+        typed: None,
         name: name.clone(),
         columns,
         constraints: Vec::new(),

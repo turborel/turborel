@@ -14,12 +14,16 @@
 
 mod call;
 mod characteristics;
+mod designator;
+
+pub(super) use characteristics::Access;
+pub(super) use designator::{CONSTRUCTOR, INSTANCE, METHOD};
 
 use super::Parser;
 use super::ptf::{ReturnsTable, has_table_parameter};
 use crate::ast::{
-    ParameterDeclaration, ParameterMode, ParameterSpecification, ParameterType, RoutineBody, RoutineDefinition, RoutineDesignator,
-    RoutineKind, RoutineType, SqlStatement, TargetKind, TypeName,
+    ParameterDeclaration, ParameterMode, ParameterSpecification, ParameterType, RoutineBody, RoutineDefinition, RoutineKind, SqlStatement,
+    TargetKind, TypeName,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -274,7 +278,7 @@ impl Parser {
     }
 
     /// `<parameter mode>` ::= IN | OUT | INOUT, taken if next.
-    fn parameter_mode(&mut self) -> Option<ParameterMode> {
+    pub(super) fn parameter_mode(&mut self) -> Option<ParameterMode> {
         if self.accept_kw(kw::IN) {
             Some(ParameterMode::In)
         } else if self.accept_word(OUT) {
@@ -289,7 +293,7 @@ impl Parser {
     /// Whether the `<parameter type>` is next, no `<SQL parameter name>`
     /// written: a key word, which no name is, a row type, or an identifier
     /// the declaration ends after.
-    fn at_unnamed_parameter(&self) -> bool {
+    pub(super) fn at_unnamed_parameter(&self) -> bool {
         match self.peek() {
             Tok::KeyWord(_) => true,
             Tok::Identifier(_) => self.at_row_type() || ends_declaration(self.peek_at(1)),
@@ -391,7 +395,7 @@ impl Parser {
     /// and refused once the statement is, and a `<dispatch clause>`, an
     /// `<external body reference>` and a `<polymorphic table function
     /// body>` are refused.
-    fn routine_spec(&mut self, kind: RoutineKind) -> Result<()> {
+    pub(super) fn routine_spec(&mut self, kind: RoutineKind) -> Result<()> {
         let at = self.here();
         let dispatch = matches!(self.peek_at(1), Tok::Identifier(w) if w == DISPATCH);
         if kind == RoutineKind::Function && self.is_word(STATIC) && dispatch {
@@ -427,7 +431,7 @@ impl Parser {
     /// [ISO/IEC 9075-2:2023 §11.60] `<SQL routine body>` ::= `<SQL
     /// procedure statement>`, read in `scope`, where no parameter is
     /// declared and none may be prepared \[SR19\], restoring both after.
-    fn routine_body(&mut self, scope: RoutineScope) -> Result<SqlStatement> {
+    pub(super) fn routine_body(&mut self, scope: RoutineScope) -> Result<SqlStatement> {
         if self.is_kw(kw::CREATE) && self.next_is_kw(kw::SCHEMA) {
             return Err(self.rule("[ISO/IEC 9075-2:2023 §11.60 SR23g] an <SQL routine body> shall not contain a <schema definition>"));
         }
@@ -477,14 +481,6 @@ impl Parser {
     fn body_parameter_refusal(&self, e: SqlError) -> SqlError {
         let Some(at) = e.pos else { return e };
         if self.toks.iter().any(|t| t.start == at && is_parameter_token(&t.tok)) { parameter_refused(at) } else { e }
-    }
-
-    /// Whether a `<specific routine designator>` begins here (`object` of
-    /// a GRANT, REVOKE or DROP).
-    pub(super) fn next_is_routine_designator(&self) -> bool {
-        let routine =
-            |t: &Tok| matches!(t, Tok::KeyWord(kw::PROCEDURE)) || matches!(t, Tok::Identifier(w) if w == FUNCTION || w == ROUTINE);
-        routine(self.peek()) || (matches!(self.peek(), Tok::Identifier(w) if w == SPECIFIC) && routine(self.peek_at(1)))
     }
 
     /// The `<target specification>` of a `<triggered action>` being read
@@ -546,46 +542,6 @@ impl Parser {
         // as an assignment's target.
         let whole = qualified || !period || (!self.blocks.is_empty() && scope.parameters.contains(first));
         (whole && scope.parameters.contains(parameter)).then(|| (parameter.clone(), qualified))
-    }
-
-    /// [ISO/IEC 9075-2:2023 §10.6] `<specific routine designator>` ::=
-    /// SPECIFIC `<routine type>` `<specific name>` | `<routine type>`
-    /// `<schema qualified routine name>` \[`<data type list>`\], of those
-    /// implemented: no METHOD.
-    ///
-    /// # Errors
-    ///
-    /// The text is not one.
-    pub(super) fn routine_designator(&mut self) -> Result<RoutineDesignator> {
-        let specific = self.accept_word(SPECIFIC);
-        let routine_type = self.routine_type()?;
-        let name = self.table_name()?;
-        if specific {
-            return Ok(RoutineDesignator { routine_type, specific, name, parameters: None });
-        }
-        let parameters = if self.is_delim(delim::LEFT_PAREN) { Some(self.data_type_list()?) } else { None };
-        if self.is_kw(kw::FOR) {
-            return Err(self.rule(
-                "[ISO/IEC 9075-2:2023 §10.6 SR3a] a <specific routine designator> names a <schema-resolved user-defined type name> \
-                 only if its <routine type> is METHOD",
-            ));
-        }
-        Ok(RoutineDesignator { routine_type, specific, name, parameters })
-    }
-
-    /// `<routine type>` ::= ROUTINE | FUNCTION | PROCEDURE, of those
-    /// implemented.
-    fn routine_type(&mut self) -> Result<RoutineType> {
-        if self.accept_kw(kw::PROCEDURE) {
-            return Ok(RoutineType::Procedure);
-        }
-        if self.accept_word(FUNCTION) {
-            return Ok(RoutineType::Function);
-        }
-        if self.accept_word(ROUTINE) {
-            return Ok(RoutineType::Routine);
-        }
-        Err(self.syntax("expected ROUTINE, FUNCTION or PROCEDURE"))
     }
 }
 

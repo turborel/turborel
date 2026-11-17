@@ -32,8 +32,8 @@ use super::{Completion, State, api, rule};
 use crate::ast::{AlterDomain, AlterDomainAction, DropBehavior, PrivilegeObject, RevokeStatement, TableName};
 use crate::binder::qualify;
 use crate::catalog::{
-    Actions, Catalog, ConstraintDesc, ConstraintKind, Privilege, PrivilegeDesc, QualifiedName, SYSTEM_GRANTOR, applicable, merged,
-    owner_of, sole,
+    Actions, Catalog, ConstraintDesc, ConstraintKind, Privilege, PrivilegeDesc, QualifiedName, SYSTEM_GRANTOR, TableDesc, applicable,
+    merged, owner_of, sole,
 };
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::txn::LockMode;
@@ -76,7 +76,7 @@ pub(in crate::db) fn with_grants(catalog: &dyn Catalog, grants: &[&Granted]) -> 
             grantor: g.grantor.clone(),
             grantee: g.grantee.clone(),
             table: g.table.clone(),
-            actions: Actions::of([g.privilege]),
+            actions: Actions::of([g.privilege.clone()]),
             grantable: g.grantable,
         });
         next.set_privileges(&name, merged(descs.collect()));
@@ -190,6 +190,30 @@ impl State {
         };
         Some(revoked)
     }
+    /// [ISO/IEC 9075:1992 §11.37; ISO/IEC 9075-2:2023 §12.7] The
+    /// privileges `r` names on `table`, revoked by `auth` of schema
+    /// `schema`: of ALL PRIVILEGES, those it holds with grant option
+    /// (`grantable`) [§10.3 SR5]; of HIERARCHY OPTION FOR, the option of
+    /// SELECT alone, SELECT staying [§12.7 GR].
+    fn revoked_privileges(
+        &self,
+        (auth, schema): (&str, &str),
+        r: &RevokeStatement,
+        (table, grantable): (&TableDesc, &Actions),
+    ) -> Result<Vec<Privilege>> {
+        let mut named = match &r.actions {
+            None => grantable.each(),
+            Some(list) => {
+                let methods = self.privilege_methods((auth, schema), table, (&r.methods, "§12.7 AR1a iii"))?;
+                granted_actions(list, table, &methods).or_at(r.table.at)?.each()
+            }
+        };
+        if r.hierarchy_option_for {
+            named.retain(|p| *p == Privilege::Select);
+            named = if named.is_empty() { Vec::new() } else { vec![Privilege::Hierarchy] };
+        }
+        Ok(named)
+    }
 
     /// [ISO/IEC 9075:1992 §11.37] REVOKE `r` by `auth`, its names in
     /// schema `schema`.
@@ -210,15 +234,20 @@ impl State {
         if held.is_empty() {
             return Err(SqlError::new(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.37 AR1] {auth} holds no privilege on {name}")));
         }
-        // [§10.3 SR5] ALL PRIVILEGES: those it holds with grant option.
-        let named = match &r.actions {
-            None => grantable.each(),
-            Some(list) => granted_actions(list, &table).or_at(r.table.at)?.each(),
-        };
+        let named = self.revoked_privileges((auth, schema), r, (&table, &grantable))?;
+        let mut going = named.clone();
+        if going.contains(&Privilege::Select) && !going.contains(&Privilege::Hierarchy) {
+            going.push(Privilege::Hierarchy);
+        }
+        // [ISO/IEC 9075-2:2023 §12.7 SR1c] SELECT takes SELECT on the
+        // table/method pair of each method with it.
+        let methods_too = going.contains(&Privilege::Select) && !r.hierarchy_option_for;
         let all = granted(&*self.catalog);
         // [SR6] Those it granted, of those named, to those named.
-        let identified =
-            |g: &Granted| g.grantor == auth && g.table == name && r.grantees.contains(&g.grantee) && named.contains(&g.privilege);
+        let identified = |g: &Granted| {
+            let going_too = going.contains(&g.privilege) || (methods_too && matches!(g.privilege, Privilege::Method(_)));
+            g.grantor == auth && g.table == name && r.grantees.contains(&g.grantee) && going_too
+        };
         let warned = not_revoked(r, &named, &all, &identified);
         let remaining: Vec<Granted> = all
             .iter()

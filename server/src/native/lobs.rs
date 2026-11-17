@@ -36,7 +36,9 @@ fn holds_lob(v: &Value) -> bool {
         Value::Lob(_) => true,
         Value::Array(items) | Value::Multiset(items) => items.iter().any(holds_lob),
         Value::Row(fields) => fields.iter().any(holds_lob),
+        Value::Structured(s) => s.attributes.iter().any(holds_lob),
         Value::Null
+        | Value::Reference(_)
         | Value::Char(_)
         | Value::Exact(_)
         | Value::Approx(_)
@@ -62,7 +64,15 @@ fn placed(session: &Session, v: Value, inline: usize, located: &mut bool) -> Res
         Value::Row(fields) => {
             Ok(Value::Row(fields.iter().cloned().map(|f| placed(session, f, inline, located)).collect::<Result<Vec<_>>>()?.into()))
         }
+        Value::Structured(s) => {
+            let attributes = s.attributes.iter().cloned().map(|a| placed(session, a, inline, located)).collect::<Result<Vec<_>>>()?;
+            Ok(Value::Structured(std::sync::Arc::new(turborel::value::types::Structured::new(
+                std::sync::Arc::clone(&s.of),
+                attributes.into(),
+            ))))
+        }
         Value::Null
+        | Value::Reference(_)
         | Value::Char(_)
         | Value::Exact(_)
         | Value::Approx(_)

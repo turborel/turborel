@@ -125,10 +125,12 @@ mod standby;
 mod state;
 mod stores;
 mod stream;
+mod structured;
 mod temporary;
 mod time_zone;
 mod triggers;
 mod truncate;
+mod typed;
 mod types;
 mod unnamed;
 mod usage;
@@ -278,6 +280,8 @@ pub struct Session {
     /// The constraint modes of its transaction, and the checks of its
     /// deferred constraints waiting [ISO/IEC 9075:1992 §14.2].
     deferral: RefCell<Deferral>,
+    /// [ISO/IEC 9075-2:2023 §4.48.1, §19.13] Its default transform group
+    /// name and its transform group names for user-defined types.
     /// Its own values of the settings a session may set (RULES.md D36).
     own: RefCell<crate::settings::Own>,
     /// The default schema of its unqualified names [ISO/IEC 9075:1992

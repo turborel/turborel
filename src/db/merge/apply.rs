@@ -12,6 +12,7 @@ use super::super::{Session, StatementContext, api};
 use super::decide::{Merge, Planned, UPDATE_RULE, target_part};
 use super::routed::Inserting;
 use crate::binder::{BoundAction, BoundWhen};
+use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::exec::{HeldRows, eval_cond};
 use crate::logical::{Cond, Expr, Truth};
@@ -76,25 +77,40 @@ fn before_clause(
     effects: &mut Effects<'_>,
 ) -> Result<()> {
     let bound = merge.bound;
-    let target = |joined: &Row| target_part(merge, joined);
+    // Of each row of a table of T's family, its whole row [ISO/IEC
+    // 9075-2:2023 §4.17.9].
+    let target = |joined: &Row, id: RowId| merge.whole(cx, (joined, id), target_part(merge, joined)?);
     match plan {
         Planned::Updates(rows) => {
             let BoundWhen::Matched { action: BoundAction::Update(set), .. } = clause else { return Ok(()) };
             let columns = set_columns_of(set, &bound.generated);
-            let mut changes = HeldRows::new(cx.st.list_space());
-            rows.visit(&mut |(id, joined, new)| changes.push((*id, target(joined)?, new.clone())))?;
-            let altered = effects.before_update(cx, (&bound.table, &columns), changes)?;
-            let mut out = HeldRows::new(cx.st.list_space());
-            for (row, change) in std::mem::replace(rows, HeldRows::new(cx.st.list_space())).into_iter().zip(altered) {
-                let ((id, joined, _), (_, _, new)) = (row?, change?);
-                out.push((id, joined, new))?;
+            for table in tables_of(merge) {
+                let mut changes = HeldRows::new(cx.st.list_space());
+                rows.visit(&mut |(id, joined, new)| {
+                    if merge.member(joined)? == table { changes.push((*id, target(joined, *id)?, new.clone())) } else { Ok(()) }
+                })?;
+                let mut altered = effects.before_update(cx, (table, &columns), changes)?.into_iter();
+                let mut out = HeldRows::new(cx.st.list_space());
+                for row in std::mem::replace(rows, HeldRows::new(cx.st.list_space())) {
+                    let (id, joined, new) = row?;
+                    let new = if merge.member(&joined)? == table {
+                        altered.next().ok_or_else(|| api("[DESIGN] a BEFORE trigger lost a row of a MERGE"))??.2
+                    } else {
+                        new
+                    };
+                    out.push((id, joined, new))?;
+                }
+                *rows = out;
             }
-            *rows = out;
         }
         Planned::Deletes(rows) => {
-            let mut olds = HeldRows::new(cx.st.list_space());
-            rows.visit(&mut |(id, joined)| olds.push((*id, target(joined)?)))?;
-            effects.before_delete(cx, &bound.table, &mut olds)?;
+            for table in tables_of(merge) {
+                let mut olds = HeldRows::new(cx.st.list_space());
+                rows.visit(&mut |(id, joined)| {
+                    if merge.member(joined)? == table { olds.push((*id, target(joined, *id)?)) } else { Ok(()) }
+                })?;
+                effects.before_delete(cx, table, &mut olds)?;
+            }
         }
         Planned::Inserts(at, rows) => {
             let table = table_of(merge, *at)?.name();
@@ -120,8 +136,10 @@ fn updates(
     let columns = set_columns_of(set, &bound.generated);
     let assigned = Assigned { desc: &bound.desc, set, generated: &bound.generated };
     rows.visit(&mut |(id, joined, new)| {
+        // [ISO/IEC 9075-2:2023 §4.17.9] the row of the table of T's family it is of.
+        let table = merge.member(joined)?;
         // [GR6a i 4] a row changed through a cursor: a cursor operation conflict.
-        effects.cursors.acted_on(&bound.table, *id);
+        effects.cursors.acted_on(table, *id);
         let mut recomputed = None;
         let mut recheck = |newest: &Row| {
             let Some(rejoined) = still_matched(merge, condition, newest, joined)? else { return Ok(Again::Skip) };
@@ -129,9 +147,9 @@ fn updates(
             recomputed = Some(row.clone());
             Ok(Again::Update(row))
         };
-        match st.rewrite_row(tx, (&bound.table, *id), Some(new), &mut recheck)? {
+        match st.rewrite_row(tx, (table, *id), Some(new), &mut recheck)? {
             Some(old) => {
-                effects.updated(&bound.table, *id, (old, recomputed.as_ref().unwrap_or(new)), &columns)?;
+                effects.updated(table, *id, (old, recomputed.as_ref().unwrap_or(new)), &columns)?;
                 if let Some(row) = recomputed {
                     again.insert(*id, Some(row));
                 }
@@ -154,8 +172,8 @@ fn deletes(
     rows: &mut HeldRows<(RowId, Row)>,
     effects: &mut Effects<'_>,
 ) -> Result<()> {
-    let table = &merge.bound.table;
     rows.visit(&mut |(id, joined)| {
+        let table = merge.member(joined)?;
         // [GR6a i 4] a row deleted through a cursor: a cursor operation conflict.
         effects.cursors.acted_on(table, *id);
         let mut recheck =
@@ -225,8 +243,9 @@ pub(super) fn checked(merge: &Merge<'_>, planned: &mut [Planned], again: &Rewrit
 /// since the snapshot, joined to the source row of `joined`, if the ON
 /// condition and `condition` both still hold of it (RULES.md D29).
 fn still_matched(merge: &Merge<'_>, condition: Option<&Cond>, newest: &Row, joined: &Row) -> Result<Option<Row>> {
+    // Of a row of a proper subtable, its superrow's columns, T's.
     let width = merge.bound.desc.columns.len();
-    let rejoined: Row = newest.iter().chain(joined.iter().skip(width)).cloned().collect();
+    let rejoined: Row = newest.iter().take(width).chain(joined.iter().skip(width)).cloned().collect();
     let holds = |c: &Cond| eval_cond(c, &rejoined, merge.runner).map(|t| t == Truth::True);
     if !holds(&merge.bound.on)? {
         return Ok(None);
@@ -236,6 +255,12 @@ fn still_matched(merge: &Merge<'_>, condition: Option<&Cond>, newest: &Row, join
         None => true,
     };
     Ok(chosen.then_some(rejoined))
+}
+
+/// The tables of `merge`'s target rows: T, then each proper subtable of it
+/// read with it.
+fn tables_of<'m>(merge: &'m Merge<'_>) -> Vec<&'m QualifiedName> {
+    std::iter::once(&merge.bound.table).chain(&merge.bound.members).collect()
 }
 
 /// The table the `at`th WHEN NOT MATCHED clause of `merge` inserts into:

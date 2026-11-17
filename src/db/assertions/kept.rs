@@ -86,7 +86,16 @@ pub(super) fn kept_desc(name: QualifiedName, generation: u32) -> TableDesc {
         column("SCALE", integer.clone()),
         column("MOVE", integer),
     ];
-    TableDesc { name, columns, constraints: Vec::new(), engine: ROW_STORE.into(), options: Vec::new(), generation, temporary: None }
+    TableDesc {
+        typed: None,
+        name,
+        columns,
+        constraints: Vec::new(),
+        engine: ROW_STORE.into(),
+        options: Vec::new(),
+        generation,
+        temporary: None,
+    }
 }
 
 /// Whether `form` keeps totals: SUM or AVG; or, of a table's rows, COUNT,
@@ -274,6 +283,8 @@ pub(super) fn row_totals(form: &Form, row: &Row, tx: &Txn) -> Result<Totals> {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_)) => {
                 return Err(SqlError::new(Code::Api, format!("[DESIGN] {other:?} is no exact number of a SUM or AVG kept")));

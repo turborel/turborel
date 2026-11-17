@@ -92,6 +92,8 @@ const DELIMITERS: &[&str] = &[
     delim::LESS_OR_EQUAL,
     delim::LEFT_BRACE_MINUS,
     delim::RIGHT_MINUS_BRACE,
+    delim::RIGHT_ARROW,
+    delim::DOUBLE_COLON,
     delim::COMMA,
     delim::LEFT_PAREN,
     delim::RIGHT_PAREN,

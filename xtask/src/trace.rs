@@ -17,7 +17,7 @@ const ATTRIBUTE: &str = "#[";
 /// Shown for a test with no requirements.
 const MISSING: &str = "MISSING";
 /// A `Verifies:` paragraph starts with one of these (RULES.md R-TRACE-1).
-const ALLOWED_TAGS: [&str; 4] = ["[X3.135-1986 §", "[EXTENSION]", "[DESIGN]", "[TOOL] R-"];
+const ALLOWED_TAGS: [&str; 5] = ["[X3.135-1986 §", "[ISO/IEC 9075", "[EXTENSION]", "[DESIGN]", "[TOOL] R-"];
 
 /// One test and the requirements it names, if any.
 #[derive(Debug, PartialEq)]
@@ -220,6 +220,10 @@ mod tests {
     fn only_allowed_tags_trace() {
         assert!(traced(Some("[X3.135-1986 §8.6 GR2] fetch")));
         assert!(traced(Some("[TOOL] R-SIZE-2 limits")));
+        assert!(traced(Some("[ISO/IEC 9075-2:2023 §4.9.3.1] subtypes")));
+        assert!(traced(Some("[ISO/IEC 9075:1992 §13.1 SR5] cursors")));
+        assert!(traced(Some("[ISO/IEC 9075-11:2006 draft §6.61] views")));
+        assert!(!traced(Some("[ISO/IEC 14651] another standard")));
         assert!(!traced(Some("")));
         assert!(!traced(Some("checks things")));
         assert!(!traced(None));

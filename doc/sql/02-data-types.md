@@ -5,7 +5,8 @@
 Every value is of a data type, and every column, parameter and
 expression has one. A column may also be of a [domain](statements/create-domain.md),
 which is a data type with a default and constraints, of a
-[distinct type](#distinct-types), or *(extension)* of a type a plug-in
+[distinct type](#distinct-types), of a [structured type](#structured-types),
+of a [reference type](#reference-types), or *(extension)* of a type a plug-in
 registers, written by its name and, in parentheses, one or two unsigned
 integers it takes; so may a domain.
 
@@ -16,7 +17,7 @@ integers it takes; so may a domain.
     | <exact numeric type> | <approximate numeric type>
     | <decimal floating-point type>
     | <datetime type> | <interval type>
-    | <row type> | <array type>
+    | <row type> | <array type> | <reference type>
     | <path-resolved user-defined type name>
 ```
 
@@ -583,6 +584,43 @@ by name, `MONEY(5)` and `"NUMERIC"(PRICE)`, and needs EXECUTE, which the
 type's owner holds and [GRANT](statements/grant.md) gives. A column of the
 type needs USAGE on it. A client reads and writes its values as values of
 the source type.
+
+## Structured types
+
+A structured type has attributes, each of a data type, and methods, and
+may be a subtype of another, by [CREATE TYPE](statements/create-type.md).
+`CREATE TYPE ADDRESS AS (STREET VARCHAR(30), CITY VARCHAR(20)) NOT
+FINAL` makes ADDRESS. `NEW ADDRESS()` makes a value of its attributes'
+defaults, `a.CITY` observes an attribute, and `a.CITY('OSLO')` gives a
+copy of the value with the attribute changed. A method is invoked as
+`a.m(args)`, a static one as `ADDRESS::m(args)`, and NEW with arguments
+invokes a constructor method.
+
+A value of a subtype is a value of each of its supertypes, and is stored
+in a column of any of them. It keeps its most specific type, which
+`v.SPECIFICTYPE` names and `v IS OF (t)` tests, and its methods run by
+that type, so an OVERRIDING method of a subtype runs for its values.
+`TREAT(v AS t)` takes a value as one of its subtype `t`, and is refused
+(SQLSTATE 0D000) of a value of no subtype of it.
+
+Values of a structured type compare by its ordering, which
+[CREATE ORDERING](statements/create-ordering.md) gives, and by nothing
+until then. A value is stored whole in its row. A typed table
+([CREATE TABLE](statements/create-table.md) `OF` a type) holds one
+value of the type in each row, its attributes as its columns, and the
+typed tables of a type and its subtypes form a family of supertables and
+subtables.
+
+## Reference types
+
+`REF(t)` is the type of a reference to a row of a typed table of the
+structured type `t`, as a typed table's self-referencing column holds
+one. `REF(t) SCOPE tab` names the table it refers into. `r -> a` reads
+the attribute `a` of the row `r` identifies, `r -> m()` invokes a
+method of it, and `DEREF(r)` gives the row as a value of `t`, each a
+null value if no row is identified. A reference without a scope is not
+dereferenced (SQLSTATE 2A000). References compare for equality alone,
+and may be elements of arrays and multisets.
 
 ## Assignment and CAST
 

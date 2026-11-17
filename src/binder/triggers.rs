@@ -92,6 +92,7 @@ pub(super) fn transition_item(b: &Bounds<'_>, t: &NamedTable, offset: usize) -> 
         (c.default, c.generated, c.domain) = (None, None, None);
     }
     let desc = TableDesc {
+        typed: None,
         name: name.clone(),
         columns,
         constraints: Vec::new(),
@@ -110,5 +111,6 @@ pub(super) fn transition_item(b: &Bounds<'_>, t: &NamedTable, offset: usize) -> 
         nullable: false,
         common: Vec::new(),
         drawn: None,
+        family: Vec::new(),
     })
 }

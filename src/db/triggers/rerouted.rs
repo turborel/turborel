@@ -110,6 +110,7 @@ impl Session {
         (where_clause, params): (Option<&SearchCondition>, &Params),
     ) -> Result<HeldRows<(RowId, Row, Row)>> {
         let authorization = self.authorization();
+        let set = &super::mutated::unmutated(cx.st, view, set)?;
         let (spec, columns) = changed_spec(cx.st, authorization.of(cx.st.catalog.roles()).cell, (view, set, where_clause))?;
         let rows = view_rows(cx, view)?;
         let over = params.clone().with_transitions(Arc::new(read_as(view, rows, params)));
@@ -267,6 +268,7 @@ pub(in crate::db) fn bind_taken(cx: Context<'_>, stmt: &SqlStatement) -> Result<
 /// An UPDATE of `view` by `set`, or a DELETE if `set` is empty, where
 /// `where_clause`, bound in `cx` over the view's rows, none read.
 fn bind_changed(cx: Context<'_>, view: &ViewDesc, (set, where_clause): (&[SetClause], Option<&SearchCondition>)) -> Result<()> {
+    let set = &super::mutated::unmutated(cx.db, view, set)?;
     let (spec, _) = changed_spec(cx.db, cx.who(), (view, set, where_clause))?;
     let over = cx.params.clone().with_transitions(Arc::new(read_as(view, HeldRows::new(cx.db.list_space()), cx.params)));
     bind_select(Context { params: &over, ..cx }, &spec).map(drop)
@@ -380,7 +382,7 @@ fn query(table: &str, list: SelectList, condition: Option<SearchCondition>) -> Q
 
 /// FROM `table` WHERE `condition`.
 fn from(table: TableName, where_clause: Option<SearchCondition>) -> TableExpression {
-    let reference = TableReference::Table(NamedTable { table, correlation: None, columns: None });
+    let reference = TableReference::Table(NamedTable { table, only: false, correlation: None, columns: None });
     TableExpression { from: vec![reference], where_clause, group_by: None, having: None, window: Vec::new() }
 }
 

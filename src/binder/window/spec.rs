@@ -4,6 +4,7 @@
 //! scope, over the rows of the table expression or its groups.
 
 use super::super::composite::{grouping_operand, integer, ordering_operand};
+use super::super::structured::keyed_operand;
 use super::super::{Binder, Scope, rule};
 use crate::ast::{
     Exclusion as Excluded, Frame as Written, FrameBound, FrameUnits, GroupingColumn, SetArg, ValueExpression, ValueOrder, WindowDefinition,
@@ -152,7 +153,9 @@ impl Binder<'_> {
             let (e, t) = self.value_expression(&o.key, scope)?;
             // [§10.10 SR2] an operand of an ordering operation, ordered by
             // its collation [§9.15].
-            ordering_operand(&t, "a <window order clause>")?;
+            ordering_operand(self.db, &t, "a <window order clause>")?;
+            // [§9.14] of a structured type, by its ordering's key.
+            let e = keyed_operand(self.context(), (e, &t), "a <window order clause>")?;
             let collation = if t.is_character() { self.collation_of(&[self.derived(&o.key)?])? } else { None };
             order
                 .push((collation.map_or_else(|| e.clone(), |c| Expr::sort_key(e.clone(), &c)), SortOrder::of(o.descending, o.nulls_first)));
@@ -174,12 +177,13 @@ impl Binder<'_> {
             )));
         }
         let (e, t) = self.value_expression(&column, scope)?;
-        grouping_operand(&t, "a <window partition clause>")?;
+        grouping_operand(self.db, &t, "a <window partition clause>")?;
         if g.collate.is_some() && !t.is_character() {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §7.15 SR5a] a window partitioning column of {t} has no COLLATE")));
         }
         if !t.is_character() {
-            return Ok(e);
+            // [§9.12] of a structured type, by its ordering's key.
+            return keyed_operand(self.context(), (e, &t), "a <window partition clause>");
         }
         let collation = self.chosen(g.collate.as_ref(), self.derived(&column)?)?;
         Ok(collation.map_or_else(|| e.clone(), |c| Expr::sort_key(e.clone(), &c)))

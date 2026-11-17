@@ -8,13 +8,16 @@
 //! where it is, as a function's `<return statement>` is
 //! (`exec/invoked.rs`).
 
+use std::sync::Arc;
+
 use super::Host;
 use crate::db::{Completion, assign_targets};
 use crate::error::{Code, Result, SqlError, SqlState, fail, fail_with};
 use crate::exec::{Subqueries, eval};
-use crate::logical::{Assign, Expr, Into, Leaf, LogicalPlan, Target, bound_expr, filled_expr};
+use crate::logical::{Assign, Expr, Into, Leaf, LogicalPlan, Modified, Target, bound_expr, filled_expr};
 use crate::params::Params;
 use crate::storage::Row;
+use crate::value::types::Structured;
 use crate::value::{Value, assign};
 
 /// [ISO/IEC 9075-2:2023 §9.2] Store assignment, as an assignment statement
@@ -100,7 +103,7 @@ pub(super) fn assignment<H: Host>(host: &H, a: &Assign, frame: &mut Params) -> R
             }
         },
     };
-    frame.set_routine(std::sync::Arc::clone(&a.scope));
+    frame.set_routine(Arc::clone(&a.scope));
     for (target, value) in a.targets.iter().zip(row) {
         assign_target(target, value, frame).map_err(|e| e.or_at(target.spec.at).or_at(a.at))?;
     }
@@ -123,18 +126,39 @@ fn assign_target(target: &Target, value: Value, frame: &mut Params) -> Result<()
     assign_targets(&[value], std::slice::from_ref(spec), frame, STORE, STORE).map(|_| ())
 }
 
-/// The row `held` with the field at `path` `value`, each field of the path
-/// one of the row of the one before.
-fn with_field(held: Value, path: &[usize], value: Value) -> Result<Value> {
+/// The value `held` with the field or attribute at `path` `value`, each
+/// part of the path one of the value of the one before: of a structured
+/// value, as its mutator gives it, of its most specific type
+/// [§14.5 SR5; ISO/IEC 9075-2:2023 §4.9.3.3].
+///
+/// # Errors
+///
+/// SQLSTATE 2202H of a field of a null row [GR4a]; 2202D of an attribute
+/// of a null value, as its mutator raises [ISO/IEC 9075-2:2023 §9.18 GR4].
+fn with_field(held: Value, path: &[Modified], value: Value) -> Result<Value> {
     let Some((first, rest)) = path.split_first() else { return Ok(value) };
-    let Value::Row(fields) = held else {
-        let msg = "[ISO/IEC 9075-4:2006 draft §14.5 GR4a] a field of a null row is assigned";
-        return fail_with(Code::Data, SqlState::NULL_VALUE_IN_FIELD_REFERENCE, msg.to_owned());
-    };
-    let mut fields = fields.to_vec();
-    let slot = fields.get_mut(*first).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] the row has no such field"))?;
-    *slot = with_field(std::mem::replace(slot, Value::Null), rest, value)?;
-    Ok(Value::Row(fields.into()))
+    match (*first, held) {
+        (Modified::Field(k), Value::Row(fields)) => {
+            let mut fields = fields.to_vec();
+            let slot = fields.get_mut(k).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] the row has no such field"))?;
+            *slot = with_field(std::mem::replace(slot, Value::Null), rest, value)?;
+            Ok(Value::Row(fields.into()))
+        }
+        (Modified::Attribute(k), Value::Structured(s)) => {
+            let mut attributes = s.attributes.to_vec();
+            let slot = attributes.get_mut(k).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] the value has no such attribute"))?;
+            *slot = with_field(std::mem::replace(slot, Value::Null), rest, value)?;
+            Ok(Value::Structured(Arc::new(Structured::new(Arc::clone(&s.of), attributes.into()))))
+        }
+        (Modified::Attribute(_), _) => {
+            let msg = "[ISO/IEC 9075-2:2023 §9.18 GR4; ISO/IEC 9075-4:2006 draft §14.5 SR5] an attribute of a null value is assigned";
+            fail_with(Code::Data, SqlState::NULL_MUTATOR_SUBJECT, msg.to_owned())
+        }
+        (Modified::Field(_), _) => {
+            let msg = "[ISO/IEC 9075-4:2006 draft §14.5 GR4a] a field of a null row is assigned";
+            fail_with(Code::Data, SqlState::NULL_VALUE_IN_FIELD_REFERENCE, msg.to_owned())
+        }
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §14.7] SELECT INTO `i`: of no row, no data, its
@@ -149,7 +173,7 @@ pub(super) fn select_into<H: Host>(host: &H, i: &Into, frame: &mut Params) -> Re
         [] => Ok(Completion::NoData),
         [row] => {
             host.present(row);
-            frame.set_routine(std::sync::Arc::clone(&i.scope));
+            frame.set_routine(Arc::clone(&i.scope));
             assign_targets(row, &i.targets, frame, "X3.135-1986 §8.10 GR8", "X3.135-1986 §8.10 GR9")
         }
         [_, _, ..] => fail(Code::Cardinality, "[X3.135-1986 §8.10 GR2] the result has more than one row"),

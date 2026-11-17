@@ -13,6 +13,14 @@
 //! constraint, is left to what drops it. Under RESTRICT a dependent
 //! refuses the drop (SR13a, SR13c, SR13e). Under CASCADE each is dropped
 //! as the General Rules say, with what depends on it in turn.
+//!
+//! [ISO/IEC 9075-2:2023 §11.18 SR4, SR5, GR2 to GR5] The scope of a
+//! reference column dropped is found so too. An impacted dereference
+//! operation reads the scope table, and binds no more once the column's
+//! type has no scope [§6.22 SR1]. \[DESIGN\] One whose reference comes
+//! from the column other than as a column reference, a subquery's result
+//! say, is of the same scope and binds no more either, so it is taken as
+//! impacted too (RULES.md D81).
 
 use super::super::ddl::Dropped;
 use super::rule;
@@ -27,10 +35,43 @@ fn written(q: &QualifiedName) -> TableName {
     TableName { auth: Some(q.auth.clone()), ident: q.ident.clone(), at: 0 }
 }
 
-/// The refusal of a drop under RESTRICT, by the Syntax Rule `cited`, of
-/// the constraint `what` depends on.
-fn depends(cited: &str, what: &str) -> crate::error::SqlError {
-    rule(format!("[ISO/IEC 9075-2:2023 §11.26 {cited}] {what} depends on the constraint, so it is dropped only with CASCADE"))
+/// What was dropped that others may depend on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::db) enum Cause {
+    /// A table constraint [§11.26].
+    Constraint,
+    /// The scope of a reference column [§11.18].
+    Scope,
+}
+
+/// What depends on what was dropped.
+#[derive(Debug, Clone, Copy)]
+enum Dependent {
+    /// A table's CHECK.
+    Check,
+    /// A domain's constraint.
+    Domain,
+    /// A view.
+    View,
+    /// An assertion.
+    Assertion,
+}
+
+/// The refusal of a drop under RESTRICT of what `cause` names, on which
+/// `what`, a `dependent`, depends.
+fn depends(cause: Cause, dependent: Dependent, what: &str) -> crate::error::SqlError {
+    let cited = match (cause, dependent) {
+        (Cause::Constraint, Dependent::Check) => "§11.26 SR13a",
+        (Cause::Constraint, Dependent::View) => "§11.26 SR13c",
+        (Cause::Constraint, Dependent::Domain | Dependent::Assertion) => "§11.26 SR13e",
+        (Cause::Scope, Dependent::View) => "§11.18 SR5b",
+        (Cause::Scope, Dependent::Check | Dependent::Domain | Dependent::Assertion) => "§11.18 SR5c",
+    };
+    let on = match cause {
+        Cause::Constraint => "depends on the constraint, so it is dropped only with CASCADE",
+        Cause::Scope => "contains a dereference of the column, so its scope is dropped only with CASCADE",
+    };
+    rule(format!("[ISO/IEC 9075-2:2023 {cited}] {what} {on}"))
 }
 
 impl State {
@@ -44,29 +85,47 @@ impl State {
     ///
     /// SQLCODE -103, not `cascade`, if one depends on it.
     pub(in crate::db) fn drop_constraint_dependents(&mut self, before: &State, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
-        let mut dropped = self.drop_dependent_checks(before, qn, cascade)?;
-        dropped.absorb(self.drop_dependent_domain_constraints(before, qn, cascade)?);
-        dropped.absorb(self.drop_dependent_views(before, qn, cascade)?);
-        dropped.absorb(self.drop_dependent_assertions(before, qn, cascade)?);
+        self.drop_dependents_of(before, (Cause::Constraint, std::slice::from_ref(qn)), cascade)
+    }
+
+    /// What depends on what `cause` names, dropped already, the
+    /// definitions `before` it was: the CHECKs, domain constraints, views
+    /// and assertions that read one of `tables`, bound in `before` and bind
+    /// no more, dropped if `cascade`. What was taken away.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103, not `cascade`, if one depends on it.
+    pub(in crate::db) fn drop_dependents_of(
+        &mut self,
+        before: &State,
+        (cause, tables): (Cause, &[QualifiedName]),
+        cascade: bool,
+    ) -> Result<Dropped> {
+        let mut dropped = self.drop_dependent_checks(before, (cause, tables), cascade)?;
+        dropped.absorb(self.drop_dependent_domain_constraints(before, (cause, tables), cascade)?);
+        dropped.absorb(self.drop_dependent_views(before, (cause, tables), cascade)?);
+        dropped.absorb(self.drop_dependent_assertions(before, (cause, tables), cascade)?);
         Ok(dropped)
     }
 
     /// [SR7, SR13a, GR1] The CHECKs of tables, not copies of a domain's,
     /// that read `qn` and bind no more, each dropped if `cascade` as
     /// ALTER TABLE … DROP CONSTRAINT … CASCADE drops it.
-    fn drop_dependent_checks(&mut self, before: &State, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
+    fn drop_dependent_checks(&mut self, before: &State, (cause, tables): (Cause, &[QualifiedName]), cascade: bool) -> Result<Dropped> {
         let mut found = Vec::new();
         for t in self.catalog.tables() {
             for c in &t.constraints {
                 let ConstraintKind::Check { text, names, reads, horizon } = &c.kind else { continue };
                 let binds = |st: &State| st.check_condition(&t.name, (text, names, horizon)).is_ok();
-                if c.domain.is_none() && reads.contains(qn) && binds(before) && !binds(self) {
+                let read = reads.iter().any(|r| tables.contains(r)) || (cause == Cause::Scope && tables.contains(&t.name));
+                if c.domain.is_none() && read && binds(before) && !binds(self) {
                     found.push((t.name.clone(), c.name.clone()));
                 }
             }
         }
         if let (Some((table, c)), false) = (found.first(), cascade) {
-            return Err(depends("SR13a", &format!("constraint {c} of {table}")));
+            return Err(depends(cause, Dependent::Check, &format!("constraint {c} of {table}")));
         }
         let mut dropped = Dropped::default();
         for (table, c) in &found {
@@ -82,19 +141,24 @@ impl State {
     /// [SR7, SR13e] The constraints of domains that read `qn` and bind no
     /// more, each dropped if `cascade` as ALTER DOMAIN … DROP CONSTRAINT
     /// drops it, with its copies [§11.39], as NOTE 568 says.
-    fn drop_dependent_domain_constraints(&mut self, before: &State, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
+    fn drop_dependent_domain_constraints(
+        &mut self,
+        before: &State,
+        (cause, tables): (Cause, &[QualifiedName]),
+        cascade: bool,
+    ) -> Result<Dropped> {
         let mut found = Vec::new();
         for d in self.catalog.domains() {
             for c in &d.constraints {
                 let ConstraintKind::Check { text, names, reads, horizon } = &c.kind else { continue };
                 let binds = |st: &State| st.bound_on_value(&d.name, d.data_type.clone(), (text, names, horizon)).is_ok();
-                if reads.contains(qn) && binds(before) && !binds(self) {
+                if reads.iter().any(|r| tables.contains(r)) && binds(before) && !binds(self) {
                     found.push((d.name.clone(), c.name.clone()));
                 }
             }
         }
         if let (Some((domain, c)), false) = (found.first(), cascade) {
-            return Err(depends("SR13e", &format!("constraint {c} of domain {domain}")));
+            return Err(depends(cause, Dependent::Domain, &format!("constraint {c} of domain {domain}")));
         }
         let mut dropped = Dropped::default();
         for (domain, c) in &found {
@@ -107,15 +171,16 @@ impl State {
     /// [SR5, SR13c, GR3] The views that read `qn`, directly or through
     /// others, and bind no more, each dropped if `cascade` as DROP VIEW …
     /// CASCADE drops it.
-    fn drop_dependent_views(&mut self, before: &State, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
+    fn drop_dependent_views(&mut self, before: &State, (cause, tables): (Cause, &[QualifiedName]), cascade: bool) -> Result<Dropped> {
         let binds = |st: &State, v: &ViewDesc| view_degree(st, v).is_ok();
-        let broken: Vec<QualifiedName> = self
-            .views_reading(qn)
-            .into_iter()
-            .filter(|v| self.catalog.view(v).is_some_and(|v| binds(before, v) && !binds(self, v)))
-            .collect();
+        let mut broken: Vec<QualifiedName> = Vec::new();
+        for v in tables.iter().flat_map(|t| self.views_reading(t)) {
+            if !broken.contains(&v) && self.catalog.view(&v).is_some_and(|d| binds(before, d) && !binds(self, d)) {
+                broken.push(v);
+            }
+        }
         if let (Some(view), false) = (broken.first(), cascade) {
-            return Err(depends("SR13c", &format!("view {view}")));
+            return Err(depends(cause, Dependent::View, &format!("view {view}")));
         }
         let mut dropped = Dropped::default();
         for view in &broken {
@@ -129,14 +194,16 @@ impl State {
 
     /// [SR7, SR13e, GR4] The assertions that read `qn` and bind no more,
     /// each dropped if `cascade` as DROP ASSERTION … CASCADE drops it.
-    fn drop_dependent_assertions(&mut self, before: &State, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
-        let reading = |kind: &ConstraintKind| if let ConstraintKind::Check { reads, .. } = kind { reads.contains(qn) } else { false };
+    fn drop_dependent_assertions(&mut self, before: &State, (cause, tables): (Cause, &[QualifiedName]), cascade: bool) -> Result<Dropped> {
+        let reading = |kind: &ConstraintKind| {
+            if let ConstraintKind::Check { reads, .. } = kind { reads.iter().any(|r| tables.contains(r)) } else { false }
+        };
         let broken: Vec<QualifiedName> = (self.catalog.assertions().into_iter())
             .filter(|a| reading(&a.kind) && before.assertion_plan(a).is_ok() && self.assertion_plan(a).is_err())
             .map(|a| a.name.clone())
             .collect();
         if let (Some(a), false) = (broken.first(), cascade) {
-            return Err(depends("SR13e", &format!("assertion {a}")));
+            return Err(depends(cause, Dependent::Assertion, &format!("assertion {a}")));
         }
         let mut dropped = Dropped::default();
         for a in &broken {

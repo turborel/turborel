@@ -39,6 +39,7 @@ impl Parser {
             | ValueExpression::AtZone { .. }
             | ValueExpression::Subquery(_)
             | ValueExpression::Composite(..)
+            | ValueExpression::Structured(..)
             | ValueExpression::Window(_)
             | ValueExpression::Navigation(_)
             | ValueExpression::Classifier { .. }
@@ -93,6 +94,7 @@ fn sort_column(key: ValueExpression, digits: bool) -> Result<SortColumn> {
         | ValueExpression::AtZone { .. }
         | ValueExpression::Subquery(_)
         | ValueExpression::Composite(..)
+        | ValueExpression::Structured(..)
         | ValueExpression::Window(_)
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
@@ -126,6 +128,7 @@ fn written_position(key: &ValueExpression, digits: bool) -> Option<i128> {
         | ValueExpression::AtZone { .. }
         | ValueExpression::Subquery(_)
         | ValueExpression::Composite(..)
+        | ValueExpression::Structured(..)
         | ValueExpression::Window(_)
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }

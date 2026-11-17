@@ -99,7 +99,9 @@ impl Session {
         let (bound, targets) = self.merge_kept(st, stmt, params, (keeping, &routed, rows_held.as_ref()))?;
         let physical = locked_rows(cx, &bound, routed.held)?;
         if !routed.held {
-            self.settle_cursors(st, &bound.table);
+            for table in std::iter::once(&bound.table).chain(&bound.members) {
+                self.settle_cursors(st, table);
+            }
         }
         let runner = Hosted::new(Some(self), cx);
         let id_column = row_id_column(&bound)?;
@@ -220,10 +222,19 @@ pub(super) fn inserting(
 fn locked_rows(StatementContext { st, tx }: StatementContext<'_>, bound: &BoundMerge, held: bool) -> Result<Plan> {
     // [DESIGN] A sort holds what passes the work area in runs of a spill
     // area (RULES.md D38), so the rows may outgrow memory.
-    let sorted = LogicalPlan::Sort { keys: vec![SortKey::ascending(row_id_column(bound)?)], input: Box::new(bound.rows.clone()) };
+    // Each target row's pairs together: of T's family, by its table too.
+    let id = row_id_column(bound)?;
+    let mut keys = vec![SortKey::ascending(id)];
+    if !bound.members.is_empty() {
+        keys.push(SortKey::ascending(id.saturating_add(1)));
+    }
+    let sorted = LogicalPlan::Sort { keys, input: Box::new(bound.rows.clone()) };
     let (optimized, _, physical) = plan(st, sorted);
     if !held {
         st.update_lock(tx, &bound.table)?;
+        for member in &bound.members {
+            st.update_lock(tx, member)?;
+        }
     }
     for t in optimized.tables().into_iter().chain(clause_tables(bound)) {
         st.read_lock(tx, &t)?;
@@ -275,10 +286,10 @@ fn row_id_column(bound: &BoundMerge) -> Result<usize> {
 ///
 /// As `filled`.
 fn filled_merge(bound: &BoundMerge, values: &[Value]) -> Result<BoundMerge> {
-    let BoundMerge { named, table, desc, source_width, rows, on, clauses, checks, auth, generated } = bound.clone();
+    let BoundMerge { named, table, desc, source_width, rows, on, clauses, checks, auth, generated, members } = bound.clone();
     let clauses = clauses.into_iter().map(|c| filled_when(c, values)).collect::<Result<_>>()?;
     let (rows, on) = (filled(rows, values)?, filled_cond(on, values)?);
-    Ok(BoundMerge { named, table, desc, source_width, rows, on, clauses, checks, auth, generated })
+    Ok(BoundMerge { named, table, desc, source_width, rows, on, clauses, checks, auth, generated, members })
 }
 
 /// The clause `clause`, its slots filled with `values`.

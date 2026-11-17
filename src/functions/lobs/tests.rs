@@ -204,3 +204,52 @@ fn like_of_a_large_object_matches_as_of_its_text() {
     assert!(LikePattern::new("%", None).unwrap().matches_lob(&empty).unwrap());
     assert!(!LikePattern::new("_", None).unwrap().matches_lob(&empty).unwrap());
 }
+
+/// Verifies: [DESIGN] RULES.md D79 [ISO/IEC 9075-2:2023 §8.2, §9.11] the
+/// type of the proxies of an equality operation of large objects: BOOLEAN
+/// where a large object is, of arrays an array of it and of rows of one
+/// degree a row, else the first operand's.
+#[test]
+fn proxy_types_of_large_object_equality() {
+    use super::proxy_type;
+    use crate::value::DataType;
+    use crate::value::types::Field;
+    let clob = DataType::Lob { kind: LobKind::Character, length: 10, units: crate::value::CharUnits::Characters };
+    let integer = DataType::Exact { precision: 10, scale: 0, spelled: crate::value::Spelled::Integer };
+    assert_eq!(proxy_type(&integer, &integer), integer, "no large object");
+    assert_eq!(proxy_type(&clob, &DataType::varying(3)), DataType::Boolean);
+    let arrays = proxy_type(&DataType::array(clob.clone(), 2), &DataType::array(clob.clone(), 3));
+    assert_eq!(arrays, DataType::array(DataType::Boolean, 2));
+    let field = |t: &DataType| Field { name: "F".into(), data_type: t.clone(), unnamed: false };
+    let rows = proxy_type(&DataType::row(vec![field(&clob), field(&integer)]), &DataType::row(vec![field(&clob), field(&integer)]));
+    assert_eq!(rows, DataType::row(vec![field(&DataType::Boolean), field(&integer)]));
+    let degrees = proxy_type(&DataType::row(vec![field(&clob)]), &DataType::row(vec![field(&clob), field(&integer)]));
+    assert_eq!(degrees, DataType::Boolean, "rows of two degrees");
+}
+
+/// Verifies: [DESIGN] RULES.md D79 [ISO/IEC 9075-2:2023 §8.2, §9.11] the
+/// first operand's proxy is TRUE where a large object is, the second's
+/// whether the two are equal, each as null as its operand, in rows and
+/// arrays too; anything but two operands refused (SQLCODE -910).
+#[test]
+fn proxies_of_large_object_equality() {
+    use super::{LobProxy, Side};
+    use crate::functions::ScalarFunction;
+    use crate::value::{DataType, Value};
+    let clob = DataType::Lob { kind: LobKind::Character, length: 10, units: crate::value::CharUnits::Characters };
+    let (first, second) = (LobProxy::new(Side::First, None), LobProxy::new(Side::Second, None));
+    assert_eq!(first.name(), "LARGE OBJECT EQUALITY");
+    assert_eq!(first.return_type(&[clob.clone(), clob.clone()]).unwrap(), DataType::Boolean);
+    assert_eq!(first.return_type(std::slice::from_ref(&clob)).unwrap_err().code, Code::Api);
+    assert_eq!(second.call(&[Value::Null]).unwrap_err().code, Code::Api);
+    let (a, b) = (Value::Lob(chunked("abc", 2)), Value::Lob(Lob::of_text("abc  ")));
+    assert_eq!(first.call(&[a.clone(), b.clone()]).unwrap().to_string(), "TRUE");
+    assert_eq!(second.call(&[a.clone(), b.clone()]).unwrap().to_string(), "TRUE", "padded with spaces");
+    assert_eq!(second.call(&[a.clone(), Value::Lob(Lob::of_text("abd"))]).unwrap().to_string(), "FALSE");
+    assert!(second.call(&[a.clone(), Value::Null]).unwrap().is_null());
+    assert!(first.call(&[Value::Null, a.clone()]).unwrap().is_null());
+    let pair = |x: Value| Value::Row(vec![x, Value::Bool(true)].into());
+    assert_eq!(second.call(&[pair(a.clone()), pair(b.clone())]).unwrap().to_literal(), "ROW(TRUE, TRUE)");
+    let list = |x: Value| Value::Array(vec![x].into());
+    assert_eq!(second.call(&[list(a), list(Value::Lob(Lob::of_text("x")))]).unwrap().to_literal(), "ARRAY[FALSE]");
+}

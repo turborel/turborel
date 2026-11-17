@@ -472,6 +472,8 @@ fn family(t: &DataType) -> &'static str {
         | DataType::DecFloat { .. }
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Extension(_) => t.kind().name(),
     }
@@ -495,7 +497,13 @@ fn sample(t: &DataType) -> Option<Value> {
         DataType::Interval(qualifier) => Some(Value::Interval(Interval { units: 0, qualifier: *qualifier })),
         DataType::Distinct(d) => sample(&d.source),
         // No index is of a large object [ISO/IEC 9075-2:2023 §9.14 SR3].
-        DataType::Lob { .. } | DataType::Array(_) | DataType::Multiset(_) | DataType::Row(_) | DataType::Extension(_) => None,
+        DataType::Lob { .. }
+        | DataType::Array(_)
+        | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
+        | DataType::Row(_)
+        | DataType::Extension(_) => None,
     }
 }
 

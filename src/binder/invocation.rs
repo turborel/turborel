@@ -105,6 +105,7 @@ impl Binder<'_> {
         match self.subject_function(named, (&types, &path), &shown)? {
             Chosen::One(Candidate::Sql(desc)) => self.sql_invocation(desc, args, bound, scope).map(Called::Done),
             Chosen::One(Candidate::Cast(t, which)) => self.cast_invocation((t, which), args, bound, scope).map(Called::Done),
+            Chosen::One(Candidate::Constructor(t)) => self.constructor_invocation(t).map(Called::Done),
             Chosen::Refused(e) => Ok(Called::Pass(Passed { bound: Some(bound), refusal: Some(e) })),
             Chosen::Nothing => Ok(Called::Pass(Passed { bound: Some(bound), refusal: None })),
         }
@@ -134,26 +135,40 @@ impl Binder<'_> {
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
         self.permitted(desc)?;
-        let (args, params) = self.routine_arguments(desc, args, bound, scope)?;
+        let (args, _) = self.routine_arguments(desc, args, bound, scope)?;
+        let invocation = self.bound_invocation(desc, args)?;
+        let result = invocation.result.clone();
+        Ok((Expr::Invoked(Arc::new(invocation)), result))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §9.18] The invocation of `desc`, an SQL-invoked
+    /// function or method of an SQL routine body, of the arguments `args`,
+    /// bound and stored in its parameters: its body bound, as the subject
+    /// routine of what invokes it [§4.35.2].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it is no function; its body's.
+    pub(super) fn bound_invocation(&self, desc: &SqlRoutineDesc, args: Vec<Expr>) -> Result<Invocation> {
         let qn = &desc.name;
         let result = desc.returns.clone().ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR10e] {qn} is no function")))?;
         let definition = definition_of(desc)?;
         let cx = super::Context { uses: None, selected: None, referencing: None, draws: false, invoked: self.invoked, ..self.context() };
         let (bound_body, _) = body::bind_body(cx, (desc, &definition), body::chain_of(self.invoked))?;
         resolve::note(self.invoked, &desc.specific);
-        let invocation = Invocation {
+        Ok(Invocation {
             name: desc.name.clone(),
             specific: desc.specific.clone(),
             args,
-            params,
+            params: desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone())).collect(),
             body: bound_body.body,
             program: bound_body.program,
             modifies: desc.access == DataAccess::Modifies,
-            result: result.clone(),
+            result,
             null_call: desc.null_call,
             deterministic: desc.deterministic,
-        };
-        Ok((Expr::Invoked(Arc::new(invocation)), result))
+            overrides: matches!(desc.method, Some((_, crate::ast::MethodKind::Instance))).then(Vec::new),
+        })
     }
 
     /// [ISO/IEC 9075-2:2023 §9.18 SR10l iii, §20.7 SR xxx] The arguments
@@ -171,12 +186,12 @@ impl Binder<'_> {
                 Some(given) => given,
                 None => self.typed(arg, ParameterType::Of(p.data_type.clone()), scope)?,
             };
-            if !super::assignable(&p.data_type, &t) {
+            let Some(e) = self.assigned((e, &t), &p.data_type)? else {
                 return Err(rule(format!(
                     "[ISO/IEC 9075-2:2023 §9.18 SR10l iii, §9.2 SR2] parameter {} of function {} is of {}, which an argument of {t} cannot be stored in",
                     p.name, desc.name, p.data_type
                 )));
-            }
+            };
             out.push(e);
         }
         let params = desc.parameters.iter().map(|p| (p.name.clone(), p.data_type.clone())).collect();
@@ -192,7 +207,7 @@ impl Binder<'_> {
     /// # Errors
     ///
     /// SQLCODE -103 if it may not.
-    fn permitted(&self, desc: &SqlRoutineDesc) -> Result<()> {
+    pub(super) fn permitted(&self, desc: &SqlRoutineDesc) -> Result<()> {
         let name = &desc.name;
         if desc.access == DataAccess::Modifies && !(self.purpose == Purpose::Query && self.hosting.get()) {
             let rules = match self.purpose {

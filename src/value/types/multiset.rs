@@ -149,6 +149,8 @@ impl SqlType for MultisetKind {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_) => return uncastable(&v, t),
         };

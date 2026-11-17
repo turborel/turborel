@@ -6,10 +6,11 @@
 
 use std::sync::Arc;
 
-use crate::catalog::TableDesc;
+use crate::catalog::{QualifiedName, TableDesc};
 use crate::exec::TransitionRows;
-use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, Subquery, map_cond_columns};
+use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, SetOp, Subquery, map_cond_columns};
 use crate::storage::ROW_ID;
+use crate::value::{Decimal, Value};
 
 /// The two sides of the rows bound over: the target's base table columns,
 /// then the source's.
@@ -29,6 +30,10 @@ pub(super) struct Sides<'b> {
     /// rows, each followed by its ordinal as its row id: T's rows, in
     /// place of a scan of a base table.
     pub(super) held: Option<&'b TransitionRows>,
+    /// [GR6a i 1 A] The proper subtables of a typed table named without
+    /// ONLY, whose superrows are rows of T too, each with the names of its
+    /// columns, of which T's are the first.
+    pub(super) members: &'b [(QualifiedName, Vec<String>)],
 }
 
 impl Sides<'_> {
@@ -51,10 +56,33 @@ impl Sides<'_> {
         }
         let needed = (0..self.target_width).collect();
         let scan = LogicalPlan::Scan { table: self.base.name.clone(), names, needed, located };
-        match self.view {
+        let own = match self.view {
             Some(cond) => LogicalPlan::Filter { cond: cond.clone(), input: Box::new(scan) },
             None => scan,
+        };
+        if self.members.is_empty() {
+            return own;
         }
+        // Of each row, located, the table it is of after its row id.
+        let tagged = |plan: LogicalPlan, width: usize, k: usize| {
+            let mut exprs: Vec<Expr> = (0..self.target_width).map(Expr::Column).collect();
+            if located {
+                exprs.push(Expr::Column(width));
+                exprs.push(Expr::Const(member_tag(k)));
+            }
+            LogicalPlan::Project { exprs, input: Box::new(plan) }
+        };
+        let first = tagged(own, self.target_width, 0);
+        self.members.iter().enumerate().fold(first, |plan, (k, (sub, columns))| {
+            let width = columns.len();
+            let mut read = columns.clone();
+            if located {
+                read.push(ROW_ID.to_owned());
+            }
+            let member = LogicalPlan::Scan { table: sub.clone(), names: read, needed: (0..self.target_width).collect(), located };
+            let arm = tagged(member, width, k.saturating_add(1));
+            LogicalPlan::SetOp { op: SetOp::Union, all: true, compared: None, left: Box::new(plan), right: Box::new(arm) }
+        })
     }
 
     /// `e`, over both sides, as an expression of a subquery over the
@@ -71,6 +99,12 @@ impl Sides<'_> {
         }
         e.map_children(&mut |child| self.correlated(child))
     }
+}
+
+/// The tag of the table a target row is of: 0 for T, k for its proper
+/// subtable k - 1 (`BoundMerge::members`).
+pub(crate) fn member_tag(k: usize) -> Value {
+    Value::Exact(Decimal::new(i128::try_from(k).unwrap_or(i128::MAX), 0))
 }
 
 /// [GR6a ii 1 to 3] The flag of a WHEN NOT MATCHED clause of the search
@@ -108,6 +142,8 @@ pub(super) fn joined(sides: &Sides<'_>, source: LogicalPlan, flags: Vec<Expr>, s
     let target = (0..tw).map(|k| Expr::Column(k.saturating_add(ahead)));
     let flagged = (sw..ahead).map(Expr::Column);
     let row_id = Expr::Column(ahead.saturating_add(tw));
-    let exprs = target.chain((0..sw).map(Expr::Column)).chain(flagged).chain(std::iter::once(row_id)).collect();
+    // Of a family, the table of the target row after its id.
+    let tag = (!sides.members.is_empty()).then(|| Expr::Column(ahead.saturating_add(tw).saturating_add(1)));
+    let exprs = target.chain((0..sw).map(Expr::Column)).chain(flagged).chain(std::iter::once(row_id)).chain(tag).collect();
     LogicalPlan::Project { exprs, input: Box::new(join) }
 }

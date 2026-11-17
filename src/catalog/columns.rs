@@ -1,6 +1,7 @@
 //! A column's description: its name, data type, nullability, default,
 //! domain and collation; and of an identity column [ISO/IEC 9075-2:2023
-//! §4.17.12] or a generated column [§4.17.13], how its values are given.
+//! §4.17.12], a generated column [§4.17.13] or a system-generated or
+//! derived self-referencing column [§4.17.9], how its values are given.
 
 use super::{Horizon, Principal, QualifiedName, SequenceDesc};
 use crate::ast::UserFunction;
@@ -44,6 +45,16 @@ pub enum Generated {
     Identity(Identity),
     /// [§4.17.13] A generated column's.
     Expression(Generation),
+    /// [§4.17.9, §11.3 GR4f iii] A system-generated self-referencing
+    /// column's: the sequence generator of its maximal supertable, which
+    /// each table of the subtable family shares, so no two rows of it get
+    /// one REF value. \[DESIGN\] Named as that table is, as an identity
+    /// column's is (RULES.md D63), and never restarted.
+    SystemReference(SequenceDesc),
+    /// [§4.17.9, §11.3 GR4f iv] A derived self-referencing column's: the
+    /// names of the derivational attributes its values are derived from
+    /// [§14.11 GR7d ii].
+    DerivedReference(Vec<String>),
 }
 
 /// [ISO/IEC 9075-2:2023 §4.17.12] What the descriptor of an identity
@@ -135,6 +146,24 @@ impl ColumnDesc {
         if let Some(Generated::Identity(identity)) = &self.generated { Some(identity) } else { None }
     }
 
+    /// Whether it is a system-generated or a derived self-referencing
+    /// column [ISO/IEC 9075-2:2023 §4.17.9]: one whose values an INSERT
+    /// generates.
+    pub fn generated_reference(&self) -> bool {
+        matches!(self.generated, Some(Generated::SystemReference(_) | Generated::DerivedReference(_)))
+    }
+
+    /// The sequence generator its values are drawn from, of an identity
+    /// column or a system-generated self-referencing column: one whose
+    /// counter is kept (RULES.md D62).
+    pub fn sequence(&self) -> Option<&SequenceDesc> {
+        match &self.generated {
+            Some(Generated::Identity(identity)) => Some(&identity.sequence),
+            Some(Generated::SystemReference(sequence)) => Some(sequence),
+            Some(Generated::Expression(_) | Generated::DerivedReference(_)) | None => None,
+        }
+    }
+
     /// Of a generated column, its generation expression.
     pub fn generation(&self) -> Option<&Generation> {
         if let Some(Generated::Expression(generation)) = &self.generated { Some(generation) } else { None }
@@ -148,7 +177,9 @@ impl ColumnDesc {
         match &self.generated {
             Some(Generated::Identity(identity)) => identity.always,
             Some(Generated::Expression(_)) => true,
-            None => false,
+            // [§14.15 SR3] No statement sets a self-referencing column at
+            // all, which `db/typed.rs` refuses apart.
+            Some(Generated::SystemReference(_) | Generated::DerivedReference(_)) | None => false,
         }
     }
 }

@@ -183,15 +183,27 @@ pub(crate) struct Assign {
     pub(crate) at: usize,
 }
 
+/// [§14.5] A part of a `<modified field reference>` or a `<mutator
+/// reference>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Modified {
+    /// The field at this position of a row [SR6].
+    Field(usize),
+    /// The attribute at this position of a structured value, set as its
+    /// mutator sets it [SR5; ISO/IEC 9075-2:2023 §4.9.3.3].
+    Attribute(usize),
+}
+
 /// [§14.5] An `<assignment target>`.
 #[derive(Debug, Clone)]
 pub(crate) struct Target {
     /// The `<target specification>`: an SQL variable or parameter, a new
     /// transition variable's column, or an element of an array one holds.
     pub(crate) spec: ParameterSpecification,
-    /// Of a `<modified field reference>`, the position of each field in
-    /// the row of the one before, the outermost first (Feature T051).
-    pub(crate) fields: Vec<usize>,
+    /// Of a `<modified field reference>` or a `<mutator reference>`, each
+    /// field or attribute of the value of the one before, the outermost
+    /// first (Features T051, S023).
+    pub(crate) fields: Vec<Modified>,
     /// The declared type of what is assigned: of its last field, if it has
     /// one, else of the target.
     pub(crate) data_type: DataType,
@@ -307,8 +319,11 @@ pub(crate) struct CursorStep {
 pub(crate) enum CursorAction {
     /// OPEN.
     Open,
-    /// FETCH of the orientation into the targets, named in the scope.
-    Fetch(FetchOrientation, Vec<ParameterSpecification>, Arc<RoutineScope>),
+    /// FETCH of the orientation into the targets, named in the scope; and,
+    /// if a value is assigned by an appropriate user-defined cast [ISO/IEC
+    /// 9075-2:2023 §9.2 GR2], a VALUES of the values assigned, over the
+    /// fetched row's values in its outer reference slots.
+    Fetch(FetchOrientation, Vec<ParameterSpecification>, Arc<RoutineScope>, Option<Leaf>),
     /// CLOSE.
     Close,
 }

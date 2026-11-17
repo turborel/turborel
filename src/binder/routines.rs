@@ -58,7 +58,7 @@ impl Binder<'_> {
             Routine::ToDistinct => t.source.clone(),
             Routine::ToSource => t.data_type(),
         };
-        let (e, given) = match (bound.into_iter().next().flatten(), args.first()) {
+        let (mut e, mut given) = match (bound.into_iter().next().flatten(), args.first()) {
             (Some(done), _) => done,
             (None, Some(arg)) => self.typed(arg, ParameterType::Of(parameter.clone()), scope)?,
             (None, None) => {
@@ -66,10 +66,15 @@ impl Binder<'_> {
             }
         };
         if !super::statements::assignable(&parameter, &given) {
-            return Err(rule(format!(
-                "[ISO/IEC 9075-2:2023 §9.18 SR10l iii, §9.2 SR2] the parameter of function {} is of {parameter}, which an argument of {given} cannot be stored in",
-                t.routine(which).name
-            )));
+            // [ISO/IEC 9075-2:2023 §9.2 GR2] by an appropriate cast.
+            let Some(cast) = super::assignment_cast(&*self.db.catalog, &given, &parameter) else {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §9.18 SR10l iii, §9.2 SR2] the parameter of function {} is of {parameter}, which an argument of {given} cannot be stored in",
+                    t.routine(which).name
+                )));
+            };
+            let cast = self.user_cast_invocation(cast, e)?.0;
+            (e, given) = (cast, parameter.clone());
         }
         let specific = QualifiedName { auth: t.name.auth.clone(), ident: t.routine(which).specific.clone() };
         super::invocation::note_specific(self.invoked, &specific);

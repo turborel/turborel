@@ -27,6 +27,7 @@ mod privileges;
 mod roles;
 mod routines;
 mod sequences;
+mod structured;
 mod triggers;
 mod user_types;
 
@@ -38,13 +39,18 @@ pub use domains::{DomainDesc, UsageDesc, usage_held};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
 pub use modules::{ModuleDesc, module_of_schema, module_schema, routine_path};
-pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, applicable, merged};
+pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, TypedActions, applicable, merged};
 pub use roles::{Authorization, Principal, RoleAuthorization, Roles, Who};
 pub use routines::{
     DataAccess, GenericParameter, GenericTable, PTF_NAME_LENGTH, ParameterMode, PtfDesc, RoutineKind, SqlParameter, SqlRoutineDesc,
     TableSemantics, ptf_name_type, ptf_status_type,
 };
 pub use sequences::SequenceDesc;
+pub use structured::{
+    AttributeDesc, CONSTRUCTOR_SUFFIX, CastDesc, MAX_HIERARCHY_DEPTH, MUTATOR_SUFFIX, MethodHost, MethodSpecDesc, OBSERVER_SUFFIX,
+    OrderingCategory, OrderingDesc, RefRepresentation, StructuredDesc, TransformGroupDesc, TransformNames, TypedDesc, method_executable,
+    method_host, proper_subtables, proper_supertables, type_methods, udt_qualified,
+};
 pub use triggers::{ActionTime, TransitionNames, TriggerDesc, TriggerEvent, TriggerLevel};
 pub use user_types::{Routine, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, based_on, types_in};
 
@@ -107,6 +113,9 @@ pub struct TableDesc {
     /// and what a commit does to its rows; none for a persistent base
     /// table.
     pub temporary: Option<Temporary>,
+    /// [ISO/IEC 9075-2:2023 §4.15.3] Of a typed table, its structured type,
+    /// self-referencing column and supertable.
+    pub typed: Option<TypedDesc>,
 }
 
 impl TableDesc {
@@ -220,6 +229,9 @@ pub struct ViewDesc {
     pub reads: Vec<QualifiedName>,
     /// The columns of each table it reads its query sees.
     pub horizon: Horizon,
+    /// [ISO/IEC 9075-2:2023 §4.16] Of a referenceable view, its structured
+    /// type, self-referencing column and superview.
+    pub typed: Option<TypedDesc>,
     /// What its columns are drawn from, if recorded: what its owner's
     /// REFERENCES on it are found from [ISO/IEC 9075:1992 §11.19 GR6].
     pub underlying: Option<Underlying>,
@@ -411,6 +423,37 @@ pub trait Catalog: Send + Sync {
     fn user_types(&self) -> Vec<&UserTypeDesc>;
     /// Forget the user-defined type of this name: one dropped [§11.59 GR].
     fn remove_user_type(&mut self, name: &QualifiedName);
+    /// Record a structured type, in place of one of its name [ISO/IEC
+    /// 9075-2:2023 §11.51 GR1].
+    fn put_structured_type(&mut self, structured: StructuredDesc);
+    /// The structured type of this name, if any.
+    fn structured_type(&self, name: &QualifiedName) -> Option<&StructuredDesc>;
+    /// Every structured type, in a stable order.
+    fn structured_types(&self) -> Vec<&StructuredDesc>;
+    /// Forget the structured type of this name.
+    fn remove_structured_type(&mut self, name: &QualifiedName);
+    /// Record a user-defined cast, in place of one of its source and target
+    /// types [ISO/IEC 9075-2:2023 §11.63 GR1].
+    fn put_cast(&mut self, cast: CastDesc);
+    /// Every user-defined cast, in a stable order.
+    fn casts(&self) -> Vec<&CastDesc>;
+    /// Forget the user-defined cast from `source` to `target`.
+    fn remove_cast(&mut self, source: &DataType, target: &DataType);
+    /// Record a user-defined ordering, in place of its type's [§11.65 GR].
+    fn put_ordering(&mut self, ordering: OrderingDesc);
+    /// The ordering of the user-defined type of this name, if any.
+    fn ordering(&self, udt: &QualifiedName) -> Option<&OrderingDesc>;
+    /// Every user-defined ordering, in a stable order.
+    fn orderings(&self) -> Vec<&OrderingDesc>;
+    /// Forget the ordering of the type of this name.
+    fn remove_ordering(&mut self, udt: &QualifiedName);
+    /// Record the transform groups of the type of this name, in place of
+    /// those it has [§11.67 GR]; none forgets them.
+    fn put_transforms(&mut self, udt: &QualifiedName, groups: Vec<TransformGroupDesc>);
+    /// The transform groups of the type of this name: none if it has none.
+    fn transforms(&self, udt: &QualifiedName) -> &[TransformGroupDesc];
+    /// Every type with transform groups, and its groups, in a stable order.
+    fn all_transforms(&self) -> Vec<(&QualifiedName, &[TransformGroupDesc])>;
     /// Forget the domain with this name: one dropped [§11.27 GR3].
     fn remove_domain(&mut self, name: &QualifiedName);
     /// Record the assertion `assertion`, a CHECK of no table, in place of

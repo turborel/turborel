@@ -20,9 +20,15 @@ const DROPPED_TYPE: u8 = 8;
 const DROPPED_TRIGGER: u8 = 9;
 const DROPPED_ROUTINE: u8 = 10;
 const DROPPED_MODULE: u8 = 11;
+/// The tag of a user-defined cast's drop.
+const DROPPED_CAST: u8 = 12;
+/// The tag of a user-defined ordering's drop.
+const DROPPED_ORDERING: u8 = 13;
+/// The tag of a transform group's drop, or of all a type's.
+const DROPPED_TRANSFORM: u8 = 14;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DropTarget {
     /// A base table [ISO/IEC 9075:1992 §11.18].
     Table(QualifiedName),
@@ -47,6 +53,14 @@ pub enum DropTarget {
     Routine(QualifiedName),
     /// An SQL-server module [ISO/IEC 9075-4:2006 draft §9.22].
     Module(QualifiedName),
+    /// A user-defined cast, by its source and target types [ISO/IEC
+    /// 9075-2:2023 §11.64].
+    Cast(Box<(crate::value::DataType, crate::value::DataType)>),
+    /// A user-defined ordering, by its type [ISO/IEC 9075-2:2023 §11.66].
+    Ordering(QualifiedName),
+    /// A type's transform group, or all of them [ISO/IEC 9075-2:2023
+    /// §11.71].
+    Transform(QualifiedName, Option<String>),
 }
 
 /// A schema's text, the engine of each table it created, its
@@ -167,6 +181,24 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::Trigger(trigger) => (DROPPED_TRIGGER, trigger),
         DropTarget::Routine(specific) => (DROPPED_ROUTINE, specific),
         DropTarget::Module(module) => (DROPPED_MODULE, module),
+        DropTarget::Ordering(udt) => (DROPPED_ORDERING, udt),
+        DropTarget::Cast(types) => {
+            out.put_u8(DROPPED_CAST);
+            crate::value::types::tags::put_type(out, &types.0);
+            crate::value::types::tags::put_type(out, &types.1);
+            out.put_u8(u8::from(cascade));
+            return;
+        }
+        DropTarget::Transform(udt, group) => {
+            out.put_u8(DROPPED_TRANSFORM);
+            put_table(out, udt);
+            out.put_u8(u8::from(group.is_some()));
+            if let Some(g) = group {
+                out.put_str(g);
+            }
+            out.put_u8(u8::from(cascade));
+            return;
+        }
     };
     out.put_u8(tag);
     put_table(out, name);
@@ -187,6 +219,16 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_TRIGGER => Ok(DropTarget::Trigger(table(r)?)),
         DROPPED_ROUTINE => Ok(DropTarget::Routine(table(r)?)),
         DROPPED_MODULE => Ok(DropTarget::Module(table(r)?)),
+        DROPPED_ORDERING => Ok(DropTarget::Ordering(table(r)?)),
+        DROPPED_CAST => {
+            let source = crate::value::types::tags::data_type(r)?;
+            Ok(DropTarget::Cast(Box::new((source, crate::value::types::tags::data_type(r)?))))
+        }
+        DROPPED_TRANSFORM => {
+            let udt = table(r)?;
+            let group = if r.u8()? == 0 { None } else { Some(r.str()?) };
+            Ok(DropTarget::Transform(udt, group))
+        }
         other => Err(SqlError::new(Code::Corrupt, format!("[DESIGN] a log record drops an unknown kind of object, {other}"))),
     }
 }

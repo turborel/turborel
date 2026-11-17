@@ -57,7 +57,7 @@ pub(super) struct Characteristics {
 
 /// An `<SQL-data access indication>` as written.
 #[derive(Debug, Clone, Copy)]
-enum Access {
+pub(in crate::parser) enum Access {
     /// NO SQL, which no SQL routine has \[SR9m ii\].
     NoSql,
     /// CONTAINS SQL, READS SQL DATA or MODIFIES SQL DATA.
@@ -257,7 +257,7 @@ impl Parser {
 
     /// `<deterministic characteristic>` ::= DETERMINISTIC | NOT
     /// DETERMINISTIC, whether the former, if one is next.
-    fn deterministic_characteristic(&mut self) -> Result<Option<bool>> {
+    pub(in crate::parser) fn deterministic_characteristic(&mut self) -> Result<Option<bool>> {
         if self.accept_word(DETERMINISTIC) {
             return Ok(Some(true));
         }
@@ -270,7 +270,7 @@ impl Parser {
 
     /// `<SQL-data access indication>` ::= NO SQL | CONTAINS SQL | READS
     /// SQL DATA | MODIFIES SQL DATA, if one is next.
-    fn data_access_indication(&mut self) -> Result<Option<Access>> {
+    pub(in crate::parser) fn data_access_indication(&mut self) -> Result<Option<Access>> {
         let access = if self.accept_kw(kw::NO) {
             Access::NoSql
         } else if self.accept_word(CONTAINS) {
@@ -292,7 +292,7 @@ impl Parser {
 
     /// `<null-call clause>` ::= RETURNS NULL ON NULL INPUT | CALLED ON
     /// NULL INPUT, whether the former, if one is next.
-    fn null_call_clause(&mut self) -> Result<Option<bool>> {
+    pub(in crate::parser) fn null_call_clause(&mut self) -> Result<Option<bool>> {
         let null_call = if self.accept_word(RETURNS) {
             self.expect_kw(kw::NULL)?;
             true

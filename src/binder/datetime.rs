@@ -97,6 +97,8 @@ pub(super) fn shown(e: Expr, from: DataType, now: Clocked<'_>) -> Expr {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => e,
@@ -161,6 +163,8 @@ fn castable(from: &DataType, to: &DataType) -> bool {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,
@@ -265,6 +269,8 @@ fn fields(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,

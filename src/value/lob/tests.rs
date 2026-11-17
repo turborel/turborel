@@ -1,4 +1,4 @@
-use super::fixtures::{Temp, text, texts};
+use super::fixtures::{Temp, octets_by, text, texts};
 use super::*;
 
 /// Verifies: [DESIGN] RULES.md D79: a directory finds the chunk of an octet
@@ -77,4 +77,67 @@ fn chunks_are_cut_between_characters() {
     assert_eq!(char_cut(&text[..7], 100), 5, "😀 split by the end");
     assert_eq!(char_cut(&text[..1], 100), 1);
     assert_eq!(char_cut(&text[5..6], 100), 0, "one partial character");
+}
+
+/// Verifies: [DESIGN] RULES.md D79 [ISO/IEC 9075-2:2023 §8.2 GR3, GR5] two
+/// binary large objects compare by their lengths, then octet by octet,
+/// held inline or in chunks; two character ones padded with spaces, the
+/// longer greater only if what it has past the shorter is other than
+/// spaces, held inline or in chunks.
+#[test]
+fn large_objects_compare_as_equality_reads_them() {
+    use std::cmp::Ordering;
+    let (short, long) = (Lob::of_octets(&[9]), Lob::of_octets(&[1, 2]));
+    assert_eq!(short.compare_to(&long).unwrap(), Ordering::Less, "held inline: by length");
+    assert_eq!(long.compare_to(&Lob::of_octets(&[1, 3])).unwrap(), Ordering::Less);
+    let chunked = octets_by(&[1, 2, 3], 2);
+    assert_eq!(chunked.compare_to(&long).unwrap(), Ordering::Greater, "in chunks: by length");
+    assert_eq!(chunked.compare_to(&octets_by(&[1, 2, 3], 1)).unwrap(), Ordering::Equal);
+    assert_eq!(texts(&["ab", "  "]).compare_to(&Lob::of_text("ab")).unwrap(), Ordering::Equal, "spaces past the shorter");
+    assert_eq!(Lob::of_text("ab").compare_to(&texts(&["ab", " c"])).unwrap(), Ordering::Less);
+    assert_eq!(texts(&["ab", " !"]).compare_to(&Lob::of_text("ab")).unwrap(), Ordering::Greater);
+    assert_eq!(texts(&["ab"]).compare_to(&Lob::of_text("ac")).unwrap(), Ordering::Less);
+}
+
+/// Verifies: [DESIGN] RULES.md D79, D45: the identity of a large object is
+/// its octets if held inline, else its parts: equal of one value's clones,
+/// not of two values alike, nor of two kinds; its key says the same; a
+/// value not held inline shows what it is; a slice of a locator or a
+/// reference keeps it.
+#[test]
+fn identities_keys_and_shown_values() {
+    let key = |l: &Lob| {
+        let mut out = Vec::new();
+        LobIdentity(l.clone()).put_key(&mut out);
+        out
+    };
+    let held = Lob::of_octets(&[1]);
+    assert_eq!(LobIdentity(held.clone()), LobIdentity(Lob::of_octets(&[1])));
+    assert!(LobIdentity(held.clone()) != LobIdentity(Lob::of_text("\u{1}")), "two kinds");
+    let chunked = octets_by(&[1, 2], 1);
+    assert_eq!(LobIdentity(chunked.clone()), LobIdentity(chunked.clone()));
+    assert!(LobIdentity(chunked.clone()) != LobIdentity(octets_by(&[1, 2], 1)), "two values alike");
+    assert!(LobIdentity(chunked.clone()) != LobIdentity(Lob::of_octets(&[1, 2])), "inline and not");
+    assert_eq!(key(&chunked), key(&chunked.clone()));
+    assert_ne!(key(&held), key(&Lob::of_text("\u{1}")));
+    assert_eq!(chunked.to_string(), "<BINARY LARGE OBJECT of 2 octets>");
+    assert_eq!(texts(&["ab", "c"]).to_string(), "<CHARACTER LARGE OBJECT of 3 characters>");
+    assert_eq!(held.to_string(), "01");
+    let located = Lob::of_locator(LobKind::Binary, 7, (10, 10));
+    assert_eq!(located.locator(), Some(7));
+    assert_eq!(held.locator(), None);
+    assert_eq!(Lob::empty(LobKind::Binary).locator(), None);
+}
+
+/// Verifies: [DESIGN] RULES.md D79: a chunk is cut at a character's
+/// boundary: before a character the limit would split, after a whole one
+/// at the end, and nowhere if none ends within the limit.
+#[test]
+fn chunks_are_cut_at_characters() {
+    let bytes = "a€b".as_bytes();
+    assert_eq!(char_cut(bytes, 2), 1, "€ would be split");
+    assert_eq!(char_cut(bytes, 4), 4);
+    assert_eq!(char_cut(&bytes[..3], 3), 1, "€ split by the end");
+    assert_eq!(char_cut("€".as_bytes(), 2), 0);
+    assert_eq!(char_cut(b"", 5), 0);
 }

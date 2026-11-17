@@ -21,7 +21,7 @@ use super::definitions::Defined;
 use super::{State, api, rule};
 use crate::ast::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
 use crate::binder::qualify;
-use crate::catalog::{QualifiedName, SequenceDesc};
+use crate::catalog::{ColumnDesc, QualifiedName, SequenceDesc};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::log::record::{Change, Record};
 use crate::txn::{LockMode, NO_TRANSACTION};
@@ -287,11 +287,19 @@ impl State {
     }
 
     /// Every sequence generator whose counter a statement may draw from:
-    /// each a definition made, and each identity column's \[§11.4 GR4\],
-    /// named as its table is (RULES.md D63).
+    /// each a definition made, each identity column's \[§11.4 GR4\] and each
+    /// typed table family's, named as its table is (RULES.md D63).
     pub(super) fn generators(&self) -> Vec<&SequenceDesc> {
-        let identities = self.catalog.tables().into_iter().flat_map(|t| t.columns.iter().filter_map(|c| c.identity()));
-        self.catalog.sequences().into_iter().chain(identities.map(|i| &i.sequence)).collect()
+        // An identity column's, and a typed table family's for its system
+        // generated references, which each of its tables holds alike.
+        let columns = self.catalog.tables().into_iter().flat_map(|t| t.columns.iter().filter_map(ColumnDesc::sequence));
+        let mut all: Vec<&SequenceDesc> = self.catalog.sequences();
+        for seq in columns {
+            if !all.iter().any(|s| s.name == seq.name && s.epoch == seq.epoch) {
+                all.push(seq);
+            }
+        }
+        all
     }
 
     /// `desc`, recorded.

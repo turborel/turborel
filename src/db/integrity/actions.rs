@@ -86,7 +86,7 @@ impl State {
     /// foreign key has an action. The values the statement gave are kept
     /// [GR7] only of the tables an action may give values to.
     pub(super) fn referential_actions(self: &Arc<Self>, tx: &Txn, effects: &mut Effects<'_>) -> Result<()> {
-        let acted: Vec<&QualifiedName> = self.catalog.tables().into_iter().filter(|t| acts_on(t)).map(|t| &t.name).collect();
+        let acted: Vec<&QualifiedName> = self.catalog.tables().into_iter().filter(|t| self.acts_on(&t.name)).map(|t| &t.name).collect();
         if acted.is_empty() {
             return Ok(());
         }
@@ -112,8 +112,11 @@ impl State {
             };
             let new = if updated { Some(self.storage_of(parent)?.get(tx.id, row)?.unwrap_or_default()) } else { None };
             let change = Change { parent, row, old, new };
+            // [ISO/IEC 9075-2:2023 §4.17.9] a row of a subtable of the
+            // referenced table is a superrow's of it; a child's foreign keys
+            // are its own and its supertables'.
             for child in self.catalog.tables() {
-                for (name, fk) in child.foreign_keys().filter(|(_, fk)| fk.table == *parent) {
+                for (name, fk) in self.foreign_keys_of(&child.name).into_iter().filter(|(_, fk)| self.reaches(parent, &fk.table)) {
                     self.act(tx, (child, name, fk), &change, (effects, &mut acting))?;
                 }
             }
@@ -422,9 +425,13 @@ fn acted(
     (changed, columns)
 }
 
-/// Whether a foreign key of `child` has a referential action, by which a
-/// change to the table it references may give values to `child`'s rows or
-/// delete them [§11.8 GR5, GR6].
-fn acts_on(child: &TableDesc) -> bool {
-    child.foreign_keys().any(|(_, fk)| fk.on_delete != ReferentialAction::NoAction || fk.on_update != ReferentialAction::NoAction)
+impl State {
+    /// Whether a foreign key of `child`, its own or a supertable's, has a
+    /// referential action, by which a change to the table it references
+    /// may give values to `child`'s rows or delete them [§11.8 GR5, GR6].
+    fn acts_on(&self, child: &QualifiedName) -> bool {
+        self.foreign_keys_of(child)
+            .into_iter()
+            .any(|(_, fk)| fk.on_delete != ReferentialAction::NoAction || fk.on_update != ReferentialAction::NoAction)
+    }
 }

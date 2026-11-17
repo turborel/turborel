@@ -48,6 +48,15 @@ impl Binder<'_> {
         Ok((Expr::NextValue(Arc::new(seq)), t))
     }
 
+    /// `bind`, the first row it binds holding an aggregate's sort keys
+    /// after its first field (`Binder::sorting`).
+    pub(super) fn sorted<T>(&self, bind: impl FnOnce() -> T) -> T {
+        let before = self.sorting.replace(true);
+        let bound = bind();
+        self.sorting.set(before);
+        bound
+    }
+
     /// `bind`, run with what it binds drawing values of sequence generators
     /// if `drawing`; as before after it.
     pub(super) fn drawing<T>(&self, drawing: bool, bind: impl FnOnce() -> T) -> T {

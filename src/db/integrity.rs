@@ -30,6 +30,7 @@ mod actions;
 mod before;
 mod gather;
 mod held;
+mod inherited;
 mod keys;
 mod modes;
 mod references;
@@ -144,7 +145,7 @@ impl<'a> Effects<'a> {
     /// The spill area's, SQLCODE -918 if it cannot be reserved.
     pub(super) fn inserted(&mut self, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
         if let Some(t) = &mut self.triggered {
-            t.record(table, &[], (id, Row::new(), row.clone()))?;
+            t.record(table, &[], &(id, Row::new(), row.clone()))?;
         }
         self.done.push(Effect::Inserted { table: table.clone(), id })
     }
@@ -158,7 +159,7 @@ impl<'a> Effects<'a> {
     /// As `inserted`.
     pub(super) fn updated(&mut self, table: &QualifiedName, id: RowId, (old, new): (Row, &Row), columns: &[usize]) -> Result<()> {
         if let Some(t) = &mut self.triggered {
-            t.record(table, columns, (id, old.clone(), new.clone()))?;
+            t.record(table, columns, &(id, old.clone(), new.clone()))?;
         }
         self.done.push(Effect::Updated { table: table.clone(), id, old, columns: columns.to_vec() })
     }
@@ -171,7 +172,7 @@ impl<'a> Effects<'a> {
     /// As `inserted`.
     pub(super) fn deleted(&mut self, table: &QualifiedName, id: RowId, old: Row) -> Result<()> {
         if let Some(t) = &mut self.triggered {
-            t.record(table, &[], (id, old.clone(), Row::new()))?;
+            t.record(table, &[], &(id, old.clone(), Row::new()))?;
         }
         self.done.push(Effect::Deleted { table: table.clone(), id, old })
     }
@@ -310,8 +311,9 @@ impl State {
                 continue;
             }
             for child in self.catalog.tables() {
-                let acts = child.foreign_keys().any(|(_, fk)| {
-                    fk.table == t && (fk.on_delete != ReferentialAction::NoAction || fk.on_update != ReferentialAction::NoAction)
+                let acts = self.foreign_keys_of(&child.name).into_iter().any(|(_, fk)| {
+                    self.reaches(&t, &fk.table)
+                        && (fk.on_delete != ReferentialAction::NoAction || fk.on_update != ReferentialAction::NoAction)
                 });
                 if acts {
                     next.push(child.name.clone());
@@ -390,11 +392,12 @@ impl State {
         Ok(triggered)
     }
 
-    /// The constraint `check` checks, if its table still has it.
+    /// The constraint `check` checks, if its table still has it: its own,
+    /// or one of a proper supertable [ISO/IEC 9075-2:2023 §4.25.1].
     pub(super) fn constraint_of(&self, check: &Check) -> Option<&ConstraintDesc> {
         let name = check.constraint();
         let Some(table) = check.table() else { return self.catalog.assertion(name) };
-        self.catalog.table(table)?.constraints.iter().find(|c| c.name == *name)
+        self.constraints_of(table).into_iter().find(|c| c.name == *name)
     }
 
     /// Makes `check`, in transaction `tx`, with what `checking` keeps:

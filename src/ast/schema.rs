@@ -55,6 +55,11 @@ pub struct Schema {
     /// The `<SQL-server module definition>`s, in order [ISO/IEC
     /// 9075-4:2006 draft §9.21].
     pub modules: Vec<ModuleDefinition>,
+    /// [ISO/IEC 9075-2:2023 §11.1] The `<SQL-invoked routine>`s of a
+    /// method, the `<user-defined cast definition>`s, `<user-defined
+    /// ordering definition>`s and `<transform definition>`s, in order,
+    /// each with how many `<schema routine>`s are written before it.
+    pub defined: Vec<(usize, SchemaStatement)>,
 }
 
 /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1] An `<SQL schema statement>` of
@@ -97,6 +102,18 @@ pub enum SchemaStatement {
     /// An `<SQL-server module definition>` [ISO/IEC 9075-4:2006 draft
     /// §9.21].
     Module(Box<ModuleDefinition>),
+    /// An `<alter type statement>` [ISO/IEC 9075-2:2023 §11.53].
+    AlterType(super::AlterType),
+    /// An `<SQL-invoked method>` [ISO/IEC 9075-2:2023 §11.60, §11.61].
+    Method(Box<super::MethodDefinition>),
+    /// A `<user-defined cast definition>` [ISO/IEC 9075-2:2023 §11.63].
+    Cast(Box<super::CastDefinition>),
+    /// A `<user-defined ordering definition>` [ISO/IEC 9075-2:2023 §11.65].
+    Ordering(super::OrderingDefinition),
+    /// A `<transform definition>` [ISO/IEC 9075-2:2023 §11.67].
+    Transform(super::TransformDefinition),
+    /// An `<alter transform statement>` [ISO/IEC 9075-2:2023 §11.68].
+    AlterTransform(super::AlterTransform),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION
@@ -222,6 +239,10 @@ pub enum TypeName {
     /// (RULES.md D69); or, unqualified and neither's, a type beyond the
     /// standard (RULES.md D53).
     Domain(TableName),
+    /// [ISO/IEC 9075-2:2023 §6.1] `<reference type>` ::= REF (
+    /// `<referenced type>` ) \[`<scope clause>`\]: the structured type and
+    /// the scope's table.
+    Reference(TableName, Option<TableName>),
     /// [ISO/IEC 9075-2:2023 §6.1] `<collection type>`, `<data type>` ARRAY
     /// \[`[` `<maximum cardinality>` `]`\] or `<data type>` MULTISET, its
     /// element type naming a type.
@@ -256,6 +277,10 @@ pub struct ViewDefinition {
     /// WITH CHECK OPTION, if written, of its levels, CASCADED if none
     /// were written [ISO/IEC 9075:1992 §11.19 SR13].
     pub check_option: Option<CheckLevels>,
+    /// [ISO/IEC 9075-2:2023 §11.32] Of a referenceable view, its OF and
+    /// UNDER, and its `<view element>`s: a self-referencing column
+    /// specification and column options.
+    pub typed: Option<Box<(super::TypedTable, Vec<TableElement>)>>,
 }
 
 /// [ISO/IEC 9075:1992 §11.19] `<levels clause>` ::= CASCADED | LOCAL: which
@@ -291,6 +316,9 @@ pub struct TableDefinition {
     pub subquery: Option<Box<super::AsSubquery>>,
     /// \[EXTENSION\] Its engine and options, if written.
     pub storage: TableStorage,
+    /// [ISO/IEC 9075-2:2023 §11.3] Its `<typed table clause>`, if written:
+    /// its elements are then of `<typed table element>`s.
+    pub typed: Option<Box<super::TypedTable>>,
 }
 
 /// \[EXTENSION\] `<table storage>` ::= \[USING `<engine name>`\] \[WITH
@@ -337,6 +365,13 @@ pub enum TableElement {
     Constraint(TableConstraint),
     /// A `<like clause>`.
     Like(super::LikeClause),
+    /// [ISO/IEC 9075-2:2023 §11.3] `<self-referencing column
+    /// specification>` ::= REF IS `<self-referencing column name>`
+    /// \[`<reference generation>`\]: its name, its generation, and where it
+    /// is written.
+    SelfReferencing(String, super::RefGeneration, usize),
+    /// [ISO/IEC 9075-2:2023 §11.3] `<column options>`.
+    Options(super::ColumnOptions),
 }
 
 /// [X3.135-1986 §6.3] `<column definition>` ::= `<column name>` {`<data type>` | `<domain name>`}

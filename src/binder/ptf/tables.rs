@@ -157,10 +157,20 @@ fn semantics_allow(ta: &TableArgument, g: GenericTable) -> Result<()> {
 }
 
 /// The place among `exprs` of what the column `c` of `columns` is compared
-/// by, bound in `cx`: of a collation, its sort key, added to `exprs`; else
-/// the column itself.
-fn keyed(cx: Context<'_>, columns: &[ColumnDesc], c: usize, exprs: &mut Vec<Expr>) -> usize {
-    let Some(d) = columns.get(c) else { return c };
+/// by, bound in `cx`: of a structured type ordered by MAP its comparison
+/// key, or of a collation its sort key, added to `exprs`; else the column
+/// itself.
+///
+/// # Errors
+///
+/// As `keyed_operand`'s.
+fn keyed(cx: Context<'_>, columns: &[ColumnDesc], c: usize, exprs: &mut Vec<Expr>) -> Result<usize> {
+    let Some(d) = columns.get(c) else { return Ok(c) };
+    // [§9.12, §9.14] of a structured type ordered by MAP, its key.
+    if crate::binder::structured::mapped(cx.db, &d.data_type) {
+        exprs.push(crate::binder::structured::keyed_operand(cx, (Expr::Column(c), &d.data_type), &d.name)?);
+        return Ok(exprs.len().saturating_sub(1));
+    }
     let out = OutColumn {
         name: Some(d.name.clone()),
         collation: d.collation.clone(),
@@ -168,13 +178,13 @@ fn keyed(cx: Context<'_>, columns: &[ColumnDesc], c: usize, exprs: &mut Vec<Expr
         not_null: d.not_null,
         origin: None,
     };
-    match of_column(cx.db, cx.collation, &out) {
+    Ok(match of_column(cx.db, cx.collation, &out) {
         Some(collation) => {
             exprs.push(Expr::sort_key(Expr::Column(c), &collation));
             exprs.len().saturating_sub(1)
         }
         None => c,
-    }
+    })
 }
 
 /// [SR12b iii to SR12b vi] The partitioning, pruning and ordering of `ta`,
@@ -189,22 +199,22 @@ fn partitioned(cx: Context<'_>, bound: &mut BoundTable, ta: &TableArgument, g: G
     for spec in ta.partition.iter().flatten() {
         let c = column(bound, spec, cx.schema, "SR12b iii 2")?;
         if let Some(d) = bound.columns.get(c) {
-            grouping_operand(&d.data_type, &format!("partitioning column {}", d.name))?;
+            grouping_operand(cx.db, &d.data_type, &format!("partitioning column {}", d.name))?;
         }
         if input.partition.contains(&c) {
             return Err(broken("SR12b iii 2", &format!("partitioning column {} is named twice", spec.column)));
         }
         input.partition.push(c);
-        input.keys.push(keyed(cx, &bound.columns, c, &mut exprs));
+        input.keys.push(keyed(cx, &bound.columns, c, &mut exprs)?);
     }
     for (spec, descending, nulls) in &ta.order {
         let c = column(bound, spec, cx.schema, "SR12b vi 2")?;
         if let Some(d) = bound.columns.get(c) {
-            ordering_operand(&d.data_type, &format!("ordering column {}", d.name))?;
+            ordering_operand(cx.db, &d.data_type, &format!("ordering column {}", d.name))?;
         }
         let order = SortOrder::of(*descending, *nulls);
         input.order.push((c, order.descending, order.nulls_first));
-        input.sort.push(SortKey::new(keyed(cx, &bound.columns, c, &mut exprs), order));
+        input.sort.push(SortKey::new(keyed(cx, &bound.columns, c, &mut exprs)?, order));
     }
     input.pruned = input.pruned || ta.prune == Some(true);
     input.columns = bound.columns.iter().map(|c| (c.name.clone(), c.data_type.clone())).collect();

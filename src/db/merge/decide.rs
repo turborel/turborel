@@ -12,6 +12,7 @@ use super::super::triggers::Instead;
 use super::super::{State, StatementContext, api};
 use super::routed::Inserting;
 use crate::binder::{BoundAction, BoundMerge, BoundWhen};
+use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
 use crate::exec::{Drawn, HeldRows, Subqueries, eval, eval_cond, execute};
 use crate::logical::{Expr, Truth};
@@ -41,6 +42,49 @@ impl Merge<'_> {
     /// The INSTEAD OF trigger that takes clause `clause`, if one does.
     pub(super) fn route(&self, clause: usize) -> Option<&Instead> {
         self.routes.get(clause).and_then(Option::as_ref)
+    }
+
+    /// [GR6a i 1 A] The tag of the table the target row of `joined` is of,
+    /// after its row id: 0 for T, k for its proper subtable k - 1; 0 of a
+    /// T with none (`BoundMerge::members`).
+    fn tag(&self, joined: &Row) -> Result<usize> {
+        if self.bound.members.is_empty() {
+            return Ok(0);
+        }
+        let untagged = || api("[DESIGN] a joined row of a MERGE has no table for its target row");
+        let Some(Value::Exact(tag)) = joined.get(self.id_column.saturating_add(1)) else { return Err(untagged()) };
+        usize::try_from(tag.units).map_err(|_| untagged())
+    }
+
+    /// The table the target row of `joined` is of: T, or one of its proper
+    /// subtables, whose superrow it is.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the row has no table.
+    pub(super) fn member(&self, joined: &Row) -> Result<&QualifiedName> {
+        let k = self.tag(joined)?;
+        let table = if k == 0 { Some(&self.bound.table) } else { self.bound.members.get(k.saturating_sub(1)) };
+        table.ok_or_else(|| api("[DESIGN] a joined row of a MERGE names no table of its target"))
+    }
+
+    /// Of the target row `id` of `joined`, the whole row of its table, read
+    /// in `cx`, its first columns, T's, `prefix`: `prefix` itself of a row
+    /// of T [ISO/IEC 9075-2:2023 §4.17.9].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the row is not there; the storage's.
+    pub(super) fn whole(&self, cx: StatementContext<'_>, (joined, id): (&Row, RowId), prefix: Row) -> Result<Row> {
+        let table = self.member(joined)?;
+        if *table == self.bound.table {
+            return Ok(prefix);
+        }
+        let mut row = cx.st.storage_of(table)?.get(cx.tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {table} vanished")))?;
+        for (slot, value) in row.iter_mut().zip(prefix) {
+            *slot = value;
+        }
+        Ok(row)
     }
 }
 
@@ -102,13 +146,14 @@ pub(super) fn planned(
             continue;
         };
         read.matched = read.matched.saturating_add(1);
-        let first = first_matched(merge, &joined, grouping.limit(id))?;
-        if let Some(subject) = grouping.pair(id, first, joined)? {
-            subject_row(merge, subject, &mut planned)?;
+        let located = (merge.tag(&joined)?, id);
+        let first = first_matched(merge, &joined, grouping.limit(located))?;
+        if let Some(subject) = grouping.pair(located, first, joined)? {
+            subject_row(StatementContext { st, tx }, merge, subject, &mut planned)?;
         }
     }
     if let Some(subject) = grouping.finish()? {
-        subject_row(merge, subject, &mut planned)?;
+        subject_row(StatementContext { st, tx }, merge, subject, &mut planned)?;
     }
     Ok((planned, read))
 }
@@ -164,8 +209,8 @@ fn first_matched(merge: &Merge<'_>, joined: &Row, limit: Option<usize>) -> Resul
 
 /// [GR6a i 1 B III, GR6a i 7] What the subject row `subject` is planned
 /// for: its candidate new row, computed now, before any row is changed,
-/// or its deletion.
-fn subject_row(merge: &Merge<'_>, subject: Subject, planned: &mut [Planned]) -> Result<()> {
+/// whole, of a row of a proper subtable of T read in `cx`; or its deletion.
+fn subject_row(cx: StatementContext<'_>, merge: &Merge<'_>, subject: Subject, planned: &mut [Planned]) -> Result<()> {
     let Subject { clause, id, joined } = subject;
     let bound = merge.bound;
     let unplanned = || api(format!("[DESIGN] clause {clause} of the MERGE is no WHEN MATCHED clause of its plan"));
@@ -180,6 +225,7 @@ fn subject_row(merge: &Merge<'_>, subject: Subject, planned: &mut [Planned]) -> 
             let generated: &[(usize, Expr)] = if merge.route(clause).is_some() { &[] } else { &bound.generated };
             let assigned = Assigned { desc: &bound.desc, set, generated };
             let new = assigned.candidate((&old, &joined), (UPDATE_RULE, merge.runner))?;
+            let new = merge.whole(cx, (&joined, id), new)?;
             rows.push((id, joined, new))
         }
         Planned::Deletes(rows) => rows.push((id, joined)),
@@ -243,10 +289,13 @@ pub(super) struct Grouping {
     group: Option<Group>,
 }
 
+/// A target row: the tag of its table (`Merge::member`), and its id.
+pub(super) type Located = (usize, RowId);
+
 /// One target row's pairs, so far: the first clause any is true of, the
 /// first pair it is true of, and how many it is true of, counted to 2.
 struct Group {
-    id: RowId,
+    id: Located,
     chosen: Option<(usize, Row)>,
     matching: usize,
 }
@@ -255,7 +304,7 @@ impl Grouping {
     /// The last clause a pair of target row `id` need be tried against:
     /// the clause its pairs so far chose, as no later one can be its
     /// subject clause; none, of a row none is chosen for yet.
-    pub(super) fn limit(&self, id: RowId) -> Option<usize> {
+    pub(super) fn limit(&self, id: Located) -> Option<usize> {
         self.group.as_ref().filter(|g| g.id == id).and_then(|g| g.chosen.as_ref().map(|(c, _)| *c))
     }
 
@@ -266,7 +315,7 @@ impl Grouping {
     /// # Errors
     ///
     /// As `finish`.
-    pub(super) fn pair(&mut self, id: RowId, first: Option<usize>, joined: Row) -> Result<Option<Subject>> {
+    pub(super) fn pair(&mut self, id: Located, first: Option<usize>, joined: Row) -> Result<Option<Subject>> {
         let ended = match self.group.take() {
             Some(g) => {
                 if g.id == id {
@@ -316,7 +365,7 @@ impl Group {
                 ),
             ));
         }
-        Ok(self.chosen.map(|(clause, joined)| Subject { clause, id: self.id, joined }))
+        Ok(self.chosen.map(|(clause, joined)| Subject { clause, id: self.id.1, joined }))
     }
 }
 

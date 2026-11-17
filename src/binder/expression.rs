@@ -152,6 +152,7 @@ impl Binder<'_> {
             | ValueExpression::Difference { .. }
             | ValueExpression::AtZone { .. }
             | ValueExpression::Composite(..)
+            | ValueExpression::Structured(..)
             | ValueExpression::Navigation(_)
             | ValueExpression::Classifier { .. }
             | ValueExpression::MatchNumber { .. } => self.decorated(v, scope),
@@ -172,21 +173,7 @@ impl Binder<'_> {
             // function, a CASE or a search condition.
             ValueExpression::SetFunction(sf) => self.drawing(false, || self.set_function(sf, scope)).or_at(sf.at),
             ValueExpression::Call { schema, name, args, at, extension } => {
-                // [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10h iv 1] a function of
-                // the schema, an SQL-invoked function or a distinct type's
-                // (D69), then one registered (D53, D74); of a call grouping
-                // reads as a registered aggregate's, that aggregate.
-                let passed = if is_aggregate_call(v, (self.db, self.schema)) {
-                    Passed::default()
-                } else {
-                    match self.invocation((schema.as_deref(), name), args, scope).or_at(*at)? {
-                        Called::Done(invoked) => return Ok(invoked),
-                        Called::Pass(passed) => passed,
-                    }
-                };
-                let aggregate = self.db.functions.aggregate(name).is_some();
-                let called = || self.call((schema.as_deref(), name, *extension), args, passed, scope);
-                self.drawing(self.drawing.get() && !aggregate, called).or_at(*at)
+                self.routine_call(v, (schema.as_deref(), name, *extension), args, (*at, scope))
             }
             ValueExpression::Function { name, args, at } => self.function(name, args, scope).or_at(*at),
             ValueExpression::Window(w) => self.window_function(w, scope).or_at(w.at),
@@ -207,6 +194,7 @@ impl Binder<'_> {
             }
             ValueExpression::AtZone { source, zone, at } => self.at_zone(source, zone.as_deref(), scope).or_at(*at),
             ValueExpression::Composite(c, at) => self.composite((c, *at), scope).or_at(*at),
+            ValueExpression::Structured(s, at) => self.structured_expression((s, *at), scope).or_at(*at),
             ValueExpression::Navigation(n) => self.navigation(n, scope).or_at(n.at),
             ValueExpression::Classifier { variable, at } => self.classifier(variable.as_deref(), scope).or_at(*at),
             ValueExpression::MatchNumber { at } => self.match_number(scope).or_at(*at),
@@ -219,6 +207,38 @@ impl Binder<'_> {
             | ValueExpression::Subquery(_)
             | ValueExpression::Datetime(_) => self.value_expression(v, scope),
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §10.4] `v`, a call of `name` of `schema` with
+    /// `args`, written at `at`: a method invocation, an SQL-invoked
+    /// function's, or a function's of the database.
+    fn routine_call(
+        &self,
+        v: &ValueExpression,
+        (schema, name, extension): (Option<&str>, &str, bool),
+        args: &[ValueExpression],
+        (at, scope): (usize, Scope<'_>),
+    ) -> Result<(Expr, DataType)> {
+        // [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10h iv 1] a function of
+        // the schema, an SQL-invoked function or a distinct type's
+        // (D69), then one registered (D53, D74); of a call grouping
+        // reads as a registered aggregate's, that aggregate.
+        // [ISO/IEC 9075-2:2023 §6.6 SR11, §6.18] of a column of a
+        // structured type, a method invocation of it.
+        if let Some(subject) = schema.and_then(|c| self.lone_basis(c, at)) {
+            return self.method_call(&subject, (name, args), scope).or_at(at);
+        }
+        let passed = if is_aggregate_call(v, (self.db, self.schema)) {
+            Passed::default()
+        } else {
+            match self.invocation((schema, name), args, scope).or_at(at)? {
+                Called::Done(invoked) => return Ok(invoked),
+                Called::Pass(passed) => passed,
+            }
+        };
+        let aggregate = self.db.functions.aggregate(name).is_some();
+        let called = || self.call((schema, name, extension), args, passed, scope);
+        self.drawing(self.drawing.get() && !aggregate, called).or_at(at)
     }
 
     /// [ISO/IEC 9075:1992 §6.6, §6.7, §6.13] A string function or
@@ -350,7 +370,7 @@ impl Binder<'_> {
         let row = ValueExpression::Composite(Box::new(Composite::Row(parts)), sf.at);
         let orders = sf.order_by.iter().map(|k| SortOrder::of(k.descending, k.nulls_first)).collect();
         let func = AggregateRef(Arc::new(ArrayAggregate { orders, collations, by_query: false }));
-        self.aggregate(func, (Some(&row), false), sf.filter.as_deref(), scope)
+        self.sorted(|| self.aggregate(func, (Some(&row), false), sf.filter.as_deref(), scope))
     }
 
     /// \[EXTENSION\] A call by name of a registered scalar or aggregate
@@ -494,8 +514,19 @@ impl Binder<'_> {
         };
         let extreme = func.0.name() == kw::MAX || func.0.name() == kw::MIN;
         if let Some(t) = &arg_type {
-            operand_rules(t, func.0.name(), (extreme, distinct))?;
+            operand_rules(self.db, t, func.0.name(), (extreme, distinct))?;
         }
+        // [ISO/IEC 9075-2:2023 §9.12, §9.14] MAX, MIN and DISTINCT of a
+        // structured type ordered by MAP compare its values' keys.
+        let arg = match (arg, &arg_type) {
+            (Some(e), Some(t)) if extreme || distinct => {
+                let e = super::structured::keyed_operand(self.context(), (e, t), func.0.name())?;
+                Some(self.keyed_value(e, t, func.0.name())?)
+            }
+            // [§9.13 SR1b] INTERSECTION groups its multisets' elements.
+            (Some(e), Some(t)) if func.0.name() == "INTERSECTION" => Some(self.keyed_elements(e, t, "INTERSECTION")?),
+            (arg, _) => arg,
+        };
         if self.purpose.constrains() && extreme && arg_type.clone().is_some_and(|t| t.is_character()) {
             return Err(nondeterministic("§7.8 SR3a, §7.9 SR13c i", "MAX or MIN of a character string"));
         }
@@ -522,14 +553,14 @@ impl Binder<'_> {
 /// `name`, of type `t`: an operand of a grouping operation under DISTINCT
 /// [§9.12]; of MAX or MIN, if `extreme`, of an ordering operation [§9.14],
 /// and not row-ordered \[SR7d ii\].
-fn operand_rules(t: &DataType, name: &str, (extreme, distinct): (bool, bool)) -> Result<()> {
+fn operand_rules(db: &crate::db::State, t: &DataType, name: &str, (extreme, distinct): (bool, bool)) -> Result<()> {
     if distinct {
-        grouping_operand(t, &format!("{name}(DISTINCT ...)"))?;
+        grouping_operand(db, t, &format!("{name}(DISTINCT ...)"))?;
     }
     if !extreme {
         return Ok(());
     }
-    ordering_operand(t, name)?;
+    ordering_operand(db, t, name)?;
     if row_ordered(t) {
         return Err(rule(format!(
             "[ISO/IEC 9075-2:2023 §10.9 SR7d ii] {name} of {t}: rows are not totally ordered, (1, NULL) and (NULL, 1) neither before the other"

@@ -7,6 +7,10 @@ use crate::ast::{ColumnSpecification, Composite, TableName, ValueExpression};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, delim, kw};
 
+/// The most `<identifier>`s of a `<column specification>`: its catalog's,
+/// its schema's, its table's and its own [ISO/IEC 9075:1992 §6.4].
+const MAX_COLUMN_PARTS: usize = 4;
+
 impl Parser {
     /// A name of a table's form, and nothing after it: a `<collation name>`
     /// in a value [ISO/IEC 9075-2:2023 §19.10 GR1a].
@@ -53,19 +57,25 @@ impl Parser {
     /// [X3.135-1986 §5.7] `<column specification>` ::= \[`<qualifier>`.\] `<column name>`
     /// `<qualifier>` ::= `<table name>` | `<correlation name>`
     pub(super) fn column_specification(&mut self) -> Result<ColumnSpecification> {
+        self.column_of_parts(MAX_COLUMN_PARTS)
+    }
+
+    /// A `<column specification>` of `most` `<identifier>`s at most, the
+    /// rest of a chain left to read.
+    fn column_of_parts(&mut self, most: usize) -> Result<ColumnSpecification> {
         let at = self.here();
         let a = self.qualifier()?;
-        if !self.accept_delim(delim::PERIOD) {
+        if most < 2 || !self.accept_delim(delim::PERIOD) {
             return Ok(ColumnSpecification { qualifier: None, column: a, catalog: None, at });
         }
         let b = self.identifier()?;
-        if !self.accept_delim(delim::PERIOD) {
+        if most < 3 || !self.accept_delim(delim::PERIOD) {
             return Ok(ColumnSpecification { qualifier: Some(TableName { auth: None, ident: a, at }), column: b, catalog: None, at });
         }
         let c = self.identifier()?;
         // [ISO/IEC 9075:1992 §6.4] a <column reference> of a <qualifier>
         // with its <catalog name>.
-        if self.accept_delim(delim::PERIOD) {
+        if most >= MAX_COLUMN_PARTS && self.accept_delim(delim::PERIOD) {
             self.catalog_named(&a, at)?;
             let d = self.identifier()?;
             return Ok(ColumnSpecification { qualifier: Some(TableName { auth: Some(b), ident: c, at }), column: d, catalog: Some(a), at });
@@ -88,13 +98,24 @@ impl Parser {
         {
             n = n.saturating_add(1);
         }
+        // [ISO/IEC 9075-2:2023 §6.18, §6.40] Of two or more, a last
+        // <identifier> before "(", a <method name>, or SPECIFICTYPE is no
+        // part of the chain: a method of what it names follows.
+        let last = n.saturating_mul(2).saturating_sub(2);
+        let method = matches!(self.peek_at(last.saturating_add(1)), Tok::Delimiter(delim::LEFT_PAREN))
+            || matches!(self.peek_at(last), Tok::Identifier(w) if w == super::structured::SPECIFICTYPE);
+        let mut most = MAX_COLUMN_PARTS;
+        if n >= 2 && method {
+            n = n.saturating_sub(1);
+            most = n;
+        }
         let catalog = match (&self.catalogs, self.peek()) {
             (Catalogs::Refused | Catalogs::Kept, _) => true,
             (Catalogs::Of(ours), Tok::Identifier(first)) => first == ours,
             (Catalogs::Of(_), _) => false,
         };
-        if n <= 3 || (n == 4 && catalog) {
-            return Ok(ValueExpression::Column(self.column_specification()?));
+        if n <= 3 || (n == MAX_COLUMN_PARTS && catalog) {
+            return Ok(ValueExpression::Column(self.column_of_parts(most)?));
         }
         let at = self.here();
         let mut parts = vec![self.qualifier()?];

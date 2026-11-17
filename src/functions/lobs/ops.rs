@@ -43,6 +43,8 @@ pub(crate) fn as_large(v: &Value, kind: LobKind) -> Result<Option<Lob>> {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_),
             _,

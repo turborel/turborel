@@ -47,6 +47,13 @@ pub(super) struct Kept {
 }
 
 impl Kept {
+    /// Keeping `default` and `generated`: of a typed table's column, its
+    /// supercolumn's default and its self-referencing column's generation
+    /// (`db/typed.rs`).
+    pub(super) fn new(default: Option<ColumnDefault>, generated: Option<Generated>) -> Kept {
+        Kept { default, generated }
+    }
+
     /// `column`, described from its `<column definition>`, given what it
     /// keeps.
     pub(super) fn keep(&self, column: &mut ColumnDesc) {
@@ -107,6 +114,10 @@ impl State {
         t: &'t TableDefinition,
         earlier: &[TableDesc],
     ) -> Result<Vec<Element<'t>>> {
+        // [ISO/IEC 9075-2:2023 §11.3 SR11i] a <typed table clause>.
+        if let Some(typed) = &t.typed {
+            return self.typed_elements(definer, (t, typed), earlier);
+        }
         if let Some(s) = &t.subquery {
             return Ok(self.queried_columns(definer, s)?.into_iter().map(|c| Element::Copied(Box::new((c, Kept::default())))).collect());
         }
@@ -117,7 +128,9 @@ impl State {
                     let copied = self.copied_columns(definer, like, earlier).or_at(like.at)?;
                     elements.extend(copied.into_iter().map(|copied| Element::Copied(Box::new(copied))));
                 }
-                TableElement::Column(_) | TableElement::Constraint(_) => elements.push(Element::Written(element)),
+                TableElement::Column(_) | TableElement::Constraint(_) | TableElement::SelfReferencing(..) | TableElement::Options(_) => {
+                    elements.push(Element::Written(element));
+                }
             }
         }
         Ok(elements)

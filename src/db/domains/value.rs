@@ -98,6 +98,7 @@ impl State {
         };
         let probe = QualifiedName { auth: domain.auth.clone(), ident: format!("{} VALUE", domain.ident) };
         let desc = TableDesc {
+            typed: None,
             name: probe.clone(),
             columns: vec![column],
             constraints: Vec::new(),

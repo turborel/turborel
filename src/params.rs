@@ -26,6 +26,7 @@ use crate::ast::{ParameterSpecification, TargetKind};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, lex};
 use crate::value::Spelled;
+use crate::value::lob::LobKind;
 use crate::value::types::MAX_TYPE_NESTING;
 use crate::value::{DataType, Decimal, INDICATOR_PRECISION, MAX_CHARACTER_LENGTH, Value, assign};
 
@@ -195,9 +196,12 @@ impl Params {
 /// \[DESIGN\] Whether a host program's argument `value` suits a parameter of
 /// type `data_type`, `depth` levels inside a composite argument. A string
 /// suits one no longer than its length, an exact number an exact
-/// parameter, any number an approximate one. A binary string, a truth
-/// value, a datetime, an interval or a plug-in type's value suits a
-/// parameter of its kind, its length, fields and precision then as its
+/// parameter, any number an approximate or decimal floating-point one. A
+/// binary string, a truth value, a datetime, an interval, a large object,
+/// a structured value, a reference or a plug-in type's value suits a
+/// parameter of its kind, a character or binary string a large object of
+/// its kind, and a value of a distinct type's source type a parameter of
+/// the distinct type, its length, fields and precision then as its
 /// assignment checks them. An array suits an array type whose maximum
 /// cardinality it is within, each element null or suiting the element
 /// type, and a multiset a multiset type so. A row suits a row type of its degree, each field null or suiting
@@ -221,12 +225,21 @@ fn argument_fits(value: &Value, data_type: &DataType, depth: usize) -> bool {
             && fields.len() == r.fields.len()
             && fields.iter().zip(&r.fields).all(|(v, f)| v.is_null() || argument_fits(v, &f.data_type, depth.saturating_add(1)));
     }
+    // [ISO/IEC 9075-2:2023 §4.7.5] a distinct type's host value is of its
+    // source type.
+    if let DataType::Distinct(d) = data_type {
+        return depth < MAX_TYPE_NESTING && argument_fits(value, &d.source, depth.saturating_add(1));
+    }
     matches!(
         (value, data_type),
         (Value::Exact(_), DataType::Exact { .. })
-            | (Value::Exact(_), DataType::Approximate { .. })
-            | (Value::Approx(_), DataType::Approximate { .. })
+            | (Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_), DataType::Approximate { .. } | DataType::DecFloat { .. })
             | (Value::Binary(_), DataType::Binary { .. } | DataType::VarBinary { .. })
+            | (Value::Char(_), DataType::Lob { kind: LobKind::Character, .. })
+            | (Value::Binary(_), DataType::Lob { kind: LobKind::Binary, .. })
+            | (Value::Lob(_), DataType::Lob { .. })
+            | (Value::Structured(_), DataType::Structured(_))
+            | (Value::Reference(_), DataType::Reference(_))
             | (Value::Bool(_), DataType::Boolean)
             | (Value::Datetime(_), DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. })
             | (Value::Interval(_), DataType::Interval(_))

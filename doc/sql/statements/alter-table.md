@@ -29,6 +29,8 @@ ALTER TABLE: change a base table
     | SET GENERATED { ALWAYS | BY DEFAULT } [ <alter identity column option>... ]
     | DROP IDENTITY
     | DROP EXPRESSION
+    | ADD SCOPE <table name>
+    | DROP SCOPE <drop behavior>
 
 <alter identity column option> ::=
       RESTART [ WITH <signed numeric literal> ]
@@ -68,6 +70,12 @@ that takes values of its own, of no default, and drops its generator. Its
 NOT NULL constraint stays. Of a generated column, DROP EXPRESSION makes it
 a column that takes values of its own, keeping those it holds. No row
 changes.
+
+ADD SCOPE gives a column of a reference type a scope, a typed table of
+its referenced type, so that `->` and DEREF find the rows its values
+identify. DROP SCOPE removes it, with RESTRICT refused while a view,
+constraint or routine dereferences the column, and with CASCADE
+dropping those.
 
 **DROP COLUMN** removes the column and its values; the columns after it
 move up one place. A table constraint that reads that column alone goes

@@ -33,8 +33,8 @@ impl Parser {
     /// DESCRIPTOR, SET NAMES, SET TIME ZONE, SET CATALOG, SET SCHEMA, SET
     /// COLLATION, SET NO COLLATION, or SET CONSTRAINTS.
     pub(super) fn set_statement(&mut self) -> Result<SqlStatement> {
-        if self.at_set_role() {
-            return self.set_role();
+        if let Some(statement) = self.set_role_or_transform_group()? {
+            return Ok(statement);
         }
         let database = *self.peek_at(1) == Tok::Identifier(DATABASE.to_owned()) && self.at_setting_name(2);
         if database {
@@ -82,6 +82,18 @@ impl Parser {
             return self.set_schema_or_collation();
         }
         self.set_constraints()
+    }
+
+    /// SET ROLE [ISO/IEC 9075-2:2023 §19.3], or SET \[DEFAULT\] TRANSFORM
+    /// GROUP [§19.13], if one is next.
+    fn set_role_or_transform_group(&mut self) -> Result<Option<SqlStatement>> {
+        if self.at_set_role() {
+            return self.set_role().map(Some);
+        }
+        if self.at_set_transform_group() {
+            return self.set_transform_group().map(Some);
+        }
+        Ok(None)
     }
 
     /// Whether the token `i` on begins a setting's name: an identifier, or

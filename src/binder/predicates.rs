@@ -12,6 +12,7 @@ use super::collation::like_under;
 use super::composite::{grouping_operand, ordering_operand, spread};
 use super::expression::dynamic_of;
 use super::multisets::equality_operand;
+use super::structured::{Need, keyed_columns};
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
 use crate::ast::{Literal, Predicate, RowValue, SearchCondition, Subquery, TruthValue, ValueExpression, ValueSpecification};
@@ -22,7 +23,7 @@ use crate::params::ParameterType;
 use crate::value::{CompOp, DataType, Decimal, MAX_BINARY_LENGTH, Value};
 
 /// `cond`, or NOT `cond` if `not`.
-fn negated(cond: Cond, not: bool) -> Cond {
+pub(super) fn negated(cond: Cond, not: bool) -> Cond {
     if not { Cond::Not(Box::new(cond)) } else { cond }
 }
 
@@ -71,11 +72,11 @@ fn comparable(x: &[(Expr, DataType)], y: &[DataType], clause: &str) -> Result<()
 /// [ISO/IEC 9075-2:2023 §9.14 SR1a, SR1b, SR3] The fields of `x`, compared
 /// by `op` in `what`, are not array-ordered unless `op` is = or <>, an
 /// equality operation [§9.11].
-fn ordered(x: &[(Expr, DataType)], op: CompOp, what: &str) -> Result<()> {
+fn ordered(db: &crate::db::State, x: &[(Expr, DataType)], op: CompOp, what: &str) -> Result<()> {
     if matches!(op, CompOp::Eq | CompOp::Ne) {
         return Ok(());
     }
-    x.iter().try_for_each(|(_, t)| ordering_operand(t, what))
+    x.iter().try_for_each(|(_, t)| ordering_operand(db, t, what))
 }
 
 /// `row`, compared with a row of `degree` values: a lone value of a row
@@ -123,14 +124,38 @@ fn distinct_rows(x: &[Expr], y: &[Expr]) -> Cond {
 }
 
 impl Binder<'_> {
+    /// [ISO/IEC 9075-2:2023 §8.2, §9.10, §9.14] The pairs of `x` and `y`,
+    /// compared by `op`, each of user-defined types compared by its
+    /// type's ordering (`Binder::compared_pair`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if a pair's type has no ordering that compares so.
+    fn udt_pairs(&self, (x, y): (BoundRow, BoundRow), op: CompOp) -> Result<(BoundRow, BoundRow)> {
+        let need = if matches!(op, CompOp::Eq | CompOp::Ne) { Need::Equality } else { Need::Ordering };
+        // A multiset too, whose elements may compare by their keys.
+        let user_defined = |t: &DataType| matches!(t, DataType::Structured(_) | DataType::Distinct(_) | DataType::Multiset(_));
+        if !x.iter().chain(&y).any(|(_, t)| user_defined(t)) {
+            return Ok((x, y));
+        }
+        let mut pairs = (Vec::with_capacity(x.len()), Vec::with_capacity(y.len()));
+        for (a, b) in x.into_iter().zip(y) {
+            let (a, b) = self.compared_pair(a, b, need)?;
+            pairs.0.push(a);
+            pairs.1.push(b);
+        }
+        Ok(pairs)
+    }
+
     /// [X3.135-1986 §5.10; ISO/IEC 9075:1992 §8.1] a `<predicate>`.
     pub(super) fn predicate(&self, p: &Predicate, scope: Scope<'_>) -> Result<Cond> {
         Ok(match p {
             Predicate::Comparison(left, op, right) => {
                 let (x, y) = self.rows_paired(left, right, scope)?;
                 comparable(&x, &y.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), "ISO/IEC 9075:1992 §8.2 SR1, SR3")?;
-                ordered(&x, *op, "the comparison")?;
+                ordered(self.db, &x, *op, "the comparison")?;
                 let (x, y) = self.keyed_rows((left, right), &x, &y)?;
+                let (x, y) = self.udt_pairs((x, y), *op)?;
                 compare_rows(&exprs(&x), *op, &exprs(&y))
             }
             // [ISO/IEC 9075-2:2023 §8.15 SR5, §9.11] each field an operand of
@@ -139,6 +164,7 @@ impl Binder<'_> {
                 let (x, y) = self.rows_paired(left, right, scope)?;
                 comparable(&x, &types(&y), "ISO/IEC 9075-2:2023 §8.15 SR1, SR3")?;
                 let (x, y) = self.keyed_rows((left, right), &x, &y)?;
+                let (x, y) = self.udt_pairs((x, y), CompOp::Eq)?;
                 // [SR6] NOT (X IS DISTINCT FROM Y).
                 negated(distinct_rows(&exprs(&x), &exprs(&y)), *not)
             }
@@ -159,23 +185,34 @@ impl Binder<'_> {
             Predicate::Member { value, multiset, not } => self.member(value, multiset, *not, scope)?,
             Predicate::Submultiset { value, multiset, not } => self.submultiset(value, multiset, *not, scope)?,
             Predicate::Set { value, not } => self.set_predicate(value, *not, scope)?,
+            Predicate::Type { value, types, not } => self.type_predicate(value, types, *not, scope)?,
             Predicate::Exists(s) => Cond::Exists(self.subquery(s, scope, Use::Exists)?.0),
-            Predicate::Unique { subquery: s, nulls_distinct } => {
-                let (bound, types) = self.subquery(s, scope, Use::Rows)?;
-                // [ISO/IEC 9075-2:2023 §9.12 SR2i] each column an operand
-                // of a grouping operation.
-                types.iter().try_for_each(|t| grouping_operand(t, "UNIQUE")).or_at(s.at)?;
-                Cond::Unique(self.keyed_rows_of(s, &types, &bound)?, *nulls_distinct)
-            }
+            Predicate::Unique { subquery: s, nulls_distinct } => self.unique(s, *nulls_distinct, scope)?,
             Predicate::Match { value, unique, match_type, subquery } => {
                 // [§17.6 GR5t] a `?` takes its subquery column's type.
                 let (s, types) = self.subquery(subquery, scope, Use::Rows)?;
                 let x = self.row_as(value, &types, scope)?;
                 comparable(&x, &types, "ISO/IEC 9075:1992 §8.10 SR1, SR2")?;
                 let (x, keyed) = self.keyed_subquery((value, subquery), (&x, &types), &s)?;
+                let (x, keyed) = self.udt_subquery(x, &types, (keyed, Need::Equality)).or_at(subquery.at)?;
                 Cond::Match { values: exprs(&x), unique: *unique, match_type: *match_type, subquery: keyed }
             }
         })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §8.11] UNIQUE of the subquery `s`, its nulls
+    /// distinct if `nulls_distinct`: each column an operand of a grouping
+    /// operation [§9.12 SR2i]; of a structured type ordered by MAP, by its
+    /// key [§9.12].
+    fn unique(&self, s: &Subquery, nulls_distinct: bool, scope: Scope<'_>) -> Result<Cond> {
+        let (bound, types) = self.subquery(s, scope, Use::Rows)?;
+        types.iter().try_for_each(|t| grouping_operand(self.db, t, "UNIQUE")).or_at(s.at)?;
+        let keyed = self.keyed_rows_of(s, &types, &bound)?;
+        let keyed = Arc::new(crate::logical::Subquery::new(
+            keyed_columns(self.context(), keyed.plan.clone(), &types, "UNIQUE").or_at(s.at)?,
+            keyed.outer.clone(),
+        ));
+        Ok(Cond::Unique(keyed, nulls_distinct))
     }
 
     /// [ISO/IEC 9075:1992 §7.1] a `<row value constructor>`: its values and
@@ -232,8 +269,10 @@ impl Binder<'_> {
         let (bound, types) = self.subquery(s, scope, Use::Rows)?;
         let x = special(self.row_as(value, &types, scope)?, types.len());
         comparable(&x, &types, "ISO/IEC 9075:1992 §8.7 SR1, SR2").or_at(s.at)?;
-        ordered(&x, op, "the quantified comparison").or_at(s.at)?;
+        ordered(self.db, &x, op, "the quantified comparison").or_at(s.at)?;
         let (x, keyed) = self.keyed_subquery((value, s), (&x, &types), &bound)?;
+        let need = if matches!(op, CompOp::Eq | CompOp::Ne) { Need::Equality } else { Need::Ordering };
+        let (x, keyed) = self.udt_subquery(x, &types, (keyed, need)).or_at(s.at)?;
         Ok(Cond::Quantified(exprs(&x), op, quantifier, keyed))
     }
 
@@ -246,9 +285,11 @@ impl Binder<'_> {
         for other in [&y, &z] {
             comparable(&x, &other.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), "ISO/IEC 9075:1992 §8.3")?;
         }
-        ordered(&x, CompOp::Ge, "BETWEEN")?;
+        ordered(self.db, &x, CompOp::Ge, "BETWEEN")?;
         let (from, y) = self.keyed_rows((value, low), &x, &y)?;
         let (to, z) = self.keyed_rows((value, high), &x, &z)?;
+        let (from, y) = self.udt_pairs((from, y), CompOp::Ge)?;
+        let (to, z) = self.udt_pairs((to, z), CompOp::Le)?;
         let at_least = compare_rows(&exprs(&from), CompOp::Ge, &exprs(&y));
         let at_most = compare_rows(&exprs(&to), CompOp::Le, &exprs(&z));
         Ok(negated(Cond::And(Box::new(at_least), Box::new(at_most)), not))
@@ -312,6 +353,7 @@ impl Binder<'_> {
             let other = special(vec![(e, t)], x.len());
             comparable(&x, &types(&other), "ISO/IEC 9075:1992 §8.4 SR1, SR4; §8.7 SR1, SR2")?;
             let (keyed, other) = self.keyed_rows((value, std::slice::from_ref(v)), &x, &other)?;
+            let (keyed, other) = self.udt_pairs((keyed, other), CompOp::Eq)?;
             any.push(compare_rows(&exprs(&keyed), CompOp::Eq, &exprs(&other)));
         }
         Ok(negated(or_all(any), not))

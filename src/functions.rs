@@ -61,6 +61,10 @@ mod registry;
 mod rows;
 pub use rows::{FieldOf, RowOf};
 mod strings;
+mod structured;
+pub use structured::{
+    Constructed, Instanced, Keyed, Mutator, Observer, SPECIFICTYPE, SPECIFICTYPE_LENGTH, SpecificType, Treat, TreatReference, TypeTest,
+};
 mod sum;
 mod trim;
 mod truths;
@@ -438,6 +442,8 @@ impl AggregateFunction for Sum {
             | DataType::Timestamp { .. }
             | DataType::Array(_)
             | DataType::Multiset(_)
+            | DataType::Structured(_)
+            | DataType::Reference(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
@@ -480,6 +486,8 @@ impl AggregateFunction for Avg {
             | DataType::Timestamp { .. }
             | DataType::Array(_)
             | DataType::Multiset(_)
+            | DataType::Structured(_)
+            | DataType::Reference(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },

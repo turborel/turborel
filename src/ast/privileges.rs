@@ -2,7 +2,7 @@
 //! ISO/IEC 9075:1992 §11.36, §11.37; ISO/IEC 9075-2:2023 §12.2, §12.3,
 //! §12.7]. Split from ast/schema.rs (RULES.md R-SIZE-2).
 
-use super::{DropBehavior, Grantor, RoutineType, TableName, TypeName};
+use super::{DropBehavior, Grantor, RoutineDesignator, RoutineType, TableName, TypeName};
 
 /// [ISO/IEC 9075:1992 §11.36] What an `<object name>` names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +34,9 @@ pub enum PrivilegeObject {
 pub struct RevokeStatement {
     /// GRANT OPTION FOR was written: the grant option goes, the privilege stays.
     pub grant_option_for: bool,
+    /// [ISO/IEC 9075-2:2023 §12.7] HIERARCHY OPTION FOR was written: the
+    /// hierarchy option of SELECT goes, the privilege stays.
+    pub hierarchy_option_for: bool,
     /// The `<action>`s, or none for ALL PRIVILEGES.
     pub actions: Option<Vec<Action>>,
     /// The `<table name>`, `<domain name>` or `<collation name>`.
@@ -47,6 +50,12 @@ pub struct RevokeStatement {
     pub grantees: Vec<Option<String>>,
     /// [ISO/IEC 9075-2:2023 §12.7 SR2] GRANTED BY's `<grantor>`, if written.
     pub grantor: Option<Grantor>,
+    /// [ISO/IEC 9075-2:2023 §12.3] The `<privilege method list>` of an
+    /// `Action::SelectMethods`, in order.
+    pub methods: Vec<RoutineDesignator>,
+    /// [ISO/IEC 9075-2:2023 §10.6] Of a method named by a `<specific
+    /// routine designator>`, FOR `<schema-resolved user-defined type name>`.
+    pub udt: Option<TableName>,
     /// The `<drop behavior>`.
     pub behavior: DropBehavior,
 }
@@ -68,8 +77,17 @@ pub struct PrivilegeDefinition {
     pub grantees: Vec<Option<String>>,
     /// WITH GRANT OPTION was written.
     pub grant_option: bool,
+    /// [ISO/IEC 9075-2:2023 §12.2] WITH HIERARCHY OPTION was written, of
+    /// SELECT on a table of a structured type \[SR3\].
+    pub hierarchy_option: bool,
     /// [ISO/IEC 9075-2:2023 §12.2 SR6] GRANTED BY's `<grantor>`, if written.
     pub grantor: Option<Grantor>,
+    /// [ISO/IEC 9075-2:2023 §12.3] The `<privilege method list>` of an
+    /// `Action::SelectMethods`, in order.
+    pub methods: Vec<RoutineDesignator>,
+    /// [ISO/IEC 9075-2:2023 §10.6] Of a method named by a `<specific
+    /// routine designator>`, FOR `<schema-resolved user-defined type name>`.
+    pub udt: Option<TableName>,
 }
 
 /// [X3.135-1986 §6.6] `<action>` ::= SELECT | INSERT | DELETE | UPDATE
@@ -98,4 +116,8 @@ pub enum Action {
     Under,
     /// [ISO/IEC 9075-2:2023 §12.3] TRIGGER (Feature T217), of a table.
     Trigger,
+    /// [ISO/IEC 9075-2:2023 §12.3] SELECT ( `<privilege method list>` ), of
+    /// a table of a structured type: the methods are the statement's
+    /// `methods` \[SR6\].
+    SelectMethods,
 }

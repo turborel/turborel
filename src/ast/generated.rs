@@ -3,7 +3,7 @@
 //! values, how ALTER COLUMN changes what it gives, and an INSERT's
 //! `<override clause>`.
 
-use super::{DefaultOption, SequenceOptions, ValueExpression};
+use super::{DefaultOption, DropBehavior, SequenceOptions, TableName, ValueExpression};
 
 /// [ISO/IEC 9075-2:2023 §11.4] An `<identity column specification>` or a
 /// `<generation clause>`, in place of a `<default clause>`.
@@ -63,6 +63,11 @@ pub enum AlterColumnAction {
     /// [§11.22] `<drop column generation expression clause>` ::= DROP
     /// EXPRESSION
     DropExpression,
+    /// [§11.17] `<add column scope clause>` ::= ADD SCOPE `<table name>`
+    AddScope(TableName),
+    /// [§11.18] `<drop column scope clause>` ::= DROP SCOPE `<drop
+    /// behavior>`
+    DropScope(DropBehavior),
 }
 
 /// [ISO/IEC 9075-2:2023 §14.11] `<override clause>` ::= OVERRIDING USER

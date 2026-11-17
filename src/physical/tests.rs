@@ -22,6 +22,7 @@ fn a_table_without_storage_is_scanned_and_reported() {
         "A",
         "A",
         vec![TableDesc {
+            typed: None,
             name: name.clone(),
             columns: vec![],
             constraints: vec![],

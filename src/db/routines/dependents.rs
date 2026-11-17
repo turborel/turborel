@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::super::ddl::Dropped;
 use super::super::revoke::Abandoned;
 use super::super::{State, rule};
-use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, SqlRoutineDesc, TableDesc, based_on};
+use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, SqlRoutineDesc, TableDesc};
 use crate::error::Result;
 
 #[cfg(test)]
@@ -113,11 +113,13 @@ impl State {
 
     /// [ISO/IEC 9075-2:2023 §11.59 SR4g, GR1] The specific names of the
     /// routines whose descriptors include one of the user-defined types
-    /// `types`: a parameter or the result of a type based on one. None is
+    /// `types`: a parameter or the result of a type based on one, a
+    /// reference type of one, or a collection of either. None is
     /// dependent on a type [§4.35.1], as none is made by a type's
     /// definition, so each is dropped with CASCADE, refusing RESTRICT.
     pub(in crate::db) fn routines_typed_by(&self, types: &[QualifiedName]) -> Vec<QualifiedName> {
-        let of = |t: &crate::value::DataType| types.iter().any(|qn| based_on(t, qn));
+        // [§11.59 SR4g, GR1] Of D, a reference type of it, or a collection of either.
+        let of = |t: &crate::value::DataType| types.iter().any(|qn| crate::db::structured::names_type(t, qn));
         let bearing = |r: &&SqlRoutineDesc| r.parameters.iter().any(|p| of(&p.data_type)) || r.returns.as_ref().is_some_and(of);
         self.catalog.routines().into_iter().filter(bearing).map(|r| r.specific.clone()).collect()
     }

@@ -30,6 +30,8 @@ fn got(v: Value) -> Got {
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Lob(_)
         | Value::Extension(_)) => panic!("{other:?}"),

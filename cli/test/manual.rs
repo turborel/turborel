@@ -344,6 +344,44 @@ fn the_distinct_type_examples_run_as_printed() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D81: the examples of the
+/// statements of structured types, each page in a session of its own, as
+/// ANN: ALTER TYPE, CREATE METHOD, the casts and the orderings.
+#[test]
+fn the_structured_type_examples_run_as_printed() {
+    let pages = [
+        "sql/statements/alter-type.md",
+        "sql/statements/create-method.md",
+        "sql/statements/create-cast.md",
+        "sql/statements/drop-cast.md",
+        "sql/statements/create-ordering.md",
+        "sql/statements/drop-ordering.md",
+    ];
+    for page in pages {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+        assert!(Client::of(&db, "ANN").page(page) > 0, "{page} shows its examples' output");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D81: the examples of the transform
+/// statements and SET TRANSFORM GROUP, each page in a session of its own,
+/// as ANN.
+#[test]
+fn the_transform_examples_run_as_printed() {
+    let pages = [
+        "sql/statements/create-transform.md",
+        "sql/statements/alter-transform.md",
+        "sql/statements/drop-transform.md",
+        "sql/statements/set-transform-group.md",
+    ];
+    for page in pages {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+        assert!(Client::of(&db, "ANN").page(page) > 0, "{page} shows its examples' output");
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8: the examples of CREATE TRIGGER,
 /// then those of DROP TRIGGER, run as printed, as ANN.
 #[test]

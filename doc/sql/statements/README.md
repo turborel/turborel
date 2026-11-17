@@ -11,6 +11,8 @@ One reference page for each statement, in alphabetical order.
 - [ALTER INDEX](alter-index.md): change an index's options
 - [ALTER SEQUENCE](alter-sequence.md): change a sequence generator
 - [ALTER TABLE](alter-table.md): change a base table
+- [ALTER TRANSFORM](alter-transform.md): add or drop the functions of a transform group
+- [ALTER TYPE](alter-type.md): add or drop a structured type's attributes and methods
 - [ALTER USER](alter-user.md): change a user's password, or whether it may create roles
 - [BEGIN](begin.md): group statements with their own variables, conditions, cursors and handlers
 - [CALL](call.md): run an SQL-invoked procedure
@@ -21,18 +23,22 @@ One reference page for each statement, in alphabetical order.
 - [CONNECT](connect.md): connect to a server
 - [COPY DESCRIPTOR](copy-descriptor.md): copy a descriptor area, or an item's fields, to a PTF descriptor area *(in a component procedure)*
 - [CREATE ASSERTION](create-assertion.md): define an assertion
+- [CREATE CAST](create-cast.md): define a cast of a user-defined type by a function
 - [CREATE COLLATION](create-collation.md): define a collation
 - [CREATE DOMAIN](create-domain.md): define a domain
 - [CREATE FUNCTION](create-function.md): define an SQL-invoked function, or a polymorphic table function
 - [CREATE INDEX](create-index.md): define an index
+- [CREATE METHOD](create-method.md): give a method of a user-defined type its body
 - [CREATE MODULE](create-module.md): define an SQL-server module
+- [CREATE ORDERING](create-ordering.md): say how values of a user-defined type compare
 - [CREATE PROCEDURE](create-procedure.md): define an SQL-invoked procedure
 - [CREATE ROLE](create-role.md): define a role
 - [CREATE SCHEMA](create-schema.md): define a schema
 - [CREATE SEQUENCE](create-sequence.md): define a sequence generator
 - [CREATE TABLE](create-table.md): define a base table
+- [CREATE TRANSFORM](create-transform.md): define transform groups of a user-defined type
 - [CREATE TRIGGER](create-trigger.md): define a trigger
-- [CREATE TYPE](create-type.md): define a distinct type
+- [CREATE TYPE](create-type.md): define a distinct or structured type
 - [CREATE USER](create-user.md): define a user
 - [CREATE VIEW](create-view.md): define a viewed table
 - [DECLARE CURSOR](declare-cursor.md): declare a cursor
@@ -44,17 +50,20 @@ One reference page for each statement, in alphabetical order.
 - [DESCRIBE](describe.md): describe a statement prepared in an SQL descriptor area
 - [DISCONNECT](disconnect.md): end connections
 - [DROP ASSERTION](drop-assertion.md): drop an assertion
+- [DROP CAST](drop-cast.md): drop a user-defined cast
 - [DROP COLLATION](drop-collation.md): drop a collation
 - [DROP DOMAIN](drop-domain.md): drop a domain
 - [DROP INDEX](drop-index.md): drop an index
 - [DROP MODULE](drop-module.md): drop an SQL-server module
+- [DROP ORDERING](drop-ordering.md): drop a user-defined type's ordering
 - [DROP ROLE](drop-role.md): drop a role
-- [DROP ROUTINE](drop-routine.md): drop an SQL-invoked function or procedure
+- [DROP ROUTINE](drop-routine.md): drop an SQL-invoked function, procedure or method
 - [DROP SCHEMA](drop-schema.md): drop a schema
 - [DROP SEQUENCE](drop-sequence.md): drop a sequence generator
 - [DROP TABLE](drop-table.md): drop a base table
+- [DROP TRANSFORM](drop-transform.md): drop transform groups of a user-defined type
 - [DROP TRIGGER](drop-trigger.md): drop a trigger
-- [DROP TYPE](drop-type.md): drop a distinct type
+- [DROP TYPE](drop-type.md): drop a distinct or structured type
 - [DROP USER](drop-user.md): drop a user
 - [DROP VIEW](drop-view.md): drop a view
 - [END CONNECTION](end-connection.md): end a connection of the server
@@ -96,6 +105,7 @@ One reference page for each statement, in alphabetical order.
 - [SET SESSION AUTHORIZATION](set-session-authorization.md): set the session's authorization identifier
 - [SET TIME ZONE](set-time-zone.md): set the session's time zone
 - [SET TRANSACTION](set-transaction.md): set the next transaction's modes
+- [SET TRANSFORM GROUP](set-transform-group.md): choose the session's transform groups
 - [SIGNAL](signal.md): raise a condition
 - [TRUNCATE TABLE](truncate-table.md): delete every row of a table at once
 - [UPDATE](update.md): update rows

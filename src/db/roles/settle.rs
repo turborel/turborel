@@ -212,7 +212,7 @@ impl State {
             }
             let unheld = |s: &str| !t.usage_of(Who::sole(after.catalog.roles(), owner_of(&*after.catalog, s)), owner).0;
             for table in self.catalog.tables().into_iter().filter(|table| unheld(&table.name.auth)) {
-                let of = table.columns.iter().filter(|c| crate::catalog::based_on(&c.data_type, &t.name));
+                let of = table.columns.iter().filter(|c| crate::db::structured::names_type(&c.data_type, &t.name));
                 abandoned.columns.extend(of.map(|c| (table.name.clone(), c.name.clone())));
             }
         }

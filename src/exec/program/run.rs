@@ -388,8 +388,14 @@ impl<'p, H: Host> Run<'p, '_, H> {
         match &c.action {
             CursorAction::Open => self.host.open(&key, cursor, self.frame).map(|()| Completion::Success),
             CursorAction::Close => self.host.close(&key).map(|()| Completion::Success),
-            CursorAction::Fetch(orientation, targets, scope) => {
-                let Some(row) = self.host.fetch(&key, orientation, self.frame)? else { return Ok(Completion::NoData) };
+            CursorAction::Fetch(orientation, targets, scope, cast) => {
+                let Some(mut row) = self.host.fetch(&key, orientation, self.frame)? else { return Ok(Completion::NoData) };
+                if let Some(cast) = cast {
+                    let outer = row.iter().map(|v| crate::logical::Expr::Const(v.clone())).collect();
+                    let query = std::sync::Arc::new(crate::logical::Subquery::new(cast.query.plan.clone(), outer));
+                    let filled = crate::logical::Leaf { query, at: cast.at };
+                    row = self.host.rows(&filled, self.frame, Some(1))?.into_iter().next().unwrap_or(row);
+                }
                 self.frame.set_routine(std::sync::Arc::clone(scope));
                 assign_targets(&row, targets, self.frame, "X3.135-1986 §8.6 GR8", "X3.135-1986 §8.6 GR10")
             }

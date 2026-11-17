@@ -5,6 +5,7 @@
 //! checks each insert column list.
 
 use super::super::from::FromItem;
+use super::super::hierarchy::family_of;
 use super::super::views::{WriteTarget, trigger_target, write_target};
 use super::super::{Context, qualify, require};
 use crate::ast::{MatchedAction, MergeStatement, MergeWhen};
@@ -27,6 +28,9 @@ pub(super) struct Target {
     /// Its FROM item, of the name it is exposed by [SR8], first in the
     /// rows the statement's conditions and SET clauses are bound over.
     pub(super) item: FromItem,
+    /// [GR6a i 1 A] Of a typed base table named without ONLY, its proper
+    /// subtables, whose rows' superrows are its rows too; else none.
+    pub(super) members: Vec<QualifiedName>,
 }
 
 /// [SR1, SR2 to SR4, SR7, SR8, AR1] The target table of `stmt`: one that
@@ -53,7 +57,8 @@ pub(super) fn bind_target(cx: Context<'_>, stmt: &MergeStatement, held: bool) ->
     // A source row no target row matches is joined to nulls, so a NOT
     // NULL column of T may be null in the rows bound over.
     let item = FromItem { correlation: stmt.correlation.as_ref().map(|(c, _)| c.clone()), nullable: true, ..alone };
-    Ok(Target { name, write, item })
+    let members = if held { Vec::new() } else { family_of(cx.db, (&name, &write.named, &write.source), stmt.only) };
+    Ok(Target { name, write, item, members })
 }
 
 /// [SR2, SR3, SR4] The rules a read-only T breaks: of each kind of WHEN
@@ -93,6 +98,10 @@ fn required(cx: Context<'_>, stmt: &MergeStatement, named: &TableDesc) -> Result
     }
     if deletes {
         require(cx.db, cx.who(), named, &Actions { delete: true, ..Actions::default() }, DELETE_PRIVILEGE)?;
+    }
+    // [§14.12 AR] ONLY ( T ), as a <target table> of DELETE or UPDATE is.
+    if stmt.only {
+        super::super::hierarchy::only_allowed(cx.db, cx.who(), named, "§14.12 AR1b iv")?;
     }
     Ok(())
 }

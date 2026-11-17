@@ -1,9 +1,11 @@
 //! The views of the Information Schema of user-defined types and their
 //! routines, as ISO/IEC 9075-11 names them. USER_DEFINED_TYPES shows each
-//! distinct type and UDT_PRIVILEGES each privilege on one. ROUTINES,
-//! PARAMETERS and ROUTINE_PRIVILEGES show the functions each type's
-//! definition makes [ISO/IEC 9075-2:2023 §11.51 GR2] and each SQL-invoked
-//! routine [§11.60], and TRANSFORMS each type's transform group. Each
+//! distinct and structured type and UDT_PRIVILEGES each privilege on one.
+//! ROUTINES, PARAMETERS and ROUTINE_PRIVILEGES show the routines each
+//! type's definition makes [ISO/IEC 9075-2:2023 §11.51 GR2, GR3, §11.52]
+//! and each SQL-invoked routine [§11.60], a method's type and a cast
+//! function's cast among the columns ISO/IEC 9075-11:2006 draft §5.49
+//! adds, and TRANSFORMS each type's transform groups. Each
 //! reads its table of the Definition Schema (`definition/user_types.rs`,
 //! `definition/routines.rs`). Their text is this implementation's, as
 //! ISO/IEC 9075:1992 has none of them.
@@ -70,6 +72,7 @@ pub(super) const VIEWS: &[SystemView] = &[
        R.SPECIFIC_CATALOG, R.SPECIFIC_SCHEMA, R.SPECIFIC_NAME,
        R.ROUTINE_CATALOG, R.ROUTINE_SCHEMA, R.ROUTINE_NAME, R.ROUTINE_TYPE,
        R.MODULE_CATALOG, R.MODULE_SCHEMA, R.MODULE_NAME,
+       R.UDT_CATALOG, R.UDT_SCHEMA, R.UDT_NAME,
        R.DATA_TYPE, R.CHARACTER_MAXIMUM_LENGTH, R.CHARACTER_OCTET_LENGTH,
        S.CHARACTER_SET_CATALOG, S.CHARACTER_SET_SCHEMA, S.CHARACTER_SET_NAME,
        R.COLLATION_CATALOG, R.COLLATION_SCHEMA, R.COLLATION_NAME,
@@ -78,6 +81,7 @@ pub(super) const VIEWS: &[SystemView] = &[
        R.USER_DEFINED_TYPE_CATALOG AS TYPE_UDT_CATALOG,
        R.USER_DEFINED_TYPE_SCHEMA AS TYPE_UDT_SCHEMA,
        R.USER_DEFINED_TYPE_NAME AS TYPE_UDT_NAME,
+       R.SCOPE_CATALOG, R.SCOPE_SCHEMA, R.SCOPE_NAME,
        R.MAXIMUM_CARDINALITY, R.DTD_IDENTIFIER, R.ROUTINE_BODY,
        CASE WHEN ( R.ROUTINE_CATALOG, R.ROUTINE_SCHEMA )
                    IN ( SELECT CATALOG_NAME, SCHEMA_NAME
@@ -88,7 +92,8 @@ pub(super) const VIEWS: &[SystemView] = &[
             ELSE NULL
        END AS ROUTINE_DEFINITION,
        R.IS_DETERMINISTIC, R.SQL_DATA_ACCESS, R.IS_NULL_CALL,
-       R.SCHEMA_LEVEL_ROUTINE, R.SECURITY_TYPE
+       R.SCHEMA_LEVEL_ROUTINE, R.IS_USER_DEFINED_CAST,
+       R.IS_IMPLICITLY_INVOCABLE, R.SECURITY_TYPE
      FROM DEFINITION_SCHEMA.ROUTINES AS R
          LEFT JOIN
            DEFINITION_SCHEMA.COLLATIONS AS S
@@ -124,6 +129,7 @@ pub(super) const VIEWS: &[SystemView] = &[
        P.USER_DEFINED_TYPE_CATALOG AS UDT_CATALOG,
        P.USER_DEFINED_TYPE_SCHEMA AS UDT_SCHEMA,
        P.USER_DEFINED_TYPE_NAME AS UDT_NAME,
+       P.SCOPE_CATALOG, P.SCOPE_SCHEMA, P.SCOPE_NAME,
        P.MAXIMUM_CARDINALITY, P.DTD_IDENTIFIER
      FROM DEFINITION_SCHEMA.PARAMETERS AS P
          LEFT JOIN

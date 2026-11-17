@@ -250,9 +250,9 @@ impl ProgramBinder<'_> {
             Some(DefaultOption::Datetime(f)) => ValueExpression::Datetime(*f),
         };
         let (leaf, source) = self.value(&value, at)?;
-        if !super::assignable(t, &source) {
+        let Some(leaf) = self.assigned_leaf(leaf, std::slice::from_ref(&source), &[t])? else {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.5 SR3, §9.2 SR2] a default of {source} is no value of {t}")).or_at(at));
-        }
+        };
         Ok(Initial::Value(leaf))
     }
 
@@ -327,6 +327,45 @@ impl ProgramBinder<'_> {
         let s = ast::Subquery { query, at };
         let (bound, columns) = binder.subquery_hosting(&s, Scope::Rows(ONE_ROW), hosts).or_at(at)?;
         Ok((Leaf { query: bound, at }, columns))
+    }
+
+    /// [ISO/IEC 9075-4:2006 draft §14.5 SR5] Of the structured type `of`,
+    /// the position and type of its attribute `name`, whose mutator an
+    /// assignment invokes.
+    fn mutator_step(&self, of: &crate::value::types::UdtName, name: &str) -> Result<(usize, DataType)> {
+        let params = self.params();
+        let cx = Context { params: &params, ..self.cx };
+        let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
+        binder.mutator_of(of, name)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §9.2 GR2] `leaf`, of a row of the types
+    /// `types`, each value assigned to a site of the type in its place of
+    /// `targets`, by an appropriate user-defined cast where it is not
+    /// assignable (`Binder::assigned_query`); none if one is neither.
+    fn assigned_leaf(&self, leaf: Leaf, types: &[DataType], targets: &[&DataType]) -> Result<Option<Leaf>> {
+        if types.len() != targets.len() || types.iter().zip(targets).all(|(t, target)| super::assignable(target, t)) {
+            return Ok(Some(leaf));
+        }
+        let params = self.params();
+        let cx = Context { params: &params, ..self.cx };
+        let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
+        Ok(binder.assigned_query(&leaf.query, types, targets)?.map(|query| Leaf { query, at: leaf.at }))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §9.2 GR2] The values `row`, of the types
+    /// `types`, each assigned to a site of the type in its place of
+    /// `targets` (`Binder::assigned`); none if one is not assignable.
+    fn cast_row(&self, row: Vec<Expr>, types: &[DataType], targets: &[DataType]) -> Result<Option<Vec<Expr>>> {
+        let params = self.params();
+        let cx = Context { params: &params, ..self.cx };
+        let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
+        let mut out = Vec::with_capacity(row.len());
+        for ((e, t), target) in row.into_iter().zip(types).zip(targets) {
+            let Some(e) = binder.assigned((e, t), target)? else { return Ok(None) };
+            out.push(e);
+        }
+        Ok(Some(out))
     }
 
     /// The value `v`, written at `at`, bound as a leaf, and its type.

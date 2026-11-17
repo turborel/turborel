@@ -24,6 +24,7 @@ fn table(ident: &str) -> TableDesc {
     let attributes = ConstraintAttributes { deferrable: false, initially_deferred: false };
     let not_null = ConstraintDesc { name: named(&format!("{ident}0")), kind: ConstraintKind::NotNull(0), attributes, domain: None };
     TableDesc {
+        typed: None,
         name: named(ident),
         columns: Vec::new(),
         constraints: vec![not_null],

@@ -322,6 +322,8 @@ fn negative(v: &Value) -> bool {
         | Value::Row(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Extension(_) => false,
     }
 }

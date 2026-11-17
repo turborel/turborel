@@ -188,7 +188,7 @@ impl<'a> Described<'a> {
     /// operation.
     fn grouped(&self, columns: &[usize], what: &str) -> Result<()> {
         let types = columns.iter().filter_map(|&i| self.columns.get(i)).map(|c| &c.data_type);
-        types.into_iter().try_for_each(|t| binder::grouping_operand(t, what))
+        types.into_iter().try_for_each(|t| binder::key_operand(t, what))
     }
 
     /// Adds the constraint `kind`, named `name` if written.
@@ -300,8 +300,10 @@ pub(super) fn describe(
     d.reserve(elements.iter().flat_map(|el| match el {
         TableElement::Column(def) => def.constraints.iter().filter_map(|c| c.name.as_ref()).collect::<Vec<_>>(),
         TableElement::Constraint(c) => c.name.iter().collect(),
-        // Replaced by the columns it copies (`db/contents.rs`).
-        TableElement::Like(_) => Vec::new(),
+        TableElement::Options(o) => o.constraints.iter().filter_map(|c| c.name.as_ref()).collect(),
+        // Replaced by the columns it copies (`db/contents.rs`); the self-
+        // referencing column's constraints are named by none.
+        TableElement::Like(_) | TableElement::SelfReferencing(..) => Vec::new(),
     }));
     let mut at = 0_usize;
     for el in elements {
@@ -311,10 +313,12 @@ pub(super) fn describe(
                 at = at.saturating_add(1);
             }
             TableElement::Constraint(c) => d.table_constraint(c)?,
-            TableElement::Like(_) => {}
+            // Made columns of a typed table (`db/typed.rs`) first.
+            TableElement::Like(_) | TableElement::SelfReferencing(..) | TableElement::Options(_) => {}
         }
     }
     let probe = TableDesc {
+        typed: None,
         name: table.clone(),
         columns: columns.to_vec(),
         constraints: d.constraints.clone(),
@@ -519,6 +523,7 @@ impl State {
         let condition = Parser::new(text)?.of_definition().check_condition()?;
         let from = TableReference::Table(NamedTable {
             table: TableName { auth: Some(table.auth.clone()), ident: table.ident.clone(), at: 0 },
+            only: false,
             correlation: None,
             columns: None,
         });

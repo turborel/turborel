@@ -71,6 +71,8 @@ fn shape(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,
@@ -185,6 +187,8 @@ pub fn cast_at(v: Value, t: &DataType, now: Now) -> Result<Value> {
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => uncastable(&v, t),
     }

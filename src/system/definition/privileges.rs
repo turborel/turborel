@@ -24,6 +24,11 @@ use crate::system::{Rows, SYSTEM_GRANTOR, Seen, SystemTable, catalog_name, text,
 /// [§21.3.20 Description 2] The grantee of a privilege granted to all.
 pub(super) const PUBLIC: &str = "PUBLIC";
 
+/// [ISO/IEC 9075-2:2023 §12.2] The kind of a descriptor that tells a
+/// SELECT has WITH HIERARCHY OPTION: no row of its own, but the
+/// WITH_HIERARCHY of its SELECT's.
+const HIERARCHY: &str = "SELECT WITH HIERARCHY OPTION";
+
 /// The tables.
 pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     vec![
@@ -36,14 +41,14 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
 
 /// A privilege descriptor: its grantor, grantee, table, privilege, and
 /// column if it is a column privilege's.
-type Descriptor = (String, String, QualifiedName, &'static str, Option<String>);
+pub(super) type Descriptor = (String, String, QualifiedName, &'static str, Option<String>);
 
 /// Every privilege descriptor, each once, and whether it is grantable.
 ///
 /// # Errors
 ///
 /// A view of the Information Schema does not bind: a defect.
-fn descriptors(seen: &Seen<'_>) -> Result<BTreeMap<Descriptor, bool>> {
+pub(super) fn descriptors(seen: &Seen<'_>) -> Result<BTreeMap<Descriptor, bool>> {
     let catalog = &*seen.state.catalog;
     let mut all = BTreeMap::new();
     for o in objects(seen)? {
@@ -86,6 +91,7 @@ fn add(all: &mut BTreeMap<Descriptor, bool>, (grantor, grantee, object): (&str, 
         ("UPDATE", every(&held.update), every(&grantable.update)),
         ("REFERENCES", every(&held.references), every(&grantable.references)),
         ("TRIGGER", held.trigger, grantable.trigger),
+        (HIERARCHY, held.typed.hierarchy, grantable.typed.hierarchy),
     ];
     let mut put = |kind: &'static str, column: Option<String>, can: bool| {
         let key = (grantor.to_owned(), grantee.to_owned(), object.name.clone(), kind, column);
@@ -138,17 +144,23 @@ fn users(seen: &Seen<'_>) -> Result<Vec<Row>> {
 // ---------------------------------------------------------------------------
 
 fn table_privileges_columns() -> Vec<ColumnDesc> {
-    Columns::of().id("GRANTOR", true).id("GRANTEE", true).ids("TABLE", true).data("PRIVILEGE_TYPE", true).data("IS_GRANTABLE", true).done()
+    let columns = Columns::of().id("GRANTOR", true).id("GRANTEE", true).ids("TABLE", true).data("PRIVILEGE_TYPE", true);
+    columns.data("IS_GRANTABLE", true).data("WITH_HIERARCHY", true).done()
 }
 
-/// Each table privilege descriptor.
+/// Each table privilege descriptor, a SELECT's WITH_HIERARCHY YES if it
+/// has WITH HIERARCHY OPTION [ISO/IEC 9075-2:2023 §12.2].
 fn table_privileges(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
-    Ok(descriptors(seen)?
-        .into_iter()
-        .filter(|((.., column), _)| column.is_none())
+    let all = descriptors(seen)?;
+    let hierarchy: BTreeSet<(&String, &String, &QualifiedName)> =
+        all.keys().filter(|(.., kind, column)| *kind == HIERARCHY && column.is_none()).map(|(g, e, t, ..)| (g, e, t)).collect();
+    Ok(all
+        .iter()
+        .filter(|((.., kind, column), _)| column.is_none() && *kind != HIERARCHY)
         .map(|((grantor, grantee, table, kind, _), grantable)| {
-            [vec![text(&grantor), text(&grantee)], ids(&catalog, &table).to_vec(), vec![text(kind), yes(grantable)]].concat()
+            let with = *kind == "SELECT" && hierarchy.contains(&(grantor, grantee, table));
+            [vec![text(grantor), text(grantee)], ids(&catalog, table).to_vec(), vec![text(kind), yes(*grantable), yes(with)]].concat()
         })
         .collect())
 }

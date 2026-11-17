@@ -437,6 +437,7 @@ mod tests {
             generated: None,
         };
         TableDesc {
+            typed: None,
             name: QualifiedName { auth: "A".into(), ident: "T".into() },
             columns: vec![column],
             constraints: vec![],

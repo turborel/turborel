@@ -18,13 +18,12 @@ use super::super::ddl::Dropped;
 use super::super::definitions::Defined;
 use super::super::{Completion, Session, State, rule};
 use crate::ast::{
-    ParameterDeclaration, PrivilegeDefinition, PrivilegeObject, RoutineBody, RoutineDefinition, RoutineDesignator, Schema, TableName,
-    TypeName,
+    ParameterDeclaration, PrivilegeDefinition, PrivilegeObject, RoutineBody, RoutineDefinition, RoutineDesignator, RoutineType, Schema,
+    SchemaStatement, TableName, TypeName,
 };
 use crate::binder::{alike, definition_of, qualify};
 use crate::catalog::{
-    Horizon, ParameterMode, QualifiedName, Routine, RoutineKind, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, UsageDesc, UserTypeDesc,
-    owner_of, sole,
+    Horizon, ParameterMode, QualifiedName, RoutineKind, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, UsageDesc, owner_of, sole,
 };
 use crate::error::{At, Code, Result, SqlError};
 use crate::log::record::DropTarget;
@@ -78,8 +77,13 @@ impl State {
         let owner = owner_of(&*self.catalog, &name.auth).to_owned();
         let parameters = self.parameters(r, (names, &owner))?;
         self.told_apart(&name, r.kind, &parameters).or_at(r.name.at)?;
+        if r.kind == RoutineKind::Function {
+            let types: Vec<DataType> = parameters.iter().map(|p| p.data_type.clone()).collect();
+            self.told_apart_from_methods(&name, &types).or_at(r.name.at)?;
+        }
         let created = self.catalog.routines().iter().map(|d| d.created).max().unwrap_or(0).saturating_add(1);
         let mut desc = SqlRoutineDesc {
+            method: None,
             specific: self.specific_name(r, &name, created)?,
             name,
             kind: r.kind,
@@ -190,11 +194,9 @@ impl State {
     /// Whether a routine of its schema has the specific name `specific`:
     /// an SQL-invoked routine, or a distinct type's function.
     fn specific_taken(&self, specific: &QualifiedName) -> bool {
-        let of_type = |t: &UserTypeDesc| {
-            t.name.auth == specific.auth
-                && [Routine::ToDistinct, Routine::ToSource].iter().any(|w| t.routine(*w).specific == specific.ident)
-        };
-        self.catalog.routine(specific).is_some() || self.catalog.user_types().into_iter().any(of_type)
+        // And a structured type's routines and method specifications'
+        // [§11.51 SR9b vii] (`db/structured.rs`).
+        self.specific_in_use(specific)
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 SR16] The SQL parameters of `r`, each
@@ -230,13 +232,15 @@ impl State {
     /// SQLCODE -103 if one is named in another schema [SR9q]; as
     /// `create_routine` and GRANT say.
     pub(in crate::db) fn schema_routines(&mut self, s: &Schema, owner: &str) -> Result<bool> {
-        for r in &s.routines {
+        for (at, r) in s.routines.iter().enumerate() {
+            self.schema_defined((s, owner), at)?;
             if let Some(other) = r.name.auth.as_ref().filter(|o| **o != s.name) {
                 let msg = format!("[ISO/IEC 9075-2:2023 §11.60 SR9q] routine {} is in schema {other}, not {}", r.name.ident, s.name);
                 return Err(rule(msg).or_at(r.name.at));
             }
             self.create_routine(&s.name, r)?;
         }
+        self.schema_defined((s, owner), s.routines.len())?;
         let mut warned = false;
         for p in s.privileges.iter().filter(|p| of_schema_routine(s, p)) {
             warned |= self.grant_on_type(owner, &s.name, p).or_at(p.table.at)?.completion != Completion::Success;
@@ -244,15 +248,21 @@ impl State {
         Ok(warned)
     }
 
-    /// [ISO/IEC 9075-2:2023 §12.7 SR3b] That routine `r` may still be
-    /// defined as it is: its body binds, under its owner, with the
-    /// privileges it needs, and within its SQL-data access indication.
+    /// [ISO/IEC 9075-2:2023 §12.7 SR3b, GR12o] That routine `r` may still
+    /// be defined as it is: its owner holds USAGE on its parameters' and
+    /// result's types [§6.1 AR1], and its body binds, under its owner, with
+    /// the privileges it needs, and within its SQL-data access indication.
     ///
     /// # Errors
     ///
-    /// As `create_routine`'s, of its body.
+    /// As `create_routine`'s, of its types and body.
     pub(in crate::db) fn routine_binds(&self, r: &SqlRoutineDesc) -> Result<()> {
         let definition = definition_of(r)?;
+        let owner = owner_of(&*self.catalog, &r.name.auth).to_owned();
+        self.parameters(&definition, (&r.schema, &owner))?;
+        if let Some(t) = &definition.returns {
+            self.parameter_type(t, (&r.schema, &owner))?;
+        }
         self.bind_routine_body(r, &definition).map(drop)
     }
 
@@ -282,7 +292,8 @@ impl State {
     ///
     /// SQLCODE -103 if there is no such routine, or without CASCADE a
     /// routine, view, constraint, generated column or trigger invokes it
-    /// [SR4c].
+    /// [SR4c], or it is the function of an ordering, a transform or a cast
+    /// [SR4a, SR4d].
     pub(in crate::db) fn drop_routine(&mut self, specific: &QualifiedName, cascade: bool) -> Result<Dropped> {
         let Some(desc) = self.catalog.routine(specific).cloned() else {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.62 SR1] there is no routine of specific name {specific}")));
@@ -291,9 +302,12 @@ impl State {
         if let Some(module) = desc.module_name() {
             return self.drop_module(&module, cascade);
         }
+        // [§11.62 SR4a, SR4d, GR2 to GR4] what it is the function of.
+        let mut dropped = self.drop_function_uses(specific, cascade)?;
         let refused =
             |first: String| format!("[ISO/IEC 9075-2:2023 §11.62 SR4c] {first} invokes routine {}: drop it with CASCADE", desc.name);
-        self.drop_invoked(std::slice::from_ref(specific), cascade, &refused)
+        dropped.absorb(self.drop_invoked(std::slice::from_ref(specific), cascade, &refused)?);
+        Ok(dropped)
     }
 
     /// The routines of specific names `own` dropped, with CASCADE each
@@ -351,7 +365,12 @@ impl Session {
         };
         let named = (&designator.name, object, designator.parameters.as_deref(), None);
         let auth = self.auth().clone();
-        let Some(desc) = st.sql_routine_named((&auth, &schema), named)? else {
+        // [§10.6 SR3b] METHOD ... FOR a type, of the type's methods.
+        let found = match &designator.udt {
+            Some(udt) => st.method_designated((&auth, &schema), named, udt)?,
+            None => st.sql_routine_named((&auth, &schema), named)?,
+        };
+        let Some(desc) = found else {
             return Err(no_routine(&designator.name, &schema));
         };
         if let Some(module) = desc.module_name() {
@@ -386,7 +405,72 @@ pub(in crate::db) fn of_schema_routine(s: &Schema, p: &PrivilegeDefinition) -> b
         | PrivilegeObject::Module
         | PrivilegeObject::Type => false,
     };
-    s.routines.iter().any(of)
+    // [ISO/IEC 9075-2:2023 §11.1] of a method of the schema, once it has
+    // its body.
+    let method = p.udt.is_some()
+        || matches!(p.object, PrivilegeObject::SpecificRoutine(RoutineType::Method(_)) | PrivilegeObject::Routine(RoutineType::Method(_)));
+    let defines_methods = s.defined.iter().any(|(_, d)| matches!(d, SchemaStatement::Method(_)));
+    s.routines.iter().any(of) || (method && defines_methods)
+}
+
+impl State {
+    /// [ISO/IEC 9075-2:2023 §11.1] The methods, casts, orderings and
+    /// transforms of `<schema definition>` `s`, owned by `owner`, written
+    /// after `at` of its routines and before the next: each made in the
+    /// schema, as it would be alone.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if a method is of a type of another schema [§11.60
+    /// SR9q]; -104 if `owner` owns not the schema of the type of a cast,
+    /// ordering or transform [§11.63 AR2, §11.65 AR1, §11.67 AR1]; as each
+    /// one's.
+    fn schema_defined(&mut self, (s, owner): (&Schema, &str), at: usize) -> Result<()> {
+        for (_, d) in s.defined.iter().filter(|(before, _)| *before == at) {
+            if let (Some(n), cited) = super::super::structured::type_named(d) {
+                let qn = qualify(n, &s.name);
+                if matches!(d, SchemaStatement::Method(_)) && qn.auth != s.name {
+                    let msg = format!("[ISO/IEC 9075-2:2023 §11.60 SR9q] method of {qn} is in schema {}, not {}", qn.auth, s.name);
+                    return Err(rule(msg).or_at(n.at));
+                }
+                if owner_of(&*self.catalog, &qn.auth) != owner {
+                    let msg = format!("[ISO/IEC 9075-2:2023 {cited}] {qn} is in schema {}, which {owner} does not own", qn.auth);
+                    return Err(SqlError::new(Code::Privilege, msg).or_at(n.at));
+                }
+            }
+            self.schema_element_for_type(&s.name, d)?;
+        }
+        Ok(())
+    }
+
+    /// The method, cast, ordering or transform `d` of schema `schema` made.
+    fn schema_element_for_type(&mut self, schema: &str, d: &SchemaStatement) -> Result<()> {
+        match d {
+            SchemaStatement::Method(m) => self.create_method(schema, m).map(drop),
+            SchemaStatement::Cast(c) => self.create_cast(schema, c).map(drop),
+            SchemaStatement::Ordering(o) => self.create_ordering(schema, o).map(drop),
+            SchemaStatement::Transform(t) => self.create_transform(schema, t).map(drop),
+            SchemaStatement::Table(_)
+            | SchemaStatement::View(_)
+            | SchemaStatement::Grant(_)
+            | SchemaStatement::Revoke(_)
+            | SchemaStatement::Role(_)
+            | SchemaStatement::Domain(_)
+            | SchemaStatement::Assertion(_)
+            | SchemaStatement::Collation(_)
+            | SchemaStatement::Sequence(_)
+            | SchemaStatement::AlterSequence(_)
+            | SchemaStatement::AlterDomain(_)
+            | SchemaStatement::Type(_)
+            | SchemaStatement::Trigger(_)
+            | SchemaStatement::Routine(_)
+            | SchemaStatement::Module(_)
+            | SchemaStatement::AlterType(_)
+            | SchemaStatement::AlterTransform(_) => {
+                Err(rule("[DESIGN] a schema element defined for a type is a method, cast, ordering or transform"))
+            }
+        }
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §11.62 SR1, §10.6 SR3, SR4] No SQL-invoked routine

@@ -1,11 +1,13 @@
 //! [X3.135-1986 §6.5] `<view definition>`: the rules of a view and what the
-//! catalog keeps of it.
+//! catalog keeps of it. A referenceable view's are `views/referenceable.rs`.
+
+mod referenceable;
 
 use std::sync::Arc;
 
 use super::{State, rule};
 use crate::ast::ViewDefinition;
-use crate::binder::{BoundView, Context, Invoked, bind_view, underlying};
+use crate::binder::{Bound, BoundView, Context, Invoked, bind_view, underlying};
 use crate::catalog::{ColumnDesc, Horizon, QualifiedName, TemporaryKind, ViewDesc, owner_of};
 use crate::error::{At, Result};
 use crate::params::Params;
@@ -45,21 +47,15 @@ impl State {
         let (params, invoked) = (Params::new(), Invoked::default());
         let cx = Context { schema: names, invoked: Some(&invoked), ..Context::new(self, owner_of(&*self.catalog, auth), &params) };
         let BoundView { bound, grouped, updates, reads } = bind_view(cx, &v.query)?;
-        let titles = view_column_names(&name, v.columns.as_deref(), bound.columns.iter().map(|c| c.name.clone()).collect())?;
-        // [SR7] its columns are those of the query, as named.
-        let columns = titles
-            .into_iter()
-            .zip(&bound.columns)
-            .map(|(column, c)| ColumnDesc {
-                name: column,
-                data_type: c.data_type.clone(),
-                not_null: c.not_null,
-                default: None,
-                domain: None,
-                collation: c.collation.clone(),
-                generated: None,
-            })
-            .collect();
+        let (columns, typed, derivational) = match &v.typed {
+            Some(_) => {
+                let r = self.referenceable_view((&name, names, cx.auth), v, &bound)?;
+                (r.columns, Some(r.typed), r.derivational)
+            }
+            None => (regular_columns(&name, v, &bound)?, None, None),
+        };
+        // [DESIGN] A referenceable view is read-only (`views/referenceable.rs`).
+        let updates = updates.filter(|_| typed.is_none());
         if v.check_option.is_some() && updates.is_none() {
             return Err(rule(format!("[X3.135-1986 §6.5 SR9] {name} is WITH CHECK OPTION, so must be updatable")));
         }
@@ -74,11 +70,31 @@ impl State {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.19 SR5] view {name} names {t}, a declared local temporary table")));
         }
         // [ISO/IEC 9075:1992 §11.19 GR6] what its owner's REFERENCES on it are found from.
-        let underlying = Some(underlying(cx, &v.query)?);
+        let underlying = Some(referenceable::prefixed(underlying(cx, &v.query)?, derivational.as_deref()));
         let horizon = Horizon::of(&*self.catalog, &reads).invoking(invoked.take());
         let (query, names) = (v.text.clone(), names.to_owned());
-        Ok(ViewDesc { name, columns, query, names, check_option: v.check_option, grouped, updates, reads, horizon, underlying })
+        Ok(ViewDesc { typed, name, columns, query, names, check_option: v.check_option, grouped, updates, reads, horizon, underlying })
     }
+}
+
+/// [X3.135-1986 §6.5 SR7] The columns of the regular view `name` defined
+/// by `v`, whose query is `bound`: those of the query, as named.
+///
+/// # Errors
+///
+/// As `view_column_names`.
+fn regular_columns(name: &QualifiedName, v: &ViewDefinition, bound: &Bound) -> Result<Vec<ColumnDesc>> {
+    let titles = view_column_names(name, v.columns.as_deref(), bound.columns.iter().map(|c| c.name.clone()).collect())?;
+    let columns = titles.into_iter().zip(&bound.columns).map(|(column, c)| ColumnDesc {
+        name: column,
+        data_type: c.data_type.clone(),
+        not_null: c.not_null,
+        default: None,
+        domain: None,
+        collation: c.collation.clone(),
+        generated: None,
+    });
+    Ok(columns.collect())
 }
 
 impl State {

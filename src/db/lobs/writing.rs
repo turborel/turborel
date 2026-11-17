@@ -108,7 +108,12 @@ pub(super) fn resolved(v: &Value, located: &mut dyn FnMut(u32) -> Result<Lob>) -
         Value::Array(items) => Ok(Value::Array(items.iter().map(|i| resolved(i, located)).collect::<Result<Vec<_>>>()?.into())),
         Value::Multiset(items) => Ok(Value::Multiset(items.iter().map(|i| resolved(i, located)).collect::<Result<Vec<_>>>()?.into())),
         Value::Row(fields) => Ok(Value::Row(fields.iter().map(|f| resolved(f, located)).collect::<Result<Vec<_>>>()?.into())),
+        Value::Structured(s) => {
+            let attributes = s.attributes.iter().map(|a| resolved(a, located)).collect::<Result<Vec<_>>>()?;
+            Ok(Value::Structured(std::sync::Arc::new(crate::value::types::Structured { attributes: attributes.into(), ..(**s).clone() })))
+        }
         Value::Null
+        | Value::Reference(_)
         | Value::Char(_)
         | Value::Exact(_)
         | Value::Approx(_)

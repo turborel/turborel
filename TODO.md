@@ -49,14 +49,7 @@ Nothing is open.
 
 ### Types
 
-- Structured types (S023 to S026, S051, S151, S161, S261) [§4.9.3,
-  §11.51]. CREATE TYPE AS a list of attributes, methods, subtypes under
-  their supertypes, typed tables, IS OF and TREAT. Their methods are
-  SQL-invoked routines.
-- Reference types (S041, S043, S162, S094) [§4.11]. REF of a structured
-  type, a typed table's self-referencing column and dereference. They
-  need structured types and typed tables. S274 (Multisets of reference
-  types) comes with them.
+Nothing is open.
 
 ### Periods and temporal tables
 

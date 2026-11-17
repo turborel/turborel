@@ -325,18 +325,18 @@ impl Session {
         &self,
         st: &State,
         params: &Params,
-        (kind, table, set, cond): (WriteKind, &TableName, &[SetClause], Option<&SearchCondition>),
+        (kind, table, set, cond): (WriteKind, (&TableName, bool), &[SetClause], Option<&SearchCondition>),
     ) -> Result<()> {
         self.bound(st, params, |cx| bind_write(cx, kind, table, set, cond)).map(drop)
     }
 
     /// `stmt`, a positioned UPDATE or DELETE, bound as `bind_only` binds it.
     fn positioned_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
-        if let SqlStatement::UpdatePositioned { table, set, .. } = stmt {
-            return self.write_only(st, params, (WriteKind::UpdatePositioned, table, set, None));
+        if let SqlStatement::UpdatePositioned { table, only, set, .. } = stmt {
+            return self.write_only(st, params, (WriteKind::UpdatePositioned, (table, *only), set, None));
         }
-        if let SqlStatement::DeletePositioned { table, .. } = stmt {
-            return self.write_only(st, params, (WriteKind::DeletePositioned, table, &[], None));
+        if let SqlStatement::DeletePositioned { table, only, .. } = stmt {
+            return self.write_only(st, params, (WriteKind::DeletePositioned, (table, *only), &[], None));
         }
         Ok(())
     }
@@ -356,12 +356,12 @@ impl Session {
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
         match stmt {
             SqlStatement::Insert(ins) => self.insert_only(st, ins, params)?,
-            SqlStatement::UpdateSearched { table, set, where_clause } => {
-                self.write_only(st, params, (WriteKind::UpdateSearched, table, set, where_clause.as_ref()))?;
+            SqlStatement::UpdateSearched { table, only, set, where_clause } => {
+                self.write_only(st, params, (WriteKind::UpdateSearched, (table, *only), set, where_clause.as_ref()))?;
             }
             SqlStatement::Merge(merge) => drop(self.merge_bound(st, merge, params, None)?),
-            SqlStatement::DeleteSearched { table, where_clause } => {
-                self.write_only(st, params, (WriteKind::DeleteSearched, table, &[], where_clause.as_ref()))?;
+            SqlStatement::DeleteSearched { table, only, where_clause } => {
+                self.write_only(st, params, (WriteKind::DeleteSearched, (table, *only), &[], where_clause.as_ref()))?;
             }
             SqlStatement::UpdatePositioned { .. } | SqlStatement::DeletePositioned { .. } => self.positioned_only(st, stmt, params)?,
             // [§17.6 GR5u]
@@ -406,6 +406,7 @@ impl Session {
             | SqlStatement::Index(_)
             | SqlStatement::User(_)
             | SqlStatement::SetCollation(None)
+            | SqlStatement::SetTransformGroup(_)
             | SqlStatement::SetRole(SetRole::None)
             | SqlStatement::Served(_) => {}
         }

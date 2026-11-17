@@ -110,6 +110,7 @@ impl State {
                 self.named_type(name, (schema, who))?
             }
             TypeName::Extension { name, params } => self.extension_type((name, params), MISSING)?,
+            TypeName::Reference(referenced, scope) => self.reference_type((referenced, scope.as_ref()), (schema, who))?,
             TypeName::Collection(element, kind) => kind.of(self.data_type_of(element, (schema, who))?),
             TypeName::Row(fields) => {
                 let field = |(name, t): &(String, TypeName)| -> Result<Field> {
@@ -137,6 +138,15 @@ impl State {
     /// SQLCODE -103 if it names neither; -104 if `who` holds no USAGE.
     pub(crate) fn named_type(&self, name: &TableName, (schema, who): (&str, Who<'_>)) -> Result<DataType> {
         let qn = qualify(name, schema);
+        // [ISO/IEC 9075-2:2023 §6.1 AR1] a structured type, as `who` holds
+        // USAGE on it (RULES.md D81).
+        if let Some(structured) = self.catalog.structured_type(&qn) {
+            if !structured.usage_of(who, owner_of(&*self.catalog, &qn.auth)).0 {
+                let msg = format!("[ISO/IEC 9075-2:2023 §6.1 AR1] {} holds no USAGE on type {qn}", who.auth);
+                return fail(Code::Privilege, msg).or_at(name.at);
+            }
+            return Ok(structured.data_type());
+        }
         let Some(user_type) = self.catalog.user_type(&qn) else { return self.extension_type((name, &[]), MISSING) };
         if !user_type.usage_of(who, owner_of(&*self.catalog, &qn.auth)).0 {
             let msg = format!("[ISO/IEC 9075-2:2023 §6.1 AR1] {} holds no USAGE on type {qn}", who.auth);
@@ -165,14 +175,14 @@ impl State {
                     let msg = format!("[ISO/IEC 9075:1992 §11.21] a domain's <data type> is no domain, as {} is", name.ident);
                     return Err(rule(msg).or_at(name.at));
                 }
-                if self.catalog.user_type(&qn).is_some() {
+                if self.catalog.user_type(&qn).is_some() || self.catalog.structured_type(&qn).is_some() {
                     let msg = format!("[ISO/IEC 9075-2:2023 §11.34] a domain's data type is a <predefined type>, not type {qn}");
                     return Err(rule(msg).or_at(name.at));
                 }
                 self.extension_type((name, &[]), missing)
             }
             TypeName::Extension { name, params } => self.extension_type((name, params), missing),
-            TypeName::Collection(..) | TypeName::Row(_) => Err(rule(
+            TypeName::Collection(..) | TypeName::Row(_) | TypeName::Reference(..) => Err(rule(
                 "[ISO/IEC 9075-2:2023 §11.34] a domain's data type is a <predefined type>, and names no type as an element or a field"
                     .to_owned(),
             )),

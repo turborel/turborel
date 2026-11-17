@@ -108,6 +108,8 @@ fn heap(v: &Value) -> usize {
         | Value::Interval(_)
         | Value::Array(_)
         | Value::Multiset(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
         | Value::Row(_)
         | Value::Extension(_) => 0,
     }

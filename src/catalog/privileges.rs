@@ -29,13 +29,38 @@ pub struct Actions {
     /// [ISO/IEC 9075-2:2023 §12.3] TRIGGER (Feature T217): its schema's
     /// owner may define a trigger on the table [§11.49 AR2].
     pub trigger: bool,
+    /// Those of a typed table alone.
+    pub typed: TypedActions,
+}
+
+/// The privileges on a table there are of a typed table alone [ISO/IEC
+/// 9075-2:2023 §4.42.2].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TypedActions {
+    /// [ISO/IEC 9075-2:2023 §12.2] SELECT WITH HIERARCHY OPTION (Feature
+    /// S081): SELECT on each of its subtables too \[GR8\], and its rows read
+    /// alone under ONLY [§7.6 AR1b ii 2].
+    pub hierarchy: bool,
+    /// [ISO/IEC 9075-2:2023 §4.42.2, §12.3] The specific names of the
+    /// methods of the table's structured type on whose table/method pair
+    /// SELECT is held (Feature S024): a method reference of a scope of the
+    /// table invokes them [§6.23 AR1].
+    pub methods: BTreeSet<QualifiedName>,
 }
 
 impl Actions {
     /// Every privilege on a table of `columns` columns.
     pub fn all(columns: usize) -> Actions {
         let every = || (0..columns).collect();
-        Actions { select: true, insert: every(), delete: true, update: every(), references: every(), trigger: true }
+        Actions {
+            select: true,
+            insert: every(),
+            delete: true,
+            update: every(),
+            references: every(),
+            trigger: true,
+            typed: TypedActions::default(),
+        }
     }
 
     /// Adds the privileges of `other`.
@@ -46,6 +71,8 @@ impl Actions {
         self.update.extend(other.update.iter().copied());
         self.references.extend(other.references.iter().copied());
         self.trigger |= other.trigger;
+        self.typed.hierarchy |= other.typed.hierarchy;
+        self.typed.methods.extend(other.typed.methods.iter().cloned());
     }
 
     /// Whether there are none.
@@ -63,6 +90,10 @@ impl Actions {
             update: self.update.intersection(&other.update).copied().collect(),
             references: self.references.intersection(&other.references).copied().collect(),
             trigger: self.trigger && other.trigger,
+            typed: TypedActions {
+                hierarchy: self.typed.hierarchy && other.typed.hierarchy,
+                methods: self.typed.methods.intersection(&other.typed.methods).cloned().collect(),
+            },
         }
     }
 
@@ -70,11 +101,17 @@ impl Actions {
     /// one for each action on the table, or on one of its columns
     /// [ISO/IEC 9075:1992 §10.3 GR3, §11.36 GR3].
     pub fn each(&self) -> Vec<Privilege> {
-        let tabled = [(self.select, Privilege::Select), (self.delete, Privilege::Delete), (self.trigger, Privilege::Trigger)];
+        let tabled = [
+            (self.select, Privilege::Select),
+            (self.delete, Privilege::Delete),
+            (self.trigger, Privilege::Trigger),
+            (self.typed.hierarchy, Privilege::Hierarchy),
+        ];
         let mut each: Vec<Privilege> = tabled.into_iter().filter(|(held, _)| *held).map(|(_, p)| p).collect();
         each.extend(self.insert.iter().map(|c| Privilege::Insert(*c)));
         each.extend(self.update.iter().map(|c| Privilege::Update(*c)));
         each.extend(self.references.iter().map(|c| Privilege::References(*c)));
+        each.extend(self.typed.methods.iter().map(|m| Privilege::Method(m.clone())));
         each
     }
 
@@ -95,6 +132,10 @@ impl Actions {
                     actions.references.insert(c);
                 }
                 Privilege::Trigger => actions.trigger = true,
+                Privilege::Hierarchy => actions.typed.hierarchy = true,
+                Privilege::Method(m) => {
+                    actions.typed.methods.insert(m);
+                }
             }
         }
         actions
@@ -104,8 +145,12 @@ impl Actions {
     /// names `columns` (or positions, where it has none): "SELECT",
     /// "UPDATE(AMT)"; none if they lack none.
     pub fn missing(&self, other: &Actions, columns: &[String]) -> Option<String> {
-        let actions =
-            [("SELECT", self.select, other.select), ("DELETE", self.delete, other.delete), ("TRIGGER", self.trigger, other.trigger)];
+        let actions = [
+            ("SELECT", self.select, other.select),
+            ("DELETE", self.delete, other.delete),
+            ("TRIGGER", self.trigger, other.trigger),
+            ("SELECT WITH HIERARCHY OPTION", self.typed.hierarchy, other.typed.hierarchy),
+        ];
         if let Some((name, ..)) = actions.iter().find(|(_, held, wanted)| *wanted && !*held) {
             return Some((*name).to_owned());
         }
@@ -116,14 +161,21 @@ impl Actions {
         if let Some(column) = other.update.difference(&self.update).next() {
             return Some(format!("UPDATE({})", name(column)));
         }
-        let column = other.references.difference(&self.references).next()?;
-        Some(format!("REFERENCES({})", name(column)))
+        if let Some(column) = other.references.difference(&self.references).next() {
+            return Some(format!("REFERENCES({})", name(column)));
+        }
+        let method = other.typed.methods.difference(&self.typed.methods).next()?;
+        Some(format!("SELECT(SPECIFIC METHOD {method})"))
     }
 
     /// The column of the privilege `missing` names, if it names one: the
     /// inaccessible column [ISO/IEC 9075:1992 §18.1 GR3g ii].
     pub fn missing_column(&self, other: &Actions) -> Option<usize> {
-        if (other.select && !self.select) || (other.delete && !self.delete) || (other.trigger && !self.trigger) {
+        if (other.select && !self.select)
+            || (other.delete && !self.delete)
+            || (other.trigger && !self.trigger)
+            || (other.typed.hierarchy && !self.typed.hierarchy)
+        {
             return None;
         }
         let mut columns = other.insert.difference(&self.insert);
@@ -134,7 +186,7 @@ impl Actions {
 
 /// One privilege on a table: an action on it, or on one of its columns
 /// [ISO/IEC 9075:1992 §10.3].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Privilege {
     /// SELECT.
     Select,
@@ -148,6 +200,11 @@ pub enum Privilege {
     References(usize),
     /// [ISO/IEC 9075-2:2023 §12.3] TRIGGER.
     Trigger,
+    /// [ISO/IEC 9075-2:2023 §12.2] The WITH HIERARCHY OPTION of SELECT.
+    Hierarchy,
+    /// [ISO/IEC 9075-2:2023 §4.42.2, §12.3] SELECT on the table/method pair
+    /// of the table and the method of this specific name.
+    Method(QualifiedName),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.49 GR6] The special grantor value of the
@@ -193,7 +250,7 @@ pub fn merged(descs: Vec<PrivilegeDesc>) -> Vec<PrivilegeDesc> {
     let mut merged = Vec::new();
     for (pair, table) in pairs {
         for grantable in [true, false] {
-            let actions = Actions::of(each.iter().filter(|((of, _), g)| *of == pair && **g == grantable).map(|((_, p), _)| *p));
+            let actions = Actions::of(each.iter().filter(|((of, _), g)| *of == pair && **g == grantable).map(|((_, p), _)| p.clone()));
             if !actions.is_empty() {
                 let (grantor, grantee) = pair.clone();
                 merged.push(PrivilegeDesc { grantor, grantee, table: table.clone(), actions, grantable });
@@ -233,7 +290,11 @@ pub fn applicable(catalog: &dyn Catalog, who: Who<'_>, name: &QualifiedName) -> 
         return granted(catalog, who, name);
     }
     if let Some(table) = catalog.table(name) {
-        let all = Actions::all(table.columns.len());
+        // [ISO/IEC 9075-2:2023 §11.3 GR7] of a typed table, SELECT WITH
+        // HIERARCHY OPTION, and SELECT on the table/method pair of each
+        // method of its type.
+        let methods = table.typed.as_ref().map(|t| super::type_methods(catalog, &t.udt)).unwrap_or_default();
+        let all = Actions { typed: TypedActions { hierarchy: table.typed.is_some(), methods }, ..Actions::all(table.columns.len()) };
         return (all.clone(), all);
     }
     let Some(view) = catalog.view(name) else { return (Actions::default(), Actions::default()) };
@@ -241,6 +302,17 @@ pub fn applicable(catalog: &dyn Catalog, who: Who<'_>, name: &QualifiedName) -> 
     let (mut held, mut grantable) = derived(catalog, sole, view);
     // [ISO/IEC 9075-2:2023 §11.32 GR5] TRIGGER on its view, not grantable.
     (held.trigger, grantable.trigger) = (true, false);
+    // [ISO/IEC 9075-2:2023 §11.32 GR8a] SELECT WITH HIERARCHY OPTION on a
+    // referenceable view, grantable; \[DESIGN\] and, as of a typed table
+    // [§11.3 GR7], SELECT on the table/method pair of each method of its
+    // type, grantable, so a method is invoked of a reference scoped by it
+    // (RULES.md D81).
+    if let Some(typed) = &view.typed {
+        (held.typed.hierarchy, grantable.typed.hierarchy) = (true, true);
+        let methods = super::type_methods(catalog, &typed.udt);
+        held.typed.methods.extend(methods.iter().cloned());
+        grantable.typed.methods.extend(methods);
+    }
     let (mut held, mut grantable) = system_granted(catalog, sole, name, (held, grantable));
     // [ISO/IEC 9075-2:2023 §4.42.4] And those granted another enabled one.
     if who.auth != owner || who.role.is_some() {
@@ -321,13 +393,54 @@ fn column_at(catalog: &dyn Catalog, t: &QualifiedName, c: &str) -> Option<usize>
 /// ii; ISO/IEC 9075-2:2023 §4.42.4].
 fn granted(catalog: &dyn Catalog, who: Who<'_>, name: &QualifiedName) -> (Actions, Actions) {
     let (mut held, mut grantable) = (Actions::default(), Actions::default());
+    let typed = typed_as(catalog, name);
     for p in catalog.privileges(name).into_iter().filter(|p| who.holds(p.grantee.as_deref())) {
-        held.add(&p.actions);
+        let mut actions = p.actions.clone();
+        if actions.select {
+            actions.typed.methods.extend(executable_methods(catalog, typed, &p.grantor));
+        }
+        held.add(&actions);
         if p.grantable {
-            grantable.add(&p.actions);
+            grantable.add(&actions);
+        }
+    }
+    // [ISO/IEC 9075-2:2023 §12.2 GR8, §11.3 GR8, §11.32 GR9, GR10] SELECT
+    // WITH HIERARCHY OPTION on a supertable or a superview is SELECT on
+    // it, grantable if that is; [§12.7 SR1c] and on the table/method pair
+    // of each method of its type.
+    for sup in super::proper_supertables(catalog, name) {
+        for p in catalog.privileges(&sup).into_iter().filter(|p| p.actions.typed.hierarchy && who.holds(p.grantee.as_deref())) {
+            let methods = executable_methods(catalog, typed, &p.grantor);
+            held.select = true;
+            held.typed.methods.extend(methods.iter().cloned());
+            if p.grantable {
+                grantable.select = true;
+                grantable.typed.methods.extend(methods);
+            }
         }
     }
     (held, grantable)
+}
+
+/// The structured type of the typed table or referenceable view `name`.
+fn typed_as<'a>(catalog: &'a dyn Catalog, name: &QualifiedName) -> Option<&'a QualifiedName> {
+    let typed = catalog.table(name).and_then(|t| t.typed.as_ref()).or_else(|| catalog.view(name).and_then(|v| v.typed.as_ref()));
+    typed.map(|t| &t.udt)
+}
+
+/// [ISO/IEC 9075-2:2023 §12.2 GR6] Of SELECT on a table of the type
+/// `typed` granted by `grantor`, the methods on whose table/method pair
+/// SELECT is granted with it: each method of the type `grantor` holds
+/// EXECUTE on WITH GRANT OPTION, every one of "_SYSTEM"'s. \[DESIGN\] Found
+/// as it is read, not kept apart when granted, so a method added to the
+/// type is one at once [§11.56 GR3] (RULES.md D81).
+fn executable_methods(catalog: &dyn Catalog, typed: Option<&QualifiedName>, grantor: &str) -> BTreeSet<QualifiedName> {
+    let Some(udt) = typed else { return BTreeSet::new() };
+    let mut all = super::type_methods(catalog, udt);
+    if grantor != SYSTEM_GRANTOR {
+        all.retain(|m| super::method_executable(catalog, m, grantor));
+    }
+    all
 }
 
 /// The privileges on a view that `actions` on its table give, its column
@@ -342,5 +455,8 @@ fn through(actions: &Actions, columns: &[usize]) -> Actions {
         references: BTreeSet::new(),
         // [ISO/IEC 9075-2:2023 §11.32 GR5] the owner's own on its view.
         trigger: false,
+        // [ISO/IEC 9075-2:2023 §11.32 GR8a] Of a referenceable view, its
+        // owner's by its definition (`applicable`), not by its table's.
+        typed: TypedActions::default(),
     }
 }

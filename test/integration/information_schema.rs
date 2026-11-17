@@ -59,8 +59,8 @@ fn tables_and_columns_are_described_21_2_7() {
     let own = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'INFORMATION_SCHEMA'";
     assert_eq!(
         seen(&db.session("NOBODY"), own),
-        ["62"],
-        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 8 of roles, the 6 of triggers, the 5 of modules, TABLE_OPTIONS, INDEXES, INDEX_OPTIONS, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS and ASSERTION_TOTALS"
+        ["70"],
+        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, TABLE_OPTIONS, INDEXES, INDEX_OPTIONS, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS and ASSERTION_TOTALS"
     );
     assert_eq!(
         seen(&owner, "SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.SCHEMATA"),
@@ -95,6 +95,12 @@ fn tables_and_columns_are_described_21_2_7() {
             "2|TABLE_SCHEMA|CHARACTER VARYING|128",
             "3|TABLE_NAME|CHARACTER VARYING|128",
             "4|TABLE_TYPE|CHARACTER VARYING|32767",
+            "5|SELF_REFERENCING_COLUMN_NAME|CHARACTER VARYING|128",
+            "6|REFERENCE_GENERATION|CHARACTER VARYING|32767",
+            "7|USER_DEFINED_TYPE_CATALOG|CHARACTER VARYING|128",
+            "8|USER_DEFINED_TYPE_SCHEMA|CHARACTER VARYING|128",
+            "9|USER_DEFINED_TYPE_NAME|CHARACTER VARYING|128",
+            "10|IS_TYPED|CHARACTER VARYING|32767",
         ]
     );
 }

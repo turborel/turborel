@@ -124,7 +124,7 @@ pub(super) fn named(db: &State, name: &QualifiedName, reader: Reader<'_>) -> Res
     }
     let undefined = || rule(format!("[X3.135-1986 §5.4 SR5] table {name} is not defined")).about(Subject::table(name.parts()));
     let view = db.catalog.view(name).ok_or_else(undefined)?;
-    let desc = TableDesc { columns: view.columns.clone(), ..unconstrained(name) };
+    let desc = TableDesc { columns: view.columns.clone(), typed: view.typed.clone(), ..unconstrained(name) };
     Ok(Named { desc, source: expand(db, view, reader)? })
 }
 
@@ -151,6 +151,7 @@ pub fn table_columns(db: &State, name: &QualifiedName, user: Principal<'_>) -> R
 /// constraint or engine.
 pub(super) fn unconstrained(name: &QualifiedName) -> TableDesc {
     TableDesc {
+        typed: None,
         name: name.clone(),
         columns: Vec::new(),
         constraints: Vec::new(),
@@ -246,7 +247,8 @@ pub(super) fn column_name(db: &State, name: &QualifiedName, i: usize) -> Option<
 
 /// The degree of `view`'s query bound now, as its owner's: for a change of
 /// a table it reads, which a view that refers to what changed no longer
-/// binds to, or not to as many columns (`db/alter.rs`).
+/// binds to, or not to as many columns (`db/alter.rs`); of a referenceable
+/// view, with the self-referencing column it adds, if it adds one.
 ///
 /// # Errors
 ///
@@ -255,12 +257,18 @@ pub fn view_degree(db: &State, view: &ViewDesc) -> Result<usize> {
     let query = Parser::new(&view.query)?.of_definition().view_query()?;
     let params = Params::new();
     let cx = Context { horizon: &view.horizon, schema: &view.names, ..Context::new(db, owner_of(&*db.catalog, &view.name.auth), &params) };
-    Ok(bind_query_expression(cx, &query, &Nesting::Query)?.columns.len())
+    let degree = bind_query_expression(cx, &query, &Nesting::Query)?.columns.len();
+    Ok(degree.saturating_add(super::referenceable::beyond_query(view)))
 }
 
 /// [X3.135-1986 §6.5 GR1] The rows of `view`: its query, bound as its
-/// owner's for `purpose`, and for an updatable view read as its base table.
-fn expand(db: &State, view: &ViewDesc, Reader { purpose, own, user, now, .. }: Reader<'_>) -> Result<Source> {
+/// owner's for `purpose`, and for an updatable view read as its base table;
+/// of a referenceable view, its own rows (`binder/referenceable.rs`).
+fn expand(db: &State, view: &ViewDesc, reader: Reader<'_>) -> Result<Source> {
+    if view.typed.is_some() {
+        return Ok(Source::Derived(super::referenceable::own_rows(db, view, reader)?));
+    }
+    let Reader { purpose, own, user, now, .. } = reader;
     let query = Parser::new(&view.query)?.of_definition().view_query()?;
     let params = Params::new();
     let cx = Context {
@@ -368,6 +376,7 @@ pub fn write_target(
         )
         .about(Subject::table(name.parts())));
     }
+    super::referenceable::writable(db, name)?;
     let Named { desc, source, .. } = named(
         db,
         name,

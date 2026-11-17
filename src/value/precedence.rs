@@ -61,10 +61,27 @@ pub fn position(p: &DataType, t: &DataType) -> Option<u8> {
                 None
             }
         }
+        // [SR4] a structured type's name, among its own and its proper
+        // supertypes', the nearest first; [SR18] a reference type's as its
+        // referenced type's is.
+        DataType::Structured(s) => t.structured_type().and_then(|own| among(&s.name, own)),
+        DataType::Reference(r) => {
+            if let DataType::Reference(own) = t {
+                among(&r.referenced.name, &own.referenced)
+            } else {
+                None
+            }
+        }
         // [SR4] a user-defined type's own name, as no distinct type has a
         // proper supertype; [SR19] a row type is no parameter's type.
         DataType::Distinct(_) | DataType::Row(_) | DataType::Extension(_) => (p == t).then_some(FIRST),
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §9.7 SR4] Where `name` is in the type precedence
+/// list of the structured type `own`, from 0.
+fn among(name: &crate::value::types::UdtName, own: &crate::value::types::StructuredType) -> Option<u8> {
+    own.precedence().position(|n| n == name).and_then(|i| u8::try_from(i).ok())
 }
 
 /// [ISO/IEC 9075-2:2023 §9.7] Whether the type designator of `p`, a
@@ -143,6 +160,8 @@ fn of_string(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Timestamp { .. }
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,
@@ -188,6 +207,8 @@ fn of_number(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Timestamp { .. }
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,

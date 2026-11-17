@@ -94,6 +94,14 @@ pub(super) struct Updatable {
     pub(super) table: QualifiedName,
     /// The rows it may cover, in its order.
     pub(super) ids: HeldRows<RowId>,
+    /// [ISO/IEC 9075-2:2023 §4.17.9] Of a typed table read with its proper
+    /// subtables, those subtables, and of each row the table it is of: 0
+    /// for `table`, k for the subtable k - 1. Empty, and none, of another.
+    pub(super) subtables: Vec<QualifiedName>,
+    pub(super) of: Option<HeldRows<RowId>>,
+    /// [ISO/IEC 9075-2:2023 §14.8 SR9, §14.13 SR9] Its `<table reference>`
+    /// is ONLY: a positioned UPDATE or DELETE through it names ONLY too.
+    pub(super) only: bool,
     /// Of each of its columns, the column of `table` it is.
     pub(super) projection: Vec<usize>,
     pub(super) condition: Option<Cond>,
@@ -104,16 +112,26 @@ pub(super) struct Updatable {
     /// The columns of `table` its ORDER BY reads, which a positioned
     /// UPDATE may not set [§13.9 SR4].
     pub(super) ordered: Vec<usize>,
-    /// The rows of `table` updated or deleted through it [§11.8 GR8].
-    pub(super) changed: Vec<RowId>,
-    /// The row it is on, if it is on one: the id at `at`.
-    pub(super) on: Option<RowId>,
+    /// The rows updated or deleted through it, each with its table
+    /// [§11.8 GR8].
+    pub(super) changed: Vec<(QualifiedName, RowId)>,
+    /// The row it is on, if it is on one: the id at `at`, and the table
+    /// it is of, as `of` gives it.
+    pub(super) on: Option<(usize, RowId)>,
 }
 
 impl Updatable {
-    /// The row the cursor is on, if it is on one.
-    pub(super) fn current(&self) -> Option<RowId> {
-        self.on
+    /// The row the cursor is on, if it is on one, and the table it is of:
+    /// `table`, or one of its proper subtables.
+    pub(super) fn current(&self) -> Option<(&QualifiedName, RowId)> {
+        let (k, id) = self.on?;
+        let table = if k == 0 { Some(&self.table) } else { self.subtables.get(k.saturating_sub(1)) };
+        Some((table?, id))
+    }
+
+    /// Whether it reads `table`: its own, or one of its subtables.
+    pub(super) fn reads(&self, table: &QualifiedName) -> bool {
+        self.table == *table || self.subtables.contains(table)
     }
 
     /// [X3.135-1986 §4.12] The current row deleted: the cursor is before
@@ -133,19 +151,23 @@ impl Updatable {
     /// Reading a row, or evaluating its condition, failed: the cursor stays
     /// where it was \[GR7\].
     pub(super) fn fetch(&mut self, tx: TxId, to: Move) -> Result<Option<Row>> {
-        let storage = Arc::clone(self.snapshot.storage_of(&self.table)?);
+        let storages = std::iter::once(&self.table)
+            .chain(&self.subtables)
+            .map(|t| self.snapshot.storage_of(t).map(Arc::clone))
+            .collect::<Result<Vec<_>>>()?;
         let runner = Runner::new(&self.snapshot, tx);
         let mut places = Derived {
-            storage: &*storage,
+            storages: &storages,
             tx,
             ids: &mut self.ids,
+            of: self.of.as_mut(),
             projection: &self.projection,
             condition: self.condition.as_ref(),
             runner: &runner,
         };
         let (at, row) = fetch(&mut places, self.at, to)?;
         let on = match at {
-            Position::On(i) => places.ids.get(i)?,
+            Position::On(i) => places.place(i)?,
             Position::Before(_) | Position::After => None,
         };
         (self.at, self.on) = (at, on);
@@ -153,26 +175,77 @@ impl Updatable {
     }
 }
 
-/// The rows an updatable cursor may cover, in its order: those of its
-/// `plan`'s table access, sorted, if a Sort is in it, on the keys it has.
-/// Each key is a column of the projections between the Sort and the
-/// access, of a column of the cursor or of a value its ORDER BY computes
-/// [ISO/IEC 9075-2:2023 §7.17 SR26 d i 10], so each row is projected as
-/// they project it. Read by transaction `tx`, their ids held, and sorted,
-/// as the statement's work area holds them (RULES.md D38).
+/// The rows an updatable cursor may cover, in its order, read by `plans`,
+/// one for each table it reads (`Updating`): those of each plan's table
+/// access, sorted, if a Sort is in it, on the keys it has. Each key is a
+/// column of the projections between the Sort and the access, of a column
+/// of the cursor or of a value its ORDER BY computes [ISO/IEC 9075-2:2023
+/// §7.17 SR26 d i 10], so each row is projected as they project it. Read
+/// by transaction `tx`, their ids held, and sorted, as the statement's
+/// work area holds them; and of more than one plan, the table of each,
+/// the plan's place.
 ///
 /// # Errors
 ///
-/// Reading the rows, computing their keys, sorting them, or holding their
-/// ids failed.
-pub(super) fn ordered_ids(plan: Plan, st: &Arc<State>, tx: TxId) -> Result<HeldRows<RowId>> {
+/// Reading the rows, or holding or sorting their ids, failed.
+pub(super) fn ordered_ids(plans: Vec<Plan>, st: &Arc<State>, tx: TxId) -> Result<(HeldRows<RowId>, Option<HeldRows<RowId>>)> {
+    let tagged = plans.len() > 1;
     let mut ids = HeldRows::new(st.list_space());
-    // The projections atop the Sort take away what it alone reads.
+    let mut of = tagged.then(|| HeldRows::new(st.list_space()));
+    let mut sorted: Vec<(Vec<usize>, Vec<SortKey>, RowIter)> = Vec::new();
+    for (k, plan) in plans.into_iter().enumerate() {
+        let (keys, input) = match sort_of(plan) {
+            Ok(found) => found,
+            Err(access) => {
+                for entry in table_entries(*access, st, tx)? {
+                    ids.push(entry?.0)?;
+                    if let Some(of) = of.as_mut() {
+                        of.push(RowId::try_from(k).unwrap_or(RowId::MAX))?;
+                    }
+                }
+                continue;
+            }
+        };
+        let (layers, access) = layers_of(input);
+        // Each row as its sort keys' values, then its table's place, then
+        // its id.
+        let columns: Vec<usize> = keys.iter().map(|key| key.column).collect();
+        let on_keys: Vec<SortKey> = keys.iter().enumerate().map(|(i, key)| SortKey::new(i, key.order())).collect();
+        let runner = Runner::new(st, tx);
+        let at = columns.clone();
+        let keyed: RowIter = Box::new(table_entries(access, st, tx)?.map(move |read| {
+            read.and_then(|(id, row)| {
+                let mut values = keyed(&projected(row, &layers, &runner)?, &at, id)?;
+                if tagged {
+                    values.insert(at.len(), Value::Exact(Decimal::new(i128::try_from(k).unwrap_or(i128::MAX), 0)));
+                }
+                Ok(values)
+            })
+        }));
+        sorted.push((columns, on_keys, keyed));
+    }
+    let Some((columns, on_keys, _)) = sorted.first() else { return Ok((ids, of)) };
+    let (width, on_keys) = (columns.len(), on_keys.clone());
+    let all: RowIter = Box::new(sorted.into_iter().flat_map(|(_, _, rows)| rows));
+    for row in sort_rows(&on_keys, all, st, tx) {
+        let row = row?;
+        if let Some(of) = of.as_mut() {
+            of.push(id_of(&row, width)?)?;
+        }
+        ids.push(id_of(&row, width.saturating_add(usize::from(tagged)))?)?;
+    }
+    Ok((ids, of))
+}
+
+/// The keys of the Sort in `plan`, under the projections atop it that take
+/// away what it alone reads, and its input; or, of a plan with no Sort,
+/// its table access.
+fn sort_of(plan: Plan) -> std::result::Result<(Vec<SortKey>, Plan), Box<Plan>> {
     let mut node = plan;
-    let (keys, input) = loop {
+    loop {
         match node {
             Plan::Project { input, .. } => node = *input,
-            Plan::Sort { keys, input, .. } => break (keys, *input),
+            Plan::Sort { keys, input, .. } => return Ok((keys, *input)),
             other @ (Plan::SeqScan { .. }
             | Plan::Limit { .. }
             | Plan::IndexScan { .. }
@@ -193,27 +266,9 @@ pub(super) fn ordered_ids(plan: Plan, st: &Arc<State>, tx: TxId) -> Result<HeldR
             | Plan::Polymorphic(..)
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
-            | Plan::Transition { .. }) => {
-                for entry in table_entries(other, st, tx)? {
-                    ids.push(entry?.0)?;
-                }
-                return Ok(ids);
-            }
+            | Plan::Transition { .. }) => return Err(Box::new(other)),
         }
-    };
-    let (layers, access) = layers_of(input);
-    // Each row as its sort keys' values, then its id.
-    let columns: Vec<usize> = keys.iter().map(|k| k.column).collect();
-    let on_keys: Vec<SortKey> = keys.iter().enumerate().map(|(i, k)| SortKey::new(i, k.order())).collect();
-    let id_at = columns.len();
-    let runner = Runner::new(st, tx);
-    let keyed: RowIter = Box::new(
-        table_entries(access, st, tx)?.map(move |read| read.and_then(|(id, row)| keyed(&projected(row, &layers, &runner)?, &columns, id))),
-    );
-    for row in sort_rows(&on_keys, keyed, st, tx) {
-        ids.push(id_of(&row?, id_at)?)?;
     }
-    Ok(ids)
 }
 
 /// The expressions of each projection atop `plan`'s table access, the
@@ -276,28 +331,55 @@ fn id_of(row: &Row, at: usize) -> Result<RowId> {
 }
 
 /// An updatable cursor's places, each row derived as transaction `tx`
-/// sees it now.
+/// sees it now, from the storage of the table it is of: of `storages`, the
+/// one `of` gives, or the first if none does.
 struct Derived<'a> {
-    storage: &'a dyn TableStorage,
+    storages: &'a [Arc<dyn TableStorage>],
     tx: TxId,
     ids: &'a mut HeldRows<RowId>,
+    of: Option<&'a mut HeldRows<RowId>>,
     projection: &'a [usize],
     condition: Option<&'a Cond>,
     runner: &'a dyn Subqueries,
 }
 
+impl Derived<'_> {
+    /// The table and id of the row at place `i`, if it has one.
+    fn place(&mut self, i: usize) -> Result<Option<(usize, RowId)>> {
+        let Some(id) = self.ids.get(i)? else { return Ok(None) };
+        let k = match self.of.as_mut() {
+            Some(of) => {
+                of.get(i)?.and_then(|k| usize::try_from(k).ok()).ok_or_else(|| api(format!("[DESIGN] a cursor's row {i} has no table")))?
+            }
+            None => 0,
+        };
+        Ok(Some((k, id)))
+    }
+
+    /// The row at place `i` as it is now, if it is there still.
+    fn now(&mut self, i: usize) -> Result<Option<(RowId, Row)>> {
+        let Some((k, id)) = self.place(i)? else { return Ok(None) };
+        let storage = self.storages.get(k).ok_or_else(|| api(format!("[DESIGN] a cursor reads no table {k}")))?;
+        Ok(storage.get(self.tx, id)?.map(|row| (id, row)))
+    }
+}
+
 impl Places for Derived<'_> {
     fn at(&mut self, i: usize) -> Result<Slot> {
-        let Some(id) = self.ids.get(i)? else { return Ok(Slot::End) };
-        let Some(row) = self.storage.get(self.tx, id)? else { return Ok(Slot::Gone) };
+        if i >= self.ids.len() {
+            return Ok(Slot::End);
+        }
+        let Some((_, row)) = self.now(i)? else { return Ok(Slot::Gone) };
         match self.condition.map_or(Ok(Truth::True), |c| eval_cond(c, &row, self.runner))? {
             Truth::True => Ok(Slot::Row),
             Truth::False | Truth::Unknown => Ok(Slot::Gone),
         }
     }
     fn row(&mut self, i: usize) -> Result<Row> {
-        let id = self.ids.get(i)?.ok_or_else(|| api(format!("[DESIGN] a cursor has no row {i}")))?;
-        let row = self.storage.get(self.tx, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} vanished")))?;
+        if i >= self.ids.len() {
+            return Err(api(format!("[DESIGN] a cursor has no row {i}")));
+        }
+        let (id, row) = self.now(i)?.ok_or_else(|| api(format!("[DESIGN] the row at {i} vanished")))?;
         project(&row, self.projection).ok_or_else(|| api(format!("[DESIGN] row {id} is shorter than the cursor's columns")))
     }
     fn count(&mut self) -> Result<usize> {
@@ -338,6 +420,7 @@ mod tests {
             generated: None,
         };
         let desc = TableDesc {
+            typed: None,
             name: QualifiedName { auth: "A".into(), ident: "T".into() },
             columns: vec![column("K"), column("V")],
             constraints: vec![],
@@ -354,7 +437,9 @@ mod tests {
         let mut ids = HeldRows::new(ListSpace::default());
         ids.push(first).unwrap();
         ids.push(second).unwrap();
-        let mut places = Derived { storage: table.as_ref(), tx, ids: &mut ids, projection: &[1], condition: None, runner: &NoSubqueries };
+        let storages: [Arc<dyn TableStorage>; 1] = [Arc::from(table)];
+        let mut places =
+            Derived { storages: &storages, tx, ids: &mut ids, of: None, projection: &[1], condition: None, runner: &NoSubqueries };
         assert!(matches!(places.at(0).unwrap(), Slot::Gone));
         assert!(matches!(places.at(1).unwrap(), Slot::Row));
         assert!(matches!(places.at(2).unwrap(), Slot::End));

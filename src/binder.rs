@@ -17,7 +17,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
 use crate::ast::{ColumnSpecification, TableName, ValueExpression};
-use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc, Who, applicable};
+use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, Who};
 use crate::db::State;
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::logical::{AggCall, Expr, LogicalPlan};
@@ -34,7 +34,7 @@ mod collation;
 mod composite;
 mod context;
 mod counterparts;
-pub(crate) use composite::grouping_operand;
+pub(crate) use composite::key_operand;
 mod cursor;
 mod datetime;
 mod dependencies;
@@ -55,6 +55,8 @@ mod from;
 mod generated;
 mod greatest;
 mod grouping_sets;
+mod hierarchy;
+pub use hierarchy::{family_in, member_plan};
 mod hypothetical;
 mod invariant;
 mod limit;
@@ -70,7 +72,9 @@ mod ptf;
 mod purpose;
 mod query;
 mod recursive;
+mod referenceable;
 mod referencing;
+mod required;
 mod routines;
 mod search_cycle;
 mod sequences;
@@ -78,6 +82,7 @@ mod set_functions;
 mod set_operations;
 mod statements;
 mod strata;
+mod structured;
 mod subquery;
 mod triggers;
 mod trim;
@@ -97,15 +102,16 @@ pub use invocation::{
     routine_definition, sql_statement,
 };
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
-pub use parameters::bind_argument;
+pub use parameters::{assigned_argument, bind_argument};
 pub(crate) use psm::{Frame, bind_program};
 use query::bind_query_specification;
 pub use set_operations::{ObjectColumn, bind_insert_query};
 pub(crate) use statements::assignable;
 pub use statements::{
-    AssignRule, BoundWrite, INSERT_RULE, UPDATE_POSITIONED_RULE, UPDATE_SEARCHED_RULE, WriteKind, bind_select, bind_write,
-    check_assignment, updatable, updatable_in,
+    AssignRule, BoundWrite, INSERT_RULE, UPDATE_POSITIONED_RULE, UPDATE_SEARCHED_RULE, WriteKind, bind_member_write, bind_select,
+    bind_write, check_assignment, updatable, updatable_in, updatable_only,
 };
+pub(crate) use structured::assignment_cast;
 use subquery::Outer;
 pub use triggers::bind_when;
 pub use underlying::underlying;
@@ -223,6 +229,7 @@ pub use noted::{DrawnFrom, Invoked, Selected, Uses};
 pub use ptf::Compile;
 pub use purpose::Purpose;
 pub use referencing::Referencing;
+pub use required::require;
 
 /// [X3.135-1986 §5.4 SR2] a `<table name>` without an `<authorization identifier>` implicitly
 /// has the one of the enclosing `<schema>` or `<module>`. In direct invocation `auth` is the
@@ -253,31 +260,6 @@ fn nondeterministic(rules: &str, what: &str) -> SqlError {
     rule(format!(
         "[ISO/IEC 9075:1992 §11.9 SR6, {rules}] a CHECK condition shall not contain a query that is possibly non-deterministic: {what}"
     ))
-}
-
-/// [X3.135-1986 §6.6 SR3] Whether the current privileges of `who` on
-/// `table` include `needed`, as the Syntax Rule `clause` (e.g. "X3.135-1986 §8.7 SR1"), cited in full,
-/// requires.
-///
-/// # Errors
-///
-/// SQLCODE -104 if they do not.
-pub fn require(db: &State, who: Who<'_>, table: &TableDesc, needed: &Actions, clause: &str) -> Result<()> {
-    let (held, _) = applicable(&*db.catalog, who, &table.name);
-    let columns: Vec<String> = table.columns.iter().map(|c| c.name.clone()).collect();
-    match held.missing(needed, &columns) {
-        None => Ok(()),
-        Some(missing) => {
-            // [ISO/IEC 9075:1992 §18.1 GR3g] its table, and its column, if inaccessible.
-            let column = held.missing_column(needed).and_then(|at| columns.get(at).cloned());
-            let subject = Subject { column, ..Subject::table(table.name.parts()) };
-            Err(SqlError::new(
-                Code::Privilege,
-                format!("[{clause}; X3.135-1986 §6.6 SR3] {} has no {missing} privilege on {}", who.auth, table.name),
-            )
-            .about(subject))
-        }
-    }
 }
 
 /// A Syntax Rule violation `message`: `table` has no column `column`,
@@ -312,6 +294,10 @@ struct Grouping {
     /// columns a column referenced in a group, no grouping column, must be
     /// functionally dependent on (`binder/invariant.rs`).
     determinants: Vec<Vec<usize>>,
+    /// [ISO/IEC 9075-2:2023 §9.12] Of each grouping column of a structured
+    /// type ordered by MAP, of a primitive GROUP BY, its position and its
+    /// value given its comparison key (RULES.md D81).
+    keyed: Vec<(usize, Expr)>,
 }
 
 /// What a column reference means where it appears.
@@ -394,6 +380,10 @@ struct Binder<'a> {
     /// abbreviation or a simple CASE's operand [§6.12 SR1a, SR2a]
     /// (`binder/invocation.rs`).
     hosting: Cell<bool>,
+    /// [ISO/IEC 9075-2:2023 §9.14 SR2f] Whether a row it binds now holds
+    /// the sort keys of an ARRAY_AGG or a LISTAGG after its first field,
+    /// each of a structured type given its key (`binder/composite.rs`).
+    sorting: Cell<bool>,
     /// The query names in scope (`Context::queries`).
     queries: Option<&'a Queries<'a>>,
     /// What a PTF describe component procedure reads SQL-data with (`Context::compile`).
@@ -451,6 +441,7 @@ impl<'a> Binder<'a> {
             draws: cx.draws && !cx.purpose.constrains(),
             drawing: Cell::new(false),
             hosting: Cell::new(false),
+            sorting: Cell::new(false),
             queries: cx.queries,
             compile: cx.compile,
             invoked: cx.invoked,

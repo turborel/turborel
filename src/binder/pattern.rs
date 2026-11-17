@@ -238,6 +238,7 @@ impl Grouping {
             collated: RefCell::new(Vec::new()),
             sets: None,
             determinants: Vec::new(),
+            keyed: Vec::new(),
         }
     }
 }

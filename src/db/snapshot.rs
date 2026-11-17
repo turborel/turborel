@@ -27,7 +27,8 @@
 //!           `catalog/codec/roles.rs` writes them), the users allowed to
 //!           create roles (count u32, each str), SQL-server modules (count
 //!           u32, each a module, in the order of their timestamps of
-//!           creation)
+//!           creation), structured types (count u32, each a type),
+//!           user-defined casts, orderings and transforms (likewise)
 //! ```
 
 use std::sync::Arc;
@@ -35,11 +36,13 @@ use std::sync::Arc;
 use super::sequences::Settled;
 use super::{State, api};
 use crate::bytes::{Put, Reader};
+use crate::catalog::codec::{cast, ordering, put_cast, put_ordering, put_structured_type, put_transforms, structured_type, transforms};
 use crate::catalog::codec::{
     collation, constraint, domain, index, module, privilege, put_collation, put_constraint, put_domain, put_index, put_module, put_name,
     put_privilege, put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine,
     sequence, table, trigger, user_type, view,
 };
+use crate::catalog::{CastDesc, OrderingDesc, StructuredDesc, TransformGroupDesc};
 use crate::catalog::{
     Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
     SqlRoutineDesc, TableDesc, TriggerDesc, UserTypeDesc, ViewDesc, module_of_schema,
@@ -84,6 +87,14 @@ pub(super) struct Snapshot {
     creators: Vec<String>,
     /// The SQL-server modules, oldest first.
     modules: Vec<ModuleDesc>,
+    /// The structured types, by name.
+    structured_types: Vec<StructuredDesc>,
+    /// The user-defined casts, in the order made.
+    casts: Vec<CastDesc>,
+    /// The user-defined orderings, by their types' names.
+    orderings: Vec<OrderingDesc>,
+    /// The types' transform groups, by the types' names.
+    transforms: Vec<(QualifiedName, Vec<TransformGroupDesc>)>,
 }
 
 impl Snapshot {
@@ -114,15 +125,7 @@ impl Snapshot {
         let assertions = st.catalog.assertions().into_iter().cloned().collect();
         let sequences: Vec<SequenceDesc> = st.catalog.sequences().into_iter().cloned().collect();
         let user_types = st.catalog.user_types().into_iter().cloned().collect();
-        let (epochs, mut counters) = st.sequences.settle()?;
-        // [DESIGN] RULES.md D63: a generator's counter of its own epoch
-        // kept, though another of its name, of a schema or a table, is of
-        // a later one.
-        let published = st.generators();
-        let kept = |name: &QualifiedName, epoch: u64| {
-            published.iter().any(|s| s.name == *name && s.epoch == epoch) || published.iter().all(|s| s.name != *name || s.epoch <= epoch)
-        };
-        counters.retain(|(name, epoch, _)| kept(name, *epoch));
+        let (epochs, counters) = settled_counters(st)?;
         Ok(Snapshot {
             schemas,
             domains,
@@ -145,6 +148,10 @@ impl Snapshot {
             roles: st.catalog.roles().clone(),
             creators: st.users.creators().cloned().collect(),
             modules: st.catalog.modules().into_iter().cloned().collect(),
+            structured_types: st.catalog.structured_types().into_iter().cloned().collect(),
+            casts: st.catalog.casts().into_iter().cloned().collect(),
+            orderings: st.catalog.orderings().into_iter().cloned().collect(),
+            transforms: st.catalog.all_transforms().into_iter().map(|(n, g)| (n.clone(), g.to_vec())).collect(),
         })
     }
 
@@ -221,6 +228,14 @@ impl Snapshot {
         self.creators.iter().for_each(|c| out.put_str(c));
         out.put_u32(count(self.modules.len()));
         self.modules.iter().for_each(|m| put_module(out, m));
+        out.put_u32(count(self.structured_types.len()));
+        self.structured_types.iter().for_each(|t| put_structured_type(out, t));
+        out.put_u32(count(self.casts.len()));
+        self.casts.iter().for_each(|c| put_cast(out, c));
+        out.put_u32(count(self.orderings.len()));
+        self.orderings.iter().for_each(|o| put_ordering(out, o));
+        out.put_u32(count(self.transforms.len()));
+        self.transforms.iter().for_each(|(n, g)| put_transforms(out, (n, g)));
     }
 
     /// The snapshot `put` wrote.
@@ -229,51 +244,53 @@ impl Snapshot {
     ///
     /// SQLCODE -916 if it is not one.
     pub(super) fn get(r: &mut Reader<'_>) -> Result<Snapshot> {
-        let schemas = (0..r.u32()?).map(|_| Ok((r.str()?, r.str()?))).collect::<Result<_>>()?;
-        let domains = (0..r.u32()?).map(|_| domain(r)).collect::<Result<_>>()?;
-        let collations = (0..r.u32()?).map(|_| collation(r)).collect::<Result<_>>()?;
-        let collation_versions = (0..r.u32()?).map(|_| Ok((r.str()?, r.str()?))).collect::<Result<_>>()?;
-        let assertions = (0..r.u32()?).map(|_| constraint(r)).collect::<Result<_>>()?;
-        let tables = (0..r.u32()?).map(|_| table(r)).collect::<Result<_>>()?;
-        let views = (0..r.u32()?).map(|_| view(r)).collect::<Result<_>>()?;
-        let indexes = (0..r.u32()?).map(|_| index(r)).collect::<Result<_>>()?;
-        let privileges = (0..r.u32()?).map(|_| privilege(r)).collect::<Result<_>>()?;
-        let sequences = (0..r.u32()?).map(|_| sequence(r)).collect::<Result<_>>()?;
-        let user_types = (0..r.u32()?).map(|_| user_type(r)).collect::<Result<_>>()?;
-        let settings = (0..r.u32()?).map(|_| Ok((r.str()?, value(r)?))).collect::<Result<_>>()?;
-        let users = (0..r.u32()?).map(|_| Ok((r.str()?, r.bytes()?.to_vec()))).collect::<Result<_>>()?;
-        let owner = if r.u8()? == 0 { None } else { Some(r.str()?) };
-        let epochs = r.u64()?;
-        let counters = (0..r.u32()?).map(|_| Ok((qualified(r)?, r.u64()?, r.i128()?))).collect::<Result<_>>()?;
-        let triggers = (0..r.u32()?).map(|_| trigger(r)).collect::<Result<_>>()?;
-        let routines = (0..r.u32()?).map(|_| routine(r)).collect::<Result<_>>()?;
-        let roles = roles(r)?;
-        let creators = (0..r.u32()?).map(|_| r.str()).collect::<Result<_>>()?;
-        let modules = (0..r.u32()?).map(|_| module(r)).collect::<Result<_>>()?;
+        // Each read in the order `put` wrote it, as a struct expression's
+        // fields are evaluated in the order written.
         Ok(Snapshot {
-            schemas,
-            domains,
-            collations,
-            collation_versions,
-            assertions,
-            tables,
-            views,
-            indexes,
-            privileges,
-            sequences,
-            user_types,
-            settings,
-            users,
-            owner,
-            epochs,
-            counters,
-            triggers,
-            routines,
-            roles,
-            creators,
-            modules,
+            schemas: (0..r.u32()?).map(|_| Ok((r.str()?, r.str()?))).collect::<Result<_>>()?,
+            domains: (0..r.u32()?).map(|_| domain(r)).collect::<Result<_>>()?,
+            collations: (0..r.u32()?).map(|_| collation(r)).collect::<Result<_>>()?,
+            collation_versions: (0..r.u32()?).map(|_| Ok((r.str()?, r.str()?))).collect::<Result<_>>()?,
+            assertions: (0..r.u32()?).map(|_| constraint(r)).collect::<Result<_>>()?,
+            tables: (0..r.u32()?).map(|_| table(r)).collect::<Result<_>>()?,
+            views: (0..r.u32()?).map(|_| view(r)).collect::<Result<_>>()?,
+            indexes: (0..r.u32()?).map(|_| index(r)).collect::<Result<_>>()?,
+            privileges: (0..r.u32()?).map(|_| privilege(r)).collect::<Result<_>>()?,
+            sequences: (0..r.u32()?).map(|_| sequence(r)).collect::<Result<_>>()?,
+            user_types: (0..r.u32()?).map(|_| user_type(r)).collect::<Result<_>>()?,
+            settings: (0..r.u32()?).map(|_| Ok((r.str()?, value(r)?))).collect::<Result<_>>()?,
+            users: (0..r.u32()?).map(|_| Ok((r.str()?, r.bytes()?.to_vec()))).collect::<Result<_>>()?,
+            owner: if r.u8()? == 0 { None } else { Some(r.str()?) },
+            epochs: r.u64()?,
+            counters: (0..r.u32()?).map(|_| Ok((qualified(r)?, r.u64()?, r.i128()?))).collect::<Result<_>>()?,
+            triggers: (0..r.u32()?).map(|_| trigger(r)).collect::<Result<_>>()?,
+            routines: (0..r.u32()?).map(|_| routine(r)).collect::<Result<_>>()?,
+            roles: roles(r)?,
+            creators: (0..r.u32()?).map(|_| r.str()).collect::<Result<_>>()?,
+            modules: (0..r.u32()?).map(|_| module(r)).collect::<Result<_>>()?,
+            structured_types: (0..r.u32()?).map(|_| structured_type(r)).collect::<Result<_>>()?,
+            casts: (0..r.u32()?).map(|_| cast(r)).collect::<Result<_>>()?,
+            orderings: (0..r.u32()?).map(|_| ordering(r)).collect::<Result<_>>()?,
+            transforms: (0..r.u32()?).map(|_| transforms(r)).collect::<Result<_>>()?,
         })
     }
+}
+
+/// The generators' epochs and counters of `st`, settled: a generator's
+/// counter of its own epoch kept, though another of its name, of a schema
+/// or a table, is of a later one (RULES.md D63).
+///
+/// # Errors
+///
+/// SQLCODE -910 if a thread panicked holding the counters.
+fn settled_counters(st: &State) -> Result<(u64, Vec<Settled>)> {
+    let (epochs, mut counters) = st.sequences.settle()?;
+    let published = st.generators();
+    let kept = |name: &QualifiedName, epoch: u64| {
+        published.iter().any(|s| s.name == *name && s.epoch == epoch) || published.iter().all(|s| s.name != *name || s.epoch <= epoch)
+    };
+    counters.retain(|(name, epoch, _)| kept(name, *epoch));
+    Ok((epochs, counters))
 }
 
 impl State {
@@ -365,6 +382,10 @@ fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.collations.iter().cloned().for_each(|c| catalog.put_collation(c));
     snapshot.sequences.iter().cloned().for_each(|s| catalog.put_sequence(s));
     snapshot.user_types.iter().cloned().for_each(|t| catalog.put_user_type(t));
+    snapshot.structured_types.iter().cloned().for_each(|t| catalog.put_structured_type(t));
+    snapshot.casts.iter().cloned().for_each(|c| catalog.put_cast(c));
+    snapshot.orderings.iter().cloned().for_each(|o| catalog.put_ordering(o));
+    snapshot.transforms.iter().for_each(|(n, g)| catalog.put_transforms(n, g.clone()));
 }
 
 /// The assertions, views, privileges, triggers and SQL-invoked routines

@@ -17,64 +17,7 @@ use crate::value::datetime::Field;
 use crate::value::types::MAX_TYPE_NESTING;
 use crate::value::{DataType, Decimal, Spelled, Value, spelling};
 
-/// [ISO/IEC 9075:1992 §17.1 Table 18] The codes of the data types.
-pub(super) mod code {
-    /// CHARACTER.
-    pub(in crate::db::dynamic) const CHARACTER: i64 = 1;
-    /// NUMERIC.
-    pub(in crate::db::dynamic) const NUMERIC: i64 = 2;
-    /// DECIMAL.
-    pub(in crate::db::dynamic) const DECIMAL: i64 = 3;
-    /// INTEGER.
-    pub(in crate::db::dynamic) const INTEGER: i64 = 4;
-    /// SMALLINT.
-    pub(in crate::db::dynamic) const SMALLINT: i64 = 5;
-    /// FLOAT.
-    pub(in crate::db::dynamic) const FLOAT: i64 = 6;
-    /// REAL.
-    pub(in crate::db::dynamic) const REAL: i64 = 7;
-    /// DOUBLE PRECISION.
-    pub(in crate::db::dynamic) const DOUBLE_PRECISION: i64 = 8;
-    /// DATE, TIME or TIMESTAMP.
-    pub(in crate::db::dynamic) const DATETIME: i64 = 9;
-    /// INTERVAL.
-    pub(in crate::db::dynamic) const INTERVAL: i64 = 10;
-    /// CHARACTER VARYING.
-    pub(in crate::db::dynamic) const VARYING: i64 = 12;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BOOLEAN.
-    pub(in crate::db::dynamic) const BOOLEAN: i64 = 16;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BIGINT.
-    pub(in crate::db::dynamic) const BIGINT: i64 = 25;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] DECFLOAT.
-    pub(in crate::db::dynamic) const DECFLOAT: i64 = 26;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY.
-    pub(in crate::db::dynamic) const BINARY: i64 = 60;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY VARYING.
-    pub(in crate::db::dynamic) const BINARY_VARYING: i64 = 61;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY LARGE OBJECT.
-    pub(in crate::db::dynamic) const BLOB: i64 = 30;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY LARGE OBJECT LOCATOR.
-    pub(in crate::db::dynamic) const BLOB_LOCATOR: i64 = 31;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] CHARACTER LARGE OBJECT.
-    pub(in crate::db::dynamic) const CLOB: i64 = 40;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] CHARACTER LARGE OBJECT
-    /// LOCATOR.
-    pub(in crate::db::dynamic) const CLOB_LOCATOR: i64 = 41;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] ROW TYPE.
-    pub(in crate::db::dynamic) const ROW: i64 = 19;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] A user-defined type.
-    pub(in crate::db::dynamic) const USER_DEFINED: i64 = 17;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] ARRAY.
-    pub(in crate::db::dynamic) const ARRAY: i64 = 50;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] MULTISET.
-    pub(in crate::db::dynamic) const MULTISET: i64 = 55;
-    /// [ISO/IEC 9075-2:2023 §20.1, Table 34] DISTINCT, the category of a
-    /// distinct type.
-    pub(in crate::db::dynamic) const DISTINCT: i64 = 1;
-    /// \[DESIGN\] An implementation-defined data type, of a code less than 0:
-    /// a plug-in's (RULES.md D53), each described by this one code.
-    pub(in crate::db::dynamic) const EXTENSION: i64 = -1;
-}
+pub(super) mod code;
 
 /// [ISO/IEC 9075:1992 §17.1 Table 19] The codes of the datetime types:
 /// DATE, TIME, TIMESTAMP, TIME WITH TIME ZONE, TIMESTAMP WITH TIME ZONE.
@@ -213,6 +156,13 @@ impl Item {
         self.extension.clone_from(&other.extension);
     }
 
+    /// The name of three parts `parts` in the fields `fields`.
+    fn names(&mut self, fields: [DescriptorItem; 3], parts: [&str; 3]) {
+        for (f, part) in fields.into_iter().zip(parts) {
+            self.set(f, Value::Char(part.to_owned()));
+        }
+    }
+
     /// The `<character set name>` of SQL_TEXT in the fields `fields`.
     fn sql_text(&mut self, fields: [DescriptorItem; 3], catalog: &str) {
         for (f, part) in fields.into_iter().zip([catalog, INFORMATION_SCHEMA, SQL_TEXT]) {
@@ -253,6 +203,20 @@ impl Item {
             self.sql_text(CHARACTER_SET, catalog);
             self.sql_text(COLLATION, catalog);
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7d ix] The fields of the reference
+    /// type `r`: its referenced type's name, its scope's, and LENGTH and
+    /// OCTET_LENGTH its octets' (IV071).
+    fn describe_reference(&mut self, r: &crate::value::types::RefType, catalog: &str) {
+        let named = &r.referenced.name;
+        self.names(USER_DEFINED_TYPE, [catalog, named.schema.as_str(), named.name.as_str()]);
+        if let Some(scope) = &r.scope {
+            self.names(SCOPE, [catalog, scope.schema.as_str(), scope.name.as_str()]);
+        }
+        let length = number(crate::value::types::REF_OCTETS);
+        self.set_number(DescriptorItem::Length, length);
+        self.set_number(DescriptorItem::OctetLength, length);
     }
 
     /// [ISO/IEC 9075:1992 §17.9 GR3e iv, GR4e iv] The fields of `t` that its
@@ -304,12 +268,14 @@ impl Item {
             DataType::Array(a) => self.set_number(DescriptorItem::Cardinality, i64::from(a.max)),
             // [ISO/IEC 9075-2:2023 §20.10 GR7d viii] Its name and category.
             DataType::Distinct(d) => {
-                let parts = [catalog, d.schema.as_str(), d.name.as_str()];
-                for (f, part) in USER_DEFINED_TYPE.into_iter().zip(parts) {
-                    self.set(f, Value::Char(part.to_owned()));
-                }
+                self.names(USER_DEFINED_TYPE, [catalog, d.schema.as_str(), d.name.as_str()]);
                 self.set_number(DescriptorItem::UserDefinedTypeCode, code::DISTINCT);
             }
+            DataType::Structured(s) => {
+                self.names(USER_DEFINED_TYPE, [catalog, s.name.schema.as_str(), s.name.name.as_str()]);
+                self.set_number(DescriptorItem::UserDefinedTypeCode, code::STRUCTURED);
+            }
+            DataType::Reference(r) => self.describe_reference(&r, catalog),
             DataType::Extension(_) => self.extension = Some(t),
         }
     }
@@ -399,6 +365,10 @@ pub(super) fn is_text(f: DescriptorItem) -> bool {
 const USER_DEFINED_TYPE: [DescriptorItem; 3] =
     [DescriptorItem::UserDefinedTypeCatalog, DescriptorItem::UserDefinedTypeSchema, DescriptorItem::UserDefinedTypeName];
 
+/// [ISO/IEC 9075-2:2023 §20.1, Table 29] The items of a reference type's
+/// scope's name.
+const SCOPE: [DescriptorItem; 3] = [DescriptorItem::ScopeCatalog, DescriptorItem::ScopeSchema, DescriptorItem::ScopeName];
+
 /// [ISO/IEC 9075:1992 §17.1 Table 18] The code of `t`.
 fn type_code(t: &DataType) -> i64 {
     match t {
@@ -427,7 +397,8 @@ fn type_code(t: &DataType) -> i64 {
         DataType::Row(_) => code::ROW,
         DataType::Array(_) => code::ARRAY,
         DataType::Multiset(_) => code::MULTISET,
-        DataType::Distinct(_) => code::USER_DEFINED,
+        DataType::Distinct(_) | DataType::Structured(_) => code::USER_DEFINED,
+        DataType::Reference(_) => code::REF,
         DataType::Extension(_) => code::EXTENSION,
     }
 }
@@ -457,6 +428,8 @@ fn datetime_shape(t: &DataType) -> (i64, i64, i64) {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => (1, DATE_POSITIONS, 0),

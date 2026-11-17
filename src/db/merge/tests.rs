@@ -22,7 +22,7 @@ fn subjects(pairs: &[(u64, Option<usize>, u8)]) -> crate::error::Result<Seen> {
     let mut grouping = Grouping::default();
     let mut out: Vec<Subject> = Vec::new();
     for &(id, first, n) in pairs {
-        out.extend(grouping.pair(id, first, row(n))?);
+        out.extend(grouping.pair((0, id), first, row(n))?);
     }
     out.extend(grouping.finish()?);
     Ok(out.into_iter().map(|Subject { clause, id, joined }| (clause, id, format!("{joined:?}"))).collect())
@@ -82,12 +82,12 @@ fn the_last_target_row_is_checked_too() {
 #[test]
 fn a_pair_is_tried_only_up_to_the_clause_chosen() {
     let mut grouping = Grouping::default();
-    assert_eq!(grouping.limit(9), None);
-    assert!(grouping.pair(9, None, row(1)).unwrap().is_none());
-    assert_eq!(grouping.limit(9), None);
-    assert!(grouping.pair(9, Some(3), row(2)).unwrap().is_none());
-    assert_eq!(grouping.limit(9), Some(3));
-    assert_eq!(grouping.limit(10), None);
+    assert_eq!(grouping.limit((0, 9)), None);
+    assert!(grouping.pair((0, 9), None, row(1)).unwrap().is_none());
+    assert_eq!(grouping.limit((0, 9)), None);
+    assert!(grouping.pair((0, 9), Some(3), row(2)).unwrap().is_none());
+    assert_eq!(grouping.limit((0, 9)), Some(3));
+    assert_eq!(grouping.limit((0, 10)), None);
 }
 
 /// A WHEN NOT MATCHED clause of flag `flag`.

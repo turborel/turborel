@@ -196,6 +196,8 @@ impl Trim {
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
+            | Value::Structured(_)
+            | Value::Reference(_)
             | Value::Row(_)
             | Value::Extension(_) => Ok(text(source)?.map_or(Value::Null, |s| Value::Char(trimmed(s, &set, ends).to_owned()))),
         }

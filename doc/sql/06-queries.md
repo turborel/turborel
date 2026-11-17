@@ -25,6 +25,27 @@ reads every combination of their rows, each row of one with each of the
 other, which WHERE then filters. A table may be given a **correlation
 name**, `STAFF S`, which then names it in the query.
 
+A typed table is read with the rows of its subtables, cut to its own
+columns. `ONLY (t)` reads its own rows alone. Of the tables of
+[Structured values and references](04-expressions.md#structured-values-and-references):
+
+```sql
+SELECT LABEL FROM ITEMS ORDER BY LABEL;
+SELECT LABEL FROM ONLY (ITEMS);
+```
+
+```
+ LABEL
+------------
+ BOOK
+ LAMP
+(2 rows)
+ LABEL
+------------
+ LAMP
+(1 row)
+```
+
 A **derived table** is a query in parentheses, given a correlation name
 and, if written, names for its columns: `(SELECT ...) AS C (D, N)`.
 

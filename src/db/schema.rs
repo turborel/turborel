@@ -14,7 +14,7 @@ use super::sequences::Epochs;
 use super::{Completion, Database, State, api};
 use crate::ast::{PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
 use crate::binder::qualify;
-use crate::catalog::{Catalog, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, TemporaryKind, applicable, merged, sole};
+use crate::catalog::{Actions, Catalog, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, TemporaryKind, applicable, merged, sole};
 use crate::engine::rows::ROW_STORE;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::index::Index;
@@ -86,7 +86,7 @@ impl State {
             .collect::<Result<Vec<_>>>()?;
         // Its keys group its columns' values [ISO/IEC 9075-2:2023 §9.12 SR3].
         let keyed = cols.iter().filter_map(|&c| desc.columns.get(c));
-        keyed.into_iter().try_for_each(|column| crate::binder::grouping_operand(&column.data_type, &format!("index {name}")))?;
+        keyed.into_iter().try_for_each(|column| crate::binder::key_operand(&column.data_type, &format!("index {name}")))?;
         if self.catalog.index(name).is_some() {
             return fail(Code::Api, format!("[EXTENSION] an index named {name} already exists"));
         }
@@ -292,10 +292,13 @@ impl State {
         }
         let placed = || self.placement.get(&name).map_or_else(|| self.table_engine().to_owned(), Clone::clone);
         let engine = if t.temporary.is_some() { ROW_STORE.to_owned() } else { placed() };
-        let desc = TableDesc { name, columns, constraints, engine, options: Vec::new(), generation: 0, temporary: t.temporary };
+        // [ISO/IEC 9075-2:2023 §11.3 GR4f, GR4h, GR4i] what makes it typed.
+        let typed = self.typed_desc(names, t, earlier)?;
+        let desc = TableDesc { typed, name, columns, constraints, engine, options: Vec::new(), generation: 0, temporary: t.temporary };
         // [EXTENSION] its engine and options, if written (RULES.md D41).
         let mut desc = self.stored(&desc, &t.storage)?;
         desc.refresh_not_null();
+        self.inherited_nullability(&mut desc, earlier);
         Ok((desc, pending))
     }
 
@@ -340,10 +343,18 @@ impl State {
         if held.is_empty() {
             return fail(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.36 AR1] {grantor} holds no privilege on {name}"));
         }
-        let asked = match &p.actions {
-            None => grantable.clone(),
-            Some(list) => granted_actions(list, &table)?,
+        // [ISO/IEC 9075-2:2023 §12.2 SR3b] WITH HIERARCHY OPTION of a
+        // table of a structured type; no action of ALL PRIVILEGES.
+        if p.hierarchy_option && table.typed.is_none() {
+            return rule(format!(
+                "[ISO/IEC 9075-2:2023 §12.2 SR3b] {name} is no table of a structured type, so WITH HIERARCHY OPTION is not granted on it"
+            ));
+        }
+        let mut asked = match &p.actions {
+            None => Actions { typed: crate::catalog::TypedActions { hierarchy: false, ..grantable.typed.clone() }, ..grantable.clone() },
+            Some(list) => granted_actions(list, &table, &self.privilege_methods((grantor, schema), &table, (&p.methods, "§12.2 AR3"))?)?,
         };
+        asked.typed.hierarchy = p.hierarchy_option;
         let actions = asked.common(&grantable);
         let warned = if p.actions.is_some() { actions != asked } else { actions.is_empty() };
         if actions.is_empty() {
@@ -375,6 +386,7 @@ impl State {
         match (self.catalog.table(name), self.catalog.view(name)) {
             (Some(t), _) => Ok(t.clone()),
             (None, Some(v)) => Ok(TableDesc {
+                typed: v.typed.clone(),
                 name: name.clone(),
                 columns: v.columns.clone(),
                 constraints: Vec::new(),
@@ -527,6 +539,7 @@ mod tests {
             domain: None,
         };
         TableDesc {
+            typed: None,
             name,
             columns: vec![column],
             constraints: if unique { vec![key] } else { vec![] },

@@ -121,6 +121,13 @@ pub enum DescriptorItem {
     /// [ISO/IEC 9075-2:2023 §20.1, Table 29] USER_DEFINED_TYPE_CODE, its
     /// category's code [Table 34].
     UserDefinedTypeCode,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] SCOPE_CATALOG, of a reference
+    /// type's scope's name.
+    ScopeCatalog,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] SCOPE_SCHEMA.
+    ScopeSchema,
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 29] SCOPE_NAME.
+    ScopeName,
     /// [ISO/IEC 9075-2:2023 §20.1, Table 29] KEY_MEMBER: 1 of a column of
     /// the key KEY_TYPE says [§20.10 GR7c i 3], else 0.
     KeyMember,
@@ -134,7 +141,7 @@ pub enum DescriptorItem {
 }
 
 /// [ISO/IEC 9075:1992 §17.4] Each `<descriptor item name>`, as written.
-const ITEM_NAMES: [(&str, DescriptorItem); 31] = [
+const ITEM_NAMES: [(&str, DescriptorItem); 34] = [
     ("TYPE", DescriptorItem::Type),
     ("LENGTH", DescriptorItem::Length),
     ("OCTET_LENGTH", DescriptorItem::OctetLength),
@@ -163,6 +170,9 @@ const ITEM_NAMES: [(&str, DescriptorItem); 31] = [
     ("USER_DEFINED_TYPE_SCHEMA", DescriptorItem::UserDefinedTypeSchema),
     ("USER_DEFINED_TYPE_NAME", DescriptorItem::UserDefinedTypeName),
     ("USER_DEFINED_TYPE_CODE", DescriptorItem::UserDefinedTypeCode),
+    ("SCOPE_CATALOG", DescriptorItem::ScopeCatalog),
+    ("SCOPE_SCHEMA", DescriptorItem::ScopeSchema),
+    ("SCOPE_NAME", DescriptorItem::ScopeName),
     ("KEY_MEMBER", DescriptorItem::KeyMember),
     ("SORT_DIRECTION", DescriptorItem::SortDirection),
     ("NULL_ORDERING", DescriptorItem::NullOrdering),
@@ -335,6 +345,8 @@ pub enum DynamicStatement {
     DeletePositioned {
         /// The `<table name>`.
         table: TableName,
+        /// [ISO/IEC 9075-2:2023 §14.9] ONLY ( `<table name>` ) was written.
+        only: bool,
         /// The `<extended cursor name>`.
         cursor: ExtendedName,
     },
@@ -343,6 +355,8 @@ pub enum DynamicStatement {
     UpdatePositioned {
         /// The `<table name>`.
         table: TableName,
+        /// [ISO/IEC 9075-2:2023 §14.9] ONLY ( `<table name>` ) was written.
+        only: bool,
         /// The `<set clause>`s, in order.
         set: Vec<SetClause>,
         /// The `<extended cursor name>`.

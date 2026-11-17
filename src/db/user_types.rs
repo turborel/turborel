@@ -16,10 +16,13 @@ mod uses;
 use super::ddl::Dropped;
 use super::definitions::Defined;
 use super::{State, rule};
-use crate::ast::{TypeDefinition, TypeName, TypeOption};
+use crate::ast::{OrderingForm, TypeDefinition, TypeName, TypeOption};
 use crate::binder::{alike, qualify};
-use crate::catalog::{QualifiedName, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, owner_of, sole, types_in};
-use crate::error::{At, Code, Result, SqlError, SqlState, fail};
+use crate::catalog::{
+    OrderingCategory, OrderingDesc, QualifiedName, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, owner_of, sole,
+    types_in,
+};
+use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::txn::LockMode;
 use crate::value::{DataType, Spelled};
 
@@ -33,22 +36,31 @@ impl State {
     /// SQLCODE -103 if its schema is not there (SQLSTATE 3F000), the
     /// schema has a type or domain of its name \[SR3\], or it breaks
     /// another Syntax Rule; -104 if the schema's owner holds no USAGE on a
-    /// type its source names [§6.1 AR1]; -900 if it defines a structured
-    /// type.
+    /// type its source names [§6.1 AR1]. A structured type is defined as
+    /// `create_structured_type` says.
     pub(super) fn create_user_type(&mut self, schema: &str, d: &TypeDefinition) -> Result<Defined> {
         let qn = qualify(&d.name, schema);
         if !self.catalog.schema_exists(&qn.auth) {
             let msg = format!("[ISO/IEC 9075-2:2023 §11.51 SR1] there is no schema {0}: CREATE SCHEMA AUTHORIZATION {0} first", qn.auth);
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::INVALID_SCHEMA_NAME).or_at(d.name.at));
         }
-        if self.catalog.user_type(&qn).is_some() || self.catalog.domain(&qn).is_some() {
+        if self.catalog.user_type(&qn).is_some() || self.catalog.structured_type(&qn).is_some() || self.catalog.domain(&qn).is_some() {
             let msg = format!("[ISO/IEC 9075-2:2023 §11.51 SR3] schema {} has a type or domain {} already", qn.auth, qn.ident);
             return Err(rule(msg).or_at(d.name.at));
         }
-        let desc = self.user_type_described(qn.clone(), d)?;
+        // [SR5] of a <member list>, or no AS, a structured type.
+        if d.representation.is_none() {
+            return self.create_structured_type(&qn, d);
+        }
+        let mut desc = self.user_type_described(qn.clone(), d)?;
+        desc.methods = self.distinct_methods_described(&desc, d)?;
         let mut read = Vec::new();
         types_in(&desc.source, &mut read);
+        let ordering = distinct_ordering(&desc);
         let mut catalog = self.catalog.duplicate();
+        if let Some(o) = ordering {
+            catalog.put_ordering(o);
+        }
         catalog.put_user_type(desc);
         self.catalog = Arc::from(catalog);
         let locks = read.into_iter().chain([QualifiedName::of_schema(&qn.auth)]).map(|name| (name, LockMode::Shared)).collect();
@@ -75,8 +87,7 @@ impl State {
     fn user_type_described(&self, qn: QualifiedName, d: &TypeDefinition) -> Result<UserTypeDesc> {
         options_once(&d.options)?;
         let Some(representation) = &d.representation else {
-            let msg = "[DESIGN] a structured type [ISO/IEC 9075-2:2023 §11.51 SR5b] is valid SQL this implementation does not take";
-            return fail(Code::Unsupported, msg).or_at(d.name.at);
+            return Err(rule("[ISO/IEC 9075-2:2023 §11.51 SR5] a distinct type has a representation".to_owned()).or_at(d.name.at));
         };
         distinct_options(d)?;
         let owner = owner_of(&*self.catalog, &qn.auth).to_owned();
@@ -95,6 +106,7 @@ impl State {
             name: qn,
             source,
             usage: Vec::new(),
+            methods: Vec::new(),
         };
         self.routine_unique(&desc.name, &desc.to_distinct.name, &desc.source).or_at(d.name.at)?;
         self.routine_unique(&desc.name, &desc.to_source.name, &desc.data_type()).or_at(d.name.at)?;
@@ -116,7 +128,7 @@ impl State {
             TypeName::Data(DataType::Distinct(_)) => refused("a user-defined type", 0),
             TypeName::Data(DataType::Extension(t)) => refused(t.kind.name(), 0),
             TypeName::Data(t) => Ok(t.clone()),
-            TypeName::Domain(name) | TypeName::Extension { name, .. } => refused(&name.ident, name.at),
+            TypeName::Domain(name) | TypeName::Extension { name, .. } | TypeName::Reference(name, _) => refused(&name.ident, name.at),
             TypeName::Collection(..) => self.data_type_of(of, (schema, sole(&*self.catalog, owner))),
         }
     }
@@ -167,9 +179,22 @@ impl State {
     }
 }
 
+/// [ISO/IEC 9075-2:2023 §11.51 GR2c] The ordering of distinct type
+/// `desc`: FULL by map of its function to its source type, of a source
+/// no collection type nor large object one; EQUALS ONLY of a large object
+/// one (Feature T042); none of a collection type.
+fn distinct_ordering(desc: &UserTypeDesc) -> Option<OrderingDesc> {
+    if matches!(desc.source, DataType::Array(_) | DataType::Multiset(_)) {
+        return None;
+    }
+    let form = if desc.source.is_lob() { OrderingForm::Equals } else { OrderingForm::Full };
+    let function = QualifiedName { auth: desc.name.auth.clone(), ident: desc.to_source.specific.clone() };
+    Some(OrderingDesc { udt: desc.name.clone(), form, category: OrderingCategory::Map(function) })
+}
+
 /// [ISO/IEC 9075-2:2023 §11.51 SR4] That no kind of option is written
 /// twice.
-fn options_once(options: &[(TypeOption, usize)]) -> Result<()> {
+pub(super) fn options_once(options: &[(TypeOption, usize)]) -> Result<()> {
     for (i, (o, at)) in options.iter().enumerate() {
         if options.iter().take(i).any(|(earlier, _)| earlier.kind() == o.kind()) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.51 SR4] {} is written once", o.kind())).or_at(*at));
@@ -182,15 +207,15 @@ fn options_once(options: &[(TypeOption, usize)]) -> Result<()> {
 /// definition, writes none of the options of a structured type: FINAL
 /// alone of them is implicit.
 fn distinct_options(d: &TypeDefinition) -> Result<()> {
-    if let Some(at) = d.under {
-        return Err(rule("[ISO/IEC 9075-2:2023 §11.51 SR7d] a distinct type has no <subtype clause>".to_owned()).or_at(at));
+    if let Some(under) = &d.under {
+        return Err(rule("[ISO/IEC 9075-2:2023 §11.51 SR7d] a distinct type has no <subtype clause>".to_owned()).or_at(under.at));
     }
     for (o, at) in &d.options {
         let cited = match o {
             TypeOption::Instantiable(_) => "SR7b] a distinct type has no <instantiable clause>",
             TypeOption::Final(false) => "SR7c] a distinct type is FINAL",
-            TypeOption::Reference => "SR7e] a distinct type has no <reference type specification>",
-            TypeOption::CastToRef | TypeOption::CastToType => "SR7f] a distinct type has no <cast to ref> nor <cast to type>",
+            TypeOption::Reference(_) => "SR7e] a distinct type has no <reference type specification>",
+            TypeOption::CastToRef(_) | TypeOption::CastToType(_) => "SR7f] a distinct type has no <cast to ref> nor <cast to type>",
             TypeOption::Final(true) | TypeOption::CastToDistinct(_) | TypeOption::CastToSource(_) => continue,
         };
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.51 {cited}")).or_at(*at));
@@ -218,6 +243,8 @@ fn respelled(t: DataType) -> DataType {
         | DataType::Interval(_)
         | DataType::Array(_)
         | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_)) => other,
@@ -226,7 +253,7 @@ fn respelled(t: DataType) -> DataType {
 
 /// [ISO/IEC 9075-2:2023 §9.9 SR2] The IDENTIFIER of SDT `t`, as IV223
 /// spells a number's type; none of a type no source is.
-fn type_name_of(t: &DataType) -> Option<&'static str> {
+pub(super) fn type_name_of(t: &DataType) -> Option<&'static str> {
     Some(match t {
         DataType::Character { .. } => "CHAR",
         DataType::Varying { .. } => "VARCHAR",
@@ -244,6 +271,8 @@ fn type_name_of(t: &DataType) -> Option<&'static str> {
         DataType::Boolean => "BOOLEAN",
         DataType::Array(_) => "ARRAY",
         DataType::Multiset(_) => crate::value::types::MULTISET_NAME,
-        DataType::Row(_) | DataType::Distinct(_) | DataType::Extension(_) => return None,
+        DataType::Row(_) | DataType::Distinct(_) | DataType::Structured(_) | DataType::Reference(_) | DataType::Extension(_) => {
+            return None;
+        }
     })
 }

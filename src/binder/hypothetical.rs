@@ -94,7 +94,7 @@ impl Binder<'_> {
         ((values, value_types), (keys, key_types)): &mut (Parts, Parts),
     ) -> Result<()> {
         let (key, key_type) = self.value_expression(&k.key, rows)?;
-        ordering_operand(&key_type, name)?;
+        ordering_operand(self.db, &key_type, name)?;
         // [EXTENSION] a `?` takes its sort key's type, where [ISO/IEC
         // 9075-2:2023 §20.7 GR5a] gives it none.
         let taken = || ParameterType::Of(key_type.clone());

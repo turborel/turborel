@@ -162,8 +162,8 @@ impl Session {
             DynamicStatement::Open { cursor, using } => self.dynamic_open(cx, cursor, using.as_ref(), params),
             DynamicStatement::Fetch { cursor, orientation, using } => self.dynamic_fetch(cx, cursor, (orientation, using), params),
             DynamicStatement::Close(cursor) => self.dynamic_close(cursor, params),
-            DynamicStatement::DeletePositioned { table, cursor } => self.dynamic_delete(cx, table, cursor, params),
-            DynamicStatement::UpdatePositioned { table, set, cursor } => self.dynamic_update(cx, (table, set), cursor, params),
+            DynamicStatement::DeletePositioned { table, cursor, .. } => self.dynamic_delete(cx, table, cursor, params),
+            DynamicStatement::UpdatePositioned { table, set, cursor, .. } => self.dynamic_update(cx, (table, set), cursor, params),
             // [ISO/IEC 9075-2:2023 §20.6 GR1] run directly, no PTF data area
             // is: its target identifies none.
             DynamicStatement::CopyDescriptor { target, .. } => Err(no_ptf_area(target)),

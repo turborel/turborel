@@ -139,6 +139,7 @@ impl Session {
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
             | SqlStatement::SetCollation(_)
+            | SqlStatement::SetTransformGroup(_)
             | SqlStatement::SetCatalog(_)
             | SqlStatement::SetTimeZone(_)
             | SqlStatement::Locator { .. }
