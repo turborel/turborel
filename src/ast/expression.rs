@@ -156,6 +156,14 @@ pub enum Predicate {
         /// NOT LIKE_REGEX was written.
         not: bool,
     },
+    /// [ISO/IEC 9075-2:2023 §8.23] `<JSON exists predicate>` ::=
+    /// JSON_EXISTS ( `<JSON API common syntax>` \[`<JSON exists error
+    /// behavior>` ON ERROR\] ).
+    JsonExists(Box<super::JsonOperator>),
+    /// [ISO/IEC 9075-2:2023 §8.22] `<JSON predicate>` ::= `<JSON predicate
+    /// input>` \[`<JSON input clause>`\] IS \[NOT\] JSON \[`<JSON predicate
+    /// type constraint>`\] \[`<JSON key uniqueness constraint>`\].
+    IsJson(Box<super::IsJson>),
     /// [§8.6] `<null predicate>` ::= `<row value constructor>` IS \[NOT\] NULL
     Null {
         /// The row tested.
@@ -391,6 +399,9 @@ pub enum ValueExpression {
     /// [ISO/IEC 9075-2:2023 §6.18 to §6.24] An expression of user-defined
     /// types and references, and where it begins in the statement.
     Structured(Box<super::StructuredExpression>, usize),
+    /// [ISO/IEC 9075-2:2023 §6.28, §6.34, §6.35] JSON_VALUE, JSON_QUERY,
+    /// JSON_OBJECT or JSON_ARRAY, and where it begins in the statement.
+    Json(Box<super::JsonExpression>, usize),
     /// [ISO/IEC 9075-2:2023 §6.10] A `<window function>`.
     Window(Box<WindowFunction>),
     /// [ISO/IEC 9075-2:2023 §6.11] A `<nested window function>`.

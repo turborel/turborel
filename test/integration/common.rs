@@ -383,3 +383,23 @@ impl Rng {
         (i64::try_from(self.below(21_usize)).unwrap() - 6_i64).to_string()
     }
 }
+
+/// The error `sql` raises as it is prepared, opened or read.
+pub fn failed(s: &Session, sql: &str) -> SqlError {
+    let read = s.open_cursor(sql).and_then(|mut c| {
+        while c.fetch()?.is_some() {}
+        Ok(())
+    });
+    read.expect_err(sql)
+}
+
+/// The SQLCODE, the SQLSTATE and the rule of the error `sql` raises.
+pub fn refused(s: &Session, sql: &str) -> (i32, String, Option<String>) {
+    let e = failed(s, sql);
+    (e.sqlcode(), e.sqlstate().as_str().to_owned(), e.rule)
+}
+
+/// `refused`, of a rule of ISO/IEC 9075-2:2023 `cited`.
+pub fn broke(code: i32, state: &str, cited: &str) -> (i32, String, Option<String>) {
+    (code, state.to_owned(), Some(format!("ISO/IEC 9075-2:2023 {cited}")))
+}

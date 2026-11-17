@@ -44,6 +44,7 @@ pub mod functions;
 pub mod geometry;
 pub mod hash;
 pub mod index;
+pub mod json;
 pub mod lexer;
 pub mod log;
 pub mod logical;

@@ -1807,6 +1807,97 @@ an identifier, read as a word where a statement of roles reads it.
 CURRENT_ROLE stays an identifier too, read as the value function where it
 stands alone, so a column of that name is read qualified.
 
+### SQL/JSON
+
+The SQL/JSON query operators JSON_EXISTS [§8.23], JSON_VALUE [§6.28]
+and JSON_QUERY [§6.35] are implemented, over JSON text in character
+strings, with the SQL/JSON data model [§4.48.3], the parsing and
+serializing of JSON text [§9.42, §9.43] and the SQL/JSON path language
+[§9.45, §9.46] they read (`turborel::json`, RULES.md D84). The
+operators' General Rules are the library's (`json/query.rs`), with the
+rules they apply: the serializing of an item [§9.43], the array wrappers
+[§9.44], the processing of the common syntax [§9.47], and the casting
+and serializing of a sequence [§9.48, §9.49]; the binder makes each call
+of an operator a function that applies them to its operands' values. So
+are the `<JSON predicate>` IS JSON [§8.22], the constructor functions
+JSON_OBJECT and JSON_ARRAY [§6.34], and the `<JSON aggregate function>`s
+JSON_OBJECTAGG and JSON_ARRAYAGG [§10.11], set functions.
+
+Features T823 (SQL/JSON: PASSING clause), T828 (JSON_QUERY) and T829
+(JSON_QUERY: array wrapper options) are claimed, and so are the path
+language's T831 (strict mode), T832 (item method), T833 (multiple
+subscripts), T834 (wildcard member accessor), T835 (filter expressions),
+T836 (starts with predicate), T837 (regex_like predicate), T840 (hex
+integer literals) and T865 to T878 (the item methods bigint() to
+timestamp_tz(), with precisions and scales), which §9.46's Conformance
+Rules 8 to 21 ask of the methods alone. Features T811 (Basic SQL/JSON
+constructor functions), T812 (SQL/JSON: JSON_OBJECTAGG), T813 (SQL/JSON:
+JSON_ARRAYAGG with ORDER BY), T814 (Colon in JSON_OBJECT or
+JSON_OBJECTAGG), T822 (SQL/JSON: IS JSON WITH UNIQUE KEYS predicate) and
+T830 (Enforcing unique keys in SQL/JSON constructor functions) are
+claimed. Feature T821 (Basic SQL/JSON query operators) is not claimed:
+of its operators JSON_VALUE, JSON_EXISTS and IS JSON are implemented,
+JSON_TABLE [§7.11] is not. T825 (ON EMPTY and ON ERROR clauses) and T826
+(General value expression in ON ERROR or ON EMPTY clauses) are
+implemented for the three query operators, and not claimed, as
+JSON_TABLE's clauses of theirs are not. T803 (String-based JSON) is
+implemented for character strings, every input and output clause of the
+query operators, the constructors and IS JSON; JSON text in a binary
+string, FORMAT JSON ENCODING, is SQLCODE -900, so it is not claimed.
+There is no JSON type (T801).
+
+The library holds the rules of the `<JSON predicate>` IS JSON [§8.22]
+and of the constructor functions JSON_OBJECT and JSON_ARRAY [§6.34] and
+JSON_OBJECTAGG and JSON_ARRAYAGG [§10.11] (`json/predicate.rs`,
+`json/construct.rs`), string-based (T803): their inputs are character
+strings, FORMAT JSON marking one as JSON text, and they return character
+strings. IS JSON is Unknown of the null value and False of text that is
+not JSON, or that has two members of one key under WITH UNIQUE KEYS. A
+constructor keeps a character string, a number and a truth value as its
+scalar and casts any other value, a datetime too, to a character string
+(ID100, IV179). A null name is 22004 and two members of one name under WITH
+UNIQUE KEYS 22030. An aggregate of no rows is the null value. An object
+has at most 1,048,576 members (IL051) and an array as many elements
+(IL052), past them 2203E and 2203D.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| JSON_EXISTS | §8.23 SR1, GR | A predicate, in a search condition or as a BOOLEAN value: True if the path gives an item, False if it gives none, Unknown if the context item is null. |
+| JSON_VALUE | §6.28 SR1 to SR5, GR; §9.48 | The one scalar the path gives, cast to the returned type. Null if the context item is null, and of the SQL/JSON null. An array or object is 2203F, two items 22034, an item of a type that does not cast to the returned type 2203G, and a cast's exception is its own, 22018 say. |
+| JSON_QUERY | §6.35 SR1 to SR9, GR; §9.49 | The one item the path gives, serialized as JSON text, FORMAT JSON, to the returned type. Two items unwrapped are 22034, and a text longer than the type 22001. |
+| Common syntax | §10.14 SR1 to SR5; §10.12 | The context item is a character string, FORMAT JSON implicit or written, else SQLCODE -103. Its text is parsed WITHOUT UNIQUE KEYS before the path is evaluated (IA050, IV185), so a text that is no JSON text is 22032 whether the path reads it or not. The path specification is a character string literal, parsed once as the statement is prepared: a path that is none is refused then, -101, -102 or -103. AS a table path name is -103 [SR2a]. |
+| PASSING | §10.14, §9.46 SR4, GR11b; §10.12 SR3, SR6, SR7 | An argument without FORMAT JSON is the item its value is: a character string, a number, a truth value or a datetime as it is, an interval cast to CHARACTER VARYING(32767) (IV165), a null value the SQL/JSON null. One with FORMAT JSON is a character string's JSON text, parsed first (IA054); of a null value it is the empty sequence. A binary string without FORMAT JSON, an array, a multiset or a row is -103; a user-defined type, a reference or a type beyond the standard is -900. A named variable no argument has is -103 as the statement is prepared, whatever the path does with it. Of two arguments of one name, the first is the variable's. |
+| Identifiers of PASSING | §9.46 SR4, GR11b; ISO/IEC 9075:1992 §5.2 SR10 | An argument's `<identifier>` is equivalent to a named variable's `<JSON path identifier>` if its value, as SQL defines it, is the variable's name: a regular identifier in upper case, a delimited identifier its body. The path language is case-sensitive, so `PASSING 1 AS x` is the variable `$X`, and `PASSING 1 AS "x"` is `$x`. |
+| starts with of a variable | §9.46 SR8 | The variable is an argument of a character string without FORMAT JSON, else -103. |
+| RETURNING | §6.28 SR1, SR2; §6.35 SR1b; §10.13 SR2 | JSON_VALUE returns a predefined character string, numeric, BOOLEAN or datetime type, else -103; JSON_QUERY a character string type, else -103. Without RETURNING each returns CHARACTER VARYING(32767) (ID074, ID101). A binary string type for JSON_QUERY, and FORMAT JSON ENCODING of a binary string anywhere, are valid SQL not implemented, -900; ENCODING of a character string is -103 [§10.12 SR8, §10.13 SR2a]. A cast that cuts a string completes with the warning 01004, as CAST does. |
+| Wrappers and quotes | §6.35 SR6 to SR9; §9.49 GR4, GR5 | WITHOUT ARRAY is the default. WITH ARRAY WRAPPER is UNCONDITIONAL. WITH CONDITIONAL ARRAY WRAPPER leaves a sequence of one array or object as it is and wraps any other, a lone scalar included, as §9.49 GR4a iv says. An empty sequence is never wrapped, so ON EMPTY applies. OMIT QUOTES casts a lone character string to the returned type, KEEP QUOTES, the default, serializes it in quotation marks. A quotes behavior WITH a wrapper is -103 [SR8]. |
+| ON EMPTY and ON ERROR | §6.28 SR4, SR5; §6.35 SR4, SR5; §8.23 SR1; §9.48 GR4, GR5; §9.49 GR4c, GR6 | NULL ON EMPTY and NULL ON ERROR are implicit, and FALSE ON ERROR of JSON_EXISTS. ON ERROR replaces an exception condition, which is an error of SQLSTATE class 22, data exception, alone: a limit of turborel's, SQLCODE -900, and a Syntax Rule broken are raised whatever ON ERROR says. ERROR ON EMPTY makes an empty sequence 22035, an exception ON ERROR then replaces, so ERROR ON EMPTY with NULL ON ERROR, written or implicit, is null [§9.48 GR4c i, GR5c]. DEFAULT is any value expression, a column's or a `?` too, cast to the returned type, which CAST is to take, else -103; a cast of the DEFAULT ON EMPTY that fails is an exception ON ERROR replaces [GR4c iii], and of the DEFAULT ON ERROR one raised [GR5d i]. A DEFAULT's value expression is evaluated for each row, used or not, as other operands are. |
+| Dynamic parameters | §20.7 GR5a, GR5b | No rule types a `?` here. A `?` context item or argument FORMAT JSON is CHARACTER VARYING(32767) and a DEFAULT the returned type [EXTENSION]; an argument without FORMAT JSON is refused. |
+| Where written | §6.3, §8.1; §9.16 SR1g, SR1h, SR1al; §11.9 CR2 | JSON_VALUE, JSON_QUERY and the constructors wherever a value is; JSON_EXISTS and IS JSON wherever a predicate is: in queries and views. JSON_VALUE, JSON_QUERY and JSON_EXISTS are potential sources of non-determinism, so a CHECK constraint or a generation expression holding one is SQLCODE -103; the constructors, the aggregates and IS JSON may be there. |
+| Key words | §5.2 | JSON_EXISTS, JSON_VALUE and JSON_QUERY are no key words of SQL-92, so each stays an identifier, the operator only before a parenthesis. PASSING, RETURNING, FORMAT, JSON, ENCODING, ERROR, EMPTY, ARRAY, OBJECT, WITHOUT, CONDITIONAL, UNCONDITIONAL, WRAPPER, KEEP, OMIT, QUOTES, SCALAR and STRING are read only where the operators' Formats have them, so a column of any of those names stays one. |
+| IS JSON | §8.22 SR1 to SR4, GR | A predicate wherever one is written. True if the character string is JSON text of the kind named, VALUE, the default, ARRAY, OBJECT, or SCALAR, neither, and, WITH UNIQUE KEYS, of no object of two members of one key; False otherwise, of a text that is no JSON text too; Unknown of the null value. IS NOT JSON is its negation [SR4]. FORMAT JSON is implicit [SR1]. An input of no character string is SQLCODE -103, a binary string -900. A text beyond turborel's limits is -900, no answer. |
+| JSON_OBJECT | §6.34 SR5, SR6, GR2, GR5a | Members written `[KEY] name VALUE value` or `name : value` (T814). A name is a character string, else -103; a null one is 22004. A value of a string, number or truth value is kept, one of another type cast to CHARACTER VARYING(32767) (ID100, IV179), a datetime among them; FORMAT JSON parses it under the key uniqueness constraint. NULL ON NULL is the default; ABSENT ON NULL leaves a member bound to the SQL/JSON null out. WITH UNIQUE KEYS makes two members of one name 22030, those left out too. Of no members, `{}`. |
+| JSON_ARRAY | §6.34 SR7, GR3, GR4, GR5a | By enumeration, its elements in order; by query, of a query of degree 1, else -103 [SR7c], its column's values in the order of its ORDER BY, `[]` of no rows. A lone scalar subquery makes it by query [SR7d]. ABSENT ON NULL is the default. An element FORMAT JSON is parsed WITHOUT UNIQUE KEYS (IV156). |
+| JSON_OBJECTAGG, JSON_ARRAYAGG | §10.11 SR1 to SR5, GR | Set functions, with FILTER and OVER, of a group's rows, nulls kept; the null value of no rows. JSON_OBJECTAGG is NULL ON NULL and WITHOUT UNIQUE KEYS by default, and a null name is 22004. JSON_ARRAYAGG's ORDER BY (T813) orders the elements, its keys orderable, else -103 [§9.14 SR3]; without one, the order the rows are read (US044). ABSENT ON NULL is its default. A grouping past its work area spills them as it spills every set function. They are no potential source of non-determinism, so a constraint may hold them. |
+| Inputs and outputs of the constructors | §10.12 SR3, SR4a, SR6 to SR8; §10.13 SR2 | As the query operators': a value FORMAT JSON of no string is -103 [SR6], a binary string without FORMAT JSON -103 [SR7], an array, a multiset or a row -103 [SR3], ENCODING of a character string -103 [SR8]. A JSON-returning function, a constructor, an aggregate or JSON_QUERY, as an input is FORMAT JSON implicitly [SR4a], so constructors nest, as a PASSING argument too. RETURNING is a character string type, else -103, a binary string type -900; without it CHARACTER VARYING(32767) (ID098, ID134). A text longer than the type is 22001. |
+| Key words of the constructors | §5.2 | JSON_OBJECT, JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG are no key words of SQL-92, each the function only before a parenthesis. ABSENT, KEYS, SCALAR and the words the query operators share are read only where the Formats have them. RETURNING within a constructor is the output clause unless VALUE, a colon, a comma or ")" follows it, so a column RETURNING may be a name. IS [NOT] JSON, and FORMAT JSON [ENCODING ...] before IS, after a value are IS JSON, so `SELECT ID JSON FROM T` and `SELECT ID FORMAT FROM T` still name columns. |
+| SQL/JSON items | §4.48.3 | The SQL/JSON null, a scalar that is a character string, a number, a truth value or a datetime, an array, or an object. Two are equivalent as the clause says: scalars equal as SQL values, arrays element by element, objects by a pairing of their members one to one, keys equal code point by code point. |
+| JSON text | §9.42 GR3a; RFC 8259 §2 to §7 | A string that is no JSON text is SQLSTATE 22032, and so is one whose string escapes a surrogate that is not of a pair. Members of one key are all kept (UA057), in the order written (US039); under WITH UNIQUE KEYS they are 22037. Arrays and objects nested more than 128 deep are SQLCODE -900. |
+| Numbers | §9.42 GR3a iii 3 A IV, §9.45 GR1a | A number without an exponent is exact, of its fraction's scale; one with an exponent is approximate. An exact one of more than 18 digits is DECFLOAT, rounded to 34. One out of its kind's range is SQLCODE -900. |
+| Lexical elements | §9.45 SR1 to SR4, GR1; ECMAScript 5.1 §7 | Identifiers of Unicode 13.0's letters, with `\u` escapes; string literals in single or double quotation marks, with ECMAScript's escapes and line continuations; decimal numeric literals, and hex integer literals (T840), `0x` or `0X` and hexadecimal digits, each the exact number of its value, of more than 18 digits a DECFLOAT rounded to 34. The language is case-sensitive and reserves no word: `$.type` is a member, `$.type()` the method [NOTE 483]. A character that begins no token is SQLCODE -101. |
+| Format | §9.46 F, SR3, SR5 to SR7, SR10 | A path begins with `strict` or `lax`. Text that does not conform is SQLCODE -102; `@` outside a predicate and `last` outside a subscript are -103. A like_regex pattern and its flags are read when the path is parsed, 2201S and 2201T. The precision and scale of decimal() and the precisions of time(), time_tz(), timestamp() and timestamp_tz() are unsigned integers, a precision of 0 or a scale above the precision -103 [§6.1 SR23, SR25], a precision above 18, or above 6 for a time or timestamp, -900. A `<JSON datetime template>` is read as the path is parsed [SR10]: one that is no datetime template, or is neither dated nor timed, or zoned and not timed, is SQLCODE -103, and one of FF7 to FF9 SQLCODE -900. A path nested more than 64 deep, or of more than 63 accessors or operators in a row, is SQLCODE -900. No analysis for certain exceptions is made (IA223) [SR9]. |
+| Modes | §9.46 GR7, GR8; §4.48.5 | Lax mode wraps and unwraps one level, and takes what it still cannot access for nothing. Strict mode raises each structural error. |
+| Member accessors | §9.46 GR11g ii 1, 2 | In strict mode an item that is no object with the member is 2203A, and for `.*` one that is no object 2203C. Members of one key raise no exception (IA071): `.key` takes the first (UA075), and `.*` gives the bound values of all (UA058) in the order written (US040). |
+| Array accessors | §9.46 GR11g ii 3, 4 | An item that is no array is 22039. A subscript that is not one number is 22033; a fraction is truncated toward zero (IA073). In strict mode a subscript outside the array, or a range whose first is past its last, is 22033; in lax mode the elements there are are taken. `last` is the current array's last subscript. |
+| Item methods | §9.46 GR11g ii 6 | type() names an item's kind, a datetime's by its type. size() is an array's elements or 1, in strict mode 22039 of what is no array. double() casts a number or a character string to DOUBLE PRECISION, 22036 of another item and 22018 of a string that is no number. ceiling(), floor() and abs() are of numbers alone, else 22036. datetime() reads a character string as a date, a time with and without time zone and a timestamp with and without time zone in turn, with time zone where it writes a displacement, of the precision of its fraction; else, or of another item, 22031, and a fraction of more than 6 digits is -900. datetime() of a template reads the string by it, as CAST with FORMAT does [§9.51], to the datetime type the template implies, in the session's time zone; a string it does not read is 22031. keyvalue() gives an object of `key`, `value` and `id` for each member of each object, in the order kept, members of one key all (IA072, UA058); `id` is the object's place in the sequence keyvalue() is applied to, from 0; an item that is no object is 2203C. |
+| Casting item methods | §9.46 GR11g ii 6 C IX to XIX | bigint(), integer(), decimal() and number() take numbers and character strings, else 22036; boolean() truth values and strings, else 2202V; date() strings, else 2202W; string() strings, numbers and truth values, else 2202X; time() and timestamp() strings, else 2202Y and 2202Z; time_tz() and timestamp_tz(), as printed, numbers and strings, else 2202Y and 2202Z. Each casts by CAST, its exception the path's: decimal() to DECIMAL of the precision and scale written, of none 18 and 0; string() to CHARACTER VARYING(32767) (IL006); the time and timestamp methods to the precision written, of none 0 and 6. number()'s type (IV186) is a number's own, so a number is kept as it is, and of a string that of the `<signed numeric literal>` it is. A datetime without time zone is taken in UTC, the evaluator having no SQL-session. |
+| Arithmetic | §9.46 GR11h to GR11j, §6.31 | A sign is of numbers alone, else 2203B. An operand that is not one number is 22038. `%` is MOD, of whole exact or DECFLOAT numbers, a zero divisor 22012. An exception of the arithmetic is the path's. |
+| Filters and predicates | §9.46 GR11g ii 5, GR12 | A filter keeps the items its predicate is True of. Predicates are True, False or Unknown, an exception within one making it Unknown, a strict mode's structural error too. Character strings compare by code point. The SQL/JSON null is comparable with any item. Where one pair is in error and another succeeds, in lax mode, the result is True (UA073). A like_regex match the matcher gives up on, past its steps, is an error of its item. |
+| Named variables | §9.46 SR4, GR11b | A variable's value is the item passed under its name, as the PASSING row above says. One that is not passed is SQLCODE -103, found before anything is evaluated, so no filter hides it. |
+
+Where the text of §6.28, §9.45, §9.46 and §9.48 cannot be followed as
+printed, it is read as Readings of ambiguous text says.
+
 ## SQL/PSM
 
 Persistent stored modules, ISO/IEC 9075-4, written from its 2006 draft
@@ -2346,6 +2437,35 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | 2023 §9.25 GR10, GR11 (UV133) the names and declared type of the pass-through input surrogate columns | PTF_PASS_THROUGH_t, an underscore added until no column of the table has it; BIGINT, the row's place among its table's rows | `db/ptf/compile.rs`, `db/ptf/execute.rs` |
 | 2023 §9.25 (UA056) the partitioning of a table argument of row semantics | One partition of all its rows, its virtual processors one | `db/ptf/execute.rs` |
 
+### SQL/JSON
+
+| Rule | Choice | Where |
+|---|---|---|
+| 2023 §6.28 SR1, ID074, and §6.35 SR1b, ID101, the type JSON_VALUE and JSON_QUERY return without RETURNING | CHARACTER VARYING(32767) | `json/query.rs`, `binder/json.rs` |
+| 2023 §9.46 GR11b i 2 B, IV165, the character string type a PASSING argument of another type is cast to | CHARACTER VARYING(32767) | `json/query.rs` |
+| 2023 §9.46 GR4, GR5, IA050, IA054, IV185, whether and how the context item and the FORMAT JSON arguments are parsed before the path is evaluated | They are, WITHOUT UNIQUE KEYS, so a text that is no JSON text is 22032 whether the path reads it or not | `json/query.rs` |
+| 2023 §9.42 GR3a iii 3 A VIII 2, UA057, whether members of one key are removed as JSON text is parsed | None is. Every member is kept, so WITH UNIQUE KEYS can refuse them. | `json/text.rs` |
+| 2023 §9.42 GR3a iii 3 A VIII 1, US039, the order the members of a JSON object are enumerated in | The order written | `json/text.rs` |
+| 2023 §9.43 GR2a ii, UV097, the JSON text an SQL/JSON item is serialized as | No insignificant white space. Members in the order kept, those of one key all. Of a string, `"` and `\` escaped as `\"` and `\\`, and U+0000 to U+001F as `\b`, `\f`, `\n`, `\r` or `\t`, else `\u` and four lower case hexadecimal digits; no other character. A number as CAST writes it, a DECFLOAT without an exponent. | `json/serialize.rs` |
+| 2023 §9.46 SR9, IA223, whether a syntactic analysis of a path may find an exception its evaluation would raise | None is made. Each exception is raised as the path is evaluated. | `json/path/parse.rs` |
+| 2023 §9.46 GR11g ii 1 C, GR11g ii 2 B, IA071, whether a member or wildcard member accessor of an object of two members of one key raises 22037 | It does not | `json/path/eval/accessors.rs` |
+| 2023 §9.46 GR11g ii 1 D II 2 a, UA075, which member of one key a member accessor takes | The first kept, the first written | `json/path/eval/accessors.rs` |
+| 2023 §9.46 GR11g ii 2 C II 2 a iii, GR11g ii 6 C VIII 1 c iv, UA058, how many members of one key the wildcard member accessor and keyvalue() delete | None | `json/path/eval/accessors.rs`, `json/path/eval/methods/keyvalue.rs` |
+| 2023 §9.46 GR11g ii 2 C II 2 a ii, iv, GR11g ii 6 C VIII 1 c iii, US040, the order the members of an SQL/JSON object are enumerated in | The order kept | `json/path/eval/accessors.rs`, `json/path/eval/methods/keyvalue.rs` |
+| 2023 §9.46 GR11g ii 3 F II 1, IA073, whether a subscript is truncated or rounded to scale 0 | Truncated toward zero | `json/path/eval/accessors.rs` |
+| 2023 §9.46 GR11g ii 6 C VII 2 a, UA070, which exception datetime() raises of several items in error | The first item's | `json/path/eval/methods/datetime.rs` |
+| 2023 §9.46 GR11g ii 6 C VIII 1 b, IA072, whether keyvalue() of an object of two members of one key raises 22037 | It does not | `json/path/eval/methods/keyvalue.rs` |
+| 2023 §9.46 GR11g ii 6 C VIII 1 c i, which names no code, the value IDj that identifies an object of keyvalue() | Its place in the sequence keyvalue() is applied to, from 0, so unique among the objects of one keyvalue() and not of two | `json/path/eval/methods/keyvalue.rs` |
+| 2023 §9.46 GR11g ii 6 C XIV 1 b, IV186, the numeric type NT of number() | A number's own, so a number is kept as it is. Of a character string, the type of the `<signed numeric literal>` it is. | `json/path/eval/methods/casts.rs` |
+| 2023 §9.46 GR11g ii 6 C XV 1 b, IL006, ML, the maximum length of string()'s CHARACTER VARYING | 32,767 characters | `json/path/eval/methods/casts.rs` |
+| 2023 §9.46 GR12c iii 2 E II, GR12d ii 2 F II, GR12e ii 3 D II, UA073, a comparison, like_regex or starts with of which one test is in error and one True | True. A test stops at its first success in lax mode, and at its first error in strict mode, where the rule before makes it Unknown. | `json/path/eval/predicate.rs` |
+| 2023 §6.34 SR2b, ID098, and §10.11 SR1b, ID134, the type a constructor returns without RETURNING | CHARACTER VARYING(32767), FORMAT JSON | `json/construct/object.rs`, `json/construct/array.rs`, `functions/json/operands.rs` |
+| 2023 §6.34 GR2d ii 1 F IV 2, GR3c ii 1 B IV 2, GR4b ii 1 B IV 2, ID100, and §10.11 GR4b ii 2 D IV 2, GR5f ii 2 D II, IV179, the character string type SDT a constructor's input of another type is cast to | CHARACTER VARYING(32767), of a datetime too | `json/construct.rs` |
+| 2023 §6.34 GR3c ii 1 B III, GR4b ii 1 B III, IV156, and §10.11 GR5f ii 2 C, IV178, the `<JSON key uniqueness constraint>` an array constructor's input FORMAT JSON is parsed under | WITHOUT UNIQUE KEYS, as the query operators' (IV185) | `json/construct/array.rs` |
+| 2023 §6.34 GR2a, IL049, the maximum length of a JSON name, and GR2b, GR3a, IL050, of a string input | That of its type, which no value of it exceeds | `json/construct.rs` |
+| 2023 §6.34 GR2d ii 3, §10.11 GR4b ii 4, IL051, and §6.34 GR3c ii 2, GR4b ii 2, §10.11 GR5g, IL052, the most members of a JSON object and elements of a JSON array | 1,048,576 each, one more 2203E or 2203D | `json/construct.rs` |
+| 2023 §10.11 GR5c, US044, the order of JSON_ARRAYAGG's elements without ORDER BY | The order its rows are read | `json/construct/aggregate.rs`, `functions/json/aggregate.rs` |
+
 ### Sessions, users and connections
 
 | Rule | Choice | Where |
@@ -2445,6 +2565,12 @@ SQLCODE -900 (RULES.md D18).
 | Grouping sets | 4,096 of a GROUP BY, and GROUPING of 59 columns | 2023 §7.13 SR14 and SR16 set no maximum, and a CUBE of n sets stands for 2 to the n. GROUPING's value is of 18 digits [§6.9 SR10b], which 2 to the 59 fits and 2 to the 60 does not. | `binder/grouping_sets.rs`, `binder/grouping_sets/expansion.rs` |
 | Trigger and procedure nesting | 16 levels of triggered actions and procedures executed within each other, past which the statement fails with SQLCODE -900, of a trigger's action SQLSTATE 09000 | §15.21 and §9.18 set no limit, and a trigger whose action executes it again would recurse until the stack overflowed. 16 levels run in half of Rust's default 2 MiB thread stack. | `db/nested.rs` |
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
+| SQL/JSON item nesting | 128 levels of arrays and objects, of JSON text parsed and of an item compared or serialized | §9.42 sets no limit, and RFC 8259 §9 lets a parser limit the depth of nesting. Every walk of an item recurses, and the limit bounds it (RULES.md R-CF-6). | `json.rs`, `json/text.rs`, `json/item.rs`, `json/serialize.rs` |
+| SQL/JSON path nesting | 64 levels of a path's syntax tree, `$` one of them, so at most 63 accessors or operators in a row, and parentheses, filters, subscripts and signs nested at most 64 deep | §9.46 sets no limit. The parser and the evaluator recurse over the tree, which has no counter of its own, and the limit bounds both (RULES.md R-CF-6). | `json/path.rs`, `json/path/parse.rs` |
+| SQL/JSON numbers | An exact number within DECFLOAT's range, a HexIntegerLiteral's too, and an approximate one within a double's, of JSON text and of a path | RFC 8259 §6 and §9 let an implementation limit the range and precision of numbers. An exact number of more than 18 digits is a DECFLOAT, rounded to 34 (RULES.md D84), and no type holds one past DECFLOAT's range. | `json/text.rs`, `json/path/lex.rs` |
+| SQL/JSON item method precisions | 18 digits of decimal(); 6 digits of a second's fraction of time(), time_tz(), timestamp() and timestamp_tz(), of a string datetime() reads, and of a template's FFn | §9.46 sets none. The methods cast to DECIMAL and to the datetime types [GR11g ii 6 C XII, XVI to XIX], and datetime() makes a datetime [VII], which hold no more digits here (Exact precision above). | `json/path/parse/method.rs`, `json/path/eval/methods/datetime.rs` |
+| A large object read as SQL/JSON | 262,144 octets, a chunk, of a character large object read whole as JSON text, as a PASSING argument or as a constructor's input or name | The text is held in memory whole to be parsed, as a LIKE pattern of a large object is, and to the same bound. | `json/query.rs`, `json/construct.rs`, `json/predicate.rs`, `functions/lobs/like.rs` |
+| JSON object members and array elements | 1,048,576 of an object or an array constructed, one more SQLSTATE 2203E or 2203D | §6.34 GR2d ii 3, GR3c ii 2, GR4b ii 2 and §10.11 GR4b ii 4, GR5g leave the number to the implementation (IL051, IL052) and name these exceptions past it. The limit bounds what an aggregate holds. | `json/construct.rs` |
 
 An index entry is an encoded key plus an 8-byte row id, and has its own limit.
 These figures assume the default 4-byte CRC-32C checksum.
@@ -2505,3 +2631,19 @@ Where the standards are unclear, turborel reads them as follows.
 | A generation expression referencing a period dropped with CASCADE [2023 §11.28 SR3d vii, GR2f] | SR3d vii forbids the reference under RESTRICT, but GR2f names nothing to drop for it under CASCADE, and dropping the period would leave the column's expression unbound. The drop is refused under CASCADE too, until the column is dropped. |
 | TRANSACTION_ACTIVE [2023 §23.1 GR2j] | "Currently active" is read as GET DIAGNOSTICS runs, which begins no transaction, so it tells whether the statement before left one active. |
 | The routine a condition is raised in [2023 §23.1 GR4l, GR4q] | The only SQL-invoked routines are the functions a distinct type's definition makes, which take a value of their parameter's type and give it back as their result's [§11.51 GR2b]. A condition raised as one is invoked is read as one of the CAST it stands for, so no condition names a routine, and ROUTINE_CATALOG, ROUTINE_SCHEMA, ROUTINE_NAME, SPECIFIC_NAME, PARAMETER_MODE and PARAMETER_NAME are zero-length strings, PARAMETER_ORDINAL_POSITION 0. |
+| Subscripts tested before they are defined [2023 §9.46 GR11g ii 3 E III] | The rule tests TJSFROMi and TJSTOi, which F II 1 defines after it. RJSFROMi and RJSTOi, the results of E II, are meant. An exception of a subscript's own evaluation, of which the rule says nothing, is the path's, as a base's is [GR11g i]. |
+| The elements of a range in lax mode [2023 §9.46 GR11g ii 3 F II 2 b] | The rule takes the subscripts "between 0 (zero) and Nj, inclusive", and Nj is the subscript of no element. The elements there are are taken. |
+| size() of "any Vj" [2023 §9.46 GR11g ii 6 C II 1] | Vj is what the rule then defines. The item Ij is meant, so in strict mode an item that is no array is 22039. |
+| datetime() of a string without a time zone [2023 §9.46 GR11g ii 6 C VII 1 c ii to v] | c ii tries a string as a TIME WITH TIME ZONE before c iii tries it as a TIME WITHOUT TIME ZONE. A literal without a `<time zone interval>` is of a type without time zone [§5.3 SR34, SR35], so it determines no value of the type with one, and the type without is taken, a timestamp's likewise. |
+| OBJh of keyvalue() [2023 §9.46 GR11g ii 6 C VIII 1 c vi] | The rule defines OBJh, 1 ≤ h ≤ q, of Ki and BVi. The key and bound value of the h-th member left are meant. |
+| time_tz() and timestamp_tz() of a number [2023 §9.46 GR11g ii 6 C XVII 1 a, XIX 1 a] | Each takes "a number or character string", where time() and timestamp() take a character string alone. That is followed, and CAST of a number to a datetime is 22005. |
+| The value of a HexIntegerLiteral [2023 §9.45 GR1a] | GR1a gives a numeric literal the value of the `<signed numeric literal>` of its characters, which a HexIntegerLiteral is not. Its value is ECMAScript's [ECMAScript 5.1 §7.8.3], exact. |
+| starts with of a sequence [2023 §9.46 GR12e ii 2] | The rule asks whether B "is not a character string", B being an SQL/JSON sequence. It is to be one item, a character string, else the predicate is Unknown. |
+| `+` and `-` in lax mode [2023 §9.46 GR11j] | GR11j has no step that unwraps its operands in lax mode, as GR11i ii has for `*`, `/` and `%`, and none is made. So `lax $ + 1` of `[1]` is 22038, where `lax $ * 2` of `[4]` is 8. |
+| ST2 of JSON_VALUE [2023 §6.28 GR6] | GR6 raises ST2, and GR5 has named SR2 the status §9.48 returns. That status is meant. |
+| The cast of DEFAULT ON EMPTY [2023 §9.48 GR4c iii] | The rule writes `CAST (VE AS DT>)`. `CAST (VE AS DT)` is meant. |
+| EMPTY BEHAVIOR of §9.48 [2023 §9.48 Subclause Signature] | The signature says it is ERROR, EMPTY ARRAY or EMPTY OBJECT, which are JSON_QUERY's. Its General Rules read JSON_VALUE's ERROR, NULL and DEFAULT, and they are followed. |
+| A string input of IS JSON [2023 §8.22 CR2] | CR2 forbids a `<string value expression>` as the input without Feature T801, the JSON type, which a string is not. T803, String-based JSON, is meant, as of every string input. |
+| JVNi of JSON_OBJECT [2023 §6.34 GR2d ii 1 G] | The rule makes JVNi a member's key. VJNi, the value of its name, is meant. |
+| VBVi, CJOA and NJVE of the aggregates [2023 §10.11 GR4b ii 2 D II, GR4c, GR5g] | GR4b ii 2 D II lets VBVi be the value, where the other cases let JBVi be; GR4c lets JACF be CJOA, where GR4b made CJO; GR5g counts NJVE, which only §6.34 defines. JBVi, CJO and NTXA are meant. |
+| FORMAT after a query of JSON_ARRAY [2023 §6.34 F, §7.6] | In JSON_ARRAY of a query whose FROM clause ends in a table of no correlation name, FORMAT is read as that table's correlation name, as the grammar lets it be, FORMAT being no reserved word. AS before a name, or the query in parentheses, keeps it the `<JSON input clause>`. |

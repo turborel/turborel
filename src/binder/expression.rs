@@ -153,6 +153,7 @@ impl Binder<'_> {
             | ValueExpression::AtZone { .. }
             | ValueExpression::Composite(..)
             | ValueExpression::Structured(..)
+            | ValueExpression::Json(..)
             | ValueExpression::Navigation(_)
             | ValueExpression::Classifier { .. }
             | ValueExpression::MatchNumber { .. } => self.decorated(v, scope),
@@ -195,6 +196,7 @@ impl Binder<'_> {
             ValueExpression::AtZone { source, zone, at } => self.at_zone(source, zone.as_deref(), scope).or_at(*at),
             ValueExpression::Composite(c, at) => self.composite((c, *at), scope).or_at(*at),
             ValueExpression::Structured(s, at) => self.structured_expression((s, *at), scope).or_at(*at),
+            ValueExpression::Json(j, at) => self.json_expression(j, scope).or_at(*at),
             ValueExpression::Navigation(n) => self.navigation(n, scope).or_at(n.at),
             ValueExpression::Classifier { variable, at } => self.classifier(variable.as_deref(), scope).or_at(*at),
             ValueExpression::MatchNumber { at } => self.match_number(scope).or_at(*at),
@@ -326,6 +328,9 @@ impl Binder<'_> {
             SetArg::Fraction(fraction) => return self.inverse_distribution(sf, fraction, scope),
             SetArg::Variable(name, at) => return self.pattern_count(sf, name, scope).or_at(*at),
             SetArg::CountStar | SetArg::Distinct(_) | SetArg::All(_) => {}
+        }
+        if let Some(json) = self.json_aggregate(sf, scope) {
+            return json;
         }
         if sf.name == ARRAY_AGG {
             return self.array_aggregate(sf, scope);

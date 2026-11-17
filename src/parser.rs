@@ -42,6 +42,7 @@ mod generated;
 mod grouping;
 mod hypothetical;
 mod interval;
+mod json;
 mod listagg;
 mod literal;
 mod locators;

@@ -56,6 +56,22 @@ choices:
 | A session's transform group of a distinct type | the one its definition makes, so a value goes to and from the host as its source's |
 | The order of ARRAY_AGG's elements without ORDER BY | as the rows are read |
 | Which identifiers are users | any, of a program's own session; of a server's client, the users the database keeps |
+| JSON_VALUE and JSON_QUERY of no RETURNING | CHARACTER VARYING(32767) |
+| A PASSING argument of an interval | cast to CHARACTER VARYING(32767) |
+| The JSON text of a context item or a FORMAT JSON argument | parsed WITHOUT UNIQUE KEYS before the path is evaluated, so text that is not JSON is SQLSTATE 22032 whether the path reads it or not |
+| Members of one key in JSON text | all kept, in the order written; a member accessor takes the first, `.*` and keyvalue() give all, and none raises an exception |
+| A subscript that is not a whole number | truncated toward zero |
+| The type of number() | a number's own; of a string, that of the numeric literal it is |
+| The type of string() | CHARACTER VARYING(32767) |
+| keyvalue()'s `id` | the object's place in the sequence keyvalue() is applied to, from 0 |
+| A comparison, like_regex or starts with of one item in error and one that succeeds | True in lax mode, Unknown in strict mode |
+| Which error datetime() raises of several items in error | the first item's |
+| A path whose evaluation must raise an exception, as `strict $[last+1]` | accepted, the exception raised as it is evaluated |
+| An SQL/JSON item as JSON text | no white space between tokens; members in the order kept; only `"`, `\` and control characters escaped; a DECFLOAT without an exponent |
+| JSON_OBJECT, JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG of no RETURNING | CHARACTER VARYING(32767) |
+| A constructor's input of a type it does not keep, as a date | cast to CHARACTER VARYING(32767) |
+| An element FORMAT JSON of JSON_ARRAY or JSON_ARRAYAGG | parsed WITHOUT UNIQUE KEYS |
+| The order of JSON_ARRAYAGG's elements without ORDER BY | as the rows are read |
 
 [CONFORMANCE.md](../../CONFORMANCE.md) lists each choice with the rule
 it is of.

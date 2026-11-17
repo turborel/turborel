@@ -182,6 +182,9 @@ impl Binder<'_> {
             }
             Predicate::Like { value, pattern, escape, not } => self.like([value, pattern], escape.as_deref(), *not, scope)?,
             Predicate::LikeRegex { value, pattern, flag, not } => self.like_regex([value, pattern], flag.as_deref(), *not, scope)?,
+            // [ISO/IEC 9075-2:2023 §8.23] the BOOLEAN JSON_EXISTS gives.
+            Predicate::JsonExists(j) => Cond::Value(self.json_operator(j, scope)?.0),
+            Predicate::IsJson(p) => self.is_json(p, scope)?,
             Predicate::Null { value, not } => self.null(value, *not, scope)?,
             Predicate::Member { value, multiset, not } => self.member(value, multiset, *not, scope)?,
             Predicate::Submultiset { value, multiset, not } => self.submultiset(value, multiset, *not, scope)?,

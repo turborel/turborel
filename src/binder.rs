@@ -41,6 +41,7 @@ mod dependencies;
 pub(crate) use dependencies::{DescribedKey, described_key};
 mod interval;
 mod invocation;
+mod json;
 mod listagg;
 mod lobs;
 mod merge;

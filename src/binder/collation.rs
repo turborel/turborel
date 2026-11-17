@@ -316,6 +316,7 @@ impl Binder<'_> {
             // their parts'.
             | ValueExpression::Composite(..)
             | ValueExpression::Structured(..)
+            | ValueExpression::Json(..)
             // [ISO/IEC 9075-2:2023 §6.33 SR24b] CLASSIFIER's, its declared
             // type's, of no column: none.
             | ValueExpression::Classifier { .. }

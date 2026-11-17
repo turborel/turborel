@@ -36,6 +36,7 @@ mod dynamic;
 mod expression;
 mod generated;
 mod joined;
+mod json;
 mod merge;
 mod modules;
 mod ordered;
@@ -77,6 +78,10 @@ pub use expression::{
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
+pub use json::{
+    IsJson, JsonAggregate, JsonArgument, JsonClauses, JsonCommon, JsonConstructor, JsonExpression, JsonFormat, JsonInput, JsonMember,
+    JsonOperator, JsonOutput, JsonValueBehavior,
+};
 pub use merge::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use modules::ModuleDefinition;
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};

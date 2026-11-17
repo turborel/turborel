@@ -224,6 +224,76 @@ impl SqlState {
     /// Data exception: invalid XQuery replacement string [ISO/IEC
     /// 9075-2:2023 §9.29 GR5].
     pub const INVALID_XQUERY_REPLACEMENT_STRING: SqlState = SqlState(*b"2201V");
+    /// Data exception: invalid argument for SQL/JSON datetime function
+    /// [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 a, VII 1 c vi].
+    pub const INVALID_ARGUMENT_FOR_SQL_JSON_DATETIME_FUNCTION: SqlState = SqlState(*b"22031");
+    /// Data exception: non-Boolean SQL/JSON item [ISO/IEC 9075-2:2023
+    /// §9.46 GR11g ii 6 C X 1 a].
+    pub const NON_BOOLEAN_SQL_JSON_ITEM: SqlState = SqlState(*b"2202V");
+    /// Data exception: non-date SQL/JSON item [ISO/IEC 9075-2:2023 §9.46
+    /// GR11g ii 6 C XI 1 a].
+    pub const NON_DATE_SQL_JSON_ITEM: SqlState = SqlState(*b"2202W");
+    /// Data exception: non-string SQL/JSON item [ISO/IEC 9075-2:2023 §9.46
+    /// GR11g ii 6 C XV 1 a].
+    pub const NON_STRING_SQL_JSON_ITEM: SqlState = SqlState(*b"2202X");
+    /// Data exception: non-time SQL/JSON item [ISO/IEC 9075-2:2023 §9.46
+    /// GR11g ii 6 C XVI 1 a, XVII 1 a].
+    pub const NON_TIME_SQL_JSON_ITEM: SqlState = SqlState(*b"2202Y");
+    /// Data exception: non-timestamp SQL/JSON item [ISO/IEC 9075-2:2023
+    /// §9.46 GR11g ii 6 C XVIII 1 a, XIX 1 a].
+    pub const NON_TIMESTAMP_SQL_JSON_ITEM: SqlState = SqlState(*b"2202Z");
+    /// Data exception: invalid JSON text [ISO/IEC 9075-2:2023 §9.42 GR3a
+    /// iii 1].
+    pub const INVALID_JSON_TEXT: SqlState = SqlState(*b"22032");
+    /// Data exception: non-unique keys in a JSON object [ISO/IEC
+    /// 9075-2:2023 §9.42 GR3a iii 2].
+    pub const NON_UNIQUE_KEYS_IN_A_JSON_OBJECT: SqlState = SqlState(*b"22037");
+    /// Data exception: invalid SQL/JSON subscript [ISO/IEC 9075-2:2023
+    /// §9.46 GR11g ii 3 E III, GR11g ii 3 F II 2 a].
+    pub const INVALID_SQL_JSON_SUBSCRIPT: SqlState = SqlState(*b"22033");
+    /// Data exception: non-numeric SQL/JSON item [ISO/IEC 9075-2:2023
+    /// §9.46 GR11g ii 6 C III 1 a].
+    pub const NON_NUMERIC_SQL_JSON_ITEM: SqlState = SqlState(*b"22036");
+    /// Data exception: singleton SQL/JSON item required [ISO/IEC
+    /// 9075-2:2023 §9.46 GR11i iii 1, GR11j ii 1].
+    pub const SINGLETON_SQL_JSON_ITEM_REQUIRED: SqlState = SqlState(*b"22038");
+    /// Data exception: SQL/JSON array not found [ISO/IEC 9075-2:2023 §9.46
+    /// GR11g ii 3 B].
+    pub const SQL_JSON_ARRAY_NOT_FOUND: SqlState = SqlState(*b"22039");
+    /// Data exception: SQL/JSON member not found [ISO/IEC 9075-2:2023 §9.46
+    /// GR11g ii 1 B II].
+    pub const SQL_JSON_MEMBER_NOT_FOUND: SqlState = SqlState(*b"2203A");
+    /// Data exception: SQL/JSON number not found [ISO/IEC 9075-2:2023 §9.46
+    /// GR11h ii].
+    pub const SQL_JSON_NUMBER_NOT_FOUND: SqlState = SqlState(*b"2203B");
+    /// Data exception: SQL/JSON object not found [ISO/IEC 9075-2:2023 §9.46
+    /// GR11g ii 2 A II].
+    pub const SQL_JSON_OBJECT_NOT_FOUND: SqlState = SqlState(*b"2203C");
+    /// Data exception: more than one SQL/JSON item [ISO/IEC 9075-2:2023
+    /// §9.44 GR4c iii, §9.48 GR4a, §9.49 GR4c iii].
+    pub const MORE_THAN_ONE_SQL_JSON_ITEM: SqlState = SqlState(*b"22034");
+    /// Data exception: no SQL/JSON item [ISO/IEC 9075-2:2023 §9.44 GR4c i
+    /// 1, §9.48 GR4c i, §9.49 GR4c i 1].
+    pub const NO_SQL_JSON_ITEM: SqlState = SqlState(*b"22035");
+    /// Data exception: SQL/JSON scalar required [ISO/IEC 9075-2:2023 §9.48
+    /// GR4b i].
+    pub const SQL_JSON_SCALAR_REQUIRED: SqlState = SqlState(*b"2203F");
+    /// Data exception: SQL/JSON item cannot be cast to target type [ISO/IEC
+    /// 9075-2:2023 §9.48 GR4b iii 1].
+    pub const SQL_JSON_ITEM_CANNOT_BE_CAST_TO_TARGET_TYPE: SqlState = SqlState(*b"2203G");
+    /// Data exception: null value not allowed [ISO/IEC 9075-2:2023 §6.34
+    /// GR2d ii 1 D, §10.11 GR4b ii 2 B]: the null value as the name of a
+    /// member of a JSON object constructed.
+    pub const NULL_VALUE_NOT_ALLOWED: SqlState = SqlState(*b"22004");
+    /// Data exception: duplicate JSON object key value [ISO/IEC 9075-2:2023
+    /// §6.34 GR2d ii 2, §10.11 GR4b ii 3].
+    pub const DUPLICATE_JSON_OBJECT_KEY_VALUE: SqlState = SqlState(*b"22030");
+    /// Data exception: too many JSON array elements [ISO/IEC 9075-2:2023
+    /// §6.34 GR3c ii 2, GR4b ii 2, §10.11 GR5g].
+    pub const TOO_MANY_JSON_ARRAY_ELEMENTS: SqlState = SqlState(*b"2203D");
+    /// Data exception: too many JSON object members [ISO/IEC 9075-2:2023
+    /// §6.34 GR2d ii 3, §10.11 GR4b ii 4].
+    pub const TOO_MANY_JSON_OBJECT_MEMBERS: SqlState = SqlState(*b"2203E");
     /// Data exception: sequence generator limit exceeded [ISO/IEC
     /// 9075-2:2023 §9.35 GR3a].
     pub const SEQUENCE_GENERATOR_LIMIT_EXCEEDED: SqlState = SqlState(*b"2200H");
