@@ -2607,7 +2607,12 @@ honor the constant-folding rule's presence and setting. Geometry
 relationships use this to keep one decoded constant operand per expression,
 immutable and without a shared cache lock. They check operand identity
 before using that representation and release the reservation with its last
-owner. Polygon and MultiPolygon operands with at least one ring of 64
+owner. A single rectangular ring can locate points through its closed
+envelope. Recognition requires four distinct axis-aligned corners and
+closure, in either ring direction; holes, diagonal edges and collapsed
+rectangles retain general point location. It uses no area arithmetic or
+tolerance, including for subnormal and extreme coordinates.
+Polygon and MultiPolygon operands with at least one ring of 64
 edges can also keep a Y-interval tree for each ring. The threshold follows
 the measured crossover in `bench/geometry.md`; shorter boundaries retain
 linear scans. A query point visits only subtrees whose closed ordinate

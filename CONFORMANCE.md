@@ -1916,8 +1916,11 @@ memory reservation. Polygon and MultiPolygon constants can additionally
 retain per-ring Y-interval trees for point location
 (`src/geometry/prepared/locator.rs`). They use the same exact crossings,
 closed boundaries and hole rules as ordinary evaluation; an insufficient
-budget leaves the decoded operand without an index. Prepared distance
-reuses that intersection decision and keeps the ordinary separation kernel.
+budget leaves the decoded operand without an index. A single, closed,
+axis-aligned rectangular ring without holes can classify a point directly
+against its closed bounds (`src/geometry/prepared/rectangle.rs`). Prepared
+distance reuses that intersection decision and keeps the ordinary
+separation kernel.
 Reused physical plans prepare calls with each
 execution's arguments when constant folding is enabled; failed preparation
 preserves ordinary evaluation, including lazy branches and runtime errors.

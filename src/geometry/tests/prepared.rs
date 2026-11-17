@@ -6,6 +6,7 @@ use crate::functions::ScalarFunction;
 use crate::memory::MemoryBudget;
 
 mod borrowed;
+mod rectangles;
 
 /// Verifies: [DESIGN] D15, D82: prepared point location preserves every
 /// scalar result, including distance bits, holes, boundaries and other

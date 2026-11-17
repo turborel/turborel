@@ -3,7 +3,7 @@
 use super::{Mutation, Package};
 
 /// Representation invariants that must fail their requirement tests.
-pub const GEOMETRY: [Mutation; 30] = [
+pub const GEOMETRY: [Mutation; 31] = [
     Mutation {
         name: "geometry-batch-borrowed-arguments",
         package: Package::Core,
@@ -43,6 +43,16 @@ pub const GEOMETRY: [Mutation; 30] = [
         replacement: "Err(_) => continue,",
         integration: &[],
         unit: &["exec::batch::judge::calls::tests::batch_calls_stop_at_the_first_error_after_the_successful_prefix"],
+    },
+    Mutation {
+        name: "geometry-rectangle-holes",
+        package: Package::Core,
+        breaks: "rectangle preparation ignores interior rings",
+        file: "src/geometry/prepared/rectangle.rs",
+        original: "let [ring] = rings.as_slice() else { return false };",
+        replacement: "let Some(ring) = rings.first() else { return false };",
+        integration: &[],
+        unit: &["geometry::prepared::rectangle::tests::other_shapes_holes_diagonals_and_collapsed_rings_are_declined"],
     },
     Mutation {
         name: "geometry-orientation-filter-bound",

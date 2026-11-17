@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 mod locator;
+mod rectangle;
 
 use super::{Geometry, GeometryFunction, kind};
 use crate::error::Result;
@@ -21,6 +22,7 @@ struct Prepared {
     value: Value,
     geometry: Geometry,
     locator: Option<Box<Locator>>,
+    rectangle: bool,
     _held: Reservation,
 }
 
@@ -43,7 +45,8 @@ impl Prepared {
         let geometry = Geometry::from_value(value).ok()?;
         held.resize(base.checked_add(geometry.shape.heap_bytes()?)?).ok()?;
         let locator = Locator::new(&geometry.shape, budget);
-        Some(Self { function, position, value: value.clone(), geometry, locator, _held: held })
+        let rectangle = rectangle::recognizes(&geometry.shape);
+        Some(Self { function, position, value: value.clone(), geometry, locator, rectangle, _held: held })
     }
 
     fn matches(&self, args: &[&Value]) -> bool {
@@ -52,8 +55,12 @@ impl Prepared {
     }
 
     fn intersection(&self, other: &Geometry) -> Result<Option<bool>> {
-        let Some(locator) = &self.locator else { return Ok(None) };
         let super::Shape::Point(Some(point)) = &other.shape else { return Ok(None) };
+        if self.rectangle {
+            self.geometry.same_reference(other)?;
+            return Ok(self.geometry.bounds.zip(other.bounds).map(|(a, b)| a.intersects(b)));
+        }
+        let Some(locator) = &self.locator else { return Ok(None) };
         self.geometry.same_reference(other)?;
         if self.geometry.bounds.zip(other.bounds).is_some_and(|(a, b)| !a.intersects(b)) {
             return Ok(Some(false));
