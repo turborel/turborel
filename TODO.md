@@ -23,7 +23,8 @@ Code never cites this file (R-DOC-5).
 
 ## Next
 
-Nothing is chosen yet. Each item becomes a decision in RULES.md when done.
+SQL/XML ([XML](#xml)), series by series. Each item becomes a decision in
+RULES.md when done.
 
 ---
 
@@ -125,11 +126,34 @@ CONFORMANCE.md one by one as they are done.
 
 ### XML
 
-- SQL/XML (ISO/IEC 9075-14:2023). The XML type, stored parsed, XMLPARSE,
-  XMLSERIALIZE, XMLELEMENT, XMLFOREST, XMLAGG and the other publishing
-  functions, XMLQUERY, XMLEXISTS, XMLTABLE and XMLCAST, with XQuery and
-  XPath and XML Schema validation. It needs large objects for documents
-  past a row.
+SQL/XML, ISO/IEC 9075-14, written from its 2006 draft as SQL/PSM was,
+and the W3C texts it names: XML 1.0 and 1.1, Namespaces, the XQuery 1.0
+data model, XQuery 1.0, its functions and operators, its serialization,
+and XML Schema 1.0. Each series below stands alone, by the draft's
+features.
+
+- The XML type and its values: XML(DOCUMENT), XML(CONTENT) and
+  XML(SEQUENCE), UNTYPED and ANY, kept in tables (X010, X016, X181,
+  X182, X190, X231, X232, X251 to X255); XMLPARSE,
+  XMLSERIALIZE, XMLDOCUMENT and XMLCAST, the document and content
+  predicates, and XML 1.1 (X025, X030, X060 to X078, X090, X091, X211).
+- Publishing: XMLELEMENT, XMLATTRIBUTES, XMLFOREST, XMLCONCAT, XMLAGG,
+  XMLCOMMENT, XMLPI and XMLTEXT, their null handling and RETURNING
+  clauses, namespaces and XMLBINARY (X020, X031 to X038, X080 to X086,
+  X131 to X135, X170, X171, X241, X242), and the mapping of SQL names,
+  identifiers and values to XML (X400).
+- XQuery: XMLQUERY, XMLEXISTS and XMLTABLE over the XQuery 1.0 data
+  model, its functions and operators, passed BY VALUE or BY REF (X096,
+  X200 to X206, X221, X222, X300 to X305). An index of documents' paths
+  and values follows ([Index structures](#index-structures)).
+- XML Schema: registered XML schemas, XML(DOCUMENT(XMLSCHEMA)) and
+  XML(CONTENT(XMLSCHEMA)), XMLVALIDATE and IS VALID, and their
+  Information Schema (X141 to X161, X191, X192, X256, X257, X260 to X286).
+- The mappings of tables, schemas and catalogs to XML and XML Schema
+  (X040 to X059).
+- XML within other types and routines: arrays, multisets, distinct types,
+  attributes and fields of XML, and XML parameters of routines (X011 to
+  X015, X120, X121).
 
 ### Full text
 
