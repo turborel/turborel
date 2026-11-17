@@ -591,7 +591,7 @@ in memory, in the log or on the wire. RULES.md D79 says how.
 | Locators | §4.37.5, §14.17, §14.18 | A session's four-octet integer (UV065) of a value sent to a client or made by one a piece at a time. Valid until its transaction ends, FREE LOCATOR ending it sooner and HOLD LOCATOR keeping it past a commit. A rollback ends every one. FREE and HOLD take dynamic parameters [SR1]. One not valid is 0F001. |
 | Descriptor areas | §20.1 Table 30 | TYPE 30 of BINARY LARGE OBJECT, 40 of CHARACTER LARGE OBJECT, LENGTH its length and OCTET_LENGTH its length in octets. The locator types 31 and 41 are not used, as no host language is. |
 | Information Schema | 92 §21 | DATA_TYPE 'CHARACTER LARGE OBJECT' or 'BINARY LARGE OBJECT'. |
-| Stored | RULES.md D79 | In chunks of 256 KiB, logged and checkpointed by chunk, collected with the versions that name them. The column store refuses a large object column. |
+| Stored | RULES.md D79 | In chunks of 256 KiB, logged and checkpointed by chunk, collected with the versions that name them; a distinct type's as its source's. One inside an array, a multiset, a row or a structured value is held whole in that value's row, at most a chunk, a longer one SQLCODE -900. The column store refuses a large object column, and one of a type holding a large object. |
 
 The non-holdable locators of T039 and T049 are the client protocol's
 (D45). An embedded program reaches the same registry through the
@@ -1882,7 +1882,7 @@ claimed.
 | Feature | Rules | What turborel does |
 |---|---|---|
 | The XML types | §4.2.2, §6.1 SR1 to SR3 | XML(DOCUMENT), XML(CONTENT), each UNTYPED or ANY, and XML(SEQUENCE). XML alone is XML(SEQUENCE), and DOCUMENT or CONTENT alone is ANY [SR2, SR3b]. XMLSCHEMA is valid SQL not yet taken, SQLCODE -900. |
-| XML values | §4.2.3 | An XQuery sequence of nodes and atomic values. A value held in a column is its stored form (RULES.md D86): in the row when short, else as the table's large objects, logged and recovered as large objects are. |
+| XML values | §4.2.3 | An XQuery sequence of nodes and atomic values. A value held in a column is its stored form (RULES.md D86): in the row when short, else as the table's large objects, logged and recovered as large objects are. One inside an array, a multiset, a row or a structured value is held whole in that value's row, its stored form at most 64 MiB, else SQLCODE -900. |
 | Assignment | §4.2.4, §10.2 SR1, GR1 | An XML value to an XML site alone, an UNTYPED one's of an UNTYPED type, else SQLCODE -103. A DOCUMENT site takes a document, else SQLSTATE 2200L; a CONTENT site one document node, else 2200U. A value stored is a copy. |
 | Not comparable | §4.2.4, §10.8 SR1 to §10.11 SR1 | No equality, grouping or ordering operation takes an XML value: comparisons, IN, quantified comparisons, MATCH, UNIQUE, DISTINCT, IS DISTINCT FROM, NULLIF, a simple CASE, GROUP BY, ORDER BY, set operations but UNION ALL, MIN and MAX, a NATURAL or USING join's common column, keys and indexes, SQLCODE -103. |
 | Types brought together | §10.3 SR1 | XML types with XML types alone, of the type SR1b gives: SEQUENCE if one is, the one type, DOCUMENT(UNTYPED) if all are, CONTENT(UNTYPED) if all are UNTYPED, else CONTENT(ANY). |

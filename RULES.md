@@ -1025,7 +1025,16 @@ which covers transactions that never committed. The objects of a
 transaction whose definitions wait for its commit are made after them,
 as their table may be one it made (D33). A checkpoint logs the
 objects awaiting collection as `LobStale`, and recovery from it frees
-them. The column store refuses a large object column.
+them. The column store refuses a large object column, and a column of a
+type holding one. A column of a distinct type keeps its large objects as
+its source type's would (D69).
+
+A table keeps objects for its own columns alone, so an object inside an
+array, a multiset, a row or a structured value would name another
+table's, or none once its row was gone. Each one is held whole in its
+value before the row is written and logged (`value/nested.rs`), up to a
+chunk, as what must be held whole is, and refused past one. A record and
+its log record then hold it, so recovery and a standby need nothing more.
 
 A value a function makes, as UPPER, TRIM, OVERLAY and TRANSLATE_REGEX
 make one, is written a chunk at a time to the database's temporary
@@ -2863,7 +2872,10 @@ turned into another only when needed. A table keeps the stored form as it
 keeps a BLOB (D79): in the record when short, else as its own large
 objects, logged chunk by chunk, so recovery and replication need nothing
 of their own. A value is held whole when read, at most `MAX_STORED`, the
-one place XML departs from D79, as a value must be a tree to be read.
+one place XML departs from D79, as a value must be a tree to be read. A
+value inside an array, a multiset, a row or a structured value is held
+whole in its row's record, as D79 holds a large object there, at most
+`MAX_STORED` octets of stored form.
 
 XQuery 1.0, the text XMLQUERY evaluates, is parsed by `xquery::parse`,
 written here as D3 requires, by the lexical rules of XML 1.1 or 1.0
@@ -2898,7 +2910,7 @@ the binder refuses them where an equality, grouping or ordering operation
 would take one. Over a connection a value is its serialization as
 CONTENT, and a client parses it as CONTENT when it needs its nodes. A
 column is described with the type's modifiers. The column store keeps no
-XML value, as it keeps no large object.
+XML value, as it keeps no large object, nor one inside another value.
 
 The constructors of XQuery that SQL/XML's operators evaluate are each a
 function of `xml` over sequences, not XQuery text: `document` for

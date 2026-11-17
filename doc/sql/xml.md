@@ -32,7 +32,10 @@ XML Schema, is not yet implemented (SQLCODE -900).
 
 A value stored in a DOCUMENT column that is not a document is refused
 with SQLSTATE 2200L. A short value is kept in its row, and a long one
-apart from it as large objects are, logged and recovered with them.
+apart from it as large objects are, logged and recovered with them. A
+value inside an array, a multiset, a row or a structured value is kept
+whole in that value's row, up to the limit of a value's stored form. The
+column store keeps no XML value, nor any inside another value.
 
 XML values are not comparable. `=`, IN, DISTINCT, GROUP BY, ORDER BY,
 MAX, MIN, UNION without ALL, a NATURAL or USING join on an XML column,

@@ -1,7 +1,8 @@
 //! XML values kept [ISO/IEC 9075-14:2006 draft §4.2.3] (RULES.md D86):
 //! in the row when short, else as a table's large objects, through a
-//! crash, a clean close, an update, a delete and a rollback; refused by
-//! the column store; described in SQL descriptor areas.
+//! crash, a clean close, an update, a delete and a rollback; inside an
+//! array, a multiset, a row or a structured value, in that value's row;
+//! refused by the column store; described in SQL descriptor areas.
 
 use std::fmt::Write;
 
@@ -73,16 +74,61 @@ fn values_are_kept_in_rows_and_large_objects() {
     kept(&open(), &[(1, &short), (3, &short)]);
 }
 
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3, §10.2 GR1b] [DESIGN]
+/// RULES.md D79, D86: an XML value of many chunks, copied from a table's
+/// column into an array, a multiset, a row and a structured value, is
+/// held in its row, so each is whole after its source row is deleted, and
+/// after a crash; an update rolled back leaves it. A regression test: each
+/// named the source's large object, and failed to be read, SQLCODE -916.
+#[test]
+fn values_inside_other_values_are_kept_with_their_rows() {
+    let scratch = Scratch::new("xml-inside");
+    let dir = scratch.path("db");
+    let open = || {
+        let db = Database::new();
+        db.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
+        db
+    };
+    let document = long_document(20_000);
+    let crashed = open();
+    crashed
+        .schema(
+            "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, X XML) \
+             CREATE TYPE ST AS (X XML(CONTENT(ANY)), N INTEGER) NOT FINAL \
+             CREATE TABLE U (K INTEGER, A XML ARRAY[2], M XML MULTISET, R ROW(F XML, N INTEGER), S ST)",
+        )
+        .unwrap();
+    let a = crashed.session("A");
+    a.run(&insert(1, &document)).unwrap();
+    a.commit().unwrap();
+    a.run("INSERT INTO U SELECT K, ARRAY[X, CAST(NULL AS XML)], MULTISET[X], ROW(X, K), NEW ST().X(X) FROM T").unwrap();
+    a.run("DELETE FROM T").unwrap();
+    a.commit().unwrap();
+    a.run("UPDATE U SET A = NULL").unwrap();
+    a.rollback().unwrap();
+    drop((a, crashed));
+    let db = open();
+    let a = db.session("A");
+    let whole = |x: &str| format!("XMLSERIALIZE(DOCUMENT {x} AS CLOB)");
+    let read = format!("SELECT {}, A[2] IS NULL, {}, {} FROM U", whole("A[1]"), whole("U.R.F"), whole("U.S.X"));
+    assert_eq!(rows(&a, &read).unwrap(), [format!("{document},TRUE,{document},{document}")]);
+    let elements = format!("SELECT {} FROM U, UNNEST(U.M) AS E(X)", whole("E.X"));
+    assert_eq!(rows(&a, &elements).unwrap(), [document]);
+}
+
 /// Verifies: [DESIGN] RULES.md D31, D86: the column store keeps no XML
-/// value, as it keeps no large object.
+/// value, as it keeps no large object, nor one inside an array, a
+/// multiset or a row; nor a large object inside one.
 #[test]
 fn the_column_store_keeps_no_xml() {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
     let a = db.session("A");
-    let error = a.run("CREATE TABLE C (K INTEGER, X XML) USING columnstore").unwrap_err();
-    assert_eq!(error.code, Code::Unsupported, "{error}");
-    assert!(error.to_string().contains("XML value"), "{error}");
+    for t in ["XML", "XML ARRAY[2]", "XML MULTISET", "ROW(F INTEGER, G XML)", "BLOB ARRAY[2]"] {
+        let error = a.run(&format!("CREATE TABLE C (K INTEGER, V {t}) USING columnstore")).unwrap_err();
+        assert_eq!(error.code, Code::Unsupported, "{t}: {error}");
+        assert!(error.to_string().contains("XML value"), "{error}");
+    }
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §17.1 GR1, Table 12] [DESIGN]

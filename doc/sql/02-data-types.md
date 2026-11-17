@@ -203,7 +203,10 @@ length either holds the longest, 4G.
 A large object is kept apart from its row, in chunks of 256 KiB, and is
 logged, read and sent to a client a chunk at a time, so none is ever
 held whole in memory. A value a function makes, as UPPER or LPAD make
-one, is written to a temporary file the same way.
+one, is written to a temporary file the same way. A large object inside
+an array, a multiset, a row or a structured value is kept whole in that
+value's row instead, and one longer than 256 KiB is refused there
+(SQLCODE -900). The column store keeps no large object.
 
 `||`, SUBSTRING, POSITION, OVERLAY, TRIM, UPPER, LOWER, the pads, LIKE
 and the regular expressions take large objects, and a CLOB and a

@@ -19,8 +19,11 @@ use crate::sync::lock_builtin;
 impl State {
     /// Makes each large object of `row`, to be inserted into `table` by
     /// `tx`, or to replace its row `replacing`, one the table keeps for
-    /// it, logging each object it makes.
+    /// it, logging each object it makes; and holds inline each one, and
+    /// each XML value, inside a value made of values, which no table keeps
+    /// apart (RULES.md D79, D86).
     pub(crate) fn keep_lobs(&self, tx: &Txn, table: &QualifiedName, replacing: Option<RowId>, row: &mut Row) -> Result<()> {
+        crate::value::nested::hold_parts_inline(row)?;
         if !row.iter().any(crate::value::Value::is_lob_stored) {
             return Ok(());
         }

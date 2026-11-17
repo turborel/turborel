@@ -64,8 +64,9 @@ impl State {
     pub(crate) fn insert_row(&self, tx: &Txn, table: &QualifiedName, row: &Row) -> Result<RowId> {
         self.prepare_write(tx, table)?;
         // A row of large objects is copied, so each names one the table
-        // keeps for it (RULES.md D79); any other is written as given.
-        let kept = if row.iter().any(Value::is_lob_stored) {
+        // keeps for it, or is held in the row inside another value
+        // (RULES.md D79, D86); any other is written as given.
+        let kept = if row.iter().any(Value::needs_keeping) {
             let mut kept = row.clone();
             self.keep_lobs(tx, table, None, &mut kept)?;
             Cow::Owned(kept)

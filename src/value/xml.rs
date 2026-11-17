@@ -240,13 +240,16 @@ impl XmlValue {
 impl super::DataType {
     /// \[DESIGN\] The kind of large object its values are stored as, if
     /// they are: a large object string's own (RULES.md D79), or binary for
-    /// an XML type, whose stored form a binary large object holds (D86).
+    /// an XML type, whose stored form a binary large object holds (D86); a
+    /// distinct type's values as its source's are, being its source's
+    /// values (D69).
     #[must_use]
     pub fn lob_kind(&self) -> Option<LobKind> {
-        if let super::DataType::Lob { kind, .. } = self {
+        let represented = self.represented();
+        if let super::DataType::Lob { kind, .. } = represented {
             return Some(*kind);
         }
-        matches!(self, super::DataType::Xml(_)).then_some(LobKind::Binary)
+        matches!(represented, super::DataType::Xml(_)).then_some(LobKind::Binary)
     }
 }
 

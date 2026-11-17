@@ -19,6 +19,7 @@ pub mod interval;
 mod like;
 pub mod lob;
 pub mod multisets;
+pub(crate) mod nested;
 mod operators;
 mod order;
 pub mod precedence;
