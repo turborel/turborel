@@ -23,6 +23,8 @@ SQLSTATE 0A000.
 | An unsigned integer, as a length | 4,294,967,295 |
 | An array's maximum cardinality | 65,535 elements, also the maximum of an array type written without one |
 | A multiset's elements | 65,535; past it, SQLSTATE 2200Q |
+| A number in JSON text or an SQL/JSON path | an exact one within DECFLOAT's range, an approximate one within DOUBLE PRECISION's |
+| The precision of an SQL/JSON item method | decimal() 18 digits; time(), time_tz(), timestamp() and timestamp_tz() 6, and a string datetime() reads 6 digits of a second's fraction |
 
 ## Nesting
 
@@ -46,8 +48,8 @@ no limit. Each is SQLCODE -900.
 JSON text nests arrays and objects at most 128 deep, and an SQL/JSON
 path expression is at most 64 deep, of parentheses, filters, subscripts
 and signs, or of accessors and operators in a row. A deeper one is
-SQLCODE -900, which ON ERROR does not replace. JSON text in a large
-object is read at most 262,144 octets long, a chunk.
+SQLCODE -900, which ON ERROR does not replace. JSON text, or a PASSING
+argument, in a large object is read at most 262,144 octets long, a chunk.
 
 ## Grouping
 
