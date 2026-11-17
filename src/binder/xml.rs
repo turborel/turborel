@@ -4,6 +4,7 @@
 //! (`publish`, `element`), and the document and content predicates [§8.2,
 //! §8.3], each a call of its function (`functions/xml.rs`).
 
+mod aggregate;
 mod cast;
 mod element;
 mod namespaces;

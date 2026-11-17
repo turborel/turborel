@@ -318,7 +318,7 @@ impl Parser {
             SetArg::All(Box::new(self.value_expression()?))
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg: None, filter: None, semantics: None, at })
+        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg: None, filter: None, semantics: None, returning: None, at })
     }
 
     /// [ISO/IEC 9075-2:2023 §6.9] `<grouping operation>` ::= GROUPING (
@@ -339,6 +339,7 @@ impl Parser {
             listagg: None,
             filter: None,
             semantics: None,
+            returning: None,
             at,
         })
     }

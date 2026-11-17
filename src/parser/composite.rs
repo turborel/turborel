@@ -287,6 +287,7 @@ impl Parser {
             listagg: None,
             filter: None,
             semantics: None,
+            returning: None,
             at,
         })
     }

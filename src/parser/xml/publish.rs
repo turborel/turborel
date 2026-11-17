@@ -1,12 +1,16 @@
 //! The grammar of SQL/XML's publishing operators [ISO/IEC 9075-14:2006
 //! draft §6]: XMLCOMMENT [§6.11], XMLCONCAT [§6.12], XMLELEMENT [§6.14],
-//! XMLFOREST [§6.15], XMLPI [§6.17] and XMLTEXT [§6.19], and the `<XML
-//! namespace declaration>` [§11.3].
+//! XMLFOREST [§6.15], XMLPI [§6.17] and XMLTEXT [§6.19], XMLAGG [§11.2],
+//! and the `<XML namespace declaration>` [§11.3].
 
 use super::super::Parser;
 use super::CONTENT;
-use crate::ast::{ContentOption, ElementConstructor, ForestConstructor, Named, NamespaceItem, ValueExpression, XmlOperator};
+use crate::ast::{
+    ContentOption, ElementConstructor, ForestConstructor, Named, NamespaceItem, SetArg, SetFunctionSpecification, ValueExpression,
+    XmlOperator,
+};
 use crate::error::Result;
+use crate::functions::XMLAGG;
 use crate::lexer::{delim, kw};
 
 /// `<XML comment>`'s word.
@@ -50,6 +54,8 @@ impl Parser {
             self.xml_element()?
         } else if self.at_xml(XMLFOREST) {
             self.xml_forest()?
+        } else if self.at_xml(XMLAGG) {
+            return self.xml_aggregate().map(|sf| Some(ValueExpression::SetFunction(sf)));
         } else {
             return Ok(None);
         };
@@ -235,5 +241,24 @@ impl Parser {
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(items)
+    }
+
+    /// [§11.2] `<XML aggregate>` ::= XMLAGG ( `<XML value expression>` \[
+    /// ORDER BY `<sort specification list>` \] \[`<XML returning clause>`\]
+    /// ), an `<aggregate function>`.
+    fn xml_aggregate(&mut self) -> Result<SetFunctionSpecification> {
+        let at = self.here();
+        self.expect_word(XMLAGG)?;
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let value = self.nested(Parser::value_expression)?;
+        let mut order_by = Vec::new();
+        if self.accept_kw(kw::ORDER) {
+            self.expect_kw(kw::BY)?;
+            order_by = self.sort_specification_list()?;
+        }
+        let returning = self.returning_clause()?;
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        let arg = SetArg::All(Box::new(value));
+        Ok(SetFunctionSpecification { name: XMLAGG, arg, order_by, listagg: None, filter: None, semantics: None, returning, at })
     }
 }

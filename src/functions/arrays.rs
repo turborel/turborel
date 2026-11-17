@@ -10,9 +10,9 @@ use super::strings::whole;
 use super::{Accumulator, AggregateFunction, ScalarFunction};
 use crate::error::{Code, Result, SqlError, SqlState, fail, fail_with};
 use crate::value::collation::CollationRef;
-use crate::value::types::MAX_ARRAY_CARDINALITY;
 use crate::value::types::array::with_element;
 use crate::value::types::composite::unordered;
+use crate::value::types::{MAX_ARRAY_CARDINALITY, RowType};
 use crate::value::{DataType, Decimal, SortOrder, Value};
 
 /// [ISO/IEC 9075-2:2023 §6.31] `<cardinality expression>`'s name.
@@ -200,15 +200,7 @@ impl AggregateFunction for ArrayAggregate {
     fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
         match arg {
             Some(DataType::Row(r)) => {
-                // [§9.14 SR2f, SR3] no key is LOB-ordered or array-ordered.
-                if let Some((key, these)) = r.fields.iter().skip(1).find_map(|f| Some((&f.data_type, unordered(&f.data_type)?))) {
-                    return fail(
-                        Code::SyntaxRule,
-                        format!(
-                            "[ISO/IEC 9075-2:2023 §9.14 SR3] ARRAY_AGG orders by values of {key}, and {these} are compared for equality alone"
-                        ),
-                    );
-                }
+                ordered_keys(&r, ARRAY_AGG)?;
                 let value = r.fields.first().map(|f| f.data_type.clone());
                 value.map(|t| DataType::array(t, MAX_ARRAY_CARDINALITY)).ok_or_else(no_argument)
             }
@@ -219,17 +211,40 @@ impl AggregateFunction for ArrayAggregate {
         let (orders, collations) = (self.orders.clone(), self.collations.clone());
         Box::new(Gathered { rows: Vec::new(), orders, collations, by_query: self.by_query })
     }
-    /// Its keys' directions, null orderings and collations, by their places
-    /// in its row.
     fn label_suffix(&self) -> String {
-        let keys = self.orders.iter().zip(&self.collations).enumerate().map(|(i, (order, collation))| {
-            let collated = collation.as_ref().map_or_else(String::new, |c| format!(" COLLATE {}", c.collation.name()));
-            let down = if order.descending { " DESC" } else { "" };
-            format!("{}{collated}{down}{}", i.saturating_add(2), order.null_suffix())
-        });
-        let keys: Vec<String> = keys.collect();
-        if keys.is_empty() { String::new() } else { format!(" ORDER BY {}", keys.join(", ")) }
+        order_suffix(&self.orders, &self.collations)
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §9.14 SR2f, SR3] That no sort key of `row`, a
+/// value and its sort keys as `name`, ARRAY_AGG or XMLAGG, gathers them,
+/// is LOB-ordered, array-ordered or of another type compared for
+/// equality alone.
+///
+/// # Errors
+///
+/// SQLCODE -103 if one is.
+pub(crate) fn ordered_keys(row: &RowType, name: &str) -> Result<()> {
+    let Some((key, these)) = row.fields.iter().skip(1).find_map(|f| Some((&f.data_type, unordered(&f.data_type)?))) else {
+        return Ok(());
+    };
+    fail(
+        Code::SyntaxRule,
+        format!("[ISO/IEC 9075-2:2023 §9.14 SR3] {name} orders by values of {key}, and {these} are compared for equality alone"),
+    )
+}
+
+/// The ORDER BY of an aggregate of a value and its sort keys, as ARRAY_AGG
+/// and XMLAGG gather them: its keys' directions, null orderings and
+/// collations, by their places in its row; nothing of no keys.
+pub(crate) fn order_suffix(orders: &[SortOrder], collations: &[Option<CollationRef>]) -> String {
+    let keys = orders.iter().zip(collations).enumerate().map(|(i, (order, collation))| {
+        let collated = collation.as_ref().map_or_else(String::new, |c| format!(" COLLATE {}", c.collation.name()));
+        let down = if order.descending { " DESC" } else { "" };
+        format!("{}{collated}{down}{}", i.saturating_add(2), order.null_suffix())
+    });
+    let keys: Vec<String> = keys.collect();
+    if keys.is_empty() { String::new() } else { format!(" ORDER BY {}", keys.join(", ")) }
 }
 
 fn no_argument() -> SqlError {
@@ -244,12 +259,24 @@ struct Gathered {
     by_query: bool,
 }
 
-impl Gathered {
-    /// [ISO/IEC 9075-2:2023 §10.10] How two rows order by their keys.
-    fn order(a: &[Value], b: &[Value], orders: &[SortOrder]) -> Ordering {
-        let keys = a.iter().zip(b).skip(1).zip(orders);
-        keys.map(|((x, y), order)| order.cmp(x, y)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+/// [ISO/IEC 9075-2:2023 §10.10] How two rows of a value and its sort
+/// keys, as ARRAY_AGG and XMLAGG gather them, order by their keys.
+pub(crate) fn by_keys(a: &[Value], b: &[Value], orders: &[SortOrder]) -> Ordering {
+    let keys = a.iter().zip(b).skip(1).zip(orders);
+    keys.map(|((x, y), order)| order.cmp(x, y)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+}
+
+/// `row`, a value and its sort keys, each key by its collation's sort
+/// key, if it has one, so `by_keys` orders it so.
+pub(crate) fn keyed(row: &Arc<[Value]>, collations: &[Option<CollationRef>]) -> Arc<[Value]> {
+    if collations.iter().all(Option::is_none) {
+        return Arc::clone(row);
     }
+    let keyed = row.iter().enumerate().map(|(i, part)| {
+        let collation = i.checked_sub(1).and_then(|k| collations.get(k)).and_then(Option::as_ref);
+        collation.map_or_else(|| part.clone(), |c| c.sort_key(part))
+    });
+    keyed.collect()
 }
 
 impl Accumulator for Gathered {
@@ -261,12 +288,7 @@ impl Accumulator for Gathered {
             let rule = if self.by_query { "§6.49 GR3b" } else { "§10.9 GR12e" };
             return crate::value::types::array::truncated(rule, self.rows.len().saturating_add(1), MAX_ARRAY_CARDINALITY);
         }
-        // Each key by its collation's sort key, so `sort_cmp` orders it so.
-        let keyed = row.iter().enumerate().map(|(i, part)| {
-            let collation = i.checked_sub(1).and_then(|k| self.collations.get(k)).and_then(Option::as_ref);
-            collation.map_or_else(|| part.clone(), |c| c.sort_key(part))
-        });
-        self.rows.push(if self.collations.iter().any(Option::is_some) { keyed.collect() } else { Arc::clone(row) });
+        self.rows.push(keyed(row, &self.collations));
         Ok(())
     }
     /// [ISO/IEC 9075-2:2023 §10.9 GR12g] null of no rows; else the values,
@@ -276,7 +298,7 @@ impl Accumulator for Gathered {
             return Ok(Value::Null);
         }
         let mut rows: Vec<&Arc<[Value]>> = self.rows.iter().collect();
-        rows.sort_by(|a, b| Gathered::order(a, b, &self.orders));
+        rows.sort_by(|a, b| by_keys(a, b, &self.orders));
         Ok(Value::Array(rows.into_iter().map(|r| r.first().cloned().unwrap_or(Value::Null)).collect()))
     }
 }

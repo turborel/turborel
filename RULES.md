@@ -2877,7 +2877,10 @@ content once into attributes, text and nodes to copy and builds the
 element with `Builder`, its bindings those its names need, a prefix
 bound to another URI renumbered; `comment`, `processing_instruction` and
 `text`, each a tree of one node standing alone; and `concatenate`. A copy
-follows the source tree's links, so none recurses. The binder keeps the
+follows the source tree's links, so none recurses. XMLAGG gathers its
+rows as ARRAY_AGG does, sharing its key order, and makes the document
+node of RETURNING CONTENT itself, so it is one aggregate over a window
+too. The binder keeps the
 XMLNAMESPACES declarations in scope, innermost last, and searches a
 subquery's own first, then those of the query it is in.
 

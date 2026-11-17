@@ -245,6 +245,9 @@ impl SqlState {
     /// Data exception: invalid processing instruction [ISO/IEC
     /// 9075-14:2006 draft §6.17 GR4, §23.1].
     pub const INVALID_PROCESSING_INSTRUCTION: SqlState = SqlState(*b"2200T");
+    /// Data exception: XML value overflow [ISO/IEC 9075-14:2006 draft §11.2
+    /// GR1, §23.1].
+    pub const XML_VALUE_OVERFLOW: SqlState = SqlState(*b"2200R");
     /// XQuery error [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j, §6.13
     /// GR8, §23.1].
     pub const XQUERY_ERROR: SqlState = SqlState(*b"10000");

@@ -68,6 +68,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2200M | Invalid XML document: XMLPARSE DOCUMENT of text that is no well-formed document |
 | 2200N | Invalid XML content: XMLPARSE CONTENT of text that is no well-formed content, or content XMLELEMENT or XMLFOREST maps to XML that is none |
 | 2200Q | Multiset value overflow: a multiset of more than 65,535 elements |
+| 2200R | XML value overflow: XMLAGG of values holding more than 64 MiB together |
 | 2200S | Invalid comment: XMLCOMMENT of text holding two hyphens together, ending with one, or holding a character no XML 1.1 character |
 | 2200T | Invalid processing instruction: XMLPI of text holding '?>' |
 | 2200U | Not an XQuery document node: a value stored in, or cast to, an XML(CONTENT) type that is not one document node |

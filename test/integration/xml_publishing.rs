@@ -118,3 +118,71 @@ fn publishing_takes_character_strings() {
         assert_eq!(code(&a, &format!("SELECT {refused} FROM T")), Code::SyntaxRule, "{refused}");
     }
 }
+
+/// Schema A: table P of a VARCHAR(10) DEPT, a VARCHAR(10) NAME and an
+/// INTEGER RANK, three in 'a', one in 'b' of a null name.
+fn people() -> Database {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE P (DEPT VARCHAR(10), NAME VARCHAR(10), RANK INTEGER)").unwrap();
+    let a = db.session("A");
+    for row in ["'a', 'Cy', 2", "'a', 'Al', 1", "'a', 'Bo', 3", "'b', NULL, 1"] {
+        a.run(&format!("INSERT INTO P VALUES ({row})")).unwrap();
+    }
+    a.commit().unwrap();
+    db
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §11.2 GR2, §10.14] XMLAGG: the
+/// XML values of each group concatenated in the order of the sort keys,
+/// each in its direction; a null value left out; the null value of a group
+/// of none not null, and of no rows.
+#[test]
+fn xmlagg_11_2() {
+    let db = people();
+    let a = db.session("A");
+    let by = |order: &str| {
+        sorted(
+            &a,
+            &format!(
+                "SELECT DEPT, XMLSERIALIZE(XMLAGG(XMLELEMENT(NAME \"n\", NAME) {order}) AS VARCHAR(100)) FROM P WHERE NAME IS NOT NULL OR DEPT = 'b' GROUP BY DEPT"
+            ),
+        )
+    };
+    assert_eq!(by("ORDER BY NAME"), ["a,<n>Al</n><n>Bo</n><n>Cy</n>", "b,<n/>"]);
+    assert_eq!(by("ORDER BY RANK DESC"), ["a,<n>Bo</n><n>Cy</n><n>Al</n>", "b,<n/>"]);
+    let nulls = "SELECT DEPT, XMLSERIALIZE(XMLAGG(XMLELEMENT(NAME \"n\", NAME OPTION NULL ON NULL) ORDER BY NAME) AS VARCHAR(100)) FROM P GROUP BY DEPT";
+    assert_eq!(sorted(&a, nulls), ["a,<n>Al</n><n>Bo</n><n>Cy</n>", "b,NULL"]);
+    assert_eq!(rows(&a, "SELECT XMLSERIALIZE(XMLAGG(XMLTEXT(NAME)) AS VARCHAR(10)) FROM P WHERE RANK > 9").unwrap(), ["NULL"]);
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §11.2 SR1, SR2, SR5] RETURNING
+/// CONTENT, implicit, a document node of XML(CONTENT(UNTYPED)) of untyped
+/// values, else XML(CONTENT(ANY)); RETURNING SEQUENCE of XML(SEQUENCE);
+/// an XML value alone aggregated, by keys an ordering operation takes,
+/// else SQLCODE -103.
+#[test]
+fn xmlagg_returning_11_2() {
+    let db = people();
+    let a = db.session("A");
+    assert_eq!(rows(&a, "SELECT DEPT FROM P GROUP BY DEPT HAVING XMLAGG(XMLTEXT(NAME)) IS CONTENT ORDER BY DEPT").unwrap(), ["a"]);
+    let sequence = "SELECT DEPT FROM P GROUP BY DEPT HAVING XMLAGG(XMLTEXT(NAME) RETURNING SEQUENCE) IS CONTENT";
+    assert_eq!(rows(&a, sequence).unwrap(), Vec::<String>::new());
+    a.run("CREATE TABLE U (U XML(CONTENT(UNTYPED)), C XML(CONTENT))").unwrap();
+    a.run("INSERT INTO U (U) SELECT XMLAGG(XMLCOMMENT(NAME)) FROM P").unwrap();
+    a.run("INSERT INTO U (C) SELECT XMLAGG(XMLPARSE(CONTENT NAME PRESERVE WHITESPACE) RETURNING CONTENT) FROM P").unwrap();
+    assert_eq!(a.run("INSERT INTO U (U) SELECT XMLAGG(XMLTEXT(NAME) RETURNING SEQUENCE) FROM P").unwrap_err().code, Code::SyntaxRule);
+    for refused in ["XMLAGG(NAME)", "XMLAGG(XMLTEXT(NAME) ORDER BY XMLTEXT(NAME))", "XMLAGG(XMLTEXT(NAME) RETURNING DOCUMENT)"] {
+        let code = code(&a, &format!("SELECT {refused} FROM P"));
+        assert!(matches!(code, Code::SyntaxRule | Code::Syntax), "{refused}: {code:?}");
+    }
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §11.2] [ISO/IEC 9075-2:2023 §6.10]
+/// XMLAGG as a window function's aggregate, over each partition, ordered.
+#[test]
+fn xmlagg_over_a_window() {
+    let db = people();
+    let a = db.session("A");
+    let windowed = "SELECT NAME, XMLSERIALIZE(XMLAGG(XMLTEXT(NAME || ' ') ORDER BY RANK) OVER (PARTITION BY DEPT) AS VARCHAR(40)) FROM P WHERE DEPT = 'a'";
+    assert_eq!(sorted(&a, windowed), ["Al,Al Cy Bo ", "Bo,Al Cy Bo ", "Cy,Al Cy Bo "]);
+}

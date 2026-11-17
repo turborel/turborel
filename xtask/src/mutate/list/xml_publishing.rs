@@ -1,11 +1,11 @@
 //! Mutations of SQL/XML's publishing operators: XMLELEMENT, XMLFOREST,
-//! XMLCONCAT, XMLCOMMENT, XMLPI and XMLTEXT, XMLNAMESPACES, and the
+//! XMLAGG, XMLCONCAT, XMLCOMMENT, XMLPI and XMLTEXT, XMLNAMESPACES, and the
 //! mapping of SQL identifiers to XML Names (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each publishing mechanism broken alone, and the tests that fail.
-pub const XML_PUBLISHING: [Mutation; 15] = [
+pub const XML_PUBLISHING: [Mutation; 19] = [
     Mutation {
         name: "xml-comment-hyphen-last",
         package: Package::Core,
@@ -155,5 +155,45 @@ pub const XML_PUBLISHING: [Mutation; 15] = [
         replacement: "            if variant == Escape::Full {",
         integration: &[],
         unit: &["xml::identifiers::tests::escape_variants_9_1"],
+    },
+    Mutation {
+        name: "xmlagg-unordered",
+        package: Package::Core,
+        breaks: "XMLAGG gives its values in the order they came, not by its keys",
+        file: "src/functions/xml/aggregate.rs",
+        original: "        rows.sort_by(|a, b| by_keys(a, b, &self.orders));",
+        replacement: "",
+        integration: &["xml_publishing::xmlagg_11_2"],
+        unit: &["functions::xml::aggregate::tests::values_in_key_order_11_2"],
+    },
+    Mutation {
+        name: "xmlagg-content",
+        package: Package::Core,
+        breaks: "XMLAGG RETURNING CONTENT makes no document node",
+        file: "src/functions/xml/aggregate.rs",
+        original: "if self.content { document(&made)? } else { made }",
+        replacement: "made",
+        integration: &["xml_publishing::xmlagg_returning_11_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xmlagg-untyped",
+        package: Package::Core,
+        breaks: "XMLAGG RETURNING CONTENT of untyped values is of XML(CONTENT(ANY))",
+        file: "src/functions/xml/aggregate.rs",
+        original: "            (true, true) => XmlType::Content(Typing::Untyped),",
+        replacement: "            (true, true) => XmlType::Content(Typing::Any),",
+        integration: &["xml_publishing::xmlagg_returning_11_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xmlagg-overflow",
+        package: Package::Core,
+        breaks: "XMLAGG gathers values past the limit of one XML value",
+        file: "src/functions/xml/aggregate.rs",
+        original: "        if self.held > MAX_STORED {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &["functions::xml::aggregate::tests::values_beyond_the_limit_overflow_11_2"],
     },
 ];

@@ -132,8 +132,7 @@ data model, XQuery 1.0, its functions and operators, its serialization,
 and XML Schema 1.0. Each series below stands alone, by the draft's
 features.
 
-- Publishing: XMLAGG (X034, X035), and with it RETURNING in every
-  publishing operator (X241, X242); WITH XMLNAMESPACES and XMLBINARY of a
+- Publishing: WITH XMLNAMESPACES and XMLBINARY of a
   query expression, and their scope in DML, DDL and compound statements
   (X081 to X084, X131 to X135); XMLNAMESPACES in XMLTABLE (X086), with
   XQuery; arrays, multisets and rows mapped to XML [§9.8 GR9i, GR9j], as

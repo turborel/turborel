@@ -41,6 +41,15 @@ impl Parser {
         self.expect_delim(delim::RIGHT_PAREN)?;
         let order_by = self.within_group_specification(name)?;
         let arg = SetArg::Fraction(Box::new(fraction));
-        Ok(ValueExpression::SetFunction(SetFunctionSpecification { name, arg, order_by, listagg: None, filter: None, semantics: None, at }))
+        Ok(ValueExpression::SetFunction(SetFunctionSpecification {
+            name,
+            arg,
+            order_by,
+            listagg: None,
+            filter: None,
+            semantics: None,
+            returning: None,
+            at,
+        }))
     }
 }

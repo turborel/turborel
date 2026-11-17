@@ -378,6 +378,32 @@ OK
 turborel: SQLCODE -301 (SQLSTATE 2200S): the comment holds two hyphens together, ends with one, or holds a character XML does not [XML 1.1 §2.5 [15]] [ISO/IEC 9075-14:2006 draft §6.11 GR3]
 ```
 
+## XMLAGG
+
+```
+XMLAGG ( <XML value expression> [ ORDER BY <sort specification list> ]
+         [ RETURNING { CONTENT | SEQUENCE } ] )
+```
+
+XMLAGG is a set function. It gives the XML values of a group, in the
+order of its sort keys, one after another; values that are null are left
+out, and a group of no value not null gives the null value. Without
+ORDER BY the order is that in which the rows are read. RETURNING CONTENT,
+the default, makes a document node of them; RETURNING SEQUENCE gives them
+as a sequence. XMLAGG may be the aggregate of a window function. Values
+that together hold more than 64 MiB fail with SQLSTATE 2200R.
+
+```sql
+SELECT XMLSERIALIZE(XMLELEMENT(NAME "staff", XMLAGG(XMLELEMENT(NAME "emp", XMLATTRIBUTES(ID AS "id"), NAME) ORDER BY NAME DESC)) AS VARCHAR(200)) FROM STAFF;
+```
+
+```
+
+--------------------------------------------------------------
+ <staff><emp id="2">Bo &amp; Co</emp><emp id="1">Ann</emp></staff>
+(1 row)
+```
+
 ## Clients
 
 A column of an XML type is described with its modifiers. A value is

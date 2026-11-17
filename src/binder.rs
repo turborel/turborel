@@ -63,6 +63,7 @@ mod limit;
 mod natural;
 mod noted;
 mod order_by;
+mod ordered;
 mod parameters;
 mod partitioned;
 mod pattern;

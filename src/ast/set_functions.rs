@@ -27,6 +27,9 @@ pub struct SetFunctionSpecification {
     /// [ISO/IEC 9075-2:2023 §6.9] The `<running or final>` written before
     /// it, if one is.
     pub semantics: Option<Semantics>,
+    /// [ISO/IEC 9075-14:2006 draft §11.2] XMLAGG's `<XML returning
+    /// clause>`, if written; of every other function, none.
+    pub returning: Option<super::Returning>,
     /// Where it begins in the statement: a character offset, for the
     /// positions of errors (`SqlError::or_at`).
     pub at: usize,

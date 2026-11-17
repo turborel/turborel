@@ -370,6 +370,7 @@ a query reads, or of each group of its GROUP BY.
 | ANY(x), SOME(x) | of a BOOLEAN x, TRUE if an x is TRUE, else FALSE |
 | ANY_VALUE(x) | one of the values of x, the first one read |
 | LISTAGG(x, 'sep') WITHIN GROUP (ORDER BY ...) | the strings x joined by the separator in the order ORDER BY gives, CHARACTER VARYING(32767) |
+| XMLAGG(x ORDER BY ...) | of XML values x, those not null one after another in the order ORDER BY gives, a document node of them by default ([XML Values](xml.md)); null of none |
 | PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY x) | the value a fraction p of the way through the sorted x, between two of them if it falls between |
 | PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY x) | the first of the sorted x whose share of the values up to it is at least p |
 
@@ -829,7 +830,8 @@ OK
 XMLPARSE makes an XML value of a string, and XMLSERIALIZE writes one as a
 string. XMLDOCUMENT makes a document node of an XML value, XMLCAST
 casts SQL values to XML and back, and XMLELEMENT, XMLFOREST, XMLCONCAT,
-XMLCOMMENT, XMLPI and XMLTEXT make XML of SQL values. [XML Values](xml.md)
+XMLCOMMENT, XMLPI and XMLTEXT make XML of SQL values, and XMLAGG of a
+group's. [XML Values](xml.md)
 gives their syntax.
 
 ```sql

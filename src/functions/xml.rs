@@ -4,11 +4,13 @@
 //! and content predicates [§8.2, §8.3], as the binder calls them
 //! (`binder/xml.rs`); XMLCAST's [§6.6] are in `xml/cast.rs`.
 
+mod aggregate;
 mod cast;
 mod element;
 mod mapping;
 mod publish;
 
+pub use aggregate::{XMLAGG, XmlAggregate};
 pub use cast::{IMPLICIT_BINARY_ENCODING, XmlCastIn, XmlCastOut, xml_schema_type};
 pub use element::{XmlElement, XmlForest};
 pub use mapping::{BinaryEncoding, xml_lexical};
