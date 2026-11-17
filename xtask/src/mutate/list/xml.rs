@@ -1,11 +1,12 @@
 //! Mutations of SQL/XML: the parser, the serializer, the stored form, the
-//! XML type's rules, its storage and its Information Schema columns
-//! (RULES.md R-TEST-9, D86).
+//! XML type's rules, its storage and its Information Schema columns,
+//! the document and content predicates and XMLDOCUMENT (RULES.md
+//! R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each XML mechanism broken alone, and the tests that fail.
-pub const XML: [Mutation; 16] = [
+pub const XML: [Mutation; 22] = [
     Mutation {
         name: "xml-element-type-match",
         package: Package::Core,
@@ -170,5 +171,65 @@ pub const XML: [Mutation; 16] = [
         replacement: "    let mechanism = if xml { Value::Null } else { Value::Null };",
         integration: &["xml_information::routines_and_parameters_20_10"],
         unit: &[],
+    },
+    Mutation {
+        name: "xml-document-predicate",
+        package: Package::Core,
+        breaks: "IS DOCUMENT is true of any document node",
+        file: "src/functions/xml.rs",
+        original: "            Syntax::Document => sequence.is_document(),",
+        replacement: "            Syntax::Document => sequence.is_content(),",
+        integration: &["xml_operators::the_document_predicate_8_3", "xml_operators::the_predicates_as_when_operands_6_4"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-predicate-negated",
+        package: Package::Core,
+        breaks: "IS NOT DOCUMENT and IS NOT CONTENT are their predicates unnegated",
+        file: "src/binder/xml.rs",
+        original: "vec![e])), not))",
+        replacement: "vec![e])), false))",
+        integration: &["xml_operators::the_document_predicate_8_3", "xml_operators::the_content_predicate_8_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-document-returning",
+        package: Package::Core,
+        breaks: "XMLDOCUMENT RETURNING CONTENT is of XML(SEQUENCE)",
+        file: "src/binder/xml.rs",
+        original: "Returning::Content => DataType::Xml(DOCUMENT_CONTENT),",
+        replacement: "Returning::Content => DataType::Xml(XmlType::Sequence),",
+        integration: &["xml_operators::xmldocument_6_13"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-document-atomic-separator",
+        package: Package::Core,
+        breaks: "adjacent atomic values made a text node run together",
+        file: "src/xml/construct.rs",
+        original: "                    builder.text(&SEPARATOR.to_string())?;",
+        replacement: "",
+        integration: &[],
+        unit: &["xml::construct::tests::a_document_node_of_the_content"],
+    },
+    Mutation {
+        name: "xml-document-attribute",
+        package: Package::Core,
+        breaks: "an attribute in a document node's content is no XQuery error",
+        file: "src/xml/construct.rs",
+        original: "                if node.kind() == Some(Kind::Attribute) {",
+        replacement: "                if false {",
+        integration: &[],
+        unit: &["xml::construct::tests::an_attribute_is_refused"],
+    },
+    Mutation {
+        name: "xml-copy-namespaces",
+        package: Package::Core,
+        breaks: "an element copied from below another loses the bindings its ancestors declared",
+        file: "src/xml/tree/build.rs",
+        original: "                let bindings = if root && tree.parent(id).is_some() {",
+        replacement: "                let bindings = if false {",
+        integration: &[],
+        unit: &["xml::construct::tests::copies_keep_namespaces_and_ids"],
     },
 ];

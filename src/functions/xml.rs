@@ -1,12 +1,13 @@
 //! The functions of the SQL/XML operators [ISO/IEC 9075-14:2006 draft
-//! §6]: XMLPARSE [§6.16] and XMLSERIALIZE [§6.8], as the binder calls
-//! them (`binder/xml.rs`).
+//! §6]: XMLDOCUMENT [§6.13], XMLPARSE [§6.16] and XMLSERIALIZE [§6.8],
+//! and of the document and content predicates [§8.2, §8.3], as the binder
+//! calls them (`binder/xml.rs`).
 
 use super::ScalarFunction;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::value::xml::XmlValue;
 use crate::value::{Binary, DataType, Value};
-use crate::xml::{MAX_INPUT, Parameters, Sequence, Syntax, Version, Whitespace, parse, parse_bytes, serialize};
+use crate::xml::{MAX_INPUT, Parameters, Sequence, Syntax, Version, Whitespace, document, parse, parse_bytes, serialize};
 
 /// [§6.16] XMLPARSE, of a character string, or a binary string if
 /// `binary`.
@@ -88,6 +89,61 @@ impl ScalarFunction for XmlParse {
             Input::Octets(octets) => parse_bytes(&octets, self.syntax, self.whitespace)?,
         };
         Ok(Value::Xml(XmlValue::of(Sequence::document(tree))))
+    }
+}
+
+/// [§8.2, §8.3] IS CONTENT, or IS DOCUMENT: whether an XML value is one
+/// document node, or one whose children are one element and comments and
+/// processing instructions.
+#[derive(Debug)]
+pub struct XmlIs(pub Syntax);
+
+impl ScalarFunction for XmlIs {
+    fn name(&self) -> &'static str {
+        match self.0 {
+            Syntax::Document => "IS DOCUMENT",
+            Syntax::Content => "IS CONTENT",
+        }
+    }
+
+    fn return_type(&self, _: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Boolean)
+    }
+
+    /// [§8.2 GR2, §8.3 GR2] Unknown of the null value \[GR2a\]; True of a
+    /// sequence of one document node, of one element and comments and
+    /// processing instructions for DOCUMENT \[GR2b\]; else False \[GR2c\].
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        let Some(Value::Xml(x)) = args.first() else { return Ok(Value::Null) };
+        let sequence = x.sequence()?;
+        Ok(Value::Bool(match self.0 {
+            Syntax::Document => sequence.is_document(),
+            Syntax::Content => sequence.is_content(),
+        }))
+    }
+}
+
+/// [§6.13] XMLDOCUMENT: a document node of an XML value's items, made by
+/// XQuery's computed document constructor (`xml::document`).
+#[derive(Debug)]
+pub struct XmlDocument(pub DataType);
+
+impl ScalarFunction for XmlDocument {
+    fn name(&self) -> &'static str {
+        "XMLDOCUMENT"
+    }
+
+    fn return_type(&self, _: &[DataType]) -> Result<DataType> {
+        Ok(self.0.clone())
+    }
+
+    /// [§6.13 GR2] The null value of the null value; else `document {
+    /// $EXPR }` of the value \[GR8\], a new document node of nodes no
+    /// schema types, so of XML(CONTENT(UNTYPED)) as §10.19 makes one
+    /// \[GR9a\].
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        let Some(Value::Xml(x)) = args.first() else { return Ok(Value::Null) };
+        Ok(Value::Xml(XmlValue::of(document(&*x.sequence()?)?)))
     }
 }
 

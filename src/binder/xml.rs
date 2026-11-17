@@ -1,14 +1,16 @@
-//! Binding the SQL/XML operators [ISO/IEC 9075-14:2006 draft §6]: XMLPARSE
-//! [§6.16] and XMLSERIALIZE [§6.8], each a call of its function
-//! (`functions/xml.rs`).
+//! Binding the SQL/XML operators [ISO/IEC 9075-14:2006 draft §6]:
+//! XMLDOCUMENT [§6.13], XMLPARSE [§6.16] and XMLSERIALIZE [§6.8], and the
+//! document and content predicates [§8.2, §8.3], each a call of its
+//! function (`functions/xml.rs`).
 
 use std::sync::Arc;
 
+use super::predicates::negated;
 use super::{Binder, Scope, rule};
-use crate::ast::{Passing, ValueExpression, XmlOperator};
+use crate::ast::{Passing, Returning, RowValue, ValueExpression, XmlOperator};
 use crate::error::Result;
-use crate::functions::{ScalarRef, Serialization, XmlCopy, XmlParse, XmlSerialize};
-use crate::logical::Expr;
+use crate::functions::{ScalarRef, Serialization, XmlCopy, XmlDocument, XmlIs, XmlParse, XmlSerialize};
+use crate::logical::{Cond, Expr};
 use crate::value::DataType;
 use crate::value::xml::{Typing, XmlType};
 use crate::xml::{Syntax, VERSION_10, VERSION_11, Version, Whitespace};
@@ -22,10 +24,29 @@ pub const IMPLICIT_VERSION: Version = Version::V10;
 /// names none, UTF8.
 pub const ENCODINGS: [&str; 2] = ["UTF8", "UTF16"];
 
+/// [§6.13 SR1] implementation-defined: the `<XML returning clause>` of an
+/// XMLDOCUMENT that writes none, RETURNING CONTENT, as its value is one
+/// document node.
+pub const IMPLICIT_RETURNING: Returning = Returning::Content;
+
+/// [§6.13 SR3a] implementation-defined: the declared type of XMLDOCUMENT
+/// RETURNING CONTENT, XML(CONTENT(UNTYPED)), as no node turborel holds has
+/// a type of an XML Schema, and §10.19 makes its value so \[GR9a\].
+pub const DOCUMENT_CONTENT: XmlType = XmlType::Content(Typing::Untyped);
+
 impl Binder<'_> {
     /// An SQL/XML operator: bound, and type-checked.
     pub(super) fn xml_operator(&self, x: &XmlOperator, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         match x {
+            XmlOperator::Document { operand, returning } => {
+                let operand = self.xml_value_expression(operand, scope, "XMLDOCUMENT")?;
+                // [§6.13 SR3] CONTENT's type, or XML(SEQUENCE).
+                let result = match returning.unwrap_or(IMPLICIT_RETURNING) {
+                    Returning::Content => DataType::Xml(DOCUMENT_CONTENT),
+                    Returning::Sequence => DataType::Xml(XmlType::Sequence),
+                };
+                Ok((Expr::Call(ScalarRef(Arc::new(XmlDocument(result.clone()))), vec![operand]), result))
+            }
             XmlOperator::Parse { syntax, operand, whitespace } => self.xml_parse(*syntax, operand, *whitespace, scope),
             XmlOperator::Serialize { syntax, operand, target, encoding, version, declaration } => {
                 let operand = self.xml_value_expression(operand, scope, "XMLSERIALIZE")?;
@@ -75,6 +96,24 @@ impl Binder<'_> {
             )));
         }
         xml_cast(bound, target, passing)
+    }
+
+    /// [§8.2, §8.3] `value` IS \[NOT\] DOCUMENT or CONTENT, as `syntax`
+    /// says: of one `<XML value expression>` \[SR1\]; IS NOT the negation
+    /// of IS \[SR2\].
+    pub(super) fn xml_predicate(&self, value: &RowValue, syntax: Syntax, not: bool, scope: Scope<'_>) -> Result<Cond> {
+        let (what, clause) = match syntax {
+            Syntax::Document => ("IS DOCUMENT", "§8.3 SR1"),
+            Syntax::Content => ("IS CONTENT", "§8.2 SR1"),
+        };
+        let [xve] = value.as_slice() else {
+            return Err(rule(format!("[ISO/IEC 9075-14:2006 draft {clause}] the operand of {what} is one value, not a row")));
+        };
+        let (e, t) = self.value_expression(xve, scope)?;
+        if !matches!(t, DataType::Xml(_)) {
+            return Err(rule(format!("[ISO/IEC 9075-14:2006 draft {clause}] {what} tests an XML value, not a value of {t}")));
+        }
+        Ok(negated(Cond::Value(Expr::Call(ScalarRef(Arc::new(XmlIs(syntax))), vec![e])), not))
     }
 
     /// [§6.9] An `<XML value expression>` of `what`: of an XML type \[SR1\].

@@ -132,8 +132,7 @@ data model, XQuery 1.0, its functions and operators, its serialization,
 and XML Schema 1.0. Each series below stands alone, by the draft's
 features.
 
-- The rest of the XML type: XMLDOCUMENT and XMLCAST, and the document and
-  content predicates (X025, X030, X090, X091).
+- The rest of the XML type: XMLCAST (X025).
 - Publishing: XMLELEMENT, XMLATTRIBUTES, XMLFOREST, XMLCONCAT, XMLAGG,
   XMLCOMMENT, XMLPI and XMLTEXT, their null handling and RETURNING
   clauses, namespaces and XMLBINARY (X020, X031 to X038, X080 to X086,

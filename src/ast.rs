@@ -132,7 +132,7 @@ pub use window::{
     Exclusion, Frame, FrameBound, FrameUnits, NestedWindow, OffsetFunction, RankKind, RowMarker, ValueFunction, Which, WindowDefinition,
     WindowFunction, WindowKind, WindowOver, WindowSpecification,
 };
-pub use xml::{Passing, XmlOperator};
+pub use xml::{Passing, Returning, XmlOperator};
 
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.7] <insert statement>

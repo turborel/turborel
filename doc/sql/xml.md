@@ -4,7 +4,8 @@
 
 The XML type holds XML documents and fragments of them, as SQL/XML
 (ISO/IEC 9075-14) defines it. XMLPARSE makes an XML value from text, and
-XMLSERIALIZE writes one back as text.
+XMLSERIALIZE writes one back as text. XMLDOCUMENT makes a document node
+of a value, and IS DOCUMENT and IS CONTENT test what a value is.
 
 ## The type
 
@@ -159,6 +160,66 @@ OK
  <a/>
 (2 rows)
 turborel: SQLCODE -103 (SQLSTATE 2A000): CAST of XML(DOCUMENT(ANY)) to CHARACTER VARYING(80) is not valid [ISO/IEC 9075-14:2006 draft §6.5 SR3] (at character 7)
+```
+
+## XMLDOCUMENT
+
+```
+XMLDOCUMENT ( <XML value expression> [ RETURNING { CONTENT | SEQUENCE } ] )
+```
+
+XMLDOCUMENT makes a new document node whose children are copies of the
+value's nodes; a document node of the value gives its children instead.
+Adjacent atomic values become one text node, a space apart, and adjacent
+text is joined. An attribute standing alone among the value's items
+fails with SQLSTATE 10000. XMLDOCUMENT of the null value is null.
+
+RETURNING CONTENT, the default, makes a value of XML(CONTENT(UNTYPED));
+RETURNING SEQUENCE one of XML(SEQUENCE). A document node is not always
+a document, so a DOCUMENT column refuses one that is not, as the
+example below shows.
+
+## IS DOCUMENT and IS CONTENT
+
+```
+<XML value expression> IS [ NOT ] DOCUMENT
+<XML value expression> IS [ NOT ] CONTENT
+```
+
+IS DOCUMENT is true of a document: one document node whose children are
+one element, with comments and processing instructions beside it. IS
+CONTENT is true of one document node. Each is unknown of the null value.
+Either may follow WHEN in a simple CASE, testing its operand.
+
+```sql
+CREATE TABLE NOTES (ID INTEGER, BODY XML);
+INSERT INTO NOTES VALUES (1, XMLPARSE(DOCUMENT '<a/>' PRESERVE WHITESPACE)), (2, XMLPARSE(CONTENT 'note <b/>' PRESERVE WHITESPACE)), (3, NULL);
+SELECT ID, BODY IS DOCUMENT, BODY IS CONTENT FROM NOTES ORDER BY ID;
+SELECT ID, CASE BODY WHEN IS DOCUMENT THEN 'document' WHEN IS CONTENT THEN 'content' END FROM NOTES ORDER BY ID;
+SELECT XMLSERIALIZE(XMLDOCUMENT(BODY) AS VARCHAR(40)) FROM NOTES WHERE ID = 2;
+INSERT INTO ORDERS SELECT 4, XMLDOCUMENT(BODY) FROM NOTES WHERE ID = 2;
+```
+
+```
+OK
+OK
+           ID |       |
+--------------+-------+-------
+            1 | TRUE  | TRUE
+            2 | FALSE | TRUE
+            3 | NULL  | NULL
+(3 rows)
+           ID |
+--------------+----------
+            1 | document
+            2 | content
+            3 | NULL
+(3 rows)
+
+------------------------------------------
+ note <b/>
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2200L): the value of XML(DOCUMENT(ANY)) is not an XML document [ISO/IEC 9075:1992 §13.8 GR4b iii; ISO/IEC 9075-14:2006 draft §10.2 GR1a]
 ```
 
 ## Clients

@@ -10,7 +10,8 @@
 //! An XML text is parsed (`xml/parse.rs`) [§10.16] by the characters and
 //! names of its version (`xml/chars.rs`) into a tree of the data model's
 //! nodes (`xml/tree.rs`) [XQueryDM §6], built in document order
-//! (`xml/tree/build.rs`).
+//! (`xml/tree/build.rs`). XMLDOCUMENT's document node is built by
+//! XQuery's computed document constructor (`xml/construct.rs`) [§6.13].
 //!
 //! \[DESIGN\] RULES.md D86: a tree is an arena of its nodes in document
 //! order, element and attribute names tokenized into a table of the tree,
@@ -18,6 +19,7 @@
 //! recurses, and elements nest at most `MAX_NESTING` deep.
 
 mod chars;
+mod construct;
 mod parse;
 mod sequence;
 mod serialize;
@@ -28,6 +30,7 @@ pub use chars::{
     COLON, VERSION_10, VERSION_11, Version, is_char, is_literal, is_name, is_name_char, is_name_start, is_ncname, is_nmtoken,
     is_pubid_char, is_restricted, is_space,
 };
+pub use construct::document;
 pub use parse::{Syntax, Whitespace, parse, parse_bytes};
 pub use sequence::{Atomic, AtomicType, Item, Node, Sequence};
 pub use serialize::{Parameters, serialize};

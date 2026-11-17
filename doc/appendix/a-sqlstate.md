@@ -50,6 +50,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 09000 | Triggered action exception: a trigger's action failed; the message gives the trigger and the SQLSTATE and message of its failure |
 | 0A000 | Feature not supported: valid SQL Turborel does not process |
 | 0A001 | Feature not supported: multiple server transactions |
+| 10000 | XQuery error: XMLDOCUMENT of a value holding an attribute standing alone |
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
 | 22000 | Data exception |

@@ -1,6 +1,6 @@
 //! Abstract syntax of the SQL/XML operators [ISO/IEC 9075-14:2006 draft
-//! §6], each a `ValueExpression::Xml`: XMLPARSE [§6.16] and XMLSERIALIZE
-//! [§6.8].
+//! §6], each a `ValueExpression::Xml`: XMLDOCUMENT [§6.13], XMLPARSE
+//! [§6.16] and XMLSERIALIZE [§6.8].
 
 use super::ValueExpression;
 use crate::value::DataType;
@@ -15,9 +15,27 @@ pub enum Passing {
     ByValue,
 }
 
+/// [ISO/IEC 9075-14:2006 draft §11.4] `<XML returning clause>` ::=
+/// RETURNING { CONTENT | SEQUENCE }.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Returning {
+    /// RETURNING CONTENT.
+    Content,
+    /// RETURNING SEQUENCE.
+    Sequence,
+}
+
 /// An SQL/XML operator.
 #[derive(Debug, Clone)]
 pub enum XmlOperator {
+    /// [§6.13] `<XML document>` ::= XMLDOCUMENT ( `<XML value expression>`
+    /// \[`<XML returning clause>`\] ).
+    Document {
+        /// The XML value made a document node's children.
+        operand: ValueExpression,
+        /// The `<XML returning clause>`, if written.
+        returning: Option<Returning>,
+    },
     /// [§6.16] `<XML parse>` ::= XMLPARSE ( `<document or content>`
     /// `<string value expression>` `<XML whitespace option>` ).
     Parse {
@@ -55,7 +73,9 @@ impl XmlOperator {
     /// Calls `f` on each value expression it holds.
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         match self {
-            XmlOperator::Parse { operand, .. } | XmlOperator::Serialize { operand, .. } => f(operand),
+            XmlOperator::Document { operand, .. } | XmlOperator::Parse { operand, .. } | XmlOperator::Serialize { operand, .. } => {
+                f(operand);
+            }
         }
     }
 }

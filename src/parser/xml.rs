@@ -1,6 +1,6 @@
 //! The grammar of SQL/XML [ISO/IEC 9075-14:2006 draft §6]: the XML type
-//! [§6.1], XMLPARSE [§6.16], XMLSERIALIZE [§6.8], and CAST's `<XML passing
-//! mechanism>` [§6.5].
+//! [§6.1], XMLDOCUMENT [§6.13], XMLPARSE [§6.16], XMLSERIALIZE [§6.8], and
+//! CAST's `<XML passing mechanism>` [§6.5].
 //!
 //! [§5.1] XML and the names of the operators are reserved words of
 //! SQL/XML, and its other words non-reserved; as SQL-92's are the key
@@ -8,7 +8,7 @@
 //! where the grammar takes it, as BOOLEAN and CLOB are.
 
 use super::Parser;
-use crate::ast::{Passing, ValueExpression, XmlOperator};
+use crate::ast::{Passing, Returning, ValueExpression, XmlOperator};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::DataType;
@@ -17,14 +17,16 @@ use crate::value::xml::{IMPLICIT, IMPLICIT_TYPING, Typing, XmlType};
 use crate::xml::{Syntax, Whitespace};
 
 // [§5.1] The words of SQL/XML this grammar reads.
+/// `<XML document>`'s.
+pub const XMLDOCUMENT: &str = "XMLDOCUMENT";
 /// `<XML parse>`'s.
 pub const XMLPARSE: &str = "XMLPARSE";
 /// `<XML character string serialization>`'s.
 pub const XMLSERIALIZE: &str = "XMLSERIALIZE";
 /// DOCUMENT.
-const DOCUMENT: &str = "DOCUMENT";
+pub(super) const DOCUMENT: &str = "DOCUMENT";
 /// CONTENT.
-const CONTENT: &str = "CONTENT";
+pub(super) const CONTENT: &str = "CONTENT";
 /// SEQUENCE.
 const SEQUENCE: &str = "SEQUENCE";
 /// UNTYPED.
@@ -55,6 +57,8 @@ const LOCATION: &str = "LOCATION";
 const NAMESPACE: &str = "NAMESPACE";
 /// ELEMENT.
 const ELEMENT: &str = "ELEMENT";
+/// [§11.4] RETURNING, of an `<XML returning clause>`.
+const RETURNING: &str = "RETURNING";
 
 impl Parser {
     /// Whether the `<XML type>` is next [§6.1].
@@ -145,6 +149,9 @@ impl Parser {
     /// [§6.10] An `<XML value function>`, or [§6.8] XMLSERIALIZE, if one
     /// is next: its word, no key word of SQL-92, then "(".
     pub(super) fn xml_primary(&mut self) -> Result<Option<ValueExpression>> {
+        if self.at_xml(XMLDOCUMENT) {
+            return self.xml_document().map(Some);
+        }
         if self.at_xml(XMLPARSE) {
             return self.xml_parse().map(Some);
         }
@@ -152,6 +159,33 @@ impl Parser {
             return self.xml_serialize().map(Some);
         }
         Ok(None)
+    }
+
+    /// [§6.13] `<XML document>` ::= XMLDOCUMENT ( `<XML value
+    /// expression>` \[`<XML returning clause>`\] ).
+    fn xml_document(&mut self) -> Result<ValueExpression> {
+        let at = self.here();
+        self.expect_word(XMLDOCUMENT)?;
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let operand = self.value_expression()?;
+        let returning = self.returning_clause()?;
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::Xml(Box::new(XmlOperator::Document { operand, returning }), at))
+    }
+
+    /// [§11.4] `<XML returning clause>` ::= RETURNING { CONTENT | SEQUENCE
+    /// }, if next.
+    fn returning_clause(&mut self) -> Result<Option<Returning>> {
+        if !self.accept_word(RETURNING) {
+            return Ok(None);
+        }
+        if self.accept_word(CONTENT) {
+            return Ok(Some(Returning::Content));
+        }
+        if self.accept_word(SEQUENCE) {
+            return Ok(Some(Returning::Sequence));
+        }
+        Err(self.syntax("expected CONTENT or SEQUENCE [ISO/IEC 9075-14:2006 draft §11.4]"))
     }
 
     /// [§6.16] `<XML parse>` ::= XMLPARSE ( `<document or content>`

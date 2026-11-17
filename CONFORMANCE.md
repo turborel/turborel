@@ -1861,16 +1861,18 @@ from the W3C texts the draft names, at the editions it names (RULES.md
 D86). Part 14 adds the XML type, whose values are XQuery sequences, and
 the operators that make them and write them.
 
-Features X010 (XML type), X016 (Persistent XML values), X060 and X061
-(XMLParse: character string input and CONTENT, DOCUMENT option), X065 and
-X066 (XMLParse: BLOB input and CONTENT, DOCUMENT option), X070 to X072
-(XMLSerialize: character string serialization), X073 to X075
-(XMLSerialize: BLOB serialization), X076 (XMLSerialize: VERSION), X077
-(XMLSerialize: explicit ENCODING option), X078 (XMLSerialize: explicit XML
-declaration), X181 and X182 (XML(DOCUMENT(UNTYPED)) and XML(DOCUMENT(ANY))
-types), X190 (XML(SEQUENCE) type), X211 (XML 1.1 support), X231 and X232
-(XML(CONTENT(UNTYPED)) and XML(CONTENT(ANY)) types), and X251 to X255
-(Persistent XML values of each XML type) are claimed.
+Features X010 (XML type), X016 (Persistent XML values), X030
+(XMLDocument), X060 and X061 (XMLParse: character string input and
+CONTENT, DOCUMENT option), X065 and X066 (XMLParse: BLOB input and
+CONTENT, DOCUMENT option), X070 to X072 (XMLSerialize: character string
+serialization), X073 to X075 (XMLSerialize: BLOB serialization), X076
+(XMLSerialize: VERSION), X077 (XMLSerialize: explicit ENCODING option),
+X078 (XMLSerialize: explicit XML declaration), X090 and X091 (XML document
+and content predicates), X181 and X182 (XML(DOCUMENT(UNTYPED)) and
+XML(DOCUMENT(ANY)) types), X190 (XML(SEQUENCE) type), X211 (XML 1.1
+support), X231 and X232 (XML(CONTENT(UNTYPED)) and XML(CONTENT(ANY))
+types), and X251 to X255 (Persistent XML values of each XML type) are
+claimed.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -1879,6 +1881,8 @@ types), X190 (XML(SEQUENCE) type), X211 (XML 1.1 support), X231 and X232
 | Assignment | §4.2.4, §10.2 SR1, GR1 | An XML value to an XML site alone, an UNTYPED one's of an UNTYPED type, else SQLCODE -103. A DOCUMENT site takes a document, else SQLSTATE 2200L; a CONTENT site one document node, else 2200U. A value stored is a copy. |
 | Not comparable | §4.2.4, §10.8 SR1 to §10.11 SR1 | No equality, grouping or ordering operation takes an XML value: comparisons, IN, quantified comparisons, MATCH, UNIQUE, DISTINCT, IS DISTINCT FROM, NULLIF, a simple CASE, GROUP BY, ORDER BY, set operations but UNION ALL, MIN and MAX, a NATURAL or USING join's common column, keys and indexes, SQLCODE -103. |
 | Types brought together | §10.3 SR1 | XML types with XML types alone, of the type SR1b gives: SEQUENCE if one is, the one type, DOCUMENT(UNTYPED) if all are, CONTENT(UNTYPED) if all are UNTYPED, else CONTENT(ANY). |
+| IS DOCUMENT, IS CONTENT | §8.2, §8.3, §6.4 | Of one XML value, else SQLCODE -103 [SR1]. IS DOCUMENT is True of one document node whose children are one element and comments and processing instructions, IS CONTENT of one document node; Unknown of the null value; else False [GR2]. IS NOT is the negation [SR2]. Either is a `<when operand>` of a simple CASE. |
+| XMLDOCUMENT | §6.13, §11.4 | Of an XML value [§6.9 SR1]: XQuery's `document { $EXPR }`, a new document node of copies of the value's nodes, a document node's children in its place, adjacent atomic values one text node a space apart, an attribute SQLSTATE 10000, XQuery error [GR8]. Construction mode preserve keeps the ID and IDREFS properties [GR5]; an element copied from below another declares the bindings in its scope. The null value of the null value [GR2]. RETURNING CONTENT or SEQUENCE (X241, X242 for XMLDOCUMENT alone) [SR3]. |
 | CAST | §6.5 SR1 to SR4, GR1 | Of an XML type to an XML type alone [SR3]. BY REF is implicit [SR2], to an UNTYPED type of an UNTYPED one [SR4a]. BY VALUE copies the value. To a DOCUMENT or CONTENT type, as assignment checks it. |
 | XMLPARSE | §6.16, §10.16 | Of a character string or a binary string, large objects too. DOCUMENT parses a textual XML 1.0 or XML 1.1 document, else 2200M; CONTENT a document or an external parsed entity, else 2200N [GR6a]. The internal DTD subset's entities are expanded and its attribute defaults applied [GR7c, GR7d]. STRIP WHITESPACE removes text of white space alone by `xml:space` [GR8]. Its type is XML(DOCUMENT(UNTYPED)) or XML(CONTENT(UNTYPED)) [SR1]. |
 | XMLSERIALIZE | §6.8, §10.15 | To a character or a binary string, by the XML output method of XSLT 2.0 and XQuery 1.0 Serialization, after its sequence normalization. CONTENT if neither is written. DOCUMENT of a document alone, else 2200L. VERSION '1.0' or '1.1'. A binary string in UTF8 or UTF16. INCLUDING and EXCLUDING XMLDECLARATION. The result is stored in its type as assignment stores it, too long 22001. A value with no serialization, an attribute alone among others, is 2200W. |
@@ -1893,6 +1897,8 @@ types), X190 (XML(SEQUENCE) type), X211 (XML 1.1 support), X231 and X232
 | CAST's passing mechanism | §6.5 SR2 | BY REF. |
 | A routine's passing mechanism | §12.7 SR8b i, iii | BY REF, of each parameter and result of an XML type, as none is written. |
 | The lengths of NCNAME and URI | §20.1 Description 2, §20.2 Description 2 | CHARACTER_DATA's, 32767 characters: XML_SCHEMA_ELEMENT and XML_SCHEMA_NAMESPACE are CHARACTER VARYING(32767). |
+| XMLDOCUMENT's returning clause | §6.13 SR1 | RETURNING CONTENT. |
+| XMLDOCUMENT's type of CONTENT | §6.13 SR3a | XML(CONTENT(UNTYPED)), as no node turborel holds has a type of an XML Schema. |
 | XMLSERIALIZE's version and encoding | §6.8 SR2d, SR4d, SR4e | '1.0'. The encodings are UTF8, the default, and UTF16. |
 | A byte order mark | §10.15 GR4a ii | Before UTF16 alone. |
 | The standalone declaration | §10.15 GR7 | None is written. |

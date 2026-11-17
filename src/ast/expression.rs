@@ -246,6 +246,17 @@ pub enum Predicate {
         /// IS NOT OF was written.
         not: bool,
     },
+    /// [ISO/IEC 9075-14:2006 draft §8.2, §8.3] `<XML content predicate>`
+    /// ::= `<row value predicand>` IS \[NOT\] CONTENT, and `<XML document
+    /// predicate>` ::= `<row value predicand>` IS \[NOT\] DOCUMENT.
+    Xml {
+        /// The XML value tested, XVE: a row of one value \[SR1\].
+        value: RowValue,
+        /// DOCUMENT or CONTENT.
+        syntax: crate::xml::Syntax,
+        /// IS NOT was written \[SR2\].
+        not: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -310,8 +321,8 @@ pub enum ValueExpression {
     },
     /// [ISO/IEC 9075:1992 §7.11] A `<scalar subquery>`.
     Subquery(Box<Subquery>),
-    /// [ISO/IEC 9075-14:2006 draft §6.8, §6.16] An SQL/XML operator,
-    /// XMLPARSE or XMLSERIALIZE, and where it begins.
+    /// [ISO/IEC 9075-14:2006 draft §6.8, §6.13, §6.16] An SQL/XML operator,
+    /// XMLDOCUMENT, XMLPARSE or XMLSERIALIZE, and where it begins.
     Xml(Box<super::XmlOperator>, usize),
     /// [ISO/IEC 9075:1992 §6.6, §6.7, §6.13] A string function, or
     /// concatenation, read with its own syntax: the function registered

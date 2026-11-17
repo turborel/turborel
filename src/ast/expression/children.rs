@@ -214,6 +214,7 @@ impl Predicate {
             Predicate::InSubquery { value, .. }
             | Predicate::Set { value, .. }
             | Predicate::Type { value, .. }
+            | Predicate::Xml { value, .. }
             | Predicate::Null { value, .. }
             | Predicate::Quantified { value, .. }
             | Predicate::Match { value, .. } => {
@@ -247,6 +248,7 @@ impl Predicate {
             | Predicate::Submultiset { .. }
             | Predicate::Set { .. }
             | Predicate::Type { .. }
+            | Predicate::Xml { .. }
             | Predicate::Null { .. } => None,
         }
     }
