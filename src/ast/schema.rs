@@ -319,6 +319,9 @@ pub struct TableDefinition {
     /// [ISO/IEC 9075-2:2023 §11.3] Its `<typed table clause>`, if written:
     /// its elements are then of `<typed table element>`s.
     pub typed: Option<Box<super::TypedTable>>,
+    /// [ISO/IEC 9075-2:2023 §11.3] Where WITH SYSTEM VERSIONING begins, if
+    /// written.
+    pub versioning: Option<usize>,
 }
 
 /// \[EXTENSION\] `<table storage>` ::= \[USING `<engine name>`\] \[WITH

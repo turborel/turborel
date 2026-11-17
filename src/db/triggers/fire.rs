@@ -172,8 +172,10 @@ fn fitted(mut row: Row, width: usize) -> Row {
 }
 
 impl Effects<'_> {
-    /// [ISO/IEC 9075-2:2023 §15.11 GR4] The BEFORE triggers of inserting
-    /// `rows` into `table`, in `cx`, executed: the rows as they left them.
+    /// [ISO/IEC 9075-2:2023 §15.11 GR3b, GR3c, GR4] Of inserting `rows`
+    /// into `table`, in `cx`: of a table with a system-time period, each
+    /// row's start and end given it (`db/write/system_time.rs`); then its
+    /// BEFORE triggers executed. The rows as they left them.
     ///
     /// # Errors
     ///
@@ -184,12 +186,24 @@ impl Effects<'_> {
         table: &QualifiedName,
         rows: HeldRows<Row>,
     ) -> Result<HeldRows<Row>> {
-        if self.triggered.is_none() {
+        let stamp = cx.st.stamp_of(cx.tx, table)?;
+        if self.triggered.is_none() && stamp.is_none() {
             return Ok(rows);
         }
         let mut changes = HeldRows::new(cx.st.list_space());
         for row in rows {
-            changes.push((0, Row::new(), row?))?;
+            let mut row = row?;
+            if let Some(stamp) = &stamp {
+                stamp.put(&mut row);
+            }
+            changes.push((0, Row::new(), row))?;
+        }
+        if self.triggered.is_none() {
+            let mut out = HeldRows::new(cx.st.list_space());
+            for change in changes {
+                out.push(change?.2)?;
+            }
+            return Ok(out);
         }
         let mut out = HeldRows::new(cx.st.list_space());
         for change in self.before(cx, (table, Event::Insert, &[]), changes)? {

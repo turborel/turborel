@@ -55,8 +55,9 @@ impl State {
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if no schema includes it, it is a view, or a foreign
-    /// key references it, its own among them.
+    /// SQLCODE -103 if no schema includes it, it is a view or a
+    /// system-versioned table, or a foreign key references it, its own
+    /// among them.
     pub(super) fn truncated(&self, qn: &QualifiedName) -> Result<TableDesc> {
         let Some(desc) = self.catalog.table(qn) else {
             if self.catalog.view(qn).is_some() {
@@ -64,6 +65,9 @@ impl State {
             }
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §14.10 SR2] there is no table {qn}")));
         };
+        if self.versioned(qn) {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §14.10 SR3] {qn} is a system-versioned table, whose rows are not truncated")));
+        }
         if desc.temporary.is_some_and(|t| t.kind == TemporaryKind::Declared) {
             return Err(rule(format!(
                 "[ISO/IEC 9075-2:2023 §14.10 SR2] {qn} is a declared local temporary table, of no schema: DELETE FROM {qn} deletes its rows"

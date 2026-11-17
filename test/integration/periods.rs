@@ -135,23 +135,18 @@ fn create_table_refuses_a_period_against_its_rules_11_3() {
     assert!(s.run("SELECT * FROM T").is_err(), "no table T is made");
 }
 
-/// Verifies: [DESIGN] RULES.md D18
-/// A system-time period is of a system-versioned table (T180), which is
-/// not yet, so PERIOD FOR SYSTEM_TIME is refused with -900, by CREATE
-/// TABLE, ADD PERIOD and DROP PERIOD alike.
+/// Verifies: [ISO/IEC 9075-2:2023 §11.3 SR2e v 1, §11.27 SR4c, §11.28 SR2b]
+/// PERIOD FOR SYSTEM_TIME is no application-time period: its columns are
+/// of ROW START and ROW END, not columns the table has, so it is refused
+/// of those by CREATE TABLE and ADD PERIOD, and DROP PERIOD of a table
+/// with none (`system_versioned.rs`).
 #[test]
-fn a_system_time_period_is_not_yet_supported() {
+fn a_system_time_period_is_of_its_own_columns() {
     let db = database();
     let s = db.session("A");
     ok(&s, &[BOOKINGS]);
-    for sql in [
-        "CREATE TABLE T (S TIMESTAMP NOT NULL, E TIMESTAMP NOT NULL, PERIOD FOR SYSTEM_TIME (S, E))",
-        "ALTER TABLE BOOKINGS ADD PERIOD FOR SYSTEM_TIME (S, E)",
-    ] {
-        let e = refused(&s, sql);
-        assert_eq!(e.code, Code::Unsupported, "{sql}: {e}");
-        assert!(e.msg.contains("T180"), "{e}");
-    }
+    refused_by(&s, "CREATE TABLE T (S TIMESTAMP NOT NULL, E TIMESTAMP NOT NULL, PERIOD FOR SYSTEM_TIME (S, E))", "SR2e v 1");
+    refused_by(&s, "ALTER TABLE BOOKINGS ADD PERIOD FOR SYSTEM_TIME (S, E)", "§11.27 SR4c");
     refused_by(&s, "ALTER TABLE BOOKINGS DROP PERIOD FOR SYSTEM_TIME RESTRICT", "§11.28 SR2b");
 }
 

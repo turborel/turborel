@@ -375,8 +375,9 @@ fn bind_set_clause(
 }
 
 /// [ISO/IEC 9075-2:2023 §14.15 SR3, SR5] That `sc` may set the column
-/// `base` of `table`: not its self-referencing column, and of a generated
-/// column, or an identity column always generated, only to DEFAULT.
+/// `base` of `table`: not its self-referencing column, nor a system-time
+/// period column, and of a generated column, or an identity column always
+/// generated, only to DEFAULT.
 fn settable(table: &TableDesc, base: Option<&ColumnDesc>, sc: &SetClause) -> Result<()> {
     // [ISO/IEC 9075-2:2023 §14.15 SR3] no self-referencing column set.
     if let Some(typed) = &table.typed
@@ -386,6 +387,11 @@ fn settable(table: &TableDesc, base: Option<&ColumnDesc>, sc: &SetClause) -> Res
             "[ISO/IEC 9075-2:2023 §14.15 SR3] column {} is the self-referencing column of {}, so no <set clause> sets it",
             sc.column, table.name
         );
+        return Err(rule(msg));
+    }
+    if base.is_some_and(|c| c.system_time().is_some()) {
+        let msg =
+            format!("[ISO/IEC 9075-2:2023 §14.15 SR3] column {} is a system-time period column, so no <set clause> sets it", sc.column);
         return Err(rule(msg));
     }
     // [ISO/IEC 9075-2:2023 §14.15 SR5] a generated column, or an identity

@@ -72,8 +72,11 @@ impl State {
         let kind =
             ConstraintKind::Check { text: a.check.text.clone(), names: schema.to_owned(), reads: Vec::new(), horizon: Horizon::default() };
         let mut desc = ConstraintDesc { name: name.clone(), kind, attributes: a.attributes, domain: None };
-        let invoked = Invoked::default();
-        let plan = self.bind_assertion(&desc, (None, Some(&invoked))).or_at(a.name.at)?;
+        let (invoked, uses) = (Invoked::default(), Uses::default());
+        let plan = self.bind_assertion(&desc, (Some(&uses), Some(&invoked))).or_at(a.name.at)?;
+        // [ISO/IEC 9075-2:2023 §11.47 SR5] no system-time period column of a
+        // system-versioned table.
+        self.no_system_time(&binder::once_each(uses.into_inner()), (&format!("assertion {name}"), "§11.47 SR5"), true).or_at(a.name.at)?;
         let reads = plan.tables();
         // The columns it sees of each: those of now, as a CHECK's; and
         // [ISO/IEC 9075-2:2023 §4.35.2] its subject routines from now on.

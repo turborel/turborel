@@ -146,6 +146,11 @@ impl State {
         let (table, _, names, _) = definer;
         let source = qualify(&like.table, names);
         let (lt, viewed) = self.like_source(definer, &source, earlier)?;
+        if self.versioned(&source) {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §11.3 SR9b i] {source} is a system-versioned table, so no <like clause> names it"
+            )));
+        }
         // [SR9b ii] a viewed table's columns alone.
         if viewed && like.has_options() {
             return Err(rule(format!(

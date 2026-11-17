@@ -53,10 +53,6 @@ Nothing is open.
 
 ### Periods and temporal tables
 
-- System-versioned tables (T180) [§4.17.2.3, §11.3], PERIOD FOR
-  SYSTEM_TIME and WITH SYSTEM VERSIONING. The engine keeps every version a
-  change ends as a historical row, which garbage collection must not
-  remove, and constraints judge only the current rows [§4.25.3].
 - FOR SYSTEM_TIME AS OF, BETWEEN and FROM … TO [§4.17.10, §7.6], reading
   the rows current at a time or within one.
 - Bitemporal tables, an application-time period and system versioning on

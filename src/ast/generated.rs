@@ -20,6 +20,15 @@ pub enum ColumnGeneration {
         /// Where GENERATED begins in the statement.
         at: usize,
     },
+    /// [§11.4] `<system time period start column specification>` ::=
+    /// GENERATED ALWAYS AS ROW START, or `<system time period end column
+    /// specification>` ::= GENERATED ALWAYS AS ROW END.
+    SystemTime {
+        /// ROW END, rather than ROW START.
+        end: bool,
+        /// Where GENERATED begins in the statement.
+        at: usize,
+    },
     /// `<generation clause>` ::= GENERATED ALWAYS AS ( `<generation
     /// expression>` )
     Expression {
@@ -36,7 +45,9 @@ impl ColumnGeneration {
     /// Where it begins in the statement.
     pub fn at(&self) -> usize {
         match self {
-            ColumnGeneration::Identity { at, .. } | ColumnGeneration::Expression { at, .. } => *at,
+            ColumnGeneration::Identity { at, .. } | ColumnGeneration::SystemTime { at, .. } | ColumnGeneration::Expression { at, .. } => {
+                *at
+            }
         }
     }
 }

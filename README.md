@@ -58,6 +58,9 @@ behind it, and each can be replaced or added to.
   DELETE FOR PORTION OF a period, which keep the parts of a row outside it,
   keys WITHOUT OVERLAPS of it, one row of a key at each point in time, and
   foreign keys of a period, whose rows' periods their references cover.
+- System-versioned tables, PERIOD FOR SYSTEM_TIME of ROW START and ROW END
+  columns the database stamps, WITH SYSTEM VERSIONING keeping each row an
+  update or delete ends as a historical row.
 - Stored procedures and functions in SQL/PSM, with variables, cursors,
   handlers, loops and SIGNAL, grouped into modules if wished, and
   polymorphic table functions that take whole tables as arguments.

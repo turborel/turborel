@@ -29,6 +29,7 @@ use crate::value::datetime::Now;
 use crate::value::{Value, assign};
 
 mod portion;
+pub(crate) mod system_time;
 
 /// The table an INSERT puts rows in, and its object columns [X3.135-1986
 /// §8.7 SR3, SR4].

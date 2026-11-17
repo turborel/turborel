@@ -19,7 +19,10 @@ ALTER TABLE: change a base table
     | ADD <table constraint definition>
     | DROP CONSTRAINT <constraint name> <drop behavior>
     | ADD <table period definition>
-    | DROP PERIOD FOR <period name> <drop behavior>
+      [ ADD [ COLUMN ] <column definition> ADD [ COLUMN ] <column definition> ]
+    | DROP PERIOD FOR { <period name> | SYSTEM_TIME } <drop behavior>
+    | ADD SYSTEM VERSIONING
+    | DROP SYSTEM VERSIONING <drop behavior>
     | SET ( <table option> [ { , <table option> }... ] )
     | USING <engine name> [ WITH ( <table option> [ { , <table option> }... ] ) ]
     | RESEAL
@@ -99,6 +102,15 @@ without a schema being of the session's default schema. RESTRICT refuses
 the drop of a UNIQUE or PRIMARY KEY constraint that a foreign key
 references; CASCADE drops that foreign key too.
 
+**ADD PERIOD FOR SYSTEM_TIME** adds the table's system-time period with
+its two columns, written after it, of ROW START then ROW END. Each row
+there begins at the transaction timestamp and ends at the highest value
+of their type. **DROP PERIOD FOR SYSTEM_TIME** drops the period and both
+columns, as DROP COLUMN does under the behavior written. **ADD SYSTEM
+VERSIONING** makes a table of a system-time period system-versioned,
+and **DROP SYSTEM VERSIONING** makes it a base table again, its
+historical rows deleted.
+
 **ADD PERIOD** adds a period of two columns the table has, and its
 period constraint, CHECK (start < end), checked of the rows there now; a
 row whose start is not before its end refuses it. **DROP PERIOD** drops
@@ -176,6 +188,17 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
    one among them, each known not nullable, and neither an identity nor
    a generated column. DROP PERIOD: the table has the period, nothing references it under
    RESTRICT, and no generation expression references it.
+12. ADD PERIOD FOR SYSTEM_TIME: the table is a persistent base table,
+    not a typed one, has no system-time period and no column named
+    SYSTEM_TIME, and adds a column of ROW START, the period's start,
+    then one of ROW END, its end. ADD COLUMN adds no ROW START or ROW
+    END column, and an application-time period adds no column. DROP
+    PERIOD FOR SYSTEM_TIME: the table is not system-versioned.
+13. ADD SYSTEM VERSIONING: the table is a persistent base table, not a
+    typed one, of a system-time period and no column of a reference
+    type, and not system-versioned. DROP SYSTEM VERSIONING: it is.
+14. A system-versioned table's columns are not added, altered or
+    dropped. A system-time period column has no default.
 7. A constraint added follows the rules of [CREATE TABLE](create-table.md).
 8. SET and USING: the engine is registered, and takes each option, of a
    value it accepts; an option of columns names the table's. A temporary table names no engine or options,
@@ -203,7 +226,6 @@ says.
 |---|---|---|
 | 2A000 | -102 | The action is not written as the synopsis shows |
 | 2A000 | -103 | A rule above is broken |
-| 0A000 | -900 | ADD PERIOD FOR SYSTEM_TIME |
 | 3F000 | -103 | The schema of a constraint added does not exist |
 | 2A000 | -104 | Its user does not own the table's schema, or lacks a privilege a column or constraint needs |
 | 23000 | -201 | A row breaks the constraint added; a NOT NULL column added has no default, and the table has rows |
@@ -339,7 +361,10 @@ actions of an identity column and DROP EXPRESSION are ISO/IEC 9075-2:2023
 §11.20 to §11.22, Features T178, F384, F385 and F386, and the drop of a
 column a generation expression references is §11.23 SR7f and GR3. ADD
 PERIOD and DROP PERIOD are §11.27 and §11.28, Features T181 and T502, and what a
-period keeps of its columns §11.23 SR6 and §11.26 SR10. SET,
+period keeps of its columns §11.23 SR6 and §11.26 SR10. ADD and DROP
+SYSTEM VERSIONING are §11.29 and §11.30, Feature T180, the start given
+existing rows by ADD PERIOD FOR SYSTEM_TIME the transaction timestamp
+(IV181). SET,
 USING and RESEAL are extensions. SQL-86 has no ALTER TABLE.
 
 ## SEE ALSO

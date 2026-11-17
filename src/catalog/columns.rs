@@ -51,6 +51,12 @@ pub enum Generated {
     /// one REF value. \[DESIGN\] Named as that table is, as an identity
     /// column's is (RULES.md D63), and never restarted.
     SystemReference(SequenceDesc),
+    /// [§11.4 GR5g, GR5h, GR5i] A system-time period start column's, or
+    /// end column's if `end`: transaction timestamps always generated.
+    SystemTime {
+        /// The end column, rather than the start.
+        end: bool,
+    },
     /// [§4.17.9, §11.3 GR4f iv] A derived self-referencing column's: the
     /// names of the derivational attributes its values are derived from
     /// [§14.11 GR7d ii].
@@ -160,8 +166,14 @@ impl ColumnDesc {
         match &self.generated {
             Some(Generated::Identity(identity)) => Some(&identity.sequence),
             Some(Generated::SystemReference(sequence)) => Some(sequence),
-            Some(Generated::Expression(_) | Generated::DerivedReference(_)) | None => None,
+            Some(Generated::Expression(_) | Generated::DerivedReference(_) | Generated::SystemTime { .. }) | None => None,
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §4.17.2.3] Of a system-time period start or end
+    /// column, whether it is the end column.
+    pub fn system_time(&self) -> Option<bool> {
+        if let Some(Generated::SystemTime { end }) = &self.generated { Some(*end) } else { None }
     }
 
     /// Of a generated column, its generation expression.
@@ -178,8 +190,9 @@ impl ColumnDesc {
             Some(Generated::Identity(identity)) => identity.always,
             Some(Generated::Expression(_)) => true,
             // [§14.15 SR3] No statement sets a self-referencing column at
-            // all, which `db/typed.rs` refuses apart.
-            Some(Generated::SystemReference(_) | Generated::DerivedReference(_)) | None => false,
+            // all, which `db/typed.rs` refuses apart, or a system-time
+            // period column, which `binder/statements.rs` does.
+            Some(Generated::SystemReference(_) | Generated::DerivedReference(_) | Generated::SystemTime { .. }) | None => false,
         }
     }
 }

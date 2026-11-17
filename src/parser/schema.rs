@@ -7,8 +7,9 @@
 
 use super::Parser;
 use crate::ast::{
-    CheckLevels, CollationDefinition, ColumnDefinition, DefaultOption, QueryExpression, Schema, SchemaStatement, SqlStatement,
-    TableDefinition, TableElement, TableName, TableStorage, Temporary, TemporaryKind, TypeName, ViewDefinition,
+    CheckLevels, CollationDefinition, ColumnConstraint, ColumnConstraintKind, ColumnDefinition, ColumnGeneration, ConstraintAttributes,
+    DefaultOption, QueryExpression, Schema, SchemaStatement, SqlStatement, TableDefinition, TableElement, TableName, TableStorage,
+    Temporary, TemporaryKind, TypeName, ViewDefinition,
 };
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
@@ -275,6 +276,13 @@ impl Parser {
             let (elements, subquery) = self.table_contents()?;
             (elements, subquery, None)
         };
+        // [ISO/IEC 9075-2:2023 §11.3] WITH <system versioning clause>.
+        let versioning = self.at_versioning(kw::WITH).then(|| self.here());
+        if versioning.is_some() {
+            self.advance();
+            self.advance();
+            self.advance();
+        }
         let on_commit = self.on_commit()?;
         // [§11.3 SR3] ON COMMIT only of a temporary table; [SR4] DELETE
         // ROWS if not written.
@@ -290,7 +298,7 @@ impl Parser {
         if self.accept_kw(kw::WITH) {
             storage.options = self.table_options()?;
         }
-        Ok(TableDefinition { name, temporary, elements, subquery, storage, typed })
+        Ok(TableDefinition { name, temporary, elements, subquery, storage, typed, versioning })
     }
 
     /// [ISO/IEC 9075:1992 §13.11] `<temporary table declaration>` ::=
@@ -309,7 +317,7 @@ impl Parser {
         let elements = self.table_element_list()?;
         let delete_rows = self.on_commit()?.unwrap_or(true);
         let temporary = Some(Temporary { kind: TemporaryKind::Declared, delete_rows });
-        Ok(TableDefinition { name, temporary, elements, subquery: None, storage: TableStorage::default(), typed: None })
+        Ok(TableDefinition { name, temporary, elements, subquery: None, storage: TableStorage::default(), typed: None, versioning: None })
     }
 
     /// [ISO/IEC 9075:1992 §11.3] `<table element list>` ::= ( `<table
@@ -373,6 +381,14 @@ impl Parser {
         let mut constraints = Vec::new();
         while self.at_column_constraint() {
             constraints.push(self.column_constraint()?);
+        }
+        // [ISO/IEC 9075-2:2023 §11.4 SR6c] NOT NULL NOT DEFERRABLE implicit
+        // of a system-time period column.
+        if let Some(ColumnGeneration::SystemTime { at: stamped, .. }) = &generated
+            && !constraints.iter().any(|c| matches!(c.kind, ColumnConstraintKind::NotNull))
+        {
+            let attributes = ConstraintAttributes { deferrable: false, initially_deferred: false };
+            constraints.push(ColumnConstraint { name: None, at: *stamped, kind: ColumnConstraintKind::NotNull, attributes });
         }
         // [ISO/IEC 9075:1992 §11.4] [<collate clause>]
         let collate = self.collate_after(of_type)?;

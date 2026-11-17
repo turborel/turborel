@@ -259,10 +259,12 @@ impl State {
         }
         match action {
             AlterColumnAction::SetDefault(o) => {
-                // [ISO/IEC 9075-2:2023 §11.12 SR9] no generated column's.
-                if c.generation().is_some() {
-                    let msg =
-                        format!("[ISO/IEC 9075-2:2023 §11.12 SR9] column {column} of {qn} is a generated column, so it has no default");
+                // [ISO/IEC 9075-2:2023 §11.12 SR9] no generated column's,
+                // nor a system-time period column's.
+                if c.generation().is_some() || c.system_time().is_some() {
+                    let msg = format!(
+                        "[ISO/IEC 9075-2:2023 §11.12 SR9] column {column} of {qn} is a generated or system-time period column, so it has no default"
+                    );
                     return Err(rule(msg));
                 }
                 c.default = Some(default_of(&c.data_type.clone(), o, zone)?);

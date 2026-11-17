@@ -170,7 +170,7 @@ fn referencing(desc: &TableDesc) -> Result<Option<(usize, Referencing)>> {
                 };
                 return Ok(Some((at, Referencing::Derived(names.iter().map(position).collect::<Result<_>>()?))));
             }
-            Some(Generated::Identity(_) | Generated::Expression(_)) | None => {}
+            Some(Generated::Identity(_) | Generated::Expression(_) | Generated::SystemTime { .. }) | None => {}
         }
     }
     Ok(None)
@@ -250,6 +250,16 @@ impl Inserted<'_> {
             Inserted::Row(_) => ["§14.12 SR18h", "§14.12 SR18h ii", "§14.12 SR18h iii", "§14.12 SR18h i"],
         }
     }
+
+    /// The rule of the `<override clause>` of a system-time period start
+    /// or end column: §14.11 SR13d of an INSERT, §14.12 SR18h iv of a
+    /// MERGE.
+    fn system_time_rule(self) -> &'static str {
+        match self {
+            Inserted::Source(_) => "§14.11 SR13d",
+            Inserted::Row(_) => "§14.12 SR18h iv",
+        }
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §14.11 SR11b, §14.12 SR18b] Whether the object
@@ -282,7 +292,8 @@ fn placed(e: SqlError, at: Option<usize>) -> SqlError {
 /// with the `<override clause>` `overriding`, gives no generated column a
 /// value, and gives an identity column one as its override says, and a
 /// system-generated or derived self-referencing column one only with an
-/// `<override clause>` \[SR13a\]. What each row draws: the identity
+/// `<override clause>` \[SR13a\], and a system-time period column one only
+/// with OVERRIDING USER VALUE, which ignores it \[SR13d\]. What each row draws: the identity
 /// column, if the table has one, its generator's next value if it is no
 /// object column, or its values are given by DEFAULT VALUES, or
 /// OVERRIDING USER VALUE ignores them \[GR7e\]; the self-referencing
@@ -299,6 +310,7 @@ pub(in crate::db) fn check_override(
 ) -> Result<Drawing> {
     let mut identity = None;
     let mut referenced = None;
+    let mut system = false;
     for (k, column) in object.iter().filter_map(|&c| desc.columns.get(c)).enumerate() {
         let given = given_at(source, k);
         if column.generation().is_some() && given != Given::Defaulted {
@@ -312,11 +324,23 @@ pub(in crate::db) fn check_override(
         if let Some(id) = column.identity() {
             identity = Some((column.name.as_str(), id.always, given));
         }
+        if column.system_time().is_some() && given != Given::Defaulted && overriding != Some(Overriding::User) {
+            let msg = format!(
+                "[ISO/IEC 9075-2:2023 {}] column {} is a system-time period column, so a value is given it only with OVERRIDING USER VALUE",
+                source.system_time_rule(),
+                column.name
+            );
+            return Err(placed(rule(msg), given.at()));
+        }
+        system |= column.system_time().is_some() && given != Given::Defaulted;
         if column.generated_reference() {
             referenced = Some(column.name.as_str());
         }
     }
-    if let Some((msg, at)) = override_refused(identity, (overriding, referenced), source.override_rules()) {
+    // [SR13d ii] OVERRIDING USER VALUE of a system-time period column
+    // given a value is written whatever the other columns.
+    let refused = if system { None } else { override_refused(identity, (overriding, referenced), source.override_rules()) };
+    if let Some((msg, at)) = refused {
         return Err(placed(rule(msg), at));
     }
     let drawn =

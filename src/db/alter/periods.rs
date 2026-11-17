@@ -5,13 +5,13 @@
 use std::sync::Arc;
 
 use super::{Cause, Made};
-use crate::ast::{DropBehavior, PeriodDefinition, PeriodName, TableName};
+use crate::ast::{ColumnDefinition, DropBehavior, PeriodDefinition, PeriodName, SYSTEM_TIME, TableName};
 use crate::binder::bind_generation;
 use crate::catalog::{ConstraintKind, QualifiedName, TableDesc};
 use crate::db::State;
-use crate::db::constraints::periods::{Defining, application, constraint_name, period_check, period_of};
+use crate::db::constraints::periods::{Defining, constraint_name, period_check, period_of};
 use crate::db::ddl::Dropped;
-use crate::db::rule;
+use crate::db::{api, rule};
 use crate::error::{At, Result};
 use crate::txn::Txn;
 
@@ -26,15 +26,20 @@ impl State {
     ///
     /// SQLCODE -103 if the table is temporary \[SR2\] or typed \[SR3\], or
     /// has an application-time period already \[SR5b\], or a rule of the
-    /// period's columns is broken (`periods::period_of`); -900 of
-    /// SYSTEM_TIME.
+    /// period's columns is broken (`periods::period_of`), or columns are
+    /// added with it \[SR5d\]; -910 of SYSTEM_TIME (`add_system_period`).
     pub(in crate::db) fn add_period(
         &mut self,
         (qn, names): (&QualifiedName, &str),
-        def: &PeriodDefinition,
+        (def, added): (&PeriodDefinition, &[ColumnDefinition]),
         (made, tx): (Option<&Made>, Option<&Txn>),
     ) -> Result<Made> {
-        let name = application(&def.name).or_at(def.at)?;
+        let PeriodName::Application(name) = &def.name else { return Err(api("[DESIGN] SYSTEM_TIME is added by add_system_period")) };
+        if let Some(c) = added.first() {
+            return Err(
+                rule(format!("[ISO/IEC 9075-2:2023 §11.27 SR5d] application-time period {name} adds no column {}", c.name)).or_at(c.at)
+            );
+        }
         let desc = self.base_table(qn).or_at(def.at)?;
         if desc.temporary.is_some() {
             return Err(
@@ -44,13 +49,13 @@ impl State {
         if desc.typed.is_some() {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.27 SR3] {qn} is a referenceable table")).or_at(def.at));
         }
-        if let Some(p) = desc.periods.first() {
+        if let Some(p) = desc.periods.iter().find(|p| p.name != SYSTEM_TIME) {
             return Err(
                 rule(format!("[ISO/IEC 9075-2:2023 §11.27 SR5b] {qn} has application-time period {} already", p.name)).or_at(def.at)
             );
         }
         let constraint = constraint_name(qn, name, &self.all_constraint_names());
-        let period = period_of(&desc, def, constraint.clone(), Defining::Added).or_at(def.at)?;
+        let period = period_of(&desc, def, Some(constraint.clone()), Defining::Added).or_at(def.at)?;
         let built = self.add_constraint((qn, names), &period_check(def, &constraint)?, (made, tx)).or_at(def.at)?;
         let mut constrained = self.base_table(qn)?;
         constrained.periods.push(period);
@@ -76,7 +81,7 @@ impl State {
     /// Readings of ambiguous text).
     pub(in crate::db) fn drop_period(&mut self, qn: &QualifiedName, name: &PeriodName, behavior: DropBehavior) -> Result<Dropped> {
         let table = self.base_table(qn)?;
-        let Some(at) = table.periods.iter().position(|p| *name == PeriodName::Application(p.name.clone())) else {
+        let Some(at) = table.periods.iter().position(|p| p.name == name.name()) else {
             let cited = if *name == PeriodName::SystemTime { "SR2b" } else { "SR3a" };
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.28 {cited}] {qn} has no period {}", name.name())));
         };
@@ -102,8 +107,10 @@ impl State {
         dropped.absorb(self.drop_dependents_of(&before, (Cause::Period, std::slice::from_ref(qn)), cascade)?);
         dropped.absorb(self.drop_dependent_triggers(&before, (Cause::Period, qn), cascade)?);
         dropped.absorb(self.drop_dependent_routines(&before, (Cause::Period, qn), cascade)?);
-        let constraint = TableName { auth: Some(removed.constraint.auth.clone()), ident: removed.constraint.ident.clone(), at: 0 };
-        dropped.absorb(self.drop_constraint((qn, &removed.constraint.auth), &constraint, DropBehavior::Cascade)?);
+        if let Some(c) = &removed.constraint {
+            let constraint = TableName { auth: Some(c.auth.clone()), ident: c.ident.clone(), at: 0 };
+            dropped.absorb(self.drop_constraint((qn, &c.auth), &constraint, DropBehavior::Cascade)?);
+        }
         Ok(dropped)
     }
 

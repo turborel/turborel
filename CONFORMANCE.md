@@ -1627,9 +1627,24 @@ columns of a table as its start, included, and its end, excluded
 | Foreign keys of a period | §4.25.3.3, §11.8 SR2, SR18a i, GR2d, GR2e | `FOREIGN KEY (c, ..., PERIOD p) REFERENCES t (c, ..., PERIOD q)` refuses a row whose period the periods of the rows of t its values match do not cover, SQLSTATE 23000, MATCH SIMPLE, FULL and PARTIAL taking nulls as of any foreign key. A row of t deleted, or its key or period changed, is refused while a row whose period overlapped its own is left uncovered. The rows of a key are read in order of their starts through the index of t's key WITHOUT OVERLAPS, stopping at a gap. Both periods are written, with the referenced columns, which are of a unique constraint WITHOUT OVERLAPS of q, each table has its period, the two of one type, and no action is CASCADE, SET NULL or SET DEFAULT. Each rule broken is SQLCODE -103. DROP PERIOD RESTRICT of either period is refused, and CASCADE drops the foreign key (§11.28 SR3d ii). |
 | Its description | §4.16.1 | INFORMATION_SCHEMA.PERIODS gives the table, the period's name, its start and end columns and its constraint, of the tables the current user holds a privilege on. ISO/IEC 9075-11:2006 has no view of periods, so this one is an extension. |
 
-`PERIOD FOR SYSTEM_TIME` is SQLCODE -900 until system-versioned tables
-(T180) are. PERIOD is a key word only before FOR, so a column may be
-named PERIOD.
+PERIOD is a key word only before FOR, so a column may be named PERIOD.
+
+Feature T180 (System-versioned tables). A table's system-time period,
+SYSTEM_TIME, is given by the database, and WITH SYSTEM VERSIONING keeps
+the rows it ends as historical system rows [§4.17.2.3]. They are kept in
+a hidden table of their own (RULES.md D82), so the table is read, keyed
+and constrained by its current rows alone.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Definition | §11.3 SR1, SR2a, SR3, §11.4 SR6, SR14 | `PERIOD FOR SYSTEM_TIME (start, end)` of a column `GENERATED ALWAYS AS ROW START` and one `GENERATED ALWAYS AS ROW END`, each DATE or a timestamp type, NOT NULL NOT DEFERRABLE implicitly. A table has at most one system-time and one application-time period, and a temporary table none. `WITH SYSTEM VERSIONING` after the table's elements needs the system-time period, and no column is of a reference type. A ROW START or ROW END column of no such period, or a period of other columns, is refused. Each rule broken is SQLCODE -103. |
+| Stamping | §15.11 GR3b, GR3c, §15.14 GR10a iii 1, §9.17 GR16a iii 1 | Each row inserted, updated or merged begins at the transaction timestamp, cast to the start column's type, and ends at the highest value of the end column's type. A row a later transaction updates or deletes is kept, of a versioned table, as a historical row ending at the transaction timestamp. One the transaction began itself is changed in place. One that begins after the transaction timestamp is SQLSTATE 2201H. |
+| Given values | §14.11 SR13d, §14.12 SR18h iv, §14.15 SR3 | INSERT and MERGE give a system-time column a value only with OVERRIDING USER VALUE, which ignores it, else SQLCODE -103. DEFAULT needs none. No UPDATE or MERGE sets one, SQLCODE -103. |
+| References | §11.7 SR6b, §11.8 SR10, §11.9 SR1, §11.47 SR5, §11.49 SR12, SR14c | No unique key, foreign key's referencing columns or CHECK is of a system-time column, no assertion references one of a versioned table, and no trigger's action one of its table, each SQLCODE -103. |
+| ADD and DROP SYSTEM VERSIONING | §11.29, §11.30 | `ALTER TABLE t ADD SYSTEM VERSIONING` of a regular persistent base table, not referenceable, of a system-time period and no reference-type column, not versioned already. `DROP SYSTEM VERSIONING RESTRICT` or `CASCADE` of a versioned one deletes its historical rows. Each rule broken is SQLCODE -103. No query reads a table FOR SYSTEM_TIME yet, so RESTRICT finds nothing to refuse it. |
+| ADD and DROP PERIOD | §11.27 SR4, GR1, §11.28 SR2, GR1 | `ADD PERIOD FOR SYSTEM_TIME (s, e) ADD COLUMN s ... ROW START ADD COLUMN e ... ROW END` adds both columns, each row there beginning at the transaction timestamp (IV181) and ending at the highest value. `DROP PERIOD FOR SYSTEM_TIME` of a table not versioned drops both columns, as DROP COLUMN does under the behavior given. ADD COLUMN adds no ROW START or ROW END column. |
+| The versioned table kept | §11.3 SR9b i, §11.11 SR2, §11.12 SR2, SR9, §11.23 SR3, SR5, §14.10 SR3 | A versioned table's columns are not added, altered or dropped, its rows not truncated, and no LIKE copies it. A system-time column has no default and is not dropped while its period is. Each is SQLCODE -103. |
+| Its description | §21.3.8, §4.16.1 | INFORMATION_SCHEMA.TABLES gives a versioned table's TABLE_TYPE as `SYSTEM VERSIONED`, which ISO/IEC 9075-11:2006 lacks, an extension. PERIODS gives SYSTEM_TIME and its columns, its constraint null. A history is in no view. |
 
 Feature T502 (Period predicates) [§8.20]:
 
@@ -2091,6 +2106,9 @@ topic. The Where column names the file that implements each.
 | §9.50 GR4 (IA074) whether the seconds a template writes are truncated or rounded to its fractional precision | Truncated | `functions/formatted/format.rs` |
 | §9.51 GR6b iv (IV096) the year RR's digits are read in | The current year, so RR is read as YY | `functions/formatted/parse.rs` |
 | 2023 §8.20 GR3, IL055, the greatest timestamp precision a period predicate compares at | 6, microseconds, of TIMESTAMP WITH TIME ZONE | `binder/periods.rs` |
+| 2023 §4.44 (IV072) the type of the transaction timestamp | TIMESTAMP(6) WITH TIME ZONE, the clock's instant as the transaction first changes data, at +00:00 | `db/write/system_time.rs` |
+| 2023 §11.27 GR1c (IV181) the start given existing rows by ADD PERIOD FOR SYSTEM_TIME | The transaction timestamp, cast to the column's type | `db/ddl.rs` |
+| 2023 §15.11 GR3c the highest value of a type | DATE 9999-12-31; a timestamp 9999-12-31 23:59:59.999999 cut to its precision, at +00:00 if zoned | `value/types/datetime.rs` |
 
 ### Cursors
 

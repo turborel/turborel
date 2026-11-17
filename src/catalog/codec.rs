@@ -242,7 +242,7 @@ pub(crate) fn put_table(out: &mut Vec<u8>, table: &TableDesc) {
         out.put_str(&p.name);
         out.put_str(&p.start);
         out.put_str(&p.end);
-        put_name(out, &p.constraint);
+        put_all(out, p.constraint.iter(), put_name);
     });
 }
 
@@ -260,7 +260,8 @@ pub(crate) fn table(r: &mut Reader<'_>) -> Result<TableDesc> {
     };
     let temporary = kind.map(|kind| flag(r).map(|delete_rows| Temporary { kind, delete_rows })).transpose()?;
     let typed = structured::typed(r)?;
-    let periods = get_all(r, |r| Ok(PeriodDesc { name: r.str()?, start: r.str()?, end: r.str()?, constraint: qualified(r)? }))?;
+    let periods =
+        get_all(r, |r| Ok(PeriodDesc { name: r.str()?, start: r.str()?, end: r.str()?, constraint: get_all(r, qualified)?.pop() }))?;
     Ok(TableDesc { name, columns, constraints, engine, options, generation, temporary, typed, periods })
 }
 

@@ -137,7 +137,7 @@ mod usage;
 mod user_types;
 mod users;
 mod views;
-mod write;
+pub(crate) mod write;
 
 use compiled::{plan, plan_slotted};
 

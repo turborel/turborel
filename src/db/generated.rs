@@ -62,7 +62,9 @@ impl State {
         let (data_type, domain) = match (&def.data_type, def.generated.as_deref()) {
             (Some(t), _) => self.column_type(names, t)?,
             (None, Some(ColumnGeneration::Expression { .. })) => (UNTYPED, None),
-            (None, Some(ColumnGeneration::Identity { at, .. })) => return Err(untyped().or_at(*at)),
+            (None, Some(ColumnGeneration::Identity { at, .. } | ColumnGeneration::SystemTime { at, .. })) => {
+                return Err(untyped().or_at(*at));
+            }
             (None, None) => return Err(untyped().or_at(def.at)),
         };
         let default = def.default.as_ref().map(|o| super::defaults::default_of(&data_type.clone(), o, zone)).transpose()?;
@@ -171,7 +173,7 @@ impl State {
             let sequence = match &mut column.generated {
                 Some(Generated::Identity(identity)) => &mut identity.sequence,
                 Some(Generated::SystemReference(sequence)) => sequence,
-                Some(Generated::Expression(_) | Generated::DerivedReference(_)) | None => continue,
+                Some(Generated::Expression(_) | Generated::DerivedReference(_) | Generated::SystemTime { .. }) | None => continue,
             };
             if sequence.epoch == 0 {
                 sequence.epoch = epochs.next(&self.sequences)?;
@@ -240,6 +242,16 @@ fn generated_of(table: &QualifiedName, (names, t): (&str, DataType), g: &ColumnG
         }
         ColumnGeneration::Expression { text, .. } => {
             Ok(Generated::Expression(Generation { text: text.clone(), names: names.to_owned(), horizon: Horizon::default() }))
+        }
+        // [§11.4 SR6b] DATE or a timestamp type.
+        ColumnGeneration::SystemTime { end, at } => {
+            if !matches!(t, DataType::Date | DataType::Timestamp { .. }) {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §11.4 SR6b] a system-time period column is of DATE or a timestamp type, not {t}"
+                ))
+                .or_at(*at));
+            }
+            Ok(Generated::SystemTime { end: *end })
         }
     }
 }

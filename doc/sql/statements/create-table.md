@@ -11,6 +11,7 @@ CREATE TABLE: define a base table
 ```
 <table definition> ::=
     CREATE [ { GLOBAL | LOCAL } TEMPORARY ] TABLE <table name> <table contents source>
+    [ WITH SYSTEM VERSIONING ]
     [ ON COMMIT { DELETE | PRESERVE } ROWS ]
     [ USING <engine name> ]
     [ WITH ( <table option> [ { , <table option> }... ] ) ]
@@ -22,7 +23,7 @@ CREATE TABLE: define a base table
 
 <table element> ::= <column definition> | <table constraint definition> | <like clause> | <table period definition>
 
-<table period definition> ::= PERIOD FOR <period name> ( <column name> , <column name> )
+<table period definition> ::= PERIOD FOR { <period name> | SYSTEM_TIME } ( <column name> , <column name> )
 
 <typed table element> ::=
       REF IS <column name> { SYSTEM GENERATED | USER GENERATED | DERIVED }
@@ -37,7 +38,8 @@ CREATE TABLE: define a base table
 
 <column definition> ::=
     <column name> [ <data type> | <domain name> ]
-    [ DEFAULT <default option> | <identity column specification> | <generation clause> ]
+    [ DEFAULT <default option> | <identity column specification> | <generation clause>
+      | GENERATED ALWAYS AS ROW { START | END } ]
     [ <column constraint definition>... ]
 
 <identity column specification> ::=
@@ -162,6 +164,17 @@ key WITHOUT OVERLAPS of the referenced period. A row of the referenced
 table deleted, or its period shortened, is refused while a row that
 refers to it is then left outside them. A CHECK refuses a row for which its condition is
 false; it may read other tables through subqueries.
+
+**System time.** PERIOD FOR SYSTEM_TIME names a column GENERATED ALWAYS
+AS ROW START and one GENERATED ALWAYS AS ROW END as the table's
+system-time period, which the database gives every row. A row written
+begins at the transaction timestamp, the instant the transaction first
+changed data, and ends at the highest value of its type, 9999-12-31 of
+DATE. WITH SYSTEM VERSIONING makes the table system-versioned: a row a
+later transaction updates or deletes is kept as a historical row, which
+ends at that transaction's timestamp. Statements read, key and
+constrain the current rows alone. A transaction that changes a row
+another began after its own timestamp is refused, SQLSTATE 2201H.
 
 A constraint is checked at the end of each statement, or, DEFERRABLE
 INITIALLY DEFERRED or deferred by [SET CONSTRAINTS](set-constraints.md),
@@ -294,8 +307,8 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
     column is named as the period. Its columns are two of the table's,
     each written as DATE, or both as one timestamp type, each NOT NULL
     and not DEFERRABLE, or of the PRIMARY KEY, and neither an identity
-    nor a generated column. PERIOD FOR SYSTEM_TIME, of a system-versioned
-    table, is not yet supported (SQLCODE -900).
+    nor a generated column. A table has one PERIOD FOR SYSTEM_TIME at
+    most beside it.
 19. WITHOUT OVERLAPS names the table's period, after one column at
     least. No two UNIQUE or PRIMARY KEY constraints are of the same
     columns, whatever their period. A foreign key with no columns
@@ -305,6 +318,12 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
     those of a key WITHOUT OVERLAPS of that period of the table
     referenced, and its own period is of the table, of the same type.
     It has no action CASCADE, SET NULL or SET DEFAULT.
+21. A column of ROW START is the start of the table's PERIOD FOR
+    SYSTEM_TIME and one of ROW END its end, each DATE or a timestamp
+    type, NOT NULL implicitly, of no default. WITH SYSTEM VERSIONING
+    needs the period, of a table with no column of a reference type,
+    and no LIKE names a system-versioned table. No CHECK, UNIQUE,
+    PRIMARY KEY or foreign key is of a ROW START or ROW END column.
 
 ## PRIVILEGES
 
@@ -323,7 +342,6 @@ names. The privileges the query of AS needs to be run.
 | 2A000 | -104 | Its user does not own the schema, or a constraint's, or lacks REFERENCES or USAGE it needs |
 | 25000 | -917 | The transaction is READ ONLY |
 | 0A000 | -900 | A CHARACTER SET clause of another character set |
-| 0A000 | -900 | PERIOD FOR SYSTEM_TIME |
 | 2A000 | -103 | A COLLATE clause of no collation, or of a column not of a character string |
 | 02000 | 100 | Not an error: the query of AS ... WITH DATA had no row |
 
@@ -528,6 +546,48 @@ turborel: SQLCODE -201 (SQLSTATE 23000): a row of ANN.STAYS references a row of 
 OK
 ```
 
+A system-versioned table of prices. The update keeps the old price as a
+historical row, and the current one ends at the highest timestamp. No
+statement gives its period's columns a value, and its columns are kept:
+
+```sql
+CREATE TABLE PRICES (
+    ITEM INTEGER PRIMARY KEY,
+    PRICE DECIMAL(9,2),
+    VALID_FROM TIMESTAMP(6) GENERATED ALWAYS AS ROW START,
+    VALID_TO TIMESTAMP(6) GENERATED ALWAYS AS ROW END,
+    PERIOD FOR SYSTEM_TIME (VALID_FROM, VALID_TO))
+    WITH SYSTEM VERSIONING;
+INSERT INTO PRICES (ITEM, PRICE) VALUES (1, 9.99);
+COMMIT;
+UPDATE PRICES SET PRICE = 12.50;
+COMMIT;
+SELECT ITEM, PRICE, VALID_TO FROM PRICES;
+UPDATE PRICES SET VALID_TO = CURRENT_TIMESTAMP;
+INSERT INTO PRICES VALUES (2, 1.00, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+ALTER TABLE PRICES ADD COLUMN NOTE VARCHAR(20);
+SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'PRICES';
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+         ITEM |       PRICE | VALID_TO
+--------------+-------------+----------------------------
+            1 |       12.50 | 9999-12-31 23:59:59.999999
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): column VALID_TO is a system-time period column, so no <set clause> sets it [ISO/IEC 9075-2:2023 §14.15 SR3] (at character 18)
+turborel: SQLCODE -103 (SQLSTATE 2A000): column VALID_FROM is a system-time period column, so a value is given it only with OVERRIDING USER VALUE [ISO/IEC 9075-2:2023 §14.11 SR13d] (at character 36)
+turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.PRICES is a system-versioned table, whose columns are not added, altered or dropped [ISO/IEC 9075-2:2023 §11.11 SR2] (at character 30)
+ TABLE_NAME                                                   | TABLE_TYPE
+--------------------------------------------------------------+--------------------------------------------------------------
+ PRICES                                                       | SYSTEM VERSIONED
+(1 row)
+```
+
 Tables refused:
 
 ```sql
@@ -568,7 +628,10 @@ is ISO/IEC 9075-2:2023 §11.3, Feature T171, and its options Feature
 T173; AS is Feature T172. Periods are ISO/IEC 9075-2:2023 §4.16 and
 §11.3, Feature T181, the name of the period constraint left to the
 implementation, and so are WITHOUT OVERLAPS, §11.7, and a foreign key
-of a period, §11.8; RESTRICT is §15.18, Feature T191; the view PERIODS is this implementation's own. That AS is not written in a CREATE SCHEMA, and
+of a period, §11.8; RESTRICT is §15.18, Feature T191; the view PERIODS is this implementation's own.
+System-versioned tables are §4.17.2.3 and §11.3, Feature T180, the
+transaction timestamp's type TIMESTAMP(6) WITH TIME ZONE (IV072);
+TABLE_TYPE SYSTEM VERSIONED is an extension. That AS is not written in a CREATE SCHEMA, and
 that neither names a declared local temporary table, are this
 implementation's own. The null treatment of UNIQUE is ISO/IEC
 9075-2:2023 §11.7, Feature F292. With none written it is NULLS DISTINCT,

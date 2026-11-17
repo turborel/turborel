@@ -90,6 +90,10 @@ in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
    comparable with the period's columns, reference no column of the
    table, and invoke no function that is not deterministic or modifies
    SQL-data.
+9. No SET clause sets a column of ROW START or ROW END. A row of a
+   table of a system-time period begins at the transaction timestamp as
+   it is updated, and of a system-versioned table its old values are
+   kept as a historical row.
 
 ## PRIVILEGES
 
@@ -108,6 +112,7 @@ privilege beyond UPDATE.
 | 22xxx | -301 | A data exception as a value is computed or assigned |
 | 2202E | -301 | An element set at an index not from 1 to the maximum cardinality (rule 7) |
 | 2200E | -301 | An element set of a null array (rule 7) |
+| 2201H | -301 | A row of a system-time period begins after the transaction timestamp: another transaction changed it later (rule 9) |
 | TB911 | -911 | A row was written by another transaction, not committed under LOCKS.WAIT OFF, or committed after this one's snapshot at REPEATABLE READ or SERIALIZABLE; or a wait for it would deadlock or passed LOCKS.TIMEOUT_MS: the statement is undone, and may be run again |
 | 25000 | -917 | The transaction is READ ONLY |
 | 02000 | 100 | Not an error: no row was changed |

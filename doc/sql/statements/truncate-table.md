@@ -39,7 +39,8 @@ one's snapshot, this one's COMMIT fails, so no row goes unseen.
 ## RULES
 
 1. The table is a base table of a schema. It is not a view, nor a table
-   declared with DECLARE LOCAL TEMPORARY TABLE.
+   declared with DECLARE LOCAL TEMPORARY TABLE, nor a system-versioned
+   table.
 2. No foreign key references the table, its own included. DELETE, which
    runs the referential actions, deletes the rows of such a table.
 3. The transaction is not READ ONLY, but for a temporary table.
@@ -57,7 +58,7 @@ Ownership of the table's schema. DELETE on the table is not enough.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist, is a view or a declared local temporary table, or a foreign key references it; the start value of RESTART IDENTITY is beyond its generator's bounds |
+| 2A000 | -103 | The table does not exist, is a view, a declared local temporary table or a system-versioned table, or a foreign key references it; the start value of RESTART IDENTITY is beyond its generator's bounds |
 | 2A000 | -104 | Its user does not own the table's schema |
 | 23000 | -201 | An assertion, or a CHECK with a subquery, that reads the table no longer holds |
 | 36002 | -501 | A cursor of the transaction reads the table |

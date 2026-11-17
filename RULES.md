@@ -119,6 +119,7 @@ verification approach DO-178C expects (§8).
 | D79 | Large objects stream: chunked, logged by chunk, read by range, reached by locators |
 | D80 | Multisets are unordered values, paired by classes and a matching |
 | D81 | Structured types: values name their type, typed tables keep their own rows, references are octets |
+| D82 | System-versioned tables keep their historical rows in a hidden table of their own |
 
 ### The project
 
@@ -1220,6 +1221,39 @@ structured value crosses to a client whole, as the protocol's tag of
 its type writes it. A function that is an ordering's, a transform's or
 a cast's is dropped only with CASCADE, which drops what it is the
 function of [§11.62 SR4a, SR4d].
+
+#### D82. System-versioned tables keep their historical rows in a hidden table of their own
+
+A system-versioned table [ISO/IEC 9075-2:2023 §4.17.2.3] keeps the rows
+its updates and deletes end as historical system rows. turborel keeps
+them in the table's history, a table of DEFINITION_SCHEMA named `SYSTEM
+HISTORY`, then the length of the table's schema name, its schema and
+its name, so no two tables' histories meet. The history has the table's
+columns, none generated and none of a default, its engine and options,
+and no constraint and no index. It is made as the table is defined WITH
+SYSTEM VERSIONING or altered ADD SYSTEM VERSIONING, as kept totals are
+(D51), and dropped with the table or DROP SYSTEM VERSIONING. A table is
+system-versioned exactly while it has a history, so its descriptor
+records nothing more.
+
+The table itself holds only current rows. Its indexes, its constraints,
+its readers and garbage collection of its versions are what they were,
+and none of them sees a historical row. A row changed by a transaction
+later than the one that began it is copied to the history as it is
+written, its end the transaction timestamp, in the same gate section's
+transaction, so rollback and recovery undo or redo it as any insert.
+The cost is one more insert for each update or delete, and a second
+storage per versioned table. No statement adds, alters or drops a
+column of a versioned table [§11.11 SR2, §11.12 SR2, §11.23 SR3], so a
+history is never reshaped.
+
+The transaction timestamp [§4.44] is the clock's instant as the
+transaction first changes data, of TIMESTAMP(6) WITH TIME ZONE at
++00:00 (IV072), kept for the rest of it. Every table with a system-time
+period, versioned or not, stamps the rows written to it with it: an
+insert as BEFORE triggers would see the row, an update where the row is
+written, both as the period's start, the end the highest value of the
+column's type.
 
 #### D33. Schema changes are transactional
 

@@ -50,6 +50,7 @@ mod shadow;
 mod sql2023;
 mod stats;
 mod structured;
+mod system_versioned;
 mod tailorings;
 mod temporal;
 mod temporal_references;

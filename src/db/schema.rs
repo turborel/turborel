@@ -211,7 +211,7 @@ impl State {
         let (granted, warned): (Vec<_>, Vec<_>) = defined?.into_iter().unzip();
         self.check_new_objects(&descs)?;
         let mut built = self.apply_schema(&*with_views, &descs, granted.concat(), made)?;
-        let asserted = self.schema_assertions(&s, (made, &mut built))?;
+        let asserted = self.schema_histories(&s, made, &mut built).and_then(|()| self.schema_assertions(&s, (made, &mut built)))?;
         let routines_warned = self.schema_routines(&s, &owner)?;
         let modules_warned = self.schema_modules(&s, zone, (made, epochs), &mut built)?;
         self.schema_triggers(&s)?;
@@ -304,9 +304,9 @@ impl State {
         Ok((desc, pending))
     }
 
-    /// The tables `descs`, their names of schema `names`, in the catalog now, completed:
-    /// each one's foreign keys `pending` resolved [ISO/IEC 9075:1992
-    /// §11.8], and its CHECK conditions bound [§11.9].
+    /// The tables `descs`, their names of schema `names`, in the catalog
+    /// now, completed: each one's foreign keys `pending` resolved [ISO/IEC
+    /// 9075:1992 §11.8], its CHECKs bound [§11.9], its keys judged.
     pub(super) fn complete_tables(&self, names: &str, descs: &mut [TableDesc], pending: &[Vec<Pending>]) -> Result<()> {
         for (desc, keys) in descs.iter_mut().zip(pending) {
             // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the table.
@@ -316,7 +316,7 @@ impl State {
                 let resolved = self.resolve_foreign_key(names, desc, p).map_err(about)?;
                 desc.constraints.push(resolved);
             }
-            self.bind_checks(desc).map_err(about)?;
+            self.bind_checks(desc).and_then(|()| constraints::periods::keyed_periods(desc)).map_err(about)?;
         }
         Ok(())
     }

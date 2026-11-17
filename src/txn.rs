@@ -74,7 +74,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
@@ -388,6 +388,7 @@ impl Transactions {
             state: Mutex::new(TxState { undo: UndoLog::new(space), ..TxState::default() }),
             running: Arc::new(Mutex::new(None)),
             stop,
+            stamp: OnceLock::new(),
         }
     }
 
@@ -490,6 +491,9 @@ pub(crate) struct Txn {
     running: Arc<Mutex<Option<ThreadId>>>,
     /// What cancels its statements: its session's (`txn/stop.rs`).
     pub(crate) stop: Arc<Stop>,
+    /// [ISO/IEC 9075-2:2023 §4.44] Its transaction timestamp, in
+    /// microseconds of UTC, once its first change set it (`Txn::stamp`).
+    stamp: OnceLock<i64>,
 }
 
 impl Txn {
@@ -500,6 +504,13 @@ impl Txn {
     /// SQLCODE -910 if a thread panicked while holding it.
     fn state(&self) -> Result<MutexGuard<'_, TxState>> {
         lock(&self.state)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §4.44] Its transaction timestamp, in
+    /// microseconds of UTC: set, by `now`, before its first change, and
+    /// the same for the rest of it.
+    pub(crate) fn stamp(&self, now: impl FnOnce() -> i64) -> i64 {
+        *self.stamp.get_or_init(now)
     }
 
     /// Records `entry`, which undoes a change it made.

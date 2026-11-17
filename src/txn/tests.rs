@@ -129,7 +129,7 @@ fn a_statement_reads_at_a_snapshot_of_its_own() {
 /// transaction it watches has its state locked.
 #[derive(Default)]
 struct Watching {
-    tx: std::sync::OnceLock<std::sync::Weak<Txn>>,
+    tx: OnceLock<std::sync::Weak<Txn>>,
     locked: Mutex<Vec<bool>>,
     records: crate::log::MemoryLog,
 }

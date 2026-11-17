@@ -61,6 +61,8 @@ cursor named by an extended name, [ALLOCATE CURSOR](allocate-cursor.md).
    in time are datetimes comparable with the period's columns, reference
    no column of the table, and invoke no function that is not
    deterministic or modifies SQL-data.
+6. A row deleted from a system-versioned table is kept as a historical
+   row, ending at the transaction timestamp.
 
 ## PRIVILEGES
 
@@ -73,6 +75,7 @@ DELETE on the table. SELECT on each other table a subquery reads.
 | 2A000 | -103 | The table does not exist or is read-only; the search condition has a set function outside a subquery; a rule of FOR PORTION OF is broken (rule 5) |
 | 2A000 | -104 | Its user lacks DELETE on the table, or SELECT on a table read |
 | 23000 | -201 | A row deleted is referenced by a foreign key whose action refuses it, or a referential action breaks a constraint |
+| 2201H | -301 | A row of a system-time period begins after the transaction timestamp: another transaction changed it later |
 | TB911 | -911 | A row was written by another transaction, not committed under LOCKS.WAIT OFF, or committed after this one's snapshot at REPEATABLE READ or SERIALIZABLE; or a wait for it would deadlock or passed LOCKS.TIMEOUT_MS: the statement is undone, and may be run again |
 | 25000 | -917 | The transaction is READ ONLY |
 | 02000 | 100 | Not an error: no row was deleted |

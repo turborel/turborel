@@ -34,6 +34,10 @@ pub const MAX_DISPLACEMENT: i16 = 13 * 60;
 const UNIX_EPOCH_DAYS: i64 = 719_162;
 /// The last day of 9999, from 0001-01-01.
 const LAST_DAY: i64 = 3_652_058;
+/// The microseconds from 0001-01-01 00:00 to the last of 9999-12-31.
+pub const LAST_INSTANT: i64 = (LAST_DAY + 1) * MICROS_PER_DAY - 1;
+/// The microseconds from 0001-01-01 to 9999-12-31.
+pub const LAST_DATE: i64 = LAST_DAY * MICROS_PER_DAY;
 
 /// What the SQL-session gives a statement's datetimes: the instant it
 /// runs at, as a timestamp's `utc` [ISO/IEC 9075:1992 §6.8 GR3], and its

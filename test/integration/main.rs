@@ -259,6 +259,7 @@ mod structured_values;
 mod subqueries;
 mod sums;
 mod system_tables;
+mod system_versioned;
 mod table_contents;
 mod table_encodings;
 mod table_settings;

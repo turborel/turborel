@@ -262,7 +262,8 @@ fn renumbered(c: &ConstraintDesc, table: &TableDesc, reshape: Reshape, own: bool
         ConstraintKind::Check { text, names, reads, horizon } => {
             let seen = match reshape {
                 Reshape::Remove(at) => horizon.without(&table.name, at),
-                Reshape::Keep | Reshape::Append => horizon.clone(),
+                Reshape::Two(Some([first, second])) => horizon.without(&table.name, first).without(&table.name, second),
+                Reshape::Keep | Reshape::Append | Reshape::Two(None) => horizon.clone(),
             };
             ConstraintKind::Check { text: text.clone(), names: names.clone(), reads: reads.clone(), horizon: seen }
         }

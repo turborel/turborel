@@ -106,8 +106,10 @@ pub(super) fn of_alter(a: &AlterAction) -> Option<SqlState> {
         AlterAction::DropColumn { .. }
         | AlterAction::AlterColumn { .. }
         | AlterAction::DropConstraint { .. }
-        | AlterAction::AddPeriod(_)
+        | AlterAction::AddPeriod(..)
         | AlterAction::DropPeriod { .. }
+        | AlterAction::AddVersioning(_)
+        | AlterAction::DropVersioning { .. }
         | AlterAction::RevertCollation(_)
         | AlterAction::Truncate { .. }
         | AlterAction::Storage(_) => None,

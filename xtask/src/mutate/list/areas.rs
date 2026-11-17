@@ -3,7 +3,7 @@
 use super::Mutation;
 
 /// Every area's mutations, in order.
-pub fn all() -> [&'static [Mutation]; 46] {
+pub fn all() -> [&'static [Mutation]; 47] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
@@ -51,5 +51,6 @@ pub fn all() -> [&'static [Mutation]; 46] {
         &super::structured::STRUCTURED,
         &super::temporal::TEMPORAL,
         &super::temporal_references::TEMPORAL_REFERENCES,
+        &super::system_versioned::SYSTEM_VERSIONED,
     ]
 }

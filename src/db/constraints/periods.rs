@@ -1,15 +1,15 @@
-//! Application-time periods [ISO/IEC 9075-2:2023 §4.16, §11.3, §11.27]: a
-//! period's name and columns judged, as CREATE TABLE defines one or ALTER
-//! TABLE adds one, and its period constraint, CHECK (start < end), named.
-//! A system-time period is of a system-versioned table (Feature T180),
-//! which is not yet, and is refused (RULES.md D18).
+//! Periods [ISO/IEC 9075-2:2023 §4.16, §11.3, §11.27]: a period's name and
+//! columns judged, as CREATE TABLE defines one or ALTER TABLE adds one; of
+//! an application-time period, its period constraint, CHECK (start < end),
+//! named; of the system-time period, SYSTEM_TIME, its columns those of
+//! ROW START and ROW END.
 
 use super::{Described, Pending, Within};
 use crate::ast::ReferentialAction;
 use crate::ast::{PeriodDefinition, PeriodName, TableConstraint, TableDefinition, TableElement};
-use crate::catalog::{ConstraintDesc, ConstraintKind, PeriodDesc, QualifiedName, TableDesc};
+use crate::catalog::{ColumnDesc, ConstraintDesc, ConstraintKind, PeriodDesc, QualifiedName, TableDesc};
 use crate::db::rule;
-use crate::error::{At, Code, Result, SqlError};
+use crate::error::{At, Result};
 use crate::parser::period_constraint;
 use crate::value::DataType;
 
@@ -24,6 +24,9 @@ pub(in crate::db) enum Defining {
     Created,
     /// ALTER TABLE ADD PERIOD [§11.27 SR5].
     Added,
+    /// ALTER TABLE ADD PERIOD FOR SYSTEM_TIME [§11.27 SR4], its columns
+    /// added with it.
+    AddedSystem,
 }
 
 impl Defining {
@@ -33,47 +36,37 @@ impl Defining {
         match self {
             Defining::Created => format!("§11.3 {created}"),
             Defining::Added => format!("§11.27 {added}"),
+            Defining::AddedSystem => "§11.27 SR4".to_owned(),
         }
     }
 }
 
-/// [ISO/IEC 9075-2:2023 §4.16.1] The application-time period name of
-/// `name`.
-///
-/// # Errors
-///
-/// SQLCODE -900 if it is SYSTEM_TIME, a system-time period, of a
-/// system-versioned table, which is not yet (RULES.md D18).
-pub(in crate::db) fn application(name: &PeriodName) -> Result<&str> {
-    match name {
-        PeriodName::Application(n) => Ok(n),
-        PeriodName::SystemTime => Err(SqlError::new(
-            Code::Unsupported,
-            "[DESIGN] PERIOD FOR SYSTEM_TIME is the period of a system-versioned table (Feature T180), not yet supported (RULES.md D18)",
-        )),
-    }
-}
-
-/// [ISO/IEC 9075-2:2023 §11.3 SR1, SR2a] The `<table period definition>`
-/// of `t`, if it has one. [SR2b] A typed table's `<typed table element
+/// [ISO/IEC 9075-2:2023 §11.3 SR1, SR2a, SR3] The `<table period
+/// definition>`s of `t`. [SR2b] A typed table's `<typed table element
 /// list>` has none to write (`parser/structured/typed.rs`).
 ///
 /// # Errors
 ///
-/// SQLCODE -103 if it has more than one application-time period \[SR1\],
-/// or is temporary \[SR2a\]; -900 of a system-time period.
-pub(in crate::db) fn written_period(t: &TableDefinition) -> Result<Option<&PeriodDefinition>> {
-    let mut periods = t.elements.iter().filter_map(|e| if let TableElement::Period(p) = e { Some(p) } else { None });
-    let Some(first) = periods.next() else { return Ok(None) };
-    application(&first.name)?;
-    if let Some(second) = periods.next() {
-        application(&second.name)?;
-        return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.3 SR1] table {} defines more than one application-time period", t.name.ident)));
+/// SQLCODE -103 if it has more than one system-time period or more than
+/// one application-time period \[SR1\], or a period of a temporary table
+/// \[SR2a\]; or WITH SYSTEM VERSIONING without a system-time period
+/// \[SR3\].
+pub(in crate::db) fn written_periods(t: &TableDefinition) -> Result<Vec<&PeriodDefinition>> {
+    let periods: Vec<&PeriodDefinition> =
+        t.elements.iter().filter_map(|e| if let TableElement::Period(p) = e { Some(p) } else { None }).collect();
+    let system = periods.iter().filter(|p| p.name == PeriodName::SystemTime).count();
+    if system > 1 || periods.len().saturating_sub(system) > 1 {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.3 SR1] table {} defines more than one period of a kind", t.name.ident)));
     }
-    if t.temporary.is_some() {
+    if t.temporary.is_some() && !periods.is_empty() {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.3 SR2a] temporary table {} has no period", t.name.ident)));
     }
-    Ok(Some(first))
+    if let Some(at) = t.versioning.filter(|_| system == 0) {
+        let msg =
+            format!("[ISO/IEC 9075-2:2023 §11.3 SR3] table {} is WITH SYSTEM VERSIONING but has no PERIOD FOR SYSTEM_TIME", t.name.ident);
+        return Err(rule(msg).or_at(at));
+    }
+    Ok(periods)
 }
 
 /// [ISO/IEC 9075-2:2023 §11.3 SR2e v 2 B, GR4e] Of table `desc`, defined
@@ -90,27 +83,69 @@ pub(in crate::db) fn define_period(
     desc: &mut TableDesc,
     taken: &[QualifiedName],
 ) -> Result<()> {
-    let Some(def) = written_period(t)? else { return keyed_periods(desc) };
-    let name = application(&def.name)?;
-    let mut all = taken.to_vec();
-    all.extend(desc.constraints.iter().map(|c| c.name.clone()));
-    let constraint = constraint_name(&desc.name, name, &all);
-    let period = period_of(desc, def, constraint.clone(), Defining::Created).or_at(def.at)?;
-    let (table, columns) = (desc.name.clone(), desc.columns.clone());
-    let mut d = Described::new((&table, names, within), &columns, all);
-    d.table_constraint(&period_check(def, &constraint)?)?;
-    desc.constraints.extend(d.constraints);
-    desc.periods.push(period);
+    let defs = written_periods(t)?;
+    system_columns(desc, defs.iter().find(|d| d.name == PeriodName::SystemTime).copied())?;
+    for def in defs {
+        let PeriodName::Application(name) = &def.name else {
+            desc.periods.push(period_of(desc, def, None, Defining::Created).or_at(def.at)?);
+            continue;
+        };
+        let mut all = taken.to_vec();
+        all.extend(desc.constraints.iter().map(|c| c.name.clone()));
+        let constraint = constraint_name(&desc.name, name, &all);
+        let period = period_of(desc, def, Some(constraint.clone()), Defining::Created).or_at(def.at)?;
+        let (table, columns) = (desc.name.clone(), desc.columns.clone());
+        let mut d = Described::new((&table, names, within), &columns, all);
+        d.table_constraint(&period_check(def, &constraint)?)?;
+        desc.constraints.extend(d.constraints);
+        desc.periods.push(period);
+    }
     keyed_periods(desc)
 }
 
-/// [ISO/IEC 9075-2:2023 §11.7 SR3b] Each unique constraint of `desc`
-/// WITHOUT OVERLAPS of a period of it.
+/// [ISO/IEC 9075-2:2023 §11.4 SR6a] Of `desc`, a table whose system-time
+/// period is `system`, if it defines one, each column of ROW START or ROW
+/// END that period's start or end column.
 ///
 /// # Errors
 ///
-/// SQLCODE -103 of one of a period it has not.
+/// SQLCODE -103 of another.
+pub(in crate::db) fn system_columns(desc: &TableDesc, system: Option<&PeriodDefinition>) -> Result<()> {
+    for c in &desc.columns {
+        let Some(end) = c.system_time() else { continue };
+        let bound = system.map(|p| if end { &p.end.0 } else { &p.start.0 });
+        if bound != Some(&c.name) {
+            let (row, bounds) = if end { ("END", "end") } else { ("START", "start") };
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §11.4 SR6a] column {} is GENERATED ALWAYS AS ROW {row}, so it is the {bounds} column of a PERIOD FOR SYSTEM_TIME",
+                c.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// [ISO/IEC 9075-2:2023 §11.7 SR3b, SR6b; §11.8 SR10] Each unique
+/// constraint of `desc` WITHOUT OVERLAPS of a period of it; and no unique
+/// constraint or foreign key of a system-time period column of it.
+///
+/// # Errors
+///
+/// SQLCODE -103 of one of a period it has not, or of such a column.
 pub(in crate::db) fn keyed_periods(desc: &TableDesc) -> Result<()> {
+    for c in &desc.constraints {
+        let (columns, cited) = match &c.kind {
+            ConstraintKind::Unique { columns, .. } => (columns, "§11.7 SR6b"),
+            ConstraintKind::ForeignKey(fk) => (&fk.columns, "§11.8 SR10"),
+            ConstraintKind::NotNull(_) | ConstraintKind::Check { .. } => continue,
+        };
+        if let Some(column) = columns.iter().filter_map(|&at| desc.columns.get(at)).find(|col| col.system_time().is_some()) {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 {cited}] constraint {} of {} is of {}, a system-time period column",
+                c.name, desc.name, column.name
+            )));
+        }
+    }
     for c in &desc.constraints {
         let ConstraintKind::Unique { period: Some(period), .. } = &c.kind else { continue };
         if !desc.periods.iter().any(|p| p.name == *period) {
@@ -174,12 +209,15 @@ fn datetime_bound(t: &DataType) -> bool {
     matches!(t, DataType::Date | DataType::Timestamp { .. })
 }
 
-/// [ISO/IEC 9075-2:2023 §11.3 SR2d, SR2e; §11.27 SR5c, SR5e to SR5i] The
-/// descriptor of the period `def` of `desc`, defined as `defining` says,
-/// its period constraint named `constraint`: its start and end columns two
-/// of the table's, of one type, DATE or a timestamp type, written so if
-/// CREATE TABLE defines it, each known not nullable, neither an identity
-/// nor a generated column; and no column named as the period.
+/// [ISO/IEC 9075-2:2023 §11.3 SR2d, SR2e; §11.27 SR4, SR5c, SR5e to
+/// SR5i] The descriptor of the period `def` of `desc`, defined as
+/// `defining` says, its period constraint, of an application-time period,
+/// named `constraint`: its start and end columns two of the table's, of
+/// one type, DATE or a timestamp type, written so if CREATE TABLE defines
+/// it, each known not nullable; of an application-time period, neither an
+/// identity nor a generated column, nor of a system-time period; of the
+/// system-time period, its start of ROW START and its end of ROW END
+/// \[SR2e v 1\]; and no column named as the period.
 ///
 /// # Errors
 ///
@@ -187,10 +225,10 @@ fn datetime_bound(t: &DataType) -> bool {
 pub(in crate::db) fn period_of(
     desc: &TableDesc,
     def: &PeriodDefinition,
-    constraint: QualifiedName,
+    constraint: Option<QualifiedName>,
     defining: Defining,
 ) -> Result<PeriodDesc> {
-    let name = application(&def.name)?;
+    let name = def.name.name();
     let table = &desc.name;
     if desc.column(name).is_some() {
         let cited = defining.cite("SR2d", "SR5c");
@@ -213,7 +251,7 @@ pub(in crate::db) fn period_of(
     // [§11.3 SR2e iii] CREATE TABLE judges the <data type or domain name>
     // written, which a domain's name is not DATE or a timestamp type;
     // [§11.27 SR5g] ALTER TABLE, the declared types.
-    let written = defining == Defining::Added || (start.domain.is_none() && end.domain.is_none());
+    let written = defining != Defining::Created || (start.domain.is_none() && end.domain.is_none());
     if !written || !datetime_bound(&start.data_type) || start.data_type != end.data_type {
         let cited = defining.cite("SR2e iii", "SR5g");
         return Err(rule(format!(
@@ -223,21 +261,43 @@ pub(in crate::db) fn period_of(
         .or_at(def.start.1));
     }
     for (at, c, place) in [(start_at, start, def.start.1), (end_at, end, def.end.1)] {
+        period_column(desc, def, (at == end_at, c), defining).or_at(place)?;
         if !not_nullable(desc, at) {
             let cited = defining.cite("SR2e iv", "SR5h");
             return Err(rule(format!("[ISO/IEC 9075-2:2023 {cited}] column {} of period {name} is not NOT NULL NOT DEFERRABLE", c.name))
                 .or_at(place));
         }
-        if c.generated.is_some() {
-            let cited = defining.cite("SR2e v 2 A", "SR5i");
-            return Err(rule(format!(
-                "[ISO/IEC 9075-2:2023 {cited}] column {} of period {name} is an identity or a generated column",
-                c.name
-            ))
-            .or_at(place));
-        }
     }
     Ok(PeriodDesc { name: name.to_owned(), start: start.name.clone(), end: end.name.clone(), constraint })
+}
+
+/// [ISO/IEC 9075-2:2023 §11.3 SR2e v; §11.27 SR4d, SR5i] That `c`, the
+/// end column of period `def` of `desc` if `end`, else its start column, is
+/// of ROW END or ROW START of the system-time period; of an
+/// application-time period, neither an identity nor a generated column, nor
+/// of a system-time period.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is not.
+fn period_column(desc: &TableDesc, def: &PeriodDefinition, (end, c): (bool, &ColumnDesc), defining: Defining) -> Result<()> {
+    let name = def.name.name();
+    if def.name == PeriodName::SystemTime {
+        if c.system_time() == Some(end) {
+            return Ok(());
+        }
+        let row = if end { "END" } else { "START" };
+        let cited = defining.cite("SR2e v 1", "SR4d");
+        return Err(rule(format!(
+            "[ISO/IEC 9075-2:2023 {cited}] column {} of period {name} of {} is not GENERATED ALWAYS AS ROW {row}",
+            c.name, desc.name
+        )));
+    }
+    if c.generated.is_some() {
+        let cited = defining.cite("SR2e v 2 A", "SR5i");
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 {cited}] column {} of period {name} is an identity or a generated column", c.name)));
+    }
+    Ok(())
 }
 
 /// [ISO/IEC 9075-2:2023 §11.23 SR6] Whether column `column` of `desc` may
@@ -265,7 +325,7 @@ pub(in crate::db) fn removed_constraint(desc: &mut TableDesc, at: usize) -> Resu
     let removed = desc.constraints.remove(at);
     let dropped = &removed.name;
     for p in &desc.periods {
-        if p.constraint == *dropped {
+        if p.constraint.as_ref() == Some(dropped) {
             return Err(rule(format!(
                 "[ISO/IEC 9075-2:2023 §11.26 SR10a] {dropped} is the constraint of period {} of {}, dropped with the period",
                 p.name, desc.name

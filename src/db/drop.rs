@@ -78,6 +78,7 @@ impl State {
         }
         catalog.revoke_all(qn);
         catalog.remove_table(qn);
+        self.drop_history(&mut *catalog, qn, &mut dropped);
         let generation = self.generation_of(qn);
         self.retired.entry(qn.clone()).and_modify(|g| *g = (*g).max(generation)).or_insert(generation);
         self.catalog = Arc::from(catalog);

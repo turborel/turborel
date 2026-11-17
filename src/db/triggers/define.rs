@@ -231,7 +231,12 @@ impl State {
         let mut sequences = drawn.into_inner();
         sequences.sort();
         sequences.dedup();
-        Ok((reads, once_each(uses.into_inner()), sequences))
+        let referenced = once_each(uses.into_inner());
+        // [ISO/IEC 9075-2:2023 §11.49 SR12, SR14c] none of its subject
+        // table's system-time period columns.
+        let own: Vec<_> = referenced.iter().filter(|(table, _)| *table == desc.table).cloned().collect();
+        self.no_system_time(&own, (&format!("the triggered action of trigger {}", desc.name), "§11.49 SR12"), false)?;
+        Ok((reads, referenced, sequences))
     }
 
     /// The INSERT `ins` of a triggered action bound in `cx` as its owner

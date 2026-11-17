@@ -199,6 +199,41 @@ impl Parser {
         Ok(SqlStatement::AlterTable { table, action, text: self.text_from(start) })
     }
 
+    /// [ISO/IEC 9075-2:2023 §11.27] ADD <table period definition>, ADD
+    /// written: the period, and the columns it adds, of SYSTEM_TIME.
+    ///
+    /// # Errors
+    ///
+    /// The text is no period, or a column of it no `<column definition>`.
+    fn added_period(&mut self) -> Result<AlterAction> {
+        let period = self.period_definition()?;
+        // [§11.27] <add system time period column list>.
+        let mut columns = Vec::new();
+        while columns.len() < 2 && self.accept_kw(kw::ADD) {
+            self.accept_kw(kw::COLUMN);
+            columns.push(self.column_definition()?);
+        }
+        Ok(AlterAction::AddPeriod(period, columns))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.29, §11.30] ADD SYSTEM VERSIONING, or DROP
+    /// SYSTEM VERSIONING <drop behavior>, if the text is at one.
+    ///
+    /// # Errors
+    ///
+    /// DROP SYSTEM VERSIONING is of no `<drop behavior>`.
+    fn versioning_action(&mut self) -> Result<Option<AlterAction>> {
+        let (add, drop) = (self.at_versioning(kw::ADD), self.at_versioning(kw::DROP));
+        if !add && !drop {
+            return Ok(None);
+        }
+        let at = self.here();
+        for _ in 0_u8..3 {
+            self.advance();
+        }
+        Ok(Some(if add { AlterAction::AddVersioning(at) } else { AlterAction::DropVersioning { at, behavior: self.drop_behavior()? } }))
+    }
+
     /// [ISO/IEC 9075:1992 §11.10] `<alter table action>`, alone: as the log
     /// keeps it (`Change::AlterTable`).
     ///
@@ -234,15 +269,17 @@ impl Parser {
             let options = if self.accept_kw(kw::WITH) { self.table_options()? } else { Vec::new() };
             return Ok(AlterAction::Storage(TableStorage { engine, options }));
         }
+        if let Some(versioning) = self.versioning_action()? {
+            return Ok(versioning);
+        }
         if self.accept_kw(kw::ADD) {
             // [§11.16] ADD <table constraint definition>, or [§11.11] ADD
             // [COLUMN] <column definition>.
             if self.at_table_constraint() {
                 return Ok(AlterAction::AddConstraint(self.table_constraint()?));
             }
-            // [ISO/IEC 9075-2:2023 §11.27] ADD <table period definition>.
             if self.at_period() {
-                return Ok(AlterAction::AddPeriod(self.period_definition()?));
+                return self.added_period();
             }
             self.accept_kw(kw::COLUMN);
             return Ok(AlterAction::AddColumn(self.column_definition()?));
