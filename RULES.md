@@ -122,6 +122,7 @@ verification approach DO-178C expects (§8).
 | D82 | System-versioned tables keep their historical rows in a hidden table of their own |
 | D83 | A column is renamed in place, refused while a text names it |
 | D85 | Geometry values start with XY representations through SqlType |
+| D86 | XML values are trees of the data model, read by a parser of our own |
 
 ### The project
 
@@ -2793,6 +2794,41 @@ functions have one learned plan shape even when preparation changes the
 function object. Ordinary function probes still require object identity;
 matching SQL names alone never establish equivalence.
 
+#### D86. XML values are trees of the data model, read by a parser of our own
+
+SQL/XML (ISO/IEC 9075-14) makes an XML value an XQuery sequence. Its
+nodes come from parsing text (§10.16) or from constructors. `xml::parse`
+reads XML 1.0 Third Edition and XML 1.1, as Namespaces in XML 1.0 and 1.1
+modify them. It is written here, as D3 requires.
+
+The parser does not validate. It reads the internal DTD subset, expands
+its entities and applies its attribute defaults. It reads no external
+subset and no external entity, so no parse opens a file or a URL. A
+reference that would need such an entity, or a declaration not read, is a
+data exception, since the data model has every entity expanded. Binary
+strings are decoded from UTF-8, UTF-16, UTF-16BE, UTF-16LE, ISO-8859-1 or
+US-ASCII; any other encoding is refused.
+
+A tree (`xml::Tree`) holds its nodes in document order, an element's
+attributes right after it. Each node links to its parent, first child and
+next sibling, so a node's index is its place in document order. Element
+and attribute names are kept once per tree and nodes refer to them by
+number, the tokenization Pal et al. describe. All text is in one buffer.
+Namespace declarations are kept on the element that makes them, as the
+data model allows.
+
+Nothing recurses. Entities are read on a stack of texts, elements on a
+stack of open elements, content models on a stack of groups. Two bounds
+keep each finite, and a text past either is SQLCODE -900 (D18):
+
+- `MAX_NESTING`, 512: how deep elements, and content-model groups, nest.
+- `MAX_TEXT`, 16 MiB: a tree's text, and what entities' replacement texts
+  add to a parse, so nested entities cannot expand without end.
+
+The stored form of an XML value and its indexes (the primary, path, value
+and property indexes of Pal et al.) are not decided here. They come with
+the XML type and are agreed before they land.
+
 ## 2. Project layout
 
 ```
@@ -3076,6 +3112,13 @@ was fixed that week, and lint baselines and over-long files were paid down.
   qualified Rust toolchain.
 - *The Rust Programming Language*, ch. 11; *The Cargo Book*; the Rust API
   Guidelines; the Rust Reference on integer overflow.
+- ISO/IEC 9075-14, *SQL/XML*, written from its 2006 draft, and the W3C
+  texts it names: XML 1.0 (third edition) and 1.1, Namespaces in XML 1.0
+  and 1.1, the XML Information Set, and the XQuery 1.0 and XPath 2.0 data
+  model.
+- S. Pal, I. Cseri, O. Seeliger, G. Schaller, L. Giakoumakis and V.
+  Zolotov, "Indexing XML Data Stored in a Relational Database", VLDB
+  2004: tokenized names, and the XML indexes (D86).
 - P. L. Lehman and S. B. Yao, "Efficient Locking for Concurrent Operations
   on B-Trees", ACM TODS 6(4), 1981: the B-link tree.
 - W. Litwin, "Linear Hashing: A New Tool for File and Table Addressing",

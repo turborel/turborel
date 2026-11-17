@@ -1,0 +1,56 @@
+//! SQL/XML [ISO/IEC 9075-14:2006 draft §4.2]: XML values, which are
+//! XQuery sequences [§4.2.3], and what makes them. Part 14 is cited by its
+//! 2006 draft, and the W3C texts it names by its own reference keys
+//! [§2.2], at the editions it names: [XML 1.0] Third Edition, [XML 1.1],
+//! [Namespaces 1.0] of 1999 and [Namespaces 1.1], \[Infoset\] Second
+//! Edition, \[XQueryDM\] the data model of XQuery 1.0 and XPath 2.0 as a
+//! Candidate Recommendation of 3 November 2005. \[XML\] and \[Namespaces\]
+//! cite what both versions say alike.
+//!
+//! An XML text is parsed (`xml/parse.rs`) [§10.16] by the characters and
+//! names of its version (`xml/chars.rs`) into a tree of the data model's
+//! nodes (`xml/tree.rs`) [XQueryDM §6], built in document order
+//! (`xml/tree/build.rs`).
+//!
+//! \[DESIGN\] RULES.md D86: a tree is an arena of its nodes in document
+//! order, element and attribute names tokenized into a table of the tree,
+//! text in one buffer. Every walk of a tree follows its links, so none
+//! recurses, and elements nest at most `MAX_NESTING` deep.
+
+mod chars;
+mod parse;
+mod tree;
+
+pub use chars::{
+    COLON, VERSION_10, VERSION_11, Version, is_char, is_literal, is_name, is_name_char, is_name_start, is_ncname, is_nmtoken,
+    is_pubid_char, is_restricted, is_space,
+};
+pub use parse::{Syntax, Whitespace, parse, parse_bytes};
+pub use tree::{Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree};
+
+use crate::error::{Code, SqlError};
+
+/// \[DESIGN\] How deep elements nest at most in a tree, so a walk of one
+/// that keeps a stack of its ancestors keeps a bounded one (RULES.md
+/// R-CF-6, D86). [XML 1.0] sets no limit, so a text nested deeper is
+/// SQLCODE -900 (D18). The value is no measurement: it is a bound past
+/// the nesting of the documents and messages an application stores.
+pub const MAX_NESTING: usize = 512;
+
+/// \[DESIGN\] How many octets of text a tree holds at most, its names and
+/// the characters of its text, comment, processing instruction and
+/// attribute nodes, and how many characters entities' replacement texts
+/// add to a parse, so a value is bounded in memory and entities that
+/// expand to more are refused rather than read for ever (RULES.md D18,
+/// D86). It is the bound geometry's readers have, `geometry::MAX_BYTES`
+/// (D85).
+pub const MAX_TEXT: usize = 16 * 1024 * 1024;
+
+/// The error of an XML value beyond turborel's limits, `why` (RULES.md
+/// D18).
+fn beyond(why: &str) -> SqlError {
+    SqlError::new(Code::Unsupported, format!("[DESIGN] the XML value is beyond turborel's limits: {why}"))
+}
+
+#[cfg(test)]
+mod tests;
