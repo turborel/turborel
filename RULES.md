@@ -2611,6 +2611,29 @@ no candidate. Reads use the ordinary table scan's visibility, cancellation
 and serializable tracking. This path promises no input order; an ordered
 join retains probes. EXPLAIN calls the choice `AdaptiveSpatialJoin`.
 
+The same-SRID column proof and non-raising residuals also establish that
+this join has no General Rule error of its own. An intersection can report
+an SRID mismatch, but cannot encounter one between those columns. A cursor
+can therefore stream its results without first retaining all pairs for
+D15's eager error check (`physical/raising.rs`). A raising outer plan or
+output expression still forces that check. Malformed stored payloads
+remain storage errors; this proof neither suppresses them nor validates
+polygon topology. Other spatial plans remain conservative.
+
+Non-raising spatial joins with column-only output use lookahead of at
+most 64 result rows (`db/stream/chunks.rs`). This amortizes transitions
+between geometry evaluation and cursor fetching without retaining the
+complete result. The first fetch returns its row directly, without waiting
+to fill a group. Row slots and payloads draw on the work-area and global
+memory budgets. A refusal keeps the already-produced current row after
+the reserved prefix and resumes direct streaming; it adds no resource
+error. A storage error follows all earlier rows and ends the stream.
+The ordinary cancellation guard surrounds lookahead: a cancel while
+filling a group fails the active fetch immediately and remains an error
+on later fetches, never a successful end of data (D44).
+Closing the cursor releases the reservation. A same-session write still
+settles the cursor through this iterator before changing its input (D15).
+
 `ST_DISTANCE` measures minimum Cartesian separation in coordinate units,
 returning DOUBLE PRECISION, zero for intersecting sets and NULL for empty
 sets. It applies the same SRID and validity requirements. Outward-rounded

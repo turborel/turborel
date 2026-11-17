@@ -81,6 +81,15 @@ rest of the join condition for each candidate. Selective lookups, missing
 estimates or insufficient memory keep the ordinary index join. A query
 needing the join's input order also keeps it.
 
+The same-SRID guarantee also lets this join stream its results without
+buffering every pair first. A query with another expression that can
+raise, such as division in its SELECT list, still performs the normal
+eager error check before opening its cursor.
+Column-only spatial results return the first row directly, then use small
+batches of up to 64 rows. Their
+buffer follows the work-area and database memory budgets; if it cannot
+grow, fetching continues row by row without losing buffered results.
+
 ## Find points in a window
 
 Use two REAL, FLOAT or DOUBLE PRECISION columns in `(X, Y)` order:

@@ -1,6 +1,6 @@
 //! A read-only cursor's rows: read from its plan as the cursor is fetched
-//! from, rather than all at OPEN, so a cursor over a large table holds
-//! one row at a time.
+//! from, rather than all at OPEN, with bounded lookahead for eligible
+//! spatial output instead of retaining the complete result.
 //!
 //! OPEN creates the cursor's table [X3.135-1986 §8.8 GR3b]; reading it
 //! later must give the same rows, and fail as OPEN would have. So:
@@ -20,6 +20,8 @@
 
 use std::sync::{Arc, Mutex};
 
+mod chunks;
+
 use super::{Completion, Database, State};
 use crate::binder::OutColumn;
 use crate::catalog::QualifiedName;
@@ -32,6 +34,9 @@ use crate::storage::Row;
 use crate::sync::lock_builtin;
 use crate::txn::{Stop, TxId, Txn};
 use crate::value::datetime::show_in;
+
+#[cfg(test)]
+mod spatial;
 
 /// \[DESIGN\] The rows of a read-only cursor.
 pub(super) struct Stream {
@@ -83,8 +88,11 @@ impl Stream {
     /// The plan, read now, raises one, or its rows cannot be held.
     pub(super) fn open(physical: Plan, reads: Arc<[QualifiedName]>, st: &Arc<State>, tx: TxId) -> Result<Stream> {
         let read_now = physical.can_raise();
-        let rest = Some(execute(physical, st, tx));
-        let mut stream = Stream { ready: None, failure: None, rest, reads, space: st.list_space() };
+        let buffered = !read_now && chunks::eligible(&physical);
+        let space = st.list_space();
+        let input = execute(physical, st, tx);
+        let rest = Some(if buffered { chunks::read(input, &st.memory, space.limit, st.tx.stop_of(tx)) } else { input });
+        let mut stream = Stream { ready: None, failure: None, rest, reads, space };
         if read_now {
             stream.read_ahead();
             if let Some(e) = stream.failure.take() {

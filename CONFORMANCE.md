@@ -1915,6 +1915,15 @@ Column-only projections can be built directly from the two source rows
 after exact intersection refinement (`exec/join/indexed/refined.rs`).
 Repeated columns and their order are preserved; additional ON conditions
 still evaluate before projection. This changes row construction only.
+For the proven same-SRID adaptive join, the relationship and its residuals
+cannot raise a SQL expression error. Its cursor streams unless another
+part of the plan can raise; such plans still evaluate eagerly before OPEN
+returns (`physical/raising.rs`, D15). Stored-data errors are not suppressed.
+Column-only spatial output gives its first row directly, then uses at most
+64 rows of lookahead, reserving
+its buffer within the memory budgets. Refusal preserves the current row
+after its buffered prefix and resumes direct streaming. Storage errors
+remain ordered after their preceding rows (`db/stream/chunks.rs`).
 ST_DISTANCE returns the approximate minimum Cartesian distance in
 coordinate units, zero for intersections and NULL for an empty set
 (OGC 06-103r4 §6.1.2.4, `src/geometry/distance.rs`). The same SRID and

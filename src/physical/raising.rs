@@ -30,7 +30,14 @@ impl Plan {
                 let owned = own.as_deref().is_some_and(|(l, r)| [l, r].iter().any(|c| c.as_ref().is_some_and(Cond::can_raise)));
                 left.can_raise() || right.can_raise() || owned || cond.as_ref().is_some_and(Cond::can_raise)
             }
-            Plan::IndexJoin { left, cond, .. } => left.can_raise() || cond.as_ref().is_some_and(Cond::can_raise),
+            // Spatial adaptation is admitted only for same-SRID geometry
+            // columns and non-raising residuals. Intersects has no other
+            // General Rule error on those stored values. Decode damage is
+            // still a storage failure, as for an ordinary scan (D15, D78).
+            Plan::IndexJoin { spatial, outer, left, cond, .. } => {
+                let proved = *spatial && !outer;
+                left.can_raise() || (!proved && cond.as_ref().is_some_and(Cond::can_raise))
+            }
             Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),
             Plan::Unnest(u) => {
                 u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(Cond::can_raise) || u.input.can_raise()
