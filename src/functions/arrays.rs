@@ -89,7 +89,7 @@ impl ScalarFunction for ElementOf {
 }
 
 /// [ISO/IEC 9075-2:2023 §6.31 GR1b, GR7] `<cardinality expression>`: the
-/// number of elements, null of a null array.
+/// number of elements, null of a null array or multiset.
 pub struct CardinalityOf(pub DataType);
 
 impl ScalarFunction for CardinalityOf {
@@ -100,10 +100,9 @@ impl ScalarFunction for CardinalityOf {
         Ok(self.0.clone())
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
-        Ok(match elements(args.first(), CARDINALITY)? {
-            Some(a) => Value::Exact(Decimal::new(i128::try_from(a.len()).unwrap_or(i128::MAX), 0)),
-            None => Value::Null,
-        })
+        let counted =
+            if let Some(Value::Multiset(m)) = args.first() { Some(m.len()) } else { elements(args.first(), CARDINALITY)?.map(|a| a.len()) };
+        Ok(counted.map_or(Value::Null, |n| Value::Exact(Decimal::new(i128::try_from(n).unwrap_or(i128::MAX), 0))))
     }
 }
 

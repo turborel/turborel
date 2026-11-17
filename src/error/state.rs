@@ -213,6 +213,9 @@ impl SqlState {
     /// Data exception: array data, right truncation [ISO/IEC 9075-2:2023
     /// §9.2 GR3b xxii 2B].
     pub const ARRAY_DATA_RIGHT_TRUNCATION: SqlState = SqlState(*b"2202F");
+    /// Data exception: multiset value overflow [ISO/IEC 9075-2:2023
+    /// §10.9 GR3b].
+    pub const MULTISET_VALUE_OVERFLOW: SqlState = SqlState(*b"2200Q");
     /// [ISO/IEC 9075-4:2006 draft §14.5 GR4a] Data exception: null value in
     /// field reference.
     pub const NULL_VALUE_IN_FIELD_REFERENCE: SqlState = SqlState(*b"2202A");

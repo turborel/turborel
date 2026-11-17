@@ -45,27 +45,22 @@ pub fn position(p: &DataType, t: &DataType) -> Option<u8> {
         DataType::Date => matches!(t, DataType::Date).then_some(FIRST),
         DataType::Time { .. } => matches!(t, DataType::Time { .. }).then_some(FIRST),
         DataType::Timestamp { .. } => matches!(t, DataType::Timestamp { .. }).then_some(FIRST),
-        // [SR17] the element type's list, of arrays, each designator in
-        // its element's place.
-        DataType::Array(a) => match t {
-            DataType::Array(b) => position(&a.element, &b.element),
-            DataType::Character { .. }
-            | DataType::Varying { .. }
-            | DataType::Binary { .. }
-            | DataType::VarBinary { .. }
-            | DataType::Lob { .. }
-            | DataType::Exact { .. }
-            | DataType::Approximate { .. }
-            | DataType::DecFloat { .. }
-            | DataType::Interval(_)
-            | DataType::Boolean
-            | DataType::Date
-            | DataType::Time { .. }
-            | DataType::Timestamp { .. }
-            | DataType::Row(_)
-            | DataType::Distinct(_)
-            | DataType::Extension(_) => None,
-        },
+        // [SR17] the element type's list, of collections of one kind,
+        // ARRAY or MULTISET, each designator in its element's place.
+        DataType::Array(a) => {
+            if let DataType::Array(b) = t {
+                position(&a.element, &b.element)
+            } else {
+                None
+            }
+        }
+        DataType::Multiset(a) => {
+            if let DataType::Multiset(b) = t {
+                position(&a.element, &b.element)
+            } else {
+                None
+            }
+        }
         // [SR4] a user-defined type's own name, as no distinct type has a
         // proper supertype; [SR19] a row type is no parameter's type.
         DataType::Distinct(_) | DataType::Row(_) | DataType::Extension(_) => (p == t).then_some(FIRST),
@@ -147,6 +142,7 @@ fn of_string(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,
@@ -191,6 +187,7 @@ fn of_number(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,

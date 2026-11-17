@@ -36,6 +36,8 @@ const EXTENSION_TAG: u8 = 6;
 const BOOL_TAG: u8 = 7;
 const COMPOSITE_TAG: u8 = 8;
 const NULL_TAG: u8 = 9;
+/// A multiset's bucket, its elements' hashes summed.
+const BAG_TAG: u8 = 10;
 
 /// The two halves of the hash of `v`'s bucket; none for the null value,
 /// which equals nothing.
@@ -69,6 +71,10 @@ pub fn hashed(v: &Value) -> Option<(u64, u64)> {
         Bucket::Extension(b) => {
             key.push(EXTENSION_TAG);
             key.extend_from_slice(&b);
+        }
+        Bucket::Bag(sum) => {
+            key.push(BAG_TAG);
+            key.extend_from_slice(&sum.to_le_bytes());
         }
         Bucket::Composite(parts) => {
             key.push(COMPOSITE_TAG);

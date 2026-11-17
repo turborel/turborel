@@ -206,6 +206,7 @@ fn kept(t: &DataType) -> bool {
         | DataType::VarBinary { .. }
         | DataType::Lob { .. }
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Extension(_) => false,
     }

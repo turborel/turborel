@@ -37,8 +37,8 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 07007 | Dynamic SQL error: an INTO clause is needed for the columns |
 | 07008 | Dynamic SQL error: invalid descriptor count: COUNT less than 0 or more than the occurrences |
 | 07009 | Dynamic SQL error: invalid descriptor index: an item number not of the occurrences |
-| 0700C | Dynamic SQL error: undefined DATA value: DATA got of an item of a row, or of an array's element |
-| 0700D | Dynamic SQL error: invalid DATA target: DATA set of an item of a row, or of an array's element |
+| 0700C | Dynamic SQL error: undefined DATA value: DATA got of an item of a row, or of an array's or a multiset's element |
+| 0700D | Dynamic SQL error: invalid DATA target: DATA set of an item of a row, or of an array's or a multiset's element |
 | 0700E | Dynamic SQL error: invalid LEVEL value: a LEVEL set out of order with the items before it |
 | 08000 | Connection exception |
 | 08001 | Connection exception: the client cannot connect |
@@ -51,7 +51,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 0A000 | Feature not supported: valid SQL turborel does not process |
 | 0A001 | Feature not supported: multiple server transactions |
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
-| 21000 | Cardinality violation: a subquery of one row gave more |
+| 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
 | 22000 | Data exception |
 | 22001 | String data, right truncation: a string too long for its type |
 | 22002 | Null value, no indicator parameter |
@@ -62,6 +62,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2200D | Invalid escape octet: an octet LIKE's escape octet not of one octet |
 | 2200E | Null value in array target: an element assigned of a null array |
 | 2200H | Sequence generator limit exceeded: NEXT VALUE FOR of a generator of NO CYCLE past its last value |
+| 2200Q | Multiset value overflow: a multiset of more than 65,535 elements |
 | 22009 | Invalid time zone displacement value |
 | 22011 | Substring error |
 | 22012 | Division by zero |
@@ -81,7 +82,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22025 | Invalid escape sequence |
 | 22027 | Trim error |
 | 2202E | Array element error: an element referenced not of the array, or an array trimmed of more elements than it has |
-| 2202F | Array data, right truncation: an array of more elements than its target's maximum cardinality |
+| 2202F | Array data, right truncation: an array, or a multiset cast to an array, of more elements than its target's maximum cardinality |
 | 2202J | Invalid argument for row pattern navigation function: a logical or physical offset of PREV, NEXT, FIRST or LAST below 0, or null |
 | 2202K | Skip to non-existent row: AFTER MATCH SKIP TO a variable no row of the match is mapped to |
 | 2202L | Skip to first row of match: AFTER MATCH SKIP TO a variable whose row it names is the match's first |

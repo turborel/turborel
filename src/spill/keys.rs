@@ -40,6 +40,10 @@ pub fn bucket_key(key: &[Bucket]) -> Vec<u8> {
                 out.extend_from_slice(&u64::try_from(parts.len()).unwrap_or(u64::MAX).to_le_bytes());
                 out.extend_from_slice(&bucket_key(parts));
             }
+            Bucket::Bag(sum) => {
+                out.push(BAG_BUCKET);
+                out.extend_from_slice(&sum.to_le_bytes());
+            }
             Bucket::Null => out.push(NULL_BUCKET),
         }
     }
@@ -54,6 +58,8 @@ const COMPOSITE_BUCKET: u8 = 7;
 /// The tag of the null value's bucket, of a key on which a null matches a
 /// null.
 const NULL_BUCKET: u8 = 8;
+/// The tag of a multiset's bucket, then its elements' hashes summed.
+const BAG_BUCKET: u8 = 9;
 
 /// The tags of a normalized key's values (`norm_key`).
 const NULL_TAG: u8 = 0;
@@ -76,6 +82,10 @@ const COMPOSITE_TAG: u8 = 11;
 /// The tag of a large object, then its identity's key
 /// (`LobIdentity::put_key`).
 const LOB_TAG: u8 = 12;
+/// The tag of a multiset, then its elements' count and their keys, each
+/// after its length, in the order of their bytes: one order of any
+/// order of the elements.
+const BAG_TAG: u8 = 13;
 
 /// Appends `v`'s normalized key to `out`: the bytes `norm_key` gives of
 /// `v.norm()`, made without making it.
@@ -119,6 +129,27 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
             out.extend_from_slice(&u64::try_from(parts.len()).unwrap_or(u64::MAX).to_le_bytes());
             parts.iter().for_each(|p| put_norm(p, out));
         }
+        Value::Multiset(parts) => {
+            let keys = parts.iter().map(|p| {
+                let mut key = Vec::new();
+                put_norm(p, &mut key);
+                key
+            });
+            put_bag(keys.collect(), out);
+        }
+    }
+}
+
+/// Appends a multiset's key of its elements' `keys`: `BAG_TAG`, their
+/// count, then each after its length, sorted, so the key is the same in
+/// any order of the elements.
+fn put_bag(mut keys: Vec<Vec<u8>>, out: &mut Vec<u8>) {
+    keys.sort_unstable();
+    out.push(BAG_TAG);
+    out.extend_from_slice(&u64::try_from(keys.len()).unwrap_or(u64::MAX).to_le_bytes());
+    for key in keys {
+        out.extend_from_slice(&u64::try_from(key.len()).unwrap_or(u64::MAX).to_le_bytes());
+        out.extend_from_slice(&key);
     }
 }
 
@@ -220,6 +251,7 @@ pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
                 out.extend_from_slice(&u64::try_from(parts.len()).unwrap_or(u64::MAX).to_le_bytes());
                 out.extend_from_slice(&norm_key(parts));
             }
+            NormKey::Bag(bag) => put_bag(bag.keys().iter().map(|part| norm_key(std::slice::from_ref(part))).collect(), &mut out),
         }
     }
     out

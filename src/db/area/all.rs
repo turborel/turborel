@@ -55,6 +55,7 @@ fn charform(value: &Value) -> String {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_)
         | Value::Null => value.to_string(),

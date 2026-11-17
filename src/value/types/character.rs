@@ -173,7 +173,7 @@ impl SqlType for Character {
             Value::Interval(i) => super::datetime::fitted(i.to_string(), length, true).map(unwarned),
             // [ISO/IEC 9075-2:2023 §6.13 SR7] Neither a binary string, an
             // array nor a row.
-            Value::Binary(_) | Value::Lob(_) | Value::Array(_) | Value::Row(_) => uncastable(&v, t).map(unwarned),
+            Value::Binary(_) | Value::Lob(_) | Value::Array(_) | Value::Multiset(_) | Value::Row(_) => uncastable(&v, t).map(unwarned),
             Value::Bool(b) => super::boolean_text(b, t).map(unwarned),
         }
     }

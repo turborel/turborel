@@ -121,7 +121,7 @@ fn user_types_columns() -> Vec<ColumnDesc> {
 fn user_types(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     let row = |t: &UserTypeDesc| {
-        let ordered = !matches!(t.source, DataType::Array(_));
+        let ordered = !matches!(t.source, DataType::Array(_) | DataType::Multiset(_));
         let routine = if ordered { ids(&catalog, &specific((t, Routine::ToSource))).to_vec() } else { vec![Value::Null; 3] };
         let ordering = if ordered { vec![text("FULL"), text("MAP")] } else { vec![text("NONE"), Value::Null] };
         let head = vec![text("DISTINCT"), yes(true), yes(true)];

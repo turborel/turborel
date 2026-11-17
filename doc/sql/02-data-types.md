@@ -513,6 +513,52 @@ Types nest at most 16 deep.
 them, and UNNEST in [Query Expressions](06-queries.md#unnest) gives an
 array's elements as rows.
 
+## Multisets
+
+A multiset holds elements of one type in no order, each as many times as
+it was put in: `VARCHAR(10) MULTISET` holds strings, the same one more
+than once if need be. Any type of the standard may be an element's, an
+array, a row or another multiset among them. An element may be null, and
+so may the multiset itself, which differs from a multiset of no
+elements. A multiset holds at most 65,535 elements.
+
+```sql
+CREATE TABLE BAGS (ID INTEGER PRIMARY KEY, TAGS VARCHAR(10) MULTISET);
+INSERT INTO BAGS VALUES (1, MULTISET['red', 'blue', 'red']), (2, MULTISET[]), (3, NULL);
+SELECT ID, TAGS, CARDINALITY(TAGS) AS N FROM BAGS ORDER BY ID;
+SELECT ID FROM BAGS WHERE TAGS = MULTISET['red', 'red', 'blue'];
+SELECT TAGS FROM BAGS ORDER BY TAGS;
+```
+
+```
+OK
+OK
+           ID | TAGS                                                         |            N
+--------------+--------------------------------------------------------------+--------------
+            1 | MULTISET['red ', 'blue', 'red ']                             |            3
+            2 | MULTISET[]                                                   |            0
+            3 | NULL                                                         |         NULL
+(3 rows)
+           ID
+--------------
+            1
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): ORDER BY orders values of CHARACTER VARYING(10) MULTISET, and multisets are compared for equality alone [ISO/IEC 9075-2:2023 §9.14 SR3]
+```
+
+The literals `'red'` and `'blue'` are brought together as CHARACTER(4),
+so `'red'` is padded, as an array's elements would be. Multisets are
+compared for equality alone. Two are equal if their elements pair off,
+each pair equal, whatever their order, so the second query finds row 1.
+They are never ordered or grouped, so no multiset is in ORDER BY, GROUP
+BY, DISTINCT, UNION, a key or an index. A distinct type may have a
+multiset type as its source.
+
+[Value Expressions](04-expressions.md#multisets) makes and combines
+them, [Predicates](05-predicates.md#member-submultiset-and-is-a-set)
+tests them, and UNNEST in [Query Expressions](06-queries.md#unnest)
+gives their elements as rows.
+
 ## Distinct types
 
 A distinct type is a type of its own made from another, its source type,
@@ -521,14 +567,15 @@ DECIMAL(10,2)` makes MONEY, whose values are those of DECIMAL(10,2) but
 compare only with other values of MONEY. A price and a weight of one
 source type cannot then be compared or added by mistake.
 
-The source type is a predefined type or an array type. A value of the
+The source type is a predefined type, an array type or a multiset type. A value of the
 source, or of a type that is assigned to it, is assigned to a column of
 the distinct type, and a value of the distinct type is assigned only to a
 site of exactly its source type. CAST takes the same paths. No operator
 takes a value of a distinct type but comparison, so `PRICE + 1` is
 refused and `"NUMERIC"(PRICE) + 1` is not. Values of a type whose source
 is an array type are compared with none, so they are never ordered or
-grouped.
+grouped. One whose source is a multiset type is taken by the multiset
+operators and predicates as a multiset is.
 
 The type's definition makes two functions, one from its source, named
 for the type, and one to it, named for the source type. Each is invoked

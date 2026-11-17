@@ -127,7 +127,8 @@ pub(crate) struct Declared {
 pub(crate) enum Initial {
     /// The null value: of no `<default clause>`, or DEFAULT NULL.
     Null,
-    /// ARRAY `[` `]`, the array of no element.
+    /// ARRAY `[` `]` or MULTISET `[` `]`, the collection of no element of
+    /// the variable's type.
     Empty,
     /// A literal, an authorization identifier or a datetime value function.
     Value(Leaf),

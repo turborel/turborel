@@ -46,6 +46,7 @@ mod literal;
 mod locators;
 mod merge;
 mod modules;
+mod multisets;
 mod names;
 mod pattern;
 mod primary;

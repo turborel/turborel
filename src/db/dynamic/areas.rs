@@ -132,6 +132,7 @@ fn of_field_type(f: DescriptorItem, t: &DataType, target: bool) -> bool {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => false,
@@ -351,7 +352,7 @@ fn got_data(area: &Descriptor, (number, item): (i64, &Item), (t, indicator): (&D
     }
     // [ISO/IEC 9075-2:2023 §20.4 GR5a, GR5b] no DATA of an array's element,
     // or of a row.
-    if area.under_array(number) || item.code() == code::ROW {
+    if area.under_collection(number) || item.code() == code::ROW {
         let msg = format!("[ISO/IEC 9075-2:2023 §20.4 GR5a, GR5b] item {number} has no DATA: it is a row, or an array's element");
         return Err(dynamic_error(SqlState::UNDEFINED_DATA_VALUE, msg));
     }
@@ -419,7 +420,7 @@ pub(crate) fn set_into<V: Fn(&ValueSpecification, &Params) -> Result<(Value, Dat
 /// ii\]; 22005 if the type does not match \[GR4a iii\].
 fn set_data(area: &mut Descriptor, number: i64, (value, t): (Value, &DataType), catalog: &str) -> Result<()> {
     let mut item = area.item(number);
-    if area.under_array(number) || item.code() == code::ROW {
+    if area.under_collection(number) || item.code() == code::ROW {
         let msg = format!("[ISO/IEC 9075-2:2023 §20.5 GR4a i, ii] item {number} has no DATA: it is a row, or an array's element");
         return Err(dynamic_error(SqlState::INVALID_DATA_TARGET, msg));
     }

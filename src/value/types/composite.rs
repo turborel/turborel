@@ -44,11 +44,12 @@ pub(crate) fn compare_parts(a: &[Value], b: &[Value]) -> Option<Ordering> {
 
 /// [ISO/IEC 9075-2:2023 §4.1] Whether `t` is S-ordered, S the types
 /// `member` holds of: one of them, or a row with a field of a type so, or
-/// an array whose element type is.
+/// a collection whose element type is.
 fn ordered_by(t: &DataType, member: fn(&DataType) -> bool) -> bool {
     member(t)
         || match t {
             DataType::Array(a) => ordered_by(&a.element, member),
+            DataType::Multiset(m) => ordered_by(&m.element, member),
             DataType::Row(r) => r.fields.iter().any(|f| ordered_by(&f.data_type, member)),
             // Ordered by MAP of its cast to its source [§11.51 GR2c].
             DataType::Distinct(d) => ordered_by(&d.source, member),
@@ -79,14 +80,24 @@ pub(crate) fn lob_ordered(t: &DataType) -> bool {
     ordered_by(t, DataType::is_lob)
 }
 
-/// [ISO/IEC 9075-2:2023 §9.12 SR3, §9.14 SR3] What in `t` no ordering or
-/// grouping operation takes, named in the plural: large objects, of a
-/// LOB-ordered type, or arrays, of an array-ordered one; none of another.
+/// [ISO/IEC 9075-2:2023 §4.1] Whether `t` is multiset-ordered: a
+/// multiset type, or a distinct type whose source is one, among the S its
+/// definition names, as `ordered_by` finds a distinct type's source.
+pub(crate) fn multiset_ordered(t: &DataType) -> bool {
+    ordered_by(t, |t| matches!(t, DataType::Multiset(_)))
+}
+
+/// [ISO/IEC 9075-2:2023 §9.12 SR3, §9.13 SR3, §9.14 SR3] What in `t` no
+/// ordering or grouping operation takes, named in the plural: large
+/// objects, of a LOB-ordered type, arrays, of an array-ordered one, or
+/// multisets, of a multiset-ordered one; none of another.
 pub(crate) fn unordered(t: &DataType) -> Option<&'static str> {
     if lob_ordered(t) {
         Some("large objects")
     } else if array_ordered(t) {
         Some("arrays")
+    } else if multiset_ordered(t) {
+        Some("multisets")
     } else {
         None
     }
@@ -97,10 +108,11 @@ pub(crate) fn row_ordered(t: &DataType) -> bool {
     ordered_by(t, |t| matches!(t, DataType::Row(_)))
 }
 
-/// How deep arrays and rows nest in `t`: 0 of a predefined type.
+/// How deep collections and rows nest in `t`: 0 of a predefined type.
 pub(crate) fn nesting(t: &DataType) -> usize {
     match t {
         DataType::Array(a) => nesting(&a.element).saturating_add(1),
+        DataType::Multiset(m) => nesting(&m.element).saturating_add(1),
         DataType::Row(r) => r.fields.iter().map(|f| nesting(&f.data_type)).max().unwrap_or(0).saturating_add(1),
         DataType::Distinct(d) => nesting(&d.source),
         DataType::Character { .. }

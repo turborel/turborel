@@ -37,6 +37,7 @@ fn octets_of(v: &Value) -> Result<Option<Octets<'_>>> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => fail(Code::Api, "[DESIGN] POSITION was given a value not a string"),
     }
@@ -70,6 +71,7 @@ impl Position {
                 | Value::Datetime(_)
                 | Value::Interval(_)
                 | Value::Array(_)
+                | Value::Multiset(_)
                 | Value::Row(_)
                 | Value::Extension(_),
                 _,
@@ -196,6 +198,7 @@ impl ScalarFunction for Length {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_) => {
                 return text(s).map(|_| Value::Null);

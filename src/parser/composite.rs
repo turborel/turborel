@@ -1,13 +1,14 @@
 //! Arrays and rows: [ISO/IEC 9075-2:2023 §6.1] a `<data type>`, a
 //! `<predefined type>`, a `<row type>`, or a `<collection type>` of
-//! either, an `<array type>`; and the expressions of them [§6.16, §6.25,
-//! §6.31, §6.47, §6.48, §6.49, §7.1, §10.9].
+//! either, an `<array type>` or a `<multiset type>`; and the expressions
+//! of arrays and rows [§6.16, §6.25, §6.31, §6.47, §6.48, §6.49, §7.1,
+//! §10.9], those of multisets being `multisets.rs`'s.
 
 use std::collections::HashSet;
 
 use super::Parser;
 use crate::ast::{
-    ColumnSpecification, Composite, SelectSublist, SetArg, SetFunctionSpecification, TableName, TableReference, UnnestTable,
+    Collection, ColumnSpecification, Composite, SelectSublist, SetArg, SetFunctionSpecification, TableName, TableReference, UnnestTable,
     ValueExpression,
 };
 use crate::error::{Code, Result, SqlError};
@@ -15,7 +16,7 @@ use crate::functions::{ARRAY_AGG, ARRAY_MAX_CARDINALITY, CARDINALITY, TRIM_ARRAY
 use crate::lexer::{Tok, delim, kw};
 use crate::value::DataType;
 use crate::value::types::composite::nesting;
-use crate::value::types::{ARRAY_NAME, Field, MAX_ARRAY_CARDINALITY, MAX_TYPE_NESTING, ROW_NAME};
+use crate::value::types::{ARRAY_NAME, Field, MAX_ARRAY_CARDINALITY, MAX_TYPE_NESTING, MULTISET_NAME, ROW_NAME};
 
 /// [ISO/IEC 9075-2:2023 §7.6] The words of a `<collection derived table>`,
 /// no key words of SQL-92.
@@ -23,31 +24,40 @@ const UNNEST: &str = "UNNEST";
 const ORDINALITY: &str = "ORDINALITY";
 
 /// [ISO/IEC 9075-2:2023 §6.5] The tokens of an `<empty specification>`,
-/// ARRAY `[` `]`.
+/// ARRAY `[` `]` or MULTISET `[` `]`.
 const EMPTY_SPECIFICATION_TOKENS: usize = 3;
 
 impl Parser {
     /// [ISO/IEC 9075-2:2023 §6.1] `<data type>` ::= `<predefined type>` |
-    /// `<row type>` | `<collection type>`, `<array type>` ::= `<data type>`
-    /// ARRAY \[`[` `<maximum cardinality>` `]`\], so ARRAY may follow
-    /// another: nested no deeper than `MAX_TYPE_NESTING`.
+    /// `<row type>` | `<collection type>`, `<collection type>` ::= `<array
+    /// type>` | `<multiset type>`, `<array type>` ::= `<data type>` ARRAY
+    /// \[`[` `<maximum cardinality>` `]`\], `<multiset type>` ::= `<data
+    /// type>` MULTISET, so ARRAY and MULTISET may follow another: nested no
+    /// deeper than `MAX_TYPE_NESTING`.
     pub(super) fn data_type(&mut self) -> Result<DataType> {
         let at = self.here();
         let t = if self.at_row_type() { self.row_type()? } else { self.predefined_type()? };
-        let t = self.array_suffix()?.into_iter().fold(t, DataType::array);
+        let t = self.collection_suffix()?.into_iter().fold(t, |t, kind| kind.of(t));
         within_nesting(nesting(&t), at)?;
         Ok(t)
     }
 
-    /// [ISO/IEC 9075-2:2023 §6.1] The maximum cardinality of each ARRAY
-    /// \[`[` `<maximum cardinality>` `]`\] that follows a `<data type>`,
-    /// in order: of one written without it, `MAX_ARRAY_CARDINALITY` [SR47].
-    pub(super) fn array_suffix(&mut self) -> Result<Vec<u32>> {
-        let mut maxima = Vec::new();
-        while self.accept_word(ARRAY_NAME) {
-            maxima.push(if self.accept_delim(delim::LEFT_BRACKET) { self.maximum_cardinality()? } else { MAX_ARRAY_CARDINALITY });
+    /// [ISO/IEC 9075-2:2023 §6.1] Each ARRAY \[`[` `<maximum cardinality>`
+    /// `]`\] or MULTISET that follows a `<data type>`, in order: an array
+    /// written without its maximum cardinality of `MAX_ARRAY_CARDINALITY`
+    /// \[SR47\].
+    pub(super) fn collection_suffix(&mut self) -> Result<Vec<Collection>> {
+        let mut kinds = Vec::new();
+        loop {
+            if self.accept_word(ARRAY_NAME) {
+                let max = if self.accept_delim(delim::LEFT_BRACKET) { self.maximum_cardinality()? } else { MAX_ARRAY_CARDINALITY };
+                kinds.push(Collection::Array(max));
+            } else if self.accept_word(MULTISET_NAME) {
+                kinds.push(Collection::Multiset);
+            } else {
+                return Ok(kinds);
+            }
         }
-        Ok(maxima)
     }
 
     /// Whether a `<row type>` begins here: ROW, no key word of SQL-92,
@@ -129,11 +139,14 @@ pub(super) fn within_nesting(depth: usize, at: usize) -> Result<()> {
 }
 
 impl Parser {
-    /// A `<value expression primary>` of arrays and rows that begins with
-    /// an `<identifier>` no key word of SQL-92 names, if one is next:
-    /// ARRAY `[`, ARRAY (, ROW (, CARDINALITY (, ARRAY_MAX_CARDINALITY (,
-    /// TRIM_ARRAY ( or ARRAY_AGG (.
+    /// A `<value expression primary>` of arrays, multisets and rows that
+    /// begins with an `<identifier>` no key word of SQL-92 names, if one is
+    /// next: one of multisets (`multisets.rs`), ARRAY `[`, ARRAY (, ROW (,
+    /// CARDINALITY (, ARRAY_MAX_CARDINALITY (, TRIM_ARRAY ( or ARRAY_AGG (.
     pub(super) fn composite_primary(&mut self) -> Result<Option<ValueExpression>> {
+        if let Some(multiset) = self.multiset_primary()? {
+            return Ok(Some(multiset));
+        }
         let Tok::Identifier(name) = self.peek() else { return Ok(None) };
         let at = self.here();
         let opens = |d: &str| matches!(self.peek_at(1), Tok::Delimiter(x) if *x == d);
@@ -151,24 +164,39 @@ impl Parser {
         })
     }
 
-    /// [ISO/IEC 9075-2:2023 §6.5] Whether an `<empty specification>` of an
-    /// array, ARRAY `[` `]`, is next, read if it is.
-    pub(super) fn empty_specification(&mut self) -> bool {
-        let array = matches!(self.peek(), Tok::Identifier(n) if n == ARRAY_NAME);
+    /// [ISO/IEC 9075-2:2023 §6.5] The `<empty specification>` next, ARRAY
+    /// `[` `]` or MULTISET `[` `]`, read if one is: its kind, an array's
+    /// of maximum cardinality 0 \[SR1a\].
+    pub(super) fn empty_specification(&mut self) -> Option<Collection> {
+        let kind = match self.peek() {
+            Tok::Identifier(n) if n == ARRAY_NAME => Collection::Array(0),
+            Tok::Identifier(n) if n == MULTISET_NAME => Collection::Multiset,
+            Tok::Identifier(_)
+            | Tok::KeyWord(_)
+            | Tok::ExactNumeric(_)
+            | Tok::ApproximateNumeric(_)
+            | Tok::CharacterString(_)
+            | Tok::BinaryString(_)
+            | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_)
+            | Tok::Delimiter(_)
+            | Tok::End => return None,
+        };
         let bracket = |p: &Self, k: usize, d: &str| matches!(p.peek_at(k), Tok::Delimiter(x) if *x == d);
-        if !(array && bracket(self, 1, delim::LEFT_BRACKET) && bracket(self, 2, delim::RIGHT_BRACKET)) {
-            return false;
+        if !(bracket(self, 1, delim::LEFT_BRACKET) && bracket(self, 2, delim::RIGHT_BRACKET)) {
+            return None;
         }
         for _ in 0..EMPTY_SPECIFICATION_TOKENS {
             self.advance();
         }
-        true
+        Some(kind)
     }
 
-    /// [ISO/IEC 9075-2:2023 §6.49] `<array value constructor by
-    /// enumeration>`'s elements, after ARRAY: none of an `<empty
+    /// [ISO/IEC 9075-2:2023 §6.49, §6.52] `<array value constructor by
+    /// enumeration>`'s or `<multiset value constructor by enumeration>`'s
+    /// elements, after ARRAY or MULTISET: none of an `<empty
     /// specification>` [§6.5].
-    fn array_elements(&mut self) -> Result<Vec<ValueExpression>> {
+    pub(super) fn array_elements(&mut self) -> Result<Vec<ValueExpression>> {
         self.advance();
         self.expect_delim(delim::LEFT_BRACKET)?;
         let mut elements = Vec::new();

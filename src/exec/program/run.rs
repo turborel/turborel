@@ -18,7 +18,7 @@ use crate::db::{Completion, assign_targets};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::logical::{Block, Branches, Cursor, CursorAction, CursorStep, ForEach, Initial, Looped, Program, Repeating, Step};
 use crate::params::{Params, local_key};
-use crate::value::{Value, assign};
+use crate::value::{DataType, Value, assign};
 
 /// How a program ended.
 #[derive(Debug)]
@@ -277,7 +277,10 @@ impl<'p, H: Host> Run<'p, '_, H> {
         for v in &b.variables {
             let value = match &v.initial {
                 Initial::Null => Value::Null,
-                Initial::Empty => Value::Array(std::sync::Arc::from(Vec::new())),
+                Initial::Empty => {
+                    let none = std::sync::Arc::from(Vec::new());
+                    if matches!(v.data_type.represented(), DataType::Multiset(_)) { Value::Multiset(none) } else { Value::Array(none) }
+                }
                 Initial::Value(leaf) => {
                     assign(leaves::value(self.host, leaf, self.frame)?, &v.data_type, "ISO/IEC 9075-4:2006 draft §14.4 GR1")?
                 }

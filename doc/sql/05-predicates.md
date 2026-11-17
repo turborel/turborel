@@ -337,6 +337,43 @@ VALUES CASE WHEN (DATE '2026-01-01', DATE '2026-02-01') OVERLAPS (DATE '2026-01-
 (1 row)
 ```
 
+## MEMBER, SUBMULTISET and IS A SET
+
+`x MEMBER OF m` is TRUE if an element of the multiset m equals x, FALSE
+if m is empty, and else unknown if x, m or an element is null.
+`m SUBMULTISET OF n` is TRUE if each element of m pairs with an equal
+element of n, a different one each, so `MULTISET[1, 1]` is no
+submultiset of `MULTISET[1, 2]`. An empty m is a submultiset of
+anything. `m IS A SET` is TRUE if no two elements are alike, nulls
+counting as alike. Each takes NOT, and OF may be left out.
+
+```sql
+CREATE TABLE BAGS (ID INTEGER PRIMARY KEY, TAGS VARCHAR(10) MULTISET);
+INSERT INTO BAGS VALUES (1, MULTISET['red', 'blue', 'red']), (2, MULTISET['blue']), (3, MULTISET[]);
+SELECT ID FROM BAGS WHERE 'red' MEMBER OF TAGS ORDER BY ID;
+SELECT ID FROM BAGS WHERE TAGS SUBMULTISET OF MULTISET['red', 'blue'] ORDER BY ID;
+SELECT ID FROM BAGS WHERE TAGS IS A SET ORDER BY ID;
+```
+
+```
+OK
+OK
+           ID
+--------------
+            1
+(1 row)
+           ID
+--------------
+            2
+            3
+(2 rows)
+           ID
+--------------
+            2
+            3
+(2 rows)
+```
+
 ## Search conditions
 
 Predicates are joined by AND, OR and NOT, NOT binding tightest, then

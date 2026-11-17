@@ -1,10 +1,12 @@
-//! Abstract syntax of the expressions of arrays and rows [ISO/IEC
-//! 9075-2:2023 §6.16, §6.25, §6.49, §7.1], each a `ValueExpression::
-//! Composite`, and of the ordering of an array aggregate [§10.9].
+//! Abstract syntax of the expressions of arrays, multisets and rows
+//! [ISO/IEC 9075-2:2023 §6.16, §6.25, §6.26, §6.49 to §6.52, §7.1], each a
+//! `ValueExpression::Composite`, and of the ordering of an array aggregate
+//! [§10.9].
 
 use super::{Subquery, ValueExpression};
+use crate::value::multisets::BagOp;
 
-/// An expression of arrays and rows.
+/// An expression of arrays, multisets and rows.
 #[derive(Debug, Clone)]
 pub enum Composite {
     /// [ISO/IEC 9075-2:2023 §6.49] `<array value constructor by
@@ -32,6 +34,24 @@ pub enum Composite {
     /// names, the rest its fields in turn. Of fewer, or of four whose first
     /// may be the catalog's name, it is a `ValueExpression::Column`.
     Chain(Vec<String>),
+    /// [ISO/IEC 9075-2:2023 §6.52] `<multiset value constructor by
+    /// enumeration>` ::= MULTISET `[` `<multiset element list>` `]`, or with
+    /// no element, an `<empty specification>` [§6.5], MULTISET `[` `]`.
+    Multiset(Vec<ValueExpression>),
+    /// [ISO/IEC 9075-2:2023 §6.52] `<multiset value constructor by query>`
+    /// ::= MULTISET `<table subquery>`; or, if `.1`, `<table value
+    /// constructor by query>` ::= TABLE `<table subquery>`, each row a
+    /// ROW of its columns \[SR1e\].
+    MultisetQuery(Box<Subquery>, bool),
+    /// [ISO/IEC 9075-2:2023 §6.50] MULTISET UNION, EXCEPT or INTERSECT,
+    /// DISTINCT if `.1`, of two operands.
+    MultisetOperation(BagOp, bool, Box<ValueExpression>, Box<ValueExpression>),
+    /// [ISO/IEC 9075-2:2023 §6.51] `<multiset set function>` ::= SET (
+    /// `<multiset value expression>` ).
+    MultisetSet(Box<ValueExpression>),
+    /// [ISO/IEC 9075-2:2023 §6.26] `<multiset element reference>` ::=
+    /// ELEMENT ( `<multiset value expression>` ).
+    MultisetElement(Box<ValueExpression>),
 }
 
 impl Composite {
@@ -39,19 +59,34 @@ impl Composite {
     /// its subquery.
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         match self {
-            Composite::Array(values) | Composite::Row(values) => values.iter().for_each(f),
-            Composite::ArrayQuery(..) | Composite::Chain(_) => {}
+            Composite::Array(values) | Composite::Row(values) | Composite::Multiset(values) => values.iter().for_each(f),
+            Composite::ArrayQuery(..) | Composite::MultisetQuery(..) | Composite::Chain(_) => {}
+            Composite::MultisetOperation(_, _, left, right) => {
+                f(left);
+                f(right);
+            }
             Composite::Element(array, index) => {
                 f(array);
                 f(index);
             }
-            Composite::Field(value, _) => f(value),
+            Composite::MultisetSet(value) | Composite::MultisetElement(value) | Composite::Field(value, _) => f(value),
         }
     }
 
     /// Its subquery, if it has one.
     pub fn subquery(&self) -> Option<&Subquery> {
-        if let Composite::ArrayQuery(s) = self { Some(s) } else { None }
+        match self {
+            Composite::ArrayQuery(s) | Composite::MultisetQuery(s, _) => Some(s),
+            Composite::Array(_)
+            | Composite::Row(_)
+            | Composite::Element(..)
+            | Composite::Field(..)
+            | Composite::Chain(_)
+            | Composite::Multiset(_)
+            | Composite::MultisetOperation(..)
+            | Composite::MultisetSet(_)
+            | Composite::MultisetElement(_) => None,
+        }
     }
 }
 

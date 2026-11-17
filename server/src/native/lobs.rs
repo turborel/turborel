@@ -34,7 +34,7 @@ pub(super) fn placed_row(session: &Session, row: Row, inline: usize, located: &m
 fn holds_lob(v: &Value) -> bool {
     match v {
         Value::Lob(_) => true,
-        Value::Array(items) => items.iter().any(holds_lob),
+        Value::Array(items) | Value::Multiset(items) => items.iter().any(holds_lob),
         Value::Row(fields) => fields.iter().any(holds_lob),
         Value::Null
         | Value::Char(_)
@@ -55,6 +55,9 @@ fn placed(session: &Session, v: Value, inline: usize, located: &mut bool) -> Res
         Value::Lob(l) => placed_lob(session, l, inline, located).map(Value::Lob),
         Value::Array(items) => {
             Ok(Value::Array(items.iter().cloned().map(|i| placed(session, i, inline, located)).collect::<Result<Vec<_>>>()?.into()))
+        }
+        Value::Multiset(items) => {
+            Ok(Value::Multiset(items.iter().cloned().map(|i| placed(session, i, inline, located)).collect::<Result<Vec<_>>>()?.into()))
         }
         Value::Row(fields) => {
             Ok(Value::Row(fields.iter().cloned().map(|f| placed(session, f, inline, located)).collect::<Result<Vec<_>>>()?.into()))

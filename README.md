@@ -48,6 +48,8 @@ behind it, and each can be replaced or added to.
   with SEARCH and CYCLE, and row pattern recognition (MATCH_RECOGNIZE).
 - Arrays, row types, distinct types, DECFLOAT, regular expressions,
   sequences and identity columns.
+- Multisets, with MULTISET UNION, EXCEPT and INTERSECT, MEMBER,
+  SUBMULTISET and IS A SET, and COLLECT, FUSION and INTERSECTION.
 - Stored procedures and functions in SQL/PSM, with variables, cursors,
   handlers, loops and SIGNAL, grouped into modules if wished, and
   polymorphic table functions that take whole tables as arguments.

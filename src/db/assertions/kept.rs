@@ -273,6 +273,7 @@ pub(super) fn row_totals(form: &Form, row: &Row, tx: &Txn) -> Result<Totals> {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_)) => {
                 return Err(SqlError::new(Code::Api, format!("[DESIGN] {other:?} is no exact number of a SUM or AVG kept")));

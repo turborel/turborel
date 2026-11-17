@@ -26,6 +26,7 @@ fn ordering(f: f64, constant: &Value) -> Option<Ordering> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => compare(&Value::Approx(f), constant),
     }

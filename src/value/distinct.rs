@@ -19,8 +19,9 @@ fn too_deep() -> SqlError {
 /// [ISO/IEC 9075-2:2023 §8.15 GR1] Whether `a` and `b` are distinct: two
 /// nulls are not \[GR1a\]; a null and a value are \[GR1b\]; two arrays are
 /// if their cardinalities differ or an element at one place is \[GR1c v\],
-/// two rows if a pair of fields is \[GR1c iv\]; any other two if they are
-/// not equal \[GR1c i, ii\].
+/// two rows if a pair of fields is \[GR1c iv\]; two multisets if a value
+/// is not distinct from more elements of one \[GR1c vi\]; any other two
+/// if they are not equal \[GR1c i, ii\].
 ///
 /// # Errors
 ///
@@ -40,6 +41,11 @@ fn distinct_at(a: &Value, b: &Value, depth: usize) -> Result<bool> {
     }
     if let (Value::Array(x), Value::Array(y)) | (Value::Row(x), Value::Row(y)) = (a, b) {
         return parts_distinct(x, y, depth.saturating_add(1));
+    }
+    // [GR1c vi] Of two multisets, as their classes of elements not
+    // distinct from one another count.
+    if let (Value::Multiset(x), Value::Multiset(y)) = (a, b) {
+        return super::multisets::bags_distinct(x, y);
     }
     Ok(compare_checked(a, b)? != Some(Ordering::Equal))
 }
@@ -86,6 +92,7 @@ fn null_bucket(v: &Value, depth: usize) -> Result<Option<Bucket>> {
             }
             Ok(Some(Bucket::Composite(buckets.into())))
         }
+        Value::Multiset(parts) => super::multisets::null_bag_bucket(parts, |p| null_bucket(p, depth.saturating_add(1))),
         Value::Char(_)
         | Value::Exact(_)
         | Value::Approx(_)

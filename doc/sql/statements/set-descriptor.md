@@ -55,11 +55,12 @@ PRECISION 6 if it ends in SECOND, else 0.
 
 An item of TYPE 19, ROW, of DEGREE n is followed by the items of its n
 fields, of LEVEL one more than its own; one of TYPE 50, ARRAY, of
-CARDINALITY its maximum cardinality, by the item of its element. Each such
+CARDINALITY its maximum cardinality, or of TYPE 55, MULTISET, by the
+item of its element. Each such
 item is followed in turn by those of its own parts, as
 [DESCRIBE](describe.md) WITH NESTING sets them. The first item is of
 LEVEL 0. Another's LEVEL is one more than the item before it if that one
-is of TYPE ROW or ARRAY; else no more than that one's, closing each row
+is of TYPE ROW, ARRAY or MULTISET; else no more than that one's, closing each row
 whose fields it follows with all of them, and if more than 0, a field of
 a row not yet given all its fields. A field's NAME, which DESCRIBE sets, has
 no part in the type the items describe.

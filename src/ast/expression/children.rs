@@ -195,7 +195,12 @@ impl Predicate {
                     f(e);
                 }
             }
+            Predicate::Member { value, multiset, .. } | Predicate::Submultiset { value, multiset, .. } => {
+                value.iter().for_each(&mut *f);
+                f(multiset);
+            }
             Predicate::InSubquery { value, .. }
+            | Predicate::Set { value, .. }
             | Predicate::Null { value, .. }
             | Predicate::Quantified { value, .. }
             | Predicate::Match { value, .. } => {
@@ -220,6 +225,9 @@ impl Predicate {
             | Predicate::Like { .. }
             | Predicate::LikeRegex { .. }
             | Predicate::Distinct { .. }
+            | Predicate::Member { .. }
+            | Predicate::Submultiset { .. }
+            | Predicate::Set { .. }
             | Predicate::Null { .. } => None,
         }
     }

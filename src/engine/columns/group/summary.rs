@@ -107,6 +107,7 @@ fn heap(v: &Value) -> usize {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => 0,
     }

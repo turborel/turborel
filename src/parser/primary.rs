@@ -112,6 +112,11 @@ impl Parser {
             | Tok::Introducer(_)
             | Tok::LargeObjectLength(_)
             | Tok::End => self.wrapped_primary(),
+            // [ISO/IEC 9075-2:2023 §6.51, §6.52] SET ( and TABLE (.
+            Tok::KeyWord(kw::SET | kw::TABLE) => match self.keyword_multiset_primary()? {
+                Some(multiset) => Ok(multiset),
+                None => self.string_function(),
+            },
             Tok::KeyWord(_) => self.string_function(),
         }
     }

@@ -146,6 +146,7 @@ fn product(fraction: &Value, count: u64) -> Result<(u64, f64)> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => return Err(not_a_fraction(fraction)),
     };

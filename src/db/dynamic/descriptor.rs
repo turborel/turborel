@@ -66,6 +66,8 @@ pub(super) mod code {
     pub(in crate::db::dynamic) const USER_DEFINED: i64 = 17;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] ARRAY.
     pub(in crate::db::dynamic) const ARRAY: i64 = 50;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] MULTISET.
+    pub(in crate::db::dynamic) const MULTISET: i64 = 55;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 34] DISTINCT, the category of a
     /// distinct type.
     pub(in crate::db::dynamic) const DISTINCT: i64 = 1;
@@ -291,8 +293,10 @@ impl Item {
                 self.set_number(DescriptorItem::DatetimeIntervalPrecision, i64::from(q.leading));
                 self.set_number(DescriptorItem::Precision, i64::from(q.fraction));
             }
-            // [ISO/IEC 9075-2:2023 §20.1 SR6j] Of BOOLEAN, TYPE alone.
-            DataType::Boolean => {}
+            // [ISO/IEC 9075-2:2023 §20.1 SR6j, SR6r] Of BOOLEAN, TYPE alone;
+            // of a multiset too, its subordinate item describing its
+            // element type.
+            DataType::Boolean | DataType::Multiset(_) => {}
             // [ISO/IEC 9075-2:2023 §20.10 GR7d x, xi] DEGREE of a row type,
             // CARDINALITY an array type's maximum; its subordinate items
             // describe the rest (`nested.rs`).
@@ -422,6 +426,7 @@ fn type_code(t: &DataType) -> i64 {
         DataType::Interval(_) => code::INTERVAL,
         DataType::Row(_) => code::ROW,
         DataType::Array(_) => code::ARRAY,
+        DataType::Multiset(_) => code::MULTISET,
         DataType::Distinct(_) => code::USER_DEFINED,
         DataType::Extension(_) => code::EXTENSION,
     }
@@ -451,6 +456,7 @@ fn datetime_shape(t: &DataType) -> (i64, i64, i64) {
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => (1, DATE_POSITIONS, 0),
@@ -465,7 +471,7 @@ fn datetime_shape(t: &DataType) -> (i64, i64, i64) {
 /// the type it is. [ISO/IEC 9075-2:2023 §20.1 SR7t, SR7u] A row type of
 /// the same degree whose fields' types match, and an array type whose
 /// element type matches, of the same maximum cardinality, or of a target
-/// of one no less.
+/// of one no less; a multiset type whose element type matches \[SR7w\].
 pub(super) fn matches(described: &DataType, t: &DataType, target: bool) -> bool {
     matches_at(described, t, target, 0)
 }
@@ -484,6 +490,9 @@ fn matches_at(described: &DataType, t: &DataType, target: bool, depth: usize) ->
     if let (DataType::Array(a), DataType::Array(its)) = (described, t) {
         let max = its.max == a.max || (target && its.max > a.max);
         return max && matches_at(&a.element, &its.element, target, depth.saturating_add(1));
+    }
+    if let (DataType::Multiset(m), DataType::Multiset(its)) = (described, t) {
+        return matches_at(&m.element, &its.element, target, depth.saturating_add(1));
     }
     let named = std::mem::discriminant(&spelling(described)) == std::mem::discriminant(&spelling(t));
     match (described.clone(), t.clone()) {

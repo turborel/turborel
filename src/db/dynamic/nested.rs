@@ -55,6 +55,7 @@ fn subordinates(t: &DataType, level: i64, catalog: &str, out: &mut Vec<Item>) {
     match t {
         DataType::Row(r) => r.fields.iter().for_each(|f| add(&f.data_type, (&f.name, f.unnamed), out)),
         DataType::Array(a) => add(&a.element, ("", true), out),
+        DataType::Multiset(m) => add(&m.element, ("", true), out),
         DataType::Distinct(_)
         | DataType::Character { .. }
         | DataType::Varying { .. }
@@ -86,7 +87,8 @@ impl Descriptor {
     /// the number of the item after them: of TYPE ROW, DEGREE 1 or more
     /// and exactly that many immediately subordinate items, each valid
     /// \[SR6p\]; of TYPE ARRAY, a valid CARDINALITY and exactly one \[SR6q\];
-    /// else as its own fields give it, of the catalog `catalog`.
+    /// of TYPE MULTISET, exactly one \[SR6r\]; else as its own fields give
+    /// it, of the catalog `catalog`.
     pub(super) fn represented(&self, n: i64, bound: i64, catalog: &str) -> Option<(DataType, i64)> {
         self.represented_at(n, (bound, 0), catalog)
     }
@@ -120,15 +122,24 @@ impl Descriptor {
             code::ARRAY => {
                 let max =
                     u32::try_from(item.number(DescriptorItem::Cardinality)).ok().filter(|m| (1..=MAX_ARRAY_CARDINALITY).contains(m))?;
-                let first = n.saturating_add(1);
-                if !self.below(first, bound, level) {
-                    return None;
-                }
-                let (element, after) = self.represented_at(first, deeper, catalog)?;
-                (!self.below(after, bound, level)).then(|| (DataType::array(element, max), after))
+                self.element(n, deeper, catalog).map(|(element, after)| (DataType::array(element, max), after))
             }
+            code::MULTISET => self.element(n, deeper, catalog).map(|(element, after)| (DataType::multiset(element), after)),
             _ => item.data_type(catalog).map(|t| (t, n.saturating_add(1))),
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §20.1 SR6q, SR6r] The element type the one
+    /// item immediately subordinate to item `n`, of a collection, represents
+    /// at `depth`, of the first `bound`, and the number of the item after it.
+    fn element(&self, n: i64, (bound, depth): (i64, usize), catalog: &str) -> Option<(DataType, i64)> {
+        let level = self.item(n).level();
+        let first = n.saturating_add(1);
+        if !self.below(first, bound, level) {
+            return None;
+        }
+        let (element, after) = self.represented_at(first, (bound, depth), catalog)?;
+        (!self.below(after, bound, level)).then_some((element, after))
     }
 
     /// [ISO/IEC 9075-2:2023 §20.11 GR5c, GR5d i; §20.12 GR4d, GR4e] Of the
@@ -219,13 +230,14 @@ impl Descriptor {
         }
     }
 
-    /// Whether item `n` is subordinate to an item of TYPE ARRAY [§20.1 SR3].
-    pub(super) fn under_array(&self, n: i64) -> bool {
+    /// Whether item `n` is subordinate to an item of TYPE ARRAY or MULTISET
+    /// [§20.1 SR3].
+    pub(super) fn under_collection(&self, n: i64) -> bool {
         let mut level = self.item(n).level();
         for k in (1..n).rev() {
             let item = self.item(k);
             if item.level() < level {
-                if item.code() == code::ARRAY {
+                if [code::ARRAY, code::MULTISET].contains(&item.code()) {
                     return true;
                 }
                 level = item.level();
@@ -239,7 +251,7 @@ impl Descriptor {
 
     /// [ISO/IEC 9075-2:2023 §20.5 GR4b] Whether LEVEL `v` may be set in
     /// item `n`: 0 of the first; of another, one more than LEVEL `k` of the
-    /// item before it if that one is of TYPE ROW or ARRAY, or else no more
+    /// item before it if that one is of TYPE ROW, ARRAY or MULTISET, or else no more
     /// than `k`, each row it closes given all its fields \[A\] and the one
     /// the item is then a field of given fewer than DEGREE \[B\].
     ///
@@ -257,10 +269,10 @@ impl Descriptor {
         let previous = self.item(n.saturating_sub(1));
         let k = previous.level();
         if v == k.saturating_add(1) {
-            return if [code::ROW, code::ARRAY].contains(&previous.code()) {
+            return if [code::ROW, code::ARRAY, code::MULTISET].contains(&previous.code()) {
                 Ok(())
             } else {
-                Err(invalid_level("GR4b ii 1", &format!("LEVEL {v} follows an item of LEVEL {k} of TYPE neither ROW nor ARRAY")))
+                Err(invalid_level("GR4b ii 1", &format!("LEVEL {v} follows an item of LEVEL {k} of TYPE not ROW, ARRAY or MULTISET")))
             };
         }
         if v > k.saturating_add(1) || v < 0 {

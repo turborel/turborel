@@ -152,6 +152,8 @@ mod merge_rows;
 mod merge_rules;
 mod modules;
 mod modules_privileges;
+mod multiset_columns;
+mod multisets;
 mod mvcc;
 mod named_schemas;
 mod null_ordering;

@@ -107,6 +107,7 @@ pub(crate) fn with_element(array: &Value, i: Option<i128>, (max, value): (u32, V
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_)) => {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] an element of {other}, not an array, is assigned")));
@@ -165,14 +166,18 @@ impl SqlType for ArrayKind {
         Ok(Value::Array(assigned.into()))
     }
 
-    /// [ISO/IEC 9075-2:2023 §6.13 GR5] Element by element \[GR5b\], an
-    /// array longer than the maximum cardinality refused \[GR5c i\].
+    /// [ISO/IEC 9075-2:2023 §6.13 GR5, GR6] Element by element \[GR5b\],
+    /// an array or a multiset of more elements than the maximum
+    /// cardinality refused \[GR5c i, GR6b i\]: of a multiset, in the order
+    /// it holds them, which is implementation-dependent \[NOTE 173\].
     fn cast(&self, v: Value, t: &DataType) -> Result<Value> {
-        let (Some(a), Some(given)) = (array_type(t), elements(&v)) else {
+        let of_multiset = matches!(v, Value::Multiset(_));
+        let given = if let Value::Multiset(e) = &v { Some(&**e) } else { elements(&v) };
+        let (Some(a), Some(given)) = (array_type(t), given) else {
             return if v.is_null() { Ok(v) } else { uncastable(&v, t) };
         };
         if given.len() > bound(a.max) {
-            return truncated("§6.13 GR5c i", given.len(), a.max);
+            return truncated(if of_multiset { "§6.13 GR6b i" } else { "§6.13 GR5c i" }, given.len(), a.max);
         }
         let cast = given.iter().map(|e| cast(e.clone(), &a.element)).collect::<Result<Vec<_>>>()?;
         Ok(Value::Array(cast.into()))

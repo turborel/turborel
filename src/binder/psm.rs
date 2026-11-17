@@ -236,9 +236,12 @@ impl ProgramBinder<'_> {
     fn initial(&self, default: Option<&DefaultOption>, t: &DataType, at: usize) -> Result<Initial> {
         let value = match default {
             None | Some(DefaultOption::Null) => return Ok(Initial::Null),
-            Some(DefaultOption::Empty) => {
-                if !matches!(t.represented(), DataType::Array(_)) {
-                    return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.5 SR4e] ARRAY[] is the default only of an array type, not {t}")));
+            Some(DefaultOption::Empty(kind)) => {
+                if kind.empty_of(t).is_none() {
+                    return Err(rule(format!(
+                        "[ISO/IEC 9075-2:2023 §11.5 SR4e] {} is the default only of a collection type of its kind, not {t}",
+                        kind.empty_written()
+                    )));
                 }
                 return Ok(Initial::Empty);
             }

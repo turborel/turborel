@@ -102,7 +102,7 @@ impl State {
             TypeName::Domain(name) => {
                 if self.catalog.domain(&qualify(name, schema)).is_some() {
                     let msg = format!(
-                        "[ISO/IEC 9075-2:2023 §6.1] an array's element type or a row's field type is no domain, as {} is",
+                        "[ISO/IEC 9075-2:2023 §6.1] a collection's element type or a row's field type is no domain, as {} is",
                         name.ident
                     );
                     return Err(rule(msg).or_at(name.at));
@@ -110,7 +110,7 @@ impl State {
                 self.named_type(name, (schema, who))?
             }
             TypeName::Extension { name, params } => self.extension_type((name, params), MISSING)?,
-            TypeName::Array(element, max) => DataType::array(self.data_type_of(element, (schema, who))?, *max),
+            TypeName::Collection(element, kind) => kind.of(self.data_type_of(element, (schema, who))?),
             TypeName::Row(fields) => {
                 let field = |(name, t): &(String, TypeName)| -> Result<Field> {
                     Ok(Field { name: name.clone(), data_type: self.data_type_of(t, (schema, who))?, unnamed: false })
@@ -172,7 +172,7 @@ impl State {
                 self.extension_type((name, &[]), missing)
             }
             TypeName::Extension { name, params } => self.extension_type((name, params), missing),
-            TypeName::Array(..) | TypeName::Row(_) => Err(rule(
+            TypeName::Collection(..) | TypeName::Row(_) => Err(rule(
                 "[ISO/IEC 9075-2:2023 §11.34] a domain's data type is a <predefined type>, and names no type as an element or a field"
                     .to_owned(),
             )),

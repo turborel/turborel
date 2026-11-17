@@ -25,7 +25,7 @@ const LOB: u8 = b'L';
 pub enum Request {
     /// The first message: the protocol version, the user, the mechanism of
     /// authentication and its first bytes, and the capabilities the client
-    /// has (none is defined in version 2).
+    /// has (none is defined in version 1).
     Hello {
         /// `VERSION`, as the client speaks it.
         version: u32,

@@ -200,7 +200,7 @@ impl Params {
 /// parameter of its kind, its length, fields and precision then as its
 /// assignment checks them. An array suits an array type whose maximum
 /// cardinality it is within, each element null or suiting the element
-/// type. A row suits a row type of its degree, each field null or suiting
+/// type, and a multiset a multiset type so. A row suits a row type of its degree, each field null or suiting
 /// the field's type. A type is nested at most `MAX_TYPE_NESTING` deep.
 fn argument_fits(value: &Value, data_type: &DataType, depth: usize) -> bool {
     if let (Value::Char(s), DataType::Character { length, units } | DataType::Varying { length, units }) = (value, data_type) {
@@ -210,6 +210,11 @@ fn argument_fits(value: &Value, data_type: &DataType, depth: usize) -> bool {
         return depth < MAX_TYPE_NESTING
             && usize::try_from(a.max).is_ok_and(|max| elements.len() <= max)
             && elements.iter().all(|e| e.is_null() || argument_fits(e, &a.element, depth.saturating_add(1)));
+    }
+    if let (Value::Multiset(elements), DataType::Multiset(m)) = (value, data_type) {
+        return depth < MAX_TYPE_NESTING
+            && u32::try_from(elements.len()).is_ok_and(|n| n <= crate::value::types::MAX_MULTISET_CARDINALITY)
+            && elements.iter().all(|e| e.is_null() || argument_fits(e, &m.element, depth.saturating_add(1)));
     }
     if let (Value::Row(fields), DataType::Row(r)) = (value, data_type) {
         return depth < MAX_TYPE_NESTING

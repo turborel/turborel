@@ -321,6 +321,7 @@ fn negative(v: &Value) -> bool {
         | Value::Datetime(_)
         | Value::Row(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Extension(_) => false,
     }
 }

@@ -107,7 +107,10 @@ fn a_client_is_refused_saying_why() {
         initial: vec![],
         capabilities: vec![],
     };
-    for (request, expected) in [(hello(2, "X", "kerberos"), "28000"), (hello(2, "", "trust"), "28000"), (hello(1, "X", "trust"), "08004")] {
+    let (spoken, other) = (turborel_protocol::VERSION, turborel_protocol::VERSION.saturating_add(1));
+    let refusals =
+        [(hello(spoken, "X", "kerberos"), "28000"), (hello(spoken, "", "trust"), "28000"), (hello(other, "X", "trust"), "08004")];
+    for (request, expected) in refusals {
         let mut raw = server.raw();
         raw.send(&request);
         let failure = raw.refusal();

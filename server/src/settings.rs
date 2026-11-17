@@ -514,6 +514,7 @@ pub fn count(db: &Database, name: &str) -> usize {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Lob(_)
             | Value::Extension(_),
@@ -545,6 +546,7 @@ pub fn text(db: &Database, name: &str) -> String {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Lob(_)
             | Value::Extension(_),

@@ -28,21 +28,23 @@ const USER_LENGTH: u32 = 128;
 pub(super) fn default_of(subject: &DataType, option: &DefaultOption, zone: i16) -> Result<ColumnDefault> {
     // [ISO/IEC 9075-2:2023 §11.5 SR3b] of a distinct type of no collection
     // type, the null value alone.
-    let collection = matches!(subject.represented(), DataType::Array(_));
+    let collection = matches!(subject.represented(), DataType::Array(_) | DataType::Multiset(_));
     if matches!(subject, DataType::Distinct(_)) && !collection && !matches!(option, DefaultOption::Null) {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.5 SR3b] the default of a column of {subject}, a user-defined type, is NULL")));
     }
     let literal = match option {
         DefaultOption::Null => return Ok(ColumnDefault::Value(Value::Null)),
-        // [ISO/IEC 9075-2:2023 §11.5 SR4e, §6.5 GR1] of an array type, or a
-        // distinct type of one, the array of no element.
-        DefaultOption::Empty => {
-            if !collection {
+        // [ISO/IEC 9075-2:2023 §11.5 SR4e, §6.5 GR1] of a collection type
+        // of its kind, or a distinct type of one, the collection of no
+        // element.
+        DefaultOption::Empty(kind) => {
+            let Some(empty) = kind.empty_of(subject) else {
                 return Err(rule(format!(
-                    "[ISO/IEC 9075-2:2023 §11.5 SR4e] ARRAY[] is the default only of an array type, or a distinct type of one, not {subject}"
+                    "[ISO/IEC 9075-2:2023 §11.5 SR4e] {} is the default only of a collection type of its kind, or a distinct type of one, not {subject}",
+                    kind.empty_written()
                 )));
-            }
-            return Ok(ColumnDefault::Value(Value::Array(Arc::from(Vec::new()))));
+            };
+            return Ok(ColumnDefault::Value(empty));
         }
         DefaultOption::User(f) => {
             let long = if let DataType::Character { length, .. } | DataType::Varying { length, .. } = subject {
@@ -195,6 +197,7 @@ fn character_default(s: &str, subject: &DataType) -> Option<Result<Value>> {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_) => None,
     }

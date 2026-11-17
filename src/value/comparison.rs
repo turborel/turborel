@@ -44,6 +44,7 @@ fn compare_lob(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_),
             _,
@@ -55,7 +56,7 @@ fn compare_lob(a: &Value, b: &Value) -> Option<Ordering> {
 /// because one side is null ([X3.135-1986 §5.11 GR2]), or the values are not comparable.
 pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     match (a, b) {
-        (Value::Array(_) | Value::Row(_), _) | (_, Value::Array(_) | Value::Row(_)) => compare_composites(a, b),
+        (Value::Array(_) | Value::Multiset(_) | Value::Row(_), _) | (_, Value::Array(_) | Value::Multiset(_) | Value::Row(_)) => compare_composites(a, b),
         (Value::Lob(_), _) | (_, Value::Lob(_)) => compare_lob(a, b),
         // A null makes the comparison unknown [X3.135-1986 §5.11 GR2]; a character
         // string and a number are not comparable [X3.135-1986 §5.11 SR1], nor a
@@ -215,7 +216,7 @@ fn holds_lob(v: &Value, depth: usize) -> Result<bool> {
     }
     match v {
         Value::Lob(_) => Ok(true),
-        Value::Array(parts) | Value::Row(parts) => {
+        Value::Array(parts) | Value::Multiset(parts) | Value::Row(parts) => {
             for p in parts.iter() {
                 if holds_lob(p, depth.saturating_add(1))? {
                     return Ok(true);
@@ -281,9 +282,13 @@ fn too_deep() -> SqlError {
 
 /// [ISO/IEC 9075-2:2023 §8.2 GR1b] Two arrays pair by pair, their
 /// cardinalities first \[GR1b ii\]; two rows of one degree likewise
-/// \[GR1b i\]; none if either is null, or of another kind [§4.10,
-/// §4.12.4].
+/// \[GR1b i\]; two multisets equal or not as their elements pair
+/// \[GR1b iii\], unequal as less; none if either is null, or of another
+/// kind [§4.10, §4.12.4].
 fn compare_composites(a: &Value, b: &Value) -> Option<Ordering> {
+    if let (Value::Multiset(x), Value::Multiset(y)) = (a, b) {
+        return super::multisets::equal(x, y).map(|same| if same { Ordering::Equal } else { Ordering::Less });
+    }
     if let (Value::Array(x), Value::Array(y)) | (Value::Row(x), Value::Row(y)) = (a, b)
         && (matches!(a, Value::Array(_)) || x.len() == y.len())
     {
@@ -315,6 +320,7 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_),
             _,
@@ -329,6 +335,7 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_),
         ) => None,
@@ -362,6 +369,9 @@ pub enum Bucket {
     Extension(Box<[u8]>),
     /// An array's or a row's parts, each's bucket.
     Composite(Box<[Bucket]>),
+    /// A multiset's elements' buckets, their hashes summed, the same in
+    /// any order.
+    Bag(u64),
     /// [ISO/IEC 9075-2:2023 §8.15] The null value, of a join key on which
     /// a null matches a null (`key_bucket`); `bucket` gives none.
     Null,
@@ -381,6 +391,7 @@ pub fn bucket(v: &Value) -> Option<Bucket> {
         Value::Datetime(d) => Some(Bucket::Instant(d.utc)),
         Value::Interval(i) => Some(Bucket::Span(i.units)),
         Value::Array(p) | Value::Row(p) => bucket_parts(p),
+        Value::Multiset(p) => super::multisets::bag_bucket(p),
         Value::Extension(e) => e.kind.bucket(v),
     }
 }
@@ -400,6 +411,7 @@ pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => {
             return None;

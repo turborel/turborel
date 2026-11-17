@@ -158,6 +158,7 @@ fn bytes(value: &Value, default: usize) -> usize {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => default,
     }

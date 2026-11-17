@@ -80,11 +80,12 @@ impl SqlType for DistinctKind {
 
     /// [ISO/IEC 9075-2:2023 §4.9.5] With itself alone, as no other type is
     /// of its subtype family, and only if it has a comparison type: its
-    /// ordering is its source's, which no array type has [§11.51 GR2c].
+    /// ordering is its source's, which no collection type has [§11.51
+    /// GR2c].
     /// As a kind is told only the other type, `DataType::comparable` asks
     /// this of both.
     fn comparable(&self, other: &DataType) -> bool {
-        distinct_type(other).is_some_and(|d| !matches!(d.source, DataType::Array(_)))
+        distinct_type(other).is_some_and(|d| !matches!(d.source, DataType::Array(_) | DataType::Multiset(_)))
     }
 
     /// [ISO/IEC 9075-2:2023 §11.51 GR2c] As their source values compare.

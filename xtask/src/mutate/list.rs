@@ -25,6 +25,7 @@ mod listagg;
 mod lobs;
 mod merge;
 mod modules;
+mod multisets;
 mod near;
 mod null_ordering;
 mod nulls;

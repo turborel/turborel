@@ -164,7 +164,13 @@ pub(super) fn prefix_of(value: &Value, order: SortOrder) -> Option<Prefix> {
         // tie past one byte, so a prefix would save little; a DECFLOAT
         // number is compared whole.
         // No large object is a sort key [ISO/IEC 9075-2:2023 §9.14 SR3].
-        Value::Bool(_) | Value::DecFloat(_) | Value::Lob(_) | Value::Array(_) | Value::Row(_) | Value::Extension(_) => return None,
+        Value::Bool(_)
+        | Value::DecFloat(_)
+        | Value::Lob(_)
+        | Value::Array(_)
+        | Value::Multiset(_)
+        | Value::Row(_)
+        | Value::Extension(_) => return None,
     };
     Some(finished((kind, bits, held), order))
 }

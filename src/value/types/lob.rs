@@ -81,6 +81,7 @@ pub(crate) fn as_lob(v: &Value, kind: LobKind) -> Option<Lob> {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_),
             _,

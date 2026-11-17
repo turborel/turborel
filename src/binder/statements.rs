@@ -118,7 +118,8 @@ pub fn check_assignment(col: &ColumnDesc, t: &DataType, r: AssignRule) -> Result
 /// as its kind says, or a character string, if the target's kind takes
 /// one (`SqlType::assigns_text`). [ISO/IEC 9075-2:2023 §9.2 SR2d, SR2e]
 /// An array in an array whose element type its elements are assignable
-/// to, a row in a row of its degree, field by field. [§4.9.5, §4.13, §9.2
+/// to, a multiset in a multiset so [§4.12.4], a row in a row of its
+/// degree, field by field. [§4.9.5, §4.13, §9.2
 /// SR3] A distinct type's value in a site of it, or of its source type
 /// alone; in a site of it, a value of it, or one its function from its
 /// source takes, implicitly invocable (`distinct_assignable`).
@@ -129,10 +130,13 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     if let (DataType::Array(a), DataType::Array(b)) = (target, t) {
         return assignable(&a.element, &b.element);
     }
+    if let (DataType::Multiset(a), DataType::Multiset(b)) = (target, t) {
+        return assignable(&a.element, &b.element);
+    }
     if let (DataType::Row(a), DataType::Row(b)) = (target, t) {
         return a.fields.len() == b.fields.len() && a.fields.iter().zip(&b.fields).all(|(x, y)| assignable(&x.data_type, &y.data_type));
     }
-    let composite = |either: &DataType| matches!(either, DataType::Array(_) | DataType::Row(_));
+    let composite = |either: &DataType| matches!(either, DataType::Array(_) | DataType::Multiset(_) | DataType::Row(_));
     if composite(target) || composite(t) {
         return false;
     }

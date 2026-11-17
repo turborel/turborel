@@ -87,6 +87,7 @@ fn returned(item: &mut Item, v: &Value) {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => {
             return;
@@ -120,7 +121,9 @@ pub(super) fn reflected(item: &mut Item, (tv, t): (&Value, &DataType), (sv, sdt)
     } else if varying(sdt) {
         returned(item, sv);
     }
-    if let Value::Array(a) = tv {
+    // [ISO/IEC 9075-2:2023 §20.12 GR4b ii 3] of an array or a multiset,
+    // its cardinality.
+    if let Value::Array(a) | Value::Multiset(a) = tv {
         item.set(DescriptorItem::ReturnedCardinality, exact(number(a.len())));
     }
 }

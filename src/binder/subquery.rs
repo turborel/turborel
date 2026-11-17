@@ -21,7 +21,7 @@ use crate::ast::{
     ValueExpression, ValueSpecification,
 };
 use crate::error::{At, Result, SqlState};
-use crate::functions::{AggregateFunction, AggregateRef, ArrayAggregate, RowOf, ScalarRef};
+use crate::functions::{AggregateFunction, AggregateRef, ArrayAggregate, Gathering, MultisetAggregate, RowOf, ScalarRef};
 use crate::logical::{AggCall, Expr, LogicalPlan, SortKey, Subquery, render_expr};
 use crate::value::types::{Field, MAX_ARRAY_CARDINALITY};
 use crate::value::{DataType, Decimal};
@@ -429,23 +429,64 @@ impl Binder<'_> {
         let func = ArrayAggregate { orders, collations: ordered.collations, by_query: true };
         let result = super::composite::bounded(DataType::array(element, MAX_ARRAY_CARDINALITY))?;
         let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
-        let agg = AggCall {
-            func: AggregateRef(Arc::new(func)),
-            arg: Some(arg),
-            distinct: false,
-            result: result.clone(),
-            filter: None,
-            distribution: None,
-            label,
-        };
-        let plan = LogicalPlan::Aggregate {
-            groups: Vec::new(),
-            collations: Vec::new(),
-            aggs: vec![agg],
-            seeds: Vec::new(),
-            input: Box::new(ordered.plan),
-        };
-        let subquery = Subquery::new(plan, outer.captured.into_inner());
-        Ok((Expr::Subquery(Arc::new(subquery), 0), result))
+        Ok(aggregated((AggregateRef(Arc::new(func)), arg, label), result, ordered.plan, outer))
     }
+
+    /// [ISO/IEC 9075-2:2023 §6.52 SR1, SR4, GR3] `<multiset value
+    /// constructor by query>`, its query of degree one \[SR4a\], or of
+    /// `table`, `<table value constructor by query>`, each row the ROW of
+    /// its columns, named as `anonymous` names them (UV076) \[SR1e\]: of no
+    /// ORDER BY \[SR1b, SR4b\], aggregated as COLLECT aggregates; of no
+    /// rows, an empty multiset.
+    pub(super) fn multiset_query(&self, s: &ast::Subquery, table: bool, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let (word, rules) = if table { ("TABLE", ("§6.52 SR1b", "§6.52 SR1c")) } else { ("MULTISET", ("§6.52 SR4b", "§6.52 SR4a")) };
+        if let ast::QueryExpression::Ordered(o) = &s.query
+            && !o.order_by.is_empty()
+        {
+            let msg = format!("[ISO/IEC 9075-2:2023 {}] the query of {word} has no ORDER BY, as a multiset is unordered", rules.0);
+            return Err(rule(msg).or_at(s.at));
+        }
+        let cx = self.context();
+        let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
+        let nesting = Nesting::Subquery { outer: &outer, result: None };
+        let ordered = ordered_query(cx, &s.query, (&[], &nesting), cx.draws).or_at(s.at)?.limited();
+        let own = ordered.all.get(..ordered.visible).unwrap_or_default();
+        self.note_subquery(s, own);
+        let (element, value) = match own {
+            [column] if !table => (column.data_type.clone(), Expr::Column(0)),
+            _ if !table => {
+                return Err(rule(format!("[ISO/IEC 9075-2:2023 {}] the query of MULTISET is of degree one, not {}", rules.1, own.len())));
+            }
+            _ => {
+                let fields =
+                    own.iter().enumerate().map(|(i, c)| Field { name: anonymous(i), data_type: c.data_type.clone(), unnamed: true });
+                let t = DataType::row(fields.collect());
+                (t.clone(), Expr::Call(ScalarRef(Arc::new(RowOf(t))), (0..own.len()).map(Expr::Column).collect()))
+            }
+        };
+        let label = format!("{word}({})", render_expr(&value, &[]));
+        let arg = Expr::Call(
+            ScalarRef(Arc::new(RowOf(DataType::row(vec![Field { name: anonymous(0), data_type: element.clone(), unnamed: true }])))),
+            vec![value],
+        );
+        let result = super::composite::bounded(DataType::multiset(element))?;
+        let func = AggregateRef(Arc::new(MultisetAggregate { kind: Gathering::Collect, by_query: true }));
+        Ok(aggregated((func, arg, label), result, ordered.plan, outer))
+    }
+}
+
+/// The subquery of one row and one column, the aggregate `func` of `arg`,
+/// labelled `label`, over the rows `input`, of type `result`, its outer
+/// references those of `outer`.
+fn aggregated(
+    (func, arg, label): (AggregateRef, Expr, String),
+    result: DataType,
+    input: LogicalPlan,
+    outer: Outer<'_>,
+) -> (Expr, DataType) {
+    let agg = AggCall { func, arg: Some(arg), distinct: false, result: result.clone(), filter: None, distribution: None, label };
+    let plan =
+        LogicalPlan::Aggregate { groups: Vec::new(), collations: Vec::new(), aggs: vec![agg], seeds: Vec::new(), input: Box::new(input) };
+    let subquery = Subquery::new(plan, outer.captured.into_inner());
+    (Expr::Subquery(Arc::new(subquery), 0), result)
 }

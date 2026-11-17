@@ -49,17 +49,14 @@ Nothing is open.
 
 ### Types
 
-- Multisets (S271, S275, S272, S274, S281, S402, S202) [§4.12.3, §6.50 to
-  §6.52, §8.16 to §8.18]. MULTISET types and constructors, MEMBER, SUBMULTISET
-  and IS A SET, MULTISET UNION, EXCEPT and INTERSECT, and SET, FUSION and
-  COLLECT. Arrays already give a collection type to build on.
 - Structured types (S023 to S026, S051, S151, S161, S261) [§4.9.3,
   §11.51]. CREATE TYPE AS a list of attributes, methods, subtypes under
   their supertypes, typed tables, IS OF and TREAT. Their methods are
   SQL-invoked routines.
 - Reference types (S041, S043, S162, S094) [§4.11]. REF of a structured
   type, a typed table's self-referencing column and dereference. They
-  need structured types and typed tables.
+  need structured types and typed tables. S274 (Multisets of reference
+  types) comes with them.
 
 ### Periods and temporal tables
 

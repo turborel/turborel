@@ -321,6 +321,7 @@ pub fn padding(t: &DataType) -> Option<Option<usize>> {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Extension(_) => None,
     }

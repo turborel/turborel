@@ -6,8 +6,8 @@
 //! (RULES.md D69).
 
 use super::{
-    APPROXIMATE, ARRAY, BINARY, BINARY_VARYING, BLOB, BOOLEAN, CHARACTER, CLOB, DATE, DECFLOAT, DISTINCT, EXACT, INTERVAL_DAY_TIME, ROW,
-    TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING,
+    APPROXIMATE, ARRAY, BINARY, BINARY_VARYING, BLOB, BOOLEAN, CHARACTER, CLOB, DATE, DECFLOAT, DISTINCT, EXACT, INTERVAL_DAY_TIME,
+    MULTISET, ROW, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING,
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -53,6 +53,9 @@ const CLOB_TYPE: u8 = 24;
 /// [ISO/IEC 9075-2:2023 §6.1] BINARY LARGE OBJECT: its maximum length u64,
 /// then units its kind ignores.
 const BLOB_TYPE: u8 = 25;
+/// [ISO/IEC 9075-2:2023 §6.1] A multiset type: its element type
+/// (RULES.md D80).
+const MULTISET_TYPE: u8 = 26;
 
 /// Appends `data_type`'s bytes to `out`.
 pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
@@ -73,6 +76,7 @@ pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
         DataType::Interval(_) => out.put_u8(INTERVAL_TYPE),
         DataType::Exact { spelled, .. } | DataType::Approximate { spelled, .. } => out.put_u8(number_tag(*spelled)),
         DataType::Array(_) => out.put_u8(ARRAY_TYPE),
+        DataType::Multiset(_) => out.put_u8(MULTISET_TYPE),
         DataType::Row(_) => out.put_u8(ROW_TYPE),
         DataType::Distinct(_) => out.put_u8(DISTINCT_TYPE),
         DataType::Extension(e) => {
@@ -114,6 +118,7 @@ fn spelled_as(t: DataType, spelled: Spelled) -> DataType {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => t,
@@ -156,6 +161,7 @@ pub(crate) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         TIMESTAMP_ZONED_TYPE => &TIMESTAMP_ZONED,
         INTERVAL_TYPE => &INTERVAL_DAY_TIME,
         ARRAY_TYPE => &ARRAY,
+        MULTISET_TYPE => &MULTISET,
         ROW_TYPE => &ROW,
         DISTINCT_TYPE => &DISTINCT,
         EXTENSION_TYPE => {

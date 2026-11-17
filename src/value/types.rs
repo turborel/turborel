@@ -33,6 +33,7 @@ pub(crate) mod distinct;
 mod exact;
 pub(crate) mod interval;
 pub(crate) mod lob;
+pub(crate) mod multiset;
 mod row;
 pub(crate) mod tags;
 mod unregistered;
@@ -51,6 +52,7 @@ pub use distinct::{DISTINCT, DistinctKind, DistinctType, USER_DEFINED_NAME};
 pub use exact::{BIGINT_NAME, EXACT, Exact};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
 pub use lob::{BLOB, BLOB_NAME, CLOB, CLOB_NAME, LARGE_NAME, LobType, NCLOB_NAME, OBJECT_NAME};
+pub use multiset::{MAX_MULTISET_CARDINALITY, MULTISET, MULTISET_NAME, MultisetKind, MultisetType};
 pub use row::{Field, ROW, ROW_NAME, RowKind, RowType};
 pub use unregistered::{UNREGISTERED, UNREGISTERED_KIND, Unregistered, parts, unregistered};
 pub use varying::{VARYING, Varying};
@@ -434,6 +436,7 @@ impl DataType {
             DataType::Approximate { .. } => &APPROXIMATE,
             DataType::DecFloat { .. } => &DECFLOAT,
             DataType::Array(_) => &ARRAY,
+            DataType::Multiset(_) => &MULTISET,
             DataType::Row(_) => &ROW,
             DataType::Distinct(_) => &DISTINCT,
             DataType::Extension(e) => *e.kind,
@@ -462,6 +465,7 @@ impl DataType {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Array(_)
+            | DataType::Multiset(_)
             | DataType::Row(_)
             | DataType::Distinct(_) => self.kind().encode_record(v, self),
             DataType::Exact { .. } => EXACT.encode_record(v, self),
@@ -485,6 +489,7 @@ impl DataType {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Array(_)
+            | DataType::Multiset(_)
             | DataType::Row(_)
             | DataType::Distinct(_) => self.kind().decode_record(field, self),
             DataType::Exact { .. } => EXACT.decode_record(field, self),
@@ -512,6 +517,7 @@ impl DataType {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Array(_)
+            | DataType::Multiset(_)
             | DataType::Row(_)
             | DataType::Distinct(_) => self.kind().encode_key(v, self, out),
             DataType::Exact { .. } => EXACT.encode_key(v, self, out),
@@ -539,6 +545,7 @@ impl DataType {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Array(_)
+            | DataType::Multiset(_)
             | DataType::Row(_)
             | DataType::Distinct(_) => self.kind().decode_key(rest, self),
             DataType::Exact { .. } => EXACT.decode_key(rest, self),
@@ -568,6 +575,7 @@ impl Value {
             Value::Datetime(d) => Some(datetime::kind_of(d)),
             Value::Interval(i) => Some(interval::kind_of(i.qualifier)),
             Value::Array(_) => Some(&ARRAY),
+            Value::Multiset(_) => Some(&MULTISET),
             Value::Row(_) => Some(&ROW),
             Value::Extension(e) => Some(e.kind),
         }

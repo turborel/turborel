@@ -60,6 +60,8 @@ const ROW: u8 = 14;
 const CLOB: u8 = 15;
 /// [ISO/IEC 9075-2:2023 §4.4] A binary large object.
 const BLOB: u8 = 16;
+/// [ISO/IEC 9075-2:2023 §4.12.3] A multiset: its elements, as an array's.
+const MULTISET: u8 = 17;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -91,6 +93,7 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
         },
         Value::Interval(_) => INTERVAL,
         Value::Array(_) => ARRAY,
+        Value::Multiset(_) => MULTISET,
         Value::Row(_) => ROW,
         Value::Extension(e) => {
             out.put_u8(EXTENSION);
@@ -125,6 +128,7 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         TIMESTAMP => &types::TIMESTAMP,
         INTERVAL => &types::INTERVAL_DAY_TIME,
         ARRAY => &types::ARRAY,
+        MULTISET => &types::MULTISET,
         ROW => &types::ROW,
         CLOB => &types::CLOB,
         BLOB => &types::BLOB,

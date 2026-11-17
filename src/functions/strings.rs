@@ -113,6 +113,7 @@ pub(super) fn character(name: &str, t: &DataType) -> Result<u32> {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => {
@@ -146,6 +147,7 @@ fn binary_string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,
@@ -170,6 +172,7 @@ fn integer(name: &str, t: &DataType) -> Result<()> {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => fail(
@@ -193,6 +196,7 @@ pub(super) fn text(v: &Value) -> Result<Option<&str>> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => fail(Code::Api, "[DESIGN] a string function was given a value not a character string"),
     }
@@ -220,6 +224,7 @@ pub(super) fn whole(v: Option<&Value>) -> Result<Option<i128>> {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_),
         ) => not_integer(),

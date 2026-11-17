@@ -119,6 +119,10 @@ fn edge_rows() -> Vec<Row> {
             datetime(Moment::Timestamp, "0001-01-01 00:00:00"),
         ],
         vec![Value::Interval(Interval { units: -14, qualifier: Qualifier::new(Field::Year, Field::Month, 2, 0) })],
+        vec![
+            Value::Multiset(vec![Value::Exact(Decimal::new(1, 0)), Value::Null, Value::Multiset(Vec::new().into())].into()),
+            Value::Multiset(Vec::new().into()),
+        ],
         vec![],
     ]
 }
@@ -139,6 +143,7 @@ fn every_reply() -> Vec<Reply> {
         Column { name: Some("W".into()), data_type: DataType::Timestamp { precision: 3, zoned: true }, not_null: false },
         Column { name: Some("I".into()), data_type: DataType::Interval(Qualifier::new(Field::Day, Field::Second, 9, 2)), not_null: false },
         Column { name: Some("I".into()), data_type: DataType::Interval(Qualifier::new(Field::Day, Field::Second, 9, 2)), not_null: false },
+        Column { name: Some("M".into()), data_type: DataType::multiset(DataType::multiset(DataType::character(2))), not_null: false },
     ];
     let cited = Failure {
         sqlcode: -103,
@@ -173,7 +178,7 @@ fn every_reply() -> Vec<Reply> {
 }
 
 /// Verifies: [DESIGN] RULES.md D42, D45: every reply reads back as written:
-/// each data type and each kind of value, a null, a column named and one
+/// each data type and each kind of value, a multiset nested and empty, a null, a column named and one
 /// not, a parameter of each kind, an error with its rule and position and
 /// one without; `row_size` is the bytes a row takes.
 #[test]

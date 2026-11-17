@@ -22,6 +22,7 @@ SQLSTATE 0A000.
 | An interval's leading field | 9 digits; its fraction of a second 6 |
 | An unsigned integer, as a length | 4,294,967,295 |
 | An array's maximum cardinality | 65,535 elements, also the maximum of an array type written without one |
+| A multiset's elements | 65,535; past it, SQLSTATE 2200Q |
 
 ## Nesting
 
@@ -32,8 +33,8 @@ FROM clause. A deeper one is refused rather than run out of stack.
 Triggers run within triggers at most 16 deep: a trigger whose action
 runs a 17th fails its statement with SQLSTATE 09000, SQLCODE -900.
 
-Array and row types nest at most 16 deep, an array of rows of arrays
-counting three. A deeper type is refused as it is read.
+Array, multiset and row types nest at most 16 deep, an array of rows of
+arrays counting three. A deeper type is refused as it is read.
 
 A regular expression compiles to at most 8,192 instructions, about as
 many characters, each counted repeat as many times as its count, so

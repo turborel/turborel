@@ -107,14 +107,17 @@ impl Parser {
     ///     [ <left paren> <unsigned integer> [ <comma> <unsigned integer> ] <right paren> ]
     /// ```
     ///
-    /// [ISO/IEC 9075-2:2023 §6.1] An array's element type and a row's field
-    /// type may name a type too, nested no deeper than `MAX_TYPE_NESTING`.
+    /// [ISO/IEC 9075-2:2023 §6.1] A collection's element type and a row's
+    /// field type may name a type too, nested no deeper than
+    /// `MAX_TYPE_NESTING`.
     pub(super) fn type_name(&mut self) -> Result<TypeName> {
         let at = self.here();
         let base = self.named_or_row()?;
-        let t = self.array_suffix()?.into_iter().fold(base, |t, max| match t {
-            TypeName::Data(element) => TypeName::Data(DataType::array(element, max)),
-            TypeName::Domain(_) | TypeName::Extension { .. } | TypeName::Array(..) | TypeName::Row(_) => TypeName::Array(Box::new(t), max),
+        let t = self.collection_suffix()?.into_iter().fold(base, |t, kind| match t {
+            TypeName::Data(element) => TypeName::Data(kind.of(element)),
+            TypeName::Domain(_) | TypeName::Extension { .. } | TypeName::Collection(..) | TypeName::Row(_) => {
+                TypeName::Collection(Box::new(t), kind)
+            }
         });
         within_nesting(type_nesting(&t), at)?;
         Ok(t)
@@ -130,7 +133,7 @@ impl Parser {
             }
             let data = |(name, t): (String, TypeName)| match t {
                 TypeName::Data(data_type) => Some(Field { name, data_type, unnamed: false }),
-                TypeName::Domain(_) | TypeName::Extension { .. } | TypeName::Array(..) | TypeName::Row(_) => None,
+                TypeName::Domain(_) | TypeName::Extension { .. } | TypeName::Collection(..) | TypeName::Row(_) => None,
             };
             return Ok(TypeName::Data(DataType::row(fields.into_iter().filter_map(data).collect())));
         }
@@ -167,13 +170,13 @@ impl Parser {
     }
 }
 
-/// How deep arrays and rows nest in `t`, as written: a type it names
+/// How deep collections and rows nest in `t`, as written: a type it names
 /// counts as none, its own nesting checked as it is resolved.
 fn type_nesting(t: &TypeName) -> usize {
     match t {
         TypeName::Data(d) => nesting(d),
         TypeName::Domain(_) | TypeName::Extension { .. } => 0,
-        TypeName::Array(element, _) => type_nesting(element).saturating_add(1),
+        TypeName::Collection(element, _) => type_nesting(element).saturating_add(1),
         TypeName::Row(fields) => fields.iter().map(|(_, f)| type_nesting(f)).max().unwrap_or(0).saturating_add(1),
     }
 }

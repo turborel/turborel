@@ -42,6 +42,7 @@ fn finished(function: &dyn AggregateFunction, result: DataType, values: &[Value]
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_) => None,
         })

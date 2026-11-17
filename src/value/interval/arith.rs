@@ -77,6 +77,7 @@ pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> 
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => factor.clone(),
     };

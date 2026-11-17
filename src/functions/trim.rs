@@ -195,6 +195,7 @@ impl Trim {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_) => Ok(text(source)?.map_or(Value::Null, |s| Value::Char(trimmed(s, &set, ends).to_owned()))),
         }

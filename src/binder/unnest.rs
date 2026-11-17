@@ -40,10 +40,38 @@ pub(super) struct Unnested {
     pub(super) reads: BTreeSet<usize>,
 }
 
+/// [ISO/IEC 9075-2:2023 §7.6 SR8c, SR8e] The collections of `table`, bound
+/// by `binder`, and the element type of each: each an array, or one
+/// multiset alone, of no WITH ORDINALITY, as the array it is cast to.
+fn collections_of(binder: &Binder<'_>, table: &UnnestTable) -> Result<(Vec<Expr>, Vec<DataType>)> {
+    let scope = Scope::Rows("[ISO/IEC 9075-2:2023 §6.9 SR7] a set function in a <collection derived table> is over an outer reference");
+    let (mut collections, mut types) = (Vec::new(), Vec::new());
+    for collection in &table.collections {
+        let (expr, value_type) = binder.value_expression(collection, scope)?;
+        let element = if let DataType::Array(array) = &value_type {
+            array.element.clone()
+        } else if let Some(m) = value_type.multiset_type() {
+            if table.collections.len() != 1 || table.ordinality {
+                return Err(rule(
+                    "[ISO/IEC 9075-2:2023 §7.6 SR8e i] a multiset is unnested alone, and WITH ORDINALITY gives it no ordinal".to_owned(),
+                ));
+            }
+            m.element.clone()
+        } else {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §7.6 SR8c] a <collection value expression> is an array or a multiset, not of {value_type}"
+            )));
+        };
+        collections.push(expr);
+        types.push(element);
+    }
+    Ok((collections, types))
+}
+
 /// [ISO/IEC 9075-2:2023 §7.6 SR8] The collection derived table `table`, its
 /// first column at `offset`: its collections bound over every item of
-/// `from` [SR20a], each an array [SR8c], its columns named by its derived
-/// column list, else as SR8m ii names them.
+/// `from` [SR20a], each an array, or one multiset alone [SR8c, SR8e], its
+/// columns named by its derived column list, else as SR8m ii names them.
 pub(super) fn unnest_item(bounds: Bounds<'_>, table: &UnnestTable, offset: usize, from: &mut From) -> Result<FromItem> {
     let mut ids: Vec<usize> = (0..from.items.len()).collect();
     ids.sort_by_key(|&i| from.items.get(i).map_or(0, |it| it.offset));
@@ -55,16 +83,7 @@ pub(super) fn unnest_item(bounds: Bounds<'_>, table: &UnnestTable, offset: usize
     // [ISO/IEC 9075-2:2023 §6.14 SR1] none of its rows draws a value.
     let cx = Context { draws: false, ..bounds.cx };
     let binder = Binder::new(cx, bounds.outer, (items, names, visible), BTreeSet::new());
-    let scope = Scope::Rows("[ISO/IEC 9075-2:2023 §6.9 SR7] a set function in a <collection derived table> is over an outer reference");
-    let (mut collections, mut types) = (Vec::new(), Vec::new());
-    for collection in &table.collections {
-        let (expr, value_type) = binder.value_expression(collection, scope)?;
-        let DataType::Array(array) = value_type else {
-            return Err(rule(format!("[ISO/IEC 9075-2:2023 §7.6 SR8c] a <collection value expression> is an array, not of {value_type}")));
-        };
-        collections.push(expr);
-        types.push(array.element.clone());
-    }
+    let (collections, types) = collections_of(&binder, table)?;
     let reads = binder.used.into_inner();
     from.used.extend(reads.iter().copied());
     let spread = types.iter().map(|element| if let DataType::Row(row) = element { Some(row.fields.len()) } else { None }).collect();

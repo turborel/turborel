@@ -47,6 +47,11 @@ mod hypothetical;
 pub use hypothetical::{Hypothesis, Hypothetical, RANK_FUNCTION_TYPES};
 mod ints;
 mod listagg;
+mod multisets;
+pub use multisets::{
+    COLLECT, ELEMENT, ElementOfMultiset, FUSION, Gathering, INTERSECTION, IsASet, MEMBER, MemberOf, MultisetAggregate, MultisetCombination,
+    MultisetOf, SUBMULTISET, SetOf, SubmultisetOf,
+};
 mod octet_like;
 pub use octet_like::OctetLike;
 pub mod lobs;
@@ -432,6 +437,7 @@ impl AggregateFunction for Sum {
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
             | DataType::Array(_)
+            | DataType::Multiset(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
@@ -473,6 +479,7 @@ impl AggregateFunction for Avg {
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
             | DataType::Array(_)
+            | DataType::Multiset(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },

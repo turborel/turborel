@@ -1,4 +1,4 @@
-//! \[DESIGN\] The native wire protocol, version 2 (RULES.md D42, D45): its
+//! \[DESIGN\] The native wire protocol, version 1 (RULES.md D42, D45): its
 //! messages and their encoding, without I/O, so the server and the client
 //! share one codec and tests can check it byte by byte.
 //!
@@ -109,7 +109,7 @@ pub use reply::Reply;
 pub use request::Request;
 
 /// The protocol's version, the first field of Hello.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 1;
 /// \[DESIGN\] The TCP port a server listens on, and a client connects to,
 /// unless told another.
 pub const DEFAULT_PORT: u16 = 7422;

@@ -64,6 +64,7 @@ fn decfloat_of(v: &Value, precision: u32) -> Option<DecFloat> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => None,
     }
@@ -171,6 +172,7 @@ impl SqlType for DecFloatKind {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_) => uncastable(&v, t),
         }
@@ -257,6 +259,7 @@ impl SqlType for DecFloatKind {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_) => None,
         }

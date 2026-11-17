@@ -1439,7 +1439,7 @@ of a name and a type [§4.10].
 | ARRAY_AGG | §10.9 SR7 | `ARRAY_AGG(x ORDER BY ...)` of each row's value, nulls among them, null of no rows; past 65,535 elements, SQLSTATE 2202F. Its grammar has no DISTINCT, so one written is SQLCODE -102. |
 | Comparison | §8.2 GR1b, §9.11 | Arrays are compared for equality alone, of the same cardinality, element by element, three valued, so a pair known unequal makes them unequal though another is unknown. Rows are compared field by field and ordered by their first unequal field. A value of a row type is spread into its fields wherever a row value constructor is [§7.2]. |
 | Ordering and grouping | §9.12 SR3, §9.14 SR3 | An array in ORDER BY, GROUP BY, DISTINCT, UNION but UNION ALL, EXCEPT, INTERSECT, MAX, MIN, a key, an index or `<`, `<=`, `>`, `>=`, BETWEEN, GREATEST or LEAST is SQLCODE -103. A named columns join (NATURAL or USING) of array columns is valid, its columns compared for equality (F402). Rows are ordered and grouped field by field. |
-| Assignment and CAST | §9.2, §6.13 | Element by element and field by field, an array of more non-null elements than its target's maximum SQLSTATE 2202F. Nothing else is assigned or cast to or from an array or a row. |
+| Assignment and CAST | §9.2, §6.13 | Element by element and field by field, an array of more non-null elements than its target's maximum SQLSTATE 2202F. CAST also takes an array to a multiset and a multiset to an array ([Multisets](#multisets)). Nothing else is assigned or cast to or from an array or a row. |
 | `SET A[i] = v` | §14.15 GR10b | Past the cardinality the array is extended with nulls; index 0 or past the maximum is SQLSTATE 2202E, a null array SQLSTATE 2200E. |
 | Target `A[i]` | §6.4 SR7, SR8, §14.7 GR4b ii 1, §10.4 GR10b ii 1 | A SELECT INTO target or a CALL output argument in a procedure's body, of an SQL parameter's array, or in a BEFORE row trigger's action, of a new row column's. The array is of an array type or a distinct type whose source is one, and the position a literal or, in a body, an SQL parameter, exact numeric of scale 0 (SQLCODE -103). The element is assigned as `SET A[i] = v` assigns it, with the same SQLSTATEs. FETCH reads its targets alike, but neither a body nor an action may hold a FETCH. |
 | UNNEST | §7.6 SR8, §7.10 | `UNNEST(a, ...) [WITH ORDINALITY] AS t [(names)]` of the rows of its arrays' elements, padded with nulls to the longest, each array of rows spread into its fields. The ordinality column is INTEGER (IV158). It reads the FROM items before it, after a comma or as the second operand of CROSS, INNER and LEFT joins; as that of a RIGHT or FULL join it may read none of the first (SQLCODE -103). |
@@ -1457,11 +1457,49 @@ S096 (Optional array bounds), S097 (Array element assignment) and S098
 (ARRAY_AGG), each processed as the table says. ARRAY, ROW, UNNEST and
 the functions are key words only where they are read (Appendix B).
 
+### Multisets
+
+Features S271 (Basic multiset support), S275 (Advanced multiset
+support), S272 (Multisets of user-defined types), S281 (Nested
+collection types), S402 (Distinct types based on multiset types) and
+S202 (SQL-invoked routines on multisets). A multiset is an unordered
+collection of elements of one type, each possibly there more than once
+[§4.12.3].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Multiset types | §6.1 SR48, §4.12.3 | `<data type> MULTISET`, of any data type of the standard, rows, arrays, multisets and distinct types among them. No type of an extension is an element's. A multiset holds at most 65,535 elements, as an array may (see [Limits](#limits)); past it, SQLSTATE 2200Q [§10.9 GR3b]. |
+| Constructors | §6.52 | `MULTISET[...]`, of the type its elements bring together [§9.5], `MULTISET[]` where its type is known, and `MULTISET(query)` of one column and `TABLE(query)` of a row of each row's columns, named F1, F2 and so on (UV076). Either query with ORDER BY, or MULTISET's of more than one column, is SQLCODE -103. Of no rows, either is the empty multiset. |
+| Element reference | §6.26 | `ELEMENT(m)`, null of a null or empty multiset, SQLSTATE 21000 of one of more than one element. |
+| CARDINALITY and SET | §6.31, §6.51 | CARDINALITY counts the elements, null of a null multiset. SET keeps one element of each not distinct from one another, nulls among them. |
+| Operators | §6.50 | `MULTISET UNION`, `EXCEPT` and `INTERSECT`, each ALL (implicit) or DISTINCT, null if an operand is. INTERSECT binds tighter, and UNION and EXCEPT go left to right. The result is a multiset of the element types brought together [§9.5]. |
+| Comparison | §8.2 GR1b iii, §8.15 GR1c vi, §9.11 | Multisets are compared for equality alone. Two are equal if some pairing of their elements makes each pair equal, unknown if one makes each pair equal or unknown, else false, and distinct if some value is not distinct from more elements of one. A multiset compared with an array is SQLCODE -103. |
+| Predicates | §8.16, §8.17, §8.18 | `x [NOT] MEMBER [OF] m`, `m [NOT] SUBMULTISET [OF] n` and `m IS [NOT] A SET`, each by its General Rules, nulls among the elements. A row value is a member of a multiset of rows. |
+| Ordering and grouping | §9.12 SR3, §9.13 SR3, §9.14 SR3 | A multiset in ORDER BY, GROUP BY, DISTINCT, UNION but UNION ALL, EXCEPT, INTERSECT, MAX, MIN, a key, an index or `<` and the others is SQLCODE -103. So is a grouping operation, SET, IS A SET, SUBMULTISET, `=`, MEMBER and the operators but UNION ALL, over elements of a type grouped by nothing, an array, a multiset or a large object. |
+| Aggregates | §10.9 SR7k to SR7n | COLLECT gathers its values, nulls among them, DISTINCT once each. FUSION gathers the elements of its multisets and INTERSECTION keeps as many of each as the multiset of fewest, each leaving out a null multiset. Each is null of no values. FUSION and INTERSECTION take no DISTINCT (SQLCODE -103). |
+| Assignment and CAST | §9.2, §6.13 SR5, SR6 | Element by element, to a multiset alone. CAST takes a multiset to a multiset or an array and an array to a multiset; to an array of a maximum cardinality short of its elements it is SQLSTATE 2202F. A default or an SQL variable's may be `MULTISET[]` of a multiset type. |
+| UNNEST | §7.6 SR8e | `UNNEST(m) AS t [(names)]` of a row of each element, one multiset alone and without WITH ORDINALITY (SQLCODE -103). |
+| Nested and user-defined | S281, S272, S402 | Arrays of multisets, multisets of arrays and of multisets, and multisets of distinct types. A distinct type of a multiset source is taken wherever a multiset is, with ordering form NONE. |
+| Routines | S202 | An SQL-invoked routine's parameters, result and SQL variables may be of multiset types. |
+| Non-determinism | §9.16 SR1n, SR1o, SR1aq | A CHECK, assertion or generation expression holding a grouping operation, SET or INTERSECTION over elements of a character string, distinct or zoned datetime type is SQLCODE -103. |
+| Dynamic SQL | §20.1 Table 30, §20.9 GR7 | DESCRIBE gives TYPE 55 and, WITH NESTING, the element's item after it. RETURNED_CARDINALITY counts the elements, and DATA of the element's item is SQLSTATE 0700C. |
+| Its description | ISO/IEC 9075-11 | COLUMNS gives DATA_TYPE 'MULTISET' and no MAXIMUM_CARDINALITY, and ELEMENT_TYPES the element type. |
+
+A multiset's elements are kept in the row of their table, as an array's
+are, and paired by classes and a matching (RULES.md D80). MULTISET,
+MEMBER, SUBMULTISET, ELEMENT, COLLECT, FUSION and INTERSECTION are key
+words only where they are read, so a column may be named by any of them
+(Appendix B). `TABLE(query)` is processed though T326 (Table functions)
+is not claimed. S274 (Multisets of reference types) waits for reference
+types, and S233 (Multiset locators) for host languages that hold them.
+
 ### Distinct types
 
 Features S011 (Distinct data types), S028 (Permutable UDT options list)
-and S401 (Distinct types based on array types). CREATE TYPE defines a
-distinct type of a predefined type or an array type [§11.51], and DROP
+and S401 (Distinct types based on array types), and S402 (Distinct types
+based on multiset types) with [multisets](#multisets). CREATE TYPE
+defines a distinct type of a predefined, an array or a multiset type
+[§11.51], and DROP
 TYPE drops one [§11.59]. Its values are its source type's, and compare
 only with values of the same type [§4.9.5].
 
@@ -2151,6 +2189,7 @@ SQLCODE -900 (RULES.md D18).
 | FLOAT precision | 53 binary digits, and approximate literals within the range of a double | 86 §5.5 SR10 allows more precision than asked for, but sets no maximum. | `parser/data_type.rs`, `parser/literal.rs` |
 | `<unsigned integer>` | 4,294,967,295 | 86 §5.2 sets no maximum. | `parser.rs` |
 | A sum of SUM or AVG on the way to its total | 128 bits, past some 10^20 exact values of 18 digits, or 10^18 intervals of 9 digits of days | §6.5 GR2b iv judges only the total against the range of the result, so whether a sum raises does not depend on the order of its rows (RULES.md D15). Each sum before it is kept wider than the result, but not without bound. | `functions/sum.rs` |
+| Multiset cardinality | 65,535 elements | §4.12.3 sets no maximum, and §10.9 GR3b names multiset value overflow, 2200Q, for a result past what its site holds. The limit is an array's maximum cardinality, so a multiset casts to an array of it. | `value/types/multiset.rs` |
 | SQL descriptor areas | 64 at once, of a session | §17.2 GR3 leaves the number to the implementation, and names no exception past it. Direct SQL allocates them, a server's clients among it. | `db/dynamic/areas.rs` |
 | Regular expression size | 8,192 instructions compiled, about as many characters and quantified repeats, and groups 64 deep | §9.28 sets no limit. A counted repeat is compiled once for each count, so `a{9000}` passes it. | `regex/compile.rs`, `regex/parse.rs` |
 | Regular expression steps | 10,000,000, of a search with back-references | A back-reference matches no automaton, so its search goes back and can take time exponential in the string. One without any takes time linear in it, with no limit. | `regex/backtrack.rs` |

@@ -29,6 +29,7 @@ fn got(v: Value) -> Got {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Lob(_)
         | Value::Extension(_)) => panic!("{other:?}"),

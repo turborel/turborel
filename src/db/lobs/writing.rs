@@ -106,6 +106,7 @@ pub(super) fn resolved(v: &Value, located: &mut dyn FnMut(u32) -> Result<Lob>) -
             [] | [_, ..] => Ok(v.clone()),
         },
         Value::Array(items) => Ok(Value::Array(items.iter().map(|i| resolved(i, located)).collect::<Result<Vec<_>>>()?.into())),
+        Value::Multiset(items) => Ok(Value::Multiset(items.iter().map(|i| resolved(i, located)).collect::<Result<Vec<_>>>()?.into())),
         Value::Row(fields) => Ok(Value::Row(fields.iter().map(|f| resolved(f, located)).collect::<Result<Vec<_>>>()?.into())),
         Value::Null
         | Value::Char(_)

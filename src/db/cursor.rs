@@ -151,6 +151,7 @@ fn how_far(j: &ValueSpecification, valued: &Valued<'_>) -> Result<i128> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => Err(not_exact()),
     }

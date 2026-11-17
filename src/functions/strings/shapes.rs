@@ -50,6 +50,7 @@ pub(crate) fn shape(t: &DataType) -> Option<Shape> {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => return None,

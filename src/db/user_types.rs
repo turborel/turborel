@@ -117,7 +117,7 @@ impl State {
             TypeName::Data(DataType::Extension(t)) => refused(t.kind.name(), 0),
             TypeName::Data(t) => Ok(t.clone()),
             TypeName::Domain(name) | TypeName::Extension { name, .. } => refused(&name.ident, name.at),
-            TypeName::Array(..) => self.data_type_of(of, (schema, sole(&*self.catalog, owner))),
+            TypeName::Collection(..) => self.data_type_of(of, (schema, sole(&*self.catalog, owner))),
         }
     }
 
@@ -217,6 +217,7 @@ fn respelled(t: DataType) -> DataType {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_)) => other,
@@ -242,6 +243,7 @@ fn type_name_of(t: &DataType) -> Option<&'static str> {
         DataType::Interval(_) => "INTERVAL",
         DataType::Boolean => "BOOLEAN",
         DataType::Array(_) => "ARRAY",
+        DataType::Multiset(_) => crate::value::types::MULTISET_NAME,
         DataType::Row(_) | DataType::Distinct(_) | DataType::Extension(_) => return None,
     })
 }

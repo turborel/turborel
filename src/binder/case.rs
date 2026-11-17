@@ -87,6 +87,7 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Array(_)
+            | DataType::Multiset(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Extension(_) => {}
@@ -130,6 +131,7 @@ fn string_set_type(types: &[DataType]) -> Option<DataType> {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Array(_)
+            | DataType::Multiset(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Extension(_) => continue,
@@ -391,6 +393,7 @@ impl Binder<'_> {
         if !xt.comparable(&yt) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §6.9 SR4a, §8.2 SR3] {xt} and {yt} are not comparable")));
         }
+        super::multisets::equality_operand(&xt, "the comparison")?;
         let characters = xt.is_character() && yt.is_character();
         let by = if characters { self.collation_of(&[self.derived(a)?, self.derived(b)?])? } else { None };
         // A large object by its proxies (`binder/lobs.rs`).

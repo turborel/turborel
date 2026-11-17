@@ -99,6 +99,7 @@ impl SqlType for Ident {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_) => Err(mismatch(&v)),
         }
     }

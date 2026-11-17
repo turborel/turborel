@@ -251,15 +251,16 @@ fn hello(address: std::net::SocketAddr, (version, user, mechanism): (u32, &str, 
 fn a_hello_refused_before_authentication_is_told() {
     let (db, kept) = database();
     let server = start_with(&db, &[], vec![Arc::new(Refusing)]);
-    let version = hello(server.address, (1, "ann", "secret"));
-    let unnamed = hello(server.address, (2, "a b", "secret"));
-    let unserved = hello(server.address, (2, "ann", "nothing"));
+    let (spoken, other) = (turborel_protocol::VERSION, turborel_protocol::VERSION.saturating_add(1));
+    let version = hello(server.address, (other, "ann", "secret"));
+    let unnamed = hello(server.address, (spoken, "a b", "secret"));
+    let unserved = hello(server.address, (spoken, "ann", "nothing"));
     let told = kept.of("LoginFailed");
     assert_eq!(told.len(), 3, "{told:?}");
     assert_eq!(
         told[0],
         format!(
-            r#"LoginFailed {{ user: "ANN", peer: "{version}", mechanism: "secret", message: "protocol version 1 is not served; this server speaks 2" }}"#
+            r#"LoginFailed {{ user: "ANN", peer: "{version}", mechanism: "secret", message: "protocol version {other} is not served; this server speaks {spoken}" }}"#
         )
     );
     assert!(told[1].starts_with(&format!(r#"LoginFailed {{ user: "a b", peer: "{unnamed}", mechanism: "secret", message: ""#)), "{told:?}");

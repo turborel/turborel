@@ -174,6 +174,7 @@ impl SqlType for IntervalKind {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_) => uncastable(&v, t),
         }

@@ -337,6 +337,7 @@ impl<S: Read + Write> Run<'_, S> {
                     | Value::Datetime(_)
                     | Value::Interval(_)
                     | Value::Array(_)
+                    | Value::Multiset(_)
                     | Value::Row(_)
                     | Value::Lob(_)
                     | Value::Extension(_) => return Ok(v),

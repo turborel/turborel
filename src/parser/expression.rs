@@ -9,9 +9,13 @@ use super::{Parser, furthest};
 use crate::ast::{Predicate, RowValue, SearchCondition, Subquery, ValueExpression, WhenOperand};
 use crate::catalog::MatchType;
 use crate::error::Result;
-use crate::functions::{FLAG, LIKE_REGEX};
+use crate::functions::{FLAG, LIKE_REGEX, MEMBER, SUBMULTISET};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::CompOp;
+
+/// [ISO/IEC 9075-2:2023 §8.18] The A of IS \[NOT\] A SET, no key word of
+/// SQL-92.
+const A_WORD: &str = "A";
 
 impl Parser {
     // =====================================================================
@@ -105,22 +109,33 @@ impl Parser {
         self.row_value()
     }
 
-    /// Whether IS \[NOT\] NULL or IS \[NOT\] DISTINCT is next, IS \[NOT\]
-    /// TRUE, FALSE or UNKNOWN being a `<boolean test>` of a predicand
-    /// [ISO/IEC 9075-2:2023 §6.46].
+    /// Whether IS \[NOT\] NULL, IS \[NOT\] DISTINCT or IS \[NOT\] A SET is
+    /// next, IS \[NOT\] TRUE, FALSE or UNKNOWN being a `<boolean test>` of
+    /// a predicand [ISO/IEC 9075-2:2023 §6.46].
     fn at_is_predicate(&self) -> bool {
-        let word_at = |n: usize| matches!(self.peek_at(n), Tok::KeyWord(kw::NULL | kw::DISTINCT));
+        let word_at = |n: usize| {
+            matches!(self.peek_at(n), Tok::KeyWord(kw::NULL | kw::DISTINCT))
+                || (matches!(self.peek_at(n), Tok::Identifier(a) if a == A_WORD)
+                    && matches!(self.peek_at(n.saturating_add(1)), Tok::KeyWord(kw::SET)))
+        };
         self.is_kw(kw::IS) && (word_at(1) || (matches!(self.peek_at(1), Tok::KeyWord(kw::NOT)) && word_at(2)))
     }
 
     /// The predicate after its first row value, `value`, at IS: a `<null
-    /// predicate>`, or a `<distinct predicate>` [ISO/IEC 9075-2:2023 §8.15].
+    /// predicate>`, a `<set predicate>` [ISO/IEC 9075-2:2023 §8.18], or a
+    /// `<distinct predicate>` [§8.15].
     fn is_predicate(&mut self, value: RowValue) -> Result<Predicate> {
         self.expect_kw(kw::IS)?;
         let not = self.accept_kw(kw::NOT);
         // [§8.6] <null predicate> ::= <row value constructor> IS [NOT] NULL
         if self.accept_kw(kw::NULL) {
             return Ok(Predicate::Null { value, not });
+        }
+        // [ISO/IEC 9075-2:2023 §8.18] <set predicate part 2> ::= IS [NOT] A
+        // SET
+        if self.accept_word(A_WORD) {
+            self.expect_kw(kw::SET)?;
+            return Ok(Predicate::Set { value, not });
         }
         // [ISO/IEC 9075-2:2023 §8.15] <distinct predicate part 2> ::= IS
         // [NOT] DISTINCT FROM <row value predicand 4>
@@ -130,11 +145,13 @@ impl Parser {
     }
 
     /// Whether what follows a row value makes it a predicate's: MATCH,
-    /// NOT, BETWEEN, IN, LIKE, LIKE_REGEX, OVERLAPS or a `<comp op>`.
+    /// NOT, BETWEEN, IN, LIKE, LIKE_REGEX, OVERLAPS, a `<comp op>`, or
+    /// MEMBER or SUBMULTISET before OF or an operand.
     fn at_predicate_operator(&self) -> bool {
         match self.peek() {
-            // [ISO/IEC 9075-2:2023 §8.7] LIKE_REGEX, no key word of SQL-92.
-            Tok::Identifier(name) => name == LIKE_REGEX,
+            // [ISO/IEC 9075-2:2023 §8.7, §8.16, §8.17] LIKE_REGEX, MEMBER and
+            // SUBMULTISET, no key words of SQL-92.
+            Tok::Identifier(name) => name == LIKE_REGEX || ((name == MEMBER || name == SUBMULTISET) && self.operand_after()),
             Tok::KeyWord(word) => [kw::MATCH, kw::NOT, kw::BETWEEN, kw::IN, kw::LIKE, kw::OVERLAPS].contains(word),
             Tok::Delimiter(d) => {
                 [delim::EQUALS, delim::NOT_EQUALS, delim::LESS, delim::GREATER, delim::LESS_OR_EQUAL, delim::GREATER_OR_EQUAL].contains(d)
@@ -146,6 +163,23 @@ impl Parser {
             | Tok::Introducer(_)
             | Tok::LargeObjectLength(_)
             | Tok::End => false,
+        }
+    }
+
+    /// \[DESIGN\] Whether the word next, MEMBER or SUBMULTISET, is
+    /// followed by OF or what may begin its operand, so a column named so
+    /// is still read as one where it is (RULES.md D80).
+    fn operand_after(&self) -> bool {
+        match self.peek_at(1) {
+            Tok::KeyWord(word) => [kw::OF, kw::CAST, kw::CASE, kw::NULLIF, kw::COALESCE, kw::TABLE, kw::SET, kw::VALUE].contains(word),
+            Tok::Delimiter(d) => [delim::LEFT_PAREN, delim::QUESTION, delim::COLON].contains(d),
+            Tok::Identifier(_)
+            | Tok::ExactNumeric(_)
+            | Tok::ApproximateNumeric(_)
+            | Tok::CharacterString(_)
+            | Tok::BinaryString(_)
+            | Tok::Introducer(_) => true,
+            Tok::LargeObjectLength(_) | Tok::End => false,
         }
     }
 
@@ -174,8 +208,18 @@ impl Parser {
         if self.accept_word(LIKE_REGEX) {
             return self.like_regex(value, not);
         }
+        // [ISO/IEC 9075-2:2023 §8.16, §8.17] [NOT] MEMBER [OF] and [NOT]
+        // SUBMULTISET [OF] <multiset value expression>.
+        if self.accept_word(MEMBER) {
+            self.accept_kw(kw::OF);
+            return Ok(Predicate::Member { value, multiset: Box::new(self.common_value_expression()?), not });
+        }
+        if self.accept_word(SUBMULTISET) {
+            self.accept_kw(kw::OF);
+            return Ok(Predicate::Submultiset { value, multiset: Box::new(self.common_value_expression()?), not });
+        }
         if not {
-            return Err(self.syntax("expected BETWEEN, IN, LIKE or LIKE_REGEX after NOT"));
+            return Err(self.syntax("expected BETWEEN, IN, LIKE, LIKE_REGEX, MEMBER or SUBMULTISET after NOT"));
         }
         // [§8.11] <overlaps predicate>
         if self.accept_kw(kw::OVERLAPS) {
@@ -408,11 +452,21 @@ impl Parser {
     /// [ISO/IEC 9075:1992 §6.13] `<concatenation>` ::= `<character value
     /// expression>` || `<character factor>`. Of SQL:2023, a `<common value
     /// expression>` [ISO/IEC 9075-2:2023 §6.29], no truth value.
+    ///
+    /// [ISO/IEC 9075-2:2023 §6.50] A `<multiset value expression>` too, its
+    /// operators binding least tightly (`multisets.rs`).
     pub(super) fn common_value_expression(&mut self) -> Result<ValueExpression> {
         self.nested(|p| {
-            let left = p.term()?;
-            p.additions(left)
+            let sum = p.sum()?;
+            p.multiset_operations(sum)
         })
+    }
+
+    /// A `<term>` and the + - and || that follow it: a `<common value
+    /// expression>` of no multiset operator.
+    pub(super) fn sum(&mut self) -> Result<ValueExpression> {
+        let left = self.term()?;
+        self.additions(left)
     }
 
     /// [X3.135-1986 §5.9] `<term>` ::= `<factor>` | `<term>` * `<factor>` | `<term>` / `<factor>`

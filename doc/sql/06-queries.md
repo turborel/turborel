@@ -125,6 +125,8 @@ column of the place, from 1, of type INTEGER. An array of rows gives a
 column of each field. UNNEST reads the tables before it in the FROM
 clause, each of their rows giving its own rows, so a table's array column
 is unnested row by row; a LEFT join keeps a row whose array gives none.
+UNNEST of a multiset gives a row of each element, of one multiset alone
+and without WITH ORDINALITY, as a multiset's elements have no places.
 
 ```sql
 CREATE TABLE TEAMS (DEPT CHAR(3) PRIMARY KEY, MEMBERS VARCHAR(30) ARRAY[5]);

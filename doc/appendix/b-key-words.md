@@ -202,6 +202,15 @@ arrays. Of the descriptor items, DEGREE, CARDINALITY,
 RETURNED_CARDINALITY and KEY_MEMBER are read only as items,
 TOP_LEVEL_COUNT and KEY_TYPE only as header items, and NESTING and WITHOUT only after DESCRIBE's descriptor.
 
+MULTISET, MEMBER, SUBMULTISET, ELEMENT, COLLECT, FUSION and
+INTERSECTION, which SQL:2023 reserves and SQL-92 does not, are
+identifiers too. MULTISET is a key word after a data type, before `[` or
+a parenthesis where a value is, and before UNION, EXCEPT or INTERSECT
+after a value; MEMBER and SUBMULTISET after a value where a
+predicate is; and the four functions before a parenthesis. SET and
+TABLE, key words of SQL-92, make a multiset before a parenthesis where a
+value is, and A is read only in IS A SET.
+
 TYPE, FINAL, INSTANTIABLE, UNDER, SOURCE, REF, SPECIFIC, FUNCTION and
 ROUTINE, which SQL-92 does not reserve, are key words only in CREATE TYPE,
 DROP TYPE, GRANT and REVOKE, so a column may be named TYPE. A function a

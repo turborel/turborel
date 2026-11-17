@@ -58,6 +58,10 @@ const LOB_INLINE: u8 = 20;
 /// its kind, the locator u32, its octets u64 and its characters u64; the
 /// client reads it by Lob messages (`lobs.rs`).
 const LOB_LOCATOR: u8 = 21;
+/// A multiset type, then its element type; a multiset, its elements'
+/// count and then each element's value, in an order implementation-
+/// dependent [ISO/IEC 9075-2:2023 §4.12.3] (RULES.md D80).
+const MULTISET: u8 = 22;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -131,6 +135,11 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
             put_type(b, &a.element);
             return;
         }
+        DataType::Multiset(m) => {
+            b.put_u8(MULTISET);
+            put_type(b, &m.element);
+            return;
+        }
         DataType::Row(row) => {
             b.put_u8(ROW);
             put_count(b, row.fields.len());
@@ -186,6 +195,7 @@ fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
     let tag = r.u8()?;
     match tag {
         ARRAY => return r.nested(array_type),
+        MULTISET => return r.nested(|r| Ok(DataType::multiset(data_type(r)?))),
         ROW => return r.nested(row_type),
         _ => {}
     }
@@ -270,8 +280,15 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
         },
         Value::Interval(_) => INTERVAL,
         Value::Lob(l) => return put_lob(b, l),
-        Value::Array(parts) | Value::Row(parts) => {
-            b.put_u8(if matches!(v, Value::Array(_)) { ARRAY } else { ROW });
+        Value::Array(parts) | Value::Multiset(parts) | Value::Row(parts) => {
+            let tag = if matches!(v, Value::Array(_)) {
+                ARRAY
+            } else if matches!(v, Value::Multiset(_)) {
+                MULTISET
+            } else {
+                ROW
+            };
+            b.put_u8(tag);
             put_row(b, parts);
             return;
         }
@@ -319,9 +336,19 @@ fn value(r: &mut Reader<'_>) -> Result<Value> {
             Ok(Value::Lob(Lob::of_locator(kind, locator, (octets, chars))))
         }
         ARRAY => r.nested(|r| Ok(Value::Array(counted(r, value)?.into()))),
+        MULTISET => r.nested(|r| multiset(counted(r, value)?, r)),
         ROW => r.nested(|r| Ok(Value::Row(counted(r, value)?.into()))),
         tag => kind_of(tag).ok_or_else(|| r.corrupt("no value has this tag"))?.value(r),
     }
+}
+
+/// A multiset of `elements`, no more than its maximum cardinality
+/// (`MAX_MULTISET_CARDINALITY`).
+fn multiset(elements: Vec<Value>, r: &Reader<'_>) -> Result<Value> {
+    if u32::try_from(elements.len()).is_ok_and(|n| n > types::MAX_MULTISET_CARDINALITY) {
+        return Err(r.corrupt("a multiset has more elements than its maximum cardinality"));
+    }
+    Ok(Value::Multiset(elements.into()))
 }
 
 /// A large object: held whole if it is, as a server sends one short enough
@@ -375,7 +402,7 @@ pub fn row_size(row: &Row) -> usize {
         Value::Datetime(_) => 15,
         // Its tag, its qualifier's four words, and its units.
         Value::Interval(_) => 33,
-        Value::Array(_) | Value::Row(_) | Value::Extension(_) => {
+        Value::Array(_) | Value::Multiset(_) | Value::Row(_) | Value::Extension(_) => {
             let mut b = Vec::new();
             put_value(&mut b, v);
             b.len()

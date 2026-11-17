@@ -228,6 +228,7 @@ fn decfloat_floor(wbc: i128, operands: [&Value; 4]) -> Option<i128> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => None,
     };

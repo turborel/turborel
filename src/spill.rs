@@ -424,7 +424,7 @@ pub fn row_bytes(row: &Row) -> usize {
 }
 
 /// The bytes `v` holds apart from itself: a string's characters, a bit
-/// string's bytes, a plug-in's value's bytes, an array's or a row's parts
+/// string's bytes, a plug-in's value's bytes, a collection's or a row's parts
 /// (counted by every value that shares them, so never too few). The
 /// others hold all they have in themselves.
 pub fn heap_bytes(v: &Value) -> usize {
@@ -435,7 +435,7 @@ pub fn heap_bytes(v: &Value) -> usize {
         // Its parts, and the octets of those held inline: never its
         // length, which a source keeps (RULES.md D79).
         Value::Lob(l) => l.held_bytes(),
-        Value::Array(parts) | Value::Row(parts) => {
+        Value::Array(parts) | Value::Multiset(parts) | Value::Row(parts) => {
             parts.iter().fold(size_of_val::<[Value]>(parts), |sum, p| sum.saturating_add(heap_bytes(p)))
         }
         Value::Null

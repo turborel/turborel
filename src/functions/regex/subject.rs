@@ -78,6 +78,7 @@ impl<'v> Subject<'v> {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_) => Body::Chars(text(value)?.unwrap_or_default().chars().collect()),
         };

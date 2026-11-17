@@ -18,6 +18,7 @@ mod distinct;
 pub mod interval;
 mod like;
 pub mod lob;
+pub mod multisets;
 mod operators;
 mod order;
 pub mod precedence;
@@ -134,6 +135,7 @@ pub fn spelling(t: &DataType) -> Spelled {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => Spelled::Numeric,
@@ -233,6 +235,9 @@ pub enum DataType {
     Interval(interval::Qualifier),
     /// [ISO/IEC 9075-2:2023 §6.1] `<data type>` ARRAY\[n\], an array type.
     Array(Arc<types::ArrayType>),
+    /// [ISO/IEC 9075-2:2023 §6.1] `<data type>` MULTISET, a multiset
+    /// type.
+    Multiset(Arc<types::MultisetType>),
     /// [ISO/IEC 9075-2:2023 §6.1] ROW(field type, ...): a row type.
     Row(Arc<types::RowType>),
     /// [ISO/IEC 9075-2:2023 §4.9.2] A distinct type, a user-defined type of
@@ -279,10 +284,14 @@ impl DataType {
         matches!(self, DataType::Exact { .. } | DataType::Approximate { .. } | DataType::DecFloat { .. })
     }
     /// [X3.135-1986 §4.2] Whether its values compare with those of `other`,
-    /// as its kind says: arrays whose element types do [ISO/IEC 9075-2:2023
-    /// §4.12.4], rows of one degree whose fields do [§4.10].
+    /// as its kind says: arrays, or multisets, whose element types do
+    /// [ISO/IEC 9075-2:2023 §4.12.4], rows of one degree whose fields do
+    /// [§4.10].
     pub fn comparable(&self, other: &DataType) -> bool {
         if let (DataType::Array(a), DataType::Array(b)) = (self, other) {
+            return a.element.comparable(&b.element);
+        }
+        if let (DataType::Multiset(a), DataType::Multiset(b)) = (self, other) {
             return a.element.comparable(&b.element);
         }
         if let (DataType::Row(a), DataType::Row(b)) = (self, other) {
@@ -334,6 +343,9 @@ pub enum Value {
     Lob(lob::Lob),
     /// [ISO/IEC 9075-2:2023 §4.12.2] An array: its elements, in order.
     Array(Arc<[Value]>),
+    /// [ISO/IEC 9075-2:2023 §4.12.3] A multiset: its elements, in no
+    /// order that means anything.
+    Multiset(Arc<[Value]>),
     /// [ISO/IEC 9075-2:2023 §4.10] A row: its fields' values, in order.
     Row(Arc<[Value]>),
     /// A value of a type beyond the standard, a plug-in's (RULES.md D53).
@@ -360,6 +372,7 @@ impl Value {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_) => None,
         }
@@ -380,6 +393,7 @@ impl Value {
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_) => self.clone(),
         }
@@ -414,6 +428,7 @@ impl Value {
             Value::Datetime(d) => NormKey::Instant(d.utc),
             Value::Interval(i) => NormKey::Span(i.units),
             Value::Array(p) | Value::Row(p) => types::composite::norm_parts(p),
+            Value::Multiset(p) => multisets::norm_bag(p),
             // Equal values of a kind beyond the standard have the same bytes
             // (`SqlType`'s contract).
             Value::Extension(e) => NormKey::Extension(Box::new((e.kind.name().to_owned(), e.bytes.to_vec()))),
@@ -436,7 +451,7 @@ impl fmt::Display for Value {
             Value::Bool(b) => f.write_str(if *b { crate::lexer::kw::TRUE } else { crate::lexer::kw::FALSE }),
             Value::Datetime(d) => write!(f, "{d}"),
             Value::Interval(i) => write!(f, "{i}"),
-            Value::Array(_) | Value::Row(_) => f.write_str(&self.to_literal()),
+            Value::Array(_) | Value::Multiset(_) | Value::Row(_) => f.write_str(&self.to_literal()),
             Value::Extension(e) => f.write_str(&e.kind.text(self)),
         }
     }
@@ -471,6 +486,8 @@ pub enum NormKey {
     Extension(Box<(String, Vec<u8>)>),
     /// An array's or a row's parts, each's form.
     Composite(Vec<NormKey>),
+    /// A multiset's elements' forms, in any order.
+    Bag(multisets::BagKey),
 }
 
 /// [ISO/IEC 9075:1992 §9.2 GR2, GR3] Store assignment of `v` to a column,

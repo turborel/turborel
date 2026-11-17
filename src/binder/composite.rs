@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::case::{brought, set_type};
 use super::statements::assignable;
 use super::{Binder, Scope, rule};
-use crate::ast::{ColumnSpecification, Composite, SelectItem, SetClause, TableName, UpdateSource, ValueExpression};
+use crate::ast::{Collection, ColumnSpecification, Composite, SelectItem, SetClause, TableName, UpdateSource, ValueExpression};
 use crate::catalog::ColumnDesc;
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{
@@ -62,10 +62,11 @@ pub(crate) fn grouping_operand(t: &DataType, what: &str) -> Result<()> {
 }
 
 /// [ISO/IEC 9075-2:2023 §6.13 SR5-SR8] Whether CAST takes a value of
-/// `from` to `to`, either an array, a row or a distinct type: an array to an array
-/// whose element type its elements cast to; a row to a row of its degree,
-/// field by field; neither from nor to another type. Of others, true, as
-/// their own rules say.
+/// `from` to `to`, either a collection, a row or a distinct type: an array
+/// or a multiset to an array or a multiset whose element type its
+/// elements cast to [SR5, SR6]; a row to a row of its degree, field by
+/// field; neither from nor to another type. Of others, true, as their own
+/// rules say.
 pub(super) fn castable(from: &DataType, to: &DataType) -> bool {
     // [§6.13 SR12] By a user-defined cast whose source's designator is in
     // `from`'s type precedence list, to its target: as an appropriate one
@@ -74,8 +75,8 @@ pub(super) fn castable(from: &DataType, to: &DataType) -> bool {
         return cast;
     }
     let part = |x: &DataType, y: &DataType| castable(x, y) && element_castable(x, y);
-    if let (DataType::Array(a), DataType::Array(b)) = (from, to) {
-        return part(&a.element, &b.element);
+    if let (Some(a), Some(b)) = (collection_element(from), collection_element(to)) {
+        return part(a, b);
     }
     if let (DataType::Row(a), DataType::Row(b)) = (from, to) {
         return a.fields.len() == b.fields.len() && a.fields.iter().zip(&b.fields).all(|(x, y)| part(&x.data_type, &y.data_type));
@@ -83,9 +84,33 @@ pub(super) fn castable(from: &DataType, to: &DataType) -> bool {
     !(is_composite(from) || is_composite(to))
 }
 
-/// Whether `t` is an array or a row type.
+/// Whether `t` is a collection or a row type.
 fn is_composite(t: &DataType) -> bool {
-    matches!(t, DataType::Array(_) | DataType::Row(_))
+    matches!(t, DataType::Array(_) | DataType::Multiset(_) | DataType::Row(_))
+}
+
+/// The element type of `t`, if it is a collection type.
+fn collection_element(t: &DataType) -> Option<&DataType> {
+    match t {
+        DataType::Array(a) => Some(&a.element),
+        DataType::Multiset(m) => Some(&m.element),
+        DataType::Character { .. }
+        | DataType::Varying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
+        | DataType::Exact { .. }
+        | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
+        | DataType::Boolean
+        | DataType::Date
+        | DataType::Time { .. }
+        | DataType::Timestamp { .. }
+        | DataType::Interval(_)
+        | DataType::Row(_)
+        | DataType::Distinct(_)
+        | DataType::Extension(_) => None,
+    }
 }
 
 /// `t`, a type an expression makes, nested no deeper than
@@ -111,21 +136,27 @@ fn element_castable(from: &DataType, to: &DataType) -> bool {
     super::datetime::binary_castable(from, to)
 }
 
-/// [ISO/IEC 9075-2:2023 §9.5 SR3g, SR3h] The result type of `types`, one
-/// of them a row or an array type: a row of the result types of the
-/// fields in each place, named as all name it there, else F and its place
-/// (UV094); an array of the result type of the element types, of the
-/// greatest maximum cardinality. None if none is a row or an array type.
+/// [ISO/IEC 9075-2:2023 §9.5 SR3g, SR3h, SR3i] The result type of
+/// `types`, one of them a row or a collection type: a row of the result
+/// types of the fields in each place, named as all name it there, else F
+/// and its place (UV094); an array of the result type of the element
+/// types, of the greatest maximum cardinality; a multiset of the result
+/// type of the element types. None if none is a row or a collection type.
 pub(super) fn composite_set_type(types: &[DataType], clause: &str) -> Option<Result<DataType>> {
     let rows: Vec<_> = types.iter().filter_map(|t| if let DataType::Row(r) = t { Some(r) } else { None }).collect();
     let arrays: Vec<_> = types.iter().filter_map(|t| if let DataType::Array(a) = t { Some(a) } else { None }).collect();
-    if rows.is_empty() && arrays.is_empty() {
+    let multisets: Vec<_> = types.iter().filter_map(|t| if let DataType::Multiset(m) = t { Some(m) } else { None }).collect();
+    if rows.is_empty() && arrays.is_empty() && multisets.is_empty() {
         return None;
     }
-    if rows.len() != types.len() && arrays.len() != types.len() {
+    if rows.len() != types.len() && arrays.len() != types.len() && multisets.len() != types.len() {
         return Some(Err(rule(format!(
-            "[ISO/IEC 9075-2:2023 §9.5 SR3g, SR3h] {clause}: rows or arrays are brought together with other values"
+            "[ISO/IEC 9075-2:2023 §9.5 SR3g, SR3h, SR3i] {clause}: rows, arrays or multisets are brought together with other values"
         ))));
+    }
+    if !multisets.is_empty() {
+        let elements: Vec<DataType> = multisets.iter().map(|m| m.element.clone()).collect();
+        return Some(set_type(&elements, clause).map(DataType::multiset));
     }
     if let Some(max) = arrays.iter().map(|a| a.max).max() {
         let elements: Vec<DataType> = arrays.iter().map(|a| a.element.clone()).collect();
@@ -153,14 +184,29 @@ pub(super) fn anonymous(i: usize) -> String {
     format!("F{}", i.saturating_add(1))
 }
 
-/// Whether `v` is `ARRAY[]`, an `<empty specification>` [ISO/IEC
-/// 9075-2:2023 §6.5].
-pub(super) fn is_empty_array(v: &ValueExpression) -> bool {
-    matches!(v, ValueExpression::Composite(c, _) if matches!(&**c, Composite::Array(e) if e.is_empty()))
+/// The kind of `<empty specification>` [ISO/IEC 9075-2:2023 §6.5] `v`
+/// is, ARRAY[] or MULTISET[], if it is one.
+pub(super) fn empty_specification(v: &ValueExpression) -> Option<Collection> {
+    let ValueExpression::Composite(c, _) = v else { return None };
+    match &**c {
+        Composite::Array(e) if e.is_empty() => Some(Collection::Array(0)),
+        Composite::Multiset(e) if e.is_empty() => Some(Collection::Multiset),
+        Composite::Array(_)
+        | Composite::Multiset(_)
+        | Composite::ArrayQuery(_)
+        | Composite::Row(_)
+        | Composite::Element(..)
+        | Composite::Field(..)
+        | Composite::Chain(_)
+        | Composite::MultisetQuery(..)
+        | Composite::MultisetOperation(..)
+        | Composite::MultisetSet(_)
+        | Composite::MultisetElement(_) => None,
+    }
 }
 
 impl Binder<'_> {
-    /// An expression of arrays and rows, bound.
+    /// An expression of arrays, multisets and rows, bound.
     pub(super) fn composite(&self, (c, at): (&Composite, usize), scope: Scope<'_>) -> Result<(Expr, DataType)> {
         match c {
             Composite::Array(values) => self.array_of(values, scope),
@@ -172,6 +218,11 @@ impl Binder<'_> {
                 field_of(bound, name)
             }
             Composite::Chain(parts) => self.chain(parts, at, scope),
+            Composite::Multiset(values) => self.multiset_of(values, scope),
+            Composite::MultisetQuery(s, table) => self.multiset_query(s, *table, scope),
+            Composite::MultisetOperation(op, distinct, left, right) => self.multiset_operation((*op, *distinct), (left, right), scope),
+            Composite::MultisetSet(value) => self.multiset_set(value, scope),
+            Composite::MultisetElement(value) => self.multiset_element(value, scope),
         }
     }
 
@@ -234,16 +285,26 @@ impl Binder<'_> {
     /// [ISO/IEC 9075-2:2023 §6.31, §6.48] CARDINALITY, ARRAY_MAX_CARDINALITY
     /// or TRIM_ARRAY of `args`, if `name` is one of them.
     pub(super) fn array_function(&self, name: &str, args: &[ValueExpression], scope: Scope<'_>) -> Option<Result<(Expr, DataType)>> {
+        let operand = || args.first().ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §6.31] {name} has an operand")));
         let array = |p: &Self| -> Result<(Expr, DataType)> {
-            let (e, t) =
-                p.value_expression(args.first().ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §6.31] {name} has an operand")))?, scope)?;
+            let (e, t) = p.value_expression(operand()?, scope)?;
             if !matches!(t, DataType::Array(_)) {
                 return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.31, §6.47 SR2, §6.48] the operand of {name} is an array, not of {t}")));
             }
             Ok((e, t))
         };
+        // [§6.31 SR1] <cardinality expression> ::= CARDINALITY (
+        // <collection value expression> ), an array or a multiset, or a
+        // distinct type of a multiset [§6.50 SR1].
+        let collection = |p: &Self| -> Result<Expr> {
+            let (e, t) = p.value_expression(operand()?, scope)?;
+            if !matches!(t, DataType::Array(_)) && t.multiset_type().is_none() {
+                return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.31 SR1] the operand of CARDINALITY is a collection, not of {t}")));
+            }
+            Ok(e)
+        };
         Some(match name {
-            CARDINALITY => array(self).map(|(e, _)| (call(CardinalityOf(integer()), vec![e]), integer())),
+            CARDINALITY => collection(self).map(|e| (call(CardinalityOf(integer()), vec![e]), integer())),
             // [§6.31 GR1a] the maximum cardinality of the declared type.
             ARRAY_MAX_CARDINALITY => array(self).map(|(_, t)| {
                 let max = if let DataType::Array(a) = &t { a.max } else { 0 };

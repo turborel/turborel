@@ -44,6 +44,7 @@ fn target(t: &DataType) -> Option<Target> {
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,
@@ -68,6 +69,7 @@ fn string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Array(_)
+        | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Extension(_) => None,
@@ -159,6 +161,7 @@ impl ScalarFunction for Formatted {
                 | Value::Bool(_)
                 | Value::Interval(_)
                 | Value::Array(_)
+                | Value::Multiset(_)
                 | Value::Row(_)
                 | Value::Extension(_)),
             ) => fail(Code::Api, format!("[DESIGN] a formatted CAST of a datetime was given {v:?}")),

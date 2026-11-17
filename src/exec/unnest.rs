@@ -73,10 +73,12 @@ fn of_row(u: &Unnest<()>, row: Row, runner: &Runner) -> Result<Vec<Row>> {
     Ok(kept)
 }
 
-/// The elements of a collection's value `v`, none if it is null.
+/// The elements of a collection's value `v`, none if it is null: of a
+/// multiset, as the array it is cast to [ISO/IEC 9075-2:2023 §7.6 SR8e
+/// i] holds them, in an order implementation-dependent [§6.13 NOTE 173].
 fn collection(v: Value) -> Result<Option<Arc<[Value]>>> {
     match v {
-        Value::Array(a) => Ok(Some(a)),
+        Value::Array(a) | Value::Multiset(a) => Ok(Some(a)),
         Value::Null => Ok(None),
         Value::Char(_)
         | Value::Exact(_)
@@ -88,7 +90,7 @@ fn collection(v: Value) -> Result<Option<Arc<[Value]>>> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Row(_)
-        | Value::Extension(_) => Err(broken("a collection value expression is not an array")),
+        | Value::Extension(_) => Err(broken("a collection value expression is not an array or a multiset")),
     }
 }
 

@@ -44,14 +44,14 @@ impl Binder<'_> {
     /// [ISO/IEC 9075:1992 §17.6 GR5] `e` bound, a `<dynamic parameter
     /// specification>` taking the type `taken` its context gives it.
     pub(in crate::binder) fn typed(&self, e: &ValueExpression, taken: ParameterType, scope: Scope<'_>) -> Result<(Expr, DataType)> {
-        // [ISO/IEC 9075-2:2023 §6.5 SR1] ARRAY[] of the array type its
-        // context gives, or of the distinct type whose source type it is
-        // [§6.13 SR6, §11.5 SR4e], an empty array.
+        // [ISO/IEC 9075-2:2023 §6.5 SR1] ARRAY[] or MULTISET[] of the
+        // collection type of its kind its context gives, or of the distinct
+        // type whose source type it is [§6.13 SR6, §11.5 SR4e], the
+        // collection of no element.
         if let ParameterType::Of(t) = &taken
-            && matches!(t.represented(), DataType::Array(_))
-            && super::composite::is_empty_array(e)
+            && let Some(empty) = super::composite::empty_specification(e).and_then(|kind| kind.empty_of(t))
         {
-            return Ok((Expr::Const(Value::Array(Vec::new().into())), t.clone()));
+            return Ok((Expr::Const(empty), t.clone()));
         }
         if let Some((index, at)) = dynamic_of(e) {
             let (value, t) = self.params.dynamic_typed(index, Some(taken)).or_at(at)?;
@@ -312,6 +312,9 @@ impl Binder<'_> {
         }
         if sf.name == LISTAGG {
             return self.listagg(sf, scope);
+        }
+        if let Some(gathered) = self.multiset_aggregate(sf, scope) {
+            return gathered;
         }
         let func: AggregateRef = self
             .db

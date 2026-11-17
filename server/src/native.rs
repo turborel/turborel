@@ -177,7 +177,7 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
             services.cancel(&key);
             Ok(None)
         }
-        // No capability is defined in version 2, so none is taken.
+        // No capability is defined in version 1, so none is taken.
         Request::Hello { version, user, mechanism, initial, capabilities: _ } => {
             authenticate(wire, (peer, present), services, (version, user, mechanism, initial)).await.map(Some)
         }

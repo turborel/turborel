@@ -5,8 +5,8 @@ use super::{
     AlterSequence, DatetimeFunction, Literal, ModuleDefinition, PrivilegeDefinition, QueryExpression, RevokeStatement, RoleStatement,
     RoutineDefinition, SearchCondition, SequenceDefinition, TableName, TriggerDefinition, TypeDefinition, UserFunction,
 };
-use crate::value::DataType;
 use crate::value::collation::Pad;
+use crate::value::{DataType, Value};
 
 /// [X3.135-1986 §6.1; ISO/IEC 9075:1992 §11.1] `<schema definition>` ::=
 /// CREATE SCHEMA `<schema name clause>` \[`<schema element>`...\]
@@ -168,6 +168,46 @@ pub enum AlterDomainAction {
     DropConstraint(TableName),
 }
 
+/// [ISO/IEC 9075-2:2023 §6.1] The kind of a `<collection type>`, as it is
+/// written after its element type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Collection {
+    /// ARRAY \[`[` `<maximum cardinality>` `]`\]: its maximum cardinality.
+    Array(u32),
+    /// MULTISET.
+    Multiset,
+}
+
+impl Collection {
+    /// [ISO/IEC 9075-2:2023 §6.5 GR1] The collection of no element of the
+    /// type `t`, if it is of this kind, or a distinct type whose source
+    /// type is [§11.5 SR4e]: an `<empty specification>` of this kind cast
+    /// to it \[SR1\].
+    pub fn empty_of(self, t: &DataType) -> Option<Value> {
+        let none = || std::sync::Arc::from(Vec::new());
+        match self {
+            Collection::Array(_) => matches!(t.represented(), DataType::Array(_)).then(|| Value::Array(none())),
+            Collection::Multiset => matches!(t.represented(), DataType::Multiset(_)).then(|| Value::Multiset(none())),
+        }
+    }
+
+    /// How an `<empty specification>` of this kind is written.
+    pub fn empty_written(self) -> &'static str {
+        match self {
+            Collection::Array(_) => "ARRAY[]",
+            Collection::Multiset => "MULTISET[]",
+        }
+    }
+
+    /// The collection type of this kind of `element`.
+    pub fn of(self, element: DataType) -> DataType {
+        match self {
+            Collection::Array(max) => DataType::array(element, max),
+            Collection::Multiset => DataType::multiset(element),
+        }
+    }
+}
+
 /// [ISO/IEC 9075:1992 §11.4, §6.10] A `<data type>`, or a `<domain name>`:
 /// a column's type, or a CAST's target. [ISO/IEC 9075-2:2023 §6.1] A
 /// `<data type>` may name a user-defined type, as an array's element type
@@ -182,9 +222,10 @@ pub enum TypeName {
     /// (RULES.md D69); or, unqualified and neither's, a type beyond the
     /// standard (RULES.md D53).
     Domain(TableName),
-    /// [ISO/IEC 9075-2:2023 §6.1] `<data type>` ARRAY \[`[` `<maximum
-    /// cardinality>` `]`\], its element type naming a type.
-    Array(Box<TypeName>, u32),
+    /// [ISO/IEC 9075-2:2023 §6.1] `<collection type>`, `<data type>` ARRAY
+    /// \[`[` `<maximum cardinality>` `]`\] or `<data type>` MULTISET, its
+    /// element type naming a type.
+    Collection(Box<TypeName>, Collection),
     /// [ISO/IEC 9075-2:2023 §6.1] `<row type>`, a field's type naming a
     /// type: each field's name and type.
     Row(Vec<(String, TypeName)>),
@@ -341,9 +382,9 @@ pub enum DefaultOption {
     Datetime(DatetimeFunction),
     /// NULL.
     Null,
-    /// [ISO/IEC 9075-2:2023 §6.5] An `<empty specification>` of an array,
-    /// ARRAY `[` `]`.
-    Empty,
+    /// [ISO/IEC 9075-2:2023 §6.5] An `<empty specification>`, ARRAY `[`
+    /// `]`, of ET ARRAY\[0\], or MULTISET `[` `]` \[SR1\].
+    Empty(Collection),
 }
 
 /// [ISO/IEC 9075:1992 §11.4] `<column constraint definition>` ::=

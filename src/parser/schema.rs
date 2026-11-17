@@ -387,8 +387,8 @@ impl Parser {
         if self.accept_kw(kw::NULL) {
             return Ok(DefaultOption::Null);
         }
-        if self.empty_specification() {
-            return Ok(DefaultOption::Empty);
+        if let Some(kind) = self.empty_specification() {
+            return Ok(DefaultOption::Empty(kind));
         }
         if let Some(user) = self.user_function() {
             return Ok(DefaultOption::User(user));

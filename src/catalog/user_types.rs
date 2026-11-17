@@ -55,13 +55,14 @@ pub enum Routine {
 }
 
 /// [ISO/IEC 9075-2:2023 §4.2] Whether `t` is based on the user-defined
-/// type `name`: is it, or an array or row type, or a distinct type's
+/// type `name`: is it, or a collection or row type, or a distinct type's
 /// source, based on it. Each recursion is into a type `t` holds, so it
 /// is bounded by how deep types nest (`types::MAX_TYPE_NESTING`).
 pub fn based_on(t: &DataType, name: &QualifiedName) -> bool {
     match t {
         DataType::Distinct(d) => (d.schema == name.auth && d.name == name.ident) || based_on(&d.source, name),
         DataType::Array(a) => based_on(&a.element, name),
+        DataType::Multiset(m) => based_on(&m.element, name),
         DataType::Row(r) => r.fields.iter().any(|f| based_on(&f.data_type, name)),
         DataType::Character { .. }
         | DataType::Varying { .. }
@@ -91,6 +92,7 @@ pub fn types_in(t: &DataType, into: &mut Vec<QualifiedName>) {
             types_in(&d.source, into);
         }
         DataType::Array(a) => types_in(&a.element, into),
+        DataType::Multiset(m) => types_in(&m.element, into),
         DataType::Row(r) => r.fields.iter().for_each(|f| types_in(&f.data_type, into)),
         DataType::Character { .. }
         | DataType::Varying { .. }

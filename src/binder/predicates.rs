@@ -11,6 +11,7 @@ use std::sync::Arc;
 use super::collation::like_under;
 use super::composite::{grouping_operand, ordering_operand, spread};
 use super::expression::dynamic_of;
+use super::multisets::equality_operand;
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
 use crate::ast::{Literal, Predicate, RowValue, SearchCondition, Subquery, TruthValue, ValueExpression, ValueSpecification};
@@ -59,6 +60,10 @@ fn comparable(x: &[(Expr, DataType)], y: &[DataType], clause: &str) -> Result<()
         if !a.comparable(b) {
             return Err(rule(format!("[{clause}] {a} and {b} are not comparable")));
         }
+        // [ISO/IEC 9075-2:2023 §9.13 SR1a] of multisets compared, a
+        // multiset element grouping operation.
+        equality_operand(a, "the comparison")?;
+        equality_operand(b, "the comparison")?;
     }
     Ok(())
 }
@@ -151,6 +156,9 @@ impl Binder<'_> {
             Predicate::Like { value, pattern, escape, not } => self.like([value, pattern], escape.as_deref(), *not, scope)?,
             Predicate::LikeRegex { value, pattern, flag, not } => self.like_regex([value, pattern], flag.as_deref(), *not, scope)?,
             Predicate::Null { value, not } => self.null(value, *not, scope)?,
+            Predicate::Member { value, multiset, not } => self.member(value, multiset, *not, scope)?,
+            Predicate::Submultiset { value, multiset, not } => self.submultiset(value, multiset, *not, scope)?,
+            Predicate::Set { value, not } => self.set_predicate(value, *not, scope)?,
             Predicate::Exists(s) => Cond::Exists(self.subquery(s, scope, Use::Exists)?.0),
             Predicate::Unique { subquery: s, nulls_distinct } => {
                 let (bound, types) = self.subquery(s, scope, Use::Rows)?;

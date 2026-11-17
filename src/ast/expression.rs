@@ -205,6 +205,34 @@ pub enum Predicate {
         /// The `<table subquery>`.
         subquery: Box<Subquery>,
     },
+    /// [ISO/IEC 9075-2:2023 §8.16] `<member predicate>` ::= `<row value
+    /// predicand>` \[NOT\] MEMBER \[OF\] `<multiset value expression>`
+    Member {
+        /// The row tested, X.
+        value: RowValue,
+        /// The multiset, MVE.
+        multiset: Box<ValueExpression>,
+        /// NOT MEMBER was written \[SR5\].
+        not: bool,
+    },
+    /// [ISO/IEC 9075-2:2023 §8.17] `<submultiset predicate>` ::= `<row value
+    /// predicand>` \[NOT\] SUBMULTISET \[OF\] `<multiset value expression>`
+    Submultiset {
+        /// The multiset tested, CVE: a row of one value \[SR1\].
+        value: RowValue,
+        /// The multiset, MVE.
+        multiset: Box<ValueExpression>,
+        /// NOT SUBMULTISET was written \[SR5\].
+        not: bool,
+    },
+    /// [ISO/IEC 9075-2:2023 §8.18] `<set predicate>` ::= `<row value
+    /// predicand>` IS \[NOT\] A SET
+    Set {
+        /// The multiset tested, CVE: a row of one value \[SR1\].
+        value: RowValue,
+        /// IS NOT A SET was written \[SR3\].
+        not: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------

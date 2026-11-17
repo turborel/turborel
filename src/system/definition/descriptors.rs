@@ -5,7 +5,8 @@
 //! subordinate to one of those [ISO/IEC 9075-2:2023 §4.10.2, §4.12.1],
 //! or to a user-defined type's source type or a routine's parameter or
 //! result type (`definition/user_types.rs`, `definition/routines.rs`). ELEMENT_TYPES holds each array
-//! type's element type, and FIELDS each field of each row type.
+//! and multiset type's element type, and FIELDS each field of each row
+//! type.
 //!
 //! Each descriptor's DTD_IDENTIFIER is unique among those of its object,
 //! and implementation-dependent. A column's is its ordinal position and a
@@ -154,6 +155,8 @@ fn subordinates(t: &DataType, (dtd, depth): (&str, usize), head: &[Value], field
     }
     let parts: Vec<(Part<'_>, &DataType)> = if let DataType::Array(a) = t {
         vec![(Part::Element, &a.element)]
+    } else if let DataType::Multiset(m) = t {
+        vec![(Part::Element, &m.element)]
     } else if let DataType::Row(r) = t {
         r.fields.iter().enumerate().map(|(i, f)| (Part::Field(&f.name, i.saturating_add(1)), &f.data_type)).collect()
     } else {

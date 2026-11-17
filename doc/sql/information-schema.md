@@ -63,7 +63,7 @@ Two views of ISO/IEC 9075-11 describe the parts of array and row types
 
 | View | One row of each |
 |---|---|
-| ELEMENT_TYPES | array type of a column, a domain, a distinct type's source, a function's parameter or result, or a part of one, with its OBJECT_TYPE TABLE, DOMAIN, USER-DEFINED TYPE or ROUTINE, COLLECTION_TYPE_IDENTIFIER the array type's DTD_IDENTIFIER, and its element type, as COLUMNS gives a type |
+| ELEMENT_TYPES | array or multiset type of a column, a domain, a distinct type's source, a function's parameter or result, or a part of one, with its OBJECT_TYPE TABLE, DOMAIN, USER-DEFINED TYPE or ROUTINE, COLLECTION_TYPE_IDENTIFIER the collection type's DTD_IDENTIFIER, and its element type, as COLUMNS gives a type |
 | FIELDS | field of a row type of a column, a domain or a part of either, with ROW_IDENTIFIER the row type's DTD_IDENTIFIER, FIELD_NAME, ORDINAL_POSITION, and the field's type |
 
 Six more of ISO/IEC 9075-11 describe distinct types and the two functions
@@ -73,7 +73,7 @@ make, those the user, or PUBLIC, holds a privilege on:
 
 | View | One row of each |
 |---|---|
-| USER_DEFINED_TYPES | distinct type: USER_DEFINED_TYPE_CATEGORY DISTINCT, IS_INSTANTIABLE and IS_FINAL YES, ORDERING_FORM FULL and ORDERING_CATEGORY MAP with the specific name of its function to its source in ORDERING_ROUTINE_CATALOG, _SCHEMA and _NAME, or NONE of an array source, and the source type, as COLUMNS gives a type, its DTD_IDENTIFIER in SOURCE_DTD_IDENTIFIER |
+| USER_DEFINED_TYPES | distinct type: USER_DEFINED_TYPE_CATEGORY DISTINCT, IS_INSTANTIABLE and IS_FINAL YES, ORDERING_FORM FULL and ORDERING_CATEGORY MAP with the specific name of its function to its source in ORDERING_ROUTINE_CATALOG, _SCHEMA and _NAME, or NONE of an array or multiset source, and the source type, as COLUMNS gives a type, its DTD_IDENTIFIER in SOURCE_DTD_IDENTIFIER |
 | UDT_PRIVILEGES | privilege on a distinct type, its PRIVILEGE_TYPE TYPE USAGE |
 | ROUTINES | routine: its specific name and its name, ROUTINE_TYPE FUNCTION or PROCEDURE, a function's result type, as COLUMNS gives a type, the type's name in TYPE_UDT_CATALOG, _SCHEMA and _NAME, null of a procedure, ROUTINE_BODY SQL, ROUTINE_DEFINITION its body to the owner of its schema and null to others, IS_DETERMINISTIC, SQL_DATA_ACCESS CONTAINS SQL, READS SQL DATA or MODIFIES SQL DATA, a function's IS_NULL_CALL, MODULE_CATALOG, MODULE_SCHEMA and MODULE_NAME the module of a module's routine, null of another, SCHEMA_LEVEL_ROUTINE YES, or NO of a module's routine, and SECURITY_TYPE DEFINER. A distinct type's function is DETERMINISTIC, CONTAINS SQL and not null-call. A polymorphic table function is a FUNCTION of a null result type |
 | PARAMETERS | routine's parameter: its ORDINAL_POSITION, from 1, PARAMETER_MODE IN, OUT or INOUT, its name and its type. [EXTENSION] A polymorphic table function's generic table parameter is of DATA_TYPE TABLE, its descriptor parameter DESCRIPTOR, their other type columns null |
@@ -249,8 +249,8 @@ column and NEVER of another, and GENERATION_EXPRESSION is a generated
 column's expression as written. COLUMN_DEFAULT is null of both kinds.
 
 COLUMNS and DOMAINS have two more *(extension)*, as ISO/IEC 9075-11
-names them. DATA_TYPE is ARRAY or ROW of a column or domain of such a
-type, MAXIMUM_CARDINALITY an array's maximum cardinality, and null of
+names them. DATA_TYPE is ARRAY, MULTISET or ROW of a column or domain
+of such a type, MAXIMUM_CARDINALITY an array's maximum cardinality, and null of
 another type. DTD_IDENTIFIER identifies the type's descriptor. It is a
 column's ordinal position, or 1 of a domain, and null of a column of a domain,
 whose type is the domain's. A part's is its parent's, a point, and the

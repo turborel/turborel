@@ -28,6 +28,7 @@ fn binary(v: &Value) -> bool {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => false,
     }
@@ -65,6 +66,7 @@ pub(super) fn trim_octet(source: &Value, so: Option<&Value>) -> Result<Option<u8
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_),
         ) => return fail(Code::Api, "[DESIGN] a binary trim was given a trim octet not a binary string"),
@@ -116,6 +118,7 @@ pub(super) fn trimmed(source: &Value, octet: u8, ends: Ends) -> Result<Value> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Array(_)
+        | Value::Multiset(_)
         | Value::Row(_)
         | Value::Extension(_) => Ok(Value::Null),
     }

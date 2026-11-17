@@ -79,6 +79,7 @@ fn cell_kind(cell: Cell<'_>) -> Option<(u8, u32)> {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_),
         ) => Some((VALUES, 0_u32)),

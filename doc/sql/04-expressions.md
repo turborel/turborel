@@ -364,6 +364,9 @@ a query reads, or of each group of its GROUP BY.
 | MIN(x), MAX(x) | the least and greatest x |
 | EVERY(x) | of a BOOLEAN x, TRUE if each x is TRUE, else FALSE |
 | ARRAY_AGG(x ORDER BY ...) | an array of every x, nulls among them, in the order ORDER BY gives; null of no rows |
+| COLLECT(x) | a multiset of every x, nulls among them; DISTINCT once each; null of no rows |
+| FUSION(m) | a multiset of the elements of every multiset m; null of no rows |
+| INTERSECTION(m) | a multiset of as many of each value as the multiset m of fewest has; null of no rows |
 | ANY(x), SOME(x) | of a BOOLEAN x, TRUE if an x is TRUE, else FALSE |
 | ANY_VALUE(x) | one of the values of x, the first one read |
 | LISTAGG(x, 'sep') WITHIN GROUP (ORDER BY ...) | the strings x joined by the separator in the order ORDER BY gives, CHARACTER VARYING(32767) |
@@ -705,6 +708,63 @@ VALUES (ARRAY[1, 2, 3])[4];
             3 | ARRAY[1, 2]            | ARRAY[1, 2, 3]         | Ada
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 2202E): no element 4 is in an array of 3 elements [ISO/IEC 9075-2:2023 §6.25 GR2b]
+```
+
+## Multisets
+
+A multiset is made of its elements, `MULTISET[1, 2, 2]`, or of the rows
+of a query of one column, `MULTISET(SELECT DEPT FROM STAFF)`. `TABLE(query)`
+makes a multiset of a row of each of a query's rows. Neither query has
+an ORDER BY. `MULTISET[]` is a multiset of no elements, written where its
+type is known.
+
+| Expression | Value |
+|---|---|
+| m MULTISET UNION [ALL \| DISTINCT] n | the elements of both; DISTINCT one of each |
+| m MULTISET EXCEPT [ALL \| DISTINCT] n | the elements of m less as many of n; DISTINCT those n lacks, one of each |
+| m MULTISET INTERSECT [ALL \| DISTINCT] n | as many of each element as the one with fewer has; DISTINCT one of each |
+| SET(m) | one element of each, nulls counting as alike |
+| ELEMENT(m) | the one element of m; null if m is null or empty |
+| CARDINALITY(m) | the elements of m |
+
+Each operator is ALL if neither is written, and null if an operand is.
+MULTISET INTERSECT binds tighter than UNION and EXCEPT, which are read
+left to right. ELEMENT of a multiset of more than one element is refused,
+SQLSTATE 21000. COLLECT, FUSION and INTERSECTION, in [Set
+functions](#set-functions), gather multisets of a group's rows.
+
+```sql
+VALUES (MULTISET[1, 1, 2] MULTISET UNION MULTISET[2, 3], MULTISET[1, 1, 2] MULTISET UNION DISTINCT MULTISET[2, 3]);
+VALUES (MULTISET[1, 1, 2] MULTISET EXCEPT MULTISET[1], MULTISET[1, 1, 2] MULTISET INTERSECT MULTISET[1, 2, 2]);
+VALUES (SET(MULTISET[1, 1, 2]), ELEMENT(MULTISET['only']), CARDINALITY(MULTISET[3, 3]));
+SELECT DEPT, COLLECT(NAME) AS WHO FROM STAFF WHERE DEPT IS NOT NULL GROUP BY DEPT ORDER BY DEPT;
+VALUES MULTISET(SELECT DEPT FROM STAFF WHERE DEPT IS NOT NULL);
+VALUES ELEMENT(MULTISET[1, 2]);
+```
+
+```
+                                                              |
+--------------------------------------------------------------+--------------------------------------------------------------
+ MULTISET[1, 1, 2, 2, 3]                                      | MULTISET[1, 2, 3]
+(1 row)
+                                                              |
+--------------------------------------------------------------+--------------------------------------------------------------
+ MULTISET[1, 2]                                               | MULTISET[1, 2]
+(1 row)
+                                                              |      |
+--------------------------------------------------------------+------+--------------
+ MULTISET[1, 2]                                               | only |            2
+(1 row)
+ DEPT | WHO
+------+--------------------------------------------------------------
+ ENG  | MULTISET['Ada', 'Grace']
+ OPS  | MULTISET['Edsger']
+(2 rows)
+
+--------------------------------------------------------------
+ MULTISET['ENG', 'ENG', 'OPS']
+(1 row)
+turborel: SQLCODE -811 (SQLSTATE 21000): ELEMENT of a multiset of 2 elements [ISO/IEC 9075-2:2023 §6.26 SR1, §7.11 GR1a]
 ```
 
 ## Conditions as values

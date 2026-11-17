@@ -13,7 +13,7 @@ CREATE TYPE: define a distinct type
     CREATE TYPE <user-defined type name> AS <representation>
     [ <type option>... ]
 
-<representation> ::= <predefined type> | <array type>
+<representation> ::= <predefined type> | <array type> | <multiset type>
 
 <type option> ::=
       FINAL
@@ -30,7 +30,7 @@ values are those of the source, but they compare only with values of the
 same distinct type, so values of two types of one source, such as prices
 and weights, cannot be compared by mistake.
 
-The source is a predefined type or an array type. An exact numeric
+The source is a predefined type, an array type or a multiset type. An exact numeric
 source is kept as NUMERIC of its precision and scale, so INTEGER is
 NUMERIC(10,0), and an approximate one as FLOAT of its precision.
 
@@ -39,8 +39,9 @@ a type that is assigned to the source, such as an integer to a type of
 DECIMAL. A value of the type is assigned only to a site of exactly the
 source type. CAST takes the same paths and no other. The values compare,
 order and group as the source's do, so a column of the type may be a key
-or be indexed. A type whose source is an array type compares with
-nothing. No operator but comparison takes the type's values. Arithmetic,
+or be indexed. A type whose source is an array or multiset type
+compares with nothing, and one of a multiset is taken wherever a
+multiset is, by the multiset operators and predicates. No operator but comparison takes the type's values. Arithmetic,
 SUM and the string functions are refused, and the values are taken out
 first by the function to the source.
 
@@ -67,7 +68,7 @@ the functions.
 ## RULES
 
 1. The schema exists, and no type or domain of the schema has its name.
-2. The source is a predefined type or an array type, and no row type,
+2. The source is a predefined, an array or a multiset type, and no row type,
    distinct type or domain.
 3. Each option is written at most once. NOT FINAL, INSTANTIABLE, UNDER,
    REF and the CASTs to REF and TYPE, which are of structured types, are
@@ -76,7 +77,7 @@ the functions.
    its name in the schema, an SQL-invoked function's or another type's,
    as [CREATE FUNCTION](create-function.md) tells overloads apart.
 5. A column of the type defaults to NULL alone, or to ARRAY[] if the
-   source is an array type.
+   source is an array type, or MULTISET[] if it is a multiset type.
 
 ## PRIVILEGES
 

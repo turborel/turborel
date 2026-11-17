@@ -258,9 +258,10 @@ impl Binder<'_> {
             let object = objects.and_then(|o| o.get(k));
             let (bound, at) = match element {
                 RowElement::Value(v, at) => {
-                    // [ISO/IEC 9075-2:2023 §6.5 SR1] ARRAY[] of its object
-                    // column's type.
-                    let contextual = || object.filter(|_| super::composite::is_empty_array(v)).map(|o| o.desc.data_type.clone());
+                    // [ISO/IEC 9075-2:2023 §6.5 SR1] ARRAY[] or MULTISET[]
+                    // of its object column's type.
+                    let contextual =
+                        || object.filter(|_| super::composite::empty_specification(v).is_some()).map(|o| o.desc.data_type.clone());
                     let (e, t) = match taken.get(k).cloned().flatten().or_else(contextual) {
                         Some(t) => self.typed(v, ParameterType::Of(t), scope),
                         None => self.value_expression(v, scope),

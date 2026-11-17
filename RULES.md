@@ -94,7 +94,7 @@ verification approach DO-178C expects (§8).
 | D42 | The server has three modes over one core |
 | D43 | Users, passwords and the database's owner |
 | D44 | A running statement is cancelled from another thread |
-| D45 | Protocol version 2, and prepared statements |
+| D45 | Protocol version 1, and prepared statements |
 | D46 | The command-line client |
 | D59 | Import is rows from a pluggable source, over a connection |
 | D60 | Collations are sort keys, and a collation never changes |
@@ -117,6 +117,7 @@ verification approach DO-178C expects (§8).
 | D77 | SQL-server modules: catalog routines of a module, its tables in a schema of its own |
 | D78 | Polymorphic table functions: compiled as bound, run whole as the cursor opens |
 | D79 | Large objects stream: chunked, logged by chunk, read by range, reached by locators |
+| D80 | Multisets are unordered values, paired by classes and a matching |
 
 ### The project
 
@@ -590,6 +591,7 @@ elements or fields behind one shared pointer, and a type holds its element
 type or fields the same way, so a copy of either costs a count, and a value
 of a scalar type is no larger than before. A data type is cloned, not
 copied, so a scalar one still costs a few bytes to copy and no allocation.
+A multiset is held the same way, its elements unordered (D80).
 
 A type may hold another, so every walk of one recurses. Types nest at most
 `MAX_TYPE_NESTING` deep, 16, checked as a type is read from SQL text, from
@@ -1050,6 +1052,58 @@ The costs are these. A long transaction writing large objects holds back
 log truncation. A standby holds the objects of each open transaction. A
 locator under READ COMMITTED holds back collection of every table until
 its transaction ends. Each object written is one log record.
+
+#### D80. Multisets are unordered values, paired by classes and a matching
+
+A multiset type [ISO/IEC 9075-2:2023 §4.12.3] is a kind of the `SqlType`
+contract beside arrays (D53, D68, `value/types/multiset.rs`). A value
+holds its elements behind one shared pointer, as an array does, in the
+order they were made, which nothing reads. A multiset has at most
+`MAX_MULTISET_CARDINALITY` elements, 65535, as an array may. An
+operation that would pass it is multiset value overflow, SQLSTATE 2200Q
+[§10.9 GR3b], raised as the limit is passed, so nothing holds more.
+
+Equality [§8.2 GR1b iii] and SUBMULTISET [§8.17 GR3c] ask whether the
+elements of one pair with those of another, each pair equal, or each
+equal or unknown. Searching pairings is factorial, so neither does. The
+elements holding no null fall into classes of equal elements, found by
+their buckets, and two equal elements are interchangeable, so the
+classes pair whole by their counts. What they leave, with the elements
+holding a null, pairs by a maximum bipartite matching whose edges join
+elements whose equality is not false, a null element matching any
+(`value/multisets.rs`). Kuhn's augmenting paths run on a stack of their
+own, so the matching recurses not at all (R-CF-6). The grouping
+operations, SET, IS A SET, MULTISET UNION DISTINCT, EXCEPT, INTERSECT and
+INTERSECTION, count classes of elements not distinct from one another
+[§8.15], nulls in one class, and keep each element's first operand
+first.
+
+Each grouping operation refuses a multiset whose elements are ordered
+or grouped by nothing [§9.13 SR3], arrays, multisets and large objects
+among them (SQLCODE -103), so the classes never compare such elements.
+A multiset is itself grouped and ordered by nothing. ORDER BY, GROUP BY,
+DISTINCT, keys, MAX and `<` refuse one, and a distinct type whose source
+is a multiset has ordering form NONE. Its bucket and its normalized key
+are its elements' summed, so two equal multisets in any order share
+them, though no key of a multiset is ever stored.
+
+MULTISET, MEMBER, SUBMULTISET, ELEMENT, COLLECT, FUSION and INTERSECTION
+are no key words of SQL-92, so each is read as a word where it is one
+and a column may be named so (`parser/multisets.rs`). MULTISET and
+UNION, EXCEPT or INTERSECT are an operator only after a whole operand,
+where no column stands. MULTISET INTERSECT binds tighter than UNION and EXCEPT [§6.50]. COLLECT
+( X ) aggregates the row ( X ), as ARRAY_AGG does, so a null X stays an
+element; a multiset value constructor by query is COLLECT of its rows,
+the empty multiset of none [§6.52 GR3]. UNNEST takes one multiset alone
+and no ordinality [§7.6 SR8e].
+
+A CHECK, assertion or generation refuses what §9.16 calls a potential
+source of non-determinism. Of multisets that is a grouping operation or
+SET over elements of a character string, distinct or zoned datetime
+type, whose equal values may differ [§9.16 SR1n, SR1o, SR1aq]. Elements
+of a character set use its default collation, as arrays' do. The
+protocol carries a multiset as tag 22 (D45), and a descriptor area as
+TYPE 55 with its element's item after it [§20.1 Table 30].
 
 #### D33. Schema changes are transactional
 
@@ -1944,7 +1998,7 @@ points are `auth::Authenticator`, `transport::Listener` and
 TLS (D26) runs on one port with cleartext, and the first byte tells them
 apart (RFC 8446 §5.1). SERVER.TLS is OFF, ON or REQUIRED. Certificates reload
 without a restart (`Tls::reload`). SERVER.TLS_CLIENT_CA asks clients for a
-certificate. The native protocol is version 2 (D45) on port 7422.
+certificate. The native protocol is version 1 (D45) on port 7422.
 
 Each connection has one session, and each statement is a `<direct SQL
 statement>` [ISO/IEC 9075:1992 §20.1]. A terminated session ends as
@@ -2028,7 +2082,7 @@ SQLCODE -920 (SQLSTATE TB920) and is undone as any failed statement
 stays failed. STATEMENT.TIMEOUT_MS cancels a statement that has run that
 long.
 
-#### D45. Protocol version 2, and prepared statements
+#### D45. Protocol version 1, and prepared statements
 
 Prepared statements are SQL-92's dynamic SQL [ISO/IEC 9075:1992 §17], which
 drivers expect. `Session::prepare` checks a `<preparable statement>` once
@@ -2087,10 +2141,14 @@ cancels what the session runs (D44). This needs no second writer, which a
 TLS stream can't have. Capabilities are exchanged by Hello and Ready, so
 later ones need no new version.
 
-Version 2 adds large objects (D79). A value of one is sent whole, or as
-its locator with its lengths. A Lob request reads a range of one, makes
-one, appends to it, or frees or holds its locator, and a Lob reply gives
-back the octets read or the new locator.
+The protocol stays at version 1 while turborel is alpha, so a change to
+it is made in place. It carries large objects (D79) and multisets (D80).
+A large object is sent whole, or as its locator with its lengths. A Lob
+request reads a range of one, makes one, appends to it, or frees or
+holds its locator, and a Lob reply gives back the octets read or the new
+locator. A multiset type is tag 22 and its element type; a multiset
+value is tag 22, its cardinality and its elements, never more than its
+maximum cardinality.
 
 #### D46. The command-line client
 

@@ -205,6 +205,7 @@ impl ScalarFunction for LikeRegex {
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
+            | Value::Multiset(_)
             | Value::Row(_)
             | Value::Extension(_) => self.cache.compiled(&pattern, &flag)?.is_match(text(value)?.unwrap_or_default())?,
         };
