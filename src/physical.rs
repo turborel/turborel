@@ -33,7 +33,7 @@ mod probe;
 mod raising;
 mod recognized;
 mod shown;
-mod spatial;
+pub(crate) mod spatial;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
 pub use kept::{Place, ProbeSlot};
@@ -172,10 +172,17 @@ pub enum Plan {
     /// rows of a product that its comparisons keep [X3.135-1986 §5.20 GR2b,
     /// §5.21 GR2], or, `outer`, of a LEFT outer join [ISO/IEC 9075:1992
     /// §7.5], each row of `left` no table row matches with nulls; in the
-    /// order of `left`, each row's matches in the index's (`exec/join/indexed.rs`).
+    /// order of `left`, each row's matches in the index's (`exec/join/indexed.rs`),
+    /// unless `spatial` permits an unordered scan alternative.
     IndexJoin {
         /// A LEFT outer join.
         outer: bool,
+        /// An unordered fixed-SRID inner join may buffer a bounded outer
+        /// input and scan the table once when that costs less than probes.
+        /// Otherwise it continues the ordinary index nested-loop path.
+        /// Both geometry columns enforce the same SRID and all residuals
+        /// are non-raising: the join itself needs no eager error check.
+        spatial: bool,
         /// The outer input, each of its rows probing the index.
         left: Box<Plan>,
         /// The table read.

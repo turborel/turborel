@@ -82,6 +82,10 @@ join condition that can raise an error prevents this optimization.
 Geometry outer joins also use their ordinary execution path. Indexing
 both tables does not make the planner traverse both trees together:
 the indexed inner join probes one tree for each row of the other input.
+For a small regions input, an `AdaptiveSpatialJoin` can instead buffer its
+rows and scan the sites once when that is estimated cheaper. Bounds select
+candidates; exact relationships and other join conditions still decide
+matches. The [indexing chapter](03-indexing.md) describes its limits.
 
 ## Reference systems, empty values and validity
 

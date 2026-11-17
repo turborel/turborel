@@ -22,7 +22,7 @@ fn root(tree: &RTree, level: u8, entries: Vec<Entry>) {
     tree.store(id, &node).unwrap();
 }
 
-/// Verifies: [DESIGN] D35, D78: estimation visits the whole root range,
+/// Verifies: [DESIGN] D35, D82: estimation visits the whole root range,
 /// weighs differently populated leaves and counts candidates once despite
 /// their version reference counts. Closed boundaries and disjoint queries
 /// have the same meaning as search. Repeated estimates are deterministic.
@@ -49,7 +49,7 @@ fn estimates_cover_root_branches_and_count_entries_not_references() {
     }
 }
 
-/// Verifies: [DESIGN] D35, D78: a sampled path accounts for branching at
+/// Verifies: [DESIGN] D35, D82: a sampled path accounts for branching at
 /// every level, not just the root. A leaf root is counted exactly and an
 /// empty internal branch contributes zero without dividing by zero.
 #[test]
@@ -73,7 +73,7 @@ fn estimates_weight_every_branch_and_handle_empty_nodes() {
     assert_eq!(tree.estimated_matches(bounds), Some(0));
 }
 
-/// Verifies: [DESIGN] D35, D78: split stamps, pending links and wrong
+/// Verifies: [DESIGN] D35, D82: split stamps, pending links and wrong
 /// child levels make statistics decline. A fixed read budget bounds even
 /// deep paths; these fallbacks do not change ordinary search.
 #[test]

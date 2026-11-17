@@ -1823,6 +1823,19 @@ in row order, and stop at the first error with the earlier matches retained.
 Comparisons retain operand order and propagate large-object read errors.
 Arguments that need expression evaluation use the general row evaluator.
 
+Column-only row projections consume each input value at its last output
+position and copy it only for earlier duplicates (`exec/project.rs`). An
+identity projection returns its input allocation. An index join likewise
+moves the fetched inner row into its pair; it copies only the outer row,
+which later matches still need. These changes avoid retaining extra
+references to large values while preserving output order and multiplicity.
+An index join can also retain a column-only output projection. When its
+only conjunct is a spatial intersection, it refines borrowed source rows
+and builds only the selected values, rather than copying both geometries
+into a pair that the projection immediately discards. Adaptive scans use
+the same binding (`exec/join/indexed/refined.rs`). Additional ON conjuncts
+retain the full pair for evaluation before projection; a fallback to
+ordinary probes retains the requested output columns.
 #### D34. Index methods support comparisons and function predicates
 
 An index method creates indexes and says which probes they answer, and the
@@ -2538,6 +2551,9 @@ allocation keeps the smaller buffer or streams directly. Every candidate,
 including different versions of one row, retains its own envelope. A
 prefetched index error follows all preceding candidates. Nearest searches
 and reference-mismatch scans do not use these unordered blocks.
+Each new projected join probe renews the row-store leaf-locality trial.
+This preserves the row-byte buffer and transaction bookkeeping while
+allowing a dense probe to benefit after a sparse probe exhausted its hints.
 Geometry cardinality estimation counts up to 1000 candidates exactly.
 Beyond that it samples 64 paths across the root's branches, weighting leaf
 matches by each visited branch's fanout. It reads at most 256 sample nodes
@@ -2559,6 +2575,41 @@ both table orders and column projections. A NULL outer geometry makes no
 probe; an empty geometry finds no pair. Spatial probes retain the same
 whole-table serializable read as filters. This is not a simultaneous
 traversal of two indexes. Geometry outer joins do not yet use this path.
+
+For an unordered spatial inner join, the executor can choose a single
+table scan instead of repeated probes (`exec/join/indexed/adaptive.rs`).
+It first runs ordinary probes. Completed probes accumulate their actual
+candidate reads. Only after that count reaches the table's row count does
+the executor buffer and price the remaining input. This conservative gate
+avoids repeating much of a selective join's index work just to estimate
+its cost. It can delay adaptation on storage with expensive random reads;
+the gate is not a substitute for a calibrated storage cost model.
+An initially selective prefix does not prevent a later broad probe from
+triggering adaptation. Already-emitted outer rows are never replayed.
+It buffers the remaining input within the work-area and global memory
+budgets, reserving row slots, payloads and hierarchy storage before growth.
+Refused growth resumes probing with the buffered rows and the first
+row that did not fit, without rereading input. Missing estimates retain
+probes. Otherwise the estimated probe
+fetch work is compared with one scan plus four binary searches per
+possible leaf, priced with the existing comparison cost. This conservative
+price does not assume that hierarchy pruning will succeed. This choice
+affects work only.
+
+The buffered envelopes are partitioned by alternating coordinate centres
+into a balanced hierarchy (`spatial/packed.rs`). Each leaf holds at most
+64 rows in four sorted boundary arrays with inclusive prefix masks, one
+bit per row (`spatial/masks.rs`). A scan skips disjoint groups through
+subtree links, without allocating a search stack per table row. Within
+each leaf, the masks identify exactly the overlapping envelopes, including
+touching boundaries and degenerate rectangles. Original row positions
+preserve duplicate inputs across partitions. It is still only a geometry
+candidate set. Each
+candidate runs the exact relationship, optionally prepared for that outer
+row, followed by every remaining ON conjunct. NULL and empty bounds add
+no candidate. Reads use the ordinary table scan's visibility, cancellation
+and serializable tracking. This path promises no input order; an ordered
+join retains probes. EXPLAIN calls the choice `AdaptiveSpatialJoin`.
 
 `ST_DISTANCE` measures minimum Cartesian separation in coordinate units,
 returning DOUBLE PRECISION, zero for intersecting sets and NULL for empty
@@ -2622,7 +2673,12 @@ effects. Retained state reserves memory from the supplied database budget
 (D38); failed preparation leaves the original call for runtime. Filling a
 kept physical plan also folds and prepares its calls using that execution's
 values, without changing access paths or raising skipped errors. Both paths
-honor the constant-folding rule's presence and setting. Geometry
+honor the constant-folding rule's presence and setting. An indexed function
+join also prepares calls for each outer row, whose columns stay fixed for
+one probe. It changes only scalar implementations, leaving argument
+expressions and the complete join condition in place. An empty probe
+evaluates no call; advancing the outer row releases the previous prepared
+state. This path uses the same optimizer switch and memory budget. Geometry
 relationships use this to keep one decoded constant operand per expression,
 immutable and without a shared cache lock. They check operand identity
 before using that representation and release the reservation with its last

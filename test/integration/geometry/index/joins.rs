@@ -7,7 +7,9 @@ use turborel::db::Database;
 use turborel::error::Code;
 use turborel::params::Params;
 
+mod adaptive;
 mod clustered;
+mod prepared;
 
 fn windows(db: &Database, reference: &str) {
     let a = db.session("A");

@@ -14,6 +14,7 @@ mod partitioned;
 mod rescan;
 
 pub(super) use indexed::indexed;
+pub(super) use indexed::projected as indexed_projected;
 pub(super) use outer::outer;
 pub(in crate::exec) use outer::{Holding, Joining, Prepared, Spec, prepared, spec_of};
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};

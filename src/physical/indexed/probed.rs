@@ -12,6 +12,7 @@ pub(super) struct Choice {
     pub(super) read: Probing,
     pub(super) probe: JoinProbe,
     pub(super) total: f64,
+    pub(super) spatial: bool,
 }
 
 impl PhysicalPlanner<'_> {
@@ -41,12 +42,12 @@ impl PhysicalPlanner<'_> {
             needed: read.needed.to_vec(),
             located: read.located,
         };
-        Some(Choice { read: probing, probe, total: outer * cost })
+        Some(Choice { read: probing, probe, total: outer * cost, spatial: false })
     }
 }
 
 pub(super) fn planned(choice: Choice, outer: Plan, (cond, width): (Cond, usize), shown: Shown<'_>) -> Plan {
-    let Choice { mut read, probe, total } = choice;
+    let Choice { mut read, probe, total, spatial } = choice;
     let through = read.through.take();
     let mapped = |c: usize| match &through {
         Some((columns, _)) => c.checked_sub(width).and_then(|i| columns.get(i)).map_or(c, |i| i.saturating_add(width)),
@@ -62,6 +63,7 @@ pub(super) fn planned(choice: Choice, outer: Plan, (cond, width): (Cond, usize),
     let detail = table_shown.text(|names| condition.as_ref().map(|c| render_cond(c, names)).unwrap_or_default());
     let joined = Plan::IndexJoin {
         outer: false,
+        spatial,
         left: Box::new(outer),
         table: read.table,
         index: read.index,

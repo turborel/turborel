@@ -7,7 +7,7 @@ use crate::geometry::SpatialOperation;
 use crate::logical::{Cond, Expr};
 use crate::value::{CompOp, Value};
 
-pub(super) fn intersection(cond: &Cond) -> Option<(&ScalarRef, &[Expr])> {
+pub(crate) fn intersection(cond: &Cond) -> Option<(&ScalarRef, &[Expr])> {
     let Cond::Compare(left, CompOp::Eq, right) = cond else { return None };
     let expression = if one(right) {
         left

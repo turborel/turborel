@@ -523,7 +523,10 @@ decoded operand still serves ordinary relationship evaluation.
 The hook receives the database's `MemoryBudget`; retained state must own a
 reservation and decline preparation if it cannot obtain one. A reused
 physical plan prepares calls after filling that execution's parameters.
-Disabling or removing the constant-folding rule disables this step too.
+Indexed function joins may also call the hook for each outer row, with
+its column values fixed for that probe. The full condition and its
+argument expressions are still evaluated for each candidate pair.
+Disabling or removing the constant-folding rule disables these steps too.
 For spatial probes, the declared operation lets the planner recognize an
 equivalent prepared function when learning a reusable plan. Ordinary
 function probes still require the same function object, not just its name.

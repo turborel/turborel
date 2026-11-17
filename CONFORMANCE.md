@@ -1901,6 +1901,20 @@ Both table orders and column projections are considered; the complete ON
 condition rechecks each visible pair. Other raising conjuncts and raising
 inner filters prevent this path. Geometry outer joins and simultaneous
 traversal of two spatial indexes are not implemented.
+An unordered inner join whose remaining outer rows fit its memory
+budgets can choose a single visible table scan when index estimates price
+it below repeated probes (`exec/join/indexed/adaptive.rs`). A temporary
+spatial hierarchy prunes groups; four boundary masks per leaf select
+envelope candidates; exact geometry relationships and the remaining ON condition
+still decide every result. Memory or capacity refusal resumes the buffered
+input through probes. Snapshot visibility and serializable reads use the
+same storage contracts as ordinary scans.
+Optional setup waits until completed probes have read at least a table's
+worth of candidates, avoiding repeated estimates for a selective join.
+Column-only projections can be built directly from the two source rows
+after exact intersection refinement (`exec/join/indexed/refined.rs`).
+Repeated columns and their order are preserved; additional ON conditions
+still evaluate before projection. This changes row construction only.
 ST_DISTANCE returns the approximate minimum Cartesian distance in
 coordinate units, zero for intersections and NULL for an empty set
 (OGC 06-103r4 §6.1.2.4, `src/geometry/distance.rs`). The same SRID and
@@ -1920,7 +1934,8 @@ budget leaves the decoded operand without an index. A single, closed,
 axis-aligned rectangular ring without holes can classify a point directly
 against its closed bounds (`src/geometry/prepared/rectangle.rs`). Prepared
 distance reuses that intersection decision and keeps the ordinary
-separation kernel.
+separation kernel. Indexed joins can prepare their outer geometry once
+per probe, preserving the full ON condition and runtime errors.
 Reused physical plans prepare calls with each
 execution's arguments when constant folding is enabled; failed preparation
 preserves ordinary evaluation, including lazy branches and runtime errors.

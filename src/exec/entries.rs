@@ -26,6 +26,15 @@ pub(in crate::exec) struct Reading {
 }
 
 impl Reading {
+    /// Independent projected probes can change from sparse to clustered
+    /// row ids. Renew the leaf trial without dropping the transaction's
+    /// cached bookkeeping or the row-byte allocation.
+    pub(in crate::exec) fn next_probe(&mut self) {
+        if self.projection.is_some() {
+            self.near.misses = 0;
+        }
+    }
+
     /// For the scan of index `ix` by a statement that reads only `needed`
     /// and the index's columns, if it names them; else every column.
     pub(in crate::exec) fn of(ix: &KeyShape, needed: Option<&[usize]>, projection: Option<Arc<dyn KeyProjection>>) -> Reading {
@@ -171,3 +180,6 @@ pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<HeldRows<(Ro
     }
     Ok(held)
 }
+
+#[cfg(test)]
+mod tests;

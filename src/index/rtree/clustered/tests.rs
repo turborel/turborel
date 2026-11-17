@@ -12,7 +12,7 @@ fn entries(count: usize) -> Vec<Entry> {
         .collect()
 }
 
-/// Verifies: [DESIGN] D38, D78: blocks preserve every envelope/row pair,
+/// Verifies: [DESIGN] D38, D82: blocks preserve every envelope/row pair,
 /// including duplicate row ids for different versions, and sort large
 /// blocks for storage locality. The initial and grown buffers are charged,
 /// bounded independently of result size, and released with the cursor.
@@ -38,7 +38,7 @@ fn clustered_candidates_preserve_all_versions_and_bound_memory() {
     assert_eq!(actual, expected);
 }
 
-/// Verifies: [DESIGN] D38, D78: refusing either the initial allocation or
+/// Verifies: [DESIGN] D38, D82: refusing either the initial allocation or
 /// its growth independently preserves every candidate in streaming order.
 /// A small result keeps only the small buffer; an absent budget opts out.
 #[test]
@@ -63,7 +63,7 @@ fn clustered_candidates_decline_unaffordable_buffers_without_losing_rows() {
     }
 }
 
-/// Verifies: [DESIGN] D15, D78: prefetch does not expose an index failure
+/// Verifies: [DESIGN] D15, D82: prefetch does not expose an index failure
 /// before its preceding candidates. No entry after that failure escapes,
 /// and a cursor stopped after its first candidate never observes it.
 #[test]

@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Verifies: [DESIGN] D15, D78: prepared rectangles preserve intersection,
+/// Verifies: [DESIGN] D15, D82: prepared rectangles preserve intersection,
 /// disjointness and distance bits at corners, edges, interior and exterior
 /// points, including adjacent binary64 values and extreme coordinates.
 /// Both operand orders, NULL, EMPTY and changed SRIDs retain their results

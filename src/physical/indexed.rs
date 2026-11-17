@@ -135,6 +135,7 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
     let detail = shown.text(|names| and_all(probed.chain(cond.clone()).collect()).map(|c| render_cond(&c, names)).unwrap_or_default());
     Plan::IndexJoin {
         outer: join.outer,
+        spatial: false,
         left: Box::new(left),
         table: probing.table,
         index: probing.index,

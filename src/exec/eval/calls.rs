@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::functions::ScalarFunction;
+use crate::value::lob::fixtures::Temp;
+use crate::value::lob::{CHUNK_OCTETS, Lob, TempLobs};
 use crate::value::{DataType, Decimal, Spelled};
 
 struct Function {
@@ -82,7 +84,7 @@ impl ScalarFunction for Borrowed {
         fail(Code::Api, "[DESIGN] this test requires borrowed dispatch")
     }
 
-    fn call_borrowed(&self, args: &[&Value], _temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Value> {
+    fn call_borrowed(&self, args: &[&Value], _temp: Option<&dyn TempLobs>) -> Result<Value> {
         for arg in args {
             let Value::Row(values) = arg else { return fail(Code::Api, "[DESIGN] not the shared argument") };
             if Arc::strong_count(values) != 1 {
@@ -109,5 +111,35 @@ fn direct_scalar_arguments_borrow_shared_values() {
     }
     for args in [vec![Expr::Column(1)], vec![Expr::Column(0), Expr::Column(1)], vec![Expr::Column(1), Expr::Column(0)]] {
         assert_eq!(eval(&Expr::Call(function.clone(), args), &row, &NoSubqueries).unwrap_err().code, Code::Api);
+    }
+}
+
+struct WithTemp(Temp);
+
+impl Subqueries for WithTemp {
+    fn rows(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> Result<SubqueryRows> {
+        NoSubqueries.rows(subquery, outer, limit)
+    }
+
+    fn temp_lobs(&self) -> Option<&dyn TempLobs> {
+        Some(&self.0)
+    }
+}
+
+/// Verifies: [DESIGN] D79: borrowed and evaluated scalar arguments keep
+/// the statement's temporary large-object store. UPPER of more than one
+/// chunk succeeds and writes there; dispatch through `call` would fail.
+#[test]
+fn borrowed_scalar_preserves_temporary_large_objects() {
+    let function = crate::functions::Registry::with_set_functions().scalar("UPPER").unwrap();
+    let length = CHUNK_OCTETS.saturating_add(1);
+    let row = vec![Value::Lob(Lob::of_text(&"a".repeat(length)))];
+    let nested = Expr::Call(function.clone(), vec![Expr::Column(0)]);
+    for arg in [Expr::Column(0), Expr::Const(row[0].clone()), nested] {
+        let context = WithTemp(Temp::default());
+        let result = eval(&Expr::Call(function.clone(), vec![arg]), &row, &context).unwrap();
+        let Value::Lob(result) = result else { panic!("UPPER did not return a large object") };
+        assert_eq!(result.reader().read(0, u64::try_from(length).unwrap()).unwrap(), vec![b'A'; length]);
+        assert!(context.0.made() > 0);
     }
 }

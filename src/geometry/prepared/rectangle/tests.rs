@@ -3,7 +3,7 @@
 use super::*;
 use crate::geometry::Geometry;
 
-/// Verifies: [DESIGN] D78: all four starting corners and both ring
+/// Verifies: [DESIGN] D82: all four starting corners and both ring
 /// directions describe the same rectangle, even at subnormal and extreme
 /// coordinates. Recognition requires no subtraction or area calculation.
 #[test]
@@ -31,7 +31,7 @@ fn rectangles_accept_each_start_and_direction_without_area_arithmetic() {
     }
 }
 
-/// Verifies: [DESIGN] D78: bounds alone cannot recognize a rectangle.
+/// Verifies: [DESIGN] D82: bounds alone cannot recognize a rectangle.
 /// Each required shape, ring count, corner count, closure, nonzero extent
 /// and adjacent-corner relationship is varied independently.
 #[test]

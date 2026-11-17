@@ -29,6 +29,7 @@ mod nearest;
 mod partition;
 mod pattern;
 mod program;
+mod project;
 mod ptf;
 mod recursive;
 mod scan;
@@ -260,6 +261,13 @@ fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         return batch::projected(plan, db, tx);
     }
     let Plan::Project { exprs, input, .. } = plan else { return failed(broken("a projection is not one")) };
+    if let Some(columns) = project::Columns::of(&exprs) {
+        if matches!(*input, Plan::IndexJoin { .. }) {
+            return join::indexed_projected(*input, Some(columns), db, tx);
+        }
+        let input = execute(*input, db, tx);
+        return Box::new(input.map(move |row| row.and_then(|row| columns.take(row))));
+    }
     let (input, runner) = (execute(*input, db, tx), Runner::new(db, tx));
     // [ISO/IEC 9075-2:2023 §4.29.1] a row's draws of one generator are one.
     if exprs.iter().any(Expr::draws) {

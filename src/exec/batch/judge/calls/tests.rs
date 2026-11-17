@@ -7,6 +7,8 @@ use crate::error::{Code, Result, fail};
 use crate::exec::{NoSubqueries, broken, eval_cond};
 use crate::functions::ScalarFunction;
 use crate::storage::Column;
+use crate::value::lob::fixtures::Temp;
+use crate::value::lob::{CHUNK_OCTETS, Lob, LobKind};
 use crate::value::{DataType, Decimal, Spelled};
 
 struct Function(Arc<Mutex<Vec<Vec<String>>>>);
@@ -26,7 +28,7 @@ impl ScalarFunction for Borrowed {
         fail(Code::Api, "[DESIGN] this test requires borrowed batch dispatch")
     }
 
-    fn call_borrowed(&self, args: &[&Value], _temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Value> {
+    fn call_borrowed(&self, args: &[&Value], _temp: Option<&dyn TempLobs>) -> Result<Value> {
         for arg in args {
             let Value::Row(values) = arg else { return fail(Code::Api, "[DESIGN] not the shared argument") };
             if Arc::strong_count(values) != 1 {
@@ -174,4 +176,45 @@ fn batch_calls_decline_arguments_that_need_expression_evaluation() {
     assert!(Call::of(&Cond::Const(Truth::True), &[]).is_none());
     let column = Cond::Compare(Expr::Column(0), CompOp::Eq, Expr::Const(number(0)));
     assert!(Call::of(&column, &[0]).is_none());
+}
+
+/// Verifies: [DESIGN] D31, D79: a direct batch scalar comparison gives
+/// UPPER the temporary store needed for a result longer than one chunk
+/// and reads that result for comparison, as the row evaluator does.
+#[test]
+fn borrowed_batch_preserves_temporary_large_objects() {
+    let function = crate::functions::Registry::with_set_functions().scalar("UPPER").unwrap();
+    let length = CHUNK_OCTETS.saturating_add(1);
+    let batch = Batch { columns: vec![Column::from(vec![Value::Lob(Lob::of_text(&"a".repeat(length)))])], rows: 1 };
+    let call = Expr::Call(function, vec![Expr::Column(0)]);
+    let constant = Expr::Const(Value::Lob(Lob::of_text(&"A".repeat(length))));
+    let cond = Cond::Compare(call, CompOp::Eq, constant);
+    let temp = Temp::default();
+    let (kept, error) = Call::of(&cond, &[0]).unwrap().in_order(&batch, &[0], Some(&temp));
+    assert!(error.is_none(), "{error:?}");
+    assert_eq!(kept, vec![0]);
+    assert_eq!(temp.made(), 1);
+}
+
+/// Verifies: [DESIGN] D15, D31, D79: a large-object read error in a
+/// scalar result comparison retains the successful prefix and the same
+/// error as row evaluation, with either operand order. An unreadable
+/// reference must not become an unknown comparison and silently disappear.
+#[test]
+fn borrowed_batch_reports_large_object_comparison_errors() {
+    let kind = DataType::Lob { kind: LobKind::Character, length: 10, units: crate::value::CharUnits::Characters };
+    let function = ScalarRef(Arc::new(crate::functions::FieldOf(kind, 0)));
+    let good = Value::Lob(Lob::of_text("X"));
+    let bad = Value::Lob(Lob::of_reference(LobKind::Character, 42, (1, 1)));
+    let values: Vec<_> = [good.clone(), bad, good.clone()].into_iter().map(|value| Value::Row(Arc::from([value]))).collect();
+    let batch = Batch { columns: vec![Column::from(values.clone())], rows: 3 };
+    for reversed in [false, true] {
+        let call = Expr::Call(function.clone(), vec![Expr::Column(0)]);
+        let constant = Expr::Const(good.clone());
+        let cond = if reversed { Cond::Compare(constant, CompOp::Eq, call) } else { Cond::Compare(call, CompOp::Eq, constant) };
+        let (kept, error) = Call::of(&cond, &[0]).unwrap().in_order(&batch, &[0, 1, 2], None);
+        assert_eq!(kept, vec![0]);
+        assert_eq!(error.unwrap().code, Code::Api);
+        assert_eq!(eval_cond(&cond, &vec![values[1].clone()], &NoSubqueries).unwrap_err().code, Code::Api);
+    }
 }

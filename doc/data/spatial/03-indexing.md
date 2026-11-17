@@ -70,6 +70,17 @@ table when both columns enforce the same SRID. The
 that query. Geometry outer joins and ST_DISJOINT do
 not yet use these geometry probes.
 
+For an unordered spatial inner join, `EXPLAIN` may show
+`AdaptiveSpatialJoin`.
+Execution starts with index lookups. After enough candidate rows have been read, it can
+compare the estimated work of the remaining lookups with scanning the
+larger table once. If the remaining outer rows fit the work-area and
+database memory budgets, a scan groups their rectangles in a temporary
+spatial index to find candidates. It checks the exact geometries and the
+rest of the join condition for each candidate. Selective lookups, missing
+estimates or insufficient memory keep the ordinary index join. A query
+needing the join's input order also keeps it.
+
 ## Find points in a window
 
 Use two REAL, FLOAT or DOUBLE PRECISION columns in `(X, Y)` order:

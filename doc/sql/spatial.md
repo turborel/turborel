@@ -122,6 +122,9 @@ candidates. An inner join can also use a geometry index when both columns
 enforce the same SRID; each outer row supplies the query geometry and the
 complete ON condition checks each candidate pair. See
 [geometry indexes](../data/spatial/03-indexing.md).
+An unordered inner join also permits an adaptive choice between those
+probes and one table scan when its remaining outer input fits the memory
+budgets, with the same exact checks.
 ST_DISJOINT, distance comparisons in WHERE and geometry outer joins do
 not yet use those probes. Ascending ST_DISTANCE with FETCH FIRST can use
 a nearest-candidate traversal; the [distance guide](../data/spatial/05-distance.md)
@@ -130,6 +133,12 @@ With constant folding enabled and enough memory available, a constant
 geometry operand is decoded once per expression and reused while evaluating
 rows. This also applies when a prepared statement reuses its query plan;
 each execution prepares its own parameter value.
+An indexed spatial join also decodes its outer geometry once per probe,
+then reuses it while checking that geometry's candidate matches.
+When the query selects only columns, an intersection join can build those
+columns directly after checking a match. Selecting IDs therefore avoids
+copying geometry values into a temporary result row. Additional ON
+conditions still apply before any result is returned.
 
 SQL `=`, ordering, grouping and ordinary index keys compare the stored
 representation, including SRID and coordinate order. This is not the

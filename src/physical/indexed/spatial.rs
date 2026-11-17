@@ -37,14 +37,16 @@ impl PhysicalPlanner<'_> {
         let names = self.shown.then(|| left.names().into_iter().chain(right.names()).collect::<Vec<_>>());
         let shown = Shown::of(names.as_deref());
         if swap {
-            let choice = swapped?;
+            let mut choice = swapped?;
+            choice.spatial = want.is_empty();
             let outer = self.build_node(right, &[]).plan;
             let flipped_names = flip.names(shown);
             let flipped = Shown::of(flipped_names.as_deref());
             let plan = planned(choice, outer, (reversed, right.width()), flipped);
             return Some(Built::unordered(flip.restored(plan, flipped)));
         }
-        let choice = normal?;
+        let mut choice = normal?;
+        choice.spatial = want.is_empty();
         let wanted = of_left(want, left.width());
         let outer = self.build_node(left, wanted);
         let ordered = !wanted.is_empty() && outer.ordered;

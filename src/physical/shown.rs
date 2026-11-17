@@ -59,6 +59,22 @@ impl Plan {
         out
     }
 
+    fn write_index_join(&self, out: &mut String, pad: &str) -> std::fmt::Result {
+        let Plan::IndexJoin { spatial, outer, table, index, method, detail, est, cost, .. } = self else { return Ok(()) };
+        if *spatial {
+            writeln!(
+                out,
+                "{pad}AdaptiveSpatialJoin {table} using {index} [{method}]: {detail}  (IndexNestedLoop or bounded boundary-mask scan)"
+            )
+        } else {
+            writeln!(
+                out,
+                "{pad}{}IndexNestedLoop {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
+                if *outer { "LeftOuter" } else { "" }
+            )
+        }
+    }
+
     fn write(&self, out: &mut String, depth: usize) {
         let pad = "  ".repeat(depth);
         // Writing to a String cannot fail.
@@ -83,11 +99,7 @@ impl Plan {
             Plan::Product { .. } => writeln!(out, "{pad}NestedLoop (Cartesian product)"),
             Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
             Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
-            Plan::IndexJoin { outer, table, index, method, detail, est, cost, .. } => writeln!(
-                out,
-                "{pad}{}IndexNestedLoop {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
-                if *outer { "LeftOuter" } else { "" }
-            ),
+            Plan::IndexJoin { .. } => self.write_index_join(out, &pad),
             Plan::Aggregate { detail, .. } => writeln!(out, "{pad}Aggregate {detail}"),
             Plan::Project { detail, .. } => writeln!(out, "{pad}Project {detail}"),
             Plan::Distinct { .. } => writeln!(out, "{pad}Distinct"),
