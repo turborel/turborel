@@ -94,6 +94,7 @@ fn table(bench: &Bench, long: usize) -> (RowStore, Arc<dyn TableStorage>) {
         ("LAST", DataType::character(u32::try_from(last_length(long)).unwrap())),
     ];
     let desc = TableDesc {
+        periods: Vec::new(),
         name: QualifiedName { auth: "A".into(), ident: "T".into() },
         columns: columns
             .iter()

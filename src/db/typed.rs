@@ -293,7 +293,11 @@ fn subtable_columns((table, st): (&QualifiedName, &StructuredDesc), sup: &TableD
 fn self_specification(t: &TableDefinition) -> Option<(&str, RefGeneration, usize)> {
     t.elements.iter().find_map(|e| match e {
         TableElement::SelfReferencing(name, generation, at) => Some((name.as_str(), *generation, *at)),
-        TableElement::Column(_) | TableElement::Constraint(_) | TableElement::Like(_) | TableElement::Options(_) => None,
+        TableElement::Column(_)
+        | TableElement::Constraint(_)
+        | TableElement::Like(_)
+        | TableElement::Options(_)
+        | TableElement::Period(_) => None,
     })
 }
 
@@ -341,7 +345,11 @@ fn derived_constraints(t: &TableDefinition, derivational: &[String]) -> Result<(
             TableConstraintKind::Unique { primary, columns, .. } => (columns.as_slice() == derivational).then_some(*primary),
             TableConstraintKind::ForeignKey { .. } | TableConstraintKind::Check(_) => None,
         },
-        TableElement::Column(_) | TableElement::Like(_) | TableElement::SelfReferencing(..) | TableElement::Options(_) => None,
+        TableElement::Column(_)
+        | TableElement::Like(_)
+        | TableElement::SelfReferencing(..)
+        | TableElement::Options(_)
+        | TableElement::Period(_) => None,
     });
     let list = derivational.join(", ");
     let Some(primary) = unique else {

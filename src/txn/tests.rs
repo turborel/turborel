@@ -26,6 +26,7 @@ fn participants_end_where_they_joined() {
         generated: None,
     };
     let desc = crate::catalog::TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: name.clone(),
         columns: vec![column],

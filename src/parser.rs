@@ -12,6 +12,7 @@
 pub use ddl::{RESEAL, REVERT_COLLATION};
 pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
+pub(crate) use periods::period_constraint;
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
@@ -49,6 +50,7 @@ mod modules;
 mod multisets;
 mod names;
 mod pattern;
+mod periods;
 mod primary;
 mod privileges;
 mod psm;

@@ -400,6 +400,7 @@ mod tests {
             generated: None,
         };
         let desc = TableDesc {
+            periods: Vec::new(),
             typed: None,
             name: name.clone(),
             columns: vec![column],

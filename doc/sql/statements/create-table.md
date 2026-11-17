@@ -20,7 +20,9 @@ CREATE TABLE: define a base table
     | OF <user-defined type name> [ UNDER <supertable name> ] [ ( <typed table element> [ { , <typed table element> }... ] ) ]
     | [ ( <column name> [ { , <column name> }... ] ) ] AS ( <query expression> ) WITH [ NO ] DATA
 
-<table element> ::= <column definition> | <table constraint definition> | <like clause>
+<table element> ::= <column definition> | <table constraint definition> | <like clause> | <table period definition>
+
+<table period definition> ::= PERIOD FOR <period name> ( <column name> , <column name> )
 
 <typed table element> ::=
       REF IS <column name> { SYSTEM GENERATED | USER GENERATED | DERIVED }
@@ -153,6 +155,15 @@ default schema is ANN, `CREATE TABLE SHOP.ITEMS (ID INTEGER CONSTRAINT
 KEYED PRIMARY KEY)` names its constraint ANN.KEYED. In a [CREATE
 SCHEMA](create-schema.md), it is of the schema being defined.
 
+**Periods.** PERIOD FOR names two columns of the table as a period,
+from its start column, included, to its end column, excluded. The table
+gets the period constraint CHECK (start < end), named for the table and
+the period with `_PERIOD` after, as `ROOMS_STAY_PERIOD`, and numbered if
+its schema has that name. While the period is, its columns are not
+dropped, nor made nullable. [ALTER TABLE](alter-table.md) adds or drops
+one. The view PERIODS of the [Information Schema](../information-schema.md)
+shows each.
+
 **Temporary tables.** GLOBAL TEMPORARY or LOCAL TEMPORARY defines a
 table whose rows are each session's own: empty as the session begins,
 gone when it ends, and never recovered. ON COMMIT DELETE ROWS, the
@@ -261,6 +272,12 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
     [CREATE SCHEMA](create-schema.md).
 17. NULLS DISTINCT or NULLS NOT DISTINCT follows UNIQUE in a table
     constraint, not PRIMARY KEY, and not in a column constraint.
+18. A table has one period at most, and a temporary table none. No
+    column is named as the period. Its columns are two of the table's,
+    each written as DATE, or both as one timestamp type, each NOT NULL
+    and not DEFERRABLE, or of the PRIMARY KEY, and neither an identity
+    nor a generated column. PERIOD FOR SYSTEM_TIME, of a system-versioned
+    table, is not yet supported (SQLCODE -900).
 
 ## PRIVILEGES
 
@@ -279,6 +296,7 @@ names. The privileges the query of AS needs to be run.
 | 2A000 | -104 | Its user does not own the schema, or a constraint's, or lacks REFERENCES or USAGE it needs |
 | 25000 | -917 | The transaction is READ ONLY |
 | 0A000 | -900 | A CHARACTER SET clause of another character set |
+| 0A000 | -900 | PERIOD FOR SYSTEM_TIME |
 | 2A000 | -103 | A COLLATE clause of no collation, or of a column not of a character string |
 | 02000 | 100 | Not an error: the query of AS ... WITH DATA had no row |
 
@@ -423,6 +441,28 @@ OK
 (1 row)
 ```
 
+A period of the days a room is booked, from its first, included, to its
+last, excluded:
+
+```sql
+CREATE TABLE ROOMS (ROOM INTEGER, FROM_DAY DATE NOT NULL, TO_DAY DATE NOT NULL, PERIOD FOR STAY (FROM_DAY, TO_DAY));
+INSERT INTO ROOMS VALUES (101, DATE '2026-03-01', DATE '2026-03-04');
+INSERT INTO ROOMS VALUES (102, DATE '2026-03-04', DATE '2026-03-04');
+COMMIT;
+SELECT PERIOD_NAME, CONSTRAINT_NAME FROM INFORMATION_SCHEMA.PERIODS;
+```
+
+```
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.ROOMS_STAY_PERIOD of ANN.ROOMS is false for a row [ISO/IEC 9075:1992 §11.6 GR3]
+OK
+ PERIOD_NAME                                                  | CONSTRAINT_NAME
+--------------------------------------------------------------+--------------------------------------------------------------
+ STAY                                                         | ROOMS_STAY_PERIOD
+(1 row)
+```
+
 Tables refused:
 
 ```sql
@@ -436,6 +476,7 @@ CREATE TABLE T11 (A INTEGER, B GENERATED ALWAYS AS (A + (SELECT COUNT(*) FROM OR
 CREATE TABLE T12 (LIKE ORDERS INCLUDING DEFAULTS EXCLUDING DEFAULTS);
 CREATE TABLE T13 AS (SELECT QUANTITY * PRICE FROM ORDERS) WITH NO DATA;
 CREATE TABLE T14 (A INTEGER, PRIMARY KEY NULLS NOT DISTINCT (A));
+CREATE TABLE T15 (A DATE NOT NULL, B TIMESTAMP NOT NULL, PERIOD FOR P (A, B));
 ```
 
 ```
@@ -449,6 +490,7 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): the generation expression of column B o
 turborel: SQLCODE -103 (SQLSTATE 2A000): a <like clause> writes its <column default option> once [ISO/IEC 9075-2:2023 §11.3 SR9b iv 1] (at character 49)
 turborel: SQLCODE -103 (SQLSTATE 2A000): column 1 of the query has no name, so a <column name list> names it [ISO/IEC 9075-2:2023 §11.3 SR10b] (at character 17)
 turborel: SQLCODE -103 (SQLSTATE 2A000): PRIMARY KEY writes no <unique null treatment>, as its columns are not null [ISO/IEC 9075-2:2023 §11.7 SR5] (at character 41)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the columns of period P are of one type, DATE or a timestamp type, not DATE and TIMESTAMP(6) [ISO/IEC 9075-2:2023 §11.3 SR2e iii] (at character 71)
 ```
 
 ## STANDARD
@@ -458,7 +500,9 @@ attributes; X3.135-1986 §6.2 to §6.4, whose tables have NOT NULL and
 UNIQUE only. Identity columns and generated columns are ISO/IEC
 9075-2:2023 §4.17.12, §4.17.13 and §11.4, Features T174 and T175. LIKE
 is ISO/IEC 9075-2:2023 §11.3, Feature T171, and its options Feature
-T173; AS is Feature T172. That AS is not written in a CREATE SCHEMA, and
+T173; AS is Feature T172. Periods are ISO/IEC 9075-2:2023 §4.16 and
+§11.3, Feature T181, the name of the period constraint left to the
+implementation; the view PERIODS is this implementation's own. That AS is not written in a CREATE SCHEMA, and
 that neither names a declared local temporary table, are this
 implementation's own. The null treatment of UNIQUE is ISO/IEC
 9075-2:2023 §11.7, Feature F292. With none written it is NULLS DISTINCT,

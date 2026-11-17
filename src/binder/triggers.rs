@@ -92,6 +92,7 @@ pub(super) fn transition_item(b: &Bounds<'_>, t: &NamedTable, offset: usize) -> 
         (c.default, c.generated, c.domain) = (None, None, None);
     }
     let desc = TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: name.clone(),
         columns,

@@ -18,6 +18,8 @@ ALTER TABLE: change a base table
     | DROP [ COLUMN ] <column name> <drop behavior>
     | ADD <table constraint definition>
     | DROP CONSTRAINT <constraint name> <drop behavior>
+    | ADD <table period definition>
+    | DROP PERIOD FOR <period name> <drop behavior>
     | SET ( <table option> [ { , <table option> }... ] )
     | USING <engine name> [ WITH ( <table option> [ { , <table option> }... ] ) ]
     | RESEAL
@@ -43,7 +45,7 @@ ALTER TABLE: change a base table
 ```
 
 The `<column definition>`, `<default option>`, `<table constraint
-definition>` and `<table option>` are those of
+definition>`, `<table period definition>` and `<table option>` are those of
 [CREATE TABLE](create-table.md). One statement takes one action.
 
 ## DESCRIPTION
@@ -96,6 +98,12 @@ now; a row that breaks it refuses it.
 without a schema being of the session's default schema. RESTRICT refuses
 the drop of a UNIQUE or PRIMARY KEY constraint that a foreign key
 references; CASCADE drops that foreign key too.
+
+**ADD PERIOD** adds a period of two columns the table has, and its
+period constraint, CHECK (start < end), checked of the rows there now; a
+row whose start is not before its end refuses it. **DROP PERIOD** drops
+the period and its constraint, RESTRICT and CASCADE alike, as nothing
+else names a period yet. See [CREATE TABLE](create-table.md).
 
 A grouped query may read a column outside a set function because a key
 makes it dependent on the grouping columns. A view, a CHECK, a domain
@@ -154,11 +162,19 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
    changed first.
 5. DROP CONSTRAINT: the table has the constraint. A constraint a column
    has from its domain is changed by [ALTER DOMAIN](alter-domain.md).
-6. A constraint added follows the rules of [CREATE TABLE](create-table.md).
-7. SET and USING: the engine is registered, and takes each option, of a
+   A period's constraint is dropped with its period alone, and no NOT
+   NULL or PRIMARY KEY is dropped whose going leaves a period's column
+   possibly nullable. DROP COLUMN drops no column of a period.
+6. ADD PERIOD: the table is a persistent base table, not a typed one,
+   and has no period. No column is named as the period. Its columns are
+   the table's, of one type, DATE or a timestamp type, a domain's over
+   one among them, each known not nullable, and neither an identity nor
+   a generated column. DROP PERIOD: the table has the period.
+7. A constraint added follows the rules of [CREATE TABLE](create-table.md).
+8. SET and USING: the engine is registered, and takes each option, of a
    value it accepts; an option of columns names the table's. A temporary table names no engine or options,
    and is not resealed.
-8. A temporary table is altered only while no other transaction has a
+9. A temporary table is altered only while no other transaction has a
    session's rows of it open, and by a transaction that sees each
    session's rows: one begun after the last commit that wrote them. ADD
    and DROP COLUMN change each session's rows, its own and another's,
@@ -166,8 +182,8 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
    no row and is every session's at once. The table's constraints, a
    constraint added among them, hold of each session's rows, read as
    that session sees the other temporary tables: its own rows of them.
-9. No cursor of the transaction reads the table.
-10. The transaction is not READ ONLY.
+10. No cursor of the transaction reads the table.
+11. The transaction is not READ ONLY.
 
 ## PRIVILEGES
 
@@ -181,6 +197,7 @@ says.
 |---|---|---|
 | 2A000 | -102 | The action is not written as the synopsis shows |
 | 2A000 | -103 | A rule above is broken |
+| 0A000 | -900 | ADD PERIOD FOR SYSTEM_TIME |
 | 3F000 | -103 | The schema of a constraint added does not exist |
 | 2A000 | -104 | Its user does not own the table's schema, or lacks a privilege a column or constraint needs |
 | 23000 | -201 | A row breaks the constraint added; a NOT NULL column added has no default, and the table has rows |
@@ -314,7 +331,9 @@ ISO/IEC 9075:1992 §11.10 to §11.17. A column dropped takes a table
 constraint that reads it alone, even with RESTRICT [§11.15 SR4]. The
 actions of an identity column and DROP EXPRESSION are ISO/IEC 9075-2:2023
 §11.20 to §11.22, Features T178, F384, F385 and F386, and the drop of a
-column a generation expression references is §11.23 SR7f and GR3. SET,
+column a generation expression references is §11.23 SR7f and GR3. ADD
+PERIOD and DROP PERIOD are §11.27 and §11.28, Feature T181, and what a
+period keeps of its columns §11.23 SR6 and §11.26 SR10. SET,
 USING and RESEAL are extensions. SQL-86 has no ALTER TABLE.
 
 ## SEE ALSO

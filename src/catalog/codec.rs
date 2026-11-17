@@ -52,7 +52,8 @@ use std::collections::BTreeSet;
 
 use super::{
     Actions, CheckLevels, ConstraintAttributes, ConstraintDesc, ConstraintKind, DomainDesc, ForeignKey, Horizon, IndexDesc, MatchType,
-    PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind, TypedActions, Underlying, UsageDesc, ViewDesc,
+    PeriodDesc, PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind, TypedActions, Underlying, UsageDesc,
+    ViewDesc,
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -237,6 +238,13 @@ pub(crate) fn put_table(out: &mut Vec<u8>, table: &TableDesc) {
         }
     }
     structured::put_typed(out, table.typed.as_ref());
+    // [ISO/IEC 9075-2:2023 §4.16.1] each period descriptor.
+    put_all(out, table.periods.iter(), |out, p| {
+        out.put_str(&p.name);
+        out.put_str(&p.start);
+        out.put_str(&p.end);
+        put_name(out, &p.constraint);
+    });
 }
 
 /// The table `put_table` wrote.
@@ -253,7 +261,8 @@ pub(crate) fn table(r: &mut Reader<'_>) -> Result<TableDesc> {
     };
     let temporary = kind.map(|kind| flag(r).map(|delete_rows| Temporary { kind, delete_rows })).transpose()?;
     let typed = structured::typed(r)?;
-    Ok(TableDesc { name, columns, constraints, engine, options, generation, temporary, typed })
+    let periods = get_all(r, |r| Ok(PeriodDesc { name: r.str()?, start: r.str()?, end: r.str()?, constraint: qualified(r)? }))?;
+    Ok(TableDesc { name, columns, constraints, engine, options, generation, temporary, typed, periods })
 }
 
 /// A constraint: its name, kind and attributes, and the domain constraint
@@ -563,6 +572,7 @@ mod tests {
         let temporary = kinds.into_iter().flat_map(|kind| [true, false].map(|delete_rows| Some(Temporary { kind, delete_rows })));
         for of in std::iter::once(None).chain(temporary) {
             let desc = TableDesc {
+                periods: Vec::new(),
                 typed: None,
                 name: QualifiedName { auth: "A".into(), ident: "T".into() },
                 columns: Vec::new(),

@@ -25,6 +25,7 @@ mod columns;
 mod constraints;
 mod depending;
 mod identity;
+mod periods;
 mod scope;
 mod storage;
 mod truncate;
@@ -153,6 +154,10 @@ impl State {
             AlterAction::DropConstraint { name, behavior } => {
                 Ok((self.drop_constraint((qn, names), name, *behavior).or_at(name.at)?, Made::default(), None))
             }
+            AlterAction::AddPeriod(def) => Ok((Dropped::default(), self.add_period((qn, names), def, (made, tx))?, None)),
+            // [§11.28 SR3b to SR3d] RESTRICT and CASCADE drop the same, as
+            // nothing names a period but its descriptor.
+            AlterAction::DropPeriod { name, at, behavior: _ } => Ok((self.drop_period(qn, name).or_at(*at)?, Made::default(), None)),
             AlterAction::Storage(_) => self.alter_storage(qn, action, (made, tx)),
             AlterAction::RevertCollation(name) => self.revert_collation(qn, name, (action, made)),
             AlterAction::Truncate { restart } => self.truncate_rows(qn, *restart, (action, made, epochs)),
@@ -196,6 +201,8 @@ impl State {
             AlterAction::AlterColumn { .. }
             | AlterAction::AddConstraint(_)
             | AlterAction::DropConstraint { .. }
+            | AlterAction::AddPeriod(_)
+            | AlterAction::DropPeriod { .. }
             | AlterAction::RevertCollation(_)
             | AlterAction::Truncate { .. }
             | AlterAction::Storage(_) => {
@@ -401,6 +408,8 @@ impl State {
                 AlterAction::AlterColumn { .. }
                 | AlterAction::AddConstraint(_)
                 | AlterAction::DropConstraint { .. }
+                | AlterAction::AddPeriod(_)
+                | AlterAction::DropPeriod { .. }
                 | AlterAction::RevertCollation(_)
                 | AlterAction::Truncate { .. }
                 | AlterAction::Storage(_) => api("[DESIGN] a default, a constraint, the storage or its rows change no view"),

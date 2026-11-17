@@ -40,6 +40,7 @@ mod descriptors;
 mod implicit;
 mod modules;
 mod options;
+mod periods;
 mod privileges;
 mod roles;
 mod routines;
@@ -103,6 +104,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(privileges::tables());
     tables.extend(options::tables());
     tables.extend(sequences::tables());
+    tables.extend(periods::tables());
     tables.extend(user_types::tables());
     tables.extend(routines::tables());
     tables.extend(roles::tables());

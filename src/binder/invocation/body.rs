@@ -308,6 +308,7 @@ fn parameters_item(desc: &SqlRoutineDesc) -> FromItem {
     let types = columns.iter().map(|c| c.data_type.clone()).collect();
     let name = QualifiedName { auth: String::new(), ident: desc.name.ident.clone() };
     let table = TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: name.clone(),
         columns,

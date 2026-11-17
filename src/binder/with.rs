@@ -214,6 +214,7 @@ pub(super) fn query_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result
     }
     let name = QualifiedName { auth: String::new(), ident: t.table.ident.clone() };
     let desc = TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: name.clone(),
         columns,

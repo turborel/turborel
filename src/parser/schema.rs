@@ -351,6 +351,10 @@ impl Parser {
         if self.at_table_constraint() {
             return Ok(TableElement::Constraint(self.table_constraint()?));
         }
+        // [ISO/IEC 9075-2:2023 §11.3] a <table period definition>.
+        if self.at_period() {
+            return Ok(TableElement::Period(self.period_definition()?));
+        }
         Ok(TableElement::Column(self.column_definition()?))
     }
 

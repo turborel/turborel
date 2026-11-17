@@ -408,6 +408,8 @@ pub(super) fn copy_rows(
         | AlterAction::DropColumn { .. }
         | AlterAction::AddConstraint(_)
         | AlterAction::DropConstraint { .. }
+        | AlterAction::AddPeriod(_)
+        | AlterAction::DropPeriod { .. }
         | AlterAction::RevertCollation(_)
         | AlterAction::Truncate { .. }
         | AlterAction::Storage(_) => None,

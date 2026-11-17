@@ -128,7 +128,11 @@ impl State {
                     let copied = self.copied_columns(definer, like, earlier).or_at(like.at)?;
                     elements.extend(copied.into_iter().map(|copied| Element::Copied(Box::new(copied))));
                 }
-                TableElement::Column(_) | TableElement::Constraint(_) | TableElement::SelfReferencing(..) | TableElement::Options(_) => {
+                TableElement::Column(_)
+                | TableElement::Constraint(_)
+                | TableElement::SelfReferencing(..)
+                | TableElement::Options(_)
+                | TableElement::Period(_) => {
                     elements.push(Element::Written(element));
                 }
             }

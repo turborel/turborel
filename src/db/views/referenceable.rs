@@ -116,7 +116,11 @@ impl State {
     fn root_typed(&self, st: &StructuredDesc, elements: &[TableElement]) -> Result<TypedDesc> {
         let found = elements.iter().find_map(|e| match e {
             TableElement::SelfReferencing(name, generation, at) => Some((name.clone(), *generation, *at)),
-            TableElement::Column(_) | TableElement::Constraint(_) | TableElement::Like(_) | TableElement::Options(_) => None,
+            TableElement::Column(_)
+            | TableElement::Constraint(_)
+            | TableElement::Like(_)
+            | TableElement::Options(_)
+            | TableElement::Period(_) => None,
         });
         let Some((name, generation, at)) = found else {
             return Err(api(format!("[DESIGN] a referenceable view of {} has no <self-referencing column specification>", st.name)));

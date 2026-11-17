@@ -51,6 +51,7 @@ mod sql2023;
 mod stats;
 mod structured;
 mod tailorings;
+mod temporal;
 mod triggers;
 mod truncate;
 mod view_defaults;

@@ -129,6 +129,7 @@ impl State {
     ) -> Result<Vec<ColumnDesc>> {
         let (constraints, options) = (Vec::new(), Vec::new());
         let mut probe = TableDesc {
+            periods: Vec::new(),
             typed: None,
             name: name.clone(),
             columns,

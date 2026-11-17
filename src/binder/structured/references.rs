@@ -347,6 +347,7 @@ fn reference_item(t: &DataType) -> FromItem {
     };
     let name = QualifiedName { auth: String::new(), ident: REFERENCE.to_owned() };
     let table = TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: name.clone(),
         columns: vec![column],

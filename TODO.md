@@ -53,9 +53,6 @@ Nothing is open.
 
 ### Periods and temporal tables
 
-- Periods (T181) [§4.16, §11.3, §11.27, §11.28]. PERIOD FOR names two
-  columns as a period from its start, included, to its end, excluded.
-  Every temporal item builds on it.
 - Period predicates (T502) [§8.20]. CONTAINS, OVERLAPS, EQUALS, PRECEDES,
   SUCCEEDS, IMMEDIATELY PRECEDES and IMMEDIATELY SUCCEEDS. OVERLAPS of two
   row values exists today (F053) [§8.14].

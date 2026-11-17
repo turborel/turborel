@@ -39,6 +39,7 @@ mod merge;
 mod modules;
 mod ordered;
 mod pattern;
+mod periods;
 mod privileges;
 mod psm;
 mod ptf;
@@ -80,6 +81,7 @@ pub use pattern::{
     Definition, EmptyMatches, Logical, Measure, Navigation, PatternCommon, Physical, Quantified, RecognizedTable, RowPattern,
     RowPatternRecognition, RowsPerMatch, Semantics, SkipTo, Subset, WindowRecognition,
 };
+pub use periods::{PeriodDefinition, PeriodName};
 pub use query::{
     Correspondence, CursorSpecification, DerivedTable, GroupBy, GroupingColumn, GroupingElement, NamedTable, QueryExpression,
     QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn, SortSpecification,
@@ -489,6 +491,19 @@ pub enum AlterAction {
     /// [ISO/IEC 9075:1992 §11.16] `<add table constraint definition>` ::=
     /// ADD `<table constraint definition>`
     AddConstraint(TableConstraint),
+    /// [ISO/IEC 9075-2:2023 §11.27] ADD `<table period definition>`.
+    AddPeriod(PeriodDefinition),
+    /// [ISO/IEC 9075-2:2023 §11.28] DROP `<system or application time period
+    /// specification>` `<drop behavior>`: the period's name, where PERIOD
+    /// begins, and the behavior.
+    DropPeriod {
+        /// The period's name.
+        name: PeriodName,
+        /// Where PERIOD begins in the statement.
+        at: usize,
+        /// RESTRICT or CASCADE.
+        behavior: DropBehavior,
+    },
     /// \[DESIGN\] [ISO/IEC 9075-2:2023 §11.44 GR2] Columns of a collation
     /// dropped made of the character set's: read only from the log, as
     /// DROP COLLATION writes it.

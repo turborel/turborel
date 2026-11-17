@@ -343,8 +343,17 @@ fn catalog_with_table(engine: &str) -> MemoryCatalog {
         domain: None,
     };
     let (columns, constraints, engine) = (vec![column], vec![constraint], engine.into());
-    let table =
-        TableDesc { typed: None, name: name.clone(), columns, constraints, engine, options: Vec::new(), generation: 0, temporary: None };
+    let table = TableDesc {
+        periods: Vec::new(),
+        typed: None,
+        name: name.clone(),
+        columns,
+        constraints,
+        engine,
+        options: Vec::new(),
+        generation: 0,
+        temporary: None,
+    };
     let mut catalog = MemoryCatalog::default();
     catalog.create_schema("A", "A", vec![table]);
     let (method, options) = ("btree".into(), Vec::new());

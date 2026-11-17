@@ -415,6 +415,7 @@ mod tests {
             domain: None,
         };
         let table = TableDesc {
+            periods: Vec::new(),
             typed: None,
             name: QualifiedName { auth: "A".into(), ident: "T".into() },
             columns: vec![column("A"), column("B")],

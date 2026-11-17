@@ -87,6 +87,7 @@ pub(super) fn kept_desc(name: QualifiedName, generation: u32) -> TableDesc {
         column("MOVE", integer),
     ];
     TableDesc {
+        periods: Vec::new(),
         typed: None,
         name,
         columns,

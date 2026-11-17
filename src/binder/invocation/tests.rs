@@ -76,6 +76,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
 fn database(routines: Vec<SqlRoutineDesc>) -> State {
     let mut catalog = MemoryCatalog::default();
     let table = TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: qn("S", "T"),
         columns: vec![column("K"), column("P")],

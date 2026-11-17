@@ -1609,6 +1609,25 @@ references) and S274 (Multisets of reference types). A reference
 
 `REFERENCES ARE CHECKED`, which SQL:1999 had, is not in SQL:2023.
 
+### Periods
+
+Feature T181 (Application-time period tables). A period names two
+columns of a table as its start, included, and its end, excluded
+[§4.16].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Definition | §11.3 SR1, SR2, GR4e | `PERIOD FOR name (start, end)` among a table's elements, one to a table. Its columns are two of the table's, written as DATE or one timestamp type, each NOT NULL NOT DEFERRABLE or of the primary key, neither identity nor generated, and no column bears the period's name. A temporary table has none, and a typed table's elements cannot write one. Each rule broken is SQLCODE -103. |
+| Period constraint | §11.3 SR2e v 2 B, §11.27 GR2 | `CHECK (start < end)`, named as the table and the period with `_PERIOD` after, numbered past a name its schema has (UV100). A row that breaks it is SQLSTATE 23000. |
+| ADD PERIOD | §11.27 | `ALTER TABLE t ADD PERIOD FOR name (start, end)` of a persistent base table that is not referenceable and has no period. The columns' declared types judge it, so a domain over DATE serves. The table's rows are checked by the period constraint, and the period is not added if one breaks it. |
+| DROP PERIOD | §11.28 | `ALTER TABLE t DROP PERIOD FOR name RESTRICT` or `CASCADE` drops the period and its constraint. Nothing yet names a period but its table, so the two drop the same. |
+| Its columns | §11.23 SR6, §11.26 SR10 | While the period is, its columns are not dropped, its constraint is dropped only with it, and a NOT NULL or primary key whose going makes one of its columns possibly nullable is not dropped. Each is SQLCODE -103. |
+| Its description | §4.16.1 | INFORMATION_SCHEMA.PERIODS gives the table, the period's name, its start and end columns and its constraint, of the tables the current user holds a privilege on. ISO/IEC 9075-11:2006 has no view of periods, so this one is an extension. |
+
+`PERIOD FOR SYSTEM_TIME` is SQLCODE -900 until system-versioned tables
+(T180) are. PERIOD is a key word only before FOR, so a column may be
+named PERIOD.
+
 ### Triggers
 
 Features T200 (Trigger DDL), T211 (Basic trigger capability), T212

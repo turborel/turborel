@@ -57,6 +57,7 @@ fn table_desc(auth: &str, ident: &str, engine: &str) -> TableDesc {
         },
     ];
     TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: QualifiedName { auth: auth.into(), ident: ident.into() },
         columns,

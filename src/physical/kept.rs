@@ -335,6 +335,7 @@ mod tests {
             generated: None,
         };
         let desc = TableDesc {
+            periods: Vec::new(),
             typed: None,
             name: table(),
             columns: vec![column("K"), column("L")],

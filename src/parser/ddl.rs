@@ -240,6 +240,10 @@ impl Parser {
             if self.at_table_constraint() {
                 return Ok(AlterAction::AddConstraint(self.table_constraint()?));
             }
+            // [ISO/IEC 9075-2:2023 §11.27] ADD <table period definition>.
+            if self.at_period() {
+                return Ok(AlterAction::AddPeriod(self.period_definition()?));
+            }
             self.accept_kw(kw::COLUMN);
             return Ok(AlterAction::AddColumn(self.column_definition()?));
         }
@@ -251,6 +255,22 @@ impl Parser {
             return Ok(AlterAction::AlterColumn { column, at, action: self.alter_column_action()? });
         }
         self.expect_kw(kw::DROP)?;
+        self.drop_action()
+    }
+
+    /// The `<alter table action>` that DROP begins, after DROP.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it is not written so.
+    fn drop_action(&mut self) -> Result<AlterAction> {
+        // [ISO/IEC 9075-2:2023 §11.28] DROP <system or application time
+        // period specification> <drop behavior>.
+        if self.at_period() {
+            let at = self.here();
+            let name = self.period_name()?;
+            return Ok(AlterAction::DropPeriod { name, at, behavior: self.drop_behavior()? });
+        }
         if self.accept_kw(kw::CONSTRAINT) {
             // [§11.17] DROP CONSTRAINT <constraint name> <drop behavior>
             let name = self.table_name()?;

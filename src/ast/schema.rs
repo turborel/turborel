@@ -372,6 +372,8 @@ pub enum TableElement {
     SelfReferencing(String, super::RefGeneration, usize),
     /// [ISO/IEC 9075-2:2023 §11.3] `<column options>`.
     Options(super::ColumnOptions),
+    /// [ISO/IEC 9075-2:2023 §11.3] A `<table period definition>`.
+    Period(super::PeriodDefinition),
 }
 
 /// [X3.135-1986 §6.3] `<column definition>` ::= `<column name>` {`<data type>` | `<domain name>`}

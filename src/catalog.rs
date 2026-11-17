@@ -23,6 +23,7 @@ mod domains;
 mod keys;
 mod memory;
 mod modules;
+mod periods;
 mod privileges;
 mod roles;
 mod routines;
@@ -39,6 +40,7 @@ pub use domains::{DomainDesc, UsageDesc, usage_held};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
 pub use modules::{ModuleDesc, module_of_schema, module_schema, routine_path};
+pub use periods::PeriodDesc;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, TypedActions, applicable, merged};
 pub use roles::{Authorization, Principal, RoleAuthorization, Roles, Who};
 pub use routines::{
@@ -116,6 +118,8 @@ pub struct TableDesc {
     /// [ISO/IEC 9075-2:2023 §4.15.3] Of a typed table, its structured type,
     /// self-referencing column and supertable.
     pub typed: Option<TypedDesc>,
+    /// [ISO/IEC 9075-2:2023 §4.16.1] Its period descriptors.
+    pub periods: Vec<PeriodDesc>,
 }
 
 impl TableDesc {

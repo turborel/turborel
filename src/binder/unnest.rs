@@ -90,6 +90,7 @@ pub(super) fn unnest_item(bounds: Bounds<'_>, table: &UnnestTable, offset: usize
     let columns = columns_of(&types, table)?;
     let name = QualifiedName { auth: String::new(), ident: table.correlation.clone() };
     let desc = TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: name.clone(),
         columns,

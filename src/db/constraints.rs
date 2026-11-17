@@ -25,6 +25,7 @@ use crate::parser::Parser;
 use crate::value::Decimal;
 
 mod names;
+pub(in crate::db) mod periods;
 
 /// A FOREIGN KEY of a table, described but not yet resolved: its name, the
 /// positions of its referencing columns, what it references, and where it
@@ -303,7 +304,8 @@ pub(super) fn describe(
         TableElement::Options(o) => o.constraints.iter().filter_map(|c| c.name.as_ref()).collect(),
         // Replaced by the columns it copies (`db/contents.rs`); the self-
         // referencing column's constraints are named by none.
-        TableElement::Like(_) | TableElement::SelfReferencing(..) => Vec::new(),
+        // A period's constraint is named apart (`db/constraints/periods.rs`).
+        TableElement::Like(_) | TableElement::SelfReferencing(..) | TableElement::Period(_) => Vec::new(),
     }));
     let mut at = 0_usize;
     for el in elements {
@@ -314,10 +316,13 @@ pub(super) fn describe(
             }
             TableElement::Constraint(c) => d.table_constraint(c)?,
             // Made columns of a typed table (`db/typed.rs`) first.
-            TableElement::Like(_) | TableElement::SelfReferencing(..) | TableElement::Options(_) => {}
+            // A period's constraint is described once its columns are
+            // (`db/constraints/periods.rs`).
+            TableElement::Like(_) | TableElement::SelfReferencing(..) | TableElement::Options(_) | TableElement::Period(_) => {}
         }
     }
     let probe = TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: table.clone(),
         columns: columns.to_vec(),

@@ -158,7 +158,7 @@ impl State {
             .iter()
             .position(|c| c.name == named)
             .ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.17 SR2] {qn} has no constraint {named}")))?;
-        let removed = desc.constraints.remove(at);
+        let removed = crate::db::constraints::periods::removed_constraint(&mut desc, at)?;
         let mut dropped = Dropped::default();
         let mut catalog = self.catalog.duplicate();
         if let ConstraintKind::Unique { columns, .. } = &removed.kind {

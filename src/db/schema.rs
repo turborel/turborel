@@ -275,13 +275,13 @@ impl State {
         let elements: Vec<&TableElement> = effective.iter().map(Element::element).collect();
         let (columns, defs) = self.described_columns((&name, names, zone), &effective)?;
         let columns = self.typed_columns(&name, columns, &defs)?;
-        let taken = earlier
+        let taken: Vec<QualifiedName> = earlier
             .iter()
             .flat_map(|d| d.constraints.iter().map(|c| c.name.clone()))
             .chain(keys.iter().flatten().map(|p| p.name.clone()))
             .chain(self.all_constraint_names())
             .collect();
-        let (mut constraints, pending) = constraints::describe((&name, names, within), &columns, &elements, taken)?;
+        let (mut constraints, pending) = constraints::describe((&name, names, within), &columns, &elements, taken.clone())?;
         // [§11.21 GR5, GR6] its domains' constraints, on their columns.
         constraints.extend(self.domain_checks(&name, &columns));
         // [ISO/IEC 9075:1992 §4.9] A temporary table's rows are each
@@ -294,11 +294,13 @@ impl State {
         let engine = if t.temporary.is_some() { ROW_STORE.to_owned() } else { placed() };
         // [ISO/IEC 9075-2:2023 §11.3 GR4f, GR4h, GR4i] what makes it typed.
         let typed = self.typed_desc(names, t, earlier)?;
-        let desc = TableDesc { typed, name, columns, constraints, engine, options: Vec::new(), generation: 0, temporary: t.temporary };
+        let (temporary, periods) = (t.temporary, Vec::new());
+        let desc = TableDesc { typed, name, columns, constraints, engine, options: Vec::new(), generation: 0, temporary, periods };
         // [EXTENSION] its engine and options, if written (RULES.md D41).
         let mut desc = self.stored(&desc, &t.storage)?;
         desc.refresh_not_null();
         self.inherited_nullability(&mut desc, earlier);
+        constraints::periods::define_period((t, names, within), &mut desc, &taken)?;
         Ok((desc, pending))
     }
 
@@ -386,6 +388,7 @@ impl State {
         match (self.catalog.table(name), self.catalog.view(name)) {
             (Some(t), _) => Ok(t.clone()),
             (None, Some(v)) => Ok(TableDesc {
+                periods: Vec::new(),
                 typed: v.typed.clone(),
                 name: name.clone(),
                 columns: v.columns.clone(),
@@ -539,6 +542,7 @@ mod tests {
             domain: None,
         };
         TableDesc {
+            periods: Vec::new(),
             typed: None,
             name,
             columns: vec![column],

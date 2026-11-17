@@ -151,6 +151,7 @@ pub fn table_columns(db: &State, name: &QualifiedName, user: Principal<'_>) -> R
 /// constraint or engine.
 pub(super) fn unconstrained(name: &QualifiedName) -> TableDesc {
     TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: name.clone(),
         columns: Vec::new(),

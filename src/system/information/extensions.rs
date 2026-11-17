@@ -31,6 +31,29 @@ pub(super) const VIEWS: &[SystemView] = &[
          AND TABLE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
+    // [EXTENSION] [ISO/IEC 9075-2:2023 §4.16.1] PERIODS: the periods of the
+    // tables the current user has a privilege on.
+    SystemView {
+        name: "PERIODS",
+        query: r"SELECT
+       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, PERIOD_NAME,
+       START_COLUMN_NAME, END_COLUMN_NAME,
+       CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME
+     FROM DEFINITION_SCHEMA.PERIODS
+         WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
+           IN (
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
+               UNION
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
+         AND TABLE_CATALOG
+           = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
+    },
     // [EXTENSION] [ISO/IEC 9075:1992 §21.1] INDEXES (RULES.md D34): the
     // indexes of the tables the current user has a privilege on.
     SystemView {

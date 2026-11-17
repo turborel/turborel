@@ -168,7 +168,11 @@ fn self_references(elements: &[TableElement]) -> Vec<(usize, RefGeneration)> {
         .iter()
         .filter_map(|e| match e {
             TableElement::SelfReferencing(_, generation, at) => Some((*at, *generation)),
-            TableElement::Column(_) | TableElement::Constraint(_) | TableElement::Like(_) | TableElement::Options(_) => None,
+            TableElement::Column(_)
+            | TableElement::Constraint(_)
+            | TableElement::Like(_)
+            | TableElement::Options(_)
+            | TableElement::Period(_) => None,
         })
         .collect()
 }
@@ -204,7 +208,11 @@ fn check_typed_table(elements: &[TableElement], (subtable, temporary): (bool, bo
                 return Err(broken("§11.3 SR11g ii", o.column.1, &format!("column {} has two <column options>", o.column.0)));
             }
             TableElement::Options(o) => columns.push(&o.column.0),
-            TableElement::Column(_) | TableElement::Constraint(_) | TableElement::Like(_) | TableElement::SelfReferencing(..) => {}
+            TableElement::Column(_)
+            | TableElement::Constraint(_)
+            | TableElement::Like(_)
+            | TableElement::SelfReferencing(..)
+            | TableElement::Period(_) => {}
         }
     }
     Ok(())

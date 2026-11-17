@@ -105,6 +105,7 @@ impl State {
     ) -> Result<(TableDesc, Reshape, Vec<TableDesc>)> {
         let at = desc.column(column).ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.15 SR3] {} has no column {column}", desc.name)))?;
         self.droppable(desc, column)?;
+        crate::db::constraints::periods::unbounding(desc, column)?;
         // With CASCADE, its generated columns are dropped first
         // (`Session::alter_table`).
         self.no_generated_on(desc, (at, column))?;

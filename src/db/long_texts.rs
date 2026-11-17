@@ -53,7 +53,7 @@ fn of_table(t: &TableDefinition) -> Option<SqlState> {
         TableElement::Column(c) => of_column(c),
         TableElement::Constraint(c) => of_constraint(c),
         TableElement::Options(o) => o.constraints.iter().find_map(of_column_constraint),
-        TableElement::Like(_) | TableElement::SelfReferencing(..) => None,
+        TableElement::Like(_) | TableElement::SelfReferencing(..) | TableElement::Period(_) => None,
     })
 }
 
@@ -106,6 +106,8 @@ pub(super) fn of_alter(a: &AlterAction) -> Option<SqlState> {
         AlterAction::DropColumn { .. }
         | AlterAction::AlterColumn { .. }
         | AlterAction::DropConstraint { .. }
+        | AlterAction::AddPeriod(_)
+        | AlterAction::DropPeriod { .. }
         | AlterAction::RevertCollation(_)
         | AlterAction::Truncate { .. }
         | AlterAction::Storage(_) => None,

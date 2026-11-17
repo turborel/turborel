@@ -381,6 +381,7 @@ fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
     }
     let name = QualifiedName { auth: String::new(), ident: d.correlation.clone() };
     let desc = TableDesc {
+        periods: Vec::new(),
         typed: None,
         name: name.clone(),
         columns,
