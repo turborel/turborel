@@ -8,7 +8,7 @@ use crate::exec::{NoSubqueries, broken, eval_cond};
 use crate::functions::ScalarFunction;
 use crate::storage::Column;
 use crate::value::lob::fixtures::Temp;
-use crate::value::lob::{CHUNK_OCTETS, Lob, LobKind};
+use crate::value::lob::{CHUNK_OCTETS, Directory, Kept, Lob, LobKind, LobSource};
 use crate::value::{DataType, Decimal, Spelled};
 
 struct Function(Arc<Mutex<Vec<Vec<String>>>>);
@@ -199,13 +199,13 @@ fn borrowed_batch_preserves_temporary_large_objects() {
 /// Verifies: [DESIGN] D15, D31, D79: a large-object read error in a
 /// scalar result comparison retains the successful prefix and the same
 /// error as row evaluation, with either operand order. An unreadable
-/// reference must not become an unknown comparison and silently disappear.
+/// source must not become an unknown comparison and silently disappear.
 #[test]
 fn borrowed_batch_reports_large_object_comparison_errors() {
     let kind = DataType::Lob { kind: LobKind::Character, length: 10, units: crate::value::CharUnits::Characters };
     let function = ScalarRef(Arc::new(crate::functions::FieldOf(kind, 0)));
     let good = Value::Lob(Lob::of_text("X"));
-    let bad = Value::Lob(Lob::of_reference(LobKind::Character, 42, (1, 1)));
+    let bad = Value::Lob(Lob::of_source(LobKind::Character, Arc::new(Unreadable)));
     let values: Vec<_> = [good.clone(), bad, good.clone()].into_iter().map(|value| Value::Row(Arc::from([value]))).collect();
     let batch = Batch { columns: vec![Column::from(values.clone())], rows: 3 };
     for reversed in [false, true] {
@@ -216,5 +216,26 @@ fn borrowed_batch_reports_large_object_comparison_errors() {
         assert_eq!(kept, vec![0]);
         assert_eq!(error.unwrap().code, Code::Api);
         assert_eq!(eval_cond(&cond, &vec![values[1].clone()], &NoSubqueries).unwrap_err().code, Code::Api);
+    }
+}
+
+#[derive(Debug)]
+struct Unreadable;
+
+impl LobSource for Unreadable {
+    fn totals(&self) -> (u64, u64) {
+        (1, 1)
+    }
+
+    fn directory(&self) -> Result<&Directory> {
+        fail(Code::Api, "[DESIGN] the test large-object source cannot be read")
+    }
+
+    fn chunk(&self, _: usize) -> Result<Arc<[u8]>> {
+        fail(Code::Api, "[DESIGN] the test large-object chunk cannot be read")
+    }
+
+    fn kept(&self) -> Option<Kept> {
+        None
     }
 }
