@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use super::depending::Cause;
 use super::{Made, Reshape};
 use crate::ast::{AlterAction, ColumnDefinition, ColumnGeneration, DropBehavior, PeriodDefinition, PeriodName, SYSTEM_TIME, Schema};
 use crate::catalog::{Catalog, QualifiedName, TableDesc};
@@ -161,21 +162,29 @@ impl State {
     }
 
     /// [ISO/IEC 9075-2:2023 §11.30] ALTER TABLE `qn` DROP SYSTEM
-    /// VERSIONING: its history dropped, its historical system rows with it
-    /// \[GR2\]. What it took away.
+    /// VERSIONING `behavior`: its history dropped, its historical system
+    /// rows with it \[GR2\]. The views, table and domain constraints,
+    /// assertions, routines and triggers that read it FOR SYSTEM_TIME bind
+    /// no more, and are dropped under CASCADE \[GR3\]. What it took away.
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if it is no system-versioned table \[SR2\].
-    pub(in crate::db) fn drop_versioning(&mut self, qn: &QualifiedName, _behavior: DropBehavior) -> Result<Dropped> {
+    /// SQLCODE -103 if it is no system-versioned table \[SR2\], or under
+    /// RESTRICT if one of those reads it so \[SR3\].
+    pub(in crate::db) fn drop_versioning(&mut self, qn: &QualifiedName, behavior: DropBehavior) -> Result<Dropped> {
         self.base_table(qn)?;
         if !self.versioned(qn) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.30 SR2] {qn} is not a system-versioned table")));
         }
+        let before = self.clone();
         let mut dropped = Dropped::default();
         let mut catalog = self.catalog.duplicate();
         self.drop_history(&mut *catalog, qn, &mut dropped);
         self.catalog = Arc::from(catalog);
+        let cascade = behavior == DropBehavior::Cascade;
+        dropped.absorb(self.drop_dependents_of(&before, (Cause::Versioning, std::slice::from_ref(qn)), cascade)?);
+        dropped.absorb(self.drop_dependent_triggers(&before, (Cause::Versioning, qn), cascade)?);
+        dropped.absorb(self.drop_dependent_routines(&before, (Cause::Versioning, qn), cascade)?);
         Ok(dropped)
     }
 

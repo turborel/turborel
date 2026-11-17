@@ -540,6 +540,7 @@ impl State {
             only: false,
             correlation: None,
             columns: None,
+            system_time: None,
         });
         let table_expression =
             TableExpression { from: vec![from], where_clause: Some(condition), group_by: None, having: None, window: Vec::new() };

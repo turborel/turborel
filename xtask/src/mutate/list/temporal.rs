@@ -258,8 +258,8 @@ pub const TEMPORAL: [Mutation; 51] = [
         package: Package::Core,
         breaks: "a CHECK of the period's own table is not found to reference it [§11.28 SR3d ii]",
         file: "src/db/alter/depending.rs",
-        original: "let own = matches!(cause, Cause::Scope | Cause::Period) && tables.contains(&t.name);",
-        replacement: "let own = matches!(cause, Cause::Scope) && tables.contains(&t.name);",
+        original: "let own = matches!(cause, Cause::Scope | Cause::Period | Cause::Versioning) && tables.contains(&t.name);",
+        replacement: "let own = matches!(cause, Cause::Scope | Cause::Versioning) && tables.contains(&t.name);",
         integration: &[
             "period_predicates::drop_period_restrict_is_refused_by_a_reference_11_28",
             "period_predicates::drop_period_cascade_drops_its_references_11_28",

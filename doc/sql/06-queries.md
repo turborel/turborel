@@ -98,6 +98,62 @@ SELECT * FROM (SELECT DEPT, COUNT(*) FROM STAFF GROUP BY DEPT) AS C (D, N) WHERE
 (1 row)
 ```
 
+### Reading a table's history
+
+A system-versioned table ([CREATE TABLE](statements/create-table.md))
+is read as its current rows. Read **FOR SYSTEM_TIME**, after its name
+and before its correlation name, it is read with its historical rows,
+those whose system-time period the clause names:
+
+| Clause | Rows |
+|---|---|
+| `AS OF t` | those current at t: begun at t or before, ended after it |
+| `BETWEEN t1 AND t2` | those current at some time from t1 to t2, both included; none if t1 is after t2 |
+| `BETWEEN SYMMETRIC t1 AND t2` | as BETWEEN, t1 and t2 exchanged if t1 is after t2 |
+| `FROM t1 TO t2` | those current at some time from t1, included, to t2, excluded; none unless t1 is before t2 |
+
+Each point in time is a datetime, cast to the type of the period's
+start column, and reads no column, of the query or one it is in. `AS OF
+CURRENT_TIMESTAMP` reads the current rows, as the name alone does. Read
+any other way, a table is no updatable table, and no constraint reads
+it so. Of a table of fares, the first fare is still read once it is
+updated:
+
+```sql
+CREATE TABLE FARES (ITEM INTEGER PRIMARY KEY, PRICE DECIMAL(9,2),
+    VALID_FROM TIMESTAMP(6) GENERATED ALWAYS AS ROW START,
+    VALID_TO TIMESTAMP(6) GENERATED ALWAYS AS ROW END,
+    PERIOD FOR SYSTEM_TIME (VALID_FROM, VALID_TO)) WITH SYSTEM VERSIONING;
+INSERT INTO FARES (ITEM, PRICE) VALUES (1, 9.99);
+COMMIT;
+UPDATE FARES SET PRICE = 12.50;
+COMMIT;
+SELECT ITEM, PRICE FROM FARES FOR SYSTEM_TIME FROM DATE '2000-01-01' TO DATE '3000-01-01' ORDER BY PRICE;
+SELECT ITEM, PRICE FROM FARES FOR SYSTEM_TIME AS OF CURRENT_TIMESTAMP;
+SELECT COUNT(*) FROM FARES FOR SYSTEM_TIME AS OF DATE '2000-01-01';
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+         ITEM |       PRICE
+--------------+-------------
+            1 |        9.99
+            1 |       12.50
+(2 rows)
+         ITEM |       PRICE
+--------------+-------------
+            1 |       12.50
+(1 row)
+
+----------------------
+                    0
+(1 row)
+```
+
 ### Partitioned joins
 
 An operand of an outer join may be **partitioned**: `B PARTITION BY

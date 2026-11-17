@@ -53,8 +53,6 @@ Nothing is open.
 
 ### Periods and temporal tables
 
-- FOR SYSTEM_TIME AS OF, BETWEEN and FROM … TO [§4.17.10, §7.6], reading
-  the rows current at a time or within one.
 - Bitemporal tables, an application-time period and system versioning on
   one table. No feature names them, and each part above composes once
   both exist.

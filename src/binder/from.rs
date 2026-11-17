@@ -289,11 +289,11 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
     // [ISO/IEC 9075-2:2023 §7.17 SR3i] a query name in scope names no
     // table.
     if let Some(query) = with::query_item(b, t, offset)? {
-        return Ok(query);
+        return super::system_time::unversioned(t).map(|()| query);
     }
     // [ISO/IEC 9075-2:2023 §7.6 SR6] nor does a transition table name.
     if let Some(transition) = super::triggers::transition_item(&b, t, offset) {
-        return Ok(transition);
+        return super::system_time::unversioned(t).map(|()| transition);
     }
     let cx = b.cx;
     let name = qualify(&t.table, cx.schema);
@@ -313,7 +313,8 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
     // A triggered action's statement sees what its trigger saw, and a
     // procedure body's what the procedure saw.
     let horizon = if cx.params.horizoned() { cx.params.horizon() } else { cx.horizon };
-    let (mut desc, source) = seen(horizon, &name, (desc, source));
+    let (desc, source) = seen(horizon, &name, (desc, source));
+    let (mut desc, source) = super::system_time::system_time_source(&b, (&name, desc, source), t.system_time.as_deref())?;
     let source = super::referenceable::hierarchical(cx.db, (&name, source), (t.only, Reader::of(&cx)))?;
     if let Some(names) = &t.columns {
         renamed(&mut desc.columns, names)?;

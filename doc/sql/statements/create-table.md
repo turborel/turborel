@@ -173,7 +173,9 @@ changed data, and ends at the highest value of its type, 9999-12-31 of
 DATE. WITH SYSTEM VERSIONING makes the table system-versioned: a row a
 later transaction updates or deletes is kept as a historical row, which
 ends at that transaction's timestamp. Statements read, key and
-constrain the current rows alone. A transaction that changes a row
+constrain the current rows alone, unless a query reads the table FOR
+SYSTEM_TIME ([Query Expressions](../06-queries.md#reading-a-tables-history)).
+A transaction that changes a row
 another began after its own timestamp is refused, SQLSTATE 2201H.
 
 A constraint is checked at the end of each statement, or, DEFERRABLE

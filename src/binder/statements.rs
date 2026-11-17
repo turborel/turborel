@@ -10,7 +10,8 @@ use super::portion::Portioned;
 use super::views::{Source, ViewCheck, write_target};
 use super::{Binder, Bound, Context, FromItem, Scope, bind_query_specification, no_column, qualify, require, rule};
 use crate::ast::{
-    CursorSpecification, Portion, QuerySpecification, SearchCondition, SetClause, TableExpression, TableName, TableReference, UpdateSource,
+    CursorSpecification, Portion, QuerySpecification, SearchCondition, SetClause, SystemTimeRead, TableExpression, TableName,
+    TableReference, UpdateSource,
 };
 use crate::catalog::Actions;
 use crate::catalog::{Catalog, ColumnDesc, QualifiedName, TableDesc};
@@ -64,9 +65,11 @@ pub fn updatable_only(c: &CursorSpecification) -> bool {
 
 /// [X3.135-1986 §5.25 SR11c, SR11e] one `<table reference>`, naming a
 /// table [ISO/IEC 9075:1992 §7.5 SR10, §7.9 SR12c], and no GROUP BY or
-/// HAVING.
+/// HAVING; read FOR SYSTEM_TIME only AS OF CURRENT_TIMESTAMP [ISO/IEC
+/// 9075-2:2023 §7.16 SR22d].
 fn single_ungrouped_table(te: &TableExpression) -> bool {
-    matches!(te.from.as_slice(), [TableReference::Table(t)] if t.columns.is_none()) && te.group_by.is_none() && te.having.is_none()
+    let [TableReference::Table(t)] = te.from.as_slice() else { return false };
+    t.columns.is_none() && t.system_time.as_deref().is_none_or(SystemTimeRead::current) && te.group_by.is_none() && te.having.is_none()
 }
 
 /// [X3.135-1986 §8.10] the `<query specification>` of a `<select statement>`.

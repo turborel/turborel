@@ -2,12 +2,14 @@
 //! stamp not given or its transaction timestamp not kept, a historical row
 //! not kept or kept of a row changed in place, a row begun later changed,
 //! a history left behind, and the rules that keep a system-time column
-//! from statements, constraints and ALTER broken.
+//! from statements, constraints and ALTER broken; and of reading one FOR
+//! SYSTEM_TIME, the bounds of each reading, its history, and the rules
+//! that keep a reading of it out of constraints and updates.
 
 use super::{Mutation, Package};
 
 /// The mutations of system-versioned tables, in the order they run.
-pub const SYSTEM_VERSIONED: [Mutation; 18] = [
+pub const SYSTEM_VERSIONED: [Mutation; 30] = [
     Mutation {
         name: "history-not-kept",
         package: Package::Core,
@@ -186,6 +188,126 @@ pub const SYSTEM_VERSIONED: [Mutation; 18] = [
         original: "        if bound != Some(&c.name) {",
         replacement: "        if bound != Some(&c.name) && bound.is_some() {",
         integration: &["system_versioned::a_system_time_period_is_defined_so_11_3"],
+        unit: &[],
+    },
+    Mutation {
+        name: "as-of-start-excluded",
+        package: Package::Core,
+        breaks: "a row begun at the point AS OF is not read [§7.6 GR2c ii 1 D I]",
+        file: "src/binder/system_time.rs",
+        original: "and(compared(&s, CompOp::Le, &pot1), compared(&e, CompOp::Gt, &pot1))",
+        replacement: "and(compared(&s, CompOp::Lt, &pot1), compared(&e, CompOp::Gt, &pot1))",
+        integration: &["system_time_queries::as_of_reads_the_rows_current_then"],
+        unit: &[],
+    },
+    Mutation {
+        name: "as-of-end-included",
+        package: Package::Core,
+        breaks: "a row ended at the point AS OF is read [§7.6 GR2c ii 1 D I]",
+        file: "src/binder/system_time.rs",
+        original: "and(compared(&s, CompOp::Le, &pot1), compared(&e, CompOp::Gt, &pot1))",
+        replacement: "and(compared(&s, CompOp::Le, &pot1), compared(&e, CompOp::Ge, &pot1))",
+        integration: &["system_time_queries::as_of_reads_the_rows_current_then"],
+        unit: &[],
+    },
+    Mutation {
+        name: "between-unordered",
+        package: Package::Core,
+        breaks: "BETWEEN of points out of order reads rows [§7.6 GR2c ii 1 D II]",
+        file: "src/binder/system_time.rs",
+        original: "and(and(compared(&pot1, CompOp::Le, &pot2), compared(&e, CompOp::Gt, &pot1)), compared(&s, CompOp::Le, &pot2))",
+        replacement: "and(and(Cond::Const(crate::logical::Truth::True), compared(&e, CompOp::Gt, &pot1)), compared(&s, CompOp::Le, &pot2))",
+        integration: &["system_time_queries::between_and_from_to_read_the_rows_of_a_span"],
+        unit: &[],
+    },
+    Mutation {
+        name: "from-to-end-included",
+        package: Package::Core,
+        breaks: "FROM … TO reads a row begun at its second point [§7.6 GR2c ii 1 D III]",
+        file: "src/binder/system_time.rs",
+        original: "compared(&e, CompOp::Gt, &pot1)), compared(&s, CompOp::Lt, &pot2))",
+        replacement: "compared(&e, CompOp::Gt, &pot1)), compared(&s, CompOp::Le, &pot2))",
+        integration: &["system_time_queries::between_and_from_to_read_the_rows_of_a_span"],
+        unit: &[],
+    },
+    Mutation {
+        name: "symmetric-not-exchanged",
+        package: Package::Core,
+        breaks: "BETWEEN SYMMETRIC does not exchange points out of order [§7.6 GR2c ii 1 C I]",
+        file: "src/binder/system_time.rs",
+        original: "    if !symmetric {",
+        replacement: "    if symmetric || !symmetric {",
+        integration: &["system_time_queries::between_and_from_to_read_the_rows_of_a_span"],
+        unit: &[],
+    },
+    Mutation {
+        name: "history-unread",
+        package: Package::Core,
+        breaks: "a reading FOR SYSTEM_TIME reads no historical row [§7.6 GR2c ii 1]",
+        file: "src/binder/system_time.rs",
+        original: "right: Box::new(scan(history)),",
+        replacement: "right: Box::new(scan(name.clone())),",
+        integration: &["system_time_queries::as_of_reads_the_rows_current_then", "system_time_queries::a_history_is_read_after_reopening"],
+        unit: &[],
+    },
+    Mutation {
+        name: "unversioned-read",
+        package: Package::Core,
+        breaks: "a table not system-versioned is read FOR SYSTEM_TIME [§7.6 SR9d i]",
+        file: "src/binder/system_time.rs",
+        original: "if !matches!(source, Source::Table) || b.cx.db.catalog.table(&history).is_none() {",
+        replacement: "if !matches!(source, Source::Table) {",
+        integration: &["system_time_queries::a_reading_is_of_a_versioned_table_and_a_constant_point"],
+        unit: &[],
+    },
+    Mutation {
+        name: "parameter-point",
+        package: Package::Core,
+        breaks: "a point in time references an SQL parameter [§7.6 SR9d iii]",
+        file: "src/binder/system_time.rs",
+        original: "if let Some(r) = referenced.first() {",
+        replacement: "if let Some(r) = referenced.first().filter(|_| false) {",
+        integration: &["system_time_queries::a_reading_is_of_a_versioned_table_and_a_constant_point"],
+        unit: &[],
+    },
+    Mutation {
+        name: "history-in-constraint",
+        package: Package::Core,
+        breaks: "a constraint reads a table FOR SYSTEM_TIME AS OF a time [§9.16 SR1s, §11.9 CR2]",
+        file: "src/binder/system_time.rs",
+        original: "if b.cx.purpose.constrains() {",
+        replacement: "if b.cx.purpose.constrains() && false {",
+        integration: &["system_time_queries::a_reading_of_history_is_nondeterministic_and_read_only"],
+        unit: &[],
+    },
+    Mutation {
+        name: "history-updatable",
+        package: Package::Core,
+        breaks: "a query reading a table FOR SYSTEM_TIME AS OF a time is updatable [§7.16 SR22d]",
+        file: "src/binder/statements.rs",
+        original: "t.system_time.as_deref().is_none_or(SystemTimeRead::current)",
+        replacement: "t.system_time.as_deref().is_none_or(|_| true)",
+        integration: &["system_time_queries::a_reading_of_history_is_nondeterministic_and_read_only"],
+        unit: &[],
+    },
+    Mutation {
+        name: "current-not-current",
+        package: Package::Core,
+        breaks: "AS OF CURRENT_TIMESTAMP is read as a time, not as the current rows [§7.6 SR9c]",
+        file: "src/ast/periods.rs",
+        original: "f.moment == crate::value::datetime::Moment::Timestamp && f.precision.is_none()",
+        replacement: "f.moment == crate::value::datetime::Moment::Date",
+        integration: &["system_time_queries::a_reading_of_history_is_nondeterministic_and_read_only"],
+        unit: &[],
+    },
+    Mutation {
+        name: "versioning-dependents-kept",
+        package: Package::Core,
+        breaks: "DROP SYSTEM VERSIONING leaves a view reading the table FOR SYSTEM_TIME [§11.30 SR3a, GR3]",
+        file: "src/db/alter/versioning.rs",
+        original: "dropped.absorb(self.drop_dependents_of(&before, (Cause::Versioning, std::slice::from_ref(qn)), cascade)?);",
+        replacement: "let _ = (&before, cascade);",
+        integration: &["system_time_queries::dropping_versioning_drops_what_reads_its_history"],
         unit: &[],
     },
 ];

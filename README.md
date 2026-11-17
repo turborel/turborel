@@ -60,7 +60,8 @@ behind it, and each can be replaced or added to.
   foreign keys of a period, whose rows' periods their references cover.
 - System-versioned tables, PERIOD FOR SYSTEM_TIME of ROW START and ROW END
   columns the database stamps, WITH SYSTEM VERSIONING keeping each row an
-  update or delete ends as a historical row.
+  update or delete ends as a historical row, read FOR SYSTEM_TIME AS OF,
+  BETWEEN or FROM … TO.
 - Stored procedures and functions in SQL/PSM, with variables, cursors,
   handlers, loops and SIGNAL, grouped into modules if wished, and
   polymorphic table functions that take whole tables as arguments.

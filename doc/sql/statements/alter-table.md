@@ -109,7 +109,9 @@ of their type. **DROP PERIOD FOR SYSTEM_TIME** drops the period and both
 columns, as DROP COLUMN does under the behavior written. **ADD SYSTEM
 VERSIONING** makes a table of a system-time period system-versioned,
 and **DROP SYSTEM VERSIONING** makes it a base table again, its
-historical rows deleted.
+historical rows deleted. A view, constraint, assertion, routine or
+trigger that reads the table FOR SYSTEM_TIME refuses it under RESTRICT,
+and CASCADE drops each.
 
 **ADD PERIOD** adds a period of two columns the table has, and its
 period constraint, CHECK (start < end), checked of the rows there now; a
@@ -196,7 +198,8 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
     PERIOD FOR SYSTEM_TIME: the table is not system-versioned.
 13. ADD SYSTEM VERSIONING: the table is a persistent base table, not a
     typed one, of a system-time period and no column of a reference
-    type, and not system-versioned. DROP SYSTEM VERSIONING: it is.
+    type, and not system-versioned. DROP SYSTEM VERSIONING: it is, and
+    under RESTRICT nothing reads it FOR SYSTEM_TIME.
 14. A system-versioned table's columns are not added, altered or
     dropped. A system-time period column has no default.
 7. A constraint added follows the rules of [CREATE TABLE](create-table.md).

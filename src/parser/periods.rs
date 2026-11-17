@@ -7,7 +7,9 @@
 //! may begin an operand, so a column or an alias may still be so named.
 
 use super::Parser;
-use crate::ast::{PeriodDefinition, PeriodName, PeriodOperand, PeriodOperator, Portion, Predicate, SYSTEM_TIME};
+use crate::ast::{
+    PeriodDefinition, PeriodName, PeriodOperand, PeriodOperator, Portion, Predicate, SYSTEM_TIME, SystemTimeKind, SystemTimeRead,
+};
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
 
@@ -29,6 +31,11 @@ const IMMEDIATELY: &str = "IMMEDIATELY";
 
 /// [ISO/IEC 9075-2:2023 §14.9, §14.14] The word after FOR of FOR PORTION OF.
 const PORTION: &str = "PORTION";
+/// [ISO/IEC 9075-2:2023 §7.6] BETWEEN SYMMETRIC of FOR SYSTEM_TIME.
+const SYMMETRIC: &str = "SYMMETRIC";
+/// [ISO/IEC 9075-2:2023 §7.6] BETWEEN ASYMMETRIC of FOR SYSTEM_TIME, as
+/// it is without either.
+const ASYMMETRIC: &str = "ASYMMETRIC";
 
 impl Parser {
     /// Whether PERIOD FOR is next: a `<system or application time period
@@ -173,6 +180,41 @@ impl Parser {
         }
         self.expect_word(CONTAINS)?;
         Ok(PeriodOperator::Contains)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §7.6] `<query system time period
+    /// specification>`, if FOR SYSTEM_TIME begins it: AS OF a point in
+    /// time, BETWEEN \[ASYMMETRIC | SYMMETRIC\] two AND, or FROM one TO
+    /// another, each a `<datetime value expression>`, of no truth value.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it is not written so.
+    pub(super) fn system_time_read(&mut self) -> Result<Option<Box<SystemTimeRead>>> {
+        let at = self.here();
+        if self.peek() != &Tok::KeyWord(kw::FOR) || *self.peek_at(1) != Tok::Identifier(SYSTEM_TIME.to_owned()) {
+            return Ok(None);
+        }
+        self.advance();
+        self.advance();
+        let kind = if self.accept_kw(kw::AS) {
+            self.expect_kw(kw::OF)?;
+            SystemTimeKind::AsOf(self.common_value_expression()?)
+        } else if self.accept_kw(kw::BETWEEN) {
+            let symmetric = self.accept_word(SYMMETRIC);
+            if !symmetric {
+                self.accept_word(ASYMMETRIC);
+            }
+            let first = self.common_value_expression()?;
+            self.expect_kw(kw::AND)?;
+            SystemTimeKind::Between(symmetric, first, self.common_value_expression()?)
+        } else {
+            self.expect_kw(kw::FROM)?;
+            let first = self.common_value_expression()?;
+            self.expect_kw(kw::TO)?;
+            SystemTimeKind::FromTo(first, self.common_value_expression()?)
+        };
+        Ok(Some(Box::new(SystemTimeRead { kind, at })))
     }
 
     /// [ISO/IEC 9075-2:2023 §14.9, §14.14] FOR PORTION OF `<application

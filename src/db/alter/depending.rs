@@ -44,6 +44,8 @@ pub(in crate::db) enum Cause {
     Scope,
     /// An application-time period [§11.28].
     Period,
+    /// The system versioning of a table [§11.30].
+    Versioning,
 }
 
 /// What depends on what was dropped.
@@ -81,11 +83,17 @@ pub(in crate::db) fn depends(cause: Cause, dependent: Dependent, what: &str) -> 
         (Cause::Period, Dependent::Assertion) => "§11.28 SR3d iii",
         (Cause::Period, Dependent::Routine) => "§11.28 SR3b i, SR3c i, SR3d iv, SR3d v",
         (Cause::Period, Dependent::Trigger) => "§11.28 SR3b ii, SR3c ii, SR3d vi",
+        (Cause::Versioning, Dependent::View) => "§11.30 SR3a",
+        (Cause::Versioning, Dependent::Check | Dependent::Domain) => "§11.30 SR3b",
+        (Cause::Versioning, Dependent::Assertion) => "§11.30 SR3c",
+        (Cause::Versioning, Dependent::Routine) => "§11.30 SR3d",
+        (Cause::Versioning, Dependent::Trigger) => "§11.30 SR3e",
     };
     let on = match cause {
         Cause::Constraint => "depends on the constraint, so it is dropped only with CASCADE",
         Cause::Scope => "contains a dereference of the column, so its scope is dropped only with CASCADE",
         Cause::Period => "references the period, or changes FOR PORTION OF it, so it is dropped only with CASCADE",
+        Cause::Versioning => "reads the table FOR SYSTEM_TIME, so its system versioning is dropped only with CASCADE",
     };
     rule(format!("[ISO/IEC 9075-2:2023 {cited}] {what} {on}"))
 }
@@ -135,7 +143,7 @@ impl State {
                 let ConstraintKind::Check { text, names, reads, horizon } = &c.kind else { continue };
                 let binds = |st: &State| st.check_condition(&t.name, (text, names, horizon)).is_ok();
                 // A dereference, or a period reference, of the table's own.
-                let own = matches!(cause, Cause::Scope | Cause::Period) && tables.contains(&t.name);
+                let own = matches!(cause, Cause::Scope | Cause::Period | Cause::Versioning) && tables.contains(&t.name);
                 let read = reads.iter().any(|r| tables.contains(r)) || own;
                 if c.domain.is_none() && read && binds(before) && !binds(self) {
                     found.push((t.name.clone(), c.name.clone()));
