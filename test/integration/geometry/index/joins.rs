@@ -7,6 +7,8 @@ use turborel::db::Database;
 use turborel::error::Code;
 use turborel::params::Params;
 
+mod clustered;
+
 fn windows(db: &Database, reference: &str) {
     let a = db.session("A");
     a.run(&format!("CREATE TABLE WINDOWS (ID INTEGER, G {reference})")).unwrap();

@@ -5,6 +5,7 @@
 //! GEOMETRY(srid) column instead stores envelope projections and rechecks
 //! the visible geometry and full spatial predicate (D82).
 
+mod clustered;
 mod geometry;
 mod probe;
 
@@ -114,7 +115,7 @@ impl IndexMethod for RTreeMethod {
     fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
         let srid = validate(columns)?;
         let (pool, file) = self.files()?;
-        Ok(Box::new(RTreeIndex::new(RTree::create(pool, file)?, columns.len(), srid)))
+        Ok(Box::new(RTreeIndex::new(RTree::create(pool, file)?, columns.len(), srid, self.memory.budget())))
     }
     fn create_on(&self, columns: &[DataType], on: (&TableDesc, &IndexDesc)) -> Result<Box<dyn Index>> {
         if on.1.nulls {
@@ -140,7 +141,7 @@ impl IndexMethod for RTreeMethod {
         let meta = PageId(reader.u64()?);
         reader.finish()?;
         let (pool, file) = self.files()?;
-        Ok(Some(Box::new(RTreeIndex::new(RTree::open(pool, file, meta)?, width, srid))))
+        Ok(Some(Box::new(RTreeIndex::new(RTree::open(pool, file, meta)?, width, srid, self.memory.budget()))))
     }
     fn checkpoint(&self) -> Result<()> {
         let (pool, file) = self.files()?;
@@ -175,11 +176,12 @@ struct RTreeIndex {
     discarded: AtomicBool,
     srid: Option<i32>,
     projection: Option<Arc<dyn KeyProjection>>,
+    budget: Arc<MemoryBudget>,
 }
 
 impl RTreeIndex {
-    fn new(tree: RTree, width: usize, srid: Option<i32>) -> RTreeIndex {
-        RTreeIndex { tree, width, discarded: AtomicBool::new(false), srid, projection: srid.map(geometry::projection) }
+    fn new(tree: RTree, width: usize, srid: Option<i32>, budget: Arc<MemoryBudget>) -> RTreeIndex {
+        RTreeIndex { tree, width, discarded: AtomicBool::new(false), srid, projection: srid.map(geometry::projection), budget }
     }
 
     fn bounds(&self, key: &Key) -> Result<Bounds> {
@@ -207,7 +209,7 @@ impl RTreeIndex {
 
     fn matching(&self, probe: &Probe) -> Entries {
         if let Some(srid) = self.srid {
-            return geometry::matching(&self.tree, probe, srid);
+            return geometry::matching(&self.tree, probe, srid, &self.budget);
         }
         let window = probe::window(probe, self.width);
         let (tree, width, probe) = (self.tree.clone(), self.width, probe.clone());

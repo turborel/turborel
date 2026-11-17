@@ -146,6 +146,12 @@ joins per second, including query planning. Before timing, it compares
 the entire result to integer-coordinate inclusion. Filter benchmarks
 likewise validate every measured window outside the timer.
 
+`cargo xtask bench geometry_fetch --save initial` isolates fetching and
+decoding geometry rows from spatial candidates. It compares traversal
+order with sorting bounded blocks by row id, at several block sizes and
+session counts. It excludes SQL evaluation and transaction bookkeeping;
+use it to investigate storage locality, not to claim SQL query rates.
+
 `cargo xtask bench spatial --save before` measures SQL filters, joins,
 nearest-point sorting and mixed sessions for scans, B-trees and R-trees.
 The nearest SQL case still sorts its squared-distance expression; the

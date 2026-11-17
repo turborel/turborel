@@ -205,6 +205,12 @@ applies its ordinary transaction visibility rules. A query rechecks the
 geometry version visible to its transaction, including when older and
 newer versions have the same bounding rectangle.
 
+Broad geometry probes collect a bounded block of candidates and fetch
+nearby row IDs together. Each active cursor may use about 160 KiB for
+that block, charged to the database memory budget. If it cannot reserve
+the memory, it uses a smaller buffer or streams candidates directly.
+Nearest queries retain their distance traversal order.
+
 An R-tree omits a row with any NULL coordinate. The planner uses it only
 when that omission cannot hide a matching row. NOT NULL coordinate
 columns make the intended data model explicit; do not invent `(0, 0)`

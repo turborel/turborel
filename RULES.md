@@ -2528,6 +2528,16 @@ An empty stored geometry projects to an origin rectangle, adding candidates
 but no false negatives. NULL keys are omitted. Readers compare the visible
 version's projection with the entry before evaluating the full condition.
 Spatial reads currently record a whole-table serializable read (D34).
+Geometry window probes group at most 4096 envelope/row-id pairs before
+fetching rows. Blocks of at least 1024 pairs are sorted by row id to reuse
+nearby row-store pages; smaller results keep their traversal order. The
+buffer starts at 64 pairs and grows once, with both allocations charged
+during the handover. Each cursor retains at most 160 KiB of candidate
+elements; actual vector capacity is charged to D38's budget. A refused
+allocation keeps the smaller buffer or streams directly. Every candidate,
+including different versions of one row, retains its own envelope. A
+prefetched index error follows all preceding candidates. Nearest searches
+and reference-mismatch scans do not use these unordered blocks.
 Geometry index locators use version 2: version and width bytes, a u32 SRID
 and a u64 metadata page, all integers little-endian. Numeric locators keep
 version 1; tree page formats are unchanged.

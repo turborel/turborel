@@ -3,7 +3,7 @@
 use super::{Mutation, Package};
 
 /// Representation invariants that must fail their requirement tests.
-pub const GEOMETRY: [Mutation; 31] = [
+pub const GEOMETRY: [Mutation; 34] = [
     Mutation {
         name: "geometry-batch-borrowed-arguments",
         package: Package::Core,
@@ -53,6 +53,36 @@ pub const GEOMETRY: [Mutation; 31] = [
         replacement: "let Some(ring) = rings.first() else { return false };",
         integration: &[],
         unit: &["geometry::prepared::rectangle::tests::other_shapes_holes_diagonals_and_collapsed_rings_are_declined"],
+    },
+    Mutation {
+        name: "geometry-clustered-memory",
+        package: Package::Core,
+        breaks: "candidate buffers release their memory charge while retaining allocation",
+        file: "src/index/rtree/clustered.rs",
+        original: "held.resize(ready.capacity().checked_mul(size_of::<Entry>())?).ok()?;",
+        replacement: "held.resize(0).ok()?;",
+        integration: &[],
+        unit: &["index::rtree::clustered::tests::clustered_candidates_preserve_all_versions_and_bound_memory"],
+    },
+    Mutation {
+        name: "geometry-clustered-order",
+        package: Package::Core,
+        breaks: "large candidate blocks lose their row storage locality",
+        file: "src/index/rtree/clustered.rs",
+        original: "self.ready.sort_unstable_by_key(|entry| entry.1);",
+        replacement: "self.ready.reverse();",
+        integration: &[],
+        unit: &["index::rtree::clustered::tests::clustered_candidates_preserve_all_versions_and_bound_memory"],
+    },
+    Mutation {
+        name: "geometry-clustered-error",
+        package: Package::Core,
+        breaks: "candidate prefetch silently discards a later index failure",
+        file: "src/index/rtree/clustered.rs",
+        original: "self.error = Some(error);",
+        replacement: "drop(error);",
+        integration: &[],
+        unit: &["index::rtree::clustered::tests::clustered_candidates_defer_prefetched_errors_until_prior_rows"],
     },
     Mutation {
         name: "geometry-orientation-filter-bound",

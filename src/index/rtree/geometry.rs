@@ -95,14 +95,16 @@ fn search(probe: &Probe, srid: i32) -> Result<Search> {
     Ok(geometry.bounds().map_or(Search::Empty, Search::Window))
 }
 
-pub(super) fn matching(tree: &RTree, probe: &Probe, srid: i32) -> Entries {
+pub(super) fn matching(tree: &RTree, probe: &Probe, srid: i32, budget: &Arc<MemoryBudget>) -> Entries {
     let window = match search(probe, srid) {
         Ok(Search::Empty) => return Box::new(std::iter::empty()),
         Ok(Search::All) => None,
         Ok(Search::Window(bounds)) => Some(bounds),
         Err(error) => return Box::new(std::iter::once(Err(error))),
     };
-    Box::new(tree.scan(window).map(|entry| entry.map(|(bounds, row)| (probe::key(bounds, RECTANGLE_COLUMNS), row))))
+    let scan = tree.scan(window);
+    let buffered = super::clustered::Clustered::new(scan, window.map(|_| budget));
+    Box::new(buffered.map(|entry| entry.map(|(bounds, row)| (probe::key(bounds, RECTANGLE_COLUMNS), row))))
 }
 
 pub(super) fn equal(tree: &RTree, key: &Key, srid: i32) -> Result<Entries> {

@@ -125,6 +125,11 @@ path = "bench/geometry_join.rs"
 harness = false
 
 [[bench]]
+name = "geometry_fetch"
+path = "bench/geometry_fetch.rs"
+harness = false
+
+[[bench]]
 name = "geometry_nearest"
 path = "bench/geometry_nearest.rs"
 harness = false
