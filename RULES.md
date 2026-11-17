@@ -2371,7 +2371,13 @@ without binding plug-ins to one page cache. Each database has one budget in
 bytes, MEMORY.BUDGET_BYTES. Pools reserve from it, a reservation past it is
 refused (SQLCODE -918), and so is a page wanted from a full pool. Plug-ins
 get the budget when registered. INFORMATION_SCHEMA.MEMORY_RESERVATIONS shows
-each reservation to the database's owner.
+each reservation to the database's owner. Admission is one atomic total.
+The list behind that view is kept in 64 shards chosen by each
+reservation's number, and a reservation's size is an atomic of its own
+entry, so sessions reserving, resizing and releasing at once take no
+database-wide lock. The view merges the shards in creation order. A
+single list took a fifth of thread time in waits for four to eight
+sessions of nearest-neighbour queries.
 
 Undo is never refused by the budget, because a refusal would damage a table
 (D19). A failed statement's undo and a ROLLBACK reserve what they need even
