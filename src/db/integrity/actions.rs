@@ -37,6 +37,7 @@ use crate::txn::Txn;
 use crate::value::Value;
 use crate::value::codec::{put_value, value};
 use crate::value::types::TypeRegistry;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 /// What the referential actions of a statement keep while they run, in
@@ -50,6 +51,9 @@ struct Acting {
     given: SpillMap,
     dropped: SpillMap,
     before: Vec<Before>,
+    /// Of each table a RESTRICT judges, the ids of the rows the statement
+    /// changed and their first states (`State::before_changed`).
+    changed: Vec<(SpillMap, Before)>,
 }
 
 /// Row `row` of a referenced table, `parent`, deleted, or (with its values
@@ -147,6 +151,9 @@ impl State {
         if (updated && !changed) || action == ReferentialAction::NoAction {
             return Ok(());
         }
+        if action == ReferentialAction::Restrict && fk.match_type != MatchType::Partial {
+            return self.restricted(tx, (child, name, fk), &key, (effects, acting));
+        }
         // [GR5a iii, GR6a iii] SET DEFAULT gives the child's defaults [§11.5 GR2].
         let defaults = if action == ReferentialAction::SetDefault {
             default_row(child, effects.user.of(self.catalog.roles()), effects.now)?
@@ -186,6 +193,10 @@ impl State {
         };
         if !unique {
             return Ok(());
+        }
+        // [ISO/IEC 9075-2:2023 §15.18 GR9b iv, GR10b iv] a unique matching row.
+        if done.rule == ReferentialAction::Restrict {
+            return Err(restrict_violation(done.name, child, change.parent));
         }
         // [GR8] a row a cursor changed: a cursor operation conflict.
         effects.cursors.acted_on(child, row_id);
@@ -253,10 +264,60 @@ impl State {
     }
 }
 
+impl State {
+    /// [ISO/IEC 9075-2:2023 §15.18 GR7, GR9a iv, GR10a iv] RESTRICT of
+    /// `fk`, foreign key `name` of `child`, with MATCH SIMPLE or FULL, of a
+    /// referenced row whose referenced values were `key`, deleted or given
+    /// a distinct one: refused if a row of `child` matched it before the
+    /// statement. A row the statement changed not, as it is now, through
+    /// the child's index; one it changed, as it was first.
+    fn restricted(
+        &self,
+        tx: &Txn,
+        (child, name, fk): (&TableDesc, &QualifiedName, &ForeignKey),
+        key: &[Value],
+        (effects, acting): (&mut Effects<'_>, &mut Acting),
+    ) -> Result<()> {
+        if key.iter().any(Value::is_null) {
+            return Ok(());
+        }
+        let parent = &fk.table;
+        if !acting.changed.iter().any(|(_, b)| b.table == child.name) {
+            let made = self.before_changed(&child.name, &mut effects.done, &effects.space)?;
+            acting.changed.push(made);
+        }
+        let Some((changed, before)) = acting.changed.iter_mut().find(|(_, b)| b.table == child.name) else { return Ok(()) };
+        let mut found = false;
+        self.each_row_with(tx, &child.name, (&fk.columns, key), &mut |id, _| {
+            found = !changed.contains(&id.to_le_bytes())?;
+            Ok(if found { ControlFlow::Break(()) } else { ControlFlow::Continue(()) })
+        })?;
+        let mut was = before.matched(&fk.columns, key)?;
+        was.visit(&mut |_| {
+            found = true;
+            Ok(())
+        })?;
+        if found { Err(restrict_violation(name, &child.name, parent)) } else { Ok(()) }
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §15.18 GR9a iv, GR10a iv] A row of `child` matched
+/// a row of `parent` deleted or re-keyed, by RESTRICT of foreign key
+/// `name`: a restrict violation.
+fn restrict_violation(name: &QualifiedName, child: &QualifiedName, parent: &QualifiedName) -> SqlError {
+    SqlError::new(
+        Code::Constraint,
+        format!("[ISO/IEC 9075-2:2023 §15.18 GR9a iv, GR10a iv] a row of {child} matches a row of {parent} deleted or updated: FOREIGN KEY {name} is RESTRICT"),
+    )
+    .with_state(SqlState::RESTRICT_VIOLATION)
+    .about(Subject::constraint(name.parts(), child.parts()))
+}
+
 impl Acting {
     /// Nothing kept yet, what it will keep held in `space`.
     fn new(space: &ListSpace) -> Acting {
-        Acting { space: space.clone(), given: SpillMap::new(space.clone()), dropped: SpillMap::new(space.clone()), before: Vec::new() }
+        let (given, dropped) = (SpillMap::new(space.clone()), SpillMap::new(space.clone()));
+        Acting { space: space.clone(), given, dropped, before: Vec::new(), changed: Vec::new() }
     }
 
     /// [§11.8 GR3b, GR4] The rows of the table `done` acts for a change
@@ -415,7 +476,7 @@ fn acted(
                 }
                 defaults.get(c).cloned().unwrap_or(Value::Null)
             }
-            ReferentialAction::NoAction => continue,
+            ReferentialAction::NoAction | ReferentialAction::Restrict => continue,
         };
         if let Some(slot) = changed.get_mut(c) {
             *slot = value;

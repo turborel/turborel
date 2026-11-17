@@ -107,34 +107,48 @@ impl State {
         Ok(dropped)
     }
 
-    /// [ISO/IEC 9075-2:2023 §11.28 SR3d ii, GR2f iii] The unique
-    /// constraints of `desc`, base table `qn`, WITHOUT OVERLAPS of its
-    /// period at `at`, whose search conditions reference the period:
-    /// dropped as ALTER TABLE DROP CONSTRAINT CASCADE drops them, with the
-    /// foreign keys that reference them, under CASCADE.
+    /// [ISO/IEC 9075-2:2023 §11.28 SR3d ii, GR2f iii] The constraints whose
+    /// search conditions reference the period at `at` of `desc`, base table
+    /// `qn`: its unique constraints WITHOUT OVERLAPS of it, and the foreign
+    /// keys of a period that is it, of `qn` or referencing it; dropped as
+    /// ALTER TABLE DROP CONSTRAINT CASCADE drops them under CASCADE.
     ///
     /// # Errors
     ///
     /// SQLCODE -103 under RESTRICT if it has one.
     fn drop_period_keys(&mut self, qn: &QualifiedName, (desc, at): (&TableDesc, usize), behavior: DropBehavior) -> Result<Dropped> {
         let period = desc.periods.get(at).map(|p| p.name.as_str());
-        let keyed: Vec<QualifiedName> = desc
-            .constraints
-            .iter()
-            .filter_map(|c| if let ConstraintKind::Unique { period: Some(p), .. } = &c.kind { Some((p, &c.name)) } else { None })
-            .filter(|(p, _)| Some(p.as_str()) == period)
-            .map(|(_, name)| name.clone())
-            .collect();
+        // The temporal foreign keys of either side first, then the keys.
+        let mut keyed: Vec<(QualifiedName, QualifiedName)> = Vec::new();
+        for table in self.catalog.tables() {
+            for c in &table.constraints {
+                let ConstraintKind::ForeignKey(fk) = &c.kind else { continue };
+                let Some((own, theirs)) = &fk.period else { continue };
+                if (table.name == *qn && Some(own.as_str()) == period) || (fk.table == *qn && Some(theirs.as_str()) == period) {
+                    keyed.push((table.name.clone(), c.name.clone()));
+                }
+            }
+        }
+        for c in &desc.constraints {
+            let ConstraintKind::Unique { period: Some(p), .. } = &c.kind else { continue };
+            if Some(p.as_str()) == period {
+                keyed.push((qn.clone(), c.name.clone()));
+            }
+        }
         let mut dropped = Dropped::default();
-        for name in keyed {
+        for (table, name) in keyed {
+            // One a CASCADE before it dropped is gone.
+            if !self.catalog.table(&table).is_some_and(|t| t.constraints.iter().any(|c| c.name == name)) {
+                continue;
+            }
             if behavior == DropBehavior::Restrict {
                 return Err(rule(format!(
-                    "[ISO/IEC 9075-2:2023 §11.28 SR3d ii] constraint {name} of {qn} is WITHOUT OVERLAPS of period {}, so it is dropped only with CASCADE",
+                    "[ISO/IEC 9075-2:2023 §11.28 SR3d ii] constraint {name} of {table} is of period {} of {qn}, so it is dropped only with CASCADE",
                     period.unwrap_or_default()
                 )));
             }
             let written = TableName { auth: Some(name.auth.clone()), ident: name.ident.clone(), at: 0 };
-            dropped.absorb(self.drop_constraint((qn, &name.auth), &written, DropBehavior::Cascade)?);
+            dropped.absorb(self.drop_constraint((&table, &name.auth), &written, DropBehavior::Cascade)?);
         }
         Ok(dropped)
     }

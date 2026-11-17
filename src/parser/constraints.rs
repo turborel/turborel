@@ -50,8 +50,8 @@ impl Parser {
         } else if self.accept_kw(kw::FOREIGN) {
             // [§11.8] FOREIGN KEY (<referencing columns>) <references specification>
             self.expect_kw(kw::KEY)?;
-            let columns = self.name_list()?;
-            TableConstraintKind::ForeignKey { columns, references: self.references()? }
+            let (columns, period) = self.period_column_list()?;
+            TableConstraintKind::ForeignKey { columns, period, references: self.references()? }
         } else {
             TableConstraintKind::Check(self.check()?)
         };
@@ -74,6 +74,28 @@ impl Parser {
                 return Ok((names, Some(name)));
             }
             names.push(name);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok((names, None))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.8] ( `<column name list>` \[,
+    /// `<referencing period specification>`\] ), and of a `<referenced
+    /// table and columns>` its `<referenced period specification>`: the
+    /// columns, and the period of PERIOD `<application time period name>`
+    /// if written. PERIOD is a word told from a column named PERIOD by the
+    /// name after it (`parser/periods.rs`).
+    fn period_column_list(&mut self) -> Result<(Vec<String>, Option<String>)> {
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut names = vec![self.identifier()?];
+        while self.accept_delim(delim::COMMA) {
+            if self.at_period_specification() {
+                self.advance();
+                let period = self.identifier()?;
+                self.expect_delim(delim::RIGHT_PAREN)?;
+                return Ok((names, Some(period)));
+            }
+            names.push(self.identifier()?);
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok((names, None))
@@ -161,7 +183,12 @@ impl Parser {
     fn references(&mut self) -> Result<References> {
         self.expect_kw(kw::REFERENCES)?;
         let table = self.table_name()?;
-        let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.name_list()?) } else { None };
+        let (columns, period) = if self.is_delim(delim::LEFT_PAREN) {
+            let (columns, period) = self.period_column_list()?;
+            (Some(columns), period)
+        } else {
+            (None, None)
+        };
         let match_type = if self.accept_kw(kw::MATCH) { self.match_type()? } else { MatchType::Simple };
         // <referential triggered action> ::= <update rule> [<delete rule>] | <delete rule> [<update rule>]
         let (mut on_update, mut on_delete) = (None, None);
@@ -175,6 +202,7 @@ impl Parser {
         Ok(References {
             table,
             columns,
+            period,
             match_type,
             on_update: on_update.unwrap_or(ReferentialAction::NoAction),
             on_delete: on_delete.unwrap_or(ReferentialAction::NoAction),
@@ -193,6 +221,10 @@ impl Parser {
             }
             self.expect_kw(kw::DEFAULT)?;
             return Ok(ReferentialAction::SetDefault);
+        }
+        // [ISO/IEC 9075-2:2023 §11.8] RESTRICT (Feature T191).
+        if self.accept_kw(kw::RESTRICT) {
+            return Ok(ReferentialAction::Restrict);
         }
         self.expect_kw(kw::NO)?;
         self.expect_kw(kw::ACTION)?;

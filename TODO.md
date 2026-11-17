@@ -53,8 +53,6 @@ Nothing is open.
 
 ### Periods and temporal tables
 
-- Temporal foreign keys, PERIOD in a referential constraint [§4.25.3,
-  §11.8]. A child row's period must be covered by its parents' periods.
 - System-versioned tables (T180) [§4.17.2.3, §11.3], PERIOD FOR
   SYSTEM_TIME and WITH SYSTEM VERSIONING. The engine keeps every version a
   change ends as a historical row, which garbage collection must not

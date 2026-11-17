@@ -52,6 +52,7 @@ mod stats;
 mod structured;
 mod tailorings;
 mod temporal;
+mod temporal_references;
 mod triggers;
 mod truncate;
 mod view_defaults;
@@ -196,8 +197,8 @@ pub const MUTATIONS: [Mutation; 43] = [
         package: Package::Core,
         breaks: "FOREIGN KEY: a row referencing no row is let in",
         file: "src/db/integrity.rs",
-        original: "if !self.matches(tx, fk, &values)? {",
-        replacement: "if false && !self.matches(tx, fk, &values)? {",
+        original: "if !self.matches_row(tx, (desc, fk), &row)? {",
+        replacement: "if false && !self.matches_row(tx, (desc, fk), &row)? {",
         integration: &["constraints::references_are_kept_11_8", "constraints::partial_matches_11_8"],
         unit: &[],
     },

@@ -68,16 +68,17 @@ CREATE TABLE: define a base table
     [ CONSTRAINT <constraint name> ]
     {   { UNIQUE [ NULLS [ NOT ] DISTINCT ] | PRIMARY KEY }
           ( <column name> [ { , <column name> }... ] [ , <period name> WITHOUT OVERLAPS ] )
-      | FOREIGN KEY ( <column name> [ { , <column name> }... ] ) <references specification>
+      | FOREIGN KEY ( <column name> [ { , <column name> }... ] [ , PERIOD <period name> ] )
+          <references specification>
       | <check constraint definition> }
     [ <constraint attributes> ]
 
 <references specification> ::=
-    REFERENCES <table name> [ ( <column name> [ { , <column name> }... ] ) ]
+    REFERENCES <table name> [ ( <column name> [ { , <column name> }... ] [ , PERIOD <period name> ] ) ]
     [ MATCH { FULL | PARTIAL } ]
     [ ON UPDATE <referential action> ] [ ON DELETE <referential action> ]
 
-<referential action> ::= CASCADE | SET NULL | SET DEFAULT | NO ACTION
+<referential action> ::= CASCADE | SET NULL | SET DEFAULT | RESTRICT | NO ACTION
 
 <check constraint definition> ::= CHECK ( <search condition> )
 
@@ -147,7 +148,19 @@ one with some null and some not; MATCH PARTIAL accepts it if its values
 that are not null match a row's. ON UPDATE and ON DELETE say what is done to the
 rows that refer to one changed or deleted: refused (NO ACTION, the
 default), changed or deleted with it (CASCADE), or their values set null
-or to their defaults. A CHECK refuses a row for which its condition is
+or to their defaults. NO ACTION judges the rows as the statement ends,
+or at commit if deferred. RESTRICT refuses at once a row deleted, or a
+referenced value changed, while a row referenced it before the
+statement (SQLSTATE 23001), so a statement that deletes a row and the
+rows that refer to it is refused, deferred or not.
+
+A foreign key of a period, PERIOD after its columns and after the
+columns it references, keeps each row's period within the periods of
+the rows its values match. One row may span several that meet, as a
+price held across two of its periods. The columns it references are a
+key WITHOUT OVERLAPS of the referenced period. A row of the referenced
+table deleted, or its period shortened, is refused while a row that
+refers to it is then left outside them. A CHECK refuses a row for which its condition is
 false; it may read other tables through subqueries.
 
 A constraint is checked at the end of each statement, or, DEFERRABLE
@@ -287,6 +300,11 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
     least. No two UNIQUE or PRIMARY KEY constraints are of the same
     columns, whatever their period. A foreign key with no columns
     written references no PRIMARY KEY WITHOUT OVERLAPS.
+20. A foreign key writes PERIOD after its columns and after those it
+    references, or neither, the columns it references written. They are
+    those of a key WITHOUT OVERLAPS of that period of the table
+    referenced, and its own period is of the table, of the same type.
+    It has no action CASCADE, SET NULL or SET DEFAULT.
 
 ## PRIVILEGES
 
@@ -491,6 +509,25 @@ turborel: SQLCODE -201 (SQLSTATE 23000): PRIMARY KEY ANN.BOOKINGS_PRIMARY1 (ROOM
 OK
 ```
 
+Orders whose days the room's bookings cover. A stay across two bookings
+is kept, one past them refused, and so is a booking cut short under one:
+
+```sql
+CREATE TABLE STAYS (ROOM INTEGER, IN_DAY DATE NOT NULL, OUT_DAY DATE NOT NULL, PERIOD FOR VISIT (IN_DAY, OUT_DAY), FOREIGN KEY (ROOM, PERIOD VISIT) REFERENCES BOOKINGS (ROOM, PERIOD STAY));
+INSERT INTO STAYS VALUES (101, DATE '2026-03-02', DATE '2026-03-05');
+INSERT INTO STAYS VALUES (101, DATE '2026-03-05', DATE '2026-03-07');
+UPDATE BOOKINGS SET TO_DAY = DATE '2026-03-03' WHERE FROM_DAY = DATE '2026-03-01';
+COMMIT;
+```
+
+```
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): a row of ANN.STAYS references no row of ANN.BOOKINGS: FOREIGN KEY ANN.STAYS_FOREIGN1 [ISO/IEC 9075:1992 §11.8 GR2]
+turborel: SQLCODE -201 (SQLSTATE 23000): a row of ANN.STAYS references a row of ANN.BOOKINGS no longer there: FOREIGN KEY ANN.STAYS_FOREIGN1 [ISO/IEC 9075:1992 §11.8 GR2]
+OK
+```
+
 Tables refused:
 
 ```sql
@@ -530,7 +567,8 @@ UNIQUE only. Identity columns and generated columns are ISO/IEC
 is ISO/IEC 9075-2:2023 §11.3, Feature T171, and its options Feature
 T173; AS is Feature T172. Periods are ISO/IEC 9075-2:2023 §4.16 and
 §11.3, Feature T181, the name of the period constraint left to the
-implementation, and so is WITHOUT OVERLAPS, §11.7; the view PERIODS is this implementation's own. That AS is not written in a CREATE SCHEMA, and
+implementation, and so are WITHOUT OVERLAPS, §11.7, and a foreign key
+of a period, §11.8; RESTRICT is §15.18, Feature T191; the view PERIODS is this implementation's own. That AS is not written in a CREATE SCHEMA, and
 that neither names a declared local temporary table, are this
 implementation's own. The null treatment of UNIQUE is ISO/IEC
 9075-2:2023 §11.7, Feature F292. With none written it is NULLS DISTINCT,

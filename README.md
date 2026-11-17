@@ -56,7 +56,8 @@ behind it, and each can be replaced or added to.
   before its end, the period predicates OVERLAPS, EQUALS, CONTAINS,
   PRECEDES, SUCCEEDS and IMMEDIATELY PRECEDES and SUCCEEDS, and UPDATE and
   DELETE FOR PORTION OF a period, which keep the parts of a row outside it,
-  and keys WITHOUT OVERLAPS of it, one row of a key at each point in time.
+  keys WITHOUT OVERLAPS of it, one row of a key at each point in time, and
+  foreign keys of a period, whose rows' periods their references cover.
 - Stored procedures and functions in SQL/PSM, with variables, cursors,
   handlers, loops and SIGNAL, grouped into modules if wished, and
   polymorphic table functions that take whole tables as arguments.

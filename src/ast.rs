@@ -44,6 +44,7 @@ mod privileges;
 mod psm;
 mod ptf;
 mod query;
+mod references;
 mod roles;
 mod routines;
 mod schema;
@@ -98,6 +99,7 @@ pub use ptf::{
     DescriptorColumn, GenericTable, ParameterType, PrivateParameter, PtfArgument, PtfDefinition, PtfInvocation, PtfTable, RoutineBody,
     TableArgument, TableArgumentProper, TableSemantics,
 };
+pub use references::{MatchType, References, ReferentialAction};
 pub use roles::{Grantor, RoleStatement, SetRole};
 pub use routines::{
     CallStatement, DataAccess, ParameterDeclaration, ParameterMode, ReturnStatement, RoutineDefinition, RoutineDesignator, RoutineKind,
@@ -105,9 +107,9 @@ pub use routines::{
 };
 pub use schema::{
     AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, Collection, ColumnConstraint,
-    ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, MatchType,
-    OptionValue, References, ReferentialAction, Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition,
-    TableElement, TableOptionValue, TableStorage, Temporary, TemporaryKind, TypeName, ViewDefinition,
+    ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, OptionValue,
+    Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage,
+    Temporary, TemporaryKind, TypeName, ViewDefinition,
 };
 pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};

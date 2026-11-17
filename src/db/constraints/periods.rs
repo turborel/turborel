@@ -4,7 +4,8 @@
 //! A system-time period is of a system-versioned table (Feature T180),
 //! which is not yet, and is refused (RULES.md D18).
 
-use super::{Described, Within};
+use super::{Described, Pending, Within};
+use crate::ast::ReferentialAction;
 use crate::ast::{PeriodDefinition, PeriodName, TableConstraint, TableDefinition, TableElement};
 use crate::catalog::{ConstraintDesc, ConstraintKind, PeriodDesc, QualifiedName, TableDesc};
 use crate::db::rule;
@@ -280,4 +281,49 @@ pub(in crate::db) fn removed_constraint(desc: &mut TableDesc, at: usize) -> Resu
         }
     }
     Ok(removed)
+}
+
+/// [ISO/IEC 9075-2:2023 §11.8 SR2, SR18a i] The periods of the foreign key
+/// `p`, named `name`, of `child`, referencing table `target`, `parent`, if
+/// temporal: the referencing period, then the referenced one.
+///
+/// # Errors
+///
+/// SQLCODE -103 if one is written without the other, or the referenced
+/// columns are not \[SR2a\]; if it writes CASCADE, SET NULL or SET
+/// DEFAULT \[SR2b\]; if either table lacks its period \[SR18a i 4, 5\];
+/// or the periods are not of one type \[SR18a i 8\].
+pub(in crate::db) fn temporal_reference(
+    (child, parent): (&TableDesc, &TableDesc),
+    p: &Pending,
+    (name, target): (&QualifiedName, &QualifiedName),
+) -> Result<Option<(String, String)>> {
+    let r = &p.references;
+    let (own, theirs) = match (&p.period, &r.period, &r.columns) {
+        (None, None, _) => return Ok(None),
+        (Some(own), Some(theirs), Some(_)) => (own, theirs),
+        (Some(_) | None, _, _) => {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §11.8 SR2a] FOREIGN KEY {name} writes a PERIOD of its own columns and of those referenced, or neither"
+            )));
+        }
+    };
+    if [r.on_update, r.on_delete].into_iter().any(ReferentialAction::writes) {
+        return Err(rule(format!(
+            "[ISO/IEC 9075-2:2023 §11.8 SR2b] FOREIGN KEY {name} of a period has no action CASCADE, SET NULL or SET DEFAULT"
+        )));
+    }
+    let bounds = |t: &TableDesc, period: &str, cited: &str| {
+        t.period_columns(period).ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §11.8 {cited}] {} has no period {period}", t.name)))
+    };
+    let [theirs_start, _] = bounds(parent, theirs, "SR18a i 4")?;
+    let [own_start, _] = bounds(child, own, "SR18a i 5")?;
+    let of = |t: &TableDesc, at: usize| t.columns.get(at).map(|c| c.data_type.clone());
+    if of(parent, theirs_start) != of(child, own_start) {
+        return Err(rule(format!(
+            "[ISO/IEC 9075-2:2023 §11.8 SR18a i 8, §9.30] period {own} of {} and period {theirs} of {target} are not of one type",
+            child.name
+        )));
+    }
+    Ok(Some((own.clone(), theirs.clone())))
 }

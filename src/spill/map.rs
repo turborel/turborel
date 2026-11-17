@@ -86,21 +86,6 @@ impl SpillMap {
         if self.bytes > self.space.limit && self.space.areas.is_some() { self.spill() } else { Ok(()) }
     }
 
-    /// Takes away `key`'s value; whether it had one.
-    ///
-    /// # Errors
-    ///
-    /// The spill area's.
-    pub fn remove(&mut self, key: &[u8]) -> Result<bool> {
-        if let Some(table) = &mut self.table {
-            let Some(was) = table.get(key)?.into_iter().next() else { return Ok(false) };
-            return table.remove(key, &was);
-        }
-        let Some(was) = self.held.remove(key) else { return Ok(false) };
-        self.bytes = self.bytes.saturating_sub(key.len().saturating_add(was.len()).saturating_add(ENTRY_BYTES));
-        Ok(true)
-    }
-
     /// Moves what it holds to a table of a spill area of its own.
     fn spill(&mut self) -> Result<()> {
         let areas = self.space.areas.as_ref().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a map that spills has no work areas"))?;

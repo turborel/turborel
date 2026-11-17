@@ -2,8 +2,8 @@
 //! ISO/IEC 9075:1992 §11].
 
 use super::{
-    AlterSequence, DatetimeFunction, Literal, ModuleDefinition, PrivilegeDefinition, QueryExpression, RevokeStatement, RoleStatement,
-    RoutineDefinition, SearchCondition, SequenceDefinition, TableName, TriggerDefinition, TypeDefinition, UserFunction,
+    AlterSequence, DatetimeFunction, Literal, ModuleDefinition, PrivilegeDefinition, QueryExpression, References, RevokeStatement,
+    RoleStatement, RoutineDefinition, SearchCondition, SequenceDefinition, TableName, TriggerDefinition, TypeDefinition, UserFunction,
 };
 use crate::value::collation::Pad;
 use crate::value::{DataType, Value};
@@ -513,55 +513,14 @@ pub enum TableConstraintKind {
     ForeignKey {
         /// The `<referencing columns>`.
         columns: Vec<String>,
+        /// [ISO/IEC 9075-2:2023 §11.8] The `<application time period
+        /// name>` of a `<referencing period specification>`, if written.
+        period: Option<String>,
         /// The `<references specification>`.
         references: References,
     },
     /// [§11.9] A `<check constraint definition>`.
     Check(Check),
-}
-
-/// [ISO/IEC 9075:1992 §11.8] `<references specification>` ::= REFERENCES
-/// `<referenced table and columns>` \[MATCH `<match type>`\]
-/// \[`<referential triggered action>`\]
-#[derive(Debug, Clone)]
-pub struct References {
-    /// The referenced `<table name>`.
-    pub table: TableName,
-    /// The `<reference column list>`, if written; else the referenced
-    /// table's PRIMARY KEY \[SR2b\].
-    pub columns: Option<Vec<String>>,
-    /// The `<match type>`, or none.
-    pub match_type: MatchType,
-    /// The `<update rule>`, NO ACTION if none is written \[SR8\].
-    pub on_update: ReferentialAction,
-    /// The `<delete rule>`, NO ACTION if none is written \[SR9\].
-    pub on_delete: ReferentialAction,
-}
-
-/// [ISO/IEC 9075:1992 §11.8, §8.10] `<match type>` ::= FULL | PARTIAL, or
-/// none written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MatchType {
-    /// None written: a row with a null matches [§8.10 GR2a].
-    Simple,
-    /// PARTIAL: the values not null match [§8.10 GR3].
-    Partial,
-    /// FULL: all null, or none null and matching [§8.10 GR4].
-    Full,
-}
-
-/// [ISO/IEC 9075:1992 §11.8] `<referential action>` ::= CASCADE | SET NULL
-/// | SET DEFAULT | NO ACTION
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReferentialAction {
-    /// CASCADE.
-    Cascade,
-    /// SET NULL.
-    SetNull,
-    /// SET DEFAULT: each column's default [§11.5].
-    SetDefault,
-    /// NO ACTION.
-    NoAction,
 }
 
 /// [ISO/IEC 9075:1992 §11.9] `<check constraint definition>` ::= CHECK

@@ -104,8 +104,9 @@ period constraint, CHECK (start < end), checked of the rows there now; a
 row whose start is not before its end refuses it. **DROP PERIOD** drops
 the period and its constraint. Under RESTRICT it is refused while a
 view, a CHECK, a domain constraint, an assertion, a routine or a trigger
-references the period in a period predicate, or a UNIQUE or PRIMARY
-KEY is WITHOUT OVERLAPS of it; CASCADE drops them. A
+references the period in a period predicate, a UNIQUE or PRIMARY KEY
+is WITHOUT OVERLAPS of it, or a foreign key of this table or of another
+is of it; CASCADE drops them. A
 generated column whose expression references it refuses the drop under
 either. See [CREATE TABLE](create-table.md).
 

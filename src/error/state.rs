@@ -255,6 +255,9 @@ impl SqlState {
     pub const INTERVAL_FIELD_OVERFLOW: SqlState = SqlState(*b"22015");
     /// Integrity constraint violation.
     pub const INTEGRITY_CONSTRAINT_VIOLATION: SqlState = SqlState(*b"23000");
+    /// Integrity constraint violation: restrict violation [ISO/IEC
+    /// 9075-2:2023 §15.18 GR9a iv, GR10a iv].
+    pub const RESTRICT_VIOLATION: SqlState = SqlState(*b"23001");
     /// Triggered data change violation.
     pub const TRIGGERED_DATA_CHANGE_VIOLATION: SqlState = SqlState(*b"27000");
     /// Triggered action exception [ISO/IEC 9075-2:2023 §15.21 GR5b i 1,

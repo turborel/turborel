@@ -29,17 +29,10 @@ impl State {
     /// match type, any null matches; with FULL, all null do, some not;
     /// with PARTIAL, all null do, else those not null must equal a row's.
     pub(super) fn matches(&self, tx: &Txn, fk: &ForeignKey, values: &[Value]) -> Result<bool> {
-        let nulls = values.iter().filter(|v| v.is_null()).count();
-        if nulls == values.len() {
-            return Ok(true);
+        match wanted(fk, values) {
+            ControlFlow::Break(decided) => Ok(decided),
+            ControlFlow::Continue((columns, wanted)) => self.family_has_row_with(tx, &fk.table, &columns, &wanted),
         }
-        if nulls > 0 && fk.match_type != MatchType::Partial {
-            return Ok(fk.match_type == MatchType::Simple);
-        }
-        // Those not null, which with no match type or FULL are all of them.
-        let (columns, wanted): (Vec<usize>, Vec<Value>) =
-            fk.referenced.iter().zip(values).filter(|(_, v)| !v.is_null()).map(|(&c, v)| (c, v.clone())).unzip();
-        self.family_has_row_with(tx, &fk.table, &columns, &wanted)
     }
 
     /// [ISO/IEC 9075-2:2023 §4.17.9] Whether `table`, or one of its proper
@@ -70,7 +63,13 @@ impl State {
     /// an index of exactly those columns if there is one, its rows of the
     /// key read as taken (`Index::key_rows`), else read in full, a row at
     /// a time.
-    fn each_row_with(&self, tx: &Txn, table: &QualifiedName, (columns, values): (&[usize], &[Value]), each: Visit<'_>) -> Result<()> {
+    pub(super) fn each_row_with(
+        &self,
+        tx: &Txn,
+        table: &QualifiedName,
+        (columns, values): (&[usize], &[Value]),
+        each: Visit<'_>,
+    ) -> Result<()> {
         // By each column's collation, as an index of it holds them.
         let wanted = self.normal(table, columns, values)?;
         let of_row = |row: &Row| project(row, columns).map(|v| self.normal(table, columns, &v));
@@ -168,13 +167,15 @@ impl State {
     /// or row `id` was updated from it.
     fn orphans(&self, tx: &Txn, (child, fk): (&TableDesc, &ForeignKey), old: &Row, id: Option<RowId>) -> Result<bool> {
         let key = project(old, &fk.referenced).ok_or_else(|| api(format!("[DESIGN] a row of {} is short", fk.table)))?;
+        if fk.period.is_some() {
+            return self.temporal_orphans(tx, (child, fk), old, &key);
+        }
         if fk.match_type == MatchType::Partial {
             // Each matching row in turn, until one matches no row now.
             let mut orphaned = false;
             let matching = |row: &Row| project(row, &fk.columns).is_some_and(|v| partially(&v, &key));
             self.each_row_where(tx, &child.name, &matching, &mut |_, row| {
-                let values = project(&row, &fk.columns).ok_or_else(|| api(format!("[DESIGN] a row of {} is short", child.name)))?;
-                orphaned = !self.matches(tx, fk, &values)?;
+                orphaned = !self.matches_row(tx, (child, fk), &row)?;
                 Ok(if orphaned { ControlFlow::Break(()) } else { ControlFlow::Continue(()) })
             })?;
             return Ok(orphaned);
@@ -195,6 +196,22 @@ impl State {
         }
         self.has_row_with(tx, &child.name, &fk.columns, &key)
     }
+}
+
+/// [§11.8 GR2, §8.10 GR2-GR4] What `values`, of foreign key `fk`'s
+/// referencing columns, need of a referenced row: none, if they match
+/// whatever it has (`Break(true)`), or match nothing (`Break(false)`);
+/// else its values in the referenced columns given.
+pub(super) fn wanted(fk: &ForeignKey, values: &[Value]) -> ControlFlow<bool, (Vec<usize>, Vec<Value>)> {
+    let nulls = values.iter().filter(|v| v.is_null()).count();
+    if nulls == values.len() {
+        return ControlFlow::Break(true);
+    }
+    if nulls > 0 && fk.match_type != MatchType::Partial {
+        return ControlFlow::Break(fk.match_type == MatchType::Simple);
+    }
+    // Those not null, which with no match type or FULL are all of them.
+    ControlFlow::Continue(fk.referenced.iter().zip(values).filter(|(_, v)| !v.is_null()).map(|(&c, v)| (c, v.clone())).unzip())
 }
 
 /// [§11.8 GR3b i] Whether referencing `values` match referenced `key` with

@@ -37,6 +37,14 @@ impl Parser {
         matches!(self.peek(), Tok::Identifier(w) if w == PERIOD) && self.next_is_kw(kw::FOR)
     }
 
+    /// Whether a `<referencing period specification>` or `<referenced
+    /// period specification>` is next [ISO/IEC 9075-2:2023 §11.8]: PERIOD
+    /// and a name, where a column named PERIOD has a comma or a parenthesis
+    /// after it.
+    pub(super) fn at_period_specification(&self) -> bool {
+        matches!(self.peek(), Tok::Identifier(w) if w == PERIOD) && matches!(self.peek_at(1), Tok::Identifier(_) | Tok::KeyWord(_))
+    }
+
     /// [ISO/IEC 9075-2:2023 §11.3] `<system or application time period
     /// specification>` ::= PERIOD FOR SYSTEM_TIME | PERIOD FOR
     /// `<application time period name>`, at PERIOD.

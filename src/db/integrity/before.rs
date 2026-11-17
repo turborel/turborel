@@ -194,34 +194,59 @@ impl State {
         done: &mut HeldRows<Effect>,
         space: &ListSpace,
     ) -> Result<Before> {
-        let mut changed = SpillMap::new(space.clone());
-        done.visit(&mut |effect| {
-            let (t, id, _) = effect_row(effect);
-            if t == table { changed.insert(&id.to_le_bytes(), &[]) } else { Ok(()) }
-        })?;
-        let mut rows = HeldRows::new(space.clone());
+        let (changed, mut rows) = first_states(table, done, space)?;
         self.each_row_where(tx, table, &|_| true, &mut |id, row| {
             if !changed.contains(&id.to_le_bytes())? {
                 rows.push((id, row))?;
             }
             Ok(ControlFlow::Continue(()))
         })?;
-        done.visit(&mut |effect| {
-            let (t, id, was) = effect_row(effect);
-            if t != table {
-                return Ok(());
-            }
-            // Its first effect, taken from those to come: what it was.
-            let first = changed.remove(&id.to_le_bytes())?;
-            match (first, was) {
-                (true, Some(old)) => rows.push((id, old.clone())),
-                (true, None) | (false, _) => Ok(()),
-            }
-        })?;
+        Ok(self.before_of(table, rows, space))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §15.18 GR7] Of `table`, the rows the statement
+    /// that did `done` changed, as each was first, none of one it inserted:
+    /// their ids, in a map that spills, and those rows as a `Before`. With
+    /// the rows it changed not, as they are, they are the table as it was.
+    ///
+    /// # Errors
+    ///
+    /// The spill area's.
+    pub(super) fn before_changed(
+        &self,
+        table: &QualifiedName,
+        done: &mut HeldRows<Effect>,
+        space: &ListSpace,
+    ) -> Result<(SpillMap, Before)> {
+        let (changed, rows) = first_states(table, done, space)?;
+        Ok((changed, self.before_of(table, rows, space)))
+    }
+
+    /// `table` of `rows`, as a `Before` with no lookups yet.
+    fn before_of(&self, table: &QualifiedName, rows: HeldRows<(RowId, Row)>, space: &ListSpace) -> Before {
         let types = self.catalog.table(table).map(|t| t.columns.iter().map(|c| c.data_type.clone()).collect()).unwrap_or_default();
         let (map, space) = (SpillMap::new(space.clone()), space.clone());
-        Ok(Before { table: table.clone(), rows, types, lookups: Vec::new(), map, places: NONE, space })
+        Before { table: table.clone(), rows, types, lookups: Vec::new(), map, places: NONE, space }
     }
+}
+
+/// The ids of the rows of `table` that `done` changed, in a map that
+/// spills, and each one's first state, none of one it inserted: what it was
+/// before the statement.
+fn first_states(table: &QualifiedName, done: &mut HeldRows<Effect>, space: &ListSpace) -> Result<(SpillMap, HeldRows<(RowId, Row)>)> {
+    let (mut changed, mut rows) = (SpillMap::new(space.clone()), HeldRows::new(space.clone()));
+    done.visit(&mut |effect| {
+        let (t, id, was) = effect_row(effect);
+        if t != table || changed.contains(&id.to_le_bytes())? {
+            return Ok(());
+        }
+        changed.insert(&id.to_le_bytes(), &[])?;
+        match was {
+            Some(old) => rows.push((id, old.clone())),
+            None => Ok(()),
+        }
+    })?;
+    Ok((changed, rows))
 }
 
 /// The table, row and old values of what `effect` did: none of a row

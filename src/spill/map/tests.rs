@@ -23,7 +23,7 @@ fn key(n: u64) -> [u8; 8] {
 
 /// Verifies: [DESIGN] RULES.md D38, `SpillMap`: entries held, then, past
 /// its bytes, moved to a spill area, are read as given: a value replaced,
-/// one taken away gone, a key never given none; held and spilled alike.
+/// a key never given none; held and spilled alike.
 #[test]
 fn entries_are_read_back_held_and_spilled() {
     for (limit, spills) in [(usize::MAX, false), (512_usize, true)] {
@@ -33,28 +33,22 @@ fn entries_are_read_back_held_and_spilled() {
         }
         assert_eq!(m.spilled(), spills);
         m.insert(&key(7), b"seven").unwrap();
-        assert!(m.remove(&key(8)).unwrap());
-        assert!(!m.remove(&key(8)).unwrap(), "already gone");
-        assert!(!m.remove(&key(1000)).unwrap(), "never given");
         assert_eq!(m.get(&key(7)).unwrap(), Some(b"seven".to_vec()));
         assert_eq!(m.get(&key(9)).unwrap(), Some(key(18).to_vec()));
-        assert_eq!(m.get(&key(8)).unwrap(), None);
+        assert_eq!(m.get(&key(1000)).unwrap(), None);
         assert!(m.contains(&key(99)).unwrap());
-        assert!(!m.contains(&key(8)).unwrap());
         assert!(!m.contains(&key(100)).unwrap());
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D38, `SpillMap`: held, a value replaced or
-/// taken away gives back its bytes, so it spills only once what it holds
-/// passes its limit; with no work areas it never spills.
+/// Verifies: [DESIGN] RULES.md D38, `SpillMap`: held, a value replaced
+/// gives back its bytes, so it spills only once what it holds passes its
+/// limit; with no work areas it never spills.
 #[test]
 fn held_bytes_follow_the_entries() {
     let mut m = map(200, false);
     for _ in 0..50_u32 {
         m.insert(&key(1), &key(2)).unwrap();
-        m.insert(&key(3), b"").unwrap();
-        assert!(m.remove(&key(3)).unwrap());
     }
     assert!(!m.spilled(), "one entry held");
     let mut unbounded = SpillMap::new(ListSpace { limit: 0, ..ListSpace::default() });
