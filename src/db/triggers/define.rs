@@ -27,8 +27,8 @@ use super::rerouted::bind_taken;
 use super::run::{parsed, transitions_of};
 use crate::ast::{InsertSource, InsertStatement, MergeStatement, Schema, SqlStatement, TriggerDefinition, TriggerEvent as Written};
 use crate::binder::{
-    Context, DrawnFrom, Invoked, ObjectColumn, Uses, WriteKind, bind_insert_query, bind_merge, bind_select, bind_when, bind_write,
-    once_each, qualify,
+    Context, DrawnFrom, Invoked, ObjectColumn, Uses, WriteKind, bind_insert_query, bind_merge, bind_searched_write, bind_select, bind_when,
+    bind_write, once_each, qualify,
 };
 use crate::catalog::{
     ActionTime, Horizon, Principal, QualifiedName, TransitionNames, TriggerDesc, TriggerEvent, ViewDesc, applicable, owner_of, sole,
@@ -393,11 +393,13 @@ fn refused() -> SqlError {
 
 /// `stmt`, a searched UPDATE or DELETE, bound as `bind_triggered` binds it.
 fn bind_searched(cx: Context<'_>, stmt: &SqlStatement) -> Result<()> {
-    if let SqlStatement::UpdateSearched { table, only, set, where_clause } = stmt {
-        return bind_write(cx, WriteKind::UpdateSearched, (table, *only), set, where_clause.as_ref()).map(drop);
+    if let SqlStatement::UpdateSearched { table, only, portion, set, where_clause } = stmt {
+        return bind_searched_write(cx, WriteKind::UpdateSearched, (table, *only, portion.as_deref()), set, where_clause.as_ref())
+            .map(drop);
     }
-    if let SqlStatement::DeleteSearched { table, only, where_clause } = stmt {
-        return bind_write(cx, WriteKind::DeleteSearched, (table, *only), &[], where_clause.as_ref()).map(drop);
+    if let SqlStatement::DeleteSearched { table, only, portion, where_clause } = stmt {
+        return bind_searched_write(cx, WriteKind::DeleteSearched, (table, *only, portion.as_deref()), &[], where_clause.as_ref())
+            .map(drop);
     }
     Ok(())
 }

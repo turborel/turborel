@@ -53,9 +53,6 @@ Nothing is open.
 
 ### Periods and temporal tables
 
-- UPDATE and DELETE FOR PORTION OF [§14.9, §14.14] of an application-time
-  period table. A row that spans more than the portion is split, its parts
-  outside kept as they were.
 - Temporal primary and unique keys, WITHOUT OVERLAPS [§11.7], so that no
   two rows of one key hold for one point in time.
 - Temporal foreign keys, PERIOD in a referential constraint [§4.25.3,

@@ -15,7 +15,7 @@ use crate::ast::{
     AlterAction, DropObject, IndexStatement, PrivilegeDefinition, PrivilegeObject, RevokeStatement, SchemaStatement, SearchCondition,
     SetClause, SqlStatement, TableName, TableStorage,
 };
-use crate::binder::{Context, WriteKind, bind_member_write, bind_write, qualify};
+use crate::binder::{Context, SearchedTarget, WriteKind, bind_member_write, bind_searched_write, bind_write, qualify};
 use crate::catalog::proper_subtables;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::params::Params;
@@ -279,11 +279,11 @@ impl Session {
     fn searched(
         &self,
         cx: StatementContext<'_>,
-        (kind, table, set, where_clause): (WriteKind, (&TableName, bool), &[SetClause], Option<&SearchCondition>),
+        (kind, table, set, where_clause): (WriteKind, SearchedTarget<'_>, &[SetClause], Option<&SearchCondition>),
         run: RowsRun,
         (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<Completion> {
-        let bind = |b: Context<'_>| bind_write(b, kind, table, set, where_clause);
+        let bind = |b: Context<'_>| bind_searched_write(b, kind, table, set, where_clause);
         let w = self.write_bound(cx.st, params, keeping, bind)?;
         // [ISO/IEC 9075-2:2023 §15.15 GR3c iv 2] the INSTEAD OF trigger of a
         // view under the one named, in place of the change; one of the view
@@ -356,11 +356,13 @@ impl Session {
         match stmt {
             SqlStatement::Insert(ins) => self.insert_statement(cx, ins, params, keeping).map(|n| self.affected(n)),
             SqlStatement::Merge(merge) => self.merge_completed(cx, merge, params, keeping),
-            SqlStatement::UpdateSearched { table, only, set, where_clause } => {
-                self.searched(cx, (WriteKind::UpdateSearched, (table, *only), set, where_clause.as_ref()), update_rows, (&*params, keeping))
+            SqlStatement::UpdateSearched { table, only, portion, set, where_clause } => {
+                let target = (table, *only, portion.as_deref());
+                self.searched(cx, (WriteKind::UpdateSearched, target, set, where_clause.as_ref()), update_rows, (&*params, keeping))
             }
-            SqlStatement::DeleteSearched { table, only, where_clause } => {
-                self.searched(cx, (WriteKind::DeleteSearched, (table, *only), &[], where_clause.as_ref()), delete_rows, (&*params, keeping))
+            SqlStatement::DeleteSearched { table, only, portion, where_clause } => {
+                let target = (table, *only, portion.as_deref());
+                self.searched(cx, (WriteKind::DeleteSearched, target, &[], where_clause.as_ref()), delete_rows, (&*params, keeping))
             }
             SqlStatement::UpdatePositioned { .. } | SqlStatement::DeletePositioned { .. } => {
                 self.positioned_statement(cx, stmt, (params, keeping))

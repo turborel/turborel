@@ -86,10 +86,11 @@ impl Parser {
         }
         self.expect_kw(kw::FROM)?;
         let (table, only) = self.target_table()?;
+        let portion = self.for_portion()?;
         if !self.accept_kw(kw::WHERE) {
-            return Ok(SqlStatement::DeleteSearched { table, only, where_clause: None });
+            return Ok(SqlStatement::DeleteSearched { table, only, portion, where_clause: None });
         }
-        if self.accept_kw(kw::CURRENT) {
+        if portion.is_none() && self.accept_kw(kw::CURRENT) {
             self.expect_kw(kw::OF)?;
             if let Some(cursor) = self.dynamic_current_of()? {
                 return Ok(SqlStatement::Dynamic(Box::new(DynamicStatement::DeletePositioned { table, only, cursor })));
@@ -97,7 +98,7 @@ impl Parser {
             let at = self.here();
             return Ok(SqlStatement::DeletePositioned { table, only, cursor: (self.identifier()?, at) });
         }
-        Ok(SqlStatement::DeleteSearched { table, only, where_clause: Some(self.search_condition()?) })
+        Ok(SqlStatement::DeleteSearched { table, only, portion, where_clause: Some(self.search_condition()?) })
     }
 
     /// The statement a word, no key word, begins, if one does, read to its
@@ -166,11 +167,12 @@ impl Parser {
             return Ok(SqlStatement::UpdatePositioned { table, only: false, set, cursor });
         }
         let (table, only) = self.target_table()?;
+        let portion = self.for_portion()?;
         let set = self.set_clause_list()?;
         if !self.accept_kw(kw::WHERE) {
-            return Ok(SqlStatement::UpdateSearched { table, only, set, where_clause: None });
+            return Ok(SqlStatement::UpdateSearched { table, only, portion, set, where_clause: None });
         }
-        if self.accept_kw(kw::CURRENT) {
+        if portion.is_none() && self.accept_kw(kw::CURRENT) {
             self.expect_kw(kw::OF)?;
             if let Some(cursor) = self.dynamic_current_of()? {
                 return Ok(SqlStatement::Dynamic(Box::new(DynamicStatement::UpdatePositioned { table, only, set, cursor })));
@@ -178,7 +180,7 @@ impl Parser {
             let at = self.here();
             return Ok(SqlStatement::UpdatePositioned { table, only, set, cursor: (self.identifier()?, at) });
         }
-        Ok(SqlStatement::UpdateSearched { table, only, set, where_clause: Some(self.search_condition()?) })
+        Ok(SqlStatement::UpdateSearched { table, only, portion, set, where_clause: Some(self.search_condition()?) })
     }
 
     /// [ISO/IEC 9075-2:2023 §14.9] `<target table>` ::= `<table name>` |

@@ -40,6 +40,21 @@ pub(in crate::db) fn named(
     out
 }
 
+/// Adds to `out` the table names written in `stmt`, a searched UPDATE or
+/// DELETE, and in its points in time FOR PORTION OF, if written [ISO/IEC
+/// 9075-2:2023 §14.9 SR7a, §14.14 SR7a].
+fn searched(stmt: &SqlStatement, out: &mut Vec<TableName>) {
+    let (table, set, where_clause, portion) = if let SqlStatement::UpdateSearched { table, set, where_clause, portion, .. } = stmt {
+        (table, set.as_slice(), where_clause, portion)
+    } else if let SqlStatement::DeleteSearched { table, where_clause, portion, .. } = stmt {
+        (table, &[][..], where_clause, portion)
+    } else {
+        return;
+    };
+    changed(table, set, where_clause.as_ref(), out);
+    values(portion.iter().flat_map(|p| [&p.from, &p.to]), out);
+}
+
 /// Adds to `out` the table names written in `stmt`.
 fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
     match stmt {
@@ -50,8 +65,7 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
             }
         }
         SqlStatement::Select { query: spec, .. } => query(&QueryExpression::Spec(spec.clone()), out),
-        SqlStatement::UpdateSearched { table, set, where_clause, .. } => changed(table, set, where_clause.as_ref(), out),
-        SqlStatement::DeleteSearched { table, where_clause, .. } => changed(table, &[], where_clause.as_ref(), out),
+        SqlStatement::UpdateSearched { .. } | SqlStatement::DeleteSearched { .. } => searched(stmt, out),
         SqlStatement::Merge(m) => merge(m, out),
         SqlStatement::Call(call) => values(call.arguments.iter().filter_map(argued), out),
         // [ISO/IEC 9075-2:2023 §16.2] A function's `<return value>`.

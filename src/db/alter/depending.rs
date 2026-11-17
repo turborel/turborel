@@ -79,13 +79,13 @@ pub(in crate::db) fn depends(cause: Cause, dependent: Dependent, what: &str) -> 
         (Cause::Period, Dependent::View) => "§11.28 SR3d i",
         (Cause::Period, Dependent::Check | Dependent::Domain) => "§11.28 SR3d ii",
         (Cause::Period, Dependent::Assertion) => "§11.28 SR3d iii",
-        (Cause::Period, Dependent::Routine) => "§11.28 SR3d iv, SR3d v",
-        (Cause::Period, Dependent::Trigger) => "§11.28 SR3d vi",
+        (Cause::Period, Dependent::Routine) => "§11.28 SR3b i, SR3c i, SR3d iv, SR3d v",
+        (Cause::Period, Dependent::Trigger) => "§11.28 SR3b ii, SR3c ii, SR3d vi",
     };
     let on = match cause {
         Cause::Constraint => "depends on the constraint, so it is dropped only with CASCADE",
         Cause::Scope => "contains a dereference of the column, so its scope is dropped only with CASCADE",
-        Cause::Period => "references the period, so it is dropped only with CASCADE",
+        Cause::Period => "references the period, or changes FOR PORTION OF it, so it is dropped only with CASCADE",
     };
     rule(format!("[ISO/IEC 9075-2:2023 {cited}] {what} {on}"))
 }

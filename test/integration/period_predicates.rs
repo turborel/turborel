@@ -220,12 +220,12 @@ fn drop_period_restrict_is_refused_by_a_reference_11_28() {
         ),
         (
             "CREATE FUNCTION BUSY (D DATE) RETURNS INTEGER READS SQL DATA RETURN (SELECT COUNT(*) FROM BOOKINGS WHERE BOOKED CONTAINS D)",
-            "SR3d iv, SR3d v",
+            "SR3b i, SR3c i, SR3d iv, SR3d v",
         ),
         (
             "CREATE TRIGGER G AFTER INSERT ON BOOKINGS REFERENCING NEW ROW AS N FOR EACH ROW \
           DELETE FROM ROOMS WHERE EXISTS (SELECT * FROM BOOKINGS WHERE BOOKED CONTAINS DATE '2030-01-01')",
-            "SR3d vi",
+            "SR3b ii, SR3c ii, SR3d vi",
         ),
     ];
     for (create, cited) in cases {

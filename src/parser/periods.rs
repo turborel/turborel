@@ -7,7 +7,7 @@
 //! may begin an operand, so a column or an alias may still be so named.
 
 use super::Parser;
-use crate::ast::{PeriodDefinition, PeriodName, PeriodOperand, PeriodOperator, Predicate, SYSTEM_TIME};
+use crate::ast::{PeriodDefinition, PeriodName, PeriodOperand, PeriodOperator, Portion, Predicate, SYSTEM_TIME};
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
 
@@ -26,6 +26,9 @@ const PRECEDES: &str = "PRECEDES";
 const SUCCEEDS: &str = "SUCCEEDS";
 /// The immediately preceding and succeeding predicates' first word.
 const IMMEDIATELY: &str = "IMMEDIATELY";
+
+/// [ISO/IEC 9075-2:2023 §14.9, §14.14] The word after FOR of FOR PORTION OF.
+const PORTION: &str = "PORTION";
 
 impl Parser {
     /// Whether PERIOD FOR is next: a `<system or application time period
@@ -162,6 +165,24 @@ impl Parser {
         }
         self.expect_word(CONTAINS)?;
         Ok(PeriodOperator::Contains)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §14.9, §14.14] FOR PORTION OF `<application
+    /// time period name>` FROM `<point in time 1>` TO `<point in time 2>`,
+    /// if FOR begins it.
+    pub(super) fn for_portion(&mut self) -> Result<Option<Box<Portion>>> {
+        let at = self.here();
+        if !self.accept_kw(kw::FOR) {
+            return Ok(None);
+        }
+        self.expect_word(PORTION)?;
+        self.expect_kw(kw::OF)?;
+        let period = self.identifier()?;
+        self.expect_kw(kw::FROM)?;
+        let from = self.value_expression()?;
+        self.expect_kw(kw::TO)?;
+        let to = self.value_expression()?;
+        Ok(Some(Box::new(Portion { period, from, to, at })))
     }
 }
 

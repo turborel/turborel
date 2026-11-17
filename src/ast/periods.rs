@@ -73,3 +73,17 @@ pub enum PeriodOperand {
     /// A `<period reference>`, or a `<datetime value expression>`.
     Value(Box<super::ValueExpression>),
 }
+
+/// [ISO/IEC 9075-2:2023 §14.9, §14.14] FOR PORTION OF `<application time
+/// period name>` FROM `<point in time 1>` TO `<point in time 2>`.
+#[derive(Debug, Clone)]
+pub struct Portion {
+    /// The period's name.
+    pub period: String,
+    /// `<point in time 1>`, FROMVAL \[SR7a ii\].
+    pub from: super::ValueExpression,
+    /// `<point in time 2>`, TOVAL \[SR7a iii\].
+    pub to: super::ValueExpression,
+    /// Where it begins in the statement.
+    pub at: usize,
+}

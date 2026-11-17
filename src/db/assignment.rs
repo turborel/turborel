@@ -412,6 +412,7 @@ mod tests {
         };
         let rows = LogicalPlan::Scan { table: name.clone(), names: vec!["K".into()], needed: vec![0], located: false };
         let write = crate::binder::BoundWrite {
+            portion: None,
             named: name.clone(),
             table: name,
             desc,

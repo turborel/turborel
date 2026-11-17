@@ -10,7 +10,9 @@ DELETE: delete rows
 
 ```
 <delete statement: searched> ::=
-    DELETE FROM <table name> [ WHERE <search condition> ]
+    DELETE FROM <table name>
+    [ FOR PORTION OF <period name> FROM <point in time> TO <point in time> ]
+    [ WHERE <search condition> ]
 ```
 
 ## DESCRIPTION
@@ -33,6 +35,16 @@ positioned form through a cursor over either. The
 rows a referential action deletes or changes run their own table's
 triggers too.
 
+FOR PORTION OF a period of the table (see [CREATE TABLE](create-table.md))
+deletes only the time from its first point to its second. It deletes
+the rows the WHERE condition is true of whose period overlaps that
+time, and keeps each one's parts before and after it as rows of their
+own, whose period ends where the portion begins or begins where it
+ends. A part kept takes its identity column's next value and its
+generated columns again, and is inserted as an INSERT inserts a row,
+its INSERT triggers running; the constraints judge it with the rest as
+the statement ends. Its row count is of the rows deleted.
+
 The positioned form, WHERE CURRENT OF a cursor, runs only in a program
 that embeds turborel; see [DECLARE CURSOR](declare-cursor.md), and, of a
 cursor named by an extended name, [ALLOCATE CURSOR](allocate-cursor.md).
@@ -45,6 +57,10 @@ cursor named by an extended name, [ALLOCATE CURSOR](allocate-cursor.md).
 3. The rows left, and those referential actions change, satisfy the
    constraints.
 4. The transaction is not READ ONLY, but for a temporary table.
+5. FOR PORTION OF names a period of the table, a base table. Its points
+   in time are datetimes comparable with the period's columns, reference
+   no column of the table, and invoke no function that is not
+   deterministic or modifies SQL-data.
 
 ## PRIVILEGES
 
@@ -54,7 +70,7 @@ DELETE on the table. SELECT on each other table a subquery reads.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; the search condition has a set function outside a subquery |
+| 2A000 | -103 | The table does not exist or is read-only; the search condition has a set function outside a subquery; a rule of FOR PORTION OF is broken (rule 5) |
 | 2A000 | -104 | Its user lacks DELETE on the table, or SELECT on a table read |
 | 23000 | -201 | A row deleted is referenced by a foreign key whose action refuses it, or a referential action breaks a constraint |
 | TB911 | -911 | A row was written by another transaction, not committed under LOCKS.WAIT OFF, or committed after this one's snapshot at REPEATABLE READ or SERIALIZABLE; or a wait for it would deadlock or passed LOCKS.TIMEOUT_MS: the statement is undone, and may be run again |
@@ -91,10 +107,31 @@ DELETE FROM PARTS WHERE SUM(QTY) > 0;
 turborel: SQLCODE -103 (SQLSTATE 2A000): a set function needs an argument source (a <table expression>), which this <search condition> does not have [X3.135-1986 §5.8 SR1] (at character 24)
 ```
 
+Of a table of prices through time, a week of January deleted:
+
+```sql
+CREATE TABLE OFFERS (ITEM INTEGER, PRICE INTEGER, S DATE NOT NULL, E DATE NOT NULL, PERIOD FOR VALID (S, E));
+INSERT INTO OFFERS VALUES (1, 10, DATE '2026-01-01', DATE '2026-02-01');
+DELETE FROM OFFERS FOR PORTION OF VALID FROM DATE '2026-01-10' TO DATE '2026-01-17';
+SELECT * FROM OFFERS ORDER BY S;
+```
+
+```
+OK
+OK
+OK
+         ITEM |        PRICE | S          | E
+--------------+--------------+------------+------------
+            1 |           10 | 2026-01-01 | 2026-01-10
+            1 |           10 | 2026-01-17 | 2026-02-01
+(2 rows)
+```
+
 ## STANDARD
 
 ISO/IEC 9075:1992 §13.7, the `<delete statement: searched>`, and
-X3.135-1986 §8.5. Referential actions are SQL-92's [§11.8]. TB911 is this
+X3.135-1986 §8.5. FOR PORTION OF is ISO/IEC 9075-2:2023 §14.9 SR7a and
+§15.8 GR9, Feature T181. Referential actions are SQL-92's [§11.8]. TB911 is this
 implementation's own.
 
 ## SEE ALSO

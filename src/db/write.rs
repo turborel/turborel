@@ -28,6 +28,8 @@ use crate::txn::{Again, Txn};
 use crate::value::datetime::Now;
 use crate::value::{Value, assign};
 
+mod portion;
+
 /// The table an INSERT puts rows in, and its object columns [X3.135-1986
 /// §8.7 SR3, SR4].
 #[derive(Debug, Clone)]
@@ -452,6 +454,7 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     let columns = set_columns(&w);
     let hosted = Hosted::new(effects.host, cx);
     let runner = hosted.runner();
+    let mut leftovers = portion::Leftovers::of(st, &w)?;
     // [ISO/IEC 9075:1992 §13.10 GR6] every value computed before any row
     // is updated: a subquery of one may read the table.
     let mut changes = HeldRows::new(st.list_space());
@@ -477,6 +480,7 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
         };
         match st.rewrite_row(tx, (&w.bound.table, *id), Some(new), &mut recheck)? {
             Some(old) => {
+                leftovers.keep(st, &w, &old, &hosted)?;
                 effects.updated(&w.bound.table, *id, (old, recomputed.as_ref().unwrap_or(new)), &columns)?;
                 if let Some(row) = recomputed {
                     again.insert(*id, Some(row));
@@ -496,7 +500,7 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
             None => checked(new),
         })?;
     }
-    Ok(Some(changes.len().saturating_sub(again.values().filter(|r| r.is_none()).count())))
+    leftovers.insert(cx, &w, effects).map(|()| Some(changes.len().saturating_sub(again.values().filter(|r| r.is_none()).count())))
 }
 
 /// [X3.135-1986 §8.5] the searched DELETE bound as `w`: the rows it
@@ -523,6 +527,7 @@ pub(super) fn delete_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     // [ISO/IEC 9075-2:2023 §15.8 GR2] its BEFORE triggers first.
     effects.before_delete(cx, &w.bound.table, &mut objects)?;
     let runner = Runner::new(st, tx.id);
+    let mut leftovers = portion::Leftovers::of(st, &w)?;
     let mut count = 0_usize;
     for object in objects {
         let (id, _) = object?;
@@ -530,10 +535,12 @@ pub(super) fn delete_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
         // committed, if it is still one to delete.
         let mut recheck = |newest: &Row| Ok(if w.holds_of(newest, &runner)? { Again::Delete } else { Again::Skip });
         if let Some(old) = st.rewrite_row(tx, (&w.bound.table, id), None, &mut recheck)? {
+            leftovers.keep(st, &w, &old, &runner)?;
             effects.deleted(&w.bound.table, id, old)?;
             count = count.saturating_add(1);
         }
     }
+    leftovers.insert(cx, &w, effects)?;
     Ok(Some(count))
 }
 

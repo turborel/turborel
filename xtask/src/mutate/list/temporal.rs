@@ -8,12 +8,15 @@
 //! predicates, a comparison that takes meeting periods or a period's end,
 //! the exceptions and nulls judged out of order, a type refused taken, a
 //! period reference unresolved or ambiguous, and DROP PERIOD missing what
-//! references the period.
+//! references the period; of FOR PORTION OF, a row that meets the portion
+//! changed, a period not clipped or set, a point in time not judged, a
+//! part kept dropped, bounded wrongly, not generated or not inserted as
+//! an INSERT, and an interval's TO taking another's.
 
 use super::{Mutation, Package};
 
 /// The mutations of periods, in the order they run.
-pub const TEMPORAL: [Mutation; 25] = [
+pub const TEMPORAL: [Mutation; 37] = [
     Mutation {
         name: "period-column-named-period",
         package: Package::Core,
@@ -268,6 +271,129 @@ pub const TEMPORAL: [Mutation; 25] = [
         original: "if bind_generation(self, &desc, (k, g)).is_err() {",
         replacement: "if bind_generation(self, &desc, (k, g)).is_err() && k == usize::MAX {",
         integration: &["period_predicates::a_generation_expression_keeps_its_period_11_28"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-meeting-row-reached",
+        package: Package::Core,
+        breaks: "a row whose period ends where the portion begins is changed [§14.9 SR7a iv]",
+        file: "src/binder/portion.rs",
+        original: "compared(&end, CompOp::Gt, &from, at)",
+        replacement: "compared(&end, CompOp::Ge, &from, at)",
+        integration: &["portions::a_portion_at_a_bound_keeps_no_empty_part_14_9"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-start-unclipped",
+        package: Package::Core,
+        breaks: "an UPDATE FOR PORTION OF leaves its rows' starts as they were [§14.14 SR7a vi]",
+        file: "src/binder/portion.rs",
+        original: "            set.push(clipped((&period.start, &start, CompOp::Gt, &from)));\n",
+        replacement: "",
+        integration: &["portions::update_for_portion_of_splits_its_rows_14_14"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-period-column-set",
+        package: Package::Core,
+        breaks: "a SET clause of the period's end column is taken [§14.14 SR7a ii]",
+        file: "src/binder/portion.rs",
+        original: "set.iter().find(|s| s.column == period.start || s.column == period.end)",
+        replacement: "set.iter().find(|s| s.column == period.end)",
+        integration: &["portions::for_portion_of_is_refused_against_its_rules_14_14"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-point-of-a-column",
+        package: Package::Core,
+        breaks: "a point in time of a column of the table is taken [§14.9 SR7a ii]",
+        file: "src/binder/portion.rs",
+        original: "        if !columns.is_empty() {",
+        replacement: "        if columns.len() > 1 {",
+        integration: &["portions::for_portion_of_is_refused_against_its_rules_14_14"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-point-nondeterministic",
+        package: Package::Core,
+        breaks: "a point in time invoking a non-deterministic function is taken [§14.9 SR7a ii]",
+        file: "src/binder/portion.rs",
+        original: "(!i.deterministic || i.modifies)",
+        replacement: "i.modifies",
+        integration: &["portions::for_portion_of_is_refused_against_its_rules_14_14"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-parameter-untyped",
+        package: Package::Core,
+        breaks: "a `?` point in time is not of the period's type [DESIGN]",
+        file: "src/binder/portion.rs",
+        original: "if dynamic_of(v).is_some() { cast(v) } else { v.clone() }",
+        replacement: "if dynamic_of(v).is_none() { cast(v) } else { v.clone() }",
+        integration: &["portions::a_parameter_point_in_time_is_of_the_periods_type_14_14"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-before-dropped",
+        package: Package::Core,
+        breaks: "the part of a row before the portion is not kept [§15.8 GR9c]",
+        file: "src/db/write/portion.rs",
+        original: "for (bound, column) in [(before, end), (after, start)] {",
+        replacement: "for (bound, column) in [(after, start)] {",
+        integration: &["portions::delete_for_portion_of_keeps_the_rest_14_9"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-bounds-swapped",
+        package: Package::Core,
+        breaks: "a part kept takes the portion's bound as its other end [§15.8 GR9c, GR9d]",
+        file: "src/db/write/portion.rs",
+        original: "for (bound, column) in [(before, end), (after, start)] {",
+        replacement: "for (bound, column) in [(before, start), (after, end)] {",
+        integration: &["portions::delete_for_portion_of_keeps_the_rest_14_9"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-kept-ungenerated",
+        package: Package::Core,
+        breaks: "a part kept keeps the old row's identity value [§15.14 GR12b]",
+        file: "src/db/write/portion.rs",
+        original: "            generating.give(st, &mut row, subqueries)?;\n",
+        replacement: "",
+        integration: &["portions::a_part_kept_is_inserted_as_a_row_15_14"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-kept-unnoted",
+        package: Package::Core,
+        breaks: "a part kept is written as no INSERT, its triggers and constraints passed by [§15.8 GR9c ii]",
+        file: "src/db/write/portion.rs",
+        original: "rows.visit(&mut |row| effects.inserted(table, cx.st.insert_row(cx.tx, table, row)?, row))",
+        replacement: "rows.visit(&mut |row| cx.st.insert_row(cx.tx, table, row).map(drop))",
+        integration: &[
+            "portions::a_part_kept_is_inserted_as_a_row_15_14",
+            "portions::the_parts_kept_are_checked_as_the_statement_ends_15_8",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-kept-unfilled",
+        package: Package::Core,
+        breaks: "a prepared statement's parts kept are bounded by its unfilled parameters [DESIGN]",
+        file: "src/db/write/portion.rs",
+        original: "Some(values) => eval(&filled_expr(bound.clone(), values)?, old, subqueries)?,",
+        replacement: "Some(_) => eval(bound, old, subqueries)?,",
+        integration: &["portions::a_parameter_point_in_time_is_of_the_periods_type_14_14"],
+        unit: &[],
+    },
+    Mutation {
+        name: "interval-to-of-any-word",
+        package: Package::Core,
+        breaks: "an interval qualifier takes the TO of what follows it [ISO/IEC 9075:1992 §10.1]",
+        file: "src/parser/interval.rs",
+        original: " || !self.field_after_to() {",
+        replacement: " {",
+        integration: &["portions::for_portion_of_is_refused_against_its_rules_14_14"],
         unit: &[],
     },
 ];

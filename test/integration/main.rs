@@ -174,6 +174,7 @@ mod planning;
 mod plugin_files;
 mod plugin_settings;
 mod point_plans;
+mod portions;
 mod positions;
 mod predicate_indexes;
 mod predicates;
