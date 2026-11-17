@@ -10,6 +10,7 @@
 //! R* partitioning, for independent point or rectangle coordinate bounds.
 
 mod blink;
+pub mod fulltext;
 mod hash;
 mod nearest;
 mod projection;
@@ -20,6 +21,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 pub use blink::BTreeMethod;
+pub use fulltext::{FULLTEXT_METHOD, FullTextMethod};
 pub use hash::HashMethod;
 pub use nearest::{NearestQuery, NeighbourEntries};
 pub use projection::KeyProjection;

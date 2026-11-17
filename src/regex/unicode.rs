@@ -32,7 +32,7 @@ const LAST: u32 = 0x10_FFFF;
 
 /// The General Categories [Unicode 13.0 §4.5], in the order the table
 /// numbers them (`xtask/src/unicode/regex.rs`).
-pub(super) const CATEGORIES: [&str; 30] = [
+pub(crate) const CATEGORIES: [&str; 30] = [
     "Lu", "Ll", "Lt", "Lm", "Lo", "Mn", "Mc", "Me", "Nd", "Nl", "No", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Sm", "Sc", "Sk", "So",
     "Zs", "Zl", "Zp", "Cc", "Cf", "Cs", "Co", "Cn",
 ];
@@ -123,7 +123,7 @@ impl Table {
 
     /// The characters whose General Category is among `wanted`, places in
     /// `CATEGORIES`.
-    pub(super) fn categories(&self, wanted: &[usize]) -> CharSet {
+    pub(crate) fn categories(&self, wanted: &[usize]) -> CharSet {
         let mut ranges = Vec::new();
         for i in 0..self.runs.records {
             let Some((first, category)) = self.runs.pair(i) else { continue };

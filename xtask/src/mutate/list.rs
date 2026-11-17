@@ -16,6 +16,7 @@ mod distribution;
 mod explain;
 mod fill;
 mod filter;
+mod fulltext;
 mod generated;
 mod geometry;
 mod grouping_sets;
@@ -91,7 +92,7 @@ pub fn all() -> Vec<Mutation> {
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
     core.into_iter()
         .chain(areas::all())
-        .chain([projection::PROJECTION.as_slice(), &json::JSON])
+        .chain([projection::PROJECTION.as_slice(), &json::JSON, &fulltext::FULLTEXT])
         .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()
         .copied()

@@ -106,8 +106,6 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   beyond probing one tree for each outer row. Add bulk packing
   and reclaim empty nodes without relocating entries under active scans;
   measure overlap and space after sustained updates as well as fresh loads.
-- An inverted index of terms to the rows and positions they appear at,
-  with its tokenizer, for full text search. Full text needs it.
 - HNSW, a hierarchical graph of vectors for approximate nearest neighbour
   search. Vectors need it, and a structure kept on disk past what memory
   holds may follow it.

@@ -2082,8 +2082,8 @@ No Simple Features or SQL/MM Spatial conformance is claimed.
 
 ### Indexes
 
-These are RULES.md D34, of the methods `btree`, `hash` and `rtree`, or a
-plug-in's. The statements run outside a transaction. The `rtree` method
+These are RULES.md D34, of the methods `btree`, `hash`, `rtree` and
+`fulltext`, or a plug-in's. The statements run outside a transaction. The `rtree` method
 indexes two approximate-numeric point coordinates or four rectangle
 coordinates and answers independent SQL comparisons (`index/rtree.rs`,
 `physical/access/columns.rs`, D72). Inner joins can bind these comparisons
@@ -2118,6 +2118,43 @@ expression or another part of the filter can raise, the table is read
 whole so the lookup cannot hide the error (D15). The built-in `btree` and
 `hash` methods retain their comparison lookups; a plug-in supplies the
 function lookup.
+
+### Full-text search
+
+TEXT_MATCHES(document, words) is true of a document holding every word
+of `words` that is not a stop word, true of a search of stop words
+alone, and null of a null argument (`fulltext/matches.rs`). Both are
+character strings or large objects, read a piece at a time. It reads
+both in English and compares words normalized, not stemmed. ISO/IEC
+13249-2:2002 (CD, SC32 N0640) searches by its FULLTEXT type's CONTAINS
+method instead, which is not implemented.
+
+The index method `fulltext` answers TEXT_MATCHES of one character string
+column (`index/fulltext.rs`, RULES.md D86). Its options are
+FULLTEXT.LANGUAGE, ENGLISH or NONE, and FULLTEXT.STOP_WORDS, DEFAULT,
+NONE or a list of words, each a rebuild; and FULLTEXT.K1 (0 to 1000,
+1.2) and FULLTEXT.B (0 to 1, 0.75), BM25's weights, changed in place. A
+column with a collation is refused (SQLCODE -900), as its key is its
+sort key and not its text. A word the index takes for a stop word has no
+entries, so a search of it reads the table. A document's places are
+sorted in a work area of 4 MiB before its postings are written, spilling
+beyond it (D38).
+
+13249-2 leaves the tokenizer to the implementation [§4.1, §4.4, §4.5].
+These are turborel's choices (`fulltext/text.rs`).
+
+| Choice | turborel |
+|---|---|
+| Word | A run of Unicode 13.0 letters, numbers and marks, two joined by one connector (Pc) or, between letters, one apostrophe (U+0027 or U+2019). Each Han, Hiragana or Katakana character is a word |
+| Sentence end | `.`, `!` or `?`, with closing brackets and quotes after it, then a blank, a line terminator or the end; U+3002, U+FF01, U+FF0E and U+FF1F alone |
+| Paragraph end | Two line terminators with only blanks between, or U+2029 |
+| Ordinals | Every word, stop words too, from 1; sentences and paragraphs from 1, counting those holding a word |
+| Offset and length | In characters, as written |
+| Normalization [§4.5] | Simple case folding, canonical decomposition, folding again, nonspacing marks (Mn) removed, U+2019 made U+0027 |
+| Stop words [§4.4.2] | English, Snowball's list of 174; NONE, none |
+| Stems [§4.2.3.4] | English, Porter2 (Snowball English, 2006); NONE, the word |
+| Languages [§5.1.9] | ENGLISH, NONE; another is SQLSTATE 2FF02 |
+| Word and term length | A word's first 256 characters; a term's first 255 bytes of UTF-8, cut at a character |
 
 ### Users
 

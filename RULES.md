@@ -123,6 +123,7 @@ verification approach DO-178C expects (§8).
 | D83 | A column is renamed in place, refused while a text names it |
 | D84 | SQL/JSON items hold SQL values, and a path is parsed once, apart from SQL |
 | D85 | Geometry values start with XY representations through SqlType |
+| D86 | An inverted index keeps terms, places and counts in one B-link tree |
 
 ### The project
 
@@ -2878,6 +2879,61 @@ functions have one learned plan shape even when preparation changes the
 function object. Ordinary function probes still require object identity;
 matching SQL names alone never establish equivalence.
 
+#### D86. An inverted index keeps terms, places and counts in one B-link tree
+
+The index method `fulltext` (`index/fulltext.rs`) finds rows by the words
+of one character string column, for TEXT_MATCHES \[EXTENSION\] and the
+full-text search of ISO/IEC 13249-2:2002 (CD, SC32 N0640). Its column's
+text is cut into words by the tokenizer (`fulltext/text.rs`), whose every
+rule is implementation-defined [13249-2 §4.1, §4.4, §4.5] and listed in
+CONFORMANCE.md. The tokenizer reads a document a character at a time and
+holds only the word it is reading, so a large object is never held whole
+(D79).
+
+An index is one B-link tree (D31), its keys tagged by their first byte.
+Each distinct document of a row, its row and its hash, takes a document
+number from a counter in `C`, never used again. `D` keys map the row and
+hash to its entry count, number and length, and `N` keys map the number
+back. A term's postings are blocks of at most 128 documents under `P`
+keys of the term and the block's first number. A block holds the numbers
+as varint deltas, then each document's term frequency, then each
+document's places, its own length first so a reader skips them: each
+word's ordinal, sentence, paragraph and character offset as deltas. A
+document whose places would take more than a quarter of a block keeps
+them in `Q` chunk entries. The block keys are the skip list, so a search
+of a rare and a common term seeks past the common one's blocks without
+reading them. `H` keys find the rows of a document's hash, `S` keys keep
+each term's document frequency and greatest frequency, `W` keys map a
+stem to the terms of it and `C` keeps the documents and their total
+length. A document's postings are written as its first entry is
+inserted and taken out at its last, so versions of a row with the same
+text (D29) cost a count and nothing more. Stop words are posted nowhere,
+but count among the ordinals, so distances stay right [13249-2 §5.1.5].
+Postings take about 7 bytes each and a document's own entries about 90.
+
+The keys the index gives are a projection (D85's contract), a 128-bit
+hash of the document's tokens, so documents equal under SQL's comparison
+project alike and a reader keeps a row only if its visible version
+hashes the same. A document's places are sorted in a spill area (D38)
+before its postings are written, so no document is held whole in memory
+either. Writes of one row's entries are serialized by row stripes, as
+the R-tree's are (D72), so a version's insert and an older one's removal
+by garbage collection never lose a posting. A block is rewritten under a
+stripe of its term, taken after the row's and one at a time, so writers
+of one term never lose each other's documents. Entries are not logged.
+Recovery mends or rebuilds the index from its table (D25), and undo
+inserts and removes the full key, which tokenizes alike every time. A
+bulk load numbers documents in row order and writes full blocks.
+
+Its options (D41) are FULLTEXT.LANGUAGE, ENGLISH or NONE, and
+FULLTEXT.STOP_WORDS, DEFAULT for the language's list, NONE, or a list of
+words written with commas, normalized as a document's words are. The
+index is rebuilt for a change of either, as its postings follow them.
+FULLTEXT.K1 and FULLTEXT.B, the weights of BM25 ranking, change in
+place. A term is kept to its first 255 bytes, cut at a character, and a
+word to its first 256 characters. A longer one is found by its prefix
+and then checked against the row.
+
 ## 2. Project layout
 
 ```
@@ -3039,7 +3095,7 @@ R-TEST-6 was withdrawn with the golden-file tests (D6).
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
+| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[ISO/IEC 13249…]` (SQL/MM) of any part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
 | R-TRACE-2 | Code implementing a requirement **shall** cite it (R-DOC-4). `cargo xtask trace '§8.6'` lists a clause's tests. | review; `xtask trace` |
 | R-TRACE-3 | CONFORMANCE.md **shall** change with the change implementing or changing a clause. | review |
 

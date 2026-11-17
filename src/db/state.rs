@@ -18,7 +18,7 @@ use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
-use crate::index::{BTreeMethod, HashMethod, Index, IndexMethod, RTreeMethod};
+use crate::index::{BTreeMethod, FullTextMethod, HashMethod, Index, IndexMethod, RTreeMethod};
 use crate::log::Log;
 use crate::optimizer::Optimizer;
 use crate::physical::CostModel;
@@ -226,7 +226,8 @@ impl State {
         st.engines.insert(ROW_STORE.to_owned(), Arc::new(engine));
         let hash = HashMethod::sharing(Arc::clone(&st.pages));
         let spatial = RTreeMethod::sharing(Arc::clone(&st.pages));
-        let methods: Vec<Arc<dyn IndexMethod>> = vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial)];
+        let words = FullTextMethod::sharing(Arc::clone(&st.pages));
+        let methods: Vec<Arc<dyn IndexMethod>> = vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial), Arc::new(words)];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);
         }
@@ -249,7 +250,9 @@ impl State {
                 let types = ix
                     .key_types(desc)
                     .ok_or_else(|| api(format!("[DESIGN] the catalog's index {} is on a column its table lacks", ix.name)))?;
-                self.indexes.insert(ix.name.clone(), Arc::from(method.create(&types)?));
+                // Of its options and its table's, as CREATE INDEX made it
+                // (RULES.md D41).
+                self.indexes.insert(ix.name.clone(), Arc::from(method.create_on(&types, (desc, ix))?));
             }
         }
         Ok(())

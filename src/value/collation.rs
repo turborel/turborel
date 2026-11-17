@@ -17,7 +17,7 @@ mod pad;
 mod reorder;
 mod rules;
 mod streaming;
-mod table;
+pub(crate) mod table;
 #[cfg(test)]
 pub(crate) use table::fnv;
 mod tailored;

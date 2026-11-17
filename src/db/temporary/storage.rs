@@ -17,7 +17,8 @@ use crate::db::api;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{
-    self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, KeyProjection, Probe, RTREE_METHOD, RTreeMethod,
+    self, BTreeMethod, FULLTEXT_METHOD, FullTextMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, KeyProjection, Probe,
+    RTREE_METHOD, RTreeMethod,
 };
 use crate::log::Lsn;
 use crate::spill::{Area, WorkAreas};
@@ -425,6 +426,10 @@ impl Entries {
             Arc::from(HashMethod::new(pool, file).create_on(&types, on)?)
         } else if self.index.method == RTREE_METHOD {
             Arc::from(RTreeMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == FULLTEXT_METHOD {
+            // Its documents' places sorted in the database's work areas
+            // (RULES.md D38, D86).
+            Arc::from(FullTextMethod::with_work(pool, file, Arc::clone(&pages.place.work)).create_on(&types, on)?)
         } else {
             Arc::from(BTreeMethod::new(pool, file).create_on(&types, on)?)
         };
@@ -463,6 +468,11 @@ impl Index for Entries {
         self.read()?.map_or(Ok(None), |entries| entries.nearest(query, budget))
     }
     fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
+        if self.index.method == FULLTEXT_METHOD {
+            // The projection of the index made of this descriptor (RULES.md
+            // D86); a descriptor it refuses makes no index either.
+            return FullTextMethod::projection(&self.index).ok();
+        }
         if self.index.method != RTREE_METHOD {
             return None;
         }

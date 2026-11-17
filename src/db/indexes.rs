@@ -30,7 +30,7 @@ use std::sync::Arc;
 use super::{Database, State, api, qualified_name};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{Code, Result, SqlError, fail};
-use crate::index::{BTREE_METHOD, HASH_METHOD, Index, KeyOrder, Probe, RTREE_METHOD};
+use crate::index::{BTREE_METHOD, FULLTEXT_METHOD, HASH_METHOD, Index, KeyOrder, Probe, RTREE_METHOD};
 use crate::log::record::Change;
 use crate::storage::{TableOption, chosen, needs_rebuild};
 use crate::txn::{Concurrency, LockMode, TableLock, Timestamp, Transactions, Txn};
@@ -252,11 +252,11 @@ impl Database {
         // session's instance makes its entries, in memory, of its own rows,
         // once no transaction has them open (`db/temporary/storage.rs`).
         if current.catalog.table(qn).is_some_and(|t| t.temporary.is_some()) {
-            if spec.method != BTREE_METHOD && spec.method != HASH_METHOD && spec.method != RTREE_METHOD {
+            if ![BTREE_METHOD, HASH_METHOD, RTREE_METHOD, FULLTEXT_METHOD].contains(&spec.method.as_str()) {
                 return Err(SqlError::new(
                     Code::SyntaxRule,
                     format!(
-                        "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD}, {HASH_METHOD} or {RTREE_METHOD}, kept in memory (RULES.md D49)"
+                        "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD}, {HASH_METHOD}, {RTREE_METHOD} or {FULLTEXT_METHOD}, kept in memory (RULES.md D49)"
                     ),
                 ));
             }
