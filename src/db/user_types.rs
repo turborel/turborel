@@ -182,9 +182,10 @@ impl State {
 /// [ISO/IEC 9075-2:2023 §11.51 GR2c] The ordering of distinct type
 /// `desc`: FULL by map of its function to its source type, of a source
 /// no collection type nor large object one; EQUALS ONLY of a large object
-/// one (Feature T042); none of a collection type.
+/// one (Feature T042); none of a collection type, nor of an XML type, as
+/// XML values are not comparable [ISO/IEC 9075-14:2006 draft §4.2.4].
 fn distinct_ordering(desc: &UserTypeDesc) -> Option<OrderingDesc> {
-    if matches!(desc.source, DataType::Array(_) | DataType::Multiset(_)) {
+    if matches!(desc.source, DataType::Array(_) | DataType::Multiset(_) | DataType::Xml(_)) {
         return None;
     }
     let form = if desc.source.is_lob() { OrderingForm::Equals } else { OrderingForm::Full };
@@ -253,7 +254,8 @@ fn respelled(t: DataType) -> DataType {
 }
 
 /// [ISO/IEC 9075-2:2023 §9.9 SR2] The IDENTIFIER of SDT `t`, as IV223
-/// spells a number's type; none of a type no source is.
+/// spells a number's type, XML of an XML type [ISO/IEC 9075-14:2006 draft
+/// §10.5 SR1]; none of a type no source is.
 pub(super) fn type_name_of(t: &DataType) -> Option<&'static str> {
     Some(match t {
         DataType::Character { .. } => "CHAR",
@@ -272,12 +274,8 @@ pub(super) fn type_name_of(t: &DataType) -> Option<&'static str> {
         DataType::Boolean => "BOOLEAN",
         DataType::Array(_) => "ARRAY",
         DataType::Multiset(_) => crate::value::types::MULTISET_NAME,
-        DataType::Row(_)
-        | DataType::Distinct(_)
-        | DataType::Structured(_)
-        | DataType::Reference(_)
-        | DataType::Extension(_)
-        | DataType::Xml(_) => {
+        DataType::Xml(_) => crate::value::types::XML_NAME,
+        DataType::Row(_) | DataType::Distinct(_) | DataType::Structured(_) | DataType::Reference(_) | DataType::Extension(_) => {
             return None;
         }
     })

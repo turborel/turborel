@@ -575,7 +575,7 @@ DECIMAL(10,2)` makes MONEY, whose values are those of DECIMAL(10,2) but
 compare only with other values of MONEY. A price and a weight of one
 source type cannot then be compared or added by mistake.
 
-The source type is a predefined type, an array type or a multiset type. A value of the
+The source type is a predefined type, XML among them, an array type or a multiset type. A value of the
 source, or of a type that is assigned to it, is assigned to a column of
 the distinct type, and a value of the distinct type is assigned only to a
 site of exactly its source type. CAST takes the same paths. No operator

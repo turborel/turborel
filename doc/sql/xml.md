@@ -407,6 +407,48 @@ SELECT XMLSERIALIZE(XMLELEMENT(NAME "staff", XMLAGG(XMLELEMENT(NAME "emp", XMLAT
 (1 row)
 ```
 
+## XML in other types
+
+An array or a multiset may hold XML values, of any XML type or of a
+distinct type of one, and so may a field of a row and an attribute of a
+structured type. A distinct type may have an XML type as its source:
+`CREATE TYPE LEAF AS XML(DOCUMENT(ANY)) FINAL`. Its function to its
+source is named XML, as `XML(COVER)` below, and CAST takes a value to the
+type and back. A routine's parameter or result may be of any of them.
+
+Each XML value inside is assigned as one stored in a column of its
+type is, so an array of XML(DOCUMENT) refuses an element that is not a
+document (SQLSTATE 2200L). None of these is ever compared: an array,
+multiset, row or distinct type holding XML is refused wherever an XML
+value is (SQLCODE -103), and so are DISTINCT, SET, IS A SET, MEMBER,
+SUBMULTISET and the multiset operators but MULTISET UNION ALL over a
+multiset of XML.
+
+```sql
+CREATE TYPE LEAF AS XML(DOCUMENT(ANY)) FINAL;
+CREATE TABLE BOOKS (ID INTEGER, PAGES XML(CONTENT(ANY)) ARRAY[10], COVER LEAF, META ROW(TITLE VARCHAR(20), BLURB XML(CONTENT(ANY))));
+INSERT INTO BOOKS VALUES (1, ARRAY[XMLPARSE(CONTENT '<p>One</p>' PRESERVE WHITESPACE), XMLPARSE(CONTENT '<p>Two</p>' PRESERVE WHITESPACE)], CAST(XMLPARSE(DOCUMENT '<cover/>' PRESERVE WHITESPACE) AS LEAF), ROW('Tales', XMLPARSE(CONTENT 'A <b>bold</b> start' PRESERVE WHITESPACE)));
+SELECT ID, CARDINALITY(PAGES), XMLSERIALIZE(PAGES[2] AS VARCHAR(20)), XMLSERIALIZE(BOOKS.META.BLURB AS VARCHAR(30)) FROM BOOKS;
+SELECT XMLSERIALIZE(XML(COVER) AS VARCHAR(20)) FROM BOOKS;
+INSERT INTO BOOKS (ID, COVER) VALUES (2, CAST(XMLPARSE(CONTENT 'no root' PRESERVE WHITESPACE) AS LEAF));
+SELECT ID FROM BOOKS WHERE PAGES = PAGES;
+```
+```
+OK
+OK
+OK
+           ID |              |                      |
+--------------+--------------+----------------------+--------------------------------
+            1 |            2 | <p>Two</p>           | A <b>bold</b> start
+(1 row)
+
+----------------------
+ <cover/>
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2200L): the value of XML(DOCUMENT(ANY)) is not an XML document [ISO/IEC 9075-14:2006 draft §6.5 GR1a]
+turborel: SQLCODE -103 (SQLSTATE 2A000): the comparison compares values of XML(CONTENT(ANY)) ARRAY[10], and XML values are not comparable [ISO/IEC 9075-14:2006 draft §10.8 SR1] (at character 27)
+```
+
 ## Clients
 
 A column of an XML type is described with its modifiers. A value is

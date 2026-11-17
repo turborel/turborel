@@ -81,7 +81,13 @@ Nothing is open.
 
 ## Storage and durability
 
-Nothing is open.
+- A row a statement holds past its work area (`exec/held.rs`) is written
+  to its spill area in the log's form of values, so a large object or an
+  XML value a table keeps apart is written as that table's object id and
+  read back as a reference no table resolves: an UPDATE of such a row
+  fails (SQLCODE -916), and an INSERT of rows read from another table may
+  name that table's object. Held rows should keep such values beside
+  their records.
 
 ---
 
@@ -152,9 +158,6 @@ features.
   Information Schema (X141 to X161, X191, X192, X256, X257, X260 to X286).
 - The mappings of tables, schemas and catalogs to XML and XML Schema
   (X040 to X059).
-- XML within other types and routines: arrays, multisets, distinct types,
-  attributes and fields of XML, and XML parameters of routines (X011 to
-  X015, X120, X121).
 
 ### Full text
 

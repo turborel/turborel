@@ -1876,14 +1876,18 @@ options, NIL ON NO CONTENT option), X181 and X182 (XML(DOCUMENT(UNTYPED)) and
 XML(DOCUMENT(ANY)) types), X190 (XML(SEQUENCE) type), X211 (XML 1.1
 support), X231 and X232 (XML(CONTENT(UNTYPED)) and XML(CONTENT(ANY))
 types), X241 and X242 (RETURNING CONTENT and RETURNING SEQUENCE in XML
-publishing), and X251 to X255 (Persistent XML values of each XML type) are
-claimed.
+publishing), X251 to X255 (Persistent XML values of each XML type), X011
+(Arrays of XML type), X012 (Multisets of XML type), X013 (Distinct types
+of XML type), X014 (Attributes of XML type), X015 (Fields of XML type) and
+X120 (XML parameters in SQL routines) are claimed. X121 (XML parameters in
+external routines) is not, as turborel has no external routine.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
 | The XML types | §4.2.2, §6.1 SR1 to SR3 | XML(DOCUMENT), XML(CONTENT), each UNTYPED or ANY, and XML(SEQUENCE). XML alone is XML(SEQUENCE), and DOCUMENT or CONTENT alone is ANY [SR2, SR3b]. XMLSCHEMA is valid SQL not yet taken, SQLCODE -900. |
 | XML values | §4.2.3 | An XQuery sequence of nodes and atomic values. A value held in a column is its stored form (RULES.md D86): in the row when short, else as the table's large objects, logged and recovered as large objects are. One inside an array, a multiset, a row or a structured value is held whole in that value's row, its stored form at most 64 MiB, else SQLCODE -900. |
 | Assignment | §4.2.4, §10.2 SR1, GR1 | An XML value to an XML site alone, an UNTYPED one's of an UNTYPED type, else SQLCODE -103. A DOCUMENT site takes a document, else SQLSTATE 2200L; a CONTENT site one document node, else 2200U. A value stored is a copy. |
+| XML within other types | §6.1 CR2, CR3, §6.2 CR1, §12.5 CR1, §12.6 CR1, §12.7 CR1, §10.4 SR1, §10.5 SR1 | An array or multiset of an XML type or of a distinct type of one; a distinct type whose source is an XML type, its function to its source named XML [§10.5 SR1], of no ordering; an attribute of a structured type, and a field of a row type, of either; a parameter or result of an SQL routine of any of them. Each is stored, read, assigned and cast part by part, an XML part checked as §10.2 GR1a and §6.5 GR1a check one. Every XML type's type precedence list is XML [§10.4 SR1], so a routine of an XML parameter takes an argument of any XML type that is assigned to it. |
 | Not comparable | §4.2.4, §10.8 SR1 to §10.11 SR1 | No equality, grouping or ordering operation takes an XML value: comparisons, IN, quantified comparisons, MATCH, UNIQUE, DISTINCT, IS DISTINCT FROM, NULLIF, a simple CASE, GROUP BY, ORDER BY, set operations but UNION ALL, MIN and MAX, a NATURAL or USING join's common column, keys and indexes, SQLCODE -103. |
 | Types brought together | §10.3 SR1 | XML types with XML types alone, of the type SR1b gives: SEQUENCE if one is, the one type, DOCUMENT(UNTYPED) if all are, CONTENT(UNTYPED) if all are UNTYPED, else CONTENT(ANY). |
 | IS DOCUMENT, IS CONTENT | §8.2, §8.3, §6.4 | Of one XML value, else SQLCODE -103 [SR1]. IS DOCUMENT is True of one document node whose children are one element and comments and processing instructions, IS CONTENT of one document node; Unknown of the null value; else False [GR2]. IS NOT is the negation [SR2]. Either is a `<when operand>` of a simple CASE. |
@@ -1918,6 +1922,7 @@ claimed.
 | The namespace of `sqlxml` | §4.9 Table 2, §10.12 SR2a ii 2 B I | `http://standards.iso.org/iso/9075/2003/sqlxml`, as Table 2 writes it; §10.12 and §10.20 write it without the slash after `iso`. |
 | SQL_TEXT's mapping to Unicode | §9.1 GR3, §9.3 GR4, §10.12 SR3 | The identity: SQL_TEXT is Unicode. |
 | NIL ON NO CONTENT | §10.13 GR4c ii 2 | Read of the content as mapped: an element whose content holds no element, text node or atomic value is nilled. |
+| CAST of a distinct type of XML | §6.5 SR3, ISO/IEC 9075-2:2023 §11.51 GR2b, §6.13 SR12 | By the type's own casts to and from its source, as Part 2 makes them for every distinct type, though §6.5 SR3's table writes N between XML and a user-defined type: without them no value of the type could be made (X013). |
 | The XML Schema types of SQL's numbers and BOOLEAN | §9.5 GR8d iv, GR8e viii, GR8f | INTEGER, SMALLINT and BIGINT restrictions of `xs:integer`; REAL and FLOAT of 24 bits or fewer `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`; BOOLEAN `xs:boolean`. |
 | Limits of XQuery's atomic values | XQueryFO §10.1.1, §17.1.1 | A date's year from 0001 to 9999, else err:FODT0001; seconds, of times and of `xdt:dayTimeDuration`, to the microsecond, more digits dropped; a duration within 128 bits of months or microseconds, else err:FODT0002; `xs:decimal` and `xs:integer` of any digits, an SQL exact number of them its fraction cut to 38 digits. A float or double cast to a decimal is the shortest decimal that reads back as it. A zero time zone is written Z. |
 | XMLDOCUMENT's returning clause | §6.13 SR1 | RETURNING CONTENT. |

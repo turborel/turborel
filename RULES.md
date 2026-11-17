@@ -2907,7 +2907,13 @@ a test checks.
 
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation
-would take one. Over a connection a value is its serialization as
+would take one, as one inside an array, a multiset, a row or a distinct
+type. A distinct type of an XML type has no ordering, and its casts to
+and from its source are its own, as every distinct type's are (D69),
+though Part 14's table of CAST writes none between XML and a
+user-defined type. Every XML type's type precedence list is XML alone.
+A part of an array, a multiset or a row is cast to an XML type as CAST
+of an XML value is, BY REF. Over a connection a value is its serialization as
 CONTENT, and a client parses it as CONTENT when it needs its nodes. A
 column is described with the type's modifiers. The column store keeps no
 XML value, as it keeps no large object, nor one inside another value.

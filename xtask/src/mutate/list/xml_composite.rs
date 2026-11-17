@@ -5,7 +5,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const XML_COMPOSITE: [Mutation; 7] = [
+pub const XML_COMPOSITE: [Mutation; 12] = [
     Mutation {
         name: "lob-after-definitions",
         package: Package::Core,
@@ -74,6 +74,56 @@ pub const XML_COMPOSITE: [Mutation; 7] = [
         original: "let held = |t: &DataType| composite::lob_ordered(t) || composite::xml_ordered(t);",
         replacement: "let held = |t: &DataType| t.lob_kind().is_some();",
         integration: &["xml_storage::the_column_store_keeps_no_xml"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-xml-name",
+        package: Package::Core,
+        breaks: "a distinct type of XML has no function to its source",
+        file: "src/db/user_types.rs",
+        original: "DataType::Xml(_) => crate::value::types::XML_NAME,",
+        replacement: "DataType::Xml(_) => return None,",
+        integration: &["xml_composite::distinct_types_of_xml_x013"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-xml-ordering",
+        package: Package::Core,
+        breaks: "a distinct type of XML is ordered by its source",
+        file: "src/db/user_types.rs",
+        original: "if matches!(desc.source, DataType::Array(_) | DataType::Multiset(_) | DataType::Xml(_)) {",
+        replacement: "if matches!(desc.source, DataType::Array(_) | DataType::Multiset(_)) {",
+        integration: &["xml_composite::distinct_types_of_xml_x013"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-precedence",
+        package: Package::Core,
+        breaks: "each XML type's precedence list holds itself alone",
+        file: "src/value/precedence.rs",
+        original: "DataType::Xml(_) => matches!(t, DataType::Xml(_)).then_some(FIRST),",
+        replacement: "DataType::Xml(_) => (p == t).then_some(FIRST),",
+        integration: &["xml_composite::distinct_types_of_xml_x013"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-xml-cast",
+        package: Package::Core,
+        breaks: "CAST to a distinct type of XML is refused as CAST of XML to another type",
+        file: "src/binder/case.rs",
+        original: "if (xml(&t) || xml(&target)) && !user_defined(&t) && !user_defined(&target) {",
+        replacement: "if xml(&t) || xml(&target) {",
+        integration: &["xml_composite::distinct_types_of_xml_x013"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-part-cast",
+        package: Package::Core,
+        breaks: "a part of an array is cast to an UNTYPED XML type from an ANY one",
+        file: "src/binder/composite.rs",
+        original: "return target.takes(*source);",
+        replacement: "return true;",
+        integration: &["xml_composite::assigned_and_cast_part_by_part_10_2"],
         unit: &[],
     },
 ];

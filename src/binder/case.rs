@@ -494,8 +494,11 @@ impl Binder<'_> {
         // supertype.
         let user_defined = |x: &DataType| matches!(x, DataType::Structured(_) | DataType::Distinct(_) | DataType::Reference(_));
         // [ISO/IEC 9075-14:2006 draft §6.5 SR2] implementation-defined: BY
-        // REF is implicit, of an XML type to one.
-        if matches!(t, DataType::Xml(_)) || matches!(target, DataType::Xml(_)) {
+        // REF is implicit, of an XML type to one. Of a distinct type of an
+        // XML type to its source or back, the type's own cast [ISO/IEC
+        // 9075-2:2023 §11.51 GR2b, §6.13 SR12] (Feature X013).
+        let xml = |x: &DataType| matches!(x, DataType::Xml(_));
+        if (xml(&t) || xml(&target)) && !user_defined(&t) && !user_defined(&target) {
             return super::xml::xml_cast((e, t), target, Passing::ByRef);
         }
         let e = if t != target && (user_defined(&t) || user_defined(&target)) {

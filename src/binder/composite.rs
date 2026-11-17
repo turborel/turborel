@@ -175,9 +175,15 @@ pub(super) fn bounded(t: DataType) -> Result<DataType> {
 }
 
 /// Whether a part of `from` casts to `to`, as the rules of predefined
-/// types say: a binary string with a binary string alone [§6.13 SR7].
+/// types say: a binary string with a binary string alone [§6.13 SR7]; an
+/// XML type with an XML type alone, BY REF as CAST of one is, so to an
+/// UNTYPED type of an UNTYPED one [ISO/IEC 9075-14:2006 draft §6.5 SR3,
+/// SR4a].
 fn element_castable(from: &DataType, to: &DataType) -> bool {
-    super::datetime::binary_castable(from, to)
+    if let (DataType::Xml(source), DataType::Xml(target)) = (from, to) {
+        return target.takes(*source);
+    }
+    !matches!(from, DataType::Xml(_)) && !matches!(to, DataType::Xml(_)) && super::datetime::binary_castable(from, to)
 }
 
 /// [ISO/IEC 9075-2:2023 §9.5 SR3g, SR3h, SR3i] The result type of
