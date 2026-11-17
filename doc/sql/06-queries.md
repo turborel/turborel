@@ -154,6 +154,46 @@ OK
 (1 row)
 ```
 
+A system-versioned table of an application-time period too, a
+bitemporal table, records both when a fact held and when it was
+recorded. Of a post changed for 2025, both what is held now and every
+row recorded of 2025-06-01:
+
+```sql
+CREATE TABLE POSTS (ID INTEGER, DEPT CHAR(3),
+    VF DATE NOT NULL, VT DATE NOT NULL, PERIOD FOR VALID (VF, VT),
+    S TIMESTAMP(6) GENERATED ALWAYS AS ROW START,
+    E TIMESTAMP(6) GENERATED ALWAYS AS ROW END,
+    PERIOD FOR SYSTEM_TIME (S, E),
+    PRIMARY KEY (ID, VALID WITHOUT OVERLAPS)) WITH SYSTEM VERSIONING;
+INSERT INTO POSTS (ID, DEPT, VF, VT) VALUES (1, 'ENG', DATE '2024-01-01', DATE '2026-01-01');
+COMMIT;
+UPDATE POSTS FOR PORTION OF VALID FROM DATE '2025-01-01' TO DATE '2026-01-01' SET DEPT = 'OPS';
+COMMIT;
+SELECT DEPT, VF, VT FROM POSTS ORDER BY VF;
+SELECT DEPT, VF, VT, E < CURRENT_TIMESTAMP AS ENDED
+    FROM POSTS FOR SYSTEM_TIME FROM DATE '2000-01-01' TO DATE '3000-01-01'
+    WHERE VALID CONTAINS DATE '2025-06-01' ORDER BY S;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+ DEPT | VF         | VT
+------+------------+------------
+ ENG  | 2024-01-01 | 2025-01-01
+ OPS  | 2025-01-01 | 2026-01-01
+(2 rows)
+ DEPT | VF         | VT         | ENDED
+------+------------+------------+-------
+ ENG  | 2024-01-01 | 2026-01-01 | TRUE
+ OPS  | 2025-01-01 | 2026-01-01 | FALSE
+(2 rows)
+```
+
 ### Partitioned joins
 
 An operand of an outer join may be **partitioned**: `B PARTITION BY

@@ -176,7 +176,11 @@ ends at that transaction's timestamp. Statements read, key and
 constrain the current rows alone, unless a query reads the table FOR
 SYSTEM_TIME ([Query Expressions](../06-queries.md#reading-a-tables-history)).
 A transaction that changes a row
-another began after its own timestamp is refused, SQLSTATE 2201H.
+another began after its own timestamp is refused, SQLSTATE 2201H. A
+system-versioned table may have an application-time period too, a
+bitemporal table: UPDATE and DELETE FOR PORTION OF it keep each row
+they change as a historical row, the parts they keep beginning at the
+transaction timestamp, and its keys judge the current rows alone.
 
 A constraint is checked at the end of each statement, or, DEFERRABLE
 INITIALLY DEFERRED or deferred by [SET CONSTRAINTS](set-constraints.md),

@@ -58,6 +58,7 @@ mod batch_joins;
 mod batches;
 mod bigint;
 mod binary;
+mod bitemporal;
 mod blocks;
 mod booleans;
 mod buffer;

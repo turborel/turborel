@@ -57,7 +57,8 @@ cursor named by an extended name, [ALLOCATE CURSOR](allocate-cursor.md).
 3. The rows left, and those referential actions change, satisfy the
    constraints.
 4. The transaction is not READ ONLY, but for a temporary table.
-5. FOR PORTION OF names a period of the table, a base table. Its points
+5. FOR PORTION OF names an application-time period of the table, a
+   base table, not SYSTEM_TIME, a reserved word. Its points
    in time are datetimes comparable with the period's columns, reference
    no column of the table, and invoke no function that is not
    deterministic or modifies SQL-data.

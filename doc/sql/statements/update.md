@@ -85,7 +85,8 @@ in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
    only to DEFAULT.
 7. An element is set of an array column, at an index from 1 to its
    maximum cardinality, of an array not null.
-8. FOR PORTION OF names a period of the table, a base table, whose
+8. FOR PORTION OF names an application-time period of the table, a
+   base table, not SYSTEM_TIME, a reserved word, whose
    columns no SET clause sets. Its points in time are datetimes
    comparable with the period's columns, reference no column of the
    table, and invoke no function that is not deterministic or modifies

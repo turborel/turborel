@@ -67,7 +67,8 @@ impl Parser {
         self.expect_delim(delim::LEFT_PAREN)?;
         let mut names = vec![self.identifier()?];
         while self.accept_delim(delim::COMMA) {
-            let name = self.identifier()?;
+            let period = *self.peek_at(1) == Tok::Identifier(WITHOUT.to_owned());
+            let name = if period { self.application_period_name()? } else { self.identifier()? };
             if self.accept_word(WITHOUT) {
                 self.expect_kw(kw::OVERLAPS)?;
                 self.expect_delim(delim::RIGHT_PAREN)?;
@@ -91,7 +92,7 @@ impl Parser {
         while self.accept_delim(delim::COMMA) {
             if self.at_period_specification() {
                 self.advance();
-                let period = self.identifier()?;
+                let period = self.application_period_name()?;
                 self.expect_delim(delim::RIGHT_PAREN)?;
                 return Ok((names, Some(period)));
             }

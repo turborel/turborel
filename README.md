@@ -61,7 +61,7 @@ behind it, and each can be replaced or added to.
 - System-versioned tables, PERIOD FOR SYSTEM_TIME of ROW START and ROW END
   columns the database stamps, WITH SYSTEM VERSIONING keeping each row an
   update or delete ends as a historical row, read FOR SYSTEM_TIME AS OF,
-  BETWEEN or FROM … TO.
+  BETWEEN or FROM … TO, and bitemporal with an application-time period.
 - Stored procedures and functions in SQL/PSM, with variables, cursors,
   handlers, loops and SIGNAL, grouped into modules if wished, and
   polymorphic table functions that take whole tables as arguments.

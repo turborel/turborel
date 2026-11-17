@@ -4,12 +4,13 @@
 //! a history left behind, and the rules that keep a system-time column
 //! from statements, constraints and ALTER broken; and of reading one FOR
 //! SYSTEM_TIME, the bounds of each reading, its history, and the rules
-//! that keep a reading of it out of constraints and updates.
+//! that keep a reading of it out of constraints and updates; and of a
+//! bitemporal table, SYSTEM_TIME taken as an application-time period.
 
 use super::{Mutation, Package};
 
 /// The mutations of system-versioned tables, in the order they run.
-pub const SYSTEM_VERSIONED: [Mutation; 30] = [
+pub const SYSTEM_VERSIONED: [Mutation; 34] = [
     Mutation {
         name: "history-not-kept",
         package: Package::Core,
@@ -308,6 +309,46 @@ pub const SYSTEM_VERSIONED: [Mutation; 30] = [
         original: "dropped.absorb(self.drop_dependents_of(&before, (Cause::Versioning, std::slice::from_ref(qn)), cascade)?);",
         replacement: "let _ = (&before, cascade);",
         integration: &["system_time_queries::dropping_versioning_drops_what_reads_its_history"],
+        unit: &[],
+    },
+    Mutation {
+        name: "portion-of-system-time",
+        package: Package::Core,
+        breaks: "FOR PORTION OF names SYSTEM_TIME [§14.14 SR7a]",
+        file: "src/parser/periods.rs",
+        original: "if *self.peek() == Tok::Identifier(SYSTEM_TIME.to_owned()) {",
+        replacement: "if *self.peek() == Tok::Identifier(String::new()) {",
+        integration: &["bitemporal::system_time_is_no_application_time_period_11_7"],
+        unit: &[],
+    },
+    Mutation {
+        name: "without-overlaps-system-time",
+        package: Package::Core,
+        breaks: "a key is WITHOUT OVERLAPS of SYSTEM_TIME [§11.7 SR3]",
+        file: "src/parser/constraints.rs",
+        original: "let name = if period { self.application_period_name()? } else { self.identifier()? };",
+        replacement: "let name = self.identifier()?;",
+        integration: &["bitemporal::system_time_is_no_application_time_period_11_7"],
+        unit: &[],
+    },
+    Mutation {
+        name: "foreign-key-system-time",
+        package: Package::Core,
+        breaks: "a foreign key's PERIOD is SYSTEM_TIME [§11.8 SR18a i]",
+        file: "src/parser/constraints.rs",
+        original: "let period = self.application_period_name()?;",
+        replacement: "let period = self.identifier()?;",
+        integration: &["bitemporal::system_time_is_no_application_time_period_11_7"],
+        unit: &[],
+    },
+    Mutation {
+        name: "system-period-cited-as-application",
+        package: Package::Core,
+        breaks: "DROP PERIOD FOR SYSTEM_TIME RESTRICT is refused by the rules of an application-time period [§11.28 SR2d]",
+        file: "src/db/alter/periods.rs",
+        original: "let cause = if *name == PeriodName::SystemTime { Cause::SystemPeriod } else { Cause::Period };",
+        replacement: "let cause = Cause::Period;",
+        integration: &["bitemporal::system_time_is_no_application_time_period_11_7"],
         unit: &[],
     },
 ];

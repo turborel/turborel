@@ -217,6 +217,20 @@ impl Parser {
         Ok(Some(Box::new(SystemTimeRead { kind, at })))
     }
 
+    /// [ISO/IEC 9075-2:2023 §11.3] `<application time period name>`, an
+    /// `<identifier>`: SYSTEM_TIME, a reserved word of SQL:2023, names no
+    /// application-time period.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it is no identifier, or SYSTEM_TIME.
+    pub(super) fn application_period_name(&mut self) -> Result<String> {
+        if *self.peek() == Tok::Identifier(SYSTEM_TIME.to_owned()) {
+            return Err(self.syntax("expected an <application time period name>, which SYSTEM_TIME, a reserved word, is not"));
+        }
+        self.identifier()
+    }
+
     /// [ISO/IEC 9075-2:2023 §14.9, §14.14] FOR PORTION OF `<application
     /// time period name>` FROM `<point in time 1>` TO `<point in time 2>`,
     /// if FOR begins it.
@@ -227,7 +241,7 @@ impl Parser {
         }
         self.expect_word(PORTION)?;
         self.expect_kw(kw::OF)?;
-        let period = self.identifier()?;
+        let period = self.application_period_name()?;
         self.expect_kw(kw::FROM)?;
         let from = self.value_expression()?;
         self.expect_kw(kw::TO)?;

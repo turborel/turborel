@@ -53,9 +53,6 @@ Nothing is open.
 
 ### Periods and temporal tables
 
-- Bitemporal tables, an application-time period and system versioning on
-  one table. No feature names them, and each part above composes once
-  both exist.
 
 ### JSON
 

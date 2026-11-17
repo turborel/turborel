@@ -69,7 +69,7 @@ impl State {
     /// `qn` as `behavior` says: its descriptor \[GR2b\]; what references
     /// it, a view, a table or domain constraint, an assertion, a routine
     /// or a trigger that bound before and binds no more, refusing it under
-    /// RESTRICT \[SR3d\] and dropped under CASCADE \[GR2f\]; then its
+    /// RESTRICT \[SR2d, SR3d\] and dropped under CASCADE \[GR1d, GR2f\]; then its
     /// period constraint, as ALTER TABLE DROP CONSTRAINT CASCADE drops it
     /// \[GR2c\]. What it took away.
     ///
@@ -104,9 +104,10 @@ impl State {
         catalog.replace_table(desc);
         self.catalog = Arc::from(catalog);
         let cascade = behavior == DropBehavior::Cascade;
-        dropped.absorb(self.drop_dependents_of(&before, (Cause::Period, std::slice::from_ref(qn)), cascade)?);
-        dropped.absorb(self.drop_dependent_triggers(&before, (Cause::Period, qn), cascade)?);
-        dropped.absorb(self.drop_dependent_routines(&before, (Cause::Period, qn), cascade)?);
+        let cause = if *name == PeriodName::SystemTime { Cause::SystemPeriod } else { Cause::Period };
+        dropped.absorb(self.drop_dependents_of(&before, (cause, std::slice::from_ref(qn)), cascade)?);
+        dropped.absorb(self.drop_dependent_triggers(&before, (cause, qn), cascade)?);
+        dropped.absorb(self.drop_dependent_routines(&before, (cause, qn), cascade)?);
         if let Some(c) = &removed.constraint {
             let constraint = TableName { auth: Some(c.auth.clone()), ident: c.ident.clone(), at: 0 };
             dropped.absorb(self.drop_constraint((qn, &c.auth), &constraint, DropBehavior::Cascade)?);
