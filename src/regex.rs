@@ -33,7 +33,7 @@ pub(crate) mod unicode;
 
 use compile::{Program, compile};
 use flags::{Flag, Flags};
-use parse::parse;
+use parse::{parse, parse_schema};
 use unicode::Table;
 
 pub use lob_text::LobText;
@@ -109,6 +109,22 @@ impl Regex {
             literal: flags.has(Flag::Literal),
             table,
         })
+    }
+
+    /// `pattern` compiled as the value of an XML Schema `pattern` facet
+    /// [Schema2 §4.3.4, Appendix F]: `is_match` is then true of a string
+    /// the whole of which it matches [Schema2 §4.3.4.4], as no `^` or `$`
+    /// anchors it there.
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 2201S if `pattern` is no regular expression of XML Schema;
+    /// SQLCODE -900 past `MAX_INSTRUCTIONS`, or groups nested too deep.
+    pub fn schema(pattern: &str) -> Result<Regex> {
+        let table = Table::read()?;
+        let parsed = parse_schema(pattern, &table)?;
+        let program = compile(&parsed, Flags::default())?;
+        Ok(Regex { program, groups: parsed.groups, back_references: false, caseless: false, literal: false, table })
     }
 
     /// How many groups capture [§9.28 GR8].

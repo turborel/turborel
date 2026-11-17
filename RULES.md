@@ -438,6 +438,12 @@ So the binder makes each call its own function, keeping its last pattern, and
 none is registered. TRANSLATE_REGEX replaces as fn:replace does, matching the
 pattern again within each match [§9.29 GR9a].
 
+The pattern facet of XML Schema reads its patterns by the same parser
+(`Regex::schema`), in the dialect of XML Schema Part 2 Appendix F: a
+pattern matches a whole string, `^` and `$` are normal characters, `.` and
+`\s` are as XML Schema defines them, and there are no flags, reluctant
+quantifiers, groups that capture nothing or back-references.
+
 #### D62. A sequence generator's place is logged apart from transactions
 
 A sequence generator's descriptor is a definition, made, changed and dropped

@@ -276,3 +276,31 @@ fn searches_from_a_position() {
     assert_eq!(r.find_at(&text, 1).unwrap().unwrap().get(0), Some((2, 3)));
     assert!(r.find_at(&text, 3).unwrap().is_none());
 }
+
+/// Whether the XML Schema pattern `pattern` matches the whole of `text`.
+fn schema_matches(pattern: &str, text: &str) -> bool {
+    Regex::schema(pattern).unwrap().is_match(text).unwrap()
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §9.5 GR8g ii] [Schema2 §4.3.4.4,
+/// Appendix F] a pattern facet matches a whole string, never a part, the
+/// first branch of an alternation not preferred; `^` and `$` are normal
+/// characters; `.` is any character but a line feed or carriage return
+/// and `\s` the four white space characters; a reluctant quantifier, a
+/// group that captures nothing, a back-reference, `\$` and a quantifier
+/// with no atom are none, SQLSTATE 2201S.
+#[test]
+fn schema_patterns_match_whole_strings() {
+    assert!(schema_matches("\\p{Nd}{4}-\\p{Nd}{2}-\\p{Nd}{2}", "2026-11-17"));
+    assert!(!schema_matches("\\p{Nd}{4}-\\p{Nd}{2}-\\p{Nd}{2}", "2026-11-17Z"));
+    assert!(!schema_matches("\\p{Nd}{2}", "x12"));
+    assert!(schema_matches("a|ab", "ab"));
+    assert!(schema_matches("^a$", "^a$") && !schema_matches("^a$", "a"));
+    assert!(schema_matches(".", "\u{85}") && !schema_matches(".", "\n") && !schema_matches(".", "\r"));
+    assert!(schema_matches("\\s", "\t") && !schema_matches("\\s", "\u{85}") && schema_matches("\\S", "\u{2028}"));
+    assert!(schema_matches("[\\i-[:]][\\c-[:]]*", "a-b") && !schema_matches("[\\i-[:]][\\c-[:]]*", "a:b"));
+    assert!(schema_matches("", ""));
+    for refused in ["a*?", "(?:a)", "(a)\\1", "\\$", "(+|-)"] {
+        assert_eq!(Regex::schema(refused).unwrap_err().sqlstate().as_str(), "2201S", "{refused}");
+    }
+}
