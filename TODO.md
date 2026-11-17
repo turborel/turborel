@@ -152,6 +152,11 @@ features.
 - XML Schema: registered XML schemas, XML(DOCUMENT(XMLSCHEMA)) and
   XML(CONTENT(XMLSCHEMA)), XMLVALIDATE and IS VALID, and their
   Information Schema (X141 to X161, X191, X192, X256, X257, X260 to X286).
+  The built-in datatypes, simple type definitions with their facets,
+  lists and unions, the validation of a literal and the cast to a derived
+  type are done; what is left is reading schema documents into
+  components, complex types, element and attribute declarations and the
+  validation of documents [Schema1], and registering schemas.
 - The mappings of tables, schemas and catalogs to XML and XML Schema
   (X040 to X059).
 

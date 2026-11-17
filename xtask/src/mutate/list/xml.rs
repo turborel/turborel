@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// Each XML mechanism broken alone, and the tests that fail.
-pub const XML: [Mutation; 33] = [
+pub const XML: [Mutation; 36] = [
     Mutation {
         name: "xml-element-type-match",
         package: Package::Core,
@@ -341,5 +341,35 @@ pub const XML: [Mutation; 33] = [
         replacement: "    let range: i128 = ZONE_RANGE.saturating_mul(0);",
         integration: &[],
         unit: &["xml::atomic::value::tests::the_partial_order_of_dates_and_times"],
+    },
+    Mutation {
+        name: "xml-pattern-facet",
+        package: Package::Core,
+        breaks: "a literal matching no pattern of a derivation step is valid",
+        file: "src/xml/schema/validate.rs",
+        original: "            if !matched {",
+        replacement: "            if false {",
+        integration: &[],
+        unit: &["xml::schema::tests::validation_by_facets"],
+    },
+    Mutation {
+        name: "xml-fraction-digits-facet",
+        package: Package::Core,
+        breaks: "a decimal of more digits than the facets allow is valid",
+        file: "src/xml/schema/validate.rs",
+        original: "            if most.is_some_and(|m| n > m) {",
+        replacement: "            if false {",
+        integration: &[],
+        unit: &["xml::schema::tests::validation_by_facets"],
+    },
+    Mutation {
+        name: "xml-restriction-narrows",
+        package: Package::Core,
+        breaks: "a restriction's bound may pass its base's",
+        file: "src/xml/schema/restrict.rs",
+        original: "        let order = base.facets.bound(*parent).and_then(|held| compare(value, &held.value));",
+        replacement: "        let order: Option<Ordering> = None;",
+        integration: &[],
+        unit: &["xml::schema::tests::restriction_of_values"],
     },
 ];

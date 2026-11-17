@@ -2891,6 +2891,15 @@ after its sequence normalization. It writes no CDATA section, document
 type declaration or indentation, and writes as character references what a
 parse would otherwise change.
 
+A simple type (`xml::SimpleType`) is a built-in type, a list, a union, or
+a restriction of one, holding its facets merged with its base's as it is
+made, so a validation never walks its derivation. Each pattern is
+compiled once, as `regex` reads XML Schema's (D61). Validating a literal
+normalizes its white space, matches each derivation step's patterns,
+reads its value, then checks each other facet; a literal or value not
+valid is err:FORG0001, as a cast reports it. Lists and unions nest at
+most `MAX_TYPE_NESTING`, 32, deep (D18).
+
 A value's stored form (`xml::encode`, version 1) is binary and read in one
 pass, in document order, as Pal et al. store XML. Each node item has a
 table of its names, each once, then its nodes as events: document, element
