@@ -99,6 +99,8 @@ fn loaded(bench: &Bench) -> (RowStore, Arc<dyn TableStorage>, RTree) {
     let store = RowStore::new(TableFiles::new(pool, file, Arc::new(MemoryLog::new())), TableOptions::default());
     let columns = [("ID", DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer }), ("G", data_type_with_srid(0).unwrap())];
     let desc = TableDesc {
+        periods: Vec::new(),
+        typed: None,
         name: QualifiedName { auth: "B".into(), ident: "POINTS".into() },
         columns: columns
             .into_iter()
