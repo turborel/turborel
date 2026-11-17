@@ -8,7 +8,9 @@ use turborel::disk::encoding::Pipeline;
 use turborel::disk::io::OsFileSystem;
 use turborel::disk::pager::Pager;
 use turborel::error::Result;
-use turborel::index::{BTreeMethod, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe, RTreeMethod};
+use turborel::fulltext::matches::TextMatches;
+use turborel::functions::ScalarRef;
+use turborel::index::{BTreeMethod, FullTextMethod, HashMethod, Index, IndexMethod, Key, KeyOrder, Predicate, Probe, RTreeMethod};
 use turborel::storage::RowId;
 use turborel::value::{CompOp, DataType, Spelled, Value, compare};
 
@@ -259,5 +261,78 @@ fn spatial_method_keeps_the_index_contract() {
         index_contract(&method, &[approximate.clone(), approximate.clone()], point);
         prefix_contract(&method, &approximate, value);
         range_contract(&method, &approximate, value);
+    }
+}
+
+/// The documents of the full-text contract, ids from 1: a duplicate, and
+/// one of two words a search of both finds.
+const DOCUMENTS: [&str; 4] = ["the quick fox", "a lazy dog", "the quick fox", "quick brown dogs"];
+
+/// A document as a key of one column.
+fn document(text: &str) -> Key {
+    Key(vec![Value::Char(text.to_owned())])
+}
+
+/// The ids a TEXT_MATCHES lookup of `words` selects in `index`, sorted.
+fn matched(index: &Arc<dyn Index>, words: &str) -> Vec<RowId> {
+    let predicate = Box::new(Predicate { function: ScalarRef(Arc::new(TextMatches)), column: 0, argument: 0 });
+    let probe = Probe::Predicate { predicate, value: Value::Char(words.to_owned()) };
+    let mut ids: Vec<RowId> = searched(index, &probe).unwrap().into_iter().map(|(_, id)| id).collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// Verifies: [EXTENSION] RULES.md D34, D86: the fulltext method keeps the
+/// index contract in memory and in a pager file. It answers no comparison
+/// and only a TEXT_MATCHES lookup of its one character string column. A
+/// new index is empty; `Probe::All` gives every entry, each with the key
+/// its projection makes of its document, one for documents alike; a
+/// lookup gives the rows holding every word; entries are counted, a pair
+/// inserted twice staying until removed twice; a key's rows read as taken
+/// are those `Index::rows` gives; a key it cannot read is an error.
+#[test]
+fn full_text_method_keeps_the_index_contract() {
+    let scratch = Scratch::new("contract-fulltext");
+    let pager = Pager::create(&OsFileSystem, &scratch.path("index"), crc32c(), Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(64, Box::new(Clock::new(64))).unwrap());
+    let file = pool.add_pager(Arc::new(pager));
+    let text = DataType::varying(100);
+    for method in [FullTextMethod::in_memory(), FullTextMethod::new(pool, file)] {
+        assert!(OPERATORS.iter().all(|op| !method.supports(*op)) && !method.ordered(), "it compares nothing");
+        assert!(
+            method.create(&[DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }]).is_err()
+                && method.create(&[text.clone(), text.clone()]).is_err()
+        );
+        let index: Arc<dyn Index> = Arc::from(method.create(std::slice::from_ref(&text)).unwrap());
+        assert!(searched(&index, &Probe::All).unwrap().is_empty(), "a new index is empty");
+        for (id, d) in (1..).zip(DOCUMENTS) {
+            index.insert(document(d), id).unwrap();
+        }
+        let all = searched(&index, &Probe::All).unwrap();
+        let key_of = |id: RowId| all.iter().find(|(_, i)| *i == id).map(|(k, _)| k.clone()).unwrap();
+        assert_eq!(all.len(), 4);
+        assert_eq!(key_of(1), key_of(3), "documents alike, keys alike");
+        assert_ne!(key_of(1), key_of(2));
+        assert_eq!(matched(&index, "quick"), [1, 3, 4]);
+        assert_eq!(matched(&index, "quick dogs"), [4], "every word");
+        assert_eq!(matched(&index, "Quick DOG"), Vec::<RowId>::new(), "words normalized, not stemmed");
+        assert_eq!(matched(&index, "cat"), Vec::<RowId>::new());
+        let rows = |d: &str| {
+            let mut r = index.rows(&document(d)).unwrap();
+            r.sort_unstable();
+            let mut taken: Vec<RowId> = Arc::clone(&index).key_rows(&document(d)).collect::<Result<_>>().unwrap();
+            taken.sort_unstable();
+            assert_eq!(taken, r, "a key's rows as read are its rows");
+            r
+        };
+        assert_eq!(rows(DOCUMENTS[0]), [1, 3]);
+        index.insert(document(DOCUMENTS[1]), 2).unwrap();
+        index.remove(&document(DOCUMENTS[1]), 2).unwrap();
+        assert_eq!((rows(DOCUMENTS[1]), matched(&index, "lazy")), (vec![2], vec![2]), "one insert left");
+        index.remove(&document(DOCUMENTS[1]), 2).unwrap();
+        index.remove(&document(DOCUMENTS[1]), 99).unwrap(); // absent: no change
+        assert_eq!((rows(DOCUMENTS[1]), matched(&index, "lazy")), (Vec::new(), Vec::new()));
+        let wrong: Vec<Result<RowId>> = Arc::clone(&index).key_rows(&key(1)).collect();
+        assert!(matches!(wrong.as_slice(), [Err(_)]), "{wrong:?}");
     }
 }

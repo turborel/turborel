@@ -117,7 +117,8 @@ fn a_type_is_registered_once_by_its_name() {
     }
     db.register_type(Box::new(Ident)).unwrap();
     assert_eq!(db.register_type(Box::new(Named("IDENT", None))).err().map(|e| e.code), Some(Code::Api), "twice");
-    assert_eq!(db.types().unwrap().names().collect::<Vec<_>>(), ["IDENT"]);
+    // Beside the built-in full-text types (RULES.md D87).
+    assert_eq!(db.types().unwrap().names().collect::<Vec<_>>(), ["FT_PATTERN", "FULLTEXT", "IDENT"]);
 }
 
 /// Verifies: [EXTENSION] RULES.md D53: a column of a type beyond the

@@ -20,7 +20,7 @@
 //! account of collations [F&O 3.1 §5.6.3].
 
 mod backtrack;
-mod class;
+pub(crate) mod class;
 mod class_expr;
 mod compile;
 mod flags;
@@ -29,7 +29,7 @@ mod parse;
 mod pike;
 mod replace;
 mod text;
-mod unicode;
+pub(crate) mod unicode;
 
 use compile::{Program, compile};
 use flags::{Flag, Flags};

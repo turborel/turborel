@@ -37,6 +37,8 @@ impl Eq for Distance {}
 pub(super) struct Threshold {
     heap: BinaryHeap<Distance>,
     first: usize,
+    /// Whether its values are negated scores, at most 0 (D87).
+    negated: bool,
     _held: Reservation,
 }
 
@@ -54,7 +56,12 @@ impl Threshold {
             return None;
         }
         held.resize(allocated).ok()?;
-        Some(Self { heap, first, _held: held })
+        Some(Self { heap, first, negated: false, _held: held })
+    }
+
+    /// It, of negated scores, each at most 0, as a descending read gives.
+    pub(super) fn negated(self, negated: bool) -> Self {
+        Self { negated, ..self }
     }
 
     pub(super) fn full(&self) -> bool {
@@ -62,7 +69,7 @@ impl Threshold {
     }
 
     pub(super) fn add(&mut self, distance: f64) -> Result<()> {
-        valid(distance)?;
+        self.valid(distance)?;
         if !self.full() {
             self.heap.push(Distance(distance));
         } else if let Some(mut greatest) = self.heap.peek_mut()
@@ -74,16 +81,19 @@ impl Threshold {
     }
 
     pub(super) fn beyond(&self, bound: f64) -> Result<bool> {
-        valid(bound)?;
+        self.valid(bound)?;
         Ok(self.full() && self.heap.peek().is_some_and(|greatest| bound > greatest.0))
     }
-}
 
-fn valid(distance: f64) -> Result<()> {
-    if !distance.is_finite() || distance < 0.0_f64 {
-        return Err(broken("a nearest distance or bound is not finite and nonnegative"));
+    /// Whether `distance` is finite, and nonnegative, or of a negated
+    /// score at most 0.
+    fn valid(&self, distance: f64) -> Result<()> {
+        let signed = if self.negated { -distance } else { distance };
+        if !distance.is_finite() || signed < 0.0_f64 {
+            return Err(broken("a nearest distance or bound is not finite and nonnegative"));
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(test)]

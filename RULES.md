@@ -123,6 +123,8 @@ verification approach DO-178C expects (§8).
 | D83 | A column is renamed in place, refused while a text names it |
 | D84 | SQL/JSON items hold SQL values, and a path is parsed once, apart from SQL |
 | D85 | Geometry values start with XY representations through SqlType |
+| D86 | An inverted index keeps terms, places and counts in one B-link tree |
+| D87 | SQL/MM Full-Text is built in, its methods calls of registered functions |
 
 ### The project
 
@@ -2878,6 +2880,130 @@ functions have one learned plan shape even when preparation changes the
 function object. Ordinary function probes still require object identity;
 matching SQL names alone never establish equivalence.
 
+#### D86. An inverted index keeps terms, places and counts in one B-link tree
+
+The index method `fulltext` (`index/fulltext.rs`) finds rows by the words
+of one character string column, for TEXT_MATCHES \[EXTENSION\] and the
+full-text search of ISO/IEC 13249-2:2002 (CD, SC32 N0640). Its column's
+text is cut into words by the tokenizer (`fulltext/text.rs`), whose every
+rule is implementation-defined [13249-2 §4.1, §4.4, §4.5] and listed in
+CONFORMANCE.md. The tokenizer reads a document a character at a time and
+holds only the word it is reading, so a large object is never held whole
+(D79).
+
+An index is one B-link tree (D31), its keys tagged by their first byte.
+Each distinct document of a row, its row and its hash, takes a document
+number from a counter in `C`, never used again. `D` keys map the row and
+hash to its entry count, number and length, and `N` keys map the number
+back. A term's postings are blocks of at most 128 documents under `P`
+keys of the term and the block's first number. A block holds the numbers
+as varint deltas, then each document's term frequency, then each
+document's places, its own length first so a reader skips them: each
+word's ordinal, sentence, paragraph and character offset as deltas. A
+document whose places would take more than a quarter of a block keeps
+them in `Q` chunk entries. The block keys are the skip list, so a search
+of a rare and a common term seeks past the common one's blocks without
+reading them. `H` keys find the rows of a document's hash, `S` keys keep
+each term's document frequency and greatest frequency, `W` keys map a
+stem to the terms of it and `C` keeps the documents and their total
+length. A document's postings are written as its first entry is
+inserted and taken out at its last, so versions of a row with the same
+text (D29) cost a count and nothing more. Stop words are posted nowhere,
+but count among the ordinals, so distances stay right [13249-2 §5.1.5].
+Postings take about 7 bytes each and a document's own entries about 90.
+
+The keys the index gives are a projection (D85's contract), a 128-bit
+hash of the document's tokens, so documents equal under SQL's comparison
+project alike and a reader keeps a row only if its visible version
+hashes the same. A document's places are sorted in a spill area (D38)
+before its postings are written, so no document is held whole in memory
+either. Writes of one row's entries are serialized by row stripes, as
+the R-tree's are (D72), so a version's insert and an older one's removal
+by garbage collection never lose a posting. A block is rewritten under a
+stripe of its term, taken after the row's and one at a time, so writers
+of one term never lose each other's documents. Entries are not logged.
+Recovery mends or rebuilds the index from its table (D25), and undo
+inserts and removes the full key, which tokenizes alike every time. A
+bulk load numbers documents in row order and writes full blocks.
+
+Its options (D41) are FULLTEXT.LANGUAGE, ENGLISH or NONE, and
+FULLTEXT.STOP_WORDS, DEFAULT for the language's list, NONE, or a list of
+words written with commas, normalized as a document's words are. The
+index is rebuilt for a change of either, as its postings follow them.
+FULLTEXT.K1 and FULLTEXT.B, the weights of BM25 ranking, change in
+place. A term is kept to its first 255 bytes, cut at a character, and a
+word to its first 256 characters. A longer one is found by its prefix
+and then checked against the row.
+
+#### D87. SQL/MM Full-Text is built in, its methods calls of registered functions
+
+The public types and routines of ISO/IEC 13249-2:2002 (CD, SC32 N0640)
+§12.1 are built in, as the index method `fulltext` (D86) is. FULLTEXT
+and FT_PATTERN are types beyond the standard (D53), registered as the
+database starts, and their routines are scalar functions (D74). A
+registered type is no user-defined type, so it declares no methods. A
+method of a value of one, `doc.Contains(p)` or `t.doc.Rank(p)`, is
+bound as the call of the registered function of its name whose first
+argument is the value, `CONTAINS(doc, p)` (`binder/structured.rs`).
+Such a call is bound whatever SQL.FUNCTION_CALLS is, as the standard
+writes the method that way. AS names no supertype of a registered type.
+
+Contains gives an INTEGER, 1 or 0, so a query writes `doc.Contains(p) =
+1`. A function declares the value its call is compared equal to where it
+stands for a predicate (`predicate_truth`), and a full-text index finds
+the rows of that comparison as of a BOOLEAN call (D34). Contains raises
+2FF01, 2FF02 or 2FF03 of a malformed pattern, so it is no
+`index_predicate`. It promises `rechecked_errors` instead. A call raises
+only of its pattern, alike for every row, and a call of a null document
+is null before its pattern is read. The index, given a pattern that
+raises, finds every row it holds of a value, so the WHERE check raises
+at the first row of a document exactly where a scan would (D15).
+
+Thesauri are the rows of the tables of clause 8, FT_THESAURUS's
+TERM_DICTIONARY, TERM_HIERARCHY, TERM_SYNONYM and TERM_RELATED, which a
+user makes with that clause's definitions. A scalar function reads no
+table, so a call of Contains or Rank whose pattern may name a thesaurus
+is given the relations as its last argument (`appended_query`). The
+binder appends an ARRAY of a query of them, read once in the statement's
+snapshot and with its user's privileges, if the tables are there. A
+constant pattern that names no thesaurus is given nothing. The index
+reads only the column and the pattern (`probe_arguments`), and finds
+every row it holds for a thesaurus expansion, which only the WHERE check
+expands. A statement's thesauri hold at most 65,535 relations, the
+greatest cardinality of an array.
+
+`NEW FullText(...)` is bound as the call of the registered function of
+the type's name, FULLTEXT. LANGUAGE is a reserved word, so its method is
+written `doc."LANGUAGE"`.
+
+A rank is a plug-in's choice, not the standard's [§5.1.3]. A `Ranking`
+weighs a term in a document from its index's statistics and bounds that
+weight for every document. BM25 is built in, and `Database::
+register_ranking` adds others, which an index names by its option
+FULLTEXT.RANKING, checked at CREATE and ALTER INDEX. The binder appends
+to a call of Rank or Contains the name of the full-text index of its
+document's column (`ranked_by_index`). A function that reads the
+statement's context (`uses_context`) is called with it (`call_in`), and
+the statement reads each index's statistics once, so every call and the
+index's own bounds see one snapshot. A rank is therefore NOT
+DETERMINISTIC, yet fixed within a statement. Of no index, Rank is BM25
+with every inverse document frequency 1. A character string document is
+read in the index's language, as the index reads it.
+
+A function that scores (`ranks`) is ordered greatest first through the
+nearest-neighbour path (D85), its bounds negated so the stream still
+ascends. `ORDER BY RANK(doc, p) DESC FETCH FIRST n ROWS ONLY` reads the
+index when a WHERE lookup of the same column excludes null documents,
+which DESC sorts first. The executor recomputes each candidate's rank,
+and a weight above its ranking's bound is SQLCODE -910, so a lying
+plug-in is refused, never trusted. A pattern given as a string is a
+constant cast to FT_PATTERN; a cast of a constant that succeeds raises
+for no row, so a lookup or a nearest read takes its value (`settled`).
+
+FT_INFORMATION_SCHEMA's views FT_FEATURES and FT_SCHEMATA [§9] are system
+tables (D37) of the views' columns, as clause 10's base tables are a
+model only [§10.1].
+
 ## 2. Project layout
 
 ```
@@ -3039,7 +3165,7 @@ R-TEST-6 was withdrawn with the golden-file tests (D6).
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
+| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[ISO/IEC 13249…]` (SQL/MM) of any part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
 | R-TRACE-2 | Code implementing a requirement **shall** cite it (R-DOC-4). `cargo xtask trace '§8.6'` lists a clause's tests. | review; `xtask trace` |
 | R-TRACE-3 | CONFORMANCE.md **shall** change with the change implementing or changing a clause. | review |
 

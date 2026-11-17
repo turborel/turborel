@@ -31,6 +31,8 @@ pub struct NearestRead {
     pub width: usize,
     /// The full distance call, evaluated once per qualifying row.
     pub measure: Expr,
+    /// Whether it is a score, read greatest first (D87).
+    pub descending: bool,
     /// The full WHERE condition, evaluated before ranking.
     pub condition: Option<Cond>,
     /// OFFSET plus FETCH count, excluding WITH TIES and PERCENT.
@@ -41,23 +43,56 @@ pub struct NearestRead {
     pub cost: f64,
 }
 
-/// The column and its argument position in a declared distance call.
+/// The column and its argument position in a declared distance call, or a
+/// score's (`ScalarFunction::ranks`), whose arguments after its first two
+/// are constants, as the index name the binder gives Rank (D87).
 pub(crate) fn distance_call(expr: &Expr) -> Option<(usize, usize, &ScalarRef, &Expr)> {
     let Expr::Call(function, args) = expr else { return None };
-    if !function.0.deterministic() || function.0.spatial_operation() != Some(SpatialOperation::Distance) {
+    let f = &function.0;
+    let ranks = f.ranks();
+    let distance = f.deterministic() && f.spatial_operation() == Some(SpatialOperation::Distance);
+    let (two, rest) = args.split_at(args.len().min(2));
+    let constants = rest.iter().all(|e| matches!(e, Expr::Const(_)));
+    if !(distance || ranks) || !constants || (!rest.is_empty() && !ranks) {
         return None;
     }
-    match args.as_slice() {
+    match two {
         [Expr::Column(column), other] => Some((*column, 0, function, other)),
         [other, Expr::Column(column)] => Some((*column, 1, function, other)),
         _ => None,
     }
 }
 
+/// Whether a call `distance_call` finds is a score, greatest first.
+fn descends(measure: &Expr) -> bool {
+    distance_call(measure).is_some_and(|(_, _, f, _)| f.0.ranks())
+}
+
+/// Whether `condition` is never true of a row whose `column` is null: one
+/// of its conjuncts is a lookup of a call of it (`predicate_call`), which is
+/// null of a null column (D34, D87).
+fn excludes_nulls(condition: Option<&Cond>, column: usize) -> bool {
+    let Some(condition) = condition else { return false };
+    if let Cond::And(a, b) = condition {
+        return excludes_nulls(Some(a), column) || excludes_nulls(Some(b), column);
+    }
+    let Some((function, args)) = crate::physical::access::predicate_call(condition) else { return false };
+    let Some(Expr::Column(first)) = args.first() else { return false };
+    let promised = function.0.index_predicate() || function.0.rechecked_errors();
+    promised && *first == column
+}
+
 impl NearestRead {
     pub(crate) fn query(&self) -> Option<NearestQuery> {
         let (_, argument, function, Expr::Const(value)) = distance_call(&self.measure)? else { return None };
-        Some(NearestQuery { function: function.clone(), column: 0, argument, value: value.clone() })
+        Some(NearestQuery {
+            function: function.clone(),
+            column: 0,
+            argument,
+            value: value.clone(),
+            descending: self.descending,
+            statistics: None,
+        })
     }
 }
 
@@ -65,11 +100,12 @@ impl PhysicalPlanner<'_> {
     pub(super) fn nearest(&self, keys: &[SortKey], input: &LogicalPlan) -> Option<Plan> {
         let first = self.first.filter(|&n| n > 0)?;
         let key = keys.first()?;
-        if key.descending || key.nulls_first {
-            return None;
-        }
         let LogicalPlan::Project { exprs, input: source } = input else { return None };
         let measure = exprs.get(key.column)?;
+        let descending = descends(measure);
+        if key.descending != descending {
+            return None;
+        }
         let (scan, condition) =
             if let LogicalPlan::Filter { cond, input: filtered } = &**source { (&**filtered, Some(cond)) } else { (&**source, None) };
         let LogicalPlan::Scan { table, needed, located, .. } = scan else { return None };
@@ -78,6 +114,10 @@ impl PhysicalPlanner<'_> {
             return None;
         }
         let (column, query) = self.nearest_query(measure, desc)?;
+        // A null measure comes last, or the rows of none come at all.
+        if key.nulls_first && !(descending && excludes_nulls(condition, column)) {
+            return None;
+        }
         let cost = self.nearest_cost((table, needed), condition, first)?;
         let index = self.db.catalog.indexes(table).into_iter().find(|ix| {
             if ix.columns.as_slice() != [column] || ix.is_collated() || self.db.building.contains(&ix.name) {
@@ -98,6 +138,7 @@ impl PhysicalPlanner<'_> {
             located: *located,
             width: scan.width(),
             measure: measure.clone(),
+            descending,
             condition: condition.cloned(),
             first,
             detail,
@@ -111,7 +152,10 @@ impl PhysicalPlanner<'_> {
 
     fn nearest_query(&self, measure: &Expr, desc: &TableDesc) -> Option<(usize, NearestQuery)> {
         let (column, argument, function, other) = distance_call(measure)?;
-        fixed_srid(&desc.columns.get(column)?.data_type)?;
+        let descending = function.0.ranks();
+        if !descending {
+            fixed_srid(&desc.columns.get(column)?.data_type)?;
+        }
         let value = if let Expr::Const(value) = other {
             value.clone()
         } else if let Expr::Dynamic(_) = other {
@@ -120,7 +164,7 @@ impl PhysicalPlanner<'_> {
         } else {
             return None;
         };
-        Some((column, NearestQuery { function: function.clone(), column: 0, argument, value }))
+        Some((column, NearestQuery { function: function.clone(), column: 0, argument, value, descending, statistics: None }))
     }
 
     fn nearest_cost(&self, (table, columns): (&QualifiedName, &[usize]), condition: Option<&Cond>, first: usize) -> Option<f64> {

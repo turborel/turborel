@@ -34,6 +34,7 @@ The claim follows SQL-86 §3.4.
 | Type | Full SQL conformance to Level 2, for SQL-DDL (`<schema>`, through `Database::schema`) and SQL-DML. |
 | Facilities | Direct processing of SQL statements through the Rust binding (`Session`, `Params`). §3.4 leaves the method and time of binding to the implementation. The module language and embedded SQL (COBOL, FORTRAN, Pascal, PL/I) are not claimed. |
 | Environment [§4.6, §4.7] | A database kept in a directory (`Database::open_files`) keeps its schemas and committed changes, and is recovered after a failure [§4.16]. A database made with `Database::new` is held in memory and ends with the process. |
+| SQL/MM Full-Text | The public types and routines of ISO/IEC 13249-2:2002 (CD, SC32 N0640) §12.1, built in, with the choices that part leaves to an implementation listed [below](#sqlmm-full-text) [§12.2]. |
 | Limits | SQL-86 sets one limit of its own, 18 characters in an `<identifier>` [§5.3 SR3], which SQL-92 raises to 128. A statement past one of this implementation's [limits](#limits) gets SQLCODE -900 ("valid, but not processed"). |
 
 Every outcome has an SQLSTATE beside its SQLCODE [ISO/IEC 9075:1992 §22.1].
@@ -1945,6 +1946,104 @@ reserves are never a correlation name written without AS.
 
 ---
 
+## SQL/MM Full-Text
+
+ISO/IEC 13249-2:2002, cited by its committee draft (CD, SC32 N0640), is
+built in (RULES.md D87). Its types FULLTEXT and FT_PATTERN, the FullText
+methods and FullText_to_Character, Contains, Rank, the thesaurus tables
+of clause 8 and FT_INFORMATION_SCHEMA's views FT_FEATURES and FT_SCHEMATA
+are implemented, as is the whole pattern language of §5.3.1. The manual
+is [doc/sql/fulltext.md](doc/sql/fulltext.md).
+
+A method is written `doc.Contains(p)`, or as a call, `CONTAINS(doc, p)`,
+and `NEW FullText(t)` is `FULLTEXT(t)`. LANGUAGE is a reserved word, so
+its method is written `doc."LANGUAGE"`. Contains gives 1 or 0, so a
+query compares it, `CONTAINS(doc, p) = 1`, and a full-text index of the
+column answers that comparison.
+
+### Implementation-defined values
+
+| Value | turborel |
+|---|---|
+| FT_MaxTextLength [§5.1.1 DR2] | 32,767 characters. A value is held inline, as every extension type's is; past it, SQLSTATE 22001 |
+| FT_MaxPatternLength [§5.3.1 DR1] | 32,767 characters |
+| FT_MaxLanguageLength [§5.1.1 DR4] | 32 |
+| FT_DefaultLanguage [§5.1.1 DR5] | ENGLISH |
+| Languages [§5.1.9] | ENGLISH and NONE, in any case, trailing blanks ignored; another, an empty or a null one is SQLSTATE 2FF02 |
+| FT_MinRankValue, FT_MaxRankValue [§5.1.3] | 0 and the greatest DOUBLE PRECISION |
+| FT_RankDeterminism [§5.1.1 DR6] | NOT DETERMINISTIC. A rank moves with its index's statistics, which a statement reads once, so it is fixed within a statement |
+| Thesauri [§8.3 D1] | Those whose names FT_THESAURUS's tables hold, made by the user with clause 8's definitions; at most 65,535 relations a statement, the greatest array |
+| Comparison of FULLTEXT values | §5.1.1 defines none. Two compare by language, then by text in code point order, and are equal only of the same language and text |
+| Casts | A character string casts to FULLTEXT in ENGLISH and FULLTEXT to a character string as its text [§5.1.10]. A string is no FULLTEXT by assignment; it is an FT_PATTERN by assignment |
+| A null string [§5.1.9] | FULLTEXT(NULL) is null, not a value of null contents |
+| A document of no characters [§5.1.2 D3c ii] | Contains gives 0 and Rank 0, of every pattern, NOT patterns too. A document of characters but no words matches a NOT pattern [§6.4.2] |
+| Nulls | A null document gives null before its pattern is read, then a null pattern null |
+
+### Reading patterns
+
+| Choice | turborel |
+|---|---|
+| Words [§5.3.1 D3a, D3b] | Separated by white space; any character but an unescaped `"`, `""` being one `"` |
+| Language specification [§5.3.1 D3c] | A name just before the quote, in any case; else the document's language |
+| Normalization [§4.5, §6.4.5] | A word with no wild card is cut as a document is, so `"e-mail"` is the phrase e mail; a run between wild cards is normalized. Such a phrase inside a NEAR list is SQLSTATE 2FF01 |
+| Escapes | An escape before anything but itself, `%` or `_` is 2FF01, as is an escape not one character |
+| Optional words | A phrase part of unescaped `%` alone; a phrase of optional words alone is 2FF01 |
+| Stop words [§4.4.2, §6.6.2] | Never 2FF01. A pattern of stop words alone is 2FF03. A lone stop word matches nothing, and inside a phrase matches any stop word of the document |
+| A literal of another language [§6.4.2, §6.5.2] | LIKE over normalized text, its stop words and stems of its own language |
+| Phrases | May cross a sentence's end; in a context condition a match lies wholly in one unit |
+| IS ABOUT [§6.17.2] | Any word of the phrase that is not a stop word |
+| SOUNDS LIKE [§6.9.5] | American Soundex of the word's ASCII letters; a word of none matches itself only |
+| FUZZY FORM OF [§6.10.5] | Optimal string alignment distance at most 1, or 2 of a word of 8 or more characters |
+| Thesaurus terms | Deduplicated, read in the start term's language and matched literally; names compared trimmed of blanks; synonyms transitive [§6.13.5] |
+| Nesting | At most 100 levels, else 2FF01; a thesaurus expansion adds at most 64 |
+
+### Tokenizing [§5.1.4–§5.1.8]
+
+| Choice | turborel |
+|---|---|
+| Stop words | Left out of every result, as two of them need compare equal [§5.1.5 D4]; ordinals count them [D7–D9] |
+| TokenizePosition units [§5.1.5 D2] | CHARACTERS, WORDS, SENTENCE(S), PARAGRAPH(S), in any case; another gives null [D5b] |
+| Segmentize units [§5.1.6 D2] | SENTENCE and PARAGRAPH; another gives null, as the draft names no condition |
+| CHARACTERS places | POSITION the word's first character from 1, CORRVAL its length as written; 0 of other units |
+| Segments | From the previous segment's end to the white space after its last word, trimmed, in SELF's language; only sentences and paragraphs holding a word count |
+| Arrays | At most 65,535 elements, else SQLSTATE 2202F; a document of no words gives an empty array |
+
+### Readings of the draft
+
+| Text | Reading |
+|---|---|
+| Proximity, §4.2.5.1 against §6.8.2 | §6.8.2. A distance is the difference of positions in the unit; IN ORDER means the second at or after the first, so two words of one sentence are in order both ways under SENTENCES; WITHIN 0 WORDS is one word, which may match both lists; under CHARACTERS the distance is the characters between the words |
+| Bare lists beside NEAR | Accepted, as §4.2.5.1's example and §5.3.1 D5f write them, though the grammar asks for parentheses |
+| Units [§5.3.1 D3f] | Singular and plural after WITHIN and IN SAME. CHARACTERS and WORDS after IN SAME are 2FF01 |
+| FUZZY FORM OF | Of a `<word>`, as the grammar says, though D5j speaks of phrases |
+| FOR n LEVELS [§6.11.5] | n steps. The draft's query recurses while LEVEL < n from 0, which gives n+1. Without FOR, every level [NOTE 14] |
+| BROADER, NARROWER, SYNONYM, RELATED | Include the start term. PREFERRED and TOP include it only when nothing else is found |
+| TokenizeAndStem, TokenizePositionAndStem | Their own clauses' types, §5.1.7 and §5.1.8, over §5.1.1's FullText ARRAY |
+| FullText_Token, FT_TokenPosition [§7.1, §5.2.1] | CHARACTER VARYING(1024), and a ROW of TOKEN, POSITION and CORRVAL |
+
+### Ranking [EXTENSION]
+
+Rank's value is implementation-dependent [§5.1.3]. It is BM25
+(Robertson and Walker, SIGIR 1994), the sum over the terms the pattern's
+words match, outside NOT, of idf × tf(k1+1) / (tf + k1(1 − b + b·len/avg)),
+with idf = ln(1 + (N − df + 0.5)/(df + 0.5)). k1 and b are the index's
+FULLTEXT.K1 (1.2) and FULLTEXT.B (0.75). The statistics are those of the
+full-text index of the document's column, the first by name of several;
+of no index, every idf is 1.
+
+`Database::register_ranking` adds a ranking, named by an upper-case
+identifier, which an index names by FULLTEXT.RANKING (default BM25,
+changed in place). An unknown name is SQLCODE -103; a ranking giving a
+weight above its own bound is -910. `ORDER BY RANK(doc, p) DESC FETCH
+FIRST n ROWS ONLY`, with a CONTAINS lookup of the same column, reads the
+index best first and stops early. A character string or CLOB document
+[EXTENSION] is read in its index's FULLTEXT.LANGUAGE, else ENGLISH.
+
+### Not implemented
+
+FT_DEFINITION_SCHEMA's base tables [§10] are a model only; the
+information schema views are system tables of the same columns.
+
 ## Extensions
 
 These facilities go beyond the standards, and the code marks them
@@ -2082,8 +2181,8 @@ No Simple Features or SQL/MM Spatial conformance is claimed.
 
 ### Indexes
 
-These are RULES.md D34, of the methods `btree`, `hash` and `rtree`, or a
-plug-in's. The statements run outside a transaction. The `rtree` method
+These are RULES.md D34, of the methods `btree`, `hash`, `rtree` and
+`fulltext`, or a plug-in's. The statements run outside a transaction. The `rtree` method
 indexes two approximate-numeric point coordinates or four rectangle
 coordinates and answers independent SQL comparisons (`index/rtree.rs`,
 `physical/access/columns.rs`, D72). Inner joins can bind these comparisons
@@ -2118,6 +2217,43 @@ expression or another part of the filter can raise, the table is read
 whole so the lookup cannot hide the error (D15). The built-in `btree` and
 `hash` methods retain their comparison lookups; a plug-in supplies the
 function lookup.
+
+### Full-text search
+
+TEXT_MATCHES(document, words) is true of a document holding every word
+of `words` that is not a stop word, true of a search of stop words
+alone, and null of a null argument (`fulltext/matches.rs`). Both are
+character strings or large objects, read a piece at a time. It reads
+both in English and compares words normalized, not stemmed. ISO/IEC
+13249-2:2002 (CD, SC32 N0640) searches by its FULLTEXT type's CONTAINS
+method instead, [below](#sqlmm-full-text).
+
+The index method `fulltext` answers TEXT_MATCHES of one character string
+column (`index/fulltext.rs`, RULES.md D86). Its options are
+FULLTEXT.LANGUAGE, ENGLISH or NONE, and FULLTEXT.STOP_WORDS, DEFAULT,
+NONE or a list of words, each a rebuild; and FULLTEXT.K1 (0 to 1000,
+1.2) and FULLTEXT.B (0 to 1, 0.75), BM25's weights, changed in place. A
+column with a collation is refused (SQLCODE -900), as its key is its
+sort key and not its text. A word the index takes for a stop word has no
+entries, so a search of it reads the table. A document's places are
+sorted in a work area of 4 MiB before its postings are written, spilling
+beyond it (D38).
+
+13249-2 leaves the tokenizer to the implementation [§4.1, §4.4, §4.5].
+These are turborel's choices (`fulltext/text.rs`).
+
+| Choice | turborel |
+|---|---|
+| Word | A run of Unicode 13.0 letters, numbers and marks, two joined by one connector (Pc) or, between letters, one apostrophe (U+0027 or U+2019). Each Han, Hiragana or Katakana character is a word |
+| Sentence end | `.`, `!` or `?`, with closing brackets and quotes after it, then a blank, a line terminator or the end; U+3002, U+FF01, U+FF0E and U+FF1F alone |
+| Paragraph end | Two line terminators with only blanks between, or U+2029 |
+| Ordinals | Every word, stop words too, from 1; sentences and paragraphs from 1, counting those holding a word |
+| Offset and length | In characters, as written |
+| Normalization [§4.5] | Simple case folding, canonical decomposition, folding again, nonspacing marks (Mn) removed, U+2019 made U+0027 |
+| Stop words [§4.4.2] | English, Snowball's list of 174; NONE, none |
+| Stems [§4.2.3.4] | English, Porter2 (Snowball English, 2006); NONE, the word |
+| Languages [§5.1.9] | ENGLISH, NONE; another is SQLSTATE 2FF02 |
+| Word and term length | A word's first 256 characters; a term's first 255 bytes of UTF-8, cut at a character |
 
 ### Users
 

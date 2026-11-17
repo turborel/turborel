@@ -486,10 +486,12 @@ impl State {
         for ix in indexes {
             let method =
                 self.methods.get(&ix.method).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index method {}", ix.method)))?;
-            let types = self.catalog.table(&ix.table).and_then(|t| ix.key_types(t));
-            let types =
-                types.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] index {} is on a column its table lacks", ix.name)))?;
-            let index = method.create(&types)?;
+            let found = self.catalog.table(&ix.table).and_then(|t| ix.key_types(t).map(|types| (t, types)));
+            let (table, types) =
+                found.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] index {} is on a column its table lacks", ix.name)))?;
+            // Made as CREATE INDEX made it, its options and its table's
+            // read again (RULES.md D41).
+            let index = method.create_on(&types, (table, &ix))?;
             self.load_index(&*index, &ix, Timestamp::MAX)?;
             self.indexes.insert(ix.name.clone(), Arc::from(index));
         }

@@ -25,8 +25,15 @@ and writing the table, and then puts it in the old one's place. It is
 made at once, apart from any transaction: no ROLLBACK undoes it.
 
 The options are those the index's method declares and those plug-ins
-declare for every index; the built-in methods, `btree`, `hash` and `rtree`,
-declare none. INFORMATION_SCHEMA.INDEX_OPTIONS shows an index's options.
+declare for every index; of the built-in methods, `btree`, `hash` and
+`rtree` declare none, and `fulltext` declares those of
+[Full-Text Search](../fulltext.md). INFORMATION_SCHEMA.INDEX_OPTIONS shows an index's options.
+
+Of a `fulltext` index, FULLTEXT.K1, FULLTEXT.B and FULLTEXT.RANKING
+change in place, as the index's entries do not depend on how its rows
+are ranked. FULLTEXT.RANKING names BM25 or a ranking the program
+registered, and Rank scores by it from the next statement on.
+FULLTEXT.LANGUAGE and FULLTEXT.STOP_WORDS build the index again.
 
 ## RULES
 

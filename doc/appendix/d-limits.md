@@ -25,6 +25,10 @@ SQLSTATE 0A000.
 | A multiset's elements | 65,535; past it, SQLSTATE 2200Q |
 | A number in JSON text or an SQL/JSON path | an exact one within DECFLOAT's range, an approximate one within DOUBLE PRECISION's |
 | The precision of an SQL/JSON item method | decimal() 18 digits; time(), time_tz(), timestamp() and timestamp_tz() 6, and a string datetime() reads, or its template's FF*n*, 6 digits of a second's fraction |
+| A FULLTEXT value or a full-text search pattern | 32,767 characters; past it, SQLSTATE 22001 |
+| A full-text language's name | 32 characters |
+| The array a full-text tokenizing method gives | 65,535 elements; past it, SQLSTATE 2202F |
+| The relations of the thesauri a statement reads | 65,535 |
 
 ## Nesting
 
@@ -34,6 +38,9 @@ FROM clause. A deeper one is refused rather than run out of stack.
 
 Triggers run within triggers at most 16 deep: a trigger whose action
 runs a 17th fails its statement with SQLSTATE 09000, SQLCODE -900.
+
+A full-text search pattern nests at most 100 deep, and a deeper one is
+SQLSTATE 2FF01.
 
 Array, multiset and row types nest at most 16 deep, an array of rows of
 arrays counting three. A deeper type is refused as it is read.
@@ -76,6 +83,8 @@ text or binary result exceeds its limit fails with SQLCODE -900.
 | What | Limit |
 |---|---|
 | An index's key | of the default 8 KiB page, 2,007 bytes in a B-link tree, 8,116 in a hash index; of a 4 KiB page, 983 in a B-link tree; of a 64 KiB page, 16,343 in a B-link tree, 65,460 in a hash index |
+| A word a full-text index keeps | its first 256 characters, and of those its first 255 bytes in UTF-8; a longer word is found by that prefix and checked against the row |
+| A document a full-text index reads | none: it is read a word at a time |
 | A row | none: its long values are kept out of line |
 | A message to the server | SERVER.MAX_MESSAGE_BYTES, 16 MiB by default |
 | Connections at once | SERVER.MAX_CONNECTIONS, 100 by default |

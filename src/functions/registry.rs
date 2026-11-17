@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use super::{AggregateFunction, AggregateRef, Avg, Count, Extreme, ScalarFunction, ScalarRef, Sum, Truths, any_value, strings, trim};
 use crate::error::{Code, Result, fail};
+use crate::fulltext::matches::TextMatches;
 use crate::value::DataType;
 use crate::value::precedence::told_apart;
 
@@ -39,10 +40,20 @@ pub(crate) enum Standard {
     Avg,
 }
 
+/// The built-in functions of full text: TEXT_MATCHES (`fulltext/matches.rs`)
+/// and the routines of SQL/MM Full-Text (`fulltext/types.rs`, RULES.md
+/// D87).
+fn words() -> Vec<Arc<dyn ScalarFunction>> {
+    let mut words: Vec<Arc<dyn ScalarFunction>> = vec![Arc::new(TextMatches)];
+    words.extend(crate::fulltext::types::functions());
+    words
+}
+
 impl Registry {
     /// A registry holding the five SQL-86 set functions, EVERY, ANY and
-    /// SOME [ISO/IEC 9075-2:2023 §10.9], and the string functions of
-    /// SQL-92 [ISO/IEC 9075:1992 §6.6, §6.7, §6.13].
+    /// SOME [ISO/IEC 9075-2:2023 §10.9], the string functions of
+    /// SQL-92 [ISO/IEC 9075:1992 §6.6, §6.7, §6.13], and TEXT_MATCHES
+    /// \[EXTENSION\], which a full-text index answers (RULES.md D86).
     pub fn with_set_functions() -> Registry {
         let standard = [
             AggregateRef(Arc::new(Count)),
@@ -51,8 +62,12 @@ impl Registry {
             AggregateRef(Arc::new(Sum)),
             AggregateRef(Arc::new(Avg)),
         ];
-        let scalars =
-            strings::functions().into_iter().chain(trim::functions()).map(|f| (f.name().to_string(), vec![ScalarRef(f)])).collect();
+        let scalars = strings::functions()
+            .into_iter()
+            .chain(trim::functions())
+            .chain(words())
+            .map(|f| (f.name().to_string(), vec![ScalarRef(f)]))
+            .collect();
         let truths = [Truths::EVERY, Truths::ANY, Truths::SOME].map(|t| AggregateRef(Arc::new(t)));
         let any_value = [AggregateRef(Arc::new(any_value::AnyValue))];
         let aggregates = standard.iter().chain(&truths).chain(&any_value).map(|f| (f.0.name().to_string(), f.clone())).collect();

@@ -91,6 +91,8 @@ pub enum Extension {
     DataType,
     /// \[EXTENSION\] A `ServedConnections` (`Database::set_served_connections`).
     ServedConnections,
+    /// \[EXTENSION\] A ranking of full-text search (`Database::register_ranking`).
+    Ranking,
 }
 
 /// \[DESIGN\] An event of the database's.

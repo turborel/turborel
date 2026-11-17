@@ -29,6 +29,7 @@ fn read(value: Value, first: usize) -> NearestRead {
         located: false,
         width: 2,
         measure: Expr::Call(ScalarRef(Arc::new(GeometryFunction::Distance)), vec![Expr::Column(1), Expr::Const(value)]),
+        descending: false,
         condition: None,
         first,
         detail: String::new(),

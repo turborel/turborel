@@ -37,6 +37,7 @@
 mod definition;
 mod files;
 mod formats;
+mod fulltext;
 mod information;
 mod jobs;
 mod memory;
@@ -149,6 +150,7 @@ pub(crate) fn builtin() -> SystemTables {
         Arc::new(information::CatalogName),
     ];
     tables.extend(definition::tables());
+    tables.extend(fulltext::tables());
     tables.into_iter().map(|t| (name_of(&*t), t)).collect()
 }
 

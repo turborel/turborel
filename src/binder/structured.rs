@@ -24,7 +24,7 @@ pub(crate) use casts::assignment_cast;
 use std::sync::Arc;
 
 use super::{Binder, Scope, rule};
-use crate::ast::{RowValue, StructuredExpression, TypeList, TypeName, ValueExpression};
+use crate::ast::{ColumnSpecification, RowValue, StructuredExpression, TypeList, TypeName, ValueExpression};
 use crate::catalog::StructuredDesc;
 use crate::error::{At, Result};
 use crate::functions::{Constructed, ScalarFunction, ScalarRef};
@@ -83,14 +83,14 @@ impl Binder<'_> {
     ///
     /// Each form's, placed at `at`.
     pub(super) fn structured_expression(&self, (s, at): (&StructuredExpression, usize), scope: Scope<'_>) -> Result<(Expr, DataType)> {
-        self.structured_at(s, scope).or_at(at)
+        self.structured_at((s, at), scope).or_at(at)
     }
 
     /// `structured_expression`, its errors not yet placed.
-    fn structured_at(&self, s: &StructuredExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+    fn structured_at(&self, (s, at): (&StructuredExpression, usize), scope: Scope<'_>) -> Result<(Expr, DataType)> {
         match s {
             StructuredExpression::Method { subject, as_type, name, args } => {
-                self.method_invocation((subject, as_type.as_ref()), name, args, scope)
+                self.method_invocation((subject, as_type.as_ref()), (name, at), args, scope)
             }
             StructuredExpression::Static { udt, name, args } => self.static_method(udt, name, args, scope),
             StructuredExpression::New { udt, args } => self.new_specification(udt, args, scope),
@@ -118,11 +118,14 @@ impl Binder<'_> {
     fn method_invocation(
         &self,
         (subject, as_type): (&ValueExpression, Option<&TypeName>),
-        name: &str,
+        (name, at): (&str, usize),
         args: &[ValueExpression],
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
         let (e, t) = self.value_expression(subject, scope)?;
+        if let DataType::Extension(_) = &t {
+            return self.extension_method((subject, as_type), (name, at), args, scope);
+        }
         if let DataType::Distinct(d) = &t {
             let of = UdtName::new(&d.schema, &d.name);
             // [§6.18 SR, §9.19 SR6a] a distinct type has no proper supertype.
@@ -159,7 +162,7 @@ impl Binder<'_> {
     /// methods; `method_of`'s.
     pub(super) fn method_call(
         &self,
-        subject: &crate::ast::ColumnSpecification,
+        subject: &ColumnSpecification,
         (name, args): (&str, &[ValueExpression]),
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
@@ -184,5 +187,42 @@ impl Binder<'_> {
     /// As `type_predicate_of`'s.
     pub(super) fn type_predicate(&self, value: &RowValue, types: &TypeList, not: bool, scope: Scope<'_>) -> Result<Cond> {
         self.type_predicate_of(value, types, not, scope)
+    }
+}
+
+impl Binder<'_> {
+    /// \[EXTENSION\] (RULES.md D87) A method of a value of a registered
+    /// type, as `doc.Contains(p)` of SQL/MM Full-Text [ISO/IEC 13249-2:2002
+    /// §5.1.2]: the call of the registered function of its name whose
+    /// first argument is the value, `CONTAINS(doc, p)`. A registered type
+    /// is no user-defined type, so it declares no methods of its own, and
+    /// has no supertype for AS to name.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if AS names a type, or as the call's binding.
+    pub(super) fn extension_method(
+        &self,
+        (subject, as_type): (&ValueExpression, Option<&TypeName>),
+        (name, at): (&str, usize),
+        args: &[ValueExpression],
+        scope: Scope<'_>,
+    ) -> Result<(Expr, DataType)> {
+        if as_type.is_some() {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.18, §9.18 SR10a] a value of a registered type has no supertype for {name}")));
+        }
+        let args = std::iter::once(subject.clone()).chain(args.iter().cloned()).collect();
+        // A call by name, as SQL.FUNCTION_CALLS takes it or not, would
+        // refuse a method written as the standard writes it.
+        let call = ValueExpression::Call { schema: None, name: name.to_owned(), args, at, extension: true };
+        self.value_expression(&call, scope)
+    }
+
+    /// The column `name` of this query, of no table named, if it is of a
+    /// registered type, so `name.m(...)` is a method of it rather than a
+    /// function of a schema `name`.
+    pub(super) fn extension_basis(&self, name: &str, at: usize) -> Option<ColumnSpecification> {
+        let basis = ColumnSpecification { qualifier: None, column: name.to_owned(), catalog: None, at };
+        matches!(self.local(&basis), Ok(Some((_, DataType::Extension(_), _)))).then_some(basis)
     }
 }

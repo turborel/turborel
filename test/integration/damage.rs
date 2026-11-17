@@ -4,14 +4,15 @@
 //! a table's rows, by opening the database again; damage to the index
 //! entries alone is repaired at once, the indexes built again from the rows.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
-use turborel::catalog::{QualifiedName, TableDesc};
+use turborel::catalog::{IndexDesc, QualifiedName, TableDesc};
 use turborel::db::{Database, OpenOptions, Opened};
 use turborel::error::{Code, Result, fail};
 use turborel::index::{BTreeMethod, Entries, Index, IndexMethod, Key, KeyOrder, Probe};
-use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
+use turborel::settings::Kind;
+use turborel::storage::{Rebuild, Row, RowId, Rows, StorageEngine, TableOption, TableStorage};
 use turborel::threads::JobPolicy;
 use turborel::txn::{Concurrency, TxCapabilities, TxId, Undo};
 use turborel::value::{CompOp, DataType, Decimal, Value};
@@ -70,11 +71,16 @@ impl TableStorage for FlakyTable {
 
 /// The built-in ordered index method, named "flaky", whose indexes'
 /// `remove`, by which the coordinator undoes an entry, fails while
-/// `failing` is set.
+/// `failing` is set. It declares an option, FLAKY.FILL, and keeps the
+/// options of each index it is asked to make, in `made`.
 struct FlakyIndexes {
     inner: BTreeMethod,
     failing: Arc<AtomicBool>,
+    made: Arc<Mutex<Vec<String>>>,
 }
+
+/// The name of the option "flaky" declares.
+const FILL: &str = "FLAKY.FILL";
 
 struct FlakyIndex {
     inner: Arc<dyn Index>,
@@ -93,6 +99,15 @@ impl IndexMethod for FlakyIndexes {
     }
     fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
         Ok(Box::new(FlakyIndex { inner: Arc::from(self.inner.create(columns)?), failing: Arc::clone(&self.failing) }))
+    }
+    fn index_options(&self) -> Vec<TableOption> {
+        let fill = Value::Exact(Decimal::new(90, 0));
+        vec![TableOption::new((FILL, Kind::Integer { min: 10, max: 100 }, fill), Rebuild::Yes, "How full.")]
+    }
+    fn create_on(&self, columns: &[DataType], (_, index): (&TableDesc, &IndexDesc)) -> Result<Box<dyn Index>> {
+        let options: Vec<String> = index.options.iter().map(|(name, value)| format!("{name}={value}")).collect();
+        self.made.lock().unwrap().push(options.join(","));
+        self.create(columns)
     }
 }
 
@@ -154,15 +169,19 @@ fn rows_left_undone_doom_the_transaction_and_the_table() {
 /// entries a failed statement left behind damage the table's indexes
 /// alone; `repair_table` builds them again from its rows, after which the
 /// table takes statements again and its index finds its rows, and only
-/// them.
+/// them. An index built again is made with the options CREATE INDEX gave
+/// it (RULES.md D41).
 #[test]
 fn index_entries_left_undone_are_repaired_at_once() {
     let failing = Arc::new(AtomicBool::new(false));
+    let made = Arc::new(Mutex::new(Vec::new()));
     let db = Database::new();
-    db.register_index_method(Box::new(FlakyIndexes { inner: BTreeMethod::in_memory(), failing: Arc::clone(&failing) })).unwrap();
+    let method = FlakyIndexes { inner: BTreeMethod::in_memory(), failing: Arc::clone(&failing), made: Arc::clone(&made) };
+    db.register_index_method(Box::new(method)).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE U (K INTEGER NOT NULL UNIQUE, V INTEGER)").unwrap();
-    db.create_index("U_V", "X.U", &["V"], "flaky").unwrap();
     let s = db.session("X");
+    exec(&s, "CREATE INDEX U_V ON U (V) USING FLAKY WITH (FLAKY.FILL = 70)").unwrap();
+    assert_eq!(made.lock().unwrap().drain(..).collect::<Vec<_>>(), ["FLAKY.FILL=70"]);
     s.run("INSERT INTO U VALUES (1, 10)").unwrap();
     s.commit().unwrap();
     failing.store(true, Ordering::SeqCst);
@@ -172,6 +191,7 @@ fn index_entries_left_undone_are_repaired_at_once() {
     assert_eq!(rows(&s, "SELECT K FROM U"), Err(Code::Damaged));
     assert_eq!(db.index_entries("U_V").unwrap(), 2, "the one left behind");
     db.repair_table("X.U").unwrap();
+    assert_eq!(made.lock().unwrap().drain(..).collect::<Vec<_>>(), ["FLAKY.FILL=70"], "built again of its options");
     assert_eq!(db.damaged_tables().unwrap(), Vec::<QualifiedName>::new());
     assert_eq!(db.index_entries("U_V").unwrap(), 1);
     assert_eq!(rows(&s, "SELECT K FROM U WHERE V = 10"), Ok(vec!["1".into()]));

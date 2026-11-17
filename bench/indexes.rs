@@ -2,7 +2,8 @@
 //! database uses: "btree" (`index/blink.rs`) and "hash" (`index/hash.rs`),
 //! entries added under scattered integer keys, found again by equality as
 //! a query's probe and as a UNIQUE check, on one and on several threads,
-//! in a buffer pool that holds every index. Run with `cargo xtask bench`,
+//! in a buffer pool that holds every index; and "fulltext"
+//! (`index/fulltext.rs`), documents added and searched (`fulltext.rs`). Run with `cargo xtask bench`,
 //! on the harness (RULES.md R-BENCH-1).
 
 #![allow(
@@ -16,6 +17,8 @@
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
 
+#[path = "indexes/fulltext.rs"]
+mod fulltext;
 mod harness;
 
 use std::sync::Arc;
@@ -41,6 +44,7 @@ fn main() {
             workloads(&bench, method, threads);
         }
     }
+    fulltext::workloads(&bench);
 }
 
 /// The workloads of `method` on `threads` threads.

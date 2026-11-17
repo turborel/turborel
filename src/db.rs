@@ -7,10 +7,9 @@
 //!     CLOSE, COMMIT WORK, DELETE (positioned or searched), FETCH, INSERT,
 //!     OPEN, ROLLBACK WORK, SELECT ... INTO, UPDATE (positioned or searched).
 //!
-//! \[DESIGN\] A `Session` plays the part of an application program bound to a
-//! `<module>`: it has the module's authorization identifier, its cursors, and
-//! its current transaction. How a program is bound to a module is left to
-//! the implementation [X3.135-1986 §3.4], and so is this API.
+//! \[DESIGN\] A `Session` plays an application program bound to a `<module>`,
+//! with its authorization identifier, cursors and current transaction. The
+//! binding is left to the implementation [X3.135-1986 §3.4], as is this API.
 //!
 //! What SQL-86 leaves to the implementation is reached through Rust:
 //!
@@ -34,18 +33,18 @@
 //! | `Clock`             | the system's          | datetime functions (RULES.md D54) |
 //! | `BackgroundJob`     | none                  | plug-ins' jobs (RULES.md D55)    |
 //! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
+//! | `Ranking`           | BM25                  | full-text Rank (RULES.md D87)    |
 //!
-//! Plus the settings (`settings.rs`, RULES.md D36): each declared once in a
-//! registry, plug-ins' among them; the database's values, kept with its
-//! definitions, and each session's own (`db/settings.rs`).
+//! Plus the settings (`settings.rs`, RULES.md D36), declared once in a
+//! registry, plug-ins' too; the database's values and each session's own.
 //!
 //! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any
 //! number of threads (RULES.md D27). Each statement runs against a snapshot
 //! of the definitions taken when it starts, holding no lock on them while it
 //! runs; the data is guarded by the storage engines and indexes, and its
 //! isolation by the engine, or by the transaction coordinator's table locks
-//! for an engine that leaves it to them (RULES.md D29). A `Session` is
-//! used by one thread at a time, but may move between threads between calls.
+//! for an engine that leaves it to them (RULES.md D29). A `Session` is used
+//! by one thread at a time, and may move between threads between calls.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -105,6 +104,7 @@ mod nested;
 mod position;
 mod prepared;
 pub(crate) mod ptf;
+mod rankings;
 mod recovery;
 mod rekey;
 mod revoke;

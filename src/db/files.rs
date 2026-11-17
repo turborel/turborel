@@ -69,7 +69,7 @@ use crate::disk::shadow::ShadowFileSystem;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::Result;
 use crate::files::FileManager;
-use crate::index::{BTreeMethod, HashMethod, RTreeMethod};
+use crate::index::{BTreeMethod, FullTextMethod, HashMethod, RTreeMethod};
 use crate::log::{FileLog, FileLogOptions, Log, Lsn, Records};
 use crate::storage::TableStorage;
 use crate::txn::Persistence;
@@ -535,7 +535,9 @@ impl Database {
         self.register_engine(Box::new(RowStore::new(files, TableOptions::default())))?;
         self.register_index_method(Box::new(BTreeMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(HashMethod::new(Arc::clone(&pool), file)))?;
-        self.register_index_method(Box::new(RTreeMethod::new(pool, file)))
+        self.register_index_method(Box::new(RTreeMethod::new(Arc::clone(&pool), file)))?;
+        let rankings = self.snapshot()?.rankings.closure();
+        self.register_index_method(Box::new(FullTextMethod::new(pool, file).with_rankings(rankings)))
     }
 
     /// Makes the definitions of `image` again, reopening its tables and

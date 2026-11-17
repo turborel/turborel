@@ -354,6 +354,15 @@ impl SqlState {
     /// SQL routine exception: function executed no return statement
     /// [ISO/IEC 9075-2:2023 §9.18 GR8b ix].
     pub const NO_RETURN_STATEMENT: SqlState = SqlState(*b"2F005");
+    /// SQL routine exception: invalid search expression [ISO/IEC
+    /// 13249-2:2002 (CD, SC32 N0640) §11].
+    pub const INVALID_SEARCH_EXPRESSION: SqlState = SqlState(*b"2FF01");
+    /// SQL routine exception: invalid language specification [ISO/IEC
+    /// 13249-2:2002 (CD, SC32 N0640) §11].
+    pub const INVALID_LANGUAGE_SPECIFICATION: SqlState = SqlState(*b"2FF02");
+    /// SQL routine exception: effectively empty search expression [ISO/IEC
+    /// 13249-2:2002 (CD, SC32 N0640) §11].
+    pub const EFFECTIVELY_EMPTY_SEARCH_EXPRESSION: SqlState = SqlState(*b"2FF03");
     /// Invalid cursor state.
     pub const INVALID_CURSOR_STATE: SqlState = SqlState(*b"24000");
     /// Invalid transaction state.

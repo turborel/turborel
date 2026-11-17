@@ -19,7 +19,9 @@ use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType, Value};
 
 mod predicate;
+
 use predicate::{omits_rows, supports};
+pub(crate) use predicate::{predicate_call, rechecked_lookup};
 
 /// \[DESIGN\] What a row an index-only scan makes of its entry costs, in
 /// rows of a scan of its table: its zone's visibility looked at and the
@@ -184,8 +186,9 @@ impl PhysicalPlanner<'_> {
         let all = cost_of(storage.row_count());
         // RULES.md D15: a probe reads only the rows its conjuncts select, so the
         // other conjuncts would not be evaluated on the rest. When one of them
-        // can raise an error it must see every row: probe no index then.
-        let answerable: &[Cond] = if conds.iter().any(Cond::can_raise) { &[] } else { conds };
+        // can raise an error it must see every row: probe no index then. A
+        // rechecked lookup raises where the scan would (D87).
+        let answerable: &[Cond] = if conds.iter().any(|c| c.can_raise() && !rechecked_lookup(c)) { &[] } else { conds };
         let (compared, ors) = comparisons(answerable, known, self.values);
         if let Some(path) = want.is_empty().then(|| self.point_path(read, (answerable, &compared), known.cost)).flatten() {
             return path;

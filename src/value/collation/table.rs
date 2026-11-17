@@ -119,7 +119,7 @@ pub(super) struct Implicit {
 }
 
 /// The table, its sections found.
-pub(super) struct Table {
+pub(crate) struct Table {
     chars: Section,
     elements: Section,
     contractions: Section,
@@ -143,7 +143,7 @@ impl Table {
     /// # Errors
     ///
     /// SQLCODE -916 if it does not hold what its header says.
-    pub(super) fn read() -> Result<Table> {
+    pub(crate) fn read() -> Result<Table> {
         if BYTES.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
             return Err(damaged());
         }
@@ -225,7 +225,7 @@ impl Table {
 
     /// `c`'s full canonical decomposition, added to `out`; `c` if it has
     /// none.
-    pub(super) fn decompose(&self, c: char, out: &mut Vec<char>) {
+    pub(crate) fn decompose(&self, c: char, out: &mut Vec<char>) {
         let parts = self.decompositions.find(u32::from(c), u32::MAX).and_then(|i| {
             let record = self.decompositions.u32_at(i, 1)?;
             let run = run_of(record)?;
@@ -238,12 +238,12 @@ impl Table {
     }
 
     /// `c`'s canonical combining class.
-    pub(super) fn class(&self, c: char) -> u32 {
+    pub(crate) fn class(&self, c: char) -> u32 {
         self.classes.find(u32::from(c), u32::MAX).and_then(|i| self.classes.u32_at(i, 1)).unwrap_or(0)
     }
 
     /// `c`'s simple case folding.
-    pub(super) fn fold(&self, c: char) -> char {
+    pub(crate) fn fold(&self, c: char) -> char {
         let folded = self.folds.find(u32::from(c), u32::MAX).and_then(|i| self.folds.u32_at(i, 1));
         folded.and_then(char::from_u32).unwrap_or(c)
     }

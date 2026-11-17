@@ -22,8 +22,9 @@ CREATE INDEX: make an index on a table *(extension)*
 
 CREATE INDEX makes an index on columns of a base table, kept by an index
 method: `btree`, a B-link tree, the default; `hash`, a linear hash table;
-`rtree`, a spatial tree over coordinate columns or fixed-SRID geometries; or a method a plug-in
-registers. The planner uses an index when its cost
+`rtree`, a spatial tree over coordinate columns or fixed-SRID geometries;
+`fulltext`, an inverted index of a text column's words; or a method a
+plug-in registers. The planner uses an index when its cost
 says the index is the cheaper way to find a query's rows: by the
 comparisons of its columns with constants in a WHERE clause, BETWEEN,
 IN lists of constants, ORs of these of one column, and LIKE patterns
@@ -82,6 +83,17 @@ joins and distance filters are not indexed yet. See the
 [spatial guide](../../data/spatial/03-indexing.md) and
 [distance queries](../../data/spatial/05-distance.md) for runnable examples.
 
+A `fulltext` index takes one FULLTEXT column, or one character string
+column with no collation. It keeps each word of the column's text and
+the rows holding it, and supplies the rows for `CONTAINS(column, value)
+= 1` and `TEXT_MATCHES(column, value)`, where `value` is a constant or
+parameter, and the best ranked rows of a Contains filter ordered by
+`RANK(column, value) DESC` with FETCH FIRST. The executor checks each
+row it finds. Its options are FULLTEXT.LANGUAGE, FULLTEXT.STOP_WORDS,
+FULLTEXT.K1, FULLTEXT.B and FULLTEXT.RANKING, which names BM25 or a
+ranking the program registered. See [Full-Text Search](../fulltext.md) for its rules and the
+[full-text guide](../../data/fulltext/README.md) for runnable examples.
+
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each
 change. It is made at once, apart from any transaction: no ROLLBACK
@@ -89,8 +101,8 @@ undoes it.
 
 An index's name is an identifier, not of a schema: no two indexes of the
 database have one name. The options WITH sets are those the method
-declares and those plug-ins declare for every index; the built-in
-methods declare none. INFORMATION_SCHEMA.INDEXES lists the indexes, and
+declares and those plug-ins declare for every index; of the built-in
+methods, only `fulltext` declares any. INFORMATION_SCHEMA.INDEXES lists the indexes, and
 INDEX_OPTIONS their options.
 
 An index takes no UNIQUE: a UNIQUE or PRIMARY KEY constraint makes an
@@ -112,7 +124,7 @@ run again after COMMIT or ROLLBACK.
 3. Each column is the table's.
 4. No index has the name.
 5. The method is registered; its name is matched in any case. On a
-   temporary table, it is `btree`, `hash` or `rtree`.
+   temporary table, it is `btree`, `hash`, `rtree` or `fulltext`.
 6. Each option is declared, given once, of a value it accepts.
 
 ## PRIVILEGES
@@ -128,6 +140,7 @@ The table's schema is its user's.
 | 2A000 | -104 | Its user does not own the table's schema |
 | 0A000 | -900 | `rtree` is asked to index an unsupported column count or type |
 | TB910 | -910 | An `rtree` coordinate is non-finite or a rectangle has reversed bounds |
+| 0A000 | -900 | `fulltext` is asked to index other than one FULLTEXT column or one character string column with no collation |
 
 ## EXAMPLES
 
@@ -248,6 +261,28 @@ These small tables can still use scans; index choice is based on cost.
 See the [dispatch guide](../../data/spatial/README.md) for service-area
 joins and nearest-depot searches using the same query patterns.
 
+A full-text index of notes, its stop words its own:
+
+```sql
+CREATE TABLE NOTES (ID INTEGER PRIMARY KEY, BODY VARCHAR(200));
+INSERT INTO NOTES VALUES (1, 'Call the depot about the late van'), (2, 'Van serviced, depot informed');
+COMMIT;
+CREATE INDEX NOTES_BODY ON NOTES (BODY) USING FULLTEXT WITH (FULLTEXT.STOP_WORDS = 'the, about');
+SELECT ID FROM NOTES WHERE TEXT_MATCHES(BODY, 'depot van') ORDER BY ID;
+```
+
+```
+OK
+OK
+OK
+OK
+           ID
+--------------
+            1
+            2
+(2 rows)
+```
+
 Indexes refused, V a view:
 
 ```sql
@@ -286,4 +321,5 @@ An extension: neither SQL-86 nor SQL-92 has indexes.
 
 [ALTER INDEX](alter-index.md), [DROP INDEX](drop-index.md),
 [CREATE TABLE](create-table.md),
-[R-tree queries](../../data/spatial/03-indexing.md)
+[R-tree queries](../../data/spatial/03-indexing.md),
+[Full-Text Search](../fulltext.md)
