@@ -321,8 +321,9 @@ pub enum ValueExpression {
     },
     /// [ISO/IEC 9075:1992 §7.11] A `<scalar subquery>`.
     Subquery(Box<Subquery>),
-    /// [ISO/IEC 9075-14:2006 draft §6.8, §6.13, §6.16] An SQL/XML operator,
-    /// XMLDOCUMENT, XMLPARSE or XMLSERIALIZE, and where it begins.
+    /// [ISO/IEC 9075-14:2006 draft §6.6, §6.8, §6.13, §6.16] An SQL/XML
+    /// operator, XMLCAST, XMLDOCUMENT, XMLPARSE or XMLSERIALIZE, and where
+    /// it begins.
     Xml(Box<super::XmlOperator>, usize),
     /// [ISO/IEC 9075:1992 §6.6, §6.7, §6.13] A string function, or
     /// concatenation, read with its own syntax: the function registered

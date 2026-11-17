@@ -1,7 +1,10 @@
 //! Binding the SQL/XML operators [ISO/IEC 9075-14:2006 draft §6]:
-//! XMLDOCUMENT [§6.13], XMLPARSE [§6.16] and XMLSERIALIZE [§6.8], and the
+//! XMLCAST [§6.6] (`binder/xml/cast.rs`), XMLDOCUMENT [§6.13], XMLPARSE
+//! [§6.16] and XMLSERIALIZE [§6.8], and the
 //! document and content predicates [§8.2, §8.3], each a call of its
 //! function (`functions/xml.rs`).
+
+mod cast;
 
 use std::sync::Arc;
 
@@ -38,6 +41,7 @@ impl Binder<'_> {
     /// An SQL/XML operator: bound, and type-checked.
     pub(super) fn xml_operator(&self, x: &XmlOperator, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         match x {
+            XmlOperator::Cast { operand, target, passing } => self.xml_cast_specification(operand.as_ref(), target, *passing, scope),
             XmlOperator::Document { operand, returning } => {
                 let operand = self.xml_value_expression(operand, scope, "XMLDOCUMENT")?;
                 // [§6.13 SR3] CONTENT's type, or XML(SEQUENCE).

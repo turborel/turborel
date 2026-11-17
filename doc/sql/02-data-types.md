@@ -630,7 +630,7 @@ and may be elements of arrays and multisets.
 
 XML, XML(DOCUMENT), XML(CONTENT) and XML(SEQUENCE) hold XML documents
 and fragments of them. [XML Values](xml.md) describes them, and XMLPARSE,
-XMLDOCUMENT and XMLSERIALIZE, which make and write them.
+XMLDOCUMENT, XMLCAST and XMLSERIALIZE, which make and write them.
 
 ## Assignment and CAST
 

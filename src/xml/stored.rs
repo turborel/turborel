@@ -15,7 +15,11 @@
 //!       u8 3 end                                       closes
 //!       u8 4 text str | u8 5 comment str | u8 6 processing instruction u32 name, str
 //!       u8 7 attribute u32 name, u8 flags, str         a root alone
-//!   u8 1, an atomic value: u8 type (0 xs:string, 1 xdt:untypedAtomic), str lexical form
+//!   u8 1, an atomic value: u8 type, str canonical lexical form; the types
+//!       0 xs:string, 1 xdt:untypedAtomic, 2 xs:boolean, 3 xs:decimal,
+//!       4 xs:integer, 5 xs:float, 6 xs:double, 7 xs:date, 8 xs:time,
+//!       9 xs:dateTime, 10 xdt:yearMonthDuration, 11 xdt:dayTimeDuration,
+//!       12 xs:hexBinary
 //! ```
 //!
 //! A node stored is copied, as storing a value copies it
@@ -65,11 +69,22 @@ const IS_ID: u8 = 1;
 /// An attribute is an IDREF or IDREFS.
 const IS_IDREFS: u8 = 2;
 
-// Atomic types.
-/// `xs:string`.
-const STRING: u8 = 0;
-/// `xdt:untypedAtomic`.
-const UNTYPED_ATOMIC: u8 = 1;
+/// The atomic types, each stored as its place here.
+const ATOMIC_TYPES: [AtomicType; 13] = [
+    AtomicType::String,
+    AtomicType::UntypedAtomic,
+    AtomicType::Boolean,
+    AtomicType::Decimal,
+    AtomicType::Integer,
+    AtomicType::Float,
+    AtomicType::Double,
+    AtomicType::Date,
+    AtomicType::Time,
+    AtomicType::DateTime,
+    AtomicType::YearMonthDuration,
+    AtomicType::DayTimeDuration,
+    AtomicType::HexBinary,
+];
 
 /// What a reader of the stored form names in its errors.
 const WHAT: &str = "an XML value";
@@ -92,10 +107,8 @@ pub fn encode(value: &Sequence) -> Vec<u8> {
             }
             Item::Atomic(atomic) => {
                 out.put_u8(ATOMIC);
-                out.put_u8(match atomic.kind {
-                    AtomicType::String => STRING,
-                    AtomicType::UntypedAtomic => UNTYPED_ATOMIC,
-                });
+                let tag = ATOMIC_TYPES.iter().position(|&t| t == atomic.kind).and_then(|p| u8::try_from(p).ok());
+                out.put_u8(tag.unwrap_or(0));
                 out.put_str(&atomic.lexical);
             }
         }
@@ -262,10 +275,9 @@ pub fn decode(bytes: &[u8]) -> Result<Sequence> {
 
 /// An atomic value read.
 fn decode_atomic(reader: &mut Reader<'_>) -> Result<Atomic> {
-    let kind = match reader.u8()? {
-        STRING => AtomicType::String,
-        UNTYPED_ATOMIC => AtomicType::UntypedAtomic,
-        tag => return Err(reader.corrupt(&format!("an atomic value's type is {tag}"))),
+    let tag = reader.u8()?;
+    let Some(&kind) = ATOMIC_TYPES.get(usize::from(tag)) else {
+        return Err(reader.corrupt(&format!("an atomic value's type is {tag}")));
     };
     Ok(Atomic { kind, lexical: reader.str()?.into() })
 }

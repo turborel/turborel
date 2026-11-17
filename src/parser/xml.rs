@@ -1,5 +1,5 @@
 //! The grammar of SQL/XML [ISO/IEC 9075-14:2006 draft §6]: the XML type
-//! [§6.1], XMLDOCUMENT [§6.13], XMLPARSE [§6.16], XMLSERIALIZE [§6.8], and
+//! [§6.1], XMLCAST [§6.6], XMLDOCUMENT [§6.13], XMLPARSE [§6.16], XMLSERIALIZE [§6.8], and
 //! CAST's `<XML passing mechanism>` [§6.5].
 //!
 //! [§5.1] XML and the names of the operators are reserved words of
@@ -17,6 +17,8 @@ use crate::value::xml::{IMPLICIT, IMPLICIT_TYPING, Typing, XmlType};
 use crate::xml::{Syntax, Whitespace};
 
 // [§5.1] The words of SQL/XML this grammar reads.
+/// `<XML cast specification>`'s.
+pub const XMLCAST: &str = "XMLCAST";
 /// `<XML document>`'s.
 pub const XMLDOCUMENT: &str = "XMLDOCUMENT";
 /// `<XML parse>`'s.
@@ -149,6 +151,9 @@ impl Parser {
     /// [§6.10] An `<XML value function>`, or [§6.8] XMLSERIALIZE, if one
     /// is next: its word, no key word of SQL-92, then "(".
     pub(super) fn xml_primary(&mut self) -> Result<Option<ValueExpression>> {
+        if self.at_xml(XMLCAST) {
+            return self.xml_cast().map(Some);
+        }
         if self.at_xml(XMLDOCUMENT) {
             return self.xml_document().map(Some);
         }
@@ -159,6 +164,22 @@ impl Parser {
             return self.xml_serialize().map(Some);
         }
         Ok(None)
+    }
+
+    /// [§6.6] `<XML cast specification>` ::= XMLCAST ( `<XML cast operand>`
+    /// AS `<XML cast target>` \[`<XML passing mechanism>`\] ), the operand
+    /// a `<value expression>` or NULL, the target a `<data type>` or a
+    /// `<domain name>`.
+    fn xml_cast(&mut self) -> Result<ValueExpression> {
+        let at = self.here();
+        self.expect_word(XMLCAST)?;
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let operand = if self.accept_kw(kw::NULL) { None } else { Some(self.value_expression()?) };
+        self.expect_kw(kw::AS)?;
+        let target = self.type_name()?;
+        let passing = self.passing_mechanism()?;
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::Xml(Box::new(XmlOperator::Cast { operand, target, passing }), at))
     }
 
     /// [§6.13] `<XML document>` ::= XMLDOCUMENT ( `<XML value

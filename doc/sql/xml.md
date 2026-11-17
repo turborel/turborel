@@ -5,7 +5,8 @@
 The XML type holds XML documents and fragments of them, as SQL/XML
 (ISO/IEC 9075-14) defines it. XMLPARSE makes an XML value from text, and
 XMLSERIALIZE writes one back as text. XMLDOCUMENT makes a document node
-of a value, and IS DOCUMENT and IS CONTENT test what a value is.
+of a value, XMLCAST casts SQL values to XML and back, and IS DOCUMENT and
+IS CONTENT test what a value is.
 
 ## The type
 
@@ -160,6 +161,64 @@ OK
  <a/>
 (2 rows)
 turborel: SQLCODE -103 (SQLSTATE 2A000): CAST of XML(DOCUMENT(ANY)) to CHARACTER VARYING(80) is not valid [ISO/IEC 9075-14:2006 draft §6.5 SR3] (at character 7)
+```
+
+## XMLCAST
+
+```
+XMLCAST ( { <value expression> | NULL } AS { <data type> | <domain name> }
+          [ BY REF | BY VALUE ] )
+```
+
+XMLCAST casts a value of an SQL type to an XML type, or an XML value to
+an SQL type. Between two XML types it is CAST.
+
+An SQL value cast to XML(CONTENT) becomes a document node holding its
+text: a string's characters, a number as CAST writes it, a truth value
+as `true` or `false`, a date and time with a T between them, an interval
+as an XML duration such as `P01Y02M`, and a binary string in hex. Cast
+to XML(SEQUENCE), it becomes one atomic value of the XML Schema type its
+type maps to, in that type's canonical form: `xs:decimal` 1.5 for
+NUMERIC 1.50, `xdt:yearMonthDuration` P1Y2M. A character no XML 1.1
+character fails with SQLSTATE 0N002. No SQL value is cast to
+XML(DOCUMENT).
+
+An XML value cast to an SQL type gives the text of its one item: a
+document node's children, an element's text. That text, its white space
+collapsed, is read as a value of the XML Schema type the SQL type maps
+to, then cast to the SQL type, whose length, precision and range apply
+as CAST applies them. A date or time with a time zone is moved to UTC
+for a type without one; a type WITH TIME ZONE needs one (SQLSTATE
+22007). Text that is no such value, or more than one item, fails with
+SQLSTATE 10000; a value with no item is null.
+
+```sql
+SELECT ID, XMLCAST(BODY AS VARCHAR(20)) FROM ORDERS ORDER BY ID;
+VALUES (XMLSERIALIZE(XMLCAST(CAST(1.50 AS NUMERIC(5,2)) AS XML(CONTENT)) AS VARCHAR(20)), XMLSERIALIZE(XMLCAST(CAST(1.50 AS NUMERIC(5,2)) AS XML) AS VARCHAR(20)));
+VALUES (XMLCAST(XMLPARSE(CONTENT '<total currency="EUR"> 17.25 </total>' PRESERVE WHITESPACE) AS NUMERIC(6,1)));
+VALUES (XMLCAST(XMLPARSE(CONTENT '<due>2026-11-17T09:30:00-05:00</due>' PRESERVE WHITESPACE) AS TIMESTAMP));
+VALUES (XMLCAST(XMLPARSE(CONTENT '<qty>many</qty>' PRESERVE WHITESPACE) AS INTEGER));
+```
+
+```
+           ID |
+--------------+----------------------
+            1 | teacups
+            3 |
+(2 rows)
+                      |
+----------------------+----------------------
+ 1.50                 | 1.5
+(1 row)
+
+----------
+     17.2
+(1 row)
+
+----------------------------
+ 2026-11-17 14:30:00.000000
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error: 'many' is no lexical form of xs:integer [XQueryFO §17.1.1] err:FORG0001 [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j]
 ```
 
 ## XMLDOCUMENT

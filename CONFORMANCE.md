@@ -1861,8 +1861,8 @@ from the W3C texts the draft names, at the editions it names (RULES.md
 D86). Part 14 adds the XML type, whose values are XQuery sequences, and
 the operators that make them and write them.
 
-Features X010 (XML type), X016 (Persistent XML values), X030
-(XMLDocument), X060 and X061 (XMLParse: character string input and
+Features X010 (XML type), X016 (Persistent XML values), X025 (XMLCast),
+X030 (XMLDocument), X060 and X061 (XMLParse: character string input and
 CONTENT, DOCUMENT option), X065 and X066 (XMLParse: BLOB input and
 CONTENT, DOCUMENT option), X070 to X072 (XMLSerialize: character string
 serialization), X073 to X075 (XMLSerialize: BLOB serialization), X076
@@ -1882,6 +1882,7 @@ claimed.
 | Not comparable | §4.2.4, §10.8 SR1 to §10.11 SR1 | No equality, grouping or ordering operation takes an XML value: comparisons, IN, quantified comparisons, MATCH, UNIQUE, DISTINCT, IS DISTINCT FROM, NULLIF, a simple CASE, GROUP BY, ORDER BY, set operations but UNION ALL, MIN and MAX, a NATURAL or USING join's common column, keys and indexes, SQLCODE -103. |
 | Types brought together | §10.3 SR1 | XML types with XML types alone, of the type SR1b gives: SEQUENCE if one is, the one type, DOCUMENT(UNTYPED) if all are, CONTENT(UNTYPED) if all are UNTYPED, else CONTENT(ANY). |
 | IS DOCUMENT, IS CONTENT | §8.2, §8.3, §6.4 | Of one XML value, else SQLCODE -103 [SR1]. IS DOCUMENT is True of one document node whose children are one element and comments and processing instructions, IS CONTENT of one document node; Unknown of the null value; else False [GR2]. IS NOT is the negation [SR2]. Either is a `<when operand>` of a simple CASE. |
+| XMLCAST | §6.6, §9.5 GR8, §9.8 | Of or to an XML type [SR4], neither of nor to a collection, row, structured or reference type [SR5, SR10b i]; a passing mechanism of XML types alone [SR9]; NULL and `?` CAST to an XML type [SR10a, SR11]; to a domain, its data type [SR3a]. Of XML to XML, CAST [SR10b ii]. Of an SQL value to XML(CONTENT), XMLPARSE of its lexical form by §9.8, `&`, `<`, `>` and carriage returns mapped, a character no XML 1.1 character SQLSTATE 0N002 [GR3a to GR3c]; to XML(SEQUENCE), that cast as the built-in XML Schema type §9.5 maps its type to, one atomic value [GR3d]; to XML(DOCUMENT), SQLCODE -103 [SR7]. Of an XML value to an SQL type: document nodes replaced by their children, atomized, none the null value, more than one SQLSTATE 10000 [GR4b to GR4d]; cast as the XML Schema type, its lexical forms those of XML Schema Part 2, a value not of them 10000 [GR4j]; a date or time adjusted to UTC for a type without time zone [GR4j i to iii]; INF, -INF and NaN 22003 [GR4k v]; no time zone for a type WITH TIME ZONE, or a year past 0001 to 9999, 22007 [GR4k vi to viii]; then CAST to the SQL type [GR4l]. The types mapped are the character and binary strings, large objects too, the exact and approximate numbers, BOOLEAN, the datetimes and the intervals; DECFLOAT, which §9.5 does not map, SQLCODE -103. |
 | XMLDOCUMENT | §6.13, §11.4 | Of an XML value [§6.9 SR1]: XQuery's `document { $EXPR }`, a new document node of copies of the value's nodes, a document node's children in its place, adjacent atomic values one text node a space apart, an attribute SQLSTATE 10000, XQuery error [GR8]. Construction mode preserve keeps the ID and IDREFS properties [GR5]; an element copied from below another declares the bindings in its scope. The null value of the null value [GR2]. RETURNING CONTENT or SEQUENCE (X241, X242 for XMLDOCUMENT alone) [SR3]. |
 | CAST | §6.5 SR1 to SR4, GR1 | Of an XML type to an XML type alone [SR3]. BY REF is implicit [SR2], to an UNTYPED type of an UNTYPED one [SR4a]. BY VALUE copies the value. To a DOCUMENT or CONTENT type, as assignment checks it. |
 | XMLPARSE | §6.16, §10.16 | Of a character string or a binary string, large objects too. DOCUMENT parses a textual XML 1.0 or XML 1.1 document, else 2200M; CONTENT a document or an external parsed entity, else 2200N [GR6a]. The internal DTD subset's entities are expanded and its attribute defaults applied [GR7c, GR7d]. STRIP WHITESPACE removes text of white space alone by `xml:space` [GR8]. Its type is XML(DOCUMENT(UNTYPED)) or XML(CONTENT(UNTYPED)) [SR1]. |
@@ -1897,6 +1898,10 @@ claimed.
 | CAST's passing mechanism | §6.5 SR2 | BY REF. |
 | A routine's passing mechanism | §12.7 SR8b i, iii | BY REF, of each parameter and result of an XML type, as none is written. |
 | The lengths of NCNAME and URI | §20.1 Description 2, §20.2 Description 2 | CHARACTER_DATA's, 32767 characters: XML_SCHEMA_ELEMENT and XML_SCHEMA_NAMESPACE are CHARACTER VARYING(32767). |
+| XMLCAST's passing mechanism | §6.6 SR10b ii 1 | BY REF. |
+| XMLCAST's binary encoding | §6.6 SR1b | HEX: a binary string is an `xs:hexBinary`, in upper case. |
+| The XML Schema types of SQL's numbers and BOOLEAN | §9.5 GR8d iv, GR8e viii, GR8f | INTEGER, SMALLINT and BIGINT restrictions of `xs:integer`; REAL and FLOAT of 24 bits or fewer `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`; BOOLEAN `xs:boolean`. |
+| Limits of XQuery's atomic values | XQueryFO §10.1.1, §17.1.1 | A date's year from 0001 to 9999, else err:FODT0001; seconds, of times and of `xdt:dayTimeDuration`, to the microsecond, more digits dropped; a duration within 128 bits of months or microseconds, else err:FODT0002; `xs:decimal` and `xs:integer` of any digits, an SQL exact number of them its fraction cut to 38 digits. A float or double cast to a decimal is the shortest decimal that reads back as it. A zero time zone is written Z. |
 | XMLDOCUMENT's returning clause | §6.13 SR1 | RETURNING CONTENT. |
 | XMLDOCUMENT's type of CONTENT | §6.13 SR3a | XML(CONTENT(UNTYPED)), as no node turborel holds has a type of an XML Schema. |
 | XMLSERIALIZE's version and encoding | §6.8 SR2d, SR4d, SR4e | '1.0'. The encodings are UTF8, the default, and UTF16. |
@@ -1909,6 +1914,15 @@ claimed.
 | Base URI | §10.16 GR7b | None. |
 | External DTD | §10.16 GR7e | Not read, nor any external entity, so no parse opens a file or a URL. A reference that needs one, or a declaration not read, is the exception GR6 raises, as the data model has every entity expanded. |
 | The encoding of a binary string parsed | XML §4.3.3 | UTF-8, UTF-16 with its byte order mark, UTF-16BE and UTF-16LE that declare themselves, ISO-8859-1 and US-ASCII; another is refused. |
+
+XMLCAST of an XML value to an SQL type casts through the built-in XML
+Schema type §9.5 maps the SQL type to, not through the restriction of it
+§9.5 defines: the restriction's facets (a CHARACTER's length, a
+NUMERIC's digits, an INTEGER's range, a TIME's pattern of fraction
+digits) are not checked by the XQuery cast. CAST to the SQL type applies
+SQL's own length, precision and range instead, as GR4l's note describes,
+so `<a>ab</a>` cast to CHARACTER(5) is `'ab   '` where the facet would
+refuse it.
 
 The words of Part 14, XML and the operators' names among its reserved
 words, are no key words of SQL-92, so each stays an identifier, read as a

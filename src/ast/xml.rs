@@ -1,8 +1,8 @@
 //! Abstract syntax of the SQL/XML operators [ISO/IEC 9075-14:2006 draft
-//! §6], each a `ValueExpression::Xml`: XMLDOCUMENT [§6.13], XMLPARSE
-//! [§6.16] and XMLSERIALIZE [§6.8].
+//! §6], each a `ValueExpression::Xml`: XMLCAST [§6.6], XMLDOCUMENT
+//! [§6.13], XMLPARSE [§6.16] and XMLSERIALIZE [§6.8].
 
-use super::ValueExpression;
+use super::{TypeName, ValueExpression};
 use crate::value::DataType;
 use crate::xml::{Syntax, Whitespace};
 
@@ -28,6 +28,16 @@ pub enum Returning {
 /// An SQL/XML operator.
 #[derive(Debug, Clone)]
 pub enum XmlOperator {
+    /// [§6.6] `<XML cast specification>` ::= XMLCAST ( `<XML cast
+    /// operand>` AS `<XML cast target>` \[`<XML passing mechanism>`\] ).
+    Cast {
+        /// The `<value expression>`, or none for NULL.
+        operand: Option<ValueExpression>,
+        /// The `<XML cast target>`: a `<data type>`, or a `<domain name>`.
+        target: TypeName,
+        /// The `<XML passing mechanism>`, if written.
+        passing: Option<Passing>,
+    },
     /// [§6.13] `<XML document>` ::= XMLDOCUMENT ( `<XML value expression>`
     /// \[`<XML returning clause>`\] ).
     Document {
@@ -73,6 +83,11 @@ impl XmlOperator {
     /// Calls `f` on each value expression it holds.
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         match self {
+            XmlOperator::Cast { operand, .. } => {
+                if let Some(v) = operand {
+                    f(v);
+                }
+            }
             XmlOperator::Document { operand, .. } | XmlOperator::Parse { operand, .. } | XmlOperator::Serialize { operand, .. } => {
                 f(operand);
             }

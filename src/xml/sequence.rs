@@ -57,7 +57,9 @@ impl Node {
     }
 }
 
-/// The type of an atomic value [XQueryDM §2.6.2].
+/// The type of an atomic value [XQueryDM §2.6.2]: `xs:string` and
+/// `xdt:untypedAtomic`, and the XML Schema types SQL's types map to
+/// [ISO/IEC 9075-14:2006 draft §9.5 GR8, §6.6 GR3d ii] (`xml/atomic.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AtomicType {
     /// `xs:string`.
@@ -65,6 +67,28 @@ pub enum AtomicType {
     /// `xdt:untypedAtomic`, the type of the value of an attribute or
     /// element no schema types [XQueryDM §6.2.3, §6.3.3].
     UntypedAtomic,
+    /// `xs:boolean` [Schema2 §3.2.2].
+    Boolean,
+    /// `xs:decimal` [Schema2 §3.2.3].
+    Decimal,
+    /// `xs:integer` [Schema2 §3.3.13].
+    Integer,
+    /// `xs:float` [Schema2 §3.2.4].
+    Float,
+    /// `xs:double` [Schema2 §3.2.5].
+    Double,
+    /// `xs:date` [Schema2 §3.2.9].
+    Date,
+    /// `xs:time` [Schema2 §3.2.8].
+    Time,
+    /// `xs:dateTime` [Schema2 §3.2.7].
+    DateTime,
+    /// `xdt:yearMonthDuration` [XQueryFO §10.3.1].
+    YearMonthDuration,
+    /// `xdt:dayTimeDuration` [XQueryFO §10.3.2].
+    DayTimeDuration,
+    /// `xs:hexBinary` [Schema2 §3.2.15].
+    HexBinary,
 }
 
 /// An atomic value [XQueryDM §2.6.4]: its type and its canonical lexical

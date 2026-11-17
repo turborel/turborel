@@ -98,7 +98,7 @@ fn corrupt_bytes_are_refused() {
     assert!(corrupt(&good[..good.len() - 1]).contains(WHAT));
     assert!(corrupt(&[good.as_slice(), &[0]].concat()).contains(WHAT));
     assert!(corrupt(&[1, 1, 0, 0, 0, 9]).contains("an item's tag is 9"));
-    assert!(corrupt(&[1, 1, 0, 0, 0, ATOMIC, 9]).contains("type is 9"));
+    assert!(corrupt(&[1, 1, 0, 0, 0, ATOMIC, 13]).contains("type is 13"));
     let no_names = [1, 1, 0, 0, 0, NODE, 0, 0, 0, 0];
     assert!(corrupt(&[&no_names[..], &[ELEMENT, 5, 0, 0, 0]].concat()).contains("the name 5 is not numbered"));
     assert!(corrupt(&[&no_names[..], &[9]].concat()).contains("an event's tag is 9"));

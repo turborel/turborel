@@ -2833,19 +2833,26 @@ keep each finite, and a value past one is SQLCODE -900 (D18):
 An XML value is a sequence (`xml::Sequence`) of items, each a node or an
 atomic value. A node is its tree, shared, and its place in it, so the
 nodes one tree gives many values keep their identity; storing a value
-copies it. `xml::serialize` writes a value by the XML output method of
-XSLT 2.0 and XQuery 1.0 Serialization, after its sequence normalization.
-It writes no CDATA section, document type declaration or indentation, and
-writes as character references what a parse would otherwise change.
+copies it. An atomic value is its type and its canonical lexical form, the
+string casting it to `xs:string` gives: `xs:string`, `xdt:untypedAtomic`,
+and the XML Schema types SQL's types map to (`xs:boolean`, `xs:decimal`,
+`xs:integer`, `xs:float`, `xs:double`, `xs:date`, `xs:time`,
+`xs:dateTime`, the two durations and `xs:hexBinary`); `xml::cast` casts
+among them as XQuery does, years kept to 0001-9999 and seconds to the
+microsecond, as SQL's are, decimals of any digits. `xml::serialize` writes
+a value by the XML output method of XSLT 2.0 and XQuery 1.0 Serialization,
+after its sequence normalization. It writes no CDATA section, document
+type declaration or indentation, and writes as character references what a
+parse would otherwise change.
 
 A value's stored form (`xml::encode`, version 1) is binary and read in one
 pass, in document order, as Pal et al. store XML. Each node item has a
-table of its names, each once, then its nodes as events: document,
-element (with its bindings and attributes), end, text, comment and
-processing instruction. Its fields are D30's. A node below the root of its
-tree is stored as a copy, an element declaring every binding in its scope.
-XML indexes (the primary, path, value and property indexes of Pal et
-al.) come with XQuery.
+table of its names, each once, then its nodes as events: document, element
+(with its bindings and attributes), end, text, comment and processing
+instruction; each atomic item its type's tag and its lexical form. Its
+fields are D30's. A node below the root of its tree is stored as a copy,
+an element declaring every binding in its scope. XML indexes (the primary,
+path, value and property indexes of Pal et al.) come with XQuery.
 
 The XML type's values are `Value::Xml` (`value::XmlValue`), held in one
 of three forms: a sequence; a binary large object of the stored form, as a

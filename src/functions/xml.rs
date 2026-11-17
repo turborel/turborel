@@ -1,7 +1,13 @@
 //! The functions of the SQL/XML operators [ISO/IEC 9075-14:2006 draft
 //! §6]: XMLDOCUMENT [§6.13], XMLPARSE [§6.16] and XMLSERIALIZE [§6.8],
 //! and of the document and content predicates [§8.2, §8.3], as the binder
-//! calls them (`binder/xml.rs`).
+//! calls them (`binder/xml.rs`); XMLCAST's [§6.6] are in `xml/cast.rs`.
+
+mod cast;
+mod mapping;
+
+pub use cast::{ENCODING as XMLCAST_ENCODING, XmlCastIn, XmlCastOut, xml_schema_type};
+pub use mapping::{BinaryEncoding, xml_lexical};
 
 use super::ScalarFunction;
 use crate::error::{Code, Result, SqlError, SqlState};

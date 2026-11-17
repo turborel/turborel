@@ -827,8 +827,9 @@ OK
 ## XML values
 
 XMLPARSE makes an XML value of a string, and XMLSERIALIZE writes one as a
-string. XMLDOCUMENT makes a document node of an XML value. [XML
-Values](xml.md) gives their syntax.
+string. XMLDOCUMENT makes a document node of an XML value, and XMLCAST
+casts SQL values to XML and back. [XML Values](xml.md) gives their
+syntax.
 
 ```sql
 VALUES (XMLSERIALIZE(XMLPARSE(CONTENT 'tea <b>and</b> cups' PRESERVE WHITESPACE) AS VARCHAR(40)));

@@ -1,12 +1,12 @@
 //! Mutations of SQL/XML: the parser, the serializer, the stored form, the
 //! XML type's rules, its storage and its Information Schema columns,
-//! the document and content predicates and XMLDOCUMENT (RULES.md
-//! R-TEST-9, D86).
+//! the document and content predicates, XMLDOCUMENT and XMLCAST
+//! (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each XML mechanism broken alone, and the tests that fail.
-pub const XML: [Mutation; 22] = [
+pub const XML: [Mutation; 30] = [
     Mutation {
         name: "xml-element-type-match",
         package: Package::Core,
@@ -231,5 +231,85 @@ pub const XML: [Mutation; 22] = [
         replacement: "                let bindings = if false {",
         integration: &[],
         unit: &["xml::construct::tests::copies_keep_namespaces_and_ids"],
+    },
+    Mutation {
+        name: "xml-cast-character-mapping",
+        package: Package::Core,
+        breaks: "an SQL string mapped to XML has its < unmapped, so it parses as markup",
+        file: "src/functions/xml/mapping.rs",
+        original: "            '<' => out.push_str(\"&lt;\"),",
+        replacement: "            '<' => out.push('<'),",
+        integration: &["xml_cast::sql_values_to_content_6_6"],
+        unit: &["functions::xml::mapping::tests::values_as_text"],
+    },
+    Mutation {
+        name: "xml-cast-utc",
+        package: Package::Core,
+        breaks: "a date or time cast to a type without time zone keeps its local value",
+        file: "src/functions/xml/cast.rs",
+        original: "    let m = if zoned { m } else { m.in_utc() };",
+        replacement: "    let m = if zoned { m } else { m };",
+        integration: &["xml_cast::xml_values_to_sql_6_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-cast-one-item",
+        package: Package::Core,
+        breaks: "an XML value of several atomic values casts as its last",
+        file: "src/functions/xml/cast.rs",
+        original: "    if items.len() > 1 {",
+        replacement: "    if false {",
+        integration: &["xml_cast::xml_values_that_cast_to_none_6_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-cast-zone-required",
+        package: Package::Core,
+        breaks: "a value with no time zone is cast to a type WITH TIME ZONE",
+        file: "src/functions/xml/cast.rs",
+        original: "    if zoned && m.zone.is_none() {",
+        replacement: "    if false {",
+        integration: &["xml_cast::xml_values_that_cast_to_none_6_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-cast-document-target",
+        package: Package::Core,
+        breaks: "an SQL value is cast to an XML(DOCUMENT) type",
+        file: "src/binder/xml/cast.rs",
+        original: "        if matches!(xml, XmlType::Document(_)) {",
+        replacement: "        if false {",
+        integration: &["xml_cast::xmlcast_takes_what_it_maps_6_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-atomic-collapse",
+        package: Package::Core,
+        breaks: "text cast to an atomic type keeps the white space around it",
+        file: "src/xml/atomic.rs",
+        original: "    let collapsed = collapse(text);",
+        replacement: "    let collapsed = text.to_owned();",
+        integration: &["xml_cast::xml_values_to_sql_6_6"],
+        unit: &["xml::atomic::tests::numbers_and_truth_values"],
+    },
+    Mutation {
+        name: "xml-decimal-canonical",
+        package: Package::Core,
+        breaks: "a decimal is written with zeros trailing its fraction",
+        file: "src/xml/atomic/number.rs",
+        original: "    let fraction = fraction.trim_end_matches('0');",
+        replacement: "",
+        integration: &["xml_cast::sql_values_to_sequences_6_6"],
+        unit: &["xml::atomic::tests::numbers_and_truth_values"],
+    },
+    Mutation {
+        name: "xml-base64-padding",
+        package: Package::Core,
+        breaks: "base64 of a last group short of three octets is not padded",
+        file: "src/functions/xml/mapping.rs",
+        original: "                out.push(PAD);",
+        replacement: "",
+        integration: &[],
+        unit: &["functions::xml::mapping::tests::binary_strings_in_hex_or_base64"],
     },
 ];

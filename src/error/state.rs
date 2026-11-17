@@ -239,8 +239,12 @@ impl SqlState {
     /// Data exception: XQuery serialization error [ISO/IEC 9075-14:2006
     /// draft §10.15 GR11, §23.1].
     pub const XQUERY_SERIALIZATION_ERROR: SqlState = SqlState(*b"2200W");
-    /// XQuery error [ISO/IEC 9075-14:2006 draft §6.13 GR8, §23.1].
+    /// XQuery error [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j, §6.13
+    /// GR8, §23.1].
     pub const XQUERY_ERROR: SqlState = SqlState(*b"10000");
+    /// SQL/XML mapping error: invalid XML character [ISO/IEC 9075-14:2006
+    /// draft §9.8 GR9a ii, §23.1].
+    pub const INVALID_XML_CHARACTER: SqlState = SqlState(*b"0N002");
     /// Data exception: sequence generator limit exceeded [ISO/IEC
     /// 9075-2:2023 §9.35 GR3a].
     pub const SEQUENCE_GENERATOR_LIMIT_EXCEEDED: SqlState = SqlState(*b"2200H");

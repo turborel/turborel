@@ -36,8 +36,8 @@ behind it, and each can be replaced or added to.
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.
 - [SQL/XML](doc/sql/xml.md): an XML type kept in tables, its values parsed
-  from XML 1.0 and 1.1 text and serialized back, XMLDOCUMENT, and IS
-  DOCUMENT and IS CONTENT, written in-house with no dependency, its
+  from XML 1.0 and 1.1 text and serialized back, XMLDOCUMENT, XMLCAST, and
+  IS DOCUMENT and IS CONTENT, written in-house with no dependency, its
   modifiers shown in the Information Schema.
 - [Geospatial SQL](doc/data/spatial/README.md), with XY geometries, WKT/WKB,
   intersection filters and joins, planar distances and R-tree

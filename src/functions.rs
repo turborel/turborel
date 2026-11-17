@@ -85,7 +85,10 @@ pub use trim::{BTRIM, LPAD, LTRIM, RPAD, RTRIM, TRIMS_AND_PADS, Trim, source_of,
 pub use truths::EVERY;
 use truths::Truths;
 pub use width_bucket::{WIDTH_BUCKET, width_bucket};
-pub use xml::{Serialization, XmlCopy, XmlDocument, XmlIs, XmlParse, XmlSerialize};
+pub use xml::{
+    BinaryEncoding, Serialization, XMLCAST_ENCODING, XmlCastIn, XmlCastOut, XmlCopy, XmlDocument, XmlIs, XmlParse, XmlSerialize,
+    xml_lexical, xml_schema_type,
+};
 
 /// \[EXTENSION\] A function callable with the opt-in call syntax.
 ///
