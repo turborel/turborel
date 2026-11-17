@@ -17,6 +17,7 @@ mod explain;
 mod fill;
 mod filter;
 mod generated;
+mod geometry;
 mod grouping_sets;
 mod hypothetical;
 mod kept;
@@ -34,6 +35,7 @@ mod overloading;
 mod partitioned_joins;
 mod patterns;
 mod predicates;
+mod projection;
 mod psm;
 mod ptf;
 mod readers;
@@ -88,14 +90,35 @@ pub fn all() -> Vec<Mutation> {
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
     core.into_iter()
         .chain(areas::all())
-        .chain([near::NEAR.as_slice(), &rtree::RTREE, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
+        .chain([projection::PROJECTION.as_slice()])
+        .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()
         .copied()
         .collect()
 }
 
 /// The core's mutations: transactions, durability, constraints, assertions, the hash index. Rekeying's are in `rekey.rs`.
-pub const MUTATIONS: [Mutation; 43] = [
+pub const MUTATIONS: [Mutation; 45] = [
+    Mutation {
+        name: "hash-key-stream-owner",
+        package: Package::Core,
+        breaks: "a discarded hash index frees pages while its key-row stream reads them",
+        file: "src/index/hash.rs",
+        original: "let _rows_owner = &self;",
+        replacement: "let _rows_owner = ();",
+        integration: &[],
+        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
+    },
+    Mutation {
+        name: "hash-search-stream-owner",
+        package: Package::Core,
+        breaks: "a discarded hash index frees pages while a search still reads them",
+        file: "src/index/hash.rs",
+        original: "let _entries_owner = &self;",
+        replacement: "let _entries_owner = ();",
+        integration: &["indexes::indexes_are_dropped"],
+        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
+    },
     Mutation {
         name: "mvcc-snapshot",
         package: Package::Core,

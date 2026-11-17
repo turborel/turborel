@@ -9,6 +9,8 @@ use turborel::params::ParameterType;
 use turborel::value::Spelled;
 use turborel::value::{DataType, Decimal, Value};
 
+mod specialization;
+
 fn int(n: i128) -> Value {
     Value::Exact(Decimal::new(n, 0))
 }

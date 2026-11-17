@@ -50,6 +50,7 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
     match plan {
         Plan::Product { left, right } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => Some((left, right)),
         Plan::SeqScan { .. }
+        | Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
@@ -108,6 +109,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         }
         Plan::Product { .. }
         | Plan::SeqScan { .. }
+        | Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
@@ -154,6 +156,7 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         Plan::HashJoin { .. } => hash_batches,
         Plan::OuterJoin { .. } => outer_batches,
         Plan::SeqScan { .. }
+        | Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
@@ -309,7 +312,8 @@ fn in_order(plan: &Plan) -> bool {
         Plan::Filter { input, .. } | Plan::Project { input, .. } => in_order(input),
         Plan::Product { left, .. } | Plan::HashJoin { left, .. } | Plan::OuterJoin { left, .. } => in_order(left),
         Plan::Append { left, right } => in_order(left) || in_order(right),
-        Plan::IndexScan { .. }
+        Plan::Nearest(_)
+        | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::SetOp { .. }

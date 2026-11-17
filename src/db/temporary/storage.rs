@@ -16,7 +16,9 @@ use crate::catalog::{IndexDesc, TableDesc};
 use crate::db::api;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::{Code, Result, SqlError};
-use crate::index::{self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe, RTREE_METHOD, RTreeMethod};
+use crate::index::{
+    self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, KeyProjection, Probe, RTREE_METHOD, RTreeMethod,
+};
 use crate::log::Lsn;
 use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
@@ -453,6 +455,19 @@ impl Entries {
 }
 
 impl Index for Entries {
+    fn nearest(
+        self: Arc<Self>,
+        query: &index::NearestQuery,
+        budget: &Arc<crate::memory::MemoryBudget>,
+    ) -> Result<Option<index::NeighbourEntries>> {
+        self.read()?.map_or(Ok(None), |entries| entries.nearest(query, budget))
+    }
+    fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
+        if self.index.method != RTREE_METHOD {
+            return None;
+        }
+        RTreeMethod::projection(&self.index.key_types(&self.desc)?)
+    }
     fn insert(&self, key: Key, row: RowId) -> Result<()> {
         self.make()?.insert(key, row)
     }

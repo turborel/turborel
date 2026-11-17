@@ -185,6 +185,9 @@ impl Judging {
     /// The rows of `batch` at `rows` that `cond` is true of, judged in
     /// order up to the first that raises an error, and that error.
     fn in_order(&self, cond: &Cond, batch: &Batch, rows: &[usize], runner: &Runner) -> (Vec<usize>, Option<SqlError>) {
+        if let Some(call) = calls::Call::of(cond, &self.columns) {
+            return call.in_order(batch, rows, runner.temp_lobs());
+        }
         let mut row = vec![Value::Null; self.width];
         let mut out = Vec::with_capacity(rows.len());
         for &r in rows {
@@ -317,6 +320,7 @@ fn compared_of_integers(cond: &Cond, columns: &[usize]) -> Option<Judged> {
 
 // Unit tests: which conjuncts of a filter are judged over vectors, and
 // what each keeps (RULES.md R-TEST-1).
+mod calls;
 mod floats;
 mod ints;
 mod likes;

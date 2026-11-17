@@ -1,12 +1,17 @@
 //! \[DESIGN\] The built-in Cartesian index, "rtree" (D72). Two
 //! approximate-numeric columns are a point (X, Y); four are a rectangle
 //! (min X, min Y, max X, max Y). The key retains every coordinate, so
-//! ordinary SQL comparisons and MVCC key rechecks remain exact. These
-//! numeric keys are not geometry values or SQL/MM spatial routines.
+//! ordinary SQL comparisons and MVCC key rechecks remain exact. A single
+//! GEOMETRY(srid) column instead stores envelope projections and rechecks
+//! the visible geometry and full spatial predicate (D82).
 
+mod clustered;
+mod geometry;
 mod probe;
 
-use super::{Entries, Index, IndexMethod, Key, KeyOrder, Probe, RTREE_METHOD, RowIds};
+use super::{
+    Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, NearestQuery, NeighbourEntries, Predicate, Probe, RTREE_METHOD, RowIds,
+};
 use crate::bytes::{Put, Reader};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::disk::buffer::{BufferPool, FileId};
@@ -15,7 +20,7 @@ use crate::disk::pager::PageId;
 use crate::engine::rtree::RTree;
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
-use crate::memory::Host;
+use crate::memory::{Host, MemoryBudget};
 use crate::spatial::{Bounds, DIMENSIONS};
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
@@ -27,6 +32,8 @@ use std::sync::{Arc, Mutex};
 const RECTANGLE_COLUMNS: usize = 4;
 /// Version of the method's locator, independent of the tree's pages.
 const LOCATOR_VERSION: u8 = 1;
+/// Geometry locators also bind the enforced reference identifier.
+const GEOMETRY_LOCATOR_VERSION: u8 = 2;
 /// Bound planning work even when a probe matches most of the index.
 const MOST_COUNTED: usize = 1_000;
 
@@ -53,6 +60,13 @@ impl RTreeMethod {
         RTreeMethod { files: Mutex::new(None), memory }
     }
 
+    /// Temporary instances need the same projection before their pages
+    /// are made, so a prepared reader sees a fixed contract (D49, D82).
+    pub(crate) fn projection(columns: &[DataType]) -> Option<Arc<dyn KeyProjection>> {
+        let [column] = columns else { return None };
+        crate::geometry::fixed_srid(column).map(geometry::projection)
+    }
+
     fn files(&self) -> Result<(Arc<BufferPool>, FileId)> {
         let mut files = lock_builtin(&self.files);
         if let Some((pool, file)) = files.as_ref() {
@@ -65,6 +79,10 @@ impl RTreeMethod {
 }
 
 impl IndexMethod for RTreeMethod {
+    fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> bool {
+        let [column] = columns else { return false };
+        crate::geometry::fixed_srid(column).is_some() && geometry::supports_nearest(query)
+    }
     fn name(&self) -> &'static str {
         RTREE_METHOD
     }
@@ -75,19 +93,29 @@ impl IndexMethod for RTreeMethod {
     fn supports(&self, op: CompOp) -> bool {
         op != CompOp::Ne
     }
+    fn supports_compare(&self, op: CompOp, columns: &[DataType]) -> bool {
+        numeric_width(columns.len()) && self.supports(op)
+    }
     fn supports_prefix(&self, columns: usize, equal: usize, then: Option<CompOp>) -> bool {
-        equal > 0 && equal.saturating_add(usize::from(then.is_some())) <= columns && then.is_none_or(|op| self.supports(op))
+        numeric_width(columns)
+            && equal > 0
+            && equal.saturating_add(usize::from(then.is_some())) <= columns
+            && then.is_none_or(|op| self.supports(op))
     }
     fn supports_range(&self, columns: usize, equal: usize) -> bool {
-        equal < columns
+        numeric_width(columns) && equal < columns
     }
     fn supports_columns(&self, columns: usize, comparisons: &[(usize, CompOp)]) -> bool {
-        !comparisons.is_empty() && comparisons.iter().all(|(at, op)| *at < columns && self.supports(*op))
+        numeric_width(columns) && !comparisons.is_empty() && comparisons.iter().all(|(at, op)| *at < columns && self.supports(*op))
+    }
+    fn supports_predicate(&self, predicate: &Predicate, columns: &[DataType]) -> bool {
+        let [column] = columns else { return false };
+        crate::geometry::fixed_srid(column).is_some() && geometry::supports(predicate)
     }
     fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
-        validate(columns)?;
+        let srid = validate(columns)?;
         let (pool, file) = self.files()?;
-        Ok(Box::new(RTreeIndex::new(RTree::create(pool, file)?, columns.len())))
+        Ok(Box::new(RTreeIndex::new(RTree::create(pool, file)?, columns.len(), srid, self.memory.budget())))
     }
     fn create_on(&self, columns: &[DataType], on: (&TableDesc, &IndexDesc)) -> Result<Box<dyn Index>> {
         if on.1.nulls {
@@ -96,17 +124,24 @@ impl IndexMethod for RTreeMethod {
         self.create(columns)
     }
     fn open(&self, columns: &[DataType], locator: &[u8]) -> Result<Option<Box<dyn Index>>> {
-        validate(columns)?;
+        let srid = validate(columns)?;
         let mut reader = Reader::new(locator, "R-tree index locator");
         let version = reader.u8()?;
         let width = usize::from(reader.u8()?);
-        if version != LOCATOR_VERSION || width != columns.len() {
+        let expected = if srid.is_some() { GEOMETRY_LOCATOR_VERSION } else { LOCATOR_VERSION };
+        if version != expected || width != columns.len() {
             return Err(reader.corrupt("its version or column count differs"));
+        }
+        if let Some(srid) = srid {
+            let stored = reader.u32()?;
+            if i32::try_from(stored).ok() != Some(srid) {
+                return Err(reader.corrupt("its geometry SRID differs from its column"));
+            }
         }
         let meta = PageId(reader.u64()?);
         reader.finish()?;
         let (pool, file) = self.files()?;
-        Ok(Some(Box::new(RTreeIndex::new(RTree::open(pool, file, meta)?, width))))
+        Ok(Some(Box::new(RTreeIndex::new(RTree::open(pool, file, meta)?, width, srid, self.memory.budget()))))
     }
     fn checkpoint(&self) -> Result<()> {
         let (pool, file) = self.files()?;
@@ -114,14 +149,21 @@ impl IndexMethod for RTreeMethod {
     }
 }
 
-fn validate(columns: &[DataType]) -> Result<()> {
-    if columns.len() != DIMENSIONS && columns.len() != RECTANGLE_COLUMNS {
-        return Err(unsupported("needs two point columns or four rectangle columns"));
+fn validate(columns: &[DataType]) -> Result<Option<i32>> {
+    if let [column] = columns {
+        return crate::geometry::fixed_srid(column).map(Some).ok_or_else(|| unsupported("needs GEOMETRY(srid) for a geometry key"));
+    }
+    if !numeric_width(columns.len()) {
+        return Err(unsupported("needs GEOMETRY(srid), two point columns or four rectangle columns"));
     }
     if columns.iter().any(|t| !matches!(t, DataType::Approximate { .. })) {
         return Err(unsupported("needs REAL, FLOAT or DOUBLE PRECISION coordinate columns"));
     }
-    Ok(())
+    Ok(None)
+}
+
+fn numeric_width(width: usize) -> bool {
+    width == DIMENSIONS || width == RECTANGLE_COLUMNS
 }
 
 fn unsupported(detail: &str) -> SqlError {
@@ -132,14 +174,20 @@ struct RTreeIndex {
     tree: RTree,
     width: usize,
     discarded: AtomicBool,
+    srid: Option<i32>,
+    projection: Option<Arc<dyn KeyProjection>>,
+    budget: Arc<MemoryBudget>,
 }
 
 impl RTreeIndex {
-    fn new(tree: RTree, width: usize) -> RTreeIndex {
-        RTreeIndex { tree, width, discarded: AtomicBool::new(false) }
+    fn new(tree: RTree, width: usize, srid: Option<i32>, budget: Arc<MemoryBudget>) -> RTreeIndex {
+        RTreeIndex { tree, width, discarded: AtomicBool::new(false), srid, projection: srid.map(geometry::projection), budget }
     }
 
     fn bounds(&self, key: &Key) -> Result<Bounds> {
+        if let Some(srid) = self.srid {
+            return geometry::bounds(key, srid);
+        }
         if key.0.len() != self.width {
             return Err(unsupported("received an invalid coordinate count"));
         }
@@ -159,13 +207,24 @@ impl RTreeIndex {
         Ok(())
     }
 
-    fn matching(&self, probe: &Probe) -> impl Iterator<Item = Result<(Key, RowId)>> + Send + use<> {
+    fn matching(&self, probe: &Probe) -> Entries {
+        if let Some(srid) = self.srid {
+            return geometry::matching(&self.tree, probe, srid, &self.budget);
+        }
         let window = probe::window(probe, self.width);
         let (tree, width, probe) = (self.tree.clone(), self.width, probe.clone());
         let scan = window.map(|window| tree.scan(Some(window)));
-        scan.into_iter().flatten().filter_map(move |entry| {
+        Box::new(scan.into_iter().flatten().filter_map(move |entry| {
             entry.map(|(bounds, row)| probe::answers(&probe, bounds, width).then(|| (probe::key(bounds, width), row))).transpose()
-        })
+        }))
+    }
+
+    fn equality(&self, key: &Key) -> Result<Entries> {
+        if let Some(srid) = self.srid {
+            return geometry::equal(&self.tree, key, srid);
+        }
+        self.query_key(key)?;
+        Ok(self.matching(&Probe::Prefix { equal: key.0.clone(), then: None }))
     }
 }
 
@@ -180,6 +239,16 @@ impl Drop for RTreeIndex {
 }
 
 impl Index for RTreeIndex {
+    fn nearest(self: Arc<Self>, query: &NearestQuery, budget: &Arc<MemoryBudget>) -> Result<Option<NeighbourEntries>> {
+        let Some(srid) = self.srid else { return Ok(None) };
+        let Some(found) = geometry::nearest(&self.tree, query, srid, budget)? else { return Ok(None) };
+        Ok(Some(Box::new(found.inspect(move |_| {
+            let _held = &self;
+        }))))
+    }
+    fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
+        self.projection.clone()
+    }
     fn insert(&self, key: Key, row: RowId) -> Result<()> {
         self.tree.insert(self.bounds(&key)?, row)
     }
@@ -193,21 +262,20 @@ impl Index for RTreeIndex {
         self.tree.remove(self.bounds(key)?, row)
     }
     fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
-        self.query_key(key)?;
-        self.matching(&Probe::Prefix { equal: key.0.clone(), then: None }).map(|entry| entry.map(|e| e.1)).collect()
+        self.equality(key)?.map(|entry| entry.map(|e| e.1)).collect()
     }
     fn key_rows(self: Arc<Self>, key: &Key) -> RowIds {
-        if let Err(error) = self.query_key(key) {
-            return Box::new(std::iter::once(Err(error)));
-        }
-        let found = self.matching(&Probe::Prefix { equal: key.0.clone(), then: None });
+        let found = match self.equality(key) {
+            Ok(found) => found,
+            Err(error) => return Box::new(std::iter::once(Err(error))),
+        };
         Box::new(found.map(move |entry| {
             let _held = &self;
             entry.map(|e| e.1)
         }))
     }
     fn search(self: Arc<Self>, probe: &Probe, _order: KeyOrder) -> Entries {
-        if matches!(probe, Probe::Predicate { .. }) {
+        if self.srid.is_none() && matches!(probe, Probe::Predicate { .. }) {
             return Box::new(std::iter::once(Err(unsupported("does not support function lookups"))));
         }
         let found = self.matching(probe);
@@ -216,6 +284,9 @@ impl Index for RTreeIndex {
         }))
     }
     fn estimate(&self, probe: &Probe) -> Option<usize> {
+        if let Some(srid) = self.srid {
+            return geometry::estimate(&self.tree, probe, srid);
+        }
         if matches!(probe, Probe::All | Probe::Predicate { .. }) {
             return None;
         }
@@ -231,7 +302,11 @@ impl Index for RTreeIndex {
         Some(count)
     }
     fn locator(&self) -> Vec<u8> {
-        let mut bytes = vec![LOCATOR_VERSION, u8::try_from(self.width).unwrap_or_default()];
+        let version = if self.srid.is_some() { GEOMETRY_LOCATOR_VERSION } else { LOCATOR_VERSION };
+        let mut bytes = vec![version, u8::try_from(self.width).unwrap_or_default()];
+        if let Some(srid) = self.srid {
+            bytes.put_u32(u32::try_from(srid).unwrap_or_default());
+        }
         bytes.put_u64(self.tree.meta().0);
         bytes
     }

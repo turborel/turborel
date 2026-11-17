@@ -41,6 +41,7 @@ pub mod error;
 pub mod exec;
 pub mod files;
 pub mod functions;
+pub mod geometry;
 pub mod hash;
 pub mod index;
 pub mod lexer;

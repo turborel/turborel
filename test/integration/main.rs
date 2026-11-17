@@ -119,6 +119,7 @@ mod functions;
 mod functions_overloading;
 mod generated;
 mod generated_named;
+mod geometry;
 mod get_diagnostics;
 mod get_diagnostics_items;
 mod grouping_sets;

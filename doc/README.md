@@ -26,6 +26,7 @@ come with.
 | [II. SQL Reference Manual](sql/README.md) | The same, looking something up | The language element by element; each statement on a page of its own |
 | [III. Operator's Guide](operator/README.md) | Whoever installs and runs a server | Installing, running `turboreld`, databases, settings, users, connections |
 | [IV. Client Reference](client/README.md) | Users of the client, and programs that connect or embed | The `turborel` command, the client library, and the embedded library |
+| [V. Specialized Data](data/README.md) | SQL users working with spatial and other specialized data | Data models, practical queries, interchange and indexing |
 | [Appendices](appendix/README.md) | Everyone | SQLSTATEs, key words, settings, limits, implementation-defined choices, versions, table options, a glossary |
 
 Read the User's Guide from the start to learn Turborel; turn to the

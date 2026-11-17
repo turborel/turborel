@@ -22,7 +22,7 @@ CREATE INDEX: make an index on a table *(extension)*
 
 CREATE INDEX makes an index on columns of a base table, kept by an index
 method: `btree`, a B-link tree, the default; `hash`, a linear hash table;
-`rtree`, a spatial tree over coordinate columns; or a method a plug-in
+`rtree`, a spatial tree over coordinate columns or fixed-SRID geometries; or a method a plug-in
 registers. The planner uses an index when its cost
 says the index is the cheaper way to find a query's rows: by the
 comparisons of its columns with constants in a WHERE clause, BETWEEN,
@@ -51,8 +51,8 @@ each visible row and checks the full WHERE condition before returning it.
 Only functions that promise the same answer for the same inputs, no side
 effects, no errors for accepted arguments and null for a null argument
 can use this lookup. A filter that can raise keeps a full table read, so
-an index cannot hide its error (D15). The built-in `btree`, `hash` and `rtree`
-methods support comparisons; a plug-in supplies the function lookup. See
+an index cannot hide its error (D15). This Boolean function contract is
+separate from the built-in geometry lookup described below. See
 [Indexes for function calls](../../client/03-embedding.md#indexes-for-function-calls-extension)
 for a runnable example and the Rust API.
 
@@ -66,8 +66,21 @@ a NULL coordinate, so the planner uses it only when those rows cannot
 answer the query. An inner join can probe the index with coordinate bounds
 from each row of the other operand. Both table orders and projections of
 the indexed table's columns are considered; candidate rows still satisfy
-the complete join condition. It does not implement geometry types or
-SQL/MM functions.
+the complete join condition.
+
+An `rtree` can also index one `GEOMETRY(srid)` column. It stores the
+geometry's envelope and can supply candidates for
+`ST_INTERSECTS(column, value) = 1`, where `value` is a constant or parameter.
+The executor fetches the visible geometry and checks the full condition;
+an envelope match alone never establishes intersection. The column must
+enforce one SRID. NULLs are omitted and empty values never intersect.
+Inner joins can also probe it when both geometry columns enforce the same
+SRID; the full ON condition checks every candidate pair. Ascending
+ST_DISTANCE with FETCH FIRST can also use this index, refining each
+candidate's geometry before deciding which rows to return. Geometry outer
+joins and distance filters are not indexed yet. See the
+[spatial guide](../../data/spatial/03-indexing.md) and
+[distance queries](../../data/spatial/05-distance.md) for runnable examples.
 
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each
@@ -139,50 +152,101 @@ OK
 (3 rows)
 ```
 
-A point window, of a table PLACES (ID INTEGER, X DOUBLE PRECISION NOT
-NULL, Y DOUBLE PRECISION NOT NULL):
+A dispatch map with numeric courier coordinates. Index X and Y in that
+order, then ask for couriers in the visible window:
 
 ```sql
-CREATE INDEX PLACES_XY ON PLACES (X, Y) USING RTREE;
-INSERT INTO PLACES VALUES (1, 0, 0), (2, 5, 5), (3, 10, 10);
 COMMIT;
-SELECT ID FROM PLACES
-    WHERE X BETWEEN 0 AND 5 AND Y BETWEEN 0 AND 5 ORDER BY ID;
+CREATE TABLE COURIERS (
+    ID INTEGER PRIMARY KEY,
+    NAME VARCHAR(12),
+    X DOUBLE PRECISION NOT NULL,
+    Y DOUBLE PRECISION NOT NULL
+);
+INSERT INTO COURIERS VALUES
+    (1, 'Amina', 100, 100), (2, 'Bo', 750, 250), (3, 'Chao', 1500, 200);
+COMMIT;
+CREATE INDEX COURIERS_XY ON COURIERS (X, Y) USING RTREE;
+SELECT NAME FROM COURIERS
+WHERE X BETWEEN 0 AND 1000 AND Y BETWEEN 0 AND 400
+ORDER BY ID;
 ```
 
 ```
 OK
 OK
 OK
-           ID
+OK
+OK
+ NAME
 --------------
-            1
-            2
+ Amina
+ Bo
 (2 rows)
 ```
 
-Joining those points to two windows includes a point on a shared edge in
-both windows. The planner chooses index probes when their estimated cost
-is lower than testing every pair:
+Use the same coordinates to find each courier's dispatch area. These
+areas are rectangles in the same local metre grid; a courier on their
+shared edge would match both:
 
 ```sql
-SELECT P.ID, W.ID AS WINDOW_ID
-FROM PLACES P JOIN
-    (VALUES (10, 0E0, 0E0, 5E0, 5E0), (20, 5E0, 5E0, 10E0, 10E0))
-    AS W (ID, LX, LY, HX, HY)
-ON P.X >= W.LX AND P.X <= W.HX AND P.Y >= W.LY AND P.Y <= W.HY
-ORDER BY P.ID, W.ID;
+SELECT C.NAME, A.AREA_NAME
+FROM COURIERS C JOIN
+    (VALUES ('West', 0E0, 0E0, 1000E0, 400E0),
+            ('East', 1000E0, 0E0, 2000E0, 400E0))
+    AS A (AREA_NAME, MIN_X, MIN_Y, MAX_X, MAX_Y)
+ON C.X >= A.MIN_X AND C.X <= A.MAX_X
+AND C.Y >= A.MIN_Y AND C.Y <= A.MAX_Y
+ORDER BY C.ID, A.AREA_NAME;
 ```
 
 ```
-           ID | WINDOW_ID
+ NAME         | AREA_NAME
 --------------+-----------
-            1 |        10
-            2 |        10
-            2 |        20
-            3 |        20
-(4 rows)
+ Amina        | West
+ Bo           | West
+ Chao         | East
+(3 rows)
 ```
+
+For geometry locations, index the single fixed-SRID column instead. This
+example creates a depot index and finds depots in a map window. It assumes
+`turboreld`, which includes the geometry type and functions:
+
+```sql
+COMMIT;
+SET SQL.FUNCTION_CALLS = 'ON';
+CREATE TABLE PICKUP_DEPOTS (
+    ID INTEGER PRIMARY KEY,
+    NAME VARCHAR(12),
+    LOCATION GEOMETRY(0)
+);
+INSERT INTO PICKUP_DEPOTS VALUES
+    (1, 'Canal depot', ST_POINT(100, 700)),
+    (2, 'Market depot', ST_POINT(1000, 300));
+COMMIT;
+CREATE INDEX PICKUP_DEPOTS_LOCATION ON PICKUP_DEPOTS (LOCATION) USING RTREE;
+SELECT NAME FROM PICKUP_DEPOTS
+WHERE ST_INTERSECTS(LOCATION, ST_MAKEENVELOPE(0, 0, 500, 1000)) = 1
+ORDER BY ID;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+ NAME
+--------------
+ Canal depot
+(1 row)
+```
+
+These small tables can still use scans; index choice is based on cost.
+See the [dispatch guide](../../data/spatial/README.md) for service-area
+joins and nearest-depot searches using the same query patterns.
 
 Indexes refused, V a view:
 
@@ -221,4 +285,5 @@ An extension: neither SQL-86 nor SQL-92 has indexes.
 ## SEE ALSO
 
 [ALTER INDEX](alter-index.md), [DROP INDEX](drop-index.md),
-[CREATE TABLE](create-table.md)
+[CREATE TABLE](create-table.md),
+[R-tree queries](../../data/spatial/03-indexing.md)

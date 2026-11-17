@@ -17,6 +17,7 @@
 //! bounds. Counts of one row are serialized separately, so a changed
 //! subtree choice cannot create a second copy of an existing entry.
 
+mod estimate;
 mod join;
 mod nearest;
 mod node;
@@ -192,6 +193,13 @@ impl RTree {
     /// An error after construction is yielded once by the iterator.
     pub fn nearest(&self, query: Bounds, budget: &Arc<MemoryBudget>) -> Result<Nearest> {
         Nearest::new(self.clone(), query, budget)
+    }
+
+    /// Candidates ordered by monotone envelope lower bounds. Decline if
+    /// the query or root envelope exceeds the caller's finite-distance
+    /// domain; the captured root includes unfinished split siblings.
+    pub(crate) fn nearest_candidates(&self, query: Bounds, domain: Bounds, budget: &Arc<MemoryBudget>) -> Result<Option<Nearest>> {
+        Nearest::candidates(self.clone(), query, domain, budget)
     }
 
     /// Streams intersecting pairs, pruning disjoint branches of both

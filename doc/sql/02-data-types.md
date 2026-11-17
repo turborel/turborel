@@ -10,6 +10,9 @@ of a [reference type](#reference-types), or *(extension)* of a type a plug-in
 registers, written by its name and, in parentheses, one or two unsigned
 integers it takes; so may a domain.
 
+The library includes an opt-in [GEOMETRY type](spatial.md) for XY points,
+lines, polygons and collections, registered by the embedding program.
+
 ```
 <data type> ::=
       <character string type> | <national character string type>

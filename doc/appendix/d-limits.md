@@ -52,6 +52,13 @@ their number less 1, has at most the 18 digits of its type.
 
 ## Sizes
 
+The GEOMETRY readers accept at most 16 MiB of WKT or WKB,
+100,000 geometry components, rings and coordinates in total, and 16
+nested geometry levels including the root. SQL text/binary interchange
+still uses the 32,767-character/octet string limits above; the Rust
+geometry codecs support the larger inputs. A SQL geometry observer whose
+text or binary result exceeds its limit fails with SQLCODE -900.
+
 | What | Limit |
 |---|---|
 | An index's key | of the default 8 KiB page, 2,007 bytes in a B-link tree, 8,116 in a hash index; of a 4 KiB page, 983 in a B-link tree; of a 64 KiB page, 16,343 in a B-link tree, 65,460 in a hash index |

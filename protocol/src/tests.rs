@@ -2,6 +2,8 @@
 //! byte by byte where the layout is the contract; malformed ones refused as
 //! connection failures (RULES.md R-TEST-1, R-TEST-2).
 
+mod geometry;
+
 use turborel::params::ParameterType;
 use turborel::storage::Row;
 use turborel::value::datetime::{Datetime, Field, Moment, parse};

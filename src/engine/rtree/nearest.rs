@@ -29,6 +29,7 @@ const GROWTH: usize = 2;
 pub struct Nearest {
     tree: RTree,
     query: Bounds,
+    metric: Metric,
     queue: BinaryHeap<Queued>,
     held: Reservation,
     failed: bool,
@@ -39,6 +40,27 @@ pub struct Nearest {
     /// before an entry already returned. Entries held throughout remain
     /// ordered by their admissible branch bounds.
     last: Option<(f64, RowId)>,
+}
+
+#[derive(Clone, Copy)]
+enum Metric {
+    Euclidean,
+    LowerBound,
+}
+
+impl Metric {
+    fn distance(self, entry: Bounds, query: Bounds, leaf: bool) -> f64 {
+        match self {
+            Self::Euclidean => {
+                if leaf {
+                    entry.distance(query)
+                } else {
+                    entry.distance_lower_bound(query)
+                }
+            }
+            Self::LowerBound => entry.distance_lower_bound(query),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -85,8 +107,33 @@ impl Eq for Queued {}
 impl Nearest {
     pub(super) fn new(tree: RTree, query: Bounds, budget: &Arc<MemoryBudget>) -> Result<Nearest> {
         let root = tree.root()?;
+        Self::from_root(tree, root, query, budget, Metric::Euclidean)
+    }
+
+    pub(super) fn candidates(tree: RTree, query: Bounds, domain: Bounds, budget: &Arc<MemoryBudget>) -> Result<Option<Nearest>> {
+        let root = tree.root()?;
+        Self::within(tree, root, (query, domain), budget)
+    }
+
+    pub(super) fn within(
+        tree: RTree,
+        root: Visit,
+        (query, domain): (Bounds, Bounds),
+        budget: &Arc<MemoryBudget>,
+    ) -> Result<Option<Nearest>> {
+        if !domain.contains(query) {
+            return Ok(None);
+        }
+        let envelope = root_envelope(&tree, root)?;
+        if envelope.is_some_and(|bounds| !domain.contains(bounds)) {
+            return Ok(None);
+        }
+        Self::from_root(tree, root, query, budget, Metric::LowerBound).map(Some)
+    }
+
+    fn from_root(tree: RTree, root: Visit, query: Bounds, budget: &Arc<MemoryBudget>, metric: Metric) -> Result<Nearest> {
         let held = budget.reserve(0, "the R-tree nearest-neighbour frontier")?;
-        let mut nearest = Nearest { tree, query, queue: BinaryHeap::new(), held, failed: false, visited: 0, limit: 0, last: None };
+        let mut nearest = Nearest { tree, query, metric, queue: BinaryHeap::new(), held, failed: false, visited: 0, limit: 0, last: None };
         nearest.push(Queued { distance: 0.0_f64, item: Item::Page(root) })?;
         Ok(nearest)
     }
@@ -120,15 +167,45 @@ impl Nearest {
             self.tree.inner.right_moves.fetch_add(1, AtomicOrder::Relaxed);
         }
         for entry in node.entries {
+            let priority = self.metric.distance(entry.bounds, self.query, node.level == 0);
             let item = if node.level == 0 {
-                Queued { distance: entry.bounds.distance(self.query), item: Item::Entry(entry.bounds, entry.id) }
+                Item::Entry(entry.bounds, entry.id)
             } else {
                 let child = Visit { id: PageId(entry.id), stamp: entry.value, level: node.level.saturating_sub(1) };
-                Queued { distance: entry.bounds.distance_lower_bound(self.query), item: Item::Page(child) }
+                Item::Page(child)
             };
-            self.push(item)?;
+            self.push(Queued { distance: priority, item })?;
         }
         Ok(())
+    }
+}
+
+/// Ancestors enlarge before insertion and commit publication. A snapshot
+/// established before this read therefore has every retained visible
+/// entry inside this envelope, including a root split not yet posted.
+fn root_envelope(tree: &RTree, mut visit: Visit) -> Result<Option<Bounds>> {
+    let mut envelope = None;
+    let mut visited = 0_u64;
+    let mut limit = 0_u64;
+    loop {
+        visited = visited.saturating_add(1);
+        if visited > limit {
+            limit = tree.inner.pool.pages_in_use(tree.inner.file)?;
+            if visited > limit {
+                return Err(corrupt("its root envelope traversal contains a cycle"));
+            }
+        }
+        let node = tree.read(visit.id)?;
+        if node.level != visit.level {
+            return Err(corrupt("a root envelope sibling is at the wrong level"));
+        }
+        if let Some(bounds) = node.bounds() {
+            envelope = Some(envelope.map_or(bounds, |was: Bounds| was.union(bounds)));
+        }
+        if node.stamp == visit.stamp {
+            return Ok(envelope);
+        }
+        visit.id = node.right.ok_or_else(|| corrupt("a root envelope split has no sibling"))?;
     }
 }
 

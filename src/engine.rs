@@ -100,6 +100,11 @@ impl MemoryPages {
         *lock_builtin(&self.budget) = budget;
     }
 
+    /// The attached host budget, also used by optional index read buffers.
+    pub(crate) fn budget(&self) -> Arc<MemoryBudget> {
+        Arc::clone(&lock_builtin(&self.budget))
+    }
+
     /// Makes their pool of `bytes`, if made after.
     pub(crate) fn resize(&self, bytes: usize) {
         self.bytes.store(bytes, Ordering::Release);

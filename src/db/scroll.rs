@@ -248,6 +248,7 @@ fn sort_of(plan: Plan) -> std::result::Result<(Vec<SortKey>, Plan), Box<Plan>> {
             Plan::Sort { keys, input, .. } => return Ok((keys, *input)),
             other @ (Plan::SeqScan { .. }
             | Plan::Limit { .. }
+            | Plan::Nearest(_)
             | Plan::IndexScan { .. }
             | Plan::Filter { .. }
             | Plan::Append { .. }
@@ -283,6 +284,7 @@ fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
                 node = *input;
             }
             other @ (Plan::SeqScan { .. }
+            | Plan::Nearest(_)
             | Plan::IndexScan { .. }
             | Plan::Sort { .. }
             | Plan::Limit { .. }

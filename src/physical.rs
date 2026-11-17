@@ -24,12 +24,17 @@ mod join_probe;
 pub use join_probe::{JoinComparison, JoinProbe};
 mod join;
 mod kept;
+mod nearest;
 mod nodes;
+pub use nearest::NearestRead;
+pub(crate) use nearest::distance_call;
 mod order;
 mod probe;
+mod project;
 mod raising;
 mod recognized;
 mod shown;
+pub(crate) mod spatial;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
 pub use kept::{Place, ProbeSlot};
@@ -71,6 +76,8 @@ pub struct JoinKey {
 /// filled for an execution (`physical/kept.rs`).
 #[derive(Debug, Clone)]
 pub enum Plan {
+    /// Distance candidates refined before the final SQL ordering.
+    Nearest(Box<NearestRead>),
     /// Every row of a table, in the engine's order, or in that of `order`.
     SeqScan {
         /// The table read.
@@ -166,10 +173,17 @@ pub enum Plan {
     /// rows of a product that its comparisons keep [X3.135-1986 §5.20 GR2b,
     /// §5.21 GR2], or, `outer`, of a LEFT outer join [ISO/IEC 9075:1992
     /// §7.5], each row of `left` no table row matches with nulls; in the
-    /// order of `left`, each row's matches in the index's (`exec/join/indexed.rs`).
+    /// order of `left`, each row's matches in the index's (`exec/join/indexed.rs`),
+    /// unless `spatial` permits an unordered scan alternative.
     IndexJoin {
         /// A LEFT outer join.
         outer: bool,
+        /// An unordered fixed-SRID inner join may buffer a bounded outer
+        /// input and scan the table once when that costs less than probes.
+        /// Otherwise it continues the ordinary index nested-loop path.
+        /// Both geometry columns enforce the same SRID and all residuals
+        /// are non-raising: the join itself needs no eager error check.
+        spatial: bool,
         /// The outer input, each of its rows probing the index.
         left: Box<Plan>,
         /// The table read.
@@ -567,12 +581,13 @@ impl<'a> PhysicalPlanner<'a> {
             .unwrap_or_default();
         let b = self.build(input, &inner);
         let detail = self.described(input, |names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
-        Built { plan: Plan::Project { exprs: exprs.to_vec(), detail, input: Box::new(b.plan) }, ordered: !inner.is_empty() && b.ordered }
+        let (exprs, source) = project::collapsed(exprs.to_vec(), b.plan);
+        Built { plan: Plan::Project { exprs, detail, input: Box::new(source) }, ordered: !inner.is_empty() && b.ordered }
     }
 
     /// The keys are asked of the input; if it gives them, no Sort is needed.
     fn sort(&self, keys: &[SortKey], input: &LogicalPlan) -> Built {
-        let b = self.build(input, keys);
+        let b = self.nearest(keys, input).map_or_else(|| self.build(input, keys), Built::unordered);
         if b.ordered {
             return Built::unordered(b.plan);
         }

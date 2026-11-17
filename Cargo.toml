@@ -109,6 +109,41 @@ name = "spatial"
 path = "bench/spatial.rs"
 harness = false
 
+[[bench]]
+name = "geometry"
+path = "bench/geometry.rs"
+harness = false
+
+[[bench]]
+name = "geometry_sql"
+path = "bench/geometry_sql.rs"
+harness = false
+
+[[bench]]
+name = "geometry_join"
+path = "bench/geometry_join.rs"
+harness = false
+
+[[bench]]
+name = "geometry_shapes"
+path = "bench/geometry_shapes.rs"
+harness = false
+
+[[bench]]
+name = "geometry_fetch"
+path = "bench/geometry_fetch.rs"
+harness = false
+
+[[bench]]
+name = "geometry_nearest"
+path = "bench/geometry_nearest.rs"
+harness = false
+
+[[bench]]
+name = "geometry_mixed"
+path = "bench/geometry_mixed.rs"
+harness = false
+
 # `cargo xtask <command>` runs the project's checks (RULES.md R-TOOL-1).
 [workspace]
 members = ["xtask", "protocol", "client", "server", "turboreld", "support", "cli", "lz4", "aes", "replication"]

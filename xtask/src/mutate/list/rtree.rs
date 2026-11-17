@@ -4,7 +4,37 @@
 use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail spatial requirements.
-pub const RTREE: [Mutation; 9] = [
+pub const RTREE: [Mutation; 12] = [
+    Mutation {
+        name: "geometry-nearest-root-envelope",
+        package: Package::Core,
+        breaks: "a finite-distance certificate omits the root's unposted split siblings",
+        file: "src/engine/rtree/nearest.rs",
+        original: "if node.stamp == visit.stamp {",
+        replacement: "if visited > 0 {",
+        integration: &[],
+        unit: &["engine::rtree::tests::nearest::candidate_range_proof_includes_unposted_root_siblings"],
+    },
+    Mutation {
+        name: "geometry-nearest-candidate-bound",
+        package: Package::Core,
+        breaks: "geometry candidate priorities use rectangle measures in place of their monotone lower bounds",
+        file: "src/engine/rtree/nearest.rs",
+        original: "Self::LowerBound => entry.distance_lower_bound(query),",
+        replacement: "Self::LowerBound => entry.distance(query),",
+        integration: &[],
+        unit: &["engine::rtree::tests::nearest::candidate_bounds_match_exhaustive_order_through_old_roots"],
+    },
+    Mutation {
+        name: "rtree-distance-monotonic",
+        package: Package::Core,
+        breaks: "rectangle enlargement can increase a computed distance bound through scale rounding",
+        file: "src/spatial.rs",
+        original: "        let squared = down(down(x * x) + down(y * y));\n        down(squared.sqrt()).max(x).max(y)",
+        replacement: "        let scale = x.max(y);\n        if scale <= 0.0_f64 { return 0.0_f64; }\n        let (x, y) = (down(x / scale), down(y / scale));\n        let squared = down(down(x * x) + down(y * y));\n        down(down(squared.sqrt()) * scale)",
+        integration: &[],
+        unit: &["spatial::tests::distance_bounds_are_monotone_under_rectangle_enlargement"],
+    },
     Mutation {
         name: "rtree-split-stamp",
         package: Package::Core,
@@ -50,8 +80,8 @@ pub const RTREE: [Mutation; 9] = [
         package: Package::Core,
         breaks: "a branch distance bound overestimates the distance of a nearer child",
         file: "src/spatial.rs",
-        original: "down(down(squared.sqrt()) * scale)",
-        replacement: "down(down(squared.sqrt()) * scale) + scale",
+        original: "down(squared.sqrt()).max(x).max(y)",
+        replacement: "down(squared.sqrt()).max(x).max(y) + x.max(y)",
         integration: &[],
         unit: &["spatial::tests::distances_bound_the_geometry_at_extreme_scales"],
     },
@@ -88,11 +118,14 @@ pub const RTREE: [Mutation; 9] = [
     Mutation {
         name: "rtree-join-phantoms",
         package: Package::Core,
-        breaks: "an independent-coordinate join probe fails to record its serializable read predicate",
+        breaks: "a coordinate or geometry join probe fails to record its serializable read predicate",
         file: "src/exec/join/indexed.rs",
-        original: "self.storage.read_by_condition(self.tx, &Condition { columns: self.ix.columns.clone(), probe: probe.clone() })?;",
-        replacement: "if matches!(binding, JoinProbe::Prefix(_)) { self.storage.read_by_condition(self.tx, &Condition { columns: self.ix.columns.clone(), probe: probe.clone() })?; }",
-        integration: &["spatial_index::joins::spatial_joins_track_empty_probe_phantoms"],
+        original: "self.storage.read_by_condition(self.tx, &asked(&self.ix, probe.clone()))?;",
+        replacement: "if matches!(binding, JoinProbe::Prefix(_)) { self.storage.read_by_condition(self.tx, &asked(&self.ix, probe.clone()))?; }",
+        integration: &[
+            "spatial_index::joins::spatial_joins_track_empty_probe_phantoms",
+            "geometry::index::joins::geometry_joins_track_empty_probe_phantoms",
+        ],
         unit: &[],
     },
 ];

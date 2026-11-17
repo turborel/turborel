@@ -25,9 +25,11 @@ mod held;
 mod invoked;
 mod join;
 mod limit;
+mod nearest;
 mod partition;
 mod pattern;
 mod program;
+mod project;
 mod ptf;
 mod recursive;
 mod scan;
@@ -99,6 +101,7 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let run: Opened = match &plan {
         Plan::SeqScan { .. } => scan::scanned_plan,
         Plan::IndexScan { .. } => scan::indexed,
+        Plan::Nearest(_) => nearest::nearest,
         Plan::Filter { .. } => filtered,
         Plan::Product { .. } | Plan::HashJoin { .. } => joined_plan,
         Plan::OuterJoin { .. } => join::outer,
@@ -138,6 +141,7 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Product { left, right } => join::joined(*left, *right, None, db, tx),
         Plan::HashJoin { left, right, keys, .. } => join::joined(*left, *right, Some(keys), db, tx),
         Plan::SeqScan { .. }
+        | Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::Filter { .. }
         | Plan::OuterJoin { .. }
@@ -257,6 +261,13 @@ fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         return batch::projected(plan, db, tx);
     }
     let Plan::Project { exprs, input, .. } = plan else { return failed(broken("a projection is not one")) };
+    if let Some(columns) = project::Columns::of(&exprs) {
+        if matches!(*input, Plan::IndexJoin { .. }) {
+            return join::indexed_projected(*input, Some(columns), db, tx);
+        }
+        let input = execute(*input, db, tx);
+        return Box::new(input.map(move |row| row.and_then(|row| columns.take(row))));
+    }
     let (input, runner) = (execute(*input, db, tx), Runner::new(db, tx));
     // [ISO/IEC 9075-2:2023 §4.29.1] a row's draws of one generator are one.
     if exprs.iter().any(Expr::draws) {

@@ -16,7 +16,7 @@ mod join;
 mod nearest;
 mod paths;
 
-fn tree() -> RTree {
+pub(super) fn tree() -> RTree {
     tree_in(&MemoryBudget::new(usize::MAX))
 }
 

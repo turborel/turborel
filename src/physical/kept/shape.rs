@@ -10,6 +10,7 @@
 //! a sort, a limit and an append. A join, a set operation, a system table or a
 //! VALUES list has no shape a kept plan may take.
 
+use crate::functions::ScalarRef;
 use crate::index::Probe;
 use crate::logical::Limit;
 use crate::physical::Plan;
@@ -18,11 +19,9 @@ use std::sync::Arc;
 /// Whether `one` and `other` have one shape, as the module says.
 pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
     match one {
-        Plan::SeqScan { table, columns, order, backward, .. } => {
-            let Plan::SeqScan { table: table2, columns: columns2, order: order2, backward: backward2, .. } = other else { return false };
-            table == table2 && columns == columns2 && order == order2 && backward == backward2
-        }
+        Plan::SeqScan { .. } => same_scan(one, other),
         Plan::IndexScan { .. } => same_index_scan(one, other),
+        Plan::Nearest(_) => same_nearest(one, other),
         Plan::Filter { input, .. } => {
             let Plan::Filter { input: input2, .. } = other else { return false };
             same_shape(input, input2)
@@ -69,6 +68,12 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
     }
 }
 
+fn same_scan(one: &Plan, other: &Plan) -> bool {
+    let Plan::SeqScan { table, columns, order, backward, .. } = one else { return false };
+    let Plan::SeqScan { table: table2, columns: columns2, order: order2, backward: backward2, .. } = other else { return false };
+    table == table2 && columns == columns2 && order == order2 && backward == backward2
+}
+
 /// Whether `one` and `other` are scans of one index, read one way, by
 /// probes of one shape (`same_probe`).
 fn same_index_scan(one: &Plan, other: &Plan) -> bool {
@@ -82,6 +87,20 @@ fn same_index_scan(one: &Plan, other: &Plan) -> bool {
     read && columns == columns2 && covering == covering2 && same_probe(probe, probe2)
 }
 
+fn same_nearest(one: &Plan, other: &Plan) -> bool {
+    let Plan::Nearest(a) = one else { return false };
+    let Plan::Nearest(b) = other else { return false };
+    let (Some((column, argument, function, _)), Some((other_column, other_argument, other_function, _))) =
+        (crate::physical::distance_call(&a.measure), crate::physical::distance_call(&b.measure))
+    else {
+        return false;
+    };
+    let source = a.table == b.table && a.index == b.index && a.columns == b.columns;
+    let layout = a.located == b.located && a.width == b.width && a.first == b.first;
+    let call = column == other_column && argument == other_argument && same_function(function, other_function);
+    source && layout && call && a.condition.is_some() == b.condition.is_some()
+}
+
 /// Whether `one` and `other` are probes of one kind, holding as many
 /// values equal and comparing the rest by the same operators.
 fn same_probe(one: &Probe, other: &Probe) -> bool {
@@ -89,7 +108,7 @@ fn same_probe(one: &Probe, other: &Probe) -> bool {
         Probe::All => matches!(other, Probe::All),
         Probe::Predicate { predicate: a, .. } => {
             let Probe::Predicate { predicate: b, .. } = other else { return false };
-            Arc::ptr_eq(&a.function.0, &b.function.0) && a.column == b.column && a.argument == b.argument
+            same_function(&a.function, &b.function) && a.column == b.column && a.argument == b.argument
         }
         Probe::Columns(each) => {
             let Probe::Columns(those) = other else { return false };
@@ -110,6 +129,17 @@ fn same_probe(one: &Probe, other: &Probe) -> bool {
     }
 }
 
+/// Preparation changes object identity but preserves complete declared
+/// spatial semantics. Ordinary predicates still require one object;
+/// neither a shared SQL name nor two absent declarations establish this.
+fn same_function(a: &ScalarRef, b: &ScalarRef) -> bool {
+    if Arc::ptr_eq(&a.0, &b.0) {
+        return true;
+    }
+    let Some(spatial) = a.0.spatial_operation() else { return false };
+    a.0.deterministic() && b.0.deterministic() && b.0.spatial_operation() == Some(spatial)
+}
+
 // Unit tests: plans of one shape and of two (RULES.md R-TEST-1, R-TEST-8).
 #[cfg(test)]
 mod tests {
@@ -117,6 +147,54 @@ mod tests {
     use crate::catalog::QualifiedName;
     use crate::logical::SortKey;
     use crate::value::{CompOp, Decimal, SortOrder, Value};
+
+    struct Declared {
+        function: crate::geometry::GeometryFunction,
+        deterministic: bool,
+    }
+
+    impl crate::functions::ScalarFunction for Declared {
+        fn name(&self) -> &str {
+            self.function.name()
+        }
+
+        fn return_type(&self, args: &[crate::value::DataType]) -> crate::error::Result<crate::value::DataType> {
+            self.function.return_type(args)
+        }
+
+        fn call(&self, args: &[Value]) -> crate::error::Result<Value> {
+            self.function.call(args)
+        }
+
+        fn deterministic(&self) -> bool {
+            self.deterministic
+        }
+
+        fn spatial_operation(&self) -> Option<crate::geometry::SpatialOperation> {
+            self.function.spatial_operation()
+        }
+    }
+
+    /// Verifies: [DESIGN] D45, D82: distinct function objects share a
+    /// probe shape only through complete spatial semantics. MC/DC: each
+    /// determinism declaration and each spatial declaration independently
+    /// prevents this; ordinary predicates still require object identity.
+    #[test]
+    fn spatial_function_shapes_require_complete_deterministic_semantics() {
+        use crate::geometry::GeometryFunction::{Distance, Intersects, X};
+        let function = |function, deterministic| ScalarRef(Arc::new(Declared { function, deterministic }));
+        let spatial = function(Intersects, true);
+        assert!(same_function(&spatial, &function(Intersects, true)));
+        assert!(!same_function(&function(Intersects, false), &spatial));
+        assert!(!same_function(&spatial, &function(Intersects, false)));
+        assert!(!same_function(&function(Distance, true), &spatial));
+        assert!(!same_function(&spatial, &function(Distance, true)));
+        let ordinary = function(X, true);
+        assert!(!same_function(&ordinary, &function(X, true)));
+        assert!(!same_function(&ordinary, &spatial));
+        assert!(!same_function(&spatial, &ordinary));
+        assert!(same_function(&ordinary, &ordinary.clone()));
+    }
 
     fn int(n: i128) -> Value {
         Value::Exact(Decimal::new(n, 0))

@@ -5,6 +5,8 @@
 
 use crate::error::{Code, Result, SqlError};
 
+pub(crate) mod masks;
+pub(crate) mod packed;
 pub(crate) mod partition;
 
 /// The two coordinate axes of Cartesian spatial bounds.
@@ -115,18 +117,14 @@ impl Bounds {
     }
 
     /// A lower bound on Euclidean distance, for best-first traversal.
-    /// Each positive arithmetic result is rounded down. Scaling keeps
-    /// squares finite even near the limits of the coordinate type.
+    /// Enlarging either rectangle cannot increase it. Each positive
+    /// operation rounds down; overflowing squares saturate, weakening the
+    /// Euclidean term while the largest axis gap remains a lower bound.
     pub fn distance_lower_bound(self, other: Bounds) -> f64 {
         let x = down((self.min_x - other.max_x).max(other.min_x - self.max_x));
         let y = down((self.min_y - other.max_y).max(other.min_y - self.max_y));
-        let scale = x.max(y);
-        if scale <= 0.0_f64 {
-            return 0.0_f64;
-        }
-        let (x, y) = (down(x / scale), down(y / scale));
         let squared = down(down(x * x) + down(y * y));
-        down(down(squared.sqrt()) * scale)
+        down(squared.sqrt()).max(x).max(y)
     }
 }
 

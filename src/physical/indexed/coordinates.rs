@@ -3,20 +3,15 @@
 //! condition still checks each visible candidate. A raising condition or
 //! inner filter cannot take this path (RULES.md D15, D35).
 
-use super::{Probing, Read, alike, read_table};
+use super::probed::{Choice, planned};
+use super::{Read, alike, read_table};
 use crate::catalog::IndexDesc;
-use crate::logical::{Cond, Expr, LogicalPlan, SortKey, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr, split_and};
+use crate::logical::{Cond, Expr, LogicalPlan, SortKey, split_and};
 use crate::physical::join::Flip;
 use crate::physical::shown::Shown;
-use crate::physical::{Built, JoinComparison, JoinProbe, PhysicalPlanner, Plan, of_left};
+use crate::physical::{Built, JoinComparison, JoinProbe, PhysicalPlanner, of_left};
 use crate::storage::cost_of;
 use crate::value::CompOp;
-
-struct Choice {
-    read: Probing,
-    comparisons: Vec<JoinComparison>,
-    total: f64,
-}
 
 impl PhysicalPlanner<'_> {
     pub(in crate::physical) fn comparison_join(
@@ -104,27 +99,10 @@ impl PhysicalPlanner<'_> {
     }
 
     fn coordinate_cost(&self, read: &Read<'_>, ix: &IndexDesc, comparisons: Vec<JoinComparison>, outer: f64) -> Option<Choice> {
-        let storage = self.db.storage_of(read.table).ok()?;
-        let desc = self.db.catalog.table(read.table)?;
         let model = self.db.cost();
-        let rows = cost_of(storage.row_count());
         let share = comparisons.iter().map(|c| if c.op == CompOp::Eq { model.equal_selectivity } else { model.range_selectivity });
-        let each = rows * share.product::<f64>();
-        let cost = model.index_descent * (rows + 1.0_f64).log2() + each * storage.fetch_cost();
-        let probing = Probing {
-            table: read.table.clone(),
-            filter: read.filter.cloned(),
-            width: desc.columns.len().saturating_add(usize::from(read.located)),
-            index: ix.name.clone(),
-            method: ix.method.clone(),
-            used: Vec::new(),
-            each,
-            cost,
-            through: read.through.clone(),
-            needed: read.needed.to_vec(),
-            located: read.located,
-        };
-        Some(Choice { read: probing, comparisons, total: outer * cost })
+        let share = share.product::<f64>();
+        self.join_cost(read, ix, JoinProbe::Columns(comparisons.into_boxed_slice()), (outer, share))
     }
 }
 
@@ -149,44 +127,4 @@ fn crossed(cond: &Cond, width: usize) -> Vec<JoinComparison> {
             }
         })
         .collect()
-}
-
-fn planned(choice: Choice, outer: Plan, (cond, width): (Cond, usize), shown: Shown<'_>) -> Plan {
-    let Choice { mut read, comparisons, total } = choice;
-    let through = read.through.take();
-    let mapped = |c: usize| match &through {
-        Some((columns, _)) => c.checked_sub(width).and_then(|i| columns.get(i)).map_or(c, |i| i.saturating_add(width)),
-        None => c,
-    };
-    let cond = map_cond_columns(cond, &mapped);
-    let filter = read.filter.map(|c| map_cond_columns(c, &|i| i.saturating_add(width)));
-    let condition = and_all(std::iter::once(cond).chain(filter).collect()).map(judged_by_sets);
-    let joined_names = through
-        .as_ref()
-        .and_then(|(_, table)| shown.names().map(|names| names.iter().take(width).chain(table).cloned().collect::<Vec<_>>()));
-    let table_shown = joined_names.as_ref().map_or(shown, |names| Shown::of(Some(names)));
-    let detail = table_shown.text(|names| condition.as_ref().map(|c| render_cond(c, names)).unwrap_or_default());
-    let joined = Plan::IndexJoin {
-        outer: false,
-        left: Box::new(outer),
-        table: read.table,
-        index: read.index,
-        method: read.method,
-        probe: JoinProbe::Columns(comparisons.into_boxed_slice()),
-        cond: condition,
-        width: read.width,
-        columns: read.needed,
-        detail,
-        est: read.each,
-        cost: total,
-        located: read.located,
-    };
-    match through {
-        Some((columns, _)) => {
-            let exprs: Vec<_> = (0..width).chain(columns.iter().map(|&i| i.saturating_add(width))).map(Expr::Column).collect();
-            let projection = table_shown.text(|names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
-            Plan::Project { exprs, detail: projection, input: Box::new(joined) }
-        }
-        None => joined,
-    }
 }

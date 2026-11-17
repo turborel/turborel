@@ -102,6 +102,33 @@ fn indexes_reopen_and_are_freed() {
     assert!(method.open(&[MONEY], &locator).is_err(), "its meta page is freed");
 }
 
+/// Verifies: [DESIGN] RULES.md D34, `Index::discard`: each hash search
+/// and key-row stream owns its pages until it is dropped, even without
+/// an enclosing catalog snapshot. Regression test (R-TEST-7): a column
+/// projection no longer incidentally retained the discarded index.
+#[test]
+fn streams_retain_discarded_indexes_until_they_close() {
+    for probe in [None, Some(eq(exact(123, 0))), Some(Probe::All)] {
+        let method = HashMethod::in_memory();
+        let index = Arc::<dyn Index>::from(method.create(&[MONEY]).unwrap());
+        let key = Key(vec![exact(123, 0)]);
+        for row in 0..1_024 {
+            index.insert(key.clone(), row).unwrap();
+        }
+        let locator = index.locator();
+        let rows: RowIds = match probe {
+            Some(probe) => Box::new(Arc::clone(&index).search(&probe, KeyOrder::Ascending).map(|entry| entry.map(|(_, row)| row))),
+            None => Arc::clone(&index).key_rows(&key),
+        };
+        index.discard();
+        drop(index);
+        let mut found = rows.collect::<Result<Vec<_>>>().unwrap();
+        found.sort_unstable();
+        assert_eq!(found, (0..1_024).collect::<Vec<_>>());
+        assert!(method.open(&[MONEY], &locator).is_err(), "the final stream releases the pages");
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D25, D34, `Index::locator`: an index opened
 /// by the locator a checkpoint takes, its method not checkpointed since it
 /// last grew, counts every entry it holds, and none once all are removed;

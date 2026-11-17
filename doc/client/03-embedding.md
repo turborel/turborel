@@ -501,6 +501,36 @@ methods are `btree`, `hash` and `rtree`. Each trait's contract, what the databas
 calls and what an implementation must keep, is in the crate's own
 documentation, of the module the trait is in.
 
+`ScalarFunction::call_borrowed` receives references to existing argument
+values and the same temporary large-object store as `call_with`. The executor
+can use it for direct unary and binary row expressions and scalar comparisons
+over batches. The default copies the arguments and calls `call_with` once,
+so existing implementations need no changes. An override can avoid those
+copies but must preserve results, errors, side effects and large-object handling.
+References are valid only for the call; retaining a value requires owning it.
+
+`ScalarFunction::specialize` may prepare an equivalent function using
+constant arguments discovered by constant folding. It must preserve the
+function's type contracts, results and runtime errors, including when a
+later execution supplies different arguments. Preparation has no visible
+side effects; an invalid constant must be left for runtime because a CASE
+branch or an empty input may never evaluate it. An already prepared
+function returns no further specialization. Geometry relationships use
+this hook to retain a decoded constant operand within the expression.
+Polygon constants may also retain immutable interval indexes for point
+location. They use a separate memory reservation; if it is refused, the
+decoded operand still serves ordinary relationship evaluation.
+The hook receives the database's `MemoryBudget`; retained state must own a
+reservation and decline preparation if it cannot obtain one. A reused
+physical plan prepares calls after filling that execution's parameters.
+Indexed function joins may also call the hook for each outer row, with
+its column values fixed for that probe. The full condition and its
+argument expressions are still evaluated for each candidate pair.
+Disabling or removing the constant-folding rule disables these steps too.
+For spatial probes, the declared operation lets the planner recognize an
+equivalent prepared function when learning a reusable plan. Ordinary
+function probes still require the same function object, not just its name.
+
 ```rust
 use turborel::db::Database;
 
@@ -535,8 +565,9 @@ exact function to reject the extra matches (RULES.md D34).
 
 The example defines its own integer function and index. An application
 must register both before using them; `NEXT_TO` is not a built-in
-function. The built-in `btree`, `hash` and `rtree` methods retain their comparison
-lookups. A plug-in supplies the search for a function.
+function. A plug-in supplies the search for an arbitrary Boolean function.
+The built-in geometry lookup has the separate contract described under
+[Geometry values](#geometry-values).
 
 The function and index opt in separately:
 
@@ -544,7 +575,7 @@ The function and index opt in separately:
 |---|---|
 | `ScalarFunction::index_predicate` | True means every call accepted by the function's type checks returns BOOLEAN or null without an error or side effect. Equal inputs give equal answers, and either argument being null gives null. `deterministic` must also return true. |
 | `IndexMethod::supports_predicate` | True means every index it creates on the given key types returns every match for the registered function, indexed column and argument position. Support covers every accepted value of the other argument, including null. |
-| `Index::search` with `Probe::Predicate` | Return matching inserted `(Key, RowId)` pairs, each once. Extra candidates are allowed. Return the original key values so the executor can check the visible row version. |
+| `Index::search` with `Probe::Predicate` | Return matching inserted `(Key, RowId)` pairs, each once. Extra candidates are allowed. Keys retain inserted values unless `Index::key_projection` declares a projection. The executor rechecks the visible row version. |
 
 Both opt-ins default to false and their promises hold for the lifetime
 of the registered implementations. The planner recognizes calls with
@@ -553,6 +584,11 @@ either order. `Predicate::column` is the column's position in the index
 key; `Predicate::argument` is its position in the call, 0 or 1.
 `Probe::Predicate::value` supplies the other argument. The example method
 below supports the column in the first argument only.
+
+An index stream must retain its storage until it closes. This applies to
+`search`, `key_rows` and `nearest`: an existing cursor may continue reading
+after the index is dropped, without another catalog snapshot keeping the
+index alive. Reclaim its pages only when the last reader releases it.
 
 The planner compares the lookup cost with a scan. `Index::estimate`
 counts every candidate, including those the WHERE check rejects. If it
@@ -748,6 +784,112 @@ predicate index: true
 recheck: true
 ```
 
+## Geometry values
+
+Register GEOMETRY and its functions before opening a database containing
+spatial values. This example also shows a host application checking a
+courier route against a roadworks area, using the same local metre grid
+as the [SQL workflows](../data/spatial/00-sample-data.md):
+
+```rust
+use turborel::db::Database;
+use turborel::geometry::{FUNCTIONS, Geometry, GeometryType};
+use turborel::value::Value;
+
+fn main() -> Result<(), turborel::error::SqlError> {
+    let db = Database::new();
+    db.register_type(Box::new(GeometryType))?;
+    for function in FUNCTIONS {
+        db.register_scalar_function(Box::new(function))?;
+    }
+    db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned()))?;
+
+    let route = Geometry::from_wkt("LINESTRING (0 200, 1000 200)", 0)?;
+    let roadworks = Geometry::rectangle([300.0, 100.0], [500.0, 300.0], 0)?;
+    let stored_value = route.to_value();
+    let restored_route = Geometry::from_value(&stored_value)?;
+    println!(
+        "Route meets roadworks: {}",
+        restored_route.intersects(&roadworks)?
+    );
+    println!("Route: {}", restored_route.to_wkt());
+    Ok(())
+}
+```
+
+```text
+Route meets roadworks: true
+Route: LINESTRING (0 200, 1e3 200)
+```
+
+`stored_value` is the value to bind through the ordinary prepared-statement
+API. The spatial test checks the whole line: both route endpoints are
+outside the roadworks, but the path between them crosses it. It does not
+find a replacement route or calculate travel time.
+
+Registration is explicit, as for other plug-ins. Names already registered
+are refused; the loop consists of separate registrations. `turboreld`
+registers this extension automatically before opening database files.
+
+`Geometry::from_wkt(text, srid)` and `Geometry::from_wkb(bytes, srid)`
+construct structurally checked representations. `to_wkt` and `to_wkb`
+export them without their SRID; `to_value` and `from_value` bridge to
+SQL's extension values. `bounds()` returns a closed Cartesian envelope,
+or `None` for an empty point set. Construction computes the envelope;
+reading a SQL value decodes its payload and computes it again.
+`Geometry::point(x, y, srid)` and `Geometry::rectangle(lower, upper, srid)`
+construct directly from coordinates. The rectangle is a closed polygon;
+both axes require finite, strictly positive extents. Unlike storage
+`Bounds`, it refuses zero-width rectangles rather than producing an
+invalid polygon.
+`Geometry::intersects` makes exact XY topological decisions;
+`Geometry::distance` returns an approximate planar distance, or `None`
+for an empty operand. Both require matching SRIDs and valid polygon
+inputs. `geometry::data_type_with_srid` constructs a column descriptor
+that enforces one nonnegative SRID at assignment and storage boundaries;
+`geometry::data_type` permits any signed reference label.
+
+The codecs accept at most 16 MiB of input, 100,000 components, rings and
+coordinates in total, and 16 geometry levels including the root. Counts
+and input lengths are checked before allocating from them. SQL functions
+retain the existing SQL string limits. Formats, errors and semantics are
+specified in the [SQL reference](../sql/spatial.md); the
+[Spatial Guide](../data/spatial/README.md) contains SQL workflows.
+
+The version-1 payload contains the SRID and canonical little-endian WKB.
+Unknown versions and noncanonical stored encodings are refused. Existing
+file, log, catalog and wire formats are unchanged. A client without the
+type uses the existing opaque extension-value handling. The type must be
+registered again before reopening database files that contain it.
+
+An `RTreeMethod` index on one `geometry::data_type_with_srid(srid)` column
+stores envelope projections. `ScalarFunction::spatial_operation` identifies
+the intersection, distance and emptiness contracts, including result types,
+NULL behavior and SRID errors;
+it does not promise D34's error-free Boolean behavior. The planner uses it
+with a constrained column and a valid constant or parameter. A later
+query parameter with a different SRID causes a full index read, preserving
+the runtime mismatch error. Other raising conjuncts prevent pruning.
+An inner join can supply the probe from the other column when both column
+types enforce the same SRID. Its `JoinProbe::Predicate` binds each outer
+value and retains the full ON condition for exact checking.
+
+`Index::key_projection` shares an immutable `KeyProjection` with readers.
+Counts belong to projected-key/row pairs, so colliding versions keep one
+entry until their last reference is removed. Equality lookups return
+candidates; constraints and foreign-key actions compare original values.
+The executor checks each visible row's projection and then the full SQL
+condition. Projected indexes cannot supply original values for covering
+reads or claim SQL key order. Spatial predicate reads currently record a
+whole-table serializable read. Geometry index locators use version 2 and
+include the SRID; numeric locators remain version 1.
+
+An envelope is a candidate-search bound. `Geometry::intersects` checks
+actual shapes, including polygon holes and boundaries, using exact
+orientation signs. Both arguments must have the same SRID and polygon
+topology must be valid. SQL constant folding can keep a decoded constant
+operand per expression, avoiding repeated decoding without a cache lock.
+
 ## Spatial storage primitives
 
 The built-in `RTreeMethod` connects these pages to SQL. An index on two
@@ -759,14 +901,17 @@ on each coordinate. See [CREATE INDEX](../sql/statements/create-index.md).
 order. It accepts points and zero-width rectangles, rejects reversed bounds
 and non-finite coordinates, and treats touching boundaries as intersections.
 
+For a storage-level viewport filter, the bounds can test whether a
+courier's point is visible, including the viewport's edge:
+
 ```rust
 use turborel::spatial::Bounds;
 
 fn main() -> Result<(), turborel::error::SqlError> {
-    let window = Bounds::new([0.0, 0.0], [10.0, 10.0])?;
-    let point = Bounds::point([10.0, 5.0])?;
-    assert!(window.intersects(point));
-    assert!(window.contains(point));
+    let viewport = Bounds::new([0.0, 0.0], [1000.0, 400.0])?;
+    let courier = Bounds::point([1000.0, 100.0])?;
+    assert!(viewport.intersects(courier));
+    assert!(viewport.contains(courier));
     Ok(())
 }
 ```
@@ -782,6 +927,19 @@ ties by row identifier. Take the first k entries to stop as soon as those
 neighbours are known. Its priority queue reserves memory from the supplied
 `MemoryBudget` and returns SQLCODE -918 if it cannot grow. Dropping the
 iterator releases that memory. Distances use the coordinates' units.
+
+`Index::nearest` supplies `NeighbourEntries` for a supported `NearestQuery`.
+These are candidates ordered by conservative distance bounds. The caller
+checks the visible geometry and its scalar distance, keeps the best k
+results, and continues through every bound equal to the current kth
+distance. Taking the first k candidates is insufficient for geometry.
+The geometry index declines requests outside its certified finite-distance
+domain, returning `None` so the caller can scan and preserve runtime errors.
+The SQL executor uses this contract for `NearestScan`, with a separate
+budgeted heap of scalar distances and the existing SQL sorter. It checks
+each fetched version's projected key, records a serializable table read,
+and observes cancellation before returning rows. When too few qualifying
+non-NULL distances exist, a scan supplies the NULL-distance tail.
 
 `RTree::join` streams pairs of intersecting entries from two trees. It
 prunes disjoint branches on both sides and charges its workspace to the

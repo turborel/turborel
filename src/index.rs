@@ -11,6 +11,8 @@
 
 mod blink;
 mod hash;
+mod nearest;
+mod projection;
 mod rtree;
 mod stats;
 
@@ -19,6 +21,8 @@ use std::sync::Arc;
 
 pub use blink::BTreeMethod;
 pub use hash::HashMethod;
+pub use nearest::{NearestQuery, NeighbourEntries};
+pub use projection::KeyProjection;
 pub use rtree::RTreeMethod;
 
 use crate::catalog::{IndexDesc, TableDesc};
@@ -90,7 +94,8 @@ pub enum KeyOrder {
 
 /// \[EXTENSION\] A function call used to find rows through an index, such
 /// as `f(column, ?)` (RULES.md D34). The function must opt in through
-/// `ScalarFunction::index_predicate`. An index method declares support
+/// `ScalarFunction::index_predicate`, or the separately proven spatial
+/// contract in D82. An index method declares support
 /// for this function and both positions, for every accepted value of the
 /// other argument, including null and later prepared parameter values.
 #[derive(Debug, Clone)]
@@ -213,8 +218,8 @@ fn columns_answer<'a>(key: impl Iterator<Item = &'a Value>, each: &[ColumnCompar
 /// Contract (RULES.md R-SAFE-3; checked for btree and hash by
 /// `test/integration/index_contracts.rs`):
 /// * `name` is unique among the registered methods, and constant.
-/// * `supports(op)` is true only if every index it creates answers
-///   `Probe::Compare` with `op` exactly (see `Index`), and
+/// * `supports_compare(op, types)` is true only if every index it creates
+///   on those types answers `Probe::Compare` with `op` exactly, and
 ///   `supports_prefix(columns, equal, then)` only if every index it creates
 ///   on `columns` columns answers exactly a `Probe::Prefix` of `equal`
 ///   values and a comparison by `then`.
@@ -237,6 +242,12 @@ fn columns_answer<'a>(key: impl Iterator<Item = &'a Value>, each: &[ColumnCompar
 /// * No method may call back into the `Database` or its sessions (RULES.md
 ///   R-ERR-4); the `Database` docs say what happens if one does.
 pub trait IndexMethod: Send + Sync {
+    /// Whether indexes on these types offer distance candidates for this
+    /// call's declared semantics. Runtime requests may still decline under
+    /// [`NeighbourEntries`]' error and range contract. Default: unsupported.
+    fn supports_nearest(&self, _query: &NearestQuery, _columns: &[DataType]) -> bool {
+        false
+    }
     /// The method's name, as `create_index` and `IndexDesc::method` give it.
     fn name(&self) -> &'static str;
     /// Takes what the database registering it provides: its memory budget.
@@ -255,6 +266,11 @@ pub trait IndexMethod: Send + Sync {
     }
     /// Can a `Probe::Compare` with this operator be answered?
     fn supports(&self, op: CompOp) -> bool;
+    /// Whether comparison probes are supported on these column types.
+    /// Defaults to `supports`; a method accepting lossy keys may restrict it.
+    fn supports_compare(&self, op: CompOp, _columns: &[DataType]) -> bool {
+        self.supports(op)
+    }
     /// Can an index on `columns` columns answer a `Probe::Prefix` of
     /// `equal` values, then a comparison by `then`, if given? Default: no.
     fn supports_prefix(&self, _columns: usize, _equal: usize, _then: Option<CompOp>) -> bool {
@@ -369,6 +385,11 @@ pub trait IndexMethod: Send + Sync {
 ///   UNIQUE NULLS NOT DISTINCT constraint (`IndexDesc::nulls`), and probe
 ///   only with probes the method supports. No comparison probe selects
 ///   such a key. `Probe::Predicate` may return one as an extra candidate.
+/// * Unless `key_projection` declares the D82 projected-key contract,
+///   counts and returned keys refer to the original inserted keys.
+///   With a projection they refer to projected keys: `rows`/`key_rows`
+///   give projection-equality candidates, and readers recheck original
+///   row values. Such an index cannot provide SQL key order or covering reads.
 /// * For comparison probes and `Probe::All`, `search` gives exactly the
 ///   (key, id) pairs inserted more often than removed whose key satisfies
 ///   the probe by the [X3.135-1986 §5.11]
@@ -381,23 +402,26 @@ pub trait IndexMethod: Send + Sync {
 ///   entry is; callers read no further.
 /// * For `Probe::Predicate`, `search` returns every matching inserted
 ///   `(Key, RowId)` pair, each once. It may also return extra candidates,
-///   each once. Keys contain the inserted values, never approximations
-///   such as bounding boxes. The executor fetches visible row versions and
+///   each once. Keys contain inserted values unless `key_projection`
+///   explicitly declares their projection. The executor fetches visible row versions and
 ///   checks the full WHERE condition (RULES.md D34). The function's
 ///   declaration and the method's support must hold for the index's life.
 ///   Estimates and searches must never call back into a database or session.
-/// * `rows(key)` returns the ids of the pairs with a key equal to `key`, a
-///   null in it equal to a null, each once; `key_rows(key)` gives the same ids, as they are read,
+/// * `rows(key)` returns the ids of the pairs with a key equal to `key`
+///   (or its declared projection), a null equal to a null, each once;
+///   `key_rows(key)` gives the same ids, as they are read,
 ///   holding no more of them than `search` does, so a key of more rows
 ///   than memory holds is read whole (RULES.md D34, D38); an error of its
 ///   storage is given as an id is.
-/// * `remove` takes back one insert of that (key, id) pair; removing a pair
-///   with none left changes nothing.
+/// * `remove` takes back one insert of that (key, id) pair, using the
+///   declared projection when present; removing a pair with none left changes nothing.
 /// * `load` is called only on an index that is empty, and nothing else
 ///   reads or writes it until it returns; it leaves the index as inserting
 ///   each entry would.
-/// * After `discard`, no method but `search`, `rows` and `estimate` is
+/// * After `discard`, no method but `search`, `nearest`, `rows`, `key_rows` and `estimate` is
 ///   called, and those only by readers that found the index before.
+///   Streams retain the index until they close, independently of catalog
+///   snapshots, so its pages cannot be reclaimed while they are read.
 /// * `estimate` is only a statistic: results never depend on it. `None` is
 ///   "not known cheaply", and the planner then estimates from the table's
 ///   statistics; for `Probe::Predicate` it prices fetching every table row.
@@ -406,6 +430,21 @@ pub trait IndexMethod: Send + Sync {
 /// * No method may call back into the `Database` or its sessions (RULES.md
 ///   R-ERR-4); the `Database` docs say what happens if one does.
 pub trait Index: Send + Sync {
+    /// Distance candidates under [`NeighbourEntries`]' pruning contract,
+    /// or `None` when the request needs an ordinary scan. Default: no
+    /// capability. The returned stream retains this index.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or SQLCODE -918 if its frontier cannot be reserved.
+    fn nearest(self: Arc<Self>, _query: &NearestQuery, _budget: &Arc<crate::memory::MemoryBudget>) -> Result<Option<NeighbourEntries>> {
+        Ok(None)
+    }
+    /// A fixed projection of original keys, or none for exact keys.
+    /// See [`KeyProjection`] for counts, candidate and recheck contracts.
+    fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
+        None
+    }
     /// Adds an entry of `row` under `key`. Keys containing a null are
     /// inserted only into the index of a UNIQUE NULLS NOT DISTINCT
     /// constraint [ISO/IEC 9075-2:2023 §11.7], to be found by `rows`: a

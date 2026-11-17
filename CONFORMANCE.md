@@ -1875,6 +1875,120 @@ Plug-ins register these with `Database::register_type` (RULES.md D53).
 | Durability | Logged, checkpointed and recovered. A database whose files hold one is not opened without it. |
 | Clients | Sent as its type's name, its text and its bytes, and shown as its text by a client without the plug-in. |
 
+### Geometry representations
+
+GEOMETRY is a registered type (`src/geometry.rs`, RULES.md D82),
+with the seven basic XY value kinds and their WKT/WKB representations
+from OGC 06-103r4 §§7–8. Its optional nonnegative SRID parameter, using
+D53's existing type syntax, enforces the reference on assignment, CAST
+and storage, including empty values; the unparameterized type permits
+any signed 32-bit identifier. The type descriptor and value payload each
+have a versioned encoding. Z/M, curves and EWKB flags are refused. Empty
+points use the GEOS NaN-pair WKB convention. Readers check structure,
+finite coordinates and representation limits, not polygon topology.
+Stored WKB also requires little-endian components, positive zero and
+the canonical empty-point NaN pair; these checks happen during decoding
+without changing the payload format or the accepted interchange forms.
+The server program registers the type and functions before opening files;
+embedding applications register them explicitly. Function calls retain
+the existing SQL.FUNCTION_CALLS opt-in.
+
+The free functions ST_POINT, ST_X, ST_Y, ST_GEOMFROMTEXT, ST_GEOMFROMWKB,
+ST_ASTEXT, ST_ASBINARY, ST_SRID, ST_SETSRID, ST_ISEMPTY and ST_GEOMETRYTYPE
+are extensions. Point ordinate observers return NULL for an empty point
+and refuse other geometry kinds. ST_GEOMETRYTYPE returns SQL/MM-style
+names, including ST_GeomCollection. ST_SETSRID changes only the identifier.
+ST_MAKEENVELOPE constructs a rectangular polygon from four numeric bounds
+and an optional SRID. It refuses non-finite, reversed and zero-area bounds
+(`Geometry::rectangle`); it does not implement SQL/MM's ST_Envelope method.
+ST_MINX, ST_MAXX, ST_MINY and ST_MAXY return DOUBLE PRECISION extrema of
+any supported kind, or NULL for an empty point set. They are free-function
+extensions, not structured-type methods.
+SRIDs are opaque identifiers, default zero; there is no CRS catalog or
+transformation. Ordinary comparisons use canonical representation bytes,
+not topological equality. ST_INTERSECTS and ST_DISJOINT implement closed
+XY intersection/disjointness for valid simple-feature topology
+(OGC 06-103r4 §6.1.2.3, `src/geometry/relate.rs`). Empty inputs intersect
+nothing; mixed SRIDs fail before empty/envelope shortcuts. Orientation
+signs are exact for finite binary64 coordinates (`src/geometry/robust.rs`).
+These functions return integer 1/0. A filter comparing ST_INTERSECTS to 1
+can use an R-tree on a `GEOMETRY(srid)` column with a constant or parameter
+query geometry (`physical/access/spatial.rs`, `index/rtree/geometry.rs`).
+Envelope candidates are rechecked against the visible geometry and full
+condition. Mixed-reference parameters fall back to all entries, preserving
+runtime errors. NULL/EMPTY behavior and representation equality are unchanged.
+Inner joins between two columns constrained to the same SRID can probe
+one geometry index for each outer row (`physical/indexed/spatial.rs`).
+Both table orders and column projections are considered; the complete ON
+condition rechecks each visible pair. Other raising conjuncts and raising
+inner filters prevent this path. Geometry outer joins and simultaneous
+traversal of two spatial indexes are not implemented.
+An unordered inner join whose remaining outer rows fit its memory
+budgets can choose a single visible table scan when index estimates price
+it below repeated probes (`exec/join/indexed/adaptive.rs`). A temporary
+spatial hierarchy prunes groups; four boundary masks per leaf select
+envelope candidates; exact geometry relationships and the remaining ON condition
+still decide every result. Memory or capacity refusal resumes the buffered
+input through probes. Snapshot visibility and serializable reads use the
+same storage contracts as ordinary scans.
+Optional setup waits until completed probes have read at least a table's
+worth of candidates, avoiding repeated estimates for a selective join.
+Column-only projections can be built directly from the two source rows
+after exact intersection refinement (`exec/join/indexed/refined.rs`).
+Repeated columns and their order are preserved; additional ON conditions
+still evaluate before projection. This changes row construction only.
+For the proven same-SRID adaptive join, the relationship and its residuals
+cannot raise a SQL expression error. Its cursor streams unless another
+part of the plan can raise; such plans still evaluate eagerly before OPEN
+returns (`physical/raising.rs`, D15). Stored-data errors are not suppressed.
+Column-only spatial output gives its first row directly, then uses at most
+64 rows of lookahead, reserving
+its buffer within the memory budgets. Refusal preserves the current row
+after its buffered prefix and resumes direct streaming. Storage errors
+remain ordered after their preceding rows (`db/stream/chunks.rs`).
+ST_DISTANCE returns the approximate minimum Cartesian distance in
+coordinate units, zero for intersections and NULL for an empty set
+(OGC 06-103r4 §6.1.2.4, `src/geometry/distance.rs`). The same SRID and
+polygon validity requirements apply. Outward-rounded interval filters
+fall back to exact dyadic arithmetic for uncertain endpoint classifications
+and perpendicular determinants; the final magnitude is approximate.
+Distance norms have explicit axis/L1 bounds and binary scale factors.
+Finite geometry distances cannot fall below their conservative envelope
+bound, which never increases when either envelope expands (`src/spatial.rs`).
+Unrepresentable final distances raise 22003.
+Relationship calls may retain a decoded constant operand with a database
+memory reservation. Polygon and MultiPolygon constants can additionally
+retain per-ring Y-interval trees for point location
+(`src/geometry/prepared/locator.rs`). They use the same exact crossings,
+closed boundaries and hole rules as ordinary evaluation; an insufficient
+budget leaves the decoded operand without an index. A single, closed,
+axis-aligned rectangular ring without holes can classify a point directly
+against its closed bounds (`src/geometry/prepared/rectangle.rs`). Prepared
+distance reuses that intersection decision and keeps the ordinary
+separation kernel. Indexed joins can prepare their outer geometry once
+per probe, preserving the full ON condition and runtime errors.
+Reused physical plans prepare calls with each
+execution's arguments when constant folding is enabled; failed preparation
+preserves ordinary evaluation, including lazy branches and runtime errors.
+Indexed geometry plans can learn despite different prepared function
+objects: probe shapes compare the declared spatial semantics, retaining
+ordinary function identity checks for other predicates.
+The index extension API can return geometry distance candidates in monotone
+envelope-bound order (`Index::nearest`, `src/index/nearest.rs`). Its finite
+range certificate includes every root split sibling and may decline a
+request before output. Ascending ST_DISTANCE with NULLS LAST and a known
+OFFSET plus FETCH FIRST ONLY count can select these candidates on a
+fixed-SRID geometry column (`physical/nearest.rs`, `exec/nearest.rs`).
+The full filter and visible geometry are evaluated before ranking; a
+strict cutoff keeps distance ties for the final SQL sort. Exhausted
+candidates are supplemented with qualifying NULL distances when needed.
+Uncertified requests and an unaffordable threshold heap scan before output.
+WITH TIES, PERCENT and other orders retain ordinary plans. Serializable
+reads, cancellation, prepared values and runtime errors are preserved.
+Geometry metadata tables, other spatial relationships and measures,
+and SQL/MM structured types are not implemented.
+No Simple Features or SQL/MM Spatial conformance is claimed.
+
 ### Indexes
 
 These are RULES.md D34, of the methods `btree`, `hash` and `rtree`, or a
@@ -1882,8 +1996,8 @@ plug-in's. The statements run outside a transaction. The `rtree` method
 indexes two approximate-numeric point coordinates or four rectangle
 coordinates and answers independent SQL comparisons (`index/rtree.rs`,
 `physical/access/columns.rs`, D72). Inner joins can bind these comparisons
-from each outer row (`physical/indexed/coordinates.rs`). This does not add geometry types or
-SQL/MM spatial routines.
+from each outer row (`physical/indexed/coordinates.rs`). Single-column
+geometry indexes use the projection contract described above (D82).
 
 ```
 CREATE INDEX name ON table (columns) [USING method] [WITH (...)]

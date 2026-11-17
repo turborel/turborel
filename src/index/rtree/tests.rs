@@ -5,6 +5,9 @@ use super::*;
 use crate::index::ColumnComparison;
 use crate::value::{Decimal, Spelled};
 
+mod geometry;
+mod nearest;
+
 fn approximate() -> DataType {
     DataType::Approximate { precision: 53, spelled: Spelled::DoublePrecision }
 }

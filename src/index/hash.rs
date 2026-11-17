@@ -376,10 +376,14 @@ impl Index for HashIndex {
 
     /// The key's entries, a page of its chain at a time, each row once.
     fn key_rows(self: Arc<Self>, key: &Key) -> RowIds {
-        match self.encoded(key) {
+        let rows = match self.encoded(key) {
             Ok(encoded) => self.rows_of(&encoded),
             Err(e) => Box::new(std::iter::once(Err(e))),
-        }
+        };
+        // The index owns page reclamation; holding its table alone is insufficient.
+        Box::new(rows.inspect(move |_| {
+            let _rows_owner = &self;
+        }))
     }
 
     /// For one key, a lookup, its entries counted (`counted`), pairs
@@ -408,7 +412,7 @@ impl Index for HashIndex {
         if matches!(probe, Probe::Predicate { .. }) {
             return Box::new(std::iter::once(Err(SqlError::new(Code::Unsupported, "[EXTENSION] hash does not support function lookups"))));
         }
-        match self.lookup(probe) {
+        let entries: Entries = match self.lookup(probe) {
             Lookup::Nothing => Box::new(std::iter::empty()),
             Lookup::Key { key, checked } => match self.answers(&key, checked, probe) {
                 Ok(Some(decoded)) => Box::new(self.rows_of(&key).map(move |row| row.map(|r| (decoded.clone(), r)))),
@@ -423,7 +427,11 @@ impl Index for HashIndex {
                     Err(e) => vec![Err(e)],
                 }))
             }
-        }
+        };
+        // A cursor may outlive the catalog snapshot that opened this index.
+        Box::new(entries.inspect(move |_| {
+            let _entries_owner = &self;
+        }))
     }
 
     /// Its table's entries and their bytes, u64 each, little-endian; then

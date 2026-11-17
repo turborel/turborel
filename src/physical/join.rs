@@ -46,10 +46,12 @@ impl PhysicalPlanner<'_> {
     /// `cond` over `input` as a hash join, if `input` is a product and
     /// `cond` equates a column of each of its operands and cannot raise an
     /// error. The conjuncts that are not such equalities filter its rows.
+    /// Geometry joins can instead prove matching SRIDs and probe envelopes
+    /// even though the scalar function can raise on unconstrained values.
     pub(super) fn hash_join(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Option<Built> {
         let LogicalPlan::Product { left, right } = input else { return None };
         if cond.can_raise() {
-            return None;
+            return self.spatial_join(cond, (left, right), want);
         }
         if let Some(Lifted { cond, left, right, kept }) = lifted(cond, left, right) {
             let product = LogicalPlan::Product { left: Box::new(left), right: Box::new(right) };

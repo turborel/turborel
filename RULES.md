@@ -119,6 +119,7 @@ verification approach DO-178C expects (§8).
 | D79 | Large objects stream: chunked, logged by chunk, read by range, reached by locators |
 | D80 | Multisets are unordered values, paired by classes and a matching |
 | D81 | Structured types: values name their type, typed tables keep their own rows, references are octets |
+| D82 | Geometry values start with XY representations through SqlType |
 | D82 | System-versioned tables keep their historical rows in a hidden table of their own |
 | D83 | A column is renamed in place, refused while a text names it |
 
@@ -1869,6 +1870,39 @@ row at a time so the two can be compared. The batch tests read each answer
 both ways. A batch that raises gives its earlier rows first, then the
 error, so results and errors match the row path (D15).
 
+A filter comparing a scalar call with a constant can read its column
+arguments directly from the batch (`exec/batch/judge/calls.rs`). Constant
+arguments and batch values are passed by reference through
+`ScalarFunction::call_borrowed`, with the temporary large-object store
+(D79). Its default copies the arguments and calls `call_with` exactly
+once; an override must preserve all results, errors and side effects.
+Direct unary and binary row expressions can use the
+same hook. Prepared geometry relationships borrow both operands, avoiding
+reference-count changes to their shared type and payload. Calls still run once per selected row,
+in row order, and stop at the first error with the earlier matches retained.
+Comparisons retain operand order and propagate large-object read errors.
+Arguments that need expression evaluation use the general row evaluator.
+
+Column-only row projections consume each input value at its last output
+position and copy it only for earlier duplicates (`exec/project.rs`). An
+identity projection returns its input allocation. An index join likewise
+moves the fetched inner row into its pair; it copies only the outer row,
+which later matches still need. These changes avoid retaining extra
+references to large values while preserving output order and multiplicity.
+An index join can also retain a column-only output projection. When its
+only conjunct is a spatial intersection, it refines borrowed source rows
+and builds only the selected values, rather than copying both geometries
+into a pair that the projection immediately discards. Adaptive scans use
+the same binding (`exec/join/indexed/refined.rs`). Additional ON conjuncts
+retain the full pair for evaluation before projection; a fallback to
+ordinary probes retains the requested output columns.
+Adjacent column-only projections are composed during physical planning
+(`physical/project.rs`). This includes the projection that restores a
+reversed join's column order, so the join receives the final selection.
+Repeated columns and output order are preserved. A computed expression
+on either side prevents composition; even an unused expression must still
+be evaluated for its errors (D15).
+
 #### D34. Index methods support comparisons and function predicates
 
 An index method creates indexes and says which probes they answer, and the
@@ -1876,8 +1910,15 @@ planner picks by estimate. Three are built in, paged through the buffer
 pool. `btree` is a B-link tree, ordered, for equality and ranges. `hash` is
 a linear hash table (Litwin, 1980), for equality only, and its readers lock
 nothing. `rtree` indexes two point coordinates or four rectangle coordinates
-(D72). A method can support independent comparisons on several key columns
+(D72), or one fixed-SRID geometry through envelope projections (D82).
+A method can support independent comparisons on several key columns
 without an equality prefix (`IndexMethod::supports_columns`).
+
+Search, nearest-neighbour and key-row streams retain their index until
+they close. Dropping an index removes it from new catalog snapshots;
+its pages are reclaimed only after existing readers release it. A stream
+must keep this ownership itself, without relying on an enclosing plan or
+catalog snapshot to retain the index.
 
 A comparison probe finds exactly what SQL compares. A probe value of
 another type is placed by its anchor and each entry checked, and a number
@@ -1905,8 +1946,12 @@ not hide an error on a row it skips (D15).
 
 The index returns every matching inserted `(Key, RowId)` pair, each once.
 It may also return pairs that do not match, called extra candidates. The
-keys must contain the inserted values rather than approximations such as
-bounding boxes. The executor fetches each row version visible to the
+keys contain inserted values unless `Index::key_projection` explicitly
+declares a deterministic projection (D82). A projected index counts
+`(projected key, row id)` pairs and returns projected keys. Its equality
+lookups return projection-equality candidates; constraint and referential
+checks compare original values. It provides neither SQL key order nor
+covering reads. The executor fetches each row version visible to the
 transaction and checks the whole WHERE condition, even for an exact
 implementation. Only TRUE keeps the row; FALSE and unknown discard
 it. A function lookup always fetches rows and never uses an index-only
@@ -2453,6 +2498,300 @@ They descend one side at a time and stream matching leaf pairs. Split
 chains partition each input independently, so the product of two moved
 groups is not visited twice. The pending pairs and two decoded leaf pages
 reserve memory (D38); result pairs are never collected in the index.
+
+#### D82. Geometry values start with XY representations through SqlType
+
+`geometry::GeometryType` registers GEOMETRY through D53. It is a single
+type whose values distinguish Point, LineString, Polygon,
+MultiPoint, MultiLineString, MultiPolygon and GeometryCollection. These
+are value kinds, not a SQL structured-type hierarchy. Hosts register the
+type and the functions in `geometry::FUNCTIONS` before opening files.
+The server program registers them automatically before opening files;
+calls still require the existing SQL.FUNCTION_CALLS setting.
+
+The interchange subset is XY WKT and WKB from OGC 06-103r4 §§7–8. Readers
+check complete input, finite coordinates, line cardinality, ring length
+and closure, and homogeneous collection member types. They do not check
+polygon self-intersection, hole placement or other topological validity.
+Z/M, curves, surfaces beyond polygons and EWKB flags are refused. WKB
+accepts either byte order per component and is written little-endian.
+For empty points it uses the NaN-pair interchange convention documented
+by [GEOS](https://libgeos.org/specifications/wkb/); no non-finite coordinate
+enters the geometry's envelope. An empty geometry is not SQL NULL.
+
+The existing D53 type-parameter syntax also permits `GEOMETRY(srid)`.
+Its one unsigned parameter must fit a nonnegative signed 32-bit integer.
+Assignment, existing-value CAST, record/key encoding and decoding enforce
+that label, including on empty values. Text CAST supplies the destination
+SRID while constructing the geometry. An SRID constraint never relabels
+an existing value. Plain GEOMETRY retains arbitrary signed identifiers.
+The descriptor's own version 1 encoding is a version byte, a parameter
+count byte (0 or 1), and, if present, the SRID as a little-endian u32.
+Unknown versions, invalid counts and out-of-range parameters are refused.
+
+Every value has an opaque signed 32-bit SRID, zero if not supplied. No
+identifier is validated against a CRS catalog, no axis order is changed,
+and no coordinate transformation or geodesic operation is implied.
+WKT and WKB omit SRID; the versioned stored payload retains it. Version 1
+is a byte of version, an i32 little-endian SRID and canonical XY WKB.
+Unknown versions and noncanonical stored encodings are refused. Existing
+file, catalog, log and wire formats keep their versions: this payload is
+carried by the existing extension-value representation.
+
+The stored WKB reader checks little-endian order at every component,
+positive zero and the writer's exact empty-point NaN bits while parsing.
+It checks signed-zero encodings in a contiguous pass over each coordinate
+array; the ordinary parser still checks finite values and ring structure.
+Together with the ordinary structural and complete-input checks, these
+accept exactly the bytes a read-and-rewrite comparison accepts, without
+allocating a second encoding. Interchange remains permissive about byte
+order, signed zero and the NaN pair's representation.
+
+SQL equality, ordering, hashing and ordinary index keys compare the
+canonical payload bytes, including SRID and coordinate order. This is
+representation equality, not ST_Equals. Signed zero is normalized, but
+ring order and line direction are preserved. Large values remain subject
+to the ordinary index key limits. An `rtree` on one `GEOMETRY(srid)`
+column stores envelopes instead; the row retains the original geometry.
+
+Readers accept at most 16 MiB of WKT or WKB, 100,000 components, rings and
+coordinates in total, and 16 nested geometry levels including the root.
+Each reader checks the same budget; binary counts are checked against
+remaining input before allocation. SQL constructor parameters and text
+or binary observer results use the existing SQL string limits. An
+observer exceeding its SQL result limit fails with SQLCODE -900. The
+Rust interchange methods retain the larger representation limits.
+
+`ST_POINT` constructs a point from two numeric coordinates; `ST_X` and
+`ST_Y` read an ordinate, returning NULL for POINT EMPTY and refusing
+other kinds. `ST_SETSRID` relabels coordinates without transforming them.
+`ST_MAKEENVELOPE` constructs a rectangular polygon from minimum X/Y and
+maximum X/Y coordinates. Both axes must have finite, strictly positive
+extents: reversed and zero-area rectangles fail with SQLCODE -301. It
+uses comparisons rather than subtracting coordinates, so extreme and
+subnormal bounds do not require an area calculation. This free-function
+extension is distinct from SQL/MM's ST_Envelope method. `ST_MINX`,
+`ST_MAXX`, `ST_MINY` and `ST_MAXY` observe extrema of any geometry kind,
+returning NULL for an empty point set.
+`ST_GEOMFROMTEXT`, `ST_GEOMFROMWKB`, `ST_POINT` and `ST_MAKEENVELOPE` accept an optional SRID;
+`ST_ASTEXT`, `ST_ASBINARY`, `ST_SRID`, `ST_ISEMPTY` and `ST_GEOMETRYTYPE`
+observe the representation. ST_GEOMETRYTYPE uses SQL/MM-style names,
+including ST_GeomCollection, rather than uppercase WKT names. They are
+extension functions through the
+existing opt-in call syntax.
+This subset claims neither SQL/MM Spatial nor Simple Features conformance.
+
+`ST_INTERSECTS` and `ST_DISJOINT` test closed XY point sets and return
+integer 1 or 0 as OGC 06-103r4 §6.1.2.3 describes. Polygon topology must
+be valid; these operations do not validate it. Empty sets intersect
+nothing, NULL propagates, and mixed SRIDs fail with SQLCODE -301 before
+empty or envelope shortcuts. They do not opt into D34's total Boolean
+predicate contract. Thus planning must preserve their runtime errors.
+Orientation first tries Shewchuk's binary64 rounding-error bound
+([reference implementation](https://www.cs.cmu.edu/afs/cs/project/quake/public/code/predicates.c),
+`ccwerrboundA`). It accepts a sign only when both products, the determinant
+and the error bound are normal, and the determinant's magnitude exceeds
+that bound. Other cases use outward-rounded intervals, then exact bounded
+integers on binary64's dyadic coordinates. No tolerance changes a
+topological decision, including at extreme exponents.
+
+`ScalarFunction::spatial_operation` declares equivalent spatial semantics,
+including result types, NULL propagation and SRID errors. It is separate
+from D34's error-free Boolean opt-in. For `ST_INTERSECTS(column, value) = 1`
+(or either reversed operand/comparison), a single fixed-SRID geometry
+column permits envelope candidates. The other argument must be a valid
+constant or parameter, and every other conjunct must be non-raising.
+The full condition remains a residual. If a later parameter has a different
+SRID, the index returns all entries, including empties, so pruning cannot
+hide the runtime error. NULL and matching-SRID EMPTY queries return none.
+An empty stored geometry projects to an origin rectangle, adding candidates
+but no false negatives. NULL keys are omitted. Readers compare the visible
+version's projection with the entry before evaluating the full condition.
+Spatial reads currently record a whole-table serializable read (D34).
+Geometry window probes group at most 4096 envelope/row-id pairs before
+fetching rows. Blocks of at least 1024 pairs are sorted by row id to reuse
+nearby row-store pages; smaller results keep their traversal order. The
+buffer starts at 64 pairs and grows once, with both allocations charged
+during the handover. Each cursor retains at most 160 KiB of candidate
+elements; actual vector capacity is charged to D38's budget. A refused
+allocation keeps the smaller buffer or streams directly. Every candidate,
+including different versions of one row, retains its own envelope. A
+prefetched index error follows all preceding candidates. Nearest searches
+and reference-mismatch scans do not use these unordered blocks.
+Each new projected join probe renews the row-store leaf-locality trial.
+This preserves the row-byte buffer and transaction bookkeeping while
+allowing a dense probe to benefit after a sparse probe exhausted its hints.
+Geometry cardinality estimation counts up to 1000 candidates exactly.
+Beyond that it samples 64 paths across the root's branches, weighting leaf
+matches by each visited branch's fanout. It reads at most 256 sample nodes
+after locating the root and retains only the root and current path node.
+Changed split stamps, pending splits, malformed paths, arithmetic overflow
+or an exhausted page budget decline the estimate. The estimate is at least
+the candidate count already observed; it is approximate planning input,
+never a bound used to skip or accept rows. Numeric coordinate probes retain
+their existing exact-count cutoff.
+Geometry index locators use version 2: version and width bytes, a u32 SRID
+and a u64 metadata page, all integers little-endian. Numeric locators keep
+version 1; tree page formats are unchanged.
+
+An inner join on `ST_INTERSECTS(left, right) = 1` can probe one geometry
+index for each outer row. Both columns must enforce the same SRID, all
+other conjuncts and the indexed table's filter must be non-raising, and
+the complete ON condition rechecks each visible pair. Planning considers
+both table orders and column projections. A NULL outer geometry makes no
+probe; an empty geometry finds no pair. Spatial probes retain the same
+whole-table serializable read as filters. This is not a simultaneous
+traversal of two indexes. Geometry outer joins do not yet use this path.
+
+For an unordered spatial inner join, the executor can choose a single
+table scan instead of repeated probes (`exec/join/indexed/adaptive.rs`).
+It first runs ordinary probes. Completed probes accumulate their actual
+candidate reads. Only after that count reaches the table's row count does
+the executor buffer and price the remaining input. This conservative gate
+avoids repeating much of a selective join's index work just to estimate
+its cost. It can delay adaptation on storage with expensive random reads;
+the gate is not a substitute for a calibrated storage cost model.
+An initially selective prefix does not prevent a later broad probe from
+triggering adaptation. Already-emitted outer rows are never replayed.
+It buffers the remaining input within the work-area and global memory
+budgets, reserving row slots, payloads and hierarchy storage before growth.
+Refused growth resumes probing with the buffered rows and the first
+row that did not fit, without rereading input. Missing estimates retain
+probes. Otherwise the estimated probe
+fetch work is compared with one scan plus four binary searches per
+possible leaf, priced with the existing comparison cost. This conservative
+price does not assume that hierarchy pruning will succeed. This choice
+affects work only.
+
+The buffered envelopes are partitioned by alternating coordinate centres
+into a balanced hierarchy (`spatial/packed.rs`). Each leaf holds at most
+64 rows in four sorted boundary arrays with inclusive prefix masks, one
+bit per row (`spatial/masks.rs`). A scan skips disjoint groups through
+subtree links, without allocating a search stack per table row. Within
+each leaf, the masks identify exactly the overlapping envelopes, including
+touching boundaries and degenerate rectangles. Original row positions
+preserve duplicate inputs across partitions. It is still only a geometry
+candidate set. Each
+candidate runs the exact relationship, optionally prepared for that outer
+row, followed by every remaining ON conjunct. NULL and empty bounds add
+no candidate. Reads use the ordinary table scan's visibility, cancellation
+and serializable tracking. This path promises no input order; an ordered
+join retains probes. EXPLAIN calls the choice `AdaptiveSpatialJoin`.
+
+The same-SRID column proof and non-raising residuals also establish that
+this join has no General Rule error of its own. An intersection can report
+an SRID mismatch, but cannot encounter one between those columns. A cursor
+can therefore stream its results without first retaining all pairs for
+D15's eager error check (`physical/raising.rs`). A raising outer plan or
+output expression still forces that check. Malformed stored payloads
+remain storage errors; this proof neither suppresses them nor validates
+polygon topology. Other spatial plans remain conservative.
+
+Non-raising spatial joins with column-only output use lookahead of at
+most 64 result rows (`db/stream/chunks.rs`). This amortizes transitions
+between geometry evaluation and cursor fetching without retaining the
+complete result. The first fetch returns its row directly, without waiting
+to fill a group. Row slots and payloads draw on the work-area and global
+memory budgets. A refusal keeps the already-produced current row after
+the reserved prefix and resumes direct streaming; it adds no resource
+error. A storage error follows all earlier rows and ends the stream.
+The ordinary cancellation guard surrounds lookahead: a cancel while
+filling a group fails the active fetch immediately and remains an error
+on later fetches, never a successful end of data (D44).
+Closing the cursor releases the reservation. A same-session write still
+settles the cursor through this iterator before changing its input (D15).
+
+`ST_DISTANCE` measures minimum Cartesian separation in coordinate units,
+returning DOUBLE PRECISION, zero for intersecting sets and NULL for empty
+sets. It applies the same SRID and validity requirements. Outward-rounded
+intervals prove endpoint classification and bound rounding in ordinary
+measures. Uncertain cases use exact dot products and a scaled exact
+determinant preserves small perpendicular distances despite cancellation
+or intermediate overflow. Final magnitudes remain approximate binary64
+values; underflow may round a positive distance to zero. Only a final
+minimum beyond the finite range raises SQLSTATE 22003, not an intermediate
+component distance. It is not a substitute for a topological predicate.
+
+Distance bounds round each positive operation down. The Euclidean term
+uses unscaled squares and a square root, combined with the greatest axis
+gap. Overflow saturates that term rather than changing the scale: each
+operation is monotone, so enlarging either envelope cannot increase its
+bound. A finite geometry distance is at least this bound of its envelopes.
+This relates pruning to the computed measure without an error epsilon;
+it does not certify bounds for individual segments inside that geometry.
+Distance norms stay within the greatest component and outward-rounded L1
+bounds; exact determinant scales use encoded binary powers of two.
+
+The operation metadata also identifies distance and emptiness calls.
+`Index::nearest` may supply distance candidates, each with a nonnegative,
+finite lower bound on the computed scalar result, in bound order. It
+certifies error-free distance evaluation for stable entries or declines
+before output so the caller can scan. The geometry R-tree certifies only
+when query and root coordinates are within MAX/8 on each axis, including
+the captured root's split siblings. Ancestor enlargement precedes insertion
+and commit visibility; the certificate covers every retained snapshot
+entry. A candidate stream uses the same monotone bound at branches and
+leaves, retains its index and reserves its frontier memory. Numeric R-tree
+nearest traversal keeps its existing Euclidean entry order.
+
+Ascending `ST_DISTANCE(column, value)` with NULLS LAST and a known OFFSET
+plus FETCH FIRST ONLY count can select `NearestScan` on a fixed-SRID
+geometry column. The other argument is a constant or parameter, in either
+position. Other projections and filters must be non-raising; declared
+emptiness calls on stored fixed-SRID geometries have a narrow type-based
+proof. Planning prices candidate fetches using filter selectivity against
+scanning and sorting. Without emptiness statistics it uses range selectivity
+for emptiness and the complementary share for nonemptiness, excluding NULLs.
+
+Execution certifies the index before emitting rows, fetches the visible
+version and checks its projection, then evaluates the complete filter and
+distance once. A fixed-capacity heap keeps the kth scalar distance within
+both MEMORY.WORK_BYTES and the database budget. Search stops only at a
+strictly greater bound; the ordinary SQL sort handles secondary keys and
+ties. If traversal exhausts with fewer qualifying non-NULL distances than
+requested, a scan supplies NULL distances, including omitted NULL keys.
+Uncertified requests or an unaffordable threshold heap scan before output.
+Both paths preserve lazy runtime errors. Every indexed read records a
+whole-table serializable predicate and observes cancellation. WITH TIES,
+PERCENT and other distance orders retain ordinary plans. Learned plans
+fill and prepare both their distance measure and full filter each run.
+
+Constant folding may replace a scalar call with its `specialize` result
+(D53). The replacement preserves its contracts and errors, remains correct
+if given different arguments, and must not perform work with visible side
+effects. Retained state reserves memory from the supplied database budget
+(D38); failed preparation leaves the original call for runtime. Filling a
+kept physical plan also folds and prepares its calls using that execution's
+values, without changing access paths or raising skipped errors. Both paths
+honor the constant-folding rule's presence and setting. An indexed function
+join also prepares calls for each outer row, whose columns stay fixed for
+one probe. It changes only scalar implementations, leaving argument
+expressions and the complete join condition in place. An empty probe
+evaluates no call; advancing the outer row releases the previous prepared
+state. This path uses the same optimizer switch and memory budget. Geometry
+relationships use this to keep one decoded constant operand per expression,
+immutable and without a shared cache lock. They check operand identity
+before using that representation and release the reservation with its last
+owner. A single rectangular ring can locate points through its closed
+envelope. Recognition requires four distinct axis-aligned corners and
+closure, in either ring direction; holes, diagonal edges and collapsed
+rectangles retain general point location. It uses no area arithmetic or
+tolerance, including for subnormal and extreme coordinates.
+Polygon and MultiPolygon operands with at least one ring of 64
+edges can also keep a Y-interval tree for each ring. The threshold follows
+the measured crossover in `bench/geometry.md`; shorter boundaries retain
+linear scans. A query point visits only subtrees whose closed ordinate
+range contains its Y; the shared exact ray-crossing rule still decides
+boundary membership and shell-minus-hole interiors. These immutable trees
+reserve vector capacity before allocation, have depth bounded by the
+geometry coordinate limit, and decline independently when memory is short.
+The decoded operand remains usable without them. Distance reuses the
+prepared intersection decision, then keeps its ordinary separation kernel
+and result bounds; segment-distance pruning is not implied.
+Spatial probes with equal declared semantics and deterministic
+functions have one learned plan shape even when preparation changes the
+function object. Ordinary function probes still require object identity;
+matching SQL names alone never establish equivalence.
 
 ## 2. Project layout
 

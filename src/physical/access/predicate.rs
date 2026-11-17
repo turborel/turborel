@@ -43,7 +43,7 @@ pub(super) fn candidates(conds: &[Cond], ix: &IndexDesc, values: Option<&[Value]
 
 /// Returns the table column number, its position in the call and the other
 /// argument. Order matters: `f(column, value)` need not equal `f(value, column)`.
-fn operands(args: &[Expr]) -> Option<(usize, usize, &Expr)> {
+pub(super) fn operands(args: &[Expr]) -> Option<(usize, usize, &Expr)> {
     match args {
         [Expr::Column(column), other] => Some((*column, 0, other)),
         [other, Expr::Column(column)] => Some((*column, 1, other)),
@@ -53,7 +53,7 @@ fn operands(args: &[Expr]) -> Option<(usize, usize, &Expr)> {
 
 /// Gets the constant or current parameter value, retaining its slot for
 /// later executions. Plan filling reports any failed parameter conversion.
-fn constant(expr: &Expr, values: Option<&[Value]>) -> Option<(Value, Option<Slot>)> {
+pub(super) fn constant(expr: &Expr, values: Option<&[Value]>) -> Option<(Value, Option<Slot>)> {
     match expr {
         Expr::Const(value) => Some((value.clone(), None)),
         Expr::Dynamic(slot) => {
@@ -83,7 +83,7 @@ pub(super) fn supports(method: &dyn IndexMethod, probe: &Probe, (types, ordering
     match probe {
         Probe::All => method.ordered() && ordering,
         Probe::Columns(each) => method.supports_columns(types.len(), &each.iter().map(|c| (c.column, c.op)).collect::<Vec<_>>()),
-        Probe::Compare { op, .. } => method.supports(*op),
+        Probe::Compare { op, .. } => method.supports_compare(*op, types),
         Probe::Prefix { equal, then } => method.supports_prefix(types.len(), equal.len(), then.as_ref().map(|(op, _)| *op)),
         Probe::Range { equal, .. } => method.supports_range(types.len(), equal.len()),
         Probe::Predicate { predicate, .. } => method.supports_predicate(predicate, types),

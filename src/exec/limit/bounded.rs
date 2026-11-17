@@ -22,6 +22,7 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
             Plan::Project { exprs, detail, input }
         }
         plan @ (Plan::IndexScan { .. }
+        | Plan::Nearest(_)
         | Plan::Filter { .. }
         | Plan::Product { .. }
         | Plan::HashJoin { .. }

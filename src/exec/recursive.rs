@@ -195,6 +195,7 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         Plan::WorkTable { member, rows } => *rows = work.get(*member).cloned(),
         Plan::Recursive { .. }
         | Plan::SeqScan { .. }
+        | Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::System { .. }
         | Plan::Values { .. }
