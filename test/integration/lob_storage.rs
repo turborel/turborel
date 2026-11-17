@@ -1,7 +1,8 @@
 //! Large objects kept by a database in a directory (RULES.md D25, D79):
 //! a value of many chunks logged a chunk at a time and recovered after a
-//! crash, before and after a checkpoint; a transaction open at the crash
-//! leaves nothing; a value written back unchanged shares its chunks; and a
+//! crash, before and after a checkpoint, and in a table its transaction
+//! made; a transaction open at the crash leaves nothing; a value written
+//! back unchanged shares its chunks; and a
 //! value much larger than the buffer pool is written and read through it;
 //! and a snapshot reads the value it saw, though it was replaced.
 
@@ -83,6 +84,38 @@ fn large_objects_are_recovered_after_a_crash() {
         drop((s, db));
     }
     drop((a, open_tx, crashed));
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D33, D79: a value of many chunks in a
+/// table that its own transaction made, the definition replayed at its
+/// commit, is back after a crash, whole, as is one written after it; a
+/// transaction that made a table and a value in it and was rolled back
+/// leaves neither. A regression test: the objects were replayed before the
+/// table was made, so were lost, and the database failed to open.
+#[test]
+fn objects_of_a_table_made_in_their_transaction_are_recovered() {
+    let scratch = Scratch::new("lob-made");
+    let dir = scratch.path("db");
+    let (crashed, _) = open(&dir);
+    crashed.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
+    let a = crashed.session("A");
+    let (made, later) = (text(600_000, 'm'), text(300_000, 'l'));
+    a.run("CREATE TABLE T (K INTEGER, C CLOB)").unwrap();
+    insert(&a, 1, &made);
+    a.commit().unwrap();
+    insert(&a, 2, &later);
+    a.commit().unwrap();
+    a.run("CREATE TABLE U (K INTEGER, C CLOB)").unwrap();
+    let p = a.prepare("INSERT INTO U VALUES (1, ?)").unwrap();
+    a.execute_prepared(&p, &[Value::Lob(Lob::of_text(&made))]).unwrap();
+    a.rollback().unwrap();
+    drop((a, crashed));
+    let (db, opened) = open(&dir);
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    let s = db.session("A");
+    assert_eq!(rows(&s, "SELECT K, CHAR_LENGTH(C) FROM T ORDER BY K").unwrap(), ["1,600000", "2,300000"]);
+    assert_eq!((read(&s, 1), read(&s, 2)), (made, later));
+    assert!(rows(&s, "SELECT K FROM U").is_err(), "U was rolled back");
 }
 
 /// Verifies: [DESIGN] RULES.md D79: a value of 24 MiB, 96 chunks, is

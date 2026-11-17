@@ -1021,7 +1021,9 @@ a retry's leavings. DROP TABLE frees the space whole.
 Each object is logged as it is made, one `LobPut` record of at most a
 chunk, before the row change that names it. Recovery keeps every object
 it reads and at its end frees those that no row's newest version names,
-which covers transactions that never committed. A checkpoint logs the
+which covers transactions that never committed. The objects of a
+transaction whose definitions wait for its commit are made after them,
+as their table may be one it made (D33). A checkpoint logs the
 objects awaiting collection as `LobStale`, and recovery from it frees
 them. The column store refuses a large object column.
 
