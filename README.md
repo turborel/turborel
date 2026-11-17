@@ -38,7 +38,8 @@ behind it, and each can be replaced or added to.
 - [SQL/XML](doc/sql/xml.md): an XML type kept in tables, in arrays,
   multisets, rows and distinct and structured types too, its values parsed
   from XML 1.0 and 1.1 text and serialized back, XMLDOCUMENT, XMLCAST, IS
-  DOCUMENT and IS CONTENT, and XML published from SQL values by
+  DOCUMENT and IS CONTENT, and XML published from SQL values, arrays and
+  multisets too, by
   XMLELEMENT, XMLFOREST, XMLAGG, XMLCONCAT, XMLCOMMENT, XMLPI and XMLTEXT
   with namespaces, written in-house with no dependency, its modifiers shown in
   the Information Schema.

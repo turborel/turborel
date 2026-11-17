@@ -184,3 +184,21 @@ fn xmlcast_takes_what_it_maps_6_6() {
     assert_eq!(failure(&a, "XMLCAST('a\u{FFFE}' AS XML)"), SqlState::INVALID_XML_CHARACTER);
     assert_eq!(code(&a, "VALUES (XMLCAST(1 AS XML BY NAME))"), Code::Syntax);
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 SR10b i, GR3c, GR3d ii,
+/// §9.8 GR1a, GR9j] XMLCAST of a value of a distinct type whose source is
+/// a collection type, which SR10b i does not refuse, to XML(CONTENT): its
+/// source's mapping, an element of each element, a null one nilled; to
+/// XML(SEQUENCE), SQLCODE -900, as §9.5 maps no collection to an atomic
+/// type; of a collection type itself, SQLCODE -103.
+#[test]
+fn distinct_collections_to_content_6_6() {
+    let db = database();
+    let a = db.session("A");
+    a.run("CREATE TYPE IDS AS INTEGER ARRAY[3] FINAL").unwrap();
+    let nil = r#"<element xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/>"#;
+    let cast = "XMLSERIALIZE(XMLCAST(CAST(ARRAY[1, CAST(NULL AS INTEGER)] AS IDS) AS XML(CONTENT)) AS VARCHAR(200))";
+    assert_eq!(one(&a, cast), format!("<element>1</element>{nil}"));
+    assert_eq!(code(&a, "VALUES (XMLCAST(CAST(ARRAY[1] AS IDS) AS XML))"), Code::Unsupported);
+    assert_eq!(code(&a, "VALUES (XMLCAST(ARRAY[1] AS XML(CONTENT)))"), Code::SyntaxRule);
+}

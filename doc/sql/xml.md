@@ -184,7 +184,10 @@ to XML(SEQUENCE), it becomes one atomic value of the XML Schema type its
 type maps to, in that type's canonical form: `xs:decimal` 1.5 for
 NUMERIC 1.50, `xdt:yearMonthDuration` P1Y2M. A character no XML 1.1
 character fails with SQLSTATE 0N002. No SQL value is cast to
-XML(DOCUMENT).
+XML(DOCUMENT). No array, multiset or row is cast either, but a value of
+a distinct type whose source is an array or a multiset is cast to
+XML(CONTENT), written as XMLELEMENT writes it as content; cast to
+XML(SEQUENCE), it is refused (SQLCODE -900).
 
 An XML value cast to an SQL type gives the text of its one item: a
 document node's children, an element's text. That text, its white space
@@ -315,8 +318,19 @@ An attribute whose value is null is left out. Each value of the content
 becomes the element's content: an XML value's nodes, copied, or another
 value's text. A character string is escaped as text; a number, a
 datetime, an interval or a truth value is written as XML Schema writes
-it; a binary string is written in hex. An attribute or content of an
-array or a multiset is not yet supported (SQLCODE -900).
+it; a binary string is written in hex. An attribute's value is of a
+predefined type other than XML, or of a distinct type of one.
+
+Content may be an array or a multiset too, or a value of a distinct type
+whose source is one. Each element becomes an element named `element`,
+holding its own value written as content is; a null element becomes
+`<element xsi:nil="true"/>`, which declares the prefix `xsi`. An element
+that is a row writes an element of each field that is not null, named by
+the field's name as an XML name, its characters an XML name may not hold
+escaped as `_xHHHH_`. An element that is an XML value is written as
+XMLSERIALIZE writes it. A collection of XML(SEQUENCE), XML alone among
+them, of a structured or a reference type, or of DECFLOAT, and content
+of a row, are refused (SQLCODE -103).
 
 The content option says what an element of content all null is: EMPTY
 ON NULL, the default, an empty element; NULL ON NULL the null value;
@@ -379,6 +393,26 @@ OK
  <a/><b/>
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 2200S): the comment holds two hyphens together, ends with one, or holds a character XML does not [XML 1.1 §2.5 [15]] [ISO/IEC 9075-14:2006 draft §6.11 GR3]
+```
+
+Arrays, multisets and rows inside them are published as their elements:
+
+```sql
+SELECT XMLSERIALIZE(XMLELEMENT(NAME "pays", ARRAY[PAY, PAY * 2]) AS VARCHAR(200)) FROM STAFF ORDER BY ID;
+SELECT XMLSERIALIZE(XMLFOREST(MULTISET[NAME] AS "names", ARRAY[CAST(ROW(ID, NAME) AS ROW("id" INTEGER, "full name" VARCHAR(20)))] AS "rows") AS VARCHAR(200)) FROM STAFF WHERE ID = 1;
+SELECT XMLELEMENT(NAME "r", ROW(ID, NAME)) FROM STAFF;
+```
+```
+
+--------------------------------------------------------------
+ <pays><element>1200.50</element><element>2401.00</element></pays>
+ <pays><element xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/><element xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/></pays>
+(2 rows)
+
+--------------------------------------------------------------
+ <names><element>Ann</element></names><rows><element><id>1</id><full_x0020_name>Ann</full_x0020_name></element></rows>
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): a value of ROW(F1 INTEGER, F2 CHARACTER VARYING(20)) is not mapped to XML here [ISO/IEC 9075-14:2006 draft §6.14 SR7] (at character 7)
 ```
 
 ## XMLAGG

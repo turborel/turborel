@@ -13,7 +13,7 @@ mod publish;
 pub use aggregate::{XMLAGG, XmlAggregate};
 pub use cast::{IMPLICIT_BINARY_ENCODING, XmlCastIn, XmlCastOut, xml_schema_type};
 pub use element::{XmlElement, XmlForest};
-pub use mapping::{BinaryEncoding, xml_lexical};
+pub use mapping::{BinaryEncoding, Mapping, xml_lexical, xml_mapped};
 pub use publish::{XmlComment, XmlConcat, XmlPi, XmlText};
 
 use super::ScalarFunction;

@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use super::super::{BinaryEncoding, ScalarFunction, xml_lexical};
+use super::super::{Mapping, ScalarFunction, xml_lexical, xml_mapped};
 use crate::ast::ContentOption;
 use crate::error::Result;
 use crate::value::xml::{XmlType, XmlValue};
@@ -28,39 +28,47 @@ fn has_content(contents: &[Arc<Sequence>]) -> bool {
     })
 }
 
+/// A value of content, and the declared type it is mapped by if that is
+/// a collection type, or a distinct type of one [§9.8 GR1a, GR9j].
+type Content<'v> = (&'v Value, Option<&'v DataType>);
+
 /// [§10.13 GR4c i] Value `v`, not null, as the element's content: an XML
-/// value as it is \[1 A\]; another mapped to XML [§9.8], `&`, `<`, `>`
-/// and a carriage return as references, and parsed as CONTENT,
-/// whitespace preserved \[1 B\].
-fn content_of(v: &Value, encoding: BinaryEncoding) -> Result<Arc<Sequence>> {
+/// value as it is \[1 A\]; another mapped to XML [§9.8] as `m` says, a
+/// collection by its declared type `t`, `&`, `<`, `>` and a carriage
+/// return as references, and parsed as CONTENT, whitespace preserved
+/// \[1 B\].
+fn content_of((v, t): Content<'_>, m: Mapping) -> Result<Arc<Sequence>> {
     if let Value::Xml(x) = v {
         return x.sequence();
     }
-    let text = xml_lexical(v, encoding, true)?;
+    let text = match t {
+        Some(t) => xml_mapped(v, t, m)?,
+        None => xml_lexical(v, m.encoding, m.charmapping)?,
+    };
     Ok(Arc::new(Sequence::document(parse(&text, Syntax::Content, Whitespace::Preserve)?)))
 }
 
 /// [§10.13] The element of `name` and `attributes` and the content
-/// `values`, by `option`, binary strings written by `encoding`: none, the
-/// null value, if every value is null and the option NULL ON NULL; the
-/// empty sequence of ABSENT ON NULL \[GR4a, GR4b\]; else the element, its
-/// content the values not null, `xsi:nil="true"` after its attributes if
-/// every value is null and the option NIL ON NULL, or none is an element
-/// or text and the option NIL ON NO CONTENT \[GR4c\].
+/// `values`, by `option`, mapped as `m` says: none, the null value, if
+/// every value is null and the option NULL ON NULL; the empty sequence of
+/// ABSENT ON NULL \[GR4a, GR4b\]; else the element, its content the
+/// values not null, `xsi:nil="true"` after its attributes if every value
+/// is null and the option NIL ON NULL, or none is an element or text and
+/// the option NIL ON NO CONTENT \[GR4c\].
 fn construct(
     name: &QName,
     mut attributes: Vec<Specified>,
-    values: &[&Value],
+    values: &[Content<'_>],
     option: Option<ContentOption>,
-    encoding: BinaryEncoding,
+    m: Mapping,
 ) -> Result<Option<Sequence>> {
-    let all_null = !values.is_empty() && values.iter().all(|v| v.is_null());
+    let all_null = !values.is_empty() && values.iter().all(|(v, _)| v.is_null());
     match (all_null, option) {
         (true, Some(ContentOption::NullOnNull)) => return Ok(None),
         (true, Some(ContentOption::AbsentOnNull)) => return Ok(Some(Sequence::default())),
         (true | false, _) => {}
     }
-    let contents = values.iter().filter(|v| !v.is_null()).map(|v| content_of(v, encoding)).collect::<Result<Vec<_>>>()?;
+    let contents = values.iter().filter(|(v, _)| !v.is_null()).map(|c| content_of(*c, m)).collect::<Result<Vec<_>>>()?;
     let nilled = match option {
         Some(ContentOption::NilOnNull) => all_null,
         Some(ContentOption::NilOnNoContent) => !has_content(&contents),
@@ -85,8 +93,14 @@ pub struct XmlElement {
     pub attributes: Vec<QName>,
     /// The `<XML content option>`, of content alone \[SR8\].
     pub option: Option<ContentOption>,
-    /// How binary strings are written [GR1, GR2].
-    pub encoding: BinaryEncoding,
+    /// The declared type of each value of content that is a collection,
+    /// or a distinct type of one, mapped by it [§9.8 GR9j]; none of
+    /// another \[SR7\].
+    pub content: Vec<Option<DataType>>,
+    /// How binary strings are written [GR1, GR2], and the SQL-session's
+    /// displacement, a datetime inside a collection written in it [§9.8
+    /// GR7]; characters mapped [§10.13 GR4c i 1 B].
+    pub mapping: Mapping,
 }
 
 impl ScalarFunction for XmlElement {
@@ -106,12 +120,13 @@ impl ScalarFunction for XmlElement {
         let mut attributes = Vec::with_capacity(given.len());
         for (name, v) in self.attributes.iter().zip(given) {
             if !v.is_null() {
-                let value = xml_lexical(v, self.encoding, false)?;
+                let value = xml_lexical(v, self.mapping.encoding, false)?;
                 attributes.push(Specified { name: name.clone(), value, is_id: false, is_idrefs: false });
             }
         }
-        let values: Vec<&Value> = content.iter().collect();
-        Ok(construct(&self.name, attributes, &values, self.option, self.encoding)?.map_or(Value::Null, |s| Value::Xml(XmlValue::of(s))))
+        let types = self.content.iter().map(Option::as_ref).chain(std::iter::repeat(None));
+        let values: Vec<Content<'_>> = content.iter().zip(types).collect();
+        Ok(construct(&self.name, attributes, &values, self.option, self.mapping)?.map_or(Value::Null, |s| Value::Xml(XmlValue::of(s))))
     }
 }
 
@@ -122,8 +137,12 @@ pub struct XmlForest {
     pub names: Vec<QName>,
     /// The `<XML content option>` \[SR3\].
     pub option: ContentOption,
-    /// How binary strings are written [GR1, GR2].
-    pub encoding: BinaryEncoding,
+    /// The declared type of each value that is a collection, or a
+    /// distinct type of one, mapped by it [§9.8 GR9j]; none of another
+    /// \[SR2b\].
+    pub types: Vec<Option<DataType>>,
+    /// How values are mapped, as XMLELEMENT's [GR1, GR2].
+    pub mapping: Mapping,
 }
 
 impl ScalarFunction for XmlForest {
@@ -139,8 +158,9 @@ impl ScalarFunction for XmlForest {
     /// attribute, each concatenated with the last [§10.14].
     fn call(&self, args: &[Value]) -> Result<Value> {
         let mut made = Vec::with_capacity(args.len());
-        for (name, v) in self.names.iter().zip(args) {
-            made.push(construct(name, Vec::new(), &[v], Some(self.option), self.encoding)?);
+        let types = self.types.iter().map(Option::as_ref).chain(std::iter::repeat(None));
+        for ((name, v), t) in self.names.iter().zip(args).zip(types) {
+            made.push(construct(name, Vec::new(), &[(v, t)], Some(self.option), self.mapping)?);
         }
         Ok(concatenate(made.iter().map(Option::as_ref)).map_or(Value::Null, |s| Value::Xml(XmlValue::of(s))))
     }

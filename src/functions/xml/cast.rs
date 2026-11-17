@@ -14,7 +14,7 @@
 //! restricts it by; SQL's CAST to the type applies its own length,
 //! precision and range \[GR4l\].
 
-use super::mapping::{BinaryEncoding, xml_lexical};
+use super::mapping::{BinaryEncoding, Mapping, xml_lexical, xml_mapped};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::functions::ScalarFunction;
 use crate::value::datetime::{Field, MAX_TIME_PRECISION};
@@ -87,8 +87,13 @@ pub fn xml_schema_type(t: &DataType) -> Option<AtomicType> {
 pub struct XmlCastIn {
     /// The XML type cast to: CONTENT or SEQUENCE.
     pub target: XmlType,
-    /// The XML Schema type the value's SQL type maps to.
+    /// The XML Schema type the value's SQL type maps to, of XML(SEQUENCE)
+    /// \[GR3d\].
     pub base: AtomicType,
+    /// Of a value of a distinct type whose source is a collection type,
+    /// cast to XML(CONTENT) alone, that type and how its value is mapped
+    /// [§9.8 GR1a, GR9j]; none of a value of a predefined type.
+    pub collection: Option<(DataType, Mapping)>,
 }
 
 impl ScalarFunction for XmlCastIn {
@@ -109,7 +114,11 @@ impl ScalarFunction for XmlCastIn {
         if v.is_null() {
             return Ok(Value::Null);
         }
-        let tree = parse(&xml_lexical(v, IMPLICIT_BINARY_ENCODING, true)?, Syntax::Content, Whitespace::Preserve)?;
+        let mapped = match &self.collection {
+            Some((t, m)) => xml_mapped(v, t, *m)?,
+            None => xml_lexical(v, IMPLICIT_BINARY_ENCODING, true)?,
+        };
+        let tree = parse(&mapped, Syntax::Content, Whitespace::Preserve)?;
         if self.target != XmlType::Sequence {
             return Ok(Value::Xml(XmlValue::of(Sequence::document(tree))));
         }

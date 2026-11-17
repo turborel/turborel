@@ -5,7 +5,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const XML_COMPOSITE: [Mutation; 12] = [
+pub const XML_COMPOSITE: [Mutation; 17] = [
     Mutation {
         name: "lob-after-definitions",
         package: Package::Core,
@@ -124,6 +124,56 @@ pub const XML_COMPOSITE: [Mutation; 12] = [
         original: "return target.takes(*source);",
         replacement: "return true;",
         integration: &["xml_composite::assigned_and_cast_part_by_part_10_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "mapped-nil-element",
+        package: Package::Core,
+        breaks: "a null element of a collection is mapped as a value",
+        file: "src/functions/xml/mapping.rs",
+        original: "if item.is_null() {",
+        replacement: "if item.is_null() && depth > MAX_MAPPED_DEPTH {",
+        integration: &["xml_elements::collections_mapped_9_8", "xml_cast::distinct_collections_to_content_6_6"],
+        unit: &["functions::xml::mapping::tests::collections_and_rows_9_8"],
+    },
+    Mutation {
+        name: "mapped-row-null-field",
+        package: Package::Core,
+        breaks: "a null field of a row is mapped as a value",
+        file: "src/functions/xml/mapping.rs",
+        original: "        if v.is_null() {",
+        replacement: "        if v.is_null() && depth > MAX_MAPPED_DEPTH {",
+        integration: &["xml_elements::collections_mapped_9_8"],
+        unit: &["functions::xml::mapping::tests::collections_and_rows_9_8"],
+    },
+    Mutation {
+        name: "mapped-unmappable",
+        package: Package::Core,
+        breaks: "a collection of XML(SEQUENCE) is taken as content",
+        file: "src/binder/xml/element.rs",
+        original: "DataType::Xml(x) => *x != XmlType::Sequence,",
+        replacement: "DataType::Xml(_) => true,",
+        integration: &["xml_elements::unmappable_collections_refused_6_14"],
+        unit: &[],
+    },
+    Mutation {
+        name: "mapped-depth",
+        package: Package::Core,
+        breaks: "a value nested past the bound is mapped",
+        file: "src/functions/xml/mapping.rs",
+        original: "if depth > MAX_MAPPED_DEPTH {",
+        replacement: "if depth > usize::MAX {",
+        integration: &[],
+        unit: &["functions::xml::mapping::tests::mapping_is_bounded"],
+    },
+    Mutation {
+        name: "mapped-distinct-cast",
+        package: Package::Core,
+        breaks: "XMLCAST of a distinct type of a collection is refused",
+        file: "src/binder/xml/cast.rs",
+        original: "if matches!(source.represented(), DataType::Array(_) | DataType::Multiset(_)) {",
+        replacement: "if matches!(source, DataType::Array(_) | DataType::Multiset(_)) {",
+        integration: &["xml_cast::distinct_collections_to_content_6_6"],
         unit: &[],
     },
 ];

@@ -86,8 +86,8 @@ pub use truths::EVERY;
 use truths::Truths;
 pub use width_bucket::{WIDTH_BUCKET, width_bucket};
 pub use xml::{
-    BinaryEncoding, IMPLICIT_BINARY_ENCODING, Serialization, XMLAGG, XmlAggregate, XmlCastIn, XmlCastOut, XmlComment, XmlConcat, XmlCopy,
-    XmlDocument, XmlElement, XmlForest, XmlIs, XmlParse, XmlPi, XmlSerialize, XmlText, xml_lexical, xml_schema_type,
+    BinaryEncoding, IMPLICIT_BINARY_ENCODING, Mapping, Serialization, XMLAGG, XmlAggregate, XmlCastIn, XmlCastOut, XmlComment, XmlConcat,
+    XmlCopy, XmlDocument, XmlElement, XmlForest, XmlIs, XmlParse, XmlPi, XmlSerialize, XmlText, xml_lexical, xml_mapped, xml_schema_type,
 };
 
 /// \[EXTENSION\] A function callable with the opt-in call syntax.

@@ -1,6 +1,6 @@
 //! SQL/XML's element constructors [ISO/IEC 9075-14:2006 draft §6.14,
 //! §6.15]: XMLELEMENT with XMLATTRIBUTES, XMLFOREST, and XMLNAMESPACES
-//! [§11.3, §10.12].
+//! [§11.3, §10.12]; content of arrays and multisets mapped [§9.8].
 
 use turborel::db::{Database, Session};
 use turborel::error::{Code, SqlState};
@@ -163,4 +163,75 @@ fn content_errors_10_13() {
     let a = db.session("A");
     assert_eq!(state(&a, "SELECT XMLELEMENT(NAME \"a\", '\u{FFFE}') FROM E"), SqlState::INVALID_XML_CHARACTER);
     assert_eq!(state(&a, "SELECT XMLELEMENT(NAME \"a\", '\u{1}') FROM E"), SqlState::INVALID_XML_CONTENT);
+}
+
+/// The element of a null element of a collection [§9.8 GR9j iii 2 A].
+const NIL_ELEMENT: &str = r#"<element xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/>"#;
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.14 SR7, §6.15 SR2b, §9.8
+/// GR1a, GR7, GR9i, GR9j, GR9k, §10.13 GR4c i 1 B] content of an array or
+/// a multiset: an element `element` of each element, of a null one an element
+/// marked xsi:nil, its prefix declared; characters escaped, a date and a
+/// timestamp as XML Schema writes them; an array inside one nested so; a
+/// row inside one an element of each field not null, named by §9.1 fully
+/// escaped; an XML value its serialization; a distinct type's value its
+/// source's; XMLFOREST's elements alike; a null collection null content.
+#[test]
+fn collections_mapped_9_8() {
+    let db = employees();
+    let a = db.session("A");
+    let numbers = serialized(&a, "XMLELEMENT(NAME \"n\", ARRAY[ID, CAST(NULL AS INTEGER), ID + 1])");
+    assert_eq!(
+        numbers,
+        [
+            format!("1,<n><element>1</element>{NIL_ELEMENT}<element>2</element></n>"),
+            format!("2,<n><element>2</element>{NIL_ELEMENT}<element>3</element></n>"),
+        ]
+    );
+    let values = "XMLELEMENT(NAME \"v\", MULTISET[NAME], ARRAY[HIRED], ARRAY[TIMESTAMP '2020-01-02 03:04:05'])";
+    assert_eq!(
+        serialized(&a, values)[0],
+        "1,<v><element>Ann &lt;A&amp;B&gt;</element><element>2020-01-02</element><element>2020-01-02T03:04:05</element></v>"
+    );
+    let rows = "XMLELEMENT(NAME \"r\", ARRAY[CAST(ROW(ID, NAME) AS ROW(\"id\" INTEGER, \"a b\" VARCHAR(20)))])";
+    assert_eq!(
+        serialized(&a, rows),
+        ["1,<r><element><id>1</id><a_x0020_b>Ann &lt;A&amp;B&gt;</a_x0020_b></element></r>", "2,<r><element><id>2</id></element></r>"]
+    );
+    let nested =
+        "XMLELEMENT(NAME \"a\", ARRAY[ARRAY[ID], CAST(NULL AS INTEGER ARRAY[1])], ARRAY[XMLPARSE(CONTENT '<x>t</x>' PRESERVE WHITESPACE)])";
+    assert_eq!(
+        serialized(&a, nested)[0],
+        format!("1,<a><element><element>1</element></element>{NIL_ELEMENT}<element><x>t</x></element></a>")
+    );
+    a.run("CREATE TYPE IDS AS INTEGER ARRAY[2] FINAL").unwrap();
+    assert_eq!(serialized(&a, "XMLELEMENT(NAME \"d\", CAST(ARRAY[ID] AS IDS))")[0], "1,<d><element>1</element></d>");
+    assert_eq!(
+        serialized(&a, "XMLFOREST(ARRAY[ID] AS \"ids\", PAY)"),
+        ["1,<ids><element>1</element></ids><PAY>1200.50</PAY>", "2,<ids><element>2</element></ids>"]
+    );
+    assert_eq!(serialized(&a, "XMLELEMENT(NAME \"e\", CAST(NULL AS INTEGER ARRAY[2]))")[0], "1,<e/>");
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.10.8, §6.14 SR3c, SR7, §6.15
+/// SR2b] content of a collection based on an XML unmappable type,
+/// XML(SEQUENCE) or a structured type, or of DECFLOAT, which §9.5 does not
+/// map; content of a row type; an attribute of an array: each SQLCODE
+/// -103.
+#[test]
+fn unmappable_collections_refused_6_14() {
+    let db = employees();
+    let a = db.session("A");
+    a.run("CREATE TYPE ST AS (N INTEGER) NOT FINAL").unwrap();
+    for refused in [
+        "XMLELEMENT(NAME \"a\", ARRAY[XMLCOMMENT('c' RETURNING SEQUENCE)])",
+        "XMLELEMENT(NAME \"a\", ARRAY[ROW(ID, XMLCOMMENT('c' RETURNING SEQUENCE))])",
+        "XMLELEMENT(NAME \"a\", ARRAY[NEW ST()])",
+        "XMLELEMENT(NAME \"a\", ARRAY[CAST(ID AS DECFLOAT)])",
+        "XMLELEMENT(NAME \"a\", ROW(ID, NAME))",
+        "XMLFOREST(ROW(ID, NAME) AS \"r\")",
+        "XMLELEMENT(NAME \"a\", XMLATTRIBUTES(ARRAY[ID] AS \"b\"))",
+    ] {
+        assert_eq!(code(&a, &format!("SELECT {refused} FROM E")), Code::SyntaxRule, "{refused}");
+    }
 }

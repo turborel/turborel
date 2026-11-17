@@ -1,15 +1,20 @@
 //! The mapping of SQL values to XML [ISO/IEC 9075-14:2006 draft §9.8]:
 //! the lexical form of an SQL value of a predefined type, as XMLCAST
-//! [§6.6 GR3a] and the publishing functions write it.
+//! [§6.6 GR3a] and the publishing functions write it (`xml_lexical`), and
+//! the XML text of a value of a distinct, collection, row or XML type
+//! (`xml_mapped`).
 
 use std::fmt::Write;
 
 use super::{Input, input};
 use crate::error::{Code, Result, SqlError, SqlState};
+use crate::value::datetime::Now;
 use crate::value::datetime::{Field, MICROS_PER_SECOND};
 use crate::value::interval::{Interval, Qualifier};
+use crate::value::types::datetime::shown;
+use crate::value::types::{Field as RowField, MAX_TYPE_NESTING};
 use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
-use crate::xml::{Version, hex_text, is_char};
+use crate::xml::{Escape, Version, XSI_NAMESPACE, XSI_PREFIX, hex_text, is_char, name_of};
 
 /// [§9.5 GR3, §9.8 GR3] How binary strings are encoded: in base64 or in
 /// hex [Schema2 §3.2.16, §3.2.15].
@@ -170,6 +175,159 @@ fn duration_text(i: &Interval) -> String {
         out.push(designator);
     }
     out
+}
+
+/// [§9.8 GR9j iii 2] The name of the element each element of a collection
+/// is mapped to.
+const ELEMENT: &str = "element";
+
+/// \[DESIGN\] R-CF-6: how many values made of values may enclose a value
+/// mapped: as many as types nest (`MAX_TYPE_NESTING`), so every value of
+/// a declared type is mapped whole.
+const MAX_MAPPED_DEPTH: usize = MAX_TYPE_NESTING;
+
+/// [§9.8 GR3, GR4, GR7] The choices a value is mapped with: how binary
+/// strings are encoded \[GR3\]; whether `&`, `<`, `>` and a carriage
+/// return are written as references \[GR4\]; and the SQL-session's time
+/// zone displacement, in which a datetime without time zone is written,
+/// as CAST to a character string writes it \[GR7\]. NULLS \[GR2\] is absent
+/// wherever SQL/XML maps a value [§6.6 GR3a, §10.13 GR4c i 1 B], so a
+/// null field is no element \[GR9i ii 2 A\] and no choice here.
+#[derive(Debug, Clone, Copy)]
+pub struct Mapping {
+    /// How binary strings are encoded.
+    pub encoding: BinaryEncoding,
+    /// Whether characters are mapped to references.
+    pub charmapping: bool,
+    /// The SQL-session's time zone displacement, in minutes.
+    pub zone: i16,
+}
+
+/// [§9.8] The XML text of `v`, not null, of the declared type `t`: of a
+/// distinct type, its source's \[GR1a\]; of a row type, an element of
+/// each field not null, named by its name mapped to an XML Name fully
+/// escaped [§9.1], NULLS absent \[GR9i\]; of an array or a multiset,
+/// an element `element` of each element, of a null one an element marked
+/// `xsi:nil="true"` \[GR9j\]; of an XML type, its serialization as
+/// CONTENT \[GR9k\]; of another, its lexical form (`xml_lexical`).
+///
+/// \[DESIGN\] The element of a null element declares the namespace of
+/// its prefix `xsi` [§4.9 Table 2], so its text, parsed as CONTENT
+/// [§6.6 GR3b, §10.13 GR4c i 1 B], is namespace-well-formed.
+///
+/// # Errors
+///
+/// SQLCODE -900 of values nested deeper than `MAX_MAPPED_DEPTH`;
+/// SQLSTATE 2200W of an XML value of no serialization; the errors of
+/// `xml_lexical`.
+pub fn xml_mapped(v: &Value, t: &DataType, m: Mapping) -> Result<String> {
+    let mut out = String::new();
+    mapped_into(v, t, m, 0, &mut out)?;
+    Ok(out)
+}
+
+/// The elements of `v`, if it is an array or a multiset.
+fn items_of(v: &Value) -> Option<&[Value]> {
+    match v {
+        Value::Array(items) | Value::Multiset(items) => Some(items),
+        Value::Null
+        | Value::Char(_)
+        | Value::Exact(_)
+        | Value::Approx(_)
+        | Value::DecFloat(_)
+        | Value::Binary(_)
+        | Value::Bool(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Lob(_)
+        | Value::Row(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
+        | Value::Xml(_)
+        | Value::Extension(_) => None,
+    }
+}
+
+/// The element type of `t`, if it is a collection type.
+fn element_of(t: &DataType) -> Option<&DataType> {
+    if let DataType::Array(a) = t {
+        return Some(&a.element);
+    }
+    t.multiset_type().map(|m| &m.element)
+}
+
+/// Appends the XML text of `v`, inside `depth` values, as `xml_mapped`.
+fn mapped_into(v: &Value, t: &DataType, m: Mapping, depth: usize, out: &mut String) -> Result<()> {
+    if depth > MAX_MAPPED_DEPTH {
+        return Err(SqlError::new(
+            Code::Unsupported,
+            format!("[DESIGN] a value inside more than {MAX_MAPPED_DEPTH} others is beyond turborel's limits for §9.8's mapping"),
+        ));
+    }
+    // [GR1a] CAST (DV AS SQLT): a distinct type's value is its source's
+    // (RULES.md D69).
+    let t = t.represented();
+    if let Value::Xml(x) = v {
+        out.push_str(&x.text()?);
+        return Ok(());
+    }
+    if let (Some(items), Some(element)) = (items_of(v), element_of(t)) {
+        return elements_into(items, element, (m, depth), out);
+    }
+    if let (Value::Row(values), DataType::Row(r)) = (v, t) {
+        return fields_into(values, &r.fields, (m, depth), out);
+    }
+    // [GR7] A datetime without time zone in the session's displacement,
+    // which `shown` reads alone.
+    if let Value::Datetime(d) = v {
+        let local = Value::Datetime(shown(d, Now { zone: m.zone, ..Now::default() }));
+        out.push_str(&xml_lexical(&local, m.encoding, m.charmapping)?);
+        return Ok(());
+    }
+    out.push_str(&xml_lexical(v, m.encoding, m.charmapping)?);
+    Ok(())
+}
+
+/// Appends the start tag of an element `name`, or its end tag if `end`.
+fn tag(out: &mut String, name: &str, end: bool) {
+    out.push_str(if end { "</" } else { "<" });
+    out.push_str(name);
+    out.push('>');
+}
+
+/// [§9.8 GR9j] Appends each of `items`, of the element type `element`:
+/// `<element>X</element>`, X its mapping, or `<element xsi:nil="true"/>`
+/// of a null one.
+fn elements_into(items: &[Value], element: &DataType, (m, depth): (Mapping, usize), out: &mut String) -> Result<()> {
+    for item in items {
+        if item.is_null() {
+            for piece in ["<", ELEMENT, " xmlns:", XSI_PREFIX, "=\"", XSI_NAMESPACE, "\" ", XSI_PREFIX, ":nil=\"true\"/>"] {
+                out.push_str(piece);
+            }
+            continue;
+        }
+        tag(out, ELEMENT, false);
+        mapped_into(item, element, m, depth.saturating_add(1), out)?;
+        tag(out, ELEMENT, true);
+    }
+    Ok(())
+}
+
+/// [§9.8 GR9i] Appends each of `values`, the fields `fields` declare: none
+/// of a null one, NULLS absent \[GR9i ii 2 A\]; else `<FN>X</FN>`, FN its
+/// name mapped by §9.1 fully escaped \[GR9i ii 1\], X its mapping \[GR9i
+/// ii 2 C\].
+fn fields_into(values: &[Value], fields: &[RowField], (m, depth): (Mapping, usize), out: &mut String) -> Result<()> {
+    for (v, f) in values.iter().zip(fields) {
+        if v.is_null() {
+            continue;
+        }
+        let name = name_of(&f.name, Escape::Full);
+        tag(out, &name, false);
+        mapped_into(v, &f.data_type, m, depth.saturating_add(1), out)?;
+        tag(out, &name, true);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

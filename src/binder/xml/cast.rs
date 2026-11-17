@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use super::super::{Binder, Scope, rule};
 use crate::ast::{Passing, TypeName, ValueExpression, ValueSpecification};
-use crate::error::Result;
-use crate::functions::{ScalarRef, XmlCastIn, XmlCastOut, xml_schema_type};
+use crate::error::{Code, Result, SqlError};
+use crate::functions::{IMPLICIT_BINARY_ENCODING, Mapping, ScalarRef, XmlCastIn, XmlCastOut, xml_schema_type};
 use crate::logical::Expr;
 use crate::params::ParameterType;
 use crate::value::datetime::{Field, MAX_TIME_PRECISION};
@@ -22,12 +22,10 @@ use crate::value::{
 use crate::xml::AtomicType;
 
 /// [§6.6 SR5, SR10b i] Whether `t` is a collection, row, structured or
-/// reference type, which XMLCAST takes neither to nor from.
+/// reference type, which XMLCAST takes neither to nor from; a distinct
+/// type is none of them, whatever its source.
 fn unmappable(t: &DataType) -> bool {
-    matches!(
-        t.represented(),
-        DataType::Array(_) | DataType::Multiset(_) | DataType::Row(_) | DataType::Structured(_) | DataType::Reference(_)
-    )
+    matches!(t, DataType::Array(_) | DataType::Multiset(_) | DataType::Row(_) | DataType::Structured(_) | DataType::Reference(_))
 }
 
 /// Whether `v` is a `<dynamic parameter specification>`, perhaps in
@@ -141,11 +139,38 @@ impl Binder<'_> {
                 "[ISO/IEC 9075-14:2006 draft §6.6 SR7] XMLCAST to {target} casts an XML value or NULL, not a value of {source}"
             )));
         }
+        if matches!(source.represented(), DataType::Array(_) | DataType::Multiset(_)) {
+            return Ok((self.collection_to_xml(e, source, xml)?, target));
+        }
         let Some(base) = xml_schema_type(source) else {
             return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §9.5 GR8] {source} maps to no XML Schema type")));
         };
         let shown = super::super::datetime::shown(e, source.represented().clone(), self.now);
-        Ok((Expr::Call(ScalarRef(Arc::new(XmlCastIn { target: xml, base })), vec![shown]), target))
+        Ok((Expr::Call(ScalarRef(Arc::new(XmlCastIn { target: xml, base, collection: None })), vec![shown]), target))
+    }
+
+    /// [§6.6 GR3, §9.8 GR1a, GR9j] XMLCAST of `e`, of `source`, a distinct
+    /// type whose source is a collection type, which SR10b i does not
+    /// refuse, to the XML type `xml`: to CONTENT, its value mapped by its
+    /// type \[GR3c\]; to SEQUENCE, SQLCODE -900, as GR3d casts to an
+    /// atomic type and §9.5 maps no collection to one \[GR3d ii\].
+    fn collection_to_xml(&self, e: Expr, source: &DataType, xml: XmlType) -> Result<Expr> {
+        if xml == XmlType::Sequence {
+            return Err(SqlError::new(
+                Code::Unsupported,
+                format!("[ISO/IEC 9075-14:2006 draft §6.6 GR3d ii] XMLCAST of {source} to XML(SEQUENCE) casts to no atomic type"),
+            ));
+        }
+        if !super::element::mapped_inside(source.represented(), super::element::MAPPED_LEVELS) {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-14:2006 draft §9.8 GR9j, §4.10.8] {source} is based on a type mapped to no XML: XML(SEQUENCE), a structured or a reference type, or one §9.5 does not map"
+            )));
+        }
+        // [GR1, GR2] The implicit encoding; [GR3a] characters mapped.
+        let mapping = Mapping { encoding: IMPLICIT_BINARY_ENCODING, charmapping: true, zone: self.now.zone() };
+        // The atomic type is not read, as the value is cast to CONTENT.
+        let cast = XmlCastIn { target: xml, base: AtomicType::UntypedAtomic, collection: Some((source.clone(), mapping)) };
+        Ok(Expr::Call(ScalarRef(Arc::new(cast)), vec![e]))
     }
 
     /// [§6.6 GR4] XMLCAST of `e`, an XML value, to `target`, an SQL type:

@@ -2928,7 +2928,10 @@ bound to another URI renumbered; `comment`, `processing_instruction` and
 follows the source tree's links, so none recurses. XMLAGG gathers its
 rows as ARRAY_AGG does, sharing its key order, and makes the document
 node of RETURNING CONTENT itself, so it is one aggregate over a window
-too. The binder keeps the
+too. An array or a multiset of content is mapped to text by its declared
+type (`functions/xml/mapping.rs`, `xml_mapped`), an element of each
+element, as §9.8 maps one, then parsed as other content is; its walk is
+bounded as types nest. The binder keeps the
 XMLNAMESPACES declarations in scope, innermost last, and searches a
 subquery's own first, then those of the query it is in.
 
