@@ -1224,6 +1224,7 @@ structured value crosses to a client whole, as the protocol's tag of
 its type writes it. A function that is an ordering's, a transform's or
 a cast's is dropped only with CASCADE, which drops what it is the
 function of [§11.62 SR4a, SR4d].
+
 #### D82. System-versioned tables keep their historical rows in a hidden table of their own
 
 A system-versioned table [ISO/IEC 9075-2:2023 §4.17.2.3] keeps the rows

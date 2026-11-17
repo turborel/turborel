@@ -56,26 +56,17 @@ Nothing is open.
 
 ### JSON
 
-- The rest of SQL/JSON's path language [§9.46]: datetime() of a `<JSON
-  datetime template>` [SR10, GR11g ii 6 C VII 1 b], which with the
-  methods there are makes T832 whole. It needs the template's implicit
-  datetime type, whether it is dated, timed or zoned and its fraction's
-  precision, from the formatted cast's template reader
-  (`src/functions/formatted/template.rs`), which does not give it outside
-  its module yet.
-- The syntax of IS JSON (T821, T822) [§8.22] and of the constructor
-  functions JSON_OBJECT and JSON_ARRAY and the aggregates JSON_OBJECTAGG
-  and JSON_ARRAYAGG (T803, T811 to T814, T830) [§6.34, §10.11]: read,
-  bound and documented, as JSON_EXISTS, JSON_VALUE and JSON_QUERY are.
-  Their General Rules are written (`src/json/predicate.rs`,
-  `src/json/construct.rs`, RULES.md D84), the aggregates as states the
-  executor is to drive. With them T803 is claimed.
-- JSON_TABLE (T821, T824, T827) [§7.11], over the path engine the query
-  operators use. With it and IS JSON, T821 is claimed, and T825 and T826,
-  whose JSON_TABLE clauses are all they lack. It is not begun.
+- datetime() of a `<JSON datetime template>` in SQL/JSON's path language
+  (T832) [§9.46 SR10, GR11g ii 6 C VII 1 b]. With it T832 is claimed.
+- IS JSON (T822) [§8.22], and the constructor functions JSON_OBJECT and
+  JSON_ARRAY and the aggregates JSON_OBJECTAGG and JSON_ARRAYAGG (T803,
+  T811 to T814, T830) [§6.34, §10.11], in statements, as JSON_EXISTS,
+  JSON_VALUE and JSON_QUERY are.
+- JSON_TABLE (T821, T824, T827) [§7.11]. With it and IS JSON, T821 is
+  claimed, and T825 and T826, whose JSON_TABLE clauses are all they lack.
 - JSON text in binary strings, FORMAT JSON ENCODING UTF8, UTF16 or UTF32
   [§10.12, §10.13], of a context item, an argument and JSON_QUERY's
-  RETURNING. Each is SQLCODE -900 today.
+  RETURNING.
 - The JSON type (T801, T802) [§4.8, §6.1, §6.37, §6.40, §6.41], stored
   parsed so a query does not parse text again.
 - The simplified accessor (T860 to T864) [§6.36], as `doc.items[0].name`.
