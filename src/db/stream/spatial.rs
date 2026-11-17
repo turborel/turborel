@@ -25,7 +25,7 @@ fn spatial() -> Database {
     db
 }
 
-/// Verifies: [DESIGN] D15, D78: a proven same-SRID intersection join
+/// Verifies: [DESIGN] D15, D82: a proven same-SRID intersection join
 /// streams instead of retaining its entire result before the first fetch.
 /// Both argument orders and non-raising residuals preserve this proof;
 /// every expected pair is still fetched. Without the index, the general
@@ -61,7 +61,7 @@ fn proven_spatial_joins_stream_without_eager_result_spill() {
     assert!(!lock_builtin(&cursor.rows).as_ref().unwrap().streaming());
 }
 
-/// Verifies: [DESIGN] D15, D38, D78: a same-session write settles a
+/// Verifies: [DESIGN] D15, D38, D82: a same-session write settles a
 /// spatial cursor through its partially fetched output group. Buffered
 /// and unread pairs both retain their original values; the next query
 /// sees the write. No pair is lost or repeated at the group boundary.

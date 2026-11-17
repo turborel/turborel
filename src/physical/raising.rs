@@ -33,7 +33,7 @@ impl Plan {
             // Spatial adaptation is admitted only for same-SRID geometry
             // columns and non-raising residuals. Intersects has no other
             // General Rule error on those stored values. Decode damage is
-            // still a storage failure, as for an ordinary scan (D15, D78).
+            // still a storage failure, as for an ordinary scan (D15, D82).
             Plan::IndexJoin { spatial, outer, left, cond, .. } => {
                 let proved = *spatial && !outer;
                 left.can_raise() || (!proved && cond.as_ref().is_some_and(Cond::can_raise))
