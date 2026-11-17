@@ -19,6 +19,11 @@
 //! to, so each row of ELEMENT_TYPES and FIELDS holds its descriptor's
 //! columns itself. A field or element type of a character string is of
 //! the collation of its character set, SQL_TEXT, as none is named for it.
+//!
+//! Every descriptor ends with the columns ISO/IEC 9075-14:2006 draft §21.1
+//! adds, an XML type's modifiers and XML Schema (`xml`). Its domains
+//! NCNAME and URI [§20.1, §20.2] are not defined as domains, as
+//! CHARACTER_DATA is not (`system/information.rs`).
 
 use std::sync::Arc;
 
@@ -34,6 +39,10 @@ use crate::value::{DataType, Value};
 /// The DTD_IDENTIFIER of a domain's descriptor.
 const DOMAIN_DTD: &str = "1";
 
+/// [ISO/IEC 9075-14:2006 draft §21.1] How many columns name an XML type's
+/// XML Schema: XML_SCHEMA_CATALOG, _SCHEMA, _NAME, _NAMESPACE and _ELEMENT.
+const XML_SCHEMA_COLUMNS: usize = 5;
+
 /// The tables.
 pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     vec![
@@ -44,9 +53,15 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     ]
 }
 
-/// Then the columns of a descriptor, from DATA_TYPE on, ending with a
-/// user-defined type's name [ISO/IEC 9075-2:2023 §4.9.2] and a reference
-/// type's scope [§4.11], as ISO/IEC 9075-11:2006 draft §6.21 orders them.
+/// How many columns a data type descriptor's are, from DATA_TYPE on
+/// (`described`).
+pub(super) const DESCRIBED: usize = 24;
+
+/// Then the columns of a descriptor, from DATA_TYPE on: to a user-defined
+/// type's name [ISO/IEC 9075-2:2023 §4.9.2] and a reference type's scope
+/// [§4.11], as ISO/IEC 9075-11:2006 draft §6.21 orders them, then an XML
+/// type's modifiers and XML Schema, which ISO/IEC 9075-14:2006 draft §21.1
+/// adds.
 pub(super) fn described(columns: Columns) -> Columns {
     described_as(columns, true)
 }
@@ -66,6 +81,14 @@ pub(super) fn described_as(columns: Columns, not_null: bool) -> Columns {
         .number("MAXIMUM_CARDINALITY", false)
         .ids("USER_DEFINED_TYPE", false)
         .ids("SCOPE", false)
+        .data("XML_PRIMARY_MODIFIER", false)
+        .data("XML_SECONDARY_MODIFIER", false)
+        .ids("XML_SCHEMA", false)
+        // [ISO/IEC 9075-14:2006 draft §20.2, §20.1] Of the domains URI and
+        // NCNAME, CHARACTER VARYING(L), L implementation-defined: here
+        // CHARACTER_DATA's, the longest character string.
+        .data("XML_SCHEMA_NAMESPACE", false)
+        .data("XML_SCHEMA_ELEMENT", false)
 }
 
 fn data_type_columns() -> Vec<ColumnDesc> {
@@ -267,5 +290,14 @@ pub(super) fn data_type(catalog: &Value, t: &DataType, named: Option<&QualifiedN
     let scope = if let DataType::Reference(r) = t { r.scope.as_ref() } else { None };
     let scope = scope.map(|s| ids(catalog, &QualifiedName { auth: s.schema.clone(), ident: s.name.clone() }));
     let scope = scope.map_or_else(|| vec![Value::Null, Value::Null, Value::Null], |s| s.to_vec());
-    [head, collation, tail, user_defined, scope].concat()
+    [head, collation, tail, user_defined, scope, xml(d.xml)].concat()
+}
+
+/// [ISO/IEC 9075-14:2006 draft §21.1 Description 1] Of an XML type, its
+/// primary and secondary modifiers, the secondary null of SEQUENCE; then
+/// its XML Schema's catalog, schema, name, namespace and element, null, as
+/// no type is of XMLSCHEMA \[1a iii 2\]. Of another type, each null \[1b\].
+fn xml(modifiers: Option<(&str, Option<&str>)>) -> Vec<Value> {
+    let (primary, secondary) = modifiers.map_or((Value::Null, Value::Null), |(p, s)| (text(p), s.map_or(Value::Null, text)));
+    [vec![primary, secondary], vec![Value::Null; XML_SCHEMA_COLUMNS]].concat()
 }

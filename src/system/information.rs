@@ -96,7 +96,8 @@ const VIEWS: &[SystemView] = &[
     },
     // [ISO/IEC 9075:1992 §21.2.5] DOMAINS; with each domain's maximum
     // cardinality and the identifier of its data type descriptor, as
-    // ISO/IEC 9075-11 adds them.
+    // ISO/IEC 9075-11 adds them, and its XML modifiers and XML Schema, as
+    // [ISO/IEC 9075-14:2006 draft §20.5] does.
     SystemView {
         name: "DOMAINS",
         query: r"SELECT DISTINCT
@@ -106,7 +107,8 @@ const VIEWS: &[SystemView] = &[
        CHARACTER_SET_CATALOG, CHARACTER_SET_SCHEMA, CHARACTER_SET_NAME,
        NUMERIC_PRECISION, NUMERIC_PRECISION_RADIX, NUMERIC_SCALE,
        DATETIME_PRECISION, DOMAIN_DEFAULT,
-       MAXIMUM_CARDINALITY, DTD_IDENTIFIER
+       MAXIMUM_CARDINALITY, DTD_IDENTIFIER, XML_PRIMARY_MODIFIER, XML_SECONDARY_MODIFIER,
+       XML_SCHEMA_CATALOG, XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME, XML_SCHEMA_NAMESPACE, XML_SCHEMA_ELEMENT
      FROM DEFINITION_SCHEMA.DOMAINS
           JOIN
             DEFINITION_SCHEMA.DATA_TYPE_DESCRIPTOR AS D
@@ -193,10 +195,10 @@ const VIEWS: &[SystemView] = &[
          AND TABLE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
-    // [ISO/IEC 9075:1992 §21.2.9] COLUMNS; [EXTENSION] with each column's
-    // identity and generation; with its maximum cardinality, its scope,
-    // whether it is self-referencing and, of a column of no domain, the
-    // identifier of its data type descriptor, as ISO/IEC 9075-11 adds them.
+    // [ISO/IEC 9075:1992 §21.2.9] COLUMNS; [EXTENSION] with each column's identity and generation;
+    // with its maximum cardinality, its scope, whether it is self-referencing and, of a column of no
+    // domain, the identifier of its data type descriptor, as ISO/IEC 9075-11 adds them; its XML
+    // modifiers and XML Schema [ISO/IEC 9075-14:2006 draft §20.4].
     SystemView {
         name: "COLUMNS",
         query: r"SELECT DISTINCT
@@ -245,7 +247,14 @@ const VIEWS: &[SystemView] = &[
        IS_GENERATED, GENERATION_EXPRESSION,
        COALESCE (D1.MAXIMUM_CARDINALITY, D2.MAXIMUM_CARDINALITY)
                     AS MAXIMUM_CARDINALITY,
-       D1.DTD_IDENTIFIER
+       D1.DTD_IDENTIFIER,
+       COALESCE (D1.XML_PRIMARY_MODIFIER, D2.XML_PRIMARY_MODIFIER) AS XML_PRIMARY_MODIFIER,
+       COALESCE (D1.XML_SECONDARY_MODIFIER, D2.XML_SECONDARY_MODIFIER) AS XML_SECONDARY_MODIFIER,
+       COALESCE (D1.XML_SCHEMA_CATALOG, D2.XML_SCHEMA_CATALOG) AS XML_SCHEMA_CATALOG,
+       COALESCE (D1.XML_SCHEMA_SCHEMA, D2.XML_SCHEMA_SCHEMA) AS XML_SCHEMA_SCHEMA,
+       COALESCE (D1.XML_SCHEMA_NAME, D2.XML_SCHEMA_NAME) AS XML_SCHEMA_NAME,
+       COALESCE (D1.XML_SCHEMA_NAMESPACE, D2.XML_SCHEMA_NAMESPACE) AS XML_SCHEMA_NAMESPACE,
+       COALESCE (D1.XML_SCHEMA_ELEMENT, D2.XML_SCHEMA_ELEMENT) AS XML_SCHEMA_ELEMENT
      FROM DEFINITION_SCHEMA.COLUMNS AS C
          LEFT JOIN
            DEFINITION_SCHEMA.DATA_TYPE_DESCRIPTOR AS D1

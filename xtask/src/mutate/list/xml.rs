@@ -1,10 +1,11 @@
 //! Mutations of SQL/XML: the parser, the serializer, the stored form, the
-//! XML type's rules and its storage (RULES.md R-TEST-9, D86).
+//! XML type's rules, its storage and its Information Schema columns
+//! (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each XML mechanism broken alone, and the tests that fail.
-pub const XML: [Mutation; 14] = [
+pub const XML: [Mutation; 16] = [
     Mutation {
         name: "xml-element-type-match",
         package: Package::Core,
@@ -144,5 +145,30 @@ pub const XML: [Mutation; 14] = [
         replacement: "                && false",
         integration: &[],
         unit: &["engine::rows::lobs::tests::xml_values_are_kept_as_large_objects"],
+    },
+    Mutation {
+        name: "xml-descriptor-modifiers",
+        package: Package::Core,
+        breaks: "a data type descriptor shows no XML type's secondary modifier",
+        file: "src/system/definition/descriptors.rs",
+        original: "(text(p), s.map_or(Value::Null, text))",
+        replacement: "(text(p), s.filter(|_| false).map_or(Value::Null, text))",
+        integration: &[
+            "xml_information::columns_and_domains_20_4",
+            "xml_information::element_types_and_fields_20_6",
+            "xml_information::attributes_and_methods_20_3",
+            "xml_information::routines_and_parameters_20_10",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-passing-mechanism",
+        package: Package::Core,
+        breaks: "an XML parameter or result shows no passing mechanism",
+        file: "src/system/definition/routines.rs",
+        original: "    let mechanism = if xml { text(IMPLICIT_PASSING) } else { Value::Null };",
+        replacement: "    let mechanism = if xml { Value::Null } else { Value::Null };",
+        integration: &["xml_information::routines_and_parameters_20_10"],
+        unit: &[],
     },
 ];

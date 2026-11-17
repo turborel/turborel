@@ -20,10 +20,15 @@
 //! as written, null when longer than CHARACTER_DATA holds. A routine of an
 //! SQL-server module names it, and is no schema-level routine [ISO/IEC
 //! 9075-4:2006 draft §19.5].
+//!
+//! ROUTINES and PARAMETERS end with the columns ISO/IEC 9075-14:2006
+//! draft §21.2 and §21.3 append: the associated string type and XML option
+//! of an external routine's parameter or result, and the XML passing
+//! mechanism of an SQL routine's (`xml_columns`).
 
 use std::sync::Arc;
 
-use super::descriptors::{data_type, described, described_as};
+use super::descriptors::{DESCRIBED, data_type, described, described_as};
 use super::implicit::{FUNCTION, Implicit, implicit, method_type};
 use super::privileges::PUBLIC;
 use super::user_types::{RESULT_DTD, holders};
@@ -34,8 +39,19 @@ use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable, yes};
 use crate::value::{DataType, Value};
 
-/// How many columns a data type descriptor's are, from DATA_TYPE on.
-const DESCRIBED: usize = 17;
+/// [ISO/IEC 9075-14:2006 draft §12.7 SR8b i, iii] The `<XML passing
+/// mechanism>` implicit of a parameter or result of an XML type, or a
+/// distinct type of an XML type, implementation-defined: BY REF, as CAST's
+/// is, for no routine copies the nodes of a value passed to it.
+const IMPLICIT_PASSING: &str = "BY REF";
+
+/// How many of `xml_columns` come before the passing mechanism: the
+/// associated string type's DTD_IDENTIFIER and the XML option.
+const STRING_TYPE_COLUMNS: usize = 2;
+
+/// How many of `xml_columns` come after it: the associated string type's
+/// descriptor's.
+const STRING_DESCRIBED: usize = 6;
 
 /// The tables.
 pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
@@ -104,6 +120,32 @@ fn udt_ids(catalog: &Value, udt: Option<&QualifiedName>) -> Vec<Value> {
 }
 
 // ---------------------------------------------------------------------------
+// [ISO/IEC 9075-14:2006 draft §21.2, §21.3] XML parameters and results
+// ---------------------------------------------------------------------------
+
+/// Then XML_STRING_DTD_IDENTIFIER, XML_OPTION and `mechanism`,
+/// XML_PASSING_MECHANISM or XML_RETURN_MECHANISM; then \[DESIGN\] the
+/// columns of the descriptor of the associated string type the views show,
+/// as each row holds those of its own type's, by the names the views give
+/// them [§20.10, §20.11]. Its character set is that of its collation.
+fn xml_columns(columns: Columns, mechanism: &str) -> Columns {
+    let columns = columns.id("XML_STRING_DTD_IDENTIFIER", false).data("XML_OPTION", false).data(mechanism, false);
+    let described = columns.data("XML_CHAR_TYPE", false).length("XML_CHAR_MAX_LEN", false).length("XML_CHAR_OCT_LEN", false);
+    described.id("XML_CHAR_COLL_CAT", false).id("XML_CHAR_COLL_SCH", false).id("XML_CHAR_COLL_NAME", false)
+}
+
+/// The values of `xml_columns` of a parameter or result of type `t`. Only
+/// an external routine's has an associated string type and XML option
+/// [§12.7 SR1, SR3, SR4], so each is null. An SQL routine's of an XML
+/// type, or a distinct type of one, is passed by its implicit mechanism
+/// \[SR8b\], as none is written; another's by none [§21.2 Description 3].
+fn xml_values(t: Option<&DataType>) -> Vec<Value> {
+    let xml = t.is_some_and(|t| matches!(t.represented(), DataType::Xml(_)));
+    let mechanism = if xml { text(IMPLICIT_PASSING) } else { Value::Null };
+    [vec![Value::Null; STRING_TYPE_COLUMNS], vec![mechanism], vec![Value::Null; STRING_DESCRIBED]].concat()
+}
+
+// ---------------------------------------------------------------------------
 // ROUTINES
 // ---------------------------------------------------------------------------
 
@@ -115,7 +157,7 @@ fn routines_columns() -> Vec<ColumnDesc> {
         .ids("UDT", false)
         .data("ROUTINE_TYPE", true)
         .id("DTD_IDENTIFIER", false);
-    described_as(columns, false)
+    let columns = described_as(columns, false)
         .data("ROUTINE_BODY", true)
         .data("ROUTINE_DEFINITION", false)
         .data("IS_DETERMINISTIC", true)
@@ -124,8 +166,8 @@ fn routines_columns() -> Vec<ColumnDesc> {
         .data("SCHEMA_LEVEL_ROUTINE", true)
         .data("IS_USER_DEFINED_CAST", false)
         .data("IS_IMPLICITLY_INVOCABLE", false)
-        .data("SECURITY_TYPE", true)
-        .done()
+        .data("SECURITY_TYPE", true);
+    xml_columns(columns, "XML_RETURN_MECHANISM").done()
 }
 
 /// Each routine a type's definition makes, a schema-level SQL routine,
@@ -149,7 +191,7 @@ fn implicit_routine(catalog: &Value, r: &Implicit<'_>) -> Row {
         vec![text(&r.kind), text(RESULT_DTD)],
     ];
     let traits = vec![text("SQL"), Value::Null, yes(r.deterministic), text("CONTAINS SQL"), yes(r.null_call), yes(true)];
-    let tail = [traits, cast_values(r.cast, true).to_vec(), vec![text("DEFINER")]].concat();
+    let tail = [traits, cast_values(r.cast, true).to_vec(), vec![text("DEFINER")], xml_values(Some(&r.result))].concat();
     [head.concat(), data_type(catalog, &r.result, None), tail].concat()
 }
 
@@ -173,7 +215,7 @@ fn routine(seen: &Seen<'_>, catalog: &Value, r: &SqlRoutineDesc) -> Row {
     let level = yes(r.module.is_none());
     let traits = vec![text("SQL"), long(&r.body), yes(r.deterministic), text(access(r.access)), null_call, level];
     let cast = cast_values(cast_of(seen, &r.specific), r.returns.is_some() || r.function());
-    [head, described, traits, cast.to_vec(), vec![text("DEFINER")]].concat()
+    [head, described, traits, cast.to_vec(), vec![text("DEFINER")], xml_values(r.returns.as_ref())].concat()
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +230,7 @@ fn parameters_columns() -> Vec<ColumnDesc> {
         .data("IS_RESULT", true)
         .data("AS_LOCATOR", true)
         .id("PARAMETER_NAME", false);
-    described(columns).id("DTD_IDENTIFIER", true).done()
+    xml_columns(described(columns).id("DTD_IDENTIFIER", true), "XML_PASSING_MECHANISM").done()
 }
 
 /// Each parameter of each routine a type's definition makes, an input
@@ -203,7 +245,7 @@ fn parameters(seen: &Seen<'_>) -> Vec<Row> {
             let position = at.saturating_add(1);
             let head = vec![number(position), text("IN"), yes(*result), yes(false), text(name)];
             let dtd = vec![text(&position.to_string())];
-            rows.push([ids(&catalog, &r.specific).to_vec(), head, data_type(&catalog, t, None), dtd].concat());
+            rows.push([ids(&catalog, &r.specific).to_vec(), head, data_type(&catalog, t, None), dtd, xml_values(Some(t))].concat());
         }
     }
     for r in seen.state.catalog.routines() {
@@ -228,7 +270,8 @@ fn parameters(seen: &Seen<'_>) -> Vec<Row> {
                     none
                 }
             };
-            rows.push([ids(&catalog, &r.specific).to_vec(), head, described, vec![dtd]].concat());
+            let xml = xml_values(p.generic.is_none().then_some(&p.data_type));
+            rows.push([ids(&catalog, &r.specific).to_vec(), head, described, vec![dtd], xml].concat());
         }
     }
     rows

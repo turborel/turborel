@@ -351,6 +351,9 @@ pub struct Descriptor {
     /// USER_DEFINED_TYPE_SCHEMA and USER_DEFINED_TYPE_NAME, of a
     /// user-defined type [ISO/IEC 9075-2:2023 §4.9.2].
     pub user_defined: Option<(String, String)>,
+    /// XML_PRIMARY_MODIFIER and XML_SECONDARY_MODIFIER, of an XML type
+    /// [ISO/IEC 9075-14:2006 draft §21.1 Description 1a].
+    pub xml: Option<(&'static str, Option<&'static str>)>,
 }
 
 impl Descriptor {
@@ -367,6 +370,7 @@ impl Descriptor {
             datetime_precision: None,
             cardinality: None,
             user_defined: None,
+            xml: None,
         }
     }
 }

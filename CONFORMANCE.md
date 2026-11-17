@@ -1884,12 +1884,15 @@ types), X190 (XML(SEQUENCE) type), X211 (XML 1.1 support), X231 and X232
 | XMLSERIALIZE | §6.8, §10.15 | To a character or a binary string, by the XML output method of XSLT 2.0 and XQuery 1.0 Serialization, after its sequence normalization. CONTENT if neither is written. DOCUMENT of a document alone, else 2200L. VERSION '1.0' or '1.1'. A binary string in UTF8 or UTF16. INCLUDING and EXCLUDING XMLDECLARATION. The result is stored in its type as assignment stores it, too long 22001. A value with no serialization, an attribute alone among others, is 2200W. |
 | Over a connection | RULES.md D86 | A column of an XML type is described with its modifiers. A value is sent as its serialization as CONTENT, refused with 2200W if it has none, and a client parses it as CONTENT when it needs its nodes. A value sent as a parameter is kept as sent. |
 | Descriptor areas | §17.1 GR1, Table 12 | XML is code 137. An item of it matches any XML type. |
+| Information Schema | §20.3 to §20.11, §21.1 to §21.3 | ATTRIBUTES, COLUMNS, DOMAINS, ELEMENT_TYPES, FIELDS, METHOD_SPECIFICATIONS, METHOD_SPECIFICATION_PARAMETERS, PARAMETERS and ROUTINES show an XML type's XML_PRIMARY_MODIFIER, DOCUMENT, CONTENT or SEQUENCE, and XML_SECONDARY_MODIFIER, UNTYPED or ANY, null of SEQUENCE [§21.1 Description 1a]. The XML_SCHEMA_ columns are null, as no type is of XMLSCHEMA, and all seven are null of another type. PARAMETERS shows XML_PASSING_MECHANISM and ROUTINES XML_RETURN_MECHANISM, BY REF of a parameter or result of an XML type, else null; the associated string type's columns and XML_OPTION are null, as an external routine alone has them [§12.7 SR1]. No view shows the RESULT_CAST_XML_ columns, as none shows a `<result cast>`'s; ROUTINES shows XML_CHAR_TYPE once, as ROUTINES_S does [§20.15]. NCNAME and URI are not defined as domains, as CHARACTER_DATA is not [§20.1, §20.2]. The views of registered XML Schemas [§20.12 to §20.14] wait for them. |
 
 | Choice | Rules | turborel |
 |---|---|---|
 | XML alone; DOCUMENT and CONTENT alone | §6.1 SR2, SR3b | XML(SEQUENCE); ANY. |
 | The type of XMLPARSE | §6.16 SR1 | UNTYPED, as every node a parse makes is. |
 | CAST's passing mechanism | §6.5 SR2 | BY REF. |
+| A routine's passing mechanism | §12.7 SR8b i, iii | BY REF, of each parameter and result of an XML type, as none is written. |
+| The lengths of NCNAME and URI | §20.1 Description 2, §20.2 Description 2 | CHARACTER_DATA's, 32767 characters: XML_SCHEMA_ELEMENT and XML_SCHEMA_NAMESPACE are CHARACTER VARYING(32767). |
 | XMLSERIALIZE's version and encoding | §6.8 SR2d, SR4d, SR4e | '1.0'. The encodings are UTF8, the default, and UTF16. |
 | A byte order mark | §10.15 GR4a ii | Before UTF16 alone. |
 | The standalone declaration | §10.15 GR7 | None is written. |

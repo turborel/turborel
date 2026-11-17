@@ -36,6 +36,27 @@ XML values are not comparable. `=`, IN, DISTINCT, GROUP BY, ORDER BY,
 MAX, MIN, UNION without ALL, a NATURAL or USING join on an XML column,
 and a key or an index of one are refused (SQLCODE -103).
 
+[The Information Schema](information-schema.md) shows a type's modifiers
+in XML_PRIMARY_MODIFIER and XML_SECONDARY_MODIFIER, the second null of
+SEQUENCE. A parameter or result of a routine of an XML type is passed by
+reference: XML_PASSING_MECHANISM in PARAMETERS and XML_RETURN_MECHANISM
+in ROUTINES are BY REF.
+
+```sql
+CREATE TABLE PAGES (ID INTEGER, BODY XML(DOCUMENT(UNTYPED)), NOTES XML);
+SELECT COLUMN_NAME, DATA_TYPE, XML_PRIMARY_MODIFIER, XML_SECONDARY_MODIFIER FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PAGES' ORDER BY ORDINAL_POSITION;
+```
+
+```
+OK
+ COLUMN_NAME                                                  | DATA_TYPE                                                    | XML_PRIMARY_MODIFIER                                         | XML_SECONDARY_MODIFIER
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ ID                                                           | INTEGER                                                      | NULL                                                         | NULL
+ BODY                                                         | XML                                                          | DOCUMENT                                                     | UNTYPED
+ NOTES                                                        | XML                                                          | SEQUENCE                                                     | NULL
+(3 rows)
+```
+
 ## XMLPARSE
 
 ```

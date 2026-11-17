@@ -272,6 +272,29 @@ field's place in its row, or 1 of an array's element, so the first field
 of column 2 is `2.1` and the element of that field's array `2.1.1`.
 ELEMENT_TYPES and FIELDS join to COLUMNS and DOMAINS by it.
 
+The views that describe a type, COLUMNS, DOMAINS, ELEMENT_TYPES, FIELDS,
+ATTRIBUTES, METHOD_SPECIFICATIONS, METHOD_SPECIFICATION_PARAMETERS,
+ROUTINES and PARAMETERS, have seven more columns, as SQL/XML (ISO/IEC
+9075-14) names them. Of an [XML type](xml.md), XML_PRIMARY_MODIFIER is
+DOCUMENT, CONTENT or SEQUENCE, and XML_SECONDARY_MODIFIER is UNTYPED or
+ANY, null of SEQUENCE, so a column declared XML alone shows SEQUENCE.
+XML_SCHEMA_CATALOG, XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME,
+XML_SCHEMA_NAMESPACE and XML_SCHEMA_ELEMENT name a registered XML Schema,
+and are null, as no type is of one. All seven are null of a type that is
+not XML. They follow the view's other columns, but in ROUTINES, where
+they follow DTD_IDENTIFIER.
+
+ROUTINES and PARAMETERS end with twelve more, after the seven in
+PARAMETERS. XML_CHAR_TYPE, XML_CHAR_MAX_LEN, XML_CHAR_OCT_LEN,
+XML_CHAR_SET_CAT, XML_CHAR_SET_SCH, XML_CHAR_SET_NAME, XML_CHAR_COLL_CAT,
+XML_CHAR_COLL_SCH, XML_CHAR_COLL_NAME and XML_CHAR_DTD_ID describe the
+character string an external routine passes an XML value as, and
+XML_OPTION says whether as DOCUMENT or CONTENT. Every routine is an SQL
+routine, so they are null. XML_RETURN_MECHANISM in ROUTINES and
+XML_PASSING_MECHANISM in PARAMETERS are BY REF of a result or parameter
+of an XML type, which is passed by reference, and null of another.
+[XML Values](xml.md#the-type) has an example.
+
 TABLE_CONSTRAINTS has one more column *(extension)*, NULLS_DISTINCT, as
 ISO/IEC 9075-11 names it: YES of a UNIQUE constraint of NULLS DISTINCT,
 written or not, NO of one of NULLS NOT DISTINCT, and null of a PRIMARY

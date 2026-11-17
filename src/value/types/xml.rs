@@ -127,9 +127,11 @@ impl SqlType for XmlKind {
         None
     }
 
-    /// [ISO/IEC 9075:1992 §21.3.5] XML, its other columns null.
-    fn descriptor(&self, _: &DataType) -> Descriptor {
-        Descriptor::of(XML_NAME)
+    /// [ISO/IEC 9075:1992 §21.3.5] XML, with its modifiers [ISO/IEC
+    /// 9075-14:2006 draft §21.1 Description 1a], its other columns null.
+    fn descriptor(&self, t: &DataType) -> Descriptor {
+        let x = xml_type(t);
+        Descriptor { xml: Some((x.primary(), x.secondary())), ..Descriptor::of(XML_NAME) }
     }
 
     /// Its stored form as a binary large object's (`lob::put_lob`): its

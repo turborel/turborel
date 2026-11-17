@@ -28,7 +28,7 @@
 
 use std::sync::Arc;
 
-use super::descriptors::{data_type, described_as};
+use super::descriptors::{DESCRIBED, data_type, described_as};
 use super::privileges::PUBLIC;
 use super::{Columns, catalog_name, defined, ids, text};
 use crate::ast::{OrderingForm, TransformKind};
@@ -49,9 +49,6 @@ pub(super) const RESULT_DTD: &str = "0";
 /// user-defined reference type: none of its attributes', which are their
 /// ordinal positions (`definition/structured.rs`).
 pub(super) const REF_DTD: &str = "0";
-
-/// How many columns a data type descriptor's are, from DATA_TYPE on.
-const DESCRIBED: usize = 17;
 
 /// The tables.
 pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {

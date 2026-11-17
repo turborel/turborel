@@ -19,7 +19,8 @@ use super::SystemView;
 
 /// The views, after those of user-defined types.
 pub(super) const VIEWS: &[SystemView] = &[
-    // [§5.11] ATTRIBUTES.
+    // [§5.11] ATTRIBUTES; with an XML type's modifiers and XML Schema, as
+    // [ISO/IEC 9075-14:2006 draft §20.3] adds them.
     SystemView {
         name: "ATTRIBUTES",
         query: r"SELECT DISTINCT
@@ -34,7 +35,10 @@ pub(super) const VIEWS: &[SystemView] = &[
        A.USER_DEFINED_TYPE_SCHEMA AS ATTRIBUTE_UDT_SCHEMA,
        A.USER_DEFINED_TYPE_NAME AS ATTRIBUTE_UDT_NAME,
        A.SCOPE_CATALOG, A.SCOPE_SCHEMA, A.SCOPE_NAME,
-       A.MAXIMUM_CARDINALITY, A.DTD_IDENTIFIER, A.IS_DERIVED_REFERENCE_ATTRIBUTE
+       A.MAXIMUM_CARDINALITY, A.DTD_IDENTIFIER, A.IS_DERIVED_REFERENCE_ATTRIBUTE,
+       A.XML_PRIMARY_MODIFIER, A.XML_SECONDARY_MODIFIER,
+       A.XML_SCHEMA_CATALOG, A.XML_SCHEMA_SCHEMA, A.XML_SCHEMA_NAME,
+       A.XML_SCHEMA_NAMESPACE, A.XML_SCHEMA_ELEMENT
      FROM DEFINITION_SCHEMA.ATTRIBUTES AS A
          LEFT JOIN
            DEFINITION_SCHEMA.COLLATIONS AS S
@@ -91,7 +95,9 @@ pub(super) const VIEWS: &[SystemView] = &[
     },
     // [§5.34] METHOD_SPECIFICATIONS; corrected: the method's type read from
     // the columns UDT_CATALOG, UDT_SCHEMA and UDT_NAME, its result type's
-    // name being those of its descriptor.
+    // name being those of its descriptor. With its result type's XML
+    // modifiers and XML Schema, as [ISO/IEC 9075-14:2006 draft §20.9]
+    // adds them, but not those of a `<result cast>`, as above.
     SystemView {
         name: "METHOD_SPECIFICATIONS",
         query: r"SELECT M.SPECIFIC_CATALOG, M.SPECIFIC_SCHEMA, M.SPECIFIC_NAME,
@@ -110,7 +116,10 @@ pub(super) const VIEWS: &[SystemView] = &[
             M.PARAMETER_STYLE, M.IS_DETERMINISTIC, M.SQL_DATA_ACCESS,
             M.IS_NULL_CALL,
             M.TO_SQL_SPECIFIC_CATALOG, M.TO_SQL_SPECIFIC_SCHEMA,
-            M.TO_SQL_SPECIFIC_NAME, M.AS_LOCATOR
+            M.TO_SQL_SPECIFIC_NAME, M.AS_LOCATOR,
+            M.XML_PRIMARY_MODIFIER, M.XML_SECONDARY_MODIFIER,
+            M.XML_SCHEMA_CATALOG, M.XML_SCHEMA_SCHEMA, M.XML_SCHEMA_NAME,
+            M.XML_SCHEMA_NAMESPACE, M.XML_SCHEMA_ELEMENT
      FROM DEFINITION_SCHEMA.METHOD_SPECIFICATIONS AS M
          LEFT JOIN
            DEFINITION_SCHEMA.COLLATIONS AS S
@@ -127,7 +136,8 @@ pub(super) const VIEWS: &[SystemView] = &[
     },
     // [§5.33] METHOD_SPECIFICATION_PARAMETERS; corrected: the method's type
     // read from METHOD_SPECIFICATIONS as above, joined ON its specific
-    // name, as the draft's USING would.
+    // name, as the draft's USING would. With an XML type's modifiers and
+    // XML Schema, as [ISO/IEC 9075-14:2006 draft §20.8] adds them.
     SystemView {
         name: "METHOD_SPECIFICATION_PARAMETERS",
         query: r"SELECT P.SPECIFIC_CATALOG, P.SPECIFIC_SCHEMA, P.SPECIFIC_NAME,
@@ -144,7 +154,10 @@ pub(super) const VIEWS: &[SystemView] = &[
             P.USER_DEFINED_TYPE_SCHEMA AS PARAMETER_UDT_SCHEMA,
             P.USER_DEFINED_TYPE_NAME AS PARAMETER_UDT_NAME,
             P.SCOPE_CATALOG, P.SCOPE_SCHEMA, P.SCOPE_NAME,
-            P.MAXIMUM_CARDINALITY, P.DTD_IDENTIFIER
+            P.MAXIMUM_CARDINALITY, P.DTD_IDENTIFIER,
+            P.XML_PRIMARY_MODIFIER, P.XML_SECONDARY_MODIFIER,
+            P.XML_SCHEMA_CATALOG, P.XML_SCHEMA_SCHEMA, P.XML_SCHEMA_NAME,
+            P.XML_SCHEMA_NAMESPACE, P.XML_SCHEMA_ELEMENT
      FROM DEFINITION_SCHEMA.METHOD_SPECIFICATION_PARAMETERS AS P
          JOIN
            DEFINITION_SCHEMA.METHOD_SPECIFICATIONS AS M

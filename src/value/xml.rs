@@ -53,14 +53,34 @@ impl XmlType {
     /// The type as a `<data type>` writes it [§6.1].
     #[must_use]
     pub fn written(self) -> String {
+        match self.secondary() {
+            Some(secondary) => format!("XML({}({secondary}))", self.primary()),
+            None => format!("XML({})", self.primary()),
+        }
+    }
+
+    /// Its `<primary XML type modifier>`, as XML_PRIMARY_MODIFIER shows it
+    /// [§6.1] [§21.1 Description 1a i].
+    #[must_use]
+    pub fn primary(self) -> &'static str {
+        match self {
+            XmlType::Document(_) => "DOCUMENT",
+            XmlType::Content(_) => "CONTENT",
+            XmlType::Sequence => "SEQUENCE",
+        }
+    }
+
+    /// Its `<secondary XML type modifier>`, as XML_SECONDARY_MODIFIER shows
+    /// it: none of SEQUENCE [§6.1] [§21.1 Description 1a ii].
+    #[must_use]
+    pub fn secondary(self) -> Option<&'static str> {
         let typing = |t: Typing| match t {
             Typing::Untyped => "UNTYPED",
             Typing::Any => "ANY",
         };
         match self {
-            XmlType::Document(t) => format!("XML(DOCUMENT({}))", typing(t)),
-            XmlType::Content(t) => format!("XML(CONTENT({}))", typing(t)),
-            XmlType::Sequence => "XML(SEQUENCE)".to_owned(),
+            XmlType::Document(t) | XmlType::Content(t) => Some(typing(t)),
+            XmlType::Sequence => None,
         }
     }
 
