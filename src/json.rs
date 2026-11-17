@@ -23,15 +23,29 @@
 //! (`cast_sequence`) [§9.48], converting one to an item
 //! (`sequence_to_item`) [§9.44] and serializing one to a string type
 //! (`serialize_sequence`) [§9.49].
+//!
+//! The `<JSON predicate>` IS JSON [§8.22] is `is_json` and `is_not_json`
+//! (`json/predicate.rs`), and the constructor functions JSON_OBJECT and
+//! JSON_ARRAY [§6.34] and JSON_OBJECTAGG and JSON_ARRAYAGG [§10.11] are
+//! `json_object`, `json_array`, `json_array_by_query` and the accumulators
+//! `JsonObjectAgg` and `JsonArrayAgg` (`json/construct.rs`), of their
+//! inputs already evaluated, returning JSON text.
 
+mod construct;
 mod item;
 mod path;
+mod predicate;
 mod query;
 mod serialize;
 mod text;
 
+pub use construct::{
+    ArrayOptions, Input, JsonArrayAgg, JsonObjectAgg, MAX_ELEMENTS, MAX_MEMBERS, NameAndValue, ObjectOptions, OnNull, json_array,
+    json_array_by_query, json_object,
+};
 pub use item::{Item, Member, Scalar};
 pub use path::{Accessor, Comparison, Expr, Method, Mode, Operator, Path, Predicate, Sign, Subscript, parse_path};
+pub use predicate::{JsonType, is_json, is_not_json};
 pub use query::{
     CommonSyntax, ExistsBehavior, IMPLICIT_RETURNING, Passing, QueryBehavior, QueryOptions, Quotes, ValueBehavior, Warned, Wrapper,
     cast_sequence, is_exception, json_exists, json_query, json_value, process, sequence_to_item, serialize_sequence,

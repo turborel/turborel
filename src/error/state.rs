@@ -263,6 +263,19 @@ impl SqlState {
     /// Data exception: SQL/JSON item cannot be cast to target type [ISO/IEC
     /// 9075-2:2023 §9.48 GR4b iii 1].
     pub const SQL_JSON_ITEM_CANNOT_BE_CAST_TO_TARGET_TYPE: SqlState = SqlState(*b"2203G");
+    /// Data exception: null value not allowed [ISO/IEC 9075-2:2023 §6.34
+    /// GR2d ii 1 D, §10.11 GR4b ii 2 B]: the null value as the name of a
+    /// member of a JSON object constructed.
+    pub const NULL_VALUE_NOT_ALLOWED: SqlState = SqlState(*b"22004");
+    /// Data exception: duplicate JSON object key value [ISO/IEC 9075-2:2023
+    /// §6.34 GR2d ii 2, §10.11 GR4b ii 3].
+    pub const DUPLICATE_JSON_OBJECT_KEY_VALUE: SqlState = SqlState(*b"22030");
+    /// Data exception: too many JSON array elements [ISO/IEC 9075-2:2023
+    /// §6.34 GR3c ii 2, GR4b ii 2, §10.11 GR5g].
+    pub const TOO_MANY_JSON_ARRAY_ELEMENTS: SqlState = SqlState(*b"2203D");
+    /// Data exception: too many JSON object members [ISO/IEC 9075-2:2023
+    /// §6.34 GR2d ii 3, §10.11 GR4b ii 4].
+    pub const TOO_MANY_JSON_OBJECT_MEMBERS: SqlState = SqlState(*b"2203E");
     /// Data exception: sequence generator limit exceeded [ISO/IEC
     /// 9075-2:2023 §9.35 GR3a].
     pub const SEQUENCE_GENERATOR_LIMIT_EXCEEDED: SqlState = SqlState(*b"2200H");

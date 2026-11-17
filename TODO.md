@@ -66,9 +66,11 @@ Nothing is open.
   §6.28, §6.34, §6.35, §7.11, §8.22, §8.23, §10.11]. JSON_OBJECT,
   JSON_ARRAY and their aggregates, JSON_VALUE, JSON_QUERY, JSON_EXISTS, IS
   JSON and JSON_TABLE, with PASSING, ON EMPTY and ON ERROR. The General
-  Rules of JSON_EXISTS, JSON_VALUE and JSON_QUERY are written
-  (`src/json/query.rs`); their syntax, binding and manual pages come
-  first, and with them the path language's features are claimed.
+  Rules of JSON_EXISTS, JSON_VALUE and JSON_QUERY (`src/json/query.rs`),
+  of IS JSON (`src/json/predicate.rs`) and of JSON_OBJECT, JSON_ARRAY,
+  JSON_OBJECTAGG and JSON_ARRAYAGG (`src/json/construct.rs`) are written;
+  their syntax, binding and manual pages come first, and with them the
+  features are claimed. JSON_TABLE is not begun.
 - The JSON type (T801, T802) [§4.8, §6.1, §6.37, §6.40, §6.41], stored
   parsed so a query does not parse text again.
 - The simplified accessor (T860 to T864) [§6.36], as `doc.items[0].name`.

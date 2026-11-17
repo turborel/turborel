@@ -1830,6 +1830,20 @@ and ON EMPTY and ON ERROR choices already evaluated. ON ERROR replaces an
 exception of SQLSTATE class 22 and no other. An ERROR ON EMPTY that NULL
 ON ERROR follows gives the null value, as §9.48 GR4c i and GR5 have it.
 
+So are the rules of the `<JSON predicate>` IS JSON [§8.22] and of the
+constructor functions JSON_OBJECT and JSON_ARRAY [§6.34] and
+JSON_OBJECTAGG and JSON_ARRAYAGG [§10.11] (`json/predicate.rs`,
+`json/construct.rs`), string-based (T803): their inputs are character
+strings, FORMAT JSON marking one as JSON text, and they return character
+strings. IS JSON is Unknown of the null value and False of text that is
+not JSON, or that has two members of one key under WITH UNIQUE KEYS. A
+constructor keeps a character string, a number and a truth value as its
+scalar and casts any other value, a datetime too, to a character string
+(IV179). A null name is 22004 and two members of one name under WITH
+UNIQUE KEYS 22030. An aggregate of no rows is the null value. An object
+has at most 1,048,576 members (IL051) and an array as many elements
+(IL052), past them 2203E and 2203D.
+
 | Feature | Rules | What turborel does |
 |---|---|---|
 | SQL/JSON items | §4.48.3 | The SQL/JSON null, a scalar that is a character string, a number, a truth value or a datetime, an array, or an object. Two are equivalent as the clause says: scalars equal as SQL values, arrays element by element, objects by a pairing of their members one to one, keys equal code point by code point. |

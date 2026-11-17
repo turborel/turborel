@@ -201,7 +201,7 @@ fn passed(argument: &Passing<'_>) -> Result<Vec<Item>> {
 ///
 /// SQLCODE -103 of a value of another type than a string's; -900 of a
 /// binary string, or a character large object longer than one chunk.
-fn json_text(value: &Value, rule: &str) -> Result<Option<String>> {
+pub(super) fn json_text(value: &Value, rule: &str) -> Result<Option<String>> {
     match value {
         Value::Null => Ok(None),
         Value::Char(text) => Ok(Some(text.clone())),

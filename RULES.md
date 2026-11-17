@@ -1330,6 +1330,11 @@ type returned [§9.43, §9.48, §9.49]. ON ERROR replaces a data exception,
 SQLSTATE class 22, and nothing else: a Syntax Rule broken or a limit
 passed is the statement's.
 
+The rules of IS JSON [§8.22] and of the constructors JSON_OBJECT,
+JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG [§6.34, §10.11] are there
+alike (`json/predicate.rs`, `json/construct.rs`), the aggregates as
+states the executor is to drive, given their rows in the order to keep.
+
 No SQL statement reads a path yet. The operators' syntax is to be bound
 to these functions, and until it is the engine is reached through the
 library alone (`turborel::json`).
