@@ -1,9 +1,19 @@
-//! Mutations of geometry representation validation (RULES.md R-TEST-9).
+//! Mutations of geometry representation and execution (RULES.md R-TEST-9).
 
 use super::{Mutation, Package};
 
 /// Representation invariants that must fail their requirement tests.
-pub const GEOMETRY: [Mutation; 24] = [
+pub const GEOMETRY: [Mutation; 25] = [
+    Mutation {
+        name: "geometry-orientation-filter-bound",
+        package: Package::Core,
+        breaks: "the fast orientation filter accepts a determinant within its rounding bound",
+        file: "src/geometry/robust.rs",
+        original: "if normal && determinant.abs() > error {",
+        replacement: "if normal && determinant.abs() > 0.0_f64 {",
+        integration: &[],
+        unit: &["geometry::robust::tests::orientation_filter_proves_only_normal_separated_determinants"],
+    },
     Mutation {
         name: "geometry-canonical-byte-order",
         package: Package::Core,

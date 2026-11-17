@@ -1,7 +1,7 @@
 //! Exact orientation of finite binary64 coordinates. The common path
-//! proves the determinant's sign with outward-rounded intervals. If the
-//! interval includes zero, overflows or underflows, bounded integer
-//! arithmetic determines the sign. There is no geometric tolerance.
+//! first proves the determinant's sign with a rounding-error bound, then
+//! outward-rounded intervals. If neither proves a sign, bounded integer
+//! arithmetic determines it. There is no geometric tolerance.
 
 pub(super) mod distance;
 mod integer;
@@ -10,6 +10,12 @@ use std::cmp::Ordering;
 
 use super::shape::Point;
 use integer::Integer;
+
+/// Shewchuk, `predicates.c` (1996), `exactinit`'s `ccwerrboundA`:
+/// (3 + 16u)u for binary64 unit roundoff u = 2^-53. The fast filter below
+/// admits only normal products, determinant and bound, so the relative
+/// error analysis encounters neither product underflow nor overflow.
+const ORIENTATION_ERROR: f64 = 3.330_669_073_875_471_6e-16;
 
 #[derive(Clone, Copy)]
 struct Interval {
@@ -43,6 +49,9 @@ impl Interval {
 }
 
 pub(super) fn orient([ax, ay]: Point, [bx, by]: Point, [cx, cy]: Point) -> Ordering {
+    if let Some(sign) = filtered([ax, ay], [bx, by], [cx, cy]) {
+        return sign;
+    }
     let left = Interval::difference(ax, cx).multiply(Interval::difference(by, cy));
     let right = Interval::difference(ay, cy).multiply(Interval::difference(bx, cx));
     if (left.low - right.high).next_down() > 0.0_f64 {
@@ -52,6 +61,19 @@ pub(super) fn orient([ax, ay]: Point, [bx, by]: Point, [cx, cy]: Point) -> Order
         return Ordering::Less;
     }
     exact([ax, ay], [bx, by], [cx, cy])
+}
+
+/// A subnormal coordinate difference is exact (differences are multiples
+/// of binary64's least subnormal). Products must be normal; rounded-to-zero
+/// products are never treated as exact. Cancellation and extreme values
+/// fall through to the existing interval and integer proofs.
+fn filtered([ax, ay]: Point, [bx, by]: Point, [cx, cy]: Point) -> Option<Ordering> {
+    let left = (ax - cx) * (by - cy);
+    let right = (ay - cy) * (bx - cx);
+    let determinant = left - right;
+    let error = ORIENTATION_ERROR * (left.abs() + right.abs());
+    let normal = left.is_normal() && right.is_normal() && determinant.is_normal() && error.is_normal();
+    if normal && determinant.abs() > error { Some(if determinant > 0.0_f64 { Ordering::Greater } else { Ordering::Less }) } else { None }
 }
 
 fn exact([ax, ay]: Point, [bx, by]: Point, [cx, cy]: Point) -> Ordering {

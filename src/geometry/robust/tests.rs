@@ -52,3 +52,51 @@ fn cancellation_and_extreme_offsets_are_not_tolerances() {
     assert_eq!(orient(a, b, [f64::from_bits(1), 0.0_f64]), Ordering::Less);
     assert_eq!(orient([0.0_f64, 0.0_f64], [f64::MIN_POSITIVE, 0.0_f64], [0.0_f64, f64::from_bits(1)]), Ordering::Greater);
 }
+
+/// Verifies: [DESIGN] D78: the fast orientation proof accepts ordinary
+/// turns of either sign but declines cancellation, zero products, overflow
+/// and subnormal products or error bounds. Declined cases retain the exact
+/// sign; a rounded product of zero is never a proof of collinearity.
+#[test]
+fn orientation_filter_proves_only_normal_separated_determinants() {
+    let a = [1.0_f64, 1.0_f64];
+    let b = [3.0_f64, 2.0_f64];
+    let c = [2.0_f64, 4.0_f64];
+    assert_eq!(filtered(a, b, c), Some(Ordering::Greater));
+    assert_eq!(filtered(b, a, c), Some(Ordering::Less));
+    let n = 4_503_599_627_370_496.0_f64;
+    for (first, second, third) in [
+        ([0.0_f64, 0.0_f64], [n, n - 1.0_f64], [n + 1.0_f64, n]),
+        ([0.0_f64, 0.0_f64], [1.0_f64, 0.0_f64], [0.0_f64, 1.0_f64]),
+        (a, a, c),
+        ([-f64::MAX, -f64::MAX], [f64::MAX, f64::MAX], [0.0_f64, f64::from_bits(1)]),
+        (a.map(|v| v * 1e-160_f64), b.map(|v| v * 1e-160_f64), c.map(|v| v * 1e-160_f64)),
+        (a.map(|v| v * 1e-150_f64), b.map(|v| v * 1e-150_f64), c.map(|v| v * 1e-150_f64)),
+    ] {
+        assert_eq!(filtered(first, second, third), None);
+        assert_eq!(orient(first, second, third), exact(first, second, third));
+    }
+}
+
+/// Verifies: [DESIGN] D78: the filtered and complete orientation agree
+/// with dyadic integer arithmetic for reproducible binary64 bit patterns
+/// across the exponent range, including unequal scales and signed zeros.
+#[test]
+fn filtered_orientations_match_exact_binary64_determinants() {
+    let mut seed = 7_u64;
+    for _ in 0_u32..10_000 {
+        let mut point = || {
+            std::array::from_fn(|_| {
+                seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                let bits = if seed & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000 { seed & !0x0010_0000_0000_0000 } else { seed };
+                f64::from_bits(bits)
+            })
+        };
+        let (a, b, c) = (point(), point(), point());
+        let expected = exact(a, b, c);
+        if let Some(sign) = filtered(a, b, c) {
+            assert_eq!(sign, expected, "{a:?} {b:?} {c:?}");
+        }
+        assert_eq!(orient(a, b, c), expected);
+    }
+}

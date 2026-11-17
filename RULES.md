@@ -2494,9 +2494,13 @@ be valid; these operations do not validate it. Empty sets intersect
 nothing, NULL propagates, and mixed SRIDs fail with SQLCODE -301 before
 empty or envelope shortcuts. They do not opt into D34's total Boolean
 predicate contract. Thus planning must preserve their runtime errors.
-Orientation uses outward-rounded intervals to prove a sign and falls
-back to exact bounded integers on binary64's dyadic coordinates. No
-tolerance changes a topological decision, including at extreme exponents.
+Orientation first tries Shewchuk's binary64 rounding-error bound
+([reference implementation](https://www.cs.cmu.edu/afs/cs/project/quake/public/code/predicates.c),
+`ccwerrboundA`). It accepts a sign only when both products, the determinant
+and the error bound are normal, and the determinant's magnitude exceeds
+that bound. Other cases use outward-rounded intervals, then exact bounded
+integers on binary64's dyadic coordinates. No tolerance changes a
+topological decision, including at extreme exponents.
 
 `ScalarFunction::spatial_operation` declares equivalent spatial semantics,
 including result types, NULL propagation and SRID errors. It is separate
