@@ -108,7 +108,7 @@ mod tests {
         }
     }
 
-    /// Verifies: [DESIGN] D82: a spatial join binds the chosen outer
+    /// Verifies: [DESIGN] D85: a spatial join binds the chosen outer
     /// geometry without changing either argument position. An unrelated
     /// NULL is harmless, a NULL operand rejects the pair, and a missing
     /// outer column reports the same -910 as comparison probes.

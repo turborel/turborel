@@ -6,7 +6,7 @@ use turborel::error::Code;
 use turborel::params::Params;
 use turborel::value::Value;
 
-/// Verifies: [EXTENSION] D82: numeric window construction finds the same
+/// Verifies: [EXTENSION] D85: numeric window construction finds the same
 /// boundary points and polygon-hole exclusions with and without an index.
 /// Every prepared execution supplies new coordinate parameters.
 #[test]
@@ -39,7 +39,7 @@ fn numeric_geometry_windows_match_scans_and_bind_parameters() {
     }
 }
 
-/// Verifies: [EXTENSION] D82: SQL extrema distinguish NULL/EMPTY and
+/// Verifies: [EXTENSION] D85: SQL extrema distinguish NULL/EMPTY and
 /// non-point values. An invalid rectangle rolls back the whole insertion;
 /// empty inputs and skipped CASE branches preserve D15 lazy errors.
 #[test]

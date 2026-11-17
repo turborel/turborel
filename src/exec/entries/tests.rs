@@ -11,7 +11,7 @@ impl KeyProjection for Identity {
     }
 }
 
-/// Verifies: [DESIGN] D31, D82: independent projected probes renew the
+/// Verifies: [DESIGN] D31, D85: independent projected probes renew the
 /// storage leaf trial after a sparse probe disabled it. The previous
 /// leaf, reusable allocation and MVCC bookkeeping remain available;
 /// ordinary ordered index probes retain their existing miss history.

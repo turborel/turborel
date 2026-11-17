@@ -1,6 +1,6 @@
 //! Immutable closed-bound searches over at most one machine word of
 //! rectangles. Four inclusive prefix masks identify exactly the overlapping
-//! bounds; callers still refine geometry candidates (D82).
+//! bounds; callers still refine geometry candidates (D85).
 
 use super::Bounds;
 

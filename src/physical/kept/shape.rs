@@ -175,7 +175,7 @@ mod tests {
         }
     }
 
-    /// Verifies: [DESIGN] D45, D82: distinct function objects share a
+    /// Verifies: [DESIGN] D45, D85: distinct function objects share a
     /// probe shape only through complete spatial semantics. MC/DC: each
     /// determinism declaration and each spatial declaration independently
     /// prevents this; ordinary predicates still require object identity.

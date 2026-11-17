@@ -1,4 +1,4 @@
-//! Distance candidates and their pruning contract (D15, D38, D82).
+//! Distance candidates and their pruning contract (D15, D38, D85).
 
 use super::Key;
 use crate::error::Result;

@@ -1,4 +1,4 @@
-//! Distance ordering through certified index candidates (D15, D82).
+//! Distance ordering through certified index candidates (D15, D85).
 //! The final sort still compares exact scalar results and secondary keys.
 
 mod safe;

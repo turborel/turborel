@@ -2,7 +2,7 @@
 
 use super::{Params, populated, rows, windows};
 
-/// Verifies: [DESIGN] D31, D82: either written join order uses one final
+/// Verifies: [DESIGN] D31, D85: either written join order uses one final
 /// column selection above the spatial join, including repeated output
 /// columns. Reversing the join does not retain a full geometry pair only
 /// to discard its geometries in a second selection.

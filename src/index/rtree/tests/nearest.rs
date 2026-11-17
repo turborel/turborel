@@ -28,7 +28,7 @@ impl ScalarFunction for Unstable {
     }
 }
 
-/// Verifies: [DESIGN] D82: a distance capability needs a single fixed-SRID
+/// Verifies: [DESIGN] D85: a distance capability needs a single fixed-SRID
 /// geometry key and complete deterministic distance semantics. MC/DC:
 /// each function declaration, key/call position and column type can refuse
 /// support independently; ordinary index methods default to unsupported.
@@ -53,7 +53,7 @@ fn nearest_capability_requires_the_complete_distance_contract() {
     assert!(!crate::index::BTreeMethod::in_memory().supports_nearest(&request, &types));
 }
 
-/// Verifies: [DESIGN] D15, D82: malformed, NULL, empty, mixed-reference
+/// Verifies: [DESIGN] D15, D85: malformed, NULL, empty, mixed-reference
 /// and out-of-range requests decline before yielding, leaving runtime
 /// scalar evaluation to the scan. Out-of-range stored data also declines.
 #[test]
@@ -78,7 +78,7 @@ fn uncertified_distances_fall_back_without_eager_scalar_errors() {
     assert!(numeric.nearest(&request, &budget).unwrap().is_none());
 }
 
-/// Verifies: [DESIGN] D38, D82: nearest candidates keep their projected
+/// Verifies: [DESIGN] D38, D85: nearest candidates keep their projected
 /// key and index alive, include each counted pair once, and expose bounds
 /// rather than claiming a polygon hole has distance zero. The frontier
 /// is budgeted and released; exhausting it reports SQLCODE -918.

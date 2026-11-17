@@ -1,6 +1,6 @@
 //! Refine a spatial candidate using borrowed input values. The same
 //! binding serves index probes and adaptive scans; every remaining ON
-//! conjunct is retained for the ordinary row evaluator (D15, D82).
+//! conjunct is retained for the ordinary row evaluator (D15, D85).
 
 use std::sync::Arc;
 

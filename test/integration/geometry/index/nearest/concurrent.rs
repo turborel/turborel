@@ -46,7 +46,7 @@ impl ScalarFunction for Hook {
     }
 }
 
-/// Verifies: [DESIGN] D15, D29, D82: after certification, another
+/// Verifies: [DESIGN] D15, D29, D85: after certification, another
 /// transaction moves a point, replaces a polygon by the same envelope,
 /// changes NULL membership and splits pages with extreme new entries.
 /// Refinement sees the reader's retained versions, each once, and never
@@ -86,7 +86,7 @@ fn nearest_geometry_refines_the_snapshot_across_concurrent_splits() {
     assert_eq!(rows(&reader, ordinary).unwrap_err(), Code::Data);
 }
 
-/// Verifies: [DESIGN] D44, D82: cancellation during exact refinement
+/// Verifies: [DESIGN] D44, D85: cancellation during exact refinement
 /// reaches the caller, and a later statement runs normally. A declared
 /// distance function is recognized independently of its SQL name.
 #[test]
@@ -106,7 +106,7 @@ fn nearest_geometry_refinement_observes_cancellation() {
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM SHAPES").unwrap(), ["2003"]);
 }
 
-/// Verifies: [DESIGN] D29, D82: a nearest read records its whole-table
+/// Verifies: [DESIGN] D29, D85: a nearest read records its whole-table
 /// predicate even when bounds stop the traversal. Two readers cannot
 /// both commit inserts that would replace it with closer geometries.
 #[test]

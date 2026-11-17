@@ -8,7 +8,7 @@ use crate::memory::MemoryBudget;
 mod borrowed;
 mod rectangles;
 
-/// Verifies: [DESIGN] D15, D82: prepared point location preserves every
+/// Verifies: [DESIGN] D15, D85: prepared point location preserves every
 /// scalar result, including distance bits, holes, boundaries and other
 /// geometry kinds. SRID errors and changed constant operands still take
 /// their ordinary path, in either argument position.
@@ -61,7 +61,7 @@ fn same_result(actual: Value, expected: Value) {
     }
 }
 
-/// Verifies: [DESIGN] D38, D82: an unaffordable interval index leaves
+/// Verifies: [DESIGN] D38, D85: an unaffordable interval index leaves
 /// the decoded operand available. Its scalar results are unchanged and
 /// the final clone releases both decoding and optional-index reservations.
 #[test]
@@ -90,7 +90,7 @@ fn prepared_polygon_index_can_decline_without_losing_preparation() {
     assert_eq!(budget.reserved(), 0);
 }
 
-/// Verifies: [DESIGN] D15, D82: a prepared relationship retains all type
+/// Verifies: [DESIGN] D15, D85: a prepared relationship retains all type
 /// contracts and runtime behavior, including different arguments supplied
 /// by a later plan execution. Preparing again reaches a fixed point.
 #[test]
@@ -128,7 +128,7 @@ fn prepared_relationships_accept_changed_arguments() {
     }
 }
 
-/// Verifies: [DESIGN] D15, D82: no constant, NULL, an invalid value, or an
+/// Verifies: [DESIGN] D15, D85: no constant, NULL, an invalid value, or an
 /// unsupported signature cannot raise a planning error or install a cache.
 #[test]
 fn failed_preparation_leaves_runtime_evaluation_intact() {
@@ -140,7 +140,7 @@ fn failed_preparation_leaves_runtime_evaluation_intact() {
     assert!(GeometryFunction::Srid.specialize(&[None], &budget).is_none());
 }
 
-/// Verifies: [DESIGN] D38, D82: retained preparation reserves payload and
+/// Verifies: [DESIGN] D38, D85: retained preparation reserves payload and
 /// decoded storage, shares that reservation across clones and releases it
 /// with the last owner. An insufficient budget declines preparation and
 /// leaves ordinary evaluation available without changing its result.

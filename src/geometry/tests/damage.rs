@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Verifies: [EXTENSION] D82; OGC 06-103r4 §7.2.2: malformed numeric
+/// Verifies: [EXTENSION] D85; OGC 06-103r4 §7.2.2: malformed numeric
 /// literals, arity, separators and trailing data are data errors. Ring
 /// cardinality and closure, and both finite-coordinate conditions, fail
 /// independently; unsupported kinds and dimensions are refused.
@@ -38,7 +38,7 @@ fn malformed_text_never_becomes_a_partial_geometry() {
     }
 }
 
-/// Verifies: [EXTENSION] D82; OGC 06-103r4 §8: truncation at every byte,
+/// Verifies: [EXTENSION] D85; OGC 06-103r4 §8: truncation at every byte,
 /// trailing bytes, invalid byte order, overclaimed counts and mismatched
 /// homogeneous components are rejected. EWKB and Z/M tags are refused.
 #[test]
@@ -66,7 +66,7 @@ fn malformed_binary_counts_and_tags_are_rejected() {
     assert_eq!(Geometry::from_wkb(&wrong, 0).unwrap_err().code, Code::Data);
 }
 
-/// Verifies: [EXTENSION] D82: only two NaNs in a point denote EMPTY;
+/// Verifies: [EXTENSION] D85: only two NaNs in a point denote EMPTY;
 /// either NaN alone, either infinity, and NaNs in a line are invalid.
 #[test]
 fn empty_point_nan_convention_does_not_admit_nonfinite_coordinates() {
@@ -95,7 +95,7 @@ fn empty_point_nan_convention_does_not_admit_nonfinite_coordinates() {
     assert_eq!(Geometry::from_wkb(&line, 0).unwrap_err().code, Code::Data);
 }
 
-/// Verifies: [DESIGN] D82, R-CF-6: WKT/WKB nesting and component budgets
+/// Verifies: [DESIGN] D85, R-CF-6: WKT/WKB nesting and component budgets
 /// agree; oversized text and hostile binary counts stop before allocation.
 #[test]
 fn representation_limits_are_checked_before_unbounded_work() {

@@ -1,6 +1,6 @@
 //! Bounded output lookahead for non-raising spatial joins. Small groups
 //! amortize transitions between geometry evaluation and cursor fetching
-//! without materializing the complete result (D15, D38, D82). A refused
+//! without materializing the complete result (D15, D38, D85). A refused
 //! reservation preserves the current row and resumes direct streaming.
 
 use std::collections::VecDeque;

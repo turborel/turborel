@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Verifies: [DESIGN] D82: geometry distances never fall below the
+/// Verifies: [DESIGN] D85: geometry distances never fall below the
 /// computed envelope bound. Boundary fixtures and a deterministic sample
 /// spanning binary64 magnitudes inside MAX/8 retain finite point/segment
 /// distances. Swapping operands preserves the result; reversing a line's

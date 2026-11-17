@@ -119,7 +119,7 @@ fn measured(state: &Arc<State>, plan: Plan, (budget, estimates): (usize, bool)) 
     (searches.load(Ordering::Relaxed), estimates_made.load(Ordering::Relaxed), rows)
 }
 
-/// Verifies: [DESIGN] D82: selective probes need no extra cardinality
+/// Verifies: [DESIGN] D85: selective probes need no extra cardinality
 /// estimates. A broad probe later in the input still triggers adaptation,
 /// without repeating or losing any already-emitted outer row's pairs.
 #[test]
@@ -142,7 +142,7 @@ fn observed_probes_stay_lazy_and_adapt_after_a_selective_prefix() {
     assert_eq!(pairs, expected);
 }
 
-/// Verifies: [DESIGN] D82: setup is amortized over observed candidate
+/// Verifies: [DESIGN] D85: setup is amortized over observed candidate
 /// work, without extra estimates for a wholly selective join. Several
 /// moderate probes can jointly justify adaptation; no one broad probe
 /// is required, and their already-emitted pairs are not replayed.
@@ -165,7 +165,7 @@ fn completed_probes_accumulate_before_pricing_the_remaining_input() {
     assert_eq!(actual, expected);
 }
 
-/// Verifies: [DESIGN] D82: after one broad probe, spatial joins scan the
+/// Verifies: [DESIGN] D85: after one broad probe, spatial joins scan the
 /// remaining outer input in either
 /// argument order, while selective probes, unavailable estimates and
 /// refused memory retain index access. The result pairs are unchanged.
@@ -196,7 +196,7 @@ fn broad_joins_scan_and_selective_or_unaffordable_joins_probe() {
     assert_eq!((searches, rows.len()), (0, 0));
 }
 
-/// Verifies: [DESIGN] D38, D82: exceeding the build memory limit or running
+/// Verifies: [DESIGN] D38, D85: exceeding the build memory limit or running
 /// out of memory after some rows were buffered resumes every row exactly
 /// once. Reservations are released after either execution path is dropped.
 #[test]
@@ -219,7 +219,7 @@ fn adaptive_fallback_keeps_the_buffer_and_first_overflow_row() {
     assert_eq!(partial_rows.iter().map(|row| row[0].to_string()).collect::<Vec<_>>(), ["1", "2", "3"]);
 }
 
-/// Verifies: [DESIGN] D82: a broad build larger than one mask word can
+/// Verifies: [DESIGN] D85: a broad build larger than one mask word can
 /// scan once, with each original outer row's full set of matches. The
 /// memory-bounded hierarchy preserves duplicates across every group.
 #[test]
@@ -265,7 +265,7 @@ fn adaptive_build_stops_when_its_reservation_cannot_grow() {
     assert!(input.next().is_none());
 }
 
-/// Verifies: [DESIGN] D31, D82: projecting inside either spatial join
+/// Verifies: [DESIGN] D31, D85: projecting inside either spatial join
 /// path preserves every selected value, including geometry values,
 /// reordered duplicates and zero-column rows. Memory refusal and missing
 /// estimates retain that projection when they resume ordinary probes.

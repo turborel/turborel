@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Verifies: [DESIGN] D82: exact binary scaling preserves every normal
+/// Verifies: [DESIGN] D85: exact binary scaling preserves every normal
 /// and subnormal power of two, underflows only below the least subnormal,
 /// and overflows beyond the greatest power. Splitting the scale keeps
 /// finite reconstructed values even with exponents outside the normal range.
@@ -29,7 +29,7 @@ fn binary_scales_preserve_normal_and_subnormal_results() {
     }
 }
 
-/// Verifies: [DESIGN] D82: a norm is between its largest component and
+/// Verifies: [DESIGN] D85: a norm is between its largest component and
 /// its outward-rounded L1 bound, across every exponent and both signs.
 /// Zero and infinite differences are defined; no squared intermediate
 /// turns a finite norm into zero or infinity.

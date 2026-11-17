@@ -8,7 +8,7 @@ use turborel::params::Params;
 mod concurrent;
 mod storage;
 
-/// Verifies: [DESIGN] D15, D82: nearest candidates refine polygon holes,
+/// Verifies: [DESIGN] D15, D85: nearest candidates refine polygon holes,
 /// retain distance ties for secondary ordering, and apply filters before
 /// ranking. Both operand orientations and OFFSET agree with full sorting.
 #[test]
@@ -38,7 +38,7 @@ fn nearest_geometry_candidates_equal_exhaustive_sql() {
     }
 }
 
-/// Verifies: [DESIGN] D82: exhausting candidates with fewer than FETCH
+/// Verifies: [DESIGN] D85: exhausting candidates with fewer than FETCH
 /// non-NULL distances adds each qualifying EMPTY and NULL row once.
 /// A NULL or EMPTY query falls back to SQL's complete nullable ordering.
 #[test]
@@ -70,7 +70,7 @@ fn nearest_geometry_null_tails_and_query_fallbacks_equal_scans() {
     }
 }
 
-/// Verifies: [DESIGN] D15, D82: pruning cannot hide an SRID mismatch,
+/// Verifies: [DESIGN] D15, D85: pruning cannot hide an SRID mismatch,
 /// distance overflow, or errors in other projections or WHERE terms.
 /// Descending, NULLS FIRST, WITH TIES and PERCENT retain ordinary plans.
 #[test]

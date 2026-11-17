@@ -36,7 +36,7 @@ fn read(value: Value, first: usize) -> NearestRead {
     }
 }
 
-/// Verifies: [DESIGN] D15, D38, D82: requests that cannot be certified
+/// Verifies: [DESIGN] D15, D38, D85: requests that cannot be certified
 /// do not manufacture a distance error on no rows. An unaffordable
 /// threshold falls back before opening the candidate stream.
 #[test]

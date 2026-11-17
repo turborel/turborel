@@ -28,7 +28,7 @@ fn equivalent(bytes: &[u8]) {
     }
 }
 
-/// Verifies: [DESIGN] D82: strict stored decoding has the same acceptance
+/// Verifies: [DESIGN] D85: strict stored decoding has the same acceptance
 /// rule as parsing then comparing the canonical writer, for all seven
 /// kinds, empty components, every truncation and single-bit mutation.
 #[test]
@@ -65,7 +65,7 @@ fn canonical_reader_equals_parse_and_rewrite() {
     }
 }
 
-/// Verifies: [DESIGN] D82: little-endian is required independently at
+/// Verifies: [DESIGN] D85: little-endian is required independently at
 /// every stored component; interchange accepts both byte orders.
 /// MC/DC: strict/lax with XDR, strict with NDR, and invalid order tags.
 #[test]
@@ -85,7 +85,7 @@ fn canonical_reader_rejects_big_endian_at_every_level() {
     equivalent(&big);
 }
 
-/// Verifies: [DESIGN] D82: signed zero is normalized on interchange and
+/// Verifies: [DESIGN] D85: signed zero is normalized on interchange and
 /// rejected in stored bytes on either axis of points, lines and rings.
 /// MC/DC: positive zero and nonzero are accepted, negative zero refused
 /// only when the reader's canonical mode is enabled.
@@ -108,7 +108,7 @@ fn canonical_reader_rejects_signed_zero_in_every_coordinate() {
     }
 }
 
-/// Verifies: [DESIGN] D82: EMPTY accepts any NaN pair on interchange but
+/// Verifies: [DESIGN] D85: EMPTY accepts any NaN pair on interchange but
 /// only the writer's quiet NaN pair in storage. Either ordinate alone
 /// determines rejection; payload, sign and signalling bits are covered.
 /// MC/DC: canonical and other NaNs in both reader modes vary the two
@@ -129,7 +129,7 @@ fn canonical_reader_rejects_alternate_empty_nan_bits() {
     }
 }
 
-/// Verifies: [DESIGN] D53, D82: strict validation retains representation
+/// Verifies: [DESIGN] D53, D85: strict validation retains representation
 /// limits and corruption categories at value, record, key and wire boundaries.
 #[test]
 fn canonical_reader_preserves_limits_and_boundary_errors() {

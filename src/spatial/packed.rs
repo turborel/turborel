@@ -1,7 +1,7 @@
 //! A temporary hierarchy of closed bounds with word-sized mask leaves.
 //! Balanced spatial partitions prune groups before their four boundary
 //! searches. Skip links stream candidates without a per-query allocation;
-//! callers still check every geometry candidate exactly (D82).
+//! callers still check every geometry candidate exactly (D85).
 
 use super::{
     Bounds,

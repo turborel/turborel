@@ -3,7 +3,7 @@
 use super::*;
 use crate::value::DataType;
 
-/// Verifies: [EXTENSION] D53, D82: fixed-SRID descriptors reject invalid
+/// Verifies: [EXTENSION] D53, D85: fixed-SRID descriptors reject invalid
 /// parameters and round trip their versioned form; truncated or unknown
 /// encodings cannot silently turn a constrained column into an unconstrained one.
 #[test]
@@ -31,7 +31,7 @@ fn reference_descriptors_are_validated_and_versioned() {
     assert_eq!(fixed_srid(&DataType::Boolean), None);
 }
 
-/// Verifies: [EXTENSION] D82: assignment, CAST, records, keys and anchors
+/// Verifies: [EXTENSION] D85: assignment, CAST, records, keys and anchors
 /// enforce the declared SRID even for empty geometries. Text CAST supplies
 /// the destination reference; casting a geometry never relabels it.
 #[test]

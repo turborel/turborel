@@ -1,5 +1,5 @@
 //! Shared construction of candidate joins, preserving every condition and
-//! restoring projected table columns to their logical positions (D35, D82).
+//! restoring projected table columns to their logical positions (D35, D85).
 
 use super::{Probing, Read};
 use crate::catalog::IndexDesc;

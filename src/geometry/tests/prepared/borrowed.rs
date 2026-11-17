@@ -10,7 +10,7 @@ fn same_call(function: &dyn ScalarFunction, args: &[Value]) {
     }
 }
 
-/// Verifies: [DESIGN] D15, D82: borrowed geometry relationships preserve
+/// Verifies: [DESIGN] D15, D85: borrowed geometry relationships preserve
 /// NULL, EMPTY, boundary and interior results, SRID and malformed-value
 /// errors, arity checks and changed prepared constants in either position.
 /// The other geometry functions retain their ordinary call contract.

@@ -1,5 +1,5 @@
 //! Geometry joins retain exact shapes, references and visible versions
-//! when an R-tree replaces their Cartesian product (D15, D82).
+//! when an R-tree replaces their Cartesian product (D15, D85).
 
 use super::populated;
 use crate::common::{rows, serializable};
@@ -19,7 +19,7 @@ fn windows(db: &Database, reference: &str) {
     a.commit().unwrap();
 }
 
-/// Verifies: [DESIGN] D82: both join orders and function/comparison
+/// Verifies: [DESIGN] D85: both join orders and function/comparison
 /// orientations use geometry candidates, then reject holes and empties.
 /// Projected columns, inner filters and other ON comparisons are retained.
 /// Dropping the index gives exactly the same sorted rows for every query.
@@ -51,7 +51,7 @@ fn geometry_joins_refine_candidates_and_equal_products() {
     }
 }
 
-/// Verifies: [DESIGN] D15, D82: fixed but differing SRIDs, including an
+/// Verifies: [DESIGN] D15, D85: fixed but differing SRIDs, including an
 /// empty geometry, raise even when envelopes do not meet. An unconstrained
 /// reference and another raising conjunct prevent an indexed join; empty
 /// inputs still do not evaluate a relationship on a nonexistent pair.
@@ -84,7 +84,7 @@ fn geometry_joins_preserve_reference_and_other_runtime_errors() {
     }
 }
 
-/// Verifies: [DESIGN] D82: a paused geometry join retains snapshot shapes
+/// Verifies: [DESIGN] D85: a paused geometry join retains snapshot shapes
 /// across equal-envelope, moved-envelope and NULL updates. Rollback restores
 /// the original pairs without duplicate entries from projected versions.
 #[test]
@@ -119,7 +119,7 @@ fn geometry_joins_keep_visible_shapes_across_updates_and_rollback() {
     assert_eq!(rows(&writer, &ordered).unwrap(), committed);
 }
 
-/// Verifies: [DESIGN] D29, D82: two serializable readers of an empty
+/// Verifies: [DESIGN] D29, D85: two serializable readers of an empty
 /// geometry join cannot both commit inserts that would match it. The
 /// predicate read is recorded even when the R-tree finds no candidate.
 #[test]

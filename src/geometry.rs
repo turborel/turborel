@@ -27,15 +27,15 @@ use crate::value::Value;
 
 /// Maximum nesting, including the outer geometry (RULES.md R-CF-6).
 pub const MAX_DEPTH: usize = 16;
-/// Maximum WKT, WKB or stored payload length: 16 MiB (RULES.md D82).
+/// Maximum WKT, WKB or stored payload length: 16 MiB (RULES.md D85).
 pub const MAX_BYTES: usize = 16 * 1024 * 1024;
-/// Maximum coordinate and component count per value (RULES.md D82).
+/// Maximum coordinate and component count per value (RULES.md D85).
 pub const MAX_PARTS: usize = 100_000;
 /// SRID used by CAST and the one-argument constructors; no CRS is implied.
 pub const UNSPECIFIED_SRID: i32 = 0;
 
 /// A spatial function's semantics, usable only with the planner's SRID
-/// and runtime-error safeguards (D82); this is not a total Boolean predicate.
+/// and runtime-error safeguards (D85); this is not a total Boolean predicate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpatialOperation {
     /// Closed XY intersection: INTEGER 1/0, NULL propagation, and an error
@@ -256,7 +256,7 @@ fn unsupported(detail: &str) -> SqlError {
 
 fn limited(count: usize, maximum: usize) -> Result<()> {
     if count > maximum {
-        return Err(unsupported("this representation size or nesting depth (RULES.md D82)"));
+        return Err(unsupported("this representation size or nesting depth (RULES.md D85)"));
     }
     Ok(())
 }

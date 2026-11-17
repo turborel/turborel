@@ -271,7 +271,7 @@ impl ScalarFunction for GeometryFunction {
         let input = self.input();
         // Keep an already constrained geometry's descriptor: assigning
         // it to plain GEOMETRY adds a fallible wrapper and erases the
-        // column reference proof needed for spatial candidates (D82).
+        // column reference proof needed for spatial candidates (D85).
         let constrained =
             known.get(position).and_then(Option::as_ref).filter(|t| input.kind().comparable(t) && super::fixed_srid(t).is_some());
         Some(constrained.cloned().unwrap_or(input))

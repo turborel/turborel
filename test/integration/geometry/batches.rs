@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Verifies: [DESIGN] D15, D31, D82: direct batch scalar comparisons
+/// Verifies: [DESIGN] D15, D31, D85: direct batch scalar comparisons
 /// preserve results and first-row behavior with both argument orders,
 /// empty geometry, NULL and a later SRID error. EXISTS can finish at its
 /// first match; opening a complete query, even with FETCH FIRST, still

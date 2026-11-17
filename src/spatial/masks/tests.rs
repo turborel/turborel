@@ -11,7 +11,7 @@ fn linear(bounds: &[Option<Bounds>], query: Bounds) -> u64 {
     )
 }
 
-/// Verifies: [DESIGN] D82: mask lookup keeps exactly overlapping closed
+/// Verifies: [DESIGN] D85: mask lookup keeps exactly overlapping closed
 /// bounds, including repeated endpoints, touching edges, degenerate boxes,
 /// absent bounds, signed zero, subnormals and extreme finite coordinates.
 /// Every word bit, empty input and the capacity limit are exercised.

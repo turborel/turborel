@@ -52,7 +52,7 @@ impl ScalarFunction for Counted {
     }
 }
 
-/// Verifies: [DESIGN] D15, D82: each outer row supplies the prepared
+/// Verifies: [DESIGN] D15, D85: each outer row supplies the prepared
 /// operand for its own probe, in either argument position. All candidate
 /// evaluations use preparation only when constant folding is enabled.
 /// Holes, empty/NULL operands, projected columns and residual comparisons

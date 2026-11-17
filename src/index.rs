@@ -95,7 +95,7 @@ pub enum KeyOrder {
 /// \[EXTENSION\] A function call used to find rows through an index, such
 /// as `f(column, ?)` (RULES.md D34). The function must opt in through
 /// `ScalarFunction::index_predicate`, or the separately proven spatial
-/// contract in D82. An index method declares support
+/// contract in D85. An index method declares support
 /// for this function and both positions, for every accepted value of the
 /// other argument, including null and later prepared parameter values.
 #[derive(Debug, Clone)]
@@ -385,7 +385,7 @@ pub trait IndexMethod: Send + Sync {
 ///   UNIQUE NULLS NOT DISTINCT constraint (`IndexDesc::nulls`), and probe
 ///   only with probes the method supports. No comparison probe selects
 ///   such a key. `Probe::Predicate` may return one as an extra candidate.
-/// * Unless `key_projection` declares the D82 projected-key contract,
+/// * Unless `key_projection` declares the D85 projected-key contract,
 ///   counts and returned keys refer to the original inserted keys.
 ///   With a projection they refer to projected keys: `rows`/`key_rows`
 ///   give projection-equality candidates, and readers recheck original

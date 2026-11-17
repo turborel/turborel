@@ -63,7 +63,7 @@ fn coordinates_round_trip_without_rounding_or_negative_zero() {
     }
 }
 
-/// Verifies: [DESIGN] D82: envelopes include every collection component
+/// Verifies: [DESIGN] D85: envelopes include every collection component
 /// and ring, and an empty point set has no invented coordinate envelope.
 #[test]
 fn envelopes_cover_components_and_distinguish_empty_from_origin() {
@@ -96,7 +96,7 @@ fn binary_byte_order_is_local_to_each_component() {
     assert_eq!(Geometry::from_wkb(&collection, 0).unwrap().to_wkt(), "GEOMETRYCOLLECTION (POINT (7 8), POINT (2.5 -3))");
 }
 
-/// Verifies: [DESIGN] D82: GEOMETRY's ordering and hashing identify its
+/// Verifies: [DESIGN] D85: GEOMETRY's ordering and hashing identify its
 /// canonical representation including SRID, without claiming ST_Equals.
 #[test]
 fn representations_keep_srid_and_coordinate_order() {
@@ -112,7 +112,7 @@ fn representations_keep_srid_and_coordinate_order() {
     assert_eq!(GEOMETRY.compare(&a, &Value::Null), None);
 }
 
-/// Verifies: [DESIGN] D53, D82: record and key decoders reject unknown
+/// Verifies: [DESIGN] D53, D85: record and key decoders reject unknown
 /// versions, noncanonical bytes, and damaged payloads; framed decoding
 /// retains the caller's corruption/connection error category.
 #[test]

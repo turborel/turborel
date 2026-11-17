@@ -144,7 +144,7 @@ fn nearest_refuses_a_missing_split_link() {
     assert!(near.next().is_none());
 }
 
-/// Verifies: [DESIGN] D82: geometry candidates use monotone lower bounds
+/// Verifies: [DESIGN] D85: geometry candidates use monotone lower bounds
 /// for leaves as well as branches, in bound/row order, through root growth.
 /// Their frontier remains charged until the cursor is dropped.
 #[test]
@@ -181,7 +181,7 @@ fn split_root() -> (RTree, Visit, Bounds) {
     (tree, root, domain)
 }
 
-/// Verifies: [DESIGN] D15, D82: the finite-distance certificate covers
+/// Verifies: [DESIGN] D15, D85: the finite-distance certificate covers
 /// every root split sibling, not only the safe left half. Query and data
 /// outside the domain independently decline; an empty tree is supported.
 #[test]
@@ -200,7 +200,7 @@ fn candidate_range_proof_includes_unposted_root_siblings() {
     assert_eq!(budget.reserved(), 0);
 }
 
-/// Verifies: [DESIGN] D82: root-envelope certification refuses missing
+/// Verifies: [DESIGN] D85: root-envelope certification refuses missing
 /// siblings, wrong levels and sibling cycles with SQLCODE -916, rather
 /// than treating an incomplete envelope as a safe distance domain.
 #[test]

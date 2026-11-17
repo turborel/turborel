@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Verifies: [DESIGN] D35, D82: a window matching over 1000 candidates
+/// Verifies: [DESIGN] D35, D85: a window matching over 1000 candidates
 /// can still use its spatial index. Its complete result agrees with both
 /// integer-coordinate inclusion and a scan after dropping the index.
 /// The old exact-count cutoff fell back to a whole-table estimate here.

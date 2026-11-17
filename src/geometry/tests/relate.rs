@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Verifies: [EXTENSION] D82; OGC 06-103r4 §6.1.2.3: intersections include
+/// Verifies: [EXTENSION] D85; OGC 06-103r4 §6.1.2.3: intersections include
 /// boundaries, exclude hole interiors and are symmetric for all seven
 /// geometry kinds. Empty components cannot introduce a shared point.
 #[test]
@@ -39,7 +39,7 @@ fn intersection(left: &str, right: &str, expected: bool) {
     assert_eq!(b.intersects(&a).unwrap(), expected, "{right} / {left}");
 }
 
-/// Verifies: [EXTENSION] D82; OGC 06-103r4 §6.1.11.1: both exterior
+/// Verifies: [EXTENSION] D85; OGC 06-103r4 §6.1.11.1: both exterior
 /// and interior rings bound a closed polygon. A hole interior is outside;
 /// tangency, shared edges and containment still count as intersection.
 #[test]
@@ -68,7 +68,7 @@ fn polygon_holes_boundaries_and_containment_are_distinct() {
     intersection("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))", "POINT (2 1)", true);
 }
 
-/// Verifies: [EXTENSION] D82: the reference check precedes envelope and
+/// Verifies: [EXTENSION] D85: the reference check precedes envelope and
 /// empty-set shortcuts; assigning different reference labels never silently
 /// compares coordinates in incompatible spatial reference systems.
 #[test]

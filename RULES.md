@@ -119,9 +119,9 @@ verification approach DO-178C expects (§8).
 | D79 | Large objects stream: chunked, logged by chunk, read by range, reached by locators |
 | D80 | Multisets are unordered values, paired by classes and a matching |
 | D81 | Structured types: values name their type, typed tables keep their own rows, references are octets |
-| D82 | Geometry values start with XY representations through SqlType |
 | D82 | System-versioned tables keep their historical rows in a hidden table of their own |
 | D83 | A column is renamed in place, refused while a text names it |
+| D85 | Geometry values start with XY representations through SqlType |
 
 ### The project
 
@@ -1910,7 +1910,7 @@ planner picks by estimate. Three are built in, paged through the buffer
 pool. `btree` is a B-link tree, ordered, for equality and ranges. `hash` is
 a linear hash table (Litwin, 1980), for equality only, and its readers lock
 nothing. `rtree` indexes two point coordinates or four rectangle coordinates
-(D72), or one fixed-SRID geometry through envelope projections (D82).
+(D72), or one fixed-SRID geometry through envelope projections (D85).
 A method can support independent comparisons on several key columns
 without an equality prefix (`IndexMethod::supports_columns`).
 
@@ -1947,7 +1947,7 @@ not hide an error on a row it skips (D15).
 The index returns every matching inserted `(Key, RowId)` pair, each once.
 It may also return pairs that do not match, called extra candidates. The
 keys contain inserted values unless `Index::key_projection` explicitly
-declares a deterministic projection (D82). A projected index counts
+declares a deterministic projection (D85). A projected index counts
 `(projected key, row id)` pairs and returns projected keys. Its equality
 lookups return projection-equality candidates; constraint and referential
 checks compare original values. It provides neither SQL key order nor
@@ -2499,7 +2499,7 @@ chains partition each input independently, so the product of two moved
 groups is not visited twice. The pending pairs and two decoded leaf pages
 reserve memory (D38); result pairs are never collected in the index.
 
-#### D82. Geometry values start with XY representations through SqlType
+#### D85. Geometry values start with XY representations through SqlType
 
 `geometry::GeometryType` registers GEOMETRY through D53. It is a single
 type whose values distinguish Point, LineString, Polygon,

@@ -15,7 +15,7 @@ fn with_hole(reversed: bool) -> Shape {
     Shape::Polygon(vec![shell, hole])
 }
 
-/// Verifies: [DESIGN] D82: interval pruning preserves the exact shell,
+/// Verifies: [DESIGN] D85: interval pruning preserves the exact shell,
 /// hole and boundary decisions in either ring direction. Empty polygon
 /// members, disconnected components and outside points keep their meaning.
 #[test]
@@ -47,7 +47,7 @@ fn polygon_interval_locations_match_all_ring_decisions() {
     assert_eq!(budget.reserved(), 0);
 }
 
-/// Verifies: [DESIGN] D82: closed interval bounds retain vertices and
+/// Verifies: [DESIGN] D85: closed interval bounds retain vertices and
 /// horizontal edges at subnormal and extreme finite ordinates. A value
 /// immediately outside either bound is distinguished from its boundary;
 /// the Y tree does not calculate an overflowing or rounded midpoint.
@@ -77,7 +77,7 @@ fn polygon_interval_bounds_keep_extreme_ordinates() {
     }
 }
 
-/// Verifies: [DESIGN] D38, D82: the optional index reserves every owned
+/// Verifies: [DESIGN] D38, D85: the optional index reserves every owned
 /// vector's capacity and releases it on success or partial construction
 /// failure. Unsupported kinds and empty values allocate no index.
 #[test]
@@ -111,7 +111,7 @@ fn polygon_interval_indexes_reserve_and_release_their_storage() {
     assert_eq!(budget.reserved(), 0);
 }
 
-/// Verifies: [DESIGN] R-CF-6, D82: the median tree accommodates the full
+/// Verifies: [DESIGN] R-CF-6, D85: the median tree accommodates the full
 /// coordinate limit. Both construction and querying refuse a nonempty
 /// subtree beyond that depth; an empty child needs no recursive frame.
 #[test]

@@ -4,7 +4,7 @@ use super::*;
 use crate::functions::ScalarFunction;
 use crate::value::{Binary, DataType, Decimal};
 
-/// Verifies: [EXTENSION] D82: SQL type names retain their SQL/MM spelling
+/// Verifies: [EXTENSION] D85: SQL type names retain their SQL/MM spelling
 /// for every basic kind, including empty geometries; Rust reports WKT kinds.
 #[test]
 fn type_names_distinguish_sql_names_from_wkt_kinds() {
@@ -24,7 +24,7 @@ fn type_names_distinguish_sql_names_from_wkt_kinds() {
     }
 }
 
-/// Verifies: [EXTENSION] D82: function arity, input types, exact signed
+/// Verifies: [EXTENSION] D85: function arity, input types, exact signed
 /// SRIDs, NULL propagation and unsupported index opt-in are explicit.
 #[test]
 fn function_contracts_reject_arity_and_propagate_null() {
@@ -54,7 +54,7 @@ fn function_contracts_reject_arity_and_propagate_null() {
     }
 }
 
-/// Verifies: [EXTENSION] D82: SRIDs are signed 32-bit integers without
+/// Verifies: [EXTENSION] D85: SRIDs are signed 32-bit integers without
 /// rounding; text, binary and geometry arguments are not interchangeable.
 #[test]
 fn function_contracts_refuse_malformed_types_and_srids() {
@@ -78,7 +78,7 @@ fn function_contracts_refuse_malformed_types_and_srids() {
     assert!(GEOMETRY.cast(Value::Null, &data_type()).unwrap().is_null());
 }
 
-/// Verifies: [EXTENSION] D82: point construction needs finite coordinates;
+/// Verifies: [EXTENSION] D85: point construction needs finite coordinates;
 /// ordinates preserve their order, EMPTY has no ordinate, and relabeling
 /// keeps the coordinates exactly while changing the reference identifier.
 #[test]
@@ -100,7 +100,7 @@ fn point_construction_and_relabeling_preserve_coordinates() {
     assert!(GeometryFunction::Point.call(&[Value::Approx(0.0), Value::Char("y".into())]).is_err());
 }
 
-/// Verifies: [DESIGN] D82: SQL observers refuse results beyond existing
+/// Verifies: [DESIGN] D85: SQL observers refuse results beyond existing
 /// string limits while the Rust codecs can still round trip those shapes.
 #[test]
 fn sql_observer_limits_do_not_truncate_geometries() {

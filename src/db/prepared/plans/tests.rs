@@ -34,7 +34,7 @@ fn spatial_table() -> (Database, Session) {
     (db, s)
 }
 
-/// Verifies: [DESIGN] D45, D82: preparing a geometry operand must not
+/// Verifies: [DESIGN] D45, D85: preparing a geometry operand must not
 /// prevent an indexed plan from learning. This regresses comparisons of
 /// the prepared function's object identity with its original function.
 /// Changed values, NULL, EMPTY and reference errors survive reuse.
@@ -64,7 +64,7 @@ fn geometry_index_plans_learn_despite_scalar_preparation() {
     assert_eq!(query.plans_made(), 1);
 }
 
-/// Verifies: [DESIGN] D15, D45, D82: a nearest plan learns with one
+/// Verifies: [DESIGN] D15, D45, D85: a nearest plan learns with one
 /// distance parameter, fills its measure and filter on reuse, and keeps
 /// NULL, EMPTY and SRID-changing arguments correct after specialization.
 #[test]

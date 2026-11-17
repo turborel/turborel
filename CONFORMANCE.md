@@ -1877,7 +1877,7 @@ Plug-ins register these with `Database::register_type` (RULES.md D53).
 
 ### Geometry representations
 
-GEOMETRY is a registered type (`src/geometry.rs`, RULES.md D82),
+GEOMETRY is a registered type (`src/geometry.rs`, RULES.md D85),
 with the seven basic XY value kinds and their WKT/WKB representations
 from OGC 06-103r4 §§7–8. Its optional nonnegative SRID parameter, using
 D53's existing type syntax, enforces the reference on assignment, CAST
@@ -1997,7 +1997,7 @@ indexes two approximate-numeric point coordinates or four rectangle
 coordinates and answers independent SQL comparisons (`index/rtree.rs`,
 `physical/access/columns.rs`, D72). Inner joins can bind these comparisons
 from each outer row (`physical/indexed/coordinates.rs`). Single-column
-geometry indexes use the projection contract described above (D82).
+geometry indexes use the projection contract described above (D85).
 
 ```
 CREATE INDEX name ON table (columns) [USING method] [WITH (...)]

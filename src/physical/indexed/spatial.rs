@@ -1,6 +1,6 @@
 //! Inner geometry joins through envelope candidates. Both source columns
 //! enforce the same SRID, other conjuncts and the inner filter cannot
-//! raise, and the full ON condition checks every visible pair (D15, D82).
+//! raise, and the full ON condition checks every visible pair (D15, D85).
 
 use super::probed::{Choice, planned};
 use super::{Read, read_table};

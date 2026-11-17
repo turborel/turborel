@@ -1,6 +1,6 @@
 //! A kept physical plan filled and prepared for one execution. Access
 //! paths stay fixed; scalar preparation sees the new constant operands and
-//! preserves lazy runtime evaluation (D15, D38, D45, D82).
+//! preserves lazy runtime evaluation (D15, D38, D45, D85).
 
 use std::sync::Arc;
 

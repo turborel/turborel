@@ -21,7 +21,7 @@ fn polygon(hole: bool) -> Value {
     Geometry::from_wkt(&format!("POLYGON (({}){interior})", points.join(", ")), 0).unwrap().to_value()
 }
 
-/// Verifies: [DESIGN] D15, D45, D82: a repeated SQL query uses the
+/// Verifies: [DESIGN] D15, D45, D85: a repeated SQL query uses the
 /// current polygon's hole and boundary after plan learning. Prepared
 /// interval indexes and ordinary calls return identical complete rows;
 /// replacing a polygon by NULL, EMPTY or another SRID preserves behavior.

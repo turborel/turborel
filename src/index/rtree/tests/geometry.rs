@@ -15,7 +15,7 @@ fn intersects(value: Value) -> Probe {
     }
 }
 
-/// Verifies: [DESIGN] D82: projection collisions retain one counted entry
+/// Verifies: [DESIGN] D85: projection collisions retain one counted entry
 /// per envelope/row pair. Equality returns candidates, not original-key
 /// equality; removing one version retains another with the same envelope.
 #[test]
@@ -47,7 +47,7 @@ fn geometry_projection_collisions_are_counted_candidates() {
     assert_eq!(ids(&index, &Probe::All), [8]);
 }
 
-/// Verifies: [DESIGN] D15, D82: a matching reference permits envelope
+/// Verifies: [DESIGN] D15, D85: a matching reference permits envelope
 /// pruning; a changed reference must return every entry, including EMPTY,
 /// so runtime SQL still reports mismatches. NULL never matches. A hole's
 /// bounding box is only a candidate and cannot claim exact intersection.
@@ -81,7 +81,7 @@ fn geometry_candidates_preserve_empty_and_reference_errors() {
     assert_eq!(index.search(&compare, KeyOrder::Ascending).next().unwrap().unwrap_err().code, Code::Unsupported);
 }
 
-/// Verifies: [DESIGN] D82: geometry support is restricted to a fixed SRID
+/// Verifies: [DESIGN] D85: geometry support is restricted to a fixed SRID
 /// and the promised intersection function, on the sole key column in
 /// either argument position. SQL equality/order capabilities stay off.
 #[test]
@@ -111,7 +111,7 @@ fn geometry_capabilities_do_not_claim_original_key_order_or_equality() {
     assert_eq!(index.search(&unsupported, KeyOrder::Ascending).next().unwrap().unwrap_err().code, Code::Unsupported);
 }
 
-/// Verifies: [DESIGN] D82: geometry locators bind their SRID, preserve
+/// Verifies: [DESIGN] D85: geometry locators bind their SRID, preserve
 /// projected version counts across reopen, and refuse wrong versions,
 /// references, truncations and trailing bytes. Numeric v1 stays readable.
 #[test]

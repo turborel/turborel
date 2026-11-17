@@ -24,7 +24,7 @@ fn counted(rows: Vec<Result<Row>>) -> (RowIter, Arc<AtomicUsize>) {
     (Box::new(input), count)
 }
 
-/// Verifies: [DESIGN] D15, D38, D82: a spatial result reads no rows before
+/// Verifies: [DESIGN] D15, D38, D85: a spatial result reads no rows before
 /// its first fetch, gives its first row directly, then reads bounded
 /// groups. It preserves order and releases reservations on early close
 /// or exhaustion.
@@ -50,7 +50,7 @@ fn lookahead_is_lazy_bounded_and_releases_its_reservation() {
     }
 }
 
-/// Verifies: [DESIGN] D38, D82: refused metadata, a row exceeding the
+/// Verifies: [DESIGN] D38, D85: refused metadata, a row exceeding the
 /// work area and refused payload growth all retain every row exactly
 /// once. The first unbuffered row follows the reserved prefix, including
 /// variable-width and NULL values. Fallback adds no resource error.
@@ -73,7 +73,7 @@ fn lookahead_refusal_preserves_the_prefix_and_overflow_row() {
     }
 }
 
-/// Verifies: [DESIGN] D15, D82: a storage error follows every preceding
+/// Verifies: [DESIGN] D15, D85: a storage error follows every preceding
 /// row, is returned once, and ends the stream without reading later rows.
 /// Errors at the first row, a group boundary and within a group agree.
 #[test]
@@ -97,7 +97,7 @@ fn lookahead_keeps_the_first_error_after_its_preceding_rows() {
     }
 }
 
-/// Verifies: [DESIGN] D44, D82: cancellation during lookahead fails the
+/// Verifies: [DESIGN] D44, D85: cancellation during lookahead fails the
 /// current fetch immediately, before it returns a buffered row. Later
 /// fetches still fail, even in a new cancellation window, rather than
 /// reporting successful end of data. No later input is consumed.

@@ -130,7 +130,7 @@ fn enclosing_bounds_do_not_prune_nearer_children() {
     }
 }
 
-/// Verifies: [DESIGN] D82: enlarging either rectangle never increases
+/// Verifies: [DESIGN] D85: enlarging either rectangle never increases
 /// its computed lower bound. The first fixture regresses a one-ULP
 /// inversion in the scaled formula; the sweep covers both signs, axes,
 /// subnormal coordinates and every finite exponent bucket.

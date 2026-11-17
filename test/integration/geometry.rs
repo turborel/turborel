@@ -21,7 +21,7 @@ fn registered() -> Database {
     db
 }
 
-/// Verifies: [EXTENSION] D53, D82: GEOMETRY passes the shared SqlType
+/// Verifies: [EXTENSION] D53, D85: GEOMETRY passes the shared SqlType
 /// contract on every supported shape, empty values, extreme SRIDs, and
 /// values whose binary payload contains the index key's escape byte.
 #[test]
@@ -47,7 +47,7 @@ fn geometry_keeps_the_shared_type_contract() {
     crate::type_contract::type_contract(&geometry::data_type_with_srid(4326).unwrap(), &fixed);
 }
 
-/// Verifies: [EXTENSION] D82: SQL constructors and observers round trip
+/// Verifies: [EXTENSION] D85: SQL constructors and observers round trip
 /// WKT/WKB while keeping SRID separate. Empty is not NULL; failed
 /// multirow construction leaves no insertion, on both storage engines.
 #[test]
@@ -76,7 +76,7 @@ fn sql_geometry_values_and_failed_writes() {
     }
 }
 
-/// Verifies: [EXTENSION] D82: prepared constructors bind text and SRID
+/// Verifies: [EXTENSION] D85: prepared constructors bind text and SRID
 /// independently, reject fractional/out-of-range SRIDs, and preserve
 /// canonical representation equality through a UNIQUE B-tree index.
 #[test]
@@ -96,7 +96,7 @@ fn prepared_values_have_exact_srid_and_representation_keys() {
     assert_eq!(exec(&a, "CREATE INDEX SPATIAL ON SHAPES (G) USING rtree").err(), Some(Code::Unsupported));
 }
 
-/// Verifies: [EXTENSION] D53, D82: constructor NULL propagation, CAST
+/// Verifies: [EXTENSION] D53, D85: constructor NULL propagation, CAST
 /// default SRID, invalid type parameters and argument type/arity checks.
 #[test]
 fn nulls_casts_and_signatures_are_explicit() {
@@ -124,7 +124,7 @@ fn nulls_casts_and_signatures_are_explicit() {
     assert_eq!(exec(&a, "CREATE TABLE BAD (G GEOMETRY(4326, 1))").err(), Some(Code::SyntaxRule));
 }
 
-/// Verifies: [EXTENSION] D82: SQL users construct points from numeric
+/// Verifies: [EXTENSION] D85: SQL users construct points from numeric
 /// columns and inspect or relabel them without assembling WKT strings.
 #[test]
 fn point_functions_work_with_numeric_columns_and_prepared_parameters() {
@@ -144,7 +144,7 @@ fn point_functions_work_with_numeric_columns_and_prepared_parameters() {
     assert_eq!(rows(&a, "VALUES ST_Y(ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)'))").unwrap_err(), Code::Data);
 }
 
-/// Verifies: [EXTENSION] D25, D53, D82: checkpoint and log recovery keep
+/// Verifies: [EXTENSION] D25, D53, D85: checkpoint and log recovery keep
 /// geometry coordinates, empty values and SRIDs. Uncommitted updates
 /// disappear after crash; opening without its type refuses the catalog.
 #[test]
@@ -183,7 +183,7 @@ fn geometry_survives_checkpoint_and_crash_recovery() {
     drop(crashed);
 }
 
-/// Verifies: [EXTENSION] D82: integer-valued spatial relationships work
+/// Verifies: [EXTENSION] D85: integer-valued spatial relationships work
 /// in SQL filters and joins, preserve NULL and EMPTY semantics, and bind
 /// prepared geometry parameters. D15 errors survive other filters.
 #[test]
@@ -213,7 +213,7 @@ fn sql_relationships_refine_shapes_and_preserve_errors() {
     assert_eq!(rows(&a, "VALUES ST_INTERSECTS(ST_POINT(0, 0), 1)").unwrap_err(), Code::SyntaxRule);
 }
 
-/// Verifies: [DESIGN] D15, D82: constant preparation preserves results
+/// Verifies: [DESIGN] D15, D85: constant preparation preserves results
 /// with folding disabled, sees new parameters after prepared plans have
 /// learned their shape, and never raises a skipped branch's runtime error.
 #[test]
@@ -253,7 +253,7 @@ fn prepared_relationships_preserve_parameter_reuse_and_lazy_errors() {
     }
 }
 
-/// Verifies: [EXTENSION] D82: ST_DISTANCE measures geometry in filters,
+/// Verifies: [EXTENSION] D85: ST_DISTANCE measures geometry in filters,
 /// joins and deterministic nearest ordering; prepared constants preserve
 /// NULL/EMPTY results and D15 errors when other filters would skip a row.
 #[test]
@@ -292,7 +292,7 @@ fn sql_distance_filters_joins_and_nearest_ordering() {
     assert_eq!(rows(&a, "SELECT ID FROM SHAPES WHERE ID = 1 AND ST_DISTANCE(G, ST_POINT(0, 0)) < 7").unwrap_err(), Code::Data);
 }
 
-/// Verifies: [EXTENSION] D53, D82: an optional column SRID rejects mixed
+/// Verifies: [EXTENSION] D53, D85: an optional column SRID rejects mixed
 /// references atomically in both engines, accepts NULL/EMPTY, applies to
 /// prepared writes and CAST, and survives checkpoint and log recovery.
 #[test]

@@ -1,5 +1,5 @@
 //! Preparation remains effective after a statement learns its physical
-//! plan, without overriding disabled or absent optimizer rules (D45, D82).
+//! plan, without overriding disabled or absent optimizer rules (D45, D85).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -54,7 +54,7 @@ impl ScalarFunction for Second {
     }
 }
 
-/// Verifies: [DESIGN] D45, D82: preparation uses each execution's values
+/// Verifies: [DESIGN] D45, D85: preparation uses each execution's values
 /// after plan learning, in projections and filters. This regresses the
 /// loss of preparation when cached slots were merely filled. Disabling
 /// constant folding or removing its rule independently prevents it.

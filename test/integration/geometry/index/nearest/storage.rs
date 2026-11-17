@@ -29,7 +29,7 @@ fn points(a: &turborel::db::Session) {
 
 const QUERY: &str = "SELECT ID, ST_DISTANCE(G, ST_POINT(5, 5)) AS D FROM T ORDER BY D, ID FETCH FIRST 3 ROWS ONLY";
 
-/// Verifies: [DESIGN] D25, D29, D82: both engines refine all seven
+/// Verifies: [DESIGN] D25, D29, D85: both engines refine all seven
 /// geometry kinds through SQL. Same-envelope changes and rollback keep
 /// exact ranking; durable reopen rebuilds and reads the same candidates.
 #[test]
@@ -79,7 +79,7 @@ fn nearest_geometry_survives_rollback_and_recovery_on_both_engines() {
     }
 }
 
-/// Verifies: [DESIGN] D49, D82: a temporary index can decline before
+/// Verifies: [DESIGN] D49, D85: a temporary index can decline before
 /// its pages exist, then serves only its own session's nearest geometries.
 #[test]
 fn nearest_geometry_temporary_indexes_are_session_local() {

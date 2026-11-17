@@ -1,4 +1,4 @@
-//! Geometry index candidates through SQL and MVCC visibility (D82).
+//! Geometry index candidates through SQL and MVCC visibility (D85).
 
 use super::registered;
 use crate::common::{Scratch, after_crash, rows, serializable};
@@ -31,7 +31,7 @@ fn populate(db: &Database) {
     db.create_index("SHAPES_G", "A.SHAPES", &["G"], "rtree").unwrap();
 }
 
-/// Verifies: [EXTENSION] D82: ST_Intersects = 1 in either orientation
+/// Verifies: [EXTENSION] D85: ST_Intersects = 1 in either orientation
 /// uses envelope candidates and rechecks polygon holes. Adding/removing
 /// the index preserves results for NULL, EMPTY, boundaries and equality.
 #[test]
@@ -67,7 +67,7 @@ fn geometry_index_filters_refine_candidates_and_equal_scans() {
     }
 }
 
-/// Verifies: [DESIGN] D15, D82: prepared geometry lookups replace NULL,
+/// Verifies: [DESIGN] D15, D85: prepared geometry lookups replace NULL,
 /// EMPTY and reference-changing values. An SRID mismatch outside every
 /// stored envelope must still raise, even when the query geometry is empty.
 #[test]
@@ -94,7 +94,7 @@ fn geometry_index_prepared_values_preserve_srid_errors() {
     assert_eq!(rows(&a, bad).unwrap_err(), Code::Data);
 }
 
-/// Verifies: [DESIGN] D82: old snapshots see their own envelope and shape;
+/// Verifies: [DESIGN] D85: old snapshots see their own envelope and shape;
 /// equal-envelope versions retain one counted entry and different-envelope
 /// versions are rechecked. NULL updates and rollback cannot leave ghosts.
 #[test]
@@ -130,7 +130,7 @@ fn geometry_index_rechecks_visible_projection_and_shape() {
     assert_eq!(rows(&reader, far).unwrap(), Vec::<String>::new());
 }
 
-/// Verifies: [DESIGN] D82: geometry candidates retain serializable read
+/// Verifies: [DESIGN] D85: geometry candidates retain serializable read
 /// tracking. Two readers of an empty window cannot both insert there and
 /// commit, even though the R-tree returned neither inserted row initially.
 #[test]
@@ -150,7 +150,7 @@ fn geometry_index_reads_track_serializable_phantoms() {
     }
 }
 
-/// Verifies: [DESIGN] D82: recovery preserves geometry projections and
+/// Verifies: [DESIGN] D85: recovery preserves geometry projections and
 /// their version counts. A checkpoint containing an uncommitted update
 /// is undone while committed same-envelope and new-envelope changes survive.
 #[test]
@@ -191,7 +191,7 @@ fn geometry_index_recovers_projected_versions_and_open_writes() {
     drop(writer);
 }
 
-/// Verifies: [EXTENSION] D82: projection collisions do not violate
+/// Verifies: [EXTENSION] D85: projection collisions do not violate
 /// representation uniqueness, satisfy a missing foreign key, or cascade
 /// into a different geometry. A repeated original value remains a duplicate.
 #[test]
@@ -220,7 +220,7 @@ fn geometry_index_constraints_recheck_original_values() {
     a.rollback().unwrap();
 }
 
-/// Verifies: [DESIGN] D15, D82: an index does not manufacture an SRID
+/// Verifies: [DESIGN] D15, D85: an index does not manufacture an SRID
 /// error on an empty/null-only table, but an EMPTY geometry still has a
 /// reference. Invalid later writes roll back every earlier spatial entry.
 #[test]
@@ -243,7 +243,7 @@ fn geometry_index_empty_inputs_and_failed_writes_keep_sql_semantics() {
     }
 }
 
-/// Verifies: [DESIGN] D49, D82: a temporary index forwards its geometry
+/// Verifies: [DESIGN] D49, D85: a temporary index forwards its geometry
 /// projection even before its pages exist. Different sessions own distinct
 /// entries; ON COMMIT DELETE recreates the same projection after clearing.
 #[test]

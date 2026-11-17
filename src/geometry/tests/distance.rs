@@ -3,7 +3,7 @@
 use super::*;
 use crate::functions::ScalarFunction;
 
-/// Verifies: [EXTENSION] D82; OGC 06-103r4 §6.1.2.4: minimum XY distance
+/// Verifies: [EXTENSION] D85; OGC 06-103r4 §6.1.2.4: minimum XY distance
 /// accounts for segment interiors, polygon interiors and holes, all basic
 /// collection kinds, and degeneracies. Operand order cannot change it.
 #[test]
@@ -36,7 +36,7 @@ fn distances_measure_point_sets_and_polygon_holes() {
     }
 }
 
-/// Verifies: [EXTENSION] D82: empty sets have no distance, NULL propagates,
+/// Verifies: [EXTENSION] D85: empty sets have no distance, NULL propagates,
 /// reference errors precede empty shortcuts, and only the final minimum
 /// can overflow. One unrepresentable component does not poison the result.
 #[test]
@@ -58,7 +58,7 @@ fn distance_null_empty_reference_and_overflow_contracts() {
     assert_eq!(origin.distance(&collection).unwrap(), Some(5.0_f64));
 }
 
-/// Verifies: [DESIGN] D82: cancellation, overflow and subnormal products
+/// Verifies: [DESIGN] D85: cancellation, overflow and subnormal products
 /// retain finite perpendicular distances. Expected binary64 values were
 /// independently rounded from exact rational squared distances using
 /// 200-digit decimal square roots, not the implementation's determinant.
@@ -79,7 +79,7 @@ fn extreme_segment_distances_match_independent_rational_oracles() {
     }
 }
 
-/// Verifies: [DESIGN] D82: scale does not affect endpoint/interior
+/// Verifies: [DESIGN] D85: scale does not affect endpoint/interior
 /// classification across every finite binary64 exponent. Tiny segments
 /// and huge differences neither collapse nor cause intermediate errors.
 #[test]
@@ -92,7 +92,7 @@ fn segment_distances_survive_every_binary64_exponent() {
     }
 }
 
-/// Verifies: [DESIGN] D82: ordinary segment distances agree with an
+/// Verifies: [DESIGN] D85: ordinary segment distances agree with an
 /// independent integer projection oracle in all endpoint regions. The
 /// error allowance concerns approximate measures, not topology decisions.
 #[test]

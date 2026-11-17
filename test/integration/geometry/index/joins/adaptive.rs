@@ -20,7 +20,7 @@ fn broad() -> Database {
     db
 }
 
-/// Verifies: [DESIGN] D15, D82: broad adaptive joins preserve holes,
+/// Verifies: [DESIGN] D15, D85: broad adaptive joins preserve holes,
 /// boundary points, NULL/EMPTY values, both argument and input orders,
 /// projected inner columns, duplicate output columns and ON residuals.
 /// Disabling preparation or dropping the index yields the same pairs.
@@ -61,7 +61,7 @@ fn adaptive_spatial_joins_match_products_and_preparation_modes() {
     }
 }
 
-/// Verifies: [DESIGN] D29, D82: the scan path reads statement-visible
+/// Verifies: [DESIGN] D29, D85: the scan path reads statement-visible
 /// shapes across moved, equal-envelope, deleted, inserted and NULL rows.
 /// A paused repeatable-read cursor retains its original complete pairs;
 /// a later statement sees committed changes and rollback restores them.
@@ -101,7 +101,7 @@ fn adaptive_spatial_joins_keep_their_snapshot_across_writes() {
     assert_eq!(restored, committed);
 }
 
-/// Verifies: [DESIGN] D29, D82: broad adaptive scans record predicate
+/// Verifies: [DESIGN] D29, D85: broad adaptive scans record predicate
 /// reads. Two serializable readers cannot both commit new matching rows.
 #[test]
 fn adaptive_spatial_scans_record_serializable_reads() {
@@ -119,7 +119,7 @@ fn adaptive_spatial_scans_record_serializable_reads() {
     }
 }
 
-/// Verifies: [DESIGN] D82: SQL planning permits adaptive spatial builds
+/// Verifies: [DESIGN] D85: SQL planning permits adaptive spatial builds
 /// beyond one mask word. Grouping still counts every matching pair;
 /// removing the R-tree produces the same groups through a product.
 #[test]

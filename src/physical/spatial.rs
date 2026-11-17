@@ -1,6 +1,6 @@
 //! Spatial function comparisons recognized by filter and join planning.
 //! Recognition alone permits no pruning: callers must prove reference
-//! and error behavior and retain the complete SQL condition (D15, D82).
+//! and error behavior and retain the complete SQL condition (D15, D85).
 
 use crate::functions::ScalarRef;
 use crate::geometry::SpatialOperation;

@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Verifies: [DESIGN] D82: signs match an integer oracle in all octants,
+/// Verifies: [DESIGN] D85: signs match an integer oracle in all octants,
 /// including degeneracy, negative coordinates and both turn directions.
 #[test]
 fn orientations_agree_with_integer_determinants() {
@@ -22,7 +22,7 @@ fn orientations_agree_with_integer_determinants() {
     }
 }
 
-/// Verifies: [DESIGN] D82: the sign of one-ULP triangles survives every
+/// Verifies: [DESIGN] D85: the sign of one-ULP triangles survives every
 /// binary64 exponent, including products that underflow or overflow.
 /// Reversing the points reverses the sign; repeating one makes it zero.
 #[test]
@@ -39,7 +39,7 @@ fn one_ulp_triangles_have_exact_sign_at_every_exponent() {
     }
 }
 
-/// Verifies: [DESIGN] D82: exact cancellation and differences that
+/// Verifies: [DESIGN] D85: exact cancellation and differences that
 /// overflow binary64 cannot change collinearity or swallow a tiny offset.
 #[test]
 fn cancellation_and_extreme_offsets_are_not_tolerances() {
@@ -53,7 +53,7 @@ fn cancellation_and_extreme_offsets_are_not_tolerances() {
     assert_eq!(orient([0.0_f64, 0.0_f64], [f64::MIN_POSITIVE, 0.0_f64], [0.0_f64, f64::from_bits(1)]), Ordering::Greater);
 }
 
-/// Verifies: [DESIGN] D82: the fast orientation proof accepts ordinary
+/// Verifies: [DESIGN] D85: the fast orientation proof accepts ordinary
 /// turns of either sign but declines cancellation, zero products, overflow
 /// and subnormal products or error bounds. Declined cases retain the exact
 /// sign; a rounded product of zero is never a proof of collinearity.
@@ -78,7 +78,7 @@ fn orientation_filter_proves_only_normal_separated_determinants() {
     }
 }
 
-/// Verifies: [DESIGN] D82: the filtered and complete orientation agree
+/// Verifies: [DESIGN] D85: the filtered and complete orientation agree
 /// with dyadic integer arithmetic for reproducible binary64 bit patterns
 /// across the exponent range, including unequal scales and signed zeros.
 #[test]

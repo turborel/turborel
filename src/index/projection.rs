@@ -5,7 +5,7 @@
 use super::Key;
 use crate::error::Result;
 
-/// An immutable projection shared by an index and its readers (D82).
+/// An immutable projection shared by an index and its readers (D85).
 /// Equal original keys must have equal projections. Different keys may
 /// collide; one original key always has exactly one projection. The
 /// projection remains fixed for the index's lifetime, including reopen.

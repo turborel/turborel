@@ -7,7 +7,7 @@ use crate::value::{DOUBLE_PRECISION, DataType, Decimal, Spelled};
 
 const NUMBER: DataType = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::DoublePrecision };
 
-/// Verifies: [EXTENSION] D82: extrema include every coordinate across
+/// Verifies: [EXTENSION] D85: extrema include every coordinate across
 /// all seven XY kinds, ignore empty components and return NULL for an
 /// empty set. These observers do not require a point geometry.
 #[test]
@@ -38,7 +38,7 @@ fn extrema_cover_all_geometry_kinds_and_empty_components() {
     }
 }
 
-/// Verifies: [EXTENSION] D82: a rectangle is a closed clockwise polygon
+/// Verifies: [EXTENSION] D85: a rectangle is a closed clockwise polygon
 /// with the supplied bounds and SRID. Extreme and subnormal coordinates
 /// need no overflowing width/area calculation; signed zero is normalized.
 #[test]
@@ -62,7 +62,7 @@ fn rectangles_preserve_finite_extreme_and_subnormal_bounds() {
     assert_eq!(Geometry::from_wkb(&small.to_wkb(), 0).unwrap().to_wkt(), small.to_wkt());
 }
 
-/// Verifies: [EXTENSION] D82: non-finite, reversed and zero-area bounds
+/// Verifies: [EXTENSION] D85: non-finite, reversed and zero-area bounds
 /// are refused. MC/DC: each coordinate's finiteness and each axis's
 /// ordering independently rejects an otherwise valid rectangle.
 #[test]
@@ -82,7 +82,7 @@ fn rectangle_bounds_reject_nonfinite_reversed_and_zero_area() {
     }
 }
 
-/// Verifies: [EXTENSION] D82: the numeric constructor accepts four
+/// Verifies: [EXTENSION] D85: the numeric constructor accepts four
 /// coordinates and an optional exact i32 SRID, propagates any NULL and
 /// rejects a nonnumeric coordinate or fractional/out-of-range reference.
 #[test]

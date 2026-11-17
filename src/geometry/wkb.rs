@@ -17,7 +17,7 @@ const POINT_BYTES: usize = 16;
 const ORDINATE_BYTES: usize = 8;
 /// GEOS WKB empty point convention, a canonical IEEE quiet NaN.
 const EMPTY_ORDINATE: u64 = 0x7ff8_0000_0000_0000;
-/// Canonical stored coordinates use positive zero (RULES.md D82).
+/// Canonical stored coordinates use positive zero (RULES.md D85).
 const NEGATIVE_ZERO: u64 = 0x8000_0000_0000_0000;
 
 pub(super) fn read(bytes: &[u8]) -> Result<Shape> {
@@ -80,7 +80,7 @@ impl<const CANONICAL: bool> Binary<'_, CANONICAL> {
             let ordinates = self.rest.get(..width).ok_or_else(|| invalid("WKB ends too soon"))?;
             // Geometry headers already require NDR in this mode. A
             // contiguous pass keeps the coordinate parser's hot loop free
-            // of a second per-ordinate representation branch (D82).
+            // of a second per-ordinate representation branch (D85).
             let (chunks, _) = ordinates.as_chunks::<ORDINATE_BYTES>();
             let negative = chunks.contains(&NEGATIVE_ZERO.to_le_bytes());
             if negative {
@@ -108,7 +108,7 @@ impl<const CANONICAL: bool> Binary<'_, CANONICAL> {
         self.charge(usize::from(!empty))?;
         if empty {
             // Other geometry coordinates must be finite. Only an EMPTY
-            // point needs the extra NaN representation check (D82).
+            // point needs the extra NaN representation check (D85).
             let other_nan = p.iter().any(|v| v.to_bits() != EMPTY_ORDINATE);
             if CANONICAL && other_nan {
                 return Err(invalid("noncanonical WKB empty point"));

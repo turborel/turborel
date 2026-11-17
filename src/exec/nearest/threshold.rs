@@ -92,7 +92,7 @@ mod tests {
     use crate::db::Database;
     use crate::error::Code;
 
-    /// Verifies: [DESIGN] D38, D82: the threshold counts qualifying
+    /// Verifies: [DESIGN] D38, D85: the threshold counts qualifying
     /// distances only, retains ties, updates its kth value without heap
     /// growth, and releases its reservation. Invalid plugin measures fail.
     #[test]

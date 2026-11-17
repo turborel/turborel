@@ -30,7 +30,7 @@ fn rectangles(count: usize) -> Vec<Option<Bounds>> {
         .collect()
 }
 
-/// Verifies: [DESIGN] D82: temporary spatial groups return exactly the
+/// Verifies: [DESIGN] D85: temporary spatial groups return exactly the
 /// overlapping closed envelopes, once each, in their original row
 /// positions. NULL bounds, coincident shapes, boundary touches, extreme
 /// finite coordinates and inputs beyond a mask word retain every match.
@@ -55,7 +55,7 @@ fn packed_masks_match_linear_search_across_group_boundaries() {
     }
 }
 
-/// Verifies: [DESIGN] D38, D82: the hierarchy allocation estimate covers
+/// Verifies: [DESIGN] D38, D85: the hierarchy allocation estimate covers
 /// retained vectors and leaf boundaries for every tested split size.
 /// Empty bounds need no nodes; unrepresentable budgets saturate and can
 /// be refused before allocation.

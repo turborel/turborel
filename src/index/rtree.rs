@@ -3,7 +3,7 @@
 //! (min X, min Y, max X, max Y). The key retains every coordinate, so
 //! ordinary SQL comparisons and MVCC key rechecks remain exact. A single
 //! GEOMETRY(srid) column instead stores envelope projections and rechecks
-//! the visible geometry and full spatial predicate (D82).
+//! the visible geometry and full spatial predicate (D85).
 
 mod clustered;
 mod geometry;
@@ -61,7 +61,7 @@ impl RTreeMethod {
     }
 
     /// Temporary instances need the same projection before their pages
-    /// are made, so a prepared reader sees a fixed contract (D49, D82).
+    /// are made, so a prepared reader sees a fixed contract (D49, D85).
     pub(crate) fn projection(columns: &[DataType]) -> Option<Arc<dyn KeyProjection>> {
         let [column] = columns else { return None };
         crate::geometry::fixed_srid(column).map(geometry::projection)

@@ -1,5 +1,5 @@
 //! Best-first geometry candidates refined against visible rows (D15,
-//! D29, D38, D44, D82). A strict lower-bound cutoff retains distance ties;
+//! D29, D38, D44, D85). A strict lower-bound cutoff retains distance ties;
 //! the existing sort decides their secondary order. An uncertified index
 //! or an unaffordable threshold heap falls back before producing rows.
 

@@ -21,7 +21,7 @@ fn populated() -> Database {
     db
 }
 
-/// Verifies: [DESIGN] D29, D82: a spatial join spanning multiple buffered
+/// Verifies: [DESIGN] D29, D85: a spatial join spanning multiple buffered
 /// blocks keeps its snapshot across moved, NULL and equal-envelope shape
 /// updates and an insertion. Later reads see the changes, with no duplicate
 /// from counted versions; rollback restores the full visible result.

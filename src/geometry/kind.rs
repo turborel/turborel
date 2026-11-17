@@ -13,7 +13,7 @@ use crate::value::{Binary, Bucket, DataType, SqlType, Value};
 
 /// The registered SQL type name.
 pub(super) const NAME: &str = "GEOMETRY";
-/// Stored geometry payload version (RULES.md D82).
+/// Stored geometry payload version (RULES.md D85).
 const VERSION: u8 = 1;
 /// The bytes in a stored SRID.
 const SRID_BYTES: usize = 4;

@@ -167,7 +167,7 @@ pub trait ScalarFunction: Send + Sync {
         false
     }
     /// A spatial operation whose complete behavior this function implements,
-    /// including result types, NULLs and SRID errors (D82). Deterministic,
+    /// including result types, NULLs and SRID errors (D85). Deterministic,
     /// side-effect-free, and fixed for its lifetime. Unlike `index_predicate`,
     /// this does not promise error-free calls: pruning requires a separate
     /// proof and a runtime fallback for changed prepared arguments.
