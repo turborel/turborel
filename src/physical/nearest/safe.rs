@@ -17,9 +17,21 @@ fn expression(expr: &Expr, table: &TableDesc) -> bool {
         return true;
     }
     let Expr::Call(function, args) = expr else { return false };
+    if rechecked(function, args) {
+        return true;
+    }
     let [Expr::Column(column)] = args.as_slice() else { return false };
     let geometry = table.columns.get(*column).is_some_and(|c| fixed_srid(&c.data_type).is_some());
     geometry && function.0.deterministic() && function.0.spatial_operation() == Some(SpatialOperation::IsEmpty)
+}
+
+/// A call that raises only of its arguments other than the column, alike
+/// for every row of a value, and of none of a null (D87): a row the
+/// pruning skips would have raised as the rows it reads do.
+fn rechecked(function: &crate::functions::ScalarRef, args: &[Expr]) -> bool {
+    let f = &function.0;
+    let plain = args.iter().all(|a| matches!(a, Expr::Column(_) | Expr::Const(_)));
+    f.rechecked_errors() && f.deterministic() && plain
 }
 
 pub(super) fn condition(cond: &Cond, table: &TableDesc) -> bool {

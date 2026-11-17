@@ -2,6 +2,7 @@
 
 use super::extremes::Extreme;
 use super::*;
+use crate::value::Decimal;
 
 /// Verifies: [X3.135-1986 §5.8 F] MAX and MIN take an argument; asked for
 /// the type of an argumentless call, they refuse rather than panic.

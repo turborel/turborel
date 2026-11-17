@@ -133,7 +133,7 @@ impl Session {
     /// temporary files.
     pub(super) fn instance_place(&self, st: &State) -> Place {
         let bytes = work_bytes(st.settings.effective(MEMORY_WORK_BYTES, &self.own.borrow()).0);
-        Place { budget: Arc::clone(&st.memory), work: Arc::clone(&st.work), bytes }
+        Place { budget: Arc::clone(&st.memory), work: Arc::clone(&st.work), bytes, rankings: st.rankings.closure() }
     }
 }
 

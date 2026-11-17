@@ -17,8 +17,8 @@ fn listed(db: &Database) -> Vec<String> {
 }
 
 /// Verifies: [EXTENSION] RULES.md D41, D86: a full-text index has the
-/// options FULLTEXT.B, FULLTEXT.K1, FULLTEXT.LANGUAGE and
-/// FULLTEXT.STOP_WORDS, of their defaults unless WITH gives them; ALTER
+/// options FULLTEXT.B, FULLTEXT.K1, FULLTEXT.LANGUAGE, FULLTEXT.RANKING
+/// (D87) and FULLTEXT.STOP_WORDS, of their defaults unless WITH gives them; ALTER
 /// INDEX changes them; a value out of range, a language not known or an
 /// option of another method is refused (SQLCODE -103).
 #[test]
@@ -29,6 +29,7 @@ fn its_options_are_listed_set_and_checked() {
         "FULLTEXT.B,7.5E-1,DEFAULT",
         "FULLTEXT.K1,1.2E0,DEFAULT",
         "FULLTEXT.LANGUAGE,ENGLISH,DEFAULT",
+        "FULLTEXT.RANKING,BM25,DEFAULT",
         "FULLTEXT.STOP_WORDS,DEFAULT,DEFAULT",
     ];
     assert_eq!(listed(&db), defaults);

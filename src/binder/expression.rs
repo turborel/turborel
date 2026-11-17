@@ -230,6 +230,10 @@ impl Binder<'_> {
         if let Some(subject) = schema.and_then(|c| self.lone_basis(c, at)) {
             return self.method_call(&subject, (name, args), scope).or_at(at);
         }
+        // Of a column of a registered type, the method of it (RULES.md D87).
+        if let Some(subject) = schema.and_then(|c| self.extension_basis(c, at)) {
+            return self.extension_method((&ValueExpression::Column(subject), None), (name, at), args, scope).or_at(at);
+        }
         let passed = if is_aggregate_call(v, (self.db, self.schema)) {
             Passed::default()
         } else {
@@ -425,7 +429,11 @@ impl Binder<'_> {
                     refusal.unwrap_or_else(|| rule(format!("[EXTENSION] no function {name} registered takes arguments of ({shown})")))
                 );
             };
-            let (exprs, types) = self.arguments_of(&*f.0, args, bound, scope)?;
+            let (mut exprs, mut types) = self.arguments_of(&*f.0, args, bound, scope)?;
+            for (e, t) in self.appended_arguments(&*f.0, (args, &exprs), scope)? {
+                exprs.push(e);
+                types.push(t);
+            }
             let t = f.0.return_type(&types)?;
             return Ok((Expr::Call(f, exprs), t));
         }

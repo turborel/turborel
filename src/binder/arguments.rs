@@ -21,6 +21,9 @@ use crate::value::{DataType, Value, assign};
 /// function's argument being no target the standard names.
 const ARGUMENT_RULE: &str = "ISO/IEC 9075:1992 §9.2 GR3";
 
+/// The name of the call that stores an argument in its declared type.
+pub(super) const ASSIGN: &str = "ASSIGN";
+
 /// \[EXTENSION\] [ISO/IEC 9075:1992 §9.2] An argument stored in the type
 /// its function declares for it, as `value::assign` stores a value in a
 /// column of that type.
@@ -30,7 +33,7 @@ struct Assigned {
 
 impl ScalarFunction for Assigned {
     fn name(&self) -> &'static str {
-        "ASSIGN"
+        ASSIGN
     }
     fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
         Ok(self.to.clone())

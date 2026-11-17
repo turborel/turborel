@@ -43,6 +43,14 @@ impl TypeRegistry {
         self.kinds.iter().flat_map(|kinds| kinds.keys()).map(String::as_str)
     }
 
+    /// The kinds built in, SQL/MM Full-Text's FULLTEXT and FT_PATTERN
+    /// (RULES.md D87), which a registration of a type of their names is
+    /// refused beside.
+    pub(crate) fn builtin() -> TypeRegistry {
+        let kinds = crate::fulltext::types::types().map(|kind: Kind| (kind.name().to_owned(), kind));
+        TypeRegistry { kinds: Some(Arc::new(kinds.into_iter().collect())) }
+    }
+
     /// Registers `kind`.
     ///
     /// # Errors

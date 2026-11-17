@@ -26,7 +26,7 @@ use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::storage::{Floats, Ints, Texts};
 use crate::value::Spelled;
-use crate::value::{DOUBLE_PRECISION, DataType, Decimal, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
+use crate::value::{DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
 
 mod any_value;
 pub use any_value::ANY_VALUE;
@@ -36,6 +36,10 @@ pub use arrays::{
     ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf, ElementOf,
     TRIM_ARRAY, TrimArrayOf,
 };
+mod context;
+mod count;
+pub use context::{AppendedQuery, CallContext};
+use count::Count;
 mod distribution;
 pub use distribution::{FRACTION, InverseDistribution, PERCENTILE_CONT, PERCENTILE_DISC, Picked, picked, picked_value};
 mod extremes;
@@ -193,6 +197,77 @@ pub trait ScalarFunction: Send + Sync {
     /// Defaults to false, so existing functions do not opt in.
     fn index_predicate(&self) -> bool {
         false
+    }
+    /// \[EXTENSION\] The value a call of this function is compared equal
+    /// to where the call stands for a predicate, as SQL/MM Full-Text's
+    /// Contains, an INTEGER, is compared with 1 [ISO/IEC 13249-2:2002
+    /// §5.1.2] (RULES.md D87). An index that finds rows for the function
+    /// (`index_predicate`) finds them for `f(column, ?) = value` too, as
+    /// for a call of a BOOLEAN result that is true. None by default.
+    fn predicate_truth(&self) -> Option<Value> {
+        None
+    }
+    /// \[EXTENSION\] Whether an index may find rows for this function
+    /// though its calls can raise, as SQL/MM Full-Text's Contains raises
+    /// of a malformed pattern (RULES.md D87). True promises what
+    /// `index_predicate` does but for errors, and that a call raises only
+    /// of its arguments other than the column, alike for every row; that a
+    /// call of a null column is null, raising nothing; and that the index,
+    /// given arguments that raise, finds every row it holds of a value. The
+    /// WHERE check of the rows it finds then raises as a scan would, at the
+    /// first row of a value. Defaults to false.
+    fn rechecked_errors(&self) -> bool {
+        false
+    }
+    /// \[EXTENSION\] How many of a call's first arguments an index finding
+    /// rows for this function reads, the column and the value it is given;
+    /// the rest only the WHERE check reads, as Contains's thesaurus
+    /// relations, which the index answers as a superset (RULES.md D87).
+    /// None, all of them, by default.
+    fn probe_arguments(&self) -> Option<usize> {
+        None
+    }
+    /// \[EXTENSION\] A query whose ARRAY the binder gives a call as its
+    /// last argument, read in the statement's snapshot as any subquery is,
+    /// and with the privileges of its user: of SQL/MM Full-Text's Contains
+    /// and Rank, the relations of the thesauri its pattern expands by
+    /// (RULES.md D87). `constants` are the call's arguments that are
+    /// constants, None of the others. None, nothing appended, by default;
+    /// and nothing is if a table the query reads is not there.
+    fn appended_query(&self, _constants: &[Option<&Value>]) -> Option<AppendedQuery> {
+        None
+    }
+    /// \[EXTENSION\] Whether the binder gives a call, before any appended
+    /// query (`appended_query`), the name of the index that ranks the column
+    /// its first argument reads, if it reads a base table's column one does:
+    /// as SQL/MM Full-Text's Rank scores by that index's statistics
+    /// (RULES.md D87). False by default.
+    fn ranked_by_index(&self) -> bool {
+        false
+    }
+    /// \[EXTENSION\] Whether a call is a score, greater the better, as
+    /// SQL/MM Full-Text's Rank, whose highest an index of its first
+    /// argument's column may give first (`Index::nearest`, RULES.md D87).
+    /// True promises that a call is the same for the same arguments within
+    /// a statement, its statistics fixed there (`CallContext`), and raises
+    /// only as `rechecked_errors` says. False by default.
+    fn ranks(&self) -> bool {
+        false
+    }
+    /// \[EXTENSION\] Whether a call reads what its statement holds beside
+    /// its arguments (`CallContext`), so it is evaluated a row at a time
+    /// by `call_in`, never by a batch. False by default.
+    fn uses_context(&self) -> bool {
+        false
+    }
+    /// A call of `args` in the statement `cx` gives (`uses_context`). By
+    /// default `call_with`.
+    ///
+    /// # Errors
+    ///
+    /// As `call_with`.
+    fn call_in(&self, args: &[Value], cx: &dyn CallContext) -> Result<Value> {
+        self.call_with(args, cx.temp_lobs())
     }
     /// A spatial operation whose complete behavior this function implements,
     /// including result types, NULLs and SRID errors (D85). Deterministic,
@@ -418,69 +493,6 @@ fn not_character(name: &str, arg: Option<DataType>) -> Result<DataType> {
             Code::SyntaxRule,
             format!("[X3.135-1986 §5.8 SR9a; ISO/IEC 9075:1992 §6.5 SR9a] the argument of {name} shall be a number or an interval"),
         ),
-    }
-}
-
-/// COUNT(*) and COUNT(DISTINCT c). [X3.135-1986 §5.8 GR4a, GR4b] the cardinality.
-struct Count;
-
-impl AggregateFunction for Count {
-    fn name(&self) -> &'static str {
-        kw::COUNT
-    }
-    // [X3.135-1986 §5.8 SR7] exact numeric with implementor-defined precision and scale 0.
-    fn result_type(&self, _arg: Option<DataType>) -> Result<DataType> {
-        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
-    }
-    fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
-        Box::new(CountAcc(0))
-    }
-}
-
-struct CountAcc(i128);
-
-impl Accumulator for CountAcc {
-    fn update(&mut self, _v: &Value) -> Result<()> {
-        self.0 = self.0.saturating_add(1);
-        Ok(())
-    }
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
-        let counted = match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).filter(|v| !v.is_null()).count(),
-            None => values.iter().filter(|v| !v.is_null()).count(),
-        };
-        self.update_rows(counted)
-    }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
-        self.update_rows(ints::count(ints, rows))
-    }
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
-        self.update_rows(floats::count(floats, rows))
-    }
-    /// Its texts counted, none made a value.
-    fn update_texts(&mut self, texts: &Texts, rows: Option<&[usize]>) -> Result<()> {
-        let counted = match rows {
-            Some(rows) => rows.iter().filter(|&&n| texts.get(n).is_some()).count(),
-            None => (0..texts.len()).filter(|&n| texts.get(n).is_some()).count(),
-        };
-        self.update_rows(counted)
-    }
-    fn update_rows(&mut self, rows: usize) -> Result<()> {
-        self.0 = self.0.saturating_add(i128::try_from(rows).unwrap_or(i128::MAX));
-        Ok(())
-    }
-    /// The count, its 16 bytes.
-    fn write_state(&self, out: &mut Vec<u8>) -> bool {
-        out.extend_from_slice(&self.0.to_le_bytes());
-        true
-    }
-    fn merge(&mut self, state: &[u8]) -> Result<()> {
-        let n = <[u8; 16]>::try_from(state).map(i128::from_le_bytes);
-        self.0 = self.0.saturating_add(n.or_else(|_| fail(Code::Corrupt, "[DESIGN] a state of COUNT is not 16 bytes"))?);
-        Ok(())
-    }
-    fn finish(&self) -> Result<Value> {
-        Ok(Value::Exact(Decimal::new(self.0, 0)))
     }
 }
 

@@ -17,6 +17,7 @@ use crate::binder::qualify;
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{At, Code, Result, SqlError, fail};
 use crate::index::BTREE_METHOD;
+use crate::index::fulltext::RANKING_OPTION;
 use crate::storage::chosen;
 use crate::value::Value;
 
@@ -121,5 +122,23 @@ fn options_of(st: &State, method: &str, given: &[TableOptionValue]) -> Result<Ve
         let value = option.value.as_ref().map(value_of);
         options = chosen(method, (&declared, &options), (&option.name, value.as_ref())).or_at(option.at)?;
     }
+    ranked(st, &options)?;
     Ok(options)
+}
+
+/// \[EXTENSION\] Whether FULLTEXT.RANKING, if given, names a ranking built
+/// in or registered (`Database::register_ranking`, RULES.md D87), checked
+/// here as an ALTER INDEX changing it in place never reaches the method
+/// before it commits.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it names none.
+fn ranked(st: &State, options: &[(String, Value)]) -> Result<()> {
+    let Some((_, Value::Char(name))) = options.iter().find(|(n, _)| n == RANKING_OPTION) else { return Ok(()) };
+    if st.rankings.named(name).is_some() {
+        return Ok(());
+    }
+    let names: Vec<String> = (st.rankings.closure())().iter().map(|r| r.name().to_owned()).collect();
+    Err(refused(&format!("{RANKING_OPTION} is one of {}, not {name}", names.join(", "))))
 }

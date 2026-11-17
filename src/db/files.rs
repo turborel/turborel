@@ -536,7 +536,8 @@ impl Database {
         self.register_index_method(Box::new(BTreeMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(HashMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(RTreeMethod::new(Arc::clone(&pool), file)))?;
-        self.register_index_method(Box::new(FullTextMethod::new(pool, file)))
+        let rankings = self.snapshot()?.rankings.closure();
+        self.register_index_method(Box::new(FullTextMethod::new(pool, file).with_rankings(rankings)))
     }
 
     /// Makes the definitions of `image` again, reopening its tables and

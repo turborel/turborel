@@ -24,22 +24,29 @@ mod cursor;
 mod document;
 mod keys;
 mod load;
+mod matcher;
+mod near;
 pub(super) mod options;
+mod plan;
 mod postings;
+mod rank;
 mod search;
+mod topk;
 mod write;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub(crate) use document::chars_of;
+pub(crate) use document::{DocChars, chars_of};
 pub use keys::{TermStatistics, Totals};
 pub use options::{
-    B_OPTION, DEFAULT_B, DEFAULT_K1, DEFAULT_STOP_WORDS, K1_OPTION, LANGUAGE_OPTION, NO_STOP_WORDS, STOP_WORDS_OPTION, Weights,
+    B_OPTION, DEFAULT_B, DEFAULT_K1, DEFAULT_STOP_WORDS, K1_OPTION, LANGUAGE_OPTION, NO_STOP_WORDS, RANKING_OPTION, STOP_WORDS_OPTION,
+    Weights,
 };
 pub use postings::Position;
+pub(crate) use rank::score;
 
-use super::{Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, Predicate, Probe, RowIds};
+use super::{Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, NearestQuery, NeighbourEntries, Predicate, Probe, RowIds};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
@@ -48,7 +55,10 @@ use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
 use crate::fulltext::Language;
 use crate::fulltext::matches::TEXT_MATCHES;
+use crate::fulltext::pattern::{CONTAINS, RANK};
+use crate::fulltext::rank::{Bm25, Ranking, Rankings, Statistics, built_in, named};
 use crate::fulltext::text::StopWords;
+use crate::fulltext::value::FULLTEXT;
 use crate::hash::murmur::murmur3_x64_128;
 use crate::memory::{Host, MemoryBudget};
 use crate::spill::{Area, DEFAULT_SPILL_BATCH, DEFAULT_WORK_MEMORY, WorkAreas};
@@ -56,7 +66,7 @@ use crate::storage::{RowId, TableOption};
 use crate::sync::lock_builtin;
 use crate::value::{CompOp, DataType};
 use document::Reading;
-use options::{located, options, options_of};
+use options::{Options, located, options, options_of, ranking_named};
 
 /// The name of `FullTextMethod`.
 pub const FULLTEXT_METHOD: &str = "fulltext";
@@ -109,18 +119,25 @@ pub struct FullTextMethod {
     memory: Arc<MemoryPages>,
     /// The work areas its indexes spill to.
     work: Work,
+    /// The rankings its indexes may name.
+    rankings: Rankings,
 }
 
 impl FullTextMethod {
     /// A method keeping its indexes in pager file `file` of `pool`.
     pub fn new(pool: Arc<BufferPool>, file: FileId) -> FullTextMethod {
-        FullTextMethod { files: Mutex::new(Some((pool, file))), memory: MemoryPages::new(0), work: Work::default() }
+        FullTextMethod { files: Mutex::new(Some((pool, file))), memory: MemoryPages::new(0), work: Work::default(), rankings: built_in() }
     }
 
     /// As `new`, its indexes spilling to `work` at once, for a method not
     /// attached to a database (`attach`), as a temporary table's indexes'.
     pub fn with_work(pool: Arc<BufferPool>, file: FileId, work: Arc<WorkAreas>) -> FullTextMethod {
-        FullTextMethod { files: Mutex::new(Some((pool, file))), memory: MemoryPages::new(0), work: Arc::new(Mutex::new(Some(work))) }
+        FullTextMethod {
+            files: Mutex::new(Some((pool, file))),
+            memory: MemoryPages::new(0),
+            work: Arc::new(Mutex::new(Some(work))),
+            rankings: built_in(),
+        }
     }
 
     /// \[EXTENSION\] The projection of the keys of the index `index`
@@ -133,6 +150,26 @@ impl FullTextMethod {
     pub fn projection(index: &IndexDesc) -> Result<Arc<dyn KeyProjection>> {
         let projection: Arc<dyn KeyProjection> = document::Projection::shared(options_of(index)?.reading);
         Ok(projection)
+    }
+
+    /// \[EXTENSION\] The method, its indexes naming their rankings among
+    /// `rankings` (FULLTEXT.RANKING), not the built-in alone.
+    #[must_use]
+    pub fn with_rankings(self, rankings: Rankings) -> FullTextMethod {
+        FullTextMethod { rankings, ..self }
+    }
+
+    /// The index of `tree` with `options`, its ranking found by name.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if no ranking has the name its options give.
+    fn index_of(&self, tree: BLinkTree, options: Options) -> Result<FullTextIndex> {
+        let ranking = ranking_named(&self.rankings, &options.ranking)?;
+        let mut index = FullTextIndex::with(tree, (options.reading, options.weights), self.spill());
+        index.ranking = Mutex::new(ranking);
+        index.rankings = Arc::clone(&self.rankings);
+        Ok(index)
     }
 
     /// Where its indexes spill.
@@ -149,7 +186,7 @@ impl FullTextMethod {
 
     /// A method keeping its indexes in `memory`, which others may share.
     pub(crate) fn sharing(memory: Arc<MemoryPages>) -> FullTextMethod {
-        FullTextMethod { files: Mutex::new(None), memory, work: Work::default() }
+        FullTextMethod { files: Mutex::new(None), memory, work: Work::default(), rankings: built_in() }
     }
 
     /// Its file, made in memory if it has none yet.
@@ -169,19 +206,26 @@ fn unsupported(detail: &str) -> SqlError {
     SqlError::new(Code::Unsupported, format!("[EXTENSION] the fulltext index method {detail}"))
 }
 
+/// Whether `query` asks for its call of the indexed column, as its first
+/// argument, greatest first.
+fn self_answers(query: &NearestQuery) -> bool {
+    query.argument == 0 && query.column == 0 && query.descending
+}
+
 /// Whether `columns` is one character string column, as the method takes.
 fn one_text_column(columns: &[DataType]) -> bool {
     let [column] = columns else { return false };
-    column.is_character()
+    let DataType::Extension(extension) = column else { return column.is_character() };
+    extension.kind.name() == FULLTEXT
 }
 
 /// Refuses `columns` unless the method takes them.
 ///
 /// # Errors
 ///
-/// SQLCODE -900 if they are not one character string column.
+/// SQLCODE -900 if they are not one character string or FullText column.
 fn validate(columns: &[DataType]) -> Result<()> {
-    if one_text_column(columns) { Ok(()) } else { Err(unsupported("indexes one character string column")) }
+    if one_text_column(columns) { Ok(()) } else { Err(unsupported("indexes one character string or FULLTEXT column")) }
 }
 
 impl IndexMethod for FullTextMethod {
@@ -197,9 +241,17 @@ impl IndexMethod for FullTextMethod {
     fn supports(&self, _op: CompOp) -> bool {
         false
     }
-    /// TEXT_MATCHES of the indexed column, as its first argument.
+    /// TEXT_MATCHES or CONTAINS of the indexed column, as its first
+    /// argument [ISO/IEC 13249-2:2002 (CD, SC32 N0640) §5.1.2].
     fn supports_predicate(&self, predicate: &Predicate, columns: &[DataType]) -> bool {
-        predicate.function.0.name() == TEXT_MATCHES && predicate.argument == 0 && predicate.column == 0 && one_text_column(columns)
+        let name = predicate.function.0.name();
+        let answered = name == TEXT_MATCHES || name == CONTAINS;
+        answered && predicate.argument == 0 && predicate.column == 0 && one_text_column(columns)
+    }
+    /// A score of the indexed column, as its first argument, greatest
+    /// first: RANK (`Index::nearest`).
+    fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> bool {
+        query.function.0.ranks() && self_answers(query) && one_text_column(columns)
     }
     fn index_options(&self) -> Vec<TableOption> {
         options()
@@ -222,9 +274,10 @@ impl IndexMethod for FullTextMethod {
         }
         validate(columns)?;
         let options = options_of(on.1)?;
+        ranking_named(&self.rankings, &options.ranking)?;
         let (pool, file) = self.files()?;
         let tree = BLinkTree::create(pool, file)?;
-        Ok(Box::new(FullTextIndex::with(tree, (options.reading, options.weights), self.spill())))
+        Ok(Box::new(self.index_of(tree, options)?))
     }
     fn open(&self, columns: &[DataType], locator: &[u8]) -> Result<Option<Box<dyn Index>>> {
         validate(columns)?;
@@ -238,10 +291,10 @@ impl IndexMethod for FullTextMethod {
     fn open_on(&self, columns: &[DataType], locator: &[u8], on: (&TableDesc, &IndexDesc)) -> Result<Option<Box<dyn Index>>> {
         validate(columns)?;
         let (meta, reading) = located(locator)?;
-        let options = options_of(on.1)?;
+        let options = Options { reading, ..options_of(on.1)? };
         let (pool, file) = self.files()?;
         let tree = BLinkTree::open(pool, file, meta)?;
-        Ok(Some(Box::new(FullTextIndex::with(tree, (reading, options.weights), self.spill()))))
+        Ok(Some(Box::new(self.index_of(tree, options)?)))
     }
     /// Writes back every page and syncs the file.
     fn checkpoint(&self) -> Result<()> {
@@ -272,6 +325,10 @@ pub struct FullTextIndex {
     /// stripe's lock, taken after a row's (`write.rs`).
     terms: Vec<Mutex<()>>,
     discarded: AtomicBool,
+    /// The ranking its Rank uses (FULLTEXT.RANKING), changed in place.
+    ranking: Mutex<Arc<dyn Ranking>>,
+    /// The rankings it may name.
+    rankings: Rankings,
     /// The blocks its cursors decoded, so tests see what a search skips.
     #[cfg(test)]
     blocks_read: AtomicU64,
@@ -294,6 +351,8 @@ impl FullTextIndex {
             spill,
             rows: (0..ROW_LOCKS).map(|_| Mutex::new(())).collect(),
             terms: (0..TERM_LOCKS).map(|_| Mutex::new(())).collect(),
+            ranking: Mutex::new(Arc::new(Bm25)),
+            rankings: built_in(),
             discarded: AtomicBool::new(false),
             #[cfg(test)]
             blocks_read: AtomicU64::new(0),
@@ -308,6 +367,12 @@ impl FullTextIndex {
     /// The stop words it does not post.
     pub fn stop_words(&self) -> &StopWords {
         &self.reading.stop
+    }
+
+    /// \[EXTENSION\] The ranking its Rank uses, as FULLTEXT.RANKING names
+    /// it now.
+    pub fn ranking(&self) -> Arc<dyn Ranking> {
+        Arc::clone(&lock_builtin(&self.ranking))
     }
 
     /// The weights it ranks by, as its options set them now.
@@ -353,6 +418,21 @@ impl Drop for FullTextIndex {
 }
 
 impl Index for FullTextIndex {
+    /// RANK of the indexed column and a pattern, greatest first: every
+    /// document, best first (`ranked`) by the statement's snapshot, its
+    /// rank negated, an upper bound of the call's, equal where the pattern
+    /// reads alike in each language.
+    fn nearest(self: Arc<Self>, query: &NearestQuery, budget: &Arc<MemoryBudget>) -> Result<Option<NeighbourEntries>> {
+        if query.function.0.name() != RANK || !self_answers(query) {
+            return Ok(None);
+        }
+        let Some(found) = self.ranked(&query.value, query.statistics.clone(), budget)? else { return Ok(None) };
+        Ok(Some(Box::new(found.map(|entry| entry.map(|(rank, key, row)| (-rank, key, row))))))
+    }
+    /// A snapshot of its statistics (`snapshot`).
+    fn ranking_statistics(self: Arc<Self>) -> Result<Option<Arc<dyn Statistics>>> {
+        self.snapshot().map(Some)
+    }
     fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
         let projection: Arc<dyn KeyProjection> = Arc::<document::Projection>::clone(&self.projection);
         Some(projection)
@@ -400,6 +480,9 @@ impl Index for FullTextIndex {
             let [k1, b] = &self.weights;
             k1.store(options.weights.k1.to_bits(), Ordering::Release);
             b.store(options.weights.b.to_bits(), Ordering::Release);
+            if let Some(ranking) = named(&self.rankings, &options.ranking) {
+                *lock_builtin(&self.ranking) = ranking;
+            }
         }
     }
 }

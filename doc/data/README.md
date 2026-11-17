@@ -14,7 +14,8 @@ when indexes can help. Function signatures and error details live in the
   map window, assign service areas, check route intersections and find
   nearby depots. A shared dataset makes the queries runnable.
 - [Full-text search](fulltext/README.md): search support tickets by
-  their words, whatever their case and accents, and index them.
+  their words, whatever their case and accents, index them, search them
+  by pattern and show the best ranked first.
 
 Vectors and JSON will have their own guides here when implemented.
 Their planned work is tracked in [TODO.md](../../TODO.md); this volume

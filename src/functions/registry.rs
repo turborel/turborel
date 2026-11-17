@@ -40,9 +40,13 @@ pub(crate) enum Standard {
     Avg,
 }
 
-/// The built-in functions of full text (`fulltext/matches.rs`).
-fn words() -> [Arc<dyn ScalarFunction>; 1] {
-    [Arc::new(TextMatches)]
+/// The built-in functions of full text: TEXT_MATCHES (`fulltext/matches.rs`)
+/// and the routines of SQL/MM Full-Text (`fulltext/types.rs`, RULES.md
+/// D87).
+fn words() -> Vec<Arc<dyn ScalarFunction>> {
+    let mut words: Vec<Arc<dyn ScalarFunction>> = vec![Arc::new(TextMatches)];
+    words.extend(crate::fulltext::types::functions());
+    words
 }
 
 impl Registry {

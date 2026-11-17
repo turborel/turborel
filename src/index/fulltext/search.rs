@@ -11,17 +11,19 @@ use std::ops::{Bound, Deref};
 use std::sync::Arc;
 
 use super::FullTextIndex;
-use super::block::Places;
-use super::cursor::{Cursor, Intersect};
-use super::document::{hash_in, hash_key, term_of};
+use super::cursor::{Cursor, Numbers, intersect};
+use super::document::{LANGUAGES, hash_in, hash_key, term_of};
 use super::keys::{
     COUNTS_KEY, Counts, DOCUMENT, Doc, DocumentValue, TermStatistics, Totals, document_key, document_of, hashed_range, hashed_row,
-    number_doc, number_key, overflow_key, statistic_key, tag_range,
+    number_doc, number_key, statistic_key, tag_range,
 };
-use super::postings::{Position, positions_in};
+use super::near::stream;
+use super::plan::{Plan, or};
+use super::postings::Position;
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
 use crate::error::{Code, Result, SqlError};
 use crate::fulltext::matches::search_words;
+use crate::fulltext::pattern::{CONTAINS, Pattern, contains as holds, parse};
 use crate::index::{Entries, Key, Probe, RowIds};
 use crate::storage::RowId;
 use crate::value::Value;
@@ -63,7 +65,12 @@ fn refused() -> SqlError {
 pub(super) fn search(index: &Arc<FullTextIndex>, probe: &Probe) -> Entries {
     let words = match probe {
         Probe::All => return Box::new(documents(index).map(entry)),
-        Probe::Predicate { value, .. } => value,
+        Probe::Predicate { predicate, value } => {
+            if predicate.function.0.name() == CONTAINS {
+                return contains(index, value);
+            }
+            value
+        }
         Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => {
             return Box::new(std::iter::once(Err(refused())));
         }
@@ -78,7 +85,45 @@ pub(super) fn search(index: &Arc<FullTextIndex>, probe: &Probe) -> Entries {
     }
     let cursors = terms.into_iter().map(|term| Cursor::new(index, term)).collect();
     let held = Arc::clone(index);
-    Box::new(Intersect::new(cursors).filter_map(move |docno| held.numbered(docno).transpose()).map(entry))
+    Box::new(intersect(cursors).filter_map(move |docno| held.numbered(docno).transpose()).map(entry))
+}
+
+/// The plan of CONTAINS's pattern `value` [ISO/IEC 13249-2:2002 (CD,
+/// SC32 N0640) §5.1.2]: none for a null pattern; every document for one
+/// that is not a character string or that Contains refuses, as one that
+/// does not parse or of stop words only, so the recheck of the first row
+/// gives the error, where a scan of the table would. A pattern's words
+/// are of its document's language where they name none, so its plan is
+/// the union of its plans in each language a document may be in.
+fn pattern_plan(index: &FullTextIndex, value: &Value) -> Result<Option<Plan>> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(text) = crate::fulltext::types::pattern_of(value) else { return Ok(Some(Plan::All)) };
+    let mut patterns: Vec<Pattern> = Vec::new();
+    for language in LANGUAGES {
+        let Ok(pattern) = parse(text, language) else { return Ok(Some(Plan::All)) };
+        if holds(&pattern, std::iter::empty(), language).is_err() {
+            return Ok(Some(Plan::All));
+        }
+        if !patterns.contains(&pattern) {
+            patterns.push(pattern);
+        }
+    }
+    let plans = patterns.iter().map(|pattern| index.plan(pattern)).collect::<Result<Vec<Plan>>>()?;
+    Ok(Some(or(plans)))
+}
+
+/// `search` for CONTAINS of the pattern `value`: the documents its plan
+/// finds, a superset of those it holds, as they are read.
+fn contains(index: &Arc<FullTextIndex>, value: &Value) -> Entries {
+    let plan = match pattern_plan(index, value) {
+        Ok(Some(plan)) => plan,
+        Ok(None) => return Box::new(std::iter::empty()),
+        Err(e) => return Box::new(std::iter::once(Err(e))),
+    };
+    let held = Arc::clone(index);
+    Box::new(Numbers::new(stream(index, plan)).filter_map(move |docno| held.numbered(docno).transpose()).map(entry))
 }
 
 /// `key_rows`: the rows of `key`'s document, read as they are taken.
@@ -154,17 +199,7 @@ impl FullTextIndex {
         let docno = DocumentValue::decode(&value)?.docno;
         let term = term_of(word, self.most_term);
         let Some(posting) = self.posting(term, docno)? else { return Ok(None) };
-        let places = match posting.places {
-            Places::Inline(bytes) => positions_in(&bytes)?,
-            Places::Overflow => {
-                let (lower, upper) = (overflow_key(term, docno, 0), overflow_key(term, docno, u16::MAX));
-                let mut places = Vec::new();
-                for entry in self.tree.scan(Bound::Included(&lower), Bound::Included(&upper), Direction::Forward) {
-                    places.extend(positions_in(&entry?.1)?);
-                }
-                places
-            }
-        };
+        let places = self.places(term, docno)?;
         Ok(Some((posting.frequency, places)))
     }
 
@@ -174,7 +209,17 @@ impl FullTextIndex {
     ///
     /// The tree's; SQLCODE -916 if its entry is malformed.
     pub(super) fn numbered(&self, docno: Result<u64>) -> Result<Option<Doc>> {
-        self.tree.get(&number_key(docno?))?.map(|value| number_doc(&value)).transpose()
+        Ok(self.numbered_with_length(docno?)?.map(|(doc, _)| doc))
+    }
+
+    /// The document numbered `docno` and its length, if it is still
+    /// indexed.
+    ///
+    /// # Errors
+    ///
+    /// As `numbered`.
+    pub(super) fn numbered_with_length(&self, docno: u64) -> Result<Option<(Doc, u32)>> {
+        self.tree.get(&number_key(docno))?.map(|value| number_doc(&value)).transpose()
     }
 
     /// `estimate`: every document for `Probe::All`, and for TEXT_MATCHES
@@ -183,7 +228,14 @@ impl FullTextIndex {
         let documents = |stats: Result<u64>| stats.ok().map(|n| usize::try_from(n).unwrap_or(usize::MAX));
         let words = match probe {
             Probe::All => return documents(self.totals().map(|t| t.documents)),
-            Probe::Predicate { value, .. } => value,
+            Probe::Predicate { predicate, value } => {
+                if predicate.function.0.name() == CONTAINS {
+                    let every = self.totals().ok()?.documents;
+                    let Some(plan) = pattern_plan(self, value).ok()? else { return Some(0) };
+                    return documents(self.plan_estimate(&plan, every));
+                }
+                value
+            }
             Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => return None,
         };
         let terms = self.terms_of(words).ok()?;

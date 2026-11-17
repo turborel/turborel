@@ -41,6 +41,8 @@ behind it, and each can be replaced or added to.
 - [Full-text search](doc/data/fulltext/README.md) by a text's words,
   whatever their case and accents, through an inverted index of
   block-compressed postings.
+- [SQL/MM Full-Text](doc/sql/fulltext.md), its FULLTEXT type, CONTAINS
+  patterns and thesauri, ranked by BM25 or a ranking of your own.
 - Collations, from binary order through case-insensitive to the Unicode
   Collation Algorithm and CLDR's tailorings for 48 languages, so text sorts
   and compares as its readers expect.

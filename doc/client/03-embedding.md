@@ -480,6 +480,7 @@ files, so the definitions that name one find it:
 | `register_encoding` | an encoding of files or tables' rows, `Encoding`, named by STORAGE.ENCODINGS and a table's ENCODINGS |
 | `register_hash_function` | a hash function for checksums, `HashFunction`, named by STORAGE.CHECKSUM |
 | `register_system_table` | a table of the Information Schema's kind, `SystemTable` |
+| `register_ranking` | a ranking of full-text search, `Ranking`, named by a full-text index's FULLTEXT.RANKING ([Full-text rankings](#full-text-rankings-extension)) |
 | `set_diagnostics` | where the database's events go, `Diagnostics` ([Diagnostics](../operator/08-diagnostics.md)); `tell` gives it one of the program's own, as a server's, those below DIAGNOSTICS.LEVEL dropped |
 
 A plug-in of any kind above, and a catalog's or a log's storage, the
@@ -783,6 +784,79 @@ Output:
 null argument: 0 rows
 predicate index: true
 recheck: true
+```
+
+### Full-text rankings *(extension)*
+
+Rank scores a document by BM25, or by the ranking its column's
+full-text index names in FULLTEXT.RANKING ([Full-Text
+Search](../sql/fulltext.md#ranking)). A program adds a ranking with
+`register_ranking`, an implementation of
+`turborel::fulltext::rank::Ranking`. Its name is a regular identifier in
+upper case, not one built in or registered already, or registering it
+fails with SQLCODE -910. An index may name it from then on, and Rank of
+such an index fails with -910 in a database opened without it.
+
+A pattern's rank is the sum, over the terms its words match in the
+document, of the ranking's `weight` of each. The database gives it the
+collection's statistics as the statement first read them, as a
+`Corpus`, a `TermStats` of the term and an `InDocument` of the term in
+the document. The ranking keeps this contract.
+
+- `weight` and `bound` are deterministic, bit for bit, finite, never
+  negative, and never panic.
+- `weight(c, t, d) <= bound(c, t)` for every document. The index reads
+  the best rows of a top-k by these bounds, and fails a statement with
+  SQLCODE -910 where a weight passes its bound, so a top-k is never
+  wrong.
+- Neither calls back into the database or its sessions, nor holds a
+  lock past its return.
+
+This ranking counts each occurrence of a matched term once:
+
+```rust
+use turborel::db::Database;
+use turborel::fulltext::rank::{Corpus, InDocument, Ranking, TermStats};
+
+/// Counts each occurrence of a matched term once, whatever the collection.
+struct Occurrences;
+
+impl Ranking for Occurrences {
+    fn name(&self) -> &str {
+        "OCCURRENCES"
+    }
+
+    fn weight(&self, _corpus: &Corpus, _term: &TermStats, in_doc: &InDocument) -> f64 {
+        f64::from(in_doc.frequency)
+    }
+
+    fn bound(&self, _corpus: &Corpus, term: &TermStats) -> f64 {
+        f64::from(term.most)
+    }
+}
+
+fn main() -> Result<(), turborel::error::SqlError> {
+    let db = Database::new();
+    db.register_ranking(Box::new(Occurrences))?;
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE DOCS (ID INTEGER PRIMARY KEY, BODY VARCHAR(200))")?;
+    let ann = db.session("ANN");
+    ann.run("INSERT INTO DOCS VALUES (1, 'fox fox fox'), (2, 'a fox and a dog'), (3, 'a cat')")?;
+    ann.run("COMMIT")?;
+    ann.run("CREATE INDEX DOCS_BODY ON DOCS (BODY) USING FULLTEXT WITH (FULLTEXT.RANKING = OCCURRENCES)")?;
+    let mut rows = ann.open_cursor("SELECT ID, RANK(BODY, '\"fox\"') FROM DOCS ORDER BY ID")?;
+    while let Some(row) = rows.fetch()? {
+        println!("{} {}", row[0], row[1]);
+    }
+    Ok(())
+}
+```
+
+Output:
+
+```text
+1 3E0
+2 1E0
+3 0E0
 ```
 
 ## Geometry values

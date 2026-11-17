@@ -331,6 +331,13 @@ impl Binder<'_> {
             (None, Some(TableName { auth: Some(a), ident, .. })) => (a, vec![ident.clone(), cs.column.clone()]),
             (Some(_), _) | (None, None) => return Ok(None),
         };
+        if let ([method], Some(basis)) = (rest.as_slice(), self.extension_basis(first, cs.at))
+            && !matches!(self.local(cs), Ok(Some(_)))
+        {
+            // A method of no argument of a column of a registered type (D87).
+            let subject = ValueExpression::Column(basis);
+            return self.extension_method((&subject, None), (method, cs.at), &[], scope).map(Some);
+        }
         let Some(basis) = self.lone_basis(first, cs.at) else { return Ok(None) };
         if matches!(self.local(cs), Ok(Some(_))) {
             let written = written(cs);

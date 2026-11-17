@@ -215,7 +215,7 @@ impl FullTextIndex {
                 Ok(Update::Put(DocumentValue { length, ..found }.encode()))
             })
             .and_then(|()| self.tree.update(&hashed_key(doc), |_| Ok(Update::Put(Vec::new()))))
-            .and_then(|()| self.tree.update(&number_key(docno), |_| Ok(Update::Put(number_value(doc)))));
+            .and_then(|()| self.tree.update(&number_key(docno), |_| Ok(Update::Put(number_value(doc, length)))));
         if rest.is_err() {
             // Taken back as far as storage lets it; the error given is the
             // write's.

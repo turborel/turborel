@@ -59,6 +59,10 @@ impl Subqueries for Drawn<'_> {
         self.inner.state()
     }
 
+    fn ranking_statistics(&self, index: &str) -> Result<Option<Arc<dyn crate::fulltext::rank::Statistics>>> {
+        self.inner.ranking_statistics(index)
+    }
+
     fn invoke_hosted(&self, i: &Invocation, values: Vec<Value>) -> Option<Result<Option<Value>>> {
         self.inner.invoke_hosted(i, values)
     }

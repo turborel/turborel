@@ -5,7 +5,14 @@ use crate::functions::{ScalarFunction, ScalarRef};
 use crate::geometry::{Geometry, GeometryFunction, SpatialOperation, data_type, data_type_with_srid};
 
 fn query(value: Value) -> NearestQuery {
-    NearestQuery { function: ScalarRef(Arc::new(GeometryFunction::Distance)), column: 0, argument: 0, value }
+    NearestQuery {
+        function: ScalarRef(Arc::new(GeometryFunction::Distance)),
+        column: 0,
+        argument: 0,
+        value,
+        descending: false,
+        statistics: None,
+    }
 }
 
 struct Unstable;

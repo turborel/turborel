@@ -22,7 +22,7 @@ use std::collections::VecDeque;
 use std::iter::Peekable;
 
 use super::block::{block_room, inline_most};
-use super::document::{Hasher, Reading, chars_of, term_of};
+use super::document::{Hasher, Reading, term_of, tokens_of};
 use super::keys::{DocHash, OVERFLOW_OVERHEAD, VARINT_MOST, corrupt, put_varint, take_varint};
 use crate::error::{Code, Result, SqlError};
 use crate::spill::{Area, Records, WorkAreas, sorted_records};
@@ -106,10 +106,9 @@ fn parse(record: &[u8]) -> Result<(&[u8], Position)> {
 ///
 /// As reading it; the tokenizer's; the spill area's.
 pub(super) fn read(value: &Value, reading: &Reading, most: usize, (work, area): (&WorkAreas, Area)) -> Result<Option<Read>> {
-    let Some(chars) = chars_of(value)? else { return Ok(None) };
-    let mut hasher = Hasher::new();
+    let Some((language, mut tokens)) = tokens_of(value, reading)? else { return Ok(None) };
+    let mut hasher = Hasher::new(language);
     let mut length = 0_u32;
-    let mut tokens = reading.tokens(chars);
     let mut records = std::iter::from_fn(|| {
         loop {
             let token = match tokens.next()? {

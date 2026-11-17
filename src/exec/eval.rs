@@ -12,9 +12,11 @@ use crate::spill::norm_row;
 use crate::storage::Row;
 use crate::value::types::rows_hold;
 use crate::value::{CompOp, Value, arith, cast_warned, compare, distinct, proxies, row_proxies};
+use context::Context;
 
 #[cfg(test)]
 mod calls;
+mod context;
 
 /// Where no subquery can be, as `NoSubqueries`, the warnings raised heard
 /// by the `Warnings` it holds: a session's, or the optimizer's own, to
@@ -145,6 +147,10 @@ fn called_warned(function: &ScalarRef, args: &[Expr], row: &Row, subqueries: &dy
 /// argument list. Arrays preserve left-to-right evaluation and drop earlier
 /// values if a later argument fails, just as collecting into a vector does.
 fn called(function: &ScalarRef, args: &[Expr], row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
+    if function.0.uses_context() {
+        let values = args.iter().map(|arg| eval(arg, row, subqueries)).collect::<Result<Vec<_>>>()?;
+        return function.0.call_in(&values, &Context(subqueries));
+    }
     let temp = subqueries.temp_lobs();
     match args {
         [] => function.0.call_with(&[], temp),

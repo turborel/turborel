@@ -9,6 +9,11 @@
 //! which words are stop words, by language.
 
 pub mod matches;
+pub mod pattern;
+pub mod rank;
 pub mod text;
+pub mod thesaurus;
+pub mod types;
+pub mod value;
 
 pub use text::{Language, StopWords, Token, Tokens, is_stop, normalize, stem, tokenize, tokenize_with};

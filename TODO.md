@@ -132,10 +132,6 @@ CONFORMANCE.md one by one as they are done.
 
 ### Full text
 
-- SQL/MM Full-Text (ISO/IEC 13249-2). The FULLTEXT type and its methods,
-  CONTAINS and its search patterns of words, phrases, proximity,
-  stemming and thesaurus, and ranking by score, over the inverted index.
-
 ### Spatial
 
 - Geometry predicates over the registered XY GEOMETRY representation:

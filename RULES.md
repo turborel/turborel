@@ -124,6 +124,7 @@ verification approach DO-178C expects (§8).
 | D84 | SQL/JSON items hold SQL values, and a path is parsed once, apart from SQL |
 | D85 | Geometry values start with XY representations through SqlType |
 | D86 | An inverted index keeps terms, places and counts in one B-link tree |
+| D87 | SQL/MM Full-Text is built in, its methods calls of registered functions |
 
 ### The project
 
@@ -2933,6 +2934,75 @@ FULLTEXT.K1 and FULLTEXT.B, the weights of BM25 ranking, change in
 place. A term is kept to its first 255 bytes, cut at a character, and a
 word to its first 256 characters. A longer one is found by its prefix
 and then checked against the row.
+
+#### D87. SQL/MM Full-Text is built in, its methods calls of registered functions
+
+The public types and routines of ISO/IEC 13249-2:2002 (CD, SC32 N0640)
+§12.1 are built in, as the index method `fulltext` (D86) is. FULLTEXT
+and FT_PATTERN are types beyond the standard (D53), registered as the
+database starts, and their routines are scalar functions (D74). A
+registered type is no user-defined type, so it declares no methods. A
+method of a value of one, `doc.Contains(p)` or `t.doc.Rank(p)`, is
+bound as the call of the registered function of its name whose first
+argument is the value, `CONTAINS(doc, p)` (`binder/structured.rs`).
+Such a call is bound whatever SQL.FUNCTION_CALLS is, as the standard
+writes the method that way. AS names no supertype of a registered type.
+
+Contains gives an INTEGER, 1 or 0, so a query writes `doc.Contains(p) =
+1`. A function declares the value its call is compared equal to where it
+stands for a predicate (`predicate_truth`), and a full-text index finds
+the rows of that comparison as of a BOOLEAN call (D34). Contains raises
+2FF01, 2FF02 or 2FF03 of a malformed pattern, so it is no
+`index_predicate`. It promises `rechecked_errors` instead. A call raises
+only of its pattern, alike for every row, and a call of a null document
+is null before its pattern is read. The index, given a pattern that
+raises, finds every row it holds of a value, so the WHERE check raises
+at the first row of a document exactly where a scan would (D15).
+
+Thesauri are the rows of the tables of clause 8, FT_THESAURUS's
+TERM_DICTIONARY, TERM_HIERARCHY, TERM_SYNONYM and TERM_RELATED, which a
+user makes with that clause's definitions. A scalar function reads no
+table, so a call of Contains or Rank whose pattern may name a thesaurus
+is given the relations as its last argument (`appended_query`). The
+binder appends an ARRAY of a query of them, read once in the statement's
+snapshot and with its user's privileges, if the tables are there. A
+constant pattern that names no thesaurus is given nothing. The index
+reads only the column and the pattern (`probe_arguments`), and finds
+every row it holds for a thesaurus expansion, which only the WHERE check
+expands. A statement's thesauri hold at most 65,535 relations, the
+greatest cardinality of an array.
+
+`NEW FullText(...)` is bound as the call of the registered function of
+the type's name, FULLTEXT. LANGUAGE is a reserved word, so its method is
+written `doc."LANGUAGE"`.
+
+A rank is a plug-in's choice, not the standard's [§5.1.3]. A `Ranking`
+weighs a term in a document from its index's statistics and bounds that
+weight for every document. BM25 is built in, and `Database::
+register_ranking` adds others, which an index names by its option
+FULLTEXT.RANKING, checked at CREATE and ALTER INDEX. The binder appends
+to a call of Rank or Contains the name of the full-text index of its
+document's column (`ranked_by_index`). A function that reads the
+statement's context (`uses_context`) is called with it (`call_in`), and
+the statement reads each index's statistics once, so every call and the
+index's own bounds see one snapshot. A rank is therefore NOT
+DETERMINISTIC, yet fixed within a statement. Of no index, Rank is BM25
+with every inverse document frequency 1. A character string document is
+read in the index's language, as the index reads it.
+
+A function that scores (`ranks`) is ordered greatest first through the
+nearest-neighbour path (D85), its bounds negated so the stream still
+ascends. `ORDER BY RANK(doc, p) DESC FETCH FIRST n ROWS ONLY` reads the
+index when a WHERE lookup of the same column excludes null documents,
+which DESC sorts first. The executor recomputes each candidate's rank,
+and a weight above its ranking's bound is SQLCODE -910, so a lying
+plug-in is refused, never trusted. A pattern given as a string is a
+constant cast to FT_PATTERN; a cast of a constant that succeeds raises
+for no row, so a lookup or a nearest read takes its value (`settled`).
+
+FT_INFORMATION_SCHEMA's views FT_FEATURES and FT_SCHEMATA [§9] are system
+tables (D37) of the views' columns, as clause 10's base tables are a
+model only [§10.1].
 
 ## 2. Project layout
 

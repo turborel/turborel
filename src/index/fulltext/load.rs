@@ -227,7 +227,7 @@ impl Numbered<'_> {
         let mut document = document_key(doc);
         document.extend_from_slice(&DocumentValue { count, docno, length }.encode());
         let mut number = number_key(docno);
-        number.extend_from_slice(&number_value(doc));
+        number.extend_from_slice(&number_value(doc, length));
         Ok(vec![Ok(document), Ok(hashed_key(doc)), Ok(number)])
     }
 }

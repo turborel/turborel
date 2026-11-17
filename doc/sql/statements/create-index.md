@@ -83,12 +83,15 @@ joins and distance filters are not indexed yet. See the
 [spatial guide](../../data/spatial/03-indexing.md) and
 [distance queries](../../data/spatial/05-distance.md) for runnable examples.
 
-A `fulltext` index takes one character string column with no collation.
-It keeps each word of the column's text and the rows holding it, and
-supplies the rows for `TEXT_MATCHES(column, value)`, where `value` is a
-constant or parameter. The executor checks each row it finds. Its
-options are FULLTEXT.LANGUAGE, FULLTEXT.STOP_WORDS, FULLTEXT.K1 and
-FULLTEXT.B. See [Full-Text Search](../fulltext.md) for its rules and the
+A `fulltext` index takes one FULLTEXT column, or one character string
+column with no collation. It keeps each word of the column's text and
+the rows holding it, and supplies the rows for `CONTAINS(column, value)
+= 1` and `TEXT_MATCHES(column, value)`, where `value` is a constant or
+parameter, and the best ranked rows of a Contains filter ordered by
+`RANK(column, value) DESC` with FETCH FIRST. The executor checks each
+row it finds. Its options are FULLTEXT.LANGUAGE, FULLTEXT.STOP_WORDS,
+FULLTEXT.K1, FULLTEXT.B and FULLTEXT.RANKING, which names BM25 or a
+ranking the program registered. See [Full-Text Search](../fulltext.md) for its rules and the
 [full-text guide](../../data/fulltext/README.md) for runnable examples.
 
 The index is built from the rows there now, while other transactions go
@@ -137,7 +140,7 @@ The table's schema is its user's.
 | 2A000 | -104 | Its user does not own the table's schema |
 | 0A000 | -900 | `rtree` is asked to index an unsupported column count or type |
 | TB910 | -910 | An `rtree` coordinate is non-finite or a rectangle has reversed bounds |
-| 0A000 | -900 | `fulltext` is asked to index other than one character string column with no collation |
+| 0A000 | -900 | `fulltext` is asked to index other than one FULLTEXT column or one character string column with no collation |
 
 ## EXAMPLES
 

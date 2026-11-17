@@ -1,14 +1,20 @@
 //! Distance candidates and their pruning contract (D15, D38, D85).
 
+use std::fmt;
+use std::sync::Arc;
+
 use super::Key;
 use crate::error::Result;
+use crate::fulltext::rank::Statistics;
 use crate::functions::ScalarRef;
 use crate::storage::RowId;
 use crate::value::Value;
 
-/// A two-argument distance call with one indexed column and one value.
-/// Support follows the function's declared semantics, never its SQL name.
-#[derive(Debug, Clone)]
+/// A two-argument distance call with one indexed column and one value, or
+/// a score's (`ScalarFunction::ranks`, RULES.md D87), the column and its
+/// value first and its other arguments constants. Support follows the
+/// function's declared semantics, never its SQL name.
+#[derive(Clone)]
 pub struct NearestQuery {
     /// The function evaluated on each fetched visible row.
     pub function: ScalarRef,
@@ -18,9 +24,32 @@ pub struct NearestQuery {
     pub argument: usize,
     /// The other argument, including a later prepared parameter's value.
     pub value: Value,
+    /// Whether the greatest call comes first, of a score: the stream's
+    /// bounds are then the negated upper bounds of the calls, so they are
+    /// lower bounds of the negated call, and the contract below holds of
+    /// it.
+    pub descending: bool,
+    /// The statistics a score reads, the snapshot its statement's calls
+    /// read too (`CallContext::ranking_statistics`), so the bounds and the
+    /// calls agree.
+    pub statistics: Option<Arc<dyn Statistics>>,
 }
 
-/// Candidates `(lower bound, key, row)` in nondecreasing bound order.
+impl fmt::Debug for NearestQuery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NearestQuery")
+            .field("function", &self.function)
+            .field("column", &self.column)
+            .field("argument", &self.argument)
+            .field("value", &self.value)
+            .field("descending", &self.descending)
+            .field("statistics", &self.statistics.is_some())
+            .finish()
+    }
+}
+
+/// Candidates `(lower bound, key, row)` in nondecreasing bound order, of
+/// the call, or of the negated call of a `descending` query.
 /// Bounds are finite, nonnegative and no greater than the function's
 /// computed non-NULL distance for that key. Every stable key with a
 /// non-NULL distance appears once; extra NULL-distance candidates are

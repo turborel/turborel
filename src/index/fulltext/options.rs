@@ -10,12 +10,13 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use super::document::Reading;
+use super::document::{LANGUAGES, Reading};
 use crate::bytes::{Put, Reader};
 use crate::catalog::IndexDesc;
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::fulltext::Language;
+use crate::fulltext::rank::{BM25, Ranking, Rankings, named};
 use crate::fulltext::text::StopWords;
 use crate::settings::Kind;
 use crate::storage::{Rebuild, TableOption, option_value};
@@ -27,6 +28,9 @@ pub const K1_OPTION: &str = "FULLTEXT.K1";
 pub const B_OPTION: &str = "FULLTEXT.B";
 /// The option of the language an index reads its documents in.
 pub const LANGUAGE_OPTION: &str = "FULLTEXT.LANGUAGE";
+/// The option of the ranking an index's Rank uses, by its name
+/// (`crate::fulltext::rank`).
+pub const RANKING_OPTION: &str = "FULLTEXT.RANKING";
 /// The option of an index's stop words: `DEFAULT_STOP_WORDS`,
 /// `NO_STOP_WORDS`, or words by commas.
 pub const STOP_WORDS_OPTION: &str = "FULLTEXT.STOP_WORDS";
@@ -72,6 +76,8 @@ pub(super) struct Options {
     pub reading: Reading,
     /// The weights it ranks by.
     pub weights: Weights,
+    /// The name of its ranking, as set.
+    pub ranking: String,
 }
 
 /// The number option `name` of `declared` `set` gives.
@@ -114,11 +120,25 @@ pub(super) fn options_of(desc: &IndexDesc) -> Result<Options> {
         Some(Value::Char(text)) => stop_words_of(text),
         Some(_) | None => StopWords::Language,
     };
-    Ok(Options { reading: Reading { language, stop }, weights })
+    let ranking = match option_value(&declared, &desc.options, RANKING_OPTION) {
+        Some(Value::Char(name)) => name.to_ascii_uppercase(),
+        Some(_) | None => BM25.to_owned(),
+    };
+    Ok(Options { reading: Reading { language, stop }, weights, ranking })
 }
 
-/// The languages the tokenizer knows, for the error naming them.
-const LANGUAGES: [Language; 2] = [Language::English, Language::None];
+/// The ranking of `rankings` named `name`: refused as any option's bad
+/// value is, naming the rankings known.
+///
+/// # Errors
+///
+/// SQLCODE -103 if there is none of that name.
+pub(super) fn ranking_named(rankings: &Rankings, name: &str) -> Result<Arc<dyn Ranking>> {
+    named(rankings, name).ok_or_else(|| {
+        let known: Vec<String> = rankings().iter().map(|ranking| ranking.name().to_owned()).collect();
+        SqlError::new(Code::SyntaxRule, format!("[EXTENSION] FULLTEXT.RANKING is one of {}, not {name}", known.join(", ")))
+    })
+}
 
 /// The language FULLTEXT.LANGUAGE names: refused as any option's bad
 /// value is, naming the languages known; SQLSTATE 2FF02 stays for a
@@ -143,6 +163,11 @@ pub(super) fn options() -> Vec<TableOption> {
             (B_OPTION, Kind::Number { min: 0.0, max: 1.0 }, Value::Approx(DEFAULT_B)),
             Rebuild::No,
             "BM25's b: how much a document's weight is normalized by its length, from 0 to 1.",
+        ),
+        TableOption::new(
+            (RANKING_OPTION, Kind::Identifier, Value::Char(BM25.to_owned())),
+            Rebuild::No,
+            "The ranking Rank uses, by its name: BM25, built in, or one registered.",
         ),
         TableOption::new(
             (LANGUAGE_OPTION, Kind::Identifier, Value::Char(Language::English.name().to_owned())),

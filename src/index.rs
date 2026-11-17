@@ -1,13 +1,10 @@
 //! \[EXTENSION\] Indexes do not exist in X3.135-1986 (it has no CREATE INDEX).
-//! \[DESIGN\] Index access methods. An `IndexMethod` declares its capabilities: which
-//! comparisons and function calls it can use to find rows, and
-//! whether it returns rows in key order. The physical planner asks each index
-//! for an estimate and picks the cheapest supported path.
-//!
-//! Built in: "btree" (`index/blink.rs`), a B-link tree in pages, ordered,
-//! for equality and ranges; "hash" (`index/hash.rs`), a linear hash table
-//! in pages, for equality; "rtree" (`index/rtree.rs`), an R-link tree with
-//! R* partitioning, for independent point or rectangle coordinate bounds.
+//! \[DESIGN\] Index access methods. An `IndexMethod` declares which comparisons
+//! and calls it finds rows by, and whether in key order; the planner asks each
+//! for an estimate and picks the cheapest supported path. Built in are
+//! "btree", a B-link tree for equality and ranges; "hash", a linear hash
+//! table for equality; "rtree", an R-link tree for coordinate bounds; and
+//! "fulltext", an inverted index of words (RULES.md D86).
 
 mod blink;
 pub mod fulltext;
@@ -32,8 +29,7 @@ use crate::error::Result;
 use crate::functions::ScalarRef;
 use crate::memory::Host;
 use crate::spill::{Area, WorkAreas};
-use crate::storage::RowId;
-use crate::storage::TableOption;
+use crate::storage::{RowId, TableOption};
 use crate::value::{CompOp, DataType, Value, compare};
 
 // ---------------------------------------------------------------------------
@@ -440,6 +436,15 @@ pub trait Index: Send + Sync {
     ///
     /// Storage errors, or SQLCODE -918 if its frontier cannot be reserved.
     fn nearest(self: Arc<Self>, _query: &NearestQuery, _budget: &Arc<crate::memory::MemoryBudget>) -> Result<Option<NeighbourEntries>> {
+        Ok(None)
+    }
+    /// \[EXTENSION\] A snapshot, taken now, of the statistics a rank of its
+    /// column reads (RULES.md D87); none by default. It may retain the index.
+    ///
+    /// # Errors
+    ///
+    /// As reading what it fixes.
+    fn ranking_statistics(self: Arc<Self>) -> Result<Option<Arc<dyn crate::fulltext::rank::Statistics>>> {
         Ok(None)
     }
     /// A fixed projection of original keys, or none for exact keys.

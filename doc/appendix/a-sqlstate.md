@@ -120,6 +120,9 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2B000 | Dependent privilege descriptors still exist |
 | 2E000 | Invalid connection name |
 | 2F005 | SQL routine exception: function executed no return statement, of a function whose body is no RETURN |
+| 2FF01 | SQL/MM Full-Text exception: invalid search expression, a pattern not of the [pattern language](../sql/fulltext-patterns.md) |
+| 2FF02 | SQL/MM Full-Text exception: invalid language specification, a language null, empty or unknown |
+| 2FF03 | SQL/MM Full-Text exception: effectively empty search expression, every word of the pattern a stop word |
 | 2H000 | Invalid collation name |
 | 33000 | Invalid SQL descriptor name |
 | 34000 | Invalid cursor name: of a cursor allocated, or a positioned statement prepared |

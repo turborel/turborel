@@ -138,6 +138,27 @@ pub(super) fn docnos(first: u64, value: &[u8]) -> Result<Vec<u64>> {
     Ok(out)
 }
 
+/// The document numbers of the block keyed `first` of value `value`, and
+/// the term's frequency in each.
+///
+/// # Errors
+///
+/// SQLCODE -916 if it is malformed.
+pub(super) fn frequencies(first: u64, value: &[u8]) -> Result<(Vec<u64>, Vec<u32>)> {
+    let numbers = docnos(first, value)?;
+    let (_, _, mut ids, _) = header(value)?;
+    for _ in &numbers {
+        ids = take_varint(ids)?.1;
+    }
+    let mut out = Vec::with_capacity(numbers.len());
+    for _ in &numbers {
+        let (flagged, rest) = take_varint(ids)?;
+        ids = rest;
+        out.push(u32::try_from(flagged >> 1_u32).map_err(|_| corrupt())?);
+    }
+    Ok((numbers, out))
+}
+
 /// The postings of the block keyed `first` of value `value`.
 ///
 /// # Errors

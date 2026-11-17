@@ -100,6 +100,9 @@ pub struct State {
     pub(crate) functions: Registry,
     /// The data types beyond the standard registered (RULES.md D53).
     pub(crate) types: TypeRegistry,
+    /// \[EXTENSION\] The rankings of full-text search (RULES.md D87),
+    /// shared by every state.
+    pub(crate) rankings: super::rankings::SharedRankings,
     /// The collations there are, by name (RULES.md D60).
     pub(crate) collations: BTreeMap<String, Arc<dyn Collation>>,
     /// The clock the datetime value functions read (`clock.rs`).
@@ -175,7 +178,8 @@ impl State {
             locks: MurmurMap::default(),
             indexes: HashMap::new(),
             functions: Registry::with_set_functions(),
-            types: TypeRegistry::default(),
+            types: TypeRegistry::builtin(),
+            rankings: super::rankings::SharedRankings::default(),
             clock: Arc::new(crate::clock::SystemClock),
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
@@ -226,7 +230,7 @@ impl State {
         st.engines.insert(ROW_STORE.to_owned(), Arc::new(engine));
         let hash = HashMethod::sharing(Arc::clone(&st.pages));
         let spatial = RTreeMethod::sharing(Arc::clone(&st.pages));
-        let words = FullTextMethod::sharing(Arc::clone(&st.pages));
+        let words = FullTextMethod::sharing(Arc::clone(&st.pages)).with_rankings(st.rankings.closure());
         let methods: Vec<Arc<dyn IndexMethod>> = vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial), Arc::new(words)];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);

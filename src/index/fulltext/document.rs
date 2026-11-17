@@ -3,8 +3,12 @@
 //! read as they are taken; the terms its words are kept under; and its
 //! hash, the projection of the key an entry is counted under (D85).
 //!
-//! The hash is of the document's tokens, each word with its places and
-//! whether it is a stop word, not of its characters: two documents whose
+//! A FullText value's document is read in its own language, a character
+//! string's in the index's (`crate::fulltext::value::document`).
+//!
+//! The hash is of the document's language and its tokens, each word with
+//! its places and whether it is a stop word, not of its characters, so
+//! one text in two languages hashes apart: two documents whose
 //! tokens are alike have the same postings, so versions of a row that
 //! differ only in what the tokenizer drops, as trailing spaces, or case
 //! once words are normalized, are one document and project alike, as
@@ -23,6 +27,9 @@ use crate::hash::murmur::murmur3_x64_128;
 use crate::index::{Key, KeyProjection};
 use crate::value::lob::{LobChars, LobKind};
 use crate::value::{Binary, Value};
+
+/// The languages the tokenizer knows.
+pub(crate) const LANGUAGES: [Language; 2] = [Language::English, Language::None];
 
 /// \[DESIGN\] The seed of the document hash: fixed, so the hash is the
 /// same in every run. Its bytes spell "FTX1".
@@ -113,10 +120,13 @@ pub(super) struct Hasher {
 }
 
 impl Hasher {
-    /// A hash of no tokens yet.
-    pub fn new() -> Hasher {
+    /// A hash of a document in `language`, of no tokens yet.
+    pub fn new(language: Language) -> Hasher {
         let mut buffer = Vec::with_capacity(HASH_BLOCK.saturating_add(HASH_BYTES));
         buffer.extend_from_slice(&[0; HASH_BYTES]);
+        let name = language.name().as_bytes();
+        buffer.push(u8::try_from(name.len()).unwrap_or(u8::MAX));
+        buffer.extend_from_slice(name);
         Hasher { buffer }
     }
 
@@ -152,6 +162,19 @@ fn digest(bytes: &[u8]) -> DocHash {
     out
 }
 
+/// The tokens of the document `value` read as `reading` says, and the
+/// language they are read in: a FullText value's own, else the index's;
+/// none if it is null.
+///
+/// # Errors
+///
+/// As `value::document`.
+pub(super) fn tokens_of<'v>(value: &'v Value, reading: &Reading) -> Result<Option<(Language, Tokens<DocChars<'v>>)>> {
+    let Some(document) = crate::fulltext::value::document(value)? else { return Ok(None) };
+    let language = document.language.unwrap_or(reading.language);
+    Ok(Some((language, tokenize_with(document.chars, language, &reading.stop))))
+}
+
 /// The hash of the document `value` read as `reading` says, or none if
 /// it is null.
 ///
@@ -159,9 +182,9 @@ fn digest(bytes: &[u8]) -> DocHash {
 ///
 /// As `chars_of`; the tokenizer's.
 pub(super) fn hash_of(value: &Value, reading: &Reading) -> Result<Option<DocHash>> {
-    let Some(chars) = chars_of(value)? else { return Ok(None) };
-    let mut hasher = Hasher::new();
-    for token in reading.tokens(chars) {
+    let Some((language, tokens)) = tokens_of(value, reading)? else { return Ok(None) };
+    let mut hasher = Hasher::new(language);
+    for token in tokens {
         hasher.add(&token?);
     }
     Ok(Some(hasher.finish()))
@@ -199,14 +222,15 @@ pub(super) struct Reading {
 }
 
 impl Reading {
-    /// The tokens of `chars`, read so.
-    pub fn tokens<I: Iterator<Item = Result<char>>>(&self, chars: I) -> Tokens<I> {
-        tokenize_with(chars, self.language, &self.stop)
-    }
-
     /// Whether the normalized word `word` is a stop word, as read so.
     pub fn is_stop(&self, word: &str) -> bool {
         self.stop.contains(self.language, word)
+    }
+
+    /// Whether the normalized word `word` may go unposted: a stop word of
+    /// a document in some language, as a FullText value names its own.
+    pub fn may_stop(&self, word: &str) -> bool {
+        LANGUAGES.iter().any(|language| self.stop.contains(*language, word))
     }
 }
 

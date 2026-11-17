@@ -7,7 +7,7 @@ use std::thread;
 
 use super::*;
 use crate::index::fulltext::block::{self, Builder, MOST_BLOCK_DOCUMENTS, Places, Posting, fits};
-use crate::index::fulltext::cursor::{Cursor, Intersect};
+use crate::index::fulltext::cursor::{Cursor, Docs, intersect};
 use crate::index::searched;
 
 /// The blocks of `term` in `index`: each one's first number and postings.
@@ -154,7 +154,7 @@ fn cursors_advance_across_blocks() {
     assert_eq!(cursor.advance_to(1_999).unwrap(), None);
     let mut far = Cursor::new(&index, b"third".to_vec());
     assert_eq!(far.advance_to(1_500).unwrap(), Some(1_500));
-    let both = Intersect::new(vec![Cursor::new(&index, b"third".to_vec()), Cursor::new(&index, b"fifth".to_vec())]);
+    let both = intersect(vec![Cursor::new(&index, b"third".to_vec()), Cursor::new(&index, b"fifth".to_vec())]);
     let found: Vec<u64> = both.map(Result::unwrap).collect();
     assert_eq!(found, (0..2_000).step_by(15).collect::<Vec<u64>>());
 }
@@ -171,7 +171,7 @@ fn a_rare_word_skips_the_common_ones_blocks() {
     let common = blocks(&index, b"common").len();
     assert!(common > 150, "{common} blocks");
     index.blocks_read.store(0, Ordering::Relaxed);
-    let both = Intersect::new(vec![Cursor::new(&index, b"common".to_vec()), Cursor::new(&index, b"rare".to_vec())]);
+    let both = intersect(vec![Cursor::new(&index, b"common".to_vec()), Cursor::new(&index, b"rare".to_vec())]);
     let found: Vec<u64> = both.map(Result::unwrap).collect();
     assert_eq!(found, (7..20_000).step_by(2_000).collect::<Vec<u64>>());
     let read = index.blocks_read.load(Ordering::Relaxed);

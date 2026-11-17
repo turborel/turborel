@@ -156,7 +156,7 @@ fn options_set_the_weights_and_language() {
     let method = FullTextMethod::in_memory();
     let declared = method.index_options();
     let names: Vec<&str> = declared.iter().map(|o| o.name.as_str()).collect();
-    assert_eq!(names, [K1_OPTION, B_OPTION, LANGUAGE_OPTION, STOP_WORDS_OPTION]);
+    assert_eq!(names, [K1_OPTION, B_OPTION, RANKING_OPTION, LANGUAGE_OPTION, STOP_WORDS_OPTION]);
     let column = [DataType::varying(100)];
     let (table, desc) = described(Vec::new());
     let made: Arc<dyn Index> = Arc::from(method.create_on(&column, (&table, &desc)).unwrap());

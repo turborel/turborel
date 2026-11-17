@@ -7,7 +7,8 @@
 //! * `D` row, document hash: the versions of the row holding the document,
 //!   its number, and its length in words that are not stop words.
 //! * `H` document hash, row: nothing; it finds the rows of a document.
-//! * `N` document number: the row and document hash it numbers.
+//! * `N` document number: the row and document hash it numbers, and the
+//!   document's length, so ranking reads one entry.
 //! * `P` term, 0, document number: a block of the term's postings in up to
 //!   `MOST_BLOCK_DOCUMENTS` documents from that number on (`block.rs`).
 //! * `Q` term, 0, document number, chunk: places of the term in one
@@ -138,9 +139,10 @@ pub(super) fn number_key(docno: u64) -> Vec<u8> {
 }
 
 /// The value of a document number's entry: the document's row and hash.
-pub(super) fn number_value(doc: Doc) -> Vec<u8> {
+pub(super) fn number_value(doc: Doc, length: u32) -> Vec<u8> {
     let mut out = doc.row.to_be_bytes().to_vec();
     out.extend_from_slice(&doc.hash);
+    put_varint(&mut out, u64::from(length));
     out
 }
 
@@ -149,12 +151,16 @@ pub(super) fn number_value(doc: Doc) -> Vec<u8> {
 /// # Errors
 ///
 /// SQLCODE -916 if `value` is not one.
-pub(super) fn number_doc(value: &[u8]) -> Result<Doc> {
-    let mut reader = Reader::new(value, "full-text document number");
-    let row = RowId::from_be_bytes(reader.take(ROW_BYTES)?.try_into().map_err(|_| corrupt())?);
-    let hash = DocHash::try_from(reader.take(HASH_BYTES)?).map_err(|_| corrupt())?;
-    reader.finish()?;
-    Ok(Doc { row, hash })
+pub(super) fn number_doc(value: &[u8]) -> Result<(Doc, u32)> {
+    let (row, rest) = value.split_at_checked(ROW_BYTES).ok_or_else(corrupt)?;
+    let (hash, rest) = rest.split_at_checked(HASH_BYTES).ok_or_else(corrupt)?;
+    let (length, rest) = take_varint(rest)?;
+    if !rest.is_empty() {
+        return Err(corrupt());
+    }
+    let row = RowId::from_be_bytes(row.try_into().map_err(|_| corrupt())?);
+    let hash = DocHash::try_from(hash).map_err(|_| corrupt())?;
+    Ok((Doc { row, hash }, u32::try_from(length).map_err(|_| corrupt())?))
 }
 
 /// The key of `doc`'s document entry.

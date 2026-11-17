@@ -4,10 +4,12 @@
 
 use super::Candidate;
 use crate::catalog::{ColumnDesc, IndexDesc};
+use crate::functions::ScalarRef;
 use crate::index::{IndexMethod, Predicate, Probe};
 use crate::logical::{Cond, Expr, Slot, filled_expr};
 use crate::physical::{Place, ProbeSlot};
-use crate::value::{DataType, Value};
+use crate::value::{CompOp, DataType, Value, compare};
+use std::cmp::Ordering;
 
 /// Whether this is a function lookup, requiring the full WHERE check.
 pub(super) fn named(probes: &[Probe]) -> bool {
@@ -25,8 +27,9 @@ pub(super) fn candidates(conds: &[Cond], ix: &IndexDesc, values: Option<&[Value]
         .iter()
         .enumerate()
         .filter_map(|(at, c)| {
-            let Cond::Value(Expr::Call(function, args)) = c else { return None };
-            if c.can_raise() {
+            let (function, args) = predicate_call(c)?;
+            let args = probed(function, args)?;
+            if raises(function, args) {
                 return None;
             }
             let (column, argument, other) = operands(args)?;
@@ -39,6 +42,49 @@ pub(super) fn candidates(conds: &[Cond], ix: &IndexDesc, values: Option<&[Value]
             Some(Candidate { slots, ..Candidate::one(probe, (vec![at], 0, all, true)) })
         })
         .collect()
+}
+
+/// The call a condition is a lookup of: a call of a BOOLEAN result, or one
+/// compared equal to the value its function declares it is where it stands
+/// for a predicate (`ScalarFunction::predicate_truth`, RULES.md D87), as
+/// `CONTAINS(doc, p) = 1`, either way round.
+pub(crate) fn predicate_call(c: &Cond) -> Option<(&ScalarRef, &[Expr])> {
+    if let Cond::Value(Expr::Call(function, args)) = c {
+        return Some((function, args));
+    }
+    let Cond::Compare(left, CompOp::Eq, right) = c else { return None };
+    let ((Expr::Call(function, args), Expr::Const(value)) | (Expr::Const(value), Expr::Call(function, args))) = (left, right) else {
+        return None;
+    };
+    let truth = function.0.predicate_truth()?;
+    (compare(value, &truth) == Some(Ordering::Equal)).then_some((function, args.as_slice()))
+}
+
+/// The arguments of `args` an index reads (`ScalarFunction::probe_arguments`).
+fn probed<'a>(function: &ScalarRef, args: &'a [Expr]) -> Option<&'a [Expr]> {
+    function.0.probe_arguments().map_or(Some(args), |n| args.get(..n))
+}
+
+/// Whether a call of `function` of `args` may raise in a way an index lookup
+/// would change (RULES.md D15): of an argument, or of a function that is
+/// neither an index predicate nor one whose errors the WHERE check raises
+/// as a scan would (D34, D87). Its constant compared with is never raising.
+fn raises(function: &ScalarRef, args: &[Expr]) -> bool {
+    let f = &function.0;
+    let promised = f.index_predicate() || f.rechecked_errors();
+    !promised || !f.deterministic() || args.iter().any(Expr::can_raise)
+}
+
+/// Whether `c` is a lookup the WHERE check rechecks (D87): a call of a
+/// function whose errors are of its arguments, alike for every row, of
+/// arguments none of which raises. An index given an argument that raises
+/// finds every row it holds of a value, and a null one raises nowhere, so
+/// the WHERE check raises where a scan would and the conjunct need not
+/// keep the table from being probed (D15).
+pub(crate) fn rechecked_lookup(c: &Cond) -> bool {
+    let Some((function, args)) = predicate_call(c) else { return false };
+    let f = &function.0;
+    f.rechecked_errors() && f.deterministic() && args.iter().all(|a| !a.can_raise())
 }
 
 /// Returns the table column number, its position in the call and the other

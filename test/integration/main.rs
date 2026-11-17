@@ -115,6 +115,7 @@ mod file_manager;
 mod filter;
 mod following;
 mod formatted_casts;
+mod fulltext;
 mod fulltext_index;
 mod functions;
 mod functions_overloading;

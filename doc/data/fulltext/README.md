@@ -4,8 +4,9 @@
 
 A support desk keeps its tickets' text and needs the tickets that
 mention a problem, whatever their wording's case or accents. This guide
-searches them with TEXT_MATCHES *(extension)* and then indexes them so a
-search reads only the tickets it finds. The
+searches them with TEXT_MATCHES *(extension)*, indexes them so a search
+reads only the tickets it finds, and then searches them by pattern and
+ranks them with CONTAINS and RANK of SQL/MM Full-Text. The
 [reference](../../sql/fulltext.md) gives every rule.
 
 ## The tickets
@@ -118,8 +119,9 @@ OK
  FULLTEXT.B                                                   | 7.5E-1                                                       | DEFAULT
  FULLTEXT.K1                                                  | 1.2E0                                                        | DEFAULT
  FULLTEXT.LANGUAGE                                            | ENGLISH                                                      | DEFAULT
+ FULLTEXT.RANKING                                             | BM25                                                         | DEFAULT
  FULLTEXT.STOP_WORDS                                          | DEFAULT                                                      | DEFAULT
-(4 rows)
+(5 rows)
 OK
 ```
 
@@ -139,7 +141,7 @@ OK
 turborel: SQLCODE -103 (SQLSTATE 2A000): FULLTEXT.LANGUAGE is one of ENGLISH, NONE, not KLINGON
 ```
 
-An index is of one character string column:
+An index is of one character string or FULLTEXT column:
 
 ```sql
 CREATE INDEX TICKETS_SUBJECT ON TICKETS (SUBJECT, BODY) USING FULLTEXT;
@@ -147,12 +149,63 @@ CREATE INDEX TICKETS_ID ON TICKETS (ID) USING FULLTEXT;
 ```
 
 ```
-turborel: SQLCODE -900 (SQLSTATE 0A000): the fulltext index method indexes one character string column
-turborel: SQLCODE -900 (SQLSTATE 0A000): the fulltext index method indexes one character string column
+turborel: SQLCODE -900 (SQLSTATE 0A000): the fulltext index method indexes one character string or FULLTEXT column
+turborel: SQLCODE -900 (SQLSTATE 0A000): the fulltext index method indexes one character string or FULLTEXT column
 ```
 
-## What is next
+## Searching by pattern
 
-ISO/IEC 13249-2's FULLTEXT type, its CONTAINS method with phrases,
-proximity, stems and thesauri, and ranking by score are planned in
-[TODO.md](../../../TODO.md).
+TEXT_MATCHES asks for every word. CONTAINS reads a search pattern of
+ISO/IEC 13249-2, in which words are written in double quotes and may be
+stemmed, joined by `&`, `|` and NOT, or asked to stand near each other.
+It gives 1 or 0. A stemmed word finds `invoice` and `invoices` alike,
+and NEAR finds `password` a few words from `reset`, in either order:
+
+```sql
+SELECT ID, SUBJECT FROM TICKETS WHERE CONTAINS(BODY, 'STEMMED FORM OF "invoices"') = 1 ORDER BY ID;
+SELECT ID FROM TICKETS WHERE CONTAINS(BODY, '"password reset" | "refund"') = 1 ORDER BY ID;
+SELECT ID FROM TICKETS WHERE CONTAINS(BODY, '"password" NEAR "reset" WITHIN 3 WORDS ANY ORDER') = 1 ORDER BY ID;
+```
+
+```
+           ID | SUBJECT
+--------------+--------------------------------------------------------------
+            2 | Invoice wrong
+            5 | Refund
+(2 rows)
+           ID
+--------------
+            1
+            5
+(2 rows)
+           ID
+--------------
+            1
+            4
+(2 rows)
+```
+
+RANK scores how well a ticket matches, by BM25 over the index's
+statistics, so the desk can show the best few first. With the index,
+such a query reads the tickets in rank order and stops after the first
+rows:
+
+```sql
+SELECT ID, SUBJECT, RANK(BODY, '"invoice" | "charge%"') AS SCORE FROM TICKETS
+    WHERE CONTAINS(BODY, '"invoice" | "charge%"') = 1
+    ORDER BY RANK(BODY, '"invoice" | "charge%"') DESC FETCH FIRST 2 ROWS ONLY;
+```
+
+```
+           ID | SUBJECT                                                      |                    SCORE
+--------------+--------------------------------------------------------------+--------------------------
+            5 | Refund                                                       |     2.6002217094092983E0
+            2 | Invoice wrong                                                |      2.468305162708714E0
+(2 rows)
+```
+
+The [pattern reference](../../sql/fulltext-patterns.md) has every form
+of a pattern, phrases and wild cards, sentences and paragraphs,
+sound-alike and misspelt words, and thesauri. The
+[reference](../../sql/fulltext.md) has the FULLTEXT type, which keeps a
+document's language with its text, and how ranking can be tuned.

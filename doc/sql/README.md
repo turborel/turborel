@@ -10,6 +10,7 @@ The language, element by element, and each statement on a reference page of its 
 - [Data Types](02-data-types.md)
 - [Geometry Values](spatial.md)
 - [Full-Text Search](fulltext.md)
+- [Full-Text Patterns](fulltext-patterns.md)
 - [Names and Qualification](03-names.md)
 - [Value Expressions](04-expressions.md)
 - [Predicates and Search Conditions](05-predicates.md)

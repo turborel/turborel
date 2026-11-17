@@ -429,7 +429,9 @@ impl Entries {
         } else if self.index.method == FULLTEXT_METHOD {
             // Its documents' places sorted in the database's work areas
             // (RULES.md D38, D86).
-            Arc::from(FullTextMethod::with_work(pool, file, Arc::clone(&pages.place.work)).create_on(&types, on)?)
+            let method =
+                FullTextMethod::with_work(pool, file, Arc::clone(&pages.place.work)).with_rankings(Arc::clone(&pages.place.rankings));
+            Arc::from(method.create_on(&types, on)?)
         } else {
             Arc::from(BTreeMethod::new(pool, file).create_on(&types, on)?)
         };

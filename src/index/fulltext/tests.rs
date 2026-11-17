@@ -6,7 +6,9 @@
 //! `tests/method.rs`; blocks of postings and cursors in `tests/blocks.rs`.
 
 mod blocks;
-mod method;
+mod contains;
+pub(super) mod method;
+mod ranking;
 mod search;
 mod size;
 mod stop;
