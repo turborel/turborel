@@ -4,12 +4,16 @@
 //! that differ taken, a domain's name taken by CREATE TABLE, a second
 //! period added, a period's column dropped, its constraint dropped alone,
 //! a NOT NULL dropped that leaves its column nullable, a period lost on
-//! reopening, and the Information Schema missing one.
+//! reopening, and the Information Schema missing one; of period
+//! predicates, a comparison that takes meeting periods or a period's end,
+//! the exceptions and nulls judged out of order, a type refused taken, a
+//! period reference unresolved or ambiguous, and DROP PERIOD missing what
+//! references the period.
 
 use super::{Mutation, Package};
 
 /// The mutations of periods, in the order they run.
-pub const TEMPORAL: [Mutation; 12] = [
+pub const TEMPORAL: [Mutation; 25] = [
     Mutation {
         name: "period-column-named-period",
         package: Package::Core,
@@ -131,6 +135,139 @@ pub const TEMPORAL: [Mutation; 12] = [
         original: "for p in &t.periods {",
         replacement: "for p in t.periods.iter().skip(1) {",
         integration: &["periods::the_information_schema_shows_periods"],
+        unit: &[],
+    },
+    Mutation {
+        name: "period-overlaps-meeting",
+        package: Package::Core,
+        breaks: "OVERLAPS holds of periods that only meet [§8.20 GR4b iv]",
+        file: "src/functions/periods.rs",
+        original: "PeriodOperator::Overlaps => is(s1, e2, &[Less]) && is(e1, s2, &[Greater]),",
+        replacement: "PeriodOperator::Overlaps => is(s1, e2, &[Less]) && is(e1, s2, &[Greater, Equal]),",
+        integration: &["period_predicates::each_predicate_of_a_period_reference_8_20"],
+        unit: &["functions::periods::tests::overlaps_shows_mc_dc"],
+    },
+    Mutation {
+        name: "period-immediately-apart",
+        package: Package::Core,
+        breaks: "IMMEDIATELY PRECEDES holds of periods apart [§8.20 GR4b viii]",
+        file: "src/functions/periods.rs",
+        original: "PeriodOperator::ImmediatelyPrecedes => is(e1, s2, &[Equal]),",
+        replacement: "PeriodOperator::ImmediatelyPrecedes => is(e1, s2, &[Less, Equal]),",
+        integration: &["period_predicates::each_predicate_of_a_period_reference_8_20"],
+        unit: &["functions::periods::tests::precedes_and_succeeds_meet_or_part"],
+    },
+    Mutation {
+        name: "period-contains-its-end",
+        package: Package::Core,
+        breaks: "CONTAINS of a point holds of the period's end [§8.20 GR4a v 2]",
+        file: "src/functions/periods.rs",
+        original: "is(e1, point, &[Ordering::Greater])",
+        replacement: "is(e1, point, &[Ordering::Greater, Ordering::Equal])",
+        integration: &["period_predicates::contains_a_point_in_time_8_20"],
+        unit: &["functions::periods::tests::contains_a_point_shows_mc_dc"],
+    },
+    Mutation {
+        name: "period-empty-written",
+        package: Package::Core,
+        breaks: "a written period whose start is its end raises no exception [§8.20 GR2b]",
+        file: "src/functions/periods.rs",
+        original: "is(start, end, &[Ordering::Equal, Ordering::Greater])",
+        replacement: "is(start, end, &[Ordering::Greater])",
+        integration: &["period_predicates::a_written_period_is_judged_8_20"],
+        unit: &["functions::periods::tests::a_written_period_out_of_order_fails"],
+    },
+    Mutation {
+        name: "period-null-after-order",
+        package: Package::Core,
+        breaks: "the second written period's null is judged after the first's order [§8.20 GR2]",
+        file: "src/functions/periods.rs",
+        original: "if written_null(first, w1) || written_null(second, w2) {",
+        replacement: "if written_null(first, w1) {",
+        integration: &[],
+        unit: &["functions::periods::tests::a_written_period_out_of_order_fails"],
+    },
+    Mutation {
+        name: "period-reference-null-unknown",
+        package: Package::Core,
+        breaks: "a period reference's null bound makes the predicate Unknown, not False [§8.20 GR4]",
+        file: "src/functions/periods.rs",
+        original: "written && pair.iter().any(Value::is_null)",
+        replacement: "(written || !written) && pair.iter().any(Value::is_null)",
+        integration: &["period_predicates::period_references_are_resolved_8_20"],
+        unit: &["functions::periods::tests::a_written_null_bound_is_unknown"],
+    },
+    Mutation {
+        name: "period-time-taken",
+        package: Package::Core,
+        breaks: "a period or point in time of TIME is taken [§8.20 SR1a, SR2]",
+        file: "src/binder/periods.rs",
+        original: "matches!(t, DataType::Date | DataType::Timestamp { .. })",
+        replacement: "matches!(t, DataType::Date | DataType::Timestamp { .. } | DataType::Time { .. })",
+        integration: &["period_predicates::period_predicates_are_refused_against_their_rules_8_20"],
+        unit: &[],
+    },
+    Mutation {
+        name: "period-written-types-differ",
+        package: Package::Core,
+        breaks: "a written period of two types is taken [§8.20 SR1b]",
+        file: "src/binder/periods.rs",
+        original: "        if ts != te {",
+        replacement: "        if !instant(&te) {",
+        integration: &["period_predicates::period_predicates_are_refused_against_their_rules_8_20"],
+        unit: &[],
+    },
+    Mutation {
+        name: "period-outer-unresolved",
+        package: Package::Core,
+        breaks: "a period of an outer query is not found from a subquery [§8.20 GR4a i 2]",
+        file: "src/binder/periods.rs",
+        original: "Some(outer) => outer.binder().period_named(cs),",
+        replacement: "Some(_) => Ok(None),",
+        integration: &["period_predicates::period_references_are_resolved_8_20"],
+        unit: &[],
+    },
+    Mutation {
+        name: "period-two-tables",
+        package: Package::Core,
+        breaks: "a period name of two tables is taken as the first's [§8.20]",
+        file: "src/binder/periods.rs",
+        original: "        if found.next().is_some() {",
+        replacement: "        if found.next().is_some() && cs.qualifier.is_some() {",
+        integration: &["period_predicates::period_predicates_are_refused_against_their_rules_8_20"],
+        unit: &[],
+    },
+    Mutation {
+        name: "drop-period-restrict-cascades",
+        package: Package::Core,
+        breaks: "DROP PERIOD RESTRICT drops what references the period [§11.28 SR3d]",
+        file: "src/db/alter/periods.rs",
+        original: "let cascade = behavior == DropBehavior::Cascade;",
+        replacement: "let cascade = behavior != DropBehavior::Cascade || true;",
+        integration: &["period_predicates::drop_period_restrict_is_refused_by_a_reference_11_28"],
+        unit: &[],
+    },
+    Mutation {
+        name: "drop-period-own-check-missed",
+        package: Package::Core,
+        breaks: "a CHECK of the period's own table is not found to reference it [§11.28 SR3d ii]",
+        file: "src/db/alter/depending.rs",
+        original: "let own = matches!(cause, Cause::Scope | Cause::Period) && tables.contains(&t.name);",
+        replacement: "let own = matches!(cause, Cause::Scope) && tables.contains(&t.name);",
+        integration: &[
+            "period_predicates::drop_period_restrict_is_refused_by_a_reference_11_28",
+            "period_predicates::drop_period_cascade_drops_its_references_11_28",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "drop-period-generation-missed",
+        package: Package::Core,
+        breaks: "a generation expression referencing the period does not keep it [§11.28 SR3d vii]",
+        file: "src/db/alter/periods.rs",
+        original: "if bind_generation(self, &desc, (k, g)).is_err() {",
+        replacement: "if bind_generation(self, &desc, (k, g)).is_err() && k == usize::MAX {",
+        integration: &["period_predicates::a_generation_expression_keeps_its_period_11_28"],
         unit: &[],
     },
 ];

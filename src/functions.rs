@@ -53,7 +53,9 @@ pub use multisets::{
     MultisetOf, SUBMULTISET, SetOf, SubmultisetOf,
 };
 mod octet_like;
+mod periods;
 pub use octet_like::OctetLike;
+pub use periods::PeriodTest;
 pub mod lobs;
 pub use listagg::{LISTAGG, Listagg, ListaggSpec, MAX_LISTAGG_LENGTH, Truncation};
 mod regex;

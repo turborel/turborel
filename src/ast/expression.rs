@@ -98,6 +98,9 @@ pub enum Predicate {
     /// [§8.11] `<overlaps predicate>` ::= `<row value constructor>`
     /// OVERLAPS `<row value constructor>`
     Overlaps(RowValue, RowValue),
+    /// [ISO/IEC 9075-2:2023 §8.20] `<period predicate>`: its operator, and
+    /// its `<period predicand 1>` and second operand.
+    Period(super::PeriodOperator, super::PeriodOperand, super::PeriodOperand),
     /// [§8.3] `<between predicate>` ::= `<row value constructor>` \[NOT\]
     /// BETWEEN `<row value constructor>` AND `<row value constructor>`
     Between {

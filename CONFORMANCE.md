@@ -1620,13 +1620,21 @@ columns of a table as its start, included, and its end, excluded
 | Definition | §11.3 SR1, SR2, GR4e | `PERIOD FOR name (start, end)` among a table's elements, one to a table. Its columns are two of the table's, written as DATE or one timestamp type, each NOT NULL NOT DEFERRABLE or of the primary key, neither identity nor generated, and no column bears the period's name. A temporary table has none, and a typed table's elements cannot write one. Each rule broken is SQLCODE -103. |
 | Period constraint | §11.3 SR2e v 2 B, §11.27 GR2 | `CHECK (start < end)`, named as the table and the period with `_PERIOD` after, numbered past a name its schema has (UV100). A row that breaks it is SQLSTATE 23000. |
 | ADD PERIOD | §11.27 | `ALTER TABLE t ADD PERIOD FOR name (start, end)` of a persistent base table that is not referenceable and has no period. The columns' declared types judge it, so a domain over DATE serves. The table's rows are checked by the period constraint, and the period is not added if one breaks it. |
-| DROP PERIOD | §11.28 | `ALTER TABLE t DROP PERIOD FOR name RESTRICT` or `CASCADE` drops the period and its constraint. Nothing yet names a period but its table, so the two drop the same. |
+| DROP PERIOD | §11.28 SR3d, GR2 | `ALTER TABLE t DROP PERIOD FOR name RESTRICT` or `CASCADE` drops the period and its constraint. A view, a CHECK, a domain constraint, an assertion, a routine or a trigger that references the period, one that bound before the drop and binds no more, refuses RESTRICT, SQLCODE -103 citing SR3d i to vi, and CASCADE drops it. A generation expression that references the period refuses both (SR3d vii). |
 | Its columns | §11.23 SR6, §11.26 SR10 | While the period is, its columns are not dropped, its constraint is dropped only with it, and a NOT NULL or primary key whose going makes one of its columns possibly nullable is not dropped. Each is SQLCODE -103. |
 | Its description | §4.16.1 | INFORMATION_SCHEMA.PERIODS gives the table, the period's name, its start and end columns and its constraint, of the tables the current user holds a privilege on. ISO/IEC 9075-11:2006 has no view of periods, so this one is an extension. |
 
 `PERIOD FOR SYSTEM_TIME` is SQLCODE -900 until system-versioned tables
 (T180) are. PERIOD is a key word only before FOR, so a column may be
 named PERIOD.
+
+Feature T502 (Period predicates) [§8.20]:
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Predicands | §8.20 SR1, SR2 | A `<period reference>` names a period of a table of the query, or of a query it is in, a qualifier choosing among tables. `PERIOD (start, end)` writes one of two values of one type, DATE or a timestamp type. After CONTAINS, a value naming no period is a point in time, DATE or a timestamp. TIME, two types, a period of two tables or an operand that is no period is SQLCODE -103. A `?` bound takes the other bound's type, a `?` point TIMESTAMP(6) WITH TIME ZONE. |
+| Evaluation | §8.20 GR2 to GR4 | Every bound and point is cast to TIMESTAMP(6) WITH TIME ZONE (IL055) under the session's time zone and compared. A null bound of a written period makes the result unknown, judged before any period's order. A written period whose start is not before its end raises 22020. A period reference's null bounds, of an outer join's missing row, make it false. |
+| Operators | §8.20 GR4 | OVERLAPS, EQUALS, CONTAINS of a period or a point, PRECEDES, SUCCEEDS, IMMEDIATELY PRECEDES and IMMEDIATELY SUCCEEDS. OVERLAPS of two row values stays the `<overlaps predicate>` [§8.14]. EQUALS, CONTAINS, PRECEDES, SUCCEEDS and IMMEDIATELY are no key words, so columns may bear those names. |
 
 ### Triggers
 
@@ -2079,6 +2087,7 @@ topic. The Where column names the file that implements each.
 | §9.2 GR3l, §4.6 a datetime's fraction stored in a type of fewer digits | Truncated | `value/datetime.rs` |
 | §9.50 GR4 (IA074) whether the seconds a template writes are truncated or rounded to its fractional precision | Truncated | `functions/formatted/format.rs` |
 | §9.51 GR6b iv (IV096) the year RR's digits are read in | The current year, so RR is read as YY | `functions/formatted/parse.rs` |
+| 2023 §8.20 GR3, IL055, the greatest timestamp precision a period predicate compares at | 6, microseconds, of TIMESTAMP WITH TIME ZONE | `binder/periods.rs` |
 
 ### Cursors
 
@@ -2223,6 +2232,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §21.3.23, §21.3.24 the character set SQL_TEXT | Form-of-use UTF-8, 1,112,064 characters (every Unicode scalar value), PAD SPACE | `system/definition.rs` |
 | §21.3.5 how data types are described | A number's by the name it was written with, INTEGER, SMALLINT, BIGINT, DECIMAL or NUMERIC, radix 10, or REAL, DOUBLE PRECISION or FLOAT, radix 2, of the binary precision it holds values of, 24 or 53. A type computed is NUMERIC or FLOAT. The name is no part of the type, so INTEGER and NUMERIC(10,0) are one type. A character string's octet length is 4n. | `value.rs`, `value/types/exact.rs`, `value/types/approximate.rs` |
 | §21.3.13 names of unnamed constraints | The table's name, the constraint's kind and a number, as `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |
+| 2023 §11.3 SR2e v 2 B (UV100) the name of a period constraint | The table's name, the period's and PERIOD, joined by underscores, as `T_P_PERIOD`, an underscore and a number after if its schema has the name | `db/constraints/periods.rs` |
 | ID106, ISO/IEC 9075-2:2023 §8.11 SR3, §11.7 SR5 the `<unique null treatment>` not written | NULLS DISTINCT, as every key and UNIQUE predicate was before one could be written | `ast/schema.rs` |
 | IA201, ISO/IEC 9075-2:2023 §4.25.3.2 whether two rows all null are unique with nulls not distinct | Not: under NULLS NOT DISTINCT they are the same, a key refusing the second and UNIQUE false of them | `db/integrity/keys.rs`, `exec/eval.rs` |
 | IE015, ISO/IEC 9075-2:2023 §4.26.3, §4.26.6, §4.26.12 known functional dependencies the rules leave to the implementation | A non-deferrable UNIQUE NULLS NOT DISTINCT determines its table's columns. A table value constructor of at most one row determines its columns. A column compared with a deterministic expression of no column has one value, and one compared with a deterministic expression of columns is determined by them (notes 68 and 69). | `binder/dependencies.rs`, `binder/dependencies/tables.rs`, `binder/dependencies/conditions.rs` |
@@ -2340,5 +2350,6 @@ Where the standards are unclear, turborel reads them as follows.
 | The default connection's names [§18.1 GR3n ii, §12.3 GR6c i] | A session the host program starts effectively ran CONNECT TO DEFAULT, whose text gives no name of a connection or server. CONNECTION_NAME and SERVER_NAME are each read as `DEFAULT`, the word that stands for them. |
 | ALL CONDITION of a number no condition has [2023 §23.1 GR3, GR6a iii] | GR3's exception is written of a `<condition information>`, and GR6a iii reads condition area CN as GR3 does. A number of no condition is read as GR3 reads it, SQLSTATE 35000. |
 | The items of ALL [2023 §23.1 GR6a ii 2, GR6a iii] | "CIN is the `<condition number>` of CII" is read as the `<condition information item name>` of CII, as SIN is a statement item's name. CONDITION_NUMBER is presented once for each condition, before its items and not among them, and ALL CONDITION with a number presents none, as GR6a iii names no COND. |
+| A generation expression referencing a period dropped with CASCADE [2023 §11.28 SR3d vii, GR2f] | SR3d vii forbids the reference under RESTRICT, but GR2f names nothing to drop for it under CASCADE, and dropping the period would leave the column's expression unbound. The drop is refused under CASCADE too, until the column is dropped. |
 | TRANSACTION_ACTIVE [2023 §23.1 GR2j] | "Currently active" is read as GET DIAGNOSTICS runs, which begins no transaction, so it tells whether the statement before left one active. |
 | The routine a condition is raised in [2023 §23.1 GR4l, GR4q] | The only SQL-invoked routines are the functions a distinct type's definition makes, which take a value of their parameter's type and give it back as their result's [§11.51 GR2b]. A condition raised as one is invoked is read as one of the CAST it stands for, so no condition names a routine, and ROUTINE_CATALOG, ROUTINE_SCHEMA, ROUTINE_NAME, SPECIFIC_NAME, PARAMETER_MODE and PARAMETER_NAME are zero-length strings, PARAMETER_ORDINAL_POSITION 0. |

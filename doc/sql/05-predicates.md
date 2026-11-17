@@ -337,6 +337,44 @@ VALUES CASE WHEN (DATE '2026-01-01', DATE '2026-02-01') OVERLAPS (DATE '2026-01-
 (1 row)
 ```
 
+## Period predicates
+
+A period runs from its start, included, to its end, excluded. It is
+named by a period of a table (see [CREATE TABLE](statements/create-table.md)),
+or written `PERIOD (start, end)` of two dates or two timestamps of one
+type. `p OVERLAPS q` is true if they share an instant, `p EQUALS q` if
+their bounds are the same, `p CONTAINS q` if q lies within p, and
+`p CONTAINS x` if the instant x does. `p PRECEDES q` is true if p ends
+before or as q starts, `p SUCCEEDS q` if p starts at or after q's end,
+and IMMEDIATELY PRECEDES and IMMEDIATELY SUCCEEDS if they meet exactly.
+A written period with a null bound makes the predicate unknown, and one
+whose start is not before its end is an error (SQLSTATE 22020).
+
+```sql
+VALUES CASE WHEN PERIOD (DATE '2026-01-01', DATE '2026-01-05')
+                 IMMEDIATELY PRECEDES PERIOD (DATE '2026-01-05', DATE '2026-01-09')
+            THEN 'meets' ELSE 'apart' END;
+```
+
+```
+
+-------
+ meets
+(1 row)
+```
+
+```sql
+VALUES CASE WHEN PERIOD (DATE '2026-01-01', DATE '2026-01-05') CONTAINS DATE '2026-01-05'
+            THEN 'in' ELSE 'out' END;
+```
+
+```
+
+-----
+ out
+(1 row)
+```
+
 ## MEMBER, SUBMULTISET and IS A SET
 
 `x MEMBER OF m` is TRUE if an element of the multiset m equals x, FALSE

@@ -102,8 +102,11 @@ references; CASCADE drops that foreign key too.
 **ADD PERIOD** adds a period of two columns the table has, and its
 period constraint, CHECK (start < end), checked of the rows there now; a
 row whose start is not before its end refuses it. **DROP PERIOD** drops
-the period and its constraint, RESTRICT and CASCADE alike, as nothing
-else names a period yet. See [CREATE TABLE](create-table.md).
+the period and its constraint. Under RESTRICT it is refused while a
+view, a CHECK, a domain constraint, an assertion, a routine or a trigger
+references the period in a period predicate; CASCADE drops them. A
+generated column whose expression references it refuses the drop under
+either. See [CREATE TABLE](create-table.md).
 
 A grouped query may read a column outside a set function because a key
 makes it dependent on the grouping columns. A view, a CHECK, a domain
@@ -169,7 +172,8 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
    and has no period. No column is named as the period. Its columns are
    the table's, of one type, DATE or a timestamp type, a domain's over
    one among them, each known not nullable, and neither an identity nor
-   a generated column. DROP PERIOD: the table has the period.
+   a generated column. DROP PERIOD: the table has the period, nothing references it under
+   RESTRICT, and no generation expression references it.
 7. A constraint added follows the rules of [CREATE TABLE](create-table.md).
 8. SET and USING: the engine is registered, and takes each option, of a
    value it accepts; an option of columns names the table's. A temporary table names no engine or options,
@@ -332,7 +336,7 @@ constraint that reads it alone, even with RESTRICT [§11.15 SR4]. The
 actions of an identity column and DROP EXPRESSION are ISO/IEC 9075-2:2023
 §11.20 to §11.22, Features T178, F384, F385 and F386, and the drop of a
 column a generation expression references is §11.23 SR7f and GR3. ADD
-PERIOD and DROP PERIOD are §11.27 and §11.28, Feature T181, and what a
+PERIOD and DROP PERIOD are §11.27 and §11.28, Features T181 and T502, and what a
 period keeps of its columns §11.23 SR6 and §11.26 SR10. SET,
 USING and RESEAL are extensions. SQL-86 has no ALTER TABLE.
 

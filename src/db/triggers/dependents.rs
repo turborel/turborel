@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use super::super::alter::{Cause, Dependent, depends};
 use super::super::ddl::Dropped;
 use super::super::{State, rule};
 use crate::catalog::{QualifiedName, TableDesc, TriggerDesc, TriggerEvent};
@@ -79,27 +80,29 @@ impl State {
         self.drop_triggers(&doomed)
     }
 
-    /// [ISO/IEC 9075-2:2023 §11.26 SR13f, GR5] The triggers on or naming
-    /// `table` whose action binds no more once a constraint of it is
-    /// dropped, those that depend on it, dropped if `cascade`: what was
-    /// taken away. One depends on it if its action bound in the
-    /// definitions `before` the drop and binds no more.
+    /// [ISO/IEC 9075-2:2023 §11.26 SR13f, GR5; §11.28 SR3d vi, GR2f v]
+    /// The triggers on or naming `table` whose action binds no more once
+    /// what `cause` names of it is dropped, a constraint or a period,
+    /// those that depend on it, dropped if `cascade`: what was taken away.
+    /// One depends on it if its action bound in the definitions `before`
+    /// the drop and binds no more.
     ///
     /// # Errors
     ///
     /// SQLCODE -103, not `cascade`, if one depends on it.
-    pub(in crate::db) fn drop_constraint_triggering(&mut self, before: &State, table: &QualifiedName, cascade: bool) -> Result<Dropped> {
+    pub(in crate::db) fn drop_dependent_triggers(
+        &mut self,
+        before: &State,
+        (cause, table): (Cause, &QualifiedName),
+        cascade: bool,
+    ) -> Result<Dropped> {
         let mut doomed = Vec::new();
         for t in self.catalog.triggers() {
             if (t.table != *table && !t.reads.contains(table)) || self.trigger_binds(t).is_ok() || before.trigger_binds(t).is_err() {
                 continue;
             }
             if !cascade {
-                let msg = format!(
-                    "[ISO/IEC 9075-2:2023 §11.26 SR13f] trigger {} depends on the constraint, so it is dropped only with CASCADE",
-                    t.name
-                );
-                return Err(rule(msg));
+                return Err(depends(cause, Dependent::Trigger, &format!("trigger {}", t.name)));
             }
             doomed.push(t.name.clone());
         }

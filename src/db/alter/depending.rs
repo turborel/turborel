@@ -42,11 +42,13 @@ pub(in crate::db) enum Cause {
     Constraint,
     /// The scope of a reference column [§11.18].
     Scope,
+    /// An application-time period [§11.28].
+    Period,
 }
 
 /// What depends on what was dropped.
 #[derive(Debug, Clone, Copy)]
-enum Dependent {
+pub(in crate::db) enum Dependent {
     /// A table's CHECK.
     Check,
     /// A domain's constraint.
@@ -55,21 +57,35 @@ enum Dependent {
     View,
     /// An assertion.
     Assertion,
+    /// A trigger.
+    Trigger,
+    /// An SQL-invoked routine.
+    Routine,
 }
 
 /// The refusal of a drop under RESTRICT of what `cause` names, on which
 /// `what`, a `dependent`, depends.
-fn depends(cause: Cause, dependent: Dependent, what: &str) -> crate::error::SqlError {
+pub(in crate::db) fn depends(cause: Cause, dependent: Dependent, what: &str) -> crate::error::SqlError {
     let cited = match (cause, dependent) {
         (Cause::Constraint, Dependent::Check) => "§11.26 SR13a",
         (Cause::Constraint, Dependent::View) => "§11.26 SR13c",
         (Cause::Constraint, Dependent::Domain | Dependent::Assertion) => "§11.26 SR13e",
+        (Cause::Constraint, Dependent::Trigger) => "§11.26 SR13f",
+        (Cause::Constraint, Dependent::Routine) => "§11.26 SR13d",
         (Cause::Scope, Dependent::View) => "§11.18 SR5b",
         (Cause::Scope, Dependent::Check | Dependent::Domain | Dependent::Assertion) => "§11.18 SR5c",
+        (Cause::Scope, Dependent::Trigger) => "§11.18 SR5d",
+        (Cause::Scope, Dependent::Routine) => "§11.18 SR5a",
+        (Cause::Period, Dependent::View) => "§11.28 SR3d i",
+        (Cause::Period, Dependent::Check | Dependent::Domain) => "§11.28 SR3d ii",
+        (Cause::Period, Dependent::Assertion) => "§11.28 SR3d iii",
+        (Cause::Period, Dependent::Routine) => "§11.28 SR3d iv, SR3d v",
+        (Cause::Period, Dependent::Trigger) => "§11.28 SR3d vi",
     };
     let on = match cause {
         Cause::Constraint => "depends on the constraint, so it is dropped only with CASCADE",
         Cause::Scope => "contains a dereference of the column, so its scope is dropped only with CASCADE",
+        Cause::Period => "references the period, so it is dropped only with CASCADE",
     };
     rule(format!("[ISO/IEC 9075-2:2023 {cited}] {what} {on}"))
 }
@@ -118,7 +134,9 @@ impl State {
             for c in &t.constraints {
                 let ConstraintKind::Check { text, names, reads, horizon } = &c.kind else { continue };
                 let binds = |st: &State| st.check_condition(&t.name, (text, names, horizon)).is_ok();
-                let read = reads.iter().any(|r| tables.contains(r)) || (cause == Cause::Scope && tables.contains(&t.name));
+                // A dereference, or a period reference, of the table's own.
+                let own = matches!(cause, Cause::Scope | Cause::Period) && tables.contains(&t.name);
+                let read = reads.iter().any(|r| tables.contains(r)) || own;
                 if c.domain.is_none() && read && binds(before) && !binds(self) {
                     found.push((t.name.clone(), c.name.clone()));
                 }

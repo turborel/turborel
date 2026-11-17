@@ -81,7 +81,7 @@ pub use pattern::{
     Definition, EmptyMatches, Logical, Measure, Navigation, PatternCommon, Physical, Quantified, RecognizedTable, RowPattern,
     RowPatternRecognition, RowsPerMatch, Semantics, SkipTo, Subset, WindowRecognition,
 };
-pub use periods::{PeriodDefinition, PeriodName};
+pub use periods::{PeriodDefinition, PeriodName, PeriodOperand, PeriodOperator, SYSTEM_TIME};
 pub use query::{
     Correspondence, CursorSpecification, DerivedTable, GroupBy, GroupingColumn, GroupingElement, NamedTable, QueryExpression,
     QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn, SortSpecification,

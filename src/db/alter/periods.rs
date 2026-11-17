@@ -4,8 +4,9 @@
 
 use std::sync::Arc;
 
-use super::Made;
+use super::{Cause, Made};
 use crate::ast::{DropBehavior, PeriodDefinition, PeriodName, TableName};
+use crate::binder::bind_generation;
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::db::constraints::periods::{Defining, application, constraint_name, period_check, period_of};
@@ -60,26 +61,47 @@ impl State {
     }
 
     /// [ISO/IEC 9075-2:2023 §11.28] Drops the period `name` of base table
-    /// `qn`: its descriptor \[GR2b\], then its
+    /// `qn` as `behavior` says: its descriptor \[GR2b\]; what references
+    /// it, a view, a table or domain constraint, an assertion, a routine
+    /// or a trigger that bound before and binds no more, refusing it under
+    /// RESTRICT \[SR3d\] and dropped under CASCADE \[GR2f\]; then its
     /// period constraint, as ALTER TABLE DROP CONSTRAINT CASCADE drops it
-    /// \[GR2c\]. Nothing yet names a period but its descriptor, so RESTRICT
-    /// and CASCADE drop the same \[SR3b to SR3d, GR2d to GR2f\]. What it
-    /// took away.
+    /// \[GR2c\]. What it took away.
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if the table has no such period [SR2b, SR3a].
-    pub(in crate::db) fn drop_period(&mut self, qn: &QualifiedName, name: &PeriodName) -> Result<Dropped> {
+    /// SQLCODE -103 if the table has no such period [SR2b, SR3a], or, under
+    /// RESTRICT, something references it [SR3d i to vi]; or a generation
+    /// expression does, whatever the behavior [SR3d vii] (CONFORMANCE.md,
+    /// Readings of ambiguous text).
+    pub(in crate::db) fn drop_period(&mut self, qn: &QualifiedName, name: &PeriodName, behavior: DropBehavior) -> Result<Dropped> {
         let mut desc = self.base_table(qn)?;
         let Some(at) = desc.periods.iter().position(|p| *name == PeriodName::Application(p.name.clone())) else {
             let cited = if *name == PeriodName::SystemTime { "SR2b" } else { "SR3a" };
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.28 {cited}] {qn} has no period {}", name.name())));
         };
+        let before = self.clone();
         let removed = desc.periods.remove(at);
+        // [SR3d vii] GR2f drops no generated column, so none may reference
+        // it under CASCADE either.
+        for (k, c) in desc.columns.iter().enumerate() {
+            let Some(g) = c.generation() else { continue };
+            if bind_generation(self, &desc, (k, g)).is_err() {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §11.28 SR3d vii] the generation expression of column {} of {qn} references period {}",
+                    c.name, removed.name
+                )));
+            }
+        }
         let mut catalog = self.catalog.duplicate();
         catalog.replace_table(desc);
         self.catalog = Arc::from(catalog);
+        let cascade = behavior == DropBehavior::Cascade;
+        let mut dropped = self.drop_dependents_of(&before, (Cause::Period, std::slice::from_ref(qn)), cascade)?;
+        dropped.absorb(self.drop_dependent_triggers(&before, (Cause::Period, qn), cascade)?);
+        dropped.absorb(self.drop_dependent_routines(&before, (Cause::Period, qn), cascade)?);
         let constraint = TableName { auth: Some(removed.constraint.auth.clone()), ident: removed.constraint.ident.clone(), at: 0 };
-        self.drop_constraint((qn, &removed.constraint.auth), &constraint, DropBehavior::Cascade)
+        dropped.absorb(self.drop_constraint((qn, &removed.constraint.auth), &constraint, DropBehavior::Cascade)?);
+        Ok(dropped)
     }
 }

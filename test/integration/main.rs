@@ -168,6 +168,7 @@ mod ordered_joins;
 mod pages;
 mod partial_groups;
 mod partitioned_joins;
+mod period_predicates;
 mod periods;
 mod planning;
 mod plugin_files;

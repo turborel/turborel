@@ -156,6 +156,10 @@ impl SqlState {
     pub const ERROR_IN_ASSIGNMENT: SqlState = SqlState(*b"22005");
     /// Data exception: division by zero.
     pub const DIVISION_BY_ZERO: SqlState = SqlState(*b"22012");
+    /// [ISO/IEC 9075-2:2023 §24.1, Table 38] Data exception, invalid
+    /// period value: a period whose start is not before its end [§8.20
+    /// GR2b].
+    pub const INVALID_PERIOD_VALUE: SqlState = SqlState(*b"22020");
     /// [ISO/IEC 9075-2:2023 §24.1, Table 38] Data exception, most specific
     /// type mismatch.
     pub const MOST_SPECIFIC_TYPE_MISMATCH: SqlState = SqlState(*b"2200G");

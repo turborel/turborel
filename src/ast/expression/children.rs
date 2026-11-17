@@ -3,7 +3,7 @@
 //! of its own.
 
 use super::{CaseExpression, Predicate, SearchCondition, Subquery, ValueExpression, WhenOperand};
-use crate::ast::SetArg;
+use crate::ast::{PeriodOperand, SetArg};
 
 impl ValueExpression {
     /// Calls `f` with each value expression this one is made of: operands,
@@ -179,6 +179,20 @@ impl SearchCondition {
     }
 }
 
+impl PeriodOperand {
+    /// Calls `f` with each of its value expressions: a period's start and
+    /// end, or the value.
+    pub fn for_each_value<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
+        match self {
+            PeriodOperand::Written(start, end) => {
+                f(start);
+                f(end);
+            }
+            PeriodOperand::Value(v) => f(v),
+        }
+    }
+}
+
 impl Predicate {
     /// Calls `f` with each value expression the predicate compares, not
     /// those of its subqueries.
@@ -208,6 +222,10 @@ impl Predicate {
             | Predicate::Match { value, .. } => {
                 value.iter().for_each(f);
             }
+            Predicate::Period(_, left, right) => {
+                left.for_each_value(f);
+                right.for_each_value(f);
+            }
             Predicate::Exists(_) | Predicate::Unique { .. } => {}
         }
     }
@@ -222,6 +240,7 @@ impl Predicate {
             | Predicate::Exists(subquery) => Some(subquery),
             Predicate::Comparison(..)
             | Predicate::Overlaps(..)
+            | Predicate::Period(..)
             | Predicate::Between { .. }
             | Predicate::InList { .. }
             | Predicate::Like { .. }

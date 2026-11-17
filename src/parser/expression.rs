@@ -83,6 +83,12 @@ impl Parser {
             return self.subquery_predicate();
         }
         let at = self.here();
+        // [ISO/IEC 9075-2:2023 §8.20] a <period predicate> of PERIOD ( start
+        // , end ).
+        if self.at_written_period() {
+            let left = self.written_period()?;
+            return Ok(SearchCondition::Predicate(Box::new(self.period_predicate(left)?), at));
+        }
         let value = self.row_value()?;
         self.predicate_of(value, at)
     }
@@ -176,7 +182,7 @@ impl Parser {
     /// \[DESIGN\] Whether the word next, MEMBER or SUBMULTISET, is
     /// followed by OF or what may begin its operand, so a column named so
     /// is still read as one where it is (RULES.md D80).
-    fn operand_after(&self) -> bool {
+    pub(super) fn operand_after(&self) -> bool {
         match self.peek_at(1) {
             Tok::KeyWord(word) => [kw::OF, kw::CAST, kw::CASE, kw::NULLIF, kw::COALESCE, kw::TABLE, kw::SET, kw::VALUE].contains(word),
             Tok::Delimiter(d) => [delim::LEFT_PAREN, delim::QUESTION, delim::COLON].contains(d),

@@ -53,9 +53,6 @@ Nothing is open.
 
 ### Periods and temporal tables
 
-- Period predicates (T502) [§8.20]. CONTAINS, OVERLAPS, EQUALS, PRECEDES,
-  SUCCEEDS, IMMEDIATELY PRECEDES and IMMEDIATELY SUCCEEDS. OVERLAPS of two
-  row values exists today (F053) [§8.14].
 - UPDATE and DELETE FOR PORTION OF [§14.9, §14.14] of an application-time
   period table. A row that spans more than the portion is split, its parts
   outside kept as they were.

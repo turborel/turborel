@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use super::Made;
+use super::{Cause, Made};
 use crate::ast::{DropBehavior, TableConstraint, TableName};
 use crate::binder::qualify;
 use crate::catalog::{ConstraintKind, IndexDesc, QualifiedName};
@@ -200,8 +200,8 @@ impl State {
         // [SR13f, GR5] the triggers; [SR13d, GR2] the routines.
         let cascade = behavior == DropBehavior::Cascade;
         dropped.absorb(self.drop_constraint_dependents(&before, qn, cascade)?);
-        dropped.absorb(self.drop_constraint_triggering(&before, qn, cascade)?);
-        dropped.absorb(self.drop_constraint_routining(&before, qn, cascade)?);
+        dropped.absorb(self.drop_dependent_triggers(&before, (Cause::Constraint, qn), cascade)?);
+        dropped.absorb(self.drop_dependent_routines(&before, (Cause::Constraint, qn), cascade)?);
         Ok(dropped)
     }
 }

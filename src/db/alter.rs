@@ -30,6 +30,7 @@ mod scope;
 mod storage;
 mod truncate;
 
+pub(super) use depending::{Cause, Dependent, depends};
 pub(super) use storage::value_of;
 
 use std::cmp::Ordering;
@@ -155,9 +156,9 @@ impl State {
                 Ok((self.drop_constraint((qn, names), name, *behavior).or_at(name.at)?, Made::default(), None))
             }
             AlterAction::AddPeriod(def) => Ok((Dropped::default(), self.add_period((qn, names), def, (made, tx))?, None)),
-            // [§11.28 SR3b to SR3d] RESTRICT and CASCADE drop the same, as
-            // nothing names a period but its descriptor.
-            AlterAction::DropPeriod { name, at, behavior: _ } => Ok((self.drop_period(qn, name).or_at(*at)?, Made::default(), None)),
+            AlterAction::DropPeriod { name, at, behavior } => {
+                Ok((self.drop_period(qn, name, *behavior).or_at(*at)?, Made::default(), None))
+            }
             AlterAction::Storage(_) => self.alter_storage(qn, action, (made, tx)),
             AlterAction::RevertCollation(name) => self.revert_collation(qn, name, (action, made)),
             AlterAction::Truncate { restart } => self.truncate_rows(qn, *restart, (action, made, epochs)),

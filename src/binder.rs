@@ -66,6 +66,7 @@ mod order_by;
 mod parameters;
 mod partitioned;
 mod pattern;
+mod periods;
 mod predicates;
 mod psm;
 mod ptf;

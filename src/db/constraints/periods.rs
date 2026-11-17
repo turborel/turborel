@@ -12,6 +12,10 @@ use crate::error::{At, Code, Result, SqlError};
 use crate::parser::period_constraint;
 use crate::value::DataType;
 
+/// [ISO/IEC 9075-2:2023 §11.3 SR2e v 2 B] The last part of a period
+/// constraint's name (UV100).
+const PERIOD: &str = "PERIOD";
+
 /// Which statement defines a period, whose rules judge its columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::db) enum Defining {
@@ -104,7 +108,7 @@ pub(in crate::db) fn define_period(
 /// name, the period's and PERIOD, joined by underscores, then numbered if
 /// a constraint of schema `table.auth` of `taken` has it.
 pub(in crate::db) fn constraint_name(table: &QualifiedName, period: &str, taken: &[QualifiedName]) -> QualifiedName {
-    let base = format!("{}_{period}_PERIOD", table.ident);
+    let base = format!("{}_{period}_{PERIOD}", table.ident);
     let named = |ident: String| QualifiedName { auth: table.auth.clone(), ident };
     let free = |n: &QualifiedName| !taken.contains(n);
     let first = named(base.clone());

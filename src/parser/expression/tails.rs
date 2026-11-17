@@ -11,7 +11,7 @@
 //! nested to `MAX_NESTING_DEPTH` is read within half the default stack
 //! (RULES.md R-CF-6).
 
-use crate::ast::{Composite, Predicate, RowValue, SearchCondition, Sign, TruthValue, ValueExpression};
+use crate::ast::{Composite, PeriodOperand, Predicate, RowValue, SearchCondition, Sign, TruthValue, ValueExpression};
 use crate::error::Result;
 use crate::functions::CONCATENATION;
 use crate::lexer::{delim, kw};
@@ -83,16 +83,21 @@ impl Parser {
         if self.at_is_predicate() {
             return self.is_predicate(value).map(predicate);
         }
-        let row = match (self.at_predicate_operator(), <[ValueExpression; 1]>::try_from(value)) {
-            (false, Ok([v])) => return Ok(SearchCondition::Predicand(Box::new(v), at)),
-            (true, Ok(one)) => Vec::from(one),
+        let operators = (self.at_period_operator(), self.at_predicate_operator());
+        let row = match (operators, <[ValueExpression; 1]>::try_from(value)) {
+            // [ISO/IEC 9075-2:2023 §8.20] a <period predicate> of a <period
+            // reference> or other value, which the binder judges; OVERLAPS
+            // of two values is the <overlaps predicate> [§8.14].
+            ((true, _), Ok([v])) => return self.period_predicate(PeriodOperand::Value(Box::new(v))).map(predicate),
+            ((false, false), Ok([v])) => return Ok(SearchCondition::Predicand(Box::new(v), at)),
+            ((false, true), Ok(one)) => Vec::from(one),
             // [ISO/IEC 9075-2:2023 §7.1] a row value constructor of no
             // predicate: a value of a row type.
-            (false, Err(row)) => {
+            ((_, false), Err(row)) => {
                 let constructed = ValueExpression::Composite(Box::new(Composite::Row(row)), at);
                 return Ok(SearchCondition::Predicand(Box::new(constructed), at));
             }
-            (true, Err(row)) => row,
+            ((_, true), Err(row)) => row,
         };
         self.predicate_rest(row).map(predicate)
     }

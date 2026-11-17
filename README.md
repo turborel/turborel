@@ -53,7 +53,8 @@ behind it, and each can be replaced or added to.
 - Structured types with attributes, methods and subtypes, typed tables
   in hierarchies, and references that are dereferenced.
 - Application-time periods, PERIOD FOR two columns of a table, its start
-  before its end.
+  before its end, and the period predicates OVERLAPS, EQUALS, CONTAINS,
+  PRECEDES, SUCCEEDS and IMMEDIATELY PRECEDES and SUCCEEDS.
 - Stored procedures and functions in SQL/PSM, with variables, cursors,
   handlers, loops and SIGNAL, grouped into modules if wished, and
   polymorphic table functions that take whole tables as arguments.

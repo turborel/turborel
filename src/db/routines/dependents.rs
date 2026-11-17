@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use super::super::alter::{Cause, Dependent, depends};
 use super::super::ddl::Dropped;
 use super::super::revoke::Abandoned;
 use super::super::{State, rule};
@@ -79,26 +80,29 @@ impl State {
         self.drop_routines(&doomed)
     }
 
-    /// [ISO/IEC 9075-2:2023 §11.26 SR6, SR13d, GR2] The routines naming
-    /// `table` whose bodies bind no more once a constraint of it is
-    /// dropped, those dependent on it, dropped if `cascade`: what was
-    /// taken away. One depends on it if its body bound in the definitions
-    /// `before` the drop and binds no more.
+    /// [ISO/IEC 9075-2:2023 §11.26 SR6, SR13d, GR2; §11.28 SR3d iv, v,
+    /// GR2f iv] The routines naming `table` whose bodies bind no more
+    /// once what `cause` names of it is dropped, a constraint or a period,
+    /// those dependent on it, dropped if `cascade`: what was taken away.
+    /// One depends on it if its body bound in the definitions `before` the
+    /// drop and binds no more.
     ///
     /// # Errors
     ///
     /// SQLCODE -103, not `cascade`, if one depends on it.
-    pub(in crate::db) fn drop_constraint_routining(&mut self, before: &State, table: &QualifiedName, cascade: bool) -> Result<Dropped> {
+    pub(in crate::db) fn drop_dependent_routines(
+        &mut self,
+        before: &State,
+        (cause, table): (Cause, &QualifiedName),
+        cascade: bool,
+    ) -> Result<Dropped> {
         let mut doomed = Vec::new();
         for r in self.catalog.routines().into_iter().filter(|r| r.reads.contains(table)) {
             if self.routine_binds(r).is_ok() || before.routine_binds(r).is_err() {
                 continue;
             }
             if !cascade {
-                return Err(rule(format!(
-                    "[ISO/IEC 9075-2:2023 §11.26 SR13d] routine {} depends on the constraint, so it is dropped only with CASCADE",
-                    r.specific
-                )));
+                return Err(depends(cause, Dependent::Routine, &format!("routine {}", r.specific)));
             }
             doomed.push(r.specific.clone());
         }
