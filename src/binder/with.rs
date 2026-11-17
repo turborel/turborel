@@ -94,6 +94,11 @@ impl<'a> Queries<'a> {
 
     /// The query `name` names, of the innermost clause with one of that
     /// name in scope, and where that clause is.
+    /// \[EXTENSION\] Whether `name` is a query name in scope.
+    pub(super) fn names(&self, name: &str) -> bool {
+        self.find(name).is_some()
+    }
+
     fn find(&self, name: &str) -> Option<(Option<&'a Outer<'a>>, Query)> {
         let here = self.named.borrow().iter().rev().find(|q| q.name == name).cloned();
         match here {

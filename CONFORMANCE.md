@@ -1864,7 +1864,12 @@ the operators that make them and write them.
 Features X010 (XML type), X016 (Persistent XML values), X020
 (XMLConcat), X025 (XMLCast), X030 (XMLDocument), X031 (XMLElement), X032
 (XMLForest), X034 (XMLAgg), X035 (XMLAgg: ORDER BY option), X036
-(XMLComment), X037 (XMLPI), X038 (XMLText), X060 and X061 (XMLParse: character string input and
+(XMLComment), X037 (XMLPI), X038 (XMLText), X040 to X049 (Basic table
+mapping, with nulls absent and as nil, a table as a forest and as an
+element, a target namespace, data and metadata, and base64 and hex
+encodings of binary strings), X050 to X059 (Advanced table mapping, of
+schemas and the catalog, with the same), X060 and X061 (XMLParse:
+character string input and
 CONTENT, DOCUMENT option), X065 and X066 (XMLParse: BLOB input and
 CONTENT, DOCUMENT option), X070 to X072 (XMLSerialize: character string
 serialization), X073 to X075 (XMLSerialize: BLOB serialization), X076
@@ -1928,6 +1933,7 @@ Validation, Static Typing, Module and Serialization are not [XQuery §5.2].
 | XQuery: static context | XQuery §2.1.1, Appendix C.1, §4; §10.20 SR2 | The predeclared namespaces `xml`, `xs`, `xsi`, `fn`, `xdt`, `local`, and `sqlxml` [SR2b], those the `<XML namespace declaration>`s in scope declare overriding them and their default the default element namespace [SR2d], then the prolog's. Every QName resolved: an unbound prefix err:XPST0081, of a name test err:XPST0008 [XQuery §3.2.1.2]; a variable not in scope err:XPST0008; a function of no signature of its name and arity err:XPST0017; an atomic type not in scope err:XPST0051, a cast to none err:XPST0080. A prolog's setters, namespace and default namespace declarations, variables (a variable declared twice err:XQST0049, depending on itself through functions err:XQST0054), functions (in no namespace err:XQST0060, a reserved one err:XQST0045, twice err:XQST0034, recursive), options (ignored, their names resolved). A pragma is recognized of none, so an extension expression of no expression in braces is err:XQST0079. Schema imports and modules are refused [XQuery §5.2]. |
 | XQuery: evaluation | XQuery §2.4, §3, Appendix B | Paths on all twelve axes, each step's nodes in document order with duplicates removed, a reverse axis's positions from the context node; numeric and boolean predicates; sequences, ranges, union, intersect and except; arithmetic and comparisons by Appendix B.2's operator mapping, its operands atomized and promoted [B.1]: numbers, strings by collation, booleans, dates, times and the two durations ordered, Gregorian values, `xs:duration`, binaries and QNames equal or not; general comparisons converting untyped values [§3.5.2]; node comparisons; logic by effective boolean value; FLWOR with positional variables, where and order by (stable, empty least or greatest, by collation); quantified, conditional and typeswitch expressions; instance of, treat, cast, castable and the constructor functions by [XQueryFO §17]; validate, strict, err:XQDY0084 as no element is declared, after err:XQTY0030 and err:XQDY0061; direct and computed constructors, boundary whitespace stripped by default [§3.7.1.4], each node copied by the construction and copy-namespaces modes, each name's namespace declared, a prefix taken renamed [§3.7.4]; ordered and unordered expressions; prolog variables evaluated once, as first read; functions with their arguments and results converted by the function conversion rules [§3.1.5]. |
 | XQuery: built-in functions | XQueryFO §2.3, §2.4, §7.4.1, §9.1, §9.3.1, §14.9, §15.1, §15.4.1, §15.5.4, §16.1, §16.2 | fn:true, fn:false, fn:not, fn:boolean, fn:data, fn:string (0 and 1 arguments), fn:count, fn:empty, fn:exists, fn:position, fn:last, fn:concat (2 or more), fn:root (0 and 1), fn:doc; and a constructor function of each atomic type [XQuery §3.12.5]. \[EXTENSION\] A plug-in registers more (`Database::register_xquery_function`), called by name and arity or declared `external` [XQuery §4.15]. |
+| Mappings of tables, schemas and catalogs | §4.10.8 to §4.10.11, §9.4 to §9.17 | \[EXTENSION\] Through XMLMAP ([XMLMAP](#xmlmap)), as the draft gives them no syntax [§4.10.9 NOTE 13]. TABLE, SCHEMA and CATALOG map to the data [§9.10, §9.13, §9.16], the XML Schema document [§9.9, §9.12, §9.15, §9.7], or both [§9.11, §9.14, §9.17], with each of NULLS absent and nil, TABLEFOREST, TARGETNS and ENCODING. A column is visible with SELECT on its table and, of a distinct type, EXECUTE on its cast to its source type; XML visible if its type maps, so not of XML(SEQUENCE), a structured or reference type, nor, as turborel does not yet map them [§9.8 GR9i, GR9j], a row, array or multiset type, DECFLOAT or a plug-in's type [§4.10.8]. A schema's and the catalog's mappings hold their XML visible tables and schemas alone. A table's names, columns' and types' are mapped by §9.1 and §9.2, fully escaped; its values by §9.8. |
 | Information Schema | §20.3 to §20.11, §21.1 to §21.3 | ATTRIBUTES, COLUMNS, DOMAINS, ELEMENT_TYPES, FIELDS, METHOD_SPECIFICATIONS, METHOD_SPECIFICATION_PARAMETERS, PARAMETERS and ROUTINES show an XML type's XML_PRIMARY_MODIFIER, DOCUMENT, CONTENT or SEQUENCE, and XML_SECONDARY_MODIFIER, UNTYPED or ANY, null of SEQUENCE [§21.1 Description 1a]. The XML_SCHEMA_ columns are null, as no type is of XMLSCHEMA, and all seven are null of another type. PARAMETERS shows XML_PASSING_MECHANISM and ROUTINES XML_RETURN_MECHANISM, BY REF of a parameter or result of an XML type, else null; the associated string type's columns and XML_OPTION are null, as an external routine alone has them [§12.7 SR1]. No view shows the RESULT_CAST_XML_ columns, as none shows a `<result cast>`'s; ROUTINES shows XML_CHAR_TYPE once, as ROUTINES_S does [§20.15]. NCNAME and URI are not defined as domains, as CHARACTER_DATA is not [§20.1, §20.2]. The views of registered XML Schemas [§20.12 to §20.14] wait for them. |
 
 | Choice | Rules | turborel |
@@ -1949,6 +1955,11 @@ Validation, Static Typing, Module and Serialization are not [XQuery §5.2].
 | CAST of a distinct type of XML | §6.5 SR3, ISO/IEC 9075-2:2023 §11.51 GR2b, §6.13 SR12 | By the type's own casts to and from its source, as Part 2 makes them for every distinct type, though §6.5 SR3's table writes N between XML and a user-defined type: without them no value of the type could be made (X013). |
 | The XML Schema types of SQL's numbers and BOOLEAN | §9.5 GR8d iv, GR8e viii, GR8f | INTEGER, SMALLINT and BIGINT restrictions of `xs:integer`, an XML Schema document's by their greatest and least values; REAL and FLOAT of 24 bits or fewer `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`; BOOLEAN `xs:boolean`, each named by a restriction of no facet [§9.6 GR6b iv]. |
 | Annotations of XML Schema types | §4.10.5, §9.5 GR8 | None is written, so no type an XML Schema document defines uses the namespace of `sqlxml` (`functions/xml/map/types.rs`). |
+| XMLMAP's clauses not written | RULES.md D86 | NULLS ABSENT, as XMLFOREST leaves a null value out; AS ELEMENT, TABLEFOREST False; TARGETNAMESPACE '', no namespace [§9.10 GR1]; DATA; ENCODING HEX, as XMLCAST's. |
+| The version and encoding of a mapping's documents | §9.11 GR7b, GR8, §9.14 GR8b, GR9, §9.17 GR8b, GR9 | XML 1.0, unless a name of the XML Schema document is of XML 1.1 alone [GR7a]; UTF-8, so XMLDECL is written of XML 1.1 alone, and its encoding never (`functions/xml/map.rs`). |
+| SLOC, the location of `sqlxml`'s XML Schema | §9.11 GR10c, §9.14 GR11c, §9.17 GR11c | None: no type uses `sqlxml`, so XSDIMP and XSDECL are the zero-length string (`functions/xml/map/documents.rs`). |
+| Annotations of tables, schemas and the catalog | §9.9 GR5f i 7, GR9, §9.12 GR8, §9.15 GR7 | None (`functions/xml/map/documents.rs`). |
+| The orderings of rows, tables and schemas | §9.10 GR6a, §9.12 GR5a, §9.13 GR5a, §9.16 GR5a | Rows as the table is read; a schema's tables, and the catalog's schemas, in order of name (`binder/xml/map.rs`). |
 | A character set's mapping to Unicode in XML Schema types | §9.4 GR2c, §9.5 GR8a ii | The identity. Of a length in characters it is homomorphic, N characters of N; of a length in octets not, as N octets hold at most N characters, so a CHARACTER of one is restricted by `xs:maxLength`, and named VARCHAR_N_N. |
 | Limits of XQuery's atomic values | XQueryFO §10.1.1, §17.1.1 | A date's year from 0001 to 9999, else err:FODT0001; seconds, of times and of `xdt:dayTimeDuration`, to the microsecond, more digits dropped; a duration within 128 bits of months or microseconds, else err:FODT0002; `xs:decimal` and `xs:integer` of any digits, an SQL exact number of them its fraction cut to 38 digits. A float or double cast to a decimal is the shortest decimal that reads back as it. A zero time zone is written Z. |
 | The types §9.5 maps SQL's types to | §9.5 GR8 | Without annotations [GR8a vii and the like]. CSM, the mapping of a character set to Unicode, is the identity [GR8a ii], so CHARACTER(n) is `xs:string` of the length n, and of a length in OCTETS of the maxLength n. |
@@ -1998,6 +2009,28 @@ seconds have no fraction, and INTERVAL SECOND's are of its leading
 precision's digits. The `name` §9.5 GR8r writes on `xs:any` is left out,
 as `xs:any` takes none [Schema1 §3.10.2].
 
+The mappings of tables, schemas and catalogs are read so the XML Schema
+document each makes is one, and describes the data. XD's root [§9.11
+GR12c, §9.14 GR13c, §9.17 GR13c] is the element XDROWS, XDSCHEMA or
+XDCATALOG already is, declaring `xsi`'s namespace, not another of its
+name around it, which no element the schema document declares holds; and
+\[§9.11 GR12c ii\] of a target namespace its default namespace, as §9.10
+GR7b writes it, not `xmlns:xs`. XSLA \[§9.11 GR11a\] is the zero-length
+string, as XSR is no resource a URI identifies. A schema document of a
+target namespace declares it its default namespace too, so the names of
+the types it defines resolve where it writes them unprefixed [Schema1
+§3.15.3]; of an interval type it declares and imports the namespace of
+`xdt`, as of `sqlxml` it would [§9.11 GR10c, GR10d]. A schema's and the
+catalog's schema documents define each table's row type and table type
+[§9.9 GR10], and the catalog's each schema's type [§9.12], which their
+types name [§9.12 GR5f, §9.15 GR5e]; not the elements §9.9 GR10b
+declares, of which two schemas' tables of one name would be two. The
+data of a table AS FOREST is content of no root [§9.11 GR12c iii]; of
+XML 1.1, it starts with a text declaration, which names its encoding
+[XML 1.1 §4.3.1], so the parse reads its names. An XML value in the data
+is its serialization as CONTENT [§9.8 GR9k], so an element of no
+namespace in it is read in the target namespace.
+
 The words of Part 14, XML and the operators' names among its reserved
 words, are no key words of SQL-92, so each stays an identifier, read as a
 word where SQL/XML reads it. A column named DOCUMENT or CONTENT is read as
@@ -2025,6 +2058,41 @@ Plug-ins register these with `Database::register_type` (RULES.md D53).
 | Comparing | Compared, ordered, grouped, indexed and kept unique as its type's kind says, and comparable with values of its own type alone. |
 | Durability | Logged, checkpointed and recovered. A database whose files hold one is not opened without it. |
 | Clients | Sent as its type's name, its text and its bytes, and shown as its text by a client without the plug-in. |
+
+### XMLMAP
+
+A value expression mapping a table, a schema or the catalog to XML and
+to an XML Schema document, as Part 14 defines the mappings but gives them
+no syntax [ISO/IEC 9075-14:2006 draft §4.10.9 NOTE 13] (RULES.md D86,
+`parser/xml/map.rs`, `binder/xml/map.rs`, `functions/xml/map.rs`). Its
+clauses are written in this order, each at most once.
+
+```
+XMLMAP ( { TABLE <table name> | SCHEMA <schema name> | CATALOG }
+         [ NULLS { ABSENT | NIL } ]
+         [ AS { FOREST | ELEMENT } ]
+         [ TARGETNAMESPACE <character string literal> ]
+         [ DATA | METADATA | DATA AND METADATA ]
+         [ ENCODING { BASE64 | HEX } ] )
+```
+
+| Clause | Parameter | Default |
+|---|---|---|
+| NULLS ABSENT, NIL | NULLS absent, nil [§9.11 SR1] | ABSENT |
+| AS FOREST, ELEMENT | TABLEFOREST True, False | ELEMENT |
+| TARGETNAMESPACE | TARGETNS | '', no namespace |
+| DATA, METADATA, DATA AND METADATA | DATA True, METADATA True, both | DATA |
+| ENCODING BASE64, HEX | ENCODING | HEX |
+
+Its value is the XML value the draft's XMLPARSE makes of XS and XD,
+which XMLSERIALIZE writes as XSR and XDR: of METADATA the XML Schema
+document, of XML(DOCUMENT(UNTYPED)); of DATA the data, of
+XML(DOCUMENT(UNTYPED)), or of a table AS FOREST XML(CONTENT(UNTYPED));
+of both, the schema document's document node then the data's, of
+XML(SEQUENCE). A target namespace of `xml`'s or `xmlns`'s, or holding a
+character no XML character, a table that is a query a `<with clause>`
+names, and XMLMAP in a constraint are SQLCODE -103; a schema that is not
+there SQLSTATE 3F000.
 
 ### Geometry representations
 
@@ -2628,6 +2696,7 @@ SQLCODE -900 (RULES.md D18).
 | Regular expression steps | 10,000,000, of a search with back-references | A back-reference matches no automaton, so its search goes back and can take time exponential in the string. One without any takes time linear in it, with no limit. | `regex/backtrack.rs` |
 | Grouping sets | 4,096 of a GROUP BY, and GROUPING of 59 columns | 2023 §7.13 SR14 and SR16 set no maximum, and a CUBE of n sets stands for 2 to the n. GROUPING's value is of 18 digits [§6.9 SR10b], which 2 to the 59 fits and 2 to the 60 does not. | `binder/grouping_sets.rs`, `binder/grouping_sets/expansion.rs` |
 | Trigger and procedure nesting | 16 levels of triggered actions and procedures executed within each other, past which the statement fails with SQLCODE -900, of a trigger's action SQLSTATE 09000 | §15.21 and §9.18 set no limit, and a trigger whose action executes it again would recurse until the stack overflowed. 16 levels run in half of Rust's default 2 MiB thread stack. | `db/nested.rs` |
+| XMLMAP's text | 64 MiB of each table's rows, as a set function writes them, and of the data and the XML Schema document of a mapping | §9.10 to §9.17 set no limit, and a table holds rows without end. Each table's rows are held as text until the mapping is parsed. | `functions/xml/map/rows.rs`, `functions/xml/map/data.rs` |
 | XML text and values | Elements and content models nest 512 deep; a tree holds 16 MiB of text and 1,048,576 nodes and namespace bindings; XMLPARSE reads 16 MiB more of entities' replacement texts and 64 MiB of input; a value's stored form is 64 MiB | XML 1.0 and Part 14 set no limit, and nested entities expand without end. A walk of a tree keeps a stack of its ancestors. | `xml.rs` |
 | XQuery queries | Expressions nest 64 deep; an evaluation nests 256 deep in operations and function calls; a sequence holds 1,048,576 items; one evaluation constructs nodes of 64 MiB | XQuery sets none. The parser and the evaluation recurse, so each is bounded within half of a thread's stack. | `xquery.rs`, `xquery/eval.rs` |
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |

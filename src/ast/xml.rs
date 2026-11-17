@@ -2,14 +2,19 @@
 //! §6], each a `ValueExpression::Xml`: XMLCAST [§6.6], XMLCOMMENT
 //! [§6.11], XMLCONCAT [§6.12], XMLDOCUMENT [§6.13], XMLELEMENT [§6.14],
 //! XMLFOREST [§6.15], XMLPARSE [§6.16], XMLPI [§6.17], XMLSERIALIZE [§6.8]
-//! and XMLTEXT [§6.19].
+//! and XMLTEXT [§6.19]; and \[EXTENSION\] XMLMAP, the mappings of a table, a
+//! schema or the catalog to XML [§9.11, §9.14, §9.17] (RULES.md D86).
 
 mod query;
 
 pub use query::{OnEmpty, XmlArgument, XmlArguments, XmlQuery, XmlRegularColumn, XmlTable, XmlTableColumn};
 
-use super::{SqlStatement, TypeName, ValueExpression};
+use super::{
+    NamedTable, QueryExpression, QuerySpecification, SelectList, SqlStatement, Subquery, TableExpression, TableName, TableReference,
+    TypeName, ValueExpression,
+};
 use crate::functions::BinaryEncoding;
+use crate::functions::xml_map::Nulls;
 use crate::value::DataType;
 use crate::xml::{Syntax, Whitespace};
 
@@ -145,6 +150,61 @@ pub struct ForestConstructor {
     pub returning: Option<Returning>,
 }
 
+/// \[EXTENSION\] `<XML map source>`: what XMLMAP maps (RULES.md D86).
+#[derive(Debug, Clone)]
+pub enum MapSource {
+    /// TABLE `<table name>`: the query of its rows, `SELECT * FROM` it
+    /// (`rows_of`), so the table is named as a `<table reference>` names
+    /// it, and found among those a query reads.
+    Table(Box<Subquery>),
+    /// SCHEMA `<schema name>`: its `<unqualified schema name>`, and where
+    /// it is written.
+    Schema(String, usize),
+    /// CATALOG.
+    Catalog,
+}
+
+/// \[EXTENSION\] `<XML map results>`: what XMLMAP gives [§9.11 SR1].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapResults {
+    /// DATA: the data alone.
+    Data,
+    /// METADATA: the XML Schema document alone.
+    Metadata,
+    /// DATA AND METADATA: both.
+    DataAndMetadata,
+}
+
+/// \[EXTENSION\] `<XML map>` ::= XMLMAP ( `<XML map source>` \[`<XML map
+/// nulls>`\] \[`<XML map form>`\] \[`<XML map target namespace>`\]
+/// \[`<XML map results>`\] \[`<XML map encoding>`\] ) (RULES.md D86).
+#[derive(Debug, Clone)]
+pub struct XmlMapping {
+    /// What is mapped.
+    pub source: MapSource,
+    /// NULLS ABSENT or NIL, if written.
+    pub nulls: Option<Nulls>,
+    /// AS FOREST (true) or AS ELEMENT (false), if written.
+    pub forest: Option<bool>,
+    /// TARGETNAMESPACE's `<character string literal>`, if written.
+    pub target: Option<String>,
+    /// DATA, METADATA, or DATA AND METADATA, if written.
+    pub results: Option<MapResults>,
+    /// ENCODING BASE64 or HEX, if written.
+    pub encoding: Option<BinaryEncoding>,
+}
+
+/// The query of the rows of the table `table`, written at `at`: `SELECT *
+/// FROM` it.
+#[must_use]
+pub fn rows_of(table: TableName, at: usize) -> Subquery {
+    let named = NamedTable { table, only: false, correlation: None, columns: None, system_time: None };
+    let table_expression =
+        TableExpression { from: vec![TableReference::Table(named)], where_clause: None, group_by: None, having: None, window: Vec::new() };
+    let spec = QuerySpecification { distinct: false, select_list: SelectList::Star, table_expression };
+    Subquery { query: QueryExpression::Spec(Box::new(spec)), at }
+}
+
 /// An SQL/XML operator.
 #[derive(Debug, Clone)]
 pub enum XmlOperator {
@@ -205,6 +265,8 @@ pub enum XmlOperator {
         /// The `<XML returning clause>`, if written.
         returning: Option<Returning>,
     },
+    /// \[EXTENSION\] `<XML map>`.
+    Map(XmlMapping),
     /// [§6.16] `<XML parse>` ::= XMLPARSE ( `<document or content>`
     /// `<string value expression>` `<XML whitespace option>` ).
     Parse {
@@ -268,6 +330,28 @@ impl XmlOperator {
             XmlOperator::Forest(x) => x.elements.iter().for_each(|e| f(&e.value)),
             XmlOperator::Query(q) | XmlOperator::Exists(q) => q.arguments.iter().for_each(|a| a.for_each_child(f)),
             XmlOperator::Table(t) => t.arguments.iter().for_each(|a| a.for_each_child(f)),
+            XmlOperator::Map(_) => {}
+        }
+    }
+
+    /// The query it reads, if it is XMLMAP of a table.
+    pub fn subquery(&self) -> Option<&Subquery> {
+        match self {
+            XmlOperator::Map(XmlMapping { source: MapSource::Table(query), .. }) => Some(query),
+            XmlOperator::Map(_)
+            | XmlOperator::Cast { .. }
+            | XmlOperator::Comment { .. }
+            | XmlOperator::Document { .. }
+            | XmlOperator::Parse { .. }
+            | XmlOperator::Serialize { .. }
+            | XmlOperator::Text { .. }
+            | XmlOperator::Concat { .. }
+            | XmlOperator::Pi { .. }
+            | XmlOperator::Element(_)
+            | XmlOperator::Forest(_)
+            | XmlOperator::Query(_)
+            | XmlOperator::Exists(_)
+            | XmlOperator::Table(_) => None,
         }
     }
 }

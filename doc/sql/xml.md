@@ -7,7 +7,8 @@ The XML type holds XML documents and fragments of them, as SQL/XML
 XMLSERIALIZE writes one back as text. XMLDOCUMENT makes a document node
 of a value, XMLCAST casts SQL values to XML and back, and IS DOCUMENT and
 IS CONTENT test what a value is. XMLQUERY, XMLEXISTS and XMLTABLE query
-XML values with XQuery.
+XML values with XQuery. XMLMAP maps a table, a schema or the catalog to
+XML and to an XML Schema document.
 
 ## The type
 
@@ -933,6 +934,101 @@ OK
 turborel: SQLCODE -103 (SQLSTATE 2A000): the options declare namespaces once and a binary encoding once [ISO/IEC 9075-14:2006 draft §11.3 SR1] (at character 23)
 ```
 
+## Mapping tables to XML
+
+XMLMAP maps a table, a schema or the catalog to XML, and to an XML
+Schema document that describes that XML, as SQL/XML defines the
+mappings. SQL/XML gives the mappings no syntax, so XMLMAP is
+turborel's own. Its clauses are written in this order, each at most
+once.
+
+```
+XMLMAP ( { TABLE <table name> | SCHEMA <schema name> | CATALOG }
+         [ NULLS { ABSENT | NIL } ]
+         [ AS { FOREST | ELEMENT } ]
+         [ TARGETNAMESPACE <character string literal> ]
+         [ DATA | METADATA | DATA AND METADATA ]
+         [ ENCODING { BASE64 | HEX } ] )
+```
+
+DATA, the default, gives the data. A table is an element named after
+it, holding an element `row` for each row, which holds an element for
+each column named after the column. A value is written as XMLFOREST
+writes it: a string's characters escaped, a number, a datetime, an
+interval or a truth value as XML Schema writes it, an XML value as its
+serialization. A schema is an element named after it, holding the
+element of each of its tables, and the catalog an element named after
+it (the setting CATALOG.NAME), holding the element of each schema.
+Names are escaped as XMLELEMENT's are, a character a name cannot hold
+written `_xHHHH_`. The rows are in the order the table is read, the
+tables and schemas in order of name.
+
+NULLS ABSENT, the default, leaves a null value's element out. NULLS NIL
+writes it empty, with the attribute `xsi:nil="true"`. AS FOREST maps a
+table to an element named after the table for each row, with no element
+around them; AS ELEMENT, the default, maps it as above. TARGETNAMESPACE
+puts the elements in a namespace; with none, or with `''`, they are in
+none. ENCODING writes binary strings in HEX, the default, or BASE64.
+
+METADATA gives the XML Schema document instead. It defines a type of
+each column's data type, distinct type or domain, named after it, a type
+of each table's rows, and, AS ELEMENT, of each table; then of the
+schema and of the catalog, and declares the element at the root of the
+data. DATA AND METADATA gives both: the schema document, then the data.
+
+Only what the user may read is mapped. TABLE needs SELECT on the table
+(SQLCODE -104). A schema or the catalog holds only the tables the user
+may SELECT that have a column to map, and the catalog only the schemas
+of such tables, the Information Schema among them. A column is left out
+if it is of XML(SEQUENCE) (XML alone), a structured, reference, row,
+array or multiset type, DECFLOAT or a plug-in's type, or of a distinct
+type whose cast to its source type the user may not execute.
+
+| Mapping | Value |
+|---|---|
+| DATA, AS ELEMENT, or of a schema or the catalog | XML(DOCUMENT(UNTYPED)): a document |
+| DATA of a table AS FOREST | XML(CONTENT(UNTYPED)): the rows' elements |
+| METADATA | XML(DOCUMENT(UNTYPED)): the XML Schema document |
+| DATA AND METADATA | XML(SEQUENCE): the schema document, then the data |
+
+A view whose query maps a table depends on the table, so DROP TABLE
+RESTRICT is refused while it does. A CHECK constraint may not hold
+XMLMAP (SQLCODE -103), as it reads rows in an order not determined. A
+target namespace of the namespace of `xml` or `xmlns` is refused
+(SQLCODE -103), and a schema that is not there is SQLSTATE 3F000.
+
+```sql
+VALUES (XMLSERIALIZE(CONTENT XMLMAP(TABLE STAFF) AS VARCHAR(400)));
+VALUES (XMLSERIALIZE(CONTENT XMLMAP(TABLE STAFF NULLS NIL AS FOREST ENCODING BASE64) AS VARCHAR(400)));
+CREATE SCHEMA SHOP CREATE TABLE ITEMS (SKU CHAR(4) NOT NULL, PRICE NUMERIC(6,2));
+INSERT INTO SHOP.ITEMS VALUES ('A100', 9.99), ('B200', NULL);
+VALUES (XMLSERIALIZE(CONTENT XMLMAP(SCHEMA SHOP TARGETNAMESPACE 'urn:shop') AS VARCHAR(400)));
+VALUES (XMLSERIALIZE(CONTENT XMLMAP(SCHEMA SHOP METADATA) AS VARCHAR(2000)));
+VALUES (XMLMAP(TABLE NOWHERE));
+```
+
+```
+
+--------------------------------------------------------------
+ <STAFF xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><row><ID>1</ID><NAME>Ann</NAME><PAY>1200.50</PAY><PHOTO>0FB7</PHOTO></row><row><ID>2</ID><NAME>Bo &amp; Co</NAME></row></STAFF>
+(1 row)
+
+--------------------------------------------------------------
+ <STAFF xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><ID>1</ID><NAME>Ann</NAME><PAY>1200.50</PAY><PHOTO>D7c=</PHOTO></STAFF><STAFF xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><ID>2</ID><NAME>Bo &amp; Co</NAME><PAY xsi:nil="true"/><PHOTO xsi:nil="true"/></STAFF>
+(1 row)
+OK
+OK
+
+--------------------------------------------------------------
+ <SHOP xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="urn:shop"><ITEMS><row><SKU>A100</SKU><PRICE>9.99</PRICE></row><row><SKU>B200</SKU></row></ITEMS></SHOP>
+(1 row)
+
+--------------------------------------------------------------
+ <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:simpleType name="CHAR_4"><xs:restriction base="xs:string"><xs:length value="4"/></xs:restriction></xs:simpleType><xs:simpleType name="NUMERIC_6_2"><xs:restriction base="xs:decimal"><xs:totalDigits value="6"/><xs:fractionDigits value="2"/></xs:restriction></xs:simpleType><xs:complexType name="RowType.TURBOREL.SHOP.ITEMS"><xs:sequence><xs:element name="SKU" type="CHAR_4"/><xs:element name="PRICE" type="NUMERIC_6_2" minOccurs="0"/></xs:sequence></xs:complexType><xs:complexType name="TableType.TURBOREL.SHOP.ITEMS"><xs:sequence><xs:element name="row" type="RowType.TURBOREL.SHOP.ITEMS" minOccurs="0" maxOccurs="unbounded"/></xs:sequence></xs:complexType><xs:complexType name="SchemaType.TURBOREL.SHOP"><xs:all><xs:element name="ITEMS" type="TableType.TURBOREL.SHOP.ITEMS"/></xs:all></xs:complexType><xs:element name="SHOP" type="SchemaType.TURBOREL.SHOP"/></xs:schema>
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.NOWHERE is not defined [X3.135-1986 §5.4 SR5] (at character 21)
+```
+
 ## Clients
 
 A column of an XML type is described with its modifiers. A value is
@@ -950,6 +1046,7 @@ standing alone, is refused with SQLSTATE 2200W when it is fetched.
 | Text entities add to one parse | 16 MiB |
 | Text XMLPARSE reads | 64 MiB |
 | A value's stored form | 64 MiB |
+| XMLMAP's text of one table's rows, and of its data or schema document | 64 MiB |
 | Elements and attributes an XML index keys of one value | 262,144 |
 | Octets of a value an XML index keys | 64; 512 of XML_PRIMARY |
 | Expressions nested in an XQuery query | 64 |

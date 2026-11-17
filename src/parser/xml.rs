@@ -8,6 +8,7 @@
 //! words this lexer reads (CONFORMANCE.md), each is read as an identifier
 //! where the grammar takes it, as BOOLEAN and CLOB are.
 
+mod map;
 mod publish;
 mod query;
 mod scoped;
@@ -175,6 +176,9 @@ impl Parser {
         }
         if self.at_xml(XMLEXISTS) {
             return self.xml_exists().map(Some);
+        }
+        if self.at_xml(map::XMLMAP) {
+            return self.xml_map().map(Some);
         }
         self.xml_publishing()
     }

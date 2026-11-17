@@ -57,6 +57,7 @@ use crate::storage::Row;
 use crate::value::Spelled;
 use crate::value::{CharUnits, DataType, Decimal, INTEGER_PRECISION, Value, assign};
 
+pub(crate) use information::views as information_views;
 pub use information::{SystemView, view};
 pub use settings::DESCRIPTION_LENGTH;
 

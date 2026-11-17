@@ -72,6 +72,7 @@ mod with;
 mod xml;
 mod xml_composite;
 mod xml_index;
+mod xml_map;
 mod xml_publishing;
 mod xml_scoped;
 mod xquery;
@@ -100,6 +101,7 @@ pub fn all() -> Vec<Mutation> {
         .chain([projection::PROJECTION.as_slice(), &xquery::XQUERY])
         .chain([xml_publishing::XML_PUBLISHING.as_slice()])
         .chain([xml_composite::XML_COMPOSITE.as_slice()])
+        .chain([xml_map::XML_MAP.as_slice()])
         .chain([xml_index::XML_INDEX.as_slice()])
         .chain([xquery_eval::XQUERY_EVAL.as_slice()])
         .chain([xml_scoped::XML_SCOPED.as_slice()])

@@ -157,8 +157,9 @@ features.
   type are done; what is left is reading schema documents into
   components, complex types, element and attribute declarations and the
   validation of documents [Schema1], and registering schemas.
-- The mappings of tables, schemas and catalogs to XML and XML Schema
-  (X040 to X059).
+- The mappings of tables, schemas and catalogs (XMLMAP): columns of row,
+  array and multiset types, which they leave out until §9.8 GR9i and
+  GR9j map such values.
 
 ### Full text
 

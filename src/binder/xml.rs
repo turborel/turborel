@@ -2,11 +2,13 @@
 //! XMLCAST [§6.6] (`binder/xml/cast.rs`), XMLDOCUMENT [§6.13], XMLPARSE
 //! [§6.16], XMLSERIALIZE [§6.8] and the publishing operators
 //! (`publish`, `element`), and the document and content predicates [§8.2,
-//! §8.3], each a call of its function (`functions/xml.rs`).
+//! §8.3], each a call of its function (`functions/xml.rs`); and
+//! \[EXTENSION\] XMLMAP (`map`).
 
 mod aggregate;
 mod cast;
 mod element;
+mod map;
 mod namespaces;
 mod publish;
 mod query;
@@ -69,6 +71,7 @@ impl Binder<'_> {
             XmlOperator::Query(q) => self.xml_query(q, scope),
             XmlOperator::Exists(q) => self.xml_exists(q, scope),
             XmlOperator::Table(t) => self.xml_table(t, scope),
+            XmlOperator::Map(mapping) => self.xml_map(mapping, scope),
             XmlOperator::Parse { syntax, operand, whitespace } => self.xml_parse(*syntax, operand, *whitespace, scope),
             XmlOperator::Serialize { syntax, operand, target, encoding, version, declaration } => {
                 let operand = self.xml_value_expression(operand, scope, "XMLSERIALIZE")?;

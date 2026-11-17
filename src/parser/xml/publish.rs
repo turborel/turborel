@@ -31,10 +31,11 @@ const XMLATTRIBUTES: &str = "XMLATTRIBUTES";
 pub(in crate::parser) const XMLNAMESPACES: &str = "XMLNAMESPACES";
 /// EMPTY, of EMPTY ON NULL.
 const EMPTY: &str = "EMPTY";
-/// ABSENT, of ABSENT ON NULL.
-const ABSENT: &str = "ABSENT";
-/// NIL, of NIL ON NULL and NIL ON NO CONTENT.
-const NIL: &str = "NIL";
+/// ABSENT, of ABSENT ON NULL, and \[EXTENSION\] of XMLMAP's NULLS ABSENT.
+pub(super) const ABSENT: &str = "ABSENT";
+/// NIL, of NIL ON NULL and NIL ON NO CONTENT, and \[EXTENSION\] of
+/// XMLMAP's NULLS NIL.
+pub(super) const NIL: &str = "NIL";
 /// NAME, before a name the operator makes.
 const NAME: &str = "NAME";
 

@@ -3182,6 +3182,78 @@ method that prices none is not read. EXPLAIN shows `column has` the
 query, its filter of an ancestor as a predicate of its step, and
 whether the index answers it.
 
+XMLMAP \[EXTENSION\]. Part 14 maps a table, a schema or the catalog to
+XML and to an XML Schema document [§9.11, §9.14, §9.17], but gives the
+mappings no syntax [§4.10.9 NOTE 13, §4.10.10 NOTE 14, §4.10.11 NOTE
+15]. turborel gives them one, a value expression of an XML type, written
+here in the draft's notation:
+
+```
+<XML map> ::=
+    XMLMAP <left paren> <XML map source>
+        [ <XML map nulls> ] [ <XML map form> ]
+        [ <XML map target namespace> ] [ <XML map results> ]
+        [ <XML map encoding> ] <right paren>
+
+<XML map source> ::=
+      TABLE <table name>
+    | SCHEMA <schema name>
+    | CATALOG
+
+<XML map nulls> ::= NULLS { ABSENT | NIL }
+
+<XML map form> ::= AS { FOREST | ELEMENT }
+
+<XML map target namespace> ::= TARGETNAMESPACE <character string literal>
+
+<XML map results> ::= DATA | METADATA | DATA AND METADATA
+
+<XML map encoding> ::= ENCODING { BASE64 | HEX }
+```
+
+Each clause gives a parameter of the mapping [§9.11 SR1, §9.14 SR1,
+§9.17 SR1]. NULLS ABSENT and NIL are NULLS absent and nil. AS FOREST is
+TABLEFOREST True and AS ELEMENT False. TARGETNAMESPACE is TARGETNS. DATA
+is DATA True and METADATA False, METADATA the reverse, and DATA AND
+METADATA both True, so one at least is \[SR2\]. ENCODING BASE64 and HEX
+are ENCODING. A clause not written takes its default. TARGETNAMESPACE's
+is the zero-length string, which the draft makes no namespace [§9.10
+GR1]. The draft leaves the others to the implementation: NULLS ABSENT,
+as XMLFOREST leaves a null value out; AS ELEMENT, so a table's mapping
+is a document, as a schema's and the catalog's always are; DATA; and
+ENCODING HEX, XMLCAST's binary encoding. XMLMAP, NULLS, ABSENT, NIL,
+FOREST, ELEMENT, TARGETNAMESPACE, DATA, METADATA, ENCODING, BASE64 and
+HEX are no key words, each read as a word where XMLMAP takes it. The
+target namespace holds XML characters alone and is not the namespace of
+`xml` or `xmlns`, which XMLNAMESPACES refuses too [§11.3 SR6].
+
+The binder reads each table a mapping maps by a subquery, `SELECT * FROM`
+the table, so it is read as a `<table reference>` reads it. TABLE needs
+SELECT on its table, else SQLCODE -104, and a view whose query maps a
+table reads it, so DROP TABLE RESTRICT is refused while it does. A
+schema's or the catalog's mapping holds its XML visible tables alone
+[§4.10.8], those whose SELECT the statement's authorization identifier
+holds with a column it can map, so it is never refused for a table it
+cannot read; its tables are not among those a view reads. A mapping
+reads rows in an order not determined, so a constraint holds none. Each
+table's rows are written as text, as §9.10 writes them, by a set
+function over them, so a table of any number of rows is read as its rows
+stream, its text at most `MAX_INPUT`; past it, and past the limits of
+the value it makes, SQLCODE -900. A function of those texts writes the
+XML Schema document [§9.11 GR10] and the data [GR12] and parses each, as
+the draft's XMLPARSE does, PRESERVE WHITESPACE.
+
+The value is what that parse gives, which XMLSERIALIZE writes as the
+draft's XSR and XDR [§9.11 GR10f, GR12d]. Of METADATA it is the XML
+Schema document, of XML(DOCUMENT(UNTYPED)). Of DATA it is the data, of
+XML(DOCUMENT(UNTYPED)), or of a table AS FOREST of
+XML(CONTENT(UNTYPED)), a document node of the rows' elements. Of DATA AND
+METADATA it is the two results the draft names [§9.11 GR13], a sequence
+of the schema document's document node then the data's, of
+XML(SEQUENCE). The documents are of UTF-8 [GR8], and of XML 1.1 only if
+a name in them is no name of XML 1.0 [GR7], so XMLDECL is written of XML
+1.1 alone. They hold no white space between elements.
+
 ## 2. Project layout
 
 ```

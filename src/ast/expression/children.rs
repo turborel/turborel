@@ -86,6 +86,12 @@ impl ValueExpression {
         {
             c.for_each_own_subquery(f);
         }
+        // [EXTENSION] XMLMAP of a table reads it as its query does.
+        if let ValueExpression::Xml(x, _) = self
+            && let Some(s) = x.subquery()
+        {
+            f(s);
+        }
         self.for_each_child(&mut |child| child.for_each_subquery(f));
     }
 

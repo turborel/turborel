@@ -516,6 +516,31 @@ impl Binder<'_> {
     }
 }
 
+/// What a set function of the rows of a query is, made of the query's
+/// columns: the function, its argument, its label, and its result's type.
+pub(super) type RowsAggregate = (AggregateRef, Expr, String, DataType);
+
+impl Binder<'_> {
+    /// \[EXTENSION\] The rows of `query`, bound as a subquery of this
+    /// query in `scope`, aggregated by the set function `aggregate` makes
+    /// of their columns: a subquery of one row and one column, its outer
+    /// references made as it is bound (XMLMAP, RULES.md D86); and the
+    /// columns.
+    pub(super) fn aggregated_rows(
+        &self,
+        query: &ast::Subquery,
+        scope: Scope<'_>,
+        aggregate: &mut dyn FnMut(&[OutColumn]) -> Result<RowsAggregate>,
+    ) -> Result<(Expr, Vec<OutColumn>)> {
+        let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
+        let nesting = Nesting::Subquery { outer: &outer, result: None };
+        let bound = bind_query_expression(self.context(), &query.query, &nesting).or_at(query.at)?;
+        let (func, arg, label, result) = aggregate(&bound.columns)?;
+        let (e, _) = aggregated((func, arg, label), result, bound.plan, outer);
+        Ok((e, bound.columns))
+    }
+}
+
 /// The subquery of one row and one column, the aggregate `func` of `arg`,
 /// labelled `label`, over the rows `input`, of type `result`, its outer
 /// references those of `outer`.

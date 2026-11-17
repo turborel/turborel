@@ -133,8 +133,8 @@ pub use window::{
     WindowFunction, WindowKind, WindowOver, WindowSpecification,
 };
 pub use xml::{
-    ContentOption, ElementConstructor, ForestConstructor, LexicallyScopedOptions, Named, NamespaceItem, OnEmpty, Passing, Returning,
-    XmlArgument, XmlArguments, XmlOperator, XmlQuery, XmlRegularColumn, XmlTable, XmlTableColumn,
+    ContentOption, ElementConstructor, ForestConstructor, LexicallyScopedOptions, MapResults, MapSource, Named, NamespaceItem, OnEmpty,
+    Passing, Returning, XmlArgument, XmlArguments, XmlMapping, XmlOperator, XmlQuery, XmlRegularColumn, XmlTable, XmlTableColumn, rows_of,
 };
 
 // ---------------------------------------------------------------------------
