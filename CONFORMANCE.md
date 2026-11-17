@@ -1928,6 +1928,12 @@ external routines) is not, as turborel has no external routine.
 | The XML Schema types of SQL's numbers and BOOLEAN | §9.5 GR8d iv, GR8e viii, GR8f | INTEGER, SMALLINT and BIGINT restrictions of `xs:integer`; REAL and FLOAT of 24 bits or fewer `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`; BOOLEAN `xs:boolean`. |
 | Limits of XQuery's atomic values | XQueryFO §10.1.1, §17.1.1 | A date's year from 0001 to 9999, else err:FODT0001; seconds, of times and of `xdt:dayTimeDuration`, to the microsecond, more digits dropped; a duration within 128 bits of months or microseconds, else err:FODT0002; `xs:decimal` and `xs:integer` of any digits, an SQL exact number of them its fraction cut to 38 digits. A float or double cast to a decimal is the shortest decimal that reads back as it. A zero time zone is written Z. |
 | XMLDOCUMENT's returning clause | §6.13 SR1 | RETURNING CONTENT. |
+| How far a URI is checked | XQueryFO §17.1.1 | Not at all: every string is a lexical form of `xs:anyURI`. |
+| The literals of `xs:base64Binary` | Schema2 §3.2.16 | Groups of four characters of RFC 2045's alphabet, spaces among them ignored, the last group alone padded with `=`; another character is refused, not ignored. Its string has no spaces. |
+| The names of `xs:Name`, `xs:NCName`, `xs:NMTOKEN` and their kin | Schema2 §3.3.4 to §3.3.11 | XML 1.1's, the names of XQuery's evaluations under XML 1.1's lexical rules [§6.6 GR3d vi, GR4j] and those `\i` and `\c` match in a pattern. |
+| `xs:gMonth` | Schema2 §3.2.14.1 | Written `--MM--`, as the edition SQL/XML names writes it. |
+| A QName's value | Schema2 §3.2.18 | Its prefix and local name as written: an atomic value holds no namespace bindings, and no cast makes a QName [XQueryFO §17.1.1]. A length facet constrains no QName or NOTATION, as length is measured in no unit of theirs [Schema2 §4.3.1.3]. |
+| The canonical form of the types with none | XQueryFO §17.1.2 | The string XQuery writes: of `xs:date`, the Gregorian types and the durations their local value or canonical duration; of `xs:base64Binary` no spaces. The seconds of a date and time or a time end in no zero, as XQuery writes them. |
 | XMLDOCUMENT's type of CONTENT | §6.13 SR3a | XML(CONTENT(UNTYPED)), as no node turborel holds has a type of an XML Schema. |
 | XMLSERIALIZE's version and encoding | §6.8 SR2d, SR4d, SR4e | '1.0'. The encodings are UTF8, the default, and UTF16. |
 | A byte order mark | §10.15 GR4a ii | Before UTF16 alone. |

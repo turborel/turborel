@@ -19,7 +19,7 @@ use crate::value::xml::XmlType;
 use crate::value::{
     CharUnits, DOUBLE_PRECISION, DataType, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, REAL_PRECISION, Spelled, Value,
 };
-use crate::xml::AtomicType;
+use crate::xml::{AtomicType, Primitive};
 
 /// [§6.6 SR5, SR10b i] Whether `t` is a collection, row, structured or
 /// reference type, which XMLCAST takes neither to nor from; a distinct
@@ -48,32 +48,38 @@ fn given_type(base: AtomicType, sqlt: &DataType) -> DataType {
     let lob = |kind| DataType::Lob { kind, length: MAX_LOB_LENGTH, units: CharUnits::default() };
     let varying = DataType::Varying { length: MAX_CHARACTER_LENGTH, units: CharUnits::default() };
     let large = matches!(sqlt, DataType::Lob { .. });
-    match base {
-        AtomicType::String | AtomicType::UntypedAtomic => {
+    match base.primitive() {
+        Primitive::String | Primitive::Untyped | Primitive::AnyUri | Primitive::QName | Primitive::Notation => {
             if large {
                 lob(LobKind::Character)
             } else {
                 varying
             }
         }
-        AtomicType::HexBinary => {
+        Primitive::HexBinary | Primitive::Base64Binary => {
             if large {
                 lob(LobKind::Binary)
             } else {
                 DataType::VarBinary { length: MAX_BINARY_LENGTH }
             }
         }
-        AtomicType::Decimal | AtomicType::Integer => {
-            DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric }
-        }
-        AtomicType::Float => DataType::Approximate { precision: REAL_PRECISION, spelled: Spelled::Real },
-        AtomicType::Double => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::DoublePrecision },
-        AtomicType::Boolean => DataType::Boolean,
-        AtomicType::Date | AtomicType::Time | AtomicType::DateTime => varying,
-        AtomicType::YearMonthDuration => DataType::Interval(Qualifier::new(Field::Year, Field::Month, MAX_LEADING_PRECISION, 0)),
-        AtomicType::DayTimeDuration => {
+        Primitive::Decimal | Primitive::Integer => DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric },
+        Primitive::Float => DataType::Approximate { precision: REAL_PRECISION, spelled: Spelled::Real },
+        Primitive::Double => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::DoublePrecision },
+        Primitive::Boolean => DataType::Boolean,
+        Primitive::YearMonthDuration => DataType::Interval(Qualifier::new(Field::Year, Field::Month, MAX_LEADING_PRECISION, 0)),
+        Primitive::DayTimeDuration => {
             DataType::Interval(Qualifier::new(Field::Day, Field::Second, MAX_LEADING_PRECISION, MAX_TIME_PRECISION))
         }
+        Primitive::Date
+        | Primitive::Time
+        | Primitive::DateTime
+        | Primitive::Duration
+        | Primitive::GYearMonth
+        | Primitive::GYear
+        | Primitive::GMonthDay
+        | Primitive::GDay
+        | Primitive::GMonth => varying,
     }
 }
 

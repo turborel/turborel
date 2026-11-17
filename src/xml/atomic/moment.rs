@@ -1,11 +1,11 @@
-//! Dates and times [Schema2 §3.2.7 to §3.2.9]: `xs:dateTime`, `xs:time`
-//! and `xs:date`, their lexical forms, the strings casting them to
-//! `xs:string` gives [XQueryFO §17.1.2], casts among them [XQueryFO
-//! §17.1.5], and their adjustment to UTC [XQueryFO §10.7].
+//! Dates and times [Schema2 §3.2.7 to §3.2.14]: `xs:dateTime`, `xs:time`,
+//! `xs:date` and the Gregorian types (`xml/atomic/gregorian.rs`), their
+//! lexical forms, the strings casting them to `xs:string` gives [XQueryFO
+//! §17.1.2], casts among them [XQueryFO §17.1.5], and their adjustment to
+//! UTC [XQueryFO §10.7].
 
-use std::fmt::Write;
-
-use super::{Atomic, AtomicType, xquery_error};
+use super::types::Primitive;
+use super::{Atomic, xquery_error};
 use crate::error::Result;
 use crate::value::datetime::{MICROS_PER_DAY, MICROS_PER_MINUTE, MICROS_PER_SECOND, civil_from_days, days_from_civil, days_in};
 
@@ -37,10 +37,21 @@ pub enum Shape {
     Time,
     /// `xs:dateTime`.
     DateTime,
+    /// `xs:gYearMonth`.
+    GYearMonth,
+    /// `xs:gYear`.
+    GYear,
+    /// `xs:gMonthDay`.
+    GMonthDay,
+    /// `xs:gDay`.
+    GDay,
+    /// `xs:gMonth`.
+    GMonth,
 }
 
-/// A date, a time or a date and time [XQueryFO §10.2]: its local value
-/// and its time zone, if it has one.
+/// A date, a time, a date and time or a Gregorian value [XQueryFO §10.2]:
+/// its local value and its time zone, if it has one. A Gregorian value is
+/// its starting instant (`xml/atomic/gregorian.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Moment {
     /// Its type.
@@ -71,7 +82,7 @@ fn zone_of(text: &str) -> Option<(&str, Option<i16>)> {
     if let Some(body) = text.strip_suffix('Z') {
         return Some((body, Some(0)));
     }
-    let at = text.len().checked_sub(6)?;
+    let Some(at) = text.len().checked_sub(6) else { return Some((text, None)) };
     if text.as_bytes().get(at.saturating_add(3)) != Some(&b':') {
         return Some((text, None));
     }
@@ -141,16 +152,9 @@ impl Moment {
     /// SQLSTATE 10000, err:FODT0001, of a year negative or past 9999.
     pub fn parse(text: &str, shape: Shape) -> Result<Option<Moment>> {
         let Some((body, zone)) = zone_of(text) else { return Ok(None) };
-        let (date, time) = match shape {
-            Shape::Date => (Some(body), None),
-            Shape::Time => (None, Some(body)),
-            Shape::DateTime => match body.split_once('T') {
-                Some((date, time)) => (Some(date), Some(time)),
-                None => return Ok(None),
-            },
-        };
+        let Some((date, time)) = split(body, shape) else { return Ok(None) };
         let days = match date {
-            Some(d) => match date_part(d)? {
+            Some(d) => match date_part(&d)? {
                 Some(days) => days,
                 None => return Ok(None),
             },
@@ -162,6 +166,14 @@ impl Moment {
             return Err(beyond(text));
         }
         Ok(Some(moment))
+    }
+
+    /// Its local value in microseconds from 0001-01-01T00:00:00, and its
+    /// time zone, as the order of [Schema2 §3.2.7.3] reads it.
+    #[must_use]
+    pub fn local(&self) -> (i128, Option<i16>) {
+        let micros = i128::from(self.days).saturating_mul(i128::from(MICROS_PER_DAY)).saturating_add(i128::from(self.micros));
+        (micros, self.zone)
     }
 
     /// It with its time within a day: a whole day of time carried to its
@@ -198,20 +210,27 @@ impl Moment {
     #[must_use]
     pub fn text(&self) -> String {
         let mut out = String::new();
-        if self.shape != Shape::Time {
-            let (year, month, day) = civil_from_days(self.days);
-            let _ = write!(out, "{year:04}-{month:02}-{day:02}");
+        match self.shape {
+            Shape::Date | Shape::DateTime => out.push_str(&self.ymd()),
+            Shape::Time => {}
+            Shape::GYearMonth | Shape::GYear | Shape::GMonthDay | Shape::GDay | Shape::GMonth => out.push_str(&self.gregorian_text()),
         }
         if self.shape == Shape::DateTime {
             out.push('T');
         }
-        if self.shape != Shape::Date {
+        if matches!(self.shape, Shape::Time | Shape::DateTime) {
             out.push_str(&self.clock());
         }
         if let Some(zone) = self.zone {
             out.push_str(&zone_text(zone));
         }
         out
+    }
+
+    /// Its date, yyyy-mm-dd.
+    fn ymd(&self) -> String {
+        let (year, month, day) = civil_from_days(self.days);
+        format!("{year:04}-{month:02}-{day:02}")
     }
 
     /// Its time of day, hh:mm:ss, a fraction after if it has one.
@@ -233,14 +252,13 @@ impl Moment {
     #[must_use]
     pub fn sql_literal(&self) -> String {
         let mut out = String::new();
-        if self.shape != Shape::Time {
-            let (year, month, day) = civil_from_days(self.days);
-            let _ = write!(out, "{year:04}-{month:02}-{day:02}");
+        if matches!(self.shape, Shape::Date | Shape::DateTime) {
+            out.push_str(&self.ymd());
         }
         if self.shape == Shape::DateTime {
             out.push(' ');
         }
-        if self.shape != Shape::Date {
+        if matches!(self.shape, Shape::Time | Shape::DateTime) {
             out.push_str(&self.clock());
         }
         if let Some(zone) = self.zone {
@@ -249,35 +267,91 @@ impl Moment {
         out
     }
 
-    /// `value`, a date, time or date and time, cast as `to`, another of
-    /// them [XQueryFO §17.1.5]: a date and time's date or time, or a date
-    /// at 00:00:00, each with its time zone; none of another cast.
+    /// `value`, a date, time, date and time or Gregorian value, cast as
+    /// `to`, another of them [XQueryFO §17.1.5]: a date and time's date or
+    /// time, a date at 00:00:00, or the Gregorian value of a date's or a
+    /// date and time's fields, each with its time zone; none of another
+    /// cast.
     #[must_use]
-    pub fn convert(value: &Atomic, to: AtomicType) -> Option<String> {
-        let from = match value.kind {
-            AtomicType::DateTime => Shape::DateTime,
-            AtomicType::Date => Shape::Date,
-            AtomicType::String
-            | AtomicType::UntypedAtomic
-            | AtomicType::Boolean
-            | AtomicType::Decimal
-            | AtomicType::Integer
-            | AtomicType::Float
-            | AtomicType::Double
-            | AtomicType::Time
-            | AtomicType::YearMonthDuration
-            | AtomicType::DayTimeDuration
-            | AtomicType::HexBinary => return None,
-        };
+    pub fn convert(value: &Atomic, to: Primitive) -> Option<String> {
+        let from = Shape::of(value.kind.primitive()).filter(|s| matches!(s, Shape::Date | Shape::DateTime))?;
+        let target = Shape::of(to)?;
         let m = Moment::parse(&value.lexical, from).ok().flatten()?;
-        let cast = match (from, to) {
-            (Shape::DateTime, AtomicType::Date) => Moment { shape: Shape::Date, micros: 0, ..m },
-            (Shape::DateTime, AtomicType::Time) => Moment { shape: Shape::Time, days: 0, ..m },
-            (Shape::Date, AtomicType::DateTime) => Moment { shape: Shape::DateTime, ..m },
-            (Shape::Date | Shape::Time | Shape::DateTime, _) => return None,
+        if target.gregorian() {
+            return Some(m.to_gregorian(target).text());
+        }
+        let cast = match (from, target) {
+            (Shape::DateTime, Shape::Date) => Moment { shape: Shape::Date, micros: 0, ..m },
+            (Shape::DateTime, Shape::Time) => Moment { shape: Shape::Time, days: 0, ..m },
+            (Shape::Date, Shape::DateTime) => Moment { shape: Shape::DateTime, ..m },
+            (
+                Shape::Date
+                | Shape::Time
+                | Shape::DateTime
+                | Shape::GYearMonth
+                | Shape::GYear
+                | Shape::GMonthDay
+                | Shape::GDay
+                | Shape::GMonth,
+                _,
+            ) => return None,
         };
         Some(cast.text())
     }
+}
+
+impl Shape {
+    /// The shape of values of `p`; none if it is no date or time type.
+    #[must_use]
+    pub fn of(p: Primitive) -> Option<Shape> {
+        Some(match p {
+            Primitive::Date => Shape::Date,
+            Primitive::Time => Shape::Time,
+            Primitive::DateTime => Shape::DateTime,
+            Primitive::GYearMonth => Shape::GYearMonth,
+            Primitive::GYear => Shape::GYear,
+            Primitive::GMonthDay => Shape::GMonthDay,
+            Primitive::GDay => Shape::GDay,
+            Primitive::GMonth => Shape::GMonth,
+            Primitive::Untyped
+            | Primitive::String
+            | Primitive::Boolean
+            | Primitive::Decimal
+            | Primitive::Integer
+            | Primitive::Float
+            | Primitive::Double
+            | Primitive::Duration
+            | Primitive::YearMonthDuration
+            | Primitive::DayTimeDuration
+            | Primitive::HexBinary
+            | Primitive::Base64Binary
+            | Primitive::AnyUri
+            | Primitive::QName
+            | Primitive::Notation => return None,
+        })
+    }
+
+    /// Whether it is a Gregorian type's.
+    #[must_use]
+    pub fn gregorian(self) -> bool {
+        matches!(self, Shape::GYearMonth | Shape::GYear | Shape::GMonthDay | Shape::GDay | Shape::GMonth)
+    }
+}
+
+/// The date and the time of `body`, a value of `shape` without its time
+/// zone; none if it has not the parts of one.
+fn split(body: &str, shape: Shape) -> Option<(Option<String>, Option<&str>)> {
+    Some(match shape {
+        Shape::Date => (Some(body.to_owned()), None),
+        Shape::Time => (None, Some(body)),
+        Shape::DateTime => {
+            let (date, time) = body.split_once('T')?;
+            (Some(date.to_owned()), Some(time))
+        }
+        Shape::GYearMonth | Shape::GYear | Shape::GMonthDay | Shape::GDay | Shape::GMonth => {
+            (Some(super::gregorian::as_date(body, shape)?), None)
+        }
+    })
 }
 
 /// The time zone `zone`, in minutes: Z if zero [Schema2 §3.2.7.2], else

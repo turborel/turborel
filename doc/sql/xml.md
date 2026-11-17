@@ -225,7 +225,7 @@ VALUES (XMLCAST(XMLPARSE(CONTENT '<qty>many</qty>' PRESERVE WHITESPACE) AS INTEG
 ----------------------------
  2026-11-17 14:30:00.000000
 (1 row)
-turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error: 'many' is no lexical form of xs:integer [XQueryFO §17.1.1] err:FORG0001 [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j]
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error: 'many' is no lexical form of xs:integer [XQueryFO §17.1.1, §17.4] err:FORG0001 [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j]
 ```
 
 ## XMLDOCUMENT

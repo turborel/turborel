@@ -2871,13 +2871,21 @@ keep each finite, and a value past one is SQLCODE -900 (D18):
 An XML value is a sequence (`xml::Sequence`) of items, each a node or an
 atomic value. A node is its tree, shared, and its place in it, so the
 nodes one tree gives many values keep their identity; storing a value
-copies it. An atomic value is its type and its canonical lexical form, the
-string casting it to `xs:string` gives: `xs:string`, `xdt:untypedAtomic`,
-and the XML Schema types SQL's types map to (`xs:boolean`, `xs:decimal`,
-`xs:integer`, `xs:float`, `xs:double`, `xs:date`, `xs:time`,
-`xs:dateTime`, the two durations and `xs:hexBinary`); `xml::cast` casts
-among them as XQuery does, years kept to 0001-9999 and seconds to the
-microsecond, as SQL's are, decimals of any digits. `xml::serialize` writes
+copies it. An atomic value is its type and the string casting it to
+`xs:string` gives, one string for each value. Its type is a built-in
+atomic type of XML Schema Part 2, primitive or derived, or one of the
+three XQuery adds, `xdt:untypedAtomic` and the two durations; a table of
+the 44 holds each one's name, base type, the primitive type a cast
+treats it as, and the bounds or name production it fixes. A value is read
+from its string when compared: a decimal as its digits, of any number, a
+float or double, a duration as months and microseconds, a date or time as
+its local value and time zone. Equality and the orders are XML Schema's,
+the partial orders of durations and of dates and times giving no order
+where it is indeterminate. `xml::cast` casts among the types as XQuery
+does, checking the facets a derived type fixes, years kept to 0001-9999
+and seconds to the microsecond, as SQL's are, decimals of any digits. A
+type added to the stored form takes a tag after those it had, so a value
+stored before reads as it did. `xml::serialize` writes
 a value by the XML output method of XSLT 2.0 and XQuery 1.0 Serialization,
 after its sequence normalization. It writes no CDATA section, document
 type declaration or indentation, and writes as character references what a

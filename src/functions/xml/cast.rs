@@ -23,8 +23,8 @@ use crate::value::lob::LobKind;
 use crate::value::xml::{XmlType, XmlValue};
 use crate::value::{Binary, DataType, Decimal, Spelled, Value};
 use crate::xml::{
-    Atomic, AtomicType, Item, Kind, LAST_YEAR, Moment, NodeId, Sequence, Shape, Syntax, Tree, Whitespace, cast, duration_units, hex, parse,
-    xquery_error,
+    Atomic, AtomicType, Item, Kind, LAST_YEAR, Moment, NodeId, Primitive, Sequence, Shape, Syntax, Tree, Whitespace, base64, cast,
+    duration_units, hex, parse, xquery_error,
 };
 
 /// [§6.6 SR1b, SR2, §6.14 GR1b, §6.15 GR1b, §6.19 GR3b]
@@ -216,17 +216,30 @@ fn refused(why: &str, rule: &str, state: SqlState) -> SqlError {
 /// string, CAST to the datetime type by the binder \[GR4k vi to viii\].
 fn sql_value(bv: &Atomic, zoned: bool) -> Result<Value> {
     let text = &*bv.lexical;
-    Ok(match bv.kind {
-        AtomicType::String | AtomicType::UntypedAtomic => Value::Char(text.to_owned()),
-        AtomicType::HexBinary => Value::Binary(Binary::new(hex(text).unwrap_or_default())),
-        AtomicType::Decimal | AtomicType::Integer => Value::Exact(exact(text)?),
-        AtomicType::Float | AtomicType::Double => Value::Approx(approximate(text)?),
-        AtomicType::Boolean => Value::Bool(text == "true"),
-        AtomicType::YearMonthDuration => interval(text, true)?,
-        AtomicType::DayTimeDuration => interval(text, false)?,
-        AtomicType::Date => Value::Char(datetime(text, Shape::Date, zoned)?),
-        AtomicType::Time => Value::Char(datetime(text, Shape::Time, zoned)?),
-        AtomicType::DateTime => Value::Char(datetime(text, Shape::DateTime, zoned)?),
+    Ok(match bv.kind.primitive() {
+        // [GR4k i] a string; XT is none of the other types here, as §9.5
+        // maps no SQL type to them.
+        Primitive::String
+        | Primitive::Untyped
+        | Primitive::AnyUri
+        | Primitive::QName
+        | Primitive::Notation
+        | Primitive::Duration
+        | Primitive::GYearMonth
+        | Primitive::GYear
+        | Primitive::GMonthDay
+        | Primitive::GDay
+        | Primitive::GMonth => Value::Char(text.to_owned()),
+        Primitive::HexBinary => Value::Binary(Binary::new(hex(text).unwrap_or_default())),
+        Primitive::Base64Binary => Value::Binary(Binary::new(base64(text).unwrap_or_default())),
+        Primitive::Decimal | Primitive::Integer => Value::Exact(exact(text)?),
+        Primitive::Float | Primitive::Double => Value::Approx(approximate(text)?),
+        Primitive::Boolean => Value::Bool(text == "true"),
+        Primitive::YearMonthDuration => interval(text, true)?,
+        Primitive::DayTimeDuration => interval(text, false)?,
+        Primitive::Date => Value::Char(datetime(text, Shape::Date, zoned)?),
+        Primitive::Time => Value::Char(datetime(text, Shape::Time, zoned)?),
+        Primitive::DateTime => Value::Char(datetime(text, Shape::DateTime, zoned)?),
     })
 }
 

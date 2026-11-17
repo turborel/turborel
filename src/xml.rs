@@ -31,7 +31,10 @@ mod serialize;
 mod stored;
 mod tree;
 
-pub use atomic::{LAST_YEAR, Moment, Shape, cast, duration_units, hex, hex_text, xquery_error};
+pub use atomic::{
+    Exact, LAST_YEAR, Moment, Ordered, Primitive, Production, Shape, WhiteSpace, base64, base64_text, canonical, cast, compare, digits,
+    duration_units, equal, from_lexical, hex, hex_text, length, normalize, xquery_error,
+};
 pub use chars::{
     COLON, VERSION_10, VERSION_11, Version, is_char, is_literal, is_name, is_name_char, is_name_start, is_ncname, is_nmtoken,
     is_pubid_char, is_restricted, is_space, qname_parts,

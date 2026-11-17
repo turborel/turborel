@@ -57,9 +57,11 @@ impl Node {
     }
 }
 
-/// The type of an atomic value [XQueryDM §2.6.2]: `xs:string` and
-/// `xdt:untypedAtomic`, and the XML Schema types SQL's types map to
-/// [ISO/IEC 9075-14:2006 draft §9.5 GR8, §6.6 GR3d ii] (`xml/atomic.rs`).
+/// The type of an atomic value [XQueryDM §2.6.2]: each atomic built-in
+/// datatype of XML Schema [Schema2 §3.2, §3.3], and the three XQuery adds,
+/// `xdt:untypedAtomic` and the two durations (`xml/atomic/types.rs`). A
+/// value of a type an XML Schema derives from one is of the built-in type
+/// it is derived from, with the facets checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AtomicType {
     /// `xs:string`.
@@ -89,6 +91,68 @@ pub enum AtomicType {
     DayTimeDuration,
     /// `xs:hexBinary` [Schema2 §3.2.15].
     HexBinary,
+    /// `xs:duration` [Schema2 §3.2.6].
+    Duration,
+    /// `xs:gYearMonth` [Schema2 §3.2.10].
+    GYearMonth,
+    /// `xs:gYear` [Schema2 §3.2.11].
+    GYear,
+    /// `xs:gMonthDay` [Schema2 §3.2.12].
+    GMonthDay,
+    /// `xs:gDay` [Schema2 §3.2.13].
+    GDay,
+    /// `xs:gMonth` [Schema2 §3.2.14].
+    GMonth,
+    /// `xs:base64Binary` [Schema2 §3.2.16].
+    Base64Binary,
+    /// `xs:anyURI` [Schema2 §3.2.17].
+    AnyUri,
+    /// `xs:QName` [Schema2 §3.2.18].
+    QName,
+    /// `xs:NOTATION` [Schema2 §3.2.19].
+    Notation,
+    /// `xs:normalizedString` [Schema2 §3.3.1].
+    NormalizedString,
+    /// `xs:token` [Schema2 §3.3.2].
+    Token,
+    /// `xs:language` [Schema2 §3.3.3].
+    Language,
+    /// `xs:NMTOKEN` [Schema2 §3.3.4].
+    NmToken,
+    /// `xs:Name` [Schema2 §3.3.6].
+    Name,
+    /// `xs:NCName` [Schema2 §3.3.7].
+    NcName,
+    /// `xs:ID` [Schema2 §3.3.8].
+    Id,
+    /// `xs:IDREF` [Schema2 §3.3.9].
+    IdRef,
+    /// `xs:ENTITY` [Schema2 §3.3.11].
+    Entity,
+    /// `xs:nonPositiveInteger` [Schema2 §3.3.14].
+    NonPositiveInteger,
+    /// `xs:negativeInteger` [Schema2 §3.3.15].
+    NegativeInteger,
+    /// `xs:long` [Schema2 §3.3.16].
+    Long,
+    /// `xs:int` [Schema2 §3.3.17].
+    Int,
+    /// `xs:short` [Schema2 §3.3.18].
+    Short,
+    /// `xs:byte` [Schema2 §3.3.19].
+    Byte,
+    /// `xs:nonNegativeInteger` [Schema2 §3.3.20].
+    NonNegativeInteger,
+    /// `xs:unsignedLong` [Schema2 §3.3.21].
+    UnsignedLong,
+    /// `xs:unsignedInt` [Schema2 §3.3.22].
+    UnsignedInt,
+    /// `xs:unsignedShort` [Schema2 §3.3.23].
+    UnsignedShort,
+    /// `xs:unsignedByte` [Schema2 §3.3.24].
+    UnsignedByte,
+    /// `xs:positiveInteger` [Schema2 §3.3.25].
+    PositiveInteger,
 }
 
 /// An atomic value [XQueryDM §2.6.4]: its type and its canonical lexical

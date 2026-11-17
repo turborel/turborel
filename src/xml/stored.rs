@@ -71,21 +71,55 @@ const IS_ID: u8 = 1;
 /// An attribute is an IDREF or IDREFS.
 const IS_IDREFS: u8 = 2;
 
-/// The atomic types, each stored as its place here.
-const ATOMIC_TYPES: [AtomicType; 13] = [
-    AtomicType::String,
-    AtomicType::UntypedAtomic,
-    AtomicType::Boolean,
-    AtomicType::Decimal,
-    AtomicType::Integer,
-    AtomicType::Float,
-    AtomicType::Double,
-    AtomicType::Date,
-    AtomicType::Time,
-    AtomicType::DateTime,
-    AtomicType::YearMonthDuration,
-    AtomicType::DayTimeDuration,
-    AtomicType::HexBinary,
+/// The atomic types, each stored as its place here, its tag, written
+/// beside it. The tags are part of the stored form, version 1: a type
+/// added is added at the end, and no tag is renumbered, so each value
+/// stored keeps its type.
+const ATOMIC_TYPES: [AtomicType; 44] = [
+    AtomicType::String,             // 0
+    AtomicType::UntypedAtomic,      // 1
+    AtomicType::Boolean,            // 2
+    AtomicType::Decimal,            // 3
+    AtomicType::Integer,            // 4
+    AtomicType::Float,              // 5
+    AtomicType::Double,             // 6
+    AtomicType::Date,               // 7
+    AtomicType::Time,               // 8
+    AtomicType::DateTime,           // 9
+    AtomicType::YearMonthDuration,  // 10
+    AtomicType::DayTimeDuration,    // 11
+    AtomicType::HexBinary,          // 12
+    AtomicType::Duration,           // 13
+    AtomicType::GYearMonth,         // 14
+    AtomicType::GYear,              // 15
+    AtomicType::GMonthDay,          // 16
+    AtomicType::GDay,               // 17
+    AtomicType::GMonth,             // 18
+    AtomicType::Base64Binary,       // 19
+    AtomicType::AnyUri,             // 20
+    AtomicType::QName,              // 21
+    AtomicType::Notation,           // 22
+    AtomicType::NormalizedString,   // 23
+    AtomicType::Token,              // 24
+    AtomicType::Language,           // 25
+    AtomicType::NmToken,            // 26
+    AtomicType::Name,               // 27
+    AtomicType::NcName,             // 28
+    AtomicType::Id,                 // 29
+    AtomicType::IdRef,              // 30
+    AtomicType::Entity,             // 31
+    AtomicType::NonPositiveInteger, // 32
+    AtomicType::NegativeInteger,    // 33
+    AtomicType::Long,               // 34
+    AtomicType::Int,                // 35
+    AtomicType::Short,              // 36
+    AtomicType::Byte,               // 37
+    AtomicType::NonNegativeInteger, // 38
+    AtomicType::UnsignedLong,       // 39
+    AtomicType::UnsignedInt,        // 40
+    AtomicType::UnsignedShort,      // 41
+    AtomicType::UnsignedByte,       // 42
+    AtomicType::PositiveInteger,    // 43
 ];
 
 /// What a reader of the stored form names in its errors.

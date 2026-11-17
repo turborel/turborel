@@ -14,7 +14,7 @@ use crate::value::interval::{Interval, Qualifier};
 use crate::value::types::datetime::shown;
 use crate::value::types::{Field as RowField, MAX_TYPE_NESTING};
 use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
-use crate::xml::{Escape, Version, XSI_NAMESPACE, XSI_PREFIX, hex_text, is_char, name_of};
+use crate::xml::{Escape, Version, XSI_NAMESPACE, XSI_PREFIX, base64_text, hex_text, is_char, name_of};
 
 /// [§9.5 GR3, §9.8 GR3] How binary strings are encoded: in base64 or in
 /// hex [Schema2 §3.2.16, §3.2.15].
@@ -26,18 +26,6 @@ pub enum BinaryEncoding {
     Hex,
 }
 
-/// [Schema2 §3.2.16] The 64 characters of base64, each standing for six
-/// bits, in order [RFC 2045 §6.8].
-const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-/// [Schema2 §3.2.16] The character that pads base64 to a whole group.
-const PAD: char = '=';
-/// [Schema2 §3.2.16] The octets of a group, which four characters write.
-const GROUP: usize = 3;
-/// The bits each character of base64 stands for.
-const SIX_BITS: u32 = 6;
-/// The low six bits.
-const SIX_MASK: u32 = 0x3F;
-
 impl BinaryEncoding {
     /// `octets` in this encoding [§9.8 GR9b]: hex, upper case [Schema2
     /// §3.2.15.2]; or base64, of no line breaks, padded [Schema2 §3.2.16].
@@ -45,32 +33,9 @@ impl BinaryEncoding {
     pub fn encode(self, octets: &[u8]) -> String {
         match self {
             BinaryEncoding::Hex => hex_text(octets),
-            BinaryEncoding::Base64 => base64(octets),
+            BinaryEncoding::Base64 => base64_text(octets),
         }
     }
-}
-
-/// `octets` in base64: each three octets four characters of six bits, a
-/// last group of fewer padded with `=` [Schema2 §3.2.16].
-fn base64(octets: &[u8]) -> String {
-    let mut out = String::new();
-    for group in octets.chunks(GROUP) {
-        let mut word = [0_u8; 4];
-        for (w, o) in word.iter_mut().skip(1).zip(group) {
-            *w = *o;
-        }
-        let word = u32::from_be_bytes(word);
-        for k in 0..=GROUP {
-            if k > group.len() {
-                out.push(PAD);
-                continue;
-            }
-            let shift = u32::try_from(GROUP.saturating_sub(k)).unwrap_or(0).saturating_mul(SIX_BITS);
-            let six = word.checked_shr(shift).unwrap_or(0) & SIX_MASK;
-            out.push(char::from(BASE64.get(usize::try_from(six).unwrap_or(0)).copied().unwrap_or(b'A')));
-        }
-    }
-    out
 }
 
 /// [§9.8 GR9] The lexical form of `v`, not null, of an SQL type, as XML

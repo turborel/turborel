@@ -1,12 +1,12 @@
 //! Mutations of SQL/XML: the parser, the serializer, the stored form, the
 //! XML type's rules, its storage and its Information Schema columns,
-//! the document and content predicates, XMLDOCUMENT and XMLCAST
-//! (RULES.md R-TEST-9, D86).
+//! the document and content predicates, XMLDOCUMENT and XMLCAST, and
+//! the datatypes and simple types of XML Schema (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each XML mechanism broken alone, and the tests that fail.
-pub const XML: [Mutation; 30] = [
+pub const XML: [Mutation; 33] = [
     Mutation {
         name: "xml-element-type-match",
         package: Package::Core,
@@ -287,8 +287,8 @@ pub const XML: [Mutation; 30] = [
         package: Package::Core,
         breaks: "text cast to an atomic type keeps the white space around it",
         file: "src/xml/atomic.rs",
-        original: "    let collapsed = collapse(text);",
-        replacement: "    let collapsed = text.to_owned();",
+        original: "    let normalized = normalize(text, to.white_space());",
+        replacement: "    let normalized = text.to_owned();",
         integration: &["xml_cast::xml_values_to_sql_6_6"],
         unit: &["xml::atomic::tests::numbers_and_truth_values"],
     },
@@ -306,10 +306,40 @@ pub const XML: [Mutation; 30] = [
         name: "xml-base64-padding",
         package: Package::Core,
         breaks: "base64 of a last group short of three octets is not padded",
-        file: "src/functions/xml/mapping.rs",
+        file: "src/xml/atomic/binary.rs",
         original: "                out.push(PAD);",
         replacement: "",
         integration: &[],
         unit: &["functions::xml::mapping::tests::binary_strings_in_hex_or_base64"],
+    },
+    Mutation {
+        name: "xml-derived-bounds",
+        package: Package::Core,
+        breaks: "a value cast to an integer type passes the bounds the type fixes",
+        file: "src/xml/atomic.rs",
+        original: "        if !within(least, std::cmp::Ordering::Less) || !within(most, std::cmp::Ordering::Greater) {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &["xml::atomic::tests::derived_types_by_the_facets_they_fix"],
+    },
+    Mutation {
+        name: "xml-duration-partial-order",
+        package: Package::Core,
+        breaks: "durations are ordered by the first dateTime they are added to alone",
+        file: "src/xml/atomic/value.rs",
+        original: "        if order == Ordering::Equal || found.is_some_and(|f| f != order) {",
+        replacement: "        if order == Ordering::Equal {",
+        integration: &[],
+        unit: &["xml::atomic::value::tests::the_partial_order_of_durations"],
+    },
+    Mutation {
+        name: "xml-zoned-order",
+        package: Package::Core,
+        breaks: "a date and time with a time zone is ordered with one without as if it were in UTC",
+        file: "src/xml/atomic/value.rs",
+        original: "    let range = ZONE_RANGE.saturating_mul(i128::from(MICROS_PER_MINUTE));",
+        replacement: "    let range: i128 = ZONE_RANGE.saturating_mul(0);",
+        integration: &[],
+        unit: &["xml::atomic::value::tests::the_partial_order_of_dates_and_times"],
     },
 ];

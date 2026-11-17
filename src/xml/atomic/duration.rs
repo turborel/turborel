@@ -1,11 +1,13 @@
-//! The two totally ordered durations [XQueryFO §10.3]:
-//! `xdt:yearMonthDuration`, a number of months, and `xdt:dayTimeDuration`,
-//! a number of seconds, here microseconds; their lexical forms, their
-//! canonical forms, and casts between them [XQueryFO §17.1.4].
+//! Durations [Schema2 §3.2.6] and the two totally ordered ones [XQueryFO
+//! §10.3]: `xdt:yearMonthDuration`, a number of months, and
+//! `xdt:dayTimeDuration`, a number of seconds, here microseconds; an
+//! `xs:duration` both [XQueryFO §10.4.7]. Their lexical forms, their
+//! canonical forms, and casts among them [XQueryFO §17.1.4].
 
 use std::fmt::Write;
 
-use super::{Atomic, AtomicType, xquery_error};
+use super::types::Primitive;
+use super::{Atomic, xquery_error};
 use crate::error::Result;
 use crate::value::datetime::MICROS_PER_SECOND;
 
@@ -113,6 +115,54 @@ pub fn day_time(text: &str) -> Result<Option<i128>> {
     Ok(Some(if negative { micros.saturating_neg() } else { micros }))
 }
 
+/// The months and the microseconds of the `xs:duration` `text` is a
+/// lexical form of [Schema2 §3.2.6.1]: years and months as months, days
+/// to seconds as microseconds, both of its sign [XQueryFO §10.4.7]; none
+/// if it is none.
+///
+/// # Errors
+///
+/// SQLSTATE 10000, err:FODT0002, if they are too many to hold.
+pub fn general(text: &str) -> Result<Option<(i128, i128)>> {
+    let Some((negative, body)) = signed(text) else { return Ok(None) };
+    let Some(parts) = components(body) else { return Ok(None) };
+    let (mut months, mut micros) = (0_i128, 0_i128);
+    for (place, n) in parts {
+        if place < 2 {
+            let unit = if place == 0 { MONTHS } else { 1 };
+            if n.contains('.') {
+                return Ok(None);
+            }
+            let value = n.parse::<i128>().ok().and_then(|v| v.checked_mul(unit));
+            months = value.and_then(|v| months.checked_add(v)).ok_or_else(|| too_large(text))?;
+            continue;
+        }
+        micros = match component_micros(place, n) {
+            Component::Invalid => return Ok(None),
+            Component::TooLarge => None,
+            Component::Micros(v) => micros.checked_add(v),
+        }
+        .ok_or_else(|| too_large(text))?;
+    }
+    Ok(Some(if negative { (months.saturating_neg(), micros.saturating_neg()) } else { (months, micros) }))
+}
+
+/// The string of the `xs:duration` of `months` and `micros`, both of one
+/// sign [XQueryFO §17.1.2]: the day-time duration's if no months; the
+/// year-month duration's if no microseconds; else both, the second
+/// without its sign and P.
+pub fn general_text(months: i128, micros: i128) -> String {
+    let (year_month, day_time) = (year_month_text(months), day_time_text(micros));
+    if months == 0 {
+        return day_time;
+    }
+    if micros == 0 {
+        return year_month;
+    }
+    let rest = day_time.trim_start_matches('-').trim_start_matches('P');
+    format!("{year_month}{rest}")
+}
+
 /// What a component's number is.
 enum Component {
     /// No number of its component.
@@ -194,24 +244,67 @@ pub fn day_time_text(micros: i128) -> String {
     out
 }
 
-/// `value`, a duration, cast as `to`, the other duration [XQueryFO
-/// §17.1.4]: of zero months or seconds; none of another cast.
+/// The months and microseconds of `value`, a duration of any of the
+/// three types; none if it is none.
 #[must_use]
-pub fn convert(value: &Atomic, to: AtomicType) -> Option<String> {
-    let durations = matches!(value.kind, AtomicType::YearMonthDuration | AtomicType::DayTimeDuration);
+pub fn units(value: &Atomic) -> Option<(i128, i128)> {
+    match value.kind.primitive() {
+        Primitive::YearMonthDuration => year_month(&value.lexical).ok().flatten().map(|m| (m, 0)),
+        Primitive::DayTimeDuration => day_time(&value.lexical).ok().flatten().map(|u| (0, u)),
+        Primitive::Duration => general(&value.lexical).ok().flatten(),
+        Primitive::Untyped
+        | Primitive::String
+        | Primitive::Boolean
+        | Primitive::Decimal
+        | Primitive::Integer
+        | Primitive::Float
+        | Primitive::Double
+        | Primitive::DateTime
+        | Primitive::Time
+        | Primitive::Date
+        | Primitive::GYearMonth
+        | Primitive::GYear
+        | Primitive::GMonthDay
+        | Primitive::GDay
+        | Primitive::GMonth
+        | Primitive::HexBinary
+        | Primitive::Base64Binary
+        | Primitive::AnyUri
+        | Primitive::QName
+        | Primitive::Notation => None,
+    }
+}
+
+/// `value`, a duration, cast as `to`, another duration type [XQueryFO
+/// §17.1.4]: as a year-month duration its months alone, as a day-time
+/// duration its microseconds alone, as an `xs:duration` both; none of
+/// another cast.
+#[must_use]
+pub fn convert(value: &Atomic, to: Primitive) -> Option<String> {
+    let (months, micros) = units(value)?;
     match to {
-        AtomicType::YearMonthDuration => durations.then(|| year_month_text(0)),
-        AtomicType::DayTimeDuration => durations.then(|| day_time_text(0)),
-        AtomicType::String
-        | AtomicType::UntypedAtomic
-        | AtomicType::Boolean
-        | AtomicType::Decimal
-        | AtomicType::Integer
-        | AtomicType::Float
-        | AtomicType::Double
-        | AtomicType::Date
-        | AtomicType::Time
-        | AtomicType::DateTime
-        | AtomicType::HexBinary => None,
+        Primitive::YearMonthDuration => Some(year_month_text(months)),
+        Primitive::DayTimeDuration => Some(day_time_text(micros)),
+        Primitive::Duration => Some(general_text(months, micros)),
+        Primitive::Untyped
+        | Primitive::String
+        | Primitive::Boolean
+        | Primitive::Decimal
+        | Primitive::Integer
+        | Primitive::Float
+        | Primitive::Double
+        | Primitive::DateTime
+        | Primitive::Time
+        | Primitive::Date
+        | Primitive::GYearMonth
+        | Primitive::GYear
+        | Primitive::GMonthDay
+        | Primitive::GDay
+        | Primitive::GMonth
+        | Primitive::HexBinary
+        | Primitive::Base64Binary
+        | Primitive::AnyUri
+        | Primitive::QName
+        | Primitive::Notation => None,
     }
 }

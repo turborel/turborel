@@ -181,3 +181,170 @@ fn hex_binary() {
     assert_eq!(hex("00ff"), Some(vec![0, 255]));
     assert_eq!(hex_text(&[1, 171]), "01AB");
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §3.1.3.35] [Schema2 §3.2, §3.3,
+/// Appendix A, Appendix C.1] [XQueryDM §2.6.2] every built-in atomic
+/// type, named once, derived from its base up to a primitive type; what a
+/// cast treats it as; its whiteSpace facet; and the ordered and numeric
+/// fundamental facets of its primitive type.
+#[test]
+fn the_built_in_types_and_their_derivation() {
+    let names: Vec<&str> = AtomicType::all().map(AtomicType::name).collect();
+    assert_eq!(names.len(), 44);
+    for (i, name) in names.iter().enumerate() {
+        assert!(!names[i + 1..].contains(name), "{name} twice");
+    }
+    assert!(AtomicType::Byte.derives_from(AtomicType::Decimal) && AtomicType::Byte.derives_from(AtomicType::Byte));
+    assert!(!AtomicType::Byte.derives_from(AtomicType::UnsignedByte) && !AtomicType::Decimal.derives_from(AtomicType::Integer));
+    assert!(AtomicType::Id.derives_from(AtomicType::String) && AtomicType::DayTimeDuration.derives_from(AtomicType::Duration));
+    assert_eq!(AtomicType::UntypedAtomic.base(), None);
+    assert_eq!(AtomicType::NcName.base(), Some(AtomicType::Name));
+    assert_eq!(AtomicType::UnsignedShort.bounds(), (Some("0"), Some("65535")));
+    assert_eq!((AtomicType::Language.primitive(), AtomicType::Short.primitive()), (Primitive::String, Primitive::Integer));
+    let spaces = [AtomicType::String, AtomicType::NormalizedString, AtomicType::Token, AtomicType::UntypedAtomic, AtomicType::Date];
+    let expected = [WhiteSpace::Preserve, WhiteSpace::Replace, WhiteSpace::Collapse, WhiteSpace::Preserve, WhiteSpace::Collapse];
+    assert_eq!(spaces.map(AtomicType::white_space), expected);
+    assert_eq!((Primitive::Integer.schema(), Primitive::DayTimeDuration.schema()), (Primitive::Decimal, Primitive::Duration));
+    assert_eq!(
+        (Primitive::Float.ordered(), Primitive::GDay.ordered(), Primitive::QName.ordered()),
+        (Ordered::Total, Ordered::Partial, Ordered::False)
+    );
+    assert!(Primitive::Integer.numeric() && !Primitive::Duration.numeric());
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j] [Schema2 §3.2.6.1,
+/// §3.2.10.1 to §3.2.14.1, §3.2.16, §3.2.17] [XQueryFO §17.1.1, §17.1.2]
+/// the lexical forms of the other primitive types: a duration of any
+/// components, written as XQuery writes it; the Gregorian types, their
+/// fields checked as a date's; base64 in groups of four, spaces ignored,
+/// padded at the end alone; any string a URI.
+#[test]
+fn other_primitive_types_lexical_forms() {
+    let cases = [
+        ("P1Y2M3DT4H5.5S", AtomicType::Duration, "P1Y2M3DT4H5.5S"),
+        ("-P13M", AtomicType::Duration, "-P1Y1M"),
+        ("P0Y", AtomicType::Duration, "PT0S"),
+        ("PT36H", AtomicType::Duration, "P1DT12H"),
+        ("P1.5Y", AtomicType::Duration, "err:FORG0001"),
+        ("PT", AtomicType::Duration, "err:FORG0001"),
+        (" 2020-02 ", AtomicType::GYearMonth, "2020-02"),
+        ("2020-13", AtomicType::GYearMonth, "err:FORG0001"),
+        ("2020-2", AtomicType::GYearMonth, "err:FORG0001"),
+        ("2020+05:00", AtomicType::GYear, "2020+05:00"),
+        ("0000", AtomicType::GYear, "err:FORG0001"),
+        ("20200", AtomicType::GYear, "err:FODT0001"),
+        ("--02-29", AtomicType::GMonthDay, "--02-29"),
+        ("--02-30", AtomicType::GMonthDay, "err:FORG0001"),
+        ("---31Z", AtomicType::GDay, "---31Z"),
+        ("---1", AtomicType::GDay, "err:FORG0001"),
+        ("--12--", AtomicType::GMonth, "--12--"),
+        ("--12", AtomicType::GMonth, "err:FORG0001"),
+        ("--13--", AtomicType::GMonth, "err:FORG0001"),
+        ("AQID", AtomicType::Base64Binary, "AQID"),
+        ("A Q I =", AtomicType::Base64Binary, "AQI="),
+        ("AQ==", AtomicType::Base64Binary, "AQ=="),
+        ("AQ=A", AtomicType::Base64Binary, "err:FORG0001"),
+        ("A===", AtomicType::Base64Binary, "err:FORG0001"),
+        ("AQ==AQID", AtomicType::Base64Binary, "err:FORG0001"),
+        ("AQI", AtomicType::Base64Binary, "err:FORG0001"),
+        (" a b ", AtomicType::AnyUri, "a b"),
+    ];
+    for (text, to, expected) in cases {
+        assert_eq!(cast_text(text, to), expected, "{text} as {}", to.name());
+    }
+    assert_eq!(base64("AQID").unwrap(), [1, 2, 3]);
+    assert_eq!(base64_text(&[1]), "AQ==");
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j] [Schema2 §3.3,
+/// Appendix A] [XQueryFO §17.1.1, §17.2] the derived types: an integer
+/// type's bounds, a sign taken as its base takes it; a string type's
+/// white space normalized; language, NMTOKEN, Name and NCName literals by
+/// their productions; anything else err:FORG0001.
+#[test]
+fn derived_types_by_the_facets_they_fix() {
+    let cases = [
+        ("+0", AtomicType::NonPositiveInteger, "0"),
+        ("1", AtomicType::NonPositiveInteger, "err:FORG0001"),
+        ("0", AtomicType::NegativeInteger, "err:FORG0001"),
+        ("-1", AtomicType::NegativeInteger, "-1"),
+        ("127", AtomicType::Byte, "127"),
+        ("128", AtomicType::Byte, "err:FORG0001"),
+        ("-129", AtomicType::Byte, "err:FORG0001"),
+        ("18446744073709551615", AtomicType::UnsignedLong, "18446744073709551615"),
+        ("18446744073709551616", AtomicType::UnsignedLong, "err:FORG0001"),
+        ("-1", AtomicType::UnsignedInt, "err:FORG0001"),
+        ("0", AtomicType::PositiveInteger, "err:FORG0001"),
+        ("1.0", AtomicType::Int, "err:FORG0001"),
+        (" a \t b ", AtomicType::Token, "a b"),
+        (" a\tb ", AtomicType::NormalizedString, " a b "),
+        ("en-US", AtomicType::Language, "en-US"),
+        ("i-klingon", AtomicType::Language, "i-klingon"),
+        ("x-abcdefgh", AtomicType::Language, "x-abcdefgh"),
+        ("x-abcdefghi", AtomicType::Language, "err:FORG0001"),
+        ("eng", AtomicType::Language, "err:FORG0001"),
+        ("en-", AtomicType::Language, "err:FORG0001"),
+        ("-a", AtomicType::NmToken, "-a"),
+        ("a b", AtomicType::NmToken, "err:FORG0001"),
+        ("-a", AtomicType::Name, "err:FORG0001"),
+        ("a:b", AtomicType::Name, "a:b"),
+        ("a:b", AtomicType::NcName, "err:FORG0001"),
+        ("_x", AtomicType::Id, "_x"),
+        ("1x", AtomicType::IdRef, "err:FORG0001"),
+        ("e", AtomicType::Entity, "e"),
+    ];
+    for (text, to, expected) in cases {
+        assert_eq!(cast_text(text, to), expected, "{text} as {}", to.name());
+    }
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j] [XQueryFO §17.1,
+/// §17.1.4, §17.1.5, §17.1.7, §17.4, §17.5] casts within and across the
+/// type hierarchy: cast as what the target is treated as, then checked
+/// against its facets; durations to each other; dates to the Gregorian
+/// types; hex and base64 to each other; `xs:NOTATION` abstract,
+/// err:XPST0080; `xs:QName` from no string, err:XPTY0004, nor from one
+/// not a literal, err:XPST0083.
+#[test]
+fn casts_within_and_across_the_hierarchy() {
+    let of = |kind, lexical: &str| Atomic { kind, lexical: lexical.into() };
+    let cases = [
+        (of(AtomicType::Double, "3.7"), AtomicType::Int, "3"),
+        (of(AtomicType::Int, "5"), AtomicType::Short, "5"),
+        (of(AtomicType::Boolean, "true"), AtomicType::Byte, "1"),
+        (of(AtomicType::Decimal, "1.5"), AtomicType::Token, "1.5"),
+        (of(AtomicType::Short, "-5"), AtomicType::Decimal, "-5"),
+        (of(AtomicType::HexBinary, "0FB7"), AtomicType::Base64Binary, "D7c="),
+        (of(AtomicType::Base64Binary, "D7c="), AtomicType::HexBinary, "0FB7"),
+        (of(AtomicType::DayTimeDuration, "P1D"), AtomicType::Duration, "P1D"),
+        (of(AtomicType::Duration, "P1Y2MT3H"), AtomicType::YearMonthDuration, "P1Y2M"),
+        (of(AtomicType::Duration, "-P1Y2MT3H"), AtomicType::DayTimeDuration, "-PT3H"),
+        (of(AtomicType::YearMonthDuration, "P1Y"), AtomicType::Duration, "P1Y"),
+        (of(AtomicType::DateTime, "2020-02-29T12:00:00+05:00"), AtomicType::GMonthDay, "--02-29+05:00"),
+        (of(AtomicType::Date, "2021-03-04"), AtomicType::GYear, "2021"),
+        (of(AtomicType::Date, "2021-03-04"), AtomicType::GMonth, "--03--"),
+        (of(AtomicType::Date, "2021-03-04Z"), AtomicType::GDay, "---04Z"),
+        (of(AtomicType::DateTime, "2021-03-04T00:00:00"), AtomicType::GYearMonth, "2021-03"),
+        (of(AtomicType::Duration, "P1D"), AtomicType::String, "P1D"),
+    ];
+    for (value, to, expected) in cases {
+        assert_eq!(&*cast(&value, to).unwrap().lexical, expected, "{value:?} as {}", to.name());
+    }
+    let refused = [
+        (of(AtomicType::Double, "300"), AtomicType::Byte, "FORG0001"),
+        (of(AtomicType::Decimal, "1.5"), AtomicType::NcName, "FORG0001"),
+        (of(AtomicType::String, "a"), AtomicType::Notation, "XPST0080"),
+        (of(AtomicType::String, "a:b"), AtomicType::QName, "XPST0083"),
+        (of(AtomicType::UntypedAtomic, "a:b"), AtomicType::QName, "XPTY0004"),
+        (of(AtomicType::Time, "12:00:00"), AtomicType::GDay, "XPTY0004"),
+        (of(AtomicType::AnyUri, "a"), AtomicType::HexBinary, "XPTY0004"),
+        (of(AtomicType::Date, "2020-01-01"), AtomicType::AnyUri, "XPTY0004"),
+    ];
+    for (value, to, code) in refused {
+        let error = cast(&value, to).unwrap_err();
+        assert!(error.to_string().contains(code), "{value:?} as {}: {error}", to.name());
+    }
+    assert_eq!(from_lexical(" a:b ", AtomicType::QName).unwrap().unwrap().lexical.as_ref(), "a:b");
+    assert!(from_lexical("a:b:c", AtomicType::Notation).unwrap().is_none());
+    assert_eq!(normalize(" a \n\r b ", WhiteSpace::Replace), " a    b ");
+}

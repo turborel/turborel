@@ -98,7 +98,7 @@ fn corrupt_bytes_are_refused() {
     assert!(corrupt(&good[..good.len() - 1]).contains(WHAT));
     assert!(corrupt(&[good.as_slice(), &[0]].concat()).contains(WHAT));
     assert!(corrupt(&[1, 1, 0, 0, 0, 9]).contains("an item's tag is 9"));
-    assert!(corrupt(&[1, 1, 0, 0, 0, ATOMIC, 13]).contains("type is 13"));
+    assert!(corrupt(&[1, 1, 0, 0, 0, ATOMIC, 44]).contains("type is 44"));
     let no_names = [1, 1, 0, 0, 0, NODE, 0, 0, 0, 0];
     assert!(corrupt(&[&no_names[..], &[ELEMENT, 5, 0, 0, 0]].concat()).contains("the name 5 is not numbered"));
     assert!(corrupt(&[&no_names[..], &[9]].concat()).contains("an event's tag is 9"));
@@ -151,4 +151,23 @@ fn the_stored_form_is_read_as_events() {
     assert_eq!(code(&[&no_names[..], &[9]].concat()), -916_i32, "an event's tag");
     assert_eq!(code(&[&no_names[..], &[END]].concat()), -916_i32, "an end of nothing");
     assert_eq!(code(&[bytes.as_slice(), &[0]].concat()), -916_i32, "bytes after the last item");
+}
+
+/// Verifies: [DESIGN] RULES.md D30, D86: each atomic type is stored by
+/// its own tag, the first thirteen as before the others were added, so a
+/// value stored before is read as it was; every type is read back.
+#[test]
+fn every_atomic_type_has_a_tag() {
+    assert_eq!(ATOMIC_TYPES.get(12), Some(&AtomicType::HexBinary));
+    assert_eq!(ATOMIC_TYPES.get(13), Some(&AtomicType::Duration));
+    assert_eq!(ATOMIC_TYPES.get(21), Some(&AtomicType::QName));
+    assert_eq!(ATOMIC_TYPES.get(23), Some(&AtomicType::NormalizedString));
+    assert_eq!(ATOMIC_TYPES.get(43), Some(&AtomicType::PositiveInteger));
+    for kind in AtomicType::all() {
+        assert_eq!(ATOMIC_TYPES.iter().filter(|&&t| t == kind).count(), 1, "{}", kind.name());
+        let value = Sequence::new(vec![Item::Atomic(Atomic { kind, lexical: "v".into() })]);
+        let back = again(&value);
+        let [Item::Atomic(read)] = back.items() else { panic!("an atomic value") };
+        assert_eq!(read.kind, kind);
+    }
 }

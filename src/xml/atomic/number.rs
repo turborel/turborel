@@ -8,7 +8,8 @@
 
 use std::num::FpCategory;
 
-use super::{Atomic, AtomicType, xquery_error};
+use super::types::Primitive;
+use super::{Atomic, xquery_error};
 use crate::error::Result;
 
 /// [XQueryFO §17.1.2] The least magnitude a float or double is written
@@ -33,7 +34,7 @@ fn digits(s: &str) -> bool {
 /// The sign and the digits before and after the period of `text`, if it
 /// is a lexical form of `xs:decimal`: a sign perhaps, then digits with a
 /// period perhaps among them, one digit at least [Schema2 §3.2.3.1].
-fn parts(text: &str) -> Option<(bool, &str, &str)> {
+pub(super) fn parts(text: &str) -> Option<(bool, &str, &str)> {
     let (negative, body) = match text.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, text.strip_prefix('+').unwrap_or(text)),
@@ -107,15 +108,35 @@ pub fn real_text(x: f64, single: bool) -> String {
         FpCategory::Zero => return if x.is_sign_negative() { "-0" } else { "0" }.to_owned(),
         FpCategory::Subnormal | FpCategory::Normal => {}
     }
-    let narrow = || format!("{x:e}").parse::<f32>().ok();
     let magnitude = x.abs();
     if (DECIMAL_LEAST..DECIMAL_BOUND).contains(&magnitude) {
-        let shortest = if single { narrow().map(|f| f.to_string()) } else { None }.unwrap_or_else(|| x.to_string());
+        let narrow = format!("{x:e}").parse::<f32>().ok();
+        let shortest = if single { narrow.map(|f| f.to_string()) } else { None }.unwrap_or_else(|| x.to_string());
         return decimal(&shortest).unwrap_or(shortest);
     }
+    exponent_form(x, single)
+}
+
+/// The float, if `single`, or double `x`, finite, written as a mantissa
+/// of one digit before its period, E and an exponent [Schema2 §3.2.4.2,
+/// §3.2.5.2], the mantissa the fewest digits that read back as `x`.
+fn exponent_form(x: f64, single: bool) -> String {
+    let narrow = || format!("{x:e}").parse::<f32>().ok();
     let shortest = if single { narrow().map(|f| format!("{f:e}")) } else { None }.unwrap_or_else(|| format!("{x:e}"));
     let (mantissa, exponent) = shortest.split_once('e').unwrap_or((&shortest, "0"));
     if mantissa.contains('.') { format!("{mantissa}E{exponent}") } else { format!("{mantissa}.0E{exponent}") }
+}
+
+/// The canonical representation of the float, if `single`, or double `x`
+/// [Schema2 §3.2.4.2, §3.2.5.2]: NaN, INF or -INF; else a mantissa of one
+/// digit before its period and one after it at least, E, and an exponent,
+/// 0.0E0 or -0.0E0 of a zero.
+pub fn real_canonical(x: f64, single: bool) -> String {
+    match x.classify() {
+        FpCategory::Nan | FpCategory::Infinite => real_text(x, single),
+        FpCategory::Zero => if x.is_sign_negative() { "-0.0E0" } else { "0.0E0" }.to_owned(),
+        FpCategory::Subnormal | FpCategory::Normal => exponent_form(x, single),
+    }
 }
 
 /// The `xs:boolean` of `text`, if it is a lexical form of one [Schema2
@@ -147,18 +168,28 @@ enum Number {
 
 /// `value` as a number, if it is a number or a truth value.
 fn number(value: &Atomic) -> Option<Number> {
-    match value.kind {
-        AtomicType::Decimal | AtomicType::Integer => Some(Number::Exact(value.lexical.clone())),
-        AtomicType::Float | AtomicType::Double => double(&value.lexical).map(Number::Real),
-        AtomicType::Boolean => boolean(&value.lexical).map(Number::Truth),
-        AtomicType::String
-        | AtomicType::UntypedAtomic
-        | AtomicType::Date
-        | AtomicType::Time
-        | AtomicType::DateTime
-        | AtomicType::YearMonthDuration
-        | AtomicType::DayTimeDuration
-        | AtomicType::HexBinary => None,
+    match value.kind.primitive() {
+        Primitive::Decimal | Primitive::Integer => Some(Number::Exact(value.lexical.clone())),
+        Primitive::Float | Primitive::Double => double(&value.lexical).map(Number::Real),
+        Primitive::Boolean => boolean(&value.lexical).map(Number::Truth),
+        Primitive::Untyped
+        | Primitive::String
+        | Primitive::Duration
+        | Primitive::YearMonthDuration
+        | Primitive::DayTimeDuration
+        | Primitive::DateTime
+        | Primitive::Time
+        | Primitive::Date
+        | Primitive::GYearMonth
+        | Primitive::GYear
+        | Primitive::GMonthDay
+        | Primitive::GDay
+        | Primitive::GMonth
+        | Primitive::HexBinary
+        | Primitive::Base64Binary
+        | Primitive::AnyUri
+        | Primitive::QName
+        | Primitive::Notation => None,
     }
 }
 
@@ -214,22 +245,32 @@ fn real(n: &Number, single_precision: bool) -> f64 {
 ///
 /// SQLSTATE 10000, err:FOCA0002, of a NaN or infinity cast as a decimal
 /// or integer.
-pub fn convert(value: &Atomic, to: AtomicType) -> Result<Option<String>> {
+pub fn convert(value: &Atomic, to: Primitive) -> Result<Option<String>> {
     let Some(n) = number(value) else { return Ok(None) };
     Ok(Some(match to {
-        AtomicType::Boolean => boolean_text(truth(&n)),
-        AtomicType::Decimal => exact(n)?,
+        Primitive::Boolean => boolean_text(truth(&n)),
+        Primitive::Decimal => exact(n)?,
         // [XQueryFO §17.1.3.4] the fraction discarded.
-        AtomicType::Integer => integer(exact(n)?.split('.').next().unwrap_or_default()).unwrap_or_default(),
-        AtomicType::Float => real_text(real(&n, true), true),
-        AtomicType::Double => real_text(real(&n, false), false),
-        AtomicType::String
-        | AtomicType::UntypedAtomic
-        | AtomicType::Date
-        | AtomicType::Time
-        | AtomicType::DateTime
-        | AtomicType::YearMonthDuration
-        | AtomicType::DayTimeDuration
-        | AtomicType::HexBinary => return Ok(None),
+        Primitive::Integer => integer(exact(n)?.split('.').next().unwrap_or_default()).unwrap_or_default(),
+        Primitive::Float => real_text(real(&n, true), true),
+        Primitive::Double => real_text(real(&n, false), false),
+        Primitive::Untyped
+        | Primitive::String
+        | Primitive::Duration
+        | Primitive::YearMonthDuration
+        | Primitive::DayTimeDuration
+        | Primitive::DateTime
+        | Primitive::Time
+        | Primitive::Date
+        | Primitive::GYearMonth
+        | Primitive::GYear
+        | Primitive::GMonthDay
+        | Primitive::GDay
+        | Primitive::GMonth
+        | Primitive::HexBinary
+        | Primitive::Base64Binary
+        | Primitive::AnyUri
+        | Primitive::QName
+        | Primitive::Notation => return Ok(None),
     }))
 }
