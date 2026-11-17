@@ -93,7 +93,27 @@ pub fn all() -> Vec<Mutation> {
 }
 
 /// The core's mutations: transactions, durability, constraints, assertions, the hash index. Rekeying's are in `rekey.rs`.
-pub const MUTATIONS: [Mutation; 43] = [
+pub const MUTATIONS: [Mutation; 45] = [
+    Mutation {
+        name: "hash-key-stream-owner",
+        package: Package::Core,
+        breaks: "a discarded hash index frees pages while its key-row stream reads them",
+        file: "src/index/hash.rs",
+        original: "let _rows_owner = &self;",
+        replacement: "let _rows_owner = ();",
+        integration: &[],
+        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
+    },
+    Mutation {
+        name: "hash-search-stream-owner",
+        package: Package::Core,
+        breaks: "a discarded hash index frees pages while a search still reads them",
+        file: "src/index/hash.rs",
+        original: "let _entries_owner = &self;",
+        replacement: "let _entries_owner = ();",
+        integration: &["indexes::indexes_are_dropped"],
+        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
+    },
     Mutation {
         name: "mvcc-snapshot",
         package: Package::Core,

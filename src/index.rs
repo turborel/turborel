@@ -418,8 +418,10 @@ pub trait IndexMethod: Send + Sync {
 /// * `load` is called only on an index that is empty, and nothing else
 ///   reads or writes it until it returns; it leaves the index as inserting
 ///   each entry would.
-/// * After `discard`, no method but `search`, `nearest`, `rows` and `estimate` is
+/// * After `discard`, no method but `search`, `nearest`, `rows`, `key_rows` and `estimate` is
 ///   called, and those only by readers that found the index before.
+///   Streams retain the index until they close, independently of catalog
+///   snapshots, so its pages cannot be reclaimed while they are read.
 /// * `estimate` is only a statistic: results never depend on it. `None` is
 ///   "not known cheaply", and the planner then estimates from the table's
 ///   statistics; for `Probe::Predicate` it prices fetching every table row.

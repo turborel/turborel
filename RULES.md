@@ -1821,6 +1821,12 @@ nothing. `rtree` indexes two point coordinates or four rectangle coordinates
 A method can support independent comparisons on several key columns
 without an equality prefix (`IndexMethod::supports_columns`).
 
+Search, nearest-neighbour and key-row streams retain their index until
+they close. Dropping an index removes it from new catalog snapshots;
+its pages are reclaimed only after existing readers release it. A stream
+must keep this ownership itself, without relying on an enclosing plan or
+catalog snapshot to retain the index.
+
 A comparison probe finds exactly what SQL compares. A probe value of
 another type is placed by its anchor and each entry checked, and a number
 of the other kind is placed among the column's values (`physical/probe.rs`)

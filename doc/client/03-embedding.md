@@ -574,6 +574,11 @@ key; `Predicate::argument` is its position in the call, 0 or 1.
 `Probe::Predicate::value` supplies the other argument. The example method
 below supports the column in the first argument only.
 
+An index stream must retain its storage until it closes. This applies to
+`search`, `key_rows` and `nearest`: an existing cursor may continue reading
+after the index is dropped, without another catalog snapshot keeping the
+index alive. Reclaim its pages only when the last reader releases it.
+
 The planner compares the lookup cost with a scan. `Index::estimate`
 counts every candidate, including those the WHERE check rejects. If it
 returns `None`, the planner prices fetching every table row. If
