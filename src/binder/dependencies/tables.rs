@@ -21,11 +21,13 @@ pub(super) fn base_table(w: &Walk<'_>, table: &QualifiedName, width: usize) -> K
     known.not_null = not_null.iter().filter_map(|&c| known.attribute_of(c)).collect();
     let every: Attrs = known.columns.iter().copied().collect();
     for c in desc.constraints.iter().filter(|c| !c.attributes.deferrable) {
-        let ConstraintKind::Unique { columns, primary, nulls_distinct } = &c.kind else { continue };
+        let ConstraintKind::Unique { columns, primary, nulls_distinct, period } = &c.kind else { continue };
         if !(*primary || !*nulls_distinct || columns.iter().all(|k| not_null.contains(k))) {
             continue;
         }
-        if let Some(key) = known.attributes_of(columns) {
+        // [ISO/IEC 9075-2:2023 §11.7 SR6d i] Of one WITHOUT OVERLAPS, its
+        // columns with the period's start and end, which no two rows share.
+        if let Some(key) = known.attributes_of(&desc.key_columns(columns, period.as_deref())) {
             known.depends(key.clone(), every.clone());
             known.keys.push((key, *primary));
         }

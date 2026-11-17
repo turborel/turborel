@@ -324,13 +324,12 @@ impl State {
         for ix in self.catalog.indexes(&next.name) {
             gone.push(ix.name.clone());
             let Some(columns) = reshape.columns(&ix.columns) else { continue };
-            if ix.unique && !next.unique().any(|u| u == columns.as_slice()) {
+            if ix.unique && !next.unique().any(|u| u == columns) {
                 continue;
             }
             kept.push(self.with_derived(IndexDesc { columns, ..ix.clone() }, next)?);
         }
-        let added: Vec<Vec<usize>> =
-            next.unique().filter(|u| !kept.iter().any(|ix| ix.unique && ix.columns == *u)).map(<[usize]>::to_vec).collect();
+        let added: Vec<Vec<usize>> = next.unique().filter(|u| !kept.iter().any(|ix| ix.unique && ix.columns == *u)).collect();
         // Of as many names as the table has indexes, and one more, one is free.
         let names = self.catalog.indexes(&next.name).len().saturating_add(added.len());
         for columns in added {

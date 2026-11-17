@@ -209,7 +209,12 @@ impl<'a> Described<'a> {
             let added = match &c.kind {
                 ColumnConstraintKind::NotNull => self.add(c.name.as_ref(), "NOTNULL", ConstraintKind::NotNull(at)),
                 ColumnConstraintKind::Unique { primary } => {
-                    let kind = ConstraintKind::Unique { columns: vec![at], primary: *primary, nulls_distinct: IMPLICIT_NULLS_DISTINCT };
+                    let kind = ConstraintKind::Unique {
+                        columns: vec![at],
+                        primary: *primary,
+                        nulls_distinct: IMPLICIT_NULLS_DISTINCT,
+                        period: None,
+                    };
                     self.add(c.name.as_ref(), word(*primary), kind)
                 }
                 ColumnConstraintKind::References(r) => self.foreign_key(c.name.as_ref(), vec![at], r, c.at),
@@ -231,10 +236,11 @@ impl<'a> Described<'a> {
     pub(super) fn table_constraint(&mut self, c: &TableConstraint) -> Result<()> {
         self.attributes = c.attributes;
         let added = match &c.kind {
-            TableConstraintKind::Unique { primary, columns, nulls_distinct } => {
+            TableConstraintKind::Unique { primary, columns, nulls_distinct, period } => {
                 let columns = self.positions(columns, "§11.7 SR4")?;
-                let kind = ConstraintKind::Unique { columns, primary: *primary, nulls_distinct: *nulls_distinct };
-                self.add(c.name.as_ref(), word(*primary), kind)
+                let (primary, nulls_distinct, period) = (*primary, *nulls_distinct, period.clone());
+                let kind = ConstraintKind::Unique { columns, primary, nulls_distinct, period };
+                self.add(c.name.as_ref(), word(primary), kind)
             }
             TableConstraintKind::ForeignKey { columns, references } => {
                 let columns = self.positions(columns, "§11.8 SR6")?;
@@ -341,15 +347,26 @@ pub(super) fn describe(
 /// `written`, of a unique constraint of it [SR2a], or else its PRIMARY KEY
 /// [SR2b].
 fn referenced_columns((target, parent): (&QualifiedName, &TableDesc), written: Option<&[String]>, at: usize) -> Result<Vec<usize>> {
+    // [ISO/IEC 9075-2:2023 §11.8 SR4] Of a unique constraint WITHOUT
+    // OVERLAPS, none: its columns alone are no key.
+    let keys = parent.constraints.iter().filter_map(|c| match &c.kind {
+        ConstraintKind::Unique { columns, primary, period, .. } => Some((columns, *primary, period.is_some())),
+        ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,
+    });
     let Some(written) = written else {
-        return parent
-            .primary_key()
-            .map(<[usize]>::to_vec)
-            .ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.8 SR2b] {target} has no PRIMARY KEY")).or_at(at));
+        return match keys.into_iter().find(|k| k.1) {
+            Some((columns, _, false)) => Ok(columns.clone()),
+            Some((_, _, true)) => Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §11.8 SR4b] the PRIMARY KEY of {target} is WITHOUT OVERLAPS of a period, which a foreign key with no column list does not reference"
+            ))
+            .or_at(at)),
+            None => Err(rule(format!("[ISO/IEC 9075:1992 §11.8 SR2b] {target} has no PRIMARY KEY")).or_at(at)),
+        };
     };
     let positions =
         Described::new((target, &target.auth, Within::Session), &parent.columns, Vec::new()).positions(written, "§11.8 SR2a")?;
-    let keyed = parent.unique().any(|u| u.len() == positions.len() && u.iter().all(|c| positions.contains(c)));
+    let mut keys = keys;
+    let keyed = keys.any(|(u, _, temporal)| !temporal && u.len() == positions.len() && u.iter().all(|c| positions.contains(c)));
     if !keyed {
         return Err(rule(format!(
             "[ISO/IEC 9075:1992 §11.8 SR2a] the columns referenced are not those of a unique constraint of {target}"

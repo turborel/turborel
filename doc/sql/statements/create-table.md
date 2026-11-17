@@ -66,7 +66,8 @@ CREATE TABLE: define a base table
 
 <table constraint definition> ::=
     [ CONSTRAINT <constraint name> ]
-    {   { UNIQUE [ NULLS [ NOT ] DISTINCT ] | PRIMARY KEY } ( <column name> [ { , <column name> }... ] )
+    {   { UNIQUE [ NULLS [ NOT ] DISTINCT ] | PRIMARY KEY }
+          ( <column name> [ { , <column name> }... ] [ , <period name> WITHOUT OVERLAPS ] )
       | FOREIGN KEY ( <column name> [ { , <column name> }... ] ) <references specification>
       | <check constraint definition> }
     [ <constraint attributes> ]
@@ -132,10 +133,14 @@ null. UNIQUE NULLS NOT DISTINCT takes a null as a value too, the same as
 another null, so it refuses a second row of a null where a row has one
 and the same values in the other columns, and two rows all null. One
 column of it holds one null at most. NULLS DISTINCT is the default.
-PRIMARY KEY is UNIQUE and NOT NULL, one to a table. A foreign key
+PRIMARY KEY is UNIQUE and NOT NULL, one to a table. WITHOUT OVERLAPS
+of the table's period, after the columns, makes two rows of the same
+values a duplicate only if their periods overlap. So a key holds one
+row at each point in time, and a row may end where the next of its key
+begins. A foreign key
 refuses a row whose values do not match a row of the referenced table:
 of its PRIMARY KEY, or of the columns named, which a UNIQUE or PRIMARY
-KEY constraint is on. Its MATCH says how a row with nulls in the foreign
+KEY constraint is on, not one WITHOUT OVERLAPS. Its MATCH says how a row with nulls in the foreign
 key's columns is taken: with none written, it is accepted if any of
 them is null; MATCH FULL accepts it only if all are null, and refuses
 one with some null and some not; MATCH PARTIAL accepts it if its values
@@ -278,6 +283,10 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
     and not DEFERRABLE, or of the PRIMARY KEY, and neither an identity
     nor a generated column. PERIOD FOR SYSTEM_TIME, of a system-versioned
     table, is not yet supported (SQLCODE -900).
+19. WITHOUT OVERLAPS names the table's period, after one column at
+    least. No two UNIQUE or PRIMARY KEY constraints are of the same
+    columns, whatever their period. A foreign key with no columns
+    written references no PRIMARY KEY WITHOUT OVERLAPS.
 
 ## PRIVILEGES
 
@@ -463,6 +472,25 @@ OK
 (1 row)
 ```
 
+A key of the room booked, one booking of a room on each day. A booking
+from the day another ends is kept, one that overlaps it is refused:
+
+```sql
+CREATE TABLE BOOKINGS (ROOM INTEGER, FROM_DAY DATE NOT NULL, TO_DAY DATE NOT NULL, PERIOD FOR STAY (FROM_DAY, TO_DAY), PRIMARY KEY (ROOM, STAY WITHOUT OVERLAPS));
+INSERT INTO BOOKINGS VALUES (101, DATE '2026-03-01', DATE '2026-03-04');
+INSERT INTO BOOKINGS VALUES (101, DATE '2026-03-04', DATE '2026-03-06');
+INSERT INTO BOOKINGS VALUES (101, DATE '2026-03-05', DATE '2026-03-08');
+COMMIT;
+```
+
+```
+OK
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): PRIMARY KEY ANN.BOOKINGS_PRIMARY1 (ROOM, STAY WITHOUT OVERLAPS) of ANN.BOOKINGS would be violated: a row of these values is there for a time in its period [ISO/IEC 9075-2:2023 §11.7 SR6d i]
+OK
+```
+
 Tables refused:
 
 ```sql
@@ -502,7 +530,7 @@ UNIQUE only. Identity columns and generated columns are ISO/IEC
 is ISO/IEC 9075-2:2023 §11.3, Feature T171, and its options Feature
 T173; AS is Feature T172. Periods are ISO/IEC 9075-2:2023 §4.16 and
 §11.3, Feature T181, the name of the period constraint left to the
-implementation; the view PERIODS is this implementation's own. That AS is not written in a CREATE SCHEMA, and
+implementation, and so is WITHOUT OVERLAPS, §11.7; the view PERIODS is this implementation's own. That AS is not written in a CREATE SCHEMA, and
 that neither names a declared local temporary table, are this
 implementation's own. The null treatment of UNIQUE is ISO/IEC
 9075-2:2023 §11.7, Feature F292. With none written it is NULLS DISTINCT,

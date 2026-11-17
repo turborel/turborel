@@ -261,6 +261,7 @@ mod system_tables;
 mod table_contents;
 mod table_encodings;
 mod table_settings;
+mod temporal_keys;
 mod temporary_changes;
 mod temporary_lobs;
 mod temporary_spills;

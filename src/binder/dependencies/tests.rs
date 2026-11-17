@@ -25,7 +25,7 @@ fn constraint(kind: ConstraintKind, deferrable: bool) -> ConstraintDesc {
 /// A UNIQUE of `columns`, PRIMARY KEY if `primary`, of nulls distinct if
 /// `nulls_distinct`.
 fn unique(columns: Vec<usize>, (primary, nulls_distinct): (bool, bool)) -> ConstraintKind {
-    ConstraintKind::Unique { columns, primary, nulls_distinct }
+    ConstraintKind::Unique { columns, primary, nulls_distinct, period: None }
 }
 
 /// A database of table `A.T` of columns K, V and W, of `constraints`.

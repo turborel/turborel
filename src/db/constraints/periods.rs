@@ -79,7 +79,7 @@ pub(in crate::db) fn written_period(t: &TableDefinition) -> Result<Option<&Perio
 /// by `t` `within`, its names of schema `names`, where `taken` are the
 /// constraint names there are besides its own: its application-time
 /// period's descriptor and period constraint, CHECK (start < end), if it
-/// defines one.
+/// defines one; then its keys WITHOUT OVERLAPS judged (`keyed_periods`).
 ///
 /// # Errors
 ///
@@ -89,7 +89,7 @@ pub(in crate::db) fn define_period(
     desc: &mut TableDesc,
     taken: &[QualifiedName],
 ) -> Result<()> {
-    let Some(def) = written_period(t)? else { return Ok(()) };
+    let Some(def) = written_period(t)? else { return keyed_periods(desc) };
     let name = application(&def.name)?;
     let mut all = taken.to_vec();
     all.extend(desc.constraints.iter().map(|c| c.name.clone()));
@@ -100,6 +100,25 @@ pub(in crate::db) fn define_period(
     d.table_constraint(&period_check(def, &constraint)?)?;
     desc.constraints.extend(d.constraints);
     desc.periods.push(period);
+    keyed_periods(desc)
+}
+
+/// [ISO/IEC 9075-2:2023 §11.7 SR3b] Each unique constraint of `desc`
+/// WITHOUT OVERLAPS of a period of it.
+///
+/// # Errors
+///
+/// SQLCODE -103 of one of a period it has not.
+pub(in crate::db) fn keyed_periods(desc: &TableDesc) -> Result<()> {
+    for c in &desc.constraints {
+        let ConstraintKind::Unique { period: Some(period), .. } = &c.kind else { continue };
+        if !desc.periods.iter().any(|p| p.name == *period) {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §11.7 SR3b] {} has no period {period} for constraint {} to be WITHOUT OVERLAPS of",
+                desc.name, c.name
+            )));
+        }
+    }
     Ok(())
 }
 

@@ -4,14 +4,16 @@
 //! one constraint, checked as they come, one at a time (`KeyCheck`), so
 //! none is held for the check, however many there are (RULES.md D38).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::catalog::{ConstraintKind, IndexDesc, QualifiedName, TableDesc, proper_supertables};
 use crate::db::{State, api};
 use crate::error::{Code, Result, SqlError, Subject, fail};
-use crate::index::Key;
+use crate::index::{Key, KeyOrder, Probe};
 use crate::storage::{Newest, Row, RowId, TableStorage, project};
 use crate::txn::Txn;
+use crate::value::CompOp;
 use crate::value::Value;
 
 /// [X3.135-1986 §6.4 GR2] UNIQUE on some columns of a table, "effectively
@@ -40,6 +42,10 @@ pub(in crate::db) struct KeyCheck<'s> {
     /// The constraint's name, and its columns.
     name: &'s QualifiedName,
     columns: &'s [usize],
+    /// The key of its index: its columns, and of one WITHOUT OVERLAPS, the
+    /// period's start and end columns after them (`overlaps`).
+    key: Vec<usize>,
+    overlaps: bool,
     /// Whether it is a PRIMARY KEY.
     primary: bool,
     /// Whether NULLS DISTINCT [ISO/IEC 9075-2:2023 §11.7 SR5]: a key with
@@ -72,10 +78,11 @@ impl<'s> KeyCheck<'s> {
         desc: &'s TableDesc,
         (name, kind): (&'s QualifiedName, &'s ConstraintKind),
     ) -> Result<Option<KeyCheck<'s>>> {
-        let ConstraintKind::Unique { columns, primary, nulls_distinct } = kind else { return Ok(None) };
+        let ConstraintKind::Unique { columns, primary, nulls_distinct, period } = kind else { return Ok(None) };
         let storage = st.storage_of(&desc.name)?;
+        let (key, overlaps) = (desc.key_columns(columns, period.as_deref()), period.is_some());
         let indexes = st.catalog.indexes(&desc.name).into_iter();
-        let unique: Vec<&IndexDesc> = indexes.filter(|ix| ix.unique && ix.columns == *columns).collect();
+        let unique: Vec<&IndexDesc> = indexes.filter(|ix| ix.unique && ix.columns == key).collect();
         let (primary, nulls_distinct) = (*primary, *nulls_distinct);
         // The table whose constraint it is: `desc`'s, or a supertable's.
         let owner = std::iter::once(desc.name.clone())
@@ -83,9 +90,9 @@ impl<'s> KeyCheck<'s> {
             .find(|t| st.catalog.table(t).is_some_and(|d| d.constraints.iter().any(|c| c.name == *name)))
             .unwrap_or_else(|| desc.name.clone());
         let family: Vec<QualifiedName> = st.family(&owner).into_iter().filter(|t| *t != desc.name).collect();
-        let keyed =
-            st.catalog.indexes(&owner).into_iter().find(|ix| ix.unique && ix.columns == *columns).or_else(|| unique.first().copied());
-        Ok(Some(KeyCheck { st, txn, desc, storage, name, columns, primary, nulls_distinct, unique, failed: None, family, keyed }))
+        let keyed = st.catalog.indexes(&owner).into_iter().find(|ix| ix.unique && ix.columns == key).or_else(|| unique.first().copied());
+        let failed = None;
+        Ok(Some(KeyCheck { st, txn, desc, storage, name, columns, key, overlaps, primary, nulls_distinct, unique, failed, family, keyed }))
     }
 
     /// Whether it checks constraint `name`.
@@ -104,7 +111,9 @@ impl<'s> KeyCheck<'s> {
         // None whose entry was its key's only one as it was inserted
         // (`Txn::alone`): its index holds its key, and a row of its key
         // inserted after was not, and is read itself.
-        if self.family.is_empty() && self.unique.iter().any(|ix| self.txn.alone(&ix.name, id)) {
+        // Of one WITHOUT OVERLAPS, a row whose key is its own may still
+        // overlap another's period.
+        if !self.overlaps && self.family.is_empty() && self.unique.iter().any(|ix| self.txn.alone(&ix.name, id)) {
             return Ok(());
         }
         let Some(row) = self.storage.get(self.txn.id, id)? else { return Ok(()) };
@@ -146,7 +155,7 @@ impl<'s> KeyCheck<'s> {
     fn key_of(&self, row: &Row) -> Result<Key> {
         let key = match self.keyed {
             Some(ix) => ix.key_of(row),
-            None => project(row, self.columns).map(Key),
+            None => project(row, &self.key).map(Key),
         };
         key.ok_or_else(|| api(format!("[DESIGN] a row of {} is shorter than its columns", self.desc.name)))
     }
@@ -155,6 +164,9 @@ impl<'s> KeyCheck<'s> {
     /// each unique index: the row's own entry alone, no other row may hold
     /// it.
     fn duplicate(&self, key: &Key) -> Result<()> {
+        if self.overlaps {
+            return self.overlapping(key);
+        }
         if !self.family.is_empty() {
             return self.family_duplicate(key);
         }
@@ -166,10 +178,10 @@ impl<'s> KeyCheck<'s> {
             let mut holders = 0_usize;
             for other in found {
                 let newest = self.storage.newest(self.txn.id, other)?;
-                holders = holders.saturating_add(usize::from(holds(&newest, key, &|row| self.key_of(row))?));
+                holders = holders.saturating_add(usize::from(holds(&newest, &|row| Ok(self.key_of(row)? == *key))?));
             }
             if holders > 1 {
-                return fail(Code::Constraint, duplicated(self.desc, self.columns));
+                return fail(Code::Constraint, duplicated(self.desc, self.name, self.columns));
             }
         }
         Ok(())
@@ -177,6 +189,53 @@ impl<'s> KeyCheck<'s> {
 }
 
 impl KeyCheck<'_> {
+    /// [ISO/IEC 9075-2:2023 §4.25.3.2, §11.7 SR6d i] `duplicate`, of a
+    /// constraint WITHOUT OVERLAPS: no other row of `key`'s values in its
+    /// columns has a period that overlaps `key`'s, whose start and end
+    /// follow them. Through its index, of those rows whose period starts
+    /// before `key`'s ends, if its method finds them by their first
+    /// columns; else read whole.
+    fn overlapping(&self, key: &Key) -> Result<()> {
+        let n = self.columns.len();
+        let (Some(values), Some(end)) = (key.0.get(..n), key.0.get(n.saturating_add(1))) else { return Ok(()) };
+        let width = self.key.len();
+        let method = |ix: &&&IndexDesc| self.st.methods.get(&ix.method).is_some_and(|m| m.supports_prefix(width, n, Some(CompOp::Lt)));
+        // A null equal to a null, of NULLS NOT DISTINCT, is equal to none
+        // as a probe compares.
+        let found = self.unique.iter().find(method).filter(|_| !values.iter().any(Value::is_null));
+        let Some(ix) = found else { return self.overlapping_read(key) };
+        let probe = Probe::Prefix { equal: values.to_vec(), then: Some((CompOp::Lt, end.clone())) };
+        let (mut holders, mut seen) = (0_usize, HashSet::new());
+        for entry in Arc::clone(self.st.index_of(&ix.name)?).search(&probe, KeyOrder::Ascending) {
+            // A row the transaction changed has an entry of each key it had.
+            let id = entry?.1;
+            if !seen.insert(id) {
+                continue;
+            }
+            let newest = self.storage.newest(self.txn.id, id)?;
+            holders = holders.saturating_add(usize::from(holds(&newest, &|row| Ok(overlap(&self.key_of(row)?, key, n)))?));
+            if holders > 1 {
+                return fail(Code::Constraint, duplicated(self.desc, self.name, self.columns));
+            }
+        }
+        Ok(())
+    }
+
+    /// `overlapping`, the table read whole.
+    fn overlapping_read(&self, key: &Key) -> Result<()> {
+        self.st.read_lock(self.txn, &self.desc.name)?;
+        let all: Vec<usize> = (0..self.desc.columns.len()).collect();
+        let mut holders = 0_usize;
+        for read in Arc::clone(self.storage).scan(self.txn.id, &all) {
+            let (_, row) = read?;
+            holders = holders.saturating_add(usize::from(overlap(&self.key_of(&row)?, key, self.columns.len())));
+            if holders > 1 {
+                return fail(Code::Constraint, duplicated(self.desc, self.name, self.columns));
+            }
+        }
+        Ok(())
+    }
+
     /// [ISO/IEC 9075-2:2023 §4.25.1] `duplicate`, of a constraint of a
     /// typed table with proper subtables: `key` is held by no two rows of
     /// the tables of its family, the row's own table first.
@@ -185,7 +244,7 @@ impl KeyCheck<'_> {
         for table in std::iter::once(&self.desc.name).chain(&self.family) {
             holders = holders.saturating_add(self.holders_in(table, key)?);
             if holders > 1 {
-                return fail(Code::Constraint, duplicated(self.desc, self.columns));
+                return fail(Code::Constraint, duplicated(self.desc, self.name, self.columns));
             }
         }
         Ok(())
@@ -195,12 +254,12 @@ impl KeyCheck<'_> {
     /// the constraint's columns, if it has one, else read whole.
     fn holders_in(&self, table: &QualifiedName, key: &Key) -> Result<usize> {
         let storage = self.st.storage_of(table)?;
-        let indexed = self.st.catalog.indexes(table).into_iter().find(|ix| ix.columns == self.columns);
+        let indexed = self.st.catalog.indexes(table).into_iter().find(|ix| ix.columns == self.key);
         let mut holders = 0_usize;
         if let Some(ix) = indexed {
             for other in self.st.index_of(&ix.name)?.rows(key)? {
                 let newest = storage.newest(self.txn.id, other)?;
-                holders = holders.saturating_add(usize::from(holds(&newest, key, &|row| self.key_of(row))?));
+                holders = holders.saturating_add(usize::from(holds(&newest, &|row| Ok(self.key_of(row)? == *key))?));
             }
             return Ok(holders);
         }
@@ -215,11 +274,20 @@ impl KeyCheck<'_> {
     }
 }
 
-/// Whether a row whose newest state is `newest` holds `key`, as `key_of`
+/// Whether keys `a` and `b`, each `n` values then a period's start and
+/// end, are of equal values whose periods overlap [ISO/IEC 9075-2:2023
+/// §4.16.2]: each starts before the other ends.
+fn overlap(a: &Key, b: &Key, n: usize) -> bool {
+    let one = |k: &Key, at: usize| Key(k.0.get(at).cloned().into_iter().collect());
+    let (a_start, a_end, b_start, b_end) = (one(a, n), one(a, n.saturating_add(1)), one(b, n), one(b, n.saturating_add(1)));
+    a.0.get(..n).map(|v| Key(v.to_vec())) == b.0.get(..n).map(|v| Key(v.to_vec())) && a_start < b_end && b_start < a_end
+}
+
+/// Whether a row whose newest state is `newest` holds a key, as `has_key`
 /// finds it; refused with SQLCODE -911 while another transaction's change
 /// to it leaves it in doubt.
-fn holds(newest: &Newest, key: &Key, key_of: &dyn Fn(&Row) -> Result<Key>) -> Result<bool> {
-    let has = |row: &Option<Row>| row.as_ref().map(key_of).transpose().map(|k| k.as_ref() == Some(key));
+fn holds(newest: &Newest, has_key: &dyn Fn(&Row) -> Result<bool>) -> Result<bool> {
+    let has = |row: &Option<Row>| row.as_ref().map_or(Ok(false), has_key);
     let doubt = match &newest.pending {
         Some(pending) => has(&newest.row)? || has(pending)?,
         None => false,
@@ -234,18 +302,26 @@ fn holds(newest: &Newest, key: &Key, key_of: &dyn Fn(&Row) -> Result<Key>) -> Re
 }
 
 /// The message of a duplicate of `columns` of the table `desc`: its
-/// UNIQUE or PRIMARY KEY constraint named, as GET DIAGNOSTICS names it.
-fn duplicated(desc: &TableDesc, columns: &[usize]) -> String {
+/// UNIQUE or PRIMARY KEY constraint `name`, as GET DIAGNOSTICS names it,
+/// and of one WITHOUT OVERLAPS, its period.
+fn duplicated(desc: &TableDesc, name: &QualifiedName, columns: &[usize]) -> String {
     let names: Vec<&str> = columns.iter().filter_map(|&c| desc.columns.get(c)).map(|c| c.name.as_str()).collect();
     let constraint = desc.constraints.iter().find_map(|c| match &c.kind {
-        ConstraintKind::Unique { columns: on, primary, .. } => {
-            (on == columns).then_some((if *primary { "PRIMARY KEY" } else { "UNIQUE" }, &c.name))
+        ConstraintKind::Unique { primary, period, .. } => {
+            (c.name == *name).then_some((if *primary { "PRIMARY KEY" } else { "UNIQUE" }, &c.name, period))
         }
         ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,
     });
-    let (kind, constraint_name) = constraint.map_or(("UNIQUE", String::new()), |(k, n)| (k, format!(" {n}")));
+    let Some((kind, constraint, Some(period))) = constraint else {
+        let (kind, constraint) = constraint.map_or(("UNIQUE", String::new()), |(k, n, _)| (k, format!(" {n}")));
+        return format!(
+            "[X3.135-1986 §6.4 GR2] {kind}{constraint} ({}) of {} would be violated: a row of these values is there",
+            names.join(", "),
+            desc.name
+        );
+    };
     format!(
-        "[X3.135-1986 §6.4 GR2] {kind}{constraint_name} ({}) of {} would be violated: a row of these values is there",
+        "[ISO/IEC 9075-2:2023 §11.7 SR6d i] {kind} {constraint} ({}, {period} WITHOUT OVERLAPS) of {} would be violated: a row of these values is there for a time in its period",
         names.join(", "),
         desc.name
     )

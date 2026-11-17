@@ -45,6 +45,12 @@ pub enum ConstraintKind {
         /// unique. Else NULLS NOT DISTINCT, a null in one equal to a null
         /// in the other.
         nulls_distinct: bool,
+        /// [ISO/IEC 9075-2:2023 §4.25.3.2, §11.7 SR6d i] The application-
+        /// time period it is WITHOUT OVERLAPS of, if any: then two rows
+        /// are of equal values only if their periods overlap, and its
+        /// index's key is its columns, then the period's start and end
+        /// columns (`TableDesc::key_columns`).
+        period: Option<String>,
     },
     /// [§11.8] A referential constraint.
     ForeignKey(ForeignKey),
@@ -94,12 +100,24 @@ impl fmt::Display for ConstraintDesc {
 }
 
 impl TableDesc {
-    /// The column positions of each UNIQUE and PRIMARY KEY constraint.
-    pub fn unique(&self) -> impl Iterator<Item = &[usize]> {
+    /// The key of the index of each UNIQUE and PRIMARY KEY constraint, no
+    /// two rows' the same (`key_columns`).
+    pub fn unique(&self) -> impl Iterator<Item = Vec<usize>> + '_ {
         self.constraints.iter().filter_map(|c| match &c.kind {
-            ConstraintKind::Unique { columns, .. } => Some(columns.as_slice()),
+            ConstraintKind::Unique { columns, period, .. } => Some(self.key_columns(columns, period.as_deref())),
             ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,
         })
+    }
+
+    /// The key of the index of a unique constraint on `columns`: them, and
+    /// of one WITHOUT OVERLAPS of `period`, its start and end columns
+    /// after, a key no two rows have once none overlap [ISO/IEC
+    /// 9075-2:2023 §11.7 SR6d i].
+    pub fn key_columns(&self, columns: &[usize], period: Option<&str>) -> Vec<usize> {
+        let mut key = columns.to_vec();
+        let bounds = period.and_then(|n| self.periods.iter().find(|p| p.name == n));
+        key.extend(bounds.iter().flat_map(|p| [self.column(&p.start), self.column(&p.end)]).flatten());
+        key
     }
 
     /// Whether a UNIQUE NULLS NOT DISTINCT constraint is on exactly
@@ -107,7 +125,9 @@ impl TableDesc {
     /// with a null (`IndexDesc::nulls`).
     pub fn nulls_not_distinct(&self, columns: &[usize]) -> bool {
         self.constraints.iter().any(|c| match &c.kind {
-            ConstraintKind::Unique { columns: on, nulls_distinct, .. } => !nulls_distinct && on == columns,
+            ConstraintKind::Unique { columns: on, nulls_distinct, period, .. } => {
+                !nulls_distinct && self.key_columns(on, period.as_deref()) == columns
+            }
             ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => false,
         })
     }

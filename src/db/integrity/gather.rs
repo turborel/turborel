@@ -86,8 +86,10 @@ impl State {
     fn unique_checks(&self, effects: &mut Effects<'_>, changed: &[QualifiedName], out: &mut HeldRows<Check>) -> Result<()> {
         for desc in changed.iter().filter_map(|t| self.catalog.table(t)) {
             for c in self.constraints_of(&desc.name) {
-                let ConstraintKind::Unique { columns: of, .. } = &c.kind else { continue };
-                effects.done.visit(&mut |effect| match keyed(effect, desc, of) {
+                let ConstraintKind::Unique { columns, period, .. } = &c.kind else { continue };
+                // [ISO/IEC 9075-2:2023 §11.7 SR6d i] with a period's columns.
+                let of = desc.key_columns(columns, period.as_deref());
+                effects.done.visit(&mut |effect| match keyed(effect, desc, &of) {
                     Some(id) => out.push(Check::Unique { table: desc.name.clone(), constraint: c.name.clone(), id }),
                     None => Ok(()),
                 })?;

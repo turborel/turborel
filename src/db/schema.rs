@@ -477,7 +477,7 @@ impl State {
             let index = IndexDesc {
                 name: name.clone(),
                 table: d.name.clone(),
-                columns: cols.to_vec(),
+                columns: cols,
                 method: self.constraint_method().to_owned(),
                 unique: true,
                 options: Vec::new(),
@@ -537,7 +537,7 @@ mod tests {
         let name = QualifiedName { auth: "A".into(), ident: "T".into() };
         let key = ConstraintDesc {
             name: QualifiedName { auth: "A".into(), ident: "T_UNIQUE1".into() },
-            kind: ConstraintKind::Unique { columns: vec![0], primary: false, nulls_distinct: true },
+            kind: ConstraintKind::Unique { columns: vec![0], primary: false, nulls_distinct: true, period: None },
             attributes: crate::catalog::ConstraintAttributes::default(),
             domain: None,
         };

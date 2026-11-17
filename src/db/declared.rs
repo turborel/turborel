@@ -162,12 +162,12 @@ fn indexes_of(desc: &TableDesc, method: &str) -> Vec<IndexDesc> {
         .map(|(k, columns)| IndexDesc {
             name: constraint_index_name(&desc.name, k),
             table: desc.name.clone(),
-            columns: columns.to_vec(),
+            nulls: desc.nulls_not_distinct(&columns),
+            columns,
             method: method.to_owned(),
             unique: true,
             options: Vec::new(),
             collations: Vec::new(),
-            nulls: desc.nulls_not_distinct(columns),
         })
         .collect()
 }

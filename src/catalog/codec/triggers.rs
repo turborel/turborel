@@ -115,7 +115,7 @@ pub(crate) fn trigger(r: &mut Reader<'_>) -> Result<TriggerDesc> {
 }
 
 /// A name that may be absent: 0, or 1 and the name.
-fn put_optional(out: &mut Vec<u8>, name: Option<&str>) {
+pub(super) fn put_optional(out: &mut Vec<u8>, name: Option<&str>) {
     put_flag(out, name.is_some());
     if let Some(name) = name {
         out.put_str(name);
@@ -128,6 +128,6 @@ fn text(r: &mut Reader<'_>) -> Result<String> {
 }
 
 /// The name `put_optional` wrote, if any.
-fn optional(r: &mut Reader<'_>) -> Result<Option<String>> {
+pub(super) fn optional(r: &mut Reader<'_>) -> Result<Option<String>> {
     Ok(if flag(r)? { Some(r.str()?) } else { None })
 }

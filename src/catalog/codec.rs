@@ -165,11 +165,12 @@ fn put_kind(out: &mut Vec<u8>, kind: &ConstraintKind) {
             out.put_u8(0);
             out.put_u32(count(*at));
         }
-        ConstraintKind::Unique { columns, primary, nulls_distinct } => {
+        ConstraintKind::Unique { columns, primary, nulls_distinct, period } => {
             out.put_u8(1);
             put_positions(out, columns.iter());
             put_flag(out, *primary);
             put_flag(out, *nulls_distinct);
+            triggers::put_optional(out, period.as_deref());
         }
         ConstraintKind::ForeignKey(fk) => {
             out.put_u8(2);
@@ -193,7 +194,10 @@ fn put_kind(out: &mut Vec<u8>, kind: &ConstraintKind) {
 fn kind(r: &mut Reader<'_>) -> Result<ConstraintKind> {
     Ok(match r.u8()? {
         0 => ConstraintKind::NotNull(position(r)?),
-        1 => ConstraintKind::Unique { columns: positions(r)?, primary: flag(r)?, nulls_distinct: flag(r)? },
+        1 => {
+            let (columns, primary, nulls_distinct) = (positions(r)?, flag(r)?, flag(r)?);
+            ConstraintKind::Unique { columns, primary, nulls_distinct, period: triggers::optional(r)? }
+        }
         2 => {
             let (columns, table, referenced) = (positions(r)?, qualified(r)?, positions(r)?);
             let (m, u, d) = (r.u8()?, r.u8()?, r.u8()?);

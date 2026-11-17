@@ -4,6 +4,7 @@
 //! the `<set constraints mode statement>` [§14.2].
 
 use super::Parser;
+use super::dynamic::WITHOUT;
 use crate::ast::{
     Check, ColumnConstraint, ColumnConstraintKind, ConstraintAttributes, IMPLICIT_NULLS_DISTINCT, MatchType, References, ReferentialAction,
     SqlStatement, TableConstraint, TableConstraintKind,
@@ -44,7 +45,8 @@ impl Parser {
                 return Err(SqlError::at(Code::SyntaxRule, treatment_at, msg));
             }
             let nulls_distinct = treatment.unwrap_or(IMPLICIT_NULLS_DISTINCT);
-            TableConstraintKind::Unique { primary, columns: self.name_list()?, nulls_distinct }
+            let (columns, period) = self.unique_column_list()?;
+            TableConstraintKind::Unique { primary, columns, nulls_distinct, period }
         } else if self.accept_kw(kw::FOREIGN) {
             // [§11.8] FOREIGN KEY (<referencing columns>) <references specification>
             self.expect_kw(kw::KEY)?;
@@ -54,6 +56,27 @@ impl Parser {
             TableConstraintKind::Check(self.check()?)
         };
         Ok(TableConstraint { name, at, kind, attributes: self.constraint_attributes()? })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.7] ( `<unique column list>` \[,
+    /// `<without overlap specification>`\] ): the columns, and the period
+    /// of `<application time period name>` WITHOUT OVERLAPS, if written.
+    /// WITHOUT is a reserved word of SQL:2023, read here as a word, as
+    /// SQL-92 reserves none of it (`parser/dynamic.rs`).
+    fn unique_column_list(&mut self) -> Result<(Vec<String>, Option<String>)> {
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut names = vec![self.identifier()?];
+        while self.accept_delim(delim::COMMA) {
+            let name = self.identifier()?;
+            if self.accept_word(WITHOUT) {
+                self.expect_kw(kw::OVERLAPS)?;
+                self.expect_delim(delim::RIGHT_PAREN)?;
+                return Ok((names, Some(name)));
+            }
+            names.push(name);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok((names, None))
     }
 
     /// [§11.4] `<column constraint definition>` ::= \[`<constraint name

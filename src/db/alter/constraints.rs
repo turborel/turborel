@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::{Cause, Made};
 use crate::ast::{DropBehavior, TableConstraint, TableName};
 use crate::binder::qualify;
-use crate::catalog::{ConstraintKind, IndexDesc, QualifiedName};
+use crate::catalog::{Catalog, ConstraintKind, IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::db::constraints::{Described, Within};
 use crate::db::ddl::Dropped;
@@ -40,10 +40,15 @@ impl State {
         added.table_constraint(c)?;
         let (constraints, pending) = (added.constraints, added.pending);
         self.constraint_schemas(qn, (&constraints, &pending))?;
-        let unique = constraints
-            .iter()
-            .find_map(|k| if let ConstraintKind::Unique { columns, .. } = &k.kind { Some(columns.clone()) } else { None });
+        let unique = constraints.iter().find_map(|k| {
+            if let ConstraintKind::Unique { columns, period, .. } = &k.kind {
+                Some(desc.key_columns(columns, period.as_deref()))
+            } else {
+                None
+            }
+        });
         desc.constraints.extend(constraints);
+        crate::db::constraints::periods::keyed_periods(&desc)?;
         for p in &pending {
             let resolved = self.resolve_foreign_key(names, &desc, p)?;
             desc.constraints.push(resolved);
@@ -136,6 +141,15 @@ impl State {
         Ok(structure)
     }
 
+    /// The unique index of `qn` of key `key`, a unique constraint's,
+    /// removed from `catalog` and noted in `dropped`.
+    fn drop_key_index(&mut self, (qn, key): (&QualifiedName, &[usize]), catalog: &mut dyn Catalog, dropped: &mut Dropped) {
+        for ix in self.catalog.indexes(qn).into_iter().filter(|ix| ix.unique && ix.columns == key) {
+            catalog.remove_index(&ix.name);
+            dropped.indexes.extend(self.indexes.remove(&ix.name));
+        }
+    }
+
     /// [ISO/IEC 9075:1992 §11.17] Drops the constraint `name`, its schema
     /// `implicit` if it names none [§5.4 SR8], of base table `qn`. With
     /// CASCADE the foreign keys that reference the columns of a unique one
@@ -161,7 +175,7 @@ impl State {
         let removed = crate::db::constraints::periods::removed_constraint(&mut desc, at)?;
         let mut dropped = Dropped::default();
         let mut catalog = self.catalog.duplicate();
-        if let ConstraintKind::Unique { columns, .. } = &removed.kind {
+        if let ConstraintKind::Unique { columns, period, .. } = &removed.kind {
             let dependent = |kind: &ConstraintKind| {
                 if let ConstraintKind::ForeignKey(fk) = kind {
                     fk.table == *qn && fk.referenced.len() == columns.len() && fk.referenced.iter().all(|c| columns.contains(c))
@@ -185,10 +199,7 @@ impl State {
                     catalog.replace_table(other);
                 }
             }
-            for ix in self.catalog.indexes(qn).into_iter().filter(|ix| ix.unique && ix.columns == *columns) {
-                catalog.remove_index(&ix.name);
-                dropped.indexes.extend(self.indexes.remove(&ix.name));
-            }
+            self.drop_key_index((qn, &desc.key_columns(columns, period.as_deref())), &mut *catalog, &mut dropped);
         }
         desc.refresh_not_null();
         self.inherited_nullability(&mut desc, &[]);

@@ -53,8 +53,6 @@ Nothing is open.
 
 ### Periods and temporal tables
 
-- Temporal primary and unique keys, WITHOUT OVERLAPS [§11.7], so that no
-  two rows of one key hold for one point in time.
 - Temporal foreign keys, PERIOD in a referential constraint [§4.25.3,
   §11.8]. A child row's period must be covered by its parents' periods.
 - System-versioned tables (T180) [§4.17.2.3, §11.3], PERIOD FOR

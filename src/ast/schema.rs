@@ -504,6 +504,9 @@ pub enum TableConstraintKind {
         /// [ISO/IEC 9075-2:2023 §11.7 SR5] NULLS DISTINCT, written or
         /// implicit, rather than NULLS NOT DISTINCT.
         nulls_distinct: bool,
+        /// [ISO/IEC 9075-2:2023 §11.7] The `<application time period
+        /// name>` of a `<without overlap specification>`, if written.
+        period: Option<String>,
     },
     /// [§11.8] FOREIGN KEY (`<referencing columns>`) `<references
     /// specification>`

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::{Cause, Made};
 use crate::ast::{DropBehavior, PeriodDefinition, PeriodName, TableName};
 use crate::binder::bind_generation;
-use crate::catalog::QualifiedName;
+use crate::catalog::{ConstraintKind, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::db::constraints::periods::{Defining, application, constraint_name, period_check, period_of};
 use crate::db::ddl::Dropped;
@@ -75,11 +75,13 @@ impl State {
     /// expression does, whatever the behavior [SR3d vii] (CONFORMANCE.md,
     /// Readings of ambiguous text).
     pub(in crate::db) fn drop_period(&mut self, qn: &QualifiedName, name: &PeriodName, behavior: DropBehavior) -> Result<Dropped> {
-        let mut desc = self.base_table(qn)?;
-        let Some(at) = desc.periods.iter().position(|p| *name == PeriodName::Application(p.name.clone())) else {
+        let table = self.base_table(qn)?;
+        let Some(at) = table.periods.iter().position(|p| *name == PeriodName::Application(p.name.clone())) else {
             let cited = if *name == PeriodName::SystemTime { "SR2b" } else { "SR3a" };
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.28 {cited}] {qn} has no period {}", name.name())));
         };
+        let mut dropped = self.drop_period_keys(qn, (&table, at), behavior)?;
+        let mut desc = self.base_table(qn)?;
         let before = self.clone();
         let removed = desc.periods.remove(at);
         // [SR3d vii] GR2f drops no generated column, so none may reference
@@ -97,11 +99,43 @@ impl State {
         catalog.replace_table(desc);
         self.catalog = Arc::from(catalog);
         let cascade = behavior == DropBehavior::Cascade;
-        let mut dropped = self.drop_dependents_of(&before, (Cause::Period, std::slice::from_ref(qn)), cascade)?;
+        dropped.absorb(self.drop_dependents_of(&before, (Cause::Period, std::slice::from_ref(qn)), cascade)?);
         dropped.absorb(self.drop_dependent_triggers(&before, (Cause::Period, qn), cascade)?);
         dropped.absorb(self.drop_dependent_routines(&before, (Cause::Period, qn), cascade)?);
         let constraint = TableName { auth: Some(removed.constraint.auth.clone()), ident: removed.constraint.ident.clone(), at: 0 };
         dropped.absorb(self.drop_constraint((qn, &removed.constraint.auth), &constraint, DropBehavior::Cascade)?);
+        Ok(dropped)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.28 SR3d ii, GR2f iii] The unique
+    /// constraints of `desc`, base table `qn`, WITHOUT OVERLAPS of its
+    /// period at `at`, whose search conditions reference the period:
+    /// dropped as ALTER TABLE DROP CONSTRAINT CASCADE drops them, with the
+    /// foreign keys that reference them, under CASCADE.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 under RESTRICT if it has one.
+    fn drop_period_keys(&mut self, qn: &QualifiedName, (desc, at): (&TableDesc, usize), behavior: DropBehavior) -> Result<Dropped> {
+        let period = desc.periods.get(at).map(|p| p.name.as_str());
+        let keyed: Vec<QualifiedName> = desc
+            .constraints
+            .iter()
+            .filter_map(|c| if let ConstraintKind::Unique { period: Some(p), .. } = &c.kind { Some((p, &c.name)) } else { None })
+            .filter(|(p, _)| Some(p.as_str()) == period)
+            .map(|(_, name)| name.clone())
+            .collect();
+        let mut dropped = Dropped::default();
+        for name in keyed {
+            if behavior == DropBehavior::Restrict {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §11.28 SR3d ii] constraint {name} of {qn} is WITHOUT OVERLAPS of period {}, so it is dropped only with CASCADE",
+                    period.unwrap_or_default()
+                )));
+            }
+            let written = TableName { auth: Some(name.auth.clone()), ident: name.ident.clone(), at: 0 };
+            dropped.absorb(self.drop_constraint((qn, &name.auth), &written, DropBehavior::Cascade)?);
+        }
         Ok(dropped)
     }
 }
