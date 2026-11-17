@@ -10,8 +10,8 @@ use crate::error::Result;
 use crate::functions::{AggregateFunction, ScalarFunction};
 
 impl Database {
-    /// \[EXTENSION\] Register a scalar function. Callable only from sessions
-    /// that take the function call syntax (SQL.FUNCTION_CALLS ON).
+    /// \[EXTENSION\] Register a scalar function. Callable from sessions that
+    /// take calls of registered functions (SQL.FUNCTION_CALLS ON, the default).
     /// Of a name already a scalar function's, it is one more, overloading
     /// it, only if each declares the types of its parameters and no call
     /// could invoke two of them alike (RULES.md D74); they share the

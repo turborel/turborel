@@ -1890,8 +1890,8 @@ Stored WKB also requires little-endian components, positive zero and
 the canonical empty-point NaN pair; these checks happen during decoding
 without changing the payload format or the accepted interchange forms.
 The server program registers the type and functions before opening files;
-embedding applications register them explicitly. Function calls retain
-the existing SQL.FUNCTION_CALLS opt-in.
+embedding applications register them explicitly. Sessions call them by
+name while SQL.FUNCTION_CALLS is ON, its default.
 
 The free functions ST_POINT, ST_X, ST_Y, ST_GEOMFROMTEXT, ST_GEOMFROMWKB,
 ST_ASTEXT, ST_ASBINARY, ST_SRID, ST_SETSRID, ST_ISEMPTY and ST_GEOMETRYTYPE
@@ -2146,7 +2146,7 @@ Encodings and hash functions are in `src/db/formats.rs`, and file systems in
 ### Function call syntax
 
 Registered functions may be called by name in sessions whose setting
-SQL.FUNCTION_CALLS is ON. A name has one scalar function, or several that
+SQL.FUNCTION_CALLS is ON, as it is by default. A name has one scalar function, or several that
 each declare the types of their parameters and that no call could invoke two
 of alike, chosen by the arguments' types as an SQL-invoked function is
 (RULES.md D53, D74). Any other second registration of a name is refused. A

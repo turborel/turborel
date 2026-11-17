@@ -363,10 +363,11 @@ call's arguments is invoked before a registered one of its name, and
 one of as many parameters as a call has arguments takes the call from
 a registered aggregate of its name, whatever their types. An
 index method that knows a predicate's function by its name should look
-at its parameter types too. A call,
-`NAME(arguments)`, is syntax the standards do not have *(extension)*:
-a session takes it only once its setting SQL.FUNCTION_CALLS is ON, and
-refuses it until then, as SQL does (SQLCODE -102).
+at its parameter types too. A call of a
+registered function, `NAME(arguments)`, names no function of a schema,
+so it is no routine invocation of the standard *(extension)*: a session
+takes it while its setting SQL.FUNCTION_CALLS is ON, as it is by
+default, and refuses it while it is OFF, as SQL does (SQLCODE -102).
 
 ```rust
 use turborel::db::Database;

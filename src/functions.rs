@@ -7,10 +7,12 @@
 //! the parser, planner or executor. So are SQL-92's string functions and
 //! concatenation (`functions/strings.rs`).
 //!
-//! \[EXTENSION\] SQL-86 has no syntax for calling any other function. As an opt-in,
-//! non-standard extension ([X3.135-1986 §3.4] allows "user options to process nonconforming
-//! SQL language"), a session whose SQL.FUNCTION_CALLS is ON accepts `<identifier>`(`<args>`) and resolves it
-//! to a registered `ScalarFunction` or `AggregateFunction`.
+//! \[EXTENSION\] A function registered belongs to no schema, so a call of it
+//! is no `<routine invocation>` [ISO/IEC 9075-2:2023 §10.4]. A session whose
+//! SQL.FUNCTION_CALLS is ON, as it is by default, resolves `<identifier>`(`<args>`)
+//! that names no function of the schema to a registered `ScalarFunction` or
+//! `AggregateFunction`; OFF, it takes the schema's own functions alone
+//! ([X3.135-1986 §3.4] allows "user options to process nonconforming SQL language").
 //!
 //! The engine, not the plugin, applies [X3.135-1986 §5.8 GR1, GR2]: nulls are removed from
 //! the argument, and duplicates too for DISTINCT, before `update` is called.

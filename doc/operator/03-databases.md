@@ -4,8 +4,8 @@
 
 The server includes the GEOMETRY type and its spatial functions, registering
 them before it creates or opens database files. No separate spatial library
-or server option is required. SQL sessions enable SQL.FUNCTION_CALLS to use
-the functions. See [Spatial Data](../data/spatial/README.md) for supported
+or server option is required. SQL sessions call the functions by name, as
+SQL.FUNCTION_CALLS is ON by default. See [Spatial Data](../data/spatial/README.md) for supported
 operations, coordinate-system semantics and indexing limits. A program
 embedding the library must register the extension itself before opening
 a database that contains GEOMETRY columns.

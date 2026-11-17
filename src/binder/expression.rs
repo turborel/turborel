@@ -405,7 +405,7 @@ impl Binder<'_> {
         if !extension {
             return Err(SqlError::new(
                 Code::Syntax,
-                "[X3.135-1986 §5.9 F] function calls are not SQL-86 (they are an [EXTENSION], taken while SQL.FUNCTION_CALLS is ON); expected a <value expression>",
+                "[ISO/IEC 9075-2:2023 §10.4] no function of the schema is of this name, and a call of a function registered is an [EXTENSION] taken while SQL.FUNCTION_CALLS is ON",
             ));
         }
         if !registered.is_empty() {

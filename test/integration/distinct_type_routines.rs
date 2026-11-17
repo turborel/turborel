@@ -56,7 +56,10 @@ fn invoked_by_name_10_4() {
         assert_eq!(code(&a, sql), Code::SyntaxRule, "{sql}");
     }
     assert_eq!(code(&a, "SELECT B.MONEY(1) FROM T"), Code::SyntaxRule, "schema B has no function MONEY");
+    assert_eq!(code(&a, "SELECT NOPE(1) FROM T"), Code::SyntaxRule, "nothing of the name");
+    a.run("SET SQL.FUNCTION_CALLS = 'OFF'").unwrap();
     assert_eq!(code(&a, "SELECT NOPE(1) FROM T"), Code::Syntax, "nothing of the name, and function calls not taken");
+    assert_eq!(query(&a, "SELECT MONEY(2) FROM T"), ["2.00"], "the schema's own, all the same");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.18 SR10d, SR10h; §9.7; §9.6] of the
