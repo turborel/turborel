@@ -11,16 +11,17 @@
 
 mod blink;
 mod hash;
+mod key;
 mod nearest;
 mod projection;
 mod rtree;
 mod stats;
 
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 pub use blink::BTreeMethod;
 pub use hash::HashMethod;
+pub use key::Key;
 pub use nearest::{NearestQuery, NeighbourEntries};
 pub use projection::KeyProjection;
 pub use rtree::RTreeMethod;
@@ -33,45 +34,6 @@ use crate::spill::{Area, WorkAreas};
 use crate::storage::RowId;
 use crate::storage::TableOption;
 use crate::value::{CompOp, DataType, Value, compare};
-
-// ---------------------------------------------------------------------------
-// Index keys: ordered tuples of values, by the [X3.135-1986 §5.11] comparison rules
-// ---------------------------------------------------------------------------
-
-/// A tuple of column values ordered exactly as SQL compares them, so that
-/// 'OPS' and 'OPS ' are the same key and 1.5 sorts after 1.
-#[derive(Debug, Clone)]
-pub struct Key(pub Vec<Value>);
-
-fn total_cmp(a: &Value, b: &Value) -> Ordering {
-    compare(a, b).unwrap_or_else(|| a.is_null().cmp(&b.is_null()).reverse())
-}
-
-impl Ord for Key {
-    fn cmp(&self, o: &Self) -> Ordering {
-        for (a, b) in self.0.iter().zip(&o.0) {
-            let c = total_cmp(a, b);
-            if c != Ordering::Equal {
-                return c;
-            }
-        }
-        self.0.len().cmp(&o.0.len())
-    }
-}
-
-impl PartialOrd for Key {
-    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-        Some(self.cmp(o))
-    }
-}
-
-impl PartialEq for Key {
-    fn eq(&self, o: &Self) -> bool {
-        self.cmp(o) == Ordering::Equal
-    }
-}
-
-impl Eq for Key {}
 
 /// \[DESIGN\] The entries a search finds, (key, row) pairs, read as they
 /// are taken (`Index::search`).
