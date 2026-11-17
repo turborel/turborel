@@ -2,7 +2,7 @@
 
 [Contents](README.md)
 
-## Connecting with the turborel client
+## Connecting with the Turborel client
 
 With a server running ([Running the Server](../operator/02-turboreld.md)),
 connect to it with `turborel`, as a user of the database. A password is

@@ -4,14 +4,14 @@
 
 ## Platforms
 
-turborel runs on Linux, macOS and Windows: each is built and tested on
+Turborel runs on Linux, macOS and Windows: each is built and tested on
 every change. What only one platform has is refused, saying so,
 elsewhere: Unix sockets are of Linux and macOS alone, named pipes of
 Windows.
 
 ## Building from source
 
-turborel is built with Rust's cargo, of Rust 1.89 or later:
+Turborel is built with Rust's cargo, of Rust 1.89 or later:
 
 ```
 git clone https://github.com/turborel/turborel.git

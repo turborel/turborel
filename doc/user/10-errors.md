@@ -14,7 +14,7 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.NOPE is not defined [X3.135-1
 
 The SQLCODE says the kind: -101 to -104 a statement not written right,
 -201 a constraint broken, -301 a value that does not fit, -911 a
-conflict with another transaction, -900 valid SQL turborel does not
+conflict with another transaction, -900 valid SQL Turborel does not
 process. The SQLSTATE is the standard's code of the condition.
 [SQLSTATE and SQLCODE](../appendix/a-sqlstate.md) lists them all.
 

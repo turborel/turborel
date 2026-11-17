@@ -162,8 +162,8 @@ The key words are SQL-92's reserved words, in any case: `select` is
 SELECT. None is an identifier, so a column named as one, VALUE or
 POSITION, is written delimited, `"VALUE"`. A few words are key words
 only where a statement writes them, and identifiers everywhere else:
-SQL-92's non-reserved words that turborel reads, as SERIALIZABLE and
-COMMITTED, and INDEX, PASSWORD, DATABASE and OWNER, of turborel's
+SQL-92's non-reserved words that Turborel reads, as SERIALIZABLE and
+COMMITTED, and INDEX, PASSWORD, DATABASE and OWNER, of Turborel's
 extensions.
 `SET DATABASE` followed by a setting's name is
 [SET DATABASE](statements/set-database.md); otherwise, as in

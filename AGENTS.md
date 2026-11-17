@@ -1,10 +1,10 @@
 # Guide for coding agents
 
-How to work on turborel as a coding agent, with any tool. If this file
+How to work on Turborel as a coding agent, with any tool. If this file
 disagrees with [RULES.md](RULES.md) or [CONTRIBUTING.md](CONTRIBUTING.md),
 follow those.
 
-turborel is a relational database in Rust, queried in SQL. It ships as a
+Turborel is a relational database in Rust, queried in SQL. It ships as a
 library, a server (`turboreld`), a client and a command-line client
 (`turborel`). See [README.md](README.md).
 

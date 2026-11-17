@@ -6,7 +6,7 @@
 
 The 226 reserved words of SQL-92, each a key word in any case,
 and none an identifier unless delimited: a column named VALUE is written
-`"VALUE"`. Some name statements turborel does not process; they are
+`"VALUE"`. Some name statements Turborel does not process; they are
 reserved all the same.
 
 **A** ABSOLUTE · ACTION · ADD · ALL · ALLOCATE · ALTER · AND · ANY · ARE · AS · ASC · ASSERTION · AT · AUTHORIZATION · AVG  

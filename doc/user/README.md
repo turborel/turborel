@@ -1,6 +1,6 @@
 # Volume I: User's Guide
 
-For anyone who writes SQL against turborel: the concepts, and how to use them, chapter by chapter.
+For anyone who writes SQL against Turborel: the concepts, and how to use them, chapter by chapter.
 
 [The documentation set](../README.md)
 

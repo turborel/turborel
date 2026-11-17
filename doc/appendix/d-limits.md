@@ -3,7 +3,7 @@
 [Contents](README.md)
 
 SQL sets few limits of its own. A statement past one of these is valid
-SQL turborel does not process: it is refused with SQLCODE -900,
+SQL Turborel does not process: it is refused with SQLCODE -900,
 SQLSTATE 0A000.
 
 ## Lengths and precisions
