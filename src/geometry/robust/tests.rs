@@ -53,7 +53,7 @@ fn cancellation_and_extreme_offsets_are_not_tolerances() {
     assert_eq!(orient([0.0_f64, 0.0_f64], [f64::MIN_POSITIVE, 0.0_f64], [0.0_f64, f64::from_bits(1)]), Ordering::Greater);
 }
 
-/// Verifies: [DESIGN] D78: the fast orientation proof accepts ordinary
+/// Verifies: [DESIGN] D82: the fast orientation proof accepts ordinary
 /// turns of either sign but declines cancellation, zero products, overflow
 /// and subnormal products or error bounds. Declined cases retain the exact
 /// sign; a rounded product of zero is never a proof of collinearity.
@@ -78,7 +78,7 @@ fn orientation_filter_proves_only_normal_separated_determinants() {
     }
 }
 
-/// Verifies: [DESIGN] D78: the filtered and complete orientation agree
+/// Verifies: [DESIGN] D82: the filtered and complete orientation agree
 /// with dyadic integer arithmetic for reproducible binary64 bit patterns
 /// across the exponent range, including unequal scales and signed zeros.
 #[test]

@@ -3,7 +3,47 @@
 use super::{Mutation, Package};
 
 /// Representation invariants that must fail their requirement tests.
-pub const GEOMETRY: [Mutation; 25] = [
+pub const GEOMETRY: [Mutation; 30] = [
+    Mutation {
+        name: "geometry-batch-borrowed-arguments",
+        package: Package::Core,
+        breaks: "batch scalar arguments copy shared values instead of borrowing them",
+        file: "src/exec/batch/judge/calls.rs",
+        original: "self.function.0.call_borrowed(&args, temp)",
+        replacement: "self.function.0.call_with(&args.iter().map(|value| (*value).clone()).collect::<Vec<_>>(), temp)",
+        integration: &[],
+        unit: &["exec::batch::judge::calls::tests::batch_scalar_arguments_borrow_shared_values"],
+    },
+    Mutation {
+        name: "geometry-borrowed-arguments",
+        package: Package::Core,
+        breaks: "direct binary calls clone shared values instead of borrowing them",
+        file: "src/exec/eval.rs",
+        original: "(Some(left), Some(right)) => function.0.call_borrowed(&[left?, right?], temp),",
+        replacement: "(Some(left), Some(right)) => function.0.call_with(&[left?.clone(), right?.clone()], temp),",
+        integration: &[],
+        unit: &["exec::eval::calls::direct_scalar_arguments_borrow_shared_values"],
+    },
+    Mutation {
+        name: "geometry-batch-comparison",
+        package: Package::Core,
+        breaks: "a constant on the left of a batch scalar comparison is read on the right",
+        file: "src/exec/batch/judge/calls.rs",
+        original: "(function, args, value, true)",
+        replacement: "(function, args, value, false)",
+        integration: &[],
+        unit: &["exec::batch::judge::calls::tests::batch_calls_preserve_arguments_comparisons_and_selection"],
+    },
+    Mutation {
+        name: "geometry-batch-error",
+        package: Package::Core,
+        breaks: "a batch scalar call hides the first error and continues to later rows",
+        file: "src/exec/batch/judge/calls.rs",
+        original: "Err(error) => return (kept, Some(error)),",
+        replacement: "Err(_) => continue,",
+        integration: &[],
+        unit: &["exec::batch::judge::calls::tests::batch_calls_stop_at_the_first_error_after_the_successful_prefix"],
+    },
     Mutation {
         name: "geometry-orientation-filter-bound",
         package: Package::Core,
@@ -13,6 +53,16 @@ pub const GEOMETRY: [Mutation; 25] = [
         replacement: "if normal && determinant.abs() > 0.0_f64 {",
         integration: &[],
         unit: &["geometry::robust::tests::orientation_filter_proves_only_normal_separated_determinants"],
+    },
+    Mutation {
+        name: "geometry-scalar-argument-order",
+        package: Package::Core,
+        breaks: "binary scalar evaluation reverses its argument values and evaluation order",
+        file: "src/exec/eval.rs",
+        original: "_ => function.0.call(&[eval(left, row, subqueries)?, eval(right, row, subqueries)?]),",
+        replacement: "_ => function.0.call(&[eval(right, row, subqueries)?, eval(left, row, subqueries)?]),",
+        integration: &[],
+        unit: &["exec::eval::calls::scalar_argument_storage_preserves_order_nulls_and_first_error"],
     },
     Mutation {
         name: "geometry-canonical-byte-order",

@@ -5,6 +5,8 @@ use super::*;
 use crate::functions::ScalarFunction;
 use crate::memory::MemoryBudget;
 
+mod borrowed;
+
 /// Verifies: [DESIGN] D15, D82: prepared point location preserves every
 /// scalar result, including distance bits, holes, boundaries and other
 /// geometry kinds. SRID errors and changed constant operands still take

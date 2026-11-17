@@ -1810,6 +1810,19 @@ row at a time so the two can be compared. The batch tests read each answer
 both ways. A batch that raises gives its earlier rows first, then the
 error, so results and errors match the row path (D15).
 
+A filter comparing a scalar call with a constant can read its column
+arguments directly from the batch (`exec/batch/judge/calls.rs`). Constant
+arguments and batch values are passed by reference through
+`ScalarFunction::call_borrowed`, with the temporary large-object store
+(D79). Its default copies the arguments and calls `call_with` exactly
+once; an override must preserve all results, errors and side effects.
+Direct unary and binary row expressions can use the
+same hook. Prepared geometry relationships borrow both operands, avoiding
+reference-count changes to their shared type and payload. Calls still run once per selected row,
+in row order, and stop at the first error with the earlier matches retained.
+Comparisons retain operand order and propagate large-object read errors.
+Arguments that need expression evaluation use the general row evaluator.
+
 #### D34. Index methods support comparisons and function predicates
 
 An index method creates indexes and says which probes they answer, and the

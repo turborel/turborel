@@ -501,6 +501,14 @@ methods are `btree`, `hash` and `rtree`. Each trait's contract, what the databas
 calls and what an implementation must keep, is in the crate's own
 documentation, of the module the trait is in.
 
+`ScalarFunction::call_borrowed` receives references to existing argument
+values and the same temporary large-object store as `call_with`. The executor
+can use it for direct unary and binary row expressions and scalar comparisons
+over batches. The default copies the arguments and calls `call_with` once,
+so existing implementations need no changes. An override can avoid those
+copies but must preserve results, errors, side effects and large-object handling.
+References are valid only for the call; retaining a value requires owning it.
+
 `ScalarFunction::specialize` may prepare an equivalent function using
 constant arguments discovered by constant folding. It must preserve the
 function's type contracts, results and runtime errors, including when a

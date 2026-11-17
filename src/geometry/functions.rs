@@ -308,6 +308,22 @@ impl ScalarFunction for GeometryFunction {
         }
         self.observe(Geometry::from_value(first)?, rest)
     }
+
+    fn call_borrowed(&self, args: &[&Value], _temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Value> {
+        if self.paired() {
+            let [left, right] = args else { return Err(signature(self.name())) };
+            if left.is_null() || right.is_null() {
+                return Ok(Value::Null);
+            }
+            return self.pair(&Geometry::from_value(left)?, &Geometry::from_value(right)?);
+        }
+        match args {
+            [] => self.call(&[]),
+            [one] => self.call(&[(*one).clone()]),
+            [left, right] => self.call(&[(*left).clone(), (*right).clone()]),
+            _ => self.call(&args.iter().map(|value| (*value).clone()).collect::<Vec<_>>()),
+        }
+    }
 }
 
 impl GeometryFunction {

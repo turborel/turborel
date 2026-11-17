@@ -136,6 +136,24 @@ pub trait ScalarFunction: Send + Sync {
     fn call_with(&self, args: &[Value], _temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Value> {
         self.call(args)
     }
+    /// As `call_with`, with borrowed arguments and the same temporary
+    /// large-object store. Implementations may avoid
+    /// copying large values or changing shared reference counts. Results,
+    /// errors and side effects must be identical to `call_with`; arguments
+    /// cannot be retained beyond this call without taking ownership.
+    /// The default copies arguments and calls `call_with` exactly once.
+    ///
+    /// # Errors
+    ///
+    /// The same errors as `call_with` for the same arguments.
+    fn call_borrowed(&self, args: &[&Value], temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Value> {
+        match args {
+            [] => self.call_with(&[], temp),
+            [one] => self.call_with(&[(*one).clone()], temp),
+            [left, right] => self.call_with(&[(*left).clone(), (*right).clone()], temp),
+            _ => self.call_with(&args.iter().map(|value| (*value).clone()).collect::<Vec<_>>(), temp),
+        }
+    }
     /// \[EXTENSION\] Whether an index may find rows for this function in
     /// a WHERE filter, such as `f(column, ?)` (RULES.md D34).
     /// True promises that every call accepted by the function's type
@@ -526,5 +544,7 @@ impl AggregateFunction for Avg {
 
 // Unit tests: what the set functions refuse and how they total (RULES.md
 // R-TEST-2 robustness).
+#[cfg(test)]
+mod borrowed;
 #[cfg(test)]
 mod tests;

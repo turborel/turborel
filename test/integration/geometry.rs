@@ -7,6 +7,7 @@ use turborel::value::{Decimal, Value};
 
 use crate::common::{Scratch, after_crash, exec, rows};
 
+mod batches;
 mod index;
 mod prepared;
 

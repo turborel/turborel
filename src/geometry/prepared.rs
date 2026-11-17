@@ -46,8 +46,8 @@ impl Prepared {
         Some(Self { function, position, value: value.clone(), geometry, locator, _held: held })
     }
 
-    fn matches(&self, args: &[Value]) -> bool {
-        let (Value::Extension(was), Some(Value::Extension(now))) = (&self.value, args.get(self.position)) else { return false };
+    fn matches(&self, args: &[&Value]) -> bool {
+        let (Value::Extension(was), Some(Value::Extension(now))) = (&self.value, args.get(self.position).copied()) else { return false };
         now.kind.name() == kind::NAME && (Arc::ptr_eq(&was.bytes, &now.bytes) || was.bytes == now.bytes)
     }
 
@@ -85,8 +85,13 @@ impl ScalarFunction for Prepared {
 
     fn call(&self, args: &[Value]) -> Result<Value> {
         let [left, right] = args else { return self.function.call(args) };
+        self.call_borrowed(&[left, right], None)
+    }
+
+    fn call_borrowed(&self, args: &[&Value], temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Value> {
+        let [left, right] = args else { return self.function.call_borrowed(args, temp) };
         if !self.matches(args) {
-            return self.function.call(args);
+            return self.function.call_borrowed(args, temp);
         }
         if left.is_null() || right.is_null() {
             return Ok(Value::Null);

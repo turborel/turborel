@@ -6,11 +6,15 @@
 use super::{NoSubqueries, Subqueries, SubqueryRows, broken};
 use crate::catalog::MatchType;
 use crate::error::{Code, Result, SqlError, SqlState, Subject, Warnings, fail, fail_with};
+use crate::functions::ScalarRef;
 use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Subquery, Truth};
 use crate::spill::norm_row;
 use crate::storage::Row;
 use crate::value::types::rows_hold;
 use crate::value::{CompOp, Value, arith, cast_warned, compare, distinct, proxies, row_proxies};
+
+#[cfg(test)]
+mod calls;
 
 /// Where no subquery can be, as `NoSubqueries`, the warnings raised heard
 /// by the `Warnings` it holds: a session's, or the optimizer's own, to
@@ -78,10 +82,7 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
         // As `eval` evaluates them.
         Expr::Column(_) | Expr::Const(_) | Expr::Arith(..) => eval(e, row, subqueries),
         Expr::Neg(x) => Ok(eval(x, row, subqueries)?.negate()),
-        Expr::Call(f, args) => {
-            let values = args.iter().map(|a| eval(a, row, subqueries)).collect::<Result<Vec<_>>>()?;
-            f.0.call_with(&values, subqueries.temp_lobs())
-        }
+        Expr::Call(f, args) => called(f, args, row, subqueries),
         Expr::Outer(_, name) => Err(broken(&format!("the outer reference {name} has no value"))),
         Expr::Invoked(i) => super::invoked::invoke(i, row, subqueries),
         Expr::Dynamic(slot) => Err(broken(&format!("<dynamic parameter specification> {} has no value", slot.index.saturating_add(1)))),
@@ -119,6 +120,51 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
                 _ => fail(Code::Cardinality, "[ISO/IEC 9075:1992 §7.11 GR1] a <scalar subquery> or <row subquery> gives more than one row"),
             }
         }
+    }
+}
+
+/// The usual unary and binary calls need no heap allocation for their
+/// argument list. Arrays preserve left-to-right evaluation and drop earlier
+/// values if a later argument fails, just as collecting into a vector does.
+fn called(function: &ScalarRef, args: &[Expr], row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
+    let temp = subqueries.temp_lobs();
+    match args {
+        [] => function.0.call_with(&[], temp),
+        [one] => match argument(one, row) {
+            Some(value) => function.0.call_borrowed(&[value?], temp),
+            None => function.0.call_with(&[eval(one, row, subqueries)?], temp),
+        },
+        [left, right] => match (argument(left, row), argument(right, row)) {
+            (Some(left), Some(right)) => function.0.call_borrowed(&[left?, right?], temp),
+            _ => function.0.call_with(&[eval(left, row, subqueries)?, eval(right, row, subqueries)?], temp),
+        },
+        _ => {
+            let values = args.iter().map(|arg| eval(arg, row, subqueries)).collect::<Result<Vec<_>>>()?;
+            function.0.call_with(&values, temp)
+        }
+    }
+}
+
+/// Direct arguments already live long enough for a call. In particular,
+/// borrowing an extension value avoids atomic reference-count traffic on
+/// its type and payload shared by concurrent readers.
+fn argument<'a>(expr: &'a Expr, row: &'a Row) -> Option<Result<&'a Value>> {
+    match expr {
+        Expr::Column(at) => Some(column(row, *at)),
+        Expr::Const(value) => Some(Ok(value)),
+        Expr::Neg(_)
+        | Expr::Arith(..)
+        | Expr::Call(..)
+        | Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Case(..)
+        | Expr::Cast(..)
+        | Expr::Domain(..)
+        | Expr::SortKey(..)
+        | Expr::Truth(_)
+        | Expr::NextValue(_)
+        | Expr::Invoked(_)
+        | Expr::Subquery(..) => None,
     }
 }
 
