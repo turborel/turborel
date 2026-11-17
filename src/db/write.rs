@@ -13,9 +13,7 @@ use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
 use super::routines::{Hosted, hosted_rows};
 use super::{Session, State, StatementContext, plan, rule, set_columns};
-use crate::ast::{
-    ColumnName, InsertSource, InsertStatement, Overriding, QueryExpression, RowElement, SelectList, SelectSublist, TableName,
-};
+use crate::ast::{ColumnName, InsertSource, InsertStatement, Overriding, QueryExpression, SelectList, SelectSublist, TableName};
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
 use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
 use crate::error::{At, Result};
@@ -28,8 +26,11 @@ use crate::txn::{Again, Txn};
 use crate::value::datetime::Now;
 use crate::value::{Value, assign};
 
+mod degree;
 mod portion;
 pub(crate) mod system_time;
+
+use degree::degree_at;
 
 /// The table an INSERT puts rows in, and its object columns [X3.135-1986
 /// §8.7 SR3, SR4].
@@ -552,26 +553,6 @@ pub(super) fn delete_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     }
     leftovers.insert(cx, &w, effects)?;
     Ok(Some(count))
-}
-
-/// Where an INSERT's `query` of another degree than its `m` columns is
-/// placed: at its first value or select list item too many, or, of too
-/// few, at its first row or item.
-fn degree_at(query: &QueryExpression, m: usize) -> Option<usize> {
-    match query.body() {
-        QueryExpression::Values(rows) => {
-            let row = rows.first()?;
-            Some(row.elements.get(m).map_or(row.at, |e| match e {
-                RowElement::Value(_, at) | RowElement::Null(at) | RowElement::Default(at) => *at,
-            }))
-        }
-        QueryExpression::Spec(spec) => {
-            let SelectList::Values(items) = &spec.select_list else { return None };
-            let at = |i: &SelectSublist| if let SelectSublist::Derived(d) = i { Some(d.at) } else { None };
-            items.get(m).or(items.first()).and_then(at)
-        }
-        QueryExpression::SetOp(_) | QueryExpression::With(_) | QueryExpression::Ordered(_) => None,
-    }
 }
 
 /// The table `into` inserts into, as `Session::insert_target_of` gives

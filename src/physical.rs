@@ -23,6 +23,7 @@ mod indexed;
 mod join_probe;
 pub use join_probe::{JoinComparison, JoinProbe};
 mod join;
+pub use join::JoinKey;
 mod kept;
 mod nearest;
 mod nodes;
@@ -55,21 +56,6 @@ use crate::system::SystemRead;
 use crate::value::Value;
 use crate::value::collation::CollationRef;
 use shown::Shown;
-
-/// \[DESIGN\] A key of a join on keys: a column of its left operand and a
-/// column of its right whose values match, each row found through a hash
-/// table of them. They match if equal [X3.135-1986 §5.11], a null
-/// matching nothing; or, if `nulls`, if not distinct [ISO/IEC 9075-2:2023
-/// §8.15], a null matching a null, as IS NOT DISTINCT FROM says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct JoinKey {
-    /// The left operand's column.
-    pub left: usize,
-    /// The right operand's column.
-    pub right: usize,
-    /// A null matches a null.
-    pub nulls: bool,
-}
 
 /// \[DESIGN\] A physical plan: the operators the executor runs, each with what
 /// EXPLAIN shows of it. Cloned as a prepared statement's kept plan is

@@ -35,12 +35,27 @@
 use super::collated::{Lifted, lifted};
 use super::indexed::{Equijoin, index_join, right_index_join};
 use super::shown::Shown;
-use super::{Built, JoinKey, PhysicalPlanner, Plan, of_left};
+use super::{Built, PhysicalPlanner, Plan, of_left};
 use crate::logical::{
     Cond, Expr, LogicalPlan, OuterJoin, SortKey, and_all, column_name, cond_columns, judged_by_sets, map_cond_columns, render_cond,
     render_expr, split_and,
 };
 use crate::value::CompOp;
+
+/// \[DESIGN\] A key of a join on keys: a column of its left operand and a
+/// column of its right whose values match, each row found through a hash
+/// table of them. They match if equal [X3.135-1986 §5.11], a null
+/// matching nothing; or, if `nulls`, if not distinct [ISO/IEC 9075-2:2023
+/// §8.15], a null matching a null, as IS NOT DISTINCT FROM says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JoinKey {
+    /// The left operand's column.
+    pub left: usize,
+    /// The right operand's column.
+    pub right: usize,
+    /// A null matches a null.
+    pub nulls: bool,
+}
 
 impl PhysicalPlanner<'_> {
     /// `cond` over `input` as a hash join, if `input` is a product and
