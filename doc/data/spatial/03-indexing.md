@@ -211,6 +211,11 @@ that block, charged to the database memory budget. If it cannot reserve
 the memory, it uses a smaller buffer or streams candidates directly.
 Nearest queries retain their distance traversal order.
 
+For geometry filters, planning counts small candidate sets and samples
+the tree for larger ones. These estimates help choose between an index
+and a table scan. They can be inaccurate for skewed or changing data;
+the complete SQL predicate still decides which rows are returned.
+
 An R-tree omits a row with any NULL coordinate. The planner uses it only
 when that omission cannot hide a matching row. NOT NULL coordinate
 columns make the intended data model explicit; do not invent `(0, 0)`

@@ -115,7 +115,8 @@ is kept consistent under concurrent change and recovery as the B-tree is.
 
 - Connect more geometry predicates and geometry outer joins to `rtree`.
   Extend nearest ordering beyond ascending ST_DISTANCE with FETCH FIRST ONLY;
-  consider geometry distance predicates and spatial selectivity statistics.
+  consider geometry distance predicates and distribution statistics beyond
+  bounded R-tree sampling.
   Let SQL joins traverse two indexed trees directly,
   beyond probing one tree for each outer row. Add bulk packing
   and reclaim empty nodes without relocating entries under active scans;

@@ -17,6 +17,7 @@
 //! bounds. Counts of one row are serialized separately, so a changed
 //! subtree choice cannot create a second copy of an existing entry.
 
+mod estimate;
 mod join;
 mod nearest;
 mod node;

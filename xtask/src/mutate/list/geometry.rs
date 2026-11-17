@@ -3,7 +3,7 @@
 use super::{Mutation, Package};
 
 /// Representation invariants that must fail their requirement tests.
-pub const GEOMETRY: [Mutation; 34] = [
+pub const GEOMETRY: [Mutation; 37] = [
     Mutation {
         name: "geometry-batch-borrowed-arguments",
         package: Package::Core,
@@ -43,6 +43,36 @@ pub const GEOMETRY: [Mutation; 34] = [
         replacement: "Err(_) => continue,",
         integration: &[],
         unit: &["exec::batch::judge::calls::tests::batch_calls_stop_at_the_first_error_after_the_successful_prefix"],
+    },
+    Mutation {
+        name: "geometry-estimate-cutoff",
+        package: Package::Core,
+        breaks: "a broad geometry probe falls back to a whole-table estimate after 1000 candidates",
+        file: "src/index/rtree/geometry.rs",
+        original: "return tree.estimated_matches(window).map(|estimated| estimated.max(count));",
+        replacement: "return None;",
+        integration: &["geometry::index::estimates::broad_spatial_statistics_keep_selective_windows_indexed"],
+        unit: &[],
+    },
+    Mutation {
+        name: "geometry-estimate-weight",
+        package: Package::Core,
+        breaks: "sampled geometry cardinalities omit internal branching weights",
+        file: "src/engine/rtree/estimate.rs",
+        original: "weight = weight.checked_mul(u128::from(count))?;",
+        replacement: "weight = weight.checked_mul(1)?;",
+        integration: &[],
+        unit: &["engine::rtree::estimate::tests::estimates_weight_every_branch_and_handle_empty_nodes"],
+    },
+    Mutation {
+        name: "geometry-estimate-budget",
+        package: Package::Core,
+        breaks: "geometry sampling fails to charge its page budget",
+        file: "src/engine/rtree/estimate.rs",
+        original: "self.pages = self.pages.checked_sub(1)?;",
+        replacement: "self.pages = self.pages.checked_sub(0)?;",
+        integration: &[],
+        unit: &["engine::rtree::estimate::tests::estimates_decline_changed_paths_and_exhausted_page_budgets"],
     },
     Mutation {
         name: "geometry-rectangle-holes",

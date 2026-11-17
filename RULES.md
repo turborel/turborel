@@ -2538,6 +2538,15 @@ allocation keeps the smaller buffer or streams directly. Every candidate,
 including different versions of one row, retains its own envelope. A
 prefetched index error follows all preceding candidates. Nearest searches
 and reference-mismatch scans do not use these unordered blocks.
+Geometry cardinality estimation counts up to 1000 candidates exactly.
+Beyond that it samples 64 paths across the root's branches, weighting leaf
+matches by each visited branch's fanout. It reads at most 256 sample nodes
+after locating the root and retains only the root and current path node.
+Changed split stamps, pending splits, malformed paths, arithmetic overflow
+or an exhausted page budget decline the estimate. The estimate is at least
+the candidate count already observed; it is approximate planning input,
+never a bound used to skip or accept rows. Numeric coordinate probes retain
+their existing exact-count cutoff.
 Geometry index locators use version 2: version and width bytes, a u32 SRID
 and a u64 metadata page, all integers little-endian. Numeric locators keep
 version 1; tree page formats are unchanged.

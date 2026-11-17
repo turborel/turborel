@@ -126,7 +126,7 @@ pub(super) fn estimate(tree: &RTree, probe: &Probe, srid: i32) -> Option<usize> 
     let mut count = 0_usize;
     for (at, entry) in tree.scan(Some(window)).enumerate() {
         if at >= MOST_COUNTED {
-            return None;
+            return tree.estimated_matches(window).map(|estimated| estimated.max(count));
         }
         entry.ok()?;
         count = count.saturating_add(1);
