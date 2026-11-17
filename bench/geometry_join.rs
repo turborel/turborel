@@ -24,19 +24,22 @@ use turborel::value::{Decimal, Value};
 
 const WINDOWS: u64 = 32;
 const JOIN: &str = "SELECT P.ID, W.ID FROM WINDOWS W JOIN POINTS P ON ST_INTERSECTS(P.G, W.G) = 1";
+const REVERSED: &str = "SELECT P.ID, W.ID FROM POINTS P JOIN WINDOWS W ON ST_INTERSECTS(P.G, W.G) = 1";
 
 fn main() {
     let bench = Bench::new("geometry_join");
     for width in [10_u64, 500] {
         let db = database();
         windows(&db, width);
-        validate(&db, width);
-        for threads in [1_usize, 4, 8] {
-            let case = Case::new(format!("{ROWS} points, {WINDOWS} windows, width {width}"), "joins").threads(threads);
-            bench.measure(case, || joined(&db, threads));
+        for (query, order) in [(JOIN, ""), (REVERSED, ", points first")] {
+            validate(&db, width, query);
+            for threads in [1_usize, 4, 8] {
+                let case = Case::new(format!("{ROWS} points, {WINDOWS} windows, width {width}{order}"), "joins").threads(threads);
+                bench.measure(case, || joined(&db, threads, query));
+            }
+            let a = db.session("B");
+            harness::note(&format!("join plan (width {width}{order}):\n{}", a.physical_plan(query, &Params::new()).unwrap()));
         }
-        let a = db.session("B");
-        harness::note(&format!("join plan (width {width}):\n{}", a.physical_plan(JOIN, &Params::new()).unwrap()));
     }
 }
 
@@ -50,12 +53,12 @@ fn windows(db: &Database, width: u64) {
     a.commit().unwrap();
 }
 
-fn joined(db: &Database, threads: usize) -> u64 {
+fn joined(db: &Database, threads: usize, query: &str) -> u64 {
     let start = Barrier::new(threads);
     on_threads(threads, |_| {
         let a = db.session("B");
         start.wait();
-        let mut cursor = a.open_cursor(JOIN).unwrap();
+        let mut cursor = a.open_cursor(query).unwrap();
         while let Some(row) = cursor.fetch().unwrap() {
             black_box(row);
         }
@@ -65,9 +68,9 @@ fn joined(db: &Database, threads: usize) -> u64 {
     threads as u64
 }
 
-fn validate(db: &Database, width: u64) {
+fn validate(db: &Database, width: u64, query: &str) {
     let a = db.session("B");
-    let mut cursor = a.open_cursor(JOIN).unwrap();
+    let mut cursor = a.open_cursor(query).unwrap();
     let mut actual = Vec::new();
     while let Some(row) = cursor.fetch().unwrap() {
         actual.push((id(&row[0]), id(&row[1])));

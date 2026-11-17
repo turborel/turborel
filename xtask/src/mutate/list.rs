@@ -35,6 +35,7 @@ mod overloading;
 mod partitioned_joins;
 mod patterns;
 mod predicates;
+mod projection;
 mod psm;
 mod ptf;
 mod readers;
@@ -86,6 +87,7 @@ pub fn all() -> Vec<Mutation> {
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
     core.into_iter()
         .chain(areas::all())
+        .chain([projection::PROJECTION.as_slice()])
         .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()
         .copied()

@@ -30,6 +30,7 @@ pub use nearest::NearestRead;
 pub(crate) use nearest::distance_call;
 mod order;
 mod probe;
+mod project;
 mod raising;
 mod recognized;
 mod shown;
@@ -580,7 +581,8 @@ impl<'a> PhysicalPlanner<'a> {
             .unwrap_or_default();
         let b = self.build(input, &inner);
         let detail = self.described(input, |names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
-        Built { plan: Plan::Project { exprs: exprs.to_vec(), detail, input: Box::new(b.plan) }, ordered: !inner.is_empty() && b.ordered }
+        let (exprs, source) = project::collapsed(exprs.to_vec(), b.plan);
+        Built { plan: Plan::Project { exprs, detail, input: Box::new(source) }, ordered: !inner.is_empty() && b.ordered }
     }
 
     /// The keys are asked of the input; if it gives them, no Sort is needed.

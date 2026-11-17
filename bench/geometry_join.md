@@ -5,6 +5,13 @@ This benchmark joins 100,000 points to 32 polygons through
 the Cartesian product. The indexed build probes the points' R-tree for
 each polygon and checks the complete geometries of the candidates.
 
+The current harness also writes the point table first in the SQL join.
+Those cases have `points first` in their labels. Both written orders return
+the same independently checked pairs. The planner can reverse the inputs;
+measuring both orders also covers the projection that restores SQL column
+order. Each case prints its actual physical plan. The historical results
+below measured only the query with windows written first.
+
 The run used Rust 1.99.1 on macOS aarch64, with 10 available hardware
 threads, on 2026-11-16. Both builds used the optimized bench profile,
 fat LTO, one code-generation unit and overflow checks. No other build

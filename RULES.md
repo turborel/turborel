@@ -1836,6 +1836,13 @@ into a pair that the projection immediately discards. Adaptive scans use
 the same binding (`exec/join/indexed/refined.rs`). Additional ON conjuncts
 retain the full pair for evaluation before projection; a fallback to
 ordinary probes retains the requested output columns.
+Adjacent column-only projections are composed during physical planning
+(`physical/project.rs`). This includes the projection that restores a
+reversed join's column order, so the join receives the final selection.
+Repeated columns and output order are preserved. A computed expression
+on either side prevents composition; even an unused expression must still
+be evaluated for its errors (D15).
+
 #### D34. Index methods support comparisons and function predicates
 
 An index method creates indexes and says which probes they answer, and the

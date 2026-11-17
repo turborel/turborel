@@ -10,6 +10,7 @@ use turborel::params::Params;
 mod adaptive;
 mod clustered;
 mod prepared;
+mod projected;
 
 fn windows(db: &Database, reference: &str) {
     let a = db.session("A");
