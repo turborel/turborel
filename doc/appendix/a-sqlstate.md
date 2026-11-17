@@ -26,6 +26,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 01007 | Warning: privilege not granted |
 | 01009 | Warning: search condition too long for the Information Schema |
 | 0100A | Warning: query expression too long for the Information Schema |
+| 01010 | Warning: column cannot be mapped: XMLMAP left out a column the user may read, whose type does not map to XML |
 | 02000 | No data |
 | 07000 | Dynamic SQL error |
 | 07001 | Dynamic SQL error: the arguments do not match the dynamic parameters |

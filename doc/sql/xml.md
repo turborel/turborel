@@ -982,7 +982,9 @@ may SELECT that have a column to map, and the catalog only the schemas
 of such tables, the Information Schema among them. A column is left out
 if it is of XML(SEQUENCE) (XML alone), a structured, reference, row,
 array or multiset type, DECFLOAT or a plug-in's type, or of a distinct
-type whose cast to its source type the user may not execute.
+type whose cast to its source type the user may not execute. A mapping
+that leaves out a column the user may read, as its type does not map,
+completes with the warning 01010 (column cannot be mapped).
 
 | Mapping | Value |
 |---|---|

@@ -123,10 +123,20 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
     }
 }
 
+/// The value of the call of `function` of `args` for `row`, raising the
+/// warning it raises, if any (`ScalarFunction::warning`).
+fn called(function: &ScalarRef, args: &[Expr], row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
+    let value = call_of(function, args, row, subqueries)?;
+    if let Some(state) = function.0.warning() {
+        warn(subqueries, state);
+    }
+    Ok(value)
+}
+
 /// The usual unary and binary calls need no heap allocation for their
 /// argument list. Arrays preserve left-to-right evaluation and drop earlier
 /// values if a later argument fails, just as collecting into a vector does.
-fn called(function: &ScalarRef, args: &[Expr], row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
+fn call_of(function: &ScalarRef, args: &[Expr], row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
     if function.0.in_statement() {
         return function.0.call_in(&values(args, row, subqueries)?, subqueries);
     }

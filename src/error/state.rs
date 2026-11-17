@@ -44,6 +44,9 @@ impl SqlState {
     /// Warning: null value eliminated in set function [ISO/IEC 9075:1992
     /// §6.5 GR1b].
     pub const NULL_VALUE_ELIMINATED: SqlState = SqlState(*b"01003");
+    /// Warning: column cannot be mapped [ISO/IEC 9075-14:2006 draft §9.11
+    /// GR3, §9.14 GR3, §9.17 GR3, §23.1].
+    pub const COLUMN_CANNOT_BE_MAPPED: SqlState = SqlState(*b"01010");
     /// Dependent privilege descriptors still exist [ISO/IEC 9075:1992
     /// §11.37 GR2b].
     pub const DEPENDENT_PRIVILEGES: SqlState = SqlState(*b"2B000");

@@ -5,7 +5,7 @@
 use super::{Mutation, Package};
 
 /// Each mapping mechanism broken alone, and the tests that fail.
-pub const XML_MAP: [Mutation; 15] = [
+pub const XML_MAP: [Mutation; 17] = [
     Mutation {
         name: "xml-map-nulls-nil",
         package: Package::Core,
@@ -155,5 +155,25 @@ pub const XML_MAP: [Mutation; 15] = [
         replacement: "        if false {",
         integration: &[],
         unit: &["functions::xml::map::types::tests::collections_of_types_9_7"],
+    },
+    Mutation {
+        name: "xml-map-column-cannot-be-mapped",
+        package: Package::Core,
+        breaks: "a mapping that leaves out a visible column raises no warning",
+        file: "src/functions/xml/map.rs",
+        original: "self.unmappable.then_some(SqlState::COLUMN_CANNOT_BE_MAPPED)",
+        replacement: "None",
+        integration: &["xml_map::column_cannot_be_mapped_9_11"],
+        unit: &["functions::xml::map::tests::texts_past_the_limit"],
+    },
+    Mutation {
+        name: "scalar-function-warning",
+        package: Package::Core,
+        breaks: "a scalar function's call does not raise the warning it raises",
+        file: "src/exec/eval.rs",
+        original: "    if let Some(state) = function.0.warning() {",
+        replacement: "    if let Some(state) = function.0.warning().filter(|_| false) {",
+        integration: &["xml_map::column_cannot_be_mapped_9_11"],
+        unit: &[],
     },
 ];

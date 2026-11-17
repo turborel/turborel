@@ -3252,7 +3252,12 @@ METADATA it is the two results the draft names [§9.11 GR13], a sequence
 of the schema document's document node then the data's, of
 XML(SEQUENCE). The documents are of UTF-8 [GR8], and of XML 1.1 only if
 a name in them is no name of XML 1.0 [GR7], so XMLDECL is written of XML
-1.1 alone. They hold no white space between elements.
+1.1 alone. They hold no white space between elements. A visible column
+a mapping leaves out, as its type does not map, raises the warning
+01010 [§9.11 GR3]: XMLMAP's function says so by
+`ScalarFunction::warning`, which the evaluator raises after each call,
+so a mapping of no argument is not folded away as the statement is
+planned.
 
 ## 2. Project layout
 

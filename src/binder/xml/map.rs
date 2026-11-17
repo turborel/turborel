@@ -45,8 +45,9 @@ pub const IMPLICIT_RESULTS: MapResults = MapResults::Data;
 type Mapped = (Vec<Table>, Vec<Expr>, bool);
 
 /// The XML visible schemas of the catalog, each with its XML visible
-/// tables, and the subquery of each table's rows' text, in order.
-type Schemas = (Vec<(String, Vec<Table>)>, Vec<Expr>);
+/// tables, the subquery of each table's rows' text, in order, and whether
+/// a visible column of them is an XML unmappable column.
+type Schemas = (Vec<(String, Vec<Table>)>, Vec<Expr>, bool);
 
 /// [§9.11 SR1, §9.14 SR1, §9.17 SR1] The parameters `m` gives, each
 /// written or implicit: TARGETNS the zero-length string if none is
@@ -96,22 +97,22 @@ impl Binder<'_> {
             return Err(nondeterministic("ISO/IEC 9075-14:2006 draft §9.10 GR6a", "XMLMAP"));
         }
         let choices = choices(m)?;
-        let (source, rows) = match &m.source {
+        let (source, rows, unmappable) = match &m.source {
             MapSource::Table(query) => {
-                let (mut tables, rows, _) = self.map_table(query, scope, &choices)?;
-                (tables.pop().map(Source::Table), rows)
+                let (mut tables, rows, unmappable) = self.map_table(query, scope, &choices)?;
+                (tables.pop().map(Source::Table), rows, unmappable)
             }
             MapSource::Schema(name, at) => {
-                let (tables, rows, _) = self.map_schema(name, scope, &choices).or_at(*at)?;
-                (Some(Source::Schema(name.clone(), tables)), rows)
+                let (tables, rows, unmappable) = self.map_schema(name, scope, &choices).or_at(*at)?;
+                (Some(Source::Schema(name.clone(), tables)), rows, unmappable)
             }
             MapSource::Catalog => {
-                let (schemas, rows) = self.map_catalog(scope, &choices)?;
-                (Some(Source::Catalog(schemas)), rows)
+                let (schemas, rows, unmappable) = self.map_catalog(scope, &choices)?;
+                (Some(Source::Catalog(schemas)), rows, unmappable)
             }
         };
         let source = source.ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] XMLMAP mapped no table"))?;
-        let map = XmlMap { catalog: self.db.catalog_name(), source, choices };
+        let map = XmlMap { catalog: self.db.catalog_name(), source, choices, unmappable };
         let result = map.result_type();
         let args = if map.choices.data { rows } else { Vec::new() };
         Ok((Expr::Call(ScalarRef(Arc::new(map)), args), result))
@@ -171,15 +172,16 @@ impl Binder<'_> {
         schemas.push(INFORMATION_SCHEMA.to_owned());
         schemas.sort_unstable();
         schemas.dedup();
-        let (mut mapped, mut all) = (Vec::new(), Vec::new());
+        let (mut mapped, mut all, mut unmapped) = (Vec::new(), Vec::new(), false);
         for schema in schemas.into_iter().filter(|s| s != DEFINITION_SCHEMA) {
-            let (tables, rows, _) = self.map_schema(&schema, scope, choices)?;
+            let (tables, rows, unmappable) = self.map_schema(&schema, scope, choices)?;
+            unmapped |= unmappable;
             if !tables.is_empty() {
                 mapped.push((schema, tables));
                 all.extend(rows);
             }
         }
-        Ok((mapped, all))
+        Ok((mapped, all, unmapped))
     }
 
     /// The tables, views and system tables of `schema`, in order of name;

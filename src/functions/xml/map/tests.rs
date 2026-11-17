@@ -2,7 +2,7 @@
 //! XML Schema document of a mapping, and their limits.
 
 use super::*;
-use crate::error::Code;
+use crate::error::{Code, SqlState};
 use crate::functions::AggregateFunction;
 use crate::value::Decimal;
 use crate::value::lob::Lob;
@@ -72,7 +72,9 @@ fn texts_past_the_limit() {
         catalog: "C".to_owned(),
         source: Source::Schema("A".to_owned(), vec![table(), table()]),
         choices: choices(Nulls::Absent, true, ""),
+        unmappable: true,
     };
+    assert_eq!(map.warning(), Some(SqlState::COLUMN_CANNOT_BE_MAPPED));
     let rows = [Value::Lob(Lob::of_text(&half)), Value::Lob(Lob::of_text(&half))];
     assert_eq!(map.data_document(&rows).unwrap_err().code, Code::Unsupported);
     assert_eq!(
@@ -89,7 +91,7 @@ fn texts_past_the_limit() {
 fn types_of_mappings() {
     let of = |source: Source, (data, metadata, forest): (bool, bool, bool)| {
         let choices = Choices { data, metadata, ..choices(Nulls::Absent, forest, "") };
-        XmlMap { catalog: "C".to_owned(), source, choices }.result_type()
+        XmlMap { catalog: "C".to_owned(), source, choices, unmappable: false }.result_type()
     };
     let document = DataType::Xml(XmlType::Document(Typing::Untyped));
     assert_eq!(of(Source::Table(table()), (true, false, false)), document);

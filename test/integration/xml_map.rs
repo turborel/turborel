@@ -302,6 +302,40 @@ fn unmappable_columns_left_out_4_10_8() {
     validates(&a, "TABLE E", ("AS FOREST", ""));
 }
 
+/// The warning the query `sql` completed with, its rows all read, if any.
+fn warning(s: &Session, sql: &str) -> Option<SqlState> {
+    rows(s, sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+    s.warning()
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §9.11 GR3, §9.14
+/// GR3, §9.17 GR3, §23.1] [ISO/IEC 9075:1992 §3.3.4.1] a mapping of a
+/// visible column that is an XML unmappable column completes with the
+/// warning column cannot be mapped, 01010: of DATA, and of METADATA, of no
+/// row, which is not folded away; of a schema and the catalog holding
+/// one; none of a column that is not visible, of a table the user may not
+/// SELECT or of a distinct type it may not cast, nor of a mapping of none.
+#[test]
+fn column_cannot_be_mapped_9_11() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A CREATE TYPE MONEY AS NUMERIC(10, 2) \
+         CREATE TABLE T (K INTEGER, X XML) CREATE TABLE U (K INTEGER, P MONEY)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    a.run("GRANT SELECT ON U TO B").unwrap();
+    a.commit().unwrap();
+    let warned = Some(SqlState::COLUMN_CANNOT_BE_MAPPED);
+    for sql in ["XMLMAP(TABLE T)", "XMLMAP(TABLE T METADATA)", "XMLMAP(SCHEMA A AS FOREST)", "XMLMAP(CATALOG DATA AND METADATA)"] {
+        assert_eq!(warning(&a, &format!("VALUES ({sql})")), warned, "{sql}");
+    }
+    assert_eq!(warning(&a, "VALUES (XMLMAP(TABLE U))"), None);
+    let b = db.session("B");
+    assert_eq!(warning(&b, "VALUES (XMLMAP(SCHEMA A))"), None, "T is no visible table, nor P a visible column");
+    assert_eq!(text(&b, "XMLMAP(SCHEMA A)"), format!("<A {XSI}><U/></A>"));
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.10.8] [X3.135-1986
 /// §6.6 SR3] TABLE needs SELECT on its table, else SQLCODE -104; a
 /// column of a distinct type is visible only with EXECUTE on its cast to
