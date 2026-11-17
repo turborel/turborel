@@ -56,13 +56,19 @@ Nothing is open.
 
 ### JSON
 
-- SQL/JSON's path language (T831 to T838, T840) [§4.48.5, §9.45, §9.46],
-  strict and lax, with filters, item methods, starts with, like_regex and
-  hex integer literals. Every JSON function reads it, so it comes first.
+- The rest of SQL/JSON's path language [§9.45, §9.46]. Hex integer
+  literals (T840), and the item methods datetime() and keyvalue(), which
+  with the methods there are make T832 whole. keyvalue() needs a number
+  that identifies each object [GR11g ii 6 C VIII 1 c i]. The lexer,
+  parser and evaluator of the rest are in `src/json/` (RULES.md D84), and
+  no SQL statement reads them until the functions below do.
 - SQL/JSON functions over character strings (T803, T811 to T830) [§4.48,
   §6.28, §6.34, §6.35, §7.11, §8.22, §8.23, §10.11]. JSON_OBJECT,
   JSON_ARRAY and their aggregates, JSON_VALUE, JSON_QUERY, JSON_EXISTS, IS
-  JSON and JSON_TABLE, with PASSING, ON EMPTY and ON ERROR.
+  JSON and JSON_TABLE, with PASSING, ON EMPTY and ON ERROR. The General
+  Rules of JSON_EXISTS, JSON_VALUE and JSON_QUERY are written
+  (`src/json/query.rs`); their syntax, binding and manual pages come
+  first, and with them the path language's features are claimed.
 - The JSON type (T801, T802) [§4.8, §6.1, §6.37, §6.40, §6.41], stored
   parsed so a query does not parse text again.
 - The simplified accessor (T860 to T864) [§6.36], as `doc.items[0].name`.

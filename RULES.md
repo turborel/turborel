@@ -121,6 +121,7 @@ verification approach DO-178C expects (§8).
 | D81 | Structured types: values name their type, typed tables keep their own rows, references are octets |
 | D82 | System-versioned tables keep their historical rows in a hidden table of their own |
 | D83 | A column is renamed in place, refused while a text names it |
+| D84 | SQL/JSON items hold SQL values, and a path is parsed once, apart from SQL |
 | D85 | Geometry values start with XY representations through SqlType |
 
 ### The project
@@ -1223,7 +1224,6 @@ structured value crosses to a client whole, as the protocol's tag of
 its type writes it. A function that is an ordering's, a transform's or
 a cast's is dropped only with CASCADE, which drops what it is the
 function of [§11.62 SR4a, SR4d].
-
 #### D82. System-versioned tables keep their historical rows in a hidden table of their own
 
 A system-versioned table [ISO/IEC 9075-2:2023 §4.17.2.3] keeps the rows
@@ -1281,6 +1281,58 @@ refuses it too. A typed table's columns are its type's attributes, and a
 system-versioned table's are not altered [§11.12 SR2], so neither is
 renamed. The rename is logged as the action written, as every ALTER
 TABLE is (D33), so recovery and a standby apply it again.
+
+#### D84. SQL/JSON items hold SQL values, and a path is parsed once, apart from SQL
+
+An SQL/JSON item [ISO/IEC 9075-2:2023 §4.48.3] is an `Item`
+(`json/item.rs`): the SQL/JSON null, a scalar, an array or an object. A
+scalar holds a `Value` that is a character string, a number, a truth
+value or a datetime, and nothing else can be made one, so items are
+compared and computed with by the code SQL's values are (`value.rs`). An
+object keeps its members in the order written, those of one key all
+(UA057), so that WITH UNIQUE KEYS can refuse them and an accessor take
+the first (UA075). Arrays and objects nest at most `json::MAX_NESTING`
+deep, 128, and one deeper is SQLCODE -900 (D18), so every walk of an item
+is bounded (R-CF-6).
+
+JSON text is parsed by RFC 8259's grammar [§9.42] (`json/text.rs`). A
+number without an exponent is exact and one with an exponent approximate,
+as the `<signed numeric literal>` of its characters is [GR3a iii 3 A IV].
+An exact one of more digits than `MAX_EXACT_PRECISION` is DECFLOAT,
+rounded to 34 digits, where an SQL literal is refused: RFC 8259 §6 lets
+precision be limited, and identifiers of 19 and 20 digits are common in
+JSON. An escaped surrogate that is not of a pair is no Unicode character,
+so it is refused as text that is not JSON, SQLSTATE 22032.
+
+The SQL/JSON path language [§9.45, §9.46] is not SQL. Its lexical rules
+are ECMAScript 5.1's, it is case-sensitive and no word of it is reserved.
+So it has a lexer and a parser of its own (`json/path/lex.rs`,
+`json/path/parse.rs`) and never meets `lexer.rs` or `parser.rs`. A path
+is parsed once to a tree (`json/path/ast.rs`), its like_regex patterns
+compiled then (D61), so a constant path costs a statement one parse. The
+tree is at most `MAX_NESTING` high, 64, counting what recursion reads and
+what loops build alike, so the evaluator recurses over it with no counter
+of its own (R-CF-6).
+
+Evaluation (`json/path/eval.rs`) follows §9.46's General Rules, an
+SQL/JSON sequence being a vector of items. An exception is an `SqlError`
+of the SQLSTATE its rule names, which a filter's predicate catches as
+Unknown [§4.48.5]. CEILING, FLOOR, ABS and MOD, for the item methods and
+`%`, are computed by §6.31's rules in `json/path/eval/numbers.rs`, as SQL
+has no numeric value function of those names yet.
+
+The General Rules of JSON_EXISTS, JSON_VALUE and JSON_QUERY [§8.23,
+§6.28, §6.35] are functions of the library too (`json/query.rs`), over
+values already evaluated: the context item, the path, the PASSING
+arguments and each clause's choice. They parse the context's text
+[§9.47], evaluate the path, and cast or serialize the sequence to the
+type returned [§9.43, §9.48, §9.49]. ON ERROR replaces a data exception,
+SQLSTATE class 22, and nothing else: a Syntax Rule broken or a limit
+passed is the statement's.
+
+No SQL statement reads a path yet. The operators' syntax is to be bound
+to these functions, and until it is the engine is reached through the
+library alone (`turborel::json`).
 
 #### D33. Schema changes are transactional
 

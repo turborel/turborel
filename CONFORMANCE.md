@@ -1807,6 +1807,57 @@ an identifier, read as a word where a statement of roles reads it.
 CURRENT_ROLE stays an identifier too, read as the value function where it
 stands alone, so a column of that name is read qualified.
 
+### SQL/JSON path language
+
+No feature is claimed yet. The SQL/JSON data model [§4.48.3], the parsing
+of JSON text [§9.42] and the SQL/JSON path language [§9.45, §9.46] are
+implemented as the library the SQL/JSON query operators will call
+(`turborel::json`, RULES.md D84). Those operators, Feature T821 (Basic
+SQL/JSON query operators), are not, so no SQL statement reads a path.
+What the library implements is what Features T831 (strict mode), T833
+(multiple subscripts), T834 (wildcard member accessor), T835 (filter
+expressions), T836 (starts with predicate) and T837 (regex_like
+predicate) name, and of T832 (item method) the methods type, size,
+double, ceiling, floor and abs.
+
+The General Rules of JSON_EXISTS [§8.23], JSON_VALUE [§6.28] and
+JSON_QUERY [§6.35] are in the library as well (`json/query.rs`), with
+the rules they apply: the serializing of an item [§9.43], the array
+wrappers [§9.44], the processing of the common syntax [§9.47], and the
+casting and serializing of a sequence [§9.48, §9.49]. Their syntax is not
+read yet. Each takes its context item, PASSING arguments, RETURNING type
+and ON EMPTY and ON ERROR choices already evaluated. ON ERROR replaces an
+exception of SQLSTATE class 22 and no other. An ERROR ON EMPTY that NULL
+ON ERROR follows gives the null value, as §9.48 GR4c i and GR5 have it.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| SQL/JSON items | §4.48.3 | The SQL/JSON null, a scalar that is a character string, a number, a truth value or a datetime, an array, or an object. Two are equivalent as the clause says: scalars equal as SQL values, arrays element by element, objects by a pairing of their members one to one, keys equal code point by code point. |
+| JSON text | §9.42 GR3a; RFC 8259 §2 to §7 | A string that is no JSON text is SQLSTATE 22032, and so is one whose string escapes a surrogate that is not of a pair. Members of one key are all kept (UA057), in the order written (US039); under WITH UNIQUE KEYS they are 22037. Arrays and objects nested more than 128 deep are SQLCODE -900. |
+| Numbers | §9.42 GR3a iii 3 A IV, §9.45 GR1a | A number without an exponent is exact, of its fraction's scale; one with an exponent is approximate. An exact one of more than 18 digits is DECFLOAT, rounded to 34. One out of its kind's range is SQLCODE -900. |
+| Lexical elements | §9.45 SR1 to SR4; ECMAScript 5.1 §7 | Identifiers of Unicode 13.0's letters, with `\u` escapes; string literals in single or double quotation marks, with ECMAScript's escapes and line continuations; decimal numeric literals. The language is case-sensitive and reserves no word: `$.type` is a member, `$.type()` the method [NOTE 483]. A character that begins no token is SQLCODE -101. A hex integer literal (T840) is SQLCODE -900. |
+| Format | §9.46 F, SR3, SR5 to SR7 | A path begins with `strict` or `lax`. Text that does not conform is SQLCODE -102; `@` outside a predicate and `last` outside a subscript are -103. A like_regex pattern and its flags are read when the path is parsed, 2201S and 2201T. The item methods datetime, keyvalue and bigint to timestamp_tz (T865 to T878) are SQLCODE -900, and so is a path nested more than 64 deep, or of more than 63 accessors or operators in a row. No analysis for certain exceptions is made (IA223) [SR9]. |
+| Modes | §9.46 GR7, GR8; §4.48.5 | Lax mode wraps and unwraps one level, and takes what it still cannot access for nothing. Strict mode raises each structural error. |
+| Member accessors | §9.46 GR11g ii 1, 2 | In strict mode an item that is no object with the member is 2203A, and for `.*` one that is no object 2203C. Members of one key raise no exception (IA071): `.key` takes the first (UA075), and `.*` gives the bound values of all (UA058) in the order written (US040). |
+| Array accessors | §9.46 GR11g ii 3, 4 | An item that is no array is 22039. A subscript that is not one number is 22033; a fraction is truncated toward zero (IA073). In strict mode a subscript outside the array, or a range whose first is past its last, is 22033; in lax mode the elements there are are taken. `last` is the current array's last subscript. |
+| Item methods | §9.46 GR11g ii 6 | type() names an item's kind, a datetime's by its type. size() is an array's elements or 1, in strict mode 22039 of what is no array. double() casts a number or a character string to DOUBLE PRECISION, 22036 of another item and 22018 of a string that is no number. ceiling(), floor() and abs() are of numbers alone, else 22036. |
+| Arithmetic | §9.46 GR11h to GR11j, §6.31 | A sign is of numbers alone, else 2203B. An operand that is not one number is 22038. `%` is MOD, of whole exact or DECFLOAT numbers, a zero divisor 22012. An exception of the arithmetic is the path's. |
+| Filters and predicates | §9.46 GR11g ii 5, GR12 | A filter keeps the items its predicate is True of. Predicates are True, False or Unknown, an exception within one making it Unknown, a strict mode's structural error too. Character strings compare by code point. The SQL/JSON null is comparable with any item. Where one pair is in error and another succeeds, in lax mode, the result is True (UA073). A like_regex match the matcher gives up on, past its steps, is an error of its item. |
+| Named variables | §9.46 SR4, GR11b | A variable's value is the item passed under its name, exactly as written. One that is not passed is SQLCODE -103, found before anything is evaluated, so no filter hides it. |
+
+§9.46's text is read as follows where it cannot be followed as printed.
+GR11g ii 3 E III tests TJSFROM and TJSTO before they are defined, and
+RJSFROM and RJSTO are meant; an exception of a subscript's own
+evaluation, of which the rule says nothing, is the path's, as a base's
+is. GR11g ii 3 F II 2 b takes subscripts "between 0 (zero) and Nj,
+inclusive", and Nj is the subscript of no element, so the elements there
+are are taken. GR11g ii 6 C II 1 tests "any Vj" for size(), and the item
+Ij is meant. GR12e ii 2 asks whether B "is not a character string", B
+being a sequence: it is to be one item, a character string, else the
+predicate is Unknown. GR11j, for `+` and `-`, has no step that unwraps
+its operands in lax mode, as GR11i has for `*`, `/` and `%`, and none is
+made: `lax $ + 1` of `[1]` is 22038, where `lax $ * 2` of `[4]` is 8.
+
 ## SQL/PSM
 
 Persistent stored modules, ISO/IEC 9075-4, written from its 2006 draft
