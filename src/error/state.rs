@@ -224,6 +224,24 @@ impl SqlState {
     /// Data exception: invalid XQuery replacement string [ISO/IEC
     /// 9075-2:2023 §9.29 GR5].
     pub const INVALID_XQUERY_REPLACEMENT_STRING: SqlState = SqlState(*b"2201V");
+    /// Data exception: invalid argument for SQL/JSON datetime function
+    /// [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 a, VII 1 c vi].
+    pub const INVALID_ARGUMENT_FOR_SQL_JSON_DATETIME_FUNCTION: SqlState = SqlState(*b"22031");
+    /// Data exception: non-Boolean SQL/JSON item [ISO/IEC 9075-2:2023
+    /// §9.46 GR11g ii 6 C X 1 a].
+    pub const NON_BOOLEAN_SQL_JSON_ITEM: SqlState = SqlState(*b"2202V");
+    /// Data exception: non-date SQL/JSON item [ISO/IEC 9075-2:2023 §9.46
+    /// GR11g ii 6 C XI 1 a].
+    pub const NON_DATE_SQL_JSON_ITEM: SqlState = SqlState(*b"2202W");
+    /// Data exception: non-string SQL/JSON item [ISO/IEC 9075-2:2023 §9.46
+    /// GR11g ii 6 C XV 1 a].
+    pub const NON_STRING_SQL_JSON_ITEM: SqlState = SqlState(*b"2202X");
+    /// Data exception: non-time SQL/JSON item [ISO/IEC 9075-2:2023 §9.46
+    /// GR11g ii 6 C XVI 1 a, XVII 1 a].
+    pub const NON_TIME_SQL_JSON_ITEM: SqlState = SqlState(*b"2202Y");
+    /// Data exception: non-timestamp SQL/JSON item [ISO/IEC 9075-2:2023
+    /// §9.46 GR11g ii 6 C XVIII 1 a, XIX 1 a].
+    pub const NON_TIMESTAMP_SQL_JSON_ITEM: SqlState = SqlState(*b"2202Z");
     /// Data exception: invalid JSON text [ISO/IEC 9075-2:2023 §9.42 GR3a
     /// iii 1].
     pub const INVALID_JSON_TEXT: SqlState = SqlState(*b"22032");

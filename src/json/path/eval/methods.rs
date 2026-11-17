@@ -1,8 +1,14 @@
 //! The item methods of an SQL/JSON path expression evaluated [ISO/IEC
-//! 9075-2:2023 §9.46 GR11g ii 6]: `type()`, `size()`, `double()`,
-//! `ceiling()`, `floor()` and `abs()`, each applied to every item of its
-//! base. \[GR11g ii 6 A\] In lax mode the base of each but `type()` and
-//! `size()` is unwrapped first.
+//! 9075-2:2023 §9.46 GR11g ii 6], each applied to every item of its base:
+//! `type()`, `size()`, `double()`, `ceiling()`, `floor()` and `abs()`
+//! here, `datetime()` in `methods/datetime.rs`, `keyvalue()` in
+//! `methods/keyvalue.rs`, and the casts of `bigint()` to `timestamp_tz()`
+//! in `methods/casts.rs`. \[GR11g ii 6 A\] In lax mode the base of each
+//! but `type()` and `size()` is unwrapped first.
+
+mod casts;
+mod datetime;
+mod keyvalue;
 
 use super::{Evaluator, Number, count, exception, item, number, numbers};
 use crate::error::{Result, SqlState};
@@ -46,6 +52,19 @@ impl Evaluator<'_> {
             Method::Ceiling => numeric(&self.lax_unwrap(base), numbers::ceiling, "GR11g ii 6 C IV 1 a"),
             Method::Floor => numeric(&self.lax_unwrap(base), numbers::floor, "GR11g ii 6 C V 1 a"),
             Method::Abs => numeric(&self.lax_unwrap(base), |n| Ok(numbers::abs(n)), "GR11g ii 6 C VI 1 a"),
+            Method::Datetime => datetime::datetime(&self.lax_unwrap(base)),
+            Method::Keyvalue => keyvalue::keyvalue(&self.lax_unwrap(base)),
+            Method::Bigint => casts::converted(&self.lax_unwrap(base), &casts::BIGINT),
+            Method::Boolean => casts::converted(&self.lax_unwrap(base), &casts::BOOLEAN),
+            Method::Date => casts::converted(&self.lax_unwrap(base), &casts::DATE),
+            Method::Decimal { precision, scale } => casts::converted(&self.lax_unwrap(base), &casts::decimal(precision, scale)),
+            Method::Integer => casts::converted(&self.lax_unwrap(base), &casts::INTEGER),
+            Method::Number => casts::converted(&self.lax_unwrap(base), &casts::NUMBER),
+            Method::String => casts::converted(&self.lax_unwrap(base), &casts::STRING),
+            Method::Time(precision) => casts::converted(&self.lax_unwrap(base), &casts::time(precision)),
+            Method::TimeTz(precision) => casts::converted(&self.lax_unwrap(base), &casts::time_tz(precision)),
+            Method::Timestamp(precision) => casts::converted(&self.lax_unwrap(base), &casts::timestamp(precision)),
+            Method::TimestampTz(precision) => casts::converted(&self.lax_unwrap(base), &casts::timestamp_tz(precision)),
         }
     }
 

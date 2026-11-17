@@ -40,9 +40,11 @@ impl Path {
     /// SQLCODE -103 if `variables` values no variable of a name the path
     /// has \[SR4\], whatever the path would do with it; else the exception
     /// condition of the path's evaluation not caught by a filter's
-    /// predicate \[GR11\]: SQLSTATE 2203A, 2203C, 22039, 22033, 22036, 2203B or
-    /// 22038 as the General Rules raise them, or the error of a cast or an
-    /// arithmetic operation the path does.
+    /// predicate \[GR11\]: SQLSTATE 2203A, 2203C, 22039, 22033, 22036, 22031,
+    /// 2202V, 2202W, 2202X, 2202Y, 2202Z, 2203B or 22038 as the General
+    /// Rules raise them, or the error of a cast or an arithmetic operation
+    /// the path does; SQLCODE -900 of a `datetime()` of a string of more
+    /// digits of a second's fraction than turborel's maximum.
     pub fn evaluate(&self, context: &Item, variables: &[(String, Vec<Item>)]) -> Result<Vec<Item>> {
         self.check_variables(&variables.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>())?;
         Evaluator { mode: self.mode, context, variables, current: None, last: None }.wff(&self.expr)

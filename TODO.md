@@ -56,12 +56,15 @@ Nothing is open.
 
 ### JSON
 
-- The rest of SQL/JSON's path language [§9.45, §9.46]. Hex integer
-  literals (T840), and the item methods datetime() and keyvalue(), which
-  with the methods there are make T832 whole. keyvalue() needs a number
-  that identifies each object [GR11g ii 6 C VIII 1 c i]. The lexer,
-  parser and evaluator of the rest are in `src/json/` (RULES.md D84), and
-  no SQL statement reads them until the functions below do.
+- The rest of SQL/JSON's path language [§9.46]: datetime() of a `<JSON
+  datetime template>` [SR10, GR11g ii 6 C VII 1 b], which with the
+  methods there are makes T832 whole. It needs the template's implicit
+  datetime type, whether it is dated, timed or zoned and its fraction's
+  precision, from the formatted cast's template reader
+  (`src/functions/formatted/template.rs`), which does not give it outside
+  its module yet. The lexer, parser and evaluator of the rest are in
+  `src/json/` (RULES.md D84), and no SQL statement reads them until the
+  functions below do.
 - SQL/JSON functions over character strings (T803, T811 to T830) [§4.48,
   §6.28, §6.34, §6.35, §7.11, §8.22, §8.23, §10.11]. JSON_OBJECT,
   JSON_ARRAY and their aggregates, JSON_VALUE, JSON_QUERY, JSON_EXISTS, IS
@@ -75,7 +78,6 @@ Nothing is open.
   parsed so a query does not parse text again.
 - The simplified accessor (T860 to T864) [§6.36], as `doc.items[0].name`.
   It needs the JSON type.
-- Item methods (T865 to T878) [§9.46], bigint() to timestamp_tz().
 - JSON in equality, grouping and ordering (T879 to T882) [§4.8.2].
 
 ---

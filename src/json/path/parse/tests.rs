@@ -170,47 +170,98 @@ fn accessor_ops_apply_in_turn() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] the item methods
-/// turborel implements, each written with `()` and nothing in it; a
-/// method of another name, or with something in its parentheses, is
-/// SQLCODE -102.
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] each item method,
+/// of nothing in its parentheses; a method of another name, a name of
+/// another case, or something in the parentheses of a method of nothing
+/// in them, is SQLCODE -102; a method's name with no `(` after it is a
+/// key name.
 #[test]
 fn item_methods_are_parsed() {
     assert_eq!(tree("lax $.type()"), "Lax $.Type()");
     assert_eq!(tree("lax $.size ( )"), "Lax $.Size()");
     assert_eq!(tree("lax $.double().ceiling().floor().abs()"), "Lax $.Double().Ceiling().Floor().Abs()");
-    for text in ["lax $.foo()", "lax $.a(", "lax $.type(1)", "lax $.type(", "lax $.Type()"] {
+    assert_eq!(tree("lax $.datetime().keyvalue()"), "Lax $.Datetime().Keyvalue()");
+    assert_eq!(tree("lax $.bigint().boolean().date()"), "Lax $.Bigint().Boolean().Date()");
+    assert_eq!(tree("lax $.integer().number().string()"), "Lax $.Integer().Number().String()");
+    for text in ["lax $.foo()", "lax $.a(", "lax $.type(1)", "lax $.type(", "lax $.Type()", "lax $.keyvalue(1)", "lax $.string(\"a\")"] {
+        assert_eq!(code(text), -102_i32, "{text}");
+    }
+    for name in ["datetime", "keyvalue", "bigint", "decimal", "time_tz", "timestamp_tz"] {
+        assert_eq!(tree(&format!("lax $.{name}")), format!("Lax $.\"{name}\""));
+    }
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] `decimal()` of
+/// nothing, a `<precision>`, or a `<precision>` and a `<scale>`; `time()`,
+/// `time_tz()`, `timestamp()` and `timestamp_tz()` of nothing or a
+/// precision; each an `<unsigned integer>`, so a number of a period, an
+/// exponent or hexadecimal digits, a sign or a missing scale is SQLCODE
+/// -102.
+#[test]
+fn item_method_arguments_are_parsed() {
+    assert_eq!(tree("lax $.decimal()"), "Lax $.Decimal { precision: None, scale: None }()");
+    assert_eq!(tree("lax $.decimal(5)"), "Lax $.Decimal { precision: Some(5), scale: None }()");
+    assert_eq!(tree("lax $.decimal( 18 , 0 )"), "Lax $.Decimal { precision: Some(18), scale: Some(0) }()");
+    assert_eq!(tree("lax $.time()"), "Lax $.Time(None)()");
+    assert_eq!(tree("lax $.time(0)"), "Lax $.Time(Some(0))()");
+    assert_eq!(tree("lax $.time_tz(3)"), "Lax $.TimeTz(Some(3))()");
+    assert_eq!(tree("lax $.timestamp()"), "Lax $.Timestamp(None)()");
+    assert_eq!(tree("lax $.timestamp_tz(6)"), "Lax $.TimestampTz(Some(6))()");
+    for text in [
+        "lax $.decimal(5.)",
+        "lax $.decimal(5.0)",
+        "lax $.decimal(5e0)",
+        "lax $.decimal(0x5)",
+        "lax $.decimal(-5)",
+        "lax $.decimal(5,)",
+        "lax $.decimal(5, 2, 1)",
+        "lax $.decimal(,2)",
+        "lax $.time(1.5)",
+        "lax $.timestamp(\"6\")",
+        "lax $.time_tz(1",
+    ] {
         assert_eq!(code(text), -102_i32, "{text}");
     }
 }
 
-/// Verifies: [DESIGN] [ISO/IEC 9075-2:2023 §9.46 Conformance Rules 2, 8
-/// to 21] RULES.md D18: an item method turborel does not implement,
-/// written as a method, is SQLCODE -900 naming it and its Feature; its
-/// name with no `(` after it is a key name.
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XII, XVI
+/// to XIX] [§6.1 SR23, SR25] a precision of 0, or a scale above the
+/// precision, is SQLCODE -103; \[DESIGN\] RULES.md D18: a precision past
+/// turborel's maximum, 18 digits of DECIMAL or 6 of a second's fraction,
+/// of however many digits, is SQLCODE -900.
 #[test]
-fn methods_not_implemented_are_refused() {
-    for (name, feature) in [
-        ("datetime", "T832"),
-        ("keyvalue", "T832"),
-        ("bigint", "T865"),
-        ("boolean", "T866"),
-        ("date", "T867"),
-        ("decimal", "T868"),
-        ("integer", "T870"),
-        ("number", "T871"),
-        ("string", "T872"),
-        ("time", "T873"),
-        ("time_tz", "T874"),
-        ("timestamp", "T876"),
-        ("timestamp_tz", "T877"),
+fn item_method_arguments_are_held_to_the_types_rules() {
+    let zero = refused("lax $.decimal(0)");
+    assert_eq!(zero.sqlcode(), -103_i32);
+    assert_eq!(zero.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §6.1 SR23"));
+    let scale = refused("lax $.decimal(2, 3)");
+    assert_eq!(scale.sqlcode(), -103_i32);
+    assert_eq!(scale.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §6.1 SR25"));
+    assert_eq!(tree("lax $.decimal(2, 2)"), "Lax $.Decimal { precision: Some(2), scale: Some(2) }()");
+    for text in [
+        "lax $.decimal(19)",
+        "lax $.decimal(4294967296)",
+        "lax $.decimal(123456789012345678901234567890)",
+        "lax $.time(7)",
+        "lax $.time_tz(99999999999)",
+        "lax $.timestamp(7)",
+        "lax $.timestamp_tz(7)",
     ] {
-        let error = refused(&format!("lax $.{name}()"));
-        assert_eq!(error.sqlcode(), -900_i32, "{name}");
-        assert!(error.msg.contains(&format!("{name}() (Feature {feature}")), "{}", error.msg);
-        assert_eq!(tree(&format!("lax $.{name}")), format!("Lax $.\"{name}\""));
+        assert_eq!(code(text), -900_i32, "{text}");
     }
-    assert_eq!(code("lax $.datetime(\"HH24\")"), -900_i32);
+}
+
+/// Verifies: [DESIGN] [ISO/IEC 9075-2:2023 §9.46 F, SR10] RULES.md D18:
+/// `datetime()` of a `<JSON datetime template>` is SQLCODE -900; one not
+/// closed, or of no string literal, SQLCODE -102.
+#[test]
+fn datetime_templates_are_refused() {
+    let template = refused("lax $.datetime(\"HH24\")");
+    assert_eq!(template.sqlcode(), -900_i32);
+    assert!(template.msg.contains("<JSON datetime template>"), "{}", template.msg);
+    assert_eq!(code("lax $.datetime('YYYY-MM-DD')"), -900_i32);
+    assert_eq!(code("lax $.datetime(\"HH24\""), -102_i32);
+    assert_eq!(code("lax $.datetime(1)"), -102_i32);
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] what follows `.`
@@ -476,5 +527,5 @@ fn a_refusal_names_its_rule_and_place() {
     let at = refused("lax $.a + @");
     assert!(at.msg.contains("(at character 11)"), "{}", at.msg);
     assert_eq!(code("lax $ # 1"), -101_i32);
-    assert_eq!(code("lax 0x1"), -900_i32);
+    assert_eq!(tree("lax 0x1F"), "Lax 31");
 }

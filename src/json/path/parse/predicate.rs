@@ -201,7 +201,7 @@ impl Parser {
         let initial = match self.peek().cloned() {
             Some(Token::String(string)) => Expr::Literal(Item::Scalar(string.into())),
             Some(Token::Identifier(name)) => Expr::Variable(named_variable(&name).ok_or_else(|| self.invalid(INITIAL))?.to_owned()),
-            Some(Token::Symbol(_) | Token::Number(_)) | None => return Err(self.invalid(INITIAL)),
+            Some(Token::Symbol(_) | Token::Number(..)) | None => return Err(self.invalid(INITIAL)),
         };
         self.bump();
         built(Predicate::StartsWith(wff.node, initial), wff.height.max(1))

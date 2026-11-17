@@ -100,9 +100,9 @@ pub struct Subscript {
     pub to: Option<Expr>,
 }
 
-/// `<JSON method>`: the item methods turborel implements. \[DESIGN\] The
-/// others the Format lists, `datetime()`, `keyvalue()` and those of
-/// Features T865 to T878, are refused when parsed (RULES.md D18).
+/// `<JSON method>`: an item method and the arguments written in its
+/// parentheses. \[DESIGN\] `datetime()` with a `<JSON datetime template>`
+/// is refused when parsed (RULES.md D18), so `Datetime` has none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     /// `type()`.
@@ -117,6 +117,41 @@ pub enum Method {
     Floor,
     /// `abs()`.
     Abs,
+    /// `datetime()`, without a `<JSON datetime template>`.
+    Datetime,
+    /// `keyvalue()`.
+    Keyvalue,
+    /// `bigint()`.
+    Bigint,
+    /// `boolean()`.
+    Boolean,
+    /// `date()`.
+    Date,
+    /// `decimal()`, `decimal(<precision>)` or `decimal(<precision>,
+    /// <scale>)`.
+    Decimal {
+        /// The `<precision>`, if written.
+        precision: Option<u32>,
+        /// The `<scale>`, if written; only after a precision.
+        scale: Option<u32>,
+    },
+    /// `integer()`.
+    Integer,
+    /// `number()`.
+    Number,
+    /// `string()`.
+    String,
+    /// `time()` or `time(<time precision>)`: the precision, if written.
+    Time(Option<u32>),
+    /// `time_tz()` or `time_tz(<time precision>)`: the precision, if
+    /// written.
+    TimeTz(Option<u32>),
+    /// `timestamp()` or `timestamp(<timestamp precision>)`: the precision,
+    /// if written.
+    Timestamp(Option<u32>),
+    /// `timestamp_tz()` or `timestamp_tz(<timestamp precision>)`: the
+    /// precision, if written.
+    TimestampTz(Option<u32>),
 }
 
 /// The sign of a `<JSON unary expression>`.

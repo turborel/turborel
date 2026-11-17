@@ -23,7 +23,7 @@ fn describe(token: &Token) -> String {
         Token::Symbol(symbol) => format!("{symbol:?}"),
         Token::Identifier(name) => format!("id:{name}"),
         Token::String(string) => format!("str:{string}"),
-        Token::Number(_) => "num".to_owned(),
+        Token::Number(..) => "num".to_owned(),
     }
 }
 
@@ -35,7 +35,7 @@ fn refused(text: &str) -> SqlError {
 fn number(text: &str) -> Value {
     let lexemes = lex(text).unwrap();
     assert_eq!(lexemes.len(), 1, "{text}");
-    let Some(Lexeme { token: Token::Number(Item::Scalar(scalar)), .. }) = lexemes.first() else { panic!("a number: {text}") };
+    let Some(Lexeme { token: Token::Number(Item::Scalar(scalar), _), .. }) = lexemes.first() else { panic!("a number: {text}") };
     scalar.value().clone()
 }
 
@@ -188,20 +188,42 @@ fn a_decimal_literal_with_an_exponent_is_approximate() {
 /// Verifies: [EXTENSION] [ECMAScript 5.1 §7.8.3] what is no numeric
 /// literal: a leading zero, as of an OctalIntegerLiteral, a literal
 /// followed at once by a digit, an identifier's first character or a
-/// `\`, an exponent without digits; \[DESIGN\] [ISO/IEC 9075-2:2023 §9.45
-/// Conformance Rule 1] a HexIntegerLiteral is Feature T840, SQLCODE -900.
+/// `\`, an exponent without digits, `0x` without a hexadecimal digit or
+/// followed by a letter that is none.
 #[test]
 fn what_is_no_numeric_literal() {
-    for text in ["01", "00.5", "3in", "1$", "1_", "1é", "1\\", "1e", "1e+", "1E-", "1.e", "0x", "0xg", "1.5.5e"] {
+    for text in ["01", "00.5", "3in", "1$", "1_", "1é", "1\\", "1e", "1e+", "1E-", "1.e", "0x", "0xg", "0x1g", "0x1$", "1.5.5e"] {
         assert_eq!(refused(text).sqlcode(), -101_i32, "{text}");
-    }
-    for text in ["0x1F", "0XaB", "0x0"] {
-        let hex = refused(text);
-        assert_eq!(hex.sqlcode(), -900_i32, "{text}");
-        assert!(hex.msg.contains("Feature T840"), "{}", hex.msg);
     }
     assert_eq!(tokens("1.5.a 1 .a 1..a"), ["num", "Period", "id:a", "num", "Period", "id:a", "num", "Period", "id:a"]);
     assert_eq!(tokens("1+2 1\u{2003}"), ["num", "Plus", "num", "num"]);
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 Conformance Rule 1,
+/// GR1a] [ECMAScript 5.1 §7.8.3] Feature T840: a HexIntegerLiteral, `0x`
+/// or `0X` and hexadecimal digits of either case, is the exact number of
+/// its MV, of scale 0; of more than 18 decimal digits a DECFLOAT rounded to
+/// 34; past every DECFLOAT, SQLCODE -900. It is no `<unsigned integer>`.
+#[test]
+fn hex_integer_literals_are_exact_numbers() {
+    assert_eq!(exact_of("0x1F"), (31_i128, 0_u32));
+    assert_eq!(exact_of("0XaB"), (171_i128, 0_u32));
+    assert_eq!(exact_of("0x0"), (0_i128, 0_u32));
+    assert_eq!(exact_of("0x000010"), (16_i128, 0_u32));
+    assert_eq!(exact_of("0xDE0B6B3A763FFFF"), (999_999_999_999_999_999_i128, 0_u32));
+    let Value::DecFloat(big) = number("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF") else { panic!("a DECFLOAT") };
+    let expected = DecFloat::of_digits(false, "340282366920938463463374607431768211455", 0, MAX_DECFLOAT_PRECISION).unwrap();
+    assert_eq!(big.to_string(), expected.to_string());
+    let huge = format!("0x{}", "F".repeat(6000));
+    assert_eq!(refused(&huge).sqlcode(), -900_i32);
+    assert_eq!(refused(&format!("0x1{}", "0".repeat(5200))).sqlcode(), -900_i32);
+    assert_eq!(tokens("0x1F+0x2 0x3)"), ["num", "Plus", "num", "num", "RightParen"]);
+    let numerals: Vec<Numeral> = lex("0x5 5 5. 5.0 5e0 .5")
+        .unwrap()
+        .into_iter()
+        .map(|lexeme| if let Token::Number(_, numeral) = lexeme.token { numeral } else { panic!("a number") })
+        .collect();
+    assert_eq!(numerals, [Numeral::Other, Numeral::Integer, Numeral::Other, Numeral::Other, Numeral::Other, Numeral::Other]);
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 GR1b] [ECMAScript 5.1

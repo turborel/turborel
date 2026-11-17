@@ -1816,9 +1816,10 @@ implemented as the library the SQL/JSON query operators will call
 SQL/JSON query operators), are not, so no SQL statement reads a path.
 What the library implements is what Features T831 (strict mode), T833
 (multiple subscripts), T834 (wildcard member accessor), T835 (filter
-expressions), T836 (starts with predicate) and T837 (regex_like
-predicate) name, and of T832 (item method) the methods type, size,
-double, ceiling, floor and abs.
+expressions), T836 (starts with predicate), T837 (regex_like predicate),
+T840 (hex integer literals) and T865 to T878 (the item methods bigint()
+to timestamp_tz(), with precisions and scales) name, and of T832 (item
+method) every method but datetime() of a template.
 
 The General Rules of JSON_EXISTS [§8.23], JSON_VALUE [§6.28] and
 JSON_QUERY [§6.35] are in the library as well (`json/query.rs`), with
@@ -1849,12 +1850,13 @@ has at most 1,048,576 members (IL051) and an array as many elements
 | SQL/JSON items | §4.48.3 | The SQL/JSON null, a scalar that is a character string, a number, a truth value or a datetime, an array, or an object. Two are equivalent as the clause says: scalars equal as SQL values, arrays element by element, objects by a pairing of their members one to one, keys equal code point by code point. |
 | JSON text | §9.42 GR3a; RFC 8259 §2 to §7 | A string that is no JSON text is SQLSTATE 22032, and so is one whose string escapes a surrogate that is not of a pair. Members of one key are all kept (UA057), in the order written (US039); under WITH UNIQUE KEYS they are 22037. Arrays and objects nested more than 128 deep are SQLCODE -900. |
 | Numbers | §9.42 GR3a iii 3 A IV, §9.45 GR1a | A number without an exponent is exact, of its fraction's scale; one with an exponent is approximate. An exact one of more than 18 digits is DECFLOAT, rounded to 34. One out of its kind's range is SQLCODE -900. |
-| Lexical elements | §9.45 SR1 to SR4; ECMAScript 5.1 §7 | Identifiers of Unicode 13.0's letters, with `\u` escapes; string literals in single or double quotation marks, with ECMAScript's escapes and line continuations; decimal numeric literals. The language is case-sensitive and reserves no word: `$.type` is a member, `$.type()` the method [NOTE 483]. A character that begins no token is SQLCODE -101. A hex integer literal (T840) is SQLCODE -900. |
-| Format | §9.46 F, SR3, SR5 to SR7 | A path begins with `strict` or `lax`. Text that does not conform is SQLCODE -102; `@` outside a predicate and `last` outside a subscript are -103. A like_regex pattern and its flags are read when the path is parsed, 2201S and 2201T. The item methods datetime, keyvalue and bigint to timestamp_tz (T865 to T878) are SQLCODE -900, and so is a path nested more than 64 deep, or of more than 63 accessors or operators in a row. No analysis for certain exceptions is made (IA223) [SR9]. |
+| Lexical elements | §9.45 SR1 to SR4, GR1; ECMAScript 5.1 §7 | Identifiers of Unicode 13.0's letters, with `\u` escapes; string literals in single or double quotation marks, with ECMAScript's escapes and line continuations; decimal numeric literals, and hex integer literals (T840), `0x` or `0X` and hexadecimal digits, each the exact number of its value, of more than 18 digits a DECFLOAT rounded to 34. The language is case-sensitive and reserves no word: `$.type` is a member, `$.type()` the method [NOTE 483]. A character that begins no token is SQLCODE -101. |
+| Format | §9.46 F, SR3, SR5 to SR7 | A path begins with `strict` or `lax`. Text that does not conform is SQLCODE -102; `@` outside a predicate and `last` outside a subscript are -103. A like_regex pattern and its flags are read when the path is parsed, 2201S and 2201T. The precision and scale of decimal() and the precisions of time(), time_tz(), timestamp() and timestamp_tz() are unsigned integers, a precision of 0 or a scale above the precision -103 [§6.1 SR23, SR25], a precision above 18, or above 6 for a time or timestamp, -900. datetime() of a `<JSON datetime template>` is SQLCODE -900, and so is a path nested more than 64 deep, or of more than 63 accessors or operators in a row. No analysis for certain exceptions is made (IA223) [SR9]. |
 | Modes | §9.46 GR7, GR8; §4.48.5 | Lax mode wraps and unwraps one level, and takes what it still cannot access for nothing. Strict mode raises each structural error. |
 | Member accessors | §9.46 GR11g ii 1, 2 | In strict mode an item that is no object with the member is 2203A, and for `.*` one that is no object 2203C. Members of one key raise no exception (IA071): `.key` takes the first (UA075), and `.*` gives the bound values of all (UA058) in the order written (US040). |
 | Array accessors | §9.46 GR11g ii 3, 4 | An item that is no array is 22039. A subscript that is not one number is 22033; a fraction is truncated toward zero (IA073). In strict mode a subscript outside the array, or a range whose first is past its last, is 22033; in lax mode the elements there are are taken. `last` is the current array's last subscript. |
-| Item methods | §9.46 GR11g ii 6 | type() names an item's kind, a datetime's by its type. size() is an array's elements or 1, in strict mode 22039 of what is no array. double() casts a number or a character string to DOUBLE PRECISION, 22036 of another item and 22018 of a string that is no number. ceiling(), floor() and abs() are of numbers alone, else 22036. |
+| Item methods | §9.46 GR11g ii 6 | type() names an item's kind, a datetime's by its type. size() is an array's elements or 1, in strict mode 22039 of what is no array. double() casts a number or a character string to DOUBLE PRECISION, 22036 of another item and 22018 of a string that is no number. ceiling(), floor() and abs() are of numbers alone, else 22036. datetime() reads a character string as a date, a time with and without time zone and a timestamp with and without time zone in turn, with time zone where it writes a displacement, of the precision of its fraction; else, or of another item, 22031, and a fraction of more than 6 digits is -900. keyvalue() gives an object of `key`, `value` and `id` for each member of each object, in the order kept, members of one key all (IA072, UA058); `id` is the object's place in the sequence keyvalue() is applied to, from 0; an item that is no object is 2203C. |
+| Casting item methods | §9.46 GR11g ii 6 C IX to XIX | bigint(), integer(), decimal() and number() take numbers and character strings, else 22036; boolean() truth values and strings, else 2202V; date() strings, else 2202W; string() strings, numbers and truth values, else 2202X; time() and timestamp() strings, else 2202Y and 2202Z; time_tz() and timestamp_tz(), as printed, numbers and strings, else 2202Y and 2202Z. Each casts by CAST, its exception the path's: decimal() to DECIMAL of the precision and scale written, of none 18 and 0; string() to CHARACTER VARYING(32767) (IL006); the time and timestamp methods to the precision written, of none 0 and 6. number()'s type (IV186) is a number's own, so a number is kept as it is, and of a string that of the `<signed numeric literal>` it is. A datetime without time zone is taken in UTC, the evaluator having no SQL-session. |
 | Arithmetic | §9.46 GR11h to GR11j, §6.31 | A sign is of numbers alone, else 2203B. An operand that is not one number is 22038. `%` is MOD, of whole exact or DECFLOAT numbers, a zero divisor 22012. An exception of the arithmetic is the path's. |
 | Filters and predicates | §9.46 GR11g ii 5, GR12 | A filter keeps the items its predicate is True of. Predicates are True, False or Unknown, an exception within one making it Unknown, a strict mode's structural error too. Character strings compare by code point. The SQL/JSON null is comparable with any item. Where one pair is in error and another succeeds, in lax mode, the result is True (UA073). A like_regex match the matcher gives up on, past its steps, is an error of its item. |
 | Named variables | §9.46 SR4, GR11b | A variable's value is the item passed under its name, exactly as written. One that is not passed is SQLCODE -103, found before anything is evaluated, so no filter hides it. |
@@ -1866,7 +1868,17 @@ evaluation, of which the rule says nothing, is the path's, as a base's
 is. GR11g ii 3 F II 2 b takes subscripts "between 0 (zero) and Nj,
 inclusive", and Nj is the subscript of no element, so the elements there
 are are taken. GR11g ii 6 C II 1 tests "any Vj" for size(), and the item
-Ij is meant. GR12e ii 2 asks whether B "is not a character string", B
+Ij is meant. GR11g ii 6 C VII 1 c ii tries a string as a TIME WITH
+TIME ZONE before a TIME WITHOUT TIME ZONE; a literal without a `<time zone
+interval>` is of a type without time zone [§5.3 SR34, SR35], so that one
+is taken, and a timestamp's likewise. GR11g ii 6 C VIII 1 c vi defines
+OBJh of Ki and BVi, and the h-th member's key and bound value are meant;
+its IDj names no implementation-defined item. GR11g ii 6 C XVII 1 a and
+XIX 1 a let time_tz() and timestamp_tz() take a number, where time() and
+timestamp() take a string alone; that is followed, and CAST of a number to
+a datetime is 22005. §9.45 GR1a gives a numeric literal the value of the
+`<signed numeric literal>` of its characters, which a HexIntegerLiteral
+is not; its value is ECMAScript's, exact. GR12e ii 2 asks whether B "is not a character string", B
 being a sequence: it is to be one item, a character string, else the
 predicate is Unknown. GR11j, for `+` and `-`, has no step that unwraps
 its operands in lax mode, as GR11i has for `*`, `/` and `%`, and none is

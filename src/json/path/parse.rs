@@ -10,26 +10,15 @@
 //! operators or accessors, built by a loop, is bounded too (RULES.md
 //! R-CF-6).
 
+mod method;
 mod predicate;
 
-use super::ast::{Accessor, Expr, Method, Mode, Operator, Path, Sign, Subscript};
+use super::ast::{Accessor, Expr, Mode, Operator, Path, Sign, Subscript};
 use super::lex::{Lexeme, Symbol, Token, lex};
-use super::{
-    ABS, CEILING, DEFERRED_METHODS, DOLLAR, DOUBLE, FALSE, FLOOR, LAST, LAX, MAX_NESTING, NULL, SIZE, STRICT, TO, TRUE, TYPE, beyond,
-    misplaced, syntax, unsupported,
-};
+use super::{DOLLAR, FALSE, LAST, LAX, MAX_NESTING, NULL, STRICT, TO, TRUE, beyond, misplaced, syntax};
 use crate::error::{Result, SqlError};
 use crate::json::Item;
 
-/// [§9.46 F] The `<JSON method>`s turborel implements, by name.
-const METHODS: [(&str, Method); 6] = [
-    (TYPE, Method::Type),
-    (SIZE, Method::Size),
-    (DOUBLE, Method::Double),
-    (CEILING, Method::Ceiling),
-    (FLOOR, Method::Floor),
-    (ABS, Method::Abs),
-];
 /// [§9.46 F] The operators of a `<JSON additive expression>`.
 const ADDITIVE: [(Symbol, Operator); 2] = [(Symbol::Plus, Operator::Add), (Symbol::Minus, Operator::Subtract)];
 /// [§9.46 F] The operators of a `<JSON multiplicative expression>`.
@@ -78,11 +67,13 @@ struct Parser {
 /// SQLCODE -101 if `text` is not of the path language's tokens
 /// [§9.45 SR2]; SQLCODE -102 if it does not conform to `<JSON path
 /// expression>` [§9.46 F]; SQLCODE -103 if `@` is not within a predicate
-/// \[SR5\] or `last` not within a subscript \[SR6\]; SQLSTATE 2201S or 2201T
-/// if a `like_regex` pattern is no XQuery regular expression or its flags
-/// no XQuery option flag \[SR7\]; SQLCODE -900 for an item method or a
-/// numeric literal turborel does not implement, a number out of every
-/// number's range, or a path nested deeper than `MAX_NESTING`.
+/// \[SR5\] or `last` not within a subscript \[SR6\], or if an item
+/// method's precision is 0 or its scale above its precision [§6.1 SR23,
+/// SR25]; SQLSTATE 2201S or 2201T if a `like_regex` pattern is no XQuery
+/// regular expression or its flags no XQuery option flag \[SR7\]; SQLCODE
+/// -900 for a `datetime()` of a template, an item method's precision past
+/// turborel's maximum, a number out of every number's range, or a path
+/// nested deeper than `MAX_NESTING`.
 pub fn parse_path(text: &str) -> Result<Path> {
     let mut parser = Parser { tokens: lex(text)?, at: 0, end: text.chars().count(), predicates: 0, subscripts: 0 };
     let mode = parser.mode()?;
@@ -259,7 +250,7 @@ impl Parser {
         let at = self.here();
         let Some(token) = self.next() else { return Err(syntax(at, "a <JSON path primary> is missing")) };
         match token {
-            Token::Number(item) => built(Expr::Literal(item), 0),
+            Token::Number(item, _) => built(Expr::Literal(item), 0),
             Token::String(string) => built(Expr::Literal(Item::Scalar(string.into())), 0),
             Token::Identifier(name) => self.variable(&name, at),
             Token::Symbol(symbol) => self.primary_symbol(symbol, depth, at),
@@ -318,7 +309,7 @@ impl Parser {
             Some(Token::Identifier(name)) => self.key_or_method(name, at),
             Some(Token::String(key)) => Ok(Accessor::Member(key)),
             Some(Token::Symbol(Symbol::Asterisk)) => Ok(Accessor::AnyMember),
-            Some(Token::Symbol(_) | Token::Number(_)) | None => {
+            Some(Token::Symbol(_) | Token::Number(..)) | None => {
                 Err(syntax(at, "a <JSON path key name>, a string literal, * or a <JSON method> follows '.'"))
             }
         }
@@ -334,14 +325,7 @@ impl Parser {
         if !self.accept(Symbol::LeftParen) {
             return Ok(Accessor::Member(name));
         }
-        let Some((_, method)) = METHODS.iter().find(|(word, _)| *word == name) else {
-            if let Some((_, feature)) = DEFERRED_METHODS.iter().find(|(word, _)| *word == name) {
-                return Err(unsupported(&format!("the item method {name}() (Feature {feature})")));
-            }
-            return Err(syntax(at, &format!("no <JSON method> is named {name}")));
-        };
-        self.expect(Symbol::RightParen, "a ')' follows the '(' of a <JSON method>")?;
-        Ok(Accessor::Method(*method))
+        self.method(&name, at).map(Accessor::Method)
     }
 
     /// `<JSON array accessor>` or `<JSON wildcard array accessor>`, its

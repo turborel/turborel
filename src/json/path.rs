@@ -40,8 +40,18 @@ const DOLLAR: char = '$';
 // [§9.45 F] The `<SQL/JSON key word>`s the parser reads.
 /// `abs`.
 const ABS: &str = "abs";
+/// `bigint`.
+const BIGINT: &str = "bigint";
+/// `boolean`.
+const BOOLEAN: &str = "boolean";
 /// `ceiling`.
 const CEILING: &str = "ceiling";
+/// `date`.
+const DATE: &str = "date";
+/// `datetime`.
+const DATETIME: &str = "datetime";
+/// `decimal`.
+const DECIMAL: &str = "decimal";
 /// `double`.
 const DOUBLE: &str = "double";
 /// `exists`.
@@ -52,8 +62,12 @@ const FALSE: &str = "false";
 const FLAG: &str = "flag";
 /// `floor`.
 const FLOOR: &str = "floor";
+/// `integer`.
+const INTEGER: &str = "integer";
 /// `is`.
 const IS: &str = "is";
+/// `keyvalue`.
+const KEYVALUE: &str = "keyvalue";
 /// `last`.
 const LAST: &str = "last";
 /// `lax`.
@@ -62,12 +76,24 @@ const LAX: &str = "lax";
 const LIKE_REGEX: &str = "like_regex";
 /// `null`.
 const NULL: &str = "null";
+/// `number`.
+const NUMBER: &str = "number";
 /// `size`.
 const SIZE: &str = "size";
 /// `starts`.
 const STARTS: &str = "starts";
 /// `strict`.
 const STRICT: &str = "strict";
+/// `string`.
+const STRING: &str = "string";
+/// `time`.
+const TIME: &str = "time";
+/// `time_tz`.
+const TIME_TZ: &str = "time_tz";
+/// `timestamp`.
+const TIMESTAMP: &str = "timestamp";
+/// `timestamp_tz`.
+const TIMESTAMP_TZ: &str = "timestamp_tz";
 /// `to`.
 const TO: &str = "to";
 /// `true`.
@@ -78,24 +104,6 @@ const TYPE: &str = "type";
 const UNKNOWN: &str = "unknown";
 /// `with`.
 const WITH: &str = "with";
-
-/// [§9.46 F, Conformance Rules 2, 8 to 21] The `<JSON method>`s turborel
-/// does not implement, each with the Feature that adds it.
-const DEFERRED_METHODS: [(&str, &str); 13] = [
-    ("bigint", "T865, \"SQL/JSON item method: bigint()\""),
-    ("boolean", "T866, \"SQL/JSON item method: boolean()\""),
-    ("date", "T867, \"SQL/JSON item method: date()\""),
-    ("datetime", "T832, \"SQL/JSON path language: item method\""),
-    ("decimal", "T868, \"SQL/JSON item method: decimal()\""),
-    ("integer", "T870, \"SQL/JSON item method: integer()\""),
-    ("keyvalue", "T832, \"SQL/JSON path language: item method\""),
-    ("number", "T871, \"SQL/JSON item method: number()\""),
-    ("string", "T872, \"SQL/JSON item method: string()\""),
-    ("time", "T873, \"SQL/JSON item method: time()\""),
-    ("time_tz", "T874, \"SQL/JSON item method: time_tz()\""),
-    ("timestamp", "T876, \"SQL/JSON item method: timestamp()\""),
-    ("timestamp_tz", "T877, \"SQL/JSON item method: timestamp_tz()\""),
-];
 
 /// The message's end that names character `at` of the path expression,
 /// counted from 0, as the character it is counted from 1.

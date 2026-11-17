@@ -13,7 +13,7 @@
 //! though it is an ECMAScript punctuator, since no SQL/JSON path
 //! expression holds one.
 
-use super::{lexical, unsupported};
+use super::{beyond, lexical};
 use crate::error::Result;
 use crate::json::Item;
 use crate::json::text::{HEX, HIGH_SURROGATES, approximate, exact, paired};
@@ -51,6 +51,18 @@ const PARTS: usize = 2;
 const SPACES: usize = 3;
 /// The flags `CATEGORIES` is compiled under: none.
 const NO_FLAGS: &str = "";
+
+/// [ECMAScript 5.1 §7.8.3] How many characters begin a HexIntegerLiteral:
+/// `0x` or `0X`.
+const HEX_PREFIX_LENGTH: usize = 2;
+/// The radix of decimal digits.
+const DECIMAL: u32 = 10;
+/// \[DESIGN\] The most decimal digits a HexIntegerLiteral's value is
+/// written in as it is read: of more, it is past the range of every
+/// decimal floating-point number, whose exponent is at most 6144 and
+/// coefficient of 34 digits, so its reading stops, and with it the work of
+/// a text of many digits.
+const MAX_HEX_VALUE_DIGITS: usize = 6144 + 34;
 
 /// [ECMAScript 5.1 §7.8.4] How many hexadecimal digits a HexEscapeSequence
 /// has.
@@ -150,8 +162,21 @@ pub(super) enum Token {
     /// [§9.45 GR1b] A `<JSON path string literal>`: its characters, each
     /// escape replaced.
     String(String),
-    /// [§9.45 GR1a] A `<JSON path numeric literal>`: the number it is.
-    Number(Item),
+    /// [§9.45 GR1a] A `<JSON path numeric literal>`: the number it is,
+    /// and how it is written.
+    Number(Item, Numeral),
+}
+
+/// How a numeric literal is written [ECMAScript 5.1 §7.8.3].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Numeral {
+    /// A DecimalIntegerLiteral alone, its digits all that is written: what
+    /// an `<unsigned integer>` may be too, as the precision of a `<JSON
+    /// method>` is [§9.46 F].
+    Integer,
+    /// Any other: a DecimalLiteral of a period or an ExponentPart, or a
+    /// HexIntegerLiteral.
+    Other,
 }
 
 /// A token and where it begins: its first character, counted from 0.
@@ -189,8 +214,8 @@ struct Lexer {
 /// # Errors
 ///
 /// SQLCODE -101 if `text` is not of the path language's tokens and
-/// separators; SQLCODE -900 for a HexIntegerLiteral (Feature T840), or a
-/// numeric literal out of every number's range.
+/// separators; SQLCODE -900 for a numeric literal out of every number's
+/// range.
 pub(super) fn lex(text: &str) -> Result<Vec<Lexeme>> {
     let mut lexer = Lexer { chars: text.chars().collect(), at: 0, categories: None };
     let mut lexemes = Vec::new();
@@ -215,6 +240,23 @@ fn ascii_class(c: char) -> Class {
         '0'..='9' => Class::Part,
         '\t' | VT | FF | ' ' | '\n' | '\r' => Class::Separator,
         _ => Class::Other,
+    }
+}
+
+/// `decimal`, the decimal digits of a number, least significant first,
+/// made those of 16 times the number plus `digit`, a hexadecimal digit's
+/// value.
+fn times_sixteen_plus(decimal: &mut Vec<u32>, digit: u32) {
+    let mut carry = digit;
+    for place in decimal.iter_mut() {
+        // At most 9 × 16 + 15, so no step overflows.
+        let n = place.wrapping_mul(HEX).wrapping_add(carry);
+        *place = n.checked_rem(DECIMAL).unwrap_or(0);
+        carry = n.checked_div(DECIMAL).unwrap_or(0);
+    }
+    while carry > 0 {
+        decimal.push(carry.checked_rem(DECIMAL).unwrap_or(0));
+        carry = carry.checked_div(DECIMAL).unwrap_or(0);
     }
 }
 
@@ -368,36 +410,67 @@ impl Lexer {
     /// [ECMAScript 5.1 §7.8.3] A NumericLiteral, the first character of
     /// which is next: its value [§9.45 GR1a] as the `<signed numeric
     /// literal>` of its characters, exact without an ExponentPart and
-    /// approximate with one.
+    /// approximate with one; of a HexIntegerLiteral, its MV, exact.
     fn number(&mut self) -> Result<Token> {
         let start = self.at;
         if self.is_hex() {
-            return Err(unsupported("a HexIntegerLiteral (Feature T840, \"Hex integer literals in SQL/JSON path language\")"));
+            let item = self.hex_integer()?;
+            return self.followed(Token::Number(item, Numeral::Other));
         }
         let whole = if self.accept('0') { String::from('0') } else { self.digits() };
-        let fraction = if self.accept('.') { self.digits() } else { String::new() };
-        let item = if matches!(self.peek(), Some('e' | 'E')) {
+        let point = self.accept('.');
+        let fraction = if point { self.digits() } else { String::new() };
+        let token = if matches!(self.peek(), Some('e' | 'E')) {
             self.exponent()?;
             let text: String = self.chars.get(start..self.at).map_or_else(String::new, |read| read.iter().collect());
-            approximate(&text)?
+            Token::Number(approximate(&text)?, Numeral::Other)
         } else {
-            exact(false, &whole, &fraction)?
+            Token::Number(exact(false, &whole, &fraction)?, if point { Numeral::Other } else { Numeral::Integer })
         };
-        // "The source character immediately following a NumericLiteral
-        // must not be an IdentifierStart or DecimalDigit."
+        self.followed(token)
+    }
+
+    /// `token`, the numeric literal just read, if what follows may follow
+    /// it: "The source character immediately following a NumericLiteral
+    /// must not be an IdentifierStart or DecimalDigit."
+    fn followed(&mut self, token: Token) -> Result<Token> {
         let after = self.at;
-        let Some(c) = self.peek() else { return Ok(Token::Number(item)) };
+        let Some(c) = self.peek() else { return Ok(token) };
         let class = self.class(c)?;
         if c.is_ascii_digit() || c == '\\' || class == Class::Start {
             return Err(lexical(after, "a numeric literal is followed at once by a digit or an identifier"));
         }
-        Ok(Token::Number(item))
+        Ok(token)
     }
 
     /// Whether a HexIntegerLiteral is next: `0x` or `0X`, and a hexadecimal
     /// digit.
     fn is_hex(&self) -> bool {
         self.peek() == Some('0') && matches!(self.peek_at(1), Some('x' | 'X')) && self.peek_at(2).is_some_and(|c| c.is_ascii_hexdigit())
+    }
+
+    /// [ECMAScript 5.1 §7.8.3] The HexIntegerLiteral next, taken: `0x` or
+    /// `0X` and its HexDigits. Its MV, "(the MV of HexIntegerLiteral times
+    /// 16) plus the MV of HexDigit" digit by digit, is an exact number, as
+    /// the `exact` of its decimal digits is: of more than 18 digits a
+    /// DECFLOAT, rounded to 34.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 if it is out of the range of a decimal floating-point
+    /// number.
+    fn hex_integer(&mut self) -> Result<Item> {
+        self.at = self.at.saturating_add(HEX_PREFIX_LENGTH);
+        let mut decimal: Vec<u32> = vec![0];
+        while let Some(digit) = self.peek().and_then(|c| c.to_digit(HEX)) {
+            self.bump();
+            times_sixteen_plus(&mut decimal, digit);
+            if decimal.len() > MAX_HEX_VALUE_DIGITS {
+                return Err(beyond("a number is out of the range of a decimal floating-point number"));
+            }
+        }
+        let digits: String = decimal.iter().rev().filter_map(|d| char::from_digit(*d, DECIMAL)).collect();
+        exact(false, &digits, "")
     }
 
     /// DecimalDigits: the decimal digits next, taken, none perhaps.
