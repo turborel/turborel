@@ -56,17 +56,13 @@ Nothing is open.
 
 ### JSON
 
-- datetime() of a `<JSON datetime template>` in SQL/JSON's path language
-  (T832) [§9.46 SR10, GR11g ii 6 C VII 1 b]. With it T832 is claimed.
-- IS JSON (T822) [§8.22], and the constructor functions JSON_OBJECT and
-  JSON_ARRAY and the aggregates JSON_OBJECTAGG and JSON_ARRAYAGG (T803,
-  T811 to T814, T830) [§6.34, §10.11], in statements, as JSON_EXISTS,
-  JSON_VALUE and JSON_QUERY are.
-- JSON_TABLE (T821, T824, T827) [§7.11]. With it and IS JSON, T821 is
-  claimed, and T825 and T826, whose JSON_TABLE clauses are all they lack.
-- JSON text in binary strings, FORMAT JSON ENCODING UTF8, UTF16 or UTF32
-  [§10.12, §10.13], of a context item, an argument and JSON_QUERY's
-  RETURNING.
+- SQL/JSON's path language (T831 to T838, T840) [§4.48.5, §9.45, §9.46],
+  strict and lax, with filters, item methods, starts with, like_regex and
+  hex integer literals. Every JSON function reads it, so it comes first.
+- SQL/JSON functions over character strings (T803, T811 to T830) [§4.48,
+  §6.28, §6.34, §6.35, §7.11, §8.22, §8.23, §10.11]. JSON_OBJECT,
+  JSON_ARRAY and their aggregates, JSON_VALUE, JSON_QUERY, JSON_EXISTS, IS
+  JSON and JSON_TABLE, with PASSING, ON EMPTY and ON ERROR.
 - The JSON type (T801, T802) [§4.8, §6.1, §6.37, §6.40, §6.41], stored
   parsed so a query does not parse text again.
 - The simplified accessor (T860 to T864) [§6.36], as `doc.items[0].name`.
