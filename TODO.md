@@ -117,6 +117,13 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   Extend nearest ordering beyond ascending ST_DISTANCE with FETCH FIRST ONLY;
   consider geometry distance predicates and distribution statistics beyond
   bounded R-tree sampling.
+  Price geometry predicate evaluation and clustered row fetches when
+  choosing between a scan and a spatial probe. Measure large-result row
+  materialization and wire encoding separately from tree traversal.
+  Extend adaptive joins to builds larger than their memory budget through
+  partitioning and spill. Cover large inputs on
+  both sides, real polygon and line data, disk pressure and sustained
+  updates in complete-query comparisons, including tail latency.
   Let SQL joins traverse two indexed trees directly,
   beyond probing one tree for each outer row. Add bulk packing
   and reclaim empty nodes without relocating entries under active scans;

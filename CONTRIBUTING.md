@@ -146,6 +146,17 @@ joins per second, including query planning. Before timing, it compares
 the entire result to integer-coordinate inclusion. Filter benchmarks
 likewise validate every measured window outside the timer.
 
+`cargo xtask bench geometry_shapes --save before` extends the join cases
+to holed diamonds, concave 128-edge polygons, clustered point data and
+short and long line segments. It uses 32 or 256 regions, covering both
+single-leaf and multiple-leaf adaptive builds. Every output pair is checked
+against an independent integer-coordinate oracle before timing. These
+are deterministic synthetic workloads with in-memory tables and one,
+four and eight sessions. Temporary spill files use disk by default;
+`TURBOREL_SHAPES_SPILL=memory` uses files held in the database's memory
+budget instead. Labels record the mode. These cases do not replace real
+datasets, durable table storage or sustained-update measurements.
+
 `cargo xtask bench geometry_fetch --save initial` isolates fetching and
 decoding geometry rows from spatial candidates. It compares traversal
 order with sorting bounded blocks by row id, at several block sizes and

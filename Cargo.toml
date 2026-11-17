@@ -125,6 +125,11 @@ path = "bench/geometry_join.rs"
 harness = false
 
 [[bench]]
+name = "geometry_shapes"
+path = "bench/geometry_shapes.rs"
+harness = false
+
+[[bench]]
 name = "geometry_fetch"
 path = "bench/geometry_fetch.rs"
 harness = false

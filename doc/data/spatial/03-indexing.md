@@ -254,5 +254,6 @@ initial throughput.
 
 The project's [benchmark instructions](../../../CONTRIBUTING.md#spatial-benchmarks)
 separate SQL queries from raw index operations. Raw nearest-entry timings
-are not SQL geometry-distance timings. No benchmark comparing this
-geometry increment with PostGIS has been performed.
+are not SQL geometry-distance timings. Comparing engines requires the same
+results, transaction settings and client/server boundary; raw index timings
+alone do not establish an advantage over PostGIS.

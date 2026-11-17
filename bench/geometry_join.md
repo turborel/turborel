@@ -81,7 +81,10 @@ distributions can therefore need different plan choices.
 
 An indexed join streams its outer rows and candidates; it does not build
 a table of all matching pairs. Resident memory, index maintenance costs
-and long-running contention were not measured. The implementation probes
-one tree per outer row, rather than traversing two spatial indexes together.
-This is a comparison of turborel's own execution paths, not a PostGIS
-benchmark.
+and long-running contention were not measured. The indexed build measured
+here probes one tree per outer row. Current execution can also switch to
+a table scan against a hierarchy of buffered envelopes, subject to the
+work-area and global memory budgets. The
+[varied-geometry benchmark](geometry_shapes.md) covers larger region
+inputs, holes and concave polygons. These historical figures compare
+turborel's own execution paths; they do not compare PostGIS.
