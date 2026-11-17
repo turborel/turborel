@@ -786,9 +786,10 @@ recheck: true
 
 ## Geometry values
 
-The `geometry` module provides the GEOMETRY type, its seven XY value
-kinds, WKT/WKB codecs and spatial functions. Register the
-type and functions before opening files that contain geometry values:
+Register GEOMETRY and its functions before opening a database containing
+spatial values. This example also shows a host application checking a
+courier route against a roadworks area, using the same local metre grid
+as the [SQL workflows](../data/spatial/00-sample-data.md):
 
 ```rust
 use turborel::db::Database;
@@ -803,14 +804,28 @@ fn main() -> Result<(), turborel::error::SqlError> {
     }
     db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned()))?;
 
-    let point = Geometry::from_wkt("POINT (4.9 52.37)", 4326)?;
-    let value = point.to_value();
-    let restored = Geometry::from_value(&value)?;
-    assert_eq!(restored.srid(), 4326);
-    assert_eq!(restored.to_wkt(), "POINT (4.9 52.37)");
+    let route = Geometry::from_wkt("LINESTRING (0 200, 1000 200)", 0)?;
+    let roadworks = Geometry::rectangle([300.0, 100.0], [500.0, 300.0], 0)?;
+    let stored_value = route.to_value();
+    let restored_route = Geometry::from_value(&stored_value)?;
+    println!(
+        "Route meets roadworks: {}",
+        restored_route.intersects(&roadworks)?
+    );
+    println!("Route: {}", restored_route.to_wkt());
     Ok(())
 }
 ```
+
+```text
+Route meets roadworks: true
+Route: LINESTRING (0 200, 1e3 200)
+```
+
+`stored_value` is the value to bind through the ordinary prepared-statement
+API. The spatial test checks the whole line: both route endpoints are
+outside the roadworks, but the path between them crosses it. It does not
+find a replacement route or calculate travel time.
 
 Registration is explicit, as for other plug-ins. Names already registered
 are refused; the loop consists of separate registrations. `turboreld`
@@ -886,14 +901,17 @@ on each coordinate. See [CREATE INDEX](../sql/statements/create-index.md).
 order. It accepts points and zero-width rectangles, rejects reversed bounds
 and non-finite coordinates, and treats touching boundaries as intersections.
 
+For a storage-level viewport filter, the bounds can test whether a
+courier's point is visible, including the viewport's edge:
+
 ```rust
 use turborel::spatial::Bounds;
 
 fn main() -> Result<(), turborel::error::SqlError> {
-    let window = Bounds::new([0.0, 0.0], [10.0, 10.0])?;
-    let point = Bounds::point([10.0, 5.0])?;
-    assert!(window.intersects(point));
-    assert!(window.contains(point));
+    let viewport = Bounds::new([0.0, 0.0], [1000.0, 400.0])?;
+    let courier = Bounds::point([1000.0, 100.0])?;
+    assert!(viewport.intersects(courier));
+    assert!(viewport.contains(courier));
     Ok(())
 }
 ```

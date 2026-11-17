@@ -10,9 +10,9 @@ when indexes can help. Function signatures and error details live in the
 
 ## Guides
 
-- [Spatial data](spatial/README.md): coordinates, geometry values,
-  spatial references, WKT/WKB interchange, geometry relationships and
-  R-tree queries over geometries or numeric coordinates.
+- [Spatial data](spatial/README.md): import delivery locations, search a
+  map window, assign service areas, check route intersections and find
+  nearby depots. A shared dataset makes the queries runnable.
 
 Full-text search, vectors and JSON will have their own guides here when
 implemented. Their planned work is tracked in [TODO.md](../../TODO.md);

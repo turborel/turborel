@@ -3,206 +3,211 @@
 [Spatial Data](README.md) · [Previous: coordinates and geometry](01-model.md) ·
 [Next: R-tree queries](03-indexing.md)
 
-This chapter assumes geometry functions are enabled as described in the
-[guide introduction](README.md), and that a schema is selected. Numeric R-tree queries in the
-next chapter work without that extension.
+Load the [dispatch dataset](00-sample-data.md) first. This chapter imports a
+small delivery feed, checks whether its addresses can be dispatched, and
+exports geometry together with its reference identifier.
 
-## Create and populate a geometry column
+## Turn coordinate columns into locations
 
-Use a geometry column when the shape itself is part of the data:
+A CSV import or upstream application may supply coordinates as separate
+columns. Keep them in a staging table, then construct points with
+`ST_POINT`; there is no need to assemble WKT strings:
 
 ```sql
-CREATE TABLE places (
-    id INTEGER PRIMARY KEY,
-    name VARCHAR(30),
-    shape GEOMETRY(4326)
-);
-INSERT INTO places VALUES
-    (1, 'Shop', ST_POINT(4.9, 52.37, 4326)),
-    (2, 'Unlocated', ST_GEOMFROMTEXT('POINT EMPTY', 4326)),
-    (3, 'Unknown', NULL);
 COMMIT;
-SELECT id, ST_ASTEXT(shape), ST_SRID(shape), ST_ISEMPTY(shape)
-FROM places ORDER BY id;
+CREATE TABLE delivery_feed (
+    id INTEGER,
+    customer VARCHAR(40),
+    easting DOUBLE PRECISION,
+    northing DOUBLE PRECISION
+);
+INSERT INTO delivery_feed VALUES (9, 'Garden centre', 300, 900);
+CREATE TABLE incoming_deliveries (
+    id INTEGER PRIMARY KEY,
+    customer VARCHAR(40) NOT NULL,
+    location GEOMETRY(0)
+);
+INSERT INTO incoming_deliveries
+SELECT id, customer, ST_POINT(easting, northing)
+FROM delivery_feed;
+COMMIT;
+SELECT customer, ST_ASTEXT(location) AS location_wkt
+FROM incoming_deliveries ORDER BY id;
 ```
-
-Result rows:
 
 ```text
-1,POINT (4.9 52.37),4326,0
-2,POINT EMPTY,4326,1
-3,NULL,NULL,NULL
+Garden centre,POINT (300 900)
 ```
 
-The empty point retains its SRID; the NULL row has no geometry metadata.
-`GEOMETRY(4326)` accepts any of the seven supported kinds but requires
-SRID 4326 on every non-NULL value, including empty geometries. An INSERT
-or UPDATE with another SRID fails atomically with SQLCODE -301. The
-constraint survives recovery and applies to prepared statements too.
-Plain `GEOMETRY` accepts any signed 32-bit SRID. The optional column
-parameter accepts 0 through 2147483647.
+Both coordinate columns must describe the same grid and unit. For a
+longitude/latitude feed, X is longitude and Y is latitude if that is the
+convention you have chosen. Supply its SRID as the third argument and use
+a matching column type; do not load angular coordinates into this metre
+example merely by giving them SRID 0.
 
-Checking the identifier does not validate coordinate ranges or look up a
-CRS. A geometry kind constraint is not yet available, and registered
-functions cannot currently be used in stored CHECK conditions.
-Applications requiring only points must validate the kind before writing.
+`GEOMETRY(0)` requires SRID 0 on every non-NULL value. A column declared
+`GEOMETRY(4326)` requires 4326 instead. The identifier is checked on
+assignment and storage, including for empty geometries. Plain `GEOMETRY`
+permits mixed identifiers, but cannot use the geometry R-tree index.
+A fixed-SRID column accepts all seven geometry kinds; applications that
+require addresses to be points must check the kind too.
 
-`ST_POINT` constructs a point directly from numbers or numeric columns.
-Read its coordinates back with `ST_X` and `ST_Y`:
+## Review an imported batch before dispatch
+
+WKT feeds can contain empty shapes, missing values or the wrong geometry
+kind for an address. Retain that distinction in the staging table:
 
 ```sql
-SELECT ST_X(shape), ST_Y(shape) FROM places WHERE id = 1;
+INSERT INTO incoming_deliveries VALUES
+    (10, 'Night market', ST_GEOMFROMTEXT('POINT EMPTY')),
+    (11, 'New office', NULL),
+    (12, 'Rail office', ST_GEOMFROMTEXT('LINESTRING (100 100, 200 100)'));
+COMMIT;
+SELECT customer,
+       TRIM(CASE
+           WHEN location IS NULL THEN 'missing location'
+           WHEN ST_ISEMPTY(location) = 1 THEN 'empty geometry'
+           WHEN ST_GEOMETRYTYPE(location) <> 'ST_Point' THEN 'not a point'
+           ELSE 'ready to import'
+       END) AS import_status
+FROM incoming_deliveries
+ORDER BY id;
 ```
 
 ```text
-4.9E0,5.237E1
+Garden centre,ready to import
+Night market,empty geometry
+New office,missing location
+Rail office,not a point
 ```
 
-Both observers return NULL for POINT EMPTY and reject non-point kinds.
-They do not interpret the coordinates as longitude, latitude or metres.
-
-## Construct windows and inspect bounds
-
-Build a rectangular polygon from numbers with `ST_MAKEENVELOPE`:
+Copy only usable addresses to the live table. This example rolls the
+insertion back after inspecting it, so later chapters keep the original
+dispatch data. In an application, commit the accepted batch:
 
 ```sql
-VALUES ST_ASTEXT(ST_MAKEENVELOPE(0, 0, 10, 20));
+INSERT INTO deliveries
+SELECT id, customer, 'ready', location
+FROM incoming_deliveries
+WHERE ST_GEOMETRYTYPE(location) = 'ST_Point'
+  AND ST_ISEMPTY(location) = 0;
+SELECT id, customer, ST_ASTEXT(location) AS location_wkt
+FROM deliveries WHERE id >= 9 ORDER BY id;
+ROLLBACK;
 ```
 
 ```text
-POLYGON ((0 0, 0 20, 10 20, 10 0, 0 0))
+9,Garden centre,POINT (300 900)
 ```
 
-The arguments are minimum X, minimum Y, maximum X and maximum Y, followed
-by an optional SRID. Each minimum must be strictly below its maximum;
-reversed or zero-area rectangles fail. The default SRID is 0. Pass the
-same SRID as your stored data when using a rectangle as a search window.
+NULL fails these WHERE tests, while an empty point fails the emptiness
+test. Do not replace either with `(0, 0)`: that would create a real,
+queryable address at the grid's origin. Geometry-kind constraints are not
+yet available, and registered functions cannot currently be used in
+stored CHECK conditions.
 
-Read coordinate bounds without constructing another geometry:
+## Export coordinates for map markers
+
+Use the numeric observers when a client expects separate coordinates:
 
 ```sql
-SELECT id, ST_MINX(shape), ST_MINY(shape), ST_MAXX(shape), ST_MAXY(shape)
-FROM places ORDER BY id;
+SELECT id, customer, ST_X(location) AS x, ST_Y(location) AS y
+FROM deliveries
+WHERE status = 'ready' AND ST_GEOMETRYTYPE(location) = 'ST_Point'
+ORDER BY id;
 ```
 
 ```text
-1,4.9E0,5.237E1,4.9E0,5.237E1
-2,NULL,NULL,NULL,NULL
-3,NULL,NULL,NULL,NULL
+1,Museum shop,1E2,1E2
+2,University library,5E2,5E2
+3,Harbour cafe,9E2,1E2
+4,Market stall,7E2,3E2
+5,Hill florist,1.4E3,2E2
+8,Station kiosk,1E3,1E2
 ```
 
-These observers work for lines, polygons and collections too. An empty
-geometry has no bounds. A point has equal minima and maxima, so use
-`ST_POINT` directly when a point is the intended search region.
+ST_X and ST_Y accept points, return NULL for POINT EMPTY, and reject
+other kinds. They return DOUBLE PRECISION; `1E2` in the output means 100.
+They do not convert units or infer longitude and latitude.
 
-## Text interchange
+## Keep the SRID beside exported WKT or WKB
 
-WKT is useful for inspection and small examples. Its keywords are
-case-insensitive, and coordinates accept decimal and exponent notation.
-The output preserves the coordinate values but may normalize their
-spelling and whitespace.
-
-WKT contains no SRID. Pass it separately when rebuilding a value:
+A shape's text is useful in an export, a support ticket or an audit log.
+Keep its SRID in a separate field:
 
 ```sql
-SELECT ST_ASTEXT(ST_GEOMFROMTEXT(ST_ASTEXT(shape), ST_SRID(shape)))
-FROM places WHERE id = 1;
+SELECT name, ST_ASTEXT(path) AS route_wkt, ST_SRID(path) AS srid
+FROM routes
+ORDER BY id;
 ```
 
 ```text
-POINT (4.9 52.37)
+Canal route,LINESTRING (0 200, 1e3 200),0
+North route,LINESTRING (0 800, 1e3 800),0
+East route,LINESTRING (1200 0, 1200 1e3),0
 ```
 
-Leaving off the SRID gives the new value SRID 0. `CAST(text AS GEOMETRY)`
-also uses SRID 0. `CAST(text AS GEOMETRY(4326))` supplies SRID 4326 while
-reading the text. Casting an existing geometry to a constrained type
-checks its SRID and never changes it. A geometry's printed WKT alone is not a
-complete backup of the value and its reference identifier.
-
-Use `ST_SETSRID` when a correctly sourced coordinate sequence needs its
-reference label attached. It changes only the identifier:
+WKT output may normalize whitespace and number spelling: `1e3` means
+1000. WKT contains no SRID. `ST_GEOMFROMTEXT(route_wkt, srid)` restores both
+parts of that export. WKB has the same requirement: export
+`ST_ASBINARY(path)` and `ST_SRID(path)`, then pass both to
+`ST_GEOMFROMWKB`. Here is a binary round trip for a route:
 
 ```sql
-VALUES ST_ASTEXT(ST_SETSRID(ST_POINT(100, 200), 28992));
+SELECT name,
+       ST_ASTEXT(ST_GEOMFROMWKB(ST_ASBINARY(path), ST_SRID(path))) AS restored_path
+FROM routes WHERE id = 1;
 ```
 
 ```text
-POINT (100 200)
+Canal route,LINESTRING (0 200, 1e3 200)
 ```
 
-The coordinates are still `(100, 200)`. This function cannot convert
-longitude/latitude to projected coordinates; transformation support is
-separate work.
+The binary constructor accepts standard XY WKB in either byte order and
+writes little-endian WKB. It does not accept EWKB's embedded SRID or Z/M
+flags. POINT EMPTY uses the interoperable pair-of-NaNs convention; other
+non-finite coordinates are refused.
 
-## Binary interchange
+`CAST(text AS GEOMETRY(4326))` supplies 4326 while reading WKT.
+`CAST(existing_geometry AS GEOMETRY(4326))` checks its existing label.
+`ST_SETSRID` changes only a label and is appropriate only when the
+coordinates already belong to that reference system. None of these
+operations reprojects coordinates.
 
-WKB encodes the kind, counts and coordinates in binary form. Each
-geometry component carries its own byte-order marker. Turborel accepts
-both orders and writes little-endian output. EWKB flags, including an
-embedded SRID, are not accepted by these constructors.
+## Fit the map to a route
 
-This standard XY WKB value represents the point `(1, 2)`:
+Send a route's bounds to a map client without building another polygon:
 
 ```sql
-VALUES ST_ASTEXT(ST_GEOMFROMWKB(
-    X'0101000000000000000000F03F0000000000000040', 4326));
+SELECT name, ST_MINX(path) AS west, ST_MINY(path) AS south,
+       ST_MAXX(path) AS east, ST_MAXY(path) AS north
+FROM routes WHERE id = 1;
 ```
 
 ```text
-POINT (1 2)
+Canal route,0E0,2E2,1E3,2E2
 ```
 
-As with WKT, retain the SRID separately:
+All four extrema functions work for every supported kind. An empty shape
+has no bounds. A horizontal route has equal minimum and maximum Y;
+expand the display bounds before using them to construct a nonzero-area
+`ST_MAKEENVELOPE` search polygon.
 
-```sql
-SELECT ST_ASTEXT(ST_GEOMFROMWKB(ST_ASBINARY(shape), ST_SRID(shape)))
-FROM places WHERE id = 1;
-```
+## Storage, errors and limits
 
-```text
-POINT (4.9 52.37)
-```
+Geometry columns participate in ordinary transactions, rollback,
+checkpoints and recovery. Stored values keep their SRID and coordinates.
+An embedding application must register the type before reopening files;
+`turboreld` does that automatically. The native client can carry the value
+opaquely, but GIS discovery tables and dedicated GIS drivers are not yet
+provided.
 
-POINT EMPTY uses the interoperable pair-of-NaNs WKB convention. A NaN
-in only one ordinate, an infinite ordinate or a NaN in a line is rejected.
-Empty lines, polygons and collections use zero component counts.
+Malformed WKT or WKB fails with SQLCODE -301. Unsupported dimensions,
+kinds or representation limits fail with -900. Constructors check
+structure, not polygon topology. An invalid row in a multirow insertion
+fails the whole statement; it does not leave its earlier rows inserted.
 
-## Inspect and preserve values
-
-`ST_GEOMETRYTYPE` reports a SQL/MM-style name for the outer kind, even
-for an empty value:
-
-```sql
-SELECT id, ST_GEOMETRYTYPE(shape) FROM places ORDER BY id;
-```
-
-```text
-1,ST_Point
-2,ST_Point
-3,NULL
-```
-
-Geometry values participate in the database's ordinary transactions,
-rollback, checkpoints and recovery. The stored payload retains the SRID
-and coordinates. An application reopening the files must enable the same
-type before opening them. This is separate from exchanging WKT or WKB.
-
-The native client can carry an extension value without interpreting its
-geometry. That does not provide automatic GIS discovery: GEOMETRY_COLUMNS,
-SPATIAL_REF_SYS and dedicated GIS drivers are not implemented yet.
-
-## Errors and limits
-
-Malformed text or binary input fails with SQLCODE -301. Unsupported
-dimensions, geometry kinds and representation limits fail with -900.
-A failed multirow insertion does not leave its earlier rows inserted.
-
-SQL text and binary values currently have limits of 32,767 characters
-and octets respectively. A geometry observer that would produce a larger
-result fails with -900. Geometry nesting and component counts have
-additional [limits](../../appendix/d-limits.md). Large-object SQL types
-are needed before arbitrary large shapes can use these SQL interchange
-functions.
-
-See the [function reference](../../sql/spatial.md) for signatures, NULL
-handling and the exact supported representation subset.
+The SQL interchange functions use the ordinary 32,767-character/octet
+string limits. CLOB/BLOB interchange is not provided by these geometry
+functions. The Rust codecs have larger [representation limits](../../appendix/d-limits.md).
+See the [function reference](../../sql/spatial.md) for signatures and errors.

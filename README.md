@@ -35,6 +35,9 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.
+- [Geospatial SQL](doc/data/spatial/README.md), with XY geometries, WKT/WKB,
+  intersection filters and joins, planar distances and R-tree
+  nearest-neighbour queries.
 - Collations, from binary order through case-insensitive to the Unicode
   Collation Algorithm and CLDR's tailorings for 48 languages, so text sorts
   and compares as its readers expect.

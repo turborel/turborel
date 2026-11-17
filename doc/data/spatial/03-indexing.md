@@ -3,257 +3,221 @@
 [Spatial Data](README.md) · [Previous: store and exchange geometries](02-interchange.md) ·
 [Next: spatial relationships](04-relationships.md)
 
-An R-tree groups nearby bounding rectangles so a query can skip groups
-outside its search region. Use a GEOMETRY column when you need shapes,
-or numeric columns when your data consists of point coordinates or
-rectangles. The database maintains either index as rows change.
+Load the [dispatch dataset](00-sample-data.md) first. Its geometry indexes
+let the planner find candidate deliveries, service areas, depots and
+routes without testing every shape. Queries still name the relationship
+they need; the index does not replace the geometry test.
 
-## Index geometry intersections
+## Show ready deliveries in a map window
 
-Declare the column's SRID and index the geometry itself:
+A dispatch map asks for orders in its current viewport, excluding orders
+already delivered. Construct the viewport directly from its bounds:
 
 ```sql
-SET SQL.FUNCTION_CALLS = 'ON';
-CREATE TABLE features (id INTEGER PRIMARY KEY, shape GEOMETRY(0));
-COMMIT;
-CREATE INDEX features_shape ON features (shape) USING rtree;
-INSERT INTO features VALUES
-    (1, ST_POINT(5, 5)),
-    (2, ST_GEOMFROMTEXT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 2 8, 8 8, 8 2, 2 2))')),
-    (3, ST_GEOMFROMTEXT('POINT EMPTY')),
-    (4, NULL);
-COMMIT;
-SELECT id FROM features
-WHERE ST_INTERSECTS(shape, ST_POINT(5, 5)) = 1
+SELECT id, customer
+FROM deliveries
+WHERE status = 'ready'
+  AND ST_INTERSECTS(location, ST_MAKEENVELOPE(0, 0, 1000, 400)) = 1
 ORDER BY id;
 ```
 
 ```text
-1
+1,Museum shop
+3,Harbour cafe
+4,Market stall
+8,Station kiosk
 ```
 
-Feature 2's bounding rectangle contains `(5, 5)`, but that point is in
-its hole. The exact intersection test removes that candidate. You do
-not need separate envelope columns or a second bounding-box condition.
-The index updates automatically when the geometry changes.
+The four numbers are west, south, east and north in the data's coordinate
+system. Station kiosk lies on the eastern edge and is included. Warehouse
+is in the window but has already been delivered. A missing or empty
+location cannot intersect the window.
 
-For a rectangular search window, construct the geometry from its bounds:
+In a map application, bind the changing bounds or the constructed geometry
+as parameters. For a fixed-SRID column, the query geometry must carry the
+same SRID; pass it as the fifth argument to ST_MAKEENVELOPE when it is not
+0. Each minimum must be strictly below its maximum. Use ST_POINT for a
+single-coordinate query.
+
+The setup created `deliveries_location` on `deliveries(location)` using
+`rtree`. You do not need four additional envelope columns or a separate
+bounding-box condition. For polygons, the index's rectangle is only a
+candidate bound: the exact predicate excludes holes and other nonmatching
+parts. [Service-area joins](04-relationships.md#join-by-intersection)
+show why this matters.
+
+## Keep the map current after an address correction
+
+Updating a location updates its index in the same transaction. Here the
+new customer supplies an address inside the viewport:
 
 ```sql
-SELECT id FROM features
-WHERE ST_INTERSECTS(shape, ST_MAKEENVELOPE(9, 9, 11, 11)) = 1
+COMMIT;
+UPDATE deliveries SET location = ST_POINT(300, 100) WHERE id = 6;
+SELECT id, customer
+FROM deliveries
+WHERE status = 'ready'
+  AND ST_INTERSECTS(location, ST_MAKEENVELOPE(0, 0, 1000, 400)) = 1
 ORDER BY id;
+ROLLBACK;
 ```
 
 ```text
-2
+1,Museum shop
+3,Harbour cafe
+4,Market stall
+6,New customer
+8,Station kiosk
 ```
 
-This window intersects the polygon's upper corner. It uses the same
-geometry-index path, and avoids building a polygon text string in the
-application. Supply an SRID as the fifth argument when it is not 0.
+The example rolls back the correction to preserve the sample data.
+Commit a real correction when it is accepted. Other sessions follow the
+database's transaction visibility rules; an index candidate is checked
+against the geometry version visible to the reading transaction.
 
-`GEOMETRY(0)` means all values carry SRID 0; use the SRID appropriate
-to your data. An unconstrained `GEOMETRY` column cannot have this index.
-The constraint prevents mixing reference labels within the indexed column;
-it does not transform coordinates or validate a CRS identifier.
+## Understand when the index helps
 
-The planner recognizes `ST_INTERSECTS(shape, value) = 1` with a constant
-or prepared parameter, including the arguments or comparison reversed.
-It chooses by cost, so this tiny example can still use a table scan.
-NULL and empty geometries never intersect. A different query SRID still
-raises an error; an index cannot silently discard the mismatch.
+The planner recognizes `ST_INTERSECTS(column, value) = 1`, with a constant
+or parameter in either argument position. The indexed column must be
+`GEOMETRY(srid)`, not unconstrained GEOMETRY. A different query SRID raises
+an error rather than quietly returning no matches.
 
-An inner join can also probe the index with a geometry from the other
-table when both columns enforce the same SRID. The
-[relationship chapter](04-relationships.md#join-by-intersection) shows
-that query. Geometry outer joins and ST_DISJOINT do
-not yet use these geometry probes.
+Use EXPLAIN to inspect a query's chosen access path. On these small tables,
+a scan can be cheaper than an index lookup. A city-wide viewport can also
+favor a scan even when a street-sized viewport benefits from the R-tree.
+Estimates count small candidate sets and sample larger ones; they affect
+the choice of plan, never the exact result.
 
-For an unordered spatial inner join, `EXPLAIN` may show
-`AdaptiveSpatialJoin`.
-Execution starts with index lookups. After enough candidate rows have been read, it can
-compare the estimated work of the remaining lookups with scanning the
-larger table once. If the remaining outer rows fit the work-area and
-database memory budgets, a scan groups their rectangles in a temporary
-spatial index to find candidates. It checks the exact geometries and the
-rest of the join condition for each candidate. Selective lookups, missing
-estimates or insufficient memory keep the ordinary index join. A query
-needing the join's input order also keeps it.
+For an unordered intersection join, `AdaptiveSpatialJoin` can begin with
+index probes and switch to one scan when repeated broad lookups would cost
+more. It buffers the remaining outer rows only within the work-area and
+database memory budgets, and checks the full geometry relationship for
+every candidate. Missing estimates, insufficient memory or a required
+input order retain the ordinary index join.
 
-The same-SRID guarantee also lets this join stream its results without
-buffering every pair first. A query with another expression that can
-raise, such as division in its SELECT list, still performs the normal
-eager error check before opening its cursor.
-Column-only spatial results return the first row directly, then use small
-batches of up to 64 rows. Their
-buffer follows the work-area and database memory budgets; if it cannot
-grow, fetching continues row by row without losing buffered results.
+Geometry outer joins, ST_DISJOINT filters and distance comparisons in
+WHERE do not currently use geometry probes. Combining a window with a
+distance filter does not promise an indexed radius search: other
+expressions that can raise errors can prevent pruning. See
+[distance queries](05-distance.md) for the supported nearest-neighbour form.
 
-## Find points in a window
+## Find couriers stored as numeric coordinates
 
-Use two REAL, FLOAT or DOUBLE PRECISION columns in `(X, Y)` order:
+An existing telemetry table may already store X and Y separately. It can
+use a numeric R-tree without converting its data to GEOMETRY:
 
 ```sql
-CREATE TABLE sites (
-    id INTEGER PRIMARY KEY,
+COMMIT;
+CREATE TABLE courier_positions (
+    courier VARCHAR(30) PRIMARY KEY,
     x DOUBLE PRECISION NOT NULL,
     y DOUBLE PRECISION NOT NULL
 );
+INSERT INTO courier_positions VALUES
+    ('Amina', 100, 100), ('Bo', 750, 250), ('Chao', 1500, 200);
 COMMIT;
-CREATE INDEX sites_xy ON sites (x, y) USING rtree;
-INSERT INTO sites VALUES (1, 0, 0), (2, 5, 5), (3, 10, 10), (4, 50, 50);
-COMMIT;
-SELECT id FROM sites
-WHERE x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5
-ORDER BY id;
+CREATE INDEX courier_positions_xy ON courier_positions (x, y) USING rtree;
+SELECT courier
+FROM courier_positions
+WHERE x BETWEEN 0 AND 1000 AND y BETWEEN 0 AND 400
+ORDER BY courier;
 ```
-
-Result rows:
 
 ```text
-1
-2
+Amina
+Bo
 ```
 
-Both bounds are inclusive. The point at `(5, 5)` belongs to this window.
-The planner can combine the two coordinate ranges into an R-tree probe.
-It still chooses by cost: on a small table or a broad window, scanning
-the table can be cheaper. An index does not prescribe result order;
-use ORDER BY when order matters.
+The index columns must be REAL, FLOAT or DOUBLE PRECISION, in `(X, Y)`
+order. Bounds are inclusive. NOT NULL makes a usable location part of the
+row's contract; an R-tree omits rows with a NULL coordinate. Do not use
+zero coordinates to stand for a courier whose location is unknown.
 
-Creating an index requires no open transaction. Commit or roll back a
-previous query or modification first. The examples do so explicitly.
+## Load the map tiles a viewport overlaps
 
-## Find overlapping rectangles
-
-Four columns must be ordered `(min X, min Y, max X, max Y)` in the index.
-Each minimum must be at most its maximum; zero-width rectangles are
-allowed. All coordinates must be finite.
+For precomputed rectangular tiles, index their four bounds in
+`(min X, min Y, max X, max Y)` order:
 
 ```sql
 COMMIT;
-CREATE TABLE regions (
+CREATE TABLE dispatch_tiles (
     id INTEGER PRIMARY KEY,
+    name VARCHAR(20) NOT NULL,
     min_x DOUBLE PRECISION NOT NULL,
     min_y DOUBLE PRECISION NOT NULL,
     max_x DOUBLE PRECISION NOT NULL,
     max_y DOUBLE PRECISION NOT NULL
 );
+INSERT INTO dispatch_tiles VALUES
+    (1, 'West', 0, 0, 1000, 400),
+    (2, 'East', 1000, 0, 2000, 400),
+    (3, 'North', 0, 400, 1000, 1200);
 COMMIT;
-CREATE INDEX regions_bounds ON regions (min_x, min_y, max_x, max_y) USING rtree;
-INSERT INTO regions VALUES
-    (1, 0, 0, 5, 5), (2, 5, 5, 10, 10), (3, 20, 20, 30, 30);
-COMMIT;
-SELECT id FROM regions
-WHERE min_x <= 6 AND max_x >= 4
-  AND min_y <= 6 AND max_y >= 4
+CREATE INDEX dispatch_tiles_bounds
+ON dispatch_tiles (min_x, min_y, max_x, max_y) USING rtree;
+SELECT name
+FROM dispatch_tiles
+WHERE min_x <= 1100 AND max_x >= 900
+  AND min_y <= 300 AND max_y >= 100
 ORDER BY id;
 ```
 
 ```text
-1
-2
+West
+East
 ```
 
-The query asks which rectangles overlap the closed window from `(4, 4)`
-to `(6, 6)`. Notice that it compares both minima and maxima. Treating
-only a rectangle's lower corner as a point would miss rectangles that
-extend into the query window from outside it.
+The viewport straddles West and East. Testing only each tile's lower
+corner would miss West, whose lower corner is outside the viewport.
+These comparisons are exact for rectangles. Rectangles around complex
+shapes supply candidates only; use geometry predicates for those shapes.
+Numeric bounds must be finite and ordered; zero-width rectangles are
+allowed, unlike ST_MAKEENVELOPE's polygon constructor.
 
-These tests are exact for rectangles. If the rectangles instead bound
-complex geometries, they provide candidates only. They do not establish
-polygon intersection or containment. If you keep separate shape and envelope
-columns, keeping them consistent is the application's responsibility.
-The geometry index above maintains its envelopes automatically.
+## Match courier positions to tiles
 
-## Join points to regions
-
-The same comparisons can use columns from the other side of a join:
+The same comparisons can reference the other side of a join:
 
 ```sql
-SELECT s.id AS site_id, r.id AS region_id
-FROM sites s JOIN regions r
-ON s.x >= r.min_x AND s.x <= r.max_x
-AND s.y >= r.min_y AND s.y <= r.max_y
-ORDER BY s.id, r.id;
+SELECT vehicle.courier, tile.name AS tile
+FROM courier_positions vehicle
+JOIN dispatch_tiles tile
+  ON vehicle.x >= tile.min_x AND vehicle.x <= tile.max_x
+ AND vehicle.y >= tile.min_y AND vehicle.y <= tile.max_y
+ORDER BY vehicle.courier, tile.id;
 ```
 
 ```text
-1,1
-2,1
-2,2
-3,2
+Amina,West
+Bo,West
+Chao,East
 ```
 
-Site 2 lies on the shared corner and belongs to both closed regions.
-An indexed inner join can probe an R-tree using each outer row's bounds,
-then check the full join condition on the visible rows. SQL planning
-does not yet traverse two R-trees as a single join operation. Do not
-assume that indexing both tables forces a particular join algorithm.
+A courier exactly on a shared tile edge matches both closed rectangles.
+Choose an explicit ownership rule if a downstream operation needs one
+tile per courier. An indexed join can probe using the other table's
+bounds; indexing both sides does not force a traversal of both trees.
 
 ## Nearest points in SQL
 
-For small Cartesian datasets, ordinary SQL can sort squared Euclidean
-distances. This example asks for the two points nearest `(4, 4)`:
+For nearest-depot searches, use a `GEOMETRY(srid)` column and ST_DISTANCE
+with FETCH FIRST, as in the [distance chapter](05-distance.md). Sorting a
+numeric expression such as squared X/Y differences still scans and sorts;
+the numeric R-tree does not turn that expression into indexed nearest SQL.
 
-```sql
-SELECT id FROM sites
-ORDER BY (x - 4) * (x - 4) + (y - 4) * (y - 4), id
-FETCH FIRST 2 ROWS ONLY;
-```
+## Measure the workload users will run
 
-```text
-2
-1
-```
+Test street-sized and city-wide views, overlapping service areas, and
+ongoing location updates. Large or overlapping bounds leave less to
+prune, and a join returning millions of pairs must still fetch and send
+those pairs. Include complete result fetching when measuring it.
 
-The coordinates here are small, so squaring their differences is safe.
-The formula needs care with extreme magnitudes. It measures the units of
-the coordinates and is not a geodesic distance formula.
+Broad geometry probes can batch nearby row IDs for more local reads;
+their candidate buffers are bounded and charged to the database memory
+budget. Nearest queries retain distance traversal order. Index nodes
+left empty by deletes currently remain in the tree; search quality after
+sustained updates matters as well as performance after a fresh load.
 
-This numeric expression still scans and sorts. To use indexed nearest
-ordering, store a `GEOMETRY(srid)` column, index it and order by
-`ST_DISTANCE` with FETCH FIRST. The [distance chapter](05-distance.md)
-shows that form. Geometry queries refine the actual shape before ranking;
-bounding-box distance alone would be insufficient for polygons with holes.
-
-## Updates, NULLs and performance
-
-The database maintains geometry and numeric indexes as rows change and
-applies its ordinary transaction visibility rules. A query rechecks the
-geometry version visible to its transaction, including when older and
-newer versions have the same bounding rectangle.
-
-Broad geometry probes collect a bounded block of candidates and fetch
-nearby row IDs together. Each active cursor may use about 160 KiB for
-that block, charged to the database memory budget. If it cannot reserve
-the memory, it uses a smaller buffer or streams candidates directly.
-Nearest queries retain their distance traversal order.
-
-For geometry filters, planning counts small candidate sets and samples
-the tree for larger ones. These estimates help choose between an index
-and a table scan. They can be inaccurate for skewed or changing data;
-the complete SQL predicate still decides which rows are returned.
-
-An R-tree omits a row with any NULL coordinate. The planner uses it only
-when that omission cannot hide a matching row. NOT NULL coordinate
-columns make the intended data model explicit; do not invent `(0, 0)`
-coordinates for unknown locations.
-
-Performance depends on the distribution of the bounds and how much of
-the table a query returns. Large or overlapping rectangles give the
-tree less to prune. A dense join can legitimately produce millions of
-pairs; an index cannot remove the cost of returning those matches.
-
-Measure narrow and broad windows, realistic overlap, and sustained
-updates as well as fresh loads. Empty nodes currently remain in a live
-tree, and the tree does not perform forced reinsertion or deletion
-condensation. Space and search quality after churn matter alongside
-initial throughput.
-
-The project's [benchmark instructions](../../../CONTRIBUTING.md#spatial-benchmarks)
-separate SQL queries from raw index operations. Raw nearest-entry timings
-are not SQL geometry-distance timings. Comparing engines requires the same
-results, transaction settings and client/server boundary; raw index timings
-alone do not establish an advantage over PostGIS.
+The [benchmark instructions](../../../CONTRIBUTING.md#spatial-benchmarks)
+distinguish complete SQL workloads from raw index operations. Compare
+engines with the same answers, transaction settings and client boundary.

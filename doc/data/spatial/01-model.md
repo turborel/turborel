@@ -1,6 +1,11 @@
 # Coordinates and Geometry
 
-[Spatial Data](README.md) · [Next: store and exchange geometries](02-interchange.md)
+[Spatial Data](README.md) · [Sample data](00-sample-data.md) · [Next: store and exchange geometries](02-interchange.md)
+
+The [dispatch examples](00-sample-data.md) keep addresses as points, routes
+as lines and service zones as polygons. Choose the shape that answers the
+question: a route's centre or bounding rectangle cannot tell you whether
+the route itself meets a road closure.
 
 ## Coordinates need a coordinate system
 
@@ -13,7 +18,8 @@ Choose one coordinate system for values you intend to compare. An SRID
 labels that choice. Turborel currently stores the supplied signed
 32-bit identifier without looking it up, validating the coordinate
 range, swapping axes or transforming coordinates. SRID 0 means no
-reference identifier was supplied; it does not select WGS 84.
+reference identifier was supplied; it does not select WGS 84. In the sample
+dataset, metres come from the agreed local grid, not from the SRID.
 
 Keep a consistent X/Y convention when importing. For longitude/latitude
 data, make the convention explicit in the application and verify it
@@ -42,6 +48,12 @@ GEOMETRY is one registered SQL type with these value kinds:
 | MULTIPOLYGON | A collection of polygons | `MULTIPOLYGON (((0 0, 4 0, 4 4, 0 0)))` |
 | GEOMETRYCOLLECTION | A collection of different kinds | `GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (0 0, 3 4))` |
 
+Keep one location per delivery when it needs one address. Use a polygon
+for a service area; its holes can describe excluded grounds. Use a
+MultiPolygon when one named service area has disconnected parts. A
+GeometryCollection can retain mixed imported shapes, but makes a poor
+substitute for separate rows when each object needs its own name or status.
+
 A nonempty line has at least two points. A polygon ring repeats its
 first coordinate at the end and has at least four coordinates including
 that repetition. All stored coordinates are finite. Z and M ordinates,
@@ -57,6 +69,11 @@ An empty geometry still has its geometry kind and SRID. A collection
 containing only empty components also has no coordinates. The current
 constructors and observers propagate NULL; `ST_ISEMPTY` returns 1 for an
 empty geometry, 0 for one with coordinates, and NULL for a NULL argument.
+
+For a delivery whose address has not been geocoded, use NULL. An empty
+geometry is useful when preserving an upstream geometry value that is
+explicitly empty; it does not put the delivery at `(0, 0)`. Keep such rows
+out of dispatch and report them for correction.
 
 An empty geometry has no extent or location. It never intersects another
 geometry, and its distance to another geometry is NULL.

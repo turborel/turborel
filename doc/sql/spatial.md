@@ -122,23 +122,17 @@ candidates. An inner join can also use a geometry index when both columns
 enforce the same SRID; each outer row supplies the query geometry and the
 complete ON condition checks each candidate pair. See
 [geometry indexes](../data/spatial/03-indexing.md).
-An unordered inner join also permits an adaptive choice between those
-probes and one table scan when its remaining outer input fits the memory
-budgets, with the same exact checks.
+For broad inner joins, the planner can also choose an adaptive scan.
 ST_DISJOINT, distance comparisons in WHERE and geometry outer joins do
-not yet use those probes. Ascending ST_DISTANCE with FETCH FIRST can use
-a nearest-candidate traversal; the [distance guide](../data/spatial/05-distance.md)
-lists its requirements and fallbacks.
-With constant folding enabled and enough memory available, a constant
-geometry operand is decoded once per expression and reused while evaluating
-rows. This also applies when a prepared statement reuses its query plan;
-each execution prepares its own parameter value.
-An indexed spatial join also decodes its outer geometry once per probe,
-then reuses it while checking that geometry's candidate matches.
-When the query selects only columns, an intersection join can build those
-columns directly after checking a match. Selecting IDs therefore avoids
-copying geometry values into a temporary result row. Additional ON
-conditions still apply before any result is returned.
+not yet use geometry probes. Ascending ST_DISTANCE with FETCH FIRST can
+use nearest traversal; the [distance guide](../data/spatial/05-distance.md)
+lists its requirements and fallbacks. Index selection changes cost, not
+the exact relationship or transaction visibility.
+
+Constant and parameter geometries can be prepared once per expression
+and reused during that execution. Indexed joins can reuse each outer
+geometry across its candidate matches. This preparation is bounded by
+the database's memory budget and preserves results and errors.
 
 SQL `=`, ordering, grouping and ordinary index keys compare the stored
 representation, including SRID and coordinate order. This is not the
@@ -152,28 +146,67 @@ with -900. Damaged stored payloads and unknown versions fail with -916.
 The type and functions are a subset implemented as extensions; they do
 not claim Simple Features or SQL/MM Spatial conformance.
 
-## Example
+## Common queries
 
-With a schema selected:
+These queries use the [dispatch sample tables](../data/spatial/00-sample-data.md).
+They show the functions in the WHERE, ON and ORDER BY clauses that an
+application would use. The guide explains the data, boundaries and
+index choices in more detail.
+
+Show ready delivery addresses inside the current map view:
 
 ```sql
-SET SQL.FUNCTION_CALLS = 'ON';
-CREATE TABLE places (id INTEGER, shape GEOMETRY);
-INSERT INTO places VALUES
-    (1, ST_POINT(4.9, 52.37, 4326)),
-    (2, ST_GEOMFROMTEXT('POINT EMPTY', 4326));
-SELECT id, ST_ASTEXT(shape), ST_SRID(shape), ST_ISEMPTY(shape)
-FROM places ORDER BY id;
+SELECT customer
+FROM deliveries
+WHERE status = 'ready'
+  AND ST_INTERSECTS(location, ST_MAKEENVELOPE(0, 0, 1000, 400)) = 1
+ORDER BY id;
 ```
-
-The rows, in order, are:
 
 ```text
-1,POINT (4.9 52.37),4326,0
-2,POINT EMPTY,4326,1
+Museum shop
+Harbour cafe
+Market stall
+Station kiosk
 ```
 
-The SQL functions follow the existing 32,767-character/octet string
-limits. Geometry values use a versioned payload within the existing
-database formats. A host opening a database containing GEOMETRY must
-enable the type before opening its files.
+Find service areas for an order, including any shared-boundary matches:
+
+```sql
+SELECT delivery.customer, area.name AS service_area
+FROM deliveries delivery
+JOIN delivery_zones area
+  ON ST_INTERSECTS(delivery.location, area.boundary) = 1
+WHERE delivery.id = 8
+ORDER BY area.id;
+```
+
+```text
+Station kiosk,Central
+Station kiosk,East
+```
+
+Offer the two depots nearest a courier at `(400, 300)` in the sample metre
+grid, with a stable order for equal distances:
+
+```sql
+SELECT name, ST_DISTANCE(location, ST_POINT(400, 300)) AS distance_metres
+FROM depots
+WHERE ST_ISEMPTY(location) = 0
+ORDER BY distance_metres ASC NULLS LAST, id
+FETCH FIRST 2 ROWS ONLY;
+```
+
+```text
+Canal depot,5E2
+Market depot,6E2
+```
+
+For radius searches, order counts and exception reports, see
+[nearby deliveries](../data/spatial/05-distance.md) and
+[service-area workflows](../data/spatial/04-relationships.md).
+
+The SQL interchange functions retain the 32,767-character/octet limits
+of their ordinary string types. Geometry values use a versioned payload
+within the existing database formats. A host opening a database containing
+GEOMETRY must register the type before opening its files.
