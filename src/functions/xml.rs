@@ -8,6 +8,7 @@
 mod aggregate;
 mod cast;
 mod element;
+pub mod map;
 mod mapping;
 mod publish;
 mod query;

@@ -1947,7 +1947,9 @@ Validation, Static Typing, Module and Serialization are not [XQuery §5.2].
 | A null element mapped | §9.8 GR9j iii 2 A, §4.9 Table 2 | `<element xsi:nil="true"/>` declares the prefix `xsi`, so the text, parsed as CONTENT [§10.13 GR4c i 1 B, §6.6 GR3b], is namespace-well-formed. |
 | NIL ON NO CONTENT | §10.13 GR4c ii 2 | Read of the content as mapped: an element whose content holds no element, text node or atomic value is nilled. |
 | CAST of a distinct type of XML | §6.5 SR3, ISO/IEC 9075-2:2023 §11.51 GR2b, §6.13 SR12 | By the type's own casts to and from its source, as Part 2 makes them for every distinct type, though §6.5 SR3's table writes N between XML and a user-defined type: without them no value of the type could be made (X013). |
-| The XML Schema types of SQL's numbers and BOOLEAN | §9.5 GR8d iv, GR8e viii, GR8f | INTEGER, SMALLINT and BIGINT restrictions of `xs:integer`; REAL and FLOAT of 24 bits or fewer `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`; BOOLEAN `xs:boolean`. |
+| The XML Schema types of SQL's numbers and BOOLEAN | §9.5 GR8d iv, GR8e viii, GR8f | INTEGER, SMALLINT and BIGINT restrictions of `xs:integer`, an XML Schema document's by their greatest and least values; REAL and FLOAT of 24 bits or fewer `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`; BOOLEAN `xs:boolean`, each named by a restriction of no facet [§9.6 GR6b iv]. |
+| Annotations of XML Schema types | §4.10.5, §9.5 GR8 | None is written, so no type an XML Schema document defines uses the namespace of `sqlxml` (`functions/xml/map/types.rs`). |
+| A character set's mapping to Unicode in XML Schema types | §9.4 GR2c, §9.5 GR8a ii | The identity. Of a length in characters it is homomorphic, N characters of N; of a length in octets not, as N octets hold at most N characters, so a CHARACTER of one is restricted by `xs:maxLength`, and named VARCHAR_N_N. |
 | Limits of XQuery's atomic values | XQueryFO §10.1.1, §17.1.1 | A date's year from 0001 to 9999, else err:FODT0001; seconds, of times and of `xdt:dayTimeDuration`, to the microsecond, more digits dropped; a duration within 128 bits of months or microseconds, else err:FODT0002; `xs:decimal` and `xs:integer` of any digits, an SQL exact number of them its fraction cut to 38 digits. A float or double cast to a decimal is the shortest decimal that reads back as it. A zero time zone is written Z. |
 | The types §9.5 maps SQL's types to | §9.5 GR8 | Without annotations [GR8a vii and the like]. CSM, the mapping of a character set to Unicode, is the identity [GR8a ii], so CHARACTER(n) is `xs:string` of the length n, and of a length in OCTETS of the maxLength n. |
 | The pattern of TIME(p) and TIMESTAMP(p) | §9.5 GR8h to GR8k, §6.6 GR4j | The patterns ask for exactly p digits of fraction, which no canonical form of a value has, as its seconds end in no zero [XQueryFO §17.4]; so a value, adjusted to UTC first of a type without time zone [GR4j i to iii], is checked against XT written as §9.8 GR9f and GR9g write an SQL value of the type: its fraction padded with zeros to p digits, its time zone ±hh:mm. A value, or text, of more than p digits of fraction is refused, SQLSTATE 10000; zeros ending the text's fraction are not counted, as they are no digits of its value, so `12:00:00.5000` is a TIME(3). |
@@ -1984,6 +1986,17 @@ Validation, Static Typing, Module and Serialization are not [XQuery §5.2].
 | Copy-namespaces no-preserve | XQuery §3.7.1.3 | Each copied element declares the bindings its name and attributes' names use; one copied below another keeps too those its copied ancestors declare, as a tree holds bindings where they are declared. |
 | A prefix made for a constructed name | XQuery §3.7.4 | `ns1`, `ns2` and on, or the prefix taken followed by its next free number. |
 | XQuery's Unicode and XML versions | XQuery §2, §3.1.1, §3.7.1.1 | Names, characters, character references and attribute normalization of XML 1.1 and Namespaces in XML 1.1, as XMLQUERY reads by XML 1.1's lexical rules [§6.18 GR2a]. |
+
+\[EXTENSION\] Part 14's 2006 draft gives no XML Name of a BINARY, a
+BINARY VARYING or an interval type [§9.4], though §9.5 maps each [GR8b,
+GR8l]. They are named as §9.4 names BLOB [GR3]: `BINARY_n`,
+`VARBINARY_n`, and `INTERVAL_` with the fields, the leading precision
+and, of SECOND, the fractional seconds precision, as
+`INTERVAL_DAY_TO_SECOND_2_6`. An interval type's pattern [§9.5 GR8l] is
+read so it describes what §9.8 GR9h writes: of no fractional seconds, the
+seconds have no fraction, and INTERVAL SECOND's are of its leading
+precision's digits. The `name` §9.5 GR8r writes on `xs:any` is left out,
+as `xs:any` takes none [Schema1 §3.10.2].
 
 The words of Part 14, XML and the operators' names among its reserved
 words, are no key words of SQL-92, so each stays an identifier, read as a
