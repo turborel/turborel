@@ -1,10 +1,13 @@
 //! Binding the SQL/XML operators [ISO/IEC 9075-14:2006 draft §6]:
 //! XMLCAST [§6.6] (`binder/xml/cast.rs`), XMLDOCUMENT [§6.13], XMLPARSE
-//! [§6.16] and XMLSERIALIZE [§6.8], and the
-//! document and content predicates [§8.2, §8.3], each a call of its
-//! function (`functions/xml.rs`).
+//! [§6.16], XMLSERIALIZE [§6.8] and the publishing operators
+//! (`publish`, `element`), and the document and content predicates [§8.2,
+//! §8.3], each a call of its function (`functions/xml.rs`).
 
 mod cast;
+mod element;
+mod namespaces;
+mod publish;
 
 use std::sync::Arc;
 
@@ -51,6 +54,12 @@ impl Binder<'_> {
                 };
                 Ok((Expr::Call(ScalarRef(Arc::new(XmlDocument(result.clone()))), vec![operand]), result))
             }
+            XmlOperator::Comment { operand, returning } => self.xml_comment(operand, *returning, scope),
+            XmlOperator::Concat { operands, returning } => self.xml_concatenation(operands, *returning, scope),
+            XmlOperator::Pi { target, operand, returning } => self.xml_pi(target, operand.as_ref(), *returning, scope),
+            XmlOperator::Text { operand, returning } => self.xml_text(operand, *returning, scope),
+            XmlOperator::Element(element) => self.xml_element(element, scope),
+            XmlOperator::Forest(forest) => self.xml_forest(forest, scope),
             XmlOperator::Parse { syntax, operand, whitespace } => self.xml_parse(*syntax, operand, *whitespace, scope),
             XmlOperator::Serialize { syntax, operand, target, encoding, version, declaration } => {
                 let operand = self.xml_value_expression(operand, scope, "XMLSERIALIZE")?;

@@ -22,7 +22,10 @@
 mod atomic;
 mod chars;
 mod construct;
+mod element;
+mod identifiers;
 mod parse;
+mod publish;
 mod sequence;
 mod serialize;
 mod stored;
@@ -31,14 +34,20 @@ mod tree;
 pub use atomic::{LAST_YEAR, Moment, Shape, cast, duration_units, hex, hex_text, xquery_error};
 pub use chars::{
     COLON, VERSION_10, VERSION_11, Version, is_char, is_literal, is_name, is_name_char, is_name_start, is_ncname, is_nmtoken,
-    is_pubid_char, is_restricted, is_space,
+    is_pubid_char, is_restricted, is_space, qname_parts,
 };
 pub use construct::document;
+pub use element::element;
+pub use identifiers::{Escape, identifier_of, name_of, name_of_parts};
 pub use parse::{Syntax, Whitespace, parse, parse_bytes};
+pub use publish::{comment, concatenate, processing_instruction, text};
 pub use sequence::{Atomic, AtomicType, Item, Node, Sequence};
 pub use serialize::{Parameters, serialize};
 pub use stored::{FORMAT_VERSION, decode, encode};
-pub use tree::{Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree};
+pub use tree::{
+    Binding, Builder, ElementStart, Kind, NodeId, QName, SQLXML_NAMESPACE, SQLXML_PREFIX, Specified, Tree, XML_NAMESPACE, XML_PREFIX,
+    XMLNS_NAMESPACE, XS_NAMESPACE, XS_PREFIX, XSI_NAMESPACE, XSI_PREFIX,
+};
 
 use crate::error::{Code, SqlError};
 

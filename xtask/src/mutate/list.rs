@@ -69,6 +69,7 @@ mod window_values;
 mod windows;
 mod with;
 mod xml;
+mod xml_publishing;
 mod zones;
 
 use super::{Mutation, Package};
@@ -92,6 +93,7 @@ pub fn all() -> Vec<Mutation> {
     core.into_iter()
         .chain(areas::all())
         .chain([projection::PROJECTION.as_slice()])
+        .chain([xml_publishing::XML_PUBLISHING.as_slice()])
         .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &xml::XML, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()
         .copied()

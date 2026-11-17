@@ -408,6 +408,10 @@ struct Binder<'a> {
     /// condition>`s of row pattern recognition, what their row pattern
     /// column references read (`binder/pattern.rs`).
     recognizing: Option<Box<pattern::Recognizing>>,
+    /// [ISO/IEC 9075-14:2006 draft §11.3] The items of the `<XML namespace
+    /// declaration>`s whose scope what it binds now is in, innermost last
+    /// (`binder/xml/namespaces.rs`).
+    xml_namespaces: RefCell<Vec<Vec<crate::ast::NamespaceItem>>>,
 }
 
 /// The FROM row a binder sees: its items, the display names of its
@@ -454,6 +458,7 @@ impl<'a> Binder<'a> {
             sort_names: RefCell::new(order_by::SortNames::default()),
             rows: RefCell::new(invariant::Rows::default()),
             recognizing: None,
+            xml_namespaces: RefCell::new(Vec::new()),
         }
     }
 

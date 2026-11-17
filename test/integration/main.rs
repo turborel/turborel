@@ -314,6 +314,8 @@ mod with_strata;
 mod working_tables;
 mod xml;
 mod xml_cast;
+mod xml_elements;
 mod xml_information;
 mod xml_operators;
+mod xml_publishing;
 mod xml_storage;

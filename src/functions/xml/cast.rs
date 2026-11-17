@@ -5,7 +5,7 @@
 //!
 //! \[DESIGN\] RULES.md D86: \[§6.6 SR1b\] implementation-defined, with no
 //! `<XML lexically scoped options>` the `<XML binary encoding>` is HEX
-//! (`ENCODING`), so a binary string is an `xs:hexBinary`. \[§9.5 GR8d iv\]
+//! (`IMPLICIT_BINARY_ENCODING`), so a binary string is an `xs:hexBinary`. \[§9.5 GR8d iv\]
 //! implementation-defined, INTEGER, SMALLINT and BIGINT are restrictions
 //! of `xs:integer`; \[§9.5 GR8e viii, GR8f\] REAL and FLOAT of 24 bits or
 //! fewer are `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`,
@@ -27,9 +27,10 @@ use crate::xml::{
     xquery_error,
 };
 
-/// [§6.6 SR1b, SR2] implementation-defined: the `<XML binary encoding>`
-/// of XMLCAST, as no `<XML lexically scoped options>` give one: HEX.
-pub const ENCODING: BinaryEncoding = BinaryEncoding::Hex;
+/// [§6.6 SR1b, SR2, §6.14 GR1b, §6.15 GR1b, §6.19 GR3b]
+/// implementation-defined: the `<XML binary encoding>` of XMLCAST,
+/// XMLELEMENT, XMLFOREST and XMLTEXT outside the scope of one: HEX.
+pub const IMPLICIT_BINARY_ENCODING: BinaryEncoding = BinaryEncoding::Hex;
 
 /// The decimal digits an exact number's units hold at most.
 const MAX_DIGITS: usize = 38;
@@ -108,7 +109,7 @@ impl ScalarFunction for XmlCastIn {
         if v.is_null() {
             return Ok(Value::Null);
         }
-        let tree = parse(&xml_lexical(v, ENCODING, true)?, Syntax::Content, Whitespace::Preserve)?;
+        let tree = parse(&xml_lexical(v, IMPLICIT_BINARY_ENCODING, true)?, Syntax::Content, Whitespace::Preserve)?;
         if self.target != XmlType::Sequence {
             return Ok(Value::Xml(XmlValue::of(Sequence::document(tree))));
         }

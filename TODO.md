@@ -132,11 +132,13 @@ data model, XQuery 1.0, its functions and operators, its serialization,
 and XML Schema 1.0. Each series below stands alone, by the draft's
 features.
 
-- Publishing: XMLELEMENT, XMLATTRIBUTES, XMLFOREST, XMLCONCAT, XMLAGG,
-  XMLCOMMENT, XMLPI and XMLTEXT, their null handling and RETURNING
-  clauses, namespaces and XMLBINARY (X020, X031 to X038, X080 to X086,
-  X131 to X135, X170, X171, X241, X242), and the mapping of SQL names,
-  identifiers and values to XML (X400).
+- Publishing: XMLAGG (X034, X035), and with it RETURNING in every
+  publishing operator (X241, X242); WITH XMLNAMESPACES and XMLBINARY of a
+  query expression, and their scope in DML, DDL and compound statements
+  (X081 to X084, X131 to X135); XMLNAMESPACES in XMLTABLE (X086), with
+  XQuery; arrays, multisets and rows mapped to XML [§9.8 GR9i, GR9j], as
+  XMLELEMENT's and XMLFOREST's content; and the mapping of XML Names to
+  identifiers (X400).
 - XQuery: XMLQUERY, XMLEXISTS and XMLTABLE over the XQuery 1.0 data
   model, its functions and operators, passed BY VALUE or BY REF (X096,
   X200 to X206, X221, X222, X300 to X305). An index of documents' paths

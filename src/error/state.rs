@@ -239,6 +239,12 @@ impl SqlState {
     /// Data exception: XQuery serialization error [ISO/IEC 9075-14:2006
     /// draft §10.15 GR11, §23.1].
     pub const XQUERY_SERIALIZATION_ERROR: SqlState = SqlState(*b"2200W");
+    /// Data exception: invalid comment [ISO/IEC 9075-14:2006 draft §6.11
+    /// GR3, §23.1].
+    pub const INVALID_COMMENT: SqlState = SqlState(*b"2200S");
+    /// Data exception: invalid processing instruction [ISO/IEC
+    /// 9075-14:2006 draft §6.17 GR4, §23.1].
+    pub const INVALID_PROCESSING_INSTRUCTION: SqlState = SqlState(*b"2200T");
     /// XQuery error [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j, §6.13
     /// GR8, §23.1].
     pub const XQUERY_ERROR: SqlState = SqlState(*b"10000");

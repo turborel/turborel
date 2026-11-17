@@ -11,14 +11,12 @@ use std::rc::Rc;
 use super::Parser;
 use super::attlist::Kind as AttKind;
 use crate::error::Result;
-use crate::xml::chars::{COLON, Version, is_ncname};
-use crate::xml::tree::{Binding, ElementStart, QName, Specified, XML_NAMESPACE, XML_PREFIX};
+use crate::xml::chars::{COLON, Version, is_ncname, qname_parts};
+use crate::xml::tree::{Binding, ElementStart, QName, Specified, XML_NAMESPACE, XML_PREFIX, XMLNS_NAMESPACE};
 
 /// The attribute that declares the default namespace, and the prefix of
 /// those that declare a prefix [Namespaces 1.0 §2 \[1\] to \[3\]] [Namespaces 1.1 §3 \[1\] to \[3\]].
 pub(super) const XMLNS: &str = "xmlns";
-/// [Namespaces 1.1 §3] The namespace the prefix `xmlns` is bound to.
-const XMLNS_NAMESPACE: &str = "http://www.w3.org/2000/xmlns/";
 /// [XQueryDM §6.3.3] The local name of `xml:id`.
 const ID: &str = "id";
 
@@ -77,11 +75,7 @@ impl Parser {
     /// `raw` split as a `QName` into its prefix, if any, and local part
     /// [Namespaces 1.0 §3 \[6\]] [Namespaces 1.1 §4 \[6\]].
     pub(super) fn qname<'a>(&self, raw: &'a str) -> Result<(Option<&'a str>, &'a str)> {
-        let split = match raw.split_once(COLON) {
-            None => Some((None, raw)),
-            Some((prefix, local)) => (is_ncname(self.version, prefix) && is_ncname(self.version, local)).then_some((Some(prefix), local)),
-        };
-        split.ok_or_else(|| {
+        qname_parts(self.version, raw).ok_or_else(|| {
             let rule = self.ns("[Namespaces 1.0 §3 [6]]", "[Namespaces 1.1 §4 [6]]");
             self.malformed(&format!("'{raw}' is no qualified name {rule}"))
         })

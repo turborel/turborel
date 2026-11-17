@@ -1,11 +1,14 @@
 //! The grammar of SQL/XML [ISO/IEC 9075-14:2006 draft §6]: the XML type
-//! [§6.1], XMLCAST [§6.6], XMLDOCUMENT [§6.13], XMLPARSE [§6.16], XMLSERIALIZE [§6.8], and
-//! CAST's `<XML passing mechanism>` [§6.5].
+//! [§6.1], XMLCAST [§6.6], XMLDOCUMENT [§6.13], XMLPARSE [§6.16],
+//! XMLSERIALIZE [§6.8], CAST's `<XML passing mechanism>` [§6.5], and the
+//! publishing operators (`publish`).
 //!
 //! [§5.1] XML and the names of the operators are reserved words of
 //! SQL/XML, and its other words non-reserved; as SQL-92's are the key
 //! words this lexer reads (CONFORMANCE.md), each is read as an identifier
 //! where the grammar takes it, as BOOLEAN and CLOB are.
+
+mod publish;
 
 use super::Parser;
 use crate::ast::{Passing, Returning, ValueExpression, XmlOperator};
@@ -163,7 +166,7 @@ impl Parser {
         if self.at_xml(XMLSERIALIZE) {
             return self.xml_serialize().map(Some);
         }
-        Ok(None)
+        self.xml_publishing()
     }
 
     /// [§6.6] `<XML cast specification>` ::= XMLCAST ( `<XML cast operand>`

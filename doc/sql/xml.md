@@ -281,6 +281,103 @@ OK
 turborel: SQLCODE -301 (SQLSTATE 2200L): the value of XML(DOCUMENT(ANY)) is not an XML document [ISO/IEC 9075:1992 §13.8 GR4b iii; ISO/IEC 9075-14:2006 draft §10.2 GR1a]
 ```
 
+## Publishing XML
+
+The publishing operators make XML values of SQL values.
+
+```
+XMLELEMENT ( NAME <XML element name>
+             [ , XMLNAMESPACES ( <XML namespace declaration item> [ , ... ] ) ]
+             [ , XMLATTRIBUTES ( <value expression> [ AS <XML attribute name> ] [ , ... ] ) ]
+             [ { , <value expression> }... [ OPTION <XML content option> ] ]
+             [ RETURNING { CONTENT | SEQUENCE } ] )
+XMLFOREST ( [ XMLNAMESPACES ( ... ) , ] <value expression> [ AS <forest element name> ] [ , ... ]
+            [ OPTION <XML content option> ] [ RETURNING { CONTENT | SEQUENCE } ] )
+XMLCONCAT ( <XML value expression> , <XML value expression> [ , ... ] [ RETURNING { CONTENT | SEQUENCE } ] )
+XMLCOMMENT ( <character value expression> [ RETURNING { CONTENT | SEQUENCE } ] )
+XMLPI ( NAME <XML PI target> [ , <character value expression> ] [ RETURNING { CONTENT | SEQUENCE } ] )
+XMLTEXT ( <character value expression> [ RETURNING { CONTENT | SEQUENCE } ] )
+
+<XML namespace declaration item> ::= <XML namespace URI> AS <XML namespace prefix>
+                                   | DEFAULT <XML namespace URI> | NO DEFAULT
+<XML content option> ::= NULL ON NULL | EMPTY ON NULL | ABSENT ON NULL
+                       | NIL ON NULL | NIL ON NO CONTENT
+```
+
+XMLELEMENT makes an element. Its name, and each attribute's, is an
+identifier: a regular identifier's in upper case, a delimited one's as
+written, with a prefix if it has a colon. An attribute or a forest
+element named by no AS must be a column, and takes the column's name.
+An attribute whose value is null is left out. Each value of the content
+becomes the element's content: an XML value's nodes, copied, or another
+value's text. A character string is escaped as text; a number, a
+datetime, an interval or a truth value is written as XML Schema writes
+it; a binary string is written in hex. An attribute or content of an
+array or a multiset is not yet supported (SQLCODE -900).
+
+The content option says what an element of content all null is: EMPTY
+ON NULL, the default, an empty element; NULL ON NULL the null value;
+ABSENT ON NULL nothing; NIL ON NULL an empty element with the attribute
+`xsi:nil="true"`. NIL ON NO CONTENT gives that attribute to an element
+with no element or text in its content.
+
+XMLFOREST makes an element of each value, named as attributes are, and
+gives them in order. Its content option applies to each element; NULL
+ON NULL is its default, so a forest of null values alone is null.
+
+XMLNAMESPACES binds prefixes to namespaces for the names of the element
+or forest it is in and of the operators within it. DEFAULT names the
+namespace of a name with no prefix, and NO DEFAULT none. The prefixes
+`xml`, `xs`, `xsi` and `sqlxml` are bound unless declared otherwise.
+Each element declares the namespaces its names use.
+
+XMLCONCAT gives the items of each value that is not null, in order, and
+is null if every value is. XMLCOMMENT makes a comment, which may not
+hold two hyphens together or end with one (SQLSTATE 2200S). XMLPI makes
+a processing instruction of a target and text, its leading white space
+removed, which may not hold `?>` (SQLSTATE 2200T); its target may not be
+`xml`. XMLTEXT makes a text node. A character no XML 1.1 text holds is
+SQLSTATE 0N002.
+
+Each operator is RETURNING CONTENT by default: its value is a document
+node of what it makes, of XML(CONTENT(UNTYPED)), which a DOCUMENT or
+CONTENT column takes. RETURNING SEQUENCE gives what it makes itself, of
+XML(SEQUENCE).
+
+```sql
+CREATE TABLE STAFF (ID INTEGER, NAME VARCHAR(20), PAY DECIMAL(7,2), PHOTO VARBINARY(4));
+INSERT INTO STAFF VALUES (1, 'Ann', 1200.50, X'0FB7'), (2, 'Bo & Co', NULL, NULL);
+SELECT XMLSERIALIZE(XMLELEMENT(NAME "emp", XMLATTRIBUTES(ID AS "id"), XMLELEMENT(NAME "name", NAME), XMLFOREST(PAY, PHOTO)) AS VARCHAR(100)) FROM STAFF ORDER BY ID;
+SELECT XMLSERIALIZE(XMLELEMENT(NAME emp, PAY OPTION NIL ON NULL) AS VARCHAR(100)) FROM STAFF ORDER BY ID;
+SELECT XMLSERIALIZE(XMLELEMENT(NAME "h:p", XMLNAMESPACES('http://www.w3.org/1999/xhtml' AS "h"), XMLCOMMENT('pay'), XMLTEXT('see '), XMLPI(NAME "page", 'next')) AS VARCHAR(200)) FROM STAFF WHERE ID = 1;
+SELECT XMLSERIALIZE(XMLCONCAT(XMLELEMENT(NAME "a"), XMLELEMENT(NAME "b")) AS VARCHAR(20)) FROM STAFF WHERE ID = 1;
+SELECT XMLCOMMENT('a--b') FROM STAFF;
+```
+
+```
+OK
+OK
+
+--------------------------------------------------------------
+ <emp id="1"><name>Ann</name><PAY>1200.50</PAY><PHOTO>0FB7</PHOTO></emp>
+ <emp id="2"><name>Bo &amp; Co</name></emp>
+(2 rows)
+
+--------------------------------------------------------------
+ <EMP>1200.50</EMP>
+ <EMP xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/>
+(2 rows)
+
+--------------------------------------------------------------
+ <h:p xmlns:h="http://www.w3.org/1999/xhtml"><!--pay-->see <?page next?></h:p>
+(1 row)
+
+----------------------
+ <a/><b/>
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2200S): the comment holds two hyphens together, ends with one, or holds a character XML does not [XML 1.1 §2.5 [15]] [ISO/IEC 9075-14:2006 draft §6.11 GR3]
+```
+
 ## Clients
 
 A column of an XML type is described with its modifiers. A value is

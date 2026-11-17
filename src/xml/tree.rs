@@ -104,6 +104,25 @@ pub struct Binding {
 pub const XML_PREFIX: &str = "xml";
 /// The namespace the prefix `xml` is bound to [Namespaces 1.0 §4].
 pub const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
+/// The namespace the prefix `xmlns` is bound to, which no other prefix
+/// is [Namespaces 1.1 §3].
+pub const XMLNS_NAMESPACE: &str = "http://www.w3.org/2000/xmlns/";
+/// [ISO/IEC 9075-14:2006 draft §4.9, Table 2] The prefix `xs` and the
+/// namespace of XML Schema's data types.
+pub const XS_PREFIX: &str = "xs";
+/// The namespace `xs` is bound to.
+pub const XS_NAMESPACE: &str = "http://www.w3.org/2001/XMLSchema";
+/// [Table 2] The prefix `xsi` and the namespace of XML Schema's
+/// attributes of instances, as `xsi:nil`.
+pub const XSI_PREFIX: &str = "xsi";
+/// The namespace `xsi` is bound to.
+pub const XSI_NAMESPACE: &str = "http://www.w3.org/2001/XMLSchema-instance";
+/// [Table 2] The prefix `sqlxml` and SQL/XML's namespace.
+pub const SQLXML_PREFIX: &str = "sqlxml";
+/// The namespace `sqlxml` is bound to, as Table 2 writes it; §10.12 SR2a
+/// ii 2 B I and §10.20 SR2b write it without the slash between `iso` and
+/// `9075`.
+pub const SQLXML_NAMESPACE: &str = "http://standards.iso.org/iso/9075/2003/sqlxml";
 
 /// The index of no node or name: a node with no parent, child, sibling or
 /// name.

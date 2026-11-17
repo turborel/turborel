@@ -241,13 +241,15 @@ impl Builder {
 
     /// `text` added to the open node's children: to its last child if
     /// that is a text node, so adjacent text is one node, and nothing if
-    /// it is empty [XQueryDM §6.7.3].
+    /// it is empty [XQueryDM §6.7.3]; or, of a tree with no node yet, a
+    /// text node standing alone, which may be empty [XQueryDM §6.7.1]
+    /// [XQuery §3.7.3.4].
     ///
     /// # Errors
     ///
     /// SQLCODE -900 if the tree's text would pass `MAX_TEXT`.
     pub fn text(&mut self, text: &str) -> Result<()> {
-        if text.is_empty() {
+        if text.is_empty() && !self.open.is_empty() {
             return Ok(());
         }
         let last = self.open.last().map_or(NONE, |o| o.last_child);

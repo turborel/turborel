@@ -50,9 +50,9 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 09000 | Triggered action exception: a trigger's action failed; the message gives the trigger and the SQLSTATE and message of its failure |
 | 0A000 | Feature not supported: valid SQL Turborel does not process |
 | 0A001 | Feature not supported: multiple server transactions |
-| 10000 | XQuery error: XMLDOCUMENT of a value holding an attribute standing alone; XMLCAST of text that is no value of the XML Schema type cast to, or of more than one atomic value |
-| 0N002 | SQL/XML mapping error: invalid XML character: XMLCAST of a string holding a character no XML 1.1 character |
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
+| 0N002 | SQL/XML mapping error: invalid XML character: XMLCAST, XMLELEMENT, XMLFOREST, XMLPI or XMLTEXT of a string holding a character no XML 1.1 character |
+| 10000 | XQuery error: XMLDOCUMENT of a value holding an attribute standing alone; XMLCAST of text that is no value of the XML Schema type cast to, or of more than one atomic value; XMLELEMENT of an attribute after other content, or of two attributes of one name |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
 | 22000 | Data exception |
 | 22001 | String data, right truncation: a string too long for its type |
@@ -64,7 +64,14 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2200D | Invalid escape octet: an octet LIKE's escape octet not of one octet |
 | 2200E | Null value in array target: an element assigned of a null array |
 | 2200H | Sequence generator limit exceeded: NEXT VALUE FOR of a generator of NO CYCLE past its last value |
+| 2200L | Not an XML document: a value stored in, or cast to, an XML(DOCUMENT) type that is no document, or XMLSERIALIZE DOCUMENT of one |
+| 2200M | Invalid XML document: XMLPARSE DOCUMENT of text that is no well-formed document |
+| 2200N | Invalid XML content: XMLPARSE CONTENT of text that is no well-formed content, or content XMLELEMENT or XMLFOREST maps to XML that is none |
 | 2200Q | Multiset value overflow: a multiset of more than 65,535 elements |
+| 2200S | Invalid comment: XMLCOMMENT of text holding two hyphens together, ending with one, or holding a character no XML 1.1 character |
+| 2200T | Invalid processing instruction: XMLPI of text holding '?>' |
+| 2200U | Not an XQuery document node: a value stored in, or cast to, an XML(CONTENT) type that is not one document node |
+| 2200W | XQuery serialization error: an XML value with no serialization, as an attribute standing alone, serialized or sent to a client |
 | 22009 | Invalid time zone displacement value |
 | 22011 | Substring error |
 | 22012 | Division by zero |

@@ -2870,6 +2870,17 @@ CONTENT, and a client parses it as CONTENT when it needs its nodes. A
 column is described with the type's modifiers. The column store keeps no
 XML value, as it keeps no large object.
 
+The constructors of XQuery that SQL/XML's operators evaluate are each a
+function of `xml` over sequences, not XQuery text: `document` for
+XMLDOCUMENT; `element` for XMLELEMENT and XMLFOREST, which reads its
+content once into attributes, text and nodes to copy and builds the
+element with `Builder`, its bindings those its names need, a prefix
+bound to another URI renumbered; `comment`, `processing_instruction` and
+`text`, each a tree of one node standing alone; and `concatenate`. A copy
+follows the source tree's links, so none recurses. The binder keeps the
+XMLNAMESPACES declarations in scope, innermost last, and searches a
+subquery's own first, then those of the query it is in.
+
 ## 2. Project layout
 
 ```

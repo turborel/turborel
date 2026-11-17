@@ -29,7 +29,7 @@ mod parse;
 mod pike;
 mod replace;
 mod text;
-mod unicode;
+pub(crate) mod unicode;
 
 use compile::{Program, compile};
 use flags::{Flag, Flags};

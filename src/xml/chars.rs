@@ -186,6 +186,17 @@ pub fn is_ncname(version: Version, text: &str) -> bool {
     is_name(version, text) && !text.contains(COLON)
 }
 
+/// `text` split as a `QName` of `version` into its prefix, if any, and
+/// local part, each an `NCName` [Namespaces 1.0 §3 \[6\]] [Namespaces 1.1
+/// §4 \[6\]]; none if it is no `QName`.
+#[must_use]
+pub fn qname_parts(version: Version, text: &str) -> Option<(Option<&str>, &str)> {
+    match text.split_once(COLON) {
+        None => is_ncname(version, text).then_some((None, text)),
+        Some((prefix, local)) => (is_ncname(version, prefix) && is_ncname(version, local)).then_some((Some(prefix), local)),
+    }
+}
+
 /// Whether `text` matches `Nmtoken` of `version`: one or more name
 /// characters [XML 1.0 §2.3 \[7\]] [XML 1.1 §2.3 \[7\]].
 #[must_use]
