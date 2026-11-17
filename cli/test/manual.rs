@@ -254,12 +254,13 @@ fn the_users_guide_runs_as_printed() {
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8: the SQL Reference Manual's
 /// examples of value expressions, predicates and query expressions, of
-/// the tables the first makes, and INSERT's and UPDATE's, of the table the
-/// first makes, run as printed, as ANN.
+/// the tables the first makes, and INSERT's with UPDATE's, and with
+/// DELETE's, of the table the first makes, run as printed, as ANN.
 #[test]
 fn the_reference_manuals_examples_run_as_printed() {
     let chapters = ["sql/04-expressions.md", "sql/05-predicates.md", "sql/06-queries.md"];
-    for pages in [chapters.as_slice(), &["sql/statements/insert.md", "sql/statements/update.md"]] {
+    let deleted = ["sql/statements/insert.md", "sql/statements/delete.md"];
+    for pages in [chapters.as_slice(), &["sql/statements/insert.md", "sql/statements/update.md"], &deleted] {
         let db = Database::new();
         db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
         let mut ann = Client::of(&db, "ANN");

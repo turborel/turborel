@@ -11,6 +11,7 @@ UPDATE: update rows
 ```
 <update statement: searched> ::=
     UPDATE <table name>
+    [ FOR PORTION OF <period name> FROM <point in time> TO <point in time> ]
     SET <set clause> [ { , <set clause> }... ]
     [ WHERE <search condition> ]
 
@@ -56,6 +57,16 @@ over such a view runs its trigger the same way, and so does the
 positioned form through a cursor over either. A
 trigger of UPDATE OF its columns runs only if a SET clause names one.
 
+FOR PORTION OF a period of the table (see [CREATE TABLE](create-table.md))
+changes only the time from its first point to its second. Each row the
+WHERE condition is true of whose period overlaps that time is changed
+for the part within it, its period cut to that part, and its parts
+before and after are kept unchanged as rows of their own. A part kept
+takes its identity column's next value and its generated columns again,
+and is inserted as an INSERT inserts a row, its INSERT triggers
+running; the constraints judge it with the rest as the statement ends.
+Its row count is of the rows changed.
+
 The positioned form, WHERE CURRENT OF a cursor, of a cursor named by
 an extended name too ([ALLOCATE CURSOR](allocate-cursor.md)), runs only
 in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
@@ -74,6 +85,16 @@ in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
    only to DEFAULT.
 7. An element is set of an array column, at an index from 1 to its
    maximum cardinality, of an array not null.
+8. FOR PORTION OF names an application-time period of the table, a
+   base table, not SYSTEM_TIME, a reserved word, whose
+   columns no SET clause sets. Its points in time are datetimes
+   comparable with the period's columns, reference no column of the
+   table, and invoke no function that is not deterministic or modifies
+   SQL-data.
+9. No SET clause sets a column of ROW START or ROW END. A row of a
+   table of a system-time period begins at the transaction timestamp as
+   it is updated, and of a system-versioned table its old values are
+   kept as a historical row.
 
 ## PRIVILEGES
 
@@ -85,13 +106,14 @@ privilege beyond UPDATE.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; a column set is not of it, or is set twice; a value is not assignable to its column, or contains a set function |
+| 2A000 | -103 | The table does not exist or is read-only; a column set is not of it, or is set twice; a value is not assignable to its column, or contains a set function; a rule of FOR PORTION OF is broken (rule 8) |
 | 2A000 | -104 | Its user lacks UPDATE on a column set, or SELECT on a table read |
 | 23000 | -201 | A row as changed breaks a constraint |
 | 44000 | -201 | A row changed through a view WITH CHECK OPTION is no longer a row of the view |
 | 22xxx | -301 | A data exception as a value is computed or assigned |
 | 2202E | -301 | An element set at an index not from 1 to the maximum cardinality (rule 7) |
 | 2200E | -301 | An element set of a null array (rule 7) |
+| 2201H | -301 | A row of a system-time period begins after the transaction timestamp: another transaction changed it later (rule 9) |
 | TB911 | -911 | A row was written by another transaction, not committed under LOCKS.WAIT OFF, or committed after this one's snapshot at REPEATABLE READ or SERIALIZABLE; or a wait for it would deadlock or passed LOCKS.TIMEOUT_MS: the statement is undone, and may be run again |
 | 25000 | -917 | The transaction is READ ONLY |
 | 02000 | 100 | Not an error: no row was changed |
@@ -184,10 +206,32 @@ turborel: SQLCODE -201 (SQLSTATE 23000): PRIMARY KEY ANN.PARTS_PRIMARY1 (ID) of 
 turborel: SQLCODE -103 (SQLSTATE 2A000): a value of a SET clause contains no set function [X3.135-1986 §8.12 SR3] (at character 23)
 ```
 
+Of a table of prices through time, a week of January's price raised:
+
+```sql
+CREATE TABLE OFFERS (ITEM INTEGER, PRICE INTEGER, S DATE NOT NULL, E DATE NOT NULL, PERIOD FOR VALID (S, E));
+INSERT INTO OFFERS VALUES (1, 10, DATE '2026-01-01', DATE '2026-02-01');
+UPDATE OFFERS FOR PORTION OF VALID FROM DATE '2026-01-10' TO DATE '2026-01-17' SET PRICE = 12;
+SELECT * FROM OFFERS ORDER BY S;
+```
+
+```
+OK
+OK
+OK
+         ITEM |        PRICE | S          | E
+--------------+--------------+------------+------------
+            1 |           10 | 2026-01-01 | 2026-01-10
+            1 |           12 | 2026-01-10 | 2026-01-17
+            1 |           10 | 2026-01-17 | 2026-02-01
+(3 rows)
+```
+
 ## STANDARD
 
 ISO/IEC 9075:1992 §13.10, the `<update statement: searched>`, and
-X3.135-1986 §8.12. NULL and DEFAULT as an `<update source>` are SQL-92's
+X3.135-1986 §8.12. FOR PORTION OF is ISO/IEC 9075-2:2023 §14.14 SR7a
+and §15.14 GR12, Feature T181. NULL and DEFAULT as an `<update source>` are SQL-92's
 [§13.9]. The values identity columns and generated columns take are
 ISO/IEC 9075-2:2023 §14.15 SR5 and §15.14. An `<update target>` of an
 element is ISO/IEC 9075-2:2023's [§14.15 SR11, GR10b, §15.5 GR3b].

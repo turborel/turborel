@@ -1,6 +1,6 @@
-# Contributing to turborel
+# Contributing to Turborel
 
-turborel stores data people depend on, and data that gets lost or corrupted
+Turborel stores data people depend on, and data that gets lost or corrupted
 may be gone for good. So a change is judged first on whether it keeps data
 correct, durable and isolated, and then on what it adds. The process follows
 the Linux kernel's, adapted to pull requests and to a database.
@@ -303,7 +303,7 @@ State the impact first. Put it in the title's first word when it is severe.
 | `[REGRESSION]` | worked in an earlier commit (give the last good commit and, if you can, the first bad one) |
 
 Give the commit (`git rev-parse --short=12 HEAD`), the platform and
-architecture, and how turborel ran. Include settings that differ from their
+architecture, and how Turborel ran. Include settings that differ from their
 defaults.
 
 ```
@@ -318,7 +318,7 @@ Don't open a public issue for a vulnerability. Report it privately, as
 
 ## License
 
-turborel is under the BSD 2-Clause license in [LICENSE](LICENSE), and a
+Turborel is under the BSD 2-Clause license in [LICENSE](LICENSE), and a
 contribution is made under that license. Contributors keep their copyright
 and own their changes. Whoever submits a change answers for all of it,
 however it was written.

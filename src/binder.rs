@@ -67,6 +67,7 @@ mod parameters;
 mod partitioned;
 mod pattern;
 mod periods;
+mod portion;
 mod predicates;
 mod psm;
 mod ptf;
@@ -85,6 +86,7 @@ mod statements;
 mod strata;
 mod structured;
 mod subquery;
+mod system_time;
 mod triggers;
 mod trim;
 mod underlying;
@@ -109,8 +111,8 @@ use query::bind_query_specification;
 pub use set_operations::{ObjectColumn, bind_insert_query};
 pub(crate) use statements::assignable;
 pub use statements::{
-    AssignRule, BoundWrite, INSERT_RULE, UPDATE_POSITIONED_RULE, UPDATE_SEARCHED_RULE, WriteKind, bind_member_write, bind_select,
-    bind_write, check_assignment, updatable, updatable_in, updatable_only,
+    AssignRule, BoundWrite, INSERT_RULE, SearchedTarget, UPDATE_POSITIONED_RULE, UPDATE_SEARCHED_RULE, WriteKind, bind_member_write,
+    bind_searched_write, bind_select, bind_write, check_assignment, updatable, updatable_in, updatable_only,
 };
 pub(crate) use structured::assignment_cast;
 use subquery::Outer;

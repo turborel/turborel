@@ -29,7 +29,7 @@ come with.
 | [V. Specialized Data](data/README.md) | SQL users working with spatial and other specialized data | Data models, practical queries, interchange and indexing |
 | [Appendices](appendix/README.md) | Everyone | SQLSTATEs, key words, settings, limits, implementation-defined choices, versions, table options, a glossary |
 
-Read the User's Guide from the start to learn turborel; turn to the
+Read the User's Guide from the start to learn Turborel; turn to the
 Reference Manual and the appendices to look a thing up.
 
 ## Conventions
@@ -63,7 +63,7 @@ NULL, where by default the client shows nothing
 [ISO/IEC 9075:1992 §11.3] is clause 11.3 of SQL-92; [X3.135-1986 §8.7]
 is clause 8.7 of SQL-86. A rule is cited further as Syntax Rule (SR),
 General Rule (GR) or Access Rule (AR) and its number: §11.9 AR1 is Access
-Rule 1 of clause 11.9. turborel's own error messages cite rules the same
+Rule 1 of clause 11.9. Turborel's own error messages cite rules the same
 way, so a message can be looked up.
 
 **Extensions**, facilities the standards do not define, are marked

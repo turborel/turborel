@@ -408,8 +408,10 @@ pub(super) fn copy_rows(
         | AlterAction::DropColumn { .. }
         | AlterAction::AddConstraint(_)
         | AlterAction::DropConstraint { .. }
-        | AlterAction::AddPeriod(_)
+        | AlterAction::AddPeriod(..)
         | AlterAction::DropPeriod { .. }
+        | AlterAction::AddVersioning(_)
+        | AlterAction::DropVersioning { .. }
         | AlterAction::RevertCollation(_)
         | AlterAction::Truncate { .. }
         | AlterAction::Storage(_) => None,
@@ -422,9 +424,16 @@ pub(super) fn copy_rows(
         Some(desc) => Generating::of_column(next, desc, desc.columns.len().saturating_sub(1))?,
         None => Generating::default(),
     };
+    // [ISO/IEC 9075-2:2023 §11.27 GR1c] of a system-time period added,
+    // its start the transaction timestamp, its end the highest value
+    // (IV181).
+    let stamp = if matches!(reshape, Reshape::Two(None)) { next.stamp_of(tx, table)? } else { None };
     for read in Arc::clone(st.storage_of(table)?).scan(tx.id, &columns) {
         let (_, row) = read?;
         let mut new = reshape.row(row);
+        if let Some(stamp) = &stamp {
+            stamp.put(&mut new);
+        }
         if let (Some(c), Some(value)) = (&added, &fill) {
             if let Some(slot) = new.last_mut() {
                 *slot = value.clone();

@@ -213,7 +213,7 @@ there only the statements whose operands may be `<literal>`s are of use.
 |---|---|---|
 | Schema definitions | §11.1, §20.1 GR6b ii, iii | `CREATE SCHEMA S AUTHORIZATION U`, `CREATE SCHEMA S` owned by the session's authorization identifier [SR2b], or SQL-86's `CREATE SCHEMA AUTHORIZATION U`. The name may be qualified by the catalog's. What is in it is its owner's, and its unqualified names are of it. Run by a session, it is part of its transaction (RULES.md D33). |
 | Names qualified by the catalog | §5.4, §6.4, §7.9 | A table's, view's, domain's, constraint's or assertion's, `CAT.S.T`, a column reference's qualifier's, `CAT.S.T.C`, and a `<qualifier>.*`'s. The catalog is the one there is. Another is refused (SQLCODE -103). |
-| Constraints | §11.4, §11.6–§11.9, §10.6 | NOT NULL, UNIQUE (whose columns may be null), PRIMARY KEY, FOREIGN KEY with MATCH FULL, PARTIAL or neither and every referential action, and CHECK, with subqueries too. Each is named, by the definition or the implementation. |
+| Constraints | §11.4, §11.6–§11.9, §10.6 | NOT NULL, UNIQUE (whose columns may be null), PRIMARY KEY, FOREIGN KEY with MATCH FULL, PARTIAL or neither and every referential action, RESTRICT too (ISO/IEC 9075-2:2023 §15.18, Feature T191), and CHECK, with subqueries too. Each is named, by the definition or the implementation. |
 | A constraint's schema | §5.4 SR8 | A name written without a schema is of the `<schema definition>`'s schema, else of the session's default schema, which may differ from its table's or domain's (RULES.md D47). A declared local temporary table's is of MODULE. |
 | When constraints are checked | §14.2 | At the end of each statement. Deferred ones, by SET CONSTRAINTS or INITIALLY DEFERRED, at commit. |
 | Defaults | §11.5 | A literal, NULL, USER, CURRENT_USER, CURRENT_ROLE, SESSION_USER, SYSTEM_USER, or a datetime value function. Used by INSERT, DEFAULT VALUES, `SET ... = DEFAULT`, columns added, and the referential action SET DEFAULT. |
@@ -1622,11 +1622,33 @@ columns of a table as its start, included, and its end, excluded
 | ADD PERIOD | §11.27 | `ALTER TABLE t ADD PERIOD FOR name (start, end)` of a persistent base table that is not referenceable and has no period. The columns' declared types judge it, so a domain over DATE serves. The table's rows are checked by the period constraint, and the period is not added if one breaks it. |
 | DROP PERIOD | §11.28 SR3d, GR2 | `ALTER TABLE t DROP PERIOD FOR name RESTRICT` or `CASCADE` drops the period and its constraint. A view, a CHECK, a domain constraint, an assertion, a routine or a trigger that references the period, one that bound before the drop and binds no more, refuses RESTRICT, SQLCODE -103 citing SR3d i to vi, and CASCADE drops it. A generation expression that references the period refuses both (SR3d vii). |
 | Its columns | §11.23 SR6, §11.26 SR10 | While the period is, its columns are not dropped, its constraint is dropped only with it, and a NOT NULL or primary key whose going makes one of its columns possibly nullable is not dropped. Each is SQLCODE -103. |
+| FOR PORTION OF | §14.9 SR7a, §14.14 SR7a, §15.8 GR9, §15.14 GR12 | `DELETE FROM t FOR PORTION OF p FROM x TO y` and `UPDATE t FOR PORTION OF p FROM x TO y SET ...` change the rows whose period overlaps x to y, an UPDATE's period cut to it. Each row's parts before x and after y are kept as rows of their own, of the old values, their identity column drawn and generated columns computed again. They are inserted once every row is changed, as an INSERT inserts them, its triggers executed, and the constraints judge them as the statement ends. The table has the period, an UPDATE sets neither of its columns, and x and y are datetimes comparable with them, reference no column of the table and invoke no SQL-invoked function that is not deterministic or modifies SQL-data outside a subquery. Each rule broken is SQLCODE -103. A `?` point in time is of the period's type. A routine or trigger that changes a table FOR PORTION OF a period refuses DROP PERIOD RESTRICT of it and is dropped by CASCADE (§11.28 SR3b, SR3c). |
+| WITHOUT OVERLAPS | §4.25.3.2, §11.7 SR3b, SR6d i, §11.8 SR4b | `UNIQUE (c, ..., p WITHOUT OVERLAPS)` and `PRIMARY KEY (...)` refuse two rows of equal values in their columns, as their null treatment takes nulls, whose periods p overlap, SQLSTATE 23000, as the statement ends or as its deferral says. Its index is of its columns then the period's start and end, and a row is judged against the rows of its values whose period starts before its own ends. The table has the period, and a foreign key with no column list references no PRIMARY KEY WITHOUT OVERLAPS, SQLCODE -103. Its columns alone are no key, so a foreign key of them is refused too until temporal foreign keys. DROP PERIOD RESTRICT of the period is refused, and CASCADE drops the key (§11.28 SR3d ii, GR2f iii). |
+| Foreign keys of a period | §4.25.3.3, §11.8 SR2, SR18a i, GR2d, GR2e | `FOREIGN KEY (c, ..., PERIOD p) REFERENCES t (c, ..., PERIOD q)` refuses a row whose period the periods of the rows of t its values match do not cover, SQLSTATE 23000, MATCH SIMPLE, FULL and PARTIAL taking nulls as of any foreign key. A row of t deleted, or its key or period changed, is refused while a row whose period overlapped its own is left uncovered. The rows of a key are read in order of their starts through the index of t's key WITHOUT OVERLAPS, stopping at a gap. Both periods are written, with the referenced columns, which are of a unique constraint WITHOUT OVERLAPS of q, each table has its period, the two of one type, and no action is CASCADE, SET NULL or SET DEFAULT. Each rule broken is SQLCODE -103. DROP PERIOD RESTRICT of either period is refused, and CASCADE drops the foreign key (§11.28 SR3d ii). |
 | Its description | §4.16.1 | INFORMATION_SCHEMA.PERIODS gives the table, the period's name, its start and end columns and its constraint, of the tables the current user holds a privilege on. ISO/IEC 9075-11:2006 has no view of periods, so this one is an extension. |
 
-`PERIOD FOR SYSTEM_TIME` is SQLCODE -900 until system-versioned tables
-(T180) are. PERIOD is a key word only before FOR, so a column may be
-named PERIOD.
+PERIOD is a key word only before FOR, so a column may be named PERIOD.
+
+Feature T180 (System-versioned tables). A table's system-time period,
+SYSTEM_TIME, is given by the database, and WITH SYSTEM VERSIONING keeps
+the rows it ends as historical system rows [§4.17.2.3]. They are kept in
+a hidden table of their own (RULES.md D82), so the table is read, keyed
+and constrained by its current rows alone.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Definition | §11.3 SR1, SR2a, SR3, §11.4 SR6, SR14 | `PERIOD FOR SYSTEM_TIME (start, end)` of a column `GENERATED ALWAYS AS ROW START` and one `GENERATED ALWAYS AS ROW END`, each DATE or a timestamp type, NOT NULL NOT DEFERRABLE implicitly. A table has at most one system-time and one application-time period, and a temporary table none. `WITH SYSTEM VERSIONING` after the table's elements needs the system-time period, and no column is of a reference type. A ROW START or ROW END column of no such period, or a period of other columns, is refused. Each rule broken is SQLCODE -103. |
+| Stamping | §15.11 GR3b, GR3c, §15.14 GR10a iii 1, §9.17 GR16a iii 1 | Each row inserted, updated or merged begins at the transaction timestamp, cast to the start column's type, and ends at the highest value of the end column's type. A row a later transaction updates or deletes is kept, of a versioned table, as a historical row ending at the transaction timestamp. One the transaction began itself is changed in place. One that begins after the transaction timestamp is SQLSTATE 2201H. |
+| Given values | §14.11 SR13d, §14.12 SR18h iv, §14.15 SR3 | INSERT and MERGE give a system-time column a value only with OVERRIDING USER VALUE, which ignores it, else SQLCODE -103. DEFAULT needs none. No UPDATE or MERGE sets one, SQLCODE -103. |
+| References | §11.7 SR6b, §11.8 SR10, §11.9 SR1, §11.47 SR5, §11.49 SR12, SR14c | No unique key, foreign key's referencing columns or CHECK is of a system-time column, no assertion references one of a versioned table, and no trigger's action one of its table, each SQLCODE -103. |
+| ADD and DROP SYSTEM VERSIONING | §11.29, §11.30 | `ALTER TABLE t ADD SYSTEM VERSIONING` of a regular persistent base table, not referenceable, of a system-time period and no reference-type column, not versioned already. `DROP SYSTEM VERSIONING RESTRICT` or `CASCADE` of a versioned one deletes its historical rows. Under RESTRICT a view, table or domain constraint, assertion, routine or trigger reading the table FOR SYSTEM_TIME refuses it [SR3], and CASCADE drops each [GR3]. Each rule broken is SQLCODE -103. |
+| ADD and DROP PERIOD | §11.27 SR4, GR1, §11.28 SR2, GR1 | `ADD PERIOD FOR SYSTEM_TIME (s, e) ADD COLUMN s ... ROW START ADD COLUMN e ... ROW END` adds both columns, each row there beginning at the transaction timestamp (IV181) and ending at the highest value. `DROP PERIOD FOR SYSTEM_TIME` of a table not versioned drops both columns, as DROP COLUMN does under the behavior given. ADD COLUMN adds no ROW START or ROW END column. |
+| The versioned table kept | §11.3 SR9b i, §11.11 SR2, §11.12 SR2, SR9, §11.23 SR3, SR5, §14.10 SR3 | A versioned table's columns are not added, altered or dropped, its rows not truncated, and no LIKE copies it. A system-time column has no default and is not dropped while its period is. Each is SQLCODE -103. |
+| Reading its history | §7.6 SR9c, SR9d, GR2c ii 1 | A versioned table read `FOR SYSTEM_TIME AS OF t` gives its current and historical rows whose period contains t; `BETWEEN [ASYMMETRIC \| SYMMETRIC] t1 AND t2` those current at a time from t1 to t2, both included, SYMMETRIC exchanging t1 and t2 if t1 is later; `FROM t1 TO t2` those current from t1 to before t2. Each point in time is a datetime value expression, cast to the start column's type, and a `?` is of that type. Read with none, or `AS OF CURRENT_TIMESTAMP`, it is its current rows. A table not versioned, a view, a query name or a transition table read so, or a point in time referencing a column, of the query or one it is in, or an SQL parameter, is SQLCODE -103. |
+| Bitemporal tables | §4.17.2, §15.8 GR9, §15.14 GR12, §11.7 SR6d i, §11.8 SR18a i | A versioned table may have an application-time period too, defined with the table or added either way about. UPDATE and DELETE FOR PORTION OF it keep each row they change as a historical row, and the parts they keep begin at the transaction timestamp. Its keys WITHOUT OVERLAPS and temporal foreign keys judge its current rows alone. A period predicate references either period, of current and historical rows read FOR SYSTEM_TIME. |
+| SYSTEM_TIME no application-time period | §11.7 SR3, §11.8 SR18a i, §14.9 SR7a, §14.14 SR7a, §11.28 SR2d, GR1d | SYSTEM_TIME, a reserved word, is no `<application time period name>`: a key WITHOUT OVERLAPS, a foreign key's PERIOD or FOR PORTION OF naming it is SQLCODE -102. A view, constraint, assertion, routine or trigger referencing the system-time period of a table not versioned refuses DROP PERIOD FOR SYSTEM_TIME RESTRICT, SQLCODE -103, and CASCADE drops it. |
+| History read only | §7.16 SR22d, §9.16 SR1s, §11.9 CR2 | A query reading a table FOR SYSTEM_TIME, but AS OF CURRENT_TIMESTAMP, is not updatable, and no constraint or assertion reads one so, SQLCODE -103. |
+| Its description | §21.3.8, §4.16.1 | INFORMATION_SCHEMA.TABLES gives a versioned table's TABLE_TYPE as `SYSTEM VERSIONED`, which ISO/IEC 9075-11:2006 lacks, an extension. PERIODS gives SYSTEM_TIME and its columns, its constraint null. A history is in no view. |
 
 Feature T502 (Period predicates) [§8.20]:
 
@@ -2073,6 +2095,7 @@ CREATE TABLE ... USING engine WITH (name = value, ...)
 ALTER TABLE ... SET (...)
 ALTER TABLE ... USING engine WITH (...)
 ALTER TABLE ... RESEAL
+ALTER TABLE ... RENAME [COLUMN] ... TO ...
 ```
 
 The row store takes OUT_OF_LINE and the options beginning STATISTICS. and
@@ -2084,6 +2107,14 @@ The database declares ENCODINGS for every table. These are the registered
 encodings its rows pass through, such as LZ4, or AES-256-GCM or
 ChaCha20-Poly1305 with its key (RULES.md D48). RESEAL copies a table's rows
 through those it names now, and is a non-reserved word.
+
+RENAME COLUMN gives a column a new name in place (RULES.md D83), which
+SQL:2023 has no statement for [§11.10]. RENAME is a non-reserved word.
+The rename changes the column's descriptor, the periods it bounds and
+the table options that name it, and is refused while a view, CHECK,
+assertion, trigger, routine or generation expression reading the table
+names the column or its new name, or a view selects `*` of it, SQLCODE
+-103, as is one of a typed or system-versioned table.
 
 ### Views of the running system
 
@@ -2202,6 +2233,9 @@ topic. The Where column names the file that implements each.
 | §9.50 GR4 (IA074) whether the seconds a template writes are truncated or rounded to its fractional precision | Truncated | `functions/formatted/format.rs` |
 | §9.51 GR6b iv (IV096) the year RR's digits are read in | The current year, so RR is read as YY | `functions/formatted/parse.rs` |
 | 2023 §8.20 GR3, IL055, the greatest timestamp precision a period predicate compares at | 6, microseconds, of TIMESTAMP WITH TIME ZONE | `binder/periods.rs` |
+| 2023 §4.44 (IV072) the type of the transaction timestamp | TIMESTAMP(6) WITH TIME ZONE, the clock's instant as the transaction first changes data, at +00:00 | `db/write/system_time.rs` |
+| 2023 §11.27 GR1c (IV181) the start given existing rows by ADD PERIOD FOR SYSTEM_TIME | The transaction timestamp, cast to the column's type | `db/ddl.rs` |
+| 2023 §15.11 GR3c the highest value of a type | DATE 9999-12-31; a timestamp 9999-12-31 23:59:59.999999 cut to its precision, at +00:00 if zoned | `value/types/datetime.rs` |
 
 ### Cursors
 
@@ -2464,6 +2498,10 @@ Where the standards are unclear, turborel reads them as follows.
 | The default connection's names [§18.1 GR3n ii, §12.3 GR6c i] | A session the host program starts effectively ran CONNECT TO DEFAULT, whose text gives no name of a connection or server. CONNECTION_NAME and SERVER_NAME are each read as `DEFAULT`, the word that stands for them. |
 | ALL CONDITION of a number no condition has [2023 §23.1 GR3, GR6a iii] | GR3's exception is written of a `<condition information>`, and GR6a iii reads condition area CN as GR3 does. A number of no condition is read as GR3 reads it, SQLSTATE 35000. |
 | The items of ALL [2023 §23.1 GR6a ii 2, GR6a iii] | "CIN is the `<condition number>` of CII" is read as the `<condition information item name>` of CII, as SIN is a statement item's name. CONDITION_NUMBER is presented once for each condition, before its items and not among them, and ALL CONDITION with a number presents none, as GR6a iii names no COND. |
+| A key WITHOUT OVERLAPS of a period dropped [2023 §11.28 SR3d ii, GR2f iii] | The search condition of a key WITHOUT OVERLAPS, §11.7 SR6d i, writes the period's start and end columns, not the period's name, and the descriptor names the period (GR2c). It is read as one that references the period, so DROP PERIOD RESTRICT is refused while it is, and CASCADE drops it, as GR2f iii drops a constraint. |
+| RESTRICT of a foreign key of a period [2023 §15.18 GR6, GR9a iv, GR10a iv] | The matching rows of GR6 are those whose referencing values equal the referenced row's, and nothing there names a period. So RESTRICT refuses a referenced row deleted, or its key changed, while any row of its values is there, whatever their periods, and a change to its period alone is no update of a referenced column, which NO ACTION's check as the statement ends judges. |
+| A referenced period alone [2023 §11.8 SR2a] | SR2a asks a `<referenced period specification>` of a foreign key that writes a `<referencing period specification>`, and says nothing of the one written alone, which SR18a then never reads. It is refused, SQLCODE -103, as a period that would judge nothing. |
+| The rows FOR PORTION OF keeps [2023 §15.8 GR9c ii, §15.14 GR12c ii] | "The following `<insert statement>` is effectively executed without further Access Rule and constraint checking." An INSERT executed has its triggers executed [§15.11], so the rows kept execute the table's INSERT triggers, in the state changes of the DELETE or UPDATE. Constraints judge them as the statement ends, as NOTE 707 and NOTE 714 say. |
 | A generation expression referencing a period dropped with CASCADE [2023 §11.28 SR3d vii, GR2f] | SR3d vii forbids the reference under RESTRICT, but GR2f names nothing to drop for it under CASCADE, and dropping the period would leave the column's expression unbound. The drop is refused under CASCADE too, until the column is dropped. |
 | TRANSACTION_ACTIVE [2023 §23.1 GR2j] | "Currently active" is read as GET DIAGNOSTICS runs, which begins no transaction, so it tells whether the statement before left one active. |
 | The routine a condition is raised in [2023 §23.1 GR4l, GR4q] | The only SQL-invoked routines are the functions a distinct type's definition makes, which take a value of their parameter's type and give it back as their result's [§11.51 GR2b]. A condition raised as one is invoked is read as one of the CAST it stands for, so no condition names a routine, and ROUTINE_CATALOG, ROUTINE_SCHEMA, ROUTINE_NAME, SPECIFIC_NAME, PARAMETER_MODE and PARAMETER_NAME are zero-length strings, PARAMETER_ORDINAL_POSITION 0. |

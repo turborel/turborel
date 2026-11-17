@@ -56,14 +56,22 @@ behind it, and each can be replaced or added to.
 - Structured types with attributes, methods and subtypes, typed tables
   in hierarchies, and references that are dereferenced.
 - Application-time periods, PERIOD FOR two columns of a table, its start
-  before its end, and the period predicates OVERLAPS, EQUALS, CONTAINS,
-  PRECEDES, SUCCEEDS and IMMEDIATELY PRECEDES and SUCCEEDS.
+  before its end, the period predicates OVERLAPS, EQUALS, CONTAINS,
+  PRECEDES, SUCCEEDS and IMMEDIATELY PRECEDES and SUCCEEDS, and UPDATE and
+  DELETE FOR PORTION OF a period, which keep the parts of a row outside it,
+  keys WITHOUT OVERLAPS of it, one row of a key at each point in time, and
+  foreign keys of a period, whose rows' periods their references cover.
+- System-versioned tables, PERIOD FOR SYSTEM_TIME of ROW START and ROW END
+  columns the database stamps, WITH SYSTEM VERSIONING keeping each row an
+  update or delete ends as a historical row, read FOR SYSTEM_TIME AS OF,
+  BETWEEN or FROM … TO, and bitemporal with an application-time period.
 - Stored procedures and functions in SQL/PSM, with variables, cursors,
   handlers, loops and SIGNAL, grouped into modules if wished, and
   polymorphic table functions that take whole tables as arguments.
 - Triggers before, after and instead of a change, for each row or
   statement, and roles with privileges granted and revoked.
 - Domains, assertions, temporary tables, scrollable cursors and dynamic SQL.
+- Columns renamed in place, without copying their rows.
 - Import of CSV and tab-separated files through the client.
 - Library, embedded modes
 - A server over TCP, Unix sockets or Windows named pipes, with TLS,

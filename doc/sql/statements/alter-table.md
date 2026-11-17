@@ -19,10 +19,14 @@ ALTER TABLE: change a base table
     | ADD <table constraint definition>
     | DROP CONSTRAINT <constraint name> <drop behavior>
     | ADD <table period definition>
-    | DROP PERIOD FOR <period name> <drop behavior>
+      [ ADD [ COLUMN ] <column definition> ADD [ COLUMN ] <column definition> ]
+    | DROP PERIOD FOR { <period name> | SYSTEM_TIME } <drop behavior>
+    | ADD SYSTEM VERSIONING
+    | DROP SYSTEM VERSIONING <drop behavior>
     | SET ( <table option> [ { , <table option> }... ] )
     | USING <engine name> [ WITH ( <table option> [ { , <table option> }... ] ) ]
     | RESEAL
+    | RENAME [ COLUMN ] <column name> TO <column name>
 
 <alter column action> ::=
       SET DEFAULT <default option>
@@ -79,6 +83,14 @@ identify. DROP SCOPE removes it, with RESTRICT refused while a view,
 constraint or routine dereferences the column, and with CASCADE
 dropping those.
 
+**RENAME COLUMN** *(extension)* gives a column a new name, its values,
+place, keys, indexes and privileges kept, and its rows not copied. A
+period it bounds and a table option that names it, such as
+COLUMNSTORE.ORDER, name it anew. A view, CHECK, assertion, trigger,
+routine or generation expression that reads the table and names the
+column, or its new name, refuses it, as does a view that selects `*`
+of the table: drop or change those first.
+
 **DROP COLUMN** removes the column and its values; the columns after it
 move up one place. A table constraint that reads that column alone goes
 with it. RESTRICT refuses the drop if a view, an assertion, a foreign
@@ -99,12 +111,25 @@ without a schema being of the session's default schema. RESTRICT refuses
 the drop of a UNIQUE or PRIMARY KEY constraint that a foreign key
 references; CASCADE drops that foreign key too.
 
+**ADD PERIOD FOR SYSTEM_TIME** adds the table's system-time period with
+its two columns, written after it, of ROW START then ROW END. Each row
+there begins at the transaction timestamp and ends at the highest value
+of their type. **DROP PERIOD FOR SYSTEM_TIME** drops the period and both
+columns, as DROP COLUMN does under the behavior written. **ADD SYSTEM
+VERSIONING** makes a table of a system-time period system-versioned,
+and **DROP SYSTEM VERSIONING** makes it a base table again, its
+historical rows deleted. A view, constraint, assertion, routine or
+trigger that reads the table FOR SYSTEM_TIME refuses it under RESTRICT,
+and CASCADE drops each.
+
 **ADD PERIOD** adds a period of two columns the table has, and its
 period constraint, CHECK (start < end), checked of the rows there now; a
 row whose start is not before its end refuses it. **DROP PERIOD** drops
 the period and its constraint. Under RESTRICT it is refused while a
 view, a CHECK, a domain constraint, an assertion, a routine or a trigger
-references the period in a period predicate; CASCADE drops them. A
+references the period in a period predicate, a UNIQUE or PRIMARY KEY
+is WITHOUT OVERLAPS of it, or a foreign key of this table or of another
+is of it; CASCADE drops them. A
 generated column whose expression references it refuses the drop under
 either. See [CREATE TABLE](create-table.md).
 
@@ -174,6 +199,18 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
    one among them, each known not nullable, and neither an identity nor
    a generated column. DROP PERIOD: the table has the period, nothing references it under
    RESTRICT, and no generation expression references it.
+12. ADD PERIOD FOR SYSTEM_TIME: the table is a persistent base table,
+    not a typed one, has no system-time period and no column named
+    SYSTEM_TIME, and adds a column of ROW START, the period's start,
+    then one of ROW END, its end. ADD COLUMN adds no ROW START or ROW
+    END column, and an application-time period adds no column. DROP
+    PERIOD FOR SYSTEM_TIME: the table is not system-versioned.
+13. ADD SYSTEM VERSIONING: the table is a persistent base table, not a
+    typed one, of a system-time period and no column of a reference
+    type, and not system-versioned. DROP SYSTEM VERSIONING: it is, and
+    under RESTRICT nothing reads it FOR SYSTEM_TIME.
+14. A system-versioned table's columns are not added, altered or
+    dropped. A system-time period column has no default.
 7. A constraint added follows the rules of [CREATE TABLE](create-table.md).
 8. SET and USING: the engine is registered, and takes each option, of a
    value it accepts; an option of columns names the table's. A temporary table names no engine or options,
@@ -186,6 +223,10 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
    no row and is every session's at once. The table's constraints, a
    constraint added among them, hold of each session's rows, read as
    that session sees the other temporary tables: its own rows of them.
+15. RENAME COLUMN: the table has the column, and no column or period
+    of the new name. It is no typed table and not system-versioned, and
+    nothing the RENAME COLUMN paragraph above lists names the column or
+    the new name.
 10. No cursor of the transaction reads the table.
 11. The transaction is not READ ONLY.
 
@@ -201,7 +242,6 @@ says.
 |---|---|---|
 | 2A000 | -102 | The action is not written as the synopsis shows |
 | 2A000 | -103 | A rule above is broken |
-| 0A000 | -900 | ADD PERIOD FOR SYSTEM_TIME |
 | 3F000 | -103 | The schema of a constraint added does not exist |
 | 2A000 | -104 | Its user does not own the table's schema, or lacks a privilege a column or constraint needs |
 | 23000 | -201 | A row breaks the constraint added; a NOT NULL column added has no default, and the table has rows |
@@ -329,6 +369,25 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.NOPE is not defined [ISO/IEC 9075:1
 turborel: SQLCODE -102 (SQLSTATE 2A000): expected CASCADE or RESTRICT, found end of statement (at character 34)
 ```
 
+A column renamed, and a rename a view refuses:
+
+```sql
+ALTER TABLE STAFF RENAME COLUMN NAME TO FULL_NAME;
+CREATE VIEW WHO AS SELECT FULL_NAME FROM STAFF;
+ALTER TABLE STAFF RENAME COLUMN FULL_NAME TO GIVEN;
+SELECT ID, FULL_NAME FROM STAFF WHERE ID = 1;
+```
+
+```
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.WHO names ANN.STAFF.FULL_NAME or GIVEN in its text, so the column is renamed only once nothing does (at character 32)
+           ID | FULL_NAME
+--------------+--------------------------------
+            1 | Ada
+(1 row)
+```
+
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.10 to §11.17. A column dropped takes a table
@@ -337,8 +396,12 @@ actions of an identity column and DROP EXPRESSION are ISO/IEC 9075-2:2023
 §11.20 to §11.22, Features T178, F384, F385 and F386, and the drop of a
 column a generation expression references is §11.23 SR7f and GR3. ADD
 PERIOD and DROP PERIOD are §11.27 and §11.28, Features T181 and T502, and what a
-period keeps of its columns §11.23 SR6 and §11.26 SR10. SET,
-USING and RESEAL are extensions. SQL-86 has no ALTER TABLE.
+period keeps of its columns §11.23 SR6 and §11.26 SR10. ADD and DROP
+SYSTEM VERSIONING are §11.29 and §11.30, Feature T180, the start given
+existing rows by ADD PERIOD FOR SYSTEM_TIME the transaction timestamp
+(IV181). SET,
+USING, RESEAL and RENAME COLUMN are extensions; SQL:2023 renames no
+column. SQL-86 has no ALTER TABLE.
 
 ## SEE ALSO
 

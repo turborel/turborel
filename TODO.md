@@ -53,22 +53,6 @@ Nothing is open.
 
 ### Periods and temporal tables
 
-- UPDATE and DELETE FOR PORTION OF [§14.9, §14.14] of an application-time
-  period table. A row that spans more than the portion is split, its parts
-  outside kept as they were.
-- Temporal primary and unique keys, WITHOUT OVERLAPS [§11.7], so that no
-  two rows of one key hold for one point in time.
-- Temporal foreign keys, PERIOD in a referential constraint [§4.25.3,
-  §11.8]. A child row's period must be covered by its parents' periods.
-- System-versioned tables (T180) [§4.17.2.3, §11.3], PERIOD FOR
-  SYSTEM_TIME and WITH SYSTEM VERSIONING. The engine keeps every version a
-  change ends as a historical row, which garbage collection must not
-  remove, and constraints judge only the current rows [§4.25.3].
-- FOR SYSTEM_TIME AS OF, BETWEEN and FROM … TO [§4.17.10, §7.6], reading
-  the rows current at a time or within one.
-- Bitemporal tables, an application-time period and system versioning on
-  one table. No feature names them, and each part above composes once
-  both exist.
 
 ### JSON
 
@@ -96,14 +80,7 @@ Nothing is open.
 
 ## Storage and durability
 
-- Renaming a column [EXTENSION], ALTER TABLE … RENAME COLUMN … TO …,
-  with COLUMNSTORE.ORDER following it (D31). SQL:2023 renames no column
-  [§11.10], so today a new name takes a new column and a copy of its data.
-  A view, a constraint or a generated column that names the column by its
-  text keeps the old name, so the rename refuses while one depends on it,
-  as DROP COLUMN RESTRICT does [§11.23 SR7], and changes the column's
-  descriptor, the information schema and COLUMNSTORE.ORDER in one
-  transaction, durable and replicated as other schema changes are.
+Nothing is open.
 
 ---
 

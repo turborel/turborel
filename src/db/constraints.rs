@@ -26,6 +26,7 @@ use crate::value::Decimal;
 
 mod names;
 pub(in crate::db) mod periods;
+mod referenced;
 
 /// A FOREIGN KEY of a table, described but not yet resolved: its name, the
 /// positions of its referencing columns, what it references, and where it
@@ -33,6 +34,8 @@ pub(in crate::db) mod periods;
 pub(in crate::db) struct Pending {
     pub(super) name: QualifiedName,
     columns: Vec<usize>,
+    /// Its `<referencing period specification>`'s period, if written.
+    period: Option<String>,
     references: References,
     at: usize,
     attributes: ConstraintAttributes,
@@ -209,10 +212,15 @@ impl<'a> Described<'a> {
             let added = match &c.kind {
                 ColumnConstraintKind::NotNull => self.add(c.name.as_ref(), "NOTNULL", ConstraintKind::NotNull(at)),
                 ColumnConstraintKind::Unique { primary } => {
-                    let kind = ConstraintKind::Unique { columns: vec![at], primary: *primary, nulls_distinct: IMPLICIT_NULLS_DISTINCT };
+                    let kind = ConstraintKind::Unique {
+                        columns: vec![at],
+                        primary: *primary,
+                        nulls_distinct: IMPLICIT_NULLS_DISTINCT,
+                        period: None,
+                    };
                     self.add(c.name.as_ref(), word(*primary), kind)
                 }
-                ColumnConstraintKind::References(r) => self.foreign_key(c.name.as_ref(), vec![at], r, c.at),
+                ColumnConstraintKind::References(r) => self.foreign_key(c.name.as_ref(), (vec![at], None), r, c.at),
                 ColumnConstraintKind::Check(check) => self.check(c.name.as_ref(), check),
             };
             added.or_at(c.at)?;
@@ -231,14 +239,15 @@ impl<'a> Described<'a> {
     pub(super) fn table_constraint(&mut self, c: &TableConstraint) -> Result<()> {
         self.attributes = c.attributes;
         let added = match &c.kind {
-            TableConstraintKind::Unique { primary, columns, nulls_distinct } => {
+            TableConstraintKind::Unique { primary, columns, nulls_distinct, period } => {
                 let columns = self.positions(columns, "§11.7 SR4")?;
-                let kind = ConstraintKind::Unique { columns, primary: *primary, nulls_distinct: *nulls_distinct };
-                self.add(c.name.as_ref(), word(*primary), kind)
+                let (primary, nulls_distinct, period) = (*primary, *nulls_distinct, period.clone());
+                let kind = ConstraintKind::Unique { columns, primary, nulls_distinct, period };
+                self.add(c.name.as_ref(), word(primary), kind)
             }
-            TableConstraintKind::ForeignKey { columns, references } => {
+            TableConstraintKind::ForeignKey { columns, period, references } => {
                 let columns = self.positions(columns, "§11.8 SR6")?;
-                self.foreign_key(c.name.as_ref(), columns, references, c.at)
+                self.foreign_key(c.name.as_ref(), (columns, period.clone()), references, c.at)
             }
             TableConstraintKind::Check(check) => self.check(c.name.as_ref(), check),
         };
@@ -246,10 +255,16 @@ impl<'a> Described<'a> {
     }
 
     /// A FOREIGN KEY, resolved later (`State::resolve_foreign_key`).
-    fn foreign_key(&mut self, name: Option<&TableName>, columns: Vec<usize>, references: &References, at: usize) -> Result<()> {
+    fn foreign_key(
+        &mut self,
+        name: Option<&TableName>,
+        (columns, period): (Vec<usize>, Option<String>),
+        references: &References,
+        at: usize,
+    ) -> Result<()> {
         self.grouped(&columns, "FOREIGN KEY")?;
         let name = self.name(name, "FOREIGN")?;
-        self.pending.push(Pending { name, columns, references: references.clone(), at, attributes: self.attributes });
+        self.pending.push(Pending { name, columns, period, references: references.clone(), at, attributes: self.attributes });
         Ok(())
     }
 
@@ -336,29 +351,6 @@ pub(super) fn describe(
     Ok((d.constraints, d.pending))
 }
 
-/// [ISO/IEC 9075:1992 §11.8 SR2] The positions of the columns a foreign
-/// key, written at `at`, references of table `target`, `parent`: those
-/// `written`, of a unique constraint of it [SR2a], or else its PRIMARY KEY
-/// [SR2b].
-fn referenced_columns((target, parent): (&QualifiedName, &TableDesc), written: Option<&[String]>, at: usize) -> Result<Vec<usize>> {
-    let Some(written) = written else {
-        return parent
-            .primary_key()
-            .map(<[usize]>::to_vec)
-            .ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.8 SR2b] {target} has no PRIMARY KEY")).or_at(at));
-    };
-    let positions =
-        Described::new((target, &target.auth, Within::Session), &parent.columns, Vec::new()).positions(written, "§11.8 SR2a")?;
-    let keyed = parent.unique().any(|u| u.len() == positions.len() && u.iter().all(|c| positions.contains(c)));
-    if !keyed {
-        return Err(rule(format!(
-            "[ISO/IEC 9075:1992 §11.8 SR2a] the columns referenced are not those of a unique constraint of {target}"
-        ))
-        .or_at(at));
-    }
-    Ok(positions)
-}
-
 impl State {
     /// [ISO/IEC 9075:1992 §11.8 SR2, SR4] The base table `target`, which a
     /// foreign key references.
@@ -373,6 +365,33 @@ impl State {
             }
             rule(format!("[ISO/IEC 9075:1992 §11.8 SR2] {target} is not defined"))
         })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §9.15 SR4a] Each referencing column of the
+    /// foreign key `p`, of `child`, of the collation of its column
+    /// `referenced` of `parent`.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 of one that is not; -900 of MATCH PARTIAL of a column
+    /// of a collation.
+    fn same_collations(&self, (child, parent): (&TableDesc, &TableDesc), p: &Pending, referenced: &[usize]) -> Result<()> {
+        for (&c, &k) in p.columns.iter().zip(referenced) {
+            let of = |t: &TableDesc, at: usize| t.columns.get(at).map_or(Ok(None), |column| self.column_collation(column));
+            if of(child, c)? != of(parent, k)? {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §9.15 SR4a] the referencing columns of {} are not of the collations of those referenced",
+                    p.name
+                ))
+                .or_at(p.at));
+            }
+            let collated = child.columns.get(c).is_some_and(|column| column.collation.is_some());
+            if collated && p.references.match_type == crate::ast::MatchType::Partial {
+                let msg = format!("[DESIGN] MATCH PARTIAL of {} is of a column of a collation, which is not implemented", p.name);
+                return Err(SqlError::new(Code::Unsupported, msg).or_at(p.at));
+            }
+        }
+        Ok(())
     }
 
     /// [ISO/IEC 9075:1992 §11.8] Resolves the FOREIGN KEY `p` of table
@@ -392,7 +411,9 @@ impl State {
         let about = |e: SqlError| e.or_about_table(target.parts());
         let parent = self.referenced(&target).map_err(about).or_at(r.table.at)?;
         super::temporary::may_refer(child, parent, ("§11.8 SR4", "§11.8 SR5")).or_at(r.table.at)?;
-        let referenced = referenced_columns((&target, parent), r.columns.as_deref(), p.at).map_err(about)?;
+        let period = periods::temporal_reference((child, parent), p, (&p.name, &target)).map_err(about).or_at(p.at)?;
+        let keyed = period.as_ref().map(|(_, theirs)| theirs.as_str());
+        let referenced = referenced::referenced_columns((&target, parent), (r.columns.as_deref(), keyed), p.at).map_err(about)?;
         // [SR7] as many, each of the same type as its referencing column.
         let same = p.columns.len() == referenced.len() && child.types(&p.columns) == parent.types(&referenced);
         if !same {
@@ -403,22 +424,7 @@ impl State {
             .or_at(p.at));
         }
         super::generated::generated_referencing(child, &p.columns, r, (&p.name, p.at))?;
-        // [ISO/IEC 9075-2:2023 §9.15 SR4a] the same collation.
-        for (&c, &k) in p.columns.iter().zip(&referenced) {
-            let of = |t: &TableDesc, at: usize| t.columns.get(at).map_or(Ok(None), |column| self.column_collation(column));
-            if of(child, c)? != of(parent, k)? {
-                return Err(rule(format!(
-                    "[ISO/IEC 9075-2:2023 §9.15 SR4a] the referencing columns of {} are not of the collations of those referenced",
-                    p.name
-                ))
-                .or_at(p.at));
-            }
-            let collated = child.columns.get(c).is_some_and(|column| column.collation.is_some());
-            if collated && r.match_type == crate::ast::MatchType::Partial {
-                let msg = format!("[DESIGN] MATCH PARTIAL of {} is of a column of a collation, which is not implemented", p.name);
-                return Err(SqlError::new(Code::Unsupported, msg).or_at(p.at));
-            }
-        }
+        self.same_collations((child, parent), p, &referenced)?;
         // [AR1] REFERENCES on each referenced column.
         let (held, _) = applicable(&*self.catalog, sole(&*self.catalog, auth), &target);
         if let Some(column) = referenced.iter().find(|c| !held.references.contains(c)) {
@@ -436,6 +442,7 @@ impl State {
             match_type: r.match_type,
             on_update: r.on_update,
             on_delete: r.on_delete,
+            period,
         };
         Ok(ConstraintDesc { name: p.name.clone(), kind: ConstraintKind::ForeignKey(fk), attributes: p.attributes, domain: None })
     }
@@ -453,10 +460,12 @@ impl State {
         let this = desc.clone();
         for c in &mut desc.constraints {
             let ConstraintKind::Check { text, names, reads, horizon } = &mut c.kind else { continue };
-            let invoked = Invoked::default();
+            let (invoked, uses, fresh) = (Invoked::default(), Uses::default(), horizon.widths.is_empty());
             let cond = self
-                .bind_check(&table, (text, names, horizon), (None, &Referencing::default(), Some(&invoked)))
+                .bind_check(&table, (text, names, horizon), (fresh.then_some(&uses), &Referencing::default(), Some(&invoked)))
                 .map_err(|e| SqlError { msg: format!("CHECK {}: {}", c.name, e.msg), pos: None, ..e })?;
+            // [ISO/IEC 9075-2:2023 §11.9 SR1] Of a CHECK defined now.
+            self.no_system_time(&binder::once_each(uses.into_inner()), (&format!("CHECK {}", c.name), "§11.9 SR1"), false)?;
             // [ISO/IEC 9075:1992 §11.6 GR3] One whose subqueries read no table is checked of its table whole, as one reading one is.
             *reads = Some(cond.tables()).filter(|t| !t.is_empty() || !cond.has_subquery()).unwrap_or_else(|| vec![table.clone()]);
             for other in reads.iter().filter(|t| **t != table).filter_map(|t| self.catalog.table(t)) {
@@ -531,6 +540,7 @@ impl State {
             only: false,
             correlation: None,
             columns: None,
+            system_time: None,
         });
         let table_expression =
             TableExpression { from: vec![from], where_clause: Some(condition), group_by: None, having: None, window: Vec::new() };

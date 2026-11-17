@@ -242,10 +242,11 @@ fn renumbered(c: &ConstraintDesc, table: &TableDesc, reshape: Reshape, own: bool
     let moved = |columns: &[usize]| reshape.columns(columns).unwrap_or_else(|| columns.to_vec());
     let kind = match &c.kind {
         ConstraintKind::NotNull(at) => ConstraintKind::NotNull(if own { reshape.moved(*at).unwrap_or(*at) } else { *at }),
-        ConstraintKind::Unique { columns, primary, nulls_distinct } => ConstraintKind::Unique {
+        ConstraintKind::Unique { columns, primary, nulls_distinct, period } => ConstraintKind::Unique {
             columns: if own { moved(columns) } else { columns.clone() },
             primary: *primary,
             nulls_distinct: *nulls_distinct,
+            period: period.clone(),
         },
         ConstraintKind::ForeignKey(fk) => {
             let mut fk = fk.clone();
@@ -261,7 +262,8 @@ fn renumbered(c: &ConstraintDesc, table: &TableDesc, reshape: Reshape, own: bool
         ConstraintKind::Check { text, names, reads, horizon } => {
             let seen = match reshape {
                 Reshape::Remove(at) => horizon.without(&table.name, at),
-                Reshape::Keep | Reshape::Append => horizon.clone(),
+                Reshape::Two(Some([first, second])) => horizon.without(&table.name, first).without(&table.name, second),
+                Reshape::Keep | Reshape::Append | Reshape::Two(None) => horizon.clone(),
             };
             ConstraintKind::Check { text: text.clone(), names: names.clone(), reads: reads.clone(), horizon: seen }
         }

@@ -32,6 +32,11 @@ impl Parser {
         if let Tok::KeyWord(word) = self.peek() { field_of(word).is_some() } else { false }
     }
 
+    /// Whether a `<datetime field>` follows the TO next.
+    fn field_after_to(&self) -> bool {
+        if let Tok::KeyWord(word) = self.peek_at(1) { field_of(word).is_some() } else { false }
+    }
+
     /// The `<datetime field>` next, taken.
     fn datetime_field(&mut self) -> Result<Field> {
         let Tok::KeyWord(word) = *self.peek() else { return Err(self.syntax("expected a <datetime field>")) };
@@ -83,9 +88,13 @@ impl Parser {
             }
             self.expect_delim(delim::RIGHT_PAREN)?;
         }
-        if start == Field::Second || !self.accept_kw(kw::TO) {
+        // TO only of a <datetime field>: a TO after it is another's, as of
+        // FOR PORTION OF ... FROM x - INTERVAL '1' DAY TO y [ISO/IEC
+        // 9075-2:2023 §14.9].
+        if start == Field::Second || !self.is_kw(kw::TO) || !self.field_after_to() {
             return Ok(Qualifier::new(start, start, leading, fraction));
         }
+        self.advance();
         let end = self.datetime_field()?;
         if end == Field::Second && self.accept_delim(delim::LEFT_PAREN) {
             fraction = self.interval_precision(false)?;

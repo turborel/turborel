@@ -42,6 +42,7 @@ mod readers;
 mod reads;
 mod regex;
 mod rekey;
+mod rename;
 mod roles;
 mod routines;
 mod rtree;
@@ -52,8 +53,10 @@ mod shadow;
 mod sql2023;
 mod stats;
 mod structured;
+mod system_versioned;
 mod tailorings;
 mod temporal;
+mod temporal_references;
 mod triggers;
 mod truncate;
 mod view_defaults;
@@ -219,8 +222,8 @@ pub const MUTATIONS: [Mutation; 45] = [
         package: Package::Core,
         breaks: "FOREIGN KEY: a row referencing no row is let in",
         file: "src/db/integrity.rs",
-        original: "if !self.matches(tx, fk, &values)? {",
-        replacement: "if false && !self.matches(tx, fk, &values)? {",
+        original: "if !self.matches_row(tx, (desc, fk), &row)? {",
+        replacement: "if false && !self.matches_row(tx, (desc, fk), &row)? {",
         integration: &["constraints::references_are_kept_11_8", "constraints::partial_matches_11_8"],
         unit: &[],
     },

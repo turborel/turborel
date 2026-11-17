@@ -10,6 +10,7 @@ use super::{Columns, catalog_name, defined, ids, text};
 use crate::catalog::ColumnDesc;
 use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable};
+use crate::value::Value;
 
 /// The table.
 pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
@@ -22,7 +23,7 @@ fn periods_columns() -> Vec<ColumnDesc> {
         .id("PERIOD_NAME", true)
         .id("START_COLUMN_NAME", true)
         .id("END_COLUMN_NAME", true)
-        .ids("CONSTRAINT", true)
+        .ids("CONSTRAINT", false)
         .done()
 }
 
@@ -33,7 +34,8 @@ fn periods(seen: &Seen<'_>) -> Vec<Row> {
     for t in seen.state.catalog.tables() {
         for p in &t.periods {
             let named = [text(&p.name), text(&p.start), text(&p.end)];
-            rows.push([ids(&catalog, &t.name).to_vec(), named.to_vec(), ids(&catalog, &p.constraint).to_vec()].concat());
+            let constraint = p.constraint.as_ref().map_or([Value::Null, Value::Null, Value::Null], |c| ids(&catalog, c));
+            rows.push([ids(&catalog, &t.name).to_vec(), named.to_vec(), constraint.to_vec()].concat());
         }
     }
     rows

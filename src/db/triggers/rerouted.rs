@@ -382,7 +382,7 @@ fn query(table: &str, list: SelectList, condition: Option<SearchCondition>) -> Q
 
 /// FROM `table` WHERE `condition`.
 fn from(table: TableName, where_clause: Option<SearchCondition>) -> TableExpression {
-    let reference = TableReference::Table(NamedTable { table, only: false, correlation: None, columns: None });
+    let reference = TableReference::Table(NamedTable { table, only: false, correlation: None, columns: None, system_time: None });
     TableExpression { from: vec![reference], where_clause, group_by: None, having: None, window: Vec::new() }
 }
 

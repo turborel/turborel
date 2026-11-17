@@ -4,6 +4,7 @@
 //! the `<set constraints mode statement>` [§14.2].
 
 use super::Parser;
+use super::dynamic::WITHOUT;
 use crate::ast::{
     Check, ColumnConstraint, ColumnConstraintKind, ConstraintAttributes, IMPLICIT_NULLS_DISTINCT, MatchType, References, ReferentialAction,
     SqlStatement, TableConstraint, TableConstraintKind,
@@ -44,16 +45,61 @@ impl Parser {
                 return Err(SqlError::at(Code::SyntaxRule, treatment_at, msg));
             }
             let nulls_distinct = treatment.unwrap_or(IMPLICIT_NULLS_DISTINCT);
-            TableConstraintKind::Unique { primary, columns: self.name_list()?, nulls_distinct }
+            let (columns, period) = self.unique_column_list()?;
+            TableConstraintKind::Unique { primary, columns, nulls_distinct, period }
         } else if self.accept_kw(kw::FOREIGN) {
             // [§11.8] FOREIGN KEY (<referencing columns>) <references specification>
             self.expect_kw(kw::KEY)?;
-            let columns = self.name_list()?;
-            TableConstraintKind::ForeignKey { columns, references: self.references()? }
+            let (columns, period) = self.period_column_list()?;
+            TableConstraintKind::ForeignKey { columns, period, references: self.references()? }
         } else {
             TableConstraintKind::Check(self.check()?)
         };
         Ok(TableConstraint { name, at, kind, attributes: self.constraint_attributes()? })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.7] ( `<unique column list>` \[,
+    /// `<without overlap specification>`\] ): the columns, and the period
+    /// of `<application time period name>` WITHOUT OVERLAPS, if written.
+    /// WITHOUT is a reserved word of SQL:2023, read here as a word, as
+    /// SQL-92 reserves none of it (`parser/dynamic.rs`).
+    fn unique_column_list(&mut self) -> Result<(Vec<String>, Option<String>)> {
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut names = vec![self.identifier()?];
+        while self.accept_delim(delim::COMMA) {
+            let period = *self.peek_at(1) == Tok::Identifier(WITHOUT.to_owned());
+            let name = if period { self.application_period_name()? } else { self.identifier()? };
+            if self.accept_word(WITHOUT) {
+                self.expect_kw(kw::OVERLAPS)?;
+                self.expect_delim(delim::RIGHT_PAREN)?;
+                return Ok((names, Some(name)));
+            }
+            names.push(name);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok((names, None))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.8] ( `<column name list>` \[,
+    /// `<referencing period specification>`\] ), and of a `<referenced
+    /// table and columns>` its `<referenced period specification>`: the
+    /// columns, and the period of PERIOD `<application time period name>`
+    /// if written. PERIOD is a word told from a column named PERIOD by the
+    /// name after it (`parser/periods.rs`).
+    fn period_column_list(&mut self) -> Result<(Vec<String>, Option<String>)> {
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let mut names = vec![self.identifier()?];
+        while self.accept_delim(delim::COMMA) {
+            if self.at_period_specification() {
+                self.advance();
+                let period = self.application_period_name()?;
+                self.expect_delim(delim::RIGHT_PAREN)?;
+                return Ok((names, Some(period)));
+            }
+            names.push(self.identifier()?);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok((names, None))
     }
 
     /// [§11.4] `<column constraint definition>` ::= \[`<constraint name
@@ -138,7 +184,12 @@ impl Parser {
     fn references(&mut self) -> Result<References> {
         self.expect_kw(kw::REFERENCES)?;
         let table = self.table_name()?;
-        let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.name_list()?) } else { None };
+        let (columns, period) = if self.is_delim(delim::LEFT_PAREN) {
+            let (columns, period) = self.period_column_list()?;
+            (Some(columns), period)
+        } else {
+            (None, None)
+        };
         let match_type = if self.accept_kw(kw::MATCH) { self.match_type()? } else { MatchType::Simple };
         // <referential triggered action> ::= <update rule> [<delete rule>] | <delete rule> [<update rule>]
         let (mut on_update, mut on_delete) = (None, None);
@@ -152,6 +203,7 @@ impl Parser {
         Ok(References {
             table,
             columns,
+            period,
             match_type,
             on_update: on_update.unwrap_or(ReferentialAction::NoAction),
             on_delete: on_delete.unwrap_or(ReferentialAction::NoAction),
@@ -170,6 +222,10 @@ impl Parser {
             }
             self.expect_kw(kw::DEFAULT)?;
             return Ok(ReferentialAction::SetDefault);
+        }
+        // [ISO/IEC 9075-2:2023 §11.8] RESTRICT (Feature T191).
+        if self.accept_kw(kw::RESTRICT) {
+            return Ok(ReferentialAction::Restrict);
         }
         self.expect_kw(kw::NO)?;
         self.expect_kw(kw::ACTION)?;

@@ -25,6 +25,7 @@ pub struct TableName {
     pub at: usize,
 }
 
+mod alter;
 mod composite;
 mod connection;
 mod contents;
@@ -44,6 +45,7 @@ mod privileges;
 mod psm;
 mod ptf;
 mod query;
+mod references;
 mod roles;
 mod routines;
 mod schema;
@@ -58,6 +60,7 @@ mod user_types;
 mod users;
 mod window;
 
+pub use alter::AlterAction;
 pub use composite::{Composite, ValueOrder};
 pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
 pub use contents::{AsSubquery, LikeClause};
@@ -81,7 +84,7 @@ pub use pattern::{
     Definition, EmptyMatches, Logical, Measure, Navigation, PatternCommon, Physical, Quantified, RecognizedTable, RowPattern,
     RowPatternRecognition, RowsPerMatch, Semantics, SkipTo, Subset, WindowRecognition,
 };
-pub use periods::{PeriodDefinition, PeriodName, PeriodOperand, PeriodOperator, SYSTEM_TIME};
+pub use periods::{PeriodDefinition, PeriodName, PeriodOperand, PeriodOperator, Portion, SYSTEM_TIME, SystemTimeKind, SystemTimeRead};
 pub use query::{
     Correspondence, CursorSpecification, DerivedTable, GroupBy, GroupingColumn, GroupingElement, NamedTable, QueryExpression,
     QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn, SortSpecification,
@@ -98,6 +101,7 @@ pub use ptf::{
     DescriptorColumn, GenericTable, ParameterType, PrivateParameter, PtfArgument, PtfDefinition, PtfInvocation, PtfTable, RoutineBody,
     TableArgument, TableArgumentProper, TableSemantics,
 };
+pub use references::{MatchType, References, ReferentialAction};
 pub use roles::{Grantor, RoleStatement, SetRole};
 pub use routines::{
     CallStatement, DataAccess, ParameterDeclaration, ParameterMode, ReturnStatement, RoutineDefinition, RoutineDesignator, RoutineKind,
@@ -105,9 +109,9 @@ pub use routines::{
 };
 pub use schema::{
     AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, Collection, ColumnConstraint,
-    ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, MatchType,
-    OptionValue, References, ReferentialAction, Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition,
-    TableElement, TableOptionValue, TableStorage, Temporary, TemporaryKind, TypeName, ViewDefinition,
+    ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, OptionValue,
+    Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage,
+    Temporary, TemporaryKind, TypeName, ViewDefinition,
 };
 pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
@@ -277,6 +281,8 @@ pub enum SqlStatement {
         /// [ISO/IEC 9075-2:2023 §14.9] ONLY ( `<table name>` ) was written:
         /// the rows of no proper subtable \[GR3\].
         only: bool,
+        /// [ISO/IEC 9075-2:2023 §14.9 SR7a] FOR PORTION OF, if written.
+        portion: Option<Box<Portion>>,
         /// The `<search condition>`, if written.
         where_clause: Option<SearchCondition>,
     },
@@ -452,80 +458,13 @@ pub enum SqlStatement {
         /// [ISO/IEC 9075-2:2023 §14.14] ONLY ( `<table name>` ) was written:
         /// the rows of no proper subtable \[GR6\].
         only: bool,
+        /// [ISO/IEC 9075-2:2023 §14.14 SR7a] FOR PORTION OF, if written.
+        portion: Option<Box<Portion>>,
         /// The `<set clause>`s, in order.
         set: Vec<SetClause>,
         /// The `<search condition>`, if written.
         where_clause: Option<SearchCondition>,
     },
-}
-
-/// [ISO/IEC 9075:1992 §11.10] `<alter table action>` ::= `<add column
-/// definition>` | `<alter column definition>` | `<drop column definition>`
-/// | `<add table constraint definition>` | `<drop table constraint
-/// definition>`
-#[derive(Debug, Clone)]
-pub enum AlterAction {
-    /// [ISO/IEC 9075:1992 §11.11] `<add column definition>` ::= ADD \[COLUMN\]
-    /// `<column definition>`
-    AddColumn(ColumnDefinition),
-    /// [ISO/IEC 9075:1992 §11.15] `<drop column definition>` ::= DROP
-    /// \[COLUMN\] `<column name>` `<drop behavior>`
-    DropColumn {
-        /// The `<column name>`.
-        column: String,
-        /// Where it begins in the statement, for the positions of errors.
-        at: usize,
-        /// The `<drop behavior>`.
-        behavior: DropBehavior,
-    },
-    /// [ISO/IEC 9075:1992 §11.12] `<alter column definition>` ::= ALTER
-    /// \[COLUMN\] `<column name>` `<alter column action>`
-    AlterColumn {
-        /// The `<column name>`.
-        column: String,
-        /// Where it begins in the statement, for the positions of errors.
-        at: usize,
-        /// The `<alter column action>`.
-        action: AlterColumnAction,
-    },
-    /// [ISO/IEC 9075:1992 §11.16] `<add table constraint definition>` ::=
-    /// ADD `<table constraint definition>`
-    AddConstraint(TableConstraint),
-    /// [ISO/IEC 9075-2:2023 §11.27] ADD `<table period definition>`.
-    AddPeriod(PeriodDefinition),
-    /// [ISO/IEC 9075-2:2023 §11.28] DROP `<system or application time period
-    /// specification>` `<drop behavior>`: the period's name, where PERIOD
-    /// begins, and the behavior.
-    DropPeriod {
-        /// The period's name.
-        name: PeriodName,
-        /// Where PERIOD begins in the statement.
-        at: usize,
-        /// RESTRICT or CASCADE.
-        behavior: DropBehavior,
-    },
-    /// \[DESIGN\] [ISO/IEC 9075-2:2023 §11.44 GR2] Columns of a collation
-    /// dropped made of the character set's: read only from the log, as
-    /// DROP COLLATION writes it.
-    RevertCollation(QualifiedName),
-    /// \[DESIGN\] [ISO/IEC 9075-2:2023 §14.10 GR5, GR8] Every row of the
-    /// table gone, at once, and its identity column's generator restarted
-    /// if `restart`: read only from the log, as TRUNCATE TABLE writes it.
-    Truncate {
-        /// Whether RESTART IDENTITY was written.
-        restart: bool,
-    },
-    /// [ISO/IEC 9075:1992 §11.17] `<drop table constraint definition>` ::=
-    /// DROP CONSTRAINT `<constraint name>` `<drop behavior>`
-    DropConstraint {
-        /// The `<constraint name>`.
-        name: TableName,
-        /// The `<drop behavior>`.
-        behavior: DropBehavior,
-    },
-    /// \[EXTENSION\] `<alter table storage>` ::= SET `<table options>` |
-    /// USING `<engine name>` \[WITH `<table options>`\] (RULES.md D41)
-    Storage(TableStorage),
 }
 
 /// \[EXTENSION\] A statement of indexes (RULES.md D34, D41), run outside a

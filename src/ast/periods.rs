@@ -73,3 +73,54 @@ pub enum PeriodOperand {
     /// A `<period reference>`, or a `<datetime value expression>`.
     Value(Box<super::ValueExpression>),
 }
+
+/// [ISO/IEC 9075-2:2023 §7.6] A `<query system time period
+/// specification>`: the system rows of a system-versioned table read.
+#[derive(Debug, Clone)]
+pub struct SystemTimeRead {
+    /// Which rows.
+    pub kind: SystemTimeKind,
+    /// Where FOR begins it.
+    pub at: usize,
+}
+
+impl SystemTimeRead {
+    /// [ISO/IEC 9075-2:2023 §7.6 SR9c] Whether it is FOR SYSTEM_TIME AS
+    /// OF CURRENT_TIMESTAMP, as a system-versioned table read with none
+    /// is read: its current rows.
+    #[must_use]
+    pub fn current(&self) -> bool {
+        let SystemTimeKind::AsOf(super::ValueExpression::Datetime(f)) = &self.kind else { return false };
+        f.moment == crate::value::datetime::Moment::Timestamp && f.precision.is_none()
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §7.6 GR2c ii 1 D] What a `<query system time
+/// period specification>` reads.
+#[derive(Debug, Clone)]
+pub enum SystemTimeKind {
+    /// FOR SYSTEM_TIME AS OF `<point in time 1>`: the rows current then.
+    AsOf(super::ValueExpression),
+    /// FOR SYSTEM_TIME BETWEEN \[SYMMETRIC\] `<point in time 1>` AND
+    /// `<point in time 2>`: the rows current at a time from the first to
+    /// the second, both included; SYMMETRIC if written.
+    Between(bool, super::ValueExpression, super::ValueExpression),
+    /// FOR SYSTEM_TIME FROM `<point in time 1>` TO `<point in time 2>`:
+    /// the rows current at a time from the first, included, to the
+    /// second, excluded.
+    FromTo(super::ValueExpression, super::ValueExpression),
+}
+
+/// [ISO/IEC 9075-2:2023 §14.9, §14.14] FOR PORTION OF `<application time
+/// period name>` FROM `<point in time 1>` TO `<point in time 2>`.
+#[derive(Debug, Clone)]
+pub struct Portion {
+    /// The period's name.
+    pub period: String,
+    /// `<point in time 1>`, FROMVAL \[SR7a ii\].
+    pub from: super::ValueExpression,
+    /// `<point in time 2>`, TOVAL \[SR7a iii\].
+    pub to: super::ValueExpression,
+    /// Where it begins in the statement.
+    pub at: usize,
+}

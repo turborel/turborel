@@ -287,6 +287,7 @@ impl<'a> Binder<'a> {
             only,
             correlation: Some(SCOPED.to_owned()),
             columns: None,
+            system_time: None,
         });
         let table_expression =
             TableExpression { from: vec![from], where_clause: Some(key), group_by: None, having: None, window: Vec::new() };

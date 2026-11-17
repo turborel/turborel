@@ -45,6 +45,12 @@ pub enum ConstraintKind {
         /// unique. Else NULLS NOT DISTINCT, a null in one equal to a null
         /// in the other.
         nulls_distinct: bool,
+        /// [ISO/IEC 9075-2:2023 §4.25.3.2, §11.7 SR6d i] The application-
+        /// time period it is WITHOUT OVERLAPS of, if any: then two rows
+        /// are of equal values only if their periods overlap, and its
+        /// index's key is its columns, then the period's start and end
+        /// columns (`TableDesc::key_columns`).
+        period: Option<String>,
     },
     /// [§11.8] A referential constraint.
     ForeignKey(ForeignKey),
@@ -85,6 +91,30 @@ pub struct ForeignKey {
     pub on_update: ReferentialAction,
     /// The `<delete rule>` \[SR9\].
     pub on_delete: ReferentialAction,
+    /// [ISO/IEC 9075-2:2023 §4.25.3.3, §11.8 GR2d, GR2e] Of a temporal
+    /// one, the names of its referencing period, of its table, and of the
+    /// referenced period: a row's period is then covered by the periods of
+    /// the referenced rows its values match.
+    pub period: Option<(String, String)>,
+}
+
+impl ForeignKey {
+    /// The columns of `child`, its table, whose values it judges: its
+    /// referencing columns, and of a temporal one its period's start and
+    /// end [ISO/IEC 9075-2:2023 §11.8 SR18a i].
+    pub fn referencing_key(&self, child: &TableDesc) -> Vec<usize> {
+        let mut key = self.columns.clone();
+        key.extend(self.period.as_ref().and_then(|(own, _)| child.period_columns(own)).into_iter().flatten());
+        key
+    }
+
+    /// The columns of `parent`, the table it references, whose values it
+    /// judges: the referenced columns, and of a temporal one its period's.
+    pub fn referenced_key(&self, parent: &TableDesc) -> Vec<usize> {
+        let mut key = self.referenced.clone();
+        key.extend(self.period.as_ref().and_then(|(_, theirs)| parent.period_columns(theirs)).into_iter().flatten());
+        key
+    }
 }
 
 impl fmt::Display for ConstraintDesc {
@@ -94,12 +124,30 @@ impl fmt::Display for ConstraintDesc {
 }
 
 impl TableDesc {
-    /// The column positions of each UNIQUE and PRIMARY KEY constraint.
-    pub fn unique(&self) -> impl Iterator<Item = &[usize]> {
+    /// The key of the index of each UNIQUE and PRIMARY KEY constraint, no
+    /// two rows' the same (`key_columns`).
+    pub fn unique(&self) -> impl Iterator<Item = Vec<usize>> + '_ {
         self.constraints.iter().filter_map(|c| match &c.kind {
-            ConstraintKind::Unique { columns, .. } => Some(columns.as_slice()),
+            ConstraintKind::Unique { columns, period, .. } => Some(self.key_columns(columns, period.as_deref())),
             ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,
         })
+    }
+
+    /// The positions of the start and end columns of its period `name`, if
+    /// it has it.
+    pub fn period_columns(&self, name: &str) -> Option<[usize; 2]> {
+        let period = self.periods.iter().find(|p| p.name == name)?;
+        Some([self.column(&period.start)?, self.column(&period.end)?])
+    }
+
+    /// The key of the index of a unique constraint on `columns`: them, and
+    /// of one WITHOUT OVERLAPS of `period`, its start and end columns
+    /// after, a key no two rows have once none overlap [ISO/IEC
+    /// 9075-2:2023 §11.7 SR6d i].
+    pub fn key_columns(&self, columns: &[usize], period: Option<&str>) -> Vec<usize> {
+        let mut key = columns.to_vec();
+        key.extend(period.and_then(|n| self.period_columns(n)).into_iter().flatten());
+        key
     }
 
     /// Whether a UNIQUE NULLS NOT DISTINCT constraint is on exactly
@@ -107,7 +155,9 @@ impl TableDesc {
     /// with a null (`IndexDesc::nulls`).
     pub fn nulls_not_distinct(&self, columns: &[usize]) -> bool {
         self.constraints.iter().any(|c| match &c.kind {
-            ConstraintKind::Unique { columns: on, nulls_distinct, .. } => !nulls_distinct && on == columns,
+            ConstraintKind::Unique { columns: on, nulls_distinct, period, .. } => {
+                !nulls_distinct && self.key_columns(on, period.as_deref()) == columns
+            }
             ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => false,
         })
     }

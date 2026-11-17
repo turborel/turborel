@@ -8,6 +8,7 @@ use std::sync::Arc;
 use super::UndoEntry;
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
+use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
 use crate::log::record::Change;
@@ -129,6 +130,12 @@ impl State {
         mut recheck: Option<Recheck<'_>>,
     ) -> Result<Option<Row>> {
         self.prepare_write(tx, table)?;
+        // [ISO/IEC 9075-2:2023 §15.14 GR10a] a row of a system-time period
+        // stamped, and of a system-versioned table, kept as it was.
+        let stamp = self.stamp_of(tx, table)?;
+        if let (Some(stamp), Write::Update(row)) = (&stamp, &mut write) {
+            stamp.put(row);
+        }
         let mut seen: Option<(Timestamp, Row)> = None;
         let mut tries = 0_usize;
         loop {
@@ -138,10 +145,15 @@ impl State {
             let attempt = {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
-                self.write_once(tx, (table, id), &write, seen.as_ref())
+                self.write_once(tx, (table, id), (&write, stamp.as_ref()), seen.as_ref())
             };
             let e = match attempt {
-                Ok(old) => return Ok(Some(old)),
+                Ok((old, history)) => {
+                    if let (Some(history), Some(stamp)) = (history, &stamp) {
+                        self.insert_row(tx, &history, &stamp.ended(&old))?;
+                    }
+                    return Ok(Some(old));
+                }
                 Err(e) => e,
             };
             tries = tries.saturating_add(1);
@@ -173,12 +185,24 @@ impl State {
     }
 
     /// `write` of row `id` once, over the version `seen` if given, with
-    /// its index entries and what undoes it: the row it replaced.
-    fn write_once(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), write: &Write, seen: Option<&(Timestamp, Row)>) -> Result<Row> {
+    /// its index entries and what undoes it: the row it replaced, and the
+    /// history it is kept in, if `stamp`, of the table's system-time
+    /// period, says it is [ISO/IEC 9075-2:2023 §15.14 GR10a iii].
+    fn write_once(
+        &self,
+        tx: &Txn,
+        (table, id): (&QualifiedName, RowId),
+        (write, system): (&Write, Option<&Stamp>),
+        seen: Option<&(Timestamp, Row)>,
+    ) -> Result<(Row, Option<QualifiedName>)> {
         let storage = self.storage_of(table)?;
         let old = match seen {
             Some((_, row)) => row.clone(),
             None => storage.get(tx.id, id)?.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no row {id} in {table}")))?,
+        };
+        let history = match system.map(|s| s.judge(&old)).transpose()? {
+            Some((Changed::Kept, history)) => history.cloned(),
+            Some((Changed::InPlace, _)) | None => None,
         };
         let new = match write {
             Write::Update(row) => Some(row.clone()),
@@ -193,7 +217,7 @@ impl State {
             Write::Update(row) => self.updated(tx, (table, id), (&old, row))?,
             Write::Delete => self.deleted(tx, table, id, &old)?,
         }
-        Ok(old)
+        Ok((old, history))
     }
 
     /// Of row `id` of `table` made `row` from `old`: what undoes it, its

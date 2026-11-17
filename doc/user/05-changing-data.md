@@ -94,7 +94,7 @@ Edsger's salary is updated, and Frances is inserted
 
 ## Cursors
 
-A program that embeds turborel may read a query's rows one at a time,
+A program that embeds Turborel may read a query's rows one at a time,
 by a cursor it declares, and change the row the cursor is on
 ([DECLARE CURSOR](../sql/statements/declare-cursor.md)). The client
 declares no cursor, so it runs no FETCH, and no UPDATE or DELETE ...

@@ -8,7 +8,7 @@
 turborel [options]
 ```
 
-`turborel` connects to a turborel server and runs SQL there: typed,
+`turborel` connects to a Turborel server and runs SQL there: typed,
 given on its command line, or read from files. It shows a query's rows
 as a table as they come, and each statement's outcome.
 

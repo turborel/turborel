@@ -19,7 +19,7 @@ use super::{Descriptor, NUMBER_BYTES, SIGN, SqlType, take};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::uncastable;
-use crate::value::datetime::{Datetime, MICROS_PER_DAY, MICROS_PER_MINUTE, Moment, Now, parse};
+use crate::value::datetime::{Datetime, LAST_DATE, LAST_INSTANT, MICROS_PER_DAY, MICROS_PER_MINUTE, Moment, Now, parse};
 use crate::value::{Bucket, DataType, Value, unassignable};
 
 /// The kind of one datetime type.
@@ -392,6 +392,21 @@ pub fn current(moment: Moment, precision: u32, now: Now) -> Value {
         Moment::Timestamp => Datetime::of_local(Moment::Timestamp, local, now.zone, true, precision),
     };
     Value::Datetime(d.truncated(precision))
+}
+
+/// [ISO/IEC 9075-2:2023 §4.17.2.3] The highest value of `t`, DATE or a
+/// timestamp type, a system-time period end column's of a current system
+/// row: 9999-12-31, and of a timestamp its last instant of its precision,
+/// at the displacement +00:00 if WITH TIME ZONE; none of another type.
+pub fn highest(t: &DataType) -> Option<Value> {
+    let d = match shape(t)? {
+        (Moment::Date, ..) => Datetime::of_local(Moment::Date, LAST_DATE, 0, false, 0),
+        (Moment::Timestamp, precision, zoned) => {
+            Datetime::of_local(Moment::Timestamp, LAST_INSTANT, 0, zoned, precision).truncated(precision)
+        }
+        (Moment::Time, ..) => return None,
+    };
+    Some(Value::Datetime(d))
 }
 
 // Unit tests: CAST between the datetime types in a session, and the

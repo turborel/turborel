@@ -53,6 +53,10 @@ fn put_generated(out: &mut Vec<u8>, generated: Option<&Generated>) {
             out.put_u8(3);
             put_sequence(out, sequence);
         }
+        Some(Generated::SystemTime { end }) => {
+            out.put_u8(5);
+            put_flag(out, *end);
+        }
         Some(Generated::DerivedReference(names)) => {
             out.put_u8(4);
             out.put_u32(u32::try_from(names.len()).unwrap_or(u32::MAX));
@@ -74,6 +78,7 @@ fn generated(r: &mut Reader<'_>) -> Result<Option<Generated>> {
             let n = r.u32()?;
             Some(Generated::DerivedReference((0..n).map(|_| r.str()).collect::<Result<_>>()?))
         }
+        5 => Some(Generated::SystemTime { end: flag(r)? }),
         _ => return Err(r.corrupt("not how a column's values are generated")),
     })
 }

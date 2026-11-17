@@ -120,6 +120,8 @@ verification approach DO-178C expects (§8).
 | D80 | Multisets are unordered values, paired by classes and a matching |
 | D81 | Structured types: values name their type, typed tables keep their own rows, references are octets |
 | D82 | Geometry values start with XY representations through SqlType |
+| D82 | System-versioned tables keep their historical rows in a hidden table of their own |
+| D83 | A column is renamed in place, refused while a text names it |
 
 ### The project
 
@@ -1221,6 +1223,64 @@ structured value crosses to a client whole, as the protocol's tag of
 its type writes it. A function that is an ordering's, a transform's or
 a cast's is dropped only with CASCADE, which drops what it is the
 function of [§11.62 SR4a, SR4d].
+
+#### D82. System-versioned tables keep their historical rows in a hidden table of their own
+
+A system-versioned table [ISO/IEC 9075-2:2023 §4.17.2.3] keeps the rows
+its updates and deletes end as historical system rows. turborel keeps
+them in the table's history, a table of DEFINITION_SCHEMA named `SYSTEM
+HISTORY`, then the length of the table's schema name, its schema and
+its name, so no two tables' histories meet. The history has the table's
+columns, none generated and none of a default, its engine and options,
+and no constraint and no index. It is made as the table is defined WITH
+SYSTEM VERSIONING or altered ADD SYSTEM VERSIONING, as kept totals are
+(D51), and dropped with the table or DROP SYSTEM VERSIONING. A table is
+system-versioned exactly while it has a history, so its descriptor
+records nothing more.
+
+The table itself holds only current rows. Its indexes, its constraints,
+its readers and garbage collection of its versions are what they were,
+and none of them sees a historical row. A row changed by a transaction
+later than the one that began it is copied to the history as it is
+written, its end the transaction timestamp, in the same gate section's
+transaction, so rollback and recovery undo or redo it as any insert.
+The cost is one more insert for each update or delete, and a second
+storage per versioned table. No statement adds, alters or drops a
+column of a versioned table [§11.11 SR2, §11.12 SR2, §11.23 SR3], so a
+history is never reshaped.
+
+The transaction timestamp [§4.44] is the clock's instant as the
+transaction first changes data, of TIMESTAMP(6) WITH TIME ZONE at
++00:00 (IV072), kept for the rest of it. Every table with a system-time
+period, versioned or not, stamps the rows written to it with it: an
+insert as BEFORE triggers would see the row, an update where the row is
+written, both as the period's start, the end the highest value of the
+column's type.
+
+#### D83. A column is renamed in place, refused while a text names it
+
+SQL:2023 renames no column [ISO/IEC 9075-2:2023 §11.10], so ALTER TABLE
+… RENAME \[COLUMN\] … TO … is an extension. It changes the column's name
+in the table's descriptor and nothing of its rows, so it copies none and
+gives the table no new storage generation. What refers to a column by
+its place, a key, a NOT NULL, an index, a privilege or a statistic, is
+unchanged. What refers to it by its name as data changes with it: the
+start or end of a period, its period constraint's text, written again
+of the period's names, and each table option of columns, as
+COLUMNSTORE.ORDER (D31).
+
+What names a column in SQL text read again, a view's query, a CHECK, an
+assertion, a trigger, a routine's body or a generation expression, is
+not rewritten, for a name in a text may be captured by another scope
+once changed. While a text that reads the table names the column or its
+new name as an identifier, or a view that reads it selects `*` after
+SELECT or a qualifier, the rename is refused, as DROP COLUMN RESTRICT is
+[ISO/IEC 9075:1992 §11.15 SR4]. The test is of the text's tokens, so it
+is conservative: a name of another table's column of the same spelling
+refuses it too. A typed table's columns are its type's attributes, and a
+system-versioned table's are not altered [§11.12 SR2], so neither is
+renamed. The rename is logged as the action written, as every ALTER
+TABLE is (D33), so recovery and a standby apply it again.
 
 #### D33. Schema changes are transactional
 

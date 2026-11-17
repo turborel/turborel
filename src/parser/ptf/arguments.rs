@@ -146,7 +146,7 @@ impl Parser {
                 self.expect_delim(delim::LEFT_PAREN)?;
                 let name = self.table_name()?;
                 self.expect_delim(delim::RIGHT_PAREN)?;
-                TableArgumentProper::Named(NamedTable { table: name, only: false, correlation: None, columns: None })
+                TableArgumentProper::Named(NamedTable { table: name, only: false, correlation: None, columns: None, system_time: None })
             };
             return self.table_argument(proper, at);
         }

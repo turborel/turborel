@@ -509,6 +509,9 @@ pub struct NamedTable {
     /// The `<derived column list>`, if written [ISO/IEC 9075:1992 §6.3
     /// SR7].
     pub columns: Option<Vec<String>>,
+    /// [ISO/IEC 9075-2:2023 §7.6] Its `<query system time period
+    /// specification>`, if written.
+    pub system_time: Option<Box<super::SystemTimeRead>>,
 }
 
 /// [ISO/IEC 9075:1992 §6.3] A `<derived table>`, its `<table subquery>`

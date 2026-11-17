@@ -156,7 +156,13 @@ impl Parser {
         }
         if self.accept_kw(kw::TABLE) {
             let table = self.table_name()?;
-            return Ok(all_of(TableReference::Table(NamedTable { table, only: false, correlation: None, columns: None })));
+            return Ok(all_of(TableReference::Table(NamedTable {
+                table,
+                only: false,
+                correlation: None,
+                columns: None,
+                system_time: None,
+            })));
         }
         let (at, first) = (self.here(), self.pos == 0);
         let joined = self.table_reference()?;
@@ -501,9 +507,12 @@ impl Parser {
         }
         // [ISO/IEC 9075-2:2023 §7.6] <only spec>.
         let (table, only) = self.target_table()?;
+        // [ISO/IEC 9075-2:2023 §7.6] <query system time period
+        // specification>, of a <table or query name>.
+        let system_time = if only { None } else { self.system_time_read()? };
         let correlation = self.correlation()?;
         let columns = if correlation.is_some() { self.derived_columns()? } else { None };
-        self.recognized(TableReference::Table(NamedTable { table, only, correlation, columns }))
+        self.recognized(TableReference::Table(NamedTable { table, only, correlation, columns, system_time }))
     }
 
     /// \[\[AS\] `<correlation name>`\], if written.

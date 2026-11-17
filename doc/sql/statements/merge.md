@@ -102,7 +102,9 @@ seen, so an insert of the same key fails its unique constraint.
    its clause.
 4. An insert gives as many values as it names columns, each assignable
    to its column. A generated column is given only DEFAULT, and an
-   identity column as its OVERRIDING clause allows.
+   identity column as its OVERRIDING clause allows, a column of ROW
+   START or ROW END only with OVERRIDING USER VALUE. No column of ROW
+   START or ROW END is set.
 5. No condition or value contains a set function.
 6. The transaction is not READ ONLY, but for a temporary table.
 

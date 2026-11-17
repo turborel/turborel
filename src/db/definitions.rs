@@ -306,7 +306,12 @@ impl State {
         self.give_epochs(&mut desc, epochs)?;
         let mut catalog = self.catalog.duplicate();
         catalog.add_table(desc.clone());
-        let built = self.place_table(&mut *catalog, &desc, made)?;
+        let mut built = self.place_table(&mut *catalog, &desc, made)?;
+        // [ISO/IEC 9075-2:2023 §11.3 GR1c] A system-versioned table, its
+        // history made (RULES.md D82).
+        if t.versioning.is_some() {
+            built.tables.push(self.versioned_table(&mut *catalog, &desc, made).or_at(t.name.at)?);
+        }
         self.catalog = Arc::from(catalog);
         let mut reads = read_by(&desc);
         // [ISO/IEC 9075-2:2023 §11.3] what its columns were found from, so

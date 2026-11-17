@@ -1,6 +1,6 @@
 # Versioning
 
-How turborel's releases are numbered and named, and what each kind of
+How Turborel's releases are numbered and named, and what each kind of
 release may change. The files a database is kept in and the wire protocol
 have version numbers of their own; this file lists them.
 
@@ -22,7 +22,7 @@ server of the same release always work together.
 
 ## Alpha
 
-turborel is in alpha, version **0.0.0**, until its first release. While
+Turborel is in alpha, version **0.0.0**, until its first release. While
 its version is 0.y.z nothing is promised. SQL's behaviour, settings, the
 Rust API, the protocol and the files a database is kept in may change in
 any release. A renamed setting is renamed in place, with no alias. A database made by
@@ -60,7 +60,7 @@ every release has one.
 
 Each later codename is chosen when its release is planned, and added here.
 There is no fixed theme. A release is named with its codename, as
-`turborel 1.0.0 (Sprout)`, and so is what the server tells a client and
+`Turborel 1.0.0 (Sprout)`, and so is what the server tells a client and
 what the command-line client prints as a typed session begins.
 
 ## Format and protocol versions

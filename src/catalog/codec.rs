@@ -51,15 +51,15 @@
 use std::collections::BTreeSet;
 
 use super::{
-    Actions, CheckLevels, ConstraintAttributes, ConstraintDesc, ConstraintKind, DomainDesc, ForeignKey, Horizon, IndexDesc, MatchType,
-    PeriodDesc, PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind, TypedActions, Underlying, UsageDesc,
-    ViewDesc,
+    Actions, CheckLevels, ConstraintAttributes, ConstraintDesc, ConstraintKind, DomainDesc, Horizon, IndexDesc, MatchType, PeriodDesc,
+    PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind, TypedActions, Underlying, UsageDesc, ViewDesc,
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::codec::{put_value, value};
 
 mod columns;
+mod foreign;
 mod objects;
 mod roles;
 mod routines;
@@ -147,8 +147,13 @@ pub(super) fn horizon(r: &mut Reader<'_>) -> Result<Horizon> {
 }
 
 /// The tag of `action`, and the action of a tag.
-const ACTIONS: [ReferentialAction; 4] =
-    [ReferentialAction::Cascade, ReferentialAction::SetNull, ReferentialAction::SetDefault, ReferentialAction::NoAction];
+const ACTIONS: [ReferentialAction; 5] = [
+    ReferentialAction::Cascade,
+    ReferentialAction::SetNull,
+    ReferentialAction::SetDefault,
+    ReferentialAction::NoAction,
+    ReferentialAction::Restrict,
+];
 const MATCHES: [MatchType; 3] = [MatchType::Simple, MatchType::Partial, MatchType::Full];
 
 fn tag_of<T: PartialEq>(all: &[T], item: &T) -> u8 {
@@ -165,20 +170,16 @@ fn put_kind(out: &mut Vec<u8>, kind: &ConstraintKind) {
             out.put_u8(0);
             out.put_u32(count(*at));
         }
-        ConstraintKind::Unique { columns, primary, nulls_distinct } => {
+        ConstraintKind::Unique { columns, primary, nulls_distinct, period } => {
             out.put_u8(1);
             put_positions(out, columns.iter());
             put_flag(out, *primary);
             put_flag(out, *nulls_distinct);
+            triggers::put_optional(out, period.as_deref());
         }
         ConstraintKind::ForeignKey(fk) => {
             out.put_u8(2);
-            put_positions(out, fk.columns.iter());
-            put_name(out, &fk.table);
-            put_positions(out, fk.referenced.iter());
-            out.put_u8(tag_of(&MATCHES, &fk.match_type));
-            out.put_u8(tag_of(&ACTIONS, &fk.on_update));
-            out.put_u8(tag_of(&ACTIONS, &fk.on_delete));
+            foreign::put_foreign_key(out, fk);
         }
         ConstraintKind::Check { text, names, reads, horizon } => {
             out.put_u8(3);
@@ -193,13 +194,11 @@ fn put_kind(out: &mut Vec<u8>, kind: &ConstraintKind) {
 fn kind(r: &mut Reader<'_>) -> Result<ConstraintKind> {
     Ok(match r.u8()? {
         0 => ConstraintKind::NotNull(position(r)?),
-        1 => ConstraintKind::Unique { columns: positions(r)?, primary: flag(r)?, nulls_distinct: flag(r)? },
-        2 => {
-            let (columns, table, referenced) = (positions(r)?, qualified(r)?, positions(r)?);
-            let (m, u, d) = (r.u8()?, r.u8()?, r.u8()?);
-            let (match_type, on_update, on_delete) = (of_tag(r, &MATCHES, m)?, of_tag(r, &ACTIONS, u)?, of_tag(r, &ACTIONS, d)?);
-            ConstraintKind::ForeignKey(ForeignKey { columns, table, referenced, match_type, on_update, on_delete })
+        1 => {
+            let (columns, primary, nulls_distinct) = (positions(r)?, flag(r)?, flag(r)?);
+            ConstraintKind::Unique { columns, primary, nulls_distinct, period: triggers::optional(r)? }
         }
+        2 => ConstraintKind::ForeignKey(foreign::foreign_key(r)?),
         3 => ConstraintKind::Check { text: r.str()?, names: r.str()?, reads: get_all(r, qualified)?, horizon: horizon(r)? },
         _ => return Err(r.corrupt("not a kind of constraint")),
     })
@@ -243,7 +242,7 @@ pub(crate) fn put_table(out: &mut Vec<u8>, table: &TableDesc) {
         out.put_str(&p.name);
         out.put_str(&p.start);
         out.put_str(&p.end);
-        put_name(out, &p.constraint);
+        put_all(out, p.constraint.iter(), put_name);
     });
 }
 
@@ -261,7 +260,8 @@ pub(crate) fn table(r: &mut Reader<'_>) -> Result<TableDesc> {
     };
     let temporary = kind.map(|kind| flag(r).map(|delete_rows| Temporary { kind, delete_rows })).transpose()?;
     let typed = structured::typed(r)?;
-    let periods = get_all(r, |r| Ok(PeriodDesc { name: r.str()?, start: r.str()?, end: r.str()?, constraint: qualified(r)? }))?;
+    let periods =
+        get_all(r, |r| Ok(PeriodDesc { name: r.str()?, start: r.str()?, end: r.str()?, constraint: get_all(r, qualified)?.pop() }))?;
     Ok(TableDesc { name, columns, constraints, engine, options, generation, temporary, typed, periods })
 }
 
@@ -500,11 +500,16 @@ mod tests {
                     put_name(out, &QualifiedName { auth: "A".into(), ident: "T".into() });
                     put_positions(out, [0].iter());
                 },
-                &[0, action, 0],
+                &[0, action, 0, 0, 0],
             )
         };
         assert_eq!(refused(&foreign_key(9), kind), corrupt, "an action");
-        assert!(kind(&mut Reader::new(&foreign_key(3), "kind")).is_ok());
+        assert!(kind(&mut Reader::new(&foreign_key(4), "kind")).is_ok(), "RESTRICT");
+        let mut alone = foreign_key(3);
+        alone.truncate(alone.len().saturating_sub(2));
+        triggers::put_optional(&mut alone, Some("P"));
+        triggers::put_optional(&mut alone, None);
+        assert_eq!(refused(&alone, kind), corrupt, "a foreign key of one period");
         let view_with = |option: u8| {
             bytes(
                 |out| {

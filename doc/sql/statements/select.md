@@ -243,6 +243,11 @@ over the match. A window may hold a row pattern too, which narrows each
 row's frame to the match starting at it ([Row pattern
 recognition](../06-queries.md#row-pattern-recognition)).
 
+A system-versioned table read FOR SYSTEM_TIME AS OF a point in time,
+BETWEEN two or FROM one TO another is read with its historical rows
+whose system-time period the clause names ([Reading a table's
+history](../06-queries.md#reading-a-tables-history)).
+
 A query begins a transaction if none is active, and reads as its
 isolation level says ([SET TRANSACTION](set-transaction.md)).
 
@@ -342,6 +347,10 @@ parameters, is [a statement of a program too](#select-into).
 14. A window of a row pattern has a frame of ROWS BETWEEN CURRENT ROW
     and a bound, EXCLUDE NO OTHERS, and a pattern of no `^` or `$`. A
     `<window row pattern measure>` names one of its measures.
+15. A table read FOR SYSTEM_TIME is a system-versioned base table. Each
+    point in time is a datetime and references no column or SQL
+    parameter. A table read so, but AS OF CURRENT_TIMESTAMP, is read in
+    no constraint, and a query reading it so is not updatable.
 
 ## PRIVILEGES
 
@@ -504,7 +513,8 @@ and T620, with the window parts of T612. NTILE is Feature T614, LEAD
 and LAG T615, IGNORE NULLS T616, FIRST_VALUE and LAST_VALUE T617,
 NTH_VALUE T618, the `<nested window function>` [§6.11] T619, and
 COUNT(DISTINCT ...) over a window of an ordering or a frame T627.
-MATCH_RECOGNIZE is the `<row pattern recognition clause>` of §7.7 to
+FOR SYSTEM_TIME is the `<query system time period specification>` of
+§7.6, Feature T180. MATCH_RECOGNIZE is the `<row pattern recognition clause>` of §7.7 to
 §7.9, Feature R010, a window's row pattern its `<row pattern measures>`
 and `<row pattern common syntax>` [§7.15], Feature R020, and its set
 functions Feature R030. SELECT

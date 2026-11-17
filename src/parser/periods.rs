@@ -7,7 +7,9 @@
 //! may begin an operand, so a column or an alias may still be so named.
 
 use super::Parser;
-use crate::ast::{PeriodDefinition, PeriodName, PeriodOperand, PeriodOperator, Predicate, SYSTEM_TIME};
+use crate::ast::{
+    PeriodDefinition, PeriodName, PeriodOperand, PeriodOperator, Portion, Predicate, SYSTEM_TIME, SystemTimeKind, SystemTimeRead,
+};
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
 
@@ -27,11 +29,27 @@ const SUCCEEDS: &str = "SUCCEEDS";
 /// The immediately preceding and succeeding predicates' first word.
 const IMMEDIATELY: &str = "IMMEDIATELY";
 
+/// [ISO/IEC 9075-2:2023 §14.9, §14.14] The word after FOR of FOR PORTION OF.
+const PORTION: &str = "PORTION";
+/// [ISO/IEC 9075-2:2023 §7.6] BETWEEN SYMMETRIC of FOR SYSTEM_TIME.
+const SYMMETRIC: &str = "SYMMETRIC";
+/// [ISO/IEC 9075-2:2023 §7.6] BETWEEN ASYMMETRIC of FOR SYSTEM_TIME, as
+/// it is without either.
+const ASYMMETRIC: &str = "ASYMMETRIC";
+
 impl Parser {
     /// Whether PERIOD FOR is next: a `<system or application time period
     /// specification>`.
     pub(super) fn at_period(&self) -> bool {
         matches!(self.peek(), Tok::Identifier(w) if w == PERIOD) && self.next_is_kw(kw::FOR)
+    }
+
+    /// Whether a `<referencing period specification>` or `<referenced
+    /// period specification>` is next [ISO/IEC 9075-2:2023 §11.8]: PERIOD
+    /// and a name, where a column named PERIOD has a comma or a parenthesis
+    /// after it.
+    pub(super) fn at_period_specification(&self) -> bool {
+        matches!(self.peek(), Tok::Identifier(w) if w == PERIOD) && matches!(self.peek_at(1), Tok::Identifier(_) | Tok::KeyWord(_))
     }
 
     /// [ISO/IEC 9075-2:2023 §11.3] `<system or application time period
@@ -162,6 +180,73 @@ impl Parser {
         }
         self.expect_word(CONTAINS)?;
         Ok(PeriodOperator::Contains)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §7.6] `<query system time period
+    /// specification>`, if FOR SYSTEM_TIME begins it: AS OF a point in
+    /// time, BETWEEN \[ASYMMETRIC | SYMMETRIC\] two AND, or FROM one TO
+    /// another, each a `<datetime value expression>`, of no truth value.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it is not written so.
+    pub(super) fn system_time_read(&mut self) -> Result<Option<Box<SystemTimeRead>>> {
+        let at = self.here();
+        if self.peek() != &Tok::KeyWord(kw::FOR) || *self.peek_at(1) != Tok::Identifier(SYSTEM_TIME.to_owned()) {
+            return Ok(None);
+        }
+        self.advance();
+        self.advance();
+        let kind = if self.accept_kw(kw::AS) {
+            self.expect_kw(kw::OF)?;
+            SystemTimeKind::AsOf(self.common_value_expression()?)
+        } else if self.accept_kw(kw::BETWEEN) {
+            let symmetric = self.accept_word(SYMMETRIC);
+            if !symmetric {
+                self.accept_word(ASYMMETRIC);
+            }
+            let first = self.common_value_expression()?;
+            self.expect_kw(kw::AND)?;
+            SystemTimeKind::Between(symmetric, first, self.common_value_expression()?)
+        } else {
+            self.expect_kw(kw::FROM)?;
+            let first = self.common_value_expression()?;
+            self.expect_kw(kw::TO)?;
+            SystemTimeKind::FromTo(first, self.common_value_expression()?)
+        };
+        Ok(Some(Box::new(SystemTimeRead { kind, at })))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.3] `<application time period name>`, an
+    /// `<identifier>`: SYSTEM_TIME, a reserved word of SQL:2023, names no
+    /// application-time period.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it is no identifier, or SYSTEM_TIME.
+    pub(super) fn application_period_name(&mut self) -> Result<String> {
+        if *self.peek() == Tok::Identifier(SYSTEM_TIME.to_owned()) {
+            return Err(self.syntax("expected an <application time period name>, which SYSTEM_TIME, a reserved word, is not"));
+        }
+        self.identifier()
+    }
+
+    /// [ISO/IEC 9075-2:2023 §14.9, §14.14] FOR PORTION OF `<application
+    /// time period name>` FROM `<point in time 1>` TO `<point in time 2>`,
+    /// if FOR begins it.
+    pub(super) fn for_portion(&mut self) -> Result<Option<Box<Portion>>> {
+        let at = self.here();
+        if !self.accept_kw(kw::FOR) {
+            return Ok(None);
+        }
+        self.expect_word(PORTION)?;
+        self.expect_kw(kw::OF)?;
+        let period = self.application_period_name()?;
+        self.expect_kw(kw::FROM)?;
+        let from = self.value_expression()?;
+        self.expect_kw(kw::TO)?;
+        let to = self.value_expression()?;
+        Ok(Some(Box::new(Portion { period, from, to, at })))
     }
 }
 

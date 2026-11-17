@@ -26,9 +26,11 @@ mod constraints;
 mod depending;
 mod identity;
 mod periods;
+mod rename;
 mod scope;
 mod storage;
 mod truncate;
+mod versioning;
 
 pub(super) use depending::{Cause, Dependent, depends};
 pub(super) use storage::value_of;
@@ -41,7 +43,7 @@ use super::ddl::Dropped;
 use super::schema::constraint_index_name;
 use super::sequences::Epochs;
 use super::{State, api, rule};
-use crate::ast::{AlterAction, AlterColumnAction, DropBehavior};
+use crate::ast::{AlterAction, AlterColumnAction, DropBehavior, PeriodDefinition, PeriodName};
 use crate::binder::view_degree;
 use crate::catalog::{Actions, ConstraintKind, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, ViewDesc};
 use crate::error::{At, Result};
@@ -88,6 +90,10 @@ pub(super) enum Reshape {
     Append,
     /// The column at this position removed.
     Remove(usize),
+    /// [ISO/IEC 9075-2:2023 §11.27 GR1, §11.28 GR1] Of the system-time
+    /// period, two columns added last, if none; else removed, at these
+    /// positions, the second's once the first is gone.
+    Two(Option<[usize; 2]>),
 }
 
 impl Reshape {
@@ -101,13 +107,19 @@ impl Reshape {
                     row.remove(at);
                 }
             }
+            Reshape::Two(None) => row.extend([Value::Null, Value::Null]),
+            Reshape::Two(Some([first, second])) => return Reshape::Remove(second).row(Reshape::Remove(first).row(row)),
         }
         row
     }
 
     /// The new position of the column at `at`, none if it is removed.
     pub(super) fn moved(self, at: usize) -> Option<usize> {
-        let Reshape::Remove(gone) = self else { return Some(at) };
+        let gone = match self {
+            Reshape::Remove(gone) => gone,
+            Reshape::Two(Some([first, second])) => return Reshape::Remove(first).moved(at).and_then(|m| Reshape::Remove(second).moved(m)),
+            Reshape::Keep | Reshape::Append | Reshape::Two(None) => return Some(at),
+        };
         match at.cmp(&gone) {
             Ordering::Less => Some(at),
             Ordering::Equal => None,
@@ -139,6 +151,7 @@ impl State {
         action: &AlterAction,
         (made, tx, epochs): (Option<&Made>, Option<&Txn>, &mut Epochs),
     ) -> Result<(Dropped, Made, Option<Reshape>)> {
+        versioning::unversioned(self, qn, action)?;
         match action {
             AlterAction::AddColumn(_) | AlterAction::DropColumn { .. } => {
                 let (dropped, built, reshape) = self.alter_columns((qn, names, zone), action, (made, epochs))?;
@@ -146,6 +159,10 @@ impl State {
             }
             AlterAction::AlterColumn { column, at, action: a @ (AlterColumnAction::AddScope(_) | AlterColumnAction::DropScope(_)) } => {
                 Ok((self.alter_scope((qn, names), column, a).or_at(*at)?, Made::default(), None))
+            }
+            AlterAction::AlterColumn { column, at, action: AlterColumnAction::Rename(to) } => {
+                self.rename_column(qn, column, to).or_at(*at)?;
+                Ok((Dropped::default(), Made::default(), None))
             }
             AlterAction::AlterColumn { column, at, action } => {
                 self.alter_column((qn, zone), (column, *at), (action, epochs)).or_at(*at)?;
@@ -155,10 +172,18 @@ impl State {
             AlterAction::DropConstraint { name, behavior } => {
                 Ok((self.drop_constraint((qn, names), name, *behavior).or_at(name.at)?, Made::default(), None))
             }
-            AlterAction::AddPeriod(def) => Ok((Dropped::default(), self.add_period((qn, names), def, (made, tx))?, None)),
+            AlterAction::AddPeriod(def @ PeriodDefinition { name: PeriodName::SystemTime, .. }, added) => {
+                self.add_system_period((qn, names, zone), (def, added), (made, epochs))
+            }
+            AlterAction::AddPeriod(def, added) => Ok((Dropped::default(), self.add_period((qn, names), (def, added), (made, tx))?, None)),
+            AlterAction::DropPeriod { name: PeriodName::SystemTime, at, behavior } => {
+                self.drop_system_period(qn, *behavior, made).or_at(*at)
+            }
             AlterAction::DropPeriod { name, at, behavior } => {
                 Ok((self.drop_period(qn, name, *behavior).or_at(*at)?, Made::default(), None))
             }
+            AlterAction::AddVersioning(at) => Ok((Dropped::default(), self.add_versioning(qn, made).or_at(*at)?, None)),
+            AlterAction::DropVersioning { at, behavior } => Ok((self.drop_versioning(qn, *behavior).or_at(*at)?, Made::default(), None)),
             AlterAction::Storage(_) => self.alter_storage(qn, action, (made, tx)),
             AlterAction::RevertCollation(name) => self.revert_collation(qn, name, (action, made)),
             AlterAction::Truncate { restart } => self.truncate_rows(qn, *restart, (action, made, epochs)),
@@ -202,8 +227,10 @@ impl State {
             AlterAction::AlterColumn { .. }
             | AlterAction::AddConstraint(_)
             | AlterAction::DropConstraint { .. }
-            | AlterAction::AddPeriod(_)
+            | AlterAction::AddPeriod(..)
             | AlterAction::DropPeriod { .. }
+            | AlterAction::AddVersioning(_)
+            | AlterAction::DropVersioning { .. }
             | AlterAction::RevertCollation(_)
             | AlterAction::Truncate { .. }
             | AlterAction::Storage(_) => {
@@ -324,13 +351,12 @@ impl State {
         for ix in self.catalog.indexes(&next.name) {
             gone.push(ix.name.clone());
             let Some(columns) = reshape.columns(&ix.columns) else { continue };
-            if ix.unique && !next.unique().any(|u| u == columns.as_slice()) {
+            if ix.unique && !next.unique().any(|u| u == columns) {
                 continue;
             }
             kept.push(self.with_derived(IndexDesc { columns, ..ix.clone() }, next)?);
         }
-        let added: Vec<Vec<usize>> =
-            next.unique().filter(|u| !kept.iter().any(|ix| ix.unique && ix.columns == *u)).map(<[usize]>::to_vec).collect();
+        let added: Vec<Vec<usize>> = next.unique().filter(|u| !kept.iter().any(|ix| ix.unique && ix.columns == *u)).collect();
         // Of as many names as the table has indexes, and one more, one is free.
         let names = self.catalog.indexes(&next.name).len().saturating_add(added.len());
         for columns in added {
@@ -409,8 +435,10 @@ impl State {
                 AlterAction::AlterColumn { .. }
                 | AlterAction::AddConstraint(_)
                 | AlterAction::DropConstraint { .. }
-                | AlterAction::AddPeriod(_)
+                | AlterAction::AddPeriod(..)
                 | AlterAction::DropPeriod { .. }
+                | AlterAction::AddVersioning(_)
+                | AlterAction::DropVersioning { .. }
                 | AlterAction::RevertCollation(_)
                 | AlterAction::Truncate { .. }
                 | AlterAction::Storage(_) => api("[DESIGN] a default, a constraint, the storage or its rows change no view"),

@@ -44,7 +44,7 @@ impl State {
                 changed.push(table.clone());
             }
             match id {
-                Some(id) => row_checks((table, &self.constraints_of(table)), id, columns, &mut out),
+                Some(id) => row_checks((self.catalog.table(table), &self.constraints_of(table)), (table, id), columns, &mut out),
                 None => Ok(()),
             }
         })?;
@@ -86,8 +86,10 @@ impl State {
     fn unique_checks(&self, effects: &mut Effects<'_>, changed: &[QualifiedName], out: &mut HeldRows<Check>) -> Result<()> {
         for desc in changed.iter().filter_map(|t| self.catalog.table(t)) {
             for c in self.constraints_of(&desc.name) {
-                let ConstraintKind::Unique { columns: of, .. } = &c.kind else { continue };
-                effects.done.visit(&mut |effect| match keyed(effect, desc, of) {
+                let ConstraintKind::Unique { columns, period, .. } = &c.kind else { continue };
+                // [ISO/IEC 9075-2:2023 §11.7 SR6d i] with a period's columns.
+                let of = desc.key_columns(columns, period.as_deref());
+                effects.done.visit(&mut |effect| match keyed(effect, desc, &of) {
                     Some(id) => out.push(Check::Unique { table: desc.name.clone(), constraint: c.name.clone(), id }),
                     None => Ok(()),
                 })?;
@@ -117,7 +119,11 @@ impl State {
         // row alone.
         for child in self.catalog.tables() {
             for (name, fk) in self.foreign_keys_of(&child.name).into_iter().filter(|(_, fk)| self.reaches(table, &fk.table)) {
-                if columns.is_none_or(|set| fk.referenced.iter().any(|r| set.contains(r))) {
+                // [ISO/IEC 9075-2:2023 §11.8 SR18a i] of a temporal one,
+                // its period's columns too.
+                let parent = self.catalog.table(&fk.table);
+                let key = parent.map_or_else(|| fk.referenced.clone(), |p| fk.referenced_key(p));
+                if columns.is_none_or(|set| key.iter().any(|r| set.contains(r))) {
                     let id = id.filter(|_| fk.table == *table);
                     out.push(Check::Referenced { child: child.name.clone(), constraint: name.clone(), old: old.clone(), id })?;
                 }
@@ -133,24 +139,24 @@ fn assigned(of: &[usize], columns: Option<&[usize]>) -> bool {
     columns.is_none_or(|set| of.iter().any(|x| set.contains(x)))
 }
 
-/// Adds to `out` the checks of row `id` of `table` written, giving values
-/// to `columns`, or to every column if none: of its `constraints` on a
-/// column given a value, but UNIQUE ones (`State::checks`), and of its
-/// CHECKs without a subquery.
+/// Adds to `out` the checks of row `id` of `table`, described by `desc`,
+/// written, giving values to `columns`, or to every column if none: of its
+/// `constraints` on a column given a value, but UNIQUE ones
+/// (`State::checks`), and of its CHECKs without a subquery.
 ///
 /// # Errors
 ///
 /// The spill area's.
 fn row_checks(
-    (table, constraints): (&QualifiedName, &[&ConstraintDesc]),
-    id: RowId,
+    (desc, constraints): (Option<&TableDesc>, &[&ConstraintDesc]),
+    (table, id): (&QualifiedName, RowId),
     columns: Option<&[usize]>,
     out: &mut HeldRows<Check>,
 ) -> Result<()> {
     for c in constraints {
         let of_row = match &c.kind {
             ConstraintKind::NotNull(at) => assigned(std::slice::from_ref(at), columns),
-            ConstraintKind::ForeignKey(fk) => assigned(&fk.columns, columns),
+            ConstraintKind::ForeignKey(fk) => assigned(&desc.map_or_else(|| fk.columns.clone(), |d| fk.referencing_key(d)), columns),
             ConstraintKind::Check { reads, .. } => reads.is_empty(),
             ConstraintKind::Unique { .. } => false,
         };

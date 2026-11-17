@@ -3,10 +3,10 @@
 
 use super::QualifiedName;
 
-/// [ISO/IEC 9075-2:2023 §4.16.1] A period descriptor of an
-/// application-time period: its name, the names of its start and end
-/// columns, and the name of its period constraint, the implicit CHECK
-/// (start < end) [§11.3 SR2e v 2 B].
+/// [ISO/IEC 9075-2:2023 §4.16.1] A period descriptor: its name, the names
+/// of its start and end columns, and of an application-time period, the
+/// name of its period constraint, the implicit CHECK (start < end) [§11.3
+/// SR2e v 2 B]; a system-time period, SYSTEM_TIME, has none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeriodDesc {
     /// The period's name.
@@ -15,8 +15,8 @@ pub struct PeriodDesc {
     pub start: String,
     /// The name of the period end column.
     pub end: String,
-    /// The name of the period constraint.
-    pub constraint: QualifiedName,
+    /// The name of the period constraint, of an application-time period.
+    pub constraint: Option<QualifiedName>,
 }
 
 impl PeriodDesc {

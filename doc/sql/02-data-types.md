@@ -51,7 +51,7 @@ lines, polygons and collections, registered by the embedding program.
 The longest string is 32,767 characters, the longest binary string 32,767
 octets, the longest large object 4G characters or octets, an exact number holds at most 18 digits and a DECFLOAT at most
 34. A type past a limit
-is valid SQL turborel does not process: SQLCODE -900, SQLSTATE 0A000.
+is valid SQL Turborel does not process: SQLCODE -900, SQLSTATE 0A000.
 The [Limits](../appendix/d-limits.md) appendix lists them all.
 
 ## Character strings

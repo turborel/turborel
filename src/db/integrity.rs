@@ -35,6 +35,7 @@ mod keys;
 mod modes;
 mod references;
 mod rewritten;
+mod temporal;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -43,13 +44,13 @@ use std::sync::Arc;
 use self::keys::KeyCheck;
 pub(super) use self::modes::{Deferral, Whole};
 use super::assertions::Asserted;
-use super::{State, api, plan};
-use crate::catalog::{Authorization, ConstraintDesc, ConstraintKind, Horizon, QualifiedName, ReferentialAction, TableDesc};
+use super::{State, plan};
+use crate::catalog::{Authorization, ConstraintDesc, ConstraintKind, Horizon, QualifiedName, TableDesc};
 use crate::error::{Code, Result, SqlError, Subject, fail};
 use crate::exec::{Heard, HeldRows, eval_cond, execute};
 use crate::logical::{Cond, LogicalPlan, Truth};
 use crate::spill::ListSpace;
-use crate::storage::{Row, RowId, project};
+use crate::storage::{Row, RowId};
 use crate::txn::Txn;
 use crate::value::Value;
 
@@ -311,10 +312,10 @@ impl State {
                 continue;
             }
             for child in self.catalog.tables() {
-                let acts = self.foreign_keys_of(&child.name).into_iter().any(|(_, fk)| {
-                    self.reaches(&t, &fk.table)
-                        && (fk.on_delete != ReferentialAction::NoAction || fk.on_update != ReferentialAction::NoAction)
-                });
+                let acts = self
+                    .foreign_keys_of(&child.name)
+                    .into_iter()
+                    .any(|(_, fk)| self.reaches(&t, &fk.table) && (fk.on_delete.writes() || fk.on_update.writes()));
                 if acts {
                     next.push(child.name.clone());
                 }
@@ -503,8 +504,7 @@ impl State {
                 }
             }
             ConstraintKind::ForeignKey(fk) => {
-                let values = project(&row, &fk.columns).ok_or_else(|| api(format!("[DESIGN] a row of {table} is short")))?;
-                if !self.matches(tx, fk, &values)? {
+                if !self.matches_row(tx, (desc, fk), &row)? {
                     return fail(
                         Code::Constraint,
                         format!("[ISO/IEC 9075:1992 §11.8 GR2] a row of {table} references no row of {}: FOREIGN KEY {}", fk.table, c.name),

@@ -7,7 +7,7 @@ choices:
 
 ## By clause of the standard
 
-| What | turborel |
+| What | Turborel |
 |---|---|
 | The character set; its order | Unicode, SQL_TEXT; strings ordered by Unicode scalar value, unless a collation says otherwise |
 | LIKE under a collation | by each character's folding; under UNICODE and the collations of languages, each run of the pattern's characters matches a part of the value equal to it |

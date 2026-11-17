@@ -47,7 +47,7 @@ default; the column store, `columnstore`, named by CREATE TABLE ...
 USING; or one a plug-in registers.
 [Table Options](g-table-options.md).
 
-**extension**: what turborel has that the standards do not, marked
+**extension**: what Turborel has that the standards do not, marked
 *(extension)* in this manual.
 
 **foreign key**: a constraint that a row's values match those of a row

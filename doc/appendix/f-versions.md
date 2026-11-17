@@ -15,7 +15,7 @@ predecessor's.
 | 0.y.z | alpha |
 | 1.0.0 | Sprout |
 
-turborel is in alpha, 0.0.0: while its version is 0.y.z, its SQL, API,
+Turborel is in alpha, 0.0.0: while its version is 0.y.z, its SQL, API,
 protocol and files may change in any release, and a database made by
 one may not open with another. From 1.0.0 a patch fixes, a minor adds,
 and only a major release takes away. [VERSIONING.md](../../VERSIONING.md)

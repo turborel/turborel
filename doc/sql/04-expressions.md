@@ -209,7 +209,7 @@ VALUES (CHAR_LENGTH('café' USING OCTETS), POSITION('crème' IN 'café crème' U
 ```
 
 CONVERT and TRANSLATE, of character sets other than SQL_TEXT, are valid
-SQL turborel does not process: SQLCODE -900.
+SQL Turborel does not process: SQLCODE -900.
 
 ### Regular expressions
 

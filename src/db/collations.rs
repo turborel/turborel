@@ -410,7 +410,7 @@ mod tests {
         };
         let key = |at: usize, nulls_distinct: bool| ConstraintDesc {
             name: QualifiedName { auth: "A".into(), ident: format!("U{at}") },
-            kind: ConstraintKind::Unique { columns: vec![at], primary: false, nulls_distinct },
+            kind: ConstraintKind::Unique { columns: vec![at], primary: false, nulls_distinct, period: None },
             attributes: ConstraintAttributes::default(),
             domain: None,
         };

@@ -35,7 +35,7 @@ The views of SQL-92, each with the columns the standard gives it:
 |---|---|
 | INFORMATION_SCHEMA_CATALOG_NAME | the catalog: its name |
 | SCHEMATA | schema the user owns |
-| TABLES | table and view, its TABLE_TYPE BASE TABLE, VIEW, GLOBAL TEMPORARY or LOCAL TEMPORARY |
+| TABLES | table and view, its TABLE_TYPE BASE TABLE, VIEW, GLOBAL TEMPORARY, LOCAL TEMPORARY or SYSTEM VERSIONED *(extension)* |
 | VIEWS | view: its definition, CHECK OPTION, whether updatable |
 | COLUMNS | column of a table or view: its position, type, default, nullability, domain, identity and generation |
 | DOMAINS | domain: its type and default |
@@ -293,7 +293,7 @@ string as CHARACTER, its octet length four octets a character.
 | View | Columns | One row of each |
 |---|---|---|
 | TABLE_OPTIONS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ENGINE_NAME, OPTION_NAME, DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, CHANGED_BY, DESCRIPTION | option of a table's storage engine, its value set or its default |
-| PERIODS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, PERIOD_NAME, START_COLUMN_NAME, END_COLUMN_NAME, CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME | application-time period of a table the user holds a privilege on: its start and end columns, and its period constraint ([CREATE TABLE](statements/create-table.md)) |
+| PERIODS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, PERIOD_NAME, START_COLUMN_NAME, END_COLUMN_NAME, CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME | period of a table the user holds a privilege on, SYSTEM_TIME or an application-time period: its start and end columns, and the period constraint of an application-time period ([CREATE TABLE](statements/create-table.md)) |
 | INDEXES | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, IS_UNIQUE, COLUMN_NAMES | index, a UNIQUE or PRIMARY KEY constraint's among them |
 | SEQUENCES | SEQUENCE_CATALOG, SEQUENCE_SCHEMA, SEQUENCE_NAME, DATA_TYPE, NUMERIC_PRECISION, NUMERIC_PRECISION_RADIX, NUMERIC_SCALE, START_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, INCREMENT, CYCLE_OPTION | sequence generator the user holds USAGE on: its type, and its start, bounds and increment, each as text, and YES if it cycles ([CREATE SEQUENCE](statements/create-sequence.md)) |
 | INDEX_OPTIONS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, OPTION_NAME, DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, CHANGED_BY, DESCRIPTION | option of an index |

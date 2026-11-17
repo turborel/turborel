@@ -140,6 +140,10 @@ impl SqlState {
     pub const UNHANDLED_USER_EXCEPTION: SqlState = SqlState(*b"45000");
     /// Data exception.
     pub const DATA_EXCEPTION: SqlState = SqlState(*b"22000");
+    /// Data exception: invalid row version [ISO/IEC 9075-2:2023 §9.17
+    /// GR16a iii 1, §15.14 GR10a iii 1 A]: a row changed whose system-time
+    /// start is later than the transaction timestamp.
+    pub const INVALID_ROW_VERSION: SqlState = SqlState(*b"2201H");
     /// Data exception: string data, right truncation.
     pub const STRING_DATA_RIGHT_TRUNCATION: SqlState = SqlState(*b"22001");
     /// [ISO/IEC 9075-2:2023 §4.2.1, §24.1] Data exception: character not
@@ -255,6 +259,9 @@ impl SqlState {
     pub const INTERVAL_FIELD_OVERFLOW: SqlState = SqlState(*b"22015");
     /// Integrity constraint violation.
     pub const INTEGRITY_CONSTRAINT_VIOLATION: SqlState = SqlState(*b"23000");
+    /// Integrity constraint violation: restrict violation [ISO/IEC
+    /// 9075-2:2023 §15.18 GR9a iv, GR10a iv].
+    pub const RESTRICT_VIOLATION: SqlState = SqlState(*b"23001");
     /// Triggered data change violation.
     pub const TRIGGERED_DATA_CHANGE_VIOLATION: SqlState = SqlState(*b"27000");
     /// Triggered action exception [ISO/IEC 9075-2:2023 §15.21 GR5b i 1,

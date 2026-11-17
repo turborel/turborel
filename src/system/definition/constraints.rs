@@ -143,6 +143,7 @@ fn action(a: ReferentialAction) -> Value {
         ReferentialAction::SetNull => "SET NULL",
         ReferentialAction::SetDefault => "SET DEFAULT",
         ReferentialAction::NoAction => "NO ACTION",
+        ReferentialAction::Restrict => "RESTRICT",
     })
 }
 

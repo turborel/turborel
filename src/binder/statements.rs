@@ -6,10 +6,12 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use super::portion::Portioned;
 use super::views::{Source, ViewCheck, write_target};
 use super::{Binder, Bound, Context, FromItem, Scope, bind_query_specification, no_column, qualify, require, rule};
 use crate::ast::{
-    CursorSpecification, QuerySpecification, SearchCondition, SetClause, TableExpression, TableName, TableReference, UpdateSource,
+    CursorSpecification, Portion, QuerySpecification, SearchCondition, SetClause, SystemTimeRead, TableExpression, TableName,
+    TableReference, UpdateSource,
 };
 use crate::catalog::Actions;
 use crate::catalog::{Catalog, ColumnDesc, QualifiedName, TableDesc};
@@ -63,9 +65,11 @@ pub fn updatable_only(c: &CursorSpecification) -> bool {
 
 /// [X3.135-1986 §5.25 SR11c, SR11e] one `<table reference>`, naming a
 /// table [ISO/IEC 9075:1992 §7.5 SR10, §7.9 SR12c], and no GROUP BY or
-/// HAVING.
+/// HAVING; read FOR SYSTEM_TIME only AS OF CURRENT_TIMESTAMP [ISO/IEC
+/// 9075-2:2023 §7.16 SR22d].
 fn single_ungrouped_table(te: &TableExpression) -> bool {
-    matches!(te.from.as_slice(), [TableReference::Table(t)] if t.columns.is_none()) && te.group_by.is_none() && te.having.is_none()
+    let [TableReference::Table(t)] = te.from.as_slice() else { return false };
+    t.columns.is_none() && t.system_time.as_deref().is_none_or(SystemTimeRead::current) && te.group_by.is_none() && te.having.is_none()
 }
 
 /// [X3.135-1986 §8.10] the `<query specification>` of a `<select statement>`.
@@ -245,6 +249,10 @@ pub struct BoundWrite {
     /// [ISO/IEC 9075-2:2023 §15.14 GR9] Each generated column of the object
     /// table, by its position, its generation expression bound over the row.
     pub generated: Vec<(usize, Expr)>,
+    /// [ISO/IEC 9075-2:2023 §15.8 GR9, §15.14 GR12] Of a statement FOR
+    /// PORTION OF a period, over the old row: the end of its part before
+    /// the portion and the start of its part after, each null if none.
+    pub portion: Option<super::portion::Pieces>,
 }
 
 impl BoundWrite {
@@ -370,8 +378,9 @@ fn bind_set_clause(
 }
 
 /// [ISO/IEC 9075-2:2023 §14.15 SR3, SR5] That `sc` may set the column
-/// `base` of `table`: not its self-referencing column, and of a generated
-/// column, or an identity column always generated, only to DEFAULT.
+/// `base` of `table`: not its self-referencing column, nor a system-time
+/// period column, and of a generated column, or an identity column always
+/// generated, only to DEFAULT.
 fn settable(table: &TableDesc, base: Option<&ColumnDesc>, sc: &SetClause) -> Result<()> {
     // [ISO/IEC 9075-2:2023 §14.15 SR3] no self-referencing column set.
     if let Some(typed) = &table.typed
@@ -381,6 +390,11 @@ fn settable(table: &TableDesc, base: Option<&ColumnDesc>, sc: &SetClause) -> Res
             "[ISO/IEC 9075-2:2023 §14.15 SR3] column {} is the self-referencing column of {}, so no <set clause> sets it",
             sc.column, table.name
         );
+        return Err(rule(msg));
+    }
+    if base.is_some_and(|c| c.system_time().is_some()) {
+        let msg =
+            format!("[ISO/IEC 9075-2:2023 §14.15 SR3] column {} is a system-time period column, so no <set clause> sets it", sc.column);
         return Err(rule(msg));
     }
     // [ISO/IEC 9075-2:2023 §14.15 SR5] a generated column, or an identity
@@ -409,7 +423,27 @@ pub fn bind_write(
     set: &[SetClause],
     where_clause: Option<&SearchCondition>,
 ) -> Result<BoundWrite> {
-    let w = bind_write_of(cx, kind, (table, None), set, where_clause)?;
+    bind_searched_write(cx, kind, (table, only, None), set, where_clause)
+}
+
+/// The table a searched UPDATE or DELETE changes: its name, whether ONLY
+/// is written, and FOR PORTION OF, if written.
+pub type SearchedTarget<'a> = (&'a TableName, bool, Option<&'a Portion>);
+
+/// `bind_write` of a searched UPDATE or DELETE FOR `portion` of a period
+/// of its table, if written (`binder/portion.rs`).
+///
+/// # Errors
+///
+/// As `bind_write`, and of FOR PORTION OF \[§14.9 SR7a, §14.14 SR7a\].
+pub fn bind_searched_write(
+    cx: Context<'_>,
+    kind: WriteKind,
+    (table, only, portion): SearchedTarget<'_>,
+    set: &[SetClause],
+    where_clause: Option<&SearchCondition>,
+) -> Result<BoundWrite> {
+    let w = bind_write_of(cx, kind, (table, None, portion), set, where_clause)?;
     if only {
         let clause =
             if matches!(kind, WriteKind::DeleteSearched | WriteKind::DeletePositioned) { "§14.9 AR1b ii" } else { "§14.14 AR1b ii" };
@@ -434,14 +468,14 @@ pub fn bind_member_write(
     set: &[SetClause],
     where_clause: Option<&SearchCondition>,
 ) -> Result<BoundWrite> {
-    bind_write_of(cx, kind, (table, Some(member)), set, where_clause)
+    bind_write_of(cx, kind, (table, Some(member), None), set, where_clause)
 }
 
 /// `bind_write` of `table`'s rows, or of its proper subtable `member`'s.
 fn bind_write_of(
     cx: Context<'_>,
     kind: WriteKind,
-    (table, member): (&TableName, Option<&QualifiedName>),
+    (table, member, portion): (&TableName, Option<&QualifiedName>, Option<&Portion>),
     set: &[SetClause],
     where_clause: Option<&SearchCondition>,
 ) -> Result<BoundWrite> {
@@ -450,6 +484,8 @@ fn bind_write_of(
     let name = qualify(table, cx.schema);
     let target = write_target(db, &name, (kind.read_only_rule(), cx.user), cx.now.noted()).or_at(table.at)?;
     let desc = &target.named;
+    let portioned = portion.map(|p| Portioned::of((desc, table), (kind, p), set, where_clause)).transpose()?;
+    let (set, where_clause) = portioned.as_ref().map_or((set, where_clause), |p| (p.set.as_slice(), Some(&p.cond)));
     // SR1 of each clause: DELETE, or UPDATE on each object column.
     let needed = match kind {
         WriteKind::DeleteSearched | WriteKind::DeletePositioned => Actions { delete: true, ..Actions::default() },
@@ -464,14 +500,12 @@ fn bind_write_of(
     let names = item.row_names();
     let binder = Binder::new(cx, None, (vec![item], names.clone(), visible), BTreeSet::new());
 
-    let cond = where_clause
-        .map(|c| {
-            binder.search_condition(
-                c,
-                Scope::Rows("[X3.135-1986 §5.8 SR1] a set function needs an argument source (a <table expression>), which this <search condition> does not have"),
-            )
-        })
-        .transpose()?;
+    let rows_scope = Scope::Rows(
+        "[X3.135-1986 §5.8 SR1] a set function needs an argument source (a <table expression>), which this <search condition> does not have",
+    );
+    // [§14.9 SR7a ii, iii; §14.14 SR7a iii, iv] the points in time judged first.
+    let pieces = portioned.as_ref().map(|p| p.bind(&binder, rows_scope)).transpose()?;
+    let cond = where_clause.map(|c| binder.search_condition(c, rows_scope)).transpose()?;
 
     // [ISO/IEC 9075-2:2023 §6.14 SR1e] an <update source> draws values.
     let bound_set = binder.drawing(true, || bind_set_clauses(&binder, kind, set))?;
@@ -494,5 +528,6 @@ fn bind_write_of(
         checks: target.checks,
         auth: auth.to_string(),
         generated,
+        portion: pieces,
     })
 }

@@ -384,14 +384,18 @@ fn tables_columns() -> Vec<ColumnDesc> {
 }
 
 /// Each table, a BASE TABLE, a VIEW, or a GLOBAL or LOCAL TEMPORARY table
-/// [§21.3.8]: a system table is a base table, as
+/// [§21.3.8], or \[EXTENSION\] SYSTEM VERSIONED, a system-versioned table
+/// [ISO/IEC 9075-2:2023 §4.17.2.3]: a system table is a base table, as
 /// INFORMATION_SCHEMA_CATALOG_NAME is \[§21.2.2\]; and, of a typed table
 /// or view, what makes it typed (`typed::table_values`).
 fn described_tables(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let kind = |o: &Object| match (o.view, seen.state.catalog.table(&o.name).and_then(|t| t.temporary).map(|t| t.kind)) {
         (true, _) => "VIEW",
-        (false, None) => "BASE TABLE",
+        (false, None) => {
+            let versioned = seen.state.catalog.table(&crate::db::write::system_time::history_name(&o.name)).is_some();
+            if versioned { "SYSTEM VERSIONED" } else { "BASE TABLE" }
+        }
         (false, Some(TemporaryKind::Global)) => "GLOBAL TEMPORARY",
         (false, Some(TemporaryKind::CreatedLocal | TemporaryKind::Declared)) => "LOCAL TEMPORARY",
     };
