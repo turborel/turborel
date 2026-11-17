@@ -1311,7 +1311,7 @@ So it has a lexer and a parser of its own (`json/path/lex.rs`,
 `json/path/parse.rs`) and never meets `lexer.rs` or `parser.rs`. A path
 is parsed once to a tree (`json/path/ast.rs`), its like_regex patterns
 compiled then (D61), so a constant path costs a statement one parse. The
-tree is at most `MAX_NESTING` high, 64, counting what recursion reads and
+tree is at most `MAX_PATH_NESTING` high, 64, counting what recursion reads and
 what loops build alike, so the evaluator recurses over it with no counter
 of its own (R-CF-6).
 

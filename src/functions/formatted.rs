@@ -9,6 +9,7 @@
 //! registered.
 
 mod format;
+mod implicit;
 mod parse;
 mod template;
 
@@ -20,6 +21,7 @@ use crate::error::{Code, Result, SqlError, fail};
 use crate::value::datetime::{Clocked, Datetime, Moment, Now};
 use crate::value::types::datetime::{fitted, shown};
 use crate::value::{DataType, Value};
+pub(crate) use implicit::json_datetime_cast;
 use parse::{Pattern, Target};
 use template::Template;
 

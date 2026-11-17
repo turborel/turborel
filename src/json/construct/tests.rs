@@ -34,7 +34,7 @@ fn item(input: &Input<'_>) -> Item {
     input_item(input, Keys::Any).unwrap()
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.34 GR2d ii 1 F I, IV 1]
+/// Verifies: [ISO/IEC 9075-2:2023 §6.34 GR2d ii 1 F I, IV 1]
 /// an input without FORMAT JSON is the SQL/JSON null of the null value,
 /// the scalar a character string, a number or a truth value is, a
 /// character large object's text; and is not parsed.
@@ -50,7 +50,7 @@ fn an_input_is_the_scalar_its_value_is() {
     assert!(matches!(item(&plain(&lob)).as_scalar().unwrap().value(), Value::Char(s) if s == "é"));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.34 GR2d ii 1 F IV 2] an
+/// Verifies: [ISO/IEC 9075-2:2023 §6.34 GR2d ii 1 F IV 2] an
 /// input of another type is cast to a character string (ID100): a
 /// datetime and an interval their literals' strings; one CAST takes to
 /// none is the cast's exception, a binary string's; a character large
@@ -70,7 +70,7 @@ fn an_input_of_another_type_is_cast_to_a_string() {
     assert_eq!(input_item(&plain(&long), Keys::Any).unwrap_err().sqlcode(), -900_i32);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.34 GR2d ii 1 F III, §9.42
+/// Verifies: [ISO/IEC 9075-2:2023 §6.34 GR2d ii 1 F III, §9.42
 /// GR3a iii] an input FORMAT JSON is the item its JSON text is, of a
 /// character large object too, the SQL/JSON null of the null value; one
 /// that is no JSON text SQLSTATE 22032; one of two members of one key
@@ -87,7 +87,7 @@ fn an_input_format_json_is_parsed() {
     assert_eq!(input_item(&formatted(&twice), Keys::Unique).unwrap_err().sqlstate().as_str(), "22037");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.12 SR6] an input FORMAT
+/// Verifies: [ISO/IEC 9075-2:2023 §10.12 SR6] an input FORMAT
 /// JSON is a string: of another type SQLCODE -103; a binary string
 /// SQLCODE -900.
 #[test]
@@ -100,7 +100,7 @@ fn an_input_format_json_is_a_string() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.34 GR2d ii 1 C, D] a name
+/// Verifies: [ISO/IEC 9075-2:2023 §6.34 GR2d ii 1 C, D] a name
 /// is a character string's characters, a character large object's; the
 /// null value is SQLSTATE 22004; a value of another type SQLCODE -103, a
 /// binary large object's too; a character large object longer than one
@@ -121,7 +121,7 @@ fn a_name_is_a_character_string() {
     assert_eq!(key(&long).unwrap_err().sqlcode(), -900_i32);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.34 GR2d ii 3, GR3c ii 2]
+/// Verifies: [ISO/IEC 9075-2:2023 §6.34 GR2d ii 3, GR3c ii 2]
 /// a count of members or elements up to the maximum is within it (IL051,
 /// IL052, 2^20); one more is the exception given.
 #[test]

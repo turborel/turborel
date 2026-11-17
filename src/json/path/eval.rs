@@ -13,7 +13,7 @@
 //!
 //! Evaluation recurses over the syntax tree, a call for each node on the
 //! way down; the parser builds no tree more than the path module's
-//! `MAX_NESTING` nodes deep (`Path`), so the recursion is bounded by it
+//! `MAX_PATH_NESTING` nodes deep (`Path`), so the recursion is bounded by it
 //! (RULES.md R-CF-6).
 
 mod accessors;
@@ -122,7 +122,7 @@ impl<'a> Evaluator<'a> {
             Accessor::Subscripts(list) => self.subscripts(base, list),
             Accessor::AnyElement => self.any_element(base),
             Accessor::Filter(predicate) => Ok(self.filter(base, predicate)),
-            Accessor::Method(method) => self.method(base, *method),
+            Accessor::Method(method) => self.method(base, method),
         }
     }
 

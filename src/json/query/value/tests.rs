@@ -35,7 +35,7 @@ fn decimal() -> DataType {
     DataType::Exact { precision: 5, scale: 2, spelled: Spelled::Decimal }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.28 GR5, §9.48 GR4b iii 2]
+/// Verifies: [ISO/IEC 9075-2:2023 §6.28 GR5, §9.48 GR4b iii 2]
 /// the one scalar the path gives cast to the returned type: a string to a
 /// character string, a number, a truth value or a datetime type; a
 /// number to a character string or a number; a truth value to BOOLEAN; the
@@ -58,7 +58,7 @@ fn the_one_scalar_is_cast_to_the_returned_type() {
     assert!(matches!(strict(context, "lax $.s", &clob).unwrap(), Value::Lob(_)));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.48 GR4b iii 2, §6.13 SR7]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.48 GR4b iii 2, §6.13 SR7]
 /// a datetime item, as a PASSING argument gives one, is cast to a
 /// character string and to the datetime types the table allows.
 #[test]
@@ -84,7 +84,7 @@ fn a_datetime_item_is_cast_as_the_table_allows() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.48 GR4a, GR4b i, ii, iii
+/// Verifies: [ISO/IEC 9075-2:2023 §9.48 GR4a, GR4b i, ii, iii
 /// 1] more than one item is SQLSTATE 22034; an array or an object 2203F;
 /// the SQL/JSON null the null value; an item of a type that cannot be cast
 /// to the returned type 2203G; a cast that fails its own exception.
@@ -103,7 +103,7 @@ fn what_cannot_be_cast_is_an_exception() {
     assert_eq!(e.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.48 GR4b iii 1"));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.28 SR4, §9.48 GR4c] no
+/// Verifies: [ISO/IEC 9075-2:2023 §6.28 SR4, §9.48 GR4c] no
 /// item: NULL ON EMPTY gives the null value, DEFAULT its value cast,
 /// ERROR SQLSTATE 22035, which ON ERROR replaces, so that with NULL ON
 /// ERROR it is the null value; a DEFAULT that fails to cast is an
@@ -122,7 +122,7 @@ fn no_item_is_as_on_empty_says() {
     equal(&empty(&bad, &ValueBehavior::Default(text("6"))).unwrap().0, &typed("6", &integer()));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.28 SR5, §9.48 GR5] an
+/// Verifies: [ISO/IEC 9075-2:2023 §6.28 SR5, §9.48 GR5] an
 /// exception, of the path, of the context item or of the rules, is
 /// replaced as ON ERROR says: NULL, the default, by the null value;
 /// DEFAULT by its value cast, whose own exception is raised; ERROR raises
@@ -139,7 +139,7 @@ fn an_exception_is_replaced_as_on_error_says() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.28 GR2, GR6] of a null
+/// Verifies: [ISO/IEC 9075-2:2023 §6.28 GR2, GR6] of a null
 /// context item, the null value, whatever the path and behaviours; the
 /// warning of a string cut to the returned type is kept.
 #[test]
@@ -152,7 +152,7 @@ fn a_null_context_item_is_the_null_value_and_warnings_are_kept() {
     assert_eq!(warning.map(|w| w.as_str().to_owned()).as_deref(), Some("01004"));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.28 SR2] the returned type
+/// Verifies: [ISO/IEC 9075-2:2023 §6.28 SR2] the returned type
 /// is a predefined character string, numeric, Boolean or datetime type:
 /// another is refused with SQLCODE -103, of a null context item too; and
 /// an SQL/JSON sequence is cast to no other.
@@ -167,7 +167,7 @@ fn the_returned_type_is_one_json_value_returns() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.48 GR3, GR5] STATUS IN an
+/// Verifies: [ISO/IEC 9075-2:2023 §9.48 GR3, GR5] STATUS IN an
 /// exception condition is replaced as ON ERROR says; an error not one, as
 /// a Syntax Rule's, is raised whatever it says.
 #[test]

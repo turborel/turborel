@@ -41,6 +41,7 @@ pub use extremes::CollatedExtreme;
 use extremes::Extreme;
 mod floats;
 mod formatted;
+pub(crate) use formatted::json_datetime_cast;
 pub use formatted::{FORMAT, formatted_cast};
 mod greatest;
 pub use greatest::{GREATEST, GreatestOrLeast, LEAST};

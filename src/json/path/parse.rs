@@ -4,9 +4,9 @@
 //! Predicates are parsed in `json/path/parse/predicate.rs`.
 //!
 //! \[DESIGN\] Parentheses, filters, subscripts, signs and negations nest at
-//! most `MAX_NESTING` deep around what is read, so the parser's recursion
+//! most `MAX_PATH_NESTING` deep around what is read, so the parser's recursion
 //! is bounded; and each node of the tree is built only if no more than
-//! `MAX_NESTING` nodes are on the way down from it, so that a chain of
+//! `MAX_PATH_NESTING` nodes are on the way down from it, so that a chain of
 //! operators or accessors, built by a loop, is bounded too (RULES.md
 //! R-CF-6).
 
@@ -14,10 +14,11 @@ mod method;
 mod predicate;
 
 use super::ast::{Accessor, Expr, Mode, Operator, Path, Sign, Subscript};
-use super::lex::{Lexeme, Symbol, Token, lex};
-use super::{DOLLAR, FALSE, LAST, LAX, MAX_NESTING, NULL, STRICT, TO, TRUE, beyond, misplaced, syntax};
+use super::lex::{Lexeme, SYMBOLS, Symbol, Token, lex};
+use super::{DOLLAR, FALSE, LAST, LAX, MAX_PATH_NESTING, NULL, STRICT, TO, TRUE, beyond, misplaced, syntax};
 use crate::error::{Result, SqlError};
 use crate::json::Item;
+use crate::value::datetime::Clocked;
 
 /// [§9.46 F] The operators of a `<JSON additive expression>`.
 const ADDITIVE: [(Symbol, Operator); 2] = [(Symbol::Plus, Operator::Add), (Symbol::Minus, Operator::Subtract)];
@@ -26,6 +27,33 @@ const MULTIPLICATIVE: [(Symbol, Operator); 3] =
     [(Symbol::Asterisk, Operator::Multiply), (Symbol::Solidus, Operator::Divide), (Symbol::Percent, Operator::Modulo)];
 /// [§9.46 F] The signs of a `<JSON unary expression>`.
 const SIGNS: [(Symbol, Sign); 2] = [(Symbol::Plus, Sign::Plus), (Symbol::Minus, Sign::Minus)];
+
+/// What the text's end is shown as in an error.
+const END: &str = "the end of the path expression";
+/// What a `<JSON path primary>` is called in an error.
+const PRIMARY: &str = "a <JSON path primary>";
+/// What may follow the `<period>` of an accessor op, in an error.
+const AFTER_PERIOD: &str = "a <JSON path key name>, a string literal, * or a <JSON method>";
+
+/// `symbol` as written, quoted.
+fn written(symbol: Symbol) -> String {
+    // The period, the one symbol not in SYMBOLS, is lexed apart.
+    let text = SYMBOLS.iter().find(|(_, s)| *s == symbol).map_or(".", |(text, _)| *text);
+    format!("'{text}'")
+}
+
+/// `token` as an error shows what it found (RULES.md D24): a symbol as
+/// written, an identifier as it is, a string literal's value quoted, a
+/// number as its value; none, the text's end.
+fn shown(token: Option<&Token>) -> String {
+    match token {
+        Some(Token::Symbol(symbol)) => written(*symbol),
+        Some(Token::Identifier(name)) => name.clone(),
+        Some(Token::String(string)) => format!("\"{string}\""),
+        Some(Token::Number(item, _)) => item.as_scalar().map_or_else(String::new, |scalar| scalar.value().to_string()),
+        None => END.to_owned(),
+    }
+}
 
 /// A node parsed, and its height: how many nodes are on the longest way
 /// down from it, itself counted.
@@ -38,17 +66,17 @@ struct Built<T> {
 ///
 /// # Errors
 ///
-/// SQLCODE -900 if it would be more than `MAX_NESTING` high.
+/// SQLCODE -900 if it would be more than `MAX_PATH_NESTING` high.
 fn built<T>(node: T, below: usize) -> Result<Built<T>> {
     let height = below.saturating_add(1);
-    if height > MAX_NESTING {
+    if height > MAX_PATH_NESTING {
         return Err(beyond("its syntax tree nests too deep"));
     }
     Ok(Built { node, height })
 }
 
 /// A path expression's tokens being parsed.
-struct Parser {
+struct Parser<'a> {
     tokens: Vec<Lexeme>,
     at: usize,
     /// How many characters the text has: where its end is.
@@ -57,10 +85,15 @@ struct Parser {
     predicates: usize,
     /// How many `<JSON subscript>`s hold what is read \[SR6\].
     subscripts: usize,
+    /// The SQL-session's clock, which a `<JSON datetime template>` reads
+    /// by \[SR10h\].
+    now: Clocked<'a>,
 }
 
 /// [§9.46 SR3] The `<JSON path expression>` that `text` is, by the
-/// lexical rules of §9.45.
+/// lexical rules of §9.45, its `<JSON datetime template>`s to read
+/// character strings in the SQL-session `now` gives: its instant read only
+/// if one takes the current year or month [§9.51 GR5].
 ///
 /// # Errors
 ///
@@ -71,20 +104,22 @@ struct Parser {
 /// method's precision is 0 or its scale above its precision [§6.1 SR23,
 /// SR25]; SQLSTATE 2201S or 2201T if a `like_regex` pattern is no XQuery
 /// regular expression or its flags no XQuery option flag \[SR7\]; SQLCODE
-/// -900 for a `datetime()` of a template, an item method's precision past
-/// turborel's maximum, a number out of every number's range, or a path
-/// nested deeper than `MAX_NESTING`.
-pub fn parse_path(text: &str) -> Result<Path> {
-    let mut parser = Parser { tokens: lex(text)?, at: 0, end: text.chars().count(), predicates: 0, subscripts: 0 };
+/// -103 if a `<JSON datetime template>` breaks SR10 or a Syntax Rule of
+/// §9.52; SQLCODE -900 for a template of more digits of a second's
+/// fraction than 6, an item method's precision past turborel's maximum, a
+/// number out of every number's range, or a path nested deeper than
+/// `MAX_PATH_NESTING`.
+pub fn parse_path(text: &str, now: Clocked<'_>) -> Result<Path> {
+    let mut parser = Parser { tokens: lex(text)?, at: 0, end: text.chars().count(), predicates: 0, subscripts: 0, now };
     let mode = parser.mode()?;
     let expr = parser.wff(0)?;
     if parser.peek().is_some() {
-        return Err(parser.invalid("a token follows the <JSON path wff>"));
+        return Err(parser.expected(END));
     }
     Ok(Path { mode, expr: expr.node })
 }
 
-impl Parser {
+impl Parser<'_> {
     /// The token next, if one is.
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.at).map(|lexeme| &lexeme.token)
@@ -126,9 +161,10 @@ impl Parser {
         found
     }
 
-    /// Past `symbol`, which is to be next, else the error `why`.
-    fn expect(&mut self, symbol: Symbol, why: &str) -> Result<()> {
-        if self.accept(symbol) { Ok(()) } else { Err(self.invalid(why)) }
+    /// Past `symbol`, which is to be next, else the error that it was
+    /// expected.
+    fn expect(&mut self, symbol: Symbol) -> Result<()> {
+        if self.accept(symbol) { Ok(()) } else { Err(self.expected(&written(symbol))) }
     }
 
     /// Whether the identifier `word` is next.
@@ -150,15 +186,15 @@ impl Parser {
         table.iter().find(|(symbol, _)| self.is(*symbol)).map(|(_, value)| *value)
     }
 
-    /// The error of a path that does not conform to the Format, `why`,
-    /// at the token next.
-    fn invalid(&self, why: &str) -> SqlError {
-        syntax(self.here(), why)
+    /// The error of a path that does not conform to the Format: at the
+    /// token next, `expected` was to be.
+    fn expected(&self, expected: &str) -> SqlError {
+        syntax(self.here(), expected, &shown(self.peek()))
     }
 
     /// Into a construct `depth` deep around what follows.
     fn enter(depth: usize) -> Result<()> {
-        if depth > MAX_NESTING {
+        if depth > MAX_PATH_NESTING {
             return Err(beyond("parentheses, filters, subscripts, signs and negations nest too deep"));
         }
         Ok(())
@@ -172,7 +208,7 @@ impl Parser {
         if self.accept_word(LAX) {
             return Ok(Mode::Lax);
         }
-        Err(self.invalid("a <JSON path expression> begins with its <JSON path mode>, strict or lax"))
+        Err(self.expected("a <JSON path mode>, strict or lax"))
     }
 
     /// `<JSON path wff>`, `depth` deep: a `<JSON additive expression>`.
@@ -248,7 +284,7 @@ impl Parser {
     /// `<JSON path primary>`.
     fn primary(&mut self, depth: usize) -> Result<Built<Expr>> {
         let at = self.here();
-        let Some(token) = self.next() else { return Err(syntax(at, "a <JSON path primary> is missing")) };
+        let Some(token) = self.next() else { return Err(syntax(at, PRIMARY, END)) };
         match token {
             Token::Number(item, _) => built(Expr::Literal(item), 0),
             Token::String(string) => built(Expr::Literal(Item::Scalar(string.into())), 0),
@@ -267,12 +303,12 @@ impl Parser {
             return built(Expr::Current, 0);
         }
         if symbol != Symbol::LeftParen {
-            return Err(syntax(at, "no <JSON path primary> begins with this special symbol"));
+            return Err(syntax(at, PRIMARY, &written(symbol)));
         }
         let inner = depth.saturating_add(1);
         Parser::enter(inner)?;
         let wff = self.wff(inner)?;
-        self.expect(Symbol::RightParen, "a ')' closes the '(' of a <JSON path primary>")?;
+        self.expect(Symbol::RightParen)?;
         Ok(wff)
     }
 
@@ -288,7 +324,7 @@ impl Parser {
             FALSE => Item::Scalar(false.into()),
             NULL => Item::Null,
             LAST => return self.last(at),
-            _ => return Err(syntax(at, &format!("the <JSON path key name> {name} is no <JSON path primary>"))),
+            _ => return Err(syntax(at, PRIMARY, name)),
         };
         built(Expr::Literal(literal), 0)
     }
@@ -309,9 +345,7 @@ impl Parser {
             Some(Token::Identifier(name)) => self.key_or_method(name, at),
             Some(Token::String(key)) => Ok(Accessor::Member(key)),
             Some(Token::Symbol(Symbol::Asterisk)) => Ok(Accessor::AnyMember),
-            Some(Token::Symbol(_) | Token::Number(..)) | None => {
-                Err(syntax(at, "a <JSON path key name>, a string literal, * or a <JSON method> follows '.'"))
-            }
+            other @ (Some(Token::Symbol(_) | Token::Number(..)) | None) => Err(syntax(at, AFTER_PERIOD, &shown(other.as_ref()))),
         }
     }
 
@@ -320,7 +354,7 @@ impl Parser {
     /// [NOTE 483].
     fn key_or_method(&mut self, name: String, at: usize) -> Result<Accessor> {
         if name.starts_with(DOLLAR) {
-            return Err(syntax(at, "a <JSON path key name> does not begin with $, as a variable does"));
+            return Err(syntax(at, AFTER_PERIOD, &name));
         }
         if !self.accept(Symbol::LeftParen) {
             return Ok(Accessor::Member(name));
@@ -332,7 +366,7 @@ impl Parser {
     /// `[` read: the accessor, and the height of its tallest subscript.
     fn array_accessor(&mut self, depth: usize) -> Result<(Accessor, usize)> {
         if self.accept(Symbol::Asterisk) {
-            self.expect(Symbol::RightBracket, "a ']' follows the '[*' of a <JSON wildcard array accessor>")?;
+            self.expect(Symbol::RightBracket)?;
             return Ok((Accessor::AnyElement, 0));
         }
         let inner = depth.saturating_add(1);
@@ -349,7 +383,9 @@ impl Parser {
                 break;
             }
         }
-        self.expect(Symbol::RightBracket, "a ',' or a ']' follows a <JSON subscript>")?;
+        if !self.accept(Symbol::RightBracket) {
+            return Err(self.expected("',' or ']'"));
+        }
         self.subscripts = self.subscripts.saturating_sub(1);
         Ok((Accessor::Subscripts(list), height))
     }
@@ -357,12 +393,12 @@ impl Parser {
     /// `<JSON filter expression>`, its `?` read: the accessor, and the
     /// height of its predicate.
     fn filter(&mut self, depth: usize) -> Result<(Accessor, usize)> {
-        self.expect(Symbol::LeftParen, "a '(' follows the '?' of a <JSON filter expression>")?;
+        self.expect(Symbol::LeftParen)?;
         let inner = depth.saturating_add(1);
         Parser::enter(inner)?;
         self.predicates = self.predicates.saturating_add(1);
         let predicate = self.predicate(inner)?;
-        self.expect(Symbol::RightParen, "a ')' closes the <JSON path predicate> of a <JSON filter expression>")?;
+        self.expect(Symbol::RightParen)?;
         self.predicates = self.predicates.saturating_sub(1);
         Ok((Accessor::Filter(Box::new(predicate.node)), predicate.height))
     }

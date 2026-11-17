@@ -6,7 +6,7 @@
 use super::*;
 use crate::error::Code;
 use crate::json::parse_path;
-use crate::value::datetime::Field;
+use crate::value::datetime::{Clocked, Field};
 use crate::value::interval::{Interval, Qualifier};
 use crate::value::lob::{CHUNK_OCTETS, Lob};
 use crate::value::{Binary, Spelled, compare};
@@ -25,7 +25,7 @@ pub(super) fn typed(s: &str, t: &DataType) -> Value {
 /// `path` and the arguments `passing`, each its name, value and whether
 /// FORMAT JSON.
 pub(super) fn on<T>(context: &Value, path: &str, passing: &[(&str, Value, bool)], f: impl FnOnce(&CommonSyntax<'_>) -> T) -> T {
-    let path = parse_path(path).unwrap();
+    let path = parse_path(path, Clocked::default()).unwrap();
     let passing: Vec<Passing<'_>> =
         passing.iter().map(|(name, value, format_json)| Passing { name, value, format_json: *format_json }).collect();
     f(&CommonSyntax { context, path: &path, passing: &passing })
@@ -54,7 +54,7 @@ fn item(value: &Value) -> Item {
     Item::of_value(value).unwrap()
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.47, §9.46 GR4, GR11a] the
+/// Verifies: [ISO/IEC 9075-2:2023 §9.47, §9.46 GR4, GR11a] the
 /// context item, a character string or a character large object, is
 /// parsed as JSON text and the path evaluated of it; of the null value
 /// none is, whatever the path.
@@ -67,7 +67,7 @@ fn the_context_item_is_parsed_and_the_path_evaluated() {
     assert!(run(&Value::Null, "lax $x", &[("x", Value::Null, false)]).unwrap().is_none());
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR4] a context item
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR4] a context item
 /// that is no JSON text is SQLSTATE 22032, though the path does not read
 /// it (IA050: it is parsed first); the path's exception is its own.
 #[test]
@@ -80,7 +80,7 @@ fn a_context_item_that_is_no_json_text_is_an_exception() {
     assert_eq!(error(&text("{}"), "strict $.a", &[]).sqlstate().as_str(), "2203A");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.14 SR1] the context item
+/// Verifies: [ISO/IEC 9075-2:2023 §10.14 SR1] the context item
 /// is a string: of another type, SQLCODE -103; a binary string, whose
 /// encodings turborel does not implement, SQLCODE -900; a character large
 /// object longer than one chunk, SQLCODE -900; none is an exception
@@ -99,7 +99,7 @@ fn the_context_item_is_a_character_string() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 SR4] a named variable
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 SR4] a named variable
 /// no argument names is refused with SQLCODE -103 first, of a null
 /// context item and one that is no JSON text too, and is no exception
 /// condition.
@@ -113,7 +113,7 @@ fn a_variable_no_argument_names_is_refused_first() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11b i 1, §9.46 GR5]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11b i 1, §9.46 GR5]
 /// an argument FORMAT JSON is the item its JSON text is, of a character
 /// large object too; of the null value, the empty sequence; one that is
 /// no JSON text SQLSTATE 22032, though the path does not read it (IA054).
@@ -127,7 +127,7 @@ fn an_argument_format_json_is_parsed() {
     assert_eq!(error(&text("0"), "lax 1", &[("x", text("[1,"), true)]).sqlstate().as_str(), "22032");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.12 SR6] an argument
+/// Verifies: [ISO/IEC 9075-2:2023 §10.12 SR6] an argument
 /// FORMAT JSON is a string: of another type SQLCODE -103; a binary
 /// string SQLCODE -900.
 #[test]
@@ -139,7 +139,7 @@ fn an_argument_format_json_is_a_string() {
     assert_eq!(error(&text("0"), "lax $x", &[("x", Value::Lob(Lob::of_octets(b"1")), true)]).sqlcode(), -900_i32);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11b i 2 A, ii 2] an
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11b i 2 A, ii 2] an
 /// argument without FORMAT JSON is the scalar its value is, a character
 /// string, a number, a truth value, a datetime; a character large
 /// object's text; the null value the SQL/JSON null; and is not parsed.
@@ -157,7 +157,7 @@ fn an_argument_is_the_scalar_its_value_is() {
     gives(&text("0"), "lax $n.type()", &[("n", Value::Null, false)], r#"["null"]"#);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11b i 2 B] an
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11b i 2 B] an
 /// argument of another type is cast to a character string (IV165): an
 /// interval its literal's string; a value CAST takes to none is the cast's
 /// exception condition, SQLSTATE 22005; a character large object longer

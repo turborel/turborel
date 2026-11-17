@@ -30,7 +30,7 @@ fn date() -> Item {
     scalar(cast(Value::Char("2020-01-02".to_owned()), &DataType::Date).unwrap())
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.43 GR2a ii] [RFC 8259
+/// Verifies: [ISO/IEC 9075-2:2023 §9.43 GR2a ii] [RFC 8259
 /// §3, §4, §5] the literal names, and arrays and objects with no
 /// insignificant white space, members in the order kept, those of one key
 /// all.
@@ -45,7 +45,7 @@ fn literal_names_arrays_and_objects() {
     assert_eq!(text(&json(r#"{ "b" : 1 , "a" : [ true ] , "b" : 2 }"#)), r#"{"b":1,"a":[true],"b":2}"#);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.43 GR2a ii, §6.13 GR11a,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.43 GR2a ii, §6.13 GR11a,
 /// GR12b] an exact number as CAST writes it, its scale kept; an
 /// approximate one as its shortest approximate literal, 0E0 of zero; a
 /// decimal floating-point one plain, without an exponent, small and large.
@@ -63,7 +63,7 @@ fn numbers_are_written_as_cast_writes_them() {
     assert_eq!(text(&scalar(Value::DecFloat(small))), "-0.000000015");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.43 GR2a ii] [RFC 8259
+/// Verifies: [ISO/IEC 9075-2:2023 §9.43 GR2a ii] [RFC 8259
 /// §7] a string's quotation marks, reverse solidi and control characters
 /// are escaped, each control character of a two-character escape so,
 /// the others by four lower case hexadecimal digits; nothing else is, a
@@ -78,7 +78,7 @@ fn strings_escape_what_rfc_8259_makes_escaped() {
     assert_eq!(text(&object(&[("k\"\n", string("v"))])), r#"{"k\"\n":"v"}"#);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.43 GR2a ii 2] the text of
+/// Verifies: [ISO/IEC 9075-2:2023 §9.43 GR2a ii 2] the text of
 /// an item parsed from JSON text parses, WITHOUT UNIQUE KEYS, to an item
 /// equivalent to it: of each kind of item, a number of too many digits
 /// for an exact number, so decimal floating-point, and escaped characters
@@ -100,7 +100,7 @@ fn the_text_of_an_item_parses_back_to_an_equivalent_one() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.43 GR2a ii] no JSON text
+/// Verifies: [ISO/IEC 9075-2:2023 §9.43 GR2a ii] no JSON text
 /// parses to a datetime or an approximate number that is not finite, so
 /// an item that is or holds one is refused with SQLSTATE 22032.
 #[test]
@@ -130,7 +130,7 @@ fn serializing_is_bounded_by_the_nesting_limit() {
     assert_eq!(serialize(&object(&[("k", nested(Item::Null, MAX_NESTING))])).unwrap_err().sqlcode(), -900_i32);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.43 GR2a iii] the text as
+/// Verifies: [ISO/IEC 9075-2:2023 §9.43 GR2a iii] the text as
 /// a value of a character string type: of CHARACTER VARYING as it is, of
 /// CHARACTER padded with spaces, of CHARACTER LARGE OBJECT a large
 /// object; of one character more than the length, SQLSTATE 22001, its
@@ -152,7 +152,7 @@ fn the_text_as_a_value_of_a_character_string_type() {
     assert_eq!(serialize_as(&date(), &DataType::varying(8)).unwrap_err().sqlstate().as_str(), "22032");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.43 SR2a] JSON text is
+/// Verifies: [ISO/IEC 9075-2:2023 §9.43 SR2a] JSON text is
 /// serialized as a character or binary string type: a binary one, whose
 /// encodings turborel does not implement, is refused with SQLCODE -900,
 /// another type with SQLCODE -103.

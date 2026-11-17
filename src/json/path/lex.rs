@@ -17,7 +17,7 @@ use super::{beyond, lexical};
 use crate::error::Result;
 use crate::json::Item;
 use crate::json::text::{HEX, HIGH_SURROGATES, approximate, exact, paired};
-use crate::regex::{Captures, Regex};
+use crate::regex::general_category;
 
 // [ECMAScript 5.1 §7.2, §7.3, §7.1 Table 1] Characters each class of
 // which is named, not found by its Unicode General Category.
@@ -38,19 +38,15 @@ const ZWNJ: char = '\u{200C}';
 /// <ZWJ>, an IdentifierPart.
 const ZWJ: char = '\u{200D}';
 
-/// [ECMAScript 5.1 §7.6, §7.2] The characters by their Unicode General
-/// Categories: group 1 UnicodeLetter, which begins an identifier; group 2
+// [ECMAScript 5.1 §7.6, §7.2] The characters by their Unicode General
+// Categories, as `regex::general_category` names them.
+/// UnicodeLetter, which begins an identifier.
+const LETTERS: [&str; 6] = ["Lu", "Ll", "Lt", "Lm", "Lo", "Nl"];
 /// UnicodeCombiningMark, UnicodeDigit and UnicodeConnectorPunctuation,
-/// which continue one; group 3 <USP>, white space.
-const CATEGORIES: &str = r"([\p{Lu}\p{Ll}\p{Lt}\p{Lm}\p{Lo}\p{Nl}])|([\p{Mn}\p{Mc}\p{Nd}\p{Pc}])|(\p{Zs})";
-/// The group of `CATEGORIES` of the characters that begin an identifier.
-const LETTERS: usize = 1;
-/// The group of `CATEGORIES` of the characters that continue one.
-const PARTS: usize = 2;
-/// The group of `CATEGORIES` of white space.
-const SPACES: usize = 3;
-/// The flags `CATEGORIES` is compiled under: none.
-const NO_FLAGS: &str = "";
+/// which continue one.
+const PARTS: [&str; 4] = ["Mn", "Mc", "Nd", "Pc"];
+/// <USP>, white space.
+const SPACES: &str = "Zs";
 
 /// [ECMAScript 5.1 §7.8.3] How many characters begin a HexIntegerLiteral:
 /// `0x` or `0X`.
@@ -125,7 +121,7 @@ pub(super) enum Symbol {
 
 /// The special symbols but the period, each as written, those of two
 /// characters before those of one, so the longest is taken.
-const SYMBOLS: [(&str, Symbol); 22] = [
+pub(super) const SYMBOLS: [(&str, Symbol); 22] = [
     ("!=", Symbol::NotEquals),
     ("<>", Symbol::NotEquals),
     ("<=", Symbol::LessEquals),
@@ -205,8 +201,6 @@ enum Class {
 struct Lexer {
     chars: Vec<char>,
     at: usize,
-    /// `CATEGORIES` compiled, once a character outside ASCII is classed.
-    categories: Option<Regex>,
 }
 
 /// The tokens of the path expression `text`.
@@ -217,7 +211,7 @@ struct Lexer {
 /// separators; SQLCODE -900 for a numeric literal out of every number's
 /// range.
 pub(super) fn lex(text: &str) -> Result<Vec<Lexeme>> {
-    let mut lexer = Lexer { chars: text.chars().collect(), at: 0, categories: None };
+    let mut lexer = Lexer { chars: text.chars().collect(), at: 0 };
     let mut lexemes = Vec::new();
     loop {
         lexer.separators()?;
@@ -241,6 +235,33 @@ fn ascii_class(c: char) -> Class {
         '\t' | VT | FF | ' ' | '\n' | '\r' => Class::Separator,
         _ => Class::Other,
     }
+}
+
+/// The class of `c`: of ASCII by `ascii_class`, of the characters named
+/// above by their names, of any other by its General Category.
+///
+/// # Errors
+///
+/// SQLCODE -916 if the table of General Categories is damaged.
+fn class_of(c: char) -> Result<Class> {
+    if c.is_ascii() {
+        return Ok(ascii_class(c));
+    }
+    match c {
+        NBSP | BOM | LS | PS => return Ok(Class::Separator),
+        ZWNJ | ZWJ => return Ok(Class::Part),
+        _ => {}
+    }
+    let category = general_category(c)?;
+    Ok(if LETTERS.contains(&category) {
+        Class::Start
+    } else if PARTS.contains(&category) {
+        Class::Part
+    } else if category == SPACES {
+        Class::Separator
+    } else {
+        Class::Other
+    })
 }
 
 /// `decimal`, the decimal digits of a number, least significant first,
@@ -285,40 +306,11 @@ impl Lexer {
         found
     }
 
-    /// The class of `c`.
-    fn class(&mut self, c: char) -> Result<Class> {
-        if c.is_ascii() {
-            return Ok(ascii_class(c));
-        }
-        match c {
-            NBSP | BOM | LS | PS => return Ok(Class::Separator),
-            ZWNJ | ZWJ => return Ok(Class::Part),
-            _ => {}
-        }
-        let categories = match self.categories.take() {
-            Some(compiled) => compiled,
-            None => Regex::new(CATEGORIES, NO_FLAGS)?,
-        };
-        let found = categories.find_at(&[c], 0);
-        self.categories = Some(categories);
-        let group = |n: usize| found.as_ref().is_ok_and(|m| m.as_ref().and_then(|groups: &Captures| groups.get(n)).is_some());
-        let class = if group(LETTERS) {
-            Class::Start
-        } else if group(PARTS) {
-            Class::Part
-        } else if group(SPACES) {
-            Class::Separator
-        } else {
-            Class::Other
-        };
-        found.map(|_| class)
-    }
-
     /// Past the white space and line terminators next.
     fn separators(&mut self) -> Result<()> {
         loop {
             let Some(c) = self.peek() else { return Ok(()) };
-            if self.class(c)? != Class::Separator {
+            if class_of(c)? != Class::Separator {
                 return Ok(());
             }
             self.bump();
@@ -361,7 +353,7 @@ impl Lexer {
             let Some(c) = self.peek() else { break };
             let escaped = c == '\\';
             let character = if escaped { self.identifier_escape()? } else { c };
-            let class = self.class(character)?;
+            let class = class_of(character)?;
             if class == Class::Start || (class == Class::Part && !name.is_empty()) {
                 if !escaped {
                     self.bump();
@@ -436,7 +428,7 @@ impl Lexer {
     fn followed(&mut self, token: Token) -> Result<Token> {
         let after = self.at;
         let Some(c) = self.peek() else { return Ok(token) };
-        let class = self.class(c)?;
+        let class = class_of(c)?;
         if c.is_ascii_digit() || c == '\\' || class == Class::Start {
             return Err(lexical(after, "a numeric literal is followed at once by a digit or an identifier"));
         }

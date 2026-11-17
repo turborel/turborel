@@ -24,7 +24,7 @@ fn units(v: &Value) -> (i128, u32) {
     (d.units, d.scale)
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.31 GR15, GR16, SR20]
+/// Verifies: [ISO/IEC 9075-2:2023 §6.31 GR15, GR16, SR20]
 /// CEILING and FLOOR of an exact number are exact of scale 0: the least
 /// whole number not below, the greatest not above; a whole number is
 /// itself.
@@ -40,7 +40,7 @@ fn ceiling_and_floor_of_exact_numbers() {
     assert_eq!(units(&floor(exact(-1, 38)).unwrap()), (-1_i128, 0_u32));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.31 GR15b ii, GR16b ii,
+/// Verifies: [ISO/IEC 9075-2:2023 §6.31 GR15b ii, GR16b ii,
 /// SR20] CEILING and FLOOR of approximate and decimal floating-point
 /// numbers keep their kind; one whole, or of a power of ten no i128 holds
 /// below 1, is taken as a whole number.
@@ -56,7 +56,7 @@ fn ceiling_and_floor_of_approximate_and_decfloat_numbers() {
     assert_eq!(digits(&floor(decfloat(-5, -50)).unwrap()), (-1_i128, 0_i32));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.31 GR8] ABS of each kind
+/// Verifies: [ISO/IEC 9075-2:2023 §6.31 GR8] ABS of each kind
 /// of number: itself if not negative, else negated; of its kind and scale.
 #[test]
 fn abs_of_each_kind_of_number() {
@@ -67,10 +67,11 @@ fn abs_of_each_kind_of_number() {
     assert_eq!(digits(&abs(decfloat(7, 2))), (7_i128, 2_i32));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.31 GR9c, SR12] MOD of
+/// Verifies: [ISO/IEC 9075-2:2023 §6.31 GR9c, SR12] MOD of
 /// whole numbers: of the dividend's sign, below the divisor in magnitude;
 /// exact of scale 0, or decimal floating-point if either operand is; a
-/// whole exact number of a scale above 0 is taken.
+/// whole exact number of a scale above 0 is taken. MC/DC of either
+/// operand DECFLOAT: the dividend alone, the divisor alone, neither.
 #[test]
 fn modulo_of_whole_numbers() {
     assert_eq!(units(&modulo(exact(7, 0), exact(3, 0)).unwrap()), (1_i128, 0_u32));
@@ -83,7 +84,7 @@ fn modulo_of_whole_numbers() {
     gives("lax $ % 4", "10", "[2]");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.31 SR12, GR9b] MOD of an
+/// Verifies: [ISO/IEC 9075-2:2023 §6.31 SR12, GR9b] MOD of an
 /// approximate number, a number not whole, or one past an i128, is refused
 /// with SQLCODE -301; of a zero divisor, SQLSTATE 22012.
 #[test]

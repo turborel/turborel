@@ -44,7 +44,7 @@ const OBJECT: &str = "object";
 impl Evaluator<'_> {
     /// [§9.46 GR11g ii 6] `<JSON item method>`: `method` applied to each
     /// item of `base`.
-    pub(super) fn method(&self, base: Vec<Item>, method: Method) -> Result<Vec<Item>> {
+    pub(super) fn method(&self, base: Vec<Item>, method: &Method) -> Result<Vec<Item>> {
         match method {
             Method::Type => Ok(base.iter().map(|each| Item::Scalar(type_name(each).to_owned().into())).collect()),
             Method::Size => self.size(&base),
@@ -53,18 +53,19 @@ impl Evaluator<'_> {
             Method::Floor => numeric(&self.lax_unwrap(base), numbers::floor, "GR11g ii 6 C V 1 a"),
             Method::Abs => numeric(&self.lax_unwrap(base), |n| Ok(numbers::abs(n)), "GR11g ii 6 C VI 1 a"),
             Method::Datetime => datetime::datetime(&self.lax_unwrap(base)),
+            Method::DatetimeTemplate(template) => datetime::templated(&self.lax_unwrap(base), template),
             Method::Keyvalue => keyvalue::keyvalue(&self.lax_unwrap(base)),
             Method::Bigint => casts::converted(&self.lax_unwrap(base), &casts::BIGINT),
             Method::Boolean => casts::converted(&self.lax_unwrap(base), &casts::BOOLEAN),
             Method::Date => casts::converted(&self.lax_unwrap(base), &casts::DATE),
-            Method::Decimal { precision, scale } => casts::converted(&self.lax_unwrap(base), &casts::decimal(precision, scale)),
+            Method::Decimal { precision, scale } => casts::converted(&self.lax_unwrap(base), &casts::decimal(*precision, *scale)),
             Method::Integer => casts::converted(&self.lax_unwrap(base), &casts::INTEGER),
             Method::Number => casts::converted(&self.lax_unwrap(base), &casts::NUMBER),
             Method::String => casts::converted(&self.lax_unwrap(base), &casts::STRING),
-            Method::Time(precision) => casts::converted(&self.lax_unwrap(base), &casts::time(precision)),
-            Method::TimeTz(precision) => casts::converted(&self.lax_unwrap(base), &casts::time_tz(precision)),
-            Method::Timestamp(precision) => casts::converted(&self.lax_unwrap(base), &casts::timestamp(precision)),
-            Method::TimestampTz(precision) => casts::converted(&self.lax_unwrap(base), &casts::timestamp_tz(precision)),
+            Method::Time(precision) => casts::converted(&self.lax_unwrap(base), &casts::time(*precision)),
+            Method::TimeTz(precision) => casts::converted(&self.lax_unwrap(base), &casts::time_tz(*precision)),
+            Method::Timestamp(precision) => casts::converted(&self.lax_unwrap(base), &casts::timestamp(*precision)),
+            Method::TimestampTz(precision) => casts::converted(&self.lax_unwrap(base), &casts::timestamp_tz(*precision)),
         }
     }
 

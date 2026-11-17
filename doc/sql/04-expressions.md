@@ -910,7 +910,11 @@ names an item's kind and `.size()` counts an array's elements;
 `.integer()`, `.decimal(p, s)`, `.number()`, `.boolean()`, `.string()`,
 `.date()`, `.time(p)`, `.time_tz(p)`, `.timestamp(p)` and
 `.timestamp_tz(p)` cast an item as CAST does, the precisions optional;
-`.datetime()` reads a string as the date, time or timestamp it is; and
+`.datetime()` reads a string as the date, time or timestamp it is, and
+`.datetime("template")` as the template reads it, as in
+[CAST](#cast)'s FORMAT: a TIMESTAMP if the template has fields of the
+date and the time, a DATE or a TIME if of one, WITH TIME ZONE if it has
+TZH, a string it does not read being SQLSTATE 22031; and
 `.keyvalue()` gives an object's members, each as an object of its
 `key`, its `value` and an `id`. A number may be written in hexadecimal,
 `0x1F`. A
@@ -946,6 +950,18 @@ turborel: SQLCODE -301 (SQLSTATE 2203A): an SQL/JSON item is not an object with 
 
 --------------
          NULL
+(1 row)
+```
+
+```sql
+VALUES (JSON_VALUE('"29.02.2024"', 'lax $.datetime("DD.MM.YYYY")' RETURNING DATE),
+        JSON_VALUE('"9:05 P.M."', 'lax $.datetime("HH12:MI A.M.").type()' RETURNING VARCHAR(30)));
+```
+
+```
+            |
+------------+--------------------------------
+ 2024-02-29 | time without time zone
 (1 row)
 ```
 

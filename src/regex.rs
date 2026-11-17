@@ -36,6 +36,8 @@ use flags::{Flag, Flags};
 use parse::parse;
 use unicode::Table;
 
+pub(crate) use unicode::general_category;
+
 pub use lob_text::LobText;
 pub(crate) use replace::zero_length;
 pub use replace::{Emit, Replacement};

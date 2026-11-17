@@ -4,6 +4,7 @@ use super::*;
 use crate::json::Scalar;
 use crate::json::path::eval::tests::{error, gives, json, state, value};
 use crate::json::path::parse_path;
+use crate::value::datetime::Clocked;
 
 /// The names `type()` gives of the datetimes of the fields `moment`,
 /// zoned or not.
@@ -13,7 +14,7 @@ fn datetime_names(moment: Moment) -> Vec<String> {
         .map(|zoned| {
             let datetime = Datetime { moment, utc: 0, zone: 0, zoned, precision: 0 };
             let variables = vec![("d".to_owned(), vec![Item::Scalar(Scalar::new(Value::Datetime(datetime)).unwrap())])];
-            let got = parse_path("strict $d.type()").unwrap().evaluate(&json("0"), &variables).unwrap();
+            let got = parse_path("strict $d.type()", Clocked::default()).unwrap().evaluate(&json("0"), &variables).unwrap();
             let [Item::Scalar(name)] = got.as_slice() else { panic!("{got:?}") };
             let Value::Char(name) = name.value() else { panic!("{name:?}") };
             name.clone()
@@ -21,7 +22,7 @@ fn datetime_names(moment: Moment) -> Vec<String> {
         .collect()
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C I] the
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C I] the
 /// name of each item's type: null, number of exact, approximate and
 /// decimal floating-point alike, string, boolean, array, object; in lax
 /// mode too the base is not unwrapped.
@@ -36,7 +37,7 @@ fn type_names_each_items_type() {
     gives("lax $.none.type()", "{}", "[]");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C I 1 e
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C I 1 e
 /// to i] a datetime's type is named by its fields and whether it is of a
 /// type WITH TIME ZONE.
 #[test]
@@ -48,9 +49,11 @@ fn type_names_each_datetime_type() {
     assert_eq!(TIMESTAMP, "timestamp without time zone");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C II] the
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C II] the
 /// size of an array is its number of elements, of any other item 1; lax:
 /// not unwrapped; strict: an item that is no array is SQLSTATE 22039.
+/// MC/DC of `strict && an item is no array`: strict of 7 22039, lax of it
+/// 1, strict of an array its size.
 #[test]
 fn size_counts_an_arrays_elements() {
     gives("lax $.size()", "[1, [2, 3], 4]", "[3]");
@@ -65,7 +68,7 @@ fn size_counts_an_arrays_elements() {
     assert!(matches!(value("lax $.size()", "[1, 2]"), Value::Exact(d) if d.units == 2 && d.scale == 0));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C III]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C III]
 /// `double()` casts a number or character string to DOUBLE PRECISION; lax:
 /// the base is unwrapped; a cast's exception is the result.
 #[test]
@@ -79,7 +82,7 @@ fn double_casts_to_double_precision() {
     assert_eq!(state("strict $.double()", "[1]"), "22036");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C III 1 a]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C III 1 a]
 /// `double()` of what is neither a number nor a character string is
 /// SQLSTATE 22036: null, a truth value, an object, an array within one.
 #[test]
@@ -91,11 +94,11 @@ fn double_of_what_is_no_number_or_string_is_an_error() {
     assert_eq!(e.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C III 1 a"));
     let date = Datetime { moment: Moment::Date, utc: 0, zone: 0, zoned: false, precision: 0 };
     let variables = vec![("d".to_owned(), vec![Item::Scalar(Scalar::new(Value::Datetime(date)).unwrap())])];
-    let refused = parse_path("lax $d.double()").unwrap().evaluate(&json("0"), &variables).unwrap_err();
+    let refused = parse_path("lax $d.double()", Clocked::default()).unwrap().evaluate(&json("0"), &variables).unwrap_err();
     assert_eq!(refused.sqlstate().as_str(), "22036");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C IV, V,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C IV, V,
 /// VI] `ceiling()`, `floor()` and `abs()` of each number; lax: the base is
 /// unwrapped.
 #[test]
@@ -108,7 +111,7 @@ fn ceiling_floor_and_abs_apply_to_each_number() {
     gives("lax $.none.abs()", "{}", "[]");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C IV 1 a,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C IV 1 a,
 /// V 1 a, VI 1 a] `ceiling()`, `floor()` or `abs()` of what is no number
 /// is SQLSTATE 22036: a string, null; strict: an array, not unwrapped.
 #[test]

@@ -44,7 +44,7 @@ pub use construct::{
     json_array_by_query, json_object,
 };
 pub use item::{Item, Member, Scalar};
-pub use path::{Accessor, Comparison, Expr, Method, Mode, Operator, Path, Predicate, Sign, Subscript, parse_path};
+pub use path::{Accessor, Comparison, DatetimeTemplate, Expr, Method, Mode, Operator, Path, Predicate, Sign, Subscript, parse_path};
 pub use predicate::{JsonType, is_json, is_not_json};
 pub use query::{
     CommonSyntax, ExistsBehavior, IMPLICIT_RETURNING, Passing, QueryBehavior, QueryOptions, Quotes, ValueBehavior, Warned, Wrapper,
@@ -56,7 +56,12 @@ pub use text::{Keys, parse};
 use crate::error::{Code, SqlError};
 
 /// \[DESIGN\] How deep arrays and objects nest at most in an SQL/JSON item,
-/// so every walk of one is bounded (RULES.md R-CF-6).
+/// so every walk of one, parsing JSON text, comparing and serializing, is
+/// bounded (RULES.md R-CF-6, D84). RFC 8259 §9 lets a parser limit the
+/// depth of nesting and §9.42 sets none, so one deeper is SQLCODE -900
+/// (D18). The value is no measurement: it is twice the
+/// path language's bound, `json::path::MAX_PATH_NESTING`, 64; no stack has
+/// been measured for an item this deep.
 pub const MAX_NESTING: usize = 128;
 
 /// The error of an SQL/JSON item beyond turborel's limits, `why` (RULES.md

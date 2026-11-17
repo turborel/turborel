@@ -24,7 +24,7 @@ fn array_agg(rows: &[Input<'_>], options: &ArrayOptions<'_>) -> Result<Value> {
     state.finish()
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.11 GR4b i, GR5f i] of
+/// Verifies: [ISO/IEC 9075-2:2023 §10.11 GR4b i, GR5f i] of
 /// no rows either aggregate is the null value, not an empty object or
 /// array.
 #[test]
@@ -33,7 +33,7 @@ fn no_rows_is_the_null_value() {
     assert!(array_agg(&[], &ArrayOptions::IMPLICIT).unwrap().is_null());
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.11 SR4a, SR4b, GR4b ii,
+/// Verifies: [ISO/IEC 9075-2:2023 §10.11 SR4a, SR4b, GR4b ii,
 /// GR6b] JSON_OBJECTAGG is the object of its rows' members, in order: NULL
 /// ON NULL, the default, keeps one bound to the SQL/JSON null, ABSENT ON
 /// NULL leaves it out, an empty object if all are; WITHOUT UNIQUE KEYS,
@@ -50,7 +50,7 @@ fn an_object_of_the_rows() {
     assert_eq!(json(&object_agg(&[(&b, plain(&Value::Null))], &absent).unwrap()), "{}");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.11 GR4b ii 2 B, GR4b ii 3]
+/// Verifies: [ISO/IEC 9075-2:2023 §10.11 GR4b ii 2 B, GR4b ii 3]
 /// a row whose name is the null value is SQLSTATE 22004, raised as the
 /// row is given; WITH UNIQUE KEYS two rows of one name are 22030, raised
 /// by `finish`, after every row's own errors; a FORMAT JSON value is
@@ -74,7 +74,7 @@ fn errors_of_the_rows() {
     assert_eq!(json(&object_agg(&[(&a, formatted(&inner))], &ObjectOptions::IMPLICIT).unwrap()), r#"{"a":{"k":1,"k":2}}"#);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.11 SR5a, GR5f ii, GR5g,
+/// Verifies: [ISO/IEC 9075-2:2023 §10.11 SR5a, GR5f ii, GR5g,
 /// GR6b] JSON_ARRAYAGG is the array of its rows' values in the order
 /// given: ABSENT ON NULL, the default, leaves out the SQL/JSON nulls, an
 /// empty array if all are; NULL ON NULL keeps them; FORMAT JSON values
@@ -103,7 +103,7 @@ fn finish_leaves_the_state_as_it_is() {
     assert_eq!(json(&state.finish().unwrap()), "[true,false]");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.11 SR1b, SR3, GR6b, §9.43
+/// Verifies: [ISO/IEC 9075-2:2023 §10.11 SR1b, SR3, GR6b, §9.43
 /// GR2a iii] the type returned: the implicit one (ID134); a text longer
 /// than it SQLSTATE 22001 by `finish`; a type no string's SQLCODE -103 and
 /// a binary string type's -900 by `new`.

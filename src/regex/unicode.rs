@@ -83,6 +83,18 @@ fn damaged() -> SqlError {
     SqlError::new(Code::Corrupt, "[DESIGN] the regular expression table is damaged")
 }
 
+/// [Unicode 13.0 §4.5] The General Category of `c`, by its name in
+/// `CATEGORIES`: `"Lu"`, `"Nd"`, `"Cn"` of a code point not assigned. For
+/// what classes characters by category outside a regular expression, as
+/// the path language's lexer does its identifiers' [ECMAScript 5.1 §7.6].
+///
+/// # Errors
+///
+/// SQLCODE -916 if the table is damaged.
+pub(crate) fn general_category(c: char) -> Result<&'static str> {
+    Table::read()?.category(c).ok_or_else(damaged)
+}
+
 impl Table {
     /// The table, its sections found.
     ///
@@ -122,6 +134,24 @@ impl Table {
             }
         }
         CharSet::of(ranges)
+    }
+
+    /// The General Category of `c`: that of the last run beginning at or
+    /// before it, the runs sorted by their first code points; none if the
+    /// table is damaged.
+    fn category(&self, c: char) -> Option<&'static str> {
+        let code = u32::from(c);
+        let (mut low, mut high) = (0, self.runs.records);
+        while low < high {
+            let middle = low.midpoint(high);
+            if self.runs.u32_at(middle, 0).is_some_and(|first| first <= code) {
+                low = middle.saturating_add(1);
+            } else {
+                high = middle;
+            }
+        }
+        let (_, category) = self.runs.pair(low.checked_sub(1)?)?;
+        CATEGORIES.get(usize::try_from(category).ok()?).copied()
     }
 
     /// The characters of the block whose normalized name is `name`
@@ -215,6 +245,39 @@ mod tests {
         assert!(table.block("Greek").unwrap().contains('α') && table.block("GreekandCoptic").unwrap().contains('α'));
         assert!(table.block("PrivateUse").unwrap().contains('\u{10FFFD}'));
         assert!(table.block("NoSuchBlock").is_none());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D61 `general_category` names the
+    /// category of a character as the category's set holds it: of the
+    /// first and last code points, the first and last of a run, and an
+    /// unassigned code point, Cn; each of a sample is of the set of its
+    /// category and of no other's.
+    #[test]
+    fn a_characters_general_category_is_found() {
+        let category = |c: char| general_category(c).unwrap();
+        let named = [
+            ('\0', "Cc"),
+            ('A', "Lu"),
+            ('a', "Ll"),
+            ('1', "Nd"),
+            (' ', "Zs"),
+            ('\u{301}', "Mn"),
+            ('\u{378}', "Cn"),
+            ('\u{3000}', "Zs"),
+            ('\u{2167}', "Nl"),
+            ('\u{1FBF0}', "Nd"),
+            ('\u{10FFFD}', "Co"),
+            ('\u{10FFFF}', "Cn"),
+        ];
+        for (c, expected) in named {
+            assert_eq!(category(c), expected, "{c:?}");
+        }
+        let table = Table::read().unwrap();
+        let sets: Vec<CharSet> = (0..CATEGORIES.len()).map(|i| table.categories(&[i])).collect();
+        for c in ['\u{1}', 'Z', '[', '\u{A0}', 'é', '\u{2028}', '中', '\u{E000}', '\u{1F600}', '\u{E01EF}'] {
+            let of: Vec<&str> = CATEGORIES.iter().zip(&sets).filter(|(_, set)| set.contains(c)).map(|(name, _)| *name).collect();
+            assert_eq!(of, [category(c)], "{c:?}");
+        }
     }
 
     /// Verifies: [EXTENSION] [F&O 3.1 §5.6.2] case variants are of full

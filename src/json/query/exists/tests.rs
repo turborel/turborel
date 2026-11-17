@@ -8,7 +8,7 @@ fn exists(context: &Value, path: &str, on_error: ExistsBehavior) -> Result<Value
     on(context, path, &[], |common| json_exists(common, on_error))
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.23 GR4a] True if the path
+/// Verifies: [ISO/IEC 9075-2:2023 §8.23 GR4a] True if the path
 /// gives an SQL/JSON item, the SQL/JSON null too; False if it gives none.
 #[test]
 fn whether_the_path_gives_an_item() {
@@ -19,7 +19,7 @@ fn whether_the_path_gives_an_item() {
     assert!(matches!(exists(&context, "strict $.b", ExistsBehavior::Error).unwrap(), Value::Bool(true)));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.23 GR1] of a null context
+/// Verifies: [ISO/IEC 9075-2:2023 §8.23 GR1] of a null context
 /// item, Unknown, the null value, whatever the path and ON ERROR.
 #[test]
 fn a_null_context_item_is_unknown() {
@@ -28,7 +28,7 @@ fn a_null_context_item_is_unknown() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.23 SR1, GR4b] in place of
+/// Verifies: [ISO/IEC 9075-2:2023 §8.23 SR1, GR4b] in place of
 /// an exception condition, of the path or of a context item that is no
 /// JSON text, TRUE, FALSE (the default) and UNKNOWN give their truth
 /// values, ERROR raises it.
@@ -42,7 +42,7 @@ fn an_exception_is_replaced_as_on_error_says() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 SR4] an error not an
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 SR4] an error not an
 /// exception condition is raised whatever ON ERROR says: a variable no
 /// argument names, SQLCODE -103; a context item nested past turborel's
 /// limit, SQLCODE -900.

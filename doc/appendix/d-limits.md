@@ -24,7 +24,7 @@ SQLSTATE 0A000.
 | An array's maximum cardinality | 65,535 elements, also the maximum of an array type written without one |
 | A multiset's elements | 65,535; past it, SQLSTATE 2200Q |
 | A number in JSON text or an SQL/JSON path | an exact one within DECFLOAT's range, an approximate one within DOUBLE PRECISION's |
-| The precision of an SQL/JSON item method | decimal() 18 digits; time(), time_tz(), timestamp() and timestamp_tz() 6, and a string datetime() reads 6 digits of a second's fraction |
+| The precision of an SQL/JSON item method | decimal() 18 digits; time(), time_tz(), timestamp() and timestamp_tz() 6, and a string datetime() reads, or its template's FF*n*, 6 digits of a second's fraction |
 
 ## Nesting
 

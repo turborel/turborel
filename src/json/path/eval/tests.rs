@@ -6,7 +6,7 @@ use super::*;
 use crate::error::SqlError;
 use crate::json::path::parse_path;
 use crate::json::{Keys, parse};
-use crate::value::datetime::Moment;
+use crate::value::datetime::{Clocked, Moment};
 use crate::value::{Datetime, Value};
 
 /// The item the JSON text `text` is.
@@ -19,7 +19,7 @@ pub(super) fn json(text: &str) -> Item {
 pub(super) fn run_with(path: &str, context: &str, variables: &[(&str, &str)]) -> Result<Vec<Item>> {
     let variables =
         variables.iter().map(|(name, text)| Ok(((*name).to_owned(), vec![parse(text, Keys::Any)?]))).collect::<Result<Vec<_>>>()?;
-    parse_path(path)?.evaluate(&parse(context, Keys::Any)?, &variables)
+    parse_path(path, Clocked::default())?.evaluate(&parse(context, Keys::Any)?, &variables)
 }
 
 /// That `path` gives, of `context` and `variables` as `run_with` takes
@@ -61,7 +61,7 @@ pub(super) fn value(path: &str, context: &str) -> Value {
     only.as_scalar().unwrap().value().clone()
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11a, GR11e, GR11f]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11a, GR11e, GR11f]
 /// `$` is the context item, whatever it is; a literal is its value; a
 /// parenthesized wff is the wff's value.
 #[test]
@@ -77,7 +77,7 @@ fn the_context_item_and_literals_are_their_values() {
     assert!(matches!(value("lax 1.5e0", "0"), Value::Approx(x) if x.to_bits() == 1.5_f64.to_bits()));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11b] a named
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11b] a named
 /// variable is the item it is passed, wherever it is in the path; of two
 /// passed one name, the first is taken.
 #[test]
@@ -88,18 +88,18 @@ fn a_named_variable_is_the_item_passed() {
     gives_with("lax $[*] ? (@ > $min)", "[1, 5, 9]", &[("min", "4")], "[5, 9]");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11b i 1 A] a
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11b i 1 A] a
 /// variable passed the empty sequence, as a FORMAT JSON argument that is
 /// the null value is, gives none: as a filter's operand too.
 #[test]
 fn a_variable_may_be_the_empty_sequence() {
     let variables = vec![("x".to_owned(), Vec::new())];
-    assert!(parse_path("lax $x").unwrap().evaluate(&json("0"), &variables).unwrap().is_empty());
-    let got = parse_path("lax $[*] ? (exists ($x))").unwrap().evaluate(&json("[1]"), &variables).unwrap();
+    assert!(parse_path("lax $x", Clocked::default()).unwrap().evaluate(&json("0"), &variables).unwrap().is_empty());
+    let got = parse_path("lax $[*] ? (exists ($x))", Clocked::default()).unwrap().evaluate(&json("[1]"), &variables).unwrap();
     assert!(got.is_empty());
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 SR4] every named
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 SR4] every named
 /// variable is to be passed: one not is refused with SQLCODE -103 before
 /// anything is evaluated, within a filter's predicate too, where an
 /// exception would be Unknown, in a subscript, a range's last, an
@@ -133,7 +133,7 @@ fn a_named_variable_not_passed_is_refused_before_evaluation() {
     assert_eq!(e.sqlcode(), -103_i32);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11c] `@` is the
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11c] `@` is the
 /// current item of the innermost filter holding it, so a filter within
 /// another's predicate has its own.
 #[test]
@@ -143,7 +143,7 @@ fn at_is_the_current_item_of_the_innermost_filter() {
     gives("lax $[*] ? (@.b[*] ? (@ == 2) == 2)", r#"[{"b": [1, 2]}, {"b": [3]}]"#, r#"[{"b": [1, 2]}]"#);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11d] `last` is the
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11d] `last` is the
 /// last subscript, N − 1, of the current array of the innermost array
 /// accessor holding it, an exact number; −1 of an empty array.
 #[test]
@@ -159,7 +159,7 @@ fn last_is_the_last_subscript_of_the_current_array() {
     assert!(matches!(value("lax $[0 to 0] ? (@ == 1).size()", "[1]"), Value::Exact(d) if d.units == 1));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR7, GR8] Wrap makes
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR7, GR8] Wrap makes
 /// an array of each item that is no array; Unwrap gives each array's
 /// elements, one level only.
 #[test]
@@ -173,14 +173,14 @@ fn wrap_and_unwrap_take_one_level() {
     assert!(wrap(Vec::new()).is_empty());
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.48.3, §9.46 GR11b] a
+/// Verifies: [ISO/IEC 9075-2:2023 §4.48.3, §9.46 GR11b] a
 /// variable may be any SQL/JSON item, a datetime too, as a PASSING
 /// clause's value may be; the null value is the SQL/JSON null.
 #[test]
 fn a_variable_may_be_a_datetime() {
     let date = Datetime { moment: Moment::Date, utc: 0, zone: 0, zoned: false, precision: 0 };
     let variables = vec![("d".to_owned(), vec![Item::Scalar(Scalar::new(Value::Datetime(date)).unwrap())])];
-    let path = parse_path("lax $d.type()").unwrap();
+    let path = parse_path("lax $d.type()", Clocked::default()).unwrap();
     let got = path.evaluate(&json("0"), &variables).unwrap();
     assert!(Item::Array(got).equivalent(&json(r#"["date"]"#)).unwrap());
     assert!(matches!(item(Value::Null), Item::Null));

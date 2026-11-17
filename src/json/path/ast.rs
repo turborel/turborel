@@ -9,12 +9,16 @@
 //! whose value is the wff's \[GR11f\]. Associative operators nest to the
 //! left, as the Format writes them: `1 - 2 - 3` is `(1 - 2) - 3`.
 
+use std::fmt;
+use std::sync::Arc;
+
+use crate::functions::ScalarFunction;
 use crate::json::Item;
 use crate::regex::Regex;
 
 /// `<JSON path expression>`: `<JSON path mode> <JSON path wff>`.
 /// \[DESIGN\] No node of `expr` is nested more than the module's
-/// `MAX_NESTING` nodes deep, itself counted, so a walk of the tree may
+/// `MAX_PATH_NESTING` nodes deep, itself counted, so a walk of the tree may
 /// recurse without bound checks of its own (RULES.md R-CF-6).
 #[derive(Debug, Clone)]
 pub struct Path {
@@ -101,9 +105,8 @@ pub struct Subscript {
 }
 
 /// `<JSON method>`: an item method and the arguments written in its
-/// parentheses. \[DESIGN\] `datetime()` with a `<JSON datetime template>`
-/// is refused when parsed (RULES.md D18), so `Datetime` has none.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// parentheses.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Method {
     /// `type()`.
     Type,
@@ -119,6 +122,8 @@ pub enum Method {
     Abs,
     /// `datetime()`, without a `<JSON datetime template>`.
     Datetime,
+    /// `datetime(<JSON datetime template>)`.
+    DatetimeTemplate(DatetimeTemplate),
     /// `keyvalue()`.
     Keyvalue,
     /// `bigint()`.
@@ -153,6 +158,48 @@ pub enum Method {
     /// precision, if written.
     TimestampTz(Option<u32>),
 }
+
+/// The `<JSON datetime template>` of `datetime()` [§9.46 SR10]: the value
+/// of its string literal, and the conversion of a character string by it
+/// to a value of its implicit datetime data type [§9.51], made as the path
+/// is parsed. Two are equal if their values are, and one is shown as its
+/// value.
+#[derive(Clone)]
+pub struct DatetimeTemplate {
+    text: String,
+    cast: Arc<dyn ScalarFunction>,
+}
+
+impl DatetimeTemplate {
+    /// The template `text`, read by `cast`.
+    pub(crate) fn new(text: String, cast: Arc<dyn ScalarFunction>) -> DatetimeTemplate {
+        DatetimeTemplate { text, cast }
+    }
+
+    /// The value of the template's string literal.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The conversion of a character string by the template.
+    pub(crate) fn cast(&self) -> &dyn ScalarFunction {
+        &*self.cast
+    }
+}
+
+impl fmt::Debug for DatetimeTemplate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.text, f)
+    }
+}
+
+impl PartialEq for DatetimeTemplate {
+    fn eq(&self, other: &DatetimeTemplate) -> bool {
+        self.text == other.text
+    }
+}
+
+impl Eq for DatetimeTemplate {}
 
 /// The sign of a `<JSON unary expression>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

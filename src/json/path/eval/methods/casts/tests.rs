@@ -5,12 +5,12 @@ use crate::json::Item;
 use crate::json::path::eval::tests::{error, gives, json, state, value};
 use crate::json::path::parse_path;
 use crate::value::Value;
-use crate::value::datetime::{Datetime, Moment};
+use crate::value::datetime::{Clocked, Datetime, Moment};
 
 /// The value `path` gives of the item that is the date 2024-01-02.
 fn of_a_date(path: &str) -> crate::error::Result<Vec<Item>> {
-    let date = parse_path("lax \"2024-01-02\".date()")?.evaluate(&json("0"), &[])?;
-    parse_path(path)?.evaluate(&json("0"), &[("d".to_owned(), date)])
+    let date = parse_path("lax \"2024-01-02\".date()", Clocked::default())?.evaluate(&json("0"), &[])?;
+    parse_path(path, Clocked::default())?.evaluate(&json("0"), &[("d".to_owned(), date)])
 }
 
 /// The exact number `value` is, as its units and scale.
@@ -25,7 +25,7 @@ fn datetime(value: &Value) -> Datetime {
     *d
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C IX,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C IX,
 /// XIII] `bigint()` and `integer()` cast a number or a character string
 /// to BIGINT and INTEGER; lax: the base is unwrapped; one out of range is
 /// 22003, a string that is no number 22018.
@@ -42,7 +42,7 @@ fn bigint_and_integer_cast_to_their_types() {
     assert_eq!(state("lax $.integer()", "\"\""), "22018");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C IX 1 a,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C IX 1 a,
 /// XII 1 a, XIII 1 a, XIV 1 a] `bigint()`, `decimal()`, `integer()` and
 /// `number()` of what is neither a number nor a character string are
 /// SQLSTATE 22036: null, a truth value, an object, a datetime; strict: an
@@ -60,7 +60,7 @@ fn numeric_casts_of_what_is_no_number_or_string_are_errors() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XII]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XII]
 /// `decimal()` casts to DECIMAL of the precision and scale written, of
 /// none 18 and 0: cut to the scale, as CAST cuts; past the precision
 /// 22003.
@@ -76,7 +76,7 @@ fn decimal_casts_to_its_precision_and_scale() {
     assert_eq!(state("lax $.decimal()", "\"1,5\""), "22018");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XIV]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XIV]
 /// (IV186) `number()` keeps a number as it is, exact, approximate or
 /// decimal floating-point; casts a character string as the `<signed
 /// numeric literal>` it is, exact or approximate; a string that is none is
@@ -92,7 +92,7 @@ fn number_keeps_numbers_and_reads_strings() {
     assert_eq!(state("lax $.number()", "\"one\""), "22018");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C X]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C X]
 /// `boolean()` casts a truth value or a character string to BOOLEAN; a
 /// string that is no truth value is 22018; anything else, a number among
 /// them, is 2202V.
@@ -111,7 +111,7 @@ fn boolean_casts_truth_values_and_strings() {
     assert_eq!(of_a_date("lax $d.boolean()").unwrap_err().sqlstate().as_str(), "2202V");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XV]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XV]
 /// `string()` casts a character string, a number or a truth value to
 /// CHARACTER VARYING, each written as its literal; a datetime, null, an
 /// array or an object is 2202X.
@@ -127,7 +127,7 @@ fn string_casts_strings_numbers_and_truth_values() {
     assert_eq!(of_a_date("lax $d.string()").unwrap_err().sqlstate().as_str(), "2202X");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XI]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XI]
 /// `date()` casts a character string to DATE; a string of no date is
 /// 22018; anything else, a datetime among them, is 2202W.
 #[test]
@@ -145,7 +145,7 @@ fn date_casts_strings() {
     assert_eq!(of_a_date("lax $d.date()").unwrap_err().sqlstate().as_str(), "2202W");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XVI,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XVI,
 /// XVII] `time()` and `time_tz()` cast a character string to TIME and TIME
 /// WITH TIME ZONE, of the precision written, else 0, the fraction cut to
 /// it; a string of no time is 22018.
@@ -166,7 +166,7 @@ fn time_and_time_tz_cast_strings() {
     assert_eq!(state("lax $.time_tz()", "\"noon\""), "22018");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XVIII,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XVIII,
 /// XIX] `timestamp()` and `timestamp_tz()` cast a character string to
 /// TIMESTAMP and TIMESTAMP WITH TIME ZONE, of the precision written, else
 /// 6; a string of no timestamp is 22018.
@@ -182,7 +182,7 @@ fn timestamp_and_timestamp_tz_cast_strings() {
     assert_eq!(state("lax $.timestamp_tz()", "\"2024-13-02 00:00:00+00:00\""), "22018");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XVI 1 a,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XVI 1 a,
 /// XVII 1 a, XVIII 1 a, XIX 1 a] `time()` and `timestamp()` of what is no
 /// character string are 2202Y and 2202Z; `time_tz()` and `timestamp_tz()`
 /// of what is neither a number nor a string too, and of a number, which
@@ -205,7 +205,7 @@ fn datetime_casts_of_what_they_do_not_take_are_errors() {
     assert_eq!(state("lax $.timestamp_tz(2)", "1.5"), "22005");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 A] the
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 A] the
 /// casts are of each item, in lax mode of an array's elements; of no item,
 /// no item.
 #[test]

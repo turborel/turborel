@@ -32,7 +32,7 @@ fn value(text: &str) -> Value {
     item(text).as_scalar().unwrap().value().clone()
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A I to III]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A I to III]
 /// [RFC 8259 §3] false and true are the truth values, null the SQL/JSON
 /// null; a name of another case, cut short or longer is no JSON text.
 #[test]
@@ -45,10 +45,11 @@ fn the_literal_names() {
     }
 }
 
-/// Verifies: [EXTENSION] [RFC 8259 §2] `JSON-text = ws value ws`: spaces,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a ii, GR3a iii 1; RFC 8259 §2] `JSON-text = ws value ws`: spaces,
 /// tabs, line feeds and carriage returns around a value and around the
 /// structural characters are insignificant; an empty text, a second value
-/// and another white space character are no JSON text.
+/// and another white space character are no JSON text. MC/DC of `' ' |
+/// '\t' | '\n' | '\r'`: each skipped, VT and NBSP not.
 #[test]
 fn white_space_is_insignificant() {
     assert!(is(" \t\r\n1 \t\r\n", &number(1, 0)));
@@ -59,7 +60,7 @@ fn white_space_is_insignificant() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A IV] [RFC
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A IV] [RFC
 /// 8259 §6] a number without an exponent is the exact number its
 /// characters are of a `<signed numeric literal>`, its scale its
 /// fraction's digits.
@@ -75,10 +76,12 @@ fn a_number_without_an_exponent_is_exact() {
     assert!(is("123456789012345678", &number(123_456_789_012_345_678, 0)));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A IV] [RFC
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A IV] [RFC
 /// 8259 §6] a number with an exponent is the approximate number of its
 /// characters, the exponent signed or not, E of either case; one past an
-/// approximate number's range is SQLCODE -900.
+/// approximate number's range is SQLCODE -900. MC/DC of `'e' | 'E'`:
+/// each is an exponent, and neither
+/// (`a_number_without_an_exponent_is_exact`) none.
 #[test]
 fn a_number_with_an_exponent_is_approximate() {
     assert_eq!(bits("1e2"), Some(100.0_f64.to_bits()));
@@ -105,7 +108,7 @@ fn an_exact_number_of_many_digits_is_decimal_floating_point() {
     assert_eq!(parse(&beyond, Keys::Any).unwrap_err().sqlcode(), -900_i32);
 }
 
-/// Verifies: [EXTENSION] [RFC 8259 §6] what is no number: a leading zero,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a ii, GR3a iii 1; RFC 8259 §6] what is no number: a leading zero,
 /// a plus sign, no digit before or after the decimal point or in the
 /// exponent, a hexadecimal one, Infinity and NaN.
 #[test]
@@ -115,7 +118,7 @@ fn what_is_no_number() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A V] [RFC
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A V] [RFC
 /// 8259 §7] a string is its characters with each escape replaced: the
 /// two-character escapes, `\u` of four hexadecimal digits of either case,
 /// and two of them that are a surrogate pair, one character.
@@ -132,7 +135,7 @@ fn a_string_is_its_characters_unescaped() {
     assert_eq!(kept, "a\0b");
 }
 
-/// Verifies: [EXTENSION] [RFC 8259 §7] what is no string: one not closed,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a ii, GR3a iii 1; RFC 8259 §7] what is no string: one not closed,
 /// a control character not escaped, an escape of another character or cut
 /// short, a `\u` of fewer than four hexadecimal digits, a single
 /// quotation mark; \[DESIGN\] and a surrogate that is not of a pair, no
@@ -162,7 +165,7 @@ fn what_is_no_string() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A VI] [RFC
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A VI] [RFC
 /// 8259 §5] an array is its elements in order, of any types, nested or
 /// none; one not closed, with a comma before no element or with elements
 /// not separated is no JSON text.
@@ -177,7 +180,7 @@ fn an_array_is_its_elements_in_order() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A VII,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A VII,
 /// VIII] [RFC 8259 §4] an object is its members, each a string key and a
 /// value; a key that is no string, a member without its colon or value,
 /// a comma before no member and an object not closed are no JSON text.
@@ -192,7 +195,7 @@ fn an_object_is_its_members() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.42 GR3a iii 2, GR3a iii 3
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a iii 2, GR3a iii 3
 /// A VIII 2] members of one key are all kept, in the order written (UA057),
 /// unless keys are to be unique: then SQLSTATE 22037, in a nested object
 /// too, keys compared after their escapes are replaced; one key in two
@@ -228,7 +231,7 @@ fn nesting_is_bounded() {
     assert_eq!(parse(&mixed, Keys::Any).unwrap_err().sqlcode(), -900_i32);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.42 GR3a iii 1] the
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a iii 1] the
 /// refusal of a string that is no JSON text names its rule and the
 /// character it was refused at, as a data exception.
 #[test]

@@ -56,9 +56,6 @@ Nothing is open.
 
 ### JSON
 
-- SQL/JSON's path language (T831 to T838, T840) [§4.48.5, §9.45, §9.46],
-  strict and lax, with filters, item methods, starts with, like_regex and
-  hex integer literals. Every JSON function reads it, so it comes first.
 - SQL/JSON functions over character strings (T803, T811 to T830) [§4.48,
   §6.28, §6.34, §6.35, §7.11, §8.22, §8.23, §10.11]. JSON_OBJECT,
   JSON_ARRAY and their aggregates, JSON_VALUE, JSON_QUERY, JSON_EXISTS, IS

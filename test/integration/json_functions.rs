@@ -29,7 +29,7 @@ fn broke(code: i32, state: &str, cited: &str) -> (i32, String, Option<String>) {
     (code, state.to_owned(), Some(format!("ISO/IEC 9075-2:2023 {cited}")))
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.28 SR1, SR3, SR4, SR5,
+/// Verifies: [ISO/IEC 9075-2:2023 §6.28 SR1, SR3, SR4, SR5,
 /// GR2, GR5; §9.48 GR4b] JSON_VALUE is the one scalar its path gives, cast
 /// to the RETURNING type, of CHARACTER VARYING(32767) without one; null of
 /// a null context item, of the SQL/JSON null and, NULL ON EMPTY and NULL ON
@@ -61,7 +61,7 @@ fn json_value_6_28() {
     );
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.28; §9.48 GR4, GR5;
+/// Verifies: [ISO/IEC 9075-2:2023 §6.28; §9.48 GR4, GR5;
 /// Features T825, T826] Each ON EMPTY and ON ERROR behavior of JSON_VALUE:
 /// ERROR ON EMPTY is 22035, and ON ERROR then replaces it, so ERROR ON
 /// EMPTY alone, NULL ON ERROR implicit, is null [GR4c i, GR5c]; ERROR ON
@@ -98,7 +98,7 @@ fn json_value_behaviors_9_48() {
     assert_eq!(failed(&s, &deep).sqlcode(), -900, "a limit of turborel's is no exception ON ERROR replaces");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.35 SR1b, SR4 to SR9;
+/// Verifies: [ISO/IEC 9075-2:2023 §6.35 SR1b, SR4 to SR9;
 /// §9.49 GR4, GR5; Features T828, T829] JSON_QUERY serializes the one item
 /// its path gives as JSON text: WITH (UNCONDITIONAL) ARRAY WRAPPER wraps
 /// the sequence in an array, WITH CONDITIONAL ARRAY WRAPPER unless it is
@@ -128,7 +128,7 @@ fn json_query_6_35() {
     assert_eq!(rows(&s, &q), expected(&[r#"[1,{"b":"x"}]"#, r#"{"a":[1,{"b":"x"}],"s":"t"}"#]));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.35 SR4, SR5; §9.49 GR4c,
+/// Verifies: [ISO/IEC 9075-2:2023 §6.35 SR4, SR5; §9.49 GR4c,
 /// GR5a, GR6; Feature T825] Each ON EMPTY and ON ERROR behavior of
 /// JSON_QUERY: ERROR ON EMPTY is 22035, EMPTY ARRAY and EMPTY OBJECT give
 /// `[]` and `{}`; ERROR ON ERROR raises 22034 of two items unwrapped, and
@@ -150,7 +150,7 @@ fn json_query_behaviors_9_49() {
     assert_eq!(rows(&s, q), expected(&["[],{},[],{},NULL,[],NULL"]));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.23 SR1, GR1, GR4] JSON_EXISTS
+/// Verifies: [ISO/IEC 9075-2:2023 §8.23 SR1, GR1, GR4] JSON_EXISTS
 /// is True if the path gives an item, False if none, Unknown of a null
 /// context item; an exception is False (FALSE ON ERROR being implicit),
 /// True, Unknown or raised, as its ON ERROR says. It is a predicate: in a
@@ -173,7 +173,7 @@ fn json_exists_8_23() {
     assert_eq!(rows(&s, q), expected(&["2"]));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.14 SR4, SR5; §9.46 SR4,
+/// Verifies: [ISO/IEC 9075-2:2023 §10.14 SR4, SR5; §9.46 SR4,
 /// GR11b; §10.12; Feature T823] A PASSING argument's value is its named
 /// variable's: the `<identifier>`'s value, a regular identifier in upper
 /// case, a delimited identifier's body, is the name, so AS x is $X and AS
@@ -199,10 +199,12 @@ fn passing_t823() {
     assert_eq!(s.prepare("VALUES JSON_VALUE(CAST(NULL AS VARCHAR(2)), 'lax $Z')").map(|_| ()).unwrap_err().sqlcode(), -103);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 SR8] The initial of
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 SR8] The initial of
 /// starts with that is a named variable is a character string argument
 /// without FORMAT JSON, else SQLCODE -103; a literal initial, or the
-/// variable elsewhere, needs neither.
+/// variable elsewhere, needs neither. MC/DC of `FORMAT JSON || not a
+/// character string`: a string FORMAT JSON refused, a number refused, a
+/// string without it taken.
 #[test]
 fn starts_with_9_46() {
     let db = setup();
@@ -220,7 +222,7 @@ fn starts_with_9_46() {
     assert_eq!(refused(&s, deeper), sr8);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.14 SR1, SR2a; §10.12 SR3,
+/// Verifies: [ISO/IEC 9075-2:2023 §10.14 SR1, SR2a; §10.12 SR3,
 /// SR6 to SR8; §10.13 SR2, SR2a; §6.28 SR2; §6.35 SR8; §9.46 SR3; §9.48
 /// GR4c iii] The binder's refusals, each as the statement is prepared: a
 /// context item of no string type, a binary string's (SQLCODE -900), AS a
@@ -229,6 +231,11 @@ fn starts_with_9_46() {
 /// with WITH a wrapper, an argument of a binary string without FORMAT
 /// JSON, of an array, of no string with it, a DEFAULT CAST does not take
 /// to the returned type, and a path specification no path expression.
+/// MC/DC of `returnable`: INTERVAL, BINARY and an array type, of no
+/// condition, refused, a character string, numeric, datetime and BOOLEAN
+/// type each alone returned (`json_value_6_28`); of QUOTES and WITH
+/// CONDITIONAL or UNCONDITIONAL WRAPPER: both refused, either alone taken
+/// (`json_query_6_35`).
 #[test]
 fn refusals_10_14() {
     let db = setup();
@@ -264,7 +271,7 @@ fn refusals_10_14() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.35, §6.28, §8.23, §10.12,
+/// Verifies: [ISO/IEC 9075-2:2023 §6.35, §6.28, §8.23, §10.12,
 /// §10.13] The Format's errors: a path specification that is no literal,
 /// a FORMAT of another representation than JSON, an ENCODING of none of
 /// UTF8, UTF16 and UTF32, ON of neither EMPTY nor ERROR, EMPTY of neither
@@ -292,7 +299,7 @@ fn syntax_6_35() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.48 GR4b iii 2, §9.49 GR5b
+/// Verifies: [ISO/IEC 9075-2:2023 §9.48 GR4b iii 2, §9.49 GR5b
 /// i; ISO/IEC 9075:1992 §3.3.4.1] A cast that cuts a string to the
 /// returned type completes with the warning 01004, as CAST does: of
 /// JSON_VALUE, and of JSON_QUERY OMIT QUOTES.
@@ -308,7 +315,7 @@ fn warnings_9_48() {
     assert_eq!(s.warning(), None);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.23, §6.28, §6.35; §20.7
+/// Verifies: [ISO/IEC 9075-2:2023 §8.23, §6.28, §6.35; §20.7
 /// GR5a] The operators where an expression may be: a query's select list
 /// and WHERE, a view, a CHECK constraint, which refuses a row it is false
 /// of, and a generated column; a `?` context item or argument FORMAT JSON
@@ -342,10 +349,12 @@ fn where_written_8_23() {
     assert!(s.prepare("VALUES JSON_VALUE('{}', 'lax $B' PASSING ? AS B)").is_err());
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §5.2] JSON_EXISTS, JSON_VALUE
+/// Verifies: [ISO/IEC 9075-2:2023 §5.2] JSON_EXISTS, JSON_VALUE
 /// and JSON_QUERY are the operators only before "(", and the words of
 /// their Formats, no key words of SQL-92, only where the Formats have
 /// them: so columns of those names are columns, in a WHERE clause too.
+/// MC/DC of `at_json` of JSON_VALUE: JSON_VALUE before `(` the operator,
+/// before `+` a column, and JSON_QUERY before `(` not JSON_VALUE.
 #[test]
 fn words_stay_identifiers_5_2() {
     let db = setup();
@@ -361,9 +370,10 @@ fn words_stay_identifiers_5_2() {
     assert_eq!(rows(&s, q), expected(&["19,7"]));
     let q = "SELECT JSON_VALUE('{}', 'lax $.a' RETURNING INTEGER DEFAULT ERROR ON EMPTY DEFAULT EMPTY ON ERROR) FROM ODD";
     assert_eq!(rows(&s, q), expected(&["4"]));
+    assert_eq!(rows(&s, "SELECT JSON_QUERY('[8]', 'lax $[0]') FROM ODD"), expected(&["8"]));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 GR1; §9.46 GR11g ii 6
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 GR1; §9.46 GR11g ii 6
 /// C IX to XIX; Features T840, T865 to T878] A statement's path reads hex
 /// integer literals and the casting item methods: integer(), decimal() of
 /// a precision and scale, date(), boolean() and string() cast an item by
@@ -381,4 +391,28 @@ fn item_methods_t865() {
     let fails = |sql: &str| failed(&s, sql).sqlstate().as_str().to_owned();
     assert_eq!(fails("VALUES JSON_VALUE('true', 'lax $.date()' ERROR ON ERROR)"), "2202W");
     assert_eq!(fails("VALUES JSON_VALUE('1', 'lax $.boolean()' ERROR ON ERROR)"), "2202V");
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 SR10, GR11g ii 6 C VII 1 b; §9.51
+/// GR5 to GR12; Feature T832] A statement's path reads a string by the
+/// `<JSON datetime template>` of datetime(), as a value of the template's
+/// implicit datetime data type, cast to the RETURNING type; a string the
+/// template does not read is 22031, which ON ERROR replaces; a template
+/// that breaks SR10 or a Syntax Rule of §9.52 is refused as the statement
+/// is prepared, SQLCODE -103, whatever ON ERROR says.
+#[test]
+fn datetime_templates_t832() {
+    let db = setup();
+    let s = db.session("APP");
+    let q = r#"VALUES (JSON_VALUE('"2024-02-29"', 'lax $.datetime("YYYY-MM-DD")' RETURNING DATE),
+             JSON_VALUE('["29.02.2024 21:30"]', 'lax $.datetime("DD.MM.YYYY HH24:MI")' RETURNING TIMESTAMP(0)),
+             JSON_VALUE('"09:30 P.M."', 'lax $.datetime("HH12:MI A.M.").type()'),
+             JSON_VALUE('"2024/02/29"', 'lax $.datetime("YYYY-MM-DD")' RETURNING DATE))"#;
+    assert_eq!(rows(&s, q), expected(&["2024-02-29,2024-02-29 21:30:00,time without time zone,NULL"]));
+    let unread = "VALUES JSON_VALUE('\"2023-02-29\"', 'lax $.datetime(\"YYYY-MM-DD\")' RETURNING DATE ERROR ON ERROR)";
+    assert_eq!(refused(&s, unread), broke(-301, "22031", "§9.46 GR11g ii 6 C VII 1 b"));
+    let zoned = "VALUES JSON_VALUE('\"2024\"', 'lax $.datetime(\"YYYY TZH\")' NULL ON ERROR)";
+    assert_eq!(refused(&s, zoned), broke(-103, "2A000", "§9.46 SR10d"));
+    let lexical = "VALUES JSON_VALUE('\"2024\"', 'lax $.datetime(\"yyyy\")' NULL ON ERROR)";
+    assert_eq!(refused(&s, lexical), broke(-103, "2A000", "§9.52 SR2"));
 }

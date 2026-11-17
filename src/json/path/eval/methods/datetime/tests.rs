@@ -1,5 +1,5 @@
 //! Tests of `datetime()`: each of the five types a string is tried as,
-//! and the strings and items it refuses.
+//! the strings and items it refuses, and strings read by a template.
 
 use super::*;
 use crate::json::path::eval::tests::{error, gives, run, state, value};
@@ -11,7 +11,7 @@ fn read(text: &str) -> Datetime {
     d
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 c
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 c
 /// i to v] [§5.3 SR33 to SR35] a string is read as a date, a time or a
 /// timestamp, with time zone if it writes a `<time zone interval>`, of the
 /// precision of its `<seconds fraction>`.
@@ -37,7 +37,7 @@ fn datetime_reads_each_kind_of_string() {
     gives("lax $.none.datetime()", "{}", "[]");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 a,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 a,
 /// VII 1 c vi] what is no character string, or a string of no valid
 /// datetime of the five types, is SQLSTATE 22031: a string with spaces, of
 /// a day not in its month, of a timestamp whose time zone takes it past
@@ -62,4 +62,32 @@ fn datetime_of_what_is_no_datetime_string_is_an_error() {
 fn datetime_of_too_fine_a_fraction_is_beyond_limits() {
     assert_eq!(run("lax $.datetime()", "\"12:00:00.1234567\"").unwrap_err().sqlcode(), -900_i32);
     assert_eq!(SESSION_ZONE, 0_i16);
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 a, VII 1 b]
+/// [§9.51 GR5 to GR12] `datetime()` of a template reads each string by
+/// §9.51 as a value of the template's implicit datetime data type, of an
+/// array's elements in lax mode; what is no character string is SQLSTATE
+/// 22031, and so is a string the template does not read, in place of
+/// §9.51's exception.
+#[test]
+fn datetime_of_a_template_reads_by_it() {
+    let Value::Datetime(date) = value("lax $.datetime(\"DD.MM.YYYY\")", "\"29.02.2024\"") else { panic!("a date") };
+    assert_eq!((date.moment, date.zoned, date.to_string()), (Moment::Date, false, "2024-02-29".to_owned()));
+    let stamp = value("lax $.datetime(\"YYYY-MM-DD HH24:MI:SS.FF3 TZH:TZM\")", "\"2024-01-02 03:04:05.678 -08:00\"");
+    let Value::Datetime(stamp) = stamp else { panic!("a timestamp") };
+    assert_eq!((stamp.moment, stamp.zoned, stamp.precision, stamp.zone), (Moment::Timestamp, true, 3_u8, -480_i16));
+    gives(
+        "lax $.datetime(\"HH12:MI A.M.\").type()",
+        r#"["09:30 A.M.", "11:59 P.M."]"#,
+        r#"["time without time zone", "time without time zone"]"#,
+    );
+    let not_a_string = error("lax $.datetime(\"YYYY-MM-DD\")", "1");
+    assert_eq!(not_a_string.sqlstate().as_str(), "22031");
+    assert_eq!(not_a_string.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 a"));
+    for text in ["2024/01/02", "2023-02-29", "2024-01-02 ", "12:00"] {
+        let unread = error("lax $.datetime(\"YYYY-MM-DD\")", &format!("\"{text}\""));
+        assert_eq!(unread.sqlstate().as_str(), "22031", "{text}");
+        assert_eq!(unread.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 b"), "{text}");
+    }
 }

@@ -3,10 +3,11 @@
 
 use super::*;
 use crate::json::parse_path;
+use crate::value::datetime::Clocked;
 
 /// A call of `operation` of the path `lax $.a`, of the arguments `passing`.
 fn call(passing: Vec<(String, bool)>, operation: JsonOperation) -> JsonCall {
-    JsonCall::new("lax $.a", parse_path("lax $.a").unwrap(), passing, operation)
+    JsonCall::new("lax $.a", parse_path("lax $.a", Clocked::default()).unwrap(), passing, operation)
 }
 
 /// JSON_QUERY of every clause written as its implicit value.
@@ -27,7 +28,7 @@ fn query() -> JsonOperation {
 fn a_call_shows_its_clauses() {
     let exists = JsonCall::new(
         "lax $.a ? (@ == \"it's\")",
-        parse_path("lax $").unwrap(),
+        parse_path("lax $", Clocked::default()).unwrap(),
         vec![("X".into(), true)],
         JsonOperation::Exists(ExistsBehavior::Unknown),
     );

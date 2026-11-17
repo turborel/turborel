@@ -42,14 +42,14 @@ pub(super) enum Field {
 
 /// What a field is of: the date, the time of day, or the time zone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Of {
+pub(super) enum Of {
     Date,
     Time,
     Zone,
 }
 
 impl Field {
-    fn of(self) -> Of {
+    pub(super) fn of(self) -> Of {
         match self {
             Field::Year(_) | Field::RoundedYear(_) | Field::Month | Field::DayOfMonth | Field::DayOfYear => Of::Date,
             Field::Hour12 | Field::Hour24 | Field::Minute | Field::Second | Field::SecondOfDay | Field::Fraction(_) | Field::AmPm => {
@@ -251,7 +251,7 @@ impl Template {
 }
 
 /// \[SR2\] `text`'s parts, each field the longest written at its place.
-fn lexed(text: &str) -> Result<Vec<Part>> {
+pub(super) fn lexed(text: &str) -> Result<Vec<Part>> {
     let mut parts = Vec::new();
     let mut rest = text;
     while let Some(c) = rest.chars().next() {

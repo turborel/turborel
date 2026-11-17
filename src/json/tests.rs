@@ -29,7 +29,7 @@ fn equivalent(a: &Item, b: &Item) -> bool {
     a.equivalent(b).unwrap()
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.48.3] an SQL/JSON scalar
+/// Verifies: [ISO/IEC 9075-2:2023 §4.48.3] an SQL/JSON scalar
 /// is a non-null character string, number, truth value or datetime: the
 /// null value and a binary string are none.
 #[test]
@@ -43,7 +43,7 @@ fn a_scalar_is_of_the_types_the_model_names() {
     assert!(matches!(kept.value(), Value::Bool(true)));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.48.3] scalars are
+/// Verifies: [ISO/IEC 9075-2:2023 §4.48.3] scalars are
 /// equivalent when equal as SQL values, 1 and 1.0 so, a number and a
 /// string never; the SQL/JSON null is equivalent to itself alone.
 #[test]
@@ -58,7 +58,7 @@ fn scalars_and_nulls_are_equivalent_as_their_values_are_equal() {
     assert!(!equivalent(&number(0, 0), &Item::Null));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.48.3] arrays are
+/// Verifies: [ISO/IEC 9075-2:2023 §4.48.3] arrays are
 /// equivalent when of one length with corresponding elements equivalent,
 /// so their order matters; an array is equivalent to no scalar or object.
 #[test]
@@ -72,7 +72,7 @@ fn arrays_are_equivalent_element_by_element() {
     assert!(!equivalent(&ab, &number(1, 0)));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.48.3] objects are
+/// Verifies: [ISO/IEC 9075-2:2023 §4.48.3] objects are
 /// equivalent when their members pair off by equal keys and equivalent
 /// bound values, whatever their order; keys are equal code point by code
 /// point, so one of another case or a trailing space is another key.
@@ -87,9 +87,13 @@ fn objects_are_equivalent_whatever_their_members_order() {
     assert!(!equivalent(&ab, &Item::Array(Vec::new())));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.48.3] the bijection of
+/// Verifies: [ISO/IEC 9075-2:2023 §4.48.3] the bijection of
 /// objects with members of one key: each member is paired with one member
 /// only, so {a:1, a:1} is not {a:1, a:2}, and {a:1, a:2} is {a:2, a:1}.
+/// MC/DC of `*used || member.key != other.key` in `paired`: a member of
+/// the key already taken is passed over, and one not taken is tried
+/// ({a:1, a:1} against {a:1, a:2}); one of another key, not taken, is
+/// passed over (`objects_are_equivalent_whatever_their_members_order`).
 #[test]
 fn members_of_one_key_pair_one_to_one() {
     let twice = object(&[("a", number(1, 0)), ("a", number(1, 0))]);

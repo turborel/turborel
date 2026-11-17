@@ -15,12 +15,17 @@
 //! most [§6.1 SR40], a string is SQLCODE -900 (RULES.md D18).
 //!
 //! (UA070) Of several items in error, the first is the exception raised.
-//! \[DESIGN\] `datetime()` with a `<JSON datetime template>` is refused when
-//! the path is parsed.
+//!
+//! With a `<JSON datetime template>`, a string is read by the General
+//! Rules of §9.51 as a value of the template's implicit datetime data type
+//! \[VII 1 b\], by the conversion made of the template as the path was
+//! parsed (`DatetimeTemplate`); an exception they raise is SQLSTATE 22031
+//! instead.
 
 use super::super::{exception, item, string};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::json::Item;
+use crate::json::path::ast::DatetimeTemplate;
 use crate::value::Value;
 use crate::value::datetime::{Datetime, MAX_TIME_PRECISION, Moment, parse};
 
@@ -28,6 +33,10 @@ use crate::value::datetime::{Datetime, MAX_TIME_PRECISION, Moment, parse};
 /// tried as, in order: of which fields, and whether WITH TIME ZONE.
 const INTERPRETATIONS: [(Moment, bool); 5] =
     [(Moment::Date, false), (Moment::Time, true), (Moment::Time, false), (Moment::Timestamp, true), (Moment::Timestamp, false)];
+
+/// [§9.46 GR11g ii 6 C VII 1 a] The exception of an item that is no
+/// character string.
+const NOT_A_STRING: &str = "[ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 a] an SQL/JSON item of datetime() is not a character string";
 
 /// \[DESIGN\] The displacement, in minutes, a datetime of a type without
 /// time zone is taken in: UTC's, as `cast` takes the SQL-session's.
@@ -44,14 +53,39 @@ const SESSION_ZONE: i16 = 0;
 pub(super) fn datetime(base: &[Item]) -> Result<Vec<Item>> {
     base.iter()
         .map(|each| {
-            let Some(text) = string(each) else {
-                return Err(invalid(
-                    "[ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 a] an SQL/JSON item of datetime() is not a character string",
-                ));
-            };
+            let Some(text) = string(each) else { return Err(invalid(NOT_A_STRING)) };
             interpreted(text)
         })
         .collect()
+}
+
+/// [§9.46 GR11g ii 6 C VII 1 a, b] `datetime()` of `template` of each item
+/// of `base`: the DATETIME VALUE of §9.51's General Rules, of the
+/// template's implicit datetime data type.
+///
+/// # Errors
+///
+/// SQLSTATE 22031 if an item is no character string \[VII 1 a\], or one
+/// of which §9.51's General Rules raise an exception condition \[VII 1
+/// b\].
+pub(super) fn templated(base: &[Item], template: &DatetimeTemplate) -> Result<Vec<Item>> {
+    base.iter()
+        .map(|each| {
+            let Some(text) = string(each) else { return Err(invalid(NOT_A_STRING)) };
+            let read = template.cast().call(&[Value::Char(text.to_owned())]);
+            read.map(item).map_err(|e| if e.code == Code::Data { unread(text, template, &e) } else { e })
+        })
+        .collect()
+}
+
+/// [§9.46 GR11g ii 6 C VII 1 b] The exception that replaces `raised`, the
+/// exception §9.51 raises of `text` by `template`.
+fn unread(text: &str, template: &DatetimeTemplate, raised: &SqlError) -> SqlError {
+    invalid(&format!(
+        "[ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 b] the SQL/JSON item '{text}' of datetime() is not read by the template '{}': {}",
+        template.text(),
+        raised.msg
+    ))
 }
 
 /// The datetime `text` writes, as the first of `INTERPRETATIONS` it is a

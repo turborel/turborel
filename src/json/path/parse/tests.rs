@@ -8,7 +8,7 @@ use crate::value::Value;
 /// The tree of `text`, written out: each operation in parentheses, a
 /// member's key quoted, a method by its name.
 fn tree(text: &str) -> String {
-    let path = parse_path(text).unwrap_or_else(|e| panic!("{text}: {}", e.msg));
+    let path = parse_path(text, Clocked::default()).unwrap_or_else(|e| panic!("{text}: {}", e.msg));
     format!("{:?} {}", path.mode, expr(&path.expr))
 }
 
@@ -96,14 +96,14 @@ fn predicate(p: &Predicate) -> String {
 /// The regular expression of the like_regex predicate that is the one
 /// filter of `text`.
 fn regex_of(text: &str) -> crate::regex::Regex {
-    let path = parse_path(text).unwrap();
+    let path = parse_path(text, Clocked::default()).unwrap();
     let Expr::Access(_, Accessor::Filter(filter)) = path.expr else { panic!("a filter") };
     let Predicate::LikeRegex(Expr::Current, regex) = *filter else { panic!("like_regex of @") };
     regex
 }
 
 fn refused(text: &str) -> SqlError {
-    match parse_path(text) {
+    match parse_path(text, Clocked::default()) {
         Ok(path) => panic!("{text} parsed: {}", expr(&path.expr)),
         Err(e) => e,
     }
@@ -113,7 +113,7 @@ fn code(text: &str) -> i32 {
     refused(text).sqlcode()
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] a `<JSON path
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F] a `<JSON path
 /// expression>` is its `<JSON path mode>`, strict or lax, written in
 /// lower case, then a wff: without its mode, a wff, or with tokens after
 /// it, it is SQLCODE -102.
@@ -127,7 +127,7 @@ fn a_path_is_its_mode_and_a_wff() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F, §9.45 SR4, GR1] a
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F, §9.45 SR4, GR1] a
 /// `<JSON path primary>` is a literal, number, string, true, false or
 /// null; the context variable `$`; a named variable, `$` and its name; or
 /// a parenthesized wff; a key name, or a symbol that begins none, is
@@ -149,7 +149,7 @@ fn primaries_are_literals_variables_and_parenthesized_wffs() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F, §9.45 SR2d, NOTE
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F, §9.45 SR2d, NOTE
 /// 483] the accessor ops: a member by key name or string literal, `.*`,
 /// `[*]`, subscripts and ranges, filters and item methods, applied in
 /// turn; a key word with no `(` after it is a key name.
@@ -170,7 +170,7 @@ fn accessor_ops_apply_in_turn() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] each item method,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F] each item method,
 /// of nothing in its parentheses; a method of another name, a name of
 /// another case, or something in the parentheses of a method of nothing
 /// in them, is SQLCODE -102; a method's name with no `(` after it is a
@@ -191,7 +191,7 @@ fn item_methods_are_parsed() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] `decimal()` of
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F] `decimal()` of
 /// nothing, a `<precision>`, or a `<precision>` and a `<scale>`; `time()`,
 /// `time_tz()`, `timestamp()` and `timestamp_tz()` of nothing or a
 /// precision; each an `<unsigned integer>`, so a number of a period, an
@@ -224,7 +224,7 @@ fn item_method_arguments_are_parsed() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XII, XVI
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XII, XVI
 /// to XIX] [§6.1 SR23, SR25] a precision of 0, or a scale above the
 /// precision, is SQLCODE -103; \[DESIGN\] RULES.md D18: a precision past
 /// turborel's maximum, 18 digits of DECIMAL or 6 of a second's fraction,
@@ -251,20 +251,29 @@ fn item_method_arguments_are_held_to_the_types_rules() {
     }
 }
 
-/// Verifies: [DESIGN] [ISO/IEC 9075-2:2023 §9.46 F, SR10] RULES.md D18:
-/// `datetime()` of a `<JSON datetime template>` is SQLCODE -900; one not
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F, SR10] `datetime()` holds a
+/// `<JSON datetime template>`, a string literal of either quote, read as
+/// the path is parsed: one breaking SR10 or a Syntax Rule of §9.52 is
+/// SQLCODE -103, naming where its literal begins; one of more digits of a
+/// second's fraction than 6 is SQLCODE -900 (RULES.md D18); one not
 /// closed, or of no string literal, SQLCODE -102.
 #[test]
-fn datetime_templates_are_refused() {
-    let template = refused("lax $.datetime(\"HH24\")");
-    assert_eq!(template.sqlcode(), -900_i32);
-    assert!(template.msg.contains("<JSON datetime template>"), "{}", template.msg);
-    assert_eq!(code("lax $.datetime('YYYY-MM-DD')"), -900_i32);
+fn datetime_templates_are_read_when_parsed() {
+    assert_eq!(tree("lax $.datetime(\"HH24\")"), "Lax $.DatetimeTemplate(\"HH24\")()");
+    assert_eq!(tree("lax $.datetime('YYYY-MM-DD')"), "Lax $.DatetimeTemplate(\"YYYY-MM-DD\")()");
+    assert_eq!(tree("lax $.datetime()"), "Lax $.Datetime()");
+    let lexical = refused("lax $.datetime(\"yyyy\")");
+    assert_eq!((lexical.sqlcode(), lexical.rule.as_deref()), (-103_i32, Some("ISO/IEC 9075-2:2023 §9.52 SR2")));
+    assert!(lexical.msg.ends_with("(at character 16)"), "{}", lexical.msg);
+    assert_eq!(refused("lax $.datetime(\"TZH\")").rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.46 SR10d"));
+    assert_eq!(refused("lax $.datetime(\"-\")").rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.46 SR10e"));
+    assert_eq!(refused("lax $.datetime(\"YYYY RR\")").rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.52 SR5"));
+    assert_eq!(code("lax $.datetime(\"HH24:MI:SS.FF7\")"), -900_i32);
     assert_eq!(code("lax $.datetime(\"HH24\""), -102_i32);
     assert_eq!(code("lax $.datetime(1)"), -102_i32);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] what follows `.`
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F] what follows `.`
 /// or `[` is to be an accessor: `.` and nothing, a number, a symbol or a
 /// variable, `[` not closed, empty, or `[*` not closed, are SQLCODE -102.
 #[test]
@@ -292,7 +301,7 @@ fn malformed_accessors_are_refused() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] precedence as the
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F] precedence as the
 /// Format gives it: accessor ops bind tighter than signs, signs than `*`,
 /// `/` and `%`, and those than `+` and `-`; binary operators associate to
 /// the left.
@@ -311,7 +320,7 @@ fn operators_bind_as_the_format_nests_them() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 SR5] `@` is the
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 SR5] `@` is the
 /// current item within a filter's predicate, at any depth in it, but
 /// outside one, even after one closes, is SQLCODE -103 citing SR5.
 #[test]
@@ -326,7 +335,7 @@ fn the_current_item_is_only_within_a_predicate() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 SR6] `last` is a
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 SR6] `last` is a
 /// primary within a subscript, a filter's within one too, but outside
 /// one, even after one closes, is SQLCODE -103 citing SR6.
 #[test]
@@ -341,7 +350,7 @@ fn last_is_only_within_a_subscript() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F, NOTE 489, NOTE 490]
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F, NOTE 489, NOTE 490]
 /// each `<JSON comp op>`, `<>` and `!=` alike, of one precedence and not
 /// associative: a comparison of a comparison is SQLCODE -102, and so is
 /// a wff alone where a predicate is.
@@ -358,10 +367,11 @@ fn comparisons_do_not_associate() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] `&&` binds tighter
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F] `&&` binds tighter
 /// than `||`, both to the left; `!` negates a delimited predicate only,
 /// `exists (…)` or a parenthesized predicate; `exists` with no `(` after
-/// it is a key name, no primary.
+/// it is a key name, no primary. MC/DC of `is_exists`: `exists (` an
+/// exists predicate, `exists ==` and `exist (` none.
 #[test]
 fn boolean_operators_and_negation() {
     assert_eq!(tree("lax $ ? (@ == 1 || @ == 2 && @ == 3)"), "Lax $?(((@ == 1) || ((@ == 2) && (@ == 3))))");
@@ -375,6 +385,7 @@ fn boolean_operators_and_negation() {
         "lax $ ? (!@ == 1)",
         "lax $ ? (!(@) == 1)",
         "lax $ ? (exists == 1)",
+        "lax $ ? (exist(@))",
         "lax $ ? (exists(@)",
         "lax $ ? (exists(@) == 1)",
         "lax $ ? (@ == 1 &&)",
@@ -389,7 +400,7 @@ fn boolean_operators_and_negation() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] a `(` where a
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F] a `(` where a
 /// predicate begins opens a parenthesized predicate, a `<JSON unknown
 /// predicate>`, or the primary of a wff a comparison, like_regex or
 /// starts with begins: each is parsed, nested too, and `is` without
@@ -412,7 +423,7 @@ fn a_parenthesis_opens_a_predicate_or_a_wff() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F, SR7] like_regex
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F, SR7] like_regex
 /// takes a string literal pattern and, after `flag`, string literal
 /// flags, compiled when parsed; a pattern that is no XQuery regular
 /// expression is SQLSTATE 2201S, flags that are no XQuery option flag
@@ -437,7 +448,7 @@ fn like_regex_compiles_its_pattern() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F] starts with takes
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F] starts with takes
 /// as its initial a string literal or a named variable only: the context
 /// variable, a number, a key name or a wff is SQLCODE -102, as is `starts`
 /// without `with`.
@@ -459,71 +470,82 @@ fn starts_with_takes_a_string_or_a_named_variable() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md R-CF-6: parentheses nested `MAX_NESTING`
+/// Verifies: [DESIGN] RULES.md R-CF-6: parentheses nested `MAX_PATH_NESTING`
 /// deep are parsed, one more is SQLCODE -900, around a wff and around a
 /// predicate alike; so are signs, negations, filters and subscripts.
 #[test]
 fn nesting_around_what_is_read_is_bounded() {
     let parens = |levels: usize| format!("lax {}1{}", "(".repeat(levels), ")".repeat(levels));
-    assert_eq!(tree(&parens(MAX_NESTING)), "Lax 1");
-    assert_eq!(code(&parens(MAX_NESTING + 1)), -900_i32);
+    assert_eq!(tree(&parens(MAX_PATH_NESTING)), "Lax 1");
+    assert_eq!(code(&parens(MAX_PATH_NESTING + 1)), -900_i32);
     let predicates = |levels: usize| format!("lax $ ? ({}@ == 1{})", "(".repeat(levels), ")".repeat(levels));
-    assert!(parse_path(&predicates(MAX_NESTING - 1)).is_ok());
-    assert_eq!(code(&predicates(MAX_NESTING)), -900_i32);
+    assert!(parse_path(&predicates(MAX_PATH_NESTING - 1), Clocked::default()).is_ok());
+    assert_eq!(code(&predicates(MAX_PATH_NESTING)), -900_i32);
     let negations = |levels: usize| format!("lax $ ? ({}(@ == 1){})", "!(".repeat(levels), ")".repeat(levels));
-    assert!(parse_path(&negations(MAX_NESTING - 3)).is_ok());
-    assert_eq!(code(&negations(MAX_NESTING - 2)), -900_i32);
-    assert_eq!(code(&negations(MAX_NESTING)), -900_i32);
+    assert!(parse_path(&negations(MAX_PATH_NESTING - 3), Clocked::default()).is_ok());
+    assert_eq!(code(&negations(MAX_PATH_NESTING - 2)), -900_i32);
+    assert_eq!(code(&negations(MAX_PATH_NESTING)), -900_i32);
     let subscripts = |levels: usize| format!("lax {}0{}", "$[".repeat(levels), "]".repeat(levels));
-    assert!(parse_path(&subscripts(MAX_NESTING - 1)).is_ok());
-    assert_eq!(code(&subscripts(MAX_NESTING + 1)), -900_i32);
+    assert!(parse_path(&subscripts(MAX_PATH_NESTING - 1), Clocked::default()).is_ok());
+    assert_eq!(code(&subscripts(MAX_PATH_NESTING + 1)), -900_i32);
     let exists = |levels: usize| format!("lax $ ? ({}@ == 1{})", "exists($ ? (".repeat(levels), "))".repeat(levels));
-    assert!(parse_path(&exists(30)).is_ok());
-    assert_eq!(code(&exists(MAX_NESTING)), -900_i32);
+    assert!(parse_path(&exists(30), Clocked::default()).is_ok());
+    assert_eq!(code(&exists(MAX_PATH_NESTING)), -900_i32);
     let signs = |levels: usize| format!("lax {}1", "-".repeat(levels));
-    assert!(parse_path(&signs(MAX_NESTING - 1)).is_ok());
-    assert_eq!(code(&signs(MAX_NESTING + 1)), -900_i32);
+    assert!(parse_path(&signs(MAX_PATH_NESTING - 1), Clocked::default()).is_ok());
+    assert_eq!(code(&signs(MAX_PATH_NESTING + 1)), -900_i32);
 }
 
-/// Verifies: [DESIGN] RULES.md R-CF-6: a syntax tree `MAX_NESTING` nodes
+/// Verifies: [DESIGN] RULES.md R-CF-6: a syntax tree `MAX_PATH_NESTING` nodes
 /// high is built, one a node higher is SQLCODE -900, whether built by a
 /// chain of operators, of accessors, of `&&` or of `||`, or by signs; so
 /// a walk of the tree is bounded.
 #[test]
 fn the_syntax_trees_height_is_bounded() {
     let sums = |operators: usize| format!("lax 1{}", " + 1".repeat(operators));
-    assert!(parse_path(&sums(MAX_NESTING - 1)).is_ok());
-    assert_eq!(code(&sums(MAX_NESTING)), -900_i32);
+    assert!(parse_path(&sums(MAX_PATH_NESTING - 1), Clocked::default()).is_ok());
+    assert_eq!(code(&sums(MAX_PATH_NESTING)), -900_i32);
     let products = |operators: usize| format!("lax 1{}", " * 1".repeat(operators));
-    assert!(parse_path(&products(MAX_NESTING - 1)).is_ok());
-    assert_eq!(code(&products(MAX_NESTING)), -900_i32);
+    assert!(parse_path(&products(MAX_PATH_NESTING - 1), Clocked::default()).is_ok());
+    assert_eq!(code(&products(MAX_PATH_NESTING)), -900_i32);
     let members = |accessors: usize| format!("lax ${}", ".a".repeat(accessors));
-    assert!(parse_path(&members(MAX_NESTING - 1)).is_ok());
-    assert_eq!(code(&members(MAX_NESTING)), -900_i32);
+    assert!(parse_path(&members(MAX_PATH_NESTING - 1), Clocked::default()).is_ok());
+    assert_eq!(code(&members(MAX_PATH_NESTING)), -900_i32);
     let signs = |levels: usize| format!("lax {}1", "-".repeat(levels));
-    assert_eq!(code(&signs(MAX_NESTING)), -900_i32);
+    assert_eq!(code(&signs(MAX_PATH_NESTING)), -900_i32);
     // The filter's Access, its && or || chain, then each comparison over its two leaves.
     let ands = |operators: usize| format!("lax $ ? (@ == 1{})", " && @ == 1".repeat(operators));
-    assert!(parse_path(&ands(MAX_NESTING - 3)).is_ok());
-    assert_eq!(code(&ands(MAX_NESTING - 2)), -900_i32);
+    assert!(parse_path(&ands(MAX_PATH_NESTING - 3), Clocked::default()).is_ok());
+    assert_eq!(code(&ands(MAX_PATH_NESTING - 2)), -900_i32);
     let ors = |operators: usize| format!("lax $ ? (@ == 1{})", " || @ == 1".repeat(operators));
-    assert!(parse_path(&ors(MAX_NESTING - 3)).is_ok());
-    assert_eq!(code(&ors(MAX_NESTING - 2)), -900_i32);
+    assert!(parse_path(&ors(MAX_PATH_NESTING - 3), Clocked::default()).is_ok());
+    assert_eq!(code(&ors(MAX_PATH_NESTING - 2)), -900_i32);
     let wide = format!("lax $[{}]", vec!["1"; 1000].join(", "));
-    assert!(parse_path(&wide).is_ok());
+    assert!(parse_path(&wide, Clocked::default()).is_ok());
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.46 F, §9.45 SR2] a
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 F, §9.45 SR2] a
 /// refusal names its rule and the character it was refused at, counted
 /// from 1, the end of the text one past its last; a lexical refusal is
-/// SQLCODE -101 through the parser too.
+/// SQLCODE -101 through the parser too. \[DESIGN\] RULES.md D24: a
+/// refusal of the Format says what was expected there and what was found.
 #[test]
 fn a_refusal_names_its_rule_and_place() {
     let error = refused("lax $ ]");
     assert_eq!(error.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.46 F"));
-    assert!(error.msg.contains("(at character 7)"), "{}", error.msg);
+    assert!(error.msg.ends_with(": expected the end of the path expression, found ']' (at character 7)"), "{}", error.msg);
     let end = refused("lax $ +");
-    assert!(end.msg.contains("(at character 8)"), "{}", end.msg);
+    assert!(end.msg.ends_with(": expected a <JSON path primary>, found the end of the path expression (at character 8)"), "{}", end.msg);
+    let method = refused("lax $.size(1)");
+    assert!(method.msg.ends_with(": expected ')', found 1 (at character 12)"), "{}", method.msg);
+    let named = refused("lax $.sise()");
+    assert!(named.msg.ends_with(": expected a <JSON method>, found sise (at character 7)"), "{}", named.msg);
+    let predicate = refused("lax $ ? (@.a)");
+    assert!(
+        predicate.msg.ends_with(": expected a <JSON comp op>, like_regex or starts with, found ')' (at character 13)"),
+        "{}",
+        predicate.msg
+    );
     let at = refused("lax $.a + @");
     assert!(at.msg.contains("(at character 11)"), "{}", at.msg);
     assert_eq!(code("lax $ # 1"), -101_i32);

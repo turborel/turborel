@@ -26,8 +26,8 @@ const COMPARISONS: [(Symbol, Comparison); 6] = [
     (Symbol::LessEquals, Comparison::LessOrEqual),
     (Symbol::GreaterEquals, Comparison::GreaterOrEqual),
 ];
-/// Why a wff alone is no predicate.
-const NOT_A_PREDICATE: &str = "a <JSON comp op>, like_regex or starts with follows the <JSON path wff> of a predicate";
+/// What is to follow the `<JSON path wff>` of a predicate.
+const NOT_A_PREDICATE: &str = "a <JSON comp op>, like_regex or starts with";
 
 /// What a `(` in a predicate opens: a predicate, or a wff.
 enum Opened {
@@ -37,12 +37,12 @@ enum Opened {
     Wff(Built<Expr>),
 }
 
-impl Parser {
+impl Parser<'_> {
     /// `<JSON path predicate>`, `depth` deep.
     pub(super) fn predicate(&mut self, depth: usize) -> Result<Built<Predicate>> {
         match self.predicate_or_wff(depth)? {
             Opened::Predicate(predicate) => Ok(predicate),
-            Opened::Wff(_) => Err(self.invalid(NOT_A_PREDICATE)),
+            Opened::Wff(_) => Err(self.expected(NOT_A_PREDICATE)),
         }
     }
 
@@ -76,7 +76,7 @@ impl Parser {
     fn negation(&mut self, depth: usize) -> Result<Built<Predicate>> {
         match self.negation_or_wff(depth)? {
             Opened::Predicate(predicate) => Ok(predicate),
-            Opened::Wff(_) => Err(self.invalid(NOT_A_PREDICATE)),
+            Opened::Wff(_) => Err(self.expected(NOT_A_PREDICATE)),
         }
     }
 
@@ -103,9 +103,11 @@ impl Parser {
         if self.is_exists() {
             return self.exists(depth);
         }
-        self.expect(Symbol::LeftParen, "a <JSON delimited predicate>, exists or '(', follows '!'")?;
+        if !self.accept(Symbol::LeftParen) {
+            return Err(self.expected("exists or '('"));
+        }
         let predicate = self.predicate(depth)?;
-        self.expect(Symbol::RightParen, "a ')' closes the '(' of a <JSON delimited predicate>")?;
+        self.expect(Symbol::RightParen)?;
         Ok(predicate)
     }
 
@@ -121,7 +123,7 @@ impl Parser {
         let inner = depth.saturating_add(1);
         Parser::enter(inner)?;
         let wff = self.wff(inner)?;
-        self.expect(Symbol::RightParen, "a ')' closes the <JSON path wff> of a <JSON exists path predicate>")?;
+        self.expect(Symbol::RightParen)?;
         built(Predicate::Exists(wff.node), wff.height)
     }
 
@@ -132,7 +134,7 @@ impl Parser {
         let inner = depth.saturating_add(1);
         Parser::enter(inner)?;
         let held = self.predicate_or_wff(inner)?;
-        self.expect(Symbol::RightParen, "a ')' closes a '('")?;
+        self.expect(Symbol::RightParen)?;
         let predicate = match held {
             Opened::Predicate(predicate) => predicate,
             Opened::Wff(primary) => {
@@ -146,7 +148,7 @@ impl Parser {
             return Ok(Opened::Predicate(predicate));
         }
         if !self.accept_word(UNKNOWN) {
-            return Err(self.invalid("unknown follows the is of a <JSON unknown predicate>"));
+            return Err(self.expected("unknown"));
         }
         built(Predicate::IsUnknown(Box::new(predicate.node)), predicate.height).map(Opened::Predicate)
     }
@@ -173,20 +175,17 @@ impl Parser {
     /// `like_regex` read. \[SR7\] Its pattern is to be an XQuery regular
     /// expression, its flags an XQuery option flag: so it is compiled.
     fn like_regex(&mut self, wff: Built<Expr>) -> Result<Built<Predicate>> {
-        let pattern = self.string_literal("a <JSON like_regex pattern>, a string literal, follows like_regex")?;
+        let pattern = self.string_literal("a <JSON like_regex pattern>, a string literal")?;
         // Without `flag`, the `<XQuery option flag>` is none: no letters.
-        let flags = if self.accept_word(FLAG) {
-            self.string_literal("<JSON like_regex flags>, a string literal, follow flag")?
-        } else {
-            String::new()
-        };
+        let flags = if self.accept_word(FLAG) { self.string_literal("<JSON like_regex flags>, a string literal")? } else { String::new() };
         let regex = Regex::new(&pattern, &flags)?;
         built(Predicate::LikeRegex(wff.node, regex), wff.height)
     }
 
-    /// The `<JSON path string literal>` next, taken; else the error `why`.
-    fn string_literal(&mut self, why: &str) -> Result<String> {
-        let Some(Token::String(string)) = self.peek().cloned() else { return Err(self.invalid(why)) };
+    /// The `<JSON path string literal>` next, taken; else the error that
+    /// `expected` was.
+    fn string_literal(&mut self, expected: &str) -> Result<String> {
+        let Some(Token::String(string)) = self.peek().cloned() else { return Err(self.expected(expected)) };
         self.bump();
         Ok(string)
     }
@@ -194,14 +193,14 @@ impl Parser {
     /// The rest of a `<JSON starts with predicate>` of the `<JSON starts
     /// with whole>` `wff`, its `starts` read.
     fn starts_with(&mut self, wff: Built<Expr>) -> Result<Built<Predicate>> {
-        const INITIAL: &str = "a <JSON starts with initial>, a string literal or a named variable, follows starts with";
+        const INITIAL: &str = "a <JSON starts with initial>, a string literal or a named variable";
         if !self.accept_word(WITH) {
-            return Err(self.invalid("with follows the starts of a <JSON starts with predicate>"));
+            return Err(self.expected("with"));
         }
         let initial = match self.peek().cloned() {
             Some(Token::String(string)) => Expr::Literal(Item::Scalar(string.into())),
-            Some(Token::Identifier(name)) => Expr::Variable(named_variable(&name).ok_or_else(|| self.invalid(INITIAL))?.to_owned()),
-            Some(Token::Symbol(_) | Token::Number(..)) | None => return Err(self.invalid(INITIAL)),
+            Some(Token::Identifier(name)) => Expr::Variable(named_variable(&name).ok_or_else(|| self.expected(INITIAL))?.to_owned()),
+            Some(Token::Symbol(_) | Token::Number(..)) | None => return Err(self.expected(INITIAL)),
         };
         self.bump();
         built(Predicate::StartsWith(wff.node, initial), wff.height.max(1))

@@ -39,7 +39,7 @@ impl Binder<'_> {
     /// JSON text, or a value or a type turborel does not implement here.
     pub(super) fn json_operator(&self, j: &JsonOperator, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let common = &j.common;
-        let path = parse_path(&common.path).or_at(common.path_at)?;
+        let path = parse_path(&common.path, self.now).or_at(common.path_at)?;
         let names: Vec<&str> = common.passing.iter().map(|argument| argument.name.as_str()).collect();
         path.check_variables(&names).or_at(common.path_at)?;
         let (operation, defaults) = operation(&j.clauses)?;
@@ -294,7 +294,7 @@ fn starts_with_arguments(j: &JsonOperator, path: &Path, types: &[DataType]) -> R
 
 /// [§9.46 SR8] The names of the named variables of `expr` that are a
 /// `<JSON starts with initial>`, pushed to `names`. A parsed path is at
-/// most the path module's `MAX_NESTING` nodes deep, so the recursion is
+/// most the path module's `MAX_PATH_NESTING` nodes deep, so the recursion is
 /// bounded (RULES.md R-CF-6).
 fn expr_initials<'p>(expr: &'p PathExpr, names: &mut Vec<&'p str>) {
     match expr {

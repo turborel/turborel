@@ -15,7 +15,7 @@ fn truth(s: &str, kind: JsonType, keys: Keys) -> bool {
     b
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.22 SR2, GR3e] IS JSON
+/// Verifies: [ISO/IEC 9075-2:2023 §8.22 SR2, GR3e] IS JSON
 /// VALUE, the default, is True of every JSON text: a scalar, the literal
 /// null, an array, an object, white space around them.
 #[test]
@@ -25,7 +25,7 @@ fn a_json_text_is_json() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.22 GR2c, GR3a, §9.42
+/// Verifies: [ISO/IEC 9075-2:2023 §8.22 GR2c, GR3a, §9.42
 /// GR3a iii 1] a string that is no JSON text is False: empty, unclosed,
 /// two values, an SQL literal, a trailing comma.
 #[test]
@@ -35,9 +35,10 @@ fn a_string_that_is_no_json_text_is_not_json() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.22 GR3b, GR3c, GR3d] ARRAY,
+/// Verifies: [ISO/IEC 9075-2:2023 §8.22 GR3b, GR3c, GR3d] ARRAY,
 /// OBJECT and SCALAR are True of an array, an object, and of neither (the
-/// literal null too) alone.
+/// literal null too) alone. MC/DC of `Array | Object` for SCALAR: an
+/// array and an object each False, a number True.
 #[test]
 fn the_type_constraint_names_the_kind_of_item() {
     let cases = [
@@ -54,7 +55,7 @@ fn the_type_constraint_names_the_kind_of_item() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.22 SR3, GR3a, §9.42 GR3a
+/// Verifies: [ISO/IEC 9075-2:2023 §8.22 SR3, GR3a, §9.42 GR3a
 /// iii 2] WITHOUT UNIQUE KEYS, the default, is True of an object of two
 /// members of one key, nested too; WITH UNIQUE KEYS is False of it, True
 /// of keys that differ.
@@ -67,7 +68,7 @@ fn the_key_uniqueness_constraint() {
     assert!(truth(r#"{"a": 1, "b": {"a": 2}}"#, JsonType::Object, Keys::Unique));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.22 GR2a, SR4] of the null
+/// Verifies: [ISO/IEC 9075-2:2023 §8.22 GR2a, SR4] of the null
 /// value IS JSON and IS NOT JSON are both Unknown, the null value,
 /// whatever the constraints.
 #[test]
@@ -80,7 +81,7 @@ fn the_null_value_is_unknown() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.22 SR4] IS NOT JSON is the
+/// Verifies: [ISO/IEC 9075-2:2023 §8.22 SR4] IS NOT JSON is the
 /// negation of IS JSON of the same constraints.
 #[test]
 fn is_not_json_is_the_negation() {
@@ -91,7 +92,7 @@ fn is_not_json_is_the_negation() {
     assert!(not(r#"{"a": 1, "a": 2}"#, JsonType::Object, Keys::Unique));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.22 GR2c] a character large
+/// Verifies: [ISO/IEC 9075-2:2023 §8.22 GR2c] a character large
 /// object is parsed as a character string is.
 #[test]
 fn a_character_large_object_is_read_whole() {
@@ -101,7 +102,7 @@ fn a_character_large_object_is_read_whole() {
     assert!(matches!(is_json(&not, JsonType::Value, Keys::Any).unwrap(), Value::Bool(false)));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.22 F] the input is a
+/// Verifies: [ISO/IEC 9075-2:2023 §8.22 F] the input is a
 /// string: of another type SQLCODE -103; a binary string, a character
 /// large object longer than one chunk and a text nested past turborel's
 /// limit are SQLCODE -900 (RULES.md D18), not False.

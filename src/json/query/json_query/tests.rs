@@ -50,7 +50,7 @@ type Case<'a> = (Value, &'a str, &'a [(&'a str, Value, bool)], &'a str);
 
 const CONTEXT: &str = r#"{"a": [1, "x"], "o": {"k": [true]}, "s": "abc", "n": null}"#;
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.35 SR1b, SR6, SR9, GR5b,
+/// Verifies: [ISO/IEC 9075-2:2023 §6.35 SR1b, SR6, SR9, GR5b,
 /// §9.49 GR5c] with no clause written, the one item the path gives
 /// serialized as JSON text, a string in quotation marks, the SQL/JSON
 /// null `null`.
@@ -64,9 +64,13 @@ fn the_one_item_is_serialized() {
     assert_eq!(text_of(CONTEXT, "lax $.a[0]", &options).as_deref(), Some("1"));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.49 GR5b i] OMIT QUOTES: a
+/// Verifies: [ISO/IEC 9075-2:2023 §9.49 GR5b i] OMIT QUOTES: a
 /// character string alone is cast, not serialized, a string cut so with
-/// its warning; any other item is serialized.
+/// its warning; any other item is serialized. MC/DC of OMIT QUOTES, a
+/// scalar and a character string in `serialized`: a string cast, and
+/// serialized KEEP QUOTES (`the_one_item_is_serialized`); an array and the
+/// SQL/JSON null, no scalar, serialized; a truth value, a scalar of no
+/// string, serialized `true` where a cast would give TRUE.
 #[test]
 fn omit_quotes_casts_a_string_alone() {
     let options = QueryOptions { quotes: Quotes::Omit, ..implicit() };
@@ -74,16 +78,19 @@ fn omit_quotes_casts_a_string_alone() {
     assert_eq!(text_of(CONTEXT, "lax $.a[0]", &options).as_deref(), Some("1"));
     assert_eq!(text_of(CONTEXT, "strict $.a", &options).as_deref(), Some(r#"[1,"x"]"#));
     assert_eq!(text_of(CONTEXT, "lax $.n", &options).as_deref(), Some("null"));
+    assert_eq!(text_of(CONTEXT, "lax $.o.k[0]", &options).as_deref(), Some("true"));
     let short = DataType::varying(2);
     let (cut, warning) = query(&text(CONTEXT), "lax $.s", &QueryOptions { returning: &short, ..options }).unwrap();
     assert!(matches!(cut, Value::Char(s) if s == "ab"));
     assert_eq!(warning.map(|w| w.as_str().to_owned()).as_deref(), Some("01004"));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.49 GR4a, GR4b] WITH
+/// Verifies: [ISO/IEC 9075-2:2023 §9.49 GR4a, GR4b] WITH
 /// CONDITIONAL ARRAY wraps all but one array or object, a scalar alone
 /// too; WITH UNCONDITIONAL ARRAY wraps all; WITHOUT ARRAY none, so more
-/// than one item is SQLSTATE 22034.
+/// than one item is SQLSTATE 22034. MC/DC of `single_array_or_object`:
+/// one array and one object are left as they are, one string and two
+/// items wrapped.
 #[test]
 fn the_wrapper_behaviours() {
     let conditional = QueryOptions { wrapper: Wrapper::Conditional, ..implicit() };
@@ -100,7 +107,7 @@ fn the_wrapper_behaviours() {
     assert_eq!(e.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.49 GR4c iii"));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.35 SR4, §9.49 GR4a i,
+/// Verifies: [ISO/IEC 9075-2:2023 §6.35 SR4, §9.49 GR4a i,
 /// GR4c i, GR5a] no item, wrapped or not [NOTE 501]: ON EMPTY NULL, the
 /// default, gives the null value, EMPTY ARRAY `[]`, EMPTY OBJECT `{}`,
 /// ERROR SQLSTATE 22035, which ON ERROR replaces.
@@ -119,7 +126,7 @@ fn no_item_is_as_on_empty_says() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.35 SR5, §9.49 GR6] an
+/// Verifies: [ISO/IEC 9075-2:2023 §6.35 SR5, §9.49 GR6] an
 /// exception, of the path, of a context item that is no JSON text, of an
 /// item with no JSON text or of a text too long, is replaced as ON ERROR
 /// says: NULL, the default, the null value; EMPTY ARRAY and EMPTY OBJECT
@@ -146,7 +153,7 @@ fn an_exception_is_replaced_as_on_error_says() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.49 GR6a iii 2, §9.43 GR2a
+/// Verifies: [ISO/IEC 9075-2:2023 §9.49 GR6a iii 2, §9.43 GR2a
 /// iii] the empty array or object ON ERROR gives is serialized to the
 /// returned type, and an exception of that is raised: `{}` is longer than
 /// CHARACTER VARYING(1); of CHARACTER, the text is padded.
@@ -161,7 +168,7 @@ fn the_text_on_error_gives_is_serialized_to_the_type() {
     assert_eq!(text_of("[1]", "lax $", &padded).as_deref(), Some("[1] "));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.35 GR1, §10.13 SR2] of a
+/// Verifies: [ISO/IEC 9075-2:2023 §6.35 GR1, §10.13 SR2] of a
 /// null context item, the null value; the returned type is a string type,
 /// another refused with SQLCODE -103, of a null context item too, a
 /// binary string type with SQLCODE -900.
@@ -176,7 +183,7 @@ fn a_null_context_item_and_the_returned_type() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.49 GR3, GR6] STATUS IN an
+/// Verifies: [ISO/IEC 9075-2:2023 §9.49 GR3, GR6] STATUS IN an
 /// exception condition is replaced as ON ERROR says; an error not one, as
 /// a Syntax Rule's, is raised whatever it says.
 #[test]

@@ -2,7 +2,8 @@
 //! 9075-2:2023 §9.46 F]: its name, and what its parentheses hold: the
 //! `<precision>` and `<scale>` of `decimal()`, the `<time precision>` or
 //! `<timestamp precision>` of `time()`, `time_tz()`, `timestamp()` and
-//! `timestamp_tz()`, and the `<JSON datetime template>` of `datetime()`.
+//! `timestamp_tz()`, and the `<JSON datetime template>` of `datetime()`
+//! \[SR10\].
 //!
 //! A precision or scale is an `<unsigned integer>` [§5.3], a numeric
 //! literal of its digits alone (`Numeral::Integer`), and is held to the
@@ -14,11 +15,12 @@
 
 use super::Parser;
 use crate::error::Result;
-use crate::json::path::ast::Method;
+use crate::functions::json_datetime_cast;
+use crate::json::path::ast::{DatetimeTemplate, Method};
 use crate::json::path::lex::{Numeral, Symbol, Token};
 use crate::json::path::{
     ABS, BIGINT, BOOLEAN, CEILING, DATE, DATETIME, DECIMAL, DOUBLE, FLOOR, INTEGER, KEYVALUE, NUMBER, SIZE, STRING, TIME, TIME_TZ,
-    TIMESTAMP, TIMESTAMP_TZ, TYPE, beyond, misplaced, syntax, unsupported,
+    TIMESTAMP, TIMESTAMP_TZ, TYPE, beyond, misplaced, place, syntax,
 };
 use crate::json::{Item, Scalar};
 use crate::value::datetime::MAX_TIME_PRECISION;
@@ -51,12 +53,12 @@ type OfPrecision = fn(Option<u32>) -> Method;
 const PRECISIONED: [(&str, OfPrecision); 4] =
     [(TIME, Method::Time), (TIME_TZ, Method::TimeTz), (TIMESTAMP, Method::Timestamp), (TIMESTAMP_TZ, Method::TimestampTz)];
 
-impl Parser {
+impl Parser<'_> {
     /// The `<JSON method>` named `name`, at character `at`, its `(` read:
     /// what its parentheses hold, and its `)`.
     pub(super) fn method(&mut self, name: &str, at: usize) -> Result<Method> {
         let method = if let Some((_, method)) = METHODS.iter().find(|(word, _)| *word == name) {
-            *method
+            method.clone()
         } else if let Some((_, of)) = PRECISIONED.iter().find(|(word, _)| *word == name) {
             of(self.fraction_precision(name)?)
         } else if name == DECIMAL {
@@ -64,9 +66,9 @@ impl Parser {
         } else if name == DATETIME {
             self.datetime()?
         } else {
-            return Err(syntax(at, &format!("no <JSON method> is named {name}")));
+            return Err(syntax(at, "a <JSON method>", name));
         };
-        self.expect(Symbol::RightParen, "a ')' closes the '(' of a <JSON method>")?;
+        self.expect(Symbol::RightParen)?;
         Ok(method)
     }
 
@@ -77,7 +79,7 @@ impl Parser {
         let at = self.here();
         let Some(Token::Number(item, numeral)) = self.peek() else { return Ok(None) };
         if *numeral != Numeral::Integer {
-            return Err(syntax(at, "a precision or scale of a <JSON method> is an <unsigned integer>, of digits alone"));
+            return Err(self.expected("an <unsigned integer>, of digits alone"));
         }
         let value = whole(item);
         self.bump();
@@ -99,7 +101,7 @@ impl Parser {
         if !self.accept(Symbol::Comma) {
             return Ok(Method::Decimal { precision: Some(precision), scale: None });
         }
-        let Some((scale, scale_at)) = self.unsigned()? else { return Err(self.invalid("a <scale> follows the ',' of decimal()")) };
+        let Some((scale, scale_at)) = self.unsigned()? else { return Err(self.expected("a <scale>")) };
         if scale > precision {
             return Err(misplaced(
                 scale_at,
@@ -121,16 +123,21 @@ impl Parser {
         Ok(Some(precision))
     }
 
-    /// The parentheses of `datetime` but their `)`: nothing. \[DESIGN\] A
-    /// `<JSON datetime template>`, a string literal, is refused (RULES.md
-    /// D18): its implicit datetime type \[SR10\] is not found yet.
+    /// The parentheses of `datetime` but their `)`: nothing, or a `<JSON
+    /// datetime template>`, a `<JSON path string literal>`, its value held
+    /// to SR10 as it is read and the conversion of §9.51 made of it
+    /// (`functions/formatted/implicit.rs`). An error of the template names
+    /// where its literal begins.
     fn datetime(&mut self) -> Result<Method> {
-        if !matches!(self.peek(), Some(Token::String(_))) {
-            return Ok(Method::Datetime);
-        }
+        let at = self.here();
+        let Some(Token::String(template)) = self.peek() else { return Ok(Method::Datetime) };
+        let template = template.clone();
         self.bump();
-        self.expect(Symbol::RightParen, "a ')' closes the '(' of a <JSON method>")?;
-        Err(unsupported("the item method datetime() of a <JSON datetime template> (Feature T832, \"SQL/JSON path language: item method\")"))
+        let cast = json_datetime_cast(&template, self.now).map_err(|mut e| {
+            e.msg = format!("{} {}", e.msg, place(at));
+            e
+        })?;
+        Ok(Method::DatetimeTemplate(DatetimeTemplate::new(template, cast)))
     }
 }
 

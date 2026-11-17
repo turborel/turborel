@@ -4,8 +4,9 @@
 //! [§9.45 SR2] The text is split into tokens by the lexical rules of
 //! ECMAScript 5.1 the standard adopts, as it modifies them
 //! (`json/path/lex.rs`). The tokens are parsed by the Format of §9.46 and
-//! its Syntax Rules 3 and 5 to 7 (`json/path/parse.rs`, and
-//! `json/path/parse/predicate.rs` for predicates). Syntax Rules 4 and 8
+//! its Syntax Rules 3, 5 to 7 and 10 (`json/path/parse.rs`, and
+//! `json/path/parse/predicate.rs` for predicates,
+//! `json/path/parse/method.rs` for item methods). Syntax Rules 4 and 8
 //! need the PASSING clause, and are not checked here.
 //!
 //! [§9.45 SR2d] No word is reserved: the lexer yields every word as an
@@ -22,7 +23,7 @@ mod eval;
 mod lex;
 mod parse;
 
-pub use ast::{Accessor, Comparison, Expr, Method, Mode, Operator, Path, Predicate, Sign, Subscript};
+pub use ast::{Accessor, Comparison, DatetimeTemplate, Expr, Method, Mode, Operator, Path, Predicate, Sign, Subscript};
 pub use parse::parse_path;
 
 use crate::error::{Code, SqlError};
@@ -30,8 +31,13 @@ use crate::error::{Code, SqlError};
 /// \[DESIGN\] How deep a path expression nests at most: parentheses,
 /// filters, subscripts, signs and negations around what is read, and the
 /// nodes of its syntax tree, so the parser's recursion and every walk of
-/// the tree are bounded (RULES.md R-CF-6).
-const MAX_NESTING: usize = 64;
+/// the tree, the evaluator's and the binder's, are bounded (RULES.md
+/// R-CF-6, D84). §9.46 sets no limit, so one deeper is SQLCODE -900
+/// (D18). The value is no measurement: it is the bound regular
+/// expressions nest to, `regex::parse::MAX_NESTING`, and the SQL parser's
+/// `MAX_NESTING_DEPTH`, which `parser.rs` checks on a 1 MiB stack; no
+/// stack has been measured for a path this deep.
+const MAX_PATH_NESTING: usize = 64;
 
 /// [§9.45 SR4] What a `<JSON path identifier>` that is a variable begins
 /// with, the `<dollar sign>`.
@@ -121,12 +127,13 @@ fn lexical(at: usize, why: &str) -> SqlError {
 }
 
 /// The error of a path expression that does not conform to `<JSON path
-/// expression>` [§9.46 SR3], `why`, at character `at`.
-fn syntax(at: usize, why: &str) -> SqlError {
+/// expression>` [§9.46 SR3]: at character `at`, where `expected` was to
+/// be, is `found` (RULES.md D24).
+fn syntax(at: usize, expected: &str, found: &str) -> SqlError {
     SqlError::new(
         Code::Syntax,
         format!(
-            "[ISO/IEC 9075-2:2023 §9.46 F] the SQL/JSON path expression does not conform to <JSON path expression>: {why} {}",
+            "[ISO/IEC 9075-2:2023 §9.46 F] the SQL/JSON path expression does not conform to <JSON path expression>: expected {expected}, found {found} {}",
             place(at)
         ),
     )
@@ -136,12 +143,6 @@ fn syntax(at: usize, why: &str) -> SqlError {
 /// message `cited` begins by citing, at character `at`.
 fn misplaced(at: usize, cited: &str) -> SqlError {
     SqlError::new(Code::SyntaxRule, format!("{cited} {}", place(at)))
-}
-
-/// The error of `what`, valid in a path expression but not implemented
-/// (RULES.md D18).
-fn unsupported(what: &str) -> SqlError {
-    SqlError::new(Code::Unsupported, format!("[DESIGN] {what} is valid SQL but is not implemented (RULES.md D18)"))
 }
 
 /// The error of a path expression beyond turborel's limits, `why`

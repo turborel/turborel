@@ -58,7 +58,7 @@ fn string(text: &str) -> String {
     tokens.first().unwrap().strip_prefix("str:").unwrap().to_owned()
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 SR2] [ECMAScript 5.1
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 SR2] [ECMAScript 5.1
 /// §7.2, §7.3] white space, TAB, VT, FF, SP, NBSP, BOM and a Zs character,
 /// and line terminators, LF, CR, LS and PS, separate tokens and are
 /// insignificant around them; an empty text has no tokens.
@@ -71,7 +71,7 @@ fn white_space_and_line_terminators_separate_tokens() {
     assert_eq!(tokens(" lax  $ "), ["id:lax", "id:$"]);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 F, SR2c, SR2e] each
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 F, SR2c, SR2e] each
 /// `<SQL/JSON special symbol>` is a token, `@` among them, `<>` and `!=`
 /// one token, and the longest is taken; a character no token begins with,
 /// `=`, `&` or `|` alone among them, and a comment's start, is SQLCODE
@@ -113,11 +113,14 @@ fn special_symbols_are_tokens() {
     assert_eq!(tokens("/* */"), ["Solidus", "Asterisk", "Asterisk", "Solidus"]);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 SR2d, SR4] [ECMAScript
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 SR2d, SR4] [ECMAScript
 /// 5.1 §7.6] an identifier begins with a UnicodeLetter (Lu, Ll, Lt, Lm,
 /// Lo, Nl), `$` or `_`, and goes on with those, digits (Nd), combining
 /// marks (Mn, Mc), connector punctuation (Pc), ZWNJ and ZWJ; key words
-/// are identifiers; a digit or mark does not begin one.
+/// are identifiers; a digit or mark does not begin one. MC/DC of `Start
+/// || (Part && a character read)` in `identifier`: a letter first is
+/// taken, § first is not; a digit after a letter is taken, a digit first
+/// and `.` after a letter are not.
 #[test]
 fn identifiers_are_unicode_names() {
     assert_eq!(
@@ -135,7 +138,7 @@ fn identifiers_are_unicode_names() {
     }
 }
 
-/// Verifies: [EXTENSION] [ECMAScript 5.1 §7.6] a `\u` escape in an
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 SR2; ECMAScript 5.1 §7.6] a `\u` escape in an
 /// identifier contributes the character it stands for, which must be one
 /// the identifier may have there: a letter or `$` first, a digit after;
 /// an escape of a surrogate, cut short or of another letter is SQLCODE
@@ -151,7 +154,7 @@ fn identifiers_may_hold_unicode_escapes() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 GR1a] [ECMAScript 5.1
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 GR1a] [ECMAScript 5.1
 /// §7.8.3] a DecimalLiteral without an ExponentPart is the exact number
 /// of the `<signed numeric literal>` of its characters, digits before or
 /// after its period optional; one of more digits than an exact number
@@ -169,11 +172,12 @@ fn a_decimal_literal_without_an_exponent_is_exact() {
     assert!(matches!(number("1234567890123456789"), Value::DecFloat(d) if d == held));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 GR1a] [ECMAScript 5.1
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 GR1a] [ECMAScript 5.1
 /// §7.8.3] a DecimalLiteral with an ExponentPart is the approximate number
 /// of its characters, the exponent signed or not, E of either case, the
 /// forms `.5e1` and `5.e1` too; one past an approximate number's range is
-/// SQLCODE -900.
+/// SQLCODE -900. MC/DC of `'e' | 'E'`: each is an exponent, and neither
+/// (`a_decimal_literal_without_an_exponent_is_exact`) none.
 #[test]
 fn a_decimal_literal_with_an_exponent_is_approximate() {
     assert_eq!(bits("1e2"), 100.0_f64.to_bits());
@@ -185,23 +189,27 @@ fn a_decimal_literal_with_an_exponent_is_approximate() {
     assert_eq!(refused("1E400").sqlcode(), -900_i32);
 }
 
-/// Verifies: [EXTENSION] [ECMAScript 5.1 §7.8.3] what is no numeric
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 SR2; ECMAScript 5.1 §7.8.3] what is no numeric
 /// literal: a leading zero, as of an OctalIntegerLiteral, a literal
 /// followed at once by a digit, an identifier's first character or a
 /// `\`, an exponent without digits, `0x` without a hexadecimal digit or
-/// followed by a letter that is none.
+/// followed by a letter that is none. MC/DC of `followed`: a digit after
+/// 0, a `\` and an IdentifierStart each alone refused, `+` taken; of
+/// `is_hex`, against `0x1F` (`hex_integer_literals_are_exact_numbers`):
+/// `1x1`, no `0`, and `01`, no `x`, decimal literals refused, `0xg`, no
+/// hexadecimal digit, refused as `0` followed by a letter.
 #[test]
 fn what_is_no_numeric_literal() {
-    for text in ["01", "00.5", "3in", "1$", "1_", "1é", "1\\", "1e", "1e+", "1E-", "1.e", "0x", "0xg", "0x1g", "0x1$", "1.5.5e"] {
+    for text in ["01", "00.5", "3in", "1$", "1_", "1é", "1\\", "1e", "1e+", "1E-", "1.e", "0x", "0xg", "0x1g", "0x1$", "1.5.5e", "1x1"] {
         assert_eq!(refused(text).sqlcode(), -101_i32, "{text}");
     }
     assert_eq!(tokens("1.5.a 1 .a 1..a"), ["num", "Period", "id:a", "num", "Period", "id:a", "num", "Period", "id:a"]);
     assert_eq!(tokens("1+2 1\u{2003}"), ["num", "Plus", "num", "num"]);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 Conformance Rule 1,
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 Conformance Rule 1,
 /// GR1a] [ECMAScript 5.1 §7.8.3] Feature T840: a HexIntegerLiteral, `0x`
-/// or `0X` and hexadecimal digits of either case, is the exact number of
+/// or `0X` (MC/DC of `'x' | 'X'`: each) and hexadecimal digits of either case, is the exact number of
 /// its MV, of scale 0; of more than 18 decimal digits a DECFLOAT rounded to
 /// 34; past every DECFLOAT, SQLCODE -900. It is no `<unsigned integer>`.
 #[test]
@@ -226,7 +234,7 @@ fn hex_integer_literals_are_exact_numbers() {
     assert_eq!(numerals, [Numeral::Other, Numeral::Integer, Numeral::Other, Numeral::Other, Numeral::Other, Numeral::Other]);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 GR1b] [ECMAScript 5.1
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 GR1b] [ECMAScript 5.1
 /// §7.8.4] a string literal in double or single quotation marks is its
 /// characters, the other mark among them, each escape replaced: the
 /// single character escapes, `\0`, `\x` of two hexadecimal digits, `\u` of
@@ -248,11 +256,13 @@ fn a_string_literal_is_its_characters_unescaped() {
     assert_eq!(string("'é\u{1D11E}\u{A0}\t'"), "é\u{1D11E}\u{A0}\t");
 }
 
-/// Verifies: [EXTENSION] [ECMAScript 5.1 §7.8.4] what is no string
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 SR2; ECMAScript 5.1 §7.8.4] what is no string
 /// literal: one not closed, a line terminator in it not escaped, an
 /// escape of a digit other than `\0` alone (an OctalEscapeSequence), a
 /// `\x` or `\u` escape cut short; \[DESIGN\] and an escape of a surrogate
-/// not of a pair, no Unicode character.
+/// not of a pair, no Unicode character. MC/DC of `is_line_terminator`:
+/// LF, CR, LS and PS each refused unescaped, a tab taken
+/// (`a_string_literal_is_its_characters_unescaped`).
 #[test]
 fn what_is_no_string_literal() {
     let texts = [
@@ -281,7 +291,7 @@ fn what_is_no_string_literal() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.45 SR2] a token is where
+/// Verifies: [ISO/IEC 9075-2:2023 §9.45 SR2] a token is where
 /// its first character is, counted from 0; a refusal names its rule and
 /// the character it was refused at, counted from 1.
 #[test]
