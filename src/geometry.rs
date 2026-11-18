@@ -10,6 +10,7 @@ mod distance;
 pub mod engine;
 pub(crate) use distance::distance_domain;
 mod functions;
+mod grid;
 mod kind;
 pub mod methods;
 pub mod model;

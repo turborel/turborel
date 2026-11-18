@@ -3074,7 +3074,28 @@ range contains its Y; the shared exact ray-crossing rule still decides
 boundary membership and shell-minus-hole interiors. These immutable trees
 reserve vector capacity before allocation, have depth bounded by the
 geometry coordinate limit, and decline independently when memory is short.
-The decoded operand remains usable without them. Distance reuses the
+The decoded operand remains usable without them.
+A Polygon or MultiPolygon operand of at least 32 edges also builds exact
+cell certificates, once it has located eight points per edge plus 256, so
+an operand prepared for a few rows of a join never pays for them. Its
+envelope gets a grid of square cells whose side is a power of two, about
+64 cells per edge and at most 1,024 along an axis, their bounds 2^-8 of
+a cell past multiples of the side so round coordinates rarely fall on
+one. Cell bounds and row centres are exact, and a point's cell is found
+by an exact multiplication. A cell an edge may touch is a boundary cell:
+an edge within one row's height, or a vertical one, is marked over its
+exact extent, and any other over each row band's computed extent widened
+by a doubled bound on that computation's error. Every other cell holds no
+boundary point and is labelled interior or exterior from the exact
+half-open crossings of its row's centre line, each lying in a marked cell
+of its edge and so wholly left or right of the cell. Each ring's parity is
+kept, and shells, holes and parts combine as point location combines
+them, so a label never differs from location, valid topology or not. A
+point in a labelled cell is decided by one lookup; one in a boundary cell
+keeps the interval tree or the ring scan. Certificates decline when a cell
+would be within 256 units in the last place of the largest coordinate, a
+scaled coordinate would reach 2^44, the side would fall below 1e-280, or
+the budget refuses their cells. Distance reuses the
 prepared intersection decision, then keeps its ordinary separation kernel
 and result bounds; segment-distance pruning is not implied.
 Spatial probes with equal declared semantics and deterministic

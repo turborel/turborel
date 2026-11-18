@@ -81,8 +81,25 @@ fn main() {
     for edges in [4_u32, 8, 16, 32, 64, 128] {
         prepared(&bench, &format!("{edges}-edge polygon"), &points, &circle(edges));
     }
+    for teeth in [64_u32, 1_024, 8_192] {
+        prepared(&bench, &format!("{}-edge comb", teeth * 4 + 4), &points, &comb(teeth));
+    }
     planar::run(&bench);
     curves::run(&bench);
+}
+
+/// A comb over the point grid: a base and `teeth` narrow teeth, so a
+/// horizontal ray through the teeth crosses many edges.
+fn comb(teeth: u32) -> Geometry {
+    let width = f64::from(SIDE) / f64::from(teeth);
+    let mut coordinates = vec!["0 0".to_owned()];
+    for k in 0..teeth {
+        let left = f64::from(k) * width;
+        let right = left + width / 2.0_f64;
+        coordinates.extend([format!("{left} 10"), format!("{left} 90"), format!("{right} 90"), format!("{right} 10")]);
+    }
+    coordinates.extend([format!("{SIDE} 10"), format!("{SIDE} 0"), "0 0".to_owned()]);
+    Geometry::from_wkt(&format!("POLYGON (({}))", coordinates.join(", ")), 0).unwrap()
 }
 
 fn circle(edges: u32) -> Geometry {

@@ -90,7 +90,7 @@ fn polygon_interval_bounds_keep_extreme_ordinates() {
         }
         if scale < f64::MAX {
             for y in [scale.next_up(), (-scale).next_down()] {
-                assert!(locator.locate([0.0_f64, y]).unwrap() == Location::Exterior);
+                assert_eq!(locator.locate([0.0_f64, y]).unwrap(), Location::Exterior);
             }
         }
     }
@@ -142,8 +142,8 @@ fn polygon_interval_depth_is_bounded_by_representation_size() {
         })
         .collect();
     maxima(&mut edges, 0).unwrap();
-    assert!(in_ring([0.5_f64, 50_000.0_f64], &edges).unwrap() == Location::Boundary);
-    assert!(in_ring([0.5_f64, 50_000.5_f64], &edges).unwrap() == Location::Exterior);
+    assert_eq!(in_ring([0.5_f64, 50_000.0_f64], &edges).unwrap(), Location::Boundary);
+    assert_eq!(in_ring([0.5_f64, 50_000.5_f64], &edges).unwrap(), Location::Exterior);
     assert_eq!(maxima(&mut edges, LEVELS).unwrap_err().code, Code::Api);
     assert_eq!(visit(&edges, &mut Ray::new([0.0_f64, 0.0_f64]), LEVELS).unwrap_err().code, Code::Api);
     assert_eq!(maxima(&mut [], LEVELS).unwrap().to_bits(), f64::NEG_INFINITY.to_bits());

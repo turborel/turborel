@@ -364,3 +364,44 @@ This machine runs on-access malware scanning. The first run after a
 build scans the new binaries and slowed every case, including decoders
 this change does not touch, by 10-45%. Repeat a comparison after the
 first run, as here, and discard a run whose unchanged cases moved.
+
+## Exact cell certificates for prepared polygons
+
+A prepared polygon of at least 32 edges now builds a grid of exact cells
+once it has located eight points per edge plus 256 (RULES.md D85). A
+point in a cell no edge touches is decided by one lookup; others keep the
+interval tree or ring scan. Three combs join the suite: a base and 64,
+1,024 or 8,192 narrow teeth over the point grid, so a horizontal ray
+crosses many edges, the worst case for interval trees.
+
+Measured on an Apple M4, Rust 1.99.0. The baseline is the parent commit
+with the comb cases added. Each side ran twice and the second run is
+reported:
+
+```text
+cargo xtask bench geometry --save cells-before
+cargo xtask bench geometry --save cells --compare cells-before
+```
+
+| Prepared intersection | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 32-edge polygon | 23,388,607 | 27,335,241 | +16.9% |
+| 64-edge polygon | 24,209,946 | 27,787,728 | +14.8% |
+| 128-edge polygon | 23,920,391 | 27,649,171 | +15.6% |
+| 512-edge polygon | 22,884,590 | 27,799,496 | +21.5% |
+| 260-edge comb | 1,526,806 | 2,348,096 | +53.8% |
+| 4,100-edge comb | 106,509 | 107,878 | within noise |
+| 32,772-edge comb | 13,168 | 12,681 | within noise |
+
+Above 32 edges the rate is now about 27.5 million pairs per second
+whatever the polygon's size: decoding each SQL point dominates. The two
+large combs gain nothing: their teeth are narrower than a cell can be at
+1,024 cells per axis, so every cell over the teeth touches an edge and
+falls back to the interval tree, whose horizontal rays cross nearly every
+tooth (9.3 µs and 79 µs per point). Edge lists per boundary cell would
+address that; they are not part of this change. Preparation rates stayed
+within noise: certificates are not built until an operand has located
+enough points. Unprepared decoders and kernels, whose code this change
+does not touch, ran 5-11% slower in the same runs than in the baseline
+runs half an hour earlier; that drift applies to both sides of the
+prepared comparison.
