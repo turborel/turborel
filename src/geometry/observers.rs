@@ -37,6 +37,9 @@ const SPIRAL_TYPE_LENGTH: u32 = 128;
 /// ST_MaxUnitNameLength, implementation-defined [§5.1.30 DR 1].
 const UNIT_NAME_LENGTH: u32 = 128;
 
+/// The most coordinates of a point: x, y, z and m.
+const COORDINATES: u32 = 4;
+
 /// The result of a call and the warning it raises, if one.
 pub type Warned = (Value, Option<SqlState>);
 
@@ -78,6 +81,8 @@ pub enum Returns {
     Support(super::support::Support),
     /// An ARRAY of a type of §16 or §17.
     Supports(super::support::Support),
+    /// An ARRAY of DOUBLE PRECISION, a point's coordinates.
+    Doubles,
 }
 
 impl Returns {
@@ -90,6 +95,7 @@ impl Returns {
             Self::Array(k) => DataType::array(data_type_of(k), super::MAX_GEOMETRY_ARRAY_ELEMENTS),
             Self::Support(s) => super::support::data_type(s),
             Self::Supports(s) => DataType::array(super::support::data_type(s), super::MAX_GEOMETRY_ARRAY_ELEMENTS),
+            Self::Doubles => DataType::array(DOUBLE, COORDINATES),
         }
     }
 }

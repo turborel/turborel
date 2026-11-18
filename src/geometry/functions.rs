@@ -487,7 +487,10 @@ impl GeometryFunction {
 /// collection's elements, built in: ST_Geometries as ST_GeomCollection
 /// declares it, which a function call of a collection takes.
 pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
-    let mut out: Vec<Arc<dyn ScalarFunction>> = FUNCTIONS.iter().map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }).collect();
+    // ST_Point is a constructor of more forms than D85's (`mutators::Constructor`).
+    let d85 = FUNCTIONS.iter().filter(|f| !matches!(f, GeometryFunction::Point));
+    let mut out: Vec<Arc<dyn ScalarFunction>> = d85.map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }).collect();
+    out.extend(super::mutators::CONSTRUCTED.iter().map(|k| -> Arc<dyn ScalarFunction> { Arc::new(super::mutators::Constructor(*k)) }));
     out.push(Arc::new(super::ordering::OrderingEquals));
     let collections = super::COLLECTION_FUNCTIONS.iter().take(3);
     out.extend(collections.map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }));

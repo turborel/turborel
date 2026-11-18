@@ -350,6 +350,54 @@ VALUES ST_TOPOINT(ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)'));
 turborel: SQLCODE -301 (SQLSTATE 2FF16): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.55] not an empty set
 ```
 
+## Constructors and mutators
+
+`NEW ST_X(...)` builds a value of the type ST_X. Every type takes its
+text, binary or GML form with an SRID, 0 if not given. ST_POINT takes
+x and y with z and m if given; a null x and y make the empty point. A
+curve takes its points, a circular string also a center, a radius and
+two angles, a circle a center, a radius and a normal. An elliptical
+curve, a NURBS curve, a clothoid and a spiral take their parameters, a
+start and an end measure, the unit their lengths are in and an SRID. A
+surface takes its rings, a polyhedral surface its patches and a
+collection its elements.
+
+Each attribute a type observes, such as ST_X, ST_POINTS or
+ST_UAXISLENGTH, is also a mutator of one more argument. It returns the
+value with that attribute replaced, checked as the type checks it: a
+circle's three points are not on one line, a polygon's rings are
+closed, a polyhedral surface's patches share their edges. A length may
+be given with a unit, converted to the unit of the value's system. The
+start and end measures of a curve are both set or both removed.
+
+```sql
+VALUES ST_ASTEXT(NEW ST_POINT(1E0, 2E0, 3E0));
+VALUES ST_ASTEXT(ST_POINT(1, 2).ST_X(5E0).ST_M(7E0));
+VALUES ST_ASTEXT(NEW ST_LINESTRING(ARRAY[ST_POINT(0, 0), ST_POINT(2, 0)]).ST_POINTS(ARRAY[ST_POINT(0, 0), ST_POINT(3, 3)]));
+VALUES ST_ELLIPTICFROMTXT('ELLIPTICALCURVE (REFERENCELOCATION AFFINEPLACEMENT (LOCATION (0 0), REFERENCEDIRECTIONS (VECTOR (1 0), VECTOR (0 1))), UAXISLENGTH 2, VAXISLENGTH 1, STARTANGLE RADIANS (0), ENDANGLE RADIANS (1))').ST_UAXISLENGTH(3E0, 'KILOMETRE').ST_UAXISLENGTH();
+VALUES ST_CIRCLEFROMTXT('CIRCLE (1 0, 0 1, -1 0)').ST_POINTS(ARRAY[ST_POINT(0, 0), ST_POINT(1, 1), ST_POINT(2, 2)]);
+```
+
+```
+
+--------------------------------------------------------------
+ POINT Z (1 2 3)
+(1 row)
+
+--------------------------------------------------------------
+ POINT M (5 2 7)
+(1 row)
+
+--------------------------------------------------------------
+ LINESTRING (0 0, 3 3)
+(1 row)
+
+--------------------------
+                      3E3
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF78): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §7.4.3 Description 4d] points are collinear
+```
+
 ## Text and binary forms
 
 WKT is read in any case, with decimal and exponent coordinates. A
@@ -1366,24 +1414,32 @@ OK
 | 2FF02 | -301 | A ring of ST_BDPOLYFROMTEXT's is not a closed simple ring, a measure is given a value of a type it does not measure, or a 3D routine's argument is out of its range: a TIN's maximum side length not above 0, a vertical triangle's slope, a measure range reversed, an interior shell outside the exterior one, a TIN table or column that does not exist, or a method given an argument it does not take |
 | 2FF03 | -301 | A TIN's maximum side length, an array of shells or one of its elements, an array ST_CHECKNULLS checks, or a mutator's argument is null |
 | 2FF04 | -301 | ST_RELATE's matrix is not nine of `T`, `F`, `0`, `1`, `2` and `*` |
-| 2FF05 | -301 | ST_CHECKCONSECDUPS finds two equal values in a row |
+| 2FF05 | -301 | ST_CHECKCONSECDUPS finds two equal values in a row, or ST_POINTS is given them or an arc of equal ends |
+| 2FF07 | -301 | ST_INTERIORRINGS is given rings of an empty surface |
 | 2FF06 | -301 | ST_CHECKNULLS, or ST_TOPOINTARY and its peers, find an empty element |
-| 2FF08 | -301 | CAST is given a value Table 4 does not convert, a value is assigned to a type it is not of, or ST_TOPOINTARY and its peers find an element of another type |
+| 2FF08 | -301 | CAST is given a value Table 4 does not convert, a value is assigned to a type it is not of, ST_TOPOINTARY and its peers find an element of another type, or a polygon's interior rings are given a curve that is not a line string |
 | 2FF09 | -301 | ST_CHECKNULLS, or ST_TOPOINTARY and its peers, find a null element |
-| 2FF10 | -301 | ST_CHECKSRID's elements, or a compound surface's surfaces, are of several SRIDs |
+| 2FF10 | -301 | ST_CHECKSRID's elements, a compound surface's surfaces, or a mutator's value and SELF are of several SRIDs |
+| 2FF11 | -301 | ST_CURVES is given curves that do not meet end to start |
+| 2FF12 | -301 | A polygon's exterior ring is given a curve that is not a line string |
 | 2FF14 | -301 | A unit is not a linear unit of ST_UNITS_OF_MEASURE, or the SRID's system has no linear unit |
 | 2FF15 | -301 | ST_TRANSFORM cannot move a value to the system of the SRID |
-| 2FF16 | -301 | ST_Z of a vector is given a null value of a vector that is not empty, or a cast method a value it does not cast that is not empty |
+| 2FF16 | -301 | ST_Z of a vector or a point is given a null value of one that is not empty, NEW ST_POINT a z of a null x and y, or a cast method a value it does not cast that is not empty |
+| 2FF18 | -301 | ST_X or ST_Y of an empty point is given a value |
 | 2FF22 | -301 | A text is malformed, a typed constructor reads a value of another type, ST_BDPOLYFROMTEXT's text is of no multilinestring, or ST_DEFINESRS's definition is no spatial reference system |
 | 2FF23 | -301 | WKB of a type is malformed, a typed constructor reads a value of another type, or ST_BDPOLYFROMWKB's is of no multilinestring |
 | 2FF24 | -301 | GML is malformed, or a typed constructor reads a value of another type |
-| 2FF25 | -301 | A vector's text has a dimension not its tag's, or ST_GETCOORDDIM's elements, or a compound surface's surfaces, are of several dimensions |
+| 2FF25 | -301 | A vector's text has a dimension not its tag's, or ST_GETCOORDDIM's elements, a compound surface's surfaces, or a mutator's points or rings, are of several dimensions |
 | 2FF59 | -301 | A unit form is given a value of an SRID no system has |
+| 2FF66, 2FF67, 2FF75 | -301 | A triangle is given interior rings, a TIN a patch that is not a triangle, or a triangle a ring of other than four points |
 | 2FF68, 2FF69, 2FF70 | -301 | ST_TOTRIANGLEARY, ST_TOPOLYHDRLARY (and ST_TOCOMPSURFARY, ST_TOBREPSOLIDARY) or ST_TOTINARY finds an element of another type |
 | 2FF72 | -301 | A 3D routine of two values is given one without z |
 | 2FF74 | -301 | A TIN element's geometry is not of the type its element type takes |
 | 2FF76, 2FF79, 2FF80 | -301 | ST_CENTER of more than one arc, ST_POINTATDISTANCE beyond a curve's end, ST_DISTANCETOPOINT of a point off it |
+| 2FF77, 2FF78 | -301 | A circle is given other than three points, or three on one line |
+| 2FF84 | -301 | A constructor or mutator of measures is given one without the other |
 | 2FF85 | -301 | A surface of a compound surface does not meet the one before it in a curve |
+| 2FF86, 2FF96 | -301 | ST_REFLOCATION is given a placement of other than two directions, or of a dimension not SELF's |
 | TB916 | -916 | A stored value or index key is damaged, or of an unknown version |
 
 ## Standard
@@ -1393,8 +1449,8 @@ Spatial Information Schema are those of ISO/IEC 13249-3:2016, SQL/MM
 Spatial, §4.2, §5.1.65, §5.1.68, §19 and §20. The text forms are those
 of OGC 06-103r4, Simple Feature Access Part 1, §§7–8. The functions
 named here are called as functions, or as methods, as
-`ST_POINT(1, 2).ST_X()`. Turborel claims conformance to neither yet, as
-most of SQL/MM Spatial's routines are not there. The `rtree` index
+`ST_POINT(1, 2).ST_X()`. Each routine of §5 to §10 is built, and
+turborel claims conformance to neither yet. The `rtree` index
 method is an extension. The choices made are listed in
 [CONFORMANCE.md](../../CONFORMANCE.md#geometry-representations).
 

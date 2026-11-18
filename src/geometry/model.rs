@@ -111,6 +111,28 @@ impl Dims {
         }
     }
 
+    /// These dimensions with z if `z`, without if not.
+    #[must_use]
+    pub const fn with_z(self, z: bool) -> Dims {
+        match (z, self.has_m()) {
+            (false, false) => Dims::Xy,
+            (true, false) => Dims::Xyz,
+            (false, true) => Dims::Xym,
+            (true, true) => Dims::Xyzm,
+        }
+    }
+
+    /// These dimensions with m if `m`, without if not.
+    #[must_use]
+    pub const fn with_m(self, m: bool) -> Dims {
+        match (self.has_z(), m) {
+            (false, false) => Dims::Xy,
+            (true, false) => Dims::Xyz,
+            (false, true) => Dims::Xym,
+            (true, true) => Dims::Xyzm,
+        }
+    }
+
     /// The position of z in a point's ordinates, if it has one.
     pub const fn z_at(self) -> Option<usize> {
         if self.has_z() { Some(XY) } else { None }
@@ -494,6 +516,26 @@ impl Geom {
     #[must_use]
     pub fn xy(&self) -> Geom {
         xy::of(self)
+    }
+
+    /// The ordinate `at` of every point of the value's linear form, a
+    /// solid's of its own points: x at 0, y at 1, then z and m as the
+    /// dimensions have them.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 of a value the linear form does not take.
+    pub fn ordinates(&self, at: usize) -> Result<Vec<f64>> {
+        let mut body = if matches!(self.body, Body::Solid(_)) { self.body.clone() } else { self.linear()?.body };
+        let stride = self.dims.stride();
+        let (mut out, mut i) = (Vec::new(), 0_usize);
+        parts::numbers_mut(&mut body, &mut |x: &mut f64| {
+            if i.checked_rem(stride) == Some(at) {
+                out.push(*x);
+            }
+            i = i.wrapping_add(1);
+        });
+        Ok(out)
     }
 }
 

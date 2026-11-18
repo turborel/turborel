@@ -10,7 +10,7 @@ use crate::error::Result;
 use crate::functions::{AppendedQuery, ScalarFunction};
 use crate::geometry::functions::{BINARY, MAX_REPRESENTATION, TEXT};
 use crate::geometry::model::Kind;
-use crate::geometry::representations::{CONSTRUCTORS, Format, systems_query};
+use crate::geometry::representations::{CONSTRUCTORS, Format, MORE_CONSTRUCTORS, systems_query};
 use crate::value::lob::LobKind;
 use crate::value::{DataType, Value};
 
@@ -81,6 +81,7 @@ pub fn read(target: Kind, args: &[Value]) -> Result<Option<Value>> {
     };
     // A text's call is given the reference systems last; only GML reads them.
     let given = if format == Format::Text { args.split_last().map_or(args, |(_, rest)| rest) } else { args };
-    let Some(f) = CONSTRUCTORS.iter().find(|c| c.target == target && c.format == format) else { return Ok(None) };
+    let all = CONSTRUCTORS.iter().chain(&MORE_CONSTRUCTORS);
+    let Some(f) = all.into_iter().find(|c| c.target == target && c.format == format) else { return Ok(None) };
     f.call(given).map(Some)
 }

@@ -13,6 +13,7 @@ mod functions;
 mod kind;
 pub mod methods;
 pub mod model;
+mod mutators;
 mod observers;
 mod ordering;
 mod planar;

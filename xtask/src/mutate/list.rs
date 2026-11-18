@@ -61,6 +61,7 @@ mod server;
 mod shadow;
 mod spatial_curves;
 mod spatial_lr;
+mod spatial_mutators;
 mod spatial_network;
 mod spatial_planar;
 mod spatial_routines;

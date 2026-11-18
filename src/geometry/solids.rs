@@ -11,7 +11,7 @@ mod construct;
 mod locate;
 mod measures;
 mod relations;
-mod represented;
+pub(super) mod represented;
 mod shells;
 mod table;
 mod units;

@@ -299,3 +299,34 @@ impl Procedure for ArrayProcedure {
         Ok(())
     }
 }
+
+/// [§18.1.6, §18.1.7, §18.1.2] The geometries of `array`, as a mutator
+/// takes them: ST_CheckNulls, ST_CheckConsecDups if `consecutive`, and
+/// ST_CheckSRID; with their one SRID, 0 of none.
+///
+/// # Errors
+///
+/// 2FF03 of a null array, 2FF09 of a null element, 2FF06 of an empty
+/// one, 2FF05 of two equal consecutive ones and 2FF10 of mixed SRIDs.
+pub(crate) fn checked_geometries(array: &Value, consecutive: bool) -> Result<(Vec<Geom>, i32)> {
+    let all: Vec<Geom> = check_nulls(array, geometry_empty)?.iter().map(Geom::from_value).collect::<Result<_>>()?;
+    if consecutive {
+        for pair in all.windows(2) {
+            let [a, b] = pair else { continue };
+            if crate::geometry::EQUALITY(a, b)? {
+                return Err(spatial(SqlState::SPATIAL_DUPLICATE_VALUE, "§18.1.7 Description 2b", "duplicate value"));
+            }
+        }
+    }
+    let srid = all.first().map_or(0_i32, |g| g.srid);
+    if all.iter().any(|g| g.srid != srid) {
+        return Err(mixed_systems());
+    }
+    Ok((all, srid))
+}
+
+/// [§18.1.3 Description 2] The one coordinate dimension of `all`: 2 of
+/// none, 2FF25 of mixed.
+pub(crate) fn same_dims(all: &[Geom]) -> Result<i16> {
+    geometry_coord_dim(all)
+}

@@ -122,7 +122,9 @@ fn nulls_casts_and_signatures_are_explicit() {
 }
 
 /// Verifies: [EXTENSION] D85: SQL users construct points from numeric
-/// columns and inspect or relabel them without assembling WKT strings.
+/// columns and inspect or relabel them without assembling WKT strings;
+/// a third number not an integer is z [ISO/IEC 13249-3:2016 (DIS, SC32
+/// N2593) §6.1.2 Description 13].
 #[test]
 fn point_functions_work_with_numeric_columns_and_prepared_parameters() {
     let db = registered();
@@ -137,7 +139,8 @@ fn point_functions_work_with_numeric_columns_and_prepared_parameters() {
     let mut cursor = a.open_prepared(&query, &[Value::Approx(1.0), Value::Approx(2.0), Value::Exact(Decimal::new(4326, 0))]).unwrap();
     assert_eq!(cursor.fetch().unwrap().unwrap()[0].to_string(), "POINT (1 2)");
     assert!(cursor.fetch().unwrap().is_none());
-    assert_eq!(rows(&a, "VALUES ST_POINT(1, 2, 1.5)").unwrap_err(), Code::SyntaxRule);
+    assert_eq!(rows(&a, "VALUES ST_ASTEXT(ST_POINT(1, 2, 1.5))").unwrap(), ["POINT Z (1 2 1.5)"]);
+    assert_eq!(rows(&a, "VALUES ST_POINT(1, 2, 'x')").unwrap_err(), Code::SyntaxRule);
     assert_eq!(rows(&a, "VALUES ST_Y(ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)'))").unwrap_err(), Code::Data);
 }
 

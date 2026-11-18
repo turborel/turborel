@@ -37,6 +37,7 @@ mod vectors;
 use std::sync::Arc;
 
 pub use arrays::{ArrayProcedure, procedures};
+pub(crate) use arrays::{checked_geometries, same_dims};
 pub use ops::{Form, Op, Routine, Ty};
 pub use transforms::{TRANSFORM_GROUPS, TransformGroup};
 pub use types::SupportType;
@@ -262,6 +263,77 @@ pub fn nurbs_point_value(point: Vec<u8>, weight: Option<f64>) -> Value {
 /// [§17.5] The ST_Knot value of a knot value and its multiplicity.
 pub fn knot_value(value: f64, multiplicity: i32) -> Value {
     values::Knot { value: Some(value), multiplicity: Some(multiplicity) }.value()
+}
+
+/// [§16.1] The radians of an ST_Angle value.
+///
+/// # Errors
+///
+/// SQLCODE -301 if `v` is no ST_Angle value.
+pub fn angle_radians(v: &Value) -> crate::error::Result<f64> {
+    values::angle_of(v).map(crate::spatial::srs::angle::Angle::radians)
+}
+
+/// [§17.2] The coordinates and SRID of an ST_Vector value: x, y and z if
+/// it has one; none of the empty set.
+///
+/// # Errors
+///
+/// SQLCODE -301 if `v` is no ST_Vector value.
+pub fn vector_parts(v: &Value) -> crate::error::Result<Option<VectorParts>> {
+    let v = values::Vector::of(v)?;
+    Ok(v.x.zip(v.y).map(|(x, y)| VectorParts { x, y, z: v.z, srid: v.srid }))
+}
+
+/// An ST_AffinePlacement's location payload and directions, none of each
+/// it has not.
+pub type PlacementParts = (Option<Vec<u8>>, Option<Vec<Option<VectorParts>>>);
+
+/// An ST_Vector's coordinates and SRID.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VectorParts {
+    /// Its x.
+    pub x: f64,
+    /// Its y.
+    pub y: f64,
+    /// Its z, if it has one.
+    pub z: Option<f64>,
+    /// Its SRID.
+    pub srid: i32,
+}
+
+/// [§17.3] An ST_AffinePlacement's location, an ST_Point's payload, and
+/// its reference directions; none of each it has not.
+///
+/// # Errors
+///
+/// SQLCODE -301 if `v` is no ST_AffinePlacement value.
+pub fn placement_parts(v: &Value) -> crate::error::Result<PlacementParts> {
+    let p = values::Placement::of(v)?;
+    let directions =
+        p.directions.map(|all| all.iter().map(|d| d.x.zip(d.y).map(|(x, y)| VectorParts { x, y, z: d.z, srid: d.srid })).collect());
+    Ok((p.location, directions))
+}
+
+/// [§17.4] An ST_NURBSPoint's weighted point, an ST_Point's payload, and
+/// its weight.
+///
+/// # Errors
+///
+/// SQLCODE -301 if `v` is no ST_NURBSPoint value.
+pub fn nurbs_point_parts(v: &Value) -> crate::error::Result<(Option<Vec<u8>>, Option<f64>)> {
+    let p = values::NurbsPoint::of(v)?;
+    Ok((p.point, p.weight))
+}
+
+/// [§17.5] An ST_Knot's value and multiplicity.
+///
+/// # Errors
+///
+/// SQLCODE -301 if `v` is no ST_Knot value.
+pub fn knot_parts(v: &Value) -> crate::error::Result<(Option<f64>, Option<i32>)> {
+    let k = values::Knot::of(v)?;
+    Ok((k.value, k.multiplicity))
 }
 
 /// [Annex A.1] The meta-variables of the types' sizes: each name, value

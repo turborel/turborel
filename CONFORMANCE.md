@@ -2164,7 +2164,7 @@ when declared, with SQLCODE -103.
 |---|---|---|
 | Type hierarchy | §4.2, Figure 1 | All 27 types are SQL type names, each with an optional SRID parameter. The four that hold no values of their own (ST_Geometry, ST_Curve, ST_Surface, ST_Solid) refuse NEW. |
 | Subtyping | 9075-2 §9.2 SR2, §6.17, §8.19 | A value can be assigned to a type above its own. Assigning it to a type below its own needs TREAT, which raises 0D000 at run time. IS OF and IS OF (ONLY) are supported. |
-| Casts | §4.2.1.5 Table 4 | CAST within the hierarchy, else 2FF08. The 23 ST_ToXxx methods [§5.1.55] are not built. |
+| Casts | §4.2.1.5 Table 4 | CAST within the hierarchy, else 2FF08. The ST_ToXxx cast methods of §5.1.55, each also a function. |
 | Ordering | §5.1.65 | EQUALS ONLY BY RELATIVE with ST_OrderingEquals, the exact ST_Equals of x and y (RULES.md D-SPATIAL-PLANAR). Two empty values of one SRID are equal. PRIMARY KEY, UNIQUE and FOREIGN KEY of a geometry column are refused at declaration [9075-2 §11.7 SR1, §9.12 SR3], SQLSTATE 2A000. |
 | Methods | §4.2, 9075-2 §9.18 | A method table per type, with overriding. The collection types override ST_Geometries. `v.m()` binds by the declared type and runs by the most specific type. `(v AS T).m()` runs T's. |
 | SPECIFICTYPE | 9075-2 §6.15 | `v.SPECIFICTYPE` names the most specific type in INFORMATION_SCHEMA, the built-in types' schema. The function form SPECIFICTYPE(v) is not built. |
@@ -2175,12 +2175,14 @@ when declared, with SQLCODE -103.
 | Validity and simplicity | §5.1.8, §5.1.10, §7.1.8 | ST_IsValid, ST_IsSimple and ST_IsRing. |
 | Measures | §5.1.41, §7.1.2, §8.1.2 to §8.1.8, §10.3.5, §10.5.3 to §10.5.9 | ST_Area, ST_Length, ST_Perimeter (each with a unit form), ST_Centroid, ST_PointOnSurface and ST_Distance with a unit. Values with arcs or other curves are measured exactly by the curve engine (RULES.md D-SPATIAL-CURVES), linear ones by the planar engine. |
 | Polygons from rings | §8.3.9, §10.6.7 | ST_BdPolyFromText, ST_BdPolyFromWKB, ST_BdMPolyFromText and ST_BdMPolyFromWKB. The standard has no GML forms of them. |
-| Curves | §7 | The routines of the nine curve kinds (`src/geometry/observers.rs`, RULES.md D-SPATIAL-CURVES), with the unit forms the clause gives, ST_DistanceToPoint's and ST_PointAtDistance's among them. ST_PerpPoints has none [§7.1.15]. ST_BulgeNormal and ST_Normal return ST_Vector values, ST_StartAngle and ST_EndAngle ST_Angle values, ST_RefLocation an ST_AffinePlacement whose reference directions are the axis vectors, and ST_ControlPoints and ST_Knots arrays of ST_NURBSPoint and ST_Knot (`src/geometry/observers/records.rs`). The mutators of a curve's attributes, such as ST_UAxisLength(DOUBLE PRECISION), are not built. |
+| Curves | §7 | The routines of the nine curve kinds (`src/geometry/observers.rs`, RULES.md D-SPATIAL-CURVES), with the unit forms the clause gives, ST_DistanceToPoint's and ST_PointAtDistance's among them. ST_PerpPoints has none [§7.1.15]. ST_BulgeNormal and ST_Normal return ST_Vector values, ST_StartAngle and ST_EndAngle ST_Angle values, ST_RefLocation an ST_AffinePlacement whose reference directions are the axis vectors, and ST_ControlPoints and ST_Knots arrays of ST_NURBSPoint and ST_Knot (`src/geometry/observers/records.rs`). |
 | Surfaces and TINs | §8, §17.1 | The routines of the six surface kinds, ST_TIN of elements and of triangles, ST_TINElements as an observer and a mutator, and the ST_TINElement type with its empty constructor, observers, mutators and ST_IsEmpty (`src/geometry/tins.rs`, `src/geometry/tin_element.rs`). |
+| Constructors | §6.1.2, §7.2.2 to §7.10.2, §8.2.2 to §8.6.2, §10.1.2 to §10.6.2 | `NEW ST_X(...)` and the function ST_X of each instantiable type of §6 to §10, every form its clause defines: the text, binary and GML forms with an SRID, a point of x, y, z and m, a curve of its points or parameters, with measures, a unit and an SRID, a circular string of a center or of bulges, a circle of a center and a normal, a surface of its rings, a polyhedral surface of its patches and a collection of its elements (`src/geometry/mutators/constructors.rs`). |
+| Mutators and observers | §5.1, §6.1.3 to §6.1.7, §7.2 to §7.10, §8.1 to §8.6, §10.3 | Each attribute's mutator, checked as its clause checks it: ST_X, ST_Y, ST_Z and ST_M; ST_Points, ST_Curves, ST_ExteriorRing, ST_InteriorRings and ST_Patches; ST_RefLocation, the axis lengths, angles, measures, control points, knots, scale factor, distances, length, curvatures and spiral type, with the unit forms. Also ST_Dimension, ST_CoordDim, ST_Is3D, ST_IsMeasured, ST_Envelope, ST_EnvelopeAsPts, ST_MinZ to ST_MaxM, ST_ExplicitPoint, ST_IsWorld, ST_IsClosed and ST_PerpPoints of a multicurve, and the ToSQL methods (`src/geometry/mutators.rs`). Every routine of §5 to §10 binds and runs. |
 | Locating by measure | §5.1.13 to §5.1.16 | ST_LocateAlong and ST_LocateBetween, and their 3D forms. |
 | Routines in space | §5.1, §8, §9 | The 3D relationships, set operations, distance, measures, boundary, simplicity and closure, the shells of a solid, ST_MaxSideLength, ST_Clip and ST_TINTable (`src/geometry/solids.rs`, RULES.md D-SPATIAL-SOLIDS). ST_BRepSolid's constructors from surfaces [§9.2.2] and the routines of ST_CompoundSurface beyond measures over its patches are not built. |
 | Table functions | §8.6, §11, §12, §13 | The mechanism of RULES.md D-SPATIAL-ROUTINES. ST_TINTable, the topology and network checks and the shortest paths use it. |
-| SQLSTATEs | §22 Table 16 | All 98 conditions are defined, and the model raises 2FF06, 2FF07, 2FF08, 2FF11, 2FF18, 2FF23, 2FF25, 2FF75, 2FF77, 2FF84 and 2FF98. Defect, 2FF01 to 2FF03 clash with 13249-2's. Each part raises its own (RULES.md D-SPATIAL-STATES). |
+| SQLSTATEs | §22 Table 16 | All 98 conditions are defined, and the model raises 2FF05, 2FF06, 2FF07, 2FF08, 2FF10, 2FF11, 2FF12, 2FF16, 2FF18, 2FF23, 2FF25, 2FF66, 2FF67, 2FF75, 2FF77, 2FF78, 2FF84, 2FF86, 2FF96 and 2FF98. Defect, 2FF01 to 2FF03 clash with 13249-2's. Each part raises its own (RULES.md D-SPATIAL-STATES). |
 
 #### Readings of the standard
 
@@ -2332,6 +2334,22 @@ when declared, with SQLCODE -103.
   TREAT.
 - SQLSTATE 2FF01 to 2FF03 are shared with Full-Text's class (RULES.md
   D-SPATIAL-STATES).
+- A curve's start and end measures are both set or both removed. A
+  mutator of one measure on a curve without measures sets both to the
+  value, and the null value removes both [§7.6.2 Description 24c].
+- The mutators of a curve given by parameters raise 2FF02 of an empty
+  curve, which has no parameters to keep.
+- ST_X and ST_Y of the empty point raise 2FF18, as no point has one
+  coordinate alone. ST_Z and ST_M of a value raise 2FF03 there.
+- The patches of a polyhedral surface are adjacent when they share an
+  edge, each with at least one other and no edge with more than two.
+- ST_IsWorld is 0. No surface stored covers the whole earth.
+- ST_MinZ, ST_MaxZ, ST_MinM and ST_MaxM are of the linear form of a
+  curve, its points and stroked arcs.
+- ST_Point(1, 2, 3) is x, y and the SRID 3, the form of three integers
+  [§6.1.2 Description 11]. NEW ST_Point(1E0, 2E0, 3E0) has z 3.
+- ST_Envelope widens a flat extent by a small amount, so that the
+  rectangle of a point or a line along an axis is a polygon.
 
 ### Reference systems [§14, §20]
 

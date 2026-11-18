@@ -107,6 +107,9 @@ impl Observer for CurveMethod {
     }
 
     fn of(self, g: &Geom, value: &Geometry, rest: &[Value]) -> Result<Warned> {
+        if let (Self::PerpPoints, Some(curves)) = (self, multi_curves(value)) {
+            return Ok((multi_perp(g, &curves, rest.first())?, None));
+        }
         let c = curve(value, self.name())?;
         let geo = &Planar;
         let point = |p: Option<Coord>| p.map_or(Ok(Value::Null), |p| part(g, g.dims, Body::Point(Some(p))));
@@ -127,6 +130,31 @@ impl Observer for CurveMethod {
         };
         Ok((result, None))
     }
+}
+
+/// The curves of a multicurve or a multilinestring, none of another.
+fn multi_curves(value: &Geometry) -> Option<Vec<Curve>> {
+    match &value.body {
+        Body::Collection(Collection::MultiCurve(curves)) => Some(curves.clone()),
+        Body::Collection(Collection::MultiLineString(lines)) => Some(lines.iter().map(|l| Curve::LineString(l.clone())).collect()),
+        Body::Point(_) | Body::Curve(_) | Body::Surface(_) | Body::Solid(_) | Body::Collection(_) => None,
+    }
+}
+
+/// [§10.3.7] ST_PerpPoints(ST_Point) of a multicurve of `curves`: null
+/// of the empty set or the empty point, the point if it is on a curve,
+/// else the feet on every curve.
+fn multi_perp(g: &Geom, curves: &[Curve], arg: Option<&Value>) -> Result<Value> {
+    let Some(p) = point_argument(arg, CurveMethod::PerpPoints.name())? else { return Ok(Value::Null) };
+    let mut feet = Vec::new();
+    for c in curves {
+        let Some(found) = observe::perp_points(c, p, &Planar)? else { continue };
+        if found == [Foot::Point(p)] {
+            return perpendicular(g, Some(found));
+        }
+        feet.extend(found);
+    }
+    perpendicular(g, (!curves.is_empty()).then_some(feet))
 }
 
 /// [§7.1.15 Description 2e] The feet as a point, a multipoint, a curve, a

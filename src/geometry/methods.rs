@@ -17,11 +17,12 @@ use super::collections::CollectionFunction;
 use super::conversions::ToKind;
 use super::functions::GeometryFunction;
 use super::model::Kind;
+use super::mutators::{Either, Mutator, Property, WithoutSelf};
 use super::observers::{
     CompoundMethod, CurveMethod, MeasureMethod, ParameterMethod, PatchMethod, PointListMethod, RecordMethod, RingMethod,
     Routine as Observed,
 };
-use super::representations::AsGml;
+use super::representations::{AsGml, CONSTRUCTORS};
 use super::routines::Routine;
 use super::solids::{SolidFunction, Surfaces, TinFromTable};
 use super::tins::TinRoutine;
@@ -61,6 +62,16 @@ const fn overriding(of: Kind, name: &'static str, arity: usize, routine: fn() ->
     Method { of, name, arity, overriding: true, routine }
 }
 
+/// A method of two routines, chosen by its argument's type (`Either`).
+macro_rules! either {
+    ($text:expr, $number:expr) => {{
+        fn made() -> Arc<dyn ScalarFunction> {
+            Arc::new(Either { text: Arc::new($text), number: Arc::new($number) })
+        }
+        made
+    }};
+}
+
 macro_rules! routine {
     ($f:expr) => {{
         fn made() -> Arc<dyn ScalarFunction> {
@@ -71,7 +82,7 @@ macro_rules! routine {
 }
 
 /// The table: of each type, the methods it declares.
-pub static METHODS: [Method; 238] = [
+pub static METHODS: [Method; 300] = [
     // [§5.1.1] ST_Geometry.
     // [§5.1.55] The cast methods of ST_Geometry.
     original(Kind::Geometry, "ST_TOPOINT", 0, routine!(ToKind { name: "ST_TOPOINT", target: Kind::Point })),
@@ -221,9 +232,9 @@ pub static METHODS: [Method; 238] = [
     original(Kind::EllipticalCurve, "ST_STARTM", 0, routine!(Observed(ParameterMethod::StartM))),
     original(Kind::EllipticalCurve, "ST_ENDM", 0, routine!(Observed(ParameterMethod::EndM))),
     original(Kind::EllipticalCurve, "ST_UAXISLENGTH", 0, routine!(Observed(ParameterMethod::UAxisLength))),
-    original(Kind::EllipticalCurve, "ST_UAXISLENGTH", 1, routine!(Observed(ParameterMethod::UAxisLength))),
+    original(Kind::EllipticalCurve, "ST_UAXISLENGTH", 1, either!(Observed(ParameterMethod::UAxisLength), Mutator::UAxisLength)),
     original(Kind::EllipticalCurve, "ST_VAXISLENGTH", 0, routine!(Observed(ParameterMethod::VAxisLength))),
-    original(Kind::EllipticalCurve, "ST_VAXISLENGTH", 1, routine!(Observed(ParameterMethod::VAxisLength))),
+    original(Kind::EllipticalCurve, "ST_VAXISLENGTH", 1, either!(Observed(ParameterMethod::VAxisLength), Mutator::VAxisLength)),
     original(Kind::EllipticalCurve, "ST_REFLOCATION", 0, routine!(Observed(RecordMethod::RefLocation))),
     original(Kind::EllipticalCurve, "ST_STARTANGLE", 0, routine!(Observed(RecordMethod::StartAngle))),
     original(Kind::EllipticalCurve, "ST_ENDANGLE", 0, routine!(Observed(RecordMethod::EndAngle))),
@@ -240,8 +251,8 @@ pub static METHODS: [Method; 238] = [
     original(Kind::Clothoid, "ST_REFLOCATION", 0, routine!(Observed(RecordMethod::RefLocation))),
     original(Kind::Clothoid, "ST_STARTDISTANCE", 0, routine!(Observed(ParameterMethod::StartDistance))),
     original(Kind::Clothoid, "ST_ENDDISTANCE", 0, routine!(Observed(ParameterMethod::EndDistance))),
-    original(Kind::Clothoid, "ST_STARTDISTANCE", 1, routine!(Observed(ParameterMethod::StartDistance))),
-    original(Kind::Clothoid, "ST_ENDDISTANCE", 1, routine!(Observed(ParameterMethod::EndDistance))),
+    original(Kind::Clothoid, "ST_STARTDISTANCE", 1, either!(Observed(ParameterMethod::StartDistance), Mutator::StartDistance)),
+    original(Kind::Clothoid, "ST_ENDDISTANCE", 1, either!(Observed(ParameterMethod::EndDistance), Mutator::EndDistance)),
     original(Kind::SpiralCurve, "ST_STARTCURVATURE", 0, routine!(Observed(ParameterMethod::StartCurvature))),
     original(Kind::SpiralCurve, "ST_REFLOCATION", 0, routine!(Observed(RecordMethod::RefLocation))),
     original(Kind::SpiralCurve, "ST_ENDCURVATURE", 0, routine!(Observed(ParameterMethod::EndCurvature))),
@@ -341,6 +352,75 @@ pub static METHODS: [Method; 238] = [
     original(Kind::MultiSurface, "ST_3DCENTROID", 0, routine!(SolidFunction::Centroid)),
     original(Kind::MultiSurface, "ST_3DPOINTONSURF", 0, routine!(SolidFunction::PointOnSurf)),
     original(Kind::Tin, "ST_TINTABLE", 12, routine!(TinFromTable)),
+    // [§5.1.2 to §5.1.28] The observers of ST_Geometry's dimensions and extent.
+    original(Kind::Geometry, "ST_DIMENSION", 0, routine!(Observed(Property::Dimension))),
+    original(Kind::Geometry, "ST_COORDDIM", 0, routine!(Observed(Property::CoordDim))),
+    original(Kind::Geometry, "ST_IS3D", 0, routine!(Observed(Property::Is3D))),
+    original(Kind::Geometry, "ST_ISMEASURED", 0, routine!(Observed(Property::IsMeasured))),
+    original(Kind::Geometry, "ST_ENVELOPE", 0, routine!(Observed(Property::Envelope))),
+    original(Kind::Geometry, "ST_ENVELOPEASPTS", 0, routine!(Observed(Property::EnvelopeAsPts))),
+    original(Kind::Geometry, "ST_MINZ", 0, routine!(Observed(Property::MinZ))),
+    original(Kind::Geometry, "ST_MAXZ", 0, routine!(Observed(Property::MaxZ))),
+    original(Kind::Geometry, "ST_MINM", 0, routine!(Observed(Property::MinM))),
+    original(Kind::Geometry, "ST_MAXM", 0, routine!(Observed(Property::MaxM))),
+    // [§5.1.56, §5.1.58, §5.1.60] The methods of a representation.
+    original(Kind::Geometry, "ST_WKTTOSQL", 1, routine!(WithoutSelf(Arc::new(CONSTRUCTORS[0])))),
+    original(Kind::Geometry, "ST_WKBTOSQL", 1, routine!(WithoutSelf(Arc::new(CONSTRUCTORS[1])))),
+    original(Kind::Geometry, "ST_GMLTOSQL", 1, routine!(WithoutSelf(Arc::new(CONSTRUCTORS[2])))),
+    // [§6.1.3 to §6.1.7] ST_Point's coordinates.
+    original(Kind::Point, "ST_X", 1, routine!(Mutator::X)),
+    original(Kind::Point, "ST_Y", 1, routine!(Mutator::Y)),
+    original(Kind::Point, "ST_Z", 0, routine!(Observed(Property::Z))),
+    original(Kind::Point, "ST_Z", 1, routine!(Mutator::Z)),
+    original(Kind::Point, "ST_M", 0, routine!(Observed(Property::M))),
+    original(Kind::Point, "ST_M", 1, routine!(Mutator::M)),
+    original(Kind::Point, "ST_EXPLICITPOINT", 0, routine!(Observed(Property::ExplicitPoint))),
+    // [§7.2 to §7.10, §8.4.3] The mutators of points and curves.
+    original(Kind::LineString, "ST_POINTS", 1, routine!(Mutator::Points)),
+    original(Kind::CircularString, "ST_POINTS", 1, routine!(Mutator::Points)),
+    original(Kind::Circle, "ST_POINTS", 1, routine!(Mutator::Points)),
+    original(Kind::GeodesicString, "ST_POINTS", 1, routine!(Mutator::Points)),
+    original(Kind::Triangle, "ST_POINTS", 1, routine!(Mutator::Points)),
+    original(Kind::CompoundCurve, "ST_CURVES", 1, routine!(Mutator::Curves)),
+    // [§7.6 to §7.9] The mutators of the curves given by parameters.
+    original(Kind::EllipticalCurve, "ST_REFLOCATION", 1, routine!(Mutator::RefLocation)),
+    original(Kind::EllipticalCurve, "ST_UAXISLENGTH", 2, routine!(Mutator::UAxisLength)),
+    original(Kind::EllipticalCurve, "ST_VAXISLENGTH", 2, routine!(Mutator::VAxisLength)),
+    original(Kind::EllipticalCurve, "ST_STARTANGLE", 1, routine!(Mutator::StartAngle)),
+    original(Kind::EllipticalCurve, "ST_ENDANGLE", 1, routine!(Mutator::EndAngle)),
+    original(Kind::EllipticalCurve, "ST_STARTM", 1, routine!(Mutator::StartM)),
+    original(Kind::EllipticalCurve, "ST_ENDM", 1, routine!(Mutator::EndM)),
+    original(Kind::NurbsCurve, "ST_CONTROLPOINTS", 1, routine!(Mutator::ControlPoints)),
+    original(Kind::NurbsCurve, "ST_KNOTS", 1, routine!(Mutator::Knots)),
+    original(Kind::NurbsCurve, "ST_STARTM", 1, routine!(Mutator::StartM)),
+    original(Kind::NurbsCurve, "ST_ENDM", 1, routine!(Mutator::EndM)),
+    original(Kind::Clothoid, "ST_REFLOCATION", 1, routine!(Mutator::RefLocation)),
+    original(Kind::Clothoid, "ST_SCALEFACTOR", 1, routine!(Mutator::ScaleFactor)),
+    original(Kind::Clothoid, "ST_STARTDISTANCE", 2, routine!(Mutator::StartDistance)),
+    original(Kind::Clothoid, "ST_ENDDISTANCE", 2, routine!(Mutator::EndDistance)),
+    original(Kind::Clothoid, "ST_STARTM", 1, routine!(Mutator::StartM)),
+    original(Kind::Clothoid, "ST_ENDM", 1, routine!(Mutator::EndM)),
+    original(Kind::SpiralCurve, "ST_REFLOCATION", 1, routine!(Mutator::RefLocation)),
+    original(Kind::SpiralCurve, "ST_LENGTH", 1, either!(Routine::Length, Mutator::Length)),
+    original(Kind::SpiralCurve, "ST_LENGTH", 2, routine!(Mutator::Length)),
+    original(Kind::SpiralCurve, "ST_STARTCURVATURE", 1, routine!(Mutator::StartCurvature)),
+    original(Kind::SpiralCurve, "ST_ENDCURVATURE", 1, routine!(Mutator::EndCurvature)),
+    original(Kind::SpiralCurve, "ST_SPIRALTYPE", 1, routine!(Mutator::SpiralType)),
+    original(Kind::SpiralCurve, "ST_STARTM", 1, routine!(Mutator::StartM)),
+    original(Kind::SpiralCurve, "ST_ENDM", 1, routine!(Mutator::EndM)),
+    // [§8.1.10 to §8.6.7] The surfaces' observers and mutators.
+    original(Kind::Surface, "ST_ISWORLD", 0, routine!(Observed(Property::IsWorld))),
+    original(Kind::CurvePolygon, "ST_EXTERIORRING", 1, routine!(Mutator::ExteriorRing)),
+    original(Kind::CurvePolygon, "ST_INTERIORRINGS", 1, routine!(Mutator::InteriorRings)),
+    overriding(Kind::Polygon, "ST_EXTERIORRING", 1, routine!(Mutator::ExteriorRing)),
+    overriding(Kind::Polygon, "ST_INTERIORRINGS", 1, routine!(Mutator::InteriorRings)),
+    overriding(Kind::Triangle, "ST_EXTERIORRING", 1, routine!(Mutator::ExteriorRing)),
+    overriding(Kind::Triangle, "ST_INTERIORRINGS", 1, routine!(Mutator::InteriorRings)),
+    original(Kind::PolyhdrlSurface, "ST_PATCHES", 1, routine!(Mutator::Patches)),
+    overriding(Kind::Tin, "ST_PATCHES", 1, routine!(Mutator::Patches)),
+    // [§10.3.3, §10.3.7] ST_MultiCurve.
+    original(Kind::MultiCurve, "ST_ISCLOSED", 0, routine!(Observed(Property::IsClosed))),
+    original(Kind::MultiCurve, "ST_PERPPOINTS", 1, routine!(Observed(CurveMethod::PerpPoints))),
 ];
 
 /// The methods `of`'s descriptor declares.

@@ -11,10 +11,11 @@ use std::sync::Arc;
 use super::model::{Body as ModelBody, Geom, Kind, Surface as ModelSurface};
 use super::observers::{DOUBLE, INTEGER, signature};
 use super::representations::spatial;
+use super::solids::represented;
 use super::tin_element::{self, Parts, TAG_LENGTH, TYPE_LENGTH};
 use super::{MAX_GEOMETRY_ARRAY_ELEMENTS, data_type, data_type_of, kind};
 use crate::error::{Result, SqlState};
-use crate::functions::ScalarFunction;
+use crate::functions::{AppendedQuery, ScalarFunction};
 use crate::spatial::curves::tin::{ElementKind, triangulate};
 use crate::spatial::formats::model::{from_geom, to_geom};
 use crate::spatial::formats::tree::{self, Body, Element, Geometry, Surface, Tin};
@@ -266,6 +267,10 @@ impl ScalarFunction for TinRoutine {
     }
 
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
+        // [§8.6.2] ST_TIN of a representation and an SRID.
+        if *self == Self::Tin && args.first().is_some_and(represented::is_representation) {
+            return if represented::own(args) <= MUTATOR { Ok(data_type_of(Kind::Tin)) } else { Err(signature("ST_TIN")) };
+        }
         if !self.arities().contains(&args.len()) {
             return Err(signature(self.name_of()));
         }
@@ -283,12 +288,24 @@ impl ScalarFunction for TinRoutine {
     }
 
     fn argument_type(&self, position: usize, known: &[Option<DataType>]) -> Option<DataType> {
+        if let (Self::Tin, Some(t)) = (self, represented::representation_type(known)) {
+            return [t, INTEGER].get(position).cloned();
+        }
         self.parameter(position, known.len(), known)
+    }
+
+    fn catalog_query(&self, _: &[Option<&Value>], types: &[DataType], _: &dyn crate::catalog::Catalog) -> Option<AppendedQuery> {
+        (*self == Self::Tin).then(|| represented::appended(types)).flatten()
     }
 
     fn call(&self, args: &[Value]) -> Result<Value> {
         if args.iter().any(Value::is_null) {
             return Ok(Value::Null);
+        }
+        if *self == Self::Tin
+            && let Some(read) = represented::read(Kind::Tin, args)?
+        {
+            return Ok(read);
         }
         match self {
             Self::Element => self.element(args),
