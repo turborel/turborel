@@ -932,7 +932,10 @@ A row whose value a numeric comparison cannot cast is among those it
 gives, so its error is raised as by a full read. If another condition
 of the table may raise an error, the table is read whole, so the error
 is raised whatever rows the index would skip. In ON, a query that may
-raise an error, as a numeric comparison may, is read whole too.
+raise an error, as a numeric comparison may, is still evaluated on every
+row of its table while the other table has rows, and on none while it
+has none: the index gives its rows only then, as a WHERE clause's would,
+and the query checks each.
 
 A value of XML(SEQUENCE) may be no one document node: several items, an
 atomic value, an element or none. A query of it may fail, as of several

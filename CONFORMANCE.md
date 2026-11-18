@@ -2635,7 +2635,11 @@ such a query, exact, from its entries (`Index::xml_answers`), a row it
 may hold of checked by the query's own test; of the others each row
 given is fetched and checked. Each is priced against a full read that
 checks every row's value (`XmlCost::of_check`), and a table another
-conjunct of which may raise an error is read whole (RULES.md D15).
+conjunct of which may raise an error is read whole (RULES.md D15). A
+conjunct of ON, or of WHERE over a product, that may raise an error, of
+one table's columns, is read by an index of that table below the guard
+it is moved over, as any index method's conjuncts are
+(`physical/access/guarded.rs`).
 EXPLAIN shows the query and whether the index answers it. A value whose
 nodes or keys pass their bounds is refused, SQLCODE -900.
 

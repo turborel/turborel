@@ -3,6 +3,7 @@
 //! an OR, chosen by cost.
 
 mod columns;
+mod guarded;
 mod json;
 mod predicate;
 mod scans;
@@ -150,7 +151,7 @@ impl Probed {
 impl PhysicalPlanner<'_> {
     /// Choose how to read one table: a sequential scan or an index path.
     /// If an order is wanted, unordered paths are charged for a later sort.
-    pub(super) fn access(&self, read: TableRead<'_>, mut conds: Vec<Cond>, want: &[SortKey]) -> Built {
+    pub(super) fn access(&self, read: TableRead<'_>, conds: Vec<Cond>, want: &[SortKey]) -> Built {
         let Ok(storage) = self.db.storage_of(read.table) else {
             // [DESIGN] A bound table has storage. If not, it is scanned anyway,
             // and the executor reports the missing storage (SQLCODE -910).
@@ -169,43 +170,7 @@ impl PhysicalPlanner<'_> {
                 Filtered { shown: read.shown, known: Known { stats: None, cost: &cost }, ordered: false, read: 0.0_f64, most: 0.0_f64 };
             return filtered(plan, conds, &with);
         };
-        let rows = storage.row_count();
-        // RULES.md D106: an implied filter is no condition of the rows read:
-        // an index may find them by it, and no row is checked by it.
-        let (implied, kept): (Vec<Cond>, Vec<Cond>) = conds.into_iter().partition(xml::implied);
-        conds = kept;
-        let best = self.best_path(read, (&conds, &implied), want);
-        // A scan's filter keeps its share of the table's rows, but no more
-        // than the scan reads: the rows its zones or chunks may match.
-        let (plan, (found, most)) = match best.index {
-            None => {
-                let order = best.order;
-                let (columns, backward) = (read.needed.to_vec(), best.reverse);
-                let plan = Plan::SeqScan {
-                    table: read.table.clone(),
-                    columns,
-                    rows,
-                    cost: best.cost,
-                    order,
-                    backward,
-                    most: None,
-                    located: read.located,
-                };
-                (plan, (cost_of(rows), best.est))
-            }
-            Some(mut probed) => {
-                let (named, keyed) = (predicate::named(&probed.probes), Keyed::of_read(self.db, read));
-                let answered = probed.answered(&mut conds);
-                // A function lookup is priced as of every row; an XML lookup by
-                // its index's count.
-                let function = named && !matches!(probed.probes.first(), Some(Probe::Xml(_)));
-                let found = if function { cost_of(rows) } else { best.est };
-                (scans::index_scans(keyed.read(read), probed, answered, (best.est, best.cost, best.reverse)), (found, best.est))
-            }
-        };
-        let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
-        let known = Known { stats: stats.as_deref(), cost: &cost };
-        filtered(plan, conds, &Filtered { shown: read.shown, known, ordered: best.ordered, read: found, most })
+        self.read_by(read, conds, (want, None), &**storage).0
     }
 
     /// The cheapest way to read the table: a sequential scan, index probes

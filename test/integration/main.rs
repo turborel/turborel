@@ -132,6 +132,7 @@ mod geometry;
 mod get_diagnostics;
 mod get_diagnostics_items;
 mod grouping_sets;
+mod guarded_reads;
 mod held_lobs;
 mod hybrid_layout;
 mod hypothetical;

@@ -313,7 +313,12 @@ implementation-dependent (Annex C item 5).
 The same holds for ON, which applies to every row of the operands' product
 [ISO/IEC 9075:1992 §7.5 GR1c]. Raising conjuncts over products and outer
 joins move onto their operand over a guard (`optimizer/raising.rs`,
-`optimizer/outer.rs`). SUM and AVG judge only their final result, never a
+`optimizer/outer.rs`). The planner reads an operand's table below its
+guard (`physical/access/guarded.rs`): its conjuncts choose an index of
+any method as the table's own filter's would, which leaves out only rows
+of which no conjunct is true or raises, and stay over the product of the
+index's rows and the guard, so each is evaluated on the rows the index
+gives while the guard has a row, and on none while it has none. SUM and AVG judge only their final result, never a
 running sum, so row order can't decide an overflow [ISO/IEC 9075:1992 §6.5
 GR2b iv] (`functions/sum.rs`).
 
@@ -4736,7 +4741,8 @@ conjunct of the table cannot raise one, or is such a query that raises
 none (D15). A path, alone or compared with a string, raises none
 (`ScalarFunction::raise_free`), so it is no raising conjunct to D15's
 guards, and an ON condition of it is pushed onto its operand as a
-comparison is. A lookup is priced by the entries its index counts
+comparison is; one that may raise is moved onto its operand over a
+guard, below which the index is read (D15). A lookup is priced by the entries its index counts
 (`Index::xml_cost`), and each row it gives but an answered one a check of
 its value, against a full read that checks every row's, a check a pass
 over a value of the column's average width (`XmlCost::of_check`); a

@@ -21,6 +21,7 @@ mod fulltext;
 mod generated;
 mod geometry;
 mod grouping_sets;
+mod guarded;
 mod hash;
 mod hypothetical;
 mod information;
