@@ -1,5 +1,5 @@
 //! The well-known text representation of a spatial reference system, the
-//! <spatial reference system> of ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
+//! `<spatial reference system>` of ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
 //! §14.1.9: reading it into a [`CoordinateSystem`] and writing one back
 //! in canonical form, the pair the ST_WellKnownText transform group of
 //! §14.1.8 is made of.
@@ -21,23 +21,23 @@ pub use write::write;
 
 // The key words of §14.1.9 Description 1c, then the \[EXTENSION\] items.
 
-/// PROJCS, a <projected cs>.
+/// PROJCS, a `<projected cs>`.
 pub const PROJCS: &str = "PROJCS";
-/// GEOGCS, a <geographic cs>.
+/// GEOGCS, a `<geographic cs>`.
 pub const GEOGCS: &str = "GEOGCS";
-/// GEOCCS, a <geocentric cs>.
+/// GEOCCS, a `<geocentric cs>`.
 pub const GEOCCS: &str = "GEOCCS";
-/// DATUM, a <datum>.
+/// DATUM, a `<datum>`.
 pub const DATUM: &str = "DATUM";
-/// SPHEROID, a <spheroid>.
+/// SPHEROID, a `<spheroid>`.
 pub const SPHEROID: &str = "SPHEROID";
-/// PRIMEM, a <prime meridian>.
+/// PRIMEM, a `<prime meridian>`.
 pub const PRIMEM: &str = "PRIMEM";
-/// PROJECTION, a <projection>.
+/// PROJECTION, a `<projection>`.
 pub const PROJECTION: &str = "PROJECTION";
-/// PARAMETER, a <parameter>.
+/// PARAMETER, a `<parameter>`.
 pub const PARAMETER: &str = "PARAMETER";
-/// UNIT, a <unit>.
+/// UNIT, a `<unit>`.
 pub const UNIT: &str = "UNIT";
 /// AUTHORITY, an organization's code for an item.
 pub const AUTHORITY: &str = "AUTHORITY";
@@ -62,7 +62,7 @@ pub(crate) const DIRECTIONS: [(&str, Direction); 7] = [
 /// recursion can exhaust the stack (RULES.md R-CF-6).
 const MAX_DEPTH: usize = 6;
 
-/// The <spatial reference system> `text`, as a coordinate system.
+/// The `<spatial reference system>` `text`, as a coordinate system.
 /// Key words are read without regard to case.
 ///
 /// # Errors
@@ -81,12 +81,12 @@ pub fn read(text: &str) -> Outcome<CoordinateSystem> {
     build::system(root)
 }
 
-/// A <left delimiter> or <right delimiter>.
+/// A `<left delimiter>` or `<right delimiter>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Delimiter {
-    /// <left paren> and <right paren>.
+    /// `<left paren>` and `<right paren>`.
     Paren,
-    /// <left bracket> and <right bracket>.
+    /// `<left bracket>` and `<right bracket>`.
     Bracket,
 }
 
@@ -112,7 +112,7 @@ struct Node {
 enum Arg {
     /// A double-quoted name.
     Text(String),
-    /// A <number>.
+    /// A `<number>`.
     Number(f64),
     /// A bare word, as an AXIS direction.
     Word(String),
@@ -120,9 +120,9 @@ enum Arg {
     Node(Node),
 }
 
-/// The tokens of `text`. Names run from a <double quote> to the next one;
+/// The tokens of `text`. Names run from a `<double quote>` to the next one;
 /// any character but a double quote is accepted in them, as real names
-/// hold `/` and `,`, beyond the <letters> of §14.1.9.
+/// hold `/` and `,`, beyond the `<letters>` of §14.1.9.
 fn tokens(text: &str) -> Outcome<Vec<Token>> {
     let mut out = Vec::new();
     let mut rest = text.trim_start();
@@ -172,8 +172,8 @@ struct Reader {
 }
 
 impl Reader {
-    /// An item: a key word, a <left delimiter>, arguments separated by
-    /// <comma>s and the matching <right delimiter>.
+    /// An item: a key word, a `<left delimiter>`, arguments separated by
+    /// `<comma>`s and the matching `<right delimiter>`.
     fn node(&mut self, depth: usize) -> Outcome<Node> {
         let Some(Token::Word(keyword)) = self.tokens.next() else {
             return Err(Fault::text("[ISO/IEC 13249-3:2016 §14.1.9] a key word was expected"));

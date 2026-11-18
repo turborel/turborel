@@ -8,10 +8,12 @@
 //! implementation-defined unit of §5.1.41 Description 2b ii. A system
 //! without a `<linear unit>`, a geographic one, supports no linear unit
 //! for a planar measure, so its unit forms raise unsupported unit
-//! specified [§5.1.41 Description 4c]. A system is one the catalog
-//! seeds (`SpatialRefSys::from_srid`), as a scalar routine reads no
-//! session catalog (notes on the model, "Catalogs").
+//! specified [§5.1.41 Description 4c]. A system is one supplied or one
+//! the statement's catalog defines (`SpatialRefSys::from_srid_in`). A
+//! call without a catalog, a constant folded as a statement is planned,
+//! knows only those supplied, and leaves any other to its statement.
 
+use crate::catalog::SpatialCatalog;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::spatial::srs::system::SpatialRefSys;
 use crate::spatial::srs::units::{self, Kind};
@@ -23,12 +25,15 @@ pub(super) fn fault(f: &Fault) -> SqlError {
     SqlError::new(Code::Data, f.message.clone()).with_state(state)
 }
 
+/// The systems a call knows: the statement's catalog, if it has one.
+pub(in super::super) type Systems<'a> = Option<&'a SpatialCatalog>;
+
 /// Metres per unit of the numbers of a value of SRID `srid`.
-fn metres_per_unit(srid: i32) -> Result<f64> {
+fn metres_per_unit(srid: i32, systems: Systems<'_>) -> Result<f64> {
     if srid == system::UNSPECIFIED {
         return Ok(1.0_f64);
     }
-    let system = SpatialRefSys::from_srid(srid).map_err(|f| fault(&f))?;
+    let system = SpatialRefSys::from_srid_in(srid, systems).map_err(|f| fault(&f))?;
     system.definition().and_then(|cs| cs.linear_unit()).map(|unit| unit.factor).ok_or_else(|| {
         SqlError::new(
             Code::Data,
@@ -44,17 +49,17 @@ fn metres_per(name: &str) -> Result<f64> {
 }
 
 /// A length `value` of a value of SRID `srid` in the unit `name`.
-pub(in super::super) fn length_in(value: f64, srid: i32, name: &str) -> Result<f64> {
-    Ok(units::convert(value, metres_per_unit(srid)?, metres_per(name)?))
+pub(in super::super) fn length_in(value: f64, (srid, systems): (i32, Systems<'_>), name: &str) -> Result<f64> {
+    Ok(units::convert(value, metres_per_unit(srid, systems)?, metres_per(name)?))
 }
 
 /// An area `value` of a value of SRID `srid` in the square of unit `name`.
-pub(super) fn area_in(value: f64, srid: i32, name: &str) -> Result<f64> {
-    Ok(units::convert_area(value, metres_per_unit(srid)?, metres_per(name)?))
+pub(super) fn area_in(value: f64, (srid, systems): (i32, Systems<'_>), name: &str) -> Result<f64> {
+    Ok(units::convert_area(value, metres_per_unit(srid, systems)?, metres_per(name)?))
 }
 
 /// A length `value` in the unit `name` as numbers of a value of SRID
 /// `srid`, which a buffer's distance is.
-pub(super) fn length_of(value: f64, srid: i32, name: &str) -> Result<f64> {
-    Ok(units::convert(value, metres_per(name)?, metres_per_unit(srid)?))
+pub(super) fn length_of(value: f64, (srid, systems): (i32, Systems<'_>), name: &str) -> Result<f64> {
+    Ok(units::convert(value, metres_per(name)?, metres_per_unit(srid, systems)?))
 }

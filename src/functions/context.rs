@@ -23,6 +23,12 @@ pub trait CallContext {
     /// The ranking of full-text search named `name`, built in or registered
     /// (`Database::register_ranking`); BM25 alone where no database is.
     fn ranking(&self, name: &str) -> Option<Arc<dyn crate::fulltext::rank::Ranking>>;
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20.3] The spatial
+    /// reference systems the statement's catalog defines, beside those
+    /// supplied; none where no database runs the call, as a constant is
+    /// folded, where a call reading a system defined must wait for its
+    /// statement.
+    fn spatial(&self) -> Option<&crate::catalog::SpatialCatalog>;
 }
 
 /// A query whose ARRAY a call is given as its last argument

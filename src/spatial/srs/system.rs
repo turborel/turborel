@@ -1,6 +1,6 @@
 //! The ST_SpatialRefSys type of ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
-//! §14.1: a spatial reference system made from its <spatial reference
-//! system> text or its identifier, its canonical text, its identifier,
+//! §14.1: a spatial reference system made from its
+//! `<spatial reference system>` text or its identifier, its canonical text, its identifier,
 //! and equality.
 //!
 //! These are the implementation-defined parts.
@@ -51,7 +51,7 @@ impl SpatialRefSys {
     ///
     /// # Errors
     ///
-    /// F22 if `text` is not a <spatial reference system>.
+    /// F22 if `text` is not a `<spatial reference system>`.
     pub fn from_text(text: &str) -> Outcome<SpatialRefSys> {
         let definition = wkt::read(text)?;
         Ok(SpatialRefSys { srid: epsg_code(&definition), definition: Some(definition) })
@@ -75,6 +75,25 @@ impl SpatialRefSys {
         })?;
         let definition = wkt::read(&row.definition)?;
         Ok(SpatialRefSys { srid: Some(srid), definition: Some(definition) })
+    }
+
+    /// The system of identifier `srid` as `catalog`, the statement's
+    /// spatial catalog, holds it: one supplied, as `from_srid` makes it,
+    /// else one ST_DEFINESRS defined, of its DEFINITION [§20.3]. Without
+    /// a catalog only those supplied are known.
+    ///
+    /// # Errors
+    ///
+    /// F59 unknown spatial reference system if neither holds `srid`; F22
+    /// if a definition is not a `<spatial reference system>`.
+    pub fn from_srid_in(srid: i32, catalog: Option<&crate::catalog::SpatialCatalog>) -> Outcome<SpatialRefSys> {
+        let supplied = SpatialRefSys::from_srid(srid);
+        let Err(unknown) = supplied else { return supplied };
+        let defined = catalog.and_then(|catalog| catalog.systems().iter().find(|system| system.id == srid));
+        match defined {
+            Some(system) => Ok(SpatialRefSys::from_text(&system.definition)?.with_srid(srid)),
+            None => Err(unknown),
+        }
     }
 
     /// The system with the catalog identifier `srid` instead of its own.

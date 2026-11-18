@@ -1,7 +1,7 @@
 //! The text forms ST_Angle and ST_Direction share: the keyword and
-//! parenthesis tokens of the <angle text representation> (ISO/IEC
-//! 13249-3:2016 (DIS, SC32 N2593) §16.1.21) and the <direction text
-//! representation> (§16.2.23), and the GML measures of §16.1.15,
+//! parenthesis tokens of the `<angle text representation>` (ISO/IEC
+//! 13249-3:2016 (DIS, SC32 N2593) §16.1.21) and the
+//! `<direction text representation>` (§16.2.23), and the GML measures of §16.1.15,
 //! §16.1.16, §16.2.6 and §16.2.7, an element whose `uom` attribute names
 //! the unit and whose content is the value.
 
@@ -51,7 +51,7 @@ impl<'t> Scanner<'t> {
         }
     }
 
-    /// Consumes a <signed numeric literal> and returns its finite value.
+    /// Consumes a `<signed numeric literal>` and returns its finite value.
     pub(super) fn number(&mut self) -> Option<f64> {
         let length = number::literal_length(self.rest)?;
         let value = number::value(self.rest.get(..length)?)?;

@@ -4,7 +4,7 @@
 //!
 //! This is a pure engine on plain `[f64; 2]` and `[f64; 3]` coordinates
 //! with no SQL dependency. The SQL catalogs, types and routines wrap it.
-//! Its parts are the <spatial reference system> text of §14.1.9 and its
+//! Its parts are the `<spatial reference system>` text of §14.1.9 and its
 //! model ([`wkt`], [`model`]), the ST_SpatialRefSys semantics
 //! ([`system`]), the units of measure ([`units`]), ellipsoids and datum shifts ([`ellipsoid`]), map
 //! projections ([`projection`]), the transform pipeline of ST_Transform

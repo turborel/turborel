@@ -101,6 +101,16 @@ impl Session {
         }
         let mut next = State::clone(&fresh);
         next.apply_change(&Change::Spatial(change.clone()), None)?;
+        // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.11] the rows a column
+        // holds are of the system it is registered with.
+        if let SpatialChange::Register(c) = &change
+            && let Some(desc) = next.catalog.table(&c.table)
+        {
+            let spatial = next.catalog.spatial();
+            fresh.each_row_where(tx, &c.table, &|_| true, &mut |_, row| {
+                crate::geometry::registered::check_row_of(spatial, desc, &row).map(|()| std::ops::ControlFlow::Continue(()))
+            })?;
+        }
         self.stage(&fresh, tx, Changed { next: Arc::new(next), change: Change::Spatial(change), made: None })
     }
 }

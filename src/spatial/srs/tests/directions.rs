@@ -117,7 +117,7 @@ fn arithmetic_and_ordering() {
 }
 
 /// Verifies: [ISO/IEC 13249-3:2016 §16.2.5, §16.2.19, §16.2.23] the
-/// <direction text representation> reads and writes exactly; F22 outside
+/// `<direction text representation>` reads and writes exactly; F22 outside
 /// the BNF and F02 for radians outside [0, 2π).
 #[test]
 fn well_known_text() {

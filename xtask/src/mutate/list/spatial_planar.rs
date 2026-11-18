@@ -4,7 +4,7 @@ use super::{Mutation, Package};
 
 /// The engine's exact predicates, noding, labelling and constructions, and
 /// its routines through SQL, each broken so its requirement tests fail.
-pub const SPATIAL_PLANAR: [Mutation; 25] = [
+pub const SPATIAL_PLANAR: [Mutation; 30] = [
     Mutation {
         name: "planar-orient-filter",
         package: Package::Core,
@@ -250,9 +250,59 @@ pub const SPATIAL_PLANAR: [Mutation; 25] = [
         package: Package::Core,
         breaks: "a unit form converts a length the wrong way",
         file: "src/geometry/routines/units.rs",
-        original: "Ok(units::convert(value, metres_per_unit(srid)?, metres_per(name)?))",
-        replacement: "Ok(units::convert(value, metres_per(name)?, metres_per_unit(srid)?))",
+        original: "Ok(units::convert(value, metres_per_unit(srid, systems)?, metres_per(name)?))",
+        replacement: "Ok(units::convert(value, metres_per(name)?, metres_per_unit(srid, systems)?))",
         integration: &["spatial_planar::measures_and_their_units"],
+        unit: &[],
+    },
+    Mutation {
+        name: "planar-sql-defined-system",
+        package: Package::Core,
+        breaks: "a system the catalog defines is unknown to the routines that look one up",
+        file: "src/spatial/srs/system.rs",
+        original: "Some(system) => Ok(SpatialRefSys::from_text(&system.definition)?.with_srid(srid)),",
+        replacement: "Some(_) => Err(unknown),",
+        integration: &["spatial_systems::routines_read_systems_defined"],
+        unit: &[],
+    },
+    Mutation {
+        name: "planar-sql-context-catalog",
+        package: Package::Core,
+        breaks: "a call is given no catalog by its statement",
+        file: "src/exec/eval/context.rs",
+        original: "self.0.state().map(|state| state.catalog.spatial())",
+        replacement: "self.0.state().and(None)",
+        integration: &["spatial_systems::routines_read_systems_defined"],
+        unit: &[],
+    },
+    Mutation {
+        name: "planar-sql-registered-row",
+        package: Package::Core,
+        breaks: "a column registered with a system takes a value of another SRID",
+        file: "src/geometry/registered.rs",
+        original: "        if srid != id {",
+        replacement: "        if srid == id && srid != id {",
+        integration: &["spatial_systems::registered_columns_hold_their_systems_values"],
+        unit: &[],
+    },
+    Mutation {
+        name: "planar-sql-registration-rows",
+        package: Package::Core,
+        breaks: "a column is registered though it holds a value of another SRID",
+        file: "src/db/routines/builtin.rs",
+        original: "crate::geometry::registered::check_row_of(spatial, desc, &row).map(|()| std::ops::ControlFlow::Continue(()))",
+        replacement: "Ok(std::ops::ControlFlow::Continue(()))",
+        integration: &["spatial_systems::registered_columns_hold_their_systems_values"],
+        unit: &[],
+    },
+    Mutation {
+        name: "planar-sql-transform-points",
+        package: Package::Core,
+        breaks: "ST_Transform relabels a value without moving its points",
+        file: "src/geometry/routines/transform.rs",
+        original: "    Points { moved: &moved, stride: g.dims.stride(), z: g.dims.has_z() }.body(&mut out.body).map_err(|f| failed(&f))?;\n",
+        replacement: "",
+        integration: &["spatial_systems::transforms_follow_their_cases"],
         unit: &[],
     },
 ];

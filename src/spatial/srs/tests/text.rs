@@ -1,4 +1,4 @@
-//! Requirements of the <spatial reference system> text: reading each
+//! Requirements of the `<spatial reference system>` text: reading each
 //! production, writing the canonical form, and refusing malformed text
 //! with F22.
 

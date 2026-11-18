@@ -215,6 +215,7 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): DISTINCT compares values of ST_GEOMETRY
 | `ST_BDPOLYFROMTEXT(text [, srid])`, `ST_BDPOLYFROMWKB(binary [, srid])` | The polygon a multilinestring's rings bound |
 | `ST_BDMPOLYFROMTEXT(text [, srid])`, `ST_BDMPOLYFROMWKB(binary [, srid])` | The multipolygon a multilinestring's rings bound |
 | `ST_DISTANCE(a, b [, unit])` | The least planar distance between them, DOUBLE PRECISION; NULL if either is empty |
+| `ST_TRANSFORM(geometry, srid)` | The value moved to the system of the SRID, see [Transform](#transform) |
 | `ST_NUMGEOMETRIES(collection)` | The count of its elements, INTEGER |
 | `ST_GEOMETRYN(collection, n)` | Its `n`th element, from 1; NULL and the warning 01F01 if there is none |
 | `ST_GEOMETRIES(collection)` | Its elements, an ARRAY of the collection's element type |
@@ -461,8 +462,9 @@ whose arcs are polygons inscribed in their circles, a step of π/16
 apart. A negative distance leaves no point. ST_CONVEXHULL gives the
 least convex value holding the value, and ST_BOUNDARY its boundary.
 Each gives NULL of an empty value. A unit names a row of
-ST_UNITS_OF_MEASURE, and the distance is converted from it to the SRID's
-linear unit, the metre for SRID 0:
+ST_UNITS_OF_MEASURE, and the distance is converted from it to the linear
+unit of the SRID's system, the metre for SRID 0. The system is one
+supplied or one the catalog defines, as the statement sees it:
 
 ```sql
 SELECT ST_CONTAINS(ST_BUFFER(W.SHAPE, 5), P.SHAPE) AS NEAR_WELL,
@@ -584,6 +586,33 @@ turborel: SQLCODE -301 (SQLSTATE 22003): geometry distance exceeds the finite bi
 (1 row)
 ```
 
+## Transform
+
+ST_TRANSFORM gives a value moved to the system of another SRID, a
+system supplied or one the catalog defines. Each point is moved, with
+its z, and the points that define a curve. A value of the SRID already
+is given as it is, and an empty one takes the SRID. The unspecified
+plane, SRID 0, has no system, so a value of it is not moved, nor one of
+a system the catalog does not know:
+
+```sql
+VALUES ST_ASTEXT(ST_TRANSFORM(ST_POINT(0, 0, 4326), 3857));
+VALUES ST_X(ST_TRANSFORM(ST_POINT(1, 0, 4326), 3857)) BETWEEN 111319 AND 111320;
+VALUES ST_TRANSFORM(ST_POINT(5, 5), 4326);
+```
+
+```
+
+--------------------------------------------------------------
+ POINT (0 0)
+(1 row)
+
+-------
+ TRUE
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF15): [ISO/IEC 13249-3:2016 §5.1.6 Description 3c] the unspecified plane, SRID 0, has no transform to or from another system
+```
+
 ## The rtree index method
 
 ```
@@ -686,7 +715,11 @@ tables: a name and an identifier unique, an organization and its
 identifier both given or both NULL, a column registered with a system
 that is there and of its SRID if its type names one, a system no column
 is registered with dropped. A column's owner registers it. A
-registration goes with its column or table.
+registration goes with its column or table. A column registered with a
+system holds only values of its SRID. A row written with another is
+refused, as is the registration of a column that holds one. ST_TRANSFORM
+and the unit forms of the measures and ST_BUFFER read a system defined
+as soon as the statement's catalog holds it.
 
 ```sql
 CREATE TABLE TRACKS (ID INTEGER, PATH ST_LINESTRING(4326), PLAN ST_GEOMETRY);
@@ -719,13 +752,17 @@ OK
 OK
 ```
 
-A system a column is registered with is not dropped:
+A column registered with a system holds its values, measured in its
+unit, and the system is not dropped:
 
 ```sql
 CREATE TABLE PLOTS (ID INTEGER, AREA ST_POLYGON);
-CALL ST_DEFINESRS('FIELD GRID', 900001, 'ANN', 1, 'LOCAL_CS["field",LOCAL_DATUM["site",0],UNIT["metre",1]]', 'the field');
+CALL ST_DEFINESRS('FIELD GRID', 900001, 'ANN', 1, 'PROJCS["field",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],PARAMETER["central_meridian",15],UNIT["metre",1]]', 'the field');
 CALL ST_REGISTERGEOMETRYCOLUMN('ANN', 'PLOTS', 'AREA', 'FIELD GRID');
 SELECT COLUMN_NAME, SRS_NAME, SRS_ID FROM ST_INFORMTN_SCHEMA.ST_GEOMETRY_COLUMNS WHERE TABLE_NAME = 'PLOTS';
+INSERT INTO PLOTS VALUES (1, TREAT(ST_GEOMFROMTEXT('POLYGON ((0 0, 100 0, 100 100, 0 100, 0 0))', 900001) AS ST_POLYGON));
+INSERT INTO PLOTS VALUES (2, TREAT(ST_GEOMFROMTEXT('POLYGON ((0 0, 1 0, 1 1, 0 0))') AS ST_POLYGON));
+SELECT ID, ST_AREA(AREA, 'KILOMETRE') AS SQUARE_KM FROM PLOTS;
 CALL ST_DROPSRS('FIELD GRID');
 ROLLBACK;
 ```
@@ -737,6 +774,12 @@ OK
  COLUMN_NAME                                                  | SRS_NAME                                                     |       SRS_ID
 --------------------------------------------------------------+--------------------------------------------------------------+--------------
  AREA                                                         | FIELD GRID                                                   |       900001
+(1 row)
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.11] column AREA of ANN.PLOTS holds values of FIELD GRID, SRID 900001, not of SRID 0
+           ID |                SQUARE_KM
+--------------+--------------------------
+            1 |                     1E-2
 (1 row)
 turborel: SQLCODE -201 (SQLSTATE 23000): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20] ST_GEOMETRY_COLUMNS: SRS_SUPPORTED: column AREA of ANN.PLOTS is registered with FIELD GRID
 OK
@@ -758,7 +801,9 @@ OK
 | 2FF14 | -301 | A unit is not a linear unit of ST_UNITS_OF_MEASURE, or the SRID's system has no linear unit |
 | 2FF22 | -301 | ST_BDPOLYFROMTEXT's text is of no multilinestring |
 | 0A000 | -900 | Text of a value of a type beyond the seven, a relationship or measure of a solid, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), or an `rtree` index of a column of plain GEOMETRY |
-| 23000 | -201 | ST_DEFINESRS, ST_DROPSRS or ST_REGISTERGEOMETRYCOLUMN would break a constraint of the Spatial Information Schema's tables |
+| 23000 | -201 | ST_DEFINESRS, ST_DROPSRS or ST_REGISTERGEOMETRYCOLUMN would break a constraint of the Spatial Information Schema's tables, or a column registered with a system would hold a value of another SRID |
+| 2FF15 | -301 | ST_TRANSFORM cannot move a value to the system of the SRID |
+| 2FF59 | -301 | A unit form is given a value of an SRID no system has |
 | TB916 | -916 | A stored value or index key is damaged, or of an unknown version |
 
 ## Standard

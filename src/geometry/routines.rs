@@ -10,8 +10,10 @@
 
 mod eval;
 mod results;
+mod transform;
 mod units;
 
+pub use transform::Transform;
 pub(super) use units::length_in;
 
 use super::model::Kind;
@@ -254,11 +256,32 @@ impl ScalarFunction for Routine {
         if args.iter().any(Value::is_null) {
             return Ok(Value::Null);
         }
-        eval::call(*self, args)
+        eval::call(*self, args, None)
+    }
+
+    /// A unit form reads the statement's reference systems.
+    fn uses_context(&self, arity: usize) -> bool {
+        match self.shape() {
+            Shape::One(_, required, optional, _) => {
+                !optional.is_empty() && arity == required.len().saturating_add(1).saturating_add(optional.len())
+            }
+            Shape::Pair(..) | Shape::Rings(..) => false,
+        }
+    }
+
+    fn call_in(&self, args: &[Value], cx: &dyn crate::functions::CallContext) -> Result<Value> {
+        if args.iter().any(Value::is_null) {
+            return Ok(Value::Null);
+        }
+        eval::call(*self, args, cx.spatial())
     }
 }
 
 /// The routines, as built-in functions.
 pub(crate) fn functions() -> impl Iterator<Item = std::sync::Arc<dyn ScalarFunction>> {
-    ROUTINES.into_iter().map(|routine| -> std::sync::Arc<dyn ScalarFunction> { std::sync::Arc::new(routine) })
+    let transform: std::sync::Arc<dyn ScalarFunction> = std::sync::Arc::new(Transform);
+    ROUTINES
+        .into_iter()
+        .map(|routine| -> std::sync::Arc<dyn ScalarFunction> { std::sync::Arc::new(routine) })
+        .chain(std::iter::once(transform))
 }

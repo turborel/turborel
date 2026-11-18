@@ -17,6 +17,7 @@ mod planar;
 mod prepared;
 mod procedures;
 mod reference;
+pub(crate) mod registered;
 mod robust;
 pub mod routines;
 mod shape;

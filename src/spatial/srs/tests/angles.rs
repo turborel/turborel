@@ -123,7 +123,7 @@ fn arithmetic_and_ordering() {
 }
 
 /// Verifies: [ISO/IEC 13249-3:2016 §16.1.14, §16.1.17, §16.1.21] the
-/// <angle text representation> in each unit and any case, written in
+/// `<angle text representation>` in each unit and any case, written in
 /// radians that read back exactly; F22 for text outside the BNF and F02
 /// for its units never arises since the keywords pick them.
 #[test]

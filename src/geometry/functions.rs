@@ -200,6 +200,20 @@ impl GeometryFunction {
 }
 
 impl ScalarFunction for GeometryFunction {
+    /// ST_Distance's unit form reads the statement's reference systems.
+    fn uses_context(&self, arity: usize) -> bool {
+        matches!(self, Self::Distance) && arity == THREE_ARGS
+    }
+
+    fn call_in(&self, args: &[Value], cx: &dyn crate::functions::CallContext) -> Result<Value> {
+        let ([left, right, unit], true) = (args, self.uses_context(args.len())) else { return self.call_with(args, cx.temp_lobs()) };
+        if args.iter().any(Value::is_null) {
+            return Ok(Value::Null);
+        }
+        let measured = self.pair(&Geometry::from_value(left)?, &Geometry::from_value(right)?)?;
+        in_unit(measured, left, unit, cx.spatial())
+    }
+
     fn spatial_operation(&self) -> Option<super::SpatialOperation> {
         use super::SpatialOperation;
         match self {
@@ -347,7 +361,7 @@ impl ScalarFunction for GeometryFunction {
             let measured = self.pair(&Geometry::from_value(left)?, &Geometry::from_value(right)?)?;
             return match unit {
                 [] => Ok(measured),
-                [unit] => in_unit(measured, left, unit),
+                [unit] => in_unit(measured, left, unit, None),
                 _ => Err(signature(self.name())),
             };
         }
@@ -455,7 +469,7 @@ impl GeometryFunction {
                 let measured = self.pair(&g, &Geometry::from_value(right)?)?;
                 match unit {
                     [] => Ok(measured),
-                    [unit] => in_unit(measured, &g.to_value(), unit),
+                    [unit] => in_unit(measured, &g.to_value(), unit, None),
                     _ => Err(signature(self.name())),
                 }
             }
@@ -496,11 +510,12 @@ impl GeometryFunction {
 }
 
 /// ST_Distance(g, g, unit): the distance in the unit named [ISO/IEC
-/// 13249-3:2016 (DIS, SC32 N2593) §5.1.41 Description 4].
-fn in_unit(measured: Value, subject: &Value, unit: &Value) -> Result<Value> {
+/// 13249-3:2016 (DIS, SC32 N2593) §5.1.41 Description 4], of the systems
+/// `systems` defines beside those supplied.
+fn in_unit(measured: Value, subject: &Value, unit: &Value, systems: Option<&crate::catalog::SpatialCatalog>) -> Result<Value> {
     let (Value::Approx(distance), Value::Char(name)) = (&measured, unit) else { return Ok(measured) };
     let srid = Geometry::from_value(subject)?.srid();
-    super::routines::length_in(*distance, srid, name).map(Value::Approx)
+    super::routines::length_in(*distance, (srid, systems), name).map(Value::Approx)
 }
 
 fn point(args: &[Value]) -> Result<Value> {
@@ -531,7 +546,7 @@ fn binary(g: &Geometry) -> Value {
     Value::Lob(Lob::of_octets(&g.to_wkb()))
 }
 
-fn reference(args: &[Value]) -> Result<i32> {
+pub(super) fn reference(args: &[Value]) -> Result<i32> {
     match args {
         [] => Ok(UNSPECIFIED_SRID),
         [Value::Exact(d)] => {

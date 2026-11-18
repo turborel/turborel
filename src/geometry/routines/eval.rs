@@ -4,6 +4,7 @@
 use super::super::engine::{engine_of, geom_of};
 use super::super::model::{Body, Collection, Dims, Geom, Kind, cast};
 use super::super::{SpatialOperation, invalid};
+use super::units::Systems;
 use super::{Routine, results, units};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::spatial::planar::{self, Geometry, Operation, Point};
@@ -99,7 +100,7 @@ fn pair(first: &Value, second: &Value) -> Result<(Geom, Geom)> {
     Ok((one, two))
 }
 
-pub(super) fn call(routine: Routine, args: &[Value]) -> Result<Value> {
+pub(super) fn call(routine: Routine, args: &[Value], systems: Systems<'_>) -> Result<Value> {
     match (routine, args) {
         (Routine::Relate, [first, second, matrix]) => relate(first, second, text(matrix)?),
         (
@@ -112,7 +113,7 @@ pub(super) fn call(routine: Routine, args: &[Value]) -> Result<Value> {
         (Routine::SymDifference, [first, second]) => operation(Operation::SymDifference, first, second),
         (Routine::BdPolyFromText | Routine::BdPolyFromWkb, _) => rings(routine, args, Kind::Polygon),
         (Routine::BdMPolyFromText | Routine::BdMPolyFromWkb, _) => rings(routine, args, Kind::MultiPolygon),
-        (other, [subject, rest @ ..]) => one(other, &Geom::from_value(subject)?, rest),
+        (other, [subject, rest @ ..]) => one(other, &Geom::from_value(subject)?, rest, systems),
         (other, []) => Err(super::signature(name(other))),
     }
 }
@@ -191,13 +192,13 @@ fn declared_for(routine: Routine, g: &Geom) -> Result<()> {
 }
 
 /// A measure of the value, in `unit` if one is given.
-fn measure(value: Option<f64>, g: &Geom, unit: Option<&Value>, area: bool) -> Result<Value> {
+fn measure(value: Option<f64>, (g, systems): (&Geom, Systems<'_>), unit: Option<&Value>, area: bool) -> Result<Value> {
     let (Some(value), Some(unit)) = (value, unit) else { return Ok(number(value)) };
-    let name = text(unit)?;
-    Ok(Value::Approx(if area { units::area_in(value, g.srid, name)? } else { units::length_in(value, g.srid, name)? }))
+    let (name, of) = (text(unit)?, (g.srid, systems));
+    Ok(Value::Approx(if area { units::area_in(value, of, name)? } else { units::length_in(value, of, name)? }))
 }
 
-fn one(routine: Routine, g: &Geom, rest: &[Value]) -> Result<Value> {
+fn one(routine: Routine, g: &Geom, rest: &[Value], systems: Systems<'_>) -> Result<Value> {
     declared_for(routine, g)?;
     let empty = g.is_empty();
     match routine {
@@ -231,27 +232,27 @@ fn one(routine: Routine, g: &Geom, rest: &[Value]) -> Result<Value> {
     if empty {
         return Ok(Value::Null);
     }
-    observe(routine, g, &engine_of(g)?, rest)
+    observe(routine, (g, systems), &engine_of(g)?, rest)
 }
 
 /// Of a nonempty value, what the routine observes or builds.
-fn observe(routine: Routine, g: &Geom, planar: &Geometry, rest: &[Value]) -> Result<Value> {
+fn observe(routine: Routine, (g, systems): (&Geom, Systems<'_>), planar: &Geometry, rest: &[Value]) -> Result<Value> {
     let srid = g.srid;
     let built = |result: &Geometry| geom_of(result, srid).map(|value| value.to_value());
     match routine {
         Routine::Buffer => {
             let (distance, unit) = (double(rest.first().ok_or_else(|| invalid("a buffer needs a distance"))?)?, rest.get(1));
             let distance = match unit {
-                Some(name) => units::length_of(distance, srid, text(name)?)?,
+                Some(name) => units::length_of(distance, (srid, systems), text(name)?)?,
                 None => distance,
             };
             built(&planar::buffer(planar, distance)?)
         }
         Routine::ConvexHull => built(&planar::convex_hull(planar)),
         Routine::Boundary => built(&planar::boundary(planar)?),
-        Routine::Area => measure(planar::area(planar), g, rest.first(), true),
-        Routine::Length => measure(planar::length(planar), g, rest.first(), false),
-        Routine::Perimeter => measure(planar::perimeter(planar), g, rest.first(), false),
+        Routine::Area => measure(planar::area(planar), (g, systems), rest.first(), true),
+        Routine::Length => measure(planar::length(planar), (g, systems), rest.first(), false),
+        Routine::Perimeter => measure(planar::perimeter(planar), (g, systems), rest.first(), false),
         Routine::Centroid => point(planar::centroid(planar), srid),
         Routine::PointOnSurface => point(planar::point_on_surface(planar), srid),
         Routine::Relate

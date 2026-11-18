@@ -63,7 +63,7 @@ macro_rules! routine {
 }
 
 /// The table: of each type, the methods it declares.
-pub static METHODS: [Method; 64] = [
+pub static METHODS: [Method; 65] = [
     // [§5.1.1] ST_Geometry.
     original(Kind::Geometry, "ST_SRID", 0, routine!(GeometryFunction::Srid)),
     original(Kind::Geometry, "ST_SRID", 1, routine!(GeometryFunction::SetSrid)),
@@ -97,6 +97,8 @@ pub static METHODS: [Method; 64] = [
     original(Kind::Geometry, "ST_BOUNDARY", 0, routine!(Routine::Boundary)),
     original(Kind::Geometry, "ST_ISVALID", 0, routine!(Routine::IsValid)),
     original(Kind::Geometry, "ST_ISSIMPLE", 0, routine!(Routine::IsSimple)),
+    // [§5.1.6] ST_Transform (`routines/transform.rs`).
+    original(Kind::Geometry, "ST_TRANSFORM", 1, routine!(super::routines::Transform)),
     // [§7.1] ST_Curve.
     original(Kind::Curve, "ST_ISRING", 0, routine!(Routine::IsRing)),
     original(Kind::Curve, "ST_LENGTH", 0, routine!(Routine::Length)),

@@ -278,10 +278,10 @@ pub trait ScalarFunction: Send + Sync {
     fn ranks(&self) -> bool {
         false
     }
-    /// \[EXTENSION\] Whether a call reads what its statement holds beside
-    /// its arguments (`CallContext`), so it is evaluated a row at a time
-    /// by `call_in`, never by a batch. False by default.
-    fn uses_context(&self) -> bool {
+    /// \[EXTENSION\] Whether a call of `arity` arguments reads what its
+    /// statement holds beside them (`CallContext`), so it is evaluated a
+    /// row at a time by `call_in`, never by a batch. False by default.
+    fn uses_context(&self, _arity: usize) -> bool {
         false
     }
     /// A call of `args` in the statement `cx` gives (`uses_context`). By

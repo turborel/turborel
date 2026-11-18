@@ -165,7 +165,7 @@ fn never_raises<'e>(e: &'e Expr, desc: &TableDesc) -> std::result::Result<Typed,
             exact_arith(left.as_ref(), *op, right.as_ref()).map(Some).ok_or(e)
         }
         Expr::Call(f, args) => {
-            if !f.0.deterministic() || f.0.uses_context() {
+            if !f.0.deterministic() || f.0.uses_context(args.len()) {
                 return Err(e);
             }
             let typed = args.iter().map(|a| never_raises(a, desc)).collect::<std::result::Result<Vec<Typed>, _>>()?;
