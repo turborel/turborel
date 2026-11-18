@@ -2752,7 +2752,14 @@ Nearest-neighbour traversal expands the branch with the lowest distance
 bound next. Each arithmetic step of a branch bound rounds downward, so
 rounding cannot hide a nearer entry. Leaf rectangle distances and row
 identifiers order the results; every branch tied at that distance is
-expanded first. The frontier reserves memory before growing (D38), and
+expanded first. The frontier keeps each expanded node's items as one run,
+a binary heap built in place in linear time in an arena all runs share,
+and orders the runs by their nearest remaining item; it gives the order a
+single heap of every item would. A node then costs one heap build and one
+push rather than a logarithmic push per entry, and a leaf's entries past
+the search's end are never sifted. Pushing every entry made the frontier
+the largest cost of a ten-nearest query. The frontier reserves memory
+before growing (D38), and
 dropping the iterator releases it. A new entry behind the distance already
 returned is omitted, as concurrent inserts are optional to an index scan.
 This ordering is exact for indexed rectangles and points. A geometry
