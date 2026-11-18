@@ -9,6 +9,9 @@
 use super::{Mutation, Package};
 
 pub(super) mod algorithms;
+/// The mutations of how a search is chosen and how it expands a frontier.
+#[path = "graph_search_choice.rs"]
+pub(super) mod choice;
 
 /// The mutations of path search, in the order they run.
 pub const GRAPH_SEARCH: [Mutation; 12] = [

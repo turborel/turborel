@@ -15,6 +15,7 @@
 //! tree's entries. Durability is the tree's: its pages are synced at a
 //! checkpoint, and recovery mends or rebuilds it as every index (D25).
 
+mod batch;
 mod csr;
 mod delta;
 mod keys;
@@ -27,7 +28,9 @@ mod write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub use options::{BOTH, CSR_BYTES_OPTION, DEFAULT_CSR_BYTES, DIRECTION_OPTION, IN, INCLUDE_OPTION, OUT, SOURCE_COLUMNS_OPTION};
+pub use options::{
+    BOTH, CSR_BYTES_OPTION, DEFAULT_CSR_BYTES, DIRECTION_OPTION, IN, INCLUDE_OPTION, OUT, SOURCE_COLUMNS_OPTION, planned_ends,
+};
 
 use super::stats::KeyCounts;
 use super::{Entries, Index, IndexMethod, Key, KeyOrder, Probe, RowIds};
@@ -169,6 +172,11 @@ impl IndexMethod for AdjacencyMethod {
     fn supports_prefix(&self, columns: usize, equal: usize, then: Option<CompOp>) -> bool {
         equal > 0 && then.is_none_or(|op| op == CompOp::Eq) && equal.saturating_add(usize::from(then.is_some())) <= columns
     }
+    /// \[GS §16 R16.1\] Equalities of any columns: of the destination's, a
+    /// reverse list (`read.rs`).
+    fn supports_columns(&self, _columns: usize, comparisons: &[(usize, CompOp)]) -> bool {
+        !comparisons.is_empty() && comparisons.iter().all(|&(_, op)| op == CompOp::Eq)
+    }
     fn restores_keys(&self) -> bool {
         true
     }
@@ -307,6 +315,9 @@ impl Index for AdjacencyIndex {
 impl Adjacency for AdjacencyIndex {
     fn steps(&self, vertex: &Key, direction: Direction, out: &mut Vec<Step>) -> Result<()> {
         self.steps_of(vertex, direction, out)
+    }
+    fn steps_many(&self, vertices: &[Key], direction: Direction, out: &mut Vec<Vec<Step>>) -> Result<()> {
+        self.steps_batch(vertices, direction, out)
     }
     fn degree(&self, vertex: &Key, direction: Direction) -> Result<u64> {
         self.degree_of(vertex, direction)

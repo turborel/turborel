@@ -159,6 +159,12 @@ impl Parser {
         if self.accept_word(super::graph_ddl::ADJACENCY) {
             return self.adjacency_index();
         }
+        if self.accept_word(super::graph_ddl::REACHABILITY) {
+            return self.reachability_index();
+        }
+        if self.label_index_next() {
+            return self.label_index();
+        }
         if !self.accept_word("INDEX") {
             return Err(self.syntax("expected INDEX: a <schema> is processed by Database::schema"));
         }

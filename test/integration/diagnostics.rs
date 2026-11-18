@@ -48,6 +48,8 @@ fn a_database_tells_its_sink_of_its_life() {
             registered(Extension::IndexMethod, "rtree"),
             registered(Extension::IndexMethod, "json"),
             registered(Extension::IndexMethod, "adjacency"),
+            registered(Extension::IndexMethod, "labels"),
+            registered(Extension::IndexMethod, "reachability"),
             registered(Extension::IndexMethod, "diskann"),
             registered(Extension::IndexMethod, "hnsw"),
             registered(Extension::IndexMethod, "ivf"),

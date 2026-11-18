@@ -4,6 +4,7 @@
 // multi-source searches, the limits and cancellation.
 
 mod bank;
+mod choice;
 mod increasing;
 mod oracle;
 mod runs;

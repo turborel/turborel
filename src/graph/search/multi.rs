@@ -11,6 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::expand::ahead;
 use super::states::{Context, States, index, walk_to};
 use crate::error::Result;
 use crate::graph::binding::{Letter, PathBinding};
@@ -163,7 +164,8 @@ pub(super) fn multi_source(ctx: &Context<'_>, starts: &[ElementId], meter: &mut 
         let mut ordered: Vec<(u32, u64)> = frontier.drain().collect();
         ordered.sort_unstable_by_key(|&(node, _)| node);
         let mut offers = HashMap::new();
-        for (node, mask) in ordered {
+        for (at, &(node, mask)) in ordered.iter().enumerate() {
+            ahead(&mut runner, &batch.states, (&ordered, at), |&(n, _)| n)?;
             meter.check()?;
             let successors = batch.states.successors(&mut runner, node, level)?;
             if !successors.is_empty() && !meter.length(level.saturating_add(1))? {

@@ -92,6 +92,9 @@ behind it, and each can be replaced or added to.
 - [Graph algorithms](doc/sql/20-graph-algorithms.md) such as PAGERANK,
   WCC, LOUVAIN and SSSP over a property graph or a table of edges, in
   parallel, with INTO PROPERTY.
+- Graph plans that join rigid patterns, Expand edges and take a
+  worst-case optimal join of cycles, with label and reachability
+  indexes and graph statistics.
 - Multisets, with MULTISET UNION, EXCEPT and INTERSECT, MEMBER,
   SUBMULTISET and IS A SET, and COLLECT, FUSION and INTERSECTION.
 - Structured types with attributes, methods and subtypes, typed tables

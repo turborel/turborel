@@ -17,6 +17,8 @@
 
 mod bfs;
 mod bidirectional;
+mod choice;
+mod expand;
 mod groups;
 mod multi;
 mod paths;
@@ -28,13 +30,14 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
+pub use choice::Estimate;
 pub use multi::LANES;
 
 use super::binding::PathBinding;
 use super::limits::{Area, Limits, Meter};
 use super::nfa::Nfa;
 use super::program::{CostHook, PathPattern, PostfilterHook, Selector};
-use super::view::{ElementId, GraphView};
+use super::view::{ElementId, GraphSize, GraphView};
 use crate::error::Result;
 use crate::txn::Stop;
 use paths::Dfs;
@@ -53,6 +56,11 @@ pub struct SearchOptions {
     pub stop: Option<Arc<Stop>>,
     /// The memory it may hold.
     pub area: Area,
+    /// The algorithm a PATH_ALGO hint names [GS §16 R16.8], if one does.
+    pub algorithm: Option<crate::ast::PathAlgorithm>,
+    /// The least states, estimated, a search runs on its workers for,
+    /// GRAPH.PARALLEL_MIN_STATES; 0 for any.
+    pub parallel_min_states: usize,
 }
 
 /// \[GS §15\] The algorithm a search runs.
@@ -113,6 +121,8 @@ pub struct Plan {
     pub algorithm: Algorithm,
     /// How it uses its workers.
     pub parallelism: Parallelism,
+    /// What they were chosen by, if the graph's size is known.
+    pub estimate: Option<Estimate>,
 }
 
 impl fmt::Display for Plan {
@@ -121,6 +131,10 @@ impl fmt::Display for Plan {
             Parallelism::Sequential => write!(f, "{}", self.algorithm),
             Parallelism::LevelSynchronous(n) => write!(f, "{} (level-synchronous, {n} workers)", self.algorithm),
             Parallelism::Morsels(n) => write!(f, "{} (morsels of starts, {n} workers)", self.algorithm),
+        }?;
+        match &self.estimate {
+            Some(e) => write!(f, " by cost: {e}"),
+            None => Ok(()),
         }
     }
 }
@@ -158,55 +172,29 @@ impl<'v> PathSearch<'v> {
         &self.nfa
     }
 
-    /// What a search of `starts` starts, and `ends` ends if given, does.
-    pub fn plan(&self, starts: usize, ends: Option<usize>) -> Plan {
-        let width = self.options.threads.max(1);
-        let algorithm = self.algorithm(starts, ends);
-        // One batch of MS-BFS is one search; more are morsels of it.
-        let one_batch = algorithm == Algorithm::MultiSourceBfs && starts <= LANES;
-        let parallelism = if width <= 1 || algorithm == Algorithm::Dfs || one_batch {
-            Parallelism::Sequential
-        } else if starts > 1 {
-            Parallelism::Morsels(width)
-        } else if algorithm == Algorithm::Bfs {
-            Parallelism::LevelSynchronous(width)
-        } else {
-            Parallelism::Sequential
-        };
-        Plan { algorithm, parallelism }
-    }
-
-    /// The algorithm for `starts` starts and `ends` ends.
-    fn algorithm(&self, starts: usize, ends: Option<usize>) -> Algorithm {
-        if self.nfa.restricted() || self.selector == Selector::All {
-            return match self.selector {
-                Selector::All | Selector::Any(_) => Algorithm::Dfs,
-                Selector::AnyCheapest | Selector::AllCheapest | Selector::Cheapest(_) => Algorithm::PathDijkstra,
-                Selector::AnyShortest | Selector::AllShortest | Selector::Shortest(_) | Selector::ShortestGroups(_) => Algorithm::PathBfs,
-            };
-        }
-        match self.selector {
-            Selector::AnyShortest | Selector::Any(1) => {
-                let point = starts == 1 && ends == Some(1) && self.nfa.plain();
-                if point {
-                    Algorithm::BidirectionalBfs
-                } else if starts > 1 {
-                    Algorithm::MultiSourceBfs
-                } else {
-                    Algorithm::Bfs
-                }
-            }
-            Selector::AllShortest | Selector::ShortestGroups(_) => Algorithm::AllShortest,
-            Selector::Shortest(_) | Selector::Any(_) => Algorithm::KShortest,
-            Selector::AnyCheapest | Selector::AllCheapest | Selector::Cheapest(_) => Algorithm::Dijkstra,
-            Selector::All => Algorithm::Dfs,
-        }
+    /// What a search of `starts` starts, and `ends` ends if given, does
+    /// on its graph (`plan_for`).
+    ///
+    /// # Errors
+    ///
+    /// As `plan_for`.
+    pub fn plan(&self, starts: usize, ends: Option<usize>) -> Result<Plan> {
+        self.plan_for(starts, ends, self.view.size())
     }
 
     /// \[GS §16 R16.9\] EXPLAIN of a search of `starts` starts and `ends`
-    /// ends: its plan, then its automaton.
+    /// ends on a graph of `size`, if known: its plan, then its automaton;
+    /// or why its hint is refused.
+    pub fn explain_for(&self, starts: usize, ends: Option<usize>, size: Option<GraphSize>) -> String {
+        match self.plan_for(starts, ends, size) {
+            Ok(plan) => format!("{plan}\n{}", self.nfa),
+            Err(e) => format!("{}\n{}", e.msg, self.nfa),
+        }
+    }
+
+    /// EXPLAIN of a search of `starts` starts and `ends` ends on its graph.
     pub fn explain(&self, starts: usize, ends: Option<usize>) -> String {
-        format!("{}\n{}", self.plan(starts, ends), self.nfa)
+        self.explain_for(starts, ends, self.view.size())
     }
 
     /// The context of a search ending at `ends`, if given.
@@ -227,7 +215,7 @@ impl<'v> PathSearch<'v> {
     /// (GRF-0034), a limit (GRF-0061, -918), or a cancel (-920).
     pub fn run(&self, starts: &[ElementId], ends: Option<&[ElementId]>) -> Result<Matches<'_>> {
         let starts = self.order(starts);
-        let plan = self.plan(starts.len(), ends.map(<[ElementId]>::len));
+        let plan = self.plan(starts.len(), ends.map(<[ElementId]>::len))?;
         let ctx = self.context(ends.map(|e| Arc::new(e.iter().copied().collect())));
         let meter = Meter::new(self.options.limits, self.options.stop.clone(), self.options.area.clone());
         let postfilter = self.postfilter.as_ref().map(|p| &p.0);

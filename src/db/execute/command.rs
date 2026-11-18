@@ -161,7 +161,9 @@ fn connection_command(c: &ConnectionStatement) -> Command {
 /// \[EXTENSION\] How COMMAND_FUNCTION names the index statement `i`.
 fn index_command(i: &IndexStatement) -> Command {
     match i {
-        IndexStatement::Create { .. } | IndexStatement::Adjacency(_) => commands::CREATE_INDEX,
+        IndexStatement::Create { .. } | IndexStatement::Adjacency(_) | IndexStatement::Labels(_) | IndexStatement::Reachability(_) => {
+            commands::CREATE_INDEX
+        }
         IndexStatement::Drop { .. } => commands::DROP_INDEX,
         IndexStatement::Alter { .. } | IndexStatement::Maintain { .. } => commands::ALTER_INDEX,
     }

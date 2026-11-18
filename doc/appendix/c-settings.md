@@ -50,6 +50,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | GRAPH.MAX_PATH_LENGTH | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | GRAPH.MAX_SEARCH_STATES | 10000000 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | GRAPH.ON_LIMIT | ERROR | ONE OF ERROR, TRUNCATE | at once | *session* |
+| GRAPH.PARALLEL_MIN_STATES | 16384 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | JOBS.POLICY | AUTOMATIC | ONE OF AUTOMATIC, MANUAL, PAUSED | at once |  |
 | LOCKS.TIMEOUT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | LOCKS.WAIT | OFF | ONE OF ON, OFF | from the next transaction | *session* |
@@ -125,6 +126,7 @@ Each in a sentence:
 - **GRAPH.MAX_PATH_LENGTH**: The most edges of a path a GRAPH_TABLE's search follows; 0 for no limit. Reaching it does as GRAPH.ON_LIMIT says.
 - **GRAPH.MAX_SEARCH_STATES**: The most states a GRAPH_TABLE's search makes, each a vertex reached at a place of its pattern; 0 for no limit. Reaching it does as GRAPH.ON_LIMIT says.
 - **GRAPH.ON_LIMIT**: What a GRAPH_TABLE's search does on reaching a limit: fails, SQLSTATE 54061, ERROR; or ends with the paths found, warning 01W61, TRUNCATE.
+- **GRAPH.PARALLEL_MIN_STATES**: The least states, estimated from the graph's size, a GRAPH_TABLE's search makes for it to run on the workers EXECUTOR.GRAPH_THREADS allows; a smaller one runs on the statement's thread alone; 0 for any search. Its results are the same either way.
 - **JOBS.POLICY**: How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS), read-ahead (STORAGE.READ_AHEAD_PAGES) and the writing of its files again in new formats (STORAGE.REKEY_BYTES_PER_SECOND), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.
 - **LOCKS.TIMEOUT_MS**: The milliseconds a statement waits for a lock or a row, under LOCKS.WAIT ON, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCKS.WAIT**: ON waits for a lock, or a row, another transaction holds until it ends; OFF refuses the statement at once. ON in a database a server serves.

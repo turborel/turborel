@@ -11,10 +11,12 @@
 //! and the edge orientations' table in `graph/orientation.rs`.
 
 mod expression;
+mod hints;
 mod orientation;
 mod table;
 
 pub use expression::{GRAPH_FUNCTIONS, GraphFunction, GraphFunctionName, GraphPredicate, PathEnd, SameKind, VariableKind};
+pub use hints::{GraphHints, PathAlgorithm};
 pub use orientation::{Directions, ORIENTATIONS, Orientation, OrientationForm};
 pub use table::{GraphColumn, GraphLimits, GraphReference, GraphRows, GraphTable};
 

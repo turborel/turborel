@@ -21,7 +21,7 @@ use crate::hash::murmur::MurmurMap;
 use crate::index::vector::hybrid::HybridMethod;
 use crate::index::{
     AdjacencyMethod, BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod,
-    RTreeMethod, SparseMethod,
+    LabelsMethod, RTreeMethod, ReachabilityMethod, SparseMethod,
 };
 use crate::log::Log;
 use crate::optimizer::Optimizer;
@@ -266,6 +266,8 @@ impl State {
         let documents = JsonMethod::sharing(Arc::clone(&st.pages));
         // Its compacted adjacencies held of the budget too (RULES.md D38).
         let edges = AdjacencyMethod::sharing(Arc::clone(&st.pages)).with_budget(Arc::clone(memory));
+        let labels = LabelsMethod::sharing(Arc::clone(&st.pages)).with_budget(Arc::clone(memory));
+        let reach = ReachabilityMethod::sharing(Arc::clone(&st.pages)).with_budget(Arc::clone(memory));
         let methods: Vec<Arc<dyn IndexMethod>> = vec![
             Arc::new(btree),
             Arc::new(hash),
@@ -273,6 +275,8 @@ impl State {
             Arc::new(words),
             Arc::new(documents),
             Arc::new(edges),
+            Arc::new(labels),
+            Arc::new(reach),
             Arc::new(graph),
             Arc::new(layered),
             Arc::new(lists),

@@ -263,3 +263,30 @@ fn a_sample_scales_its_distinct_values_and_bounds_nothing() {
     assert!(!whole.unbounded);
     assert_eq!(whole.selectivity(CompOp::Eq, &number(0)), 0.0_f64, "below the least");
 }
+
+/// Verifies: [DESIGN] RULES.md D117, frequencies: of a sample of every
+/// value, each value's rows exactly, their most, median and percentiles;
+/// of a sample of some, scaled to the table's rows; none of no value.
+#[test]
+fn frequencies_of_each_value() {
+    let values: Vec<Value> = [1_u32, 1, 1, 1, 2, 2, 3, 4, 5, 6].iter().map(|&n| number(n)).collect();
+    let exact = Frequencies::of_sorted(&values, 10.0).unwrap();
+    assert_eq!(exact, Frequencies { most: 4.0, median: 1.0, p90: 2.0, p99: 2.0 });
+    assert_eq!(Frequencies::of_sorted(&values, 100.0).unwrap().most, 40.0_f64, "a sample of a tenth");
+    assert_eq!(exact.scaled(2.0).median, 2.0_f64);
+    assert_eq!(Frequencies::of_sorted(&[], 0.0), None);
+    let mut builder = StatsBuilder::new(1);
+    for v in &values {
+        builder.add(&vec![v.clone()], 4);
+    }
+    builder.add(&vec![Value::Null], 4);
+    let built = builder.finish();
+    assert_eq!(built.frequencies(0), Some(exact), "NULL is no value");
+    assert_eq!(built.bounds(0).map(|(l, g)| (l.to_string(), g.to_string())), Some(("1".into(), "6".into())));
+    assert_eq!((built.frequencies(1), built.bounds(1).is_none()), (None, true));
+    let mut sampled = StatsBuilder::counting(1, Sampling::default());
+    for v in &values {
+        sampled.add(&vec![v.clone()], 4);
+    }
+    assert_eq!(sampled.finish_sampled(1_000).frequencies(0).map(|f| f.most), Some(400.0_f64), "a sample of 10 of 1,000 rows");
+}

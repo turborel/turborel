@@ -33,6 +33,10 @@
 //! Each word but the reserved ones is a `<non-reserved word>`, so a table
 //! or label may still be named by it.
 
+mod indexes;
+
+pub(super) use indexes::REACHABILITY;
+
 use super::Parser;
 use crate::ast::{
     AdjacencyIndex, AlterGraph, AlterGraphAction, DerivedProperty, DropBehavior, DropObject, ElementAction, ElementDefinition,

@@ -11,10 +11,14 @@
 mod columns;
 mod elements;
 mod functions;
+mod hints;
+mod indexes;
+mod joins;
 mod pattern;
 mod remap;
 mod scope;
 mod seam;
+mod sizing;
 mod variables;
 
 use std::collections::BTreeSet;
@@ -124,11 +128,19 @@ pub(in crate::binder) fn graph_table_item(b: Bounds<'_>, g: &GraphTable, offset:
     let slots = graphing.slots.take();
     let mut operands = Operands::new(offset, width.saturating_add(slots.len()));
     let assembled = Assembled { tables, labels, paths: path_shapes, prefilters, vars: shapes, slots, postfilter, columns, costs, rows };
-    let graph = assembled.remapped(&mut operands, (&desc, &pattern, width), g)?;
+    let mut graph = assembled.remapped(&mut operands, (&desc, &pattern, width), g)?;
+    graph.sizing = sizing::of(b.cx, &graph.tables);
     let reads: BTreeSet<usize> = operands.reads.clone();
     from.used.extend(reads.iter().copied());
     let correlation = g.correlation.clone().unwrap_or_else(|| format!("$GRAPH_TABLE{offset}"));
-    Ok(lateral_item(&correlation, g.at, out, offset, Unnested::graph(graph, operands.exprs, reads)))
+    // [GS §16 R16.2] A rigid pattern reading no table before it is joined.
+    let mut graph = graph;
+    let joined = if reads.is_empty() { joins::planned(b.cx, &mut graph, &operands.exprs) } else { None };
+    let mut item = lateral_item(&correlation, g.at, out, offset, Unnested::graph(graph, operands.exprs, reads));
+    if let Some(plan) = joined {
+        item.source = super::views::Source::Derived(plan);
+    }
+    Ok(item)
 }
 
 /// The scope a GRAPH_TABLE's expressions are bound in.
@@ -213,6 +225,7 @@ impl Assembled {
         };
         let operand_count = operands.exprs.len();
         let options = columns::options(g);
+        let hints = hints::checked(&g.hints, &self.vars, &self.tables)?;
         Ok(GraphMatch {
             graph: desc.name.clone(),
             tables: self.tables,
@@ -228,6 +241,9 @@ impl Assembled {
             rows: self.rows,
             columns,
             options,
+            hints,
+            wcoj: false,
+            sizing: crate::logical::GraphSizing::default(),
         })
     }
 }

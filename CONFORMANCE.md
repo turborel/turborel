@@ -3304,11 +3304,15 @@ CREATE PROPERTY GRAPH g VERTEX TABLES (...) [EDGE TABLES (...)]
     [OPTIONS ({ENFORCED | TRUSTED} MODE)] [WITH INVOKER RIGHTS]
 CREATE ADJACENCY INDEX [name] ON GRAPH g EDGE TABLE alias
     [DIRECTION {FORWARD | REVERSE | BOTH}] [INCLUDE (column, ...)]
+CREATE LABEL INDEX [name] ON GRAPH g [{VERTEX | EDGE} TABLE alias]
+CREATE REACHABILITY INDEX [name] ON GRAPH g EDGE TABLE alias
 SELECT ... FROM GRAPH_TABLE (g MATCH pattern [WHERE condition]
     [ONE ROW PER {MATCH | VERTEX (v) | STEP (v1, e, v2)}]
     COLUMNS (expression [AS name], ... | v.*)
     [OPTIONS (MAX_PATH_LENGTH n, MAX_PATHS_PER_PARTITION n,
-    MAX_SEARCH_STATES n, ON LIMIT {ERROR | TRUNCATE}, DETERMINISTIC_PATHS)])
+    MAX_SEARCH_STATES n, ON LIMIT {ERROR | TRUNCATE}, DETERMINISTIC_PATHS,
+    GRAPH_START (v), GRAPH_DIRECTION (e, REVERSE), NO_WCOJ,
+    USE_ADJACENCY (alias), PATH_ALGO (BFS | BIBFS | DFS | DIJKSTRA | MSBFS))])
     [FOR SYSTEM_TIME AS OF t] [[AS] name]
 ```
 
@@ -3330,9 +3334,17 @@ DIRECTED, IS [NOT] LABELED, PATH_LENGTH, VERTICES, EDGES, IS_ACYCLIC,
 IS_TRAIL, IS_SIMPLE, PATH_TO_JSON and the set functions of a group
 variable's elements, COUNT(e.*) among them. EXPLAIN shows each path's
 automaton, the algorithm chosen and how each edge table is followed.
+A rigid pattern is planned as a join, its edges read by Expand,
+Expand (reverse) or ExpandInto (RULES.md D113), a cyclic one by a
+worst-case optimal join, and a small quantifier is unrolled (RULES.md
+D114). OPTIONS also take the hints GRAPH_START, GRAPH_DIRECTION,
+NO_WCOJ, USE_ADJACENCY and PATH_ALGO [GS §16 R16.8].
 An edge table is followed through its adjacency index (RULES.md D107)
 if it has one, and an ENFORCED graph's base edge tables are given one
-as it commits. A search past a limit fails with SQLSTATE 54061, or ON
+as it commits. A label index (RULES.md D115) gives a GRAPH_TABLE its
+label tests and starts as bitmaps, and a reachability index (RULES.md
+D116) drops the starts of a quantified search that reach no end, with
+the same rows. A search past a limit fails with SQLSTATE 54061, or ON
 LIMIT TRUNCATE ends with warning 01W61. A negative COST is 22W34.
 
 | Not taken | Behaviour |
@@ -3869,7 +3881,7 @@ defaults that turborel tunes (RULES.md D93 to D104).
 ### Property graphs
 
 The property graph standard leaves these to the implementation (RULES.md
-D106 to D111).
+D106 to D111, D113 to D118).
 
 | Rule | Choice | Where |
 |---|---|---|
@@ -3877,6 +3889,9 @@ D106 to D111).
 | GS §7.3 the default match mode | REPEATABLE ELEMENTS | `binder/graph/pattern.rs` |
 | GS §20 limits | MAX_PATH_LENGTH and MAX_PATHS_PER_PARTITION none, MAX_SEARCH_STATES 10,000,000, ON LIMIT ERROR, of GRAPH.* | `settings/graph.rs` |
 | GS §17 parallel search | EXECUTOR.GRAPH_THREADS workers, 1 by default | `exec/graph_table/limits.rs` |
+| GS §17 when a search is parallel | on its workers only when there are more than one and its states, estimated from the graph's size, reach GRAPH.PARALLEL_MIN_STATES (16,384 by default); the starts in morsels, or one start's levels | `graph/search/choice.rs` |
+| GS §15 the algorithm of ANY SHORTEST from many starts | MS-BFS, 64 starts at once, when a batch's starts times each one's estimated reach cover the graph's vertices; else BFS from each start | `graph/search/choice.rs` |
+| GS §16 R16.8 PATH_ALGO | chooses within the family the selector and restrictors call for: BFS and MSBFS of ANY SHORTEST and ANY, BFS of ALL SHORTEST and of a restricted shortest selector, BIBFS of one start and one end, DFS of every path, DIJKSTRA of the CHEAPEST selectors; else refused, -103 (GRF-0070) | `graph/search/choice.rs` |
 | GS §13.2 an adjacency index's name | `GRAPH_ALIAS_ADJACENCY` if none is written | `db/graphs/adjacency.rs` |
 | GS §13.2 DIRECTION | FORWARD keeps the OUT entries, REVERSE the IN ones, BOTH both, the default | `db/graphs/adjacency.rs` |
 | GS §5 R5.1 a native element's identity | `$NODE_ID` and `$EDGE_ID` are the canonical JSON text `{"type":"node","schema":"S","table":"T","id":N}`, `"edge"` of an edge, N from 0 per table, numbers skipped after reopening as an identity column's are | `db/graphs/native/rows.rs` |
@@ -3884,6 +3899,13 @@ D106 to D111).
 | GQL's session | SESSION.LANGUAGE SQL, and GQL.GRAPH empty, naming no graph | `settings/builtin.rs` |
 | GS §18 R18.3 parallel algorithms | EXECUTOR.GRAPH_THREADS threads, 1 by default, over morsels of 1024 vertices | `graph/algo/parallel.rs` |
 | GS §20 GRAPH_ALGO_RUNS | The latest 1000 runs, kept in memory | `system/graph_runs.rs` |
+| GS §16 R16.2 the joins of a rigid pattern | At most 64, of each choice of tables and ways, as a UNION ALL, and at most 4 whole scans of edge tables of no adjacency index | `binder/graph/joins.rs` |
+| GS §16 R16.2 the worst-case optimal join | Generic join of the vertex variables, over every edge table of the cycle's adjacency index | `graph/wcoj.rs` |
+| GS §16 R16.4 unrolling | Quantifiers of at most 3 iterations within no other, at most 16 rigid patterns | `binder/graph/joins/rigid.rs` |
+| A label index's name | `GRAPH_ALIAS_LABELS`, or `NAME_ALIAS` of each table if no table is written | `db/graphs/indexes.rs` |
+| A reachability index's name | `GRAPH_ALIAS_REACHABILITY` if none is written | `db/graphs/indexes.rs` |
+| GS §13.6 statistics | INFORMATION_SCHEMA.GRAPH_STATISTICS: each element table's rows, an edge table's out-degree and in-degree average, median, 90th and 99th percentiles and maximum, a column property's distinct values and share NULL, and each label transition's edges, made of the tables' statistics (RULES.md D117); of an endpoint of several columns, its column of most distinct values stands for it | `stats/graph.rs` |
+| GS §16 R16.8 where a search starts | GRAPH_START, GRAPH_DIRECTION (e, REVERSE), else the end of fewer candidates times fan-out once statistics are known, of a pattern of no selector, ALL SHORTEST or SHORTEST k GROUP, no COST, no limit cutting it and no DETERMINISTIC_PATHS; any other is searched from its first vertex | `exec/graph_table/start.rs` |
 
 ### Memory
 
@@ -4047,6 +4069,11 @@ Where the standards are unclear, turborel reads them as follows.
 | The class of GRF-0052 and GRF-0053 [GS §22] | They are constraint violations, so their SQLSTATE is of class 23. |
 | A GQL CALL of a binding table [GQL's call procedure statement] | The procedure runs for each record of the working table, a multiset whose duplicates are kept, and each record is joined with that run's result. A procedure that returns no table keeps the record as it is. Francis et al. §5.1 model CALL as a join, which agrees for queries, where a run per distinct binding gives the same rows. So an inline CALL that writes runs once per row, duplicates each their own. |
 | The automatic adjacency index [GS §13.2] | An index is built outside a transaction (RULES.md D34), so an ENFORCED graph's indexes are made as the transaction that created it commits, each in a transaction of its own. |
+| Rigid sub-patterns as joins [GS §16 R16.2] | A GRAPH_TABLE whose path patterns are rigid whole, and which reads no table before it, is one join. A rigid part of a pattern with a quantifier, a selector or a union is searched with the rest, so a match never depends on where the search would split. |
+| Limits of a joined pattern [GS §16 R16.2, §20] | The limits bound a search. A pattern planned as a join, or matched by the worst-case optimal join, is not searched, so GRAPH.* and 54061 do not apply to it. OPTIONS of a limit keep it searched. |
+| Hints [GS §16 R16.8] | GRAPH_START, GRAPH_DIRECTION, USE_ADJACENCY and PATH_ALGO direct a search, so a pattern written with one is searched. NO_WCOJ joins a cyclic pattern pairwise. A hint naming no variable of the pattern, a direction of a vertex, or an edge table with no adjacency index is GRF-0070. |
+| Quantifiers unrolled [GS §16 R16.4] | "When cheaper" is read as a bound of three iterations, past which the joins of every count outgrow the search. Zero iterations make the node patterns around the quantifier one vertex, which two named ones cannot be, so such a pattern is searched. |
+| Common sub-patterns [GS §16 R16.6] | A path pattern is common to another when it is written alike, anonymous elements aside. Common parts of different path patterns share their variables' operands in a join already. |
 
 ### The vector design document
 

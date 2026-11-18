@@ -161,6 +161,16 @@ pub struct Endpoints {
     pub directed: bool,
 }
 
+/// \[DESIGN\] How big a graph is, for a search's choice of algorithm and
+/// workers: an estimate, never read for a result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphSize {
+    /// Its vertices.
+    pub vertices: u64,
+    /// Its edges.
+    pub edges: u64,
+}
+
 /// \[DESIGN\] A property graph as a path search reads it [GS §3]. It may
 /// be shared between the threads of a parallel search, so it is `Sync`.
 pub trait GraphView: Send + Sync {
@@ -178,6 +188,28 @@ pub trait GraphView: Send + Sync {
     ///
     /// Any error reading the edges.
     fn hops(&self, vertex: ElementId, orientation: Orientation, out: &mut Vec<Hop>) -> Result<()>;
+
+    /// Pushes onto `out`, for each of `asked` in order, the hops `hops`
+    /// gives of its vertex and orientation, in any order: a frontier
+    /// expanded at once, which a view may read in one pass.
+    ///
+    /// # Errors
+    ///
+    /// As `hops`.
+    fn expand(&self, asked: &[(ElementId, Orientation)], out: &mut Vec<Vec<Hop>>) -> Result<()> {
+        for &(vertex, orientation) in asked {
+            let mut hops = Vec::new();
+            self.hops(vertex, orientation, &mut hops)?;
+            out.push(hops);
+        }
+        Ok(())
+    }
+
+    /// Its vertices and edges, if it knows them cheaply, for choosing how
+    /// a search runs.
+    fn size(&self) -> Option<GraphSize> {
+        None
+    }
 
     /// The endpoints of `edge` [GS §5 R5.3].
     ///

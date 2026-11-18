@@ -1,0 +1,123 @@
+//! The mutations of a graph's statistics (RULES.md R-TEST-9, D117): of
+//! the statistics, an average degree, the maximum of a key of several
+//! columns, a transition's labels, a property that is an expression and
+//! a sample's frequencies scaled; of the planner, the fan-out of a probe;
+//! of the end a search starts from, a hint, the estimate, the path
+//! reversed back and the orientation reversed; and of the view, a row's
+//! kind. Every search they change is bounded by its quantifier.
+
+use super::super::{Mutation, Package};
+
+/// The mutations of a graph's statistics, in the order they run.
+pub const GRAPH_STATISTICS: [Mutation; 11] = [
+    Mutation {
+        name: "graph-statistics-average-degree",
+        package: Package::Core,
+        breaks: "an edge table's average degree is its edges, not its edges by the vertices with one",
+        file: "src/stats/graph.rs",
+        original: "    let average = if distinct > 0.0_f64 { edges / distinct } else { 0.0_f64 };",
+        replacement: "    let average = if distinct > 0.0_f64 { edges } else { 0.0_f64 };",
+        integration: &["graph_table::statistics::graph_statistics_show_degrees_properties_and_transitions"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-statistics-key-maximum",
+        package: Package::Core,
+        breaks: "the maximum degree of a key of several columns is its widest column's, not the least of its columns'",
+        file: "src/stats/graph.rs",
+        original: "        frequencies.most = frequencies.most.min(least_most);",
+        replacement: "        frequencies.most = frequencies.most.max(least_most);",
+        integration: &[],
+        unit: &["stats::graph::tests::degrees_of_one_column_and_of_several"],
+    },
+    Mutation {
+        name: "graph-statistics-transition-labels",
+        package: Package::Core,
+        breaks: "a transition's destination label is its source's, so a transition to another label is not counted",
+        file: "src/stats/graph.rs",
+        original: "                add(&mut transitions, (&s.name, &l.name, &d.name), edges);",
+        replacement: "                add(&mut transitions, (&s.name, &l.name, &s.name), edges);",
+        integration: &[],
+        unit: &["stats::graph::tests::transitions_and_properties"],
+    },
+    Mutation {
+        name: "graph-statistics-expression-property",
+        package: Package::Core,
+        breaks: "a property that is an expression of a column is given that column's statistics",
+        file: "src/stats/graph.rs",
+        original: "names.iter().position(|c| identifier(c) == p.expression)",
+        replacement: "names.iter().position(|c| p.expression.contains(c.as_str()))",
+        integration: &[],
+        unit: &["stats::graph::tests::transitions_and_properties"],
+    },
+    Mutation {
+        name: "graph-statistics-frequencies-unscaled",
+        package: Package::Core,
+        breaks: "a sampled table's frequencies are the sample's, not scaled to its rows",
+        file: "src/stats.rs",
+        original: "        stats.frequencies = stats.frequencies.map(|f| f.scaled(factor.max(1.0_f64)));",
+        replacement: "        stats.frequencies = stats.frequencies.map(|f| f.scaled(1.0_f64));",
+        integration: &[],
+        unit: &["stats::tests::frequencies_of_each_value"],
+    },
+    Mutation {
+        name: "graph-statistics-fan-out",
+        package: Package::Core,
+        breaks: "a probe of an edge table by its source column is estimated to find twice its average degree",
+        file: "src/physical/indexed/fan_out.rs",
+        original: "        self.db.edge_degree(table, probed).map(|d| d.average)",
+        replacement: "        self.db.edge_degree(table, probed).map(|d| d.average * 2.0)",
+        integration: &["graph_table::statistics::explain_shows_the_fan_out_of_an_edge_table"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-statistics-hint-ignored",
+        package: Package::Core,
+        breaks: "GRAPH_START does not choose the end a search starts from",
+        file: "src/exec/graph_table/start.rs",
+        original: "            let from_last = hinted.unwrap_or_else(|| {",
+        replacement: "            let from_last = None.unwrap_or_else(|| {",
+        integration: &["graph_table::statistics::the_end_chosen_makes_fewer_states"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-statistics-dearer-end",
+        package: Package::Core,
+        breaks: "a search starts from the end of more candidates times fan-out",
+        file: "src/exec/graph_table/start.rs",
+        original: "        (Some(from_first), Some(from_last)) => from_last < from_first,",
+        replacement: "        (Some(from_first), Some(from_last)) => from_last > from_first,",
+        integration: &["graph_table::statistics::the_end_chosen_makes_fewer_states"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-statistics-path-not-reversed-back",
+        package: Package::Core,
+        breaks: "a path found from the last vertex is given as found, its ends and elements swapped",
+        file: "src/exec/graph_table/start.rs",
+        original: "    if !reversed {",
+        replacement: "    if !reversed || bindings.len() < usize::MAX {",
+        integration: &["graph_table::statistics::a_search_starts_from_the_cheaper_end_with_the_same_rows"],
+        unit: &["exec::graph_table::start::tests::a_path_is_reversed_back"],
+    },
+    Mutation {
+        name: "graph-statistics-orientation-kept",
+        package: Package::Core,
+        breaks: "a pattern searched from its last vertex walks each edge the way it was written, so finds the wrong paths",
+        file: "src/exec/graph_table/start.rs",
+        original: "        PatternShape::Edge(t, o) => PatternShape::Edge(t.clone(), o.reversed()),",
+        replacement: "        PatternShape::Edge(t, o) => PatternShape::Edge(t.clone(), *o),",
+        integration: &["graph_table::statistics::a_search_starts_from_the_cheaper_end_with_the_same_rows"],
+        unit: &["exec::graph_table::start::tests::a_pattern_is_reversed"],
+    },
+    Mutation {
+        name: "graph-statistics-edge-kind",
+        package: Package::Core,
+        breaks: "GRAPH_STATISTICS shows an edge table's row as a vertex table's",
+        file: "src/system/definition/graph_statistics.rs",
+        original: "        ElementKind::Edge => \"EDGE\",",
+        replacement: "        ElementKind::Edge => \"VERTEX\",",
+        integration: &["graph_table::statistics::graph_statistics_show_degrees_properties_and_transitions"],
+        unit: &[],
+    },
+];

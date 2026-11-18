@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::view::{ElementId, Endpoints, GraphView, Hop, LabelId, Orientation, TableId, Way, no_element};
+use super::view::{ElementId, Endpoints, GraphSize, GraphView, Hop, LabelId, Orientation, TableId, Way, no_element};
 use crate::error::Result;
 use crate::storage::RowId;
 
@@ -172,5 +172,9 @@ impl GraphView for InMemoryGraph {
 
     fn cost(&self, edge: ElementId) -> Result<f64> {
         Ok(self.edges.get(&edge).ok_or_else(|| no_element(edge))?.cost)
+    }
+
+    fn size(&self) -> Option<GraphSize> {
+        Some(GraphSize { vertices: u64::try_from(self.vertices.len()).ok()?, edges: u64::try_from(self.edges.len()).ok()? })
     }
 }

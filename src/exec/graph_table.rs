@@ -11,10 +11,15 @@
 //! the path bindings joined on the variables they share and kept by the
 //! match mode [GS §7.3] (`graph::matching`); each gives its rows if its
 //! postfilter is true (`graph_table/values.rs`). A search ended by a
-//! limit ON LIMIT TRUNCATE warns, 01W61.
+//! limit ON LIMIT TRUNCATE warns, 01W61. Rigid, cyclic path patterns the
+//! binder chose it for are matched by a worst-case optimal join instead
+//! (`graph::wcoj`, RULES.md D114).
 
+mod labels;
 mod limits;
+mod reach;
 mod shared;
+mod start;
 mod store;
 mod values;
 
@@ -26,8 +31,10 @@ use crate::db::State;
 use crate::error::Result;
 use crate::graph::binding::PathBinding;
 use crate::graph::matching::{PathMatches, matches};
+use crate::graph::program::{PathPattern, VarId};
 use crate::graph::search::PathSearch;
 use crate::graph::view::ElementId;
+use crate::graph::wcoj::Rigid;
 use crate::logical::{ElementRead, GraphMatch, Subquery, Truth, Unnest};
 use crate::physical::Plan;
 use crate::storage::Row;
@@ -56,10 +63,15 @@ pub(super) fn graph_table(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     Box::new(checked(rows, db.tx.stop_of(tx)))
 }
 
-/// The graph searched, and where each path pattern's matches start.
+/// The graph searched, and where each path pattern's matches start:
+/// each pattern as searched, and whether reversed (`graph_table/start.rs`).
 struct Opened {
     store: Arc<Store>,
     starts: Vec<Vec<ElementId>>,
+    /// Of each path pattern, the earlier one it is written as.
+    earlier: Vec<Option<usize>>,
+    /// Of each path pattern, it as searched, and whether from its end.
+    oriented: Vec<(crate::logical::PathShape, bool)>,
 }
 
 /// The rows of a GRAPH_TABLE over its input.
@@ -126,15 +138,16 @@ impl Rows {
         }
         let store = Arc::new(Store::new(&self.db, self.tx, Arc::clone(&self.graph), held)?);
         let mut starts = Vec::new();
-        for path in &self.graph.paths {
+        let oriented =
+            start::oriented(&self.db, &self.graph, &limits::options(&self.db, self.tx, (&self.graph.options, self.graph.hints.path_algo)));
+        for (path, _) in &oriented {
             let mut of = Vec::new();
             for &t in &path.starts {
-                let table = u32::try_from(t).unwrap_or(u32::MAX);
-                of.extend(store.rows(t)?.into_iter().map(|(id, _)| ElementId::new(table, id)));
+                of.extend(labels::starts(&store, path, t)?);
             }
             starts.push(of);
         }
-        self.opened = Some(Opened { store, starts });
+        self.opened = Some(Opened { store, starts, earlier: self.graph.earlier(), oriented });
         Ok(())
     }
 
@@ -143,22 +156,46 @@ impl Rows {
     fn searched(
         &self,
         shared: &Arc<Shared>,
-        starts: &[Vec<ElementId>],
-    ) -> Result<Vec<(crate::graph::program::PathPattern, Vec<PathBinding>)>> {
-        let options = limits::options(&self.db, self.tx, &self.graph.options);
-        let mut out = Vec::new();
-        for (n, path) in self.graph.paths.iter().enumerate() {
+        (starts, earlier): (&[Vec<ElementId>], &[Option<usize>]),
+    ) -> Result<Vec<(PathPattern, Vec<PathBinding>)>> {
+        if self.graph.wcoj {
+            return self.joined(shared, starts);
+        }
+        let options = limits::options(&self.db, self.tx, (&self.graph.options, self.graph.hints.path_algo));
+        let mut out: Vec<(PathPattern, Vec<PathBinding>)> = Vec::new();
+        let oriented = self.opened.as_ref().map(|o| o.oriented.as_slice()).unwrap_or_default();
+        for (n, (path, reversed)) in oriented.iter().enumerate() {
+            // [GS §16 R16.6] A path pattern written as an earlier one is not searched again.
+            if let Some(found) = earlier.get(n).copied().flatten().and_then(|m| out.get(m)).cloned() {
+                out.push(found);
+                continue;
+            }
             let mut pattern = path.instantiate(&mut |k| shared::filter(shared, k));
             if path.cost.is_some() {
                 pattern = pattern.cost(shared::cost(shared, n));
             }
             let search = PathSearch::new(&pattern, &*shared.store, options.clone())?;
+            let pruned = reach::pruned(shared, path, starts.get(n).map_or(&[][..], Vec::as_slice))?;
             // The run raises 01W61 itself as a truncated search ends.
-            let bindings: Vec<PathBinding> = search.run(starts.get(n).map_or(&[][..], Vec::as_slice), None)?.collect::<Result<_>>()?;
+            let bindings: Vec<PathBinding> = search.run(&pruned, None)?.collect::<Result<_>>()?;
+            let bindings = start::forward(bindings, *reversed);
             drop(search);
             out.push((pattern, bindings));
         }
         Ok(out)
+    }
+
+    /// \[GS §16 R16.2\] The path bindings of each rigid path pattern of
+    /// `shared`, of the worst-case optimal join (`graph::wcoj`).
+    fn joined(&self, shared: &Arc<Shared>, starts: &[Vec<ElementId>]) -> Result<Vec<(PathPattern, Vec<PathBinding>)>> {
+        let patterns: Vec<PathPattern> = self.graph.paths.iter().map(|p| p.instantiate(&mut |k| shared::filter(shared, k))).collect();
+        let vars = &self.graph.vars;
+        let global = |n: usize, var: VarId| vars.iter().position(|v| v.bound.contains(&(n, var)));
+        let rigid =
+            Rigid::new(&patterns, (&global, vars.len())).ok_or_else(|| broken("a worst-case optimal join's pattern is not rigid"))?;
+        let found = rigid.bindings(&*shared.store, starts)?;
+        drop(rigid);
+        Ok(patterns.into_iter().zip(found).collect())
     }
 
     /// Makes the rows of input row `row`; whether one was kept.
@@ -166,9 +203,9 @@ impl Rows {
         let operands = self.u.collections.iter().map(|e| eval(e, row, &self.runner)).collect::<Result<Vec<_>>>()?;
         self.open()?;
         let opened = self.opened.as_ref().ok_or_else(|| broken("a GRAPH_TABLE's graph is not open"))?;
-        let (store, starts) = (Arc::clone(&opened.store), opened.starts.clone());
+        let (store, starts, earlier) = (Arc::clone(&opened.store), opened.starts.clone(), opened.earlier.clone());
         let shared = Arc::new(Shared { db: Arc::clone(&self.db), tx: self.tx, graph: Arc::clone(&self.graph), store, operands });
-        let (patterns, found): (Vec<_>, Vec<_>) = self.searched(&shared, &starts)?.into_iter().unzip();
+        let (patterns, found): (Vec<_>, Vec<_>) = self.searched(&shared, (&starts, &earlier))?.into_iter().unzip();
         let paths: Vec<PathMatches<'_>> = patterns.iter().zip(found).map(|(pattern, bindings)| PathMatches { pattern, bindings }).collect();
         let mut out = Vec::new();
         for choice in matches(&paths, self.graph.mode) {

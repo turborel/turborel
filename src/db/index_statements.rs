@@ -107,6 +107,8 @@ impl Session {
             }
             // [GS §13.2] the CREATE INDEX it is.
             IndexStatement::Adjacency(_) => return self.index_statement(st, &self.adjacency_create(st, stmt)?),
+            // RULES.md D115, D116: the CREATE INDEX statements they are.
+            IndexStatement::Labels(_) | IndexStatement::Reachability(_) => self.graph_indexes_made(st, stmt)?,
             IndexStatement::Drop { name: (name, at) } => {
                 let ix = self.index_owned(st, name).or_at(*at)?;
                 if ix.unique {

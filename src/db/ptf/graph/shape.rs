@@ -4,28 +4,16 @@
 //! [GS §5 R5.1], its element table and its key, so keys of two vertex
 //! tables, of any number of columns, never meet.
 //!
-//! An identity is ELEMENT_ID's text, `{"table":"ACCOUNT","key":[6]}`: the
-//! element table's alias and its key's values in order, one text for one
-//! element, so the result joins to a GRAPH_TABLE's ELEMENT_ID. Of a
+//! An identity is ELEMENT_ID's text, `{"table":"ACCOUNT","key":[6]}`, made
+//! by the one function that makes ELEMENT_ID's (`logical/graph/identity.rs`),
+//! so the result joins to a GRAPH_TABLE's ELEMENT_ID. Of a
 //! schema's SYS_GRAPH, a vertex is its `$NODE_ID`, an identity of its own
 //! that its node table holds (§4.2).
 
 use crate::error::Result;
-use crate::json::{Item, Member, Scalar, serialize};
+use crate::logical::identity_text;
 use crate::storage::Row;
-use crate::value::{CharUnits, DataType, Value};
-
-/// \[DESIGN\] The longest identity, in characters.
-pub(crate) const IDENTITY_LENGTH: u32 = 8192;
-/// The member of an identity naming its element table.
-const TABLE_MEMBER: &str = "table";
-/// The member of an identity holding its key.
-const KEY_MEMBER: &str = "key";
-
-/// The type of an identity: CHARACTER VARYING.
-pub(crate) fn identity_type() -> DataType {
-    DataType::Varying { length: IDENTITY_LENGTH, units: CharUnits::Characters }
-}
+use crate::value::Value;
 
 /// \[EXTENSION\] How the table arguments of a graph named in place of the
 /// edges are read: the rows of each edge table, then of each vertex table.
@@ -62,12 +50,7 @@ impl GraphShape {
         if let (true, [id]) = (self.native, key) {
             return Ok(Some(id.clone()));
         }
-        let item = |v: &Value| Item::Scalar(Scalar::new(v.clone()).unwrap_or_else(|| Scalar::from(v.to_string())));
-        let identity = Item::Object(vec![
-            Member { key: TABLE_MEMBER.to_owned(), value: Item::Scalar(Scalar::from(alias.to_owned())) },
-            Member { key: KEY_MEMBER.to_owned(), value: Item::Array(key.iter().map(item).collect()) },
-        ]);
-        Ok(Some(Value::Char(serialize(&identity)?)))
+        Ok(Some(Value::Char(identity_text(alias, key)?)))
     }
 
     /// The edges and the vertices of `inputs`, the rows of its edge tables

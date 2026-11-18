@@ -16,12 +16,12 @@ use std::sync::Arc;
 
 use super::AdjacencyIndex;
 use super::csr::Csr;
-use super::keys::{FORWARD, anchored, decode_all, degree_key, degree_of, parse, tag, within};
+use super::keys::{FORWARD, REVERSE, anchored, decode_all, degree_key, degree_of, parse, tag, within};
 use super::options::Layout;
 use crate::engine::tree::{BLinkTree, Direction as Order, Scan, scan_of};
 use crate::error::{Code, Result, SqlError};
 use crate::graph::adjacency::{Direction, Step};
-use crate::index::{Entries, Key, Probe};
+use crate::index::{ColumnComparison, Entries, Key, Probe};
 use crate::storage::RowId;
 use crate::value::{CompOp, Value, compare};
 
@@ -142,8 +142,16 @@ impl Iterator for Compacted {
     }
 }
 
-/// `search`: every entry, or those of an equality of the first columns.
+/// `search`: every entry, those of an equality of the first columns, or,
+/// of comparisons of other columns, those they answer: of equalities of
+/// the destination's columns alone, a vertex's reverse list if it is kept
+/// (\[GS §16 R16.1\] the search walked the other way), else every entry,
+/// each checked.
 pub fn search(index: &Arc<AdjacencyIndex>, probe: &Probe) -> Entries {
+    if let Probe::Columns(each) = probe {
+        let (prefix, check) = reverse_plan(&index.layout, each, probe);
+        return Box::new(entries(Held(Arc::clone(index)), &index.layout, (&prefix, check)));
+    }
     let equal = match equalities(probe) {
         Ok(Some(equal)) => equal,
         Ok(None) => {
@@ -163,6 +171,26 @@ pub fn search(index: &Arc<AdjacencyIndex>, probe: &Probe) -> Entries {
             (Err(e), _) | (_, Err(e)) => Box::new(std::iter::once(Err(e))),
         },
         Plan::Scan(prefix, check) => Box::new(entries(Held(Arc::clone(index)), &index.layout, (&prefix, check))),
+    }
+}
+
+/// How the entries `each` answers are read in `layout`: of equalities of
+/// the destination's columns, in order, kept reverse, the destination's
+/// reverse entries, unchecked if its bytes alone select them; else every
+/// entry of the first direction kept, each checked by `probe`.
+fn reverse_plan(layout: &Layout, each: &[ColumnComparison], probe: &Probe) -> (Vec<u8>, Option<Probe>) {
+    let destination = layout.source..layout.endpoints();
+    let exact = each.len() == destination.len()
+        && each.iter().zip(destination).all(|(c, at)| c.column == at && c.op == CompOp::Eq)
+        && layout.kept.keeps(Direction::In);
+    let values: Vec<Value> = each.iter().map(|c| c.value.clone()).collect();
+    match exact.then(|| anchored(&values, layout.destination_types())).flatten() {
+        Some((prefix, false)) => (tagged(REVERSE, &prefix), None),
+        Some((prefix, true)) => (tagged(REVERSE, &prefix), Some(probe.clone())),
+        None => {
+            let first = layout.kept.directions().first().copied().unwrap_or(Direction::Out);
+            (vec![tag(first)], Some(probe.clone()))
+        }
     }
 }
 
@@ -262,7 +290,7 @@ impl AdjacencyIndex {
     /// # Errors
     ///
     /// SQLCODE -910 if `vertex` is not a key of the vertex's columns.
-    fn anchored(&self, vertex: &Key, direction: Direction) -> Result<Option<(Vec<u8>, bool)>> {
+    pub(super) fn anchored(&self, vertex: &Key, direction: Direction) -> Result<Option<(Vec<u8>, bool)>> {
         let vertex_types = self.layout.ends(direction).0;
         if vertex.0.len() != vertex_types.len() {
             return Err(SqlError::new(

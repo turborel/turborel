@@ -152,6 +152,8 @@ pub(super) struct Runner<'a> {
     /// labels, when nothing else decides them: an automaton with no
     /// register, counter, restrictor or prefilter.
     memo: Option<HashMap<Closed, Closure>>,
+    /// The hops of a frontier's vertices, found at once (`prefetch`).
+    fetched: HashMap<(ElementId, Orientation), Vec<Hop>>,
 }
 
 /// What a closure of a plain automaton depends on: its seeds and the
@@ -171,7 +173,26 @@ impl<'a> Runner<'a> {
             }
         }
         let plain = nfa.plain() && nfa.tests.iter().all(|t| t.filter.is_none()) && nfa.scopes.iter().all(|s| s.filter.is_none());
-        Runner { nfa, view, restrictors, labels: Vec::new(), memo: plain.then(HashMap::new) }
+        Runner { nfa, view, restrictors, labels: Vec::new(), memo: plain.then(HashMap::new), fetched: HashMap::new() }
+    }
+
+    /// \[DESIGN\] Finds the hops of each of `asked` at once, a vectorized
+    /// Expand (`GraphView::expand`), for the successors taken next; those
+    /// found before are forgotten. A vertex's hops are those `hops` gives,
+    /// so what follows them does not change.
+    ///
+    /// # Errors
+    ///
+    /// Any error of the view.
+    pub(super) fn prefetch(&mut self, mut asked: Vec<(ElementId, Orientation)>) -> Result<()> {
+        self.fetched.clear();
+        asked.retain(|&(_, o)| o != Orientation::NONE);
+        asked.sort_unstable_by_key(|&(v, _)| v);
+        asked.dedup();
+        let mut lists = Vec::with_capacity(asked.len());
+        self.view.expand(&asked, &mut lists)?;
+        self.fetched.extend(asked.into_iter().zip(lists));
+        Ok(())
     }
 
     /// The thread the automaton starts with.
@@ -230,7 +251,7 @@ impl<'a> Runner<'a> {
     }
 
     /// The ways `threads` may follow edges.
-    fn orientation(&self, threads: &[Thread]) -> Orientation {
+    pub(super) fn orientation(&self, threads: &[Thread]) -> Orientation {
         threads.iter().fold(Orientation::NONE, |o, t| {
             if let Some(Instr::Edge { orientation, .. }) = self.nfa.instr(t.pc) { o.union(*orientation) } else { o }
         })
@@ -269,8 +290,10 @@ impl<'a> Runner<'a> {
         if orientation == Orientation::NONE {
             return Ok(());
         }
-        let mut hops = Vec::new();
-        self.view.hops(vertex, orientation, &mut hops)?;
+        let mut hops = self.fetched.get(&(vertex, orientation)).cloned().unwrap_or_default();
+        if !self.fetched.contains_key(&(vertex, orientation)) {
+            self.view.hops(vertex, orientation, &mut hops)?;
+        }
         hops.sort_unstable_by_key(|h| (h.edge, h.vertex, h.way));
         let mut at = 0;
         while let Some(&hop) = hops.get(at) {

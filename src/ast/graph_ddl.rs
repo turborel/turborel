@@ -219,3 +219,30 @@ pub struct AdjacencyIndex {
     /// The columns INCLUDE names, and where each begins.
     pub include: Vec<(String, usize)>,
 }
+
+/// \[EXTENSION\] CREATE LABEL INDEX \[`<index name>`\] ON GRAPH `<graph
+/// name>` \[{VERTEX | EDGE} TABLE `<alias>`\]: an index of the labels
+/// method of an element table's key, or of each base element table's.
+#[derive(Debug, Clone)]
+pub struct LabelIndex {
+    /// The `<index name>`, if written, and where it begins.
+    pub name: Option<(String, usize)>,
+    /// The graph.
+    pub graph: TableName,
+    /// The element table's alias in the graph, whether it is an edge
+    /// table, and where it begins; none for every element table.
+    pub table: Option<(String, bool, usize)>,
+}
+
+/// \[EXTENSION\] CREATE REACHABILITY INDEX \[`<index name>`\] ON GRAPH
+/// `<graph name>` EDGE TABLE `<alias>`: an index of the reachability
+/// method of the edge table's ends.
+#[derive(Debug, Clone)]
+pub struct ReachabilityIndex {
+    /// The `<index name>`, if written, and where it begins.
+    pub name: Option<(String, usize)>,
+    /// The graph.
+    pub graph: TableName,
+    /// The edge table's alias in the graph, and where it begins.
+    pub edge: (String, usize),
+}

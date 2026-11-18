@@ -117,8 +117,20 @@ fn element_table(
         (ElementRead::Stored | ElementRead::Held(_), _) => None,
     };
     let width = columns.columns.len();
-    let source =
-        ElementSource { alias: e.alias.clone(), table: e.table.clone(), ends, key, labels: ids, properties, read, width, adjacency };
+    let (labels_index, reachability) = super::indexes::graph_indexes(b.cx, &e.table, (&read, ends.as_ref()));
+    let source = ElementSource {
+        alias: e.alias.clone(),
+        table: e.table.clone(),
+        ends,
+        key,
+        labels: ids,
+        properties,
+        read,
+        width,
+        adjacency,
+        labels_index,
+        reachability,
+    };
     Ok((source, info))
 }
 

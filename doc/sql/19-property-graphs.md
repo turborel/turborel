@@ -215,6 +215,140 @@ SELECT COUNT(*) AS PATHS FROM GRAPH_TABLE (BANK
 turborel: SQLCODE -900 (SQLSTATE 54061): [GS §20] GRF-0061: the path search passed MAX_PATH_LENGTH, 1
 ```
 
+## Plans
+
+A pattern of no quantifier is a join of its element tables, which the
+planner orders by its estimates like any other join. Each edge is read
+through its adjacency index from the vertex bound before it, shown as
+Expand, or from its destination, shown as Expand (reverse), or between
+two bound vertices, shown as ExpandInto. An edge table of no adjacency
+index is read whole once in each join, so a pattern needing more than
+four such reads is searched instead:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Scott')-[t]->(b)
+    COLUMNS (b.owner AS TO_WHOM, t.amount AS AMOUNT));
+EXPLAIN SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Mike')<-[t]-(b)
+    COLUMNS (b.owner AS FROM_WHOM));
+```
+
+```
+ TO_WHOM              |       AMOUNT
+----------------------+--------------
+ Mike                 |            8
+(1 row)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project OWNER
+   Project OWNER
+     Filter SRC = ID AND DST = ID AND OWNER = 'Mike'
+       Product
+         Product
+           Scan ANN.ACCOUNT
+           Scan ANN.TRANSFER
+         Scan ANN.ACCOUNT
+ -- rules: push_filter_into_product x2
+ -- optimized:
+ Project OWNER
+   Project OWNER
+     Filter SRC = ID
+       Product
+         Filter DST = ID
+           Product
+             Filter OWNER = 'Mike'
+               Scan ANN.ACCOUNT
+             Scan ANN.TRANSFER
+         Scan ANN.ACCOUNT
+ -- physical:
+ Project OWNER
+   IndexNestedLoop ANN.ACCOUNT using ANN.ACCOUNT.UNIQUE1 [btree]: SRC = ID  (est. rows each=1, cost=0.6)
+     Expand (reverse) ANN.TRANSFER using BANK_TRANSFER_ADJACENCY [adjacency]: ID = DST  (est. rows each=0, cost=0.5)
+       Filter OWNER = 'Mike'  (est. rows=0)
+         SeqScan ANN.ACCOUNT  (rows=4, cost=4.0)
+(27 rows)
+```
+
+A pattern whose edges close a cycle is matched by a worst-case optimal
+join: each next vertex is one of those every bound vertex tied to it
+reaches, the intersection of their neighbour lists. The hint NO_WCOJ
+joins it pairwise instead:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a)-[r]->(b)-[s]->(c)-[t]->(a) WHERE a.id < b.id AND a.id < c.id
+    COLUMNS (a.owner AS A, b.owner AS B, c.owner AS C));
+SELECT COUNT(*) AS TRIANGLES FROM GRAPH_TABLE (BANK
+    MATCH (a)-[r]->(b)-[s]->(c)-[t]->(a)
+    COLUMNS (a.id AS A) OPTIONS (NO_WCOJ));
+```
+
+```
+ A                    | B                    | C
+----------------------+----------------------+----------------------
+ Scott                | Mike                 | Jay
+(1 row)
+            TRIANGLES
+----------------------
+                    3
+(1 row)
+```
+
+A quantifier of at most three iterations is unrolled into a join for
+each count of them, and a path pattern written as an earlier one is
+searched once. GRAPH_START, GRAPH_DIRECTION, USE_ADJACENCY and
+PATH_ALGO direct a search, so a pattern written with one is searched:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Scott')-[]->{1,2}(b)
+    COLUMNS (b.owner AS REACHED));
+SELECT COUNT(*) AS PATHS FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Scott')-[]->{1,2}(b)
+    COLUMNS (b.owner AS REACHED) OPTIONS (PATH_ALGO (DFS)));
+```
+
+```
+ REACHED
+----------------------
+ Mike
+ Aretha
+ Jay
+(3 rows)
+                PATHS
+----------------------
+                    3
+(1 row)
+```
+
+A search reads the edges of 1,024 states of its frontier at a time,
+each edge table's lists in one pass of its index. Of ANY SHORTEST or
+ANY from many starts, it searches from up to 64 starts at once (MS-BFS)
+when that many starts would together reach about every vertex, judged by
+the tables' sizes and their average degree, and from each start alone
+otherwise. It runs on the workers EXECUTOR.GRAPH_THREADS allows once its
+estimated states reach GRAPH.PARALLEL_MIN_STATES: in morsels of starts,
+or level by level from one start. PATH_ALGO picks the algorithm within
+the family the selector calls for, BFS or MSBFS of a shortest or ANY
+selector, DFS of every path, DIJKSTRA of CHEAPEST, and a hint that
+cannot answer the pattern is refused.
+
+A label index ([CREATE LABEL INDEX](statements/create-label-index.md))
+answers a pattern's label tests and finds its starts without reading
+rows. A reachability index
+([CREATE REACHABILITY INDEX](statements/create-reachability-index.md))
+drops the starts of a quantified pattern that reach none of its ends.
+
+A graph's statistics ([GRAPH_STATISTICS](07-information-schema.md#graph-statistics))
+come from its tables' and give each edge table's degree. A join plan
+estimates the rows of each Expand by that average degree. A quantified
+pattern with both ends filtered is searched from the end of fewer
+candidates times fan-out, and its paths are turned back, but only where
+the answer is the same either way. GRAPH_START or GRAPH_DIRECTION
+(e, REVERSE) names that end instead.
+
 ## EXPLAIN
 
 EXPLAIN shows each path pattern's automaton, the search chosen, and

@@ -89,6 +89,15 @@ pub struct Bound<'a> {
     pub(super) reads: &'a [(VarId, Option<usize>, Option<usize>)],
 }
 
+impl Bound<'static> {
+    /// What the prefilter of an element pattern of variable `var` that
+    /// reads no other variable is given of `element` alone, as a search
+    /// that has not reached it asks beforehand (RULES.md D116).
+    pub fn alone(var: Option<VarId>, element: ElementId) -> Bound<'static> {
+        Bound { element: Some((var, element)), registers: &[], reads: &[] }
+    }
+}
+
 impl Bound<'_> {
     /// The element tested, for an element pattern's prefilter.
     pub fn element(&self) -> Option<ElementId> {

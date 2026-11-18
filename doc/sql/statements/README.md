@@ -35,11 +35,13 @@ One reference page for each statement, in alphabetical order.
 - [CREATE GRAPH TYPE](create-graph-type.md): define the node and edge types a typed GQL graph holds
 - [CREATE HYBRID VECTOR INDEX](create-hybrid-vector-index.md): define an index of a text and a vector column, for hybrid search
 - [CREATE INDEX](create-index.md): define an index
+- [CREATE LABEL INDEX](create-label-index.md): number the elements of a property graph's element tables for label tests
 - [CREATE METHOD](create-method.md): give a method of a user-defined type its body
 - [CREATE MODULE](create-module.md): define an SQL-server module
 - [CREATE ORDERING](create-ordering.md): say how values of a user-defined type compare
 - [CREATE PROCEDURE](create-procedure.md): define an SQL-invoked procedure
 - [CREATE PROPERTY GRAPH](create-property-graph.md): define a property graph over tables
+- [CREATE REACHABILITY INDEX](create-reachability-index.md): keep which vertices a property graph's edge table leads to
 - [CREATE ROLE](create-role.md): define a role
 - [CREATE SCHEMA](create-schema.md): define a schema
 - [CREATE SEQUENCE](create-sequence.md): define a sequence generator

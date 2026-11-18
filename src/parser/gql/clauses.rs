@@ -90,6 +90,7 @@ impl Parser {
             correlation: None,
             system_time: None,
             options: crate::ast::GraphLimits::default(),
+            hints: crate::ast::GraphHints::default(),
             at,
         };
         super::super::graph::check(&table)?;

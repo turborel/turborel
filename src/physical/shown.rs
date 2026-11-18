@@ -67,9 +67,14 @@ impl Plan {
                 "{pad}AdaptiveSpatialJoin {table} using {index} [{method}]: {detail}  (IndexNestedLoop or bounded boundary-mask scan)"
             )
         } else {
+            // [GS §16 R16.2] Of an adjacency index, which Expand it is (`indexed/expand.rs`).
+            let (operator, method) = method
+                .split_once(' ')
+                .filter(|(m, _)| *m == crate::index::ADJACENCY_METHOD)
+                .map_or(("IndexNestedLoop", method.as_str()), |(m, expand)| (expand, m));
             writeln!(
                 out,
-                "{pad}{}IndexNestedLoop {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
+                "{pad}{}{operator} {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
                 if *outer { "LeftOuter" } else { "" }
             )
         }
