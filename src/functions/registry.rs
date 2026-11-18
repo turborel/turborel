@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::builtin::{Procedure, TableFunction};
 use super::{
     AggregateFunction, AggregateRef, Avg, Count, Extreme, ScalarFunction, ScalarRef, Sum, Truths, any_value, numeric, statistics, strings,
     trim,
@@ -25,6 +26,10 @@ pub struct Registry {
     /// The standard COUNT, MAX, MIN, SUM and AVG, in `Standard`'s order,
     /// which a plug-in of its name may replace.
     standard: [AggregateRef; 5],
+    /// \[EXTENSION\] The table functions and procedures written in Rust,
+    /// by name (`functions/builtin.rs`).
+    tables: HashMap<String, Arc<dyn TableFunction>>,
+    procedures: HashMap<String, Arc<dyn Procedure>>,
 }
 
 /// A set function a `Registry` holds as the standard defines it, no
@@ -84,7 +89,8 @@ impl Registry {
         let statistics = statistics::functions().into_iter().map(AggregateRef).collect::<Vec<_>>();
         let aggregates =
             standard.iter().chain(&truths).chain(&any_value).chain(&statistics).map(|f| (f.0.name().to_string(), f.clone())).collect();
-        Registry { scalars, aggregates, standard }
+        let procedures = crate::geometry::procedures().into_iter().map(|p| (p.name().to_owned(), p)).collect();
+        Registry { scalars, aggregates, standard, tables: HashMap::new(), procedures }
     }
 
     /// Adds a scalar function: of a name already a scalar function's, a
@@ -134,6 +140,44 @@ impl Registry {
         }
         self.aggregates.insert(name, AggregateRef(f));
         Ok(())
+    }
+
+    /// \[EXTENSION\] Adds a table function.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if one of its name is there.
+    pub fn add_table(&mut self, f: Arc<dyn TableFunction>) -> Result<()> {
+        let name = f.name().to_owned();
+        if self.tables.contains_key(&name) {
+            return fail(Code::Api, format!("[EXTENSION] {name} is already a table function"));
+        }
+        self.tables.insert(name, f);
+        Ok(())
+    }
+
+    /// \[EXTENSION\] Adds a procedure.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if one of its name is there.
+    pub fn add_procedure(&mut self, p: Arc<dyn Procedure>) -> Result<()> {
+        let name = p.name().to_owned();
+        if self.procedures.contains_key(&name) {
+            return fail(Code::Api, format!("[EXTENSION] {name} is already a procedure"));
+        }
+        self.procedures.insert(name, p);
+        Ok(())
+    }
+
+    /// The table function named `name`, if there is one.
+    pub fn table(&self, name: &str) -> Option<Arc<dyn TableFunction>> {
+        self.tables.get(name).cloned()
+    }
+
+    /// The procedure named `name`, if there is one.
+    pub fn procedure(&self, name: &str) -> Option<Arc<dyn Procedure>> {
+        self.procedures.get(name).cloned()
     }
 
     /// Each function registered that declares settings (RULES.md D36).

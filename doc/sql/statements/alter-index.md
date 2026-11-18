@@ -11,7 +11,9 @@ ALTER INDEX: change an index's options *(extension)*
 ```
 <alter index statement> ::=
     ALTER INDEX <index name>
-    SET ( <index option> [ { , <index option> }... ] )
+    { SET ( <index option> [ { , <index option> }... ] )
+    | REBUILD [ ONLINE ] [ PARAMETERS ( <parameter> [ { , <parameter> }... ] ) ]
+    | MERGE DELTA | LOAD | UNLOAD }
 
 <index option> ::= <option name> = { <option value> | DEFAULT }
 ```
@@ -34,6 +36,9 @@ change in place, as the index's entries do not depend on how its rows
 are ranked. FULLTEXT.RANKING names BM25 or a ranking the program
 registered, and Rank scores by it from the next statement on.
 FULLTEXT.LANGUAGE and FULLTEXT.STOP_WORDS build the index again.
+
+REBUILD, MERGE DELTA, LOAD and UNLOAD are of a vector index, and are
+described with [CREATE VECTOR INDEX](create-vector-index.md).
 
 ## RULES
 
@@ -72,4 +77,4 @@ An extension: neither SQL-86 nor SQL-92 has indexes.
 
 ## SEE ALSO
 
-[CREATE INDEX](create-index.md), [DROP INDEX](drop-index.md)
+[CREATE INDEX](create-index.md), [CREATE VECTOR INDEX](create-vector-index.md), [DROP INDEX](drop-index.md)

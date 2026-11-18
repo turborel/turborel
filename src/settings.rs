@@ -14,6 +14,7 @@ mod builtin;
 mod configurable;
 mod kind;
 mod started;
+mod vector;
 mod words;
 
 use std::collections::HashMap;
@@ -37,6 +38,9 @@ use builtin::{builtin, whole};
 pub use configurable::Configurable;
 pub use kind::{Kind, column_list, column_names};
 pub use started::Started;
+pub use vector::{
+    BUILD_MEMORY_BYTES, VECTOR_APPROX_DEFAULT, VECTOR_APPROX_FALLBACK, VECTOR_BEAM_WIDTH, VECTOR_BUILD_MEMORY_BYTES, VECTOR_SEARCH_LIST,
+};
 use words::word_of;
 pub use words::{isolation_level, lock_wait, lock_wait_word, log_durability, policy_word, session_end, session_end_word};
 

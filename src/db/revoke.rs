@@ -183,6 +183,7 @@ impl State {
             PrivilegeObject::Domain => self.revoke_usage((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Sequence => self.revoke_sequence_usage((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Module => self.revoke_on_module((auth, schema), r).or_at(r.table.at),
+            PrivilegeObject::Model => self.revoke_model_execute((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) => {
                 self.revoke_on_type((auth, schema), r).or_at(r.table.at)
             }
@@ -423,7 +424,13 @@ impl State {
         // [ISO/IEC 9075-2:2023 §12.7 GR6] DROP TRIGGER.
         let triggers: Vec<QualifiedName> = abandoned.triggers.iter().filter(|t| self.catalog.trigger(t).is_some()).cloned().collect();
         for t in &triggers {
-            let taken = self.drop_trigger(t)?;
+            // A pipeline's goes with the pipeline, and so its others.
+            let pipeline = self.catalog.embeddings().pipelines.iter().find(|p| p.triggers().contains(t)).map(|p| p.name.clone());
+            let taken = match (pipeline, self.catalog.trigger(t).is_some()) {
+                (_, false) => continue,
+                (Some(p), true) => self.drop_pipeline(&p)?,
+                (None, true) => self.drop_trigger(t)?,
+            };
             locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
             dropped.absorb(taken);
         }

@@ -2,6 +2,10 @@
 //! `<result offset clause>` and `<fetch first clause>` keep of its rows,
 //! in their order.
 
+mod search;
+
+pub use search::{Hints, Search, SearchTarget, Strategy};
+
 use super::{Expr, SortKey, render_expr};
 use crate::value::Value;
 
@@ -30,6 +34,11 @@ pub struct Fetch {
     /// kept too: the keys of its rows' sort, columns of its rows, none until
     /// that sort is made (`binder/order_by.rs`). None of ONLY.
     pub ties: Option<Vec<SortKey>>,
+    /// \[EXTENSION\] APPROX, EXACT or neither, and what APPROX asks.
+    pub search: Search,
+    /// \[EXTENSION\] The vector search hints written after it (R13.4),
+    /// boxed, as they are seldom written and a plan is kept small.
+    pub hints: Box<Hints>,
 }
 
 impl Limit {
@@ -48,7 +57,7 @@ impl Limit {
     /// The most rows it keeps, if its FETCH FIRST count is a constant row
     /// count, of ONLY.
     pub fn most(&self) -> Option<usize> {
-        let Some(Fetch { count: Expr::Const(Value::Exact(d)), percent: false, ties: None }) = &self.fetch else { return None };
+        let Some(Fetch { count: Expr::Const(Value::Exact(d)), percent: false, ties: None, .. }) = &self.fetch else { return None };
         if d.scale != 0 {
             return None;
         }
@@ -84,6 +93,11 @@ impl Limit {
             }
             if f.ties.is_some() {
                 out.push_str(" with ties");
+            }
+            match &f.search {
+                Search::Unstated => {}
+                Search::Exact => out.push_str(" exact"),
+                Search::Approximate(_) => out.push_str(" approx"),
             }
         }
         out

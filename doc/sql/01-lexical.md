@@ -35,7 +35,9 @@ turborel: SQLCODE -101 (SQLSTATE 2A000): character '@' cannot start a <token> [X
 ```
 
 The operators and delimiters are `( ) , . ; ' " + - * / = < > <= >= <>
-|| ?` and `:`. Not equal is written `<>`: `!=` is not SQL.
+|| ?` and `:`. Not equal is written `<>`: `!=` is not SQL. The distance
+operators of vectors, `<-> <=> <#> <+> <~> <%>`, are delimiters too
+([Vectors](14-vectors.md#distances)).
 
 ## Identifiers
 
@@ -153,8 +155,22 @@ SELECT NAME   -- the name alone
 ```
 
 A comment is a separator. It needs the newline that ends it; the client
-ends one that the end of its input cuts short. SQL-92 has no `/* */`
-comments.
+ends one that the end of its input cuts short.
+
+A bracketed comment, of SQL:2023's Feature T351, begins with `/*` and
+ends with `*/`, across lines if need be. One begun within it is nested
+and ends first, so a comment may hold one. A statement whose comment is
+not ended is refused (SQLSTATE 2A000, SQLCODE -101):
+
+```sql
+VALUES (1 /* one /* nested */ still the comment */ + 2);
+```
+
+A bracketed comment that begins a statement and whose text begins with
+`+` is a hint. `/*+ VECTOR_WAIT_FRESH */` asks for the vectors waiting
+for the queue after commit first (see [CREATE VECTOR
+PIPELINE](statements/create-vector-pipeline.md)). A hint not known is a
+comment alone.
 
 ## Key words
 

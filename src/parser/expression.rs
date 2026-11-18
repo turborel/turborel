@@ -484,7 +484,8 @@ impl Parser {
     /// expression>` of no multiset operator.
     pub(super) fn sum(&mut self) -> Result<ValueExpression> {
         let left = self.term()?;
-        self.additions(left)
+        let left = self.additions(left)?;
+        self.distances(left)
     }
 
     /// [X3.135-1986 §5.9] `<term>` ::= `<factor>` | `<term>` * `<factor>` | `<term>` / `<factor>`

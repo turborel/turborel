@@ -20,6 +20,7 @@ fn read(value: Value, first: usize) -> NearestRead {
     NearestRead {
         table: QualifiedName { auth: "A".into(), ident: "T".into() },
         index: "T_G".into(),
+        position: 0,
         method: "rtree".into(),
         columns: vec![0, 1],
         located: false,
@@ -30,6 +31,7 @@ fn read(value: Value, first: usize) -> NearestRead {
         first,
         detail: String::new(),
         cost: 0.0,
+        approximate: None,
     }
 }
 

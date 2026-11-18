@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::alter::value_of;
 use super::indexes::IndexSpec;
 use super::{Completion, Session, State};
-use crate::ast::{IndexStatement, TableOptionValue};
+use crate::ast::{IndexMaintenance, IndexStatement, TableOptionValue};
 use crate::binder::{bind_key, qualify};
 use crate::catalog::{IndexDesc, QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlError, fail};
@@ -22,6 +22,13 @@ use crate::parser::Parser;
 use crate::settings::FUNCTION_CALLS;
 use crate::storage::chosen;
 use crate::value::Value;
+
+mod hybrid_altered;
+mod hybrid_embedded;
+mod hybrid_settled;
+
+/// \[EXTENSION\] The most rounds of maintenance MERGE DELTA runs.
+const MOST_MERGE_ROUNDS: usize = 1 << 16;
 
 /// A Syntax Rule of this extension broken (SQLCODE -103).
 fn refused(message: &str) -> SqlError {
@@ -50,6 +57,18 @@ fn admitted(st: &State, (desc, name): (&TableDesc, &str), method: &str, expressi
 }
 
 impl Session {
+    /// SQLCODE -917 if this session is in a transaction, since an index
+    /// statement runs outside one.
+    fn outside_transaction(&self) -> Result<()> {
+        if self.inner.borrow().tx.is_some() {
+            return fail(
+                Code::TransactionState,
+                "[EXTENSION] an index statement runs outside a transaction: commit or roll back first".to_owned(),
+            );
+        }
+        Ok(())
+    }
+
     /// \[EXTENSION\] Runs the index statement `stmt` on `st`.
     ///
     /// # Errors
@@ -59,12 +78,7 @@ impl Session {
     /// or option not there, or a value not of its option's kind; those of
     /// `Database::create_index`, `drop_index`.
     pub(super) fn index_statement(&self, st: &Arc<State>, stmt: &IndexStatement) -> Result<Completion> {
-        if self.inner.borrow().tx.is_some() {
-            return fail(
-                Code::TransactionState,
-                "[EXTENSION] an index statement runs outside a transaction: commit or roll back first".to_owned(),
-            );
-        }
+        self.outside_transaction()?;
         match stmt {
             IndexStatement::Create { name: (name, name_at), table, columns, expressions, storage } => {
                 let qn = qualify(table, &self.default_schema());
@@ -84,17 +98,19 @@ impl Session {
                 }
                 let options = options_of(st, &method, &storage.options)?;
                 admitted(st, (desc, name), &method, expressions)?;
-                let columns = columns.iter().map(|(c, _)| c.clone()).collect();
+                let columns: Vec<String> = columns.iter().map(|(c, _)| c.clone()).collect();
                 let expressions = expressions.iter().map(|(part, text, _)| (*part, text.clone())).collect();
-                let spec = IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls: false, expressions };
-                self.db.noted(self.db.make_index(&spec))?;
+                // A hybrid index holds keys with a null, each part the value of
+                // its own column (`index/vector/hybrid/index.rs`).
+                let nulls = method == crate::index::vector::hybrid::HYBRID_METHOD && columns.len() == 2;
+                self.index_made(st, &IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls, expressions })?;
             }
             IndexStatement::Drop { name: (name, at) } => {
                 let ix = self.index_owned(st, name).or_at(*at)?;
                 if ix.unique {
                     return Err(refused(&format!("index {name} is a UNIQUE constraint's: drop the constraint"))).or_at(*at);
                 }
-                self.db.drop_index(name)?;
+                self.index_dropped(&ix)?;
             }
             IndexStatement::Alter { name: (name, at), options } => {
                 let ix = self.index_owned(st, name).or_at(*at)?;
@@ -102,10 +118,47 @@ impl Session {
                 options_of(st, &ix.method, options)?;
                 let given: Vec<(String, Option<Value>)> =
                     options.iter().map(|o| (o.name.clone(), o.value.as_ref().map(value_of))).collect();
-                self.db.alter_index(name, &given)?;
+                self.index_altered(st, &ix, &given, false)?;
+            }
+            IndexStatement::Maintain { name: (name, at), action } => {
+                let ix = self.index_owned(st, name).or_at(*at)?;
+                self.maintain_index(st, &ix, action)?;
             }
         }
         Ok(Completion::Success)
+    }
+
+    /// \[EXTENSION\] ALTER INDEX REBUILD, MERGE DELTA, LOAD or UNLOAD of
+    /// `ix` (the vector design document §10.6): built again, of its
+    /// options and the parameters given, each named as CREATE VECTOR INDEX
+    /// names it (`parser::option_of`); its maintenance run now, as the
+    /// maintenance job runs it, until it has none to do; or its structure
+    /// taken into memory or let go.
+    fn maintain_index(&self, st: &State, ix: &IndexDesc, action: &IndexMaintenance) -> Result<()> {
+        match action {
+            IndexMaintenance::Rebuild(parameters) => {
+                let named: Vec<TableOptionValue> = parameters
+                    .iter()
+                    .map(|p| TableOptionValue { name: crate::parser::option_of(&ix.method, &p.name), ..p.clone() })
+                    .collect();
+                options_of(st, &ix.method, &named)?;
+                let given: Vec<(String, Option<Value>)> = named.iter().map(|o| (o.name.clone(), o.value.as_ref().map(value_of))).collect();
+                self.index_altered(st, ix, &given, true)
+            }
+            IndexMaintenance::MergeDelta => {
+                let index = Arc::clone(st.index_of(&ix.name)?);
+                let _turn = self.db.background().maintenance_turn.take("maintenance")?;
+                // Bounded, so an index that always finds more to do ends.
+                for _ in 0..MOST_MERGE_ROUNDS {
+                    if !index.maintain()? {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+            IndexMaintenance::Load => st.index_of(&ix.name)?.reside(true),
+            IndexMaintenance::Unload => st.index_of(&ix.name)?.reside(false),
+        }
     }
 
     /// [ISO/IEC 9075:1992 §11.10 AR1] Its identifier owns the schema of

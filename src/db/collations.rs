@@ -155,6 +155,9 @@ impl State {
             .collect::<Result<Vec<_>>>()?;
         let collations = if collations.iter().any(Option::is_some) { collations } else { Vec::new() };
         let nulls = ix.unique && table.nulls_not_distinct(&ix.columns);
+        // A hybrid index's parts each hold their own column's value, so it
+        // is given keys with a null too (`index/vector/hybrid/index.rs`).
+        let nulls = nulls || (ix.method == crate::index::vector::hybrid::HYBRID_METHOD && ix.columns.len() == 2);
         Ok(IndexDesc { collations, nulls, ..ix })
     }
 
@@ -398,7 +401,7 @@ mod tests {
     /// not distinct`: the constraint's index of NULLS NOT DISTINCT holds
     /// them (both true); another index on its columns does not (unique
     /// false); the index of a NULLS DISTINCT constraint does not (not
-    /// distinct false).
+    /// distinct false). A hybrid index holds them too.
     #[test]
     fn the_index_of_a_nulls_not_distinct_key_holds_nulls() {
         let column = |name: &str| ColumnDesc {
@@ -443,6 +446,10 @@ mod tests {
         assert!(nulls(0, true), "the constraint's index");
         assert!(!nulls(0, false), "another on its columns");
         assert!(!nulls(1, true), "of NULLS DISTINCT");
+        let hybrid =
+            |columns: Vec<usize>| IndexDesc { method: crate::index::vector::hybrid::HYBRID_METHOD.into(), columns, ..index(1, false) };
+        assert!(st.with_derived(hybrid(vec![0, 1]), &table).unwrap().nulls, "a hybrid index, each part of its own column");
+        assert!(!st.with_derived(hybrid(vec![1]), &table).unwrap().nulls, "a hybrid index of its text alone");
     }
 
     /// Verifies: [DESIGN] RULES.md D60: a collation a database uses, of

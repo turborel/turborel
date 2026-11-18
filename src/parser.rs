@@ -9,7 +9,7 @@
 //! Syntax that is valid SQL but not implemented reports `Code::Unsupported`
 //! rather than a misleading syntax error.
 
-pub use ddl::{RESEAL, REVERT_COLLATION};
+pub use ddl::{RESEAL, REVERT_COLLATION, method_of_type, option_of};
 pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
 pub(crate) use periods::period_constraint;
@@ -36,6 +36,7 @@ mod diagnostics;
 mod distribution;
 mod domains;
 mod dynamic;
+mod embedding;
 mod expression;
 mod filter;
 mod generated;
@@ -77,6 +78,7 @@ mod stored;
 mod target;
 mod triggers;
 mod users;
+mod vectors;
 
 /// \[DESIGN\] The deepest syntax tree the parser builds. Each nested `<search
 /// condition>`, `<boolean term>`, `<value expression>`, `<term>`, `<query expression>`
@@ -141,6 +143,10 @@ pub struct Parser {
     blocks: Vec<psm::Block>,
     /// [ISO/IEC 9075-4:2006 draft §12.8] In an SQL-server module, its own schema, which MODULE names.
     module: Option<String>,
+    /// \[EXTENSION\] The number of each `<dynamic parameter specification>`
+    /// by its place among them, of a text that copies some of a statement's
+    /// (`Parser::hybrid_expansion`); of none, each is numbered by its place.
+    numbers: Vec<usize>,
 }
 
 /// How a parser takes a `<catalog name>` written in a qualified name or a
@@ -223,6 +229,7 @@ impl Parser {
             routine: None,
             blocks: Vec::new(),
             module: None,
+            numbers: Vec::new(),
         })
     }
 
@@ -542,7 +549,7 @@ impl Parser {
             Tok::KeyWord(kw::UPDATE) => self.update_statement()?,
             Tok::KeyWord(kw::SELECT) => self.select_statement()?,
             Tok::KeyWord(kw::GRANT | kw::REVOKE) => self.schema_statement()?,
-            Tok::KeyWord(kw::DROP | kw::ALTER | kw::CREATE) => self.schema_manipulation()?,
+            Tok::KeyWord(kw::DROP | kw::ALTER | kw::CREATE) => self.manipulation()?,
             // [ISO/IEC 9075:1992 §20.1] a <temporary table declaration>
             // is a <direct SQL data statement>.
             Tok::KeyWord(kw::DECLARE) => return self.declare_statement(),

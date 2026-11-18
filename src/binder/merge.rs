@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::ast::MergeStatement;
+use crate::ast::{MatchedAction, MergeStatement, MergeWhen};
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::error::Result;
 use crate::exec::TransitionRows;
@@ -63,10 +63,12 @@ pub struct BoundMerge {
     pub checks: Vec<ViewCheck>,
     /// The authorization identifier it runs under: CURRENT_USER.
     pub auth: String,
-    /// [ISO/IEC 9075-2:2023 §15.14 GR9] Each generated column of the base
-    /// table, by its position, its generation expression bound over its
+    /// [ISO/IEC 9075-2:2023 §15.14 GR9] Of each clause, in order, each
+    /// generated column of the base table an update by it writes, by its
+    /// position, its generation expression bound over its row, as
+    /// `written_generations` gives them; none of a clause that updates no
     /// row.
-    pub generated: Vec<(usize, Expr)>,
+    pub generated: Vec<Vec<(usize, Expr)>>,
     /// [ISO/IEC 9075-2:2023 §14.12 GR6a i 1 A I] Of a typed table named
     /// without ONLY, its proper subtables, whose rows it reads and changes
     /// by their superrows; else none.
@@ -176,7 +178,11 @@ pub fn bind_merge(
         Some(view) => Cond::And(Box::new(sc1), Box::new(view)),
         None => sc1,
     };
-    let generated = super::generations(cx.db, &write.base)?;
+    let updated = |c: &MergeWhen| match c {
+        MergeWhen::Matched { action: MatchedAction::Update(set), .. } => super::written_generations(cx.db, &write.base, Some(set)),
+        MergeWhen::Matched { action: MatchedAction::Delete, .. } | MergeWhen::NotMatched { .. } => Ok(Vec::new()),
+    };
+    let generated = stmt.clauses.iter().map(updated).collect::<Result<_>>()?;
     Ok(BoundMerge {
         named: name,
         table: write.base.name.clone(),

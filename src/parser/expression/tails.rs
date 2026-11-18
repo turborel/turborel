@@ -3,7 +3,8 @@
 //! ISO/IEC 9075:1992 §8.12], a predicate's operator and operands
 //! [ISO/IEC 9075:1992 §8.1], and the operators, sign, collation and
 //! qualifiers of a `<value expression>` [X3.135-1986 §5.9; ISO/IEC
-//! 9075:1992 §6.13, §6.15].
+//! 9075:1992 §6.13, §6.15], and \[EXTENSION\] the distance operators of
+//! VECTOR (RULES.md D93).
 //!
 //! \[DESIGN\] Each is read apart from the production that reads its first
 //! operand, which is where a nesting of expressions recurs: so the frames
@@ -11,12 +12,15 @@
 //! nested to `MAX_NESTING_DEPTH` is read within half the default stack
 //! (RULES.md R-CF-6).
 
-use crate::ast::{Composite, PeriodOperand, Predicate, RowValue, SearchCondition, Sign, TruthValue, ValueExpression};
+use crate::ast::{
+    Composite, Literal, PeriodOperand, Predicate, RowValue, SearchCondition, Sign, TruthValue, ValueExpression, ValueSpecification,
+};
 use crate::error::Result;
 use crate::functions::CONCATENATION;
-use crate::lexer::{delim, kw};
+use crate::lexer::{Tok, delim, kw};
 use crate::parser::Parser;
 use crate::value::ArithOp;
+use crate::vector::functions::{OPERATORS, VECTOR_DISTANCE};
 
 impl Parser {
     /// [X3.135-1986 §5.18] The rest of a `<search condition>` whose first
@@ -144,6 +148,31 @@ impl Parser {
             self.deepen()?;
             let right = self.term()?;
             left = ValueExpression::Dyadic(Box::new(left), op, Box::new(right));
+        }
+    }
+
+    /// \[EXTENSION\] The rest of a `<common value expression>` whose
+    /// first sum is `left`: a distance operator of VECTOR and another sum,
+    /// each (RULES.md D93). Binding less tightly than + and -, more than a
+    /// comparison, `a <-> b + c < 1` is `(a <-> (b + c)) < 1`.
+    ///
+    /// ```text
+    /// <distance expression> ::= <sum> | <distance expression> <distance operator> <sum>
+    /// <distance operator> ::= <-> | <=> | <#> | <+> | <~> | <%>
+    /// ```
+    ///
+    /// Each is VECTOR_DISTANCE of the two and its metric's name.
+    pub(super) fn distances(&mut self, mut left: ValueExpression) -> Result<ValueExpression> {
+        loop {
+            let at = self.here();
+            let Tok::Delimiter(d) = self.peek() else { return Ok(left) };
+            let Some(&(_, metric)) = OPERATORS.iter().find(|(op, _)| op == d) else { return Ok(left) };
+            self.advance();
+            self.deepen()?;
+            let first = self.term()?;
+            let right = self.additions(first)?;
+            let named = ValueExpression::Value(ValueSpecification::Literal(Literal::Character(metric.to_owned())));
+            left = ValueExpression::Function { name: VECTOR_DISTANCE, args: vec![left, right, named], at };
         }
     }
 

@@ -117,11 +117,11 @@ fn a_type_is_registered_once_by_its_name() {
     }
     db.register_type(Box::new(Ident)).unwrap();
     assert_eq!(db.register_type(Box::new(Named("IDENT", None))).err().map(|e| e.code), Some(Code::Api), "twice");
-    // Beside the built-in full-text types (RULES.md D87) and geometry types
-    // (D-SPATIAL-FAMILY).
+    // Beside the built-in full-text types (RULES.md D87), VECTOR (D93) and
+    // the geometry types (D-SPATIAL-FAMILY).
     let types = db.types().unwrap();
     let names: Vec<_> = types.names().filter(|n| !n.starts_with("ST_") && *n != "GEOMETRY").collect();
-    assert_eq!(names, ["FT_PATTERN", "FULLTEXT", "IDENT"]);
+    assert_eq!(names, ["FT_PATTERN", "FULLTEXT", "IDENT", "VECTOR"]);
     assert_eq!(types.names().filter(|n| n.starts_with("ST_")).count(), 27);
 }
 

@@ -21,6 +21,7 @@ mod fulltext;
 mod generated;
 mod geometry;
 mod grouping_sets;
+mod hash;
 mod hypothetical;
 mod json;
 mod json_index;
@@ -58,6 +59,7 @@ mod search_cycle;
 mod sequences;
 mod server;
 mod shadow;
+mod spatial_curves;
 mod spatial_planar;
 mod spatial_srs;
 mod spatial_types;
@@ -72,6 +74,10 @@ mod temporal;
 mod temporal_references;
 mod triggers;
 mod truncate;
+mod vector;
+mod vector_embed;
+mod vector_hybrid;
+mod vector_indexes;
 mod view_defaults;
 mod vr;
 mod waits;
@@ -93,9 +99,8 @@ pub use server::SERVER;
 pub use shadow::SHADOW;
 pub use stats::STATS;
 pub use tailorings::TAILORINGS;
-pub use vr::VR;
-pub use waits::WAITS;
 pub use zones::ZONES;
+pub use {vr::VR, waits::WAITS};
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
@@ -103,7 +108,7 @@ pub fn all() -> Vec<Mutation> {
 }
 
 /// The core's mutations: transactions, durability, constraints, assertions, the hash index. Rekeying's are in `rekey.rs`.
-pub const MUTATIONS: [Mutation; 45] = [
+pub const MUTATIONS: [Mutation; 43] = [
     Mutation {
         name: "hash-key-stream-owner",
         package: Package::Core,
@@ -572,28 +577,5 @@ pub const MUTATIONS: [Mutation; 45] = [
         replacement: "            Kind::Count(op, _) => Register::of(*op, false, Move::Still),",
         integration: &["assertion_totals::two_transactions_meet_only_moving_a_value_one_way_4_28"],
         unit: &[],
-    },
-    Mutation {
-        name: "hash-key-twice",
-        package: Package::Core,
-        breaks: "a hash index gives a row of a key inserted twice twice",
-        file: "src/index/hash.rs",
-        original: "            if given.contains(&v)? {",
-        replacement: "            if given.contains(&v)? && v.is_empty() {",
-        integration: &[],
-        unit: &["index::hash::tests::a_key_of_many_rows_is_read_a_page_at_a_time"],
-    },
-    Mutation {
-        name: "hash-tail-kept",
-        package: Package::Core,
-        breaks: "a hash table appends to a page a split or merge rewrote",
-        file: "src/engine/hash.rs",
-        original: "            self.set_tail(b, 0);",
-        replacement: "            drop(b);",
-        integration: &[],
-        unit: &[
-            "engine::hash::tests::it_holds_what_a_model_holds",
-            "engine::hash::tests::a_hot_keys_bucket_splits_and_merges_a_page_at_a_time",
-        ],
     },
 ];
