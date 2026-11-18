@@ -118,6 +118,27 @@ DOCUMENT of version '1.1'. A result longer than its type fails with
 SQLSTATE 22001. Characters a parse would change, such as a carriage
 return, are written as character references.
 
+XMLSERIALIZE is how the result of a query is serialized. It writes by
+XML's output method, with no indentation, CDATA section, document type
+declaration or standalone declaration, and undeclares no namespace
+prefix, in version '1.1' too, so an element copied without its parent's
+prefixes is written within their scope. A value it cannot write, such
+as an attribute alone or a character its version has not, fails with
+SQLSTATE 2200W, naming the serialization error.
+
+```sql
+VALUES (XMLSERIALIZE(XMLQUERY('declare copy-namespaces preserve, no-inherit; let $b := <b/> return <x:a xmlns:x="u">{$b}</x:a>' RETURNING SEQUENCE BY REF EMPTY ON EMPTY) AS VARCHAR(60) VERSION '1.1'));
+VALUES (XMLSERIALIZE(XMLQUERY('attribute a {1}' RETURNING SEQUENCE BY REF EMPTY ON EMPTY) AS VARCHAR(60)));
+```
+
+```
+
+--------------------------------------------------------------
+ <x:a xmlns:x="u"><b/></x:a>
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2200W): the XML value cannot be serialized: it holds an attribute that is no element's [Serialization §2] err:SENR0001 [ISO/IEC 9075-14:2006 draft §10.15 GR11a i]
+```
+
 A value selected without XMLSERIALIZE is shown as its serialization.
 
 ```sql

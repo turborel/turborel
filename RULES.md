@@ -3937,7 +3937,11 @@ stored before reads as it did. `xml::serialize` writes
 a value by the XML output method of XSLT 2.0 and XQuery 1.0 Serialization,
 after its sequence normalization. It writes no CDATA section, document
 type declaration or indentation, and writes as character references what a
-parse would otherwise change.
+parse would otherwise change. XMLSERIALIZE is how a query's result is
+serialized, XQuery's Serialization Feature, so it serializes with the
+parameters' defaults [XQuery Appendix C.3]: it undeclares no prefix, of
+XML 1.1 too, though a value sent over a connection in XML 1.1 does, so a
+client reads back its tree.
 
 A simple type (`xml::SimpleType`) is a built-in type, a list, a union, or
 a restriction of one, holding its facets merged with its base's as it is

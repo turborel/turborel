@@ -242,3 +242,29 @@ fn types_brought_together_10_3() {
         2
     );
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.8, §10.15] [XQuery §2.2.4,
+/// §5.2.6, Appendix C.3] the Serialization Feature: a query's result is
+/// serialized by XMLSERIALIZE with C.3's parameters, the XML method,
+/// version 1.0 and UTF-8 by default, no indentation, CDATA section,
+/// document type declaration or standalone declaration, and no prefix
+/// undeclared, of XML 1.1 too; its serialization errors are reported as
+/// SQLSTATE 2200W [Serialization §2, §5.1.1].
+#[test]
+fn the_serialization_feature_5_2_6() {
+    let db = documents();
+    let a = db.session("A");
+    let sql = |text: &str, options: &str| {
+        format!("VALUES (XMLSERIALIZE(XMLQUERY('{text}' RETURNING SEQUENCE BY REF EMPTY ON EMPTY) AS VARCHAR(200){options}))")
+    };
+    let query = |text: &str, options: &str| rows(&a, &sql(text, options));
+    assert_eq!(query("<a><b>x]]&gt;y</b><c/></a>", "").unwrap(), ["<a><b>x]]&gt;y</b><c/></a>"]);
+    assert_eq!(query("(1, 2, <a/>, 3)", " INCLUDING XMLDECLARATION").unwrap(), ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>1 2<a/>3"]);
+    let no_inherit = "declare copy-namespaces preserve, no-inherit; let $b := <b/> return <x:a xmlns:x=\"u\">{$b}</x:a>";
+    assert_eq!(query(no_inherit, " VERSION '1.1'").unwrap(), ["<x:a xmlns:x=\"u\"><b/></x:a>"], "no prefix is undeclared");
+    for (text, rule) in [("attribute a {1}", "err:SENR0001"), ("<a>{codepoints-to-string(1)}</a>", "err:SERE0006")] {
+        let error = failure(&a, &sql(text, ""));
+        assert_eq!(error.sqlstate(), SqlState::XQUERY_SERIALIZATION_ERROR, "{error}");
+        assert!(error.to_string().contains(rule), "{error}");
+    }
+}

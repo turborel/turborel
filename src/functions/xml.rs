@@ -247,6 +247,14 @@ pub struct XmlSerialize(pub Serialization);
 /// begins with.
 const BYTE_ORDER_MARK: char = '\u{FEFF}';
 
+/// [§10.15 GR9] Whether a prefix the tree undeclares is written
+/// undeclared: never, undeclare-prefixes' default [XQuery Appendix C.3],
+/// as XQuery's Serialization Feature asks [XQuery §5.2.6] and GR9b leaves
+/// XML 1.1 to the implementation. A child copied with copy-namespaces
+/// no-inherit is so written with its parent's prefixes in scope, as
+/// [Serialization §5] lets the reconstructed tree hold them.
+pub const UNDECLARE_PREFIXES: bool = false;
+
 impl XmlSerialize {
     /// [§10.15 GR8] Whether an XML declaration is written: if asked for;
     /// if neither asked for nor refused, of a DOCUMENT of XML 1.1 \[GR8c
@@ -260,14 +268,17 @@ impl XmlSerialize {
 
     /// The parameters of [Serialization] it serializes by [§10.15 GR4 to
     /// GR10]: \[GR7\] implementation-defined, no standalone declaration;
-    /// \[GR9b\] implementation-defined, XML 1.1 undeclares prefixes.
+    /// \[GR9b\] implementation-defined, no prefix undeclared of XML 1.1
+    /// either, as undeclare-prefixes is no by default for XQuery's
+    /// Serialization Feature, and SQL/XML gives no way to set it [XQuery
+    /// §5.2.6, Appendix C.3].
     fn parameters(&self) -> Parameters {
         let s = &self.0;
         Parameters {
             version: s.version,
             declaration: self.declares(),
             encoding: if s.binary && s.utf16 { "UTF-16" } else { "UTF-8" },
-            undeclare: s.version == Version::V11,
+            undeclare: UNDECLARE_PREFIXES,
         }
     }
 }

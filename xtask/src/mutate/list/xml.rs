@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// Each XML mechanism broken alone, and the tests that fail.
-pub const XML: [Mutation; 40] = [
+pub const XML: [Mutation; 41] = [
     Mutation {
         name: "xml-element-type-match",
         package: Package::Core,
@@ -135,6 +135,16 @@ pub const XML: [Mutation; 40] = [
         original: "        if self.0.syntax == Syntax::Document && !sequence.is_document() {",
         replacement: "        if false {",
         integration: &["xml::xmlserialize_6_8"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-serialize-undeclares",
+        package: Package::Core,
+        breaks: "XMLSERIALIZE of XML 1.1 undeclares prefixes, against undeclare-prefixes' default",
+        file: "src/functions/xml.rs",
+        original: "pub const UNDECLARE_PREFIXES: bool = false;",
+        replacement: "pub const UNDECLARE_PREFIXES: bool = true;",
+        integration: &["xml::the_serialization_feature_5_2_6"],
         unit: &[],
     },
     Mutation {
