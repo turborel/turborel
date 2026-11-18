@@ -5,26 +5,24 @@
 //! multipolygon of its patches, a compound curve the linestring of its
 //! curves, a curve polygon the polygon of its rings, a multicurve and a
 //! multisurface the multilinestring and multipolygon of their elements.
-//! A curve of another interpolation is given to `CURVE_LINEARIZER`.
+//! A curve of another interpolation is given to `CURVE_LINEARIZER`. A
+//! solid is the multipolygon of its shells' patches, whose x and y cover
+//! the solid's projection, as the routines that ignore z take it
+//! [§5.1.31 to §5.1.54].
 
 use super::check::limited;
 use super::{Body, Collection, Coords, Curve, Dims, Geom, Rings, Surface};
-use crate::error::{Code, Result, SqlError};
+use crate::error::Result;
 use crate::geometry::MAX_DEPTH;
 
 /// \[DESIGN\] The linestring a curve of another interpolation than a
 /// linestring's is approximated by, its first point its start and its last
 /// its end: ST_CurveToLine of the curve engines at their default
-/// tolerance (RULES.md D124). None of a curve it does not take.
-pub const CURVE_LINEARIZER: fn(&Curve, Dims) -> Option<Result<Coords>> = crate::spatial::curves::adapt::linearizer;
+/// tolerance (RULES.md D124).
+pub const CURVE_LINEARIZER: fn(&Curve, Dims) -> Result<Coords> = crate::spatial::curves::adapt::linearizer;
 
 pub(super) fn of(g: &Geom) -> Result<Geom> {
     Ok(g.part(body(&g.body, g.dims, 1)?))
-}
-
-/// SQLCODE -900: a value no planar routine takes yet.
-fn unlinear(kind: &str) -> SqlError {
-    SqlError::new(Code::Unsupported, format!("[DESIGN] this spatial routine does not yet take a value of {kind} (RULES.md D119)"))
 }
 
 fn body(b: &Body, dims: Dims, depth: usize) -> Result<Body> {
@@ -37,23 +35,14 @@ fn body(b: &Body, dims: Dims, depth: usize) -> Result<Body> {
             Polygons::One(rings) => Body::Surface(Surface::Polygon(rings)),
             Polygons::Many(all) => Body::Collection(Collection::MultiPolygon(all)),
         },
-        Body::Solid(_) => return Err(unlinear("ST_BRepSolid")),
+        Body::Solid(shells) => Body::Collection(Collection::MultiPolygon(every_polygon(shells, dims, deeper)?)),
         Body::Collection(c) => Body::Collection(match c {
             Collection::Geometry(parts) => Collection::Geometry(parts.iter().map(|p| body(p, dims, deeper)).collect::<Result<_>>()?),
             Collection::MultiPoint(_) | Collection::MultiLineString(_) | Collection::MultiPolygon(_) => c.clone(),
             Collection::MultiCurve(curves) => {
                 Collection::MultiLineString(curves.iter().map(|one| curve(one, dims, deeper)).collect::<Result<_>>()?)
             }
-            Collection::MultiSurface(surfaces) => {
-                let mut all = Vec::new();
-                for s in surfaces {
-                    match polygons(s, dims, deeper)? {
-                        Polygons::One(rings) => all.push(rings),
-                        Polygons::Many(more) => all.extend(more),
-                    }
-                }
-                Collection::MultiPolygon(all)
-            }
+            Collection::MultiSurface(surfaces) => Collection::MultiPolygon(every_polygon(surfaces, dims, deeper)?),
         }),
     })
 }
@@ -84,9 +73,21 @@ fn curve(c: &Curve, dims: Dims, depth: usize) -> Result<Coords> {
             if c.is_empty() {
                 return Ok(Vec::new());
             }
-            CURVE_LINEARIZER(c, dims).unwrap_or_else(|| Err(unlinear(c.kind().sql_name())))
+            CURVE_LINEARIZER(c, dims)
         }
     }
+}
+
+/// The polygons of each of `surfaces`.
+fn every_polygon(surfaces: &[Surface], dims: Dims, depth: usize) -> Result<Vec<Rings>> {
+    let mut all = Vec::new();
+    for s in surfaces {
+        match polygons(s, dims, depth)? {
+            Polygons::One(rings) => all.push(rings),
+            Polygons::Many(more) => all.extend(more),
+        }
+    }
+    Ok(all)
 }
 
 /// A surface's polygons: one, or a collection's.
@@ -105,15 +106,6 @@ fn polygons(s: &Surface, dims: Dims, depth: usize) -> Result<Polygons> {
         Surface::Triangle(ring) => Polygons::One(if ring.is_empty() { Vec::new() } else { vec![ring.clone()] }),
         Surface::PolyhdrlSurface(patches) => Polygons::Many(patches.clone()),
         Surface::Tin(tin) => Polygons::Many(tin.triangles.iter().map(|t| vec![t.clone()]).collect()),
-        Surface::Compound(parts) => {
-            let mut all = Vec::new();
-            for part in parts {
-                match polygons(part, dims, depth.saturating_add(1))? {
-                    Polygons::One(rings) => all.push(rings),
-                    Polygons::Many(more) => all.extend(more),
-                }
-            }
-            Polygons::Many(all)
-        }
+        Surface::Compound(parts) => Polygons::Many(every_polygon(parts, dims, depth.saturating_add(1))?),
     })
 }

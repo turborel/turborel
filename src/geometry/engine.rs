@@ -7,7 +7,6 @@
 
 use super::model::{Body, Collection, Coords, Curve, Dims, Geom, Rings, Surface};
 use super::shape::{MULTILINE, MULTIPOINT, MULTIPOLYGON, Shape};
-use super::unsupported;
 use crate::error::Result;
 use crate::spatial::planar::{self, Geometry, Point};
 
@@ -15,10 +14,27 @@ use crate::spatial::planar::{self, Geometry, Point};
 ///
 /// # Errors
 ///
-/// SQLCODE -900 of a solid, which has no planar linear form; a curve
-/// is linearized by `CURVE_LINEARIZER` (`Geom::linear`).
+/// As `Geom::linear`: a curve is linearized by `CURVE_LINEARIZER`, and
+/// a solid is the region of x and y its shells' patches cover.
 pub fn engine_of(g: &Geom) -> Result<Geometry> {
-    body(&g.linear()?.xy().body)
+    let planar = body(&g.linear()?.xy().body)?;
+    if let (Body::Solid(_), Geometry::MultiPolygon(faces)) = (&g.body, &planar) {
+        return projection(faces);
+    }
+    Ok(planar)
+}
+
+/// [§5.1.31 to §5.1.54] A solid with z ignored: the region its faces
+/// cover in x and y, the union of those that are not edge on.
+fn projection(faces: &[Vec<Vec<Point>>]) -> Result<Geometry> {
+    let mut region = Geometry::Empty;
+    for face in faces {
+        let face = Geometry::Polygon(face.clone());
+        if planar::area(&face).is_some_and(|a| a > 0.0_f64) {
+            region = planar::union(&region, &face)?;
+        }
+    }
+    Ok(region)
 }
 
 fn points(coords: &Coords) -> Vec<Point> {
@@ -29,45 +45,27 @@ fn rings(rings: &Rings) -> Vec<Vec<Point>> {
     rings.iter().map(points).collect()
 }
 
-fn curve(part: &Curve) -> Result<Vec<Point>> {
-    match part {
-        Curve::LineString(coords) => Ok(points(coords)),
-        Curve::CircularString(_)
-        | Curve::Circle(_)
-        | Curve::GeodesicString(_)
-        | Curve::Elliptical(_)
-        | Curve::Nurbs(_)
-        | Curve::Clothoid(_)
-        | Curve::Spiral(_)
-        | Curve::Compound(_) => Err(unsupported("a curve the linear form left unlinearized")),
-    }
-}
-
-fn surface(part: &Surface) -> Result<Vec<Vec<Point>>> {
-    match part {
-        Surface::Polygon(r) => Ok(rings(r)),
-        Surface::CurvePolygon(_) | Surface::Triangle(_) | Surface::PolyhdrlSurface(_) | Surface::Tin(_) | Surface::Compound(_) => {
-            Err(unsupported("a surface the linear form left unlinearized"))
-        }
-    }
+/// The linear form of a part that is not linear, of x and y.
+fn linear_of(part: &Body) -> Result<Body> {
+    Ok(Geom { srid: 0, dims: Dims::Xy, body: part.clone() }.linear()?.body)
 }
 
 fn body(part: &Body) -> Result<Geometry> {
     Ok(match part {
         Body::Point(coords) => points(coords).first().map_or(Geometry::Empty, |point| Geometry::Point(*point)),
-        Body::Curve(c) => Geometry::Line(curve(c)?),
-        Body::Surface(s) => Geometry::Polygon(surface(s)?),
-        Body::Solid(_) => return Err(unsupported("a solid in a planar relationship")),
-        Body::Collection(c) => match c {
-            Collection::Geometry(parts) => Geometry::Collection(parts.iter().map(body).collect::<Result<_>>()?),
-            Collection::MultiPoint(list) => {
-                Geometry::MultiPoint(list.iter().filter_map(|coords| points(coords).first().copied()).collect())
-            }
-            Collection::MultiCurve(list) => Geometry::MultiLine(list.iter().map(curve).collect::<Result<_>>()?),
-            Collection::MultiLineString(list) => Geometry::MultiLine(list.iter().map(points).collect()),
-            Collection::MultiSurface(list) => Geometry::MultiPolygon(list.iter().map(surface).collect::<Result<_>>()?),
-            Collection::MultiPolygon(list) => Geometry::MultiPolygon(list.iter().map(rings).collect()),
-        },
+        Body::Curve(Curve::LineString(coords)) => Geometry::Line(points(coords)),
+        Body::Surface(Surface::Polygon(r)) => Geometry::Polygon(rings(r)),
+        Body::Collection(Collection::Geometry(parts)) => Geometry::Collection(parts.iter().map(body).collect::<Result<_>>()?),
+        Body::Collection(Collection::MultiPoint(list)) => {
+            Geometry::MultiPoint(list.iter().filter_map(|coords| points(coords).first().copied()).collect())
+        }
+        Body::Collection(Collection::MultiLineString(list)) => Geometry::MultiLine(list.iter().map(points).collect()),
+        Body::Collection(Collection::MultiPolygon(list)) => Geometry::MultiPolygon(list.iter().map(rings).collect()),
+        // The linear form has none of these, and takes each into one of
+        // the kinds above.
+        Body::Curve(_) | Body::Surface(_) | Body::Solid(_) | Body::Collection(Collection::MultiCurve(_) | Collection::MultiSurface(_)) => {
+            return body(&linear_of(part)?);
+        }
     })
 }
 

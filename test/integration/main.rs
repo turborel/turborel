@@ -256,6 +256,7 @@ mod settings;
 mod spatial_catalog;
 mod spatial_constructors;
 mod spatial_conversions;
+mod spatial_flat;
 mod spatial_index;
 mod spatial_lr;
 mod spatial_methods;

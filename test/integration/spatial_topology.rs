@@ -219,3 +219,17 @@ fn the_longest_topology_name() {
     a.run(&format!("CALL ST_INITTOPOGEO('{}')", "M".repeat(128))).unwrap();
     assert_eq!(state(&a, &format!("CALL ST_INITTOPOGEO('{}')", "M".repeat(129))), "22001");
 }
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §11.3.18
+/// Description 2i] no topology is made of a solid, alone or in a
+/// collection: 2FF02.
+#[test]
+fn no_topology_of_a_solid() {
+    let db = database();
+    let a = topology(&db);
+    let face = "POLYGON ((0 0 0, 0 1 0, 1 1 0, 1 0 0, 0 0 0))";
+    let g = format!(
+        "TREAT(ST_GEOMFROMTEXT('GEOMETRYCOLLECTION Z (POINT Z (5 5 5), BREPSOLID Z (POLYHEDRALSURFACE Z (PATCHES ({face}))))') AS ST_GEOMCOLLECTION)"
+    );
+    assert_eq!(state(&a, &format!("CALL ST_CREATETOPOGEO('T', {g})")), "2FF02");
+}

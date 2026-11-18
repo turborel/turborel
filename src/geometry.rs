@@ -158,29 +158,31 @@ impl Geometry {
         }
     }
 
-    /// Reads case-insensitive XY WKT (OGC 06-103r4 §7.2.2).
+    /// The planar value of x and y of the well-known text `text`, of any
+    /// type and coordinate dimension: the linear form of what
+    /// ST_GeomFromText reads [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
+    /// §5.1.62].
     ///
     /// # Errors
     ///
-    /// SQLCODE -301 for malformed text, non-finite coordinates, a line
-    /// with only one point, or an unclosed or too-short polygon ring;
-    /// -900 for unsupported types/dimensions or a representation limit.
+    /// SQLSTATE 2FF22 for malformed text, as the model's checks for a
+    /// value that is no value of its type; SQLCODE -900 past a
+    /// representation limit.
     pub fn from_wkt(text: &str, srid: i32) -> Result<Self> {
-        limited(text.len(), MAX_BYTES)?;
-        Self::of(wkt::read(text)?, srid)
+        Self::from_geom(&read_text(text, srid)?.linear()?.xy())
     }
 
-    /// Reads XY WKB, accepting either byte order independently for each
-    /// component (OGC 06-103r4 §8). A pair of NaNs denotes POINT EMPTY,
-    /// the GEOS interchange convention; other non-finite points fail.
-    /// EWKB flags and Z/M type codes are not accepted.
+    /// The planar value of x and y of the well-known binary `bytes`, of
+    /// either byte order, any type and coordinate dimension: the linear
+    /// form of what ST_GeomFromWKB reads [§5.1.63].
     ///
     /// # Errors
     ///
-    /// As [`Self::from_wkt`], including truncated or trailing bytes.
+    /// SQLSTATE 2FF23 for malformed bytes, as the model's checks; SQLCODE
+    /// -900 past a representation limit.
     pub fn from_wkb(bytes: &[u8], srid: i32) -> Result<Self> {
         limited(bytes.len(), MAX_BYTES)?;
-        Self::of(wkb::read(bytes)?, srid)
+        Self::from_geom(&model::read_wkb(bytes, srid)?.linear()?.xy())
     }
 
     fn from_canonical_wkb(bytes: &[u8], srid: i32) -> Result<Self> {
@@ -312,6 +314,18 @@ pub(crate) fn invalid(detail: &str) -> SqlError {
 
 pub(crate) fn unsupported(detail: &str) -> SqlError {
     SqlError::new(Code::Unsupported, format!("[EXTENSION] geometry does not support {detail}"))
+}
+
+/// The value the well-known text `text` represents in the system
+/// `srid`, as ST_GeomFromText reads it [ISO/IEC 13249-3:2016 (DIS, SC32
+/// N2593) §5.1.62].
+///
+/// # Errors
+///
+/// SQLSTATE 2FF22 of malformed text; SQLCODE -900 past `MAX_BYTES`.
+pub(crate) fn read_text(text: &str, srid: i32) -> Result<model::Geom> {
+    limited(text.len(), MAX_BYTES)?;
+    crate::spatial::formats::wkt::read_geom(text, srid)
 }
 
 fn limited(count: usize, maximum: usize) -> Result<()> {

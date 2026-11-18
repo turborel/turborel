@@ -150,8 +150,12 @@ pub fn to_model(c: &Curve, dims: Dims) -> model::Curve {
 /// default tolerance, in the coordinate plane (a geodesic string's
 /// geodesy needs its reference system, which the model's linear form
 /// does not carry).
-pub fn linearizer(c: &model::Curve, dims: Dims) -> Option<Result<model::Coords>> {
-    Some(curve_to_line(&from_model(c, dims), &Tolerance::DEFAULT, &Planar).map(|points| flat(&points, dims)))
+///
+/// # Errors
+///
+/// As ST_CurveToLine's.
+pub fn linearizer(c: &model::Curve, dims: Dims) -> Result<model::Coords> {
+    curve_to_line(&from_model(c, dims), &Tolerance::DEFAULT, &Planar).map(|points| flat(&points, dims))
 }
 
 #[cfg(test)]
@@ -176,7 +180,7 @@ mod tests {
     #[test]
     fn linear_form_of_an_arc() {
         let arc = model::Curve::CircularString(vec![0.0_f64, 0.0_f64, 1.0_f64, 1.0_f64, 2.0_f64, 0.0_f64]);
-        let line = linearizer(&arc, Dims::Xy).unwrap().unwrap();
+        let line = linearizer(&arc, Dims::Xy).unwrap();
         let points = coords(&line, Dims::Xy);
         assert!(points.len() > 8);
         assert_eq!(points.first().copied(), Some(Coord::xy(0.0, 0.0)));

@@ -1,10 +1,10 @@
 //! Mutations of the constructors and mutators of SQL/MM Spatial's
-//! geometry types (RULES.md R-TEST-9, D120).
+//! geometry types, and of the routines that ignore z of a solid (RULES.md R-TEST-9, D120).
 
 use super::{Mutation, Package};
 
 /// Each must fail the tests it names.
-pub const SPATIAL_MUTATORS: [Mutation; 10] = [
+pub const SPATIAL_MUTATORS: [Mutation; 16] = [
     Mutation {
         name: "spatial-mutators-circle-three",
         package: Package::Core,
@@ -103,6 +103,66 @@ pub const SPATIAL_MUTATORS: [Mutation; 10] = [
         original: "            if form.len() == WITH_Z && z.is_none() {",
         replacement: "            if false {",
         integration: &["spatial_constructors::point_constructors_take_each_dimension"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-mutators-solid-projection",
+        package: Package::Core,
+        breaks: "a solid ignoring z is its overlapping faces, not the region they cover",
+        file: "src/geometry/engine.rs",
+        original: "    if let (Body::Solid(_), Geometry::MultiPolygon(faces)) = (&g.body, &planar) {",
+        replacement: "    if let (Body::Point(_), Geometry::MultiPolygon(faces)) = (&g.body, &planar) {",
+        integration: &["spatial_flat::a_solid_relates_as_its_projection"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-mutators-solid-linear",
+        package: Package::Core,
+        breaks: "a solid's linear form loses its faces",
+        file: "src/geometry/model/linear.rs",
+        original: "MultiPolygon(every_polygon(shells, dims, deeper)?)",
+        replacement: "MultiPolygon(Vec::new())",
+        integration: &["spatial_flat::a_solid_relates_as_its_projection"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-mutators-solid-valid-closed",
+        package: Package::Core,
+        breaks: "a solid of an open shell is valid",
+        file: "src/geometry/routines/eval.rs",
+        original: "        return Ok(closed && patches_simple(",
+        replacement: "        return Ok(true && patches_simple(",
+        integration: &["spatial_flat::a_solid_is_valid_and_simple_in_space"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-mutators-topology-solid",
+        package: Package::Core,
+        breaks: "a topology is made of a solid's projection",
+        file: "src/spatial/topology/create.rs",
+        original: "        Body::Solid(_) => return Err(fault(RULE, SqlState::SPATIAL_INVALID_ARGUMENT, \"no topology is made of an ST_BRepSolid\")),",
+        replacement: "        Body::Solid(_) => (),",
+        integration: &["spatial_topology::no_topology_of_a_solid"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-mutators-normalize-first",
+        package: Package::Core,
+        breaks: "a ring closed by -0 and 0 is refused",
+        file: "src/geometry/model.rs",
+        original: "        check::normalize(&mut geom);\n        check::check(&geom)?;",
+        replacement: "        check::check(&geom)?;\n        check::normalize(&mut geom);",
+        integration: &["spatial_flat::text_cast_reads_every_type"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-mutators-cast-model-reader",
+        package: Package::Core,
+        breaks: "CAST of text drops z and m",
+        file: "src/geometry/kind/types.rs",
+        original: "            super::super::read_text(text.trim_end_matches(' '), srid)?",
+        replacement: "            super::super::read_text(text.trim_end_matches(' '), srid)?.xy()",
+        integration: &["spatial_flat::text_cast_reads_every_type"],
         unit: &[],
     },
 ];

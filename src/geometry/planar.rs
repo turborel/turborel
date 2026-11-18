@@ -2,9 +2,9 @@
 //! `Geom::xy`) as the planar representation D85's relationships take
 //! (`shape.rs`), so a value of any type relates as its linear form does.
 
-use super::model::{Body, Collection, Coords, Curve, Geom, Surface};
+use super::Geometry;
+use super::model::{Body, Collection, Coords, Curve, Dims, Geom, Surface};
 use super::shape::{self, COLLECTION, MULTILINE, MULTIPOINT, MULTIPOLYGON, Point, Shape};
-use super::{Geometry, unsupported};
 use crate::error::Result;
 
 impl Geometry {
@@ -12,11 +12,15 @@ impl Geometry {
     ///
     /// # Errors
     ///
-    /// SQLCODE -900 of a part that is not linear, as `Geom::linear` gives
-    /// none.
+    /// As `Geom::linear`, which takes a part that is not linear.
     pub fn from_geom(g: &Geom) -> Result<Geometry> {
         Geometry::of(body(&g.body)?, g.srid)
     }
+}
+
+/// The linear form of a part that is not linear, of x and y.
+fn linear_of(part: &Body) -> Result<Body> {
+    Ok(Geom { srid: 0, dims: Dims::Xy, body: part.clone() }.linear()?.body)
 }
 
 fn points(c: &Coords) -> Vec<Point> {
@@ -41,8 +45,9 @@ fn body(b: &Body) -> Result<Shape> {
             Collection::MultiPoint(ps) => Shape::Multi(MULTIPOINT, ps.iter().map(point).collect::<Result<_>>()?),
             Collection::MultiLineString(ls) => Shape::Multi(MULTILINE, ls.iter().map(|l| Shape::Line(points(l))).collect()),
             Collection::MultiPolygon(ps) => Shape::Multi(MULTIPOLYGON, ps.iter().map(|p| Shape::Polygon(rings(p))).collect()),
-            Collection::MultiCurve(_) | Collection::MultiSurface(_) => return Err(unsupported("a value not linear")),
+            // The linear form has neither, and takes each into a kind above.
+            Collection::MultiCurve(_) | Collection::MultiSurface(_) => return body(&linear_of(b)?),
         },
-        Body::Curve(_) | Body::Surface(_) | Body::Solid(_) => return Err(unsupported("a value not linear")),
+        Body::Curve(_) | Body::Surface(_) | Body::Solid(_) => return body(&linear_of(b)?),
     })
 }

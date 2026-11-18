@@ -2350,6 +2350,17 @@ when declared, with SQLCODE -103.
   [§6.1.2 Description 11]. NEW ST_Point(1E0, 2E0, 3E0) has z 3.
 - ST_Envelope widens a flat extent by a small amount, so that the
   rectangle of a point or a line along an axis is a polygon.
+- A solid in the routines that ignore z [§5.1.29 to §5.1.54] is the
+  region of x and y its faces cover. Their results are values of x and
+  y, so the ST_Solid cells of Tables 8 to 11 give surfaces.
+- ST_IsValid of a solid is 1 when each shell is closed and the patches
+  meet only along their boundaries [§9.2.1 Description 8 to 10].
+  ST_IsSimple of a solid is that second test, in space, as z is what
+  makes a solid simple.
+- CAST of a character string to a geometry type reads it as
+  ST_GeomFromText does, of any type and coordinate dimension.
+- Negative zero is read as zero before a value is checked, so a ring
+  closed by -0 and 0 is closed.
 
 ### Reference systems [§14, §20]
 

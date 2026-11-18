@@ -20,6 +20,13 @@ const RULE: &str = "§11.3.18 Description 2i";
 /// The points and the lines of the linear form of `g`, of x and y,
 /// gathered into `points` and `lines`.
 fn gather(g: &Geom, points: &mut Vec<Point>, lines: &mut Vec<Vec<Point>>) -> Result<()> {
+    match &g.body {
+        Body::Solid(_) => return Err(fault(RULE, SqlState::SPATIAL_INVALID_ARGUMENT, "no topology is made of an ST_BRepSolid")),
+        Body::Collection(Collection::Geometry(parts)) => {
+            return parts.iter().try_for_each(|part| gather(&g.part(part.clone()), points, lines));
+        }
+        Body::Point(_) | Body::Curve(_) | Body::Surface(_) | Body::Collection(_) => (),
+    }
     let linear = g.linear()?.xy();
     let xy = |c: &Vec<f64>| -> Vec<Point> { c.as_chunks::<2>().0.to_vec() };
     match &linear.body {

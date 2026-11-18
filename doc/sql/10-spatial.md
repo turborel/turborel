@@ -153,7 +153,8 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): GEOMETRY accepts at most one parameter:
 OK
 ```
 
-`CAST(text AS GEOMETRY)` reads WKT with SRID 0, and
+`CAST(text AS GEOMETRY)` reads WKT as ST_GEOMFROMTEXT does, of any
+type and coordinate dimension, with SRID 0, and
 `CAST(text AS GEOMETRY(srid))` with that SRID. A cast of a geometry to
 `GEOMETRY(srid)` checks its SRID and changes nothing. A character string
 is not stored in a GEOMETRY column by assignment, so WKT is read with a
@@ -1403,7 +1404,7 @@ OK
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 01F01 | warning | A method of a position is given one outside the value |
-| 0A000 | -900 | A relationship or measure of a solid, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), or an `rtree` index of a column of plain GEOMETRY |
+| 0A000 | -900 | More than the limits of [Appendix D](../appendix/d-limits.md), or an `rtree` index of a column of plain GEOMETRY |
 | 0D000 | -301 | TREAT is given a value of another type |
 | 22000 | -301 | WKT or WKB is malformed, a coordinate is not finite, ST_MAKEENVELOPE's bounds are reversed or of no area, ST_X or ST_Y is given another kind than a point, or two values' SRIDs differ |
 | 22000 | -301 | A value's SRID is not its column's or CAST's |

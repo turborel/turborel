@@ -9,6 +9,7 @@ use super::units::Systems;
 use super::{Routine, results, units};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::spatial::planar::{self, Geometry, Operation, Point};
+use crate::spatial::solids::shape::{patches_simple, surface_is_closed};
 use crate::value::{Decimal, Value};
 
 pub(super) fn name(routine: Routine) -> &'static str {
@@ -199,12 +200,33 @@ fn measure(value: Option<f64>, (g, systems): (&Geom, Systems<'_>), unit: Option<
     Ok(Value::Approx(if area { units::area_in(value, of, name)? } else { units::length_in(value, of, name)? }))
 }
 
+/// [§5.1.10, §9.2.1 Description 8 to 10] Whether `g` is well formed: a
+/// solid when each shell is closed and its patches are simple, another
+/// value as the planar engine checks its linear form.
+fn valid(g: &Geom) -> Result<bool> {
+    if let Body::Solid(shells) = &g.body {
+        let closed = shells.iter().all(|s| surface_is_closed(&g.part(Body::Surface(s.clone()))));
+        return Ok(closed && patches_simple(&shells.iter().collect::<Vec<_>>(), g.dims)?);
+    }
+    planar::is_valid(&engine_of(g)?)
+}
+
+/// [§5.1.8, §9.2.1 Description 8] Whether `g` is simple: a solid when its
+/// patches meet only along their boundaries, as z is what makes a solid
+/// one; another value as the planar engine checks its linear form.
+fn simple(g: &Geom) -> Result<bool> {
+    if let Body::Solid(shells) = &g.body {
+        return patches_simple(&shells.iter().collect::<Vec<_>>(), g.dims);
+    }
+    planar::is_simple(&engine_of(g)?)
+}
+
 fn one(routine: Routine, g: &Geom, rest: &[Value], systems: Systems<'_>) -> Result<Value> {
     declared_for(routine, g)?;
     let empty = g.is_empty();
     match routine {
-        Routine::IsValid => return Ok(integer(empty || planar::is_valid(&engine_of(g)?)?)),
-        Routine::IsSimple => return Ok(integer(empty || planar::is_simple(&engine_of(g)?)?)),
+        Routine::IsValid => return Ok(integer(empty || valid(g)?)),
+        Routine::IsSimple => return Ok(integer(empty || simple(g)?)),
         Routine::IsRing => return Ok(integer(!empty && ring(g)?)),
         Routine::Relate
         | Routine::Equals

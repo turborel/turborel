@@ -69,9 +69,11 @@ fn read(bytes: &[u8], canonical: bool) -> Result<(Dims, Body)> {
         return Err(wrong("bytes follow the well-known binary representation"));
     }
     let dims = r.dims.unwrap_or(Dims::Xy);
-    super::check::check(&Geom { srid: 0, dims, body: body.clone() })?;
+    // Negative zero is read as zero before the checks, so a ring closed
+    // by -0 and +0 is closed.
     let mut g = Geom { srid: 0, dims, body };
     super::check::normalize(&mut g);
+    super::check::check(&g)?;
     Ok((g.dims, g.body))
 }
 

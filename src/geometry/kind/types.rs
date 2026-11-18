@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::super::model::{self, Geom, Kind};
-use super::super::{Geometry, UNSPECIFIED_SRID, invalid, reference};
+use super::super::{UNSPECIFIED_SRID, invalid, reference};
 use super::{FAMILY, GEOMETRY, Geometries, GeometryType, check, geometry, geometry_kind, kind_of, kinds, most_specific, payload};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError};
@@ -91,7 +91,7 @@ impl SqlType for GeometryType {
         reference::check_params(reference::parameters(t))?;
         let g = if let Value::Char(text) = &v {
             let srid = reference::fixed_srid(t).unwrap_or(UNSPECIFIED_SRID);
-            Geom::from_value(&Geometry::from_wkt(text.trim_end_matches(' '), srid)?.to_value())?
+            super::super::read_text(text.trim_end_matches(' '), srid)?
         } else {
             Geom::from_value(&v)?
         };

@@ -428,8 +428,8 @@ impl Geom {
     /// past a representation limit (RULES.md D119).
     pub fn new(srid: i32, dims: Dims, body: Body) -> Result<Geom> {
         let mut geom = Geom { srid, dims, body };
-        check::check(&geom)?;
         check::normalize(&mut geom);
+        check::check(&geom)?;
         Ok(geom)
     }
 
