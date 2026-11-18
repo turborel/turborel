@@ -24,7 +24,7 @@ use crate::lexer::{Tok, delim, kw};
 /// JSON_TABLE, the table's name.
 const JSON_TABLE: &str = "JSON_TABLE";
 /// COLUMNS, of a `<JSON table columns clause>`.
-const COLUMNS: &str = "COLUMNS";
+pub(in crate::parser) const COLUMNS: &str = "COLUMNS";
 /// NESTED, of `<JSON table nested columns>`.
 const NESTED: &str = "NESTED";
 /// PLAN, of a `<JSON table plan clause>`.

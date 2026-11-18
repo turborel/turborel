@@ -320,7 +320,8 @@ impl Binder<'_> {
             // [ISO/IEC 9075-2:2023 §6.33 SR24b] CLASSIFIER's, its declared
             // type's, of no column: none.
             | ValueExpression::Classifier { .. }
-            | ValueExpression::MatchNumber { .. } => Derived::Yielding,
+            | ValueExpression::MatchNumber { .. }
+            | ValueExpression::Graph(..) => Derived::Yielding,
         })
     }
 

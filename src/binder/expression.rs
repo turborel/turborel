@@ -11,8 +11,7 @@ use super::arithmetic::distinct_operand;
 use super::composite::{grouping_operand, ordering_operand};
 use super::invocation::{Called, Passed};
 use super::set_functions::{column_references, is_aggregate_call};
-use super::subquery;
-use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
+use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, subquery, value_specification};
 use crate::ast::{Composite, Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{
@@ -22,9 +21,7 @@ use crate::functions::{
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
-use crate::value::collation::CollationRef;
-use crate::value::types::composite::row_ordered;
-use crate::value::{DataType, SortOrder, Value};
+use crate::value::{DataType, SortOrder, Value, collation::CollationRef, types::composite::row_ordered};
 
 /// [ISO/IEC 9075:1992 §17.6 GR3] `e`, if it is a `<dynamic parameter
 /// specification>`, alone or in any number of parentheses: its index, and
@@ -156,7 +153,8 @@ impl Binder<'_> {
             | ValueExpression::Json(..)
             | ValueExpression::Navigation(_)
             | ValueExpression::Classifier { .. }
-            | ValueExpression::MatchNumber { .. } => self.decorated(v, scope),
+            | ValueExpression::MatchNumber { .. }
+            | ValueExpression::Graph(..) => self.decorated(v, scope),
         }
     }
 
@@ -200,6 +198,7 @@ impl Binder<'_> {
             ValueExpression::Navigation(n) => self.navigation(n, scope).or_at(n.at),
             ValueExpression::Classifier { variable, at } => self.classifier(variable.as_deref(), scope).or_at(*at),
             ValueExpression::MatchNumber { at } => self.match_number(scope).or_at(*at),
+            ValueExpression::Graph(_, at) => Err(super::graph_seam::outside_graph_table().or_at(*at)),
             ValueExpression::Column(_)
             | ValueExpression::Nested(_)
             | ValueExpression::CollationFor(_)

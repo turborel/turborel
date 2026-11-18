@@ -56,6 +56,7 @@ mod expression;
 mod filter;
 mod from;
 mod generated;
+mod graph_seam;
 mod greatest;
 mod grouping_sets;
 mod hierarchy;
