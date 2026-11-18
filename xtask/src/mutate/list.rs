@@ -77,6 +77,7 @@ mod xml_publishing;
 mod xml_scoped;
 mod xquery;
 mod xquery_eval;
+mod xquery_functions;
 mod zones;
 
 pub use self::{vr::VR, waits::WAITS, zones::ZONES};
@@ -99,6 +100,7 @@ pub fn all() -> Vec<Mutation> {
         .chain(areas::all())
         .chain([hash::HASH.as_slice()])
         .chain([projection::PROJECTION.as_slice(), &xquery::XQUERY])
+        .chain([xquery_functions::XQUERY_FUNCTIONS.as_slice()])
         .chain([xml_publishing::XML_PUBLISHING.as_slice()])
         .chain([xml_composite::XML_COMPOSITE.as_slice()])
         .chain([xml_map::XML_MAP.as_slice()])

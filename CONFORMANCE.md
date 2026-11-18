@@ -1998,6 +1998,12 @@ Validation, Static Typing, Module and Serialization are not [XQuery §5.2].
 | Copy-namespaces no-preserve | XQuery §3.7.1.3 | Each copied element declares the bindings its name and attributes' names use; one copied below another keeps too those its copied ancestors declare, as a tree holds bindings where they are declared. |
 | A prefix made for a constructed name | XQuery §3.7.4 | `ns1`, `ns2` and on, or the prefix taken followed by its next free number. |
 | XQuery's Unicode and XML versions | XQuery §2, §3.1.1, §3.7.1.1 | Names, characters, character references and attribute normalization of XML 1.1 and Namespaces in XML 1.1, as XMLQUERY reads by XML 1.1's lexical rules [§6.18 GR2a]. |
+| The functions and operators of XQuery | XQueryFO §1.1 | A library an evaluator calls (RULES.md D86), not yet reached by a query, so no feature is claimed for it. Unicode 13.0, the version of the collations and regular expressions. |
+| The precision of `xs:decimal` and `xs:integer` operations | XQueryFO §6.2 | Any digits to 1,024, past which an operation overflows, err:FOAR0002; no integer is of limited precision, so none wraps. A quotient of decimals is exact if it ends within 18 digits after the period, or the scale of either operand, and is truncated there otherwise. |
+| Overflow and underflow of floats and doubles | XQueryFO §6.2 | IEEE 754's: an infinity, or a zero or subnormal value. A float's operation is rounded to single precision. |
+| fn:error and fn:trace | XQueryFO §3, §4 | The error is SQLSTATE 10000, its message the QName as `NS#LP` and the description; an error object is not returned. The trace is discarded. |
+| A node's base URI and document URI | XQueryFO §2.5, §2.6 | What the `xml:base` attributes of its element and that element's ancestors make, each resolved against the one above it, else none, as no tree keeps a base URI of its own; no document node has a document URI. |
+| fn:resolve-uri | XQueryFO §8.1 | RFC 3986 §5.2, strict; a base of no scheme is err:FORG0009. |
 
 \[EXTENSION\] Part 14's 2006 draft gives no XML Name of a BINARY, a
 BINARY VARYING or an interval type [§9.4], though §9.5 maps each [GR8b,

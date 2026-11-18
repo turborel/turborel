@@ -40,6 +40,7 @@ mod eval;
 mod functions;
 mod keywords;
 mod lexer;
+pub mod library;
 mod lookup;
 mod parser;
 mod plan;

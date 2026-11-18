@@ -3018,6 +3018,33 @@ item of its row pattern's value, each column's value the XMLCAST of its
 own compiled pattern's value, which the function evaluates with the cast
 the binder made of it.
 
+The functions and operators of XQuery 1.0 Functions and Operators, the
+Candidate Recommendation of 3 November 2005, are a library
+(`xquery::library`) over sequences and atomic values, one file for each
+of its sections. Each `fn:` function is a `LibraryFunction`, found by its
+expanded QName and the number of its arguments (`library::lookup`),
+called with a `Focus`: the context item, position and size, the
+statement's instant, the implicit time zone, the default collation's URI
+and the static base URI. A function applies the function conversion
+rules to its arguments itself, atomizing them, casting untyped values
+and promoting numbers and URIs, so it is called alike whether its caller
+converted them or not. Each `op:` operator is a plain function of
+`library::op`, named after it, that the evaluation of XQuery's operators
+calls. The evaluator's own seam for XQuery functions adapts
+`LibraryFunction`, so the library's functions are that seam's
+built-ins, one implementation each. Its errors are XQuery errors,
+SQLSTATE 10000, the code of the text's Appendix C in the message.
+
+An `xs:decimal` or `xs:integer` is reckoned by a decimal of digits of
+the library's own, bounded at `MAX_DIGITS`, 1,024, past which an
+operation overflows, err:FOAR0002; a quotient of decimals is exact if
+it ends within 18 digits after the period, or the scale of either
+operand, and is truncated there otherwise. A float's arithmetic is
+rounded to single precision, an overflow an infinity. No function
+recurses on a tree: fn:deep-equal compares trees from a list of the
+pairs of nodes left. A string or sequence a function would make past
+`MAX_TEXT` or `MAX_NODES` is SQLCODE -900.
+
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation
 would take one, as one inside an array, a multiset, a row or a distinct
