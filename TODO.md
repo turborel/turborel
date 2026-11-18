@@ -109,9 +109,7 @@ CONFORMANCE.md one by one as they are done.
 
 Static typing (`src/xquery/statics.rs`) is done; left of it: the
 namespace constraints of wildcards but one namespace, and the names
-declared beside an attribute wildcard, which it types as any name; and a
-session's XQUERY.STATIC_TYPING reaching the definitions it makes, which
-follow the database's.
+declared beside an attribute wildcard, which it types as any name.
 
 ### Full text
 

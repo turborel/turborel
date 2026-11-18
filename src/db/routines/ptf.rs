@@ -205,6 +205,7 @@ impl State {
             reads: Vec::new(),
             invokes,
             indicates: crate::catalog::Indicated::default(),
+            typed: false,
             sequences: Vec::new(),
             grantable,
             columns: Vec::new(),

@@ -200,6 +200,10 @@ pub enum Change {
         /// \[DESIGN\] The epochs of the counters of the sequence generators
         /// it defined, in order (RULES.md D62).
         epochs: Vec<u64>,
+        /// [XQuery §5.2.3] Whether the XQuery expressions it defines were
+        /// typed statically, as XQUERY.STATIC_TYPING was for it: what
+        /// replaying the text alone would not know (RULES.md D106).
+        typed: bool,
     },
     /// \[EXTENSION\] An index created.
     CreateIndex {
@@ -247,6 +251,10 @@ pub enum Change {
         /// \[DESIGN\] The epochs of the counters of the identity column
         /// it added or restarted, in order (RULES.md D62, D63).
         epochs: Vec<u64>,
+        /// [XQuery §5.2.3] Whether the XQuery expressions it defines were
+        /// typed statically, as XQUERY.STATIC_TYPING was for it: what
+        /// replaying the text alone would not know (RULES.md D106).
+        typed: bool,
     },
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.2, §11.18, §11.20, §11.27,
     /// §11.35] A table, view, schema, domain or assertion dropped by its
@@ -286,6 +294,10 @@ pub enum Change {
         /// \[DESIGN\] The epochs of the counters of the sequence generators
         /// it defined or restarted, in order (RULES.md D62).
         epochs: Vec<u64>,
+        /// [XQuery §5.2.3] Whether the XQuery expressions it defines were
+        /// typed statically, as XQUERY.STATIC_TYPING was for it: what
+        /// replaying the text alone would not know (RULES.md D106).
+        typed: bool,
     },
     /// \[DESIGN\] RULES.md D62: where the counter of a sequence generator
     /// goes on after a crash, logged before the values it reserves are
@@ -371,9 +383,11 @@ impl Record {
                 put_row(&mut out, key);
             }
             Change::LobPut { .. } | Change::LobStale { .. } => put_lob_change(&mut out, &self.change),
-            Change::Schema { sql, owner, engines, now, epochs } => put_schema(&mut out, (owner, sql, *now), engines, epochs),
-            Change::Defined { auth, role, schema, now, sql, placed, epochs } => {
-                put_defined(&mut out, ((auth, role.as_deref()), schema, sql, *now), placed.as_ref(), epochs);
+            Change::Schema { sql, owner, engines, now, epochs, typed } => {
+                put_schema(&mut out, (owner, sql, *now), (engines, epochs), *typed);
+            }
+            Change::Defined { auth, role, schema, now, sql, placed, epochs, typed } => {
+                put_defined(&mut out, ((auth, role.as_deref()), schema, sql, *now), placed.as_ref(), epochs, *typed);
             }
             Change::Sequence { name, epoch, resume } => put_sequence(&mut out, name, *epoch, *resume),
             Change::CreateIndex { .. } => put_create_index(&mut out, &self.change),
@@ -383,7 +397,9 @@ impl Record {
             }
             Change::DropIndex { name } | Change::Owner { name } | Change::Reconfiguration { members: name } => out.put_str(name),
             Change::Drop { object, cascade } => put_dropped(&mut out, object, *cascade),
-            Change::AlterTable { table, action, schema, zone, epochs } => put_altered(&mut out, (table, action, schema, *zone), epochs),
+            Change::AlterTable { table, action, schema, zone, epochs, typed } => {
+                put_altered(&mut out, (table, action, schema, *zone), epochs, *typed);
+            }
             Change::Setting { name, value } => {
                 out.put_str(name);
                 put_value(&mut out, value.as_ref().unwrap_or(&Value::Null));
@@ -436,7 +452,7 @@ impl Record {
             DROP => Change::Drop { object: dropped(&mut r)?, cascade: r.u8()? != 0 },
             ALTER_TABLE => {
                 let (table, action, schema, zone) = (table(&mut r)?, r.str()?, r.str()?, zone(&mut r)?);
-                Change::AlterTable { table, action, schema, zone, epochs: definitions::epochs(&mut r)? }
+                Change::AlterTable { table, action, schema, zone, epochs: definitions::epochs(&mut r)?, typed: r.u8()? != 0 }
             }
             // No setting takes the null value: it stands for the default.
             SETTING => Change::Setting { name: r.str()?, value: Some(value(&mut r)?).filter(|v| !v.is_null()) },

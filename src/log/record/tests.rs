@@ -48,14 +48,6 @@ fn every_kind() -> Vec<Record> {
         },
         Change::AlterIndex { name: "I".into(), options: vec![] },
         Change::DropIndex { name: "I".into() },
-        Change::AlterTable {
-            table: table(),
-            action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(),
-            schema: "S".into(),
-            zone: -779,
-            epochs: vec![],
-        },
-        Change::AlterTable { table: table(), action: "ALTER \"K\" RESTART".into(), schema: "S".into(), zone: 0, epochs: vec![3, u64::MAX] },
         Change::Setting { name: "LOCKS.WAIT".into(), value: Some(Value::Char("ON".into())) },
         Change::Setting { name: "OPTIMIZER.MAX_PASSES".into(), value: None },
         Change::User { name: "ANN".into(), verifier: Some(vec![0, 255, 7]) },
@@ -91,12 +83,29 @@ fn drops() -> Vec<Change> {
 /// a transaction, with the epochs of sequence generators they gave.
 fn definitions() -> Vec<Change> {
     vec![
+        Change::AlterTable {
+            table: table(),
+            action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(),
+            schema: "S".into(),
+            zone: -779,
+            epochs: vec![],
+            typed: true,
+        },
+        Change::AlterTable {
+            table: table(),
+            action: "ALTER \"K\" RESTART".into(),
+            schema: "S".into(),
+            zone: 0,
+            epochs: vec![3, u64::MAX],
+            typed: false,
+        },
         Change::Schema {
             sql: "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)".into(),
             owner: "A".into(),
             engines: vec![("T".into(), "rowstore".into())],
             now: Now { utc: i64::MIN, zone: -330 },
             epochs: vec![1, u64::MAX],
+            typed: true,
         },
         Change::Defined {
             auth: "A".into(),
@@ -106,6 +115,7 @@ fn definitions() -> Vec<Change> {
             sql: "CREATE TABLE T (K INTEGER)".into(),
             placed: Some(("rowstore".into(), u32::MAX)),
             epochs: vec![7],
+            typed: true,
         },
         Change::Defined {
             auth: String::new(),
@@ -115,6 +125,7 @@ fn definitions() -> Vec<Change> {
             sql: "GRANT SELECT ON T TO B".into(),
             placed: None,
             epochs: vec![],
+            typed: false,
         },
     ]
 }
@@ -175,17 +186,25 @@ fn what_is_not_a_record_is_refused() {
     assert_eq!(corrupt(&insert), Some(Code::Corrupt), "an unknown kind of value");
     let schema = Record {
         tx: 1,
-        change: Change::Schema { sql: "ab".into(), owner: String::new(), engines: vec![], now: Now::default(), epochs: vec![] },
+        change: Change::Schema {
+            sql: "ab".into(),
+            owner: String::new(),
+            engines: vec![],
+            now: Now::default(),
+            epochs: vec![],
+            typed: false,
+        },
     }
     .encode();
     let mut not_utf8 = schema.clone();
-    // "ab", then its engines' count, then its displacement and instant.
-    let last = not_utf8.len() - 5 - 32;
+    // "ab", then its engines' count, its displacement and instant, and
+    // whether typed.
+    let last = not_utf8.len() - 5 - 32 - 1;
     not_utf8[last] = 0xFF;
     assert_eq!(corrupt(&not_utf8), Some(Code::Corrupt));
     let mut far = schema.clone();
-    let zone = far.len() - 16;
-    far[zone..].copy_from_slice(&i128::MAX.to_le_bytes());
+    let zone = far.len() - 16 - 1;
+    far[zone..zone + 16].copy_from_slice(&i128::MAX.to_le_bytes());
     assert_eq!(corrupt(&far), Some(Code::Corrupt), "a displacement out of range");
     let mut huge = Record { tx: 1, change: Change::Delete { table: table(), generation: 0, row: 1, before: vec![] } }.encode();
     let count = huge.len() - 4;

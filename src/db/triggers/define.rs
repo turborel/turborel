@@ -95,7 +95,8 @@ impl State {
         let (reads, columns, sequences) = self.bind_action(&desc, t, (&owner, &invoked), None)?;
         let seen: Vec<QualifiedName> = reads.iter().chain([&table]).cloned().collect();
         // [ISO/IEC 9075-2:2023 §4.35.2] and its subject routines from now on.
-        desc.horizon = Horizon::of(&*self.catalog, &seen).invoking(invoked.take()).indicating(invoked.take_indicated());
+        desc.horizon =
+            Horizon::of(&*self.catalog, &seen).invoking(invoked.take()).indicating(invoked.take_indicated()).typing(invoked.take_typed());
         (desc.reads, desc.columns, desc.sequences) = (reads, columns, sequences);
         let locks = desc.reads.iter().map(|r| (r.clone(), LockMode::Shared)).chain([(table, LockMode::Exclusive)]).collect();
         let mut catalog = self.catalog.duplicate();

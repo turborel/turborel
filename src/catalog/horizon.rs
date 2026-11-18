@@ -37,6 +37,10 @@ pub struct Horizon {
     /// queries imported as it was defined [XQuery §4.11], the ones they
     /// import whenever it is bound again; each once, in order.
     pub xquery_modules: Vec<QualifiedName>,
+    /// [XQuery §5.2.3] Whether its XQuery expressions were typed
+    /// statically as it was defined, as XQUERY.STATIC_TYPING asked: they
+    /// are typed so whenever it is bound again (RULES.md D106).
+    pub static_typing: bool,
 }
 
 /// What a definition's binding notes it indicates and imports, for its
@@ -52,13 +56,22 @@ pub struct Indicated {
 
 /// No horizon at all: every table seen whole, every routine there is a
 /// candidate.
-pub static WHOLE: Horizon = Horizon { widths: Vec::new(), routines: None, xml_schemas: Vec::new(), xquery_modules: Vec::new() };
+pub static WHOLE: Horizon =
+    Horizon { widths: Vec::new(), routines: None, xml_schemas: Vec::new(), xquery_modules: Vec::new(), static_typing: false };
 
 impl Horizon {
     /// The degree of each base table of `tables` in `catalog` now.
     pub fn of(catalog: &dyn Catalog, tables: &[QualifiedName]) -> Horizon {
         let widths = tables.iter().filter_map(|t| catalog.table(t).map(|d| (t.clone(), d.columns.len()))).collect();
-        Horizon { widths, routines: None, xml_schemas: Vec::new(), xquery_modules: Vec::new() }
+        Horizon { widths, routines: None, xml_schemas: Vec::new(), xquery_modules: Vec::new(), static_typing: false }
+    }
+
+    /// It with `typed`, whether its definition's XQuery expressions were
+    /// typed statically as XQUERY.STATIC_TYPING asked [XQuery §5.2.3].
+    #[must_use]
+    pub fn typing(mut self, typed: bool) -> Horizon {
+        self.static_typing = typed;
+        self
     }
 
     /// It, of the widths `widths` in place of its own.

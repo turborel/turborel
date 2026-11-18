@@ -478,7 +478,8 @@ impl State {
             // [ISO/IEC 9075-2:2023 §4.35.2] the routines it invokes, its
             // subject routines from now on.
             if horizon.routines.is_none() {
-                *horizon = std::mem::take(horizon).invoking(invoked.take()).indicating(invoked.take_indicated());
+                *horizon =
+                    std::mem::take(horizon).invoking(invoked.take()).indicating(invoked.take_indicated()).typing(invoked.take_typed());
             }
         }
         Ok(())

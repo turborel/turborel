@@ -4,10 +4,13 @@
 //! statement is prepared, the values passed of their formal types
 //! [§10.21].
 
-use turborel::db::{Database, Session};
+use std::sync::Arc;
+
+use turborel::db::{Database, OpenOptions, Session};
+use turborel::disk::io::FileSystem;
 use turborel::error::{SqlError, SqlState};
 
-use crate::common::{fetched, rows};
+use crate::common::{Scratch, after_crash, fetched, os, rows};
 
 /// A schema document of target namespace `urn:s`: a type `base` and its
 /// extension `more`, elements `item` of `base` and `big` of `more` in its
@@ -89,31 +92,115 @@ fn known_not_null_values_are_passed_as_one_10_21() {
     }
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 SR6, §4.2.6] [EXTENSION] a
-/// definition is typed as it is made, by the database's
-/// XQUERY.STATIC_TYPING or its query's option, not by a session's: one
-/// made with static typing off is read as it was made by a session with
-/// it on; one made with the database's on is refused if a type error is
-/// found.
+/// An ill-typed query of an XML value `$x`: `$x/a`'s typed values are
+/// `xs:untypedAtomic*`, which `+` takes one of at most [XQueryFS §4.5.2].
+const ILL: &str = "XMLEXISTS('$x/a + 1' PASSING BY REF X AS \"x\")";
+
+/// A definition of each kind of an ill-typed query, named `n`: a view, a
+/// table CHECK, an assertion, a trigger, a function, a generation
+/// expression, a domain constraint, and a schema's view.
+fn definitions(n: &str) -> Vec<String> {
+    let value = ILL.replace("BY REF X", "BY REF VALUE");
+    let p = ILL.replace("BY REF X", "BY REF P");
+    let new = ILL.replace("BY REF X", "BY REF N.X");
+    vec![
+        format!("CREATE VIEW V{n} (Y) AS SELECT {ILL} FROM T"),
+        format!("ALTER TABLE T ADD CONSTRAINT C{n} CHECK (NOT {ILL})"),
+        format!("CREATE ASSERTION A{n} CHECK (NOT EXISTS (SELECT * FROM T WHERE {ILL}))"),
+        format!("CREATE TRIGGER G{n} AFTER INSERT ON T REFERENCING NEW ROW AS N FOR EACH ROW WHEN ({new}) DELETE FROM T WHERE K < 0"),
+        format!("CREATE FUNCTION F{n} (P XML(CONTENT(UNTYPED))) RETURNS BOOLEAN CONTAINS SQL RETURN {p}"),
+        format!("ALTER TABLE T ADD COLUMN E{n} BOOLEAN GENERATED ALWAYS AS ({ILL})"),
+        format!("CREATE DOMAIN D{n} AS XML(CONTENT(UNTYPED)) CHECK (VALUE IS NULL OR {value})"),
+        format!("CREATE SCHEMA S{n} CREATE VIEW W (Y) AS SELECT {ILL} FROM A.T"),
+    ]
+}
+
+/// Makes the definition `sql` in `a`: a schema's as direct SQL [ISO/IEC
+/// 9075:1992 §20.1].
+fn make(a: &Session, sql: &str) -> Result<(), SqlError> {
+    if sql.starts_with("CREATE SCHEMA") { a.direct(sql).map(drop) } else { a.run(sql).map(drop) }
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 SR6, §4.2.6] [EXTENSION]
+/// RULES.md D106: a definition of each kind is typed as it is made, as
+/// XQUERY.STATIC_TYPING is for the session that makes it or as its
+/// query's option asks; one made with static typing off is read as it was
+/// made by a session with it on; a session's value is its own, over the
+/// database's.
 #[test]
 fn definitions_are_typed_as_made() {
     let db = database();
     let a = db.session("A");
-    let view = |name: &str, prolog: &str| {
-        format!(
-            "CREATE VIEW {name} (Y) AS SELECT XMLQUERY('{prolog}$x/a + 1' PASSING BY REF X AS \"x\" RETURNING SEQUENCE BY REF EMPTY ON EMPTY) FROM T"
-        )
-    };
-    a.run(&view("V", "")).unwrap();
+    for sql in definitions("0") {
+        make(&a, &sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
     a.run("SET XQUERY.STATIC_TYPING = 'ON'").unwrap();
-    assert_eq!(fetched(&a, "SELECT * FROM V").unwrap(), 0, "read as it was made");
-    a.run(&view("W", "")).unwrap();
-    assert!(is_xquery(&a.run(&view("O", OPTION)).unwrap_err(), "XPTY0004"), "of its own option");
+    assert_eq!(fetched(&a, "SELECT * FROM V0").unwrap(), 0, "read as it was made");
+    assert_eq!(fetched(&a, "SELECT * FROM S0.W").unwrap(), 0, "read as it was made");
+    a.run("INSERT INTO T (K, X) VALUES (1, XMLPARSE(CONTENT '<b/>' STRIP WHITESPACE))").unwrap();
+    assert_eq!(fetched(&a, "SELECT F0(X) FROM T").unwrap(), 1, "read as it was made");
+    a.rollback().unwrap();
+    for sql in definitions("1") {
+        assert!(is_xquery(&make(&a, &sql).unwrap_err(), "XPTY0004"), "of the session's value: {sql}");
+    }
+    a.run("SET XQUERY.STATIC_TYPING = 'OFF'").unwrap();
+    let option = format!("CREATE VIEW O (Y) AS SELECT {} FROM T", ILL.replace("'$x", &format!("'{OPTION}$x")));
+    assert!(is_xquery(&a.run(&option).unwrap_err(), "XPTY0004"), "of its own option");
     a.commit().unwrap();
     db.create_user("A", b"x").unwrap();
     db.set_owner("A").unwrap();
     a.run("SET DATABASE XQUERY.STATIC_TYPING = 'ON'").unwrap();
-    assert!(is_xquery(&a.run(&view("U", "")).unwrap_err(), "XPTY0004"), "of the database's value");
+    let b = db.session("A");
+    assert!(is_xquery(&b.run(&definitions("2")[0]).unwrap_err(), "XPTY0004"), "of the database's value");
+    b.run("SET XQUERY.STATIC_TYPING = 'OFF'").unwrap();
+    b.run(&definitions("2")[0]).unwrap();
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 SR6, §4.2.6] [EXTENSION]
+/// RULES.md D106, D25: a definition keeps the static typing it was made
+/// with: made again from the log after a crash, and read again after a
+/// clean close, as it was made, though the database's value differs.
+#[test]
+fn definitions_keep_their_typing_when_recovered() {
+    let scratch = Scratch::new("xml-static-typing");
+    let dir = scratch.path("db");
+    let open = |fs: &Arc<dyn FileSystem>| {
+        let db = Database::new();
+        db.open_files(fs, &dir, &OpenOptions::default()).unwrap();
+        db
+    };
+    let db = open(&os());
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, X XML(CONTENT(UNTYPED)))").unwrap();
+    db.create_user("A", b"x").unwrap();
+    db.set_owner("A").unwrap();
+    let a = db.session("A");
+    a.run("SET DATABASE XQUERY.STATIC_TYPING = 'ON'").unwrap();
+    a.run("SET XQUERY.STATIC_TYPING = 'OFF'").unwrap();
+    for sql in definitions("0") {
+        make(&a, &sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+    a.commit().unwrap();
+    drop(a);
+    db.close().unwrap();
+    drop(db);
+    let before = open(&os());
+    let a = before.session("A");
+    a.run("INSERT INTO T (K, X) VALUES (1, XMLPARSE(CONTENT '<b/>' STRIP WHITESPACE))").unwrap();
+    assert_eq!(fetched(&a, "SELECT F0(X) FROM T").unwrap(), 1, "read again as it was made");
+    assert_eq!(fetched(&a, "SELECT * FROM S0.W").unwrap(), 1, "read again as it was made");
+    a.run("SET XQUERY.STATIC_TYPING = 'OFF'").unwrap();
+    for sql in definitions("1") {
+        make(&a, &sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+    a.commit().unwrap();
+    // A crash: the database is left, and opened again as it is.
+    let db = open(&after_crash());
+    let b = db.session("A");
+    b.run("INSERT INTO T (K, X) VALUES (2, XMLPARSE(CONTENT '<b/>' STRIP WHITESPACE))").unwrap();
+    assert_eq!(fetched(&b, "SELECT F1(X) FROM T").unwrap(), 2, "made again as it was made");
+    assert_eq!(fetched(&b, "SELECT * FROM S1.W").unwrap(), 2, "made again as it was made");
+    drop((a, b));
+    drop((db, before));
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.21 SR4, SR5c] [XQueryFS

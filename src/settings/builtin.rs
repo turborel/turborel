@@ -231,7 +231,7 @@ fn static_typing() -> Definition {
     defined(
         ("XQUERY.STATIC_TYPING", Kind::Choice(SWITCHES), text(OFF)),
         SESSION,
-        "Whether the XQuery expressions of XMLQUERY, XMLEXISTS and XMLTABLE are statically typed as a statement is prepared, each type error raised then, before any is evaluated: ON; or as a query declaring the option static-typing of urn:turborel:option asks, OFF. A definition is typed as it is made, by the database's value or its query's option, and not again as it is read.",
+        "Whether the XQuery expressions of XMLQUERY, XMLEXISTS and XMLTABLE are statically typed as a statement is prepared, each type error raised then, before any is evaluated: ON; or as a query declaring the option static-typing of urn:turborel:option asks, OFF. A definition is typed as it is made, as the value of the session making it or its query's option asks, and keeps that typing whenever it is bound again.",
     )
 }
 

@@ -73,7 +73,8 @@ impl State {
         let underlying = Some(referenceable::prefixed(underlying(cx, &v.query)?, derivational.as_deref()));
         // [ISO/IEC 9075-14:2006 draft §4.2.6] and the registered XML
         // Schemas it indicates.
-        let horizon = Horizon::of(&*self.catalog, &reads).invoking(invoked.take()).indicating(invoked.take_indicated());
+        let horizon =
+            Horizon::of(&*self.catalog, &reads).invoking(invoked.take()).indicating(invoked.take_indicated()).typing(invoked.take_typed());
         let (query, names) = (v.text.clone(), names.to_owned());
         Ok(ViewDesc { typed, name, columns, query, names, check_option: v.check_option, grouped, updates, reads, horizon, underlying })
     }

@@ -2,12 +2,13 @@
 //! empty type, the effective boolean value, subtyping's occurrences, the
 //! quantifier of the empty type, name tests, typed values of element-only
 //! content, the context item, the option and the setting that put it in
-//! effect, and values known not null (RULES.md R-TEST-9, D106).
+//! effect, the typing a definition keeps, and values known not null
+//! (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each static typing mechanism broken alone, and the tests that fail.
-pub const XQUERY_STATICS: [Mutation; 11] = [
+pub const XQUERY_STATICS: [Mutation; 15] = [
     Mutation {
         name: "statics-operand-cardinality",
         package: Package::Core,
@@ -103,10 +104,50 @@ pub const XQUERY_STATICS: [Mutation; 11] = [
         package: Package::Core,
         breaks: "a definition read again is typed again by the session's setting",
         file: "src/binder/xml/query.rs",
-        original: "            static_typing: self.horizon.routines.is_none() && self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own),",
-        replacement: "            static_typing: self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own),",
+        original: "            return horizon.static_typing;",
+        replacement: "            return self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own);",
         integration: &["xml_static_typing::definitions_are_typed_as_made"],
         unit: &[],
+    },
+    Mutation {
+        name: "statics-definitions-made-by-database",
+        package: Package::Core,
+        breaks: "a definition is typed as it is made by the database's setting, not the session's",
+        file: "src/binder/xml/query.rs",
+        original: "        super::typing::making().unwrap_or_else(|| self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own))",
+        replacement: "        self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own)",
+        integration: &["xml_static_typing::definitions_are_typed_as_made"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-triggered-horizon",
+        package: Package::Core,
+        breaks: "a triggered action is typed by the session's setting, not its trigger's",
+        file: "src/binder/xml/query.rs",
+        original: "        let horizon = if self.params.horizoned() { self.params.horizon() } else { self.horizon };",
+        replacement: "        let horizon = self.horizon;",
+        integration: &["xml_static_typing::definitions_are_typed_as_made"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-definitions-replayed",
+        package: Package::Core,
+        breaks: "a definition made again from the log is typed by the database's setting",
+        file: "src/db/ddl.rs",
+        original: "                let _typed = making_typed(*typed);\n                self.redefine(",
+        replacement: "                let _typed = ();\n                self.redefine(",
+        integration: &["xml_static_typing::definitions_keep_their_typing_when_recovered"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-horizon-kept",
+        package: Package::Core,
+        breaks: "a definition's static typing is not kept in the catalog",
+        file: "src/catalog/codec.rs",
+        original: "    put_flag(out, horizon.static_typing);",
+        replacement: "    put_flag(out, false);",
+        integration: &[],
+        unit: &["catalog::codec::routines::tests::each_kind_of_routine_reads_back_as_written"],
     },
     Mutation {
         name: "statics-known-not-null",

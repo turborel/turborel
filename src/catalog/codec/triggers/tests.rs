@@ -28,6 +28,7 @@ fn desc(time: ActionTime, level: TriggerLevel, event: TriggerEvent, names: Trans
             routines: Some(vec![name("F_1")]),
             xml_schemas: vec![name("X")],
             xquery_modules: vec![name("M")],
+            static_typing: true,
         },
         columns: vec![(name("T"), "K".into()), (name("U"), "V".into())],
         sequences: vec![name("Q")],

@@ -47,6 +47,9 @@ pub(in crate::db) struct BodyBound {
     /// [ISO/IEC 9075-14:2006 draft §4.2.6] The registered XML Schemas it
     /// indicates, and the registered XQuery modules it imports.
     pub(in crate::db) indicates: Indicated,
+    /// Whether its XQuery expressions were typed statically as
+    /// XQUERY.STATIC_TYPING asked [XQuery §5.2.3].
+    pub(in crate::db) typed: bool,
     /// The sequence generators it draws from, each once.
     pub(in crate::db) sequences: Vec<QualifiedName>,
     /// Whether its owner's EXECUTE on the routine is grantable [GR1].
@@ -213,6 +216,7 @@ impl State {
         }
         let reads = named(std::slice::from_ref(stmt), None, (&desc.schema, &TransitionNames::default()));
         let indicates = invoked.take_indicated();
+        let typed = invoked.take_typed();
         let invocations = invoked.into_inner();
         for r in invocations.iter().filter_map(|s| self.catalog.routine(s)) {
             access = if rank(r.access) > rank(access) { r.access } else { access };
@@ -226,7 +230,7 @@ impl State {
         sequences.sort();
         sequences.dedup();
         let columns = once_each(uses.into_inner());
-        Ok(BodyBound { reads, invokes: invocations, indicates, sequences, grantable, columns })
+        Ok(BodyBound { reads, invokes: invocations, indicates, typed, sequences, grantable, columns })
     }
 
     /// The columns of tables and views the body of the routine `r`

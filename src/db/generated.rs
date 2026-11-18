@@ -103,7 +103,7 @@ impl State {
             if let Some(Generated::Expression(g)) = &mut column.generated
                 && g.horizon.routines.is_none()
             {
-                g.horizon = Horizon::default().invoking(invoked.take()).indicating(invoked.take_indicated());
+                g.horizon = Horizon::default().invoking(invoked.take()).indicating(invoked.take_indicated()).typing(invoked.take_typed());
             }
             if def.data_type.is_none() {
                 column.data_type = t.clone();

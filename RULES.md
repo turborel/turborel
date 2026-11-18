@@ -4027,11 +4027,19 @@ error is raised then, as the statement is prepared; otherwise a type
 error is raised as the query is evaluated. It is off by default, as the
 typing of XQuery 1.0 and XPath 2.0 Formal Semantics refuses queries that
 evaluate without error. A definition is typed as it is made, by the
-database's value or its option, the state a definition is made in
-holding no session's settings, and not again as it is read. A value
-passed whose expression is known not null, a column reference to a NOT
-NULL column or a literal, is of its formal type without `?` [ISO/IEC
-9075-14:2006 draft §10.21 SR3c]. The typing follows the Formal Semantics' rules over \[XQueryFS\]'s types: a type is
+value of the session making it or its option: the state a definition is
+made in holds no session's settings, so the session's value is held by
+the thread making the statement's definitions while it does
+(`binder::making_typed`), as SQL.FUNCTION_CALLS's is (D74), and logged
+with the statement (`Change::Defined`, `Change::Schema`,
+`Change::AlterTable`), so a replay makes them alike. The definition
+keeps whether it was typed (`Horizon::static_typing`), as it keeps the
+registered XML Schemas it indicates, and is typed so whenever it is
+bound again: recovered, reopened, or bound after DDL, whatever the
+session reading it asks. A value passed whose expression is known not
+null, a column reference to a NOT NULL column or a literal, is of its
+formal type without `?` [ISO/IEC 9075-14:2006 draft §10.21 SR3c]. The typing
+follows the Formal Semantics' rules over \[XQueryFS\]'s types: a type is
 a tree of item types, sequences, choices, interleavings and
 occurrences; sequence types are normalized to them; subtyping is
 decided for the shapes the rules compare with, each by its own (a

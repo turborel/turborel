@@ -10,11 +10,12 @@ use super::alter::Made;
 use super::ddl::{Changed, Dropped};
 use super::sequences::Epochs;
 use super::{Completion, Database, Session, State, long_texts};
+use crate::binder::making_typed;
 use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlState};
 use crate::log::record::Change;
 use crate::parser::Parser;
-use crate::settings::FUNCTION_CALLS;
+use crate::settings::{FUNCTION_CALLS, XQUERY_STATIC_TYPING};
 use crate::txn::{LockMode, Txn};
 use crate::value::datetime::Now;
 
@@ -38,6 +39,9 @@ impl Session {
     fn stage_schema(&self, st: &Arc<State>, tx: &Txn, sql: &str, name: &str) -> Result<Completion> {
         // Its own texts read again as the session read it (RULES.md D74).
         let _calls = Parser::refusing_calls(sql, st.settings.is_on(FUNCTION_CALLS));
+        // [XQuery §5.2.3] typed statically as the session asks, logged with it.
+        let typed = st.settings.is_on(XQUERY_STATIC_TYPING);
+        let _typed = making_typed(typed);
         st.acquire_name(tx, &QualifiedName::of_schema(name), LockMode::Exclusive)?;
         let fresh = self.definitions(self.db.snapshot()?)?;
         let mut next = State::clone(&fresh);
@@ -55,7 +59,7 @@ impl Session {
             made.discard();
             return Err(e);
         }
-        let change = Change::Schema { sql: sql.to_owned(), owner, engines, now, epochs: epochs.given() };
+        let change = Change::Schema { sql: sql.to_owned(), owner, engines, now, epochs: epochs.given(), typed };
         self.stage(&fresh, tx, Changed { next, change, made: Some(made) })?;
         let done = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success };
         let schema = || Parser::for_stored(sql).and_then(|mut p| p.schema()).ok().as_ref().and_then(long_texts::of_schema);
@@ -76,6 +80,8 @@ impl Database {
         let holder = current.begin();
         // Its own texts read again as the database's value reads it (RULES.md D74).
         let _calls = Parser::refusing_calls(sql, current.settings.is_on(FUNCTION_CALLS));
+        let typed = current.settings.is_on(XQUERY_STATIC_TYPING);
+        let _typed = making_typed(typed);
         current.acquire_name(&holder, &QualifiedName::of_schema(&name), LockMode::Exclusive)?;
         // Published before a checkpoint can see its record or its tables.
         let _gate = current.tx.gate.enter();
@@ -89,7 +95,8 @@ impl Database {
             let checked = st.check_new_assertions(&asserted)?;
             // Logged before it is published (RULES.md D25), and before the
             // totals its assertions keep, whose tables it makes.
-            let logged = st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines, now, epochs: epochs.given() });
+            let change = Change::Schema { sql: sql.into(), owner, engines, now, epochs: epochs.given(), typed };
+            let logged = st.log_definition(None, change);
             if let Some((probe, tx)) = checked {
                 if logged.is_ok() { probe.commit(&tx)? } else { probe.rollback(&tx)? }
             }

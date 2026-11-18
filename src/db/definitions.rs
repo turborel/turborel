@@ -36,12 +36,12 @@ use super::{Completion, Session, State, api, long_texts, rule};
 use crate::ast::{
     DropBehavior, PrivilegeDefinition, PrivilegeObject, SchemaStatement, SqlStatement, TableDefinition, TableName, ViewDefinition,
 };
-use crate::binder::qualify;
+use crate::binder::{making_typed, making_typed_now, qualify};
 use crate::catalog::{ConstraintKind, QualifiedName, TableDesc, merged, owner_of, types_in};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::log::record::Change;
 use crate::parser::Parser;
-use crate::settings::FUNCTION_CALLS;
+use crate::settings::{FUNCTION_CALLS, XQUERY_STATIC_TYPING};
 use crate::txn::{LockMode, Txn};
 use crate::value::datetime::Now;
 
@@ -74,6 +74,9 @@ impl Session {
     pub(super) fn schema_statement(&self, st: &Arc<State>, tx: &Txn, statement: &SchemaStatement, text: &str) -> Result<Completion> {
         // Its own texts read again as the session read it (RULES.md D74).
         let _calls = Parser::refusing_calls(text, st.settings.is_on(FUNCTION_CALLS));
+        // [XQuery §5.2.3] Its definitions typed statically as the session
+        // asks, logged with it (RULES.md D106).
+        let _typed = making_typed(st.settings.is_on(XQUERY_STATIC_TYPING));
         let schema = self.default_schema();
         let object = self.object_of(st, statement, &schema)?;
         // [EXTENSION] A model's text logged with the shape it is of.
@@ -147,7 +150,8 @@ impl Session {
                     self.deferral.borrow_mut().forget(a, next.list_space())?;
                 }
                 let (sql, placed, epochs) = (text.to_owned(), defined.placed, epochs.given());
-                let change = Change::Defined { auth: auth.clone(), role: role.clone(), schema, now, sql, placed, epochs };
+                let typed = making_typed_now();
+                let change = Change::Defined { auth: auth.clone(), role: role.clone(), schema, now, sql, placed, epochs, typed };
                 self.stage(&fresh, tx, Changed { next, change, made: defined.made })?;
                 // [§14.11 GR3] no row inserted is no data.
                 let completion = if filled == Some(0) { Completion::NoData } else { defined.completion };

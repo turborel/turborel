@@ -81,9 +81,14 @@ pub enum DropTarget {
 }
 
 /// A schema's text, the engine of each table it created, its
-/// CURRENT_TIMESTAMP, and the epochs of the sequence generators it
-/// defined.
-pub(super) fn put_schema(out: &mut Vec<u8>, (owner, sql, now): (&str, &str, Now), engines: &[(String, String)], epochs: &[u64]) {
+/// CURRENT_TIMESTAMP, the epochs of the sequence generators it defined,
+/// and whether it was typed statically (u8 1, or 0).
+pub(super) fn put_schema(
+    out: &mut Vec<u8>,
+    (owner, sql, now): (&str, &str, Now),
+    (engines, epochs): (&[(String, String)], &[u64]),
+    typed: bool,
+) {
     out.put_str(owner);
     out.put_str(sql);
     out.put_u32(u32::try_from(engines.len()).unwrap_or(u32::MAX));
@@ -93,6 +98,7 @@ pub(super) fn put_schema(out: &mut Vec<u8>, (owner, sql, now): (&str, &str, Now)
     }
     put_now(out, now);
     put_epochs(out, epochs);
+    out.put_u8(u8::from(typed));
 }
 
 /// What `put_schema` wrote, as a change.
@@ -103,17 +109,19 @@ pub(super) fn schema(r: &mut Reader<'_>) -> Result<Change> {
     for _ in 0..count {
         engines.push((r.str()?, r.str()?));
     }
-    Ok(Change::Schema { sql, owner, engines, now: now(r)?, epochs: epochs(r)? })
+    Ok(Change::Schema { sql, owner, engines, now: now(r)?, epochs: epochs(r)?, typed: r.u8()? != 0 })
 }
 
 /// A schema statement's authorizer and its role (u8 1 and str, or u8 0 for
 /// none), default schema, text, created table's engine and generation,
-/// CURRENT_TIMESTAMP, and the epochs it gave.
+/// CURRENT_TIMESTAMP, the epochs it gave, and whether it was typed
+/// statically.
 pub(super) fn put_defined(
     out: &mut Vec<u8>,
     ((auth, role), schema, sql, now): ((&str, Option<&str>), &str, &str, Now),
     placed: Option<&(String, u32)>,
     epochs: &[u64],
+    typed: bool,
 ) {
     out.put_str(auth);
     out.put_u8(u8::from(role.is_some()));
@@ -129,16 +137,23 @@ pub(super) fn put_defined(
     }
     put_now(out, now);
     put_epochs(out, epochs);
+    out.put_u8(u8::from(typed));
 }
 
 /// An ALTER TABLE's table, action as written, default schema,
-/// displacement, and the epochs it gave.
-pub(super) fn put_altered(out: &mut Vec<u8>, (table, action, schema, zone): (&QualifiedName, &str, &str, i16), epochs: &[u64]) {
+/// displacement, the epochs it gave, and whether it was typed statically.
+pub(super) fn put_altered(
+    out: &mut Vec<u8>,
+    (table, action, schema, zone): (&QualifiedName, &str, &str, i16),
+    epochs: &[u64],
+    typed: bool,
+) {
     put_table(out, table);
     out.put_str(action);
     out.put_str(schema);
     out.put_i128(i128::from(zone));
     put_epochs(out, epochs);
+    out.put_u8(u8::from(typed));
 }
 
 /// What `put_defined` wrote, as a change.
@@ -147,7 +162,7 @@ pub(super) fn defined(r: &mut Reader<'_>) -> Result<Change> {
     let role = if r.u8()? == 0 { None } else { Some(r.str()?) };
     let (schema, sql) = (r.str()?, r.str()?);
     let placed = if r.u8()? == 0 { None } else { Some((r.str()?, r.u32()?)) };
-    Ok(Change::Defined { auth, role, schema, now: now(r)?, sql, placed, epochs: epochs(r)? })
+    Ok(Change::Defined { auth, role, schema, now: now(r)?, sql, placed, epochs: epochs(r)?, typed: r.u8()? != 0 })
 }
 
 /// The epochs of sequence generators' counters: a count u32, and each.

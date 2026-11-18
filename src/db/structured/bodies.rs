@@ -80,7 +80,7 @@ impl State {
             distance: None,
         };
         let bound = self.bind_routine_body(&desc, &definition(&name, &spec, m))?;
-        desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes).indicating(bound.indicates);
+        desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes).indicating(bound.indicates).typing(bound.typed);
         (desc.reads, desc.sequences) = (bound.reads, bound.sequences);
         let owner = owner_of(&*self.catalog, &name.auth).to_owned();
         desc.execute = vec![UsageDesc { grantor: SYSTEM_GRANTOR.to_owned(), grantee: Some(owner), grantable: bound.grantable }];

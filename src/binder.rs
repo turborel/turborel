@@ -37,6 +37,7 @@ mod context;
 mod counterparts;
 pub(crate) use composite::{key_operand, orderless_operand};
 pub(crate) use vectors::sql_metric;
+pub(crate) use xml::{making_typed, making_typed_now};
 mod cursor;
 mod datetime;
 mod dependencies;

@@ -30,7 +30,7 @@ impl State {
     ) -> Result<(Vec<QualifiedName>, Horizon)> {
         let invoked = Invoked::default();
         let (cond, probe) = self.on_value(domain, data_type, (text, names, horizon), Some(&invoked))?;
-        let seen = Horizon::default().invoking(invoked.take()).indicating(invoked.take_indicated());
+        let seen = Horizon::default().invoking(invoked.take()).indicating(invoked.take_indicated()).typing(invoked.take_typed());
         Ok((cond.tables().into_iter().filter(|t| *t != probe).collect(), seen))
     }
 

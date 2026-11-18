@@ -126,10 +126,13 @@ impl Binder<'_> {
             importable: found.importable.iter().map(|(_, s)| s.clone()).collect(),
             modules: found.modules.iter().map(|(_, m)| m.clone()).collect(),
             linked: found.linked,
-            static_typing: self.horizon.routines.is_none() && self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own),
+            static_typing: self.static_typing(),
             passed,
         };
         let query = Query::compile(text, &env)?;
+        if let Some(noted) = self.invoked.filter(|_| env.static_typing) {
+            noted.typed();
+        }
         if let Some(noted) = self.invoked {
             let validated = in_scope.iter().filter(|_| query.validates()).map(|(name, _)| name);
             let imported = found.importable.iter().filter(|(_, s)| query.imports().contains(&s.name)).map(|(name, _)| name);
@@ -326,6 +329,20 @@ impl Binder<'_> {
         };
         let integer = matches!(t.represented(), DataType::Exact { scale: 0, .. });
         optional(FormalKind::Atomic(if integer { AtomicType::Integer } else { primitive(mapped) }))
+    }
+
+    /// [XQuery §5.2.3] Whether the XQuery expressions it binds are typed
+    /// statically (RULES.md D106): of a definition bound again, as it was
+    /// typed when it was made (`Horizon::static_typing`), of a triggered
+    /// action or a procedure's body its statements' horizon's; of the
+    /// definitions a statement makes, as XQUERY.STATIC_TYPING was for it
+    /// (`typing::making`); else as it is for the statement's session.
+    fn static_typing(&self) -> bool {
+        let horizon = if self.params.horizoned() { self.params.horizon() } else { self.horizon };
+        if horizon.subjects().is_some() {
+            return horizon.static_typing;
+        }
+        super::typing::making().unwrap_or_else(|| self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own))
     }
 
     /// [§10.21 SR3c] Whether the value of `v` cannot be null: a column

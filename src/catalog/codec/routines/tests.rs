@@ -40,6 +40,7 @@ fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> Sql
             routines: Some(vec![name("G_1")]),
             xml_schemas: vec![name("X")],
             xquery_modules: vec![name("M")],
+            static_typing: true,
         },
         sequences: vec![name("Q"), name("R")],
         execute: vec![

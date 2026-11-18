@@ -47,6 +47,9 @@ pub struct Invoked {
     /// \[EXTENSION\] RULES.md D106 The registered XQuery modules' names
     /// its queries import, once or more.
     xquery_modules: RefCell<Vec<QualifiedName>>,
+    /// Whether an XQuery expression was typed statically as
+    /// XQUERY.STATIC_TYPING asked [XQuery §5.2.3].
+    typed: std::cell::Cell<bool>,
 }
 
 impl Invoked {
@@ -54,7 +57,12 @@ impl Invoked {
     /// Schema.
     #[must_use]
     pub fn new(routines: Vec<QualifiedName>) -> Invoked {
-        Invoked { routines: RefCell::new(routines), xml_schemas: RefCell::default(), xquery_modules: RefCell::default() }
+        Invoked {
+            routines: RefCell::new(routines),
+            xml_schemas: RefCell::default(),
+            xquery_modules: RefCell::default(),
+            typed: std::cell::Cell::new(false),
+        }
     }
 
     /// The routines noted.
@@ -92,6 +100,17 @@ impl Invoked {
     /// The registered XML Schemas and XQuery modules noted, taken.
     pub fn take_indicated(&self) -> Indicated {
         Indicated { xml_schemas: self.xml_schemas.take(), xquery_modules: self.xquery_modules.take() }
+    }
+
+    /// Notes that an XQuery expression was typed statically as
+    /// XQUERY.STATIC_TYPING asked [XQuery §5.2.3].
+    pub fn typed(&self) {
+        self.typed.set(true);
+    }
+
+    /// Whether one was, taken.
+    pub fn take_typed(&self) -> bool {
+        self.typed.take()
     }
 }
 

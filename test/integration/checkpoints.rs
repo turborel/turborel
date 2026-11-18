@@ -284,6 +284,7 @@ fn recovery_undoes_and_redoes_what_the_pages_need() {
             engines: vec![("T".into(), "checkpointed".into())],
             now: Now::default(),
             epochs: vec![],
+            typed: false,
         },
     );
     record(10, Change::Insert { table: table.clone(), generation: 0, row: 6, after: row(60) });

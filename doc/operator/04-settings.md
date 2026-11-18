@@ -158,7 +158,8 @@ XQUERY.STATIC_TYPING ([Static typing](../sql/16-xml.md#static-typing));
 and each of the optimizer's rules, OPTIMIZER and the rule's name, as to
 see a plan made without it. A rule a program adds to the optimizer has
 its setting too. A definition, such as a view, is typed as it is made by
-the database's XQUERY.STATIC_TYPING, not a session's.
+the XQUERY.STATIC_TYPING of the session making it, and read as it was
+made by every session.
 
 ```sql
 SET LOG.COMMIT_SYNC = 'OFF';
