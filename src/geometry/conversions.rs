@@ -138,24 +138,12 @@ fn made(g: &Geom, target: Kind) -> Result<Option<Geom>> {
     let wrapped = |body: Body| Geom::new(g.srid, g.dims, body).map(Some);
     let source = g.kind();
     match target {
-        Kind::LineString => {
-            if let Body::Curve(_) = &g.body {
-                line(g).map(Some)
-            } else {
-                Ok(None)
-            }
-        }
+        Kind::LineString => source.is_subtype_of(Kind::Curve).then(|| line(g)).transpose(),
         Kind::CompoundCurve => match &g.body {
             Body::Curve(c) => wrapped(Body::Curve(Curve::Compound(vec![c.clone()]))),
             Body::Point(_) | Body::Surface(_) | Body::Solid(_) | Body::Collection(_) => Ok(None),
         },
-        Kind::Polygon => {
-            if source == Kind::CurvePolygon {
-                polygon(g).map(Some)
-            } else {
-                Ok(None)
-            }
-        }
+        Kind::Polygon => (source == Kind::CurvePolygon).then(|| polygon(g)).transpose(),
         Kind::CompoundSurface => match &g.body {
             Body::Surface(s) => wrapped(Body::Surface(Surface::Compound(vec![s.clone()]))),
             Body::Point(_) | Body::Curve(_) | Body::Solid(_) | Body::Collection(_) => Ok(None),
