@@ -1,10 +1,10 @@
 //! Unit tests of embedding: chunking (`vector/chunk.rs`), the built-in
-//! models, the routines, and the plans of pipelines and auto-embedded
-//! columns.
+//! models, the routines, and models of the catalog bound to their
+//! plug-ins.
 
+mod bind;
 mod chunk;
 mod hashed;
-mod pipeline;
 mod routines;
 
 use std::sync::Arc;
@@ -23,20 +23,14 @@ pub(super) fn rows(session: &Session, sql: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// A database with VECTOR, the routines of the built-in models, and a
-/// schema U.
-pub(super) fn database() -> (Database, Arc<Embedders>) {
+/// A database with VECTOR and a schema U: its routines of the models
+/// are built in.
+pub(super) fn database() -> Database {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION U").unwrap();
-    // Registered routines are called in generated columns and triggers
-    // under the setting; built in, they would need none.
     db.set_setting("SQL.FUNCTION_CALLS", &crate::value::Value::Char("ON".to_owned())).unwrap();
     db.register_type(Box::new(crate::vector::VectorType)).unwrap();
-    let models = Arc::new(Embedders::built_in());
-    for routine in routines(&models) {
-        db.register_scalar_function(routine).unwrap();
-    }
-    (db, models)
+    db
 }
 
 /// Verifies: [EXTENSION] (§12.1) The registry holds the built-in models,

@@ -403,6 +403,7 @@ pub(in crate::db) fn of_schema_routine(s: &Schema, p: &PrivilegeDefinition) -> b
         | PrivilegeObject::Collation
         | PrivilegeObject::Sequence
         | PrivilegeObject::Module
+        | PrivilegeObject::Model
         | PrivilegeObject::Type => false,
     };
     // [ISO/IEC 9075-2:2023 §11.1] of a method of the schema, once it has
@@ -466,7 +467,8 @@ impl State {
             | SchemaStatement::Routine(_)
             | SchemaStatement::Module(_)
             | SchemaStatement::AlterType(_)
-            | SchemaStatement::AlterTransform(_) => {
+            | SchemaStatement::AlterTransform(_)
+            | SchemaStatement::Vector(_) => {
                 Err(rule("[DESIGN] a schema element defined for a type is a method, cast, ordering or transform"))
             }
         }

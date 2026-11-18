@@ -183,6 +183,7 @@ impl State {
             PrivilegeObject::Domain => self.revoke_usage((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Sequence => self.revoke_sequence_usage((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Module => self.revoke_on_module((auth, schema), r).or_at(r.table.at),
+            PrivilegeObject::Model => self.revoke_model_execute((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) => {
                 self.revoke_on_type((auth, schema), r).or_at(r.table.at)
             }

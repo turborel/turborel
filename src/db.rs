@@ -82,6 +82,8 @@ mod definitions;
 mod direct;
 mod domains;
 mod drop;
+mod embedding;
+pub(crate) use embedding::model_named;
 pub(crate) mod dynamic;
 mod execute;
 mod explain;
@@ -514,12 +516,10 @@ impl Session {
         self.locators_ended(ended.is_ok() || committed.get());
         self.temporaries_ended(st, id);
         // The transaction has ended. The garbage collected as it did may leave maintenance due; one that wrote
-        // may leave a checkpoint, a fold of kept totals, or a sync of the log its commit did not wait for, due.
+        // may leave a checkpoint, a fold of kept totals, embeddings, or a sync of the log its commit did not wait for, due.
         self.db.maintain_if_due();
         if wrote {
-            self.db.checkpoint_if_due();
-            self.db.fold_if_due();
-            self.db.sync_log_if_due();
+            self.db.written();
         }
         ended
     }

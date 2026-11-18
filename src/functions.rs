@@ -17,7 +17,6 @@
 //! The engine, not the plugin, applies [X3.135-1986 §5.8 GR1, GR2]: nulls are removed from
 //! the argument, and duplicates too for DISTINCT, before `update` is called.
 
-use std::fmt;
 use std::sync::Arc;
 
 use crate::error::{Code, Result, fail};
@@ -50,7 +49,9 @@ mod formatted;
 pub(crate) use formatted::json_datetime_cast;
 pub use formatted::{FORMAT, formatted_cast};
 mod greatest;
+mod handles;
 pub use greatest::{GREATEST, GreatestOrLeast, LEAST};
+pub use handles::{AggregateRef, ScalarRef};
 mod hypothetical;
 pub use hypothetical::{Hypothesis, Hypothetical, RANK_FUNCTION_TYPES};
 mod ints;
@@ -342,6 +343,18 @@ pub trait ScalarFunction: Send + Sync {
     fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
         self.argument_type(position, args).map(ParameterType::Of)
     }
+    /// \[EXTENSION\] Whether `call_many` is cheaper than a call a row, as a model's (vector design R12.3).
+    fn batches(&self) -> bool {
+        false
+    }
+    /// The values of calls of each of `rows`, in order: by default `call` of each.
+    ///
+    /// # Errors
+    ///
+    /// As `call`'s.
+    fn call_many(&self, rows: &[Vec<Value>]) -> Result<Vec<Value>> {
+        rows.iter().map(|r| self.call(r)).collect()
+    }
 }
 
 /// \[EXTENSION\] A set function: one of COUNT, SUM, AVG, MAX, MIN
@@ -471,24 +484,6 @@ pub trait Accumulator {
     ///
     /// The result cannot be computed or is out of range.
     fn finish(&self) -> Result<Value>;
-}
-
-/// A shared handle to a registered scalar function.
-#[derive(Clone)]
-pub struct ScalarRef(pub Arc<dyn ScalarFunction>);
-/// A shared handle to a registered aggregate function.
-#[derive(Clone)]
-pub struct AggregateRef(pub Arc<dyn AggregateFunction>);
-
-impl fmt::Debug for ScalarRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.name())
-    }
-}
-impl fmt::Debug for AggregateRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.name())
-    }
 }
 
 // ---------------------------------------------------------------------------

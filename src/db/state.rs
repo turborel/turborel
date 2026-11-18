@@ -103,6 +103,9 @@ pub struct State {
     /// \[EXTENSION\] The rankings of full-text search (RULES.md D87),
     /// shared by every state.
     pub(crate) rankings: super::rankings::SharedRankings,
+    /// \[EXTENSION\] The model plug-ins registered and the models of the
+    /// catalog bound to them, shared by every state (`db/embedding.rs`).
+    pub(crate) embedders: Arc<crate::vector::embed::Embedders>,
     /// The collations there are, by name (RULES.md D60).
     pub(crate) collations: BTreeMap<String, Arc<dyn Collation>>,
     /// The clock the datetime value functions read (`clock.rs`).
@@ -180,6 +183,7 @@ impl State {
             functions: Registry::with_set_functions(),
             types: TypeRegistry::builtin(),
             rankings: super::rankings::SharedRankings::default(),
+            embedders: Arc::new(crate::vector::embed::Embedders::built_in()),
             clock: Arc::new(crate::clock::SystemClock),
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
@@ -199,15 +203,19 @@ impl State {
             building: HashSet::new(),
         };
         st.attach_builtins(&memory);
-        // The built-in engines' and rules' settings, of short names none
-        // declared yet, cannot be refused; a rule without one would be on,
-        // an engine without one at its default.
-        let engines: Vec<Arc<dyn StorageEngine>> = st.engines.values().cloned().collect();
-        for engine in engines {
-            let _ = st.declare_plugin(engine.name(), engine.configurable());
-        }
-        let _ = st.switch_rules();
+        st.declare_builtins();
         st
+    }
+
+    /// The built-in engines' and rules' settings declared. Of short names
+    /// none declared yet, they cannot be refused; a rule without one would
+    /// be on, an engine without one at its default.
+    fn declare_builtins(&mut self) {
+        let engines: Vec<Arc<dyn StorageEngine>> = self.engines.values().cloned().collect();
+        for engine in engines {
+            let _ = self.declare_plugin(engine.name(), engine.configurable());
+        }
+        let _ = self.switch_rules();
     }
 
     /// The built-in engines and index methods, given the budget `memory`
@@ -215,6 +223,10 @@ impl State {
     /// sized by STORAGE.POOL_BYTES.
     fn attach_builtins(&mut self, memory: &Arc<MemoryBudget>) {
         let st = self;
+        // EMBED, CHUNK_TEXT and EMBED_VERSION of the models registered, of no name taken yet.
+        for f in crate::vector::embed::routines(&st.embedders) {
+            let _ = st.functions.add_scalar(Arc::from(f));
+        }
         st.pages.use_budget(Arc::clone(memory));
         st.pages.use_reader(Arc::clone(&st.ahead));
         let engine = RowStore::sharing(TableOptions::default(), Arc::clone(&st.pages));

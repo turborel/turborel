@@ -64,8 +64,9 @@ mod temporal;
 mod temporal_references;
 mod triggers;
 mod truncate;
-mod view_defaults;
+mod vector_embed;
 mod vector_indexes;
+mod view_defaults;
 mod vr;
 mod waits;
 mod width_bucket;
@@ -97,7 +98,7 @@ pub fn all() -> Vec<Mutation> {
     core.into_iter()
         .chain(areas::all())
         .chain([projection::PROJECTION.as_slice(), &json::JSON, &fulltext::FULLTEXT, &sqlmm_fulltext::SQLMM_FULLTEXT, &t621::T621])
-        .chain([vector_indexes::VECTOR_INDEXES.as_slice()])
+        .chain([vector_indexes::VECTOR_INDEXES.as_slice(), &vector_embed::VECTOR_EMBED])
         .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()
         .copied()

@@ -8,13 +8,14 @@ use std::collections::BTreeSet;
 
 use super::views::Source;
 use super::{Binder, Context, FromItem, Invoked, Purpose, Scope};
+use crate::ast::{SetClause, UpdateSource};
 use crate::catalog::{Generation, TableDesc, owner_of};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{Expr, expr_columns};
 use crate::params::Params;
 use crate::parser::Parser;
-use crate::value::DataType;
+use crate::value::{DataType, Value};
 
 /// [ISO/IEC 9075-2:2023 §11.4 SR10] The generation expression `g` of the
 /// column at `at` of table `desc`, bound over its row, as the owner of the
@@ -89,6 +90,35 @@ pub fn generations(db: &State, desc: &TableDesc) -> Result<Vec<(usize, Expr)>> {
         if let Some(g) = c.generation() {
             bound.push((at, bind_generation(db, desc, (at, g))?.0));
         }
+    }
+    Ok(bound)
+}
+
+/// \[EXTENSION\] (vector design §12.4 R12.6) `generations`, as a write
+/// gives them: a column computed after commit (`Generation::asynchronous`)
+/// the null value as a row is inserted, `set` none; as one is updated by
+/// `set`, its value if `set` gives it DEFAULT, else the null value if
+/// `set` changes a column it references, else the value it has. The queue
+/// after commit gives each such column DEFAULT (`db/embedding/queue.rs`).
+///
+/// # Errors
+///
+/// As `generations`.
+pub fn written_generations(db: &State, desc: &TableDesc, set: Option<&[SetClause]>) -> Result<Vec<(usize, Expr)>> {
+    let mut bound = generations(db, desc)?;
+    for (at, e) in &mut bound {
+        let Some(c) = desc.columns.get(*at).filter(|c| c.generation().is_some_and(|g| g.asynchronous)) else { continue };
+        let Some(set) = set else {
+            *e = Expr::Const(Value::Null);
+            continue;
+        };
+        if set.iter().any(|s| s.column == c.name && matches!(s.value, UpdateSource::Default)) {
+            continue;
+        }
+        let mut used = Vec::new();
+        expr_columns(e, &mut used);
+        let changed = set.iter().any(|s| used.iter().any(|&u| desc.columns.get(u).is_some_and(|r| r.name == s.column)));
+        *e = if changed { Expr::Const(Value::Null) } else { Expr::Column(*at) };
     }
     Ok(bound)
 }

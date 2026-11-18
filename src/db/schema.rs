@@ -221,9 +221,8 @@ impl State {
 
     /// The grants of `<schema>` `s`, by its owner `owner`: each table's
     /// privileges granted, and whether any was not; USAGE on a domain,
-    /// collation, sequence generator or type, and EXECUTE on a routine, is
-    /// granted in its descriptor
-    /// [§11.36].
+    /// collation, sequence generator or type, and EXECUTE on a routine or model, is
+    /// granted in its descriptor [§11.36].
     fn schema_grants(&mut self, s: &Schema, owner: &str) -> Result<Vec<(Vec<PrivilegeDesc>, bool)>> {
         let mut granted = Vec::new();
         for p in &s.privileges {
@@ -237,6 +236,7 @@ impl State {
                 PrivilegeObject::Domain => self.grant_usage(owner, &s.name, p),
                 PrivilegeObject::Collation => self.grant_collation_usage(owner, p),
                 PrivilegeObject::Sequence => self.grant_sequence_usage(owner, &s.name, p),
+                PrivilegeObject::Model => self.grant_model_execute(owner, &s.name, p),
                 // Granted once the schema's modules are made.
                 PrivilegeObject::Module => continue,
                 // Granted once the schema's routines are made.

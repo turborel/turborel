@@ -93,6 +93,8 @@ pub enum Extension {
     ServedConnections,
     /// \[EXTENSION\] A ranking of full-text search (`Database::register_ranking`).
     Ranking,
+    /// \[EXTENSION\] A model of embeddings (`Database::register_embedder`).
+    Embedder,
 }
 
 /// \[DESIGN\] An event of the database's.

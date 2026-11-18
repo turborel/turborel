@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::ast::{InsertSource, Overriding, QueryExpression, RowElement, ValuesRow};
-use crate::binder::generations;
+use crate::binder::written_generations;
 use crate::catalog::{Generated, SequenceDesc, TableDesc};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -87,7 +87,9 @@ impl Generating {
             crate::db::typed::insertable_into(st, desc)?;
         }
         let typed = |at: usize| desc.columns.get(at).map(|c| c.data_type.clone());
-        let exprs = generations(st, desc)?.into_iter().filter_map(|(at, e)| Some((at, typed(at)?, e))).collect();
+        // A column computed after commit null in a row inserted, else kept.
+        let written = if draw.inserting { None } else { Some(&[][..]) };
+        let exprs = written_generations(st, desc, written)?.into_iter().filter_map(|(at, e)| Some((at, typed(at)?, e))).collect();
         let identity =
             desc.columns.iter().enumerate().find_map(|(at, c)| Some((at, c.data_type.clone(), Arc::new(c.identity()?.sequence.clone()))));
         let reference = if draw.reference { referencing(desc)? } else { None };

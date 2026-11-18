@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use super::{
-    CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, OrderingDesc, PrivilegeDesc, QualifiedName, Roles,
-    SequenceDesc, SqlRoutineDesc, StructuredDesc, TableDesc, TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc,
+    CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, Embeddings, IndexDesc, ModuleDesc, OrderingDesc, PrivilegeDesc,
+    QualifiedName, Roles, SequenceDesc, SqlRoutineDesc, StructuredDesc, TableDesc, TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc,
 };
 use crate::hash::murmur::MurmurMap;
 use crate::value::DataType;
@@ -38,6 +38,8 @@ pub struct MemoryCatalog {
     modules: HashMap<QualifiedName, ModuleDesc>,
     /// The roles and role authorizations.
     roles: Roles,
+    /// The embedding models and vector pipelines.
+    embeddings: Embeddings,
 }
 
 impl Catalog for MemoryCatalog {
@@ -49,6 +51,12 @@ impl Catalog for MemoryCatalog {
     }
     fn set_roles(&mut self, roles: Roles) {
         self.roles = roles;
+    }
+    fn embeddings(&self) -> &Embeddings {
+        &self.embeddings
+    }
+    fn set_embeddings(&mut self, embeddings: Embeddings) {
+        self.embeddings = embeddings;
     }
     fn schema_exists(&self, schema: &str) -> bool {
         self.schemas.iter().any(|(s, _)| s == schema)

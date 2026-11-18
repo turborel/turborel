@@ -51,6 +51,7 @@ pub(crate) use datetime::cast_is_valid;
 pub use datetime::{function_type as datetime_function_type, literal_value as datetime_literal};
 pub use interval::{displacement_of, is_displacement};
 mod distribution;
+mod embedding;
 mod expression;
 mod filter;
 mod from;
@@ -101,7 +102,7 @@ mod with;
 pub use counterparts::defaulted_columns;
 pub use cursor::bind_cursor;
 use from::FromItem;
-pub use generated::{bind_generation, generations, noting_generation};
+pub use generated::{bind_generation, generations, noting_generation, written_generations};
 pub use invocation::{
     Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
     routine_definition, sql_statement,
