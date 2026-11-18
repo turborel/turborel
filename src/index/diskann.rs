@@ -18,10 +18,12 @@ pub mod options;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use self::options::{Options, options_of};
 use super::vector::{
     Ask, Column, Engine, Held, Place, VectorIndex, approximate_support, column_of, default_desc, disk_quantizer, distance, located, plain,
+    serves,
 };
 use super::{Index, IndexMethod, NearestQuery, NearestSupport};
 use crate::catalog::{IndexDesc, TableDesc};
@@ -75,15 +77,15 @@ impl DiskAnnMethod {
         DiskAnnMethod { place: self.place.with_quantizers(quantizers) }
     }
 
-    /// The plug-ins of an index of `column` with options `o`, and its
-    /// metric's name.
-    fn plugins(&self, o: &Options, column: Column) -> Result<(Plugins, String)> {
-        let metric = self.place.metric((&o.metric, true), column)?;
-        let code_bytes = usize::try_from(o.code_bytes).unwrap_or(0);
-        let quantizer = self.place.quantizer(&o.quantizer)?.map(|q| disk_quantizer(q, Arc::clone(&metric), code_bytes));
+    /// The plug-ins of an index of `column` with options `o`, and the
+    /// names of the metric it orders by and of the one it measures by.
+    fn plugins(&self, o: &Options, column: Column) -> Result<(Plugins, (String, String))> {
+        let m = self.place.metric((&o.metric, true, o.shared.normalized), column)?;
+        let metric = m.metric;
+        let quantizer = self.place.quantizer(&o.quantizer)?.map(|q| disk_quantizer(q, Arc::clone(&metric), o.shared.code_bytes));
         let measure = distance(&metric, column);
         let plugins = Plugins { metric: Arc::new(move |a: &[f32], b: &[f32]| measure(a, b)), quantizer };
-        Ok((plugins, metric.name().to_owned()))
+        Ok((plugins, m.names))
     }
 
     /// An index of `columns` as `desc` describes, made anew or, of a
@@ -103,15 +105,19 @@ impl DiskAnnMethod {
         if ann.layout().dims != column.dims {
             return Err(SqlError::new(Code::Corrupt, "[DESIGN] a DiskANN index's dimensions differ from its column's"));
         }
-        let held = Held::new(DiskEngine { ann });
+        let held = Held::new(DiskEngine { ann, rerank: AtomicBool::new(o.rerank) });
         self.place.keep(&held);
-        Ok(Box::new(VectorIndex::new(held, column, &metric)))
+        Ok(Box::new(VectorIndex::new(held, column, (&metric.0, &metric.1), o.shared)))
     }
 }
 
 impl IndexMethod for DiskAnnMethod {
     fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> NearestSupport {
         approximate_support(DISKANN_METHOD, query, columns)
+    }
+    fn serves_metric(&self, index: &IndexDesc, call: &str) -> bool {
+        let normalized = options_of(index).is_ok_and(|o| o.shared.normalized);
+        self.metric(index).is_some_and(|m| serves(&m, normalized, call))
     }
     fn metric(&self, index: &IndexDesc) -> Option<String> {
         self.place.metric_name(&options_of(index).ok()?.metric)
@@ -147,9 +153,10 @@ impl IndexMethod for DiskAnnMethod {
     }
 }
 
-/// A DiskANN graph as a vector index's engine.
+/// A DiskANN graph as a vector index's engine, and its RERANK.
 pub(crate) struct DiskEngine {
     ann: DiskAnn,
+    rerank: AtomicBool,
 }
 
 impl DiskEngine {
@@ -194,6 +201,7 @@ impl DiskEngine {
 
 impl Engine for DiskEngine {
     const METHOD: &'static str = DISKANN_METHOD;
+    const LIST_OPTION: &'static str = options::SEARCH_LIST;
     fn meta(&self) -> PageId {
         self.ann.meta()
     }
@@ -218,8 +226,11 @@ impl Engine for DiskEngine {
         if let Some(filter) = filter {
             return self.filtered(query, (ask, list), filter);
         }
+        // RERANK ON gives the executor the whole list to order again by
+        // the SQL distance; OFF the rows asked alone, in the index's order.
+        let results = if self.rerank.load(Ordering::Relaxed) { list.max(ask.wanted) } else { ask.wanted };
         let s = Search {
-            results: ask.wanted,
+            results,
             list: Some(u32::try_from(list).unwrap_or(u32::MAX)),
             width: ask.beam_width,
             selectivity: ask.selectivity,
@@ -246,6 +257,7 @@ impl Engine for DiskEngine {
     }
     fn retune(&self, desc: &IndexDesc) {
         if let Ok(o) = options_of(desc) {
+            self.rerank.store(o.rerank, Ordering::Relaxed);
             // Reconfiguring cannot report; a refused retune leaves the
             // old tuning, which still searches correctly.
             let _ = self.ann.retune(o.tuning);

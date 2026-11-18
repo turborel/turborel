@@ -1,18 +1,16 @@
 //! Functions as plugins.
 //!
-//! SQL-86 has exactly five set functions [X3.135-1986 §5.8], and their names are key
-//! words: COUNT, SUM, AVG, MAX, MIN. They are implemented here as ordinary
-//! `AggregateFunction` plugins registered under those names, so an
-//! implementation can be swapped (say, a more accurate SUM) without touching
-//! the parser, planner or executor. So are SQL-92's string functions and
-//! concatenation (`functions/strings.rs`).
+//! SQL-86 has exactly five set functions [X3.135-1986 §5.8], and their names are key words:
+//! COUNT, SUM, AVG, MAX, MIN. They are implemented here as ordinary `AggregateFunction`
+//! plugins registered under those names, so an implementation can be swapped (say, a more
+//! accurate SUM) without touching the parser, planner or executor. So are SQL-92's string
+//! functions and concatenation (`functions/strings.rs`).
 //!
-//! \[EXTENSION\] A function registered belongs to no schema, so a call of it
-//! is no `<routine invocation>` [ISO/IEC 9075-2:2023 §10.4]. A session whose
-//! SQL.FUNCTION_CALLS is ON, as it is by default, resolves `<identifier>`(`<args>`)
-//! that names no function of the schema to a registered `ScalarFunction` or
-//! `AggregateFunction`; OFF, it takes the schema's own functions alone
-//! ([X3.135-1986 §3.4] allows "user options to process nonconforming SQL language").
+//! \[EXTENSION\] A function registered belongs to no schema, so a call of it is no
+//! `<routine invocation>` [ISO/IEC 9075-2:2023 §10.4]. A session whose SQL.FUNCTION_CALLS is
+//! ON, as it is by default, resolves `<identifier>`(`<args>`) that names no function of the
+//! schema to a registered `ScalarFunction` or `AggregateFunction`; OFF, it takes the schema's
+//! own functions alone ([X3.135-1986 §3.4] allows "user options to process nonconforming SQL language").
 //!
 //! The engine, not the plugin, applies [X3.135-1986 §5.8 GR1, GR2]: nulls are removed from
 //! the argument, and duplicates too for DISTINCT, before `update` is called.
@@ -25,8 +23,7 @@ use crate::json::Warned;
 use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::storage::{Floats, Ints, Texts};
-use crate::value::Spelled;
-use crate::value::{DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
+use crate::value::{DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, Value};
 
 mod any_value;
 pub use any_value::ANY_VALUE;

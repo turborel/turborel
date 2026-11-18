@@ -1,6 +1,8 @@
 //! Counted entries, deletes by tombstone, maintenance's repair, and the
 //! quantizer trained by maintenance.
 
+use std::sync::atomic::Ordering::Relaxed;
+
 use super::*;
 
 /// Verifies: [EXTENSION] entries are counted: a pair inserted twice stays
@@ -52,6 +54,35 @@ fn hnsw_deletes_are_never_returned() {
     assert!(!hnsw.maintenance_due());
     let after = mean_recall(&search, &flat, dims, &|r| !gone(r));
     assert!(before >= 0.9_f64 && after >= 0.95_f64, "recall {before} before repair, {after} after");
+}
+
+/// Verifies: [DESIGN] maintenance makes progress under constant writes
+/// (`fence.rs`): while a writer is past the fence, a repair is not swapped
+/// in, each lost swap counted; after `MOST_LOST` it raises the fence,
+/// waits for the writer, and swaps its repair in, the count cleared.
+#[test]
+fn hnsw_maintenance_makes_progress_under_constant_writes() {
+    let dims = 16;
+    let flat = clustered(1_000, dims, 10, 17);
+    let (hnsw, _budget) = built(&flat, dims, None);
+    for (i, v) in flat.chunks_exact(dims).enumerate().filter(|(i, _)| row(*i).is_multiple_of(3)) {
+        hnsw.remove(v, row(i)).unwrap();
+    }
+    let writer = hnsw.inner.fence.pass().unwrap();
+    for lost in 1..=fence::MOST_LOST {
+        assert!(!hnsw.maintain().unwrap(), "a writer is past the fence");
+        assert_eq!(hnsw.inner.lost.load(Relaxed), lost);
+    }
+    let done = std::thread::scope(|scope| {
+        let fenced = scope.spawn(|| hnsw.maintain().unwrap());
+        while !hnsw.inner.fence.is_raised() && !fenced.is_finished() {
+            std::thread::yield_now();
+        }
+        drop(writer);
+        fenced.join().unwrap()
+    });
+    assert!(done && !hnsw.maintenance_due(), "the fenced repair was swapped in");
+    assert_eq!(hnsw.inner.lost.load(Relaxed), 0);
 }
 
 /// Verifies: [EXTENSION] an index naming a quantizer keeps full vectors

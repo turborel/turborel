@@ -140,7 +140,9 @@ fn weighted_fusion_normalizes_min_max_11_3() {
         "SELECT DOC_ID, SCORE FROM HYBRID_SEARCH(INDEX = DOCS_H, QUERY_TEXT = 'gift', QUERY_VECTOR = {VECTOR}, TOP_N = 5, \
          CANDIDATES = 1, FUSION = 'WEIGHTED') AS H"
     );
-    assert_eq!(read(&s, &alike), ["1,1E0", "4,1E0"]);
+    // Each list one candidate, which scores 1; the approximate one need not be the nearest.
+    let alike = read(&s, &alike);
+    assert!(alike.contains(&"4,1E0".to_owned()) && alike.len() == 2 && alike.iter().all(|r| r.ends_with(",1E0")), "{alike:?}");
     // Three candidates, the farthest nearer than 1: its score is 0, not 1 minus its distance.
     let three = fused(&s, &hybrid("TOP_N = 8, CANDIDATES = 3, FUSION = 'WEIGHTED', TEXT_WEIGHT = 0"));
     let farthest = three

@@ -293,8 +293,8 @@ impl Postings {
         let (Some(&first), Some(&last)) = (self.rows.first(), self.rows.last()) else {
             return Err(SqlError::new(Code::Api, "[DESIGN] a posting block has at least one posting"));
         };
-        let count = u16::try_from(self.rows.len())
-            .map_err(|_| SqlError::new(Code::Api, "[DESIGN] a posting block has at most 65535 postings"))?;
+        let count =
+            u16::try_from(self.rows.len()).map_err(|_| SqlError::new(Code::Api, "[DESIGN] a posting block has at most 65535 postings"))?;
         let deltas: Vec<u64> = self.rows.windows(2).map(|w| w.get(1).zip(w.first()).map_or(0, |(b, a)| b.wrapping_sub(*a))).collect();
         let bits = deltas.iter().max().map_or(0, |&m| ROW_BITS.saturating_sub(m.leading_zeros()));
         let (stored, measured) = stored_weights(self, quantization);
@@ -331,9 +331,7 @@ fn weights_of(stored: &[u8], header: &Header) -> Vec<f64> {
     let (step, scale) = scales(header.min, header.max);
     let base = f64::from(header.min);
     match header.quantization {
-        Quantization::Float32 => {
-            stored.as_chunks::<FLOAT32_BYTES>().0.iter().map(|&b| f64::from(f32::from_le_bytes(b))).collect()
-        }
+        Quantization::Float32 => stored.as_chunks::<FLOAT32_BYTES>().0.iter().map(|&b| f64::from(f32::from_le_bytes(b))).collect(),
         Quantization::Float16 => {
             stored.as_chunks::<FLOAT16_BYTES>().0.iter().map(|&b| f64::from(from_half(u16::from_le_bytes(b))) * scale).collect()
         }

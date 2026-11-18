@@ -36,6 +36,8 @@ use crate::index::{DiskAnnMethod, FullTextMethod, HnswMethod, Index, IndexMethod
 use crate::memory::Host;
 use crate::storage::TableOption;
 use crate::value::{CompOp, DataType};
+use crate::vector::metric::Metrics;
+use crate::vector::quantizer::Quantizers;
 
 /// The name of `HybridMethod`.
 pub const HYBRID_METHOD: &str = "hybrid";
@@ -48,7 +50,10 @@ fn unsupported(detail: &str) -> SqlError {
 /// vector methods, each making its part.
 pub struct HybridMethod {
     text: FullTextMethod,
-    vectors: Vec<Box<dyn IndexMethod>>,
+    hnsw: HnswMethod,
+    ivf: IvfMethod,
+    diskann: DiskAnnMethod,
+    sparse: SparseMethod,
 }
 
 impl HybridMethod {
@@ -57,12 +62,10 @@ impl HybridMethod {
         let pool = || Arc::clone(pool);
         HybridMethod {
             text: FullTextMethod::new(pool(), file),
-            vectors: vec![
-                Box::new(HnswMethod::new(pool(), file)),
-                Box::new(IvfMethod::new(pool(), file)),
-                Box::new(DiskAnnMethod::new(pool(), file)),
-                Box::new(SparseMethod::new(pool(), file)),
-            ],
+            hnsw: HnswMethod::new(pool(), file),
+            ivf: IvfMethod::new(pool(), file),
+            diskann: DiskAnnMethod::new(pool(), file),
+            sparse: SparseMethod::new(pool(), file),
         }
     }
 
@@ -71,13 +74,30 @@ impl HybridMethod {
         let memory = || Arc::clone(memory);
         HybridMethod {
             text: FullTextMethod::sharing(memory()),
-            vectors: vec![
-                Box::new(HnswMethod::sharing(memory())),
-                Box::new(IvfMethod::sharing(memory())),
-                Box::new(DiskAnnMethod::sharing(memory())),
-                Box::new(SparseMethod::sharing(memory())),
-            ],
+            hnsw: HnswMethod::sharing(memory()),
+            ivf: IvfMethod::sharing(memory()),
+            diskann: DiskAnnMethod::sharing(memory()),
+            sparse: SparseMethod::sharing(memory()),
         }
+    }
+
+    /// \[EXTENSION\] The method, its dense vector parts ordering by the
+    /// metrics and compressing by the quantizers `plugins` gives: the
+    /// database's.
+    #[must_use]
+    pub fn with_plugins(self, (metrics, quantizers): &(Metrics, Quantizers)) -> HybridMethod {
+        let (m, q) = (|| Arc::clone(metrics), || Arc::clone(quantizers));
+        HybridMethod {
+            hnsw: self.hnsw.with_metrics(m()).with_quantizers(q()),
+            ivf: self.ivf.with_metrics(m()).with_quantizers(q()),
+            diskann: self.diskann.with_metrics(m()).with_quantizers(q()),
+            ..self
+        }
+    }
+
+    /// Its vector methods, HNSW first, the default.
+    fn vectors(&self) -> [&dyn IndexMethod; 4] {
+        [&self.hnsw, &self.ivf, &self.diskann, &self.sparse]
     }
 
     /// \[EXTENSION\] The method, its text parts naming their rankings
@@ -90,8 +110,8 @@ impl HybridMethod {
     /// The method of the vector part `desc` describes.
     fn vector_method(&self, desc: &IndexDesc) -> Result<&dyn IndexMethod> {
         let name = options::vector_method(desc);
-        let found = self.vectors.iter().find(|m| m.name() == name);
-        found.map(|m| &**m).ok_or_else(|| unsupported(&format!("has no vector method {name}")))
+        let found = self.vectors().into_iter().find(|m| m.name() == name);
+        found.ok_or_else(|| unsupported(&format!("has no vector method {name}")))
     }
 
     /// The index of `columns` `on` describes, of its options, or with
@@ -109,7 +129,7 @@ impl HybridMethod {
         let parts = on.map(|(table, desc)| (table, options::parts(desc)));
         let vector_method = match on {
             Some((_, desc)) => self.vector_method(desc)?,
-            None => self.vectors.first().map(|m| &**m).ok_or_else(|| unsupported("has no vector method"))?,
+            None => &self.hnsw,
         };
         let (text, vector) = match (locator.map(options::located).transpose()?, parts) {
             (Some((t, v)), Some((table, (td, vd)))) => {
@@ -155,8 +175,10 @@ impl IndexMethod for HybridMethod {
         match query.column {
             TEXT => self.text.supports_nearest(&part, std::slice::from_ref(text)),
             VECTOR => {
-                let served =
-                    self.vectors.iter().any(|m| m.supports_nearest(&part, std::slice::from_ref(vector)) == NearestSupport::Approximate);
+                let served = self
+                    .vectors()
+                    .into_iter()
+                    .any(|m| m.supports_nearest(&part, std::slice::from_ref(vector)) == NearestSupport::Approximate);
                 if served { NearestSupport::Approximate } else { NearestSupport::No }
             }
             _ => NearestSupport::No,
@@ -167,12 +189,17 @@ impl IndexMethod for HybridMethod {
         let (_, vector) = options::parts(index);
         self.vector_method(index).ok()?.metric(&vector)
     }
+    /// As its vector part's method serves it.
+    fn serves_metric(&self, index: &IndexDesc, call: &str) -> bool {
+        let (_, vector) = options::parts(index);
+        self.vector_method(index).is_ok_and(|m| m.serves_metric(&vector, call))
+    }
     fn name(&self) -> &'static str {
         HYBRID_METHOD
     }
     fn attach(&self, host: &Host) -> Result<()> {
         self.text.attach(host)?;
-        self.vectors.iter().try_for_each(|m| m.attach(host))
+        self.vectors().into_iter().try_for_each(|m| m.attach(host))
     }
     /// None: its key is a text and a vector, which have no order together.
     fn supports(&self, _op: CompOp) -> bool {
@@ -188,7 +215,7 @@ impl IndexMethod for HybridMethod {
     fn index_options(&self) -> Vec<TableOption> {
         let mut all = vec![options::own()];
         all.extend(self.text.index_options());
-        self.vectors.iter().for_each(|m| all.extend(m.index_options()));
+        self.vectors().into_iter().for_each(|m| all.extend(m.index_options()));
         all
     }
     fn create_on(&self, columns: &[DataType], on: (&TableDesc, &IndexDesc)) -> Result<Box<dyn Index>> {
@@ -199,7 +226,7 @@ impl IndexMethod for HybridMethod {
     }
     fn checkpoint(&self) -> Result<()> {
         self.text.checkpoint()?;
-        self.vectors.iter().try_for_each(|m| m.checkpoint())
+        self.vectors().into_iter().try_for_each(IndexMethod::checkpoint)
     }
 }
 

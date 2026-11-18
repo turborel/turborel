@@ -43,6 +43,8 @@ pub(crate) struct Ask {
     pub(crate) beam_width: Option<u32>,
     probes: Option<u32>,
     accuracy: Option<u8>,
+    /// The index's own TARGET_ACCURACY, of one whose own list is not set.
+    index_accuracy: Option<u8>,
     widen: u32,
     /// Every row within it, instead of the nearest.
     pub(crate) radius: Option<f64>,
@@ -67,17 +69,30 @@ impl Ask {
             beam_width: a.beam_width,
             probes: a.probes,
             accuracy: a.accuracy,
+            index_accuracy: None,
             widen: a.widen.max(1),
             radius: a.radius,
             selectivity,
         }
     }
 
+    /// This request of an index whose TARGET_ACCURACY is `accuracy`, none
+    /// if its own list or probes are set (`options.rs`): a search that
+    /// sets neither its list nor its accuracy aims at it (R9.4, R10.2).
+    pub(crate) fn of_index(self, accuracy: Option<u8>) -> Ask {
+        Ask { index_accuracy: accuracy, ..self }
+    }
+
+    /// The accuracy aimed at: the query's, else the index's.
+    fn aim(&self) -> Option<u8> {
+        self.accuracy.or(self.index_accuracy)
+    }
+
     /// The candidate list: the query's, else its accuracy's, else the
-    /// index's `own`; widened, at least the rows wanted, at most
-    /// `MOST_LIST`.
+    /// index's accuracy's, else the index's `own`; widened, at least the
+    /// rows wanted, at most `MOST_LIST`.
     pub(crate) fn list(&self, own: usize) -> usize {
-        let base = match (self.search_list, self.accuracy) {
+        let base = match (self.search_list, self.aim()) {
             (Some(list), _) => usize::try_from(list).unwrap_or(MOST_LIST),
             (None, Some(accuracy)) => self.wanted.saturating_mul(PERCENT).checked_div(missed(accuracy)).unwrap_or(MOST_LIST),
             (None, None) => own,
@@ -88,7 +103,7 @@ impl Ask {
     /// The lists scanned of `lists`: the query's, else its accuracy's,
     /// else none for the index's own; widened, at most `lists`.
     pub(crate) fn probes(&self, lists: usize, own: usize) -> usize {
-        let base = match (self.probes, self.accuracy) {
+        let base = match (self.probes, self.aim()) {
             (Some(probes), _) => usize::try_from(probes).unwrap_or(lists),
             (None, Some(accuracy)) => {
                 lists.saturating_mul(PERCENT).checked_div(missed(accuracy).saturating_mul(PROBE_SHARE)).unwrap_or(lists).max(1)
@@ -140,7 +155,8 @@ mod tests {
 
     /// Verifies: [EXTENSION] vector_standard §9.2 R9.4 A query's search
     /// list comes first, then its TARGET ACCURACY, mapped to about nine
-    /// times the rows at 90% and fifty at 99%, then the index's own; a
+    /// times the rows at 90% and fifty at 99%, then the index's
+    /// TARGET_ACCURACY, then the index's own list; a
     /// widened search (R9.3) multiplies it; it is never below the rows
     /// asked nor past the greatest list.
     #[test]
@@ -152,11 +168,16 @@ mod tests {
         assert_eq!(asked(None, None, 4, FilterHint::None).list(64), 256);
         assert_eq!(asked(Some(2), None, 1, FilterHint::None).list(64), 10);
         assert_eq!(asked(Some(9_000), None, 4, FilterHint::None).list(64), MOST_LIST);
+        assert_eq!(asked(None, None, 1, FilterHint::None).of_index(Some(99)).list(64), 500);
+        assert_eq!(asked(None, Some(90), 1, FilterHint::None).of_index(Some(99)).list(64), 90);
+        assert_eq!(asked(Some(40), None, 1, FilterHint::None).of_index(Some(99)).list(64), 40);
+        assert_eq!(asked(None, None, 1, FilterHint::None).of_index(None).list(64), 64);
     }
 
     /// Verifies: [EXTENSION] vector_standard §9.2 R9.4 IVF's probes come
     /// from the query, then its accuracy, about one list in nine at 90%,
-    /// then the index's own; widened, at least one, at most every list.
+    /// then the index's accuracy, then the index's own probes; widened, at
+    /// least one, at most every list.
     #[test]
     fn probes_come_from_the_query_its_accuracy_or_the_index() {
         let mut a = asked(None, Some(90), 1, FilterHint::None);
@@ -166,6 +187,8 @@ mod tests {
         assert_eq!(asked(None, None, 2, FilterHint::None).probes(900, 7), 14);
         assert_eq!(asked(None, None, 1, FilterHint::None).probes(4, 0), 1);
         assert_eq!(asked(None, Some(100), 8, FilterHint::None).probes(16, 7), 16);
+        assert_eq!(asked(None, None, 1, FilterHint::None).of_index(Some(90)).probes(900, 7), 102);
+        assert_eq!(asked(None, None, 1, FilterHint::None).of_index(None).probes(900, 7), 7);
     }
 
     /// Verifies: [EXTENSION] vector_standard R13.2 A post-filter keeping a

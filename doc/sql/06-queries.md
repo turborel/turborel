@@ -1219,8 +1219,16 @@ ON.
 
 APPROX is a request, not a guarantee. An index is read only when ORDER
 BY is one distance of an indexed column against a constant, a parameter
-or an outer reference, and the index's metric is the distance's. With
-no such index the query runs exactly, as here:
+or an outer reference, and the index serves the distance's metric. The
+distance is VECTOR_DISTANCE, its metric named before or after its
+vectors, or a shorthand such as COSINE_DISTANCE or L2_DISTANCE. An index
+serves its own metric, and EUCLIDEAN and EUCLIDEAN_SQUARED serve each
+other. An index whose column is declared NORMALIZED serves any of
+COSINE, DOT, EUCLIDEAN and EUCLIDEAN_SQUARED, since on vectors of norm 1
+they order rows alike
+([CREATE VECTOR INDEX](statements/create-vector-index.md)). A `?` in a
+distance takes the type of the column it is measured against. With no
+such index the query runs exactly, as here:
 
 ```sql
 SELECT NAME, SALARY FROM STAFF WHERE SALARY IS NOT NULL
@@ -1236,7 +1244,9 @@ ORDER BY (SALARY - 7000) * (SALARY - 7000) FETCH APPROX FIRST 2 ROWS ONLY WITH T
 ```
 
 A target accuracy is a percentage from 1 to 100, and overrides the
-index's own. PARAMETERS sets the search instead: EFSEARCH and SEARCH_LIST
+index's own TARGET_ACCURACY. A query of neither aims at the index's,
+unless the index's own search list, EF_SEARCH or PROBES is set, which it
+then searches by. PARAMETERS sets the search instead: EFSEARCH and SEARCH_LIST
 the candidates a graph keeps, BEAM_WIDTH the nodes it reads at once, and
 NEIGHBOR PARTITION PROBES the partitions it reads. The settings
 VECTOR.SEARCH_LIST and VECTOR.BEAM_WIDTH hold when a query names none.

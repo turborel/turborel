@@ -187,23 +187,24 @@ impl CodeTable for Table<'_> {
 // ---------------------------------------------------------------------------
 
 /// The quantizer HNSW and IVF keep codes of, by name: their own SQ8, or a
-/// database quantizer's codebooks with codes of their default length.
-pub(crate) fn codec_quantizer(quantizer: Arc<dyn Quantizer>) -> Arc<dyn hnsw::Quantizer> {
+/// database quantizer's codebooks with codes of `code_bytes` (PQ_BYTES, 0
+/// for the quantizer's default).
+pub(crate) fn codec_quantizer(quantizer: Arc<dyn Quantizer>, code_bytes: usize) -> Arc<dyn hnsw::Quantizer> {
     if quantizer.name() == hnsw::SQ8 {
         return Arc::new(hnsw::Sq8);
     }
-    Arc::new(CodecQuantizer(quantizer))
+    Arc::new(CodecQuantizer(quantizer, code_bytes))
 }
 
-/// A database quantizer as HNSW's and IVF's.
-struct CodecQuantizer(Arc<dyn Quantizer>);
+/// A database quantizer as HNSW's and IVF's, and its codes' bytes.
+struct CodecQuantizer(Arc<dyn Quantizer>, usize);
 
 impl hnsw::Quantizer for CodecQuantizer {
     fn name(&self) -> &str {
         self.0.name()
     }
     fn train(&self, sample: &[f32], dims: usize, seed: u64) -> Result<Arc<dyn Codec>> {
-        Ok(Arc::new(BookCodec(trained(&*self.0, sample, dims, (0, seed))?)))
+        Ok(Arc::new(BookCodec(trained(&*self.0, sample, dims, (self.1, seed))?)))
     }
     fn read(&self, bytes: &[u8], dims: usize) -> Result<Arc<dyn Codec>> {
         let book = self.0.read(bytes)?;

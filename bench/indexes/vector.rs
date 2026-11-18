@@ -1,32 +1,18 @@
 //! The vector index methods "diskann", "hnsw" and "ivf" through `Index`,
-//! apart from SQL: each built of the same clustered vectors one insert at
-//! a time, as CREATE INDEX fills one while writers go on, then searched
-//! approximately with a sweep of each method's knob, DiskANN's search
+//! apart from SQL. Each is built of the same clustered vectors one insert
+//! at a time, as CREATE INDEX fills one while writers go on, then searched
+//! approximately with a sweep of each method's knob: DiskANN's search
 //! list L and beam width W, HNSW's efSearch, IVF's NPROBE. Each sweep
 //! point reports its queries a second and, as a note, its recall@10
 //! against the exact ten nearest by COSINE. Set TURBOREL_VECTOR_ROWS for
 //! scale (default 20000) and TURBOREL_VECTOR_METHOD to one method.
-
-#![allow(
-    clippy::unwrap_used,
-    clippy::as_conversions,
-    clippy::arithmetic_side_effects,
-    clippy::integer_division,
-    clippy::indexing_slicing,
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    missing_docs,
-    reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
-)]
-
-mod harness;
 
 use std::collections::HashSet;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Instant;
 
-use harness::{Bench, Case};
+use super::harness::{self, Bench, Case};
 use turborel::functions::ScalarFunction;
 use turborel::index::{Approximation, DiskAnnMethod, FilterHint, HnswMethod, Index, IndexMethod, IvfMethod, Key, NearestQuery};
 use turborel::memory::MemoryBudget;
@@ -45,8 +31,9 @@ const DISKANN_WIDTHS: [u32; 2] = [1, 4];
 const HNSW_EF: [u32; 5] = [10, 20, 40, 80, 160];
 const IVF_PROBES: [u32; 5] = [1, 2, 4, 8, 16];
 
-fn main() {
-    let bench = Bench::new("vector_index");
+/// The build and the sweep of each method, or of TURBOREL_VECTOR_METHOD's
+/// alone.
+pub fn workloads(bench: &Bench) {
     let rows = std::env::var("TURBOREL_VECTOR_ROWS").ok().map_or(ROWS, |s| s.parse().unwrap());
     let selected = std::env::var("TURBOREL_VECTOR_METHOD").ok();
     let data: Vec<Vec<f32>> = (0..rows).map(vector_of).collect();

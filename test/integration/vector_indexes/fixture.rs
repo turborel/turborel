@@ -1,21 +1,13 @@
-//! A database of VECTOR columns for the vector index methods: the VECTOR
-//! type and functions registered, each distance function of one metric
-//! declaring it (`vector_metric`), so FETCH APPROX of one is served by an
-//! index of its metric. A table S.T (ID INTEGER, V VECTOR(16), a FLOAT32,
-//! C INTEGER) of clustered random vectors, with the exact answers to
-//! compare an index's with.
-
-use std::sync::Arc;
+//! A database of VECTOR columns for the vector index methods, VECTOR and
+//! its functions built in, each distance function declaring its metric
+//! (`vector_metric`), so FETCH APPROX of one is served by an index of its
+//! metric. A table S.T (ID INTEGER, V VECTOR(16, FLOAT32), C INTEGER) of
+//! clustered random vectors, with the exact answers to compare an index's
+//! with.
 
 use turborel::db::{Database, OpenOptions, Session};
-use turborel::error::Result;
-use turborel::functions::{ScalarFunction, ScalarRef};
-use turborel::memory::MemoryBudget;
-use turborel::params::ParameterType;
 use turborel::params::Params;
 use turborel::threads::JobPolicy;
-use turborel::value::{DataType, Value};
-use turborel::vector::{VectorType, functions};
 
 use crate::common::{Scratch, after_crash, rows};
 
@@ -28,62 +20,10 @@ pub const QUERIES: usize = 20;
 /// The methods tested, each of its own metric option group.
 pub const METHODS: [&str; 3] = ["diskann", "hnsw", "ivf"];
 
-/// A built-in VECTOR function, declaring the metric of a distance
-/// shorthand as the vector design document's §13 R13.1 asks.
-struct Declared {
-    inner: Arc<dyn ScalarFunction>,
-    metric: Option<&'static str>,
-}
-
-impl ScalarFunction for Declared {
-    fn name(&self) -> &str {
-        self.inner.name()
-    }
-    fn return_type(&self, args: &[DataType]) -> Result<DataType> {
-        self.inner.return_type(args)
-    }
-    fn call(&self, args: &[Value]) -> Result<Value> {
-        self.inner.call(args)
-    }
-    fn deterministic(&self) -> bool {
-        self.inner.deterministic()
-    }
-    fn specialize(&self, args: &[Option<&Value>], budget: &Arc<MemoryBudget>) -> Option<ScalarRef> {
-        self.inner.specialize(args, budget)
-    }
-    fn argument_type(&self, position: usize, args: &[Option<DataType>]) -> Option<DataType> {
-        self.inner.argument_type(position, args)
-    }
-    fn parameter_types(&self) -> Option<Vec<DataType>> {
-        self.inner.parameter_types()
-    }
-    fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
-        self.inner.parameter_type(position, args)
-    }
-    fn vector_metric(&self, constants: &[Option<&Value>]) -> Option<(String, usize)> {
-        let metric = self.metric?;
-        (constants.len() == 2).then(|| (metric.to_owned(), 0))
-    }
-}
-
-/// The metric each distance shorthand measures by.
-fn metric_of(name: &str) -> Option<&'static str> {
-    match name {
-        "L2_DISTANCE" => Some("EUCLIDEAN"),
-        "COSINE_DISTANCE" => Some("COSINE"),
-        "L1_DISTANCE" => Some("MANHATTAN"),
-        _ => None,
-    }
-}
-
-/// Registers the VECTOR type and functions of `db`.
+/// Readies `db` for the tests: background work run only when asked. VECTOR
+/// and its functions are built in.
 pub fn register(db: &Database) {
     db.set_job_policy(JobPolicy::Manual).unwrap();
-    db.register_type(Box::new(VectorType)).unwrap();
-    for f in functions() {
-        let metric = metric_of(f.name());
-        db.register_scalar_function(Box::new(Declared { inner: f, metric })).unwrap();
-    }
 }
 
 /// A random-looking number of `seed` in [0, 1), the same each run.
@@ -123,7 +63,7 @@ pub fn insert(s: &Session, (from, to): (u64, u64)) {
 
 /// Makes S.T in `db`, of `n` rows and one null vector, row -1.
 pub fn populate(db: &Database, n: u64) {
-    db.schema(&format!("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (ID INTEGER, V VECTOR({DIMS}), C INTEGER)")).unwrap();
+    db.schema(&format!("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (ID INTEGER, V VECTOR({DIMS}, FLOAT32), C INTEGER)")).unwrap();
     let s = db.session("S");
     insert(&s, (0, n));
     s.run("INSERT INTO T VALUES (-1, NULL, 0)").unwrap();

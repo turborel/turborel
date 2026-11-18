@@ -12,7 +12,7 @@ use super::graph::{Graph, Store};
 use super::log::{MEMORY_STEP, grow};
 use super::random::{Rng, vector_hash};
 use super::view::{TRIES, contended};
-use super::{Config, Hnsw, image, meta_bytes};
+use super::{Config, Hnsw, fence, image, meta_bytes};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::memory::Reservation;
@@ -206,6 +206,8 @@ impl Hnsw {
             return Ok(false);
         }
         let inner = &*self.inner;
+        // Past `MOST_LOST` swaps lost to writers, they wait for this one.
+        let _fenced = if inner.lost.load(Relaxed) >= fence::MOST_LOST { Some(inner.fence.raise()?) } else { None };
         if let Some((mut copy, changes, held)) = self.copied()? {
             let mut changed = false;
             if inner.quantizer.is_some() && copy.code_bytes().is_none() && copy.live >= inner.train_rows {
@@ -224,9 +226,12 @@ impl Hnsw {
             drop(held);
             if !swapped {
                 // Changed meanwhile: the work is let go, and maintenance
-                // stays due for the next try.
+                // stays due for the next try, fenced once it has lost
+                // enough.
+                inner.lost.fetch_add(1, Relaxed);
                 return Ok(false);
             }
+            inner.lost.store(0, Relaxed);
         }
         self.save()?;
         Ok(true)
@@ -252,11 +257,13 @@ impl Hnsw {
     }
 
     /// Puts `built` in place of the graph if it has had no change since
-    /// `changes`, in a new epoch: whether it did.
+    /// `changes`, and no writer is past the fence, in a new epoch: whether
+    /// it did. A writer past the fence may yet link its node's back edges,
+    /// which a renumbered graph would lose.
     fn swap(&self, built: Graph, changes: u64) -> Result<bool> {
         let inner = &*self.inner;
         let mut graph = write(&inner.graph)?;
-        if graph.changes != changes {
+        if graph.changes != changes || !inner.fence.idle()? {
             return Ok(false);
         }
         let mut built = built;

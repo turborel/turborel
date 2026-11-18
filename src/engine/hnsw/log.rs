@@ -127,12 +127,16 @@ impl Inner {
 
     /// Chooses node `e`'s list on `level` again with `new` among the
     /// candidates, as its back edge did not fit: computed with no lock
-    /// held, written only if the list is still as read, else again. Past
-    /// `TRIES`, or once maintenance renumbers the graph, the back edge is
-    /// dropped: `new` still links to `e`, and searches reach `e` through it.
+    /// held, written only if the list is still as read, else again, until
+    /// it is: a back edge is the way searches reach `new`, so none is
+    /// dropped. Each try lost is another writer's change of the list made,
+    /// so the writers as a whole make progress. Maintenance swaps in no
+    /// graph while a writer is past the fence (`fence.rs`), so the graph is
+    /// not renumbered under a back edge; were it, `new` would be in the
+    /// repaired graph as its copy found it.
     fn back_edge(&self, (e, level, new): (u32, u8, u32), s: &mut Scratch) -> Result<()> {
         let build = self.build();
-        for _ in 0..TRIES {
+        loop {
             let mut src = Shared::new(&self.graph, take(&mut s.hop))?;
             let epoch = src.epoch;
             let chosen = reselect(&mut src, &self.metric, (e, level, new), &build, s);
@@ -147,7 +151,6 @@ impl Inner {
                 return Ok(());
             }
         }
-        Ok(())
     }
 }
 
@@ -190,6 +193,7 @@ impl Hnsw {
     pub fn insert(&self, vector: &[f32], row: u64) -> Result<()> {
         let inner = &*self.inner;
         inner.metric.check(vector, inner.dims)?;
+        let _writing = inner.fence.pass()?;
         let hash = vector_hash(vector);
         let mut s = inner.scratch.take();
         let done = (|| {
@@ -254,6 +258,7 @@ impl Hnsw {
     pub fn remove(&self, vector: &[f32], row: u64) -> Result<()> {
         let inner = &*self.inner;
         let hash = vector_hash(vector);
+        let _writing = inner.fence.pass()?;
         let mut graph = write(&inner.graph)?;
         let Some(id) = graph.find(hash, row, vector).filter(|id| graph.is_live(*id)) else { return Ok(()) };
         let mut record = vec![REMOVE];

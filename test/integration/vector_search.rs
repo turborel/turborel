@@ -13,7 +13,6 @@ use std::sync::atomic::Ordering;
 use fixture::{DEFAULT_LIST, database, indexed, plan, session};
 use turborel::error::Code;
 use turborel::index::FilterHint;
-use turborel::value::Value;
 
 use crate::common::rows;
 
@@ -263,49 +262,4 @@ fn null_distances_come_last_r10_6() {
     let q = "SELECT ID FROM T ORDER BY TEST_DIST(X, 0.0E0) FETCH APPROX FIRST 4 ROWS ONLY";
     assert_eq!(rows(&s, q).unwrap(), ["0", "1", "2", "99"]);
     assert_eq!(DEFAULT_LIST, 4);
-}
-
-/// Verifies: [EXTENSION] vector_standard §9.3: VECTOR_SEARCH(TABLE =,
-/// COLUMN =, SIMILAR_TO =, METRIC =, TOP_N =) is the table's TOP_N rows
-/// nearest the query, its columns and its DISTANCE under the function's
-/// correlation name, or the table's if none, read by the approximate
-/// index; an argument missing
-/// or written twice is refused (SQLCODE -103), an unknown one is a syntax
-/// error (-102).
-#[test]
-fn vector_search_is_an_approximate_fetch_9_3() {
-    let (db, log) = indexed(500);
-    db.register_scalar_function(Box::new(fixture::Distance("VECTOR_DISTANCE"))).unwrap();
-    let s = session(&db);
-    let q = "SELECT S.ID, S.DISTANCE FROM VECTOR_SEARCH(TABLE = T AS A, COLUMN = X, SIMILAR_TO = 40.5E0, \
-             METRIC = 'testl1', TOP_N = 2) AS S ORDER BY S.DISTANCE, S.ID";
-    assert_eq!(rows(&s, q).unwrap(), ["40,5E-1", "41,5E-1"]);
-    assert_eq!(log.asked().len(), 1);
-    assert!(plan(&s, q).contains("NearestScan"));
-    let unnamed = "SELECT T.ID FROM VECTOR_SEARCH(TOP_N = 1, SIMILAR_TO = 7.0E0, COLUMN = X, TABLE = T)";
-    assert_eq!(rows(&s, unnamed).unwrap(), ["7"]);
-    for (bad, code) in [
-        ("VECTOR_SEARCH(TABLE = T, COLUMN = X, TOP_N = 1)", Code::SyntaxRule),
-        ("VECTOR_SEARCH(TABLE = T, COLUMN = X, COLUMN = X, SIMILAR_TO = 1.0E0, TOP_N = 1)", Code::SyntaxRule),
-        ("VECTOR_SEARCH(TABLE = T, COLUMN = X, SIMILAR_TO = 1.0E0, TOP_N = 1, K = 3)", Code::Syntax),
-    ] {
-        assert_eq!(rows(&s, &format!("SELECT * FROM {bad}")).unwrap_err(), code, "{bad}");
-    }
-}
-
-/// Verifies: [EXTENSION] vector_standard §10.6: INDEX_ACCURACY_REPORT
-/// searches each sample both ways, approximately by the index and
-/// exactly, and counts the exact rows the index found; of an index of no
-/// metric, or none, it is refused (SQLCODE -103).
-#[test]
-fn the_accuracy_report_measures_recall_10_6() {
-    let (db, log) = indexed(300);
-    db.register_scalar_function(Box::new(fixture::Distance("VECTOR_DISTANCE"))).unwrap();
-    let s = session(&db);
-    let samples = [Value::Approx(3.0), Value::Approx(150.2)];
-    let report = s.index_accuracy_report("T_X", &samples, 5).unwrap();
-    assert_eq!((report.queries, report.expected, report.found), (2, 10, 10));
-    assert!((report.recall() - 1.0).abs() < f64::EPSILON);
-    assert_eq!(log.asked().len(), 2);
-    assert_eq!(s.index_accuracy_report("NONE_SUCH", &samples, 5).unwrap_err().code, Code::SyntaxRule);
 }

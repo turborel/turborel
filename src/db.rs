@@ -137,11 +137,11 @@ mod unnamed;
 mod usage;
 mod user_types;
 mod users;
+mod vectors;
 mod views;
 pub(crate) mod write;
 
 use compiled::{plan, plan_slotted};
-
 pub use lobs::LOB_READ_OCTETS;
 pub use prepared::Prepared;
 pub use served::ServedConnections;

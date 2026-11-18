@@ -1,18 +1,10 @@
 //! A database of documents for the hybrid index and the inverted index of
-//! sparse vectors: the VECTOR type and functions registered, VECTOR_DISTANCE
-//! of a constant metric declaring it (`vector_metric`), so FETCH APPROX of
-//! it is served by an index of its metric.
-
-use std::sync::Arc;
+//! sparse vectors, of the built-in VECTOR type and functions.
 
 use turborel::db::{Database, Session};
-use turborel::error::Result;
-use turborel::functions::{ScalarFunction, ScalarRef};
-use turborel::memory::MemoryBudget;
-use turborel::params::{ParameterType, Params};
+use turborel::params::Params;
 use turborel::threads::JobPolicy;
-use turborel::value::{DataType, Value};
-use turborel::vector::{VectorType, functions};
+use turborel::value::Value;
 
 use crate::common::rows;
 
@@ -21,48 +13,9 @@ pub const FILLER: u32 = 1000;
 /// The filler rows.
 pub const FILLERS: u32 = 2000;
 
-/// VECTOR_DISTANCE, declaring the metric its third argument names when it
-/// is a constant, as the vector design document's R13.1 asks.
-struct Declared(Arc<dyn ScalarFunction>);
-
-impl ScalarFunction for Declared {
-    fn name(&self) -> &str {
-        self.0.name()
-    }
-    fn return_type(&self, args: &[DataType]) -> Result<DataType> {
-        self.0.return_type(args)
-    }
-    fn call(&self, args: &[Value]) -> Result<Value> {
-        self.0.call(args)
-    }
-    fn deterministic(&self) -> bool {
-        self.0.deterministic()
-    }
-    fn specialize(&self, args: &[Option<&Value>], budget: &Arc<MemoryBudget>) -> Option<ScalarRef> {
-        self.0.specialize(args, budget)
-    }
-    fn argument_type(&self, position: usize, args: &[Option<DataType>]) -> Option<DataType> {
-        self.0.argument_type(position, args)
-    }
-    fn parameter_types(&self) -> Option<Vec<DataType>> {
-        self.0.parameter_types()
-    }
-    fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
-        self.0.parameter_type(position, args)
-    }
-    fn vector_metric(&self, constants: &[Option<&Value>]) -> Option<(String, usize)> {
-        let [_, _, Some(Value::Char(metric))] = constants else { return None };
-        (self.0.name() == "VECTOR_DISTANCE").then(|| (metric.trim().to_ascii_uppercase(), 0))
-    }
-}
-
-/// Registers the VECTOR type and functions of `db`.
+/// Readies `db` for the tests: background work run only when asked.
 pub fn register(db: &Database) {
     db.set_job_policy(JobPolicy::Manual).unwrap();
-    db.register_type(Box::new(VectorType)).unwrap();
-    for f in functions() {
-        db.register_scalar_function(Box::new(Declared(f))).unwrap();
-    }
 }
 
 /// The documents of `documents`: a text and its embedding, ID from 1.

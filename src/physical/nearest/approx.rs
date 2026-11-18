@@ -10,7 +10,7 @@
 
 use super::super::PhysicalPlanner;
 use crate::catalog::{IndexDesc, QualifiedName};
-use crate::index::{Approximation, FilterHint, NearestQuery, same_metric};
+use crate::index::{Approximation, FilterHint, NearestQuery};
 use crate::logical::{Cond, Hints, Search, SearchTarget, Strategy};
 use crate::settings::{VECTOR_APPROX_DEFAULT, VECTOR_APPROX_FALLBACK, VECTOR_BEAM_WIDTH, VECTOR_SEARCH_LIST};
 use crate::storage::cost_of;
@@ -83,16 +83,15 @@ pub(super) fn probe(target: SearchTarget, first: usize) -> Approximation {
 
 /// Of the approximate index `current` found before and `candidate`, each
 /// with the position of the column in its key, the one a read takes: one
-/// of the call's metric, the index a hint names first (R13.4), else the
-/// first found.
+/// that serves the call's metric (`served`, `IndexMethod::serves_metric`),
+/// the index a hint names first (R13.4), else the first found.
 pub(super) fn preferred(
     current: Option<(IndexDesc, usize)>,
-    (candidate, metric): ((IndexDesc, usize), Option<String>),
-    (query, asked): (&NearestQuery, Option<SearchTarget>),
+    (candidate, served): ((IndexDesc, usize), bool),
+    asked: Option<SearchTarget>,
     hints: Option<&Hints>,
 ) -> Option<(IndexDesc, usize)> {
-    let matches = metric.as_deref().zip(query.metric.as_deref()).is_some_and(|(index, call)| same_metric(index, call));
-    if asked.is_none() || !matches {
+    if asked.is_none() || !served {
         return current;
     }
     let named = hints.and_then(|h| h.index_of(&candidate.0.table.ident)).is_some_and(|i| i.eq_ignore_ascii_case(&candidate.0.name));

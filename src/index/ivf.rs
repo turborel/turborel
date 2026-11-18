@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use self::options::options_of;
-use super::vector::{Ask, Engine, Held, Place, VectorIndex, approximate_support, column_of, default_desc, located, plain};
+use super::vector::{Ask, Engine, Held, Named, Place, VectorIndex, approximate_support, column_of, default_desc, located, plain, serves};
 use super::{Index, IndexMethod, NearestQuery, NearestSupport};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::disk::buffer::{BufferPool, FileId};
@@ -78,7 +78,8 @@ impl IvfMethod {
         let column = column_of(IVF_METHOD, columns)?;
         plain(IVF_METHOD, desc)?;
         let o = options_of(desc, column.width());
-        let (plugins, metric) = self.place.codec_plugins((&o.metric, &o.quantizer), column, false)?;
+        let named = Named { metric: &o.metric, quantizer: &o.quantizer, shared: o.shared };
+        let (plugins, metric) = self.place.codec_plugins(&named, column, false)?;
         let (pool, file) = self.place.files()?;
         let budget = self.place.budget();
         let ivf = match locator {
@@ -90,13 +91,17 @@ impl IvfMethod {
         }
         let held = Held::new(IvfEngine { ivf, probes: AtomicUsize::new(o.config.probes), dims: column.width() });
         self.place.keep(&held);
-        Ok(Box::new(VectorIndex::new(held, column, &metric)))
+        Ok(Box::new(VectorIndex::new(held, column, (&metric.0, &metric.1), o.shared)))
     }
 }
 
 impl IndexMethod for IvfMethod {
     fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> NearestSupport {
         approximate_support(IVF_METHOD, query, columns)
+    }
+    fn serves_metric(&self, index: &IndexDesc, call: &str) -> bool {
+        let o = options_of(index, 0);
+        self.metric(index).is_some_and(|m| serves(&m, o.shared.normalized, call))
     }
     fn metric(&self, index: &IndexDesc) -> Option<String> {
         self.place.metric_name(&options_of(index, 0).metric)
@@ -141,6 +146,7 @@ pub(crate) struct IvfEngine {
 
 impl Engine for IvfEngine {
     const METHOD: &'static str = IVF_METHOD;
+    const LIST_OPTION: &'static str = options::PROBES;
     fn meta(&self) -> PageId {
         self.ivf.meta()
     }

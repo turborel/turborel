@@ -118,7 +118,7 @@ pub use schema::{
     AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, Collection, ColumnConstraint,
     ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, OptionValue,
     Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage,
-    Temporary, TemporaryKind, TypeName, ViewDefinition,
+    Temporary, TemporaryKind, TypeName, TypeParam, ViewDefinition,
 };
 pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
