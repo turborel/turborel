@@ -243,3 +243,19 @@ fn call_is_executed_directly_and_prepared_16_1() {
     assert_eq!(rows(&a, "SELECT K FROM T ORDER BY K"), ["7", "8"]);
     assert_eq!(a.direct("RETURN 1").err().map(|e| e.code), Some(Code::SyntaxRule));
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §9.18 SR4, SR5d, §10.4] (Feature T521)
+/// a CALL's arguments named each give the parameter of its name its
+/// value, in any order; one naming no parameter, or a list naming some
+/// arguments and not all, is refused (SQLCODE -103).
+#[test]
+fn named_arguments_in_call_10_4() {
+    let db = defined();
+    let a = db.session("A");
+    a.run("CREATE PROCEDURE ADD_ROW (IN K INTEGER, IN N INTEGER) MODIFIES SQL DATA INSERT INTO T VALUES (K, N)").unwrap();
+    a.run("CALL ADD_ROW(N => 10, K => 1)").unwrap();
+    a.run("CALL ADD_ROW(K => 2, N => 20)").unwrap();
+    assert_eq!(rows(&a, "SELECT K, N FROM T ORDER BY K"), ["1,10", "2,20"]);
+    assert_eq!(code(&a, "CALL ADD_ROW(K => 3, M => 30)"), Code::SyntaxRule);
+    assert_eq!(code(&a, "CALL ADD_ROW(3, N => 30)"), Code::SyntaxRule);
+}

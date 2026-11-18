@@ -1,4 +1,4 @@
-//! \[EXTENSION\] Property graphs over tables (RULES.md D-GRAPH-CATALOG),
+//! \[EXTENSION\] Property graphs over tables (RULES.md D106),
 //! Mode A of the property graph implementation standard (§4.1): CREATE,
 //! ALTER and DROP PROPERTY GRAPH, in a transaction as a view's statements
 //! are (`db/definitions.rs`, `db/drop.rs`).
@@ -11,6 +11,7 @@
 //! it otherwise marks it INVALID until ALTER PROPERTY GRAPH ... COMPILE
 //! finds it holds again (R4.7, `graphs/dependents.rs`).
 
+mod adjacency;
 mod alter;
 mod dependents;
 mod describe;
@@ -18,6 +19,7 @@ mod elements;
 pub(in crate::db) mod gql;
 pub(in crate::db) mod native;
 mod privileges;
+mod property;
 
 use std::sync::Arc;
 

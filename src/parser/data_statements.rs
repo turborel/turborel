@@ -104,7 +104,8 @@ impl Parser {
 
     /// The statement a word, no key word, begins, if one does, read to its
     /// end: \[EXTENSION\] CANCEL CONNECTION (`parser/served.rs`),
-    /// TRUNCATE TABLE, MERGE INTO (`parser/merge.rs`), or SAVEPOINT or
+    /// TRUNCATE TABLE, MERGE INTO (`parser/merge.rs`), INTO PROPERTY
+    /// (`parser/graph_algo.rs`), or SAVEPOINT or
     /// RELEASE SAVEPOINT (`parser/savepoints.rs`).
     pub(super) fn word_statement(&mut self) -> Result<Option<SqlStatement>> {
         // [EXTENSION] EXECUTE GQL, and the statements of GQL graphs.
@@ -118,6 +119,8 @@ impl Parser {
             self.merge_statement()?
         } else if self.at_call() {
             SqlStatement::Call(self.call_statement()?)
+        } else if self.at_graph_algorithm() {
+            self.property_statement()?
         } else if self.at_return() {
             SqlStatement::Return(self.return_statement()?)
         } else if self.at_copy_descriptor() {

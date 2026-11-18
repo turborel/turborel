@@ -321,7 +321,9 @@ pub(in crate::db) const DROP_EMBEDDING_MODEL: Command = command("DROP EMBEDDING 
 pub(in crate::db) const CREATE_VECTOR_PIPELINE: Command = command("CREATE VECTOR PIPELINE", -20);
 /// \[EXTENSION\] DROP VECTOR PIPELINE.
 pub(in crate::db) const DROP_VECTOR_PIPELINE: Command = command("DROP VECTOR PIPELINE", -21);
-/// \[EXTENSION\] CREATE PROPERTY GRAPH (RULES.md D-GRAPH-CATALOG).
+/// \[EXTENSION\] CREATE PROPERTY GRAPH (RULES.md D106): -22 to
+/// -24 for property graphs, past the codes -17 to -21 of the vector
+/// statements; the graph query language's take -30 and on.
 pub(in crate::db) const CREATE_PROPERTY_GRAPH: Command = command("CREATE PROPERTY GRAPH", -22);
 /// \[EXTENSION\] ALTER PROPERTY GRAPH.
 pub(in crate::db) const ALTER_PROPERTY_GRAPH: Command = command("ALTER PROPERTY GRAPH", -23);

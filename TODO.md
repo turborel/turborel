@@ -93,8 +93,6 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   beyond probing one tree for each outer row. Add bulk packing
   and reclaim empty nodes without relocating entries under active scans;
   measure overlap and space after sustained updates as well as fresh loads.
-- Adjacency held for a graph's edges, so a path query follows an edge
-  without a join's search. Graph queries need it.
 - An index of XML documents' paths and values, so XQuery and XPath read
   only the nodes they ask for. XML needs it.
 
@@ -147,12 +145,6 @@ CONFORMANCE.md one by one as they are done.
   quantified paths and path modes, and inserting, setting and removing
   nodes and edges, as a language beside SQL over the same storage and
   transactions.
-- SQL/PGQ (ISO/IEC 9075-16:2023). CREATE PROPERTY GRAPH over existing
-  tables, naming which are vertex tables and which edge tables and the
-  keys that join them, and GRAPH_TABLE in FROM, whose MATCH shares GQL's
-  graph patterns and gives its matches as rows to the rest of the query.
-  It shares GQL's pattern matcher and the edges' adjacency, so the two
-  are built together.
 
 ### Vectors
 

@@ -143,6 +143,9 @@ verification approach DO-178C expects (§8).
 | D103 | What waits for an embedding is found in the rows, filled after commit |
 | D104 | A scalar function may take a batch's rows at once |
 | D105 | Bracketed comments are separators, and a leading `/*+` one carries hints |
+| D106 | A property graph is a view-like schema object over tables, ENFORCED or TRUSTED |
+| D107 | A graph's edges are followed through an adjacency index, every entry rechecked |
+| D108 | GRAPH_TABLE is a lateral collection derived table searched by PathSearch |
 
 ### The project
 
@@ -3798,6 +3801,58 @@ read by `lexer::hinted`. VECTOR_WAIT_FRESH is the one hint read there
 (D103). An unknown hint is a comment alone, as hints never fail a
 statement. The approximate search's hints are written after the fetch
 clause instead (D94), where the parser reads them as syntax.
+
+#### D106. A property graph is a view-like schema object over tables, ENFORCED or TRUSTED
+
+CREATE, ALTER and DROP PROPERTY GRAPH (`db/graphs.rs`) define a graph
+over existing tables and views, Mode A of the property graph standard
+(§4.1). Its name is of its schema's table namespace, and it depends on
+what it reads as a view does. An ENFORCED graph, the default, has keys
+that are declared PRIMARY KEY or UNIQUE constraints of NOT NULL columns
+and ends that are declared FOREIGN KEYs. A TRUSTED graph takes them as
+written, so a key may repeat and an end may match no vertex (R4.3).
+Element tables are read with the owner's privileges unless the graph
+is WITH INVOKER RIGHTS. The statements take command codes -22 to -24.
+
+#### D107. A graph's edges are followed through an adjacency index, every entry rechecked
+
+The adjacency method (`index/adjacency.rs`) keeps an edge table's edges
+by source and by destination in one B-link tree. CREATE ADJACENCY INDEX
+ON GRAPH (GS §13.2, `db/graphs/adjacency.rs`) names an edge table by its
+alias and is the CREATE INDEX of that method, its key the source's
+columns then the destination's, ADJACENCY.SOURCE_COLUMNS their split.
+FORWARD keeps the OUT entries alone, REVERSE the IN ones. An ENFORCED
+graph's base edge tables are each given such an index as the
+transaction creating the graph commits, as an index is built outside a
+transaction (D34), unless one already keeps their ends. A GRAPH_TABLE
+follows an edge table through the index chosen as it is bound, and
+reads each entry's row again: an entry may be of a version the reader
+does not see, or of ends changed since. Without one, an edge table's
+edges are listed by a scan the first time the search follows one.
+
+#### D108. GRAPH_TABLE is a lateral collection derived table searched by PathSearch
+
+A GRAPH_TABLE (GS §8) is bound as a JSON table is (D90), an Unnest node
+that reads the table references before it (`binder/graph.rs`,
+`exec/graph_table.rs`). Each element variable is a synthetic range
+variable of the union of its tables' properties and hidden columns of
+its identity, table and, of an edge, its ends. Each path pattern is
+compiled to the automaton of `graph/nfa.rs` and searched by PathSearch
+(`graph/search.rs`) over a view of the element tables, from every
+vertex of the tables a match may start at. A base table is read where
+it is stored. A view, or a table read FOR SYSTEM_TIME, is read once
+into the statement. The bindings of the path patterns are joined on
+the variables they share and kept by the match mode (§7.3). Element
+WHERE clauses are prefilters, run as the search binds the element; a
+prefilter that reads a later variable outside a quantifier is run on
+the walk's group. A set function of a group variable is a slot of the
+match row, as is each path function. The search is bounded by OPTIONS
+and else by the settings GRAPH.* (§20). Passing a bound fails with
+54061 (GRF-0061), or, ON LIMIT TRUNCATE, keeps the paths found and warns
+01W61. The rigid parts of a pattern are searched by the automaton, as
+its quantified parts are, so a match never depends on how the planner
+would join. EXPLAIN shows each path's automaton and algorithm and how
+each edge table is followed.
 
 ## 2. Project layout
 

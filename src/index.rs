@@ -315,7 +315,7 @@ pub trait Index: Send + Sync {
     }
     /// \[EXTENSION\] The adjacency it keeps of a graph's edges, read by
     /// path search as `nearest` is by a distance search (RULES.md
-    /// D-GRAPH-ADJACENCY); none by default. It may retain the index.
+    /// D107); none by default. It may retain the index.
     fn adjacency(self: Arc<Self>) -> Option<Arc<dyn crate::graph::adjacency::Adjacency>> {
         None
     }

@@ -2621,6 +2621,51 @@ out of scope. A clause not yet done has no row.
 | VEC-0011 | TB918 | -918 |
 | VEC-0032 | The plug-in's own, under ON_ERROR | |
 
+### Property graphs
+
+```
+CREATE PROPERTY GRAPH g VERTEX TABLES (...) [EDGE TABLES (...)]
+    [OPTIONS ({ENFORCED | TRUSTED} MODE)] [WITH INVOKER RIGHTS]
+CREATE ADJACENCY INDEX [name] ON GRAPH g EDGE TABLE alias
+    [DIRECTION {FORWARD | REVERSE | BOTH}] [INCLUDE (column, ...)]
+SELECT ... FROM GRAPH_TABLE (g MATCH pattern [WHERE condition]
+    [ONE ROW PER {MATCH | VERTEX (v) | STEP (v1, e, v2)}]
+    COLUMNS (expression [AS name], ... | v.*)
+    [OPTIONS (MAX_PATH_LENGTH n, MAX_PATHS_PER_PARTITION n,
+    MAX_SEARCH_STATES n, ON LIMIT {ERROR | TRUNCATE}, DETERMINISTIC_PATHS)])
+    [FOR SYSTEM_TIME AS OF t] [[AS] name]
+```
+
+A property graph (RULES.md D106) is defined over tables and views, and
+the schema of node and edge tables has SYS_GRAPH, which the database
+keeps ([CREATE PROPERTY GRAPH](doc/sql/statements/create-property-graph.md)).
+GRAPH_TABLE (RULES.md D108) matches its pattern of the property graph
+standard's GPML [GS §6] and gives rows to the query around it, which it
+may read laterally ([Property graphs](doc/sql/16-property-graphs.md)).
+It takes the selectors ANY, ANY k, ANY SHORTEST, ALL SHORTEST,
+SHORTEST k [GROUPS] and ANY, ALL or k CHEAPEST [COST expression]; the
+restrictors WALK, TRAIL, ACYCLIC and SIMPLE; the match modes REPEATABLE
+ELEMENTS, DIFFERENT EDGES and DIFFERENT VERTICES; label expressions with
+`&`, `|`, `!` and `%`; quantifiers; unions and alternations; element
+and parenthesized WHERE clauses; and a postfilter. Its expressions take
+ELEMENT_ID, VERTEX_ID, EDGE_ID, LABELS, PROPERTY_EXISTS, SAME,
+ALL_DIFFERENT, IS [NOT] SOURCE OF, IS [NOT] DESTINATION OF, IS [NOT]
+DIRECTED, IS [NOT] LABELED, PATH_LENGTH, VERTICES, EDGES, IS_ACYCLIC,
+IS_TRAIL, IS_SIMPLE, PATH_TO_JSON and the set functions of a group
+variable's elements, COUNT(e.*) among them. EXPLAIN shows each path's
+automaton, the algorithm chosen and how each edge table is followed.
+An edge table is followed through its adjacency index (RULES.md D107)
+if it has one, and an ENFORCED graph's base edge tables are given one
+as it commits. A search past a limit fails with SQLSTATE 54061, or ON
+LIMIT TRUNCATE ends with warning 01W61. A negative COST is 22W34.
+
+| Not taken | Behaviour |
+|---|---|
+| A subpath variable | -900 |
+| A prefilter of a quantified element that reads a later variable | -900 |
+| A set function in the filter of a bounded group | -900 |
+| AS OF SCN | -900 |
+
 ### Users
 
 Neither standard has these (RULES.md D43). They run outside a transaction, by
@@ -3059,6 +3104,20 @@ defaults that turborel tunes (RULES.md D93 to D104).
 | vector R12.6 when the queue runs | After each commit that wrote, and as the database opens, by the job `turborel-embedding` | `db/embedding/queue.rs` |
 | A metric's or a quantizer's name | A regular identifier in upper case, or two joined by a period | `db/vectors.rs` |
 
+### Property graphs
+
+The property graph standard leaves these to the implementation (RULES.md
+D106 to D108).
+
+| Rule | Choice | Where |
+|---|---|---|
+| GS §5 R5.1 an element's identity | ELEMENT_ID is the canonical JSON text `{"table":alias,"key":[...]}` of its element table's alias and key, VERTEX_ID and EDGE_ID its JSON value | `logical/graph/identity.rs` |
+| GS §7.3 the default match mode | REPEATABLE ELEMENTS | `binder/graph/pattern.rs` |
+| GS §20 limits | MAX_PATH_LENGTH and MAX_PATHS_PER_PARTITION none, MAX_SEARCH_STATES 10,000,000, ON LIMIT ERROR, of GRAPH.* | `settings/graph.rs` |
+| GS §17 parallel search | EXECUTOR.GRAPH_THREADS workers, 1 by default | `exec/graph_table/limits.rs` |
+| GS §13.2 an adjacency index's name | `GRAPH_ALIAS_ADJACENCY` if none is written | `db/graphs/adjacency.rs` |
+| GS §13.2 DIRECTION | FORWARD keeps the OUT entries, REVERSE the IN ones, BOTH both, the default | `db/graphs/adjacency.rs` |
+
 ### Memory
 
 The standards leave memory to the implementation (RULES.md D38). This is in
@@ -3199,6 +3258,21 @@ Where the standards are unclear, turborel reads them as follows.
 | JVNi of JSON_OBJECT [2023 §6.34 GR2d ii 1 G] | The rule makes JVNi a member's key. VJNi, the value of its name, is meant. |
 | VBVi, CJOA and NJVE of the aggregates [2023 §10.11 GR4b ii 2 D II, GR4c, GR5g] | GR4b ii 2 D II lets VBVi be the value, where the other cases let JBVi be; GR4c lets JACF be CJOA, where GR4b made CJO; GR5g counts NJVE, which only §6.34 defines. JBVi, CJO and NTXA are meant. |
 | FORMAT after a query of JSON_ARRAY [2023 §6.34 F, §7.6] | In JSON_ARRAY of a query whose FROM clause ends in a table of no correlation name, FORMAT is read as that table's correlation name, as the grammar lets it be, FORMAT being no reserved word. AS before a name, or the query in parentheses, keeps it the `<JSON input clause>`. |
+
+### The property graph standard
+
+| Text | Reading |
+|---|---|
+| T7's expected path [GS §23.2] | The fixture's transfer t6 from a6 to a5 makes the shortest path from Scott's account to Jay's and back to a blocked account 5 edges long, t1 t2 t3 t4 t6. The 6 edges the test lists are not the shortest of that fixture, so the 5-edge path is returned. |
+| One variable of several labels [GS §6.2] | An element variable written twice with different label expressions may bind the tables of either, each occurrence then testing its own. T5 needs Zembla, a country only, bound by `(c:City) \| (c:Country)`. |
+| Anonymous variables of a union [GS §6.4] | An element written without a variable is bound by no variable, so the branches of a union that match one path give one binding (T9). |
+| A prefilter of a later variable [GS §6.8] | One outside a quantifier is run on the walk once every variable it reads is bound, as a parenthesized WHERE would be. One inside a quantifier is refused, as no binding of the later variable exists as the element is bound. |
+| A set function in a group's filter [GS §5 R5.6] | Of an unbounded group it is GRF-0032 (T12). Of a bounded one it is not taken. |
+| An undirected self-loop [GS §4.1] | It is followed once, its source and destination the same vertex. |
+| ONE ROW PER STEP of a path of no edge [GS §8 R8.3] | It gives one row, of its vertex, the edge and the next vertex null. |
+| FOR SYSTEM_TIME of a GRAPH_TABLE [GS §8] | It reads every element table as of that time. A table not system-versioned is refused as in FROM. |
+| A TRUSTED key that repeats [GS §4.1 R4.3] | Each row of the key is a vertex, and an end that names it binds each. An end that names no row is no edge. |
+| The automatic adjacency index [GS §13.2] | An index is built outside a transaction (RULES.md D34), so an ENFORCED graph's indexes are made as the transaction that created it commits, each in a transaction of its own. |
 
 ### The vector design document
 

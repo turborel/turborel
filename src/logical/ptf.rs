@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use super::Expr;
-use crate::db::ptf::Call;
+use crate::db::ptf::Invoked;
 
 /// [ISO/IEC 9075-2:2023 §7.6 SR12a, §9.25] The rows of a `<PTF derived
 /// table>`: of its proper result columns, then of each table argument its
@@ -15,7 +15,7 @@ use crate::db::ptf::Call;
 #[derive(Debug, Clone)]
 pub struct Polymorphic<P> {
     /// The invocation, compiled, and its component procedures, bound.
-    pub(crate) call: Arc<Call>,
+    pub(crate) call: Arc<Invoked>,
     /// Of each parameter, the value of its pre-compilation argument [§9.18
     /// SR12f]: of a generic table parameter null, of a descriptor
     /// parameter null if its argument is, else some value not null.
@@ -35,6 +35,6 @@ impl<P> Polymorphic<P> {
 
     /// The name of the function it invokes, as a plan shows it.
     pub fn function(&self) -> String {
-        self.call.name.to_string()
+        self.call.name().to_string()
     }
 }

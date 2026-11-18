@@ -92,9 +92,9 @@ fn second() -> [&'static [Mutation]; 30] {
 
 /// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's,
 /// T621's, the graph syntax's, path search's and GQL's, then the spatial areas', the adjacency index's,
-/// replication's and the server's.
+/// GRAPH_TABLE's, replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
-    let json: [&'static [Mutation]; 13] = [
+    let json: [&'static [Mutation]; 14] = [
         &super::projection::PROJECTION,
         &super::json::JSON,
         &super::json_path::JSON_PATH,
@@ -107,13 +107,15 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::t621::T621,
         &super::graph_syntax::GRAPH_SYNTAX,
         &super::graph_search::GRAPH_SEARCH,
+        &super::graph_search::algorithms::GRAPH_ALGO,
         &super::graph_gql::GRAPH_GQL,
     ];
-    let last: [&'static [Mutation]; 10] = [
+    let last: [&'static [Mutation]; 11] = [
         &super::near::NEAR,
         &super::rtree::RTREE,
         &super::geometry::GEOMETRY,
         &super::graph_adjacency::GRAPH_ADJACENCY,
+        &super::graph_table::GRAPH_TABLE,
         &super::FILL,
         &super::ZONES,
         &super::STATS,

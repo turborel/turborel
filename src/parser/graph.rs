@@ -26,8 +26,8 @@ pub use syntax::{Declared, Degree, Exposed, Exposure, exposure};
 
 use super::Parser;
 use crate::ast::{
-    ColumnSpecification, GraphColumn, GraphReference, GraphRows, GraphTable, GraphVariable, SystemTimeKind, SystemTimeRead, TableName,
-    TableReference, ValueExpression,
+    ColumnSpecification, GraphColumn, GraphLimits, GraphReference, GraphRows, GraphTable, GraphVariable, SystemTimeKind, SystemTimeRead,
+    TableName, TableReference, ValueExpression,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -44,6 +44,22 @@ const STEP: &str = "STEP";
 const LINE_GRAPH: &str = "LINE_GRAPH";
 /// SCN, of AS OF SCN, which names a system change number.
 const SCN: &str = "SCN";
+/// \[EXTENSION\] [GS §20] The words of a GRAPH_TABLE's OPTIONS.
+const OPTIONS: &str = "OPTIONS";
+/// See `OPTIONS`.
+const MAX_PATH_LENGTH: &str = "MAX_PATH_LENGTH";
+/// See `OPTIONS`.
+const MAX_PATHS_PER_PARTITION: &str = "MAX_PATHS_PER_PARTITION";
+/// See `OPTIONS`.
+const MAX_SEARCH_STATES: &str = "MAX_SEARCH_STATES";
+/// See `OPTIONS`.
+const LIMIT: &str = "LIMIT";
+/// See `OPTIONS`.
+const ERROR: &str = "ERROR";
+/// See `OPTIONS`.
+const TRUNCATE: &str = "TRUNCATE";
+/// See `OPTIONS`.
+const DETERMINISTIC_PATHS: &str = "DETERMINISTIC_PATHS";
 
 impl Parser {
     /// Whether a GRAPH_TABLE begins here: GRAPH_TABLE before "(".
@@ -88,8 +104,49 @@ impl Parser {
         let rows = self.graph_rows()?;
         self.expect_word(super::json::COLUMNS)?;
         let columns = self.graph_columns()?;
+        let options = self.graph_limits()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(GraphTable { graph, pattern, rows, columns, correlation: None, system_time: None, at })
+        Ok(GraphTable { graph, pattern, rows, columns, correlation: None, system_time: None, options, at })
+    }
+
+    /// \[EXTENSION\] [GS §20] \[OPTIONS ( `<graph option>` \[, ...\] )\],
+    /// each option at most once: MAX_PATH_LENGTH `n`,
+    /// MAX_PATHS_PER_PARTITION `n`, MAX_SEARCH_STATES `n`, ON LIMIT
+    /// {ERROR | TRUNCATE}, DETERMINISTIC_PATHS.
+    fn graph_limits(&mut self) -> Result<GraphLimits> {
+        let mut limits = GraphLimits::default();
+        if !self.accept_word(OPTIONS) {
+            return Ok(limits);
+        }
+        self.expect_delim(delim::LEFT_PAREN)?;
+        loop {
+            let at = self.here();
+            let before = limits;
+            if self.accept_word(MAX_PATH_LENGTH) && limits.max_path_length.is_none() {
+                limits.max_path_length = Some(self.unsigned_integer()?);
+            } else if self.accept_word(MAX_PATHS_PER_PARTITION) && limits.max_paths_per_partition.is_none() {
+                limits.max_paths_per_partition = Some(self.unsigned_integer()?);
+            } else if self.accept_word(MAX_SEARCH_STATES) && limits.max_search_states.is_none() {
+                limits.max_search_states = Some(self.unsigned_integer()?);
+            } else if self.accept_kw(kw::ON) && limits.truncate.is_none() {
+                self.expect_word(LIMIT)?;
+                let truncate = !self.accept_word(ERROR);
+                if truncate {
+                    self.expect_word(TRUNCATE)?;
+                }
+                limits.truncate = Some(truncate);
+            } else if self.accept_word(DETERMINISTIC_PATHS) && !limits.deterministic {
+                limits.deterministic = true;
+            }
+            if limits == before {
+                return Err(SqlError::at(Code::Syntax, at, "[EXTENSION] expected a GRAPH_TABLE option not yet written (GS §20)"));
+            }
+            if !self.accept_delim(delim::COMMA) {
+                break;
+            }
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(limits)
     }
 
     /// `<graph reference>` ::= `<graph name>` | \[EXTENSION\] LINE_GRAPH (

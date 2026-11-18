@@ -90,14 +90,14 @@ pub use gql::{
     GqlSort, GqlSpan, GqlTable, GqlTransaction, GraphTypeDefinition, GraphTyping, NodeTypeDefinition, PropertyTypeDefinition,
 };
 pub use graph::{
-    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphPattern,
-    GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression, MatchMode, ORIENTATIONS, Orientation,
-    OrientationForm, ParenthesizedPath, PathEnd, PathExpression, PathFactor, PathPattern, PathPrefix, PathPrimary, PathTerm, PropertySpec,
-    Quantifier, QuantifierSugar, Restrictor, SameKind, SegmentFilter, Selector, VariableKind,
+    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphLimits,
+    GraphPattern, GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression, MatchMode, ORIENTATIONS,
+    Orientation, OrientationForm, ParenthesizedPath, PathEnd, PathExpression, PathFactor, PathPattern, PathPrefix, PathPrimary, PathTerm,
+    PropertySpec, Quantifier, QuantifierSugar, Restrictor, SameKind, SegmentFilter, Selector, VariableKind,
 };
 pub use graph_ddl::{
-    AlterGraph, AlterGraphAction, DerivedProperty, ElementAction, ElementDefinition, EndpointDefinition, GraphDefinition, GraphModeOption,
-    LabelDefinition, PropertiesDefinition,
+    AdjacencyIndex, AlterGraph, AlterGraphAction, DerivedProperty, ElementAction, ElementDefinition, EndpointDefinition, GraphDefinition,
+    GraphModeOption, LabelDefinition, PropertiesDefinition,
 };
 pub use hybrid_search::{Fusion, HybridSearch, SearchArgument, SearchValue};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
@@ -109,7 +109,7 @@ pub use json_table::{
     JsonTable, JsonTableColumn, JsonTableColumnKind, JsonTableFormatted, JsonTableNamed, JsonTableNested, JsonTablePath, JsonTablePlan,
     JsonTablePlanClause,
 };
-pub use merge::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
+pub use merge::{IntoProperty, MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use modules::ModuleDefinition;
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
 pub use pattern::{
@@ -530,6 +530,8 @@ pub enum IndexStatement {
         /// The `<index name>`, and where it begins.
         name: (String, usize),
     },
+    /// \[EXTENSION\] [GS §13.2] CREATE ADJACENCY INDEX ON GRAPH.
+    Adjacency(Box<AdjacencyIndex>),
     /// `<alter index statement>` ::= ALTER INDEX `<index name>` SET
     /// `<table options>`
     Alter {

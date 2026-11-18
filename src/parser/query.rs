@@ -514,6 +514,9 @@ impl Parser {
         if self.at_vector_search() {
             return self.vector_search();
         }
+        if self.at_graph_algorithm() {
+            return self.graph_algorithm_table();
+        }
         if self.at_json_table() {
             return self.json_table();
         }

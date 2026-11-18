@@ -59,8 +59,8 @@ fn tables_and_columns_are_described_21_2_7() {
     let own = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'INFORMATION_SCHEMA'";
     assert_eq!(
         seen(&db.session("NOBODY"), own),
-        ["89"],
-        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, the 7 of property graphs, the 2 of node and edge tables, the 2 of graph types and GQL graphs, TABLE_OPTIONS, PERIODS, INDEXES, INDEX_OPTIONS, ADJACENCY_INDEXES, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS, ASSERTION_TOTALS, the 4 of embedding models and pipelines and the 2 of vectors"
+        ["90"],
+        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, the 7 of property graphs, the 2 of node and edge tables, the 2 of graph types and GQL graphs, GRAPH_ALGO_RUNS, TABLE_OPTIONS, PERIODS, INDEXES, INDEX_OPTIONS, ADJACENCY_INDEXES, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS, ASSERTION_TOTALS, the 4 of embedding models and pipelines and the 2 of vectors"
     );
     assert_eq!(
         seen(&owner, "SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.SCHEMATA"),

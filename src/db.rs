@@ -484,7 +484,7 @@ impl Session {
     pub fn commit(&self) -> Result<()> {
         let call = self.enter()?;
         self.emptied((commands::COMMIT_WORK, commands::UNRECOGNIZED));
-        self.diagnosed(self.db.noted(self.commit_in(call.state())), |()| SqlState::SUCCESSFUL_COMPLETION)
+        self.diagnosed(self.db.noted(self.committing(call.state())), |()| SqlState::SUCCESSFUL_COMPLETION)
     }
 
     fn commit_in(&self, st: &Arc<State>) -> Result<()> {

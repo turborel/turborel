@@ -41,9 +41,15 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | DIAGNOSTICS.SLOW_STATEMENT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | EXECUTOR.BATCHES | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.DECORRELATE_AFTER_RUNS | 8 | INTEGER FROM 0 TO 1000000 | at once |  |
+| EXECUTOR.GRAPH_THREADS | 1 | INTEGER FROM 1 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.MAX_ITERATIONS | 1000000 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | FILES.MAX_OPEN | 1024 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | GQL.GRAPH | (empty) | TEXT OF AT MOST 257 CHARACTERS | at once | *session* |
+| GRAPH.DETERMINISTIC_PATHS | OFF | ONE OF ON, OFF | at once | *session* |
+| GRAPH.MAX_PATHS_PER_PARTITION | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
+| GRAPH.MAX_PATH_LENGTH | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
+| GRAPH.MAX_SEARCH_STATES | 10000000 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
+| GRAPH.ON_LIMIT | ERROR | ONE OF ERROR, TRUNCATE | at once | *session* |
 | JOBS.POLICY | AUTOMATIC | ONE OF AUTOMATIC, MANUAL, PAUSED | at once |  |
 | LOCKS.TIMEOUT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | LOCKS.WAIT | OFF | ONE OF ON, OFF | from the next transaction | *session* |
@@ -110,9 +116,15 @@ Each in a sentence:
 - **DIAGNOSTICS.SLOW_STATEMENT_MS**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
 - **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.
 - **EXECUTOR.DECORRELATE_AFTER_RUNS**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
+- **EXECUTOR.GRAPH_THREADS**: The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.
 - **EXECUTOR.MAX_ITERATIONS**: The most iterations a recursive query of WITH RECURSIVE takes, each evaluating its recursive elements once more, before it is refused (SQLCODE -918) as never reaching its fixpoint; 0 for no limit.
 - **FILES.MAX_OPEN**: The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed (one with writes not yet synced last, and synced first), and opened again as it is next used.
 - **GQL.GRAPH**: The property graph a GQL statement reads when it names none, as SESSION SET GRAPH sets it, named in the default schema if unqualified; empty for none.
+- **GRAPH.DETERMINISTIC_PATHS**: Whether a GRAPH_TABLE's selectors that keep some of equal paths, as ANY and ANY SHORTEST, keep the same ones each run, ON, ordered by the elements' identities; or any, OFF.
+- **GRAPH.MAX_PATHS_PER_PARTITION**: The most paths a GRAPH_TABLE's search finds between one start and one end; 0 for no limit. Reaching it does as GRAPH.ON_LIMIT says.
+- **GRAPH.MAX_PATH_LENGTH**: The most edges of a path a GRAPH_TABLE's search follows; 0 for no limit. Reaching it does as GRAPH.ON_LIMIT says.
+- **GRAPH.MAX_SEARCH_STATES**: The most states a GRAPH_TABLE's search makes, each a vertex reached at a place of its pattern; 0 for no limit. Reaching it does as GRAPH.ON_LIMIT says.
+- **GRAPH.ON_LIMIT**: What a GRAPH_TABLE's search does on reaching a limit: fails, SQLSTATE 54061, ERROR; or ends with the paths found, warning 01W61, TRUNCATE.
 - **JOBS.POLICY**: How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS), read-ahead (STORAGE.READ_AHEAD_PAGES) and the writing of its files again in new formats (STORAGE.REKEY_BYTES_PER_SECOND), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.
 - **LOCKS.TIMEOUT_MS**: The milliseconds a statement waits for a lock or a row, under LOCKS.WAIT ON, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCKS.WAIT**: ON waits for a lock, or a row, another transaction holds until it ends; OFF refuses the statement at once. ON in a database a server serves.

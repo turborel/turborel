@@ -70,6 +70,7 @@ impl Binder<'_> {
             names: (0..fields.len()).map(anonymous).collect(),
             input: LogicalPlan::Values { rows: vec![Vec::new()], types: Vec::new() },
             json: None,
+            graph: None,
         };
         let one = DataType::row(vec![Field { name: anonymous(0), data_type: element, unnamed: true }]);
         let arg = Expr::Call(ScalarRef(Arc::new(RowOf(one))), vec![value]);

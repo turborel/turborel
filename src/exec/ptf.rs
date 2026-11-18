@@ -24,7 +24,7 @@ pub(super) fn polymorphic(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         for input in p.inputs {
             rows.push(execute(input, db, tx).collect::<Result<Vec<Row>>>()?);
         }
-        p.call.run(arguments, &rows, &runner)
+        p.call.run(arguments, &rows, &runner, (db, tx))
     };
     match found() {
         Ok(rows) => Box::new(rows.into_iter().map(Ok)),

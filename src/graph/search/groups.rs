@@ -134,7 +134,7 @@ impl Dag<'_, '_> {
 pub(super) fn groups(ctx: &Context<'_>, start: ElementId, k: u64, meter: &mut Meter) -> Result<Vec<PathBinding>> {
     let k = usize::try_from(k).unwrap_or(usize::MAX);
     let mut runner = Runner::new(ctx.nfa, ctx.view);
-    let mut dag = Dag { ctx, k, states: States::default(), records: Vec::new(), levels: HashMap::new(), ends: Vec::new() };
+    let mut dag = Dag { ctx, k, states: States::of(ctx.nfa), records: Vec::new(), levels: HashMap::new(), ends: Vec::new() };
     let mut level = HashMap::new();
     for (note, threads) in runner.start(start)? {
         let letter = dag.states.first(start, note);

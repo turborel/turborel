@@ -78,6 +78,8 @@ behind it, and each can be replaced or added to.
   top-k by RRF or weighted scores.
 - Embedding models, pipelines that chunk and embed text, and columns
   embedded after commit.
+- [Property graphs](doc/sql/16-property-graphs.md) over tables, queried
+  by GRAPH_TABLE's path patterns through adjacency indexes.
 - Multisets, with MULTISET UNION, EXCEPT and INTERSECT, MEMBER,
   SUBMULTISET and IS A SET, and COLLECT, FUSION and INTERSECTION.
 - Structured types with attributes, methods and subtypes, typed tables

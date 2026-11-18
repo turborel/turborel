@@ -39,7 +39,7 @@ impl Parser {
         while self.is_kw(kw::WHEN) {
             clauses.push(self.merge_when_clause()?);
         }
-        Ok(SqlStatement::Merge(Box::new(MergeStatement { target, only, correlation, source, on, clauses })))
+        Ok(SqlStatement::Merge(Box::new(MergeStatement { target, only, correlation, source, on, clauses, property: None })))
     }
 
     /// \[\[AS\] `<merge correlation name>`\], if written, and where it

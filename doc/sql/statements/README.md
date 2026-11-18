@@ -24,6 +24,7 @@ One reference page for each statement, in alphabetical order.
 - [COMMIT](commit.md): end a transaction, keeping its changes
 - [CONNECT](connect.md): connect to a server
 - [COPY DESCRIPTOR](copy-descriptor.md): copy a descriptor area, or an item's fields, to a PTF descriptor area *(in a component procedure)*
+- [CREATE ADJACENCY INDEX](create-adjacency-index.md): index the edges of a property graph's edge table
 - [CREATE ASSERTION](create-assertion.md): define an assertion
 - [CREATE CAST](create-cast.md): define a cast of a user-defined type by a function
 - [CREATE COLLATION](create-collation.md): define a collation

@@ -14,19 +14,76 @@ mod area;
 mod compile;
 mod compiling;
 mod execute;
+mod graph;
 mod statements;
 
 pub(crate) use area::DataArea;
 pub(crate) use compile::{Compiled, DescriptorColumns, Procedure, TableInput, compile};
+pub(crate) use graph::{EdgeShape, GraphCall, GraphShape, identity_type};
 pub(crate) use statements::run_statement;
 
 use execute::{Execution, execute};
 
+use std::sync::Arc;
+
 use crate::catalog::QualifiedName;
+use crate::db::State;
 use crate::error::Result;
 use crate::exec::Subqueries;
 use crate::storage::Row;
+use crate::txn::TxId;
 use crate::value::Value;
+
+/// What a `<PTF derived table>` invokes: a polymorphic table function
+/// [ISO/IEC 9075-2:2023 §9.25], or a function of GRAPH_ALGO
+/// (\[EXTENSION\], `graph.rs`).
+#[derive(Debug, Clone)]
+pub(crate) enum Invoked {
+    /// A polymorphic table function's invocation, compiled.
+    Routine(Box<Call>),
+    /// A graph algorithm's.
+    Graph(GraphCall),
+}
+
+impl Invoked {
+    /// The function's name.
+    pub(crate) fn name(&self) -> &QualifiedName {
+        match self {
+            Invoked::Routine(c) => &c.name,
+            Invoked::Graph(g) => &g.name,
+        }
+    }
+
+    /// The programs of its component procedures, which run as its plan
+    /// runs: none of a graph algorithm.
+    pub(crate) fn programs(&self) -> impl Iterator<Item = &crate::logical::Program> {
+        let routine = match self {
+            Invoked::Routine(c) => Some(&**c),
+            Invoked::Graph(_) => None,
+        };
+        routine.into_iter().flat_map(Call::programs)
+    }
+
+    /// Its result, of the values `arguments` of its arguments and its
+    /// table arguments' rows `rows`, where `subqueries` runs a query's
+    /// subqueries, run in `db` for `tx`'s statement.
+    ///
+    /// # Errors
+    ///
+    /// As `Call::run`'s or `GraphCall::run`'s.
+    pub(crate) fn run(
+        &self,
+        arguments: Vec<Value>,
+        rows: &[Vec<Row>],
+        subqueries: &dyn Subqueries,
+        run_in: (&Arc<State>, TxId),
+    ) -> Result<Vec<Row>> {
+        match self {
+            Invoked::Routine(c) => c.run(arguments, rows, subqueries),
+            Invoked::Graph(g) => g.run(arguments, rows, run_in),
+        }
+    }
+}
 
 /// [ISO/IEC 9075-2:2023 §9.24, §9.25] An invocation of a polymorphic table
 /// function, compiled, as a plan runs it: its PTF data area as

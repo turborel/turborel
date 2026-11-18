@@ -19,7 +19,6 @@ mod bfs;
 mod bidirectional;
 mod groups;
 mod multi;
-mod parallel;
 mod paths;
 mod ranked;
 mod selection;
@@ -240,7 +239,7 @@ impl<'v> PathSearch<'v> {
         let mut found = match plan.parallelism {
             Parallelism::Morsels(width) => {
                 let size = if plan.algorithm == Algorithm::MultiSourceBfs { LANES } else { 1 };
-                let parts = parallel::morsels(width, (starts.len(), size), meter.stop(), |range| {
+                let parts = crate::threads::morsels(width, (starts.len(), size), meter.stop(), |range| {
                     let mut part = meter.part();
                     self.sequential(&ctx, (starts.get(range).unwrap_or_default(), plan), &mut part)
                 })?;

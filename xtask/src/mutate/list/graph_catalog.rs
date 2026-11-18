@@ -1,7 +1,7 @@
 //! Mutations of the property graph catalog: the rules CREATE and ALTER
 //! PROPERTY GRAPH check, graphs left INVALID by a change of their tables,
 //! dropped with them or abandoned by a revoke, SELECT on a graph, and the
-//! descriptor kept across reopening (RULES.md R-TEST-9, D-GRAPH-CATALOG).
+//! descriptor kept across reopening (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 

@@ -89,6 +89,7 @@ impl Parser {
             columns: Vec::new(),
             correlation: None,
             system_time: None,
+            options: crate::ast::GraphLimits::default(),
             at,
         };
         super::super::graph::check(&table)?;

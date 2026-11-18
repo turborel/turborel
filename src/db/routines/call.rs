@@ -29,6 +29,7 @@ use super::program::{Hosted, hosted_rows};
 use crate::ast::{
     CallStatement, Composite, ElementPosition, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification,
 };
+use crate::binder::named::{all_or_none, arranged};
 use crate::binder::{Context, OutColumn, bind_argument, definition_of, qualify, resolve_procedure, sql_statement};
 use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of, routine_path};
 use crate::error::{At, Code, Result, SqlError, Subject};
@@ -150,9 +151,17 @@ impl State {
     /// argument is not as its parameter's mode allows; -104 without
     /// EXECUTE on it; an argument's, bound.
     pub(crate) fn bind_call(cx: Context<'_>, call: &CallStatement) -> Result<BoundCall> {
+        all_or_none(&call.names)?;
         let desc = resolve_procedure(cx, &call.name, call.arguments.len())?;
+        let parameters: Vec<&str> = desc.parameters.iter().map(|p| p.name.as_str()).collect();
+        let Some(arguments) = arranged(&parameters, &call.arguments, &call.names) else {
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §9.18 SR5d] the arguments of the CALL do not name each parameter of procedure {}",
+                desc.name
+            )));
+        };
         let (mut inputs, mut targets) = (Vec::new(), Vec::new());
-        for (k, (p, a)) in desc.parameters.iter().zip(&call.arguments).enumerate() {
+        for (k, (p, a)) in desc.parameters.iter().zip(arguments).enumerate() {
             let target = match a {
                 SqlArgument::Value(v) => target_of(cx, v),
                 SqlArgument::Default(_) | SqlArgument::Null(_) => None,

@@ -8,6 +8,8 @@
 
 use super::{Mutation, Package};
 
+pub(super) mod algorithms;
+
 /// The mutations of path search, in the order they run.
 pub const GRAPH_SEARCH: [Mutation; 12] = [
     Mutation {
@@ -97,7 +99,7 @@ pub const GRAPH_SEARCH: [Mutation; 12] = [
         name: "graph-parallel-results-unordered",
         package: Package::Core,
         breaks: "parallel morsels' results are put back in the order the workers finish, not the morsels'",
-        file: "src/graph/search/parallel.rs",
+        file: "src/threads/morsels.rs",
         original: "    done.sort_unstable_by_key(|d| d.0);",
         replacement: "    done.sort_unstable_by_key(|d| std::cmp::Reverse(d.0));",
         integration: &[],

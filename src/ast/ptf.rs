@@ -127,6 +127,9 @@ pub struct PtfInvocation {
     pub name: String,
     /// Its `<SQL argument>`s, in order.
     pub arguments: Vec<PtfArgument>,
+    /// Of each argument, the `<SQL parameter name>` of its `<named
+    /// argument specification>`, if it is one (Feature T524).
+    pub names: Vec<Option<String>>,
     /// Its `<co-partition clause>`: each `<co-partition specification>`'s
     /// `<range variable>`s, each with where it begins.
     pub copartition: Vec<Vec<(TableName, usize)>>,

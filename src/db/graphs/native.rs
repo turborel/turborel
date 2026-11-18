@@ -12,7 +12,7 @@
 //! An edge's `$FROM_ID` and `$TO_ID` are the texts of two nodes of its
 //! schema. Each pseudo-column is NOT NULL. A node table has an index of
 //! its `$NODE_ID`, an edge table one of its `$EDGE_ID` and an `adjacency`
-//! index of its endpoints (§13.2, RULES.md D-GRAPH-ADJACENCY).
+//! index of its endpoints (§13.2, RULES.md D107).
 
 mod graph;
 mod rows;

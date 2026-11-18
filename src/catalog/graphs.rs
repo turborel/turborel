@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The descriptor of a property graph defined over tables
-//! (RULES.md D-GRAPH-CATALOG), Mode A of the property graph implementation
+//! (RULES.md D106), Mode A of the property graph implementation
 //! standard (§4.1): its vertex and edge element tables, each with its key,
 //! labels and properties, an edge's source and destination key
 //! references, its mode, and what it reads, as a view's descriptor keeps

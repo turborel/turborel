@@ -1,5 +1,5 @@
 //! \[EXTENSION\] A property graph's descriptor from its definition
-//! (RULES.md D-GRAPH-CATALOG), each rule of §4.1 checked: its element
+//! (RULES.md D106), each rule of §4.1 checked: its element
 //! tables usable and their aliases unique, each key and endpoint found or
 //! written (R4.2) and held as its mode says (R4.3), and its labels and
 //! properties (R4.4 to R4.6). A graph altered or compiled is described

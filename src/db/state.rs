@@ -141,6 +141,9 @@ pub struct State {
     /// Its background work's jobs, shared by every snapshot (`threads.rs`,
     /// RULES.md D55).
     pub(crate) jobs: Arc<crate::threads::Jobs>,
+    /// The latest runs of the graph algorithms, shared by every snapshot
+    /// (`system/graph_runs.rs`).
+    pub(crate) graph_runs: Arc<crate::system::GraphRuns>,
     /// What reads ahead for its pools on its read-ahead job, shared by
     /// every snapshot (`disk/buffer/ahead.rs`, RULES.md D30).
     pub(crate) ahead: Arc<crate::disk::buffer::AheadReader>,
@@ -202,6 +205,7 @@ impl State {
             work: Arc::clone(&work),
             temp_lobs: Arc::new(crate::spill::TempLobStore::new(work)),
             jobs: Arc::default(),
+            graph_runs: Arc::default(),
             ahead: crate::disk::buffer::AheadReader::new(),
             rekey: Arc::default(),
             files: Arc::default(),

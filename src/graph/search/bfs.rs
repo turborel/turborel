@@ -23,6 +23,11 @@ pub(super) struct Tree {
 }
 
 impl Tree {
+    /// The tree of a search of `ctx`.
+    pub(super) fn of(ctx: &Context<'_>) -> Tree {
+        Tree { states: States::of(ctx.nfa), ..Tree::default() }
+    }
+
     /// Adds the state of `vertex` and `threads`, reached from `parent` by
     /// `letter`, if it is new: whether the search goes on, and the state
     /// if it is new.
@@ -77,7 +82,7 @@ fn ctx_accepts(ctx: &Context<'_>, threads: &[crate::graph::run::Thread]) -> bool
 /// Any error of the view, a prefilter or a limit.
 pub(super) fn any_shortest(ctx: &Context<'_>, start: ElementId, meter: &mut Meter) -> Result<Vec<PathBinding>> {
     let mut runner = Runner::new(ctx.nfa, ctx.view);
-    let mut tree = Tree::default();
+    let mut tree = Tree::of(ctx);
     let mut frontier = tree.begin(ctx, &mut runner, start, meter)?;
     let mut level = 0_usize;
     'levels: while !frontier.is_empty() && !ctx.all_found(&tree.ends) {
@@ -116,12 +121,12 @@ pub const LEVEL_MORSEL: usize = 64;
 /// As `any_shortest`; -910 if a worker fails.
 pub(super) fn any_shortest_levels(ctx: &Context<'_>, start: ElementId, width: usize, meter: &mut Meter) -> Result<Vec<PathBinding>> {
     let mut runner = Runner::new(ctx.nfa, ctx.view);
-    let mut tree = Tree::default();
+    let mut tree = Tree::of(ctx);
     let mut frontier = tree.begin(ctx, &mut runner, start, meter)?;
     let mut level = 0_usize;
     'levels: while !frontier.is_empty() && !ctx.all_found(&tree.ends) {
         let states = &tree.states;
-        let expanded = super::parallel::morsels(width, (frontier.len(), LEVEL_MORSEL), meter.stop(), |range| {
+        let expanded = crate::threads::morsels(width, (frontier.len(), LEVEL_MORSEL), meter.stop(), |range| {
             let mut worker = Runner::new(ctx.nfa, ctx.view);
             frontier
                 .get(range)

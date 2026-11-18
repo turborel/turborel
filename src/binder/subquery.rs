@@ -211,6 +211,9 @@ impl Binder<'_> {
         if let Some((pos, t, _)) = self.local(cs)? {
             return Ok((self.column_in(cs, (pos, &t), scope)?, t));
         }
+        if let Some(variable) = self.graph_variable(cs, scope) {
+            return Ok(variable);
+        }
         let Some(outer) = self.outer else {
             // [ISO/IEC 9075-2:2023 §11.49 SR12] the trigger's scope, which
             // encloses its action's.

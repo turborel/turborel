@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The columns of a property graph's element table and the
-//! expressions of its properties (RULES.md D-GRAPH-CATALOG), bound as the
+//! expressions of its properties (RULES.md D106), bound as the
 //! graph's owner binds them, as a view's query is bound. Each property's
 //! `<value expression>` is bound over the columns of one row of the table,
 //! as a generation expression is [ISO/IEC 9075-2:2023 §11.4 SR10], so it

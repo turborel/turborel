@@ -39,8 +39,10 @@ impl Plan {
                 left.can_raise() || (!proved && cond.as_ref().is_some_and(Cond::can_raise))
             }
             Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),
+            // A GRAPH_TABLE's search can always pass its limits.
             Plan::Unnest(u) => {
-                u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(Cond::can_raise) || u.input.can_raise()
+                let own = u.graph.is_some() || u.collections.iter().any(Expr::can_raise);
+                own || u.outer.as_ref().is_some_and(Cond::can_raise) || u.input.can_raise()
             }
             Plan::Window { window, .. } => window.can_raise() || window.input.can_raise(),
             // Its search can always pass the matcher's limits.

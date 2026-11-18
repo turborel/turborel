@@ -1,4 +1,5 @@
-//! \[EXTENSION\] Property graphs: path search over a graph's elements.
+//! \[EXTENSION\] Property graphs: path search over a graph's elements,
+//! and the library of graph algorithms (`algo.rs`).
 //!
 //! Citations: `[GS §n]` is the project's property graph implementation
 //! standard, section n, and its rules `Rn.m`; `[P1 §n]` is Deutsch et
@@ -8,6 +9,7 @@
 //! 18(6), 2025, arXiv 2409.01102).
 
 pub mod adjacency;
+pub mod algo;
 pub mod binding;
 pub mod in_memory;
 pub mod limits;

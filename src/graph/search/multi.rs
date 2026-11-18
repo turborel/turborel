@@ -141,7 +141,7 @@ pub(super) fn multi_source(ctx: &Context<'_>, starts: &[ElementId], meter: &mut 
     let mut runner = Runner::new(ctx.nfa, ctx.view);
     let count = starts.len().min(LANES);
     let mut batch = Batch {
-        states: States::default(),
+        states: States::of(ctx.nfa),
         seen: Vec::new(),
         accepting: Vec::new(),
         parents: HashMap::new(),

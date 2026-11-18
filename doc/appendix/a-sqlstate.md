@@ -26,6 +26,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 01007 | Warning: privilege not granted |
 | 01009 | Warning: search condition too long for the Information Schema |
 | 0100A | Warning: query expression too long for the Information Schema |
+| 01W61 | Warning: a GRAPH_TABLE's search ended at a limit ON LIMIT TRUNCATE, its rows those of the paths found (GRF-0061) |
 | 02000 | No data |
 | 07000 | Dynamic SQL error |
 | 07001 | Dynamic SQL error: the arguments do not match the dynamic parameters |
@@ -112,6 +113,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2203E | Too many JSON object members: JSON_OBJECT or JSON_OBJECTAGG of more than 1,048,576 members |
 | 2203F | SQL/JSON scalar required: JSON_VALUE of an array or an object |
 | 2203G | SQL/JSON item cannot be cast to target type: JSON_VALUE of an item whose type does not cast to the returned type, as true to INTEGER |
+| 22W34 | Data exception: a CHEAPEST selector's COST of an edge that is negative or no number (GRF-0034) |
 | 23000 | Integrity constraint violation |
 | 24000 | Invalid cursor state |
 | 25000 | Invalid transaction state |
@@ -142,6 +144,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 40001 | Transaction rollback: serialization failure |
 | 40002 | Transaction rollback: integrity constraint violation, at commit |
 | 44000 | With check option violation |
+| 54061 | Program limit exceeded: a GRAPH_TABLE's search passed MAX_PATH_LENGTH, MAX_PATHS_PER_PARTITION or MAX_SEARCH_STATES (GRF-0061) |
 | TB910 | The Rust API was misused, or a defect, or a registered vector distance function that breaks its contract |
 | TB911 | Conflict with another transaction: the statement undone, the transaction going on |
 | TB912 | Refused by the transaction policy |
