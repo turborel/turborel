@@ -1,13 +1,13 @@
 //! Mutations of the Information Schema's columns and views of ISO/IEC
 //! 9075-11: an interval type's description, insertability and
 //! updatability, a commit action, a foreign key's positions, what a
-//! routine's descriptor holds, and the usage views (RULES.md R-TEST-9,
-//! D37).
+//! routine's descriptor holds, the usage views, and the views of what is
+//! supported (RULES.md R-TEST-9, D37).
 
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const INFORMATION: [Mutation; 17] = [
+pub const INFORMATION: [Mutation; 22] = [
     Mutation {
         name: "information-interval-type",
         package: Package::Core,
@@ -179,6 +179,56 @@ pub const INFORMATION: [Mutation; 17] = [
         original: "if self.counting == Some(super::Counting::Trigger) && !self.counted.get() {",
         replacement: "if false && self.counting == Some(super::Counting::Trigger) && !self.counted.get() {",
         integration: &["column_usage::trigger_column_usage_6_54"],
+        unit: &[],
+    },
+    Mutation {
+        name: "information-features-subfeatures",
+        package: Package::Core,
+        breaks: "SQL_FEATURES shows no subfeature",
+        file: "src/system/information/conformance.rs",
+        original: "( 'FEATURE', 'SUBFEATURE' )",
+        replacement: "( 'FEATURE' )",
+        integration: &["conformance_views::features_are_supported_as_claimed_5_52"],
+        unit: &[],
+    },
+    Mutation {
+        name: "information-conformance-null",
+        package: Package::Core,
+        breaks: "an empty column of SQL_CONFORMANCE's rows is the empty string, not the null value",
+        file: "src/system/definition/conformance.rs",
+        original: "if field.is_empty() { Value::Null } else { text(field) }",
+        replacement: "if field.is_empty() { text(field) } else { text(field) }",
+        integration: &["conformance_views::features_are_supported_as_claimed_5_52", "conformance_views::parts_and_packages_5_54_5_55"],
+        unit: &[],
+    },
+    Mutation {
+        name: "information-sizing-precision",
+        package: Package::Core,
+        breaks: "SQL_SIZING shows a NUMERIC's greatest precision as one less than the code keeps",
+        file: "src/system/definition/sizing.rs",
+        original: "value: || exact(crate::value::MAX_EXACT_PRECISION),\n        comment: \"IL009",
+        replacement: "value: || exact(crate::value::MAX_EXACT_PRECISION.saturating_sub(1)),\n        comment: \"IL009",
+        integration: &["conformance_views::sizing_items_are_the_limits_kept_5_56"],
+        unit: &[],
+    },
+    Mutation {
+        name: "information-sizing-savepoints",
+        package: Package::Core,
+        breaks: "SQL_SIZING shows one savepoint more than a transaction may have",
+        file: "src/system/definition/sizing.rs",
+        original: "value: || number(crate::db::savepoints::MAX_SAVEPOINTS),",
+        replacement: "value: || number(crate::db::savepoints::MAX_SAVEPOINTS.saturating_add(1)),",
+        integration: &["conformance_views::sizing_items_are_the_limits_kept_5_56"],
+        unit: &[],
+    },
+    Mutation {
+        name: "information-short-impl-info",
+        package: Package::Core,
+        breaks: "SQL_IMPL_INFO leaves out INTEGER_VALUE",
+        file: "src/system/information/short_names/conformance.rs",
+        original: "IMPLEMENTATION_INFO_NAME AS IMPL_INFO_NAME, INTEGER_VALUE,",
+        replacement: "IMPLEMENTATION_INFO_NAME AS IMPL_INFO_NAME,",
+        integration: &["short_name_views::short_name_views_of_conformance_5_77"],
         unit: &[],
     },
 ];

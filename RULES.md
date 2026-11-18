@@ -2280,7 +2280,12 @@ nothing, as VIEW_COLUMN_USAGE binds a view; a column needing what the
 catalog does not keep, as a routine's timestamps, is not defined until
 the catalog keeps it. The short name views [§5.77] are the standard's
 definitions too, each over its view, so they show what it shows. SELECT
-on them is PUBLIC's and nothing else is granted.
+on them is PUBLIC's and nothing else is granted. SQL_FEATURES and
+SQL_PARTS read rows `cargo xtask features` writes from the standards'
+feature taxonomies and CONFORMANCE.md's table of the features claimed,
+which `verify` checks the rows against, so the views cannot drift from
+the claims; SQL_SIZING's values are read from the constants that keep
+each limit.
 
 #### D38. The memory budget, and spilling
 
@@ -4913,7 +4918,7 @@ Rust's short-circuit `&&` and `||`.
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-PROC-1 | `cargo xtask verify` **shall** pass before every commit: format, lints, lint baselines, docs, file length, traceability and citations, no merge conflict marker in a source or document, every test. `--coverage` adds coverage. | pre-commit hook; CI |
+| R-PROC-1 | `cargo xtask verify` **shall** pass before every commit: format, lints, lint baselines, docs, file length, traceability and citations, no merge conflict marker in a source or document, threads, the claimed features SQL_FEATURES shows, every test. `--coverage` adds coverage. | pre-commit hook; CI |
 | R-PROC-2 | Every change **shall** be reviewed against the checklist below. | review |
 | R-PROC-3 | Commits **should** be small and single-purpose, in CONTRIBUTING.md's form (`area: summary`, then why), citing rules applied or changed. | review |
 | R-PROC-4 | A threshold change **shall** change RULES.md, `clippy.toml` and `xtask` together. | review |

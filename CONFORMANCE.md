@@ -20,6 +20,7 @@ Contents: [The claim](#the-claim) ·
 [SQL-86, clause by clause](#sql-86-clause-by-clause) ·
 [SQL-92](#sql-92) · [Collations](#collations) · [SQL:2023](#sql2023) ·
 [SQL/PSM](#sqlpsm) · [SQL/XML](#sqlxml) · [Extensions](#extensions) ·
+[Features claimed](#features-claimed) ·
 [Implementation-defined choices](#implementation-defined-choices) ·
 [Limits](#limits) · [Readings of ambiguous text](#readings-of-ambiguous-text)
 
@@ -415,7 +416,8 @@ Cursors follow §13.1, §13.3.
 | The Information Schema | §21 | Its 23 views, with the standard's own definitions, over the Definition Schema (RULES.md D37). Each also shows what the enabled roles own or hold (see Roles). |
 | Columns of ISO/IEC 9075-11 | ISO/IEC 9075-11:2006 draft Clause 5, §6.11, §6.20, §6.21, §6.28, §6.30, §6.31, §6.40, §6.41, §6.50, §6.52 | Each view of ISO/IEC 9075:1992 and of ISO/IEC 9075-11 here has every column the draft gives it, but CREATED and LAST_ALTERED of ROUTINES and METHOD_SPECIFICATIONS, of Feature T011 (Timestamp in Information Schema), which is not claimed: no timestamp of a routine is kept. A data type's descriptor has INTERVAL_TYPE, an interval type's fields as the draft's check constraint names them, and INTERVAL_PRECISION, its leading field precision [§6.21 Description 8, 9]. TABLES has IS_INSERTABLE_INTO, YES of a base table and of an updatable view, and VIEWS has it as INSERTABLE_INTO, as Feature T111 is not supported [§6.50 Description 7b]; COLUMNS has IS_UPDATABLE, YES of each column of such a table [ISO/IEC 9075-2:2023 §4.17.6]; the Information Schema's own tables and views are neither. COMMIT_ACTION is a temporary table's ON COMMIT [§6.50 Description 4]. SCHEMATA's SQL_PATH is null, as no `<schema definition>` here has a `<schema path specification>` [§6.41 Description 5b]. KEY_COLUMN_USAGE's ORDINAL_POSITION is a column's position in its constraint, a foreign key's too [§6.28 Description 3], where SQL-92 makes a foreign key's column's that of the column it references [ISO/IEC 9075:1992 §21.3.14 Description 3], which POSITION_IN_UNIQUE_CONSTRAINT shows now, null of a UNIQUE or PRIMARY KEY constraint's column [§6.28 Description 4]. CHARACTER_SETS's CHARACTER_REPERTOIRE is SQL_TEXT [ISO/IEC 9075-2:2023 §4.3.7 Table 1]. A routine's SQL_PATH is its module's PATH, or its own schema [ISO/IEC 9075-2:2023 §11.60 GR3v], each written `catalog.schema`, a comma between; MAX_DYNAMIC_RESULT_SETS is 0; AS_LOCATOR NO of a function, null of a procedure; IS_UDT_DEPENDENT YES of a routine a type's definition makes [ISO/IEC 9075-2:2023 §4.35.1]. The columns of an external routine, a transform's from-sql and to-sql routines, and a `<result cast>` are null, as every routine is an SQL routine, which has none [ISO/IEC 9075-2:2023 §4.35.5, §11.60 SR9m i]; the views join a `<result cast>`'s descriptor from DATA_TYPE_DESCRIPTOR, as the draft does, which none matches. |
 | Views of usage | ISO/IEC 9075-11:2006 draft §5.13, §5.16, §5.17, §5.20, §5.24, §5.44, §5.46 to §5.48, §5.74, §6.13, §6.17, §6.18, §6.35, §6.37 to §6.39, §6.63 | Features F341 (Usage tables) and F231 (Privilege tables), each of their views defined. CHECK_CONSTRAINT_ROUTINE_USAGE, COLLATION_CHARACTER_SET_APPLICABILITY, COLUMN_COLUMN_USAGE, COLUMN_UDT_USAGE, DATA_TYPE_PRIVILEGES, ROUTINE_COLUMN_USAGE, ROUTINE_ROUTINE_USAGE, ROUTINE_SEQUENCE_USAGE, ROUTINE_TABLE_USAGE and VIEW_ROUTINE_USAGE, with the draft's definitions, over Definition Schema tables made from what the catalog keeps of each definition for RESTRICT: a routine's tables, subject routines and sequence generators, a view's and a check constraint's subject routines, fixed as each was defined. ROUTINE_COLUMN_USAGE shows the columns its Description 1 lists, as the routine's body binds now: those a searched UPDATE's or DELETE's search condition or an UPDATE's source references, and those an INSERT's column list or an UPDATE's SET names [§6.35 Description 1a to 1d]; not a column a query alone references, which MODULE_COLUMN_USAGE shows of a module's routine [ISO/IEC 9075-4:2006 draft §19.1 Description 2]. COLUMN_COLUMN_USAGE binds each generation expression now. Corrected: COLUMN_UDT_USAGE joins a column's descriptor by the column's name, as DATA_TYPE_DESCRIPTOR keys it here; DATA_TYPE_PRIVILEGES passes over a column of a domain, which has no DTD_IDENTIFIER of its own here, and reads a method specification parameter's object as its specific name [§6.29 Description 5]. |
-| Short name views | ISO/IEC 9075-11:2006 draft §5.77, §4.2 | The short name view of each view defined here, with the draft's definition, each column named by an `<as clause>` as its `<view column list>` names it [§7.9 SR9a, §11.19 GR1], so it shows the rows its view shows the user: CATALOG_NAME, SCHEMATA_S, DOMAINS_S, TABLES_S, COLUMNS_S, REF_CONSTRAINTS, KEY_COLUMN_USAGE_S, CHARACTER_SETS_S, COLLATIONS_S, SEQUENCES_S, TRANSLATIONS_S, CONSTR_TABLE_USAGE, CONSTR_COL_USAGE, COL_DOMAIN_USAGE, ELEMENT_TYPES_S, FIELDS_S, UDT_S, ROUTINES_S, PARAMETERS_S, ATTRIBUTES_S, METHOD_SPECS, METHOD_SPEC_PARAMS, REFERENCED_TYPES_S, TABLE_METHOD_PRIVS, ADMIN_ROLE_AUTHS, ROLE_ROUT_GRANTS, ROL_TAB_METH_GRNTS, TRIGGERS_S, TRIG_UPDATE_COLS, TRIG_TABLE_USAGE, TRIG_COLUMN_USAGE, TRIG_ROUT_USAGE_S, TRIG_SEQ_USAGE_S, COLLATION_APPLIC_S, COL_COL_USAGE, CONSTR_ROUT_USE_S, ROUT_ROUT_USAGE_S, ROUT_SEQ_USAGE_S, ROUTINE_COL_USAGE and ROUT_TABLE_USAGE; those of [SQL/PSM](#sqlpsm) and [SQL/XML](#sqlxml) with them. None is a feature of its own: each is of its view's, as the draft's Conformance Rules give them [§5.77 CR1 to CR53], and every name is of 18 characters at most, as an SQL-implementation without Feature F391 (Long identifiers) needs [ISO/IEC 9075-2:2023 §5.2 CR1, CR2]. Each has every column of its view's the draft gives it but ROUTINES_S's and METHOD_SPECS's CREATED and LAST_ALTERED, of Feature T011, as above. SQL_IMPL_INFO and SQL_SIZING_PROFS are not defined, as SQL_IMPLEMENTATION_INFO and SQL_SIZING_PROFILES are not. Corrected: ATTRIBUTES_S's select list, which names IS_NULLABLE where its `<view column list>` names ATTRIBUTE_NAME, read as the list; METHOD_SPECS's USER_DEFINED_TYPE_CATALOG, _SCHEMA and _NAME, read as the UDT_CATALOG, UDT_SCHEMA and UDT_NAME of METHOD_SPECIFICATIONS [§5.34]; ROUTINES_S's RESULT_CAST_CHAR_SET_NAME, read as ROUTINES's RESULT_CAST_CHARACTER_SET_NAME [§5.49]. |
+| Conformance views | ISO/IEC 9075-11:2006 draft §5.52 to §5.57, §6.43 to §6.46 | Features F501 (Features and conformance views) and F502 (Enhanced documentation tables): SQL_FEATURES, SQL_PARTS, SQL_PACKAGES, SQL_SIZING, SQL_IMPLEMENTATION_INFO and SQL_SIZING_PROFILES, with the draft's definitions. SQL_CONFORMANCE has a row of each part ISO/IEC 9075-2:2023 names, and of each feature and subfeature of the taxonomies of ISO/IEC 9075-2:2023 (Annexes D and H) and of the 2006 drafts of ISO/IEC 9075-4, 9075-11 (Annex E) and 9075-14, IS_SUPPORTED YES exactly where [Features claimed](#features-claimed) claims it, or claims the feature a subfeature is of [§6.43 Description 7], COMMENTS the section claiming it, IS_VERIFIED_BY null, as no conformance test has verified a claim [Description 6]; `cargo xtask features` writes its rows (`system/definition/conformance.tsv`) from those texts and that table, and `cargo xtask verify` fails if they differ. No part is claimed whole, and no text defines a package, so SQL_PACKAGES has no row. SQL_SIZING has a row of each implementation-defined limit ISO/IEC 9075-2:2023 Annex B lists, IL001 to IL208, SIZING_ID its number, SIZING_NAME Annex B's words, SUPPORTED_VALUE read from the constant the code keeps it in, 0 of a limit there is none of (IL039 to IL041, IL063's digits), null of IL066, of Ada (`system/definition/sizing.rs`). ISO/IEC 9075-11 and 9075-2 name no implementation information item, so SQL_IMPLEMENTATION_INFO has no row, and no profile is defined, so SQL_SIZING_PROFILES has none. The implementation information and sizing items ISO/IEC 9075-3 (SQL/CLI) adds [§6.44, §6.45] are not defined yet; they will be added, read from that part's text. |
+| Short name views | ISO/IEC 9075-11:2006 draft §5.77, §4.2 | The short name view of each view defined here, with the draft's definition, each column named by an `<as clause>` as its `<view column list>` names it [§7.9 SR9a, §11.19 GR1], so it shows the rows its view shows the user: CATALOG_NAME, SCHEMATA_S, DOMAINS_S, TABLES_S, COLUMNS_S, REF_CONSTRAINTS, KEY_COLUMN_USAGE_S, CHARACTER_SETS_S, COLLATIONS_S, SEQUENCES_S, TRANSLATIONS_S, CONSTR_TABLE_USAGE, CONSTR_COL_USAGE, COL_DOMAIN_USAGE, ELEMENT_TYPES_S, FIELDS_S, UDT_S, ROUTINES_S, PARAMETERS_S, ATTRIBUTES_S, METHOD_SPECS, METHOD_SPEC_PARAMS, REFERENCED_TYPES_S, TABLE_METHOD_PRIVS, ADMIN_ROLE_AUTHS, ROLE_ROUT_GRANTS, ROL_TAB_METH_GRNTS, TRIGGERS_S, TRIG_UPDATE_COLS, TRIG_TABLE_USAGE, TRIG_COLUMN_USAGE, TRIG_ROUT_USAGE_S, TRIG_SEQ_USAGE_S, COLLATION_APPLIC_S, COL_COL_USAGE, CONSTR_ROUT_USE_S, ROUT_ROUT_USAGE_S, ROUT_SEQ_USAGE_S, ROUTINE_COL_USAGE, ROUT_TABLE_USAGE, SQL_IMPL_INFO and SQL_SIZING_PROFS; those of [SQL/PSM](#sqlpsm) and [SQL/XML](#sqlxml) with them. None is a feature of its own: each is of its view's, as the draft's Conformance Rules give them [§5.77 CR1 to CR53], and every name is of 18 characters at most, as an SQL-implementation without Feature F391 (Long identifiers) needs [ISO/IEC 9075-2:2023 §5.2 CR1, CR2]. Each has every column of its view's the draft gives it but ROUTINES_S's and METHOD_SPECS's CREATED and LAST_ALTERED, of Feature T011, as above. Corrected: ATTRIBUTES_S's select list, which names IS_NULLABLE where its `<view column list>` names ATTRIBUTE_NAME, read as the list; METHOD_SPECS's USER_DEFINED_TYPE_CATALOG, _SCHEMA and _NAME, read as the UDT_CATALOG, UDT_SCHEMA and UDT_NAME of METHOD_SPECIFICATIONS [§5.34]; ROUTINES_S's RESULT_CAST_CHAR_SET_NAME, read as ROUTINES's RESULT_CAST_CHARACTER_SET_NAME [§5.49]. |
 
 Isolation levels behave as follows (RULES.md D29). No level reads uncommitted
 changes, and constraints are checked serializably at every level.
@@ -3081,6 +3083,392 @@ arguments are bound. The setting is checked as a definition is made. A
 view, constraint, assertion, domain, trigger, generated column or SQL
 routine body that calls a registered function keeps the call, whatever
 the setting is when it is used, reopened or recovered (RULES.md D74).
+
+---
+
+## Features claimed
+
+Each feature and subfeature claimed, as the feature taxonomies of
+ISO/IEC 9075-2:2023 (Annexes D and H) and of the 2006 drafts of
+ISO/IEC 9075-4, 9075-11 and 9075-14 name it, with the section saying how
+it is done. A feature claimed claims each of its subfeatures
+[ISO/IEC 9075-11:2006 draft §6.43 Description 7]. Every other feature
+and subfeature of those taxonomies is not claimed, nor is any part of
+ISO/IEC 9075 whole, and none of those texts defines a package.
+
+INFORMATION_SCHEMA.SQL_FEATURES shows this table, and SQL_PARTS the
+parts: `cargo xtask features` writes their rows from it, and
+`cargo xtask verify` fails if they differ (RULES.md D37).
+
+| Feature | Name | Claimed in |
+|---|---|---|
+| T191 | Referential action RESTRICT | [Schemas and constraints](#schemas-and-constraints) |
+| F231 | Privilege tables | [Transactions, sessions and the Information Schema](#transactions-sessions-and-the-information-schema) |
+| F341 | Usage tables | [Transactions, sessions and the Information Schema](#transactions-sessions-and-the-information-schema) |
+| F501 | Features and conformance views | [Transactions, sessions and the Information Schema](#transactions-sessions-and-the-information-schema) |
+| F502 | Enhanced documentation tables | [Transactions, sessions and the Information Schema](#transactions-sessions-and-the-information-schema) |
+| F690 | Collation support | [Collations](#collations) |
+| F692 | Extended collation support | [Collations](#collations) |
+| F693 | SQL-session and client module collations | [Collations](#collations) |
+| T285 | Enhanced derived column names | [SQL:2023](#sql2023) |
+| T031 | BOOLEAN data type | [Truth values](#truth-values) |
+| T662 | Underscores in numeric literals | [Numeric literals](#numeric-literals) |
+| T021 | BINARY and VARBINARY data types | [Binary strings](#binary-strings) |
+| T022 | Advanced support for BINARY and VARBINARY data types | [Binary strings](#binary-strings) |
+| T023 | Compound binary literals | [Binary strings](#binary-strings) |
+| T024 | Spaces in binary literals | [Binary strings](#binary-strings) |
+| T039 | CLOB locator: non-holdable | [Large objects](#large-objects) |
+| T040 | Concatenation of CLOBs | [Large objects](#large-objects) |
+| T041 | Basic LOB data type support | [Large objects](#large-objects) |
+| T042 | Extended LOB data type support | [Large objects](#large-objects) |
+| T045 | BLOB data type | [Large objects](#large-objects) |
+| T046 | CLOB data type | [Large objects](#large-objects) |
+| T047 | POSITION, OCTET_LENGTH, TRIM, and SUBSTRING for BLOBs | [Large objects](#large-objects) |
+| T048 | Concatenation of BLOBs | [Large objects](#large-objects) |
+| T049 | BLOB locator: non-holdable | [Large objects](#large-objects) |
+| T050 | POSITION, CHAR_LENGTH, OCTET_LENGTH, LOWER, TRIM, UPPER, and SUBSTRING for CLOBs | [Large objects](#large-objects) |
+| T312 | OVERLAY function | [Large objects](#large-objects) |
+| T561 | Holdable locators | [Large objects](#large-objects) |
+| F262 | Extended CASE expression | [Simple CASE](#simple-case) |
+| F263 | Comma-separated predicates in simple CASE expression | [Simple CASE](#simple-case) |
+| T151 | DISTINCT predicate | [DISTINCT predicate](#distinct-predicate) |
+| T152 | DISTINCT predicate with negation | [DISTINCT predicate](#distinct-predicate) |
+| T054 | GREATEST and LEAST | [GREATEST and LEAST](#greatest-and-least) |
+| T055 | String padding functions | [Trims and pads](#trims-and-pads) |
+| T056 | Multi-character TRIM function | [Trims and pads](#trims-and-pads) |
+| T081 | Optional string types maximum length | [Optional maximum lengths](#optional-maximum-lengths) |
+| T071 | BIGINT data type | [BIGINT](#bigint) |
+| T076 | DECFLOAT data type | [Decimal floating point](#decimal-floating-point) |
+| F841 | LIKE_REGEX predicate | [Regular expressions](#regular-expressions) |
+| F842 | OCCURRENCES_REGEX function | [Regular expressions](#regular-expressions) |
+| F843 | POSITION_REGEX function | [Regular expressions](#regular-expressions) |
+| F844 | SUBSTRING_REGEX | [Regular expressions](#regular-expressions) |
+| F845 | TRANSLATE_REGEX | [Regular expressions](#regular-expressions) |
+| F846 | Octet support in regular expression operators | [Regular expressions](#regular-expressions) |
+| F847 | Non-constant regular expression | [Regular expressions](#regular-expressions) |
+| T062 | Character length units | [Character length units](#character-length-units) |
+| T839 | Formatted cast of datetimes to/from character strings | [Formatted CAST](#formatted-cast) |
+| T176 | Sequence generator support | [Sequence generators](#sequence-generators) |
+| T177 | Sequence generator support: simple restart option | [Sequence generators](#sequence-generators) |
+| T174 | Identity columns | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| T175 | Generated columns | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| T178 | Identity columns: simple restart option | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| F384 | Drop identity property clause | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| F385 | Drop column generation expression clause | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| F386 | Set identity column generation clause | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| F200 | TRUNCATE TABLE statement | [TRUNCATE TABLE](#truncate-table) |
+| F202 | TRUNCATE TABLE: identity column restart option | [TRUNCATE TABLE](#truncate-table) |
+| F312 | MERGE statement | [MERGE](#merge) |
+| F313 | Enhanced MERGE statement | [MERGE](#merge) |
+| F314 | MERGE statement with DELETE branch | [MERGE](#merge) |
+| F122 | Enhanced diagnostics management | [Diagnostics](#diagnostics) |
+| F123 | All diagnostics | [Diagnostics](#diagnostics) |
+| T511 | Transaction counts | [Diagnostics](#diagnostics) |
+| T171 | LIKE clause in table definition | [LIKE and AS in CREATE TABLE](#like-and-as-in-create-table) |
+| T172 | AS subquery clause in table definition | [LIKE and AS in CREATE TABLE](#like-and-as-in-create-table) |
+| T173 | Extended LIKE clause in table definition | [LIKE and AS in CREATE TABLE](#like-and-as-in-create-table) |
+| F292 | UNIQUE null treatment | [UNIQUE null treatment](#unique-null-treatment) |
+| T121 | WITH (excluding RECURSIVE) in query expression | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
+| T122 | WITH (excluding RECURSIVE) in subquery | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
+| T131 | Recursive query | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
+| T132 | Recursive query in subquery | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
+| T133 | Enhanced cycle mark values | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
+| F403 | Partitioned join tables | [Partitioned joins](#partitioned-joins) |
+| T431 | Extended grouping capabilities | [Grouping sets](#grouping-sets) |
+| T432 | Nested and concatenated GROUPING SETS | [Grouping sets](#grouping-sets) |
+| T433 | Multi-argument GROUPING function | [Grouping sets](#grouping-sets) |
+| T434 | GROUP BY DISTINCT | [Grouping sets](#grouping-sets) |
+| T625 | LISTAGG | [LISTAGG and ANY_VALUE](#listagg-and-any_value) |
+| T626 | ANY_VALUE | [LISTAGG and ANY_VALUE](#listagg-and-any_value) |
+| T621 | Enhanced numeric functions | [Enhanced numeric functions](#enhanced-numeric-functions) |
+| T301 | Functional dependencies | [Functional dependencies](#functional-dependencies) |
+| E121-02 | ORDER BY columns need not be in select list | [Sort keys](#sort-keys) |
+| E121-03 | Value expressions in ORDER BY clause | [Sort keys](#sort-keys) |
+| F868 | ORDER BY in grouped table | [Sort keys](#sort-keys) |
+| F850 | Top-level ORDER BY in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F851 | ORDER BY in subqueries | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F852 | Top-level ORDER BY in views | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F855 | Nested ORDER BY in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F856 | Nested FETCH FIRST in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F857 | Top-level FETCH FIRST in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F858 | FETCH FIRST in subqueries | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F859 | Top-level FETCH FIRST in views | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F860 | Dynamic FETCH FIRST row count | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F861 | Top-level OFFSET in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F862 | OFFSET in subqueries | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F863 | Nested OFFSET in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F864 | Top-level OFFSET in views | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F865 | Dynamic offset row count in OFFSET | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F866 | FETCH FIRST clause: PERCENT option | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F867 | FETCH FIRST clause: WITH TIES option | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| T611 | Elementary OLAP operations | [Window functions](#window-functions) |
+| T612 | Advanced OLAP operations | [Window functions](#window-functions) |
+| T614 | NTILE function | [Window functions](#window-functions) |
+| T615 | LEAD and LAG functions | [Window functions](#window-functions) |
+| T616 | Null treatment option for LEAD and LAG functions | [Window functions](#window-functions) |
+| T617 | FIRST_VALUE and LAST_VALUE functions | [Window functions](#window-functions) |
+| T618 | NTH_VALUE function | [Window functions](#window-functions) |
+| T619 | Nested window functions | [Window functions](#window-functions) |
+| T620 | WINDOW clause: GROUPS option | [Window functions](#window-functions) |
+| T627 | Window framed COUNT DISTINCT | [Window functions](#window-functions) |
+| R010 | Row pattern recognition: FROM clause | [Row pattern recognition](#row-pattern-recognition) |
+| R020 | Row pattern recognition: WINDOW clause | [Row pattern recognition](#row-pattern-recognition) |
+| R030 | Row pattern recognition: full aggregate support | [Row pattern recognition](#row-pattern-recognition) |
+| S090 | Minimal array support | [Arrays and row types](#arrays-and-row-types) |
+| S091 | Basic array support | [Arrays and row types](#arrays-and-row-types) |
+| S093 | Arrays of distinct types | [Arrays and row types](#arrays-and-row-types) |
+| S095 | Array constructors by query | [Arrays and row types](#arrays-and-row-types) |
+| S096 | Optional array bounds | [Arrays and row types](#arrays-and-row-types) |
+| S097 | Array element assignment | [Arrays and row types](#arrays-and-row-types) |
+| S098 | ARRAY_AGG | [Arrays and row types](#arrays-and-row-types) |
+| S099 | Array expressions | [Arrays and row types](#arrays-and-row-types) |
+| S301 | Enhanced UNNEST | [Arrays and row types](#arrays-and-row-types) |
+| S403 | ARRAY_MAX_CARDINALITY | [Arrays and row types](#arrays-and-row-types) |
+| S404 | TRIM_ARRAY | [Arrays and row types](#arrays-and-row-types) |
+| T051 | Row types | [Arrays and row types](#arrays-and-row-types) |
+| T053 | Explicit aliases for all-fields reference | [Arrays and row types](#arrays-and-row-types) |
+| S202 | SQL-invoked routines on multisets | [Multisets](#multisets) |
+| S271 | Basic multiset support | [Multisets](#multisets) |
+| S272 | Multisets of user-defined types | [Multisets](#multisets) |
+| S275 | Advanced multiset support | [Multisets](#multisets) |
+| S281 | Nested collection types | [Multisets](#multisets) |
+| S402 | Distinct types based on multiset types | [Multisets](#multisets) |
+| S011 | Distinct data types | [Distinct types](#distinct-types) |
+| S028 | Permutable UDT options list | [Distinct types](#distinct-types) |
+| S401 | Distinct types based on array types | [Distinct types](#distinct-types) |
+| S023 | Basic structured types | [Structured types](#structured-types) |
+| S024 | Enhanced structured types | [Structured types](#structured-types) |
+| S025 | Final structured types | [Structured types](#structured-types) |
+| S026 | Self-referencing structured types | [Structured types](#structured-types) |
+| S027 | Create method by specific method name | [Structured types](#structured-types) |
+| S151 | Type predicate | [Structured types](#structured-types) |
+| S161 | Subtype treatment | [Structured types](#structured-types) |
+| S211 | User-defined cast functions | [Structured types](#structured-types) |
+| S241 | Transform functions | [Structured types](#structured-types) |
+| S261 | Specific type method | [Structured types](#structured-types) |
+| S051 | Create table of type | [Typed tables](#typed-tables) |
+| S081 | Subtables | [Typed tables](#typed-tables) |
+| S111 | ONLY in query expressions | [Typed tables](#typed-tables) |
+| S041 | Basic reference types | [Reference types](#reference-types) |
+| S043 | Enhanced reference types | [Reference types](#reference-types) |
+| S094 | Arrays of reference types | [Reference types](#reference-types) |
+| S162 | Subtype treatment for references | [Reference types](#reference-types) |
+| S274 | Multisets of reference types | [Reference types](#reference-types) |
+| T180 | System-versioned tables | [Periods](#periods) |
+| T181 | Application-time period tables | [Periods](#periods) |
+| T502 | Period predicates | [Periods](#periods) |
+| T200 | Trigger DDL | [Triggers](#triggers) |
+| T211 | Basic trigger capability | [Triggers](#triggers) |
+| T212 | Enhanced trigger capability | [Triggers](#triggers) |
+| T213 | INSTEAD OF triggers | [Triggers](#triggers) |
+| T214 | BEFORE triggers | [Triggers](#triggers) |
+| T215 | AFTER triggers | [Triggers](#triggers) |
+| T216 | Ability to require true search condition before trigger is invoked | [Triggers](#triggers) |
+| T217 | TRIGGER privilege | [Triggers](#triggers) |
+| T218 | Multiple triggers for the same event executed in the order created | [Triggers](#triggers) |
+| T321 | Basic SQL-invoked routines | [SQL-invoked routines](#sql-invoked-routines) |
+| T341 | Overloading of SQL-invoked functions and SQL-invoked procedures | [SQL-invoked routines](#sql-invoked-routines) |
+| B033 | Untyped SQL-invoked function arguments | [SQL-invoked routines](#sql-invoked-routines) |
+| B128 | Routine language SQL | [SQL-invoked routines](#sql-invoked-routines) |
+| S203 | Array parameters | [SQL-invoked routines](#sql-invoked-routines) |
+| S204 | Array as result type of functions | [SQL-invoked routines](#sql-invoked-routines) |
+| B200 | Polymorphic table functions | [Polymorphic table functions](#polymorphic-table-functions) |
+| B201 | More than one PTF generic table parameter | [Polymorphic table functions](#polymorphic-table-functions) |
+| B202 | PTF copartitioning | [Polymorphic table functions](#polymorphic-table-functions) |
+| B203 | More than one copartition specification | [Polymorphic table functions](#polymorphic-table-functions) |
+| B204 | PRUNE WHEN EMPTY | [Polymorphic table functions](#polymorphic-table-functions) |
+| B205 | Pass-through columns | [Polymorphic table functions](#polymorphic-table-functions) |
+| B206 | PTF descriptor parameters | [Polymorphic table functions](#polymorphic-table-functions) |
+| B207 | Cross products of partitionings | [Polymorphic table functions](#polymorphic-table-functions) |
+| B208 | PTF component procedure interface | [Polymorphic table functions](#polymorphic-table-functions) |
+| B209 | PTF extended names | [Polymorphic table functions](#polymorphic-table-functions) |
+| T331 | Basic roles | [Roles](#roles) |
+| T332 | Extended roles | [Roles](#roles) |
+| T801 | JSON data type | [SQL/JSON](#sqljson) |
+| T802 | Enhanced JSON data type | [SQL/JSON](#sqljson) |
+| T811 | Basic SQL/JSON constructor functions | [SQL/JSON](#sqljson) |
+| T812 | SQL/JSON: JSON_OBJECTAGG | [SQL/JSON](#sqljson) |
+| T813 | SQL/JSON: JSON_ARRAYAGG with ORDER BY | [SQL/JSON](#sqljson) |
+| T814 | Colon in JSON_OBJECT or JSON_OBJECTAGG | [SQL/JSON](#sqljson) |
+| T821 | Basic SQL/JSON query operators | [SQL/JSON](#sqljson) |
+| T822 | SQL/JSON: IS JSON WITH UNIQUE KEYS predicate | [SQL/JSON](#sqljson) |
+| T823 | SQL/JSON: PASSING clause | [SQL/JSON](#sqljson) |
+| T824 | JSON_TABLE: specific PLAN clause | [SQL/JSON](#sqljson) |
+| T825 | SQL/JSON: ON EMPTY and ON ERROR clauses | [SQL/JSON](#sqljson) |
+| T826 | General value expression in ON ERROR or ON EMPTY clauses | [SQL/JSON](#sqljson) |
+| T827 | JSON_TABLE: sibling NESTED COLUMNS clauses | [SQL/JSON](#sqljson) |
+| T828 | JSON_QUERY | [SQL/JSON](#sqljson) |
+| T829 | JSON_QUERY: array wrapper options | [SQL/JSON](#sqljson) |
+| T830 | Enforcing unique keys in SQL/JSON constructor functions | [SQL/JSON](#sqljson) |
+| T831 | SQL/JSON path language: strict mode | [SQL/JSON](#sqljson) |
+| T832 | SQL/JSON path language: item method | [SQL/JSON](#sqljson) |
+| T833 | SQL/JSON path language: multiple subscripts | [SQL/JSON](#sqljson) |
+| T834 | SQL/JSON path language: wildcard member accessor | [SQL/JSON](#sqljson) |
+| T835 | SQL/JSON path language: filter expressions | [SQL/JSON](#sqljson) |
+| T836 | SQL/JSON path language: starts with predicate | [SQL/JSON](#sqljson) |
+| T837 | SQL/JSON path language: regex_like predicate | [SQL/JSON](#sqljson) |
+| T838 | JSON_TABLE: PLAN DEFAULT clause | [SQL/JSON](#sqljson) |
+| T840 | Hex integer literals in SQL/JSON path language | [SQL/JSON](#sqljson) |
+| T851 | SQL/JSON: optional keywords for default syntax | [SQL/JSON](#sqljson) |
+| T860 | SQL/JSON simplified accessor: column reference only | [SQL/JSON](#sqljson) |
+| T862 | SQL/JSON simplified accessor: wildcard member accessor | [SQL/JSON](#sqljson) |
+| T863 | SQL/JSON simplified accessor: single-quoted string literal as member accessor | [SQL/JSON](#sqljson) |
+| T864 | SQL/JSON simplified accessor | [SQL/JSON](#sqljson) |
+| T865 | SQL/JSON item method: bigint() | [SQL/JSON](#sqljson) |
+| T866 | SQL/JSON item method: boolean() | [SQL/JSON](#sqljson) |
+| T867 | SQL/JSON item method: date() | [SQL/JSON](#sqljson) |
+| T868 | SQL/JSON item method: decimal() | [SQL/JSON](#sqljson) |
+| T869 | SQL/JSON item method: decimal() with precision and scale | [SQL/JSON](#sqljson) |
+| T870 | SQL/JSON item method: integer() | [SQL/JSON](#sqljson) |
+| T871 | SQL/JSON item method: number() | [SQL/JSON](#sqljson) |
+| T872 | SQL/JSON item method: string() | [SQL/JSON](#sqljson) |
+| T873 | SQL/JSON item method: time() | [SQL/JSON](#sqljson) |
+| T874 | SQL/JSON item method: time_tz() | [SQL/JSON](#sqljson) |
+| T875 | SQL/JSON item method: time precision | [SQL/JSON](#sqljson) |
+| T876 | SQL/JSON item method: timestamp() | [SQL/JSON](#sqljson) |
+| T877 | SQL/JSON item method: timestamp_tz() | [SQL/JSON](#sqljson) |
+| T878 | SQL/JSON item method: timestamp precision | [SQL/JSON](#sqljson) |
+| T879 | JSON in equality operations | [SQL/JSON](#sqljson) |
+| T880 | JSON in grouping operations | [SQL/JSON](#sqljson) |
+| T881 | JSON in ordering operations | [SQL/JSON](#sqljson) |
+| T882 | JSON in multiset element grouping operations | [SQL/JSON](#sqljson) |
+| T271 | Savepoints | [Savepoints](#savepoints) |
+| T272 | Enhanced savepoint management | [Savepoints](#savepoints) |
+| T351 | Bracketed comments | [Bracketed comments](#bracketed-comments) |
+| P001 | Stored modules | [SQL/PSM](#sqlpsm) |
+| P002 | Computational completeness | [SQL/PSM](#sqlpsm) |
+| P003 | Information Schema views | [SQL/PSM](#sqlpsm) |
+| P004 | Extended CASE statement | [SQL/PSM](#sqlpsm) |
+| P005 | Qualified SQL variable references | [SQL/PSM](#sqlpsm) |
+| P006 | Multiple assignment | [SQL/PSM](#sqlpsm) |
+| P007 | Enhanced diagnostics management | [SQL/PSM](#sqlpsm) |
+| P008 | Comma-separated predicates in a CASE statement | [SQL/PSM](#sqlpsm) |
+| X010 | XML type | [SQL/XML](#sqlxml) |
+| X011 | Arrays of XML type | [SQL/XML](#sqlxml) |
+| X012 | Multisets of XML type | [SQL/XML](#sqlxml) |
+| X013 | Distinct types of XML type | [SQL/XML](#sqlxml) |
+| X014 | Attributes of XML type | [SQL/XML](#sqlxml) |
+| X015 | Fields of XML type | [SQL/XML](#sqlxml) |
+| X016 | Persistent XML values | [SQL/XML](#sqlxml) |
+| X020 | XMLConcat | [SQL/XML](#sqlxml) |
+| X025 | XMLCast | [SQL/XML](#sqlxml) |
+| X030 | XMLDocument | [SQL/XML](#sqlxml) |
+| X031 | XMLElement | [SQL/XML](#sqlxml) |
+| X032 | XMLForest | [SQL/XML](#sqlxml) |
+| X034 | XMLAgg | [SQL/XML](#sqlxml) |
+| X035 | XMLAgg: ORDER BY option | [SQL/XML](#sqlxml) |
+| X036 | XMLComment | [SQL/XML](#sqlxml) |
+| X037 | XMLPI | [SQL/XML](#sqlxml) |
+| X038 | XMLText | [SQL/XML](#sqlxml) |
+| X040 | Basic table mapping | [SQL/XML](#sqlxml) |
+| X041 | Basic table mapping: null absent | [SQL/XML](#sqlxml) |
+| X042 | Basic table mapping: null as nil | [SQL/XML](#sqlxml) |
+| X043 | Basic table mapping: table as forest | [SQL/XML](#sqlxml) |
+| X044 | Basic table mapping: table as element | [SQL/XML](#sqlxml) |
+| X045 | Basic table mapping: with target namespace | [SQL/XML](#sqlxml) |
+| X046 | Basic table mapping: data mapping | [SQL/XML](#sqlxml) |
+| X047 | Basic table mapping: metadata mapping | [SQL/XML](#sqlxml) |
+| X048 | Basic table mapping: base64 encoding of binary strings | [SQL/XML](#sqlxml) |
+| X049 | Basic table mapping: hex encoding of binary strings | [SQL/XML](#sqlxml) |
+| X050 | Advanced table mapping | [SQL/XML](#sqlxml) |
+| X051 | Advanced table mapping: null absent | [SQL/XML](#sqlxml) |
+| X052 | Advanced table mapping: null as nil | [SQL/XML](#sqlxml) |
+| X053 | Advanced table mapping: table as forest | [SQL/XML](#sqlxml) |
+| X054 | Advanced table mapping: table as element | [SQL/XML](#sqlxml) |
+| X055 | Advanced table mapping: with target namespace | [SQL/XML](#sqlxml) |
+| X056 | Advanced table mapping: data mapping | [SQL/XML](#sqlxml) |
+| X057 | Advanced table mapping: metadata mapping | [SQL/XML](#sqlxml) |
+| X058 | Advanced table mapping: base64 encoding of binary strings | [SQL/XML](#sqlxml) |
+| X059 | Advanced table mapping: hex encoding of binary strings | [SQL/XML](#sqlxml) |
+| X060 | XMLParse: Character string input and CONTENT option | [SQL/XML](#sqlxml) |
+| X061 | XMLParse: Character string input and DOCUMENT option | [SQL/XML](#sqlxml) |
+| X065 | XMLParse: BLOB input and CONTENT option | [SQL/XML](#sqlxml) |
+| X066 | XMLParse: BLOB input and DOCUMENT option | [SQL/XML](#sqlxml) |
+| X070 | XMLSerialize: Character string serialization and CONTENT option | [SQL/XML](#sqlxml) |
+| X071 | XMLSerialize: Character string serialization and DOCUMENT option | [SQL/XML](#sqlxml) |
+| X072 | XMLSerialize: Character string serialization | [SQL/XML](#sqlxml) |
+| X073 | XMLSerialize: BLOB serialization and CONTENT option | [SQL/XML](#sqlxml) |
+| X074 | XMLSerialize: BLOB serialization and DOCUMENT option | [SQL/XML](#sqlxml) |
+| X075 | XMLSerialize: BLOB serialization | [SQL/XML](#sqlxml) |
+| X076 | XMLSerialize: VERSION | [SQL/XML](#sqlxml) |
+| X077 | XMLSerialize: explicit ENCODING option | [SQL/XML](#sqlxml) |
+| X078 | XMLSerialize: explicit XML declaration | [SQL/XML](#sqlxml) |
+| X080 | Namespaces in XML publishing | [SQL/XML](#sqlxml) |
+| X081 | Query-level XML namespace declarations | [SQL/XML](#sqlxml) |
+| X082 | XML namespace declarations in DML | [SQL/XML](#sqlxml) |
+| X083 | XML namespace declarations in DDL | [SQL/XML](#sqlxml) |
+| X084 | XML namespace declarations in compound statements | [SQL/XML](#sqlxml) |
+| X085 | Predefined namespace prefixes | [SQL/XML](#sqlxml) |
+| X086 | XML namespace declarations in XMLTable | [SQL/XML](#sqlxml) |
+| X090 | XML document predicate | [SQL/XML](#sqlxml) |
+| X091 | XML content predicate | [SQL/XML](#sqlxml) |
+| X096 | XMLExists | [SQL/XML](#sqlxml) |
+| X120 | XML parameters in SQL routines | [SQL/XML](#sqlxml) |
+| X131 | Query-level XMLBINARY clause | [SQL/XML](#sqlxml) |
+| X132 | XMLBINARY clause in DML | [SQL/XML](#sqlxml) |
+| X133 | XMLBINARY clause in DDL | [SQL/XML](#sqlxml) |
+| X134 | XMLBINARY clause in compound statements | [SQL/XML](#sqlxml) |
+| X135 | XMLBINARY clause in subqueries | [SQL/XML](#sqlxml) |
+| X141 | IS VALID predicate: data-driven case | [SQL/XML](#sqlxml) |
+| X142 | IS VALID predicate: ACCORDING TO clause | [SQL/XML](#sqlxml) |
+| X143 | IS VALID predicate: ELEMENT clause | [SQL/XML](#sqlxml) |
+| X144 | IS VALID predicate: schema location | [SQL/XML](#sqlxml) |
+| X145 | IS VALID predicate outside check constraints | [SQL/XML](#sqlxml) |
+| X151 | IS VALID predicate with DOCUMENT option | [SQL/XML](#sqlxml) |
+| X152 | IS VALID predicate with CONTENT option | [SQL/XML](#sqlxml) |
+| X153 | IS VALID predicate with SEQUENCE option | [SQL/XML](#sqlxml) |
+| X155 | IS VALID predicate: NAMESPACE without ELEMENT clause | [SQL/XML](#sqlxml) |
+| X157 | IS VALID predicate: NO NAMESPACE with ELEMENT clause | [SQL/XML](#sqlxml) |
+| X160 | Basic Information Schema for registered XML Schemas | [SQL/XML](#sqlxml) |
+| X161 | Advanced Information Schema for registered XML Schemas | [SQL/XML](#sqlxml) |
+| X170 | XML null handling options | [SQL/XML](#sqlxml) |
+| X171 | NIL ON NO CONTENT option | [SQL/XML](#sqlxml) |
+| X181 | XML(DOCUMENT(UNTYPED)) type | [SQL/XML](#sqlxml) |
+| X182 | XML(DOCUMENT(ANY)) type | [SQL/XML](#sqlxml) |
+| X190 | XML(SEQUENCE) type | [SQL/XML](#sqlxml) |
+| X191 | XML(DOCUMENT(XMLSCHEMA)) type | [SQL/XML](#sqlxml) |
+| X192 | XML(CONTENT(XMLSCHEMA)) type | [SQL/XML](#sqlxml) |
+| X200 | XMLQuery | [SQL/XML](#sqlxml) |
+| X201 | XMLQuery: RETURNING CONTENT | [SQL/XML](#sqlxml) |
+| X202 | XMLQuery: RETURNING SEQUENCE | [SQL/XML](#sqlxml) |
+| X203 | XMLQuery: passing a context item | [SQL/XML](#sqlxml) |
+| X204 | XMLQuery: initializing an XQuery variable | [SQL/XML](#sqlxml) |
+| X205 | XMLQuery: EMPTY ON EMPTY option | [SQL/XML](#sqlxml) |
+| X206 | XMLQuery: NULL ON EMPTY option | [SQL/XML](#sqlxml) |
+| X211 | XML 1.1 support | [SQL/XML](#sqlxml) |
+| X221 | XML passing mechanism BY VALUE | [SQL/XML](#sqlxml) |
+| X222 | XML passing mechanism BY REF | [SQL/XML](#sqlxml) |
+| X231 | XML(CONTENT(UNTYPED)) type | [SQL/XML](#sqlxml) |
+| X232 | XML(CONTENT(ANY)) type | [SQL/XML](#sqlxml) |
+| X241 | RETURNING CONTENT in XML publishing | [SQL/XML](#sqlxml) |
+| X242 | RETURNING SEQUENCE in XML publishing | [SQL/XML](#sqlxml) |
+| X251 | Persistent XML values of XML(DOCUMENT(UNTYPED)) type | [SQL/XML](#sqlxml) |
+| X252 | Persistent XML values of XML(DOCUMENT(ANY)) type | [SQL/XML](#sqlxml) |
+| X253 | Persistent XML values of XML(CONTENT(UNTYPED)) type | [SQL/XML](#sqlxml) |
+| X254 | Persistent XML values of XML(CONTENT(ANY)) type | [SQL/XML](#sqlxml) |
+| X255 | Persistent XML values of XML(SEQUENCE) type | [SQL/XML](#sqlxml) |
+| X256 | Persistent XML values of XML(DOCUMENT(XMLSCHEMA)) type | [SQL/XML](#sqlxml) |
+| X257 | Persistent XML values of XML(CONTENT(XMLSCHEMA)) type | [SQL/XML](#sqlxml) |
+| X260 | XML type: ELEMENT clause | [SQL/XML](#sqlxml) |
+| X261 | XML type: NAMESPACE without ELEMENT clause | [SQL/XML](#sqlxml) |
+| X263 | XML type: NO NAMESPACE with ELEMENT clause | [SQL/XML](#sqlxml) |
+| X264 | XML type: schema location | [SQL/XML](#sqlxml) |
+| X271 | XMLValidate: data-driven case | [SQL/XML](#sqlxml) |
+| X272 | XMLValidate: ACCORDING TO clause | [SQL/XML](#sqlxml) |
+| X273 | XMLValidate: ELEMENT clause | [SQL/XML](#sqlxml) |
+| X274 | XMLValidate: schema location | [SQL/XML](#sqlxml) |
+| X281 | XMLValidate: with DOCUMENT option | [SQL/XML](#sqlxml) |
+| X282 | XMLValidate with CONTENT option | [SQL/XML](#sqlxml) |
+| X283 | XMLValidate with SEQUENCE option | [SQL/XML](#sqlxml) |
+| X284 | XMLValidate NAMESPACE without ELEMENT clause | [SQL/XML](#sqlxml) |
+| X286 | XMLValidate: NO NAMESPACE with ELEMENT clause | [SQL/XML](#sqlxml) |
+| X300 | XMLTable | [SQL/XML](#sqlxml) |
+| X301 | XMLTable: derived column list option | [SQL/XML](#sqlxml) |
+| X302 | XMLTable: ordinality column option | [SQL/XML](#sqlxml) |
+| X303 | XMLTable: column default option | [SQL/XML](#sqlxml) |
+| X304 | XMLTable: passing a context item | [SQL/XML](#sqlxml) |
+| X305 | XMLTable: initializing an XQuery variable | [SQL/XML](#sqlxml) |
+| X400 | Name and identifier mapping | [SQL/XML](#sqlxml) |
 
 ---
 

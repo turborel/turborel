@@ -488,3 +488,17 @@ fn short_name_views_of_usage_5_77() {
         assert!(same(&a, (short, long), columns) > 0, "no row of {short}");
     }
 }
+
+/// Verifies: [ISO/IEC 9075-11:2006 draft §5.77] SQL_IMPL_INFO and
+/// SQL_SIZING_PROFS have the columns of SQL_IMPLEMENTATION_INFO and
+/// SQL_SIZING_PROFILES under the draft's short names, and show what those
+/// show: no row, as neither has one.
+#[test]
+fn short_name_views_of_conformance_5_77() {
+    let a = Database::new().session("A");
+    let information =
+        ["IMPL_INFO_ID=IMPLEMENTATION_INFO_ID IMPL_INFO_NAME=IMPLEMENTATION_INFO_NAME INTEGER_VALUE CHARACTER_VALUE COMMENTS"];
+    assert_eq!(same(&a, ("SQL_IMPL_INFO", "SQL_IMPLEMENTATION_INFO"), &information), 0);
+    let profiles = ["SIZING_ID SIZING_NAME PROFILE_ID PROFILE_NAME REQUIRED_VALUE COMMENTS"];
+    assert_eq!(same(&a, ("SQL_SIZING_PROFS", "SQL_SIZING_PROFILES"), &profiles), 0);
+}

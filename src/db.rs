@@ -115,7 +115,7 @@ mod revoke;
 mod roles;
 mod routines;
 mod running;
-mod savepoints;
+pub(crate) mod savepoints;
 mod schema;
 mod scroll;
 mod sealing;

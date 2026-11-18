@@ -37,9 +37,13 @@
 //! and of what routines, views, check constraints and generated columns
 //! depend on in `definition/usage.rs`; and, of ISO/IEC 9075-14, those of
 //! registered XML Schemas in
-//! `definition/xml_schemas.rs` (RULES.md R-SIZE-2).
+//! `definition/xml_schemas.rs`; and, of ISO/IEC 9075-11, the tables of
+//! the parts, features, implementation information and sizing items
+//! supported in `definition/conformance.rs` and `definition/sizing.rs`
+//! (RULES.md R-SIZE-2).
 
 mod characters;
+mod conformance;
 mod constraints;
 mod descriptors;
 mod implicit;
@@ -50,6 +54,7 @@ mod privileges;
 mod roles;
 mod routines;
 mod sequences;
+mod sizing;
 mod structured;
 #[cfg(test)]
 mod tests;
@@ -112,6 +117,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(typed::tables());
     tables.extend(usage::tables());
     tables.extend(xml_schemas::tables());
+    tables.extend(conformance::tables());
     tables
 }
 

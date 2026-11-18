@@ -19,6 +19,7 @@
 //! COLUMNS wrote USER, which is the same [ISO/IEC 9075:1992 §6.2 SR3].
 
 mod composites;
+mod conformance;
 mod constraints;
 mod extensions;
 mod modules;
@@ -72,12 +73,22 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// The views of the Information Schema: those of ISO/IEC 9075:1992
 /// (`objects.rs`, `constraints.rs`), then those of `information/`'s
 /// modules, arrays and row types, user-defined types, structured types,
-/// roles, triggers, SQL-server modules, usage (`usage.rs`) and registered
-/// XML Schemas, then the short name views (`short_names.rs`), then the
-/// extensions (`extensions.rs`).
+/// roles, triggers, SQL-server modules, usage (`usage.rs`), what this
+/// implementation supports (`conformance.rs`) and registered XML Schemas,
+/// then the short name views (`short_names.rs`), then the extensions
+/// (`extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
-    let parts = [composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS, usage::VIEWS];
+    let parts = [
+        composites::VIEWS,
+        user_types::VIEWS,
+        structured::VIEWS,
+        roles::VIEWS,
+        triggers::VIEWS,
+        modules::VIEWS,
+        usage::VIEWS,
+        conformance::VIEWS,
+    ];
     let short = short_names::PARTS.as_slice();
     let standard = [objects::VIEWS, constraints::VIEWS];
     ALL.get_or_init(|| [standard.as_slice(), parts.as_slice(), &[xml_schemas::VIEWS], short, &[extensions::VIEWS]].concat().concat())

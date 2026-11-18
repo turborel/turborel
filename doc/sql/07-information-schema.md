@@ -4,7 +4,7 @@
 
 The schema INFORMATION_SCHEMA describes the database in tables: its
 schemas, tables, columns, constraints, privileges, roles and triggers,
-and, of turborel's
+what of the standard it supports, and, of turborel's
 own, its indexes, settings and users. Every user may read it, and may
 grant SELECT on views of it. It is read like any table, in the
 session's transaction, as of its snapshot; it is never written.
@@ -436,6 +436,59 @@ OK
 (1 row)
 ```
 
+## What turborel supports
+
+Six views of ISO/IEC 9075-11 say what of the standard turborel supports,
+and the limits it keeps:
+
+| View | One row of each |
+|---|---|
+| SQL_FEATURES | feature and subfeature of ISO/IEC 9075-2 (Foundation), 9075-4 (SQL/PSM), 9075-11 and 9075-14 (SQL/XML): FEATURE_ID and FEATURE_NAME, a subfeature's SUB_FEATURE_ID and SUB_FEATURE_NAME, a single space of a feature; IS_SUPPORTED YES of what [CONFORMANCE.md](../../CONFORMANCE.md#features-claimed) claims, and of each subfeature of a feature it claims, else NO; IS_VERIFIED_BY null; COMMENTS the section of CONFORMANCE.md that says how it is done |
+| SQL_PARTS | part of ISO/IEC 9075: PART its number, NAME, IS_SUPPORTED NO, as none is claimed whole |
+| SQL_PACKAGES | package of features: none, as the standard's parts define none |
+| SQL_SIZING | limit ISO/IEC 9075-2 leaves to the implementation: SIZING_ID its number there, IL001 to IL208, SIZING_NAME its words, SUPPORTED_VALUE the limit, 0 if there is none, null of what turborel has no use for, and COMMENTS what the value is of |
+| SQL_IMPLEMENTATION_INFO | item of information on the implementation: none, as ISO/IEC 9075-2 and 9075-11 name none; those of the Call-Level Interface, ISO/IEC 9075-3, are not defined |
+| SQL_SIZING_PROFILES | limit a profile of the standard requires: none, as no profile is defined |
+
+Each feature is named as its part names it. The rows of SQL_FEATURES
+are made from CONFORMANCE.md's table of the features claimed, so the two
+always agree. Run by any user:
+
+```sql
+SELECT FEATURE_ID, SUB_FEATURE_ID, IS_SUPPORTED, COMMENTS FROM INFORMATION_SCHEMA.SQL_FEATURES
+    WHERE FEATURE_ID IN ('T011', 'T031', 'F501') ORDER BY FEATURE_ID, SUB_FEATURE_ID;
+SELECT PART, NAME, IS_SUPPORTED FROM INFORMATION_SCHEMA.SQL_PARTS
+    WHERE PART IN ('2', '11', '14') ORDER BY CAST(PART AS INTEGER);
+SELECT SIZING_ID, SUPPORTED_VALUE, COMMENTS FROM INFORMATION_SCHEMA.SQL_SIZING
+    WHERE SIZING_ID IN (1, 2, 9, 39, 66, 208) ORDER BY SIZING_ID;
+```
+
+```
+ FEATURE_ID                                                   | SUB_FEATURE_ID                                               | IS_SUPPORTED                                                 | COMMENTS
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ F501                                                         |                                                              | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
+ F501                                                         | 01                                                           | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
+ F501                                                         | 02                                                           | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
+ T011                                                         |                                                              | NO                                                           | NULL
+ T031                                                         |                                                              | YES                                                          | CONFORMANCE.md, Truth values
+(5 rows)
+ PART                                                         | NAME                                                         | IS_SUPPORTED
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ 2                                                            | Foundation (SQL/Foundation)                                  | NO
+ 11                                                           | Information and Definition Schemas (SQL/Schemata)            | NO
+ 14                                                           | XML-Related Specifications (SQL/XML)                         | NO
+(3 rows)
+    SIZING_ID |      SUPPORTED_VALUE | COMMENTS
+--------------+----------------------+--------------------------------------------------------------
+            1 |                32767 | IL001, in characters
+            2 |           4294967296 | IL002, in characters
+            9 |                   18 | IL009, in decimal digits
+           39 |                    0 | IL039: none of an item parsed; an object or array constructed holds IL051's and IL052's
+           66 |                 NULL | IL066: no externally-invoked procedure
+          208 |                 1024 | IL208
+(6 rows)
+```
+
 ## The short name views
 
 ISO/IEC 9075-11 defines most views again under a short name, and their
@@ -496,11 +549,12 @@ MAX_CARDINALITY, XML_SCHEMA_NAMESPACE XML_SCHEMA_NSPACE, and so on.
 | XML_SCHEMAS_S | XML_SCHEMAS |
 | XML_SCH_NSPACES_S | XML_SCHEMA_NAMESPACES |
 | XML_SCH_ELEMENTS_S | XML_SCHEMA_ELEMENTS |
+| SQL_IMPL_INFO | SQL_IMPLEMENTATION_INFO |
+| SQL_SIZING_PROFS | SQL_SIZING_PROFILES |
 
 A short name view has every column the standard gives it but CREATED
 and LAST_ALTERED of ROUTINES_S and METHOD_SPECS, which ROUTINES and
-METHOD_SPECIFICATIONS have not. SQL_IMPL_INFO and SQL_SIZING_PROFS are
-not defined, as SQL_IMPLEMENTATION_INFO and SQL_SIZING_PROFILES are not.
+METHOD_SPECIFICATIONS have not.
 
 The views that describe a type end with the seven columns of an XML
 type, named XML_PRIMARY_MOD, XML_SECONDARY_MOD, XML_SCHEMA_CATALOG,

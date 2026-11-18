@@ -70,6 +70,7 @@ mod checkpoints;
 mod checks;
 mod column_store;
 mod column_usage;
+mod conformance_views;
 mod constraints;
 mod contracts;
 mod creation;

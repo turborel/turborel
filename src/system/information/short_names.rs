@@ -12,12 +12,11 @@
 //! by an `<as clause>` instead, which names it as the list would
 //! [ISO/IEC 9075:1992 §7.9 SR9a, §11.19 GR1]. ROUTINES_S and METHOD_SPECS
 //! leave out CREATED and LAST_ALTERED, the timestamps of Feature T011,
-//! which ROUTINES and METHOD_SPECIFICATIONS do not show. SQL_IMPL_INFO and
-//! SQL_SIZING_PROFS are not defined, as SQL_IMPLEMENTATION_INFO and
-//! SQL_SIZING_PROFILES are not. Each slip of the draft corrected is noted
+//! which ROUTINES and METHOD_SPECIFICATIONS do not show. Each slip of the draft corrected is noted
 //! at its view.
 
 mod composites;
+mod conformance;
 mod modules;
 mod roles;
 mod structured;
@@ -29,7 +28,7 @@ mod xml_schemas;
 use super::SystemView;
 
 /// The short name views, in the order of the views they read.
-pub(super) const PARTS: [&[SystemView]; 9] = [
+pub(super) const PARTS: [&[SystemView]; 10] = [
     VIEWS,
     composites::VIEWS,
     user_types::VIEWS,
@@ -38,6 +37,7 @@ pub(super) const PARTS: [&[SystemView]; 9] = [
     triggers::VIEWS,
     modules::VIEWS,
     usage::VIEWS,
+    conformance::VIEWS,
     xml_schemas::VIEWS,
 ];
 
