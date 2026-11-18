@@ -121,9 +121,11 @@ fn dates_and_times() {
     assert!(cast(&day, AtomicType::Time).is_err());
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j] [XQueryFO §10.7] a
-/// date, time or date and time adjusted to UTC and its time zone removed:
-/// one with none as it is; a date the date of its start in UTC.
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j, §9.8 GR9f, GR9g]
+/// [XQueryFO §10.7] a date, time or date and time adjusted to UTC and its
+/// time zone removed: one with none as it is; a date the date of its start
+/// in UTC; and written as §9.8 writes an SQL value, of a number of digits
+/// of fraction, its time zone ±hh:mm.
 #[test]
 fn adjusted_to_utc() {
     let utc = |text: &str, shape| Moment::parse(text, shape).unwrap().unwrap().in_utc().text();
@@ -134,6 +136,10 @@ fn adjusted_to_utc() {
     assert_eq!(utc("01:00:00+02:00", Shape::Time), "23:00:00");
     let m = Moment::parse("2020-01-02T03:04:05.5-08:00", Shape::DateTime).unwrap().unwrap();
     assert_eq!(m.sql_literal(), "2020-01-02 03:04:05.5-08:00");
+    assert_eq!(m.written(3), "2020-01-02T03:04:05.500-08:00");
+    assert_eq!(m.written(0), "2020-01-02T03:04:05.5-08:00");
+    let noon = Moment::parse("12:00:00Z", Shape::Time).unwrap().unwrap();
+    assert_eq!((noon.written(0), noon.written(2)), ("12:00:00+00:00".to_owned(), "12:00:00.00+00:00".to_owned()));
     assert_eq!(m.year(), 2020);
 }
 

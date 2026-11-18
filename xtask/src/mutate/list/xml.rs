@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// Each XML mechanism broken alone, and the tests that fail.
-pub const XML: [Mutation; 38] = [
+pub const XML: [Mutation; 40] = [
     Mutation {
         name: "xml-element-type-match",
         package: Package::Core,
@@ -269,7 +269,7 @@ pub const XML: [Mutation; 38] = [
         file: "src/functions/xml/schema_type.rs",
         original: "    let zone = if zoned { TZ } else { \"\" };",
         replacement: "    let zone = if zoned { \"\" } else { \"\" };",
-        integration: &["xml_cast::xml_values_cast_by_the_facets_6_6"],
+        integration: &["xml_cast::xml_values_cast_as_times_of_their_precision_6_6"],
         unit: &["functions::xml::schema_type::tests::datetimes_9_5"],
     },
     Mutation {
@@ -377,8 +377,8 @@ pub const XML: [Mutation; 38] = [
         package: Package::Core,
         breaks: "XMLCAST casts an XML value as the built-in type alone, its facets unchecked",
         file: "src/functions/xml/cast.rs",
-        original: "            None => self.xmlt.cast(&av)?,",
-        replacement: "            None => cast(&av, self.xmlt.atomic().unwrap_or(AtomicType::String))?,",
+        original: "            (None, None) => self.xmlt.cast(&av)?,",
+        replacement: "            (None, None) => cast(&av, self.xmlt.atomic().unwrap_or(AtomicType::String))?,",
         integration: &["xml_cast::xml_values_cast_by_the_facets_6_6"],
         unit: &[],
     },
@@ -387,9 +387,29 @@ pub const XML: [Mutation; 38] = [
         package: Package::Core,
         breaks: "a date or time is matched against the pattern before it is adjusted to UTC",
         file: "src/functions/xml/cast.rs",
-        original: "            Some(kind) => self.xmlt.cast(&in_utc(&av, kind)?)?,",
-        replacement: "            Some(_) => self.xmlt.cast(&av)?,",
-        integration: &["xml_cast::xml_values_to_sql_6_6", "xml_cast::xml_values_cast_by_the_facets_6_6"],
+        original: "            (None, Some(kind)) => self.xmlt.cast(&in_utc(&av, kind)?)?,",
+        replacement: "            (None, Some(_)) => self.xmlt.cast(&av)?,",
+        integration: &["xml_cast::xml_values_to_sql_6_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xmlcast-time-written",
+        package: Package::Core,
+        breaks: "a time or timestamp is checked against its type's pattern without its fraction padded to the type's digits",
+        file: "src/xml/atomic/moment.rs",
+        original: "        let fraction = format!(\"{fraction:0<digits$}\");",
+        replacement: "        let fraction = fraction.to_owned();",
+        integration: &["xml_cast::xml_values_cast_as_times_of_their_precision_6_6"],
+        unit: &["xml::atomic::tests::adjusted_to_utc"],
+    },
+    Mutation {
+        name: "xmlcast-time-digits",
+        package: Package::Core,
+        breaks: "text of more digits of fraction than a time's or timestamp's precision is taken",
+        file: "src/functions/xml/cast.rs",
+        original: "        if av.kind.primitive().textual() && significant_fraction(&av.lexical) > places {",
+        replacement: "        if false {",
+        integration: &["xml_cast::xml_values_cast_as_times_of_their_precision_6_6"],
         unit: &[],
     },
 ];

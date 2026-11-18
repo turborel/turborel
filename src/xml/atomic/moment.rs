@@ -247,6 +247,22 @@ impl Moment {
         format!("{hour:02}:{minute:02}:{second:02}{dot}{fraction}")
     }
 
+    /// It written as §9.8 writes an SQL time or timestamp [ISO/IEC
+    /// 9075-14:2006 draft §9.8 GR9f, GR9g]: its date and T, of a date and
+    /// time; its time of day with `digits` digits of fraction, zeros
+    /// padding its own, or with its own if they are more; and its time
+    /// zone, if it has one, as ±hh:mm.
+    #[must_use]
+    pub fn written(&self, digits: usize) -> String {
+        let clock = self.clock();
+        let (whole, fraction) = clock.split_once('.').unwrap_or((&clock, ""));
+        let fraction = format!("{fraction:0<digits$}");
+        let dot = if fraction.is_empty() { "" } else { "." };
+        let date = if self.shape == Shape::DateTime { format!("{}T", self.ymd()) } else { String::new() };
+        let zone = self.zone.map(crate::value::datetime::Datetime::displacement_text).unwrap_or_default();
+        format!("{date}{whole}{dot}{fraction}{zone}")
+    }
+
     /// The string of an SQL literal of it [ISO/IEC 9075:1992 §5.3]: its
     /// date, its time, a space between, then its time zone as ±hh:mm.
     #[must_use]

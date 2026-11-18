@@ -210,21 +210,20 @@ NUMERIC(6,1) no second digit of fraction.
 | REAL, DOUBLE PRECISION, FLOAT | `xs:float` or `xs:double` |
 | BOOLEAN | `xs:boolean` |
 | DATE | `xs:date` of four digits of year and two of month and day |
-| TIME(p), TIMESTAMP(p) | `xs:time`, `xs:dateTime` of p digits of fraction, none if p is 0; WITH TIME ZONE, a zone written `+hh:mm` or `-hh:mm` |
+| TIME(p), TIMESTAMP(p) | `xs:time`, `xs:dateTime` of at most p digits of fraction, zeros ending it not counted; WITH TIME ZONE, with a time zone |
 | INTERVAL | `xdt:yearMonthDuration` or `xdt:dayTimeDuration`, each field written as XMLCAST writes it: the first of the leading precision's digits, the others of two, the seconds' fraction of the fractional precision's |
 
-A date or time with a time zone is moved to UTC for a type without one,
-and is then checked as written in UTC, the zeros ending its fraction
-dropped. So TIMESTAMP, of precision 6, takes a value whose fraction has
-six digits, its last not zero, and TIMESTAMP(0) a value of whole
-seconds. Text that is no such value, or more than one item, fails with
-SQLSTATE 10000; a value with no item is null.
+A date or time with a time zone is moved to UTC for a type without one.
+A time or timestamp is checked as XMLCAST writes a value of its type, its
+fraction padded with zeros, so TIMESTAMP takes 14:30:00 and 14:30:00.5,
+and TIMESTAMP(0) refuses 14:30:00.5. Text that is no such value, or more
+than one item, fails with SQLSTATE 10000; a value with no item is null.
 
 ```sql
 SELECT ID, XMLCAST(BODY AS VARCHAR(20)) FROM ORDERS ORDER BY ID;
 VALUES (XMLSERIALIZE(XMLCAST(CAST(1.50 AS NUMERIC(5,2)) AS XML(CONTENT)) AS VARCHAR(20)), XMLSERIALIZE(XMLCAST(CAST(1.50 AS NUMERIC(5,2)) AS XML) AS VARCHAR(20)));
 VALUES (XMLCAST(XMLPARSE(CONTENT '<total currency="EUR"> 17.25 </total>' PRESERVE WHITESPACE) AS NUMERIC(6,2)));
-VALUES (XMLCAST(XMLPARSE(CONTENT '<due>2026-11-17T09:30:00-05:00</due>' PRESERVE WHITESPACE) AS TIMESTAMP(0)));
+VALUES (XMLCAST(XMLPARSE(CONTENT '<due>2026-11-17T09:30:00-05:00</due>' PRESERVE WHITESPACE) AS TIMESTAMP));
 VALUES (XMLCAST(XMLPARSE(CONTENT '<total currency="EUR"> 17.25 </total>' PRESERVE WHITESPACE) AS NUMERIC(6,1)));
 VALUES (XMLCAST(XMLPARSE(CONTENT '<qty>many</qty>' PRESERVE WHITESPACE) AS INTEGER));
 ```
@@ -244,8 +243,8 @@ VALUES (XMLCAST(XMLPARSE(CONTENT '<qty>many</qty>' PRESERVE WHITESPACE) AS INTEG
     17.25
 (1 row)
 
----------------------
- 2026-11-17 14:30:00
+----------------------------
+ 2026-11-17 14:30:00.000000
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error: '17.25' is not valid for NUMERIC(6,1): its 2 digits break its fractionDigits [Schema2 §4.3.12.3] [Schema2 §4.1.4] [XQueryFO §17.1.1] err:FORG0001 [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j]
 turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error: 'many' is not valid for INTEGER: it is no literal of xs:integer [Schema2 §4.1.4] [XQueryFO §17.1.1] err:FORG0001 [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j]

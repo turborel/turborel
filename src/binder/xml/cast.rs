@@ -199,7 +199,9 @@ impl Binder<'_> {
             (sqlt == DataType::Date).then_some(AtomicType::Date)
         };
         let given = given_type(base, &sqlt);
-        let function = XmlCastOut { xmlt: Arc::new(xmlt), adjust, given: given.clone() };
+        let fraction =
+            if let DataType::Time { precision, .. } | DataType::Timestamp { precision, .. } = sqlt { Some(precision) } else { None };
+        let function = XmlCastOut { xmlt: Arc::new(xmlt), adjust, fraction, given: given.clone() };
         let (cast, _) = self.cast_bound((Expr::Call(ScalarRef(Arc::new(function)), vec![e]), given), sqlt)?;
         Ok((cast, target))
     }

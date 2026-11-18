@@ -143,6 +143,10 @@ pub struct XmlCastOut {
     /// or `xs:dateTime`, which the value is cast as and adjusted to UTC
     /// first, before it is cast as XT \[GR4j i to iii\].
     pub adjust: Option<AtomicType>,
+    /// Of TIME(p) and TIMESTAMP(p), with or without time zone, p: the
+    /// value is checked against XT written with p digits of fraction
+    /// (`written`).
+    pub fraction: Option<u32>,
     /// The type of the value it gives, A of \[GR4k\].
     pub given: DataType,
 }
@@ -161,12 +165,57 @@ impl ScalarFunction for XmlCastOut {
     fn call(&self, args: &[Value]) -> Result<Value> {
         let Some(Value::Xml(x)) = args.first() else { return Ok(Value::Null) };
         let Some(av) = atomized(&*x.sequence()?)? else { return Ok(Value::Null) };
-        let bv = match self.adjust {
-            Some(kind) => self.xmlt.cast(&in_utc(&av, kind)?)?,
-            None => self.xmlt.cast(&av)?,
+        let bv = match (self.fraction, self.adjust) {
+            (Some(digits), adjust) => self.written(&av, digits, adjust)?,
+            (None, Some(kind)) => self.xmlt.cast(&in_utc(&av, kind)?)?,
+            (None, None) => self.xmlt.cast(&av)?,
         };
         sql_value(&bv)
     }
+}
+
+impl XmlCastOut {
+    /// `av` cast as XT, the type of TIME(`digits`) or TIMESTAMP(`digits`),
+    /// adjusted to UTC first as `adjust` says \[GR4j i to iii\].
+    /// \[DESIGN\] RULES.md D86: implementation-defined, as the patterns
+    /// of §9.5 GR8h to GR8k ask for exactly `digits` digits of fraction,
+    /// which no canonical form of a value has [XQueryFO §17.4], the
+    /// pattern and the other facets are checked against the value written
+    /// as §9.8 GR9f and GR9g write an SQL value of the type, its fraction
+    /// padded with zeros to `digits` and its time zone ±hh:mm
+    /// (`Moment::written`), so each value of the SQL type is taken. A
+    /// value of more significant digits of fraction is not, nor text of
+    /// more, zeros ending its fraction not counted, as they are no digits
+    /// of its value.
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 10000, err:FORG0001, of more digits of fraction, or a
+    /// value XT does not take; as `cast` and `in_utc` do.
+    fn written(&self, av: &Atomic, digits: u32, adjust: Option<AtomicType>) -> Result<Atomic> {
+        let kind = self.xmlt.atomic().unwrap_or(AtomicType::DateTime);
+        let places = usize::try_from(digits).unwrap_or(usize::MAX);
+        if av.kind.primitive().textual() && significant_fraction(&av.lexical) > places {
+            let why = format!("'{}' has more than {digits} digits of fraction for {}", av.lexical, self.xmlt.name());
+            return Err(xquery_error(&why, "[XQueryFO §17.1.1] err:FORG0001"));
+        }
+        let typed = match adjust {
+            Some(k) => in_utc(av, k)?,
+            None => cast(av, kind)?,
+        };
+        let Some(m) = Shape::of(kind.primitive()).and_then(|shape| Moment::parse(&typed.lexical, shape).ok().flatten()) else {
+            return self.xmlt.cast(&typed);
+        };
+        Ok(self.xmlt.validate(&m.written(places))?.pop().unwrap_or(typed))
+    }
+}
+
+/// How many digits of fraction the seconds of the date and time or time
+/// `text` has, zeros ending them not counted.
+fn significant_fraction(text: &str) -> usize {
+    let Some((_, after)) = text.split_once('.') else { return 0 };
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    digits.trim_end_matches('0').len()
 }
 
 /// [§6.6 GR4j i to iii] `value` cast as `kind`, a date, a time or a date
