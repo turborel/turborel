@@ -2188,10 +2188,16 @@ XMLQUERY NULL ON EMPTY IS NOT NULL, and for XMLTABLE joined to its rows
 not by LEFT, of a query of the column alone, of XML(DOCUMENT) or
 XML(CONTENT), that is one path of child, descendant and attribute steps,
 its last of one predicate, a relative path or its comparison with a
-literal (`xquery/lookup.rs`, `physical/access/xml.rs`); each row given
-is fetched and checked, and a table another conjunct of which may raise
-an error is read whole (RULES.md D15). EXPLAIN shows the lookup. A value
-whose nodes or keys pass their bounds is refused, SQLCODE -900.
+literal, and one step before it, of child steps after it, of a predicate
+of an ancestor, a relative path or its comparison with a string
+(`xquery/lookup.rs`, `physical/access/xml.rs`). `xml_primary` answers
+such a query, exact, from its entries (`Index::xml_answers`), a row it
+may hold of checked by the query's own test; of the others each row
+given is fetched and checked. Each is priced against a full read that
+checks every row's value (`XmlCost::of_check`), and a table another
+conjunct of which may raise an error is read whole (RULES.md D15).
+EXPLAIN shows the query and whether the index answers it. A value whose
+nodes or keys pass their bounds is refused, SQLCODE -900.
 
 ### Users
 

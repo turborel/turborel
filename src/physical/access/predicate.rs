@@ -12,7 +12,11 @@ use crate::value::{DataType, Value};
 /// Whether this is a function lookup, or an XML lookup, requiring the full
 /// WHERE check (RULES.md D34, D86).
 pub(super) fn named(probes: &[Probe]) -> bool {
-    probes.first().is_some_and(Probe::opaque)
+    match probes.first() {
+        Some(Probe::Xml(asked)) => !asked.answered,
+        Some(probe) => probe.opaque(),
+        None => false,
+    }
 }
 
 /// Finds function calls with one indexed column and a constant or parameter.

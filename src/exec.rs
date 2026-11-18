@@ -16,6 +16,7 @@
 //! and spill the rest (`exec/work.rs`, RULES.md D38); so do the rows a
 //! statement holds past them, a cursor's or a write's (`exec/held.rs`).
 
+mod answered;
 mod batch;
 mod distinct;
 mod entries;

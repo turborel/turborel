@@ -3146,16 +3146,27 @@ row by (`XmlRowsOf`). The query is passed the column alone, or its copy,
 as its context item, of XML(DOCUMENT) or XML(CONTENT), so each value is
 one node; one of XML(SEQUENCE) may be several items or none, and the
 query raise an error of it [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii 2]
-that a lookup would hide. The query is reduced to a lookup
+that a lookup would hide. The query is reduced to an index's query
 (`xquery/lookup.rs`) if it is one path of child, descendant and
 attribute steps over names or `*`, its last step of at most one
 predicate: a relative path, or its comparison, or `.`'s, with a literal.
 A general comparison with a number, or with a string by the codepoint
 collation, is the lookup's comparison; any other leaves the path alone,
-each row checked. The rows come as `Probe::Xml`, opaque as a function
-lookup's (`Probe::opaque`): storage records a read of the whole table,
-each entry's key projects to null (`DerivedKeys`), and the filter keeps
-the conjunct and checks each row fetched, so an index changes no result.
+each row checked. One step before the last, of child steps after it, may
+have a predicate too, a relative path or its general comparison with a
+string: the query's filter of that ancestor (`XmlFilter`); one that may
+raise, as a numeric comparison of each ancestor may whether a node below
+it is selected or not, reduces the query to none. The rows come as
+`Probe::Xml` (`XmlProbe`), opaque as a function lookup's
+(`Probe::opaque`): storage records a read of the whole table, each
+entry's key projects to null (`DerivedKeys`), and the filter keeps the
+conjunct and checks each row fetched, so an index changes no result. Of
+`xml_primary`, a query that is exactly XMLEXISTS's test, every
+comparison kept and none raising, is answered (`Index::xml_answers`):
+the conjunct is no filter's, a row the index holds of is kept as its
+visible version is fetched, and one it may hold of is checked by
+`XmlQuery::matches` (`exec/answered.rs`), of a SELECT's rows and of an
+UPDATE's or DELETE's alike.
 The rows a lookup leaves out are those its query gives the empty
 sequence of with no error, a numeric comparison's lookup giving the
 values that cast to no number, so it is used only if every other
@@ -3164,8 +3175,12 @@ none (D15). A path, alone or compared with a string, raises none
 (`ScalarFunction::raise_free`), so it is no raising conjunct to D15's
 guards, and an ON condition of it is pushed onto its operand as a
 comparison is. A lookup is priced by the entries its index counts
-(`Index::xml_cost`) against a full read; a method that prices none is
-not read. EXPLAIN shows `column has` the lookup's path and comparison.
+(`Index::xml_cost`), and each row it gives but an answered one a check of
+its value, against a full read that checks every row's, a check a pass
+over a value of the column's average width (`XmlCost::of_check`); a
+method that prices none is not read. EXPLAIN shows `column has` the
+query, its filter of an ancestor as a predicate of its step, and
+whether the index answers it.
 
 ## 2. Project layout
 

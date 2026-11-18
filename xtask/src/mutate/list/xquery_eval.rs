@@ -9,7 +9,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const XQUERY_EVAL: [Mutation; 24] = [
+pub const XQUERY_EVAL: [Mutation; 27] = [
     Mutation {
         name: "xquery-depth-bound",
         package: Package::Core,
@@ -195,8 +195,8 @@ pub const XQUERY_EVAL: [Mutation; 24] = [
         package: Package::Core,
         breaks: "a string compared by a collation not the codepoint one narrows the lookup",
         file: "src/xquery/lookup.rs",
-        original: "            if codepoint {",
-        replacement: "            if codepoint || !codepoint {",
+        original: "Literal::Untyped(_)) && !codepoint {",
+        replacement: "Literal::Untyped(_)) && !codepoint && false {",
         integration: &[],
         unit: &["xquery::lookup::tests::predicates_reduce"],
     },
@@ -205,8 +205,8 @@ pub const XQUERY_EVAL: [Mutation; 24] = [
         package: Package::Core,
         breaks: "the rows an XML lookup gives are taken unchecked, its conjunct out of the filter",
         file: "src/physical/access/predicate.rs",
-        original: "    probes.first().is_some_and(Probe::opaque)",
-        replacement: "    matches!(probes.first(), Some(Probe::Predicate { .. }))",
+        original: "        Some(Probe::Xml(asked)) => !asked.answered,",
+        replacement: "        Some(Probe::Xml(_)) => false,",
         integration: &["xml_index_plans::each_index_gives_the_rows_of_a_full_read"],
         unit: &[],
     },
@@ -249,5 +249,35 @@ pub const XQUERY_EVAL: [Mutation; 24] = [
         replacement: "reduction_of(&self.0).is_some()",
         integration: &["xml_index_plans::errors_are_raised_as_by_a_full_read"],
         unit: &[],
+    },
+    Mutation {
+        name: "xml-index-answered-check",
+        package: Package::Core,
+        breaks: "a row the primary may hold of is kept unchecked",
+        file: "src/exec/answered.rs",
+        original: "if given == XmlAnswer::Check && !query.matches(value)? {",
+        replacement: "if false && given == XmlAnswer::Check && !query.matches(value)? {",
+        integration: &["xml_index_plans::the_primary_answers_exact_queries"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-lookup-exact",
+        package: Package::Core,
+        breaks: "a query that may raise an error is answered by the primary",
+        file: "src/xquery/lookup.rs",
+        original: "    reduction.exact &= reduction.raise_free;",
+        replacement: "    reduction.exact |= false;",
+        integration: &["xml_index_plans::the_primary_answers_exact_queries"],
+        unit: &["xquery::lookup::tests::ancestor_predicates_are_filters"],
+    },
+    Mutation {
+        name: "xml-lookup-ancestor-filter",
+        package: Package::Core,
+        breaks: "a predicate of an ancestor is dropped from the index's query",
+        file: "src/xquery/lookup.rs",
+        original: "reduction.query.filter = Some(filter_of(predicate, at, &mut reduction)?);",
+        replacement: "filter_of(predicate, at, &mut reduction)?;",
+        integration: &["xml_index_plans::each_index_gives_the_rows_of_a_full_read"],
+        unit: &["xquery::lookup::tests::ancestor_predicates_are_filters"],
     },
 ];

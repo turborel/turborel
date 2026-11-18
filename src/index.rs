@@ -137,17 +137,11 @@ pub enum Probe {
         /// The other argument, as the bound function receives it.
         value: Value,
     },
-    /// \[EXTENSION\] RULES.md D86: the rows of an XML lookup, each checked.
-    Xml(Box<xml::XmlLookup>),
+    /// \[EXTENSION\] RULES.md D86: an XML index's query (`xml::XmlProbe`).
+    Xml(Box<xml::XmlProbe>),
 }
 
 impl Probe {
-    /// Whether it is a function or XML lookup (RULES.md D34, D86).
-    #[must_use]
-    pub fn opaque(&self) -> bool {
-        matches!(self, Probe::Predicate { .. } | Probe::Xml(_))
-    }
-
     /// Whether a key, its values in order, answers the probe by the
     /// [X3.135-1986 §5.11] comparison rules: never with a null where a
     /// value is compared (GR2). For `Probe::Predicate`, this always returns

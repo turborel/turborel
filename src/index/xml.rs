@@ -28,6 +28,7 @@ mod documents;
 mod keys;
 mod lookup;
 mod primary;
+mod probe;
 mod search;
 mod shown;
 
@@ -38,6 +39,7 @@ pub use derive::MAX_KEYED_NODES;
 pub use lookup::{
     Axis, Comparison, Literal, MAX_STEPS, PathPattern, Step, Target, XmlAnswer, XmlAnswers, XmlCost, XmlFilter, XmlLookup, XmlQuery,
 };
+pub use probe::XmlProbe;
 
 use super::{Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, Probe, RowIds};
 use crate::catalog::{IndexDesc, TableDesc};
@@ -296,8 +298,8 @@ impl Index for XmlIndex {
     /// lookup, `Probe::Xml`, each row it gives, once, its key null; no
     /// other probe, as no comparison probes it.
     fn search(self: Arc<Self>, probe: &Probe, _order: KeyOrder) -> Entries {
-        if let Probe::Xml(lookup) = probe {
-            return Box::new(self.lookup_rows(lookup).map(|row| Ok((Key(vec![Value::Null]), row?))));
+        if let Probe::Xml(asked) = probe {
+            return Box::new(self.lookup_rows(&asked.query.lookup).map(|row| Ok((Key(vec![Value::Null]), row?))));
         }
         if !matches!(probe, Probe::All) {
             return Box::new(std::iter::once(Err(SqlError::new(

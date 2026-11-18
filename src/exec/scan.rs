@@ -25,7 +25,7 @@ type ReadOf<'a> = (&'a QualifiedName, &'a [usize], bool);
 
 /// The row `row` of id `id`, followed by the id if `located`: the last
 /// column of a located read (`storage::located`).
-fn read_row(located: bool, (id, mut row): (RowId, Row)) -> Row {
+pub(super) fn read_row(located: bool, (id, mut row): (RowId, Row)) -> Row {
     if located {
         row.push(storage::located(id));
     }
@@ -118,6 +118,11 @@ pub(super) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::IndexScan { table, index, probe, reverse, covering, columns: needed, located, .. } = plan else {
         return failed(broken("an index scan is not one"));
     };
+    if let Probe::Xml(asked) = &probe
+        && asked.answered
+    {
+        return super::answered::answered(db, tx, (&table, &index, asked), (&needed, located));
+    }
     let width = covering.then(|| db.catalog.table(&table).map(|t| t.columns.len())).flatten();
     match probe_index(db, &table, &index, &probe, reverse) {
         Ok(Found { storage, ix, entries, projection }) => match storage.read_by_condition(tx, &asked(&ix, probe)) {

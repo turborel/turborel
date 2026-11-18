@@ -12,7 +12,7 @@ use turborel::value::Value;
 use crate::common::{fetched, rows};
 
 /// The methods, as CREATE INDEX names them.
-const METHODS: [&str; 3] = ["XML_PATH", "XML_VALUE", "XML_PROPERTY"];
+const METHODS: [&str; 4] = ["XML_PATH", "XML_VALUE", "XML_PROPERTY", "XML_PRIMARY"];
 
 /// How many rows table T has.
 const ROWS: usize = 240;
@@ -66,7 +66,12 @@ fn plan(a: &Session, query: &str) -> String {
 /// The conditions on T's rows the tests ask of each index: paths, their
 /// predicates and comparisons, of every shape a lookup takes, and some
 /// that reduce to none.
-const CONDITIONS: [&str; 23] = [
+const CONDITIONS: [&str; 28] = [
+    "XMLEXISTS('/order[@id = \"77\"]/item' PASSING BY REF X)",
+    "XMLEXISTS('//order[item]/@id' PASSING BY REF X)",
+    "XMLEXISTS('//item[name = \"pen\"]/qty' PASSING BY REF X)",
+    "XMLEXISTS('/order[item/name = \"cap\"]/item[@price > 20]' PASSING BY REF X)",
+    "XMLEXISTS('//order[.//gift]/item/name' PASSING BY VALUE X)",
     "XMLEXISTS('/order/item' PASSING BY REF X)",
     "XMLEXISTS('//name[. = \"pen\"]' PASSING BY REF X)",
     "XMLEXISTS('//item[@price > 40]' PASSING BY REF X)",
@@ -283,4 +288,50 @@ fn prepared_statements_read_by_an_index() {
     }
     assert!(full[0].len() > full[1].len() && !full[1].is_empty(), "{full:?}");
     assert_eq!(fetched(&a, "SELECT K FROM T WHERE XMLEXISTS('(' PASSING BY REF X)").unwrap_err().code, Code::Data);
+}
+
+/// Verifies: [EXTENSION] [XQuery §3.2.2] RULES.md D34, D86: XML_PRIMARY
+/// answers an exact query of a row from its entries alone, a filter of an
+/// ancestor among it, and the condition is then no filter's, EXPLAIN
+/// saying so; a query not exact, as a numeric comparison is, keeps the
+/// filter; UPDATE and DELETE change the rows it answers, those alone; a
+/// row whose answer needs a value longer than it keeps whole is checked;
+/// a row the index has entries of that its version seen does not hold, as
+/// deleted, or made null, is none.
+#[test]
+fn the_primary_answers_exact_queries() {
+    let db = database();
+    let a = db.session("A");
+    a.run("CREATE INDEX P ON T (X) USING XML_PRIMARY").unwrap();
+    let exact = "SELECT K FROM T WHERE XMLEXISTS('/order[@id = \"79\"]/item/name' PASSING BY REF X)";
+    let shown = plan(&a, exact);
+    assert!(shown.contains("using P [xml_primary]: T.X has /order[@id = '79']/item/name, answered by the index"), "{shown}");
+    assert!(!shown.contains("Filter"), "{shown}");
+    assert_eq!(rows(&a, exact).unwrap(), ["79"]);
+    let numeric = "SELECT K FROM T WHERE XMLEXISTS('//item[@price > 47]' PASSING BY REF X)";
+    let shown = plan(&a, numeric);
+    assert!(shown.contains("Filter XMLEXISTS(T.X)") && !shown.contains("answered"), "{shown}");
+    a.run("UPDATE T SET K = K + 1000 WHERE XMLEXISTS('/order[@id = \"79\"]/item' PASSING BY REF X)").unwrap();
+    a.run("DELETE FROM T WHERE XMLEXISTS('/order[@id = \"83\"]/item/name' PASSING BY REF X)").unwrap();
+    assert_eq!(rows(&a, "SELECT K FROM T WHERE K > 1000 OR K = 83").unwrap(), ["1079"]);
+    assert_eq!(rows(&a, "SELECT COUNT(*) FROM T").unwrap(), [format!("{}", ROWS - 1)]);
+    // Rows the index still has entries of: one deleted, one made null.
+    a.run("UPDATE T SET X = NULL WHERE K = 1079").unwrap();
+    let gone = "SELECT K FROM T WHERE XMLEXISTS('/order[@id = \"83\"]/item' PASSING BY REF X) OR XMLEXISTS('/order[@id = \"79\"]/item' PASSING BY REF X)";
+    assert_eq!(rows(&a, gone).unwrap(), Vec::<String>::new());
+    for id in ["83", "79"] {
+        let one = format!("SELECT K FROM T WHERE XMLEXISTS('/order[@id = \"{id}\"]/item' PASSING BY REF X)");
+        assert!(plan(&a, &one).contains("answered by the index"), "{}", plan(&a, &one));
+        assert_eq!(rows(&a, &one).unwrap(), Vec::<String>::new(), "{id}");
+    }
+    // Values longer than the primary keeps whole, alike in what it keeps:
+    // each answer is checked against the value itself.
+    let long = "x".repeat(600);
+    for (k, end) in [(2001, "a"), (2002, "b")] {
+        let d = format!("<order><item><name>{long}{end}</name></item></order>");
+        a.run(&format!("INSERT INTO T VALUES ({k}, XMLPARSE(DOCUMENT '{d}' STRIP WHITESPACE), NULL)")).unwrap();
+    }
+    let checked = format!("SELECT K FROM T WHERE XMLEXISTS('/order[item/name = \"{long}b\"]/item' PASSING BY REF X)");
+    assert!(plan(&a, &checked).contains("answered by the index"), "{}", plan(&a, &checked));
+    assert_eq!(rows(&a, &checked).unwrap(), ["2002"]);
 }

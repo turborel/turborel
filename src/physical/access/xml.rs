@@ -21,16 +21,23 @@ use std::sync::Arc;
 use super::Candidate;
 use crate::catalog::IndexDesc;
 use crate::functions::XmlFilter;
-use crate::index::{Index, Probe};
+use crate::index::xml::{XmlCost, XmlProbe};
+use crate::index::{Index, Probe, XML_PRIMARY_METHOD};
 use crate::logical::{Cond, Expr};
+use crate::stats::Statistics;
 use crate::storage::cost_of;
 use crate::xquery::Reduction;
 
 /// A conjunct an XML index may find the rows of: its query's context
 /// item's column, and its reduction.
 struct Reduced {
+    /// The column of its context item.
     column: usize,
+    /// Its query reduced.
     reduction: Reduction,
+    /// Whether it is the query's test alone, so an index answering the
+    /// query answers it: XMLEXISTS, or an implied filter.
+    answerable: bool,
 }
 
 /// The column of a call's one argument, the context item: a column, or
@@ -60,7 +67,7 @@ fn null_of_empty(e: &Expr) -> Option<Reduced> {
         }
     };
     let XmlFilter::NullOfEmpty(reduction) = filter else { return None };
-    Some(Reduced { column: context_column(args)?, reduction })
+    Some(Reduced { column: context_column(args)?, reduction, answerable: false })
 }
 
 /// The reduction of `c`, if it keeps a row only if its query's value is
@@ -73,7 +80,7 @@ fn reduced(c: &Cond) -> Option<(Reduced, bool)> {
     let filter = f.0.xml_filter()?;
     let implied = matches!(filter, XmlFilter::Implied(_));
     let (XmlFilter::Exists(reduction) | XmlFilter::Implied(reduction)) = filter else { return None };
-    Some((Reduced { column: context_column(args)?, reduction }, implied))
+    Some((Reduced { column: context_column(args)?, reduction, answerable: true }, implied))
 }
 
 /// Whether `c` is an implied filter (`XmlFilter::Implied`), which no
@@ -88,11 +95,12 @@ fn raises_none(c: &Cond) -> bool {
     !c.can_raise() || reduced(c).is_some_and(|(r, _)| r.reduction.raise_free)
 }
 
-/// The XML lookups of `ix` that find the rows of a conjunct of `conds`,
+/// The XML queries of `ix` that find the rows of a conjunct of `conds`,
 /// or of an implied filter of `implied`, each priced by the index
-/// `found` against the table's `all` rows: of a conjunct of a column of
-/// one node the index keys, the others raising no error of a row it
-/// leaves out.
+/// `found` against the table's `all` rows: of a conjunct of a column the
+/// index keys, the others raising no error of a row it leaves out. Of
+/// the primary, a query the conjunct is the test of, exactly, is answered
+/// by it (`Index::xml_answers`), and the conjunct no longer a filter's.
 pub(super) fn candidates((conds, implied): (&[Cond], &[Cond]), ix: &IndexDesc, found: &Arc<dyn Index>, all: f64) -> Vec<Candidate> {
     let [key] = ix.columns.as_slice() else { return Vec::new() };
     let mut out = Vec::new();
@@ -107,11 +115,32 @@ pub(super) fn candidates((conds, implied): (&[Cond], &[Cond]), ix: &IndexDesc, f
             continue;
         }
         // An index that prices no lookup answers none (`Index::xml_cost`).
-        let Some(cost) = Arc::clone(found).xml_cost(&r.reduction.lookup) else { continue };
+        let Some(cost) = Arc::clone(found).xml_cost(&r.reduction.query.lookup) else { continue };
         let guess = cost.entries.map_or(all, |entries| cost_of(entries).min(all));
-        let probe = Probe::Xml(Box::new(r.reduction.lookup));
-        // D34, D86: the filter keeps the conjunct, to check each row.
+        let answered = r.answerable && r.reduction.exact && ix.method == XML_PRIMARY_METHOD;
+        let probe = Probe::Xml(Box::new(XmlProbe { query: r.reduction.query, answered }));
+        // D34, D86: the filter keeps the conjunct, to check each row, but
+        // of a query the index answers.
         out.push(Candidate::one(probe, (at.into_iter().collect(), 0, guess, true)));
     }
     out
+}
+
+/// Whether `probes` are an XML query an index answers (`XmlProbe`).
+pub(super) fn answered(probes: &[Probe]) -> bool {
+    let Some(Probe::Xml(asked)) = probes.first() else { return false };
+    asked.answered
+}
+
+/// What checking the XML queries of `conds` costs of a row, each a pass
+/// over a value of its column's average width as `stats` know it
+/// (`XmlCost::of_check`), its pages each a level of an index's descent,
+/// `descent`.
+pub(super) fn check_cost(conds: &[Cond], stats: Option<&dyn Statistics>, descent: f64) -> f64 {
+    let pages = |column: usize| {
+        let width = stats.and_then(|s| s.width(&[column])).unwrap_or(0.0_f64);
+        let octets = format!("{:.0}", width.max(0.0_f64).ceil()).parse::<u64>().unwrap_or(u64::MAX);
+        XmlCost::of_check(octets).pages.unwrap_or(1.0_f64)
+    };
+    conds.iter().filter_map(reduced).map(|(r, _)| pages(r.column) * descent).sum()
 }

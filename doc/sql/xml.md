@@ -750,8 +750,11 @@ attribute steps over names or `*`. Its last step may have one predicate:
 a relative path of such steps, or a comparison of one, or of `.`, with a
 literal. A comparison by `=`, `!=`, `<`, `<=`, `>` or `>=` with a string
 or a number narrows the rows the index gives; any other leaves the path
-alone. A query of another shape, a column of XML(SEQUENCE), whose value
-may be no one node, or a table too small to gain is read whole.
+alone. One step before the last, of child steps after it, may have a
+predicate too, of an ancestor of the nodes selected: a relative path, or
+its comparison with a string, as in `/order[@no = "17"]/item`. A query
+of another shape, a column of XML(SEQUENCE), whose value may be no one
+node, or a table too small to gain is read whole.
 
 The index gives the rows whose values may hold such a node. Each is
 fetched and the condition checked on it, so the result is a full read's.
@@ -759,9 +762,17 @@ A row whose value a numeric comparison cannot cast is among those it
 gives, so its error is raised as by a full read. If another condition
 of the table may raise an error, the table is read whole, so the error
 is raised whatever rows the index would skip. In ON, a query that may
-raise an error, as a numeric comparison may, is read whole too. EXPLAIN
-shows the index read by its method, and the path and comparison it
-looks up.
+raise an error, as a numeric comparison may, is read whole too.
+
+XML_PRIMARY answers of each row from the index alone a query of a path,
+its comparisons with strings and its predicate of an ancestor: a row it
+holds of is not checked, only one whose answer needs a value longer
+than it keeps whole. Of the other methods, and of a query compared with
+a number or by a value comparison, each row given is checked. The
+planner weighs reading an index against reading every row and checking
+its value, by the values' average length. EXPLAIN shows the index read
+by its method, the path, predicate and comparison it looks up, and
+whether it answers the query.
 
 ```sql
 CREATE TABLE PARCELS (ID INTEGER, LABEL XML(DOCUMENT));
@@ -814,6 +825,39 @@ OK
    Unnest of 1 collections
      IndexScan ANN.PARCELS using PARCEL_PATHS [xml_path]: P.LABEL has //fragile  (est. rows=10, cost=137.9)
 (13 rows)
+```
+
+```sql
+COMMIT;
+DROP INDEX PARCEL_PATHS;
+CREATE INDEX PARCEL_NODES ON PARCELS (LABEL) USING XML_PRIMARY;
+SELECT ID FROM PARCELS WHERE XMLEXISTS('/parcel[to = "398"]/fragile' PASSING BY REF LABEL);
+EXPLAIN SELECT ID FROM PARCELS WHERE XMLEXISTS('/parcel[to = "398"]/fragile' PASSING BY REF LABEL);
+```
+
+```
+OK
+OK
+OK
+           ID
+--------------
+          398
+(1 row)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project PARCELS.ID
+   Filter XMLEXISTS(PARCELS.LABEL)
+     Scan ANN.PARCELS
+ -- rules: none
+ -- optimized:
+ Project PARCELS.ID
+   Filter XMLEXISTS(PARCELS.LABEL)
+     Scan ANN.PARCELS
+ -- physical:
+ Project PARCELS.ID
+   IndexScan ANN.PARCELS using PARCEL_NODES [xml_primary]: PARCELS.LABEL has /parcel[to = '398']/fragile, answered by the index  (est. rows=6, cost=103.5)
+(12 rows)
 ```
 
 ## XML options of a scope

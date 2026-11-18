@@ -117,9 +117,8 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   and `xml_primary` are built, answer lookups of paths and values, and
   the primary answers queries with filters of an ancestor; the planner
   reads them for XMLEXISTS, XMLQUERY NULL ON EMPTY IS NOT NULL and
-  XMLTABLE of a path. Left: the planner weighing `XmlCost::of_check`
-  and reading the primary's answers (`Index::xml_answers`) and filters
-  of an ancestor; a column of XML(SEQUENCE), whose rows of a value of
+  XMLTABLE of a path, the primary answering exact queries with filters of
+  an ancestor. Left: a column of XML(SEQUENCE), whose rows of a value of
   other than one node an index would mark so a lookup gives them;
   predicates of more than one step above, several paths joined by `and`,
   and paths of other axes, which no lookup takes yet; and an ON condition
