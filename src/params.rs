@@ -22,7 +22,7 @@ pub(crate) use transition::Transitions;
 use dynamic::Dynamic;
 pub use dynamic::ParameterType;
 
-use crate::ast::{ParameterSpecification, TargetKind};
+use crate::ast::{LexicallyScopedOptions, ParameterSpecification, TargetKind};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, lex};
 use crate::value::Spelled;
@@ -64,6 +64,12 @@ pub struct Params {
     /// an SQL-server module bound inline, the module's SQL-path, which
     /// `routine` gives of any other routine's (`params/routine.rs`).
     path: Vec<String>,
+    /// [ISO/IEC 9075-14:2006 draft §14.3 to §14.7, §12.1, §12.2, §12.4]
+    /// The `<XML lexically scoped options>` of the DELETE, INSERT, MERGE
+    /// or UPDATE these are the parameters of as it runs, or of the
+    /// generation expression, CHECK or assertion as it is bound: their
+    /// scope is all of it.
+    xml: Option<LexicallyScopedOptions>,
 }
 
 fn api(msg: impl Into<String>) -> SqlError {
@@ -92,6 +98,26 @@ impl Params {
             DataType::Exact { precision: INDICATOR_PRECISION, scale: 0, spelled: Spelled::Numeric },
             Value::Exact(Decimal::new(i128::from(value), 0)),
         )
+    }
+
+    /// The `<XML lexically scoped options>` of the statement or definition
+    /// these are the parameters of, if it wrote them (`binder/xml/scope.rs`).
+    pub(crate) fn xml_options(&self) -> Option<&LexicallyScopedOptions> {
+        self.xml.as_ref()
+    }
+
+    /// Makes `options` those of the statement these are the parameters of,
+    /// as it runs: what were, given back.
+    pub(crate) fn replace_xml_options(&mut self, options: Option<LexicallyScopedOptions>) -> Option<LexicallyScopedOptions> {
+        std::mem::replace(&mut self.xml, options)
+    }
+
+    /// These parameters, of a statement or definition that writes
+    /// `options`.
+    #[must_use]
+    pub(crate) fn with_xml_options(mut self, options: Option<&LexicallyScopedOptions>) -> Params {
+        self.xml = options.cloned();
+        self
     }
 
     /// The parameter named `name`, if declared.

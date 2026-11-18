@@ -322,5 +322,6 @@ mod xml_information;
 mod xml_operators;
 mod xml_publishing;
 mod xml_query;
+mod xml_scoped_options;
 mod xml_storage;
 mod xml_table;

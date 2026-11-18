@@ -136,10 +136,7 @@ data model, XQuery 1.0, its functions and operators, its serialization,
 and XML Schema 1.0. Each series below stands alone, by the draft's
 features.
 
-- Publishing: WITH XMLNAMESPACES and XMLBINARY of a
-  query expression, and their scope in DML, DDL and compound statements
-  (X081 to X084, X131 to X135);
-  and the mapping of XML Names to identifiers (X400).
+- Publishing: the mapping of XML Names to identifiers (X400).
 - XQuery: XMLQUERY, XMLEXISTS and XMLTABLE evaluate every expression of
   XQuery 1.0 (`src/xquery.rs`). Left: the rest of the functions and
   operators library, on the `XQueryFunction` seam; casts to `xs:QName`;

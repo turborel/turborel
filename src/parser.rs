@@ -430,15 +430,17 @@ impl Parser {
     // [X3.135-1986 §8.7] <insert statement>
     // =====================================================================
 
-    /// INSERT INTO `<table name>` {\[(`<insert column list>`)\] \[`<override
-    /// clause>`\] `<query expression>` | DEFAULT VALUES} [ISO/IEC 9075:1992
-    /// §13.8; ISO/IEC 9075-2:2023 §14.11]
+    /// INSERT \[WITH `<XML lexically scoped options>`\] INTO `<table name>`
+    /// {\[(`<insert column list>`)\] \[`<override clause>`\] `<query
+    /// expression>` | DEFAULT VALUES} [ISO/IEC 9075:1992 §13.8; ISO/IEC
+    /// 9075-2:2023 §14.11; ISO/IEC 9075-14:2006 draft §14.4]
     ///
     /// # Errors
     ///
     /// The text is not an `<insert statement>`.
     pub fn insert_statement(&mut self) -> Result<InsertStatement> {
         self.expect_kw(kw::INSERT)?;
+        let xml = self.with_scoped_options()?;
         self.expect_kw(kw::INTO)?;
         let table = self.table_name()?;
         let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.insert_column_list()?) } else { None };
@@ -448,11 +450,11 @@ impl Parser {
         if columns.is_none() && overriding.is_none() && self.accept_kw(kw::DEFAULT) {
             self.expect_kw(kw::VALUES)?;
             self.end()?;
-            return Ok(InsertStatement { table, columns, overriding, source: InsertSource::DefaultValues });
+            return Ok(InsertStatement { table, columns, overriding, source: InsertSource::DefaultValues, xml });
         }
         let query = self.query_expression()?;
         self.end()?;
-        Ok(InsertStatement { table, columns, overriding, source: InsertSource::Query(Box::new(query)) })
+        Ok(InsertStatement { table, columns, overriding, source: InsertSource::Query(Box::new(query)), xml })
     }
 
     /// (`<insert column list>`) ::= ( `<column name>` \[{, `<column

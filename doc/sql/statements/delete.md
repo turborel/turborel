@@ -10,7 +10,7 @@ DELETE: delete rows
 
 ```
 <delete statement: searched> ::=
-    DELETE FROM <table name>
+    DELETE [ WITH <XML lexically scoped options> ] FROM <table name>
     [ FOR PORTION OF <period name> FROM <point in time> TO <point in time> ]
     [ WHERE <search condition> ]
 ```
@@ -45,6 +45,9 @@ generated columns again, and is inserted as an INSERT inserts a row,
 its INSERT triggers running; the constraints judge it with the rest as
 the statement ends. Its row count is of the rows deleted.
 
+WITH's XML options, XMLNAMESPACES and XMLBINARY, are in scope of the
+whole statement, its search condition and subqueries too: see [XML Values](../xml.md#xml-options-of-a-scope).
+
 The positioned form, WHERE CURRENT OF a cursor, runs only in a program
 that embeds turborel; see [DECLARE CURSOR](declare-cursor.md), and, of a
 cursor named by an extended name, [ALLOCATE CURSOR](allocate-cursor.md).
@@ -73,7 +76,7 @@ DELETE on the table. SELECT on each other table a subquery reads.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; the search condition has a set function outside a subquery; a rule of FOR PORTION OF is broken (rule 5) |
+| 2A000 | -103 | The table does not exist or is read-only; the search condition has a set function outside a subquery; a rule of FOR PORTION OF is broken (rule 5); WITH's XML options break a rule of [XML Values](../xml.md#xml-options-of-a-scope) |
 | 2A000 | -104 | Its user lacks DELETE on the table, or SELECT on a table read |
 | 23000 | -201 | A row deleted is referenced by a foreign key whose action refuses it, or a referential action breaks a constraint |
 | 2201H | -301 | A row of a system-time period begins after the transaction timestamp: another transaction changed it later |
@@ -135,7 +138,8 @@ OK
 
 ISO/IEC 9075:1992 §13.7, the `<delete statement: searched>`, and
 X3.135-1986 §8.5. FOR PORTION OF is ISO/IEC 9075-2:2023 §14.9 SR7a and
-§15.8 GR9, Feature T181. Referential actions are SQL-92's [§11.8]. TB911 is this
+§15.8 GR9, Feature T181. WITH's XML options are ISO/IEC 9075-14:2006
+draft §14.3, Features X082 and X132. Referential actions are SQL-92's [§11.8]. TB911 is this
 implementation's own.
 
 ## SEE ALSO

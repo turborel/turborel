@@ -10,8 +10,12 @@ mod element;
 mod namespaces;
 mod publish;
 mod query;
+mod scope;
 
 use std::sync::Arc;
+
+pub(crate) use namespaces::checked_namespaces;
+pub(in crate::binder) use scope::Scopes;
 
 use super::predicates::negated;
 use super::{Binder, Scope, rule};

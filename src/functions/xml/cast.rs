@@ -3,9 +3,11 @@
 //! calls (`binder/xml/cast.rs`), through the mapping of SQL types to XML
 //! Schema types [§9.5] and of SQL values to their lexical forms [§9.8].
 //!
-//! \[DESIGN\] RULES.md D86: \[§6.6 SR1b\] implementation-defined, with no
-//! `<XML lexically scoped options>` the `<XML binary encoding>` is HEX
-//! (`IMPLICIT_BINARY_ENCODING`), so a binary string is an `xs:hexBinary`. \[§9.5 GR8d iv\]
+//! \[DESIGN\] RULES.md D86: \[§6.6 SR1b\] implementation-defined, in the
+//! scope of no `<XML binary encoding>` [§11.3] the encoding is HEX
+//! (`IMPLICIT_BINARY_ENCODING`), so a binary string is an `xs:hexBinary`;
+//! in the scope of XMLBINARY USING BASE64 it is an `xs:base64Binary`
+//! \[SR1a, SR2\] [§9.5 GR8b ii]. \[§9.5 GR8d iv\]
 //! implementation-defined, INTEGER, SMALLINT and BIGINT are restrictions
 //! of `xs:integer`; \[§9.5 GR8e viii, GR8f\] REAL and FLOAT of 24 bits or
 //! fewer are `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`,
@@ -38,19 +40,21 @@ pub const IMPLICIT_BINARY_ENCODING: BinaryEncoding = BinaryEncoding::Hex;
 /// The decimal digits an exact number's units hold at most.
 const MAX_DIGITS: usize = 38;
 
-/// [§9.5 GR8] The XML Schema built-in type the SQL type `t` maps to,
-/// the type its value is cast to and from: of a character string
-/// `xs:string`, of a binary string `xs:hexBinary`, of NUMERIC and DECIMAL
+/// [§9.5 GR8] The XML Schema built-in type the SQL type `t` maps to, in
+/// binary strings' `encoding`, the type its value is cast to and from: of
+/// a character string `xs:string`, of a binary string `xs:hexBinary`, or
+/// `xs:base64Binary` of BASE64 [§9.5 GR8b ii], of NUMERIC and DECIMAL
 /// `xs:decimal`, of INTEGER, SMALLINT and BIGINT `xs:integer`, of an
 /// approximate number `xs:float` or `xs:double`, of BOOLEAN `xs:boolean`,
 /// of DATE, TIME and TIMESTAMP `xs:date`, `xs:time` and `xs:dateTime`,
 /// and of a year-month or day-time interval `xdt:yearMonthDuration` or
 /// `xdt:dayTimeDuration` [§6.6 GR3d ii]; none of another type.
 #[must_use]
-pub fn xml_schema_type(t: &DataType) -> Option<AtomicType> {
+pub fn xml_schema_type(t: &DataType, encoding: BinaryEncoding) -> Option<AtomicType> {
+    let binary = binary_type(encoding);
     Some(match t.represented() {
         DataType::Character { .. } | DataType::Varying { .. } | DataType::Lob { kind: LobKind::Character, .. } => AtomicType::String,
-        DataType::Binary { .. } | DataType::VarBinary { .. } | DataType::Lob { kind: LobKind::Binary, .. } => AtomicType::HexBinary,
+        DataType::Binary { .. } | DataType::VarBinary { .. } | DataType::Lob { kind: LobKind::Binary, .. } => binary,
         DataType::Exact { spelled: Spelled::Integer | Spelled::Smallint | Spelled::Bigint, .. } => AtomicType::Integer,
         DataType::Exact { .. } => AtomicType::Decimal,
         DataType::Approximate { precision, .. } => {
@@ -83,9 +87,19 @@ pub fn xml_schema_type(t: &DataType) -> Option<AtomicType> {
     })
 }
 
+/// [§9.5 GR8b ii] The XML Schema type a binary string maps to in
+/// `encoding`: `xs:hexBinary` of HEX, `xs:base64Binary` of BASE64.
+pub(super) fn binary_type(encoding: BinaryEncoding) -> AtomicType {
+    match encoding {
+        BinaryEncoding::Hex => AtomicType::HexBinary,
+        BinaryEncoding::Base64 => AtomicType::Base64Binary,
+    }
+}
+
 /// [§6.6 GR3] XMLCAST of an SQL value to an XML type: its lexical form
-/// [§9.8], parsed as CONTENT \[GR3a, GR3b\], and of XML(SEQUENCE) cast as
-/// the XML Schema type of its SQL type \[GR3d\].
+/// [§9.8], binary strings in `encoding` \[SR1, SR2\], parsed as CONTENT
+/// \[GR3a, GR3b\], and of XML(SEQUENCE) cast as the XML Schema type of its
+/// SQL type \[GR3d\].
 #[derive(Debug)]
 pub struct XmlCastIn {
     /// The XML type cast to: CONTENT or SEQUENCE.
@@ -97,6 +111,8 @@ pub struct XmlCastIn {
     /// cast to XML(CONTENT) alone, that type and how its value is mapped
     /// [§9.8 GR1a, GR9j]; none of a value of a predefined type.
     pub collection: Option<(DataType, Mapping)>,
+    /// How binary strings are encoded, ENC of \[SR2\].
+    pub encoding: BinaryEncoding,
 }
 
 impl ScalarFunction for XmlCastIn {
@@ -119,7 +135,7 @@ impl ScalarFunction for XmlCastIn {
         }
         let mapped = match &self.collection {
             Some((t, m)) => xml_mapped(v, t, *m)?,
-            None => xml_lexical(v, IMPLICIT_BINARY_ENCODING, true)?,
+            None => xml_lexical(v, self.encoding, true)?,
         };
         let tree = parse(&mapped, Syntax::Content, Whitespace::Preserve)?;
         if self.target != XmlType::Sequence {

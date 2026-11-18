@@ -270,6 +270,17 @@ impl State {
     /// `stmt` of a triggered action, or of the body of an SQL-invoked
     /// procedure, bound in `cx` as its owner `owner` would with `params`.
     pub(in crate::db) fn bind_triggered(&self, cx: Context<'_>, stmt: &SqlStatement, (owner, params): (&str, &Params)) -> Result<()> {
+        // [ISO/IEC 9075-14:2006 draft §14.3 to §14.7 SR1, SR2] its XML
+        // options in scope as it is bound.
+        if let Some(options) = stmt.xml_options() {
+            let scoped = params.clone().with_xml_options(Some(options));
+            return self.bind_triggered_in(Context { params: &scoped, ..cx }, stmt, (owner, &scoped));
+        }
+        self.bind_triggered_in(cx, stmt, (owner, params))
+    }
+
+    /// `bind_triggered`, the statement's XML options in scope.
+    fn bind_triggered_in(&self, cx: Context<'_>, stmt: &SqlStatement, (owner, params): (&str, &Params)) -> Result<()> {
         // A change of a view only its INSTEAD OF triggers change.
         if bind_taken(cx, stmt)? {
             return Ok(());
@@ -398,11 +409,11 @@ fn refused() -> SqlError {
 
 /// `stmt`, a searched UPDATE or DELETE, bound as `bind_triggered` binds it.
 fn bind_searched(cx: Context<'_>, stmt: &SqlStatement) -> Result<()> {
-    if let SqlStatement::UpdateSearched { table, only, portion, set, where_clause } = stmt {
+    if let SqlStatement::UpdateSearched { table, only, portion, set, where_clause, .. } = stmt {
         return bind_searched_write(cx, WriteKind::UpdateSearched, (table, *only, portion.as_deref()), set, where_clause.as_ref())
             .map(drop);
     }
-    if let SqlStatement::DeleteSearched { table, only, portion, where_clause } = stmt {
+    if let SqlStatement::DeleteSearched { table, only, portion, where_clause, .. } = stmt {
         return bind_searched_write(cx, WriteKind::DeleteSearched, (table, *only, portion.as_deref()), &[], where_clause.as_ref())
             .map(drop);
     }

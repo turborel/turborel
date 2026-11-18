@@ -3,12 +3,16 @@
 //! URI of an XML QName written in it.
 //!
 //! An XMLELEMENT's or XMLFOREST's declaration is in scope within it
-//! [§6.14 SR1, §6.15 SR1], so within a subquery of it too: a binder's
-//! declarations are searched first, innermost first, then those of the
-//! query it is a subquery of.
+//! [§6.14 SR1, §6.15 SR1], so within a subquery of it too; those of the
+//! `<XML lexically scoped options>` of a query, a definition, a
+//! statement or a compound statement are in scope within it [§7.2 SR2,
+//! §12.1 SR1, §12.2 SR1, §12.4 SR1, §14.3 to §14.7 SR1, §15.1 SR1]. They
+//! are searched the innermost first (`binder/xml/scope.rs`).
+
+use std::cell::RefCell;
 
 use super::super::{Binder, rule};
-use crate::ast::NamespaceItem;
+use crate::ast::{LexicallyScopedOptions, NamespaceItem};
 use crate::error::Result;
 use crate::xml::{
     SQLXML_NAMESPACE, SQLXML_PREFIX, Version, XML_NAMESPACE, XML_PREFIX, XMLNS_NAMESPACE, XS_NAMESPACE, XS_PREFIX, XSI_NAMESPACE,
@@ -22,7 +26,11 @@ const XMLNS_PREFIX: &str = "xmlns";
 /// default namespace, each prefix an XML 1.1 NCName, none twice, none
 /// `xml` or `xmlns`, no URI the namespace of `xml` or `xmlns`, and each
 /// prefix's URI not empty.
-fn checked(items: &[NamespaceItem]) -> Result<()> {
+///
+/// # Errors
+///
+/// SQLCODE -103 if they break one of those rules.
+pub(crate) fn checked_namespaces(items: &[NamespaceItem]) -> Result<()> {
     let cite = |sr: &str, what: String| rule(format!("[ISO/IEC 9075-14:2006 draft §11.3 {sr}] {what}"));
     let defaults = items.iter().filter(|i| matches!(i, NamespaceItem::Default(_) | NamespaceItem::NoDefault)).count();
     if defaults > 1 {
@@ -70,26 +78,28 @@ impl Binder<'_> {
     /// checked [§11.3].
     pub(super) fn in_namespaces<T>(&self, items: Option<&[NamespaceItem]>, bind: impl FnOnce() -> Result<T>) -> Result<T> {
         let Some(items) = items else { return bind() };
-        checked(items)?;
-        self.xml_namespaces.borrow_mut().push(items.to_vec());
+        checked_namespaces(items)?;
+        let level = LexicallyScopedOptions { namespaces: Some(items.to_vec()), binary: None };
+        self.xml.levels.borrow_mut().push(level);
         let bound = bind();
-        self.xml_namespaces.borrow_mut().pop();
+        self.xml.levels.borrow_mut().pop();
         bound
     }
 
     /// [§10.20 SR2d] The prefixes the `<XML namespace declaration>`s in
-    /// scope bind, each to its URI, the outermost first, so an inner one
-    /// overrides; and the default namespace the innermost that declares
-    /// one sets, the zero-length string of NO DEFAULT.
+    /// scope bind, those of a query, a statement, a definition or a
+    /// compound statement too, each to its URI, the outermost first, so an
+    /// inner one overrides; and the default namespace the innermost that
+    /// declares one sets, the zero-length string of NO DEFAULT.
     pub(super) fn namespaces_in_scope(&self) -> (Vec<(String, String)>, Option<String>) {
-        let mut stacks = Vec::new();
-        let mut binder = Some(self);
-        while let Some(b) = binder {
-            stacks.push(b.xml_namespaces.borrow().clone());
-            binder = b.outer.map(super::super::Outer::binder);
-        }
+        // Each declaration in scope, the innermost first.
+        let found = RefCell::new(Vec::new());
+        self.in_xml_scope(|o| {
+            found.borrow_mut().extend(o.namespaces.clone());
+            None::<()>
+        });
         let (mut prefixes, mut default) = (Vec::new(), None);
-        for item in stacks.into_iter().rev().flatten().flatten() {
+        for item in found.into_inner().into_iter().rev().flatten() {
             match item {
                 NamespaceItem::Regular { uri, prefix } => prefixes.push((prefix, uri)),
                 NamespaceItem::Default(uri) => default = Some(uri),
@@ -102,14 +112,7 @@ impl Binder<'_> {
     /// The URI the innermost declaration in scope that declares `prefix`,
     /// or the default namespace if none, binds it to.
     fn declared_uri(&self, prefix: Option<&str>) -> Option<String> {
-        let mut binder = self;
-        loop {
-            let found = binder.xml_namespaces.borrow().iter().rev().find_map(|items| declared(items, prefix).map(str::to_owned));
-            if found.is_some() {
-                return found;
-            }
-            binder = binder.outer?.binder();
-        }
+        self.in_xml_scope(|o| declared(o.namespaces.as_deref()?, prefix).map(str::to_owned))
     }
 
     /// [§10.12 SR2] The namespace URI of an XML QName of `prefix`, if it

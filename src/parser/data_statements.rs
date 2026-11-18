@@ -39,7 +39,7 @@ pub(crate) const MERGE: &str = "MERGE";
 /// statement is read (`at_call`, `at_return`); SIGNAL, RESIGNAL, or a
 /// label.
 pub(crate) fn begins_word_statement(first: Option<&Tok>, second: Option<&Tok>) -> bool {
-    let merge = matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::KeyWord(kw::INTO))) if w == MERGE);
+    let merge = matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::KeyWord(kw::INTO | kw::WITH))) if w == MERGE);
     let call = matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::Identifier(_) | Tok::KeyWord(_))) if w == CALL);
     let returned = matches!(first, Some(Tok::Identifier(w)) if w == RETURN);
     // [ISO/IEC 9075-4:2006 draft §17.2, §17.3, §14.1] SIGNAL, RESIGNAL, and
@@ -75,7 +75,9 @@ impl Parser {
     }
 
     /// [X3.135-1986 §8.4, §8.5] DELETE FROM `<table name>`
-    ///     {WHERE CURRENT OF `<cursor name>` | \[WHERE `<search condition>`\]}
+    ///     {WHERE CURRENT OF `<cursor name>` | \[WHERE `<search condition>`\]};
+    ///     [ISO/IEC 9075-14:2006 draft §14.3] DELETE \[WITH `<XML lexically
+    ///     scoped options>`\] FROM, of a searched one alone.
     pub(super) fn delete_statement(&mut self) -> Result<SqlStatement> {
         self.expect_kw(kw::DELETE)?;
         // [ISO/IEC 9075:1992 §17.19] a <preparable dynamic delete statement:
@@ -84,13 +86,14 @@ impl Parser {
             let (table, cursor) = self.preparable_positioned()?;
             return Ok(SqlStatement::DeletePositioned { table, only: false, cursor });
         }
+        let xml = self.with_scoped_options()?.map(Box::new);
         self.expect_kw(kw::FROM)?;
         let (table, only) = self.target_table()?;
         let portion = self.for_portion()?;
         if !self.accept_kw(kw::WHERE) {
-            return Ok(SqlStatement::DeleteSearched { table, only, portion, where_clause: None });
+            return Ok(SqlStatement::DeleteSearched { table, only, portion, where_clause: None, xml });
         }
-        if portion.is_none() && self.accept_kw(kw::CURRENT) {
+        if portion.is_none() && xml.is_none() && self.accept_kw(kw::CURRENT) {
             self.expect_kw(kw::OF)?;
             if let Some(cursor) = self.dynamic_current_of()? {
                 return Ok(SqlStatement::Dynamic(Box::new(DynamicStatement::DeletePositioned { table, only, cursor })));
@@ -98,7 +101,7 @@ impl Parser {
             let at = self.here();
             return Ok(SqlStatement::DeletePositioned { table, only, cursor: (self.identifier()?, at) });
         }
-        Ok(SqlStatement::DeleteSearched { table, only, portion, where_clause: Some(self.search_condition()?) })
+        Ok(SqlStatement::DeleteSearched { table, only, portion, where_clause: Some(self.search_condition()?), xml })
     }
 
     /// The statement a word, no key word, begins, if one does, read to its
@@ -128,10 +131,11 @@ impl Parser {
         Ok(Some(stmt))
     }
 
-    /// Whether a `<merge statement>` begins here: MERGE, then INTO.
+    /// Whether a `<merge statement>` begins here: MERGE, then INTO, or
+    /// WITH [ISO/IEC 9075-14:2006 draft §14.5].
     fn at_merge(&self) -> bool {
         let Tok::Identifier(word) = self.peek() else { return false };
-        word == MERGE && self.next_is_kw(kw::INTO)
+        word == MERGE && (self.next_is_kw(kw::INTO) || self.next_is_kw(kw::WITH))
     }
 
     /// Whether a `<truncate table statement>` begins here: TRUNCATE, then
@@ -156,7 +160,9 @@ impl Parser {
     }
 
     /// [X3.135-1986 §8.11, §8.12] UPDATE `<table name>` SET `<set clause>` \[{,`<set clause>`}...\]
-    ///     {WHERE CURRENT OF `<cursor name>` | \[WHERE `<search condition>`\]}
+    ///     {WHERE CURRENT OF `<cursor name>` | \[WHERE `<search condition>`\]};
+    ///     [ISO/IEC 9075-14:2006 draft §14.6, §14.7] UPDATE \[WITH `<XML
+    ///     lexically scoped options>`\] `<target table>`, of no dynamic cursor.
     pub(super) fn update_statement(&mut self) -> Result<SqlStatement> {
         self.expect_kw(kw::UPDATE)?;
         // [ISO/IEC 9075:1992 §17.20] a <preparable dynamic update statement:
@@ -164,23 +170,27 @@ impl Parser {
         if self.dynamic.is_some() && self.is_kw(kw::SET) {
             let set = self.set_clause_list()?;
             let (table, cursor) = self.preparable_positioned()?;
-            return Ok(SqlStatement::UpdatePositioned { table, only: false, set, cursor });
+            return Ok(SqlStatement::UpdatePositioned { table, only: false, set, cursor, xml: None });
         }
+        let xml = self.with_scoped_options()?.map(Box::new);
         let (table, only) = self.target_table()?;
         let portion = self.for_portion()?;
         let set = self.set_clause_list()?;
         if !self.accept_kw(kw::WHERE) {
-            return Ok(SqlStatement::UpdateSearched { table, only, portion, set, where_clause: None });
+            return Ok(SqlStatement::UpdateSearched { table, only, portion, set, where_clause: None, xml });
         }
         if portion.is_none() && self.accept_kw(kw::CURRENT) {
             self.expect_kw(kw::OF)?;
-            if let Some(cursor) = self.dynamic_current_of()? {
+            // [ISO/IEC 9075-14:2006 draft §14.6] of a <cursor name>, not a
+            // dynamic one, whose statement §14 does not modify.
+            let dynamic = if xml.is_none() { self.dynamic_current_of()? } else { None };
+            if let Some(cursor) = dynamic {
                 return Ok(SqlStatement::Dynamic(Box::new(DynamicStatement::UpdatePositioned { table, only, set, cursor })));
             }
             let at = self.here();
-            return Ok(SqlStatement::UpdatePositioned { table, only, set, cursor: (self.identifier()?, at) });
+            return Ok(SqlStatement::UpdatePositioned { table, only, set, cursor: (self.identifier()?, at), xml });
         }
-        Ok(SqlStatement::UpdateSearched { table, only, portion, set, where_clause: Some(self.search_condition()?) })
+        Ok(SqlStatement::UpdateSearched { table, only, portion, set, where_clause: Some(self.search_condition()?), xml })
     }
 
     /// [ISO/IEC 9075-2:2023 §14.9] `<target table>` ::= `<table name>` |

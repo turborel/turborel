@@ -8,7 +8,7 @@
 //! of SQL-92 may use it.
 
 use super::Parser;
-use crate::ast::{AlterColumnAction, ColumnGeneration, Overriding, SequenceOptions, ValueExpression};
+use crate::ast::{AlterColumnAction, ColumnGeneration, LexicallyScopedOptions, Overriding, SequenceOptions, ValueExpression};
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
 
@@ -74,9 +74,13 @@ impl Parser {
             self.expect_kw(kw::DEFAULT)?;
         }
         self.expect_kw(kw::AS)?;
-        // <generation clause> ::= GENERATED ALWAYS AS ( <value expression> )
+        // <generation clause> ::= GENERATED ALWAYS AS <generation
+        // expression>, ( [ WITH <XML lexically scoped options> ] <value
+        // expression> ) [ISO/IEC 9075-14:2006 draft §12.1], the column
+        // descriptor keeping the options with the expression.
         if always && self.accept_delim(delim::LEFT_PAREN) {
             let start = self.here();
+            self.with_scoped_options()?;
             let value = self.value_expression()?;
             let text = self.text_from(start);
             self.expect_delim(delim::RIGHT_PAREN)?;
@@ -115,6 +119,19 @@ impl Parser {
         let value = self.value_expression()?;
         self.end()?;
         Ok(value)
+    }
+
+    /// [ISO/IEC 9075-14:2006 draft §12.1] A generation expression as the
+    /// column descriptor keeps it: \[WITH `<XML lexically scoped
+    /// options>`\] `<value expression>`, the options' scope the
+    /// expression \[SR1, SR2\].
+    ///
+    /// # Errors
+    ///
+    /// The text is not one.
+    pub fn scoped_generation(&mut self) -> Result<(Option<LexicallyScopedOptions>, ValueExpression)> {
+        let options = self.with_scoped_options()?;
+        Ok((options, self.generation_expression()?))
     }
 
     /// [ISO/IEC 9075-2:2023 §11.12] An `<alter column action>`, after

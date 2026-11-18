@@ -19,7 +19,7 @@ use super::subquery::{Outer, capture};
 use super::underlying::drawn_from;
 use super::views::Source;
 use super::{Bound, Context, OutColumn, rule};
-use crate::ast::{NamedTable, WithElement, WithQuery};
+use crate::ast::{LexicallyScopedOptions, NamedTable, WithElement, WithQuery};
 use crate::catalog::{ColumnDesc, QualifiedName, TableDesc, Underlying};
 use crate::error::{At, Code, Result, SqlError};
 use crate::logical::{Expr, LogicalPlan, map_plan_exprs};
@@ -34,6 +34,9 @@ pub(crate) struct Queries<'a> {
     site: Option<&'a Outer<'a>>,
     /// The query names of the clauses it is in.
     parent: Option<&'a Queries<'a>>,
+    /// [ISO/IEC 9075-14:2006 draft §7.2 SR2, SR3] The clause's `<XML
+    /// lexically scoped options>`, if written (`binder/xml/scope.rs`).
+    options: Option<&'a LexicallyScopedOptions>,
 }
 
 /// A query name, and the table it names.
@@ -51,16 +54,26 @@ pub(super) struct Query {
 }
 
 impl<'a> Queries<'a> {
-    /// The query names of a clause written where `cx` binds, a subquery of
-    /// `site` if it is in one, none bound yet.
-    pub(super) fn new(cx: &Context<'a>, site: Option<&'a Outer<'a>>) -> Queries<'a> {
-        Queries { named: RefCell::new(Vec::new()), site, parent: cx.queries }
+    /// The query names of a clause of `options` written where `cx` binds,
+    /// a subquery of `site` if it is in one, none bound yet.
+    pub(super) fn new(cx: &Context<'a>, site: Option<&'a Outer<'a>>, options: Option<&'a LexicallyScopedOptions>) -> Queries<'a> {
+        Queries { named: RefCell::new(Vec::new()), site, parent: cx.queries, options }
     }
 
     /// The query names of a scope within `parent`'s, of the same clause,
     /// none added yet: of a recursive stratum's work tables.
     pub(super) fn within(parent: &'a Queries<'a>) -> Queries<'a> {
-        Queries { named: RefCell::new(Vec::new()), site: parent.site, parent: Some(parent) }
+        Queries { named: RefCell::new(Vec::new()), site: parent.site, parent: Some(parent), options: None }
+    }
+
+    /// The `<XML lexically scoped options>` of its clause, if written.
+    pub(super) fn options(&self) -> Option<&'a LexicallyScopedOptions> {
+        self.options
+    }
+
+    /// The query names of the clauses it is in.
+    pub(super) fn parent(&self) -> Option<&'a Queries<'a>> {
+        self.parent
     }
 
     /// The query the clause is a subquery of, if it is in one.
@@ -128,7 +141,9 @@ pub(super) fn with_scope<'a, T>(
     (site, drawn): (Option<&'a Outer<'a>>, bool),
     then: impl FnOnce(Context<'_>) -> Result<T>,
 ) -> Result<T> {
-    let queries = Queries::new(&cx, site);
+    // [ISO/IEC 9075-14:2006 draft §7.2 SR2, SR3] its XML options in scope of
+    // its elements and its body, the scope of the <query expression>.
+    let queries = Queries::new(&cx, site, w.options.as_ref());
     for (n, e) in w.elements.iter().enumerate() {
         // [SR3c] no two elements of one list have one name.
         if w.elements.iter().take(n).any(|earlier| earlier.name == e.name) {

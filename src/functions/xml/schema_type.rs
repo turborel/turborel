@@ -17,6 +17,7 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
+use super::mapping::BinaryEncoding;
 use crate::error::Result;
 use crate::value::datetime::Field;
 use crate::value::interval::Qualifier;
@@ -43,8 +44,8 @@ const NINE: char = '9';
 
 /// [§9.5 GR8] The XML Schema type the SQL type `t` maps to, restricted by
 /// the facets §9.5 gives it: a character string's `xs:string` of its
-/// length or maxLength \[GR8a\]; a binary string's `xs:hexBinary` of its
-/// maxLength \[GR8b\], hex being XMLCAST's encoding; NUMERIC's and
+/// length or maxLength \[GR8a\]; a binary string's `xs:hexBinary`, or of
+/// BASE64 `encoding` `xs:base64Binary`, of its maxLength \[GR8b\]; NUMERIC's and
 /// DECIMAL's `xs:decimal` of its totalDigits and fractionDigits \[GR8c\];
 /// INTEGER's, SMALLINT's and BIGINT's `xs:integer` of its bounds \[GR8d\];
 /// an approximate number's `xs:float` or `xs:double` \[GR8e\]; BOOLEAN's
@@ -56,22 +57,25 @@ const NINE: char = '9';
 ///
 /// None of the types it maps, whose facets are valid; as `restrict` does
 /// otherwise.
-pub fn xml_schema_restriction(t: &DataType) -> Result<Option<SimpleType>> {
-    let Some((base, facets)) = facets_of(t) else { return Ok(None) };
+pub fn xml_schema_restriction(t: &DataType, encoding: BinaryEncoding) -> Result<Option<SimpleType>> {
+    let Some((base, facets)) = facets_of(t, encoding) else { return Ok(None) };
     let specified: Vec<FacetSpec> = facets.into_iter().map(FacetSpec::new).collect();
     Ok(Some(SimpleType::restrict(&Arc::new(SimpleType::built_in(base)), &specified)?.named(&t.to_string())))
 }
 
-/// The base and the facets of the restriction §9.5 maps `t` to.
-fn facets_of(t: &DataType) -> Option<(AtomicType, Vec<Facet>)> {
+/// The base and the facets of the restriction §9.5 maps `t` to, of binary
+/// strings in `encoding`.
+fn facets_of(t: &DataType, encoding: BinaryEncoding) -> Option<(AtomicType, Vec<Facet>)> {
     Some(match t.represented() {
         DataType::Character { length, units: CharUnits::Characters } => (AtomicType::String, vec![Facet::Length(u64::from(*length))]),
         DataType::Character { length, units: CharUnits::Octets } | DataType::Varying { length, .. } => {
             (AtomicType::String, vec![Facet::MaxLength(u64::from(*length))])
         }
         DataType::Lob { kind: LobKind::Character, length, .. } => (AtomicType::String, vec![Facet::MaxLength(*length)]),
-        DataType::Binary { length } | DataType::VarBinary { length } => (AtomicType::HexBinary, vec![Facet::MaxLength(u64::from(*length))]),
-        DataType::Lob { kind: LobKind::Binary, length, .. } => (AtomicType::HexBinary, vec![Facet::MaxLength(*length)]),
+        DataType::Binary { length } | DataType::VarBinary { length } => {
+            (super::cast::binary_type(encoding), vec![Facet::MaxLength(u64::from(*length))])
+        }
+        DataType::Lob { kind: LobKind::Binary, length, .. } => (super::cast::binary_type(encoding), vec![Facet::MaxLength(*length)]),
         DataType::Exact { precision, spelled: Spelled::Integer | Spelled::Smallint | Spelled::Bigint, .. } => {
             let most: String = std::iter::repeat_n(NINE, usize::try_from(*precision).unwrap_or(0)).collect();
             (AtomicType::Integer, vec![Facet::MaxInclusive(most.as_str().into()), Facet::MinInclusive(format!("-{most}").into())])
@@ -79,13 +83,13 @@ fn facets_of(t: &DataType) -> Option<(AtomicType, Vec<Facet>)> {
         DataType::Exact { precision, scale, .. } => {
             (AtomicType::Decimal, vec![Facet::TotalDigits(u64::from(*precision)), Facet::FractionDigits(u64::from(*scale))])
         }
-        DataType::Approximate { .. } | DataType::Boolean => (super::xml_schema_type(t)?, Vec::new()),
+        DataType::Approximate { .. } | DataType::Boolean => (super::xml_schema_type(t, encoding)?, Vec::new()),
         DataType::Date => (AtomicType::Date, vec![Facet::Pattern(DATE.into())]),
         DataType::Time { precision, zoned } => (AtomicType::Time, vec![Facet::Pattern(clock(TIME, *precision, *zoned).into())]),
         DataType::Timestamp { precision, zoned } => {
             (AtomicType::DateTime, vec![Facet::Pattern(clock(&format!("{DATE}T{TIME}"), *precision, *zoned).into())])
         }
-        DataType::Interval(q) => (super::xml_schema_type(t)?, vec![Facet::Pattern(interval(*q).into())]),
+        DataType::Interval(q) => (super::xml_schema_type(t, encoding)?, vec![Facet::Pattern(interval(*q).into())]),
         DataType::DecFloat { .. }
         | DataType::Array(_)
         | DataType::Multiset(_)

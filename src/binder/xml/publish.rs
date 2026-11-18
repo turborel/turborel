@@ -67,10 +67,11 @@ impl Binder<'_> {
         Ok(returned(Expr::Call(ScalarRef(Arc::new(XmlComment)), vec![e]), returning))
     }
 
-    /// [§6.19] XMLTEXT of `operand`, a character string.
+    /// [§6.19] XMLTEXT of `operand`, a character string, of the `<XML
+    /// binary encoding>` in scope \[GR3, GR4\].
     pub(super) fn xml_text(&self, operand: &ValueExpression, returning: Option<Returning>, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let e = self.xml_characters(operand, scope, "XMLTEXT", "§6.19")?;
-        Ok(returned(Expr::Call(ScalarRef(Arc::new(XmlText)), vec![e]), returning))
+        Ok(returned(Expr::Call(ScalarRef(Arc::new(XmlText(self.binary_encoding()))), vec![e]), returning))
     }
 
     /// [§6.17] XMLPI of `target`, an XML 1.1 NCName \[SR1, SR2\] but `xml`

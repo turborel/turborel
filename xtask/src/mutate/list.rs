@@ -73,6 +73,7 @@ mod xml;
 mod xml_composite;
 mod xml_index;
 mod xml_publishing;
+mod xml_scoped;
 mod xquery;
 mod xquery_eval;
 mod zones;
@@ -101,6 +102,7 @@ pub fn all() -> Vec<Mutation> {
         .chain([xml_composite::XML_COMPOSITE.as_slice()])
         .chain([xml_index::XML_INDEX.as_slice()])
         .chain([xquery_eval::XQUERY_EVAL.as_slice()])
+        .chain([xml_scoped::XML_SCOPED.as_slice()])
         .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &xml::XML, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()
         .copied()

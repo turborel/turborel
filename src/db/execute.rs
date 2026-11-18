@@ -235,7 +235,7 @@ impl Session {
         stmt: &SqlStatement,
         by: (&Params, Option<&Keeping<'_>>),
     ) -> Result<Completion> {
-        if let SqlStatement::UpdatePositioned { table, only, set, cursor } = stmt {
+        if let SqlStatement::UpdatePositioned { table, only, set, cursor, .. } = stmt {
             return self.positioned(cx, ((table, *only), set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), by);
         }
         if let SqlStatement::DeletePositioned { table, only, cursor } = stmt {
@@ -321,7 +321,12 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
         let _compiling = self.compiling(cx.st, cx.tx.id);
-        self.run_compiling(cx, stmt, params, keeping)
+        // [ISO/IEC 9075-14:2006 draft §14.3 to §14.7 SR1, SR2] its XML
+        // options in scope as it is bound, and none of another's.
+        let around = params.replace_xml_options(stmt.xml_options().cloned());
+        let ran = self.run_compiling(cx, stmt, params, keeping);
+        params.replace_xml_options(around);
+        ran
     }
 
     /// OPEN, FETCH or CLOSE `stmt` of an embedded cursor, as
@@ -356,11 +361,11 @@ impl Session {
         match stmt {
             SqlStatement::Insert(ins) => self.insert_statement(cx, ins, params, keeping).map(|n| self.affected(n)),
             SqlStatement::Merge(merge) => self.merge_completed(cx, merge, params, keeping),
-            SqlStatement::UpdateSearched { table, only, portion, set, where_clause } => {
+            SqlStatement::UpdateSearched { table, only, portion, set, where_clause, .. } => {
                 let target = (table, *only, portion.as_deref());
                 self.searched(cx, (WriteKind::UpdateSearched, target, set, where_clause.as_ref()), update_rows, (&*params, keeping))
             }
-            SqlStatement::DeleteSearched { table, only, portion, where_clause } => {
+            SqlStatement::DeleteSearched { table, only, portion, where_clause, .. } => {
                 let target = (table, *only, portion.as_deref());
                 self.searched(cx, (WriteKind::DeleteSearched, target, &[], where_clause.as_ref()), delete_rows, (&*params, keeping))
             }

@@ -181,6 +181,10 @@ impl ProgramBinder<'_> {
     /// `block`'s work, what it brings into scope taken out after.
     fn block_within(&mut self, c: &CompoundStatement, label_name: Option<&str>) -> Result<Step> {
         let mut scope = (*self.scope).clone();
+        // [ISO/IEC 9075-14:2006 draft §15.1 SR1, SR2] its XML options in
+        // scope of what it holds, its declarations' defaults too.
+        scope.xml.extend(c.options.iter().cloned());
+        self.scope = Arc::new(scope.clone());
         let mut variables = Vec::new();
         for declaration in &c.declarations {
             match declaration {

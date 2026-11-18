@@ -10,6 +10,7 @@
 
 mod publish;
 mod query;
+mod scoped;
 
 use query::{XMLEXISTS, XMLQUERY};
 

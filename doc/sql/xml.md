@@ -181,10 +181,13 @@ an SQL type. Between two XML types it is CAST.
 An SQL value cast to XML(CONTENT) becomes a document node holding its
 text: a string's characters, a number as CAST writes it, a truth value
 as `true` or `false`, a date and time with a T between them, an interval
-as an XML duration such as `P01Y02M`, and a binary string in hex. Cast
+as an XML duration such as `P01Y02M`, and a binary string in hex, or in
+base64 where XMLBINARY USING BASE64 is in scope
+([XML options](#xml-options-of-a-scope)). Cast
 to XML(SEQUENCE), it becomes one atomic value of the XML Schema type its
 type maps to, in that type's canonical form: `xs:decimal` 1.5 for
-NUMERIC 1.50, `xdt:yearMonthDuration` P1Y2M. A character no XML 1.1
+NUMERIC 1.50, `xdt:yearMonthDuration` P1Y2M, `xs:hexBinary` or, of
+BASE64, `xs:base64Binary` for a binary string. A character no XML 1.1
 character fails with SQLSTATE 0N002. No SQL value is cast to
 XML(DOCUMENT). No array, multiset or row is cast either, but a value of
 a distinct type whose source is an array or a multiset is cast to
@@ -204,7 +207,7 @@ NUMERIC(6,1) no second digit of fraction.
 |---|---|
 | CHARACTER(n) | `xs:string` of n characters; at most n of a length in OCTETS |
 | CHARACTER VARYING(n), CLOB(n) | `xs:string` of at most n characters |
-| BINARY(n), VARBINARY(n), BLOB(n) | `xs:hexBinary` of at most n octets |
+| BINARY(n), VARBINARY(n), BLOB(n) | `xs:hexBinary` of at most n octets; `xs:base64Binary` where XMLBINARY USING BASE64 is in scope |
 | NUMERIC(p,s), DECIMAL(p,s) | `xs:decimal` of at most p digits, s after the point |
 | INTEGER, SMALLINT, BIGINT | `xs:integer` within the type's range |
 | REAL, DOUBLE PRECISION, FLOAT | `xs:float` or `xs:double` |
@@ -341,7 +344,8 @@ An attribute whose value is null is left out. Each value of the content
 becomes the element's content: an XML value's nodes, copied, or another
 value's text. A character string is escaped as text; a number, a
 datetime, an interval or a truth value is written as XML Schema writes
-it; a binary string is written in hex. An attribute's value is of a
+it; a binary string is written in hex, or in base64 where XMLBINARY
+USING BASE64 is in scope. An attribute's value is of a
 predefined type other than XML, or of a distinct type of one.
 
 Content may be an array or a multiset too, or a value of a distinct type
@@ -366,7 +370,9 @@ gives them in order. Its content option applies to each element; NULL
 ON NULL is its default, so a forest of null values alone is null.
 
 XMLNAMESPACES binds prefixes to namespaces for the names of the element
-or forest it is in and of the operators within it. DEFAULT names the
+or forest it is in and of the operators within it, inside those a query,
+a statement or a definition declares
+([XML options](#xml-options-of-a-scope)). DEFAULT names the
 namespace of a name with no prefix, and NO DEFAULT none. The prefixes
 `xml`, `xs`, `xsi` and `sqlxml` are bound unless declared otherwise.
 Each element declares the namespaces its names use.
@@ -547,8 +553,10 @@ null variable is the empty sequence. A context item of more than one
 item fails with SQLSTATE 2200V.
 
 The XMLNAMESPACES declarations in scope, of an XMLELEMENT, XMLFOREST or
-XMLTABLE around the query, are the query's namespaces too, beside `xml`,
-`xs`, `xsi`, `fn`, `xdt`, `local` and `sqlxml`.
+XMLTABLE around the query, or of the query, statement or definition it
+is in ([XML options](#xml-options-of-a-scope)), are the query's
+namespaces too, beside `xml`, `xs`, `xsi`, `fn`, `xdt`, `local` and
+`sqlxml`.
 
 ### XMLQUERY
 
@@ -713,6 +721,79 @@ OK
 --------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
  ORDER_PATHS                                                  | xml_path                                                     | BODY
 (1 row)
+```
+
+## XML options of a scope
+
+```
+<XML lexically scoped options> ::= <XML lexically scoped option> [ , <XML lexically scoped option> ]
+<XML lexically scoped option> ::=
+      XMLNAMESPACES ( <XML namespace declaration item> [ , ... ] )
+    | XMLBINARY [ USING ] { BASE64 | HEX }
+
+<with clause> ::= WITH [ <XML lexically scoped options> ] [ , ] [ [ RECURSIVE ] <with list> ]
+DELETE [ WITH <XML lexically scoped options> ] FROM ...
+INSERT [ WITH <XML lexically scoped options> ] INTO ...
+MERGE [ WITH <XML lexically scoped options> ] INTO ...
+UPDATE [ WITH <XML lexically scoped options> ] <table name> SET ...
+CHECK ( [ WITH <XML lexically scoped options> ] <search condition> )
+GENERATED ALWAYS AS ( [ WITH <XML lexically scoped options> ] <value expression> )
+BEGIN [ [ NOT ] ATOMIC ] [ DECLARE <XML lexically scoped options> ; ] ... END
+```
+
+XMLNAMESPACES and XMLBINARY may be declared for a whole query, a whole
+statement or a whole definition, as well as in one XMLELEMENT or
+XMLFOREST. Each holds at most one XMLNAMESPACES and one XMLBINARY.
+
+XMLNAMESPACES names the elements and attributes of XMLELEMENT and
+XMLFOREST, and is among the namespaces of XMLQUERY's, XMLEXISTS's and
+XMLTABLE's queries.
+
+XMLBINARY says how XMLELEMENT, XMLFOREST and XMLCAST write a binary
+string, and how XMLCAST reads one: BASE64 in base64, HEX in hex. Where
+no XMLBINARY is in scope it is HEX. XMLPI always writes hex.
+
+The options after WITH, before a query's WITH list or alone, are in
+scope of the whole query: its subqueries, derived tables, the queries
+of its WITH list and the operands of its UNION, EXCEPT and INTERSECT.
+A comma comes between the options and the WITH list, and only there.
+After the first word of DELETE, INSERT, MERGE or UPDATE, positioned or
+searched, they are in scope of the whole statement. A CHECK, of a table,
+a domain or an assertion, and a generation expression are in their
+scope, and keep them with their text, so they mean the same whenever
+the definition is read again. DECLARE as a compound statement begins
+puts them in scope of all it holds. The innermost declaration of a name
+wins: an XMLELEMENT's own, then each query's from the inside out, then
+the statement's or the definition's, then the compound statements'.
+
+A view keeps the options of its query, and a routine those of its body;
+neither sees those of the statement that reads or invokes it.
+
+```sql
+WITH XMLBINARY USING BASE64 SELECT XMLSERIALIZE(XMLFOREST(ID, PHOTO) AS VARCHAR(60)) FROM STAFF WHERE ID = 1;
+WITH XMLNAMESPACES('http://www.w3.org/1999/xhtml' AS "h"), XMLBINARY BASE64 SELECT XMLSERIALIZE(XMLELEMENT(NAME "h:img", XMLATTRIBUTES(PHOTO AS "h:src"), (SELECT XMLELEMENT(NAME "h:b", NAME) FROM STAFF WHERE ID = 2)) AS VARCHAR(200)) FROM STAFF WHERE ID = 1;
+CREATE TABLE PICTURES (ID INTEGER, PHOTO VARBINARY(4), TAG VARCHAR(40) GENERATED ALWAYS AS (WITH XMLBINARY BASE64 XMLSERIALIZE(XMLELEMENT(NAME "img", PHOTO) AS VARCHAR(40))));
+INSERT WITH XMLBINARY BASE64 INTO PICTURES (ID, PHOTO) VALUES (1, XMLCAST(XMLPARSE(CONTENT 'D7c=' PRESERVE WHITESPACE) AS VARBINARY(4)));
+SELECT ID, PHOTO, TAG FROM PICTURES;
+WITH XMLBINARY BASE64, XMLBINARY HEX SELECT ID FROM STAFF;
+```
+
+```
+
+--------------------------------------------------------------
+ <ID>1</ID><PHOTO>D7c=</PHOTO>
+(1 row)
+
+--------------------------------------------------------------
+ <h:img xmlns:h="http://www.w3.org/1999/xhtml" h:src="D7c="><h:b>Bo &amp; Co</h:b></h:img>
+(1 row)
+OK
+OK
+           ID | PHOTO    | TAG
+--------------+----------+------------------------------------------
+            1 | 0FB7     | <img>D7c=</img>
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the options declare namespaces once and a binary encoding once [ISO/IEC 9075-14:2006 draft §11.3 SR1] (at character 23)
 ```
 
 ## Clients

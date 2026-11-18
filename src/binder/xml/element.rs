@@ -73,7 +73,7 @@ pub(super) fn mapped_inside(t: &DataType, levels: usize) -> bool {
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
-        | DataType::Interval(_) => xml_schema_type(t).is_some(),
+        | DataType::Interval(_) => xml_schema_type(t, IMPLICIT_BINARY_ENCODING).is_some(),
     }
 }
 
@@ -89,10 +89,11 @@ impl Binder<'_> {
     }
 
     /// How XMLELEMENT and XMLFOREST map values [§6.14 GR1, GR2, §10.13 GR4c
-    /// i 1 B]: binary strings by the implicit encoding, characters mapped,
-    /// a datetime in the SQL-session's displacement [§9.8 GR7].
+    /// i 1 B]: binary strings by the `<XML binary encoding>` in scope,
+    /// characters mapped, a datetime in the SQL-session's displacement
+    /// [§9.8 GR7].
     fn mapping(&self) -> Mapping {
-        Mapping { encoding: IMPLICIT_BINARY_ENCODING, charmapping: true, zone: self.now.zone() }
+        Mapping { encoding: self.binary_encoding(), charmapping: true, zone: self.now.zone() }
     }
 
     /// `operand`, bound as a value §9.8 maps [§6.14 SR3c, SR7, §6.15
@@ -116,7 +117,7 @@ impl Binder<'_> {
             }
             return Ok((e, Some(t)));
         }
-        if matches!(represented, DataType::Xml(_)) || xml_schema_type(&t).is_none() {
+        if matches!(represented, DataType::Xml(_)) || xml_schema_type(&t, self.binary_encoding()).is_none() {
             return Err(rule(format!("[ISO/IEC 9075-14:2006 draft {clause}] a value of {t} is not mapped to XML here")));
         }
         Ok((super::super::datetime::shown(e, represented, self.now), None))

@@ -3,7 +3,7 @@
 //! XMLTEXT [§6.19], as the binder calls them (`binder/xml/publish.rs`),
 //! each RETURNING SEQUENCE; RETURNING CONTENT is XMLDOCUMENT's of it.
 
-use super::super::{BinaryEncoding, IMPLICIT_BINARY_ENCODING, ScalarFunction, xml_lexical};
+use super::super::{BinaryEncoding, ScalarFunction, xml_lexical};
 use super::{Input, input};
 use crate::error::{Code, Result, SqlError};
 use crate::value::xml::XmlValue;
@@ -46,9 +46,11 @@ impl ScalarFunction for XmlComment {
     }
 }
 
-/// [§6.19] XMLTEXT, RETURNING SEQUENCE.
+/// [§6.19] XMLTEXT, RETURNING SEQUENCE, of binary strings in the
+/// `<XML binary encoding>` with innermost scope that contains it \[GR3,
+/// GR4\].
 #[derive(Debug)]
-pub struct XmlText;
+pub struct XmlText(pub BinaryEncoding);
 
 impl ScalarFunction for XmlText {
     fn name(&self) -> &'static str {
@@ -67,7 +69,7 @@ impl ScalarFunction for XmlText {
         if v.is_null() {
             return Ok(Value::Null);
         }
-        Ok(xml(text(&xml_lexical(v, IMPLICIT_BINARY_ENCODING, false)?)?))
+        Ok(xml(text(&xml_lexical(v, self.0, false)?)?))
     }
 }
 

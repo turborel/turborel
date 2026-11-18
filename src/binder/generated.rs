@@ -50,21 +50,21 @@ pub fn noting_generation(
 
 /// `noting_generation`, its errors not yet said to be of the column.
 fn bound(db: &State, desc: &TableDesc, g: &Generation, invoked: Option<&Invoked>) -> Result<(Expr, DataType)> {
-    let value = Parser::new(&g.text)?.of_definition().generation_expression()?;
+    let (options, value) = Parser::new(&g.text)?.of_definition().scoped_generation()?;
     let mut queried = false;
     value.for_each_subquery(&mut |_| queried = true);
     if queried {
         return Err(SqlError::new(Code::SyntaxRule, "[ISO/IEC 9075-2:2023 §11.4 SR10f] it contains no <query expression>"));
     }
-    let params = Params::new();
+    // [ISO/IEC 9075-14:2006 draft §12.1 SR1, SR2] its XML options in scope.
+    let params = Params::new().with_xml_options(options.as_ref());
     let owner = owner_of(&*db.catalog, &desc.name.auth);
     let cx = Context { purpose: Purpose::Generation, schema: &g.names, horizon: &g.horizon, invoked, ..Context::new(db, owner, &params) };
     let item = FromItem::alone(desc.name.clone(), 0, (desc.clone(), Source::Table));
     let visible = (0..desc.columns.len()).map(|k| (0, k)).collect();
     let names = item.row_names();
-    let binder = Binder::new(cx, None, (vec![item], names, visible), BTreeSet::new());
     let scope = Scope::Rows("[ISO/IEC 9075-2:2023 §11.4 SR10] it is over the columns of one row, so it contains no set function");
-    let (e, t) = binder.value_expression(&value, scope)?;
+    let (e, t) = Binder::new(cx, None, (vec![item], names, visible), BTreeSet::new()).value_expression(&value, scope)?;
     let mut used = Vec::new();
     expr_columns(&e, &mut used);
     if let Some(other) = used.iter().filter_map(|&u| desc.columns.get(u)).find(|c| c.generation().is_some()) {

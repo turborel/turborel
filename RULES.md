@@ -3028,9 +3028,19 @@ node of RETURNING CONTENT itself, so it is one aggregate over a window
 too. An array or a multiset of content is mapped to text by its declared
 type (`functions/xml/mapping.rs`, `xml_mapped`), an element of each
 element, as §9.8 maps one, then parsed as other content is; its walk is
-bounded as types nest. The binder keeps the
-XMLNAMESPACES declarations in scope, innermost last, and searches a
-subquery's own first, then those of the query it is in.
+bounded as types nest.
+
+The binder finds the `<XML lexically scoped options>` in scope, the
+innermost first: the XMLNAMESPACES of the XMLELEMENTs and XMLFORESTs a
+binder is binding; those of each `<with clause>`, kept with its query
+names, which the context of a subquery, a derived table or a `<with
+list element>` links to the clauses around it; then those of the
+statement or definition, and of the compound statements it is in,
+which its parameters carry. A subquery searches its own first, then
+those of the query it is in. A definition keeps its options in the text
+the catalog keeps, so it binds the same when read again; a view or a
+routine sees none of what reads or invokes it. Outside every XMLBINARY
+binary strings are in hex.
 
 XML indexes are built-in index methods (D34) of one XML column, after Pal
 et al.'s secondary XML indexes: `xml_path` (PATH_VALUE, §3.2.1),

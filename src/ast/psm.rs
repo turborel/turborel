@@ -53,6 +53,9 @@ pub struct CompoundStatement {
     pub label: Option<Label>,
     /// ATOMIC was written; NOT ATOMIC is the default \[SR5\].
     pub atomic: bool,
+    /// [ISO/IEC 9075-14:2006 draft §15.1] DECLARE's `<XML lexically scoped
+    /// options>`, if written: their scope is the compound statement.
+    pub options: Option<super::LexicallyScopedOptions>,
     /// The `<local declaration>`s, in order: variables and conditions.
     pub declarations: Vec<LocalDeclaration>,
     /// The `<declare cursor>`s of its `<local cursor declaration list>`.

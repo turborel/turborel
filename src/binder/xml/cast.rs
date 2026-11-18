@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::super::{Binder, Scope, rule};
 use crate::ast::{Passing, TypeName, ValueExpression, ValueSpecification};
 use crate::error::{Code, Result, SqlError};
-use crate::functions::{IMPLICIT_BINARY_ENCODING, Mapping, ScalarRef, XmlCastIn, XmlCastOut, xml_schema_restriction, xml_schema_type};
+use crate::functions::{Mapping, ScalarRef, XmlCastIn, XmlCastOut, xml_schema_restriction, xml_schema_type};
 use crate::logical::Expr;
 use crate::params::ParameterType;
 use crate::value::datetime::{Field, MAX_TIME_PRECISION};
@@ -134,7 +134,8 @@ impl Binder<'_> {
     }
 
     /// [§6.6 GR3] XMLCAST of `e`, of the SQL type `source`, to `target`, an
-    /// XML type: not DOCUMENT \[SR7\]; of a type §9.5 maps; a datetime
+    /// XML type: not DOCUMENT \[SR7\]; of a type §9.5 maps, binary strings
+    /// in the `<XML binary encoding>` in scope \[SR1, SR2\]; a datetime
     /// without time zone as the SQL-session shows it [§9.8 GR7].
     pub(super) fn cast_to_xml(&self, e: Expr, source: &DataType, target: DataType) -> Result<(Expr, DataType)> {
         let DataType::Xml(xml) = target else {
@@ -148,11 +149,13 @@ impl Binder<'_> {
         if matches!(source.represented(), DataType::Array(_) | DataType::Multiset(_)) {
             return Ok((self.collection_to_xml(e, source, xml)?, target));
         }
-        let Some(base) = xml_schema_type(source) else {
+        // [SR1, SR2] binary strings in the encoding in scope.
+        let encoding = self.binary_encoding();
+        let Some(base) = xml_schema_type(source, encoding) else {
             return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §9.5 GR8] {source} maps to no XML Schema type")));
         };
         let shown = super::super::datetime::shown(e, source.represented().clone(), self.now);
-        Ok((Expr::Call(ScalarRef(Arc::new(XmlCastIn { target: xml, base, collection: None })), vec![shown]), target))
+        Ok((Expr::Call(ScalarRef(Arc::new(XmlCastIn { target: xml, base, collection: None, encoding })), vec![shown]), target))
     }
 
     /// [§6.6 GR3, §9.8 GR1a, GR9j] XMLCAST of `e`, of `source`, a distinct
@@ -172,21 +175,23 @@ impl Binder<'_> {
                 "[ISO/IEC 9075-14:2006 draft §9.8 GR9j, §4.10.8] {source} is based on a type mapped to no XML: XML(SEQUENCE), a structured or a reference type, or one §9.5 does not map"
             )));
         }
-        // [GR1, GR2] The implicit encoding; [GR3a] characters mapped.
-        let mapping = Mapping { encoding: IMPLICIT_BINARY_ENCODING, charmapping: true, zone: self.now.zone() };
+        // [SR1, SR2] The encoding in scope; [GR3a] characters mapped.
+        let encoding = self.binary_encoding();
+        let mapping = Mapping { encoding, charmapping: true, zone: self.now.zone() };
         // The atomic type is not read, as the value is cast to CONTENT.
-        let cast = XmlCastIn { target: xml, base: AtomicType::UntypedAtomic, collection: Some((source.clone(), mapping)) };
+        let cast = XmlCastIn { target: xml, base: AtomicType::UntypedAtomic, collection: Some((source.clone(), mapping)), encoding };
         Ok(Expr::Call(ScalarRef(Arc::new(cast)), vec![e]))
     }
 
     /// [§6.6 GR4] XMLCAST of `e`, an XML value, to `target`, an SQL type:
     /// a domain's data type, or a distinct type's source type, SQLT
     /// \[GR4a\], of a type §9.5 maps, cast as the type it maps to with its
-    /// facets \[GR4e, GR4j\]; the SQL value given CAST to SQLT \[GR4l\], of
-    /// the declared type `target` \[SR6\].
+    /// facets, a binary string's in the encoding in scope \[GR4e, GR4j,
+    /// SR1\]; the SQL value given CAST to SQLT \[GR4l\], of the declared
+    /// type `target` \[SR6\].
     pub(super) fn cast_from_xml(&self, e: Expr, target: DataType) -> Result<(Expr, DataType)> {
         let sqlt = target.represented().clone();
-        let Some(xmlt) = xml_schema_restriction(&sqlt)? else {
+        let Some(xmlt) = xml_schema_restriction(&sqlt, self.binary_encoding())? else {
             return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §9.5 GR8] {target} maps to no XML Schema type")));
         };
         let base = xmlt.atomic().unwrap_or(AtomicType::String);

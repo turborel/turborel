@@ -293,7 +293,8 @@ impl Session {
             }
             Kind::Statement => {
                 let stmt = parser.sql_statement()?;
-                let params = Params::preparing(parser.dynamic_parameters());
+                // [ISO/IEC 9075-14:2006 draft §14.3 to §14.7] its XML options in scope.
+                let params = Params::preparing(parser.dynamic_parameters()).with_xml_options(stmt.xml_options());
                 self.bind_only(st, &stmt, &params)?;
                 (Vec::new(), params)
             }
@@ -356,11 +357,11 @@ impl Session {
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
         match stmt {
             SqlStatement::Insert(ins) => self.insert_only(st, ins, params)?,
-            SqlStatement::UpdateSearched { table, only, portion, set, where_clause } => {
+            SqlStatement::UpdateSearched { table, only, portion, set, where_clause, .. } => {
                 self.write_only(st, params, (WriteKind::UpdateSearched, (table, *only, portion.as_deref()), set, where_clause.as_ref()))?;
             }
             SqlStatement::Merge(merge) => drop(self.merge_bound(st, merge, params, None)?),
-            SqlStatement::DeleteSearched { table, only, portion, where_clause } => {
+            SqlStatement::DeleteSearched { table, only, portion, where_clause, .. } => {
                 self.write_only(st, params, (WriteKind::DeleteSearched, (table, *only, portion.as_deref()), &[], where_clause.as_ref()))?;
             }
             SqlStatement::UpdatePositioned { .. } | SqlStatement::DeletePositioned { .. } => self.positioned_only(st, stmt, params)?,

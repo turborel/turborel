@@ -8,7 +8,8 @@ mod query;
 
 pub use query::{OnEmpty, XmlArgument, XmlArguments, XmlQuery, XmlRegularColumn, XmlTable, XmlTableColumn};
 
-use super::{TypeName, ValueExpression};
+use super::{SqlStatement, TypeName, ValueExpression};
+use crate::functions::BinaryEncoding;
 use crate::value::DataType;
 use crate::xml::{Syntax, Whitespace};
 
@@ -47,6 +48,40 @@ pub enum NamespaceItem {
     Default(String),
     /// NO DEFAULT.
     NoDefault,
+}
+
+/// [§11.3] `<XML lexically scoped options>` ::= `<XML lexically scoped
+/// option>` \[ , `<XML lexically scoped option>` \], at most one of each
+/// kind \[SR1\]: the namespaces and the binary encoding of its scope.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LexicallyScopedOptions {
+    /// The `<XML namespace declaration>`'s items, if written.
+    pub namespaces: Option<Vec<NamespaceItem>>,
+    /// The `<XML binary encoding>`, if written: XMLBINARY \[USING\]
+    /// BASE64 or HEX.
+    pub binary: Option<BinaryEncoding>,
+}
+
+impl SqlStatement {
+    /// The `<XML lexically scoped options>` of WITH after its first word,
+    /// if it is a DELETE, INSERT, MERGE or UPDATE that writes them
+    /// [§14.3 to §14.7]: their scope is the statement \[SR1, SR2\].
+    #[must_use]
+    pub fn xml_options(&self) -> Option<&LexicallyScopedOptions> {
+        if let SqlStatement::DeleteSearched { xml, .. }
+        | SqlStatement::UpdateSearched { xml, .. }
+        | SqlStatement::UpdatePositioned { xml, .. } = self
+        {
+            return xml.as_deref();
+        }
+        if let SqlStatement::Insert(i) = self {
+            return i.xml.as_ref();
+        }
+        if let SqlStatement::Merge(m) = self {
+            return m.xml.as_ref();
+        }
+        None
+    }
 }
 
 /// [§6.14] `<XML content option>`.

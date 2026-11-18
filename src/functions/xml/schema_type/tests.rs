@@ -6,7 +6,7 @@ use crate::value::{DOUBLE_PRECISION, REAL_PRECISION};
 
 /// The type `t` maps to.
 fn mapped(t: &DataType) -> SimpleType {
-    xml_schema_restriction(t).unwrap().unwrap()
+    xml_schema_restriction(t, BinaryEncoding::Hex).unwrap().unwrap()
 }
 
 /// The patterns of the type `t` maps to.
@@ -61,7 +61,7 @@ fn strings_and_numbers_9_5() {
     let double = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::DoublePrecision };
     assert_eq!((mapped(&real).atomic(), mapped(&double).atomic()), (Some(AtomicType::Float), Some(AtomicType::Double)));
     assert_eq!(mapped(&DataType::Boolean).atomic(), Some(AtomicType::Boolean));
-    assert!(xml_schema_restriction(&DataType::DecFloat { precision: 16 }).unwrap().is_none());
+    assert!(xml_schema_restriction(&DataType::DecFloat { precision: 16 }, BinaryEncoding::Hex).unwrap().is_none());
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §9.5 GR8g to GR8k] datetimes map
@@ -106,4 +106,16 @@ fn intervals_9_5() {
     assert_eq!(mapped(&year_month).atomic(), Some(AtomicType::YearMonthDuration));
     assert!(takes(&year_month, "-P01Y02M") && !takes(&year_month, "P1Y2M"));
     assert_eq!(mapped(&interval_of(Field::Day, Field::Day, 2, 0)).atomic(), Some(AtomicType::DayTimeDuration));
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §9.5 GR8b ii] a binary string
+/// maps to `xs:base64Binary` of BASE64, of its maxLength, as to
+/// `xs:hexBinary` of HEX.
+#[test]
+fn binary_strings_in_base64_9_5() {
+    let varbinary = DataType::VarBinary { length: 2 };
+    let based = xml_schema_restriction(&varbinary, BinaryEncoding::Base64).unwrap().unwrap();
+    assert_eq!(based.atomic(), Some(AtomicType::Base64Binary));
+    assert!(based.validate("D7c=").is_ok() && based.validate("AAAA").is_err());
+    assert_eq!(mapped(&varbinary).atomic(), Some(AtomicType::HexBinary));
 }

@@ -184,7 +184,7 @@ fn checks(seen: &Seen<'_>) -> Vec<Row> {
     for (t, c) in constraints(seen) {
         let clause = match &c.kind {
             ConstraintKind::NotNull(at) => long(&format!("{} IS NOT NULL", t.columns.get(*at).map_or("", |col| col.name.as_str()))),
-            ConstraintKind::Check { text: condition, .. } => long(condition),
+            ConstraintKind::Check { text: condition, .. } => check_clause(condition),
             ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) => continue,
         };
         rows.push([ids(&catalog, &c.name).to_vec(), vec![clause]].concat());
@@ -193,7 +193,7 @@ fn checks(seen: &Seen<'_>) -> Vec<Row> {
     let domains = seen.state.catalog.domains().into_iter().flat_map(|d| d.constraints.iter());
     for c in domains.chain(seen.state.catalog.assertions()) {
         if let ConstraintKind::Check { text: condition, .. } = &c.kind {
-            rows.push([ids(&catalog, &c.name).to_vec(), vec![long(condition)]].concat());
+            rows.push([ids(&catalog, &c.name).to_vec(), vec![check_clause(condition)]].concat());
         }
     }
     rows
@@ -263,4 +263,11 @@ fn check_columns(seen: &Seen<'_>) -> Result<Vec<Row>> {
         }
     }
     Ok(rows)
+}
+
+/// [ISO/IEC 9075-11:2006 draft §6.14 Description 2] The CHECK_CLAUSE of
+/// the condition the catalog keeps as `text`: its `<search condition>`, without the XML options
+/// before it [ISO/IEC 9075-14:2006 draft §12.2, §12.4].
+fn check_clause(text: &str) -> Value {
+    long(&crate::parser::Parser::check_clause(text).unwrap_or_else(|_| text.to_owned()))
 }

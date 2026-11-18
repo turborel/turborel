@@ -10,7 +10,7 @@ MERGE: update, delete and insert rows of a table from one source
 
 ```
 <merge statement> ::=
-    MERGE INTO <table name> [ [ AS ] <correlation name> ]
+    MERGE [ WITH <XML lexically scoped options> ] INTO <table name> [ [ AS ] <correlation name> ]
     USING <table reference>
     ON <search condition>
     <merge when clause>...
@@ -118,7 +118,7 @@ inserts, and SELECT on the source's tables.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; the source is a joined table, or exposes the target's name; a column is not of the table, or is named twice; the values are not as many as the columns, or one is not assignable to its column; a target column is named in the values; a set function is in a condition or a value |
+| 2A000 | -103 | The table does not exist or is read-only; the source is a joined table, or exposes the target's name; a column is not of the table, or is named twice; the values are not as many as the columns, or one is not assignable to its column; a target column is named in the values; a set function is in a condition or a value; WITH's XML options break a rule of [XML Values](../xml.md#xml-options-of-a-scope) |
 | 2A000 | -104 | Its user lacks a privilege the statement needs |
 | 21000 | -811 | Two source rows a WHEN MATCHED clause is true of match one target row |
 | 23000 | -201 | A row as changed breaks a constraint |
@@ -186,7 +186,8 @@ turborel: SQLCODE -811 (SQLSTATE 21000): a target row is matched by more than on
 ## STANDARD
 
 ISO/IEC 9075-2:2023 §14.12, the `<merge statement>`, Features F312, F313
-and F314. How a row another transaction changed is matched again is this
+and F314; WITH's XML options are ISO/IEC 9075-14:2006 draft §14.5,
+Features X082 and X132. How a row another transaction changed is matched again is this
 implementation's own (RULES.md D29), as is TB911. See
 [CONFORMANCE.md](../../../CONFORMANCE.md#merge).
 

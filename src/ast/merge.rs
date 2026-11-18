@@ -24,6 +24,9 @@ pub struct MergeStatement {
     /// The `<merge when clause>`s of its `<merge operation
     /// specification>`, in the order written, at least one \[GR6a\].
     pub clauses: Vec<MergeWhen>,
+    /// [ISO/IEC 9075-14:2006 draft §14.5] WITH's `<XML lexically scoped
+    /// options>`, if written.
+    pub xml: Option<super::LexicallyScopedOptions>,
 }
 
 /// [ISO/IEC 9075-2:2023 §14.12] `<merge when clause>` ::= `<merge when

@@ -150,9 +150,12 @@ impl State {
         let ConstraintKind::Check { text, names, horizon, .. } = &a.kind else {
             return Err(rule(format!("[DESIGN] assertion {} is no CHECK", a.name)));
         };
-        let sql = format!("SELECT 1 FROM (VALUES (1)) AS ASSERTED (ONE) WHERE NOT ({text})");
+        // [ISO/IEC 9075-14:2006 draft §12.4 SR1, SR2] its XML options in
+        // scope of its condition.
+        let (options, _) = Parser::new(text)?.of_definition().check_condition()?;
+        let sql = format!("SELECT 1 FROM (VALUES (1)) AS ASSERTED (ONE) WHERE NOT ({})", Parser::check_clause(text)?);
         let spec = Parser::new(&sql)?.of_definition().cursor_specification()?;
-        let params = Params::new();
+        let params = Params::new().with_xml_options(options.as_ref());
         let owner = owner_of(&*self.catalog, &a.name.auth);
         let referencing = Referencing::default();
         let cx = Context {

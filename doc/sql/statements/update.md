@@ -10,7 +10,7 @@ UPDATE: update rows
 
 ```
 <update statement: searched> ::=
-    UPDATE <table name>
+    UPDATE [ WITH <XML lexically scoped options> ] <table name>
     [ FOR PORTION OF <period name> FROM <point in time> TO <point in time> ]
     SET <set clause> [ { , <set clause> }... ]
     [ WHERE <search condition> ]
@@ -67,6 +67,10 @@ and is inserted as an INSERT inserts a row, its INSERT triggers
 running; the constraints judge it with the rest as the statement ends.
 Its row count is of the rows changed.
 
+WITH's XML options, XMLNAMESPACES and XMLBINARY, are in scope of the
+whole statement, its SET values, search condition and subqueries too, of the
+positioned form as well: see [XML Values](../xml.md#xml-options-of-a-scope).
+
 The positioned form, WHERE CURRENT OF a cursor, of a cursor named by
 an extended name too ([ALLOCATE CURSOR](allocate-cursor.md)), runs only
 in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
@@ -106,7 +110,7 @@ privilege beyond UPDATE.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; a column set is not of it, or is set twice; a value is not assignable to its column, or contains a set function; a rule of FOR PORTION OF is broken (rule 8) |
+| 2A000 | -103 | The table does not exist or is read-only; a column set is not of it, or is set twice; a value is not assignable to its column, or contains a set function; a rule of FOR PORTION OF is broken (rule 8); WITH's XML options break a rule of [XML Values](../xml.md#xml-options-of-a-scope) |
 | 2A000 | -104 | Its user lacks UPDATE on a column set, or SELECT on a table read |
 | 23000 | -201 | A row as changed breaks a constraint |
 | 44000 | -201 | A row changed through a view WITH CHECK OPTION is no longer a row of the view |
@@ -235,7 +239,8 @@ and §15.14 GR12, Feature T181. NULL and DEFAULT as an `<update source>` are SQL
 [§13.9]. The values identity columns and generated columns take are
 ISO/IEC 9075-2:2023 §14.15 SR5 and §15.14. An `<update target>` of an
 element is ISO/IEC 9075-2:2023's [§14.15 SR11, GR10b, §15.5 GR3b].
-TB911 is this implementation's own.
+WITH's XML options are ISO/IEC 9075-14:2006 draft §14.6 and §14.7,
+Features X082 and X132. TB911 is this implementation's own.
 
 ## SEE ALSO
 
