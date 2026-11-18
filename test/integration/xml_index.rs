@@ -1,5 +1,5 @@
-//! XML indexes (RULES.md D86): the methods XML_PATH, XML_VALUE and
-//! XML_PROPERTY of CREATE INDEX, kept with a table's writes, transactions
+//! XML indexes (RULES.md D86): the methods XML_PATH, XML_VALUE,
+//! XML_PROPERTY and XML_PRIMARY of CREATE INDEX, kept with a table's writes, transactions
 //! and rollbacks, reopened and recovered; their lookups give a superset of
 //! the rows a path selects, the right ones once checked; and their bounds.
 
@@ -9,14 +9,14 @@ use std::sync::Arc;
 use turborel::db::{Database, OpenOptions, Session};
 use turborel::disk::io::FileSystem;
 use turborel::error::Code;
-use turborel::index::xml::{Axis, Comparison, Literal, MAX_KEYED_NODES, PathPattern, Step, Target, XmlLookup};
+use turborel::index::xml::{Axis, Comparison, Literal, MAX_KEYED_NODES, PathPattern, Step, Target, XmlFilter, XmlLookup, XmlQuery};
 use turborel::value::{CompOp, Value};
 use turborel::xml::QName;
 
 use crate::common::{Scratch, after_crash, os, rows, sorted};
 
 /// The methods, as CREATE INDEX names them.
-const METHODS: [&str; 3] = ["XML_PATH", "XML_VALUE", "XML_PROPERTY"];
+const METHODS: [&str; 4] = ["XML_PATH", "XML_VALUE", "XML_PROPERTY", "XML_PRIMARY"];
 
 /// A database of table A.T (K INTEGER, X XML), empty.
 fn database() -> Database {
@@ -44,14 +44,14 @@ fn lookup(steps: &[(Axis, &str)], target: Target, comparisons: Vec<Comparison>) 
 
 /// The keys of the rows index `name` gives for `lookup`, as committed,
 /// and of those its check holds of, each sorted.
-fn found(db: &Database, name: &str, lookup: &XmlLookup) -> (Vec<String>, Vec<String>) {
-    let candidates = db.xml_candidates(name, lookup).unwrap();
+fn found(db: &Database, name: &str, query: &XmlQuery) -> (Vec<String>, Vec<String>) {
+    let candidates = db.xml_candidates(name, &query.lookup).unwrap();
     let key = |row: &Vec<Value>| row[0].to_string();
     let mut all: Vec<String> = candidates.iter().map(key).collect();
     let mut held: Vec<String> = candidates
         .iter()
         .filter(|row| match &row[1] {
-            Value::Xml(x) => lookup.matches(x).unwrap_or(true),
+            Value::Xml(x) => query.matches(x).unwrap_or(true),
             _ => false,
         })
         .map(key)
@@ -63,12 +63,12 @@ fn found(db: &Database, name: &str, lookup: &XmlLookup) -> (Vec<String>, Vec<Str
 
 /// The keys of the rows whose document a lookup holds of, by SQL alone,
 /// read whole: the answer an index must give once checked.
-fn by_scan(a: &Session, lookup: &XmlLookup) -> Vec<String> {
+fn by_scan(a: &Session, query: &XmlQuery) -> Vec<String> {
     let mut keys = Vec::new();
     let mut cursor = a.open_cursor("SELECT K, X FROM T").unwrap();
     while let Some(row) = cursor.fetch().unwrap() {
         if let Value::Xml(x) = &row[1]
-            && lookup.matches(x).unwrap_or(true)
+            && query.matches(x).unwrap_or(true)
         {
             keys.push(row[0].to_string());
         }
@@ -88,14 +88,27 @@ fn number(op: CompOp, n: f64) -> Comparison {
 }
 
 /// The lookups the tests ask.
-fn lookups() -> Vec<XmlLookup> {
+fn lookups() -> Vec<XmlQuery> {
     use Axis::{Child, Descendant};
     vec![
-        lookup(&[(Child, "order"), (Child, "item")], Target::Element, vec![]),
-        lookup(&[(Descendant, "item")], Target::Element, vec![string(CompOp::Eq, "tea")]),
-        lookup(&[(Child, "order"), (Child, "no")], Target::Attribute, vec![number(CompOp::Ge, 17.0)]),
-        lookup(&[(Descendant, "qty")], Target::Element, vec![number(CompOp::Lt, 3.0)]),
+        alone(lookup(&[(Child, "order"), (Child, "item")], Target::Element, vec![])),
+        alone(lookup(&[(Descendant, "item")], Target::Element, vec![string(CompOp::Eq, "tea")])),
+        alone(lookup(&[(Child, "order"), (Child, "no")], Target::Attribute, vec![number(CompOp::Ge, 17.0)])),
+        alone(lookup(&[(Descendant, "qty")], Target::Element, vec![number(CompOp::Lt, 3.0)])),
+        filtered(lookup(&[(Child, "order"), (Child, "item")], Target::Element, vec![string(CompOp::Eq, "tea")]), number(CompOp::Ge, 17.0)),
     ]
+}
+
+/// `lookup`, of the nodes whose parent has an attribute `no` of which
+/// `comparison` holds, as `/order[@no >= 17]/item` [XQuery §3.2.2].
+fn filtered(lookup: XmlLookup, comparison: Comparison) -> XmlQuery {
+    let no = PathPattern { steps: vec![Step { axis: Axis::Child, name: Some(QName::local("no")) }], target: Target::Attribute };
+    XmlQuery { lookup, filter: Some(XmlFilter { above: 1, pattern: no, comparisons: vec![comparison] }) }
+}
+
+/// `lookup` alone.
+fn alone(lookup: XmlLookup) -> XmlQuery {
+    XmlQuery { lookup, filter: None }
 }
 
 /// A document of `n` items, its stored form longer than a row holds.
@@ -137,12 +150,12 @@ fn each_method_is_made_listed_and_dropped() {
     }
     insert(&a, 2, r#"<order no="18"><item>cups</item><qty>x</qty></order>"#);
     a.commit().unwrap();
-    every_lookup_answers(&db, &["I0", "I1", "I2"]);
+    every_lookup_answers(&db, &["I0", "I1", "I2", "I3"]);
     let listed = sorted(&a, "SELECT INDEX_NAME, METHOD_NAME, COLUMN_NAMES FROM INFORMATION_SCHEMA.INDEXES WHERE TABLE_NAME = 'T'");
-    assert_eq!(listed, ["I0,xml_path,X", "I1,xml_value,X", "I2,xml_property,X"]);
+    assert_eq!(listed, ["I0,xml_path,X", "I1,xml_value,X", "I2,xml_property,X", "I3,xml_primary,X"]);
     a.rollback().unwrap();
     a.run("DROP INDEX I1").unwrap();
-    assert_eq!(db.xml_candidates("I1", &lookups()[0]).unwrap_err().code, Code::Api);
+    assert_eq!(db.xml_candidates("I1", &lookups()[0].lookup).unwrap_err().code, Code::Api);
     assert_eq!(db.index_entries("I0").unwrap(), 2, "a pair of each row and its value");
 }
 
@@ -173,7 +186,7 @@ fn indexes_are_kept_with_writes_and_rollbacks() {
     for (n, method) in METHODS.iter().enumerate() {
         index(&a, &format!("I{n}"), method);
     }
-    let names = ["I0", "I1", "I2"];
+    let names = ["I0", "I1", "I2", "I3"];
     insert(&a, 1, r#"<order no="17"><item>tea</item><qty>2</qty></order>"#);
     insert(&a, 2, &long_order(20, 400));
     insert(&a, 3, r#"<order no="9"><item>tea</item><qty>5</qty></order>"#);
@@ -223,7 +236,7 @@ fn indexes_are_reopened_and_recovered() {
     db.close().unwrap();
     drop(db);
     let before = open(&os());
-    every_lookup_answers(&before, &["I0", "I1", "I2"]);
+    every_lookup_answers(&before, &["I0", "I1", "I2", "I3"]);
     let a = before.session("A");
     insert(&a, 3, r#"<order no="30"><item>tea</item></order>"#);
     a.run(&format!("UPDATE T SET X = XMLPARSE(DOCUMENT '{}' PRESERVE WHITESPACE) WHERE K = 1", long_order(10, 300))).unwrap();
@@ -232,8 +245,8 @@ fn indexes_are_reopened_and_recovered() {
     insert(&a, 4, r#"<order no="40"><item>tea</item></order>"#);
     // A crash: the database is left, and opened again as it is.
     let db = open(&after_crash());
-    every_lookup_answers(&db, &["I0", "I1", "I2"]);
-    let tea = lookup(&[(Axis::Descendant, "item")], Target::Element, vec![string(CompOp::Eq, "tea")]);
+    every_lookup_answers(&db, &["I0", "I1", "I2", "I3"]);
+    let tea = alone(lookup(&[(Axis::Descendant, "item")], Target::Element, vec![string(CompOp::Eq, "tea")]));
     assert_eq!(found(&db, "I0", &tea).1, ["3"], "the write not committed is gone");
     drop(a);
     drop((db, before));

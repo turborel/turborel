@@ -1,9 +1,9 @@
 //! \[EXTENSION\] RULES.md D86: the built-in XML index methods, after Pal et
-//! al.'s secondary XML indexes [§3.2]: "xml_path", keyed by each node's
-//! path then value (PATH_VALUE, §3.2.1); "xml_value", by value then path
-//! (VALUE, §3.2.3); and "xml_property", by row, then path and value
-//! (PROPERTY, §3.2.2). Each indexes one XML column, and holds its own
-//! keys: none needs the primary index of the Infoset rows (§3.1).
+//! al.'s XML indexes: "xml_path", keyed by each node's path then value
+//! (PATH_VALUE, §3.2.1); "xml_value", by value then path (VALUE, §3.2.3);
+//! "xml_property", by row, then path and value (PROPERTY, §3.2.2); and
+//! "xml_primary", the rows of the Infoset, by row and ORDPATH (§3.1.1).
+//! Each indexes one XML column, and holds its own keys: none needs another.
 //!
 //! An index is a B-link tree (`engine/tree.rs`) in the data file, beside
 //! the B-link trees of `btree`, so it is checkpointed and reopened as
@@ -13,8 +13,9 @@
 //! its path's id from the index's dictionary (`dictionary.rs`), its value
 //! as a string and as a number (`keys.rs`), and its ORDPATH. The values
 //! held, and how their entries are taken back unread, are `documents.rs`'s;
-//! lookups (`Index::xml_rows`, `xml_cost`) are `search.rs`'s, and a
-//! value's own answer, which a lookup's rows are checked by, `check.rs`'s.
+//! lookups (`Index::xml_rows`, `xml_cost`) are `search.rs`'s, the
+//! primary's answers (`Index::xml_answers`) `primary.rs`'s, and a value's
+//! own answer, which a lookup's rows are checked by, `check.rs`'s.
 //!
 //! No comparison of SQL probes an XML index: XML values are not comparable
 //! [ISO/IEC 9075-14:2006 draft §4.2.4], so the planner never asks one for
@@ -26,13 +27,16 @@ mod dictionary;
 mod documents;
 mod keys;
 mod lookup;
+mod primary;
 mod search;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub use derive::MAX_KEYED_NODES;
-pub use lookup::{Axis, Comparison, Literal, MAX_STEPS, PathPattern, Step, Target, XmlCost, XmlLookup};
+pub use lookup::{
+    Axis, Comparison, Literal, MAX_STEPS, PathPattern, Step, Target, XmlAnswer, XmlAnswers, XmlCost, XmlFilter, XmlLookup, XmlQuery,
+};
 
 use super::{Entries, Index, IndexMethod, Key, KeyOrder, Probe, RowIds};
 use crate::catalog::{IndexDesc, TableDesc};
@@ -54,6 +58,12 @@ pub const XML_PATH_METHOD: &str = "xml_path";
 pub const XML_VALUE_METHOD: &str = "xml_value";
 /// The name of the method keyed by row, then path and value.
 pub const XML_PROPERTY_METHOD: &str = "xml_property";
+/// The name of the method of the Infoset's rows, keyed by row and
+/// ORDPATH.
+pub const XML_PRIMARY_METHOD: &str = "xml_primary";
+
+/// The built-in XML methods, as a database registers them.
+pub const METHODS: [Method; 4] = [Method::Path, Method::Value, Method::Property, Method::Primary];
 
 /// \[DESIGN\] How many octets of a node's string value an XML index keys
 /// (RULES.md D86): a value longer is keyed by its first, marked cut, so an
@@ -62,6 +72,14 @@ pub const XML_PROPERTY_METHOD: &str = "xml_property";
 /// short, which casts whole. The value is no measurement: the names,
 /// codes, dates and numbers a path is compared with are shorter.
 pub const VALUE_PREFIX_BYTES: usize = 64;
+
+/// \[DESIGN\] How many octets of a node's string value the primary keys
+/// (RULES.md D86): a value of no more is keyed whole, so a lookup answers
+/// of it from the index alone; one longer is keyed by its first, cut, and
+/// a row whose answer needs it is checked. The value is no measurement:
+/// it leaves an entry, its ORDPATH of a deep node too, within the longest
+/// key of the smallest page.
+pub const PRIMARY_VALUE_BYTES: usize = 512;
 
 /// How many locks the values held as large objects are taken under, each
 /// object's by its id.
@@ -78,9 +96,21 @@ pub enum Method {
     Value,
     /// "xml_property": row, path, value, ORDPATH.
     Property,
+    /// "xml_primary": row, ORDPATH, then kind, path and value, the rows
+    /// of the Infoset [Pal et al. §3.1.1].
+    Primary,
 }
 
 impl Method {
+    /// How many octets of a node's string value its indexes key.
+    #[must_use]
+    pub fn prefix(self) -> usize {
+        match self {
+            Method::Path | Method::Value | Method::Property => VALUE_PREFIX_BYTES,
+            Method::Primary => PRIMARY_VALUE_BYTES,
+        }
+    }
+
     /// Its name, as CREATE INDEX's USING gives it.
     #[must_use]
     pub fn name(self) -> &'static str {
@@ -88,6 +118,7 @@ impl Method {
             Method::Path => XML_PATH_METHOD,
             Method::Value => XML_VALUE_METHOD,
             Method::Property => XML_PROPERTY_METHOD,
+            Method::Primary => XML_PRIMARY_METHOD,
         }
     }
 }
@@ -293,6 +324,12 @@ impl Index for XmlIndex {
 
     fn xml_rows(self: Arc<Self>, lookup: &XmlLookup) -> Option<RowIds> {
         Some(self.lookup_rows(lookup))
+    }
+
+    /// Of the primary, the rows it answers of from its entries alone;
+    /// none of a secondary method, whose rows are each checked.
+    fn xml_answers(self: Arc<Self>, query: &XmlQuery) -> Option<XmlAnswers> {
+        (self.method == Method::Primary).then(|| self.primary_answers(query))
     }
 
     fn xml_cost(self: Arc<Self>, lookup: &XmlLookup) -> Option<XmlCost> {

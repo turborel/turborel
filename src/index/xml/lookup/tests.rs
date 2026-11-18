@@ -50,7 +50,7 @@ fn a_paths_prefix_is_its_fixed_last_steps() {
 /// `comparisons`' ranges, for a literal `literal` compared by each of
 /// `ops`.
 fn ranges(ops: &[CompOp], literal: &Literal) -> Option<Vec<ValueRange>> {
-    value_ranges(&ops.iter().map(|&op| Comparison { op, literal: literal.clone() }).collect::<Vec<_>>())
+    value_ranges(&ops.iter().map(|&op| Comparison { op, literal: literal.clone() }).collect::<Vec<_>>(), VALUE_PREFIX_BYTES)
 }
 
 /// Whether a node of value `text` is in `ranges`.
@@ -91,11 +91,14 @@ fn numbers_select_their_range_and_the_unordered() {
     assert!(within(&gt, "ten"), "no number: its cast raises");
     let le = ranges(&[CompOp::Le], &n).unwrap();
     assert!(within(&le, "10") && within(&le, " -INF ") && !within(&le, "11"));
-    let between = value_ranges(&[
-        Comparison { op: CompOp::Gt, literal: Literal::Number(1.0) },
-        Comparison { op: CompOp::Lt, literal: Literal::Number(3.0) },
-        Comparison { op: CompOp::Eq, literal: Literal::String("x".to_owned()) },
-    ])
+    let between = value_ranges(
+        &[
+            Comparison { op: CompOp::Gt, literal: Literal::Number(1.0) },
+            Comparison { op: CompOp::Lt, literal: Literal::Number(3.0) },
+            Comparison { op: CompOp::Eq, literal: Literal::String("x".to_owned()) },
+        ],
+        VALUE_PREFIX_BYTES,
+    )
     .unwrap();
     assert!(within(&between, "2") && !within(&between, "3") && !within(&between, "1"), "the first's kind alone");
     assert!(within(&between, "x"), "no number: a candidate, its string comparison left to the check");

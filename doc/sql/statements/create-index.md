@@ -23,8 +23,8 @@ CREATE INDEX: make an index on a table *(extension)*
 CREATE INDEX makes an index on columns of a base table, kept by an index
 method: `btree`, a B-link tree, the default; `hash`, a linear hash table;
 `rtree`, a spatial tree over coordinate columns or fixed-SRID geometries;
-`xml_path`, `xml_value` or `xml_property`, of an XML column's paths and
-values; or a method a plug-in registers. The planner uses an index when its cost
+`xml_path`, `xml_value`, `xml_property` or `xml_primary`, of an XML
+column's paths and values; or a method a plug-in registers. The planner uses an index when its cost
 says the index is the cheaper way to find a query's rows: by the
 comparisons of its columns with constants in a WHERE clause, BETWEEN,
 IN lists of constants, ORs of these of one column, and LIKE patterns
@@ -83,10 +83,12 @@ joins and distance filters are not indexed yet. See the
 [spatial guide](../../data/spatial/03-indexing.md) and
 [distance queries](../../data/spatial/05-distance.md) for runnable examples.
 
-An `xml_path`, `xml_value` or `xml_property` index keys one XML column:
-each element and attribute of its values, by its path, its value as a
-string and as a number, and its place in document order, each method in
-its own order ([XML indexes](../xml.md#xml-indexes)). No comparison of SQL
+An `xml_path`, `xml_value`, `xml_property` or `xml_primary` index keys
+one XML column: each element and attribute of its values, by its path,
+its value as a string and as a number, and its place in document order,
+each method in its own order ([XML indexes](../xml.md#xml-indexes));
+`xml_primary` keeps each node's value whole up to 512 octets, so it
+answers of a row from the index alone. No comparison of SQL
 reads it, as XML values are not comparable: it answers lookups of
 XQuery's paths. A value with more elements and attributes than it keys,
 or a name or path longer than the database's page size holds, is refused
@@ -123,8 +125,8 @@ run again after COMMIT or ROLLBACK.
 4. No index has the name.
 5. The method is registered; its name is matched in any case. On a
    temporary table, it is `btree`, `hash` or `rtree`.
-6. The columns are of types the method keys: of `xml_path`, `xml_value`
-   and `xml_property`, one column of an XML type; of the others, types
+6. The columns are of types the method keys: of `xml_path`, `xml_value`,
+   `xml_property` and `xml_primary`, one column of an XML type; of the others, types
    whose values compare, so not of an XML type.
 7. Each option is declared, given once, of a value it accepts.
 

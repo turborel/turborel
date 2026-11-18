@@ -1,7 +1,7 @@
 //! Tests of the byte forms of an XML index's keys.
 
 use super::*;
-use crate::index::xml::Method;
+use crate::index::xml::{Method, VALUE_PREFIX_BYTES};
 
 /// Verifies: [DESIGN] RULES.md D86: ordinals compare as bytes as the
 /// numbers they write, their end below every one, and read back.
@@ -25,9 +25,13 @@ fn strings_order_by_code_points() {
     let long = "z".repeat(VALUE_PREFIX_BYTES + 1);
     let prefix = "z".repeat(VALUE_PREFIX_BYTES);
     let texts = ["", "a", "a\0", "ab", "b", &prefix, &long, "é", "\u{10000}"];
-    let keys: Vec<Vec<u8>> = texts.iter().map(|t| string_value(t.as_bytes())).collect();
+    let keys: Vec<Vec<u8>> = texts.iter().map(|t| string_value(t.as_bytes(), VALUE_PREFIX_BYTES)).collect();
     assert!(keys.windows(2).all(|w| w[0] < w[1]), "{keys:?}");
-    assert_eq!(string_value(long.as_bytes()), string_value(format!("{long}more").as_bytes()), "cut alike");
+    assert_eq!(
+        string_value(long.as_bytes(), VALUE_PREFIX_BYTES),
+        string_value(format!("{long}more").as_bytes(), VALUE_PREFIX_BYTES),
+        "cut alike"
+    );
     for key in &keys {
         let with_more = [key.as_slice(), &[9, 9]].concat();
         assert_eq!(Cursor { bytes: &with_more, at: 0 }.value().unwrap(), key.as_slice());
@@ -44,7 +48,7 @@ fn numbers_order_as_numbers() {
     assert!(keys.windows(2).all(|w| w[0] < w[1]), "{keys:?}");
     assert_eq!(number_value(-0.0), number_value(0.0));
     assert_eq!(number_value(f64::NAN), vec![UNORDERED]);
-    assert!(number_value(f64::NAN) < keys[0] && keys[8] < string_value(b""));
+    assert!(number_value(f64::NAN) < keys[0] && keys[8] < string_value(b"", VALUE_PREFIX_BYTES));
 }
 
 /// Verifies: [DESIGN] RULES.md D86 [XQuery §3.5.2] [XQueryFO §17.1.1]: a
@@ -68,10 +72,10 @@ fn a_nodes_number_is_its_value_cast() {
 /// in its own order of fields.
 #[test]
 fn entries_read_back() {
-    let value = string_value(b"x\0y");
+    let value = string_value(b"x\0y", VALUE_PREFIX_BYTES);
     let ordpath = [ordinal_of(1), ordinal_of(5)].concat();
-    let node = Node { path: 300, value: &value, ordpath: &ordpath };
-    for method in [Method::Path, Method::Value, Method::Property] {
+    let node = Node { path: 300, kind: ELEMENT, value: &value, ordpath: &ordpath };
+    for method in [Method::Path, Method::Value, Method::Property, Method::Primary] {
         let key = entry(method, &node, 77);
         assert_eq!(parse_entry(method, &key).unwrap(), (300, value.as_slice(), 77), "{method:?}");
     }

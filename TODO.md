@@ -113,12 +113,13 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   holds may follow it.
 - Adjacency held for a graph's edges, so a path query follows an edge
   without a join's search. Graph queries need it.
-- XML indexes (RULES.md D86): `xml_path`, `xml_value` and `xml_property`
-  are built and answer lookups of paths and values. Left: the planner's
-  use of them for XQuery's predicates in XMLEXISTS, XMLQUERY and XMLTABLE,
-  which waits for the evaluator, with EXPLAIN naming the lookup; and the
-  primary index of Infoset rows, which waits for `cargo xtask bench
-  xml_index` to show it pays.
+- XML indexes (RULES.md D86): `xml_path`, `xml_value`, `xml_property`
+  and `xml_primary` are built, answer lookups of paths and values, and
+  the primary answers queries with filters of an ancestor. Left: the
+  planner's use of them for XQuery's predicates in XMLEXISTS, XMLQUERY and
+  XMLTABLE, weighing `xml_cost` against `XmlCost::of_check`, with EXPLAIN
+  naming the lookup; predicates of more than one step above, and paths of
+  other axes, which no lookup takes yet.
 
 ---
 

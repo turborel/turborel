@@ -18,7 +18,7 @@
 
 use std::ops::Bound;
 
-use super::{Method, VALUE_PREFIX_BYTES};
+use super::Method;
 use crate::error::{Code, Result, SqlError};
 use crate::storage::RowId;
 use crate::xml::{Atomic, AtomicType, cast};
@@ -38,6 +38,10 @@ pub(super) const MARKS: u8 = 5;
 pub(super) const DOCUMENTS: u8 = 6;
 /// The index's entries, as its method orders them.
 pub(super) const ENTRIES: u8 = 7;
+/// The primary's values of each row's versions, by row.
+pub(super) const VERSIONS: u8 = 8;
+/// The primary's nodes by row, path and value [Pal et al. §3.2.2].
+pub(super) const PATHED: u8 = 9;
 
 // The classes of value, in their order.
 /// A number that is no number: its node's value does not cast to one, is
@@ -107,11 +111,11 @@ pub(super) fn put_string(out: &mut Vec<u8>, bytes: &[u8], whole: bool) {
 }
 
 /// The value key of a string compared by code points [XQueryFO §7.3.1]:
-/// its first `VALUE_PREFIX_BYTES` octets, cut there if longer, so keys
+/// its first `prefix` octets, cut there if longer, so keys
 /// order as the strings they key, ties of strings that a cut makes alike
 /// apart.
-pub(super) fn string_value(text: &[u8]) -> Vec<u8> {
-    let cut = text.get(..VALUE_PREFIX_BYTES).unwrap_or(text);
+pub(super) fn string_value(text: &[u8], prefix: usize) -> Vec<u8> {
+    let cut = text.get(..prefix).unwrap_or(text);
     let mut out = vec![STRING];
     put_string(&mut out, cut, cut.len() == text.len());
     out
@@ -157,11 +161,38 @@ pub(super) fn values_of(text: &[u8], whole: bool) -> [Vec<u8>; 2] {
     [string, number_of(text, whole).map_or_else(|| vec![UNORDERED], number_value)]
 }
 
-/// A node as an index keys it: its path's id, a value key, its ORDPATH's
-/// ordinals without their end.
+/// The text of `value`, a string value key, and whether it is whole.
+///
+/// # Errors
+///
+/// SQLCODE -916 if it is no string value key.
+pub(super) fn text_of(value: &[u8]) -> Result<(Vec<u8>, bool)> {
+    let mut at = Cursor { bytes: value, at: 1 };
+    if value.first() != Some(&STRING) {
+        return Err(corrupt());
+    }
+    let mut text = Vec::new();
+    loop {
+        let b = at.byte()?;
+        if b != 0 {
+            text.push(b);
+            continue;
+        }
+        match at.byte()? {
+            ESCAPED => text.push(0),
+            WHOLE => return Ok((text, true)),
+            CUT => return Ok((text, false)),
+            _ => return Err(corrupt()),
+        }
+    }
+}
+
+/// A node as an index keys it: its path's id, its kind, a value key, its
+/// ORDPATH's ordinals without their end.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Node<'a> {
     pub(super) path: u64,
+    pub(super) kind: u8,
     pub(super) value: &'a [u8],
     pub(super) ordpath: &'a [u8],
 }
@@ -186,9 +217,17 @@ pub(super) fn entry(method: Method, node: &Node<'_>, row: RowId) -> Vec<u8> {
             put_ordinal(&mut out, node.path);
             out.extend_from_slice(node.value);
         }
+        Method::Primary => out.extend_from_slice(&row.to_be_bytes()),
     }
     out.extend_from_slice(node.ordpath);
     out.push(END);
+    // The primary's row of the Infoset [Pal et al. §3.1.1]: after its key,
+    // the row and ORDPATH, its kind, its path and its value.
+    if method == Method::Primary {
+        out.push(node.kind);
+        put_ordinal(&mut out, node.path);
+        out.extend_from_slice(node.value);
+    }
     out
 }
 
@@ -215,7 +254,76 @@ pub(super) fn parse_entry(method: Method, key: &[u8]) -> Result<(u64, &[u8], Row
             let path = at.ordinal()?;
             (path, at.value()?, row)
         }
+        Method::Primary => {
+            let fields = primary_fields(&mut at)?;
+            (fields.path, fields.value, fields.row)
+        }
     })
+}
+
+/// The fields of a primary's entry, a row of the Infoset [Pal et al.
+/// §3.1.1].
+pub(super) struct Primary<'a> {
+    pub(super) row: RowId,
+    pub(super) kind: u8,
+    pub(super) path: u64,
+    pub(super) value: &'a [u8],
+}
+
+/// The fields of a primary's entry, after its space: its row, its kind,
+/// its path's id and its value, its ORDPATH passed over.
+pub(super) fn primary_fields<'a>(at: &mut Cursor<'a>) -> Result<Primary<'a>> {
+    let row = at.row()?;
+    at.ordpath()?;
+    let kind = at.byte()?;
+    let path = at.ordinal()?;
+    Ok(Primary { row, kind, path, value: at.value()? })
+}
+
+/// A node as an index of any method keeps it: its path's id, its kind,
+/// its value keys as a string and as a number, and its ORDPATH's ordinals
+/// without their end.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Indexed<'a> {
+    pub(super) path: u64,
+    pub(super) kind: u8,
+    pub(super) values: [&'a [u8]; 2],
+    pub(super) ordpath: &'a [u8],
+}
+
+/// The entries of `node` of `row` in an index of `method`: a secondary
+/// method's two, of its string value and of its number; the primary's
+/// two, of its string value, its row of the Infoset [Pal et al. §3.1.1]
+/// and that row by path and value (`pathed`).
+pub(super) fn entries_of(method: Method, node: &Indexed<'_>, row: RowId) -> Vec<Vec<u8>> {
+    let entry_of = |value| entry(method, &Node { path: node.path, kind: node.kind, value, ordpath: node.ordpath }, row);
+    let [string, number] = node.values;
+    if method == Method::Primary {
+        return vec![entry_of(string), pathed(&Node { path: node.path, kind: node.kind, value: string, ordpath: node.ordpath }, row)];
+    }
+    vec![entry_of(string), entry_of(number)]
+}
+
+/// The primary's entry of `node` of `row` by path and value: its row, its
+/// path's id, its value and its ORDPATH, so a row's nodes of a path, and
+/// of a value, are found by a seek, as Pal et al.'s PROPERTY index finds
+/// them [§3.2.2].
+pub(super) fn pathed(node: &Node<'_>, row: RowId) -> Vec<u8> {
+    let mut out = vec![PATHED];
+    out.extend_from_slice(&row.to_be_bytes());
+    put_ordinal(&mut out, node.path);
+    out.extend_from_slice(node.value);
+    out.extend_from_slice(node.ordpath);
+    out.push(END);
+    out
+}
+
+/// The value and the ORDPATH's ordinals of the primary's entry by path
+/// and value `key`, after its row and path.
+pub(super) fn pathed_fields(key: &[u8], at: usize) -> Result<(&[u8], &[u8])> {
+    let mut at = Cursor { bytes: key, at };
+    let value = at.value()?;
+    Ok((value, at.ordpath()?))
 }
 
 /// A reader of the fields of a key.

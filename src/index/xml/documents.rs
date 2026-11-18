@@ -18,7 +18,9 @@
 //! marker:    5 | 0, then the MurmurHash3 x64 128 of the octets, or 1, then
 //!            the object's id u64 | row u64 -> count u32
 //! document:  6 | object's id u64 | row u64 | ORDPATH -> count u32, path's
-//!            id, the string value, the number value
+//!            id, kind, the string value, the number value
+//! version:   8 | row u64 | identity, as a marker's -> count u32: the
+//!            primary's, of the values of a row's versions
 //! ```
 
 use std::ops::Bound;
@@ -26,9 +28,10 @@ use std::ops::Bound;
 use super::derive::{Keyed, derive};
 use super::dictionary::Dictionary;
 use super::keys::{
-    Cursor, DOCUMENTS, ENTRY_OVERHEAD, MARKS, MOST_ORDINAL, Node, ROW, after, corrupt, count_of, counted, entry, put_ordinal, values_of,
+    Cursor, DOCUMENTS, ELEMENT, Indexed, MARKS, MOST_ORDINAL, ROW, VERSIONS, after, corrupt, count_of, counted, entries_of, put_ordinal,
+    values_of,
 };
-use super::{XmlIndex, too_long};
+use super::{Method, XmlIndex, too_long};
 use crate::engine::tree::{Direction, Update};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::murmur::murmur3_x64_128;
@@ -44,6 +47,9 @@ const OCTETS: u8 = 0;
 const OBJECT: u8 = 1;
 /// Bytes of a count before a document entry's body.
 const COUNT: usize = 4;
+/// Octets of a document entry's key and count but its ORDPATH: its space,
+/// object, row, ORDPATH's end and count.
+const DOCUMENT_KEY: usize = 1 + 8 + ROW + 1 + COUNT;
 /// How many document entries are read before they are changed.
 const BATCH: usize = 256;
 
@@ -106,6 +112,23 @@ fn mark_key(identity: &[u8], row: RowId) -> Vec<u8> {
     [&[MARKS][..], identity, &row.to_be_bytes()].concat()
 }
 
+/// The kind of node `keyed` is, its path's first octet.
+fn kind_of(keyed: &Keyed<'_>) -> u8 {
+    keyed.path.first().copied().unwrap_or(ELEMENT)
+}
+
+/// The body of `node`'s document entry, after its count: its path's id,
+/// its kind and its two values.
+fn document_body(node: &Indexed<'_>) -> Vec<u8> {
+    let [string, number] = node.values;
+    let mut body = Vec::with_capacity(MOST_ORDINAL.saturating_add(string.len()).saturating_add(number.len()).saturating_add(1));
+    put_ordinal(&mut body, node.path);
+    body.push(node.kind);
+    body.extend_from_slice(string);
+    body.extend_from_slice(number);
+    body
+}
+
 /// The prefix of the document entries of object `id` and `row`.
 fn documents_of(id: u64, row: RowId) -> Vec<u8> {
     [&[DOCUMENTS][..], &id.to_be_bytes(), &row.to_be_bytes()].concat()
@@ -137,7 +160,8 @@ impl XmlIndex {
     /// held; the tree's. A failure leaves no entry of it.
     pub(super) fn add(&self, value: &Value, row: RowId) -> Result<()> {
         let held = held(value)?;
-        let mark = mark_key(&identity(&held), row);
+        let identity = identity(&held);
+        let mark = mark_key(&identity, row);
         match held {
             Held::Octets(octets) => {
                 self.check(&octets)?;
@@ -160,7 +184,8 @@ impl XmlIndex {
                 }
             }
         }
-        self.bump(&mark, Change::Add)
+        self.bump(&mark, Change::Add)?;
+        self.version(&identity, row, Change::Add)
     }
 
     /// Takes back one addition of `value` of `row`, if it holds one.
@@ -170,7 +195,8 @@ impl XmlIndex {
     /// SQLCODE -916 if the value is no stored form; the tree's.
     pub(super) fn take_back(&self, value: &Value, row: RowId) -> Result<()> {
         let held = held(value)?;
-        let mark = mark_key(&identity(&held), row);
+        let identity = identity(&held);
+        let mark = mark_key(&identity, row);
         match held {
             Held::Octets(octets) => {
                 if self.count(&mark)? == 0 {
@@ -178,7 +204,7 @@ impl XmlIndex {
                 }
                 let dictionary = self.dictionary();
                 let mut names = |n: &_| dictionary.name(n, false);
-                derive(&octets, &mut names, &mut |keyed| self.write_node(keyed, (row, None), Change::TakeBack))?;
+                derive(&octets, self.method.prefix(), &mut names, &mut |keyed| self.write_node(keyed, (row, None), Change::TakeBack))?;
             }
             Held::Object { id, .. } => {
                 let _object = lock_builtin(self.stripe(id));
@@ -188,7 +214,18 @@ impl XmlIndex {
                 self.documents(id, row, Change::TakeBack)?;
             }
         }
-        self.bump(&mark, Change::TakeBack)
+        self.bump(&mark, Change::TakeBack)?;
+        self.version(&identity, row, Change::TakeBack)
+    }
+
+    /// Of the primary, adds or takes back a version of `row` of a value of
+    /// identity `identity`: its answer of a row is its entries' if they
+    /// are of one value alone, which every version a reader may see has.
+    fn version(&self, identity: &[u8], row: RowId, change: Change) -> Result<()> {
+        if self.method != Method::Primary {
+            return Ok(());
+        }
+        self.bump(&[&[VERSIONS][..], &row.to_be_bytes(), identity].concat(), change)
     }
 
     /// The rows it holds `value` of, each once: those marked with its
@@ -222,13 +259,14 @@ impl XmlIndex {
         let dictionary = self.dictionary();
         let mut all = true;
         let mut names = |n: &_| dictionary.name(n, false);
-        derive(octets, &mut names, &mut |keyed| {
+        derive(octets, self.method.prefix(), &mut names, &mut |keyed| {
             let Some(path) = dictionary.path(keyed.path, false)? else {
                 all = false;
                 return Ok(());
             };
-            for value in values_of(keyed.text, keyed.whole) {
-                let key = entry(self.method, &Node { path, value: &value, ordpath: keyed.ordpath }, row);
+            let [string, number] = values_of(keyed.text, keyed.whole);
+            let node = Indexed { path, kind: kind_of(keyed), values: [&string, &number], ordpath: keyed.ordpath };
+            for key in entries_of(self.method, &node, row) {
                 all &= self.tree.get(&key)?.is_some();
             }
             Ok(())
@@ -263,12 +301,15 @@ impl XmlIndex {
         let dictionary = self.dictionary();
         let (most_key, most_entry) = (self.tree.max_key(), self.tree.max_entry());
         let mut names = |n: &_| dictionary.name(n, true);
-        derive(octets, &mut names, &mut |keyed| {
-            let value = keyed.text.len().saturating_mul(2).saturating_add(ENTRY_OVERHEAD);
-            let entry = value.saturating_add(keyed.ordpath.len());
-            let document = entry.saturating_add(COUNT).saturating_add(MOST_ORDINAL).saturating_add(ROW);
-            let path = keyed.path.len().saturating_add(1);
-            match [(path, most_key), (entry, most_key), (document, most_entry)].into_iter().find(|(n, most)| n > most) {
+        derive(octets, self.method.prefix(), &mut names, &mut |keyed| {
+            // Of a path given no id yet, the longest an id takes.
+            let [string, number] = values_of(keyed.text, keyed.whole);
+            let node = Indexed { path: u64::MAX, kind: kind_of(keyed), values: [&string, &number], ordpath: keyed.ordpath };
+            let mut sizes = vec![(keyed.path.len().saturating_add(1), most_key)];
+            sizes.extend(entries_of(self.method, &node, RowId::MAX).into_iter().map(|key| (key.len(), most_key)));
+            let document = DOCUMENT_KEY.saturating_add(keyed.ordpath.len()).saturating_add(document_body(&node).len());
+            sizes.push((document, most_entry));
+            match sizes.into_iter().find(|(n, most)| n > most) {
                 Some((n, most)) => Err(too_long(n, most)),
                 None => Ok(()),
             }
@@ -283,7 +324,7 @@ impl XmlIndex {
         let dictionary = self.dictionary();
         let mut written = 0_usize;
         let mut names = |n: &_| dictionary.name(n, true);
-        let done = derive(octets, &mut names, &mut |keyed| {
+        let done = derive(octets, self.method.prefix(), &mut names, &mut |keyed| {
             self.write_node(keyed, (row, object), Change::Add)?;
             written = written.saturating_add(1);
             Ok(())
@@ -292,7 +333,7 @@ impl XmlIndex {
         let mut taken = 0_usize;
         let mut known = |n: &_| dictionary.name(n, false);
         // The error is the first's: what the take-back meets is lost.
-        let _ = derive(octets, &mut known, &mut |keyed| {
+        let _ = derive(octets, self.method.prefix(), &mut known, &mut |keyed| {
             if taken < written {
                 taken = taken.saturating_add(1);
                 self.write_node(keyed, (row, object), Change::TakeBack)?;
@@ -307,18 +348,17 @@ impl XmlIndex {
     /// whose path has no id has no entry.
     fn write_node(&self, keyed: &Keyed<'_>, (row, object): (RowId, Option<u64>), change: Change) -> Result<()> {
         let Some(path) = self.dictionary().path(keyed.path, change == Change::Add)? else { return Ok(()) };
-        let values = values_of(keyed.text, keyed.whole);
-        for value in &values {
-            self.bump(&entry(self.method, &Node { path, value, ordpath: keyed.ordpath }, row), change)?;
-        }
+        let [string, number] = values_of(keyed.text, keyed.whole);
+        let node = Indexed { path, kind: kind_of(keyed), values: [&string, &number], ordpath: keyed.ordpath };
+        self.write_entries(&node, row, change)?;
         let Some(id) = object else { return Ok(()) };
         let key = [&documents_of(id, row)[..], keyed.ordpath, &[0]].concat();
-        let mut body = Vec::with_capacity(COUNT.saturating_add(MOST_ORDINAL));
-        put_ordinal(&mut body, path);
-        for value in &values {
-            body.extend_from_slice(value);
-        }
-        self.bump_document(&key, &body, change)
+        self.bump_document(&key, &document_body(&node), change)
+    }
+
+    /// Adds, or takes back, the entries of `node` of `row`.
+    fn write_entries(&self, node: &Indexed<'_>, row: RowId, change: Change) -> Result<()> {
+        entries_of(self.method, node, row).iter().try_for_each(|key| self.bump(key, change))
     }
 
     /// Changes the count of document entry `key`, of `body`, by one.
@@ -352,11 +392,9 @@ impl XmlIndex {
     fn document_entry(&self, (key, body): (&[u8], &[u8]), (at, row): (usize, RowId), change: Change) -> Result<()> {
         let ordpath = Cursor { bytes: key, at }.ordpath()?;
         let mut fields = Cursor { bytes: body, at: COUNT };
-        let path = fields.ordinal()?;
-        for _ in 0..2_u8 {
-            let value = fields.value()?;
-            self.bump(&entry(self.method, &Node { path, value, ordpath }, row), change)?;
-        }
+        let (path, kind) = (fields.ordinal()?, fields.byte()?);
+        let values = [fields.value()?, fields.value()?];
+        self.write_entries(&Indexed { path, kind, values, ordpath }, row, change)?;
         self.bump_document(key, body.get(COUNT..).ok_or_else(corrupt)?, change)
     }
 }

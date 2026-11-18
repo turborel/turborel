@@ -232,7 +232,7 @@ impl State {
         let spatial = RTreeMethod::sharing(Arc::clone(&st.pages));
         let mut methods: Vec<Arc<dyn IndexMethod>> = vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial)];
         // The XML methods (RULES.md D86), attached as the others are.
-        for method in [xml::Method::Path, xml::Method::Value, xml::Method::Property] {
+        for method in xml::METHODS {
             methods.push(Arc::new(XmlMethod::sharing(method, Arc::clone(&st.pages))));
         }
         for m in methods {

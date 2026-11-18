@@ -1,7 +1,6 @@
 //! What a path predicate costs over XML values' stored form, of documents
-//! of several sizes, the measurement the primary XML index of Pal et al.
-//! (§3.1) waits for (RULES.md D86): it is built only if reading values'
-//! nodes from its rows would pay against reading the stored form.
+//! of several sizes, against the XML indexes, the primary's of Pal et al.
+//! (§3.1) among them (RULES.md D86).
 //!
 //! For each size, a predicate `/order/item[. = "thing N"]` asked of every
 //! value of a table's worth of documents:
@@ -17,7 +16,12 @@
 //!   it (`Index::xml_rows`), of an index of the first of those documents,
 //!   about 200,000 items';
 //! * looked up: those rows, each row's value then checked
-//!   (`XmlLookup::matches`); and decoded: each decoded and walked instead.
+//!   (`XmlLookup::matches`); and decoded: each decoded and walked instead;
+//! * answered: the primary's answer, from its entries alone
+//!   (`Index::xml_answers`), of the one row that holds, asked of it, and of
+//!   every row; and of the same, filtered by its order's number,
+//!   `/order[@no = 0]/item[. = "thing N"]`, beside the check of each value
+//!   of that.
 //!
 //! Index building is outside the timer. Run with `cargo xtask bench
 //! xml_index`, on the harness (RULES.md R-BENCH-1). When the XQuery
@@ -41,7 +45,9 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use harness::{Bench, Case, note};
-use turborel::index::xml::{Axis, Comparison, Literal, Method, PathPattern, Step, Target, XmlLookup, XmlMethod};
+use turborel::index::xml::{
+    Axis, Comparison, Literal, Method, PathPattern, Step, Target, XmlAnswer, XmlFilter, XmlLookup, XmlMethod, XmlQuery,
+};
 use turborel::index::{Index, IndexMethod, Key};
 use turborel::value::lob::Lob;
 use turborel::value::xml::{Typing, XmlType, XmlValue};
@@ -103,7 +109,43 @@ fn main() {
                 1
             });
         }
+        primary(&bench, items, (&values, indexed_values), &lookup);
     }
+}
+
+/// The primary's cases of `items` items, of an index of `indexed`: its
+/// answer of the one row that holds, asked of it, as `lookup` and as
+/// filtered; and of every row; with the check of each of `values`,
+/// filtered.
+fn primary(bench: &Bench, items: usize, (values, indexed_values): (&[Vec<u8>], &[Vec<u8>]), lookup: &XmlLookup) {
+    let index = indexed(Method::Primary, indexed_values);
+    let filtered = filtered(lookup);
+    bench.measure(Case::new(format!("checked, filtered, {items} items"), "values").bytes(values[0].len()), || {
+        let held = values.iter().filter(|v| filtered.matches(&xml(v)).unwrap()).count();
+        assert_eq!(held, 1);
+        values.len() as u64
+    });
+    let alone = XmlQuery { lookup: lookup.clone(), filter: None };
+    for (case, asked) in [("", &alone), ("filtered, ", &filtered)] {
+        let one = XmlQuery { lookup: XmlLookup { row: Some(0), ..asked.lookup.clone() }, filter: asked.filter.clone() };
+        bench.measure(Case::new(format!("answered, {case}one row, xml_primary, {items} items"), "lookups"), || {
+            let answers: Vec<(u64, XmlAnswer)> = Arc::clone(&index).xml_answers(&one).unwrap().map(Result::unwrap).collect();
+            assert_eq!(answers, [(0, XmlAnswer::Holds)]);
+            1
+        });
+        bench.measure(Case::new(format!("answered, {case}every row, xml_primary, {items} items"), "lookups"), || {
+            assert_eq!(Arc::clone(&index).xml_answers(asked).unwrap().count(), 1);
+            1
+        });
+    }
+}
+
+/// `lookup` of the items of an order of number 0 alone, as
+/// `/order[@no = 0]/item[. = "thing N"]`.
+fn filtered(lookup: &XmlLookup) -> XmlQuery {
+    let no = PathPattern { steps: vec![Step { axis: Axis::Child, name: Some(QName::local("no")) }], target: Target::Attribute };
+    let zero = Comparison { op: CompOp::Eq, literal: Literal::Number(0.0) };
+    XmlQuery { lookup: lookup.clone(), filter: Some(XmlFilter { above: 1, pattern: no, comparisons: vec![zero] }) }
 }
 
 /// An order of `items` items, the `n`th of a table: each document's

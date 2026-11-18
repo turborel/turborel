@@ -13,6 +13,7 @@
 
 use super::dictionary::{Dictionary, tokens_of};
 use super::keys::{ATTRIBUTE, ELEMENT, NUMBER, STRING, UNORDERED, after, number_value, put_ordinal, string_value};
+use crate::disk::pager::DEFAULT_PAGE_SIZE;
 use crate::error::{Code, Result, SqlError};
 use crate::storage::RowId;
 use crate::value::CompOp;
@@ -96,6 +97,51 @@ pub struct XmlLookup {
     pub row: Option<RowId>,
 }
 
+/// \[EXTENSION\] RULES.md D86: a lookup and a filter of each node it
+/// selects: what an index answers of a row from its entries alone
+/// (`Index::xml_answers`), and a value's own check answers
+/// (`XmlQuery::matches`). Of an index that only finds rows, its lookup's
+/// rows are a superset of its rows.
+#[derive(Debug, Clone)]
+pub struct XmlQuery {
+    /// The lookup.
+    pub lookup: XmlLookup,
+    /// A predicate of an ancestor of each node it selects, if any.
+    pub filter: Option<XmlFilter>,
+}
+
+/// \[EXTENSION\] RULES.md D86 [XQuery §3.2.2]: a predicate of the node
+/// `above` steps above a node a lookup selects, its anchor, as
+/// `/BOOK[@ISBN = "1"]/SECTION` holds of a SECTION whose parent BOOK has
+/// an ISBN of "1" [Pal et al. §3.1.2]: it holds of the anchor if a node
+/// its path selects from the anchor has a value its comparisons hold of;
+/// if none does and one raises, it raises.
+#[derive(Debug, Clone)]
+pub struct XmlFilter {
+    /// How many steps above the node selected the anchor is: 1 its parent.
+    /// The lookup's last `above` steps are child steps, so the anchor is
+    /// the node of its step before them, or its item if they are all.
+    pub above: usize,
+    /// The nodes it selects, from the anchor.
+    pub pattern: PathPattern,
+    /// Comparisons each holding of one node it selects.
+    pub comparisons: Vec<Comparison>,
+}
+
+/// \[EXTENSION\] RULES.md D86: what an index knows of a row's value from
+/// its entries alone (`Index::xml_answers`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum XmlAnswer {
+    /// The lookup holds of it.
+    Holds,
+    /// It may hold, or raise: its value is checked (`XmlLookup::matches`).
+    Check,
+}
+
+/// \[EXTENSION\] The rows an index answers a lookup of, each once, as they
+/// are read; a row not given does not hold.
+pub type XmlAnswers = Box<dyn Iterator<Item = Result<(RowId, XmlAnswer)>> + Send>;
+
 /// \[EXTENSION\] RULES.md D86, D35: what a lookup costs, as an index
 /// counts it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -103,8 +149,38 @@ pub struct XmlCost {
     /// The entries it reads, before rows are given once, if counted
     /// within a bound; none past it.
     pub entries: Option<usize>,
-    /// The pages it reads: its seeks, each its tree's height, if known.
+    /// The pages it reads: its seeks, each its tree's height, and the
+    /// pages of the entries it reads, if known.
     pub pages: Option<f64>,
+}
+
+impl XmlCost {
+    /// \[DESIGN\] What checking a value of `octets` octets stored costs
+    /// (`XmlLookup::matches`), to weigh against an index's answer: one pass
+    /// over its stored form, of its pages of the default size.
+    #[must_use]
+    pub fn of_check(octets: u64) -> XmlCost {
+        let pages = octets.div_ceil(u64::from(DEFAULT_PAGE_SIZE)).max(1);
+        XmlCost { entries: None, pages: Some(u32::try_from(pages).map_or(f64::from(u32::MAX), f64::from)) }
+    }
+}
+
+impl XmlLookup {
+    /// `filter`'s anchor, steps above a node selected: the step selecting
+    /// it, from 0 for the item.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it is no step above, or past the item, or a step
+    /// below the anchor is no child step (RULES.md D86).
+    pub(super) fn anchored(&self, filter: &XmlFilter) -> Result<usize> {
+        let steps = &self.pattern.steps;
+        let below = steps.len().checked_sub(filter.above).filter(|_| filter.above > 0);
+        let anchor = below.filter(|&k| steps.get(k..).is_some_and(|s| s.iter().all(|s| s.axis == Axis::Child)));
+        anchor.ok_or_else(|| {
+            SqlError::new(Code::Api, "[DESIGN] an XML lookup's filter is of an ancestor its last steps, child steps, reach (RULES.md D86)")
+        })
+    }
 }
 
 /// A path resolved by an index's dictionary: its kind, its steps' axes and
@@ -182,7 +258,13 @@ impl Resolved {
     pub(super) fn matches(&self, path: &[u8]) -> Result<bool> {
         let (kind, mut tokens) = tokens_of(path)?;
         tokens.reverse();
-        Ok(kind == self.kind && steps_match(&self.steps, &tokens))
+        Ok(self.selects(kind, &tokens))
+    }
+
+    /// Whether a node of kind `kind`, of `names` from below its item, or
+    /// its anchor, down to it, matches.
+    pub(super) fn selects(&self, kind: u8, names: &[u64]) -> bool {
+        kind == self.kind && steps_match(&self.steps, names)
     }
 }
 
@@ -247,8 +329,8 @@ fn past(prefix: &[u8]) -> Vec<u8> {
 /// compared also selects the unordered values, whose cast fails or which
 /// were cut, so no row whose comparison would raise err:FORG0001 is
 /// skipped (RULES.md D15).
-pub(super) fn value_ranges(comparisons: &[Comparison]) -> Option<Vec<ValueRange>> {
-    let ranged: Vec<(u8, ValueRange)> = comparisons.iter().filter_map(range_of).collect();
+pub(super) fn value_ranges(comparisons: &[Comparison], prefix: usize) -> Option<Vec<ValueRange>> {
+    let ranged: Vec<(u8, ValueRange)> = comparisons.iter().filter_map(|c| range_of(c, prefix)).collect();
     let (class, _) = ranged.first()?;
     let class = *class;
     let mut range = ValueRange { low: vec![class], high: past(&[class]) };
@@ -268,9 +350,9 @@ pub(super) fn value_ranges(comparisons: &[Comparison]) -> Option<Vec<ValueRange>
 
 /// The class of value, and the range of its keys, `comparison` selects;
 /// none for `!=`, which a range cannot hold.
-fn range_of(comparison: &Comparison) -> Option<(u8, ValueRange)> {
+fn range_of(comparison: &Comparison, prefix: usize) -> Option<(u8, ValueRange)> {
     let (class, key) = match &comparison.literal {
-        Literal::String(s) | Literal::Untyped(s) => (STRING, string_value(s.as_bytes())),
+        Literal::String(s) | Literal::Untyped(s) => (STRING, string_value(s.as_bytes(), prefix)),
         // NaN equals, and is less or greater than, nothing [XQueryFO §6.3].
         Literal::Number(n) => {
             if n.is_nan() {

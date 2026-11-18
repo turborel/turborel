@@ -48,6 +48,7 @@ fn a_database_tells_its_sink_of_its_life() {
             registered(Extension::IndexMethod, "xml_path"),
             registered(Extension::IndexMethod, "xml_value"),
             registered(Extension::IndexMethod, "xml_property"),
+            registered(Extension::IndexMethod, "xml_primary"),
             registered(Extension::IndexMethod, "rtree"),
             info("Opened(Created)"),
             info("Thread { label: \"turborel-maintenance\", change: Started }"),

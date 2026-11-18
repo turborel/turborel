@@ -26,7 +26,7 @@ made at once, apart from any transaction: no ROLLBACK undoes it.
 
 The options are those the index's method declares and those plug-ins
 declare for every index; the built-in methods, `btree`, `hash`, `rtree`,
-`xml_path`, `xml_value` and `xml_property`, declare none. INFORMATION_SCHEMA.INDEX_OPTIONS shows an index's options.
+`xml_path`, `xml_value`, `xml_property` and `xml_primary`, declare none. INFORMATION_SCHEMA.INDEX_OPTIONS shows an index's options.
 
 ## RULES
 

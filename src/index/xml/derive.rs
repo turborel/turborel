@@ -6,13 +6,12 @@
 //!
 //! An element's string value is its text descendants' content in document
 //! order [XQueryDM §6.2.3], known as it ends; each element open keeps the
-//! first `VALUE_PREFIX_BYTES` octets of its own, and whether there were
-//! more. An element's text is all its ancestors' too, so an ancestor's
+//! first octets of its own, as many as the index keys, and whether there
+//! were more. An element's text is all its ancestors' too, so an ancestor's
 //! octets are never fewer: text is added to the elements open from the
 //! innermost out, up to the first that is full, so each element takes at
 //! most its prefix's octets, however deep the nesting.
 
-use super::VALUE_PREFIX_BYTES;
 use super::keys::{ATTRIBUTE, ELEMENT, put_ordinal};
 use crate::error::{Code, Result, SqlError};
 use crate::xml::{Event, Events, MAX_NESTING, QName};
@@ -73,20 +72,23 @@ struct Deriving<'d, 'n, 'v> {
     visit: &'d mut Visit<'v>,
     /// The path of the node keyed last.
     path: Vec<u8>,
+    /// How many octets of a string value are kept.
+    prefix: usize,
 }
 
-/// Derives the nodes `bytes`, a stored form, keys, each given to `visit`,
-/// each name's token by `names`; how many.
+/// Derives the nodes `bytes`, a stored form, keys, each given to `visit`
+/// with the first `prefix` octets of its string value, each name's token
+/// by `names`; how many.
 ///
 /// # Errors
 ///
 /// SQLCODE -916 if the bytes are no stored form, or nest past
 /// `xml::MAX_NESTING`; -900 past `MAX_KEYED_NODES`; `names`' and
 /// `visit`'s.
-pub(super) fn derive(bytes: &[u8], names: &mut Tokens<'_>, visit: &mut Visit<'_>) -> Result<usize> {
+pub(super) fn derive(bytes: &[u8], prefix: usize, names: &mut Tokens<'_>, visit: &mut Visit<'_>) -> Result<usize> {
     let mut events = Events::new(bytes)?;
     let mut deriving =
-        Deriving { open: Vec::new(), ordpath: Vec::new(), tokens: Vec::new(), items: 0, keyed: 0, names, visit, path: Vec::new() };
+        Deriving { open: Vec::new(), ordpath: Vec::new(), tokens: Vec::new(), items: 0, keyed: 0, names, visit, path: Vec::new(), prefix };
     while let Some(event) = events.next_event()? {
         if event == Event::Node {
             deriving.tokens = events.names().iter().map(|n| (deriving.names)(n)).collect::<Result<_>>()?;
@@ -178,7 +180,7 @@ impl Deriving<'_, '_, '_> {
         let Some(path) = self.open.last().and_then(|e| e.tokens.as_ref()).zip(self.token(name)) else { return Ok(()) };
         self.path = [vec![ATTRIBUTE], ordinal(path.1), path.0.clone()].concat();
         let bytes = value.as_bytes();
-        let text = bytes.get(..VALUE_PREFIX_BYTES).unwrap_or(bytes);
+        let text = bytes.get(..self.prefix).unwrap_or(bytes);
         self.keyed_node(text, text.len() == bytes.len())
     }
 
@@ -214,7 +216,7 @@ impl Deriving<'_, '_, '_> {
             if open.cut {
                 break;
             }
-            let room = VALUE_PREFIX_BYTES.saturating_sub(open.text.len());
+            let room = self.prefix.saturating_sub(open.text.len());
             let taken = text.get(..room).unwrap_or(text);
             open.text.extend_from_slice(taken);
             open.cut = taken.len() < text.len();

@@ -673,7 +673,7 @@ another collation. A collation of the database is the URI
 
 ```
 CREATE INDEX <index name> ON <table name> ( <XML column name> )
-    USING { XML_PATH | XML_VALUE | XML_PROPERTY }
+    USING { XML_PATH | XML_VALUE | XML_PROPERTY | XML_PRIMARY }
 ```
 
 An XML index keys the nodes of an XML column's values, so a query of a
@@ -682,15 +682,24 @@ path reads the rows whose values hold it, not every row
 attribute below each item of a value: its path from the item, as names in
 namespaces; its value, the text of an element's descendants or an
 attribute's, as a string, by its first 64 octets, and as a number if the
-whole of it is one; and its place in document order. The three methods
-order their keys for different questions, after Pal et al., "Indexing XML
-Data Stored in a Relational Database" (VLDB 2004):
+whole of it is one; and its place in document order. The methods order
+their keys for different questions, after Pal et al., "Indexing XML Data
+Stored in a Relational Database" (VLDB 2004):
 
 | Method | Keyed by | Answers best |
 |---|---|---|
 | XML_PATH | path, value | a path, and a value at it, of any row |
 | XML_VALUE | value, path | a value, at a path given in part |
 | XML_PROPERTY | row, path, value | the values of paths of one row |
+| XML_PRIMARY | row, place in document order; and row, path, value | a query of one large value, answered from the index alone |
+
+XML_PRIMARY keeps each node whole: its kind, its path and its value up to
+512 octets. It answers whether a row's value holds a path, a value at it
+and a predicate of an ancestor, such as `/order[@no = 17]/item`, without
+reading the value; a row whose answer needs a longer value is read and
+checked. It suits large values queried for a few of their nodes; of
+small values, reading the value costs less. It takes about twice the
+space of the others.
 
 Each indexes one XML column alone; another column, or more than one, is
 refused (SQLCODE -103). Like every index, it is built of the rows there,
@@ -706,6 +715,7 @@ size, cannot be indexed, and its INSERT or UPDATE fails (SQLCODE -900).
 COMMIT;
 CREATE INDEX ORDER_PATHS ON ORDERS (BODY) USING XML_PATH;
 CREATE INDEX ORDER_VALUES ON ORDERS (BODY) USING XML_VALUE;
+CREATE INDEX ORDER_ROWS ON ORDERS (BODY) USING XML_PRIMARY;
 CREATE INDEX ORDER_IDS ON ORDERS (ID) USING XML_PROPERTY;
 DROP INDEX ORDER_VALUES;
 SELECT INDEX_NAME, METHOD_NAME, COLUMN_NAMES FROM INFORMATION_SCHEMA.INDEXES WHERE TABLE_NAME = 'ORDERS' ORDER BY INDEX_NAME;
@@ -715,12 +725,14 @@ SELECT INDEX_NAME, METHOD_NAME, COLUMN_NAMES FROM INFORMATION_SCHEMA.INDEXES WHE
 OK
 OK
 OK
+OK
 turborel: SQLCODE -103 (SQLSTATE 2A000): index ORDER_IDS of method xml_property keys one column, of an XML type (RULES.md D86)
 OK
  INDEX_NAME                                                   | METHOD_NAME                                                  | COLUMN_NAMES
 --------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
  ORDER_PATHS                                                  | xml_path                                                     | BODY
-(1 row)
+ ORDER_ROWS                                                   | xml_primary                                                  | BODY
+(2 rows)
 ```
 
 ## XML options of a scope
@@ -814,7 +826,7 @@ standing alone, is refused with SQLSTATE 2200W when it is fetched.
 | Text XMLPARSE reads | 64 MiB |
 | A value's stored form | 64 MiB |
 | Elements and attributes an XML index keys of one value | 262,144 |
-| Octets of a value an XML index keys | 64 |
+| Octets of a value an XML index keys | 64; 512 of XML_PRIMARY |
 | Expressions nested in an XQuery query | 64 |
 | Operations and function calls nested as a query is evaluated | 256 |
 | Items of one sequence a query makes | 1,048,576 |

@@ -2166,17 +2166,22 @@ whole so the lookup cannot hide the error (D15). The built-in `btree` and
 `hash` methods retain their comparison lookups; a plug-in supplies the
 function lookup.
 
-The methods `xml_path`, `xml_value` and `xml_property` index one XML
-column (RULES.md D86, `src/index/xml.rs`), after the PATH_VALUE, VALUE and
-PROPERTY indexes of Pal et al. (VLDB 2004): each element and attribute of
-a value by its path, its value as a string and as a number, and its
-ORDPATH, keyed in that method's order. CREATE INDEX refuses them on
+The methods `xml_path`, `xml_value`, `xml_property` and `xml_primary`
+index one XML column (RULES.md D86, `src/index/xml.rs`), after the
+PATH_VALUE, VALUE, PROPERTY and primary indexes of Pal et al. (VLDB
+2004): each element and attribute of a value by its path, its value as a
+string and as a number, and its ORDPATH, keyed in that method's order;
+the primary's, the rows of the Infoset by row and ORDPATH, and by row,
+path and value. The primary answers a query of a row from its entries
+alone, a path, comparisons and a filter of an ancestor
+(`Index::xml_answers`, `index::xml::XmlQuery`), checking a row only where
+a value is cut, a comparison raises or the row's versions differ. CREATE INDEX refuses them on
 another column, or on more than one (SQLCODE -103). No SQL comparison
 probes them, as XML values are not comparable; the Rust API asks them for
 the rows that may hold a node of a path of child and descendant steps
 with a value a general comparison selects (`Index::xml_rows`,
-`xml_cost`, `index::xml::XmlLookup`), which the XQuery evaluator is to
-check, and `Database::xml_candidates` reads those rows. A value whose
+`xml_cost`, `index::xml::XmlLookup`), which the caller checks
+(`XmlLookup::matches`, one pass over the stored form), and `Database::xml_candidates` reads those rows. A value whose
 nodes or keys pass their bounds is refused, SQLCODE -900.
 
 ### Users

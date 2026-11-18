@@ -1947,8 +1947,9 @@ pool. `btree` is a B-link tree, ordered, for equality and ranges. `hash` is
 a linear hash table (Litwin, 1980), for equality only, and its readers lock
 nothing. `rtree` indexes two point coordinates or four rectangle coordinates
 (D72), or one fixed-SRID geometry through envelope projections (D85).
-`xml_path`, `xml_value` and `xml_property` index one XML column's paths
-and values for XQuery's lookups (D86); no comparison probes them.
+`xml_path`, `xml_value`, `xml_property` and `xml_primary` index one XML
+column's paths and values for XQuery's lookups (D86); no comparison
+probes them.
 A method can support independent comparisons on several key columns
 without an equality prefix (`IndexMethod::supports_columns`).
 
@@ -3043,13 +3044,12 @@ routine sees none of what reads or invokes it. Outside every XMLBINARY
 binary strings are in hex.
 
 XML indexes are built-in index methods (D34) of one XML column, after Pal
-et al.'s secondary XML indexes: `xml_path` (PATH_VALUE, §3.2.1),
-`xml_value` (VALUE, §3.2.3) and `xml_property` (PROPERTY, §3.2.2), named
-in CREATE INDEX's USING as the others are, so a plug-in may add more.
-Each holds its own keys, a B-link tree in the data file beside the
-others, checkpointed, reopened and recovered as theirs are; none needs the
-primary index of Infoset rows (§3.1), which is built only if measurement
-shows it pays (`bench/xml_index.rs`). An index derives its keys from a
+et al.'s XML indexes: `xml_path` (PATH_VALUE, §3.2.1), `xml_value`
+(VALUE, §3.2.3), `xml_property` (PROPERTY, §3.2.2) and `xml_primary`
+(the primary index, §3.1), named in CREATE INDEX's USING as the others
+are, so a plug-in may add more. Each holds its own keys, a B-link tree in
+the data file beside the others, checkpointed, reopened and recovered as
+theirs are; none needs another. An index derives its keys from a
 value's stored form in one pass over its events, building no tree. It
 keys each element and attribute below each node item of the value, the
 item being the context its paths start from: its path, its value and its
@@ -3072,6 +3072,28 @@ tree's are (D34): `xml_path` keyed (path id, value, row, ORDPATH),
 `xml_value` (value, path id, row, ORDPATH), `xml_property` (row, path id,
 value, ORDPATH).
 
+`xml_primary` keeps the rows of the Infoset of §3.1.1: each element and
+attribute keyed (row, ORDPATH), then its kind, its path id and its string
+value, whole up to `PRIMARY_VALUE_BYTES` (512) octets, cut past them;
+and each again keyed (row, path id, value, ORDPATH), as the PROPERTY
+index keys the primary's rows (§3.2.2), so a row's nodes of a path and a
+value are found by a seek. It answers a query of a row from its entries
+alone (`Index::xml_answers`): it holds, it may and is checked, or it does
+not hold, the row not given. Its nodes of the path are found by path and
+value, then taken in ORDPATH order, which is document order. A query may
+filter a node by its ancestor `above` steps up, as
+`/BOOK[@ISBN = "1"]/SECTION` does (§3.1.2): the anchor's ORDPATH is the
+node's less as many components, the parent join of §3.1.2, and the nodes
+below it are its rows of the Infoset whose ORDPATH begins with its own,
+one range (§2.2). A row whose answer needs a value cut, a comparison that
+raises, or whose versions held are of more than one value, as a row
+being changed is, is checked. It was built because reading a large
+value's nodes from the stored form, even in one pass, reads all of the
+value, and a query of a few of its nodes then costs the whole value; the
+primary reads the nodes asked and their anchors' subtrees. Small values
+are cheaper checked, and the planner weighs `xml_cost` against
+`XmlCost::of_check` of the value's octets.
+
 An index is given a row's value whole, but may not be able to read it as
 it takes its entries back: garbage collection frees a version's large
 objects before its entries, and recovery and a spilled undo name an
@@ -3089,7 +3111,9 @@ literals, and gives the rows whose value may hold a node of that path of
 which they hold, each once, with what it costs. The paths of the
 dictionary are found by the tokens the last steps fix and matched step by
 step; each matching path's entries are read in the comparisons' range of
-keys. The rows are a superset, as a value is cut and a reader sees one
+keys; of the primary, its rows answered of the path. A query
+(`XmlQuery`) is a lookup and a filter: the rows of an index's lookup are a
+superset of its rows. The rows are a superset, as a value is cut and a reader sees one
 version of its row, so its caller checks each row it fetches, as for a
 function lookup (D34): an index changes no result. The check
 (`XmlLookup::matches`) reads the value's stored form in one pass, no tree
@@ -3100,6 +3124,11 @@ an element selected is open; it holds a stack of open elements, at most
 `MAX_NESTING`. Its nodes are taken in document order, an element before
 its attributes, the first that holds or raises answering, as a tree's
 walk would answer, which a test of many values and lookups made checks.
+A filter's anchor is an element open at which the steps above the filter
+end; each element below it keeps the filter's steps as bits too, from the
+anchor; a node selected whose anchor's filter is not yet known waits for
+it, and the filter holds once a node it selects holds, else raises as
+its anchor ends if one raised.
 A number compared also
 selects the values keyed unordered, so no row whose comparison would raise
 err:FORG0001 is skipped (D15). D34's function lookup does not fit:

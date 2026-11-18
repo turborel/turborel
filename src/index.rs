@@ -29,7 +29,7 @@ pub use key::Key;
 pub use nearest::{NearestQuery, NeighbourEntries};
 pub use projection::KeyProjection;
 pub use rtree::RTreeMethod;
-pub use xml::{XML_PATH_METHOD, XML_PROPERTY_METHOD, XML_VALUE_METHOD, XmlMethod};
+pub use xml::{XML_PATH_METHOD, XML_PRIMARY_METHOD, XML_PROPERTY_METHOD, XML_VALUE_METHOD, XmlMethod};
 
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::error::Result;
@@ -559,6 +559,14 @@ pub trait Index: Send + Sync {
     /// index, as `search` does. Default: none, for an index of no XML
     /// lookup.
     fn xml_rows(self: Arc<Self>, _lookup: &xml::XmlLookup) -> Option<RowIds> {
+        None
+    }
+    /// \[EXTENSION\] (RULES.md D86) Of an index that holds a row's nodes,
+    /// the rows `query` holds of, or may, from its entries alone, each
+    /// once: one that may is checked (`XmlQuery::matches`), one not given
+    /// does not hold. It holds the index. Default: none, for an index whose
+    /// rows are each checked.
+    fn xml_answers(self: Arc<Self>, _query: &xml::XmlQuery) -> Option<xml::XmlAnswers> {
         None
     }
     /// \[EXTENSION\] (RULES.md D86, D35) What `xml_rows` of `lookup` costs,

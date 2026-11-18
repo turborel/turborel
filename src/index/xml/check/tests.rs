@@ -5,24 +5,27 @@
 use std::fmt::Write;
 
 use super::*;
-use crate::index::xml::lookup::{PathPattern, Step, steps_match};
+use crate::index::xml::lookup::{PathPattern, Step, Target, XmlFilter, XmlQuery, steps_match};
 use crate::xml::{Item, Kind, NodeId, Sequence, Syntax, Tree, Whitespace, encode, parse};
 
-/// The answer of `lookup` of `sequence`, decoded into trees and walked:
+/// The answer of `query` of `sequence`, decoded into trees and walked:
 /// each element below each item, in document order, then its attributes;
 /// the first that holds, or raises, answers.
-fn by_tree(lookup: &XmlLookup, sequence: &Sequence) -> Result<bool> {
-    lookup.pattern.steps.first().ok_or_else(|| SqlError::new(Code::Api, "no step"))?;
+fn by_tree(query: &XmlQuery, sequence: &Sequence) -> Result<bool> {
+    query.lookup.pattern.steps.first().ok_or_else(|| SqlError::new(Code::Api, "no step"))?;
+    if let Some(filter) = &query.filter {
+        query.lookup.anchored(filter)?;
+    }
     for item in sequence.items() {
         let Item::Node(node) = item else { continue };
         let (tree, root) = (node.tree(), node.id());
         let below = std::iter::once(root).chain(tree.descendants(root)).filter(|&n| tree.kind(n) == Some(Kind::Element));
         for element in below {
-            if element != root && holds_of(lookup, tree, (root, element))? {
+            if element != root && holds_of(query, tree, (root, element))? {
                 return Ok(true);
             }
             for attribute in tree.attributes(element) {
-                if holds_of(lookup, tree, (root, attribute))? {
+                if holds_of(query, tree, (root, attribute))? {
                     return Ok(true);
                 }
             }
@@ -33,22 +36,56 @@ fn by_tree(lookup: &XmlLookup, sequence: &Sequence) -> Result<bool> {
 
 /// Whether `node`, below item `root`, is selected and its comparisons
 /// hold of its string value.
-fn holds_of(lookup: &XmlLookup, tree: &Tree, (root, node): (NodeId, NodeId)) -> Result<bool> {
-    let kind = match lookup.pattern.target {
+fn holds_of(query: &XmlQuery, tree: &Tree, (root, node): (NodeId, NodeId)) -> Result<bool> {
+    if !selected(&query.lookup.pattern, tree, (root, node)) || !query.lookup.compared(&tree.string_value(node))? {
+        return Ok(false);
+    }
+    let Some(filter) = &query.filter else { return Ok(true) };
+    let mut anchor = node;
+    for _ in 0..filter.above {
+        if anchor == root {
+            return Ok(false);
+        }
+        let Some(parent) = tree.parent(anchor) else { return Ok(false) };
+        anchor = parent;
+    }
+    filter_holds(filter, tree, anchor)
+}
+
+/// Whether `pattern` selects `node` from `root`: of its kind, the names
+/// from below `root` down to it its steps'.
+fn selected(pattern: &PathPattern, tree: &Tree, (root, node): (NodeId, NodeId)) -> bool {
+    let kind = match pattern.target {
         Target::Element => Kind::Element,
         Target::Attribute => Kind::Attribute,
     };
-    if tree.kind(node) != Some(kind) {
-        return Ok(false);
+    if tree.kind(node) != Some(kind) || node == root {
+        return false;
     }
     let above = std::iter::successors(Some(node), |&n| tree.parent(n)).take_while(|&n| n != root);
     let mut names: Vec<Named<'_>> = above.filter_map(|n| tree.name(n)).map(Named).collect();
     names.reverse();
-    let steps: Vec<(Axis, Option<Named<'_>>)> = lookup.pattern.steps.iter().map(|s| (s.axis, s.name.as_ref().map(Named))).collect();
-    if !steps_match(&steps, &names) {
-        return Ok(false);
+    let steps: Vec<(Axis, Option<Named<'_>>)> = pattern.steps.iter().map(|s| (s.axis, s.name.as_ref().map(Named))).collect();
+    steps_match(&steps, &names)
+}
+
+/// Whether `filter` holds of `anchor`: a node it selects below it holds;
+/// else the first error one raised; else false.
+fn filter_holds(filter: &XmlFilter, tree: &Tree, anchor: NodeId) -> Result<bool> {
+    let mut raised = None;
+    let elements = std::iter::once(anchor).chain(tree.descendants(anchor)).filter(|&n| tree.kind(n) == Some(Kind::Element));
+    for node in elements.flat_map(|e| std::iter::once(e).chain(tree.attributes(e))) {
+        if selected(&filter.pattern, tree, (anchor, node)) {
+            match compared_by(&filter.comparisons, &tree.string_value(node)) {
+                Ok(true) => return Ok(true),
+                Ok(false) => {}
+                Err(e) => {
+                    raised.get_or_insert(e);
+                }
+            }
+        }
     }
-    lookup.compared(&tree.string_value(node))
+    raised.map_or(Ok(false), Err)
 }
 
 /// A name compared as an expanded QName, whatever its prefix.
@@ -61,10 +98,10 @@ impl PartialEq for Named<'_> {
 }
 
 /// A generator of a fixed seed: xorshift.
-struct Made(u64);
+pub(in crate::index::xml) struct Made(pub(in crate::index::xml) u64);
 
 impl Made {
-    fn below(&mut self, n: usize) -> usize {
+    pub(in crate::index::xml) fn below(&mut self, n: usize) -> usize {
         self.0 ^= self.0.wrapping_shl(13);
         self.0 ^= self.0.wrapping_shr(7);
         self.0 ^= self.0.wrapping_shl(17);
@@ -80,7 +117,7 @@ const NAMES: [&str; 3] = ["a", "b", "c"];
 const TEXTS: [&str; 8] = ["1", "2.5", " 3 ", "x", "", "-INF", "NaN", "10"];
 
 /// An element made, `depth` deep at most, as text.
-fn element(made: &mut Made, depth: usize, out: &mut String) {
+pub(in crate::index::xml) fn element(made: &mut Made, depth: usize, out: &mut String) {
     let name = made.pick(&NAMES);
     out.push('<');
     out.push_str(name);
@@ -103,9 +140,14 @@ fn element(made: &mut Made, depth: usize, out: &mut String) {
     out.push('>');
 }
 
-/// A lookup made: one to three steps, an element or an attribute, none to
-/// two comparisons.
-fn lookup(made: &mut Made) -> XmlLookup {
+/// A query made: a lookup of one to three steps, an element or an
+/// attribute, none to two comparisons; and at times a filter.
+pub(in crate::index::xml) fn lookup(made: &mut Made) -> XmlQuery {
+    lookup_of(made, true)
+}
+
+/// A query made, with a filter made if `filtered`.
+fn lookup_of(made: &mut Made, filtered: bool) -> XmlQuery {
     let steps = (0..=made.below(3))
         .map(|_| {
             let axis = if made.below(2) == 0 { Axis::Child } else { Axis::Descendant };
@@ -126,23 +168,30 @@ fn lookup(made: &mut Made) -> XmlLookup {
             Comparison { op, literal }
         })
         .collect();
-    XmlLookup { pattern: PathPattern { steps, target }, comparisons, row: None }
+    let pattern = PathPattern { steps, target };
+    let below: usize = pattern.steps.iter().rev().take_while(|s| s.axis == Axis::Child).count();
+    let filter = (filtered && below > 0 && made.below(2) == 0).then(|| {
+        let inner = lookup_of(made, false).lookup;
+        XmlFilter { above: made.below(below).saturating_add(1), pattern: inner.pattern, comparisons: inner.comparisons }
+    });
+    XmlQuery { lookup: XmlLookup { pattern, comparisons, row: None }, filter }
 }
 
 /// The answer's kind: true, false, or an error's SQLCODE.
-fn kind(answer: &Result<bool>) -> std::result::Result<bool, i32> {
+pub(in crate::index::xml) fn kind(answer: &Result<bool>) -> std::result::Result<bool, i32> {
     answer.as_ref().copied().map_err(SqlError::sqlcode)
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 [XQuery §3.2, §3.5.2] [XQueryDM
-/// §6.2.3]: of 400 values made, documents and sequences of elements, each
-/// asked 25 lookups made, the answer read in one pass over the stored form
-/// is that of the value decoded and walked: true, false, or the same
-/// error, in document order.
+/// Verifies: [EXTENSION] RULES.md D86 [XQuery §3.2, §3.2.2, §3.5.2]
+/// [XQueryDM §6.2.3]: of 400 values made, documents and sequences of
+/// elements, each asked 40 lookups made, some filtered by a predicate of
+/// an ancestor, the answer read in one pass over the stored form is that
+/// of the value decoded and walked: true, false, or an error, in document
+/// order.
 #[test]
 fn one_pass_answers_as_the_tree_does() {
     let mut made = Made(0x9E37_79B9_7F4A_7C15);
-    let mut asked = [0_usize; 3];
+    let mut asked = [0_usize; 6];
     for n in 0..400_usize {
         let mut text = String::new();
         for _ in 0..=made.below(2) {
@@ -157,18 +206,19 @@ fn one_pass_answers_as_the_tree_does() {
             Sequence::new(items)
         };
         let stored = encode(&sequence);
-        for _ in 0..25_usize {
+        for _ in 0..40_usize {
             let lookup = lookup(&mut made);
             let (streamed, walked) = (lookup.matches_stored(&stored), by_tree(&lookup, &sequence));
             assert_eq!(kind(&streamed), kind(&walked), "{text} {lookup:?}");
-            asked[match kind(&walked) {
+            let answered = match kind(&walked) {
                 Ok(true) => 0,
                 Ok(false) => 1,
                 Err(_) => 2,
-            }] += 1_usize;
+            };
+            asked[answered + if lookup.filter.is_some() { 3 } else { 0 }] += 1_usize;
         }
     }
-    assert!(asked.iter().all(|&n| n > 100), "every answer is met often: {asked:?}");
+    assert!(asked.iter().all(|&n| n > 30), "every answer is met often, with a filter and without: {asked:?}");
 }
 
 /// Verifies: [EXTENSION] RULES.md D86, D18: a path of no step, or of more
@@ -188,4 +238,29 @@ fn paths_are_bounded_and_values_read_whole() {
     let lob = crate::value::lob::fixtures::octets_by(&stored, 4);
     assert!(path(1).matches(&XmlValue::stored(lob)).unwrap(), "read through its chunks");
     assert!(!path(2).matches(&XmlValue::stored(crate::value::lob::Lob::of_octets(&stored))).unwrap());
+}
+
+/// Verifies: [EXTENSION] RULES.md D86 [XQuery §3.2.2, §3.5.2]: a node
+/// selected waits for its anchor's filter: of `//a/b[../c/@x = 1]`, the
+/// first b's anchor raises as it ends, after a later b's anchor holds, and
+/// the first b, before it, answers.
+#[test]
+fn a_node_waits_for_its_anchors_filter() {
+    let text = r#"<a><b/><a><b/><c x="1"/></a><c x="no"/></a>"#;
+    let sequence = Sequence::document(parse(text, Syntax::Content, Whitespace::Preserve).unwrap());
+    let step = |axis, name: &str| Step { axis, name: Some(QName::local(name)) };
+    let query = XmlQuery {
+        lookup: XmlLookup {
+            pattern: PathPattern { steps: vec![step(Axis::Descendant, "a"), step(Axis::Child, "b")], target: Target::Element },
+            comparisons: Vec::new(),
+            row: None,
+        },
+        filter: Some(XmlFilter {
+            above: 1,
+            pattern: PathPattern { steps: vec![step(Axis::Child, "c"), step(Axis::Child, "x")], target: Target::Attribute },
+            comparisons: vec![Comparison { op: CompOp::Eq, literal: Literal::Number(1.0) }],
+        }),
+    };
+    assert_eq!(kind(&by_tree(&query, &sequence)), Err(-301_i32));
+    assert_eq!(kind(&query.matches_stored(&encode(&sequence))), Err(-301_i32));
 }

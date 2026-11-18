@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::keys::{ENTRIES, ROW, after, ordinal_of, parse_entry};
-use super::lookup::{Resolved, ValueRange, XmlCost, XmlLookup, value_ranges};
-use super::{Held, Method, XmlIndex};
+use super::lookup::{Resolved, ValueRange, XmlCost, XmlLookup, XmlQuery, value_ranges};
+use super::{Held, Method, VALUE_PREFIX_BYTES, XmlIndex};
 use crate::engine::tree::{Direction, Scan, scan_of};
 use crate::error::Result;
 use crate::index::RowIds;
@@ -99,7 +99,11 @@ impl Checks {
 
 /// The ids of the paths of the dictionary `resolved` matches, as they
 /// are read.
-fn matched_paths(index: &Arc<XmlIndex>, resolved: Arc<Resolved>, seeks: &AtomicUsize) -> Box<dyn Iterator<Item = Result<u64>> + Send> {
+pub(super) fn matched_paths(
+    index: &Arc<XmlIndex>,
+    resolved: Arc<Resolved>,
+    seeks: &AtomicUsize,
+) -> Box<dyn Iterator<Item = Result<u64>> + Send> {
     if resolved.exact {
         seeks.fetch_add(1, Ordering::Relaxed);
         return Box::new(index.dictionary().path(&resolved.prefix, false).transpose().into_iter());
@@ -121,7 +125,7 @@ impl XmlIndex {
     pub(super) fn found(self: &Arc<Self>, lookup: &XmlLookup, seeks: &Arc<AtomicUsize>) -> Result<Found> {
         let Some(resolved) = lookup.pattern.resolve(&self.dictionary())? else { return Ok(Box::new(std::iter::empty())) };
         let resolved = Arc::new(resolved);
-        let values = value_ranges(&lookup.comparisons);
+        let values = value_ranges(&lookup.comparisons, VALUE_PREFIX_BYTES);
         let by_path = |prefix: fn(u64, Option<RowId>) -> Vec<u8>| -> Found {
             let (index, seeks, values, row, method) = (Arc::clone(self), Arc::clone(seeks), values.clone(), lookup.row, self.method);
             Box::new(matched_paths(self, Arc::clone(&resolved), seeks.as_ref()).flat_map(move |path| match path {
@@ -144,6 +148,10 @@ impl XmlIndex {
             (Method::Property, None) => {
                 let scans = ranged(self, &[ENTRIES], None, seeks);
                 rows_of(scans, (self.method, None), self.checks(resolved, values))
+            }
+            (Method::Primary, _) => {
+                let query = XmlQuery { lookup: lookup.clone(), filter: None };
+                Box::new(self.primary_answers(&query).map(|answer| answer.map(|(row, _)| row)))
             }
         })
     }
@@ -179,6 +187,9 @@ impl XmlIndex {
     /// What `lookup` costs: its entries counted to `MOST_COUNTED`, and its
     /// seeks, each its tree's height.
     pub(super) fn lookup_cost(self: &Arc<Self>, lookup: &XmlLookup) -> XmlCost {
+        if self.method == Method::Primary {
+            return self.primary_cost(lookup);
+        }
         let seeks = Arc::new(AtomicUsize::new(0));
         let Ok(found) = self.found(lookup, &seeks) else { return XmlCost { entries: None, pages: None } };
         let mut entries = Some(0_usize);

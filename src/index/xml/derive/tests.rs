@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use super::*;
+use crate::index::xml::VALUE_PREFIX_BYTES;
 use crate::index::xml::keys::Cursor;
 use crate::xml::{Item, Node, Sequence, Syntax, Whitespace, encode, parse};
 
@@ -38,7 +39,7 @@ fn derived(bytes: &[u8]) -> Vec<Seen> {
         seen.push((k.path.to_vec(), String::from_utf8(k.text.to_vec()).unwrap(), k.whole, dotted(k.ordpath)));
         Ok(())
     };
-    derive(bytes, &mut names, &mut visit).unwrap();
+    derive(bytes, VALUE_PREFIX_BYTES, &mut names, &mut visit).unwrap();
     let by_token: HashMap<u64, String> = tokens.into_iter().map(|(n, t)| (t, n)).collect();
     seen.into_iter()
         .map(|(path, text, whole, ordpath)| {
@@ -117,7 +118,7 @@ fn an_element_item_is_the_context_of_its_paths() {
 #[test]
 fn keyed_nodes_are_bounded() {
     let elements = |n: usize| stored(&format!("<r>{}</r>", "<b/>".repeat(n)));
-    let count = |bytes: &[u8]| derive(bytes, &mut |_| Ok(Some(1)), &mut |_| Ok(()));
+    let count = |bytes: &[u8]| derive(bytes, VALUE_PREFIX_BYTES, &mut |_| Ok(Some(1)), &mut |_| Ok(()));
     assert_eq!(count(&elements(MAX_KEYED_NODES - 1)).unwrap(), MAX_KEYED_NODES, "the r and its b's");
     assert_eq!(count(&elements(MAX_KEYED_NODES)).unwrap_err().sqlcode(), -900_i32);
 }
@@ -128,7 +129,7 @@ fn keyed_nodes_are_bounded() {
 fn a_name_with_no_token_keys_nothing_below_it() {
     let mut names = |n: &QName| Ok((&*n.local != "s").then_some(7));
     let mut seen = Vec::new();
-    derive(&stored("<r><s><t/></s><u/></r>"), &mut names, &mut |k| {
+    derive(&stored("<r><s><t/></s><u/></r>"), VALUE_PREFIX_BYTES, &mut names, &mut |k| {
         seen.push(dotted(k.ordpath));
         Ok(())
     })
@@ -142,5 +143,5 @@ fn a_name_with_no_token_keys_nothing_below_it() {
 fn bytes_of_no_stored_form_are_refused() {
     let mut bytes = stored("<r/>");
     bytes.push(0);
-    assert_eq!(derive(&bytes, &mut |_| Ok(Some(1)), &mut |_| Ok(())).unwrap_err().sqlcode(), -916_i32);
+    assert_eq!(derive(&bytes, VALUE_PREFIX_BYTES, &mut |_| Ok(Some(1)), &mut |_| Ok(())).unwrap_err().sqlcode(), -916_i32);
 }

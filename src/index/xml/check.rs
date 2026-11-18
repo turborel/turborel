@@ -20,13 +20,13 @@
 //! so an answer of a node is kept until no element selected before it is
 //! open.
 
-use std::borrow::Cow;
-
-use super::lookup::{Axis, Comparison, Literal, MAX_STEPS, Step, Target, XmlLookup};
+use super::lookup::{Axis, Comparison, Literal, MAX_STEPS, Step, XmlFilter, XmlLookup, XmlQuery};
 use crate::error::{Code, Result, SqlError};
 use crate::value::CompOp;
 use crate::value::xml::XmlValue;
-use crate::xml::{Atomic, AtomicType, Event, Events, MAX_NESTING, MAX_STORED, QName, cast};
+use reading::Reading;
+
+use crate::xml::{Atomic, AtomicType, Event, Events, MAX_STORED, QName, cast};
 
 /// Bits of steps: bit k for step k, from 1; bit 0 for none, at the item.
 type Steps = u128;
@@ -97,32 +97,6 @@ impl<'l> Compiled<'l> {
     }
 }
 
-/// An element open: the steps ending at it and matched at or above it,
-/// and, if it is selected, its place in document order and where its
-/// text begins.
-struct Open {
-    ended: Steps,
-    reached: Steps,
-    selected: Option<(u64, usize)>,
-}
-
-/// The answer of a value, being read.
-struct Reading<'l> {
-    lookup: &'l XmlLookup,
-    path: Compiled<'l>,
-    /// The steps each name of the item read passes.
-    names: Vec<Steps>,
-    open: Vec<Open>,
-    /// The places of the elements selected and open, outermost first.
-    pending: Vec<u64>,
-    /// The text since the outermost element selected and open began.
-    text: String,
-    /// The place of the node met last.
-    at: u64,
-    /// The first answer, by place: true, or the error raised.
-    first: Option<(u64, Option<SqlError>)>,
-}
-
 impl XmlLookup {
     /// Whether `value` has a node the lookup's path selects of which every
     /// comparison holds; nodes are taken in document order, an element
@@ -135,17 +109,7 @@ impl XmlLookup {
     /// [XQuery §3.5.2]; SQLCODE -910 of a path of no step, -900 of one of
     /// more than `MAX_STEPS`; the errors of reading the value.
     pub fn matches(&self, value: &XmlValue) -> Result<bool> {
-        let lob = value.lob()?;
-        let octets = if let Some(octets) = lob.inline() {
-            Cow::Borrowed(octets)
-        } else {
-            let most = u64::try_from(MAX_STORED).unwrap_or(u64::MAX);
-            let read = lob.bounded(most)?;
-            Cow::Owned(read.ok_or_else(|| {
-                SqlError::new(Code::Corrupt, format!("[DESIGN] an XML value stored is longer than {MAX_STORED} octets (RULES.md D86)"))
-            })?)
-        };
-        self.matches_stored(&octets)
+        read(self, None, &octets_of(value)?)
     }
 
     /// `matches` of the value whose stored form is `octets`.
@@ -154,128 +118,61 @@ impl XmlLookup {
     ///
     /// As `matches`; SQLCODE -916 if the octets are no stored form.
     pub fn matches_stored(&self, octets: &[u8]) -> Result<bool> {
-        let mut reading = Reading {
-            lookup: self,
-            path: Compiled::of(&self.pattern.steps)?,
-            names: Vec::new(),
-            open: Vec::new(),
-            pending: Vec::new(),
-            text: String::new(),
-            at: 0,
-            first: None,
-        };
-        let mut events = Events::new(octets)?;
-        while let Some(event) = events.next_event()? {
-            if event == Event::Node {
-                reading.names = reading.path.names(events.names());
-            }
-            reading.event(event)?;
-            if let Some(answer) = reading.answered() {
-                return answer;
-            }
-        }
-        Ok(false)
+        read(self, None, octets)
     }
 }
 
-impl Reading<'_> {
-    /// Takes `event`.
-    fn event(&mut self, event: Event<'_>) -> Result<()> {
-        match event {
-            Event::Node | Event::Atomic | Event::Other | Event::Attribute { .. } => {}
-            Event::Document => self.push(None)?,
-            Event::Element { name, attributes } => {
-                self.push(Some(name))?;
-                for (attribute, value) in attributes {
-                    self.attribute(attribute, value);
-                }
-            }
-            Event::Text(text) => {
-                if !self.pending.is_empty() {
-                    self.text.push_str(text);
-                }
-            }
-            Event::End => self.end(),
-        }
-        Ok(())
+impl XmlQuery {
+    /// Whether `value` has a node the lookup's path selects of which every
+    /// comparison holds and whose anchor the filter holds of, as
+    /// `XmlLookup::matches` answers: the filter holds of an anchor if a
+    /// node it selects holds, else raises if one raised.
+    ///
+    /// # Errors
+    ///
+    /// As `XmlLookup::matches`; SQLCODE -910 of a filter not of an
+    /// ancestor the lookup's last steps, child steps, reach.
+    pub fn matches(&self, value: &XmlValue) -> Result<bool> {
+        read(&self.lookup, self.filter.as_ref(), &octets_of(value)?)
     }
 
-    /// The steps the name numbered `name` passes.
-    fn passes(&self, name: u32) -> Steps {
-        usize::try_from(name).ok().and_then(|n| self.names.get(n)).copied().unwrap_or(0)
+    /// `matches` of the value whose stored form is `octets`.
+    ///
+    /// # Errors
+    ///
+    /// As `matches`; SQLCODE -916 if the octets are no stored form.
+    pub fn matches_stored(&self, octets: &[u8]) -> Result<bool> {
+        read(&self.lookup, self.filter.as_ref(), octets)
     }
+}
 
-    /// Opens a document node, or an element named `name`: its item's root,
-    /// at which no step but none ends, if nothing is open.
-    fn push(&mut self, name: Option<u32>) -> Result<()> {
-        if self.open.len() > MAX_NESTING {
-            return Err(SqlError::new(
-                Code::Corrupt,
-                format!("[DESIGN] a stored XML value nests deeper than {MAX_NESTING} (RULES.md D86)"),
-            ));
-        }
-        let Some(parent) = self.open.last() else {
-            self.open.push(Open { ended: bit(0), reached: bit(0), selected: None });
-            return Ok(());
-        };
-        self.at = self.at.saturating_add(1);
-        let ended = name.map_or(0, |n| self.path.child(self.passes(n), (parent.ended, parent.reached)));
-        let reached = parent.reached | ended;
-        let selected = (self.lookup.pattern.target == Target::Element && self.path.selects(ended)).then_some((self.at, self.text.len()));
-        if let Some((at, _)) = selected {
-            self.pending.push(at);
-        }
-        self.open.push(Open { ended, reached, selected });
-        Ok(())
+/// The octets of `value`'s stored form, read whole if it is a large object.
+fn octets_of(value: &XmlValue) -> Result<Vec<u8>> {
+    let lob = value.lob()?;
+    if let Some(octets) = lob.inline() {
+        return Ok(octets.to_vec());
     }
+    let most = u64::try_from(MAX_STORED).unwrap_or(u64::MAX);
+    lob.bounded(most)?.ok_or_else(|| {
+        SqlError::new(Code::Corrupt, format!("[DESIGN] an XML value stored is longer than {MAX_STORED} octets (RULES.md D86)"))
+    })
+}
 
-    /// An attribute of the element open last, named `name`, of `value`.
-    fn attribute(&mut self, name: u32, value: &str) {
-        self.at = self.at.saturating_add(1);
-        if self.lookup.pattern.target != Target::Attribute {
-            return;
+/// The answer of `lookup`, filtered by `filter` if given, of the value
+/// whose stored form is `octets`.
+fn read(lookup: &XmlLookup, filter: Option<&XmlFilter>, octets: &[u8]) -> Result<bool> {
+    let mut reading = Reading::of(lookup, filter)?;
+    let mut events = Events::new(octets)?;
+    while let Some(event) = events.next_event()? {
+        if event == Event::Node {
+            reading.named(events.names());
         }
-        let Some(element) = self.open.last() else { return };
-        if self.path.selects(self.path.child(self.passes(name), (element.ended, element.reached))) {
-            let answer = self.lookup.compared(value);
-            self.answer(self.at, answer);
-        }
-    }
-
-    /// Closes the node open last, answering of it if it is selected.
-    fn end(&mut self) {
-        let Some(closed) = self.open.pop() else { return };
-        let Some((at, start)) = closed.selected else { return };
-        self.pending.pop();
-        let answer = self.lookup.compared(self.text.get(start..).unwrap_or_default());
-        self.answer(at, answer);
-        if self.pending.is_empty() {
-            self.text.clear();
+        reading.event(event)?;
+        if let Some(answer) = reading.answered() {
+            return answer;
         }
     }
-
-    /// The answer `answer` of the node at place `at`: kept if it holds or
-    /// raises, and is the first so far.
-    fn answer(&mut self, at: u64, answer: Result<bool>) {
-        let kept = match answer {
-            Ok(false) => return,
-            Ok(true) => None,
-            Err(e) => Some(e),
-        };
-        if self.first.as_ref().is_none_or(|(first, _)| at < *first) {
-            self.first = Some((at, kept));
-        }
-    }
-
-    /// The answer, once no node before the first that answers may still
-    /// answer: none is an element selected and open.
-    fn answered(&mut self) -> Option<Result<bool>> {
-        let (at, _) = self.first.as_ref()?;
-        if self.pending.first().is_some_and(|open| open < at) {
-            return None;
-        }
-        self.first.take().map(|(_, raised)| raised.map_or(Ok(true), Err))
-    }
+    Ok(false)
 }
 
 impl XmlLookup {
@@ -285,13 +182,23 @@ impl XmlLookup {
     ///
     /// err:FORG0001 if a numeric one meets a value that is no number.
     pub(super) fn compared(&self, text: &str) -> Result<bool> {
-        for comparison in &self.comparisons {
-            if !holds(comparison, text)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        compared_by(&self.comparisons, text)
     }
+}
+
+/// Whether every comparison of `comparisons` holds of a node's value
+/// `text`, in order.
+///
+/// # Errors
+///
+/// err:FORG0001 if a numeric one meets a value that is no number.
+pub(super) fn compared_by(comparisons: &[Comparison], text: &str) -> Result<bool> {
+    for comparison in comparisons {
+        if !holds(comparison, text)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Whether `comparison` holds of a node's `xdt:untypedAtomic` value
@@ -324,8 +231,10 @@ fn holds(comparison: &Comparison, text: &str) -> Result<bool> {
     }))
 }
 
+mod reading;
+
 // Unit tests: the answer of each value of many made, and of many lookups,
 // that of the value decoded into a tree and walked (RULES.md R-TEST-1,
 // R-TEST-2).
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

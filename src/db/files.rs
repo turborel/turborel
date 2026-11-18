@@ -535,7 +535,7 @@ impl Database {
         self.register_engine(Box::new(RowStore::new(files, TableOptions::default())))?;
         self.register_index_method(Box::new(BTreeMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(HashMethod::new(Arc::clone(&pool), file)))?;
-        let xml = [xml::Method::Path, xml::Method::Value, xml::Method::Property].map(|m| XmlMethod::new(m, Arc::clone(&pool), file));
+        let xml = xml::METHODS.map(|m| XmlMethod::new(m, Arc::clone(&pool), file));
         xml.into_iter().try_for_each(|m| self.register_index_method(Box::new(m)))?;
         self.register_index_method(Box::new(RTreeMethod::new(pool, file)))
     }

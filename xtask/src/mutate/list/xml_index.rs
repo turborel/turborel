@@ -1,13 +1,14 @@
 //! Mutations of the XML indexes: the ORDPATH's odd components, a value's
 //! cut, the numbers' order and their unordered candidates, the steps'
 //! axes and the dictionary's prefixes, the bounds, the entries of a value
-//! held as a large object taken back unread, and the check's steps and
-//! order (RULES.md R-TEST-9, D86).
+//! held as a large object taken back unread, the check's steps, order
+//! and filters, and the primary's parent join, descendants, versions and
+//! values cut (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each XML index mechanism broken alone, and the tests that fail.
-pub const XML_INDEX: [Mutation; 13] = [
+pub const XML_INDEX: [Mutation; 19] = [
     Mutation {
         name: "xml-index-ordpath-odd",
         package: Package::Core,
@@ -132,8 +133,8 @@ pub const XML_INDEX: [Mutation; 13] = [
         name: "xml-check-document-order",
         package: Package::Core,
         breaks: "the check answers by a node before an element selected earlier, still open, is known",
-        file: "src/index/xml/check.rs",
-        original: "        if self.pending.first().is_some_and(|open| open < at) {",
+        file: "src/index/xml/check/reading.rs",
+        original: "        if self.pending.first().copied().into_iter().chain(waiting).any(|w| w < *at) {",
         replacement: "        if false {",
         integration: &[],
         unit: &["index::xml::check::tests::one_pass_answers_as_the_tree_does"],
@@ -147,5 +148,68 @@ pub const XML_INDEX: [Mutation; 13] = [
         replacement: "        passed & ((after(ended) & self.child) | (after(ended) & self.descendant))",
         integration: &[],
         unit: &["index::xml::check::tests::one_pass_answers_as_the_tree_does"],
+    },
+    Mutation {
+        name: "xml-primary-parent-join",
+        package: Package::Core,
+        breaks: "a filter's anchor is a node one step lower than its ORDPATH less its steps above",
+        file: "src/index/xml/primary.rs",
+        original: "    let kept = ends.len().checked_sub(less).and_then(|n| n.checked_sub(1)).and_then(|n| ends.get(n)).copied();",
+        replacement: "    let kept = ends.len().checked_sub(less.saturating_sub(1)).and_then(|n| n.checked_sub(1)).and_then(|n| ends.get(n)).copied();",
+        integration: &[],
+        unit: &[
+            "index::xml::primary::tests::the_primary_answers_as_each_value_does",
+            "index::xml::primary::tests::only_the_primary_answers_and_ancestors_are_prefixes",
+        ],
+    },
+    Mutation {
+        name: "xml-primary-descendants",
+        package: Package::Core,
+        breaks: "a filter reads the Infoset past its anchor's ORDPATHs, not its descendants alone",
+        file: "src/index/xml/primary.rs",
+        original: "        let (below, upper) = ([&prefix[..], &[1]].concat(), after(&prefix));",
+        replacement: "        let (below, upper) = ([&prefix[..], &[1]].concat(), after(&[ENTRIES]));",
+        integration: &[],
+        unit: &["index::xml::primary::tests::the_primary_answers_as_each_value_does"],
+    },
+    Mutation {
+        name: "xml-primary-versions",
+        package: Package::Core,
+        breaks: "a row whose versions are of two values is answered from their entries mixed",
+        file: "src/index/xml/primary.rs",
+        original: "        Ok(held.take(2).collect::<Result<Vec<_>>>()?.len() > 1)",
+        replacement: "        Ok(held.take(2).collect::<Result<Vec<_>>>()?.len() > 2)",
+        integration: &[],
+        unit: &["index::xml::primary::tests::a_cut_value_and_versions_alike_are_checked"],
+    },
+    Mutation {
+        name: "xml-primary-cut-order",
+        package: Package::Core,
+        breaks: "a value cut is taken as greater than a literal its first octets begin",
+        file: "src/index/xml/primary.rs",
+        original: "    shared.or_else(|| (literal.len() <= prefix.len()).then_some(Ordering::Greater))",
+        replacement: "    shared.or(Some(Ordering::Greater))",
+        integration: &[],
+        unit: &["index::xml::primary::tests::a_cut_value_and_versions_alike_are_checked"],
+    },
+    Mutation {
+        name: "xml-check-filter-anchors",
+        package: Package::Core,
+        breaks: "the check keeps no anchor of a filter, so a node it selects never holds",
+        file: "src/index/xml/check/reading.rs",
+        original: "        if self.filter.as_ref().is_some_and(|f| ended & f.anchor != 0) {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &["index::xml::check::tests::one_pass_answers_as_the_tree_does"],
+    },
+    Mutation {
+        name: "xml-check-filter-waits",
+        package: Package::Core,
+        breaks: "the check answers by a node after one waiting for its anchor's filter",
+        file: "src/index/xml/check/reading.rs",
+        original: "        if self.pending.first().copied().into_iter().chain(waiting).any(|w| w < *at) {",
+        replacement: "        if self.pending.first().copied().into_iter().chain(waiting.take(0)).any(|w| w < *at) {",
+        integration: &[],
+        unit: &["index::xml::check::tests::a_node_waits_for_its_anchors_filter"],
     },
 ];
