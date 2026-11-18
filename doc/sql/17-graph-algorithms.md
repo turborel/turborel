@@ -263,7 +263,7 @@ OK
 
 ```
 GRAPH_ALGO . <algorithm> ( <edges> [ , <argument> ]... )
-  INTO PROPERTY <column name> OF <table name> [ ( <key column name> ) ]
+  INTO PROPERTY <column name> [ OF <table name> [ ( <key column name> ) ] ]
 ```
 
 INTO PROPERTY writes each vertex's value to the column of the row of
@@ -273,7 +273,17 @@ the name, it is added first, of DOUBLE PRECISION, BIGINT or the key's
 type, as the result's value column is. A row of no vertex keeps the
 value it had, null in a column just added. All of it is in the
 statement's transaction, so ROLLBACK undoes it. JACCARD_SIMILARITY,
-whose result is of pairs, writes no property.
+whose result is of pairs, writes no property. Of a table of edges, OF
+names the table.
+
+Of a property graph named in place of the edges, the property is
+written to its vertex tables, each row's the value of the vertex its
+identity names, matched by the table's key. OF names one vertex table to
+write alone, and no key column is written. Each table without the
+column has it added, of DOUBLE PRECISION, BIGINT, or the type of an
+identity: VARCHAR(8192), or of a SYS_GRAPH a `$NODE_ID`'s. Each vertex
+table is written by a MERGE of its own, so the statement needs UPDATE
+of the column on each, and the algorithm runs once for each.
 
 ```sql
 GRAPH_ALGO.BFS_LEVELS(TABLE (F), 1) INTO PROPERTY HOPS OF P;
@@ -290,6 +300,20 @@ OK
             4 | dee        |                    1
             5 | eve        |                 NULL
 (5 rows)
+```
+
+```sql
+GRAPH_ALGO.PAGERANK(SOCIAL) INTO PROPERTY PR;
+SELECT CNAME, CAST(PR * 1000 AS INTEGER) AS PERMILLE FROM CITY ORDER BY CNAME;
+```
+
+```
+OK
+ CNAME      |     PERMILLE
+------------+--------------
+ oslo       |          163
+ rome       |          220
+(2 rows)
 ```
 
 ## Runs
@@ -323,7 +347,9 @@ SELECT RUN_ID, ALGORITHM, ARGUMENTS, VERTICES, EDGES, ROWS_RETURNED, STATUS
                     6 | WCC                                                          |                                                              |                    7 |                    8 |                    7 | DONE
                     7 | PAGERANK                                                     |                                                              |                    3 |                    3 |                    3 | DONE
                     8 | BFS_LEVELS                                                   | START => 1                                                   |                    4 |                    5 |                    4 | DONE
-(8 rows)
+                    9 | PAGERANK                                                     |                                                              |                    7 |                    8 |                    7 | DONE
+                   10 | PAGERANK                                                     |                                                              |                    7 |                    8 |                    7 | DONE
+(10 rows)
 ```
 
 ## Errors

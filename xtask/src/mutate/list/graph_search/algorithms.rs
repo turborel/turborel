@@ -10,7 +10,7 @@
 use super::super::{Mutation, Package};
 
 /// The mutations of the graph algorithm library, in the order they run.
-pub const GRAPH_ALGO: [Mutation; 16] = [
+pub const GRAPH_ALGO: [Mutation; 19] = [
     Mutation {
         name: "graph-algo-damping-past-one",
         package: Package::Core,
@@ -126,8 +126,8 @@ pub const GRAPH_ALGO: [Mutation; 16] = [
         package: Package::Core,
         breaks: "INTO PROPERTY adds no column the table lacks, so its MERGE names a column of none",
         file: "src/db/graphs/property.rs",
-        original: "        let st = if desc.column(&p.column).is_some() {",
-        replacement: "        let st = if desc.column(&p.column).is_some() || true {",
+        original: "        if desc.column(column).is_some() {",
+        replacement: "        if desc.column(column).is_some() || true {",
         integration: &["graph_algo::into_property_writes_a_column"],
         unit: &[],
     },
@@ -169,6 +169,36 @@ pub const GRAPH_ALGO: [Mutation; 16] = [
         original: "keys.split_at((*a).min(keys.len()))",
         replacement: "keys.split_at(1.min(keys.len()))",
         integration: &["graph_algo::named::keys_of_several_columns"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-algo-property-of-every-table",
+        package: Package::Core,
+        breaks: "a vertex table's MERGE reads every vertex of the result, so keys of other vertex tables meet its rows",
+        file: "src/db/graphs/property/vertices.rs",
+        original: "let only_its = if native {",
+        replacement: "let only_its = if true {",
+        integration: &["graph_algo::property::a_graph_property_is_written_to_each_vertex_table"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-algo-property-first-key-value",
+        package: Package::Core,
+        breaks: "each key column of a vertex table is read from the identity's first key value",
+        file: "src/db/graphs/property/vertices.rs",
+        original: "'lax $.key[{i}]'",
+        replacement: "'lax $.key[0]'",
+        integration: &["graph_algo::property::a_graph_property_of_composite_keys_and_of_sys_graph"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-algo-property-of-other-tables",
+        package: Package::Core,
+        breaks: "INTO PROPERTY OF a vertex table writes every other vertex table instead",
+        file: "src/db/graphs/property/vertices.rs",
+        original: "is_none_or(|t| *t == e.table)",
+        replacement: "is_none_or(|t| *t != e.table)",
+        integration: &["graph_algo::property::a_graph_property_is_written_to_each_vertex_table"],
         unit: &[],
     },
 ];

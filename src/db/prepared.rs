@@ -354,6 +354,16 @@ impl Session {
         Ok(())
     }
 
+    /// The MERGE `merge` bound as it would be run. INTO PROPERTY of a
+    /// graph's name is bound as it runs: its MERGEs are made of the
+    /// graph's vertex tables then.
+    fn merge_only(&self, st: &State, merge: &crate::ast::MergeStatement, params: &Params) -> Result<()> {
+        if merge.property.as_ref().is_none_or(|p| p.graph.is_none()) {
+            drop(self.merge_bound(st, merge, params, None)?);
+        }
+        Ok(())
+    }
+
     /// `stmt`, a `<preparable statement>` other than a query, bound as it
     /// would be run, without running it: so each `?` takes its type.
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
@@ -362,7 +372,7 @@ impl Session {
             SqlStatement::UpdateSearched { table, only, portion, set, where_clause } => {
                 self.write_only(st, params, (WriteKind::UpdateSearched, (table, *only, portion.as_deref()), set, where_clause.as_ref()))?;
             }
-            SqlStatement::Merge(merge) => drop(self.merge_bound(st, merge, params, None)?),
+            SqlStatement::Merge(merge) => self.merge_only(st, merge, params)?,
             SqlStatement::DeleteSearched { table, only, portion, where_clause } => {
                 self.write_only(st, params, (WriteKind::DeleteSearched, (table, *only, portion.as_deref()), &[], where_clause.as_ref()))?;
             }

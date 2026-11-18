@@ -9,6 +9,7 @@ use turborel::error::SqlError;
 use crate::common::{failed, rows};
 
 mod named;
+mod property;
 
 /// Schema G: V (ID INTEGER PRIMARY KEY, NAME), vertices 1 to 5; E (SRC,
 /// DST, W DOUBLE PRECISION, LABEL), the edges 1 → 2 (1), 2 → 3 (2),
