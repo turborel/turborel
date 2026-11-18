@@ -95,9 +95,11 @@ fn plus_micros(m: Moment, micros: i128) -> Result<Moment> {
     Ok(match m.shape {
         Shape::Time => Moment { micros: time, ..m },
         Shape::Date => Moment { days, micros: 0, ..m },
-        Shape::DateTime => Moment { days, micros: time, ..m },
-        // No Gregorian value is added to (`dated`).
-        Shape::GYearMonth | Shape::GYear | Shape::GMonthDay | Shape::GDay | Shape::GMonth => m,
+        // No Gregorian value is added to (`dated`); were one, it would
+        // move as its starting instant.
+        Shape::DateTime | Shape::GYearMonth | Shape::GYear | Shape::GMonthDay | Shape::GDay | Shape::GMonth => {
+            Moment { days, micros: time, ..m }
+        }
     })
 }
 

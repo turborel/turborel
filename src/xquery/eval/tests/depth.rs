@@ -1,7 +1,9 @@
-//! Tests of the bound on how deep an evaluation nests (`MAX_DEPTH`).
+//! Tests of the bounds of an evaluation: how deep it nests (`MAX_DEPTH`),
+//! and how much it makes.
 
 use super::super::super::testing::{compile_with, evaluate};
 use crate::error::{Code, Result};
+use crate::xml::{Atomic, AtomicType, Item, MAX_NODES, MAX_STORED, MAX_TEXT, Sequence};
 
 /// Recursive functions of several shapes, each called with its depth: one
 /// adding, one constructing an element of each level, one binding a
@@ -39,4 +41,20 @@ fn depth_is_bounded_within_the_stack() {
         assert_eq!(refused.code, Code::Unsupported, "{shape}: {refused}");
         assert!(on_stack(HALF_DEFAULT_STACK, move || depth(shape, first_refused - 1).is_ok()), "{shape}");
     }
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] \[DESIGN\] RULES.md R-CF-6,
+/// D86: an evaluation making a sequence of more than `xml::MAX_NODES`
+/// items, a string longer than `xml::MAX_TEXT`, or nodes holding more than
+/// `xml::MAX_STORED` octets is refused with SQLCODE -900.
+#[test]
+fn sizes_are_bounded() {
+    let past = |text: &str, variables: Vec<Sequence>| evaluate(&compile_with(text, &["s"]).unwrap(), None, variables).unwrap_err().code;
+    let nodes = MAX_NODES + 1;
+    assert_eq!(past(&format!("count(1 to {nodes})"), vec![Sequence::default()]), Code::Unsupported);
+    let half = "x".repeat(MAX_TEXT.div_euclid(2) + 1);
+    let s = || vec![Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::String, lexical: half.as_str().into() })])];
+    assert_eq!(past("concat($s, $s)", s()), Code::Unsupported);
+    let trees = MAX_STORED.div_euclid(half.len()) + 1;
+    assert_eq!(past(&format!("for $i in 1 to {trees} return <a>{{$s}}</a>"), s()), Code::Unsupported);
 }

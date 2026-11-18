@@ -1,6 +1,6 @@
 //! Tests of paths, axes and predicates [XQuery §3.2, §3.3.2].
 
-use super::super::super::testing::{compile_with, evaluate, fails_with, run, shown};
+use super::super::super::testing::{code_of, compile_with, evaluate, run, shown};
 use crate::xml::{Item, Node, Sequence, Syntax, Whitespace, parse};
 
 /// A document to walk: a root of three children, the second with two of
@@ -55,7 +55,7 @@ fn node_tests() {
         "1 1 1 1"
     );
     assert_eq!(run("declare default element namespace 'u'; count(<r xmlns='u'><a/></r>/a)"), "1");
-    assert!(fails_with("<a/>/q:b", "err:XPST0008"));
+    assert_eq!(code_of("<a/>/q:b"), "err:XPST0008");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.2.2,
@@ -76,11 +76,11 @@ fn predicates() {
 /// node err:XPDY0050; the last step may give atomic values.
 #[test]
 fn path_errors() {
-    assert!(fails_with("(1, 2)/a", "err:XPTY0019"));
-    assert!(fails_with("<a/>/1/x", "err:XPTY0019"));
-    assert!(fails_with("<a><b/><c/></a>/*/(if (self::b) then . else 1)", "err:XPTY0018"));
-    assert!(fails_with("let $x := 1 return $x[child::a]", "err:XPTY0020"));
-    assert!(fails_with("<a/>/(/)", "err:XPDY0050"));
+    assert_eq!(code_of("(1, 2)/a"), "err:XPTY0019");
+    assert_eq!(code_of("<a/>/1/x"), "err:XPTY0019");
+    assert_eq!(code_of("<a><b/><c/></a>/*/(if (self::b) then . else 1)"), "err:XPTY0018");
+    assert_eq!(code_of("let $x := 1 return $x[child::a]"), "err:XPTY0020");
+    assert_eq!(code_of("<a/>/(/)"), "err:XPDY0050");
     assert_eq!(run("<a><b>1</b><b>2</b></a>/b/(. + 1)"), "2 3");
 }
 
@@ -98,4 +98,19 @@ fn context_documents_and_order_across_trees() {
         compile_with("let $x := (/r/a[2], <z/>, /r/a[1]) return (($x | ())[1] is /r/a[1]) or (($x | ())[1] instance of element(z))", &[])
             .unwrap();
     assert_eq!(shown(&evaluate(&order, Some(doc), Vec::<Sequence>::new()).unwrap()), "true");
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii, GR3] [XQuery §3.2,
+/// §3.2.1, §3.2.1.1] a leading `/` and an axis step of no context item
+/// err:XPDY0002, `/` of an atomic context item err:XPTY0020; the
+/// sibling and following axes of a node with none empty.
+#[test]
+fn steps_at_the_edges() {
+    assert_eq!(code_of("/a"), "err:XPDY0002");
+    assert_eq!(code_of("child::a"), "err:XPDY0002");
+    let slash = compile_with("/", &[]).unwrap();
+    let one = Item::Atomic(crate::xml::Atomic { kind: crate::xml::AtomicType::Integer, lexical: "1".into() });
+    assert!(evaluate(&slash, Some(one), Vec::new()).unwrap_err().msg.contains("err:XPTY0020"));
+    let edges = "count(<a/>/preceding-sibling::node()), count(<a/>/following::node()), count(<a><b/></a>/b/following::node())";
+    assert_eq!(run(edges), "0 0 0");
 }

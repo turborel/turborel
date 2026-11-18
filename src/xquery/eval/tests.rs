@@ -5,9 +5,11 @@
 mod constructors;
 mod depth;
 mod flwor;
+mod operators;
 mod paths;
+mod plugins;
 
-use super::super::testing::{compile_with, error_of, evaluate, fails_with, run, shown};
+use super::super::testing::{code_of, compile_with, error_of, evaluate, run, shown};
 use crate::error::Code;
 use crate::xml::{Atomic, AtomicType, Item, Sequence};
 
@@ -49,13 +51,13 @@ fn arithmetic_of_numbers() {
 /// err:FORG0001; each SQLSTATE 10000.
 #[test]
 fn arithmetic_errors() {
-    assert!(fails_with("1 div 0", "err:FOAR0001"));
-    assert!(fails_with("1 idiv 0", "err:FOAR0001"));
-    assert!(fails_with("1.5 mod 0", "err:FOAR0001"));
-    assert!(fails_with("99999999999999999999999999999999999999 * 10", "err:FOAR0002"));
-    assert!(fails_with("(1, 2) + 1", "err:XPTY0004"));
-    assert!(fails_with("'a' + 1", "err:XPTY0004"));
-    assert!(fails_with("<a>x</a> + 1", "err:FORG0001"));
+    assert_eq!(code_of("1 div 0"), "err:FOAR0001");
+    assert_eq!(code_of("1 idiv 0"), "err:FOAR0001");
+    assert_eq!(code_of("1.5 mod 0"), "err:FOAR0001");
+    assert_eq!(code_of("99999999999999999999999999999999999999 * 10"), "err:FOAR0002");
+    assert_eq!(code_of("(1, 2) + 1"), "err:XPTY0004");
+    assert_eq!(code_of("'a' + 1"), "err:XPTY0004");
+    assert_eq!(code_of("<a>x</a> + 1"), "err:FORG0001");
     let e = error_of("1 idiv 0");
     assert_eq!(e.state, Some(crate::error::SqlState::XQUERY_ERROR));
 }
@@ -72,8 +74,8 @@ fn arithmetic_of_dates_and_durations() {
     assert_eq!(run("xs:time('23:30:00') + xdt:dayTimeDuration('PT1H')"), "00:30:00");
     assert_eq!(run("xdt:yearMonthDuration('P1Y') * 1.5, xdt:dayTimeDuration('PT1H') div 2"), "P1Y6M PT30M");
     assert_eq!(run("xdt:yearMonthDuration('P1Y') div xdt:yearMonthDuration('P3M')"), "4");
-    assert!(fails_with("xs:date('9999-12-31') + xdt:dayTimeDuration('P1D')", "err:FODT0001"));
-    assert!(fails_with("xs:date('2026-01-01') + xs:date('2026-01-01')", "err:XPTY0004"));
+    assert_eq!(code_of("xs:date('9999-12-31') + xdt:dayTimeDuration('P1D')"), "err:FODT0001");
+    assert_eq!(code_of("xs:date('2026-01-01') + xs:date('2026-01-01')"), "err:XPTY0004");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.5.1] a
@@ -88,9 +90,9 @@ fn value_comparisons() {
     assert_eq!(run("xs:double('NaN') eq xs:double('NaN'), xs:double('NaN') ne 1"), "false true");
     assert_eq!(run("xs:date('2026-01-01') lt xs:date('2026-01-02'), xs:time('10:00:00+01:00') eq xs:time('09:00:00Z')"), "true true");
     assert_eq!(run("xdt:yearMonthDuration('P12M') eq xdt:yearMonthDuration('P1Y')"), "true");
-    assert!(fails_with("(1, 2) eq 1", "err:XPTY0004"));
-    assert!(fails_with("1 eq 'a'", "err:XPTY0004"));
-    assert!(fails_with("xs:hexBinary('AB') lt xs:hexBinary('CD')", "err:XPTY0004"));
+    assert_eq!(code_of("(1, 2) eq 1"), "err:XPTY0004");
+    assert_eq!(code_of("1 eq 'a'"), "err:XPTY0004");
+    assert_eq!(code_of("xs:hexBinary('AB') lt xs:hexBinary('CD')"), "err:XPTY0004");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.5.2] a
@@ -101,10 +103,10 @@ fn value_comparisons() {
 fn general_and_node_comparisons() {
     assert_eq!(run("(1, 2) = (2, 3), (1, 2) != (2, 3), (1, 2) = (3, 4), () = ()"), "true true false false");
     assert_eq!(run("<a>1.0</a> = 1, <a>1.0</a> = '1', <a>b</a> = <c>b</c>"), "true false true");
-    assert!(fails_with("<a>x</a> = 1", "err:FORG0001"));
+    assert_eq!(code_of("<a>x</a> = 1"), "err:FORG0001");
     assert_eq!(run("let $a := <a><b/><c/></a> return ($a/b << $a/c, $a/b is $a/b, $a/c >> $a/b, $a/b is $a/c)"), "true true true false");
     assert_eq!(run("<a/> is <a/>"), "false");
-    assert!(fails_with("(<a/>, <b/>) is <a/>", "err:XPTY0004"));
+    assert_eq!(code_of("(<a/>, <b/>) is <a/>"), "err:XPTY0004");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.6, §3.10,
@@ -117,8 +119,8 @@ fn logic_by_effective_boolean_value() {
     assert_eq!(run("1 and 'a', 0 or '', not(()), not(<a/>), boolean(xs:double('NaN'))"), "true false true false false");
     assert_eq!(run("if (()) then 1 else 2, if ((<a/>, 1)) then 1 else 2"), "2 1");
     assert_eq!(run("if (1) then 1 else 1 div 0"), "1");
-    assert!(fails_with("if ((1, 2)) then 1 else 2", "err:FORG0006"));
-    assert!(fails_with("boolean(xs:date('2026-01-01'))", "err:FORG0006"));
+    assert_eq!(code_of("if ((1, 2)) then 1 else 2"), "err:FORG0006");
+    assert_eq!(code_of("boolean(xs:date('2026-01-01'))"), "err:FORG0006");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.3.1,
@@ -129,12 +131,12 @@ fn logic_by_effective_boolean_value() {
 fn ranges_and_node_sets() {
     assert_eq!(run("1 to 5, 3 to 3, 5 to 1"), "1 2 3 4 5 3");
     assert_eq!(run("<a>3</a> to 4"), "3 4");
-    assert!(fails_with("1.5 to 3", "err:XPTY0004"));
+    assert_eq!(code_of("1.5 to 3"), "err:XPTY0004");
     let doc = "for $d in <r><a/><b/><c/></r> return";
     assert_eq!(run(&format!("{doc} count(($d/c, $d/a) | $d/b)")), "3");
     assert_eq!(run(&format!("{doc} (((($d/c, $d/a) union $d/b)[1] is $d/a), (($d/c | $d/a)[2] is $d/c))")), "true true");
     assert_eq!(run(&format!("{doc} (count($d/* intersect ($d/a, $d/c)), count($d/* except $d/a))")), "2 2");
-    assert!(fails_with("(1, 2) union <a/>", "err:XPTY0004"));
+    assert_eq!(code_of("(1, 2) union <a/>"), "err:XPTY0004");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 SR5, GR1] [XQuery §3.1.2,
@@ -148,8 +150,8 @@ fn passed_variables_and_context_item() {
     let context = Some(Item::Atomic(Atomic { kind: AtomicType::Integer, lexical: "40".into() }));
     let value = evaluate(&query, context, vec![one("2"), Sequence::default()]).unwrap();
     assert_eq!(shown(&value), "42");
-    assert!(fails_with(".", "err:XPDY0002"));
-    assert!(fails_with("$z", "err:XPST0008"));
+    assert_eq!(code_of("."), "err:XPDY0002");
+    assert_eq!(code_of("$z"), "err:XPST0008");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.12.1,
@@ -166,11 +168,11 @@ fn sequence_types_and_casts() {
     assert_eq!(run("'12' cast as xs:integer + 1, xs:date('2026-01-02'), () cast as xs:integer?"), "13 2026-01-02");
     assert_eq!(run("'x' castable as xs:integer, '1' castable as xs:integer, () castable as xs:integer"), "false true false");
     assert_eq!(run("xs:int('5') instance of xs:integer, xs:short(5) instance of xs:int"), "true true");
-    assert!(fails_with("'x' cast as xs:integer", "err:FORG0001"));
-    assert!(fails_with("() cast as xs:integer", "err:XPTY0004"));
-    assert!(fails_with("1 treat as xs:string", "err:XPDY0050"));
-    assert!(fails_with("1 cast as xdt:anyAtomicType", "err:XPST0080"));
-    assert!(fails_with("1 instance of xs:nosuchtype", "err:XPST0051"));
+    assert_eq!(code_of("'x' cast as xs:integer"), "err:FORG0001");
+    assert_eq!(code_of("() cast as xs:integer"), "err:XPTY0004");
+    assert_eq!(code_of("1 treat as xs:string"), "err:XPDY0050");
+    assert_eq!(code_of("1 cast as xdt:anyAtomicType"), "err:XPST0080");
+    assert_eq!(code_of("1 instance of xs:nosuchtype"), "err:XPST0051");
     assert_eq!(error_of("'a:b' cast as xs:QName").code, Code::Unsupported);
 }
 
@@ -181,11 +183,13 @@ fn core_functions() {
     assert_eq!(run("true(), false(), count((1, 2, 3)), empty(()), exists(()), fn:concat('a', 1, (), 'b')"), "true false 3 true false a1b");
     assert_eq!(run("string(<a>x<b>y</b></a>), string(()), data(<a>1</a>) instance of xdt:untypedAtomic"), "xy  true");
     assert_eq!(run("(10, 20, 30)[position() = last()], (10, 20, 30)[last() - 1]"), "30 20");
-    assert_eq!(run("count(root(<a><b/></a>/b))"), "1");
-    assert!(fails_with("doc('x.xml')", "err:FODC0005"));
-    assert!(fails_with("position()", "err:FONC0001"));
-    assert!(fails_with("no-such-function()", "err:XPST0017"));
-    assert!(fails_with("fn:count(1, 2)", "err:XPST0017"));
+    assert_eq!(run("count(root(<a><b/></a>/b)), <a><b/></a>/b/root() instance of element(a)"), "1 true");
+    assert_eq!(code_of("(1)[root()]"), "err:FOTY0011");
+    assert_eq!(run("data(<!--c-->) instance of xs:string, data(<?t c?>) instance of xs:string"), "true true");
+    assert_eq!(code_of("doc('x.xml')"), "err:FODC0005");
+    assert_eq!(code_of("position()"), "err:FONC0001");
+    assert_eq!(code_of("no-such-function()"), "err:XPST0017");
+    assert_eq!(code_of("fn:count(1, 2)"), "err:XPST0017");
 }
 
 /// Verifies: [DESIGN] RULES.md D44, D86: an evaluation looks whether its

@@ -2,7 +2,7 @@
 //! §3.12.2], and of the prolog's variables and functions [XQuery §4.14,
 //! §4.15].
 
-use super::super::super::testing::{fails_with, run};
+use super::super::super::testing::{code_of, run};
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.8.1,
 /// §3.8.2] for and let clauses make a tuple for each combination, the
@@ -17,8 +17,8 @@ fn for_let_where() {
     assert_eq!(run("for $i in 1 to 10 let $j := $i * $i where $j mod 2 = 0 return $j"), "4 16 36 64 100");
     assert_eq!(run("for $i in (1, 2) for $i in ($i * 10) return $i"), "10 20");
     assert_eq!(run("for $i as xs:integer in (1, 2) return $i"), "1 2");
-    assert!(fails_with("let $s as xs:decimal := 'cat' return $s", "err:XPTY0004"));
-    assert!(fails_with("for $i in 1 return $j", "err:XPST0008"));
+    assert_eq!(code_of("let $s as xs:decimal := 'cat' return $s"), "err:XPTY0004");
+    assert_eq!(code_of("for $i in 1 return $j"), "err:XPST0008");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.8.3] order
@@ -35,9 +35,9 @@ fn order_by() {
     assert_eq!(run(&format!("{keyed} order by $p/@k empty greatest return string($p/@n)")), "3 1 4 2");
     assert_eq!(run(&format!("{keyed} order by $p/@k descending empty least, $p/@n descending return string($p/@n)")), "4 1 3 2");
     assert_eq!(run("for $x in (xs:double('NaN'), 1e0, ()) order by $x empty greatest return string($x)"), "1 NaN");
-    assert!(fails_with("for $x in (1, 'a') order by $x return $x", "err:XPTY0004"));
-    assert!(fails_with("for $x in 1 order by (1, 2) return $x", "err:XPTY0004"));
-    assert!(fails_with("for $x in 1 order by $x collation 'urn:no:such' return $x", "err:XQST0076"));
+    assert_eq!(code_of("for $x in (1, 'a') order by $x return $x"), "err:XPTY0004");
+    assert_eq!(code_of("for $x in 1 order by (1, 2) return $x"), "err:XPTY0004");
+    assert_eq!(code_of("for $x in 1 order by $x collation 'urn:no:such' return $x"), "err:XQST0076");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §4.4, §3.8.3]
@@ -50,7 +50,7 @@ fn collations() {
     let unicode = "for $x in ('b', 'B', 'a') order by $x collation 'urn:turborel:collation:UNICODE' return $x";
     assert_eq!(run(unicode), "a b B");
     assert_eq!(run("declare default collation 'http://www.w3.org/2005/xpath-functions/collation/codepoint'; 'a' lt 'B'"), "false");
-    assert!(fails_with("declare default collation 'urn:no:such'; 1", "err:XQST0038"));
+    assert_eq!(code_of("declare default collation 'urn:no:such'; 1"), "err:XQST0038");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.11] some is
@@ -61,7 +61,7 @@ fn quantified() {
     assert_eq!(run("some $x in (1, 2, 3), $y in (2, 3, 4) satisfies $x + $y = 4"), "true");
     assert_eq!(run("every $x in (1, 2, 3), $y in (2, 3, 4) satisfies $x + $y = 4"), "false");
     assert_eq!(run("some $x in () satisfies true(), every $x in () satisfies false()"), "false true");
-    assert!(fails_with("some $x as xs:string in (1) satisfies true()", "err:XPTY0004"));
+    assert_eq!(code_of("some $x as xs:string in (1) satisfies true()"), "err:XPTY0004");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.12.2] a
@@ -91,13 +91,13 @@ fn prolog_variables_and_functions() {
     assert_eq!(run("declare variable $x := 2; declare variable $y as xs:integer := $x * 3; $y"), "6");
     assert_eq!(run("declare function local:g($s as xs:double) { $s }; local:g(1) instance of xs:double"), "true");
     assert_eq!(run("declare function local:h($e) { count($e) }; local:h(<a>1</a>/text())"), "1");
-    assert!(fails_with("declare function local:k() as xs:integer { 'x' }; local:k()", "err:XPTY0004"));
-    assert!(fails_with("declare function f() { 1 }; 1", "err:XQST0045"));
-    assert!(fails_with("declare default function namespace ''; declare function f() { 1 }; 1", "err:XQST0060"));
-    assert!(fails_with("declare function local:f() { 1 }; declare function local:f() { 2 }; 1", "err:XQST0034"));
-    assert!(fails_with("declare variable $x := 1; declare variable $x := 2; 1", "err:XQST0049"));
-    assert!(fails_with("declare variable $x := local:f(); declare function local:f() { $x }; $x", "err:XQST0054"));
-    assert!(fails_with("declare variable $x external; $x", "err:XPDY0002"));
-    assert!(fails_with("declare variable $x := $y; declare variable $y := 1; $x", "err:XPST0008"));
-    assert!(fails_with("declare function local:e($x) external; 1", "err:XPST0017"));
+    assert_eq!(code_of("declare function local:k() as xs:integer { 'x' }; local:k()"), "err:XPTY0004");
+    assert_eq!(code_of("declare function f() { 1 }; 1"), "err:XQST0045");
+    assert_eq!(code_of("declare default function namespace ''; declare function f() { 1 }; 1"), "err:XQST0060");
+    assert_eq!(code_of("declare function local:f() { 1 }; declare function local:f() { 2 }; 1"), "err:XQST0034");
+    assert_eq!(code_of("declare variable $x := 1; declare variable $x := 2; 1"), "err:XQST0049");
+    assert_eq!(code_of("declare variable $x := local:f(); declare function local:f() { $x }; $x"), "err:XQST0054");
+    assert_eq!(code_of("declare variable $x external; $x"), "err:XPDY0002");
+    assert_eq!(code_of("declare variable $x := $y; declare variable $y := 1; $x"), "err:XPST0008");
+    assert_eq!(code_of("declare function local:e($x) external; 1"), "err:XPST0017");
 }

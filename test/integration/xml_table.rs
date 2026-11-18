@@ -62,10 +62,22 @@ fn namespaces_7_1() {
     assert_eq!(rows(&a, q).unwrap(), ["3"]);
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §7.1 SR4d, SR4e ii 2] the syntax
-/// rules of XMLTABLE, each SQLCODE -103: two ordinality columns; a
-/// passing mechanism of a column not XML(SEQUENCE); a column of
-/// XML(SEQUENCE) of no mechanism and no argument list; and the errors of
+/// Verifies: [ISO/IEC 9075-14:2006 draft §7.1 SR4e ii 3, 8] a column's
+/// default of a user or datetime value function, its value where the
+/// column's pattern gives the empty sequence.
+#[test]
+fn defaults_7_1() {
+    let a = orders().session("A");
+    let q = "SELECT I.U, I.D = CURRENT_DATE FROM XMLTABLE('<r/>' COLUMNS U VARCHAR(10) DEFAULT USER PATH 'x', \
+             D DATE DEFAULT CURRENT_DATE PATH 'x') AS I";
+    assert_eq!(rows(&a, q).unwrap(), ["A,TRUE"]);
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §7.1 SR4d, SR4e ii 2, ii 8, SR4h]
+/// the syntax rules of XMLTABLE, each SQLCODE -103: two ordinality
+/// columns; a passing mechanism of a column not XML(SEQUENCE); a column of
+/// XML(SEQUENCE) of no mechanism and no argument list; a column named
+/// twice; an empty collection the default of a column; and the errors of
 /// its evaluation: an attribute made a document SQLSTATE 10000.
 #[test]
 fn rules_7_1() {
@@ -74,6 +86,8 @@ fn rules_7_1() {
         "SELECT * FROM XMLTABLE('1' COLUMNS A FOR ORDINALITY, B FOR ORDINALITY) AS I",
         "SELECT * FROM XMLTABLE('1' COLUMNS A INTEGER BY REF PATH '.') AS I",
         "SELECT * FROM XMLTABLE('1' COLUMNS A XML(SEQUENCE) PATH '.') AS I",
+        "SELECT * FROM XMLTABLE('1' COLUMNS A INTEGER PATH '.', A VARCHAR(5) PATH '.') AS I",
+        "SELECT * FROM XMLTABLE('1' COLUMNS A INTEGER DEFAULT ARRAY[] PATH 'x') AS I",
     ] {
         assert_eq!(fetched(&a, sql).expect_err(sql).code, Code::SyntaxRule, "{sql}");
     }

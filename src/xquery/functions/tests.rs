@@ -39,6 +39,8 @@ fn registration_refuses_clashes() {
     library.add(Arc::new(Unnamed(named.clone()))).unwrap();
     assert!(library.find(&named, 0).is_some());
     assert_eq!(library.configurables().count(), 0);
+    let query = super::super::testing::compile_in("declare namespace x = 'urn:x'; count(x:f())", &[], &library).unwrap();
+    assert_eq!(super::super::testing::shown(&super::super::testing::evaluate(&query, None, Vec::new()).unwrap()), "0");
 }
 
 /// A function of the name it is given and no parameter.

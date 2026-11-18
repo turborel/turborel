@@ -254,3 +254,6 @@ impl XmlTableOf {
         eval(&column.cast, &vec![Value::Xml(XmlValue::of(value))], statement)
     }
 }
+
+#[cfg(test)]
+mod tests;

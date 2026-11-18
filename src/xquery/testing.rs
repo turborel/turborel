@@ -19,12 +19,18 @@ pub(super) fn now() -> Moment {
 
 /// `text` compiled with the variables `variables` passed.
 pub(super) fn compile_with(text: &str, variables: &[&str]) -> Result<Query> {
-    let (library, collations) = (Library::builtin(), collations());
+    compile_in(text, variables, &Library::builtin())
+}
+
+/// `text` compiled with the variables `variables` passed and the
+/// functions of `library`.
+pub(super) fn compile_in(text: &str, variables: &[&str], library: &Library) -> Result<Query> {
+    let collations = collations();
     let env = Environment {
         namespaces: Vec::new(),
         default_element: None,
         variables: variables.iter().map(|v| (*v).to_owned()).collect(),
-        library: &library,
+        library,
         collations: &collations,
     };
     Query::compile(text, &env)
@@ -45,8 +51,8 @@ pub(super) fn shown(value: &Sequence) -> String {
 
 /// The value of `text`, serialized.
 pub(super) fn run(text: &str) -> String {
-    let query = compile_with(text, &[]).unwrap_or_else(|e| panic!("{text}: {e}"));
-    shown(&evaluate(&query, None, Vec::new()).unwrap_or_else(|e| panic!("{text}: {e}")))
+    let query = compile_with(text, &[]).expect(text);
+    shown(&evaluate(&query, None, Vec::new()).expect(text))
 }
 
 /// The error of `text`, compiled or evaluated.
@@ -57,10 +63,11 @@ pub(super) fn error_of(text: &str) -> SqlError {
     }
 }
 
-/// Whether `text` fails with the XQuery error `code`.
-pub(super) fn fails_with(text: &str, code: &str) -> bool {
-    let e = error_of(text);
-    let found = e.msg.contains(code);
-    assert!(found, "{text}: expected {code}, got {e}");
-    found
+/// The code of the XQuery error `text` fails with, as its message names
+/// it, `err:` and the code's local name; the whole message of an error
+/// that names none.
+pub(super) fn code_of(text: &str) -> String {
+    let message = error_of(text).msg;
+    let code = message.split_whitespace().find(|w| w.starts_with("err:")).map(|w| w.trim_end_matches(':').to_owned());
+    code.unwrap_or(message)
 }

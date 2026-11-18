@@ -1,6 +1,6 @@
 //! Tests of constructors [XQuery §3.7].
 
-use super::super::super::testing::{fails_with, run};
+use super::super::super::testing::{code_of, run};
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.7.1,
 /// §3.7.1.3] a direct element of attributes and content: enclosed atomic
@@ -17,9 +17,9 @@ fn direct_elements() {
     assert_eq!(run("let $b := <b><c/></b> return (<a>{$b}</a>/b is $b, count(<a>{$b}</a>/b/c))"), "false 1");
     assert_eq!(run("<a x=' y\tz'/>/@x/string()"), " y z");
     assert_eq!(run("<a xml:id=' p  q '/>/@xml:id/string()"), "p q");
-    assert!(fails_with("<a>{'x', attribute b {1}}</a>", "err:XQTY0024"));
-    assert!(fails_with("<a b='1'>{attribute b {2}}</a>", "err:XQDY0025"));
-    assert!(fails_with("<a p:b='1' q:b='2' xmlns:p='u' xmlns:q='u'/>", "err:XQST0040"));
+    assert_eq!(code_of("<a>{'x', attribute b {1}}</a>"), "err:XQTY0024");
+    assert_eq!(code_of("<a b='1'>{attribute b {2}}</a>"), "err:XQDY0025");
+    assert_eq!(code_of("<a p:b='1' q:b='2' xmlns:p='u' xmlns:q='u'/>"), "err:XQST0040");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.7.1.4,
@@ -49,7 +49,7 @@ fn namespaces_of_constructed_elements() {
     assert_eq!(run("<a xmlns='u'>{element b {}}</a>"), "<a xmlns=\"u\"><b/></a>");
     assert_eq!(run("<a xmlns='u'><b xmlns=''/></a>"), "<a xmlns=\"u\"><b xmlns=\"\"/></a>");
     assert_eq!(run("<a xmlns='u'>{<b xmlns=''/>}</a>"), "<a xmlns=\"u\"><b xmlns=\"\"/></a>");
-    assert!(fails_with("<p:a/>", "err:XPST0008"));
+    assert_eq!(code_of("<p:a/>"), "err:XPST0008");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.7.3] the
@@ -65,14 +65,14 @@ fn computed_constructors() {
     assert_eq!(run("text { 'a', 'b' }, count(text { () }), comment { 'c' }, processing-instruction p { '  q' }"), "a b0<!--c--><?p q?>");
     assert_eq!(run("document { <a/>, 'b' }"), "<a/>b");
     assert_eq!(run("<!--x-->, <?p q?>"), "<!--x--><?p q?>");
-    assert!(fails_with("element { 'p:a' } {}", "err:XQDY0074"));
-    assert!(fails_with("element { 1, 2 } {}", "err:XPTY0004"));
-    assert!(fails_with("attribute xmlns { 1 }", "err:XQDY0044"));
-    assert!(fails_with("comment { 'a--b' }", "err:XQDY0072"));
-    assert!(fails_with("processing-instruction { 'XmL' } {}", "err:XQDY0064"));
-    assert!(fails_with("processing-instruction p { '?>' }", "err:XQDY0026"));
-    assert!(fails_with("processing-instruction { '1a' } {}", "err:XQDY0041"));
-    assert!(fails_with("document { attribute a {1} }", "err:XPTY0004"));
+    assert_eq!(code_of("element { 'p:a' } {}"), "err:XQDY0074");
+    assert_eq!(code_of("element { 1, 2 } {}"), "err:XPTY0004");
+    assert_eq!(code_of("attribute xmlns { 1 }"), "err:XQDY0044");
+    assert_eq!(code_of("comment { 'a--b' }"), "err:XQDY0072");
+    assert_eq!(code_of("processing-instruction { 'XmL' } {}"), "err:XQDY0064");
+    assert_eq!(code_of("processing-instruction p { '?>' }"), "err:XQDY0026");
+    assert_eq!(code_of("processing-instruction { '1a' } {}"), "err:XQDY0041");
+    assert_eq!(code_of("document { attribute a {1} }"), "err:XPTY0004");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.7.1.3,
@@ -93,8 +93,31 @@ fn construction_and_copy_namespaces_modes() {
 /// err:XQTY0030; a document of two elements err:XQDY0061.
 #[test]
 fn validate() {
-    assert!(fails_with("validate { <a/> }", "err:XQDY0084"));
-    assert!(fails_with("validate strict { document { <a/> } }", "err:XQDY0084"));
-    assert!(fails_with("validate { 1 }", "err:XQTY0030"));
-    assert!(fails_with("validate { document { <a/>, <b/> } }", "err:XQDY0061"));
+    assert_eq!(code_of("validate { <a/> }"), "err:XQDY0084");
+    assert_eq!(code_of("validate strict { document { <a/> } }"), "err:XQDY0084");
+    assert_eq!(code_of("validate { 1 }"), "err:XQTY0030");
+    assert_eq!(code_of("validate { document { <a/>, <b/> } }"), "err:XQDY0061");
+    assert_eq!(code_of("validate { text {'a'} }"), "err:XQTY0030");
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, GR3] [XQuery §3.7.3.1,
+/// §3.7.3.2, §3.7.3.5, §3.7.4] computed names: an attribute's of a prefix
+/// in its namespace, unprefixed in none; an attribute or processing
+/// instruction of no content empty; a name of a number err:XPTY0004; a
+/// copied attribute whose prefix the element binds to another namespace
+/// given a prefix made anew; a reference in an attribute's value and a
+/// namespace declaration's URI.
+#[test]
+fn computed_names_and_prefixes() {
+    let p = "declare namespace p = \"urn:p\";";
+    let attributes = format!("{p} <e>{{attribute {{'p:a'}} {{'1'}}, attribute {{'b'}} {{}}}}</e>");
+    assert_eq!(run(&attributes), "<e xmlns:p=\"urn:p\" p:a=\"1\" b=\"\"/>");
+    assert_eq!(run("<e>{processing-instruction {'t'} {}}</e>"), "<e><?t?></e>");
+    assert_eq!(code_of("element {1} {}"), "err:XPTY0004");
+    let copied = "<p:e xmlns:p=\"urn:2\">{<x xmlns:p=\"urn:1\" p:a=\"1\"/>/@*}</p:e>";
+    assert_eq!(run(copied), "<p:e xmlns:p=\"urn:2\" xmlns:p1=\"urn:1\" p1:a=\"1\"/>");
+    let taken = "<p:e xmlns:p=\"urn:2\" xmlns:p1=\"urn:3\">{<x xmlns:p=\"urn:1\" p:a=\"1\"/>/@*}</p:e>";
+    assert_eq!(run(taken), "<p:e xmlns:p=\"urn:2\" xmlns:p1=\"urn:3\" xmlns:p2=\"urn:1\" p2:a=\"1\"/>");
+    assert_eq!(run("<a/> instance of element(*), <a/> instance of element(*, xdt:untyped)"), "true true");
+    assert_eq!(run("<a b=\"x&amp;y\" xmlns:q=\"urn:&amp;\"/>/@b/string()"), "x&amp;y", "serialized");
 }

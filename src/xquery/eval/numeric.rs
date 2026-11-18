@@ -150,7 +150,7 @@ fn aligned((a, sa): (i128, u32), (b, sb): (i128, u32)) -> Result<(i128, i128, u3
 /// err:FOAR0001 of an exact division by zero or an `idiv` by zero;
 /// err:FOAR0002 of an exact overflow, or an `idiv` of NaN or an infinity.
 pub(super) fn arithmetic(op: Arith, a: Num, b: Num) -> Result<Num> {
-    let to = rank(a).max(rank(b)).max(u8::from(op == Arith::Divide));
+    let to = rank(a).max(rank(b));
     match (promoted(a, to), promoted(b, to)) {
         (Num::Integer(x), Num::Integer(y)) => integer(op, x, y),
         (Num::Decimal(x, sx), Num::Decimal(y, sy)) => decimal(op, (x, sx), (y, sy)),
@@ -194,7 +194,7 @@ fn integer(op: Arith, x: i128, y: i128) -> Result<Num> {
             }
             x.checked_rem(y).unwrap_or(0)
         }
-        // A quotient of integers is a decimal, promoted before.
+        // [XQueryFO §6.2.4] a quotient of integers is a decimal.
         Arith::Divide => return decimal(op, (x, 0), (y, 0)),
     }))
 }

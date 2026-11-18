@@ -99,15 +99,7 @@ impl SchemaType {
     /// `MAX_DERIVATION` steps.
     #[must_use]
     pub fn derives_from(&self, expected: &SchemaType) -> bool {
-        let mut at = Some(self.clone());
-        for _ in 0..=MAX_DERIVATION {
-            let Some(t) = at else { return false };
-            if t == *expected {
-                return true;
-            }
-            at = t.base();
-        }
-        false
+        std::iter::successors(Some(self.clone()), SchemaType::base).take(MAX_DERIVATION.saturating_add(1)).any(|t| t == *expected)
     }
 }
 
