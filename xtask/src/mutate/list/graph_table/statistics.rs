@@ -3,13 +3,14 @@
 //! columns, a transition's labels, a property that is an expression and
 //! a sample's frequencies scaled; of the planner, the fan-out of a probe;
 //! of the end a search starts from, a hint, the estimate, the path
-//! reversed back and the orientation reversed; and of the view, a row's
-//! kind. Every search they change is bounded by its quantifier.
+//! reversed back and the orientation reversed; of a search's choice, a
+//! step's label transitions (D118); and of the view, a row's kind. Every
+//! search they change is bounded by its quantifier.
 
 use super::super::{Mutation, Package};
 
 /// The mutations of a graph's statistics, in the order they run.
-pub const GRAPH_STATISTICS: [Mutation; 11] = [
+pub const GRAPH_STATISTICS: [Mutation; 12] = [
     Mutation {
         name: "graph-statistics-average-degree",
         package: Package::Core,
@@ -118,6 +119,16 @@ pub const GRAPH_STATISTICS: [Mutation; 11] = [
         original: "        ElementKind::Edge => \"EDGE\",",
         replacement: "        ElementKind::Edge => \"VERTEX\",",
         integration: &["graph_table::statistics::graph_statistics_show_degrees_properties_and_transitions"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-statistics-step-unlabelled",
+        package: Package::Core,
+        breaks: "a search's step is estimated of every edge, not those its labels match, so ANY SHORTEST over few KNOWS edges is MS-BFS",
+        file: "src/binder/graph/sizing.rs",
+        original: "    let steps = g.paths.iter().map(|p| statistics.as_ref().and_then(|s| step(s, &g.labels, &p.pattern))).collect();",
+        replacement: "    let steps = g.paths.iter().map(|_| None).collect();",
+        integration: &["graph_table::statistics::a_step_is_estimated_by_its_label_transitions"],
         unit: &[],
     },
 ];

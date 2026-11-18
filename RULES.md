@@ -4111,7 +4111,8 @@ GRAPH_DIRECTION decide first. Else, with both ends filtered and the
 statistics known, the end of fewer candidates times the fan-out of its
 first step is taken. A pattern whose paths depend on the order of the
 search is never reversed, so no result depends on the statistics. Only
-a MAX_SEARCH_STATES limit may be reached one way and not the other.
+a MAX_SEARCH_STATES limit may be reached one way and not the other. The
+label transitions estimate a search's step (D118).
 
 #### D118. A search expands a frontier at once and chooses MS-BFS and workers by cost
 
@@ -4133,7 +4134,11 @@ runs when a batch of 64 starts times each one's estimated reach is at
 least the graph's vertices, so their searches overlap; else BFS from each
 start, whose states cost less. A start's reach is the average degree's
 powers summed up to MAX_PATH_LENGTH, at most every vertex, of the size the
-view reports (`GraphView::size`, the element tables' row counts). Workers
+view reports (`GraphView::size`, the element tables' row counts). The
+degree is of the edges a step may follow: the edges of the label
+transitions (D117) its edge patterns' labels match, the most of any of
+them, once the statistics count them (`binder/graph/sizing.rs`). A label
+expression of `!` or `&` falls back to every edge. Workers
 are used when EXECUTOR.GRAPH_THREADS is above 1, the estimated states
 reach GRAPH.PARALLEL_MIN_STATES, and there is more than one piece of
 work. A PATH_ALGO hint (GS §16 R16.8) chooses within the family, and is

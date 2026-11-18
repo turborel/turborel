@@ -405,7 +405,7 @@ impl GraphMatch {
             let pattern = path.instantiate(&mut |k| shown(self.reads(k)));
             let starts: Vec<&str> = path.starts.iter().filter_map(|&t| self.tables.get(t)).map(|t| t.alias.as_str()).collect();
             let _ = write!(out, "\n  path {}: from {}", n.saturating_add(1), starts.join(", "));
-            match PathSearch::new(&pattern, &empty, self.sizing.options(self.hints.path_algo)) {
+            match PathSearch::new(&pattern, &empty, self.sizing.options(n, self.hints.path_algo)) {
                 Ok(search) => {
                     let size = self.sizing.size(self.tables.iter().map(|t| t.ends.is_some()));
                     let count = self.sizing.starts(&path.starts).filter(|_| size.is_some()).unwrap_or(starts.len().max(2));

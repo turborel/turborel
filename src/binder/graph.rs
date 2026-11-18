@@ -129,7 +129,7 @@ pub(in crate::binder) fn graph_table_item(b: Bounds<'_>, g: &GraphTable, offset:
     let mut operands = Operands::new(offset, width.saturating_add(slots.len()));
     let assembled = Assembled { tables, labels, paths: path_shapes, prefilters, vars: shapes, slots, postfilter, columns, costs, rows };
     let mut graph = assembled.remapped(&mut operands, (&desc, &pattern, width), g)?;
-    graph.sizing = sizing::of(b.cx, &graph.tables);
+    graph.sizing = sizing::of(b.cx, &graph);
     let reads: BTreeSet<usize> = operands.reads.clone();
     from.used.extend(reads.iter().copied());
     let correlation = g.correlation.clone().unwrap_or_else(|| format!("$GRAPH_TABLE{offset}"));

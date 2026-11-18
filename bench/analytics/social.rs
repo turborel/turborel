@@ -9,7 +9,10 @@
 //! the people of a city, many starts at once, and TRAIL of one to three
 //! edges within MAX_PATH_LENGTH; and the rigid patterns joined: KNOWS
 //! walked back from one person, every walk of one or two KNOWS, and the
-//! KNOWS triangles of every person (RULES.md R-BENCH-1).
+//! KNOWS triangles of every person; and friends one and two away in
+//! PLAIN, a TRUSTED graph whose copy of KNOWS has no adjacency index, so
+//! its 2 joins of one whole scan are joined and its 8 of two searched
+//! (RULES.md D113, R-BENCH-1).
 //!
 //! The scale is `SCALE_VAR`, 1 if unset; `WORKLOAD_VAR` runs one workload
 //! alone. Each workload's rows are summed
@@ -28,6 +31,7 @@ use std::env;
 
 use super::harness::{Bench, Case, note, scatter};
 use turborel::db::{Database, Session};
+use turborel::params::Params;
 
 /// The variable of the scale: thousands of people.
 pub const SCALE_VAR: &str = "TURBOREL_BENCH_SOCIAL_SCALE";
@@ -150,7 +154,15 @@ fn generate(s: &Session, people: u64) {
     insert(s, "LIKES", &rows_of_likes);
 }
 
-/// The network of `people` people and its graph, its adjacency indexes
+/// The graph PLAIN, TRUSTED, over a copy of KNOWS of no index.
+const PLAIN: [&str; 3] = [
+    "CREATE TABLE KNOWS_PLAIN (ID INTEGER PRIMARY KEY, P1 INTEGER, P2 INTEGER, SINCE INTEGER)",
+    "INSERT INTO KNOWS_PLAIN SELECT * FROM KNOWS",
+    "CREATE PROPERTY GRAPH PLAIN VERTEX TABLES (PERSON LABEL PERSON PROPERTIES (ID)) EDGE TABLES (KNOWS_PLAIN \
+     SOURCE KEY (P1) REFERENCES PERSON (ID) DESTINATION KEY (P2) REFERENCES PERSON (ID) LABEL KNOWS) OPTIONS (TRUSTED MODE)",
+];
+
+/// The network of `people` people and its graphs, their adjacency indexes
 /// built and compacted.
 fn database(people: u64) -> Database {
     let db = Database::new();
@@ -158,6 +170,9 @@ fn database(people: u64) -> Database {
     let s = db.session("SNB");
     generate(&s, people);
     s.run(GRAPH).unwrap();
+    for sql in PLAIN {
+        s.run(sql).unwrap();
+    }
     s.commit().unwrap();
     db.maintain().unwrap();
     db
@@ -281,4 +296,14 @@ fn planned(bench: &Bench, s: &Session, from: &[u64]) {
             .to_owned(),
     ];
     workload(bench, s, "social KNOWS triangles", &triangles);
+    // [RULES.md D113] Past 4 whole scans of an edge table of no adjacency index, a search.
+    for (name, path) in
+        [("1 hop", "(a:PERSON WHERE a.id = {p})-[:KNOWS]-(b)"), ("2 hops", "(a:PERSON WHERE a.id = {p})-[:KNOWS]-()-[:KNOWS]-(b)")]
+    {
+        let queries =
+            of(from, &|p| format!("SELECT B FROM GRAPH_TABLE (PLAIN MATCH {} COLUMNS (b.id AS B))", path.replace("{p}", &p.to_string())));
+        let plan = s.explain(queries.first().map_or("", String::as_str), &Params::new()).unwrap();
+        note(&format!("unindexed friends, {name}: {}", if plan.contains("Graph table") { "searched" } else { "joined" }));
+        workload(bench, s, &format!("social unindexed friends, {name}"), &queries);
+    }
 }

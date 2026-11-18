@@ -3,7 +3,8 @@
 //! database reopened asks for them; the planner's estimate of a probe of
 //! an edge table by its endpoint columns; and the end a GRAPH_TABLE's
 //! search starts from, by the statistics and by the hints GRAPH_START and
-//! GRAPH_DIRECTION, each way giving the same rows.
+//! GRAPH_DIRECTION, each way giving the same rows; and a search's estimate
+//! of a step, by the label transitions.
 
 use std::path::Path;
 
@@ -209,4 +210,48 @@ fn the_end_chosen_makes_fewer_states() {
     gather(&db);
     assert_eq!(outcome(&s, &to_eight(limit)), "00000");
     assert_eq!(outcome(&s, &to_eight("OPTIONS (MAX_SEARCH_STATES 20, GRAPH_START(a))")), "54061");
+}
+
+/// Verifies: [EXTENSION] [GS §15, §17] RULES.md D118: a search's estimate
+/// of a step follows the edges its labels match, as the graph's label
+/// transitions count them: of 40 KNOWS edges among 80 people beside 800
+/// LIKES edges, ANY SHORTEST over KNOWS from every person is BFS from
+/// each, of the rows MS-BFS gives, and over LIKES, any edge or either
+/// label, MS-BFS.
+#[test]
+fn a_step_is_estimated_by_its_label_transitions() {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
+    let s = db.session("A");
+    let people: Vec<String> = (0..80).map(|i| format!("({i})")).collect();
+    let knows: Vec<String> = (0..40).map(|i| format!("({i}, {i}, {})", i + 1)).collect();
+    let likes: Vec<String> = (0..800).map(|i| format!("({i}, {}, {})", i % 80, (i * 7) % 80)).collect();
+    for sql in [
+        "CREATE TABLE P (ID INTEGER PRIMARY KEY)".to_owned(),
+        "CREATE TABLE K (ID INTEGER PRIMARY KEY, S INTEGER NOT NULL REFERENCES P, D INTEGER NOT NULL REFERENCES P)".to_owned(),
+        "CREATE TABLE L (ID INTEGER PRIMARY KEY, S INTEGER NOT NULL REFERENCES P, D INTEGER NOT NULL REFERENCES P)".to_owned(),
+        format!("INSERT INTO P VALUES {}", people.join(", ")),
+        format!("INSERT INTO K VALUES {}", knows.join(", ")),
+        format!("INSERT INTO L VALUES {}", likes.join(", ")),
+        "CREATE PROPERTY GRAPH SN VERTEX TABLES (P LABEL PERSON) EDGE TABLES ( \
+         K SOURCE KEY (S) REFERENCES P (ID) DESTINATION KEY (D) REFERENCES P (ID) LABEL KNOWS, \
+         L SOURCE KEY (S) REFERENCES P (ID) DESTINATION KEY (D) REFERENCES P (ID) LABEL LIKES)"
+            .to_owned(),
+        "COMMIT WORK".to_owned(),
+    ] {
+        s.run(&sql).unwrap();
+    }
+    for table in ["A.P", "A.K", "A.L"] {
+        db.analyze(table).unwrap();
+    }
+    let q = |edge: &str| format!("SELECT * FROM GRAPH_TABLE (SN MATCH ANY SHORTEST (a)-[{edge}]->*(b) COLUMNS (a.id AS A, b.id AS B)");
+    let shown = s.explain(&format!("{})", q(":KNOWS")), &Params::new()).unwrap();
+    assert!(shown.contains("PathSearch-BFS by cost: 80 starts, est. reach 1 of 80"), "{shown}");
+    for edge in [":LIKES", "", ":KNOWS|LIKES"] {
+        let shown = s.explain(&format!("{})", q(edge)), &Params::new()).unwrap();
+        assert!(shown.contains("MS-BFS by cost: 80 starts, est. reach 80 of 80"), "{edge}: {shown}");
+    }
+    let forced = format!("{} OPTIONS (PATH_ALGO(MSBFS)))", q(":KNOWS"));
+    assert_eq!(rows(&s, &format!("{})", q(":KNOWS"))), rows(&s, &forced));
 }

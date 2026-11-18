@@ -32,7 +32,7 @@ use crate::error::Result;
 use crate::graph::binding::PathBinding;
 use crate::graph::matching::{PathMatches, matches};
 use crate::graph::program::{PathPattern, VarId};
-use crate::graph::search::PathSearch;
+use crate::graph::search::{PathSearch, SearchOptions};
 use crate::graph::view::ElementId;
 use crate::graph::wcoj::Rigid;
 use crate::logical::{ElementRead, GraphMatch, Subquery, Truth, Unnest};
@@ -174,7 +174,8 @@ impl Rows {
             if path.cost.is_some() {
                 pattern = pattern.cost(shared::cost(shared, n));
             }
-            let search = PathSearch::new(&pattern, &*shared.store, options.clone())?;
+            let step_edges = self.graph.sizing.step(n);
+            let search = PathSearch::new(&pattern, &*shared.store, SearchOptions { step_edges, ..options.clone() })?;
             let pruned = reach::pruned(shared, path, starts.get(n).map_or(&[][..], Vec::as_slice))?;
             // The run raises 01W61 itself as a truncated search ends.
             let bindings: Vec<PathBinding> = search.run(&pruned, None)?.collect::<Result<_>>()?;

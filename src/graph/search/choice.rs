@@ -7,8 +7,10 @@
 //! so their searches meet and share their work; else BFS from each start,
 //! whose states cost less. A start's reach is estimated from the graph's
 //! size (`GraphView::size`): its average degree's powers summed, to the
-//! search's MAX_PATH_LENGTH, at most every vertex. Without a size, MS-BFS
-//! is chosen.
+//! search's MAX_PATH_LENGTH, at most every vertex. The degree is of the
+//! edges the pattern's edge labels match, as the graph's statistics count
+//! its label transitions, else of every edge. Without a size, MS-BFS is
+//! chosen.
 //!
 //! Workers are used when there are more than one, the work is estimated
 //! at GRAPH.PARALLEL_MIN_STATES states or more, and there is more than one
@@ -118,6 +120,8 @@ impl PathSearch<'_> {
     pub fn plan_for(&self, starts: usize, ends: Option<usize>, size: Option<GraphSize>) -> Result<Plan> {
         let point = starts == 1 && ends == Some(1) && self.nfa.plain();
         let natural = self.algorithm(starts, point);
+        // A step follows only the edges its labels match, if they were counted.
+        let size = size.map(|s| GraphSize { edges: self.options.step_edges.unwrap_or(s.edges), ..s });
         let estimate =
             size.map(|size| Estimate { starts, reach: reach(size, self.options.limits.max_path_length), vertices: size.vertices });
         let algorithm = match self.options.algorithm {

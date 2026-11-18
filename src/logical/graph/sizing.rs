@@ -16,6 +16,9 @@ pub struct GraphSizing {
     pub threads: usize,
     /// GRAPH.PARALLEL_MIN_STATES.
     pub parallel_min_states: usize,
+    /// Of each path pattern, the edges a step of it may follow, of the
+    /// label transitions counted (`binder/graph/sizing.rs`).
+    pub steps: Vec<Option<u64>>,
 }
 
 impl GraphSizing {
@@ -39,8 +42,15 @@ impl GraphSizing {
         usize::try_from(n).ok()
     }
 
-    /// The options EXPLAIN's search is planned with.
-    pub fn options(&self, algorithm: Option<crate::ast::PathAlgorithm>) -> SearchOptions {
-        SearchOptions { threads: self.threads, parallel_min_states: self.parallel_min_states, algorithm, ..SearchOptions::default() }
+    /// The options EXPLAIN's search of path pattern `path` is planned
+    /// with.
+    pub fn options(&self, path: usize, algorithm: Option<crate::ast::PathAlgorithm>) -> SearchOptions {
+        let (threads, parallel_min_states, step_edges) = (self.threads, self.parallel_min_states, self.step(path));
+        SearchOptions { threads, algorithm, parallel_min_states, step_edges, ..SearchOptions::default() }
+    }
+
+    /// The edges a step of path pattern `path` may follow, if counted.
+    pub fn step(&self, path: usize) -> Option<u64> {
+        self.steps.get(path).copied().flatten()
     }
 }

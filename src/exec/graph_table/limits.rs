@@ -43,5 +43,6 @@ pub(super) fn options(db: &Arc<State>, tx: TxId, (options, algorithm): (&GraphOp
         area: crate::graph::limits::Area::default(),
         algorithm,
         parallel_min_states: s.count(GRAPH_PARALLEL_MIN_STATES),
+        step_edges: None,
     }
 }
