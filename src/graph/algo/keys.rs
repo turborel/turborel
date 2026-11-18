@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The vertices of a graph its rows give, each a key value
-//! (RULES.md D-GRAPH-ALGO): numbered in the order of their keys, so a
+//! (RULES.md D111): numbered in the order of their keys, so a
 //! run's result, and a component labelled by its least vertex, is the same
 //! whatever order the rows come in.
 

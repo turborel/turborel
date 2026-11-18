@@ -1,4 +1,4 @@
-//! \[EXTENSION\] INTO PROPERTY (RULES.md D-GRAPH-ALGO): a graph
+//! \[EXTENSION\] INTO PROPERTY (RULES.md D111): a graph
 //! algorithm's result written as a property of the vertices of a table
 //! [GS §18], in the statement's transaction. The column is added first,
 //! by ALTER TABLE ADD COLUMN, if the table has none of its name, of DOUBLE

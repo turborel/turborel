@@ -1,5 +1,5 @@
 //! \[EXTENSION\] A GQL MATCH's graph pattern as a GRAPH_TABLE (RULES.md
-//! D-GQL): `bind_match`, the one function through which a GQL query
+//! D110): `bind_match`, the one function through which a GQL query
 //! reads a graph's matches.
 //!
 //! Its pattern is written again as a GRAPH_TABLE's (`gql/pattern.rs`),

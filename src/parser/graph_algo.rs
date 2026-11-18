@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The functions of GRAPH_ALGO, the graph standard's §18
-//! (RULES.md D-GRAPH-ALGO), as a table reference and as INTO PROPERTY:
+//! (RULES.md D111), as a table reference and as INTO PROPERTY:
 //!
 //! ```text
 //! <graph algorithm table> ::= GRAPH_ALGO . <name> ( <arguments> )

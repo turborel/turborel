@@ -77,9 +77,9 @@ pub enum DropTarget {
     Model(QualifiedName),
     /// \[EXTENSION\] A vector pipeline (§12.5).
     Pipeline(QualifiedName),
-    /// \[EXTENSION\] A graph type (RULES.md D-GQL).
+    /// \[EXTENSION\] A graph type (RULES.md D110).
     GraphType(QualifiedName),
-    /// \[EXTENSION\] A GQL graph, with its tables (RULES.md D-GQL).
+    /// \[EXTENSION\] A GQL graph, with its tables (RULES.md D110).
     GqlGraph(QualifiedName),
 }
 

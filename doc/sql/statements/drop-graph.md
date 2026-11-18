@@ -63,7 +63,7 @@ OK
 ## STANDARD
 
 ISO/IEC 39075:2024 (GQL) defines DROP GRAPH. turborel drops the tables
-CREATE GRAPH made with it (RULES.md D-GQL).
+CREATE GRAPH made with it (RULES.md D110).
 
 ## SEE ALSO
 

@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The library's functions as SQL invokes them (RULES.md
-//! D-GRAPH-ALGO): each algorithm's name in schema GRAPH_ALGO, its
+//! D111): each algorithm's name in schema GRAPH_ALGO, its
 //! parameters and its result's columns, and a run of one on the rows of
 //! its table arguments, each vertex its key value (`keys.rs`).
 //!

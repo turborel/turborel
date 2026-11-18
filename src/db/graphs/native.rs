@@ -1,4 +1,4 @@
-//! \[EXTENSION\] Native node and edge tables (RULES.md D-GRAPH-NATIVE),
+//! \[EXTENSION\] Native node and edge tables (RULES.md D109),
 //! Mode B of the property graph implementation standard (§4.2): a table
 //! created AS NODE or AS EDGE, its hidden pseudo-columns, its indexes,
 //! its CONNECTION constraints' rules, and the implicit graph SYS_GRAPH of

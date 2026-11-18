@@ -1,4 +1,4 @@
-//! \[EXTENSION\] GQL (graph standard §9, RULES.md D-GQL): EXECUTE GQL,
+//! \[EXTENSION\] GQL (graph standard §9, RULES.md D110): EXECUTE GQL,
 //! GQL_TABLE and a GQL session over a graph over tables, Mode A (§4.1),
 //! and over the GQL graphs of Mode C (§4.3), typed and open. The modules
 //! below hold the queries' clauses, their translations checked against

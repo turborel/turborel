@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The Definition Schema's base tables of node and edge
-//! tables (§4.2, RULES.md D-GRAPH-NATIVE): GRAPH_TABLES, of each node or
+//! tables (§4.2, RULES.md D109): GRAPH_TABLES, of each node or
 //! edge table, which it is; and CONNECTION_CONSTRAINTS, of each clause of
 //! each CONNECTION constraint, the node tables it joins and what a
 //! node's deletion does to the edges. Their views read them

@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The rows of a property graph named in place of the edges
-//! of a function of GRAPH_ALGO (RULES.md D-GRAPH-ALGO), made into the
+//! of a function of GRAPH_ALGO (RULES.md D111), made into the
 //! edges and vertices the library reads: each vertex is its identity
 //! [GS §5 R5.1], its element table and its key, so keys of two vertex
 //! tables, of any number of columns, never meet.

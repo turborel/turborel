@@ -1,5 +1,5 @@
 //! \[EXTENSION\] Mode C of the property graph implementation standard
-//! (§4.3, RULES.md D-GQL): graph types, and GQL graphs typed or open.
+//! (§4.3, RULES.md D110): graph types, and GQL graphs typed or open.
 //!
 //! CREATE GRAPH TYPE records a type, its definition kept as text and read
 //! again where it is used. CREATE GRAPH makes, each statement logged as

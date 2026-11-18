@@ -30,7 +30,7 @@ pub struct MergeStatement {
 }
 
 /// \[EXTENSION\] `GRAPH_ALGO.<name> ( ... ) INTO PROPERTY <column>`
-/// `[ OF <table> [ ( <key column> ) ] ]` (RULES.md D-GRAPH-ALGO), a graph
+/// `[ OF <table> [ ( <key column> ) ] ]` (RULES.md D111), a graph
 /// algorithm's result written as a property of the vertices [GS §18]: the
 /// MERGE that sets the column of each row whose key is a result row's
 /// vertex to its value, the column added first if the table has none of

@@ -1,4 +1,4 @@
-//! Node and edge tables (RULES.md D-GRAPH-NATIVE), Mode B of the property
+//! Node and edge tables (RULES.md D109), Mode B of the property
 //! graph implementation standard (§4.2): CREATE TABLE ... AS NODE and AS
 //! EDGE, their hidden pseudo-columns and the identities in them, edges
 //! inserted between nodes, CONNECTION constraints, a node's deletion and

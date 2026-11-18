@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The descriptors of Mode C of the property graph
-//! implementation standard (§4.3, RULES.md D-GQL): a graph type, kept as
+//! implementation standard (§4.3, RULES.md D110): a graph type, kept as
 //! its definition's text and read again where it is used, as a property
 //! graph's is; and a GQL graph, the property graph of its name whose
 //! tables CREATE GRAPH generated, typed by a graph type or open.

@@ -84,7 +84,7 @@ OK
 
 ISO/IEC 39075:2024 (GQL) defines graph types. turborel keeps one as its
 definition's text, of Mode C of its property graph implementation
-standard (§4.3, RULES.md D-GQL).
+standard (§4.3, RULES.md D110).
 
 ## SEE ALSO
 

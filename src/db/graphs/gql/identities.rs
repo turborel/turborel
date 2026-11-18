@@ -1,5 +1,5 @@
 //! \[EXTENSION\] Elements' identities as GQL's data-modifying statements
-//! read and write them (graph standard §5 R5.1, RULES.md D-GQL): the text
+//! read and write them (graph standard §5 R5.1, RULES.md D110): the text
 //! ELEMENT_ID gives, `{"table":"ACCOUNT","key":[6]}`, its element table's
 //! alias and its key's values, so a binding table's identities are
 //! GRAPH_TABLE's. A row is found by its key, each value read from the

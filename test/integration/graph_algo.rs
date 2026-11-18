@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The graph algorithm library of the graph standard's §18
-//! (RULES.md D-GRAPH-ALGO): the functions of GRAPH_ALGO over a table of
+//! (RULES.md D111): the functions of GRAPH_ALGO over a table of
 //! edges, their arguments positional and named, their results joined to
 //! tables, INTO PROPERTY, and INFORMATION_SCHEMA.GRAPH_ALGO_RUNS.
 

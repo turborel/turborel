@@ -552,7 +552,7 @@ pub trait Catalog: Send + Sync {
     fn graphs(&self) -> Vec<&GraphDesc>;
     /// Forget the property graph of this name: one dropped.
     fn remove_graph(&mut self, name: &QualifiedName);
-    /// \[EXTENSION\] The graph types and GQL graphs (RULES.md D-GQL).
+    /// \[EXTENSION\] The graph types and GQL graphs (RULES.md D110).
     fn gql(&self) -> &GqlCatalog;
     /// The same, to change.
     fn gql_mut(&mut self) -> &mut GqlCatalog;

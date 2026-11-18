@@ -1,5 +1,5 @@
 //! The mutations of the graph algorithm library (RULES.md R-TEST-9,
-//! D-GRAPH-ALGO): of the engine, a parameter's range, the union-find's
+//! D111): of the engine, a parameter's range, the union-find's
 //! least root, the triangles' orientation, the k-core's fall, the order
 //! of parallel results and SCC's bound on its rounds; of the SQL surface,
 //! the vertices' keys each once, a positional argument's place, a named

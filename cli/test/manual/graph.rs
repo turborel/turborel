@@ -19,7 +19,7 @@ fn the_property_graph_examples_run_as_printed() {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md R-DOC-8, D-GQL: the examples of CREATE
+/// Verifies: [EXTENSION] RULES.md R-DOC-8, D110: the examples of CREATE
 /// GRAPH TYPE, CREATE GRAPH, EXECUTE GQL, DROP GRAPH and DROP GRAPH TYPE,
 /// run as printed, as ANN.
 #[test]
@@ -39,7 +39,7 @@ fn the_gql_examples_run_as_printed() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D-GRAPH-ALGO: the chapter of the
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D111: the chapter of the
 /// graph algorithms runs as printed, as ANN.
 #[test]
 fn the_graph_algorithm_examples_run_as_printed() {

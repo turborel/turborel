@@ -1,5 +1,5 @@
 //! \[EXTENSION\] An invocation of a function of GRAPH_ALGO, the graph
-//! standard's §18 (RULES.md D-GRAPH-ALGO), bound as a `<PTF derived
+//! standard's §18 (RULES.md D111), bound as a `<PTF derived
 //! table>`: its arguments put at their parameters' places, positionally
 //! and then by name, as the standard writes `PAGERANK(g, damping =>
 //! 0.85)`; its table arguments, the edges and the vertices, bound as a

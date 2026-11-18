@@ -1,5 +1,5 @@
 //! \[EXTENSION\] An invocation of a function of GRAPH_ALGO as a plan runs
-//! it (RULES.md D-GRAPH-ALGO): the library's algorithm run on its table
+//! it (RULES.md D111): the library's algorithm run on its table
 //! arguments' rows (`graph/algo/library.rs`), on as many threads as
 //! EXECUTOR.GRAPH_THREADS says, its arrays held within MEMORY.WORK_BYTES,
 //! stopped as the statement is cancelled; each run noted in

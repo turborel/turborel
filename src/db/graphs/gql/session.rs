@@ -1,5 +1,5 @@
 //! \[EXTENSION\] GQL's session and transaction statements, run as SQL's
-//! (graph standard §9, RULES.md D-GQL): SESSION SET SCHEMA is SET SCHEMA,
+//! (graph standard §9, RULES.md D110): SESSION SET SCHEMA is SET SCHEMA,
 //! SESSION SET GRAPH sets GQL.GRAPH, SESSION SET TIME ZONE sets
 //! SESSION.TIME_ZONE; SESSION RESET takes the session's defaults again;
 //! SESSION CLOSE rolls back and resets, the connection staying open to

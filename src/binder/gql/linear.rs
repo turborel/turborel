@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The clauses of a GQL linear statement lowered to SQL
-//! (RULES.md D-GQL), each a map from binding tables to binding tables
+//! (RULES.md D110), each a map from binding tables to binding tables
 //! [P2 §5.1]: MATCH and OPTIONAL MATCH join the table with the pattern's
 //! matches on the variables they share, its WHERE their join's
 //! condition; FILTER restricts; LET adds a column; FOR an element of a
