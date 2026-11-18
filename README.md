@@ -37,9 +37,13 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.
-- [Spatial data](doc/data/02-spatial.md), with XY geometries, WKT/WKB,
-  intersection filters and joins, planar distances and R-tree
-  nearest-neighbour queries.
+- [SQL/MM Spatial](doc/sql/10-spatial.md), its 27 geometry types in 2D
+  and 3D, exact relationships and set operations, reference systems, and
+  [R-tree spatial queries](doc/data/02-spatial.md) and joins.
+- [Topologies](doc/sql/16-topology.md) of nodes, edges and faces, and
+  [spatial networks](doc/sql/18-spatial-networks.md) with shortest paths.
+- [Linear referencing](doc/sql/17-linear-referencing.md), locating along
+  roads, rails and other linear features by measure and offset.
 - [Full-text search](doc/data/01-fulltext.md) by a text's words,
   whatever their case and accents, through an inverted index of
   block-compressed postings.
