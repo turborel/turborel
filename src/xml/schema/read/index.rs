@@ -6,12 +6,13 @@
 
 use std::collections::BTreeMap;
 
+use super::super::builtin;
 use super::super::component::Expanded;
 use super::super::invalid;
 use super::attrs::At;
 use super::documents::Doc;
 use crate::error::Result;
-use crate::xml::{Kind as NodeKind, NodeId};
+use crate::xml::{Kind as NodeKind, NodeId, XS_NAMESPACE};
 
 /// A symbol space of top-level components [Schema1 §2.5]: type
 /// definitions, simple and complex together, and each other kind.
@@ -99,13 +100,20 @@ impl Index {
         Ok(index)
     }
 
-    /// `entry`, of `space`, named by the name attribute of `at` in `doc`.
+    /// `entry`, of `space`, named by the name attribute of `at` in `doc`;
+    /// none of a type definition of the XML Schema namespace that is a
+    /// built-in one, as the Schema for Schemas and Part 2's schema of the
+    /// datatypes represent those, present in every schema by definition
+    /// [Schema1 §3.4.7, §3.14.7].
     ///
     /// # Errors
     ///
     /// SQLSTATE 22000 if it has no name, or one of its space has it.
     fn insert(&mut self, space: Space, doc: &Doc, at: &At<'_>, entry: Entry) -> Result<()> {
         let name = name_of(doc, at)?;
+        if space == Space::Type && name.uri.as_deref() == Some(XS_NAMESPACE) && builtin::named(&name.local).is_some() {
+            return Ok(());
+        }
         if self.entries.insert((space, name.clone()), entry).is_some() {
             return Err(invalid("[Schema1 §3.15.6 sch-props-correct.2]", &format!("two top-level components are named {}", name.text())));
         }

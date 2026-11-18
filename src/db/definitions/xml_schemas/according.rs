@@ -25,11 +25,12 @@ use super::super::super::State;
 use crate::ast::{XmlValidAccording, XmlValidWhat};
 use crate::binder::qualify;
 use crate::catalog::xml_schemas::{may_use, permanent};
-use crate::catalog::{QualifiedName, Who, XmlSchemaDesc};
+use crate::catalog::{QualifiedName, Who};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::value::types::XmlSchemaNamed;
 use crate::value::xml::{Typing, XmlType};
 use crate::xml::Syntax;
+use crate::xml::schema::permanent::components;
 use crate::xml::schema::{Expanded, Schema};
 
 /// [§11.6 SR3 to SR4] What an `<XML valid according to what>` and its
@@ -83,27 +84,23 @@ impl State {
     /// # Errors
     ///
     /// SQLCODE -103 if it indicates no registered XML Schema [SR1, SR2c];
-    /// -104 if `who` may not use it \[AR1\]; -900 if it is permanently
-    /// registered; SQLSTATE 2201M if it has no namespace ENSURI, 2201N no
-    /// global element declaration EN [SR4b, SR4d iii, GR1].
+    /// -104 if `who` may not use it \[AR1\]; SQLSTATE 2201M if it has no
+    /// namespace ENSURI, 2201N no global element declaration EN [SR4b,
+    /// SR4d iii, GR1].
     pub(crate) fn indicated(&self, according: &XmlValidAccording, (schema, who): (&str, Who<'_>)) -> Result<Indicated> {
         let name = match &according.what {
             XmlValidWhat::Id(written) => qualify(written, schema),
             XmlValidWhat::Uri { namespace, location } => self.of_namespace((namespace, location.as_deref()), who)?,
         };
         may_use(&*self.catalog, &name, who)?;
-        if permanent(&name).is_some() {
-            return Err(SqlError::new(
-                Code::Unsupported,
-                format!(
-                    "[ISO/IEC 9075-14:2006 draft §4.2.6] {name} is permanently registered, and turborel holds no components of it to validate by"
-                ),
-            ));
-        }
-        let desc = self.catalog.xml_schema(&name).ok_or_else(|| missing(&name))?;
-        let read =
-            desc.schema.clone().ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] registered XML Schema {name} is not read")))?;
-        let (namespace, element) = element_clause(according, desc, &read)?;
+        let not_read = || SqlError::new(Code::Api, format!("[DESIGN] registered XML Schema {name} is not read"));
+        let (target_namespace, read) = if let Some(p) = permanent(&name) {
+            (p.target_namespace.to_owned(), components(p.target_namespace).ok_or_else(not_read)?)
+        } else {
+            let desc = self.catalog.xml_schema(&name).ok_or_else(|| missing(&name))?;
+            (desc.target_namespace.clone(), desc.schema.clone().ok_or_else(not_read)?)
+        };
+        let (namespace, element) = element_clause(according, (&name, &target_namespace), &read)?;
         Ok(Indicated { name, schema: read, namespace, element })
     }
 
@@ -142,20 +139,25 @@ fn missing(name: &QualifiedName) -> SqlError {
 }
 
 /// [§11.6 SR4] The namespace ENSURI and NCName EN `according`'s element
-/// clause indicates of `desc`, read as `read`: ENSURI the clause's, else
-/// the target namespace NSURI \[SR4a\]; each that RXS has, as turborel
-/// requires \[SR4b, SR4d iii\], else the exception of GR1.
-fn element_clause(according: &XmlValidAccording, desc: &XmlSchemaDesc, read: &Schema) -> Result<(Option<String>, Option<String>)> {
+/// clause indicates of the registered XML Schema `name` of target
+/// namespace NSURI `target_namespace`, read as `read`: ENSURI the clause's,
+/// else NSURI \[SR4a\]; each that RXS has, as turborel requires \[SR4b,
+/// SR4d iii\], else the exception of GR1.
+fn element_clause(
+    according: &XmlValidAccording,
+    (name, target_namespace): (&QualifiedName, &str),
+    read: &Schema,
+) -> Result<(Option<String>, Option<String>)> {
     if !according.has_element_clause() {
         return Ok((None, None));
     }
-    let ensuri = according.namespace.clone().unwrap_or_else(|| desc.target_namespace.clone());
+    let ensuri = according.namespace.clone().unwrap_or_else(|| target_namespace.to_owned());
     let uri = Some(ensuri.as_str()).filter(|u| !u.is_empty());
-    let declared = desc.target_namespace == ensuri || read.namespaces().contains(&uri);
+    let declared = target_namespace == ensuri || read.namespaces().contains(&uri);
     if !declared {
         return Err(SqlError::new(
             Code::Data,
-            format!("[ISO/IEC 9075-14:2006 draft §11.6 GR1a] registered XML Schema {} has no namespace '{ensuri}'", desc.name),
+            format!("[ISO/IEC 9075-14:2006 draft §11.6 GR1a] registered XML Schema {name} has no namespace '{ensuri}'"),
         )
         .with_state(SqlState::ELEMENT_NAMESPACE_NOT_DECLARED));
     }
@@ -165,8 +167,7 @@ fn element_clause(according: &XmlValidAccording, desc: &XmlSchemaDesc, read: &Sc
         return Err(SqlError::new(
             Code::Data,
             format!(
-                "[ISO/IEC 9075-14:2006 draft §11.6 GR1b] registered XML Schema {} declares no global element {} of namespace '{ensuri}'",
-                desc.name, en
+                "[ISO/IEC 9075-14:2006 draft §11.6 GR1b] registered XML Schema {name} declares no global element {en} of namespace '{ensuri}'"
             ),
         )
         .with_state(SqlState::GLOBAL_ELEMENT_NOT_DECLARED));

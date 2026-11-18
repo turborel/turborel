@@ -64,7 +64,8 @@ base's final forbids, and a type defined by way of itself, are refused.
 
 Three XML Schemas are registered always, and are never registered again
 or dropped: INFORMATION_SCHEMA.XS, XSI and SQLXML, of the namespaces of
-XML Schema, of XML Schema instances and of SQL/XML.
+XML Schema, of XML Schema instances and of SQL/XML. A document may
+import SQL/XML's namespace, whose types SQLXML defines.
 
 CREATE XML SCHEMA runs within the session's transaction: ROLLBACK undoes
 it.

@@ -191,3 +191,27 @@ fn qualified_names_keep_their_namespaces_10_22() {
     let local = "declare namespace q = \"urn:q\"; local-name-from-QName(data((validate { . })/q:ref))";
     assert_eq!(value(&a, local, r#"<ref xmlns="urn:q" xmlns:p="urn:p">p:x</ref>"#), "x");
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.6 Table 1, §10.20 SR2e,
+/// §22.1] the permanently registered XML Schemas are in scope of each
+/// namespace no other registered XML Schema has: a schema document is
+/// validated by the Schema for Schemas, its declarations' defaults added;
+/// an `sqlxml:sqltype` by SQL/XML's, its attributes typed; and a
+/// registered XML Schema's document imports SQL/XML's namespace, whose
+/// types then validate its elements.
+#[test]
+fn permanent_schemas_are_in_scope_4_2_6() {
+    let db = registered();
+    let a = db.session("A");
+    let xs = "declare namespace xs = \"http://www.w3.org/2001/XMLSchema\"; ";
+    let schema = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="n"/></xs:schema>"#;
+    assert_eq!(value(&a, &format!("{xs}string((validate {{ . }})/xs:schema/xs:element/@nillable)"), schema), "false");
+    let sql = "declare namespace s = \"http://standards.iso.org/iso/9075/2003/sqlxml\"; ";
+    let sqltype = r#"<s:sqltype xmlns:s="http://standards.iso.org/iso/9075/2003/sqlxml" kind="PREDEFINED" name="CHAR" length="3"/>"#;
+    assert_eq!(value(&a, &format!("{sql}data((validate {{ . }})/s:sqltype/@length) instance of xs:integer"), sqltype), "true");
+    let kinds = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:s="http://standards.iso.org/iso/9075/2003/sqlxml" targetNamespace="urn:k"><xs:import namespace="http://standards.iso.org/iso/9075/2003/sqlxml"/><xs:element name="kind" type="s:kindKeyword"/></xs:schema>"#;
+    a.run(&format!("CREATE XML SCHEMA KINDS AS '{kinds}'")).unwrap();
+    a.commit().unwrap();
+    assert_eq!(value(&a, "validate { . }", r#"<kind xmlns="urn:k">ROW</kind>"#), r#"<kind xmlns="urn:k">ROW</kind>"#);
+    assert_eq!(code(&a, "validate { . }", r#"<kind xmlns="urn:k">TABLE</kind>"#), "err:XQDY0027");
+}

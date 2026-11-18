@@ -9,12 +9,19 @@ use std::sync::Arc;
 
 use crate::catalog::{Catalog, QualifiedName, XmlSchemaDesc};
 use crate::error::{Code, Result, SqlError};
+use crate::xml::schema::permanent::components;
 use crate::xml::schema::{Library, Schema, Source, read};
-use crate::xml::{Syntax, Whitespace, parse};
+use crate::xml::{SQLXML_NAMESPACE, Syntax, Whitespace, parse};
+
+/// The schema location of the SQL/XML XML Schema's document
+/// (`catalog::xml_schemas::PERMANENT`).
+const SQLXML_LOCATION: &str = "http://standards.iso.org/iso/9075/2003/sqlxml.xsd";
 
 /// The schema `document`, of schema location `location`, is, read with
-/// the documents of `registered` as its library [Schema1 §4.2]; and the
-/// names of those of them whose documents it read.
+/// the documents of `registered` as its library [Schema1 §4.2], and that
+/// of the permanently registered SQL/XML XML Schema [ISO/IEC 9075-14:2006
+/// draft §22.1], which it may import too; and the names of those of
+/// `registered` whose documents it read.
 ///
 /// # Errors
 ///
@@ -31,6 +38,9 @@ pub(in crate::db) fn read_registered(
         let Some(own) = desc.schema.as_ref().and_then(|s| s.documents.first()) else { continue };
         sources.push(Source { location: Some(desc.location.as_str().into()), tree: Arc::clone(&own.0) });
         names.push(desc.name.clone());
+    }
+    if let Some(own) = components(SQLXML_NAMESPACE).as_ref().and_then(|s| s.documents.first()) {
+        sources.push(Source { location: Some(SQLXML_LOCATION.into()), tree: Arc::clone(&own.0) });
     }
     let schema = read(&Source { location: Some(location.into()), tree }, &Library::new(sources.clone()))?;
     let mut uses: Vec<QualifiedName> = schema

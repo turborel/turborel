@@ -53,7 +53,9 @@ fn columns_of_xmlschema_types_6_1() {
 /// Schema, or a URI of none, is SQLCODE -103; one another's, -104; a
 /// namespace the schema has not is SQLSTATE 2201M, a global element it
 /// does not declare 2201N, as the type is defined; a permanently
-/// registered one is SQLCODE -900.
+/// registered one, of an element it declares, is a type: a column of it
+/// takes a schema document INFORMATION_SCHEMA.XS validates, and
+/// XMLVALIDATE refuses another, SQLSTATE 2201R.
 #[test]
 fn an_xmlschema_type_indicates_what_is_there_11_6() {
     let db = registered();
@@ -66,7 +68,17 @@ fn an_xmlschema_type_indicates_what_is_there_11_6() {
     assert_eq!(refused(&a, &table("ID A.O NAMESPACE 'urn:x'")), (-301, "2201M".to_owned()));
     assert_eq!(refused(&a, &table("ID A.O ELEMENT \"qty\"")), (-301, "2201N".to_owned()));
     assert_eq!(refused(&a, &table("ID A.O NO NAMESPACE ELEMENT \"order\"")), (-301, "2201M".to_owned()));
-    assert_eq!(refused(&a, &table("ID INFORMATION_SCHEMA.XS")).0, -900);
+    a.run(&table("ID INFORMATION_SCHEMA.XS ELEMENT \"schema\"")).unwrap();
+    let schema = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="n" type="xs:int"/></xs:schema>"#;
+    let valid = |text: &str| {
+        format!(
+            "INSERT INTO T VALUES (XMLVALIDATE(DOCUMENT XMLPARSE(DOCUMENT '{text}' PRESERVE WHITESPACE) ACCORDING TO XMLSCHEMA ID INFORMATION_SCHEMA.XS ELEMENT \"schema\"))"
+        )
+    };
+    a.run(&valid(schema)).unwrap();
+    a.commit().unwrap();
+    let not = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element/></xs:schema>"#;
+    assert_eq!(refused(&a, &valid(not)).1, "2201R");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.4, §10.2 SR1b ii, GR1a] a

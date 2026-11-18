@@ -3204,9 +3204,8 @@ namespace the one the user may use of the least name, chosen as the
 statement is bound. Each validates by `schema::validate` in strict mode
 the item §10.22 is given: of DOCUMENT the document node, so its identity
 constraints and IDs are checked; of CONTENT and SEQUENCE each element
-child of a document node alone, so they are not. turborel holds no
-components of the permanently registered XML Schemas, so one indicated,
-or chosen, validates nothing, SQLCODE -900.
+child of a document node alone, so they are not. The permanently
+registered XML Schemas validate by their components (below).
 
 XQuery's validate expression, strict or lax, validates by
 `schema::validate` against the in-scope schema definitions, which Part 14
@@ -3214,7 +3213,8 @@ makes an implementation-defined collection of registered XML Schemas the
 current user may use [ISO/IEC 9075-14:2006 draft §10.20 SR2e]: of each
 target namespace the one XMLVALIDATE's data-driven case chooses, chosen
 as the statement is bound and held by the compiled query
-(`xquery::InScopeSchema`), none permanently registered. A definition
+(`xquery::InScopeSchema`), the permanently registered one of a namespace
+no other has. A definition
 whose query has a validate expression notes them as it is defined, as it
 notes a registered XML Schema it indicates, so its horizon keeps them and
 it depends on them; bound again, its in-scope schema definitions are
@@ -3294,7 +3294,25 @@ too, is kept as written, its declaration naming any encoding.
 The permanently registered XML Schemas of Table 1 [§4.2.6] are
 INFORMATION_SCHEMA.XS, XSI and SQLXML, constants
 (`catalog::xml_schemas::PERMANENT`), not catalog objects: none is
-registered again or dropped, and anyone may use each.
+registered again or dropped, and anyone may use each. Their components
+are read once, when first needed, from schema documents kept in the tree
+(`xml/schema/permanent/`), as no text turborel is written from fetches
+anything: XS's from the Schema for Schemas as [Schema1 Appendix A]
+prints it, with the schema of the datatypes it includes as [Schema2
+Appendix A] prints it, and a schema of the XML namespace it imports,
+which no text on hand prints, so turborel's own, of `xml:lang` and
+`xml:space` as XML 1.0 defines them; their definitions of the built-in
+type names are the built-in definitions they represent [Schema1 §3.4.7,
+§3.14.7]. Three of the Schema for Schemas' restrictions, `xs:all`,
+`xs:complexRestrictionType` and `xs:simpleRestrictionType`, have content
+models Particle Valid (Restriction) refuses by its letter [Schema1
+§3.9.6] (RecurseAsIfGroup and RecurseLax compare occurrence ranges they
+widen), so its restrictions' content models are trusted, as the text
+makes it normative; every registered XML Schema's are checked. XSI's
+are none of its own, as no attribute declaration of its namespace is
+allowed [Schema1 §3.2.6], its four in every schema by definition
+[§3.2.7]. SQLXML's are the XML Schema [ISO/IEC 9075-14:2006 draft
+§22.1] prints, which a registered XML Schema's document may import.
 
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation

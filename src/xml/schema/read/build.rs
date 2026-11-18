@@ -321,14 +321,17 @@ impl<'a> Builder<'a> {
     }
 
     /// The type definition named `name` [Schema1 §3.15.3]: a built-in one
-    /// of the XML Schema namespace, else a top-level one.
+    /// of the XML Schema namespace, else a top-level one, of the XML Schema
+    /// namespace too in the Schema for Schemas.
     ///
     /// # Errors
     ///
     /// SQLSTATE 22000 if there is none; as `type_at`.
     pub fn type_named(&mut self, name: &Expanded) -> Result<TypeDef> {
-        if name.uri.as_deref() == Some(XS_NAMESPACE) {
-            return builtin::named(&name.local).ok_or_else(|| Builder::unresolved(name, "built-in type definition"));
+        if name.uri.as_deref() == Some(XS_NAMESPACE)
+            && let Some(built_in) = builtin::named(&name.local)
+        {
+            return Ok(built_in);
         }
         let place = self.entry(Space::Type, name).ok_or_else(|| Builder::unresolved(name, "type definition"))?;
         self.type_at(place)

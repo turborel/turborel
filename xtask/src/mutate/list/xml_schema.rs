@@ -11,7 +11,7 @@ use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 39] = [
+pub const XML_SCHEMA: [Mutation; 42] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -223,7 +223,7 @@ pub const XML_SCHEMA: [Mutation; 39] = [
         package: Package::Core,
         breaks: "an element clause names a namespace its registered XML Schema has not",
         file: "src/db/definitions/xml_schemas/according.rs",
-        original: "    let declared = desc.target_namespace == ensuri || read.namespaces().contains(&uri);",
+        original: "    let declared = target_namespace == ensuri || read.namespaces().contains(&uri);",
         replacement: "    let declared = true;",
         integration: &["xml_schema_types::an_xmlschema_type_indicates_what_is_there_11_6"],
         unit: &[],
@@ -406,6 +406,39 @@ pub const XML_SCHEMA: [Mutation; 39] = [
         original: "        let pinned = self.horizon.routines.is_some().then_some(self.horizon.xml_schemas.as_slice());",
         replacement: "        let pinned: Option<&[QualifiedName]> = None;",
         integration: &["xml_schema_dependents::a_validating_view_keeps_its_schemas_in_scope_10_20"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-built-in-names-kept",
+        package: Package::Core,
+        breaks: "the Schema for Schemas' definitions of the built-in types are read as its own",
+        file: "src/xml/schema/read/index.rs",
+        original: "        if space == Space::Type && name.uri.as_deref() == Some(XS_NAMESPACE) && builtin::named(&name.local).is_some() {",
+        replacement: "        if space == Space::Type && name.uri.as_deref() == Some(XS_NAMESPACE) && builtin::named(&name.local).is_none() {",
+        integration: &[],
+        unit: &["xml::schema::permanent::tests::each_permanent_schema_reads"],
+    },
+    Mutation {
+        name: "xml-schema-for-schemas-restrictions-checked",
+        package: Package::Core,
+        breaks: "the Schema for Schemas' restrictions are checked, which three of them break",
+        file: "src/xml/schema/permanent.rs",
+        original: "    read_text(SCHEMA_FOR_SCHEMAS, &library, Restrictions::Trusted)",
+        replacement: "    read_text(SCHEMA_FOR_SCHEMAS, &library, Restrictions::Checked)",
+        integration: &[],
+        unit: &["xml::schema::permanent::tests::each_permanent_schema_reads"],
+    },
+    Mutation {
+        name: "xml-schema-permanent-indicated",
+        package: Package::Core,
+        breaks: "a permanently registered XML Schema indicated has no components",
+        file: "src/db/definitions/xml_schemas/according.rs",
+        original: "            (p.target_namespace.to_owned(), components(p.target_namespace).ok_or_else(not_read)?)",
+        replacement: "            (p.target_namespace.to_owned(), return Err(not_read()))",
+        integration: &[
+            "xml_validate::who_may_validate_by_a_schema_11_6",
+            "xml_schema_types::an_xmlschema_type_indicates_what_is_there_11_6",
+        ],
         unit: &[],
     },
 ];

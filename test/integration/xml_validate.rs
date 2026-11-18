@@ -188,8 +188,10 @@ fn what_publishing_keeps_of_validated_values_6_13() {
 /// Verifies: [ISO/IEC 9075-14:2006 draft §11.6 AR1, §4.2.6] the owner of a
 /// registered XML Schema's schema may validate by it, another may not,
 /// SQLCODE -104 (`catalog::xml_schemas::may_use`); a permanently registered
-/// one, everyone may use but turborel holds none of its components,
-/// SQLCODE -900.
+/// one everyone may use: INFORMATION_SCHEMA.XS, the Schema for Schemas,
+/// validates a schema document, adding the attributes its declarations
+/// default [Schema1 §3.4.5], and refuses an element it does not declare,
+/// SQLSTATE 2201R.
 #[test]
 fn who_may_validate_by_a_schema_11_6() {
     let db = registered();
@@ -198,5 +200,10 @@ fn who_may_validate_by_a_schema_11_6() {
     assert_eq!(refused(&b, &format!("VALUES (XMLVALIDATE(CONTENT {value} ACCORDING TO XMLSCHEMA ID A.P))")).0, -104);
     assert_eq!(refused(&b, &format!("VALUES (XMLVALIDATE(CONTENT {value} ACCORDING TO XMLSCHEMA NO NAMESPACE))")).0, -103);
     let xs = "ACCORDING TO XMLSCHEMA ID INFORMATION_SCHEMA.XS";
-    assert_eq!(refused(&b, &format!("VALUES (XMLVALIDATE(CONTENT {value} {xs}))")).0, -900);
+    assert_eq!(refused(&b, &format!("VALUES (XMLVALIDATE(CONTENT {value} {xs}))")).1, "2201R");
+    let schema = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="n" type="xs:int"/></xs:schema>"#;
+    let typed =
+        one(&b, &format!("XMLSERIALIZE(XMLVALIDATE(DOCUMENT XMLPARSE(DOCUMENT '{schema}' PRESERVE WHITESPACE) {xs}) AS VARCHAR(1000))"));
+    let defaulted = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" finalDefault="" blockDefault="" attributeFormDefault="unqualified" elementFormDefault="unqualified"><xs:element name="n" type="xs:int" nillable="false" abstract="false"/></xs:schema>"#;
+    assert_eq!(typed, defaulted, "the defaults the Schema for Schemas declares added");
 }

@@ -25,6 +25,7 @@ mod particle;
 mod shape;
 mod simple;
 
+use super::check::Restrictions;
 use std::sync::Arc;
 
 use super::component::Schema;
@@ -91,9 +92,20 @@ impl Schema {
 /// `MAX_DEPTH`, `MAX_CHAIN`, `MAX_DOCUMENTS`, `MAX_POSITIONS` or
 /// `MAX_STATES`.
 pub fn read(primary: &Source, library: &Library) -> Result<Schema> {
+    read_checking(primary, library, Restrictions::Checked)
+}
+
+/// The schema `primary` corresponds to, as `read` reads it, its
+/// restrictions' content models checked or trusted as `restrictions`
+/// says.
+///
+/// # Errors
+///
+/// As `read`.
+pub(super) fn read_checking(primary: &Source, library: &Library, restrictions: Restrictions) -> Result<Schema> {
     let docs = documents::gather(primary, library)?;
     docs.iter().try_for_each(shape::check)?;
     let index = index::Index::of(&docs)?;
     let schema = build::Builder::new(&docs, &index).build()?;
-    super::check::schema(schema)
+    super::check::schema(schema, restrictions)
 }

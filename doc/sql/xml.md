@@ -1362,8 +1362,10 @@ element validated be of that namespace or that name. Without it, each
 element is validated by the registered XML Schema of its namespace that
 the user may use, the one of the least name if there are several; an
 element of no namespace by one of no target namespace. The registered
-XML Schemas INFORMATION_SCHEMA.XS, XSI and SQLXML validate nothing, as
-turborel holds no components of them (SQLCODE -900).
+XML Schemas INFORMATION_SCHEMA.XS, XSI and SQLXML validate as the texts
+define them: XS by the Schema for Schemas, so a schema document is
+valid by it; SQLXML by SQL/XML's own XML Schema; XSI declares no
+element.
 
 Of a DOCUMENT or CONTENT value with ACCORDING TO, the result is of
 XML(DOCUMENT(XMLSCHEMA ...)) or XML(CONTENT(XMLSCHEMA ...)) of what the
@@ -1458,8 +1460,8 @@ XMLVALIDATE's do. It validates by the registered XML Schemas the user may
 use, of each target namespace the one of the least name, chosen as the
 statement is prepared: the element validated, the node or a document
 node's element, is validated by the one of its namespace, with whatever
-that one imports. INFORMATION_SCHEMA.XS, XSI and SQLXML are none of
-them. A view, a constraint, a trigger or a routine whose query has a
+that one imports; of a namespace none of them has,
+INFORMATION_SCHEMA.XS, XSI or SQLXML. A view, a constraint, a trigger or a routine whose query has a
 validate expression keeps the ones chosen when it was created, and
 depends on each of them, as on a registered XML Schema it names.
 

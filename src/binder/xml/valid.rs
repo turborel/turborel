@@ -27,6 +27,7 @@ use crate::logical::{Cond, Expr};
 use crate::value::DataType;
 use crate::value::types::XmlSchemaNamed;
 use crate::value::xml::{Typing, XmlType};
+use crate::xml::schema::permanent::components;
 
 impl Binder<'_> {
     /// [§6.20] XMLVALIDATE ( `dcs` `operand` `according` ): of an XML value
@@ -130,7 +131,8 @@ impl Binder<'_> {
         }
         for p in &PERMANENT {
             if !out.iter().any(|c| c.namespace == p.target_namespace) {
-                out.push(Candidate { namespace: p.target_namespace.to_owned(), name: p.qualified().to_string(), schema: None });
+                let schema = components(p.target_namespace);
+                out.push(Candidate { namespace: p.target_namespace.to_owned(), name: p.qualified().to_string(), schema });
             }
         }
         out

@@ -18,14 +18,28 @@ use super::component::{AttributeUse, ComplexId, Compositor, Expanded, Particle, 
 use super::{MAX_DEPTH, beyond, invalid};
 use crate::error::Result;
 
+/// Whether the content model of each complex type derived by restriction
+/// is checked to restrict its base's [Schema1 §3.4.6
+/// derivation-ok-restriction.5.3], or trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Restrictions {
+    /// Checked, of every schema registered.
+    Checked,
+    /// \[DESIGN\] Trusted, of the Schema for Schemas as [Schema1 Appendix
+    /// A] prints it, normative, three of whose restrictions Particle Valid
+    /// (Restriction) refuses by its letter (`schema::permanent`).
+    Trusted,
+}
+
 /// `schema`, once it is shown to satisfy every schema component
-/// constraint, with the automaton of each content model.
+/// constraint, its restrictions' content models checked or trusted as
+/// `restrictions` says, with the automaton of each content model.
 ///
 /// # Errors
 ///
 /// SQLSTATE 22000 naming the constraint a component breaks; SQLCODE
 /// -900 of a content model past `MAX_POSITIONS` or `MAX_STATES`.
-pub fn schema(mut schema: Schema) -> Result<Schema> {
+pub fn schema(mut schema: Schema, restrictions: Restrictions) -> Result<Schema> {
     for group in &schema.groups {
         for p in &group.particles {
             particle_correct(p)?;
@@ -40,7 +54,7 @@ pub fn schema(mut schema: Schema) -> Result<Schema> {
         not_circular(&schema, super::component::GroupId(g))?;
     }
     for id in (1..schema.complex_types.len()).map(ComplexId) {
-        derive::complex_type(&schema, id)?;
+        derive::complex_type(&schema, id, restrictions)?;
         let automaton = match schema.complex(id).and_then(|c| c.content.particle()) {
             Some(p) => {
                 particle_correct(p)?;

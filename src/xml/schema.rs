@@ -40,6 +40,7 @@ mod check;
 mod component;
 mod determinism;
 mod facet;
+pub mod permanent;
 mod read;
 mod restrict;
 mod validate;

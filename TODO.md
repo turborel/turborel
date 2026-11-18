@@ -159,9 +159,7 @@ features.
   (`db/usage/xml_schemas.rs`), and the Information Schema shows them
   (X160, X161). Left: the short-name views XML_SCHEMAS_S,
   XML_SCH_NSPACES_S and XML_SCH_ELEMENTS_S, with short-name views of the
-  Information Schema at all; the components of the permanently
-  registered XML Schemas, so they validate
-  (XS's the Schema for Schemas).
+  Information Schema at all.
 
 ### Full text
 

@@ -13,10 +13,11 @@
 
 use super::super::builtin::simple_base;
 use super::super::component::{
-    AttributeUse, ComplexId, ComplexType, ContentType, Derivations, ElementId, Method, Schema, Simple, TypeDef, ValueKind, Wildcard,
+    AttributeUse, ComplexId, ComplexType, ContentType, Derivations, ElementId, Expanded, Method, Schema, Simple, TypeDef, ValueKind,
+    Wildcard,
 };
 use super::super::{MAX_CHAIN, invalid};
-use super::{attribute_uses_correct, emptiable, particle_restricts};
+use super::{Restrictions, attribute_uses_correct, emptiable, particle_restricts};
 use crate::error::Result;
 
 /// The derivation method as a member of a derivation set.
@@ -161,12 +162,12 @@ pub fn substitution(schema: &Schema, e: ElementId) -> Result<()> {
 /// # Errors
 ///
 /// SQLSTATE 22000 naming the constraint broken.
-pub fn complex_type(schema: &Schema, id: ComplexId) -> Result<()> {
+pub fn complex_type(schema: &Schema, id: ComplexId, restrictions: Restrictions) -> Result<()> {
     let Some(def) = schema.complex(id) else { return Ok(()) };
     attribute_uses_correct(schema, &def.attribute_uses, "[Schema1 §3.4.6 ct-props-correct.4]", "[Schema1 §3.4.6 ct-props-correct.5]")?;
     match def.method {
         Method::Extension => extension(schema, def),
-        Method::Restriction => restriction(schema, def),
+        Method::Restriction => restriction(schema, def, restrictions),
     }
 }
 
@@ -236,7 +237,7 @@ fn valid_extension(schema: &Schema, e: &super::super::component::Particle, b: &s
 /// # Errors
 ///
 /// SQLSTATE 22000 naming the clause broken.
-fn restriction(schema: &Schema, def: &ComplexType) -> Result<()> {
+fn restriction(schema: &Schema, def: &ComplexType, restrictions: Restrictions) -> Result<()> {
     let fail = |clause: &str, why: &str| invalid(&format!("[Schema1 §3.4.6 derivation-ok-restriction.{clause}]"), why);
     let TypeDef::Complex(b) = def.base else { return Err(fail("1", "a restriction's base is a complex type")) };
     let base = schema.complex(b).ok_or_else(|| fail("1", "a restriction's base is a complex type"))?;
@@ -255,8 +256,12 @@ fn restriction(schema: &Schema, def: &ComplexType) -> Result<()> {
         (ContentType::Empty, ContentType::Empty) => true,
         (ContentType::Mixed(rp), ContentType::Mixed(bp))
         | (ContentType::ElementOnly(rp), ContentType::Mixed(bp) | ContentType::ElementOnly(bp)) => {
+            if restrictions == Restrictions::Trusted {
+                return Ok(());
+            }
+            let named = def.name.as_ref().map_or_else(|| "an anonymous type".to_owned(), Expanded::text);
             return particle_restricts(schema, rp, bp)
-                .map_err(|why| fail("5.3", &format!("a restriction's content model restricts its base's: {why}")));
+                .map_err(|why| fail("5.3", &format!("the content model of restriction {named} restricts its base's: {why}")));
         }
         (ContentType::Simple(_) | ContentType::Empty | ContentType::Mixed(_) | ContentType::ElementOnly(_), _) => false,
     };

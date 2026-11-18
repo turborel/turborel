@@ -12,7 +12,7 @@ use crate::ast::{
     DefaultOption, OnEmpty, Passing, Returning, ValueExpression, ValueSpecification, XmlArguments, XmlQuery, XmlTable, XmlTableColumn,
 };
 use crate::catalog::QualifiedName;
-use crate::catalog::xml_schemas::may_use;
+use crate::catalog::xml_schemas::{PERMANENT, may_use};
 use crate::error::Result;
 use crate::functions::{Evaluation, RegularColumn, ScalarRef, TableColumn, XmlCopy, XmlDocument, XmlExistsOf, XmlQueryOf, XmlTableOf};
 use crate::logical::Expr;
@@ -20,6 +20,7 @@ use crate::value::datetime::{MICROS_PER_DAY, MICROS_PER_MINUTE};
 use crate::value::types::{Field, MAX_ARRAY_CARDINALITY};
 use crate::value::xml::XmlType;
 use crate::value::{DataType, Value};
+use crate::xml::schema::permanent::components;
 use crate::xml::{Moment, Shape, Version, is_ncname};
 use crate::xquery::{Environment, InScopeSchema, Query};
 
@@ -120,8 +121,8 @@ impl Binder<'_> {
     /// [§10.20 SR2e] The in-scope schema definitions, implementation-
     /// defined (RULES.md D86): of each target namespace, the registered XML
     /// Schema of the least name the current user may use, as XMLVALIDATE's
-    /// data-driven validation chooses, and each one's name; none
-    /// permanently registered, as turborel holds no components of those.
+    /// data-driven validation chooses, and each one's name; the
+    /// permanently registered one of a namespace none of those has.
     /// A definition whose query validates notes them as it is created, so
     /// it depends on them (`Invoked::indicated`), and, bound again, has the
     /// ones it noted, of each namespace the least name, never one
@@ -141,6 +142,15 @@ impl Binder<'_> {
                 && !out.iter().any(|(_, s)| s.namespace == d.target_namespace)
             {
                 out.push((d.name.clone(), InScopeSchema { namespace: d.target_namespace.clone(), name: d.name.to_string(), schema }));
+            }
+        }
+        for p in &PERMANENT {
+            let name = p.qualified();
+            if pinned.is_none_or(|kept| kept.contains(&name))
+                && !out.iter().any(|(_, s)| s.namespace == p.target_namespace)
+                && let Some(schema) = components(p.target_namespace)
+            {
+                out.push((name.clone(), InScopeSchema { namespace: p.target_namespace.to_owned(), name: name.to_string(), schema }));
             }
         }
         out
