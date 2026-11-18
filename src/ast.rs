@@ -84,10 +84,11 @@ pub use expression::{
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use graph::{
-    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphLimits,
-    GraphPattern, GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression, MatchMode, ORIENTATIONS,
-    Orientation, OrientationForm, ParenthesizedPath, PathEnd, PathExpression, PathFactor, PathPattern, PathPrefix, PathPrimary, PathTerm,
-    PropertySpec, Quantifier, QuantifierSugar, Restrictor, SameKind, SegmentFilter, Selector, VariableKind,
+    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphHints,
+    GraphLimits, GraphPattern, GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression, MatchMode,
+    ORIENTATIONS, Orientation, OrientationForm, ParenthesizedPath, PathAlgorithm, PathEnd, PathExpression, PathFactor, PathPattern,
+    PathPrefix, PathPrimary, PathTerm, PropertySpec, Quantifier, QuantifierSugar, Restrictor, SameKind, SegmentFilter, Selector,
+    VariableKind,
 };
 pub use graph_ddl::{
     AdjacencyIndex, AlterGraph, AlterGraphAction, DerivedProperty, ElementAction, ElementDefinition, EndpointDefinition, GraphDefinition,

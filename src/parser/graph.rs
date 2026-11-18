@@ -13,6 +13,7 @@
 
 mod element;
 mod expression;
+mod hints;
 mod normalize;
 mod pattern;
 mod syntax;
@@ -26,8 +27,8 @@ pub use syntax::{Declared, Degree, Exposed, Exposure, exposure};
 
 use super::Parser;
 use crate::ast::{
-    ColumnSpecification, GraphColumn, GraphLimits, GraphReference, GraphRows, GraphTable, GraphVariable, SystemTimeKind, SystemTimeRead,
-    TableName, TableReference, ValueExpression,
+    ColumnSpecification, GraphColumn, GraphHints, GraphLimits, GraphReference, GraphRows, GraphTable, GraphVariable, SystemTimeKind,
+    SystemTimeRead, TableName, TableReference, ValueExpression,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -104,24 +105,26 @@ impl Parser {
         let rows = self.graph_rows()?;
         self.expect_word(super::json::COLUMNS)?;
         let columns = self.graph_columns()?;
-        let options = self.graph_limits()?;
+        let (options, hints) = self.graph_limits()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(GraphTable { graph, pattern, rows, columns, correlation: None, system_time: None, options, at })
+        Ok(GraphTable { graph, pattern, rows, columns, correlation: None, system_time: None, options, hints, at })
     }
 
     /// \[EXTENSION\] [GS §20] \[OPTIONS ( `<graph option>` \[, ...\] )\],
     /// each option at most once: MAX_PATH_LENGTH `n`,
     /// MAX_PATHS_PER_PARTITION `n`, MAX_SEARCH_STATES `n`, ON LIMIT
-    /// {ERROR | TRUNCATE}, DETERMINISTIC_PATHS.
-    fn graph_limits(&mut self) -> Result<GraphLimits> {
-        let mut limits = GraphLimits::default();
+    /// {ERROR | TRUNCATE}, DETERMINISTIC_PATHS; and the hints among them
+    /// (`graph/hints.rs`).
+    fn graph_limits(&mut self) -> Result<(GraphLimits, GraphHints)> {
+        let (mut limits, mut hints) = (GraphLimits::default(), GraphHints::default());
         if !self.accept_word(OPTIONS) {
-            return Ok(limits);
+            return Ok((limits, hints));
         }
         self.expect_delim(delim::LEFT_PAREN)?;
         loop {
             let at = self.here();
             let before = limits;
+            let mut hinted = false;
             if self.accept_word(MAX_PATH_LENGTH) && limits.max_path_length.is_none() {
                 limits.max_path_length = Some(self.unsigned_integer()?);
             } else if self.accept_word(MAX_PATHS_PER_PARTITION) && limits.max_paths_per_partition.is_none() {
@@ -137,8 +140,10 @@ impl Parser {
                 limits.truncate = Some(truncate);
             } else if self.accept_word(DETERMINISTIC_PATHS) && !limits.deterministic {
                 limits.deterministic = true;
+            } else {
+                hinted = self.graph_hint(&mut hints)?;
             }
-            if limits == before {
+            if limits == before && !hinted {
                 return Err(SqlError::at(Code::Syntax, at, "[EXTENSION] expected a GRAPH_TABLE option not yet written (GS §20)"));
             }
             if !self.accept_delim(delim::COMMA) {
@@ -146,7 +151,7 @@ impl Parser {
             }
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(limits)
+        Ok((limits, hints))
     }
 
     /// `<graph reference>` ::= `<graph name>` | \[EXTENSION\] LINE_GRAPH (

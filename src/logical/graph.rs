@@ -73,6 +73,8 @@ pub struct GraphMatch {
     pub columns: Vec<Expr>,
     /// The resource limits written in it [GS §20].
     pub options: GraphOptions,
+    /// The optimizer hints written in it [GS §16 R16.8].
+    pub hints: crate::ast::GraphHints,
 }
 
 /// \[EXTENSION\] How the rows of an element table are read.
@@ -393,6 +395,20 @@ impl GraphMatch {
             let _ = write!(out, "\n  edge table {}: {how}", t.alias);
         }
         let _ = write!(out, "\n  match mode {:?}, rows {:?}", self.mode, self.rows);
+        if !self.hints.is_empty() {
+            let _ = write!(out, "\n  hints {}", hints_text(&self.hints));
+        }
         out
     }
+}
+
+/// \[GS §16 R16.8\] `hints` as EXPLAIN shows them, as written.
+fn hints_text(hints: &crate::ast::GraphHints) -> String {
+    let mut shown: Vec<String> = Vec::new();
+    shown.extend(hints.start.iter().map(|(v, _)| format!("GRAPH_START({v})")));
+    shown.extend(hints.reverse.iter().map(|(v, _)| format!("GRAPH_DIRECTION({v}, REVERSE)")));
+    shown.extend(hints.no_wcoj.then(|| "NO_WCOJ".to_owned()));
+    shown.extend(hints.use_adjacency.iter().map(|(t, _)| format!("USE_ADJACENCY({t})")));
+    shown.extend(hints.path_algo.map(|a| format!("PATH_ALGO({})", a.word())));
+    shown.join(", ")
 }
