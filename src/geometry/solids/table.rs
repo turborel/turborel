@@ -146,7 +146,8 @@ fn query(constants: &[Option<&Value>]) -> Option<AppendedQuery> {
     };
     let from = table.iter().map(|p| delimited(p)).collect::<Vec<_>>().join(".");
     let fields = columns.iter().map(|c| delimited(c)).collect::<Vec<_>>().join(", ");
-    Some(AppendedQuery { query: format!("SELECT ROW({fields}) FROM {from}"), tables: vec![(schema, ident)] })
+    let query = format!("SELECT ROW({fields}) FROM {from}");
+    Some(AppendedQuery { query, tables: vec![(schema, ident)], columns })
 }
 
 /// The engine's row of a row of the table read.
@@ -209,7 +210,7 @@ impl ScalarFunction for TinFromTable {
             return Ok(Value::Null);
         }
         let Some(Value::Array(read)) = args.get(ARGUMENTS) else {
-            return Err(invalid("the table or a column is not named as an identifier, or the table does not exist"));
+            return Err(invalid("the table or a column is not named as an identifier, or does not exist"));
         };
         let rows: Vec<Row> = read.iter().map(row).collect::<Result<Vec<_>>>()?.into_iter().flatten().collect();
         let max_side = number(args.get(12).unwrap_or(&Value::Null))?;

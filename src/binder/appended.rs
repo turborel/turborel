@@ -63,7 +63,8 @@ impl Binder<'_> {
 
     /// The argument `f` declares a call of `exprs` is given last
     /// (`ScalarFunction::appended_query`), bound: ARRAY of its query, if the
-    /// tables it reads are all there (RULES.md D87).
+    /// tables it reads are all there and the first has the columns it names
+    /// (RULES.md D87).
     ///
     /// # Errors
     ///
@@ -77,7 +78,11 @@ impl Binder<'_> {
         let there = |(auth, ident): &(String, String)| {
             self.db.catalog.table(&QualifiedName { auth: auth_of(auth), ident: ident.clone() }).is_some()
         };
-        if !appended.tables.iter().all(there) {
+        let has = |(auth, ident): &(String, String)| {
+            let table = self.db.catalog.table(&QualifiedName { auth: auth_of(auth), ident: ident.clone() });
+            table.is_some_and(|t| appended.columns.iter().all(|c| t.columns.iter().any(|d| d.name == *c)))
+        };
+        if !appended.tables.iter().all(there) || !appended.tables.first().is_none_or(has) {
             return Ok(None);
         }
         let unplaced = |e: SqlError| SqlError { pos: None, ..e };

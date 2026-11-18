@@ -193,7 +193,7 @@ fn sql_relationships_refine_shapes_and_preserve_errors() {
     assert_eq!(rows(&a, query).unwrap(), ["1"]);
     assert_eq!(
         rows(&a, "SELECT ST_INTERSECTS(G, G), ST_DISJOINT(G, G) FROM SHAPES ORDER BY ID").unwrap(),
-        ["1,0", "1,0", "0,1", "NULL,NULL"]
+        ["1,0", "1,0", "NULL,NULL", "NULL,NULL"]
     );
     assert_eq!(
         rows(&a, "SELECT S.ID, T.ID FROM SHAPES S JOIN SHAPES T ON ST_INTERSECTS(S.G, T.G) = 1 ORDER BY S.ID, T.ID").unwrap(),

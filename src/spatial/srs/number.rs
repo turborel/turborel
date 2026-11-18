@@ -1,5 +1,5 @@
-//! Numbers in the text representations: the <exact numeric literal> and
-//! <approximate numeric literal> of ISO/IEC 9075-2 §5.3 that §14.1.9,
+//! Numbers in the text representations: the \<exact numeric literal\> and
+//! \<approximate numeric literal\> of ISO/IEC 9075-2 §5.3 that §14.1.9,
 //! §16.1.21 and §16.2.23 of ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
 //! reference, and the rounded decimal strings of ST_String and the
 //! bearing and azimuth methods.

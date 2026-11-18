@@ -1,7 +1,7 @@
 //! Checks a tree of items against the productions of ISO/IEC 13249-3:2016
 //! (DIS, SC32 N2593) §14.1.9 and builds the coordinate system it holds.
 //! Items appear in the order the productions give. The \[EXTENSION\] items
-//! come last in their parent: TOWGS84 after a <spheroid>, AXIS after a
+//! come last in their parent: TOWGS84 after a \<spheroid\>, AXIS after a
 //! system's units, AUTHORITY at the end of any item.
 
 use std::iter::Peekable;

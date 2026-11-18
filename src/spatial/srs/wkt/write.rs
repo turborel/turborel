@@ -1,7 +1,7 @@
-//! The canonical <spatial reference system> text of a coordinate system,
+//! The canonical \<spatial reference system\> text of a coordinate system,
 //! as ST_AsWKTSRS returns it (ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
-//! §14.1.3 Description 2): key words upper case, <left bracket> and
-//! <right bracket> delimiters, no spaces outside names, and each number
+//! §14.1.3 Description 2): key words upper case, \<left bracket\> and
+//! \<right bracket\> delimiters, no spaces outside names, and each number
 //! the shortest decimal that reads back to the same value, so reading the
 //! text gives back an equal model. \[EXTENSION\] items are written only
 //! when the model has them.

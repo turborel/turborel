@@ -16,6 +16,7 @@ use std::sync::Arc;
 use super::collections::CollectionFunction;
 use super::functions::GeometryFunction;
 use super::model::Kind;
+use super::routines::Routine;
 use super::solids::{SolidFunction, TinFromTable};
 use crate::error::{Result, SqlError, SqlState};
 use crate::functions::{ScalarFunction, ScalarRef};
@@ -63,7 +64,7 @@ macro_rules! routine {
 }
 
 /// The table: of each type, the methods it declares.
-pub static METHODS: [Method; 84] = [
+pub static METHODS: [Method; 122] = [
     // [§5.1.1] ST_Geometry.
     original(Kind::Geometry, "ST_SRID", 0, routine!(GeometryFunction::Srid)),
     original(Kind::Geometry, "ST_SRID", 1, routine!(GeometryFunction::SetSrid)),
@@ -78,6 +79,36 @@ pub static METHODS: [Method; 84] = [
     original(Kind::Geometry, "ST_MAXX", 0, routine!(GeometryFunction::MaxX)),
     original(Kind::Geometry, "ST_MINY", 0, routine!(GeometryFunction::MinY)),
     original(Kind::Geometry, "ST_MAXY", 0, routine!(GeometryFunction::MaxY)),
+    // [§5.1.8 to §5.1.54] The planar engine's routines (`routines.rs`).
+    original(Kind::Geometry, "ST_DISTANCE", 2, routine!(GeometryFunction::Distance)),
+    original(Kind::Geometry, "ST_EQUALS", 1, routine!(Routine::Equals)),
+    original(Kind::Geometry, "ST_RELATE", 2, routine!(Routine::Relate)),
+    original(Kind::Geometry, "ST_TOUCHES", 1, routine!(Routine::Touches)),
+    original(Kind::Geometry, "ST_CROSSES", 1, routine!(Routine::Crosses)),
+    original(Kind::Geometry, "ST_WITHIN", 1, routine!(Routine::Within)),
+    original(Kind::Geometry, "ST_CONTAINS", 1, routine!(Routine::Contains)),
+    original(Kind::Geometry, "ST_OVERLAPS", 1, routine!(Routine::Overlaps)),
+    original(Kind::Geometry, "ST_INTERSECTION", 1, routine!(Routine::Intersection)),
+    original(Kind::Geometry, "ST_UNION", 1, routine!(Routine::Union)),
+    original(Kind::Geometry, "ST_DIFFERENCE", 1, routine!(Routine::Difference)),
+    original(Kind::Geometry, "ST_SYMDIFFERENCE", 1, routine!(Routine::SymDifference)),
+    original(Kind::Geometry, "ST_BUFFER", 1, routine!(Routine::Buffer)),
+    original(Kind::Geometry, "ST_BUFFER", 2, routine!(Routine::Buffer)),
+    original(Kind::Geometry, "ST_CONVEXHULL", 0, routine!(Routine::ConvexHull)),
+    original(Kind::Geometry, "ST_BOUNDARY", 0, routine!(Routine::Boundary)),
+    original(Kind::Geometry, "ST_ISVALID", 0, routine!(Routine::IsValid)),
+    original(Kind::Geometry, "ST_ISSIMPLE", 0, routine!(Routine::IsSimple)),
+    // [§7.1] ST_Curve.
+    original(Kind::Curve, "ST_ISRING", 0, routine!(Routine::IsRing)),
+    original(Kind::Curve, "ST_LENGTH", 0, routine!(Routine::Length)),
+    original(Kind::Curve, "ST_LENGTH", 1, routine!(Routine::Length)),
+    // [§8.1] ST_Surface.
+    original(Kind::Surface, "ST_AREA", 0, routine!(Routine::Area)),
+    original(Kind::Surface, "ST_AREA", 1, routine!(Routine::Area)),
+    original(Kind::Surface, "ST_PERIMETER", 0, routine!(Routine::Perimeter)),
+    original(Kind::Surface, "ST_PERIMETER", 1, routine!(Routine::Perimeter)),
+    original(Kind::Surface, "ST_CENTROID", 0, routine!(Routine::Centroid)),
+    original(Kind::Surface, "ST_POINTONSURFACE", 0, routine!(Routine::PointOnSurface)),
     // [§6.1.1] ST_Point.
     original(Kind::Point, "ST_X", 0, routine!(GeometryFunction::X)),
     original(Kind::Point, "ST_Y", 0, routine!(GeometryFunction::Y)),
@@ -92,10 +123,18 @@ pub static METHODS: [Method; 84] = [
     // [§10.3.1] ST_MultiCurve.
     overriding(Kind::MultiCurve, "ST_GEOMETRIES", 0, routine!(CollectionFunction::Geometries(Kind::MultiCurve))),
     overriding(Kind::MultiCurve, "ST_GEOMETRIES", 1, routine!(CollectionFunction::Geometries(Kind::MultiCurve))),
+    original(Kind::MultiCurve, "ST_LENGTH", 0, routine!(Routine::Length)),
+    original(Kind::MultiCurve, "ST_LENGTH", 1, routine!(Routine::Length)),
     // [§10.4.1] ST_MultiLineString.
     overriding(Kind::MultiLineString, "ST_GEOMETRIES", 0, routine!(CollectionFunction::Geometries(Kind::MultiLineString))),
     overriding(Kind::MultiLineString, "ST_GEOMETRIES", 1, routine!(CollectionFunction::Geometries(Kind::MultiLineString))),
     // [§10.5.1] ST_MultiSurface.
+    original(Kind::MultiSurface, "ST_AREA", 0, routine!(Routine::Area)),
+    original(Kind::MultiSurface, "ST_AREA", 1, routine!(Routine::Area)),
+    original(Kind::MultiSurface, "ST_PERIMETER", 0, routine!(Routine::Perimeter)),
+    original(Kind::MultiSurface, "ST_PERIMETER", 1, routine!(Routine::Perimeter)),
+    original(Kind::MultiSurface, "ST_CENTROID", 0, routine!(Routine::Centroid)),
+    original(Kind::MultiSurface, "ST_POINTONSURFACE", 0, routine!(Routine::PointOnSurface)),
     overriding(Kind::MultiSurface, "ST_GEOMETRIES", 0, routine!(CollectionFunction::Geometries(Kind::MultiSurface))),
     overriding(Kind::MultiSurface, "ST_GEOMETRIES", 1, routine!(CollectionFunction::Geometries(Kind::MultiSurface))),
     // [§10.6.1] ST_MultiPolygon.
@@ -119,6 +158,7 @@ pub static METHODS: [Method; 84] = [
     original(Kind::Curve, "ST_3DLENGTH", 0, routine!(SolidFunction::Length)),
     original(Kind::Curve, "ST_3DLENGTH", 1, routine!(SolidFunction::Length)),
     original(Kind::Curve, "ST_3DISCLOSED", 0, routine!(SolidFunction::IsClosed)),
+    original(Kind::Curve, "ST_IS3DCLOSED", 0, routine!(SolidFunction::Is3DClosed)),
     original(Kind::Curve, "ST_3DISRING", 0, routine!(SolidFunction::IsRing)),
     original(Kind::Curve, "ST_3DDISTANCETOPT", 1, routine!(SolidFunction::DistanceToPt)),
     original(Kind::Curve, "ST_3DDISTANCETOPT", 2, routine!(SolidFunction::DistanceToPt)),
@@ -132,6 +172,7 @@ pub static METHODS: [Method; 84] = [
     original(Kind::Surface, "ST_3DCENTROID", 0, routine!(SolidFunction::Centroid)),
     original(Kind::Surface, "ST_3DPOINTONSURF", 0, routine!(SolidFunction::PointOnSurf)),
     original(Kind::Surface, "ST_3DISCLOSED", 0, routine!(SolidFunction::IsClosed)),
+    original(Kind::Surface, "ST_IS3DCLOSED", 0, routine!(SolidFunction::Is3DClosed)),
     original(Kind::Surface, "ST_ISSHELL", 0, routine!(SolidFunction::IsShell)),
     // [§8.4] ST_Triangle, in space.
     original(Kind::Triangle, "ST_3DSLOPE", 0, routine!(SolidFunction::Slope)),
@@ -157,6 +198,7 @@ pub static METHODS: [Method; 84] = [
     original(Kind::MultiCurve, "ST_3DLENGTH", 0, routine!(SolidFunction::Length)),
     original(Kind::MultiCurve, "ST_3DLENGTH", 1, routine!(SolidFunction::Length)),
     original(Kind::MultiCurve, "ST_3DISCLOSED", 0, routine!(SolidFunction::IsClosed)),
+    original(Kind::MultiCurve, "ST_IS3DCLOSED", 0, routine!(SolidFunction::Is3DClosed)),
     // [§10.5] ST_MultiSurface, in space.
     original(Kind::MultiSurface, "ST_3DAREA", 0, routine!(SolidFunction::Area)),
     original(Kind::MultiSurface, "ST_3DAREA", 1, routine!(SolidFunction::Area)),

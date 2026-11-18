@@ -60,6 +60,9 @@ pub enum SolidFunction {
     Length,
     /// [§7.1.7, §8.1.11, §10.3.4] ST_3DIsClosed().
     IsClosed,
+    /// [§8.1.1] ST_Is3DClosed(), the spelling ST_Surface's type
+    /// definition declares for ST_3DIsClosed.
+    Is3DClosed,
     /// [§7.1.9] ST_3DIsRing().
     IsRing,
     /// [§7.1.14] ST_3DDistanceToPt(ST_Point [, CHARACTER VARYING]).
@@ -99,7 +102,7 @@ pub enum SolidFunction {
 }
 
 /// Every routine in space.
-pub const SOLID_FUNCTIONS: [SolidFunction; 32] = [
+pub const SOLID_FUNCTIONS: [SolidFunction; 33] = [
     SolidFunction::Intersection,
     SolidFunction::Union,
     SolidFunction::Difference,
@@ -114,6 +117,7 @@ pub const SOLID_FUNCTIONS: [SolidFunction; 32] = [
     SolidFunction::LocateBetween,
     SolidFunction::Length,
     SolidFunction::IsClosed,
+    SolidFunction::Is3DClosed,
     SolidFunction::IsRing,
     SolidFunction::DistanceToPt,
     SolidFunction::PtAtDistance,
@@ -169,6 +173,7 @@ impl SolidFunction {
             Self::LocateBetween => s("ST_3DLOCATEBETWEEN", ANY, &[3]),
             Self::Length => s("ST_3DLENGTH", CURVES, ONE_OR_TWO),
             Self::IsClosed => s("ST_3DISCLOSED", &[Kind::Curve, Kind::MultiCurve, Kind::Surface], ONE),
+            Self::Is3DClosed => s("ST_IS3DCLOSED", &[Kind::Curve, Kind::MultiCurve, Kind::Surface], ONE),
             Self::IsRing => s("ST_3DISRING", &[Kind::Curve], ONE),
             Self::DistanceToPt => s("ST_3DDISTANCETOPT", &[Kind::Curve], TWO_OR_THREE),
             Self::PtAtDistance => s("ST_3DPTATDISTANCE", &[Kind::Curve], TWO_OR_THREE),
@@ -225,6 +230,7 @@ impl SolidFunction {
             | Self::Intersects
             | Self::IsSimple
             | Self::IsClosed
+            | Self::Is3DClosed
             | Self::IsRing
             | Self::IsShell
             | Self::NumIntShells => INTEGER,
@@ -253,6 +259,7 @@ impl SolidFunction {
             Self::IsSimple
             | Self::Boundary
             | Self::IsClosed
+            | Self::Is3DClosed
             | Self::IsRing
             | Self::Centroid
             | Self::PointOnSurf
@@ -296,7 +303,7 @@ impl SolidFunction {
             Self::Boundary => relations::boundary(g),
             Self::LocateAlong | Self::LocateBetween => relations::locate(g, rest),
             Self::Length => measures::length(g, rest),
-            Self::IsClosed => measures::is_closed(g),
+            Self::IsClosed | Self::Is3DClosed => measures::is_closed(g),
             Self::IsRing => measures::is_ring(g),
             Self::DistanceToPt => measures::distance_to_pt(g, rest),
             Self::PtAtDistance => measures::pt_at_distance(g, rest),

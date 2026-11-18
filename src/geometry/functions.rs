@@ -94,11 +94,14 @@ pub enum GeometryFunction {
     IsEmpty,
     /// ST_GEOMETRYTYPE(geometry), a SQL/MM-style name such as ST_Point.
     TypeName,
-    /// ST_INTERSECTS(left, right), integer 1 for a shared point, else 0.
+    /// ST_INTERSECTS(left, right), integer 1 for a shared point, else 0,
+    /// the null value if either is empty [ISO/IEC 13249-3:2016 §5.1.48].
     Intersects,
-    /// ST_DISJOINT(left, right), integer 1 for disjoint point sets, else 0.
+    /// ST_DISJOINT(left, right), integer 1 for disjoint point sets, else 0,
+    /// the null value if either is empty [§5.1.46].
     Disjoint,
-    /// ST_DISTANCE(left, right), planar distance, NULL for empty point sets.
+    /// ST_DISTANCE(left, right [, unit]), planar distance, NULL for empty
+    /// point sets, in the unit named if one is [ISO/IEC 13249-3:2016 §5.1.41].
     Distance,
 }
 
@@ -132,9 +135,9 @@ impl GeometryFunction {
 
     fn arity(self, count: usize) -> bool {
         match self {
-            Self::Point => (TWO_ARGS..=THREE_ARGS).contains(&count),
+            Self::Point | Self::Distance => (TWO_ARGS..=THREE_ARGS).contains(&count),
             Self::MakeEnvelope => (FOUR_ARGS..=FIVE_ARGS).contains(&count),
-            Self::SetSrid | Self::Intersects | Self::Disjoint | Self::Distance => count == TWO_ARGS,
+            Self::SetSrid | Self::Intersects | Self::Disjoint => count == TWO_ARGS,
             Self::FromText | Self::FromBinary => (1..=TWO_ARGS).contains(&count),
             Self::AsText
             | Self::AsBinary
@@ -264,7 +267,10 @@ impl ScalarFunction for GeometryFunction {
         } else if !input.kind().comparable(first) {
             return Err(signature(self.name()));
         }
-        if self.paired() && !args.iter().all(|t| input.kind().comparable(t)) {
+        if self.paired() && !args.iter().take(TWO_ARGS).all(|t| input.kind().comparable(t)) {
+            return Err(signature(self.name()));
+        }
+        if matches!(self, Self::Distance) && args.get(TWO_ARGS).is_some_and(|unit| !unit.is_character()) {
             return Err(signature(self.name()));
         }
         if let Some(t) = self.reference_position().and_then(|at| args.get(at))
@@ -331,11 +337,19 @@ impl ScalarFunction for GeometryFunction {
 
     fn call_borrowed(&self, args: &[&Value], _temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Value> {
         if self.paired() {
-            let [left, right] = args else { return Err(signature(self.name())) };
-            if left.is_null() || right.is_null() {
+            let [left, right, unit @ ..] = args else { return Err(signature(self.name())) };
+            if !self.arity(args.len()) {
+                return Err(signature(self.name()));
+            }
+            if args.iter().any(|value| value.is_null()) {
                 return Ok(Value::Null);
             }
-            return self.pair(&Geometry::from_value(left)?, &Geometry::from_value(right)?);
+            let measured = self.pair(&Geometry::from_value(left)?, &Geometry::from_value(right)?)?;
+            return match unit {
+                [] => Ok(measured),
+                [unit] => in_unit(measured, left, unit),
+                _ => Err(signature(self.name())),
+            };
         }
         match args {
             [] => self.call(&[]),
@@ -437,8 +451,13 @@ impl GeometryFunction {
             })),
             Self::SetSrid => Ok(g.with_srid(reference(rest)?).to_value()),
             Self::Intersects | Self::Disjoint | Self::Distance => {
-                let [right] = rest else { return Err(signature(self.name())) };
-                self.pair(&g, &Geometry::from_value(right)?)
+                let [right, unit @ ..] = rest else { return Err(signature(self.name())) };
+                let measured = self.pair(&g, &Geometry::from_value(right)?)?;
+                match unit {
+                    [] => Ok(measured),
+                    [unit] => in_unit(measured, &g.to_value(), unit),
+                    _ => Err(signature(self.name())),
+                }
             }
             Self::FromText | Self::FromBinary | Self::Point | Self::MakeEnvelope | Self::TypeName => Err(signature(self.name())),
         }
@@ -456,6 +475,7 @@ pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
     out.extend(super::SOLID_FUNCTIONS.iter().map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }));
     out.push(Arc::new(super::TinFromTable));
     out.push(Arc::new(super::BRepSolid));
+    out.extend(super::routines::functions());
     out
 }
 
@@ -472,10 +492,18 @@ impl GeometryFunction {
         if matches!(self, Self::Distance) {
             return left.distance_located(right, located).map(|distance| distance.map_or(Value::Null, Value::Approx));
         }
-        let intersects = left.intersects_located(right, located)?;
+        let Some(intersects) = left.intersects_located(right, located)? else { return Ok(Value::Null) };
         let result = if matches!(self, Self::Disjoint) { !intersects } else { intersects };
         Ok(Value::Exact(Decimal::new(i128::from(result), 0)))
     }
+}
+
+/// ST_Distance(g, g, unit): the distance in the unit named [ISO/IEC
+/// 13249-3:2016 (DIS, SC32 N2593) §5.1.41 Description 4].
+fn in_unit(measured: Value, subject: &Value, unit: &Value) -> Result<Value> {
+    let (Value::Approx(distance), Value::Char(name)) = (&measured, unit) else { return Ok(measured) };
+    let srid = Geometry::from_value(subject)?.srid();
+    super::routines::length_in(*distance, srid, name).map(Value::Approx)
 }
 
 fn point(args: &[Value]) -> Result<Value> {

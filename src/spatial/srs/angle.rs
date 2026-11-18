@@ -289,7 +289,7 @@ impl Angle {
         format!("ANGLE RADIANS({})", number::shortest(self.radians))
     }
 
-    /// ST_AngleFromText: the <angle text representation>.
+    /// ST_AngleFromText: the \<angle text representation\>.
     ///
     /// # Errors
     ///

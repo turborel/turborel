@@ -256,6 +256,7 @@ mod settings;
 mod spatial_catalog;
 mod spatial_index;
 mod spatial_methods;
+mod spatial_planar;
 mod spatial_solids;
 mod spatial_types;
 mod spill_encodings;

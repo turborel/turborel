@@ -1,4 +1,4 @@
-//! The ellipsoid of revolution of a <spheroid> (ISO/IEC 13249-3:2016 (DIS,
+//! The ellipsoid of revolution of a \<spheroid\> (ISO/IEC 13249-3:2016 (DIS,
 //! SC32 N2593) §14.1.9 Description 1k), its auxiliary latitudes, the
 //! conversion between geodetic and geocentric coordinates (EPSG Guidance
 //! Note 7-2, method 9602), and the seven-parameter Helmert datum shift

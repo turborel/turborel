@@ -1,5 +1,5 @@
 //! The well-known text representation of a spatial reference system, the
-//! <spatial reference system> of ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
+//! \<spatial reference system\> of ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
 //! §14.1.9: reading it into a [`CoordinateSystem`] and writing one back
 //! in canonical form, the pair the ST_WellKnownText transform group of
 //! §14.1.8 is made of.
@@ -21,23 +21,23 @@ pub use write::write;
 
 // The key words of §14.1.9 Description 1c, then the \[EXTENSION\] items.
 
-/// PROJCS, a <projected cs>.
+/// PROJCS, a \<projected cs\>.
 pub const PROJCS: &str = "PROJCS";
-/// GEOGCS, a <geographic cs>.
+/// GEOGCS, a \<geographic cs\>.
 pub const GEOGCS: &str = "GEOGCS";
-/// GEOCCS, a <geocentric cs>.
+/// GEOCCS, a \<geocentric cs\>.
 pub const GEOCCS: &str = "GEOCCS";
-/// DATUM, a <datum>.
+/// DATUM, a \<datum\>.
 pub const DATUM: &str = "DATUM";
-/// SPHEROID, a <spheroid>.
+/// SPHEROID, a \<spheroid\>.
 pub const SPHEROID: &str = "SPHEROID";
-/// PRIMEM, a <prime meridian>.
+/// PRIMEM, a \<prime meridian\>.
 pub const PRIMEM: &str = "PRIMEM";
-/// PROJECTION, a <projection>.
+/// PROJECTION, a \<projection\>.
 pub const PROJECTION: &str = "PROJECTION";
-/// PARAMETER, a <parameter>.
+/// PARAMETER, a \<parameter\>.
 pub const PARAMETER: &str = "PARAMETER";
-/// UNIT, a <unit>.
+/// UNIT, a \<unit\>.
 pub const UNIT: &str = "UNIT";
 /// AUTHORITY, an organization's code for an item.
 pub const AUTHORITY: &str = "AUTHORITY";
@@ -62,7 +62,7 @@ pub(crate) const DIRECTIONS: [(&str, Direction); 7] = [
 /// recursion can exhaust the stack (RULES.md R-CF-6).
 const MAX_DEPTH: usize = 6;
 
-/// The <spatial reference system> `text`, as a coordinate system.
+/// The \<spatial reference system\> `text`, as a coordinate system.
 /// Key words are read without regard to case.
 ///
 /// # Errors

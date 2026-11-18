@@ -81,7 +81,7 @@ pub fn find(name: &str) -> Option<Unit> {
     all().find(|unit| unit.name.eq_ignore_ascii_case(name.trim()))
 }
 
-/// The unit `name` of kind `kind`: a supported <unit name> in the sense of
+/// The unit `name` of kind `kind`: a supported \<unit name\> in the sense of
 /// §5.1.41 Description 4a to 4c, which for distances is a 'LINEAR' row.
 ///
 /// # Errors

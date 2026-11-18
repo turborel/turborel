@@ -7,11 +7,11 @@ collection of them, with an SRID naming its spatial reference system.
 Its type is ST_GEOMETRY or one of its 26 subtypes, the type family of
 SQL/MM Spatial. Its
 functions read and write the well-known text (WKT) and binary (WKB)
-forms, observe a value's coordinates and bounds, test whether two values
-intersect and measure the planar distance between them. An index of the
-method `rtree` on a GEOMETRY column finds the rows an intersection
-filter or join matches, and the rows nearest a point, without reading
-the table.
+forms, observe a value's coordinates and bounds, relate two values by
+their intersection matrix, combine them, buffer and measure them, and
+measure the planar distance between them. An index of the method
+`rtree` on a GEOMETRY column finds the rows a relationship filter or
+join matches, and the rows nearest a point, without reading the table.
 
 The types and their functions are built in, so every database has
 them and nothing is registered before its files are opened. For an
@@ -199,9 +199,22 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): DISTINCT compares values of ST_GEOMETRY
 | `ST_ISEMPTY(geometry)` | INTEGER 1 if it has no coordinates, else 0 |
 | `ST_GEOMETRYTYPE(geometry)` | Its most specific type's name, as `ST_Point` |
 | `ST_ORDERINGEQUALS(a, b)` | INTEGER 0 if `a` and `b` are equal by the ordering of the types, else 1 |
-| `ST_INTERSECTS(a, b)` | INTEGER 1 if `a` and `b` share a point, else 0 |
-| `ST_DISJOINT(a, b)` | INTEGER 1 if `a` and `b` share no point, else 0 |
-| `ST_DISTANCE(a, b)` | The least planar distance between them, DOUBLE PRECISION; NULL if either is empty |
+| `ST_INTERSECTS(a, b)` | INTEGER 1 if `a` and `b` share a point, else 0; NULL if either is empty |
+| `ST_DISJOINT(a, b)` | INTEGER 1 if `a` and `b` share no point, else 0; NULL if either is empty |
+| `ST_EQUALS(a, b)`, `ST_TOUCHES`, `ST_CROSSES`, `ST_WITHIN`, `ST_CONTAINS`, `ST_OVERLAPS` | INTEGER 1 or 0 by the intersection matrix, see [Relationships](#relationships) |
+| `ST_RELATE(a, b, matrix)` | INTEGER 1 if their intersection matrix matches the nine characters of `matrix`, else 0 |
+| `ST_INTERSECTION(a, b)`, `ST_UNION`, `ST_DIFFERENCE`, `ST_SYMDIFFERENCE` | The point set the operation leaves, see [Set operations](#set-operations) |
+| `ST_BUFFER(geometry, distance [, unit])` | Every point within the distance, a surface |
+| `ST_CONVEXHULL(geometry)` | The least convex value holding it |
+| `ST_BOUNDARY(geometry)` | Its boundary |
+| `ST_ISVALID(geometry)`, `ST_ISSIMPLE(geometry)` | INTEGER 1 if it is well formed, or has no anomalous point, else 0 |
+| `ST_ISRING(curve)` | INTEGER 1 if it is simple and closed, else 0 |
+| `ST_LENGTH(curves [, unit])` | The length of a curve or multicurve, DOUBLE PRECISION |
+| `ST_AREA(surfaces [, unit])`, `ST_PERIMETER(surfaces [, unit])` | The area or boundary length of a surface or multisurface, DOUBLE PRECISION |
+| `ST_CENTROID(surfaces)`, `ST_POINTONSURFACE(surfaces)` | Its centroid, or a point inside it |
+| `ST_BDPOLYFROMTEXT(text [, srid])`, `ST_BDPOLYFROMWKB(binary [, srid])` | The polygon a multilinestring's rings bound |
+| `ST_BDMPOLYFROMTEXT(text [, srid])`, `ST_BDMPOLYFROMWKB(binary [, srid])` | The multipolygon a multilinestring's rings bound |
+| `ST_DISTANCE(a, b [, unit])` | The least planar distance between them, DOUBLE PRECISION; NULL if either is empty |
 | `ST_NUMGEOMETRIES(collection)` | The count of its elements, INTEGER |
 | `ST_GEOMETRYN(collection, n)` | Its `n`th element, from 1; NULL and the warning 01F01 if there is none |
 | `ST_GEOMETRIES(collection)` | Its elements, an ARRAY of the collection's element type |
@@ -346,7 +359,7 @@ within the limits of [Appendix D](../appendix/d-limits.md).
 ST_INTERSECTS and ST_DISJOINT test the closed geometries, boundaries
 included and polygon holes excluded. Of the field, the well and the gate
 on its edge intersect it, and the pond in its hole and the road below
-it do not. An empty value intersects nothing:
+it do not. Of an empty value both give NULL:
 
 ```sql
 SELECT P.NAME, ST_INTERSECTS(P.SHAPE, F.SHAPE) AS MEETS, ST_DISJOINT(P.SHAPE, F.SHAPE) AS APART
@@ -361,7 +374,7 @@ SELECT P.NAME, ST_INTERSECTS(P.SHAPE, F.SHAPE) AS MEETS, ST_DISJOINT(P.SHAPE, F.
  Field                |            1 |            0
  Pond                 |            0 |            1
  Gate                 |            1 |            0
- Lost                 |            0 |            1
+ Lost                 |         NULL |         NULL
  Unmapped             |         NULL |         NULL
 (7 rows)
 ```
@@ -370,8 +383,8 @@ Both values must have the same SRID, even when empty. A query writes
 `ST_INTERSECTS(a, b) = 1` in a WHERE or ON condition. The tests decide
 by the exact orientation of the binary64 coordinates as stored, without
 a tolerance, in the plane, even where the SRID names a geographic
-reference system. They are right only of polygons of valid topology,
-which they do not check:
+reference system. A curve takes part as its linear form, the line
+string that approximates it:
 
 ```sql
 VALUES ST_INTERSECTS(ST_POINT(5, 5), ST_POINT(5, 5, 4326));
@@ -381,6 +394,161 @@ VALUES ST_INTERSECTS(ST_POINT(5, 5), ST_POINT(5, 5, 4326));
 turborel: SQLCODE -301 (SQLSTATE 22000): invalid geometry: spatial operands must have the same SRID
 ```
 
+The other relationships come from the intersection matrix of the two
+values, which records the dimension of each meeting of one value's
+interior, boundary and exterior with the other's. ST_RELATE compares
+it with a pattern of nine characters, each `T` (they meet), `F` (they
+do not), `0`, `1` or `2` (they meet in points, curves or a surface) or
+`*` (anything). ST_EQUALS, ST_TOUCHES, ST_CROSSES, ST_WITHIN,
+ST_CONTAINS and ST_OVERLAPS are its named patterns. Each gives NULL of
+an empty value, but two empty values are equal. ST_TOUCHES gives NULL of
+two point sets, and ST_CROSSES and ST_OVERLAPS of values of dimensions
+they do not compare. Every one is also a method, as
+`F.SHAPE.ST_CONTAINS(P.SHAPE)`:
+
+```sql
+SELECT P.NAME, ST_WITHIN(P.SHAPE, F.SHAPE) AS INSIDE, ST_TOUCHES(P.SHAPE, F.SHAPE) AS EDGE,
+       ST_RELATE(P.SHAPE, F.SHAPE, 'FT*******') AS ON_EDGE
+    FROM PLACES P, PLACES F WHERE F.ID = 3 AND P.ID IN (1, 4, 5) ORDER BY P.ID;
+VALUES ST_RELATE(ST_POINT(1, 1), ST_POINT(1, 1), 'TTX******');
+```
+
+```
+ NAME                 |       INSIDE |         EDGE |      ON_EDGE
+----------------------+--------------+--------------+--------------
+ Well                 |            1 |            0 |            0
+ Pond                 |            0 |            0 |            0
+ Gate                 |            0 |            1 |            1
+(3 rows)
+turborel: SQLCODE -301 (SQLSTATE 2FF04): [ISO/IEC 13249-3:2016 §5.1.45 Description 2c] invalid intersection matrix
+```
+
+## Set operations
+
+ST_INTERSECTION, ST_UNION, ST_DIFFERENCE and ST_SYMDIFFERENCE give the
+point set each operation leaves, closed, of the first value's SRID. A
+result is the most specific type that holds it, within the types the
+standard allows for the two operands' types. An empty result is an
+empty point, and a union with a collection is a collection:
+
+```sql
+SELECT ST_ASTEXT(ST_INTERSECTION(R.SHAPE, ST_MAKEENVELOPE(0, -6, 3, 0))) AS PIECE,
+       ST_AREA(ST_DIFFERENCE(F.SHAPE, ST_MAKEENVELOPE(5, 0, 10, 10))) AS WEST_HALF
+    FROM PLACES R, PLACES F WHERE R.ID = 2 AND F.ID = 3;
+VALUES ST_ASTEXT(ST_UNION(ST_POINT(2, 2), ST_POINT(5, 5)));
+VALUES ST_ASTEXT(ST_INTERSECTION(ST_POINT(2, 2), ST_POINT(5, 5)));
+```
+
+```
+ PIECE                                                        |                WEST_HALF
+--------------------------------------------------------------+--------------------------
+ LINESTRING (0 -5, 3 -5)                                      |                    4.8E1
+(1 row)
+
+--------------------------------------------------------------
+ MULTIPOINT ((2 2), (5 5))
+(1 row)
+
+--------------------------------------------------------------
+ POINT EMPTY
+(1 row)
+```
+
+## Buffer, hull and boundary
+
+ST_BUFFER gives every point within a distance of a value, a surface
+whose arcs are polygons inscribed in their circles, a step of π/16
+apart. A negative distance leaves no point. ST_CONVEXHULL gives the
+least convex value holding the value, and ST_BOUNDARY its boundary.
+Each gives NULL of an empty value. A unit names a row of
+ST_UNITS_OF_MEASURE, and the distance is converted from it to the SRID's
+linear unit, the metre for SRID 0:
+
+```sql
+SELECT ST_CONTAINS(ST_BUFFER(W.SHAPE, 5), P.SHAPE) AS NEAR_WELL,
+       ST_ASTEXT(ST_CONVEXHULL(ST_UNION(W.SHAPE, P.SHAPE))) AS HULL
+    FROM PLACES W, PLACES P WHERE W.ID = 1 AND P.ID = 4;
+VALUES ST_ASTEXT(ST_BOUNDARY(ST_GEOMFROMTEXT('LINESTRING (0 0, 3 0, 3 4)')));
+VALUES ST_AREA(ST_BUFFER(ST_POINT(0, 0), 0.001, 'KILOMETRE')) > 3.1;
+```
+
+```
+    NEAR_WELL | HULL
+--------------+--------------------------------------------------------------
+            1 | LINESTRING (2 2, 5 5)
+(1 row)
+
+--------------------------------------------------------------
+ MULTIPOINT ((0 0), (3 4))
+(1 row)
+
+-------
+ TRUE
+(1 row)
+```
+
+## Validity and measures
+
+ST_ISVALID tells whether a value is well formed, a polygon's rings
+closed, simple and nested without crossing. ST_ISSIMPLE tells whether
+it has no anomalous point, as a line crossing itself, and ST_ISRING
+whether a curve is simple and closed. ST_LENGTH measures a curve or
+multicurve, and ST_AREA, ST_PERIMETER, ST_CENTROID and
+ST_POINTONSURFACE a surface or multisurface, each NULL of an empty
+value. A unit converts the measure, and a geographic SRID, which has no
+linear unit, refuses one:
+
+```sql
+SELECT ST_ISVALID(SHAPE) AS VALID, ST_AREA(SHAPE) AS AREA, ST_PERIMETER(SHAPE, 'KILOMETRE') AS PERIMETER_KM,
+       ST_ASTEXT(ST_CENTROID(SHAPE)) AS CENTROID
+    FROM PLACES WHERE ID = 3;
+SELECT ST_LENGTH(SHAPE) AS ROAD, ST_ISSIMPLE(SHAPE) AS SIMPLE FROM PLACES WHERE ID = 2;
+VALUES ST_ISVALID(ST_GEOMFROMTEXT('POLYGON ((0 0, 2 2, 2 0, 0 2, 0 0))'));
+VALUES ST_AREA(ST_POINT(1, 1));
+```
+
+```
+        VALID |                     AREA |             PERIMETER_KM | CENTROID
+--------------+--------------------------+--------------------------+--------------------------------------------------------------
+            1 |                    9.6E1 |                   4.8E-2 | POINT (5 5)
+(1 row)
+                     ROAD |       SIMPLE
+--------------------------+--------------
+                      2E1 |            1
+(1 row)
+
+--------------
+            0
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF02): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1] ST_AREA takes no ST_Point
+```
+
+## Polygons from rings
+
+ST_BDPOLYFROMTEXT and ST_BDPOLYFROMWKB take a multilinestring's text or
+binary and give the polygon its rings bound, the outer one the shell
+and those inside it holes. ST_BDMPOLYFROMTEXT and ST_BDMPOLYFROMWKB give
+the multipolygon of rings that bound several. A line that is not a
+closed simple ring is an invalid argument:
+
+```sql
+VALUES ST_ASTEXT(ST_BDPOLYFROMTEXT('MULTILINESTRING ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1))'));
+VALUES ST_AREA(ST_BDMPOLYFROMTEXT('MULTILINESTRING ((0 0, 1 0, 1 1, 0 0), (5 5, 6 5, 6 6, 5 5))'));
+VALUES ST_BDPOLYFROMTEXT('MULTILINESTRING ((0 0, 1 0, 1 1))');
+```
+
+```
+
+--------------------------------------------------------------
+ POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (2 1, 1 1, 1 2, 2 2, 2 1))
+(1 row)
+
+--------------------------
+                      1E0
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF02): [ISO/IEC 13249-3:2016 §8.3.9 Description 4c] invalid argument
+```
+
 ## Distance
 
 ST_DISTANCE gives the least distance between the points of two values,
@@ -388,12 +556,14 @@ in their coordinates' unit, 0 if they intersect. Of longitude and
 latitude it gives degrees, not metres along the Earth. Its result is
 approximate, and a positive distance too small for DOUBLE PRECISION may
 round to 0, so ST_INTERSECTS is the test of contact. Both values must
-have the same SRID, and polygons valid topology:
+have the same SRID. A unit gives the distance in that unit, as for
+ST_BUFFER:
 
 ```sql
 SELECT P.NAME, ST_DISTANCE(P.SHAPE, F.SHAPE) AS FROM_FIELD
     FROM PLACES P, PLACES F WHERE F.ID = 3 ORDER BY P.ID;
 VALUES ST_DISTANCE(ST_POINT(-1E308, 0), ST_POINT(1E308, 0));
+VALUES ST_DISTANCE(ST_POINT(0, 0), ST_POINT(3000, 4000), 'KILOMETRE');
 ```
 
 ```
@@ -408,6 +578,10 @@ VALUES ST_DISTANCE(ST_POINT(-1E308, 0), ST_POINT(1E308, 0));
  Unmapped             |                     NULL
 (7 rows)
 turborel: SQLCODE -301 (SQLSTATE 22003): geometry distance exceeds the finite binary64 range
+
+--------------------------
+                      5E0
+(1 row)
 ```
 
 ## Routines in space
@@ -423,7 +597,8 @@ combine them, solids too. Both values must have z.
 A solid has ST_3DVOLUME, ST_3DSURFACEAREA, ST_3DCENTROID and
 ST_3DPOINTONSOLID. A B-rep solid has its exterior and interior shells,
 which ST_ISSHELL tests: a shell is a closed surface whose patches meet
-only along their edges. ST_BREPSOLID makes one of shells. A triangle
+only along their edges. ST_3DISCLOSED, also spelled ST_IS3DCLOSED as
+the standard spells it too, tests a curve or surface for closure. ST_BREPSOLID makes one of shells. A triangle
 has ST_3DSLOPE, its rise over its run. A TIN has ST_MAXSIDELENGTH,
 which can retriangulate it, and ST_CLIP, which keeps what lies within a
 polygon. `TABLE(ST_TINTABLE(tin))` lists a TIN's points, triangles and
@@ -494,7 +669,11 @@ which these few rows may not, in three forms.
 
 - A filter `ST_INTERSECTS(column, value) = 1`, or with the column second,
   where the value is a constant or a parameter.
-- An inner join on `ST_INTERSECTS(a.column, b.column) = 1`, where both
+  ST_CONTAINS, ST_WITHIN, ST_TOUCHES, ST_CROSSES, ST_OVERLAPS and
+  ST_EQUALS do the same, as each holds only of values that meet. An
+  empty value equals every empty row, so ST_EQUALS of one reads them all.
+- An inner join on `ST_INTERSECTS(a.column, b.column) = 1`, or one of
+  the other relationships, where both
   columns are of the same SRID. Each row of one side probes the other's
   index, and for a broad join an adaptive scan may read it once instead.
 - `ORDER BY ST_DISTANCE(column, value) ASC NULLS LAST` with FETCH FIRST,
@@ -625,12 +804,14 @@ OK
 | 2A000 | -103 | A type's parameter is not one integer from 0 to 2147483647, a function's arguments are not of its types, a value of a supertype is assigned without TREAT, NEW names a type that holds no value of its own, geometry values are ordered, grouped or made distinct, a key names a geometry column, or a method is not of the value's declared type |
 | 0D000 | -301 | TREAT is given a value of another type |
 | 2FF08 | -301 | CAST is given a value Table 4 does not convert, or a value is assigned to a type it is not of |
-| 2FF23 | -301 | WKB of a type is malformed |
-| 0A000 | -900 | Text or relationships of a value of a type beyond the seven, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), or an `rtree` index of a column of plain GEOMETRY |
-| 2FF02 | -301 | A 3D routine's argument is out of its range: a TIN's maximum side length not above 0, a vertical triangle's slope, a measure range reversed, an interior shell outside the exterior one, or a TIN table that does not exist |
+| 2FF23 | -301 | WKB of a type is malformed, or ST_BDPOLYFROMWKB's is of no multilinestring |
+| 2FF02 | -301 | A ring of ST_BDPOLYFROMTEXT's is not a closed simple ring, a measure is given a value of a type it does not measure, or a 3D routine's argument is out of its range: a TIN's maximum side length not above 0, a vertical triangle's slope, a measure range reversed, an interior shell outside the exterior one, or a TIN table or column that does not exist |
 | 2FF03 | -301 | A TIN's maximum side length, or an array of shells or one of its elements, is null |
-| 2FF14 | -301 | A 3D measure names a unit ST_UNITS_OF_MEASURE does not list, or its value is of a geographic system |
+| 2FF04 | -301 | ST_RELATE's matrix is not nine of `T`, `F`, `0`, `1`, `2` and `*` |
+| 2FF14 | -301 | A unit is not a linear unit of ST_UNITS_OF_MEASURE, or the SRID's system has no linear unit |
+| 2FF22 | -301 | ST_BDPOLYFROMTEXT's text is of no multilinestring |
 | 2FF72 | -301 | A 3D routine of two values is given one without z |
+| 0A000 | -900 | Text of a value of a type beyond the seven, a relationship or measure of a solid, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), or an `rtree` index of a column of plain GEOMETRY |
 | 23000 | -201 | ST_DEFINESRS, ST_DROPSRS or ST_REGISTERGEOMETRYCOLUMN would break a constraint of the Spatial Information Schema's tables |
 | TB916 | -916 | A stored value or index key is damaged, or of an unknown version |
 

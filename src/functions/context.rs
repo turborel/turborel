@@ -35,4 +35,7 @@ pub struct AppendedQuery {
     /// The tables it reads, each its schema's name and its own: it is
     /// appended only if they all are there.
     pub tables: Vec<(String, String)>,
+    /// The columns the first of its tables must have: it is appended only
+    /// if that table has them all.
+    pub columns: Vec<String>,
 }

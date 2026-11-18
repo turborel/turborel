@@ -1,4 +1,4 @@
-//! Map projections of a <projected cs> (ISO/IEC 13249-3:2016 (DIS, SC32
+//! Map projections of a \<projected cs\> (ISO/IEC 13249-3:2016 (DIS, SC32
 //! N2593) §14.1.9 Description 1d and 1i). Projection and parameter names
 //! are implementation-defined; this module accepts the names of the OGC
 //! coordinate transformation text and of the EPSG dataset, compared

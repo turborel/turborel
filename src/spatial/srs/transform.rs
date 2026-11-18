@@ -1,5 +1,5 @@
 //! The coordinate transform of ST_Transform (ISO/IEC 13249-3:2016 (DIS,
-//! SC32 N2593) §5.1.6), from one <spatial reference system> to another.
+//! SC32 N2593) §5.1.6), from one \<spatial reference system\> to another.
 //! §5.1.6 Description 3d leaves the transform implementation-defined;
 //! this one is the following pipeline.
 //!

@@ -170,7 +170,7 @@ fn curves_measure_in_space() {
 }
 
 /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §8.1.3, §8.1.5,
-/// §8.1.7, §8.1.11, §8.1.13, §8.4.4, §5.1.9, §5.1.18] a surface's area,
+/// §8.1.1, §8.1.7, §8.1.11, §8.1.13, §8.4.4, §5.1.9, §5.1.18] a surface's area,
 /// perimeter and centroid in space, a box's faces a closed simple shell
 /// whose boundary is empty, an open one's boundary its rim, and the slope
 /// of a triangle; a vertical triangle has none (2FF02).
@@ -183,8 +183,10 @@ fn surfaces_measure_in_space() {
     assert!(close(number(&a, &format!("VALUES ST_3DPERIMETER({tilted})")), 12.0));
     assert_eq!(text(&a, &format!("VALUES ST_3DCENTROID({tilted})")), "POINT Z (1.5 0.5 2)");
     let shell = geo(&box_faces([0.0; 3], [1.0; 3]), 0);
-    let checks = format!("VALUES (ST_ISSHELL({shell}), ST_3DISCLOSED({shell}), ST_3DISSIMPLE({shell}), ST_ISSHELL({tilted}))");
-    assert_eq!(rows(&a, &checks).unwrap(), ["1,1,1,0"]);
+    let checks = format!(
+        "VALUES (ST_ISSHELL({shell}), ST_3DISCLOSED({shell}), ST_IS3DCLOSED({shell}), ST_3DISSIMPLE({shell}), ST_ISSHELL({tilted}))"
+    );
+    assert_eq!(rows(&a, &checks).unwrap(), ["1,1,1,1,0"]);
     assert_eq!(text(&a, &format!("VALUES ST_3DBOUNDARY({tilted})")), "LINESTRING Z (0 0 0, 3 0 4, 3 1 4, 0 1 0, 0 0 0)");
     assert!(close(number(&a, &format!("VALUES ST_3DSLOPE({})", geo("TRIANGLE Z (0 0 0, 1 0 1, 0 1 0)", 0))), 1.0));
     assert_eq!(state(&a, &format!("VALUES ST_3DSLOPE({})", geo("TRIANGLE Z (0 0 0, 1 0 0, 0 0 1)", 0))), "2FF02");
@@ -226,4 +228,5 @@ fn tins_clip_and_become_tables() {
     );
     assert_eq!(rows(&a, &format!("VALUES ({built}.ST_MAXSIDELENGTH(), ST_3DAREA({built}) > 0)")).unwrap(), ["7E0,TRUE"]);
     assert_eq!(state(&a, &format!("VALUES {}", built.replace("'R'", "'NOWHERE'"))), "2FF02");
+    assert_eq!(state(&a, &format!("VALUES {}", built.replace("'ELEMENTTAG'", "'NOTAG'"))), "2FF02");
 }

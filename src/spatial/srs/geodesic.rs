@@ -9,7 +9,7 @@
 //! They give the geodetic ST_Distance, ST_Length, ST_Perimeter and
 //! ST_Area of ISO/IEC 13249-3:2016 (DIS, SC32 N2593): §5.1.41 Description
 //! 2a iv lets the distance between points be an implementation-defined
-//! algorithm, and on a <geographic cs> this one is the length of the
+//! algorithm, and on a \<geographic cs\> this one is the length of the
 //! shortest geodesic, in metres. Points are longitude, latitude pairs in
 //! degrees, the default axis order of a geographic system.
 
