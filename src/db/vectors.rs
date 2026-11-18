@@ -14,10 +14,13 @@
 use std::sync::{Arc, PoisonError, RwLock};
 
 use super::{Database, State};
+use crate::catalog::{ColumnDesc, SqlRoutineDesc};
 use crate::diagnostics::Extension;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::error::{Code, Result, SqlError};
+use crate::index::IndexMethod;
 use crate::lexer::authorization_identifier;
+use crate::value::CompOp;
 use crate::vector::metric::{Metrics, VectorMetric, metric_named};
 use crate::vector::quantizer::{Quantizer, Quantizers, built_in_quantizers, quantizer_named};
 
@@ -71,6 +74,49 @@ impl SharedVectors {
         self.quantizers.write().unwrap_or_else(PoisonError::into_inner).push(quantizer);
         Ok(())
     }
+}
+
+/// That the columns `keyed` of index `name` of method `m` group values, as
+/// keys do [ISO/IEC 9075-2:2023 §9.12 SR3]; and \[EXTENSION\] are no
+/// vectors, if `m` keys by value, by `=` or an order: a vector has neither
+/// (design document §17, RULES.md D88). A method of its own search, a
+/// vector index's, keys them.
+///
+/// # Errors
+///
+/// SQLCODE -103 if one is not, or is a vector.
+pub(super) fn keyed_by<'a>(m: &dyn IndexMethod, keyed: impl Iterator<Item = &'a ColumnDesc>, name: &str) -> Result<()> {
+    let what = format!("index {name}");
+    keyed.into_iter().try_for_each(|column| {
+        crate::binder::key_operand(&column.data_type, &what)?;
+        if !m.supports(CompOp::Eq) {
+            return Ok(());
+        }
+        crate::binder::orderless_operand(&column.data_type, &what)
+    })
+}
+
+/// \[EXTENSION\] That the routine `desc`, if a distance function of SQL
+/// (design document §8), is one: its body binds over its two vectors to a
+/// number, and its name is no metric's built in or registered, which
+/// VECTOR_DISTANCE would otherwise name in its place.
+///
+/// # Errors
+///
+/// SQLCODE -103 if its body is no number of them or it is named as a
+/// metric is.
+pub(super) fn distance_defined(st: &State, desc: &SqlRoutineDesc) -> Result<()> {
+    if desc.distance.is_none() {
+        return Ok(());
+    }
+    crate::binder::sql_metric(st, desc)?;
+    let metrics = st.vectors.metrics();
+    let qualified = format!("{}.{}", desc.name.auth, desc.name.ident);
+    if let Some(m) = [desc.name.ident.as_str(), &qualified].into_iter().find(|n| metric_named(&metrics, n).is_some()) {
+        let message = format!("[EXTENSION] a distance function is named as no metric is, and {m} is one");
+        return Err(SqlError::new(Code::SyntaxRule, message));
+    }
+    Ok(())
 }
 
 /// Whether `name` is a regular identifier in upper case, as a plug-in's

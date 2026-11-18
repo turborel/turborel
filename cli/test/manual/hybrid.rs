@@ -12,7 +12,7 @@ use super::Client;
 fn the_hybrid_search_examples_run_as_printed() {
     let db = Database::new();
     let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("sql/14-hybrid-search.md") > 0, "it shows its examples' output");
+    assert!(ann.page("sql/15-hybrid-search.md") > 0, "it shows its examples' output");
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE HELP (ID INTEGER PRIMARY KEY, BODY VARCHAR(200), EMB VECTOR(4))").unwrap();
     let mut ann = Client::of(&db, "ANN");

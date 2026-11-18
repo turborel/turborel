@@ -19,5 +19,6 @@ The language, element by element, and each statement on a reference page of its 
 - [The SQL/JSON Path Language](11-json-path.md)
 - [The JSON Type](12-json-type.md)
 - [JSON_TABLE](13-json-table.md)
-- [Hybrid Search](14-hybrid-search.md)
+- [Vectors](14-vectors.md) *(extension)*
+- [Hybrid Search](15-hybrid-search.md) *(extension)*
 - [Statements](statements/README.md)

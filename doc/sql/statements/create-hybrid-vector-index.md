@@ -25,7 +25,7 @@ column together, for HYBRID_SEARCH *(extension)*
 
 CREATE HYBRID VECTOR INDEX makes an index of the method `hybrid`: a
 full-text index of the text column and a vector index of the vector
-column, which [HYBRID_SEARCH](../14-hybrid-search.md#hybrid_search)
+column, which [HYBRID_SEARCH](../15-hybrid-search.md#hybrid_search)
 reads together. It is a [CREATE INDEX](create-index.md) of that method
 and its options, and is listed by INFORMATION_SCHEMA.INDEXES and
 INDEX_OPTIONS as any index is.
@@ -109,6 +109,6 @@ MODEL and CHUNKER.
 
 ## SEE ALSO
 
-[Hybrid Search](../14-hybrid-search.md),
+[Hybrid Search](../15-hybrid-search.md),
 [CREATE VECTOR INDEX](create-vector-index.md),
 [CREATE INDEX](create-index.md), [DROP INDEX](drop-index.md)

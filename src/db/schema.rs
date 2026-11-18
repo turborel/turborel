@@ -81,13 +81,12 @@ impl State {
         let IndexSpec { name, table: qn, columns, method, options, nulls, expressions } = spec;
         let desc = self.catalog.table(qn).cloned().ok_or_else(|| api(format!("[EXTENSION] no table {qn}")))?;
         let cols = super::indexes::key_positions(&desc, columns, expressions)?;
-        // Its keys group its columns' values [ISO/IEC 9075-2:2023 §9.12 SR3].
-        let keyed = cols.iter().filter_map(|&c| desc.columns.get(c));
-        keyed.into_iter().try_for_each(|column| crate::binder::key_operand(&column.data_type, &format!("index {name}")))?;
         if self.catalog.index(name).is_some() {
             return fail(Code::Api, format!("[EXTENSION] an index named {name} already exists"));
         }
         let m = Arc::clone(self.methods.get(method).ok_or_else(|| api(format!("[EXTENSION] no index method {method}")))?);
+        // Its keys group its columns' values [ISO/IEC 9075-2:2023 §9.12 SR3].
+        super::vectors::keyed_by(&*m, cols.iter().filter_map(|&c| desc.columns.get(c)), name)?;
         let declared = self.index_options_of(method);
         let mut taken: Vec<(String, Value)> = Vec::new();
         for (option, value) in options {

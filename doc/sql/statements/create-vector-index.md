@@ -95,9 +95,9 @@ NORMALIZED is ON, and refused when it is OFF. The setting
 VECTOR.BUILD_MEMORY_BYTES bounds the memory a build takes.
 
 A vector method makes no UNIQUE index, as vectors are compared by no
-`=`. There is no CREATE UNIQUE INDEX, and a UNIQUE constraint whose
-TABLES.UNIQUE_INDEX_METHOD names a vector method is refused with
-SQLCODE -900.
+`=`. There is no CREATE UNIQUE INDEX, and a UNIQUE constraint of a
+VECTOR column is refused with SQLCODE -103 before any method is asked
+([Vectors](../14-vectors.md#no-order-and-no-equality)).
 
 ALTER INDEX REBUILD builds the index again, with the parameters given
 set first, each named as CREATE VECTOR INDEX names it. MERGE DELTA runs

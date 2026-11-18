@@ -34,6 +34,7 @@
 //! | `BackgroundJob`     | none                  | plug-ins' jobs (RULES.md D55)    |
 //! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
 //! | `Ranking`           | BM25                  | full-text Rank (RULES.md D87)    |
+//! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D88) |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36), declared once in a
 //! registry, plug-ins' too; the database's values and each session's own.
@@ -165,8 +166,6 @@ pub use completion::{Completion, SQLCODE_NO_DATA};
 pub use database::Database;
 pub use export::{ExportedFile, RECORDS_FILE, StateSource, decode_records};
 pub use files::{CHECKPOINT_AFTER, CHECKPOINT_BYTES, OpenOptions, Opened, POOL_BYTES};
-pub use formats::FileFormats;
-pub use image::IMAGE_FORMAT;
 use integrity::Deferral;
 pub use log_sync::SYNC_AFTER_MS;
 pub use session::TransactionMode;
@@ -178,6 +177,7 @@ pub(crate) use {
     routines::run_unhosted,
     triggers::trigger_texts,
 };
+pub use {formats::FileFormats, image::IMAGE_FORMAT};
 pub use {indexes::AccuracyReport, recovery::RecoveryReport};
 
 /// The state and transaction a statement runs in.

@@ -318,6 +318,7 @@ mod vector_indexes;
 mod vector_operators;
 mod vector_pipelines;
 mod vector_search;
+mod vectors;
 mod views;
 mod warnings;
 mod width_bucket;

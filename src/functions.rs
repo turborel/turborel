@@ -312,6 +312,15 @@ pub trait ScalarFunction: Send + Sync {
     fn deterministic(&self) -> bool {
         true
     }
+    /// \[EXTENSION\] Whether an identifier `word`, written alone as
+    /// argument `position` (from 0), is a key word the function takes
+    /// there, given as a character string of it, not read as a column:
+    /// `first` says whether the first argument was one. So
+    /// `VECTOR_DISTANCE(a, b, COSINE)` names its metric (RULES.md D88).
+    /// Qualified, `s.w`, the word is written so. Default: none.
+    fn word_argument(&self, _position: usize, _word: &str, _first: bool) -> bool {
+        false
+    }
     /// Prepares an equivalent implementation using known constant
     /// arguments; `None` marks an argument that varies. Called by constant
     /// folding, without evaluating varying arguments. Retained prepared

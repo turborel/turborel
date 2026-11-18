@@ -27,6 +27,7 @@ fn routine(
 ) -> SqlRoutineDesc {
     SqlRoutineDesc {
         method: None,
+        distance: None,
         name: name(&specific.auth, "F"),
         specific: specific.clone(),
         kind: RoutineKind::Function,

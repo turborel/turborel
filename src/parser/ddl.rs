@@ -69,6 +69,9 @@ impl Parser {
         if self.next_is_routine_designator() {
             return Ok(Some(DropObject::Routine(self.routine_designator()?)));
         }
+        if self.at_distance_function() {
+            return Ok(Some(DropObject::Routine(self.dropped_distance_function()?)));
+        }
         if self.accept_word(super::user_types::TYPE) {
             return Ok(Some(DropObject::Type(self.table_name()?)));
         }
