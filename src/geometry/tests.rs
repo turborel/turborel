@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::bytes::Reader;
-use crate::value::SqlType;
 
 mod canonical;
 pub(in crate::geometry) mod common;
@@ -131,5 +130,5 @@ fn stored_payloads_are_versioned_and_checked() {
     framed[4] = 2;
     assert_eq!(GEOMETRY.value(&mut Reader::new(&framed, "test")).unwrap_err().code, Code::Corrupt);
     assert_eq!(GEOMETRY.value(&mut Reader::received(&framed, "test")).unwrap_err().code, Code::Connection);
-    assert_eq!(GEOMETRY.decode_key(&mut &[0][..], &data_type()).unwrap_err().code, Code::Corrupt);
+    assert_eq!(GEOMETRY.decode_key(&mut &[0][..], &data_type()).unwrap_err().code, Code::Unsupported);
 }

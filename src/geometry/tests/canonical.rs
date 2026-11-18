@@ -8,21 +8,26 @@ fn stored(bytes: &[u8]) -> Value {
     let mut payload = vec![1];
     payload.extend_from_slice(&17_i32.to_le_bytes());
     payload.extend_from_slice(bytes);
-    Value::Extension(ExtensionValue { kind: &GEOMETRY, bytes: Arc::from(payload) })
+    Value::Extension(ExtensionValue { kind: GEOMETRY, bytes: Arc::from(payload) })
 }
 
-/// The previous decoder's parse-and-rewrite rule is an independent
-/// acceptance oracle; it also checks all ordinary representation errors.
+/// The model's parse-and-rewrite rule, reading any well-known binary
+/// representation, is an independent acceptance oracle; it also checks
+/// all ordinary representation errors. A value of the seven kinds D85
+/// reads itself reads alike there.
 fn equivalent(bytes: &[u8]) {
-    let interchange = Geometry::from_wkb(bytes, 17);
-    let expected = interchange.as_ref().is_ok_and(|g| g.to_wkb() == bytes);
-    let decoded = Geometry::from_value(&stored(bytes));
+    let interchange = model::read_wkb(bytes, 17);
+    let expected = interchange.as_ref().is_ok_and(|g| model::write_wkb(g) == bytes);
+    let decoded = model::Geom::from_value(&stored(bytes));
     assert_eq!(decoded.is_ok(), expected, "{bytes:02x?}");
     match decoded {
-        Ok(geometry) => {
-            assert_eq!(geometry.srid(), 17_i32);
-            assert_eq!(geometry.to_wkb(), bytes);
-            assert_eq!(geometry.bounds(), interchange.unwrap().bounds());
+        Ok(geom) => {
+            assert_eq!(geom.srid, 17_i32);
+            assert_eq!(model::write_wkb(&geom), bytes);
+            if let Ok(planar) = Geometry::from_wkb(bytes, 17) {
+                let read = Geometry::from_value(&stored(bytes)).unwrap();
+                assert_eq!((read.to_wkb(), read.bounds()), (planar.to_wkb(), planar.bounds()));
+            }
         }
         Err(error) => assert_eq!(error.code, Code::Corrupt),
     }
@@ -155,5 +160,5 @@ fn canonical_reader_preserves_limits_and_boundary_errors() {
     assert_eq!(GEOMETRY.value(&mut Reader::received(&framed, "test")).unwrap_err().code, Code::Connection);
     let mut key = Vec::new();
     crate::value::Binary::new(raw.bytes.to_vec()).put_key(&mut key);
-    assert_eq!(GEOMETRY.decode_key(&mut key.as_slice(), &data_type()).unwrap_err().code, Code::Corrupt);
+    assert_eq!(GEOMETRY.decode_key(&mut key.as_slice(), &data_type()).unwrap_err().code, Code::Unsupported);
 }

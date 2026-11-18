@@ -159,6 +159,11 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     if let DataType::Json = t {
         return false;
     }
+    // [ISO/IEC 9075-2:2023 §9.2 SR2] a value of a type of a family built
+    // in to a site of it or a supertype (RULES.md D-SPATIAL-FAMILY).
+    if let Some(subtype) = crate::value::types::family::assignable(target, t) {
+        return subtype;
+    }
     if let DataType::Extension(e) = target {
         return target.comparable(t) || (t.is_character() && e.kind.assigns_text());
     }

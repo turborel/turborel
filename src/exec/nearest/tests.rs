@@ -4,16 +4,12 @@ use super::*;
 use crate::catalog::QualifiedName;
 use crate::db::Database;
 use crate::functions::ScalarRef;
-use crate::geometry::{FUNCTIONS, Geometry, GeometryFunction, GeometryType};
+use crate::geometry::{Geometry, GeometryFunction};
 use crate::logical::Expr;
 use crate::txn::NO_TRANSACTION;
 
 fn state() -> Arc<State> {
     let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
-    }
     db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (ID INTEGER, G GEOMETRY(0))").unwrap();
     db.create_index("T_G", "A.T", &["G"], "rtree").unwrap();

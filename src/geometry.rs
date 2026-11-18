@@ -7,6 +7,9 @@ mod distance;
 pub(crate) use distance::distance_domain;
 mod functions;
 mod kind;
+pub mod model;
+mod ordering;
+mod planar;
 mod prepared;
 mod reference;
 mod relate;
@@ -15,8 +18,10 @@ mod shape;
 mod wkb;
 mod wkt;
 
+pub(crate) use functions::functions;
 pub use functions::{FUNCTIONS, GeometryFunction};
-pub use kind::{GEOMETRY, GeometryType, data_type};
+pub use kind::{GEOMETRY, Geometries, GeometryType, NAME, TYPES, data_type, data_type_of, kind_of, kinds, most_specific, of_data_type};
+pub use ordering::{EQUALITY, ORDERING_EQUALS, OrderingEquals};
 pub use reference::data_type_with_srid;
 pub(crate) use reference::fixed_srid;
 use shape::Shape;
@@ -246,11 +251,11 @@ impl Geometry {
     }
 }
 
-fn invalid(detail: &str) -> SqlError {
+pub(crate) fn invalid(detail: &str) -> SqlError {
     SqlError::new(Code::Data, format!("[EXTENSION] invalid geometry: {detail}"))
 }
 
-fn unsupported(detail: &str) -> SqlError {
+pub(crate) fn unsupported(detail: &str) -> SqlError {
     SqlError::new(Code::Unsupported, format!("[EXTENSION] geometry does not support {detail}"))
 }
 

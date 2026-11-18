@@ -51,6 +51,9 @@ fn words() -> Vec<Arc<dyn ScalarFunction>> {
     words.extend(crate::fulltext::types::functions());
     // \[EXTENSION\] JSON_CONTAINS, which a json index answers too.
     words.push(Arc::new(super::JsonContains));
+    // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)] the routines of SQL/MM
+    // Spatial (RULES.md D-SPATIAL-FAMILY).
+    words.extend(crate::geometry::functions());
     words
 }
 

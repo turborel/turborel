@@ -30,6 +30,7 @@ pub(crate) mod datetime;
 mod decfloat;
 pub(crate) mod distinct;
 mod exact;
+pub mod family;
 pub(crate) mod interval;
 mod json;
 pub(crate) mod lob;
@@ -114,6 +115,12 @@ pub trait SqlType: Send + Sync + fmt::Debug {
     /// \[DESIGN\] Itself as it declares settings and is told them
     /// (`Configurable`, RULES.md D36), if it has any. Default: none.
     fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
+
+    /// \[DESIGN\] The family of types built in it is of (`family.rs`,
+    /// RULES.md D-SPATIAL-FAMILY), if any. Default: none.
+    fn family(&self) -> Option<&'static dyn family::Family> {
         None
     }
 

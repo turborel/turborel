@@ -28,7 +28,7 @@ mod user_types;
 
 use std::sync::OnceLock;
 
-use super::{INFORMATION_SCHEMA, Seen, SystemTable, catalog_name, identifier};
+use super::{Seen, SystemTable, catalog_name, identifier};
 use crate::catalog::{ColumnDesc, QualifiedName};
 use crate::error::Result;
 use crate::storage::Row;
@@ -59,9 +59,9 @@ pub struct SystemView {
     pub query: &'static str,
 }
 
-/// The Information Schema view `name`, if there is one.
+/// The view `name` of the Information Schema, or of SQL/MM Spatial's.
 pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
-    views().iter().find(|v| name.auth == INFORMATION_SCHEMA && v.name == name.ident)
+    views().iter().find(|v| super::spatial::name_of(v) == *name)
 }
 
 /// The views of the Information Schema, in the standard's order, then this
@@ -71,12 +71,12 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// and typed tables (`information/structured.rs`), those of roles
 /// (`information/roles.rs`), of triggers (`information/triggers.rs`) and
 /// of SQL-server modules (`information/modules.rs`), then the extensions
-/// (`information/extensions.rs`).
+/// (`information/extensions.rs`), then SQL/MM Spatial's.
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
     ALL.get_or_init(|| {
-        [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS, extensions::VIEWS]
-            .concat()
+        let ours = [extensions::VIEWS, super::spatial::SPATIAL_VIEWS].concat();
+        [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS, &ours].concat()
     })
 }
 

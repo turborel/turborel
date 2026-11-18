@@ -51,7 +51,7 @@ impl Prepared {
 
     fn matches(&self, args: &[&Value]) -> bool {
         let (Value::Extension(was), Some(Value::Extension(now))) = (&self.value, args.get(self.position).copied()) else { return false };
-        now.kind.name() == kind::NAME && (Arc::ptr_eq(&was.bytes, &now.bytes) || was.bytes == now.bytes)
+        kind::geometry_kind(now.kind).is_some() && (Arc::ptr_eq(&was.bytes, &now.bytes) || was.bytes == now.bytes)
     }
 
     fn intersection(&self, other: &Geometry) -> Result<Option<bool>> {

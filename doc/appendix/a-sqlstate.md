@@ -12,7 +12,9 @@ SQLCODE, a number. The client shows both of an error or a warning:
 An SQLSTATE is a class, its first two characters, and a subclass, the
 other three; subclass 000 is the class alone. Class 00 is success, 01 a
 warning, 02 no data; any other is an exception, the statement undone.
-The classes of the standard are of ISO 9075; class TB is turborel's own.
+The classes of the standard are of ISO 9075, and class 2FF of its SQL/MM
+parts, Full-Text and Spatial each giving its subclasses a meaning of
+its own; class TB is turborel's own.
 
 | SQLSTATE | Condition |
 |---|---|
@@ -50,6 +52,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 09000 | Triggered action exception: a trigger's action failed; the message gives the trigger and the SQLSTATE and message of its failure |
 | 0A000 | Feature not supported: valid SQL Turborel does not process |
 | 0A001 | Feature not supported: multiple server transactions |
+| 0D000 | Invalid target type specification: TREAT of a value whose most specific type is not the target's or below it |
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
 | 0W000 | Prohibited statement encountered during trigger execution: a savepoint statement in a procedure a trigger's action calls; told in the message of the 09000 it raises |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
@@ -124,8 +127,19 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2E000 | Invalid connection name |
 | 2F005 | SQL routine exception: function executed no return statement, of a function whose body is no RETURN |
 | 2FF01 | SQL/MM Full-Text exception: invalid search expression, a pattern not of the [pattern language](../sql/09-fulltext-patterns.md) |
-| 2FF02 | SQL/MM Full-Text exception: invalid language specification, a language null, empty or unknown |
+| 2FF02 | SQL/MM Full-Text exception: invalid language specification, a language null, empty or unknown; of a spatial routine, SQL/MM Spatial exception: invalid argument |
 | 2FF03 | SQL/MM Full-Text exception: effectively empty search expression, every word of the pattern a stop word |
+| 2FF06 | SQL/MM Spatial exception: element is an empty set: a compound curve's or surface's part empty |
+| 2FF07 | SQL/MM Spatial exception: null exterior ring: a polygon's or a triangle's ring missing |
+| 2FF08 | SQL/MM Spatial exception: element is not a valid type: a value not of the type it is assigned or cast to, or a solid's shell of another type |
+| 2FF11 | SQL/MM Spatial exception: non-contiguous curves: a compound curve whose parts do not meet end to start |
+| 2FF18 | SQL/MM Spatial exception: point value not well formed: a coordinate not finite |
+| 2FF23 | SQL/MM Spatial exception: invalid well-known binary representation |
+| 2FF25 | SQL/MM Spatial exception: mixed coordinate dimensions: parts of one value with and without Z or M |
+| 2FF75 | SQL/MM Spatial exception: exterior ring not four points: a triangle's ring |
+| 2FF77 | SQL/MM Spatial exception: exactly three points: a circle not of three points |
+| 2FF84 | SQL/MM Spatial exception: missing measure values: a curve given by parameters with M but no measures, or measures without M |
+| 2FF98 | SQL/MM Spatial exception: null exterior shell: a solid's shell empty |
 | 2H000 | Invalid collation name |
 | 33000 | Invalid SQL descriptor name |
 | 34000 | Invalid cursor name: of a cursor allocated, or a positioned statement prepared |

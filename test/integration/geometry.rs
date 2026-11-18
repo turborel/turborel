@@ -2,7 +2,7 @@
 
 use turborel::db::{Database, OpenOptions};
 use turborel::error::Code;
-use turborel::geometry::{self, FUNCTIONS, Geometry, GeometryType};
+use turborel::geometry::{self, Geometry};
 use turborel::value::{Decimal, Value};
 
 use crate::common::{Scratch, after_crash, exec, rows};
@@ -13,17 +13,13 @@ mod prepared;
 
 fn registered() -> Database {
     let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
-    }
     db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
     db
 }
 
-/// Verifies: [EXTENSION] D53, D85: GEOMETRY passes the shared SqlType
-/// contract on every supported shape, empty values, extreme SRIDs, and
-/// values whose binary payload contains the index key's escape byte.
+/// Verifies: [EXTENSION] D53, D85, D-SPATIAL-FAMILY: GEOMETRY passes the
+/// shared SqlType contract but for keys, which a type ordered by RELATIVE
+/// has none of, on every supported shape, empty values and extreme SRIDs.
 #[test]
 fn geometry_keeps_the_shared_type_contract() {
     let mut values = Vec::new();
@@ -42,9 +38,9 @@ fn geometry_keeps_the_shared_type_contract() {
             values.push(Geometry::from_wkt(text, srid).unwrap().to_value());
         }
     }
-    crate::type_contract::type_contract(&geometry::data_type(), &values);
+    crate::type_contract::type_contract_unkeyed(&geometry::data_type(), &values);
     let fixed: Vec<_> = values.iter().map(|v| Geometry::from_value(v).unwrap().with_srid(4326).to_value()).collect();
-    crate::type_contract::type_contract(&geometry::data_type_with_srid(4326).unwrap(), &fixed);
+    crate::type_contract::type_contract_unkeyed(&geometry::data_type_with_srid(4326).unwrap(), &fixed);
 }
 
 /// Verifies: [EXTENSION] D85: SQL constructors and observers round trip
@@ -77,17 +73,18 @@ fn sql_geometry_values_and_failed_writes() {
 }
 
 /// Verifies: [EXTENSION] D85: prepared constructors bind text and SRID
-/// independently, reject fractional/out-of-range SRIDs, and preserve
-/// canonical representation equality through a UNIQUE B-tree index.
+/// independently, reject fractional/out-of-range SRIDs, compare by
+/// ST_OrderingEquals, and refuse a UNIQUE B-tree key of geometry values,
+/// which have no key of their own (D-SPATIAL-FAMILY).
 #[test]
 fn prepared_values_have_exact_srid_and_representation_keys() {
     let db = registered();
-    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE SHAPES (G GEOMETRY UNIQUE)").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE SHAPES (G GEOMETRY) CREATE TABLE KEYED (G GEOMETRY UNIQUE)").unwrap();
     let a = db.session("A");
     let insert = a.prepare("INSERT INTO SHAPES VALUES (ST_GEOMFROMTEXT(?, ?))").unwrap();
     let args = [Value::Char("POINT (-0 2)".into()), Value::Exact(Decimal::new(4326, 0))];
     a.execute_prepared(&insert, &args).unwrap();
-    assert_eq!(exec(&a, "INSERT INTO SHAPES VALUES (ST_GEOMFROMTEXT('POINT (0.0 2e0)', 4326))").err(), Some(Code::Constraint));
+    assert_eq!(exec(&a, "INSERT INTO KEYED VALUES (ST_GEOMFROMTEXT('POINT (0.0 2e0)', 4326))").err(), Some(Code::Unsupported));
     a.run("INSERT INTO SHAPES VALUES (ST_GEOMFROMTEXT('POINT (0 2)', 28992))").unwrap();
     assert_eq!(rows(&a, "SELECT ST_SRID(G) FROM SHAPES WHERE G = ST_GEOMFROMTEXT('POINT (0 2)', 4326)").unwrap(), ["4326"]);
     assert_eq!(rows(&a, "VALUES ST_GEOMFROMTEXT('POINT EMPTY', 2147483648)").unwrap_err(), Code::Data);
@@ -146,7 +143,8 @@ fn point_functions_work_with_numeric_columns_and_prepared_parameters() {
 
 /// Verifies: [EXTENSION] D25, D53, D85: checkpoint and log recovery keep
 /// geometry coordinates, empty values and SRIDs. Uncommitted updates
-/// disappear after crash; opening without its type refuses the catalog.
+/// disappear after crash; the types are built in, so no registration is
+/// needed to open the files.
 #[test]
 fn geometry_survives_checkpoint_and_crash_recovery() {
     let scratch = Scratch::new("geometry-recovery");
@@ -177,7 +175,6 @@ fn geometry_survives_checkpoint_and_crash_recovery() {
     a.rollback().unwrap();
     db.close().unwrap();
     drop((a, db));
-    assert_eq!(Database::new().open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap_err().code, Code::Api);
     let db = open();
     assert_eq!(rows(&db.session("A"), "SELECT COUNT(*) FROM SHAPES").unwrap(), ["2"]);
     drop(crashed);

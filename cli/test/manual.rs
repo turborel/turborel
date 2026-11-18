@@ -10,7 +10,6 @@ use std::path::Path;
 use std::rc::Rc;
 
 use turborel::db::Database;
-use turborel::geometry::{FUNCTIONS, GeometryType};
 use turborel_cli::{Command, Dialer, Input, Io};
 use turborel_client::agent::Agent;
 
@@ -507,15 +506,10 @@ fn the_psm_examples_run_as_printed() {
     }
 }
 
-/// A database with GEOMETRY and its functions registered, as `turboreld`
-/// registers them before it opens its files.
+/// A database of the geometry types and their functions, which are built
+/// in (RULES.md D-SPATIAL-FAMILY).
 fn spatial_database() -> Database {
-    let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
-    }
-    db
+    Database::new()
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the SQL Reference Manual's

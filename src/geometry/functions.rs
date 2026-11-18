@@ -2,10 +2,14 @@
 //! the registered GEOMETRY type, using the existing function-call syntax.
 //! These free functions are not SQL/MM structured-type methods.
 
-use super::{Geometry, UNSPECIFIED_SRID, data_type, invalid, unsupported};
+use std::sync::Arc;
+
+use super::model::{self, Kind};
+use super::{Geometry, UNSPECIFIED_SRID, data_type, data_type_of, invalid, kind, unsupported};
 use crate::error::{Code, Result, SqlError};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::params::ParameterType;
+use crate::value::lob::LobKind;
 use crate::value::{Binary, DOUBLE_PRECISION, DataType, Decimal, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, Spelled, Value};
 
 /// SQL interchange uses the existing string limits until large objects exist.
@@ -14,12 +18,14 @@ const BINARY: DataType = DataType::VarBinary { length: MAX_BINARY_LENGTH };
 const INTEGER: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
 const COORDINATE: DataType = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::DoublePrecision };
 const TYPE_NAME_LENGTH: u32 = 32;
+/// The most octets of a large object a constructor reads (RULES.md D85).
+const MAX_LOB_INPUT: u64 = 16 * 1024 * 1024;
 const TWO_ARGS: usize = 2;
 const THREE_ARGS: usize = 3;
 const FOUR_ARGS: usize = 4;
 const FIVE_ARGS: usize = 5;
 
-/// Register each function after registering [`super::GeometryType`].
+/// The functions of D85, built in (RULES.md D-SPATIAL-FAMILY).
 pub const FUNCTIONS: [GeometryFunction; 19] = [
     GeometryFunction::Point,
     GeometryFunction::MakeEnvelope,
@@ -160,7 +166,9 @@ impl GeometryFunction {
 
     fn output(self) -> DataType {
         match self {
-            Self::FromText | Self::FromBinary | Self::Point | Self::MakeEnvelope | Self::SetSrid => data_type(),
+            Self::Point => data_type_of(Kind::Point),
+            Self::MakeEnvelope => data_type_of(Kind::Polygon),
+            Self::FromText | Self::FromBinary | Self::SetSrid => data_type(),
             Self::X | Self::Y | Self::MinX | Self::MaxX | Self::MinY | Self::MaxY | Self::Distance => COORDINATE,
             Self::AsText => TEXT,
             Self::AsBinary => BINARY,
@@ -230,7 +238,7 @@ impl ScalarFunction for GeometryFunction {
         }
     }
 
-    fn specialize(&self, args: &[Option<&Value>], budget: &std::sync::Arc<crate::memory::MemoryBudget>) -> Option<ScalarRef> {
+    fn specialize(&self, args: &[Option<&Value>], budget: &Arc<crate::memory::MemoryBudget>) -> Option<ScalarRef> {
         self.paired().then(|| super::prepared::specialize(*self, args, budget)).flatten()
     }
 
@@ -302,9 +310,13 @@ impl ScalarFunction for GeometryFunction {
             let srid = reference(rest)?;
             return match (self, first) {
                 (Self::FromText, Value::Char(text)) => Geometry::from_wkt(text, srid).map(|g| g.to_value()),
-                (Self::FromBinary, Value::Binary(bytes)) => Geometry::from_wkb(bytes.bytes(), srid).map(|g| g.to_value()),
+                (Self::FromBinary, Value::Binary(bytes)) => model::read_wkb(bytes.bytes(), srid).map(|g| g.to_value()),
+                (Self::FromText | Self::FromBinary, Value::Lob(lob)) => self.of_lob(lob, srid),
                 _ => Err(signature(self.name())),
             };
+        }
+        if let Some(v) = self.of_payload(first, rest)? {
+            return Ok(v);
         }
         self.observe(Geometry::from_value(first)?, rest)
     }
@@ -327,13 +339,81 @@ impl ScalarFunction for GeometryFunction {
 }
 
 impl GeometryFunction {
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.62, §5.1.63] The value
+    /// of a CHARACTER LARGE OBJECT's well-known text or a BINARY LARGE
+    /// OBJECT's well-known binary representation, read whole up to the
+    /// representation's limit (RULES.md D85).
+    fn of_lob(self, lob: &crate::value::lob::Lob, srid: i32) -> Result<Value> {
+        let whole = || lob.bounded(MAX_LOB_INPUT)?.ok_or_else(|| unsupported("this representation size (RULES.md D85)"));
+        match (self, lob.kind()) {
+            (Self::FromText, LobKind::Character) => {
+                let text = whole()?;
+                Geometry::from_wkt(std::str::from_utf8(&text).map_err(|_| invalid("the text is not UTF-8"))?, srid).map(|g| g.to_value())
+            }
+            (Self::FromBinary, LobKind::Binary) => model::read_wkb(&whole()?, srid).map(|g| g.to_value()),
+            (_, LobKind::Character | LobKind::Binary) => Err(signature(self.name())),
+        }
+    }
+
+    /// What an observer reads of the payload of `g` alone, of a value of
+    /// any type: its type, SRID and well-known binary representation, or
+    /// it relabelled. ST_AsText of a type D85 does not write is -900
+    /// until the writer of every type's well-known text takes it.
+    fn of_payload(self, g: &Value, rest: &[Value]) -> Result<Option<Value>> {
+        let bytes = kind::payload(g).ok_or_else(|| invalid("expected a geometry value"))?;
+        let (srid, wkb) = model::header(bytes)?;
+        let most = kind::most_specific(bytes).ok_or_else(|| invalid("the value's type code names no geometry type"))?;
+        let basic = wkb.get(1..5).is_some_and(|code| matches!(code, [1..=7, 0, 0, 0]));
+        Ok(Some(match self {
+            Self::TypeName => Value::Char(most.sql_name().to_owned()),
+            Self::Srid => Value::Exact(Decimal::new(i128::from(srid), 0)),
+            Self::AsBinary => {
+                if u32::try_from(wkb.len()).unwrap_or(u32::MAX) > MAX_BINARY_LENGTH {
+                    return Err(unsupported("WKB exceeding the SQL binary-string limit"));
+                }
+                Value::Binary(Binary::new(wkb.to_vec()))
+            }
+            Self::SetSrid => {
+                let mut relabelled = bytes.to_vec();
+                if let Some(at) = relabelled.get_mut(1..5) {
+                    at.copy_from_slice(&reference(rest)?.to_le_bytes());
+                }
+                kind::wrap(relabelled)
+            }
+            Self::IsEmpty => {
+                if basic {
+                    return Ok(None);
+                }
+                Value::Exact(Decimal::new(i128::from(model::Geom::decode(bytes)?.is_empty()), 0))
+            }
+            Self::AsText => {
+                if basic {
+                    return Ok(None);
+                }
+                return Err(unsupported("well-known text of this type or coordinate dimension yet"));
+            }
+            Self::X
+            | Self::Y
+            | Self::MinX
+            | Self::MaxX
+            | Self::MinY
+            | Self::MaxY
+            | Self::Intersects
+            | Self::Disjoint
+            | Self::Distance
+            | Self::FromText
+            | Self::FromBinary
+            | Self::Point
+            | Self::MakeEnvelope => return Ok(None),
+        }))
+    }
+
     fn observe(self, g: Geometry, rest: &[Value]) -> Result<Value> {
         match self {
             Self::AsText => text(&g),
             Self::AsBinary => binary(&g),
             Self::Srid => Ok(Value::Exact(Decimal::new(i128::from(g.srid()), 0))),
             Self::IsEmpty => Ok(Value::Exact(Decimal::new(i128::from(g.is_empty()), 0))),
-            Self::TypeName => Ok(Value::Char(g.shape.sql_name().to_owned())),
             Self::X => Ok(g.coordinates()?.map_or(Value::Null, |[x, _]| Value::Approx(x))),
             Self::Y => Ok(g.coordinates()?.map_or(Value::Null, |[_, y]| Value::Approx(y))),
             Self::MinX => Ok(g.bounds().map_or(Value::Null, |bounds| {
@@ -357,9 +437,16 @@ impl GeometryFunction {
                 let [right] = rest else { return Err(signature(self.name())) };
                 self.pair(&g, &Geometry::from_value(right)?)
             }
-            Self::FromText | Self::FromBinary | Self::Point | Self::MakeEnvelope => Err(signature(self.name())),
+            Self::FromText | Self::FromBinary | Self::Point | Self::MakeEnvelope | Self::TypeName => Err(signature(self.name())),
         }
     }
+}
+
+/// The functions of D85 and ST_OrderingEquals, built in.
+pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
+    let mut out: Vec<Arc<dyn ScalarFunction>> = FUNCTIONS.iter().map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }).collect();
+    out.push(Arc::new(super::ordering::OrderingEquals));
+    out
 }
 
 impl GeometryFunction {

@@ -19,7 +19,7 @@ use std::hint::black_box;
 use harness::{Bench, Case, on_threads};
 use turborel::db::Database;
 use turborel::functions::ScalarFunction;
-use turborel::geometry::{FUNCTIONS, Geometry, GeometryFunction, GeometryType};
+use turborel::geometry::{Geometry, GeometryFunction};
 use turborel::memory::MemoryBudget;
 use turborel::value::Value;
 
@@ -133,10 +133,6 @@ fn prepared(bench: &Bench, name: &str, points: &[Geometry], geometry: &Geometry)
 
 fn sql(bench: &Bench, name: &str, polygon: &Geometry) {
     let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
-    }
     db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE POINTS (ID INTEGER, G GEOMETRY)").unwrap();
     let load = db.session("B");

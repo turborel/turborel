@@ -2,8 +2,10 @@
 
 [Contents](README.md)
 
-A GEOMETRY value is a point, a line, a polygon or a collection of them
-in the XY plane, with an SRID naming its spatial reference system. Its
+A geometry value is a point, a curve, a surface, a solid or a
+collection of them, with an SRID naming its spatial reference system.
+Its type is ST_GEOMETRY or one of its 26 subtypes, the type family of
+SQL/MM Spatial. Its
 functions read and write the well-known text (WKT) and binary (WKB)
 forms, observe a value's coordinates and bounds, test whether two values
 intersect and measure the planar distance between them. An index of the
@@ -11,10 +13,9 @@ method `rtree` on a GEOMETRY column finds the rows an intersection
 filter or join matches, and the rows nearest a point, without reading
 the table.
 
-The server, `turboreld`, registers the type and its functions before it
-opens its files. A program embedding the library registers them itself
-([The Embedded Library](../client/03-embedding.md#spatial-data-extension)).
-For an introduction with complete examples, read the
+The types and their functions are built in, so every database has
+them and nothing is registered before its files are opened. For an
+introduction with complete examples, read the
 [Spatial Guide](../data/02-spatial.md).
 
 The examples on this page are run in order, by the user ANN, on a table
@@ -41,29 +42,80 @@ OK
 OK
 ```
 
-## The GEOMETRY type
+## The geometry types
 
-`GEOMETRY` holds a value of any SRID, a signed 32-bit integer.
-`GEOMETRY(srid)` holds only values of that SRID, empty ones included,
-and its parameter is an integer from 0 to 2147483647. The SRID is a
-label stored as given. It is not looked up, 0 does not mean WGS 84, and
-no coordinates are transformed or axes exchanged.
+`ST_GEOMETRY` holds a value of any type of the family and any SRID, a
+signed 32-bit integer. `GEOMETRY` is another name of it. Each type
+takes an SRID as its parameter, as `ST_POINT(4326)`, and then holds
+only values of that SRID, empty ones included. The parameter is an
+integer from 0 to 2147483647. The SRID is a label stored as given. It
+is not looked up, 0 does not mean WGS 84, and no coordinates are
+transformed or axes exchanged.
 
-A value is of one of seven kinds, POINT, LINESTRING, POLYGON,
-MULTIPOINT, MULTILINESTRING, MULTIPOLYGON and GEOMETRYCOLLECTION. They
-are kinds of one SQL type, not structured subtypes, and a column cannot
-be limited to one kind. ST_GEOMETRYTYPE names a value's kind in the
-spelling of SQL/MM Spatial, case-sensitive:
+The types form a hierarchy. A value of a type is a value of each type
+above it, and the types in italics hold no value of their own:
 
-| Kind | ST_GEOMETRYTYPE |
+| Type | Subtypes |
 |---|---|
-| POINT | ST_Point |
-| LINESTRING | ST_LineString |
-| POLYGON | ST_Polygon |
-| MULTIPOINT | ST_MultiPoint |
-| MULTILINESTRING | ST_MultiLineString |
-| MULTIPOLYGON | ST_MultiPolygon |
-| GEOMETRYCOLLECTION | ST_GeomCollection |
+| *ST_GEOMETRY* | ST_POINT, *ST_CURVE*, *ST_SURFACE*, ST_SOLID, ST_GEOMCOLLECTION |
+| *ST_CURVE* | ST_LINESTRING, ST_CIRCULARSTRING, ST_GEODESICSTRING, ST_ELLIPTICALCURVE, ST_NURBSCURVE, ST_CLOTHOID, ST_SPIRALCURVE, ST_COMPOUNDCURVE |
+| ST_CIRCULARSTRING | ST_CIRCLE |
+| *ST_SURFACE* | ST_CURVEPOLYGON, ST_POLYHDRLSURFACE, ST_COMPOUNDSURFACE |
+| ST_CURVEPOLYGON | ST_POLYGON |
+| ST_POLYGON | ST_TRIANGLE |
+| ST_POLYHDRLSURFACE | ST_TIN |
+| ST_SOLID | ST_BREPSOLID |
+| ST_GEOMCOLLECTION | ST_MULTIPOINT, ST_MULTICURVE, ST_MULTISURFACE |
+| ST_MULTICURVE | ST_MULTILINESTRING |
+| ST_MULTISURFACE | ST_MULTIPOLYGON |
+
+A column, variable or parameter of a type takes a value of that type or
+of a type below it. A value of a type above it is stored only through
+`TREAT(value AS type)`, which raises SQLSTATE 0D000 of a value of
+another type. `value IS OF (type, ...)` tests a value's type, and
+`IS OF (ONLY type)` that type alone. `CAST(value AS type)` converts
+within the hierarchy as SQL/MM Spatial's Table 4 says: a point becomes
+a multipoint of one point, a collection of one element becomes that
+element, an empty value becomes the empty value of the target, and
+anything else raises SQLSTATE 2FF08. `NEW type(...)` is refused of a
+type in italics.
+
+ST_GEOMETRYTYPE names a value's most specific type in the spelling of
+SQL/MM Spatial, case-sensitive, as `ST_Point`. The XY values of seven
+types, ST_POINT, ST_LINESTRING, ST_POLYGON, ST_MULTIPOINT,
+ST_MULTILINESTRING, ST_MULTIPOLYGON and ST_GEOMCOLLECTION, are read and
+written as text and related to each other. A value of any other type, or
+with Z or M coordinates, is read and written as WKB and has its type and
+SRID observed.
+
+```sql
+CREATE TABLE MARKS (ID INTEGER, SPOT ST_POINT(0), ROUTE ST_CURVE(0));
+INSERT INTO MARKS VALUES (1, ST_POINT(1, 1), TREAT(ST_GEOMFROMTEXT('LINESTRING (0 0, 3 4)') AS ST_CURVE));
+INSERT INTO MARKS (ID, SPOT) VALUES (2, ST_GEOMFROMTEXT('POINT (2 2)'));
+INSERT INTO MARKS (ID, SPOT) VALUES (2, TREAT(ST_GEOMFROMTEXT('POINT (2 2)') AS ST_POINT));
+SELECT ID, ST_GEOMETRYTYPE(ROUTE) AS ROUTE_TYPE, ROUTE IS OF (ST_LINESTRING) AS IS_LINE FROM MARKS ORDER BY ID;
+VALUES ST_GEOMETRYTYPE(CAST(ST_POINT(1, 2) AS ST_MULTIPOINT));
+VALUES CAST(ST_POINT(1, 2) AS ST_LINESTRING);
+ROLLBACK;
+```
+
+```
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): cannot assign a ST_GEOMETRY value to column SPOT (ST_POINT(0)) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075:1992 §9.2 SR2] (at character 40)
+OK
+           ID | ROUTE_TYPE                       | IS_LINE
+--------------+----------------------------------+---------
+            1 | ST_LineString                    | TRUE
+            2 | NULL                             | NULL
+(2 rows)
+
+----------------------------------
+ ST_MultiPoint
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF08): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2.1.5 Table 4] a value of ST_Point is not cast to ST_LineString
+OK
+```
 
 ```sql
 SELECT ID, ST_ASTEXT(SHAPE) AS WKT, ST_GEOMETRYTYPE(SHAPE) AS KIND, ST_ISEMPTY(SHAPE) AS IS_EMPTY FROM PLACES ORDER BY ID;
@@ -106,16 +158,19 @@ OK
 is not stored in a GEOMETRY column by assignment, so WKT is read with a
 constructor or CAST.
 
-`=`, ORDER BY, GROUP BY, DISTINCT and UNIQUE compare the stored
-representation, SRID, kind and coordinates in their order. Two values
-are equal only if they are written alike, so this is not the spatial
-equality of ST_Equals, and a line reversed is a different value. Byte
-order and the sign of a zero do not count. The order of values is that
-of their bytes, not a spatial one.
+The ordering of the types is EQUALS ONLY BY RELATIVE, with
+ST_ORDERINGEQUALS. `=` and `<>` compare two values by it: they are
+equal if they have one SRID and are written alike, or are both empty.
+This is not the spatial equality of ST_Equals, and a line reversed is a
+different value. Byte order and the sign of a zero do not count. ORDER
+BY, GROUP BY, DISTINCT, `<` and the other orderings are refused of a
+geometry value, and so are a PRIMARY KEY, UNIQUE or FOREIGN KEY of a
+geometry column, as its values have no key of their own.
 
 ```sql
 VALUES CASE WHEN ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)') = ST_GEOMFROMTEXT('LINESTRING (1 1, 0 0)')
     THEN 'equal' ELSE 'different' END;
+SELECT DISTINCT SHAPE FROM PLACES;
 ```
 
 ```
@@ -123,6 +178,7 @@ VALUES CASE WHEN ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)') = ST_GEOMFROMTEXT('LIN
 -----------
  different
 (1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): DISTINCT compares values of ST_GEOMETRY, which has an ordering of EQUALS ONLY (ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.65, ST_ORDERINGEQUALS) [ISO/IEC 9075-2:2023 §9.12 SR3]
 ```
 
 ## Routines
@@ -131,8 +187,8 @@ VALUES CASE WHEN ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)') = ST_GEOMFROMTEXT('LIN
 |---|---|
 | `ST_POINT(x, y [, srid])` | A point of two finite numbers, SRID 0 by default |
 | `ST_MAKEENVELOPE(min_x, min_y, max_x, max_y [, srid])` | A rectangular polygon of finite bounds, each minimum less than its maximum, SRID 0 by default |
-| `ST_GEOMFROMTEXT(text [, srid])` | The geometry of a WKT text, SRID 0 by default |
-| `ST_GEOMFROMWKB(binary [, srid])` | The geometry of a WKB string, SRID 0 by default |
+| `ST_GEOMFROMTEXT(text [, srid])` | The geometry of a WKT text, a character string or CLOB, SRID 0 by default |
+| `ST_GEOMFROMWKB(binary [, srid])` | The geometry of a WKB string, a binary string or BLOB, of any type and coordinate dimension, SRID 0 by default |
 | `ST_ASTEXT(geometry)` | Its WKT, without its SRID |
 | `ST_ASBINARY(geometry)` | Its little-endian WKB, without its SRID |
 | `ST_SRID(geometry)` | Its SRID |
@@ -141,7 +197,8 @@ VALUES CASE WHEN ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)') = ST_GEOMFROMTEXT('LIN
 | `ST_MINX(geometry)`, `ST_MAXX(geometry)` | Its least or greatest X, DOUBLE PRECISION; NULL of an empty value |
 | `ST_MINY(geometry)`, `ST_MAXY(geometry)` | Its least or greatest Y, DOUBLE PRECISION; NULL of an empty value |
 | `ST_ISEMPTY(geometry)` | INTEGER 1 if it has no coordinates, else 0 |
-| `ST_GEOMETRYTYPE(geometry)` | Its kind's name, as `ST_Point` |
+| `ST_GEOMETRYTYPE(geometry)` | Its most specific type's name, as `ST_Point` |
+| `ST_ORDERINGEQUALS(a, b)` | INTEGER 0 if `a` and `b` are equal by the ordering of the types, else 1 |
 | `ST_INTERSECTS(a, b)` | INTEGER 1 if `a` and `b` share a point, else 0 |
 | `ST_DISJOINT(a, b)` | INTEGER 1 if `a` and `b` share no point, else 0 |
 | `ST_DISTANCE(a, b)` | The least planar distance between them, DOUBLE PRECISION; NULL if either is empty |
@@ -381,6 +438,57 @@ read the table. A filter that may raise an error keeps the index from
 skipping rows. [CREATE INDEX](statements/create-index.md) gives the
 index's syntax, and its numeric forms of X and Y columns.
 
+## The Spatial Information Schema
+
+The schema ST_INFORMTN_SCHEMA holds SQL/MM Spatial's views, and SELECT
+on each is everyone's.
+
+| View | Rows |
+|---|---|
+| ST_GEOMETRY_COLUMNS | Each column of a geometry type the user may see, with the name and identifier of the system its type names, as `ST_POINT(4326)` names WGS 84. Both are NULL of a type that names no system, or one not supplied |
+| ST_SPATIAL_REFERENCE_SYSTEMS | The spatial reference systems supplied, each with its name, identifier, organization and well-known text |
+| ST_UNITS_OF_MEASURE | The units of length and angle, each with its factor to the metre or the radian |
+| ST_SIZINGS | Each implementation-defined limit, 0 if there is none and NULL if what it limits is not supported |
+| GEOMETRY_COLUMNS, SPATIAL_REF_SYS, ST_UNITS | The first three under short names |
+
+The systems supplied are WGS 84 (4326), its geocentric form (4978),
+NAD83 (4269), ETRS89 (4258), WGS 84 / Pseudo-Mercator (3857) and the
+120 WGS 84 UTM zones (32601 to 32660 and 32701 to 32760), by the EPSG
+identifiers. A system is not yet defined or dropped by a statement, and
+a value's SRID is still not checked against them. The tables the views
+read are in ST_DEFINITION_SCHEMA, which no statement reads directly.
+
+```sql
+CREATE TABLE TRACKS (ID INTEGER, PATH ST_LINESTRING(4326), PLAN ST_GEOMETRY);
+SELECT TABLE_NAME, COLUMN_NAME, SRS_NAME, SRS_ID FROM ST_INFORMTN_SCHEMA.ST_GEOMETRY_COLUMNS WHERE TABLE_NAME = 'TRACKS' ORDER BY COLUMN_NAME;
+SELECT SRID, AUTH_NAME, AUTH_ID FROM ST_INFORMTN_SCHEMA.SPATIAL_REF_SYS WHERE SRS_NAME = 'WGS 84 / UTM zone 33N';
+SELECT UNIT_NAME, CONVERSION_FACTOR FROM ST_INFORMTN_SCHEMA.ST_UNITS_OF_MEASURE WHERE UNIT_TYPE = 'LINEAR' ORDER BY CONVERSION_FACTOR;
+ROLLBACK;
+```
+
+```
+OK
+ TABLE_NAME                                                   | COLUMN_NAME                                                  | SRS_NAME                                                     |       SRS_ID
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+--------------
+ TRACKS                                                       | PATH                                                         | WGS 84                                                       |         4326
+ TRACKS                                                       | PLAN                                                         | NULL                                                         |         NULL
+(2 rows)
+         SRID | AUTH_NAME                                                    |      AUTH_ID
+--------------+--------------------------------------------------------------+--------------
+        32633 | EPSG                                                         |        32633
+(1 row)
+ UNIT_NAME                                                    |        CONVERSION_FACTOR
+--------------------------------------------------------------+--------------------------
+ FOOT                                                         |                 3.048E-1
+ US SURVEY FOOT                                               |     3.048006096012192E-1
+ METRE                                                        |                      1E0
+ KILOMETRE                                                    |                      1E3
+ STATUTE MILE                                                 |               1.609344E3
+ NAUTICAL MILE                                                |                  1.852E3
+(6 rows)
+OK
+```
+
 ## Errors
 
 | SQLSTATE | SQLCODE | When |
@@ -388,23 +496,27 @@ index's syntax, and its numeric forms of X and Y columns.
 | 22000 | -301 | WKT or WKB is malformed, a coordinate is not finite, ST_MAKEENVELOPE's bounds are reversed or of no area, ST_X or ST_Y is given another kind than a point, or two values' SRIDs differ |
 | 22000 | -301 | A value's SRID is not its column's or CAST's |
 | 22003 | -301 | A distance is greater than DOUBLE PRECISION holds |
-| 2A000 | -103 | GEOMETRY's parameter is not one integer from 0 to 2147483647, or a function's arguments are not of its types |
-| 0A000 | -900 | Z or M coordinates, curves, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), or an `rtree` index of a column of plain GEOMETRY |
+| 2A000 | -103 | A type's parameter is not one integer from 0 to 2147483647, a function's arguments are not of its types, a value of a supertype is assigned without TREAT, NEW names a type that holds no value of its own, or geometry values are ordered, grouped or made distinct |
+| 0D000 | -301 | TREAT is given a value of another type |
+| 2FF08 | -301 | CAST is given a value Table 4 does not convert, or a value is assigned to a type it is not of |
+| 2FF23 | -301 | WKB of a type is malformed |
+| 0A000 | -900 | Text or relationships of a value of a type beyond the seven, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), an `rtree` index of a column of plain GEOMETRY, or a key of a geometry column |
 | TB916 | -916 | A stored value or index key is damaged, or of an unknown version |
 
 ## Standard
 
-GEOMETRY, its functions and the `rtree` index method are extensions.
-The kinds and their WKT and WKB forms are those of OGC 06-103r4,
-Simple Feature Access Part 1, §§7–8, and the names ST_GEOMETRYTYPE
-gives are SQL/MM Spatial's. Turborel claims conformance to neither.
-GEOMETRY is a registered type, not a user-defined type, so it declares
-no methods and its kinds are not subtypes. The choices made are listed
-in [CONFORMANCE.md](../../CONFORMANCE.md#geometry-representations).
+The types, their hierarchy, their ordering, their WKB forms and the
+Spatial Information Schema are those of ISO/IEC 13249-3:2016, SQL/MM
+Spatial, §4.2, §5.1.65, §5.1.68, §19 and §20. The text forms are those
+of OGC 06-103r4, Simple Feature Access Part 1, §§7–8. The functions
+named here are called as functions, or as methods, as
+`ST_POINT(1, 2).ST_X()`. Turborel claims conformance to neither yet, as
+most of SQL/MM Spatial's routines are not there. The `rtree` index
+method is an extension. The choices made are listed in
+[CONFORMANCE.md](../../CONFORMANCE.md#geometry-representations).
 
 ## See also
 
 [CREATE INDEX](statements/create-index.md),
 [Spatial Guide](../data/02-spatial.md),
-[Appendix D: Limits](../appendix/d-limits.md),
-[The Embedded Library](../client/03-embedding.md#spatial-data-extension)
+[Appendix D: Limits](../appendix/d-limits.md)

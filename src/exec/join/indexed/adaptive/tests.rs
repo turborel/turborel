@@ -8,7 +8,7 @@ use crate::catalog::QualifiedName;
 use crate::db::Database;
 use crate::exec::execute;
 use crate::functions::ScalarRef;
-use crate::geometry::{Geometry, GeometryFunction, GeometryType};
+use crate::geometry::{Geometry, GeometryFunction};
 use crate::index::{Entries, Index, Key, KeyOrder, KeyProjection, Predicate, Probe};
 use crate::logical::{Cond, Expr};
 use crate::memory::MemoryBudget;
@@ -57,7 +57,6 @@ fn populated() -> Arc<State> {
 
 fn populated_rows(count: i32) -> Arc<State> {
     let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE POINTS (ID INTEGER, G GEOMETRY(0))").unwrap();
     let a = db.session("A");
     let insert = a.prepare("INSERT INTO POINTS VALUES (?, ?)").unwrap();

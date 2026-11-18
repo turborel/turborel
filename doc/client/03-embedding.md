@@ -863,22 +863,16 @@ Output:
 
 ## Spatial data *(extension)*
 
-Register GEOMETRY and its functions before opening a database containing
-spatial values. This example also shows a host application checking a
-courier route against a roadworks area, using the same local metre grid
-as the [Spatial Guide](../data/02-spatial.md):
+The geometry types and their functions are built in, so every
+`Database` has them and nothing is registered. This example shows a
+host application checking a courier route against a roadworks area,
+using the same local metre grid as the
+[Spatial Guide](../data/02-spatial.md):
 
 ```rust
-use turborel::db::Database;
-use turborel::geometry::{FUNCTIONS, Geometry, GeometryType};
+use turborel::geometry::Geometry;
 
 fn main() -> Result<(), turborel::error::SqlError> {
-    let db = Database::new();
-    db.register_type(Box::new(GeometryType))?;
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function))?;
-    }
-
     let route = Geometry::from_wkt("LINESTRING (0 200, 1000 200)", 0)?;
     let roadworks = Geometry::rectangle([300.0, 100.0], [500.0, 300.0], 0)?;
     let stored_value = route.to_value();
@@ -902,9 +896,8 @@ API. The spatial test checks the whole line. Both route endpoints are
 outside the roadworks, but the path between them crosses it. It does not
 find a replacement route or calculate travel time.
 
-Registration is explicit, as for other plug-ins. Names already registered
-are refused; the loop consists of separate registrations. `turboreld`
-registers this extension automatically before opening database files.
+Registering a type or function of one of their names is refused, as
+the names are taken.
 
 `Geometry::from_wkt(text, srid)` and `Geometry::from_wkb(bytes, srid)`
 construct structurally checked representations. `to_wkt` and `to_wkb`

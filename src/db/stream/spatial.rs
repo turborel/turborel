@@ -2,15 +2,10 @@
 //! non-raising. Merely recognizing a function name is insufficient.
 
 use super::*;
-use crate::geometry::{FUNCTIONS, GeometryType};
 use crate::value::Value;
 
 fn spatial() -> Database {
     let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
-    }
     db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE P (ID INTEGER, G GEOMETRY(0)) CREATE TABLE R (ID INTEGER, G GEOMETRY(0))")
         .unwrap();
