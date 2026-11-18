@@ -59,6 +59,19 @@ pub trait TableFunction: Send + Sync + Debug {
     ///
     /// The function's own.
     fn rows(&self, args: &[Value], read: &[Vec<Vec<Value>>]) -> Result<Vec<Vec<Value>>>;
+
+    /// The error of binding a query it reads that failed with `e`: by
+    /// default `e`.
+    fn read_failed(&self, e: SqlError) -> SqlError {
+        e
+    }
+
+    /// Whether it is invoked as a function too, `F(args)` in a value
+    /// expression, its value the first column of its first row, the null
+    /// value of none: by default not.
+    fn scalar(&self) -> bool {
+        false
+    }
 }
 
 /// \[EXTENSION\] What a procedure written in Rust runs in: the SQL-session
@@ -66,7 +79,8 @@ pub trait TableFunction: Send + Sync + Debug {
 pub trait ProcedureContext {
     /// Runs the SQL statement `sql`, its `<dynamic parameter
     /// specification>`s taking `args` in order, as a statement of the
-    /// procedure.
+    /// procedure; or the `<schema definition>` `sql`, owned by the
+    /// session's user, made in the transaction.
     ///
     /// # Errors
     ///
@@ -90,6 +104,15 @@ pub trait ProcedureContext {
     /// SQLCODE -103 if the change breaks a constraint of the tables that
     /// describe them.
     fn define_spatial(&mut self, change: crate::catalog::SpatialChange) -> Result<()>;
+
+    /// Runs `sql` as `run` does, with the privileges of the owner of
+    /// schema `schema` [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §11.1.1]:
+    /// how a routine writes tables the user may only read.
+    ///
+    /// # Errors
+    ///
+    /// The statement's.
+    fn run_owned(&mut self, schema: &str, sql: &str, args: &[Value]) -> Result<()>;
 }
 
 /// \[EXTENSION\] A procedure written in Rust.
@@ -107,6 +130,26 @@ pub trait Procedure: Send + Sync + Debug {
     ///
     /// The procedure's own; it is undone with the CALL.
     fn call(&self, args: &[Value], cx: &mut dyn ProcedureContext) -> Result<()>;
+
+    /// Of one invoked as a function too, the type of its value when it is
+    /// invoked with `count` arguments: none, by default, of one that is
+    /// no function. Such a function possibly modifies SQL-data, so it is
+    /// invoked where an SQL-session runs it [ISO/IEC 9075-2:2023 §9.18
+    /// GR6]; a CALL does not invoke it.
+    fn returns(&self, count: usize) -> Option<DataType> {
+        let _ = count;
+        None
+    }
+
+    /// Its value, invoked as a function of `args` in `cx`: by default the
+    /// null value, once `call` has run.
+    ///
+    /// # Errors
+    ///
+    /// The function's own; it is undone with the statement.
+    fn evaluate(&self, args: &[Value], cx: &mut dyn ProcedureContext) -> Result<Value> {
+        self.call(args, cx).map(|()| Value::Null)
+    }
 }
 
 /// The row type of a table function's rows.
@@ -150,6 +193,30 @@ impl ScalarFunction for TableCall {
         let width = self.function.columns().len();
         let rows = made.into_iter().map(|row| check_width(row, width, self.name())).collect::<Result<Vec<_>>>()?;
         Ok(Value::Multiset(rows.into()))
+    }
+    fn deterministic(&self) -> bool {
+        false
+    }
+}
+
+/// \[EXTENSION\] The invocation of a table function as a function
+/// (`TableFunction::scalar`): the first column of its first row, the null
+/// value of none.
+#[derive(Debug)]
+pub struct ValueCall(pub TableCall);
+
+impl ScalarFunction for ValueCall {
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+    fn return_type(&self, _: &[DataType]) -> Result<DataType> {
+        let first = self.0.function.columns().into_iter().next();
+        first.map(|(_, t)| t).ok_or_else(|| SqlError::new(Code::Api, format!("{} returns no column", self.name())))
+    }
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        let Value::Multiset(rows) = self.0.call(args)? else { return Ok(Value::Null) };
+        let Some(Value::Row(fields)) = rows.iter().next() else { return Ok(Value::Null) };
+        Ok(fields.first().cloned().unwrap_or(Value::Null))
     }
     fn deterministic(&self) -> bool {
         false

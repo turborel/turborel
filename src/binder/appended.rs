@@ -26,7 +26,7 @@ impl Binder<'_> {
     pub(super) fn appended_arguments(
         &self,
         f: &dyn ScalarFunction,
-        (args, exprs): (&[ValueExpression], &[Expr]),
+        (args, exprs, types): (&[ValueExpression], &[Expr], &[DataType]),
         scope: Scope<'_>,
     ) -> Result<Vec<(Expr, DataType)>> {
         let mut out = Vec::new();
@@ -37,7 +37,7 @@ impl Binder<'_> {
             out.push((Expr::Const(Value::Char(index)), DataType::Varying { length, units: CharUnits::Characters }));
         }
         let given: Vec<Expr> = exprs.iter().cloned().chain(out.iter().map(|(e, _)| e.clone())).collect();
-        out.extend(self.appended(f, &given, scope)?);
+        out.extend(self.appended(f, (&given, types), scope)?);
         Ok(out)
     }
 
@@ -69,9 +69,14 @@ impl Binder<'_> {
     ///
     /// As the query's binding, placed nowhere in the statement, since it is
     /// not written in it.
-    fn appended(&self, f: &dyn ScalarFunction, exprs: &[Expr], scope: Scope<'_>) -> Result<Option<(Expr, DataType)>> {
+    fn appended(
+        &self,
+        f: &dyn ScalarFunction,
+        (exprs, types): (&[Expr], &[DataType]),
+        scope: Scope<'_>,
+    ) -> Result<Option<(Expr, DataType)>> {
         let constants = exprs.iter().map(constant).collect::<Vec<_>>();
-        let Some(appended) = f.appended_query(&constants) else { return Ok(None) };
+        let Some(appended) = f.catalog_query(&constants, types, &*self.db.catalog) else { return Ok(None) };
         let there =
             |(auth, ident): &(String, String)| self.db.catalog.table(&QualifiedName { auth: auth.clone(), ident: ident.clone() }).is_some();
         if !appended.tables.iter().all(there) {

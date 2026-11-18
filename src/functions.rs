@@ -261,6 +261,19 @@ pub trait ScalarFunction: Send + Sync {
     fn appended_query(&self, _constants: &[Option<&Value>]) -> Option<AppendedQuery> {
         None
     }
+    /// \[EXTENSION\] As `appended_query`, given too the types of the
+    /// call's arguments and the catalog it is bound in, so a query may
+    /// read the tables the catalog registers, as SQL/MM Spatial's linear
+    /// referencing reads the linear elements of the columns ST_LR_COLUMNS
+    /// lists (`spatial/lr/sql/catalog.rs`). By default `appended_query`.
+    fn catalog_query(
+        &self,
+        constants: &[Option<&Value>],
+        _types: &[DataType],
+        _catalog: &dyn crate::catalog::Catalog,
+    ) -> Option<AppendedQuery> {
+        self.appended_query(constants)
+    }
     /// \[EXTENSION\] Whether the binder gives a call, before any appended
     /// query (`appended_query`), the name of the index that ranks the column
     /// its first argument reads, if it reads a base table's column one does:

@@ -19,6 +19,7 @@
 //!   supplies (`spatial/systems.rs`), ST_UNITS_OF_MEASURE its units, and
 //!   ST_SIZINGS each meta-variable of Annex A.1 with an integer value.
 
+mod lr;
 mod systems;
 
 use super::{Defined, Rows, Seen, SystemTable, SystemView, catalog_name, identifier, text, text_column};
@@ -59,6 +60,9 @@ pub(super) fn tables() -> Vec<std::sync::Arc<dyn SystemTable>> {
         table("ST_SPATIAL_REFERENCE_SYSTEMS", systems_columns, systems),
         table("ST_UNITS_OF_MEASURE", units_columns, units),
         table("ST_SIZINGS", sizings_columns, sizings),
+        // [§21.2] Linear referencing.
+        table("ST_LR_COLUMNS", lr::lr_columns_columns, lr::lr_columns),
+        table("ST_LRMS", lr::lrms_columns, lr::lrms),
     ]
 }
 
@@ -307,6 +311,9 @@ pub const SPATIAL_VIEWS: &[SystemView] = &[
          DEFINITION AS SRTEXT
        FROM ST_DEFINITION_SCHEMA.ST_SPATIAL_REFERENCE_SYSTEMS",
     },
+    // [§21.1] Linear referencing.
+    lr::LR_COLUMNS_VIEW,
+    lr::LRMS_VIEW,
     SystemView {
         name: "ST_UNITS",
         query: r"SELECT UNIT_NAME, UNIT_TYPE, CONVERSION_FACTOR, DESCRIPTION FROM ST_DEFINITION_SCHEMA.ST_UNITS_OF_MEASURE",

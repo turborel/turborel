@@ -27,7 +27,7 @@ const IN_ARGUMENT: &str = "[ISO/IEC 9075-2:2023 §6.9 SR7] a set function in a t
 /// The parameters of a table function, as a scalar function declares
 /// them, so its arguments are bound as a function's are.
 #[derive(Debug)]
-struct Parameters(Vec<DataType>);
+pub(super) struct Parameters(pub(super) Vec<DataType>);
 
 impl ScalarFunction for Parameters {
     fn name(&self) -> &'static str {
@@ -49,7 +49,7 @@ impl ScalarFunction for Parameters {
 
 /// The value of `e`, if it is known as it is bound: a constant, or a
 /// call or cast of known values.
-fn known(e: &Expr) -> Option<Value> {
+pub(super) fn known(e: &Expr) -> Option<Value> {
     if let Expr::Const(v) = e {
         return Some(v.clone());
     }
@@ -94,7 +94,7 @@ pub(super) fn builtin_item(b: Bounds<'_>, p: &PtfTable, offset: usize, from: &mu
     let refs: Vec<Option<&Value>> = values.iter().map(Option::as_ref).collect();
     for query in f.reads(&refs)? {
         let read = Parser::new(&format!("MULTISET ({query})"))?.generation_expression()?;
-        exprs.push(binder.value_expression(&read, scope)?.0);
+        exprs.push(binder.value_expression(&read, scope).map_err(|e| f.read_failed(e))?.0);
     }
     let reads = binder.used.into_inner();
     from.used.extend(reads.iter().copied());

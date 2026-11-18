@@ -54,7 +54,7 @@ pub use routines::{
     SqlRoutineDesc, TableSemantics, ptf_name_type, ptf_status_type,
 };
 pub use sequences::SequenceDesc;
-pub use spatial::{GeometryColumnDesc, SpatialCatalog, SpatialChange, SpatialRefSysDesc};
+pub use spatial::{GeometryColumnDesc, LrColumnDesc, LrmDesc, SpatialCatalog, SpatialChange, SpatialRefSysDesc};
 pub use structured::{
     AttributeDesc, CONSTRUCTOR_SUFFIX, CastDesc, MAX_HIERARCHY_DEPTH, MUTATOR_SUFFIX, MethodHost, MethodSpecDesc, OBSERVER_SUFFIX,
     OrderingCategory, OrderingDesc, RefRepresentation, StructuredDesc, TransformGroupDesc, TransformNames, TypedDesc, method_executable,

@@ -7,11 +7,13 @@ use crate::error::{Code, Result, SqlError};
 
 pub mod curves;
 pub mod formats;
+pub mod lr;
 pub(crate) mod masks;
 pub(crate) mod packed;
 pub(crate) mod partition;
 pub mod planar;
 pub mod srs;
+pub mod topology;
 
 /// The two coordinate axes of Cartesian spatial bounds.
 pub const DIMENSIONS: usize = 2;

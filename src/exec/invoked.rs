@@ -46,6 +46,9 @@ pub(super) fn invoke(invoked: &Invocation, row: &Row, subqueries: &dyn Subquerie
     if i.null_call && values.iter().any(Value::is_null) {
         return Ok(Value::Null);
     }
+    if i.rust.is_some() {
+        return rust_hosted(i, values, subqueries);
+    }
     if let Some(program) = &i.program {
         return programmed(i, program, values, subqueries);
     }
@@ -74,6 +77,17 @@ fn programmed(i: &Invocation, program: &Program, values: Row, subqueries: &dyn S
     };
     let returned = returned.ok_or_else(|| no_return(i))?;
     assign(returned, &i.result, "ISO/IEC 9075-2:2023 §9.18 GR10a iii")
+}
+
+/// \[EXTENSION\] The value of `i`, a procedure written in Rust invoked as
+/// a function, of the parameters' values `values`: run where an
+/// SQL-session runs its statements.
+fn rust_hosted(i: &Invocation, values: Row, subqueries: &dyn Subqueries) -> Result<Value> {
+    let Some(hosted) = subqueries.invoke_hosted(i, values) else {
+        let msg = format!("function {} possibly modifies SQL-data, and no SQL-session runs it here", i.name);
+        return Err(broken(&msg).about(Subject::routine(i.name.parts(), i.specific.parts())));
+    };
+    assign(hosted?.unwrap_or(Value::Null), &i.result, "ISO/IEC 9075-2:2023 §9.18 GR10a iii")
 }
 
 /// \[DESIGN\] The one expression of a body that is a VALUES of one row of
