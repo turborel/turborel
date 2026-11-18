@@ -19,7 +19,7 @@ mod statements;
 
 pub(crate) use area::DataArea;
 pub(crate) use compile::{Compiled, DescriptorColumns, Procedure, TableInput, compile};
-pub(crate) use graph::GraphCall;
+pub(crate) use graph::{EdgeShape, GraphCall, GraphShape, identity_type};
 pub(crate) use statements::run_statement;
 
 use execute::{Execution, execute};

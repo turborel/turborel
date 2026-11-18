@@ -42,15 +42,20 @@ table argument are of types that compare, and the result's vertex
 columns are of the type of the edges' source.
 
 The edges may be a property graph's name instead, of CREATE PROPERTY
-GRAPH or a schema's SYS_GRAPH of its node and edge tables. Its edge
-tables' source and destination columns are then the edges, each
-undirected edge both ways, and its vertex tables' keys the vertices
-unless VERTICES is given. COST may name a column that every edge table
-has alike. A vertex is its key, so each key and endpoint is of one
-column and references its vertex table's key. A graph of more than one
-vertex table, other than a SYS_GRAPH, whose keys are identities of their
-own tables, is not yet taken. A graph is read through its tables, with
-the statement's privileges on them.
+GRAPH or a schema's SYS_GRAPH of its node and edge tables. Its vertex
+tables' rows are then the vertices, and VERTICES is not written. Each
+edge table's rows are the edges, each joining the vertices whose
+columns its endpoints reference, so an edge of no such vertex is none,
+and an undirected edge joins them both ways. COST may name a column
+that every edge table has alike. A graph is read through its tables,
+with the statement's privileges on them.
+
+Of such a graph, a vertex is its identity, as ELEMENT_ID gives it: the
+text `{"table":"ACCOUNT","key":[6]}` of its element table's name and its
+key's values in order, of VARCHAR(8192). So keys of two vertex tables,
+and keys of any number of columns, name vertices apart, and START is an
+identity too. Of a SYS_GRAPH, a vertex is its `$NODE_ID`, the identity
+its node table holds.
 
 Arguments follow the edges in the order of the parameters, then by
 name. Once one is named, the rest are too. An argument not written, or
@@ -191,6 +196,42 @@ SELECT * FROM GRAPH_ALGO.TRIANGLE_COUNT(TABLE (SELECT WHO, WHOM FROM F WHERE COS
 (4 rows)
 ```
 
+A property graph's vertices are named by their identities, so a graph
+of several vertex tables, here accounts and the cities they are in,
+keeps them apart:
+
+```sql
+CREATE TABLE CITY (CID INTEGER PRIMARY KEY, CNAME VARCHAR(10));
+CREATE TABLE LIVES (WHO INTEGER PRIMARY KEY, CID INTEGER);
+INSERT INTO CITY VALUES (1, 'oslo'), (2, 'rome');
+INSERT INTO LIVES VALUES (1, 1), (2, 1), (4, 2);
+CREATE PROPERTY GRAPH SOCIAL
+  VERTEX TABLES (P, CITY)
+  EDGE TABLES (
+    F KEY (WHO, WHOM) SOURCE KEY (WHO) REFERENCES P (ID) DESTINATION KEY (WHOM) REFERENCES P (ID),
+    LIVES SOURCE KEY (WHO) REFERENCES P (ID) DESTINATION KEY (CID) REFERENCES CITY (CID))
+  OPTIONS (TRUSTED MODE);
+SELECT * FROM GRAPH_ALGO.WCC(SOCIAL) AS W ORDER BY VERTEX;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+ VERTEX                                                       | COMPONENT
+--------------------------------------------------------------+--------------------------------------------------------------
+ {"table":"CITY","key":[1]}                                   | {"table":"CITY","key":[1]}
+ {"table":"CITY","key":[2]}                                   | {"table":"CITY","key":[1]}
+ {"table":"P","key":[1]}                                      | {"table":"CITY","key":[1]}
+ {"table":"P","key":[2]}                                      | {"table":"CITY","key":[1]}
+ {"table":"P","key":[3]}                                      | {"table":"CITY","key":[1]}
+ {"table":"P","key":[4]}                                      | {"table":"CITY","key":[1]}
+ {"table":"P","key":[5]}                                      | {"table":"P","key":[5]}
+(7 rows)
+```
+
 A schema's node and edge tables are its graph SYS_GRAPH, each vertex
 its `$NODE_ID`, so a result joins to the node tables by it:
 
@@ -279,19 +320,19 @@ SELECT RUN_ID, ALGORITHM, ARGUMENTS, VERTICES, EDGES, ROWS_RETURNED, STATUS
                     3 | WCC                                                          |                                                              |                    5 |                    5 |                    5 | DONE
                     4 | PAGERANK                                                     | DAMPING => 8.5E-1, ITERATIONS => 50                          |                    4 |                    5 |                    4 | DONE
                     5 | TRIANGLE_COUNT                                               |                                                              |                    4 |                    4 |                    4 | DONE
-                    6 | PAGERANK                                                     |                                                              |                    3 |                    3 |                    3 | DONE
-                    7 | BFS_LEVELS                                                   | START => 1                                                   |                    4 |                    5 |                    4 | DONE
-(7 rows)
+                    6 | WCC                                                          |                                                              |                    7 |                    8 |                    7 | DONE
+                    7 | PAGERANK                                                     |                                                              |                    3 |                    3 |                    3 | DONE
+                    8 | BFS_LEVELS                                                   | START => 1                                                   |                    4 |                    5 |                    4 | DONE
+(8 rows)
 ```
 
 ## Errors
 
 | SQLSTATE | SQLCODE | Cause |
 |---|---|---|
-| 2A000 | -103 | GRAPH_ALGO has no algorithm of the name, an argument names no parameter, two are of one, one without a name follows a named one, START is missing, the edges are a value that names no property graph, or a key is not of a type that compares with the source's |
+| 2A000 | -103 | GRAPH_ALGO has no algorithm of the name, an argument names no parameter, two are of one, one without a name follows a named one, START is missing, the edges are a value that names no property graph, VERTICES is written with a graph, or a key is not of a type that compares with the source's |
 | 22000 | -301 | An argument is out of its range, as a DAMPING past 1 |
 | 22W34 | -301 | GRF-0034, of a COST that names no column, is null or not a number, is negative where the algorithm takes no negative cost, or makes a negative cycle SSSP's START reaches |
-| 0A000 | -900 | The edges are a property graph of a key or endpoint of more than one column, of an endpoint that references other columns than its vertex table's key, or of more than one vertex table but a SYS_GRAPH |
 | TB918 | -918 | The run needs more memory than MEMORY.WORK_BYTES |
 | TB920 | -920 | The statement was cancelled or ran past its timeout |
 

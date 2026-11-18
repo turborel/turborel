@@ -26,5 +26,5 @@ fn the_graph_algorithm_examples_run_as_printed() {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
     let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("sql/16-graph-algorithms.md") > 0, "the chapter shows its examples' output");
+    assert!(ann.page("sql/17-graph-algorithms.md") > 0, "the chapter shows its examples' output");
 }

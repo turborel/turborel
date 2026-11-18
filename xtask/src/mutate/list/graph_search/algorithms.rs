@@ -10,7 +10,7 @@
 use super::super::{Mutation, Package};
 
 /// The mutations of the graph algorithm library, in the order they run.
-pub const GRAPH_ALGO: [Mutation; 13] = [
+pub const GRAPH_ALGO: [Mutation; 16] = [
     Mutation {
         name: "graph-algo-damping-past-one",
         package: Package::Core,
@@ -135,10 +135,40 @@ pub const GRAPH_ALGO: [Mutation; 13] = [
         name: "graph-algo-undirected-one-way",
         package: Package::Core,
         breaks: "an undirected edge table of a graph named in place of the edges gives each edge one way alone",
+        file: "src/db/ptf/graph/shape.rs",
+        original: "                if shape.undirected {",
+        replacement: "                if shape.undirected && false {",
+        integration: &["graph_algo::named::property_graphs_by_name"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-algo-identity-of-no-table",
+        package: Package::Core,
+        breaks: "a vertex's identity leaves out its element table, so keys of two vertex tables meet as one vertex",
+        file: "src/db/ptf/graph/shape.rs",
+        original: "value: Item::Scalar(Scalar::from(alias.to_owned())) },",
+        replacement: "value: Item::Scalar(Scalar::from(String::new())) },",
+        integration: &["graph_algo::named::several_vertex_tables_keep_their_vertices_apart"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-algo-endpoint-on-own-columns",
+        package: Package::Core,
+        breaks: "an endpoint joins its vertex table on its own columns' names, not the columns it references",
         file: "src/binder/ptf/graph/catalogued.rs",
-        original: "        if *undirected {",
-        replacement: "        if *undirected && false {",
-        integration: &["graph_algo::property_graphs_by_name"],
+        original: ".zip(&p.references)",
+        replacement: ".zip(&p.columns)",
+        integration: &["graph_algo::named::endpoints_referencing_other_columns"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-algo-key-of-one-column",
+        package: Package::Core,
+        breaks: "an edge's source is read as a key of one column, so a key of two splits wrong",
+        file: "src/db/ptf/graph/shape.rs",
+        original: "keys.split_at((*a).min(keys.len()))",
+        replacement: "keys.split_at(1.min(keys.len()))",
+        integration: &["graph_algo::named::keys_of_several_columns"],
         unit: &[],
     },
 ];

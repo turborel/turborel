@@ -23,7 +23,7 @@ use super::tables::{BoundTable, table_argument};
 use super::{BoundPtf, Range, column, renamed};
 use crate::ast::{GenericTable, PtfArgument, PtfInvocation, TableSemantics, ValueExpression};
 use crate::catalog::{ColumnDesc, QualifiedName};
-use crate::db::ptf::{GraphCall, Invoked};
+use crate::db::ptf::{GraphCall, GraphShape, Invoked};
 use crate::error::{At, Result, SqlError};
 use crate::graph::algo::{Algorithm, Kind, Output, Parameter, SCHEMA};
 use crate::logical::{Expr, LogicalPlan, Polymorphic};
@@ -87,34 +87,18 @@ fn bigint() -> DataType {
     DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Bigint }
 }
 
-/// The table argument `a` of parameter `p`, bound; of the edges, a
-/// property graph's name too, which gives its vertices as well.
-fn table(
-    b: Bounds<'_>,
-    (algorithm, p): (Algorithm, &Parameter),
-    a: &PtfArgument,
-    depth: usize,
-) -> Result<(BoundTable, Option<BoundTable>)> {
+/// The table argument `a` of parameter `p`, bound.
+fn table(b: Bounds<'_>, (algorithm, p): (Algorithm, &Parameter), a: &PtfArgument, depth: usize) -> Result<BoundTable> {
     let PtfArgument::Table(ta) = a else {
-        if let (PtfArgument::Value(v), Kind::Edges) = (a, p.kind)
-            && let Some(g) = catalogued::graph(b, v)
-        {
-            let (edges, vertices) = catalogued::bound(b, algorithm, &g, depth)?;
-            return Ok((edges, Some(vertices)));
-        }
-        let what = if p.kind == Kind::Edges {
-            "a table argument, TABLE ( <table or query> ), or a property graph's name"
-        } else {
-            "a table argument, TABLE ( <table or query> )"
-        };
-        return Err(refused(algorithm, &format!("{} is {what}", p.name)));
+        let what = if p.kind == Kind::Edges { ", or a property graph's name" } else { "" };
+        return Err(refused(algorithm, &format!("{} is a table argument, TABLE ( <table or query> ){what}", p.name)));
     };
     let bound = table_argument(b, ta, WHOLE, depth)?;
     let least = if p.kind == Kind::Edges { ENDS } else { 1 };
     if bound.columns.len() < least {
         return Err(refused(algorithm, &format!("{}'s table has fewer than {least} columns", p.name)));
     }
-    Ok((bound, None))
+    Ok(bound)
 }
 
 /// The value argument `value` of parameter `p`, of type `declared`, bound.
@@ -185,8 +169,8 @@ pub(super) fn bound_graph_algorithm(
         return Err(refused(algorithm, "its arguments have no co-partition clause")).or_at(inv.at);
     }
     let placed = placed(algorithm, inv).or_at(inv.at)?;
-    let (tables, parameters, arguments) = arguments(b, algorithm, &placed, depth).or_at(inv.at)?;
-    let key = key_type(&tables);
+    let Inputs { tables, key, edge_columns, shape } = inputs(b, algorithm, &placed, depth).or_at(inv.at)?;
+    let (parameters, arguments) = arguments(b, algorithm, &placed, &key).or_at(inv.at)?;
     let mut columns = result_columns(algorithm, &key);
     if let Some(n) = names {
         renamed(&mut columns, n).or_at(inv.at)?;
@@ -196,7 +180,8 @@ pub(super) fn bound_graph_algorithm(
         algorithm,
         parameters,
         vertices: tables.len() > 1,
-        edge_columns: tables.first().map(|t| t.columns.iter().map(|c| c.name.clone()).collect()).unwrap_or_default(),
+        edge_columns,
+        shape,
         user: b.cx.auth.to_owned(),
     };
     let node_names = columns.iter().map(|c| c.name.clone()).collect();
@@ -208,35 +193,65 @@ pub(super) fn bound_graph_algorithm(
     Ok(BoundPtf { plan, columns, ranges })
 }
 
-/// What `arguments` binds: the table arguments, the edges' then the
-/// vertices' if given; the value parameters' names; their arguments.
-type Arguments = (Vec<BoundTable>, Vec<&'static str>, Vec<Expr>);
+/// The table arguments of an invocation, bound: the edges' then the
+/// vertices' if given, or a property graph's element tables.
+struct Inputs {
+    /// Their plans' tables.
+    tables: Vec<BoundTable>,
+    /// The type of a vertex.
+    key: DataType,
+    /// The names of the edges' columns, of which COST names one.
+    edge_columns: Vec<String>,
+    /// Of a property graph, how its tables' rows are its edges and vertices.
+    shape: Option<GraphShape>,
+}
 
-/// The arguments `placed` of the parameters of `algorithm`, bound.
-fn arguments<'a>(b: Bounds<'_>, algorithm: Algorithm, placed: &[Option<&'a PtfArgument>], depth: usize) -> Result<Arguments> {
-    let (mut tables, mut parameters, mut values) = (Vec::new(), Vec::new(), Vec::new());
+/// The table arguments `placed` of the parameters of `algorithm`, bound,
+/// nested `depth` deep.
+fn inputs<'a>(b: Bounds<'_>, algorithm: Algorithm, placed: &[Option<&'a PtfArgument>], depth: usize) -> Result<Inputs> {
     let given = |a: Option<&'a PtfArgument>| a.filter(|a| !matches!(a, PtfArgument::Null(_)));
-    let mut implied = None;
-    for (p, a) in algorithm.parameters().iter().zip(placed).filter(|(p, _)| matches!(p.kind, Kind::Edges | Kind::Vertices)) {
-        match (given(*a), p.kind) {
-            (Some(a), _) => {
-                let (bound, of_graph) = table(b, (algorithm, p), a, depth)?;
-                tables.push(bound);
-                implied = implied.or(of_graph);
+    let written: Vec<(&Parameter, Option<&PtfArgument>)> = algorithm
+        .parameters()
+        .iter()
+        .zip(placed)
+        .filter(|(p, _)| matches!(p.kind, Kind::Edges | Kind::Vertices))
+        .map(|(p, a)| (p, given(*a)))
+        .collect();
+    let mut tables = Vec::new();
+    for &(p, a) in &written {
+        match (a, p.kind) {
+            (Some(PtfArgument::Value(v)), Kind::Edges) => {
+                let Some(g) = catalogued::graph(b, v) else {
+                    return Err(refused(algorithm, &format!("{} names no property graph", p.name)));
+                };
+                if written.iter().any(|(q, w)| q.kind == Kind::Vertices && w.is_some()) {
+                    return Err(refused(algorithm, "a property graph's vertices are its vertex tables' rows, so it takes no VERTICES"));
+                }
+                let c = catalogued::bound(b, algorithm, &g, depth)?;
+                return Ok(Inputs { tables: c.tables, key: c.key, edge_columns: c.edge_columns, shape: Some(c.shape) });
             }
+            (Some(a), _) => tables.push(table(b, (algorithm, p), a, depth)?),
             (None, Kind::Edges) => return Err(refused(algorithm, "it takes the edges, its first argument")),
             (None, Kind::Vertices | Kind::Start | Kind::Number | Kind::Count | Kind::Cost) => {}
         }
     }
-    // A graph's own vertices, unless VERTICES is given.
-    if tables.len() == 1 {
-        tables.extend(implied);
-    }
     let key = key_type(&tables);
     keys_comparable(algorithm, &tables, &key)?;
+    let edge_columns = tables.first().map(|t| t.columns.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
+    Ok(Inputs { tables, key, edge_columns, shape: None })
+}
+
+/// What `arguments` binds: the value parameters' names; their arguments.
+type Arguments = (Vec<&'static str>, Vec<Expr>);
+
+/// The value arguments `placed` of the parameters of `algorithm`, bound,
+/// `key` the type of a vertex.
+fn arguments<'a>(b: Bounds<'_>, algorithm: Algorithm, placed: &[Option<&'a PtfArgument>], key: &DataType) -> Result<Arguments> {
+    let (mut parameters, mut values) = (Vec::new(), Vec::new());
+    let given = |a: Option<&'a PtfArgument>| a.filter(|a| !matches!(a, PtfArgument::Null(_)));
     for (p, a) in algorithm.parameters().iter().zip(placed).filter(|(p, _)| !matches!(p.kind, Kind::Edges | Kind::Vertices)) {
         let expr = match (given(*a), p.kind == Kind::Start) {
-            (Some(PtfArgument::Value(v)), _) => value(b, (algorithm, p), v, declared(p.kind, &key))?,
+            (Some(PtfArgument::Value(v)), _) => value(b, (algorithm, p), v, declared(p.kind, key))?,
             (Some(PtfArgument::Table(_) | PtfArgument::Descriptor(..) | PtfArgument::Null(_)), _) => {
                 return Err(refused(algorithm, &format!("{} takes a value", p.name)));
             }
@@ -246,5 +261,5 @@ fn arguments<'a>(b: Bounds<'_>, algorithm: Algorithm, placed: &[Option<&'a PtfAr
         parameters.push(p.name);
         values.push(expr);
     }
-    Ok((tables, parameters, values))
+    Ok((parameters, values))
 }

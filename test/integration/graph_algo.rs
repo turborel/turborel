@@ -8,6 +8,8 @@ use turborel::error::SqlError;
 
 use crate::common::{failed, rows};
 
+mod named;
+
 /// Schema G: V (ID INTEGER PRIMARY KEY, NAME), vertices 1 to 5; E (SRC,
 /// DST, W DOUBLE PRECISION, LABEL), the edges 1 → 2 (1), 2 → 3 (2),
 /// 3 → 1 (1), 3 → 4 (5) and 1 → 4 (10); vertex 5 is of no edge.
@@ -178,61 +180,4 @@ fn runs_are_shown() {
     assert_eq!(query(&s, "SELECT THREADS FROM INFORMATION_SCHEMA.GRAPH_ALGO_RUNS WHERE RUN_ID = 3"), ["4"]);
     let other = db.session("H");
     assert_eq!(query(&other, "SELECT COUNT(*) FROM INFORMATION_SCHEMA.GRAPH_ALGO_RUNS"), ["0"]);
-}
-
-/// Verifies: [EXTENSION] [GS §18] A property graph's name in place of the
-/// edges: its edge tables' endpoints are the edges, its vertex tables'
-/// keys the vertices, COST a column every edge table has, an undirected
-/// edge table's edges both ways; of another schema by its name. A graph
-/// of two vertex tables, but a SYS_GRAPH, is valid but not implemented
-/// (-900).
-#[test]
-fn property_graphs_by_name() {
-    let db = graph();
-    let s = db.session("G");
-    let ends = "SOURCE KEY (SRC) REFERENCES V (ID) DESTINATION KEY (DST) REFERENCES V (ID)";
-    s.run(&format!("CREATE PROPERTY GRAPH PG VERTEX TABLES (V) EDGE TABLES (E KEY (SRC, DST) {ends}) OPTIONS (TRUSTED MODE)")).unwrap();
-    s.run(&format!("CREATE PROPERTY GRAPH UG VERTEX TABLES (V) EDGE TABLES (E KEY (SRC, DST) UNDIRECTED {ends}) OPTIONS (TRUSTED MODE)"))
-        .unwrap();
-    s.run("CREATE TABLE W2 (ID INTEGER PRIMARY KEY)").unwrap();
-    s.run(&format!("CREATE PROPERTY GRAPH TWO VERTEX TABLES (V, W2) EDGE TABLES (E KEY (SRC, DST) {ends}) OPTIONS (TRUSTED MODE)"))
-        .unwrap();
-    assert_eq!(ordered(&s, "WCC(PG)"), ["1,1", "2,1", "3,1", "4,1", "5,5"]);
-    assert_eq!(ordered(&s, "SCC(G.PG)"), ["1,1", "2,1", "3,1", "4,4", "5,5"]);
-    assert_eq!(ordered(&s, "SSSP(PG, 1, COST => 'W')"), ["1,0E0", "2,1E0", "3,3E0", "4,8E0"]);
-    assert_eq!(ordered(&s, "SCC(UG)"), ["1,1", "2,1", "3,1", "4,1", "5,5"]);
-    assert_eq!(ordered(&s, "BFS_LEVELS(UG, 4)"), ["1,1", "2,2", "3,1", "4,0"]);
-    assert_eq!(ordered(&s, "WCC(PG, VERTICES => TABLE (SELECT ID FROM V WHERE ID < 5))"), ["1,1", "2,1", "3,1", "4,1"]);
-    assert_eq!(refused(&s, "SELECT * FROM GRAPH_ALGO.WCC(TWO) AS C").0, -900);
-}
-
-/// Verifies: [EXTENSION] [GS §18] [GS §4.2] SYS_GRAPH, the implicit
-/// graph of a schema's node and edge tables, in place of the edges: each
-/// vertex its `$NODE_ID`, joinable to its node table, of any of its node
-/// tables; each edge its `$FROM_ID` and `$TO_ID`, COST one of its columns.
-#[test]
-fn native_graphs_by_name() {
-    let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION H").unwrap();
-    let s = db.session("H");
-    s.run("CREATE TABLE N (NAME VARCHAR(5)) AS NODE").unwrap();
-    s.run("CREATE TABLE M (NAME VARCHAR(5)) AS NODE").unwrap();
-    s.run("CREATE TABLE L (W DOUBLE PRECISION) AS EDGE").unwrap();
-    s.run("INSERT INTO N VALUES ('a'), ('b'), ('c'), ('d')").unwrap();
-    s.run("INSERT INTO M VALUES ('m')").unwrap();
-    let id = |t: &str, name: &str| query(&s, &format!("SELECT $NODE_ID FROM {t} WHERE NAME = '{name}'")).remove(0);
-    for (from, to, w) in
-        [(id("N", "a"), id("N", "b"), 1), (id("N", "b"), id("N", "c"), 2), (id("N", "c"), id("N", "a"), 1), (id("N", "c"), id("M", "m"), 4)]
-    {
-        s.run(&format!("INSERT INTO L ($FROM_ID, $TO_ID, W) VALUES ('{from}', '{to}', {w})")).unwrap();
-    }
-    let components = "SELECT COUNT(*), COUNT(DISTINCT COMPONENT) FROM GRAPH_ALGO.WCC(SYS_GRAPH) AS W";
-    assert_eq!(query(&s, components), ["5,2"]);
-    let a = id("N", "a");
-    let levels =
-        format!("SELECT N.NAME, B.DEPTH FROM GRAPH_ALGO.BFS_LEVELS(SYS_GRAPH, '{a}') AS B JOIN N ON N.$NODE_ID = B.VERTEX ORDER BY 1");
-    assert_eq!(query(&s, &levels), ["a,0", "b,1", "c,2"]);
-    let costs =
-        format!("SELECT M.NAME, D.DISTANCE FROM GRAPH_ALGO.SSSP(H.SYS_GRAPH, '{a}', COST => 'W') AS D JOIN M ON M.$NODE_ID = D.VERTEX");
-    assert_eq!(query(&s, &costs), ["m,7E0"]);
 }

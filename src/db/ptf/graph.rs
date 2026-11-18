@@ -9,6 +9,10 @@
 //! consistent one [GS §18 R18.1], and through the privileges and the
 //! views its table arguments are read with [R18.2].
 
+mod shape;
+
+pub(crate) use shape::{EdgeShape, GraphShape, identity_type};
+
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -36,6 +40,9 @@ pub(crate) struct GraphCall {
     pub(crate) vertices: bool,
     /// The names of the edges' columns, of which COST names one.
     pub(crate) edge_columns: Vec<String>,
+    /// Of a property graph named in place of the edges, how its table
+    /// arguments' rows are made its edges and vertices.
+    pub(crate) shape: Option<GraphShape>,
     /// Who invoked it.
     pub(crate) user: String,
 }
@@ -95,11 +102,12 @@ impl GraphCall {
         let arguments = Arguments(self.parameters.iter().copied().zip(values).collect());
         let cost =
             arguments.0.iter().find_map(|(p, v)| if let (true, Value::Char(c)) = (*p == "COST", v) { Some(c.clone()) } else { None });
-        let input = Input {
-            edges: rows.first().map_or(&[], Vec::as_slice),
-            vertices: if self.vertices { rows.get(1).map(Vec::as_slice) } else { None },
-            cost: cost.as_deref().map(|c| self.cost_column(c)).transpose()?,
+        let of_graph = self.shape.as_ref().map(|shape| shape.rows(rows)).transpose()?;
+        let (edges, vertices) = match &of_graph {
+            Some((edges, vertices)) => (edges.as_slice(), Some(vertices.as_slice())),
+            None => (rows.first().map_or(&[][..], Vec::as_slice), if self.vertices { rows.get(1).map(Vec::as_slice) } else { None }),
         };
+        let input = Input { edges, vertices, cost: cost.as_deref().map(|c| self.cost_column(c)).transpose()? };
         let memory = Memory::new(work_bytes(db.settings.get(MEMORY_WORK_BYTES)));
         let stop = db.tx.stop_of(tx);
         let cancel = || stop.as_ref().map_or(Ok(()), |s| s.check());
