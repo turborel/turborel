@@ -3,8 +3,10 @@
 //! 9075-2:2023 §4.46.1]; TRIGGERED_UPDATE_COLUMNS, of each column of a
 //! trigger column list; and TRIGGER_TABLE_USAGE, TRIGGER_COLUMN_USAGE,
 //! TRIGGER_ROUTINE_USAGE and TRIGGER_SEQUENCE_USAGE, of what each triggered
-//! action names: the tables and views it reads, its triggered action column
-//! set [§11.49 GR5i], its subject routines [§4.35.2], and the sequence
+//! action names: the tables and views it reads, the columns of its
+//! triggered action column set [§11.49 GR5i] §6.54 Description 1 counts,
+//! found by binding the definition again, its subject routines [§4.35.2],
+//! and the sequence
 //! generators it draws from [§11.74 SR3b]. The views of triggers read them
 //! (`system/information/triggers.rs`).
 //!
@@ -35,7 +37,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
         defined("TRIGGERS", triggers_columns, Rows::Fallible(triggers)),
         defined("TRIGGERED_UPDATE_COLUMNS", update_columns_columns, Rows::Infallible(update_columns)),
         defined("TRIGGER_TABLE_USAGE", table_usage_columns, Rows::Infallible(table_usage)),
-        defined("TRIGGER_COLUMN_USAGE", column_usage_columns, Rows::Infallible(column_usage)),
+        defined("TRIGGER_COLUMN_USAGE", column_usage_columns, Rows::Fallible(column_usage)),
         defined("TRIGGER_ROUTINE_USAGE", routine_usage_columns, Rows::Infallible(routine_usage)),
         defined("TRIGGER_SEQUENCE_USAGE", sequence_usage_columns, Rows::Infallible(sequence_usage)),
     ]
@@ -210,16 +212,24 @@ fn table_usage(seen: &Seen<'_>) -> Vec<Row> {
     named_by(seen, |t| t.reads.clone())
 }
 
-/// [§6.54] Each column of a triggered action column set.
-fn column_usage(seen: &Seen<'_>) -> Vec<Row> {
+/// [§6.54 Description 1] Each column a trigger's definition references in
+/// a `<search condition>`, in the search condition of a searched UPDATE or
+/// DELETE or in an `<update source>` of its action, or names in an `<insert
+/// column list>` or a `<set clause>` of it, once, as the definition binds
+/// now: of its triggered action column set, those Description 1 counts.
+///
+/// # Errors
+///
+/// A trigger's definition does not bind.
+fn column_usage(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
     for t in seen.state.catalog.triggers() {
-        for (table, column) in &t.columns {
-            rows.push([ids(&catalog, &t.name).to_vec(), ids(&catalog, table).to_vec(), vec![text(column)]].concat());
+        for (table, column) in seen.state.trigger_usage_columns(t)? {
+            rows.push([ids(&catalog, &t.name).to_vec(), ids(&catalog, &table).to_vec(), vec![text(&column)]].concat());
         }
     }
-    rows
+    Ok(rows)
 }
 
 /// [§6.55] Each subject routine of a triggered action, by its specific

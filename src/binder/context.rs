@@ -31,6 +31,7 @@ impl<'a> Context<'a> {
             own,
             definitions: false,
             uses: None,
+            counting: None,
             selected: None,
             referencing: None,
             draws: false,

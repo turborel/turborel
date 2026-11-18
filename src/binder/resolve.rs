@@ -44,16 +44,16 @@ impl Binder<'_> {
                 r.column_named(&item.table);
             }
         }
-        if let Some(uses) = self.uses.filter(|_| !item.table.auth.is_empty()) {
+        if let Some(uses) = self.noted_uses().filter(|_| !item.table.auth.is_empty()) {
             let column = views::column_name(self.db, &item.table, i).or_else(|| item.desc.columns.get(i).map(|c| c.name.clone()));
             uses.borrow_mut().extend(column.map(|c| (item.table.clone(), c)));
         }
         // [ISO/IEC 9075-2:2023 §7.17 SR23b] a column of a query a <with
         // clause> names is drawn from what its query's column is.
-        if let (Some(uses), Some(drawn)) = (self.uses, &item.drawn) {
+        if let (Some(uses), Some(drawn)) = (self.noted_uses(), &item.drawn) {
             uses.borrow_mut().extend(drawn.columns.get(i).cloned().unwrap_or_default());
         }
-        if let (Some(uses), views::Source::Common) = (self.uses, &item.source) {
+        if let (Some(uses), views::Source::Common) = (self.noted_uses(), &item.source) {
             underlying::note_common(self, item, i, uses);
         }
         let pos = item.offset.saturating_add(item.position(i));

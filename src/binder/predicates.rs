@@ -462,8 +462,13 @@ impl Binder<'_> {
     /// [X3.135-1986 §5.18] `<search condition>`
     ///
     /// \[DESIGN\] Each arm here is one call, so the frame a chain of AND
-    /// or OR recurs through holds no arm's locals (RULES.md R-CF-6).
+    /// or OR recurs through holds no arm's locals (RULES.md R-CF-6). Of a
+    /// trigger's definition, the columns it references are counted
+    /// [ISO/IEC 9075-11:2006 draft §6.54 Description 1a].
     pub(super) fn search_condition(&self, c: &SearchCondition, scope: Scope<'_>) -> Result<Cond> {
+        if self.counting == Some(super::Counting::Trigger) && !self.counted.get() {
+            return self.counted(|| self.search_condition(c, scope));
+        }
         match c {
             SearchCondition::Or(a, b) => self.connected(a, b, scope).map(|(x, y)| Cond::Or(x, y)),
             SearchCondition::And(a, b) => self.connected(a, b, scope).map(|(x, y)| Cond::And(x, y)),

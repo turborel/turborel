@@ -162,7 +162,7 @@ TRIGGER](statements/create-trigger.md)):
 | TRIGGERS | trigger on a table the user, or an enabled role, holds a privilege other than SELECT on: EVENT_MANIPULATION INSERT, DELETE or UPDATE, its subject table in EVENT_OBJECT_CATALOG, _SCHEMA and _TABLE, ACTION_ORDER its place, from 1, among the triggers of that table, event, time and orientation in the order they run, ACTION_CONDITION and ACTION_STATEMENT its WHEN condition and its action as written, to the owner of its schema and null to others, ACTION_ORIENTATION ROW or STATEMENT, ACTION_TIMING BEFORE, AFTER or INSTEAD OF, its transition names in ACTION_REFERENCE_OLD_TABLE, _NEW_TABLE, _OLD_ROW and _NEW_ROW, and CREATED, null, as no timestamp is kept |
 | TRIGGERED_UPDATE_COLUMNS | column of the column list of an UPDATE OF trigger, of a column the user holds a privilege other than SELECT on |
 | TRIGGER_TABLE_USAGE | table or view a trigger's action reads, of a trigger of a schema the user, or an enabled role, owns |
-| TRIGGER_COLUMN_USAGE | column a trigger's action names, its transition variables' among them, of such a trigger |
+| TRIGGER_COLUMN_USAGE | column a trigger's definition references in a search condition, its WHEN condition's or a WHERE's, or in a searched UPDATE's or DELETE's search condition or an UPDATE's source, or names in an INSERT's column list or an UPDATE's SET, its transition variables' among them, of such a trigger; not a column a query's select list alone references |
 | TRIGGER_ROUTINE_USAGE | function or procedure a trigger's action invokes, by its specific name, of such a trigger |
 | TRIGGER_SEQUENCE_USAGE | sequence generator a trigger's action draws from, of such a trigger |
 
@@ -387,7 +387,7 @@ user-defined type, the type's; of a collation, its own.
 | View | One row of each |
 |---|---|
 | ROUTINE_TABLE_USAGE | table or view a routine's body names: the routine's SPECIFIC_ and ROUTINE_ names, and the table's |
-| ROUTINE_COLUMN_USAGE | column such a table's a routine's body references in a query or a condition, as the body binds now; not a column an INSERT's column list or an UPDATE's SET names alone |
+| ROUTINE_COLUMN_USAGE | column such a table's a routine's body references in a searched UPDATE's or DELETE's search condition or in an UPDATE's source, or names in an INSERT's column list or an UPDATE's SET, as the body binds now; not a column a query alone references |
 | ROUTINE_ROUTINE_USAGE | routine a routine's body invokes: the routine's specific name in SPECIFIC_, the one invoked in ROUTINE_ |
 | ROUTINE_SEQUENCE_USAGE | sequence generator a routine's body draws from |
 | VIEW_ROUTINE_USAGE | routine a view's query invokes, by its specific name |
@@ -407,8 +407,9 @@ CREATE TABLE STOCK (ID INTEGER, QTY INTEGER, DOUBLED INTEGER GENERATED ALWAYS AS
 CREATE FUNCTION TWICE (X INTEGER) RETURNS INTEGER DETERMINISTIC CONTAINS SQL RETURN X * 2;
 CREATE FUNCTION TOTAL () RETURNS INTEGER READS SQL DATA RETURN (SELECT SUM(TWICE(QTY)) FROM STOCK);
 CREATE VIEW BIG AS SELECT ID FROM STOCK WHERE TWICE(QTY) > 10;
+CREATE PROCEDURE RESTOCK () MODIFIES SQL DATA UPDATE STOCK SET QTY = QTY + 1 WHERE ID > 0;
 COMMIT;
-SELECT ROUTINE_NAME, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.ROUTINE_COLUMN_USAGE;
+SELECT ROUTINE_NAME, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.ROUTINE_COLUMN_USAGE ORDER BY 3;
 SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEW_ROUTINE_USAGE;
 SELECT COLUMN_NAME, DEPENDENT_COLUMN FROM INFORMATION_SCHEMA.COLUMN_COLUMN_USAGE;
 ```
@@ -419,10 +420,12 @@ OK
 OK
 OK
 OK
+OK
  ROUTINE_NAME                                                 | TABLE_NAME                                                   | COLUMN_NAME
 --------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
- TOTAL                                                        | STOCK                                                        | QTY
-(1 row)
+ RESTOCK                                                      | STOCK                                                        | ID
+ RESTOCK                                                      | STOCK                                                        | QTY
+(2 rows)
  TABLE_NAME
 --------------------------------------------------------------
  BIG

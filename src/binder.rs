@@ -205,6 +205,9 @@ pub struct Context<'a> {
     /// Where to note the columns of named tables and views it references
     /// [ISO/IEC 9075:1992 §21.3.12, §21.3.18], if anywhere.
     pub uses: Option<&'a Uses>,
+    /// Which of the columns it references `uses` notes, if not each one,
+    /// and whether what it binds now is where that counts a column.
+    pub counting: Option<(Counting, bool)>,
     /// Where to note, with `uses`, the columns each item of its select list
     /// references, if anywhere: of the query, not of its subqueries.
     pub selected: Option<&'a Selected>,
@@ -240,7 +243,7 @@ pub struct Context<'a> {
     pub compile: Option<&'a Compile>,
 }
 
-pub use noted::{DrawnFrom, Invoked, Selected, Uses};
+pub use noted::{Counting, DrawnFrom, Invoked, Selected, Uses};
 pub use ptf::Compile;
 pub use purpose::Purpose;
 pub use referencing::Referencing;
@@ -369,6 +372,11 @@ struct Binder<'a> {
     definitions: bool,
     /// Where it notes the columns it references (`Context::uses`).
     uses: Option<&'a Uses>,
+    /// Which of them it notes (`Context::counting`).
+    counting: Option<Counting>,
+    /// Whether what it binds now is where `counting` counts a column
+    /// (`Context::counting`).
+    counted: Cell<bool>,
     /// Where it notes those of each item of its select list
     /// (`Context::selected`).
     selected: Option<&'a Selected>,
@@ -452,6 +460,8 @@ impl<'a> Binder<'a> {
             user: cx.user,
             definitions: cx.definitions,
             uses: cx.uses,
+            counting: cx.counting.map(|(c, _)| c),
+            counted: Cell::new(cx.counting.is_some_and(|(_, here)| here)),
             selected: cx.selected,
             referencing: cx.referencing,
             aggregated,
@@ -490,6 +500,7 @@ impl<'a> Binder<'a> {
             own,
             definitions,
             uses: self.uses,
+            counting: self.counting.map(|c| (c, self.counted.get())),
             selected: None,
             referencing,
             now,

@@ -30,7 +30,9 @@ use std::sync::Arc;
 
 use super::super::{State, rule, triggers::named};
 use crate::ast::{RoutineDefinition, SqlStatement};
-use crate::binder::{Context, DrawnFrom, Invoked, Uses, bind_function_body, definition_of, grantably_held, once_each, sql_statement};
+use crate::binder::{
+    Context, Counting, DrawnFrom, Invoked, Uses, bind_function_body, definition_of, grantably_held, once_each, sql_statement,
+};
 use crate::catalog::{DataAccess, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of, routine_path, sole};
 use crate::error::{Code, Result, SqlError};
 use crate::params::{Params, RoutineScope};
@@ -163,6 +165,21 @@ impl State {
     /// SQL-data than its SQL-data access indication allows; its own,
     /// bound, under the routine's owner.
     pub(in crate::db) fn bind_routine_body(&self, desc: &SqlRoutineDesc, definition: &RoutineDefinition) -> Result<BodyBound> {
+        self.bind_routine_body_counting(desc, definition, None)
+    }
+
+    /// `bind_routine_body`, its columns those `counting` counts, if not
+    /// each it references.
+    ///
+    /// # Errors
+    ///
+    /// As `bind_routine_body`.
+    fn bind_routine_body_counting(
+        &self,
+        desc: &SqlRoutineDesc,
+        definition: &RoutineDefinition,
+        counting: Option<Counting>,
+    ) -> Result<BodyBound> {
         if let Some(ptf) = &desc.ptf {
             return self.bind_ptf_body(desc, ptf);
         }
@@ -176,6 +193,7 @@ impl State {
             schema: &desc.schema,
             horizon: &desc.horizon,
             uses: Some(&uses),
+            counting: counting.map(|c| (c, false)),
             invoked: Some(&invoked),
             drawn: Some(&drawn),
             ..Context::new(self, &owner, &params)
@@ -220,6 +238,19 @@ impl State {
     /// The body does not bind.
     pub(crate) fn routine_columns(&self, r: &SqlRoutineDesc) -> Result<Vec<(QualifiedName, String)>> {
         Ok(self.bind_routine_body(r, &definition_of(r)?)?.columns)
+    }
+
+    /// [ISO/IEC 9075-11:2006 draft §6.35 Description 1] The columns the
+    /// body of the routine `r` references in the search condition of a
+    /// searched UPDATE or DELETE or in an `<update source>`, and those an
+    /// `<insert column list>` or a `<set clause>` names, each once, as it
+    /// binds now.
+    ///
+    /// # Errors
+    ///
+    /// The body does not bind.
+    pub(crate) fn routine_usage_columns(&self, r: &SqlRoutineDesc) -> Result<Vec<(QualifiedName, String)>> {
+        Ok(self.bind_routine_body_counting(r, &definition_of(r)?, Some(Counting::Routine))?.columns)
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 GR1; ISO/IEC 9075-4:2006 draft §9.21

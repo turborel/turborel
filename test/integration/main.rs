@@ -69,6 +69,7 @@ mod candidate_keys;
 mod checkpoints;
 mod checks;
 mod column_store;
+mod column_usage;
 mod constraints;
 mod contracts;
 mod creation;

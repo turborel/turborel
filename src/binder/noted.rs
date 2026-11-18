@@ -13,6 +13,22 @@ use crate::catalog::QualifiedName;
 /// name, in the order referenced, once or more.
 pub type Uses = RefCell<Vec<(QualifiedName, String)>>;
 
+/// Which of the columns a statement references `Uses` notes, if not each
+/// one: those the Definition Schema's base table of usage of what holds
+/// the statement has a row of, by its Description 1. Each notes the
+/// columns an `<insert column list>` names and the object columns of an
+/// UPDATE's `<set clause>`s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Counting {
+    /// [ISO/IEC 9075-11:2006 draft §6.35 Description 1] An SQL routine's:
+    /// those in the search condition of a searched UPDATE or DELETE, and in
+    /// an `<update source>`.
+    Routine,
+    /// [ISO/IEC 9075-11:2006 draft §6.54 Description 1] A trigger's: those
+    /// and those in any `<search condition>` of its definition.
+    Trigger,
+}
+
 /// The columns each item of a select list references, as `Uses` notes
 /// them, its subqueries' too.
 pub type Selected = RefCell<Vec<Vec<(QualifiedName, String)>>>;
@@ -72,3 +88,29 @@ impl Invoked {
 /// [ISO/IEC 9075-2:2023 §6.14, §11.74 SR3] The names of the sequence
 /// generators a statement's NEXT VALUE FOR draws from, once or more.
 pub type DrawnFrom = RefCell<Vec<QualifiedName>>;
+
+impl<'a> super::Binder<'a> {
+    /// Where it notes a column it references now: its `Uses`, unless its
+    /// `Counting` does not count a column where it binds now.
+    pub(super) fn noted_uses(&self) -> Option<&'a Uses> {
+        self.uses.filter(|_| self.counting.is_none() || self.counted.get())
+    }
+
+    /// What `bind` gives, bound where its `Counting` counts a column.
+    pub(super) fn counted<T>(&self, bind: impl FnOnce() -> T) -> T {
+        let before = self.counted.replace(true);
+        let bound = bind();
+        self.counted.set(before);
+        bound
+    }
+
+    /// Notes the column `column` of the table or view `table` an `<insert
+    /// column list>` or an UPDATE's `<set clause>` names, which each
+    /// `Counting` counts [ISO/IEC 9075-11:2006 draft §6.35 Description 1c,
+    /// 1d, §6.54 Description 1d, 1e].
+    pub(super) fn note_named(&self, table: &QualifiedName, column: &str) {
+        if let Some(uses) = self.uses {
+            uses.borrow_mut().push((table.clone(), column.to_owned()));
+        }
+    }
+}

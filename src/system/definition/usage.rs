@@ -14,9 +14,10 @@
 //! sequence generators it draws from, as the routine was defined
 //! (`SqlRoutineDesc::reads`, `horizon`, `sequences`); the subject routines
 //! of a view and of a check constraint, fixed as each was defined
-//! (`Horizon::subjects`, RULES.md D73). The columns a routine's body
-//! references and those a generation expression references are found by
-//! binding each now, as VIEW_COLUMN_USAGE's are.
+//! (`Horizon::subjects`, RULES.md D73). The columns a generation
+//! expression references are found by binding it now, as
+//! VIEW_COLUMN_USAGE's are, and so are a routine's body's, counted as
+//! Description 1 counts them (`binder::Counting`).
 
 use std::sync::Arc;
 
@@ -79,7 +80,9 @@ fn routine_columns_columns() -> Vec<ColumnDesc> {
 }
 
 /// [§6.35 Description 1] Each column of a table or view each SQL-invoked
-/// routine's body references, once, as the body binds now.
+/// routine's body references in the search condition of a searched
+/// UPDATE or DELETE or in an `<update source>`, or names in an `<insert
+/// column list>` or a `<set clause>`, once, as the body binds now.
 ///
 /// # Errors
 ///
@@ -88,7 +91,7 @@ fn routine_columns(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
     for r in seen.state.catalog.routines() {
-        for (table, column) in seen.state.routine_columns(r)? {
+        for (table, column) in seen.state.routine_usage_columns(r)? {
             rows.push([ids(&catalog, &r.specific).to_vec(), ids(&catalog, &table).to_vec(), vec![text(&column)]].concat());
         }
     }

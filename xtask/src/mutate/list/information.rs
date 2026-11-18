@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const INFORMATION: [Mutation; 13] = [
+pub const INFORMATION: [Mutation; 17] = [
     Mutation {
         name: "information-interval-type",
         package: Package::Core,
@@ -139,6 +139,46 @@ pub const INFORMATION: [Mutation; 13] = [
         original: "IS_GENERATED, GENERATION_EXPRESSION AS GENERATION_EXPR, IS_UPDATABLE,",
         replacement: "IS_GENERATED, IS_UPDATABLE AS GENERATION_EXPR, GENERATION_EXPRESSION AS IS_UPDATABLE,",
         integration: &["short_name_views::short_name_views_of_sql_92_5_77"],
+        unit: &[],
+    },
+    Mutation {
+        name: "column-usage-insert-list",
+        package: Package::Core,
+        breaks: "an INSERT's column list is noted of no usage nor of a triggered action column set",
+        file: "src/db/triggers/define.rs",
+        original: "uses.borrow_mut().extend(ins.columns.iter().flatten().map(|c| (table.clone(), c.name.clone())));",
+        replacement: "uses.borrow_mut().extend(ins.columns.iter().flatten().take(0).map(|c| (table.clone(), c.name.clone())));",
+        integration: &["column_usage::routine_column_usage_6_35", "column_usage::trigger_column_usage_6_54"],
+        unit: &[],
+    },
+    Mutation {
+        name: "column-usage-object-columns",
+        package: Package::Core,
+        breaks: "an UPDATE's object columns are not noted",
+        file: "src/binder/statements.rs",
+        original: "        binder.note_named(&name, &s.column);",
+        replacement: "        let _ = (&name, &s.column);",
+        integration: &["column_usage::routine_column_usage_6_35"],
+        unit: &[],
+    },
+    Mutation {
+        name: "column-usage-searched-condition",
+        package: Package::Core,
+        breaks: "a routine's searched UPDATE's search condition is not counted",
+        file: "src/binder/statements.rs",
+        original: "let cond = binder.counted(|| where_clause.map(|c| binder.search_condition(c, rows_scope)).transpose())?;",
+        replacement: "let cond = where_clause.map(|c| binder.search_condition(c, rows_scope)).transpose()?;",
+        integration: &["column_usage::routine_column_usage_6_35"],
+        unit: &[],
+    },
+    Mutation {
+        name: "column-usage-trigger-conditions",
+        package: Package::Core,
+        breaks: "a trigger's search conditions are not counted",
+        file: "src/binder/predicates.rs",
+        original: "if self.counting == Some(super::Counting::Trigger) && !self.counted.get() {",
+        replacement: "if false && self.counting == Some(super::Counting::Trigger) && !self.counted.get() {",
+        integration: &["column_usage::trigger_column_usage_6_54"],
         unit: &[],
     },
 ];

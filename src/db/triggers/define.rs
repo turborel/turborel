@@ -28,8 +28,8 @@ use super::rerouted::bind_taken;
 use super::run::{parsed, transitions_of};
 use crate::ast::{InsertSource, InsertStatement, MergeStatement, Schema, SqlStatement, TriggerDefinition, TriggerEvent as Written};
 use crate::binder::{
-    Context, DrawnFrom, Invoked, ObjectColumn, Uses, WriteKind, bind_insert_query, bind_merge, bind_searched_write, bind_select, bind_when,
-    bind_write, once_each, qualify,
+    Context, Counting, DrawnFrom, Invoked, ObjectColumn, Uses, WriteKind, bind_insert_query, bind_merge, bind_searched_write, bind_select,
+    bind_when, bind_write, once_each, qualify,
 };
 use crate::catalog::{
     ActionTime, Horizon, Principal, QualifiedName, TransitionNames, TriggerDesc, TriggerEvent, ViewDesc, applicable, owner_of, sole,
@@ -90,7 +90,7 @@ impl State {
             created,
         };
         let invoked = Invoked::default();
-        let (reads, columns, sequences) = self.bind_action(&desc, t, (&owner, &invoked))?;
+        let (reads, columns, sequences) = self.bind_action(&desc, t, (&owner, &invoked), None)?;
         let seen: Vec<QualifiedName> = reads.iter().chain([&table]).cloned().collect();
         // [ISO/IEC 9075-2:2023 §4.35.2] and its subject routines from now on.
         desc.horizon = Horizon::of(&*self.catalog, &seen).invoking(invoked.take()).indicating(invoked.take_xml_schemas());
@@ -208,8 +208,15 @@ impl State {
 
     /// The action of `t`, whose descriptor `desc` is, its WHEN condition
     /// and its statements bound under `owner`, as the module says, the
-    /// routines they invoke noted in `invoked`: what it names.
-    fn bind_action(&self, desc: &TriggerDesc, t: &TriggerDefinition, (owner, invoked): (&str, &Invoked)) -> Result<Reads> {
+    /// routines they invoke noted in `invoked`: what it names, of its
+    /// columns those `counting` counts, if not each.
+    fn bind_action(
+        &self,
+        desc: &TriggerDesc,
+        t: &TriggerDefinition,
+        (owner, invoked): (&str, &Invoked),
+        counting: Option<Counting>,
+    ) -> Result<Reads> {
         let transitions = Arc::new(transitions_of(self, desc)?);
         let width = transitions.columns.len().saturating_mul(2);
         let params = Params::transitional(vec![Value::Null; width], transitions);
@@ -217,6 +224,7 @@ impl State {
         let cx = || Context {
             schema: &desc.schema,
             uses: Some(&uses),
+            counting: counting.map(|c| (c, false)),
             invoked: Some(invoked),
             drawn: Some(&drawn),
             ..Context::new(self, owner, &params)
@@ -252,6 +260,14 @@ impl State {
             horizon: params.horizon(),
         };
         let target = insert_target_in(self, &into, (Principal::sole(self.catalog.roles(), owner), cx.schema, Now::default()), None)?;
+        // [ISO/IEC 9075-11:2006 draft §6.35 Description 1c, §6.54
+        // Description 1d; ISO/IEC 9075-2:2023 §11.49 GR5i] the columns its
+        // <insert column list> names, of the triggered action column set
+        // and of each Description's.
+        if let Some(uses) = cx.uses {
+            let table = qualify(&ins.table, cx.schema);
+            uses.borrow_mut().extend(ins.columns.iter().flatten().map(|c| (table.clone(), c.name.clone())));
+        }
         if let InsertSource::Query(q) = &ins.source {
             bind_insert_query(cx, q, &target.objects())?;
         }
@@ -351,7 +367,23 @@ impl State {
         let definition = parsed(&t.text)?;
         let owner = owner_of(&*self.catalog, &t.name.auth).to_owned();
         self.trigger_privileges(&owner, &t.table, &t.names)?;
-        self.bind_action(t, &definition, (&owner, &Invoked::default())).map(drop)
+        self.bind_action(t, &definition, (&owner, &Invoked::default()), None).map(drop)
+    }
+
+    /// [ISO/IEC 9075-11:2006 draft §6.54 Description 1] The columns the
+    /// definition of trigger `t` references in a `<search condition>`, in
+    /// the search condition of a searched UPDATE or DELETE or in an
+    /// `<update source>` of its action, and those an `<insert column list>`
+    /// or a `<set clause>` of it names, each once, as it binds now.
+    ///
+    /// # Errors
+    ///
+    /// Its action does not bind.
+    pub(crate) fn trigger_usage_columns(&self, t: &TriggerDesc) -> Result<Vec<(QualifiedName, String)>> {
+        let definition = parsed(&t.text)?;
+        let owner = owner_of(&*self.catalog, &t.name.auth).to_owned();
+        let (_, columns, _) = self.bind_action(t, &definition, (&owner, &Invoked::default()), Some(Counting::Trigger))?;
+        Ok(columns)
     }
 
     /// [ISO/IEC 9075-2:2023 §11.50] DROP TRIGGER `qn`: its descriptor

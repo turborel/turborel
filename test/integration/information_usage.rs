@@ -58,8 +58,9 @@ fn specific(s: &Session, name: &str) -> String {
 }
 
 /// Verifies: [ISO/IEC 9075-11:2006 draft §5.44, §5.46 to §5.48, §6.35,
-/// §6.37 to §6.39] ROUTINE_TABLE_USAGE and ROUTINE_COLUMN_USAGE show the
-/// tables and columns an SQL routine's body names, ROUTINE_ROUTINE_USAGE
+/// §6.37 to §6.39] ROUTINE_TABLE_USAGE shows the tables an SQL routine's
+/// body names, ROUTINE_COLUMN_USAGE the columns its Description 1 counts
+/// (`column_usage.rs`), ROUTINE_ROUTINE_USAGE
 /// the routines it invokes, each by its specific name, and
 /// ROUTINE_SEQUENCE_USAGE the sequence generators it draws from; each to
 /// the owner of the schema of what is used, not to another user.
@@ -71,7 +72,7 @@ fn routine_usage_5_44() {
     let tables = "SELECT SPECIFIC_NAME, ROUTINE_NAME, TABLE_NAME FROM INFORMATION_SCHEMA.ROUTINE_TABLE_USAGE ORDER BY 2";
     assert_eq!(query(&a, tables), [format!("{draw},DRAW,T"), format!("{read},LATEST,T")]);
     let columns = "SELECT ROUTINE_NAME, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.ROUTINE_COLUMN_USAGE ORDER BY 1, 3";
-    assert_eq!(query(&a, columns), ["LATEST,T,K"], "the columns its queries reference, not an INSERT's column list");
+    assert_eq!(query(&a, columns), ["DRAW,T,K"], "the column its INSERT's column list names, not one a query references");
     let routines = "SELECT SPECIFIC_NAME, ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINE_ROUTINE_USAGE";
     assert_eq!(query(&a, routines), [format!("{h},{d}")], "ROUTINE_NAME the specific name of the routine invoked");
     let sequences = "SELECT SPECIFIC_NAME, SEQUENCE_NAME FROM INFORMATION_SCHEMA.ROUTINE_SEQUENCE_USAGE";

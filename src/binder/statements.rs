@@ -529,10 +529,16 @@ fn bind_write_of(
     );
     // [§14.9 SR7a ii, iii; §14.14 SR7a iii, iv] the points in time judged first.
     let pieces = portioned.as_ref().map(|p| p.bind(&binder, rows_scope)).transpose()?;
-    let cond = where_clause.map(|c| binder.search_condition(c, rows_scope)).transpose()?;
+    // [ISO/IEC 9075-11:2006 draft §6.35 Description 1a, 1b] the columns of
+    // its search condition and its update sources counted, and its object
+    // columns [Description 1d].
+    let cond = binder.counted(|| where_clause.map(|c| binder.search_condition(c, rows_scope)).transpose())?;
+    for s in set {
+        binder.note_named(&name, &s.column);
+    }
 
     // [ISO/IEC 9075-2:2023 §6.14 SR1e] an <update source> draws values.
-    let bound_set = binder.drawing(true, || bind_set_clauses(&binder, kind, set))?;
+    let bound_set = binder.counted(|| binder.drawing(true, || bind_set_clauses(&binder, kind, set)))?;
     let base = match member {
         Some(m) => db.catalog.table(m).cloned().ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] subtable {m} is not there")))?,
         None => target.base,
