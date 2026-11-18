@@ -7,6 +7,11 @@ use super::{Formal, FormalKind, Passed, Typed};
 use crate::error::Result;
 use crate::xml::AtomicType;
 
+mod calls;
+mod exprs;
+mod kinds;
+mod schemas;
+
 /// `text` compiled with static typing in effect, the variables `variables`
 /// passed of their formal types, and the context item of `context`'s.
 fn typed(text: &str, context: Option<Formal>, variables: &[(&str, Formal)]) -> Result<Query> {
