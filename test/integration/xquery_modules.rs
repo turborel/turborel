@@ -409,3 +409,24 @@ fn a_generated_column_keeps_its_module() {
     assert_eq!(rows(&a, "SELECT S FROM G").unwrap(), ["V!"]);
     assert_eq!(refused(&a, "DROP XQUERY MODULE NOTES_LIB CASCADE").0, -103);
 }
+
+/// A schema document of target namespace `urn:t` of a simple type
+/// `small`, an `xs:int` of 9 at most.
+const SMALL: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:t"><xs:simpleType name="small"><xs:restriction base="xs:int"><xs:maxInclusive value="9"/></xs:restriction></xs:simpleType></xs:schema>"#;
+
+/// Verifies: [EXTENSION] RULES.md D106 [XQuery §4.11, §2.5.4.2, Appendix
+/// F]: a module imported declaring a function of a user-defined atomic
+/// type of a registered XML Schema it imports is imported by a query that
+/// imports that schema too, which then calls it with a value of that type;
+/// else err:XQST0036.
+#[test]
+fn modules_of_user_defined_atomic_types_4_11() {
+    let db = database();
+    let a = db.session("A");
+    a.run(&format!("CREATE XML SCHEMA SMALL AS '{SMALL}'")).unwrap();
+    a.commit().unwrap();
+    let typed = "module namespace k = \"urn:k\"; import schema namespace t = \"urn:t\"; declare function k:inc($x as t:small) as xs:integer { $x + 1 };";
+    register(&a, "SMALLS", typed);
+    assert_eq!(code(&a, "import module namespace k = \"urn:k\"; 1"), "err:XQST0036");
+    assert_eq!(value(&a, "import schema namespace t = \"urn:t\"; import module namespace k = \"urn:k\"; k:inc(t:small(3))"), "4");
+}

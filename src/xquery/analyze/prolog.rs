@@ -229,18 +229,29 @@ impl Analysis<'_> {
     }
 }
 
-/// Adds to `into` each type definition of an imported schema `t` names, as
-/// the type of an element's or an attribute's annotation, each once.
+/// Adds to `into` each type definition of an imported schema `t` names:
+/// as a user-defined atomic type, or the type of an element's or an
+/// attribute's annotation; each once.
 fn defined_types(t: &SeqType, into: &mut Vec<Arc<Defined>>) {
-    let SeqType::Of(ItemKind::Node(kind), _) = t else { return };
-    let annotation = match kind {
-        NodeKind::Element(e) | NodeKind::Document(Some(e)) => e.annotation.as_ref(),
-        NodeKind::Attribute(a) => a.annotation.as_ref(),
-        NodeKind::Any | NodeKind::Document(None) | NodeKind::Pi(_) | NodeKind::Comment | NodeKind::Text => None,
+    let SeqType::Of(item, _) = t else { return };
+    let annotation = match item {
+        ItemKind::Atomic(atomic) => Some(atomic),
+        ItemKind::Node(kind) => node_annotation(kind),
+        ItemKind::Item | ItemKind::Numeric => None,
     };
     if let Some(SchemaType::Defined(d)) = annotation
         && !into.iter().any(|known| known == d)
     {
         into.push(Arc::clone(d));
+    }
+}
+
+/// The type an element's or an attribute's annotation `kind` tests
+/// derives from, if it tests one.
+fn node_annotation(kind: &NodeKind) -> Option<&SchemaType> {
+    match kind {
+        NodeKind::Element(e) | NodeKind::Document(Some(e)) => e.annotation.as_ref(),
+        NodeKind::Attribute(a) => a.annotation.as_ref(),
+        NodeKind::Any | NodeKind::Document(None) | NodeKind::Pi(_) | NodeKind::Comment | NodeKind::Text => None,
     }
 }

@@ -10,7 +10,7 @@ use super::{Mutation, Package};
 
 /// Each mechanism of library modules and module imports broken alone, and
 /// the tests that fail.
-pub const XQUERY_MODULES: [Mutation; 25] = [
+pub const XQUERY_MODULES: [Mutation; 26] = [
     Mutation {
         name: "xquery-module-target-namespace",
         package: Package::Core,
@@ -271,6 +271,16 @@ pub const XQUERY_MODULES: [Mutation; 25] = [
         original: "self.dependents_bind(&after, &qn).map_err(|e| e.or_at(m.name.at))?;",
         replacement: "drop(m.name.at);",
         integration: &["xquery_module_cycles::alter_keeps_what_depends_on_a_module_binding"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-atomic-types",
+        package: Package::Core,
+        breaks: "an imported function of a user-defined atomic type the importing module does not import is let through",
+        file: "src/xquery/analyze/prolog.rs",
+        original: "        ItemKind::Atomic(atomic) => Some(atomic),",
+        replacement: "        ItemKind::Atomic(_) => None,",
+        integration: &["xquery_modules::modules_of_user_defined_atomic_types_4_11"],
         unit: &[],
     },
 ];

@@ -4340,7 +4340,8 @@ namespace imported twice is err:XQST0047; one no module may be imported
 of err:XQST0059; a function or variable imported of the name, and of a
 function the arity, of one declared or imported err:XQST0034 or
 err:XQST0049; a library module's function or variable outside its target
-namespace err:XQST0048; an imported declaration of a schema type of no
+namespace err:XQST0048; an imported declaration of a schema type, a
+user-defined atomic type or an element's or attribute's type, of no
 schema the importing module imports, by that schema or a type of that
 name, err:XQST0036, checked once every module is analysed; and a
 circularity through any module's declarations err:XQST0054. A library
