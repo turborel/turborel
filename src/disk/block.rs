@@ -45,7 +45,7 @@ pub use counts::BlockCounts;
 use counts::{Counters, add};
 pub use cursor::Cursor;
 pub use format::{FORMAT_VERSION, HEADER_LEN};
-pub(crate) use tail::damaged;
+pub(crate) use tail::{damaged, half_made};
 
 use super::encoding::{Encoding, Pipeline};
 use super::io::{DiskFile, Durability, FileSystem, begin_file};

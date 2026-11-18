@@ -36,7 +36,8 @@
 //!   commit did. Directories are made at once, and never removed.
 //! * **Opening**: a side file ending in a commit block is copied into the
 //!   file, or removes it; the others are thrown away, a block a crash tore
-//!   as it was written over among them. Only a sealed side
+//!   as it was written over among them, and one a crash left half made as
+//!   it was made, shorter than its header. Only a sealed side
 //!   file is ever committed, and a batch is committed before the next is
 //!   sealed, so at most one has a commit block. A file is recovered as it
 //!   is first opened, or, for every file under a directory, by `recover`.

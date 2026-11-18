@@ -108,6 +108,37 @@ fn a_crash_keeps_the_last_commit() {
     assert_eq!(content(&*disk), [b"KEPTitted".as_slice(), &[5_u8; 100]].concat());
 }
 
+/// Verifies: [DESIGN] RULES.md D25, D30, shadow files across a crash: a
+/// side file a crash left half made, shorter than a block file's header,
+/// never held a commit block, so it is thrown away as any other without
+/// one: by `recover`, and as its file is opened, the file as the last
+/// commit left it. Regression test (R-TEST-7): opening refused it as too
+/// short to be a block file (SQLCODE -916), so a crash as a side file was
+/// made, its name durable before its header, left the database unopenable.
+#[test]
+fn a_side_file_a_crash_left_half_made_is_thrown_away() {
+    let disk = disk();
+    {
+        let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+        let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+        file.write_all_at(b"committed", 0).unwrap();
+        shadows.commit().unwrap();
+    }
+    let sides = [side_path(Path::new(PATH), 0), side_path(Path::new(PATH), 1)];
+    let half_made = || {
+        drop(disk.open(&sides[0], OpenMode::CreateNew).unwrap());
+        disk.open(&sides[1], OpenMode::CreateNew).unwrap().write_all_at(&[1_u8; 100], 0).unwrap();
+    };
+    half_made();
+    ShadowFileSystem::new(Arc::clone(&disk), hash()).recover(Path::new("/d")).unwrap();
+    assert!(!disk.exists(&sides[0]).unwrap() && !disk.exists(&sides[1]).unwrap(), "thrown away by recover");
+    half_made();
+    let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+    drop(shadows.open(Path::new(PATH), OpenMode::ReadWrite).unwrap());
+    assert!(!disk.exists(&sides[0]).unwrap() && !disk.exists(&sides[1]).unwrap(), "thrown away as the file is opened");
+    assert_eq!(content(&*disk), b"committed");
+}
+
 /// Verifies: [DESIGN] RULES.md D30, sealing: what is written after a seal
 /// is read back at once, but not committed with the sealed batch; it is
 /// lost in a crash after that commit, and committed by the next.

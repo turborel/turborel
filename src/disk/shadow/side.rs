@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::GRANULE;
 use crate::bytes::{Put, Reader};
-use crate::disk::block::{BlockFile, BlockId, BlockOptions, damaged};
+use crate::disk::block::{BlockFile, BlockId, BlockOptions, damaged, half_made};
 use crate::disk::encoding::Pipeline;
 use crate::disk::io::{Durability, FileSystem, OpenMode};
 use crate::error::{Code, Result, SqlError};
@@ -224,7 +224,9 @@ impl Side {
 /// can tear a block written over, so invalid bytes before valid blocks are
 /// no damage in a side file with no commit block. One with a commit block
 /// was synced whole before it, so there they are damage, whatever they
-/// look like, and it is refused (SQLCODE -916).
+/// look like, and it is refused (SQLCODE -916). A crash as a side file was
+/// made can leave it half made (`half_made`), holding no block, so no
+/// commit block: thrown away too.
 pub(super) fn recover(at: &At) -> Result<()> {
     for which in 0..SIDES.len() {
         let side = side_path(&at.path, which);
@@ -232,7 +234,17 @@ pub(super) fn recover(at: &At) -> Result<()> {
             continue;
         }
         let formats = (&[Arc::clone(&at.hash)][..], &[][..]);
-        let (blocks, found) = BlockFile::open_uncut(&*at.fs, &side, formats, BlockOptions::default(), BlockId(0))?;
+        let (blocks, found) = match BlockFile::open_uncut(&*at.fs, &side, formats, BlockOptions::default(), BlockId(0)) {
+            Ok(opened) => opened,
+            Err(e) => {
+                let half = half_made(&*at.fs, &side, &e)?;
+                if !half {
+                    return Err(e);
+                }
+                at.fs.remove(&side)?;
+                continue;
+            }
+        };
         let (ops, committed) = read_ops(&blocks)?;
         if let Some(next) = found.follows
             && (committed || ends_committed(&blocks)?)

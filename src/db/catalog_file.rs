@@ -12,7 +12,8 @@
 //! never grows past that, and has no rename to rely on. Each record has a
 //! sequence number; opening takes the file whose last record's is higher,
 //! so a crash during the switch leaves either the old file or the new one
-//! standing, and removes the other.
+//! standing, and removes the other: the new one too if the crash left it
+//! half made, shorter than a block file's header.
 //!
 //! ```text
 //! record:     sequence u64, then the record given (`db/image.rs`)
@@ -26,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use super::formats::FileFormats;
 use super::stores::{CatalogStorage, CatalogStore, StorePlace};
 use crate::bytes::{Put, Reader};
-use crate::disk::block::{BlockFile, BlockOptions};
+use crate::disk::block::{BlockFile, BlockOptions, half_made};
 use crate::disk::encoding::Pipeline;
 use crate::disk::io::{Durability, FileSystem};
 use crate::error::{Code, Result, SqlError};
@@ -141,7 +142,8 @@ impl CatalogFile {
     /// Opens the catalog in `dir`: of its two files, the one whose last
     /// record is the later, the other removed; records a crash cut short
     /// are cut off. Each is read with the hash function and encodings it
-    /// names, of `formats`'.
+    /// names, of `formats`'. One a crash left half made as the switch made
+    /// it (`half_made`) holds no record, and is removed.
     ///
     /// # Errors
     ///
@@ -151,11 +153,22 @@ impl CatalogFile {
         let mut found = Vec::new();
         for which in 0..2 {
             let path = dir.join(name(which));
-            if fs.exists(&path)? {
-                let (blocks, _) = BlockFile::open(&*fs, &path, &formats.hashes, &formats.encodings, BlockOptions::default())?;
-                let (last, records) = last_record(&blocks)?;
-                found.push((Active { blocks, which, records, broken: false }, last));
+            if !fs.exists(&path)? {
+                continue;
             }
+            let blocks = match BlockFile::open(&*fs, &path, &formats.hashes, &formats.encodings, BlockOptions::default()) {
+                Ok((blocks, _)) => blocks,
+                Err(e) => {
+                    let half = half_made(&*fs, &path, &e)?;
+                    if !half {
+                        return Err(e);
+                    }
+                    fs.remove(&path)?;
+                    continue;
+                }
+            };
+            let (last, records) = last_record(&blocks)?;
+            found.push((Active { blocks, which, records, broken: false }, last));
         }
         let newest = found.iter().enumerate().max_by_key(|(_, (_, last))| last.as_ref().map(|(sequence, _)| *sequence)).map(|(at, _)| at);
         let active = newest.and_then(|at| (at < found.len()).then(|| found.swap_remove(at)));

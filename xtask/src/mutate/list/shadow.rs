@@ -1,11 +1,12 @@
 //! The mutations of shadow files (RULES.md R-TEST-9): a granule held once
-//! in its side file, what recovery takes a torn block for, and the size
-//! below which a granule is read from the file.
+//! in its side file, what recovery takes a torn block for, the size below
+//! which a granule is read from the file; and the block files a crash left
+//! half made, side files and catalog files among them, thrown away.
 
 use super::{Mutation, Package};
 
 /// The mutations of shadow files, in the order they run.
-pub const SHADOW: [Mutation; 4] = [
+pub const SHADOW: [Mutation; 7] = [
     Mutation {
         name: "side-granule-once",
         package: Package::Core,
@@ -45,5 +46,38 @@ pub const SHADOW: [Mutation; 4] = [
         replacement: "pending.committed.is_some_and(|size| start < size / 2)",
         integration: &[],
         unit: &["disk::shadow::tests::a_granule_written_in_part_keeps_the_rest_of_the_file"],
+    },
+    Mutation {
+        name: "half-made-shorter-than-header",
+        package: Package::Core,
+        breaks: "a block file a crash left shorter than its header is refused as damaged, and the database cannot be opened",
+        file: "src/disk/block/tail.rs",
+        original: "    Ok(fs.open(path, OpenMode::ReadOnly)?.size()? < format::HEADER_LEN)",
+        replacement: "    Ok(fs.open(path, OpenMode::ReadOnly)?.size()? > format::HEADER_LEN)",
+        integration: &["log::a_crashed_file_log_recovers"],
+        unit: &[
+            "disk::shadow::tests::a_side_file_a_crash_left_half_made_is_thrown_away",
+            "db::catalog_file::tests::a_file_the_switch_left_half_made_is_removed",
+        ],
+    },
+    Mutation {
+        name: "side-half-made-thrown-away",
+        package: Package::Core,
+        breaks: "shadow files: a side file a crash left half made is refused, not thrown away",
+        file: "src/disk/shadow/side.rs",
+        original: "                let half = half_made(&*at.fs, &side, &e)?;",
+        replacement: "                let half = half_made(&*at.fs, &side, &e)? && false;",
+        integration: &[],
+        unit: &["disk::shadow::tests::a_side_file_a_crash_left_half_made_is_thrown_away"],
+    },
+    Mutation {
+        name: "catalog-half-made-removed",
+        package: Package::Core,
+        breaks: "the catalog: a file the switch left half made is refused, not removed",
+        file: "src/db/catalog_file.rs",
+        original: "                    let half = half_made(&*fs, &path, &e)?;",
+        replacement: "                    let half = half_made(&*fs, &path, &e)? && false;",
+        integration: &[],
+        unit: &["db::catalog_file::tests::a_file_the_switch_left_half_made_is_removed"],
     },
 ];

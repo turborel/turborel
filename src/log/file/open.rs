@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::{FileLog, FileLogOptions, LogRecovery, Segment, check_segment_size, segment_blocks, segment_number, split};
-use crate::disk::block::{BlockFile, BlockId, HEADER_LEN, ReadWith, Recovery};
+use crate::disk::block::{BlockFile, BlockId, HEADER_LEN, ReadWith, Recovery, half_made};
 use crate::disk::io::{Durability, FileSystem, OpenMode};
 use crate::error::{Code, Result, SqlError};
 use crate::log::{Log, Lsn};
@@ -113,7 +113,7 @@ fn open_segments(
             // Only the last may be one a rotation a crash interrupted
             // left half created, holding no record.
             Err(e) => {
-                if n != last || !half_created(fs, path, &e)? {
+                if n != last || !half_made(fs, path, &e)? {
                     return Err(e);
                 }
                 return Ok((opened, Some(path.clone())));
@@ -176,15 +176,6 @@ fn holds_a_block(fs: &dyn FileSystem, path: &Path, formats: ReadWith<'_>, option
             Err(e)
         }
     }
-}
-
-/// Whether the segment at `path`, which failed to open with `error`, is one
-/// a crash left half created: shorter than a block file's header.
-fn half_created(fs: &dyn FileSystem, path: &Path, error: &SqlError) -> Result<bool> {
-    if error.code != Code::Corrupt {
-        return Ok(false);
-    }
-    Ok(fs.open(path, OpenMode::ReadOnly)?.size()? < HEADER_LEN)
 }
 
 /// Where segment `number` at `path` is known valid through, the log

@@ -81,6 +81,26 @@ fn the_catalog_is_compacted_into_the_other_file() {
     assert!(!fs.exists(&dir.join(name(1))).unwrap(), "the older file is removed");
 }
 
+/// Verifies: [DESIGN] RULES.md D25, compaction: a crash as the switch made
+/// the other file, its name durable before its header, leaves it half
+/// made, shorter than a block file's header: the old file stands, and the
+/// half-made one is removed, empty or holding part of its header.
+/// Regression test (R-TEST-7): opening refused it as too short to be a
+/// block file (SQLCODE -916), so the database could not be opened.
+#[test]
+fn a_file_the_switch_left_half_made_is_removed() {
+    let fs = disk();
+    let dir = Path::new(DIR);
+    let store = CatalogFile::create(Arc::clone(&fs), dir.to_path_buf(), (hash(), Pipeline::none())).unwrap();
+    store.record(b"standing", COMPACT_AFTER).unwrap();
+    drop(store);
+    for part in [&[][..], &[1_u8; 100][..]] {
+        fs.open(&dir.join(name(1)), crate::disk::io::OpenMode::CreateNew).unwrap().write_all_at(part, 0).unwrap();
+        assert_eq!(opened(&fs, DIR).unwrap().last().as_deref(), Some(&b"standing"[..]), "{} bytes", part.len());
+        assert!(!fs.exists(&dir.join(name(1))).unwrap(), "the half-made file is removed");
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D25, R-ERR-1: a record too short to hold its
 /// sequence number is SQLCODE -916.
 #[test]

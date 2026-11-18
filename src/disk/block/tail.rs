@@ -63,6 +63,23 @@ pub(crate) fn damaged(path: &Path, recovery: &Recovery, next: BlockId) -> SqlErr
     )
 }
 
+/// \[DESIGN\] Whether the file at `path`, which failed to open as a block
+/// file with `error`, is one a crash left half made: shorter than a block
+/// file's header, so it holds no block, as blocks begin past the header.
+/// A crash leaves one where the file's name was made durable before its
+/// header was: by a sync of its directory for another file, or by a
+/// journaling file system's own commit of the directory.
+///
+/// # Errors
+///
+/// SQLCODE -915 if the file cannot be opened or its size read.
+pub(crate) fn half_made(fs: &dyn FileSystem, path: &Path, error: &SqlError) -> Result<bool> {
+    if error.code != Code::Corrupt {
+        return Ok(false);
+    }
+    Ok(fs.open(path, OpenMode::ReadOnly)?.size()? < format::HEADER_LEN)
+}
+
 impl BlockFile {
     /// Opens the block file at `path` as `open_from` does, but cuts
     /// nothing: the file is taken to end at its last valid block, and

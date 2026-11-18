@@ -120,7 +120,11 @@ damage, and the database is to be restored from a copy of its
 directory. Invalid bytes that show a write the crash interrupted, part
 of them never written, are cut with what follows them, as the system
 may write a file's last pages in any order before the database syncs
-it.
+it. A file the crash interrupted as it was being made, too short to
+hold even its header, held nothing yet, and is removed as the database
+opens: a side file (`data.shadow0`, `data.shadow1`, or a plug-in's), the
+one of `catalog.0` and `catalog.1` being made anew, or the log's newest
+segment.
 
 If a sync of the log fails as the database runs, it may have lost what
 the log held, and a sync tried again may succeed without it; so the log
