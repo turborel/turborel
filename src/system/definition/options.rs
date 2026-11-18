@@ -3,7 +3,8 @@
 //! option its engine or a plug-in declares, with who declared it, the value
 //! the table has, whether the table set it, its default, the values it
 //! takes, how a change of it is made, and what it does; and of indexes
-//! (RULES.md D34): INDEXES, each index with its method and columns, and
+//! (RULES.md D34): INDEXES, each index with its method and columns, an
+//! expression's as written in parentheses (RULES.md D92), and
 //! INDEX_OPTIONS, each option of each index's method, as TABLE_OPTIONS
 //! shows a table's.
 
@@ -39,7 +40,7 @@ fn indexes(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
     for (t, ix) in described_indexes(seen) {
-        let columns: Vec<&str> = ix.columns.iter().filter_map(|&c| t.columns.get(c)).map(|c| c.name.as_str()).collect();
+        let columns = ix.part_names(t);
         let mut row: Row = ids(&catalog, &t.name).to_vec();
         row.extend([text(&ix.name), text(&ix.method), yes(ix.unique), long(&columns.join(", "))]);
         rows.push(row);

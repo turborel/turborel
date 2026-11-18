@@ -96,7 +96,7 @@ impl PhysicalPlanner<'_> {
         self.db.index_of(&ix.name).ok()?;
         let kind = self.db.methods.get(&ix.method)?;
         let types = ix.key_types(self.db.catalog.table(read.table)?)?;
-        let predicate = Predicate { function: binding.function.clone(), column: 0, argument: binding.argument };
+        let predicate = Predicate { function: binding.function.clone(), column: 0, argument: Some(binding.argument) };
         kind.supports_predicate(&predicate, &types).then(|| Box::new(predicate))
     }
 }

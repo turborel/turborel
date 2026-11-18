@@ -152,6 +152,7 @@ impl SqlType for MultisetKind {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_) => return uncastable(&v, t),
         };
         let Some(m) = multiset_type(t) else { return uncastable(&v, t) };

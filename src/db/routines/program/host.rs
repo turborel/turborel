@@ -147,19 +147,19 @@ impl Host for SessionHost<'_, '_> {
     }
 
     fn run(&mut self, c: &Contained, frame: &mut Params) -> Result<Completion> {
-        if matches!(c.statement, SqlStatement::Commit | SqlStatement::Rollback) {
-            return self.end_transaction(matches!(c.statement, SqlStatement::Commit));
+        if matches!(c.statement(), SqlStatement::Commit | SqlStatement::Rollback) {
+            return self.end_transaction(matches!(c.statement(), SqlStatement::Commit));
         }
-        if let (SqlStatement::Savepoint(s), Context::Own { .. }) = (&c.statement, &self.context) {
+        if let (SqlStatement::Savepoint(s), Context::Own { .. }) = (c.statement(), &self.context) {
             return self.savepoint(s);
         }
         frame.set_routine(Arc::clone(&c.scope));
         let session = self.session;
         let ran = self.with(|cx| {
-            session.may_run(cx.st, &c.statement)?;
-            session.run_statement(cx, &c.statement, frame, None)
+            session.may_run(cx.st, c.statement())?;
+            session.run_statement(cx, c.statement(), frame, None)
         });
-        if defines(&c.statement) {
+        if defines(c.statement()) {
             self.refreshed()?;
         }
         ran

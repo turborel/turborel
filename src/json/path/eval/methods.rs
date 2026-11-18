@@ -10,7 +10,9 @@ mod casts;
 mod datetime;
 mod keyvalue;
 
-use super::{Evaluator, Number, count, exception, item, number, numbers};
+use std::borrow::Cow;
+
+use super::{Evaluator, Number, Seq, count, exception, item, number, numbers};
 use crate::error::{Result, SqlState};
 use crate::json::Item;
 use crate::json::path::ast::Method;
@@ -41,20 +43,30 @@ const ARRAY: &str = "array";
 /// Of an object.
 const OBJECT: &str = "object";
 
-impl Evaluator<'_> {
+impl<'a> Evaluator<'a> {
     /// [§9.46 GR11g ii 6] `<JSON item method>`: `method` applied to each
     /// item of `base`.
-    pub(super) fn method(&self, base: Vec<Item>, method: &Method) -> Result<Vec<Item>> {
+    pub(super) fn method(&self, base: Seq<'a>, method: &Method) -> Result<Seq<'a>> {
+        self.made(base, method).map(|items| items.into_iter().map(Cow::Owned).collect())
+    }
+
+    /// The items `method` makes of `base`.
+    fn made(&self, base: Seq<'a>, method: &Method) -> Result<Vec<Item>> {
         match method {
             Method::Type => Ok(base.iter().map(|each| Item::Scalar(type_name(each).to_owned().into())).collect()),
             Method::Size => self.size(&base),
-            Method::Double => self.lax_unwrap(base).iter().map(double).collect(),
+            Method::Double => self.lax_unwrap(base).iter().map(|each| double(each)).collect(),
             Method::Ceiling => numeric(&self.lax_unwrap(base), numbers::ceiling, "GR11g ii 6 C IV 1 a"),
             Method::Floor => numeric(&self.lax_unwrap(base), numbers::floor, "GR11g ii 6 C V 1 a"),
             Method::Abs => numeric(&self.lax_unwrap(base), |n| Ok(numbers::abs(n)), "GR11g ii 6 C VI 1 a"),
-            Method::Datetime => datetime::datetime(&self.lax_unwrap(base)),
+            Method::Datetime => datetime::datetime(&self.lax_unwrap(base), self.zone),
             Method::DatetimeTemplate(template) => datetime::templated(&self.lax_unwrap(base), template),
-            Method::Keyvalue => keyvalue::keyvalue(&self.lax_unwrap(base)),
+            Method::Keyvalue => keyvalue::keyvalue(&self.lax_unwrap(base), |object| {
+                self.identity.of(match object {
+                    Cow::Borrowed(borrowed) => Some(*borrowed),
+                    Cow::Owned(_) => None,
+                })
+            }),
             Method::Bigint => casts::converted(&self.lax_unwrap(base), &casts::BIGINT),
             Method::Boolean => casts::converted(&self.lax_unwrap(base), &casts::BOOLEAN),
             Method::Date => casts::converted(&self.lax_unwrap(base), &casts::DATE),
@@ -71,7 +83,7 @@ impl Evaluator<'_> {
 
     /// [§9.46 GR11g ii 6 C II] `size()`: the number of elements of each
     /// array of `base`, 1 of any other item.
-    fn size(&self, base: &[Item]) -> Result<Vec<Item>> {
+    fn size(&self, base: &[Cow<'_, Item>]) -> Result<Vec<Item>> {
         // [GR11g ii 6 C II 1] As printed, "any Vj is not an array"; Vj is
         // what the rule then defines, so Ij, the item, is meant.
         if self.strict() && base.iter().any(|each| each.as_array().is_none()) {
@@ -113,6 +125,7 @@ fn scalar_type(value: &Value) -> &'static str {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_) => NUMBER,
     }
 }
@@ -156,6 +169,7 @@ fn double(item: &Item) -> Result<Item> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_) => Err(exception(SqlState::NON_NUMERIC_SQL_JSON_ITEM, NOT_NUMERIC)),
     }
 }
@@ -166,7 +180,7 @@ fn double(item: &Item) -> Result<Item> {
 /// # Errors
 ///
 /// SQLSTATE 22036, citing `rule`, if one is not; else `compute`'s error.
-fn numeric(base: &[Item], compute: impl Fn(Number) -> Result<Value>, rule: &str) -> Result<Vec<Item>> {
+fn numeric(base: &[Cow<'_, Item>], compute: impl Fn(Number) -> Result<Value>, rule: &str) -> Result<Vec<Item>> {
     base.iter()
         .map(|each| {
             let n = number(each).ok_or_else(|| {

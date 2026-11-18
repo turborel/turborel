@@ -330,7 +330,7 @@ fn parameters_item(desc: &SqlRoutineDesc) -> FromItem {
 /// SQL-data, of the database of `cx`.
 fn access_of(cx: Context<'_>, (body, program): (Option<&Subquery>, Option<&Program>), invoked: &[QualifiedName]) -> DataAccess {
     let accesses: Vec<DataAccess> = invoked.iter().filter_map(|s| cx.db.catalog.routine(s)).map(|r| r.access).collect();
-    if accesses.contains(&DataAccess::Modifies) || program.is_some_and(|p| p.contained().iter().any(|c| modifies(&c.statement))) {
+    if accesses.contains(&DataAccess::Modifies) || program.is_some_and(|p| p.contained().iter().any(|c| modifies(c.statement()))) {
         return DataAccess::Modifies;
     }
     let leaves_read = program.is_some_and(|p| p.all_leaves().iter().any(|l| reads(&l.query.plan)));

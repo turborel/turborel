@@ -46,6 +46,7 @@ pub(crate) fn as_large(v: &Value, kind: LobKind) -> Result<Option<Lob>> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_),
             _,
         ) => other(),

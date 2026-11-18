@@ -54,6 +54,9 @@ pub enum Place {
     High,
     /// The constant or parameter argument of `Probe::Predicate` (RULES.md D34).
     PredicateValue,
+    /// \[EXTENSION\] A field of the ROW of values of a json index's
+    /// `Probe::Predicate` (`Predicate::argument` none).
+    PredicateField(usize),
 }
 
 /// The probe fixing every column of an index on `columns`, of `types`, by
@@ -178,14 +181,15 @@ fn filled_scan(mut plan: Plan, values: &[Value]) -> Result<Plan> {
     Ok(plan)
 }
 
-/// Puts the value of `s`'s slot, cast to its type as a logical plan's
-/// slots are, in its place in `probe`.
+/// The value of `s`'s slot, cast to its type as a logical plan's slots
+/// are.
 ///
 /// # Errors
 ///
-/// As `logical::filled`; SQLCODE -910 if the probe has no such place.
-fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
-    let value = match filled_expr(Expr::Dynamic(s.slot.clone()), values)? {
+/// As `logical::filled`; SQLCODE -910 if the slot is not filled by a
+/// constant.
+fn slot_value(s: &ProbeSlot, values: &[Value]) -> Result<Value> {
+    Ok(match filled_expr(Expr::Dynamic(s.slot.clone()), values)? {
         Expr::Const(value) => value,
         Expr::Column(_)
         | Expr::Dynamic(_)
@@ -201,7 +205,26 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         | Expr::Truth(_)
         | Expr::NextValue(_)
         | Expr::Invoked(_) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),
-    };
+    })
+}
+
+/// Puts the value of `s`'s slot, cast to its type as a logical plan's
+/// slots are, in its place in `probe`.
+///
+/// # Errors
+///
+/// As `logical::filled`; SQLCODE -910 if the probe has no such place.
+fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
+    let value = slot_value(s, values)?;
+    if let (Probe::Predicate { value: Value::Row(fields), .. }, Place::PredicateField(n)) = (&mut *probe, s.place) {
+        let mut each = fields.to_vec();
+        let Some(field) = each.get_mut(n) else {
+            return fail(Code::Api, "[DESIGN] a kept probe has no place for a <dynamic parameter specification>");
+        };
+        *field = value;
+        *fields = each.into();
+        return Ok(());
+    }
     let at = match (probe, s.place) {
         (Probe::Columns(each), Place::Column(n)) => each.get_mut(n).map(|c| &mut c.value),
         (Probe::Compare { value: first, .. }, Place::Key(n)) => (n == 0).then_some(first),
@@ -220,7 +243,11 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         | (Probe::Columns(_), Place::Key(_) | Place::Low | Place::High | Place::PredicateValue)
         | (Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. }, Place::Column(_) | Place::PredicateValue)
         | (Probe::Compare { .. } | Probe::Prefix { .. }, Place::Low | Place::High)
-        | (Probe::Predicate { .. }, Place::Column(_) | Place::Key(_) | Place::Low | Place::High) => None,
+        | (Probe::Predicate { .. }, Place::Column(_) | Place::Key(_) | Place::Low | Place::High)
+        | (
+            Probe::All | Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Predicate { .. },
+            Place::PredicateField(_),
+        ) => None,
     };
     match at {
         Some(at) => {
@@ -304,6 +331,7 @@ mod tests {
             options: Vec::new(),
             collations,
             nulls: false,
+            expressions: Vec::new(),
         };
         catalog.add_index(index("I", vec![0, 1], Vec::new()));
         let folded =
@@ -342,7 +370,7 @@ mod tests {
     #[test]
     fn predicate_slots_accept_only_their_argument_place() {
         let function = crate::functions::Registry::with_set_functions().scalar("UPPER").unwrap();
-        let predicate = Box::new(crate::index::Predicate { function, column: 0, argument: 0 });
+        let predicate = Box::new(crate::index::Predicate { function, column: 0, argument: Some(0) });
         let probe = Probe::Predicate { predicate, value: Value::Null };
         let s = ProbeSlot { place: Place::PredicateValue, slot: slot(0) };
         let mut filled = probe.clone();

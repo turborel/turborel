@@ -172,6 +172,7 @@ pub(super) fn prefix_of(value: &Value, order: SortOrder) -> Option<Prefix> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_) => return None,
     };
     Some(finished((kind, bits, held), order))

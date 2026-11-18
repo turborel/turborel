@@ -194,7 +194,7 @@ fn named_function_probes_are_explicitly_unsupported() {
     let method = RTreeMethod::in_memory();
     let index: Arc<dyn Index> = Arc::from(method.create(&columns(2)).unwrap());
     let function = Registry::with_set_functions().scalar("UPPER").unwrap();
-    let predicate = Predicate { function, column: 0, argument: 0 };
+    let predicate = Predicate { function, column: 0, argument: Some(0) };
     assert!(!method.supports_predicate(&predicate, &columns(2)));
     let probe = Probe::Predicate { predicate: Box::new(predicate), value: Value::Null };
     assert_eq!(index.estimate(&probe), None);

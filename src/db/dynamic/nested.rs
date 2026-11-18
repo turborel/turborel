@@ -72,6 +72,7 @@ fn subordinates(t: &DataType, level: i64, catalog: &str, out: &mut Vec<Item>) {
         | DataType::Interval(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_) => {}
     }
 }

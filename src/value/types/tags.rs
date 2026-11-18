@@ -6,7 +6,7 @@
 //! (RULES.md D69).
 
 use super::{
-    APPROXIMATE, ARRAY, BINARY, BINARY_VARYING, BLOB, BOOLEAN, CHARACTER, CLOB, DATE, DECFLOAT, DISTINCT, EXACT, INTERVAL_DAY_TIME,
+    APPROXIMATE, ARRAY, BINARY, BINARY_VARYING, BLOB, BOOLEAN, CHARACTER, CLOB, DATE, DECFLOAT, DISTINCT, EXACT, INTERVAL_DAY_TIME, JSON,
     MULTISET, REFERENCE, ROW, STRUCTURED, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING,
 };
 use crate::bytes::{Put, Reader};
@@ -62,6 +62,8 @@ const STRUCTURED_TYPE: u8 = 27;
 /// [ISO/IEC 9075-2:2023 §4.11] A reference type: its referenced type's
 /// name, then its scope's, if it has one.
 const REFERENCE_TYPE: u8 = 28;
+/// [ISO/IEC 9075-2:2023 §4.8] JSON, of no parameters.
+const JSON_TYPE: u8 = 29;
 
 /// Appends `data_type`'s bytes to `out`.
 pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
@@ -85,6 +87,7 @@ pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
         DataType::Multiset(_) => out.put_u8(MULTISET_TYPE),
         DataType::Structured(_) => out.put_u8(STRUCTURED_TYPE),
         DataType::Reference(_) => out.put_u8(REFERENCE_TYPE),
+        DataType::Json => out.put_u8(JSON_TYPE),
         DataType::Row(_) => out.put_u8(ROW_TYPE),
         DataType::Distinct(_) => out.put_u8(DISTINCT_TYPE),
         DataType::Extension(e) => {
@@ -131,6 +134,7 @@ fn spelled_as(t: DataType, spelled: Spelled) -> DataType {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_) => t,
     }
 }
@@ -174,6 +178,7 @@ pub(crate) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         MULTISET_TYPE => &MULTISET,
         STRUCTURED_TYPE => &STRUCTURED,
         REFERENCE_TYPE => &REFERENCE,
+        JSON_TYPE => &JSON,
         ROW_TYPE => &ROW,
         DISTINCT_TYPE => &DISTINCT,
         EXTENSION_TYPE => {

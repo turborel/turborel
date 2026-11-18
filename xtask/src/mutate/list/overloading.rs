@@ -35,7 +35,7 @@ const STORED: &str = "src/parser/stored.rs";
 const VIEW_KEPT: &str = "routines_fixed::a_view_keeps_its_subject_routine_4_35_2";
 
 /// The mutations of overloading.
-pub const OVERLOADING: [Mutation; 21] = [
+pub const OVERLOADING: [Mutation; 22] = [
     Mutation {
         name: "overloading-approximate-first",
         package: Package::Core,
@@ -231,6 +231,16 @@ pub const OVERLOADING: [Mutation; 21] = [
         original: "let mut parser = Self::with_extensions(src, !refused(kept))?;",
         replacement: "let mut parser = Self::with_extensions(src, { let _ = kept; false })?;",
         integration: &["stored_function_calls::stored_calls_are_taken_when_used"],
+        unit: &[],
+    },
+    Mutation {
+        name: "overloading-key-part-calls-taken",
+        package: Package::Core,
+        breaks: "a key part of an index calls a registered function with SQL.FUNCTION_CALLS OFF",
+        file: "src/db/index_statements.rs",
+        original: "let _calls = Parser::refusing_calls(text, st.settings.is_on(FUNCTION_CALLS));",
+        replacement: "let _calls = Parser::refusing_calls(text, true);",
+        integration: &["stored_function_calls::a_key_part_calling_a_registered_function_follows_the_setting"],
         unit: &[],
     },
     Mutation {

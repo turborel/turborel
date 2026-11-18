@@ -72,7 +72,7 @@ fn is_empty(v: &Value) -> bool {
     match v {
         Value::Char(text) => text.is_empty(),
         Value::Lob(lob) => lob.octets() == 0,
-        Value::Extension(_) => super::fulltext::parts(v).is_ok_and(|(_, text)| text.is_empty()),
+        Value::Json(_) | Value::Extension(_) => super::fulltext::parts(v).is_ok_and(|(_, text)| text.is_empty()),
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)

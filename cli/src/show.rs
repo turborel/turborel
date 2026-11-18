@@ -101,10 +101,14 @@ fn measured(t: &DataType, depth: usize) -> (usize, bool) {
         // a large object as its text or hexits, as wide as a column grows.
         // A multiset, of no maximum cardinality [ISO/IEC 9075-2:2023
         // §6.52], as wide as a column may be; a structured value, whose
-        // attributes the catalog holds, and a reference, as wide too.
-        DataType::Extension(_) | DataType::Lob { .. } | DataType::Multiset(_) | DataType::Structured(_) | DataType::Reference(_) => {
-            (MAX_WIDTH, false)
-        }
+        // attributes the catalog holds, a reference and a JSON value's
+        // text, as wide too.
+        DataType::Extension(_)
+        | DataType::Lob { .. }
+        | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
+        | DataType::Json => (MAX_WIDTH, false),
     };
     (width.min(MAX_WIDTH), right)
 }
@@ -181,6 +185,7 @@ impl Sink for Table<'_> {
                     | Value::Multiset(_)
                     | Value::Structured(_)
                     | Value::Reference(_)
+                    | Value::Json(_)
                     | Value::Row(_)
                     | Value::Lob(_)
                     | Value::Extension(_) => v.to_string(),

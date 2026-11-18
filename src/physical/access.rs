@@ -3,9 +3,12 @@
 //! an OR, chosen by cost.
 
 mod columns;
+mod json;
+mod predicate;
 mod spatial;
 
 use super::estimate::{self, Known};
+use super::expression_index::Keyed;
 use super::kept::{Place, point_probe};
 use super::probe::{Alternatives, Compared, comparisons, probes_of_any, render_probe, served_by};
 use super::shown::Shown;
@@ -18,10 +21,9 @@ use crate::logical::{Cond, SortKey, and_all, filled_cond, judged_by_sets, pushed
 use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType, Value};
 
-mod predicate;
-
+use predicate::answerable;
+pub(crate) use predicate::predicate_call;
 use predicate::{omits_rows, supports};
-pub(crate) use predicate::{predicate_call, rechecked_lookup};
 
 /// \[DESIGN\] What a row an index-only scan makes of its entry costs, in
 /// rows of a scan of its table: its zone's visibility looked at and the
@@ -163,10 +165,10 @@ impl PhysicalPlanner<'_> {
                 (plan, (cost_of(rows), best.est))
             }
             Some(mut probed) => {
-                let named = predicate::named(&probed.probes);
+                let (named, keyed) = (predicate::named(&probed.probes), Keyed::of_read(self.db, read));
                 let answered = probed.answered(&mut conds);
                 let found = if named { cost_of(rows) } else { best.est };
-                (index_scans(read, probed, answered, (best.est, best.cost, best.reverse)), (found, best.est))
+                (index_scans(keyed.read(read), probed, answered, (best.est, best.cost, best.reverse)), (found, best.est))
             }
         };
         let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
@@ -180,37 +182,32 @@ impl PhysicalPlanner<'_> {
         let cost = &self.db.cost();
         let sort_penalty = |est: f64, ordered: bool| if !want.is_empty() && !ordered { cost.sort(est) } else { 0.0_f64 };
         let unread = Path { total: 0.0_f64, cost: 0.0_f64, est: 0.0_f64, ordered: false, reverse: false, index: None, order: Vec::new() };
-        let (Ok(storage), Some(desc)) = (self.db.storage_of(read.table), self.db.catalog.table(read.table)) else { return unread };
-        let stats = self.db.statistics(read.table);
+        let Some((storage, (desc, indexes, keyed))) = self.planned(read.table) else { return unread };
+        let (desc, scanned, conds) = (&*desc, conds, &*keyed.substituted(conds));
+        let (stats, all) = (self.db.statistics(read.table), cost_of(storage.row_count()));
         let known = Known { stats: stats.as_deref(), cost };
-        let all = cost_of(storage.row_count());
-        // RULES.md D15: a probe reads only the rows its conjuncts select, so the
-        // other conjuncts would not be evaluated on the rest. When one of them
-        // can raise an error it must see every row: probe no index then. A
-        // rechecked lookup raises where the scan would (D87).
-        let answerable: &[Cond] = if conds.iter().any(|c| c.can_raise() && !rechecked_lookup(c)) { &[] } else { conds };
-        let (compared, ors) = comparisons(answerable, known, self.values);
-        if let Some(path) = want.is_empty().then(|| self.point_path(read, (answerable, &compared), known.cost)).flatten() {
+        let probed = answerable(conds);
+        let (compared, ors) = comparisons(probed, known, self.values);
+        if let Some(path) = want.is_empty().then(|| self.point_path(read, (probed, &compared), known.cost)).flatten() {
             return path;
         }
-        let (seq_cost, scanned) = scan_priced(&**storage, read.needed, &self.priced(conds));
+        let (seq_cost, scanned) = scan_priced(&**storage, read.needed, &self.priced(scanned));
         let scan = Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread };
         let mut best = self.scan_path(&**storage, want, scan);
-
         // An index being built is not read until it is (`Database::create_index`).
-        for ix in self.db.catalog.indexes(read.table).into_iter().filter(|ix| !self.db.building.contains(&ix.name)) {
+        for ix in indexes.iter().map(|ix| &**ix).filter(|ix| !self.db.building.contains(&ix.name)) {
             // [DESIGN] An index the state lacks is not a path; neither is one on
             // a column the table lacks.
             let columns: Option<Vec<_>> = ix.columns.iter().map(|&c| desc.columns.get(c)).collect();
-            let (Some(kind), Ok(found), Some(columns)) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name), columns) else {
-                continue;
-            };
-            let Some(types) = ix.key_types(desc) else { continue };
+            let (kind, found, types) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name), ix.key_types(desc));
+            let (Some(kind), Ok(found), Some(columns), Some(types)) = (kind, found, columns, types) else { continue };
             let served = served_by(&compared, ix);
             let alternatives: &[Alternatives] = if ix.is_collated() { &[] } else { &ors };
             let mut candidates = columns::candidates((&ix.columns, &types), (&served, alternatives), (all, known), &**kind);
-            candidates.extend(predicate::candidates(answerable, ix, self.values, all));
+            candidates.extend(predicate::candidates(probed, ix, self.values, all));
             candidates.extend(spatial::candidates(conds, ix, &types, self.values, all));
+            // A json index's lookups raise what a scan would of the calls it rechecks (`access/json.rs`).
+            candidates.extend(json::candidates(conds, ix, &types, self.values, all));
             // A full ordered read, only to provide order.
             candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
             for c in candidates {
@@ -225,8 +222,7 @@ impl PhysicalPlanner<'_> {
                 // different SQL order, so neither can replace a sort.
                 let ordered_index = kind.ordered() && !ix.is_collated() && !predicate::untested_nulls(&columns, c.probes.first());
                 let order = if ordered_index && !want.is_empty() { index_order(&ix.columns, c.fixed, want) } else { None };
-                let all_keys = matches!(c.probes.first(), Some(Probe::All));
-                if !supported || omitted || all_keys && order.is_none() {
+                if !supported || omitted || matches!(c.probes.first(), Some(Probe::All)) && order.is_none() {
                     continue;
                 }
                 let distinct = || self.db.distinct_keys(read.table, &**found);

@@ -3,23 +3,29 @@
 //! and calls it finds rows by, and whether in key order; the planner asks each
 //! for an estimate and picks the cheapest supported path. Built in are
 //! "btree", a B-link tree for equality and ranges; "hash", a linear hash
-//! table for equality; "rtree", an R-link tree for coordinate bounds; and
-//! "fulltext", an inverted index of words (RULES.md D86).
+//! table for equality; "rtree", an R-link tree for coordinate bounds;
+//! "fulltext", an inverted index of words (RULES.md D86); and "json", an
+//! inverted index of JSON documents' paths and values. An index's key may
+//! be of expressions of its table's columns (`index/expression.rs`).
 
 mod blink;
+mod key;
+pub use key::Key;
+pub mod expression;
 pub mod fulltext;
 mod hash;
+pub mod json;
 mod nearest;
 mod projection;
 mod rtree;
 mod stats;
 
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 pub use blink::BTreeMethod;
 pub use fulltext::{FULLTEXT_METHOD, FullTextMethod};
 pub use hash::HashMethod;
+pub use json::{JSON_METHOD, JsonMethod};
 pub use nearest::{NearestQuery, NeighbourEntries};
 pub use projection::KeyProjection;
 pub use rtree::RTreeMethod;
@@ -31,45 +37,6 @@ use crate::memory::Host;
 use crate::spill::{Area, WorkAreas};
 use crate::storage::{RowId, TableOption};
 use crate::value::{CompOp, DataType, Value, compare};
-
-// ---------------------------------------------------------------------------
-// Index keys: ordered tuples of values, by the [X3.135-1986 §5.11] comparison rules
-// ---------------------------------------------------------------------------
-
-/// A tuple of column values ordered exactly as SQL compares them, so that
-/// 'OPS' and 'OPS ' are the same key and 1.5 sorts after 1.
-#[derive(Debug, Clone)]
-pub struct Key(pub Vec<Value>);
-
-fn total_cmp(a: &Value, b: &Value) -> Ordering {
-    compare(a, b).unwrap_or_else(|| a.is_null().cmp(&b.is_null()).reverse())
-}
-
-impl Ord for Key {
-    fn cmp(&self, o: &Self) -> Ordering {
-        for (a, b) in self.0.iter().zip(&o.0) {
-            let c = total_cmp(a, b);
-            if c != Ordering::Equal {
-                return c;
-            }
-        }
-        self.0.len().cmp(&o.0.len())
-    }
-}
-
-impl PartialOrd for Key {
-    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-        Some(self.cmp(o))
-    }
-}
-
-impl PartialEq for Key {
-    fn eq(&self, o: &Self) -> bool {
-        self.cmp(o) == Ordering::Equal
-    }
-}
-
-impl Eq for Key {}
 
 /// \[DESIGN\] The entries a search finds, (key, row) pairs, read as they
 /// are taken (`Index::search`).
@@ -102,8 +69,12 @@ pub struct Predicate {
     pub function: ScalarRef,
     /// The indexed column's position in the key, from zero.
     pub column: usize,
-    /// The column's position among the function's two arguments, zero or one.
-    pub argument: usize,
+    /// The column's position among the function's two arguments, zero or
+    /// one; none of a call of an SQL/JSON operator or JSON_CONTAINS
+    /// (`ScalarFunction::json_probe`), whose first argument is the column
+    /// and whose others, its PASSING arguments' values and then the value
+    /// compared with or contained, the probe's value holds as a ROW.
+    pub argument: Option<usize>,
 }
 
 /// One SQL comparison of an independently constrained index column.

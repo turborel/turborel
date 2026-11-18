@@ -51,8 +51,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    Actions, CheckLevels, ConstraintAttributes, ConstraintDesc, ConstraintKind, DomainDesc, Horizon, IndexDesc, MatchType, PeriodDesc,
-    PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind, TypedActions, Underlying, UsageDesc, ViewDesc,
+    Actions, CheckLevels, ConstraintAttributes, ConstraintDesc, ConstraintKind, DomainDesc, Horizon, MatchType, PeriodDesc, PrivilegeDesc,
+    QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind, TypedActions, Underlying, UsageDesc, ViewDesc,
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -60,6 +60,7 @@ use crate::value::codec::{put_value, value};
 
 mod columns;
 mod foreign;
+mod indexes;
 mod objects;
 mod roles;
 mod routines;
@@ -68,6 +69,7 @@ mod triggers;
 use crate::value::types::tags::{data_type, put_type};
 use columns::{collation_name, column, put_collation_name, put_column};
 pub(crate) use columns::{default, put_default};
+pub(crate) use indexes::{index, put_index};
 pub(crate) use objects::{collation, put_collation, put_sequence, put_user_type, sequence, user_type};
 pub(crate) use roles::{put_roles, roles};
 pub(crate) use routines::{module, put_module, put_routine, routine};
@@ -387,30 +389,6 @@ pub(crate) fn view(r: &mut Reader<'_>) -> Result<ViewDesc> {
     };
     let typed = structured::typed(r)?;
     Ok(ViewDesc { name, columns, query, names, check_option, grouped, updates, reads, horizon, typed, underlying })
-}
-
-/// `index` in bytes.
-pub(crate) fn put_index(out: &mut Vec<u8>, index: &IndexDesc) {
-    out.put_str(&index.name);
-    put_name(out, &index.table);
-    put_positions(out, index.columns.iter());
-    out.put_str(&index.method);
-    put_flag(out, index.unique);
-    put_options(out, &index.options);
-}
-
-/// The index `put_index` wrote.
-pub(crate) fn index(r: &mut Reader<'_>) -> Result<IndexDesc> {
-    Ok(IndexDesc {
-        name: r.str()?,
-        table: qualified(r)?,
-        columns: positions(r)?,
-        method: r.str()?,
-        unique: flag(r)?,
-        options: options(r)?,
-        collations: Vec::new(),
-        nulls: false,
-    })
 }
 
 /// `privilege` in bytes.

@@ -128,23 +128,31 @@ pub struct JobInfo {
 /// job (`Database::job_asker`, RULES.md D57: a transport, as frames
 /// arrive): it holds the database weakly, so never keeps it open, and
 /// asks for nothing once it is gone.
+///
+/// \[DESIGN\] It holds the database inside a closure, seen as a trait
+/// object. The database holds the buffer pool, which holds an asker, and
+/// the compiler proves a type `Send` or `Sync` by walking each type its
+/// fields hold. A field of the database's own type here would have each
+/// proof about a database, a session or a plan walk the database again
+/// from the buffer pool, a chain longer than the compiler's default
+/// recursion limit, so that every program using the library would have
+/// to raise it. The proof stops at the closure's `Send + Sync`.
 #[derive(Clone)]
-pub struct JobAsker {
-    db: WeakDatabase,
-    job: JobHandle,
-}
+pub struct JobAsker(Arc<dyn Fn() + Send + Sync>);
 
 impl JobAsker {
     /// What asks for job `job` of `db`.
     pub(crate) fn new(db: WeakDatabase, job: JobHandle) -> JobAsker {
-        JobAsker { db, job }
+        JobAsker(Arc::new(move || {
+            if let Some(db) = db.upgrade() {
+                db.request_job(job, Duration::ZERO);
+            }
+        }))
     }
 
     /// Asks for the job, which runs as JOBS.POLICY says.
     pub fn ask(&self) {
-        if let Some(db) = self.db.upgrade() {
-            db.request_job(self.job, Duration::ZERO);
-        }
+        (self.0)();
     }
 }
 

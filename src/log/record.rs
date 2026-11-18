@@ -69,7 +69,9 @@ mod definitions;
 mod kinds;
 
 pub use definitions::DropTarget;
-use definitions::{defined, dropped, put_altered, put_defined, put_dropped, put_schema, put_sequence, schema, sequence};
+use definitions::{
+    create_index, defined, dropped, put_altered, put_create_index, put_defined, put_dropped, put_schema, put_sequence, schema, sequence,
+};
 
 use kinds::{
     ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, LOB_PUT, LOB_STALE,
@@ -201,12 +203,16 @@ pub enum Change {
         name: String,
         /// Its table.
         table: QualifiedName,
-        /// The columns it is on, in order.
+        /// The columns it is on, in order: of its key parts not those of
+        /// `expressions`.
         columns: Vec<String>,
         /// Its index method.
         method: String,
         /// \[EXTENSION\] The method's options it sets (RULES.md D41).
         options: Vec<(String, Value)>,
+        /// \[EXTENSION\] Its key parts that are expressions, each its place
+        /// in the key and its text (RULES.md D92).
+        expressions: Vec<(usize, String)>,
     },
     /// \[EXTENSION\] An index's options changed (RULES.md D41).
     AlterIndex {
@@ -364,13 +370,7 @@ impl Record {
                 put_defined(&mut out, ((auth, role.as_deref()), schema, sql, *zone), placed.as_ref(), epochs);
             }
             Change::Sequence { name, epoch, resume } => put_sequence(&mut out, name, *epoch, *resume),
-            Change::CreateIndex { name, table, columns, method, options } => {
-                out.put_str(name);
-                put_table(&mut out, table);
-                put_strs(&mut out, columns);
-                out.put_str(method);
-                put_options(&mut out, options);
-            }
+            Change::CreateIndex { .. } => put_create_index(&mut out, &self.change),
             Change::AlterIndex { name, options } => {
                 out.put_str(name);
                 put_options(&mut out, options);
@@ -424,11 +424,7 @@ impl Record {
             SCHEMA => schema(&mut r)?,
             DEFINED => defined(&mut r)?,
             SEQUENCE => sequence(&mut r)?,
-            CREATE_INDEX => {
-                let (name, table) = (r.str()?, table(&mut r)?);
-                let columns = (0..r.u32()?).map(|_| r.str()).collect::<Result<_>>()?;
-                Change::CreateIndex { name, table, columns, method: r.str()?, options: options(&mut r)? }
-            }
+            CREATE_INDEX => create_index(&mut r)?,
             ALTER_INDEX => Change::AlterIndex { name: r.str()?, options: options(&mut r)? },
             DROP_INDEX => Change::DropIndex { name: r.str()? },
             DROP => Change::Drop { object: dropped(&mut r)?, cascade: r.u8()? != 0 },

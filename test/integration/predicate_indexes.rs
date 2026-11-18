@@ -238,7 +238,7 @@ fn builtins_refuse_predicates_and_storage_never_evaluates_them() {
     use turborel::storage::Condition;
 
     let function = Function { safe: false, error_at: Some(0), ..Function::default() };
-    let predicate = Box::new(Predicate { function: ScalarRef(Arc::new(function)), column: 0, argument: 0 });
+    let predicate = Box::new(Predicate { function: ScalarRef(Arc::new(function)), column: 0, argument: Some(0) });
     let probe = Probe::Predicate { predicate: predicate.clone(), value: number(0) };
     let methods: Vec<Box<dyn IndexMethod>> = vec![Box::new(BTreeMethod::in_memory()), Box::new(HashMethod::in_memory())];
     for method in methods {

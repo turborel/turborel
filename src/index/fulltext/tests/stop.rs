@@ -70,8 +70,10 @@ fn searches_drop_the_indexs_stop_words() {
     index.insert(doc("a dog and a hat"), 2).unwrap();
     let matching = |words: &str| {
         let function = ScalarRef(Arc::new(TextMatches));
-        let probe =
-            Probe::Predicate { predicate: Box::new(Predicate { function, column: 0, argument: 0 }), value: Value::Char(words.into()) };
+        let probe = Probe::Predicate {
+            predicate: Box::new(Predicate { function, column: 0, argument: Some(0) }),
+            value: Value::Char(words.into()),
+        };
         searched(&index, &probe).unwrap().into_iter().map(|(_, row)| row).collect::<Vec<RowId>>()
     };
     assert_eq!(matching("cat hat"), [1, 2], "cat is not posted, so it does not narrow");

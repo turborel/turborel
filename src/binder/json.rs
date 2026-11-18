@@ -18,12 +18,19 @@
 //! The constructors, the aggregates and IS JSON are bound in
 //! `binder/json/construct.rs`.
 
+mod accessor;
 mod construct;
+mod lazy;
+mod table;
+mod typed;
+
+pub(super) use accessor::Step;
+pub(super) use table::json_table_item;
 
 use std::sync::Arc;
 
 use super::expression::nondeterministic_source;
-use super::{Binder, Scope, rule};
+use super::{Binder, Purpose, Scope, rule};
 use crate::ast::{JsonClauses, JsonExpression, JsonOperator, JsonValueBehavior, TypeName, ValueExpression};
 use crate::error::{At, Result};
 use crate::functions::{
@@ -42,6 +49,7 @@ impl Binder<'_> {
         match j {
             JsonExpression::Query(operator) => self.json_operator(operator, scope),
             JsonExpression::Constructor(constructor) => self.json_constructor(constructor, scope),
+            JsonExpression::Typed(typed) => self.json_typed(typed, scope),
         }
     }
 
@@ -57,8 +65,9 @@ impl Binder<'_> {
     /// JSON text, or a value or a type turborel does not implement here.
     pub(super) fn json_operator(&self, j: &JsonOperator, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         // [§9.16 SR1g, SR1h, SR1al] each a potential source of
-        // non-determinism, which a constraint does not contain.
-        if self.purpose.constrains() {
+        // non-determinism, which a constraint does not contain; an index's
+        // key part only where it is safe (RULES.md D92).
+        if self.purpose.constrains() && self.purpose != Purpose::Key {
             let (item, name) = match &j.clauses {
                 JsonClauses::Exists { .. } => ("al", JSON_EXISTS),
                 JsonClauses::Value { .. } => ("g", JSON_VALUE),
@@ -71,8 +80,9 @@ impl Binder<'_> {
         let names: Vec<&str> = common.passing.iter().map(|argument| argument.name.as_str()).collect();
         path.check_variables(&names).or_at(common.path_at)?;
         let (operation, defaults) = operation(&j.clauses)?;
-        let passing = common.passing.iter().map(|argument| (argument.name.clone(), argument.input.format.is_some())).collect();
-        let f = ScalarRef(Arc::new(JsonCall::new(&common.path, path.clone(), passing, operation)));
+        let passing: Vec<(String, bool)> =
+            common.passing.iter().map(|argument| (argument.name.clone(), argument.input.format.is_some())).collect();
+        let f = ScalarRef(Arc::new(JsonCall::new(&common.path, path.clone(), passing.clone(), operation.clone())));
         let operands: Vec<ValueExpression> = std::iter::once(&common.context.value)
             .chain(common.passing.iter().map(|argument| &argument.input.value))
             .chain(defaults)
@@ -80,7 +90,17 @@ impl Binder<'_> {
             .collect();
         let (exprs, types) = self.arguments(&*f.0, &operands, scope)?;
         self.json_operands(j, &path, &exprs, &types)?;
+        let inputs = types.get(..=common.passing.len()).unwrap_or_default();
+        let (f, operation) = match json_returned(&operation, inputs)? {
+            Some(json) => (ScalarRef(Arc::new(JsonCall::new(&common.path, path.clone(), passing.clone(), json.clone()))), json),
+            None => (f, operation),
+        };
         let t = f.0.return_type(&types)?;
+        // [§9.48 GR4c iii, GR5d] A DEFAULT evaluated only when taken.
+        let bound = lazy::Bound { text: &common.path, path: &path, passing: &passing, operation: &operation };
+        if let Some(lazy) = self.lazy_value(&bound, &exprs, &types)? {
+            return Ok((lazy, t));
+        }
         Ok((Expr::Call(f, exprs), t))
     }
 
@@ -140,6 +160,25 @@ fn operation(clauses: &JsonClauses) -> Result<(JsonOperation, Vec<&ValueExpressi
             Ok((operation, Vec::new()))
         }
     }
+}
+
+/// [§6.35 SR1a] JSON_QUERY's `operation` returning JSON, if it returns
+/// the implicit type and the context item or an argument, of `inputs`,
+/// is of the JSON type; none if it is unchanged. Its returned type is
+/// `IMPLICIT_RETURNING` only if no `<JSON output clause>` is written.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it returns JSON and OMIT QUOTES is written \[SR3\].
+fn json_returned(operation: &JsonOperation, inputs: &[DataType]) -> Result<Option<JsonOperation>> {
+    let JsonOperation::Query { returning, wrapper, quotes, on_empty, on_error } = operation else { return Ok(None) };
+    let implicit = *returning == IMPLICIT_RETURNING && inputs.iter().any(|t| matches!(t, DataType::Json));
+    if (implicit || *returning == DataType::Json) && *quotes == Quotes::Omit {
+        return Err(rule("[ISO/IEC 9075-2:2023 §6.35 SR3] JSON_QUERY RETURNING JSON keeps its quotes, KEEP QUOTES"));
+    }
+    let json =
+        JsonOperation::Query { returning: DataType::Json, wrapper: *wrapper, quotes: *quotes, on_empty: *on_empty, on_error: *on_error };
+    Ok(implicit.then_some(json))
 }
 
 /// [§6.28 SR4, SR5] The slot of the behavior `written`, NULL if none is.
@@ -276,3 +315,6 @@ fn predicate_initials<'p>(predicate: &'p Predicate, names: &mut Vec<&'p str>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

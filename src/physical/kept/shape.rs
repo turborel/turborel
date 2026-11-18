@@ -232,7 +232,7 @@ mod tests {
         let registry = crate::functions::Registry::with_set_functions();
         let function = registry.scalar("UPPER").unwrap();
         let make = |bound, column, argument, value| Probe::Predicate {
-            predicate: Box::new(crate::index::Predicate { function: bound, column, argument }),
+            predicate: Box::new(crate::index::Predicate { function: bound, column, argument: Some(argument) }),
             value,
         };
         let one = make(function.clone(), 0, 0, int(1));

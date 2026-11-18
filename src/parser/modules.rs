@@ -15,7 +15,7 @@ use crate::lexer::{Tok, delim, kw};
 
 /// The `<non-reserved word>` of an `<SQL-server module path
 /// specification>`.
-const PATH: &str = "PATH";
+pub(super) const PATH: &str = "PATH";
 
 /// The schemas of a module's PATH, if written, each its catalog, if
 /// written, and name; and the PATH as written.

@@ -366,6 +366,7 @@ fn catalog_with_table(engine: &str) -> MemoryCatalog {
         options,
         collations: Vec::new(),
         nulls: false,
+        expressions: Vec::new(),
     });
     catalog
 }

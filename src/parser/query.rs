@@ -505,6 +505,9 @@ impl Parser {
         if self.at_ptf_table() {
             return self.ptf_table();
         }
+        if self.at_json_table() {
+            return self.json_table();
+        }
         // [ISO/IEC 9075-2:2023 §7.6] <only spec>.
         let (table, only) = self.target_table()?;
         // [ISO/IEC 9075-2:2023 §7.6] <query system time period

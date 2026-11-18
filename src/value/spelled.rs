@@ -51,6 +51,7 @@ pub fn spelling(t: &DataType) -> Spelled {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_) => Spelled::Numeric,
     }
 }

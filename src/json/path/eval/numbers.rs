@@ -42,10 +42,15 @@ pub(super) fn floor(n: Number) -> Result<Value> {
 fn whole(n: Number, toward: Toward) -> Result<Value> {
     match n {
         Number::Exact(d) => Ok(Value::Exact(Decimal::new(rounded(d.units, i64::from(d.scale).saturating_neg(), toward), 0))),
-        Number::Approx(x) => Ok(Value::Approx(match toward {
-            Toward::Floor => x.floor(),
-            Toward::Ceiling => x.ceil(),
-        })),
+        // Plus zero, so that one between -1 and 0 is 0, not -0: every
+        // number of the result type is one, and 0 is the one a negative
+        // number above -1 rounds up to [§6.31 GR16b i].
+        Number::Approx(x) => Ok(Value::Approx(
+            match toward {
+                Toward::Floor => x.floor(),
+                Toward::Ceiling => x.ceil(),
+            } + 0.0_f64,
+        )),
         Number::DecFloat(d) => {
             // One of no negative exponent is whole.
             if d.exponent() >= 0 {
@@ -85,18 +90,26 @@ pub(super) fn abs(n: Number) -> Value {
 /// decimal floating-point if either is, else exact of scale 0 \[SR12\].
 /// \[SR12\] Each is to be exact of scale 0 or decimal floating-point;
 /// \[DESIGN\] of an SQL/JSON item, whose type is its value's, an exact or
-/// decimal floating-point number that is whole is taken, of any scale.
+/// decimal floating-point number that is whole is taken, of any scale, so
+/// `4.0 % 3` is 1. An approximate number, `5e0` too, is of no type SR12
+/// allows, and neither is a number that is not whole. A Syntax Rule
+/// broken in the General Rules of a path is no Syntax Rule of the
+/// statement's, and the calculation of §9.46 GR11i iii 2 C cannot be
+/// made, so it is an exception condition, as the path's others are: the
+/// standard names no subclass for it, so it is data exception with no
+/// subclass, SQLSTATE 22000.
 ///
 /// # Errors
 ///
-/// SQLCODE -301 if either is approximate, not whole, or past every exact
-/// number of scale 0 \[SR12\]; SQLSTATE 22012 if `m` is zero \[GR9b\].
+/// SQLSTATE 22000 if either is approximate, not whole, or past every
+/// exact number of scale 0 \[SR12\]; 22012 if `m` is zero \[GR9b\].
 pub(super) fn modulo(n: Number, m: Number) -> Result<Value> {
     let (Some(dividend), Some(divisor)) = (integer(n), integer(m)) else {
         return Err(SqlError::new(
             Code::Data,
             "[ISO/IEC 9075-2:2023 §6.31 SR12] an operand of MOD is not a whole exact or decimal floating-point number of at most 38 digits",
-        ));
+        )
+        .with_state(SqlState::DATA_EXCEPTION));
     };
     if divisor == 0 {
         return Err(

@@ -37,6 +37,13 @@ pub fn cast_warned(v: Value, to: &DataType) -> Result<(Value, Option<SqlState>)>
         let (cast, warning) = to.kind().cast_warned(lowered, to)?;
         return Ok((cast, cut.or(warning)));
     }
+    // [EXTENSION] JSON to a character string: its JSON text, as
+    // JSON_SERIALIZE gives it [ISO/IEC 9075-2:2023 §6.37] (`types::json`).
+    if let Value::Json(j) = &v
+        && to.is_character()
+    {
+        return crate::json::serialize_as(&j.item()?, to).map(|text| (text, None));
+    }
     to.kind().cast_warned(v, to)
 }
 

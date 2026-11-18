@@ -140,6 +140,7 @@ fn holds_null(v: &Value) -> bool {
         | Value::Multiset(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_) => false,
     }
 }

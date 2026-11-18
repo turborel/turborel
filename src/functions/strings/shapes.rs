@@ -55,6 +55,7 @@ pub(crate) fn shape(t: &DataType) -> Option<Shape> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_) => return None,
     };
     Some(Shape { kind, form, length, units })

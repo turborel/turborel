@@ -80,6 +80,7 @@ fn uncertain(t: &DataType) -> bool {
         | DataType::Date
         | DataType::Interval(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_) => false,
     }
 }

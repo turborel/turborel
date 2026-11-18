@@ -162,7 +162,7 @@ impl Executor<'_> {
 
     /// GET DIAGNOSTICS `c` of the area here.
     fn get_diagnostics(&self, c: &Contained, frame: &mut Params) -> Result<Completion> {
-        let SqlStatement::GetDiagnostics(get) = &c.statement else { return Ok(Completion::Success) };
+        let SqlStatement::GetDiagnostics(get) = c.statement() else { return Ok(Completion::Success) };
         let st = self.state()?;
         let area = self.area.read(get.stacked)?;
         // [ISO/IEC 9075-2:2023 §23.1 GR2j] a function runs in the
@@ -188,13 +188,13 @@ impl Host for Executor<'_> {
 
     fn run(&mut self, c: &Contained, frame: &mut Params) -> Result<Completion> {
         frame.set_routine(Arc::clone(&c.scope));
-        if let SqlStatement::GetDiagnostics(_) = c.statement {
+        if let SqlStatement::GetDiagnostics(_) = c.statement() {
             return self.get_diagnostics(c, frame);
         }
-        if let SqlStatement::Savepoint(s) = &c.statement {
+        if let SqlStatement::Savepoint(s) = c.statement() {
             return self.savepoint(s).map(|()| Completion::Success);
         }
-        if let SqlStatement::Dynamic(d) = &c.statement {
+        if let SqlStatement::Dynamic(d) = c.statement() {
             // [DESIGN] A describe component procedure runs as a definition
             // is bound too, where no statement runs: its operands, SQL
             // variables, parameters and literals, need no role.

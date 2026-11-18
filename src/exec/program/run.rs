@@ -206,12 +206,12 @@ impl<'p, H: Host> Run<'p, '_, H> {
         // CALL is not atomic: each statement of the procedure is undone
         // alone. Nor is a savepoint's statement, ROLLBACK TO going back
         // past where a mark would be [§17.8 GR3d].
-        if matches!(c.statement, SqlStatement::Call(_) | SqlStatement::Savepoint(_)) {
+        if matches!(c.statement(), SqlStatement::Call(_) | SqlStatement::Savepoint(_)) {
             return self.host.run(c, self.frame);
         }
         // Nor are COMMIT and ROLLBACK, which end the transaction a mark
         // would be of.
-        if matches!(c.statement, SqlStatement::Commit | SqlStatement::Rollback) {
+        if matches!(c.statement(), SqlStatement::Commit | SqlStatement::Rollback) {
             return self.atomic_context().and_then(|()| self.host.run(c, self.frame));
         }
         self.atomic(|run| run.host.run(c, run.frame))

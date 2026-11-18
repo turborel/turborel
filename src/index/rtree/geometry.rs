@@ -58,7 +58,7 @@ pub(super) fn projection(srid: i32) -> Arc<dyn KeyProjection> {
 
 pub(super) fn supports(predicate: &Predicate) -> bool {
     predicate.column == 0
-        && predicate.argument < ARGUMENTS
+        && predicate.argument.is_some_and(|a| a < ARGUMENTS)
         && predicate.function.0.deterministic()
         && predicate.function.0.spatial_operation() == Some(SpatialOperation::Intersects)
 }

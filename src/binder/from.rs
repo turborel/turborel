@@ -273,6 +273,7 @@ pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, fr
         TableReference::Derived(d) => derived(b, d, start).or_at(d.query.at)?,
         TableReference::Joined(j) => return bind_join(b, j, start, from).or_at(j.at),
         TableReference::Unnest(u) => unnest_item(b, u, start, from).or_at(u.at)?,
+        TableReference::Json(j) => super::json::json_table_item(b, j, start, from).or_at(j.at)?,
         TableReference::Recognized(r) => super::pattern::recognized(b, r, start).or_at(r.at)?,
         TableReference::Polymorphic(p) => return super::ptf::ptf_reference(b, p, start, from),
     };

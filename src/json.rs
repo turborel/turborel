@@ -18,40 +18,53 @@
 //! `CommonSyntax` [§10.14], its context item's JSON text, parsed path and
 //! PASSING arguments, and of each operator's clauses, every clause the
 //! value its Syntax Rules make implicit if it is not written. They apply
-//! the rules the operators share, which are public too: processing the
-//! common syntax (`process`) [§9.47], casting a sequence to an SQL type
+//! the rules the operators share: processing the common syntax
+//! (`process`) [§9.47], casting a sequence to an SQL type
 //! (`cast_sequence`) [§9.48], converting one to an item
 //! (`sequence_to_item`) [§9.44] and serializing one to a string type
-//! (`serialize_sequence`) [§9.49].
+//! (`serialize_sequence`) [§9.49]. \[DESIGN\] Of these, and of parsing
+//! and serializing JSON text and the path's syntax tree, only what another
+//! crate needs is public; the rest is the crate's own.
 //!
 //! The `<JSON predicate>` IS JSON [§8.22] is `is_json` and `is_not_json`
 //! (`json/predicate.rs`), and the constructor functions JSON_OBJECT and
 //! JSON_ARRAY [§6.34] and JSON_OBJECTAGG and JSON_ARRAYAGG [§10.11] are
-//! `json_object`, `json_array`, `json_array_by_query` and the accumulators
-//! `JsonObjectAgg` and `JsonArrayAgg` (`json/construct.rs`), of their
-//! inputs already evaluated, returning JSON text.
+//! `json_object`, `json_array`, `json_array_by_query` and the accumulator
+//! `JsonObjectAgg` (`json/construct.rs`), of their inputs already
+//! evaluated, returning JSON text.
 
+pub mod binary;
 mod construct;
 mod item;
+mod parse_fn;
 mod path;
 mod predicate;
 mod query;
+mod scalar;
 mod serialize;
+mod serialize_fn;
+mod table;
 mod text;
 
 pub use construct::{
-    ArrayOptions, Input, JsonArrayAgg, JsonObjectAgg, MAX_ELEMENTS, MAX_MEMBERS, NameAndValue, ObjectOptions, OnNull, json_array,
-    json_array_by_query, json_object,
+    ArrayOptions, Input, JsonObjectAgg, MAX_ELEMENTS, NameAndValue, ObjectOptions, OnNull, json_array, json_array_by_query, json_object,
 };
 pub use item::{Item, Member, Scalar};
-pub use path::{Accessor, Comparison, DatetimeTemplate, Expr, Method, Mode, Operator, Path, Predicate, Sign, Subscript, parse_path};
+pub use parse_fn::{JSON_PARSE, JsonParse};
+pub(crate) use path::{Accessor, Comparison, Expr, Method, Predicate, Subscript};
+pub use path::{Path, parse_path};
 pub use predicate::{JsonType, is_json, is_not_json};
 pub use query::{
     CommonSyntax, ExistsBehavior, IMPLICIT_RETURNING, Passing, QueryBehavior, QueryOptions, Quotes, ValueBehavior, Warned, Wrapper,
-    cast_sequence, is_exception, json_exists, json_query, json_value, process, sequence_to_item, serialize_sequence,
+    json_exists, json_query, json_value, sequence_to_item,
 };
-pub use serialize::{serialize, serialize_as};
-pub use text::{Keys, parse};
+pub(crate) use query::{Taken, cast_sequence, is_exception, json_value_taken, serialize_sequence};
+pub use scalar::{JSON_SCALAR, JsonScalar, scalar_operand};
+pub(crate) use serialize::{serialize, serialize_as};
+pub use serialize_fn::{JSON_SERIALIZE, JsonSerialize};
+pub use table::{Cursor, Formatted, JsonTable, PlanNode, Primitive, Slot, TableColumn, TableErrorBehavior, TableRow};
+pub use text::Keys;
+pub(crate) use text::parse;
 
 use crate::error::{Code, SqlError};
 
@@ -62,7 +75,7 @@ use crate::error::{Code, SqlError};
 /// (D18). The value is no measurement: it is twice the
 /// path language's bound, `json::path::MAX_PATH_NESTING`, 64; no stack has
 /// been measured for an item this deep.
-pub const MAX_NESTING: usize = 128;
+pub(crate) const MAX_NESTING: usize = 128;
 
 /// The error of an SQL/JSON item beyond turborel's limits, `why` (RULES.md
 /// D18).

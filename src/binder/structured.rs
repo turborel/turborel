@@ -123,6 +123,10 @@ impl Binder<'_> {
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
         let (e, t) = self.value_expression(subject, scope)?;
+        // [§6.36] of the JSON type, an item method.
+        if let (DataType::Json, None) = (&t, as_type) {
+            return self.json_step((e, t), super::json::Step::Method(name, args), scope);
+        }
         if let DataType::Extension(_) = &t {
             return self.extension_method((subject, as_type), (name, at), args, scope);
         }
@@ -167,6 +171,10 @@ impl Binder<'_> {
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
         let (e, t) = self.column_expr(subject, scope)?;
+        // [§6.36] of the JSON type, an item method.
+        if let DataType::Json = &t {
+            return self.json_step((e, t), super::json::Step::Method(name, args), scope);
+        }
         let of = if let DataType::Structured(declared) = &t {
             declared.name.clone()
         } else if let DataType::Distinct(d) = &t {
