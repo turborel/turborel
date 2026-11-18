@@ -18,3 +18,13 @@ fn the_property_graph_examples_run_as_printed() {
         assert!(ann.page(page) > 0, "{page} shows its examples' output");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D-GRAPH-ALGO: the chapter of the
+/// graph algorithms runs as printed, as ANN.
+#[test]
+fn the_graph_algorithm_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/16-graph-algorithms.md") > 0, "the chapter shows its examples' output");
+}

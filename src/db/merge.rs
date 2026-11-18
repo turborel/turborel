@@ -71,6 +71,9 @@ impl Session {
         params: &Params,
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
+        if let Some(p) = &stmt.property {
+            return self.property_written(cx, stmt, p, params);
+        }
         let m = self.merge_statement(cx, stmt, params, keeping)?;
         let completion = self.affected(m.changed);
         Ok(if m.read { Completion::Success } else { completion })

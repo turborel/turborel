@@ -400,18 +400,21 @@ fn call_is_read_16_1() {
     assert!(matches!(body, SqlStatement::Call(_)));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.4 CR1, CR5; §9.18 SR9a] a named
-/// argument (Feature T521) and a `<generalized expression>` (S023) are
-/// valid SQL refused with SQLCODE -900; a `<table argument>` and a
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.4 CR1, CR5; §9.18 SR4, SR9a] a
+/// named argument (Feature T521) is read with its parameter's name, and
+/// two of one name are refused with SQLCODE -103; a `<generalized
+/// expression>` (S023) is valid SQL refused with SQLCODE -900; a `<table argument>` and a
 /// `<co-partition clause>`, of a polymorphic table function's invocation
 /// alone, break SR9a in a CALL; a CALL that breaks the Format is a syntax
 /// error.
 #[test]
 fn call_features_are_not_supported_10_4() {
-    for (text, rule) in [("CALL P (A => 1)", "ISO/IEC 9075-2:2023 §10.4 CR5"), ("CALL P (1 AS T)", "ISO/IEC 9075-2:2023 §10.4 CR1")] {
-        let e = statement(text).unwrap_err();
-        assert_eq!((e.code, e.rule.as_deref()), (Code::Unsupported, Some(rule)), "{text}");
-    }
+    let Ok(SqlStatement::Call(named)) = statement("CALL P (B => 2, A => 1)") else { panic!("no CALL") };
+    assert_eq!(named.names, [Some("B".to_owned()), Some("A".to_owned())]);
+    let twice = statement("CALL P (A => 1, A => 2)").unwrap_err();
+    assert_eq!((twice.code, twice.rule.as_deref()), (Code::SyntaxRule, Some("ISO/IEC 9075-2:2023 §9.18 SR4")));
+    let refused = statement("CALL P (1 AS T)").unwrap_err();
+    assert_eq!((refused.code, refused.rule.as_deref()), (Code::Unsupported, Some("ISO/IEC 9075-2:2023 §10.4 CR1")));
     for text in ["CALL P (TABLE (T))", "CALL P (1 COPARTITION (A, B))", "CALL P (DESCRIPTOR (A))"] {
         let e = statement(text).unwrap_err();
         assert_eq!((e.code, e.rule.as_deref()), (Code::SyntaxRule, Some("ISO/IEC 9075-2:2023 §9.18 SR9a")), "{text}");

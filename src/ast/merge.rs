@@ -24,6 +24,48 @@ pub struct MergeStatement {
     /// The `<merge when clause>`s of its `<merge operation
     /// specification>`, in the order written, at least one \[GR6a\].
     pub clauses: Vec<MergeWhen>,
+    /// \[EXTENSION\] Of INTO PROPERTY, which it is written as, what it
+    /// writes.
+    pub property: Option<Box<IntoProperty>>,
+}
+
+/// \[EXTENSION\] `GRAPH_ALGO.<name> ( ... ) INTO PROPERTY <column> OF
+/// <table> [ ( <key column> ) ]` (RULES.md D-GRAPH-ALGO), a graph
+/// algorithm's result written as a property of the vertices of a table
+/// [GS §18]: the MERGE that sets the column of each row whose key is a
+/// result row's vertex to its value, the column added first if the table
+/// has none of its name.
+#[derive(Debug, Clone)]
+pub struct IntoProperty {
+    /// The invocation, as written.
+    pub invocation: String,
+    /// The table, as written.
+    pub table: String,
+    /// The column written.
+    pub column: String,
+    /// The table's key column, if written, else its primary key's.
+    pub key: Option<String>,
+    /// The name of the result's value column.
+    pub value: String,
+    /// The type of the column added, as written; none of a vertex's key's.
+    pub value_type: Option<&'static str>,
+}
+
+impl IntoProperty {
+    /// The text of the MERGE that writes the property, the table's key
+    /// column `key`.
+    pub fn merge(&self, key: &str) -> String {
+        let id = crate::catalog::identifier;
+        format!(
+            "MERGE INTO {} AS GRAPH_ALGO_TARGET USING {} AS GRAPH_ALGO_RESULT ON GRAPH_ALGO_TARGET.{} = GRAPH_ALGO_RESULT.VERTEX \
+             WHEN MATCHED THEN UPDATE SET {} = GRAPH_ALGO_RESULT.{}",
+            self.table,
+            self.invocation,
+            id(key),
+            id(&self.column),
+            id(&self.value)
+        )
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §14.12] `<merge when clause>` ::= `<merge when

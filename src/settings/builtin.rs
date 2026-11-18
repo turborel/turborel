@@ -108,6 +108,9 @@ pub const TRANSACTION_ISOLATION: Key = Key(45);
 /// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
 /// the executor's settings.
 pub const MAX_ITERATIONS: Key = Key(46);
+/// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
+/// the executor's settings.
+pub const GRAPH_THREADS: Key = Key(52);
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -216,7 +219,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(read_ahead());
     all.push(log_durability());
     all.extend(later());
-    all.extend(super::vector::vector());
+    all.extend(super::vector::vector().into_iter().chain([graph_threads()]));
     all
 }
 
@@ -308,6 +311,18 @@ fn system_cache() -> Definition {
 /// most iterations of a recursive query.
 fn later() -> [Definition; 5] {
     [system_cache(), checksum_key(), rekey_rate(), transaction_isolation(), max_iterations()]
+}
+
+/// \[EXTENSION\] The threads a graph algorithm runs on (RULES.md
+/// D-GRAPH-ALGO), at its key's place, after the others, though of the
+/// executor's settings: 1, the statement's own thread alone, so many
+/// sessions do not each take every core unasked.
+fn graph_threads() -> Definition {
+    defined(
+        ("EXECUTOR.GRAPH_THREADS", at_least(1), count(1)),
+        SESSION,
+        "The threads a graph algorithm of GRAPH_ALGO runs on at once, the statement's own among them; its results are the same on any number.",
+    )
 }
 
 /// [ISO/IEC 9075-2:2023 §7.17 GR2] The most iterations a recursive query

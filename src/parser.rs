@@ -42,6 +42,7 @@ mod expression;
 mod filter;
 mod generated;
 mod graph;
+pub(crate) mod graph_algo;
 mod graph_ddl;
 mod grouping;
 mod hypothetical;

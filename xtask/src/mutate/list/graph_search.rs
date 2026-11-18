@@ -8,6 +8,8 @@
 
 use super::{Mutation, Package};
 
+pub(super) mod algorithms;
+
 /// The mutations of path search, in the order they run.
 pub const GRAPH_SEARCH: [Mutation; 12] = [
     Mutation {

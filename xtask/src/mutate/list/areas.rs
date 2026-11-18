@@ -94,7 +94,7 @@ fn second() -> [&'static [Mutation]; 30] {
 /// T621's, the graph syntax's and path search's, then the spatial areas', the adjacency index's,
 /// replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
-    let json: [&'static [Mutation]; 12] = [
+    let json: [&'static [Mutation]; 13] = [
         &super::projection::PROJECTION,
         &super::json::JSON,
         &super::json_path::JSON_PATH,
@@ -107,6 +107,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::t621::T621,
         &super::graph_syntax::GRAPH_SYNTAX,
         &super::graph_search::GRAPH_SEARCH,
+        &super::graph_search::algorithms::GRAPH_ALGO,
     ];
     let last: [&'static [Mutation]; 10] = [
         &super::near::NEAR,

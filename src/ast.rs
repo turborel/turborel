@@ -103,7 +103,7 @@ pub use json_table::{
     JsonTable, JsonTableColumn, JsonTableColumnKind, JsonTableFormatted, JsonTableNamed, JsonTableNested, JsonTablePath, JsonTablePlan,
     JsonTablePlanClause,
 };
-pub use merge::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
+pub use merge::{IntoProperty, MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use modules::ModuleDefinition;
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
 pub use pattern::{

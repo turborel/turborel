@@ -17,6 +17,7 @@ mod describe;
 mod elements;
 pub(in crate::db) mod native;
 mod privileges;
+mod property;
 
 use std::sync::Arc;
 

@@ -68,6 +68,7 @@ pub use hierarchy::{family_in, member_plan};
 mod hypothetical;
 mod invariant;
 mod limit;
+pub(crate) mod named;
 mod natural;
 mod noted;
 mod order_by;

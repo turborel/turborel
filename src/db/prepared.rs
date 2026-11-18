@@ -207,6 +207,9 @@ fn kind_of(tokens: &[Token]) -> Kind {
     if begins_word_statement(first, second) {
         return Kind::Statement;
     }
+    if crate::parser::graph_algo::begins_property_statement(tokens.iter().map(|t| &t.tok)) {
+        return Kind::Statement;
+    }
     match (first, second) {
         // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
         // name too, MODULE's: no other statement begins so, but TRUNCATE

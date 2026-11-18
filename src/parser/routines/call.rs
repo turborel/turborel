@@ -29,11 +29,12 @@ impl Parser {
         self.expect_word(CALL)?;
         let name = self.table_name()?;
         self.expect_delim(delim::LEFT_PAREN)?;
-        let mut arguments = Vec::new();
+        let (mut arguments, mut names) = (Vec::new(), Vec::new());
         if self.accept_delim(delim::RIGHT_PAREN) {
-            return Ok(CallStatement { name, arguments });
+            return Ok(CallStatement { name, arguments, names });
         }
         loop {
+            names.push(self.named_argument(&names)?);
             arguments.push(self.sql_argument()?);
             if !self.accept_delim(delim::COMMA) {
                 break;
@@ -43,7 +44,7 @@ impl Parser {
             return Err(self.rule(SR9A));
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(CallStatement { name, arguments })
+        Ok(CallStatement { name, arguments, names })
     }
 
     /// [ISO/IEC 9075-2:2023 §10.4] `<SQL argument>`, of those implemented:
@@ -51,15 +52,6 @@ impl Parser {
     /// as, DEFAULT or NULL.
     fn sql_argument(&mut self) -> Result<SqlArgument> {
         let at = self.here();
-        let assignment = *self.peek_at(1) == Tok::Delimiter(delim::EQUALS) && *self.peek_at(2) == Tok::Delimiter(delim::GREATER);
-        if matches!(self.peek(), Tok::Identifier(_)) && assignment {
-            let msg = "[ISO/IEC 9075-2:2023 §10.4 CR5] a <named argument specification> in a CALL needs Feature T521, “Named arguments \
-                       in CALL statement”, which turborel does not support";
-            self.refuse_later(not_supported(at, msg));
-            self.advance();
-            self.advance();
-            self.advance();
-        }
         if self.is_kw(kw::TABLE) || self.is_kw(kw::DESCRIPTOR) || (self.is_kw(kw::CAST) && self.next_is_null_descriptor()) {
             return Err(self.rule(SR9A));
         }
