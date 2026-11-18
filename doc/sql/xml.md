@@ -1048,7 +1048,7 @@ standing alone, is refused with SQLSTATE 2200W when it is fetched.
 | Text entities add to one parse | 16 MiB |
 | Text XMLPARSE reads | 64 MiB |
 | A value's stored form | 64 MiB |
-| XMLMAP's text of one table's rows, and of its data or schema document | 64 MiB |
+| XMLMAP's data, of all its tables, and its schema document | 64 MiB |
 | Elements and attributes an XML index keys of one value | 262,144 |
 | Octets of a value an XML index keys | 64; 512 of XML_PRIMARY |
 | Expressions nested in an XQuery query | 64 |

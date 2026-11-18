@@ -5,7 +5,7 @@
 use super::{Mutation, Package};
 
 /// Each mapping mechanism broken alone, and the tests that fail.
-pub const XML_MAP: [Mutation; 17] = [
+pub const XML_MAP: [Mutation; 18] = [
     Mutation {
         name: "xml-map-nulls-nil",
         package: Package::Core,
@@ -33,6 +33,16 @@ pub const XML_MAP: [Mutation; 17] = [
         file: "src/functions/xml/map/rows.rs",
         original: "        if text.len() > MAX_INPUT {",
         replacement: "        if text.len() > MAX_INPUT.saturating_mul(4) {",
+        integration: &[],
+        unit: &["functions::xml::map::tests::texts_past_the_limit"],
+    },
+    Mutation {
+        name: "xml-map-data-limit",
+        package: Package::Core,
+        breaks: "a mapping's data is held past its limit",
+        file: "src/functions/xml/map/data.rs",
+        original: "if self.text.len().saturating_add(text.len()) > shape.limit {",
+        replacement: "if self.text.len().saturating_add(text.len()) > shape.limit.saturating_mul(4) {",
         integration: &[],
         unit: &["functions::xml::map::tests::texts_past_the_limit"],
     },
@@ -71,8 +81,8 @@ pub const XML_MAP: [Mutation; 17] = [
         package: Package::Core,
         breaks: "the root of a mapping's data does not declare the namespace of xsi",
         file: "src/functions/xml/map/data.rs",
-        original: "let _ = write!(out, r#\"<{name} xmlns:xsi=\"{XSI_NAMESPACE}\"\"#);",
-        replacement: "let _ = write!(out, r#\"<{name}\"#);",
+        original: "let mut attributes = format!(r#\" xmlns:xsi=\"{XSI_NAMESPACE}\"\"#);",
+        replacement: "let mut attributes = String::new();",
         integration: &["xml_map::table_as_element_9_10", "xml_map::schemas_9_14"],
         unit: &[],
     },
@@ -111,8 +121,8 @@ pub const XML_MAP: [Mutation; 17] = [
         package: Package::Core,
         breaks: "a schema's mapping reads a table its user may not SELECT",
         file: "src/binder/xml/map.rs",
-        original: "            if !self.selects(&name) {",
-        replacement: "            if false {",
+        original: "self.db.system.contains_key(name) || applicable(&*self.db.catalog, self.who(), name).0.select",
+        replacement: "true",
         integration: &["xml_map::schemas_of_visible_tables_4_10_8"],
         unit: &[],
     },

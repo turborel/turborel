@@ -1,109 +1,185 @@
 //! XD, the XML text of a mapping's data [ISO/IEC 9075-14:2006 draft
-//! §9.11 GR12, §9.14 GR13, §9.17 GR13]: each table's rows [§9.10], in
-//! the element of the table, mapped as an element [§9.10 GR7], of its
-//! schema [§9.13] and of the catalog [§9.16]. Its root is the element
-//! XDROWS, XDSCHEMA or XDCATALOG is, declaring `xmlns:xsi` (see
-//! `map/documents.rs`). The text is at most `MAX_INPUT` octets, the most
-//! XMLPARSE reads; past it, SQLCODE -900.
+//! §9.11 GR12, §9.14 GR13, §9.17 GR13], written as the rows of its tables
+//! come: each table's rows [§9.10], in the element of the table, mapped as
+//! an element [§9.10 GR7], of its schema [§9.13] and of the catalog
+//! [§9.16]. Its root is the element XDROWS, XDSCHEMA or XDCATALOG is,
+//! declaring `xmlns:xsi` (see `map/documents.rs`).
+//!
+//! The text is held as it grows, the whole mapping's, at most `MAX_INPUT`
+//! octets, the most XMLPARSE reads: past it, SQLCODE -900, as soon as a
+//! row takes it there, so no mapping of many tables holds more (RULES.md
+//! D18, D86).
 
 use std::fmt::Write;
 
-use super::super::{Input, input, too_long};
+use super::super::too_long;
 use super::documents::{attribute, xml_name};
-use super::{Source, Table, XmlMap};
+use super::{Choices, Source};
 use crate::error::{Code, Result, SqlError};
-use crate::value::Value;
 use crate::xml::{MAX_INPUT, XSI_NAMESPACE};
 
-/// The text of a table's rows, as the set function of them gives it
-/// (`map/rows.rs`); of the null value, of no rows, none.
-fn rows_text(v: Option<&Value>) -> Result<String> {
-    match input(v.unwrap_or(&Value::Null))? {
-        None => Ok(String::new()),
-        Some(Input::Text(text)) => Ok(text),
-        Some(Input::Octets(_)) => Err(SqlError::new(Code::Api, "[DESIGN] XMLMAP was given a binary string, not a table's rows")),
-    }
+/// An element's start tag and end tag, or two zero-length strings of no
+/// element.
+type Tags = (String, String);
+
+/// Where each table's rows go in a mapping's data: the root's tags; of
+/// each table, in order, the schema it is of among `schemas`, if the data
+/// has an element of each schema, and the tags of its element, if it has
+/// one; the tags of each schema's element; the most octets of its text.
+#[derive(Debug)]
+pub struct DataShape {
+    root: Tags,
+    tables: Vec<(Option<usize>, Tags)>,
+    schemas: Vec<Tags>,
+    limit: usize,
 }
 
-/// `text` appended to `out`, which is then at most `MAX_INPUT` octets.
-///
-/// # Errors
-///
-/// SQLCODE -900 if it is longer.
-fn append(out: &mut String, text: &str) -> Result<()> {
-    if out.len().saturating_add(text.len()) > MAX_INPUT {
-        return Err(too_long());
-    }
-    out.push_str(text);
-    Ok(())
+/// The tags of the element `name`, with `attributes` in its start tag.
+fn tags(name: &str, attributes: &str) -> Tags {
+    (format!("<{name}{attributes}>"), format!("</{name}>"))
 }
 
-impl XmlMap {
-    /// XD's text, of `rows`, the text of each table's rows in order.
-    pub(super) fn data_document(&self, rows: &[Value]) -> Result<String> {
-        let mut rows = rows.iter();
-        let mut out = String::new();
-        match &self.source {
+/// No element's tags.
+fn none() -> Tags {
+    (String::new(), String::new())
+}
+
+impl DataShape {
+    /// The data of `source` mapped by `choices`, of the catalog
+    /// `catalog`: its root declaring `xsi`'s namespace [§9.11 GR12c,
+    /// §9.14 GR13c, §9.17 GR13c], and the target namespace the default
+    /// one; none of a table mapped as a forest [§9.11 GR12c iii]. A table's
+    /// element of a schema's mapping is that §9.10 GR7a makes, with
+    /// TARGETNS the zero-length string [§9.13 GR5b]; as a forest, none.
+    #[must_use]
+    pub fn of(source: &Source, choices: &Choices, catalog: &str) -> DataShape {
+        let mut attributes = format!(r#" xmlns:xsi="{XSI_NAMESPACE}""#);
+        if !choices.target.is_empty() {
+            // Writing to a String cannot fail.
+            let _ = write!(attributes, r#" xmlns="{}""#, attribute(&choices.target));
+        }
+        let element = |name: &str| if choices.forest { none() } else { tags(&xml_name(name), "") };
+        let (root, tables, schemas) = match source {
             Source::Table(t) => {
-                // [§9.11 GR12c iii] Of a forest, XDROWS alone.
-                if self.choices.forest {
-                    append(&mut out, &rows_text(rows.next())?)?;
-                    return Ok(out);
-                }
-                let name = xml_name(&t.name);
-                self.open_root(&mut out, &name);
-                append(&mut out, &rows_text(rows.next())?)?;
-                append(&mut out, &format!("</{name}>"))?;
+                let root = if choices.forest { none() } else { tags(&xml_name(&t.name), &attributes) };
+                (root, vec![(None, none())], Vec::new())
             }
             Source::Schema(s, tables) => {
-                let name = xml_name(s);
-                self.open_root(&mut out, &name);
-                self.tables_text(&mut out, tables, &mut rows)?;
-                append(&mut out, &format!("</{name}>"))?;
+                (tags(&xml_name(s), &attributes), tables.iter().map(|t| (None, element(&t.name))).collect(), Vec::new())
             }
             Source::Catalog(schemas) => {
-                let name = xml_name(&self.catalog);
-                self.open_root(&mut out, &name);
-                for (s, tables) in schemas {
-                    let schema = xml_name(s);
-                    append(&mut out, &format!("<{schema}>"))?;
-                    self.tables_text(&mut out, tables, &mut rows)?;
-                    append(&mut out, &format!("</{schema}>"))?;
-                }
-                append(&mut out, &format!("</{name}>"))?;
+                let tables =
+                    schemas.iter().enumerate().flat_map(|(i, (_, tables))| tables.iter().map(move |t| (Some(i), element(&t.name))));
+                let elements = schemas.iter().map(|(s, _)| tags(&xml_name(s), "")).collect();
+                (tags(&xml_name(catalog), &attributes), tables.collect(), elements)
             }
-        }
-        Ok(out)
+        };
+        DataShape { root, tables, schemas, limit: MAX_INPUT }
     }
 
-    /// The start tag of XD's root, of the element `name` [§9.10 GR7, §9.13
-    /// GR6, §9.16 GR6]: declaring `xsi`'s namespace [§9.11 GR12c, §9.14
-    /// GR13c, §9.17 GR13c], and the target namespace the default one.
-    fn open_root(&self, out: &mut String, name: &str) {
-        // Writing to a String cannot fail.
-        let _ = write!(out, r#"<{name} xmlns:xsi="{XSI_NAMESPACE}""#);
-        if !self.choices.target.is_empty() {
-            let _ = write!(out, r#" xmlns="{}""#, attribute(&self.choices.target));
-        }
-        out.push('>');
+    /// Itself, its text at most `limit` octets, so a test can reach it.
+    #[must_use]
+    pub fn limited(self, limit: usize) -> DataShape {
+        DataShape { limit, ..self }
+    }
+}
+
+/// A mapping's data as it is written: its text, how many tables' elements
+/// are begun, and the schema whose element is open, if any.
+#[derive(Debug, Clone)]
+pub struct DataWriter {
+    text: String,
+    begun: usize,
+    schema: Option<usize>,
+}
+
+impl DataWriter {
+    /// The data of `shape` begun: its root's start tag.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 past `shape`'s limit.
+    pub fn new(shape: &DataShape) -> Result<DataWriter> {
+        let mut writer = DataWriter { text: String::new(), begun: 0, schema: None };
+        writer.append(shape, &shape.root.0)?;
+        Ok(writer)
     }
 
-    /// [§9.13 GR5b] The elements of `tables` of a schema, each its rows'
-    /// text from `rows`, mapped by §9.10 with TARGETNS the zero-length
-    /// string: mapped as an element, in an element of the table's name
-    /// [§9.10 GR7a]; as a forest, alone [GR7c].
-    fn tables_text<'a>(&self, out: &mut String, tables: &[Table], rows: &mut impl Iterator<Item = &'a Value>) -> Result<()> {
-        for t in tables {
-            let text = rows_text(rows.next())?;
-            if self.choices.forest {
-                append(out, &text)?;
-                continue;
-            }
-            let name = xml_name(&t.name);
-            append(out, &format!("<{name}>"))?;
-            append(out, &text)?;
-            append(out, &format!("</{name}>"))?;
+    /// `text` appended, the whole then at most `shape`'s limit.
+    fn append(&mut self, shape: &DataShape, text: &str) -> Result<()> {
+        if self.text.len().saturating_add(text.len()) > shape.limit {
+            return Err(too_long());
         }
+        self.text.push_str(text);
         Ok(())
     }
+
+    /// The next table's element begun, after the one before it is ended,
+    /// in its schema's element.
+    fn begin_next(&mut self, shape: &DataShape) -> Result<()> {
+        self.end_last(shape)?;
+        let (schema, (start, _)) = shape.tables.get(self.begun).ok_or_else(|| broken("a table it does not map"))?;
+        if *schema != self.schema {
+            self.end_schema(shape)?;
+            if let Some((open, _)) = schema.and_then(|s| shape.schemas.get(s)) {
+                self.append(shape, open)?;
+            }
+            self.schema = *schema;
+        }
+        self.append(shape, start)?;
+        self.begun = self.begun.saturating_add(1);
+        Ok(())
+    }
+
+    /// The element of the last table begun ended, if one is.
+    fn end_last(&mut self, shape: &DataShape) -> Result<()> {
+        let Some((_, (_, end))) = self.begun.checked_sub(1).and_then(|last| shape.tables.get(last)) else { return Ok(()) };
+        self.append(shape, end)
+    }
+
+    /// The element of the schema open ended, if one is.
+    fn end_schema(&mut self, shape: &DataShape) -> Result<()> {
+        let Some((_, end)) = self.schema.and_then(|s| shape.schemas.get(s)) else { return Ok(()) };
+        self.append(shape, end)
+    }
+
+    /// [§9.10 GR6] A row's text `row` of the table at `index` among
+    /// `shape`'s, the tables before it begun, and ended, first. Rows come
+    /// in the order of their tables, as the plan reads them one table
+    /// after another.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 past `shape`'s limit; -916 of a row of a table before
+    /// the last begun, which the plan never gives.
+    pub fn row(&mut self, shape: &DataShape, index: usize, row: &str) -> Result<()> {
+        if index.saturating_add(1) < self.begun {
+            return Err(broken("a row of a table after those of the next"));
+        }
+        while self.begun <= index {
+            self.begin_next(shape)?;
+        }
+        self.append(shape, row)
+    }
+
+    /// The whole text: each table not begun begun, the last ended, then
+    /// its schema's element and the root ended.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 past `shape`'s limit.
+    pub fn finish(mut self, shape: &DataShape) -> Result<String> {
+        while self.begun < shape.tables.len() {
+            self.begin_next(shape)?;
+        }
+        self.end_last(shape)?;
+        self.end_schema(shape)?;
+        self.append(shape, &shape.root.1)?;
+        Ok(self.text)
+    }
+}
+
+/// The error of rows not as the plan gives them.
+fn broken(what: &str) -> SqlError {
+    SqlError::new(Code::Corrupt, format!("[DESIGN] XMLMAP was given {what}"))
 }

@@ -3243,13 +3243,17 @@ schema's or the catalog's mapping holds its XML visible tables alone
 [§4.10.8], those whose SELECT the statement's authorization identifier
 holds with a column it can map, so it is never refused for a table it
 cannot read; its tables are not among those a view reads. A mapping
-reads rows in an order not determined, so a constraint holds none. Each
-table's rows are written as text, as §9.10 writes them, by a set
-function over them, so a table of any number of rows is read as its rows
-stream, its text at most `MAX_INPUT`; past it, and past the limits of
-the value it makes, SQLCODE -900. A function of those texts writes the
-XML Schema document [§9.11 GR10] and the data [GR12] and parses each, as
-the draft's XMLPARSE does, PRESERVE WHITESPACE.
+reads rows in an order not determined, so a constraint holds none. A
+function of each row's values writes its text, as §9.10 writes it, and
+the rows of all the tables, each its table's index and its text, are
+read UNION ALL, one table's after another's, by a set function that
+writes the data as they come, each table's in its elements [GR12]. The
+data is held whole as it grows, at most `MAX_INPUT` octets of all the
+tables', so a mapping of any number of rows and tables is read as its
+rows stream; past it, as the row that takes it there comes, and past the
+limits of the value it makes, SQLCODE -900. A function of the data
+writes the XML Schema document [§9.11 GR10] and parses each, as the
+draft's XMLPARSE does, PRESERVE WHITESPACE.
 
 The value is what that parse gives, which XMLSERIALIZE writes as the
 draft's XSR and XDR [§9.11 GR10f, GR12d]. Of METADATA it is the XML

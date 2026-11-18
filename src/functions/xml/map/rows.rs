@@ -1,15 +1,19 @@
-//! The set function that writes a table's rows as XML text [ISO/IEC
-//! 9075-14:2006 draft §9.10 GR6]: of each row, the ROW of its XML visible
-//! columns' values, an element of an element of each value. It holds the
-//! text of the rows given it, at most `MAX_INPUT` octets, so a table of
-//! any number of rows is read as its rows stream, and one whose text is
-//! longer is refused, SQLCODE -900, before memory is (RULES.md D18, D86).
+//! A mapping's rows written as XML text [ISO/IEC 9075-14:2006 draft §9.10
+//! GR6]: a function of each row's XML visible columns' values, the row's
+//! element of an element of each value (`XmlMapRow`); and the set function
+//! of the rows of all the tables a mapping maps, one table's after
+//! another's, each the index of its table and its text, which writes the
+//! mapping's data as they come (`XmlMapRows`, `map/data.rs`). A row's text
+//! and the data are each at most `MAX_INPUT` octets, so a mapping of any
+//! number of rows and tables is read as its rows stream, and one longer is
+//! refused, SQLCODE -900, before memory is (RULES.md D18, D86).
 
 use std::fmt::Write;
 use std::sync::Arc;
 
-use super::super::super::{Accumulator, AggregateFunction, BinaryEncoding, xml_lexical};
-use super::super::too_long;
+use super::super::super::{Accumulator, AggregateFunction, BinaryEncoding, ScalarFunction, xml_lexical};
+use super::super::{Input, input, too_long};
+use super::data::{DataShape, DataWriter};
 use super::documents::{ROW, attribute, xml_name};
 use super::{Choices, Nulls, Table, XMLMAP};
 use crate::error::{Code, Result, SqlError};
@@ -77,17 +81,51 @@ impl RowShape {
 /// declaration.
 const CONTENT: Parameters = Parameters { version: Version::V10, declaration: false, encoding: "UTF-8", undeclare: false };
 
-/// The type of a table's rows' text: a CHARACTER LARGE OBJECT of the
-/// longest text XMLPARSE reads.
+/// The type of a row's text and of a mapping's data: a CHARACTER LARGE
+/// OBJECT of the longest text XMLPARSE reads.
 #[must_use]
 pub fn rows_type() -> DataType {
     DataType::Lob { kind: LobKind::Character, length: u64::try_from(MAX_INPUT).unwrap_or(u64::MAX), units: CharUnits::Characters }
 }
 
-/// \[EXTENSION\] The set function of a table's rows, written as `.0`
-/// says (RULES.md D86).
+/// \[EXTENSION\] The function of a row of a table a mapping maps, of
+/// its XML visible columns' values: the row's text [§9.10 GR6c], written
+/// as `.0` says (RULES.md D86).
 #[derive(Debug)]
-pub struct XmlMapRows(pub Arc<RowShape>);
+pub struct XmlMapRow(pub Arc<RowShape>);
+
+impl ScalarFunction for XmlMapRow {
+    fn name(&self) -> &str {
+        XMLMAP
+    }
+
+    fn return_type(&self, _: &[DataType]) -> Result<DataType> {
+        Ok(rows_type())
+    }
+
+    /// [§9.10 GR6] XMLRi of the row of the values `args`; past
+    /// `MAX_INPUT` octets, SQLCODE -900.
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        let shape = &*self.0;
+        let mut text = String::new();
+        // Writing to a String cannot fail.
+        let _ = write!(text, "<{}{}>", shape.element, shape.attributes);
+        for (value, name) in args.iter().zip(&shape.columns) {
+            shape.column(&mut text, name, value)?;
+            if text.len() > MAX_INPUT {
+                return Err(too_long());
+            }
+        }
+        let _ = write!(text, "</{}>", shape.element);
+        Ok(Value::Lob(Lob::of_text(&text)))
+    }
+}
+
+/// \[EXTENSION\] The set function of the rows of a mapping's tables, each
+/// the ROW of its table's index and its text, which writes the mapping's
+/// data as `.0` says (RULES.md D86).
+#[derive(Debug)]
+pub struct XmlMapRows(pub Arc<DataShape>);
 
 impl AggregateFunction for XmlMapRows {
     fn name(&self) -> &str {
@@ -99,40 +137,39 @@ impl AggregateFunction for XmlMapRows {
     }
 
     fn accumulator(&self, _: DataType) -> Box<dyn Accumulator> {
-        Box::new(Rows { shape: Arc::clone(&self.0), text: String::new() })
+        let shape = Arc::clone(&self.0);
+        let writer = DataWriter::new(&shape);
+        Box::new(Rows { shape, writer })
     }
 }
 
-/// The text of the rows a table's mapping has been given.
+/// The data a mapping has been given rows of, or the error its root was.
 struct Rows {
-    shape: Arc<RowShape>,
-    text: String,
+    shape: Arc<DataShape>,
+    writer: Result<DataWriter>,
 }
 
 impl Accumulator for Rows {
-    /// [§9.10 GR6] XMLRi of the row `v`, the ROW of its XML visible
-    /// columns' values, after those before it; past `MAX_INPUT` octets,
-    /// SQLCODE -900.
+    /// The row `v`, the ROW of its table's index and its text, after those
+    /// before it.
     fn update(&mut self, v: &Value) -> Result<()> {
         let Value::Row(fields) = v else {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] XMLMAP's rows were given {v}, not a row")));
         };
-        let shape = &*self.shape;
-        let text = &mut self.text;
-        // Writing to a String cannot fail.
-        let _ = write!(text, "<{}{}>", shape.element, shape.attributes);
-        for (value, name) in fields.iter().zip(&shape.columns) {
-            shape.column(text, name, value)?;
-        }
-        let _ = write!(text, "</{}>", shape.element);
-        if text.len() > MAX_INPUT {
-            return Err(too_long());
-        }
-        Ok(())
+        let (Some(Value::Exact(index)), Some(text)) = (fields.first(), fields.get(1)) else {
+            return Err(SqlError::new(Code::Api, "[DESIGN] XMLMAP's rows were given a row of no table and text"));
+        };
+        let index = usize::try_from(index.units).map_err(|_| SqlError::new(Code::Api, "[DESIGN] XMLMAP was given no table's index"))?;
+        let Some(Input::Text(row)) = input(text)? else {
+            return Err(SqlError::new(Code::Api, "[DESIGN] XMLMAP was given a row of no text"));
+        };
+        let writer = self.writer.as_mut().map_err(|e| e.clone())?;
+        writer.row(&self.shape, index, &row)
     }
 
-    /// The text of the rows, of none the zero-length string.
+    /// The data's text, each table not given a row of an element of none.
     fn finish(&self) -> Result<Value> {
-        Ok(Value::Lob(Lob::of_text(&self.text)))
+        let writer = self.writer.as_ref().map_err(Clone::clone)?.clone();
+        Ok(Value::Lob(Lob::of_text(&writer.finish(&self.shape)?)))
     }
 }

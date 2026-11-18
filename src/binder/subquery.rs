@@ -22,7 +22,7 @@ use crate::ast::{
 };
 use crate::error::{At, Result, SqlState};
 use crate::functions::{AggregateFunction, AggregateRef, ArrayAggregate, Gathering, MultisetAggregate, RowOf, ScalarRef};
-use crate::logical::{AggCall, Expr, LogicalPlan, SortKey, Subquery, render_expr};
+use crate::logical::{AggCall, Expr, LogicalPlan, SetOp, SortKey, Subquery, render_expr};
 use crate::value::types::{Field, MAX_ARRAY_CARDINALITY};
 use crate::value::{DataType, Decimal};
 
@@ -520,25 +520,57 @@ impl Binder<'_> {
 /// columns: the function, its argument, its label, and its result's type.
 pub(super) type RowsAggregate = (AggregateRef, Expr, String, DataType);
 
+/// Of the `n`th of a union's queries, of its columns, the expressions it
+/// is projected by, if it is kept.
+pub(super) type MakeBranch<'m> = dyn FnMut(usize, &[OutColumn]) -> Result<Option<Vec<Expr>>> + 'm;
+
 impl Binder<'_> {
-    /// \[EXTENSION\] The rows of `query`, bound as a subquery of this
-    /// query in `scope`, aggregated by the set function `aggregate` makes
-    /// of their columns: a subquery of one row and one column, its outer
-    /// references made as it is bound (XMLMAP, RULES.md D86); and the
-    /// columns.
-    pub(super) fn aggregated_rows(
+    /// \[EXTENSION\] The rows of `queries`, each bound as a subquery of
+    /// this query in `scope`, and kept, projected by the expressions `make`
+    /// gives of its columns, if it gives any; then the rows of all those
+    /// kept, one query's after another's, UNION ALL, aggregated by the set
+    /// function `aggregate` makes: a subquery of one row and one column,
+    /// its outer references made as they are bound (XMLMAP, RULES.md D86);
+    /// none if no query is kept.
+    pub(super) fn aggregated_union(
         &self,
-        query: &ast::Subquery,
+        queries: &[ast::Subquery],
         scope: Scope<'_>,
-        aggregate: &mut dyn FnMut(&[OutColumn]) -> Result<RowsAggregate>,
-    ) -> Result<(Expr, Vec<OutColumn>)> {
+        make: &mut MakeBranch<'_>,
+        aggregate: &mut dyn FnMut() -> Result<RowsAggregate>,
+    ) -> Result<Option<Expr>> {
         let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
         let nesting = Nesting::Subquery { outer: &outer, result: None };
-        let bound = bind_query_expression(self.context(), &query.query, &nesting).or_at(query.at)?;
-        let (func, arg, label, result) = aggregate(&bound.columns)?;
-        let (e, _) = aggregated((func, arg, label), result, bound.plan, outer);
-        Ok((e, bound.columns))
+        let mut kept = Vec::new();
+        for (i, query) in queries.iter().enumerate() {
+            let bound = bind_query_expression(self.context(), &query.query, &nesting).or_at(query.at)?;
+            if let Some(exprs) = make(i, &bound.columns)? {
+                kept.push(LogicalPlan::Project { exprs, input: Box::new(bound.plan) });
+            }
+        }
+        let Some(input) = appended(kept) else { return Ok(None) };
+        let (func, arg, label, result) = aggregate()?;
+        Ok(Some(aggregated((func, arg, label), result, input, outer).0))
     }
+}
+
+/// `plans`, in order, UNION ALL, of their rows one plan's after
+/// another's: paired as a balanced tree, so the plan of many is not deep.
+fn appended(mut plans: Vec<LogicalPlan>) -> Option<LogicalPlan> {
+    while plans.len() > 1 {
+        let mut pairs = Vec::with_capacity(plans.len().div_ceil(2));
+        let mut each = plans.into_iter();
+        while let Some(left) = each.next() {
+            pairs.push(match each.next() {
+                Some(right) => {
+                    LogicalPlan::SetOp { op: SetOp::Union, all: true, compared: None, left: Box::new(left), right: Box::new(right) }
+                }
+                None => left,
+            });
+        }
+        plans = pairs;
+    }
+    plans.pop()
 }
 
 /// The subquery of one row and one column, the aggregate `func` of `arg`,

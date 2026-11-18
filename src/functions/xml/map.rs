@@ -3,9 +3,10 @@
 //! to the XML Schema data type an XML Schema document defines of it
 //! (`map/types.rs`, `map/durations.rs`); and \[EXTENSION\] XMLMAP's
 //! functions (RULES.md D86), a table, a schema or the catalog mapped to an
-//! XML Schema document and to XML [§9.11, §9.14, §9.17], each table's rows
-//! written by a set function (`map/rows.rs`), the documents by a function
-//! of their text (`map/documents.rs`, `map/data.rs`), parsed as the
+//! XML Schema document and to XML [§9.11, §9.14, §9.17]: each row written
+//! by a function of its values, the data of all the rows by a set
+//! function (`map/rows.rs`, `map/data.rs`), and the XML Schema document by
+//! the function of the data (`map/documents.rs`), each parsed as the
 //! draft's XMLPARSE parses them.
 
 mod data;
@@ -14,14 +15,16 @@ mod durations;
 mod rows;
 mod types;
 
-pub use rows::{RowShape, XmlMapRows, rows_type};
+pub use data::{DataShape, DataWriter};
+pub use rows::{RowShape, XmlMapRow, XmlMapRows, rows_type};
 pub use types::{Declared, XDT_NAMESPACE, XDT_PREFIX, declared_name, definitions, mappable, named_type, type_name};
 
 use super::super::{BinaryEncoding, ScalarFunction};
-use crate::error::Result;
+use super::{Input, input, too_long};
+use crate::error::{Code, Result, SqlError};
 use crate::value::xml::{Typing, XmlType, XmlValue};
 use crate::value::{DataType, Value};
-use crate::xml::{Item, Node, Sequence, Syntax, Whitespace, parse};
+use crate::xml::{Item, MAX_INPUT, Node, Sequence, Syntax, Whitespace, parse};
 
 /// \[EXTENSION\] XMLMAP's name, of its function and of the set function
 /// of its tables' rows.
@@ -98,9 +101,9 @@ pub enum Source {
     Catalog(Vec<(String, Vec<Table>)>),
 }
 
-/// \[EXTENSION\] XMLMAP's function (RULES.md D86): of the text of each
-/// table's rows, in the order its source gives them, if DATA, else of
-/// nothing, the mapping's XML Schema document, its data, or both.
+/// \[EXTENSION\] XMLMAP's function (RULES.md D86): of the data the set
+/// function of its tables' rows wrote, if DATA and a table is read, else
+/// of nothing, the mapping's XML Schema document, its data, or both.
 #[derive(Debug)]
 pub struct XmlMap {
     /// The `<catalog name>` of the catalog [§9.11 GR1].
@@ -159,19 +162,31 @@ impl ScalarFunction for XmlMap {
     }
 
     /// [§9.11 GR10 to GR13, §9.14 GR11 to GR14, §9.17 GR11 to GR14] XS
-    /// parsed as a document, if METADATA; then XD, of the text of each
-    /// table's rows `args`, parsed as a document, or as content of a table
-    /// mapped as a forest, if DATA: each declared of XML 1.1 if a name XS
-    /// writes is \[GR7a\], else \[GR7b\] implementation-defined, of XML 1.0.
+    /// parsed as a document, if METADATA; then XD, the text the set
+    /// function of its rows wrote `args`, or, of no table read, that of no
+    /// row, parsed as a document, or as content of a table mapped as a
+    /// forest, if DATA: each declared of XML 1.1 if a name XS writes is
+    /// \[GR7a\], else \[GR7b\] implementation-defined, of XML 1.0. Past
+    /// `MAX_INPUT` octets, SQLCODE -900.
     fn call(&self, args: &[Value]) -> Result<Value> {
         let schema = self.schema_document();
+        if schema.out.len() > MAX_INPUT {
+            return Err(too_long());
+        }
         let declaration = if schema.v11 { DECLARATION_11 } else { "" };
         let mut items = Vec::with_capacity(2);
         if self.choices.metadata {
             items.push(parsed(&format!("{declaration}{}", schema.out), Syntax::Document)?);
         }
         if self.choices.data {
-            let data = self.data_document(args)?;
+            let data = match args.first().map(input).transpose()?.flatten() {
+                Some(Input::Text(text)) => text,
+                Some(Input::Octets(_)) => return Err(SqlError::new(Code::Api, "[DESIGN] XMLMAP was given a binary string, not its data")),
+                None => {
+                    let shape = DataShape::of(&self.source, &self.choices, &self.catalog);
+                    DataWriter::new(&shape)?.finish(&shape)?
+                }
+            };
             items.push(if self.content() {
                 let text_declaration = if schema.v11 { TEXT_DECLARATION_11 } else { "" };
                 parsed(&format!("{text_declaration}{data}"), Syntax::Content)?
