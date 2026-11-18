@@ -4050,10 +4050,14 @@ it cannot be decided; a type of a schema expands to its content model's
 particles and attribute uses, with the types derived from it. A value
 passed is of its formal type [ISO/IEC 9075-14:2006 draft §10.21]. The
 built-in functions' signatures are a table of \[XQueryFO\]'s, as the
-functions declare `item()*` to the evaluation. Two static typing
+functions declare `item()*` to the evaluation. Three static typing
 extensions make types more precise: quantifiers count the least and
-most items, and the root of documents is their type. The typing recurses
-as the plan nests, counting each expression, SQLCODE -900 past
+most items; the root of documents is their type; and a wildcard's name
+is narrowed to the names its namespace constraint allows, an attribute
+wildcard's past the attribute uses beside it (`statics/names.rs`),
+where \[XQueryFS\] Appendix C.11 maps every wildcard to `*`. The
+typing recurses as the plan nests, counting each expression, SQLCODE
+-900 past
 `xquery::MAX_DEPTH`, and each walk of a type is bounded by
 `MAX_TYPE_DEPTH`, 256, and an axis's closure by `MAX_CLOSURE`, 4,096
 item types. The deepest query of each shape is analysed, and typed,

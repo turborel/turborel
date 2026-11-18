@@ -107,9 +107,7 @@ CONFORMANCE.md one by one as they are done.
 
 ### XML
 
-Static typing (`src/xquery/statics.rs`) is done; left of it: the
-namespace constraints of wildcards but one namespace, and the names
-declared beside an attribute wildcard, which it types as any name.
+Nothing is open.
 
 ### Full text
 

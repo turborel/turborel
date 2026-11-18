@@ -38,6 +38,7 @@ mod constructors;
 mod expand;
 mod expr;
 mod functions;
+mod names;
 mod operators;
 mod sequence;
 mod signatures;
@@ -290,7 +291,11 @@ fn elements(typed: &Typed) -> Type {
         Typed::Schema(schema, namespace, element) => {
             let name = namespace.as_ref().map(|ns| match element {
                 Some(e) => Name::new(Some(ns).filter(|n| !n.is_empty()).map(String::as_str), e),
-                None => Name { namespace: super::plan::Namespace::of((!ns.is_empty()).then(|| ns.as_str().into())), local: None },
+                None => Name {
+                    namespace: super::plan::Namespace::of((!ns.is_empty()).then(|| ns.as_str().into())),
+                    local: None,
+                    narrowed: None,
+                },
             });
             return expand::declared_elements(schema, name.as_ref());
         }

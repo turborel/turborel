@@ -12,8 +12,8 @@
 //! each of its alternatives is. A comparison of any other shape is false,
 //! so the analysis rejects, never admits, what it cannot decide.
 
-use super::super::plan::Namespace;
-use super::types::{Atom, Item, Name, Occ, Type, deeper, prime, quantifier};
+use super::names::name_within;
+use super::types::{Atom, Item, Occ, Type, deeper, prime, quantifier};
 use crate::error::Result;
 use crate::xml::{AtomicType, Primitive};
 
@@ -262,14 +262,6 @@ pub fn atom_sub(a: Atom, b: Atom) -> bool {
         (Atom::Of(t), Atom::Of(u)) => t.derives_from(u),
         (Atom::Any | Atom::Numeric, Atom::Of(_)) | (Atom::Any, Atom::Numeric) => false,
     }
-}
-
-/// Whether every name `a` matches `b` matches.
-#[must_use]
-pub fn name_within(a: &Name, b: &Name) -> bool {
-    let namespace = b.namespace == Namespace::Any || a.namespace == b.namespace;
-    let local = b.local.is_none() || (a.local.is_some() && a.local == b.local);
-    namespace && local
 }
 
 /// [XQueryFS §8.5.1] `a` can be promoted to `b`: as many items as `b`

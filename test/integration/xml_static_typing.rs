@@ -227,15 +227,19 @@ fn schema_types_are_read_10_21() {
 }
 
 /// A schema document of target namespace `urn:r`: an element `doc` of a
-/// list, a union, mixed elements, an empty element and a wildcard, and of
-/// a required integer attribute and an optional string one.
-const RICH: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:r="urn:r" targetNamespace="urn:r" elementFormDefault="qualified"><xs:simpleType name="sizes"><xs:list itemType="xs:int"/></xs:simpleType><xs:simpleType name="either"><xs:union memberTypes="xs:int xs:date"/></xs:simpleType><xs:element name="doc"><xs:complexType><xs:sequence><xs:element name="s" type="r:sizes"/><xs:element name="e" type="r:either" minOccurs="0"/><xs:element name="m" minOccurs="0" maxOccurs="unbounded"><xs:complexType mixed="true"><xs:sequence><xs:element name="b" type="xs:string"/></xs:sequence></xs:complexType></xs:element><xs:element name="z"><xs:complexType/></xs:element><xs:any namespace="urn:x" processContents="lax" minOccurs="0"/></xs:sequence><xs:attribute name="code" type="xs:int" use="required"/><xs:attribute name="note" type="xs:string"/></xs:complexType></xs:element></xs:schema>"#;
+/// list, a union, mixed elements, an empty element and a wildcard of other
+/// namespaces, and of a required integer attribute, an optional string
+/// one and a wildcard of no namespace and `urn:x`.
+const RICH: &str = r###"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:r="urn:r" targetNamespace="urn:r" elementFormDefault="qualified"><xs:simpleType name="sizes"><xs:list itemType="xs:int"/></xs:simpleType><xs:simpleType name="either"><xs:union memberTypes="xs:int xs:date"/></xs:simpleType><xs:element name="doc"><xs:complexType><xs:sequence><xs:element name="s" type="r:sizes"/><xs:element name="e" type="r:either" minOccurs="0"/><xs:element name="m" minOccurs="0" maxOccurs="unbounded"><xs:complexType mixed="true"><xs:sequence><xs:element name="b" type="xs:string"/></xs:sequence></xs:complexType></xs:element><xs:element name="z"><xs:complexType/></xs:element><xs:any namespace="##other" processContents="lax" minOccurs="0"/></xs:sequence><xs:attribute name="code" type="xs:int" use="required"/><xs:attribute name="note" type="xs:string"/><xs:anyAttribute namespace="##local urn:x" processContents="skip"/></xs:complexType></xs:element></xs:schema>"###;
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.21 SR5c] [XQueryFS §8.1.4,
-/// §8.1.6 to §8.1.9, §7.2.6, Appendix C.1.4] a schema's attributes, of a
-/// required use one and of another optional, its wildcards and xsi's
-/// attributes; lists' typed values their items', unions' their members',
-/// mixed content's untyped, and empty content's empty.
+/// §8.1.6 to §8.1.9, §7.2.6, Appendix C.1.4] [Schema1 §3.10.4, §3.4.4]
+/// [EXTENSION] a schema's attributes, of a required use one and of another
+/// optional, its wildcards and xsi's attributes; lists' typed values
+/// their items', unions' their members', mixed content's untyped, and
+/// empty content's empty; a wildcard admits the names of the namespaces
+/// its constraint allows alone, and an attribute wildcard not those of the
+/// attribute uses beside it.
 #[test]
 fn schema_content_is_read_10_21() {
     let db = database();
@@ -255,12 +259,22 @@ fn schema_content_is_read_10_21() {
         "./r:doc/r:m/r:b/string()",
         "./r:doc/@xsi:type",
         "./r:doc/*:other",
+        "declare namespace q = \"urn:q\"; ./r:doc/q:w",
         "count(./r:doc/@*)",
+        "./r:doc/@plain",
+        "declare namespace x = \"urn:x\"; ./r:doc/@x:a",
         "./r:doc/r:e instance of xs:int?",
     ] {
         assert_eq!(fetched(&a, &query(q)).unwrap(), 0, "{q}");
     }
-    for (q, code) in [("./r:doc/@note + 1", "XPTY0004"), ("./r:doc/r:e + 1", "XPTY0004"), ("data(./r:doc/r:z)", "XPST0005")] {
+    for (q, code) in [
+        ("./r:doc/@note + 1", "XPTY0004"),
+        ("./r:doc/r:e + 1", "XPTY0004"),
+        ("data(./r:doc/r:z)", "XPST0005"),
+        ("./r:doc/r:other", "XPST0005"),
+        ("./r:doc/plain", "XPST0005"),
+        ("declare namespace q = \"urn:q\"; ./r:doc/@q:a", "XPST0005"),
+    ] {
         assert!(is_xquery(&failure(&a, &query(q)), code), "{q}");
     }
 }

@@ -2,13 +2,13 @@
 //! empty type, the effective boolean value, subtyping's occurrences, the
 //! quantifier of the empty type, name tests, typed values of element-only
 //! content, the context item, the option and the setting that put it in
-//! effect, the typing a definition keeps, and values known not null
-//! (RULES.md R-TEST-9, D106).
+//! effect, the typing a definition keeps, values known not null, and the
+//! names of wildcards (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each static typing mechanism broken alone, and the tests that fail.
-pub const XQUERY_STATICS: [Mutation; 15] = [
+pub const XQUERY_STATICS: [Mutation; 19] = [
     Mutation {
         name: "statics-operand-cardinality",
         package: Package::Core,
@@ -158,5 +158,45 @@ pub const XQUERY_STATICS: [Mutation; 15] = [
         replacement: "        let suffix = Occurrence::Optional;",
         integration: &["xml_static_typing::known_not_null_values_are_passed_as_one_10_21"],
         unit: &[],
+    },
+    Mutation {
+        name: "statics-wildcard-not",
+        package: Package::Core,
+        breaks: "a wildcard of not a namespace admits names of it and of none",
+        file: "src/xquery/statics/expand.rs",
+        original: "        NamespaceConstraint::Not(ns) => Namespaces::NotAmong(vec![Namespace::of(ns.clone()), Namespace::Absent]),",
+        replacement: "        NamespaceConstraint::Not(_) => Namespaces::NotAmong(Vec::new()),",
+        integration: &["xml_static_typing::schema_content_is_read_10_21"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-attribute-wildcard-declared",
+        package: Package::Core,
+        breaks: "an attribute wildcard admits the names of the attribute uses beside it",
+        file: "src/xquery/statics/expand.rs",
+        original: "    if let Some(name) = ct.wildcard.as_ref().and_then(|w| wildcard_name(w, except)) {",
+        replacement: "    if let Some(name) = ct.wildcard.as_ref().and_then(|w| wildcard_name(w, { drop::<Vec<(Namespace, Box<str>)>>(except); Vec::new() })) {",
+        integration: &["xml_static_typing::schema_content_is_read_10_21"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-name-except",
+        package: Package::Core,
+        breaks: "a name is within one that does not match it",
+        file: "src/xquery/statics/names.rs",
+        original: "    local && subset(&namespaces(a), &namespaces(b)) && except(b).iter().all(|(ns, l)| !matches(a, (ns, l)))",
+        replacement: "    local && subset(&namespaces(a), &namespaces(b))",
+        integration: &[],
+        unit: &["xquery::statics::names::tests::attribute_wildcards_match_no_declared_name"],
+    },
+    Mutation {
+        name: "statics-namespace-subset",
+        package: Package::Core,
+        breaks: "all but some namespaces are within some",
+        file: "src/xquery/statics/names.rs",
+        original: "        (Namespaces::NotAmong(_), Namespaces::Among(_)) => false,",
+        replacement: "        (Namespaces::NotAmong(_), Namespaces::Among(_)) => true,",
+        integration: &[],
+        unit: &["xquery::statics::names::tests::wildcard_names_admit_their_namespaces_alone"],
     },
 ];

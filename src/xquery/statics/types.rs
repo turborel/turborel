@@ -11,6 +11,7 @@ use std::fmt;
 
 use super::super::plan::Namespace;
 use super::super::types::SchemaType;
+use super::names::{Narrowed, except_written, namespaces_written};
 use crate::error::Result;
 use crate::xml::AtomicType;
 
@@ -101,16 +102,25 @@ pub struct Name {
     pub namespace: Namespace,
     /// Its local name, none of `*` and `Prefix:*`.
     pub local: Option<Box<str>>,
+    /// \[EXTENSION\] What narrows it past these, of a schema's wildcard
+    /// (`names.rs`).
+    pub narrowed: Option<Box<Narrowed>>,
 }
 
 impl Name {
     /// `*`.
-    pub const ANY: Name = Name { namespace: Namespace::Any, local: None };
+    pub const ANY: Name = Name { namespace: Namespace::Any, local: None, narrowed: None };
 
     /// The name `local` in the namespace `uri`, none for none.
     #[must_use]
     pub fn new(uri: Option<&str>, local: &str) -> Name {
-        Name { namespace: Namespace::of(uri.map(Into::into)), local: Some(local.into()) }
+        Name { namespace: Namespace::of(uri.map(Into::into)), local: Some(local.into()), narrowed: None }
+    }
+
+    /// The name a name test of `namespace` and `local` matches.
+    #[must_use]
+    pub fn tested(namespace: &Namespace, local: Option<&str>) -> Name {
+        Name { namespace: namespace.clone(), local: local.map(Into::into), narrowed: None }
     }
 }
 
@@ -341,15 +351,19 @@ impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.namespace {
             // `*:NCName`, and `*` alone of no local name.
-            Namespace::Any => {
-                if self.local.is_some() {
-                    f.write_str("*:")?;
+            Namespace::Any => match self.narrowed.as_ref().and_then(|n| n.namespaces.as_ref()) {
+                Some(set) => f.write_str(&namespaces_written(set))?,
+                None => {
+                    if self.local.is_some() {
+                        f.write_str("*:")?;
+                    }
                 }
-            }
+            },
             Namespace::Absent => {}
             Namespace::Uri(uri) => write!(f, "{{{uri}}}")?,
         }
-        f.write_str(self.local.as_deref().unwrap_or("*"))
+        f.write_str(self.local.as_deref().unwrap_or("*"))?;
+        f.write_str(&except_written(self))
     }
 }
 

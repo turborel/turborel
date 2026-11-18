@@ -10,10 +10,11 @@
 //! closures of the child and parent axes, each item type met once
 //! [XQueryFS §8.2.2.1.7, §8.2.2.1.9].
 
-use super::super::plan::{Axis, Namespace, StepTest};
+use super::super::plan::{Axis, StepTest};
 use super::super::types::NodeKind;
 use super::beyond;
 use super::expand::expand;
+use super::names::names_both;
 use super::sequence::{any_document, any_element, node_type};
 use super::subtype::{item_sub, map_items};
 use super::types::{Item, Name, Node, Occ, Type, prime};
@@ -130,7 +131,7 @@ fn closure(t: &Type, by: Basic, and_self: bool) -> Result<Type> {
 /// principal node kind attribute if `attribute`, else element.
 fn node_test(item: &Item, test: &StepTest, attribute: bool) -> Result<Type> {
     match test {
-        StepTest::Name(namespace, local) => Ok(name_test(item, &Name { namespace: namespace.clone(), local: local.clone() }, attribute)),
+        StepTest::Name(namespace, local) => Ok(name_test(item, &Name::tested(namespace, local.as_deref()), attribute)),
         // [XQueryFS §8.2.3.1.2] node() admits each node type as it is.
         StepTest::Kind(NodeKind::Any) => Ok(Type::Item(item.clone())),
         StepTest::Kind(kind) => kind_test(item, &node_type(kind)),
@@ -150,30 +151,6 @@ fn name_test(item: &Item, test: &Name, attribute: bool) -> Type {
     let Some(name) = names_both(&node.name, test) else { return Type::Empty };
     let kept = Node { name, ..(**node).clone() };
     Type::Item(if attribute { Item::Attribute(Box::new(kept)) } else { Item::Element(Box::new(kept)) })
-}
-
-/// The names both `a` and `b` match, the most specific name of them, if
-/// any.
-fn names_both(a: &Name, b: &Name) -> Option<Name> {
-    let namespace = match (&a.namespace, &b.namespace) {
-        (Namespace::Any, other) | (other, Namespace::Any) => other.clone(),
-        (x, y) => {
-            if x != y {
-                return None;
-            }
-            x.clone()
-        }
-    };
-    let local = match (&a.local, &b.local) {
-        (None, other) | (other, None) => other.clone(),
-        (Some(x), Some(y)) => {
-            if x != y {
-                return None;
-            }
-            Some(x.clone())
-        }
-    };
-    Some(Name { namespace, local })
 }
 
 /// [XQueryFS §8.2.3.1.2] A kind test of item type `item`, the test
@@ -247,7 +224,7 @@ pub fn step_text(axis: Axis, test: &StepTest) -> String {
         Axis::AncestorOrSelf => "ancestor-or-self",
     };
     match test {
-        StepTest::Name(namespace, local) => format!("{name}::{}", Name { namespace: namespace.clone(), local: local.clone() }),
+        StepTest::Name(namespace, local) => format!("{name}::{}", Name::tested(namespace, local.as_deref())),
         StepTest::Kind(_) => format!("{name}::kind-test()"),
     }
 }

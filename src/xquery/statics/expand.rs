@@ -22,7 +22,9 @@
 use std::sync::Arc;
 
 use super::super::analyze::{heads, schema_type};
+use super::super::plan::Namespace;
 use super::super::types::SchemaType;
+use super::names::{Namespaces, name_within, narrowed};
 use super::sequence::{any_content, any_element, untyped_atomic};
 use super::types::{Atom, Item, Name, Node, Occ, Type, deeper};
 use crate::error::Result;
@@ -209,8 +211,14 @@ fn complex(schema: &Arc<Schema>, id: ComplexId) -> Result<Expanded> {
         let occ = if using.required { Occ::One } else { Occ::Optional };
         attributes.push(Type::occur(Type::Item(Item::Attribute(Box::new(node))), occ));
     }
-    if let Some(w) = &ct.wildcard {
-        let node = Node { name: wildcard_name(w), nillable: false, of: SchemaType::AnySimpleType };
+    // [Schema1 §3.4.4 Element Locally Valid (Complex Type) 3] An
+    // attribute of an attribute use's name, or one of xsi's four, is not
+    // the wildcard's.
+    let declared = ct.attribute_uses.iter().filter_map(|u| schema.attribute(u.decl)).map(|d| (d.name.uri.clone(), d.name.local.clone()));
+    let xsi = BUILT_IN_ATTRIBUTES.iter().map(|(local, _)| (Some(XSI_NAMESPACE.into()), (*local).into()));
+    let except = declared.chain(xsi).map(|(uri, local)| (Namespace::of(uri), local)).collect();
+    if let Some(name) = ct.wildcard.as_ref().and_then(|w| wildcard_name(w, except)) {
+        let node = Node { name, nillable: false, of: SchemaType::AnySimpleType };
         attributes.push(Type::occur(Type::Item(Item::Attribute(Box::new(node))), Occ::Star));
     }
     let others = Type::of_prime(vec![Item::Comment, Item::Pi], Occ::Star);
@@ -238,15 +246,17 @@ fn built_in_attributes() -> Vec<Type> {
         .collect()
 }
 
-/// The names a wildcard admits: of one namespace, its; else any.
-fn wildcard_name(w: &Wildcard) -> Name {
-    match &w.constraint {
-        NamespaceConstraint::Set(set) => match set.as_slice() {
-            [one] => Name { namespace: super::super::plan::Namespace::of(one.clone()), local: None },
-            _ => Name::ANY,
-        },
-        NamespaceConstraint::Any | NamespaceConstraint::Not(_) => Name::ANY,
-    }
+/// \[EXTENSION\] RULES.md D106: the names wildcard `w` admits but
+/// `except`, of the namespaces its {namespace constraint} allows [Schema1
+/// §3.10.4 Wildcard allows Namespace Name]: of not, neither its namespace
+/// nor none [2.2, 2.3]; none if it admits none.
+fn wildcard_name(w: &Wildcard, except: Vec<(Namespace, Box<str>)>) -> Option<Name> {
+    let namespaces = match &w.constraint {
+        NamespaceConstraint::Any => Namespaces::NotAmong(Vec::new()),
+        NamespaceConstraint::Not(ns) => Namespaces::NotAmong(vec![Namespace::of(ns.clone()), Namespace::Absent]),
+        NamespaceConstraint::Set(set) => Namespaces::Among(set.iter().cloned().map(Namespace::of).collect()),
+    };
+    narrowed(namespaces, None, except)
 }
 
 /// [XQueryFS Appendix C.1.4.2] Particle `p` of `schema` as a type: its
@@ -262,13 +272,12 @@ fn particle(schema: &Arc<Schema>, p: &Particle, depth: usize) -> Result<Type> {
     };
     let term = match &p.term {
         Term::Element(id) => element_particle(schema, *id),
-        Term::Wildcard(w) => {
-            let mut e = any_element();
-            if let Item::Element(node) = &mut e {
-                node.name = wildcard_name(w);
-            }
-            Type::Item(e)
-        }
+        Term::Wildcard(w) => match (any_element(), wildcard_name(w, Vec::new())) {
+            (Item::Element(node), Some(name)) => Type::Item(Item::Element(Box::new(Node { name, ..*node }))),
+            // Of none, its particle is satisfied by no occurrence alone.
+            (_, None) => return Ok(if p.min == 0 { Type::Empty } else { Type::None }),
+            (other, Some(_)) => Type::Item(other),
+        },
         Term::Group(id) => match schema.group(*id) {
             Some(g) => {
                 let parts = g.particles.iter().map(|inner| particle(schema, inner, next)).collect::<Result<Vec<_>>>()?;
@@ -312,9 +321,6 @@ fn element_particle(schema: &Arc<Schema>, id: crate::xml::schema::ElementId) -> 
 /// make of an element [XQueryFS §8.6.1].
 #[must_use]
 pub fn declared_elements(schema: &Arc<Schema>, name: Option<&Name>) -> Type {
-    let found = schema
-        .element_names
-        .iter()
-        .filter(|(n, _)| name.is_none_or(|w| super::subtype::name_within(&Name::new(n.uri.as_deref(), &n.local), w)));
+    let found = schema.element_names.iter().filter(|(n, _)| name.is_none_or(|w| name_within(&Name::new(n.uri.as_deref(), &n.local), w)));
     Type::choice(found.map(|(_, &id)| element_particle(schema, id)).collect())
 }
