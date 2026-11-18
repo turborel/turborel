@@ -10,7 +10,7 @@ DROP EMBEDDING MODEL: drop an embedding model
 
 ```
 <drop embedding model statement> ::=
-    DROP EMBEDDING MODEL <model name> [ CASCADE | RESTRICT ]
+    DROP { EMBEDDING | EXTERNAL } MODEL <model name> [ CASCADE | RESTRICT ]
 ```
 
 RESTRICT is the default.
@@ -18,10 +18,12 @@ RESTRICT is the default.
 ## DESCRIPTION
 
 DROP EMBEDDING MODEL drops a model and the grants of EXECUTE on it. A
-generated column whose expression calls it, and a pipeline that embeds
-by it, depend on it: with RESTRICT the drop is refused while one does,
-and with CASCADE they are dropped first, the column's values with it. A
-pipeline's target keeps its rows.
+generated column whose expression calls it, a pipeline that embeds by
+it, and a view whose query calls it depend on it. With RESTRICT the
+drop is refused while one does. With CASCADE they are dropped first,
+the column's values with it, and the views, triggers and routines that
+read such a view with the view. A pipeline's target keeps its rows.
+DROP EXTERNAL MODEL is the same statement.
 
 DROP SCHEMA with CASCADE drops the schema's models. DROP EMBEDDING
 MODEL runs within the session's transaction: ROLLBACK undoes it.
@@ -29,7 +31,7 @@ MODEL runs within the session's transaction: ROLLBACK undoes it.
 ## RULES
 
 1. The model exists, and its user owns the model's schema.
-2. With RESTRICT, no generated column or pipeline uses it.
+2. With RESTRICT, no generated column, pipeline or view uses it.
 3. The transaction is not READ ONLY.
 
 ## PRIVILEGES

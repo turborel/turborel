@@ -103,6 +103,8 @@ mod dynamic_cursors;
 mod dynamic_manual;
 mod dynamic_statements;
 mod embedding_models;
+mod embedding_queue;
+mod embedding_sources;
 mod encodings;
 mod engine_settings;
 mod expressions;

@@ -2,7 +2,8 @@
 //! FLOAT32 dimensions, each vector the text's length then 1, 0, 0. It
 //! fails for a text holding "bad", and for the first `failing` batches
 //! asked; it records each batch's size and the options it was configured
-//! with, and gives the version `version` holds.
+//! with, a model's octets FROM BLOB among them, and gives the version
+//! `version` holds. Registered under another name, it is that plug-in.
 
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -34,14 +35,15 @@ impl Asked {
     }
 }
 
-/// The plug-in.
+/// The plug-in, of its name.
 pub struct Counted {
+    pub name: &'static str,
     pub asked: Arc<Asked>,
 }
 
 impl Embedder for Counted {
     fn name(&self) -> &'static str {
-        "COUNTED"
+        self.name
     }
     fn shape(&self) -> ModelShape {
         ModelShape { dims: 4, element: Element::Float32, layout: Layout::Dense }
@@ -56,6 +58,10 @@ impl Embedder for Counted {
         let shown = options.iter().map(|o| format!("{}={}", o.name, o.value));
         self.asked.options.lock().unwrap().extend(shown);
         Ok(None)
+    }
+    fn loaded(&self, blob: &[u8], options: &[ModelOption]) -> Result<Option<Arc<dyn Embedder>>> {
+        self.asked.options.lock().unwrap().push(format!("BLOB={blob:?}"));
+        self.configured(options)
     }
     fn embed(&self, texts: &[&str]) -> Result<Vec<Vector>> {
         self.asked.batches.lock().unwrap().push(texts.len());
@@ -93,7 +99,13 @@ pub fn prepared(db: &Database) {
 
 /// COUNTED registered in `db`, version 1: what it is asked.
 pub fn registered(db: &Database) -> Arc<Asked> {
+    registered_as(db, "COUNTED")
+}
+
+/// The plug-in of name `name` registered in `db`, version 1: what it is
+/// asked.
+pub fn registered_as(db: &Database, name: &'static str) -> Arc<Asked> {
     let asked = Arc::new(Asked { version: AtomicU32::new(1), ..Asked::default() });
-    db.register_embedder(Arc::new(Counted { asked: Arc::clone(&asked) })).unwrap();
+    db.register_embedder(Arc::new(Counted { name, asked: Arc::clone(&asked) })).unwrap();
     asked
 }

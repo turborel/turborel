@@ -10,7 +10,7 @@ ALTER EMBEDDING MODEL: change an embedding model's options
 
 ```
 <alter embedding model statement> ::=
-    ALTER EMBEDDING MODEL <model name>
+    ALTER { EMBEDDING | EXTERNAL } MODEL <model name>
     WITH ( <model option> [ , <model option> ]... )
 ```
 
@@ -18,7 +18,9 @@ ALTER EMBEDDING MODEL: change an embedding model's options
 
 ALTER EMBEDDING MODEL merges its options into the model's: each one
 written replaces the model's of its name, and the others stay. Its
-plug-in is given the options again.
+plug-in is given the options again. ALTER EXTERNAL MODEL is the same
+statement, its LOCATION given as ENDPOINT (see [CREATE EMBEDDING
+MODEL](create-embedding-model.md)).
 
 A new VERSION, or a plug-in that reports a new version of its own,
 gives the model a new version tag. The chunks of a pipeline whose

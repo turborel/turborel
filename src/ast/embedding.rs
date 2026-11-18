@@ -1,7 +1,7 @@
 //! \[EXTENSION\] Abstract syntax of the statements of embedding models and
 //! vector pipelines (the vector design's §12.1, §12.5).
 
-use super::TableName;
+use super::{TableName, ValueSpecification};
 use crate::catalog::ModelOption;
 
 /// \[EXTENSION\] A statement that defines or alters an embedding model or
@@ -27,7 +27,8 @@ impl VectorStatement {
 }
 
 /// \[EXTENSION\] `<embedding model definition>` ::= CREATE EMBEDDING MODEL
-/// `<model name>` \[FROM FILE `<character string literal>`\] WITH (
+/// `<model name>` \[FROM { FILE `<character string literal>` | BLOB `<value
+/// specification>` }\] WITH (
 /// `<model option>` \[{, `<model option>`}...\] ); and ALTER EMBEDDING
 /// MODEL `<model name>` WITH ( ... ), whose options are merged into those
 /// it has.
@@ -37,6 +38,9 @@ pub struct ModelDefinition {
     pub name: TableName,
     /// FROM FILE's path, if written.
     pub file: Option<String>,
+    /// FROM BLOB's octets, a binary string literal or a parameter, if
+    /// written.
+    pub blob: Option<ValueSpecification>,
     /// The options, in the order written.
     pub options: Vec<ModelOption>,
 }

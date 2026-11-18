@@ -3,7 +3,8 @@
 //!
 //! ```text
 //! embeddings: models (count u32, each a model), pipelines (likewise)
-//! model:      name, plug-in (str), file (u8 0, or 1 and str), options
+//! model:      name, plug-in (str), file (u8 0, or 1 and str), blob (u8
+//!             0, or 1 and its octets, u32 count and each), options
 //!             (count u32, each name and value str and quoted u8),
 //!             version (u8 0, or 1 and u32), dims u32, element u8 (its
 //!             code), layout u8 (0 dense, 1 sparse), EXECUTE grants
@@ -75,6 +76,10 @@ fn put_model(out: &mut Vec<u8>, m: &ModelDesc) {
     put_name(out, &m.name);
     out.put_str(&m.plugin);
     put_optional(out, m.file.as_deref());
+    out.put_u8(u8::from(m.blob.is_some()));
+    if let Some(blob) = &m.blob {
+        out.put_bytes(blob);
+    }
     out.put_u32(count(m.options.len()));
     for o in &m.options {
         out.put_str(&o.name);
@@ -102,6 +107,7 @@ fn damaged(what: &str) -> SqlError {
 
 fn model(r: &mut Reader<'_>) -> Result<ModelDesc> {
     let (name, plugin, file) = (qualified(r)?, r.str()?, optional(r)?);
+    let blob = if r.u8()? == 0 { None } else { Some(r.bytes()?.to_vec()) };
     let options =
         (0..r.u32()?).map(|_| Ok(ModelOption { name: r.str()?, value: r.str()?, quoted: r.u8()? != 0 })).collect::<Result<_>>()?;
     let version = if r.u8()? == 0 { None } else { Some(r.u32()?) };
@@ -111,7 +117,7 @@ fn model(r: &mut Reader<'_>) -> Result<ModelDesc> {
     let execute = (0..r.u32()?)
         .map(|_| Ok(UsageDesc { grantor: r.str()?, grantee: optional(r)?, grantable: r.u8()? != 0 }))
         .collect::<Result<_>>()?;
-    Ok(ModelDesc { name, plugin, file, options, version, dims, element, layout, execute })
+    Ok(ModelDesc { name, plugin, file, blob, options, version, dims, element, layout, execute })
 }
 
 fn put_pipeline(out: &mut Vec<u8>, p: &PipelineDesc) {
@@ -150,6 +156,7 @@ mod tests {
             name: name("U", "M"),
             plugin: "HASH_DENSE".into(),
             file: Some("/m.onnx".into()),
+            blob: None,
             options: vec![option],
             version: Some(3),
             dims: 64,
@@ -161,6 +168,7 @@ mod tests {
             name: name("U", "S"),
             plugin: "HASH_SPARSE".into(),
             file: None,
+            blob: Some(vec![0, 7, 255]),
             options: Vec::new(),
             version: None,
             dims: 1 << 20,

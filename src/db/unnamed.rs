@@ -30,6 +30,12 @@ impl Session {
         self.open_with((commands::SELECT_ROWS, commands::UNRECOGNIZED), |call| self.open_in(call, sql, &Params::new()))
     }
 
+    /// \[EXTENSION\] `open_cursor` of `sql`, with the parameters `params`,
+    /// unhinted (`db/embedding/queue.rs`).
+    pub(in crate::db) fn open_cursor_with(&self, sql: &str, params: &Params) -> Result<Cursor> {
+        self.open_with((commands::SELECT_ROWS, commands::UNRECOGNIZED), |call| self.open_in(call, sql, params))
+    }
+
     /// An unnamed cursor `open` opens in a call, as `open_cursor` opens
     /// one: the diagnostics area naming it as `command` says.
     pub(super) fn open_with(&self, command: (Command, Command), open: impl FnOnce(&super::Call<'_>) -> Result<Cursor>) -> Result<Cursor> {

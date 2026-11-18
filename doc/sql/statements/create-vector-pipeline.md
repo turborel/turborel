@@ -42,11 +42,13 @@ key does both.
 
 MODE SYNC, the default, embeds each chunk as it is inserted. MODE ASYNC
 inserts it with its embedding and version null, and the queue after
-commit fills them: a job run after each commit that wrote, and as the
-database opens, embeds the chunks waiting, their texts given the model
-BATCH_SIZE at a time, in a transaction of the target's schema's owner.
-What waits is in the rows themselves, so it survives a crash. A round
-that fails leaves its rows for the next.
+commit fills them. A job runs after each commit that wrote, and as the
+database opens, and reads the tables written since its last round. It
+embeds the chunks waiting in slices of at most 4096 distinct texts,
+each slice's texts given the model BATCH_SIZE at a time, in a
+transaction of the target's schema's owner. What waits is in the rows
+themselves, so it survives a crash. A slice that fails leaves its rows
+for the next round after their table is written again.
 
 A statement whose text begins with the hint `/*+ VECTOR_WAIT_FRESH */`,
 run outside a transaction, runs a round of the queue first, so what it
@@ -56,8 +58,9 @@ EMBEDDING MODEL gives the model a new version.
 
 INFORMATION_SCHEMA.VECTOR_PIPELINES lists the pipelines of the schemas
 the user owns, and INFORMATION_SCHEMA.EMBEDDING_QUEUE each column the
-queue fills. It shows the rows the column's last round found waiting,
-those the queue has embedded, its failed rounds and its last error. CREATE VECTOR PIPELINE runs
+queue fills. It shows the distinct texts the column's last round found
+waiting, the rows the queue has embedded, its failed rounds and its last
+error. CREATE VECTOR PIPELINE runs
 within the session's transaction: ROLLBACK undoes it.
 
 ## RULES
