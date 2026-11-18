@@ -1,6 +1,7 @@
 //! Vector indexes that keep codes (RULES.md D93, D96, D97, D98): each
 //! method trains the codebook of the quantizer it names in maintenance,
-//! answers from its codes, and reads the codebook back as it reopens.
+//! answers from its codes, and reads the codebook back as it reopens;
+//! each built-in quantizer serves each method.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -8,9 +9,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use turborel::db::{Database, OpenOptions, Opened, Session};
 use turborel::error::Result;
-use turborel::vector::quantizer::{Codebook, PQ, Quantizer, built_in_quantizers};
+use turborel::vector::quantizer::{BQ, Codebook, PQ, Quantizer, SQ8, built_in_quantizers};
 
-use super::fixture::{K, METHODS, nearest_sql, populate, register};
+use super::fixture::{K, METHODS, database, insert, nearest_sql, populate, register};
 use crate::common::{Scratch, after_crash, rows};
 
 /// The rows of the tables the tests index: enough for IVF to train its
@@ -140,5 +141,25 @@ fn each_method_trains_and_reads_back_its_quantizers_codebook() {
         assert_eq!(answers(&s), before, "{method}: answers as before");
         assert!(again.read.load(Ordering::SeqCst) >= 1, "{method}: its codebook read back");
         assert_eq!(again.trained.load(Ordering::SeqCst), 0, "{method}: none trained again");
+    }
+}
+
+/// Verifies: [EXTENSION] RULES.md D93, D94, D96, D97, D98: each built-in
+/// quantizer, PQ, SQ8 and BQ, serves each method: trained in maintenance,
+/// the index searched from its codes answers the rows asked, rows
+/// inserted after the training coded as they come; of PQ and SQ8 it finds
+/// nine in ten of the exact nearest rows, of BQ, a bit a dimension, half.
+#[test]
+fn each_built_in_quantizer_serves_each_method() {
+    for method in METHODS {
+        for (quantizer, least) in [(PQ, 0.9), (SQ8, 0.9), (BQ, 0.5)] {
+            let db = database(ROWS);
+            let s = db.session("S");
+            create(&s, method, quantizer);
+            db.maintain().unwrap();
+            insert(&s, (ROWS, ROWS + 100));
+            let found = agreement(&s);
+            assert!(found >= least, "{method}, {quantizer}: recall@10 from codes {found}");
+        }
     }
 }

@@ -8,6 +8,7 @@
 
 mod durable;
 mod fixture;
+mod formats;
 mod quantized;
 mod served;
 
