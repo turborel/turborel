@@ -411,6 +411,11 @@ fn settable(table: &TableDesc, base: Option<&ColumnDesc>, sc: &SetClause) -> Res
         let msg = format!("[ISO/IEC 9075-2:2023 §14.15 SR5] column {} is generated always, so it is set only to DEFAULT", sc.column);
         return Err(rule(msg));
     }
+    // [EXTENSION] (§4.2) a node's or edge's identity is never set.
+    if base.and_then(ColumnDesc::graph_column).is_some_and(|g| g.sequence().is_some()) {
+        let msg = format!("[EXTENSION] column {} is the identity of a node or edge (§4.2), so no <set clause> sets it", sc.column);
+        return Err(rule(msg));
+    }
     Ok(())
 }
 

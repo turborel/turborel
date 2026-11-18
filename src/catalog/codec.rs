@@ -193,6 +193,15 @@ fn put_kind(out: &mut Vec<u8>, kind: &ConstraintKind) {
             put_all(out, reads.iter(), put_name);
             put_horizon(out, horizon);
         }
+        // [EXTENSION] 4, ON DELETE CASCADE, then its clauses' node tables.
+        ConstraintKind::Connection(k) => {
+            out.put_u8(4);
+            put_flag(out, k.cascade);
+            put_all(out, k.clauses.iter(), |out, (from, to)| {
+                put_name(out, from);
+                put_name(out, to);
+            });
+        }
     }
 }
 
@@ -205,6 +214,10 @@ fn kind(r: &mut Reader<'_>) -> Result<ConstraintKind> {
         }
         2 => ConstraintKind::ForeignKey(foreign::foreign_key(r)?),
         3 => ConstraintKind::Check { text: r.str()?, names: r.str()?, reads: get_all(r, qualified)?, horizon: horizon(r)? },
+        4 => {
+            let cascade = flag(r)?;
+            ConstraintKind::Connection(super::Connection { cascade, clauses: get_all(r, |r| Ok((qualified(r)?, qualified(r)?)))? })
+        }
         _ => return Err(r.corrupt("not a kind of constraint")),
     })
 }

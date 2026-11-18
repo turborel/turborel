@@ -22,6 +22,7 @@ mod composites;
 mod extensions;
 mod graphs;
 mod modules;
+mod native;
 mod roles;
 mod structured;
 mod triggers;
@@ -72,12 +73,13 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// and typed tables (`information/structured.rs`), those of roles
 /// (`information/roles.rs`), of triggers (`information/triggers.rs`), of
 /// SQL-server modules (`information/modules.rs`) and of property graphs
-/// (`information/graphs.rs`), then the extensions
+/// (`information/graphs.rs`) and node and edge tables
+/// (`information/native.rs`), then the extensions
 /// (`information/extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
     let parts = [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS];
-    ALL.get_or_init(|| [&parts[..], &[graphs::VIEWS, extensions::VIEWS]].concat().concat())
+    ALL.get_or_init(|| [&parts[..], &[graphs::VIEWS, native::VIEWS, extensions::VIEWS]].concat().concat())
 }
 
 /// The views of ISO/IEC 9075:1992 [§21.2.4-§21.2.26].
@@ -245,7 +247,7 @@ const VIEWS: &[SystemView] = &[
        IS_GENERATED, GENERATION_EXPRESSION,
        COALESCE (D1.MAXIMUM_CARDINALITY, D2.MAXIMUM_CARDINALITY)
                     AS MAXIMUM_CARDINALITY,
-       D1.DTD_IDENTIFIER
+       D1.DTD_IDENTIFIER, C.IS_HIDDEN
      FROM DEFINITION_SCHEMA.COLUMNS AS C
          LEFT JOIN
            DEFINITION_SCHEMA.DATA_TYPE_DESCRIPTOR AS D1

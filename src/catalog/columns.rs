@@ -61,6 +61,9 @@ pub enum Generated {
     /// names of the derivational attributes its values are derived from
     /// [§14.11 GR7d ii].
     DerivedReference(Vec<String>),
+    /// \[EXTENSION\] (§4.2) A pseudo-column of a node or edge table, hidden
+    /// from `*`.
+    Graph(super::GraphColumn),
 }
 
 /// [ISO/IEC 9075-2:2023 §4.17.12] What the descriptor of an identity
@@ -166,8 +169,22 @@ impl ColumnDesc {
         match &self.generated {
             Some(Generated::Identity(identity)) => Some(&identity.sequence),
             Some(Generated::SystemReference(sequence)) => Some(sequence),
+            Some(Generated::Graph(g)) => g.sequence(),
             Some(Generated::Expression(_) | Generated::DerivedReference(_) | Generated::SystemTime { .. }) | None => None,
         }
+    }
+
+    /// \[EXTENSION\] Of a pseudo-column of a node or edge table (§4.2),
+    /// which it is.
+    pub fn graph_column(&self) -> Option<&super::GraphColumn> {
+        if let Some(Generated::Graph(g)) = &self.generated { Some(g) } else { None }
+    }
+
+    /// \[EXTENSION\] Whether it is hidden: a pseudo-column of a node or
+    /// edge table (§4.2), which no `*` gives and no `<insert column list>`
+    /// left out names.
+    pub fn hidden(&self) -> bool {
+        self.graph_column().is_some()
     }
 
     /// [ISO/IEC 9075-2:2023 §4.17.2.3] Of a system-time period start or end
@@ -191,8 +208,10 @@ impl ColumnDesc {
             Some(Generated::Expression(_)) => true,
             // [§14.15 SR3] No statement sets a self-referencing column at
             // all, which `db/typed.rs` refuses apart, or a system-time
-            // period column, which `binder/statements.rs` does.
-            Some(Generated::SystemReference(_) | Generated::DerivedReference(_) | Generated::SystemTime { .. }) | None => false,
+            // period column, which `binder/statements.rs` does, as it does
+            // an identity pseudo-column of a node or edge table.
+            Some(Generated::SystemReference(_) | Generated::DerivedReference(_) | Generated::SystemTime { .. } | Generated::Graph(_))
+            | None => false,
         }
     }
 }

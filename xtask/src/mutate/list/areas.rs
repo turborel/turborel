@@ -55,7 +55,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order.
-fn second() -> [&'static [Mutation]; 25] {
+fn second() -> [&'static [Mutation]; 26] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -82,6 +82,7 @@ fn second() -> [&'static [Mutation]; 25] {
         &super::rename::RENAME,
         &super::savepoints::SAVEPOINTS,
         &super::graph_catalog::GRAPH_CATALOG,
+        &super::graph_native::GRAPH_NATIVE,
     ]
 }
 

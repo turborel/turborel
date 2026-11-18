@@ -19,7 +19,7 @@ pub(super) const NULLS: &str = "NULLS";
 impl Parser {
     /// Whether a `<table constraint definition>` begins here.
     pub(super) fn at_table_constraint(&self) -> bool {
-        [kw::CONSTRAINT, kw::UNIQUE, kw::PRIMARY, kw::FOREIGN, kw::CHECK].into_iter().any(|k| self.is_kw(k))
+        [kw::CONSTRAINT, kw::UNIQUE, kw::PRIMARY, kw::FOREIGN, kw::CHECK, kw::CONNECTION].into_iter().any(|k| self.is_kw(k))
     }
 
     /// Whether a `<column constraint definition>` begins here.
@@ -52,6 +52,8 @@ impl Parser {
             self.expect_kw(kw::KEY)?;
             let (columns, period) = self.period_column_list()?;
             TableConstraintKind::ForeignKey { columns, period, references: self.references()? }
+        } else if self.is_kw(kw::CONNECTION) {
+            self.connection_constraint()?
         } else {
             TableConstraintKind::Check(self.check()?)
         };

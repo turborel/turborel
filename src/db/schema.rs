@@ -213,6 +213,8 @@ impl State {
         let routines_warned = self.schema_routines(&s, &owner)?;
         let modules_warned = self.schema_modules(&s, zone, (made, epochs), &mut built)?;
         self.schema_triggers(&s)?;
+        // [EXTENSION] (§4.2) its node and edge tables' SYS_GRAPH.
+        self.refresh_sys_graphs()?;
         let graphs_warned = self.schema_graphs_made(&s, &owner)?;
         let warned = warned.contains(&true) || routines_warned || modules_warned || graphs_warned;
         Ok((owner, descs.into_iter().map(|d| (d.name.ident, d.engine)).collect(), warned, asserted, built))
@@ -266,6 +268,9 @@ impl State {
         if let Some(a) = t.name.auth.as_ref().filter(|a| *a != auth) {
             return rule(format!("[X3.135-1986 §6.2 SR1] table {a}.{} is not in schema {auth}", t.name.ident));
         }
+        if t.graph.is_some() && (t.typed.is_some() || t.subquery.is_some()) {
+            return rule(format!("[EXTENSION] {} is a node or edge table (§4.2), defined by its elements alone", t.name.ident));
+        }
         if earlier.iter().any(|d| d.name.ident == t.name.ident) {
             return rule(format!("[X3.135-1986 §6.2 SR2] table {} is defined twice", t.name.ident));
         }
@@ -300,6 +305,7 @@ impl State {
         desc.refresh_not_null();
         self.inherited_nullability(&mut desc, earlier);
         constraints::periods::define_period((t, names, within), &mut desc, &taken)?;
+        self.check_connections(&desc, earlier)?;
         Ok((desc, pending))
     }
 
@@ -496,6 +502,9 @@ impl State {
             indexes.push((name, structure));
             catalog.add_index(index);
         }
+        // [EXTENSION] (§4.2) a node or edge table's own indexes.
+        let kept = |name: &str| made.and_then(|m| m.indexes.iter().find(|(n, _)| n == name)).map(|(_, s)| Arc::clone(s));
+        indexes.extend(self.pseudo_indexes(catalog, d, &kept)?);
         Ok(Made { storage: Some(storage), indexes, tables: Vec::new() })
     }
 }

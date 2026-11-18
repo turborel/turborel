@@ -242,7 +242,12 @@ impl State {
         (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &mut Epochs),
     ) -> Result<Defined> {
         match statement {
-            SchemaStatement::Table(t) => self.create_table((schema, zone), t, (placed, made, epochs)),
+            SchemaStatement::Table(t) => {
+                let defined = self.create_table((schema, zone), t, (placed, made, epochs))?;
+                // [EXTENSION] (§4.2) a node or edge table joins SYS_GRAPH.
+                self.refresh_sys_graphs()?;
+                Ok(defined)
+            }
             SchemaStatement::View(v) => self.create_view(schema, v),
             SchemaStatement::Grant(p) => {
                 let a = self.cell_grantor((auth, role), p.grantor).or_at(p.table.at)?;
@@ -460,6 +465,7 @@ fn read_by(desc: &TableDesc) -> Vec<QualifiedName> {
         let names = match &c.kind {
             ConstraintKind::ForeignKey(fk) => vec![fk.table.clone()],
             ConstraintKind::Check { reads, .. } => reads.clone(),
+            ConstraintKind::Connection(k) => k.clauses.iter().flat_map(|(f, t)| [f.clone(), t.clone()]).collect(),
             ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } => Vec::new(),
         };
         for name in names {

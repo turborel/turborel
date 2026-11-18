@@ -28,6 +28,8 @@ impl State {
         touched.push(table.clone());
         let reading: Vec<GraphDesc> =
             self.catalog.graphs().into_iter().filter(|g| g.reads.iter().any(|r| touched.contains(r))).cloned().collect();
+        // [EXTENSION] (§4.2) SYS_GRAPH is described anew instead.
+        let reading = reading.into_iter().filter(|g| !super::native::is_sys_graph(&g.name));
         let mut dropped = Dropped::default();
         for g in reading {
             match self.redescribe_graph(&g, true) {

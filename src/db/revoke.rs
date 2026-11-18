@@ -381,7 +381,8 @@ impl State {
                 bound.catalog = Arc::from(after.duplicate());
                 bound.check_condition(table, (text, names, horizon)).map_or_else(|e| e.code != Code::Privilege, |_| true)
             }
-            ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } => true,
+            // [EXTENSION] Its node tables are of its own schema, its owner's.
+            ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::Connection(_) => true,
         }
     }
 

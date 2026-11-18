@@ -295,10 +295,14 @@ impl Parser {
         let (elements, subquery, typed) = if self.accept_kw(kw::OF) {
             let (typed, elements) = self.typed_table_clause(kind.is_some())?;
             (elements, None, Some(typed))
+        } else if self.at_graph_table() {
+            // [EXTENSION] (§4.2) an edge table of no column of its own.
+            (Vec::new(), None, None)
         } else {
             let (elements, subquery) = self.table_contents()?;
             (elements, subquery, None)
         };
+        let graph = self.graph_table();
         // [ISO/IEC 9075-2:2023 §11.3] WITH <system versioning clause>.
         let versioning = self.at_versioning(kw::WITH).then(|| self.here());
         if versioning.is_some() {
@@ -321,7 +325,7 @@ impl Parser {
         if self.accept_kw(kw::WITH) {
             storage.options = self.table_options()?;
         }
-        Ok(TableDefinition { name, temporary, elements, subquery, storage, typed, versioning })
+        Ok(TableDefinition { name, temporary, elements, subquery, storage, typed, versioning, graph })
     }
 
     /// [ISO/IEC 9075:1992 §13.11] `<temporary table declaration>` ::=
@@ -340,7 +344,8 @@ impl Parser {
         let elements = self.table_element_list()?;
         let delete_rows = self.on_commit()?.unwrap_or(true);
         let temporary = Some(Temporary { kind: TemporaryKind::Declared, delete_rows });
-        Ok(TableDefinition { name, temporary, elements, subquery: None, storage: TableStorage::default(), typed: None, versioning: None })
+        let (storage, typed, versioning, graph) = (TableStorage::default(), None, None, None);
+        Ok(TableDefinition { name, temporary, elements, subquery: None, storage, typed, versioning, graph })
     }
 
     /// [ISO/IEC 9075:1992 §11.3] `<table element list>` ::= ( `<table

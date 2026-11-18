@@ -48,7 +48,7 @@ impl State {
             }
         });
         desc.constraints.extend(constraints);
-        crate::db::constraints::periods::keyed_periods(&desc)?;
+        crate::db::constraints::periods::keyed_periods(&desc).and_then(|()| self.check_connections(&desc, &[]))?;
         for p in &pending {
             let resolved = self.resolve_foreign_key(names, &desc, p)?;
             desc.constraints.push(resolved);

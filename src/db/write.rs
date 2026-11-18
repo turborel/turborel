@@ -569,7 +569,10 @@ pub(super) fn insert_target_in(
     let target = binder::write_target(st, &name, (rules.read_only, user), noted).or_at(into.table.at)?;
     let desc = &target.named;
     let object: Vec<usize> = match into.columns {
-        None => (0..into.horizon.width(&name).map_or(desc.columns.len(), |w| w.min(desc.columns.len()))).collect(),
+        // [EXTENSION] (§4.2) but a node or edge table's pseudo-columns.
+        None => (0..into.horizon.width(&name).map_or(desc.columns.len(), |w| w.min(desc.columns.len())))
+            .filter(|&k| desc.columns.get(k).is_some_and(|c| !c.hidden()))
+            .collect(),
         Some(list) => object_columns(&name, &desc.columns, list, rules)?,
     };
     // [ISO/IEC 9075:1992 §13.8 AR1; ISO/IEC 9075-2:2023 §14.12 AR1b

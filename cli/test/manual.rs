@@ -342,8 +342,9 @@ fn the_expression_index_examples_run_as_printed() {
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D65, D66: the examples of CREATE
-/// TABLE run as printed, as ANN, those of LIKE and AS, and of UNIQUE
-/// NULLS NOT DISTINCT, among them.
+/// TABLE run as printed, as ANN, those of LIKE and AS, of UNIQUE NULLS
+/// NOT DISTINCT, and of node and edge tables (D-GRAPH-NATIVE), among
+/// them.
 #[test]
 fn the_create_table_examples_run_as_printed() {
     let db = Database::new();

@@ -91,7 +91,9 @@ impl State {
     /// [GR7] only of the tables an action may give values to.
     pub(super) fn referential_actions(self: &Arc<Self>, tx: &Txn, effects: &mut Effects<'_>) -> Result<()> {
         let acted: Vec<&QualifiedName> = self.catalog.tables().into_iter().filter(|t| self.acts_on(&t.name)).map(|t| &t.name).collect();
-        if acted.is_empty() {
+        // [EXTENSION] (§4.2, R12.1) a node deleted acts on its edges.
+        let nodes = self.catalog.tables().into_iter().any(|t| self.has_edges(&t.name));
+        if acted.is_empty() && !nodes {
             return Ok(());
         }
         let mut acting = Acting::new(&effects.space);
@@ -110,7 +112,12 @@ impl State {
         while let Some(effect) = effects.done.get(at)? {
             at = at.saturating_add(1);
             let (parent, old, row, updated) = match &effect {
-                Effect::Deleted { table, old, id } => (table, old, *id, false),
+                Effect::Deleted { table, old, id } => {
+                    if self.has_edges(table) {
+                        self.node_deleted(tx, (table, old), effects)?;
+                    }
+                    (table, old, *id, false)
+                }
                 Effect::Updated { table, old, id, .. } => (table, old, *id, true),
                 Effect::Inserted { .. } => continue,
             };

@@ -128,6 +128,7 @@ mod geometry;
 mod get_diagnostics;
 mod get_diagnostics_items;
 mod graph_ddl;
+mod graph_native;
 mod grouping_sets;
 mod hybrid_layout;
 mod hypothetical;

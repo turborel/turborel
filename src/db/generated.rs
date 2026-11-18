@@ -23,7 +23,7 @@ use super::State;
 use super::sequences::{Epochs, generator};
 use crate::ast::{ColumnDefinition, ColumnGeneration, References, ReferentialAction};
 use crate::binder::{Invoked, assignable, bind_generation, noting_generation};
-use crate::catalog::{ColumnDesc, Generated, Generation, Horizon, Identity, QualifiedName, TableDesc};
+use crate::catalog::{ColumnDesc, Generated, Generation, GraphColumn, Horizon, Identity, QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlError};
 use crate::logical::expr_columns;
 use crate::value::DataType;
@@ -172,8 +172,17 @@ impl State {
         for column in &mut desc.columns {
             let sequence = match &mut column.generated {
                 Some(Generated::Identity(identity)) => &mut identity.sequence,
-                Some(Generated::SystemReference(sequence)) => sequence,
-                Some(Generated::Expression(_) | Generated::DerivedReference(_) | Generated::SystemTime { .. }) | None => continue,
+                // [EXTENSION] (§4.2) A node's or edge's identities' too.
+                Some(
+                    Generated::SystemReference(sequence) | Generated::Graph(GraphColumn::Node(sequence) | GraphColumn::Edge(sequence)),
+                ) => sequence,
+                Some(
+                    Generated::Expression(_)
+                    | Generated::DerivedReference(_)
+                    | Generated::SystemTime { .. }
+                    | Generated::Graph(GraphColumn::From | GraphColumn::To),
+                )
+                | None => continue,
             };
             if sequence.epoch == 0 {
                 sequence.epoch = epochs.next(&self.sequences)?;

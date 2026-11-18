@@ -32,6 +32,9 @@ pub(in crate::db) struct Generating {
     /// Each generated column, its position, type and generation expression
     /// bound over the row \[§15.11 GR6a\].
     exprs: Vec<(usize, DataType, Expr)>,
+    /// \[EXTENSION\] (§4.2) Of a node or edge table, what its
+    /// pseudo-columns are given.
+    native: Option<crate::db::graphs::native::Native>,
 }
 
 /// [ISO/IEC 9075-2:2023 §14.11 GR7d] How the value of a self-referencing
@@ -91,7 +94,8 @@ impl Generating {
         let identity =
             desc.columns.iter().enumerate().find_map(|(at, c)| Some((at, c.data_type.clone(), Arc::new(c.identity()?.sequence.clone()))));
         let reference = if draw.reference { referencing(desc)? } else { None };
-        Ok(Generating { draw: identity.filter(|_| draw.identity), reference, exprs })
+        let native = crate::db::graphs::native::Native::of(desc, draw.inserting);
+        Ok(Generating { draw: identity.filter(|_| draw.identity), reference, exprs, native })
     }
 
     /// [ISO/IEC 9075-2:2023 §11.11 GR2] Of the column at `at` of `desc`
@@ -107,12 +111,14 @@ impl Generating {
             draw: all.draw.filter(|(k, ..)| *k == at),
             reference: None,
             exprs: all.exprs.into_iter().filter(|(k, ..)| *k == at).collect(),
+            native: None,
         })
     }
 
     /// The positions of the columns it gives each row values of.
     pub(in crate::db) fn columns(&self) -> impl Iterator<Item = usize> + '_ {
-        let reference = self.reference.iter().map(|(at, _)| *at);
+        let reference =
+            self.reference.iter().map(|(at, _)| *at).chain(self.native.as_ref().and_then(crate::db::graphs::native::Native::drawn));
         self.draw.iter().map(|(at, ..)| *at).chain(reference).chain(self.exprs.iter().map(|(at, ..)| *at))
     }
 
@@ -133,6 +139,9 @@ impl Generating {
     /// expression raises, or its value's assignment; SQLCODE -900 if a
     /// derived reference is too long.
     pub(in crate::db) fn give(&self, st: &State, row: &mut Row, subqueries: &dyn Subqueries) -> Result<()> {
+        if let Some(native) = &self.native {
+            native.give(st, row)?;
+        }
         if let Some((at, how)) = &self.reference {
             let value = match how {
                 Referencing::System(seq) => crate::db::typed::system_reference(&st.next_value(seq)?)?,
@@ -170,7 +179,7 @@ fn referencing(desc: &TableDesc) -> Result<Option<(usize, Referencing)>> {
                 };
                 return Ok(Some((at, Referencing::Derived(names.iter().map(position).collect::<Result<_>>()?))));
             }
-            Some(Generated::Identity(_) | Generated::Expression(_) | Generated::SystemTime { .. }) | None => {}
+            Some(Generated::Identity(_) | Generated::Expression(_) | Generated::SystemTime { .. } | Generated::Graph(_)) | None => {}
         }
     }
     Ok(None)
@@ -319,6 +328,11 @@ pub(in crate::db) fn check_override(
                 source.generated_rule(),
                 column.name
             );
+            return Err(placed(rule(msg), given.at()));
+        }
+        // [EXTENSION] (§4.2) a node's or edge's identity is the table's.
+        if column.graph_column().is_some_and(|g| g.sequence().is_some()) && given != Given::Defaulted {
+            let msg = format!("[EXTENSION] column {} is the identity of a node or edge (§4.2), so it is given only DEFAULT", column.name);
             return Err(placed(rule(msg), given.at()));
         }
         if let Some(id) = column.identity() {

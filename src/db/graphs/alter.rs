@@ -27,6 +27,9 @@ impl State {
     /// reads it binds no more.
     pub(in crate::db) fn alter_graph(&mut self, schema: &str, a: &AlterGraph) -> Result<Defined> {
         let qn = qualify(&a.name, schema);
+        if super::native::is_sys_graph(&qn) {
+            return Err(super::native::sys_graph_refused(&qn)).or_at(a.name.at);
+        }
         let desc = self.graph_named(&qn).or_at(a.name.at)?;
         let mut def = graph_definition(&desc.definition())?;
         let behavior = match &a.action {

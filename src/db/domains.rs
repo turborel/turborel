@@ -60,7 +60,10 @@ fn copy_of(dc: &ConstraintDesc, table: &QualifiedName, column: &str) -> Constrai
             let horizon = Horizon { widths: Vec::new(), routines: horizon.routines.clone() };
             ConstraintKind::Check { text: on_column(text, column), names: names.clone(), reads: Vec::new(), horizon }
         }
-        other @ (ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_)) => other.clone(),
+        other @ (ConstraintKind::NotNull(_)
+        | ConstraintKind::Unique { .. }
+        | ConstraintKind::ForeignKey(_)
+        | ConstraintKind::Connection(_)) => other.clone(),
     };
     ConstraintDesc { name, kind, attributes: dc.attributes, domain: Some(dc.name.clone()) }
 }
@@ -300,7 +303,7 @@ impl State {
 fn reads_of(c: &ConstraintDesc) -> &[QualifiedName] {
     match &c.kind {
         ConstraintKind::Check { reads, .. } => reads,
-        ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) => &[],
+        ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => &[],
     }
 }
 
