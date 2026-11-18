@@ -3,7 +3,8 @@
 //! XMLSERIALIZE [§6.8], CAST's `<XML passing mechanism>` [§6.5], the
 //! publishing operators (`publish`), XMLVALIDATE [§6.20] and the `<XML
 //! valid according to clause>` [§11.6] (`valid`); and \[EXTENSION\] the
-//! statements of registered XML Schemas (`registered`).
+//! statements of registered XML Schemas (`registered`) and the mappings
+//! of names (`names`).
 //!
 //! [§5.1] XML and the names of the operators are reserved words of
 //! SQL/XML, and its other words non-reserved; as SQL-92's are the key
@@ -11,6 +12,7 @@
 //! where the grammar takes it, as BOOLEAN and CLOB are.
 
 mod map;
+mod names;
 pub use map::{MappedSource, mapped_sources};
 mod publish;
 mod query;
@@ -181,6 +183,9 @@ impl Parser {
         }
         if self.at_xml(XMLVALIDATE) {
             return self.xml_validate().map(Some);
+        }
+        if let Some(mapping) = self.xml_name_mapping()? {
+            return Ok(Some(mapping));
         }
         self.xml_publishing()
     }

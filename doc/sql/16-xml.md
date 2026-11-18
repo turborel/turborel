@@ -1102,6 +1102,53 @@ OK
 turborel: SQLCODE -103 (SQLSTATE 2A000): the options declare namespaces once and a binary encoding once [ISO/IEC 9075-14:2006 draft §11.3 SR1] (at character 23)
 ```
 
+## Mapping names
+
+```
+XMLNAME_TO_IDENTIFIER ( <character value expression> )
+IDENTIFIER_TO_XMLNAME ( <character value expression> [ , { PARTIALLY | FULLY } ESCAPED ] )
+```
+
+*(extension)* An SQL identifier may hold characters an XML Name may
+not, so SQL/XML maps identifiers to XML Names, as XMLELEMENT, XMLFOREST
+and XMLMAP map column names, and XML Names back to identifiers. These
+two functions apply the mappings to a string.
+
+IDENTIFIER_TO_XMLNAME maps the characters of an identifier to an XML
+Name. A character no XML 1.1 name holds, or a first character no name
+begins with, is written `_xHHHH_` in hexadecimal, or `_xHHHHHH_` beyond
+the Basic Multilingual Plane, and an underscore before a lowercase `x`
+is written `_x005F_`. PARTIALLY ESCAPED, the default, keeps a colon
+after the first character; FULLY ESCAPED escapes every colon and the
+first letter of a leading `xml` in any case.
+
+XMLNAME_TO_IDENTIFIER maps an XML Name back: each `_xHHHH_` or
+`_xHHHHHH_` of an assigned Unicode character becomes that character,
+any other stays as written. It gives the delimited identifier, in
+double quotes, each double quote doubled. Either mapping read back
+gives the identifier again.
+
+Each takes a character string, not a large object, and gives a
+CHARACTER VARYING string: of XMLNAME_TO_IDENTIFIER twice the argument's
+length and 2, of IDENTIFIER_TO_XMLNAME 9 times it, at most 32,767
+characters. A longer result fails with SQLSTATE 22001. A null argument
+gives null. The words are no key words.
+
+```sql
+VALUES (IDENTIFIER_TO_XMLNAME('order line'), IDENTIFIER_TO_XMLNAME('ns:a', FULLY ESCAPED), IDENTIFIER_TO_XMLNAME('xml1', FULLY ESCAPED));
+VALUES (XMLNAME_TO_IDENTIFIER('order_x0020_line'), XMLNAME_TO_IDENTIFIER('say_x0020__x0022_hi_x0022_'));
+```
+```
+                                                              |                                      |
+--------------------------------------------------------------+--------------------------------------+--------------------------------------
+ order_x0020_line                                             | ns_x003A_a                           | _x0078_ml1
+(1 row)
+                                    |
+------------------------------------+--------------------------------------------------------
+ "order line"                       | "say ""hi"""
+(1 row)
+```
+
 ## Mapping tables to XML
 
 XMLMAP maps a table, a schema or the catalog to XML, and to an XML

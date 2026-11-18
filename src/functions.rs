@@ -114,6 +114,7 @@ pub use xml::{
     xml_schema_restriction, xml_schema_type, xml_text,
 };
 pub use xml::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlFilter, XmlQueryOf, XmlRowsOf, XmlTableOf};
+pub use xml::{IDENTIFIER_TO_XMLNAME, IDENTIFIER_TO_XMLNAME_FULLY, XMLNAME_TO_IDENTIFIER};
 
 /// \[EXTENSION\] A function callable with the opt-in call syntax.
 ///

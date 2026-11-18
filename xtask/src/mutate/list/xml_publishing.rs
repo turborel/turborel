@@ -1,11 +1,12 @@
 //! Mutations of SQL/XML's publishing operators: XMLELEMENT, XMLFOREST,
 //! XMLAGG, XMLCONCAT, XMLCOMMENT, XMLPI and XMLTEXT, XMLNAMESPACES, and the
-//! mapping of SQL identifiers to XML Names (RULES.md R-TEST-9, D106).
+//! mappings of SQL identifiers to XML Names and back, and the functions
+//! of Feature X400 that invoke them (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each publishing mechanism broken alone, and the tests that fail.
-pub const XML_PUBLISHING: [Mutation; 19] = [
+pub const XML_PUBLISHING: [Mutation; 22] = [
     Mutation {
         name: "xml-comment-hyphen-last",
         package: Package::Core,
@@ -195,5 +196,35 @@ pub const XML_PUBLISHING: [Mutation; 19] = [
         replacement: "        if false {",
         integration: &[],
         unit: &["functions::xml::aggregate::tests::values_beyond_the_limit_overflow_11_2"],
+    },
+    Mutation {
+        name: "xml-name-delimited",
+        package: Package::Core,
+        breaks: "XMLNAME_TO_IDENTIFIER gives the identifier's characters, not its delimited identifier",
+        file: "src/functions/xml/names.rs",
+        original: "within(self.name(), delimited(&identifier_of(name)))",
+        replacement: "within(self.name(), identifier_of(name))",
+        integration: &["xml_names::xml_names_map_to_identifiers_9_3"],
+        unit: &["functions::xml::names::tests::calls_map_names"],
+    },
+    Mutation {
+        name: "xml-name-fully-escaped",
+        package: Package::Core,
+        breaks: "IDENTIFIER_TO_XMLNAME of FULLY ESCAPED escapes partially",
+        file: "src/parser/xml/names.rs",
+        original: "        let name = if self.accept_word(FULLY) {\n            IDENTIFIER_TO_XMLNAME_FULLY\n",
+        replacement: "        let name = if self.accept_word(FULLY) {\n            IDENTIFIER_TO_XMLNAME\n",
+        integration: &["xml_names::identifiers_map_to_xml_names_9_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-name-length-bound",
+        package: Package::Core,
+        breaks: "IDENTIFIER_TO_XMLNAME's result is no longer than its argument, though escapes lengthen it",
+        file: "src/functions/xml/names.rs",
+        original: "mapped(IDENTIFIER_TO_XMLNAME, t, MOST_ESCAPED, 0)",
+        replacement: "mapped(IDENTIFIER_TO_XMLNAME, t, 1, 0)",
+        integration: &[],
+        unit: &["functions::xml::names::tests::result_types_bound_the_mapping"],
     },
 ];

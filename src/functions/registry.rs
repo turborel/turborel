@@ -74,6 +74,7 @@ impl Registry {
             .chain(trim::functions())
             .chain(numeric::functions())
             .chain(words())
+            .chain(super::xml::name_functions())
             .map(|f| (f.name().to_string(), vec![ScalarRef(f)]))
             .collect();
         let truths = [Truths::EVERY, Truths::ANY, Truths::SOME].map(|t| AggregateRef(Arc::new(t)));

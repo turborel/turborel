@@ -104,5 +104,13 @@ pub fn identifier_of(name: &str) -> String {
     identifier
 }
 
+/// [§9.3 GR5] The `<delimited identifier>` `"SQLI"` of the identifier
+/// `identifier`, SQLI: in double quotes, each double quote it holds
+/// written as a `<doublequote symbol>` [ISO/IEC 9075:1992 §5.2].
+#[must_use]
+pub fn delimited(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
 #[cfg(test)]
 mod tests;

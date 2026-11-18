@@ -62,3 +62,13 @@ fn names_map_back_to_identifiers_9_3() {
         assert_eq!(identifier_of(&name_of(identifier, Escape::Partial)), identifier, "{identifier}");
     }
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §9.3 GR5] [ISO/IEC 9075:1992
+/// §5.2] the identifier an XML Name maps to is the delimited identifier
+/// of it: in double quotes, each double quote it holds doubled.
+#[test]
+fn the_mapping_is_a_delimited_identifier_9_3() {
+    assert_eq!(delimited(&identifier_of("_x0020_a")), "\" a\"");
+    assert_eq!(delimited("say \"hi\""), "\"say \"\"hi\"\"\"");
+    assert_eq!(delimited(""), "\"\"");
+}

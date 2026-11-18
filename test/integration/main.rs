@@ -344,6 +344,7 @@ mod xml_index;
 mod xml_index_plans;
 mod xml_information;
 mod xml_map;
+mod xml_names;
 mod xml_operators;
 mod xml_publishing;
 mod xml_query;

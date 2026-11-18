@@ -4568,6 +4568,36 @@ method that prices none is not read. EXPLAIN shows `column has` the
 query, its filter of an ancestor as a predicate of its step, and
 whether the index answers it.
 
+The mappings of names \[EXTENSION\]. Part 14 maps SQL identifiers to XML
+Names [§9.1, §9.2] and back [§9.3], `xml::identifiers`, and gives an
+application no syntax to invoke them [§4.10.3 NOTE 10, §4.10.4 NOTE
+11], though Feature X400 is that an application may invoke §9.3. The
+library exports them (`xml::name_of`, `name_of_parts`, `identifier_of`,
+`delimited`), and SQL calls them by these functions, decided in the
+draft's notation:
+
+```
+<XML name to identifier> ::=
+    XMLNAME_TO_IDENTIFIER <left paren> <character value expression> <right paren>
+
+<identifier to XML name> ::=
+    IDENTIFIER_TO_XMLNAME <left paren> <character value expression>
+        [ <comma> { PARTIALLY | FULLY } ESCAPED ] <right paren>
+```
+
+XMLNAME_TO_IDENTIFIER gives the delimited identifier `"SQLI"` §9.3 GR5
+makes, each double quote of SQLI doubled [ISO/IEC 9075:1992 §5.2].
+IDENTIFIER_TO_XMLNAME applies §9.1 to the characters of one identifier,
+partially escaped unless FULLY ESCAPED is written, the draft fixing no
+default; §9.2 takes a sequence of identifiers, which a string is not, so
+no function takes it. Each is a function of the registry
+(`functions/xml/names.rs`) that the parser calls by its own syntax, as
+the string functions are called (`parser/xml/names.rs`); the words are
+no key words. Each gives CHARACTER VARYING as long as its argument's
+declared length allows its mapping to be, at most `MAX_CHARACTER_LENGTH`,
+and a longer result is SQLSTATE 22001. No error of the draft arises, as
+SQL_TEXT is Unicode [§9.3 GR4].
+
 XMLMAP \[EXTENSION\]. Part 14 maps a table, a schema or the catalog to
 XML and to an XML Schema document [§9.11, §9.14, §9.17], but gives the
 mappings no syntax [§4.10.9 NOTE 13, §4.10.10 NOTE 14, §4.10.11 NOTE

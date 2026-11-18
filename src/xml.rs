@@ -43,7 +43,7 @@ pub use chars::{
 };
 pub use construct::{document, document_as};
 pub use element::element;
-pub use identifiers::{Escape, identifier_of, name_of, name_of_parts};
+pub use identifiers::{Escape, delimited, identifier_of, name_of, name_of_parts};
 pub use parse::{Syntax, Whitespace, parse, parse_bytes};
 pub(crate) use parse::{normalized, predefined};
 pub use publish::{comment, concatenate, processing_instruction, text};

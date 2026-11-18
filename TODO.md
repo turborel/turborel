@@ -124,7 +124,6 @@ data model, XQuery 1.0, its functions and operators, its serialization,
 and XML Schema 1.0. Each series below stands alone, by the draft's
 features.
 
-- Publishing: the mapping of XML Names to identifiers (X400).
 - XQuery: XMLQUERY, XMLEXISTS and XMLTABLE evaluate every expression of
   XQuery 1.0 (`src/xquery.rs`), and call every function of XQuery 1.0
   Functions and Operators (`src/xquery/library.rs`). Left: more of a

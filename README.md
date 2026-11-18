@@ -45,7 +45,8 @@ behind it, and each can be replaced or added to.
   XMLELEMENT, XMLFOREST, XMLAGG, XMLCONCAT, XMLCOMMENT, XMLPI and XMLTEXT
   with namespaces and XMLBINARY of a query, a statement or a definition,
   tables, schemas and the catalog mapped to XML and XML Schema by
-  XMLMAP, and queried in XQuery 1.0 by XMLQUERY, XMLEXISTS and XMLTABLE,
+  XMLMAP, identifiers and XML Names mapped by XMLNAME_TO_IDENTIFIER and
+  IDENTIFIER_TO_XMLNAME, and queried in XQuery 1.0 by XMLQUERY, XMLEXISTS and XMLTABLE,
   written in-house with no dependency, its modifiers shown in the
   Information Schema, XML indexes of its paths and values, and XML
   Schemas registered by CREATE XML SCHEMA, values validated by them with
