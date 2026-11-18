@@ -2,7 +2,7 @@
 //! change a network, each a procedure written in Rust: those the text
 //! defines as procedures are invoked by CALL, those it defines as
 //! functions in a value expression that may invoke a function that
-//! possibly modifies SQL-data (RULES.md D-SPATIAL-ROUTINES). Each reads
+//! possibly modifies SQL-data (RULES.md D125). Each reads
 //! the network's views, makes its change to the network read, checking in
 //! the order its Description gives, and writes the rows that changed.
 

@@ -57,7 +57,7 @@ fn words() -> Vec<Arc<dyn ScalarFunction>> {
     // \[EXTENSION\] JSON_CONTAINS, which a json index answers too.
     words.push(Arc::new(super::JsonContains));
     // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)] the routines of SQL/MM
-    // Spatial (RULES.md D-SPATIAL-FAMILY).
+    // Spatial (RULES.md D120).
     words.extend(crate::geometry::functions());
     // [§15] Those of linear referencing, a name of both one function.
     crate::spatial::lr::sql::with_functions(words)

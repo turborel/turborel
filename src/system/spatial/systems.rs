@@ -3,7 +3,7 @@
 //! representation [§14.1.9 `<spatial reference system>`], by the
 //! identifiers the EPSG registry gives them: WGS 84 geographic and
 //! geocentric, NAD83, ETRS89, WGS 84 / Pseudo-Mercator, and the 120 WGS 84
-//! UTM zones (RULES.md D-SPATIAL-CATALOG).
+//! UTM zones (RULES.md D121).
 
 use std::sync::LazyLock;
 

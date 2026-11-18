@@ -3,7 +3,7 @@
 //! built in, in a transaction and through recovery; and the routines
 //! written in Rust that read and write tables: table functions invoked as
 //! `TABLE(f(args))` and procedures invoked by CALL (RULES.md
-//! D-SPATIAL-CATALOG, D-SPATIAL-ROUTINES).
+//! D121, D125).
 
 use turborel::db::{Database, OpenOptions};
 use turborel::error::{Code, Result};

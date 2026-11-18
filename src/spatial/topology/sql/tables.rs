@@ -4,7 +4,7 @@
 //! which returns a value. Each is a table function written in Rust that
 //! reads the topology's three views, named by the topology's name, which
 //! is so known as the invocation is bound: a literal or a parameter
-//! (RULES.md D-SPATIAL-ROUTINES). ST_GetFaceGeometry is invoked as a
+//! (RULES.md D125). ST_GetFaceGeometry is invoked as a
 //! function, its value the one column of its one row.
 
 use std::sync::Arc;

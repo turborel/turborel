@@ -2,8 +2,8 @@
 //! §4.2]: its 27 types as SQL type names, subtyping, Table 4 casts, TREAT
 //! and IS OF, the ordering EQUALS ONLY BY RELATIVE, values of every type
 //! through well-known binary, collections of geometry values, and their
-//! life across reopening and recovery (RULES.md D-SPATIAL-MODEL,
-//! D-SPATIAL-FAMILY).
+//! life across reopening and recovery (RULES.md D119,
+//! D120).
 
 use turborel::db::{Database, OpenOptions};
 use turborel::error::Code;
@@ -137,7 +137,7 @@ fn collections_of_geometry_values() {
     assert_eq!(exec(&a, "INSERT INTO T (ID, PTS) VALUES (2, ARRAY[ST_GEOMFROMTEXT('POINT (1 1)')])").err(), Some(Code::SyntaxRule));
 }
 
-/// Verifies: [DESIGN] RULES.md D25, D-SPATIAL-MODEL: values of the new
+/// Verifies: [DESIGN] RULES.md D25, D119: values of the new
 /// types and the types of their columns survive a checkpoint, a reopen and
 /// a crash, an uncommitted change lost.
 #[test]

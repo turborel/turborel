@@ -1,7 +1,7 @@
 //! Topology-geometry through SQL [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
 //! §11]: a topology made by ST_InitTopoGeo, edited by its procedures and
 //! functions, read by its table functions and ST_GetFaceGeometry, in a
-//! transaction and through recovery (RULES.md D-SPATIAL-ROUTINES).
+//! transaction and through recovery (RULES.md D125).
 
 use turborel::db::{Database, OpenOptions, Session};
 use turborel::value::Value;

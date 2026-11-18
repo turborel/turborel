@@ -7,7 +7,7 @@
 //! optional part is left out is empty where nothing follows it; else the
 //! empty forms `model/encode.rs` writes are read. Stored, only what the
 //! writer writes is read, so one value has one form (RULES.md
-//! D-SPATIAL-MODEL). Counts are checked against the bytes left and the
+//! D119). Counts are checked against the bytes left and the
 //! shared part budget before anything is allocated.
 
 use super::check::{failed, limited};

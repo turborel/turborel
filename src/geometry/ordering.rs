@@ -2,10 +2,10 @@
 //! ordering of ST_Geometry: EQUALS ONLY BY RELATIVE [§5.2], so a
 //! comparison `a = b` of geometry values is `ST_OrderingEquals(a, b) = 0`
 //! (`binder/structured/orderings.rs`), and no value of the family is
-//! grouped, sorted or a key (RULES.md D-SPATIAL-FAMILY).
+//! grouped, sorted or a key (RULES.md D120).
 //!
 //! It is 0 if the two are spatially equal [§5.1.65 GR], by `EQUALITY`,
-//! which the planar engine supplies (RULES.md D-SPATIAL-FAMILY). Values
+//! which the planar engine supplies (RULES.md D120). Values
 //! of one SRID are equal when their point sets of x and y are, by the
 //! exact relationship of ST_Equals [§5.1.43].
 

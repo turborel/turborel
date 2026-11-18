@@ -1,5 +1,5 @@
 //! The types through the SqlType contract (RULES.md D53,
-//! D-SPATIAL-SUPPORT), and the families of one type ST_SpatialRefSys and
+//! D123), and the families of one type ST_SpatialRefSys and
 //! ST_Vector are, so they are ordered EQUALS ONLY BY RELATIVE as the
 //! geometry types are (`value/types/family.rs`).
 //!
@@ -173,7 +173,7 @@ fn text_of(s: Support, v: &Value) -> Result<String> {
 
 /// SQLCODE -900: no key is of a type ordered EQUALS ONLY or of none.
 fn unkeyed(t: &DataType) -> SqlError {
-    SqlError::new(Code::Unsupported, format!("[DESIGN] no key is of {t}, whose values are not ordered (RULES.md D81, D-SPATIAL-SUPPORT)"))
+    SqlError::new(Code::Unsupported, format!("[DESIGN] no key is of {t}, whose values are not ordered (RULES.md D81, D123)"))
 }
 
 impl SqlType for SupportType {
@@ -295,7 +295,7 @@ impl SqlType for SupportType {
     }
 
     /// The radians of an angle or a direction, as a DOUBLE PRECISION's
-    /// key; no other is keyed (RULES.md D81, D-SPATIAL-SUPPORT).
+    /// key; no other is keyed (RULES.md D81, D123).
     fn encode_key(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
         let radians = self.radians(v).ok_or_else(|| unkeyed(t))?;
         let bits = (radians + 0.0_f64).to_bits();

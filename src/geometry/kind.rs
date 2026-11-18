@@ -1,7 +1,7 @@
 //! [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2] The 27 geometry types,
 //! built in, each a kind of type through the SqlType contract (RULES.md
 //! D53) and one family (`value/types/family.rs`, RULES.md
-//! D-SPATIAL-FAMILY): ST_GEOMETRY, which GEOMETRY names too, and its
+//! D120): ST_GEOMETRY, which GEOMETRY names too, and its
 //! subtypes. Every value is of one payload (`model/payload.rs`), whose
 //! type code is its most specific type; a value of a type is a value of
 //! each supertype, and is assigned to a site of a supertype as it is.

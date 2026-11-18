@@ -1,4 +1,4 @@
-//! \[DESIGN\] A geometry value as it is stored (RULES.md D-SPATIAL-MODEL):
+//! \[DESIGN\] A geometry value as it is stored (RULES.md D119):
 //! the payload version, 1, its SRID as four bytes little-endian, then its
 //! canonical well-known binary representation [ISO/IEC 13249-3:2016 (DIS,
 //! SC32 N2593) §5.1.68]. Of the seven kinds D85 stored, of x and y, these

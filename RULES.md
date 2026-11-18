@@ -143,20 +143,20 @@ verification approach DO-178C expects (§8).
 | D103 | What waits for an embedding is found in the rows, filled after commit |
 | D104 | A scalar function may take a batch's rows at once |
 | D105 | Bracketed comments are separators, and a leading `/*+` one carries hints |
-| D-SPATIAL-MODEL | One frozen geometry model of every SQL/MM Spatial type, stored as canonical well-known binary |
-| D-SPATIAL-FAMILY | The geometry types are a built-in type family, with subtyping, TREAT, IS OF, CAST and an ordering of EQUALS ONLY BY RELATIVE |
-| D-SPATIAL-CATALOG | The SQL/MM Spatial Information Schema is standard views over system tables of seeded and defined rows |
-| D-SPATIAL-SRS | Reference systems, transforms, geodesics, angles and directions are one pure engine |
-| D-SPATIAL-SUPPORT | SQL/MM Spatial's types beside the geometry types are built-in kinds, ordered as their clauses declare |
-| D-SPATIAL-CURVES | Curves are paths of pieces, a TIN a constrained Delaunay triangulation, and the formats canonical |
-| D-SPATIAL-ROUTINES | Table functions and procedures written in Rust read and write tables through SQL in the caller's transaction |
-| D-SPATIAL-PLANAR | Spatial relationships and operations come from one exact planar graph |
-| D-SPATIAL-SOLIDS | The 3D routines run on an exact plane-based engine |
-| D-SPATIAL-TOPOLOGY | A topology is a schema of its own, edited whole in memory by its routines |
-| D-SPATIAL-NETWORK | A network is a schema of its own, as a topology is |
-| D-SPATIAL-PATHS | Shortest paths are table functions over a named table, every tied path listed within bounds |
-| D-SPATIAL-LR | Linear referencing types are built-in kinds, their routines one dispatcher per name over the §21 catalog |
-| D-SPATIAL-STATES | Class 2FF is shared by the SQL/MM parts, each routine raising its own part's conditions |
+| D119 | One frozen geometry model of every SQL/MM Spatial type, stored as canonical well-known binary |
+| D120 | The geometry types are a built-in type family, with subtyping, TREAT, IS OF, CAST and an ordering of EQUALS ONLY BY RELATIVE |
+| D121 | The SQL/MM Spatial Information Schema is standard views over system tables of seeded and defined rows |
+| D122 | Reference systems, transforms, geodesics, angles and directions are one pure engine |
+| D123 | SQL/MM Spatial's types beside the geometry types are built-in kinds, ordered as their clauses declare |
+| D124 | Curves are paths of pieces, a TIN a constrained Delaunay triangulation, and the formats canonical |
+| D125 | Table functions and procedures written in Rust read and write tables through SQL in the caller's transaction |
+| D126 | Spatial relationships and operations come from one exact planar graph |
+| D127 | The 3D routines run on an exact plane-based engine |
+| D128 | A topology is a schema of its own, edited whole in memory by its routines |
+| D129 | A network is a schema of its own, as a topology is |
+| D130 | Shortest paths are table functions over a named table, every tied path listed within bounds |
+| D131 | Linear referencing types are built-in kinds, their routines one dispatcher per name over the §21 catalog |
+| D132 | Class 2FF is shared by the SQL/MM parts, each routine raising its own part's conditions |
 
 ### The project
 
@@ -3813,7 +3813,7 @@ read by `lexer::hinted`. VECTOR_WAIT_FRESH is the one hint read there
 statement. The approximate search's hints are written after the fetch
 clause instead (D94), where the parser reads them as syntax.
 
-#### D-SPATIAL-MODEL. One frozen geometry model of every SQL/MM Spatial type, stored as canonical well-known binary
+#### D119. One frozen geometry model of every SQL/MM Spatial type, stored as canonical well-known binary
 
 `geometry::model::Geom` holds a value of any of the 27 types of
 [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2]. It has an SRID, its
@@ -3838,10 +3838,10 @@ calls anything else damage (-916).
 The model is frozen. Workers that add routines read and build `Geom`
 and do not change its shape. Two hooks are constants filled by later
 decisions. `geometry::EQUALITY` is ST_Equals for ST_OrderingEquals,
-filled by D-SPATIAL-PLANAR. `model::linear::CURVE_LINEARIZER` takes
-arcs and other curves into line strings, filled by D-SPATIAL-CURVES.
+filled by D126. `model::linear::CURVE_LINEARIZER` takes
+arcs and other curves into line strings, filled by D124.
 
-#### D-SPATIAL-FAMILY. The geometry types are a built-in type family, with subtyping, TREAT, IS OF, CAST and an ordering of EQUALS ONLY BY RELATIVE
+#### D120. The geometry types are a built-in type family, with subtyping, TREAT, IS OF, CAST and an ordering of EQUALS ONLY BY RELATIVE
 
 This extends D85 and D87. It replaces D85's single type of value kinds
 and its equality of representation bytes.
@@ -3901,7 +3901,7 @@ EQUALS-only ordering there. The R-tree of D85 indexes envelopes, not
 keys, and is unchanged. Arrays and multisets of family types are
 allowed.
 
-#### D-SPATIAL-CATALOG. The SQL/MM Spatial Information Schema is standard views over system tables of seeded and defined rows
+#### D121. The SQL/MM Spatial Information Schema is standard views over system tables of seeded and defined rows
 
 The base tables of ST_DEFINITION_SCHEMA [ISO/IEC 13249-3:2016 (DIS,
 SC32 N2593) §20] are system tables (D37), as the Definition Schema of
@@ -3927,7 +3927,7 @@ and VIEWS.
 
 The procedures ST_DEFINESRS, ST_DROPSRS, ST_REGISTERGEOMETRYCOLUMN and
 ST_UNREGISTERGEOMETRYCOLUMN change the defined systems and the
-registrations (D-SPATIAL-ROUTINES). They are extensions, since the
+registrations (D125). They are extensions, since the
 standard defines the tables but no procedure.
 
 A change is a catalog change (`catalog/spatial.rs`) of the transaction,
@@ -3960,12 +3960,12 @@ sets any value [§5.1.5 Description 5]. A type naming an SRID that no
 system has still takes values. Only a lookup, by ST_Transform or a unit
 form, needs the system.
 
-#### D-SPATIAL-SRS. Reference systems, transforms, geodesics, angles and directions are one pure engine
+#### D122. Reference systems, transforms, geodesics, angles and directions are one pure engine
 
 `src/spatial/srs` is one engine on plain `[f64; 2]` and `[f64; 3]`
 coordinates with no SQL dependency. The SQL catalogs, types and
 routines wrap it and add nothing numeric. It reads its systems and units
-from the catalog tables of D-SPATIAL-CATALOG. Every failure is a
+from the catalog tables of D121. Every failure is a
 `Fault` whose `Condition` maps to a 2FF subclass of
 [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §22 Table 16].
 
@@ -3980,15 +3980,15 @@ systems a user defines.
 Geodetic distance, length and area use Karney's geodesic algorithms, so
 no result depends on a spherical approximation.
 
-#### D-SPATIAL-SUPPORT. SQL/MM Spatial's types beside the geometry types are built-in kinds, ordered as their clauses declare
+#### D123. SQL/MM Spatial's types beside the geometry types are built-in kinds, ordered as their clauses declare
 
-This extends D53, D-SPATIAL-FAMILY and D-SPATIAL-SRS.
+This extends D53, D120 and D122.
 
 ST_SpatialRefSys, ST_Angle, ST_Direction, ST_Vector,
 ST_AffinePlacement, ST_NURBSPoint and ST_Knot are each a `SqlType`
 registered beside the geometry types (`src/geometry/support`).
-ST_TINElement is D-SPATIAL-CURVES's. The SQL layer wraps the engine of
-D-SPATIAL-SRS and adds nothing numeric. Each type's routines are rows of
+ST_TINElement is D124's. The SQL layer wraps the engine of
+D122 and adds nothing numeric. Each type's routines are rows of
 one table. A constructor or function is a registered scalar function,
 one per signature, and a call picks among the signatures of a name by
 type precedence [ISO/IEC 9075-2:2023 §9.6]. A method binds by its
@@ -4021,7 +4021,7 @@ or of vectors. ST_DEFINESRS reads its definition with the engine's WKT
 reader when called and refuses an unreadable one with 2FF22, so nothing
 unreadable is stored.
 
-#### D-SPATIAL-CURVES. Curves are paths of pieces, a TIN a constrained Delaunay triangulation, and the formats canonical
+#### D124. Curves are paths of pieces, a TIN a constrained Delaunay triangulation, and the formats canonical
 
 Curves are evaluated as paths of pieces (`src/spatial/curves`). A piece
 is a segment, a conic, a spline, a clothoid, a spiral or a geodesic.
@@ -4029,7 +4029,7 @@ Lengths of conics and segments are exact. Others use adaptive
 Gauss-Legendre quadrature. Measures are linear in 3D length within a
 piece.
 
-Linearization fills D-SPATIAL-MODEL's `CURVE_LINEARIZER`. It keeps the
+Linearization fills D119's `CURVE_LINEARIZER`. It keeps the
 exact vertices of point-list curves and steps conics by equal angles.
 Other pieces are halved adaptively to a relative deviation of 1e-3 of
 the curve's extent, at most 65536 segments. Curve polygon areas are
@@ -4048,7 +4048,7 @@ The formats' writers (`src/spatial/formats`, well-known text and GML)
 are canonical, so their output reads back to the same value. WKB is the
 model's own.
 
-#### D-SPATIAL-ROUTINES. Table functions and procedures written in Rust read and write tables through SQL in the caller's transaction
+#### D125. Table functions and procedures written in Rust read and write tables through SQL in the caller's transaction
 
 A `TableFunction` (`functions/builtin.rs`) is invoked as
 `TABLE(f(args)) AS T` in a FROM clause. It is unqualified and found
@@ -4092,7 +4092,7 @@ Both are registered by `Database::register_table_function` and
 `register_procedure`. The spatial catalog procedures, the topology and
 network routines, shortest paths and ST_TINTable are built this way.
 
-#### D-SPATIAL-PLANAR. Spatial relationships and operations come from one exact planar graph
+#### D126. Spatial relationships and operations come from one exact planar graph
 
 `spatial::planar` is the computational geometry under SQL/MM Spatial's
 relationships and operations [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
@@ -4149,7 +4149,7 @@ trigonometry. Measures avoid `hypot`, so every platform gives the same
 bits.
 
 `geometry::EQUALITY` is the engine's ST_Equals of x and y, so `=`,
-`<>` and ST_OrderingEquals are spatial equality (D-SPATIAL-FAMILY).
+`<>` and ST_OrderingEquals are spatial equality (D120).
 Values of different SRIDs are unequal.
 
 Each relationship declares a spatial operation (`Meets` for Touches,
@@ -4163,7 +4163,7 @@ at a time. The plain forms keep batches (D104) and expression indexes.
 A constant folded at planning knows only the seeded systems, and a
 lookup of any other leaves the call to its statement.
 
-#### D-SPATIAL-SOLIDS. The 3D routines run on an exact plane-based engine
+#### D127. The 3D routines run on an exact plane-based engine
 
 `spatial::solids` holds the routines of x, y and z. It knows no SQL
 type. Coordinates are scaled by one power of two to integers, so every
@@ -4183,15 +4183,15 @@ Distance is the least between points, segments and triangles in
 binary64.
 
 A TIN retriangulates through the constrained triangulation of
-D-SPATIAL-CURVES. A clip cuts each triangle's plan with the planar
-engine of D-SPATIAL-PLANAR and lifts the pieces back onto its plane.
+D124. A clip cuts each triangle's plan with the planar
+engine of D126 and lifts the pieces back onto its plane.
 
-#### D-SPATIAL-TOPOLOGY. A topology is a schema of its own, edited whole in memory by its routines
+#### D128. A topology is a schema of its own, edited whole in memory by its routines
 
 A topology is the schema of its name, delimited and as given, owned by
 the user who calls ST_InitTopoGeo. ST_InitTopoGeo makes it with one
 `<schema definition>` staged in the caller's transaction
-(D-SPATIAL-ROUTINES).
+(D125).
 
 It holds base tables ST_TOPO_NODE, ST_TOPO_EDGE and ST_TOPO_FACE under
 the views ST_NODE, ST_EDGE and ST_FACE [ISO/IEC 13249-3:2016 (DIS, SC32
@@ -4209,12 +4209,12 @@ routines.
 
 Each routine loads the whole topology into
 `spatial::topology::Topology`. It edits it with the exact predicates of
-D-SPATIAL-PLANAR and writes the rows that differ. Faces made come
+D126 and writes the rows that differ. Faces made come
 first and faces deleted last, for the foreign keys. A topology is held
 in memory whole while a routine runs. That cost, O(rows) a routine, is
 accepted for the alpha.
 
-#### D-SPATIAL-NETWORK. A network is a schema of its own, as a topology is
+#### D129. A network is a schema of its own, as a topology is
 
 A network is the schema of its name, delimited and as given, owned by
 the user who calls ST_InitTopoNet. It holds base tables ST_NET_NODE and
@@ -4233,16 +4233,16 @@ edits it in memory and writes the rows that differ. Link deletions come
 first, then inserts and updates with nodes before links, then node
 deletions, for the foreign keys. A network is held in memory whole
 while a routine runs, O(rows), accepted as for topologies
-(D-SPATIAL-TOPOLOGY).
+(D128).
 
 The seven routines that return INTEGER are functions that modify
-SQL-data, and the rest procedures (D-SPATIAL-ROUTINES).
+SQL-data, and the rest procedures (D125).
 ST_ValidLogicalNet and ST_ValidSpatialNet are table functions.
 
-#### D-SPATIAL-PATHS. Shortest paths are table functions over a named table, every tied path listed within bounds
+#### D130. Shortest paths are table functions over a named table, every tied path listed within bounds
 
 ST_ShortestUndPath and ST_ShortestDirPath [ISO/IEC 13249-3:2016 (DIS,
-SC32 N2593) §13.1] are built-in table functions (D-SPATIAL-ROUTINES).
+SC32 N2593) §13.1] are built-in table functions (D125).
 Each reads the named table with the invoker's privileges, as `SELECT
 ROW(columns) FROM table`, bound when the invocation is bound.
 
@@ -4259,7 +4259,7 @@ Each search ends because it pushes only on a strict decrease and lists
 only simple paths. No mutation of `spatial_network.rs` touches either,
 so no mutation can make a search loop forever.
 
-#### D-SPATIAL-LR. Linear referencing types are built-in kinds, their routines one dispatcher per name over the §21 catalog
+#### D131. Linear referencing types are built-in kinds, their routines one dispatcher per name over the §21 catalog
 
 The thirteen types of [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15] are
 kinds of type built in (D53), as VECTOR and FULLTEXT are, of no family
@@ -4286,7 +4286,7 @@ routine takes. Every capability the geometry function declares is the
 dispatcher's too, so its R-tree plans, unit forms and batches are kept.
 
 The tables ST_LRMS and ST_LR_COLUMNS [§21.2] sit in
-ST_DEFINITION_SCHEMA beside those of D-SPATIAL-CATALOG, under the views
+ST_DEFINITION_SCHEMA beside those of D121, under the views
 of §21.1. They change in the transaction as the geometry catalog does.
 The procedures ST_DEFINELRM, ST_DROPLRM, ST_REGISTERLRCOLUMN and
 ST_UNREGISTERLRCOLUMN change them, extensions since §21.1.1 leaves the
@@ -4298,7 +4298,7 @@ is appended as an ARRAY as the statement is bound, through the
 `catalog_query` hook of `ScalarFunction`. Only registered columns are
 searched, and reading them needs SELECT on them.
 
-#### D-SPATIAL-STATES. Class 2FF is shared by the SQL/MM parts, each routine raising its own part's conditions
+#### D132. Class 2FF is shared by the SQL/MM parts, each routine raising its own part's conditions
 
 ISO/IEC 13249-2 (Full-Text) and ISO/IEC 13249-3 (Spatial) both define
 subclasses 2FF01 to 2FF03 with different meanings. A routine of a part

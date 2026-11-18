@@ -34,7 +34,7 @@ const THREE_ARGS: usize = 3;
 const FOUR_ARGS: usize = 4;
 const FIVE_ARGS: usize = 5;
 
-/// The functions of D85, built in (RULES.md D-SPATIAL-FAMILY).
+/// The functions of D85, built in (RULES.md D120).
 pub const FUNCTIONS: [GeometryFunction; 19] = [
     GeometryFunction::Point,
     GeometryFunction::MakeEnvelope,
@@ -395,7 +395,7 @@ impl GeometryFunction {
     /// What an observer reads of the payload of `g` alone, of a value of
     /// any type: its type, SRID and well-known binary representation, or
     /// it relabelled. ST_AsText of a type D85 does not write is the
-    /// formats' writer's (RULES.md D-SPATIAL-CURVES).
+    /// formats' writer's (RULES.md D124).
     fn of_payload(self, g: &Value, rest: &[Value]) -> Result<Option<Value>> {
         let bytes = kind::payload(g).ok_or_else(|| invalid("expected a geometry value"))?;
         let (srid, wkb) = model::header(bytes)?;

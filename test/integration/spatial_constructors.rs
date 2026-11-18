@@ -1,7 +1,7 @@
 //! The constructor methods of the geometry types through SQL [ISO/IEC
 //! 13249-3:2016 (DIS, SC32 N2593) §6.1.2, §7.2.2 to §7.10.2, §8.2.2 to
 //! §8.6.2, §10.1.2 to §10.6.2]: each type's representation forms and the
-//! forms of its parts, `NEW ST_X(...)` (RULES.md D-SPATIAL-FAMILY).
+//! forms of its parts, `NEW ST_X(...)` (RULES.md D120).
 
 use turborel::db::{Database, Session};
 use turborel::value::Value;

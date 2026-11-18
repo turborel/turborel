@@ -15,7 +15,7 @@ use crate::geometry::MAX_DEPTH;
 /// \[DESIGN\] The linestring a curve of another interpolation than a
 /// linestring's is approximated by, its first point its start and its last
 /// its end: ST_CurveToLine of the curve engines at their default
-/// tolerance (RULES.md D-SPATIAL-CURVES). None of a curve it does not take.
+/// tolerance (RULES.md D124). None of a curve it does not take.
 pub const CURVE_LINEARIZER: fn(&Curve, Dims) -> Option<Result<Coords>> = crate::spatial::curves::adapt::linearizer;
 
 pub(super) fn of(g: &Geom) -> Result<Geom> {
@@ -24,10 +24,7 @@ pub(super) fn of(g: &Geom) -> Result<Geom> {
 
 /// SQLCODE -900: a value no planar routine takes yet.
 fn unlinear(kind: &str) -> SqlError {
-    SqlError::new(
-        Code::Unsupported,
-        format!("[DESIGN] this spatial routine does not yet take a value of {kind} (RULES.md D-SPATIAL-MODEL)"),
-    )
+    SqlError::new(Code::Unsupported, format!("[DESIGN] this spatial routine does not yet take a value of {kind} (RULES.md D119)"))
 }
 
 fn body(b: &Body, dims: Dims, depth: usize) -> Result<Body> {

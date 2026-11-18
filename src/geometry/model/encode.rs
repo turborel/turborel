@@ -5,7 +5,7 @@
 //! Where the grammar marks a value's part optional and lets the empty set
 //! be written by leaving it out, a part that some other part may follow
 //! leaves a reader nothing to tell the two apart by. So an empty value is
-//! written in full instead (RULES.md D-SPATIAL-MODEL): an empty point as
+//! written in full instead (RULES.md D119): an empty point as
 //! NaN ordinates, the GEOS convention D85 reads; an empty value of a count
 //! as a count of zero; an empty triangle as three points of NaN; an empty
 //! elliptical curve, clothoid or spiral as its layout with every number

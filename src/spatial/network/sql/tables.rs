@@ -3,7 +3,7 @@
 //! and ST_ValidSpatialNet, which return tables. Each is a table function
 //! written in Rust that reads the network's two views, named by the
 //! network's name, which is so known as the invocation is bound: a literal
-//! or a parameter (RULES.md D-SPATIAL-ROUTINES).
+//! or a parameter (RULES.md D125).
 
 use std::sync::Arc;
 

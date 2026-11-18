@@ -3,7 +3,7 @@
 //! §5.1.15, §5.1.56 to §5.1.64, §6 to §10]: well-known text, binary and
 //! GML of every instantiable type and each type's constructors of them,
 //! the curve observers, the surface measures, rings and patches, and the
-//! measure locators (RULES.md D-SPATIAL-CURVES).
+//! measure locators (RULES.md D124).
 
 use turborel::db::{Database, Session};
 use turborel::value::Value;

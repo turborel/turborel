@@ -1,7 +1,7 @@
 //! Mutations of SQL/MM Spatial's type family, its ordering, its large
 //! object input and its Information Schema, its methods, its catalog
 //! procedures and the routines written in Rust (RULES.md R-TEST-9,
-//! D-SPATIAL-FAMILY, D-SPATIAL-CATALOG, D-SPATIAL-ROUTINES).
+//! D120, D121, D125).
 
 use super::{Mutation, Package};
 

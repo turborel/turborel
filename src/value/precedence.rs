@@ -82,7 +82,7 @@ pub fn position(p: &DataType, t: &DataType) -> Option<u8> {
 
 /// \[EXTENSION\] [SR4] A type of a family built in, among its own type
 /// and its supertypes', the nearest first, whatever their parameters, as
-/// a structured type's (RULES.md D-SPATIAL-FAMILY); another extension
+/// a structured type's (RULES.md D120); another extension
 /// type itself alone.
 fn extension(p: &DataType, t: &DataType) -> Option<u8> {
     if let (Some((f, want)), Some((g, mut at))) = (family_of(p), family_of(t))

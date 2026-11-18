@@ -4,7 +4,7 @@
 //! with a system: the rows of ST_SPATIAL_REFERENCE_SYSTEMS and
 //! ST_GEOMETRY_COLUMNS made by the procedures that define them
 //! (`geometry/procedures.rs`), each checked against those tables'
-//! constraints (RULES.md D-SPATIAL-CATALOG). And of §21, the linear
+//! constraints (RULES.md D121). And of §21, the linear
 //! referencing methods defined and the columns registered with one
 //! (`spatial/lr.rs`).
 

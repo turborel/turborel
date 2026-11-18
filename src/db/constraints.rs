@@ -194,7 +194,7 @@ impl<'a> Described<'a> {
     /// ONLY, as the geometry types' [ISO/IEC 13249-3:2016 (DIS, SC32
     /// N2593) §5.1.65], is ST-EC-ordered, so no such constraint is of it
     /// [ISO/IEC 9075-2:2023 §11.7 SR1, §11.8, §9.12 SR3] (RULES.md
-    /// D-SPATIAL-FAMILY).
+    /// D120).
     fn grouped(&self, columns: &[usize], what: &str) -> Result<()> {
         let types = columns.iter().filter_map(|&i| self.columns.get(i)).map(|c| &c.data_type);
         types.into_iter().try_for_each(|t| {

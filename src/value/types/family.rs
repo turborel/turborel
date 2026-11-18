@@ -1,7 +1,7 @@
 //! \[DESIGN\] A family of types built in, each a kind of type beyond the
 //! standard (RULES.md D53), ordered by a type hierarchy as a structured
 //! type's subtypes are [ISO/IEC 9075-2:2023 §4.9.5] (RULES.md
-//! D-SPATIAL-FAMILY): SQL/MM Spatial's 27 geometry types [ISO/IEC
+//! D120): SQL/MM Spatial's 27 geometry types [ISO/IEC
 //! 13249-3:2016 (DIS, SC32 N2593) §4.2]. Its values are of one payload,
 //! which says their most specific type; a value of a type is a value of
 //! each of its supertypes.

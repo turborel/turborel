@@ -511,7 +511,7 @@ fn the_psm_examples_run_as_printed() {
 }
 
 /// A database of the geometry types and their functions, which are built
-/// in (RULES.md D-SPATIAL-FAMILY).
+/// in (RULES.md D120).
 fn spatial_database() -> Database {
     Database::new()
 }
@@ -545,7 +545,7 @@ fn the_linear_referencing_examples_run_as_printed() {
     assert!(Client::of(&db, "ANN").page("sql/17-linear-referencing.md") > 0, "it shows its examples' output");
 }
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D-SPATIAL-NETWORK: the SQL
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D129: the SQL
 /// Reference Manual's chapter of spatial networks and shortest paths runs
 /// as printed, as ANN.
 #[test]

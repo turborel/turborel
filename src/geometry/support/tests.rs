@@ -32,7 +32,7 @@ fn samples() -> Vec<Value> {
     ]
 }
 
-/// Verifies: [DESIGN] RULES.md D53, D-SPATIAL-SUPPORT: a value of each
+/// Verifies: [DESIGN] RULES.md D53, D123: a value of each
 /// type survives its stored form and its record field, and stored bytes
 /// that are no value of the type are refused.
 #[test]

@@ -2132,7 +2132,7 @@ information schema views are system tables of the same columns.
 ## SQL/MM Spatial
 
 ISO/IEC 13249-3:2016, cited by its draft international standard (DIS,
-SC32 N2593), is built in (RULES.md D-SPATIAL-MODEL to D-SPATIAL-STATES,
+SC32 N2593), is built in (RULES.md D119 to D132,
 over D85). A bare `§` in this part is of that text. The code cites it
 as `[ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §N]`.
 
@@ -2150,7 +2150,7 @@ section below. What turborel adds beyond the standard is under
 ### Types and the model [§4–§10]
 
 The geometry types are built in (`src/geometry.rs`, RULES.md D85,
-D-SPATIAL-MODEL, D-SPATIAL-FAMILY). They are ST_GEOMETRY, also named
+D119, D120). They are ST_GEOMETRY, also named
 GEOMETRY, and its 26 subtypes of §4.2. A value of any type and
 coordinate dimension is read from and written to WKB [§5.1.68] and
 stored canonically. No registration is needed.
@@ -2165,24 +2165,24 @@ when declared, with SQLCODE -103.
 | Type hierarchy | §4.2, Figure 1 | All 27 types are SQL type names, each with an optional SRID parameter. The four that hold no values of their own (ST_Geometry, ST_Curve, ST_Surface, ST_Solid) refuse NEW. |
 | Subtyping | 9075-2 §9.2 SR2, §6.17, §8.19 | A value can be assigned to a type above its own. Assigning it to a type below its own needs TREAT, which raises 0D000 at run time. IS OF and IS OF (ONLY) are supported. |
 | Casts | §4.2.1.5 Table 4 | CAST within the hierarchy, else 2FF08. The ST_ToXxx cast methods of §5.1.55, each also a function. |
-| Ordering | §5.1.65 | EQUALS ONLY BY RELATIVE with ST_OrderingEquals, the exact ST_Equals of x and y (RULES.md D-SPATIAL-PLANAR). Two empty values of one SRID are equal. PRIMARY KEY, UNIQUE and FOREIGN KEY of a geometry column are refused at declaration [9075-2 §11.7 SR1, §9.12 SR3], SQLSTATE 2A000. |
+| Ordering | §5.1.65 | EQUALS ONLY BY RELATIVE with ST_OrderingEquals, the exact ST_Equals of x and y (RULES.md D126). Two empty values of one SRID are equal. PRIMARY KEY, UNIQUE and FOREIGN KEY of a geometry column are refused at declaration [9075-2 §11.7 SR1, §9.12 SR3], SQLSTATE 2A000. |
 | Methods | §4.2, 9075-2 §9.18 | A method table per type, with overriding. The collection types override ST_Geometries. `v.m()` binds by the declared type and runs by the most specific type. `(v AS T).m()` runs T's. |
 | SPECIFICTYPE | 9075-2 §6.15 | `v.SPECIFICTYPE` names the most specific type in INFORMATION_SCHEMA, the built-in types' schema. The function form SPECIFICTYPE(v) is not built. |
 | Collections | §10.1.3 to §10.1.5 | ST_NumGeometries, ST_GeometryN (01F01 out of range) and ST_Geometries, accessor and mutator. |
-| Relationships | §4.2.2, §5.1.43 to §5.1.54 | ST_Relate, ST_Equals, ST_Disjoint, ST_Intersects, ST_Touches, ST_Crosses, ST_Within, ST_Contains and ST_Overlaps, exact on binary64 (`src/spatial/planar`, RULES.md D-SPATIAL-PLANAR). An `rtree` index plans each as it plans ST_Intersects. |
+| Relationships | §4.2.2, §5.1.43 to §5.1.54 | ST_Relate, ST_Equals, ST_Disjoint, ST_Intersects, ST_Touches, ST_Crosses, ST_Within, ST_Contains and ST_Overlaps, exact on binary64 (`src/spatial/planar`, RULES.md D126). An `rtree` index plans each as it plans ST_Intersects. |
 | Set operations | §5.1.31 to §5.1.40, Tables 6 to 11 | ST_Intersection, ST_Union, ST_Difference and ST_SymDifference over mixed dimensions, typed by Tables 8 to 11 (`routines/results.rs`). |
 | Buffer, hull and boundary | §5.1.17, §5.1.29, §5.1.30 | ST_Buffer with and without a unit, ST_ConvexHull and ST_Boundary. |
 | Validity and simplicity | §5.1.8, §5.1.10, §7.1.8 | ST_IsValid, ST_IsSimple and ST_IsRing. |
-| Measures | §5.1.41, §7.1.2, §8.1.2 to §8.1.8, §10.3.5, §10.5.3 to §10.5.9 | ST_Area, ST_Length, ST_Perimeter (each with a unit form), ST_Centroid, ST_PointOnSurface and ST_Distance with a unit. Values with arcs or other curves are measured exactly by the curve engine (RULES.md D-SPATIAL-CURVES), linear ones by the planar engine. |
+| Measures | §5.1.41, §7.1.2, §8.1.2 to §8.1.8, §10.3.5, §10.5.3 to §10.5.9 | ST_Area, ST_Length, ST_Perimeter (each with a unit form), ST_Centroid, ST_PointOnSurface and ST_Distance with a unit. Values with arcs or other curves are measured exactly by the curve engine (RULES.md D124), linear ones by the planar engine. |
 | Polygons from rings | §8.3.9, §10.6.7 | ST_BdPolyFromText, ST_BdPolyFromWKB, ST_BdMPolyFromText and ST_BdMPolyFromWKB. The standard has no GML forms of them. |
-| Curves | §7 | The routines of the nine curve kinds (`src/geometry/observers.rs`, RULES.md D-SPATIAL-CURVES), with the unit forms the clause gives, ST_DistanceToPoint's and ST_PointAtDistance's among them. ST_PerpPoints has none [§7.1.15]. ST_BulgeNormal and ST_Normal return ST_Vector values, ST_StartAngle and ST_EndAngle ST_Angle values, ST_RefLocation an ST_AffinePlacement whose reference directions are the axis vectors, and ST_ControlPoints and ST_Knots arrays of ST_NURBSPoint and ST_Knot (`src/geometry/observers/records.rs`). |
+| Curves | §7 | The routines of the nine curve kinds (`src/geometry/observers.rs`, RULES.md D124), with the unit forms the clause gives, ST_DistanceToPoint's and ST_PointAtDistance's among them. ST_PerpPoints has none [§7.1.15]. ST_BulgeNormal and ST_Normal return ST_Vector values, ST_StartAngle and ST_EndAngle ST_Angle values, ST_RefLocation an ST_AffinePlacement whose reference directions are the axis vectors, and ST_ControlPoints and ST_Knots arrays of ST_NURBSPoint and ST_Knot (`src/geometry/observers/records.rs`). |
 | Surfaces and TINs | §8, §17.1 | The routines of the six surface kinds, ST_TIN of elements and of triangles, ST_TINElements as an observer and a mutator, and the ST_TINElement type with its empty constructor, observers, mutators and ST_IsEmpty (`src/geometry/tins.rs`, `src/geometry/tin_element.rs`). |
 | Constructors | §6.1.2, §7.2.2 to §7.10.2, §8.2.2 to §8.6.2, §10.1.2 to §10.6.2 | `NEW ST_X(...)` and the function ST_X of each instantiable type of §6 to §10, every form its clause defines: the text, binary and GML forms with an SRID, a point of x, y, z and m, a curve of its points or parameters, with measures, a unit and an SRID, a circular string of a center or of bulges, a circle of a center and a normal, a surface of its rings, a polyhedral surface of its patches and a collection of its elements (`src/geometry/mutators/constructors.rs`). |
 | Mutators and observers | §5.1, §6.1.3 to §6.1.7, §7.2 to §7.10, §8.1 to §8.6, §10.3 | Each attribute's mutator, checked as its clause checks it: ST_X, ST_Y, ST_Z and ST_M; ST_Points, ST_Curves, ST_ExteriorRing, ST_InteriorRings and ST_Patches; ST_RefLocation, the axis lengths, angles, measures, control points, knots, scale factor, distances, length, curvatures and spiral type, with the unit forms. Also ST_Dimension, ST_CoordDim, ST_Is3D, ST_IsMeasured, ST_Envelope, ST_EnvelopeAsPts, ST_MinZ to ST_MaxM, ST_ExplicitPoint, ST_IsWorld, ST_IsClosed and ST_PerpPoints of a multicurve, and the ToSQL methods (`src/geometry/mutators.rs`). Every routine of §5 to §10 binds and runs. |
 | Locating by measure | §5.1.13 to §5.1.16 | ST_LocateAlong and ST_LocateBetween, and their 3D forms. |
-| Routines in space | §5.1, §8, §9 | The 3D relationships, set operations, distance, measures, boundary, simplicity and closure, the shells of a solid, ST_MaxSideLength, ST_Clip and ST_TINTable (`src/geometry/solids.rs`, RULES.md D-SPATIAL-SOLIDS). ST_BRepSolid's constructors from surfaces [§9.2.2] and the routines of ST_CompoundSurface beyond measures over its patches are not built. |
-| Table functions | §8.6, §11, §12, §13 | The mechanism of RULES.md D-SPATIAL-ROUTINES. ST_TINTable, the topology and network checks and the shortest paths use it. |
-| SQLSTATEs | §22 Table 16 | All 98 conditions are defined, and the model raises 2FF05, 2FF06, 2FF07, 2FF08, 2FF10, 2FF11, 2FF12, 2FF16, 2FF18, 2FF23, 2FF25, 2FF66, 2FF67, 2FF75, 2FF77, 2FF78, 2FF84, 2FF86, 2FF96 and 2FF98. Defect, 2FF01 to 2FF03 clash with 13249-2's. Each part raises its own (RULES.md D-SPATIAL-STATES). |
+| Routines in space | §5.1, §8, §9 | The 3D relationships, set operations, distance, measures, boundary, simplicity and closure, the shells of a solid, ST_MaxSideLength, ST_Clip and ST_TINTable (`src/geometry/solids.rs`, RULES.md D127). ST_BRepSolid's constructors from surfaces [§9.2.2] and the routines of ST_CompoundSurface beyond measures over its patches are not built. |
+| Table functions | §8.6, §11, §12, §13 | The mechanism of RULES.md D125. ST_TINTable, the topology and network checks and the shortest paths use it. |
+| SQLSTATEs | §22 Table 16 | All 98 conditions are defined, and the model raises 2FF05, 2FF06, 2FF07, 2FF08, 2FF10, 2FF11, 2FF12, 2FF16, 2FF18, 2FF23, 2FF25, 2FF66, 2FF67, 2FF75, 2FF77, 2FF78, 2FF84, 2FF86, 2FF96 and 2FF98. Defect, 2FF01 to 2FF03 clash with 13249-2's. Each part raises its own (RULES.md D132). |
 
 #### Readings of the standard
 
@@ -2241,7 +2241,7 @@ when declared, with SQLCODE -103.
 - Curves are paths of pieces. Arcs and segments are measured exactly,
   splines, clothoids and spirals by adaptive Gauss-Legendre quadrature,
   and linearized to a relative deviation of 1e-3 of the curve's extent
-  (RULES.md D-SPATIAL-CURVES). ST_CurveToLine has no parameters in the
+  (RULES.md D124). ST_CurveToLine has no parameters in the
   standard, so it linearizes so. There is no ST_LineToCurve in the
   standard.
 - Surface measures are planar. Geodesic areas are measured in the
@@ -2333,7 +2333,7 @@ when declared, with SQLCODE -103.
 - ST_3DDistanceToPt takes an ST_Point argument. An ST_Geometry needs
   TREAT.
 - SQLSTATE 2FF01 to 2FF03 are shared with Full-Text's class (RULES.md
-  D-SPATIAL-STATES).
+  D132).
 - A curve's start and end measures are both set or both removed. A
   mutator of one measure on a curve without measures sets both to the
   value, and the null value removes both [§7.6.2 Description 24c].
@@ -2355,7 +2355,7 @@ when declared, with SQLCODE -103.
 
 The reference systems are those of ST_SPATIAL_REFERENCE_SYSTEMS
 [§20.3], seeded and defined, computed by one engine
-(`src/spatial/srs`, RULES.md D-SPATIAL-SRS, D-SPATIAL-CATALOG).
+(`src/spatial/srs`, RULES.md D122, D121).
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -2410,7 +2410,7 @@ The reference systems are those of ST_SPATIAL_REFERENCE_SYSTEMS
   of the LINEAR ones.
 
 The accuracy of each projection against its published worked example
-is in RULES.md D-SPATIAL-SRS. The residuals are at most a few
+is in RULES.md D122. The residuals are at most a few
 millimetres against EPSG Guidance Note 7-2, and tens of millimetres
 against Snyder's examples printed to 0.1 m.
 
@@ -2419,9 +2419,9 @@ against Snyder's examples printed to 0.1 m.
 The well-known text, WKB and GML of the geometry types
 [§5.1.56 to §5.1.68] are read and written by `src/spatial/formats` and
 the model (`src/geometry/representations.rs`, RULES.md
-D-SPATIAL-CURVES). The types of §14, §16 and §17.2 to §17.5 are SQL
+D124). The types of §14, §16 and §17.2 to §17.5 are SQL
 types with every routine the standard gives them, and the routines of
-§18 are built (`src/geometry/support`, RULES.md D-SPATIAL-SUPPORT). The
+§18 are built (`src/geometry/support`, RULES.md D123). The
 angle and direction engine of §16 computes them (`src/spatial/srs`).
 
 | Feature | Rules | What turborel does |
@@ -2502,7 +2502,7 @@ angle and direction engine of §16 computes them (`src/spatial/srs`).
 
 Every routine of §11.3, the views of §11.1 and the topology exceptions
 of §22 Table 16 are built (`src/spatial/topology`, RULES.md
-D-SPATIAL-TOPOLOGY).
+D128).
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -2567,7 +2567,7 @@ D-SPATIAL-TOPOLOGY).
 ### Networks [§12]
 
 All 16 routines of §12.3 and the views of §12.1 are built
-(`src/spatial/network`, RULES.md D-SPATIAL-NETWORK). The 7 that return
+(`src/spatial/network`, RULES.md D129). The 7 that return
 INTEGER (ST_AddIsoNetNode, ST_AddLink, the four splits and
 ST_NewLinkHeal) are functions, the rest procedures. ST_ValidLogicalNet
 and ST_ValidSpatialNet are table functions.
@@ -2645,7 +2645,7 @@ and ST_ValidSpatialNet are table functions.
 
 ST_ShortestUndPath and ST_ShortestDirPath are built-in table functions,
 with and without the weight column (`src/spatial/paths`, RULES.md
-D-SPATIAL-PATHS).
+D130).
 
 | Item | Reading |
 |---|---|
@@ -2687,7 +2687,7 @@ D-SPATIAL-PATHS).
 The thirteen types of §15 are built with their constructors, observers,
 mutators and methods, the functions of their well-known text and GML,
 and the §21 catalog tables and views ST_LRMS and ST_LR_COLUMNS
-(`src/spatial/lr`, RULES.md D-SPATIAL-LR).
+(`src/spatial/lr`, RULES.md D131).
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -2750,7 +2750,7 @@ and the §21 catalog tables and views ST_LRMS and ST_LR_COLUMNS
 ### The Information Schema and sizings [§19, §20, Annex A]
 
 The views of ST_INFORMTN_SCHEMA are system views over the system tables
-of ST_DEFINITION_SCHEMA (RULES.md D-SPATIAL-CATALOG).
+of ST_DEFINITION_SCHEMA (RULES.md D121).
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -2817,7 +2817,7 @@ Plug-ins register these with `Database::register_type` (RULES.md D53).
 
 GEOMETRY is a second name of ST_GEOMETRY, the root type of
 [SQL/MM Spatial](#sqlmm-spatial) (`src/geometry.rs`, RULES.md D85,
-D-SPATIAL-FAMILY). This section lists what turborel adds beyond that
+D120). This section lists what turborel adds beyond that
 standard. The types and functions are built in, so every database has
 them. Sessions call the functions by name while SQL.FUNCTION_CALLS is
 ON, its default.
@@ -2846,10 +2846,10 @@ The catalog procedures ST_DEFINESRS, ST_DROPSRS,
 ST_REGISTERGEOMETRYCOLUMN, ST_UNREGISTERGEOMETRYCOLUMN, ST_DEFINELRM,
 ST_DROPLRM, ST_REGISTERLRCOLUMN and ST_UNREGISTERLRCOLUMN are
 extensions, since the standard defines the tables but no procedure
-(RULES.md D-SPATIAL-CATALOG, D-SPATIAL-LR).
+(RULES.md D121, D131).
 
 ST_INTERSECTS and the other relationships are exact
-(`src/spatial/planar`, RULES.md D-SPATIAL-PLANAR). A filter comparing
+(`src/spatial/planar`, RULES.md D126). A filter comparing
 one of them to 1 can use an R-tree on a `GEOMETRY(srid)` column with a
 constant or parameter query geometry (`physical/access/spatial.rs`,
 `index/rtree/geometry.rs`). Envelope candidates are rechecked against

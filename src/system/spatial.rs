@@ -1,6 +1,6 @@
 //! [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §19, §20] The SQL/MM Spatial
 //! Information Schema, ST_INFORMTN_SCHEMA, and the Definition Schema it
-//! reads, ST_DEFINITION_SCHEMA (RULES.md D-SPATIAL-CATALOG).
+//! reads, ST_DEFINITION_SCHEMA (RULES.md D121).
 //!
 //! Clause 20's base tables are "only a model" [§20.1], so each is a system
 //! table made from the definitions as a statement reads it, and, as the

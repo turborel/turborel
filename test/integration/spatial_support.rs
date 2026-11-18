@@ -2,7 +2,7 @@
 //! (DIS, SC32 N2593) §14, §16]: ST_SpatialRefSys, ST_Angle and
 //! ST_Direction as SQL types, each routine the standard gives them
 //! through SQL, their orderings, their transform groups as CASTs, and
-//! ST_DEFINESRS's check of its definition (RULES.md D-SPATIAL-SUPPORT).
+//! ST_DEFINESRS's check of its definition (RULES.md D123).
 
 use turborel::db::{Database, Session};
 use turborel::value::Value;

@@ -13,7 +13,7 @@
 //! A type of a family built in (`value/types/family.rs`) is ordered as
 //! its family says: the geometry types EQUALS ONLY BY RELATIVE with
 //! ST_OrderingEquals [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.65]
-//! (RULES.md D-SPATIAL-FAMILY), so they are compared for equality as
+//! (RULES.md D120), so they are compared for equality as
 //! `RF(x, y) = 0`, and neither grouped nor sorted.
 
 use std::sync::Arc;

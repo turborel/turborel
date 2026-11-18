@@ -192,7 +192,7 @@ fn geometry_index_recovers_projected_versions_and_open_writes() {
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §11.7 SR1, §11.8, §9.12 SR3] [ISO/IEC
-/// 13249-3:2016 (DIS, SC32 N2593) §5.1.65] D-SPATIAL-FAMILY: a geometry
+/// 13249-3:2016 (DIS, SC32 N2593) §5.1.65] D120: a geometry
 /// type is ST-EC-ordered, so a UNIQUE, PRIMARY KEY or referential
 /// constraint of a geometry column is refused when it is declared, by
 /// CREATE TABLE and ALTER TABLE, whatever the unique index method; an

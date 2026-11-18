@@ -6,7 +6,7 @@
 //! precedence list finds first [§9.18 SR10b], and runs, of that method
 //! and those that override it, the one the value's most specific type
 //! finds first [§9.18 GR3b]; `(v AS T).m(args)` runs the one T finds
-//! [GR3b ii 1 D I] (RULES.md D-SPATIAL-FAMILY).
+//! [GR3b ii 1 D I] (RULES.md D120).
 //!
 //! A worker adding a method adds its row here; one overriding a method
 //! adds a row of its own type whose routine is its own.

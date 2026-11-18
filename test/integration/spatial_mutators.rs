@@ -2,7 +2,7 @@
 //! and §10 through SQL [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.2 to
 //! §5.1.60, §6.1.3 to §6.1.7, §7.2.3 to §7.10.3, §8.1.10 to §8.6.7,
 //! §10.3.3, §10.3.7]: each mutator returns SELF with one attribute
-//! replaced, checked as its clause checks it (RULES.md D-SPATIAL-FAMILY).
+//! replaced, checked as its clause checks it (RULES.md D120).
 
 use turborel::db::{Database, Session};
 use turborel::value::Value;

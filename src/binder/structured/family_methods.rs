@@ -4,7 +4,7 @@
 //! subject routine its declared type, or the type a `<generalized
 //! expression>` names, finds first [§9.18 SR10b], run as the method of
 //! the overriding set the value's most specific type, or that named type,
-//! finds first [§9.18 GR3b] (RULES.md D-SPATIAL-FAMILY).
+//! finds first [§9.18 GR3b] (RULES.md D120).
 
 use std::sync::Arc;
 

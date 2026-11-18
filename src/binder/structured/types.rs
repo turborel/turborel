@@ -107,7 +107,7 @@ impl<'a> Binder<'a> {
     }
 
     /// [ISO/IEC 9075-2:2023 §8.19] IS OF of a value of a type of a family
-    /// built in (RULES.md D-SPATIAL-FAMILY).
+    /// built in (RULES.md D120).
     fn family_type_test(
         &self,
         (e, t): (Expr, &DataType),

@@ -1,5 +1,5 @@
 //! Mutations of the constructors and mutators of SQL/MM Spatial's
-//! geometry types (RULES.md R-TEST-9, D-SPATIAL-FAMILY).
+//! geometry types (RULES.md R-TEST-9, D120).
 
 use super::{Mutation, Package};
 

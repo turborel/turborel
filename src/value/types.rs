@@ -119,7 +119,7 @@ pub trait SqlType: Send + Sync + fmt::Debug {
     }
 
     /// \[DESIGN\] The family of types built in it is of (`family.rs`,
-    /// RULES.md D-SPATIAL-FAMILY), if any. Default: none.
+    /// RULES.md D120), if any. Default: none.
     fn family(&self) -> Option<&'static dyn family::Family> {
         None
     }

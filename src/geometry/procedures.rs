@@ -4,7 +4,7 @@
 //! 13249-3:2016 (DIS, SC32 N2593) §20.2, §20.3], which the standard
 //! describes and gives no statement to change. Each is invoked by CALL
 //! and changes the catalog in the caller's transaction, as a definition
-//! does (RULES.md D-SPATIAL-CATALOG):
+//! does (RULES.md D121):
 //!
 //! - `ST_DEFINESRS(name, id, organization, organization id, definition,
 //!   description)`, its definition a `<spatial reference system>`

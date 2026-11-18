@@ -1,5 +1,5 @@
 //! Mutations of SQL/MM Spatial's curve, surface and format engines
-//! (RULES.md R-TEST-9, D-SPATIAL-CURVES).
+//! (RULES.md R-TEST-9, D124).
 
 use super::{Mutation, Package};
 

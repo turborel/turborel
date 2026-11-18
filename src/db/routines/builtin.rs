@@ -5,7 +5,7 @@
 //! [ISO/IEC 9075-2:2023 §9.18 GR3, GR4]; it then runs in the caller's
 //! SQL-session and transaction, its statements the session's, as the
 //! current user, and its changes to the catalog staged with the
-//! transaction's, undone if it rolls back (RULES.md D-SPATIAL-ROUTINES).
+//! transaction's, undone if it rolls back (RULES.md D125).
 
 use std::sync::Arc;
 

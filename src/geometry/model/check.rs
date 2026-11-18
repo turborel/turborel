@@ -2,7 +2,7 @@
 //! geometry value is, checked as one is made and as one is read: finite
 //! ordinates, the counts and closure of each part, curves of a compound
 //! curve end to end, and the representation's limits (RULES.md
-//! D-SPATIAL-MODEL). Simplicity, validity and planarity are routines'
+//! D119). Simplicity, validity and planarity are routines'
 //! [§5.1.8, §5.1.10], not the model's.
 
 use super::{Body, Collection, Coords, Curve, Dims, Geom, Measures, Nurbs, Placement, Surface, Tin, TinElement};

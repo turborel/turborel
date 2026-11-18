@@ -5,7 +5,7 @@
 //! queries it reads, named of the arguments known here, bound with the
 //! privileges of the statement's user as `MULTISET (query)` arguments
 //! after them. Its rows are the elements of the multiset its invocation
-//! returns, each row's fields its columns (RULES.md D-SPATIAL-ROUTINES).
+//! returns, each row's fields its columns (RULES.md D125).
 
 use std::sync::Arc;
 

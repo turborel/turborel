@@ -1,7 +1,7 @@
 //! [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §14, §16, §17, §18] The types
 //! of SQL/MM Spatial beside the geometry types, built in, each a kind of
 //! type through the SqlType contract (RULES.md D53,
-//! D-SPATIAL-SUPPORT): ST_SpatialRefSys, ST_Angle, ST_Direction,
+//! D123): ST_SpatialRefSys, ST_Angle, ST_Direction,
 //! ST_Vector, ST_AffinePlacement, ST_NURBSPoint and ST_Knot; their
 //! routines (`ops.rs` and a module of each); and the support routines of
 //! geometry arrays (`arrays.rs`). ST_TINElement, of §17.1 too, is

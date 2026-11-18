@@ -7,7 +7,7 @@
 //! and null argument. Each part's conditions are raised only by its own
 //! routines, so each value is kept as its part writes it, and the message
 //! and the routine raising it tell the two apart (RULES.md
-//! D-SPATIAL-STATES).
+//! D132).
 
 use super::SqlState;
 

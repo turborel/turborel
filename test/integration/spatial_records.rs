@@ -2,7 +2,7 @@
 //! through SQL [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §7.3.10, §7.3.13,
 //! §7.3.14, §7.4.7, §7.6.3, §7.6.6, §7.6.7, §7.7.4, §7.7.5, §7.8.3,
 //! §7.9.3]: reference locations and their axis vectors, control points,
-//! knots, angles and normals (RULES.md D-SPATIAL-CURVES).
+//! knots, angles and normals (RULES.md D124).
 
 use turborel::db::{Database, Session};
 use turborel::value::Value;

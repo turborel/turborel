@@ -4,7 +4,7 @@
 //! types, ST_Buffer, ST_ConvexHull, ST_Boundary, validity, the measures
 //! with their unit forms, the polygons built from rings, curves through
 //! their linear form, and R-tree plans for the new relationships
-//! (RULES.md D-SPATIAL-PLANAR).
+//! (RULES.md D126).
 
 use turborel::db::Database;
 use turborel::params::Params;

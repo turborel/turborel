@@ -160,7 +160,7 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
         return false;
     }
     // [ISO/IEC 9075-2:2023 §9.2 SR2] a value of a type of a family built
-    // in to a site of it or a supertype (RULES.md D-SPATIAL-FAMILY).
+    // in to a site of it or a supertype (RULES.md D120).
     if let Some(subtype) = crate::value::types::family::assignable(target, t) {
         return subtype;
     }

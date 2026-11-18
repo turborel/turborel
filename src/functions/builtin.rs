@@ -12,7 +12,7 @@
 //! and run in the statement's transaction, its rows given to the
 //! function as a multiset of rows, so the tables it reads are locked and
 //! shown in the plan as those of any query are (RULES.md
-//! D-SPATIAL-ROUTINES).
+//! D125).
 //!
 //! A procedure runs in the caller's SQL-session and transaction
 //! (`ProcedureContext`): its statements are the session's, as the

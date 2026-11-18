@@ -1,7 +1,7 @@
 //! Topology-networks through SQL [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
 //! §12]: a network made by ST_InitTopoNet, edited by its procedures and
 //! functions, checked by its table functions, in a transaction and through
-//! recovery (RULES.md D-SPATIAL-ROUTINES).
+//! recovery (RULES.md D125).
 
 use turborel::db::{Database, OpenOptions, Session};
 use turborel::error::Code;

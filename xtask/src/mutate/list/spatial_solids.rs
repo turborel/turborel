@@ -1,5 +1,5 @@
 //! Mutations of SQL/MM Spatial's 3D engine and its routines in space:
-//! solids, surfaces, TINs (RULES.md R-TEST-9, D-SPATIAL-SOLIDS).
+//! solids, surfaces, TINs (RULES.md R-TEST-9, D127).
 
 use super::{Mutation, Package};
 

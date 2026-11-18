@@ -1,5 +1,5 @@
 //! The geometry types through the SqlType contract (RULES.md D53), and
-//! their family (RULES.md D-SPATIAL-FAMILY).
+//! their family (RULES.md D120).
 
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -49,7 +49,7 @@ fn unkeyed(t: &DataType) -> SqlError {
     SqlError::new(
         Code::Unsupported,
         format!(
-            "[DESIGN] no key is of {t}, ordered by RELATIVE with ST_OrderingEquals: its values have no key of their own (RULES.md D81, D-SPATIAL-FAMILY)"
+            "[DESIGN] no key is of {t}, ordered by RELATIVE with ST_OrderingEquals: its values have no key of their own (RULES.md D81, D120)"
         ),
     )
 }
@@ -153,7 +153,7 @@ impl SqlType for GeometryType {
 
     /// None: values ordered by RELATIVE have no key of their own, so no
     /// B-tree, unique constraint or referential constraint is of them
-    /// (RULES.md D81, D-SPATIAL-FAMILY); an R-tree indexes their
+    /// (RULES.md D81, D120); an R-tree indexes their
     /// envelopes (D85).
     fn encode_key(&self, _: &Value, t: &DataType, _: &mut Vec<u8>) -> Result<()> {
         Err(unkeyed(t))

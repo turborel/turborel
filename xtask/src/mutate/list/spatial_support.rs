@@ -1,5 +1,5 @@
 //! Mutations of SQL/MM Spatial's types beside the geometry types and of
-//! the support routines of arrays (RULES.md R-TEST-9, D-SPATIAL-SUPPORT).
+//! the support routines of arrays (RULES.md R-TEST-9, D123).
 
 use super::{Mutation, Package};
 

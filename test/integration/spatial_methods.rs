@@ -2,7 +2,7 @@
 //! N2593) §5 to §10]: each type's own and those it inherits, the
 //! overriding ST_Geometries of the collection types, `(v AS T).m()`,
 //! SPECIFICTYPE of a geometry value, and the large objects ST_AsText and
-//! ST_AsBinary return (RULES.md D-SPATIAL-FAMILY).
+//! ST_AsBinary return (RULES.md D120).
 
 use turborel::db::Database;
 use turborel::error::Code;

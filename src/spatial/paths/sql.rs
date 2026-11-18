@@ -1,6 +1,6 @@
 //! [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §13.1.1, §13.1.2]
 //! ST_ShortestUndPath and ST_ShortestDirPath, table functions written in
-//! Rust (RULES.md D-SPATIAL-ROUTINES). The table and columns they name
+//! Rust (RULES.md D125). The table and columns they name
 //! are known as the invocation is bound, a literal or a parameter, and are
 //! read by a query of the invoker's privileges; the start and end points
 //! may be any values.

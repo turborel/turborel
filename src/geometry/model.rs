@@ -1,5 +1,5 @@
 //! [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2, §5.1.68] The geometry
-//! model every spatial routine works on (RULES.md D-SPATIAL-MODEL): one
+//! model every spatial routine works on (RULES.md D119): one
 //! value, `Geom`, of each of the 23 instantiable types of the hierarchy
 //! (`model/kind.rs`), in XY, XYZ, XYM or XYZM, with its spatial reference
 //! system's identifier.
@@ -14,7 +14,7 @@
 //! Its stored form (`model/payload.rs`) is a version byte, the SRID, then
 //! the value's canonical well-known binary representation
 //! (`model/encode.rs`, `model/decode.rs`): little-endian, the codes of
-//! Table 15, with the readings of the draft RULES.md D-SPATIAL-MODEL
+//! Table 15, with the readings of the draft RULES.md D119
 //! records for what its grammar leaves ambiguous.
 
 mod body;
@@ -425,7 +425,7 @@ impl Geom {
     ///
     /// SQLSTATE 2FF02 (invalid argument) or 2FF25 (mixed coordinate
     /// dimensions) of a body that is no value of its type; SQLCODE -900
-    /// past a representation limit (RULES.md D-SPATIAL-MODEL).
+    /// past a representation limit (RULES.md D119).
     pub fn new(srid: i32, dims: Dims, body: Body) -> Result<Geom> {
         let mut geom = Geom { srid, dims, body };
         check::check(&geom)?;

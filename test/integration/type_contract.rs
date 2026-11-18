@@ -236,7 +236,7 @@ fn arrays_keep_the_type_contract() {
 
 /// `codec_contract` of `t` on `values`, none of which has a key, each its
 /// own anchor: of a type ordered by RELATIVE (RULES.md D81,
-/// D-SPATIAL-FAMILY).
+/// D120).
 pub(crate) fn type_contract_unkeyed(t: &DataType, values: &[Value]) {
     for v in codec_contract(t, values) {
         assert!(t.kind().encode_key(&v, t, &mut Vec::new()).is_err(), "{v} has no key");

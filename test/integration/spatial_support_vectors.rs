@@ -3,7 +3,7 @@
 //! ST_NURBSPoint and ST_Knot as SQL types with their
 //! routines, ST_Vector's transform groups as CASTs, the support routines
 //! of arrays, ST_VectorOffsetExp of ST_Vector values, and stored values
-//! of every type across a reopen (RULES.md D-SPATIAL-SUPPORT).
+//! of every type across a reopen (RULES.md D123).
 
 use std::fmt::Write as _;
 
@@ -182,7 +182,7 @@ fn vector_offset_expressions_15_13() {
     assert_eq!(one(&a, "VALUES ST_VECTOROFFSETEXP(CAST(NULL AS ST_VECTOR ARRAY[3]))"), "NULL");
 }
 
-/// Verifies: [DESIGN] RULES.md D25, D-SPATIAL-SUPPORT: a value of each of
+/// Verifies: [DESIGN] RULES.md D25, D123: a value of each of
 /// the seven types, and an index keyed by an angle, survive a reopen
 /// after a crash, read back as written.
 #[test]

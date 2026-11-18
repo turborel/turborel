@@ -2,7 +2,7 @@
 //! N2593) §14, §16, §17] A method invocation of a value of one of SQL/MM
 //! Spatial's types beside the geometry types (`geometry/support.rs`):
 //! of the methods of its name and arity the type declares, the one its
-//! arguments' types choose [§9.6] (RULES.md D-SPATIAL-SUPPORT). None of
+//! arguments' types choose [§9.6] (RULES.md D123). None of
 //! these types has a proper supertype, so the method runs as bound.
 
 use std::sync::Arc;

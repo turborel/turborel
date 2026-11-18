@@ -6,7 +6,7 @@
 //! (`Procedure::returns`), which possibly modifies SQL-data, so it is
 //! invoked only where a function that does may be [ISO/IEC 9075-2:2023
 //! §7.17 SR25], and runs where the SQL-session runs its statements
-//! (RULES.md D-SPATIAL-ROUTINES). They are how SQL/MM Spatial's topology
+//! (RULES.md D125). They are how SQL/MM Spatial's topology
 //! functions are made [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §11.3].
 
 use std::sync::Arc;

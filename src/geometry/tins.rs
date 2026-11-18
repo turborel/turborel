@@ -4,7 +4,7 @@
 //! triangles and of elements, which the constrained Delaunay
 //! triangulation of `crate::spatial::curves::tin` builds, and
 //! ST_TINElements, its observer and its mutator (RULES.md
-//! D-SPATIAL-CURVES).
+//! D124).
 
 use std::sync::Arc;
 

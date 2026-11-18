@@ -1,6 +1,6 @@
 //! [ISO/IEC 9075-2:2023 §6.17, §8.19] TREAT and the `<type predicate>` of
 //! a value of a family of types built in (`value/types/family.rs`,
-//! RULES.md D-SPATIAL-FAMILY): of its most specific type, which its
+//! RULES.md D120): of its most specific type, which its
 //! family reads of it.
 
 use super::ScalarFunction;
@@ -79,7 +79,7 @@ impl ScalarFunction for FamilyTypeTest {
 /// [ISO/IEC 9075-2:2023 §6.33 GR15] SPECIFICTYPE of a value of a family:
 /// the name of its most specific type, qualified by the catalog's name and
 /// INFORMATION_SCHEMA, the schema of the types built in (RULES.md
-/// D-SPATIAL-FAMILY); null of the null value.
+/// D120); null of the null value.
 #[derive(Debug)]
 pub struct FamilySpecificType {
     /// The family.

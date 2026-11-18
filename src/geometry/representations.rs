@@ -6,7 +6,7 @@
 //! TREAT of ST_GeomFrom... AS its type, raising the representation's
 //! exception for a value of another type. GML's srsName is resolved
 //! against the reference systems the statement reads when it is bound,
-//! appended as the last argument (RULES.md D-SPATIAL-CURVES).
+//! appended as the last argument (RULES.md D124).
 
 use super::functions::{BINARY, MAX_REPRESENTATION, TEXT};
 use super::model::{self, Geom, Kind};

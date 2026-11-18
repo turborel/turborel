@@ -250,7 +250,7 @@ fn extension_set_type(e: DataType, types: &[DataType], clause: &str) -> Result<D
         return Ok(e);
     }
     // [ISO/IEC 9075-2:2023 §9.3 SR3g] of a family built in, the least
-    // supertype of them all (RULES.md D-SPATIAL-FAMILY).
+    // supertype of them all (RULES.md D120).
     if let Some(common) = crate::value::types::family::common_supertype(types) {
         return Ok(common);
     }

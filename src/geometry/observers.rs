@@ -5,7 +5,7 @@
 //! of §7.1 and those of each curve type (`observers/curves.rs`), the
 //! surface measures, rings, patches and parts of §8
 //! (`observers/surfaces.rs`) and the measure locators (RULES.md
-//! D-SPATIAL-CURVES).
+//! D124).
 
 mod curves;
 mod measures;

@@ -17,7 +17,7 @@ fn registered() -> Database {
     db
 }
 
-/// Verifies: [EXTENSION] D53, D85, D-SPATIAL-FAMILY: GEOMETRY passes the
+/// Verifies: [EXTENSION] D53, D85, D120: GEOMETRY passes the
 /// shared SqlType contract but for keys, which a type ordered by RELATIVE
 /// has none of, on every supported shape, empty values and extreme SRIDs.
 #[test]
@@ -75,7 +75,7 @@ fn sql_geometry_values_and_failed_writes() {
 /// Verifies: [EXTENSION] D85: prepared constructors bind text and SRID
 /// independently, reject fractional/out-of-range SRIDs, compare by
 /// ST_OrderingEquals, and refuse a UNIQUE constraint of a geometry column
-/// when it is declared [ISO/IEC 9075-2:2023 §9.12 SR3] (D-SPATIAL-FAMILY).
+/// when it is declared [ISO/IEC 9075-2:2023 §9.12 SR3] (D120).
 #[test]
 fn prepared_values_have_exact_srid_and_representation_keys() {
     let db = registered();
