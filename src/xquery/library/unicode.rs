@@ -111,6 +111,32 @@ pub struct Table {
     composites: Section,
 }
 
+/// The sections of the table `bytes`, as its header counts their records.
+///
+/// # Errors
+///
+/// SQLCODE -916 if `bytes` do not begin with the table's magic number, or
+/// hold more or fewer than the sections its header counts.
+fn sections(bytes: &[u8]) -> Result<[Section; SECTIONS]> {
+    if bytes.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
+        return Err(damaged());
+    }
+    let sizes = [PAIR_BYTES, PAIR_BYTES, NUMBER_BYTES, PAIR_BYTES, NUMBER_BYTES, PAIR_BYTES, NUMBER_BYTES, PAIR_BYTES, NUMBER_BYTES];
+    let mut sections = [Section::default(); SECTIONS];
+    let mut start = HEADER;
+    for (n, (section, size)) in sections.iter_mut().zip(sizes.into_iter().chain([COMPOSITE_BYTES])).enumerate() {
+        let at = MAGIC.len().saturating_add(n.saturating_mul(NUMBER_BYTES));
+        let count = bytes.get(at..at.saturating_add(NUMBER_BYTES)).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes);
+        let records = count.and_then(|r| usize::try_from(r).ok()).ok_or_else(damaged)?;
+        *section = Section { start, records, size };
+        start = records.checked_mul(size).and_then(|b| b.checked_add(start)).ok_or_else(damaged)?;
+    }
+    if start != bytes.len() {
+        return Err(damaged());
+    }
+    Ok(sections)
+}
+
 /// The error of a table that is not what its header says.
 fn damaged() -> SqlError {
     SqlError::new(Code::Corrupt, "[DESIGN] the Unicode table of the XQuery functions is damaged")
@@ -123,23 +149,7 @@ impl Table {
     ///
     /// SQLCODE -916 if it does not hold what its header says.
     pub fn read() -> Result<Table> {
-        if BYTES.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
-            return Err(damaged());
-        }
-        let sizes = [PAIR_BYTES, PAIR_BYTES, NUMBER_BYTES, PAIR_BYTES, NUMBER_BYTES, PAIR_BYTES, NUMBER_BYTES, PAIR_BYTES, NUMBER_BYTES];
-        let mut sections = [Section::default(); SECTIONS];
-        let mut start = HEADER;
-        for (n, (section, size)) in sections.iter_mut().zip(sizes.into_iter().chain([COMPOSITE_BYTES])).enumerate() {
-            let at = MAGIC.len().saturating_add(n.saturating_mul(NUMBER_BYTES));
-            let count = BYTES.get(at..at.saturating_add(NUMBER_BYTES)).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes);
-            let records = count.and_then(|r| usize::try_from(r).ok()).ok_or_else(damaged)?;
-            *section = Section { start, records, size };
-            start = records.checked_mul(size).and_then(|b| b.checked_add(start)).ok_or_else(damaged)?;
-        }
-        if start != BYTES.len() {
-            return Err(damaged());
-        }
-        let [classes, cr, cp, kr, kp, ur, up, lr, lp, composites] = sections;
+        let [classes, cr, cp, kr, kp, ur, up, lr, lp, composites] = sections(BYTES)?;
         let mapping = |records, parts| Mapping { records, parts };
         Ok(Table {
             classes,

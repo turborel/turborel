@@ -30,3 +30,16 @@ fn the_table_reads_back() {
     assert_eq!(table.composite('\u{915}', '\u{93C}'), None);
     assert_eq!(table.composite('a', 'b'), None);
 }
+
+/// Verifies: [DESIGN] RULES.md D30 a table that is not what its header
+/// says is corruption, SQLCODE -916: another magic number, a header cut
+/// short, or more or fewer bytes than its sections count.
+#[test]
+fn a_damaged_table_is_refused() {
+    let corrupt = |bytes: &[u8]| sections(bytes).unwrap_err().sqlcode();
+    assert_eq!(corrupt(b"TBXQF999"), -916_i32);
+    assert_eq!(corrupt(MAGIC.as_slice()), -916_i32);
+    assert_eq!(corrupt(&[BYTES, &[0]].concat()), -916_i32);
+    assert_eq!(corrupt(BYTES.split_last().map(|(_, rest)| rest).unwrap()), -916_i32);
+    assert!(sections(BYTES).is_ok());
+}

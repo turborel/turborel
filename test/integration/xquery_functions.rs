@@ -147,6 +147,7 @@ fn constructors_xqueryfo_5() {
             ("xdt:dayTimeDuration(\"PT36H\"), empty(xs:date(())), xs:boolean(\"1\")", "P1DT12H true true"),
             ("dateTime(xs:date(\"1999-12-31\"), xs:time(\"12:00:00\"))", "1999-12-31T12:00:00"),
             ("dateTime(xs:date(\"1999-12-31Z\"), xs:time(\"24:00:00\"))", "1999-12-31T00:00:00Z"),
+            ("dateTime(xs:date(\"1999-12-31+01:00\"), xs:time(\"12:00:00+01:00\"))", "1999-12-31T12:00:00+01:00"),
         ],
     );
     codes(

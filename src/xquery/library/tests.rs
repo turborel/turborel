@@ -3,7 +3,7 @@
 
 use super::super::functions::{FN_NAMESPACE, Library};
 use super::*;
-use crate::xml::QName;
+use crate::xml::{QName, Sequence};
 
 /// The name `local` of the namespace `uri`.
 fn name(uri: &str, local: &str) -> QName {
@@ -40,4 +40,14 @@ fn no_name_and_arity_is_two_functions() {
             assert!(f.local != g.local || !overlap, "fn:{} twice", f.local);
         }
     }
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQueryFO §1.4] a row
+/// of a section's table holds its local name, the fewest and most
+/// arguments it takes, and its body.
+#[test]
+fn a_row_holds_its_signature() {
+    let row = Builtin::function("f", 1, 2, |_, _| Ok(Sequence::empty()));
+    assert_eq!((row.local, row.least, row.most), ("f", 1, 2));
+    assert!(testing::in_context(&testing::focus(), |c| (row.body)(c, &[])).unwrap().items().is_empty());
 }

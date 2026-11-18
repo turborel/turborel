@@ -53,3 +53,34 @@ fn order_of_values() {
     assert_eq!(order(&at(AtomicType::HexBinary, "01"), &at(AtomicType::HexBinary, "02")), None);
     assert_eq!(order(&at(AtomicType::String, "1"), &at(AtomicType::Integer, "1")), None);
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQuery §3.5.1,
+/// Appendix B.2] [XQueryFO §10.4.17 to §10.4.21, §13.1.1] a value
+/// comparison by the operator mapping: the Gregorian types and NOTATION
+/// equal or not, unequal values told apart as less; `lt` of a type of no
+/// order, or of two types, err:XPTY0004; none of NaN.
+#[test]
+fn value_comparisons_by_the_operator_mapping() {
+    let c = Collator::codepoint();
+    let compare = |a: &Atomic, b: &Atomic, equality: bool| value_comparison(a, b, &c, 0, equality);
+    let pairs = [
+        (AtomicType::GYearMonth, "2000-01", "2000-02"),
+        (AtomicType::GMonthDay, "--01-01", "--01-02"),
+        (AtomicType::GMonth, "--01--", "--02--"),
+        (AtomicType::GYear, "2000", "2001"),
+        (AtomicType::GDay, "---01", "---02"),
+        (AtomicType::Notation, "a", "b"),
+    ];
+    for (kind, x, y) in pairs {
+        assert_eq!(compare(&at(kind, x), &at(kind, x), true).unwrap(), Some(Ordering::Equal), "{x}");
+        assert_eq!(compare(&at(kind, x), &at(kind, y), true).unwrap(), Some(Ordering::Less), "{x}");
+        assert!(compare(&at(kind, x), &at(kind, y), false).unwrap_err().to_string().contains("err:XPTY0004"), "{x}");
+    }
+    assert_eq!(
+        compare(&at(AtomicType::DateTime, "2000-01-01T00:00:00"), &at(AtomicType::DateTime, "2000-01-01T00:00:01"), false).unwrap(),
+        Some(Ordering::Less)
+    );
+    assert_eq!(compare(&at(AtomicType::Double, "NaN"), &at(AtomicType::Double, "1"), false).unwrap(), None);
+    assert!(compare(&at(AtomicType::String, "1"), &at(AtomicType::Integer, "1"), true).is_err());
+    assert!(compare(&at(AtomicType::Duration, "P1D"), &at(AtomicType::Duration, "P1D"), false).is_err());
+}

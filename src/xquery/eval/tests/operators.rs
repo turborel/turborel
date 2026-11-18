@@ -43,6 +43,29 @@ fn dates_times_and_durations() {
     assert_eq!(run("xs:dateTime('2026-01-01T23:00:00') + xdt:dayTimeDuration('PT2H')"), "2026-01-02T01:00:00");
     let sums = "xdt:dayTimeDuration('P1D') + xdt:dayTimeDuration('PT1H'), xdt:dayTimeDuration('P1D') - xdt:dayTimeDuration('PT1H')";
     assert_eq!(run(sums), "P1DT1H PT23H");
+    let each = [
+        ("xs:dateTime('2026-01-31T10:00:00') + xdt:yearMonthDuration('P1M')", "2026-02-28T10:00:00"),
+        ("xdt:yearMonthDuration('P1Y') + xs:dateTime('2026-01-01T00:00:00')", "2027-01-01T00:00:00"),
+        (
+            "xs:dateTime('2026-01-01T00:00:00') - xdt:yearMonthDuration('P1Y'), xs:dateTime('2026-01-01T00:00:00') - xdt:dayTimeDuration('PT1H')",
+            "2025-01-01T00:00:00 2025-12-31T23:00:00",
+        ),
+        ("xs:date('2026-01-01') - xdt:dayTimeDuration('P1D'), xs:time('00:30:00') - xdt:dayTimeDuration('PT1H')", "2025-12-31 23:30:00"),
+        (
+            "xdt:yearMonthDuration('P1Y') - xdt:yearMonthDuration('P1M'), xs:dateTime('2026-01-02T00:00:00') - xs:dateTime('2026-01-01T00:00:00')",
+            "P11M P1D",
+        ),
+        ("xs:time('10:00:00') - xs:time('09:30:00'), 2 * xdt:yearMonthDuration('P1M'), xdt:dayTimeDuration('PT1H') * 2", "PT30M P2M PT2H"),
+        ("xdt:yearMonthDuration('P1Y') div 4, xdt:dayTimeDuration('P1D') div xdt:dayTimeDuration('PT12H')", "P3M 2"),
+        ("() + 1, 1 - (), -()", ""),
+    ];
+    for (query, value) in each {
+        assert_eq!(run(query), value, "{query}");
+    }
+    for wrong in ["xdt:dayTimeDuration('P1D') idiv xdt:dayTimeDuration('P1D')", "-'a'", "(1, 2) * 2", "xdt:yearMonthDuration('P1Y') mod 2"]
+    {
+        assert_eq!(code_of(wrong), "err:XPTY0004", "{wrong}");
+    }
     for lacking in [
         "xdt:dayTimeDuration('P1D') - xs:date('2026-01-01')",
         "xs:date('2026-01-01') * xdt:dayTimeDuration('P1D')",
