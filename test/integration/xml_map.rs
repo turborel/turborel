@@ -457,7 +457,10 @@ fn the_catalog_9_17() {
     let catalog = r#"<xs:complexType name="CatalogType.TURBOREL"><xs:all><xs:element name="A" type="SchemaType.TURBOREL.A"/><xs:element name="FT_INFORMATION_SCHEMA" type="SchemaType.TURBOREL.FT_INFORMATION_SCHEMA"/><xs:element name="INFORMATION_SCHEMA" type="SchemaType.TURBOREL.INFORMATION_SCHEMA"/></xs:all></xs:complexType><xs:element name="TURBOREL" type="CatalogType.TURBOREL"/></xs:schema>"#;
     assert!(schema.ends_with(catalog), "{schema}");
     let information = text(&a, "XMLMAP(SCHEMA INFORMATION_SCHEMA)");
-    assert!(information.starts_with(&format!("<INFORMATION_SCHEMA {XSI}><ADMINISTRABLE_ROLE_AUTHORIZATIONS/><APPLICABLE_ROLES/>")));
+    assert!(
+        information
+            .starts_with(&format!("<INFORMATION_SCHEMA {XSI}><ADMINISTRABLE_ROLE_AUTHORIZATIONS/><ADMIN_ROLE_AUTHS/><APPLICABLE_ROLES/>"))
+    );
     validates(&a, "CATALOG", ("NULLS NIL AS FOREST TARGETNAMESPACE 'urn:c'", ""));
 }
 

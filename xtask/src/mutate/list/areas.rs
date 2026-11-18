@@ -89,8 +89,8 @@ fn second() -> [&'static [Mutation]; 28] {
 }
 
 /// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's
-/// and T621's, then the hash index's, XQuery's and XML's, then the spatial areas', replication's
-/// and the server's.
+/// and T621's, then the hash index's, XQuery's and XML's, the short name views' among them, then
+/// the spatial areas', replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 10] = [
         &super::projection::PROJECTION,
@@ -104,7 +104,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
     ];
-    let xml: [&'static [Mutation]; 12] = [
+    let xml: [&'static [Mutation]; 13] = [
         &super::hash::HASH,
         &super::xquery::XQUERY,
         &super::xquery_functions::XQUERY_FUNCTIONS,
@@ -115,6 +115,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_eval::XQUERY_EVAL,
         &super::xml_schema::XML_SCHEMA,
         &super::xml_schema_catalog::XML_SCHEMA_CATALOG,
+        &super::short_names::SHORT_NAMES,
         &super::xml_scoped::XML_SCOPED,
         &super::xml::XML,
     ];

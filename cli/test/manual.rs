@@ -6,6 +6,7 @@
 
 mod embedding;
 mod hybrid;
+mod information;
 mod vector;
 
 use std::cell::RefCell;

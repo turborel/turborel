@@ -4,8 +4,8 @@
 //! current user, PUBLIC or an enabled role holds USAGE on, over the
 //! Definition Schema's tables of them (`definition/xml_schemas.rs`). The
 //! text is the draft's, its `XSN. XML_SCHEMA_NAMESPACE_IS_DETERMINISTIC`
-//! written without the space. There are no short-name views [§20.15], as
-//! no view of the Information Schema here has one.
+//! written without the space. Their short name views [§20.15] are
+//! `short_names/xml_schemas.rs`'s.
 
 use super::SystemView;
 

@@ -59,6 +59,7 @@ mod search_cycle;
 mod sequences;
 mod server;
 mod shadow;
+mod short_names;
 mod sql2023;
 mod sqlmm_fulltext;
 mod stats;

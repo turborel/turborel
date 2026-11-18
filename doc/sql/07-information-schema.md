@@ -312,8 +312,9 @@ An element declaration is not deterministic if it holds or refers to a
 wildcard of any namespace, or of other than one, processed strictly or
 laxly, as `<xs:any processContents="lax"/>`, at any depth; a namespace
 is not if one of its element declarations is not, and a schema is not if
-one of its namespaces is not. The short-name views of SQL/XML, such as
-XML_SCHEMAS_S, are not defined, as no short-name view is.
+one of its namespaces is not. XML_SCHEMAS_S, XML_SCH_NSPACES_S and
+XML_SCH_ELEMENTS_S show them too, under short names ([The short name
+views](#the-short-name-views)).
 
 TABLE_CONSTRAINTS has one more column *(extension)*, NULLS_DISTINCT, as
 ISO/IEC 9075-11 names it: YES of a UNIQUE constraint of NULLS DISTINCT,
@@ -330,6 +331,114 @@ declared with, INTEGER, SMALLINT, BIGINT, DECIMAL or NUMERIC, of its precision
 and scale, radix 10, or REAL, DOUBLE PRECISION or FLOAT, of the binary
 precision it holds values of, 24 or 53, radix 2; a national character
 string as CHARACTER, its octet length four octets a character.
+
+## The short name views
+
+ISO/IEC 9075-11 defines most views again under a short name, and their
+columns too, and ISO/IEC 9075-4 and SQL/XML (ISO/IEC 9075-14) define
+those of theirs, for SQL written for a system whose names are 18
+characters at most, as one without Feature F391 (Long identifiers) has.
+Each short
+name view shows the rows its view shows the same user, column for
+column, in the order the standard gives them. A column whose name is
+longer is renamed: CHARACTER_MAXIMUM_LENGTH is CHAR_MAX_LENGTH,
+NUMERIC_PRECISION_RADIX NUMERIC_PREC_RADIX, MAXIMUM_CARDINALITY
+MAX_CARDINALITY, XML_SCHEMA_NAMESPACE XML_SCHEMA_NSPACE, and so on.
+
+| Short name view | Shows what this view shows |
+|---|---|
+| CATALOG_NAME | INFORMATION_SCHEMA_CATALOG_NAME |
+| SCHEMATA_S | SCHEMATA |
+| DOMAINS_S | DOMAINS |
+| TABLES_S | TABLES |
+| COLUMNS_S | COLUMNS |
+| REF_CONSTRAINTS | REFERENTIAL_CONSTRAINTS |
+| KEY_COLUMN_USAGE_S | KEY_COLUMN_USAGE |
+| CHARACTER_SETS_S | CHARACTER_SETS |
+| COLLATIONS_S | COLLATIONS |
+| SEQUENCES_S | SEQUENCES |
+| TRANSLATIONS_S | TRANSLATIONS |
+| CONSTR_TABLE_USAGE | CONSTRAINT_TABLE_USAGE |
+| CONSTR_COL_USAGE | CONSTRAINT_COLUMN_USAGE |
+| COL_DOMAIN_USAGE | COLUMN_DOMAIN_USAGE |
+| ELEMENT_TYPES_S | ELEMENT_TYPES |
+| FIELDS_S | FIELDS |
+| UDT_S | USER_DEFINED_TYPES |
+| ROUTINES_S | ROUTINES |
+| PARAMETERS_S | PARAMETERS |
+| ATTRIBUTES_S | ATTRIBUTES |
+| METHOD_SPECS | METHOD_SPECIFICATIONS |
+| METHOD_SPEC_PARAMS | METHOD_SPECIFICATION_PARAMETERS |
+| REFERENCED_TYPES_S | REFERENCED_TYPES |
+| TABLE_METHOD_PRIVS | TABLE_METHOD_PRIVILEGES |
+| ADMIN_ROLE_AUTHS | ADMINISTRABLE_ROLE_AUTHORIZATIONS |
+| ROLE_ROUT_GRANTS | ROLE_ROUTINE_GRANTS |
+| ROL_TAB_METH_GRNTS | ROLE_TABLE_METHOD_GRANTS |
+| TRIGGERS_S | TRIGGERS |
+| TRIG_UPDATE_COLS | TRIGGERED_UPDATE_COLUMNS |
+| TRIG_TABLE_USAGE | TRIGGER_TABLE_USAGE |
+| TRIG_COLUMN_USAGE | TRIGGER_COLUMN_USAGE |
+| TRIG_ROUT_USAGE_S | TRIGGER_ROUTINE_USAGE |
+| TRIG_SEQ_USAGE_S | TRIGGER_SEQUENCE_USAGE |
+| MODULE_COL_USAGE | MODULE_COLUMN_USAGE |
+| MODULES_S | MODULES |
+| XML_SCHEMAS_S | XML_SCHEMAS |
+| XML_SCH_NSPACES_S | XML_SCHEMA_NAMESPACES |
+| XML_SCH_ELEMENTS_S | XML_SCHEMA_ELEMENTS |
+
+A short name view has the standard's columns its view has here, and no
+other. None has INTERVAL_TYPE or INTERVAL_PRECISION; COLUMNS_S has no
+IS_UPDATABLE, TABLES_S no IS_INSERTABLE_INTO or COMMIT_ACTION,
+SCHEMATA_S no SQL_PATH, KEY_COLUMN_USAGE_S no POSITION_IN_UC,
+CHARACTER_SETS_S no CHAR_REPERTOIRE, and TRANSLATIONS_S no TRANS_SRC_
+columns. ROUTINES_S has none of the columns of an external routine, a
+result cast, a transform, a timestamp or result sets, PARAMETERS_S none
+of a transform's, and METHOD_SPECS none of a result cast's and no
+timestamps. Those of the views this implementation has not are not
+defined: COLLATION_APPLIC_S, COL_COL_USAGE, CONSTR_ROUT_USE_S,
+ROUT_ROUT_USAGE_S, ROUT_SEQ_USAGE_S, ROUTINE_COL_USAGE,
+ROUT_TABLE_USAGE, SQL_IMPL_INFO and SQL_SIZING_PROFS.
+
+The views that describe a type end with the seven columns of an XML
+type, named XML_PRIMARY_MOD, XML_SECONDARY_MOD, XML_SCHEMA_CATALOG,
+XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME, XML_SCHEMA_NSPACE and
+XML_SCHEMA_ELEMENT; ROUTINES_S has them after DTD_IDENTIFIER, named
+XML_PRIMARY_MOD, XML_SECOND_MOD, XML_SCHEMA_CAT, XML_SCH_SCH,
+XML_SCH_NAME, XML_SCH_NSPACE and XML_SCH_ELEMENT, as SQL/XML names them.
+ROUTINES_S and PARAMETERS_S end with the columns of the associated
+string type, then XML_RETURN_MECH and XML_PASSING_MECH. MODULES_S calls
+DEFAULT_SCHEMA_NAME DEFAULT_SCHEMA, and the timestamps CREATED and
+ALTERED.
+
+Run by ANN, the owner of these:
+
+```sql
+CREATE TABLE PARTS (ID INTEGER PRIMARY KEY, NAME CHARACTER VARYING(40), RADIUS DECIMAL(6,2));
+COMMIT;
+SELECT COLUMN_NAME, DATA_TYPE, CHAR_MAX_LENGTH, NUMERIC_PRECISION, NUMERIC_PREC_RADIX FROM INFORMATION_SCHEMA.COLUMNS_S
+    WHERE TABLE_NAME = 'PARTS' ORDER BY ORDINAL_POSITION;
+SELECT TABLE_NAME, TABLE_TYPE, SELF_REF_COL_NAME FROM INFORMATION_SCHEMA.TABLES_S WHERE TABLE_SCHEMA = 'ANN';
+SELECT CATALOG_NAME FROM INFORMATION_SCHEMA.CATALOG_NAME;
+```
+
+```
+OK
+OK
+ COLUMN_NAME                                                  | DATA_TYPE                                                    |      CHAR_MAX_LENGTH | NUMERIC_PRECISION | NUMERIC_PREC_RADIX
+--------------------------------------------------------------+--------------------------------------------------------------+----------------------+-------------------+--------------------
+ ID                                                           | INTEGER                                                      |                 NULL |                10 |                 10
+ NAME                                                         | CHARACTER VARYING                                            |                   40 |              NULL |               NULL
+ RADIUS                                                       | DECIMAL                                                      |                 NULL |                 6 |                 10
+(3 rows)
+ TABLE_NAME                                                   | TABLE_TYPE                                                   | SELF_REF_COL_NAME
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ PARTS                                                        | BASE TABLE                                                   | NULL
+(1 row)
+ CATALOG_NAME
+--------------------------------------------------------------
+ TURBOREL
+(1 row)
+```
 
 ## This implementation's own views
 
@@ -392,5 +501,7 @@ JOBS.POLICY says how the jobs JOBS lists are run
 ([Settings](../appendix/c-settings.md)).
 
 The standard: ISO/IEC 9075:1992 §21.1, §21.2; the views of roles and of
-triggers, and how each view reads the enabled roles, the 2006 draft of
-ISO/IEC 9075-11, Clauses 5 and 6.
+triggers, the short name views, and how each view reads the enabled
+roles, the 2006 draft of ISO/IEC 9075-11, Clauses 5 and 6; the short
+name views of modules and of SQL/XML, the 2006 drafts of ISO/IEC 9075-4,
+§18.8, and of ISO/IEC 9075-14, §20.15.

@@ -1333,6 +1333,31 @@ whose content is any element at all. Every user holds USAGE on XS
 already, without grant option, so the first grant gives BOB nothing
 more; the second lets BOB's own registered XML Schemas import NOTES.
 
+XML_SCHEMAS_S, XML_SCH_NSPACES_S and XML_SCH_ELEMENTS_S show the same
+rows as the three views, under SQL/XML's short names
+([The short name views](07-information-schema.md#the-short-name-views)):
+
+```sql
+SELECT XML_SCHEMA_NAME, XML_SCH_TGT_NSPACE, XML_SCHEMA_IS_PERM FROM INFORMATION_SCHEMA.XML_SCHEMAS_S WHERE XML_SCHEMA_SCHEMA = 'ANN' ORDER BY 1;
+SELECT XML_SCHEMA_NAME, XML_SCH_NSPACE, XML_SCH_NSP_IS_DET FROM INFORMATION_SCHEMA.XML_SCH_NSPACES_S WHERE XML_SCHEMA_NAME = 'PAGES' ORDER BY 2;
+```
+
+```
+ XML_SCHEMA_NAME                                              | XML_SCH_TGT_NSPACE                                           | XML_SCHEMA_IS_PERM
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ NOTES                                                        | urn:notes                                                    | NO
+ PAGES                                                        | urn:pages                                                    | NO
+(2 rows)
+ XML_SCHEMA_NAME                                              | XML_SCH_NSPACE                                               | XML_SCH_NSP_IS_DET
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ PAGES                                                        | urn:notes                                                    | YES
+ PAGES                                                        | urn:pages                                                    | YES
+(2 rows)
+```
+
+PAGES's namespaces are its target namespace and urn:notes, which it
+imports.
+
 ## The XMLSCHEMA types
 
 ```

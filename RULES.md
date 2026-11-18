@@ -2272,7 +2272,9 @@ System tables are plug-ins whose rows are made from the definitions as a
 statement runs. The Information Schema is the standard's own view
 definitions [ISO/IEC 9075:1992 §21.2] over Definition Schema tables only
 those views may read [§21.3]. That gives the standard's answers with no
-second description of the catalog to keep in step. SELECT on them is
+second description of the catalog to keep in step. The short name views
+[ISO/IEC 9075-11:2006 draft §5.77] are the standard's definitions too,
+each over its view, so they show what it shows. SELECT on them is
 PUBLIC's and nothing else is granted.
 
 #### D38. The memory budget, and spilling
@@ -4205,7 +4207,9 @@ the one check of USAGE every statement naming a registered XML Schema
 makes [ISO/IEC 9075-14:2006 draft §11.6 AR1]. The Information Schema's
 XML_SCHEMAS, XML_SCHEMA_NAMESPACES and XML_SCHEMA_ELEMENTS read
 Definition Schema tables made from the descriptors and the schemas read
-from their documents, as D37 makes every such table; a type of XMLSCHEMA
+from their documents, as D37 makes every such table, and their short
+name views, XML_SCHEMAS_S, XML_SCH_NSPACES_S and XML_SCH_ELEMENTS_S,
+read them as D37's do; a type of XMLSCHEMA
 shows its registered XML Schema by its kind's descriptor
 (`Descriptor::xml_schema`).
 

@@ -22,6 +22,7 @@ mod composites;
 mod extensions;
 mod modules;
 mod roles;
+mod short_names;
 mod structured;
 mod triggers;
 mod user_types;
@@ -68,11 +69,13 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// The views of the Information Schema: those of ISO/IEC 9075:1992, then
 /// those of `information/`'s modules, arrays and row types, user-defined
 /// types, structured types, roles, triggers, SQL-server modules and
-/// registered XML Schemas, then the extensions (`extensions.rs`).
+/// registered XML Schemas, then the short name views (`short_names.rs`),
+/// then the extensions (`extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
     let parts = [composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS];
-    ALL.get_or_init(|| [&[VIEWS], parts.as_slice(), &[xml_schemas::VIEWS, extensions::VIEWS]].concat().concat())
+    let short = short_names::PARTS.as_slice();
+    ALL.get_or_init(|| [&[VIEWS], parts.as_slice(), &[xml_schemas::VIEWS], short, &[extensions::VIEWS]].concat().concat())
 }
 
 /// The views of ISO/IEC 9075:1992 [§21.2.4-§21.2.26].
