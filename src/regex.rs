@@ -18,6 +18,11 @@
 //! PARAGRAPH SEPARATOR and CRLF; `\s` matches a space, a tab or a newline
 //! sequence, and `\S` any one character `\s` does not. Matching takes no
 //! account of collations [F&O 3.1 §5.6.3].
+//!
+//! XQuery 1.0's functions read a pattern as [XQueryFO §7.6.1] defines it
+//! (`Regex::xquery`): a newline is a line feed alone, for `.`, `^` and
+//! `$`; `\s` is XML Schema's four white space characters; there is no
+//! `(?:` and no flag `q`.
 
 mod backtrack;
 mod class;
@@ -41,7 +46,7 @@ pub(crate) use replace::zero_length;
 pub use replace::{Emit, Replacement};
 pub use text::{Text, Window};
 
-use crate::error::{Code, Result, SqlError, SqlState};
+use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 
 /// The error of a pattern that is no XQuery regular expression, `why`
 /// [§9.28 GR4].
@@ -90,16 +95,44 @@ impl Regex {
     /// \[GR4\], else 2201T if `flag` is no XQuery option flag \[GR5\];
     /// SQLCODE -900 past `MAX_INSTRUCTIONS`, or groups nested too deep.
     pub fn new(pattern: &str, flag: &str) -> Result<Regex> {
+        Regex::compiled(pattern, flag, false)
+    }
+
+    /// `pattern` compiled under `flag` as XQuery 1.0 reads them [XQueryFO
+    /// §7.6.1, §7.6.1.1], what fn:matches, fn:replace and fn:tokenize
+    /// match: a newline is a line feed alone, `.` matching any other
+    /// character, `^` and `$` of each line after and before one; `\s` is
+    /// XML Schema's four white space characters; there is no `(?:`; the
+    /// flags are `s`, `m`, `i` and `x`.
+    ///
+    /// # Errors
+    ///
+    /// As `new`; 2201T of the flag `q` too.
+    pub fn xquery(pattern: &str, flag: &str) -> Result<Regex> {
+        let regex = Regex::compiled(pattern, flag, true)?;
+        if regex.literal {
+            return fail_with(
+                Code::Data,
+                SqlState::INVALID_XQUERY_OPTION_FLAG,
+                format!("[XQueryFO §7.6.1.1] '{flag}' is not a flag of XQuery 1.0: 'q' is none of s, m, i and x"),
+            );
+        }
+        Ok(regex)
+    }
+
+    /// `pattern` compiled under `flag`, as XQuery 1.0 reads it if
+    /// `line_feeds`.
+    fn compiled(pattern: &str, flag: &str, line_feeds: bool) -> Result<Regex> {
         let table = Table::read()?;
         let flags = match Flags::of(flag) {
             Ok(flags) => flags,
             Err(e) => {
                 // [GR4] before [GR5]: a pattern no expression is that first.
-                parse(pattern, Flags::default(), &table)?;
+                parse(pattern, Flags::default(), &table, line_feeds)?;
                 return Err(e);
             }
         };
-        let parsed = parse(pattern, flags, &table)?;
+        let parsed = parse(pattern, flags, &table, line_feeds)?;
         let program = compile(&parsed, flags)?;
         Ok(Regex {
             program,

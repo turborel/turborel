@@ -438,6 +438,11 @@ So the binder makes each call its own function, keeping its last pattern, and
 none is registered. TRANSLATE_REGEX replaces as fn:replace does, matching the
 pattern again within each match [§9.29 GR9a].
 
+XQuery 1.0's fn:matches, fn:replace and fn:tokenize read a pattern in the
+dialect of XQuery 1.0 Functions and Operators §7.6.1 (`Regex::xquery`):
+a newline is a line feed alone, `\s` is XML Schema's, and there is no
+`(?:` and no flag `q`.
+
 The pattern facet of XML Schema reads its patterns by the same parser
 (`Regex::schema`), in the dialect of XML Schema Part 2 Appendix F: a
 pattern matches a whole string, `^` and `$` are normal characters, `.` and

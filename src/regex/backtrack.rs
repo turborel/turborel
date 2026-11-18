@@ -121,8 +121,8 @@ impl<T: Text + ?Sized> Search<'_, T> {
                 Some(at)
             }
             Inst::LoopCheck(k) => held(self.slots.get(self.program.slots.saturating_add(*k)).copied().flatten() != Some(at)),
-            Inst::LineStart(multiline) => held(line_start(self.text, at, *multiline)?),
-            Inst::LineEnd(multiline) => held(line_end(self.text, at, *multiline)?),
+            Inst::LineStart(lines) => held(line_start(self.text, at, *lines)?),
+            Inst::LineEnd(lines) => held(line_end(self.text, at, *lines)?),
             Inst::BackRef(group) => self.again(*group, at)?.map(|length| at.saturating_add(length)),
             Inst::Char(_) | Inst::Set(_) | Inst::AnyButCrlf => one(inst, self.text, at)?.then(|| at.saturating_add(1)),
             Inst::Match | Inst::Jump(_) | Inst::Split(..) => None,

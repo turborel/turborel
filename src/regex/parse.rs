@@ -78,6 +78,9 @@ pub(super) struct Parsed {
     pub(super) groups: usize,
     /// Whether a back-reference is in it.
     pub(super) back_references: bool,
+    /// Whether it is of XQuery 1.0, whose newline is a line feed alone
+    /// [XQueryFO §7.6.1].
+    pub(super) line_feeds: bool,
 }
 
 /// A pattern being read.
@@ -89,9 +92,21 @@ pub(super) struct Parser<'t> {
     opened: usize,
     closed: Vec<bool>,
     back_references: bool,
-    /// Whether it is read as an XML Schema `pattern` facet reads it
-    /// [Schema2 Appendix F], not as XQuery reads it.
-    schema: bool,
+    /// Which dialect it is read in.
+    dialect: Dialect,
+}
+
+/// The dialect a pattern is read in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Dialect {
+    /// As SQL reads XQuery's [§9.28 GR9a]: F&O 3.1's, with UTS #18's
+    /// newlines.
+    Sql,
+    /// As XQuery 1.0 reads it [XQueryFO §7.6.1]: a newline a line feed
+    /// alone, `\s` XML Schema's, no `(?:`.
+    XQuery1,
+    /// As an XML Schema `pattern` facet reads it [Schema2 Appendix F].
+    Schema,
 }
 
 /// What an escape within or outside a class names.
@@ -102,14 +117,15 @@ pub(super) enum Escaped {
     Class(CharSet),
 }
 
-/// `pattern` read under `flags`.
+/// `pattern` read under `flags`, as XQuery 1.0 reads it [XQueryFO §7.6.1]
+/// if `line_feeds`, else as F&O 3.1 does with SQL's newlines.
 ///
 /// # Errors
 ///
 /// SQLSTATE 2201S if it is no XQuery regular expression \[GR4\]; SQLCODE
 /// -900 if it nests deeper than `MAX_NESTING` or a quantity is too large
 /// to count.
-pub(super) fn parse(pattern: &str, flags: Flags, table: &Table) -> Result<Parsed> {
+pub(super) fn parse(pattern: &str, flags: Flags, table: &Table, line_feeds: bool) -> Result<Parsed> {
     let text = if flags.has(Flag::Extended) { super::flags::stripped(pattern) } else { pattern.to_owned() };
     let mut p = Parser {
         chars: text.chars().collect(),
@@ -119,7 +135,7 @@ pub(super) fn parse(pattern: &str, flags: Flags, table: &Table) -> Result<Parsed
         opened: 0,
         closed: Vec::new(),
         back_references: false,
-        schema: false,
+        dialect: if line_feeds { Dialect::XQuery1 } else { Dialect::Sql },
     };
     let node = if flags.has(Flag::Literal) {
         // [F&O 3.1 §5.6.2] q: each character itself.
@@ -131,7 +147,7 @@ pub(super) fn parse(pattern: &str, flags: Flags, table: &Table) -> Result<Parsed
         }
         node
     };
-    Ok(Parsed { node, groups: p.opened, back_references: p.back_references })
+    Ok(Parsed { node, groups: p.opened, back_references: p.back_references, line_feeds })
 }
 
 /// `pattern` read as the `pattern` facet of XML Schema reads it [Schema2
@@ -153,14 +169,14 @@ pub(super) fn parse_schema(pattern: &str, table: &Table) -> Result<Parsed> {
         opened: 0,
         closed: Vec::new(),
         back_references: false,
-        schema: true,
+        dialect: Dialect::Schema,
     };
     let node = p.reg_exp(0)?;
     if p.peek().is_some() {
         return Err(p.invalid("a ')' closes no group"));
     }
     let anchored = Node::Concat(vec![Node::Start, Node::Group(Box::new(node), None), Node::End]);
-    Ok(Parsed { node: anchored, groups: p.opened, back_references: false })
+    Ok(Parsed { node: anchored, groups: p.opened, back_references: false, line_feeds: false })
 }
 
 impl Parser<'_> {
@@ -245,7 +261,7 @@ impl Parser<'_> {
     /// `backReference`, `charClass` taking `^` and `$` too.
     fn atom(&mut self, depth: usize) -> Result<Node> {
         let Some(c) = self.next() else { return Err(self.invalid("an atom is missing")) };
-        if self.schema
+        if self.dialect == Dialect::Schema
             && let Some(node) = schema_atom(c)
         {
             return Ok(node);
@@ -265,8 +281,9 @@ impl Parser<'_> {
     /// The rest of a parenthesized expression, after its "(": a group that
     /// captures unless "?:" begins it [F&O 3.1 §5.6.1.3].
     fn group(&mut self, depth: usize) -> Result<Node> {
-        // [Schema2 Appendix F \[9\]] XML Schema has no "(?:".
-        let capturing = self.schema || !(self.peek() == Some('?') && self.peek_at(1) == Some(':'));
+        // [Schema2 Appendix F \[9\]] [XQueryFO §7.6.1] XML Schema and
+        // XQuery 1.0 have no "(?:".
+        let capturing = self.dialect != Dialect::Sql || !(self.peek() == Some('?') && self.peek_at(1) == Some(':'));
         let number = if capturing {
             self.opened = self.opened.saturating_add(1);
             self.closed.push(false);
@@ -289,7 +306,7 @@ impl Parser<'_> {
     /// its CRLF, or what `escape` names.
     fn escape_atom(&mut self) -> Result<Node> {
         let Some(c) = self.peek() else { return Err(self.invalid("a '\\' ends the pattern")) };
-        if self.schema {
+        if self.dialect == Dialect::Schema {
             return Ok(match self.escape()? {
                 Escaped::Single(single) => Node::Set(CharSet::single(single)),
                 Escaped::Class(set) => Node::Set(set),
@@ -299,7 +316,7 @@ impl Parser<'_> {
             self.at = self.at.saturating_add(1);
             return self.back_reference(c);
         }
-        if c == 's' {
+        if c == 's' && self.dialect == Dialect::Sql {
             self.at = self.at.saturating_add(1);
             return Ok(Node::Space);
         }
@@ -313,7 +330,12 @@ impl Parser<'_> {
     /// after a "\" names: one character, or a class.
     pub(super) fn escape(&mut self) -> Result<Escaped> {
         let Some(c) = self.next() else { return Err(self.invalid("a '\\' ends the pattern")) };
-        if self.schema {
+        if self.dialect == Dialect::XQuery1 && matches!(c, 's' | 'S') {
+            // [XQueryFO §7.6.1] XQuery 1.0's `\s` is XML Schema's.
+            let spaces = CharSet::chars(&SCHEMA_SPACES);
+            return Ok(Escaped::Class(if c == 's' { spaces } else { spaces.complement() }));
+        }
+        if self.dialect == Dialect::Schema {
             match schema_escape(c) {
                 SchemaEscape::Class(set) => return Ok(Escaped::Class(set)),
                 SchemaEscape::Refused => return Err(self.invalid(&format!("'\\{c}' is no escape of XML Schema"))),
@@ -439,7 +461,7 @@ impl Parser<'_> {
         self.at = self.at.saturating_add(1);
         // [Schema2 Appendix F \[4\]] XML Schema has no reluctant quantifier,
         // so a "?" after one begins an atom, and is none.
-        let greedy = if self.schema { true } else { !self.accept('?') };
+        let greedy = if self.dialect == Dialect::Schema { true } else { !self.accept('?') };
         Ok(Some(Quantity { min, max, greedy }))
     }
 

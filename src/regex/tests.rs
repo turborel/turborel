@@ -304,3 +304,31 @@ fn schema_patterns_match_whole_strings() {
         assert_eq!(Regex::schema(refused).unwrap_err().sqlstate().as_str(), "2201S", "{refused}");
     }
 }
+
+fn xquery_matches(pattern: &str, flag: &str, text: &str) -> bool {
+    Regex::xquery(pattern, flag).unwrap().is_match(text).unwrap()
+}
+
+/// Verifies: [EXTENSION] [XQueryFO §7.6.1, §7.6.1.1] XQuery 1.0's dialect:
+/// a newline is a line feed alone, so `.` matches a carriage return and
+/// NEL, `^` and `$` of a line are at line feeds only, and `$` matches at
+/// the end after a final line feed too; `\s` and `\S` are XML Schema's;
+/// under `s` `.` matches a line feed; `(?:` and the flag `q` are none,
+/// SQLSTATE 2201S and 2201T.
+#[test]
+fn xquery_one_dialect() {
+    assert!(xquery_matches("^a.b$", "", "a\rb") && !matches("^a.b$", "", "a\rb"));
+    assert!(xquery_matches("a.b", "", "a\u{85}b") && !xquery_matches("a.b", "", "a\nb"));
+    assert!(xquery_matches("a.b", "s", "a\nb"));
+    assert!(!xquery_matches("^b", "m", "a\rb") && matches("^b", "m", "a\rb"));
+    assert!(xquery_matches("^b", "m", "a\nb") && xquery_matches("a$", "m", "a\nb"));
+    assert!(xquery_matches("a$", "m", "a\n") && xquery_matches("^$", "m", "a\n"));
+    assert!(!xquery_matches("a$", "m", "a\r\nb") && !xquery_matches("a$", "", "a\nb"));
+    assert!(!xquery_matches("a\\sb", "", "a\u{2028}b") && xquery_matches("a\\Sb", "", "a\u{2028}b"));
+    assert!(xquery_matches("a[\\s]b", "", "a\tb") && !xquery_matches("a[\\s]b", "", "a\u{85}b"));
+    assert!(xquery_matches("a\\s\\sb", "", "a\r\nb"));
+    assert_eq!(Regex::xquery("(?:a)", "").unwrap_err().sqlstate().as_str(), "2201S");
+    assert_eq!(Regex::xquery("a", "q").unwrap_err().sqlstate().as_str(), "2201T");
+    assert_eq!(Regex::xquery("(a", "q").unwrap_err().sqlstate().as_str(), "2201T");
+    assert!(Regex::new("(?:a)", "").is_ok() && Regex::new("a", "q").is_ok());
+}
