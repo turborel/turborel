@@ -4,12 +4,13 @@
 //! effective boolean value, and its strings: positions, collations,
 //! normalization, escaping and XQuery 1.0's regular expressions; dates
 //! in the implicit time zone and their arithmetic, fn:deep-equal, the
-//! functions on sequences and their bounds (RULES.md R-TEST-9, D86).
+//! functions on sequences and their bounds; and the built-in functions
+//! and operators a query calls of it (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of the library broken alone, and the tests that fail.
-pub const XQUERY_FUNCTIONS: [Mutation; 20] = [
+pub const XQUERY_FUNCTIONS: [Mutation; 25] = [
     Mutation {
         name: "xquery-decimal-division-scale",
         package: Package::Core,
@@ -212,5 +213,55 @@ pub const XQUERY_FUNCTIONS: [Mutation; 20] = [
         replacement: "    let mut out",
         integration: &[],
         unit: &["xquery::library::sequences::tests::concatenate_and_to"],
+    },
+    Mutation {
+        name: "xquery-builtin-variadic",
+        package: Package::Core,
+        breaks: "fn:concat takes two arguments alone",
+        file: "src/xquery/functions/builtin.rs",
+        original: "out.push(native(f.local, f.least, true, f.body));",
+        replacement: "out.push(native(f.local, f.least, false, f.body));",
+        integration: &["xquery_functions::strings_xqueryfo_7"],
+        unit: &["xquery::functions::tests::every_builtin_keeps_the_contract"],
+    },
+    Mutation {
+        name: "xquery-builtin-arities",
+        package: Package::Core,
+        breaks: "a function is not found by its most arguments",
+        file: "src/xquery/functions/builtin.rs",
+        original: "(f.least..=f.most).map(",
+        replacement: "(f.least..f.most).map(",
+        integration: &["xquery_functions::numeric_functions_xqueryfo_6_4", "xquery_functions::strings_xqueryfo_7"],
+        unit: &["xquery::library::tests::functions_are_found_by_name_and_arity"],
+    },
+    Mutation {
+        name: "xquery-operands-swapped",
+        package: Package::Core,
+        breaks: "a duration added to a date from the left is taken as the date",
+        file: "src/xquery/eval/arith.rs",
+        original: "if swapped { function(right, left) } else { function(left, right) }",
+        replacement: "function(left, right)",
+        integration: &["xquery_functions_10_to_16::date_arithmetic_xqueryfo_10_6"],
+        unit: &["xquery::eval::tests::operators::dates_times_and_durations"],
+    },
+    Mutation {
+        name: "xquery-equality-ordered",
+        package: Package::Core,
+        breaks: "eq of values of no order is refused as lt is",
+        file: "src/xquery/eval/compare.rs",
+        original: "value_comparison(a, b, collation, i32::from(self.context.timezone), equality)",
+        replacement: "value_comparison(a, b, collation, i32::from(self.context.timezone), false)",
+        integration: &["xquery_functions_10_to_16::binary_values_xqueryfo_12", "xquery_functions_10_to_16::qnames_xqueryfo_11"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-intersect-search",
+        package: Package::Core,
+        breaks: "op:intersect keeps the nodes of the first not in the second",
+        file: "src/xquery/library/node_sets.rs",
+        original: "others.binary_search_by(|o| o.document_order(node)).is_ok()",
+        replacement: "others.binary_search_by(|o| o.document_order(node)).is_err()",
+        integration: &["xquery_functions_10_to_16::equality_and_node_sets_xqueryfo_15_2"],
+        unit: &["xquery::library::node_sets::tests::node_set_examples"],
     },
 ];
