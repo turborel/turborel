@@ -508,7 +508,10 @@ mod tests {
     /// sends it reads, and what it writes the client reads; the runtime
     /// reads and writes the same stream once it is handed back, and a
     /// thread writes it apart from the runtime meanwhile, without taking
-    /// it. The wait is not set again when it is the same.
+    /// it. The wait is not set again when it is the same. Regression test
+    /// (R-TEST-7): what the client sent was read within the 1 ms wait
+    /// before, so it failed (`WouldBlock`) now and then under load, the
+    /// bytes not yet across loopback.
     #[test]
     fn a_tcp_stream_is_read_and_written_by_a_thread_itself() {
         let (runtime, mut server, mut client) = connected();
@@ -519,6 +522,9 @@ mod tests {
         direct.wait(Duration::from_millis(1)).unwrap();
         let timed_out = direct.read(&mut buf).unwrap_err().kind();
         assert!(matches!(timed_out, ErrorKind::WouldBlock | ErrorKind::TimedOut), "waited, then {timed_out:?}");
+        // What the client sends is waited for as long as it takes to come,
+        // within a minute.
+        direct.wait(Duration::from_secs(60)).unwrap();
         runtime.block_on(client.write_all(b"ab")).unwrap();
         assert_eq!(direct.read(&mut buf).unwrap(), 2);
         assert_eq!(&buf[..2], b"ab");

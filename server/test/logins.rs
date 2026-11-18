@@ -70,33 +70,36 @@ fn of_ann(pki: &Pki, delay: i128) -> Running {
     start_with(&db, &[(LOGIN_DELAY_MS, delay)], vec![password])
 }
 
-/// A login over TLS to `server` as ANN with `password`, and how long it
-/// took.
-fn timed(server: &Running, pki: &Pki, password: &str) -> (connection::Result<Connection<tls::TlsStream>>, Duration) {
+/// A login over TLS to `server` as ANN with `password`.
+fn login(server: &Running, pki: &Pki, password: &str) -> connection::Result<Connection<tls::TlsStream>> {
     let config = tls::trusting(&pki.authority).unwrap();
-    let began = Instant::now();
-    let made = tls::connect(server.address, ("localhost", &config), "ann", &mut Password(password.to_owned()));
-    (made, began.elapsed())
+    tls::connect(server.address, ("localhost", &config), "ann", &mut Password(password.to_owned()))
 }
 
 /// Verifies: [DESIGN] RULES.md D43: after a failed login, the next from
-/// the same address waits at least 100 ms before it is checked, a right
+/// the same address is not checked until 100 ms after the failure, a right
 /// password's too; accepted, it forgets the failure. The user is never
-/// locked out. SERVER.LOGIN_DELAY_MS 0 slows none.
+/// locked out. SERVER.LOGIN_DELAY_MS 0 slows none. The wait is timed from
+/// the failed login's start, as the server counts the failure before it
+/// tells the client. Regression test (R-TEST-7): timed from the next
+/// login's start, the wait was found shorter now and then under load, the
+/// client slow to begin it.
 #[test]
 fn a_failed_login_slows_its_address() {
     let pki = pki("logins-delay");
     let server = of_ann(&pki, 10_000);
-    let (wrong, _) = timed(&server, &pki, "bob's");
+    let began = Instant::now();
+    let wrong = login(&server, &pki, "bob's");
     assert_eq!(state(&wrong.err().unwrap()), ("28000", -919));
-    let (right, took) = timed(&server, &pki, "ann's");
+    let right = login(&server, &pki, "ann's");
+    let took = began.elapsed();
     assert_eq!(right.unwrap().authorization(), "ANN", "never locked out");
     assert!(took >= FIRST_DELAY, "{took:?}");
     let undelayed = of_ann(&pki, 0);
     for _ in 0..3 {
-        assert!(timed(&undelayed, &pki, "bob's").0.is_err());
+        assert!(login(&undelayed, &pki, "bob's").is_err());
     }
-    assert_eq!(timed(&undelayed, &pki, "ann's").0.unwrap().authorization(), "ANN");
+    assert_eq!(login(&undelayed, &pki, "ann's").unwrap().authorization(), "ANN");
 }
 
 /// Verifies: [DESIGN] RULES.md D42: before a client is authenticated, a

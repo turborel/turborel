@@ -2,10 +2,11 @@
 //! `turboreld` binds, by its database's settings; and a stream to it, to
 //! speak the protocol by hand. With the feature `server`.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use tokio::sync::oneshot;
 use turborel::db::Database;
@@ -133,6 +134,24 @@ impl Raw {
         Some(Reply::decode(kind, &body).unwrap())
     }
 
+    /// The next reply, if one begins within `wait`: then taken whole,
+    /// however long the rest of it takes to come, as a limit running out
+    /// within it would leave the stream inside a message; `None` if none
+    /// began.
+    pub fn receive_within(&mut self, wait: Duration) -> Option<Reply> {
+        self.0.set_read_timeout(Some(wait)).unwrap();
+        let begun = self.0.peek(&mut [0_u8; 1]);
+        self.0.set_read_timeout(None).unwrap();
+        match begun {
+            Ok(0) => panic!("the server closed the connection"),
+            Ok(_) => self.receive(),
+            Err(e) => {
+                assert!(matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut), "{e}");
+                None
+            }
+        }
+    }
+
     /// The failure the server sends, then closes the connection after.
     pub fn refusal(&mut self) -> Failure {
         let Some(Reply::Error(failure)) = self.receive() else { panic!("no error") };
@@ -142,6 +161,15 @@ impl Raw {
 
     /// Says Hello as `user`, trusted, and takes Ready.
     pub fn hello(&mut self, user: &str) {
+        self.send_hello(user);
+        assert!(matches!(self.receive(), Some(Reply::Ready { .. })));
+    }
+
+    /// Says Hello as `user`, trusted, taking no reply yet: a request sent
+    /// next is there as the server first waits for one, so no limit of
+    /// the client's idle time runs out between them, however slow the
+    /// client.
+    pub fn send_hello(&mut self, user: &str) {
         self.send(&Request::Hello {
             version: turborel_protocol::VERSION,
             user: user.into(),
@@ -149,19 +177,12 @@ impl Raw {
             initial: vec![],
             capabilities: vec![],
         });
-        assert!(matches!(self.receive(), Some(Reply::Ready { .. })));
     }
 
     /// Says Hello as `user`, trusted, and takes the refusal, once the
     /// server has closed the connection after it.
     pub fn hello_refused(&mut self, user: &str) -> Failure {
-        self.send(&Request::Hello {
-            version: turborel_protocol::VERSION,
-            user: user.into(),
-            mechanism: "trust".into(),
-            initial: vec![],
-            capabilities: vec![],
-        });
+        self.send_hello(user);
         self.refusal()
     }
 }

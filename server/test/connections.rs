@@ -10,7 +10,7 @@ use turborel_client::connection::{self, Trust};
 use turborel_protocol::{Completed, Reply, Request};
 use turborel_server::settings::{BATCH_BYTES, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, MAX_MESSAGE_BYTES, MAX_REFUSALS};
 
-use crate::common::{set, start, state};
+use crate::common::{count, set, start, state};
 
 /// Verifies: [DESIGN] RULES.md D42, R-ERR-1: a connection breaking the
 /// protocol is told so (SQLSTATE 08006) and closed: a statement before
@@ -124,25 +124,31 @@ fn a_client_slow_to_authenticate_is_closed() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1 GR2a]; [DESIGN] RULES.md
 /// D42: a connection that sends nothing for SERVER.IDLE_TIMEOUT_MS is told so
 /// (SQLSTATE 08006) and closed, its open transaction rolled back.
+/// Regression test (R-TEST-7): the client waited for Ready before sending
+/// its statement, and for the connection made again before counting the
+/// rows through it, so a client slow under load went past the limit there,
+/// now and then, and failed.
 #[test]
 fn an_idle_connection_is_closed_and_rolled_back() {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER)").unwrap();
     let server = start(&db, &[(MAX_CONNECTIONS, 1), (IDLE_TIMEOUT_MS, 50)]);
     let mut raw = server.raw();
-    raw.hello("X");
+    raw.send_hello("X");
     raw.send(&Request::Query { sql: "INSERT INTO T VALUES (1)".into(), ends: false });
+    assert!(matches!(raw.receive(), Some(Reply::Ready { .. })));
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     let refused = raw.refusal();
     assert_eq!(state(&refused), ("08006", -919));
     assert!(refused.message.contains("SERVER.IDLE_TIMEOUT_MS"), "{}", refused.message);
-    let mut c = reconnected(&server);
-    assert_eq!(crate::common::rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["0"], "rolled back");
+    drop(reconnected(&server));
+    assert_eq!(count(&db, "X", "T"), "0", "rolled back");
 }
 
 /// Verifies: [DESIGN] RULES.md D42: a client that stops taking its rows
 /// for SERVER.IDLE_TIMEOUT_MS is let go: the worker sending them is freed,
-/// the session rolled back, and the connection's place freed.
+/// the session rolled back, and the connection's place freed. Regression
+/// test (R-TEST-7): as `an_idle_connection_is_closed_and_rolled_back`'s.
 #[test]
 fn a_client_not_taking_its_rows_is_let_go() {
     let db = Database::new();
@@ -154,13 +160,14 @@ fn a_client_not_taking_its_rows_is_let_go() {
     filling.commit().unwrap();
     let server = start(&db, &[(MAX_CONNECTIONS, 1), (BATCH_BYTES, 1), (IDLE_TIMEOUT_MS, 100)]);
     let mut raw = server.raw();
-    raw.hello("X");
+    raw.send_hello("X");
     raw.send(&Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false });
-    assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     // Four megabytes of rows, more than the sockets hold, never read.
     raw.send(&Request::Query { sql: "SELECT K, S FROM T".into(), ends: false });
-    let mut c = reconnected(&server);
-    assert_eq!(crate::common::rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["4000"], "rolled back");
+    assert!(matches!(raw.receive(), Some(Reply::Ready { .. })));
+    assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
+    drop(reconnected(&server));
+    assert_eq!(count(&db, "X", "T"), "4000", "rolled back");
     drop(raw);
 }
 

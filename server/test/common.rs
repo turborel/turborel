@@ -27,6 +27,19 @@ pub fn busy(db: &turborel::db::Database, owner: &str) -> String {
     row[0].to_string()
 }
 
+/// The rows of `table`, as `user` counts them in a session of its own,
+/// embedded in the program that serves `db`: no connection to the server
+/// taken, nor any of its limits run.
+pub fn count(db: &turborel::db::Database, user: &str, table: &str) -> String {
+    let session = db.session(user);
+    let mut cursor = session.open_cursor(&format!("SELECT COUNT(*) FROM {table}")).unwrap();
+    let row = cursor.fetch().unwrap().unwrap();
+    drop(cursor);
+    session.rollback().unwrap();
+    let [turborel::value::Value::Exact(n)] = row.as_slice() else { panic!("{row:?}") };
+    n.to_string()
+}
+
 /// A sink that keeps every event, as `Debug` shows it.
 #[derive(Clone, Default)]
 pub struct Kept(std::sync::Arc<std::sync::Mutex<Vec<String>>>);

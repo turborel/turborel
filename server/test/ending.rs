@@ -4,27 +4,14 @@
 use std::time::Duration;
 
 use turborel::db::Database;
-use turborel::value::Value;
 use turborel_protocol::{Completed, Reply, Request};
 use turborel_server::settings::IDLE_IN_TRANSACTION_TIMEOUT_MS;
 
-use crate::common::{Running, rows, start, state};
+use crate::common::{Running, count, rows, start, state};
 
 /// The ID of the connection of `user` that `server` serves.
 fn id_of(server: &Running, user: &str) -> u64 {
     server.operator.connections().into_iter().find(|(_, u)| u.as_deref() == Some(user)).unwrap().0
-}
-
-/// The rows of `table`, as `user` counts them in a session of its own,
-/// embedded in the program that serves `db`.
-fn count(db: &Database, user: &str, table: &str) -> String {
-    let session = db.session(user);
-    let mut cursor = session.open_cursor(&format!("SELECT COUNT(*) FROM {table}")).unwrap();
-    let row = cursor.fetch().unwrap().unwrap();
-    drop(cursor);
-    session.rollback().unwrap();
-    let [Value::Exact(n)] = row.as_slice() else { panic!("{row:?}") };
-    n.to_string()
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1 GR2a]; [DESIGN] RULES.md
@@ -101,18 +88,16 @@ fn the_owner_ends_and_cancels_connections_in_sql() {
     long.hello("Y");
     long.send(&Request::Query { sql: "SELECT COUNT(*) FROM X.T A, X.T B, X.T C, X.T D".into(), ends: false });
     let y = id_of(&server, "Y");
-    long.0.set_read_timeout(Some(Duration::from_millis(20))).unwrap();
     // Cancelled once it runs: a cancel before is of nothing.
     let cancelled = loop {
         owner.query(&format!("CANCEL CONNECTION {y}")).unwrap();
-        match long.receive() {
+        match long.receive_within(Duration::from_millis(20)) {
             None | Some(Reply::Description(_)) => {}
             Some(reply) => break reply,
         }
     };
     let Reply::Error(failure) = cancelled else { panic!("{cancelled:?}") };
     assert_eq!(state(&failure), ("TB920", -920));
-    long.0.set_read_timeout(None).unwrap();
     long.send(&Request::Query { sql: "VALUES 1".into(), ends: false });
     assert!(matches!(long.receive(), Some(Reply::Description(_))), "its session goes on");
     x.query("INSERT INTO T VALUES (100)").unwrap();
