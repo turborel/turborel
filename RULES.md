@@ -3065,7 +3065,8 @@ PERCENT and other distance orders retain ordinary plans. Learned plans
 fill and prepare both their distance measure and full filter each run.
 
 Constant folding may replace a scalar call with its `specialize` result
-(D53). The replacement preserves its contracts and errors, remains correct
+(D53), in a condition, a select list or a set function's argument. The
+replacement preserves its contracts and errors, remains correct
 if given different arguments, and must not perform work with visible side
 effects. Retained state reserves memory from the supplied database budget
 (D38); failed preparation leaves the original call for runtime. Filling a

@@ -1,13 +1,13 @@
 //! The mutations of the expanding nearest-edge searches (RULES.md
 //! R-TEST-9, D85): a search window that no longer reaches past the
 //! searching edge's or point's own envelope, a point's search that
-//! follows only the nearer child of each node, and one that prunes
-//! envelopes nearer than its reach.
+//! follows only the nearer child of each node, one that prunes envelopes
+//! nearer than its reach, and a set function's argument left unprepared.
 
 use super::{Mutation, Package};
 
 /// Mechanisms of the searches whose removal must fail their tests.
-pub const REACH: [Mutation; 3] = [
+pub const REACH: [Mutation; 4] = [
     Mutation {
         name: "distance-search-reach",
         package: Package::Core,
@@ -47,5 +47,15 @@ pub const REACH: [Mutation; 3] = [
             "geometry::prepared::tree::tests::nearest_edges_measure_as_the_scan_does_to_the_bit",
             "geometry::tests::prepared::prepared_point_distances_match_the_scan_to_the_bit",
         ],
+    },
+    Mutation {
+        name: "folding-set-function-arguments",
+        package: Package::Core,
+        breaks: "a set function's argument keeps its unprepared call, so each row decodes the constant operand",
+        file: "src/optimizer/folding.rs",
+        original: "aggs.iter().map(|a| a.arg.as_ref().and_then(|e| fold_expr(e, budget))).collect();",
+        replacement: "aggs.iter().map(|a| a.arg.as_ref().and_then(|e| fold_expr(e, budget)).filter(|_| false)).collect();",
+        integration: &[],
+        unit: &["db::prepared::plans::tests::set_function_arguments_are_folded_and_prepared"],
     },
 ];

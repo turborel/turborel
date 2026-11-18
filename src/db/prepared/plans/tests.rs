@@ -60,6 +60,27 @@ fn geometry_index_plans_learn_despite_scalar_preparation() {
     assert_eq!(query.plans_made(), 1);
 }
 
+/// Verifies: [DESIGN] D53, D85: constant folding reaches a set
+/// function's argument as it reaches a select list: a sum of distances to
+/// a constant polygon is folded and prepared, and sums the ordinary
+/// measures.
+#[test]
+fn set_function_arguments_are_folded_and_prepared() {
+    use crate::geometry::Geometry;
+    let (_db, s) = spatial_table();
+    let wkt = "POLYGON ((100 0, 200 0, 200 100, 100 100, 100 0))";
+    let sql = format!("SELECT SUM(ST_DISTANCE(G, ST_GEOMFROMTEXT('{wkt}', 0))) FROM P");
+    let plan = s.explain(&sql, &Params::new()).unwrap();
+    let rules = plan.lines().find(|line| line.starts_with("-- rules:")).unwrap_or_default();
+    assert!(rules.contains(crate::optimizer::CONSTANT_FOLDING), "{plan}");
+    let polygon = Geometry::from_wkt(wkt, 0).unwrap();
+    let expected: f64 =
+        (0_i32..1200_i32).map(|n| Geometry::point(f64::from(n), f64::from(n), 0).unwrap().distance(&polygon).unwrap().unwrap()).sum();
+    let row = s.open_cursor(&sql).unwrap().fetch().unwrap().unwrap();
+    let Value::Approx(sum) = row[0] else { panic!("not a double: {row:?}") };
+    assert!((sum - expected).abs() <= expected * 1e-12_f64, "{sum} against {expected}");
+}
+
 /// Verifies: [DESIGN] D15, D45, D85: a nearest plan learns with one
 /// distance parameter, fills its measure and filter on reuse, and keeps
 /// NULL, EMPTY and SRID-changing arguments correct after specialization.

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::{CONSTANT_FOLDING, Rule, RuleContext};
 use crate::error::Warnings;
 use crate::exec::{Heard, NoSubqueries, eval, eval_cond};
-use crate::logical::{Cond, Expr, LogicalPlan, Truth};
+use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Truth};
 use crate::memory::MemoryBudget;
 
 /// Evaluate column-free subexpressions once, at planning time. A subexpression
@@ -129,9 +129,17 @@ impl Rule for ConstantFolding {
                 let exprs = folded.into_iter().zip(exprs).map(|(f, e)| f.unwrap_or_else(|| e.clone())).collect();
                 Some(LogicalPlan::Project { exprs, input: input.clone() })
             }
+            LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
+                let folded: Vec<Option<Expr>> = aggs.iter().map(|a| a.arg.as_ref().and_then(|e| fold_expr(e, budget))).collect();
+                if folded.iter().all(Option::is_none) {
+                    return None;
+                }
+                let aggs = folded.into_iter().zip(aggs).map(|(f, a)| AggCall { arg: f.or_else(|| a.arg.clone()), ..a.clone() }).collect();
+                let (groups, collations, seeds, input) = (groups.clone(), collations.clone(), seeds.clone(), input.clone());
+                Some(LogicalPlan::Aggregate { groups, collations, aggs, seeds, input })
+            }
             LogicalPlan::Scan { .. }
             | LogicalPlan::Product { .. }
-            | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Values { .. }
