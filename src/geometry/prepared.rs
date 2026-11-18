@@ -12,6 +12,7 @@ use std::sync::{Arc, OnceLock};
 mod cells;
 mod locator;
 mod rectangle;
+mod shapes;
 
 use super::{Geometry, GeometryFunction, kind};
 use crate::error::Result;
@@ -21,6 +22,7 @@ use crate::params::ParameterType;
 use crate::value::{DataType, Value};
 use cells::Cells;
 use locator::Locator;
+use shapes::FiledEdges;
 
 struct Prepared {
     function: GeometryFunction,
@@ -33,8 +35,13 @@ struct Prepared {
     cells: OnceLock<Option<Box<Cells>>>,
     cells_after: usize,
     located: AtomicUsize,
-    /// The budget certificates would reserve from, kept only for an
-    /// operand that may build them.
+    /// Built at the `filed_after`th line or polygon tested; never if that
+    /// is `usize::MAX`.
+    filed: OnceLock<Option<Box<FiledEdges>>>,
+    filed_after: usize,
+    probed: AtomicUsize,
+    /// The budget certificates and filed edges would reserve from, kept
+    /// only for an operand that may build them.
     budget: Option<Arc<MemoryBudget>>,
     rectangle: bool,
     _held: Reservation,
@@ -46,6 +53,10 @@ struct Prepared {
 const CELL_USES_PER_EDGE: usize = 8;
 /// The fewest points located before building them.
 const MIN_CELL_USES: usize = 256;
+/// \[DESIGN\] Lines and polygons tested before a polygon's edges are
+/// filed: filing costs about one unprepared test, which files the larger
+/// side's edges anyway.
+const FILED_AFTER_USES: usize = 1;
 
 pub(super) fn specialize(function: GeometryFunction, args: &[Option<&Value>], budget: &Arc<MemoryBudget>) -> Option<ScalarRef> {
     let [left, right] = args else { return None };
@@ -76,7 +87,8 @@ impl Prepared {
             .unwrap_or(usize::MAX);
         let rectangle = rectangle::recognizes(&geometry.shape);
         let budget = (cells_after < usize::MAX).then(|| Arc::clone(budget));
-        let (cells, located) = (OnceLock::new(), AtomicUsize::new(0));
+        let filed_after = if budget.is_some() { FILED_AFTER_USES } else { usize::MAX };
+        let (cells, located, filed, probed) = (OnceLock::new(), AtomicUsize::new(0), OnceLock::new(), AtomicUsize::new(0));
         Some(Self {
             function,
             position,
@@ -86,6 +98,9 @@ impl Prepared {
             cells,
             cells_after,
             located,
+            filed,
+            filed_after,
+            probed,
             budget,
             rectangle,
             _held: held,
@@ -98,7 +113,14 @@ impl Prepared {
     }
 
     fn intersection(&self, other: &Geometry) -> Result<Option<bool>> {
-        let super::Shape::Point(Some(point)) = &other.shape else { return Ok(None) };
+        match &other.shape {
+            super::Shape::Point(Some(point)) => self.point_intersection(*point, other),
+            super::Shape::Point(None) => Ok(None),
+            super::Shape::Line(_) | super::Shape::Polygon(_) | super::Shape::Multi(_, _) => self.shape_intersection(other),
+        }
+    }
+
+    fn point_intersection(&self, point: super::shape::Point, other: &Geometry) -> Result<Option<bool>> {
         if self.rectangle {
             self.geometry.same_reference(other)?;
             return Ok(self.geometry.bounds.zip(other.bounds).map(|(a, b)| a.intersects(b)));
@@ -112,11 +134,40 @@ impl Prepared {
         }
         // A labelled cell decides the point exactly; a boundary cell
         // leaves it to the exact edge tests.
-        if let Some(decided) = self.cells().and_then(|cells| cells.decide(*point)) {
+        if let Some(decided) = self.cells().and_then(|cells| cells.decide(point)) {
             return Ok(Some(decided));
         }
         let Some(locator) = &self.locator else { return Ok(None) };
-        locator.locate(*point).map(|location| Some(location != super::crossing::Location::Exterior))
+        locator.locate(point).map(|location| Some(location != super::crossing::Location::Exterior))
+    }
+
+    /// A line or polygon tested against a polygon with filed edges probes
+    /// only the edges filed near its own; others take the general path.
+    fn shape_intersection(&self, other: &Geometry) -> Result<Option<bool>> {
+        if self.filed_after == usize::MAX {
+            return Ok(None);
+        }
+        self.geometry.same_reference(other)?;
+        if self.geometry.bounds.zip(other.bounds).is_none_or(|(a, b)| !a.intersects(b)) {
+            return Ok(None);
+        }
+        let Some(filed) = self.filed() else { return Ok(None) };
+        let locate = |point| self.location(point);
+        Ok(filed.meets(&self.geometry.shape, &other.shape, &locate))
+    }
+
+    /// Where `point` lies in the prepared polygon, exactly: by its cell,
+    /// its interval tree or its rings.
+    fn location(&self, point: super::shape::Point) -> super::crossing::Location {
+        match self.cells().and_then(|cells| cells.decide(point)) {
+            Some(true) => super::crossing::Location::Interior,
+            Some(false) => super::crossing::Location::Exterior,
+            None => self
+                .locator
+                .as_ref()
+                .and_then(|locator| locator.locate(point).ok())
+                .unwrap_or_else(|| super::crossing::locate(point, &self.geometry.shape)),
+        }
     }
 }
 
@@ -132,6 +183,19 @@ impl Prepared {
         }
         let build = || Cells::new(&self.geometry.shape, self.geometry.bounds?, self.budget.as_ref()?);
         self.cells.get_or_init(build).as_deref()
+    }
+
+    /// The polygon's filed edges, once it has tested enough lines and
+    /// polygons to repay filing them.
+    fn filed(&self) -> Option<&FiledEdges> {
+        if let Some(filed) = self.filed.get() {
+            return filed.as_deref();
+        }
+        if self.probed.fetch_add(1, Ordering::Relaxed) < self.filed_after {
+            return None;
+        }
+        let build = || FiledEdges::new(&self.geometry.shape, self.geometry.bounds?, self.budget.as_ref()?);
+        self.filed.get_or_init(build).as_deref()
     }
 }
 

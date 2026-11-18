@@ -149,6 +149,8 @@ fn last() -> [&'static [Mutation]; 37] {
         &super::geometry::GEOMETRY,
         &super::geometry::orientation::ORIENTATION,
         &super::geometry::cells::CELLS,
+        &super::geometry::buckets::BUCKETS,
+        &super::geometry::filed::FILED,
         &super::budget::BUDGET,
         &super::spatial_types::SPATIAL_TYPES,
         &super::spatial_curves::SPATIAL_CURVES,

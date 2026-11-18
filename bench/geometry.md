@@ -405,3 +405,60 @@ enough points. Unprepared decoders and kernels, whose code this change
 does not touch, ran 5-11% slower in the same runs than in the baseline
 runs half an hour earlier; that drift applies to both sides of the
 prepared comparison.
+
+## Edge intersection through grid buckets
+
+Whether two polygons, a line and a polygon, or two lines intersect
+tested every pair of edges. Lines and rings with at least 4,096 edge
+pairs now file one side's edges in an exact dyadic grid over the two
+envelopes' overlap and test each edge of the other only against the
+edges filed under the cells it may touch (RULES.md D85). Edges whose
+envelopes miss the overlap are neither filed nor probed. Three large
+pairs join the suite: 4,096-edge circles whose boundaries cross, one
+nested in the other, and interleaved 1,024-tooth combs whose envelopes
+overlap but whose edges never meet.
+
+Measured on an Apple M4, Rust 1.99.0, second runs of each side:
+
+```text
+cargo xtask bench geometry --save buckets-before
+cargo xtask bench geometry --save buckets --compare buckets-before
+```
+
+| Decoded intersection | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 4,096-edge circles crossing | 368 | 11,589 | 31.5x |
+| 4,096-edge circles nested | 80 | 60,489 | 756x |
+| 1,024-tooth combs interleaved | 80 | 181 | 2.3x |
+
+Every other case stayed within noise. Nested circles gain most: no edge
+of the outer ring reaches the inner one's envelope, so the test is a
+scan of the edges and one point location. The combs gain least: their
+teeth are narrower than the cells, so each cell files edges of both.
+
+## Prepared polygons keep their edges filed
+
+A prepared polygon of at least 32 edges now files its edges in the grid
+over its envelope from the second line or polygon it tests, and each
+later operand probes only the filed edges near its own (RULES.md D85).
+Unprepared, every test filed the larger side again, or tested every
+pair of edges below 4,096 pairs. A new case tests 10,000 small squares,
+one per grid point, against a prepared polygon, as a join's inner
+candidates meet its prepared outer row.
+
+Measured on an Apple M4, Rust 1.99.0, second runs of each side:
+
+```text
+cargo xtask bench geometry --save filed-before
+cargo xtask bench geometry --save filed --compare filed-before
+```
+
+| Prepared intersection | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| Squares against a 4,096-edge circle | 452,643 | 10,446,592 | 23.1x |
+| Squares against a 4,100-edge comb | 160,982 | 4,572,038 | 28.4x |
+
+Preparation rates stayed within noise, apart from the square's at -6.2%
+with spreads of 3.2-4.2%; a square is never filed. The filed edges of a
+4,096-edge polygon hold its cells' offsets and each edge once per cell it
+may touch, reserved from the budget and released with the operand.

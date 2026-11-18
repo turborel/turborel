@@ -2880,6 +2880,16 @@ collinear triples are common and the bound cannot prove a zero, takes this
 path without allocating. Other cases use outward-rounded intervals, then
 exact bounded integers on binary64's dyadic coordinates. No tolerance
 changes a topological decision, including at extreme exponents.
+Lines and polygon rings with at least 4,096 pairs of edges are compared
+through buckets of the same dyadic grid prepared polygons use, over the
+two envelopes' overlap, padded to a square where they touch along an
+axis-parallel line. One side's edges are filed under every cell they may
+touch, each edge of the other is tested exactly against the edges filed
+under its cells, and the first meeting ends the search. The cells an edge
+is said to touch include every cell it touches, so two edges that meet
+share a cell and no meeting pair is skipped; an edge whose envelope misses
+the overlap cannot meet the other side and is not filed. Where the grid
+declines, or with fewer pairs, every pair is tested as before.
 
 `ScalarFunction::spatial_operation` declares equivalent spatial semantics,
 including result types, NULL propagation and SRID errors. It is separate
@@ -3095,7 +3105,15 @@ point in a labelled cell is decided by one lookup; one in a boundary cell
 keeps the interval tree or the ring scan. Certificates decline when a cell
 would be within 256 units in the last place of the largest coordinate, a
 scaled coordinate would reach 2^44, the side would fall below 1e-280, or
-the budget refuses their cells. Distance reuses the
+the budget refuses their cells.
+The same operands, from the second line, polygon or multi-part form of
+them they test, keep their edges filed in that grid over their envelope,
+as intersection tests file one side (above), reserved from the budget. Each
+operand then probes only the filed edges in the cells its own edges may
+touch, and decides as the unprepared relationship does: edges that meet,
+or a first vertex of either shape, part by part, not outside the other,
+the prepared polygon's points placed by its cells, interval tree or
+rings. Collections keep the general path. Distance reuses the
 prepared intersection decision, then keeps its ordinary separation kernel
 and result bounds; segment-distance pruning is not implied.
 Spatial probes with equal declared semantics and deterministic
