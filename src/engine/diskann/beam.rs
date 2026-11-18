@@ -199,6 +199,7 @@ impl DiskAnn {
                 }
                 fresh.extend(node.neighbours.iter().copied().filter(|&n| visited.visit(n)));
                 let distance = finite(self.inner.plugins.metric.distance(query, &node.vector), "metric")?;
+                frontier.settle(id, distance);
                 expanded.push(Expanded { distance, id, node });
             }
             stats.expanded = stats.expanded.saturating_add(u32::try_from(batch.len()).unwrap_or(0));

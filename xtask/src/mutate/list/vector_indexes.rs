@@ -8,7 +8,7 @@ use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail the vector indexes'
 /// requirements.
-pub const VECTOR_INDEXES: [Mutation; 28] = [
+pub const VECTOR_INDEXES: [Mutation; 33] = [
     Mutation {
         name: "diskann-prune-alpha",
         package: Package::Core,
@@ -288,5 +288,55 @@ pub const VECTOR_INDEXES: [Mutation; 28] = [
         replacement: "if graph.changes != changes {",
         integration: &[],
         unit: &["engine::hnsw::tests::changes::hnsw_maintenance_makes_progress_under_constant_writes"],
+    },
+    Mutation {
+        name: "diskann-settle",
+        package: Package::Core,
+        breaks: "an expanded node keeps its code's distance in the search list, so coarse codes choose which candidates L keeps",
+        file: "src/engine/diskann/beam.rs",
+        original: "frontier.settle(id, distance);",
+        replacement: ";",
+        integration: &[],
+        unit: &["engine::diskann::tests::guided::a_guided_search_reaches_its_recall_at_a_fixed_list"],
+    },
+    Mutation {
+        name: "diskann-code-half",
+        package: Package::Core,
+        breaks: "DiskANN's built-in PQ codes take a byte for four dimensions, too coarse to guide a search to the true nearest",
+        file: "src/index/diskann.rs",
+        original: "const DIMS_PER_CODE_BYTE: u32 = 2;",
+        replacement: "const DIMS_PER_CODE_BYTE: u32 = 4;",
+        integration: &[],
+        unit: &["index::diskann::tests::diskann_codes_default_to_half_the_dimensions"],
+    },
+    Mutation {
+        name: "diskann-memory-pool",
+        package: Package::Core,
+        breaks: "a DiskANN method in memory pools its pages in 2 MiB, so a graph past it misses the pool at most hops",
+        file: "src/index/diskann.rs",
+        original: "Place::sharing(MemoryPages::new(crate::db::POOL_BYTES))",
+        replacement: "Place::in_memory()",
+        integration: &[],
+        unit: &["index::diskann::tests::diskann_in_memory_pools_as_a_database"],
+    },
+    Mutation {
+        name: "diskann-cache-growth",
+        package: Package::Core,
+        breaks: "an index grown by inserts never makes its hot-node cache, so every search reads its first hops",
+        file: "src/engine/diskann/cache.rs",
+        original: "tuning.cache_hops > 0 && share > 0 && grown",
+        replacement: "tuning.cache_hops > 0 && share > 0 && grown && false",
+        integration: &[],
+        unit: &["engine::diskann::tests::guided::an_index_grown_by_inserts_caches_its_first_hops"],
+    },
+    Mutation {
+        name: "diskann-back-edge-slack",
+        package: Package::Core,
+        breaks: "a back edge past R prunes the list to R, so the next back edge prunes it again",
+        file: "src/engine/diskann/fresh.rs",
+        original: "const SLACK: (usize, usize) = (10, 13);",
+        replacement: "const SLACK: (usize, usize) = (1, 1);",
+        integration: &[],
+        unit: &["engine::diskann::tests::guided::a_back_edge_past_r_prunes_with_slack"],
     },
 ];
