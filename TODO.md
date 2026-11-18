@@ -119,8 +119,7 @@ CONFORMANCE.md one by one as they are done.
 ### Spatial
 
 - Extend intersection's envelope candidates to geometry outer joins and distance
-  searches while preserving runtime errors. Track spatial serializable read
-  regions instead of the current whole-table predicate read.
+  searches while preserving runtime errors.
 - Simple feature access, SQL option (ISO 19125-2). The schema of geometry
   columns and spatial reference systems it defines, and its
   geometry functions where they differ from SQL/MM's, so tools that read

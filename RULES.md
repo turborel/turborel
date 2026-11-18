@@ -158,6 +158,7 @@ verification approach DO-178C expects (§8).
 | D131 | Linear referencing types are built-in kinds, their routines one dispatcher per name over the §21 catalog |
 | D132 | Class 2FF is shared by the SQL/MM parts, each routine raising its own part's conditions |
 | D133 | A registered function's own word decides whether it is deterministic, and constraints call only deterministic ones |
+| D134 | A spatial read records the envelopes it read, merged into their hull past a bound |
 
 ### The project
 
@@ -2120,7 +2121,8 @@ Storage cannot infer which rows an arbitrary function selects. It treats
 every key and range as a possible match without calling the function.
 The executor records a read of the whole table, including nulls, so
 conflict checks detect rows inserted or changed by another transaction.
-Methods protect their own state when sessions call them concurrently and
+An index that names the envelopes its search reads records them instead
+(D134). Methods protect their own state when sessions call them concurrently and
 never call back into a database or session. Scalar functions run without
 a storage lock held (D27, D42, R-ERR-4).
 
@@ -2741,7 +2743,7 @@ hide the runtime error. NULL and matching-SRID EMPTY queries return none.
 An empty stored geometry projects to an origin rectangle, adding candidates
 but no false negatives. NULL keys are omitted. Readers compare the visible
 version's projection with the entry before evaluating the full condition.
-Spatial reads currently record a whole-table serializable read (D34).
+A spatial read records the envelope it read, not the whole table (D134).
 Geometry window probes group at most 4096 envelope/row-id pairs before
 fetching rows. Blocks of at least 1024 pairs are sorted by row id to reuse
 nearby row-store pages; smaller results keep their traversal order. The
@@ -2773,9 +2775,9 @@ index for each outer row. Both columns must enforce the same SRID, all
 other conjuncts and the indexed table's filter must be non-raising, and
 the complete ON condition rechecks each visible pair. Planning considers
 both table orders and column projections. A NULL outer geometry makes no
-probe; an empty geometry finds no pair. Spatial probes retain the same
-whole-table serializable read as filters. This is not a simultaneous
-traversal of two indexes. Geometry outer joins do not yet use this path.
+probe; an empty geometry finds no pair. Each probe records its outer
+row's envelope as a serializable read region (D134). This is not a
+simultaneous traversal of two indexes. Geometry outer joins do not yet use this path.
 
 For an unordered spatial inner join, the executor can choose a single
 table scan instead of repeated probes (`exec/join/indexed/adaptive.rs`).
@@ -4330,6 +4332,49 @@ The setting SQL.FUNCTION_CALLS is checked when a definition is written
 its session read them, as CREATE does. So a constraint it adds while the
 session's setting is OFF calls no registered function, and the
 constraints made before are bound again with their calls taken.
+
+#### D134. A spatial read records the envelopes it read, merged into their hull past a bound
+
+Under SERIALIZABLE, a read is checked at commit against what transactions
+committed meanwhile changed (D29). A probe of a geometry `rtree` index
+read the whole table there before, since storage cannot call a spatial
+function under its locks (D34). Now the index says which envelopes its
+search reads (`Index::read_region`), and the executor records them as a
+region of the key's column (`TableStorage::read_by_region`,
+`storage/region.rs`). A filter's window, and each probe of an inner join,
+is one envelope.
+
+A change conflicts with a region when the envelope of its old or new
+geometry meets one of the region's, edges included. So a move into the
+window or out of it conflicts, and a write elsewhere no longer does. The
+envelope matched is the one the index keys the value by. A NULL is in no
+region, as no index holds it and no relationship holds of it. An empty
+geometry is keyed at the origin, so it conflicts with a window holding
+the origin, which may refuse a commit it need not but never misses one. A
+probe whose value is NULL or an empty geometry finds no entry, and records
+no region. A probe the index answers by reading every entry, as of
+another SRID or ST_EQUALS of an empty value, records the whole table. So
+does a key computed by an expression, whose values no column holds. A
+value that cannot be read as a geometry matches every region.
+
+A plan that reads a window wider than its probe's, as a distance search or
+an outer join may, records that wider window. It gives the region to
+`read_by_region` itself, or its index names it for its probe. Engines
+whose isolation is the coordinator's ignore regions. The default
+`read_by_region` records a read of the whole table, so an engine that
+knows only conditions stays correct.
+
+Memory is bounded as D38 bounds reads. Past TRANSACTIONS.TRACKED_ROWS
+envelopes, a transaction's regions of a table merge into one rectangle of
+each column, the hull of its envelopes. A merged region holds every row
+the regions held, so it refuses more commits, never fewer, and there are
+then at most as many regions as columns. When a committed transaction's
+changes outgrow TRANSACTIONS.HELD_BYTES and are kept as each column's
+least and greatest value, every region may match them.
+
+Regions are kept in memory with the rest of a transaction's reads, so
+neither recovery nor replication sees them. A transaction open at a
+crash is undone and validates nothing.
 
 ## 2. Project layout
 

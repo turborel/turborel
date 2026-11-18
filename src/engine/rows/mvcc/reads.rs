@@ -1,13 +1,14 @@
 //! What a transaction read of a table, for its commit's check (RULES.md D29,
-//! D38): rows, conditions, or the whole table, which past
-//! TRANSACTIONS.TRACKED_ROWS they become; and what a transaction changed,
+//! D38, D134): rows, conditions, or the whole table, which past
+//! TRANSACTIONS.TRACKED_ROWS they become, and spatial regions, which past
+//! it merge into a hull of each column; and what a transaction changed,
 //! which another's reads are checked against.
 
 use std::cmp::Ordering;
 
 use crate::hash::murmur::MurmurSet;
 use crate::spill::row_bytes;
-use crate::storage::{Conjunction, Row, RowId};
+use crate::storage::{Conjunction, Region, Row, RowId, merged};
 use crate::value::{Value, compare};
 
 /// What a transaction read.
@@ -16,6 +17,8 @@ pub(in crate::engine::rows) enum Read {
     Row(RowId),
     /// The rows a scan or an index chose by conditions.
     Condition(Conjunction),
+    /// The rows a spatial index chose by their envelopes.
+    Region(Region),
     /// Every row: a scan.
     All,
 }
@@ -26,19 +29,24 @@ pub(in crate::engine::rows) enum Read {
 pub(super) struct Reads {
     pub(super) rows: MurmurSet<RowId>,
     pub(super) conditions: Vec<Conjunction>,
+    pub(super) regions: Vec<Region>,
+    /// The envelopes of `regions`, counted as they are added.
+    envelopes: usize,
     pub(super) all: bool,
 }
 
 impl Reads {
     /// Adds `read`, then counts every row read if more than `tracked` rows
-    /// or conditions are: a read of more than it read, which may refuse a
-    /// commit it need not, never one it must.
+    /// or conditions are, and merges its regions into a hull of each column
+    /// if more than `tracked` envelopes are: a read of more than it read,
+    /// which may refuse a commit it need not, never one it must.
     pub(super) fn add(&mut self, read: Read, tracked: usize) {
         match read {
             Read::Row(id) => {
                 self.rows.insert(id);
             }
             Read::Condition(condition) => self.conditions.push(condition),
+            Read::Region(region) => self.add_region(region, tracked),
             Read::All => self.all = true,
         }
         if self.rows.len() > tracked || self.conditions.len() > tracked {
@@ -46,9 +54,23 @@ impl Reads {
         }
     }
 
+    /// Adds `region`, unless it has no envelope and so read no row, then
+    /// merges the regions past `tracked` envelopes.
+    fn add_region(&mut self, region: Region, tracked: usize) {
+        if region.envelopes().is_empty() {
+            return;
+        }
+        self.envelopes = self.envelopes.saturating_add(region.envelopes().len());
+        self.regions.push(region);
+        if self.envelopes > tracked {
+            self.regions = merged(std::mem::take(&mut self.regions));
+            self.envelopes = self.regions.iter().map(|r| r.envelopes().len()).sum();
+        }
+    }
+
     /// Whether it read anything.
     pub(super) fn any(&self) -> bool {
-        self.all || !self.rows.is_empty() || !self.conditions.is_empty()
+        self.all || !self.rows.is_empty() || !self.conditions.is_empty() || !self.regions.is_empty()
     }
 }
 
@@ -88,11 +110,14 @@ impl Changed {
         }
     }
 
-    /// Whether one of `conditions` matches a row of it, or may.
-    pub(super) fn matched_by(&self, conditions: &[Conjunction]) -> bool {
+    /// Whether one of `conditions` or `regions` matches a row of it, or
+    /// may. Bounds say nothing of a geometry's envelope, so any region may.
+    pub(super) fn matched_by(&self, conditions: &[Conjunction], regions: &[Region]) -> bool {
         match self {
-            Changed::Rows(rows, _) => rows.iter().any(|row| conditions.iter().any(|c| c.matches(row))),
-            Changed::Bounds(bounds) => conditions.iter().any(|c| c.may_match(bounds)),
+            Changed::Rows(rows, _) => {
+                rows.iter().any(|row| conditions.iter().any(|c| c.matches(row)) || regions.iter().any(|r| r.matches(row)))
+            }
+            Changed::Bounds(bounds) => !regions.is_empty() || conditions.iter().any(|c| c.may_match(bounds)),
         }
     }
 }

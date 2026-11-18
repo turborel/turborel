@@ -90,7 +90,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Near, Newest, Row, RowId, Rows, ScanOrder, TableStorage};
+use crate::storage::{Condition, Conjunction, Near, Newest, Region, Row, RowId, Rows, ScanOrder, TableStorage};
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
 /// The name of the row store.
@@ -461,6 +461,10 @@ impl TableStorage for RowTable {
 
     fn read_by_condition(&self, tx: TxId, condition: &Condition) -> Result<()> {
         self.note_read(tx, || Read::Condition(Conjunction::of(condition.clone())))
+    }
+
+    fn read_by_region(&self, tx: TxId, region: &Region) -> Result<()> {
+        self.note_read(tx, || Read::Region(region.clone()))
     }
 
     fn newest(&self, tx: TxId, id: RowId) -> Result<Newest> {
