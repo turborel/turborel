@@ -80,6 +80,13 @@ behind it, and each can be replaced or added to.
   embedded after commit.
 - [Property graphs](doc/sql/16-property-graphs.md) over tables, queried
   by GRAPH_TABLE's path patterns through adjacency indexes.
+- Native graph tables, CREATE TABLE ... AS NODE and AS EDGE, with hidden
+  identities, CONNECTION constraints and each schema's SYS_GRAPH.
+- [GQL](doc/sql/statements/execute-gql.md) by EXECUTE GQL, GQL_TABLE or
+  a GQL session, over property graphs and typed or open graphs.
+- [Graph algorithms](doc/sql/17-graph-algorithms.md) such as PAGERANK,
+  WCC, LOUVAIN and SSSP over a property graph or a table of edges, in
+  parallel, with INTO PROPERTY.
 - Multisets, with MULTISET UNION, EXCEPT and INTERSECT, MEMBER,
   SUBMULTISET and IS A SET, and COLLECT, FUSION and INTERSECTION.
 - Structured types with attributes, methods and subtypes, typed tables

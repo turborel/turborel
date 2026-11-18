@@ -140,11 +140,7 @@ CONFORMANCE.md one by one as they are done.
 
 ### Graph
 
-- GQL (ISO/IEC 39075:2024). Property graphs of nodes and edges with labels
-  and properties, their graph types, MATCH of graph patterns with
-  quantified paths and path modes, and inserting, setting and removing
-  nodes and edges, as a language beside SQL over the same storage and
-  transactions.
+Nothing is open.
 
 ### Vectors
 

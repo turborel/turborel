@@ -146,6 +146,9 @@ verification approach DO-178C expects (§8).
 | D106 | A property graph is a view-like schema object over tables, ENFORCED or TRUSTED |
 | D107 | A graph's edges are followed through an adjacency index, every entry rechecked |
 | D108 | GRAPH_TABLE is a lateral collection derived table searched by PathSearch |
+| D109 | A node or edge table is a base table with hidden pseudo-columns, and its schema's SYS_GRAPH is described from them |
+| D110 | GQL is translated to SQL clause by clause, and its MATCH is a GRAPH_TABLE |
+| D111 | Graph algorithms run on a CSR of dense vertex numbers, in fixed morsels, the same result on any number of threads |
 
 ### The project
 
@@ -3853,6 +3856,123 @@ and else by the settings GRAPH.* (§20). Passing a bound fails with
 its quantified parts are, so a match never depends on how the planner
 would join. EXPLAIN shows each path's automaton and algorithm and how
 each edge table is followed.
+
+#### D109. A node or edge table is a base table with hidden pseudo-columns, and its schema's SYS_GRAPH is described from them
+
+A node table or edge table [EXTENSION], made by CREATE TABLE ... AS NODE
+or AS EDGE, is Mode B of the property graph standard (§4.2). It is a
+base table whose descriptor has pseudo-columns after its own columns
+(`catalog/native.rs`). A node table has `$NODE_ID`, an edge table
+`$EDGE_ID`, `$FROM_ID` and `$TO_ID`. Each is an ordinary NOT NULL column
+of VARCHAR(2048), so storage, the log, the checkpoint and recovery keep
+it with the row. It is marked hidden, so `*`, an INSERT of no column
+list and LIKE leave it out, and COLUMNS shows IS_HIDDEN YES. A query
+names it like any column.
+
+A row's identity is given as it is inserted (`db/graphs/native/rows.rs`).
+It is the text of a JSON object of its kind, schema, table and number
+(R5.1), the number drawn from a generator kept in the column's
+descriptor, as an identity column's is. No statement writes it. An
+edge's endpoints are written as the identities of nodes of its schema's
+node tables, and kept in that one text, so equal nodes have equal
+texts.
+
+A CONNECTION constraint lists the pairs of node tables an edge may join
+(R12.2). It is a row constraint checked at the end of the statement
+when an endpoint is written, its node found by its identity's index.
+A node deleted is acted on with the referential actions
+(`db/integrity/connections.rs`). Its edges are found through each edge
+table's adjacency index (D107). They are deleted with it if a
+CONNECTION constraint ON DELETE CASCADE of their table names its table,
+and else the delete fails (R12.1, GRF-0052). TRUNCATE of a node table,
+which reads no edge, is refused while its schema has an edge table.
+
+Each schema's node and edge tables make its property graph SYS_GRAPH
+(`db/graphs/native/graph.rs`). It is described as CREATE PROPERTY GRAPH
+describes a graph (D106), from a definition built from the tables. Each
+node table is a vertex table keyed by `$NODE_ID`. Each edge table is an
+edge table once for each pair of node tables it may join, its endpoints
+`$FROM_ID` and `$TO_ID` referencing `$NODE_ID`. SYS_GRAPH is described
+again after each change of definitions, keeping its grants, and dropped
+with the schema's last node table. No statement creates, alters or
+drops it.
+
+#### D110. GQL is translated to SQL clause by clause, and its MATCH is a GRAPH_TABLE
+
+GQL (ISO/IEC 39075:2024) [EXTENSION] is read from the text of EXECUTE
+GQL [ON GRAPH g] 'text', of the table GQL_TABLE(g, 'text'), and of each
+direct statement but SET of a session whose SESSION.LANGUAGE is GQL, on
+the graph GQL.GRAPH names. No word of GQL is reserved in SQL.
+
+A query is translated to one SQL query clause by clause, after Francis
+et al.'s Theorem 5.1. The binding table starts as one row of no column.
+MATCH is a join with a GRAPH_TABLE of its pattern (D108), read
+laterally, on the shared element variables' ELEMENT_IDs. So its
+patterns, restrictors, selectors, path functions and privileges are
+GRAPH_TABLE's. OPTIONAL MATCH is a left join, FILTER a selection, LET a
+projection, FOR an UNNEST, and CALL a join with an inline procedure's
+or a table function's rows. RETURN is a projection grouped by its items
+that call no aggregate, NEXT a derived table, the set operators SQL's
+by column name, and OTHERWISE a union with the right's rows only when
+the left has none. An aggregate of a group variable's property is an
+aggregate over the UNNEST of its GRAPH_TABLE array.
+
+A procedure that writes runs its clauses in order under a savepoint.
+Each write is a parameterized SQL statement of the element tables that
+finds a row by the key in its ELEMENT_ID, so R12.3 holds. A node
+table's identity (D109) is the one the INSERT itself drew, never one
+read back by its values. An inline CALL that writes runs once per row
+of the binding table. INSERT writes the one table the labels name
+(R12.1, GRF-0051). DELETE of a vertex with edges is GRF-0052 unless
+DETACH.
+
+Mode C's CREATE GRAPH TYPE keeps the definition's text. CREATE GRAPH
+generates a table per type of a typed graph, or two tables of an open
+one, and a property graph over them (D106), all or none. A typed graph
+refuses what its type lacks (GRF-0053). The statements take command
+codes -30 to -34.
+
+#### D111. Graph algorithms run on a CSR of dense vertex numbers, in fixed morsels, the same result on any number of threads
+
+The functions of schema GRAPH_ALGO (GS §18) [EXTENSION] run on a graph
+of compressed sparse rows (`graph/algo/csr.rs`) built from the rows of
+their table arguments. The edges' first two columns are each edge's
+source and destination keys, and VERTICES adds keys of no edge. Keys
+are numbered in their sorted order (`keys.rs`), so a component or
+community is named by its least key and the result does not depend on
+the order rows come in. An edge of a null key is none.
+
+A property graph's name in place of the edges, SYS_GRAPH's too, is read
+as a query of each element table (`binder/ptf/graph/catalogued.rs`). An
+edge table's rows are joined to the vertex rows its endpoints
+reference. Each vertex is its identity, ELEMENT_ID's text of its
+element table and key (`db/ptf/graph/shape.rs`), so vertex tables of
+meeting keys and keys of several columns stay apart. Of SYS_GRAPH, a
+vertex is its `$NODE_ID` (D109).
+
+Each algorithm cuts its work into morsels of 1024 vertices taken by
+scoped threads (`parallel.rs`, a MAKERS file), and joins their results
+in morsel order. Sums are made in the same order on any width, so floats
+agree to the bit, counts and labels exactly. Randomized algorithms
+(BETWEENNESS's sample, LOUVAIN's visiting order) draw from SplitMix64 of
+their SEED. Label propagation is synchronous and takes the least label
+of a tie. The threads are EXECUTOR.GRAPH_THREADS, 1 by default.
+
+Every array is charged to a `Memory` of MEMORY.WORK_BYTES before it is
+made and given back as it drops. Past it the run fails with -918. A run
+looks at its statement's `Stop` each morsel and stops with -920. Every
+loop is bounded by its graph (n + 1 rounds or steps), past which it
+fails as a defect, so no input, and no mutation, makes it run forever.
+
+A run reads its table arguments in the statement's snapshot and through
+its privileges (GS §18 R18.1, R18.2). Each run is noted in
+INFORMATION_SCHEMA.GRAPH_ALGO_RUNS, the latest 1000, each user seeing
+their own and the owner all. INTO PROPERTY is a MERGE into the vertex
+table, its column added first by ALTER TABLE if missing, in the
+statement's transaction. Of a property graph's result it is one MERGE
+per vertex table, each reading its own vertices' keys back from their
+identities, all of one run of the algorithm held for the statement.
+GRF-0034 is SQLSTATE 22W34, SQLCODE -301.
 
 ## 2. Project layout
 
