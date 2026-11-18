@@ -16,6 +16,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 use std::sync::atomic::Ordering as AtomicOrder;
 
+use super::node::Node;
 use super::{Pin, RTree, Visit, corrupt};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
@@ -34,6 +35,8 @@ pub struct Nearest {
     query: Bounds,
     metric: Metric,
     queue: Runs<Queued>,
+    /// The node read last, its entries' allocation kept for the next.
+    scratch: Node,
     held: Reservation,
     failed: bool,
     visited: u64,
@@ -165,8 +168,20 @@ impl Nearest {
 
     fn from_root(tree: RTree, root: Visit, query: Bounds, budget: &Arc<MemoryBudget>, metric: Metric) -> Result<Nearest> {
         let held = budget.reserve(0, "the R-tree nearest-neighbour frontier")?;
-        let mut nearest =
-            Nearest { _pin: tree.pin(), tree, query, metric, queue: Runs::new(), held, failed: false, visited: 0, limit: 0, last: None };
+        let scratch = Node::empty(0, 0);
+        let mut nearest = Nearest {
+            _pin: tree.pin(),
+            tree,
+            query,
+            metric,
+            queue: Runs::new(),
+            scratch,
+            held,
+            failed: false,
+            visited: 0,
+            limit: 0,
+            last: None,
+        };
         let first = Queued { distance: metric.first(), item: Item::Page(root) };
         nearest.queue.add(1, std::iter::once(first), &mut nearest.held)?;
         Ok(nearest)
@@ -182,7 +197,8 @@ impl Nearest {
                 return Err(corrupt("its nearest-neighbour traversal contains a cycle"));
             }
         }
-        let node = self.tree.read(visit.id)?;
+        self.tree.read_into(visit.id, &mut self.scratch)?;
+        let node = &self.scratch;
         if node.level != visit.level {
             return Err(corrupt("a nearest-neighbour child is at the wrong level"));
         }
@@ -198,7 +214,7 @@ impl Nearest {
         let (metric, query, leaf) = (self.metric, self.query, node.level == 0);
         let level = node.level.saturating_sub(1);
         let count = node.entries.len().saturating_add(usize::from(sibling.is_some()));
-        let entries = node.entries.into_iter().map(|entry| {
+        let entries = node.entries.iter().map(|entry| {
             let priority = metric.distance(entry.bounds, query, leaf);
             let item = if leaf {
                 Item::Entry(entry.bounds, entry.id)
