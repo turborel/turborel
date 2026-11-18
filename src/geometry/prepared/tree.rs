@@ -1,14 +1,17 @@
 //! A prepared polygon's edges in a static hierarchy of their envelopes.
-//! Each node splits its edges at the median along the axis on which their
-//! centres spread widest, not on alternate axes, so long parallel edges
-//! such as a comb's teeth still fall into narrow leaves. Point location
+//! Each node splits its edges at the median along the axis whose halves'
+//! envelopes overlap least, then whose halves are smaller, not on
+//! alternate axes; edges with equal centres along it are ordered along the
+//! other. So long parallel edges, a comb's teeth, fall into narrow leaves
+//! even where they all share a centre's height. Point location
 //! asks it for the edges meeting one grid cell (`cells.rs`); every edge it
 //! returns is still tested exactly (D85). Point distance searches it for
 //! the nearest edge, depth first and nearer child first, skipping only
-//! subtrees beyond the best measure so far, widened as the chains'
-//! search widens it (`distance.rs`), so the minimum is a scan's to the
-//! bit.
+//! subtrees and edges whose envelopes lie beyond the best measure so far,
+//! widened as the chains' search widens it (`distance.rs`), so the minimum
+//! is a scan's to the bit.
 
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::shapes::rings;
@@ -28,6 +31,10 @@ const HALF: f64 = 0.5;
 /// tree, MAX_DEPTH of them, the sibling not yet visited, with room to
 /// spare.
 const STACK: usize = 130;
+/// 1 + 2^-40: a squared distance to an envelope, as computed, is within
+/// 2^-50 of its own; one beyond the squared reach by this factor is beyond
+/// the reach itself.
+const SQUARED_SLACK: f64 = 1.000_000_000_000_909_5;
 
 /// A closed envelope: lower x, lower y, upper x, upper y.
 pub(super) type Window = [f64; 4];
@@ -91,12 +98,11 @@ impl EdgeTree {
             held = top;
             let at = *stack.get(top)?;
             let node = self.nodes.get(at)?;
-            if !meets(node.bounds, around(point, reach(best, unit))) {
+            if beyond(point, node.bounds, reach(best, unit)) {
                 continue;
             }
             if node.end > node.start {
-                let edges = self.edges.get(node.start..node.end)?;
-                best = edges.iter().fold(best, |best, &(a, b)| best.min(segment(point, a, b)));
+                best = self.measured(point, node, best, unit)?;
                 continue;
             }
             let left = at.checked_add(1)?;
@@ -108,6 +114,18 @@ impl EdgeTree {
             }
         }
         Some(best)
+    }
+
+    /// The least of `best` and the measures from `point` to a leaf's edges
+    /// whose envelopes lie within reach of the best so far.
+    fn measured(&self, point: Point, leaf: &Node, best: f64, unit: f64) -> Option<f64> {
+        let edges = self.edges.get(leaf.start..leaf.end)?;
+        Some(edges.iter().fold(
+            best,
+            |best, &(a, b)| {
+                if beyond(point, envelope(a, b), reach(best, unit)) { best } else { best.min(segment(point, a, b)) }
+            },
+        ))
     }
 
     /// Calls `visit` with each edge whose envelope meets the closed
@@ -144,9 +162,9 @@ fn build(edges: &mut [(Point, Point)], start: usize, nodes: &mut Vec<Node>, dept
     let end = if leaf { start.checked_add(edges.len())? } else { start };
     nodes.push(Node { bounds, after: 0, start, end });
     if !leaf {
-        let vertical = spread(edges, true) > spread(edges, false);
+        let vertical = axis(edges)?;
         let middle = edges.len().checked_div(2)?;
-        edges.select_nth_unstable_by(middle, |&a, &b| centre(a, vertical).total_cmp(&centre(b, vertical)));
+        edges.select_nth_unstable_by(middle, |&a, &b| order(a, b, vertical));
         let (left, right) = edges.split_at_mut_checked(middle)?;
         build(left, start, nodes, depth.checked_add(1)?)?;
         build(right, start.checked_add(middle)?, nodes, depth.checked_add(1)?)?;
@@ -156,13 +174,50 @@ fn build(edges: &mut [(Point, Point)], start: usize, nodes: &mut Vec<Node>, dept
     Some(())
 }
 
-/// How far the edges' centres spread along y, if `vertical`, or x.
-fn spread(edges: &[(Point, Point)], vertical: bool) -> f64 {
-    let (low, high) = edges
-        .iter()
-        .map(|&edge| centre(edge, vertical))
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), c| (low.min(c), high.max(c)));
-    high - low
+/// Whether to split `edges` at their median along y rather than x: the
+/// axis whose halves' envelopes overlap least, then whose halves'
+/// envelopes have the least perimeter, then x. Leaves `edges` reordered.
+fn axis(edges: &mut [(Point, Point)]) -> Option<bool> {
+    let middle = edges.len().checked_div(2)?;
+    let mut costs = [(0.0_f64, 0.0_f64); 2];
+    for (cost, vertical) in costs.iter_mut().zip([false, true]) {
+        edges.select_nth_unstable_by(middle, |&a, &b| order(a, b, vertical));
+        let (left, right) = edges.split_at_checked(middle)?;
+        let (left, right) = (bounds_of(left)?, bounds_of(right)?);
+        *cost = (overlap(left, right), perimeter(left) + perimeter(right));
+    }
+    let [across, along] = costs;
+    Some(along.0.total_cmp(&across.0).then(along.1.total_cmp(&across.1)) == Ordering::Less)
+}
+
+/// Edges in order of their centres along y, if `vertical`, or x, and of
+/// their centres along the other axis where those are equal.
+fn order(a: (Point, Point), b: (Point, Point), vertical: bool) -> Ordering {
+    centre(a, vertical).total_cmp(&centre(b, vertical)).then(centre(a, !vertical).total_cmp(&centre(b, !vertical)))
+}
+
+/// The envelope of some edges.
+fn bounds_of(edges: &[(Point, Point)]) -> Option<Window> {
+    edges.iter().map(|&(a, b)| envelope(a, b)).reduce(union)
+}
+
+/// The area two envelopes share, as computed.
+fn overlap([ax0, ay0, ax1, ay1]: Window, [bx0, by0, bx1, by1]: Window) -> f64 {
+    let width = (ax1.min(bx1) - ax0.max(bx0)).max(0.0_f64);
+    let height = (ay1.min(by1) - ay0.max(by0)).max(0.0_f64);
+    width * height
+}
+
+/// Half an envelope's perimeter, as computed.
+fn perimeter([x0, y0, x1, y1]: Window) -> f64 {
+    (x1 - x0) + (y1 - y0)
+}
+
+/// Whether an envelope lies beyond `reach` of `point`: outside the square
+/// of that half-side about it, an exact test, or by a squared distance
+/// beyond the squared reach by more than that distance's rounding.
+fn beyond(point: Point, bounds: Window, reach: f64) -> bool {
+    !meets(bounds, around(point, reach)) || gap(point, bounds) > reach * reach * SQUARED_SLACK
 }
 
 /// An edge's centre along y, if `vertical`, or x; halved before adding so
@@ -176,8 +231,8 @@ fn around([px, py]: Point, reach: f64) -> Window {
     [(px - reach).next_down(), (py - reach).next_down(), (px + reach).next_up(), (py + reach).next_up()]
 }
 
-/// The squared distance from `point` to an envelope, as computed; it only
-/// orders the search.
+/// The squared distance from `point` to an envelope, as computed: it
+/// orders the search, and prunes it only past `SQUARED_SLACK`.
 fn gap([px, py]: Point, [x0, y0, x1, y1]: Window) -> f64 {
     let dx = (x0 - px).max(px - x1).max(0.0_f64);
     let dy = (y0 - py).max(py - y1).max(0.0_f64);

@@ -3122,9 +3122,11 @@ is decided by one lookup. A boundary cell only one ring's edges may touch
 keeps that ring's side where the cell's right side meets the centre line,
 unless another part holds it whole or a hole's shell leaves it outside.
 A point in it is located from the edges whose envelopes meet the closed
-cell, found in a hierarchy of the operand's edges split at the median of
-the axis on which their centres spread widest, reserved from the budget
-the first time a point needs it. The point's half-open ray is replaced by
+cell, found in a hierarchy of the operand's edges split at the median
+along the axis whose halves' envelopes overlap least, then whose halves
+are smaller, edges with equal centres ordered along the other axis,
+reserved from the budget the first time a point needs it. The point's
+half-open ray is replaced by
 a run right to the cell's side and a rise along it to the centre line,
 which cross a ring as often as the ray does, modulo two: the rise lies
 just left of the side, nearer to it than the run and the centre line lie
@@ -3146,10 +3148,12 @@ rings. Collections keep the general path. Distance reuses the
 prepared intersection decision and keeps its result bounds. From the
 seventeenth point it measures, such an operand finds a point's
 separation by searching the hierarchy of its edges for the nearest,
-depth first and nearer child first: a subtree is skipped only when its
-envelope misses the square within the best measure so far, widened as
-the chains' search widens it, so every edge whose measure could be
-least is measured and the minimum is the scan's to the bit.
+depth first and nearer child first: a subtree or an edge is skipped
+only when its envelope misses the square within the best measure so
+far, widened as the chains' search widens it, or lies beyond that reach
+by squared distance with a factor of 1 + 2^-40 for that distance's
+rounding, so every edge whose measure could be least is measured and
+the minimum is the scan's to the bit.
 Spatial probes with equal declared semantics and deterministic
 functions have one learned plan shape even when preparation changes the
 function object. Ordinary function probes still require object identity;
