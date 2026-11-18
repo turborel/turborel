@@ -2869,9 +2869,17 @@ Orientation first tries Shewchuk's binary64 rounding-error bound
 ([reference implementation](https://www.cs.cmu.edu/afs/cs/project/quake/public/code/predicates.c),
 `ccwerrboundA`). It accepts a sign only when both products, the determinant
 and the error bound are normal, and the determinant's magnitude exceeds
-that bound. Other cases use outward-rounded intervals, then exact bounded
-integers on binary64's dyadic coordinates. No tolerance changes a
-topological decision, including at extreme exponents.
+that bound. When a product's two differences are exact, or one is an exact
+zero, the determinant is next decided exactly as a four-term
+floating-point expansion: each product split into its rounded value and
+the error a fused multiply-add gives, then Shewchuk's Two-Two-Diff and the
+sign of its largest nonzero term. The split is used only for products of
+magnitude between 2^-969 and the largest finite value over eight, so the
+error is a binary64 number and no sum overflows. Grid-aligned data, where
+collinear triples are common and the bound cannot prove a zero, takes this
+path without allocating. Other cases use outward-rounded intervals, then
+exact bounded integers on binary64's dyadic coordinates. No tolerance
+changes a topological decision, including at extreme exponents.
 
 `ScalarFunction::spatial_operation` declares equivalent spatial semantics,
 including result types, NULL propagation and SRID errors. It is separate

@@ -332,3 +332,35 @@ projection oracle over 10,000 deterministic cases, and every finite
 binary64 exponent. Exact topological intersection tests remain separate
 from approximate distance measurements. This comparison does not measure
 SQL distance sorting, spatial indexes or PostGIS.
+
+## Exact signs from expansions before big integers
+
+The stage-A bound cannot prove a zero determinant, so every collinear
+triple went on to intervals and then to allocating big integers. On
+integer and other grid-aligned data such triples are common: points on a
+square's edges, shared vertices, axis-parallel edges. When a product's
+differences are exact, or one is an exact zero, orientation now decides
+the sign from a four-term floating-point expansion (RULES.md D85),
+falling back as before otherwise.
+
+Measured on an Apple M4, Rust 1.99.0. The baseline is the parent commit:
+
+```text
+cargo xtask bench geometry --save q8-before
+cargo xtask bench geometry --compare q8-before
+```
+
+| Case | Change |
+|---|---:|
+| Point/square intersection, decoded | +307.4% |
+| Point/4-edge polygon, prepared intersection | +24.5% |
+| Point/square distance | +10.9% |
+| Every other kernel and SQL scan | within noise |
+
+The complete joins of `geometry_shapes` moved +2.7% to +5.5%, all but
+one within noise; their integer points rarely land on region boundaries.
+
+This machine runs on-access malware scanning. The first run after a
+build scans the new binaries and slowed every case, including decoders
+this change does not touch, by 10-45%. Repeat a comparison after the
+first run, as here, and discard a run whose unchanged cases moved.

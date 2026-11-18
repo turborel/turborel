@@ -147,6 +147,7 @@ fn last() -> [&'static [Mutation]; 37] {
         &super::rtree_pack::RTREE_PACK,
         &super::rtree_joins::RTREE_JOINS,
         &super::geometry::GEOMETRY,
+        &super::geometry::orientation::ORIENTATION,
         &super::budget::BUDGET,
         &super::spatial_types::SPATIAL_TYPES,
         &super::spatial_curves::SPATIAL_CURVES,

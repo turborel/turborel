@@ -1,5 +1,7 @@
 //! Mutations of geometry representation and execution (RULES.md R-TEST-9).
 
+pub(super) mod orientation;
+
 use super::{Mutation, Package};
 
 /// Representation invariants that must fail their requirement tests.
