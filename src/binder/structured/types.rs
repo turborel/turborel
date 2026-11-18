@@ -137,6 +137,11 @@ impl<'a> Binder<'a> {
     /// SQLCODE -103 if the value is of no user-defined type.
     pub(in crate::binder) fn specific_type(&self, value: &ValueExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let (e, t) = self.value_expression(value, scope)?;
+        if let Some((family, _)) = family_of(&t) {
+            let f = crate::functions::FamilySpecificType { family, catalog: self.db.catalog_name() };
+            let result = DataType::Varying { length: crate::functions::SPECIFICTYPE_LENGTH, units: crate::value::CharUnits::Characters };
+            return Ok((call(f, vec![e]), result));
+        }
         if !matches!(t, DataType::Structured(_)) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.33] SPECIFICTYPE of {t}, which is no user-defined type value expression")));
         }

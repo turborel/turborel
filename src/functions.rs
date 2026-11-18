@@ -30,6 +30,7 @@ mod any_value;
 pub use any_value::ANY_VALUE;
 pub(crate) use any_value::GroupValue;
 mod arrays;
+pub mod builtin;
 pub use arrays::{
     ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf, ElementOf,
     TRIM_ARRAY, TrimArrayOf,
@@ -44,7 +45,7 @@ mod extremes;
 mod family;
 pub use extremes::CollatedExtreme;
 use extremes::Extreme;
-pub use family::{FamilyTreat, FamilyTypeTest, below};
+pub use family::{FamilySpecificType, FamilyTreat, FamilyTypeTest, below};
 mod floats;
 mod formatted;
 pub(crate) use formatted::json_datetime_cast;

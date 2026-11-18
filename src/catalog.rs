@@ -29,6 +29,7 @@ mod privileges;
 mod roles;
 mod routines;
 mod sequences;
+mod spatial;
 mod structured;
 mod triggers;
 mod user_types;
@@ -50,6 +51,7 @@ pub use routines::{
     TableSemantics, ptf_name_type, ptf_status_type,
 };
 pub use sequences::SequenceDesc;
+pub use spatial::{GeometryColumnDesc, SpatialCatalog, SpatialChange, SpatialRefSysDesc};
 pub use structured::{
     AttributeDesc, CONSTRUCTOR_SUFFIX, CastDesc, MAX_HIERARCHY_DEPTH, MUTATOR_SUFFIX, MethodHost, MethodSpecDesc, OBSERVER_SUFFIX,
     OrderingCategory, OrderingDesc, RefRepresentation, StructuredDesc, TransformGroupDesc, TransformNames, TypedDesc, method_executable,
@@ -535,6 +537,11 @@ pub trait Catalog: Send + Sync {
     /// a `<revoke role statement>` or a `<drop role statement>` left
     /// [§12.4 to §12.7].
     fn set_roles(&mut self, roles: Roles);
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20.2, §20.3] The spatial
+    /// reference systems defined and the geometry columns registered.
+    fn spatial(&self) -> &SpatialCatalog;
+    /// Make `spatial` the systems defined and the columns registered.
+    fn set_spatial(&mut self, spatial: SpatialCatalog);
     /// An independent copy of this catalog.
     fn duplicate(&self) -> Box<dyn Catalog>;
 }

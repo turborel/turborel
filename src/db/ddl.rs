@@ -141,6 +141,13 @@ impl State {
                 self.redefine(((auth, role.as_deref()), schema, *zone), sql, (placed.as_ref(), made, epochs))
             }
             Change::Schema { sql, owner, engines, zone, epochs } => self.reschema((sql, owner, *zone), engines, made, epochs),
+            Change::Spatial(c) => {
+                let next = self.catalog.spatial().applied(c)?;
+                let mut catalog = self.catalog.duplicate();
+                catalog.set_spatial(next);
+                self.catalog = Arc::from(catalog);
+                Ok(Dropped::default())
+            }
             Change::Insert { .. }
             | Change::Update { .. }
             | Change::Delete { .. }
@@ -199,6 +206,7 @@ impl State {
                 | Change::Owner { .. }
                 | Change::RoleCreator { .. }
                 | Change::Sequence { .. }
+                | Change::Spatial(_)
                 | Change::Reconfiguration { .. } => Vec::new(),
             };
             for table in renewed {

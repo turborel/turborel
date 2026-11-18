@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use super::{
     CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, OrderingDesc, PrivilegeDesc, QualifiedName, Roles,
-    SequenceDesc, SqlRoutineDesc, StructuredDesc, TableDesc, TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc,
+    SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc, TableDesc, TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc,
 };
 use crate::hash::murmur::MurmurMap;
 use crate::value::DataType;
@@ -38,6 +38,9 @@ pub struct MemoryCatalog {
     modules: HashMap<QualifiedName, ModuleDesc>,
     /// The roles and role authorizations.
     roles: Roles,
+    /// The spatial reference systems defined and the geometry columns
+    /// registered.
+    spatial: SpatialCatalog,
 }
 
 impl Catalog for MemoryCatalog {
@@ -49,6 +52,12 @@ impl Catalog for MemoryCatalog {
     }
     fn set_roles(&mut self, roles: Roles) {
         self.roles = roles;
+    }
+    fn spatial(&self) -> &SpatialCatalog {
+        &self.spatial
+    }
+    fn set_spatial(&mut self, spatial: SpatialCatalog) {
+        self.spatial = spatial;
     }
     fn schema_exists(&self, schema: &str) -> bool {
         self.schemas.iter().any(|(s, _)| s == schema)
@@ -114,9 +123,13 @@ impl Catalog for MemoryCatalog {
         views
     }
     fn replace_table(&mut self, desc: TableDesc) {
+        // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20.2 COLUMN_EXISTS]
+        let kept: Vec<&str> = desc.columns.iter().map(|c| c.name.as_str()).collect();
+        self.spatial.forget_columns(&desc.name, &kept);
         self.tables.insert(desc.name.clone(), desc);
     }
     fn remove_table(&mut self, name: &QualifiedName) {
+        self.spatial.forget_columns(name, &[]);
         self.tables.remove(name);
     }
     fn remove_view(&mut self, name: &QualifiedName) {

@@ -275,7 +275,10 @@ pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, fr
         TableReference::Unnest(u) => unnest_item(b, u, start, from).or_at(u.at)?,
         TableReference::Json(j) => super::json::json_table_item(b, j, start, from).or_at(j.at)?,
         TableReference::Recognized(r) => super::pattern::recognized(b, r, start).or_at(r.at)?,
-        TableReference::Polymorphic(p) => return super::ptf::ptf_reference(b, p, start, from),
+        TableReference::Polymorphic(p) => match super::builtin_table::builtin_item(b, p, start, from).or_at(p.at)? {
+            Some(item) => item,
+            None => return super::ptf::ptf_reference(b, p, start, from),
+        },
     };
     from.items.push(item);
     Ok(Tree::Item(from.items.len().saturating_sub(1)))

@@ -79,7 +79,7 @@ their number less 1, has at most the 18 digits of its type.
 | A word a full-text index keeps | its first 256 characters, and of those its first 255 bytes in UTF-8; a longer word is found by that prefix and checked against the row |
 | A document a full-text index reads | none: it is read a word at a time |
 | A GEOMETRY value | 16 MiB of WKT or WKB, 100,000 components, rings and coordinates in all, and 16 levels of nesting, the value's own included; more is refused with SQLCODE -900 |
-| A GEOMETRY value's WKT or WKB in SQL | 32,767 characters or octets, the limit of its string type; ST_ASTEXT or ST_ASBINARY of a longer one fails with SQLCODE -900, where the library's codecs take one up to the limit above ([Spatial Data](../sql/10-spatial.md)) |
+| A GEOMETRY value's WKT or WKB in SQL | 16 MiB: ST_ASTEXT returns a CHARACTER LARGE OBJECT and ST_ASBINARY a BINARY LARGE OBJECT, the constructors take one, each up to the limit above ([Spatial Data](../sql/10-spatial.md)) |
 | A row | none: its long values are kept out of line |
 | A message to the server | SERVER.MAX_MESSAGE_BYTES, 16 MiB by default |
 | Connections at once | SERVER.MAX_CONNECTIONS, 100 by default |

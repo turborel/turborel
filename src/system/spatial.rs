@@ -85,15 +85,20 @@ fn geometry_columns_columns() -> Vec<ColumnDesc> {
 }
 
 /// Each column of a base table or view of a geometry type, with the name
-/// of the system its type names, if it is one supplied.
+/// of the system it is registered with (`ST_REGISTERGEOMETRYCOLUMN`); of
+/// one not registered, of the system its type's SRID identifies, if one
+/// is supplied or defined.
 fn geometry_columns(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
+    let spatial = seen.state.catalog.spatial();
     let tables = seen.state.catalog.tables().into_iter().map(|t| (&t.name, &t.columns));
     let views = seen.state.catalog.views().into_iter().map(|v| (&v.name, &v.columns));
     let mut rows = Vec::new();
     for (name, columns) in tables.chain(views) {
         for c in columns.iter().filter(|c| crate::geometry::of_data_type(&c.data_type).is_some()) {
-            let srs = crate::geometry::fixed_srid(&c.data_type).and_then(SpatialRefSys::by_id).map_or(Value::Null, |s| text(&s.name));
+            let registered = spatial.column(name, &c.name).map(|r| r.srs.as_deref());
+            let typed = || crate::geometry::fixed_srid(&c.data_type).and_then(|id| spatial.system_name(id));
+            let srs = registered.unwrap_or_else(typed).map_or(Value::Null, text);
             rows.push(vec![catalog.clone(), text(&name.auth), text(&name.ident), text(&c.name), srs]);
         }
     }
@@ -115,14 +120,30 @@ fn systems_columns() -> Vec<ColumnDesc> {
     ]
 }
 
-/// Each system supplied, in order of its identifier.
-fn systems(_seen: &Seen<'_>) -> Vec<Row> {
-    SRS_SEED
-        .iter()
-        .map(|s| {
-            vec![text(&s.name), int(i64::from(s.id)), text(s.organization), int(i64::from(s.id)), text(&s.definition), text(&s.description)]
-        })
-        .collect()
+/// Each system supplied or defined (`ST_DEFINESRS`), in order of its
+/// identifier.
+fn systems(seen: &Seen<'_>) -> Vec<Row> {
+    let supplied = SRS_SEED.iter().map(|s| {
+        (
+            s.id,
+            vec![
+                text(&s.name),
+                int(i64::from(s.id)),
+                text(s.organization),
+                int(i64::from(s.id)),
+                text(&s.definition),
+                text(&s.description),
+            ],
+        )
+    });
+    let defined = seen.state.catalog.spatial().systems().iter().map(|s| {
+        let (org, org_id) = s.organization.as_ref().map_or((Value::Null, Value::Null), |(o, i)| (text(o), int(i64::from(*i))));
+        let description = s.description.as_deref().map_or(Value::Null, text);
+        (s.id, vec![text(&s.name), int(i64::from(s.id)), org, org_id, text(&s.definition), description])
+    });
+    let mut all: Vec<(i32, Row)> = supplied.chain(defined).collect();
+    all.sort_by_key(|(id, _)| *id);
+    all.into_iter().map(|(_, row)| row).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -165,42 +186,48 @@ fn units(_seen: &Seen<'_>) -> Vec<Row> {
 // [§20.5] ST_SIZINGS
 // ---------------------------------------------------------------------------
 
+/// [Annex A.1] The meta-variables of what is not supported.
+const UNSUPPORTED: [&str; 25] = [
+    "ST_MaxAngleAsGML",
+    "ST_MaxAngleAsText",
+    "ST_MaxAngleString",
+    "ST_MaxConstraintArrayElements",
+    "ST_MaxConstraintLength",
+    "ST_MaxDirectionAsGML",
+    "ST_MaxDirectionAsText",
+    "ST_MaxDirectionString",
+    "ST_MaxFeatureIDLength",
+    "ST_MaxGeometryAsGML",
+    "ST_MaxLEMeasureArrayElements",
+    "ST_MaxLRAsGML",
+    "ST_MaxLRAsText",
+    "ST_MaxLRMNameLength",
+    "ST_MaxNetworkName",
+    "ST_MaxPositionExpArrayElements",
+    "ST_MaxReferentArrayElements",
+    "ST_MaxSRSAsText",
+    "ST_MaxStartValueArrayElements",
+    "ST_MaxTopologyName",
+    "ST_MaxTopologyOrNetworkName",
+    "ST_MaxVectorArrayElements",
+    "ST_MaxVectorAsBinary",
+    "ST_MaxVectorAsGML",
+    "ST_MaxVectorAsText",
+];
+
 /// [Annex A.1] Each meta-variable of an integer value: its value, 0 of no
 /// limit, none of what is not supported [§20.5 Description 2].
 pub fn sizing_values() -> Vec<(&'static str, Option<i64>, &'static str)> {
     let bytes = i64::try_from(crate::geometry::MAX_BYTES).unwrap_or(0);
-    let unsupported = [
-        "ST_MaxAngleAsGML",
-        "ST_MaxAngleAsText",
-        "ST_MaxAngleString",
-        "ST_MaxConstraintArrayElements",
-        "ST_MaxConstraintLength",
-        "ST_MaxDirectionAsGML",
-        "ST_MaxDirectionAsText",
-        "ST_MaxDirectionString",
-        "ST_MaxFeatureIDLength",
-        "ST_MaxGeometryAsGML",
-        "ST_MaxLEMeasureArrayElements",
-        "ST_MaxLRAsGML",
-        "ST_MaxLRAsText",
-        "ST_MaxLRMNameLength",
-        "ST_MaxNetworkName",
-        "ST_MaxPositionExpArrayElements",
-        "ST_MaxReferentArrayElements",
-        "ST_MaxSRSAsText",
-        "ST_MaxStartValueArrayElements",
-        "ST_MaxTopologyName",
-        "ST_MaxTopologyOrNetworkName",
-        "ST_MaxVectorArrayElements",
-        "ST_MaxVectorAsBinary",
-        "ST_MaxVectorAsGML",
-        "ST_MaxVectorAsText",
-    ];
     let mut all = vec![
         ("ST_MaxArrayElements", Some(0), "an array's cardinality is its declared type's"),
         ("ST_MaxDescriptionLength", Some(i64::from(DESCRIPTION_LENGTH)), "the characters of a description"),
         ("ST_MaxDoublePrecisionArrayElements", Some(0), "an array's cardinality is its declared type's"),
-        ("ST_MaxGeometryArrayElements", Some(0), "an array's cardinality is its declared type's"),
+        (
+            "ST_MaxGeometryArrayElements",
+            Some(i64::from(crate::geometry::MAX_GEOMETRY_ARRAY_ELEMENTS)),
+            "the elements of the array ST_Geometries returns",
+        ),
         ("ST_MaxGeometryAsBinary", Some(bytes), "the octets of a well-known binary representation"),
         ("ST_MaxGeometryAsText", Some(bytes), "the characters of a well-known text representation"),
         ("ST_MaxIntegerArrayElements", Some(0), "an array's cardinality is its declared type's"),
@@ -214,7 +241,7 @@ pub fn sizing_values() -> Vec<(&'static str, Option<i64>, &'static str)> {
         ("ST_MaxUnitTypeLength", Some(i64::from(UNIT_TYPE_LENGTH)), "the characters of a unit's type"),
         ("ST_MaxVariableNameLength", Some(i64::from(VARIABLE_NAME_LENGTH)), "the characters of a meta-variable's name"),
     ];
-    all.extend(unsupported.iter().map(|n| (*n, None, "not supported")));
+    all.extend(UNSUPPORTED.iter().map(|n| (*n, None, "not supported")));
     all.sort_unstable_by_key(|(name, ..)| *name);
     all
 }
