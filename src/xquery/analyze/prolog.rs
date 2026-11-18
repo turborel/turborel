@@ -35,9 +35,9 @@ const RESERVED: [&str; 5] = [XML_NAMESPACE, XS_NAMESPACE, XSI_NAMESPACE, FN_NAME
 impl Analysis<'_> {
     /// The first part of a prolog applied to the static context, in order
     /// [XQuery §4]; the parser has refused a setter declared twice. Once
-    /// it is, the schema types the modules imported declare their
-    /// functions and variables of are in its in-scope schema types
-    /// \[err:XQST0036\].
+    /// it is, what it imports is noted, so the schema types the modules
+    /// imported declare their functions and variables of are checked to be
+    /// in its in-scope schema types \[err:XQST0036\].
     pub(super) fn setup(&mut self, setup: &[Setup]) -> Result<()> {
         for item in setup {
             match item {
@@ -55,7 +55,8 @@ impl Analysis<'_> {
                 Setup::Import(Import::Module(import)) => self.import_module(import)?,
             }
         }
-        self.imported_types()
+        self.imported_types();
+        Ok(())
     }
 
     /// `setter` applied [XQuery §4.3 to §4.9].
@@ -94,7 +95,7 @@ impl Analysis<'_> {
                 let function = self.signature(f)?;
                 function.parameters.iter().chain([&function.result]).for_each(|t| defined_types(t, &mut own.types));
                 let (name, arity) = (function.name.clone(), function.parameters.len());
-                let place = self.linked.function(function);
+                let place = self.linked.function(self.reserved.functions.pop_front().flatten(), function);
                 self.declared.push((name.clone(), arity, place));
                 own.functions.push((name, arity, place));
             }
@@ -106,7 +107,7 @@ impl Analysis<'_> {
                     let (global, read) = self.variable(v)?;
                     global.declared.iter().for_each(|t| defined_types(t, &mut own.types));
                     let name = global.name.clone();
-                    let place = self.linked.global(global, read);
+                    let place = self.linked.global(self.reserved.globals.pop_front().flatten(), global, read);
                     self.globals.push((name.clone(), place));
                     own.globals.push((name, place));
                 }

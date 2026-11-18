@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 pub(crate) use namespaces::checked_namespaces;
 pub(in crate::binder) use pinned::resolved_type;
-pub(crate) use registered::{Registered, in_scope, registered};
+pub(crate) use registered::{Registered, in_scope, registered, registered_module};
 pub(in crate::binder) use scope::Scopes;
 
 use super::predicates::negated;

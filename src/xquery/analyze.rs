@@ -40,7 +40,7 @@ use crate::error::Result;
 use crate::xml::QName;
 use crate::xml::schema::Schema;
 pub use linked::MAX_IMPORT_DEPTH;
-use linked::{Linked, Signature};
+use linked::{Linked, Reserved, Signature};
 pub use modules::{Analysed, LibraryModule, library_module};
 use scope::{Namespaces, PREDECLARED, Scope};
 
@@ -157,6 +157,9 @@ struct Analysis<'e> {
     /// Its place among the modules of the query, as `Plan::context`
     /// numbers them.
     module: usize,
+    /// The places of its functions and variables, given before its prolog
+    /// is analysed, of a library module.
+    reserved: Reserved,
 }
 
 /// The plan of `module`, a main module, analysed in the static context
@@ -178,6 +181,7 @@ pub fn compile(module: &Module, env: &Environment<'_>) -> Result<Plan> {
     analysis.declarations(&prolog.declarations)?;
     let body = analysis.frame(&[], |a| a.expr(body))?.0;
     analysis.linked.circularity()?;
+    analysis.linked.checked_types()?;
     let main = analysis.context();
     let imports = analysis.imported.iter().map(|i| i.name.clone()).collect();
     let imported_modules = analysis.imported_modules.iter().map(|m| m.name.clone()).collect();
@@ -216,6 +220,7 @@ impl<'e> Analysis<'e> {
             imported_modules: Vec::new(),
             linked,
             module,
+            reserved: Reserved::default(),
         }
     }
 
@@ -225,7 +230,7 @@ impl<'e> Analysis<'e> {
     fn passed(&mut self) {
         for (at, name) in self.env.variables.iter().map(|v| QName::local(v)).enumerate() {
             let global = Global { name: name.clone(), declared: None, value: GlobalValue::Passed(at), module: self.module };
-            let place = self.linked.global(global, None);
+            let place = self.linked.global(None, global, None);
             self.globals.push((name, place));
         }
     }

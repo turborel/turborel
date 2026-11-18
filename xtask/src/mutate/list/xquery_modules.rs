@@ -3,13 +3,14 @@
 //! query, the depth imports nest to, the static errors of library
 //! modules, the catalog's, and registered XQuery modules: their names,
 //! the modules they may import, what depends on them, USAGE on them,
-//! and the modules a definition keeps (RULES.md R-TEST-9, D106).
+//! the modules a definition keeps, and the cycles of imports ALTER
+//! XQUERY MODULE makes (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of library modules and module imports broken alone, and
 /// the tests that fail.
-pub const XQUERY_MODULES: [Mutation; 22] = [
+pub const XQUERY_MODULES: [Mutation; 25] = [
     Mutation {
         name: "xquery-module-target-namespace",
         package: Package::Core,
@@ -240,6 +241,36 @@ pub const XQUERY_MODULES: [Mutation; 22] = [
             "xquery_modules::what_imports_a_module_is_abandoned_with_it_12_7",
             "xquery_modules::definitions_keep_and_depend_on_the_modules_they_import",
         ],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-cycle-namespaces",
+        package: Package::Core,
+        breaks: "a cycle of modules not all of one namespace is let stand",
+        file: "src/xquery/analyze/linked.rs",
+        original: "if cycle.iter().all(|(_, ns)| cycle.first().is_some_and(|(_, first)| first == ns)) {",
+        replacement: "if true {",
+        integration: &["xquery_module_cycles::a_cycle_of_namespaces_is_refused_4_11"],
+        unit: &["xquery::analyze::modules::tests::cycles_and_chains_of_imports"],
+    },
+    Mutation {
+        name: "xquery-module-reserved-places",
+        package: Package::Core,
+        breaks: "a module's functions are declared afresh, not at the places a cycle reached them by",
+        file: "src/xquery/analyze/prolog.rs",
+        original: "self.linked.function(self.reserved.functions.pop_front().flatten(), function)",
+        replacement: "self.linked.function(None, function)",
+        integration: &["xquery_module_cycles::modules_of_one_namespace_import_one_another_4_11"],
+        unit: &["xquery::analyze::modules::tests::modules_of_one_namespace_import_one_another"],
+    },
+    Mutation {
+        name: "xquery-module-alter-dependents",
+        package: Package::Core,
+        breaks: "ALTER XQUERY MODULE breaks what depends on the module",
+        file: "src/db/definitions/xquery_modules/alter.rs",
+        original: "self.dependents_bind(&after, &qn).map_err(|e| e.or_at(m.name.at))?;",
+        replacement: "drop(m.name.at);",
+        integration: &["xquery_module_cycles::alter_keeps_what_depends_on_a_module_binding"],
         unit: &[],
     },
 ];

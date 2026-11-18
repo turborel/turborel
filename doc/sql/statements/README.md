@@ -15,6 +15,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER TRANSFORM](alter-transform.md): add or drop the functions of a transform group
 - [ALTER TYPE](alter-type.md): add or drop a structured type's attributes and methods
 - [ALTER USER](alter-user.md): change a user's password, or whether it may create roles
+- [ALTER XQUERY MODULE](alter-xquery-module.md): replace a registered XQuery module's text
 - [BEGIN](begin.md): group statements with their own variables, conditions, cursors and handlers
 - [CALL](call.md): run an SQL-invoked procedure
 - [CANCEL CONNECTION](cancel-connection.md): cancel what a connection of the server runs

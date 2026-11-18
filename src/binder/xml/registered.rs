@@ -49,6 +49,16 @@ pub(crate) fn registered(catalog: &dyn Catalog, who: Who<'_>, pins: Option<(&[Qu
     Registered { importable, modules, linked }
 }
 
+/// What a query importing the registered XQuery module `name` of `catalog`
+/// alone takes: it, and those it imports at any remove, whoever may use
+/// them, as a module imported finds those it kept; none if it is not
+/// registered.
+pub(crate) fn registered_module(catalog: &dyn Catalog, name: &QualifiedName) -> Option<Registered> {
+    let module = library_module(catalog, catalog.xquery_module(name)?)?;
+    let linked = linked(catalog, std::iter::once(name));
+    Some(Registered { importable: Vec::new(), modules: vec![(name.clone(), module)], linked })
+}
+
 /// The registered XML Schemas of `catalog` `kept` takes, each with its
 /// name: of the catalog's, in the order of their names, then the
 /// permanently registered ones.

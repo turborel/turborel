@@ -16,31 +16,31 @@ use crate::xml_validate::{one, refused};
 
 /// The library module of target namespace `urn:notes` that NOTES_LIB
 /// registers: a function shouting a string, and a variable.
-const NOTES: &str = "module namespace n = \"urn:notes\"; declare variable $n:mark := \"!\"; declare function n:shout($s as xs:string) as xs:string { fn:concat(fn:upper-case($s), $n:mark) };";
+pub(crate) const NOTES: &str = "module namespace n = \"urn:notes\"; declare variable $n:mark := \"!\"; declare function n:shout($s as xs:string) as xs:string { fn:concat(fn:upper-case($s), $n:mark) };";
 
 /// The module of urn:loud, importing NOTES_LIB, whose function shouts
 /// twice.
 const LOUD: &str = "module namespace l = \"urn:loud\"; import module namespace n = \"urn:notes\"; declare function l:twice($s as xs:string) as xs:string { n:shout(n:shout($s)) };";
 
 /// `text` as a character string literal.
-fn quoted(text: &str) -> String {
+pub(crate) fn quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
 /// `CREATE XQUERY MODULE name AS text`.
-fn create(name: &str, text: &str) -> String {
+pub(crate) fn create(name: &str, text: &str) -> String {
     format!("CREATE XQUERY MODULE {name} AS {}", quoted(text))
 }
 
 /// Registers `name` of `text` in `s`, and commits.
-fn register(s: &Session, name: &str, text: &str) {
+pub(crate) fn register(s: &Session, name: &str, text: &str) {
     let sql = create(name, text);
     s.run(&sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
     s.commit().unwrap();
 }
 
 /// A database of schemas A and B, A registering NOTES_LIB.
-fn database() -> Database {
+pub(crate) fn database() -> Database {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION B").unwrap();
@@ -49,7 +49,7 @@ fn database() -> Database {
 }
 
 /// The value of the query `query`, as a string.
-fn value(s: &Session, query: &str) -> String {
+pub(crate) fn value(s: &Session, query: &str) -> String {
     one(s, &format!("XMLCAST(XMLQUERY({} RETURNING CONTENT NULL ON EMPTY) AS VARCHAR(100))", quoted(query)))
 }
 
@@ -60,7 +60,7 @@ fn code_of(e: SqlError) -> String {
 }
 
 /// The XQuery error code the query `query` fails with, rolled back.
-fn code(s: &Session, query: &str) -> String {
+pub(crate) fn code(s: &Session, query: &str) -> String {
     let sql = format!("VALUES (XMLQUERY({} RETURNING CONTENT NULL ON EMPTY))", quoted(query));
     let e = crate::common::fetched(s, &sql).expect_err(&sql);
     s.rollback().unwrap();
@@ -69,7 +69,7 @@ fn code(s: &Session, query: &str) -> String {
 
 /// The XQuery error code registering `name` of `text` in `s` fails with,
 /// rolled back.
-fn refused_text(s: &Session, name: &str, text: &str) -> String {
+pub(crate) fn refused_text(s: &Session, name: &str, text: &str) -> String {
     let e = s.run(&create(name, text)).expect_err(text);
     s.rollback().unwrap();
     code_of(e)
@@ -246,7 +246,7 @@ fn a_standby_replays_registered_modules() {
 }
 
 /// The SQLSTATE `sql` completes with in `s`.
-fn completed(s: &Session, sql: &str) -> String {
+pub(crate) fn completed(s: &Session, sql: &str) -> String {
     s.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}")).sqlstate().as_str().to_owned()
 }
 

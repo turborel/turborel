@@ -25,7 +25,8 @@ depends on it, and so on through each that depends on that. So does a
 view, a CHECK, a domain's constraint, an assertion, a trigger or a
 routine whose query imports one of them. With RESTRICT the drop is
 refused while anything depends on the one named. With CASCADE each that
-does is dropped too.
+does is dropped too: of modules of one namespace that import one another
+([ALTER XQUERY MODULE](alter-xquery-module.md)), the whole cycle.
 
 A generated column whose query imports one of them keeps it from being
 dropped, even with CASCADE, as dropping it would change no value of the

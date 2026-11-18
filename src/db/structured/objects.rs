@@ -46,6 +46,7 @@ pub(in crate::db) fn type_named(statement: &SchemaStatement) -> (Option<&TableNa
         | SchemaStatement::Module(_)
         | SchemaStatement::XmlSchema(_)
         | SchemaStatement::XQueryModule(_)
+        | SchemaStatement::AlterXQueryModule(_)
         | SchemaStatement::Vector(_) => (None, "§11.53 AR1"),
     }
 }

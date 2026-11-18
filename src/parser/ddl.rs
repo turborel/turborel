@@ -113,7 +113,7 @@ impl Parser {
         }
         let other = self.next_is_module() || self.next_is_of_type() || self.at_xml_schema(1) || self.at_xquery_module(1);
         let defines = DEFINED.iter().any(|w| self.next_is_kw(w)) || self.next_is_trigger() || self.next_is_routine() || other;
-        let altered = self.next_is_kw(kw::DOMAIN) || self.next_is_sequence() || self.next_is_type() || self.next_is_transform();
+        let altered = self.next_is_kw(kw::DOMAIN) || self.next_is_sequence() || self.next_is_type() || self.next_is_altered_elsewhere();
         if (self.is_kw(kw::CREATE) && (defines || self.next_is_sequence() || self.next_is_type())) || (self.is_kw(kw::ALTER) && altered) {
             return self.schema_statement();
         }

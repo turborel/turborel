@@ -40,7 +40,10 @@ own: none of the namespaces a statement declares, its own setters,
 namespaces and imports. Its schema imports import among the registered
 XML Schemas, and its module imports among the registered XQuery modules,
 the owner of its schema may use, those of its own schemas and those it
-holds USAGE on ([GRANT](grant.md)). Those it imported are kept: it depends on them, and
+holds USAGE on ([GRANT](grant.md)). A module imports only modules
+registered: [ALTER XQUERY MODULE](alter-xquery-module.md) replaces its
+text once one it would import is, so modules of one namespace may import
+one another. Those it imported are kept: it depends on them, and
 imports them again whenever a query imports it, whoever runs the query.
 
 CREATE XQUERY MODULE runs within the session's transaction: ROLLBACK
@@ -109,5 +112,5 @@ statement is turborel's. See [CONFORMANCE.md](../../../CONFORMANCE.md#sqlxml).
 
 ## SEE ALSO
 
-[DROP XQUERY MODULE](drop-xquery-module.md), [XML Values](../16-xml.md#xquery-modules),
+[ALTER XQUERY MODULE](alter-xquery-module.md), [DROP XQUERY MODULE](drop-xquery-module.md), [XML Values](../16-xml.md#xquery-modules),
 [GRANT](grant.md), [DROP SCHEMA](drop-schema.md)

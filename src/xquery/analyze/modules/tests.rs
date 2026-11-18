@@ -157,7 +157,7 @@ fn the_static_errors_of_modules() {
 }
 
 /// Verifies: [DESIGN] RULES.md R-CF-6, D106 [XQuery §4.11, Appendix F]: a
-/// cycle of module imports, which no registered modules make, is
+/// cycle of module imports not all of one namespace is
 /// err:XQST0073; a chain of imports longer than `MAX_IMPORT_DEPTH` is
 /// SQLCODE -900, and one as long is analysed.
 #[test]
@@ -213,4 +213,37 @@ fn library_modules_are_analysed_as_registered() {
     let u = registered("U", "", fixed, &["M"]);
     let query = compiled("import module namespace u = 'urn:u'; u:f()", vec![u], env.modules.clone(), &[]).unwrap();
     assert_eq!(query.modules(), ["A.U".to_owned()]);
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] [XQuery §4.11, §4.15] a
+/// cycle of modules of one namespace is allowed: each is analysed once,
+/// the functions of each calling the other's, recursively, and their
+/// variables read across the cycle; of three modules too; a query
+/// importing the cycle at either module calls both; calls across the
+/// cycle nest no deeper than the evaluation's bound.
+#[test]
+fn modules_of_one_namespace_import_one_another() {
+    let even = "module namespace m = 'urn:m'; import module 'urn:m'; declare variable $m:zero := 0; declare function m:even($n) { if ($n = $m:zero) then fn:true() else m:odd($n - 1) };";
+    let odd = "module namespace m = 'urn:m'; import module 'urn:m'; declare function m:odd($n) { if ($n = $m:zero) then fn:false() else m:even($n - 1) };";
+    let (e, o) = (registered("EVEN", "", even, &["ODD"]), registered("ODD", "", odd, &["EVEN"]));
+    let both = || vec![e.clone(), o.clone()];
+    assert_eq!(value("import module namespace m = 'urn:m' at 'EVEN'; m:even(10), m:even(7)", both(), Vec::new()), "true false");
+    assert_eq!(value("import module namespace m = 'urn:m' at 'ODD'; m:odd(9)", both(), Vec::new()), "true");
+    let one = registered(
+        "C1",
+        "",
+        "module namespace c = 'urn:c'; import module 'urn:c'; declare function c:one($n) { if ($n = 0) then 'done' else c:two($n) };",
+        &["C2"],
+    );
+    let two =
+        registered("C2", "", "module namespace c = 'urn:c'; import module 'urn:c'; declare function c:two($n) { c:three($n) };", &["C3"]);
+    let three = registered(
+        "C3",
+        "",
+        "module namespace c = 'urn:c'; import module 'urn:c'; declare function c:three($n) { c:one($n - 1) };",
+        &["C1"],
+    );
+    assert_eq!(value("import module namespace c = 'urn:c' at 'C2'; c:two(3)", vec![one, two, three], Vec::new()), "done");
+    let deep = compiled("import module namespace m = 'urn:m' at 'EVEN'; m:even(100000)", both(), Vec::new(), &[]).unwrap();
+    assert_eq!(evaluate(&deep, None, Vec::new()).unwrap_err().sqlcode(), -900_i32, "calls across the cycle nest to MAX_DEPTH");
 }

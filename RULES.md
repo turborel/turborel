@@ -4342,11 +4342,15 @@ function the arity, of one declared or imported err:XQST0034 or
 err:XQST0049; a library module's function or variable outside its target
 namespace err:XQST0048; an imported declaration of a schema type of no
 schema the importing module imports, by that schema or a type of that
-name, err:XQST0036; and a circularity through any module's declarations
-err:XQST0054. A module imports only modules registered before it, so the
-graph of imports has no cycle, and the cycles of modules of one namespace
-§4.11 allows do not arise; err:XQST0073 is raised of a cycle met, which
-no catalog turborel writes holds. Imports nest at most `MAX_IMPORT_DEPTH`,
+name, err:XQST0036, checked once every module is analysed; and a
+circularity through any module's declarations err:XQST0054. A library
+module's functions and variables are given their places in the plan
+before its prolog is analysed (`Analysis::reserve`), so a module it
+imports that imports it back finds them: the cycles of imports of
+modules of one namespace §4.11 allows are analysed, each module once,
+their functions calling across the cycle as the evaluation's depth
+bounds (`MAX_DEPTH`). A cycle of modules not all of one namespace is
+err:XQST0073 (`Linked::cycle`). Imports nest at most `MAX_IMPORT_DEPTH`,
 16, modules deep, each analysed within the one importing it (R-CF-6); a
 chain deeper is SQLCODE -900 (D18). A library module given as a query, or
 a main module registered as a library module, is err:XPST0003, as a
@@ -4379,6 +4383,11 @@ These statements were decided, an extension in the standard's notation:
 
 <XQuery module text> ::= <character string literal>
 
+<alter XQuery module statement> ::=
+    ALTER XQUERY MODULE <XQuery module name>
+    [ LOCATION <XQuery module location> ]
+    AS <XQuery module text>
+
 <drop XQuery module statement> ::=
     DROP XQUERY MODULE <XQuery module name> <drop behavior>
 ```
@@ -4405,6 +4414,29 @@ depends on a module is found), as `Abandoned::xquery_modules`, which
 dropped with CASCADE, or abandoned by a REVOKE, takes the modules that
 imported it the same way; DROP SCHEMA CASCADE drops the schema's
 modules.
+
+A module imports only modules registered, so ALTER XQUERY MODULE
+replaces a module's text, and its location if written, analysed again
+and its imports found again and recorded, its USAGE kept
+(`definitions/xquery_modules/alter.rs`): a module altered imports one
+registered after it, so modules of one namespace import one another,
+each recorded as depending on the next. A cycle of modules not all of
+one namespace is err:XQST0073 as the ALTER closing it is analysed, the
+module altered taking its new text wherever the cycle reaches it back.
+What depends on the module must still analyse and bind with the new
+text, as an ALTER of another object is refused that would break what
+depends on it: each module importing it, at any remove, analysed as a
+query importing it analyses it, and each view, constraint, assertion,
+generated column, trigger and routine keeping it or one of those bound
+again; else SQLCODE -103. So a function or variable they use is not
+taken away, and a target namespace changes only if nothing imports the
+module by it. The walk of what depends on a module ends on a cycle, each
+module found once: DROP RESTRICT of a module of a cycle is refused, as
+the next depends on it, CASCADE drops the cycle, and a REVOKE abandoning
+one abandons the modules of the cycle, as each imports the next. ALTER
+is logged as its text and replayed in order; a checkpoint image of
+modules that depend on one another loads, as each is parsed alone and
+only checked to name modules registered.
 
 USAGE on a registered XQuery module is granted and revoked by GRANT and
 REVOKE USAGE ON XQUERY MODULE, as on a registered XML Schema, the grants

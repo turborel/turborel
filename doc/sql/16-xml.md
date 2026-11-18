@@ -1684,7 +1684,11 @@ module sees none of the namespaces the statement declares, and its
 functions keep its own setters, such as its construction mode. A library
 module imports the modules it imported as it was registered, whoever
 runs the query, so a user needs USAGE alone on the modules its query
-imports. The modules a user may use are those of its own schemas and
+imports. A module imports modules registered before it, or, once
+[ALTER XQUERY MODULE](statements/alter-xquery-module.md) replaces its
+text, after it, so modules of one namespace may import one another and
+call each other's functions; a cycle of modules not all of one namespace
+is refused (`err:XQST0073`). The modules a user may use are those of its own schemas and
 those it holds USAGE on ([GRANT](statements/grant.md)). A view, a
 constraint, a trigger or a routine depends on the modules its queries
 import, and keeps them: it imports those it imported as it was defined,
@@ -1697,6 +1701,7 @@ never one registered later.
 | `err:XQST0034` | A function imported has the name and arity of one declared or imported |
 | `err:XQST0049` | A variable imported has the name of one declared or imported |
 | `err:XQST0036` | A function or variable imported is of a schema type the prolog does not import |
+| `err:XQST0073` | Modules import one another, not all of one namespace |
 | `err:XQST0088` | The target namespace is the empty string |
 
 ```sql

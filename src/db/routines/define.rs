@@ -474,6 +474,7 @@ impl State {
             | SchemaStatement::AlterTransform(_)
             | SchemaStatement::XmlSchema(_)
             | SchemaStatement::XQueryModule(_)
+            | SchemaStatement::AlterXQueryModule(_)
             | SchemaStatement::Vector(_) => {
                 Err(rule("[DESIGN] a schema element defined for a type is a method, cast, ordering or transform"))
             }

@@ -122,6 +122,9 @@ pub enum SchemaStatement {
     XmlSchema(Box<super::XmlSchemaDefinition>),
     /// \[EXTENSION\] An `<XQuery module definition>` (RULES.md D106).
     XQueryModule(Box<super::XQueryModuleDefinition>),
+    /// \[EXTENSION\] An `<alter XQuery module statement>` (RULES.md D106):
+    /// its LOCATION, if written, and its text replace the module's.
+    AlterXQueryModule(Box<super::XQueryModuleDefinition>),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION

@@ -13,6 +13,8 @@
 //! (`definitions/xml_schemas.rs`). Those it imported are recorded: it
 //! depends on them, and imports them again whenever a query imports it.
 
+mod alter;
+
 use std::sync::Arc;
 
 use super::super::ddl::Dropped;
@@ -22,7 +24,7 @@ use super::Defined;
 use crate::ast::XQueryModuleDefinition;
 use crate::binder::qualify;
 use crate::binder::{Registered, in_scope, registered};
-use crate::catalog::{Horizon, QualifiedName, XQueryModuleDesc, owner_of, sole};
+use crate::catalog::{Horizon, QualifiedName, UsageDesc, XQueryModuleDesc, owner_of, sole};
 use crate::error::{Result, SqlState};
 use crate::txn::LockMode;
 use crate::xquery::{Analysed, Environment, library_module};
@@ -49,10 +51,31 @@ impl State {
         if self.catalog.xquery_module(&qn).is_some() {
             return Err(rule(format!("[EXTENSION] registered XQuery module {qn} exists: one name identifies one")).or_at(m.name.at));
         }
-        let location = m.location.clone().unwrap_or_default();
+        let (desc, locks) = self.described(&qn, m, (m.location.clone().unwrap_or_default(), Vec::new()))?;
+        let mut catalog = self.catalog.duplicate();
+        catalog.put_xquery_module(desc);
+        self.catalog = Arc::from(catalog);
+        Ok(Defined { locks, ..Defined::default() })
+    }
+
+    /// The descriptor of the registered XQuery module `qn` CREATE or ALTER
+    /// `m` makes, of location `location` and USAGE grants `usage`: its text
+    /// analysed as a library module, its imports among what its schema's
+    /// owner may use, and what it imported recorded; and the locks of its
+    /// schema and of what it imports.
+    ///
+    /// # Errors
+    ///
+    /// As `create_xquery_module`.
+    fn described(
+        &self,
+        qn: &QualifiedName,
+        m: &XQueryModuleDefinition,
+        (location, usage): (String, Vec<UsageDesc>),
+    ) -> Result<(XQueryModuleDesc, Vec<(QualifiedName, LockMode)>)> {
         let held = &*self.catalog;
         let found = registered(held, sole(held, owner_of(held, &qn.auth)), None);
-        let analysed = self.analysed(&qn, (&m.text, &location), &found)?;
+        let analysed = self.analysed(qn, (&m.text, &location), &found)?;
         if analysed.namespace.is_empty() {
             let msg =
                 format!("[EXTENSION] [XQuery §4.11] registered XQuery module {qn} has a target namespace, as a module import names one");
@@ -63,21 +86,18 @@ impl State {
         let xml_schemas: Vec<QualifiedName> =
             analysed.schemas.iter().filter_map(|n| found.importable.iter().find(|(_, s)| s.name == *n)).map(|(q, _)| q.clone()).collect();
         let mut locks = vec![(QualifiedName::of_schema(&qn.auth), LockMode::Shared)];
-        locks.extend(modules.iter().chain(&xml_schemas).map(|u| (u.clone(), LockMode::Shared)));
+        locks.extend(modules.iter().chain(&xml_schemas).filter(|u| *u != qn).map(|u| (u.clone(), LockMode::Shared)));
         let desc = XQueryModuleDesc {
-            name: qn,
+            name: qn.clone(),
             target_namespace: analysed.namespace,
             location,
             text: m.text.clone(),
             modules,
             xml_schemas,
-            usage: Vec::new(),
+            usage,
             module: Some(analysed.module),
         };
-        let mut catalog = self.catalog.duplicate();
-        catalog.put_xquery_module(desc);
-        self.catalog = Arc::from(catalog);
-        Ok(Defined { locks, ..Defined::default() })
+        Ok((desc, locks))
     }
 
     /// The library module `text`, of location `location`, analysed as
@@ -113,7 +133,9 @@ impl State {
         if self.catalog.xquery_module(qn).is_none() {
             return Err(rule(format!("[EXTENSION] there is no registered XQuery module {qn}")));
         }
-        let (abandoned, typed) = self.xquery_module_dependents(std::slice::from_ref(qn), &|_| true);
+        let (mut abandoned, typed) = self.xquery_module_dependents(std::slice::from_ref(qn), &|_| true);
+        // Of a cycle, it imports those that import it: it is dropped here.
+        abandoned.xquery_modules.retain(|m| m != qn);
         if let Some(t) = typed.first() {
             return Err(rule(format!(
                 "[EXTENSION] a generated column of {t} imports registered XQuery module {qn}, so it is not dropped, even with CASCADE"
@@ -135,7 +157,8 @@ impl State {
     /// What depends on the registered XQuery modules `gone`, abandoned:
     /// the registered XQuery modules of the schemas `within` takes that
     /// import one, and those that import one of those, of any schema, in
-    /// `Abandoned::xquery_modules`; and the views, constraints, assertions,
+    /// `Abandoned::xquery_modules`, one of `gone` among them if it imports
+    /// one of them, through a cycle; and the views, constraints, assertions,
     /// triggers and routines whose queries import one of them, of the
     /// schemas `within` takes for those of `gone`, of any for the others,
     /// as their horizons keep them (`catalog::Horizon::xquery_modules`),
@@ -151,10 +174,11 @@ impl State {
         let all = self.catalog.xquery_modules();
         let mut modules: Vec<QualifiedName> =
             all.iter().filter(|d| within(&d.name.auth) && d.modules.iter().any(|u| gone.contains(u))).map(|d| d.name.clone()).collect();
-        // Each found once, so the walk ends with the catalog's modules.
+        // Each found once, so the walk ends with the catalog's modules, a
+        // cycle among them too.
         let mut next = 0_usize;
         while let Some(used) = modules.get(next).cloned() {
-            let users = all.iter().filter(|d| d.modules.contains(&used) && !gone.contains(&d.name) && !modules.contains(&d.name));
+            let users = all.iter().filter(|d| d.modules.contains(&used) && !modules.contains(&d.name));
             let found: Vec<QualifiedName> = users.map(|d| d.name.clone()).collect();
             modules.extend(found);
             next = next.saturating_add(1);

@@ -5,8 +5,8 @@
 //! (`db/assertions.rs`), GRANT [§11.36] and REVOKE [§11.37]
 //! (`db/revoke.rs`), of ISO/IEC 9075-2:2023, CREATE COLLATION
 //! (`db/collations.rs`) and CREATE and ALTER SEQUENCE (`db/sequences.rs`),
-//! CREATE XML SCHEMA (`definitions/xml_schemas.rs`) and CREATE XQUERY
-//! MODULE (`definitions/xquery_modules.rs`).
+//! CREATE XML SCHEMA (`definitions/xml_schemas.rs`) and CREATE and ALTER
+//! XQUERY MODULE (`definitions/xquery_modules.rs`).
 //!
 //! An object is defined by the owner of its schema, its own name and the
 //! names in it written without a schema qualified by the session's default
@@ -186,7 +186,7 @@ impl Session {
             }
             // [EXTENSION] as CREATE COLLATION [ISO/IEC 9075-2:2023 §11.43 SR1].
             SchemaStatement::XmlSchema(x) => self.own_object(st, &x.name, (schema, "EXTENSION")),
-            SchemaStatement::XQueryModule(m) => self.own_object(st, &m.name, (schema, "EXTENSION")),
+            SchemaStatement::XQueryModule(m) | SchemaStatement::AlterXQueryModule(m) => self.own_object(st, &m.name, (schema, "EXTENSION")),
             SchemaStatement::AlterType(_)
             | SchemaStatement::Method(_)
             | SchemaStatement::Cast(_)
@@ -292,6 +292,7 @@ impl State {
             SchemaStatement::Vector(v) => self.vector_statement(schema, v),
             SchemaStatement::XmlSchema(x) => self.create_xml_schema(schema, x),
             SchemaStatement::XQueryModule(m) => self.create_xquery_module(schema, m),
+            SchemaStatement::AlterXQueryModule(m) => self.alter_xquery_module(schema, m),
         }
     }
 

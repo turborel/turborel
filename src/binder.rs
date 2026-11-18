@@ -133,7 +133,7 @@ pub use values::{value_specification, value_specification_as};
 pub use views::{BoundView, ViewCheck, WriteTarget, bind_view, table_columns, view_degree, write_target};
 pub(crate) use views::{once_each, system_view_columns, view_uses};
 pub(crate) use with::Queries;
-pub(crate) use xml::{Registered, checked_namespaces, in_scope, registered};
+pub(crate) use xml::{Registered, checked_namespaces, in_scope, registered, registered_module};
 
 /// A column of a cursor's result.
 #[derive(Debug, Clone)]

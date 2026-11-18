@@ -64,6 +64,7 @@ fn schema_command(s: &SchemaStatement) -> Command {
         },
         SchemaStatement::XmlSchema(_) => commands::CREATE_XML_SCHEMA,
         SchemaStatement::XQueryModule(_) => commands::CREATE_XQUERY_MODULE,
+        SchemaStatement::AlterXQueryModule(_) => commands::ALTER_XQUERY_MODULE,
     }
 }
 

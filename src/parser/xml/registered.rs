@@ -32,7 +32,8 @@ impl Parser {
     }
 
     /// An `<XML Schema definition>`, if CREATE XML SCHEMA is next, an
-    /// `<XQuery module definition>` if CREATE XQUERY MODULE is
+    /// `<XQuery module definition>` or `<alter XQuery module statement>` if
+    /// CREATE or ALTER XQUERY MODULE is
     /// (`parser/xml/xquery_modules.rs`), else a definition of a type's if
     /// one is (`defined_for_type`).
     ///
@@ -44,7 +45,9 @@ impl Parser {
             return Ok(Some(SchemaStatement::XmlSchema(Box::new(self.xml_schema_definition()?))));
         }
         if self.at_xquery_module(1) {
-            return Ok(Some(SchemaStatement::XQueryModule(Box::new(self.xquery_module_definition()?))));
+            let (altered, m) = self.xquery_module_definition()?;
+            let m = Box::new(m);
+            return Ok(Some(if altered { SchemaStatement::AlterXQueryModule(m) } else { SchemaStatement::XQueryModule(m) }));
         }
         self.defined_for_type()
     }
