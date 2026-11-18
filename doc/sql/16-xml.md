@@ -766,9 +766,10 @@ SQL value of the XML Schema type it maps to. The typing is pessimistic:
 a query refused may evaluate without error on every value, as `$x/a + 1`
 of a document whose elements `a` are many in type though one in fact;
 `exactly-one`, `zero-or-one` and a predicate `[1]` state what the types
-cannot. A definition such as a view is typed as it is made, by the
-database's XQUERY.STATIC_TYPING or its query's option, and not again as
-it is read.
+cannot. A value passed that cannot be null, a NOT NULL column or a
+literal, is one, not optional. A definition such as a view is typed as
+it is made, by the database's XQUERY.STATIC_TYPING or its query's
+option, and not again as it is read.
 
 ```sql
 SET XQUERY.STATIC_TYPING = 'ON';

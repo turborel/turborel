@@ -65,6 +65,30 @@ fn static_typing_is_in_effect_as_asked_6_18() {
     assert!(is_xquery(&failure(&a, table), "XPTY0004"), "a column's pattern of each item of the row pattern");
 }
 
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.21 SR3c, SR3d] [X3.135-1986
+/// §5.25 SR10] [XQueryFS §7.1.4] a value passed whose expression is known
+/// not null, a column reference to a NOT NULL column or a literal, is of
+/// its formal type without `?`; another, a nullable column's or one
+/// computed, with it, which a parameter of one value takes none of.
+#[test]
+fn known_not_null_values_are_passed_as_one_10_21() {
+    let db = database();
+    let a = db.session("A");
+    a.run("CREATE TABLE N (P VARCHAR(5) NOT NULL, Q VARCHAR(5))").unwrap();
+    a.run("SET XQUERY.STATIC_TYPING = 'ON'").unwrap();
+    let joined = |passed: &str| {
+        format!(
+            "SELECT XMLQUERY('string-join((\"a\", \"b\"), $s)' PASSING BY VALUE {passed} AS \"s\" RETURNING SEQUENCE EMPTY ON EMPTY) FROM N"
+        )
+    };
+    for known in ["P", "N.P", "'-'"] {
+        assert_eq!(fetched(&a, &joined(known)).unwrap(), 0, "{known} is known not null");
+    }
+    for nullable in ["Q", "P || Q", "CAST(P AS VARCHAR(6))", "UPPER(P)"] {
+        assert!(is_xquery(&failure(&a, &joined(nullable)), "XPTY0004"), "{nullable} may be null");
+    }
+}
+
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 SR6, §4.2.6] [EXTENSION] a
 /// definition is typed as it is made, by the database's
 /// XQUERY.STATIC_TYPING or its query's option, not by a session's: one

@@ -2,12 +2,12 @@
 //! empty type, the effective boolean value, subtyping's occurrences, the
 //! quantifier of the empty type, name tests, typed values of element-only
 //! content, the context item, the option and the setting that put it in
-//! effect (RULES.md R-TEST-9, D106).
+//! effect, and values known not null (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each static typing mechanism broken alone, and the tests that fail.
-pub const XQUERY_STATICS: [Mutation; 10] = [
+pub const XQUERY_STATICS: [Mutation; 11] = [
     Mutation {
         name: "statics-operand-cardinality",
         package: Package::Core,
@@ -106,6 +106,16 @@ pub const XQUERY_STATICS: [Mutation; 10] = [
         original: "            static_typing: self.horizon.routines.is_none() && self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own),",
         replacement: "            static_typing: self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own),",
         integration: &["xml_static_typing::definitions_are_typed_as_made"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-known-not-null",
+        package: Package::Core,
+        breaks: "a value passed known not null is optional",
+        file: "src/binder/xml/query.rs",
+        original: "        let suffix = if not_null { Occurrence::One } else { Occurrence::Optional };",
+        replacement: "        let suffix = Occurrence::Optional;",
+        integration: &["xml_static_typing::known_not_null_values_are_passed_as_one_10_21"],
         unit: &[],
     },
 ];

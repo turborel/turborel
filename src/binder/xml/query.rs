@@ -10,7 +10,8 @@ use super::super::{Binder, Scope, rule};
 use super::DOCUMENT_CONTENT;
 use super::registered::{Registered, in_scope, registered};
 use crate::ast::{
-    DefaultOption, OnEmpty, Passing, Returning, ValueExpression, ValueSpecification, XmlArguments, XmlQuery, XmlTable, XmlTableColumn,
+    DefaultOption, Literal, OnEmpty, Passing, Returning, ValueExpression, ValueSpecification, XmlArguments, XmlQuery, XmlTable,
+    XmlTableColumn,
 };
 use crate::catalog::QualifiedName;
 use crate::catalog::xml_schemas::PERMANENT;
@@ -65,7 +66,7 @@ impl Binder<'_> {
         let mut passed = Passed::default();
         for argument in &arguments.arguments {
             let (e, t) = self.value_expression(&argument.value, scope)?;
-            let formal = self.formal(&t);
+            let formal = self.formal(&t, self.known_not_null(&argument.value, scope)?);
             let value = if matches!(t, DataType::Xml(_)) {
                 let passing = argument.passing.unwrap_or(arguments.default);
                 if passing == Passing::ByValue { Expr::Call(ScalarRef(Arc::new(XmlCopy)), vec![e]) } else { e }
@@ -308,11 +309,11 @@ impl Binder<'_> {
     /// query: of an XML type, its kind and its secondary modifier, of an
     /// XML(SEQUENCE) one `*`; of an SQL predefined type, the XML Schema
     /// primitive type §9.5 maps it to, of an exact numeric type of scale 0
-    /// `xs:integer` [SR5h]; each `?` [SR3d]; of a type §9.5 maps to none,
-    /// as XMLCAST refuses it, XML(SEQUENCE)'s. \[DESIGN\] RULES.md D106:
-    /// no value expression is deduced to be not null [SR3c].
-    fn formal(&self, t: &DataType) -> Formal {
-        let optional = |kind| Formal { kind, occurrence: Occurrence::Optional };
+    /// `xs:integer` [SR5h]; each `?` [SR3d], of none if `not_null` [SR3c];
+    /// of a type §9.5 maps to none, as XMLCAST refuses it, XML(SEQUENCE)'s.
+    fn formal(&self, t: &DataType, not_null: bool) -> Formal {
+        let suffix = if not_null { Occurrence::One } else { Occurrence::Optional };
+        let optional = |kind| Formal { kind, occurrence: suffix };
         if let DataType::Xml(x) = t {
             return match x {
                 XmlType::Document(typing) => optional(FormalKind::Document(self.formal_typing(typing))),
@@ -325,6 +326,17 @@ impl Binder<'_> {
         };
         let integer = matches!(t.represented(), DataType::Exact { scale: 0, .. });
         optional(FormalKind::Atomic(if integer { AtomicType::Integer } else { primitive(mapped) }))
+    }
+
+    /// [§10.21 SR3c] Whether the value of `v` cannot be null: a column
+    /// reference that references a known not null column [X3.135-1986
+    /// §5.25 SR10]; or, by turborel's implementation-defined rule, a
+    /// literal but UNKNOWN.
+    fn known_not_null(&self, v: &ValueExpression, scope: Scope<'_>) -> Result<bool> {
+        if let ValueExpression::Value(ValueSpecification::Literal(l)) = v {
+            return Ok(!matches!(l, Literal::Boolean(None)));
+        }
+        Ok(super::super::query::named(self, v, scope)?.1)
     }
 
     /// [§10.21 SR4] The secondary modifier `typing`: of XMLSCHEMA, the
