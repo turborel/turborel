@@ -244,5 +244,6 @@ fn argument_fits(value: &Value, data_type: &DataType, depth: usize) -> bool {
             | (Value::Datetime(_), DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. })
             | (Value::Interval(_), DataType::Interval(_))
             | (Value::Extension(_), DataType::Extension(_))
+            | (Value::Json(_), DataType::Json)
     )
 }

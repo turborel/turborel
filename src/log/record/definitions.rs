@@ -32,6 +32,10 @@ const DROPPED_MODEL: u8 = 15;
 const DROPPED_PIPELINE: u8 = 16;
 /// The tag of a property graph's drop.
 const DROPPED_GRAPH: u8 = 17;
+/// The tag of a graph type's drop.
+const DROPPED_GRAPH_TYPE: u8 = 18;
+/// The tag of a GQL graph's drop.
+const DROPPED_GQL_GRAPH: u8 = 19;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq)]
@@ -73,6 +77,10 @@ pub enum DropTarget {
     Model(QualifiedName),
     /// \[EXTENSION\] A vector pipeline (§12.5).
     Pipeline(QualifiedName),
+    /// \[EXTENSION\] A graph type (RULES.md D-GQL).
+    GraphType(QualifiedName),
+    /// \[EXTENSION\] A GQL graph, with its tables (RULES.md D-GQL).
+    GqlGraph(QualifiedName),
 }
 
 /// A schema's text, the engine of each table it created, its
@@ -197,6 +205,8 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::Graph(graph) => (DROPPED_GRAPH, graph),
         DropTarget::Model(model) => (DROPPED_MODEL, model),
         DropTarget::Pipeline(pipeline) => (DROPPED_PIPELINE, pipeline),
+        DropTarget::GraphType(t) => (DROPPED_GRAPH_TYPE, t),
+        DropTarget::GqlGraph(graph) => (DROPPED_GQL_GRAPH, graph),
         DropTarget::Cast(types) => {
             out.put_u8(DROPPED_CAST);
             crate::value::types::tags::put_type(out, &types.0);
@@ -238,6 +248,8 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_GRAPH => Ok(DropTarget::Graph(table(r)?)),
         DROPPED_MODEL => Ok(DropTarget::Model(table(r)?)),
         DROPPED_PIPELINE => Ok(DropTarget::Pipeline(table(r)?)),
+        DROPPED_GRAPH_TYPE => Ok(DropTarget::GraphType(table(r)?)),
+        DROPPED_GQL_GRAPH => Ok(DropTarget::GqlGraph(table(r)?)),
         DROPPED_CAST => {
             let source = crate::value::types::tags::data_type(r)?;
             Ok(DropTarget::Cast(Box::new((source, crate::value::types::tags::data_type(r)?))))

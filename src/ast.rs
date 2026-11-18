@@ -36,6 +36,7 @@ mod dynamic;
 mod embedding;
 mod expression;
 mod generated;
+mod gql;
 mod graph;
 mod graph_ddl;
 mod hybrid_search;
@@ -83,6 +84,11 @@ pub use expression::{
     ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
+pub use gql::{
+    EdgeTypeDefinition, ExecuteGql, GqlCall, GqlClause, GqlComposite, GqlCondition, GqlExpression, GqlGraphDefinition, GqlLinear, GqlPage,
+    GqlProcedure, GqlRemoveItem, GqlRequest, GqlReset, GqlResult, GqlReturn, GqlReturnItem, GqlSession, GqlSetItem, GqlSetOperator,
+    GqlSort, GqlSpan, GqlTable, GqlTransaction, GraphTypeDefinition, GraphTyping, NodeTypeDefinition, PropertyTypeDefinition,
+};
 pub use graph::{
     Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphPattern,
     GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression, MatchMode, ORIENTATIONS, Orientation,
@@ -381,6 +387,8 @@ pub enum SqlStatement {
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.10, §17.11] EXECUTE or EXECUTE
     /// IMMEDIATE.
     Execute(Box<ExecuteStatement>),
+    /// \[EXTENSION\] EXECUTE GQL (graph standard §9).
+    ExecuteGql(ExecuteGql),
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §13.11, §20.1] `<temporary table
     /// declaration>`: a declared local temporary table, of kind
     /// `TemporaryKind::Declared`.

@@ -205,3 +205,7 @@ standard's §22.
 | GRF-0005 | The graph is INVALID until [ALTER PROPERTY GRAPH](../sql/statements/alter-property-graph.md) ... COMPILE checks it again |
 | GRF-0011 | A label shared by element tables whose property names differ, or whose types of one property have no type in common |
 | GRF-0012 | An element table, label or property the graph has not |
+| GRF-0022 | A group variable of a quantified pattern read as one element, as a property of it |
+| GRF-0051 | A GQL write a graph over tables cannot take, as labels that name no one table or an element whose key is not given |
+| GRF-0052 | DELETE of a vertex that has edges, which DETACH DELETE deletes too |
+| GRF-0053 | A GQL write a typed graph's type refuses, as a label or property it has not |

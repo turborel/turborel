@@ -20,6 +20,7 @@
 
 mod composites;
 mod extensions;
+mod graph_types;
 mod graphs;
 mod modules;
 mod native;
@@ -73,13 +74,14 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// and typed tables (`information/structured.rs`), those of roles
 /// (`information/roles.rs`), of triggers (`information/triggers.rs`), of
 /// SQL-server modules (`information/modules.rs`) and of property graphs
-/// (`information/graphs.rs`) and node and edge tables
-/// (`information/native.rs`), then the extensions
+/// (`information/graphs.rs`), node and edge tables
+/// (`information/native.rs`) and graph types
+/// (`information/graph_types.rs`), then the extensions
 /// (`information/extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
     let parts = [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS];
-    ALL.get_or_init(|| [&parts[..], &[graphs::VIEWS, native::VIEWS, extensions::VIEWS]].concat().concat())
+    ALL.get_or_init(|| [&parts[..], &[graphs::VIEWS, native::VIEWS, graph_types::VIEWS, extensions::VIEWS]].concat().concat())
 }
 
 /// The views of ISO/IEC 9075:1992 [§21.2.4-§21.2.26].

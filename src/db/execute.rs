@@ -82,6 +82,18 @@ impl Session {
             drop(call);
             return self.execute_dynamic(e, command, params);
         }
+        // [EXTENSION] EXECUTE GQL runs its request's statements, each as
+        // a statement of its own; CREATE GRAPH makes its tables first.
+        if let Ok(SqlStatement::ExecuteGql(crate::ast::ExecuteGql { graph, text, .. })) = parsed.as_deref() {
+            drop(call);
+            return self.execute_gql(graph.as_ref(), text);
+        }
+        if let Ok(SqlStatement::Schema { statement: SchemaStatement::GqlGraph(def), .. }) = parsed.as_deref()
+            && self.gql_graph_unmade(def)?
+        {
+            drop(call);
+            return self.create_gql_graph(def, sql);
+        }
         self.emptied(prepared.map_or((command, commands::UNRECOGNIZED), |(outer, _)| (outer, function)));
         let outcome = parsed.and_then(|stmt| {
             let target = target_of(&stmt).map(|t| qualify(t, &self.default_schema()));
@@ -218,6 +230,7 @@ impl Session {
             // never reaches here (`execute_as`).
             | SqlStatement::Dynamic(_)
             | SqlStatement::Execute(_)
+            | SqlStatement::ExecuteGql(_)
             | SqlStatement::Call(_)
             | SqlStatement::Return(_)
             | SqlStatement::Control(_)
@@ -332,6 +345,11 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
         let _compiling = self.compiling(cx.st, cx.tx.id);
+        // [ISO/IEC 9075-2:2023 §15.10, §15.13, §15.16] a view's INSTEAD OF
+        // trigger in place of the change.
+        if let Some(n) = self.instead_of(cx, stmt, params)? {
+            return Ok(self.affected(n));
+        }
         self.run_compiling(cx, stmt, params, keeping)
     }
 
@@ -358,11 +376,6 @@ impl Session {
         params: &mut Params,
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
-        // [ISO/IEC 9075-2:2023 §15.10, §15.13, §15.16] a view's INSTEAD OF
-        // trigger in place of the change.
-        if let Some(n) = self.instead_of(cx, stmt, params)? {
-            return Ok(self.affected(n));
-        }
         match stmt {
             SqlStatement::Insert(ins) => self.insert_statement(cx, ins, params, keeping).map(|n| self.affected(n)),
             SqlStatement::Merge(merge) => self.merge_completed(cx, merge, params, keeping),
@@ -409,6 +422,7 @@ impl Session {
             | SqlStatement::User(_)
             | SqlStatement::Served(_)
             | SqlStatement::Execute(_)
+            | SqlStatement::ExecuteGql(_)
             | SqlStatement::DeclareTable(_) => Ok(Completion::Success),
             // [ISO/IEC 9075-2:2023 §15.21 GR6a, §9.18 GR6f] of a triggered
             // action's or a procedure body's own diagnostics area.
@@ -496,6 +510,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::SetDatabase { .. }
         | SqlStatement::User(_)
         | SqlStatement::Execute(_)
+        | SqlStatement::ExecuteGql(_)
         | SqlStatement::Call(_)
         | SqlStatement::Return(_)
         | SqlStatement::SetConstraints { .. } => None,
@@ -529,6 +544,8 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::Routine(_)
         | SchemaStatement::Module(_)
         | SchemaStatement::Graph(_)
+        | SchemaStatement::GraphType(_)
+        | SchemaStatement::GqlGraph(_)
         | SchemaStatement::AlterGraph(_)
         | SchemaStatement::Vector(_)
         | SchemaStatement::Role(_) => None,

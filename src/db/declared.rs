@@ -95,6 +95,8 @@ impl Session {
             | SchemaStatement::Routine(_)
             | SchemaStatement::Module(_)
             | SchemaStatement::Graph(_)
+            | SchemaStatement::GraphType(_)
+            | SchemaStatement::GqlGraph(_)
             | SchemaStatement::AlterGraph(_)
             | SchemaStatement::Vector(_)
             | SchemaStatement::Role(_) => Ok(()),

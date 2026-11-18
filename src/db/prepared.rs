@@ -369,9 +369,7 @@ impl Session {
             | SqlStatement::SetSchema(v)
             | SqlStatement::SetCatalog(v)
             | SqlStatement::SetSessionAuthorization(v)
-            | SqlStatement::SetRole(SetRole::Role(v)) => {
-                drop(self.value_in(st, v, params, Some(ParameterType::Varying))?);
-            }
+            | SqlStatement::SetRole(SetRole::Role(v)) => drop(self.value_in(st, v, params, Some(ParameterType::Varying))?),
             SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),
             // [ISO/IEC 9075-2:2023 §4.37.5] a locator, a four-octet integer.
             SqlStatement::Locator { references, .. } => self.locators_only(st, references, params)?,
@@ -387,6 +385,7 @@ impl Session {
             SqlStatement::Control(_) => return Err(not_preparable("an <SQL control statement>")),
             SqlStatement::Signal(_) => self.bind_program_only(st, stmt, params)?,
             SqlStatement::Dynamic(_) | SqlStatement::Execute(_) => return Err(not_preparable("an <SQL dynamic statement>")),
+            SqlStatement::ExecuteGql(_) => return Err(not_preparable("EXECUTE GQL")),
             SqlStatement::DeclareTable(_) => return Err(not_preparable("a <temporary table declaration>")),
             SqlStatement::Call(call) => drop(self.bound(st, params, |cx| State::bind_call(cx, call))?),
             // [ISO/IEC 9075-2:2023 §16.2 SR1] only in a function's body.

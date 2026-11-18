@@ -108,6 +108,14 @@ pub const TRANSACTION_ISOLATION: Key = Key(45);
 /// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
 /// the executor's settings.
 pub const MAX_ITERATIONS: Key = Key(46);
+/// \[EXTENSION\] See [`TABLES_ENGINE`]: the language a session's direct
+/// statements are read in, SQL or GQL (graph standard §9).
+pub const SESSION_LANGUAGE: Key = Key(52);
+/// \[EXTENSION\] See [`TABLES_ENGINE`]: the graph a GQL statement that
+/// names none reads, a GQL session's graph.
+pub const GQL_GRAPH: Key = Key(53);
+/// The words of `SESSION.LANGUAGE`.
+pub const LANGUAGES: &[&str] = &["SQL", "GQL"];
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -216,7 +224,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(read_ahead());
     all.push(log_durability());
     all.extend(later());
-    all.extend(super::vector::vector());
+    all.extend(super::vector::vector().into_iter().chain(gql_session()));
     all
 }
 
@@ -308,6 +316,24 @@ fn system_cache() -> Definition {
 /// most iterations of a recursive query.
 fn later() -> [Definition; 5] {
     [system_cache(), checksum_key(), rekey_rate(), transaction_isolation(), max_iterations()]
+}
+
+/// \[EXTENSION\] A GQL session (graph standard §9, RULES.md D-GQL): the
+/// language a session's direct statements are read in, and the graph a
+/// GQL statement that names none reads.
+fn gql_session() -> [Definition; 2] {
+    [
+        defined(
+            ("SESSION.LANGUAGE", Kind::Choice(LANGUAGES), text("SQL")),
+            SESSION,
+            "The language a session's direct statements are read in, SQL or GQL; in GQL each statement but SET is a GQL request.",
+        ),
+        defined(
+            ("GQL.GRAPH", Kind::Text { max: 257 }, text("")),
+            SESSION,
+            "The property graph a GQL statement reads when it names none, as SESSION SET GRAPH sets it, named in the default schema if unqualified; empty for none.",
+        ),
+    ]
 }
 
 /// [ISO/IEC 9075-2:2023 §7.17 GR2] The most iterations a recursive query

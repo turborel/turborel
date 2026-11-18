@@ -21,6 +21,7 @@ mod columns;
 mod constraints;
 mod domains;
 mod embedding;
+mod graph_types;
 mod graphs;
 mod key_expressions;
 mod keys;
@@ -43,6 +44,7 @@ pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, Fore
 pub use domains::{DomainDesc, UsageDesc, usage_held};
 pub use embedding::{Embeddings, ModelDesc, ModelOption, PipelineDesc, TRIGGER_SUFFIXES};
 pub(crate) use embedding::{embeddings, put_embeddings};
+pub use graph_types::{GqlCatalog, GqlGraphDesc, GraphTypeDesc};
 pub use graphs::{
     ElementKind, ElementTableDesc, EndpointDesc, Endpoints, GRAPH_INVALID, GraphDesc, GraphMode, LabelDesc, PropertyDesc, identifier,
     qualified_identifier,
@@ -341,7 +343,7 @@ pub struct IndexDesc {
 ///   `routines`, `routines_named` and `remove_routine`, by specific
 ///   name, `routines` and `routines_named` in the order of their
 ///   timestamps of creation; and `put_graph`, `graph`, `graphs` and
-///   `remove_graph`, `graphs` in the order of their names.
+///   `remove_graph`, `graphs` in the order of their names; `gql`, those of Mode C.
 /// * `duplicate` returns an independent copy: changing either leaves the
 ///   other as it was. Each snapshot of the database's definitions holds its
 ///   own copy, and a change of definitions works on a fresh duplicate
@@ -550,6 +552,10 @@ pub trait Catalog: Send + Sync {
     fn graphs(&self) -> Vec<&GraphDesc>;
     /// Forget the property graph of this name: one dropped.
     fn remove_graph(&mut self, name: &QualifiedName);
+    /// \[EXTENSION\] The graph types and GQL graphs (RULES.md D-GQL).
+    fn gql(&self) -> &GqlCatalog;
+    /// The same, to change.
+    fn gql_mut(&mut self) -> &mut GqlCatalog;
     /// [ISO/IEC 9075-2:2023 §4.42.3] The roles and role authorizations.
     fn roles(&self) -> &Roles;
     /// Make `roles` the roles and role authorizations, in place of those

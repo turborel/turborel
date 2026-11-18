@@ -64,6 +64,8 @@ fn schema_command(s: &SchemaStatement) -> Command {
             VectorStatement::AlterModel(_) => commands::ALTER_EMBEDDING_MODEL,
             VectorStatement::Pipeline(_) => commands::CREATE_VECTOR_PIPELINE,
         },
+        SchemaStatement::GraphType(_) => commands::CREATE_GRAPH_TYPE,
+        SchemaStatement::GqlGraph(_) => commands::CREATE_GRAPH,
     }
 }
 
@@ -88,6 +90,8 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::Graph(..) => commands::DROP_PROPERTY_GRAPH,
         DropObject::Vector(VectorObject::Model, _) => commands::DROP_EMBEDDING_MODEL,
         DropObject::Vector(VectorObject::Pipeline, _) => commands::DROP_VECTOR_PIPELINE,
+        DropObject::GraphType(..) => commands::DROP_GRAPH_TYPE,
+        DropObject::GqlGraph(..) => commands::DROP_GRAPH,
     }
 }
 
@@ -110,6 +114,7 @@ pub(in crate::db) fn command_of(stmt: &SqlStatement) -> Command {
         SqlStatement::GetDiagnostics(_) => commands::GET_DIAGNOSTICS,
         SqlStatement::Dynamic(d) => dynamic::command(d),
         SqlStatement::Execute(e) => dynamic::execute_command(e),
+        SqlStatement::ExecuteGql(_) => commands::EXECUTE_GQL,
         SqlStatement::DeclareTable(_) => commands::DECLARE_TABLE,
         SqlStatement::Insert(_) => commands::INSERT,
         SqlStatement::Merge(_) => commands::MERGE,

@@ -37,6 +37,7 @@
 
 mod constraints;
 mod descriptors;
+mod graph_types;
 mod graphs;
 mod implicit;
 mod modules;
@@ -114,6 +115,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(modules::tables());
     tables.extend(graphs::tables());
     tables.extend(native::tables());
+    tables.extend(graph_types::tables());
     tables.extend(structured::tables());
     tables.extend(typed::tables());
     tables

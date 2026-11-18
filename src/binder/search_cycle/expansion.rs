@@ -290,6 +290,7 @@ fn every_table(from: &[TableReference], at: usize) -> Result<Vec<SelectSublist>>
                 };
                 TableName { auth: None, ident: name.clone(), at }
             }
+            TableReference::Gql(g) => TableName { auth: None, ident: g.correlation.clone().unwrap_or_else(|| g.graph.ident.clone()), at },
             TableReference::Graph(g) => {
                 let Some(name) = &g.correlation else {
                     let msg = "a <search or cycle clause> of a recursive query whose second operand selects * of a GRAPH_TABLE of no correlation name is not supported";
@@ -345,7 +346,8 @@ fn extend_reference(from: &mut [TableReference], name: &str, added: &[String]) {
             | TableReference::Json(_)
             | TableReference::Polymorphic(_)
             | TableReference::Graph(_)
-            | TableReference::Hybrid(_) => {}
+            | TableReference::Hybrid(_)
+            | TableReference::Gql(_) => {}
         }
     }
 }

@@ -107,7 +107,10 @@ impl Parser {
     /// TRUNCATE TABLE, MERGE INTO (`parser/merge.rs`), or SAVEPOINT or
     /// RELEASE SAVEPOINT (`parser/savepoints.rs`).
     pub(super) fn word_statement(&mut self) -> Result<Option<SqlStatement>> {
-        let stmt = if self.at_cancel_connection() {
+        // [EXTENSION] EXECUTE GQL, and the statements of GQL graphs.
+        let stmt = if let Some(gql) = self.gql_sql_statement()? {
+            gql
+        } else if self.at_cancel_connection() {
             self.served_statement()?
         } else if self.at_truncate() {
             self.truncate_statement()?

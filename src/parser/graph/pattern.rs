@@ -66,7 +66,7 @@ impl Parser {
     /// [P1 §4.3] `<graph pattern>` ::= \[`<match mode>`\] `<path pattern>`
     /// \[, ...\] \[KEEP `<path pattern prefix>`\] \[WHERE `<search
     /// condition>`\], KEEP also after the WHERE.
-    pub(super) fn graph_pattern(&mut self) -> Result<GraphPattern> {
+    pub(in crate::parser) fn graph_pattern(&mut self) -> Result<GraphPattern> {
         let at = self.here();
         let mode = self.match_mode()?;
         let mut paths = vec![self.path_pattern()?];
@@ -154,7 +154,7 @@ impl Parser {
     /// [P1 §4.2, §5.1] `<path pattern>` ::= \[`<path variable>` =\]
     /// \[`<path pattern prefix>`\] `<path pattern expression>`, the
     /// variable also after the prefix.
-    fn path_pattern(&mut self) -> Result<PathPattern> {
+    pub(in crate::parser) fn path_pattern(&mut self) -> Result<PathPattern> {
         let at = self.here();
         let (variable, prefix) = self.variable_and_prefix()?;
         let expression = self.path_pattern_expression()?;

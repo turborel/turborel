@@ -89,6 +89,7 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
         | SqlStatement::Fetch { .. }
         | SqlStatement::Dynamic(_)
         | SqlStatement::Execute(_)
+        | SqlStatement::ExecuteGql(_)
         | SqlStatement::DeclareTable(_)
         | SqlStatement::Open(_)
         | SqlStatement::Rollback

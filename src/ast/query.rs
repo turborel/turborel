@@ -274,8 +274,9 @@ fn named_in_from<'a>(
                     c.for_each_subquery(&mut |s| subqueries.push(s));
                 }
             }
-            // Its arguments are read again when it is bound.
-            TableReference::Hybrid(_) => {}
+            // Its arguments are read again when it is bound; a GQL_TABLE's
+            // text is read when it is bound.
+            TableReference::Hybrid(_) | TableReference::Gql(_) => {}
             // [§7.6, §10.4] Its table arguments name tables and queries.
             TableReference::Polymorphic(p) => {
                 let named = |t: &NamedTable| t.table.auth.is_none() && scope.contains(&t.table.ident.as_str());
@@ -499,6 +500,9 @@ pub enum TableReference {
     Graph(Box<super::GraphTable>),
     /// \[EXTENSION\] HYBRID_SEARCH (the vector design document §11.2).
     Hybrid(Box<super::HybridSearch>),
+    /// \[EXTENSION\] A GQL_TABLE and its correlation name, if written
+    /// (graph standard §9).
+    Gql(Box<super::GqlTable>),
 }
 
 impl TableReference {

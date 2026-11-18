@@ -523,6 +523,9 @@ impl Parser {
         if self.at_hybrid_search() {
             return self.hybrid_search();
         }
+        if self.at_gql_table() {
+            return self.gql_table();
+        }
         // [ISO/IEC 9075-2:2023 §7.6] <only spec>.
         let (table, only) = self.target_table()?;
         // [ISO/IEC 9075-2:2023 §7.6] <query system time period

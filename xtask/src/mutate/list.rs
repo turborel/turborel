@@ -22,6 +22,7 @@ mod generated;
 mod geometry;
 mod graph_adjacency;
 mod graph_catalog;
+mod graph_gql;
 mod graph_native;
 mod graph_search;
 mod graph_syntax;
@@ -92,10 +93,9 @@ mod zones;
 use super::{Mutation, Package};
 pub use server::SERVER;
 pub use shadow::SHADOW;
-pub use stats::STATS;
-pub use tailorings::TAILORINGS;
 pub use zones::ZONES;
 pub use {collations::COLLATIONS, fill::FILL, kept::KEPT, readers::READERS, reads::READS};
+pub use {stats::STATS, tailorings::TAILORINGS};
 pub use {vr::VR, waits::WAITS};
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.

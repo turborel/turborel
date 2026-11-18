@@ -41,6 +41,7 @@ mod embedding;
 mod expression;
 mod filter;
 mod generated;
+mod gql;
 mod graph;
 mod graph_ddl;
 mod grouping;

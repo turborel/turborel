@@ -44,6 +44,10 @@ impl Session {
             let rest = format!("{}{}", " ".repeat(at), sql.chars().skip(at).collect::<String>());
             return self.explain_rows(&rest).map(Direct::Rows);
         }
+        // [EXTENSION] EXECUTE GQL, and each statement of a GQL session.
+        if let Some(done) = self.gql_direct(sql, first)? {
+            return Ok(done);
+        }
         let named_cancel = if let Some(Tok::Identifier(w)) = first { w == CANCEL } else { false };
         let cancel = (named_cancel && matches!(second, Some(Tok::KeyWord("CONNECTION")))) || begins_word_statement(first, second);
         let joined = (matches!(first, Some(Tok::Identifier(_) | Tok::Introducer(_))) && !cancel)

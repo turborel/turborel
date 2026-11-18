@@ -15,6 +15,7 @@ mod alter;
 mod dependents;
 mod describe;
 mod elements;
+pub(in crate::db) mod gql;
 pub(in crate::db) mod native;
 mod privileges;
 

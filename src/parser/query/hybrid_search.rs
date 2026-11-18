@@ -239,7 +239,8 @@ impl Parser {
             | TableReference::Polymorphic(_)
             | TableReference::Json(_)
             | TableReference::Graph(_)
-            | TableReference::Hybrid(_) => Err(parser.syntax("expected HYBRID_SEARCH's query")),
+            | TableReference::Hybrid(_)
+            | TableReference::Gql(_) => Err(parser.syntax("expected HYBRID_SEARCH's query")),
         }
     }
 }
