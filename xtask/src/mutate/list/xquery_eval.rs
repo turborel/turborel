@@ -96,11 +96,14 @@ pub const XQUERY_EVAL: [Mutation; 33] = [
         name: "xquery-circular-variables",
         package: Package::Core,
         breaks: "a variable's initializing expression may depend on it",
-        file: "src/xquery/analyze/prolog.rs",
-        original: "if reaches(start, at, reads, calls) {",
+        file: "src/xquery/analyze/linked.rs",
+        original: "if self.reaches(start, at) {",
         replacement: "if false {",
         integration: &[],
-        unit: &["xquery::eval::tests::flwor::prolog_variables_and_functions"],
+        unit: &[
+            "xquery::eval::tests::flwor::prolog_variables_and_functions",
+            "xquery::analyze::modules::tests::the_static_errors_of_modules",
+        ],
     },
     Mutation {
         name: "xquery-cancellation",

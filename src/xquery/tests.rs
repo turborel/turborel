@@ -288,20 +288,21 @@ fn nesting_is_bounded_within_the_stack() {
     }
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] [XQuery §5.2.1, §5.2.5]
-/// [XQuery Appendix F] imports and library modules are parsed; a module
-/// import or a library module is refused as turborel does not support the
-/// Module Feature, err:XQST0016; a schema import, of the Schema Import
-/// Feature turborel supports, needs nothing of it, nor does a module of
-/// neither.
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] [XQuery §4.2, §4.11,
+/// §5.2.5] a library module is parsed as its module declaration and
+/// prolog, a module import as its prefix, target namespace and location
+/// hints, as turborel supports the Module Feature; a main module of no
+/// prolog has an empty one.
 #[test]
-fn imports_are_parsed_and_unsupported() {
-    assert_eq!(module("import schema 'u'; 1").unsupported(), None);
-    assert_eq!(module("declare namespace p = 'v'; import module 'u'; 1").unsupported(), Some(ErrorCode::XQST0016));
-    assert_eq!(module("module namespace m = 'u';").unsupported(), Some(ErrorCode::XQST0016));
+fn imports_and_library_modules_are_parsed() {
+    let library = module("module namespace m = 'urn:m'; declare function m:f() { 1 };");
+    let ModuleBody::Library(decl, prolog) = &library.body else { panic!("{library:?}") };
+    assert_eq!((decl.prefix.as_str(), decl.uri.as_str(), prolog.declarations.len()), ("m", "urn:m", 1));
+    let main = module("import module namespace n = 'urn:n' at 'a', 'B'; n:f()");
+    let [Setup::Import(Import::Module(import))] = main.prolog().setup.as_slice() else { panic!("{main:?}") };
     assert_eq!(
-        module("declare namespace p = 'v'; declare boundary-space strip; declare default element namespace 'x'; 1").unsupported(),
-        None
+        (import.prefix.as_deref(), import.uri.as_str(), import.at.clone()),
+        (Some("n"), "urn:n", vec!["a".to_owned(), "B".to_owned()])
     );
     assert_eq!(module("1").prolog(), &Prolog::default());
 }

@@ -68,9 +68,8 @@ pub enum ModuleBody {
     /// `MainModule` [XQuery Appendix A.1 \[3\]]: a prolog, then the query
     /// body, an `Expr` \[30\].
     Main(Prolog, Expr),
-    /// `LibraryModule` \[4\]: a module declaration, then a prolog. The
-    /// Module Feature is not supported [XQuery §5.2], so a library module
-    /// is parsed and refused by `Module::unsupported`.
+    /// `LibraryModule` \[4\]: a module declaration, then a prolog; a
+    /// registered XQuery module [XQuery §5.2.5].
     Library(ModuleDecl, Prolog),
 }
 
@@ -218,9 +217,8 @@ pub enum InheritMode {
 }
 
 /// `Import` [XQuery Appendix A.1 \[8\]]. A schema import imports a
-/// registered XML Schema (`analyze/prolog.rs`); the Module Feature is not
-/// supported [XQuery §5.2], so a module import is parsed and refused by
-/// `Module::unsupported`.
+/// registered XML Schema (`analyze/import.rs`), a module import a
+/// registered XQuery module (`analyze/modules.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Import {
     /// `SchemaImport` \[21\] [XQuery §4.10].
@@ -320,20 +318,5 @@ impl Module {
         match &self.body {
             ModuleBody::Main(prolog, _) | ModuleBody::Library(_, prolog) => prolog,
         }
-    }
-
-    /// The static error \[XQuery\] requires of an implementation without
-    /// the Module Feature, which turborel does not support [XQuery §5.2],
-    /// if the module needs it: err:XQST0016 for a library module or a
-    /// module import [XQuery Appendix F].
-    #[must_use]
-    pub fn unsupported(&self) -> Option<crate::xquery::ErrorCode> {
-        if matches!(self.body, ModuleBody::Library(..)) {
-            return Some(crate::xquery::ErrorCode::XQST0016);
-        }
-        self.prolog().setup.iter().find_map(|setup| match setup {
-            Setup::Import(Import::Module(_)) => Some(crate::xquery::ErrorCode::XQST0016),
-            Setup::Import(Import::Schema(_)) | Setup::DefaultNamespace(_) | Setup::Setter(_) | Setup::Namespace(_) => None,
-        })
     }
 }

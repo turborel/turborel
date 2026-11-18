@@ -3982,9 +3982,9 @@ one precedence is one node, so a long chain makes no deep tree. The
 parser raises what the text alone shows, as SQLSTATE 10000, XQuery
 error, naming the XQuery error code: syntax errors (err:XPST0003), and
 the static errors of the prolog and of direct constructors' attributes
-that need no static context. A module import and a library module are
-parsed and refused, as turborel does not support the Module Feature; a
-schema import is analysed (`xquery/analyze/import.rs`).
+that need no static context. Imports are analysed with the static
+context: a schema import (`xquery/analyze/import.rs`) and a module
+import (`xquery/analyze/modules.rs`).
 
 The parser recurses, so its depth is bounded (R-CF-6): each
 `ExprSingle`, each direct element constructor and each operator's right
@@ -4313,6 +4313,44 @@ item type of an imported schema by its annotation, resolved in that
 schema as a node's is, and that schema's Type Derivation OK; a value of
 a built-in type derives from none of them; and against a built-in type
 by the built-in hierarchy of its built-in type.
+
+turborel supports the Module Feature [XQuery §5.2.5]. A library module is
+a registered XQuery module (`xquery::LibraryModule`), and a module import
+imports one module of its target namespace, the set of modules §4.11
+leaves to the implementation: of the main module, among the registered
+XQuery modules the current user may use; of a library module, among
+those it imported as it was registered (`LibraryModule::modules`), so a
+library module imports what it was analysed with, whoever imports it. Of
+these, the one whose location, or whose name, alone or qualified by its
+schema's, is a location hint, else the one of the least name; a library
+module importing its own target namespace imports another module of it.
+Each module is analysed in its own static context [§4.11]: the
+statement's namespaces and variables are the main module's alone, and a
+library module's schema imports and in-scope schema definitions are
+those it kept as it was registered (`LibraryModule::importable`,
+`schemas`). The functions and variables of every module of a query are
+one list each in its plan (`xquery/analyze/linked.rs`), so a call or a
+reference is a place in it whichever module declares what it names, and
+a module imported by several is analysed once; each declaration keeps its
+module, whose construction and copy-namespaces modes, default collation,
+base URI and in-scope schema definitions its evaluation reads
+(`plan::ModuleContext`). A module imports a library module's own
+functions and variables alone, as imports are not transitive. A
+namespace imported twice is err:XQST0047; one no module may be imported
+of err:XQST0059; a function or variable imported of the name, and of a
+function the arity, of one declared or imported err:XQST0034 or
+err:XQST0049; a library module's function or variable outside its target
+namespace err:XQST0048; an imported declaration of a schema type of no
+schema the importing module imports, by that schema or a type of that
+name, err:XQST0036; and a circularity through any module's declarations
+err:XQST0054. A module imports only modules registered before it, so the
+graph of imports has no cycle, and the cycles of modules of one namespace
+§4.11 allows do not arise; err:XQST0073 is raised of a cycle met, which
+no catalog turborel writes holds. Imports nest at most `MAX_IMPORT_DEPTH`,
+16, modules deep, each analysed within the one importing it (R-CF-6); a
+chain deeper is SQLCODE -900 (D18). A library module given as a query, or
+a main module registered as a library module, is err:XPST0003, as a
+query is a main module and a library module is no query [§4].
 
 Part 14 leaves how an XML Schema is registered to the implementation
 [ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an

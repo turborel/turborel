@@ -122,7 +122,7 @@ fn setters_are_declared_once() {
         assert_eq!(code(&format!("{twice}; declare namespace p = 'u'; {twice}; 1")), error, "{twice}");
         assert_eq!(written(&format!("{twice}; 1")), format!("{}; 1", twice.replace('\'', "\"")));
     }
-    assert!(module("declare default element namespace 'e'; declare default function namespace 'f'; 1").unsupported().is_none());
+    assert_eq!(module("declare default element namespace 'e'; declare default function namespace 'f'; 1").prolog().setup.len(), 2);
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] [XQuery §4.12] [XQuery

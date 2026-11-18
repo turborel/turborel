@@ -3,9 +3,8 @@
 //! themselves: a setter or default namespace declared twice, a prefix
 //! declared twice or as `xml` [XQuery §4.3 to §4.13], a version or
 //! encoding not supported [XQuery §4.1], a function's parameter named
-//! twice [XQuery §4.15]. Imports are parsed and refused by
-//! `Module::unsupported`, as turborel supports neither the Schema Import
-//! nor the Module Feature [XQuery §5.2].
+//! twice [XQuery §4.15]. Imports are analysed with the static context
+//! (`xquery/analyze/import.rs`, `xquery/analyze/modules.rs`).
 
 mod declarations;
 

@@ -149,14 +149,14 @@ impl Analysis<'_> {
     }
 
     /// A function call [XQuery §3.1.5]: an unprefixed name in the default
-    /// function namespace; a function the prolog declares, a constructor
-    /// function [XQuery §3.12.5], or one of the library, of its name and
-    /// arity \[err:XPST0017\].
+    /// function namespace; a function the prolog declares or imports
+    /// [XQuery §4.11], a constructor function [XQuery §3.12.5], or one of
+    /// the library, of its name and arity \[err:XPST0017\].
     fn call(&mut self, name: &Lexical, arguments: &[Expr]) -> Result<Op> {
         let expanded = self.scope.name(name, Unprefixed::Function)?;
         let arity = arguments.len();
         let mut compiled = self.all(arguments)?;
-        if let Some(at) = self.declared.iter().position(|(n, a)| n.same(&expanded) && *a == arity) {
+        if let Some(at) = self.declared.iter().find(|(n, a, _)| n.same(&expanded) && *a == arity).map(|(_, _, at)| *at) {
             self.scope.functions_called.insert(at);
             return Ok(Op::Call(Box::new(CallOp { callee: Callee::Declared(at), arguments: compiled })));
         }

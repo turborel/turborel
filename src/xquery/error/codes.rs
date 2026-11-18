@@ -50,9 +50,19 @@ impl ErrorCode {
     /// [XQuery Appendix F] A computed attribute is named in the namespace
     /// of `xmlns`, or `xmlns` in no namespace.
     pub const XQDY0044: ErrorCode = ErrorCode("XQDY0044");
+    /// [XQuery Appendix F] A module imported declares a variable or
+    /// function of a schema type the importing module's in-scope schema
+    /// types do not include.
+    pub const XQST0036: ErrorCode = ErrorCode("XQST0036");
     /// [XQuery Appendix F] A function is declared in a namespace reserved
     /// to XML, XML Schema or XQuery.
     pub const XQST0045: ErrorCode = ErrorCode("XQST0045");
+    /// [XQuery Appendix F] Two module imports of a prolog specify one target
+    /// namespace.
+    pub const XQST0047: ErrorCode = ErrorCode("XQST0047");
+    /// [XQuery Appendix F] A function or variable a library module declares
+    /// is not in its target namespace.
+    pub const XQST0048: ErrorCode = ErrorCode("XQST0048");
     /// [XQuery Appendix F] Two variables of a module have one expanded
     /// QName.
     pub const XQST0049: ErrorCode = ErrorCode("XQST0049");
@@ -77,6 +87,9 @@ impl ErrorCode {
     /// [XQuery Appendix F] A computed comment holds two adjacent hyphens
     /// or ends with one.
     pub const XQDY0072: ErrorCode = ErrorCode("XQDY0072");
+    /// [XQuery Appendix F] The graph of module imports has a cycle of
+    /// modules not all of one namespace.
+    pub const XQST0073: ErrorCode = ErrorCode("XQST0073");
     /// [XQuery Appendix F] A computed element or attribute's name is no
     /// expanded QName.
     pub const XQDY0074: ErrorCode = ErrorCode("XQDY0074");

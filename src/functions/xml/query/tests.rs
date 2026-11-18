@@ -23,6 +23,8 @@ fn evaluation(text: &str, context: bool) -> Evaluation {
         collations: &collations,
         schemas: Vec::new(),
         importable: Vec::new(),
+        modules: Vec::new(),
+        linked: Vec::new(),
     };
     let query = Arc::new(Query::compile(text, &env).unwrap());
     let now = Moment::parse("2026-11-17T10:30:00Z", Shape::DateTime).unwrap().unwrap();

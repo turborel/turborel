@@ -8,7 +8,8 @@
 //! namespace is the registered XML Schema of it the current user may use
 //! whose schema location is a location hint, else the one of the least
 //! name, a permanently registered one last; a schema imported brings the
-//! components of every namespace it has.
+//! components of every namespace it has. A library module imports among
+//! those it kept as it was registered (`LibraryModule::importable`).
 
 use std::sync::Arc;
 
@@ -30,8 +31,8 @@ impl Analysis<'_> {
     /// # Errors
     ///
     /// err:XQST0058 if the prolog imported the namespace before;
-    /// err:XQST0059 if no registered XML Schema the current user may use
-    /// has it; err:XQST0035 if an imported schema defines a name of it from
+    /// err:XQST0059 if no registered XML Schema the module may import has
+    /// it; err:XQST0035 if an imported schema defines a name of it from
     /// other schema documents than this one does.
     pub(super) fn import_schema(&mut self, import: &SchemaImport) -> Result<()> {
         let uri = import.uri.as_str();
@@ -41,8 +42,8 @@ impl Analysis<'_> {
                 &format!("the prolog imports the schema of target namespace '{uri}' twice [XQuery §4.10]"),
             ));
         }
-        let env = self.env;
-        let of = || env.importable.iter().filter(|s| s.namespace == uri);
+        let importable = self.own.importable;
+        let of = || importable.iter().filter(|s| s.namespace == uri);
         let Some(found) = of().find(|s| import.at.contains(&s.location)).or_else(|| of().next()).cloned() else {
             let why = format!("no registered XML Schema the current user may use has the target namespace '{uri}' [XQuery §4.10]");
             return Err(error(ErrorCode::XQST0059, &why));

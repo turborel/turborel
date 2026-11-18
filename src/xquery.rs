@@ -29,7 +29,9 @@
 //! [XQuery §2.2.3.2]; its types are `xquery/types.rs`'s, its collations
 //! `xquery/collation.rs`'s, the functions it calls a library of
 //! `XQueryFunction`s (`xquery/functions.rs`). A compiled query is a
-//! `Query`.
+//! `Query`. turborel supports the Module Feature [XQuery §5.2.5]: a
+//! library module is a registered XQuery module, analysed as it is
+//! registered (`library_module`) and with each query that imports it.
 
 mod analyze;
 mod ast;
@@ -48,7 +50,7 @@ mod plan;
 mod testing;
 mod types;
 
-pub use analyze::{EMPTY_ORDER, Environment, InScopeSchema};
+pub use analyze::{Analysed, EMPTY_ORDER, Environment, InScopeSchema, LibraryModule, MAX_IMPORT_DEPTH, library_module};
 pub use ast::{AddOp, Flwor, GeneralComp, MulOp, NodeComp, PreserveMode, SetOp, Sign, ValueComp};
 pub use ast::{
     AttributeTest, AttributeValuePart, AxisStep, BoundarySpace, CaseClause, Comparator, Comparison, ComputedName, Construction,
@@ -129,6 +131,13 @@ impl Query {
     #[must_use]
     pub fn imports(&self) -> &[String] {
         &self.0.imports
+    }
+
+    /// The names of the registered XQuery modules its prolog imports
+    /// [XQuery §4.11]; not those they import, which each keeps.
+    #[must_use]
+    pub fn modules(&self) -> &[String] {
+        &self.0.imported_modules
     }
 
     /// Its value, given `input` [XQuery §2.2.3.2].

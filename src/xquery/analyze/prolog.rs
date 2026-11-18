@@ -1,15 +1,17 @@
-//! A prolog analysed [XQuery §4]: its setters, namespace declarations and
-//! default namespace declarations changing the static context in order
-//! [XQuery §4.3 to §4.13], then its variables, functions and options
-//! declared [XQuery §4.14 to §4.16].
+//! A prolog analysed [XQuery §4]: its setters, namespace declarations,
+//! default namespace declarations and imports changing the static context
+//! in order [XQuery §4.3 to §4.13], then its variables, functions and
+//! options declared [XQuery §4.14 to §4.16].
 //!
 //! An initializing expression, and a function body, sees every function
-//! the prolog declares and only the variables declared before it [XQuery
-//! §4.14, §4.15]; so a variable's initializing expression depends on the
-//! variable only through functions, which the graph of what each reads and
-//! calls shows \[err:XQST0054\].
+//! the prolog declares or imports and only the variables declared or
+//! imported before it [XQuery §4.14, §4.15]; so a variable's initializing
+//! expression depends on the variable only through functions, which the
+//! graph of what each reads and calls shows \[err:XQST0054\]
+//! (`analyze/linked.rs`). A library module's functions and variables are
+//! in its target namespace \[err:XQST0048\] [XQuery §4.2].
 
-use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use super::super::ast::{
     BoundarySpace, Construction, Declaration, EmptyOrder, FunctionDecl, Import, InheritMode, NamespaceKind, Param, PreserveMode, Setter,
@@ -19,8 +21,9 @@ use super::super::collation::Collator;
 use super::super::error::{ErrorCode, error};
 use super::super::functions::FN_NAMESPACE;
 use super::super::plan::{Body, Function, Global, GlobalValue, Implementation, Op};
-use super::super::types::{SeqType, XDT_NAMESPACE};
+use super::super::types::{Defined, ItemKind, NodeKind, SchemaType, SeqType, XDT_NAMESPACE};
 use super::Analysis;
+use super::linked::{Exports, Reads};
 use super::scope::{Frame, Unprefixed, Var, display};
 use crate::error::Result;
 use crate::xml::{QName, XML_NAMESPACE, XS_NAMESPACE, XSI_NAMESPACE};
@@ -29,34 +32,12 @@ use crate::xml::{QName, XML_NAMESPACE, XS_NAMESPACE, XSI_NAMESPACE};
 /// \[err:XQST0045\].
 const RESERVED: [&str; 5] = [XML_NAMESPACE, XS_NAMESPACE, XSI_NAMESPACE, FN_NAMESPACE, XDT_NAMESPACE];
 
-/// What a variable or function of the prolog read and called, for the
-/// graph of dependencies \[err:XQST0054\].
-#[derive(Default)]
-struct Reads {
-    /// The globals its expression reads.
-    globals: BTreeSet<usize>,
-    /// The declared functions it calls.
-    functions: BTreeSet<usize>,
-}
-
-/// What the second part of a prolog declares, as it is analysed.
-struct Declared {
-    /// The globals, those passed in first.
-    globals: Vec<Global>,
-    /// What each global's initializing expression reads, none of one
-    /// passed in or external.
-    reads: Vec<Option<Reads>>,
-    /// The functions, each declared once its body is compiled.
-    functions: Vec<Function>,
-    /// What each function's body reads and calls.
-    calls: Vec<Reads>,
-    /// The place of the next function declared.
-    next: usize,
-}
-
 impl Analysis<'_> {
     /// The first part of a prolog applied to the static context, in order
-    /// [XQuery §4]; the parser has refused a setter declared twice.
+    /// [XQuery §4]; the parser has refused a setter declared twice. Once
+    /// it is, the schema types the modules imported declare their
+    /// functions and variables of are in its in-scope schema types
+    /// \[err:XQST0036\].
     pub(super) fn setup(&mut self, setup: &[Setup]) -> Result<()> {
         for item in setup {
             match item {
@@ -71,13 +52,10 @@ impl Analysis<'_> {
                 }
                 Setup::Setter(setter) => self.setter(setter)?,
                 Setup::Import(Import::Schema(import)) => self.import_schema(import)?,
-                // Refused by `Module::unsupported` before the analysis.
-                Setup::Import(Import::Module(_)) => {
-                    return Err(error(ErrorCode::XQST0016, "turborel does not support the Module Feature [XQuery §5.2]"));
-                }
+                Setup::Import(Import::Module(import)) => self.import_module(import)?,
             }
         }
-        Ok(())
+        self.imported_types()
     }
 
     /// `setter` applied [XQuery §4.3 to §4.9].
@@ -107,62 +85,70 @@ impl Analysis<'_> {
 
     /// The second part of a prolog [XQuery §4.14 to §4.16]: the functions
     /// declared first, as every body and initializing expression sees all
-    /// of them; then each declaration in order, after `globals`, those
-    /// passed in.
-    pub(super) fn declarations(&mut self, declarations: &[Declaration], globals: Vec<Global>) -> Result<(Vec<Global>, Vec<Function>)> {
-        let mut functions = Vec::new();
+    /// of them; then each declaration in order. What the module declares
+    /// itself, which a library module exports [XQuery §4.11].
+    pub(super) fn declarations(&mut self, declarations: &[Declaration]) -> Result<Exports> {
+        let mut own = Exports::default();
         for declaration in declarations {
             if let Declaration::Function(f) = declaration {
-                functions.push(self.signature(f)?);
+                let function = self.signature(f)?;
+                function.parameters.iter().chain([&function.result]).for_each(|t| defined_types(t, &mut own.types));
+                let (name, arity) = (function.name.clone(), function.parameters.len());
+                let place = self.linked.function(function);
+                self.declared.push((name.clone(), arity, place));
+                own.functions.push((name, arity, place));
             }
         }
-        let calls = functions.iter().map(|_| Reads::default()).collect();
-        let reads = globals.iter().map(|_| None).collect();
-        let mut declared = Declared { globals, reads, functions, calls, next: 0 };
+        let mut bodies = own.functions.iter().map(|(_, _, place)| *place).collect::<Vec<_>>().into_iter();
         for declaration in declarations {
-            self.declaration(declaration, &mut declared)?;
+            match declaration {
+                Declaration::Variable(v) => {
+                    let (global, read) = self.variable(v)?;
+                    global.declared.iter().for_each(|t| defined_types(t, &mut own.types));
+                    let name = global.name.clone();
+                    let place = self.linked.global(global, read);
+                    self.globals.push((name.clone(), place));
+                    own.globals.push((name, place));
+                }
+                Declaration::Function(f) => {
+                    let place = bodies.next();
+                    if let (Some(place), Some((body, read))) = (place, self.body(f)?) {
+                        self.linked.body(place, body, read);
+                    }
+                }
+                Declaration::Option(option) => {
+                    // [XQuery §4.16] no namespace is recognized as one of
+                    // options, so each is ignored once its name resolves.
+                    self.scope.name(&option.name, Unprefixed::None)?;
+                }
+            }
         }
-        circularity(&declared.globals, &declared.reads, &declared.calls)?;
-        Ok((declared.globals, declared.functions))
+        Ok(own)
     }
 
-    /// `declaration` analysed into `declared` [XQuery §4.14 to §4.16].
-    fn declaration(&mut self, declaration: &Declaration, declared: &mut Declared) -> Result<()> {
-        match declaration {
-            Declaration::Variable(v) => {
-                let (global, read) = self.variable(v)?;
-                declared.reads.push(read);
-                declared.globals.push(global);
-            }
-            Declaration::Function(f) => {
-                let at = declared.next;
-                declared.next = at.saturating_add(1);
-                let Some((body, read)) = self.body(f)? else { return Ok(()) };
-                if let Some(function) = declared.functions.get_mut(at) {
-                    function.implementation = Implementation::Body(body);
-                }
-                if let Some(slot) = declared.calls.get_mut(at) {
-                    *slot = read;
-                }
-            }
-            Declaration::Option(option) => {
-                // [XQuery §4.16] no namespace is recognized as one of
-                // options, so each is ignored once its name resolves.
-                self.scope.name(&option.name, Unprefixed::None)?;
-            }
+    /// [XQuery §4.2, §4.14, §4.15] The error if `name`, of a function or
+    /// variable a library module declares, is not in its target namespace
+    /// \[err:XQST0048\].
+    fn in_target(&self, name: &QName, what: &str) -> Result<()> {
+        let Some(target) = self.own.library.and_then(super::LibraryModule::namespace) else { return Ok(()) };
+        if name.uri.as_deref() == Some(target) {
+            return Ok(());
         }
-        Ok(())
+        let why = format!("the {what} {} is not in the target namespace {target} of its library module [XQuery §4.2]", display(name));
+        Err(error(ErrorCode::XQST0048, &why))
     }
 
     /// The function `f` declares, its body not yet compiled [XQuery §4.15]:
-    /// in a namespace \[err:XQST0060\], none reserved \[err:XQST0045\], no
-    /// other of its name and arity \[err:XQST0034\]; an external one the
-    /// library's of its name and arity.
+    /// in a namespace \[err:XQST0060\], a library module's target namespace
+    /// \[err:XQST0048\], none reserved \[err:XQST0045\], no other of its
+    /// name and arity declared or imported \[err:XQST0034\]; an external
+    /// one the library's of its name and arity.
     fn signature(&mut self, f: &FunctionDecl) -> Result<Function> {
         let name = self.scope.name(&f.name, Unprefixed::Function)?;
         let Some(uri) = name.uri.as_deref() else {
             return Err(error(ErrorCode::XQST0060, &format!("the function {} is declared in no namespace [XQuery §4.15]", f.name)));
         };
+        self.in_target(&name, "function")?;
         if RESERVED.contains(&uri) {
             return Err(error(
                 ErrorCode::XQST0045,
@@ -170,8 +156,8 @@ impl Analysis<'_> {
             ));
         }
         let arity = f.params.len();
-        if self.declared.iter().any(|(n, a)| n.same(&name) && *a == arity) || self.constructor(&name, arity) {
-            let why = format!("the function {} of {arity} parameters is declared twice [XQuery §4.15]", display(&name));
+        if self.declared.iter().any(|(n, a, _)| n.same(&name) && *a == arity) || self.constructor(&name, arity) {
+            let why = format!("the function {} of {arity} parameters is declared twice [XQuery §4.15, §4.11]", display(&name));
             return Err(error(ErrorCode::XQST0034, &why));
         }
         let parameters = f.params.iter().map(|p| self.declared_type(p.declared.as_ref())).collect::<Result<Vec<_>>>()?;
@@ -184,8 +170,7 @@ impl Analysis<'_> {
             let why = format!("no external function {} of {arity} parameters is registered [XQuery §4.15]", display(&name));
             return Err(error(ErrorCode::XPST0017, &why));
         };
-        self.declared.push((name.clone(), arity));
-        Ok(Function { name, parameters, result, implementation })
+        Ok(Function { name, parameters, result, implementation, module: self.module })
     }
 
     /// The type of what declares `declared`, `item()*` of none [XQuery
@@ -204,13 +189,14 @@ impl Analysis<'_> {
         Ok(Some((compiled, Reads { globals: frame.globals_read, functions: frame.functions_called })))
     }
 
-    /// The variable `v` declares [XQuery §4.14], no other of its name in
-    /// scope \[err:XQST0049\]; what its initializing expression reads and
-    /// calls.
+    /// The variable `v` declares [XQuery §4.14], of a library module in
+    /// its target namespace \[err:XQST0048\], no other of its name in scope
+    /// \[err:XQST0049\]; what its initializing expression reads and calls.
     fn variable(&mut self, v: &VarDecl) -> Result<(Global, Option<Reads>)> {
         let name = self.scope.name(&v.name, Unprefixed::None)?;
-        if self.globals.iter().any(|g| g.same(&name)) {
-            return Err(error(ErrorCode::XQST0049, &format!("the variable ${} is declared twice [XQuery §4.14]", display(&name))));
+        self.in_target(&name, "variable")?;
+        if self.globals.iter().any(|(g, _)| g.same(&name)) {
+            return Err(error(ErrorCode::XQST0049, &format!("the variable ${} is declared twice [XQuery §4.14, §4.11]", display(&name))));
         }
         let declared = v.declared.as_ref().map(|t| self.sequence_type(t)).transpose()?;
         let (value, read) = match &v.value {
@@ -220,15 +206,14 @@ impl Analysis<'_> {
             }
             None => (GlobalValue::Missing, None),
         };
-        self.globals.push(name.clone());
-        Ok((Global { name, declared, value }, read))
+        Ok((Global { name, declared, value, module: self.module }, read))
     }
 
-    /// `compile` run in a new frame: the globals declared so far in scope,
-    /// and `params` bound to its first slots; its body and what it read
-    /// and called.
+    /// `compile` run in a new frame: the globals in scope so far, and
+    /// `params` bound to its first slots; its body and what it read and
+    /// called.
     pub(super) fn frame(&mut self, params: &[QName], compile: impl FnOnce(&mut Self) -> Result<Op>) -> Result<(Body, Frame)> {
-        let mut variables: Vec<(QName, Var)> = self.globals.iter().enumerate().map(|(at, g)| (g.clone(), Var::Global(at))).collect();
+        let mut variables: Vec<(QName, Var)> = self.globals.iter().map(|(g, at)| (g.clone(), Var::Global(*at))).collect();
         let saved = self.scope.begin_frame(Vec::new());
         for name in params {
             let slot = self.scope.slot();
@@ -243,34 +228,18 @@ impl Analysis<'_> {
     }
 }
 
-/// [XQuery §4.14] The error if a variable's initializing expression
-/// depends on the variable itself, through the functions it calls, those
-/// they call, and the variables they read \[err:XQST0054\].
-fn circularity(globals: &[Global], reads: &[Option<Reads>], calls: &[Reads]) -> Result<()> {
-    for (at, global) in globals.iter().enumerate() {
-        let Some(Some(start)) = reads.get(at) else { continue };
-        if reaches(start, at, reads, calls) {
-            let why = format!("the initializing expression of ${} depends on it [XQuery §4.14]", display(&global.name));
-            return Err(error(ErrorCode::XQST0054, &why));
-        }
+/// Adds to `into` each type definition of an imported schema `t` names, as
+/// the type of an element's or an attribute's annotation, each once.
+fn defined_types(t: &SeqType, into: &mut Vec<Arc<Defined>>) {
+    let SeqType::Of(ItemKind::Node(kind), _) = t else { return };
+    let annotation = match kind {
+        NodeKind::Element(e) | NodeKind::Document(Some(e)) => e.annotation.as_ref(),
+        NodeKind::Attribute(a) => a.annotation.as_ref(),
+        NodeKind::Any | NodeKind::Document(None) | NodeKind::Pi(_) | NodeKind::Comment | NodeKind::Text => None,
+    };
+    if let Some(SchemaType::Defined(d)) = annotation
+        && !into.iter().any(|known| known == d)
+    {
+        into.push(Arc::clone(d));
     }
-    Ok(())
-}
-
-/// Whether what `start` reads and calls reads the `target`th global, at
-/// any remove: a walk of the graph, each global and function once, so it
-/// ends.
-fn reaches(start: &Reads, target: usize, reads: &[Option<Reads>], calls: &[Reads]) -> bool {
-    let (mut seen_globals, mut seen_functions) = (BTreeSet::new(), BTreeSet::new());
-    let mut left: Vec<&Reads> = vec![start];
-    while let Some(next) = left.pop() {
-        if next.globals.contains(&target) {
-            return true;
-        }
-        let globals = next.globals.iter().filter(|g| seen_globals.insert(**g)).filter_map(|g| reads.get(*g).and_then(Option::as_ref));
-        let functions = next.functions.iter().filter(|f| seen_functions.insert(**f)).filter_map(|f| calls.get(*f));
-        let more: Vec<&Reads> = globals.chain(functions).collect();
-        left.extend(more);
-    }
-    false
 }

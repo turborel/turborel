@@ -33,6 +33,8 @@ fn statement_namespaces() {
         collations: &collations,
         schemas: Vec::new(),
         importable: Vec::new(),
+        modules: Vec::new(),
+        linked: Vec::new(),
     };
     assert!(Query::compile("<p:a/>, <b/>", &env).is_ok());
     assert!(Query::compile("xs:integer('1')", &env).is_err(), "xs is bound to another namespace");
@@ -46,7 +48,7 @@ fn statement_namespaces() {
 /// an unbound prefix err:XPST0081, an undefined variable err:XPST0008, an
 /// unknown function err:XPST0017, a pragma unrecognized of no expression
 /// err:XQST0079, a schema element test err:XPST0008, a schema import of
-/// no registered XML Schema err:XQST0059, a module import err:XQST0016.
+/// no registered XML Schema err:XQST0059.
 #[test]
 fn static_errors() {
     assert_eq!(code_of("q:f()"), "err:XPST0081");
@@ -59,15 +61,17 @@ fn static_errors() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQuery §2.5.4.3,
-/// §2.5.4.4, §4.16, §5.2, §3.12.3] the static errors of types,
-/// imports, modules and options.
+/// §2.5.4.4, §4.16, §4.11, §4, §3.12.3] the static errors of types,
+/// imports, modules and options: an import of a namespace no registered
+/// schema or module has err:XQST0059, a library module as a query
+/// err:XPST0003.
 #[test]
 fn static_errors_of_types_and_prologs() {
     assert_eq!(code_of("1 instance of schema-element(a)"), "err:XPST0008");
     assert_eq!(code_of("1 instance of element(a, xs:nosuch)"), "err:XPST0008");
     assert_eq!(code_of("import schema 'u'; 1"), "err:XQST0059");
-    assert_eq!(code_of("import module 'u'; 1"), "err:XQST0016");
-    assert_eq!(code_of("module namespace m = 'u';"), "err:XQST0016");
+    assert_eq!(code_of("import module 'u'; 1"), "err:XQST0059");
+    assert_eq!(code_of("module namespace m = 'u';"), "err:XPST0003");
     assert_eq!(code_of("declare option q:o 'v'; 1"), "err:XPST0081");
     assert_eq!(run("declare option xs:o 'v'; 1"), "1");
     assert_eq!(code_of("1 cast as xs:NOTATION"), "err:XPST0080");

@@ -353,7 +353,7 @@ pub const XQUERY_FUNCTIONS: [Mutation; 37] = [
         package: Package::Core,
         breaks: "construction mode preserve makes an element `xdt:untyped`",
         file: "src/xquery/eval/construct.rs",
-        original: "match builder.current().filter(|_| self.plan.settings.preserve) {",
+        original: "match builder.current().filter(|_| self.module_context().settings.preserve) {",
         replacement: "match builder.current().filter(|_| false) {",
         integration: &[
             "xml_query::construction_modes_annotate_elements_3_7_1_3",

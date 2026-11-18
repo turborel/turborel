@@ -108,6 +108,8 @@ impl Binder<'_> {
             collations: &self.db.collations,
             schemas: in_scope.iter().map(|(_, s)| s.clone()).collect(),
             importable: importable.iter().map(|(_, s)| s.clone()).collect(),
+            modules: Vec::new(),
+            linked: Vec::new(),
         };
         let query = Query::compile(text, &env)?;
         if let Some(noted) = self.invoked {

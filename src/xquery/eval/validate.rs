@@ -42,7 +42,8 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The registered XML Schema of the in-scope schema definitions whose
+    /// The registered XML Schema of the in-scope schema definitions of the
+    /// module being evaluated [XQuery §4.11] whose
     /// target namespace is the namespace of the element `node` validates:
     /// itself, or of a document node its first element child; none if
     /// there is no such element or schema.
@@ -54,7 +55,7 @@ impl Evaluator<'_> {
             Some(Kind::Attribute | Kind::Text | Kind::Comment | Kind::ProcessingInstruction) | None => return None,
         };
         let namespace = tree.name(element).and_then(|n| n.uri.as_deref()).unwrap_or_default();
-        self.plan.schemas.iter().find(|s| s.namespace == namespace)
+        self.module_context().schemas.iter().find(|s| s.namespace == namespace)
     }
 }
 

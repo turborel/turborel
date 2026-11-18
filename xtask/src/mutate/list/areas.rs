@@ -104,7 +104,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
     ];
-    let xml: [&'static [Mutation]; 14] = [
+    let xml: [&'static [Mutation]; 15] = [
         &super::hash::HASH,
         &super::xquery::XQUERY,
         &super::xquery_functions::XQUERY_FUNCTIONS,
@@ -118,6 +118,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::short_names::SHORT_NAMES,
         &super::information::INFORMATION,
         &super::xml_scoped::XML_SCOPED,
+        &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
     let last: [&'static [Mutation]; 9] = [

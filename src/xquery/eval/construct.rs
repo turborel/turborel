@@ -79,7 +79,7 @@ impl Evaluator<'_> {
     ///
     /// SQLCODE -900 if the tree would be too big.
     fn annotated(&self, builder: &mut Builder) -> Result<()> {
-        match builder.current().filter(|_| self.plan.settings.preserve) {
+        match builder.current().filter(|_| self.module_context().settings.preserve) {
             Some(element) => builder.annotate(element, &Annotation::any_type(), (false, false, false)),
             None => Ok(()),
         }
@@ -87,7 +87,7 @@ impl Evaluator<'_> {
 
     /// How a node of an enclosed expression is copied [XQuery §3.7.1.3].
     fn copying(&self) -> Copying {
-        let s = &self.plan.settings;
+        let s = &self.module_context().settings;
         let construction = if s.preserve { Construction::Preserve } else { Construction::Strip };
         Copying { construction, preserve: s.copy_preserve, inherit: s.copy_inherit }
     }

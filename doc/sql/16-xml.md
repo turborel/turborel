@@ -667,10 +667,12 @@ expressions ([below](#the-validate-expression)), and a prolog's
 namespaces, setters, variables and functions, recursive ones too. Static
 typing is not done, so a type error is found as the query is evaluated.
 
-Library modules and module imports are not supported (error
-`err:XQST0016`). A prolog may import a registered XML Schema
+A prolog may import a registered XML Schema
 ([below](#schema-imports)), whose types and declarations a query then
-names.
+names. A module import imports a registered XQuery module of its target
+namespace, a library module; none is registered yet, so each is refused
+with `err:XQST0059`. A library module given as a query is refused with
+`err:XPST0003`, as a query is a main module.
 
 An element a query constructs has the type annotation `xs:anyType`, and
 an element it copies keeps its own, a validated element its type; after

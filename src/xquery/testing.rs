@@ -114,6 +114,8 @@ pub(super) fn compile_in(text: &str, variables: &[&str], library: &Library) -> R
         collations: &collations,
         schemas: Vec::new(),
         importable: Vec::new(),
+        modules: Vec::new(),
+        linked: Vec::new(),
     };
     Query::compile(text, &env)
 }

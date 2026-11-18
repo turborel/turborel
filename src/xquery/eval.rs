@@ -8,6 +8,9 @@
 //! expressions that bind variables in `eval/flwor.rs`; sequence types,
 //! casts and function calls in `eval/types.rs` and `eval/call.rs`;
 //! constructors in `eval/construct.rs`; and validate in `eval/validate.rs`.
+//! Each module has its own static context [XQuery §4.11], so the
+//! evaluation reads the settings and in-scope schema definitions of the
+//! module whose function body or initializing expression it is in.
 //!
 //! \[DESIGN\] RULES.md R-CF-6, D44, D106: the evaluation recurses as the
 //! plan nests and as functions call functions, one level each operation
@@ -32,7 +35,7 @@ use std::rc::Rc;
 
 use super::error::{ErrorCode, beyond, error};
 use super::functions::QueryContext;
-use super::plan::{Op, Plan};
+use super::plan::{ModuleContext, Op, Plan};
 use crate::error::Result;
 use crate::xml::{Item, Moment, Sequence};
 
@@ -130,6 +133,9 @@ struct Evaluator<'q> {
     /// The focus of the query body and the prolog's initializing
     /// expressions.
     initial: Focus,
+    /// The module whose body or initializing expression is being
+    /// evaluated, as `Plan::context` numbers them.
+    module: Cell<usize>,
 }
 
 /// A level of the evaluation's depth, given back as it is dropped.
@@ -141,6 +147,16 @@ impl Drop for Deeper<'_> {
     }
 }
 
+/// The module the evaluation was in before it entered another's
+/// declaration, made current again as it is dropped.
+struct Within<'a>(&'a Cell<usize>, usize);
+
+impl Drop for Within<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.1);
+    }
+}
+
 /// The value of `plan` given `input` [XQuery §2.2.3.2]: its body
 /// evaluated with the context item passed as its focus, at position 1 of
 /// 1 [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii 2 B II].
@@ -148,9 +164,9 @@ pub(super) fn evaluate(plan: &Plan, input: Input<'_>) -> Result<Sequence> {
     let context = QueryContext {
         now: input.now,
         timezone: input.timezone,
-        collation: &plan.settings.collation,
+        collation: &plan.main.settings.collation,
         collations: &plan.collations,
-        base_uri: plan.settings.base_uri.as_deref(),
+        base_uri: plan.main.settings.base_uri.as_deref(),
         interrupted: input.interrupted,
     };
     let evaluator = Evaluator {
@@ -161,6 +177,7 @@ pub(super) fn evaluate(plan: &Plan, input: Input<'_>) -> Result<Sequence> {
         depth: Cell::new(0),
         constructed: Cell::new(0),
         initial: input.context_item.map_or_else(Focus::default, |item| Focus::of(item, 1, 1)),
+        module: Cell::new(0),
     };
     let mut frame = Frame::new(plan.body.slots);
     evaluator.eval(&plan.body.op, &mut frame, &evaluator.initial).map(Sequence::new)
@@ -180,6 +197,17 @@ impl Evaluator<'_> {
     /// The error if the statement was cancelled (RULES.md D44).
     fn check(&self) -> Result<()> {
         (self.context.interrupted)()
+    }
+
+    /// The static context of the module being evaluated [XQuery §4.11].
+    fn module_context(&self) -> &ModuleContext {
+        self.plan.context(self.module.get())
+    }
+
+    /// The `module`th module made the one being evaluated, until what this
+    /// gives is dropped.
+    fn within(&self, module: usize) -> Within<'_> {
+        Within(&self.module, self.module.replace(module))
     }
 
     /// The value of `op` in `frame` and `focus` [XQuery §3].

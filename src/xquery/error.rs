@@ -84,12 +84,9 @@ impl ErrorCode {
     /// [XQuery Appendix F] Two schema imports of a prolog specify one target
     /// namespace.
     pub const XQST0058: ErrorCode = ErrorCode("XQST0058");
-    /// [XQuery Appendix F] No schema of the target namespace a schema or
-    /// module import specifies is found.
+    /// [XQuery Appendix F] No schema or module of the target namespace a
+    /// schema or module import specifies is found.
     pub const XQST0059: ErrorCode = ErrorCode("XQST0059");
-    /// [XQuery Appendix F] A module is a library module or imports one,
-    /// and the implementation does not support the Module Feature.
-    pub const XQST0016: ErrorCode = ErrorCode("XQST0016");
 
     /// The code as Appendix F prints it, without its prefix.
     #[must_use]

@@ -96,6 +96,7 @@ mod xml_scoped;
 mod xquery;
 mod xquery_eval;
 mod xquery_functions;
+mod xquery_modules;
 mod zones;
 
 pub use self::{vr::VR, waits::WAITS, zones::ZONES};
