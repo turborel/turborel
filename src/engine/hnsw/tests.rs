@@ -14,6 +14,7 @@ use crate::memory::MemoryBudget;
 
 mod changes;
 mod persistence;
+mod reach;
 
 /// A pager file of 8 KiB pages in memory, in a pool of its own.
 pub(crate) fn pages(budget: &Arc<MemoryBudget>) -> (Arc<BufferPool>, FileId) {

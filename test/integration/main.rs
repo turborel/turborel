@@ -5,6 +5,7 @@
 //!
 //! A panic is how a test reports failure, so test code may unwrap, index and
 //! panic (RULES.md R-ERR-1 applies to production code only).
+
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -107,6 +108,7 @@ mod embedding_queue;
 mod embedding_sources;
 mod encodings;
 mod engine_settings;
+mod expression_indexes;
 mod expressions;
 mod extension_types;
 mod failures;
@@ -141,8 +143,12 @@ mod intervals;
 mod isolation;
 mod joined_tables;
 mod joins;
+mod json_conformance;
 mod json_constructors;
 mod json_functions;
+mod json_index;
+mod json_table;
+mod json_type;
 mod kept_plans;
 mod language;
 mod language_collations;
@@ -309,10 +315,12 @@ mod unnest;
 mod user_casts;
 mod users;
 mod varying;
+mod vector_hybrid;
 mod vector_indexes;
 mod vector_operators;
 mod vector_pipelines;
 mod vector_search;
+mod vectors;
 mod views;
 mod warnings;
 mod width_bucket;

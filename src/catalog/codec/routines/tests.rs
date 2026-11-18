@@ -21,6 +21,7 @@ fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> Sql
     let parameter = |n: &str, mode| SqlParameter { name: n.into(), data_type: numeric(), mode, generic: None };
     SqlRoutineDesc {
         method: None,
+        distance: None,
         name: name("F"),
         specific: name("F_1"),
         kind,

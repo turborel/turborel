@@ -13,11 +13,13 @@ use super::alter::value_of;
 use super::indexes::IndexSpec;
 use super::{Completion, Session, State};
 use crate::ast::{IndexMaintenance, IndexStatement, TableOptionValue};
-use crate::binder::qualify;
-use crate::catalog::{IndexDesc, QualifiedName};
+use crate::binder::{bind_key, qualify};
+use crate::catalog::{IndexDesc, QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlError, fail};
-use crate::index::BTREE_METHOD;
 use crate::index::fulltext::RANKING_OPTION;
+use crate::index::{BTREE_METHOD, HASH_METHOD};
+use crate::parser::Parser;
+use crate::settings::FUNCTION_CALLS;
 use crate::storage::chosen;
 use crate::value::Value;
 
@@ -27,6 +29,27 @@ const MOST_MERGE_ROUNDS: usize = 1 << 16;
 /// A Syntax Rule of this extension broken (SQLCODE -103).
 fn refused(message: &str) -> SqlError {
     SqlError::new(Code::SyntaxRule, format!("[EXTENSION] {message}"))
+}
+
+/// \[EXTENSION\] That the key parts `expressions` of index `name` on
+/// `desc`, by `method`, are admitted (RULES.md D92): each binds
+/// over the table's row and can raise nothing, and only a btree or a hash
+/// index has one. An error is at the expression.
+///
+/// # Errors
+///
+/// SQLCODE -103 if one is not admitted, or the method is another.
+fn admitted(st: &State, (desc, name): (&TableDesc, &str), method: &str, expressions: &[(usize, String, usize)]) -> Result<()> {
+    for (_, text, at) in expressions {
+        if method != BTREE_METHOD && method != HASH_METHOD {
+            let message = format!("a {method} index has no key part that is an expression, only btree and hash do (RULES.md D92)");
+            return Err(refused(&message)).or_at(*at);
+        }
+        // A key part is read as the statement wrote it (RULES.md D74).
+        let _calls = Parser::refusing_calls(text, st.settings.is_on(FUNCTION_CALLS));
+        bind_key(st, desc, (name, text)).or_at(*at)?;
+    }
+    Ok(())
 }
 
 impl Session {
@@ -46,7 +69,7 @@ impl Session {
             );
         }
         match stmt {
-            IndexStatement::Create { name: (name, name_at), table, columns, storage } => {
+            IndexStatement::Create { name: (name, name_at), table, columns, expressions, storage } => {
                 let qn = qualify(table, &self.default_schema());
                 self.owns(st, &qn)?;
                 let desc = st.catalog.table(&qn).ok_or_else(|| refused(&format!("{qn} is not a base table"))).or_at(table.at)?;
@@ -63,8 +86,13 @@ impl Session {
                     return Err(refused(&format!("an index named {name} already exists"))).or_at(*name_at);
                 }
                 let options = options_of(st, &method, &storage.options)?;
+                admitted(st, (desc, name), &method, expressions)?;
                 let columns = columns.iter().map(|(c, _)| c.clone()).collect();
-                let spec = IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls: false };
+                let expressions = expressions.iter().map(|(part, text, _)| (*part, text.clone())).collect();
+                // A hybrid index holds keys with a null, each part the value of
+                // its own column (`index/vector/hybrid/index.rs`).
+                let nulls = method == crate::index::vector::hybrid::HYBRID_METHOD;
+                let spec = IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls, expressions };
                 self.db.noted(self.db.make_index(&spec))?;
             }
             IndexStatement::Drop { name: (name, at) } => {

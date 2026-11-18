@@ -44,6 +44,7 @@ use crate::value::{SqlType, Value};
 
 pub use aggregate::{Aggregate, aggregates};
 pub use build::Vector;
+pub(crate) use builtin::is_built_in;
 pub use float::{half, half_bits, integral, single};
 pub use functions::{functions, functions_with};
 pub use kind::{VECTOR, VECTOR_KIND, VectorType, data_type, kind};

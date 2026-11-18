@@ -31,6 +31,7 @@ mod decfloat;
 pub(crate) mod distinct;
 mod exact;
 pub(crate) mod interval;
+mod json;
 pub(crate) mod lob;
 pub(crate) mod multiset;
 pub(crate) mod reference;
@@ -53,6 +54,7 @@ pub use decfloat::{DECFLOAT, DECFLOAT_NAME, DecFloatKind};
 pub use distinct::{DISTINCT, DistinctKind, DistinctType, USER_DEFINED_NAME};
 pub use exact::{BIGINT_NAME, EXACT, Exact};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
+pub use json::{JSON, JSON_NAME, JsonKind};
 pub use lob::{BLOB, BLOB_NAME, CLOB, CLOB_NAME, LARGE_NAME, LobType, NCLOB_NAME, OBJECT_NAME};
 pub use multiset::{MAX_MULTISET_CARDINALITY, MULTISET, MULTISET_NAME, MultisetKind, MultisetType};
 pub use reference::{REF_NAME, REF_OCTETS, REFERENCE, RefType, ReferenceKind};
@@ -206,6 +208,31 @@ pub trait SqlType: Send + Sync + fmt::Debug {
             return Ok(());
         }
         Err(SqlError::new(Code::SyntaxRule, format!("[DESIGN] the type {} takes no parameters", self.name())))
+    }
+
+    /// \[EXTENSION\] The number a word, or `*`, written as parameter `at`
+    /// (from 0) of a type of it stands for, if it takes one there (RULES.md
+    /// D53): the word upper case, as read. Default: none, a kind taking
+    /// unsigned integers alone.
+    fn param_word(&self, _at: usize, _word: &str) -> Option<u32> {
+        None
+    }
+
+    /// \[EXTENSION\] The parameters a type of it keeps of those written,
+    /// each a number or as `param_word` gave it: at most `MAX_PARAMS`,
+    /// which `check_params` is then given. None if no type of it is
+    /// written so. Default: as written.
+    fn pack_params(&self, written: &[u32]) -> Option<Vec<u32>> {
+        Some(written.to_vec())
+    }
+
+    /// \[EXTENSION\] Whether its values are ordered and grouped: compared
+    /// by `<`, `=` and the rest, sorted, grouped, made distinct and keyed.
+    /// A kind that says not keeps `compare` for its own use alone, and the
+    /// binder refuses every ordering, grouping and key of a type of it.
+    /// Default: ordered.
+    fn ordered(&self) -> bool {
+        true
     }
 
     /// Appends `t`'s parameters to `out`, which `params` reads back.
@@ -395,6 +422,7 @@ impl DataType {
             DataType::Distinct(_) => &DISTINCT,
             DataType::Structured(_) => &STRUCTURED,
             DataType::Reference(_) => &REFERENCE,
+            DataType::Json => &JSON,
             DataType::Extension(e) => *e.kind,
         }
     }
@@ -425,7 +453,8 @@ impl DataType {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Structured(_)
-            | DataType::Reference(_) => self.kind().encode_record(v, self),
+            | DataType::Reference(_)
+            | DataType::Json => self.kind().encode_record(v, self),
             DataType::Exact { .. } => EXACT.encode_record(v, self),
             DataType::Approximate { .. } => APPROXIMATE.encode_record(v, self),
             DataType::DecFloat { .. } => DECFLOAT.encode_record(v, self),
@@ -451,7 +480,8 @@ impl DataType {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Structured(_)
-            | DataType::Reference(_) => self.kind().decode_record(field, self),
+            | DataType::Reference(_)
+            | DataType::Json => self.kind().decode_record(field, self),
             DataType::Exact { .. } => EXACT.decode_record(field, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_record(field, self),
             DataType::DecFloat { .. } => DECFLOAT.decode_record(field, self),
@@ -481,7 +511,8 @@ impl DataType {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Structured(_)
-            | DataType::Reference(_) => self.kind().encode_key(v, self, out),
+            | DataType::Reference(_)
+            | DataType::Json => self.kind().encode_key(v, self, out),
             DataType::Exact { .. } => EXACT.encode_key(v, self, out),
             DataType::Approximate { .. } => APPROXIMATE.encode_key(v, self, out),
             DataType::DecFloat { .. } => DECFLOAT.encode_key(v, self, out),
@@ -511,7 +542,8 @@ impl DataType {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Structured(_)
-            | DataType::Reference(_) => self.kind().decode_key(rest, self),
+            | DataType::Reference(_)
+            | DataType::Json => self.kind().decode_key(rest, self),
             DataType::Exact { .. } => EXACT.decode_key(rest, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_key(rest, self),
             DataType::DecFloat { .. } => DECFLOAT.decode_key(rest, self),
@@ -543,6 +575,7 @@ impl Value {
             Value::Row(_) => Some(&ROW),
             Value::Structured(_) => Some(&STRUCTURED),
             Value::Reference(_) => Some(&REFERENCE),
+            Value::Json(_) => Some(&JSON),
             Value::Extension(e) => Some(e.kind),
         }
     }

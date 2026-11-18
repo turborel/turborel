@@ -116,7 +116,7 @@ pub fn parse_path(text: &str, now: Clocked<'_>) -> Result<Path> {
     if parser.peek().is_some() {
         return Err(parser.expected(END));
     }
-    Ok(Path { mode, expr: expr.node })
+    Ok(Path { mode, expr: expr.node, zone: parser.now.zone() })
 }
 
 impl Parser<'_> {
@@ -149,7 +149,8 @@ impl Parser<'_> {
 
     /// Whether the special symbol `symbol` is next.
     fn is(&self, symbol: Symbol) -> bool {
-        matches!(self.peek(), Some(Token::Symbol(s)) if *s == symbol)
+        let Some(Token::Symbol(next)) = self.peek() else { return false };
+        *next == symbol
     }
 
     /// Whether `symbol` is next, taken if it is.
@@ -169,7 +170,8 @@ impl Parser<'_> {
 
     /// Whether the identifier `word` is next.
     fn is_word(&self, word: &str) -> bool {
-        matches!(self.peek(), Some(Token::Identifier(name)) if name == word)
+        let Some(Token::Identifier(name)) = self.peek() else { return false };
+        name == word
     }
 
     /// Whether the identifier `word` is next, taken if it is.
@@ -345,7 +347,9 @@ impl Parser<'_> {
             Some(Token::Identifier(name)) => self.key_or_method(name, at),
             Some(Token::String(key)) => Ok(Accessor::Member(key)),
             Some(Token::Symbol(Symbol::Asterisk)) => Ok(Accessor::AnyMember),
-            other @ (Some(Token::Symbol(_) | Token::Number(..)) | None) => Err(syntax(at, AFTER_PERIOD, &shown(other.as_ref()))),
+            other @ Some(Token::Symbol(_)) | other @ Some(Token::Number(..)) | other @ None => {
+                Err(syntax(at, AFTER_PERIOD, &shown(other.as_ref())))
+            }
         }
     }
 

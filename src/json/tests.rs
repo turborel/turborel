@@ -90,10 +90,8 @@ fn objects_are_equivalent_whatever_their_members_order() {
 /// Verifies: [ISO/IEC 9075-2:2023 §4.48.3] the bijection of
 /// objects with members of one key: each member is paired with one member
 /// only, so {a:1, a:1} is not {a:1, a:2}, and {a:1, a:2} is {a:2, a:1}.
-/// MC/DC of `*used || member.key != other.key` in `paired`: a member of
-/// the key already taken is passed over, and one not taken is tried
-/// ({a:1, a:1} against {a:1, a:2}); one of another key, not taken, is
-/// passed over (`objects_are_equivalent_whatever_their_members_order`).
+/// The pairing is found by the items' comparison keys, members ordered by
+/// key and value (`binary::document_key`), so it needs no transitivity.
 #[test]
 fn members_of_one_key_pair_one_to_one() {
     let twice = object(&[("a", number(1, 0)), ("a", number(1, 0))]);

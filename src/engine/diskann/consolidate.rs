@@ -31,9 +31,10 @@ pub(super) const SAMPLE: usize = 65_536;
 const MEDOID_LIST: usize = 32;
 
 impl DiskAnn {
-    /// Whether maintenance has work: consolidation, or codes to train.
+    /// Whether maintenance has work: consolidation, codes to train, or
+    /// the hot-node cache to make again.
     pub fn maintenance_due(&self) -> bool {
-        self.consolidation_due() || self.training_due()
+        self.consolidation_due() || self.training_due() || self.cache_due()
     }
 
     fn consolidation_due(&self) -> bool {
@@ -58,10 +59,15 @@ impl DiskAnn {
         if self.training_due() {
             let sample = self.sample(SAMPLE)?;
             self.train(&sample)?;
+            self.refresh_cache()?;
             return Ok(true);
         }
         if self.consolidation_due() {
             self.consolidate()?;
+            return Ok(true);
+        }
+        if self.cache_due() {
+            self.refresh_cache()?;
             return Ok(true);
         }
         Ok(false)

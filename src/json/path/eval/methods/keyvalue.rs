@@ -7,16 +7,23 @@
 //! deleted, as the wildcard member accessor deletes none; (US040) the
 //! members are taken in the order they are kept. The `id` of the members of
 //! an object Ij, "an implementation-defined exact numeric value of scale 0
-//! (zero) that uniquely identifies Ij" \[VIII 1 c i\], is \[DESIGN\] its
-//! place in the base, counted from 0: unique among the objects of one
-//! `keyvalue()`, not among those of two.
+//! (zero) that uniquely identifies Ij" \[VIII 1 c i\], is \[DESIGN\] the
+//! evaluator's identity of it (`eval.rs`, `Identity`): its place in the
+//! context item, or a variable, counted from 0, each item before those
+//! within it, so an object of theirs has one `id` however the accessors
+//! reach it, and two objects have two. An object the path made, the
+//! objects `keyvalue()` gives and the values copied into them among them,
+//! has an `id` past every place, a new one each time.
 //!
 //! As printed, \[VIII 1 c vi\] defines OBJh, 1 ≤ h ≤ q, of Ki and BVi; the
 //! key and the bound value of the h-th member are meant.
 
-use super::super::{count, exception};
+use std::borrow::Cow;
+
+use super::super::exception;
 use crate::error::{Result, SqlState};
 use crate::json::{Item, Member};
+use crate::value::Decimal;
 
 // [§9.46 GR11g ii 6 C VIII 1 c vi] The keys of the members of each object
 // `keyvalue()` gives.
@@ -28,21 +35,22 @@ const VALUE: &str = "value";
 const ID: &str = "id";
 
 /// [§9.46 GR11g ii 6 C VIII] `keyvalue()` of each item of `base`: the
-/// objects of the members of each, in turn.
+/// objects of the members of each, in turn, of `identity` the `id` of
+/// each object.
 ///
 /// # Errors
 ///
 /// SQLSTATE 2203C if an item is no object \[VIII 1 a\], in either mode.
-pub(super) fn keyvalue(base: &[Item]) -> Result<Vec<Item>> {
+pub(super) fn keyvalue(base: &[Cow<'_, Item>], identity: impl Fn(&Cow<'_, Item>) -> u64) -> Result<Vec<Item>> {
     let mut pairs = Vec::new();
-    for (place, each) in base.iter().enumerate() {
+    for each in base {
         let Some(members) = each.as_object() else {
             return Err(exception(
                 SqlState::SQL_JSON_OBJECT_NOT_FOUND,
                 "[ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VIII 1 a] an SQL/JSON item of keyvalue() is not an object",
             ));
         };
-        let id = count(place);
+        let id = Item::Scalar(Decimal::new(i128::from(identity(each)), 0).into());
         pairs.extend(members.iter().map(|member| {
             Item::Object(vec![
                 Member { key: KEY.to_owned(), value: Item::Scalar(member.key.clone().into()) },

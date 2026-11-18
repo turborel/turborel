@@ -36,8 +36,10 @@ mod dynamic;
 mod embedding;
 mod expression;
 mod generated;
+mod hybrid_search;
 mod joined;
 mod json;
+mod json_table;
 mod merge;
 mod modules;
 mod ordered;
@@ -79,10 +81,15 @@ pub use expression::{
     ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
+pub use hybrid_search::{Fusion, HybridSearch, SearchValue};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
 pub use json::{
     IsJson, JsonAggregate, JsonArgument, JsonClauses, JsonCommon, JsonConstructor, JsonExpression, JsonFormat, JsonInput, JsonMember,
-    JsonOperator, JsonOutput, JsonValueBehavior,
+    JsonOperator, JsonOutput, JsonTyped, JsonValueBehavior,
+};
+pub use json_table::{
+    JsonTable, JsonTableColumn, JsonTableColumnKind, JsonTableFormatted, JsonTableNamed, JsonTableNested, JsonTablePath, JsonTablePlan,
+    JsonTablePlanClause,
 };
 pub use merge::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use modules::ModuleDefinition;
@@ -118,7 +125,7 @@ pub use schema::{
     AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, Collection, ColumnConstraint,
     ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, OptionValue,
     Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage,
-    Temporary, TemporaryKind, TypeName, ViewDefinition,
+    Temporary, TemporaryKind, TypeName, TypeParam, ViewDefinition,
 };
 pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
@@ -482,8 +489,9 @@ pub enum SqlStatement {
 #[derive(Debug, Clone)]
 pub enum IndexStatement {
     /// `<create index statement>` ::= CREATE INDEX `<index name>` ON
-    /// `<table name>` ( `<column name list>` ) \[USING `<method name>`\]
-    /// \[WITH `<table options>`\]
+    /// `<table name>` ( `<key part>` \[{, `<key part>`}...\] ) \[USING
+    /// `<method name>`\] \[WITH `<table options>`\], where `<key part>` ::=
+    /// `<column name>` | ( `<value expression>` ) (RULES.md D92)
     Create {
         /// The `<index name>`, an `<identifier>`, and where it begins.
         name: (String, usize),
@@ -491,6 +499,9 @@ pub enum IndexStatement {
         table: TableName,
         /// The `<column name>`s, in order, and where each begins.
         columns: Vec<(String, usize)>,
+        /// The `<value expression>`s, each its place among the key parts,
+        /// its text as written and where it begins.
+        expressions: Vec<(usize, String, usize)>,
         /// The method, as an engine is named, and its options.
         storage: TableStorage,
     },

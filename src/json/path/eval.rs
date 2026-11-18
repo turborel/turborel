@@ -2,8 +2,12 @@
 //! the SQL/JSON sequence its `<JSON path wff>` gives of a context item and
 //! the values of its named variables.
 //!
-//! An SQL/JSON sequence is a `Vec<Item>`, and an exception condition the
-//! `SqlError` a wff's evaluation returns \[GR11\]. This file evaluates the
+//! An SQL/JSON sequence is a `Seq`, and an exception condition the
+//! `SqlError` a wff's evaluation returns \[GR11\]. \[DESIGN\] An item of a
+//! sequence that is the context item, a variable's or one within them is
+//! borrowed of it, not copied, so that each keeps its place, which
+//! `keyvalue()` identifies an object by (`Identity`); an item made by the
+//! evaluation is owned. This file evaluates the
 //! primaries \[GR11a to GR11f\] and defines Wrap and Unwrap \[GR7, GR8\];
 //! the accessor ops are in `eval/accessors.rs` \[GR11g ii 1 to 5\], the item
 //! methods in `eval/methods.rs` \[GR11g ii 6\], with the SQL numeric
@@ -22,9 +26,13 @@ mod methods;
 mod numbers;
 mod predicate;
 
+use std::borrow::Cow;
+use std::cell::{Cell, OnceCell};
+use std::collections::HashMap;
+
 use super::ast::{Accessor, Expr, Mode, Path, Predicate};
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::json::{Item, Scalar};
+use crate::json::{Item, MAX_NESTING, Scalar};
 use crate::value::{DecFloat, Decimal, Value};
 
 impl Path {
@@ -47,7 +55,9 @@ impl Path {
     /// digits of a second's fraction than turborel's maximum.
     pub fn evaluate(&self, context: &Item, variables: &[(String, Vec<Item>)]) -> Result<Vec<Item>> {
         self.check_variables(&variables.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>())?;
-        Evaluator { mode: self.mode, context, variables, current: None, last: None }.wff(&self.expr)
+        let identity = Identity::new(context, variables);
+        let evaluator = Evaluator { mode: self.mode, zone: self.zone, context, variables, identity: &identity, current: None, last: None };
+        Ok(evaluator.wff(&self.expr)?.into_iter().map(Cow::into_owned).collect())
     }
 
     /// [§9.46 SR4] That each named variable of the path has its name among
@@ -61,15 +71,22 @@ impl Path {
     }
 }
 
-/// What a wff is evaluated with: the mode, the context item, the named
-/// variables, the current item of the innermost filter \[GR11c\], and the
-/// last subscript of the current array of the innermost array accessor
-/// \[GR11d\].
+/// An SQL/JSON sequence evaluated: each item borrowed of the context item
+/// or a variable if it is one of theirs, else owned.
+type Seq<'a> = Vec<Cow<'a, Item>>;
+
+/// What a wff is evaluated with: the mode, the SQL-session's displacement
+/// (`Path::zone`), the context item, the named variables, the identities
+/// of their objects, the current item of the innermost filter \[GR11c\],
+/// and the last subscript of the current array of the innermost array
+/// accessor \[GR11d\].
 #[derive(Clone, Copy)]
 struct Evaluator<'a> {
     mode: Mode,
+    zone: i16,
     context: &'a Item,
     variables: &'a [(String, Vec<Item>)],
+    identity: &'a Identity<'a>,
     current: Option<&'a Item>,
     last: Option<i128>,
 }
@@ -80,7 +97,15 @@ impl<'a> Evaluator<'a> {
     where
         'a: 'b,
     {
-        Evaluator { mode: self.mode, context: self.context, variables: self.variables, current: Some(item), last: self.last }
+        Evaluator {
+            mode: self.mode,
+            zone: self.zone,
+            context: self.context,
+            variables: self.variables,
+            identity: self.identity,
+            current: Some(item),
+            last: self.last,
+        }
     }
 
     /// The evaluator of a subscript, of an array of `len` elements the
@@ -90,20 +115,20 @@ impl<'a> Evaluator<'a> {
     }
 
     /// [§9.46 GR11] The SQL/JSON sequence `expr` gives.
-    fn wff(&self, expr: &Expr) -> Result<Vec<Item>> {
+    fn wff(&self, expr: &Expr) -> Result<Seq<'a>> {
         match expr {
             // [GR11e] The literal's value.
-            Expr::Literal(item) => Ok(vec![item.clone()]),
+            Expr::Literal(item) => Ok(vec![Cow::Owned(item.clone())]),
             // [GR11a ii] The context item.
-            Expr::Context => Ok(vec![self.context.clone()]),
+            Expr::Context => Ok(vec![Cow::Borrowed(self.context)]),
             // [GR11b ii 3] The item the variable is passed.
-            Expr::Variable(name) => lookup(self.variables, name).cloned(),
+            Expr::Variable(name) => Ok(lookup(self.variables, name)?.iter().map(Cow::Borrowed).collect()),
             // [GR11c] The current item; [SR5] `@` is within a filter's
             // predicate, so one is current.
-            Expr::Current => Ok(self.current.into_iter().cloned().collect()),
+            Expr::Current => Ok(self.current.map(Cow::Borrowed).into_iter().collect()),
             // [GR11d] The current array's last subscript; [SR6] `last` is
             // within a subscript, so an array is current.
-            Expr::Last => Ok(self.last.map(|last| Item::Scalar(Decimal::new(last, 0).into())).into_iter().collect()),
+            Expr::Last => Ok(self.last.map(|last| Cow::Owned(Item::Scalar(Decimal::new(last, 0).into()))).into_iter().collect()),
             // [GR11g i] An exception of the base is the result.
             Expr::Access(base, op) => {
                 let base = self.wff(base)?;
@@ -115,7 +140,7 @@ impl<'a> Evaluator<'a> {
     }
 
     /// [§9.46 GR11g ii] The accessor op `op` applied to `base`.
-    fn access(&self, base: Vec<Item>, op: &Accessor) -> Result<Vec<Item>> {
+    fn access(&self, base: Seq<'a>, op: &Accessor) -> Result<Seq<'a>> {
         match op {
             Accessor::Member(key) => self.member(base, key),
             Accessor::AnyMember => self.any_member(base),
@@ -127,17 +152,9 @@ impl<'a> Evaluator<'a> {
     }
 
     /// `seq`, Unwrap(`seq`) if the mode is lax.
-    fn lax_unwrap(&self, seq: Vec<Item>) -> Vec<Item> {
+    fn lax_unwrap(&self, seq: Seq<'a>) -> Seq<'a> {
         match self.mode {
             Mode::Lax => unwrap(seq),
-            Mode::Strict => seq,
-        }
-    }
-
-    /// `seq`, Wrap(`seq`) if the mode is lax.
-    fn lax_wrap(&self, seq: Vec<Item>) -> Vec<Item> {
-        match self.mode {
-            Mode::Lax => wrap(seq),
             Mode::Strict => seq,
         }
     }
@@ -148,28 +165,96 @@ impl<'a> Evaluator<'a> {
     }
 }
 
-/// [§9.46 GR7] Wrap(`seq`): each item that is no array, an array of it
-/// alone.
-fn wrap(seq: Vec<Item>) -> Vec<Item> {
-    seq.into_iter()
-        .map(|item| match item {
-            Item::Array(_) => item,
-            Item::Null | Item::Scalar(_) | Item::Object(_) => Item::Array(vec![item]),
-        })
-        .collect()
+/// The elements of `item` if it is an array, each borrowed if it is; of
+/// another item none.
+fn elements(item: Cow<'_, Item>) -> std::result::Result<Seq<'_>, Cow<'_, Item>> {
+    match item {
+        Cow::Borrowed(Item::Array(elements)) => Ok(elements.iter().map(Cow::Borrowed).collect()),
+        Cow::Owned(Item::Array(elements)) => Ok(elements.into_iter().map(Cow::Owned).collect()),
+        Cow::Borrowed(_) | Cow::Owned(_) => Err(item),
+    }
 }
 
 /// [§9.46 GR8] Unwrap(`seq`): each item that is an array, its elements in
 /// order; one level only.
-fn unwrap(seq: Vec<Item>) -> Vec<Item> {
+fn unwrap(seq: Seq<'_>) -> Seq<'_> {
     let mut unwrapped = Vec::with_capacity(seq.len());
     for item in seq {
-        match item {
-            Item::Array(elements) => unwrapped.extend(elements),
-            Item::Null | Item::Scalar(_) | Item::Object(_) => unwrapped.push(item),
+        match elements(item) {
+            Ok(elements) => unwrapped.extend(elements),
+            Err(item) => unwrapped.push(item),
         }
     }
     unwrapped
+}
+
+/// [§9.46 GR11g ii 6 C VIII 1 c i] What identifies each object `keyvalue()`
+/// is given: \[DESIGN\] its place in a walk of the context item and
+/// then of each variable's items in turn, each item counted before those
+/// within it, from 0, if it is one of theirs; else, an object the
+/// evaluation made, a number past them all, a new one each time it is
+/// asked. The places are counted the first time one is asked for.
+struct Identity<'a> {
+    /// The context item.
+    context: &'a Item,
+    /// The named variables.
+    variables: &'a [(String, Vec<Item>)],
+    /// Each item's place, by its address, and how many there are.
+    places: OnceCell<(HashMap<usize, u64>, u64)>,
+    /// How many identities past the places have been given.
+    made: Cell<u64>,
+}
+
+impl<'a> Identity<'a> {
+    /// The identities of the objects of `context` and `variables`.
+    fn new(context: &'a Item, variables: &'a [(String, Vec<Item>)]) -> Identity<'a> {
+        Identity { context, variables, places: OnceCell::new(), made: Cell::new(0) }
+    }
+
+    /// The identity of an item: its place, if it is `borrowed` of the
+    /// context item or a variable, else, made by the path, a new one.
+    fn of(&self, borrowed: Option<&Item>) -> u64 {
+        let (places, count) = self.places.get_or_init(|| {
+            let mut places = HashMap::new();
+            let mut count = 0_u64;
+            let sources = std::iter::once(self.context).chain(self.variables.iter().flat_map(|(_, seq)| seq.iter()));
+            for source in sources {
+                place(source, &mut places, &mut count, 0);
+            }
+            (places, count)
+        });
+        if let Some(borrowed) = borrowed
+            && let Some(found) = places.get(&address(borrowed))
+        {
+            return *found;
+        }
+        let made = self.made.get();
+        self.made.set(made.saturating_add(1));
+        count.saturating_add(made)
+    }
+}
+
+/// Where `item` is in memory, which is what tells it from an equal item.
+fn address(item: &Item) -> usize {
+    std::ptr::from_ref(item).addr()
+}
+
+/// [§9.46 GR11g ii 6 C VIII 1 c i] `item`, within `depth` arrays and
+/// objects, and the items within it, each given the next place of `count`
+/// in `places`. An item nests at most `MAX_NESTING` deep, as it was parsed,
+/// so the walk stops there (RULES.md R-CF-6).
+fn place(item: &Item, places: &mut HashMap<usize, u64>, count: &mut u64, depth: usize) {
+    places.insert(address(item), *count);
+    *count = count.saturating_add(1);
+    if depth > MAX_NESTING {
+        return;
+    }
+    let deeper = depth.saturating_add(1);
+    match item {
+        Item::Null | Item::Scalar(_) => {}
+        Item::Array(elements) => elements.iter().for_each(|element| place(element, places, count, deeper)),
+        Item::Object(members) => members.iter().for_each(|member| place(&member.value, places, count, deeper)),
+    }
 }
 
 /// [§9.46 GR11b] The sequence the variable `name` is passed.
@@ -296,13 +381,14 @@ fn number(item: &Item) -> Option<Number> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_) => None,
     }
 }
 
 /// The number the SQL/JSON sequence `seq` is, if it is a singleton
 /// numeric value: one item, a number.
-fn singleton_number(seq: &[Item]) -> Option<Number> {
+fn singleton_number(seq: &[Cow<'_, Item>]) -> Option<Number> {
     let [only] = seq else { return None };
     number(only)
 }

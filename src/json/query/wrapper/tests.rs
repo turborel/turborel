@@ -72,12 +72,15 @@ fn no_item_is_as_on_empty_says() {
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.44 GR4, GR5b] STATUS IN
-/// an exception condition is replaced as ON ERROR says; an error not one
-/// is raised whatever it says.
+/// an exception condition is replaced as ON ERROR says, EMPTY ARRAY by
+/// an empty array; an error not one is raised whatever it says.
 #[test]
 fn the_status_in_is_replaced_or_raised() {
     let exception = || Err(SqlError::new(Code::Data, "[DESIGN] an exception"));
     assert!(sequence_to_item(exception(), Wrapper::Without, QueryBehavior::Error, QueryBehavior::Null).unwrap().is_none());
+    let replaced = sequence_to_item(exception(), Wrapper::Without, QueryBehavior::Error, QueryBehavior::EmptyArray).unwrap();
+    let Some(Item::Array(elements)) = replaced else { panic!("an empty array") };
+    assert!(elements.is_empty());
     assert_eq!(sequence_to_item(exception(), Wrapper::Without, QueryBehavior::Null, QueryBehavior::Error).unwrap_err().sqlcode(), -301_i32);
     let rule = Err(SqlError::new(Code::SyntaxRule, "[DESIGN] a rule"));
     assert_eq!(sequence_to_item(rule, Wrapper::Without, QueryBehavior::Null, QueryBehavior::Null).unwrap_err().sqlcode(), -103_i32);

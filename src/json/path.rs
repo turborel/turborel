@@ -22,8 +22,9 @@ mod ast;
 mod eval;
 mod lex;
 mod parse;
+mod zoned;
 
-pub use ast::{Accessor, Comparison, DatetimeTemplate, Expr, Method, Mode, Operator, Path, Predicate, Sign, Subscript};
+pub use ast::{Accessor, Comparison, Expr, Method, Mode, Path, Predicate, Subscript};
 pub use parse::parse_path;
 
 use crate::error::{Code, SqlError};

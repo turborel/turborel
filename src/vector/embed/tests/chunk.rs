@@ -45,7 +45,10 @@ fn characters_count_unicode_scalars() {
 fn sentences_and_paragraphs_end_where_they_should() {
     let text = "It costs 3.50 dollars. \"Really?\" Yes!\n  \nNew one.";
     let sentences = chunks(text, "BY SENTENCES MAX 1");
-    assert_eq!(sentences.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["It costs 3.50 dollars.", "\"Really?\"", "Yes!", "New one."]);
+    assert_eq!(
+        sentences.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+        ["It costs 3.50 dollars.", "\"Really?\"", "Yes!", "New one."]
+    );
     let paragraphs = chunks("One.\nstill one.\n \t\nTwo.\n\n\n\nThree", "BY PARAGRAPHS MAX 1");
     assert_eq!(paragraphs.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["One.\nstill one.", "Two.", "Three"]);
     let pairs = chunks(text, "BY SENTENCES MAX 2 OVERLAP 1");

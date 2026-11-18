@@ -396,7 +396,7 @@ impl Database {
         self.change(|st| {
             match change {
                 Change::Schema { sql, owner, engines, zone, epochs } => st.reschema((sql, owner, *zone), engines, None, epochs)?.discard(),
-                Change::CreateIndex { name, table, columns, method, options } => {
+                Change::CreateIndex { name, table, columns, method, options, expressions } => {
                     let spec = IndexSpec {
                         name: name.clone(),
                         table: table.clone(),
@@ -404,6 +404,7 @@ impl Database {
                         method: method.clone(),
                         options: options.clone(),
                         nulls: false,
+                        expressions: expressions.clone(),
                     };
                     st.create_index(&spec)?;
                 }
@@ -580,7 +581,7 @@ impl State {
     /// readers may still see: keys the index does not hold left out
     /// (`IndexDesc::holds`).
     fn entries_for<'a>(&self, ix: &'a IndexDesc, as_of: Timestamp) -> Result<impl Iterator<Item = Result<(Key, RowId)>> + 'a> {
-        let versions = Arc::clone(self.storage_of(&ix.table)?).versions(self.tx.horizon(), as_of, &ix.columns);
+        let versions = Arc::clone(self.storage_of(&ix.table)?).versions(self.tx.horizon(), as_of, &ix.reads());
         Ok(versions.filter_map(move |read| {
             let keyed = read.and_then(|(id, row)| {
                 let key = ix

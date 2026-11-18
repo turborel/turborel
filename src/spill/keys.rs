@@ -86,6 +86,9 @@ const LOB_TAG: u8 = 12;
 /// after its length, in the order of their bytes: one order of any
 /// order of the elements.
 const BAG_TAG: u8 = 13;
+/// [ISO/IEC 9075-2:2023 §8.2 GR10] A value of the JSON type: its
+/// comparison key, after its length.
+const JSON_TAG: u8 = 14;
 
 /// Appends `v`'s normalized key to `out`: the bytes `norm_key` gives of
 /// `v.norm()`, made without making it.
@@ -138,6 +141,7 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
             let keys = parts.iter().map(norm_key_of).collect();
             put_bag(keys, out);
         }
+        Value::Json(j) => put_json(&j.key().unwrap_or_else(|_| j.bytes().to_vec()), out),
     }
 }
 
@@ -225,6 +229,13 @@ pub fn norm_row(values: &[Value]) -> Vec<u8> {
 /// The bytes `norm_row` makes room for of each value.
 const NORM_BYTES: usize = 24;
 
+/// Appends a JSON value's comparison key `key`, after its tag and length.
+fn put_json(key: &[u8], out: &mut Vec<u8>) {
+    out.push(JSON_TAG);
+    out.extend_from_slice(&u64::try_from(key.len()).unwrap_or(u64::MAX).to_le_bytes());
+    out.extend_from_slice(key);
+}
+
 /// The key of normalized values `key`: the same bytes exactly when the
 /// values are identical (`Value::norm`).
 pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
@@ -273,6 +284,7 @@ pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
                 out.extend_from_slice(&u64::try_from(parts.len()).unwrap_or(u64::MAX).to_le_bytes());
                 out.extend_from_slice(&norm_key(parts));
             }
+            NormKey::Json(json) => put_json(json, &mut out),
             NormKey::Bag(bag) => put_bag(bag.keys().iter().map(|part| norm_key(std::slice::from_ref(part))).collect(), &mut out),
         }
     }

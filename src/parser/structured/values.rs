@@ -146,6 +146,9 @@ impl Parser {
         let at = self.here();
         let after_period = |p: &Self, d: &str| matches!(p.peek_at(2), Tok::Delimiter(x) if *x == d);
         let period = self.is_delim(delim::PERIOD) && matches!(self.peek_at(1), Tok::Identifier(_));
+        // [ISO/IEC 9075-2:2023 §6.36] a key word before ( names a method
+        // too, as `size()` or `double()` of a JSON value.
+        let worded = self.is_delim(delim::PERIOD) && matches!(self.peek_at(1), Tok::KeyWord(_));
         let s = if period && matches!(self.peek_at(1), Tok::Identifier(w) if w == SPECIFICTYPE) {
             self.advance();
             self.advance();
@@ -154,9 +157,9 @@ impl Parser {
                 self.advance();
             }
             StructuredExpression::SpecificType(primary)
-        } else if period && after_period(self, delim::LEFT_PAREN) {
+        } else if (period || worded) && after_period(self, delim::LEFT_PAREN) {
             self.advance();
-            let name = self.identifier()?;
+            let name = self.method_name()?;
             StructuredExpression::Method { subject: primary, as_type: None, name, args: self.sql_argument_list()? }
         } else if self.accept_delim(delim::RIGHT_ARROW) {
             let name = self.identifier()?;
@@ -169,6 +172,17 @@ impl Parser {
             return Ok(Err(primary));
         };
         Ok(Ok(structured(s, at)))
+    }
+
+    /// A `<method name>`: an `<identifier>`, or a key word, taken as the
+    /// name it spells.
+    fn method_name(&mut self) -> Result<String> {
+        if let Tok::KeyWord(k) = self.peek() {
+            let name = (*k).to_owned();
+            self.advance();
+            return Ok(name);
+        }
+        self.identifier()
     }
 
     /// [ISO/IEC 9075-2:2023 §8.19] ( `<type list>` ), `<type list>` ::=

@@ -29,8 +29,8 @@ One reference page for each statement, in alphabetical order.
 - [CREATE DOMAIN](create-domain.md): define a domain
 - [CREATE EMBEDDING MODEL](create-embedding-model.md): define an embedding model of a plug-in
 - [CREATE FUNCTION](create-function.md): define an SQL-invoked function, or a polymorphic table function
+- [CREATE HYBRID VECTOR INDEX](create-hybrid-vector-index.md): define an index of a text and a vector column, for hybrid search
 - [CREATE INDEX](create-index.md): define an index
-- [CREATE VECTOR INDEX](create-vector-index.md): define an approximate nearest-neighbour index
 - [CREATE METHOD](create-method.md): give a method of a user-defined type its body
 - [CREATE MODULE](create-module.md): define an SQL-server module
 - [CREATE ORDERING](create-ordering.md): say how values of a user-defined type compare
@@ -43,6 +43,8 @@ One reference page for each statement, in alphabetical order.
 - [CREATE TRIGGER](create-trigger.md): define a trigger
 - [CREATE TYPE](create-type.md): define a distinct or structured type
 - [CREATE USER](create-user.md): define a user
+- [CREATE VECTOR DISTANCE FUNCTION](create-vector-distance-function.md): define a metric of vectors in SQL
+- [CREATE VECTOR INDEX](create-vector-index.md): define an approximate nearest-neighbour index
 - [CREATE VECTOR PIPELINE](create-vector-pipeline.md): keep a table of embedded chunks in step with a table of texts
 - [CREATE VIEW](create-view.md): define a viewed table
 - [DECLARE CURSOR](declare-cursor.md): declare a cursor
@@ -70,6 +72,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP TRIGGER](drop-trigger.md): drop a trigger
 - [DROP TYPE](drop-type.md): drop a distinct or structured type
 - [DROP USER](drop-user.md): drop a user
+- [DROP VECTOR DISTANCE FUNCTION](drop-vector-distance-function.md): drop a distance function
 - [DROP VECTOR PIPELINE](drop-vector-pipeline.md): stop keeping a table of embedded chunks
 - [DROP VIEW](drop-view.md): drop a view
 - [END CONNECTION](end-connection.md): end a connection of the server

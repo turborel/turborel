@@ -7,7 +7,7 @@
 //!
 //! A built-in metric is measured on the slices at once, by the vector
 //! module's kernels: an index orders candidates only, and the executor
-//! measures each again by the SQL call (D-APPROX), so the `f32` sum of a
+//! measures each again by the SQL call (D94), so the `f32` sum of a
 //! FLOAT16 or INT8 column (R3.10) serves. A user-defined metric is given
 //! the two vectors in the column's own format, as a SQL call gives them;
 //! a failure or a null is taken as farthest, so a broken metric misplaces
@@ -18,7 +18,7 @@ use std::sync::Arc;
 use crate::engine::diskann::{self, CodeTable, Codes};
 use crate::engine::hnsw::{self, Codec};
 use crate::error::{Code, Result, SqlError};
-use crate::vector::kernels::{fold_f32, gap, product, square};
+use crate::vector::kernels::{cosine_terms, fold_f32, gap, product, square};
 use crate::vector::metric::{COSINE, DOT, EUCLIDEAN, EUCLIDEAN_SQUARED, HAMMING, JACCARD, MANHATTAN, VectorMetric};
 use crate::vector::quantizer::{CodeDistance, Codebook, Quantizer};
 use crate::vector::{Element, VectorRef, half_bits, single};
@@ -57,9 +57,13 @@ pub(crate) fn distance(metric: &Arc<dyn VectorMetric>, column: Column) -> Distan
 
 /// COSINE: `1 - a·b / (|a| |b|)`; of a zero vector, whose SQL distance is
 /// null (R6.7), the middle of its range.
+///
+/// Its three sums are taken in one pass (`cosine_terms`), each as a
+/// separate fold would sum it, so the distance is bit for bit the same.
 fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    let scale = (fold_f32(a, a, product) * fold_f32(b, b, product)).sqrt();
-    if scale > 0.0_f32 { 1.0_f32 - fold_f32(a, b, product) / scale } else { 1.0_f32 }
+    let (aa, bb, ab) = cosine_terms(a, b);
+    let scale = (aa * bb).sqrt();
+    if scale > 0.0_f32 { 1.0_f32 - ab / scale } else { 1.0_f32 }
 }
 
 /// HAMMING: the count of elements that differ, bits of a BINARY column.
@@ -187,23 +191,24 @@ impl CodeTable for Table<'_> {
 // ---------------------------------------------------------------------------
 
 /// The quantizer HNSW and IVF keep codes of, by name: their own SQ8, or a
-/// database quantizer's codebooks with codes of their default length.
-pub(crate) fn codec_quantizer(quantizer: Arc<dyn Quantizer>) -> Arc<dyn hnsw::Quantizer> {
+/// database quantizer's codebooks with codes of `code_bytes` (PQ_BYTES, 0
+/// for the quantizer's default).
+pub(crate) fn codec_quantizer(quantizer: Arc<dyn Quantizer>, code_bytes: usize) -> Arc<dyn hnsw::Quantizer> {
     if quantizer.name() == hnsw::SQ8 {
         return Arc::new(hnsw::Sq8);
     }
-    Arc::new(CodecQuantizer(quantizer))
+    Arc::new(CodecQuantizer(quantizer, code_bytes))
 }
 
-/// A database quantizer as HNSW's and IVF's.
-struct CodecQuantizer(Arc<dyn Quantizer>);
+/// A database quantizer as HNSW's and IVF's, and its codes' bytes.
+struct CodecQuantizer(Arc<dyn Quantizer>, usize);
 
 impl hnsw::Quantizer for CodecQuantizer {
     fn name(&self) -> &str {
         self.0.name()
     }
     fn train(&self, sample: &[f32], dims: usize, seed: u64) -> Result<Arc<dyn Codec>> {
-        Ok(Arc::new(BookCodec(trained(&*self.0, sample, dims, (0, seed))?)))
+        Ok(Arc::new(BookCodec(trained(&*self.0, sample, dims, (self.1, seed))?)))
     }
     fn read(&self, bytes: &[u8], dims: usize) -> Result<Arc<dyn Codec>> {
         let book = self.0.read(bytes)?;

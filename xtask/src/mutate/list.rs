@@ -14,6 +14,7 @@ mod distinct;
 mod distinct_predicate;
 mod distribution;
 mod explain;
+mod expression_index;
 mod fill;
 mod filter;
 mod fulltext;
@@ -22,6 +23,10 @@ mod geometry;
 mod grouping_sets;
 mod hypothetical;
 mod json;
+mod json_index;
+mod json_path;
+mod json_table;
+mod json_type;
 mod kept;
 mod limits;
 mod listagg;
@@ -64,7 +69,9 @@ mod temporal;
 mod temporal_references;
 mod triggers;
 mod truncate;
+mod vector;
 mod vector_embed;
+mod vector_hybrid;
 mod vector_indexes;
 mod view_defaults;
 mod vr;
@@ -87,22 +94,12 @@ pub use server::SERVER;
 pub use shadow::SHADOW;
 pub use stats::STATS;
 pub use tailorings::TAILORINGS;
-pub use vr::VR;
-pub use waits::WAITS;
 pub use zones::ZONES;
+pub use {vr::VR, waits::WAITS};
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
-    let core: [&[Mutation]; 10] =
-        [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    core.into_iter()
-        .chain(areas::all())
-        .chain([projection::PROJECTION.as_slice(), &json::JSON, &fulltext::FULLTEXT, &sqlmm_fulltext::SQLMM_FULLTEXT, &t621::T621])
-        .chain([vector_indexes::VECTOR_INDEXES.as_slice(), &vector_embed::VECTOR_EMBED])
-        .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
-        .flatten()
-        .copied()
-        .collect()
+    areas::core().into_iter().chain(areas::all()).chain(areas::late()).flatten().copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints, assertions, the hash index. Rekeying's are in `rekey.rs`.

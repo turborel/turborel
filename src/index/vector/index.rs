@@ -8,7 +8,7 @@
 //! nothing. Writes go through the engines, each of which orders its
 //! changes so a failure leaves none (D19).
 //!
-//! An approximate search (`Index::approximate`, RULES.md D-APPROX) asks
+//! An approximate search (`Index::approximate`, RULES.md D94) asks
 //! the engine with no lock of this layer held. A filter of the query's
 //! condition is called by the engine's search outside its own locks too,
 //! as `RowFilter` requires; its first error ends the search and is
@@ -17,15 +17,16 @@
 //! cannot be had, the search declines and the executor reads the table.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use super::ask::Ask;
 use super::column::{Column, entry_key, projection, refused};
+use super::options::{Shared, serves, shared_of, unit_radius};
 use crate::bytes::{Put, Reader};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::disk::pager::PageId;
-use crate::error::{Code, Result};
-use crate::index::{Entries, Index, Key, KeyOrder, KeyProjection, NearestQuery, NeighbourEntries, Probe, RowFilter, same_metric};
+use crate::error::{Code, Result, SqlError};
+use crate::index::{Entries, Index, Key, KeyOrder, KeyProjection, NearestQuery, NeighbourEntries, Probe, RowFilter};
 use crate::memory::MemoryBudget;
 use crate::spill::{Area, WorkAreas};
 use crate::storage::RowId;
@@ -43,6 +44,9 @@ const CANDIDATE_BYTES: usize = 64;
 pub(crate) trait Engine: Send + Sync + Sized + 'static {
     /// The method's name.
     const METHOD: &'static str;
+    /// The option of its own search list or probes, which once set
+    /// searches in place of its TARGET_ACCURACY (`options.rs`).
+    const LIST_OPTION: &'static str;
     /// Its meta page, which reopens it.
     fn meta(&self) -> PageId;
     /// Adds one entry of `row` under `vector`.
@@ -108,13 +112,30 @@ pub(crate) struct VectorIndex<E: Engine> {
     column: Column,
     /// The metric it orders by, upper case.
     metric: String,
+    /// The metric its engine measures by: `metric`, or of a column
+    /// declared normalized, the one it orders as there (`options.rs`).
+    measured: String,
+    /// Whether its column is declared normalized.
+    normalized: bool,
+    /// Its TARGET_ACCURACY, 0 for none (`Shared::accuracy`); changed in
+    /// place by ALTER INDEX.
+    accuracy: AtomicU8,
     projection: Arc<dyn KeyProjection>,
 }
 
 impl<E: Engine> VectorIndex<E> {
-    /// An index of `column` ordered by `metric`, over `held`.
-    pub(crate) fn new(held: Arc<Held<E>>, column: Column, metric: &str) -> VectorIndex<E> {
-        VectorIndex { held, column, metric: metric.to_owned(), projection: projection() }
+    /// An index of `column` ordered by the metric `metric` names and
+    /// measured by `measured`, over `held`, its shared options `shared`.
+    pub(crate) fn new(held: Arc<Held<E>>, column: Column, (metric, measured): (&str, &str), shared: Shared) -> VectorIndex<E> {
+        VectorIndex {
+            held,
+            column,
+            metric: metric.to_owned(),
+            measured: measured.to_owned(),
+            normalized: shared.normalized,
+            accuracy: AtomicU8::new(shared.accuracy.unwrap_or(0)),
+            projection: projection(),
+        }
     }
 
     fn engine(&self) -> &E {
@@ -122,16 +143,36 @@ impl<E: Engine> VectorIndex<E> {
     }
 
     /// The vector of `key`, or none for a null.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -301 for a vector of a norm other than 1 if the column is
+    /// declared normalized (R13.1); -900 for a key that is no vector of
+    /// the column's shape.
     fn floats(&self, key: &Key) -> Result<Option<Vec<f32>>> {
         let [value] = key.0.as_slice() else { return Err(refused(E::METHOD, "was given a key of more than one column")) };
+        let normalized = || crate::vector::vector(value).map(|v| v.normalized);
+        if self.normalized && !value.is_null() && !normalized()? {
+            let message = format!(
+                "[EXTENSION] a {} index declares its column NORMALIZED (R13.1), and takes no vector whose norm is not 1",
+                E::METHOD
+            );
+            return Err(SqlError::new(Code::Data, message));
+        }
         self.column.floats(E::METHOD, value)
     }
 
-    /// The radius, of a call of metric `call`, in the index's terms:
+    /// The radius, of a call of metric `call` and query `q`, in the
+    /// terms of the metric the engine measures by: over a column declared
+    /// normalized, carried to EUCLIDEAN's (`options::unit_radius`);
     /// EUCLIDEAN's and EUCLIDEAN_SQUARED's differ by a square.
-    fn radius(&self, call: &str, radius: f64) -> f64 {
+    fn radius(&self, call: &str, radius: f64, q: &[f32]) -> f64 {
         let squared = |m: &str| m.eq_ignore_ascii_case(EUCLIDEAN_SQUARED) || m.eq_ignore_ascii_case(L2_SQUARED);
-        match (squared(&self.metric), squared(call)) {
+        let norm = q.iter().map(|x| f64::from(*x) * f64::from(*x)).sum::<f64>().sqrt();
+        if let Some(euclidean) = unit_radius(call, radius, norm).filter(|_| self.normalized) {
+            return if squared(&self.measured) { euclidean * euclidean } else { euclidean };
+        }
+        match (squared(&self.measured), squared(call)) {
             (true, false) => radius.max(0.0_f64) * radius.max(0.0_f64),
             (false, true) => radius.max(0.0_f64).sqrt(),
             (true, true) | (false, false) => radius,
@@ -141,9 +182,10 @@ impl<E: Engine> VectorIndex<E> {
     /// The candidates of an approximate search, or none to decline.
     fn candidates(&self, query: &NearestQuery, filter: Option<&mut dyn RowFilter>) -> Result<Option<Vec<(f32, u64)>>> {
         let (Some(approximation), Some(call)) = (query.approximate.as_ref(), query.metric.as_deref()) else { return Ok(None) };
-        let Some(q) = self.column.query(&query.value).filter(|_| same_metric(&self.metric, call)) else { return Ok(None) };
-        let mut ask = Ask::of(approximation);
-        ask.radius = ask.radius.map(|r| self.radius(call, r));
+        let Some(q) = self.column.query(&query.value).filter(|_| serves(&self.metric, self.normalized, call)) else { return Ok(None) };
+        let accuracy = Some(self.accuracy.load(Ordering::Relaxed)).filter(|a| *a > 0);
+        let mut ask = Ask::of(approximation).of_index(accuracy);
+        ask.radius = ask.radius.map(|r| self.radius(call, r, &q));
         let mut failed = None;
         let found = match filter {
             Some(f) => {
@@ -272,6 +314,8 @@ impl<E: Engine> Index for VectorIndex<E> {
         self.held.discarded.store(true, Ordering::Release);
     }
     fn reconfigure(&self, on: (&TableDesc, &IndexDesc)) {
+        let group = E::METHOD.to_ascii_uppercase();
+        self.accuracy.store(shared_of(on.1, &group, E::LIST_OPTION).accuracy.unwrap_or(0), Ordering::Relaxed);
         self.engine().retune(on.1);
     }
 }

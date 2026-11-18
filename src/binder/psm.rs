@@ -131,7 +131,7 @@ impl ProgramBinder<'_> {
 
     /// `statement`, run by the session in the scope here.
     fn contained(&self, statement: SqlStatement) -> Contained {
-        Contained { statement, scope: Arc::clone(&self.scope) }
+        Contained::new(statement, Arc::clone(&self.scope))
     }
 
     /// The SQL control statement `c`, bound.

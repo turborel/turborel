@@ -11,11 +11,13 @@
 //! in the order the members are kept; (IA073) a subscript is truncated
 //! toward zero.
 
+use std::borrow::Cow;
+
 use super::predicate::Truth;
-use super::{Evaluator, Number, exception, singleton_number};
+use super::{Evaluator, Number, Seq, elements, exception, singleton_number};
 use crate::error::{Result, SqlState};
-use crate::json::Item;
 use crate::json::path::ast::{Expr, Predicate, Subscript};
+use crate::json::{Item, Member};
 use crate::value::{DecFloat, MAX_DECFLOAT_PRECISION, pow10};
 
 /// Where a subscript, truncated, is in an array of some length.
@@ -29,15 +31,14 @@ enum Position {
     Beyond,
 }
 
-impl Evaluator<'_> {
+impl<'a> Evaluator<'a> {
     /// [§9.46 GR11g ii 1] `<JSON member accessor>`: the bound value of the
     /// member of key `key` of each object of `base`.
-    pub(super) fn member(&self, base: Vec<Item>, key: &str) -> Result<Vec<Item>> {
+    pub(super) fn member(&self, base: Seq<'a>, key: &str) -> Result<Seq<'a>> {
         let base = self.lax_unwrap(base);
         let mut values = Vec::new();
-        for item in &base {
-            let bound = item.as_object().and_then(|members| members.iter().find(|member| member.key == key));
-            let Some(member) = bound else {
+        for item in base {
+            let Some(bound) = bound_value(item, key) else {
                 if self.strict() {
                     return Err(exception(
                         SqlState::SQL_JSON_MEMBER_NOT_FOUND,
@@ -48,14 +49,14 @@ impl Evaluator<'_> {
                 }
                 continue;
             };
-            values.push(member.value.clone());
+            values.push(bound);
         }
         Ok(values)
     }
 
     /// [§9.46 GR11g ii 2] `<JSON wildcard member accessor>`: the bound
     /// values of every member of each object of `base`.
-    pub(super) fn any_member(&self, base: Vec<Item>) -> Result<Vec<Item>> {
+    pub(super) fn any_member(&self, base: Seq<'a>) -> Result<Seq<'a>> {
         let base = self.lax_unwrap(base);
         if self.strict() && base.iter().any(|item| item.as_object().is_none()) {
             return Err(exception(
@@ -63,15 +64,21 @@ impl Evaluator<'_> {
                 "[ISO/IEC 9075-2:2023 §9.46 GR11g ii 2 A II] an SQL/JSON item is not an object",
             ));
         }
-        let members = base.iter().filter_map(Item::as_object).flatten();
-        Ok(members.map(|member| member.value.clone()).collect())
+        let mut values = Vec::new();
+        for item in base {
+            match item {
+                Cow::Borrowed(Item::Object(members)) => values.extend(members.iter().map(|member| Cow::Borrowed(&member.value))),
+                Cow::Owned(Item::Object(members)) => values.extend(members.into_iter().map(|member| Cow::Owned(member.value))),
+                Cow::Borrowed(_) | Cow::Owned(_) => {}
+            }
+        }
+        Ok(values)
     }
 
     /// [§9.46 GR11g ii 3] `<JSON array accessor>`: of each array of
     /// `base`, the elements the subscripts of `list` select, in turn.
-    pub(super) fn subscripts(&self, base: Vec<Item>, list: &[Subscript]) -> Result<Vec<Item>> {
-        let base = self.lax_wrap(base);
-        let arrays = arrays(&base, "[ISO/IEC 9075-2:2023 §9.46 GR11g ii 3 B] an SQL/JSON item is not an array")?;
+    pub(super) fn subscripts(&self, base: Seq<'a>, list: &[Subscript]) -> Result<Seq<'a>> {
+        let arrays = self.arrays(base, "[ISO/IEC 9075-2:2023 §9.46 GR11g ii 3 B] an SQL/JSON item is not an array")?;
         // [GR11g ii 3 E] Every subscript of every array is evaluated, with
         // the array current, before any is checked against its array.
         let mut bounds = Vec::with_capacity(arrays.len());
@@ -117,7 +124,7 @@ impl Evaluator<'_> {
     /// `from` to `to`, appended to `values`. In strict mode a subscript
     /// out of the array, or a first past the last, is an exception; in lax
     /// mode only the elements there are are taken.
-    fn select(&self, elements: &[Item], from: Position, to: Position, values: &mut Vec<Item>) -> Result<()> {
+    fn select(&self, elements: &[Cow<'a, Item>], from: Position, to: Position, values: &mut Seq<'a>) -> Result<()> {
         if self.strict() && !within(from, to) {
             return Err(exception(
                 SqlState::INVALID_SQL_JSON_SUBSCRIPT,
@@ -141,27 +148,56 @@ impl Evaluator<'_> {
 
     /// [§9.46 GR11g ii 4] `<JSON wildcard array accessor>`: every element
     /// of each array of `base`.
-    pub(super) fn any_element(&self, base: Vec<Item>) -> Result<Vec<Item>> {
-        let base = self.lax_wrap(base);
-        let arrays = arrays(&base, "[ISO/IEC 9075-2:2023 §9.46 GR11g ii 4 B] an SQL/JSON item is not an array")?;
-        Ok(arrays.into_iter().flatten().cloned().collect())
+    pub(super) fn any_element(&self, base: Seq<'a>) -> Result<Seq<'a>> {
+        let arrays = self.arrays(base, "[ISO/IEC 9075-2:2023 §9.46 GR11g ii 4 B] an SQL/JSON item is not an array")?;
+        Ok(arrays.into_iter().flatten().collect())
     }
 
     /// [§9.46 GR11g ii 5] `<JSON filter expression>`: the items of `base`
     /// for which `predicate` is True, each the current item in turn.
-    pub(super) fn filter(&self, base: Vec<Item>, predicate: &Predicate) -> Vec<Item> {
+    pub(super) fn filter(&self, base: Seq<'a>, predicate: &Predicate) -> Seq<'a> {
         let base = self.lax_unwrap(base);
         base.into_iter().filter(|item| self.with_current(item).truth(predicate) == Truth::True).collect()
     }
 }
 
-/// The elements of each item of `base`, all arrays.
-///
-/// # Errors
-///
-/// SQLSTATE 22039, its message `cited`, if one is not an array.
-fn arrays<'b>(base: &'b [Item], cited: &str) -> Result<Vec<&'b [Item]>> {
-    base.iter().map(|item| item.as_array().ok_or_else(|| exception(SqlState::SQL_JSON_ARRAY_NOT_FOUND, cited))).collect()
+impl<'a> Evaluator<'a> {
+    /// [§9.46 GR7] The elements of each item of `base`, Wrap(`base`) in
+    /// lax mode: an item that is no array, alone, itself, so that it keeps
+    /// its place.
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 22039, its message `cited`, if one is not an array in
+    /// strict mode.
+    fn arrays(&self, base: Seq<'a>, cited: &str) -> Result<Vec<Seq<'a>>> {
+        base.into_iter()
+            .map(|item| match elements(item) {
+                Ok(elements) => Ok(elements),
+                Err(item) => {
+                    if self.strict() {
+                        Err(exception(SqlState::SQL_JSON_ARRAY_NOT_FOUND, cited))
+                    } else {
+                        Ok(vec![item])
+                    }
+                }
+            })
+            .collect()
+    }
+}
+
+/// The bound value of the first member of key `key` of `item`, if it is an
+/// object with one (UA075); borrowed if `item` is.
+fn bound_value<'a>(item: Cow<'a, Item>, key: &str) -> Option<Cow<'a, Item>> {
+    let first = |members: &[Member]| members.iter().position(|member| member.key == key);
+    match item {
+        Cow::Borrowed(Item::Object(members)) => first(members).and_then(|at| members.get(at)).map(|member| Cow::Borrowed(&member.value)),
+        Cow::Owned(Item::Object(members)) => {
+            let at = first(&members)?;
+            members.into_iter().nth(at).map(|member| Cow::Owned(member.value))
+        }
+        Cow::Borrowed(_) | Cow::Owned(_) => None,
+    }
 }
 
 /// The number `n` as a coefficient and the power of ten it is multiplied

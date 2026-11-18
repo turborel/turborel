@@ -7,6 +7,7 @@
 
 use crate::catalog::IndexDesc;
 use crate::engine::ivf::{Config, MAX_LISTS};
+use crate::index::vector::{Shared, shared, shared_of};
 use crate::settings::Kind;
 use crate::storage::{Rebuild, TableOption, option_value};
 use crate::value::{Decimal, Value};
@@ -24,6 +25,8 @@ pub const QUANTIZER: &str = "IVF.QUANTIZER";
 /// Whether a quantized search gives more candidates to re-rank.
 pub const RERANK: &str = "IVF.RERANK";
 
+/// The group of its options.
+const GROUP: &str = "IVF";
 /// The quantizer option's value for none: lists keep full vectors.
 pub const NO_QUANTIZER: &str = "NONE";
 /// The default metric (the vector document's R10.2).
@@ -83,6 +86,9 @@ pub fn options() -> Vec<TableOption> {
             "Whether a quantized search gives four times the rows asked, for the executor to order again by the SQL distance of each row's vector.",
         ),
     ]
+    .into_iter()
+    .chain(shared(GROUP))
+    .collect()
 }
 
 /// An index's options, as its descriptor sets them.
@@ -94,6 +100,8 @@ pub struct Options {
     pub metric: String,
     /// The quantizer's name, upper case; `NONE` for none.
     pub quantizer: String,
+    /// TARGET_ACCURACY, PQ_BYTES and NORMALIZED (`index/vector/options.rs`).
+    pub(crate) shared: Shared,
 }
 
 /// The options `desc` sets, the others their defaults, for vectors of
@@ -117,7 +125,8 @@ pub fn options_of(desc: &IndexDesc, dims: usize) -> Options {
         seed: SEED,
         rerank: word(RERANK, ON) == ON,
     };
-    Options { config, metric: word(METRIC, COSINE), quantizer: word(QUANTIZER, NO_QUANTIZER) }
+    let shared = shared_of(desc, GROUP, PROBES);
+    Options { config, metric: word(METRIC, COSINE), quantizer: word(QUANTIZER, NO_QUANTIZER), shared }
 }
 
 #[cfg(test)]
@@ -135,12 +144,14 @@ mod tests {
             options,
             collations: Vec::new(),
             nulls: false,
+            expressions: Vec::new(),
         }
     }
 
     /// Verifies: [EXTENSION] (RULES.md D41) every option is named once,
     /// upper case under IVF.; unset options take the defaults; set ones
-    /// are read, words in any case; only the metric and quantizer rebuild.
+    /// are read, words in any case; only the metric, the quantizer, the code
+    /// bytes and NORMALIZED rebuild.
     #[test]
     fn ivf_options_default_and_read_what_is_set() {
         let declared = options();
@@ -151,7 +162,8 @@ mod tests {
         assert!(names.iter().all(|n| n.starts_with("IVF.")));
         let read = options_of(&desc(Vec::new()), 8);
         let config = Config { dims: 8, lists: 0, probes: 0, sample_per_list: 256, seed: SEED, rerank: true };
-        assert_eq!(read, Options { config, metric: COSINE.into(), quantizer: NO_QUANTIZER.into() });
+        let shared = Shared { accuracy: Some(90), code_bytes: 0, normalized: false };
+        assert_eq!(read, Options { config, metric: COSINE.into(), quantizer: NO_QUANTIZER.into(), shared });
         let set = vec![
             (LISTS.into(), whole(100_u32)),
             (PROBES.into(), whole(10_u32)),
@@ -164,6 +176,6 @@ mod tests {
             (100, 10, false, "EUCLIDEAN")
         );
         let rebuilt: Vec<&str> = declared.iter().filter(|o| o.rebuild == Rebuild::Yes).map(|o| o.name.as_str()).collect();
-        assert_eq!(rebuilt, vec![METRIC, QUANTIZER]);
+        assert_eq!(rebuilt, vec![METRIC, QUANTIZER, "IVF.PQ_BYTES", "IVF.NORMALIZED"]);
     }
 }

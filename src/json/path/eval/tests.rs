@@ -8,6 +8,7 @@ use crate::json::path::parse_path;
 use crate::json::{Keys, parse};
 use crate::value::datetime::{Clocked, Moment};
 use crate::value::{Datetime, Value};
+use std::borrow::Cow;
 
 /// The item the JSON text `text` is.
 pub(super) fn json(text: &str) -> Item {
@@ -160,17 +161,25 @@ fn last_is_the_last_subscript_of_the_current_array() {
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR7, GR8] Wrap makes
-/// an array of each item that is no array; Unwrap gives each array's
-/// elements, one level only.
+/// an array of each item that is no array, which the array accessors see
+/// as its one element; Unwrap gives each array's elements, one level only,
+/// borrowed of an item borrowed and owned of one owned.
 #[test]
 fn wrap_and_unwrap_take_one_level() {
-    let seq = vec![json("1"), json("[2, [3]]"), json("null"), json("{}")];
-    let wrapped = Item::Array(wrap(seq.clone()));
-    assert!(wrapped.equivalent(&json("[[1], [2, [3]], [null], [{}]]")).unwrap());
-    let unwrapped = Item::Array(unwrap(seq));
-    assert!(unwrapped.equivalent(&json("[1, 2, [3], null, {}]")).unwrap());
+    let items = [json("1"), json("[2, [3]]"), json("null"), json("{}")];
+    let borrowed: Seq<'_> = items.iter().map(Cow::Borrowed).collect();
+    let unwrapped = unwrap(borrowed);
+    assert!(
+        Item::Array(unwrapped.iter().map(|each| each.clone().into_owned()).collect()).equivalent(&json("[1, 2, [3], null, {}]")).unwrap()
+    );
+    assert!(unwrapped.iter().all(|each| matches!(each, Cow::Borrowed(_))));
+    let owned: Seq<'_> = items.iter().cloned().map(Cow::Owned).collect();
+    assert!(unwrap(owned).iter().all(|each| matches!(each, Cow::Owned(_))));
     assert!(unwrap(Vec::new()).is_empty());
-    assert!(wrap(Vec::new()).is_empty());
+    gives("lax $[*]", "[1, [2], {}]", "[1, [2], {}]");
+    gives("lax $.a[0]", r#"{"a": {"b": 1}}"#, r#"[{"b": 1}]"#);
+    gives("lax $[*][*]", "[1, [2, [3]]]", "[1, 2, [3]]");
+    assert_eq!(state("strict $[*]", "{}"), "22039");
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §4.48.3, §9.46 GR11b] a

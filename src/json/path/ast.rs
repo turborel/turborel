@@ -26,6 +26,11 @@ pub struct Path {
     pub mode: Mode,
     /// The `<JSON path wff>`.
     pub expr: Expr,
+    /// The SQL-session's time zone displacement, in minutes, as the path
+    /// was parsed: what `datetime()` without a template takes a string of
+    /// a datetime without time zone in, as one with a template does
+    /// [§9.51 GR].
+    pub zone: i16,
 }
 
 /// `<JSON path mode>`: how structural errors are handled [§9.46 GR11].

@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use self::options::options_of;
-use super::vector::{Ask, Engine, Held, Place, VectorIndex, approximate_support, column_of, default_desc, located, plain};
+use super::vector::{Ask, Engine, Held, Named, Place, VectorIndex, approximate_support, column_of, default_desc, located, plain, serves};
 use super::{Index, IndexMethod, NearestQuery, NearestSupport};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::disk::buffer::{BufferPool, FileId};
@@ -74,7 +74,8 @@ impl HnswMethod {
         let column = column_of(HNSW_METHOD, columns)?;
         plain(HNSW_METHOD, desc)?;
         let o = options_of(desc, column.width());
-        let (plugins, metric) = self.place.codec_plugins((&o.metric, &o.quantizer), column, true)?;
+        let named = Named { metric: &o.metric, quantizer: &o.quantizer, shared: o.shared };
+        let (plugins, metric) = self.place.codec_plugins(&named, column, true)?;
         let (pool, file) = self.place.files()?;
         let budget = self.place.budget();
         let hnsw = match locator {
@@ -86,13 +87,17 @@ impl HnswMethod {
         }
         let held = Held::new(HnswEngine { hnsw, ef: AtomicUsize::new(o.config.ef_search), dims: column.width() });
         self.place.keep(&held);
-        Ok(Box::new(VectorIndex::new(held, column, &metric)))
+        Ok(Box::new(VectorIndex::new(held, column, (&metric.0, &metric.1), o.shared)))
     }
 }
 
 impl IndexMethod for HnswMethod {
     fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> NearestSupport {
         approximate_support(HNSW_METHOD, query, columns)
+    }
+    fn serves_metric(&self, index: &IndexDesc, call: &str) -> bool {
+        let o = options_of(index, 0);
+        self.metric(index).is_some_and(|m| serves(&m, o.shared.normalized, call))
     }
     fn metric(&self, index: &IndexDesc) -> Option<String> {
         self.place.metric_name(&options_of(index, 0).metric)
@@ -137,6 +142,7 @@ pub(crate) struct HnswEngine {
 
 impl Engine for HnswEngine {
     const METHOD: &'static str = HNSW_METHOD;
+    const LIST_OPTION: &'static str = options::EF_SEARCH;
     fn meta(&self) -> PageId {
         self.hnsw.meta()
     }

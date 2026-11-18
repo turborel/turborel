@@ -148,7 +148,7 @@ impl RowFilter for Failing {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D-APPROX: an in-filter is asked of the
+/// Verifies: [EXTENSION] RULES.md D94: an in-filter is asked of the
 /// candidates and only rows it admits are answered, as many as asked, of
 /// one in twenty, past the list the search was asked for; its
 /// first error is the search's.
@@ -180,7 +180,7 @@ fn another_metric_or_a_refused_budget_declines() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D-DISKANN, D-HNSW, D-IVF: a locator names
+/// Verifies: [DESIGN] RULES.md D95: a locator names
 /// its version, its column's format and dimensions; another of each is
 /// SQLCODE -916.
 #[test]
@@ -216,4 +216,40 @@ fn a_method_refuses_columns_it_cannot_index() {
         }
         assert!(!method.supports(crate::value::CompOp::Eq), "{}", method.name());
     }
+}
+
+/// Verifies: [EXTENSION] vector_standard R7.1, §10.2 RERANK: DiskANN's
+/// RERANK ON gives the whole search list to be ordered again by the exact
+/// distance, and OFF the rows asked alone, as ALTER INDEX sets it.
+#[test]
+fn diskann_rerank_gives_the_whole_list_or_the_rows_asked() {
+    let index = filled(&DiskAnnMethod::in_memory());
+    let q = query("COSINE", 3, None);
+    let on = found(&index, &q, None).unwrap().unwrap();
+    assert!(on.len() > K, "the list of 64: {}", on.len());
+    let name = crate::catalog::QualifiedName { auth: "A".into(), ident: "T".into() };
+    let table = crate::catalog::TableDesc {
+        periods: Vec::new(),
+        typed: None,
+        name: name.clone(),
+        columns: vec![],
+        constraints: vec![],
+        engine: crate::engine::rows::ROW_STORE.into(),
+        options: Vec::new(),
+        generation: 0,
+        temporary: None,
+    };
+    let off = crate::catalog::IndexDesc {
+        name: "T_V".into(),
+        table: name,
+        columns: vec![0],
+        method: "diskann".into(),
+        unique: false,
+        options: vec![("DISKANN.RERANK".into(), Value::Char("OFF".into()))],
+        collations: Vec::new(),
+        nulls: false,
+        expressions: Vec::new(),
+    };
+    index.reconfigure((&table, &off));
+    assert_eq!(found(&index, &q, None).unwrap().unwrap().len(), K);
 }

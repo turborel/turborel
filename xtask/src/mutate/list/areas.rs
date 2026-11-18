@@ -2,6 +2,22 @@
 
 use super::Mutation;
 
+/// The core's mutations, then those of the mechanisms beside it.
+pub fn core() -> [&'static [Mutation]; 10] {
+    [
+        &super::MUTATIONS,
+        &super::rekey::REKEY,
+        &super::KEPT,
+        &super::READERS,
+        &super::READS,
+        &super::COLLATIONS,
+        &super::TAILORINGS,
+        &super::sql2023::SQL2023,
+        &super::regex::REGEX,
+        &super::SHADOW,
+    ]
+}
+
 /// Every area's mutations, in order: the first half's, then the second's.
 pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
     first().into_iter().chain(second())
@@ -39,7 +55,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order.
-fn second() -> [&'static [Mutation]; 24] {
+fn second() -> [&'static [Mutation]; 28] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -65,5 +81,38 @@ fn second() -> [&'static [Mutation]; 24] {
         &super::system_versioned::SYSTEM_VERSIONED,
         &super::rename::RENAME,
         &super::savepoints::SAVEPOINTS,
+        &super::vector_indexes::VECTOR_INDEXES,
+        &super::vector_embed::VECTOR_EMBED,
+        &super::vector_hybrid::VECTOR_HYBRID,
+        &super::vector::VECTOR,
     ]
+}
+
+/// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's
+/// and T621's, then the spatial areas', replication's and the server's.
+pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
+    let json: [&'static [Mutation]; 10] = [
+        &super::projection::PROJECTION,
+        &super::json::JSON,
+        &super::json_path::JSON_PATH,
+        &super::json_type::JSON_TYPE,
+        &super::json_index::JSON_INDEX,
+        &super::expression_index::EXPRESSION_INDEX,
+        &super::json_table::JSON_TABLE,
+        &super::fulltext::FULLTEXT,
+        &super::sqlmm_fulltext::SQLMM_FULLTEXT,
+        &super::t621::T621,
+    ];
+    let last: [&'static [Mutation]; 9] = [
+        &super::near::NEAR,
+        &super::rtree::RTREE,
+        &super::geometry::GEOMETRY,
+        &super::FILL,
+        &super::ZONES,
+        &super::STATS,
+        &super::WAITS,
+        &super::VR,
+        &super::SERVER,
+    ];
+    json.into_iter().chain(last)
 }

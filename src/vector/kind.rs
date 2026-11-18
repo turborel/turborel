@@ -110,6 +110,20 @@ impl SqlType for VectorType {
         NAME
     }
 
+    fn param_word(&self, at: usize, word: &str) -> Option<u32> {
+        params::param_word(at, word)
+    }
+
+    fn pack_params(&self, written: &[u32]) -> Option<Vec<u32>> {
+        params::pack_params(written)
+    }
+
+    /// Vectors have no order (R3.11), and `=` is not theirs (R3.12):
+    /// VECTOR_EQUALS compares them.
+    fn ordered(&self) -> bool {
+        false
+    }
+
     fn written(&self, t: &DataType) -> String {
         params::written_of(t)
     }

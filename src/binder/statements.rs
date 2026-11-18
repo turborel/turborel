@@ -151,6 +151,14 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     if composite(target) || composite(t) {
         return false;
     }
+    // [ISO/IEC 9075-2:2023 §4.8.2] a value of JSON to a site of JSON;
+    // \[EXTENSION\] a character string's JSON text too (`types::json`).
+    if let DataType::Json = target {
+        return matches!(t, DataType::Json) || t.is_character();
+    }
+    if let DataType::Json = t {
+        return false;
+    }
     if let DataType::Extension(e) = target {
         return target.comparable(t) || (t.is_character() && e.kind.assigns_text());
     }

@@ -108,13 +108,17 @@ impl Plan {
             Plan::Recursive { member, fixpoint } => writeln!(out, "{pad}Recursive member {member} ({})", fixpoint.word()),
             Plan::WorkTable { member, .. } => writeln!(out, "{pad}WorkTable of member {member}"),
             Plan::Transition { .. } => writeln!(out, "{pad}Transition table"),
-            Plan::Unnest(u) => writeln!(
-                out,
-                "{pad}{}Unnest of {} collections{}",
-                if u.outer.is_some() { "LeftOuter" } else { "" },
-                u.collections.len(),
-                if u.ordinality { " with ordinality" } else { "" }
-            ),
+            Plan::Unnest(u) => match &u.json {
+                // [ISO/IEC 9075-2:2023 §7.11] a JSON table.
+                Some(j) => writeln!(out, "{pad}{}{}", if u.outer.is_some() { "LeftOuter " } else { "" }, j.render()),
+                None => writeln!(
+                    out,
+                    "{pad}{}Unnest of {} collections{}",
+                    if u.outer.is_some() { "LeftOuter" } else { "" },
+                    u.collections.len(),
+                    if u.ordinality { " with ordinality" } else { "" }
+                ),
+            },
             Plan::Window { detail, .. } | Plan::Recognize { detail, .. } => writeln!(out, "{pad}{detail}"),
             Plan::Polymorphic(p) => writeln!(out, "{pad}Polymorphic table function {}", p.function()),
         };
@@ -196,4 +200,3 @@ mod tests {
         assert!(Shown::of(None).names().is_none());
     }
 }
-

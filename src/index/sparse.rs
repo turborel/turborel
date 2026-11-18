@@ -6,17 +6,20 @@
 //! in a sparse inverted index (`engine/sparse.rs`) in a pager file of a
 //! buffer pool, as the rtree index keeps its tree.
 //!
-//! Its keys are projected (D85). An entry is counted under the hash of its
-//! vector, not the vector, which may be large, so readers recheck each
-//! row's vector by its hash. `Probe::All` gives every (hash, row) once.
-//! NULL vectors are not indexed (R10.6). A key of a null is refused, as
-//! no NULLS NOT DISTINCT index of this method is made.
+//! Its keys are projected (D85), as the dense vector indexes' are: every
+//! vector to one constant key, a null to itself. The engine counts an
+//! entry under the hash of its vector, not the vector, which may be large,
+//! and its searches find rows, not hashes, so a reader takes each row as
+//! it sees it and the executor measures it again (D94, D99). `rows` of a
+//! vector gives the rows of that vector exactly. NULL vectors are not
+//! indexed (R10.6). A key of a null is refused, as no NULLS NOT DISTINCT
+//! index of this method is made.
 //!
 //! Top-k and range searches by dot product are the engine's
-//! (`SparseTree::top_k`, `SparseTree::within`), reached through
-//! `SparseIndex::tree` until the executor's approximate path asks an
-//! index for them.
+//! (`SparseTree::top_k`, `SparseTree::within`). An approximate search of
+//! a call of DOT reads them (`nearest.rs`).
 
+mod nearest;
 mod options;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,18 +27,22 @@ use std::sync::{Arc, Mutex};
 
 pub use options::{BLOCK_SIZE_OPTION, QUANTIZATION_OPTION, VECTOR_TYPE};
 
-use super::{Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, Probe, RowIds};
+use super::{
+    Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, NearestQuery, NearestSupport, NeighbourEntries, Probe, RowFilter, RowIds,
+};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::engine::sparse::{HASH_BYTES, Layout, SparseTree, SparseVector};
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
-use crate::memory::Host;
+use crate::memory::{Host, MemoryBudget};
 use crate::spill::{Area, WorkAreas};
 use crate::storage::{RowId, TableOption};
 use crate::sync::lock_builtin;
-use crate::value::{Binary, CompOp, DataType, Value};
+use crate::value::{CompOp, DataType, Value};
+use crate::vector::Element;
+use crate::vector::metric::DOT;
 
 /// The name of `SparseMethod`.
 pub const SPARSE_METHOD: &str = "inverted";
@@ -59,7 +66,12 @@ impl SparseMethod {
     /// Creates its budgeted memory file lazily, when the first index is
     /// made. A database attaches its memory budget before using it.
     pub fn in_memory() -> SparseMethod {
-        SparseMethod { files: Mutex::new(None), memory: MemoryPages::new(MEMORY_POOL_BYTES) }
+        SparseMethod::sharing(MemoryPages::new(MEMORY_POOL_BYTES))
+    }
+
+    /// A method keeping its indexes in `memory`, which others may share.
+    pub(crate) fn sharing(memory: Arc<MemoryPages>) -> SparseMethod {
+        SparseMethod { files: Mutex::new(None), memory }
     }
 
     fn files(&self) -> Result<(Arc<BufferPool>, FileId)> {
@@ -76,22 +88,29 @@ impl SparseMethod {
     /// work, for the method and its tests.
     pub(crate) fn make(&self, layout: Layout) -> Result<SparseIndex> {
         let (pool, file) = self.files()?;
-        Ok(SparseIndex::new(SparseTree::create(pool, file, layout)?))
+        Ok(SparseIndex::new(SparseTree::create(pool, file, layout)?, None))
     }
 
     /// The index `locator` finds, of `layout`, its type not checked.
     pub(crate) fn reopen(&self, locator: &[u8], layout: Layout) -> Result<SparseIndex> {
         let meta = options::located(locator)?;
         let (pool, file) = self.files()?;
-        Ok(SparseIndex::new(SparseTree::open(pool, file, meta, layout)?))
+        Ok(SparseIndex::new(SparseTree::open(pool, file, meta, layout)?, None))
     }
 }
 
-/// Refuses columns that are not one VECTOR column.
-fn validate(columns: &[DataType]) -> Result<()> {
+/// Refuses columns that are not one VECTOR column, or one of DENSE
+/// layout (R10.3); else the dimension count and format the column fixes,
+/// if it fixes both and SPARSE.
+fn validate(columns: &[DataType]) -> Result<Option<(u32, Element)>> {
     let refused = || unsupported("indexes one VECTOR column of SPARSE layout (R10.3)");
-    let [DataType::Extension(t)] = columns else { return Err(refused()) };
-    if t.kind.name().eq_ignore_ascii_case(VECTOR_TYPE) { Ok(()) } else { Err(refused()) }
+    let [column] = columns else { return Err(refused()) };
+    let DataType::Extension(t) = column else { return Err(refused()) };
+    let dense = crate::vector::shape_of(column).and_then(|s| s.layout) == Some(crate::vector::Layout::Dense);
+    if !t.kind.name().eq_ignore_ascii_case(VECTOR_TYPE) || dense {
+        return Err(refused());
+    }
+    Ok(nearest::fixed_sparse(column))
 }
 
 impl IndexMethod for SparseMethod {
@@ -106,13 +125,22 @@ impl IndexMethod for SparseMethod {
     fn supports(&self, _op: CompOp) -> bool {
         false
     }
+    /// Approximately, of a call of DOT on a column of a fixed sparse
+    /// shape (`nearest.rs`).
+    fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> NearestSupport {
+        nearest::support(query, columns)
+    }
+    /// DOT: the rows of the greatest dot product are the nearest by it.
+    fn metric(&self, _index: &IndexDesc) -> Option<String> {
+        Some(DOT.to_owned())
+    }
     fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
-        validate(columns)?;
-        Ok(Box::new(self.make(Layout::default())?))
+        let shape = validate(columns)?;
+        Ok(Box::new(self.make(Layout::default())?.of_shape(shape)))
     }
     fn open(&self, columns: &[DataType], locator: &[u8]) -> Result<Option<Box<dyn Index>>> {
-        validate(columns)?;
-        Ok(Some(Box::new(self.reopen(locator, Layout::default())?)))
+        let shape = validate(columns)?;
+        Ok(Some(Box::new(self.reopen(locator, Layout::default())?.of_shape(shape))))
     }
     fn index_options(&self) -> Vec<TableOption> {
         options::options()
@@ -121,12 +149,12 @@ impl IndexMethod for SparseMethod {
         if on.1.nulls || on.1.unique {
             return Err(unsupported("makes no UNIQUE or NULLS NOT DISTINCT index"));
         }
-        validate(columns)?;
-        Ok(Box::new(self.make(options::layout_of(on.1)?)?))
+        let shape = validate(columns)?;
+        Ok(Box::new(self.make(options::layout_of(on.1)?)?.of_shape(shape)))
     }
     fn open_on(&self, columns: &[DataType], locator: &[u8], on: (&TableDesc, &IndexDesc)) -> Result<Option<Box<dyn Index>>> {
-        validate(columns)?;
-        Ok(Some(Box::new(self.reopen(locator, options::layout_of(on.1)?)?)))
+        let shape = validate(columns)?;
+        Ok(Some(Box::new(self.reopen(locator, options::layout_of(on.1)?)?.of_shape(shape))))
     }
     fn checkpoint(&self) -> Result<()> {
         let (pool, file) = self.files()?;
@@ -134,12 +162,12 @@ impl IndexMethod for SparseMethod {
     }
 }
 
-/// The hash a key is counted under: of its vector, or the hash itself if
-/// the key is one already projected, a binary string of its bytes.
-fn hash_of(key: &Key) -> Result<[u8; HASH_BYTES]> {
+/// The hash a key is counted under: of its vector; none of the projected
+/// key every vector shares.
+fn hash_of(key: &Key) -> Result<Option<[u8; HASH_BYTES]>> {
     match key.0.as_slice() {
-        [Value::Binary(hash)] => <[u8; HASH_BYTES]>::try_from(hash.bytes()).map_err(|_| unsupported("received a malformed projected key")),
-        [_] => Ok(vector_of(key)?.hash()),
+        [Value::Binary(_)] => Ok(None),
+        [_] => Ok(Some(vector_of(key)?.hash())),
         _ => Err(unsupported("received a key of more than one column")),
     }
 }
@@ -153,30 +181,25 @@ fn vector_of(key: &Key) -> Result<SparseVector> {
     }
 }
 
-/// The projected key of a hash.
-fn hash_key(hash: &[u8; HASH_BYTES]) -> Key {
-    Key(vec![Value::Binary(Binary::new(hash.to_vec()))])
-}
-
-/// Projects a vector to its hash (D85).
-struct Projection;
-
-impl KeyProjection for Projection {
-    fn project(&self, key: &Key) -> Result<Key> {
-        Ok(hash_key(&hash_of(key)?))
-    }
-}
-
 /// \[EXTENSION\] An index of the method: a sparse inverted index.
 pub struct SparseIndex {
     tree: SparseTree,
     discarded: AtomicBool,
     projection: Arc<dyn KeyProjection>,
+    /// The dimension count and format its column fixes, if it fixes both:
+    /// of none, it answers no approximate search (`nearest.rs`).
+    shape: Option<(u32, Element)>,
 }
 
 impl SparseIndex {
-    fn new(tree: SparseTree) -> SparseIndex {
-        SparseIndex { tree, discarded: AtomicBool::new(false), projection: Arc::new(Projection) }
+    fn new(tree: SparseTree, shape: Option<(u32, Element)>) -> SparseIndex {
+        SparseIndex { tree, discarded: AtomicBool::new(false), projection: super::vector::projection(), shape }
+    }
+
+    /// It, of a column fixing `shape`.
+    fn of_shape(mut self, shape: Option<(u32, Element)>) -> SparseIndex {
+        self.shape = shape;
+        self
     }
 
     /// Its sparse inverted index, for top-k and range searches.
@@ -196,6 +219,15 @@ impl Drop for SparseIndex {
 }
 
 impl Index for SparseIndex {
+    fn approximate(
+        self: Arc<Self>,
+        query: &NearestQuery,
+        budget: &Arc<MemoryBudget>,
+        filter: Option<&mut dyn RowFilter>,
+    ) -> Result<Option<NeighbourEntries>> {
+        let Some(found) = nearest::candidates(&self.tree, self.shape, (query, budget), filter)? else { return Ok(None) };
+        Ok(nearest::stream(self, found, budget))
+    }
     fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
         Some(Arc::clone(&self.projection))
     }
@@ -214,8 +246,16 @@ impl Index for SparseIndex {
     fn remove(&self, key: &Key, row: RowId) -> Result<()> {
         self.tree.remove(&vector_of(key)?, row)
     }
+    /// Of a vector, the rows of that vector; of the projected key, every
+    /// row, each once.
     fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
-        self.tree.rows(&hash_of(key)?)
+        if let Some(hash) = hash_of(key)? {
+            return self.tree.rows(&hash);
+        }
+        let mut rows = self.tree.entries().map(|entry| entry.map(|(_, row)| row)).collect::<Result<Vec<_>>>()?;
+        rows.sort_unstable();
+        rows.dedup();
+        Ok(rows)
     }
     fn key_rows(self: Arc<Self>, key: &Key) -> RowIds {
         match self.rows(key) {
@@ -242,9 +282,10 @@ impl Index for SparseIndex {
         match probe {
             Probe::All => {
                 let found = self.tree.entries();
+                let key = super::vector::entry_key();
                 Box::new(found.map(move |entry| {
                     let _held = &self;
-                    entry.map(|(hash, row)| (hash_key(&hash), row))
+                    entry.map(|(_, row)| (key.clone(), row))
                 }))
             }
             Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Predicate { .. } => {

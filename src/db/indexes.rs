@@ -29,10 +29,14 @@ mod accuracy;
 
 use std::sync::Arc;
 
+mod expressions;
+
+pub(super) use expressions::{key_positions, unbound_keys};
+
 use super::{Database, State, api, qualified_name};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{Code, Result, SqlError, fail};
-use crate::index::{BTREE_METHOD, FULLTEXT_METHOD, HASH_METHOD, Index, KeyOrder, Probe, RTREE_METHOD};
+use crate::index::{BTREE_METHOD, FULLTEXT_METHOD, HASH_METHOD, Index, JSON_METHOD, KeyOrder, Probe, RTREE_METHOD};
 use crate::log::record::Change;
 use crate::storage::{TableOption, chosen, needs_rebuild};
 use crate::txn::{Concurrency, LockMode, TableLock, Timestamp, Transactions, Txn};
@@ -43,7 +47,9 @@ pub use accuracy::AccuracyReport;
 /// name, its method, the method's options it sets (RULES.md D41), and
 /// whether it holds keys with a null (`IndexDesc::nulls`): only one built
 /// again to take the place of a UNIQUE NULLS NOT DISTINCT constraint's,
-/// which holds every key the old one held once it does.
+/// which holds every key the old one held once it does. Of its key parts
+/// that are expressions, each its place and text (RULES.md D92);
+/// `columns` are the others'.
 #[derive(Debug, Clone)]
 pub(crate) struct IndexSpec {
     pub(crate) name: String,
@@ -52,13 +58,14 @@ pub(crate) struct IndexSpec {
     pub(crate) method: String,
     pub(crate) options: Vec<(String, Value)>,
     pub(crate) nulls: bool,
+    pub(crate) expressions: Vec<(usize, String)>,
 }
 
 impl IndexSpec {
     /// The definition the log keeps of it.
     pub(super) fn change(&self) -> Change {
-        let IndexSpec { name, table, columns, method, options, .. } = self.clone();
-        Change::CreateIndex { name, table, columns, method, options }
+        let IndexSpec { name, table, columns, method, options, expressions, .. } = self.clone();
+        Change::CreateIndex { name, table, columns, method, options, expressions }
     }
 }
 
@@ -235,7 +242,7 @@ impl Database {
     pub fn create_index(&self, name: &str, table: &str, columns: &[&str], method: &str) -> Result<()> {
         let columns = columns.iter().map(|c| (*c).to_owned()).collect();
         let (table, method) = (qualified_name(table)?, method.to_owned());
-        let spec = IndexSpec { name: name.to_owned(), table, columns, method, options: Vec::new(), nulls: false };
+        let spec = IndexSpec { name: name.to_owned(), table, columns, method, options: Vec::new(), nulls: false, expressions: Vec::new() };
         self.noted(self.make_index(&spec))
     }
 
@@ -256,11 +263,11 @@ impl Database {
         // once no transaction has them open (`db/temporary/storage.rs`).
         if current.catalog.table(qn).is_some_and(|t| t.temporary.is_some()) {
             let vector = crate::index::vector::is_vector_method(&spec.method);
-            if !vector && ![BTREE_METHOD, HASH_METHOD, RTREE_METHOD, FULLTEXT_METHOD].contains(&spec.method.as_str()) {
+            if !vector && ![BTREE_METHOD, HASH_METHOD, RTREE_METHOD, FULLTEXT_METHOD, JSON_METHOD].contains(&spec.method.as_str()) {
                 return Err(SqlError::new(
                     Code::SyntaxRule,
                     format!(
-                        "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD}, {HASH_METHOD}, {RTREE_METHOD} or {FULLTEXT_METHOD}, kept in memory (RULES.md D49)"
+                        "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD}, {HASH_METHOD}, {RTREE_METHOD}, {FULLTEXT_METHOD} or {JSON_METHOD}, kept in memory (RULES.md D49)"
                     ),
                 ));
             }
@@ -388,8 +395,8 @@ impl Database {
             }
             let table = current.catalog.table(&ix.table).ok_or_else(|| api(format!("[EXTENSION] no table {}", ix.table)))?;
             let columns = ix.columns.iter().filter_map(|&c| table.columns.get(c)).map(|c| c.name.clone()).collect();
-            let spec =
-                IndexSpec { name: built.clone(), table: ix.table.clone(), columns, method: ix.method.clone(), options, nulls: ix.nulls };
+            let (method, expressions) = (ix.method.clone(), ix.texts());
+            let spec = IndexSpec { name: built.clone(), table: ix.table.clone(), columns, method, options, nulls: ix.nulls, expressions };
             return self.build_index(&spec, &|st, tx| {
                 st.swap_index((&built, name))?;
                 st.log_definition(Some(tx), change.clone())

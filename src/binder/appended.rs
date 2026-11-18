@@ -42,8 +42,8 @@ impl Binder<'_> {
     }
 
     /// The full-text index of the base table's column `first` is, if it is
-    /// a column reference of a table of this query that has one: of several,
-    /// the first by name.
+    /// a column reference of a table of this query that has one, or a
+    /// hybrid index of it: of several, the first by name.
     fn ranking_index(&self, first: Option<&ValueExpression>) -> Option<String> {
         let Some(ValueExpression::Column(cs)) = first else { return None };
         if cs.catalog.is_some() {
@@ -54,7 +54,9 @@ impl Binder<'_> {
             None => self.unqualified(&cs.column).ok()?,
         };
         let Source::Table = item.source else { return None };
-        let ranking = |ix: &&IndexDesc| ix.method == FULLTEXT_METHOD && ix.columns.as_slice() == [column];
+        // A hybrid index's text part ranks its first column (`index/vector/hybrid.rs`).
+        let hybrid = |ix: &IndexDesc| ix.method == crate::index::vector::hybrid::HYBRID_METHOD && ix.columns.first() == Some(&column);
+        let ranking = |ix: &&IndexDesc| ix.method == FULLTEXT_METHOD && ix.columns.as_slice() == [column] || hybrid(ix);
         let indexes = self.db.catalog.indexes(&item.table);
         indexes.into_iter().filter(ranking).map(|ix| ix.name.clone()).min()
     }

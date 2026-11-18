@@ -10,7 +10,10 @@
 //! column of any of those names stays one. The constructor functions and
 //! IS JSON are in `json/construct.rs`.
 
+mod accessor;
 mod construct;
+mod table;
+mod typed;
 
 use super::Parser;
 use super::dynamic::WITHOUT;
@@ -82,6 +85,8 @@ impl Parser {
             ValueExpression::SetFunction(self.json_objectagg()?)
         } else if self.at_json(JSON_ARRAYAGG) {
             ValueExpression::SetFunction(self.json_arrayagg()?)
+        } else if let Some(typed) = self.json_typed()? {
+            typed
         } else {
             return Ok(None);
         };
@@ -196,7 +201,7 @@ impl Parser {
         let wrapper = self.wrapper_behavior()?;
         let quotes_at = self.here();
         let quotes = self.quotes_behavior()?;
-        if quotes.is_some() && matches!(wrapper, Some(Wrapper::Conditional | Wrapper::Unconditional)) {
+        if quotes.is_some() && wrapper.is_some_and(|w| w != Wrapper::Without) {
             return Err(SqlError::at(
                 Code::SyntaxRule,
                 quotes_at,
@@ -341,6 +346,8 @@ fn json_returning(value: &ValueExpression) -> bool {
     match value {
         ValueExpression::Json(j, _) => match &**j {
             JsonExpression::Constructor(_) => true,
+            // [§4.48.4] Of the JSON type, FORMAT JSON implicit [§10.12 SR5].
+            JsonExpression::Typed(_) => false,
             JsonExpression::Query(operator) => matches!(operator.clauses, JsonClauses::Query { .. }),
         },
         ValueExpression::SetFunction(sf) => sf.json.is_some(),
@@ -371,3 +378,6 @@ fn json_returning(value: &ValueExpression) -> bool {
         | ValueExpression::NestedWindow(_) => false,
     }
 }
+
+#[cfg(test)]
+mod tests;

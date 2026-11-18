@@ -68,6 +68,7 @@ fn ordered_by(t: &DataType, member: fn(&DataType) -> bool) -> bool {
             | DataType::Interval(_)
             | DataType::Structured(_)
             | DataType::Reference(_)
+            | DataType::Json
             | DataType::Extension(_) => false,
         }
 }
@@ -105,6 +106,18 @@ pub(crate) fn unordered(t: &DataType) -> Option<&'static str> {
     }
 }
 
+/// \[EXTENSION\] Whether `t` is S-ordered, S the types of the kinds
+/// beyond the standard whose values have no order (`SqlType::ordered`):
+/// VECTOR's (RULES.md D93).
+pub(crate) fn orderless(t: &DataType) -> bool {
+    ordered_by(t, orderless_kind)
+}
+
+/// Whether `t` is of a kind beyond the standard whose values have no order.
+fn orderless_kind(t: &DataType) -> bool {
+    if let DataType::Extension(e) = t { !e.kind.ordered() } else { false }
+}
+
 /// [ISO/IEC 9075-2:2023 §4.2.4] Whether `t` is S-ordered of the set of
 /// structured types.
 pub(crate) fn structured_ordered(t: &DataType) -> bool {
@@ -138,6 +151,7 @@ pub(crate) fn nesting(t: &DataType) -> usize {
         | DataType::Interval(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_) => 0,
     }
 }

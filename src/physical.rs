@@ -19,6 +19,7 @@ mod access;
 mod collated;
 mod cost;
 mod estimate;
+mod expression_index;
 mod indexed;
 mod join_probe;
 pub use join_probe::{JoinComparison, JoinProbe};
@@ -366,8 +367,7 @@ pub enum Plan {
 #[derive(Clone, Copy)]
 pub struct PhysicalPlanner<'a> {
     db: &'a State,
-    /// Whether the plan is made to be shown, its operators described
-    /// (`physical/shown.rs`), as EXPLAIN's is; one made to run is not.
+    /// Whether the plan is made to be shown, its operators described (`physical/shown.rs`), as EXPLAIN's is; one made to run is not.
     shown: bool,
     /// Of a plan made with a prepared statement's slots, the values of the
     /// execution its paths are chosen by (`physical/kept.rs`).
@@ -562,8 +562,8 @@ impl<'a> PhysicalPlanner<'a> {
         let inner: Vec<SortKey> = want
             .iter()
             .map(|k| {
-                let Some(Expr::Column(c)) = exprs.get(k.column) else { return None };
-                Some(SortKey { column: *c, ..*k })
+                let column = expression_index::ordered_by(self.db, exprs.get(k.column)?, input)?;
+                Some(SortKey { column, ..*k })
             })
             .collect::<Option<_>>()
             .unwrap_or_default();

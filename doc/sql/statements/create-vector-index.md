@@ -18,6 +18,7 @@ column *(extension)*
 <vector index clause> ::=
       ORGANIZATION <organization>
     | DISTANCE <metric name>
+    | DISTANCE <schema name> . <distance function name>
     | WITH TARGET ACCURACY <unsigned integer>
     | PARAMETERS ( <parameter> [ { , <parameter> }... ] )
     | QUANTIZATION { NONE | SQ8 | BQ | PQ [ ( <unsigned integer> [ , 8 ] ) ] }
@@ -70,15 +71,43 @@ GLOBAL, ONLINE, PARALLEL and the WITH form's MAXDOP and ONLINE are taken
 and change nothing, since every index is built while the table stays
 open to other transactions, as CREATE INDEX's is.
 
+`DISTANCE s.f` names a distance function registered to the database
+under the name `S.F` as the metric. The index measures by it, and
+`VECTOR_DISTANCE(v, q, 'S.F')` is served by it. A program registers one
+with `Database::register_metric`.
+
+Each of `diskann`, `hnsw` and `ivf` declares TARGET_ACCURACY, PQ_BYTES
+and NORMALIZED in its own group. TARGET_ACCURACY, 90 by default, is the
+share of the true nearest rows a search aims at when the query names no
+accuracy or parameters of its own. Setting the method's own search list,
+EF_SEARCH or PROBES makes the index search by that instead. PQ_BYTES is
+the bytes of a quantizer's code, 0 for its default. DiskANN's 0 with the
+built-in PQ is half the dimensions, a byte for each two, as codes any
+coarser guide its search poorly. NORMALIZED ON
+declares every vector of the column of norm 1, and a row whose vector is
+not is refused with SQLCODE -301.
+
 The index serves a query whose ORDER BY is a distance of its column of
 the index's own metric. EUCLIDEAN and EUCLIDEAN_SQUARED serve each
-other. The setting VECTOR.BUILD_MEMORY_BYTES bounds the memory a build
-takes.
+other. On vectors of norm 1, COSINE, DOT, EUCLIDEAN and EUCLIDEAN_SQUARED
+order rows alike, so an index whose NORMALIZED is ON serves any of them,
+whichever is its own. A graph of `diskann` or `hnsw` needs a metric that
+is never negative, so its DOT or COSINE is measured by EUCLIDEAN when
+NORMALIZED is ON, and refused when it is OFF. The setting
+VECTOR.BUILD_MEMORY_BYTES bounds the memory a build takes.
+
+A vector method makes no UNIQUE index, as vectors are compared by no
+`=`. There is no CREATE UNIQUE INDEX, and a UNIQUE constraint of a
+VECTOR column is refused with SQLCODE -103 before any method is asked
+([Vectors](../14-vectors.md#no-order-and-no-equality)).
 
 ALTER INDEX REBUILD builds the index again, with the parameters given
 set first, each named as CREATE VECTOR INDEX names it. MERGE DELTA runs
 now the maintenance the index otherwise leaves to the database's
 maintenance job, such as merging the rows changed since it was built.
+A DiskANN index grown row by row also trains its codes then, once it
+holds DISKANN.TRAIN_AT rows, and caches again the nodes its searches
+pass first each time its rows double.
 LOAD takes the index's structure into memory, and UNLOAD lets it go, for
 a method that keeps it there. Each is made at once, apart from any
 transaction.
@@ -108,11 +137,11 @@ The table's schema is its user's.
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the table's schema |
 | 2A000 | -102 | An ORGANIZATION, a QUANTIZATION or an ALTER INDEX action is not one of those above |
+| 22000 | -301 | A row's vector is not of norm 1, and an index of its column has NORMALIZED ON |
 
 ## EXAMPLES
 
-Of a table DOCS (ID INTEGER, EMBEDDING DOUBLE PRECISION) and the methods
-`hnsw` and `diskann`:
+Of a table DOCS (ID INTEGER, EMBEDDING VECTOR(3, FLOAT32)) of four rows:
 
 ```sql
 CREATE VECTOR INDEX DOCS_HNSW ON DOCS (EMBEDDING)
@@ -156,6 +185,65 @@ OK
 --------------------------------------------------------------
  48
 (1 row)
+```
+
+The nearest rows by COSINE, found by DOCS_HNSW:
+
+```sql
+SELECT ID FROM DOCS ORDER BY VECTOR_DISTANCE(EMBEDDING, '[1,0,0]', 'COSINE') FETCH APPROX FIRST 2 ROWS ONLY;
+EXPLAIN SELECT ID FROM DOCS ORDER BY VECTOR_DISTANCE(EMBEDDING, '[1,0,0]', 'COSINE') FETCH APPROX FIRST 2 ROWS ONLY;
+```
+
+```
+           ID
+--------------
+            1
+            2
+(2 rows)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project DOCS.ID
+   Limit fetch 2 approx
+     Sort VECTOR_DISTANCE(DOCS.EMBEDDING, ASSIGN('[1,0,0]'), ASSIGN('COSINE'))
+       Project DOCS.ID, VECTOR_DISTANCE(DOCS.EMBEDDING, ASSIGN('[1,0,0]'), ASSIGN('COSINE'))
+         Scan ANN.DOCS
+ -- rules: constant_folding
+ -- optimized:
+ Project DOCS.ID
+   Limit fetch 2 approx
+     Sort VECTOR_DISTANCE(DOCS.EMBEDDING, TO_VECTOR('[1,0,0]', 3, 'FLOAT32'), 'COSINE')
+       Project DOCS.ID, VECTOR_DISTANCE(DOCS.EMBEDDING, TO_VECTOR('[1,0,0]', 3, 'FLOAT32'), 'COSINE')
+         Scan ANN.DOCS
+ -- physical:
+ Project DOCS.ID
+   Limit fetch 2 approx
+     Sort VECTOR_DISTANCE(DOCS.EMBEDDING, TO_VECTOR('[1,0,0]', 3, 'FLOAT32'), 'COSINE')
+       Project DOCS.ID, VECTOR_DISTANCE(DOCS.EMBEDDING, TO_VECTOR('[1,0,0]', 3, 'FLOAT32'), 'COSINE')
+         NearestScan ANN.DOCS using DOCS_HNSW [hnsw]: VECTOR_DISTANCE(DOCS.EMBEDDING, TO_VECTOR('[1,0,0]', 3, 'FLOAT32'), 'COSINE')  (first=2, cost=31.4; approximate COSINE post-filter, target accuracy=index, search list=index, beam width=index, probes=index, rerank=every candidate by exact distance)
+(19 rows)
+```
+
+Of a table UNIT (ID INTEGER, V VECTOR(2, FLOAT32)) of vectors of norm 1,
+an index of DOT declared NORMALIZED serves COSINE, and refuses a vector
+of another norm:
+
+```sql
+COMMIT;
+CREATE VECTOR INDEX UNIT_V ON UNIT (V) USING hnsw WITH (METRIC = 'DOT', HNSW.NORMALIZED = 'ON');
+SELECT ID FROM UNIT ORDER BY COSINE_DISTANCE(V, '[0.8,0.6]') FETCH APPROX FIRST 2 ROWS ONLY;
+INSERT INTO UNIT VALUES (4, '[3,4]');
+```
+
+```
+OK
+OK
+           ID
+--------------
+            2
+            1
+(2 rows)
+turborel: SQLCODE -301 (SQLSTATE 22000): a hnsw index declares its column NORMALIZED (R13.1), and takes no vector whose norm is not 1
 ```
 
 An index is of one method:

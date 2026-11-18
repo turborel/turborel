@@ -111,6 +111,7 @@ pub(crate) fn with_element(array: &Value, i: Option<i128>, (max, value): (u32, V
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_)) => {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] an element of {other}, not an array, is assigned")));
         }

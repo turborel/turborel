@@ -9,9 +9,9 @@
 //! image (`VectorRef`) this reads it with; this is the view the index
 //! needs, its values single precision as its postings' are.
 
-use crate::vector::{Element, Layout, VectorRef};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::murmur::murmur3_x64_128;
+use crate::vector::{Element, Layout, VectorRef};
 
 /// The image's format version (§4.1 offset 0).
 pub const IMAGE_VERSION: u8 = 1;

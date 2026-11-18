@@ -3,7 +3,7 @@
 //! where a sequence generator's counter goes on (RULES.md D62), as
 //! `log/record.rs` lays them out.
 
-use super::{Change, put_table, table, zone};
+use super::{Change, options, put_options, put_strs, put_table, table, zone};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
@@ -243,4 +243,33 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         }
         other => Err(SqlError::new(Code::Corrupt, format!("[DESIGN] a log record drops an unknown kind of object, {other}"))),
     }
+}
+
+/// A CREATE INDEX change's bytes: its name, table, columns, method,
+/// options, and its key parts that are expressions (RULES.md
+/// D92), each its place and text. Any other change, none.
+pub(super) fn put_create_index(out: &mut Vec<u8>, change: &Change) {
+    let Change::CreateIndex { name, table, columns, method, options, expressions } = change else { return };
+    out.put_str(name);
+    put_table(out, table);
+    put_strs(out, columns);
+    out.put_str(method);
+    put_options(out, options);
+    out.put_u32(u32::try_from(expressions.len()).unwrap_or(u32::MAX));
+    for (part, text) in expressions {
+        out.put_u32(u32::try_from(*part).unwrap_or(u32::MAX));
+        out.put_str(text);
+    }
+}
+
+/// What `put_create_index` wrote, as a change.
+pub(super) fn create_index(r: &mut Reader<'_>) -> Result<Change> {
+    let (name, table) = (r.str()?, table(r)?);
+    let columns = (0..r.u32()?).map(|_| r.str()).collect::<Result<_>>()?;
+    let (method, options) = (r.str()?, options(r)?);
+    let mut expressions = Vec::new();
+    for _ in 0..r.u32()? {
+        expressions.push((usize::try_from(r.u32()?).unwrap_or(usize::MAX), r.str()?));
+    }
+    Ok(Change::CreateIndex { name, table, columns, method, options, expressions })
 }

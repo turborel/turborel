@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, Weak};
 use super::Column;
 use super::column::refused;
 use super::index::{Engine, Held};
+use super::options::Shared;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::engine::hnsw;
@@ -22,6 +23,25 @@ use crate::vector::quantizer::{Quantizer, Quantizers, built_in_quantizers, quant
 
 /// HNSW's and IVF's metric and quantizer.
 pub(crate) type CodecPlugins = (hnsw::Metric, Option<Arc<dyn hnsw::Quantizer>>);
+
+/// The metric an index measures by, and the names of the one it orders
+/// by and of this one (`Place::metric`).
+pub(crate) struct Measured {
+    /// The metric measured by.
+    pub(crate) metric: Arc<dyn VectorMetric>,
+    /// The metric ordered by's name, and the measured one's.
+    pub(crate) names: (String, String),
+}
+
+/// The plug-ins an index's options name, and its shared options.
+pub(crate) struct Named<'a> {
+    /// Its metric's name.
+    pub(crate) metric: &'a str,
+    /// Its quantizer's name, or `NONE`.
+    pub(crate) quantizer: &'a str,
+    /// Its shared options.
+    pub(crate) shared: Shared,
+}
 
 /// The name of a quantizer option's value for none.
 pub(crate) const NO_QUANTIZER: &str = "NONE";
@@ -96,28 +116,33 @@ impl<E: Engine> Place<E> {
         self.memory.budget()
     }
 
-    /// The metric named `name`, if an index of `column` may order by it:
-    /// one measuring the column's format, and of a graph index (`graph`),
-    /// SYMMETRIC and NON_NEGATIVE (the vector design document R8.2).
+    /// The metric an index of `column` ordered by the metric named `name`
+    /// measures by, if it may order by it: one measuring the column's
+    /// format; of a column declared `normalized`, the metric it orders as
+    /// there (`MetricProperties::normalized_as`, `options.rs`); and of a
+    /// graph index (`graph`), SYMMETRIC and NON_NEGATIVE (the vector design
+    /// document R8.2).
     ///
     /// # Errors
     ///
     /// SQLCODE -103 for a metric the database does not know; -900 for
     /// one the index may not take.
-    pub(crate) fn metric(&self, (name, graph): (&str, bool), column: Column) -> Result<Arc<dyn VectorMetric>> {
-        let metric = metric_named(&self.metrics, name)
+    pub(crate) fn metric(&self, (name, graph, normalized): (&str, bool, bool), column: Column) -> Result<Measured> {
+        let declared = metric_named(&self.metrics, name)
             .ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[EXTENSION] there is no vector metric {name}")))?;
-        if !metric.formats().contains(&column.element) {
+        if !declared.formats().contains(&column.element) {
             return Err(refused(
                 E::METHOD,
-                &format!("orders by {}, which does not measure {} vectors", metric.name(), column.element.name()),
+                &format!("orders by {}, which does not measure {} vectors", declared.name(), column.element.name()),
             ));
         }
+        let unit = declared.properties().normalized_as.filter(|_| normalized).and_then(|m| metric_named(&self.metrics, m));
+        let metric = unit.unwrap_or_else(|| Arc::clone(&declared));
         let p = metric.properties();
         if graph && !(p.symmetric && p.non_negative) {
             return Err(refused(E::METHOD, &format!("orders by a SYMMETRIC, NON_NEGATIVE metric (R8.2), and {} is not", metric.name())));
         }
-        Ok(metric)
+        Ok(Measured { names: (declared.name().to_owned(), metric.name().to_owned()), metric })
     }
 
     /// The name of the metric named `name`, as the metric gives it: an
@@ -140,18 +165,18 @@ impl<E: Engine> Place<E> {
             .ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[EXTENSION] there is no vector quantizer {name}")))
     }
 
-    /// HNSW's or IVF's metric and quantizer of an index of `column`, the
-    /// ones named, and the metric's name; of a graph index (`graph`), the
-    /// metric as `metric` requires.
+    /// HNSW's or IVF's metric and quantizer of an index of `column` as
+    /// `o` names them, with codes of its code bytes; of a graph index
+    /// (`graph`), the metric as `metric` requires.
     ///
     /// # Errors
     ///
     /// As `metric` and `quantizer`.
-    pub(crate) fn codec_plugins(&self, (metric, quantizer): (&str, &str), column: Column, graph: bool) -> Result<(CodecPlugins, String)> {
-        let metric = self.metric((metric, graph), column)?;
-        let measure = hnsw::Metric::new(metric.name(), super::distance(&metric, column));
-        let quantizer = self.quantizer(quantizer)?.map(super::codec_quantizer);
-        Ok(((measure, quantizer), metric.name().to_owned()))
+    pub(crate) fn codec_plugins(&self, o: &Named<'_>, column: Column, graph: bool) -> Result<(CodecPlugins, (String, String))> {
+        let m = self.metric((o.metric, graph, o.shared.normalized), column)?;
+        let measure = hnsw::Metric::new(m.metric.name(), super::distance(&m.metric, column));
+        let quantizer = self.quantizer(o.quantizer)?.map(|q| super::codec_quantizer(q, o.shared.code_bytes));
+        Ok(((measure, quantizer), m.names))
     }
 
     /// Keeps `held`, made or opened, for checkpoints.

@@ -1,8 +1,9 @@
-//! Tests of JSON_OBJECTAGG and JSON_ARRAYAGG.
+//! Tests of JSON_OBJECTAGG, and of JSON_ARRAYAGG as JSON_ARRAY by query
+//! of its rows.
 
 use super::*;
-use crate::json::construct::OnNull;
 use crate::json::construct::tests::{formatted, json, plain, text};
+use crate::json::construct::{ArrayOptions, OnNull};
 use crate::json::{IMPLICIT_RETURNING, Keys};
 
 /// JSON_OBJECTAGG of the rows `rows`, each a name and an input, and
@@ -15,22 +16,17 @@ fn object_agg(rows: &[(&Value, Input<'_>)], options: &ObjectOptions<'_>) -> Resu
     state.finish()
 }
 
-/// JSON_ARRAYAGG of the rows `rows` and `options`.
+/// JSON_ARRAYAGG of the rows `rows`, of one FORMAT JSON or not, and
+/// `options`.
 fn array_agg(rows: &[Input<'_>], options: &ArrayOptions<'_>) -> Result<Value> {
-    let mut state = JsonArrayAgg::new(options)?;
-    for value in rows {
-        state.add(value)?;
-    }
-    state.finish()
+    super::super::json_array(rows, options)
 }
 
-/// Verifies: [ISO/IEC 9075-2:2023 §10.11 GR4b i, GR5f i] of
-/// no rows either aggregate is the null value, not an empty object or
-/// array.
+/// Verifies: [ISO/IEC 9075-2:2023 §10.11 GR4b i] of no rows
+/// JSON_OBJECTAGG is the null value, not an empty object.
 #[test]
 fn no_rows_is_the_null_value() {
     assert!(object_agg(&[], &ObjectOptions::IMPLICIT).unwrap().is_null());
-    assert!(array_agg(&[], &ArrayOptions::IMPLICIT).unwrap().is_null());
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §10.11 SR4a, SR4b, GR4b ii,
@@ -91,18 +87,6 @@ fn an_array_of_the_rows() {
     assert_eq!(array_agg(&[formatted(&broken)], &ArrayOptions::IMPLICIT).unwrap_err().sqlstate().as_str(), "22032");
 }
 
-/// Verifies: [DESIGN] `finish` reads the state without ending it: rows
-/// given after it are added to those before.
-#[test]
-fn finish_leaves_the_state_as_it_is() {
-    let (one, two) = (Value::Bool(true), Value::Bool(false));
-    let mut state = JsonArrayAgg::new(&ArrayOptions::IMPLICIT).unwrap();
-    state.add(&plain(&one)).unwrap();
-    assert_eq!(json(&state.finish().unwrap()), "[true]");
-    state.add(&plain(&two)).unwrap();
-    assert_eq!(json(&state.finish().unwrap()), "[true,false]");
-}
-
 /// Verifies: [ISO/IEC 9075-2:2023 §10.11 SR1b, SR3, GR6b, §9.43
 /// GR2a iii] the type returned: the implicit one (ID134); a text longer
 /// than it SQLSTATE 22001 by `finish`; a type no string's SQLCODE -103 and
@@ -117,7 +101,7 @@ fn the_type_returned() {
     let tiny = ObjectOptions { returning: &DataType::varying(9), ..ObjectOptions::IMPLICIT };
     assert_eq!(object_agg(&[(&a, plain(&one))], &tiny).unwrap_err().sqlstate().as_str(), "22001");
     let boolean = ArrayOptions { returning: &DataType::Boolean, ..ArrayOptions::IMPLICIT };
-    assert_eq!(JsonArrayAgg::new(&boolean).unwrap_err().sqlcode(), -103_i32);
+    assert_eq!(array_agg(&[], &boolean).unwrap_err().sqlcode(), -103_i32);
     let binary = DataType::VarBinary { length: 10_u32 };
     assert_eq!(JsonObjectAgg::new(&ObjectOptions { returning: &binary, ..ObjectOptions::IMPLICIT }).unwrap_err().sqlcode(), -900_i32);
     assert_eq!(

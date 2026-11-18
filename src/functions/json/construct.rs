@@ -24,6 +24,10 @@ pub const JSON_OBJECTAGG: &str = "JSON_OBJECTAGG";
 /// JSON_ARRAYAGG [§10.11].
 pub const JSON_ARRAYAGG: &str = "JSON_ARRAYAGG";
 
+/// [§6.34 F] How many operands a `<JSON name and value>` of JSON_OBJECT is
+/// bound to: its `<JSON name>` and its `<JSON input expression>`, in turn.
+pub(crate) const OPERANDS_PER_MEMBER: usize = 2;
+
 /// [§6.34] What a constructor makes, of its clauses explicit or implicit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Construction {
@@ -101,7 +105,7 @@ impl ScalarFunction for JsonConstruct {
     /// refused \[GR5b\].
     fn parameter_type(&self, position: usize, _args: &[Option<DataType>]) -> Option<ParameterType> {
         let (member, name) = match self.construction {
-            Construction::Object(..) => (position.checked_div(2)?, position.checked_rem(2)? == 0),
+            Construction::Object(..) => (position.checked_div(OPERANDS_PER_MEMBER)?, position.checked_rem(OPERANDS_PER_MEMBER)? == 0),
             Construction::Array(_) => (position, false),
         };
         let formatted = self.formats.get(member).copied().unwrap_or(false);
@@ -111,7 +115,7 @@ impl ScalarFunction for JsonConstruct {
     fn call(&self, args: &[Value]) -> Result<Value> {
         match self.construction {
             Construction::Object(on_null, keys) => {
-                let (pairs, rest) = args.as_chunks::<2>();
+                let (pairs, rest) = args.as_chunks::<OPERANDS_PER_MEMBER>();
                 if !rest.is_empty() || pairs.len() != self.formats.len() {
                     return Err(arity());
                 }

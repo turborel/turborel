@@ -2,7 +2,8 @@
 //! specification>` among them typed as the function says [ISO/IEC
 //! 9075:1992 §17.6 GR5], and \[EXTENSION\] each of a type the function
 //! declares (`ScalarFunction::argument_type`) stored in it by store
-//! assignment [§9.2], as a column's value is.
+//! assignment [§9.2], as a column's value is. The argument of a set
+//! function, a `?` in it typed as the function says too.
 
 use std::sync::Arc;
 
@@ -10,9 +11,9 @@ use super::expression::dynamic_of;
 use super::invocation::Prebound;
 use super::statements::assignable;
 use super::{Binder, Scope, datetime, rule};
-use crate::ast::ValueExpression;
-use crate::error::Result;
-use crate::functions::{ScalarFunction, ScalarRef};
+use crate::ast::{Composite, ValueExpression};
+use crate::error::{At, Result};
+use crate::functions::{AggregateFunction, ScalarFunction, ScalarRef};
 use crate::logical::Expr;
 use crate::value::precedence::{subject_routines, takes};
 use crate::value::{DataType, Value, assign};
@@ -61,6 +62,24 @@ impl Binder<'_> {
     ) -> Result<(Vec<Expr>, Vec<DataType>)> {
         let bound = self.prebound(args, scope)?;
         self.arguments_of(f, args, bound, scope)
+    }
+
+    /// [ISO/IEC 9075:1992 §17.6 GR5] `v`, the argument of the set
+    /// function `f`, bound: a `?` as it, or as a field of it if it is a
+    /// ROW, taking the type `f` gives there
+    /// (`AggregateFunction::parameter_type`).
+    pub(super) fn aggregate_argument(&self, f: &dyn AggregateFunction, v: &ValueExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let typed = |(position, field): (usize, &ValueExpression)| dynamic_of(field).is_some() && f.parameter_type(position).is_some();
+        if let ValueExpression::Composite(c, at) = v
+            && let Composite::Row(fields) = &**c
+            && fields.iter().enumerate().any(typed)
+        {
+            return self.row_typed(fields, &|position| f.parameter_type(position), scope).or_at(*at);
+        }
+        match f.parameter_type(0).filter(|_| dynamic_of(v).is_some()) {
+            Some(taken) => self.typed(v, taken, scope),
+            None => self.value_expression(v, scope),
+        }
     }
 
     /// `args` bound, each but a `<dynamic parameter specification>`, which

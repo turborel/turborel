@@ -23,13 +23,12 @@ pub(super) fn rows(session: &Session, sql: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// A database with VECTOR and a schema U: its routines of the models
-/// are built in.
+/// A database, VECTOR and the routines of its models built in, with a
+/// schema U.
 pub(super) fn database() -> Database {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION U").unwrap();
     db.set_setting("SQL.FUNCTION_CALLS", &crate::value::Value::Char("ON".to_owned())).unwrap();
-    db.register_type(Box::new(crate::vector::VectorType)).unwrap();
     db
 }
 

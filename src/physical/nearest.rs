@@ -1,5 +1,5 @@
 //! Distance ordering through certified index candidates (D15, D85), or
-//! an approximate index's when the query asks for one (D-APPROX,
+//! an approximate index's when the query asks for one (D94,
 //! `nearest/approx.rs`). The final sort still compares exact scalar
 //! results and secondary keys.
 
@@ -27,6 +27,9 @@ pub struct NearestRead {
     pub table: QualifiedName,
     /// The index supplying candidates.
     pub index: String,
+    /// \[EXTENSION\] The position in the index's key of the column it
+    /// orders by: of a hybrid index's vector column, 1 (`index/vector/hybrid.rs`).
+    pub position: usize,
     /// Its method, for EXPLAIN.
     pub method: String,
     /// The table columns read.
@@ -48,7 +51,7 @@ pub struct NearestRead {
     /// The estimated access cost.
     pub cost: f64,
     /// \[EXTENSION\] Of an approximate index's read, what it asks of it;
-    /// none of a certified one (D-APPROX).
+    /// none of a certified one (D94).
     pub approximate: Option<ApproximateRead>,
 }
 
@@ -56,7 +59,7 @@ pub struct NearestRead {
 /// score's (`ScalarFunction::ranks`), whose arguments after its first two
 /// are constants, as the index name the binder gives Rank (D87); or a
 /// vector distance's (`ScalarFunction::vector_metric`), its other
-/// arguments constants (D-APPROX).
+/// arguments constants (D94).
 pub(crate) fn distance_call(expr: &Expr) -> Option<(usize, usize, &ScalarRef, &Expr)> {
     let Expr::Call(function, args) = expr else { return None };
     if let Some((_, at)) = vector_measure(expr) {
@@ -139,7 +142,7 @@ impl NearestRead {
         let (_, argument, function, Expr::Const(value)) = distance_call(&self.measure)? else { return None };
         Some(NearestQuery {
             function: function.clone(),
-            column: 0,
+            column: self.position,
             argument,
             value: value.clone(),
             descending: self.descending,
@@ -182,7 +185,7 @@ impl PhysicalPlanner<'_> {
             return None;
         }
         let scanned = Scanned { table, needed, condition };
-        let (index, approximate, cost) = self.nearest_index((&scanned, desc), column, &query, first)?;
+        let ((index, position), approximate, cost) = self.nearest_index((&scanned, desc), column, &query, first)?;
         let detail = self.described(scan, |names| {
             let measure = render_expr(measure, names);
             condition.map_or_else(|| measure.clone(), |c| format!("{measure} where {}", crate::logical::render_cond(c, names)))
@@ -190,6 +193,7 @@ impl PhysicalPlanner<'_> {
         let read = NearestRead {
             table: table.clone(),
             index: index.name.clone(),
+            position,
             method: index.method.clone(),
             columns: needed.clone(),
             located: *located,
@@ -208,45 +212,49 @@ impl PhysicalPlanner<'_> {
         Some(Plan::Project { exprs, detail: projection, input: Box::new(Plan::Nearest(Box::new(read))) })
     }
 
-    /// The index a nearest read takes, of those on `column` alone, what
-    /// it asks of it if it is approximate, and the read's cost: a certified
-    /// index if cheaper than a scan and a sort, else an approximate one if
-    /// the query asks for an approximate search and its metric is the
-    /// call's (R13.1, `nearest/approx.rs`).
+    /// The index a nearest read takes, of those on `column`, with the
+    /// column's position in its key, what it asks of it if it is
+    /// approximate, and the read's cost: a certified index if cheaper than
+    /// a scan and a sort, else an approximate one if the query asks for an
+    /// approximate search and its metric is the call's (R13.1,
+    /// `nearest/approx.rs`). An index of several columns is asked of its
+    /// column by its position, which no built-in method but the hybrid one
+    /// serves.
     fn nearest_index(
         &self,
         (scanned, desc): (&Scanned<'_>, &TableDesc),
         column: usize,
         query: &NearestQuery,
         first: usize,
-    ) -> Option<(crate::catalog::IndexDesc, Option<ApproximateRead>, f64)> {
+    ) -> Option<((crate::catalog::IndexDesc, usize), Option<ApproximateRead>, f64)> {
         let asked = self.approximation(scanned.table);
-        let probe = NearestQuery { approximate: asked.map(|a| approx::probe(a, first)), ..query.clone() };
         let mut certified = None;
         let mut approximate = None;
         for ix in self.db.catalog.indexes(scanned.table) {
-            if ix.columns.as_slice() != [column] || ix.is_collated() || self.db.building.contains(&ix.name) {
+            let Some(position) = ix.columns.iter().position(|c| *c == column) else { continue };
+            if ix.is_collated() || self.db.building.contains(&ix.name) {
                 continue;
             }
             let (Some(method), Some(types)) = (self.db.methods.get(&ix.method), ix.key_types(desc)) else { continue };
             if self.db.index_of(&ix.name).is_err() {
                 continue;
             }
+            let probe = NearestQuery { approximate: asked.map(|a| approx::probe(a, first)), column: position, ..query.clone() };
             match method.supports_nearest(&probe, &types) {
                 NearestSupport::No => {}
                 NearestSupport::Exact => {
-                    certified.get_or_insert(ix);
+                    certified.get_or_insert((ix.clone(), position));
                 }
                 NearestSupport::Approximate => {
-                    let metric = method.metric(ix);
-                    approximate = approx::preferred(approximate, (ix.clone(), metric), (query, asked), self.hints());
+                    let served = query.metric.as_deref().is_some_and(|call| method.serves_metric(ix, call));
+                    approximate = approx::preferred(approximate, ((ix.clone(), position), served), asked, self.hints());
                 }
             }
         }
         if let Some(ix) = certified {
             let cost = self.nearest_cost((scanned.table, scanned.needed), scanned.condition, first);
             if let Some(cost) = cost {
-                return Some((ix.clone(), None, cost));
+                return Some((ix, None, cost));
             }
         }
         let ix = approximate?;

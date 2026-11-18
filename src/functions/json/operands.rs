@@ -35,6 +35,11 @@ pub(crate) fn output_type(written: Option<&JsonOutput>, function: &str) -> Resul
     if t.is_binary() {
         return Err(binary(&format!("{function} RETURNING {t}")));
     }
+    // [§10.13 SR2] RETURNING JSON, FORMAT JSON explicit or not (Features
+    // T801, T851), of no ENCODING.
+    if let DataType::Json = t {
+        return no_encoding(t, format.map(|f| f.encoding.is_some()), function).map(|()| t.clone());
+    }
     if !t.is_character() {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §10.13 SR2] the <JSON output clause> of {function} is of a string type, not {t}")));
     }
@@ -54,6 +59,10 @@ pub(crate) fn output_type(written: Option<&JsonOutput>, function: &str) -> Resul
 /// does not implement; -103 if it is of no string type, or ENCODING is
 /// written \[SR8\].
 pub(crate) fn json_text(t: &DataType, format: Option<JsonFormat>, cited: &str) -> Result<()> {
+    // [§10.12 SR5, SR6] A value of the JSON type, FORMAT JSON implicit.
+    if let DataType::Json = t {
+        return no_encoding(t, format.map(|f| f.encoding.is_some()), "JSON text");
+    }
     if t.is_binary() {
         return Err(binary(&format!("JSON text of {t}")));
     }
@@ -94,6 +103,8 @@ pub(crate) fn input_type(t: &DataType, format: Option<JsonFormat>, what: &str) -
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        // [§10.12 SR5] of the JSON type, FORMAT JSON implicit.
+        | DataType::Json
         | DataType::Lob { kind: LobKind::Character, .. } => Ok(()),
         DataType::Binary { .. } | DataType::VarBinary { .. } | DataType::Lob { kind: LobKind::Binary, .. } => {
             Err(rule(format!("[ISO/IEC 9075-2:2023 §10.12 SR7] {what} of the binary string type {t} is FORMAT JSON")))
@@ -106,6 +117,19 @@ pub(crate) fn input_type(t: &DataType, format: Option<JsonFormat>, what: &str) -
             format!("[DESIGN] {what} of {t}, cast to a character string, is valid SQL but is not implemented (RULES.md D18)"),
         )),
     }
+}
+
+/// [§10.12 SR8, §10.13 SR2] That JSON of the type `t`, a JSON type, has no
+/// ENCODING, which `encoded` says is written.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is.
+fn no_encoding(t: &DataType, encoded: Option<bool>, what: &str) -> Result<()> {
+    if encoded == Some(true) {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §10.12 SR8, §10.13 SR2] {what} of {t} has no ENCODING")));
+    }
+    Ok(())
 }
 
 /// [§6.34 F, §10.11 F] That a `<JSON name>`, of type `t`, is a

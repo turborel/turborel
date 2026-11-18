@@ -41,6 +41,7 @@ fn call(f: impl crate::functions::ScalarFunction + 'static, args: Vec<Expr>) -> 
 ///
 /// SQLCODE -103 if it is.
 pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
+    orderless_operand(t, what)?;
     super::structured::udt_operand(db, t, super::structured::Need::Ordering, what)?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!(
@@ -57,9 +58,27 @@ pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<(
 ///
 /// SQLCODE -103 if it is.
 pub(crate) fn grouping_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
+    orderless_operand(t, what)?;
     super::structured::udt_operand(db, t, super::structured::Need::Grouping, what)?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and {these} are grouped by no operation")));
+    }
+    Ok(())
+}
+
+/// \[EXTENSION\] An operand of an ordering, grouping or equality
+/// operation, or a key, `what`, of type `t`: of no kind whose values have
+/// no order, as VECTOR's have none and no `=` (design document §3.3
+/// R3.11, R3.12; RULES.md D93).
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is.
+pub(crate) fn orderless_operand(t: &DataType, what: &str) -> Result<()> {
+    if crate::value::types::composite::orderless(t) {
+        return Err(rule(format!(
+            "[EXTENSION] {what} orders, groups, compares or keys values of {t}, which have no order and no equality; VECTOR_EQUALS compares vectors"
+        )));
     }
     Ok(())
 }
@@ -105,6 +124,12 @@ pub(super) fn castable(from: &DataType, to: &DataType) -> bool {
     if let (DataType::Row(a), DataType::Row(b)) = (from, to) {
         return a.fields.len() == b.fields.len() && a.fields.iter().zip(&b.fields).all(|(x, y)| part(&x.data_type, &y.data_type));
     }
+    // [§6.13 SR, Table 6] JSON to JSON alone; \[EXTENSION\] a character
+    // string to JSON and back (`types::json`).
+    let json = |t: &DataType| matches!(t, DataType::Json);
+    if json(from) || json(to) {
+        return (json(from) || from.is_character()) && (json(to) || to.is_character());
+    }
     !(is_composite(from) || is_composite(to))
 }
 
@@ -135,6 +160,7 @@ fn collection_element(t: &DataType) -> Option<&DataType> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_) => None,
     }
 }
@@ -278,7 +304,23 @@ impl Binder<'_> {
     /// constructor>`: a row of its values, each field of its value's type,
     /// named as `anonymous` names it.
     pub(super) fn row_of(&self, values: &[ValueExpression], scope: Scope<'_>) -> Result<(Expr, DataType)> {
-        let mut bound = values.iter().map(|v| self.value_expression(v, scope)).collect::<Result<Vec<_>>>()?;
+        self.row_typed(values, &|_| None, scope)
+    }
+
+    /// `row_of` of `values`, a `<dynamic parameter specification>` among
+    /// them taking the type `typing` gives of its position, if it gives one
+    /// [ISO/IEC 9075:1992 §17.6 GR5].
+    pub(super) fn row_typed(
+        &self,
+        values: &[ValueExpression],
+        typing: &dyn Fn(usize) -> Option<ParameterType>,
+        scope: Scope<'_>,
+    ) -> Result<(Expr, DataType)> {
+        let field = |(i, v): (usize, &ValueExpression)| match typing(i) {
+            Some(taken) => self.typed(v, taken, scope),
+            None => self.value_expression(v, scope),
+        };
+        let mut bound = values.iter().enumerate().map(field).collect::<Result<Vec<_>>>()?;
         // The sort keys of an aggregate's rows, each by its ordering's key.
         if self.sorting.replace(false) {
             for (e, t) in bound.iter_mut().skip(1) {
@@ -296,6 +338,10 @@ impl Binder<'_> {
     /// taking INTEGER.
     fn element(&self, array: &ValueExpression, index: &ValueExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let (a, t) = self.value_expression(array, scope)?;
+        // [§6.36] of the JSON type, an array accessor.
+        if let DataType::Json = &t {
+            return self.json_step((a, t), super::json::Step::Element(index), scope);
+        }
         let DataType::Array(of) = &t else {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.25 SR1] an element is referenced of an array, not of {t}")));
         };
@@ -504,9 +550,10 @@ impl Binder<'_> {
 /// [ISO/IEC 9075-2:2023 §6.16] The field `name` of `bound`, a value of a
 /// row type \[SR2\]: of its type \[SR5\], none if the row is null \[GR2a\].
 /// [ISO/IEC 9075-2:2023 §6.6 SR6, SR7] Whether a column or SQL parameter
-/// of type `t` is refinable: of a row type or a structured type.
+/// of type `t` is refinable: of a row type, a JSON type or a structured
+/// type.
 pub(super) fn refinable(t: &DataType) -> bool {
-    matches!(t, DataType::Row(_) | DataType::Structured(_))
+    matches!(t, DataType::Row(_) | DataType::Structured(_) | DataType::Json)
 }
 
 impl Binder<'_> {
@@ -522,6 +569,10 @@ impl Binder<'_> {
         if let DataType::Structured(t) = &bound.1 {
             let t = Arc::clone(t);
             return self.attribute_or_method(bound, (&t, name));
+        }
+        // [§6.36] of the JSON type, a member accessor.
+        if let DataType::Json = &bound.1 {
+            return self.json_step(bound, super::json::Step::Member(name), Scope::Select);
         }
         field_of(bound, name)
     }

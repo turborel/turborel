@@ -185,6 +185,8 @@ fn character_default(s: &str, subject: &DataType) -> Option<Result<Value>> {
             Some(Ok(Value::Lob(Lob::of_text(s))))
         }
         DataType::Extension(e) => Some(e.kind.cast(Value::Char(s.to_owned()), subject)),
+        // [EXTENSION] JSON text, parsed as CAST to JSON parses it.
+        DataType::Json => Some(subject.kind().cast(Value::Char(s.to_owned()), subject)),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }

@@ -18,7 +18,11 @@ use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
-use crate::index::{BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, RTreeMethod};
+use crate::index::vector::hybrid::HybridMethod;
+use crate::index::{
+    BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod, RTreeMethod,
+    SparseMethod,
+};
 use crate::log::Log;
 use crate::optimizer::Optimizer;
 use crate::physical::CostModel;
@@ -103,6 +107,9 @@ pub struct State {
     /// \[EXTENSION\] The rankings of full-text search (RULES.md D87),
     /// shared by every state.
     pub(crate) rankings: super::rankings::SharedRankings,
+    /// \[EXTENSION\] The metrics and quantizers of VECTOR (RULES.md D93),
+    /// shared by every state.
+    pub(crate) vectors: super::vectors::SharedVectors,
     /// \[EXTENSION\] The model plug-ins registered and the models of the
     /// catalog bound to them, shared by every state (`db/embedding.rs`).
     pub(crate) embedders: Arc<crate::vector::embed::Embedders>,
@@ -183,6 +190,7 @@ impl State {
             functions: Registry::with_set_functions(),
             types: TypeRegistry::builtin(),
             rankings: super::rankings::SharedRankings::default(),
+            vectors: super::vectors::SharedVectors::default(),
             embedders: Arc::new(crate::vector::embed::Embedders::built_in()),
             clock: Arc::new(crate::clock::SystemClock),
             optimizer: Optimizer::with_builtin_rules(),
@@ -243,14 +251,31 @@ impl State {
         let hash = HashMethod::sharing(Arc::clone(&st.pages));
         let spatial = RTreeMethod::sharing(Arc::clone(&st.pages));
         let words = FullTextMethod::sharing(Arc::clone(&st.pages)).with_rankings(st.rankings.closure());
-        let graph = DiskAnnMethod::sharing(Arc::clone(&st.pages));
-        let layered = HnswMethod::sharing(Arc::clone(&st.pages));
-        let lists = IvfMethod::sharing(Arc::clone(&st.pages));
-        let methods: Vec<Arc<dyn IndexMethod>> =
-            vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial), Arc::new(words), Arc::new(graph), Arc::new(layered), Arc::new(lists)];
+        let (metrics, quantizers) = (st.vectors.metrics(), st.vectors.quantizers());
+        let graph =
+            DiskAnnMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
+        let layered =
+            HnswMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
+        let lists = IvfMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
+        let sparse = SparseMethod::sharing(Arc::clone(&st.pages));
+        let hybrid = HybridMethod::sharing(&st.pages).with_plugins(&(metrics, quantizers)).with_rankings(st.rankings.closure());
+        let documents = JsonMethod::sharing(Arc::clone(&st.pages));
+        let methods: Vec<Arc<dyn IndexMethod>> = vec![
+            Arc::new(btree),
+            Arc::new(hash),
+            Arc::new(spatial),
+            Arc::new(words),
+            Arc::new(documents),
+            Arc::new(graph),
+            Arc::new(layered),
+            Arc::new(lists),
+            Arc::new(sparse),
+            Arc::new(hybrid),
+        ];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);
         }
+        st.vector_functions();
     }
 
     /// Gives each table and index already in the catalog its storage and index
@@ -534,6 +559,7 @@ mod tests {
             options: Vec::new(),
             collations: Vec::new(),
             nulls: false,
+            expressions: Vec::new(),
         });
         let mut st = State::with_builtins(Box::new(catalog));
         assert_eq!(st.attach_catalog_objects().err().map(|e| e.code), Some(Code::Api));

@@ -1,6 +1,7 @@
 //! \[DESIGN\] What a database's state keeps of its directory as it is
-//! opened (RULES.md D25, D56): its spill files' and plug-ins' places, and
-//! its tables and indexes reopened by their locators.
+//! opened (RULES.md D25, D56): its spill files' and plug-ins' places, the
+//! log of older row versions begun anew, and its tables and indexes
+//! reopened by their locators.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -12,11 +13,12 @@ use crate::disk::io::FileSystem;
 use crate::error::Result;
 use crate::files::plugins::PLUGINS;
 use crate::index::{Index, IndexMethod};
+use crate::log::{FileLog, FileLogOptions, Log};
 use crate::spill::TempFiles;
 use crate::storage::{StorageEngine, TableStorage};
 use crate::value::DataType;
 
-use super::TEMP;
+use super::{TEMP, UNDO};
 
 impl State {
     /// Keeps its spill areas' files in `dir` of `fs` from now on, the spill
@@ -81,4 +83,22 @@ impl State {
         self.check_index_hidden(table)?;
         Ok((Arc::from(method.create_on(types, (table, index))?), false))
     }
+}
+
+/// The log of older row versions at `place`, begun anew: the segments a
+/// run before left removed, as no reader of it is left.
+///
+/// # Errors
+///
+/// SQLCODE -915 if they cannot be removed, or the log made.
+pub(super) fn undo_log(place: &Place<'_>) -> Result<Arc<dyn Log>> {
+    let dir = place.path(UNDO);
+    if place.fs.exists(&dir)? {
+        for path in place.fs.read_dir(&dir)? {
+            place.fs.remove(&path)?;
+        }
+    }
+    let options = FileLogOptions { pipeline: place.layout.formats.pipeline.clone(), ..place.options.undo.clone() };
+    let log = FileLog::create(Arc::clone(place.fs), &dir, Arc::clone(&place.layout.formats.hash), options)?;
+    Ok(Arc::new(log.telling(Arc::clone(&place.events))))
 }

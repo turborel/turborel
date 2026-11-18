@@ -1,8 +1,10 @@
 //! \[DESIGN\] The hot-node cache: "caching all vertices that are C = 3 or
 //! 4 hops from the starting point s" [DiskANN, NeurIPS 2019 §3.4], capped
 //! at a share of the nodes. Every search passes through them, so their
-//! reads are taken off every query. The copies are the index's own,
-//! reserved of the database's budget (D38), so the pool's eviction cannot
+//! reads are taken off every query. It is made when the index opens or is
+//! loaded, and again by maintenance each time its live nodes double, so
+//! an index grown by inserts caches its first hops too. The copies are
+//! the index's own, reserved of the database's budget (D38), so the pool's eviction cannot
 //! defeat them; if the budget refuses, the index caches nothing.
 //!
 //! A write of a cached node updates its copy after its page; a search
@@ -24,6 +26,10 @@ use super::node::{Node, corrupt};
 const RESERVED_AS: &str = "the hot-node cache of a DiskANN index";
 /// A percentage's whole.
 const PERCENT: u64 = 100;
+/// The cache is made again once the live nodes are twice those it was
+/// made at, so an index grown by inserts makes it a logarithmic number of
+/// times.
+const GROWTH: u64 = 2;
 
 /// Copies of the records of the nodes near the medoid.
 #[derive(Default)]
@@ -54,6 +60,7 @@ impl DiskAnn {
     pub(super) fn refresh_cache(&self) -> Result<()> {
         let tuning = self.tuning()?;
         let medoid = self.inner.medoid.load(Ordering::Acquire);
+        self.inner.cached_at.store(self.inner.live.load(Ordering::Acquire), Ordering::Release);
         let nodes = self.inner.live.load(Ordering::Acquire).saturating_add(self.inner.dead.load(Ordering::Acquire));
         let most = usize::try_from(nodes.saturating_mul(u64::from(tuning.cache_percent)).checked_div(PERCENT).unwrap_or(0)).unwrap_or(0);
         if medoid == NO_NODE || tuning.cache_hops == 0 || most == 0 {
@@ -67,6 +74,17 @@ impl DiskAnn {
         let records = self.breadth_first(medoid, tuning.cache_hops, most)?;
         *write(&self.inner.cache)? = Cache { records, _reservation: Some(reservation) };
         Ok(())
+    }
+
+    /// Whether the cache is due to be made again, its live nodes doubled
+    /// since it was made and enough for the tuning's share of them to be
+    /// at least one node.
+    pub(super) fn cache_due(&self) -> bool {
+        let Ok(tuning) = self.tuning() else { return false };
+        let live = self.inner.live.load(Ordering::Acquire);
+        let share = live.saturating_mul(u64::from(tuning.cache_percent)).checked_div(PERCENT).unwrap_or(0);
+        let grown = live >= self.inner.cached_at.load(Ordering::Acquire).saturating_mul(GROWTH);
+        tuning.cache_hops > 0 && share > 0 && grown
     }
 
     fn breadth_first(&self, medoid: u32, hops: u8, most: usize) -> Result<HashMap<u32, Box<[u8]>>> {

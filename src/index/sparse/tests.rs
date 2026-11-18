@@ -1,6 +1,9 @@
 //! Inverted index method requirements: counted entries under projected
 //! keys, every entry once, bulk loads, options read and changed in place,
-//! locators, refusals, and top-k through the method's index.
+//! locators, refusals, top-k through the method's index, and approximate
+//! searches (`tests/nearest.rs`).
+
+mod nearest;
 
 use std::sync::Arc;
 
@@ -30,6 +33,7 @@ fn desc(options: Vec<(String, Value)>) -> IndexDesc {
         options,
         collations: Vec::new(),
         nulls: false,
+        expressions: Vec::new(),
     }
 }
 
@@ -40,9 +44,9 @@ fn index() -> (SparseMethod, Arc<SparseIndex>) {
 }
 
 /// Verifies: [EXTENSION] (D85) Entries are counted under the hash of
-/// their vector: `rows` finds them by the vector or by its projected key,
-/// `Probe::All` gives each (projected key, row) once, and each insert is
-/// taken back by one remove.
+/// their vector: `rows` finds them by the vector, and by the projected key
+/// every vector shares finds every row; `Probe::All` gives each (projected
+/// key, row) once, and each insert is taken back by one remove.
 #[test]
 fn entries_are_counted_under_projected_keys() {
     let (_, index) = index();
@@ -53,7 +57,8 @@ fn entries_are_counted_under_projected_keys() {
     index.insert(key(&b), 3).unwrap();
     let projected = index.key_projection().unwrap().project(&key(&a)).unwrap();
     assert_eq!(index.rows(&key(&a)).unwrap(), [1, 2]);
-    assert_eq!(index.rows(&projected).unwrap(), [1, 2]);
+    assert_eq!(index.rows(&projected).unwrap(), [1, 2, 3]);
+    assert_eq!(index.key_projection().unwrap().project(&key(&b)).unwrap(), projected);
     let mut all: Vec<(Vec<Value>, RowId)> =
         Arc::clone(&index).search(&Probe::All, KeyOrder::Ascending).map(|e| e.map(|(k, r)| (k.0, r)).unwrap()).collect();
     all.sort_by_key(|(_, r)| *r);

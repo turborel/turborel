@@ -1,5 +1,5 @@
 //! A fake approximate index method and a distance function of one metric,
-//! so the planner and executor of approximate search (RULES.md D-APPROX)
+//! so the planner and executor of approximate search (RULES.md D94)
 //! are tested apart from the vector engines. TEST_DIST(x, q [, metric])
 //! is |x - q| of DOUBLE PRECISION values, of the metric TESTL1 unless a
 //! third argument names another. The index "fakeann" keeps its keys in a

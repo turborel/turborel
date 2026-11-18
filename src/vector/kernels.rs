@@ -90,6 +90,25 @@ pub(crate) fn fold_f32(a: &[f32], b: &[f32], term: impl Fn(f32, f32) -> f32) -> 
     total(acc) + ra.iter().zip(rb).fold(0.0_f32, |s, (p, q)| s + term(*p, *q))
 }
 
+/// `a·a`, `b·b` and `a·b` of `f32`s in one pass, each summed in the
+/// order `fold_f32` with `product` sums it, so each is bit for bit that
+/// call's. COSINE needs all three, and one pass reads each element once
+/// where three passes read it three times.
+#[inline]
+pub(crate) fn cosine_terms(a: &[f32], b: &[f32]) -> (f32, f32, f32) {
+    let ((ca, ra), (cb, rb)) = (a.as_chunks::<LANES>(), b.as_chunks::<LANES>());
+    let (mut aa, mut bb, mut ab) = ([0.0_f32; LANES], [0.0_f32; LANES], [0.0_f32; LANES]);
+    for (x, y) in ca.iter().zip(cb) {
+        for ((((sa, sb), sab), p), q) in aa.iter_mut().zip(bb.iter_mut()).zip(ab.iter_mut()).zip(x).zip(y) {
+            *sa += p * p;
+            *sb += q * q;
+            *sab += p * q;
+        }
+    }
+    let tail = |term: fn(&f32, &f32) -> f32| ra.iter().zip(rb).fold(0.0_f32, |s, (p, q)| s + term(p, q));
+    (total(aa) + tail(|p, _| p * p), total(bb) + tail(|_, q| q * q), total(ab) + tail(|p, q| p * q))
+}
+
 /// The bytes of `LANES` FLOAT64 elements.
 const DOUBLE_STEP: usize = 128;
 

@@ -155,10 +155,11 @@ fn bad_images_are_corrupt() {
 
 /// Verifies: [EXTENSION] the type's parameters as written: `param_word`
 /// reads `*`, formats and layouts in any case (R3.3); `pack_params` folds
-/// the layout into the second.
+/// the layout into the second, and refuses a dimension count of 0 (R3.4).
 #[test]
 fn parameter_words_are_read() {
-    assert_eq!(param_word(0, "*"), Some(ANY));
+    assert_eq!(pack_params(&[param_word(0, "*").unwrap()]), Some(vec![ANY]));
+    assert_eq!(pack_params(&[0]), None);
     assert_eq!(param_word(0, "FLOAT32"), None);
     assert_eq!(param_word(FORMAT_PARAM, "int8"), Some(4));
     assert_eq!(param_word(FORMAT_PARAM, "*"), Some(ANY));

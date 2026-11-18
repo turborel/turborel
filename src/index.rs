@@ -3,15 +3,21 @@
 //! and calls it finds rows by, and whether in key order; the planner asks each
 //! for an estimate and picks the cheapest supported path. Built in are
 //! "btree", a B-link tree for equality and ranges; "hash", a linear hash
-//! table for equality; "rtree", an R-link tree for coordinate bounds; and
-//! "fulltext", an inverted index of words (RULES.md D86).
+//! table for equality; "rtree", an R-link tree for coordinate bounds;
+//! "fulltext", an inverted index of words (RULES.md D86); and "json", an
+//! inverted index of JSON documents' paths and values. An index's key may
+//! be of expressions of its table's columns (`index/expression.rs`).
 
 mod blink;
 pub mod diskann;
+mod key;
+pub use key::Key;
+pub mod expression;
 pub mod fulltext;
 mod hash;
 pub mod hnsw;
 pub mod ivf;
+pub mod json;
 mod nearest;
 mod probe;
 mod projection;
@@ -20,7 +26,6 @@ mod sparse;
 mod stats;
 pub(crate) mod vector;
 
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 pub use blink::BTreeMethod;
@@ -29,57 +34,19 @@ pub use fulltext::{FULLTEXT_METHOD, FullTextMethod};
 pub use hash::HashMethod;
 pub use hnsw::{HNSW_METHOD, HnswMethod};
 pub use ivf::{IVF_METHOD, IvfMethod};
+pub use json::{JSON_METHOD, JsonMethod};
 pub use nearest::{Approximation, FilterHint, NearestQuery, NearestSupport, NeighbourEntries, RowFilter, same_metric};
+pub use probe::{ColumnComparison, Predicate, Probe};
 pub use projection::KeyProjection;
 pub use rtree::RTreeMethod;
 pub use sparse::{BLOCK_SIZE_OPTION, QUANTIZATION_OPTION, SPARSE_METHOD, SparseIndex, SparseMethod, VECTOR_TYPE};
 
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::error::Result;
-use crate::functions::ScalarRef;
 use crate::memory::Host;
 use crate::spill::{Area, WorkAreas};
 use crate::storage::{RowId, TableOption};
-use crate::value::{CompOp, DataType, Value, compare};
-
-// ---------------------------------------------------------------------------
-// Index keys: ordered tuples of values, by the [X3.135-1986 §5.11] comparison rules
-// ---------------------------------------------------------------------------
-
-/// A tuple of column values ordered exactly as SQL compares them, so that
-/// 'OPS' and 'OPS ' are the same key and 1.5 sorts after 1.
-#[derive(Debug, Clone)]
-pub struct Key(pub Vec<Value>);
-
-fn total_cmp(a: &Value, b: &Value) -> Ordering {
-    compare(a, b).unwrap_or_else(|| a.is_null().cmp(&b.is_null()).reverse())
-}
-
-impl Ord for Key {
-    fn cmp(&self, o: &Self) -> Ordering {
-        for (a, b) in self.0.iter().zip(&o.0) {
-            let c = total_cmp(a, b);
-            if c != Ordering::Equal {
-                return c;
-            }
-        }
-        self.0.len().cmp(&o.0.len())
-    }
-}
-
-impl PartialOrd for Key {
-    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-        Some(self.cmp(o))
-    }
-}
-
-impl PartialEq for Key {
-    fn eq(&self, o: &Self) -> bool {
-        self.cmp(o) == Ordering::Equal
-    }
-}
-
-impl Eq for Key {}
+use crate::value::{CompOp, DataType};
 
 /// \[DESIGN\] The entries a search finds, (key, row) pairs, read as they
 /// are taken (`Index::search`).
@@ -98,86 +65,6 @@ pub enum KeyOrder {
     Ascending,
     /// Descending keys.
     Descending,
-}
-
-/// \[EXTENSION\] A function call used to find rows through an index, such
-/// as `f(column, ?)` (RULES.md D34). The function must opt in through
-/// `ScalarFunction::index_predicate`, or the separately proven spatial
-/// contract in D85. An index method declares support
-/// for this function and both positions, for every accepted value of the
-/// other argument, including null and later prepared parameter values.
-#[derive(Debug, Clone)]
-pub struct Predicate {
-    /// The registered function, also used to check each fetched row.
-    pub function: ScalarRef,
-    /// The indexed column's position in the key, from zero.
-    pub column: usize,
-    /// The column's position among the function's two arguments, zero or one.
-    pub argument: usize,
-}
-
-/// One SQL comparison of an independently constrained index column.
-#[derive(Debug, Clone)]
-pub struct ColumnComparison {
-    /// The position of the column in the index key, from zero.
-    pub column: usize,
-    /// The comparison operator.
-    pub op: CompOp,
-    /// The value compared with that column.
-    pub value: Value,
-}
-
-/// What an index is asked for.
-#[derive(Debug, Clone)]
-pub enum Probe {
-    /// All comparisons must hold, including comparisons on columns after
-    /// a range. This describes a multidimensional window without requiring
-    /// an equality prefix (`IndexMethod::supports_columns`).
-    Columns(Vec<ColumnComparison>),
-    /// Every entry (used to read rows in key order): of a key with no null,
-    /// but in an index that holds them (`IndexDesc::nulls`).
-    All,
-    /// "column `<op>` value", of the key's first column.
-    Compare {
-        /// The comparison operator.
-        op: CompOp,
-        /// The constant the column is compared with.
-        value: Value,
-    },
-    /// The keys whose first columns equal `equal`, one value for each, and,
-    /// if `then` is given, whose next column compares with its value by
-    /// its operator (`IndexMethod::supports_prefix`).
-    Prefix {
-        /// The values of the key's first columns.
-        equal: Vec<Value>,
-        /// The comparison of the next column, if any.
-        then: Option<(CompOp, Value)>,
-    },
-    /// The keys whose first columns equal `equal`, one value for each, if
-    /// any, and whose next column lies between two bounds: above `low` by
-    /// its operator, `>` or `>=`, and below `high` by its, `<` or `<=`; as
-    /// BETWEEN gives [ISO/IEC 9075:1992 §8.3 SR6], or two comparisons
-    /// (`IndexMethod::supports_range`).
-    Range {
-        /// The values of the key's first columns.
-        equal: Vec<Value>,
-        /// The lower bound of the next column, and its operator; boxed, as
-        /// are `high`'s, so that a probe, and each plan holding one, is no
-        /// larger than another kind of probe makes it.
-        low: Box<(CompOp, Value)>,
-        /// The upper bound of the next column, and its operator.
-        high: Box<(CompOp, Value)>,
-    },
-    /// \[EXTENSION\] Rows that may satisfy a Boolean function call.
-    /// The index returns every matching entry and may return extras.
-    /// The executor fetches each visible row and checks the full WHERE
-    /// condition to reject those extras (D34).
-    Predicate {
-        /// The function and the column's positions in the key and call.
-        predicate: Box<Predicate>,
-        /// The other argument, as the bound function receives it.
-        value: Value,
-    },
 }
 
 /// \[EXTENSION\] A kind of index: creates `Index`es and says which probes they answer.
@@ -223,6 +110,13 @@ pub trait IndexMethod: Send + Sync {
     /// by default.
     fn metric(&self, _index: &IndexDesc) -> Option<String> {
         None
+    }
+    /// \[EXTENSION\] Whether the index `index` describes serves a call of
+    /// metric `call`, upper case (R13.1). By default, of its own metric
+    /// (`metric`, [`same_metric`]); a vector index of a column declared
+    /// normalized serves COSINE of a DOT index too.
+    fn serves_metric(&self, index: &IndexDesc, call: &str) -> bool {
+        self.metric(index).is_some_and(|m| same_metric(&m, call))
     }
     /// The method's name, as `create_index` and `IndexDesc::method` give it.
     fn name(&self) -> &'static str;

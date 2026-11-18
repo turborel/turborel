@@ -7,6 +7,7 @@
 
 use crate::catalog::IndexDesc;
 use crate::engine::hnsw::{Config, SQ8};
+use crate::index::vector::{Shared, shared, shared_of};
 use crate::settings::Kind;
 use crate::storage::{Rebuild, TableOption, option_value};
 use crate::value::{Decimal, Value};
@@ -30,6 +31,8 @@ pub const TRAIN_AT: &str = "HNSW.TRAIN_AT";
 /// Whether a quantized search gives more candidates to re-rank.
 pub const RERANK: &str = "HNSW.RERANK";
 
+/// The group of its options.
+const GROUP: &str = "HNSW";
 /// The quantizer option's value for none: nodes keep full vectors.
 pub const NO_QUANTIZER: &str = "NONE";
 /// The default metric (the vector document's R10.2).
@@ -119,6 +122,9 @@ pub fn options() -> Vec<TableOption> {
             "Whether a quantized search gives four times the rows asked, for the executor to order again by the SQL distance of each row's vector.",
         ),
     ]
+    .into_iter()
+    .chain(shared(GROUP))
+    .collect()
 }
 
 /// An index's options, as its descriptor sets them.
@@ -130,6 +136,8 @@ pub struct Options {
     pub metric: String,
     /// The quantizer's name, upper case; `NONE` for none.
     pub quantizer: String,
+    /// TARGET_ACCURACY, PQ_BYTES and NORMALIZED (`index/vector/options.rs`).
+    pub(crate) shared: Shared,
 }
 
 /// The options `desc` sets, the others their defaults, for vectors of
@@ -156,7 +164,8 @@ pub fn options_of(desc: &IndexDesc, dims: usize) -> Options {
         train_rows: count(TRAIN_AT),
         rerank: word(RERANK, ON) == ON,
     };
-    Options { config, metric: word(METRIC, COSINE), quantizer: word(QUANTIZER, NO_QUANTIZER) }
+    let shared = shared_of(desc, GROUP, EF_SEARCH);
+    Options { config, metric: word(METRIC, COSINE), quantizer: word(QUANTIZER, NO_QUANTIZER), shared }
 }
 
 /// Whether `name` is the built-in quantizer's.
@@ -179,6 +188,7 @@ mod tests {
             options,
             collations: Vec::new(),
             nulls: false,
+            expressions: Vec::new(),
         }
     }
 
@@ -205,7 +215,8 @@ mod tests {
             train_rows: 10_000,
             rerank: true,
         };
-        assert_eq!(read, Options { config, metric: COSINE.into(), quantizer: NO_QUANTIZER.into() });
+        let shared = Shared { accuracy: Some(90), code_bytes: 0, normalized: false };
+        assert_eq!(read, Options { config, metric: COSINE.into(), quantizer: NO_QUANTIZER.into(), shared });
         let set = vec![
             (M.into(), whole(32_u32)),
             (EF_SEARCH.into(), whole(200_u32)),

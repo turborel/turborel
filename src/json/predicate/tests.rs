@@ -118,3 +118,18 @@ fn errors_that_are_no_answer_are_raised() {
         assert_eq!(is_not_json(&value, JsonType::Value, Keys::Any).unwrap_err().sqlcode(), -900_i32);
     }
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §8.22 GR3a] [ISO/IEC 9075-2:2023 §9.42
+/// GR3a iii 1] a number no number of turborel's holds is still of RFC
+/// 8259's grammar, so IS JSON raises its SQLSTATE 22003 rather than
+/// answer False; a text that is none is still False. MC/DC of the STATUS
+/// that is False: 22032, 22037, and 22003 not.
+#[test]
+fn a_number_out_of_range_is_raised_not_false() {
+    for number in ["1e400", "1e-400", &format!("1{}1", "0".repeat(40))] {
+        let e = is_json(&text(number), JsonType::Value, Keys::Any).unwrap_err();
+        assert_eq!(e.sqlstate().as_str(), "22003", "{number}");
+    }
+    assert!(matches!(is_json(&text("[1,"), JsonType::Value, Keys::Any).unwrap(), Value::Bool(false)));
+    assert!(matches!(is_json(&text(r#"{"a":1,"a":2}"#), JsonType::Value, Keys::Unique).unwrap(), Value::Bool(false)));
+}

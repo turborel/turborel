@@ -108,3 +108,36 @@ fn modulo_refuses_what_is_not_a_whole_exact_number() {
     assert_eq!(error("lax 7 % 2e0", "0").sqlcode(), -301_i32);
     assert!(matches!(value("lax 7.0 % 2", "0"), Value::Exact(d) if d.units == 1));
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §6.31 GR15b i, GR16b i] CEILING of an
+/// approximate number between -1 and 0, and FLOOR of -0, are 0 and not
+/// -0, so the item serializes as 0. Regression: `ceiling()` gave -0.0
+/// before the fix, and fails without it.
+#[test]
+fn ceiling_and_floor_never_give_negative_zero() {
+    let zero = Some(0.0_f64.to_bits());
+    assert_eq!(bits(&ceiling(Number::Approx(-0.5_f64)).unwrap()), zero);
+    assert_eq!(bits(&floor(Number::Approx(-0.0_f64)).unwrap()), zero);
+    assert_eq!(bits(&ceiling(Number::Approx(-0.0_f64)).unwrap()), zero);
+    assert_eq!(bits(&floor(Number::Approx(-0.5_f64)).unwrap()), Some((-1.0_f64).to_bits()));
+}
+
+/// The bits of the approximate number `v`, so -0 and 0 differ; none of
+/// another value.
+fn bits(v: &Value) -> Option<u64> {
+    let Value::Approx(x) = *v else { return None };
+    Some(x.to_bits())
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11i iii 2 C] [ISO/IEC
+/// 9075-2:2023 §6.31 SR12] `%` of an approximate or a fractional operand
+/// is the exception condition data exception, SQLSTATE 22000 explicit, so
+/// lax mode's filters and ON ERROR take it; `5e0 % 2` is one.
+#[test]
+fn modulo_of_an_approximate_or_fractional_operand_is_22000() {
+    for (n, m) in [(Number::Approx(5.0_f64), exact(2, 0)), (exact(55, 1), exact(2, 0))] {
+        assert_eq!(modulo(n, m).unwrap_err().sqlstate(), SqlState::DATA_EXCEPTION);
+    }
+    assert_eq!(state("lax 5e0 % 2", "0"), "22000");
+    gives("lax $ ? (@ % 2 == 0)", "[2, 2.5e0, 4]", "[2,4]");
+}

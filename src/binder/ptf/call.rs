@@ -186,7 +186,7 @@ pub(super) fn bound(b: Bounds<'_>, inv: &PtfInvocation, depth: usize) -> Result<
     match cx.purpose {
         Purpose::Query => {}
         Purpose::Constraint | Purpose::UnderConstraint => constraint_permits(&desc).or_at(inv.at)?,
-        Purpose::Generation => generation_permits(&desc).or_at(inv.at)?,
+        Purpose::Generation | Purpose::Key => generation_permits(&desc).or_at(inv.at)?,
     }
     note_specific(cx.invoked, &desc.specific);
     let mut tables = Vec::new();

@@ -32,6 +32,13 @@ use super::{DiskAnn, SearchStats, finite};
 
 /// Tries of a change another writer keeps getting in before.
 pub(super) const TRIES: u32 = 64;
+/// \[DESIGN\] The slack of an edge list, as a ratio. A list a back edge
+/// takes past R is pruned to R × 10 / 13, not to R, so the next back
+/// edges are appended with no prune, as if a list could grow to 1.3 R
+/// before it is pruned. With α = 1.2 RobustPrune of R + 1 candidates
+/// often keeps nearly R, so pruning to R prunes again a few back edges
+/// later, about five prunes of R + 1 nodes, each read, for every insert.
+const SLACK: (usize, usize) = (10, 13);
 
 /// What an attempt at counting an existing entry found.
 enum Counted {
@@ -170,8 +177,13 @@ impl DiskAnn {
             }
             let mut extra = seen.neighbours.clone();
             extra.push(x);
-            let list =
-                if extra.len() <= self.inner.shape.degree { extra } else { self.reprune(&seen.vector, j, &extra, Some((x, x_vector)))? };
+            let degree = self.inner.shape.degree;
+            let list = if extra.len() <= degree {
+                extra
+            } else {
+                let slack = degree.saturating_mul(SLACK.0).checked_div(SLACK.1).unwrap_or(degree).max(1);
+                self.reprune_within(&seen.vector, j, &extra, (Some((x, x_vector)), slack))?
+            };
             if self.replace_edges(j, &seen.neighbours, &list)? {
                 return Ok(());
             }
@@ -195,6 +207,11 @@ impl DiskAnn {
     /// RobustPrune(p, `ids`, α, R) of node `p` at `from`, reading each
     /// candidate's vector, but `known`'s, from its record.
     pub(super) fn reprune(&self, from: &[f32], p: u32, ids: &[u32], known: Option<(u32, &[f32])>) -> Result<Vec<u32>> {
+        self.reprune_within(from, p, ids, (known, self.inner.shape.degree))
+    }
+
+    /// As `reprune`, keeping at most `degree` edges.
+    fn reprune_within(&self, from: &[f32], p: u32, ids: &[u32], (known, degree): (Option<(u32, &[f32])>, usize)) -> Result<Vec<u32>> {
         let dims = self.inner.shape.dims;
         let mut data = Vec::with_capacity(ids.len().saturating_mul(dims));
         let mut candidates = Vec::with_capacity(ids.len());
@@ -215,7 +232,7 @@ impl DiskAnn {
             candidates.push(Candidate { distance: finite(self.inner.plugins.metric.distance(from, v), "metric")?, id, row });
         }
         let alpha = self.tuning()?.alpha;
-        let bound = Bound { alpha, degree: self.inner.shape.degree };
+        let bound = Bound { alpha, degree };
         robust_prune(p, &mut candidates, Vectors { data: &data, dims }, bound, &*self.inner.plugins.metric)
     }
 

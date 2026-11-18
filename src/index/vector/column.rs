@@ -6,7 +6,7 @@
 //! Keys are projected (RULES.md D85) to one value, the same of every
 //! vector: the engines keep no copy of the column's value to give back,
 //! the quantized ones not even its `f32`s, and an approximate search's
-//! candidates are measured again on the row anyway (D-APPROX). So `rows`
+//! candidates are measured again on the row anyway (D94). So `rows`
 //! of a vector gives the rows of that vector exactly, and a search's
 //! entry stands for its row, its reader taking the row as it sees it.
 
@@ -127,6 +127,7 @@ pub(crate) fn default_desc(method: &str) -> IndexDesc {
         options: Vec::new(),
         collations: Vec::new(),
         nulls: false,
+        expressions: Vec::new(),
     }
 }
 

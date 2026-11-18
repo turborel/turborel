@@ -276,7 +276,7 @@ impl Item {
                 self.set_number(DescriptorItem::UserDefinedTypeCode, code::STRUCTURED);
             }
             DataType::Reference(r) => self.describe_reference(&r, catalog),
-            DataType::Extension(_) => self.extension = Some(t),
+            DataType::Json | DataType::Extension(_) => self.extension = Some(t),
         }
     }
 
@@ -399,7 +399,7 @@ fn type_code(t: &DataType) -> i64 {
         DataType::Multiset(_) => code::MULTISET,
         DataType::Distinct(_) | DataType::Structured(_) => code::USER_DEFINED,
         DataType::Reference(_) => code::REF,
-        DataType::Extension(_) => code::EXTENSION,
+        DataType::Json | DataType::Extension(_) => code::EXTENSION,
     }
 }
 
@@ -432,6 +432,7 @@ fn datetime_shape(t: &DataType) -> (i64, i64, i64) {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_) => (1, DATE_POSITIONS, 0),
     }
 }

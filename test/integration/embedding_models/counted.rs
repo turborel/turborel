@@ -13,7 +13,7 @@ use turborel::db::Database;
 use turborel::error::{Code, Result, SqlError};
 use turborel::threads::JobPolicy;
 use turborel::vector::embed::{Embedder, ModelShape};
-use turborel::vector::{Element, Layout, Vector, VectorType};
+use turborel::vector::{Element, Layout, Vector};
 
 /// What the plug-in was asked, shared by its configured copies.
 #[derive(Default)]
@@ -91,10 +91,9 @@ pub fn database() -> (Database, Arc<Asked>) {
     (db, asked)
 }
 
-/// `db` given VECTOR, and its background work run only when asked.
+/// `db`, VECTOR built in, its background work run only when asked.
 pub fn prepared(db: &Database) {
     db.set_job_policy(JobPolicy::Manual).unwrap();
-    db.register_type(Box::new(VectorType)).unwrap();
 }
 
 /// COUNTED registered in `db`, version 1: what it is asked.

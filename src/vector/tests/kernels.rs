@@ -202,3 +202,19 @@ fn lower_bounds_stay_below() {
     }
     assert!(metric_named(&metrics, COSINE).unwrap().lower_bound(vector_of(&q).unwrap(), &[0.0; 2], &[1.0; 2]).is_none());
 }
+
+/// Verifies: [DESIGN] COSINE's one-pass sums are bit for bit the three
+/// folds they replace, for lengths below, at and past a chunk of lanes
+/// and with tails, so an index's distances did not change.
+#[test]
+fn cosine_terms_are_the_folds_bit_for_bit() {
+    use crate::vector::kernels::{cosine_terms, fold_f32, product};
+    let mut random = Random::new(41);
+    for dims in DIMS.into_iter().chain([0, 31, 32, 48]) {
+        let a: Vec<f32> = noise(&mut random, dims).into_iter().map(single).collect();
+        let b: Vec<f32> = noise(&mut random, dims).into_iter().map(single).collect();
+        let (aa, bb, ab) = cosine_terms(&a, &b);
+        let folds = (fold_f32(&a, &a, product), fold_f32(&b, &b, product), fold_f32(&a, &b, product));
+        assert_eq!((aa.to_bits(), bb.to_bits(), ab.to_bits()), (folds.0.to_bits(), folds.1.to_bits(), folds.2.to_bits()), "{dims}");
+    }
+}

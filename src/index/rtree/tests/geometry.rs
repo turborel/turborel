@@ -10,7 +10,7 @@ fn shape(text: &str, srid: i32) -> Key {
 
 fn intersects(value: Value) -> Probe {
     Probe::Predicate {
-        predicate: Box::new(Predicate { function: ScalarRef(Arc::new(GeometryFunction::Intersects)), column: 0, argument: 0 }),
+        predicate: Box::new(Predicate { function: ScalarRef(Arc::new(GeometryFunction::Intersects)), column: 0, argument: Some(0) }),
         value,
     }
 }
@@ -95,11 +95,11 @@ fn geometry_capabilities_do_not_claim_original_key_order_or_equality() {
     assert!(!method.supports_columns(1, &[(0, CompOp::Eq)]));
     let Probe::Predicate { mut predicate, .. } = intersects(Value::Null) else { panic!("predicate") };
     assert!(method.supports_predicate(&predicate, &types));
-    predicate.argument = 1;
+    predicate.argument = Some(1);
     assert!(method.supports_predicate(&predicate, &types));
-    predicate.argument = 2;
+    predicate.argument = Some(2);
     assert!(!method.supports_predicate(&predicate, &types));
-    predicate.argument = 0;
+    predicate.argument = Some(0);
     predicate.column = 1;
     assert!(!method.supports_predicate(&predicate, &types));
     predicate.column = 0;

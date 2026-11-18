@@ -1,11 +1,13 @@
 //! The vector index methods "diskann", "hnsw" and "ivf" through SQL
-//! (the vector design document §10, RULES.md D-APPROX): their recall
+//! (the vector design document §10, RULES.md D94): their recall
 //! against FETCH EXACT, DML and rollback, recovery, options, memory and
 //! what each refuses. The fixture is `vector_indexes/fixture.rs`;
-//! recovery and refusals are `vector_indexes/durable.rs`.
+//! recovery and refusals are `vector_indexes/durable.rs`; the built-in
+//! distances they serve, `vector_indexes/served.rs`.
 
 mod durable;
 mod fixture;
+mod served;
 
 use fixture::{METHODS, database, literal, nearest_sql, plan, query_of, recall, vector_of};
 use turborel::error::Code;
@@ -71,7 +73,7 @@ fn create_vector_index_makes_each_method_10_2() {
     }
 }
 
-/// Verifies: [EXTENSION] vector_standard §10.5, RULES.md D29, D-APPROX:
+/// Verifies: [EXTENSION] vector_standard §10.5, RULES.md D29, D94:
 /// an index follows DML; a deleted row is never answered, an updated one
 /// is found at its new vector, a null vector is not indexed, and a rolled
 /// back insert is not answered, its entry taken back.

@@ -23,6 +23,7 @@
 //! and the nodes then keep codes, decoded as they are measured.
 
 mod chain;
+mod fence;
 mod graph;
 mod image;
 mod insert;
@@ -36,7 +37,7 @@ pub mod scratch;
 mod search;
 mod view;
 
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub use chain::{
@@ -126,6 +127,10 @@ struct Inner {
     memory: Mutex<(Reservation, usize)>,
     /// The budget it is reserved of.
     budget: Arc<MemoryBudget>,
+    /// What writers wait at while maintenance fences them out (`fence.rs`).
+    fence: fence::Fence,
+    /// Maintenance's swaps lost in a row to writers.
+    lost: AtomicU32,
 }
 
 impl Hnsw {
@@ -208,6 +213,8 @@ impl Hnsw {
                 scratch: scratch::Pool::default(),
                 memory: Mutex::new(p.memory),
                 budget: p.budget,
+                fence: fence::Fence::default(),
+                lost: AtomicU32::new(0),
             }),
         }
     }

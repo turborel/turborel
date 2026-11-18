@@ -78,9 +78,8 @@ fn a_number_without_an_exponent_is_exact() {
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A IV] [RFC
 /// 8259 §6] a number with an exponent is the approximate number of its
-/// characters, the exponent signed or not, E of either case; one past an
-/// approximate number's range is SQLCODE -900. MC/DC of `'e' | 'E'`:
-/// each is an exponent, and neither
+/// characters, the exponent signed or not, E of either case. MC/DC of
+/// `'e' | 'E'`: each is an exponent, and neither
 /// (`a_number_without_an_exponent_is_exact`) none.
 #[test]
 fn a_number_with_an_exponent_is_approximate() {
@@ -89,23 +88,50 @@ fn a_number_with_an_exponent_is_approximate() {
     assert_eq!(bits("25e-1"), Some(2.5_f64.to_bits()));
     assert_eq!(bits("0E0"), Some(0.0_f64.to_bits()));
     assert!(is("1e2", &number(100, 0)));
-    assert_eq!(parse("1E400", Keys::Any).unwrap_err().sqlcode(), -900_i32);
 }
 
-/// Verifies: [DESIGN] an exact number of more digits than
-/// `MAX_EXACT_PRECISION` is a decimal floating-point number, rounded to
-/// `MAX_DECFLOAT_PRECISION` digits, as RFC 8259 §6 lets precision be
-/// limited; one past its range is SQLCODE -900.
+/// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A IV] [ISO/IEC
+/// 9075-2:2023 §5.3 SR29] an approximate number too great, or not zero
+/// and too small to be other than zero, is SQLSTATE 22003, numeric value
+/// out of range; a zero of any exponent, and a subnormal one, are taken.
+/// Regression: 1e-400 was 0 and 1e400 SQLCODE -900 before the fix. MC/DC
+/// of underflow: a zero result of a mantissa not zero (`1e-400`), of a
+/// zero mantissa (`0e-400`), and a result not zero (`1e-310`).
+#[test]
+fn an_approximate_number_out_of_range_is_22003() {
+    for text in ["1E400", "-1e400", "1e-400", "-0.5e-400", "[1e-999]"] {
+        assert_eq!(state(text), "22003", "{text}");
+    }
+    assert_eq!(bits("0e-400"), Some(0.0_f64.to_bits()));
+    assert!(bits("1e-310").is_some_and(|b| b != 0));
+}
+
+/// Verifies: [DESIGN] [ISO/IEC 9075-2:2023 §5.3 SR29] an exact number of
+/// more significant digits than `MAX_EXACT_PRECISION` is a decimal
+/// floating-point number, which holds it exactly; leading zeros and the
+/// fraction's trailing zeros are not counted, so a long number of few
+/// significant digits stays exact; past `MAX_DECFLOAT_PRECISION`
+/// significant digits, or past its range, it is SQLSTATE 22003, not
+/// rounded. Regression: a 40-digit number was rounded, and a fraction of
+/// many trailing zeros was decimal floating-point, before the fix.
 #[test]
 fn an_exact_number_of_many_digits_is_decimal_floating_point() {
     let held = DecFloat::of_digits(false, "1234567890123456789", 0, MAX_DECFLOAT_PRECISION).unwrap();
     assert!(matches!(value("1234567890123456789"), Value::DecFloat(d) if d == held));
     let small = DecFloat::of_digits(true, "1", -21, MAX_DECFLOAT_PRECISION).unwrap();
     assert!(matches!(value("-0.000000000000000000001"), Value::DecFloat(d) if d == small));
-    let rounded = DecFloat::of_digits(false, "1", 39, MAX_DECFLOAT_PRECISION).unwrap();
-    assert!(matches!(value(&format!("1{}1", "0".repeat(38))), Value::DecFloat(d) if d == rounded));
-    let beyond = format!("1{}", "0".repeat(7000));
-    assert_eq!(parse(&beyond, Keys::Any).unwrap_err().sqlcode(), -900_i32);
+    let Value::Exact(trailing) = value(&format!("1.5{}", "0".repeat(40))) else { panic!("an exact number") };
+    assert_eq!((trailing.units, trailing.scale), (15_i128, 1_u32));
+    let Value::Exact(leading) = value("0.000000000000000012") else { panic!("an exact number") };
+    assert_eq!((leading.units, leading.scale), (12_i128, 18_u32));
+    let widest = format!("1{}1", "0".repeat(32));
+    let exact = DecFloat::of_digits(false, &widest, 0, MAX_DECFLOAT_PRECISION).unwrap();
+    let Value::DecFloat(widest) = value(&widest) else { panic!("a DECFLOAT") };
+    assert_eq!(widest, exact);
+    assert!(matches!(value(&format!("1{}", "0".repeat(60))), Value::DecFloat(_)));
+    assert_eq!(state(&format!("1{}1", "0".repeat(33))), "22003");
+    assert_eq!(state(&format!("1{}", "0".repeat(7000))), "22003");
+    assert_eq!(state(&format!("0.{}1", "0".repeat(7000))), "22003");
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.42 GR3a ii, GR3a iii 1; RFC 8259 §6] what is no number: a leading zero,
