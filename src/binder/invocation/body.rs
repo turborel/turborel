@@ -68,7 +68,7 @@ pub struct FunctionBody {
 ///
 /// It does not parse, or is no `<SQL-invoked routine>`.
 pub fn routine_definition(text: &str, module: Option<String>) -> Result<RoutineDefinition> {
-    let parser = Parser::new(text)?.of_definition().in_module(module);
+    let parser = Parser::for_stored(text)?.in_module(module);
     let SqlStatement::Schema { statement, .. } = { parser }.sql_statement()? else {
         return Err(SqlError::new(Code::Api, "[DESIGN] a routine's text is no <SQL-invoked routine>"));
     };

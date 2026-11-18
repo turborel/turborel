@@ -135,7 +135,7 @@ fn procedure_takes_implicit_characteristics_11_60() {
 fn text_reads_again_11_60() {
     let definition = routine("CREATE PROCEDURE P (A INT) MODIFIES SQL DATA UPDATE T SET B = A;");
     assert_eq!(definition.text, "CREATE PROCEDURE P (A INT) MODIFIES SQL DATA UPDATE T SET B = A");
-    let again = parsed_by(Parser::new(&definition.text).map(Parser::of_definition), &definition.text).unwrap().0;
+    let again = parsed_by(Parser::for_stored(&definition.text), &definition.text).unwrap().0;
     assert_eq!((again.name.ident, again.body_text), ("P".to_owned(), definition.body_text));
 }
 
@@ -148,7 +148,7 @@ fn routine_in_schema_definition_is_read_11_1() {
     let schema = Parser::new(&text).unwrap().schema().unwrap();
     assert_eq!((schema.routines.len(), schema.tables.len()), (1, 2));
     assert_eq!(schema.routines[0].text, definition);
-    let again = parsed_by(Parser::new(definition).map(Parser::of_definition), definition).unwrap().0;
+    let again = parsed_by(Parser::for_stored(definition), definition).unwrap().0;
     assert_eq!(again.body_text, "RETURN X");
 }
 

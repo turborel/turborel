@@ -95,7 +95,7 @@ fn database(routines: Vec<SqlRoutineDesc>) -> State {
 
 /// The `<value expression>` `sql`.
 fn expr(sql: &str) -> ValueExpression {
-    Parser::new(sql).unwrap().of_definition().generation_expression().unwrap()
+    Parser::for_stored(sql).unwrap().generation_expression().unwrap()
 }
 
 /// The definition of `desc` whose body is `statement`.

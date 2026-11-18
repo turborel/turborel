@@ -178,7 +178,7 @@ impl State {
     ///
     /// SQLCODE -103 if it breaks either rule.
     fn subview_rules(&self, basis: &Basis<'_>, items: &[Item], sv: &ViewDesc, typed: &TypedDesc) -> Result<()> {
-        let query = Parser::new(&sv.query)?.of_definition().view_query()?;
+        let query = Parser::for_stored(&sv.query)?.view_query()?;
         let of_super = self.basis(&query, &sv.names)?;
         if !proper_subtables(&*self.catalog, &of_super.table).contains(&basis.table) {
             return Err(rule(format!(

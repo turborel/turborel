@@ -134,7 +134,7 @@ impl State {
         match change {
             Change::Drop { object, cascade } => self.drop_object(object, *cascade),
             Change::AlterTable { table, action, schema, zone, epochs } => {
-                let action = Parser::new(action)?.of_definition().alter_table_action()?;
+                let action = Parser::for_stored(action)?.alter_table_action()?;
                 Ok(self.alter_table((table, schema, *zone), &action, (made, None, &mut Epochs::logged(epochs)))?.0)
             }
             Change::Defined { auth, role, schema, zone, sql, placed, epochs } => {

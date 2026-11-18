@@ -73,6 +73,7 @@ pub(crate) use data_statements::{EXPLAIN, TRUNCATE, begins_word_statement};
 pub(crate) use savepoints::SAVEPOINT;
 pub(crate) use served::CANCEL;
 mod session;
+mod stored;
 mod target;
 mod triggers;
 mod users;
@@ -244,15 +245,6 @@ impl Parser {
     #[must_use]
     pub fn in_catalog(mut self, catalog: &str) -> Parser {
         self.catalogs = Catalogs::Of(catalog.trim_end().to_owned());
-        self
-    }
-
-    /// This parser, taking any `<catalog name>` written in a name: as the
-    /// text of a definition is read again, its names checked when it was
-    /// defined, against the catalog's name then.
-    #[must_use]
-    pub fn of_definition(mut self) -> Parser {
-        self.catalogs = Catalogs::Kept;
         self
     }
 

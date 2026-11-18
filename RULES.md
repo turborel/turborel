@@ -827,6 +827,20 @@ whether its query is grouped depends on it. So it is the aggregate's
 unless a function of the schema of the name has as many parameters as
 the call has arguments, whatever their types.
 
+SQL.FUNCTION_CALLS is checked as a definition is made, and never again.
+A definition's text is read again with calls of registered functions
+taken (`Parser::for_stored`), whatever the setting of the session using
+it, since one refused when made made nothing. Reading a definition made
+with the setting OFF so changes nothing. Its calls were each bound to a
+function of the schema, recorded in its horizon (D73), and bound again
+it chooses among those alone, so a registered function of the name is
+never reached. Remembering the setting of each definition would put a
+flag in every descriptor and choose the same calls. A definition is made
+by binding the text it keeps. So while a statement of a session with the
+setting OFF makes its definitions (`Parser::refusing_calls`), a text
+read again whose tokens are written in the statement takes no such
+call, and any other text is of a definition made before.
+
 #### D75. Roles: one authorization cell, applicable roles by fixed point
 
 Every privilege check reads one cell, `catalog::Who`: the top cell of

@@ -408,5 +408,5 @@ fn attribute_column(a: &AttributeDesc, at: usize, default: Option<DefaultOption>
 ///
 /// SQLCODE -910 if it no longer reads as one.
 fn default_option(text: &str) -> Result<DefaultOption> {
-    Parser::new(text)?.default_option()
+    Parser::for_stored(text)?.default_option()
 }

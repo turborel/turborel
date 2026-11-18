@@ -365,7 +365,7 @@ fn defined(c: &ColumnDesc, at: usize) -> ColumnDefinition {
 ///
 /// SQLCODE -910 if it no longer reads as it did.
 fn renamed(text: &str, table: &QualifiedName) -> Result<String> {
-    let value = Parser::new(text)?.of_definition().generation_expression()?;
+    let value = Parser::for_stored(text)?.generation_expression()?;
     let mut qualified = Vec::new();
     qualified_columns(&value, &mut qualified);
     qualified.sort_unstable();

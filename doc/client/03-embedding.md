@@ -368,6 +368,10 @@ registered function, `NAME(arguments)`, names no function of a schema,
 so it is no routine invocation of the standard *(extension)*: a session
 takes it while its setting SQL.FUNCTION_CALLS is ON, as it is by
 default, and refuses it while it is OFF, as SQL does (SQLCODE -102).
+The setting is checked as a definition is made. A view, constraint,
+trigger, domain, generated column or routine that calls a registered
+function goes on calling it while a session using it has the setting
+OFF, and after the database is opened again.
 
 ```rust
 use turborel::db::Database;

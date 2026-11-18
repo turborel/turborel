@@ -122,7 +122,7 @@ pub(super) fn own_rows(db: &State, view: &ViewDesc, reader: Reader<'_>) -> Resul
     let st = db.catalog.structured_type(&typed.udt).ok_or_else(|| broken(&format!("there is no type {}", typed.udt)))?;
     let maximal = db.catalog.structured_type(&st.maximal()).unwrap_or(st);
     let result = view.columns.first().map(|c| c.data_type.clone()).ok_or_else(|| broken("a referenceable view has no columns"))?;
-    let mut query = Parser::new(&view.query)?.of_definition().view_query()?;
+    let mut query = Parser::for_stored(&view.query)?.view_query()?;
     let by_user = matches!(typed.generation, RefGeneration::User);
     let uncast = if by_user { uncast_first(&mut query) } else { false };
     let (first, after) = match (typed.generation, &maximal.reference) {
