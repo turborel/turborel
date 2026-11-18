@@ -527,6 +527,23 @@ fn the_spatial_examples_run_as_printed() {
     }
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §11] RULES.md
+/// R-DOC-8: the SQL Reference Manual's chapter of topology-geometry runs
+/// as printed, as ANN.
+#[test]
+fn the_topology_examples_run_as_printed() {
+    let db = spatial_database();
+    assert!(Client::of(&db, "ANN").page("sql/16-topology.md") > 0, "it shows its examples' output");
+}
+
+/// R-DOC-8: the SQL Reference Manual's chapter of linear referencing runs
+/// as printed, as ANN.
+#[test]
+fn the_linear_referencing_examples_run_as_printed() {
+    let db = spatial_database();
+    assert!(Client::of(&db, "ANN").page("sql/17-linear-referencing.md") > 0, "it shows its examples' output");
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the examples of CREATE INDEX
 /// run as printed, as ANN, of its table STAFF and a view V of it, with
 /// GEOMETRY registered for its R-tree of locations.

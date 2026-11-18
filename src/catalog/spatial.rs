@@ -4,7 +4,13 @@
 //! with a system: the rows of ST_SPATIAL_REFERENCE_SYSTEMS and
 //! ST_GEOMETRY_COLUMNS made by the procedures that define them
 //! (`geometry/procedures.rs`), each checked against those tables'
-//! constraints (RULES.md D-SPATIAL-CATALOG).
+//! constraints (RULES.md D-SPATIAL-CATALOG). And of §21, the linear
+//! referencing methods defined and the columns registered with one
+//! (`spatial/lr.rs`).
+
+mod lr;
+
+pub use lr::{LrColumnDesc, LrmDesc};
 
 use super::QualifiedName;
 use crate::error::{Code, Result, SqlError};
@@ -48,6 +54,15 @@ pub enum SpatialChange {
     Register(GeometryColumnDesc),
     /// The column's registration removed.
     Unregister(QualifiedName, String),
+    /// [§21.2.3] A linear referencing method defined.
+    DefineLrm(LrmDesc),
+    /// [§21.2.3] The linear referencing method of the name dropped.
+    DropLrm(String),
+    /// [§21.2.2] A column of a linear referencing type registered, in
+    /// place of its registration if it had one.
+    RegisterLr(LrColumnDesc),
+    /// [§21.2.2] The column's registration removed.
+    UnregisterLr(QualifiedName, String),
 }
 
 /// The systems defined, in the order of their identifiers, and the
@@ -56,6 +71,12 @@ pub enum SpatialChange {
 pub struct SpatialCatalog {
     systems: Vec<SpatialRefSysDesc>,
     columns: Vec<GeometryColumnDesc>,
+    /// [§21.2.3] The linear referencing methods, in the order of their
+    /// identifiers.
+    lrms: Vec<LrmDesc>,
+    /// [§21.2.2] The columns registered with one, in the order of their
+    /// tables and names.
+    lr_columns: Vec<LrColumnDesc>,
 }
 
 /// An integrity constraint violation of the definition schema's table
@@ -69,7 +90,7 @@ impl SpatialCatalog {
     pub fn of(mut systems: Vec<SpatialRefSysDesc>, mut columns: Vec<GeometryColumnDesc>) -> SpatialCatalog {
         systems.sort_by_key(|s| s.id);
         columns.sort_by(|a, b| (&a.table.auth, &a.table.ident, &a.column).cmp(&(&b.table.auth, &b.table.ident, &b.column)));
-        SpatialCatalog { systems, columns }
+        SpatialCatalog { systems, columns, lrms: Vec::new(), lr_columns: Vec::new() }
     }
 
     /// The systems defined.
@@ -115,8 +136,11 @@ impl SpatialCatalog {
                 next.columns.push(c.clone());
             }
             SpatialChange::Unregister(table, column) => next.columns.retain(|o| &o.table != table || &o.column != column),
+            SpatialChange::DefineLrm(_) | SpatialChange::DropLrm(_) | SpatialChange::RegisterLr(_) | SpatialChange::UnregisterLr(..) => {
+                return self.lr_applied(change);
+            }
         }
-        Ok(SpatialCatalog::of(next.systems, next.columns))
+        Ok(SpatialCatalog::of(next.systems, next.columns).with_lr(next.lrms, next.lr_columns))
     }
 
     /// Whether a system of the name `name` is supplied or defined.
@@ -187,5 +211,6 @@ impl SpatialCatalog {
     /// COLUMN_EXISTS].
     pub fn forget_columns(&mut self, table: &QualifiedName, kept: &[&str]) {
         self.columns.retain(|c| &c.table != table || kept.contains(&c.column.as_str()));
+        self.lr_columns.retain(|c| &c.table != table || kept.contains(&c.column.as_str()));
     }
 }

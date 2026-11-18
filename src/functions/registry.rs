@@ -59,7 +59,8 @@ fn words() -> Vec<Arc<dyn ScalarFunction>> {
     // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)] the routines of SQL/MM
     // Spatial (RULES.md D-SPATIAL-FAMILY).
     words.extend(crate::geometry::functions());
-    words
+    // [§15] Those of linear referencing, a name of both one function.
+    crate::spatial::lr::sql::with_functions(words)
 }
 
 impl Registry {
@@ -89,8 +90,17 @@ impl Registry {
         let statistics = statistics::functions().into_iter().map(AggregateRef).collect::<Vec<_>>();
         let aggregates =
             standard.iter().chain(&truths).chain(&any_value).chain(&statistics).map(|f| (f.0.name().to_string(), f.clone())).collect();
-        let procedures = crate::geometry::procedures().into_iter().map(|p| (p.name().to_owned(), p)).collect();
-        let tables = crate::geometry::table_functions().into_iter().map(|t| (t.name().to_owned(), t)).collect();
+        let procedures = crate::geometry::procedures()
+            .into_iter()
+            .chain(crate::spatial::topology::sql::procedures())
+            .chain(crate::spatial::lr::sql::procedures())
+            .map(|p| (p.name().to_owned(), p))
+            .collect();
+        let tables = crate::geometry::table_functions()
+            .into_iter()
+            .chain(crate::spatial::topology::sql::tables())
+            .map(|f| (f.name().to_owned(), f))
+            .collect();
         Registry { scalars, aggregates, standard, tables, procedures }
     }
 
