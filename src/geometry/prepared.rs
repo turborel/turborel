@@ -3,8 +3,9 @@
 //! introduces no cache lock shared by concurrent sessions. Errors remain
 //! at evaluation time, including mixed-SRID and malformed-value errors.
 //! A polygon's cell certificates (`cells.rs`) are built once, the first
-//! time the operand has located enough points to repay them, so an
-//! operand prepared for a few rows of a join never pays for them; the
+//! time the operand has located enough points, or its interval trees
+//! tested enough edges, to repay them, so an operand prepared for a few
+//! rows of a join never pays for them; the
 //! hierarchy of its edges (`tree.rs`), the first time a point in a
 //! boundary cell needs the edges near it, or once a few distances have
 //! repaid it; a point's distance then searches it for the nearest edge.
@@ -40,6 +41,10 @@ struct Prepared {
     cells: OnceLock<Option<Box<Cells>>>,
     cells_after: usize,
     located: AtomicUsize,
+    /// Or once the interval trees' tests, estimated from those of the
+    /// first points located, reach `visits_after`.
+    visits_after: usize,
+    visited: AtomicUsize,
     /// Built at the `filed_after`th line or polygon tested; never if that
     /// is `usize::MAX`.
     filed: OnceLock<Option<Box<FiledEdges>>>,
@@ -63,6 +68,14 @@ struct Prepared {
 const CELL_USES_PER_EDGE: usize = 8;
 /// The fewest points located before building them.
 const MIN_CELL_USES: usize = 256;
+/// \[DESIGN\] Edges the interval trees test, per edge, before the
+/// certificates are built however few points were located: building a
+/// comb's certificates, whose teeth span every row, costs about as much
+/// as 1,400 to 2,200 such tests per edge (`bench/geometry.md`).
+const CELL_VISITS_PER_EDGE: usize = 2_048;
+/// The first points located whose tests are counted; later points are
+/// assumed to test as many, so they pay nothing for the count.
+const COUNTED_POINTS: usize = 64;
 /// \[DESIGN\] Lines and polygons tested before a polygon's edges are
 /// filed: filing costs about one unprepared test, which files the larger
 /// side's edges anyway.
@@ -100,6 +113,7 @@ impl Prepared {
             .filter(|&edges| valid && edges >= cells::MIN_EDGES)
             .and_then(|edges| edges.checked_mul(CELL_USES_PER_EDGE)?.checked_add(MIN_CELL_USES))
             .unwrap_or(usize::MAX);
+        let visits_after = if cells_after == usize::MAX { usize::MAX } else { edges.saturating_mul(CELL_VISITS_PER_EDGE) };
         let rectangle = rectangle::recognizes(&geometry.shape);
         let budget = (cells_after < usize::MAX).then(|| Arc::clone(budget));
         let filed_after = if budget.is_some() { FILED_AFTER_USES } else { usize::MAX };
@@ -113,6 +127,8 @@ impl Prepared {
             cells,
             cells_after,
             located,
+            visits_after,
+            visited: AtomicUsize::new(0),
             filed,
             filed_after,
             probed,
@@ -156,7 +172,7 @@ impl Prepared {
             return Ok(Some(location != super::crossing::Location::Exterior));
         }
         let Some(locator) = &self.locator else { return Ok(None) };
-        locator.locate(point).map(|location| Some(location != super::crossing::Location::Exterior))
+        self.locate_by(locator, point).map(|location| Some(location != super::crossing::Location::Exterior))
     }
 
     /// A line or polygon tested against a polygon with filed edges probes
@@ -194,24 +210,46 @@ impl Prepared {
         self.cells().and_then(|cells| cells.decide(point, || self.tree())).unwrap_or_else(|| {
             self.locator
                 .as_ref()
-                .and_then(|locator| locator.locate(point).ok())
+                .and_then(|locator| self.locate_by(locator, point).ok())
                 .unwrap_or_else(|| super::crossing::locate(point, &self.geometry.shape))
         })
     }
 }
 
 impl Prepared {
-    /// The polygon's cell certificates, once it has located enough points
-    /// to repay building them.
+    /// The polygon's cell certificates, once it has located enough points,
+    /// or its interval trees tested enough edges, to repay building them.
     fn cells(&self) -> Option<&Cells> {
         if let Some(cells) = self.cells.get() {
             return cells.as_deref();
         }
-        if self.located.fetch_add(1, Ordering::Relaxed) < self.cells_after {
+        let located = self.located.fetch_add(1, Ordering::Relaxed);
+        if located < self.cells_after && !self.repaid(located) {
             return None;
         }
         let build = || Cells::new(&self.geometry.shape, self.geometry.bounds?, self.budget.as_ref()?);
         self.cells.get_or_init(build).as_deref()
+    }
+
+    /// Whether the interval trees' tests for `located` points, estimated
+    /// from those of the first points counted, reach the certificates' cost.
+    fn repaid(&self, located: usize) -> bool {
+        let counted = located.clamp(1, COUNTED_POINTS);
+        let tests = self.visited.load(Ordering::Relaxed).saturating_mul(located).checked_div(counted);
+        tests.is_some_and(|tests| tests >= self.visits_after)
+    }
+
+    /// Where `point` lies by the interval trees, counting the edges they
+    /// test for the first points located while certificates may follow.
+    fn locate_by(&self, locator: &Locator, point: super::shape::Point) -> Result<super::crossing::Location> {
+        let counting = self.cells_after < usize::MAX && self.located.load(Ordering::Relaxed) <= COUNTED_POINTS;
+        if !counting || self.cells.get().is_some() {
+            return locator.locate(point, &mut ());
+        }
+        let mut tested = 0_usize;
+        let location = locator.locate(point, &mut tested);
+        self.visited.fetch_add(tested, Ordering::Relaxed);
+        location
     }
 
     /// The hierarchy of the polygon's edges, built the first time it is

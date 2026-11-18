@@ -87,6 +87,32 @@ fn prepared_point_distances_match_the_scan_to_the_bit() {
     }
 }
 
+/// Verifies: [DESIGN] D38, D85: a polygon whose rays cross many teeth
+/// builds its cell certificates once its interval trees have tested
+/// 2,048 edges per edge, long before it has located eight points per
+/// edge; a polygon whose rays cross few edges still waits for the points.
+#[test]
+fn certificates_are_built_once_ray_work_repays_them() {
+    let budget = MemoryBudget::new(usize::MAX);
+    let mut teeth = vec![[0.0_f64, 0.0_f64]];
+    for t in 0..1_024_u32 {
+        let x = f64::from(t) * 0.25_f64;
+        teeth.extend([[x, 1.0_f64], [x, 9.0_f64], [x + 0.125_f64, 9.0_f64], [x + 0.125_f64, 1.0_f64]]);
+    }
+    teeth.extend([[256.0_f64, 1.0_f64], [256.0_f64, 0.0_f64], [0.0_f64, 0.0_f64]]);
+    let comb = Geometry::of(Shape::Polygon(vec![teeth]), 0).unwrap().to_value();
+    let ring = Geometry::of(Shape::Polygon(vec![dense_ring(0.0, 10.0)]), 0).unwrap().to_value();
+    for (polygon, points, built) in [(comb, 6_000_u32, true), (ring, 700, false)] {
+        let prepared = GeometryFunction::Intersects.specialize(&[None, Some(&polygon)], &budget).unwrap();
+        for i in 0..points {
+            let point = Geometry::point(f64::from(i % 997) * 0.25_f64 + 0.06_f64, 2.0_f64 + f64::from(i % 7), 0).unwrap();
+            prepared.0.call(&[point.to_value(), polygon.clone()]).unwrap();
+        }
+        let certified = budget.reservations().iter().any(|(what, _)| what.contains("cell certificates"));
+        assert_eq!(certified, built);
+    }
+}
+
 fn same_result(actual: Value, expected: Value) {
     match (actual, expected) {
         (Value::Approx(actual), Value::Approx(expected)) => assert_eq!(actual.to_bits(), expected.to_bits()),

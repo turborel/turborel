@@ -3095,8 +3095,11 @@ reserve vector capacity before allocation, have depth bounded by the
 geometry coordinate limit, and decline independently when memory is short.
 The decoded operand remains usable without them.
 A Polygon or MultiPolygon operand of at least 32 edges also builds exact
-cell certificates, once it has located eight points per edge plus 256, so
-an operand prepared for a few rows of a join never pays for them. Its
+cell certificates, once it has located eight points per edge plus 256,
+or its interval trees have tested about 2,048 edges per edge, as rays
+across many teeth do first, the tests of later points estimated from
+those of the first 64, so an operand prepared for a few rows of a join
+never pays for them. Its
 envelope gets a grid of square cells whose side is a power of two, about
 64 cells per edge and at most 1,024 along an axis, their bounds 2^-8 of
 a cell past multiples of the side so round coordinates rarely fall on

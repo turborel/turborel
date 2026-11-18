@@ -565,3 +565,38 @@ moved by -32% with a spread of 55%; a probe of the same calls, run
 alternately three times on each side, measured 11.83 to 11.94 million
 pairs/s on both, as it did the 512-edge polygon's at about 157,000.
 Other moves, both ways, follow the noisy baseline run.
+
+## Certificates built once ray work repays them
+
+Cell certificates were built after a polygon had located eight points
+per edge plus 256. A comb's rays cross every tooth, so the 32,772-edge
+comb needed 262,400 lookups of 79 µs each before its certificates
+decided points in about 0.1 µs; its prepared distance case, 98,304
+calls, never built them. The interval trees now count the edges they
+test for the first 64 points located, and the certificates are built
+once the estimated tests of all points located reach 2,048 per edge, or
+the points reach the old count (RULES.md D85). Later lookups do not
+count: the tally is a type that keeps nothing.
+
+Measured on an Apple M4, Rust 1.99.0, against the previous change's
+second run. This change ran twice and the second run is reported:
+
+```text
+cargo xtask bench geometry --save work --compare search
+```
+
+| Prepared point distance | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 4,100-edge comb | 660,938 | 666,616 | within noise |
+| 32,772-edge comb | 12,621 | 175,515 | 13.9x |
+
+The 4,100-edge comb's slowest timed run rose from 92,055 to 665,678
+pairs/s: its certificates now come before the first timed run. Squares
+against a prepared 4,096-edge circle moved by -7.9%, with an 8% spread,
+and by -2.4% in the first run. The first version of this change counted
+every lookup until the certificates were built, and lost about 8% on
+that case, whose cheap lookups never build them. A probe of that case
+and of points against a 128-edge polygon, run alternately three times
+on this version and its parent, measured 8.7 and 9.6 million pairs/s
+before and 9.6 and 9.5 million after for the squares after warm-up, and
+26.2 million against 26.4 million for the points.

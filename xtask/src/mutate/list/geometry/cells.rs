@@ -3,8 +3,9 @@
 //! parity, holes no longer taking a point out of their polygon, a
 //! crossing placed in the first column it may touch, a boundary cell's
 //! reference side inverted or shared by several rings, another polygon's
-//! hold ignored, the run and the rise near a point ignored, and edges
-//! through the corners of its path misplaced.
+//! hold ignored, the run and the rise near a point ignored, edges
+//! through the corners of its path misplaced, and the interval trees'
+//! work no longer counted toward building them.
 
 use super::{Mutation, Package};
 
@@ -18,7 +19,7 @@ const TIES: &str = "geometry::prepared::cells::tests::ties_on_a_points_path_are_
 const INVALID: &str = "geometry::prepared::cells::tests::invalid_topology_is_labelled_as_location_reads_it";
 
 /// Mechanisms of the certificates whose removal must fail their tests.
-pub const CELLS: [Mutation; 13] = [
+pub const CELLS: [Mutation; 14] = [
     Mutation {
         name: "cells-crossing-parity",
         package: Package::Core,
@@ -148,5 +149,15 @@ pub const CELLS: [Mutation; 13] = [
         replacement: "let above = |h: f64| height(a, b, [x, h]) != Ordering::Less;",
         integration: &[],
         unit: &[TIES],
+    },
+    Mutation {
+        name: "cells-built-by-work",
+        package: Package::Core,
+        breaks: "a polygon whose rays cross many teeth waits for eight located points per edge before its certificates",
+        file: "src/geometry/prepared/locator.rs",
+        original: "*self = self.saturating_add(1);",
+        replacement: "*self = self.saturating_add(0);",
+        integration: &[],
+        unit: &["geometry::tests::prepared::certificates_are_built_once_ray_work_repays_them"],
     },
 ];
