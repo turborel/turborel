@@ -1,5 +1,5 @@
 //! \[EXTENSION\] An inverted index's approximate search (the vector
-//! design document §9.2, §9.4, R9.3, R13.1, R13.2; RULES.md D-APPROX):
+//! design document §9.2, §9.4, R9.3, R13.1, R13.2; RULES.md D94, D99):
 //! the rows of the greatest dot product with a query, by block-max WAND
 //! (`engine/sparse/wand.rs`), as the candidates of a call of DOT.
 //!

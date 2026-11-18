@@ -69,6 +69,9 @@ impl Parser {
         if self.next_is_routine_designator() {
             return Ok(Some(DropObject::Routine(self.routine_designator()?)));
         }
+        if self.at_distance_function() {
+            return Ok(Some(DropObject::Routine(self.dropped_distance_function()?)));
+        }
         if self.accept_word(super::user_types::TYPE) {
             return Ok(Some(DropObject::Type(self.table_name()?)));
         }
@@ -144,10 +147,11 @@ impl Parser {
     }
 
     /// \[EXTENSION\] `<create index statement>` ::= CREATE INDEX `<index
-    /// name>` ON `<table name>` ( `<column name>` \[{, `<column name>`}...\] )
+    /// name>` ON `<table name>` ( `<key part>` \[{, `<key part>`}...\] )
     /// \[USING `<method name>`\] \[WITH `<table options>`\], after CREATE;
-    /// CREATE VECTOR INDEX is `ddl/vector_index.rs`, CREATE HYBRID VECTOR
-    /// INDEX `ddl/hybrid_index.rs`.
+    /// `<key part>` ::= `<column name>` | ( `<value expression>` ) (RULES.md
+    /// D92); CREATE VECTOR INDEX is `ddl/vector_index.rs`, CREATE HYBRID
+    /// VECTOR INDEX `ddl/hybrid_index.rs`.
     fn create_index(&mut self) -> Result<SqlStatement> {
         if !self.accept_word("INDEX") {
             return Err(self.syntax("expected INDEX: a <schema> is processed by Database::schema"));
@@ -157,10 +161,18 @@ impl Parser {
         self.expect_kw(kw::ON)?;
         let table = self.table_name()?;
         self.expect_delim(delim::LEFT_PAREN)?;
-        let mut columns = Vec::new();
+        let (mut columns, mut expressions) = (Vec::new(), Vec::new());
         loop {
             let at = self.here();
-            columns.push((self.identifier()?, at));
+            let part = columns.len().saturating_add(expressions.len());
+            if self.accept_delim(delim::LEFT_PAREN) {
+                let start = self.here();
+                self.value_expression()?;
+                expressions.push((part, self.text_from(start), at));
+                self.expect_delim(delim::RIGHT_PAREN)?;
+            } else {
+                columns.push((self.identifier()?, at));
+            }
             if !self.accept_delim(delim::COMMA) {
                 break;
             }
@@ -177,7 +189,7 @@ impl Parser {
         if self.accept_kw(kw::WITH) {
             storage.options = self.table_options()?;
         }
-        Ok(SqlStatement::Index(IndexStatement::Create { name, table, columns, storage }))
+        Ok(SqlStatement::Index(IndexStatement::Create { name, table, columns, expressions, storage }))
     }
 
     /// [ISO/IEC 9075:1992 §11.2, §11.18, §11.20] `<drop schema statement>`

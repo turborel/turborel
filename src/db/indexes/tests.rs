@@ -40,8 +40,15 @@ fn a_build_whose_last_change_fails_is_taken_out() {
     let db = database();
     let table = QualifiedName { auth: "S".into(), ident: "T".into() };
     let built = "T_K (rebuilt)";
-    let spec =
-        IndexSpec { name: built.into(), table, columns: vec!["K".into()], method: BTREE_METHOD.into(), options: Vec::new(), nulls: false };
+    let spec = IndexSpec {
+        name: built.into(),
+        table,
+        columns: vec!["K".into()],
+        method: BTREE_METHOD.into(),
+        options: Vec::new(),
+        nulls: false,
+        expressions: Vec::new(),
+    };
     let failed = db.build_index(&spec, &|st, _| st.swap_index((built, "GONE")));
     assert_eq!(failed.err().map(|e| e.code), Some(Code::Api));
     let st = db.snapshot().unwrap();

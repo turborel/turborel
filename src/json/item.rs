@@ -1,11 +1,8 @@
 //! SQL/JSON items [ISO/IEC 9075-2:2023 §4.48.3]: scalars, the SQL/JSON
 //! null, arrays and objects, and when two of them are equivalent.
 
-use std::cmp::Ordering;
-
-use super::{MAX_NESTING, beyond};
 use crate::error::Result;
-use crate::value::{DecFloat, Decimal, Value, compare};
+use crate::value::{DecFloat, Decimal, Value};
 
 /// [§4.48.3] An SQL/JSON item.
 #[derive(Debug, Clone)]
@@ -52,6 +49,7 @@ impl Scalar {
             | Value::Multiset(_)
             | Value::Structured(_)
             | Value::Reference(_)
+            | Value::Json(_)
             | Value::Extension(_) => None,
         }
     }
@@ -59,11 +57,6 @@ impl Scalar {
     /// The SQL value this scalar is.
     pub fn value(&self) -> &Value {
         &self.0
-    }
-
-    /// Whether the two are comparable and equal, as SQL values are.
-    fn equals(&self, other: &Scalar) -> bool {
-        compare(&self.0, &other.0) == Some(Ordering::Equal)
     }
 }
 
@@ -110,73 +103,17 @@ impl Item {
     /// [§4.48.3] Whether the two items are equivalent: equal scalars, two
     /// SQL/JSON nulls, arrays whose corresponding elements are equivalent,
     /// or objects whose members pair off, one to one, by equivalent keys
-    /// and bound values.
+    /// and bound values. Exactly then are their comparison keys
+    /// (`binary::document_key`) the same: of a string its code points, no
+    /// space padded; of a number its value; of an object its members
+    /// ordered by key and value, so a bijection is found whatever order
+    /// either keeps.
     ///
     /// # Errors
     ///
     /// SQLCODE -900 if the items nest deeper than `MAX_NESTING`.
     pub fn equivalent(&self, other: &Item) -> Result<bool> {
-        equivalent(self, other, 0)
+        let key = |item: &Item| super::binary::encode(item).and_then(|bytes| super::binary::document_key(&bytes));
+        Ok(key(self)? == key(other)?)
     }
-}
-
-/// Whether `a` and `b`, `depth` arrays and objects within the items
-/// compared, are equivalent.
-fn equivalent(a: &Item, b: &Item, depth: usize) -> Result<bool> {
-    if depth > MAX_NESTING {
-        return Err(beyond("arrays and objects nest too deep"));
-    }
-    match a {
-        Item::Null => Ok(matches!(b, Item::Null)),
-        Item::Scalar(x) => Ok(b.as_scalar().is_some_and(|y| x.equals(y))),
-        Item::Array(x) => b.as_array().map_or(Ok(false), |y| arrays(x, y, depth.saturating_add(1))),
-        Item::Object(x) => b.as_object().map_or(Ok(false), |y| objects(x, y, depth.saturating_add(1))),
-    }
-}
-
-/// Whether two arrays are "of the same length, and corresponding elements
-/// … are equivalent".
-fn arrays(x: &[Item], y: &[Item], depth: usize) -> Result<bool> {
-    if x.len() != y.len() {
-        return Ok(false);
-    }
-    for (a, b) in x.iter().zip(y) {
-        if !equivalent(a, b, depth)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-/// Whether two objects "have the same number of members and there exists
-/// a bijection" between them of equivalent members. Equivalence is
-/// transitive, so each member of `x` may take the first member of `y`
-/// left that it is equivalent to.
-fn objects(x: &[Member], y: &[Member], depth: usize) -> Result<bool> {
-    if x.len() != y.len() {
-        return Ok(false);
-    }
-    let mut taken = vec![false; y.len()];
-    for member in x {
-        if !paired(member, y, &mut taken, depth)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-/// Whether a member of `y` not yet `taken` is equivalent to `member`, the
-/// first such taken. Keys are equivalent when "all pairs of corresponding
-/// code points are equal".
-fn paired(member: &Member, y: &[Member], taken: &mut [bool], depth: usize) -> Result<bool> {
-    for (other, used) in y.iter().zip(taken.iter_mut()) {
-        if *used || member.key != other.key {
-            continue;
-        }
-        if equivalent(&member.value, &other.value, depth)? {
-            *used = true;
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }

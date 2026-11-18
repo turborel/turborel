@@ -78,6 +78,7 @@ mod stored;
 mod target;
 mod triggers;
 mod users;
+mod vectors;
 
 /// \[DESIGN\] The deepest syntax tree the parser builds. Each nested `<search
 /// condition>`, `<boolean term>`, `<value expression>`, `<term>`, `<query expression>`

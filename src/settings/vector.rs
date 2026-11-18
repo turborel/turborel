@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The settings of approximate vector search (RULES.md D36,
-//! D-APPROX; the vector design document R9.2, R9.3, R13.1), declared after
+//! D94; the vector design document R9.2, R9.3, R13.1), declared after
 //! the other built-in settings, each at its key's place. An index method
 //! reads VECTOR.BUILD_MEMORY_BYTES as it is told the settings
 //! (`Configurable::configure`).

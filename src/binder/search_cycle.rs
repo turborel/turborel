@@ -198,7 +198,11 @@ pub(super) fn referenced<'f>(from: &'f [TableReference], name: &str) -> Option<&
             }
             TableReference::Joined(j) => todo.extend([&j.right, &j.left]),
             TableReference::Recognized(r) => todo.push(&r.input),
-            TableReference::Derived(_) | TableReference::Unnest(_) | TableReference::Polymorphic(_) | TableReference::Hybrid(_) => {}
+            TableReference::Derived(_)
+            | TableReference::Unnest(_)
+            | TableReference::Json(_)
+            | TableReference::Polymorphic(_)
+            | TableReference::Hybrid(_) => {}
         }
     }
     None

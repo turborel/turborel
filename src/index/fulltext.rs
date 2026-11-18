@@ -248,7 +248,7 @@ impl IndexMethod for FullTextMethod {
     fn supports_predicate(&self, predicate: &Predicate, columns: &[DataType]) -> bool {
         let name = predicate.function.0.name();
         let answered = name == TEXT_MATCHES || name == CONTAINS;
-        answered && predicate.argument == 0 && predicate.column == 0 && one_text_column(columns)
+        answered && predicate.argument == Some(0) && predicate.column == 0 && one_text_column(columns)
     }
     /// A score of the indexed column, as its first argument, greatest
     /// first: RANK (`Index::nearest`).

@@ -32,6 +32,12 @@ fn tables_per_thread() -> Database {
 
 /// Verifies: [DESIGN] RULES.md D27: a `Database` may be shared between
 /// threads, and a `Session` moved to another thread.
+///
+/// The compiler proves both within its default recursion limit, as a
+/// program using the library has it. Regression: a program's statements
+/// held as parsed, and the buffer pool's job asker holding the database,
+/// together lengthened the proof past that limit, so this did not
+/// compile.
 #[test]
 fn handles_cross_threads() {
     is_send_and_sync::<Database>();

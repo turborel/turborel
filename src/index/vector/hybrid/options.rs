@@ -86,6 +86,7 @@ fn part(desc: &IndexDesc, at: usize, method: &str) -> IndexDesc {
         options,
         collations: desc.collations.get(at).cloned().into_iter().collect(),
         nulls: false,
+        expressions: Vec::new(),
     }
 }
 

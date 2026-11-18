@@ -86,6 +86,7 @@ pub fn based_on(t: &DataType, name: &QualifiedName) -> bool {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Json
         | DataType::Extension(_) => false,
     }
 }
@@ -120,6 +121,7 @@ pub fn types_in(t: &DataType, into: &mut Vec<QualifiedName>) {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
+        | DataType::Json
         | DataType::Extension(_) => {}
     }
 }

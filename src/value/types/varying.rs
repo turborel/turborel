@@ -198,6 +198,7 @@ impl SqlType for Varying {
             | Value::Multiset(_)
             | Value::Structured(_)
             | Value::Reference(_)
+            | Value::Json(_)
             | Value::Row(_) => uncastable(&v, t).map(unwarned),
             Value::Bool(b) => super::boolean_text(b, t).map(unwarned),
             // [GR6e] its literal's string, as it shows.

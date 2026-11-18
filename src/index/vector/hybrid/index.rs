@@ -14,7 +14,7 @@
 //! the executor measures every candidate again on it. A nearest read of
 //! the text part, a score of its column, is the part's certified one
 //! (D87); an approximate read of the vector part, a distance of its
-//! column, the part's approximate one (D-APPROX). Each is asked by the
+//! column, the part's approximate one (D94, D100). Each is asked by the
 //! position of its column in the key.
 
 use std::collections::HashSet;

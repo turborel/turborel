@@ -35,7 +35,8 @@ mod collation;
 mod composite;
 mod context;
 mod counterparts;
-pub(crate) use composite::key_operand;
+pub(crate) use composite::{key_operand, orderless_operand};
+pub(crate) use vectors::sql_metric;
 mod cursor;
 mod datetime;
 mod dependencies;
@@ -43,6 +44,7 @@ pub(crate) use dependencies::{DescribedKey, described_key};
 mod interval;
 mod invocation;
 mod json;
+mod key_expression;
 mod listagg;
 mod lobs;
 mod merge;
@@ -96,6 +98,7 @@ mod trim;
 mod underlying;
 mod unnest;
 mod values;
+mod vectors;
 mod views;
 mod window;
 mod with;
@@ -108,6 +111,7 @@ pub use invocation::{
     Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
     routine_definition, sql_statement,
 };
+pub use key_expression::bind_key;
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 pub use parameters::{assigned_argument, bind_argument};
 pub(crate) use psm::{Frame, bind_program};

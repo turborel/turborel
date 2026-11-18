@@ -49,6 +49,8 @@ pub(crate) enum Standard {
 fn words() -> Vec<Arc<dyn ScalarFunction>> {
     let mut words: Vec<Arc<dyn ScalarFunction>> = vec![Arc::new(TextMatches)];
     words.extend(crate::fulltext::types::functions());
+    // \[EXTENSION\] JSON_CONTAINS, which a json index answers too.
+    words.push(Arc::new(super::JsonContains));
     words
 }
 

@@ -7,14 +7,16 @@
 //! `<JSON predicate input>` is a `<string value expression>`, FORMAT JSON
 //! explicit or implicit \[SR1\], and \[GR2c\] applies: the string is parsed
 //! [§9.42]. A failed parse is False \[GR3a\] only if its STATUS is an
-//! exception condition of §9.42's, SQLSTATE 22032 or 22037; a limit of
-//! turborel's reached, a text nested deeper than `MAX_NESTING` or a
-//! number out of every number's range (SQLCODE -900, RULES.md D18), is no
-//! answer the rules give and is raised.
+//! exception condition of §9.42's, SQLSTATE 22032 or 22037. A limit of
+//! turborel's reached is no answer the rules give and is raised: a text
+//! nested deeper than `MAX_NESTING` (SQLCODE -900, RULES.md D18), or a
+//! number no number of turborel's holds exactly (SQLSTATE 22003), which
+//! is still of RFC 8259's grammar, so still a JSON text.
 
+use super::binary::NodeKind;
 use super::query::json_text;
-use super::{Item, Keys, is_exception, parse};
-use crate::error::Result;
+use super::{Item, Keys, parse};
+use crate::error::{Result, SqlError, SqlState};
 use crate::value::Value;
 
 /// [§8.22] A `<JSON predicate type constraint>`: the kind of SQL/JSON item
@@ -53,12 +55,26 @@ const INPUT_RULE: &str = "[ISO/IEC 9075-2:2023 §8.22 F] the input of IS JSON is
 /// object longer than one chunk, or a text beyond turborel's limits, as
 /// the module's documentation says.
 pub fn is_json(value: &Value, kind: JsonType, keys: Keys) -> Result<Value> {
+    // [§8.22 GR2b] A value of the JSON type is no text to parse: its
+    // kind alone is judged, its keys unique or not.
+    if let Value::Json(j) = value {
+        let node = j.root()?.kind()?;
+        return Ok(Value::Bool(node_is_of(node, kind)));
+    }
     let Some(text) = json_text(value, INPUT_RULE)? else { return Ok(Value::Null) };
     let item = match parse(&text, keys) {
         Ok(item) => item,
-        Err(error) => return if is_exception(&error) { Ok(Value::Bool(false)) } else { Err(error) },
+        Err(error) => return if not_json(&error) { Ok(Value::Bool(false)) } else { Err(error) },
     };
     Ok(Value::Bool(is_of(&item, kind)))
+}
+
+/// [§8.22 GR3a] Whether `error`, of a parse, is a STATUS of §9.42's:
+/// SQLSTATE 22032 of no JSON text \[§9.42 GR3a iii 1\] or 22037 of
+/// non-unique keys \[§9.42 GR3a iii 2\].
+fn not_json(error: &SqlError) -> bool {
+    let state = error.sqlstate();
+    state == SqlState::INVALID_JSON_TEXT || state == SqlState::NON_UNIQUE_KEYS_IN_A_JSON_OBJECT
 }
 
 /// [§8.22 SR4] `value IS NOT JSON kind keys`, which is `NOT (value IS JSON
@@ -70,6 +86,17 @@ pub fn is_json(value: &Value, kind: JsonType, keys: Keys) -> Result<Value> {
 pub fn is_not_json(value: &Value, kind: JsonType, keys: Keys) -> Result<Value> {
     let truth = is_json(value, kind, keys)?;
     Ok(if let Value::Bool(b) = truth { Value::Bool(!b) } else { truth })
+}
+
+/// [§8.22 GR3b to GR3e] `is_of` of an item of the JSON type, its root
+/// node of the kind `node`.
+fn node_is_of(node: NodeKind, kind: JsonType) -> bool {
+    match kind {
+        JsonType::Value => true,
+        JsonType::Array => node == NodeKind::Array,
+        JsonType::Object => node == NodeKind::Object,
+        JsonType::Scalar => node != NodeKind::Array && node != NodeKind::Object,
+    }
 }
 
 /// [§8.22 GR3b to GR3e] Whether `item` is of the kind `kind`.

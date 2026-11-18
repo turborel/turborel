@@ -1,4 +1,4 @@
-//! \[EXTENSION\] VECTOR built in, and its plug-ins (RULES.md D88): the
+//! \[EXTENSION\] VECTOR built in, and its plug-ins (RULES.md D93): the
 //! type and its functions, given every database as it is made; distance
 //! metrics (`VectorMetric`) and quantizers (`Quantizer`), built in and
 //! registered (`Database::register_metric`, `register_quantizer`).
@@ -14,10 +14,13 @@
 use std::sync::{Arc, PoisonError, RwLock};
 
 use super::{Database, State};
+use crate::catalog::{ColumnDesc, SqlRoutineDesc};
 use crate::diagnostics::Extension;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::error::{Code, Result, SqlError};
+use crate::index::IndexMethod;
 use crate::lexer::authorization_identifier;
+use crate::value::CompOp;
 use crate::vector::metric::{Metrics, VectorMetric, metric_named};
 use crate::vector::quantizer::{Quantizer, Quantizers, built_in_quantizers, quantizer_named};
 
@@ -73,6 +76,49 @@ impl SharedVectors {
     }
 }
 
+/// That the columns `keyed` of index `name` of method `m` group values, as
+/// keys do [ISO/IEC 9075-2:2023 §9.12 SR3]; and \[EXTENSION\] are no
+/// vectors, if `m` keys by value, by `=` or an order: a vector has neither
+/// (design document §17, RULES.md D93). A method of its own search, a
+/// vector index's, keys them.
+///
+/// # Errors
+///
+/// SQLCODE -103 if one is not, or is a vector.
+pub(super) fn keyed_by<'a>(m: &dyn IndexMethod, keyed: impl Iterator<Item = &'a ColumnDesc>, name: &str) -> Result<()> {
+    let what = format!("index {name}");
+    keyed.into_iter().try_for_each(|column| {
+        crate::binder::key_operand(&column.data_type, &what)?;
+        if !m.supports(CompOp::Eq) {
+            return Ok(());
+        }
+        crate::binder::orderless_operand(&column.data_type, &what)
+    })
+}
+
+/// \[EXTENSION\] That the routine `desc`, if a distance function of SQL
+/// (design document §8), is one: its body binds over its two vectors to a
+/// number, and its name is no metric's built in or registered, which
+/// VECTOR_DISTANCE would otherwise name in its place.
+///
+/// # Errors
+///
+/// SQLCODE -103 if its body is no number of them or it is named as a
+/// metric is.
+pub(super) fn distance_defined(st: &State, desc: &SqlRoutineDesc) -> Result<()> {
+    if desc.distance.is_none() {
+        return Ok(());
+    }
+    crate::binder::sql_metric(st, desc)?;
+    let metrics = st.vectors.metrics();
+    let qualified = format!("{}.{}", desc.name.auth, desc.name.ident);
+    if let Some(m) = [desc.name.ident.as_str(), &qualified].into_iter().find(|n| metric_named(&metrics, n).is_some()) {
+        let message = format!("[EXTENSION] a distance function is named as no metric is, and {m} is one");
+        return Err(SqlError::new(Code::SyntaxRule, message));
+    }
+    Ok(())
+}
+
 /// Whether `name` is a regular identifier in upper case, as a plug-in's
 /// name a statement writes as a key word must be.
 fn upper_identifier(name: &str) -> bool {
@@ -91,7 +137,7 @@ fn metric_name(name: &str) -> bool {
 
 impl State {
     /// \[EXTENSION\] The functions of VECTOR, built in as full text's are
-    /// (RULES.md D88), VECTOR_DISTANCE naming every metric registered when
+    /// (RULES.md D93), VECTOR_DISTANCE naming every metric registered when
     /// it is called. Of no name another built-in function has, so none is
     /// refused.
     pub(super) fn vector_functions(&mut self) {
@@ -108,7 +154,7 @@ impl State {
 impl Database {
     /// \[EXTENSION\] Registers a distance metric, which VECTOR_DISTANCE
     /// and a vector index then name (design document §6.1 R6.2, §10.2,
-    /// RULES.md D88). Its name is a regular identifier in upper case, or a
+    /// RULES.md D93). Its name is a regular identifier in upper case, or a
     /// distance function's, a schema's name and its own joined by a
     /// period, which an index names by `DISTANCE schema.udf_name`. Its
     /// contract is `VectorMetric`'s; VECTOR_DISTANCE refuses a result that
@@ -130,7 +176,7 @@ impl Database {
     }
 
     /// \[EXTENSION\] Registers a quantizer, which a vector index then names
-    /// to compress its vectors (design document §7.2, RULES.md D88). Its
+    /// to compress its vectors (design document §7.2, RULES.md D93). Its
     /// contract is `Quantizer`'s.
     ///
     /// # Errors

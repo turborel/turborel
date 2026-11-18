@@ -10,7 +10,7 @@
 //! and format (R3.6, R10.3), never NULL (R10.6), by the metric its
 //! options name, read from the database's metrics. Its indexes answer
 //! approximate nearest-neighbour searches of a call of that metric alone
-//! (R13.1, RULES.md D-APPROX), and no comparison, as vectors have no
+//! (R13.1, RULES.md D94), and no comparison, as vectors have no
 //! order (R3.11).
 
 mod adapt;

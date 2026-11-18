@@ -130,6 +130,7 @@ fn shown(v: &Value) -> String {
         | Value::Multiset(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Row(_)
         | Value::Extension(_) => format!("{v:?}"),
     }

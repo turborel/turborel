@@ -6,6 +6,7 @@
 //!
 //! A panic is how a test reports failure, so test code may unwrap, index and
 //! panic (RULES.md R-ERR-1 applies to production code only).
+
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

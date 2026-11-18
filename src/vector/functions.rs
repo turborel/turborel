@@ -45,6 +45,9 @@ pub(crate) const TEXT_TYPE: DataType = DataType::varying(MAX_CHARACTER_LENGTH);
 /// CLOB.
 pub(crate) const CLOB_TYPE: DataType = DataType::Lob { kind: LobKind::Character, length: MAX_LOB_LENGTH, units: CharUnits::Characters };
 
+/// VECTOR_DISTANCE's name, which the distance operators call.
+pub const VECTOR_DISTANCE: &str = "VECTOR_DISTANCE";
+
 /// The distance operators of §6.3 and the metric each stands for, as
 /// `VECTOR_DISTANCE(a, b, metric)`.
 pub const OPERATORS: [(&str, &str); 6] =
@@ -278,13 +281,23 @@ impl ScalarFunction for VectorFunction {
         self.argument_type(position, known).map(ParameterType::Of)
     }
 
+    /// A metric, format, layout, norm or property written as a key word
+    /// (R6.2): VECTOR_DISTANCE's first argument only if a metric is so
+    /// named, as it is otherwise a vector.
+    fn word_argument(&self, position: usize, word: &str, first: bool) -> bool {
+        if matches!(self.routine, Routine::Distance(Distance::VectorDistance)) && position == 0 {
+            return metric_named(&self.metrics, word).is_some();
+        }
+        self.routine.arg(position, first) == Some(Arg::Text)
+    }
+
     /// A distance raises only of its arguments: of vectors of other
     /// dimensions or formats, of a format its metric does not measure, of
     /// a metric no metric's name. A column of a fixed shape and a constant
     /// operand raise alike for every row, and a null vector gives null; the
     /// planner holds the call to that, and to a built-in metric, which
     /// never fails of finite vectors, before it skips a row for it
-    /// (`physical/nearest/safe.rs`, D-APPROX).
+    /// (`physical/nearest/safe.rs`, D94).
     fn rechecked_errors(&self) -> bool {
         matches!(self.routine, Routine::Distance(_))
     }

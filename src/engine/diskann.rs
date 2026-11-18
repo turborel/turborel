@@ -262,6 +262,9 @@ struct Inner {
     dead: AtomicU64,
     book: RwLock<Book>,
     cache: RwLock<Cache>,
+    /// Live nodes when the cache was last made, which is made again once
+    /// they double, so an index grown by inserts caches its first hops.
+    cached_at: AtomicU64,
     /// Per-node latches of writers (`engine/locks.rs`), by node number.
     latches: Locks,
     /// Nodes being inserted, which consolidation leaves alone.
@@ -393,6 +396,7 @@ impl DiskAnn {
                 dead: AtomicU64::new(state.dead),
                 book: RwLock::new(book),
                 cache: RwLock::new(Cache::default()),
+                cached_at: AtomicU64::new(0),
                 latches: Locks::new(),
                 pending: Mutex::new(HashSet::new()),
                 visits: Mutex::new(Vec::new()),

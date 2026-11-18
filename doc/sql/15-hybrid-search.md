@@ -6,8 +6,7 @@ A hybrid search finds documents by their words and by their meaning at
 once. A hybrid index of a table holds a full-text index of a text column
 and a vector index of a column of embeddings, one row a document.
 HYBRID_SEARCH reads the best candidates of each index, ranked by BM25
-and by distance, and fuses the two lists into one. The design follows
-§11 of Turborel's vector design document.
+and by distance, and fuses the two lists into one.
 
 The examples on this page are run in order, by the user ANN, on a table
 of help articles, each with an embedding of four dimensions:
@@ -321,4 +320,11 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): HYBRID_SEARCH names its QUERY_VECTOR (a
 | 2A000 | -102 | An argument is not one of those above, or FUSION is neither RRF nor WEIGHTED |
 | 2A000 | -103 | A hybrid index of a MODEL names two columns, or its table's primary key is not one column, or its model is not there |
 | 22000 | -301 | CHUNKER is no chunking CHUNK_TEXT reads |
+| 2A000 | -103 | A hybrid index of no MODEL is given a CHUNKER or a MODE |
 | 0A000 | -900 | A hybrid index of no MODEL names one column |
+
+## See also
+
+[CREATE HYBRID VECTOR INDEX](statements/create-hybrid-vector-index.md),
+[Vectors](14-vectors.md),
+[Full-Text Search](08-fulltext.md)

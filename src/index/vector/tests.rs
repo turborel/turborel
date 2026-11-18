@@ -148,7 +148,7 @@ impl RowFilter for Failing {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D-APPROX: an in-filter is asked of the
+/// Verifies: [EXTENSION] RULES.md D94: an in-filter is asked of the
 /// candidates and only rows it admits are answered, as many as asked, of
 /// one in twenty, past the list the search was asked for; its
 /// first error is the search's.
@@ -180,7 +180,7 @@ fn another_metric_or_a_refused_budget_declines() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D-DISKANN, D-HNSW, D-IVF: a locator names
+/// Verifies: [DESIGN] RULES.md D95: a locator names
 /// its version, its column's format and dimensions; another of each is
 /// SQLCODE -916.
 #[test]
@@ -248,6 +248,7 @@ fn diskann_rerank_gives_the_whole_list_or_the_rows_asked() {
         options: vec![("DISKANN.RERANK".into(), Value::Char("OFF".into()))],
         collations: Vec::new(),
         nulls: false,
+        expressions: Vec::new(),
     };
     index.reconfigure((&table, &off));
     assert_eq!(found(&index, &q, None).unwrap().unwrap().len(), K);

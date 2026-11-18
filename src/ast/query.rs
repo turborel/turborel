@@ -262,6 +262,7 @@ fn named_in_from<'a>(
             TableReference::Table(t) => each(t, t.table.auth.is_none() && scope.contains(&t.table.ident.as_str())),
             TableReference::Derived(d) => subqueries.push(&*d.query),
             TableReference::Unnest(u) => u.collections.iter().for_each(|v| v.for_each_subquery(&mut |s| subqueries.push(s))),
+            TableReference::Json(j) => j.operands().into_iter().for_each(|v| v.for_each_subquery(&mut |s| subqueries.push(s))),
             TableReference::Recognized(r) => {
                 refs.push(&r.input);
                 r.clause.for_each_subquery(&mut |s| subqueries.push(s));
@@ -489,6 +490,9 @@ pub enum TableReference {
     /// [ISO/IEC 9075-2:2023 §7.6] A `<PTF derived table>` and its
     /// `<correlation or recognition>`.
     Polymorphic(Box<PtfTable>),
+    /// [ISO/IEC 9075-2:2023 §7.6, §7.11] A `<JSON table>` and its
+    /// `<correlation or recognition>`.
+    Json(Box<super::JsonTable>),
     /// \[EXTENSION\] HYBRID_SEARCH (the vector design document §11.2).
     Hybrid(Box<super::HybridSearch>),
 }

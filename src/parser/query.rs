@@ -514,6 +514,9 @@ impl Parser {
         if self.at_vector_search() {
             return self.vector_search();
         }
+        if self.at_json_table() {
+            return self.json_table();
+        }
         if self.at_hybrid_search() {
             return self.hybrid_search();
         }

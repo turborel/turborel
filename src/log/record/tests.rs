@@ -43,6 +43,7 @@ fn every_kind() -> Vec<Record> {
             columns: vec!["K".into(), "L".into()],
             method: "btree".into(),
             options: vec![("FILL".into(), Value::Approx(0.5)), ("SHAPE".into(), Value::Char("TALL".into()))],
+            expressions: vec![(0, "UPPER(\"N\")".into()), (3, "A + B".into())],
         },
         Change::AlterIndex { name: "I".into(), options: vec![] },
         Change::DropIndex { name: "I".into() },

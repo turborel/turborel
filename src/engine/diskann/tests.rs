@@ -11,6 +11,7 @@ use crate::disk::pager::Pager;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 
 mod fresh;
+mod guided;
 mod merged;
 mod partitions;
 mod pq;

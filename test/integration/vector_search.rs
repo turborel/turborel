@@ -1,4 +1,4 @@
-//! Approximate nearest-neighbour search (RULES.md D-APPROX): FETCH APPROX
+//! Approximate nearest-neighbour search (RULES.md D94): FETCH APPROX
 //! and FETCH EXACT, the planner's choice of an approximate index, the
 //! executor's re-rank, widening and fallback, filter strategies, hints and
 //! settings, through a fake approximate index method (`fixture.rs`), apart

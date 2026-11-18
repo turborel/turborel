@@ -282,6 +282,7 @@ fn every_table(from: &[TableReference], at: usize) -> Result<Vec<SelectSublist>>
             TableReference::Table(t) => t.correlation.clone().map_or_else(|| t.table.clone(), |c| TableName { auth: None, ident: c, at }),
             TableReference::Derived(d) => TableName { auth: None, ident: d.correlation.clone(), at },
             TableReference::Unnest(u) => TableName { auth: None, ident: u.correlation.clone(), at },
+            TableReference::Json(j) => TableName { auth: None, ident: j.correlation.clone(), at },
             TableReference::Recognized(r) => {
                 let Some(name) = &r.correlation else {
                     let msg = "a <search or cycle clause> of a recursive query whose second operand selects * of a <row pattern recognition clause> of no <row pattern output name> is not supported";
@@ -332,7 +333,11 @@ fn extend_reference(from: &mut [TableReference], name: &str, added: &[String]) {
                 todo.extend([left, right]);
             }
             TableReference::Recognized(r) => todo.push(&mut r.input),
-            TableReference::Derived(_) | TableReference::Unnest(_) | TableReference::Polymorphic(_) | TableReference::Hybrid(_) => {}
+            TableReference::Derived(_)
+            | TableReference::Unnest(_)
+            | TableReference::Json(_)
+            | TableReference::Polymorphic(_)
+            | TableReference::Hybrid(_) => {}
         }
     }
 }

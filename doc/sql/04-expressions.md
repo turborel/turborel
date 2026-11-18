@@ -949,7 +949,8 @@ OK
 JSON_VALUE and JSON_QUERY take a value out of JSON text, a character
 string, by an SQL/JSON path expression;
 [JSON_EXISTS](05-predicates.md#json_exists) tests whether the path
-finds anything. Each is written as
+finds anything, and [JSON_TABLE](13-json-table.md) presents what it
+finds as a table. Each of the first three is written as
 
 ```
 JSON_VALUE(text [FORMAT JSON], 'path' [PASSING value [FORMAT JSON] AS name, ...]
@@ -1019,10 +1020,56 @@ SELECT ID, JSON_QUERY(DOC, 'lax $.items[*].sku' RETURNING VARCHAR(20) WITH ARRAY
 (2 rows)
 ```
 
+### Returned types and behaviors
+
+JSON_VALUE RETURNING a type casts the scalar found as CAST does. It casts a
+string to a time or timestamp, with a time zone or without, as its
+literal is written, a number to an exact or approximate type, cut
+to its scale, and a string to CHAR(n), padded, or to a CLOB. A cast that
+fails, as of a string that is no time, is a data exception ON ERROR
+replaces.
+
+The value expression of a DEFAULT is evaluated only for a row that
+takes it. A DEFAULT ON EMPTY is evaluated only if the path finds
+nothing, and a DEFAULT ON ERROR only in place of an exception. So a DEFAULT that could fail, as
+a division, does so only where it is used. NEXT VALUE FOR in a DEFAULT
+is the exception, as it draws once of each row wherever it is written,
+and the operator's DEFAULTs are then evaluated of every row. A DEFAULT ON EMPTY whose cast to the RETURNING type fails is
+an exception that ON ERROR replaces in turn; a DEFAULT ON ERROR whose
+cast fails raises it.
+
+The text JSON_QUERY writes is not cut to its RETURNING type. Text
+longer than the type is SQLSTATE 22001, SQLCODE -301, whatever ON ERROR
+says, since the standard raises it directly rather than as the
+operator's own exception.
+
+```sql
+VALUES (JSON_VALUE('"10:20:30+02:00"', 'lax $' RETURNING TIME WITH TIME ZONE), JSON_VALUE('1.25', 'lax $' RETURNING NUMERIC(4,1)),
+        JSON_VALUE('"ab"', 'lax $' RETURNING CHAR(4)) || '|');
+SELECT ID, JSON_VALUE(DOC, 'lax $.items[0].qty' RETURNING INTEGER DEFAULT 1 / 0 ON EMPTY) FROM PURCHASES WHERE ID = 1;
+VALUES JSON_VALUE('[]', 'lax $' RETURNING INTEGER DEFAULT 1 / 0 ON ERROR);
+VALUES JSON_QUERY('[1,2,3]', 'lax $' RETURNING VARCHAR(3) NULL ON ERROR);
+```
+
+```
+                |        |
+----------------+--------+-------
+ 10:20:30+02:00 |    1.2 | ab  |
+(1 row)
+           ID |
+--------------+--------------
+            1 |            2
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22012): a divisor shall not be 0 [X3.135-1986 §5.9 GR5]
+turborel: SQLCODE -301 (SQLSTATE 22001): the JSON text of 7 characters or octets is longer than CHARACTER VARYING(3) [ISO/IEC 9075-2:2023 §9.43 GR2a iii]
+```
+
 ### The path language
 
-A path begins with its mode, `lax` or `strict`, then `$`, the text, and
-its accessors: `.name` or `."name"` a member of an object, `.*` every
+[The SQL/JSON Path Language](11-json-path.md) gives the language in
+full: its grammar, every method and the SQLSTATE of each error.
+In short, a path begins with its mode, `lax` or `strict`, then `$`, the
+text, and its accessors: `.name` or `."name"` a member of an object, `.*` every
 member's value, `[n]`, `[n to m]` and `[last]` elements of an array,
 counted from 0, `[*]` every element, and the item methods. `.type()`
 names an item's kind and `.size()` counts an array's elements;

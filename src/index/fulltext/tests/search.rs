@@ -11,7 +11,7 @@ use crate::index::searched;
 /// The probe of TEXT_MATCHES(column, `words`).
 fn matching(words: Value) -> Probe {
     let function = ScalarRef(Arc::new(TextMatches));
-    Probe::Predicate { predicate: Box::new(Predicate { function, column: 0, argument: 0 }), value: words }
+    Probe::Predicate { predicate: Box::new(Predicate { function, column: 0, argument: Some(0) }), value: words }
 }
 
 /// The rows `probe` finds, in row order: an index gives them in its

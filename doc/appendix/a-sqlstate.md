@@ -53,10 +53,10 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
 | 0W000 | Prohibited statement encountered during trigger execution: a savepoint statement in a procedure a trigger's action calls; told in the message of the 09000 it raises |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
-| 22000 | Data exception |
-| 22001 | String data, right truncation: a string too long for its type |
+| 22000 | Data exception: a path's `%` of an approximate number or one with a fraction; vectors of other dimension counts or formats |
+| 22001 | String data, right truncation: a string too long for its type, JSON_QUERY's JSON text longer than its returned type whatever ON ERROR says among them; FROM_VECTOR of a vector whose text is longer than a character string |
 | 22002 | Null value, no indicator parameter |
-| 22003 | Numeric value out of range |
+| 22003 | Numeric value out of range, a number of JSON text of more than 34 significant digits among them, wherever JSON text is read, IS JSON too; a vector element out of its format's range, NaN or infinite, or a vector distance that overflows |
 | 22004 | Null value not allowed: a null name of a member of JSON_OBJECT or JSON_OBJECTAGG |
 | 22005 | Error in assignment |
 | 22007 | Invalid datetime format |
@@ -67,12 +67,12 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2200Q | Multiset value overflow: a multiset of more than 65,535 elements |
 | 22009 | Invalid time zone displacement value |
 | 22011 | Substring error |
-| 22012 | Division by zero |
+| 22012 | Division by zero, of a vector among them |
 | 22013 | Invalid preceding or following size in window function: a frame's offset negative or null |
 | 22014 | Invalid argument for NTILE function: a number of tiles below 1 |
 | 22015 | Interval field overflow |
 | 22016 | Invalid argument for NTH_VALUE function: a row below 1 |
-| 22018 | Invalid character value for cast |
+| 22018 | Invalid character value for cast, text that is no vector among them |
 | 22019 | Invalid escape character |
 | 2201E | Invalid argument for natural logarithm: LN of 0 or below |
 | 2201F | Invalid argument for power function: POWER of 0 to a negative power, or of a negative number to a power not whole; SQRT of a negative number |
@@ -85,7 +85,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22022 | Indicator overflow |
 | 22025 | Invalid escape sequence |
 | 22027 | Trim error |
-| 2202E | Array element error: an element referenced not of the array, or an array trimmed of more elements than it has |
+| 2202E | Array element error: an element referenced not of the array, or an array trimmed of more elements than it has; VECTOR_ELEMENT or VECTOR_SLICE outside the vector, or VECTOR_TO_ARRAY of more elements than an array holds |
 | 2202F | Array data, right truncation: an array, or a multiset cast to an array, of more elements than its target's maximum cardinality |
 | 2202J | Invalid argument for row pattern navigation function: a logical or physical offset of PREV, NEXT, FIRST or LAST below 0, or null |
 | 2202K | Skip to non-existent row: AFTER MATCH SKIP TO a variable no row of the match is mapped to |
@@ -97,7 +97,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2202Z | Non-timestamp SQL/JSON item: a path's timestamp() of an item that is no string, or timestamp_tz() of one neither a string nor a number |
 | 22030 | Duplicate JSON object key value: JSON_OBJECT or JSON_OBJECTAGG WITH UNIQUE KEYS of two members of one name |
 | 22031 | Invalid argument for SQL/JSON datetime function: a path's datetime() of an item that is no character string, or of a string that is no date, time or timestamp, or that its template does not read |
-| 22032 | Invalid JSON text: a context item or PASSING argument of JSON_EXISTS, JSON_VALUE or JSON_QUERY, or a value FORMAT JSON of a constructor, that is no JSON text, or an item JSON_QUERY serializes that has none, as a datetime |
+| 22032 | Invalid JSON text: a context item or PASSING argument of JSON_EXISTS, JSON_VALUE or JSON_QUERY, or a value FORMAT JSON of a constructor, that is no JSON text, or an item JSON_QUERY serializes that has none, as a datetime, or a parent's item of no JSON text chained to JSON_TABLE's NESTED COLUMNS under ERROR ON ERROR |
 | 22033 | Invalid SQL/JSON subscript: an array subscript of a path that is not one number, or in strict mode outside the array |
 | 22034 | More than one SQL/JSON item: JSON_VALUE, or JSON_QUERY without a wrapper, of a path that gives two items or more |
 | 22035 | No SQL/JSON item: JSON_VALUE or JSON_QUERY of ERROR ON EMPTY, of a path that gives no item |
@@ -142,7 +142,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 40001 | Transaction rollback: serialization failure |
 | 40002 | Transaction rollback: integrity constraint violation, at commit |
 | 44000 | With check option violation |
-| TB910 | The Rust API was misused, or a defect |
+| TB910 | The Rust API was misused, or a defect, or a registered vector distance function that breaks its contract |
 | TB911 | Conflict with another transaction: the statement undone, the transaction going on |
 | TB912 | Refused by the transaction policy |
 | TB914 | A table damaged by a change that could not be undone |

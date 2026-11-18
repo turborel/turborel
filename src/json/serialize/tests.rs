@@ -85,7 +85,7 @@ fn strings_escape_what_rfc_8259_makes_escaped() {
 /// too.
 #[test]
 fn the_text_of_an_item_parses_back_to_an_equivalent_one() {
-    let digits = "1234567890123456789012345678901234567890";
+    let digits = "1234567890123456789012345678901234";
     for source in [
         "null".to_owned(),
         "true".to_owned(),

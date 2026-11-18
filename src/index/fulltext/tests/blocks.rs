@@ -128,7 +128,7 @@ fn removals_keep_blocks_and_delete_the_emptied() {
         predicate: Box::new(Predicate {
             function: crate::functions::ScalarRef(Arc::new(crate::fulltext::matches::TextMatches)),
             column: 0,
-            argument: 0,
+            argument: Some(0),
         }),
         value: Value::Char("apple".into()),
     };

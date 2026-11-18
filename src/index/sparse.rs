@@ -10,7 +10,7 @@
 //! vector to one constant key, a null to itself. The engine counts an
 //! entry under the hash of its vector, not the vector, which may be large,
 //! and its searches find rows, not hashes, so a reader takes each row as
-//! it sees it and the executor measures it again (D-APPROX). `rows` of a
+//! it sees it and the executor measures it again (D94, D99). `rows` of a
 //! vector gives the rows of that vector exactly. NULL vectors are not
 //! indexed (R10.6). A key of a null is refused, as no NULLS NOT DISTINCT
 //! index of this method is made.

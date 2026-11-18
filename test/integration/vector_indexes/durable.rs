@@ -15,7 +15,7 @@ fn first(s: &turborel::db::Session) -> Vec<String> {
     rows(s, &nearest_sql("L2_DISTANCE", 0, ("APPROX", ""))).unwrap()
 }
 
-/// Verifies: [DESIGN] RULES.md D25, D-DISKANN, D-HNSW, D-IVF: a database
+/// Verifies: [DESIGN] RULES.md D25, D95, D96, D97, D98: a database
 /// of files recovers each method's index: committed changes after its
 /// checkpoint are kept and an open one's undone, mended by the log; then
 /// reopened again by its locator, it answers as before, its recall kept.
@@ -56,7 +56,7 @@ fn each_index_recovers_and_reopens_d25() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D-DISKANN, D-HNSW, D-IVF: a locator of
+/// Verifies: [DESIGN] RULES.md D95: a locator of
 /// another version, or of a column of other dimensions, is refused as
 /// corrupt (SQLCODE -916), never read as this version's.
 #[test]
@@ -98,7 +98,7 @@ fn an_encrypted_tables_vectors_are_not_indexed_in_the_clear_d48() {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D-APPROX: a temporary table's vector
+/// Verifies: [EXTENSION] RULES.md D94: a temporary table's vector
 /// index holds each session's own rows, and answers each alone.
 #[test]
 fn a_temporary_tables_index_is_each_sessions_own() {

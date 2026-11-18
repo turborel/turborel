@@ -88,6 +88,12 @@ const TRIGRAPHS: [(&str, &str); 2] = [("??(", delim::LEFT_BRACKET), ("??)", deli
 /// Every `<delimiter token>` but `<character string literal>`, longest first
 /// so that "<>" wins over "<".
 const DELIMITERS: &[&str] = &[
+    delim::EUCLIDEAN_DISTANCE,
+    delim::COSINE_DISTANCE,
+    delim::DOT_DISTANCE,
+    delim::MANHATTAN_DISTANCE,
+    delim::HAMMING_DISTANCE,
+    delim::JACCARD_DISTANCE,
     delim::CONCATENATION,
     delim::NOT_EQUALS,
     delim::GREATER_OR_EQUAL,

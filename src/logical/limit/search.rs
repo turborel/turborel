@@ -3,7 +3,7 @@
 //! design document §9.2, R9.2 to R9.5, §13 R13.1, R13.2 and R13.4).
 //! APPROX is a request, never a guarantee: a query of no usable index
 //! runs exact, and an approximate read that finds too few rows widens its
-//! search and then reads the whole table (RULES.md D-APPROX).
+//! search and then reads the whole table (RULES.md D94).
 
 /// \[EXTENSION\] The search a `<fetch first clause>` asks for.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

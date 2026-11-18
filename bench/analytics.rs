@@ -20,8 +20,9 @@
 //! and by 50,000 keys of 8 rows past 64 KiB, made partly as pieces, then
 //! of WC; and set functions of a column of runs of one value, RC's
 //! S, filtered by it and not. Rates are of the tables' rows read, but the key's, of
-//! queries. Run with `cargo xtask bench`, on the harness
-//! (RULES.md R-BENCH-1).
+//! queries. JSON_VALUE of a member of the JSON type and of JSON text is
+//! measured too (`analytics/json.rs`). Run with `cargo xtask bench`, on
+//! the harness (RULES.md R-BENCH-1).
 
 #![allow(
     clippy::unwrap_used,
@@ -35,6 +36,8 @@
 )]
 
 mod harness;
+#[path = "analytics/json.rs"]
+mod json;
 
 use harness::{Bench, Case, scatter};
 use turborel::db::{Database, Session};
@@ -55,6 +58,7 @@ fn main() {
     measure(&bench, &s, ("F", "W", ""));
     measure(&bench, &s, ("FC", "WC", " (columnstore)"));
     of_runs(&bench, &s);
+    json::workloads(&bench);
 }
 
 /// Measures set functions of RC, a column store table whose S is sorted,

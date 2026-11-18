@@ -7,7 +7,7 @@
 //!
 //! A built-in metric is measured on the slices at once, by the vector
 //! module's kernels: an index orders candidates only, and the executor
-//! measures each again by the SQL call (D-APPROX), so the `f32` sum of a
+//! measures each again by the SQL call (D94), so the `f32` sum of a
 //! FLOAT16 or INT8 column (R3.10) serves. A user-defined metric is given
 //! the two vectors in the column's own format, as a SQL call gives them;
 //! a failure or a null is taken as farthest, so a broken metric misplaces
@@ -18,7 +18,7 @@ use std::sync::Arc;
 use crate::engine::diskann::{self, CodeTable, Codes};
 use crate::engine::hnsw::{self, Codec};
 use crate::error::{Code, Result, SqlError};
-use crate::vector::kernels::{fold_f32, gap, product, square};
+use crate::vector::kernels::{cosine_terms, fold_f32, gap, product, square};
 use crate::vector::metric::{COSINE, DOT, EUCLIDEAN, EUCLIDEAN_SQUARED, HAMMING, JACCARD, MANHATTAN, VectorMetric};
 use crate::vector::quantizer::{CodeDistance, Codebook, Quantizer};
 use crate::vector::{Element, VectorRef, half_bits, single};
@@ -57,9 +57,13 @@ pub(crate) fn distance(metric: &Arc<dyn VectorMetric>, column: Column) -> Distan
 
 /// COSINE: `1 - a·b / (|a| |b|)`; of a zero vector, whose SQL distance is
 /// null (R6.7), the middle of its range.
+///
+/// Its three sums are taken in one pass (`cosine_terms`), each as a
+/// separate fold would sum it, so the distance is bit for bit the same.
 fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    let scale = (fold_f32(a, a, product) * fold_f32(b, b, product)).sqrt();
-    if scale > 0.0_f32 { 1.0_f32 - fold_f32(a, b, product) / scale } else { 1.0_f32 }
+    let (aa, bb, ab) = cosine_terms(a, b);
+    let scale = (aa * bb).sqrt();
+    if scale > 0.0_f32 { 1.0_f32 - ab / scale } else { 1.0_f32 }
 }
 
 /// HAMMING: the count of elements that differ, bits of a BINARY column.

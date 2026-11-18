@@ -16,6 +16,7 @@ pub mod decfloat;
 mod decimal;
 mod distinct;
 pub mod interval;
+pub mod json;
 mod like;
 pub mod lob;
 pub mod multisets;
@@ -193,6 +194,8 @@ pub enum DataType {
     Structured(Arc<types::StructuredType>),
     /// [ISO/IEC 9075-2:2023 §4.11] REF(T), a reference type.
     Reference(Arc<types::RefType>),
+    /// [ISO/IEC 9075-2:2023 §4.8, §6.1] JSON, the JSON type.
+    Json,
     /// A type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionType),
 }
@@ -303,6 +306,9 @@ pub enum Value {
     Structured(Arc<types::Structured>),
     /// [ISO/IEC 9075-2:2023 §4.11] A reference: its octets.
     Reference(Binary),
+    /// [ISO/IEC 9075-2:2023 §4.8] A value of the JSON type, an SQL/JSON
+    /// item in its stored form.
+    Json(json::Json),
     /// A value of a type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionValue),
 }
@@ -331,6 +337,7 @@ impl Value {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_) => None,
         }
     }
@@ -354,6 +361,7 @@ impl Value {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_) => self.clone(),
         }
     }
@@ -390,6 +398,9 @@ impl Value {
             Value::Multiset(p) => multisets::norm_bag(p),
             Value::Structured(s) => types::structured::norm_structured(s),
             Value::Reference(r) => NormKey::Binary(r.clone()),
+            // [ISO/IEC 9075-2:2023 §8.2 GR10] Equivalent values share their
+            // comparison key; a damaged one has none, so its stored form.
+            Value::Json(j) => NormKey::Json(j.key().unwrap_or_else(|_| j.bytes().to_vec()).into()),
             // Equal values of a kind beyond the standard have the same bytes
             // (`SqlType`'s contract).
             Value::Extension(e) => NormKey::Extension(Box::new((e.kind.name().to_owned(), e.bytes.to_vec()))),
@@ -415,6 +426,7 @@ impl fmt::Display for Value {
             Value::Array(_) | Value::Multiset(_) | Value::Structured(_) | Value::Reference(_) | Value::Row(_) => {
                 f.write_str(&self.to_literal())
             }
+            Value::Json(j) => write!(f, "{j}"),
             Value::Extension(e) => f.write_str(&e.kind.text(self)),
         }
     }
@@ -444,6 +456,9 @@ pub enum NormKey {
     Instant(i64),
     /// An interval's units.
     Span(i128),
+    /// [ISO/IEC 9075-2:2023 §8.2 GR10] A value of the JSON type's
+    /// comparison key.
+    Json(Box<[u8]>),
     /// A kind beyond the standard's name, and the value's bytes: boxed, so
     /// a key of the standard's types stays small.
     Extension(Box<(String, Vec<u8>)>),

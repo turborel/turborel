@@ -2,7 +2,7 @@
 //! D29, D38, D44, D85). A strict lower-bound cutoff retains distance ties;
 //! the existing sort decides their secondary order. An uncertified index
 //! or an unaffordable threshold heap falls back before producing rows.
-//! An approximate index's read is `nearest/approx.rs` (D-APPROX).
+//! An approximate index's read is `nearest/approx.rs` (D94).
 
 mod approx;
 mod threshold;

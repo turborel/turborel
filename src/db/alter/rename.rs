@@ -9,10 +9,11 @@
 //! it as a name is changed with it: the period it bounds, its period
 //! constraint, written again, and each table option of columns, as
 //! COLUMNSTORE.ORDER (RULES.md D31). What names it in a text read again,
-//! a view's query, a CHECK, an assertion, a trigger, a routine's body or a
-//! generation expression, would name another column or none, so while one
-//! that reads the table names the column or its new name, or a view
-//! selects all of the table's columns by `*`, the rename is refused, as
+//! a view's query, a CHECK, an assertion, a trigger, a routine's body, a
+//! generation expression or an index's key part, would name another
+//! column or none, so while one that reads the table names the column or
+//! its new name, or a view selects all of the table's columns by `*`, the
+//! rename is refused, as
 //! DROP COLUMN RESTRICT is refused [ISO/IEC 9075:1992 §11.15 SR4].
 
 use std::sync::Arc;
@@ -122,7 +123,8 @@ impl State {
     /// That no text that reads `desc`'s table names either of `names`: a
     /// view, by its query, or by `*`; a CHECK of a table, but a period
     /// constraint of it; an assertion; a trigger, on the table or reading
-    /// it; a routine; or a generation expression of the table.
+    /// it; a routine; a generation expression of the table; or a key part
+    /// of its index.
     ///
     /// # Errors
     ///
@@ -151,6 +153,10 @@ impl State {
         }
         for r in self.catalog.routines().into_iter().filter(|r| reads(&r.reads)) {
             found = found.or_else(|| names_any(&r.body, names, false).then(|| format!("routine {}", r.specific)));
+        }
+        for ix in self.catalog.indexes(qn) {
+            let in_key = ix.expressions.iter().any(|e| names_any(&e.text, names, false));
+            found = found.or_else(|| in_key.then(|| format!("index {}", ix.name)));
         }
         for c in desc.columns.iter().filter(|c| c.generation().is_some_and(|g| names_any(&g.text, names, false))) {
             found = found.or_else(|| Some(format!("the generation expression of column {}", c.name)));

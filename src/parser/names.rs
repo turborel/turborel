@@ -104,7 +104,10 @@ impl Parser {
         let last = n.saturating_mul(2).saturating_sub(2);
         let method = matches!(self.peek_at(last.saturating_add(1)), Tok::Delimiter(delim::LEFT_PAREN))
             || matches!(self.peek_at(last), Tok::Identifier(w) if w == super::structured::SPECIFICTYPE);
-        let mut most = MAX_COLUMN_PARTS;
+        // A period after the last <identifier> is no part of the chain: a
+        // method named by a key word may follow, as of a JSON value
+        // [ISO/IEC 9075-2:2023 §6.36].
+        let mut most = n;
         if n >= 2 && method {
             n = n.saturating_sub(1);
             most = n;

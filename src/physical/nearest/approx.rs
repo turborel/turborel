@@ -1,6 +1,6 @@
 //! \[EXTENSION\] Planning an approximate index's nearest read (the vector
 //! design document R9.2, R9.4, R13.1, R13.2, R13.4, R13.5; RULES.md
-//! D-APPROX). An approximate index is a candidate only when the FETCH
+//! D94). An approximate index is a candidate only when the FETCH
 //! FIRST asks for one, FETCH APPROX or, of neither APPROX nor EXACT, the
 //! session's VECTOR.APPROX_DEFAULT ON; and only for a call of its own
 //! metric. Its WHERE condition is applied before it (pre-filter: the

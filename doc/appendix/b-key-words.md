@@ -251,4 +251,23 @@ be a member's name. In a predicate, IS [NOT] JSON and FORMAT JSON
 before IS are IS JSON, and VALUE, ARRAY, OBJECT and SCALAR after it its
 type, so `SELECT ID JSON FROM T` still names a column JSON.
 
+The words of vectors, none reserved, are identifiers too, key words only
+where they are read:
+
+| Words | Read only |
+|---|---|
+| VECTOR | where a data type is written, and after CREATE or DROP in the statements below |
+| VECTOR INDEX, HYBRID VECTOR INDEX | after CREATE |
+| VECTOR PIPELINE, VECTOR DISTANCE FUNCTION | after CREATE or DROP |
+| EMBEDDING MODEL | after CREATE, ALTER or DROP |
+| APPROX, APPROXIMATE, EXACT | after FETCH |
+| TARGET, ACCURACY, PARAMETERS, EFSEARCH, NEIGHBOR, PARTITION, PROBES, SEARCH_LIST, BEAM_WIDTH | after WITH, at the end of a fetch first clause |
+| HINT and the vector hints | after a fetch first clause |
+| FROM_VECTOR, VECTOR_SEARCH, HYBRID_SEARCH, CHUNK_TEXT, VECTOR_CHUNKS, AI_GENERATE_CHUNKS | before a parenthesis |
+
+The words within those statements and functions, as METRIC, QUANTIZER,
+FUSION or RETURNING, are read only there, so a column may be named any
+of them. A `/*+ ... */` comment that begins a statement holds hints, its
+words read only there ([Lexical Elements](../sql/01-lexical.md#comments)).
+
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

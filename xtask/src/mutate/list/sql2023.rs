@@ -217,7 +217,7 @@ pub const SQL2023: [Mutation; 55] = [
         name: "decfloat-sum-refused",
         package: Package::Core,
         breaks: "SUM and AVG of DECFLOAT values are refused as of no number",
-        file: "src/functions.rs",
+        file: "src/functions/totals.rs",
         original: "    match arg.filter(|t| t.is_numeric() || matches!(t, DataType::Interval(_))) {",
         replacement: "    match arg.filter(|t| matches!(t, DataType::Exact { .. } | DataType::Approximate { .. } | DataType::Interval(_))) {",
         integration: &["decfloat::decfloat_set_functions_and_set_types_10_9"],

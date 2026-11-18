@@ -118,11 +118,12 @@ mod tests {
         use crate::geometry::{Geometry, GeometryFunction};
         let point = Geometry::point(1.0, 2.0, 4326).unwrap().to_value();
         for argument in [0_usize, 1] {
-            let predicate = Predicate { function: ScalarRef(std::sync::Arc::new(GeometryFunction::Intersects)), column: 0, argument };
+            let predicate =
+                Predicate { function: ScalarRef(std::sync::Arc::new(GeometryFunction::Intersects)), column: 0, argument: Some(argument) };
             let binding = JoinProbe::Predicate { predicate: Box::new(predicate), outer: 1 };
             let probe = binding.bind(&[Value::Null, point.clone()], 1).unwrap().unwrap();
             let Probe::Predicate { predicate: bound, value } = probe else { panic!("lost spatial predicate") };
-            assert_eq!(bound.argument, argument);
+            assert_eq!(bound.argument, Some(argument));
             assert_eq!(bound.column, 0);
             assert_eq!(crate::value::compare(&value, &point), Some(std::cmp::Ordering::Equal));
             assert!(binding.bind(&[point.clone(), Value::Null], 1).unwrap().is_none());

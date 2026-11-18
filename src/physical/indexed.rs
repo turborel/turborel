@@ -483,6 +483,7 @@ fn family(t: &DataType) -> &'static str {
         | DataType::Structured(_)
         | DataType::Reference(_)
         | DataType::Row(_)
+        | DataType::Json
         | DataType::Extension(_) => t.kind().name(),
     }
 }
@@ -511,6 +512,7 @@ fn sample(t: &DataType) -> Option<Value> {
         | DataType::Structured(_)
         | DataType::Reference(_)
         | DataType::Row(_)
+        | DataType::Json
         | DataType::Extension(_) => None,
     }
 }

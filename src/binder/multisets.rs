@@ -48,12 +48,14 @@ pub(super) fn grouped_elements(element: &DataType, what: &str) -> Result<()> {
 
 /// [ISO/IEC 9075-2:2023 §9.13 SR1a, SR3] Of an operand of type `t` of an
 /// equality operation, `what`: if it is a multiset, its elements grouped
-/// by no operation refused, as `grouped_elements` refuses them.
+/// by no operation refused, as `grouped_elements` refuses them; and
+/// \[EXTENSION\] a vector refused (`orderless_operand`).
 ///
 /// # Errors
 ///
 /// SQLCODE -103 if they are.
 pub(super) fn equality_operand(t: &DataType, what: &str) -> Result<()> {
+    super::composite::orderless_operand(t, what)?;
     match t.multiset_type() {
         Some(m) => grouped_elements(&m.element, what),
         None => Ok(()),
@@ -80,6 +82,7 @@ fn uncertain(t: &DataType) -> bool {
         | DataType::Date
         | DataType::Interval(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_) => false,
     }
 }

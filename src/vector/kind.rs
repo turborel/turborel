@@ -118,6 +118,12 @@ impl SqlType for VectorType {
         params::pack_params(written)
     }
 
+    /// Vectors have no order (R3.11), and `=` is not theirs (R3.12):
+    /// VECTOR_EQUALS compares them.
+    fn ordered(&self) -> bool {
+        false
+    }
+
     fn written(&self, t: &DataType) -> String {
         params::written_of(t)
     }

@@ -166,7 +166,7 @@ impl Read {
         let options =
             self.given.into_iter().map(|g| TableOptionValue { name: option_of(method, &g.word), at: g.at, value: Some(g.value) }).collect();
         let storage = TableStorage { engine: Some((method.to_owned(), at)), options };
-        SqlStatement::Index(IndexStatement::Create { name, table, columns, storage })
+        SqlStatement::Index(IndexStatement::Create { name, table, columns, expressions: Vec::new(), storage })
     }
 }
 

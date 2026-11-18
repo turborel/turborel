@@ -33,6 +33,7 @@ impl Binding {
             return None;
         }
         let [inner] = join.table.ix.columns.as_slice() else { return None };
+        let argument = predicate.argument?;
         let mut terms = Vec::new();
         split_and(join.cond.clone()?, &mut terms);
         let mut found = false;
@@ -40,7 +41,7 @@ impl Binding {
         for term in terms {
             if let Some((_, args)) = intersection(&term) {
                 let [Expr::Column(left), Expr::Column(right)] = args else { return None };
-                let actual = if predicate.argument == 0 { (*right, *left) } else { (*left, *right) };
+                let actual = if argument == 0 { (*right, *left) } else { (*left, *right) };
                 if found || actual != (*outer, width.saturating_add(*inner)) {
                     return None;
                 }
@@ -51,13 +52,7 @@ impl Binding {
                 rest.push(term);
             }
         }
-        found.then(|| Self {
-            outer: *outer,
-            inner: *inner,
-            argument: predicate.argument,
-            function: predicate.function.clone(),
-            rest: and_all(rest),
-        })
+        found.then(|| Self { outer: *outer, inner: *inner, argument, function: predicate.function.clone(), rest: and_all(rest) })
     }
 }
 

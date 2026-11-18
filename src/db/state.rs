@@ -20,7 +20,8 @@ use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
 use crate::index::vector::hybrid::HybridMethod;
 use crate::index::{
-    BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, RTreeMethod, SparseMethod,
+    BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod, RTreeMethod,
+    SparseMethod,
 };
 use crate::log::Log;
 use crate::optimizer::Optimizer;
@@ -106,7 +107,7 @@ pub struct State {
     /// \[EXTENSION\] The rankings of full-text search (RULES.md D87),
     /// shared by every state.
     pub(crate) rankings: super::rankings::SharedRankings,
-    /// \[EXTENSION\] The metrics and quantizers of VECTOR (RULES.md D88),
+    /// \[EXTENSION\] The metrics and quantizers of VECTOR (RULES.md D93),
     /// shared by every state.
     pub(crate) vectors: super::vectors::SharedVectors,
     /// \[EXTENSION\] The model plug-ins registered and the models of the
@@ -258,11 +259,13 @@ impl State {
         let lists = IvfMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
         let sparse = SparseMethod::sharing(Arc::clone(&st.pages));
         let hybrid = HybridMethod::sharing(&st.pages).with_plugins(&(metrics, quantizers)).with_rankings(st.rankings.closure());
+        let documents = JsonMethod::sharing(Arc::clone(&st.pages));
         let methods: Vec<Arc<dyn IndexMethod>> = vec![
             Arc::new(btree),
             Arc::new(hash),
             Arc::new(spatial),
             Arc::new(words),
+            Arc::new(documents),
             Arc::new(graph),
             Arc::new(layered),
             Arc::new(lists),
@@ -556,6 +559,7 @@ mod tests {
             options: Vec::new(),
             collations: Vec::new(),
             nulls: false,
+            expressions: Vec::new(),
         });
         let mut st = State::with_builtins(Box::new(catalog));
         assert_eq!(st.attach_catalog_objects().err().map(|e| e.code), Some(Code::Api));

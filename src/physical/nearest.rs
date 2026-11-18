@@ -1,5 +1,5 @@
 //! Distance ordering through certified index candidates (D15, D85), or
-//! an approximate index's when the query asks for one (D-APPROX,
+//! an approximate index's when the query asks for one (D94,
 //! `nearest/approx.rs`). The final sort still compares exact scalar
 //! results and secondary keys.
 
@@ -51,7 +51,7 @@ pub struct NearestRead {
     /// The estimated access cost.
     pub cost: f64,
     /// \[EXTENSION\] Of an approximate index's read, what it asks of it;
-    /// none of a certified one (D-APPROX).
+    /// none of a certified one (D94).
     pub approximate: Option<ApproximateRead>,
 }
 
@@ -59,7 +59,7 @@ pub struct NearestRead {
 /// score's (`ScalarFunction::ranks`), whose arguments after its first two
 /// are constants, as the index name the binder gives Rank (D87); or a
 /// vector distance's (`ScalarFunction::vector_metric`), its other
-/// arguments constants (D-APPROX).
+/// arguments constants (D94).
 pub(crate) fn distance_call(expr: &Expr) -> Option<(usize, usize, &ScalarRef, &Expr)> {
     let Expr::Call(function, args) = expr else { return None };
     if let Some((_, at)) = vector_measure(expr) {

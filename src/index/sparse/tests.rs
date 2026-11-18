@@ -33,6 +33,7 @@ fn desc(options: Vec<(String, Value)>) -> IndexDesc {
         options,
         collations: Vec::new(),
         nulls: false,
+        expressions: Vec::new(),
     }
 }
 

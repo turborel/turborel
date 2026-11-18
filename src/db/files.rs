@@ -69,13 +69,14 @@ use crate::disk::shadow::ShadowFileSystem;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::Result;
 use crate::files::FileManager;
-use crate::index::{BTreeMethod, FullTextMethod, HashMethod, RTreeMethod};
-use crate::log::{FileLog, FileLogOptions, Log, Lsn, Records};
+use crate::index::{BTreeMethod, FullTextMethod, HashMethod, JsonMethod, RTreeMethod};
+use crate::log::{FileLogOptions, Log, Lsn, Records};
 use crate::storage::TableStorage;
 use crate::txn::Persistence;
 use crate::value::Value;
 
 mod reopening;
+use reopening::undo_log;
 
 const DATA: &str = "data";
 /// The directory of the spill areas' files (`spill.rs`).
@@ -534,6 +535,7 @@ impl Database {
         self.register_index_method(Box::new(BTreeMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(HashMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(RTreeMethod::new(Arc::clone(&pool), file)))?;
+        self.register_index_method(Box::new(JsonMethod::new(Arc::clone(&pool), file)))?;
         self.register_vector_methods(&pool, file)?;
         let rankings = self.snapshot()?.rankings.closure();
         self.register_index_method(Box::new(FullTextMethod::new(pool, file).with_rankings(rankings)))
@@ -578,22 +580,4 @@ impl Database {
         })?;
         Ok(report)
     }
-}
-
-/// The log of older row versions at `place`, begun anew: the segments a
-/// run before left removed, as no reader of it is left.
-///
-/// # Errors
-///
-/// SQLCODE -915 if they cannot be removed, or the log made.
-fn undo_log(place: &Place<'_>) -> Result<Arc<dyn Log>> {
-    let dir = place.path(UNDO);
-    if place.fs.exists(&dir)? {
-        for path in place.fs.read_dir(&dir)? {
-            place.fs.remove(&path)?;
-        }
-    }
-    let options = FileLogOptions { pipeline: place.layout.formats.pipeline.clone(), ..place.options.undo.clone() };
-    let log = FileLog::create(Arc::clone(place.fs), &dir, Arc::clone(&place.layout.formats.hash), options)?;
-    Ok(Arc::new(log.telling(Arc::clone(&place.events))))
 }

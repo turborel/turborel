@@ -44,7 +44,7 @@ impl TypeRegistry {
     }
 
     /// The kinds built in, SQL/MM Full-Text's FULLTEXT and FT_PATTERN
-    /// (RULES.md D87) and VECTOR (RULES.md D88), which a registration of a
+    /// (RULES.md D87) and VECTOR (RULES.md D93), which a registration of a
     /// type of their names is refused beside.
     pub(crate) fn builtin() -> TypeRegistry {
         let kinds = crate::fulltext::types::types().into_iter().chain(crate::vector::types());

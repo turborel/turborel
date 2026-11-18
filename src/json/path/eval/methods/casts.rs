@@ -23,6 +23,8 @@
 //! number is cast, and CAST takes none to a datetime, so it is SQLSTATE
 //! 22005 [ISO/IEC 9075:1992 §6.10 SR4].
 
+use std::borrow::Cow;
+
 use super::super::{exception, item};
 use crate::error::{Result, SqlState};
 use crate::json::Item;
@@ -208,7 +210,7 @@ pub(super) fn timestamp_tz(precision: Option<u32>) -> Conversion {
 /// The exception of `conversion` if an item is of no kind it takes; else
 /// the cast's, as 22018 of a string that is no literal of the type, 22003
 /// of a number out of its range.
-pub(super) fn converted(base: &[Item], conversion: &Conversion) -> Result<Vec<Item>> {
+pub(super) fn converted(base: &[Cow<'_, Item>], conversion: &Conversion) -> Result<Vec<Item>> {
     base.iter().map(|each| conversion.of(each)).collect()
 }
 
@@ -261,6 +263,7 @@ fn kind(value: &Value) -> Kind {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_) => Kind::Number,
     }
 }

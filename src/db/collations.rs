@@ -140,12 +140,14 @@ impl State {
     /// as the index of a UNIQUE NULLS NOT DISTINCT constraint does. Not
     /// another index on its columns: made and dropped apart from the
     /// constraint, it would hold them or not as the constraint was when it
-    /// was made, and be read as the constraint is now.
+    /// was made, and be read as the constraint is now. Its key's
+    /// expressions are bound over the table's row as it is (`bound_keys`).
     ///
     /// # Errors
     ///
-    /// As `column_collation`.
+    /// As `column_collation` and `bound_keys`.
     pub(crate) fn with_derived(&self, ix: IndexDesc, table: &TableDesc) -> Result<IndexDesc> {
+        let ix = self.bound_keys(ix, table)?;
         let collations = ix
             .columns
             .iter()
@@ -438,6 +440,7 @@ mod tests {
             options: Vec::new(),
             collations: Vec::new(),
             nulls: false,
+            expressions: Vec::new(),
         };
         let nulls = |at: usize, unique: bool| st.with_derived(index(at, unique), &table).unwrap().nulls;
         assert!(nulls(0, true), "the constraint's index");

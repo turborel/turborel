@@ -132,7 +132,7 @@ impl Parser {
             Vec::new()
         };
         let storage = TableStorage { engine: Some((HYBRID_METHOD.to_owned(), method_at)), options };
-        Ok(SqlStatement::Index(IndexStatement::Create { name, table, columns, storage }))
+        Ok(SqlStatement::Index(IndexStatement::Create { name, table, columns, expressions: Vec::new(), storage }))
     }
 
     /// ( `<hybrid parameter>` ... ), after PARAMETERS: the options they set.

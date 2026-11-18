@@ -9,6 +9,7 @@
 //! result is True; so a test stops at the first success in lax mode, and
 //! at the first error in strict mode, where an error makes it Unknown.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use super::{Evaluator, string};
@@ -156,7 +157,7 @@ impl Evaluator<'_> {
 }
 
 /// The character string the sequence `seq` is, if one item, a string.
-fn singleton_string(seq: &[Item]) -> Option<&str> {
+fn singleton_string<'s>(seq: &'s [Cow<'_, Item>]) -> Option<&'s str> {
     let [only] = seq else { return None };
     string(only)
 }
@@ -172,7 +173,7 @@ fn pair(x: &Item, y: &Item, op: Comparison) -> Option<bool> {
         // [D IV 1, D IV 2] One the SQL/JSON null: unequal, and no other.
         (Item::Null, _) | (_, Item::Null) => Some(op == Comparison::NotEqual),
         (Item::Scalar(a), Item::Scalar(b)) => order(a.value(), b.value()).map(|ordering| holds(op, ordering)),
-        (Item::Array(_) | Item::Object(_), _) | (_, Item::Array(_) | Item::Object(_)) => None,
+        (Item::Array(_), _) | (Item::Object(_), _) | (_, Item::Array(_)) | (_, Item::Object(_)) => None,
     }
 }
 

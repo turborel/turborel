@@ -53,6 +53,7 @@ fn desc(options: Vec<(String, Value)>) -> IndexDesc {
         options,
         collations: vec![None, None],
         nulls: true,
+        expressions: Vec::new(),
     }
 }
 
@@ -193,7 +194,7 @@ fn the_method_serves_each_column_as_its_part_does() {
     assert!(method.index_options().iter().any(|o| o.name == VECTOR_METHOD_OPTION));
 }
 
-/// Verifies: [EXTENSION] RULES.md D-APPROX, D85: an approximate search of
+/// Verifies: [EXTENSION] RULES.md D94, D100, D85: an approximate search of
 /// the vector column is the vector part's, its entries of the projected
 /// key, the query's filter asked of each as of it; of the text column
 /// none is approximate.
@@ -226,7 +227,8 @@ fn an_approximate_search_reads_the_vector_part() {
 #[test]
 fn a_predicate_of_the_text_column_reads_the_text_part() {
     let method = in_memory();
-    let predicate = |column: usize| Predicate { function: ScalarRef(Arc::new(crate::fulltext::matches::TextMatches)), column, argument: 0 };
+    let predicate =
+        |column: usize| Predicate { function: ScalarRef(Arc::new(crate::fulltext::matches::TextMatches)), column, argument: Some(0) };
     assert!(method.supports_predicate(&predicate(0), &columns()));
     assert!(!method.supports_predicate(&predicate(1), &columns()));
     assert!(!method.supports_predicate(&predicate(0), &columns()[..1]));
