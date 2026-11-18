@@ -10,7 +10,9 @@ use turborel::disk::pager::Pager;
 use turborel::error::Result;
 use turborel::fulltext::matches::TextMatches;
 use turborel::functions::ScalarRef;
-use turborel::index::{BTreeMethod, FullTextMethod, HashMethod, Index, IndexMethod, Key, KeyOrder, Predicate, Probe, RTreeMethod};
+use turborel::index::{
+    AdjacencyMethod, BTreeMethod, FullTextMethod, HashMethod, Index, IndexMethod, Key, KeyOrder, Predicate, Probe, RTreeMethod,
+};
 use turborel::storage::RowId;
 use turborel::value::{CompOp, DataType, Spelled, Value, compare};
 
@@ -261,6 +263,27 @@ fn spatial_method_keeps_the_index_contract() {
         index_contract(&method, &[approximate.clone(), approximate.clone()], point);
         prefix_contract(&method, &approximate, value);
         range_contract(&method, &approximate, value);
+    }
+}
+
+/// Verifies: [EXTENSION] RULES.md D-GRAPH-ADJACENCY: the adjacency
+/// method passes the comparison, streaming, key, counted-entry and prefix
+/// contracts of the other built-ins, of a key of a source column and a
+/// destination column, in memory and in a pager file; it answers
+/// equality alone, and is not ordered.
+#[test]
+fn adjacency_method_keeps_the_index_contract() {
+    let scratch = Scratch::new("contract-adjacency");
+    let pager = Pager::create(&OsFileSystem, &scratch.path("index"), crc32c(), Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
+    let file = pool.add_pager(Arc::new(pager));
+    let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
+    let edge = |n| Key(vec![number(n), number(n)]);
+    for method in [AdjacencyMethod::in_memory(), AdjacencyMethod::new(pool, file)] {
+        assert!(!method.ordered() && method.supports(CompOp::Eq) && !method.supports(CompOp::Lt));
+        index_contract(&method, &[exact.clone(), exact.clone()], edge);
+        assert!(method.supports_prefix(2, 2, None) && !method.supports_range(2, 0));
+        prefix_contract(&method, &exact, number);
     }
 }
 

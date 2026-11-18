@@ -5,9 +5,11 @@
 //! "btree", a B-link tree for equality and ranges; "hash", a linear hash
 //! table for equality; "rtree", an R-link tree for coordinate bounds;
 //! "fulltext", an inverted index of words (RULES.md D86); and "json", an
-//! inverted index of JSON documents' paths and values. An index's key may
-//! be of expressions of its table's columns (`index/expression.rs`).
+//! inverted index of JSON documents' paths and values; and "adjacency",
+//! the edges of a graph's edge table by endpoint. An index's key may be of
+//! expressions of its table's columns (`index/expression.rs`).
 
+pub mod adjacency;
 mod blink;
 mod key;
 pub use key::Key;
@@ -22,6 +24,7 @@ mod stats;
 
 use std::sync::Arc;
 
+pub use adjacency::{ADJACENCY_METHOD, AdjacencyMethod};
 pub use blink::BTreeMethod;
 pub use fulltext::{FULLTEXT_METHOD, FullTextMethod};
 pub use hash::HashMethod;
@@ -408,6 +411,12 @@ pub trait Index: Send + Sync {
     /// Storage errors, or SQLCODE -918 if its frontier cannot be reserved.
     fn nearest(self: Arc<Self>, _query: &NearestQuery, _budget: &Arc<crate::memory::MemoryBudget>) -> Result<Option<NeighbourEntries>> {
         Ok(None)
+    }
+    /// \[EXTENSION\] The adjacency it keeps of a graph's edges, read by
+    /// path search as `nearest` is by a distance search (RULES.md
+    /// D-GRAPH-ADJACENCY); none by default. It may retain the index.
+    fn adjacency(self: Arc<Self>) -> Option<Arc<dyn crate::graph::adjacency::Adjacency>> {
+        None
     }
     /// \[EXTENSION\] A snapshot, taken now, of the statistics a rank of its
     /// column reads (RULES.md D87); none by default. It may retain the index.

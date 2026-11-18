@@ -123,8 +123,20 @@ fn encode_column(value: &Value, data_type: &DataType, out: &mut Vec<u8>) -> Resu
 /// SQLCODE -916 if `bytes` is not a key of columns of `types`.
 pub fn decode_key(bytes: &[u8], types: &[DataType]) -> Result<Vec<Value>> {
     let mut rest = bytes;
-    let values = types.iter().map(|t| decode_column(&mut rest, t)).collect::<Result<Vec<_>>>()?;
+    let values = decode_front(&mut rest, types)?;
     if rest.is_empty() { Ok(values) } else { Err(malformed()) }
+}
+
+/// The values of the key at the start of `rest`, of columns of `types`,
+/// `rest` left after it: as no key is a prefix of another of its columns'
+/// types, a key followed by other bytes is read back, as an index whose
+/// entries hold more than one key reads them (`index/adjacency/keys.rs`).
+///
+/// # Errors
+///
+/// SQLCODE -916 if `rest` does not begin with a key of columns of `types`.
+pub fn decode_front(rest: &mut &[u8], types: &[DataType]) -> Result<Vec<Value>> {
+    types.iter().map(|t| decode_column(rest, t)).collect()
 }
 
 /// The value of one column, from the start of `rest`.

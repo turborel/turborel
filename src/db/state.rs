@@ -18,7 +18,7 @@ use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
-use crate::index::{BTreeMethod, FullTextMethod, HashMethod, Index, IndexMethod, JsonMethod, RTreeMethod};
+use crate::index::{AdjacencyMethod, BTreeMethod, FullTextMethod, HashMethod, Index, IndexMethod, JsonMethod, RTreeMethod};
 use crate::log::Log;
 use crate::optimizer::Optimizer;
 use crate::physical::CostModel;
@@ -232,8 +232,10 @@ impl State {
         let spatial = RTreeMethod::sharing(Arc::clone(&st.pages));
         let words = FullTextMethod::sharing(Arc::clone(&st.pages)).with_rankings(st.rankings.closure());
         let documents = JsonMethod::sharing(Arc::clone(&st.pages));
+        // Its compacted adjacencies held of the budget too (RULES.md D38).
+        let edges = AdjacencyMethod::sharing(Arc::clone(&st.pages)).with_budget(Arc::clone(memory));
         let methods: Vec<Arc<dyn IndexMethod>> =
-            vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial), Arc::new(words), Arc::new(documents)];
+            vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial), Arc::new(words), Arc::new(documents), Arc::new(edges)];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);
         }

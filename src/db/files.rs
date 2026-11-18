@@ -69,7 +69,7 @@ use crate::disk::shadow::ShadowFileSystem;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::Result;
 use crate::files::FileManager;
-use crate::index::{BTreeMethod, FullTextMethod, HashMethod, JsonMethod, RTreeMethod};
+use crate::index::{AdjacencyMethod, BTreeMethod, FullTextMethod, HashMethod, JsonMethod, RTreeMethod};
 use crate::log::{FileLogOptions, Log, Lsn, Records};
 use crate::storage::TableStorage;
 use crate::txn::Persistence;
@@ -538,6 +538,7 @@ impl Database {
         self.register_index_method(Box::new(HashMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(RTreeMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(JsonMethod::new(Arc::clone(&pool), file)))?;
+        self.register_index_method(Box::new(AdjacencyMethod::new(Arc::clone(&pool), file)))?;
         let rankings = self.snapshot()?.rankings.closure();
         self.register_index_method(Box::new(FullTextMethod::new(pool, file).with_rankings(rankings)))
     }

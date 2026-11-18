@@ -34,7 +34,7 @@ pub(super) use expressions::{key_positions, unbound_keys};
 use super::{Database, State, api, qualified_name};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{Code, Result, SqlError, fail};
-use crate::index::{BTREE_METHOD, FULLTEXT_METHOD, HASH_METHOD, Index, JSON_METHOD, KeyOrder, Probe, RTREE_METHOD};
+use crate::index::{ADJACENCY_METHOD, BTREE_METHOD, FULLTEXT_METHOD, HASH_METHOD, Index, JSON_METHOD, KeyOrder, Probe, RTREE_METHOD};
 use crate::log::record::Change;
 use crate::storage::{TableOption, chosen, needs_rebuild};
 use crate::txn::{Concurrency, LockMode, TableLock, Timestamp, Transactions, Txn};
@@ -259,11 +259,11 @@ impl Database {
         // session's instance makes its entries, in memory, of its own rows,
         // once no transaction has them open (`db/temporary/storage.rs`).
         if current.catalog.table(qn).is_some_and(|t| t.temporary.is_some()) {
-            if ![BTREE_METHOD, HASH_METHOD, RTREE_METHOD, FULLTEXT_METHOD, JSON_METHOD].contains(&spec.method.as_str()) {
+            if ![BTREE_METHOD, HASH_METHOD, RTREE_METHOD, FULLTEXT_METHOD, JSON_METHOD, ADJACENCY_METHOD].contains(&spec.method.as_str()) {
                 return Err(SqlError::new(
                     Code::SyntaxRule,
                     format!(
-                        "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD}, {HASH_METHOD}, {RTREE_METHOD}, {FULLTEXT_METHOD} or {JSON_METHOD}, kept in memory (RULES.md D49)"
+                        "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD}, {HASH_METHOD}, {RTREE_METHOD}, {FULLTEXT_METHOD}, {JSON_METHOD} or {ADJACENCY_METHOD}, kept in memory (RULES.md D49)"
                     ),
                 ));
             }

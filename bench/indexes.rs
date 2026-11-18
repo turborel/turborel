@@ -4,8 +4,10 @@
 //! a query's probe and as a UNIQUE check, on one and on several threads,
 //! in a buffer pool that holds every index; "fulltext"
 //! (`index/fulltext.rs`), documents added and searched (`fulltext.rs`);
-//! and "json" (`index/json.rs`), JSON_EXISTS answered by the index beside
-//! a scan (`json.rs`). Run with `cargo xtask bench`, on the harness
+//! "json" (`index/json.rs`), JSON_EXISTS answered by the index beside a
+//! scan (`json.rs`); and "adjacency" (`index/adjacency.rs`), a million
+//! edges built and followed beside a btree on their source
+//! (`adjacency.rs`). Run with `cargo xtask bench`, on the harness
 //! (RULES.md R-BENCH-1).
 
 #![allow(
@@ -19,6 +21,8 @@
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
 
+#[path = "indexes/adjacency.rs"]
+mod adjacency;
 #[path = "indexes/fulltext.rs"]
 mod fulltext;
 mod harness;
@@ -50,6 +54,7 @@ fn main() {
     }
     fulltext::workloads(&bench);
     json::workloads(&bench);
+    adjacency::workloads(&bench);
 }
 
 /// The workloads of `method` on `threads` threads.

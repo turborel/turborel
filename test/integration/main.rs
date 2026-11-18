@@ -29,6 +29,7 @@
               handle one variant, and flat lists of assertions (RULES.md R-TEST-4)"
 )]
 
+mod adjacency_index;
 mod collated_indexes;
 mod collation_usage;
 mod collations;

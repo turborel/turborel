@@ -160,7 +160,7 @@ impl KeyCounts {
 
     /// The live entries: the stripes' sum, never below 0, as a removal of
     /// what was added before the index was opened may come before its pass.
-    fn live(&self) -> u64 {
+    pub(crate) fn live(&self) -> u64 {
         let sum = self.entries.iter().fold(0_i64, |n, s| n.saturating_add(s.0.load(Ordering::Relaxed)));
         u64::try_from(sum).unwrap_or_default()
     }
