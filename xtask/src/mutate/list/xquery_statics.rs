@@ -1,0 +1,111 @@
+//! Mutations of XQuery's static typing: the operands of operators, the
+//! empty type, the effective boolean value, subtyping's occurrences, the
+//! quantifier of the empty type, name tests, typed values of element-only
+//! content, the context item, the option and the setting that put it in
+//! effect (RULES.md R-TEST-9, D106).
+
+use super::{Mutation, Package};
+
+/// Each static typing mechanism broken alone, and the tests that fail.
+pub const XQUERY_STATICS: [Mutation; 10] = [
+    Mutation {
+        name: "statics-operand-cardinality",
+        package: Package::Core,
+        breaks: "an operator takes an operand of more than one atomic value",
+        file: "src/xquery/statics/operators.rs",
+        original: "    if q.many() {",
+        replacement: "    if false {",
+        integration: &[],
+        unit: &["xquery::statics::tests::arithmetic_is_typed_as_analysed"],
+    },
+    Mutation {
+        name: "statics-empty-type",
+        package: Package::Core,
+        breaks: "an expression of the empty type is no static error",
+        file: "src/xquery/statics/expr.rs",
+        original: "        if !self.exempt(op) && is_empty(&t)? {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &["xquery::statics::tests::the_empty_type_is_a_static_error"],
+    },
+    Mutation {
+        name: "statics-boolean-cardinality",
+        package: Package::Core,
+        breaks: "the effective boolean value is taken of many atomic values",
+        file: "src/xquery/statics/values.rs",
+        original: "    Ok(items.iter().all(single) && !quantifier(t)?.many())",
+        replacement: "    Ok(items.iter().all(single))",
+        integration: &[],
+        unit: &["xquery::statics::tests::conditions_have_effective_boolean_values"],
+    },
+    Mutation {
+        name: "statics-subtype-occurrence",
+        package: Package::Core,
+        breaks: "a subtype may hold more items than its supertype allows",
+        file: "src/xquery/statics/subtype.rs",
+        original: "    if !quantifier(a)?.within(occ) {",
+        replacement: "    if false {",
+        integration: &[],
+        unit: &["xquery::statics::tests::calls_are_typed_by_their_signatures"],
+    },
+    Mutation {
+        name: "statics-empty-quantifier",
+        package: Package::Core,
+        breaks: "the empty type counts one item in a sequence",
+        file: "src/xquery/statics/types.rs",
+        original: "        Type::Empty => (NONE, NONE),",
+        replacement: "        Type::Empty => (NONE, ONE),",
+        integration: &["xml_static_typing::schema_types_are_read_10_21"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-name-test",
+        package: Package::Core,
+        breaks: "a name test selects elements of other names",
+        file: "src/xquery/statics/axes.rs",
+        original: "    let Some(name) = names_both(&node.name, test) else { return Type::Empty };",
+        replacement: "    let name = names_both(&node.name, test).unwrap_or_else(|| node.name.clone());",
+        integration: &["xml_static_typing::schema_types_are_read_10_21"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-element-only-data",
+        package: Package::Core,
+        breaks: "an element of element-only content has a typed value",
+        file: "src/xquery/statics/expand.rs",
+        original: "    let data = if data.contains(&Type::None) { Type::None } else { Type::choice(data) };",
+        replacement: "    let data = Type::choice(data);",
+        integration: &["xml_static_typing::schema_types_are_read_10_21"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-context-item",
+        package: Package::Core,
+        breaks: "the context item is read where its static type is none",
+        file: "src/xquery/statics/expr.rs",
+        original: "            Op::ContextItem => frame.focus.clone().ok_or_else(|| super::no_focus(\".\")),",
+        replacement: "            Op::ContextItem => Ok(frame.focus.clone().unwrap_or(Type::None)),",
+        integration: &[],
+        unit: &["xquery::statics::tests::the_context_item_is_typed"],
+    },
+    Mutation {
+        name: "statics-option",
+        package: Package::Core,
+        breaks: "the option static-typing \"on\" puts nothing in effect",
+        file: "src/xquery/analyze/prolog.rs",
+        original: "        if local == STATIC_TYPING_OPTION && value == ON {",
+        replacement: "        if local == STATIC_TYPING_OPTION && value == OFF {",
+        integration: &["xml_static_typing::static_typing_is_in_effect_as_asked_6_18"],
+        unit: &["xquery::statics::tests::the_option_puts_static_typing_in_effect"],
+    },
+    Mutation {
+        name: "statics-definitions-read-again",
+        package: Package::Core,
+        breaks: "a definition read again is typed again by the session's setting",
+        file: "src/binder/xml/query.rs",
+        original: "            static_typing: self.horizon.routines.is_none() && self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own),",
+        replacement: "            static_typing: self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own),",
+        integration: &["xml_static_typing::definitions_are_typed_as_made"],
+        unit: &[],
+    },
+];

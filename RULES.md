@@ -4019,8 +4019,35 @@ each variable to a slot of its frame or a global, each function call to a
 function of the prolog, a constructor function's cast, or a function of
 the library. A cast or constructor function to `xs:QName`, of a string
 literal alone, is evaluated there, its prefix resolved by the statically
-known namespaces. A static error is raised there; no static typing is
-done, so a type error is raised as the query is evaluated. The library
+known namespaces. A static error is raised there. XQuery's Static
+Typing Feature (`xquery::statics`) types the plan statically if
+XQUERY.STATIC_TYPING is ON for the statement, or the query's prolog declares the option `static-typing` "on" of
+`urn:turborel:option`, the namespace of turborel's options, so every type
+error is raised then, as the statement is prepared; otherwise a type
+error is raised as the query is evaluated. It is off by default, as the
+typing of XQuery 1.0 and XPath 2.0 Formal Semantics refuses queries that
+evaluate without error. A definition is typed as it is made, by the
+database's value or its option, the state a definition is made in
+holding no session's settings, and not again as it is read. The typing
+follows the Formal Semantics' rules over \[XQueryFS\]'s types: a type is
+a tree of item types, sequences, choices, interleavings and
+occurrences; sequence types are normalized to them; subtyping is
+decided for the shapes the rules compare with, each by its own (a
+factored type by its item types and occurrence, a constructor's content
+by the order of its attributes too, a document test's interleaving part
+by part), any other shape refused, so a query is never admitted where
+it cannot be decided; a type of a schema expands to its content model's
+particles and attribute uses, with the types derived from it. A value
+passed is of its formal type [ISO/IEC 9075-14:2006 draft §10.21]. The
+built-in functions' signatures are a table of \[XQueryFO\]'s, as the
+functions declare `item()*` to the evaluation. Two static typing
+extensions make types more precise: quantifiers count the least and
+most items, and the root of documents is their type. The typing recurses
+as the plan nests, counting each expression, SQLCODE -900 past
+`xquery::MAX_DEPTH`, and each walk of a type is bounded by
+`MAX_TYPE_DEPTH`, 256, and an axis's closure by `MAX_CLOSURE`, 4,096
+item types. The deepest query of each shape is typed within a thread's
+default stack, as a test checks. The library
 (`xquery::Library`) is the built-in functions and those plug-ins
 register (`Database::register_xquery_function`), each an
 `XQueryFunction` of its expanded QName, parameter types and result type,
@@ -5218,8 +5245,8 @@ was fixed that week, and lint baselines and over-long files were paid down.
   Guidelines; the Rust Reference on integer overflow.
 - ISO/IEC 9075-14, *SQL/XML*, written from its 2006 draft, and the W3C
   texts it names: XML 1.0 (third edition) and 1.1, Namespaces in XML 1.0
-  and 1.1, the XML Information Set, and the XQuery 1.0 and XPath 2.0 data
-  model.
+  and 1.1, the XML Information Set, the XQuery 1.0 and XPath 2.0 data
+  model and Formal Semantics, and XSLT 2.0 and XQuery 1.0 Serialization.
 - S. Pal, I. Cseri, O. Seeliger, G. Schaller, L. Giakoumakis and V.
   Zolotov, "Indexing XML Data Stored in a Relational Database", VLDB
   2004: tokenized names, and the XML indexes (D106).

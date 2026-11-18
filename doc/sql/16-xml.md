@@ -685,8 +685,9 @@ comparisons, FLWOR expressions with order by, quantified, conditional
 and typeswitch expressions, instance of, treat, cast and castable, direct
 and computed constructors, ordered and unordered expressions, validate
 expressions ([below](#the-validate-expression)), and a prolog's
-namespaces, setters, variables and functions, recursive ones too. Static
-typing is not done, so a type error is found as the query is evaluated.
+namespaces, setters, variables and functions, recursive ones too. A type
+error is found as the query is evaluated, unless static typing is in
+effect ([below](#static-typing)).
 
 A prolog may import a registered XML Schema
 ([below](#schema-imports)), whose types and declarations a query then
@@ -736,6 +737,58 @@ SELECT XMLQUERY('xs:QName(concat("s", ":item"))' NULL ON EMPTY) FROM ORDERS2 WHE
  urn:shop
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XPST0083: a value cast to xs:QName, or a type derived from it or xs:NOTATION, is a string literal [XQuery §3.12.3, §3.12.5] [ISO/IEC 9075-14:2006 draft §6.18 GR3] (at character 7)
+```
+
+### Static typing
+
+XQuery's static typing gives each expression of a query a type before
+it is evaluated, and refuses a query whose types do not fit, as XQuery
+1.0 and XPath 2.0 Formal Semantics types it. It is off by default. The
+setting XQUERY.STATIC_TYPING ON puts it in effect for the statements a
+session, or with SET DATABASE every session, prepares; a query puts it
+in effect for itself with the option `static-typing` of turborel's
+namespace of options, `urn:turborel:option`. Its value `off` takes
+nothing out of effect.
+
+```
+declare namespace t = "urn:turborel:option";
+declare option t:static-typing "on";
+```
+
+In effect, every type error, `err:XPTY0004` and the others XQuery names,
+is raised as the statement is prepared, SQLSTATE 10000, before any row
+is read; an expression whose type is empty, such as a path to an element
+no type has, is `err:XPST0005`, and the context item read where none is
+passed `err:XPST0001`. A value passed is of the type its SQL type gives:
+an XML(DOCUMENT) or XML(CONTENT) value an optional document of elements
+of its kind, of a registered XML Schema's declarations for XMLSCHEMA; an
+SQL value of the XML Schema type it maps to. The typing is pessimistic:
+a query refused may evaluate without error on every value, as `$x/a + 1`
+of a document whose elements `a` are many in type though one in fact;
+`exactly-one`, `zero-or-one` and a predicate `[1]` state what the types
+cannot. A definition such as a view is typed as it is made, by the
+database's XQUERY.STATIC_TYPING or its query's option, and not again as
+it is read.
+
+```sql
+SET XQUERY.STATIC_TYPING = 'ON';
+VALUES (XMLSERIALIZE(XMLQUERY('exactly-one(./order/qty) + 1' PASSING BY REF XMLPARSE(DOCUMENT '<order><qty>2</qty></order>' PRESERVE WHITESPACE) RETURNING SEQUENCE EMPTY ON EMPTY) AS VARCHAR(20)));
+VALUES (XMLSERIALIZE(XMLQUERY('./order/qty + 1' PASSING BY REF XMLPARSE(DOCUMENT '<order><qty>2</qty></order>' PRESERVE WHITESPACE) RETURNING SEQUENCE EMPTY ON EMPTY) AS VARCHAR(20)));
+VALUES (XMLSERIALIZE(XMLQUERY('./order/@qty/x' PASSING BY REF XMLPARSE(DOCUMENT '<order><qty>2</qty></order>' PRESERVE WHITESPACE) RETURNING SEQUENCE EMPTY ON EMPTY) AS VARCHAR(20)));
+SET XQUERY.STATIC_TYPING TO DEFAULT;
+VALUES (XMLSERIALIZE(XMLQUERY('declare namespace t = "urn:turborel:option"; declare option t:static-typing "on"; upper-case(1)' RETURNING SEQUENCE BY REF EMPTY ON EMPTY) AS VARCHAR(20)));
+```
+
+```
+OK
+
+----------------------
+ 3
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XPTY0004: an operand of + is of (xs:double)* and xs:integer, not each of one atomic value or none [XQueryFS Appendix B.2] [ISO/IEC 9075-14:2006 draft §6.18 GR3] (at character 21)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XPST0005: the step child::x of a context item of attribute qty of type xdt:untypedAtomic selects nothing [XQuery §2.3.1] [XQueryFS §4] [ISO/IEC 9075-14:2006 draft §6.18 GR3] (at character 21)
+OK
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XPTY0004: argument 1 of upper-case is of xs:integer, which cannot be promoted to (xs:string)? [XQueryFS §4.1.5, §8.5.1] [ISO/IEC 9075-14:2006 draft §6.18 GR3] (at character 21)
 ```
 
 ### Functions
@@ -1821,6 +1874,9 @@ standing alone, is refused with SQLSTATE 2200W when it is fetched.
 | Octets of a value an XML index keys | 64; 512 of XML_PRIMARY |
 | Expressions nested in an XQuery query | 64 |
 | Operations and function calls nested as a query is evaluated | 256 |
+| Expressions nested as a query is statically typed | 256 |
+| How deep a static type nests | 256 |
+| Item types the descendants or ancestors of a static type are of | 4,096 |
 | Items of one sequence a query makes | 1,048,576 |
 | Text of one string a query makes | 16 MiB |
 | What the nodes one evaluation of a query constructs hold | 64 MiB |

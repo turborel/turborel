@@ -222,7 +222,7 @@ fn errors_are_xquery_errors() {
 /// direct elements and their enclosed expressions, function calls,
 /// conditional and FLWOR expressions, unary operators, and operators of
 /// every precedence, whose right operands nest one level each.
-fn nesting_shapes() -> [(&'static str, &'static str); 10] {
+pub(super) fn nesting_shapes() -> [(&'static str, &'static str); 10] {
     [
         ("(", ")"),
         ("a[", "]"),
@@ -239,7 +239,7 @@ fn nesting_shapes() -> [(&'static str, &'static str); 10] {
 
 /// Runs `parse` on a thread with half the default stack, 1 MiB; a stack
 /// overflow aborts the test.
-fn on_half_stack(parse: impl FnOnce() -> bool + Send + 'static) -> bool {
+pub(super) fn on_half_stack(parse: impl FnOnce() -> bool + Send + 'static) -> bool {
     const HALF_DEFAULT_STACK: usize = 1024 * 1024;
     std::thread::Builder::new().name("xquery-nesting".to_owned()).stack_size(HALF_DEFAULT_STACK).spawn(parse).unwrap().join().unwrap()
 }

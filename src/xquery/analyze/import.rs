@@ -116,7 +116,7 @@ impl Analysis<'_> {
 
 /// The schema type of `def` of `schema`: a built-in one, by its name, else
 /// the type definition of the schema imported.
-fn schema_type(schema: &Arc<Schema>, def: TypeDef) -> SchemaType {
+pub(in crate::xquery) fn schema_type(schema: &Arc<Schema>, def: TypeDef) -> SchemaType {
     let name = annotation_name(schema, def);
     SchemaType::named(name.uri.as_deref(), &name.local)
         .unwrap_or_else(|| SchemaType::Defined(Arc::new(Defined { name, schema: Arc::clone(schema), def })))
@@ -125,7 +125,7 @@ fn schema_type(schema: &Arc<Schema>, def: TypeDef) -> SchemaType {
 /// Whether element declaration `e` of `schema` is in the substitution
 /// group `head` heads [Schema1 §3.3.6]: `head` reached by its substitution
 /// group affiliations, within `MAX_CHAIN` of them.
-fn heads(schema: &Schema, e: ElementId, head: ElementId) -> bool {
+pub(in crate::xquery) fn heads(schema: &Schema, e: ElementId, head: ElementId) -> bool {
     let mut at = Some(e);
     for _ in 0..MAX_CHAIN {
         at = at.and_then(|x| schema.element(x)).and_then(|d| d.substitution_group);

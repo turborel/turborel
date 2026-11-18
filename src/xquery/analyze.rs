@@ -9,10 +9,14 @@
 //! analysed, each in a static context of its own, into the one plan
 //! (`analyze/modules.rs`, `analyze/linked.rs`) [XQuery §4.11].
 //!
-//! Static typing is not done: the Static Typing Feature is not supported
-//! [XQuery §5.2.3], so the static types assigned are implementation-
-//! dependent, here `item()*` of each expression, and every type error is
-//! raised as the query is evaluated [XQuery §2.2.3.2].
+//! The Static Typing Feature [XQuery §5.2.3] is in effect if the statement
+//! asks for it (`Environment::static_typing`) or the prolog declares the
+//! option `static-typing` of turborel's namespace of options
+//! (`OPTION_NAMESPACE`) [XQuery §4.16]: the plan is then typed statically
+//! (`xquery/statics.rs`) and every type error raised as it is analysed.
+//! Else the static types assigned are implementation-dependent, `item()*`
+//! of each expression, and a type error is raised as the query is
+//! evaluated [XQuery §2.2.3.2].
 //!
 //! \[DESIGN\] RULES.md R-CF-6, D106: the analysis recurses as the tree
 //! nests, which the parser bounds by `xquery::MAX_NESTING`, and as modules
@@ -29,11 +33,14 @@ mod prolog;
 mod scope;
 mod types;
 
+pub(super) use import::{heads, schema_type};
+
 use super::ast::{EmptyOrder, Module, ModuleBody};
 use super::collation::Collations;
 use super::error::{ErrorCode, error};
 use super::functions::{FN_NAMESPACE, Library};
 use super::plan::{Global, GlobalValue, ModuleContext, Plan, Settings};
+use super::statics::{self, Passed};
 use std::sync::Arc;
 
 use crate::error::Result;
@@ -43,6 +50,15 @@ pub use linked::MAX_IMPORT_DEPTH;
 use linked::{Linked, Reserved, Signature};
 pub use modules::{Analysed, LibraryModule, library_module};
 use scope::{Namespaces, PREDECLARED, Scope};
+
+/// \[EXTENSION\] Implementation-defined [XQuery §4.16]: the namespace of
+/// turborel's options, the one an option declaration of turborel names.
+pub const OPTION_NAMESPACE: &str = "urn:turborel:option";
+
+/// \[EXTENSION\] The option of `OPTION_NAMESPACE` that puts the Static
+/// Typing Feature in effect for its query [XQuery §5.2.3, §4.16]: of the
+/// value `on`; of `off` none, as an option suppresses no static error.
+pub const STATIC_TYPING_OPTION: &str = "static-typing";
 
 /// \[DESIGN\] Implementation-defined [XQuery Appendix C.1]: the default
 /// order for empty sequences, `empty least`.
@@ -83,6 +99,13 @@ pub struct Environment<'a> {
     /// it was registered to (`LibraryModule::modules`), whether the
     /// current user may use it or not.
     pub linked: Vec<LibraryModule>,
+    /// Whether the Static Typing Feature is in effect for the query
+    /// [XQuery §5.2.3], as the statement's XQUERY.STATIC_TYPING sets it
+    /// (RULES.md D106).
+    pub static_typing: bool,
+    /// The formal types of the context item and the variables passed
+    /// [§10.21], which the static typing reads.
+    pub passed: Passed,
 }
 
 /// [ISO/IEC 9075-14:2006 draft §10.20 SR2e] A registered XML Schema the
@@ -160,6 +183,18 @@ struct Analysis<'e> {
     /// The places of its functions and variables, given before its prolog
     /// is analysed, of a library module.
     reserved: Reserved,
+    /// Whether its prolog puts the Static Typing Feature in effect
+    /// [XQuery §4.16].
+    typing: Typing,
+}
+
+/// How a query is typed [XQuery §5.2.3].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Typing {
+    /// As it is evaluated.
+    Dynamic,
+    /// Statically, as it is analysed.
+    Static,
 }
 
 /// The plan of `module`, a main module, analysed in the static context
@@ -186,8 +221,14 @@ pub fn compile(module: &Module, env: &Environment<'_>) -> Result<Plan> {
     let imports = analysis.imported.iter().map(|i| i.name.clone()).collect();
     let imported_modules = analysis.imported_modules.iter().map(|m| m.name.clone()).collect();
     let validates = analysis.validates;
+    let static_typing = env.static_typing || analysis.typing == Typing::Static;
     let (globals, functions, libraries) = analysis.linked.into_parts();
-    Ok(Plan { body, globals, functions, main, libraries, collations: env.collations.clone(), validates, imports, imported_modules })
+    let collations = env.collations.clone();
+    let mut plan = Plan { body, globals, functions, main, libraries, collations, validates, imports, imported_modules, item: None };
+    if static_typing {
+        plan.item = Some(statics::check(&plan, &env.passed, &env.schemas)?);
+    }
+    Ok(plan)
 }
 
 impl<'e> Analysis<'e> {
@@ -221,6 +262,7 @@ impl<'e> Analysis<'e> {
             linked,
             module,
             reserved: Reserved::default(),
+            typing: Typing::Dynamic,
         }
     }
 

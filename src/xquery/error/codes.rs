@@ -5,11 +5,18 @@
 use super::ErrorCode;
 
 impl ErrorCode {
+    /// [XQuery Appendix F] Analysis relies on a component of the static
+    /// context that has no value.
+    pub const XPST0001: ErrorCode = ErrorCode("XPST0001");
+    /// [XQuery Appendix F] The static type of an expression other than
+    /// `()` or `data(())` is `empty-sequence()`.
+    pub const XPST0005: ErrorCode = ErrorCode("XPST0005");
     /// [XQuery Appendix F] Evaluation relies on a part of the dynamic
     /// context that has no value.
     pub const XPDY0002: ErrorCode = ErrorCode("XPDY0002");
-    /// [XQuery Appendix F] The dynamic type of a value does not match a
-    /// required type.
+    /// [XQuery Appendix F] The static type of an expression is not
+    /// appropriate for the context it is in, or the dynamic type of a
+    /// value does not match a required type.
     pub const XPTY0004: ErrorCode = ErrorCode("XPTY0004");
     /// [XQuery Appendix F] A name, prefix or variable is not defined in the
     /// static context.

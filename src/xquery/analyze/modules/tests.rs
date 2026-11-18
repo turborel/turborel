@@ -38,6 +38,8 @@ fn compiled(query: &str, modules: Vec<LibraryModule>, linked: Vec<LibraryModule>
         importable: Vec::new(),
         modules,
         linked,
+        static_typing: false,
+        passed: crate::xquery::Passed::default(),
     };
     Query::compile(query, &env)
 }
@@ -200,6 +202,8 @@ fn library_modules_are_analysed_as_registered() {
         importable: Vec::new(),
         modules: vec![registered("M", "", DOUBLING, &[])],
         linked: Vec::new(),
+        static_typing: false,
+        passed: crate::xquery::Passed::default(),
     };
     assert_eq!(code(library_module("import module namespace m = 'urn:m'; m:twice(1)", ("A.U", "U"), "", &env)), "err:XPST0003");
     let fixed = "module namespace u = 'urn:u'; import module namespace m = 'urn:m'; declare function u:f() { m:twice(1) };";

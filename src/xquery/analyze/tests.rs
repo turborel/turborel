@@ -35,6 +35,8 @@ fn statement_namespaces() {
         importable: Vec::new(),
         modules: Vec::new(),
         linked: Vec::new(),
+        static_typing: false,
+        passed: crate::xquery::Passed::default(),
     };
     assert!(Query::compile("<p:a/>, <b/>", &env).is_ok());
     assert!(Query::compile("xs:integer('1')", &env).is_err(), "xs is bound to another namespace");

@@ -27,6 +27,7 @@ pub use op::{
 use super::analyze::InScopeSchema;
 use super::collation::{Collations, Collator};
 use super::functions::XQueryFunction;
+use super::statics::Type;
 use super::types::SeqType;
 use crate::xml::QName;
 
@@ -54,6 +55,9 @@ pub struct Plan {
     /// The names of the registered XQuery modules the main module's prolog
     /// imports [XQuery §4.11].
     pub(super) imported_modules: Vec<String>,
+    /// Of a query typed statically [XQuery §5.2.3], the type of an item of
+    /// its value, its prime type [XQueryFS §8.4].
+    pub(super) item: Option<Type>,
 }
 
 /// What the evaluation reads of one module's static context [XQuery

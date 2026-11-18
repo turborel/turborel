@@ -25,6 +25,8 @@ fn evaluation(text: &str, context: bool) -> Evaluation {
         importable: Vec::new(),
         modules: Vec::new(),
         linked: Vec::new(),
+        static_typing: false,
+        passed: crate::xquery::Passed::default(),
     };
     let query = Arc::new(Query::compile(text, &env).unwrap());
     let now = Moment::parse("2026-11-17T10:30:00Z", Shape::DateTime).unwrap().unwrap();

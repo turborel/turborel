@@ -122,6 +122,10 @@ impl State {
             importable: found.importable.iter().map(|(_, s)| s.clone()).collect(),
             modules: found.modules.iter().map(|(_, l)| l.clone()).collect(),
             linked: found.linked.clone(),
+            // A library module is typed statically with each query that
+            // imports it, as that query's typing asks (RULES.md D106).
+            static_typing: false,
+            passed: crate::xquery::Passed::default(),
         };
         library_module(text, (&qn.to_string(), &qn.ident), location, &env)
     }

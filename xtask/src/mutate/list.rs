@@ -99,6 +99,7 @@ mod xquery;
 mod xquery_eval;
 mod xquery_functions;
 mod xquery_modules;
+mod xquery_statics;
 mod zones;
 
 pub use self::{vr::VR, waits::WAITS, zones::ZONES};

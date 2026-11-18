@@ -25,8 +25,9 @@
 //! \[err:XPST0003\], and the static errors of the prolog and the direct
 //! constructors that need no static context (`ErrorCode`). A module is then
 //! analysed in its static context (`xquery/analyze.rs`) [XQuery §2.2.3.1]
-//! into a plan (`xquery/plan.rs`), which is evaluated (`xquery/eval.rs`)
-//! [XQuery §2.2.3.2]; its types are `xquery/types.rs`'s, its collations
+//! into a plan (`xquery/plan.rs`), typed statically if the Static Typing
+//! Feature is in effect (`xquery/statics.rs`) [XQuery §5.2.3], which is
+//! evaluated (`xquery/eval.rs`) [XQuery §2.2.3.2]; its types are `xquery/types.rs`'s, its collations
 //! `xquery/collation.rs`'s, the functions it calls a library of
 //! `XQueryFunction`s (`xquery/functions.rs`). A compiled query is a
 //! `Query`. turborel supports the Module Feature [XQuery §5.2.5]: a
@@ -46,11 +47,15 @@ pub mod library;
 mod lookup;
 mod parser;
 mod plan;
+mod statics;
 #[cfg(test)]
 mod testing;
 mod types;
 
-pub use analyze::{Analysed, EMPTY_ORDER, Environment, InScopeSchema, LibraryModule, MAX_IMPORT_DEPTH, library_module};
+pub use analyze::{
+    Analysed, EMPTY_ORDER, Environment, InScopeSchema, LibraryModule, MAX_IMPORT_DEPTH, OPTION_NAMESPACE, STATIC_TYPING_OPTION,
+    library_module,
+};
 pub use ast::{AddOp, Flwor, GeneralComp, MulOp, NodeComp, PreserveMode, SetOp, Sign, ValueComp};
 pub use ast::{
     AttributeTest, AttributeValuePart, AxisStep, BoundarySpace, CaseClause, Comparator, Comparison, ComputedName, Construction,
@@ -66,6 +71,7 @@ pub use error::{ErrorCode, error};
 pub use eval::{Input, MAX_DEPTH};
 pub use functions::{Context, FN_NAMESPACE, Library, XQueryFunction};
 pub use lookup::Reduction;
+pub use statics::{Formal, FormalKind, MAX_TYPE_DEPTH, Passed, Typed};
 pub use types::{AttributeKind, ElementKind, ItemKind, NodeKind, SchemaType, SeqType, XDT_NAMESPACE};
 
 use crate::error::Result;
@@ -138,6 +144,16 @@ impl Query {
     #[must_use]
     pub fn modules(&self) -> &[String] {
         &self.0.imported_modules
+    }
+
+    /// What a query evaluated with each item of its value as its context
+    /// item is passed, as an XMLTABLE column's pattern is [ISO/IEC
+    /// 9075-14:2006 draft §7.1 SR4e]: an item of XML(SEQUENCE) [§10.21
+    /// SR3a, SR5g], of the type of its items if it was typed statically.
+    #[must_use]
+    pub fn row_item(&self) -> Passed {
+        let context = Some(Formal { kind: FormalKind::Sequence, occurrence: Occurrence::One });
+        Passed { context, variables: Vec::new(), item: self.0.item.clone() }
     }
 
     /// Its value, given `input` [XQuery §2.2.3.2].

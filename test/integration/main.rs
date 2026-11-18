@@ -363,6 +363,7 @@ mod xml_schema_dependents;
 mod xml_schema_import;
 mod xml_schema_types;
 mod xml_scoped_options;
+mod xml_static_typing;
 mod xml_storage;
 mod xml_table;
 mod xml_valid;

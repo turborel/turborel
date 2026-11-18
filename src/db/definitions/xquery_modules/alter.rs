@@ -114,6 +114,10 @@ impl State {
             importable: Vec::new(),
             modules: found.modules.iter().map(|(_, m)| m.clone()).collect(),
             linked: found.linked,
+            // A library module is typed statically with each query that
+            // imports it, as that query's typing asks (RULES.md D106).
+            static_typing: false,
+            passed: crate::xquery::Passed::default(),
         };
         Query::compile(&text, &env).map(drop)
     }

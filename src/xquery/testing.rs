@@ -116,6 +116,8 @@ pub(super) fn compile_in(text: &str, variables: &[&str], library: &Library) -> R
         importable: Vec::new(),
         modules: Vec::new(),
         linked: Vec::new(),
+        static_typing: false,
+        passed: crate::xquery::Passed::default(),
     };
     Query::compile(text, &env)
 }

@@ -14,19 +14,24 @@
 use std::sync::Arc;
 
 use super::super::ast::{
-    BoundarySpace, Construction, Declaration, EmptyOrder, FunctionDecl, Import, InheritMode, NamespaceKind, Param, PreserveMode, Setter,
-    Setup, VarDecl,
+    BoundarySpace, Construction, Declaration, EmptyOrder, FunctionDecl, Import, InheritMode, NamespaceKind, OptionDecl, Param,
+    PreserveMode, Setter, Setup, VarDecl,
 };
 use super::super::collation::Collator;
 use super::super::error::{ErrorCode, error};
 use super::super::functions::FN_NAMESPACE;
 use super::super::plan::{Body, Function, Global, GlobalValue, Implementation, Op};
 use super::super::types::{Defined, ItemKind, NodeKind, SchemaType, SeqType, XDT_NAMESPACE};
-use super::Analysis;
 use super::linked::{Exports, Reads};
 use super::scope::{Frame, Unprefixed, Var, display};
-use crate::error::Result;
+use super::{Analysis, OPTION_NAMESPACE, STATIC_TYPING_OPTION};
+use crate::error::{Code, Result, SqlError};
 use crate::xml::{QName, XML_NAMESPACE, XS_NAMESPACE, XSI_NAMESPACE};
+
+/// [XQuery §4.16] The values of turborel's option `static-typing`.
+const ON: &str = "on";
+/// See [`ON`].
+const OFF: &str = "off";
 
 /// [XQuery §4.15] The namespaces no declared function is in
 /// \[err:XQST0045\].
@@ -117,11 +122,7 @@ impl Analysis<'_> {
                         self.linked.body(place, body, read);
                     }
                 }
-                Declaration::Option(option) => {
-                    // [XQuery §4.16] no namespace is recognized as one of
-                    // options, so each is ignored once its name resolves.
-                    self.scope.name(&option.name, Unprefixed::None)?;
-                }
+                Declaration::Option(option) => self.option(option)?,
             }
         }
         Ok(own)
@@ -137,6 +138,36 @@ impl Analysis<'_> {
         }
         let why = format!("the {what} {} is not in the target namespace {target} of its library module [XQuery §4.2]", display(name));
         Err(error(ErrorCode::XQST0048, &why))
+    }
+
+    /// An option declaration [XQuery §4.16], its name resolved: of
+    /// turborel's namespace of options, `static-typing` `on` puts the
+    /// Static Typing Feature in effect for the query, `off` leaves it as
+    /// the statement has it, as an option suppresses no static error; an
+    /// option of another namespace is ignored.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 of an option of turborel's namespace it does not
+    /// recognize, or of another value.
+    fn option(&mut self, option: &OptionDecl) -> Result<()> {
+        let name = self.scope.name(&option.name, Unprefixed::None)?;
+        if name.uri.as_deref() != Some(OPTION_NAMESPACE) {
+            return Ok(());
+        }
+        let local = &*name.local;
+        let value = option.value.as_str();
+        if local == STATIC_TYPING_OPTION && value == ON {
+            self.typing = super::Typing::Static;
+        } else if local != STATIC_TYPING_OPTION || value != OFF {
+            return Err(SqlError::new(
+                Code::SyntaxRule,
+                format!(
+                    "[EXTENSION] turborel has no option {local} '{value}' of {OPTION_NAMESPACE}: {STATIC_TYPING_OPTION} takes '{ON}' or '{OFF}' [XQuery §4.16]"
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// The function `f` declares, its body not yet compiled [XQuery §4.15]:
