@@ -1,11 +1,24 @@
-//! SUM and AVG, the SQL-86 set functions of numbers [X3.135-1986 §5.8]:
-//! their result types. Their accumulators are in `sum.rs`.
+//! The SQL-86 set functions SUM and AVG [X3.135-1986 §5.8], their
+//! accumulators in `sum.rs`; and \[EXTENSION\] of a VECTOR argument, the
+//! element-wise VECTOR_SUM and VECTOR_AVG (design document §6.5, RULES.md
+//! D93), so `AVG(v)` gives a centroid.
 
 use super::sum::{AvgAcc, SumAcc};
 use super::{Accumulator, AggregateFunction};
 use crate::error::{Code, Result, fail};
 use crate::lexer::kw;
 use crate::value::{DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled};
+use crate::vector::{Aggregate, shape_of};
+
+/// \[EXTENSION\] Of a VECTOR argument, the result type of `of`, VECTOR_SUM
+/// or VECTOR_AVG; none of another.
+fn vector_total(arg: Option<&DataType>, of: Aggregate) -> Option<Result<DataType>> {
+    arg.filter(|t| shape_of(t).is_some()).map(|t| of.result_type(Some(t.clone())))
+}
+
+// ---------------------------------------------------------------------------
+// The SQL-86 set functions [X3.135-1986 §5.8]
+// ---------------------------------------------------------------------------
 
 /// [X3.135-1986 §5.8 SR9c] implementor-defined: AVG of an exact numeric with scale S has
 /// scale S + `AVG_EXTRA_SCALE`, truncated toward zero.
@@ -31,6 +44,9 @@ impl AggregateFunction for Sum {
         kw::SUM
     }
     fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
+        if let Some(of) = vector_total(arg.as_ref(), Aggregate::Sum) {
+            return of;
+        }
         Ok(match not_character(kw::SUM, arg)? {
             DataType::Exact { scale, .. } => DataType::Exact { precision: MAX_EXACT_PRECISION, scale, spelled: Spelled::Numeric },
             // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
@@ -60,6 +76,9 @@ impl AggregateFunction for Sum {
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
+        if shape_of(&result).is_some() {
+            return Aggregate::Sum.accumulator(result);
+        }
         Box::new(SumAcc::new(result))
     }
 }
@@ -73,6 +92,9 @@ impl AggregateFunction for Avg {
         kw::AVG
     }
     fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
+        if let Some(of) = vector_total(arg.as_ref(), Aggregate::Avg) {
+            return of;
+        }
         Ok(match not_character(kw::AVG, arg)? {
             DataType::Exact { scale, .. } => DataType::Exact {
                 precision: MAX_EXACT_PRECISION,
@@ -105,6 +127,9 @@ impl AggregateFunction for Avg {
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
+        if shape_of(&result).is_some() {
+            return Aggregate::Avg.accumulator(result);
+        }
         Box::new(AvgAcc::new(result))
     }
 }

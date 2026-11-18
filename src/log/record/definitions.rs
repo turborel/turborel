@@ -26,6 +26,10 @@ const DROPPED_CAST: u8 = 12;
 const DROPPED_ORDERING: u8 = 13;
 /// The tag of a transform group's drop, or of all a type's.
 const DROPPED_TRANSFORM: u8 = 14;
+/// The tag of an embedding model's drop.
+const DROPPED_MODEL: u8 = 15;
+/// The tag of a vector pipeline's drop.
+const DROPPED_PIPELINE: u8 = 16;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq)]
@@ -61,6 +65,10 @@ pub enum DropTarget {
     /// A type's transform group, or all of them [ISO/IEC 9075-2:2023
     /// §11.71].
     Transform(QualifiedName, Option<String>),
+    /// \[EXTENSION\] An embedding model (the vector design's §12.1).
+    Model(QualifiedName),
+    /// \[EXTENSION\] A vector pipeline (§12.5).
+    Pipeline(QualifiedName),
 }
 
 /// A schema's text, the engine of each table it created, its
@@ -182,6 +190,8 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::Routine(specific) => (DROPPED_ROUTINE, specific),
         DropTarget::Module(module) => (DROPPED_MODULE, module),
         DropTarget::Ordering(udt) => (DROPPED_ORDERING, udt),
+        DropTarget::Model(model) => (DROPPED_MODEL, model),
+        DropTarget::Pipeline(pipeline) => (DROPPED_PIPELINE, pipeline),
         DropTarget::Cast(types) => {
             out.put_u8(DROPPED_CAST);
             crate::value::types::tags::put_type(out, &types.0);
@@ -220,6 +230,8 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_ROUTINE => Ok(DropTarget::Routine(table(r)?)),
         DROPPED_MODULE => Ok(DropTarget::Module(table(r)?)),
         DROPPED_ORDERING => Ok(DropTarget::Ordering(table(r)?)),
+        DROPPED_MODEL => Ok(DropTarget::Model(table(r)?)),
+        DROPPED_PIPELINE => Ok(DropTarget::Pipeline(table(r)?)),
         DROPPED_CAST => {
             let source = crate::value::types::tags::data_type(r)?;
             Ok(DropTarget::Cast(Box::new((source, crate::value::types::tags::data_type(r)?))))

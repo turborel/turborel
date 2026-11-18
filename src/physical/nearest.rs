@@ -1,15 +1,21 @@
-//! Distance ordering through certified index candidates (D15, D85).
-//! The final sort still compares exact scalar results and secondary keys.
+//! Distance ordering through certified index candidates (D15, D85), or
+//! an approximate index's when the query asks for one (D94,
+//! `nearest/approx.rs`). The final sort still compares exact scalar
+//! results and secondary keys.
 
+mod approx;
 mod safe;
+
+pub use approx::ApproximateRead;
 
 use super::{PhysicalPlanner, Plan, estimate};
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::functions::ScalarRef;
 use crate::geometry::{SpatialOperation, fixed_srid};
-use crate::index::NearestQuery;
+use crate::index::{NearestQuery, NearestSupport};
 use crate::logical::{Cond, Expr, LogicalPlan, SortKey, filled_expr, render_expr};
 use crate::storage::cost_of;
+use crate::value::Value;
 
 /// A table read in increasing distance-bound order, with visible rows
 /// refined by `measure`. It emits the table row followed by that result;
@@ -21,6 +27,9 @@ pub struct NearestRead {
     pub table: QualifiedName,
     /// The index supplying candidates.
     pub index: String,
+    /// \[EXTENSION\] The position in the index's key of the column it
+    /// orders by: of a hybrid index's vector column, 1 (`index/vector/hybrid.rs`).
+    pub position: usize,
     /// Its method, for EXPLAIN.
     pub method: String,
     /// The table columns read.
@@ -41,13 +50,22 @@ pub struct NearestRead {
     pub detail: String,
     /// The estimated access cost.
     pub cost: f64,
+    /// \[EXTENSION\] Of an approximate index's read, what it asks of it;
+    /// none of a certified one (D94).
+    pub approximate: Option<ApproximateRead>,
 }
 
 /// The column and its argument position in a declared distance call, or a
 /// score's (`ScalarFunction::ranks`), whose arguments after its first two
-/// are constants, as the index name the binder gives Rank (D87).
+/// are constants, as the index name the binder gives Rank (D87); or a
+/// vector distance's (`ScalarFunction::vector_metric`), its other
+/// arguments constants (D94).
 pub(crate) fn distance_call(expr: &Expr) -> Option<(usize, usize, &ScalarRef, &Expr)> {
     let Expr::Call(function, args) = expr else { return None };
+    if let Some((_, at)) = vector_measure(expr) {
+        let (column, argument, other) = operands(args, at)?;
+        return Some((column, argument, function, other));
+    }
     let f = &function.0;
     let ranks = f.ranks();
     let distance = f.deterministic() && f.spatial_operation() == Some(SpatialOperation::Distance);
@@ -56,11 +74,48 @@ pub(crate) fn distance_call(expr: &Expr) -> Option<(usize, usize, &ScalarRef, &E
     if !(distance || ranks) || !constants || (!rest.is_empty() && !ranks) {
         return None;
     }
-    match two {
-        [Expr::Column(column), other] => Some((*column, 0, function, other)),
-        [other, Expr::Column(column)] => Some((*column, 1, function, other)),
-        _ => None,
+    operands(two, 0).map(|(column, argument, other)| (column, argument, function, other))
+}
+
+/// The column, its position, and the other operand of the two at `at`
+/// and after it, one of them a column.
+fn operands(args: &[Expr], at: usize) -> Option<(usize, usize, &Expr)> {
+    match (args.get(at)?, args.get(at.checked_add(1)?)?) {
+        (Expr::Column(column), other) => Some((*column, at, other)),
+        (other, Expr::Column(column)) => Some((*column, at.checked_add(1)?, other)),
+        (_, _) => None,
     }
+}
+
+/// \[EXTENSION\] Of a deterministic vector distance whose arguments but
+/// its two vectors are constants, its metric and its first vector's
+/// position (`ScalarFunction::vector_metric`).
+pub(crate) fn vector_measure(expr: &Expr) -> Option<(String, usize)> {
+    let Expr::Call(function, args) = expr else { return None };
+    let constants: Vec<Option<&Value>> = args.iter().map(|e| if let Expr::Const(v) = e { Some(v) } else { None }).collect();
+    let (metric, at) = function.0.vector_metric(&constants)?;
+    let operand = |i: usize| i == at || Some(i) == at.checked_add(1);
+    let others = constants.iter().enumerate().all(|(i, c)| operand(i) || c.is_some());
+    (function.0.deterministic() && others).then(|| (metric.to_ascii_uppercase(), at))
+}
+
+/// `exprs` over `source`, through a projection of columns alone below
+/// it, as a select list naming every column it needs makes: each column
+/// the one it projects.
+fn flattened<'p>(exprs: &[Expr], source: &'p LogicalPlan) -> (Vec<Expr>, &'p LogicalPlan) {
+    let LogicalPlan::Project { exprs: inner, input } = source else { return (exprs.to_vec(), source) };
+    if !inner.iter().all(|e| matches!(e, Expr::Column(_))) {
+        return (exprs.to_vec(), source);
+    }
+    (exprs.iter().map(|e| through(e.clone(), inner)).collect(), input)
+}
+
+/// `e`, each column the expression `inner` projects for it.
+fn through(e: Expr, inner: &[Expr]) -> Expr {
+    if let Expr::Column(i) = e {
+        return inner.get(i).cloned().unwrap_or(Expr::Column(i));
+    }
+    e.map_children(&mut |child| through(child, inner))
 }
 
 /// Whether a call `distance_call` finds is a score, greatest first.
@@ -87,13 +142,23 @@ impl NearestRead {
         let (_, argument, function, Expr::Const(value)) = distance_call(&self.measure)? else { return None };
         Some(NearestQuery {
             function: function.clone(),
-            column: 0,
+            column: self.position,
             argument,
             value: value.clone(),
             descending: self.descending,
             statistics: None,
+            metric: vector_measure(&self.measure).map(|(metric, _)| metric),
+            approximate: None,
         })
     }
+}
+
+/// What `nearest` reads: the table scanned, its columns needed, and its
+/// filter.
+struct Scanned<'p> {
+    table: &'p QualifiedName,
+    needed: &'p [usize],
+    condition: Option<&'p Cond>,
 }
 
 impl PhysicalPlanner<'_> {
@@ -101,13 +166,14 @@ impl PhysicalPlanner<'_> {
         let first = self.first.filter(|&n| n > 0)?;
         let key = keys.first()?;
         let LogicalPlan::Project { exprs, input: source } = input else { return None };
+        let (exprs, source) = &flattened(exprs, source);
         let measure = exprs.get(key.column)?;
         let descending = descends(measure);
         if key.descending != descending {
             return None;
         }
         let (scan, condition) =
-            if let LogicalPlan::Filter { cond, input: filtered } = &**source { (&**filtered, Some(cond)) } else { (&**source, None) };
+            if let LogicalPlan::Filter { cond, input: filtered } = *source { (&**filtered, Some(cond)) } else { (*source, None) };
         let LogicalPlan::Scan { table, needed, located, .. } = scan else { return None };
         let desc = self.db.catalog.table(table)?;
         if !safe::projection(exprs, key.column, desc) || condition.is_some_and(|c| !safe::condition(c, desc)) {
@@ -118,14 +184,8 @@ impl PhysicalPlanner<'_> {
         if key.nulls_first && !(descending && excludes_nulls(condition, column)) {
             return None;
         }
-        let cost = self.nearest_cost((table, needed), condition, first)?;
-        let index = self.db.catalog.indexes(table).into_iter().find(|ix| {
-            if ix.columns.as_slice() != [column] || ix.is_collated() || self.db.building.contains(&ix.name) {
-                return false;
-            }
-            let (Some(method), Some(types)) = (self.db.methods.get(&ix.method), ix.key_types(desc)) else { return false };
-            method.supports_nearest(&query, &types) && self.db.index_of(&ix.name).is_ok()
-        })?;
+        let scanned = Scanned { table, needed, condition };
+        let ((index, position), approximate, cost) = self.nearest_index((&scanned, desc), column, &query, first)?;
         let detail = self.described(scan, |names| {
             let measure = render_expr(measure, names);
             condition.map_or_else(|| measure.clone(), |c| format!("{measure} where {}", crate::logical::render_cond(c, names)))
@@ -133,6 +193,7 @@ impl PhysicalPlanner<'_> {
         let read = NearestRead {
             table: table.clone(),
             index: index.name.clone(),
+            position,
             method: index.method.clone(),
             columns: needed.clone(),
             located: *located,
@@ -143,6 +204,7 @@ impl PhysicalPlanner<'_> {
             first,
             detail,
             cost,
+            approximate,
         };
         let projection = self.described(source, |names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
         let mut exprs = exprs.clone();
@@ -150,10 +212,62 @@ impl PhysicalPlanner<'_> {
         Some(Plan::Project { exprs, detail: projection, input: Box::new(Plan::Nearest(Box::new(read))) })
     }
 
+    /// The index a nearest read takes, of those on `column`, with the
+    /// column's position in its key, what it asks of it if it is
+    /// approximate, and the read's cost: a certified index if cheaper than
+    /// a scan and a sort, else an approximate one if the query asks for an
+    /// approximate search and its metric is the call's (R13.1,
+    /// `nearest/approx.rs`). An index of several columns is asked of its
+    /// column by its position, which no built-in method but the hybrid one
+    /// serves.
+    fn nearest_index(
+        &self,
+        (scanned, desc): (&Scanned<'_>, &TableDesc),
+        column: usize,
+        query: &NearestQuery,
+        first: usize,
+    ) -> Option<((crate::catalog::IndexDesc, usize), Option<ApproximateRead>, f64)> {
+        let asked = self.approximation(scanned.table);
+        let mut certified = None;
+        let mut approximate = None;
+        for ix in self.db.catalog.indexes(scanned.table) {
+            let Some(position) = ix.columns.iter().position(|c| *c == column) else { continue };
+            if ix.is_collated() || self.db.building.contains(&ix.name) {
+                continue;
+            }
+            let (Some(method), Some(types)) = (self.db.methods.get(&ix.method), ix.key_types(desc)) else { continue };
+            if self.db.index_of(&ix.name).is_err() {
+                continue;
+            }
+            let probe = NearestQuery { approximate: asked.map(|a| approx::probe(a, first)), column: position, ..query.clone() };
+            match method.supports_nearest(&probe, &types) {
+                NearestSupport::No => {}
+                NearestSupport::Exact => {
+                    certified.get_or_insert((ix.clone(), position));
+                }
+                NearestSupport::Approximate => {
+                    let served = query.metric.as_deref().is_some_and(|call| method.serves_metric(ix, call));
+                    approximate = approx::preferred(approximate, ((ix.clone(), position), served), asked, self.hints());
+                }
+            }
+        }
+        if let Some(ix) = certified {
+            let cost = self.nearest_cost((scanned.table, scanned.needed), scanned.condition, first);
+            if let Some(cost) = cost {
+                return Some((ix, None, cost));
+            }
+        }
+        let ix = approximate?;
+        let read = self.approximate_read(asked?, (scanned.table, scanned.condition), query)?;
+        let cost = self.approximate_cost(scanned.table, &read, first)?;
+        Some((ix, Some(read), cost))
+    }
+
     fn nearest_query(&self, measure: &Expr, desc: &TableDesc) -> Option<(usize, NearestQuery)> {
         let (column, argument, function, other) = distance_call(measure)?;
         let descending = function.0.ranks();
-        if !descending {
+        let metric = vector_measure(measure).map(|(metric, _)| metric);
+        if !descending && metric.is_none() {
             fixed_srid(&desc.columns.get(column)?.data_type)?;
         }
         let value = if let Expr::Const(value) = other {
@@ -164,16 +278,24 @@ impl PhysicalPlanner<'_> {
         } else {
             return None;
         };
-        Some((column, NearestQuery { function: function.clone(), column: 0, argument, value, descending, statistics: None }))
+        let query = NearestQuery {
+            function: function.clone(),
+            column: 0,
+            argument,
+            value,
+            descending,
+            statistics: None,
+            metric,
+            approximate: None,
+        };
+        Some((column, query))
     }
 
     fn nearest_cost(&self, (table, columns): (&QualifiedName, &[usize]), condition: Option<&Cond>, first: usize) -> Option<f64> {
         let storage = self.db.storage_of(table).ok()?;
         let model = self.db.cost();
-        let stats = self.db.statistics(table);
-        let known = estimate::Known { stats: stats.as_deref(), cost: &model };
         let all = cost_of(storage.row_count());
-        let fraction = condition.map_or(1.0_f64, |c| safe::selectivity(c, known));
+        let fraction = self.selectivity(table, condition);
         if fraction <= 0.0_f64 {
             return None;
         }
@@ -183,5 +305,13 @@ impl PhysicalPlanner<'_> {
         let cost = model.index_descent * (all + 1.0_f64).log2() + read * storage.fetch_cost();
         let sorted = model.sort(all * fraction);
         (cost + model.sort(cost_of(first)) < storage.scan_cost(columns) + sorted).then_some(cost)
+    }
+
+    /// The share of the rows of `table` `condition` is estimated to keep.
+    fn selectivity(&self, table: &QualifiedName, condition: Option<&Cond>) -> f64 {
+        let model = self.db.cost();
+        let stats = self.db.statistics(table);
+        let known = estimate::Known { stats: stats.as_deref(), cost: &model };
+        condition.map_or(1.0_f64, |c| safe::selectivity(c, known))
     }
 }

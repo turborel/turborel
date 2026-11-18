@@ -13,7 +13,7 @@
 //!   must write it as a `<delimited identifier>`.
 //! * A `<separator>` is spaces, newlines and comments. A tab is not a `<space>`.
 //! * A `<comment>` is "--" up to and including a `<newline>`, so it cannot be the
-//!   last thing in the input.
+//!   last thing in the input, or a `<bracketed comment>` (`lexer/comments.rs`).
 //! * A `<character string literal>` may be empty, and may go on after a
 //!   `<separator>` with a `<newline>` in another quoted part [ISO/IEC
 //!   9075:1992 §5.3 SR1, SR4, SR9].
@@ -77,7 +77,9 @@ key_words! {
     ZONE
 }
 
+mod comments;
 pub mod delim;
+pub use comments::hinted;
 
 /// [ISO/IEC 9075-2:2023 §5.1] `<left bracket trigraph>` and `<right
 /// bracket trigraph>`, each the bracket it stands for.
@@ -86,6 +88,12 @@ const TRIGRAPHS: [(&str, &str); 2] = [("??(", delim::LEFT_BRACKET), ("??)", deli
 /// Every `<delimiter token>` but `<character string literal>`, longest first
 /// so that "<>" wins over "<".
 const DELIMITERS: &[&str] = &[
+    delim::EUCLIDEAN_DISTANCE,
+    delim::COSINE_DISTANCE,
+    delim::DOT_DISTANCE,
+    delim::MANHATTAN_DISTANCE,
+    delim::HAMMING_DISTANCE,
+    delim::JACCARD_DISTANCE,
     delim::CONCATENATION,
     delim::NOT_EQUALS,
     delim::GREATER_OR_EQUAL,
@@ -296,7 +304,7 @@ impl Scanner {
             return Ok(true);
         }
         if self.peek(0) != Some('-') || self.peek(1) != Some('-') {
-            return Ok(false);
+            return self.bracketed_comment();
         }
         // <comment> ::= --[<character>...]<newline>
         let start = self.at;

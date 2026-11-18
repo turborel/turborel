@@ -46,7 +46,9 @@ pub use options::{
 pub use postings::Position;
 pub(crate) use rank::score;
 
-use super::{Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, NearestQuery, NeighbourEntries, Predicate, Probe, RowIds};
+use super::{
+    Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, NearestQuery, NearestSupport, NeighbourEntries, Predicate, Probe, RowIds,
+};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
@@ -250,8 +252,9 @@ impl IndexMethod for FullTextMethod {
     }
     /// A score of the indexed column, as its first argument, greatest
     /// first: RANK (`Index::nearest`).
-    fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> bool {
-        query.function.0.ranks() && self_answers(query) && one_text_column(columns)
+    fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> NearestSupport {
+        let certified = query.function.0.ranks() && self_answers(query) && one_text_column(columns);
+        if certified { NearestSupport::Exact } else { NearestSupport::No }
     }
     fn index_options(&self) -> Vec<TableOption> {
         options()

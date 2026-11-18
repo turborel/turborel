@@ -524,7 +524,7 @@ mod tests {
         let derived = Generated::DerivedReference(vec!["X".into(), "Y".into()]);
         let identity = Generated::Identity(Identity { always: true, sequence });
         let horizon = Horizon::default().invoking(vec![QualifiedName { auth: "A".into(), ident: "F_1".into() }]);
-        let expression = Generated::Expression(Generation { text: "K + 1".into(), names: "A".into(), horizon });
+        let expression = Generated::Expression(Generation { text: "K + 1".into(), names: "A".into(), horizon, asynchronous: false });
         for generated in [None, Some(identity), Some(expression), Some(system), Some(derived)] {
             let c = ColumnDesc {
                 name: "C".into(),

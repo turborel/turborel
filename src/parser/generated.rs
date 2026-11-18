@@ -16,6 +16,12 @@ use crate::lexer::{Tok, delim, kw};
 const GENERATED: &str = "GENERATED";
 /// The `<non-reserved word>` of values always generated.
 const ALWAYS: &str = "ALWAYS";
+/// \[EXTENSION\] The words after a generation expression: its values
+/// kept, as every generated column's are; computed in the writing
+/// statement; or after commit (vector design §12.4).
+const STORED: &str = "STORED";
+const SYNC: &str = "SYNC";
+const ASYNC: &str = "ASYNC";
 /// The `<non-reserved word>` DROP EXPRESSION drops.
 const EXPRESSION: &str = "EXPRESSION";
 /// SCOPE, of an `<add column scope clause>` and a `<drop column scope
@@ -80,7 +86,13 @@ impl Parser {
             let value = self.value_expression()?;
             let text = self.text_from(start);
             self.expect_delim(delim::RIGHT_PAREN)?;
-            return Ok(Some(ColumnGeneration::Expression { value, text, at }));
+            // [EXTENSION] (vector design §12.4) [STORED] [SYNC | ASYNC].
+            self.accept_word(STORED);
+            let asynchronous = self.accept_word(ASYNC);
+            if !asynchronous {
+                self.accept_word(SYNC);
+            }
+            return Ok(Some(ColumnGeneration::Expression { value, text, at, asynchronous }));
         }
         // [ISO/IEC 9075-2:2023 §11.4] GENERATED ALWAYS AS ROW { START | END }
         if always && self.accept_word(ROW) {

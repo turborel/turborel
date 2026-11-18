@@ -9,34 +9,44 @@
 //! be of expressions of its table's columns (`index/expression.rs`).
 
 mod blink;
+pub mod diskann;
 mod key;
 pub use key::Key;
 pub mod expression;
 pub mod fulltext;
 mod hash;
+pub mod hnsw;
+pub mod ivf;
 pub mod json;
 mod nearest;
+mod probe;
 mod projection;
 mod rtree;
+mod sparse;
 mod stats;
+pub(crate) mod vector;
 
 use std::sync::Arc;
 
 pub use blink::BTreeMethod;
+pub use diskann::{DISKANN_METHOD, DiskAnnMethod};
 pub use fulltext::{FULLTEXT_METHOD, FullTextMethod};
 pub use hash::HashMethod;
+pub use hnsw::{HNSW_METHOD, HnswMethod};
+pub use ivf::{IVF_METHOD, IvfMethod};
 pub use json::{JSON_METHOD, JsonMethod};
-pub use nearest::{NearestQuery, NeighbourEntries};
+pub use nearest::{Approximation, FilterHint, NearestQuery, NearestSupport, NeighbourEntries, RowFilter, same_metric};
+pub use probe::{ColumnComparison, Predicate, Probe};
 pub use projection::KeyProjection;
 pub use rtree::RTreeMethod;
+pub use sparse::{BLOCK_SIZE_OPTION, QUANTIZATION_OPTION, SPARSE_METHOD, SparseIndex, SparseMethod, VECTOR_TYPE};
 
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::error::Result;
-use crate::functions::ScalarRef;
 use crate::memory::Host;
 use crate::spill::{Area, WorkAreas};
 use crate::storage::{RowId, TableOption};
-use crate::value::{CompOp, DataType, Value, compare};
+use crate::value::{CompOp, DataType};
 
 /// \[DESIGN\] The entries a search finds, (key, row) pairs, read as they
 /// are taken (`Index::search`).
@@ -55,131 +65,6 @@ pub enum KeyOrder {
     Ascending,
     /// Descending keys.
     Descending,
-}
-
-/// \[EXTENSION\] A function call used to find rows through an index, such
-/// as `f(column, ?)` (RULES.md D34). The function must opt in through
-/// `ScalarFunction::index_predicate`, or the separately proven spatial
-/// contract in D85. An index method declares support
-/// for this function and both positions, for every accepted value of the
-/// other argument, including null and later prepared parameter values.
-#[derive(Debug, Clone)]
-pub struct Predicate {
-    /// The registered function, also used to check each fetched row.
-    pub function: ScalarRef,
-    /// The indexed column's position in the key, from zero.
-    pub column: usize,
-    /// The column's position among the function's two arguments, zero or
-    /// one; none of a call of an SQL/JSON operator or JSON_CONTAINS
-    /// (`ScalarFunction::json_probe`), whose first argument is the column
-    /// and whose others, its PASSING arguments' values and then the value
-    /// compared with or contained, the probe's value holds as a ROW.
-    pub argument: Option<usize>,
-}
-
-/// One SQL comparison of an independently constrained index column.
-#[derive(Debug, Clone)]
-pub struct ColumnComparison {
-    /// The position of the column in the index key, from zero.
-    pub column: usize,
-    /// The comparison operator.
-    pub op: CompOp,
-    /// The value compared with that column.
-    pub value: Value,
-}
-
-/// What an index is asked for.
-#[derive(Debug, Clone)]
-pub enum Probe {
-    /// All comparisons must hold, including comparisons on columns after
-    /// a range. This describes a multidimensional window without requiring
-    /// an equality prefix (`IndexMethod::supports_columns`).
-    Columns(Vec<ColumnComparison>),
-    /// Every entry (used to read rows in key order): of a key with no null,
-    /// but in an index that holds them (`IndexDesc::nulls`).
-    All,
-    /// "column `<op>` value", of the key's first column.
-    Compare {
-        /// The comparison operator.
-        op: CompOp,
-        /// The constant the column is compared with.
-        value: Value,
-    },
-    /// The keys whose first columns equal `equal`, one value for each, and,
-    /// if `then` is given, whose next column compares with its value by
-    /// its operator (`IndexMethod::supports_prefix`).
-    Prefix {
-        /// The values of the key's first columns.
-        equal: Vec<Value>,
-        /// The comparison of the next column, if any.
-        then: Option<(CompOp, Value)>,
-    },
-    /// The keys whose first columns equal `equal`, one value for each, if
-    /// any, and whose next column lies between two bounds: above `low` by
-    /// its operator, `>` or `>=`, and below `high` by its, `<` or `<=`; as
-    /// BETWEEN gives [ISO/IEC 9075:1992 §8.3 SR6], or two comparisons
-    /// (`IndexMethod::supports_range`).
-    Range {
-        /// The values of the key's first columns.
-        equal: Vec<Value>,
-        /// The lower bound of the next column, and its operator; boxed, as
-        /// are `high`'s, so that a probe, and each plan holding one, is no
-        /// larger than another kind of probe makes it.
-        low: Box<(CompOp, Value)>,
-        /// The upper bound of the next column, and its operator.
-        high: Box<(CompOp, Value)>,
-    },
-    /// \[EXTENSION\] Rows that may satisfy a Boolean function call.
-    /// The index returns every matching entry and may return extras.
-    /// The executor fetches each visible row and checks the full WHERE
-    /// condition to reject those extras (D34).
-    Predicate {
-        /// The function and the column's positions in the key and call.
-        predicate: Box<Predicate>,
-        /// The other argument, as the bound function receives it.
-        value: Value,
-    },
-}
-
-impl Probe {
-    /// Whether a key, its values in order, answers the probe by the
-    /// [X3.135-1986 §5.11] comparison rules: never with a null where a
-    /// value is compared (GR2). For `Probe::Predicate`, this always returns
-    /// true: storage uses it under locks, where calling a plug-in is
-    /// forbidden. The executor checks the function on fetched rows
-    /// (RULES.md D34).
-    pub fn answers<'v>(&self, key: impl IntoIterator<Item = &'v Value>) -> bool {
-        let mut key = key.into_iter();
-        let holds = |op: CompOp, k: Option<&Value>, v: &Value| k.and_then(|k| compare(k, v)).is_some_and(|o| op.holds(o));
-        match self {
-            Probe::All | Probe::Predicate { .. } => true,
-            Probe::Columns(each) => columns_answer(key, each),
-            Probe::Compare { op, value } => holds(*op, key.next(), value),
-            Probe::Prefix { equal, then } => {
-                equal.iter().all(|v| holds(CompOp::Eq, key.next(), v)) && then.as_ref().is_none_or(|(op, v)| holds(*op, key.next(), v))
-            }
-            Probe::Range { equal, low, high } => {
-                let equals = equal.iter().all(|v| holds(CompOp::Eq, key.next(), v));
-                let next = key.next();
-                equals && holds(low.0, next, &low.1) && holds(high.0, next, &high.1)
-            }
-        }
-    }
-}
-
-/// Test independent comparisons without allocating a copy of the key.
-/// Missing key columns cannot satisfy a comparison.
-fn columns_answer<'a>(key: impl Iterator<Item = &'a Value>, each: &[ColumnComparison]) -> bool {
-    let mut checked = 0_usize;
-    for (at, value) in key.enumerate() {
-        for c in each.iter().filter(|c| c.column == at) {
-            if !compare(value, &c.value).is_some_and(|o| c.op.holds(o)) {
-                return false;
-            }
-            checked = checked.saturating_add(1);
-        }
-    }
-    checked == each.len()
 }
 
 /// \[EXTENSION\] A kind of index: creates `Index`es and says which probes they answer.
@@ -212,10 +97,26 @@ fn columns_answer<'a>(key: impl Iterator<Item = &'a Value>, each: &[ColumnCompar
 ///   R-ERR-4); the `Database` docs say what happens if one does.
 pub trait IndexMethod: Send + Sync {
     /// Whether indexes on these types offer distance candidates for this
-    /// call's declared semantics. Runtime requests may still decline under
-    /// [`NeighbourEntries`]' error and range contract. Default: unsupported.
-    fn supports_nearest(&self, _query: &NearestQuery, _columns: &[DataType]) -> bool {
-        false
+    /// call's declared semantics: certified ([`NeighbourEntries`]), or
+    /// approximate ([`Approximation`]), which only a query asking for an
+    /// approximate search reads, of the index's own metric (the query's
+    /// `metric`, [`same_metric`]). Runtime requests may still decline.
+    /// Default: unsupported.
+    fn supports_nearest(&self, _query: &NearestQuery, _columns: &[DataType]) -> NearestSupport {
+        NearestSupport::No
+    }
+    /// \[EXTENSION\] The metric the index `index` describes orders by, of
+    /// an approximate method, read only for a call of it (R13.1). None
+    /// by default.
+    fn metric(&self, _index: &IndexDesc) -> Option<String> {
+        None
+    }
+    /// \[EXTENSION\] Whether the index `index` describes serves a call of
+    /// metric `call`, upper case (R13.1). By default, of its own metric
+    /// (`metric`, [`same_metric`]); a vector index of a column declared
+    /// normalized serves COSINE of a DOT index too.
+    fn serves_metric(&self, index: &IndexDesc, call: &str) -> bool {
+        self.metric(index).is_some_and(|m| same_metric(&m, call))
     }
     /// The method's name, as `create_index` and `IndexDesc::method` give it.
     fn name(&self) -> &'static str;
@@ -408,6 +309,33 @@ pub trait Index: Send + Sync {
     /// Storage errors, or SQLCODE -918 if its frontier cannot be reserved.
     fn nearest(self: Arc<Self>, _query: &NearestQuery, _budget: &Arc<crate::memory::MemoryBudget>) -> Result<Option<NeighbourEntries>> {
         Ok(None)
+    }
+    /// \[EXTENSION\] Candidates of an approximate search, its query's
+    /// `approximate` given, under [`Approximation`]'s relaxed contract, or
+    /// `None` when the request needs an ordinary scan. `filter`, given of
+    /// `FilterHint::InFilter`, may be asked of candidates before this
+    /// returns, never after ([`RowFilter`]). Default: `nearest`.
+    ///
+    /// # Errors
+    ///
+    /// As `nearest`, and those of `filter`.
+    fn approximate(
+        self: Arc<Self>,
+        query: &NearestQuery,
+        budget: &Arc<crate::memory::MemoryBudget>,
+        _filter: Option<&mut dyn RowFilter>,
+    ) -> Result<Option<NeighbourEntries>> {
+        self.nearest(query, budget)
+    }
+    /// \[EXTENSION\] Takes its structure into memory, or lets it go (ALTER
+    /// INDEX LOAD, UNLOAD; vector design document §10.6): a hint, changing
+    /// nothing it holds. Default: nothing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or SQLCODE -918 if the memory cannot be reserved.
+    fn reside(&self, _resident: bool) -> Result<()> {
+        Ok(())
     }
     /// \[EXTENSION\] A snapshot, taken now, of the statistics a rank of its
     /// column reads (RULES.md D87); none by default. It may retain the index.

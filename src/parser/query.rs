@@ -14,9 +14,12 @@ use crate::ast::{
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
+mod chunk_table;
+mod hybrid_search;
 mod order_by;
 mod ordered;
 mod sets;
+mod vector_search;
 
 // [ISO/IEC 9075-2:2023 §5.2, §7.17] Words of a <with clause> that SQL-92
 // does not reserve: identifiers, read as these only there.
@@ -502,11 +505,20 @@ impl Parser {
         if self.at_unnest() {
             return self.collection_derived_table();
         }
+        if self.at_chunk_table() {
+            return self.chunk_table();
+        }
         if self.at_ptf_table() {
             return self.ptf_table();
         }
+        if self.at_vector_search() {
+            return self.vector_search();
+        }
         if self.at_json_table() {
             return self.json_table();
+        }
+        if self.at_hybrid_search() {
+            return self.hybrid_search();
         }
         // [ISO/IEC 9075-2:2023 §7.6] <only spec>.
         let (table, only) = self.target_table()?;

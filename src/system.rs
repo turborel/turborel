@@ -35,6 +35,7 @@
 //! binding it.
 
 mod definition;
+mod embedding;
 mod files;
 mod formats;
 mod fulltext;
@@ -45,6 +46,7 @@ mod settings;
 mod spatial;
 mod totals;
 mod users;
+mod vectors;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -154,6 +156,8 @@ pub(crate) fn builtin() -> SystemTables {
     tables.extend(definition::tables());
     tables.extend(fulltext::tables());
     tables.extend(spatial::tables());
+    tables.extend(embedding::tables());
+    tables.extend(vectors::tables());
     tables.into_iter().map(|t| (name_of(&*t), t)).collect()
 }
 

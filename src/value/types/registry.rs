@@ -44,11 +44,14 @@ impl TypeRegistry {
     }
 
     /// The kinds built in, SQL/MM Full-Text's FULLTEXT and FT_PATTERN
-    /// (RULES.md D87) and SQL/MM Spatial's geometry types (RULES.md
-    /// D-SPATIAL-FAMILY), which a registration of a type of their names is
-    /// refused beside.
+    /// (RULES.md D87), VECTOR (RULES.md D93) and SQL/MM Spatial's geometry
+    /// types (RULES.md D-SPATIAL-FAMILY), which a registration of a type of
+    /// their names is refused beside.
     pub(crate) fn builtin() -> TypeRegistry {
-        let kinds = crate::fulltext::types::types().into_iter().chain(crate::geometry::kinds().iter().copied());
+        let kinds = crate::fulltext::types::types()
+            .into_iter()
+            .chain(crate::vector::types())
+            .chain(crate::geometry::kinds().iter().copied());
         let mut all: BTreeMap<String, Kind> = kinds.map(|kind: Kind| (kind.name().to_owned(), kind)).collect();
         // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2] GEOMETRY names
         // ST_GEOMETRY too, as ISO/IEC 19125-2 and D85 wrote it.
