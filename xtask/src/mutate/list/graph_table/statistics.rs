@@ -4,13 +4,13 @@
 //! a sample's frequencies scaled; of the planner, the fan-out of a probe;
 //! of the end a search starts from, a hint, the estimate, the path
 //! reversed back and the orientation reversed; of a search's choice, a
-//! step's label transitions (D118); and of the view, a row's kind. Every
+//! step's label transitions and its endpoints' labels (D118); and of the view, a row's kind. Every
 //! search they change is bounded by its quantifier.
 
 use super::super::{Mutation, Package};
 
 /// The mutations of a graph's statistics, in the order they run.
-pub const GRAPH_STATISTICS: [Mutation; 12] = [
+pub const GRAPH_STATISTICS: [Mutation; 13] = [
     Mutation {
         name: "graph-statistics-average-degree",
         package: Package::Core,
@@ -129,6 +129,16 @@ pub const GRAPH_STATISTICS: [Mutation; 12] = [
         original: "    let steps = g.paths.iter().map(|p| statistics.as_ref().and_then(|s| step(s, &g.labels, &p.pattern))).collect();",
         replacement: "    let steps = g.paths.iter().map(|_| None).collect();",
         integration: &["graph_table::statistics::a_step_is_estimated_by_its_label_transitions"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-statistics-step-endpoints",
+        package: Package::Core,
+        breaks: "a step's estimate ignores the node patterns beside its edge, so LINK from person to person counts the links to cities too and is MS-BFS",
+        file: "src/binder/graph/sizing.rs",
+        original: "                each((beside(i.checked_sub(1)), test.labels.as_ref(), beside(i.checked_add(1)), *orientation))",
+        replacement: "                each((None, test.labels.as_ref(), None, *orientation))",
+        integration: &["graph_table::statistics::a_step_is_estimated_by_its_endpoint_labels"],
         unit: &[],
     },
 ];

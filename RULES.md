@@ -4136,9 +4136,12 @@ start, whose states cost less. A start's reach is the average degree's
 powers summed up to MAX_PATH_LENGTH, at most every vertex, of the size the
 view reports (`GraphView::size`, the element tables' row counts). The
 degree is of the edges a step may follow: the edges of the label
-transitions (D117) its edge patterns' labels match, the most of any of
-them, once the statistics count them (`binder/graph/sizing.rs`). A label
-expression of `!` or `&` falls back to every edge. Workers
+transitions (D117) of source, edge and destination labels its edge
+pattern and the node patterns written beside it match, each way the
+edge pattern walks, the most of any step, once the statistics count
+them (`binder/graph/sizing.rs`). An edge's label expression of `!` or
+`&` falls back to every edge, and a node's, or a side with no node
+pattern, matches any label. Workers
 are used when EXECUTOR.GRAPH_THREADS is above 1, the estimated states
 reach GRAPH.PARALLEL_MIN_STATES, and there is more than one piece of
 work. A PATH_ALGO hint (GS §16 R16.8) chooses within the family, and is

@@ -255,3 +255,45 @@ fn a_step_is_estimated_by_its_label_transitions() {
     let forced = format!("{} OPTIONS (PATH_ALGO(MSBFS)))", q(":KNOWS"));
     assert_eq!(rows(&s, &format!("{})", q(":KNOWS"))), rows(&s, &forced));
 }
+
+/// Verifies: [EXTENSION] [GS §15, §17] RULES.md D118: a step's estimate
+/// counts the label transitions of its edge's labels between the labels of
+/// the node patterns beside it: of LINK edges, 40 between people and 800
+/// from people to cities, ANY SHORTEST over LINK from person to person is
+/// BFS from each start, and from person to city MS-BFS.
+#[test]
+fn a_step_is_estimated_by_its_endpoint_labels() {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
+    let s = db.session("A");
+    let ids: Vec<String> = (0..80).map(|i| format!("({i})")).collect();
+    let knows: Vec<String> = (0..40).map(|i| format!("({i}, {i}, {})", i + 1)).collect();
+    let lives: Vec<String> = (0..800).map(|i| format!("({i}, {}, {})", i % 80, (i * 7) % 80)).collect();
+    for sql in [
+        "CREATE TABLE P (ID INTEGER PRIMARY KEY)".to_owned(),
+        "CREATE TABLE C (ID INTEGER PRIMARY KEY)".to_owned(),
+        "CREATE TABLE K (ID INTEGER PRIMARY KEY, S INTEGER NOT NULL REFERENCES P, D INTEGER NOT NULL REFERENCES P)".to_owned(),
+        "CREATE TABLE L (ID INTEGER PRIMARY KEY, S INTEGER NOT NULL REFERENCES P, D INTEGER NOT NULL REFERENCES C)".to_owned(),
+        format!("INSERT INTO P VALUES {}", ids.join(", ")),
+        format!("INSERT INTO C VALUES {}", ids.join(", ")),
+        format!("INSERT INTO K VALUES {}", knows.join(", ")),
+        format!("INSERT INTO L VALUES {}", lives.join(", ")),
+        "CREATE PROPERTY GRAPH SN VERTEX TABLES (P LABEL PERSON, C LABEL CITY) EDGE TABLES ( \
+         K SOURCE KEY (S) REFERENCES P (ID) DESTINATION KEY (D) REFERENCES P (ID) LABEL LINK, \
+         L SOURCE KEY (S) REFERENCES P (ID) DESTINATION KEY (D) REFERENCES C (ID) LABEL LINK)"
+            .to_owned(),
+        "COMMIT WORK".to_owned(),
+    ] {
+        s.run(&sql).unwrap();
+    }
+    for table in ["A.P", "A.C", "A.K", "A.L"] {
+        db.analyze(table).unwrap();
+    }
+    let q =
+        |to: &str| format!("SELECT * FROM GRAPH_TABLE (SN MATCH ANY SHORTEST (a)((x:PERSON)-[:LINK]->(y:{to}))*(b) COLUMNS (b.id AS B))");
+    let shown = s.explain(&q("PERSON"), &Params::new()).unwrap();
+    assert!(shown.contains("PathSearch-BFS by cost: 160 starts, est. reach 1 of 160"), "{shown}");
+    let shown = s.explain(&q("CITY"), &Params::new()).unwrap();
+    assert!(shown.contains("MS-BFS by cost: 160 starts"), "{shown}");
+}

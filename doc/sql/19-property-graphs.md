@@ -328,8 +328,9 @@ each edge table's lists in one pass of its index. Of ANY SHORTEST or
 ANY from many starts, it searches from up to 64 starts at once (MS-BFS)
 when that many starts would together reach about every vertex, judged by
 the tables' sizes and the average degree of the edges the pattern's
-labels match, once the graph's statistics count them, and from each
-start alone otherwise. It runs on the workers EXECUTOR.GRAPH_THREADS allows once its
+edge labels match between the labels of the node patterns beside them,
+once the graph's statistics count them, and from each start alone
+otherwise. It runs on the workers EXECUTOR.GRAPH_THREADS allows once its
 estimated states reach GRAPH.PARALLEL_MIN_STATES: in morsels of starts,
 or level by level from one start. PATH_ALGO picks the algorithm within
 the family the selector calls for, BFS or MSBFS of a shortest or ANY
