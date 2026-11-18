@@ -318,22 +318,26 @@ fn recovery_undoes_and_redoes_what_the_pages_need() {
     assert_eq!((report.undone, report.redone), (3, 3), "undone 3, 4, 8; redone 2, 7, 9: {report:?}");
 }
 
-/// Waits up to five seconds for `db` to have taken `n` checkpoints.
+/// Waits for `db` to have taken `n` checkpoints, thirty seconds at most,
+/// as the other tests of background work wait for it: a checkpoint's syncs
+/// take long on a machine under load.
 fn wait_for_checkpoints(db: &Database, n: u64) -> bool {
-    for _ in 0..500 {
-        if db.checkpoints_taken() >= n {
-            return true;
+    let began = std::time::Instant::now();
+    while db.checkpoints_taken() < n {
+        if began.elapsed() >= std::time::Duration::from_secs(30) {
+            return false;
         }
         thread::sleep(std::time::Duration::from_millis(10));
     }
-    false
+    true
 }
 
 /// Verifies: [DESIGN] RULES.md D25, checkpoints come due: after
 /// CHECKPOINT.AFTER_CHANGES row changes, and after CHECKPOINT.AFTER_BYTES written to
 /// the tables file's side file, the checkpoint thread takes one; a database
 /// not opened from files counts none and has no failure; the thread ends
-/// when the database is closed.
+/// when the database is closed. Regression test (R-TEST-7): it waited five
+/// seconds for the checkpoint, and failed now and then under load.
 #[test]
 fn checkpoints_come_due() {
     assert_eq!((Database::new().checkpoints_taken(), Database::new().checkpoint_failure().is_none()), (0, true));
