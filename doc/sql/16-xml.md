@@ -927,8 +927,9 @@ last step, with a literal, or several of these joined by `and`, as in
 `/order[@no = "17"][customer]/item[qty = "2" and name]`. A comparison by
 `=`, `!=`, `<`, `<=`, `>` or `>=` with a string or a number narrows the
 rows the index gives; any other leaves its path alone. The index reads
-the path, and each predicate's path from the start, and gives the rows
-each of them gives; of a predicate compared with a number, which may
+the path, each predicate's path from the start, and, of a last step of
+another axis, the path of its elements, and gives the rows each of them
+gives; of a predicate compared with a number, which may
 fail of a node it cannot cast, the rows its own path gives too. Several
 such conditions of one column joined by AND are read alike. A query of
 another shape, or a table too small to gain, is read whole.
@@ -953,7 +954,8 @@ error raised as by a full read.
 XML_PRIMARY answers of each row from the index alone a query of a path,
 its comparisons with strings and its steps' predicates, where each
 predicate's node is fixed of a node the path selects, as it is but of a
-predicate between two `//` steps: a row it
+predicate between two `//` steps, and a last step of another axis, by
+comparing the places in document order its index keeps: a row it
 holds of is not checked, only one whose answer needs a value longer
 than it keeps whole. Of the other methods, of a query compared with a
 number or by a value comparison, and of a column of XML(SEQUENCE), each

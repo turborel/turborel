@@ -16,24 +16,19 @@
 //! - as the last step, `ancestor` or `ancestor-or-self` of a name a step
 //!   it reaches tests, or of any name and a step it reaches, selects a
 //!   node whenever the path before does, so the path is the lookup,
-//!   exactly; of another name, a node only if the value has an element of
-//!   that name, a condition of the item, though not exactly; so do
-//!   `following`, `following-sibling`, `preceding` and `preceding-sibling`
-//!   of a name; and of a kind test, or a last step of the child or
-//!   descendant axis of `text()`, `comment()`, `node()` or
-//!   `processing-instruction()`, a node only if the path before selects
-//!   one, its lookup, not exactly.
-//!
-//! The order of nodes the last kinds of step need is the ORDPATHs' the
-//! primary keeps [Pal et al. §2.2], but a node's following or preceding
-//! nodes are neither below an anchor of it, the one range of ORDPATHs a
-//! filter reads, nor of one path, the one seek a node is found by: the
-//! primary answers none of them, and each row given is checked.
+//!   exactly; of another name, and `following`, `following-sibling`,
+//!   `preceding` and `preceding-sibling` of a name or any, a node only if
+//!   an element of that name stands in that relation to a node the path
+//!   before selects: the query's relation (`index::xml::XmlRelated`),
+//!   exactly, which the primary answers by the nodes' ORDPATHs [Pal et al.
+//!   §2.2]; of a kind test, or a last step of the child or descendant axis
+//!   of `text()`, `comment()`, `node()` or `processing-instruction()`, a
+//!   node only if the path before selects one, its lookup, not exactly.
 
 use super::super::plan::{Axis, Namespace, Op, PathOp, StepOp, StepTest};
 use super::super::types::{ElementKind, NodeKind};
 use super::conditions::{Branch, branches};
-use crate::index::xml::{Axis as Along, PathPattern, Step, Target};
+use crate::index::xml::{Axis as Along, PathPattern, Relation, Step, Target, XmlRelated};
 use crate::xml::QName;
 
 /// A condition of a node.
@@ -63,14 +58,16 @@ pub(super) struct Taken<'a> {
 }
 
 /// A path taken: the conditions of the item, its steps, what its last
-/// selects, and whether a lookup of them selects exactly the nodes the
-/// path does.
+/// selects, whether a lookup of them selects exactly the nodes the path
+/// does, and the relation of an element to its last node, if a last step
+/// makes one.
 #[derive(Debug)]
 pub(super) struct Twig<'a> {
     pub(super) root: Vec<Condition<'a>>,
     pub(super) steps: Vec<Taken<'a>>,
     pub(super) target: Target,
     pub(super) exact: bool,
+    pub(super) related: Option<XmlRelated>,
 }
 
 impl<'a> Twig<'a> {
@@ -101,7 +98,7 @@ struct Tested(Option<QName>);
 /// `path`'s steps taken, from the context item or `/`, which of a value's
 /// one node is that node; none if a step is of another kind.
 pub(super) fn twig(path: &PathOp) -> Option<Twig<'_>> {
-    let mut made = Twig { root: Vec::new(), steps: Vec::new(), target: Target::Element, exact: true };
+    let mut made = Twig { root: Vec::new(), steps: Vec::new(), target: Target::Element, exact: true, related: None };
     let mut descend = false;
     for (at, step) in path.steps.iter().enumerate() {
         let last = at.saturating_add(1) == path.steps.len();
@@ -300,15 +297,15 @@ fn ancestor(made: &mut Twig<'_>, stepping: Stepping<'_, '_>) -> Option<()> {
     let reached = made.steps.len().saturating_sub(usize::from(!own));
     let tests = |taken: &Taken<'_>| name.as_ref().is_none_or(|n| taken.step.name.as_ref().is_some_and(|t| t.same(n)));
     if !made.steps.iter().take(reached).any(tests) {
-        below_item(made, name);
+        let relation = if stepping.axis == Axis::Ancestor { Relation::Ancestor } else { Relation::AncestorOrSelf };
+        made.related = Some(XmlRelated { relation, name });
     }
     Some(())
 }
 
 /// A last step of `following`, `preceding` or their siblings, of no
-/// predicate: of a name, the path and the condition of the item that an
-/// element of that name is below it; of a kind test, the path; neither
-/// exactly.
+/// predicate: of a name or any, the path and its relation; of a kind
+/// test, the path, not exactly.
 fn elsewhere(made: &mut Twig<'_>, stepping: Stepping<'_, '_>) -> Option<()> {
     if !stepping.last || stepping.descend || !stepping.own.is_empty() || made.steps.is_empty() {
         return None;
@@ -317,14 +314,20 @@ fn elsewhere(made: &mut Twig<'_>, stepping: Stepping<'_, '_>) -> Option<()> {
         made.exact = false;
         return Some(());
     };
-    below_item(made, named(Axis::Child, stepping.test)?.0);
+    let relation = match stepping.axis {
+        Axis::Following => Relation::Following,
+        Axis::FollowingSibling => Relation::FollowingSibling,
+        Axis::Preceding => Relation::Preceding,
+        Axis::PrecedingSibling => Relation::PrecedingSibling,
+        Axis::Child
+        | Axis::Descendant
+        | Axis::Attribute
+        | Axis::SelfNode
+        | Axis::DescendantOrSelf
+        | Axis::Parent
+        | Axis::Ancestor
+        | Axis::AncestorOrSelf => return None,
+    };
+    made.related = Some(XmlRelated { relation, name: named(Axis::Child, stepping.test)?.0 });
     Some(())
-}
-
-/// `made`, its item's condition that an element named `name`, or any, is
-/// below it added, not exactly.
-fn below_item(made: &mut Twig<'_>, name: Option<QName>) {
-    made.exact = false;
-    let pattern = PathPattern { steps: vec![Step { axis: Along::Descendant, name }], target: Target::Element };
-    made.root.push(Condition::Made(Branch::of(pattern)));
 }

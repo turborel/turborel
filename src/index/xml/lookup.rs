@@ -13,6 +13,7 @@
 
 use super::dictionary::{Dictionary, tokens_of};
 use super::keys::{ATTRIBUTE, ELEMENT, NUMBER, STRING, UNORDERED, after, number_value, put_ordinal, string_value};
+use super::related::XmlRelated;
 use crate::disk::pager::DEFAULT_PAGE_SIZE;
 use crate::error::{Code, Result, SqlError};
 use crate::storage::RowId;
@@ -107,7 +108,8 @@ pub struct XmlLookup {
 /// steps: what an index answers of a row from its entries alone
 /// (`Index::xml_answers`), and a value's own check answers
 /// (`XmlQuery::matches`). It holds of a value of which its lookup selects
-/// a node whose every filter holds of its anchor. Of an index that only
+/// a node whose every filter holds of its anchor, and to which an element
+/// stands in its relation, if it has one. Of an index that only
 /// finds rows, the rows every lookup of it gives (`XmlQuery::lookups`)
 /// are a superset of its rows.
 #[derive(Debug, Clone)]
@@ -117,6 +119,9 @@ pub struct XmlQuery {
     /// Predicates of the nodes of the lookup's steps, each of the node of
     /// one, its anchor: none for the lookup alone.
     pub filters: Vec<XmlFilter>,
+    /// An element related to the node selected, as by a last step of
+    /// the ancestor, following or preceding axes, if any.
+    pub related: Option<XmlRelated>,
 }
 
 /// \[EXTENSION\] RULES.md D106 [XQuery §3.2.2]: a predicate of the node a
@@ -235,7 +240,7 @@ impl XmlQuery {
     /// The lookup alone, of no filter.
     #[must_use]
     pub fn of(lookup: XmlLookup) -> XmlQuery {
-        XmlQuery { lookup, filters: Vec::new() }
+        XmlQuery { lookup, filters: Vec::new(), related: None }
     }
 
     /// Where each filter's anchor is of a node its lookup selects.
@@ -250,8 +255,9 @@ impl XmlQuery {
 
     /// Its lookup's rows hold every row it holds of, and so do each
     /// filter's: the lookup's steps to the filter's anchor, then the
-    /// filter's, with its comparisons [Pal et al. §3.3]. Its lookup, then
-    /// each filter's, of the row its lookup asks of.
+    /// filter's, with its comparisons [Pal et al. §3.3], and of the elements
+    /// of its relation. Its lookup, then each filter's, then its
+    /// relation's, of the row its lookup asks of.
     #[must_use]
     pub fn lookups(&self) -> Vec<XmlLookup> {
         let each = self.filters.iter().map(|filter| {
@@ -260,7 +266,8 @@ impl XmlQuery {
             let pattern = PathPattern { steps, target: filter.pattern.target };
             XmlLookup { pattern, comparisons: filter.comparisons.clone(), row: self.lookup.row }
         });
-        std::iter::once(self.lookup.clone()).chain(each).collect()
+        let related = self.related.iter().map(|r| XmlLookup { pattern: r.pattern(), comparisons: Vec::new(), row: self.lookup.row });
+        std::iter::once(self.lookup.clone()).chain(each).chain(related).collect()
     }
 }
 

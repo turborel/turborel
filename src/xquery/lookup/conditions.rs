@@ -71,7 +71,7 @@ fn relative(path: &PathOp) -> Option<PathPattern> {
         return None;
     }
     let made = twig(path)?;
-    let plain = made.exact && made.root.is_empty() && made.steps.iter().all(|t| t.conditions.is_empty());
+    let plain = made.exact && made.related.is_none() && made.root.is_empty() && made.steps.iter().all(|t| t.conditions.is_empty());
     let steps: Vec<_> = made.steps.into_iter().map(|t| t.step).collect();
     (plain && !steps.is_empty()).then_some(PathPattern { steps, target: made.target })
 }

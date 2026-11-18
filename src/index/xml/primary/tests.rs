@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use super::*;
 use crate::index::xml::check::tests::{Made, element, kind, lookup};
 use crate::index::xml::tests::{compared, document, index, path, stored};
-use crate::index::xml::{Axis, Literal, Method, PRIMARY_VALUE_BYTES};
+use crate::index::xml::{Axis, Literal, Method, PRIMARY_VALUE_BYTES, Relation, Target, XmlRelated};
 use crate::index::{Index, Key};
 use crate::value::{CompOp, Value};
+use crate::xml::QName;
 use crate::xml::{Sequence, Syntax, Whitespace, encode, parse};
 
 /// The answers of `index` for `query`, by row.
@@ -70,14 +71,14 @@ fn a_parent_join_answers_the_papers_query() {
     index.insert(Key(vec![document(&book("1-55860-438-3"))]), 1).unwrap();
     index.insert(Key(vec![document(&book("0-00000-000-0"))]), 2).unwrap();
     index.insert(Key(vec![document("<BOOK><SECTION/></BOOK>")]), 3).unwrap();
-    let isbn = path(&[(Axis::Child, "ISBN")], crate::index::xml::Target::Attribute);
+    let isbn = path(&[(Axis::Child, "ISBN")], Target::Attribute);
     let filter = XmlFilter { at: 1, pattern: isbn, comparisons: vec![compared(CompOp::Eq, Literal::String("1-55860-438-3".to_owned()))] };
     let lookup = XmlLookup {
-        pattern: path(&[(Axis::Child, "BOOK"), (Axis::Child, "SECTION")], crate::index::xml::Target::Element),
+        pattern: path(&[(Axis::Child, "BOOK"), (Axis::Child, "SECTION")], Target::Element),
         comparisons: Vec::new(),
         row: None,
     };
-    let mut query = XmlQuery { lookup, filters: vec![filter] };
+    let mut query = XmlQuery { lookup, filters: vec![filter], related: None };
     assert_eq!(answers(&index, &query), HashMap::from([(1, XmlAnswer::Holds)]));
     query.lookup.row = Some(2);
     assert_eq!(answers(&index, &query), HashMap::new());
@@ -101,7 +102,7 @@ fn a_cut_value_and_versions_alike_are_checked() {
     index.insert(Key(vec![document(&format!("<a>{long}</a>"))]), 1).unwrap();
     let lookup = |text: &str| {
         alone(XmlLookup {
-            pattern: path(&[(Axis::Child, "a")], crate::index::xml::Target::Element),
+            pattern: path(&[(Axis::Child, "a")], Target::Element),
             comparisons: vec![compared(CompOp::Eq, Literal::String(text.to_owned()))],
             row: None,
         })
@@ -122,10 +123,56 @@ fn a_cut_value_and_versions_alike_are_checked() {
 /// ORDPATH less as many components [Pal et al. §2.2].
 #[test]
 fn only_the_primary_answers_and_ancestors_are_prefixes() {
-    let lookup = XmlLookup { pattern: path(&[(Axis::Child, "a")], crate::index::xml::Target::Element), comparisons: Vec::new(), row: None };
+    let lookup = XmlLookup { pattern: path(&[(Axis::Child, "a")], Target::Element), comparisons: Vec::new(), row: None };
     assert!(index(Method::Path).xml_answers(&alone(lookup)).is_none());
     let label = [ordinal_of(1), ordinal_of(3), ordinal_of(300)].concat();
     assert_eq!(ancestor(&label, 1).unwrap(), &label[..4]);
     assert_eq!(ancestor(&label, 2).unwrap(), &label[..2]);
     assert!(ancestor(&label, 3).is_err());
+}
+
+/// Verifies: [EXTENSION] RULES.md D106 [Pal et al. §2.2, §3.1.1] [XQuery
+/// §3.2.1.1]: of the paper's document, the primary answers a relation of
+/// an element to a node by their ORDPATHs: its following and preceding
+/// elements past and before its range of keys, not its ancestors; its
+/// siblings of its parent's range and as many components; its ancestors
+/// of the prefixes of its ORDPATH; an attribute has no sibling, and its
+/// element is its ancestor.
+#[test]
+fn relations_are_answered_by_ordpaths() {
+    let index = index(Method::Primary);
+    let book = r#"<BOOK ISBN="1"><SECTION><TITLE>Bad Bugs</TITLE>Nobody<FIGURE CAPTION="Sample bug"/></SECTION><SECTION><TITLE>Tree Frogs</TITLE>All<BOLD> love </BOLD></SECTION></BOOK>"#;
+    index.insert(Key(vec![document(book)]), 1).unwrap();
+    let asked = |node: &str, target: Target, relation: Relation, name: Option<&str>| {
+        let lookup = XmlLookup { pattern: path(&[(Axis::Descendant, node)], target), comparisons: Vec::new(), row: None };
+        let related = Some(XmlRelated { relation, name: name.map(QName::local) });
+        let query = XmlQuery { related, ..XmlQuery::of(lookup) };
+        let wanted = query.matches_stored(&stored(book)).unwrap();
+        let answered = answers(&index, &query).contains_key(&1);
+        assert_eq!(answered, wanted, "{node} {relation:?} {name:?}");
+        answered
+    };
+    let (e, a) = (Target::Element, Target::Attribute);
+    for (node, target, relation, name, holds) in [
+        ("TITLE", e, Relation::FollowingSibling, Some("FIGURE"), true),
+        ("FIGURE", e, Relation::FollowingSibling, Some("TITLE"), false),
+        ("FIGURE", e, Relation::PrecedingSibling, Some("TITLE"), true),
+        ("TITLE", e, Relation::PrecedingSibling, None, false),
+        ("BOLD", e, Relation::Preceding, Some("FIGURE"), true),
+        ("FIGURE", e, Relation::Preceding, Some("BOLD"), false),
+        // Its own section is above it.
+        ("FIGURE", e, Relation::Preceding, Some("SECTION"), false),
+        ("FIGURE", e, Relation::Following, None, true),
+        ("BOLD", e, Relation::Following, None, false),
+        // The figure is below its section.
+        ("SECTION", e, Relation::Following, Some("FIGURE"), false),
+        ("TITLE", e, Relation::Ancestor, Some("BOOK"), true),
+        ("BOOK", e, Relation::Ancestor, None, false),
+        ("CAPTION", a, Relation::AncestorOrSelf, Some("FIGURE"), true),
+        ("FIGURE", e, Relation::AncestorOrSelf, Some("FIGURE"), true),
+        ("CAPTION", a, Relation::FollowingSibling, None, false),
+        ("CAPTION", a, Relation::Following, Some("SECTION"), true),
+    ] {
+        assert_eq!(asked(node, target, relation, name), holds, "{node} {relation:?} {name:?}");
+    }
 }

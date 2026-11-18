@@ -14,12 +14,18 @@
 //! known, the error one raised. Until then it waits, as an element
 //! selected and open does; the first answer, by place, is kept until no
 //! node before it waits. Nodes waiting for the same anchors, alike in
-//! whether one raised, answer alike, so only the first is kept.
+//! whether one raised, answer alike, so only the first is kept. A query's
+//! relation of an element to a node selected is read too (`relating.rs`),
+//! a node waiting for an element following it as for an anchor.
+
+mod relating;
 
 use super::{Compiled, Steps, bit, compared_by};
 use crate::error::{Code, Result, SqlError};
 use crate::index::xml::lookup::{Anchored, Target, XmlFilter, XmlLookup, anchors_of};
+use crate::index::xml::related::XmlRelated;
 use crate::xml::{Event, MAX_NESTING, QName};
+use relating::{Of, Related, Relating};
 
 /// A filter's steps from an anchor, of an element open: the anchor's
 /// number, and the steps ending at the element and matched at or above it.
@@ -75,6 +81,8 @@ struct Compiling<'l> {
 /// The answer of a value, being read.
 pub(super) struct Reading<'l> {
     lookup: &'l XmlLookup,
+    /// The relation of an element to a node selected, if any.
+    relating: Option<Relating<'l>>,
     path: Compiled<'l>,
     filters: Vec<Compiling<'l>>,
     /// The steps each name of the item passes, and each filter's.
@@ -98,14 +106,14 @@ pub(super) struct Reading<'l> {
 }
 
 impl<'l> Reading<'l> {
-    /// The reading of the answer of `lookup` and `filters`.
+    /// The reading of the answer of `lookup`, `filters` and `related`.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 of a path of no step, or of a filter whose anchor is
     /// not fixed (`XmlLookup::anchored`); -900 of a path of more than
     /// `MAX_STEPS` steps, or of more filters than `MAX_FILTERS`.
-    pub(super) fn of(lookup: &'l XmlLookup, filters: &'l [XmlFilter]) -> Result<Reading<'l>> {
+    pub(super) fn of(lookup: &'l XmlLookup, filters: &'l [XmlFilter], related: Option<&'l XmlRelated>) -> Result<Reading<'l>> {
         let filters = filters
             .iter()
             .zip(anchors_of(lookup, filters)?)
@@ -116,6 +124,7 @@ impl<'l> Reading<'l> {
             .collect::<Result<_>>()?;
         Ok(Reading {
             lookup,
+            relating: related.map(Relating::of),
             path: Compiled::of(&lookup.pattern.steps)?,
             filters,
             names: Vec::new(),
@@ -136,6 +145,9 @@ impl<'l> Reading<'l> {
         let filtered: Vec<Vec<Steps>> = self.filters.iter().map(|f| f.path.names(names)).collect();
         let each = |n: usize| filtered.iter().map(|f| f.get(n).copied().unwrap_or(0)).collect();
         self.names = self.path.names(names).into_iter().enumerate().map(|(n, own)| (own, each(n))).collect();
+        if let Some(relating) = self.relating.as_mut() {
+            relating.named(names);
+        }
     }
 
     /// Takes `event`.
@@ -203,6 +215,10 @@ impl<'l> Reading<'l> {
         }
         let selected = selected.zip(start);
         self.open.push(Open { ended, reached, selected, filtering, filtered, start, anchors });
+        let held = self.relating.as_mut().map(|r| r.push(name)).unwrap_or_default();
+        for id in held {
+            self.known(id, None);
+        }
         Ok(())
     }
 
@@ -260,7 +276,7 @@ impl<'l> Reading<'l> {
             self.filter_answer(anchor, value);
         }
         if selected {
-            self.target_answer((self.at, parent.saturating_add(1)), value);
+            self.target_answer((self.at, parent.saturating_add(1)), value, Of::Attribute);
         }
     }
 
@@ -268,6 +284,7 @@ impl<'l> Reading<'l> {
     /// its anchors if a filter selects it, and closing its anchors.
     pub(super) fn end(&mut self) {
         let Some(closed) = self.open.pop() else { return };
+        let opened = self.relating.as_mut().and_then(Relating::pop);
         let depth = self.open.len();
         let text = closed.start.and_then(|start| self.text.get(start..)).unwrap_or_default().to_owned();
         for &anchor in &closed.filtered {
@@ -275,7 +292,17 @@ impl<'l> Reading<'l> {
         }
         if let Some((at, _)) = closed.selected {
             self.pending.pop();
-            self.target_answer((at, depth), &text);
+            // An element is open in the relation as in the reading, so of a
+            // relation it has its own.
+            if let Some(opened) = opened.as_ref() {
+                self.target_answer((at, depth), &text, Of::Element(opened));
+            } else {
+                self.target_answer((at, depth), &text, Of::Attribute);
+            }
+        }
+        let ended = self.relating.as_mut().zip(opened).map(|(r, o)| r.closed(&o)).unwrap_or_default();
+        for id in ended {
+            self.waiting.retain(|w| !w.pending.contains(&id));
         }
         for _ in 0..closed.anchors {
             if let Some(anchor) = self.anchors.pop() {
@@ -290,11 +317,12 @@ impl<'l> Reading<'l> {
         }
     }
 
-    /// The answer of a node selected, at place `at` and `depth` deep, of
-    /// value `text`: of its comparisons, then of its anchors' filters.
-    fn target_answer(&mut self, (at, depth): (u64, usize), text: &str) {
+    /// The answer of a node selected, `of` an element or an attribute, at
+    /// place `at` and `depth` deep, of value `text`: of its comparisons,
+    /// then of its anchors' filters and its relation.
+    fn target_answer(&mut self, (at, depth): (u64, usize), text: &str, of: Of<'_>) {
         let compared = self.lookup.compared(text);
-        if self.filters.is_empty() || !matches!(compared, Ok(true)) {
+        if !matches!(compared, Ok(true)) {
             return self.answer(at, compared);
         }
         let mut pending = Vec::new();
@@ -308,6 +336,11 @@ impl<'l> Reading<'l> {
             if !anchor.holds {
                 pending.push(anchor.id);
             }
+        }
+        match self.relating.as_mut().map(|r| r.related(of, &mut self.next_anchor)) {
+            Some(Related::No) => return,
+            Some(Related::Waits(id)) => pending.push(id),
+            Some(Related::Yes) | None => {}
         }
         if pending.is_empty() {
             return self.answer(at, Ok(true));

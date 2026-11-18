@@ -23,12 +23,15 @@ const NAMES: [&str; 3] = ["pen", "ink", "cap"];
 
 /// The document of row `k`: an order of a customer of a tier, and two
 /// items, each of a price, a name and a quantity; a gift in every
-/// twentieth's first item, from the fourth.
+/// twentieth's first item, from the fourth, after its quantity, but before
+/// its name in every fortieth's, from the twenty-fourth.
 fn document(k: usize) -> String {
     let tier = if k.is_multiple_of(4) { "gold" } else { "silver" };
     let item = |n: usize| {
         let gift = if n == 0 && k % 20 == 4 { "<gift/>" } else { "" };
-        format!("<item price=\"{}\"><name>{}</name><qty>{}</qty>{gift}</item>", (k + n * 7) % 50, NAMES[(k + n) % NAMES.len()], (k + n) % 5)
+        let (first, last) = if k % 40 == 24 { (gift, "") } else { ("", gift) };
+        let (price, name, qty) = ((k + n * 7) % 50, NAMES[(k + n) % NAMES.len()], (k + n) % 5);
+        format!("<item price=\"{price}\">{first}<name>{name}</name><qty>{qty}</qty>{last}</item>")
     };
     format!("<order id=\"{k}\"><customer tier=\"{tier}\"/>{}{}</order>", item(0), item(1))
 }
@@ -176,7 +179,7 @@ fn a_predicate_that_may_raise_is_read_by_its_lookup() {
 /// Conditions of T's rows of steps of other axes, each with what EXPLAIN
 /// shows of the XML_PATH index's query of it, and whether XML_PRIMARY
 /// answers it where it reads it.
-const AXES: [(&str, &str, bool); 9] = [
+const AXES: [(&str, &str, bool); 12] = [
     ("XMLEXISTS('/order/item/../customer[@tier = \"gold\"]' PASSING BY REF X)", "/order[item]/customer/@tier = 'gold'", true),
     ("XMLEXISTS('/order/item/gift/ancestor::item' PASSING BY REF X)", "/order/item/gift", true),
     ("XMLEXISTS('//*/self::gift' PASSING BY REF X)", "//gift", true),
@@ -186,9 +189,12 @@ const AXES: [(&str, &str, bool); 9] = [
         true,
     ),
     ("XMLEXISTS('//gift/..' PASSING BY REF X)", "//gift", true),
-    ("XMLEXISTS('//gift/ancestor::order' PASSING BY REF X)", ".[.//order]//gift", false),
-    ("XMLEXISTS('//name/following-sibling::gift' PASSING BY REF X)", ".[.//gift]//name", false),
-    ("XMLEXISTS('//gift/preceding::customer' PASSING BY REF X)", ".[.//customer]//gift", false),
+    ("XMLEXISTS('//gift/ancestor::order' PASSING BY REF X)", "//gift/ancestor::order", true),
+    ("XMLEXISTS('//name/following-sibling::gift' PASSING BY REF X)", "//name/following-sibling::gift", true),
+    ("XMLEXISTS('//name/preceding-sibling::gift' PASSING BY REF X)", "//name/preceding-sibling::gift", true),
+    ("XMLEXISTS('//gift/following-sibling::qty' PASSING BY REF X)", "//gift/following-sibling::qty", true),
+    ("XMLEXISTS('//gift/preceding::customer' PASSING BY REF X)", "//gift/preceding::customer", true),
+    ("XMLEXISTS('//customer[@tier = \"gold\"]/following::gift' PASSING BY REF X)", "//customer[@tier = 'gold']/following::gift", true),
     ("XMLEXISTS('//item[gift]/name/text()' PASSING BY REF X)", "//item[gift]/name", false),
 ];
 
@@ -196,8 +202,9 @@ const AXES: [(&str, &str, bool); 9] = [
 /// RULES.md D34, D106: of each XML index method, every condition of steps
 /// of the self, parent, ancestor, following and preceding axes, and of a
 /// kind test, gives the rows a full read gives, the index read for it,
-/// EXPLAIN showing its query; XML_PRIMARY answers those the path and its
-/// predicates select exactly, and checks the rows of the others.
+/// EXPLAIN showing its query; XML_PRIMARY answers those the path, its
+/// predicates and its relation select exactly, a relation of a gift by
+/// the nodes' ORDPATHs, and checks the rows of the others.
 #[test]
 fn other_axes_give_the_rows_of_a_full_read() {
     let db = database();
@@ -215,6 +222,10 @@ fn other_axes_give_the_rows_of_a_full_read() {
             }
             if method == "XML_PRIMARY" && found.contains("IndexScan") {
                 assert_eq!(found.contains("answered by the index"), *answered, "{condition}: {found}");
+            }
+            // Of a relation of few nodes, the primary answers by ORDPATHs.
+            if method == "XML_PRIMARY" && condition.contains("//gift/") && shown.contains("::") {
+                assert!(found.contains("answered by the index"), "{condition}: {found}");
             }
         }
         a.commit().unwrap();

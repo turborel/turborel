@@ -29,6 +29,7 @@ mod keys;
 mod lookup;
 mod primary;
 mod probe;
+mod related;
 mod search;
 mod shown;
 
@@ -41,6 +42,7 @@ pub use lookup::{
     XmlLookup, XmlQuery,
 };
 pub use probe::{MAX_LOOKUPS, XmlProbe};
+pub use related::{Relation, XmlRelated};
 
 use super::{Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, Probe, RowIds};
 use crate::catalog::{IndexDesc, TableDesc};

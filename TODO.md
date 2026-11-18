@@ -96,11 +96,6 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   measure overlap and space after sustained updates as well as fresh loads.
 - Adjacency held for a graph's edges, so a path query follows an edge
   without a join's search. Graph queries need it.
-- XML indexes (RULES.md D106): a last step of the following, preceding
-  or ancestor axes, of a name no step before tests, is read by lookups
-  and each row checked. The primary could answer it exactly by comparing
-  a row's nodes of two paths in ORDPATH order [Pal et al. §2.2], a join
-  its answers, a seek and an anchor's range, do not make yet.
 
 ---
 

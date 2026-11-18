@@ -20,14 +20,15 @@
 //! * answered: the primary's answer, from its entries alone
 //!   (`Index::xml_answers`), of the one row that holds, asked of it, and of
 //!   every row; and of the same, filtered by its order's number,
-//!   `/order[@no = 0]/item[. = "thing N"]`, beside the check of each value
-//!   of that.
+//!   `/order[@no = 0]/item[. = "thing N"]`, and of the item's following
+//!   quantity, `.../following-sibling::qty`, by their ORDPATHs, beside the
+//!   check of each value of each.
 //!
 //! And statements of a table of 2,000 orders of 10 items, read whole and
 //! by each method's index, of the shapes the planner reads an index for:
 //! a predicate of two steps, of each step, of `and`; queries joined by
 //! AND; a parent step; a numeric predicate in ON, read below its guard;
-//! and a query of a column of XML(SEQUENCE).
+//! a following sibling; and a query of a column of XML(SEQUENCE).
 //!
 //! Index building is outside the timer. Run with `cargo xtask bench
 //! xml_index`, on the harness (RULES.md R-BENCH-1). When the XQuery
@@ -53,7 +54,8 @@ use std::sync::Arc;
 use harness::{Bench, Case, note};
 use turborel::db::{Database, Session};
 use turborel::index::xml::{
-    Axis, Comparison, Literal, Method, PathPattern, Step, Target, XmlAnswer, XmlFilter, XmlLookup, XmlMethod, XmlQuery,
+    Axis, Comparison, Literal, Method, PathPattern, Relation, Step, Target, XmlAnswer, XmlFilter, XmlLookup, XmlMethod, XmlQuery,
+    XmlRelated,
 };
 use turborel::index::{Index, IndexMethod, Key};
 use turborel::value::lob::Lob;
@@ -134,8 +136,16 @@ fn primary(bench: &Bench, items: usize, (values, indexed_values): (&[Vec<u8>], &
         values.len() as u64
     });
     let alone = XmlQuery::of(lookup.clone());
-    for (case, asked) in [("", &alone), ("filtered, ", &filtered)] {
-        let one = XmlQuery { lookup: XmlLookup { row: Some(0), ..asked.lookup.clone() }, filters: asked.filters.clone() };
+    // The item's following quantity, its sibling, by their ORDPATHs.
+    let qty = XmlRelated { relation: Relation::FollowingSibling, name: Some(QName::local("qty")) };
+    let related = XmlQuery { related: Some(qty), ..XmlQuery::of(lookup.clone()) };
+    bench.measure(Case::new(format!("checked, related, {items} items"), "values").bytes(values[0].len()), || {
+        let held = values.iter().filter(|v| related.matches(&xml(v)).unwrap()).count();
+        assert_eq!(held, 1);
+        values.len() as u64
+    });
+    for (case, asked) in [("", &alone), ("filtered, ", &filtered), ("related, ", &related)] {
+        let one = XmlQuery { lookup: XmlLookup { row: Some(0), ..asked.lookup.clone() }, ..asked.clone() };
         bench.measure(Case::new(format!("answered, {case}one row, xml_primary, {items} items"), "lookups"), || {
             let answers: Vec<(u64, XmlAnswer)> = Arc::clone(&index).xml_answers(&one).unwrap().map(Result::unwrap).collect();
             assert_eq!(answers, [(0, XmlAnswer::Holds)]);
@@ -153,7 +163,7 @@ fn primary(bench: &Bench, items: usize, (values, indexed_values): (&[Vec<u8>], &
 fn filtered(lookup: &XmlLookup) -> XmlQuery {
     let no = PathPattern { steps: vec![Step { axis: Axis::Child, name: Some(QName::local("no")) }], target: Target::Attribute };
     let zero = Comparison { op: CompOp::Eq, literal: Literal::Number(0.0) };
-    XmlQuery { lookup: lookup.clone(), filters: vec![XmlFilter { at: 1, pattern: no, comparisons: vec![zero] }] }
+    XmlQuery { lookup: lookup.clone(), filters: vec![XmlFilter { at: 1, pattern: no, comparisons: vec![zero] }], related: None }
 }
 
 /// An order of `items` items, the `n`th of a table: each document's
@@ -245,7 +255,7 @@ const ORDERS: usize = 2_000;
 
 /// The statements of each shape the planner reads an index for, each a
 /// count of the rows it holds of, with that count.
-const SHAPES: [(&str, &str, u64); 7] = [
+const SHAPES: [(&str, &str, u64); 8] = [
     ("two predicates", "SELECT COUNT(*) FROM T WHERE XMLEXISTS('/order[@no = \"7\"]/item[@sku = \"3\"]' PASSING BY REF X)", 1),
     (
         "a predicate of each step",
@@ -263,6 +273,11 @@ const SHAPES: [(&str, &str, u64); 7] = [
         "a numeric predicate in ON",
         "SELECT COUNT(*) FROM O JOIN T ON O.K = T.K AND XMLEXISTS('/order[@no > 1990]/item' PASSING BY REF T.X)",
         9,
+    ),
+    (
+        "a following sibling",
+        "SELECT COUNT(*) FROM T WHERE XMLEXISTS('/order[@no = \"7\"]/item[@sku = \"3\"]/following-sibling::qty' PASSING BY REF X)",
+        1,
     ),
     ("a sequence", "SELECT COUNT(*) FROM T WHERE XMLEXISTS('/order[@no = \"7\"]/item' PASSING BY REF S)", 1),
 ];

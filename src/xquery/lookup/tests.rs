@@ -174,9 +174,10 @@ fn other_queries_reduce_to_none() {
 /// takes back a child or attribute step, a condition of the step before,
 /// and after a descendant step, last, is the path before; each exactly;
 /// a last `ancestor` or `ancestor-or-self` of a name a step reaches is
-/// the path, exactly, of another, the path and an element of that name
-/// below the item, not exactly, as are `following`, `preceding` and their
-/// siblings of a name; a last kind test is the path before, not exactly.
+/// the path, exactly, of another, the path and its relation, exactly, as
+/// are `following`, `preceding` and their siblings of a name, the last
+/// step's predicates then filters of its node; a last kind test is the
+/// path before, not exactly.
 #[test]
 fn steps_of_other_axes_reduce() {
     for (text, lookup, exact) in [
@@ -195,10 +196,13 @@ fn steps_of_other_axes_reduce() {
         ("/order/item/ancestor-or-self::item", "/order/item", true),
         ("/order/item/ancestor::*", "/order/item", true),
         ("//item/@id/ancestor::node()", "//item/@id", true),
-        ("//item/ancestor::order", ".[.//order]//item", false),
-        ("/order/ancestor::*", ".[.//*]/order", false),
-        ("//item/following-sibling::note", ".[.//note]//item", false),
-        ("//item/preceding::*", ".[.//*]//item", false),
+        ("//item/ancestor::order", "//item/ancestor::order", true),
+        ("/order/ancestor::*", "/order/ancestor::*", true),
+        ("//item/following-sibling::note", "//item/following-sibling::note", true),
+        ("//item[. = 'x'][@id]/preceding-sibling::note", "//item[@id][. = 'x']/preceding-sibling::note", true),
+        ("//@id/ancestor-or-self::*", "//@id/ancestor-or-self::*", true),
+        ("//item/preceding::*", "//item/preceding::*", true),
+        ("//item[name]/following::note", "//item[name]/following::note", true),
         ("//item/following::text()", "//item", false),
         ("//item/text()", "//item", false),
         ("/order/item/node()", "/order/item", false),

@@ -6,12 +6,14 @@
 //! values cut, the values of no one document node a column of
 //! XML(SEQUENCE) holds, and queries of several filters: their lookups, the
 //! anchors fixed, the rows each lookup of a probe gives or any gives, and
-//! the answer of a node of several anchors (RULES.md R-TEST-9, D106).
+//! the answer of a node of several anchors; and a relation of an element
+//! to a node, by ORDPATHs and as the events come (RULES.md R-TEST-9,
+//! D106).
 
 use super::{Mutation, Package};
 
 /// Each XML index mechanism broken alone, and the tests that fail.
-pub const XML_INDEX: [Mutation; 30] = [
+pub const XML_INDEX: [Mutation; 36] = [
     Mutation {
         name: "xml-index-ordpath-odd",
         package: Package::Core,
@@ -336,5 +338,65 @@ pub const XML_INDEX: [Mutation; 30] = [
         replacement: "    let guess = if ix.method == XML_PRIMARY_METHOD { guess } else { guess };",
         integration: &["xml_index_shapes::explain_shows_each_shape_read"],
         unit: &[],
+    },
+    Mutation {
+        name: "xml-related-following",
+        package: Package::Core,
+        breaks: "an element below a node is taken as following it",
+        file: "src/index/xml/primary/related.rs",
+        original: "                let (Bound::Excluded(from) | Bound::Included(from)) = past(&below(node)) else { return Ok(false) };\n                self.met((Bound::Included(from), past(&entries)), paths, None)",
+        replacement: "                let from = [&below(node)[..], &[1]].concat();\n                self.met((Bound::Included(from), past(&entries)), paths, None)",
+        integration: &[],
+        unit: &["index::xml::primary::tests::relations_are_answered_by_ordpaths"],
+    },
+    Mutation {
+        name: "xml-related-preceding",
+        package: Package::Core,
+        breaks: "an ancestor of a node is taken as preceding it",
+        file: "src/index/xml/primary/related.rs",
+        original: "            if !above && paths.contains(&path) {",
+        replacement: "            if paths.contains(&path) {",
+        integration: &[],
+        unit: &["index::xml::primary::tests::relations_are_answered_by_ordpaths"],
+    },
+    Mutation {
+        name: "xml-primary-related",
+        package: Package::Core,
+        breaks: "the primary answers a query of a relation by its path alone",
+        file: "src/index/xml/primary.rs",
+        original: "                if outcome != Outcome::False && !self.related(row, node)? {",
+        replacement: "                if false && !self.related(row, node)? {",
+        integration: &["xml_index_shapes::other_axes_give_the_rows_of_a_full_read"],
+        unit: &["index::xml::primary::tests::the_primary_answers_as_each_value_does"],
+    },
+    Mutation {
+        name: "xml-check-following",
+        package: Package::Core,
+        breaks: "the check's node waiting for an element following it is never answered by one",
+        file: "src/index/xml/check/reading/relating.rs",
+        original: "            held.extend(self.following.take());",
+        replacement: "            held.extend(self.following.take().filter(|_| false));",
+        integration: &[],
+        unit: &["index::xml::check::tests::one_pass_answers_as_the_tree_does"],
+    },
+    Mutation {
+        name: "xml-check-preceding",
+        package: Package::Core,
+        breaks: "the check takes no element as preceding a node",
+        file: "src/index/xml/check/reading/relating.rs",
+        original: "let before = Before { preceded: self.closed, sibling: sibling_before };",
+        replacement: "let before = Before { preceded: false, sibling: sibling_before };",
+        integration: &[],
+        unit: &["index::xml::check::tests::one_pass_answers_as_the_tree_does"],
+    },
+    Mutation {
+        name: "xml-lookup-related",
+        package: Package::Core,
+        breaks: "a last step of the following, preceding or sibling axes is dropped, its path taken as exact",
+        file: "src/xquery/lookup/steps.rs",
+        original: "    made.related = Some(XmlRelated { relation, name: named(Axis::Child, stepping.test)?.0 });",
+        replacement: "    named(Axis::Child, stepping.test)?;",
+        integration: &["xml_index_shapes::other_axes_give_the_rows_of_a_full_read"],
+        unit: &["xquery::lookup::tests::steps_of_other_axes_reduce"],
     },
 ];

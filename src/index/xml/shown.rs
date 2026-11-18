@@ -4,12 +4,15 @@
 //! name, a name in a namespace as `Q{uri}local` [XPath 3.0 §A.1 EQName],
 //! then each comparison with its literal; a query's filters as predicates
 //! of the steps they are of, their paths relative to them, `.` the item
-//! [XQuery §3.2.2]; a probe's queries joined by `and`.
+//! [XQuery §3.2.2]; a relation as the last step it is, its node's
+//! comparisons a predicate of `.` before it; a probe's queries joined by
+//! `and`.
 
 use std::fmt::{self, Display, Write};
 
 use super::lookup::{Axis, Comparison, Literal, PathPattern, Step, Target, XmlFilter, XmlLookup, XmlQuery};
 use super::probe::XmlProbe;
+use super::related::Relation;
 use crate::value::CompOp;
 
 impl Display for XmlLookup {
@@ -32,7 +35,26 @@ impl Display for XmlQuery {
             step(f, each, (at == last && pattern.target == Target::Attribute, false))?;
             predicates(f, of(at.saturating_add(1)))?;
         }
-        compared(f, &self.lookup.comparisons)
+        let Some(related) = &self.related else { return compared(f, &self.lookup.comparisons) };
+        if !self.lookup.comparisons.is_empty() {
+            f.write_str("[.")?;
+            compared(f, &self.lookup.comparisons)?;
+            f.write_char(']')?;
+        }
+        write!(f, "/{}::", axis(related.relation))?;
+        name(f, &Step { axis: Axis::Child, name: related.name.clone() })
+    }
+}
+
+/// The axis of `relation`, as XQuery names it [XQuery §3.2.1.1].
+fn axis(relation: Relation) -> &'static str {
+    match relation {
+        Relation::Ancestor => "ancestor",
+        Relation::AncestorOrSelf => "ancestor-or-self",
+        Relation::Following => "following",
+        Relation::FollowingSibling => "following-sibling",
+        Relation::Preceding => "preceding",
+        Relation::PrecedingSibling => "preceding-sibling",
     }
 }
 

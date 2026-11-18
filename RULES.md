@@ -4648,7 +4648,19 @@ anchor fixed of the node, as many steps above it as child steps follow
 the filter's step, or below the item as child steps reach it, its
 ORDPATH the node's less as many components, the parent join of §3.1.2;
 the nodes below it are its rows of the Infoset whose ORDPATH begins with
-its own, one range (§2.2). A row whose answer needs a value cut, a comparison that
+its own, one range (§2.2). A query's relation holds of a node if an
+element of its paths stands in it, as "a byte comparison of two ORDPATH
+labels yields the relative order of the nodes" and a child's label
+extends its parent's (§2.2), so the row's rows of the Infoset in a range
+of keys are those of a range of places (`primary/related.rs`): an
+ancestor is sought at each prefix of the node's ORDPATH; a following
+element is read past the node's range, a following sibling past it
+before its parent's range ends, of as many components; a preceding one
+before the node, of no prefix of it, a preceding sibling after the
+parent's own row; each range read until one is met. The check reads the relation as the
+events come: an element above a node is open, one before it closed
+before it opened, and a node waits for one after it as for an anchor
+(`check/reading/relating.rs`). A row whose answer needs a value cut, a comparison that
 raises, or whose versions held are of more than one value, as a row
 being changed is, is checked. It was built because reading a large
 value's nodes from the stored form, even in one pass, reads all of the
@@ -4731,10 +4743,10 @@ narrows the step before's; `parent` takes back a child or attribute step
 as a condition of the step before, as `a/b/..` is `a[b]`, after a
 descendant step, last, the path before; a last `ancestor` of a name a
 step before tests, the path, exactly; of another, and `following`,
-`preceding` and their siblings of a name, the path and an element of
-that name below the item, and a last kind test the path before, none of
-them exactly, as the order of nodes outside a node's anchors is no
-range of ORDPATHs a seek or an anchor reads [Pal et al. §2.2]. Each step
+`preceding` and their siblings of a name or `*`, the query's relation of
+an element of that name to the node before (`XmlRelated`), its lookup the
+elements' path, exactly; a last kind test the path before, not exactly.
+Each step
 may have predicates whose
 conjuncts [XQuery §3.6] are each a relative path of such steps, or its
 comparison, or `.`'s, with a literal. A general comparison with a number,

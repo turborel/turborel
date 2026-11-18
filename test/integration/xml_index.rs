@@ -103,7 +103,7 @@ fn lookups() -> Vec<XmlQuery> {
 /// `comparison` holds, as `/order[@no >= 17]/item` [XQuery §3.2.2].
 fn filtered(lookup: XmlLookup, comparison: Comparison) -> XmlQuery {
     let no = PathPattern { steps: vec![Step { axis: Axis::Child, name: Some(QName::local("no")) }], target: Target::Attribute };
-    XmlQuery { lookup, filters: vec![XmlFilter { at: 1, pattern: no, comparisons: vec![comparison] }] }
+    XmlQuery { lookup, filters: vec![XmlFilter { at: 1, pattern: no, comparisons: vec![comparison] }], related: None }
 }
 
 /// `lookup` alone.

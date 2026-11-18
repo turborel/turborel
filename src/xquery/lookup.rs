@@ -15,8 +15,10 @@
 //! (`conditions.rs`). Anything else reduces to none: a planner then reads
 //! every row.
 //!
-//! The path's steps are the lookup's. The last step's comparisons of `.`
-//! are the lookup's comparisons; else one of its other conditions, a
+//! The path's steps are the lookup's, and a last step that relates an
+//! element to the node before is its relation (`steps.rs`). The last
+//! step's comparisons of `.` are the lookup's comparisons; else, of no
+//! relation, one of its other conditions, a
 //! relative path whose steps are child steps if one is, continues the
 //! lookup, as `a[b op v]` selects an `a` with a `b` the comparison holds
 //! of, as `a/b op v` does: its lookup is `a/b` and the comparison. Every
@@ -86,7 +88,7 @@ type Placed = (usize, Branch);
 /// A path reduced, from the context item or `/`, which of a value's one
 /// node is that node.
 fn reduce(path: &PathOp) -> Option<Reduction> {
-    let Twig { root, steps, target, exact } = twig(path)?;
+    let Twig { root, steps, target, exact, related } = twig(path)?;
     let mut placed: Vec<Placed> = Vec::new();
     for condition in root {
         placed.extend(condition.branches()?.into_iter().map(|b| (0, b)));
@@ -102,6 +104,7 @@ fn reduce(path: &PathOp) -> Option<Reduction> {
         query: XmlQuery {
             lookup: XmlLookup { pattern: PathPattern { steps: lookup, target }, comparisons: Vec::new(), row: None },
             filters: Vec::new(),
+            related,
         },
         raise_free: true,
         exact,
@@ -132,7 +135,10 @@ fn continued(reduction: &mut Reduction, placed: &mut Vec<Placed>) -> Option<usiz
     }
     let of_last = |(at, _): &Placed| *at == last;
     let child = |(at, branch): &Placed| *at == last && branch.child_steps();
-    let Some(chosen) = placed.iter().position(child).or_else(|| placed.iter().position(of_last)) else {
+    // Of a relation, of the last step's node, no condition continues the
+    // lookup: each is a filter of that node.
+    let continues = reduction.query.related.is_none();
+    let Some(chosen) = placed.iter().position(child).or_else(|| placed.iter().position(of_last)).filter(|_| continues) else {
         return (last > 0).then_some(last);
     };
     let (_, branch) = placed.remove(chosen);

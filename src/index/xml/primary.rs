@@ -76,6 +76,8 @@ struct Plan {
     paths: Vec<(u64, Arc<Vec<u64>>)>,
     values: Option<Vec<ValueRange>>,
     filters: Vec<(Anchored, Option<Resolved>)>,
+    /// The paths of the elements of the query's relation, if it has one.
+    related: Option<Vec<u64>>,
 }
 
 /// What filter `n` answers of each anchor, by its ORDPATH, as known.
@@ -194,7 +196,14 @@ impl XmlIndex {
         let strings = query.lookup.comparisons.iter().all(|c| matches!(c.literal, Literal::String(_) | Literal::Untyped(_)));
         let values = value_ranges(&query.lookup.comparisons, PRIMARY_VALUE_BYTES)
             .filter(|r| strings && r.iter().all(|v| v.low.first() == Some(&STRING)));
-        Ok(Some(Plan { paths, values, filters }))
+        let related = match &query.related {
+            Some(related) => Some(match related.pattern().resolve(&dictionary)? {
+                Some(resolved) => matched_paths(self, Arc::new(resolved), read).collect::<Result<_>>()?,
+                None => Vec::new(),
+            }),
+            None => None,
+        };
+        Ok(Some(Plan { paths, values, filters, related }))
     }
 
     /// Whether `row` has entries of values of more than one identity.
@@ -244,8 +253,13 @@ impl Answering<'_> {
         let mut known = Known::new();
         for node in &nodes {
             let mut outcome = compared(&self.query.lookup.comparisons, node);
+            // Of comparisons that hold, its filters and its relation, false
+            // if one does not hold [XQuery §3.6].
             if outcome == Outcome::True {
                 outcome = self.anchored(row, node, &mut known)?;
+                if outcome != Outcome::False && !self.related(row, node)? {
+                    outcome = Outcome::False;
+                }
             }
             match outcome {
                 Outcome::False => {}
@@ -283,6 +297,13 @@ impl Answering<'_> {
             }
         }
         Ok(outcome)
+    }
+
+    /// Whether an element of the query's relation stands in it to `node`,
+    /// of `row` (`related.rs`); true of none.
+    fn related(&self, row: RowId, node: &Shredded) -> Result<bool> {
+        let (Some(related), Some(paths)) = (&self.query.related, &self.plan.related) else { return Ok(true) };
+        self.related_by((related, paths), row, &node.ordpath)
     }
 
     /// Adds to `nodes` the nodes of `row` of path `path`, of `names`, of
@@ -347,5 +368,7 @@ impl Answering<'_> {
 // Unit tests: the primary's answers are a value's own, of many values
 // and queries made, and its parent join and ORDPATH tests (RULES.md
 // R-TEST-1, R-TEST-2).
+mod related;
+
 #[cfg(test)]
 mod tests;

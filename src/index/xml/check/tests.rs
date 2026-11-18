@@ -6,6 +6,7 @@ use std::fmt::Write;
 
 use super::*;
 use crate::index::xml::lookup::{Anchored, MAX_FILTERS, PathPattern, Step, Target, XmlFilter, XmlQuery, steps_match};
+use crate::index::xml::related::{Relation, XmlRelated};
 use crate::xml::{Item, Kind, NodeId, Sequence, Syntax, Tree, Whitespace, encode, parse};
 
 /// The answer of `query` of `sequence`, decoded into trees and walked:
@@ -60,7 +61,30 @@ fn holds_of((query, anchors): (&XmlQuery, &[Anchored]), tree: &Tree, (root, node
             }
         }
     }
+    if query.related.as_ref().is_some_and(|r| !related_of(r, tree, (root, node))) {
+        return Ok(false);
+    }
     raised.map_or(Ok(true), Err)
+}
+
+/// Whether an element below `root` of `related`'s name stands in its
+/// relation to `node`, by the tree's document order and parents.
+fn related_of(related: &XmlRelated, tree: &Tree, (root, node): (NodeId, NodeId)) -> bool {
+    let named =
+        |m: &NodeId| tree.kind(*m) == Some(Kind::Element) && related.name.as_ref().is_none_or(|r| tree.name(*m).is_some_and(|n| n.same(r)));
+    let elements: Vec<NodeId> = tree.descendants(root).filter(named).collect();
+    let above: Vec<NodeId> = std::iter::successors(tree.parent(node), |&n| tree.parent(n)).take_while(|&n| n != root).collect();
+    let attribute = tree.kind(node) == Some(Kind::Attribute);
+    let below = |m: NodeId| std::iter::successors(tree.parent(m), |&n| tree.parent(n)).any(|p| p == node);
+    let sibling = |m: NodeId| !attribute && tree.parent(m) == tree.parent(node);
+    match related.relation {
+        Relation::Ancestor => elements.iter().any(|m| above.contains(m)),
+        Relation::AncestorOrSelf => elements.iter().any(|m| above.contains(m) || (!attribute && *m == node)),
+        Relation::Following => elements.iter().any(|&m| m > node && !below(m)),
+        Relation::Preceding => elements.iter().any(|m| *m < node && !above.contains(m)),
+        Relation::FollowingSibling => elements.iter().any(|&m| m > node && sibling(m)),
+        Relation::PrecedingSibling => elements.iter().any(|&m| m < node && sibling(m)),
+    }
 }
 
 /// Whether `pattern` selects `node` from `root`: of its kind, the names
@@ -191,6 +215,18 @@ fn lookup_of(made: &mut Made, filtered: bool) -> XmlQuery {
         let inner = lookup_of(made, false).lookup;
         query.filters.push(XmlFilter { at, pattern: inner.pattern, comparisons: inner.comparisons });
     }
+    if filtered && made.below(3) == 0 {
+        let relation = [
+            Relation::Ancestor,
+            Relation::AncestorOrSelf,
+            Relation::Following,
+            Relation::FollowingSibling,
+            Relation::Preceding,
+            Relation::PrecedingSibling,
+        ][made.below(6)];
+        let name = ["a", "b", "c", "*"][made.below(4)];
+        query.related = Some(XmlRelated { relation, name: (name != "*").then(|| QName::local(name)) });
+    }
     query
 }
 
@@ -232,7 +268,7 @@ fn one_pass_answers_as_the_tree_does() {
                 Ok(false) => 1,
                 Err(_) => 2,
             };
-            asked[answered + if lookup.filters.is_empty() { 0 } else { 3 }] += 1_usize;
+            asked[answered + if lookup.filters.is_empty() && lookup.related.is_none() { 0 } else { 3 }] += 1_usize;
         }
     }
     assert!(asked.iter().all(|&n| n > 30), "every answer is met often, with a filter and without: {asked:?}");
@@ -277,6 +313,7 @@ fn a_node_waits_for_its_anchors_filter() {
             pattern: PathPattern { steps: vec![step(Axis::Child, "c"), step(Axis::Child, "x")], target: Target::Attribute },
             comparisons: vec![Comparison { op: CompOp::Eq, literal: Literal::Number(1.0) }],
         }],
+        related: None,
     };
     assert_eq!(kind(&by_tree(&query, &sequence)), Err(-301_i32));
     assert_eq!(kind(&query.matches_stored(&encode(&sequence))), Err(-301_i32));
@@ -297,6 +334,7 @@ fn two_filters() -> XmlQuery {
     XmlQuery {
         lookup,
         filters: vec![XmlFilter { at: 1, pattern: x, comparisons: vec![one] }, XmlFilter { at: 2, pattern: d, comparisons: Vec::new() }],
+        related: None,
     }
 }
 
@@ -334,6 +372,7 @@ fn filters_are_of_fixed_anchors_and_bounded() {
     let of = |at: usize, n: usize| XmlQuery {
         lookup: lookup.clone(),
         filters: vec![XmlFilter { at, pattern: d.clone(), comparisons: Vec::new() }; n],
+        related: None,
     };
     assert_eq!(of(2, 1).matches_stored(&stored).unwrap_err().sqlcode(), -910_i32);
     assert_eq!(of(4, 1).matches_stored(&stored).unwrap_err().sqlcode(), -910_i32);

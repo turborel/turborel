@@ -11,7 +11,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const XQUERY_EVAL: [Mutation; 37] = [
+pub const XQUERY_EVAL: [Mutation; 36] = [
     Mutation {
         name: "xquery-depth-bound",
         package: Package::Core,
@@ -362,16 +362,6 @@ pub const XQUERY_EVAL: [Mutation; 37] = [
         file: "src/xquery/lookup/steps.rs",
         original: "    let reached = made.steps.len().saturating_sub(usize::from(!own));",
         replacement: "    let reached = 0_usize.saturating_sub(usize::from(!own));",
-        integration: &["xml_index_shapes::other_axes_give_the_rows_of_a_full_read"],
-        unit: &["xquery::lookup::tests::steps_of_other_axes_reduce"],
-    },
-    Mutation {
-        name: "xml-axis-elsewhere",
-        package: Package::Core,
-        breaks: "a last following, preceding or ancestor step of a name leaves out that an element of the name is below the item",
-        file: "src/xquery/lookup/steps.rs",
-        original: "    made.root.push(Condition::Made(Branch::of(pattern)));",
-        replacement: "    drop(pattern);",
         integration: &["xml_index_shapes::other_axes_give_the_rows_of_a_full_read"],
         unit: &["xquery::lookup::tests::steps_of_other_axes_reduce"],
     },
