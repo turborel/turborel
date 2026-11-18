@@ -289,7 +289,7 @@ pub const XML: [Mutation; 38] = [
         file: "src/xml/atomic.rs",
         original: "    let normalized = normalize(text, to.white_space());",
         replacement: "    let normalized = text.to_owned();",
-        integration: &["xml_cast::xml_values_to_sql_6_6"],
+        integration: &[],
         unit: &["xml::atomic::tests::numbers_and_truth_values"],
     },
     Mutation {

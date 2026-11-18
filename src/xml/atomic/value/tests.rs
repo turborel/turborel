@@ -113,7 +113,8 @@ fn the_partial_order_of_dates_and_times() {
 /// Verifies: [ISO/IEC 9075-14:2006 draft §3.1.3.45] [Schema2 §3.2.6.2,
 /// Appendix E] [XQueryFO §10.4.7] the partial order of durations, by
 /// adding each to four dateTimes: the table of §3.2.6.2, a year against
-/// days and months against days; equal of the same months and seconds.
+/// days and months against days; less at two of them and greater at the
+/// others, indeterminate; equal of the same months and seconds.
 #[test]
 fn the_partial_order_of_durations() {
     let d = |a, b| order(AtomicType::Duration, a, b);
@@ -134,6 +135,7 @@ fn the_partial_order_of_durations() {
         ("P1Y", "P12M", Some(Ordering::Equal)),
         ("-P1D", "PT1S", Some(Ordering::Less)),
         ("P1Y1D", "P1Y", Some(Ordering::Greater)),
+        ("P1M", "P30DT12H", None),
     ];
     for (a, b, expected) in table {
         assert_eq!(d(a, b), expected, "{a} against {b}");
