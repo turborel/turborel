@@ -39,6 +39,31 @@ pub(crate) struct ProductCodebook {
     spans: Vec<(usize, usize)>,
     /// Each subspace's centroids, `k` of its width, one after another.
     centroids: Vec<Vec<f32>>,
+    /// Each centroid's squared norm, subspace by subspace, `k` each: what
+    /// a COSINE table sums of a code, made once with the codebook, not
+    /// for each query. Derived, so never written.
+    norms: Vec<f32>,
+}
+
+/// The squared norm of every centroid, subspace by subspace, summed as a
+/// query's table sums its terms, so a table's distances are the same as
+/// when each was summed for the query.
+fn norms_of(spans: &[(usize, usize)], centroids: &[Vec<f32>], k: usize) -> Vec<f32> {
+    let mut norms = Vec::with_capacity(spans.len().saturating_mul(k));
+    for (span, cents) in spans.iter().zip(centroids) {
+        norms.extend((0..k).map(|c| {
+            let cent = centroid(cents, span.1, c);
+            fold_f32(cent, cent, product)
+        }));
+    }
+    norms
+}
+
+impl ProductCodebook {
+    fn new(dims: u32, k: usize, spans: Vec<(usize, usize)>, centroids: Vec<Vec<f32>>) -> ProductCodebook {
+        let norms = norms_of(&spans, &centroids, k);
+        ProductCodebook { dims, k, spans, centroids, norms }
+    }
 }
 
 /// `dims` split into `m` consecutive spans, the first ones a dimension
@@ -155,7 +180,7 @@ impl Quantizer for ProductQuantizer {
                 k_means(&points, span.1, k, &mut random)
             })
             .collect();
-        Ok(Box::new(ProductCodebook { dims, k, spans, centroids }))
+        Ok(Box::new(ProductCodebook::new(dims, k, spans, centroids)))
     }
 
     fn read(&self, bytes: &[u8]) -> Result<Box<dyn Codebook>> {
@@ -180,21 +205,21 @@ impl Quantizer for ProductQuantizer {
                 taken
             })
             .collect();
-        Ok(Box::new(ProductCodebook { dims, k, spans, centroids }))
+        Ok(Box::new(ProductCodebook::new(dims, k, spans, centroids)))
     }
 }
 
 /// A query's table: for each subspace, its term with each centroid, and
-/// for COSINE each centroid's squared norm.
-struct Table {
+/// the codebook's squared norms of the centroids, for COSINE.
+struct Table<'a> {
     measure: Measure,
     k: usize,
     terms: Vec<f32>,
-    norms: Vec<f32>,
+    norms: &'a [f32],
     query_norm: f64,
 }
 
-impl CodeDistance for Table {
+impl CodeDistance for Table<'_> {
     fn distance(&self, code: &[u8]) -> f32 {
         let (mut sum, mut squares) = (0.0_f64, 0.0_f64);
         for (s, c) in code.iter().enumerate() {
@@ -235,16 +260,12 @@ impl Codebook for ProductCodebook {
             Measure::Dot | Measure::Cosine => product,
             Measure::Gap => gap,
         };
-        let (mut terms, mut norms) = (Vec::new(), Vec::new());
+        let mut terms = Vec::with_capacity(self.norms.len());
         for (span, cents) in self.spans.iter().zip(&self.centroids) {
             let q = part(query, *span);
-            for c in 0..self.k {
-                let cent = centroid(cents, span.1, c);
-                terms.push(fold_f32(q, cent, term));
-                norms.push(fold_f32(cent, cent, product));
-            }
+            terms.extend((0..self.k).map(|c| fold_f32(q, centroid(cents, span.1, c), term)));
         }
-        Box::new(Table { measure: m, k: self.k, terms, norms, query_norm: super::quantizer::norm_of(query) })
+        Box::new(Table { measure: m, k: self.k, terms, norms: &self.norms, query_norm: super::quantizer::norm_of(query) })
     }
 
     fn write(&self, out: &mut Vec<u8>) {

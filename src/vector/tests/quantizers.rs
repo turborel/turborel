@@ -146,3 +146,32 @@ fn training_refuses_bad_samples() {
     }
     assert!(quantizer_named(&built_in_quantizers(), "OPQ").is_none());
 }
+
+/// Verifies: [EXTENSION] §7.2 PQ's COSINE table, its centroids' squared
+/// norms made once with the codebook (trained or read back), gives each
+/// code the COSINE distance of the vector the code decodes to, within an
+/// `f32` sum's error.
+#[test]
+fn product_cosine_tables_use_the_centroid_norms() {
+    let points = clustered(9);
+    let book = train(PQ, &points, 8, 13);
+    let quantizer = quantizer_named(&built_in_quantizers(), PQ).unwrap();
+    let mut bytes = Vec::new();
+    book.write(&mut bytes);
+    let read = quantizer.read(&bytes).unwrap();
+    let m = metric_named(&built_in_metrics(), COSINE).unwrap();
+    let cosine = |a: &[f32], b: &[f32]| {
+        let dot: f64 = a.iter().zip(b).map(|(x, y)| f64::from(*x) * f64::from(*y)).sum();
+        1.0_f64 - dot / (squared(a, &vec![0.0_f32; a.len()]).sqrt() * squared(b, &vec![0.0_f32; b.len()]).sqrt())
+    };
+    for codebook in [&book, &read] {
+        let table = codebook.table(&points[3], m.as_ref());
+        let (mut code, mut decoded) = (vec![0; codebook.code_bytes()], Vec::new());
+        for p in points.iter().step_by(37) {
+            codebook.encode(p, &mut code);
+            codebook.decode(&code, &mut decoded);
+            let gap = (f64::from(table.distance(&code)) - cosine(&points[3], &decoded)).abs();
+            assert!(gap < 1e-4_f64, "{gap}");
+        }
+    }
+}
