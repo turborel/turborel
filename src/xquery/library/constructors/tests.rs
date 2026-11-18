@@ -3,6 +3,18 @@
 use super::super::testing::{atom, call, code, empty, s, typed};
 use super::*;
 
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §5.2,
+/// §10.1.1] a date of its type read back as its moment: a year past 9999
+/// err:FODT0001, a lexical form that is none err:XPTY0004.
+#[test]
+fn moments_of_dates_and_times() {
+    let of = |text: &str| moment(&Atomic::new(AtomicType::Date, text), Shape::Date);
+    assert_eq!(of("2026-11-18").unwrap().text(), "2026-11-18");
+    let failure = |text: &str| of(text).unwrap_err().to_string();
+    assert!(failure("10000-01-01").contains("err:FODT0001"));
+    assert!(failure("x").contains("err:XPTY0004"));
+}
+
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §5.2.1]
 /// the examples of `fn:dateTime`, 24:00:00 the start of the day given; a
 /// time zone either argument has; different time zones err:FORG0008; an
