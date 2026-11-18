@@ -69,7 +69,7 @@ UPDATE OF its columns runs only for an UPDATE that sets one of them.
 Triggers of the same table, time and event run in the order they were
 made. INFORMATION_SCHEMA.TRIGGERS lists them, and the other views of
 triggers what each action names (see [Information
-Schema](../information-schema.md)). A sequence generator an action draws
+Schema](../07-information-schema.md)). A sequence generator an action draws
 from is dropped only with CASCADE, which drops the trigger too (see [DROP
 SEQUENCE](drop-sequence.md)). An action's statements run as statements of their own: each runs
 the referential actions, checks the immediate constraints and runs the
@@ -317,4 +317,4 @@ Feature P002. SQL-86 and SQL-92 have no triggers.
 [DROP TRIGGER](drop-trigger.md), [CALL](call.md), [GRANT](grant.md), [BEGIN](begin.md),
 [GET DIAGNOSTICS](get-diagnostics.md), [CREATE VIEW](create-view.md),
 [Constraints](../../user/07-constraints.md), [Information
-Schema](../information-schema.md)
+Schema](../07-information-schema.md)

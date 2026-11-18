@@ -10,8 +10,11 @@ of a [reference type](#reference-types), or *(extension)* of a type a plug-in
 registers, written by its name and, in parentheses, one or two unsigned
 integers it takes; so may a domain.
 
-The library includes an opt-in [GEOMETRY type](spatial.md) for XY points,
-lines, polygons and collections, registered by the embedding program.
+Two such types are built in, FULLTEXT and FT_PATTERN, of
+[Full-Text Search](08-fulltext.md). A third, GEOMETRY, of XY points,
+lines, polygons and collections ([Spatial Data](10-spatial.md)), is
+registered by the server, `turboreld`, and by a program embedding the
+library that uses it.
 
 ```
 <data type> ::=

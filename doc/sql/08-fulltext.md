@@ -8,13 +8,13 @@ document's text and its language. Its Contains method tells whether the
 document matches a search pattern, and its Rank method scores how well.
 The pattern language has words, phrases, wild cards, stems, sound-alike
 and misspelt words, proximity, sentences and paragraphs, and thesauri,
-each on [Full-Text Patterns](fulltext-patterns.md). An index of the
+each on [Full-Text Patterns](09-fulltext-patterns.md). An index of the
 method `fulltext` finds the rows a search matches, and the best ranked
 of them, without reading the table.
 
 TEXT_MATCHES, an extension of Turborel's own, finds the rows whose text
 holds every word of a search. For an introduction with complete
-examples, read the [Full-Text Guide](../data/fulltext/README.md).
+examples, read the [Full-Text Guide](../data/01-fulltext.md).
 
 The examples on this page are run in order, by the user ANN, on a table
 of articles:
@@ -177,7 +177,7 @@ Contains and Rank of a null document are null, and the pattern is not
 read. Of a null pattern they are null too. A document of no characters
 matches no pattern, NOT patterns included, and ranks 0.
 
-A pattern that is not of the [pattern language](fulltext-patterns.md)
+A pattern that is not of the [pattern language](09-fulltext-patterns.md)
 raises SQLSTATE 2FF01. One that names a language the tokenizer does not
 know raises 2FF02, and one every word of which is a stop word raises
 2FF03:
@@ -315,7 +315,7 @@ SELECT TOKENIZE('plain') FROM ARTICLES WHERE ID = 1;
 ```
  T2                                                           |      BY_WORD | BY_SENTENCES
 --------------------------------------------------------------+--------------+--------------
- swim                                                         |              |
+ swim                                                         |         NULL |         NULL
 (1 row)
 turborel: SQLCODE -103 (SQLSTATE 2A000): [ISO/IEC 13249-2:2002 §5.1.1] invalid arguments to TOKENIZE (at character 7)
 turborel: SQLCODE -103 (SQLSTATE 2A000): argument 1 of TOKENIZE, a CHARACTER(5) value, cannot be assigned to its type FULLTEXT [ISO/IEC 9075:1992 §9.2 SR2] (at character 7)
@@ -676,8 +676,8 @@ methods and AS names no supertype of them.
 
 ## See also
 
-[Full-Text Patterns](fulltext-patterns.md),
+[Full-Text Patterns](09-fulltext-patterns.md),
 [CREATE INDEX](statements/create-index.md),
 [ALTER INDEX](statements/alter-index.md),
-[Full-Text Guide](../data/fulltext/README.md),
+[Full-Text Guide](../data/01-fulltext.md),
 [The Embedded Library](../client/03-embedding.md#full-text-rankings-extension)

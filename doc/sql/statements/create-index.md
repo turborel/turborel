@@ -79,9 +79,9 @@ Inner joins can also probe it when both geometry columns enforce the same
 SRID; the full ON condition checks every candidate pair. Ascending
 ST_DISTANCE with FETCH FIRST can also use this index, refining each
 candidate's geometry before deciding which rows to return. Geometry outer
-joins and distance filters are not indexed yet. See the
-[spatial guide](../../data/spatial/03-indexing.md) and
-[distance queries](../../data/spatial/05-distance.md) for runnable examples.
+joins and distance filters are not indexed. See
+[Spatial Data](../10-spatial.md#the-rtree-index-method) for its rules and the
+[Spatial Guide](../../data/02-spatial.md) for runnable examples.
 
 A `fulltext` index takes one FULLTEXT column, or one character string
 column with no collation. It keeps each word of the column's text and
@@ -91,8 +91,8 @@ parameter, and the best ranked rows of a Contains filter ordered by
 `RANK(column, value) DESC` with FETCH FIRST. The executor checks each
 row it finds. Its options are FULLTEXT.LANGUAGE, FULLTEXT.STOP_WORDS,
 FULLTEXT.K1, FULLTEXT.B and FULLTEXT.RANKING, which names BM25 or a
-ranking the program registered. See [Full-Text Search](../fulltext.md) for its rules and the
-[full-text guide](../../data/fulltext/README.md) for runnable examples.
+ranking the program registered. See [Full-Text Search](../08-fulltext.md) for its rules and the
+[full-text guide](../../data/01-fulltext.md) for runnable examples.
 
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each
@@ -222,13 +222,11 @@ ORDER BY C.ID, A.AREA_NAME;
 (3 rows)
 ```
 
-For geometry locations, index the single fixed-SRID column instead. This
-example creates a depot index and finds depots in a map window. It assumes
-`turboreld`, which includes the geometry type and functions:
+A GEOMETRY location is indexed by its one column, of a fixed SRID. A
+depot index finds the depots in a map window:
 
 ```sql
 COMMIT;
-SET SQL.FUNCTION_CALLS = 'ON';
 CREATE TABLE PICKUP_DEPOTS (
     ID INTEGER PRIMARY KEY,
     NAME VARCHAR(12),
@@ -250,16 +248,15 @@ OK
 OK
 OK
 OK
-OK
  NAME
 --------------
  Canal depot
 (1 row)
 ```
 
-These small tables can still use scans; index choice is based on cost.
-See the [dispatch guide](../../data/spatial/README.md) for service-area
-joins and nearest-depot searches using the same query patterns.
+The planner may still read so small a table whole, as it chooses by
+cost. The [Spatial Guide](../../data/02-spatial.md) has service-area
+joins and nearest-depot searches.
 
 A full-text index of notes, its stop words its own:
 
@@ -286,6 +283,7 @@ OK
 Indexes refused, V a view:
 
 ```sql
+COMMIT;
 CREATE INDEX STAFF_X ON STAFF (NOPE);
 CREATE INDEX STAFF_X ON STAFF (DEPT) USING NOPE;
 CREATE INDEX STAFF_DEPT ON STAFF (DEPT);
@@ -293,6 +291,7 @@ CREATE INDEX STAFF_X ON V (ID);
 ```
 
 ```
+OK
 turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.STAFF has no column NOPE (at character 31)
 turborel: SQLCODE -103 (SQLSTATE 2A000): there is no index method NOPE (at character 43)
 turborel: SQLCODE -103 (SQLSTATE 2A000): an index named STAFF_DEPT already exists (at character 13)
@@ -307,9 +306,9 @@ CREATE INDEX STAFF_Y ON STAFF (DEPT);
 ```
 
 ```
+
 -----
-   1
-(1 row)
+(0 rows)
 turborel: SQLCODE -917 (SQLSTATE 25000): an index statement runs outside a transaction: commit or roll back first
 ```
 
@@ -321,5 +320,5 @@ An extension: neither SQL-86 nor SQL-92 has indexes.
 
 [ALTER INDEX](alter-index.md), [DROP INDEX](drop-index.md),
 [CREATE TABLE](create-table.md),
-[R-tree queries](../../data/spatial/03-indexing.md),
-[Full-Text Search](../fulltext.md)
+[Full-Text Search](../08-fulltext.md),
+[Spatial Data](../10-spatial.md)

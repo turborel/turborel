@@ -3,7 +3,7 @@
 [Contents](README.md)
 
 A search pattern says what a document must hold for Contains to match
-it and Rank to score it ([Full-Text Search](fulltext.md)). It is a
+it and Rank to score it ([Full-Text Search](08-fulltext.md)). It is a
 character string or an FT_PATTERN value of at most 32,767 characters,
 written in the pattern language of ISO/IEC 13249-2:2002 (CD, SC32
 N0640) §5.3.1. Key words are read in any case, and white space between
@@ -301,6 +301,7 @@ so the minutes below, two paragraphs, are imported from a file and then
 made a FULLTEXT value:
 
 ```
+$ cat minutes.csv
 ID,BODY
 7,"Minutes of the board meeting.
 
@@ -545,6 +546,6 @@ listed in [CONFORMANCE.md](../../CONFORMANCE.md).
 
 ## See also
 
-[Full-Text Search](fulltext.md),
-[Full-Text Guide](../data/fulltext/README.md),
+[Full-Text Search](08-fulltext.md),
+[Full-Text Guide](../data/01-fulltext.md),
 [The turborel Command](../client/01-turborel.md)

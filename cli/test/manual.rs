@@ -10,6 +10,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use turborel::db::Database;
+use turborel::geometry::{FUNCTIONS, GeometryType};
 use turborel_cli::{Command, Dialer, Input, Io};
 use turborel_client::agent::Agent;
 
@@ -444,5 +445,55 @@ fn the_psm_examples_run_as_printed() {
         db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
         let mut ann = Client::of(&db, "ANN");
         assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+}
+
+/// A database with GEOMETRY and its functions registered, as `turboreld`
+/// registers them before it opens its files.
+fn spatial_database() -> Database {
+    let db = Database::new();
+    db.register_type(Box::new(GeometryType)).unwrap();
+    for function in FUNCTIONS {
+        db.register_scalar_function(Box::new(function)).unwrap();
+    }
+    db
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the SQL Reference Manual's
+/// chapter of spatial data, and the guide to it, each in a database of
+/// its own with GEOMETRY registered, run as printed, as ANN.
+#[test]
+fn the_spatial_examples_run_as_printed() {
+    for page in ["sql/10-spatial.md", "data/02-spatial.md"] {
+        let db = spatial_database();
+        assert!(Client::of(&db, "ANN").page(page) > 0, "{page} shows its examples' output");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the examples of CREATE INDEX
+/// run as printed, as ANN, of its table STAFF and a view V of it, with
+/// GEOMETRY registered for its R-tree of locations.
+#[test]
+fn the_create_index_examples_run_as_printed() {
+    let db = spatial_database();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION ANN \
+         CREATE TABLE STAFF (ID INTEGER PRIMARY KEY, NAME VARCHAR(30), DEPT CHAR(3)) \
+         CREATE VIEW V AS SELECT ID FROM STAFF",
+    )
+    .unwrap();
+    assert!(Client::of(&db, "ANN").page("sql/statements/create-index.md") > 0, "it shows its examples' output");
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8: the SQL Reference Manual's
+/// chapters of full-text search and its patterns, and the guide to it,
+/// each in a database of its own, run as printed, as ANN, each file a
+/// page shows made imported.
+#[test]
+fn the_fulltext_examples_run_as_printed() {
+    let scratch = Scratch::new("manual-fulltext");
+    for page in ["sql/08-fulltext.md", "sql/09-fulltext-patterns.md", "data/01-fulltext.md"] {
+        let db = Database::new();
+        assert!(Client::of(&db, "ANN").run(page, &examples(page), Some(&scratch)) > 0, "{page} shows its examples' output");
     }
 }

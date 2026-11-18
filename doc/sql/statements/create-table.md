@@ -198,7 +198,7 @@ gets the period constraint CHECK (start < end), named for the table and
 the period with `_PERIOD` after, as `ROOMS_STAY_PERIOD`, and numbered if
 its schema has that name. While the period is, its columns are not
 dropped, nor made nullable. [ALTER TABLE](alter-table.md) adds or drops
-one. The view PERIODS of the [Information Schema](../information-schema.md)
+one. The view PERIODS of the [Information Schema](../07-information-schema.md)
 shows each.
 
 **Temporary tables.** GLOBAL TEMPORARY or LOCAL TEMPORARY defines a

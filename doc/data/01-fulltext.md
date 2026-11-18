@@ -1,13 +1,13 @@
 # Full-Text Search
 
-[Specialized Data](../README.md)
+[Specialized Data](README.md)
 
 A support desk keeps its tickets' text and needs the tickets that
 mention a problem, whatever their wording's case or accents. This guide
 searches them with TEXT_MATCHES *(extension)*, indexes them so a search
 reads only the tickets it finds, and then searches them by pattern and
 ranks them with CONTAINS and RANK of SQL/MM Full-Text. The
-[reference](../../sql/fulltext.md) gives every rule.
+[reference](../sql/08-fulltext.md) gives every rule.
 
 ## The tickets
 
@@ -204,8 +204,8 @@ SELECT ID, SUBJECT, RANK(BODY, '"invoice" | "charge%"') AS SCORE FROM TICKETS
 (2 rows)
 ```
 
-The [pattern reference](../../sql/fulltext-patterns.md) has every form
+The [pattern reference](../sql/09-fulltext-patterns.md) has every form
 of a pattern, phrases and wild cards, sentences and paragraphs,
 sound-alike and misspelt words, and thesauri. The
-[reference](../../sql/fulltext.md) has the FULLTEXT type, which keeps a
+[reference](../sql/08-fulltext.md) has the FULLTEXT type, which keeps a
 document's language with its text, and how ranking can be tuned.

@@ -415,6 +415,6 @@ SQL-86 and SQL-92 have no SQL-invoked routines.
 
 [CREATE PROCEDURE](create-procedure.md), [RETURN](return.md),
 [DROP ROUTINE](drop-routine.md), [GRANT](grant.md),
-[CREATE TYPE](create-type.md), [Information Schema](../information-schema.md),
+[CREATE TYPE](create-type.md), [Information Schema](../07-information-schema.md),
 [BEGIN](begin.md), [PIPE ROW](pipe-row.md), [COPY DESCRIPTOR](copy-descriptor.md),
 [SELECT](select.md)

@@ -35,13 +35,13 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.
-- [Geospatial SQL](doc/data/spatial/README.md), with XY geometries, WKT/WKB,
+- [Spatial data](doc/data/02-spatial.md), with XY geometries, WKT/WKB,
   intersection filters and joins, planar distances and R-tree
   nearest-neighbour queries.
-- [Full-text search](doc/data/fulltext/README.md) by a text's words,
+- [Full-text search](doc/data/01-fulltext.md) by a text's words,
   whatever their case and accents, through an inverted index of
   block-compressed postings.
-- [SQL/MM Full-Text](doc/sql/fulltext.md), its FULLTEXT type, CONTAINS
+- [SQL/MM Full-Text](doc/sql/08-fulltext.md), its FULLTEXT type, CONTAINS
   patterns and thesauri, ranked by BM25 or a ranking of your own.
 - Collations, from binary order through case-insensitive to the Unicode
   Collation Algorithm and CLDR's tailorings for 48 languages, so text sorts
