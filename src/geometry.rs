@@ -4,6 +4,7 @@
 //! valid for spatial relationships. No coordinate transformation occurs.
 
 mod distance;
+pub mod engine;
 pub(crate) use distance::distance_domain;
 mod functions;
 mod kind;

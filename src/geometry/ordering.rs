@@ -5,9 +5,9 @@
 //! grouped, sorted or a key (RULES.md D-SPATIAL-FAMILY).
 //!
 //! It is 0 if the two are spatially equal [§5.1.65 GR], by `EQUALITY`,
-//! which the planar engine supplies (RULES.md D-SPATIAL-FAMILY); until it
-//! does, two values are equal if their stored forms are, or both are
-//! empty of one SRID, and else unequal.
+//! which the planar engine supplies (RULES.md D-SPATIAL-FAMILY). Values
+//! of one SRID are equal when their point sets of x and y are, by the
+//! exact relationship of ST_Equals [§5.1.43].
 
 use super::kind::{data_type, payload};
 use super::model::Geom;
@@ -18,15 +18,9 @@ use crate::value::{DataType, Decimal, Spelled, Value};
 /// The name of ST_OrderingEquals.
 pub const ORDERING_EQUALS: &str = "ST_ORDERINGEQUALS";
 
-/// \[DESIGN\] Whether two values are spatially equal [§5.1.65 GR2a, 2b]:
-/// of x and y, or of x, y and z if both have z. The planar engine puts its
-/// ST_Equals and ST_3DEquals here.
-pub const EQUALITY: fn(&Geom, &Geom) -> Result<bool> = |a, b| Ok(stored_equality(a, b));
-
-/// Equal stored forms, or both empty of one SRID.
-fn stored_equality(a: &Geom, b: &Geom) -> bool {
-    a.srid == b.srid && (a == b || (a.is_empty() && b.is_empty()))
-}
+/// \[DESIGN\] Whether two values are spatially equal [§5.1.65 GR2a],
+/// by the planar engine's exact ST_Equals of x and y (`engine.rs`).
+pub const EQUALITY: fn(&Geom, &Geom) -> Result<bool> = super::engine::equal;
 
 /// ST_ORDERINGEQUALS(a, b): INTEGER 0 if equal, else 1.
 #[derive(Debug, Clone, Copy)]
