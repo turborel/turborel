@@ -30,6 +30,7 @@ mod privileges;
 mod roles;
 mod routines;
 mod sequences;
+mod spatial;
 mod structured;
 mod triggers;
 mod user_types;
@@ -53,6 +54,7 @@ pub use routines::{
     SqlRoutineDesc, TableSemantics, ptf_name_type, ptf_status_type,
 };
 pub use sequences::SequenceDesc;
+pub use spatial::{GeometryColumnDesc, LrColumnDesc, LrmDesc, SpatialCatalog, SpatialChange, SpatialRefSysDesc};
 pub use structured::{
     AttributeDesc, CONSTRUCTOR_SUFFIX, CastDesc, MAX_HIERARCHY_DEPTH, MUTATOR_SUFFIX, MethodHost, MethodSpecDesc, OBSERVER_SUFFIX,
     OrderingCategory, OrderingDesc, RefRepresentation, StructuredDesc, TransformGroupDesc, TransformNames, TypedDesc, method_executable,
@@ -544,6 +546,11 @@ pub trait Catalog: Send + Sync {
     /// Make `embeddings` the embedding models and vector pipelines, in
     /// place of those there were.
     fn set_embeddings(&mut self, embeddings: Embeddings);
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20.2, §20.3] The spatial
+    /// reference systems defined and the geometry columns registered.
+    fn spatial(&self) -> &SpatialCatalog;
+    /// Make `spatial` the systems defined and the columns registered.
+    fn set_spatial(&mut self, spatial: SpatialCatalog);
     /// An independent copy of this catalog.
     fn duplicate(&self) -> Box<dyn Catalog>;
 }

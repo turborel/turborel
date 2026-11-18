@@ -55,7 +55,20 @@ fn every_table_keeps_the_contract() {
 #[test]
 fn users_and_check_tables_are_described() {
     let db = database();
-    assert_eq!(rows_of(&db, "USERS"), ["DEFINITION_SCHEMA", "FT_INFORMATION_SCHEMA", "INFORMATION_SCHEMA", "PUBLIC", "R", "S", "_SYSTEM"]);
+    assert_eq!(
+        rows_of(&db, "USERS"),
+        [
+            "DEFINITION_SCHEMA",
+            "FT_INFORMATION_SCHEMA",
+            "INFORMATION_SCHEMA",
+            "PUBLIC",
+            "R",
+            "S",
+            "ST_DEFINITION_SCHEMA",
+            "ST_INFORMTN_SCHEMA",
+            "_SYSTEM"
+        ]
+    );
     // In the order the CHECK's references are bound: its IN's subquery's
     // first [ISO/IEC 9075:1992 §17.6 GR5q].
     assert_eq!(rows_of(&db, "CHECK_TABLE_USAGE"), ["TURBOREL|S|IN_P|TURBOREL|S|P", "TURBOREL|S|IN_P|TURBOREL|S|C"]);

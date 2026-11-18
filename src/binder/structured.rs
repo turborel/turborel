@@ -10,9 +10,11 @@
 mod casts;
 mod combined;
 mod elements;
+mod family_methods;
 mod methods;
 mod mutated;
 mod orderings;
+mod support_methods;
 pub(super) use combined::user_defined_set_type;
 pub(super) use orderings::{Need, keyed_columns, keyed_operand, mapped, udt_operand};
 mod references;
@@ -204,7 +206,9 @@ impl Binder<'_> {
     /// §5.1.2]: the call of the registered function of its name whose
     /// first argument is the value, `CONTAINS(doc, p)`. A registered type
     /// is no user-defined type, so it declares no methods of its own, and
-    /// has no supertype for AS to name.
+    /// has no supertype for AS to name; a geometry type has its method
+    /// table (`family_method`), and each of SQL/MM Spatial's types beside
+    /// them its methods (`support_method`).
     ///
     /// # Errors
     ///
@@ -216,6 +220,19 @@ impl Binder<'_> {
         args: &[ValueExpression],
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
+        if let Some(bound) = self.family_method((subject, as_type), name, args, scope)? {
+            return Ok(bound);
+        }
+        if let Some(bound) = self.support_method((subject, as_type), name, args, scope)? {
+            return Ok(bound);
+        }
+        if as_type.is_none() && args.is_empty() && name.eq_ignore_ascii_case("ST_ISEMPTY") {
+            let (e, t) = self.value_expression(subject, scope)?;
+            if let Some(f) = crate::geometry::tin_element_is_empty(&t) {
+                let result = f.return_type(&[t])?;
+                return Ok((Expr::Call(ScalarRef(f), vec![e]), result));
+            }
+        }
         if as_type.is_some() {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.18, §9.18 SR10a] a value of a registered type has no supertype for {name}")));
         }

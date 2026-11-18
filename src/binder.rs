@@ -30,6 +30,8 @@ use crate::value::datetime::Clocked;
 mod appended;
 mod arguments;
 mod arithmetic;
+mod builtin_function;
+mod builtin_table;
 mod case;
 mod collation;
 mod composite;

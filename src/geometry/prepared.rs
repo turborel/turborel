@@ -44,14 +44,17 @@ impl Prepared {
         let mut held = budget.reserve(base, "a prepared geometry operand").ok()?;
         let geometry = Geometry::from_value(value).ok()?;
         held.resize(base.checked_add(geometry.shape.heap_bytes()?)?).ok()?;
-        let locator = Locator::new(&geometry.shape, budget);
+        // The locator's ring parity is the engine's location for a valid
+        // polygon only, so another polygon is left to the engine.
+        let valid = crate::spatial::planar::is_valid(&super::engine::of_shape(&geometry.shape)).unwrap_or(false);
+        let locator = if valid { Locator::new(&geometry.shape, budget) } else { None };
         let rectangle = rectangle::recognizes(&geometry.shape);
         Some(Self { function, position, value: value.clone(), geometry, locator, rectangle, _held: held })
     }
 
     fn matches(&self, args: &[&Value]) -> bool {
         let (Value::Extension(was), Some(Value::Extension(now))) = (&self.value, args.get(self.position).copied()) else { return false };
-        now.kind.name() == kind::NAME && (Arc::ptr_eq(&was.bytes, &now.bytes) || was.bytes == now.bytes)
+        kind::geometry_kind(now.kind).is_some() && (Arc::ptr_eq(&was.bytes, &now.bytes) || was.bytes == now.bytes)
     }
 
     fn intersection(&self, other: &Geometry) -> Result<Option<bool>> {
@@ -65,7 +68,7 @@ impl Prepared {
         if self.geometry.bounds.zip(other.bounds).is_some_and(|(a, b)| !a.intersects(b)) {
             return Ok(Some(false));
         }
-        locator.locate(*point).map(|location| Some(location != super::relate::Location::Exterior))
+        locator.locate(*point).map(|location| Some(location != super::crossing::Location::Exterior))
     }
 }
 

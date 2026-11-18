@@ -24,7 +24,7 @@ use std::sync::Barrier;
 use fixture::{Distribution, Feature, Polygon, Shape, Workload};
 use harness::{Bench, Case, on_threads};
 use turborel::db::Database;
-use turborel::geometry::{FUNCTIONS, Geometry, GeometryType};
+use turborel::geometry::Geometry;
 use turborel::params::Params;
 use turborel::txn::LockWait;
 use turborel::value::{Decimal, Value};
@@ -59,10 +59,6 @@ fn loaded(features: &[Feature], regions: &[Polygon], temp: Option<&std::path::Pa
     let db = Database::new();
     if let Some(temp) = temp {
         db.set_spill(Box::new(spill::OnDisk::new(temp))).unwrap();
-    }
-    db.register_type(Box::new(GeometryType)).unwrap();
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
     }
     db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
     db.set_lock_wait(LockWait::Wait).unwrap();

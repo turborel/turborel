@@ -3,9 +3,10 @@
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 10] {
+pub fn core() -> [&'static [Mutation]; 11] {
     [
         &super::MUTATIONS,
+        &super::hash::HASH,
         &super::rekey::REKEY,
         &super::KEPT,
         &super::READERS,
@@ -89,7 +90,7 @@ fn second() -> [&'static [Mutation]; 28] {
 }
 
 /// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's
-/// and T621's, then the spatial areas', replication's and the server's.
+/// and T621's, then the spatial areas', the planar engine's, replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 10] = [
         &super::projection::PROJECTION,
@@ -103,10 +104,21 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
     ];
-    let last: [&'static [Mutation]; 9] = [
+    let last: [&'static [Mutation]; 20] = [
         &super::near::NEAR,
         &super::rtree::RTREE,
         &super::geometry::GEOMETRY,
+        &super::spatial_types::SPATIAL_TYPES,
+        &super::spatial_curves::SPATIAL_CURVES,
+        &super::spatial_routines::SPATIAL_ROUTINES,
+        &super::spatial_mutators::SPATIAL_MUTATORS,
+        &super::spatial_planar::SPATIAL_PLANAR,
+        &super::spatial_srs::SPATIAL_SRS,
+        &super::spatial_support::SPATIAL_SUPPORT,
+        &super::spatial_solids::SPATIAL_SOLIDS,
+        &super::spatial_topology::SPATIAL_TOPOLOGY,
+        &super::spatial_lr::SPATIAL_LR,
+        &super::spatial_network::SPATIAL_NETWORK,
         &super::FILL,
         &super::ZONES,
         &super::STATS,

@@ -2,13 +2,11 @@
 
 [Contents](README.md)
 
-The server includes the GEOMETRY type and its spatial functions, registering
-them before it creates or opens database files. No separate spatial library
-or server option is required. SQL sessions call the functions by name, as
-SQL.FUNCTION_CALLS is ON by default. See [Spatial Data](../data/02-spatial.md) for supported
-operations, coordinate-system semantics and indexing limits. A program
-embedding the library must register the extension itself before opening
-a database that contains GEOMETRY columns.
+The geometry types and their spatial functions are built in. No separate
+spatial library or server option is required. SQL sessions call the
+functions by name, as SQL.FUNCTION_CALLS is ON by default. See
+[Spatial Data](../data/02-spatial.md) for supported operations,
+coordinate-system semantics and indexing limits.
 
 ## A database's directory
 

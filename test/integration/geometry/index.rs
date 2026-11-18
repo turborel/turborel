@@ -191,33 +191,31 @@ fn geometry_index_recovers_projected_versions_and_open_writes() {
     drop(writer);
 }
 
-/// Verifies: [EXTENSION] D85: projection collisions do not violate
-/// representation uniqueness, satisfy a missing foreign key, or cascade
-/// into a different geometry. A repeated original value remains a duplicate.
+/// Verifies: [ISO/IEC 9075-2:2023 §11.7 SR1, §11.8, §9.12 SR3] [ISO/IEC
+/// 13249-3:2016 (DIS, SC32 N2593) §5.1.65] D120: a geometry
+/// type is ST-EC-ordered, so a UNIQUE, PRIMARY KEY or referential
+/// constraint of a geometry column is refused when it is declared, by
+/// CREATE TABLE and ALTER TABLE, whatever the unique index method; an
+/// R-tree of the column is still made.
 #[test]
-fn geometry_index_constraints_recheck_original_values() {
+fn geometry_columns_are_no_key_of_a_constraint() {
     let db = registered();
     db.set_setting("TABLES.UNIQUE_INDEX_METHOD", &Value::Char("rtree".into())).unwrap();
-    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE P (ID INTEGER, G GEOMETRY(4326) UNIQUE) CREATE TABLE C (ID INTEGER, G GEOMETRY(4326) REFERENCES P (G) ON DELETE CASCADE ON UPDATE CASCADE)").unwrap();
-    db.create_index("C_G", "A.C", &["G"], "rtree").unwrap();
+    for table in ["P (ID INTEGER, G GEOMETRY(4326) UNIQUE)", "P (G ST_POINT PRIMARY KEY)", "P (ID INTEGER, G GEOMETRY, UNIQUE (ID, G))"] {
+        assert_eq!(
+            db.schema(&format!("CREATE SCHEMA AUTHORIZATION A CREATE TABLE {table}")).unwrap_err().code,
+            Code::SyntaxRule,
+            "{table}"
+        );
+    }
+    db.set_setting("TABLES.UNIQUE_INDEX_METHOD", &Value::Char("btree".into())).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE P (ID INTEGER PRIMARY KEY, G GEOMETRY(4326))").unwrap();
     let a = db.session("A");
-    a.run("INSERT INTO P VALUES (1, ST_GEOMFROMTEXT('LINESTRING (0 0, 4 4)', 4326)), (2, ST_GEOMFROMTEXT('LINESTRING (0 4, 4 0)', 4326))")
-        .unwrap();
-    a.run("INSERT INTO C SELECT ID, G FROM P").unwrap();
-    assert_eq!(a.run("INSERT INTO P SELECT 3, G FROM P WHERE ID = 1").unwrap_err().code, Code::Constraint);
-    let missing = "INSERT INTO C VALUES (3, ST_GEOMFROMTEXT('LINESTRING (4 4, 0 0)', 4326))";
-    assert_eq!(a.run(missing).unwrap_err().code, Code::Constraint);
-    a.run("UPDATE P SET G = ST_POINT(9, 9, 4326) WHERE ID = 1").unwrap();
-    assert_eq!(rows(&a, "SELECT ID, ST_ASTEXT(G) FROM C ORDER BY ID").unwrap(), ["1,POINT (9 9)", "2,LINESTRING (0 4, 4 0)"]);
-    a.run("DELETE FROM P WHERE ID = 2").unwrap();
-    assert_eq!(rows(&a, "SELECT ID FROM C").unwrap(), ["1"]);
-    a.commit().unwrap();
-    let b = db.session("A");
-    a.run("INSERT INTO P VALUES (3, ST_GEOMFROMTEXT('LINESTRING (0 0, 4 4)', 4326))").unwrap();
-    b.run("INSERT INTO P VALUES (4, ST_GEOMFROMTEXT('LINESTRING (0 4, 4 0)', 4326))").unwrap();
-    b.commit().unwrap();
-    assert_eq!(b.run("INSERT INTO P VALUES (5, ST_GEOMFROMTEXT('LINESTRING (0 0, 4 4)', 4326))").unwrap_err().code, Code::Conflict);
+    for alter in ["ALTER TABLE P ADD UNIQUE (G)", "ALTER TABLE P ADD CONSTRAINT R FOREIGN KEY (G) REFERENCES P (G)"] {
+        assert_eq!(a.run(alter).unwrap_err().code, Code::SyntaxRule, "{alter}");
+    }
     a.rollback().unwrap();
+    db.create_index("P_G", "A.P", &["G"], "rtree").unwrap();
 }
 
 /// Verifies: [DESIGN] D15, D85: an index does not manufacture an SRID

@@ -3,27 +3,59 @@
 //! Ring structure is checked when decoded; polygon topology must be
 //! valid for spatial relationships. No coordinate transformation occurs.
 
+mod collections;
+mod conversions;
+mod crossing;
 mod distance;
+pub mod engine;
 pub(crate) use distance::distance_domain;
 mod functions;
 mod kind;
+pub mod methods;
+pub mod model;
+mod mutators;
+mod observers;
+mod ordering;
+mod planar;
 mod prepared;
+mod procedures;
 mod reference;
-mod relate;
+pub(crate) mod registered;
+mod representations;
 mod robust;
+pub mod routines;
 mod shape;
+mod solids;
+pub mod support;
+mod tin_element;
+mod tins;
 mod wkb;
 mod wkt;
 
+pub use collections::{COLLECTION_FUNCTIONS, CollectionFunction, MAX_GEOMETRY_ARRAY_ELEMENTS, element_kind, elements};
+pub(crate) use functions::functions;
 pub use functions::{FUNCTIONS, GeometryFunction};
-pub use kind::{GEOMETRY, GeometryType, data_type};
+pub use kind::{GEOMETRY, Geometries, GeometryType, NAME, TYPES, data_type, data_type_of, kind_of, kinds, most_specific, of_data_type};
+pub use ordering::{EQUALITY, ORDERING_EQUALS, OrderingEquals};
+pub use procedures::{CatalogProcedure, procedures};
 pub use reference::data_type_with_srid;
 pub(crate) use reference::fixed_srid;
+pub use representations::MAX_GEOMETRY_AS_GML;
 use shape::Shape;
+pub use solids::{BRepSolid, SOLID_FUNCTIONS, SolidFunction, TinFromTable, TinTable, table_functions};
+pub use tin_element::kind as tin_element_kind;
 
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::spatial::{Bounds, DIMENSIONS};
-use crate::value::Value;
+use crate::value::{DataType, Value};
+
+/// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.1.7] The method
+/// ST_IsEmpty() of an ST_TINElement value, if `t` is its type, which a function of the name, the geometry types', does not take.
+pub fn tin_element_is_empty(t: &DataType) -> Option<std::sync::Arc<dyn crate::functions::ScalarFunction>> {
+    let DataType::Extension(e) = t else { return None };
+    (e.kind.name() == tin_element::ST_TINELEMENT)
+        .then(|| -> std::sync::Arc<dyn crate::functions::ScalarFunction> { std::sync::Arc::new(tins::TinRoutine::IsEmpty) })
+}
 
 /// Maximum nesting, including the outer geometry (RULES.md R-CF-6).
 pub const MAX_DEPTH: usize = 16;
@@ -38,16 +70,37 @@ pub const UNSPECIFIED_SRID: i32 = 0;
 /// and runtime-error safeguards (D85); this is not a total Boolean predicate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpatialOperation {
-    /// Closed XY intersection: INTEGER 1/0, NULL propagation, and an error
-    /// for unequal SRIDs, including empty operands, as [`Geometry::intersects`].
+    /// Closed XY intersection: INTEGER 1/0, NULL for an empty operand and
+    /// NULL propagation, and an error for unequal SRIDs, including empty
+    /// operands, as [`Geometry::intersects`].
     Intersects,
     /// Minimum Cartesian separation, with precisely the results, envelope
     /// lower bound and errors of [`Geometry::distance`]. NULL propagates;
     /// empty sets return NULL. The SQL result is DOUBLE PRECISION.
     Distance,
+    /// A relationship true only of operands whose point sets meet, so of
+    /// none that is empty: ST_Touches, ST_Crosses, ST_Within, ST_Contains
+    /// and ST_Overlaps, INTEGER 1, 0 or NULL [ISO/IEC 13249-3:2016 §5.1].
+    /// An index finds its rows as it finds those of `Intersects`.
+    Meets,
+    /// ST_Equals, true also of two empty sets [§5.1.43], so an index
+    /// finds every row for an empty operand.
+    Equals,
     /// INTEGER 1 for an empty geometry and 0 otherwise, as
     /// [`Geometry::is_empty`]; a NULL argument returns NULL.
     IsEmpty,
+}
+
+impl SpatialOperation {
+    /// Whether `f(column, value) = 1` holds only of a column value whose
+    /// envelope meets the value's, so an index window finds every row;
+    /// of `Equals` an empty value's window is every row.
+    pub fn windowed(self) -> bool {
+        match self {
+            Self::Intersects | Self::Meets | Self::Equals => true,
+            Self::Distance | Self::IsEmpty => false,
+        }
+    }
 }
 
 /// A geometry with an opaque spatial reference identifier. Coordinates
@@ -105,29 +158,31 @@ impl Geometry {
         }
     }
 
-    /// Reads case-insensitive XY WKT (OGC 06-103r4 §7.2.2).
+    /// The planar value of x and y of the well-known text `text`, of any
+    /// type and coordinate dimension: the linear form of what
+    /// ST_GeomFromText reads [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
+    /// §5.1.62].
     ///
     /// # Errors
     ///
-    /// SQLCODE -301 for malformed text, non-finite coordinates, a line
-    /// with only one point, or an unclosed or too-short polygon ring;
-    /// -900 for unsupported types/dimensions or a representation limit.
+    /// SQLSTATE 2FF22 for malformed text, as the model's checks for a
+    /// value that is no value of its type; SQLCODE -900 past a
+    /// representation limit.
     pub fn from_wkt(text: &str, srid: i32) -> Result<Self> {
-        limited(text.len(), MAX_BYTES)?;
-        Self::of(wkt::read(text)?, srid)
+        Self::from_geom(&read_text(text, srid)?.linear()?.xy())
     }
 
-    /// Reads XY WKB, accepting either byte order independently for each
-    /// component (OGC 06-103r4 §8). A pair of NaNs denotes POINT EMPTY,
-    /// the GEOS interchange convention; other non-finite points fail.
-    /// EWKB flags and Z/M type codes are not accepted.
+    /// The planar value of x and y of the well-known binary `bytes`, of
+    /// either byte order, any type and coordinate dimension: the linear
+    /// form of what ST_GeomFromWKB reads [§5.1.63].
     ///
     /// # Errors
     ///
-    /// As [`Self::from_wkt`], including truncated or trailing bytes.
+    /// SQLSTATE 2FF23 for malformed bytes, as the model's checks; SQLCODE
+    /// -900 past a representation limit.
     pub fn from_wkb(bytes: &[u8], srid: i32) -> Result<Self> {
         limited(bytes.len(), MAX_BYTES)?;
-        Self::of(wkb::read(bytes)?, srid)
+        Self::from_geom(&model::read_wkb(bytes, srid)?.linear()?.xy())
     }
 
     fn from_canonical_wkb(bytes: &[u8], srid: i32) -> Result<Self> {
@@ -161,24 +216,31 @@ impl Geometry {
     }
 
     /// Whether the closed XY point sets share any point, including their
-    /// boundaries. Polygon inputs must have valid simple-feature topology;
-    /// this operation does not validate that topology. Empty sets never
-    /// intersect. Decisions use exact signs of the input coordinates, with
-    /// no tolerance or geographic interpretation.
+    /// boundaries, by the planar engine's exact ST_Intersects
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.48]. Empty sets never
+    /// intersect here; the SQL function returns the null value for them.
     ///
     /// # Errors
     ///
-    /// SQLCODE -301 if the geometries have different SRIDs, even if empty.
+    /// SQLCODE -301 if the geometries have different SRIDs, even if empty;
+    /// -910 if noding does not settle.
     pub fn intersects(&self, other: &Self) -> Result<bool> {
-        self.intersects_located(other, None)
+        Ok(self.intersects_located(other, None)?.unwrap_or(false))
     }
 
-    /// Preparation may supply the same closed-set intersection decision
-    /// from its point locator; reference and empty-set checks still apply.
-    fn intersects_located(&self, other: &Self, located: Option<bool>) -> Result<bool> {
+    /// ST_Intersects, none if either set is empty [§5.1.48 Description
+    /// 2c]. Preparation may supply the same decision from its point
+    /// locator; reference and empty-set checks still apply.
+    fn intersects_located(&self, other: &Self, located: Option<bool>) -> Result<Option<bool>> {
         self.same_reference(other)?;
-        let (Some(left), Some(right)) = (self.bounds, other.bounds) else { return Ok(false) };
-        Ok(left.intersects(right) && located.unwrap_or_else(|| relate::intersects(&self.shape, &other.shape)))
+        let (Some(left), Some(right)) = (self.bounds, other.bounds) else { return Ok(None) };
+        if !left.intersects(right) {
+            return Ok(Some(false));
+        }
+        if let Some(known) = located {
+            return Ok(Some(known));
+        }
+        crate::spatial::planar::intersects(&engine::of_shape(&self.shape), &engine::of_shape(&other.shape))
     }
 
     /// Minimum Cartesian distance in the supplied coordinate units,
@@ -199,7 +261,7 @@ impl Geometry {
     fn distance_located(&self, other: &Self, located: Option<bool>) -> Result<Option<f64>> {
         self.same_reference(other)?;
         let (Some(left), Some(right)) = (self.bounds, other.bounds) else { return Ok(None) };
-        if self.intersects_located(other, located)? {
+        if self.intersects_located(other, located)? == Some(true) {
             return Ok(Some(0.0_f64));
         }
         let distance = distance::separated(&self.shape, &other.shape);
@@ -246,12 +308,24 @@ impl Geometry {
     }
 }
 
-fn invalid(detail: &str) -> SqlError {
+pub(crate) fn invalid(detail: &str) -> SqlError {
     SqlError::new(Code::Data, format!("[EXTENSION] invalid geometry: {detail}"))
 }
 
-fn unsupported(detail: &str) -> SqlError {
+pub(crate) fn unsupported(detail: &str) -> SqlError {
     SqlError::new(Code::Unsupported, format!("[EXTENSION] geometry does not support {detail}"))
+}
+
+/// The value the well-known text `text` represents in the system
+/// `srid`, as ST_GeomFromText reads it [ISO/IEC 13249-3:2016 (DIS, SC32
+/// N2593) §5.1.62].
+///
+/// # Errors
+///
+/// SQLSTATE 2FF22 of malformed text; SQLCODE -900 past `MAX_BYTES`.
+pub(crate) fn read_text(text: &str, srid: i32) -> Result<model::Geom> {
+    limited(text.len(), MAX_BYTES)?;
+    crate::spatial::formats::wkt::read_geom(text, srid)
 }
 
 fn limited(count: usize, maximum: usize) -> Result<()> {

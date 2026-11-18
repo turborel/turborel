@@ -279,9 +279,10 @@ pub fn merged(descs: Vec<PrivilegeDesc>) -> Vec<PrivilegeDesc> {
 /// [§11.37 SR7a ii], where SQL-86 took only one naming its grantee itself. On a table of INFORMATION_SCHEMA, everyone has
 /// SELECT, grantable, "so that SELECT privilege can be further granted on
 /// views that reference" it, and no other privilege [ISO/IEC 9075:1992
-/// §21.1].
+/// §21.1]; on one of SQL/MM Spatial's ST_INFORMTN_SCHEMA, the same
+/// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §19.1].
 pub fn applicable(catalog: &dyn Catalog, who: Who<'_>, name: &QualifiedName) -> (Actions, Actions) {
-    if name.auth == crate::system::INFORMATION_SCHEMA {
+    if name.auth == crate::system::INFORMATION_SCHEMA || name.auth == crate::system::ST_INFORMTN_SCHEMA {
         let select = Actions { select: true, ..Actions::default() };
         return (select.clone(), select);
     }

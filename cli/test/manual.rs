@@ -14,7 +14,6 @@ use std::path::Path;
 use std::rc::Rc;
 
 use turborel::db::Database;
-use turborel::geometry::{FUNCTIONS, GeometryType};
 use turborel_cli::{Command, Dialer, Input, Io};
 use turborel_client::agent::Agent;
 
@@ -511,15 +510,10 @@ fn the_psm_examples_run_as_printed() {
     }
 }
 
-/// A database with GEOMETRY and its functions registered, as `turboreld`
-/// registers them before it opens its files.
+/// A database of the geometry types and their functions, which are built
+/// in (RULES.md D120).
 fn spatial_database() -> Database {
-    let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
-    }
-    db
+    Database::new()
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the SQL Reference Manual's
@@ -531,6 +525,33 @@ fn the_spatial_examples_run_as_printed() {
         let db = spatial_database();
         assert!(Client::of(&db, "ANN").page(page) > 0, "{page} shows its examples' output");
     }
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §11] RULES.md
+/// R-DOC-8: the SQL Reference Manual's chapter of topology-geometry runs
+/// as printed, as ANN.
+#[test]
+fn the_topology_examples_run_as_printed() {
+    let db = spatial_database();
+    assert!(Client::of(&db, "ANN").page("sql/16-topology.md") > 0, "it shows its examples' output");
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15] RULES.md
+/// R-DOC-8: the SQL Reference Manual's chapter of linear referencing runs
+/// as printed, as ANN.
+#[test]
+fn the_linear_referencing_examples_run_as_printed() {
+    let db = spatial_database();
+    assert!(Client::of(&db, "ANN").page("sql/17-linear-referencing.md") > 0, "it shows its examples' output");
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D129: the SQL
+/// Reference Manual's chapter of spatial networks and shortest paths runs
+/// as printed, as ANN.
+#[test]
+fn the_spatial_network_examples_run_as_printed() {
+    let db = spatial_database();
+    assert!(Client::of(&db, "ANN").page("sql/18-spatial-networks.md") > 0, "it shows its examples' output");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the examples of CREATE INDEX

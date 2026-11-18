@@ -10,11 +10,10 @@ of a [reference type](#reference-types), or *(extension)* of a type a plug-in
 registers, written by its name and, in parentheses, one or two unsigned
 integers it takes; so may a domain.
 
-Two such types are built in, FULLTEXT and FT_PATTERN, of
-[Full-Text Search](08-fulltext.md). A third, GEOMETRY, of XY points,
-lines, polygons and collections ([Spatial Data](10-spatial.md)), is
-registered by the server, `turboreld`, and by a program embedding the
-library that uses it.
+Such types are built in. FULLTEXT and FT_PATTERN are of
+[Full-Text Search](08-fulltext.md). ST_GEOMETRY, also named GEOMETRY,
+and its 26 subtypes, of points, curves, surfaces, solids and
+collections, are of [Spatial Data](10-spatial.md).
 
 ```
 <data type> ::=

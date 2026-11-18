@@ -60,7 +60,7 @@ pub(super) fn supports(predicate: &Predicate) -> bool {
     predicate.column == 0
         && predicate.argument.is_some_and(|a| a < ARGUMENTS)
         && predicate.function.0.deterministic()
-        && predicate.function.0.spatial_operation() == Some(SpatialOperation::Intersects)
+        && predicate.function.0.spatial_operation().is_some_and(SpatialOperation::windowed)
 }
 
 pub(super) fn bounds(key: &Key, srid: i32) -> Result<Bounds> {
@@ -92,7 +92,9 @@ fn search(probe: &Probe, srid: i32) -> Result<Search> {
     if geometry.srid() != srid {
         return Ok(Search::All);
     }
-    Ok(geometry.bounds().map_or(Search::Empty, Search::Window))
+    // ST_Equals holds of two empty sets, which an envelope window misses.
+    let empty = if predicate.function.0.spatial_operation() == Some(SpatialOperation::Equals) { Search::All } else { Search::Empty };
+    Ok(geometry.bounds().map_or(empty, Search::Window))
 }
 
 pub(super) fn matching(tree: &RTree, probe: &Probe, srid: i32, budget: &Arc<MemoryBudget>) -> Entries {

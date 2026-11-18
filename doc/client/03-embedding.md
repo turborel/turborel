@@ -468,6 +468,85 @@ fn main() -> Result<()> {
 A function is called from any thread a statement runs on, so it is
 `Send` and `Sync`, and guards any state of its own.
 
+### Table functions and procedures *(extension)*
+
+`register_table_function` takes a `TableFunction`, which a FROM clause
+invokes as `TABLE(NAME(arguments)) AS T`. It names the types of its
+parameters and its columns, and gives its rows. The tables it reads are
+named by queries, made of the arguments known as the statement is
+bound (`TableFunction::reads`), so a table's name is a literal there,
+not a `?`. Each query is checked with the privileges of the statement's
+user, and runs in its transaction. Its rows are given to the function.
+The table function may read the table references before it, as a
+lateral derived table does.
+
+`register_procedure` takes a `Procedure`, invoked by `CALL NAME(arguments)`,
+unqualified. It runs in the caller's session and transaction through a
+`ProcedureContext`, whose `run` runs a statement and `rows` a query,
+each with `?` taking the values given. A CALL that fails is undone
+whole. The procedures of SQL/MM Spatial's catalog are built this way
+([Spatial Data](../sql/10-spatial.md#the-spatial-information-schema)).
+
+```rust
+use turborel::db::Database;
+use turborel::error::Result;
+use turborel::functions::builtin::{Procedure, ProcedureContext, TableFunction};
+use turborel::value::{DataType, Decimal, Spelled, Value};
+
+const INTEGER: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
+
+/// CALL KEEP(n): n kept in table A.KEPT.
+#[derive(Debug)]
+struct Keep;
+
+impl Procedure for Keep {
+    fn name(&self) -> &str {
+        "KEEP"
+    }
+    fn parameters(&self, count: usize) -> Option<Vec<DataType>> {
+        (count == 1).then(|| vec![INTEGER])
+    }
+    fn call(&self, args: &[Value], cx: &mut dyn ProcedureContext) -> Result<()> {
+        cx.run("INSERT INTO A.KEPT VALUES (?)", args)
+    }
+}
+
+/// TABLE(UPTO(n)): the integers 1 to n.
+#[derive(Debug)]
+struct UpTo;
+
+impl TableFunction for UpTo {
+    fn name(&self) -> &str {
+        "UPTO"
+    }
+    fn parameters(&self, count: usize) -> Option<Vec<DataType>> {
+        (count == 1).then(|| vec![INTEGER])
+    }
+    fn columns(&self) -> Vec<(String, DataType)> {
+        vec![("N".to_owned(), INTEGER)]
+    }
+    fn rows(&self, args: &[Value], _read: &[Vec<Vec<Value>>]) -> Result<Vec<Vec<Value>>> {
+        let n = match args {
+            [Value::Exact(n)] => n.units,
+            _ => 0,
+        };
+        Ok((1..=n).map(|k| vec![Value::Exact(Decimal::new(k, 0))]).collect())
+    }
+}
+
+fn main() -> Result<()> {
+    let db = Database::new();
+    db.register_procedure(Box::new(Keep))?;
+    db.register_table_function(Box::new(UpTo))?;
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE KEPT (N INTEGER)")?;
+    let a = db.session("A");
+    a.run("CALL KEEP(2)")?;
+    let mut rows = a.open_cursor("SELECT COUNT(*) FROM KEPT, TABLE(UPTO(3)) AS T WHERE T.N <= KEPT.N")?;
+    assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("2".to_owned()));
+    Ok(())
+}
+```
+
 ## Engines and other plug-ins
 
 Each extension point is a trait, whose implementation the program
@@ -480,6 +559,7 @@ files, so the definitions that name one find it:
 | `register_index_method` | an index method, `IndexMethod`, named by CREATE INDEX ... USING |
 | `register_type` | a data type beyond the standard's, `SqlType`, named in a column definition and CAST: a value of it is CAST from a character string, and a character string is stored in it as in a character column only if the type says it takes one (`assigns_text`); no privilege is needed to use it |
 | `register_scalar_function`, `register_aggregate_function` | functions, as above |
+| `register_table_function`, `register_procedure` | table functions and procedures written in Rust, as above |
 | `register_encoding` | an encoding of files or tables' rows, `Encoding`, named by STORAGE.ENCODINGS and a table's ENCODINGS |
 | `register_hash_function` | a hash function for checksums, `HashFunction`, named by STORAGE.CHECKSUM |
 | `register_system_table` | a table of the Information Schema's kind, `SystemTable` |
@@ -866,22 +946,16 @@ Output:
 
 ## Spatial data *(extension)*
 
-Register GEOMETRY and its functions before opening a database containing
-spatial values. This example also shows a host application checking a
-courier route against a roadworks area, using the same local metre grid
-as the [Spatial Guide](../data/02-spatial.md):
+The geometry types and their functions are built in, so every
+`Database` has them and nothing is registered. This example shows a
+host application checking a courier route against a roadworks area,
+using the same local metre grid as the
+[Spatial Guide](../data/02-spatial.md):
 
 ```rust
-use turborel::db::Database;
-use turborel::geometry::{FUNCTIONS, Geometry, GeometryType};
+use turborel::geometry::Geometry;
 
 fn main() -> Result<(), turborel::error::SqlError> {
-    let db = Database::new();
-    db.register_type(Box::new(GeometryType))?;
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function))?;
-    }
-
     let route = Geometry::from_wkt("LINESTRING (0 200, 1000 200)", 0)?;
     let roadworks = Geometry::rectangle([300.0, 100.0], [500.0, 300.0], 0)?;
     let stored_value = route.to_value();
@@ -905,9 +979,8 @@ API. The spatial test checks the whole line. Both route endpoints are
 outside the roadworks, but the path between them crosses it. It does not
 find a replacement route or calculate travel time.
 
-Registration is explicit, as for other plug-ins. Names already registered
-are refused; the loop consists of separate registrations. `turboreld`
-registers this extension automatically before opening database files.
+Registering a type or function of one of their names is refused, as
+the names are taken.
 
 `Geometry::from_wkt(text, srid)` and `Geometry::from_wkb(bytes, srid)`
 construct structurally checked representations. `to_wkt` and `to_wkb`

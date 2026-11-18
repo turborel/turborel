@@ -43,6 +43,8 @@
 //!             each a name and str))
 //! index:      name (str), table name, positions, method (str), unique u8,
 //!             options
+//! spatial reference systems and geometry columns:
+//!             catalog/codec/spatial.rs
 //! privilege:  grantor (str), grantee (0 PUBLIC, or 1 and str), table name,
 //!             select u8, delete u8, insert positions, update positions,
 //!             references positions, grantable u8
@@ -64,6 +66,7 @@ mod indexes;
 mod objects;
 mod roles;
 mod routines;
+mod spatial;
 mod structured;
 mod triggers;
 use crate::value::types::tags::{data_type, put_type};
@@ -73,6 +76,7 @@ pub(crate) use indexes::{index, put_index};
 pub(crate) use objects::{collation, put_collation, put_sequence, put_user_type, sequence, user_type};
 pub(crate) use roles::{put_roles, roles};
 pub(crate) use routines::{module, put_module, put_routine, routine};
+pub(crate) use spatial::{put_spatial, put_spatial_change, spatial, spatial_change};
 pub(crate) use structured::{cast, ordering, put_cast, put_ordering, put_structured_type, put_transforms, structured_type, transforms};
 pub(crate) use triggers::{put_trigger, trigger};
 

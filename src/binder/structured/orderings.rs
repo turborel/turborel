@@ -9,6 +9,12 @@
 //! it compare that. Ordered by RELATIVE, `x op y` is `RF(x, y) op 0`. By
 //! STATE, values compare by most specific type and attributes, as the
 //! values themselves do (RULES.md D81).
+//!
+//! A type of a family built in (`value/types/family.rs`) is ordered as
+//! its family says: the geometry types EQUALS ONLY BY RELATIVE with
+//! ST_OrderingEquals [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.65]
+//! (RULES.md D120), so they are compared for equality as
+//! `RF(x, y) = 0`, and neither grouped nor sorted.
 
 use std::sync::Arc;
 
@@ -20,6 +26,7 @@ use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::functions::Keyed;
 use crate::logical::{Expr, LogicalPlan, Subquery};
+use crate::value::types::family::family_of;
 use crate::value::{DataType, Decimal, Value};
 
 /// What an operation needs of its operands' orderings.
@@ -99,6 +106,19 @@ pub(in crate::binder) fn udt_operand(db: &State, t: &DataType, need: Need, what:
                 "[ISO/IEC 9075-2:2023 §9.14 SR3] {what} orders values of {u}, and references are compared for equality alone"
             )));
         }
+        if let Some((f, kind)) = family_of(u)
+            && need != Need::Equality
+        {
+            // [§14.1.7, §17.2.20] ST_SpatialRefSys's and ST_Vector's, else
+            // the geometry types'.
+            let clause = crate::geometry::support::of_data_type(u).map_or("§5.1.65", |s| s.ordering_clause());
+            return Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 {}] {what} compares values of {}, which has an ordering of EQUALS ONLY (ISO/IEC 13249-3:2016 (DIS, SC32 N2593) {clause}, {})",
+                need.rule(),
+                kind.name(),
+                f.relative_ordering()
+            )));
+        }
         let Some((qn, ordering)) = ordering_of(db, u) else { continue };
         let refused = match ordering.map(|o| o.form) {
             None => Some("no ordering"),
@@ -164,6 +184,13 @@ impl Binder<'_> {
         y: (Expr, DataType),
         need: Need,
     ) -> Result<((Expr, DataType), (Expr, DataType))> {
+        if family_of(&x.1).is_some() {
+            udt_operand(self.db, &x.1, need, "the comparison")?;
+            udt_operand(self.db, &y.1, need, "the comparison")?;
+            let integer = super::super::composite::integer();
+            let relative = call(crate::geometry::OrderingEquals, vec![x.0, y.0]);
+            return Ok(((relative, integer.clone()), (Expr::Const(Value::Exact(Decimal::new(0_i128, 0_u32))), integer)));
+        }
         if let Some((_, Some(o))) = ordering_of(self.db, &x.1).filter(|_| matches!(x.1, DataType::Structured(_)))
             && let OrderingCategory::Relative(f) = &o.category
         {

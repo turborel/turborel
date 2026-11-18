@@ -20,10 +20,6 @@ const EMPTY_ORDINATE: u64 = 0x7ff8_0000_0000_0000;
 /// Canonical stored coordinates use positive zero (RULES.md D85).
 const NEGATIVE_ZERO: u64 = 0x8000_0000_0000_0000;
 
-pub(super) fn read(bytes: &[u8]) -> Result<Shape> {
-    checked::<false>(bytes)
-}
-
 /// The writer's byte order and floating representations are checked as
 /// they are read, avoiding a second allocation and encoding for comparison.
 pub(super) fn read_canonical(bytes: &[u8]) -> Result<Shape> {

@@ -401,12 +401,8 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
 /// Registers with `db` the plug-ins the program ships (RULES.md D26, D48):
 /// LZ4; AES-256-GCM and ChaCha20-Poly1305 with the keys of `--keys`;
 /// SHA-256 and SHA-512; and HMAC-SHA-256 if `--checksum-key` names its key.
-/// GEOMETRY and its spatial functions are registered before opening files.
+/// The geometry types and their functions are built in.
 fn register(db: &Database, config: &Config) -> Result<(), String> {
-    db.register_type(Box::new(turborel::geometry::GeometryType)).map_err(refused("GEOMETRY"))?;
-    for function in turborel::geometry::FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).map_err(refused("spatial functions"))?;
-    }
     db.register_encoding(Box::new(Lz4)).map_err(refused("LZ4"))?;
     let keyring: Arc<dyn Keyring> = match &config.keys {
         Some(dir) => Arc::new(NotedKeys { keys: KeyDirectory::new(dir), noted: noted(db, dir, false)? }),

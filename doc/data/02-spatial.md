@@ -10,9 +10,8 @@ guide asks those questions in SQL, with the GEOMETRY type, its functions
 and the R-tree indexes that find shapes without reading every row. The
 [reference](../sql/10-spatial.md) gives every rule.
 
-GEOMETRY is in `turboreld`, which registers it before it opens its files.
-A program embedding the library registers it itself
-([The Embedded Library](../client/03-embedding.md#spatial-data-extension)).
+GEOMETRY and the other geometry types are built in, in the server and
+in a program embedding the library alike, so every database has them.
 
 ## The deliveries
 

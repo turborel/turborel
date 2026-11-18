@@ -83,7 +83,7 @@ fn contains_and_rank_declare_their_types() {
     }
     assert!(!Contains.index_predicate() && !rank.index_predicate());
     assert!(Contains.deterministic() && !rank.deterministic());
-    assert!(rank.ranks() && rank.uses_context() && rank.ranked_by_index() && !Contains.ranks() && Contains.uses_context());
+    assert!(rank.ranks() && rank.uses_context(2) && rank.ranked_by_index() && !Contains.ranks() && Contains.uses_context(2));
     assert_eq!(Contains.predicate_truth().map(|v| v.to_string()), Some("1".to_owned()));
     assert!(rank.predicate_truth().is_none());
     assert!(Contains.rechecked_errors() && Contains.probe_arguments() == Some(2));
