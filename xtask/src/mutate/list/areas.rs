@@ -104,7 +104,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
     ];
-    let last: [&'static [Mutation]; 16] = [
+    let last: [&'static [Mutation]; 17] = [
         &super::near::NEAR,
         &super::rtree::RTREE,
         &super::geometry::GEOMETRY,
@@ -115,6 +115,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::spatial_solids::SPATIAL_SOLIDS,
         &super::spatial_topology::SPATIAL_TOPOLOGY,
         &super::spatial_lr::SPATIAL_LR,
+        &super::spatial_network::SPATIAL_NETWORK,
         &super::FILL,
         &super::ZONES,
         &super::STATS,

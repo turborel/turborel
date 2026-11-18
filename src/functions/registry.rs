@@ -94,11 +94,14 @@ impl Registry {
             .into_iter()
             .chain(crate::spatial::topology::sql::procedures())
             .chain(crate::spatial::lr::sql::procedures())
+            .chain(crate::spatial::network::sql::procedures())
             .map(|p| (p.name().to_owned(), p))
             .collect();
         let tables = crate::geometry::table_functions()
             .into_iter()
             .chain(crate::spatial::topology::sql::tables())
+            .chain(crate::spatial::network::sql::tables())
+            .chain(crate::spatial::paths::sql::tables())
             .map(|f| (f.name().to_owned(), f))
             .collect();
         Registry { scalars, aggregates, standard, tables, procedures }

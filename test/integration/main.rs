@@ -261,6 +261,8 @@ mod spatial_planar;
 mod spatial_solids;
 mod spatial_systems;
 mod spatial_topology;
+mod spatial_network;
+mod spatial_paths;
 mod spatial_types;
 mod spill_encodings;
 mod spilled_actions;

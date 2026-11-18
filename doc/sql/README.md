@@ -23,4 +23,5 @@ The language, element by element, and each statement on a reference page of its 
 - [Hybrid Search](15-hybrid-search.md) *(extension)*
 - [Topology-Geometry](16-topology.md)
 - [Linear Referencing](17-linear-referencing.md)
+- [Spatial Networks](18-spatial-networks.md)
 - [Statements](statements/README.md)
