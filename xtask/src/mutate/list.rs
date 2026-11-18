@@ -58,6 +58,7 @@ mod search_cycle;
 mod sequences;
 mod server;
 mod shadow;
+mod spatial_curves;
 mod spatial_types;
 mod sql2023;
 mod sqlmm_fulltext;

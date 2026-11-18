@@ -14,6 +14,9 @@
 
 mod harness;
 
+#[path = "geometry/curves.rs"]
+mod curves;
+
 use std::hint::black_box;
 
 use harness::{Bench, Case, on_threads};
@@ -73,6 +76,7 @@ fn main() {
     for edges in [4_u32, 8, 16, 32, 64, 128] {
         prepared(&bench, &format!("{edges}-edge polygon"), &points, &circle(edges));
     }
+    curves::run(&bench);
 }
 
 fn circle(edges: u32) -> Geometry {
