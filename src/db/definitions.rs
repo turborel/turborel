@@ -169,6 +169,8 @@ impl Session {
             SchemaStatement::Trigger(t) => self.own_object(st, &t.name, (schema, "ISO/IEC 9075-2:2023 §11.49 AR1")),
             SchemaStatement::Routine(r) => self.own_object(st, &r.name, (schema, "ISO/IEC 9075-2:2023 §11.60 AR1")),
             SchemaStatement::Module(m) => self.own_object(st, &m.name, (schema, "ISO/IEC 9075-4:2006 draft §9.21 AR1")),
+            SchemaStatement::Graph(g) => self.own_object(st, &g.name, (schema, "EXTENSION")),
+            SchemaStatement::AlterGraph(a) => self.own_object(st, &a.name, (schema, "EXTENSION")),
             SchemaStatement::AlterType(_)
             | SchemaStatement::Method(_)
             | SchemaStatement::Cast(_)
@@ -271,6 +273,8 @@ impl State {
             SchemaStatement::Ordering(o) => self.create_ordering(schema, o),
             SchemaStatement::Transform(t) => self.create_transform(schema, t),
             SchemaStatement::AlterTransform(t) => self.alter_transform(schema, t),
+            SchemaStatement::Graph(g) => self.create_graph(schema, g),
+            SchemaStatement::AlterGraph(a) => self.alter_graph(schema, a),
         }
     }
 
@@ -379,6 +383,13 @@ impl State {
         if self.catalog.table(qn).is_some() || self.catalog.view(qn).is_some() {
             return Err(rule(format!("[ISO/IEC 9075:1992 {rule_cited}] schema {} has a table or view {} already", qn.auth, qn.ident)));
         }
+        if self.catalog.graph(qn).is_some() {
+            let msg = format!(
+                "[EXTENSION] schema {} has a property graph {} already, whose names are those of its tables and views",
+                qn.auth, qn.ident
+            );
+            return Err(rule(msg));
+        }
         Ok(())
     }
 
@@ -397,6 +408,9 @@ impl State {
         }
         if p.object == PrivilegeObject::Module {
             return self.grant_on_module(auth, schema, p).or_at(p.table.at);
+        }
+        if p.object == PrivilegeObject::Graph {
+            return self.grant_on_graph(auth, schema, p).or_at(p.table.at);
         }
         if matches!(p.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_)) {
             return self.grant_on_type(auth, schema, p).or_at(p.table.at);
@@ -426,7 +440,7 @@ pub(super) fn created(schema: &str, sql: &str) -> Option<QualifiedName> {
 /// The locks a table or view `qn` defined takes beside its own, shared:
 /// those of what it reads, `reads`, and of its schema, which is not
 /// dropped meanwhile (`db/drop.rs`).
-fn in_schema(qn: &QualifiedName, reads: Vec<QualifiedName>) -> Vec<(QualifiedName, LockMode)> {
+pub(super) fn in_schema(qn: &QualifiedName, reads: Vec<QualifiedName>) -> Vec<(QualifiedName, LockMode)> {
     reads.into_iter().chain([QualifiedName::of_schema(&qn.auth)]).map(|name| (name, LockMode::Shared)).collect()
 }
 

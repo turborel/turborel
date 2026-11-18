@@ -90,6 +90,8 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         | SchemaStatement::Ordering(_)
         | SchemaStatement::Transform(_)
         | SchemaStatement::AlterTransform(_)
+        | SchemaStatement::Graph(_)
+        | SchemaStatement::AlterGraph(_)
         | SchemaStatement::Role(_) => None,
         // [ISO/IEC 9075-2:2023 §11.60 GR5]
         SchemaStatement::Method(m) => long(&m.body_text).then_some(SqlState::STATEMENT_TOO_LONG),

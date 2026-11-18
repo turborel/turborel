@@ -311,3 +311,9 @@ pub(in crate::db) const EXPLAIN: Command = command("EXPLAIN", -14);
 pub(in crate::db) const COPY_DESCRIPTOR: Command = command("COPY DESCRIPTOR", -15);
 /// [ISO/IEC 9075-2:2023 §20.28] PIPE ROW, which Table 39 has no row for.
 pub(in crate::db) const PIPE_ROW: Command = command("PIPE ROW", -16);
+/// \[EXTENSION\] CREATE PROPERTY GRAPH (RULES.md D-GRAPH-CATALOG).
+pub(in crate::db) const CREATE_PROPERTY_GRAPH: Command = command("CREATE PROPERTY GRAPH", -17);
+/// \[EXTENSION\] ALTER PROPERTY GRAPH.
+pub(in crate::db) const ALTER_PROPERTY_GRAPH: Command = command("ALTER PROPERTY GRAPH", -18);
+/// \[EXTENSION\] DROP PROPERTY GRAPH.
+pub(in crate::db) const DROP_PROPERTY_GRAPH: Command = command("DROP PROPERTY GRAPH", -19);

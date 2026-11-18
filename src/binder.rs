@@ -56,6 +56,7 @@ mod expression;
 mod filter;
 mod from;
 mod generated;
+mod graph_properties;
 mod greatest;
 mod grouping_sets;
 mod hierarchy;
@@ -103,6 +104,7 @@ pub use counterparts::defaulted_columns;
 pub use cursor::bind_cursor;
 use from::FromItem;
 pub use generated::{bind_generation, generations, noting_generation};
+pub use graph_properties::{PropertyBinding, element_columns, property_bound, property_expression, property_type};
 pub use invocation::{
     Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
     routine_definition, sql_statement,

@@ -26,6 +26,8 @@ const DROPPED_CAST: u8 = 12;
 const DROPPED_ORDERING: u8 = 13;
 /// The tag of a transform group's drop, or of all a type's.
 const DROPPED_TRANSFORM: u8 = 14;
+/// The tag of a property graph's drop.
+const DROPPED_GRAPH: u8 = 15;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq)]
@@ -61,6 +63,8 @@ pub enum DropTarget {
     /// A type's transform group, or all of them [ISO/IEC 9075-2:2023
     /// §11.71].
     Transform(QualifiedName, Option<String>),
+    /// \[EXTENSION\] A property graph (RULES.md D-GRAPH-CATALOG).
+    Graph(QualifiedName),
 }
 
 /// A schema's text, the engine of each table it created, its
@@ -182,6 +186,7 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::Routine(specific) => (DROPPED_ROUTINE, specific),
         DropTarget::Module(module) => (DROPPED_MODULE, module),
         DropTarget::Ordering(udt) => (DROPPED_ORDERING, udt),
+        DropTarget::Graph(graph) => (DROPPED_GRAPH, graph),
         DropTarget::Cast(types) => {
             out.put_u8(DROPPED_CAST);
             crate::value::types::tags::put_type(out, &types.0);
@@ -220,6 +225,7 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_ROUTINE => Ok(DropTarget::Routine(table(r)?)),
         DROPPED_MODULE => Ok(DropTarget::Module(table(r)?)),
         DROPPED_ORDERING => Ok(DropTarget::Ordering(table(r)?)),
+        DROPPED_GRAPH => Ok(DropTarget::Graph(table(r)?)),
         DROPPED_CAST => {
             let source = crate::value::types::tags::data_type(r)?;
             Ok(DropTarget::Cast(Box::new((source, crate::value::types::tags::data_type(r)?))))

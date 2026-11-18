@@ -153,6 +153,7 @@ impl State {
         abandoned.triggers = self.catalog.triggers().into_iter().filter(|t| on(&t.horizon)).map(|t| t.name.clone()).collect();
         let invoker = |r: &&SqlRoutineDesc| !gone.contains(&r.specific) && on(&r.horizon);
         abandoned.routines = self.catalog.routines().into_iter().filter(invoker).map(|r| r.specific.clone()).collect();
+        abandoned.graphs = self.graphs_invoking(gone);
         abandoned
     }
 

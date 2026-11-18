@@ -127,6 +127,7 @@ mod generated_named;
 mod geometry;
 mod get_diagnostics;
 mod get_diagnostics_items;
+mod graph_ddl;
 mod grouping_sets;
 mod hybrid_layout;
 mod hypothetical;

@@ -49,6 +49,7 @@ impl State {
             DropTarget::Cast(types) => self.drop_cast(&types.0, &types.1, cascade),
             DropTarget::Ordering(qn) => self.drop_ordering(qn, cascade),
             DropTarget::Transform(qn, group) => self.drop_transform(qn, group.as_deref(), cascade),
+            DropTarget::Graph(qn) => self.drop_graph(qn, cascade),
         }
     }
 
@@ -206,12 +207,18 @@ impl State {
     /// \[EXTENSION\] (RULES.md D47) The constraints named in schema `auth`
     /// of tables and domains of other schemas, dropped with it if
     /// `cascade`, as ALTER TABLE and ALTER DOMAIN DROP CONSTRAINT drop them,
-    /// a domain constraint's copies with it.
+    /// a domain constraint's copies with it; and first the schema's own
+    /// property graphs, as DROP PROPERTY GRAPH ... CASCADE drops them.
     ///
     /// # Errors
     ///
-    /// SQLCODE -103, not `cascade`, if there is one.
+    /// SQLCODE -103, not `cascade`, if there is one, or a graph.
     fn drop_named_in(&mut self, auth: &str, cascade: bool) -> Result<Dropped> {
+        let graphs = self.schema_graphs(auth);
+        if let (Some(graph), false) = (graphs.first(), cascade) {
+            return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {graph}, so it is dropped only with CASCADE")));
+        }
+        let mut dropped = self.drop_graphs(&graphs)?;
         let named = |c: &&ConstraintDesc| c.name.auth == auth && c.domain.is_none();
         let of_tables: Vec<(QualifiedName, QualifiedName)> = (self.catalog.tables().into_iter())
             .filter(|t| t.name.auth != auth)
@@ -225,7 +232,6 @@ impl State {
             return Err(rule(format!("[EXTENSION] schema {auth} names constraint {c} of {of}, so it is dropped only with CASCADE")));
         }
         let written = |q: &QualifiedName| TableName { auth: Some(q.auth.clone()), ident: q.ident.clone(), at: 0 };
-        let mut dropped = Dropped::default();
         for (table, c) in &of_tables {
             dropped.absorb(self.drop_constraint((table, &table.auth), &written(c), DropBehavior::Cascade)?);
             dropped.names.push(table.clone());
@@ -249,7 +255,7 @@ impl State {
     ///
     /// SQLCODE -103, not `cascade`, if anything depends on `qn`, as the
     /// Syntax Rule `cited` says.
-    fn drop_dependents(&mut self, qn: &QualifiedName, cascade: bool, cited: &str) -> Result<Dropped> {
+    pub(super) fn drop_dependents(&mut self, qn: &QualifiedName, cascade: bool, cited: &str) -> Result<Dropped> {
         let views = self.views_reading(qn);
         if let (Some(view), false) = (views.first(), cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 {cited}] {qn} is read by view {view}, so it is dropped only with CASCADE")));
@@ -284,6 +290,7 @@ impl State {
         dropped.absorb(self.drop_asserting(&gone, (cascade, cited))?);
         dropped.absorb(self.drop_triggering(&gone, (cascade, self.catalog.table(qn).is_some()))?);
         dropped.absorb(self.drop_routining(&gone, (cascade, self.catalog.table(qn).is_some()))?);
+        dropped.absorb(self.drop_graphing(&gone, (cascade, cited))?);
         dropped.names.extend(views);
         Ok(dropped)
     }
@@ -316,6 +323,12 @@ impl Session {
     /// domain, collation or type it drops go first, and the columns of a
     /// type it drops.
     pub(super) fn drop_object(&self, st: &Arc<State>, tx: &Txn, object: &DropObject, behavior: DropBehavior) -> Result<Completion> {
+        // [EXTENSION] IF EXISTS of a graph there is not: nothing to drop.
+        if let DropObject::Graph(name, true) = object
+            && st.catalog.graph(&qualify(name, &self.default_schema())).is_none()
+        {
+            return Ok(Completion::Success);
+        }
         let target = self.drop_target(st, object)?;
         let cascade = behavior == DropBehavior::Cascade;
         // The generated columns that name what goes, with CASCADE, dropped
@@ -349,7 +362,8 @@ impl Session {
             | DropTarget::Module(_)
             | DropTarget::Cast(_)
             | DropTarget::Ordering(_)
-            | DropTarget::Transform(..) => Vec::new(),
+            | DropTarget::Transform(..)
+            | DropTarget::Graph(_) => Vec::new(),
         };
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
@@ -412,6 +426,7 @@ impl Session {
             DropObject::Routine(designator) => self.routine_target(st, designator),
             DropObject::Module(name) => Ok(DropTarget::Module(self.owned(st, name, "ISO/IEC 9075-4:2006 draft §9.22 AR1")?)),
             DropObject::Cast(..) | DropObject::Ordering(_) | DropObject::Transform(..) => self.type_drop_target(st, object),
+            DropObject::Graph(name, _) => Ok(DropTarget::Graph(self.owned(st, name, "EXTENSION")?)),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {

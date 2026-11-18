@@ -57,6 +57,8 @@ fn schema_command(s: &SchemaStatement) -> Command {
         SchemaStatement::Trigger(_) => commands::CREATE_TRIGGER,
         SchemaStatement::Method(_) | SchemaStatement::Routine(_) => commands::CREATE_ROUTINE,
         SchemaStatement::Module(_) => commands::CREATE_MODULE,
+        SchemaStatement::Graph(_) => commands::CREATE_PROPERTY_GRAPH,
+        SchemaStatement::AlterGraph(_) => commands::ALTER_PROPERTY_GRAPH,
     }
 }
 
@@ -78,6 +80,7 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::Cast(..) => commands::DROP_CAST,
         DropObject::Ordering(_) => commands::DROP_ORDERING,
         DropObject::Transform(..) => commands::DROP_TRANSFORM,
+        DropObject::Graph(..) => commands::DROP_PROPERTY_GRAPH,
     }
 }
 

@@ -527,6 +527,8 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::AlterTransform(_)
         | SchemaStatement::Routine(_)
         | SchemaStatement::Module(_)
+        | SchemaStatement::Graph(_)
+        | SchemaStatement::AlterGraph(_)
         | SchemaStatement::Role(_) => None,
     }
 }

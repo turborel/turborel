@@ -39,6 +39,7 @@ mod dynamic;
 mod expression;
 mod filter;
 mod generated;
+mod graph_ddl;
 mod grouping;
 mod hypothetical;
 mod interval;

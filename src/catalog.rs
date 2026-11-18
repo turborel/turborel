@@ -20,6 +20,7 @@ mod collations;
 mod columns;
 mod constraints;
 mod domains;
+mod graphs;
 mod key_expressions;
 mod keys;
 mod memory;
@@ -38,6 +39,10 @@ pub use collations::CollationDesc;
 pub use columns::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, Identity};
 pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, MatchType, ReferentialAction};
 pub use domains::{DomainDesc, UsageDesc, usage_held};
+pub use graphs::{
+    ElementKind, ElementTableDesc, EndpointDesc, Endpoints, GRAPH_INVALID, GraphDesc, GraphMode, LabelDesc, PropertyDesc, identifier,
+    qualified_identifier,
+};
 pub use key_expressions::{EXPRESSION_PART, KeyExpression};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
@@ -328,7 +333,8 @@ pub struct IndexDesc {
 ///   their timestamps of creation; and `put_routine`, `routine`,
 ///   `routines`, `routines_named` and `remove_routine`, by specific
 ///   name, `routines` and `routines_named` in the order of their
-///   timestamps of creation.
+///   timestamps of creation; and `put_graph`, `graph`, `graphs` and
+///   `remove_graph`, `graphs` in the order of their names.
 /// * `duplicate` returns an independent copy: changing either leaves the
 ///   other as it was. Each snapshot of the database's definitions holds its
 ///   own copy, and a change of definitions works on a fresh duplicate
@@ -528,6 +534,15 @@ pub trait Catalog: Send + Sync {
     /// Forget the SQL-server module of this name: one dropped [§9.22 GR2].
     /// Its routines and tables are removed by the caller.
     fn remove_module(&mut self, name: &QualifiedName);
+    /// \[EXTENSION\] Record the property graph `graph`, in place of any of
+    /// its name (RULES.md D-GRAPH-CATALOG).
+    fn put_graph(&mut self, graph: GraphDesc);
+    /// The property graph of this name, if any.
+    fn graph(&self, name: &QualifiedName) -> Option<&GraphDesc>;
+    /// Every property graph, in the order of their names.
+    fn graphs(&self) -> Vec<&GraphDesc>;
+    /// Forget the property graph of this name: one dropped.
+    fn remove_graph(&mut self, name: &QualifiedName);
     /// [ISO/IEC 9075-2:2023 §4.42.3] The roles and role authorizations.
     fn roles(&self) -> &Roles;
     /// Make `roles` the roles and role authorizations, in place of those

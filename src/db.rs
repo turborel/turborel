@@ -35,8 +35,7 @@
 //! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
 //! | `Ranking`           | BM25                  | full-text Rank (RULES.md D87)    |
 //!
-//! Plus the settings (`settings.rs`, RULES.md D36), declared once in a
-//! registry, plug-ins' too; the database's values and each session's own.
+//! Plus the settings (`settings.rs`, RULES.md D36), plug-ins' too, per database and session.
 //!
 //! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any
 //! number of threads (RULES.md D27). Each statement runs against a snapshot
@@ -90,6 +89,7 @@ mod files;
 mod formats;
 mod functions;
 mod generated;
+mod graphs;
 mod image;
 mod index_statements;
 mod indexes;

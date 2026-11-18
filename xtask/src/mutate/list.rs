@@ -21,6 +21,7 @@ mod fulltext;
 mod generated;
 mod geometry;
 mod graph_adjacency;
+mod graph_catalog;
 mod grouping_sets;
 mod hypothetical;
 mod json;

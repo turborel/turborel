@@ -89,7 +89,7 @@ impl Parser {
     /// CREATE, DROP or ALTER INDEX, CREATE, ALTER or DROP USER, and ALTER
     /// DATABASE (`parser/users.rs`).
     pub(super) fn schema_manipulation(&mut self) -> Result<SqlStatement> {
-        if self.at_role_definition() {
+        if self.at_role_definition() || (self.next_is_graph() && !self.is_kw(kw::DROP)) {
             return self.schema_statement();
         }
         let other = self.next_is_module() || self.next_is_of_type();
@@ -119,6 +119,9 @@ impl Parser {
         }
         if !alter && let Some(refused) = self.drop_character_set()? {
             return Ok(refused);
+        }
+        if !alter && let Some(dropped) = self.drop_graph()? {
+            return Ok(dropped);
         }
         if !alter && let Some(object) = self.dropped_object()? {
             return Ok(SqlStatement::Drop { object, behavior: self.drop_behavior()? });

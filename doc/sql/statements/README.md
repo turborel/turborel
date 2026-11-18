@@ -9,6 +9,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER DATABASE](alter-database.md): hand the database on to another owner, or change the replica group's members
 - [ALTER DOMAIN](alter-domain.md): change a domain's default or constraints
 - [ALTER INDEX](alter-index.md): change an index's options
+- [ALTER PROPERTY GRAPH](alter-property-graph.md): add or drop a graph's element tables, labels and properties, or compile it
 - [ALTER SEQUENCE](alter-sequence.md): change a sequence generator
 - [ALTER TABLE](alter-table.md): change a base table
 - [ALTER TRANSFORM](alter-transform.md): add or drop the functions of a transform group
@@ -32,6 +33,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE MODULE](create-module.md): define an SQL-server module
 - [CREATE ORDERING](create-ordering.md): say how values of a user-defined type compare
 - [CREATE PROCEDURE](create-procedure.md): define an SQL-invoked procedure
+- [CREATE PROPERTY GRAPH](create-property-graph.md): define a property graph over tables
 - [CREATE ROLE](create-role.md): define a role
 - [CREATE SCHEMA](create-schema.md): define a schema
 - [CREATE SEQUENCE](create-sequence.md): define a sequence generator
@@ -56,6 +58,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP INDEX](drop-index.md): drop an index
 - [DROP MODULE](drop-module.md): drop an SQL-server module
 - [DROP ORDERING](drop-ordering.md): drop a user-defined type's ordering
+- [DROP PROPERTY GRAPH](drop-property-graph.md): drop a property graph
 - [DROP ROLE](drop-role.md): drop a role
 - [DROP ROUTINE](drop-routine.md): drop an SQL-invoked function, procedure or method
 - [DROP SCHEMA](drop-schema.md): drop a schema

@@ -187,3 +187,21 @@ negative of an exception:
 
 The standard: ISO/IEC 9075:1992 §22.1, Table 23; X3.135-1986 §7.3, of
 SQLCODE.
+
+## Property graph conditions
+
+A statement of property graphs that breaks one of their rules fails
+with SQLCODE -103, SQLSTATE 2A000, as any statement whose Syntax Rule is
+broken. Its message names the condition by a code of its own, as in
+`[EXTENSION] GRF-0003 ...`, after the property graph implementation
+standard's §22.
+
+| Code | Condition |
+|---|---|
+| GRF-0001 | No property graph of the name |
+| GRF-0002 | An element table that is no table or view, or one a graph cannot use, as a declared temporary table |
+| GRF-0003 | A key or an endpoint not written and not found: write KEY, or SOURCE KEY and DESTINATION KEY |
+| GRF-0004 | An endpoint whose vertex table is not of the graph |
+| GRF-0005 | The graph is INVALID until [ALTER PROPERTY GRAPH](../sql/statements/alter-property-graph.md) ... COMPILE checks it again |
+| GRF-0011 | A label shared by element tables whose property names differ, or whose types of one property have no type in common |
+| GRF-0012 | An element table, label or property the graph has not |

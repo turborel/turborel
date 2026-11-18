@@ -28,7 +28,8 @@
 //!           create roles (count u32, each str), SQL-server modules (count
 //!           u32, each a module, in the order of their timestamps of
 //!           creation), structured types (count u32, each a type),
-//!           user-defined casts, orderings and transforms (likewise)
+//!           user-defined casts, orderings and transforms (likewise),
+//!           property graphs (count u32, each a graph, by name)
 //! ```
 
 use std::sync::Arc;
@@ -36,13 +37,15 @@ use std::sync::Arc;
 use super::sequences::Settled;
 use super::{State, api};
 use crate::bytes::{Put, Reader};
-use crate::catalog::codec::{cast, ordering, put_cast, put_ordering, put_structured_type, put_transforms, structured_type, transforms};
+use crate::catalog::codec::{
+    cast, graph, ordering, put_cast, put_graph, put_ordering, put_structured_type, put_transforms, structured_type, transforms,
+};
 use crate::catalog::codec::{
     collation, constraint, domain, index, module, privilege, put_collation, put_constraint, put_domain, put_index, put_module, put_name,
     put_privilege, put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine,
     sequence, table, trigger, user_type, view,
 };
-use crate::catalog::{CastDesc, OrderingDesc, StructuredDesc, TransformGroupDesc};
+use crate::catalog::{CastDesc, GraphDesc, OrderingDesc, StructuredDesc, TransformGroupDesc};
 use crate::catalog::{
     Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
     SqlRoutineDesc, TableDesc, TriggerDesc, UserTypeDesc, ViewDesc, module_of_schema,
@@ -95,6 +98,8 @@ pub(super) struct Snapshot {
     orderings: Vec<OrderingDesc>,
     /// The types' transform groups, by the types' names.
     transforms: Vec<(QualifiedName, Vec<TransformGroupDesc>)>,
+    /// The property graphs, by name.
+    graphs: Vec<GraphDesc>,
 }
 
 impl Snapshot {
@@ -152,6 +157,7 @@ impl Snapshot {
             casts: st.catalog.casts().into_iter().cloned().collect(),
             orderings: st.catalog.orderings().into_iter().cloned().collect(),
             transforms: st.catalog.all_transforms().into_iter().map(|(n, g)| (n.clone(), g.to_vec())).collect(),
+            graphs: st.catalog.graphs().into_iter().cloned().collect(),
         })
     }
 
@@ -236,6 +242,8 @@ impl Snapshot {
         self.orderings.iter().for_each(|o| put_ordering(out, o));
         out.put_u32(count(self.transforms.len()));
         self.transforms.iter().for_each(|(n, g)| put_transforms(out, (n, g)));
+        out.put_u32(count(self.graphs.len()));
+        self.graphs.iter().for_each(|g| put_graph(out, g));
     }
 
     /// The snapshot `put` wrote.
@@ -272,6 +280,7 @@ impl Snapshot {
             casts: (0..r.u32()?).map(|_| cast(r)).collect::<Result<_>>()?,
             orderings: (0..r.u32()?).map(|_| ordering(r)).collect::<Result<_>>()?,
             transforms: (0..r.u32()?).map(|_| transforms(r)).collect::<Result<_>>()?,
+            graphs: (0..r.u32()?).map(|_| graph(r)).collect::<Result<_>>()?,
         })
     }
 }
@@ -388,9 +397,9 @@ fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.transforms.iter().for_each(|(n, g)| catalog.put_transforms(n, g.clone()));
 }
 
-/// The assertions, views, privileges, triggers and SQL-invoked routines
-/// of `snapshot`, put in `catalog`: each depends on a table, so they
-/// follow the tables.
+/// The assertions, views, privileges, triggers, SQL-invoked routines,
+/// modules and property graphs of `snapshot`, put in `catalog`: each
+/// depends on a table, so they follow the tables.
 fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.assertions.iter().cloned().for_each(|a| catalog.put_assertion(a));
     catalog.add_views(snapshot.views.clone());
@@ -398,6 +407,7 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.triggers.iter().cloned().for_each(|t| catalog.put_trigger(t));
     snapshot.routines.iter().cloned().for_each(|r| catalog.put_routine(r));
     snapshot.modules.iter().cloned().for_each(|m| catalog.put_module(m));
+    snapshot.graphs.iter().cloned().for_each(|g| catalog.put_graph(g));
 }
 
 /// [ISO/IEC 9075-4:2006 draft §12.8] Puts in `catalog` the declared tables
@@ -416,7 +426,8 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D25, D43, D62, a snapshot of the
     /// definitions: of every kind of table, column, constraint, view, index,
-    /// sequence generator, privilege, SQL-invoked routine, setting, user and
+    /// sequence generator, privilege, SQL-invoked routine, property graph,
+    /// setting, user and
     /// owner there is, and of the counters, it reads back exactly as written.
     #[test]
     fn a_snapshot_reads_back_as_written() {
@@ -438,7 +449,11 @@ mod tests {
                  DETERMINISTIC READS SQL DATA RETURNS NULL ON NULL INPUT RETURN (SELECT MAX(K) FROM C WHERE V > X)
                CREATE PROCEDURE PUT (IN K INTEGER, OUT N INTEGER, INOUT M INTEGER) MODIFIES SQL DATA
                  INSERT INTO P (K) VALUES (K)
-               GRANT EXECUTE ON FUNCTION TOP TO B WITH GRANT OPTION",
+               GRANT EXECUTE ON FUNCTION TOP TO B WITH GRANT OPTION
+               CREATE PROPERTY GRAPH N VERTEX TABLES (P PROPERTIES (K, N AS WHO))
+                 EDGE TABLES (C KEY (K, V) UNDIRECTED SOURCE KEY (K) REFERENCES P DESTINATION P
+                   LABEL PAID PROPERTIES (V * 2 AS TWICE, TOP(V) AS T)) OPTIONS (TRUSTED MODE) WITH INVOKER RIGHTS
+               GRANT SELECT ON PROPERTY GRAPH N TO B WITH GRANT OPTION",
         )
         .unwrap();
         let a = db.session("A");
@@ -451,6 +466,10 @@ mod tests {
         db.set_owner("ANN").unwrap();
         let snapshot = Snapshot::of(&db.snapshot().unwrap()).unwrap();
         assert!(!snapshot.tables.is_empty() && snapshot.views.len() == 2 && snapshot.privileges.len() >= 2);
+        assert_eq!(
+            snapshot.graphs.iter().map(|g| (g.elements.len(), g.select.len(), g.horizon.routines.clone())).collect::<Vec<_>>(),
+            [(2, 1, Some(vec![QualifiedName { auth: "A".into(), ident: "TOP_ONE".into() }]))]
+        );
         assert_eq!(snapshot.routines.iter().map(|r| r.execute.len()).collect::<Vec<_>>(), [2, 1]);
         assert_eq!((snapshot.users.len(), snapshot.owner.as_deref()), (2, Some("ANN")));
         let q = QualifiedName { auth: "A".into(), ident: "Q".into() };

@@ -43,7 +43,9 @@ pub(in crate::db) fn type_named(statement: &SchemaStatement) -> (Option<&TableNa
         | SchemaStatement::Type(_)
         | SchemaStatement::Trigger(_)
         | SchemaStatement::Routine(_)
-        | SchemaStatement::Module(_) => (None, "§11.53 AR1"),
+        | SchemaStatement::Module(_)
+        | SchemaStatement::Graph(_)
+        | SchemaStatement::AlterGraph(_) => (None, "§11.53 AR1"),
     }
 }
 
@@ -124,7 +126,8 @@ impl Session {
             | DropObject::Sequence(name)
             | DropObject::Type(name)
             | DropObject::Trigger(name)
-            | DropObject::Module(name) => Err(rule(format!("[DESIGN] {} is no cast, ordering or transform", name.ident))),
+            | DropObject::Module(name)
+            | DropObject::Graph(name, _) => Err(rule(format!("[DESIGN] {} is no cast, ordering or transform", name.ident))),
             DropObject::Routine(_) | DropObject::Schema { .. } => Err(rule("[DESIGN] no cast, ordering or transform is named")),
         }
     }
@@ -195,7 +198,8 @@ impl State {
             | DropTarget::Type(_)
             | DropTarget::Trigger(_)
             | DropTarget::Routine(_)
-            | DropTarget::Module(_) => return Vec::new(),
+            | DropTarget::Module(_)
+            | DropTarget::Graph(_) => return Vec::new(),
         }
         let mut after = self.clone();
         after.catalog = Arc::from(catalog);

@@ -43,6 +43,7 @@ impl Parser {
             triggers: Vec::new(),
             routines: Vec::new(),
             modules: Vec::new(),
+            graphs: Vec::new(),
             defined: Vec::new(),
         };
         while self.schema_element(&mut schema)? {}
@@ -92,13 +93,24 @@ impl Parser {
             let before = s.routines.len();
             let Some(defined) = self.defined_for_type()? else { return Err(self.syntax("expected a method, cast, ordering or transform")) };
             s.defined.push((before, defined));
+        } else {
+            self.created_element(s)?;
+        }
+        Ok(true)
+    }
+
+    /// The `<schema element>` of CREATE left: a property graph
+    /// (`parser/graph_ddl.rs`), a module, or a table.
+    fn created_element(&mut self, s: &mut Schema) -> Result<()> {
+        if self.next_is_graph() {
+            s.graphs.push(self.graph_definition()?);
         } else if self.next_is_module() {
             let schema = s.name.clone();
             s.modules.push(self.module_definition(Some(&schema))?);
         } else {
             s.tables.push(self.table_definition()?);
         }
-        Ok(true)
+        Ok(())
     }
 
     /// [§11.1] `<schema name clause>` ::= `<schema name>` | AUTHORIZATION
@@ -167,7 +179,8 @@ impl Parser {
     /// `<view definition>`, a `<domain definition>`, an `<alter domain
     /// statement>`, an `<assertion definition>`, a `<grant statement>`, a
     /// `<revoke statement>` or [ISO/IEC 9075-2:2023 §11.49] a `<trigger
-    /// definition>`, on its own: with its text.
+    /// definition>`, or a property graph statement but DROP, on its own:
+    /// with its text.
     pub(super) fn schema_statement(&mut self) -> Result<SqlStatement> {
         let start = self.here();
         let statement = if let Some(r) = self.role_statement()? {
@@ -176,6 +189,8 @@ impl Parser {
             SchemaStatement::Grant(self.privilege_definition()?)
         } else if self.is_kw(kw::REVOKE) {
             SchemaStatement::Revoke(self.revoke_statement()?)
+        } else if self.next_is_graph() {
+            self.graph_statement()?
         } else if self.next_is_kw(kw::VIEW) {
             SchemaStatement::View(self.view_definition()?)
         } else if self.next_is_kw(kw::DOMAIN) && self.is_kw(kw::ALTER) {
@@ -194,7 +209,16 @@ impl Parser {
             SchemaStatement::Sequence(self.sequence_definition()?)
         } else if let Some(defined) = self.defined_for_type()? {
             defined
-        } else if self.next_is_trigger() {
+        } else {
+            self.created_statement()?
+        };
+        Ok(SqlStatement::Schema { statement, text: self.text_from(start) })
+    }
+
+    /// The schema statement of CREATE left: a trigger, a routine, a module
+    /// or a table.
+    fn created_statement(&mut self) -> Result<SchemaStatement> {
+        Ok(if self.next_is_trigger() {
             SchemaStatement::Trigger(self.trigger_definition()?)
         } else if self.next_is_routine() {
             SchemaStatement::Routine(Box::new(self.routine_definition()?))
@@ -202,8 +226,7 @@ impl Parser {
             SchemaStatement::Module(Box::new(self.module_definition(None)?))
         } else {
             SchemaStatement::Table(self.table_definition()?)
-        };
-        Ok(SqlStatement::Schema { statement, text: self.text_from(start) })
+        })
     }
 
     /// [X3.135-1986 §6.5; ISO/IEC 9075:1992 §11.19] `<view definition>` ::=

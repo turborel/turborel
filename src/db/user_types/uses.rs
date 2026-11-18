@@ -200,6 +200,7 @@ impl State {
         }
         abandoned.assertions =
             self.catalog.assertions().into_iter().filter(|a| gone(after.assertion_plan(a).map(|_| ()))).map(|a| a.name.clone()).collect();
+        abandoned.graphs = self.graphs_unbound_in(after, lost);
         abandoned
     }
 }

@@ -126,6 +126,11 @@ pub(in crate::db) struct Abandoned {
     /// by specific name, whose owner loses a privilege their bodies need,
     /// or whose bodies invoke a routine dropped.
     pub(in crate::db) routines: Vec<QualifiedName>,
+    /// \[EXTENSION\] Property graphs whose owner loses SELECT on what they
+    /// read, or whose properties invoke a routine dropped.
+    pub(in crate::db) graphs: Vec<QualifiedName>,
+    /// \[EXTENSION\] Property graphs a grant of SELECT on which is lost.
+    pub(in crate::db) graph_grants: Vec<QualifiedName>,
 }
 
 impl Abandoned {
@@ -139,6 +144,8 @@ impl Abandoned {
             && self.columns.is_empty()
             && self.triggers.is_empty()
             && self.routines.is_empty()
+            && self.graphs.is_empty()
+            && self.graph_grants.is_empty()
     }
 
     /// The first of them, named for a refusal.
@@ -168,6 +175,12 @@ impl Abandoned {
         if let Some(r) = self.routines.first() {
             return format!("routine {r}");
         }
+        if let Some(g) = self.graphs.first() {
+            return format!("property graph {g}");
+        }
+        if let Some(g) = self.graph_grants.first() {
+            return format!("a privilege granted on property graph {g}");
+        }
         self.columns.first().map(|(t, c)| format!("generated column {t}.{c}")).unwrap_or_default()
     }
 }
@@ -186,6 +199,7 @@ impl State {
             PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) => {
                 self.revoke_on_type((auth, schema), r).or_at(r.table.at)
             }
+            PrivilegeObject::Graph => self.revoke_on_graph((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Table => return None,
         };
         Some(revoked)
@@ -292,6 +306,7 @@ impl State {
             }
         }
         self.abandoned_constraints(after, &mut abandoned);
+        self.graphs_abandoned(after, &mut abandoned);
         abandoned
     }
 
@@ -431,6 +446,15 @@ impl State {
         let taken = self.drop_routines(&abandoned.routines)?;
         locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
         dropped.absorb(taken);
+        // [EXTENSION] DROP PROPERTY GRAPH ... CASCADE, and the grants on
+        // the others that stand no more.
+        let graphs = self.drop_graphs(&abandoned.graphs)?;
+        locks.extend(graphs.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
+        dropped.absorb(graphs);
+        for g in &abandoned.graph_grants {
+            self.graph_grants_standing(g);
+            locks.push((g.clone(), LockMode::Exclusive));
+        }
         Ok((dropped, locks))
     }
 
