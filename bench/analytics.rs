@@ -21,7 +21,8 @@
 //! of WC; and set functions of a column of runs of one value, RC's
 //! S, filtered by it and not. Rates are of the tables' rows read, but the key's, of
 //! queries. JSON_VALUE of a member of the JSON type and of JSON text is
-//! measured too (`analytics/json.rs`). Run with `cargo xtask bench`, on
+//! measured too (`analytics/json.rs`), and path search on a graph of a
+//! million edges (`analytics/graph.rs`). Run with `cargo xtask bench`, on
 //! the harness (RULES.md R-BENCH-1).
 
 #![allow(
@@ -35,6 +36,8 @@
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
 
+#[path = "analytics/graph.rs"]
+mod graph;
 mod harness;
 #[path = "analytics/json.rs"]
 mod json;
@@ -59,6 +62,7 @@ fn main() {
     measure(&bench, &s, ("FC", "WC", " (columnstore)"));
     of_runs(&bench, &s);
     json::workloads(&bench);
+    graph::workloads(&bench);
 }
 
 /// Measures set functions of RC, a column store table whose S is sorted,
