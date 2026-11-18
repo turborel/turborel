@@ -73,6 +73,8 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22016 | Invalid argument for NTH_VALUE function: a row below 1 |
 | 22018 | Invalid character value for cast |
 | 22019 | Invalid escape character |
+| 2201E | Invalid argument for natural logarithm: LN of 0 or below |
+| 2201F | Invalid argument for power function: POWER of 0 to a negative power, or of a negative number to a power not whole; SQRT of a negative number |
 | 2201S | Invalid XQuery regular expression: a pattern no XQuery regular expression |
 | 2201T | Invalid XQuery option flag: a flag of a character none of s, m, i, x and q |
 | 2201U | Attempt to replace a zero-length string: TRANSLATE_REGEX of a match of no characters, or of a pattern that matches the empty string |

@@ -1177,6 +1177,36 @@ depend on their order, so it is the error the result would raise
 (RULES.md D15). ANY_VALUE, LISTAGG, WITHIN and OVERFLOW, which SQL-92 does
 not reserve, are key words only where they are read.
 
+### Enhanced numeric functions
+
+Feature T621 (Enhanced numeric functions): the numeric value functions
+LN, EXP, POWER, SQRT, FLOOR and CEIL or CEILING of ISO/IEC 9075-2:2023
+§6.31, and the set functions STDDEV_POP, STDDEV_SAMP, VAR_POP, VAR_SAMP
+and the binary set functions of §10.9.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| LN, EXP | §6.31 SR16, SR17, GR12, GR13 | Of a number, DOUBLE PRECISION, or DECFLOAT(34) of a DECFLOAT. LN of 0 or below is SQLSTATE 2201E. EXP past the range of the result is 22003. Null of a null. |
+| POWER, SQRT | §6.31 SR18, SR19, GR14 | DOUBLE PRECISION, or DECFLOAT(34) if either operand is DECFLOAT. 0 to a negative power, and a negative base to a power not a whole number, are 2201F; 0 to the power 0 is 1, to a positive power 0; a negative base to a whole power is signed as the power is odd or even. SQRT(x) is POWER(x, 0.5), so SQRT of a negative number is 2201F. Past the range, 22003. |
+| FLOOR, CEIL, CEILING | §6.31 SR20, GR15, GR16 | Of an exact number, exact of scale 0, found exactly, of precision enough for its whole part and one digit more (IV151); of an approximate number or a DECFLOAT, of its type. |
+| The names | §6.31, §10.9 | LN, EXP, POWER, SQRT, FLOOR, CEIL, CEILING, STDDEV_POP, STDDEV_SAMP, VAR_POP, VAR_SAMP, COVAR_POP, COVAR_SAMP, CORR and the REGR_ names, which SQL-92 does not reserve, are the functions only before "(", so a column may still be named one. |
+| VAR_POP, VAR_SAMP, STDDEV_POP, STDDEV_SAMP | §10.9 SR2, SR7h, SR7i, SR7j, GR7d ix | Of a number; DISTINCT or ALL written is SQLCODE -103 [SR2]. DOUBLE PRECISION, or DECFLOAT(34) of a DECFLOAT. VAR_POP is (SXS − SX²/N)/N; VAR_SAMP divides by N − 1 and is null of one value; STDDEV_ is the square root. Null of no values. |
+| The binary set functions | §10.9 SR9, GR8 | COVAR_POP, COVAR_SAMP, CORR, REGR_SLOPE, REGR_INTERCEPT, REGR_COUNT, REGR_R2, REGR_AVGX, REGR_AVGY, REGR_SXX, REGR_SYY and REGR_SXY of Y and X, each a number, else -103. A pair with a null Y or X is left out, with SQLSTATE 01003. REGR_COUNT is NUMERIC(18), 0 of no pairs; the others are DOUBLE PRECISION, or DECFLOAT(34) if Y or X is, and null of no pairs. COVAR_SAMP is null of one pair. |
+| CORR, REGR_R2, REGR_SLOPE, REGR_INTERCEPT | §10.9 GR8c x to xiii | Null where X is all alike. CORR is null where Y is all alike, REGR_R2 1. CORR is SQRT(POWER(N·SXY − SX·SY, 2) / ...), as GR8c x 3 writes it, so it is never below 0: of Y falling as X rises it is 1. A result past the range is null. |
+| Their uses | §10.9 GR4, §6.10, §7.9 | Each takes FILTER, is computed for each group of GROUP BY, ROLLUP, CUBE and GROUPING SETS, and is a window function with OVER. |
+| Out of range | §10.9 GR3e | A sum on the way past the range of the result's type is 22003, judged once the sum is finished. |
+
+Of numbers not DECFLOAT the statistical set functions keep the count,
+the means and the sums of squared deviations and of their products by
+Welford's updates, so no digits are lost to the subtraction SXS − SX²/N.
+Their state is written, and two states merged by Chan's formulas, so a
+window frame is computed from a tree of states. SXX and SYY only grow,
+so whether one passes the range does not depend on the order of the
+rows (RULES.md D15). Of DECFLOAT operands they find SX, SXS and the rest
+in DECFLOAT arithmetic, as the General Rules write them, and write no
+state, as SUM of DECFLOAT writes none. A variance rounding leaves below 0
+is 0. CORR and REGR_R2 rounding puts past 1 are 1.
+
 ### Null ordering
 
 Feature T611 (Elementary OLAP operations), its `<null ordering>` of
@@ -2429,6 +2459,12 @@ topic. The Where column names the file that implements each.
 | 2023 §4.37.5, UV065, a locator's value | The next of the session's counter, from 1, never one in use | `db/lobs.rs` |
 | 2023 §5.2 SR4, IV074, the `<truncating whitespace>` | The space alone | `functions/lobs/ops.rs` |
 | 2023 §6.31 SR1, IV137, the type of OCCURRENCES_REGEX and POSITION_REGEX | NUMERIC(18) | `functions/regex.rs` |
+| 2023 §6.31 SR16b, SR17b, SR18b, IV146, IV148, IV150, the type of LN, EXP, POWER and SQRT | DOUBLE PRECISION | `functions/numeric.rs` |
+| 2023 §6.31 SR16a, SR17a, SR18a, IV145, IV147, IV149, of a DECFLOAT operand | DECFLOAT(34); LN, EXP and POWER to a non-whole power found in double precision through the decimal exponent, kept to 16 digits; SQRT and whole powers to 34 digits | `functions/numeric/decimal.rs` |
+| 2023 §6.31 SR20a, IV151, the type of FLOOR and CEILING of NUMERIC(p, s) | NUMERIC(p − s + 1, 0); of scale 0 the operand's type | `functions/numeric.rs` |
+| 2023 §10.9 SR7h ii, SR9c ii 2, IV173, IV176, the type of the statistical set functions | DOUBLE PRECISION | `functions/statistics.rs` |
+| 2023 §10.9 SR7h i, SR9c ii 1, IV172, IV175, of a DECFLOAT operand | DECFLOAT(34) | `functions/statistics.rs` |
+| 2023 §10.9 SR9c i, IV174, the type of REGR_COUNT | NUMERIC(18), COUNT's | `functions/statistics.rs` |
 | 2023 §11.72 SR6, ID157, the type of a sequence generator that names none | NUMERIC(18) | `db/sequences.rs` |
 | 2023 §9.36 SR7, §9.37 SR7, ID112, the maximum of NO MAXVALUE | The type's greatest value ascending, -1 descending | `db/sequences.rs` |
 | 2023 §9.36 SR8, §9.37 SR8, ID113, the minimum of NO MINVALUE | 1 ascending, the type's least value descending | `db/sequences.rs` |

@@ -99,6 +99,10 @@ The numeric functions:
 | POSITION(a IN b) | where string a first begins in b, from 1; 0 if not in it, 1 if a is empty; of binary strings, in octets |
 | EXTRACT(f FROM d) | the field f of a datetime or interval |
 | WIDTH_BUCKET(x, b1, b2, n) | which of n buckets of equal width from b1 to b2 x falls in |
+| LN(x), EXP(x) | the natural logarithm of x, and e raised to the power x |
+| POWER(x, y), SQRT(x) | x raised to the power y, and the square root of x, POWER(x, 0.5) |
+| FLOOR(x) | the greatest whole number not above x |
+| CEILING(x), CEIL(x) | the least whole number not below x |
 
 WIDTH_BUCKET cuts the range from b1 to b2 into n buckets of equal width
 and gives the bucket x falls in, from 1. A value before b1 is in bucket
@@ -125,6 +129,39 @@ VALUES (WIDTH_BUCKET(1, 0, 0, 4));
  Grace                          |     8100.00 |   4 |    1
 (4 rows)
 turborel: SQLCODE -301 (SQLSTATE 2201G): the width bucket bounds are equal [ISO/IEC 9075-2:2023 §6.31 GR17c]
+```
+
+LN, EXP, POWER and SQRT are DOUBLE PRECISION, or DECFLOAT(34) if an
+operand is DECFLOAT. FLOOR and CEILING of an exact number are exact of
+scale 0, found exactly; of an approximate number or a DECFLOAT they are
+of its type. Each is null if an operand is. POWER of 0 to the power 0 is
+1, and of a negative number to a whole power is negative only of an odd
+power. Of a DECFLOAT, SQRT and a whole power are found to 34 digits, and
+LN, EXP and other powers to the 16 digits of double precision.
+
+LN of 0 or below is refused (SQLSTATE 2201E, SQLCODE -301). So is POWER
+of 0 to a negative power, or of a negative number to a power not whole,
+and so SQRT of a negative number (2201F, -301). A result past the range
+of its type is refused too (22003, -301).
+
+```sql
+VALUES (LN(1), EXP(1), POWER(2, 10), POWER(-2, 3), SQRT(2));
+VALUES (FLOOR(-2.5), CEILING(-2.5), FLOOR(2.5E0), CEIL(CAST(0.001 AS DECFLOAT)), SQRT(CAST(2 AS DECFLOAT)));
+VALUES (LN(0));
+VALUES (SQRT(-1));
+```
+
+```
+                          |                          |                          |                          |
+--------------------------+--------------------------+--------------------------+--------------------------+--------------------------
+                      0E0 |      2.718281828459045E0 |                  1.024E3 |                     -8E0 |     1.4142135623730951E0
+(1 row)
+      |      |                          |                                             |
+------+------+--------------------------+---------------------------------------------+---------------------------------------------
+   -3 |   -2 |                      2E0 |                                           1 |         1.414213562373095048801688724209698
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2201E): the natural logarithm is of a number above 0 [ISO/IEC 9075-2:2023 §6.31 GR12b]
+turborel: SQLCODE -301 (SQLSTATE 2201F): a negative base is raised only to a whole number [ISO/IEC 9075-2:2023 §6.31 GR14e]
 ```
 
 ## String expressions
@@ -374,6 +411,15 @@ a query reads, or of each group of its GROUP BY.
 | JSON_OBJECTAGG(name VALUE x) | the JSON text of an object of each row's member, name a character string; null of no rows |
 | PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY x) | the value a fraction p of the way through the sorted x, between two of them if it falls between |
 | PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY x) | the first of the sorted x whose share of the values up to it is at least p |
+| VAR_POP(x), VAR_SAMP(x) | the variance of x, of the population and of a sample |
+| STDDEV_POP(x), STDDEV_SAMP(x) | their square roots, the standard deviations |
+| COVAR_POP(y, x), COVAR_SAMP(y, x) | the covariance of the pairs of y and x, of the population and of a sample |
+| CORR(y, x) | the size of their coefficient of correlation, from 0 to 1 |
+| REGR_SLOPE(y, x), REGR_INTERCEPT(y, x) | the slope and intercept of the least-squares line of y on x |
+| REGR_R2(y, x) | that line's coefficient of determination |
+| REGR_COUNT(y, x) | the pairs in which neither y nor x is null |
+| REGR_AVGX(y, x), REGR_AVGY(y, x) | the means of x and of y |
+| REGR_SXX(y, x), REGR_SYY(y, x), REGR_SXY(y, x) | the sums of the squares of the deviations of x and of y from their means, and of their products |
 
 Each but COUNT(*) leaves out the nulls of x, and with DISTINCT counts
 each value of x once: `COUNT(DISTINCT DEPT)`. Of no rows, COUNT is 0
@@ -441,6 +487,48 @@ SELECT ID FROM STAFF WHERE SALARY > AVG(SALARY);
 ```
 turborel: SQLCODE -103 (SQLSTATE 2A000): when the select list has a set function, every column reference must be inside one, or of a column functionally dependent on none (found STAFF.NAME) [X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] (at character 7)
 turborel: SQLCODE -103 (SQLSTATE 2A000): a <set function specification> is in a <where clause> only in a <having clause>'s <subquery>, of an outer reference [X3.135-1986 §5.21 SR3] (at character 36)
+```
+
+The statistical set functions are of numbers. Each is DOUBLE
+PRECISION, or DECFLOAT(34) if an argument is DECFLOAT, but REGR_COUNT,
+which is exact. VAR_POP, VAR_SAMP, STDDEV_POP and STDDEV_SAMP take no
+DISTINCT or ALL (SQLSTATE 2A000, SQLCODE -103). Those of two arguments,
+y and x, leave out each row in which either is null, with the warning
+01003. Of no rows REGR_COUNT is 0 and the others null; of one row
+VAR_SAMP, STDDEV_SAMP and COVAR_SAMP are null, the variance of a sample
+of one being unknown. Where every x is alike, CORR, REGR_R2, REGR_SLOPE
+and REGR_INTERCEPT are null, as the line would be upright; where every y
+is alike and the x are not, CORR is null and REGR_R2 1. CORR is the size
+of the coefficient, not its sign. The standard defines it as the square
+root of its square, so of y falling as x rises it is 1, not -1, and
+REGR_SLOPE gives the sign. A sum on the way past the range of the
+result's type is refused (22003, -301).
+
+```sql
+SELECT VAR_POP(SALARY), VAR_SAMP(SALARY), STDDEV_POP(SALARY), STDDEV_SAMP(SALARY) FROM STAFF;
+SELECT DEPT, REGR_COUNT(SALARY, ID), REGR_SLOPE(SALARY, ID), VAR_SAMP(SALARY)
+  FROM STAFF GROUP BY DEPT ORDER BY DEPT;
+SELECT REGR_SLOPE(Y, X), REGR_INTERCEPT(Y, X), REGR_R2(Y, X), CORR(Y, X), COVAR_SAMP(Y, X)
+  FROM (VALUES (2, 1), (4, 2), (5, 3), (9, 4)) AS P (Y, X);
+SELECT VAR_POP(DISTINCT SALARY) FROM STAFF;
+```
+
+```
+                          |                          |                          |
+--------------------------+--------------------------+--------------------------+--------------------------
+                   1.26E6 |                   1.89E6 |     1.1224972160321825E3 |      1.374772708486752E3
+(1 row, with a warning: SQLSTATE 01003)
+ DEPT |                      |                          |
+------+----------------------+--------------------------+--------------------------
+ ENG  |                    2 |                      9E2 |                   4.05E5
+ OPS  |                    1 |                     NULL |                     NULL
+ NULL |                    0 |                     NULL |                     NULL
+(3 rows, with a warning: SQLSTATE 01003)
+                          |                          |                          |                          |
+--------------------------+--------------------------+--------------------------+--------------------------+--------------------------
+                    2.2E0 |                    -5E-1 |     9.307692307692307E-1 |     9.647638212377321E-1 |     3.6666666666666665E0
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): VAR_POP takes no <set quantifier>: neither DISTINCT nor ALL [ISO/IEC 9075-2:2023 §10.9 SR2] (at character 15)
 ```
 
 The mean is found by a subquery: `WHERE SALARY > (SELECT AVG(SALARY)
