@@ -21,6 +21,7 @@ mod routines;
 
 use std::sync::Arc;
 
+pub use args::MAX_ARRAY;
 pub use catalog::procedures;
 pub use kind::{data_type_of, kinds, of_data_type};
 
@@ -44,8 +45,11 @@ pub const CONSTRAINT_LENGTH: u32 = 256;
 pub const TYPE_LENGTH: u32 = 128;
 /// ST_MaxFeatureIDLength [§15.3.1 DR4].
 pub const FEATURE_ID_LENGTH: u32 = 128;
-/// The length of a referent's name and of a topology or network's.
+/// The length of a referent's name.
 pub const NAME_LENGTH: u32 = 128;
+/// ST_MaxTopologyOrNetworkName [§15.5.1 DR1], the lesser of
+/// ST_MaxTopologyName and ST_MaxNetworkName, so either name fits.
+pub const TOPO_OR_NET_NAME_LENGTH: u32 = 128;
 /// ST_MaxDescriptionLength, as §20.3's.
 pub const DESCRIPTION_LENGTH: u32 = crate::system::SRS_DESCRIPTION_LENGTH;
 
@@ -61,6 +65,12 @@ pub fn with_functions(mut existing: Vec<Arc<dyn ScalarFunction>>) -> Vec<Arc<dyn
         existing.push(Arc::new(dispatch::LrFunction::new(name, fallback)));
     }
     existing
+}
+
+/// The names of the routines of §15, one a routine.
+#[cfg(test)]
+pub fn routines_names() -> Vec<&'static str> {
+    routines::all().map(|r| r.name).collect()
 }
 
 /// The value of the stored form `bytes` of a linear referencing value.

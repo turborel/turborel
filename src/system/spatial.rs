@@ -191,27 +191,16 @@ fn units(_seen: &Seen<'_>) -> Vec<Row> {
 // ---------------------------------------------------------------------------
 
 /// [Annex A.1] The meta-variables of what is not supported.
-const UNSUPPORTED: [&str; 24] = [
+const UNSUPPORTED: [&str; 13] = [
     "ST_MaxAngleAsGML",
     "ST_MaxAngleAsText",
     "ST_MaxAngleString",
-    "ST_MaxConstraintArrayElements",
-    "ST_MaxConstraintLength",
     "ST_MaxDirectionAsGML",
     "ST_MaxDirectionAsText",
     "ST_MaxDirectionString",
-    "ST_MaxFeatureIDLength",
     "ST_MaxGeometryAsGML",
     "ST_MaxLEMeasureArrayElements",
-    "ST_MaxLRAsGML",
-    "ST_MaxLRAsText",
-    "ST_MaxLRMNameLength",
-    "ST_MaxPositionExpArrayElements",
-    "ST_MaxReferentArrayElements",
     "ST_MaxSRSAsText",
-    "ST_MaxStartValueArrayElements",
-    "ST_MaxTopologyName",
-    "ST_MaxTopologyOrNetworkName",
     "ST_MaxVectorArrayElements",
     "ST_MaxVectorAsBinary",
     "ST_MaxVectorAsGML",
@@ -224,7 +213,11 @@ pub fn sizing_values() -> Vec<(&'static str, Option<i64>, &'static str)> {
     let bytes = i64::try_from(crate::geometry::MAX_BYTES).unwrap_or(0);
     let network = i64::try_from(crate::spatial::network::sql::MAX_NETWORK_NAME).unwrap_or(0);
     let mut all = vec![
-        ("ST_MaxArrayElements", Some(0), "an array's cardinality is its declared type's"),
+        (
+            "ST_MaxArrayElements",
+            Some(i64::from(crate::value::types::MAX_ARRAY_CARDINALITY)),
+            "the paths of one shortest path ST_ShortestUndPath and ST_ShortestDirPath return",
+        ),
         ("ST_MaxDescriptionLength", Some(i64::from(DESCRIPTION_LENGTH)), "the characters of a description"),
         ("ST_MaxDoublePrecisionArrayElements", Some(0), "an array's cardinality is its declared type's"),
         (
@@ -246,9 +239,36 @@ pub fn sizing_values() -> Vec<(&'static str, Option<i64>, &'static str)> {
         ("ST_MaxUnitTypeLength", Some(i64::from(UNIT_TYPE_LENGTH)), "the characters of a unit's type"),
         ("ST_MaxVariableNameLength", Some(i64::from(VARIABLE_NAME_LENGTH)), "the characters of a meta-variable's name"),
     ];
+    all.extend(linear_referencing_sizings());
     all.extend(UNSUPPORTED.iter().map(|n| (*n, None, "not supported")));
     all.sort_unstable_by_key(|(name, ..)| *name);
     all
+}
+
+/// [Annex A.1] The meta-variables of topology-geometry and linear
+/// referencing, each the limit its routines' parameters enforce.
+fn linear_referencing_sizings() -> [(&'static str, Option<i64>, &'static str); 11] {
+    use crate::spatial::lr::sql::{CONSTRAINT_LENGTH, FEATURE_ID_LENGTH, LRM_NAME_LENGTH, MAX_ARRAY, TOPO_OR_NET_NAME_LENGTH};
+    let text = i64::try_from(crate::spatial::lr::MAX_TEXT).unwrap_or(0);
+    let topology = i64::try_from(crate::spatial::topology::sql::MAX_TOPOLOGY_NAME).unwrap_or(0);
+    let position_exps = i64::try_from(crate::spatial::lr::MAX_POSITION_EXPS).unwrap_or(0);
+    [
+        ("ST_MaxConstraintArrayElements", Some(i64::from(MAX_ARRAY)), "the constraints of an LRM"),
+        ("ST_MaxConstraintLength", Some(i64::from(CONSTRAINT_LENGTH)), "the characters of an LRM's constraint"),
+        ("ST_MaxFeatureIDLength", Some(i64::from(FEATURE_ID_LENGTH)), "the characters of a feature's identifier"),
+        ("ST_MaxLRAsGML", Some(text), "the characters of a linear referencing value's GML"),
+        ("ST_MaxLRAsText", Some(text), "the characters of a linear referencing value's well-known text"),
+        ("ST_MaxLRMNameLength", Some(i64::from(LRM_NAME_LENGTH)), "the characters of an LRM's name"),
+        ("ST_MaxPositionExpArrayElements", Some(position_exps), "the position expressions ST_TranslateToInstance returns"),
+        ("ST_MaxReferentArrayElements", Some(i64::from(MAX_ARRAY)), "the referents of a feature"),
+        ("ST_MaxStartValueArrayElements", Some(i64::from(MAX_ARRAY)), "the start values of a linear element"),
+        ("ST_MaxTopologyName", Some(topology), "the characters of a topology's name"),
+        (
+            "ST_MaxTopologyOrNetworkName",
+            Some(i64::from(TOPO_OR_NET_NAME_LENGTH)),
+            "the characters of a directed edge's topology or network",
+        ),
+    ]
 }
 
 fn sizings_columns() -> Vec<ColumnDesc> {

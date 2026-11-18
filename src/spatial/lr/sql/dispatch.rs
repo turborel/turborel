@@ -4,6 +4,7 @@
 //! fitting any. A function of the name already there, a geometry
 //! routine, is invoked of arguments no routine of §15 takes.
 
+use std::borrow::Borrow;
 use std::cell::Cell;
 use std::sync::{Arc, LazyLock};
 
@@ -13,8 +14,13 @@ use super::catalog::{self, Read};
 use super::routine::Routine;
 use super::routines;
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::functions::{AppendedQuery, ScalarFunction};
+use crate::functions::{AppendedQuery, CallContext, JsonProbe, ScalarFunction, ScalarRef};
+use crate::geometry::SpatialOperation;
+use crate::index::expression::KeyArgument;
+use crate::memory::MemoryBudget;
 use crate::params::ParameterType;
+use crate::settings::Configurable;
+use crate::value::lob::TempLobs;
 use crate::value::{DataType, Value};
 
 /// [§15.1.1 Description 16] The supported units: the LINEAR rows of
@@ -40,6 +46,17 @@ impl LrFunction {
         LrFunction { name, routines: routines::all().filter(|r| r.name == name).collect(), fallback }
     }
 
+    /// It, taking `fallback`'s calls in place of its own fallback's.
+    fn over(&self, fallback: Arc<dyn ScalarFunction>) -> LrFunction {
+        LrFunction { name: self.name, routines: self.routines.clone(), fallback: Some(fallback) }
+    }
+
+    /// The function there was before of the name, if one was and a call
+    /// of values `values` is not one of a routine of §15.
+    fn other<V: Borrow<Value>>(&self, values: &[V]) -> Option<&Arc<dyn ScalarFunction>> {
+        self.fallback.as_ref().filter(|_| self.by_values(values).is_none())
+    }
+
     /// The routine the declared types `types` choose.
     fn by_types(&self, types: &[DataType]) -> Option<Chosen> {
         let own = self.routines.iter().find(|r| r.takes(types)).map(|r| (*r, false));
@@ -50,9 +67,9 @@ impl LrFunction {
     }
 
     /// The routine the values `values` choose.
-    fn by_values(&self, values: &[Value]) -> Option<Chosen> {
+    fn by_values<V: Borrow<Value>>(&self, values: &[V]) -> Option<Chosen> {
         if let Some((last, given)) = values.split_last()
-            && matches!(last, Value::Array(_))
+            && matches!(last.borrow(), Value::Array(_))
             && let Some(r) = self.routines.iter().find(|r| r.catalog && r.holds(given))
         {
             return Some((r, true));
@@ -66,7 +83,7 @@ impl LrFunction {
     /// # Errors
     ///
     /// The routine's; SQLCODE -103 if no routine takes the values.
-    fn run(&self, values: &[Value], temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<(Value, Option<SqlState>)> {
+    fn run(&self, values: &[Value], temp: Option<&dyn TempLobs>) -> Result<(Value, Option<SqlState>)> {
         let Some((routine, appended)) = self.by_values(values) else {
             return match &self.fallback {
                 Some(f) => f.call_warned(values, temp),
@@ -74,6 +91,7 @@ impl LrFunction {
             };
         };
         let (given, read) = if appended { split(values) } else { (values, None) };
+        routine.check_lengths(given)?;
         if routine.null_call && given.iter().any(Value::is_null) {
             return Ok((Value::Null, None));
         }
@@ -132,7 +150,37 @@ impl ScalarFunction for LrFunction {
         self.run(args, None).map(|(v, _)| v)
     }
 
-    fn call_warned(&self, args: &[Value], temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<(Value, Option<SqlState>)> {
+    fn call_with(&self, args: &[Value], temp: Option<&dyn TempLobs>) -> Result<Value> {
+        match self.other(args) {
+            Some(f) => f.call_with(args, temp),
+            None => self.run(args, temp).map(|(v, _)| v),
+        }
+    }
+
+    fn call_borrowed(&self, args: &[&Value], temp: Option<&dyn TempLobs>) -> Result<Value> {
+        match self.other(args) {
+            Some(f) => f.call_borrowed(args, temp),
+            None => self.call_with(&args.iter().map(|v| (*v).clone()).collect::<Vec<_>>(), temp),
+        }
+    }
+
+    fn call_in(&self, args: &[Value], cx: &dyn CallContext) -> Result<Value> {
+        match self.other(args) {
+            Some(f) => f.call_in(args, cx),
+            None => self.run(args, cx.temp_lobs()).map(|(v, _)| v),
+        }
+    }
+
+    /// A batch of no call of a routine of §15 is the function's there was
+    /// before; else a call a row.
+    fn call_many(&self, rows: &[Vec<Value>]) -> Result<Vec<Value>> {
+        match self.fallback.as_ref().filter(|_| rows.iter().all(|r| self.by_values(r).is_none())) {
+            Some(f) => f.call_many(rows),
+            None => rows.iter().map(|r| self.call(r)).collect(),
+        }
+    }
+
+    fn call_warned(&self, args: &[Value], temp: Option<&dyn TempLobs>) -> Result<(Value, Option<SqlState>)> {
         self.run(args, temp)
     }
 
@@ -174,5 +222,91 @@ impl ScalarFunction for LrFunction {
             Some((r, _)) => r.catalog.then(|| catalog::query(cat)),
             None => self.fallback.as_ref().and_then(|f| f.catalog_query(constants, types, cat)),
         }
+    }
+
+    /// Of a call of a routine of §15, none: a call is of one if an
+    /// argument's type is one of §15's.
+    fn index_safe(&self, args: &[KeyArgument<'_>]) -> bool {
+        let lr = args.iter().filter_map(|a| a.data_type).any(|t| super::of_data_type(t).is_some());
+        !lr && self.fallback.as_ref().is_some_and(|f| f.index_safe(args))
+    }
+
+    /// The function there was before, prepared of the constants `args`, and
+    /// the routines of §15 still taking theirs; none if a constant is a
+    /// value of §15's types, or the function there was before is not
+    /// prepared.
+    fn specialize(&self, args: &[Option<&Value>], budget: &Arc<MemoryBudget>) -> Option<ScalarRef> {
+        if args.iter().flatten().any(|v| super::kind::kind_of_value(v).is_some()) {
+            return None;
+        }
+        let prepared = self.fallback.as_ref()?.specialize(args, budget)?;
+        Some(ScalarRef(Arc::new(self.over(prepared.0))))
+    }
+
+    /// None: it is alone of its name, the overloads its routines and the
+    /// function there was before (`argument_type`).
+    fn parameter_types(&self) -> Option<Vec<DataType>> {
+        None
+    }
+
+    // The capabilities below are the function's there was before. An
+    // index, a plan or a batch reads them of a call whose column or probe
+    // is a geometry, an argument no routine of §15 takes, so a call of a
+    // routine of §15 never reaches what they promise.
+
+    fn configurable(&self) -> Option<&dyn Configurable> {
+        self.fallback.as_ref().and_then(|f| f.configurable())
+    }
+
+    fn index_predicate(&self) -> bool {
+        self.fallback.as_ref().is_some_and(|f| f.index_predicate())
+    }
+
+    fn predicate_truth(&self) -> Option<Value> {
+        self.fallback.as_ref().and_then(|f| f.predicate_truth())
+    }
+
+    fn rechecked_errors(&self) -> bool {
+        self.fallback.as_ref().is_some_and(|f| f.rechecked_errors())
+    }
+
+    fn probe_arguments(&self) -> Option<usize> {
+        self.fallback.as_ref().and_then(|f| f.probe_arguments())
+    }
+
+    fn json_probe(&self) -> Option<JsonProbe<'_>> {
+        self.fallback.as_ref().and_then(|f| f.json_probe())
+    }
+
+    fn appended_query(&self, constants: &[Option<&Value>]) -> Option<AppendedQuery> {
+        self.fallback.as_ref().and_then(|f| f.appended_query(constants))
+    }
+
+    fn ranked_by_index(&self) -> bool {
+        self.fallback.as_ref().is_some_and(|f| f.ranked_by_index())
+    }
+
+    fn ranks(&self) -> bool {
+        self.fallback.as_ref().is_some_and(|f| f.ranks())
+    }
+
+    fn uses_context(&self, arity: usize) -> bool {
+        self.fallback.as_ref().is_some_and(|f| f.uses_context(arity))
+    }
+
+    fn spatial_operation(&self) -> Option<SpatialOperation> {
+        self.fallback.as_ref().and_then(|f| f.spatial_operation())
+    }
+
+    fn vector_metric(&self, constants: &[Option<&Value>]) -> Option<(String, usize)> {
+        self.fallback.as_ref().and_then(|f| f.vector_metric(constants))
+    }
+
+    fn word_argument(&self, position: usize, word: &str, first: bool) -> bool {
+        self.fallback.as_ref().is_some_and(|f| f.word_argument(position, word, first))
+    }
+
+    fn batches(&self) -> bool {
+        self.fallback.as_ref().is_some_and(|f| f.batches())
     }
 }
