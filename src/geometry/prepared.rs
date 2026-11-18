@@ -198,7 +198,9 @@ impl Prepared {
         if located == Some(true) || self.cells_after == usize::MAX {
             return None;
         }
-        if self.tree.get().is_none() && self.measured.fetch_add(1, Ordering::Relaxed) < MEASURED_AFTER_USES {
+        let built = self.tree.get().is_some();
+        let measured = if built { MEASURED_AFTER_USES } else { self.measured.fetch_add(1, Ordering::Relaxed) };
+        if measured < MEASURED_AFTER_USES {
             return None;
         }
         self.tree()?.nearest(*point)
@@ -265,7 +267,8 @@ impl Prepared {
         if let Some(filed) = self.filed.get() {
             return filed.as_deref();
         }
-        if self.probed.fetch_add(1, Ordering::Relaxed) < self.filed_after {
+        let probed = self.probed.fetch_add(1, Ordering::Relaxed);
+        if probed < self.filed_after {
             return None;
         }
         let build = || FiledEdges::new(&self.geometry.shape, self.geometry.bounds?, self.budget.as_ref()?);

@@ -120,7 +120,8 @@ impl EdgeTree {
                 at = node.after;
             } else if node.end > node.start {
                 let edges = self.edges.get(node.start..node.end)?;
-                if !edges.iter().filter(|&&(a, b)| meets(envelope(a, b), window)).all(|&(a, b)| visit(a, b)) {
+                let finished = edges.iter().filter(|&&(a, b)| meets(envelope(a, b), window)).all(|&(a, b)| visit(a, b));
+                if !finished {
                     return Some(());
                 }
                 at = node.after;
