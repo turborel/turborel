@@ -34,8 +34,10 @@ mod value;
 mod tests;
 
 pub use binary::{base64, base64_text, hex, hex_text};
+pub use duration::{day_time_text, year_month_text};
 pub use exact::Exact;
 pub use moment::{LAST_YEAR, Moment, Shape};
+pub use number::{double, real_text};
 pub use types::{Ordered, Primitive, Production, WhiteSpace};
 pub use value::{canonical, compare, digits, equal, length};
 
@@ -166,11 +168,11 @@ fn lexical(c: &str, p: Primitive) -> Result<Option<String>> {
         Primitive::Boolean => number::boolean(c).map(number::boolean_text),
         Primitive::Decimal => number::decimal(c),
         Primitive::Integer => number::integer(c),
-        Primitive::Float => number::float(c).map(|x| number::real_text(x, true)),
-        Primitive::Double => number::double(c).map(|x| number::real_text(x, false)),
+        Primitive::Float => number::float(c).map(|x| real_text(x, true)),
+        Primitive::Double => double(c).map(|x| real_text(x, false)),
         Primitive::Duration => duration::general(c)?.map(|(months, micros)| duration::general_text(months, micros)),
-        Primitive::YearMonthDuration => duration::year_month(c)?.map(duration::year_month_text),
-        Primitive::DayTimeDuration => duration::day_time(c)?.map(duration::day_time_text),
+        Primitive::YearMonthDuration => duration::year_month(c)?.map(year_month_text),
+        Primitive::DayTimeDuration => duration::day_time(c)?.map(day_time_text),
         Primitive::HexBinary => hex(c).map(|octets| hex_text(&octets)),
         Primitive::Base64Binary => base64(c).map(|octets| base64_text(&octets)),
         Primitive::QName | Primitive::Notation => text::is_qname(c).then(|| c.to_owned()),

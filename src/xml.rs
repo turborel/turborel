@@ -33,8 +33,9 @@ mod stored;
 mod tree;
 
 pub use atomic::{
-    Exact, LAST_YEAR, Moment, Ordered, Primitive, Production, Shape, WhiteSpace, base64, base64_text, canonical, cast, compare, digits,
-    duration_units, equal, from_lexical, hex, hex_text, length, normalize, xquery_error,
+    Exact, LAST_YEAR, Moment, Ordered, Primitive, Production, Shape, WhiteSpace, base64, base64_text, canonical, cast, compare,
+    day_time_text, digits, double, duration_units, equal, from_lexical, hex, hex_text, length, normalize, real_text, xquery_error,
+    year_month_text,
 };
 pub use chars::{
     COLON, VERSION_10, VERSION_11, Version, is_char, is_literal, is_name, is_name_char, is_name_start, is_ncname, is_nmtoken,
@@ -51,8 +52,8 @@ pub use sequence::{Atomic, AtomicType, Item, Node, Sequence};
 pub use serialize::{Parameters, serialize};
 pub use stored::{Event, Events, FORMAT_VERSION, decode, encode};
 pub use tree::{
-    Binding, Builder, ElementStart, Kind, NodeId, QName, SQLXML_NAMESPACE, SQLXML_PREFIX, Specified, Tree, XML_NAMESPACE, XML_PREFIX,
-    XMLNS_NAMESPACE, XS_NAMESPACE, XS_PREFIX, XSI_NAMESPACE, XSI_PREFIX,
+    Binding, Builder, Copying, ElementStart, Kind, NodeId, QName, SQLXML_NAMESPACE, SQLXML_PREFIX, Specified, Tree, XML_NAMESPACE,
+    XML_PREFIX, XMLNS_NAMESPACE, XS_NAMESPACE, XS_PREFIX, XSI_NAMESPACE, XSI_PREFIX, copied_attribute, is_xml_id,
 };
 
 use crate::error::{Code, SqlError};

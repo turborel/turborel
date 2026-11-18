@@ -2951,6 +2951,48 @@ hold only what it needs, so the deepest query of each shape parses, is
 written back and is dropped within half of a thread's default stack, as
 a test checks.
 
+A query is analysed once, as its statement is bound (`xquery::Query`),
+into a plan (`xquery/plan.rs`) that its evaluations share and none
+changes. The analysis makes the static context of XQuery's Appendix C.1
+and §10.20 of Part 14, the namespaces the binder holds in scope among it,
+and resolves every name of the tree: each QName to an expanded QName,
+each variable to a slot of its frame or a global, each function call to a
+function of the prolog, a constructor function's cast, or a function of
+the library. A static error is raised there; no static typing is done, so
+a type error is raised as the query is evaluated. The library
+(`xquery::Library`) is the built-in functions and those plug-ins
+add (`Library::add`), each an
+`XQueryFunction` of its expanded QName, parameter types and result type,
+called with its arguments converted by the function conversion rules and
+its dynamic context (`xquery::Context`): the focus, the current dateTime
+and implicit timezone, the collations and the base URI. A prolog's
+`external` function is the library's of its name and arity. Collations
+are the codepoint collation and the database's (D60), each reached by its
+URI.
+
+The evaluation holds a sequence as a vector of `xml::Item`s, a node its
+tree, shared, and its place, so a node keeps its identity; a variable's
+value is held once and shared by every reference to it. The focus, the
+context item, position and size, is passed down to each operation, and
+the variables of a body are the slots of its frame; a prolog's variables
+are evaluated once, as first read. Document order within a tree is the
+order of its nodes; between trees it is by where each tree is held,
+stable while any node of it is held (`xml::Node::document_order`). A
+constructor builds its element in a tree of its own with `Builder`, a
+direct element nested in it built in place, each node of an enclosed
+expression copied by the construction and copy-namespaces modes.
+
+The evaluation recurses as the plan nests and as functions call functions,
+so it counts each operation evaluated within another, each FLWOR clause
+and each call, and is SQLCODE -900 past `xquery::MAX_DEPTH`, 256: the
+deepest evaluation of each shape a test tries runs within half of a
+thread's default stack. A sequence holds `xml::MAX_NODES` items at most,
+a string `xml::MAX_TEXT` octets, and the trees one evaluation constructs
+`xml::MAX_STORED` octets together, each past it SQLCODE -900. Each item
+of a FLWOR expression, a path step, a predicate and a quantified
+expression, and each call, looks whether the statement was cancelled
+(D44).
+
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation
 would take one, as one inside an array, a multiset, a row or a distinct

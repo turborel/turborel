@@ -17,7 +17,7 @@
 
 mod build;
 
-pub use build::{Builder, ElementStart, Specified};
+pub use build::{Builder, Copying, ElementStart, Specified, copied_attribute, is_xml_id};
 
 use std::ops::Range;
 
@@ -290,10 +290,16 @@ impl Tree {
         (id.index().saturating_add(1)..end).filter_map(NodeId::at).filter(move |&d| self.kind(d) != Some(Kind::Attribute))
     }
 
+    /// Its nodes, in document order.
+    pub fn nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+        (0..self.nodes.len()).filter_map(NodeId::at)
+    }
+
     /// The first node after `id` in document order that is not below it:
     /// its next sibling, or the next sibling of the nearest ancestor that
     /// has one.
-    fn following(&self, id: NodeId) -> Option<NodeId> {
+    #[must_use]
+    pub fn following(&self, id: NodeId) -> Option<NodeId> {
         let mut at = Some(id);
         while let Some(node) = at {
             let n = self.node(node)?;

@@ -55,6 +55,26 @@ impl Node {
     pub fn is(&self, other: &Node) -> bool {
         Arc::ptr_eq(&self.tree, &other.tree) && self.id == other.id
     }
+
+    /// The node `id` of its tree.
+    #[must_use]
+    pub fn at(&self, id: NodeId) -> Node {
+        Node { tree: Arc::clone(&self.tree), id }
+    }
+
+    /// Where `self` is in document order beside `other` [XQueryDM §2.4]:
+    /// of one tree, by their places in it; of two, by where their trees
+    /// are held. \[DESIGN\] RULES.md D86: the order of trees is
+    /// implementation-dependent, but stable and all of a tree's nodes
+    /// together [XQuery §2.4.1], as a tree is held at one address while a
+    /// node of it is, and every node holds its tree.
+    #[must_use]
+    pub fn document_order(&self, other: &Node) -> std::cmp::Ordering {
+        if Arc::ptr_eq(&self.tree, &other.tree) {
+            return self.id.cmp(&other.id);
+        }
+        Arc::as_ptr(&self.tree).addr().cmp(&Arc::as_ptr(&other.tree).addr())
+    }
 }
 
 /// The type of an atomic value [XQueryDM §2.6.2]: each atomic built-in
@@ -212,6 +232,12 @@ impl Sequence {
     #[must_use]
     pub fn items(&self) -> &[Item] {
         &self.items
+    }
+
+    /// Its items, in order, taken.
+    #[must_use]
+    pub fn into_items(self) -> Vec<Item> {
+        self.items
     }
 
     /// The document node it is alone, if it is one.

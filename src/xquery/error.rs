@@ -2,6 +2,8 @@
 //! Appendix F], raised as SQL/XML's exception condition XQuery error
 //! [ISO/IEC 9075-14:2006 draft §6.18 GR3], and where in the text each is.
 
+mod codes;
+
 use std::fmt;
 
 use crate::error::{Code, SqlError, SqlState};
@@ -121,6 +123,28 @@ pub(super) fn xquery_error(code: ErrorCode, place: Place, why: &str) -> SqlError
         format!("[ISO/IEC 9075-14:2006 draft §6.18 GR3] XQuery error {code} at line {}, column {}: {why}", place.line, place.column),
     )
     .with_state(SqlState::XQUERY_ERROR)
+}
+
+/// The XQuery error `code` raised as a query is analysed in its static
+/// context or evaluated, `why` saying which rule of \[XQuery\] or
+/// \[XQueryFO\] it breaks: SQL/XML's exception condition XQuery error
+/// [ISO/IEC 9075-14:2006 draft §6.18 GR3], its message naming the code.
+#[must_use]
+pub fn error(code: ErrorCode, why: &str) -> SqlError {
+    SqlError::new(Code::Data, format!("[ISO/IEC 9075-14:2006 draft §6.18 GR3] XQuery error {code}: {why}"))
+        .with_state(SqlState::XQUERY_ERROR)
+}
+
+/// The error of a query whose evaluation passes one of turborel's limits,
+/// `why` (RULES.md D18, D86): SQLCODE -900.
+pub(super) fn beyond(why: &str) -> SqlError {
+    SqlError::new(Code::Unsupported, format!("[DESIGN] the XQuery evaluation is beyond turborel's limits: {why}"))
+}
+
+/// The error of valid XQuery turborel does not process yet, `what`
+/// (RULES.md D18): SQLCODE -900.
+pub(super) fn not_yet(what: &str) -> SqlError {
+    SqlError::new(Code::Unsupported, format!("[DESIGN] turborel does not process {what} yet"))
 }
 
 /// The error of a query nested deeper than `MAX_NESTING`, at `place`

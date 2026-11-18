@@ -3,9 +3,13 @@
 //! its children, closed when its end tag is. Adjacent text is one text
 //! node, and no text node is empty [XQueryDM §6.7.3].
 
+mod copy;
+
+pub use copy::{Copying, copied_attribute, is_xml_id};
+
 use std::collections::HashMap;
 
-use super::{Binding, Kind, NONE, Node, NodeId, QName, Tree, XML_PREFIX};
+use super::{Binding, Kind, NONE, Node, QName, Tree};
 use crate::error::Result;
 use crate::xml::{MAX_NESTING, MAX_NODES, MAX_TEXT, beyond};
 
@@ -310,84 +314,6 @@ impl Builder {
         Ok(())
     }
 
-    /// A copy of node `root` of `tree` and the nodes below it, added to the
-    /// open node's children [XQuery §3.7.1.3]: each copied node new, the
-    /// relations among them kept; an element's ID and IDREFS properties
-    /// kept, as construction mode preserve keeps them [ISO/IEC 9075-14:2006
-    /// draft §6.13 GR5]; and the root, an element that had a parent,
-    /// declaring every binding in its scope, as copy-namespaces preserve
-    /// keeps them [XQueryDM §6.2.1]. A document node's children are copied
-    /// in its place. An attribute is no child, so it is not copied here.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -900 if `root` is an attribute, or the tree would nest too
-    /// deep or be too big.
-    pub fn copy(&mut self, tree: &Tree, root: NodeId) -> Result<()> {
-        if tree.kind(root) == Some(Kind::Document) {
-            return tree.children(root).try_for_each(|child| self.copy_subtree(tree, child));
-        }
-        self.copy_subtree(tree, root)
-    }
-
-    /// A copy of node `root` of `tree`, no document node, and the nodes
-    /// below it, added to the open node's children (`copy`).
-    fn copy_subtree(&mut self, tree: &Tree, root: NodeId) -> Result<()> {
-        let mut at = Some(root);
-        while let Some(id) = at {
-            let opened = self.copy_node(tree, id, id == root)?;
-            at = match tree.first_child(id).filter(|_| opened) {
-                Some(child) => Some(child),
-                None => self.copied_after(tree, root, id, opened)?,
-            };
-        }
-        Ok(())
-    }
-
-    /// Node `id` of `tree` copied, the root of what is copied if `root`;
-    /// whether it opened an element, whose children follow it.
-    fn copy_node(&mut self, tree: &Tree, id: NodeId, root: bool) -> Result<bool> {
-        match tree.kind(id) {
-            Some(Kind::Element) => {
-                let name = tree.name(id).cloned().ok_or_else(|| beyond("an element has no name"))?;
-                let bindings = if root && tree.parent(id).is_some() {
-                    let scope = tree.in_scope(id).into_iter().filter(|(p, _)| *p != Some(XML_PREFIX));
-                    scope.map(|(p, uri)| Binding { prefix: p.map(Into::into), uri: uri.into() }).collect()
-                } else {
-                    tree.declared(id).to_vec()
-                };
-                let attributes = tree.attributes(id).map(|a| copied_attribute(tree, a)).collect::<Result<Vec<_>>>()?;
-                self.start_element(ElementStart { name, bindings, attributes }).map(|()| true)
-            }
-            Some(Kind::Text) => self.text(tree.content(id)).map(|()| false),
-            Some(Kind::Comment) => self.comment(tree.content(id)).map(|()| false),
-            Some(Kind::ProcessingInstruction) => {
-                let target = tree.name(id).map_or("", |n| &n.local);
-                self.processing_instruction(target, tree.content(id)).map(|()| false)
-            }
-            Some(Kind::Attribute | Kind::Document) | None => Err(beyond("an attribute or document node is no node's child")),
-        }
-    }
-
-    /// The node after `id` in document order below `root`, each element
-    /// left on the way closed, `id` too if it opened one with no child;
-    /// none at the end of `root`.
-    fn copied_after(&mut self, tree: &Tree, root: NodeId, id: NodeId, opened: bool) -> Result<Option<NodeId>> {
-        if opened {
-            self.end_element()?;
-        }
-        let mut at = id;
-        while at != root {
-            if let Some(sibling) = tree.next_sibling(at) {
-                return Ok(Some(sibling));
-            }
-            let Some(parent) = tree.parent(at) else { break };
-            self.end_element()?;
-            at = parent;
-        }
-        Ok(None)
-    }
-
     /// The tree built.
     ///
     /// # Errors
@@ -399,10 +325,4 @@ impl Builder {
         }
         Ok(self.tree)
     }
-}
-
-/// Attribute `id` of `tree`, as an element copied specifies it.
-fn copied_attribute(tree: &Tree, id: NodeId) -> Result<Specified> {
-    let name = tree.name(id).cloned().ok_or_else(|| beyond("an attribute has no name"))?;
-    Ok(Specified { name, value: tree.content(id).to_owned(), is_id: tree.is_id(id), is_idrefs: tree.is_idrefs(id) })
 }

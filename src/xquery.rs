@@ -21,19 +21,32 @@
 //! of one precedence is one node of the tree, so a long chain makes no
 //! deep tree.
 //!
-//! Nothing is evaluated yet: a query's static context, its names'
-//! namespaces and its types are the work of what evaluates it. The parser
-//! raises what the text alone shows: syntax errors \[err:XPST0003\], and
-//! the static errors of the prolog and the direct constructors that need
-//! no static context (`ErrorCode`).
+//! The parser raises what the text alone shows: syntax errors
+//! \[err:XPST0003\], and the static errors of the prolog and the direct
+//! constructors that need no static context (`ErrorCode`). A module is then
+//! analysed in its static context (`xquery/analyze.rs`) [XQuery §2.2.3.1]
+//! into a plan (`xquery/plan.rs`), which is evaluated (`xquery/eval.rs`)
+//! [XQuery §2.2.3.2]; its types are `xquery/types.rs`'s, its collations
+//! `xquery/collation.rs`'s, the functions it calls a library of
+//! `XQueryFunction`s (`xquery/functions.rs`). A compiled query is a
+//! `Query`.
 
+mod analyze;
 mod ast;
+mod collation;
 mod display;
 mod error;
+mod eval;
+mod functions;
 mod keywords;
 mod lexer;
 mod parser;
+mod plan;
+#[cfg(test)]
+mod testing;
+mod types;
 
+pub use analyze::{EMPTY_ORDER, Environment};
 pub use ast::{AddOp, Flwor, GeneralComp, MulOp, NodeComp, PreserveMode, SetOp, Sign, ValueComp};
 pub use ast::{
     AttributeTest, AttributeValuePart, AxisStep, BoundarySpace, CaseClause, Comparator, Comparison, ComputedName, Construction,
@@ -44,7 +57,11 @@ pub use ast::{
     ReverseAxis, Root, SchemaImport, SchemaPrefix, Separator, SequenceType, Setter, Setup, SingleType, Step, StepExpr, Typeswitch,
     ValidationMode, VarDecl, VersionDecl, boundary_whitespace,
 };
-pub use error::ErrorCode;
+pub use collation::{CODEPOINT, Collations, Collator, SQL_COLLATION};
+pub use error::{ErrorCode, error};
+pub use eval::{Input, MAX_DEPTH};
+pub use functions::{Context, FN_NAMESPACE, Library, XQueryFunction};
+pub use types::{AttributeKind, ElementKind, ItemKind, NodeKind, SchemaType, SeqType, XDT_NAMESPACE};
 
 use crate::error::Result;
 use crate::xml::Version;
@@ -74,6 +91,39 @@ pub const MAX_NESTING: usize = 64;
 /// SQLCODE -900 if it nests deeper than `MAX_NESTING`.
 pub fn parse(text: &str, version: Version) -> Result<Module> {
     parser::module(text, version)
+}
+
+/// A query, parsed and analysed in its static context [XQuery §2.2.3.1],
+/// to be evaluated as often as it is given input [XQuery §2.2.3.2]. It is
+/// shared by every evaluation of a statement, and changes in none.
+#[derive(Debug)]
+pub struct Query(plan::Plan);
+
+impl Query {
+    /// The query `text`, parsed by XML 1.1's lexical rules [ISO/IEC
+    /// 9075-14:2006 draft §6.18 GR2a] and analysed in the static context
+    /// `env` gives [§10.20].
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 10000, XQuery error, of a static error \[XQuery\] raises
+    /// [§6.18 GR3]; SQLCODE -900 of a query nested deeper than
+    /// `MAX_NESTING`, or valid XQuery turborel does not process yet.
+    pub fn compile(text: &str, env: &Environment<'_>) -> Result<Query> {
+        let module = parse(text, Version::V11)?;
+        analyze::compile(&module, env).map(Query)
+    }
+
+    /// Its value, given `input` [XQuery §2.2.3.2].
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 10000, XQuery error, of a dynamic or type error \[XQuery\]
+    /// raises [§6.18 GR3]; SQLCODE -900 of an evaluation past turborel's
+    /// limits; SQLCODE -920 if the statement is cancelled.
+    pub fn evaluate(&self, input: Input<'_>) -> Result<crate::xml::Sequence> {
+        eval::evaluate(&self.0, input)
+    }
 }
 
 #[cfg(test)]
