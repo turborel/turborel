@@ -6,6 +6,7 @@
 //! [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2.1.5].
 
 use super::model::{Body, Collection, Coords, Curve, Dims, Geom, Rings, Surface};
+use super::shape::{MULTILINE, MULTIPOINT, MULTIPOLYGON, Shape};
 use super::unsupported;
 use crate::error::Result;
 use crate::spatial::planar::{self, Geometry, Point};
@@ -14,7 +15,8 @@ use crate::spatial::planar::{self, Geometry, Point};
 ///
 /// # Errors
 ///
-/// SQLCODE -900 of a curve no linearizer takes yet.
+/// SQLCODE -900 of a solid, which has no planar linear form; a curve
+/// is linearized by `CURVE_LINEARIZER` (`Geom::linear`).
 pub fn engine_of(g: &Geom) -> Result<Geometry> {
     body(&g.linear()?.xy().body)
 }
@@ -37,7 +39,7 @@ fn curve(part: &Curve) -> Result<Vec<Point>> {
         | Curve::Nurbs(_)
         | Curve::Clothoid(_)
         | Curve::Spiral(_)
-        | Curve::Compound(_) => Err(unsupported("a curve that is not linear")),
+        | Curve::Compound(_) => Err(unsupported("a curve the linear form left unlinearized")),
     }
 }
 
@@ -45,7 +47,7 @@ fn surface(part: &Surface) -> Result<Vec<Vec<Point>>> {
     match part {
         Surface::Polygon(r) => Ok(rings(r)),
         Surface::CurvePolygon(_) | Surface::Triangle(_) | Surface::PolyhdrlSurface(_) | Surface::Tin(_) | Surface::Compound(_) => {
-            Err(unsupported("a surface that is not a polygon"))
+            Err(unsupported("a surface the linear form left unlinearized"))
         }
     }
 }
@@ -69,6 +71,29 @@ fn body(part: &Body) -> Result<Geometry> {
     })
 }
 
+/// The engine's value of a shape of the seven kinds of x and y, which
+/// is the linear form of any value (`kind::decode`).
+pub(super) fn of_shape(shape: &Shape) -> Geometry {
+    match shape {
+        Shape::Point(point) => point.map_or(Geometry::Empty, Geometry::Point),
+        Shape::Line(line) => Geometry::Line(line.clone()),
+        Shape::Polygon(rings) => Geometry::Polygon(rings.clone()),
+        Shape::Multi(code, parts) => {
+            let lines = || parts.iter().filter_map(|part| if let Shape::Line(line) = part { Some(line.clone()) } else { None });
+            match *code {
+                MULTIPOINT => Geometry::MultiPoint(
+                    parts.iter().filter_map(|part| if let Shape::Point(point) = part { *point } else { None }).collect(),
+                ),
+                MULTILINE => Geometry::MultiLine(lines().collect()),
+                MULTIPOLYGON => Geometry::MultiPolygon(
+                    parts.iter().filter_map(|part| if let Shape::Polygon(rings) = part { Some(rings.clone()) } else { None }).collect(),
+                ),
+                _ => Geometry::Collection(parts.iter().map(of_shape).collect()),
+            }
+        }
+    }
+}
+
 /// The XY value of SRID `srid` holding the engine's result.
 ///
 /// # Errors
@@ -89,7 +114,8 @@ fn flat_rings(rings: &[Vec<Point>]) -> Rings {
 
 fn body_of(result: &Geometry) -> Body {
     match result {
-        Geometry::Empty => Body::Collection(Collection::Geometry(Vec::new())),
+        // R00 of §5.1.39 Table 7, the empty set of type ST_Point.
+        Geometry::Empty => Body::Point(Vec::new()),
         Geometry::Point(point) => Body::Point(flat(&[*point])),
         Geometry::Line(line) => Body::Curve(Curve::LineString(flat(line))),
         Geometry::Polygon(polygon) => Body::Surface(Surface::Polygon(flat_rings(polygon))),

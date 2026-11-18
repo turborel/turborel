@@ -2,9 +2,9 @@
 
 use super::{Mutation, Package};
 
-/// The engine's exact predicates, noding, labelling and constructions, each
-/// broken so its requirement tests fail.
-pub const SPATIAL_PLANAR: [Mutation; 19] = [
+/// The engine's exact predicates, noding, labelling and constructions, and
+/// its routines through SQL, each broken so its requirement tests fail.
+pub const SPATIAL_PLANAR: [Mutation; 25] = [
     Mutation {
         name: "planar-orient-filter",
         package: Package::Core,
@@ -194,5 +194,65 @@ pub const SPATIAL_PLANAR: [Mutation; 19] = [
         replacement: "for _ in 0..0 {",
         integration: &[],
         unit: &["spatial::planar::segment::tests::full_precision_crossings_are_nearest"],
+    },
+    Mutation {
+        name: "planar-sql-relate-empty",
+        package: Package::Core,
+        breaks: "ST_Relate checks the matrix of an empty operand instead of giving NULL",
+        file: "src/geometry/routines/eval.rs",
+        original: "    if one.is_empty() || two.is_empty() {\n        return Ok(Value::Null);\n    }\n    let pattern",
+        replacement: "    let pattern",
+        integration: &["spatial_planar::relationships_follow_the_de9im"],
+        unit: &[],
+    },
+    Mutation {
+        name: "planar-sql-meets-window",
+        package: Package::Core,
+        breaks: "the relationships that hold only of meeting values get no R-tree window",
+        file: "src/geometry.rs",
+        original: "Self::Intersects | Self::Meets | Self::Equals => true,\n            Self::Distance | Self::IsEmpty => false,",
+        replacement: "Self::Intersects | Self::Equals => true,\n            Self::Meets | Self::Distance | Self::IsEmpty => false,",
+        integration: &["spatial_planar::relationships_use_rtree_plans"],
+        unit: &[],
+    },
+    Mutation {
+        name: "planar-sql-equals-empty-window",
+        package: Package::Core,
+        breaks: "an empty value's ST_Equals window finds no row",
+        file: "src/index/rtree/geometry.rs",
+        original: "Some(SpatialOperation::Equals) { Search::All } else { Search::Empty }",
+        replacement: "Some(SpatialOperation::Equals) { Search::Empty } else { Search::Empty }",
+        integration: &["spatial_planar::relationships_use_rtree_plans"],
+        unit: &[],
+    },
+    Mutation {
+        name: "planar-sql-collection-type",
+        package: Package::Core,
+        breaks: "a union with a collection narrows to a multipoint",
+        file: "src/geometry/routines/results.rs",
+        original: ".find(|multi| kind != Kind::GeomCollection && multi.is_subtype_of(kind)",
+        replacement: ".find(|multi| multi.is_subtype_of(kind)",
+        integration: &["spatial_planar::set_operations_and_their_result_types"],
+        unit: &[],
+    },
+    Mutation {
+        name: "planar-sql-ring-closed",
+        package: Package::Core,
+        breaks: "ST_IsRing holds of an open simple curve",
+        file: "src/geometry/routines/eval.rs",
+        original: "Ok(closed && planar::is_simple(&line)?)",
+        replacement: "Ok(planar::is_simple(&line)?)",
+        integration: &["spatial_planar::validity_simplicity_and_rings"],
+        unit: &[],
+    },
+    Mutation {
+        name: "planar-sql-unit-direction",
+        package: Package::Core,
+        breaks: "a unit form converts a length the wrong way",
+        file: "src/geometry/routines/units.rs",
+        original: "Ok(units::convert(value, metres_per_unit(srid)?, metres_per(name)?))",
+        replacement: "Ok(units::convert(value, metres_per(name)?, metres_per_unit(srid)?))",
+        integration: &["spatial_planar::measures_and_their_units"],
+        unit: &[],
     },
 ];

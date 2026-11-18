@@ -22,7 +22,7 @@ pub(in crate::physical) fn render_probe(probe: &Probe, columns: &[usize], names:
             let value = Expr::Const(value.clone());
             let args = if argument == 0 { vec![column, value] } else { vec![value, column] };
             let call = Expr::Call(predicate.function.clone(), args);
-            let condition = if predicate.function.0.spatial_operation() == Some(SpatialOperation::Intersects) {
+            let condition = if predicate.function.0.spatial_operation().is_some_and(SpatialOperation::windowed) {
                 Cond::Compare(call, CompOp::Eq, Expr::Const(Value::Exact(Decimal::new(1, 0))))
             } else {
                 Cond::Value(call)

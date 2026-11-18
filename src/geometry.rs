@@ -4,6 +4,7 @@
 //! valid for spatial relationships. No coordinate transformation occurs.
 
 mod collections;
+mod crossing;
 mod distance;
 pub mod engine;
 pub(crate) use distance::distance_domain;
@@ -16,8 +17,8 @@ mod planar;
 mod prepared;
 mod procedures;
 mod reference;
-mod relate;
 mod robust;
+pub mod routines;
 mod shape;
 mod wkb;
 mod wkt;
@@ -49,16 +50,37 @@ pub const UNSPECIFIED_SRID: i32 = 0;
 /// and runtime-error safeguards (D85); this is not a total Boolean predicate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpatialOperation {
-    /// Closed XY intersection: INTEGER 1/0, NULL propagation, and an error
-    /// for unequal SRIDs, including empty operands, as [`Geometry::intersects`].
+    /// Closed XY intersection: INTEGER 1/0, NULL for an empty operand and
+    /// NULL propagation, and an error for unequal SRIDs, including empty
+    /// operands, as [`Geometry::intersects`].
     Intersects,
     /// Minimum Cartesian separation, with precisely the results, envelope
     /// lower bound and errors of [`Geometry::distance`]. NULL propagates;
     /// empty sets return NULL. The SQL result is DOUBLE PRECISION.
     Distance,
+    /// A relationship true only of operands whose point sets meet, so of
+    /// none that is empty: ST_Touches, ST_Crosses, ST_Within, ST_Contains
+    /// and ST_Overlaps, INTEGER 1, 0 or NULL [ISO/IEC 13249-3:2016 §5.1].
+    /// An index finds its rows as it finds those of `Intersects`.
+    Meets,
+    /// ST_Equals, true also of two empty sets [§5.1.43], so an index
+    /// finds every row for an empty operand.
+    Equals,
     /// INTEGER 1 for an empty geometry and 0 otherwise, as
     /// [`Geometry::is_empty`]; a NULL argument returns NULL.
     IsEmpty,
+}
+
+impl SpatialOperation {
+    /// Whether `f(column, value) = 1` holds only of a column value whose
+    /// envelope meets the value's, so an index window finds every row;
+    /// of `Equals` an empty value's window is every row.
+    pub fn windowed(self) -> bool {
+        match self {
+            Self::Intersects | Self::Meets | Self::Equals => true,
+            Self::Distance | Self::IsEmpty => false,
+        }
+    }
 }
 
 /// A geometry with an opaque spatial reference identifier. Coordinates
@@ -172,24 +194,31 @@ impl Geometry {
     }
 
     /// Whether the closed XY point sets share any point, including their
-    /// boundaries. Polygon inputs must have valid simple-feature topology;
-    /// this operation does not validate that topology. Empty sets never
-    /// intersect. Decisions use exact signs of the input coordinates, with
-    /// no tolerance or geographic interpretation.
+    /// boundaries, by the planar engine's exact ST_Intersects
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.48]. Empty sets never
+    /// intersect here; the SQL function returns the null value for them.
     ///
     /// # Errors
     ///
-    /// SQLCODE -301 if the geometries have different SRIDs, even if empty.
+    /// SQLCODE -301 if the geometries have different SRIDs, even if empty;
+    /// -910 if noding does not settle.
     pub fn intersects(&self, other: &Self) -> Result<bool> {
-        self.intersects_located(other, None)
+        Ok(self.intersects_located(other, None)?.unwrap_or(false))
     }
 
-    /// Preparation may supply the same closed-set intersection decision
-    /// from its point locator; reference and empty-set checks still apply.
-    fn intersects_located(&self, other: &Self, located: Option<bool>) -> Result<bool> {
+    /// ST_Intersects, none if either set is empty [§5.1.48 Description
+    /// 2c]. Preparation may supply the same decision from its point
+    /// locator; reference and empty-set checks still apply.
+    fn intersects_located(&self, other: &Self, located: Option<bool>) -> Result<Option<bool>> {
         self.same_reference(other)?;
-        let (Some(left), Some(right)) = (self.bounds, other.bounds) else { return Ok(false) };
-        Ok(left.intersects(right) && located.unwrap_or_else(|| relate::intersects(&self.shape, &other.shape)))
+        let (Some(left), Some(right)) = (self.bounds, other.bounds) else { return Ok(None) };
+        if !left.intersects(right) {
+            return Ok(Some(false));
+        }
+        if let Some(known) = located {
+            return Ok(Some(known));
+        }
+        crate::spatial::planar::intersects(&engine::of_shape(&self.shape), &engine::of_shape(&other.shape))
     }
 
     /// Minimum Cartesian distance in the supplied coordinate units,
@@ -210,7 +239,7 @@ impl Geometry {
     fn distance_located(&self, other: &Self, located: Option<bool>) -> Result<Option<f64>> {
         self.same_reference(other)?;
         let (Some(left), Some(right)) = (self.bounds, other.bounds) else { return Ok(None) };
-        if self.intersects_located(other, located)? {
+        if self.intersects_located(other, located)? == Some(true) {
             return Ok(Some(0.0_f64));
         }
         let distance = distance::separated(&self.shape, &other.shape);

@@ -3,7 +3,7 @@
 //! by points or line segments on their boundaries. Empty components
 //! contribute infinity, never a spurious zero or an early overflow error.
 
-use super::relate::segments;
+use super::crossing::segments;
 use super::robust::distance::{point, segment};
 use super::shape::{Point, Shape};
 use crate::error::Result;

@@ -2,8 +2,23 @@
 //! same representation and memory bounds as its prepared operand.
 
 use super::*;
-use crate::geometry::relate;
 use crate::geometry::tests::common::{dense_ring as ring, subdivided_ring};
+
+/// The planar engine's location of a point in a polygon's point set.
+fn engine_location(point: Point, shape: &Shape) -> Location {
+    let (area, at) = (crate::geometry::engine::of_shape(shape), crate::spatial::planar::Geometry::Point(point));
+    if crate::spatial::planar::within(&at, &area).unwrap() == Some(true) {
+        Location::Interior
+    } else if crate::spatial::planar::intersects(&at, &area).unwrap() == Some(true) {
+        Location::Boundary
+    } else {
+        Location::Exterior
+    }
+}
+
+fn valid(shape: &Shape) -> bool {
+    crate::spatial::planar::is_valid(&crate::geometry::engine::of_shape(shape)).unwrap()
+}
 
 fn with_hole(reversed: bool) -> Shape {
     let mut shell = ring(0.0, 10.0);
@@ -39,7 +54,7 @@ fn polygon_interval_locations_match_all_ring_decisions() {
             for x in -2_i32..31_i32 {
                 for y in -2_i32..31_i32 {
                     let point = [f64::from(x) / 2.0_f64, f64::from(y) / 2.0_f64];
-                    assert!(locator.locate(point).unwrap() == relate::locate(point, &shape), "point {point:?}, reversed {reversed}");
+                    assert!(locator.locate(point).unwrap() == engine_location(point, &shape), "point {point:?}, reversed {reversed}");
                 }
             }
         }
@@ -67,7 +82,11 @@ fn polygon_interval_bounds_keep_extreme_ordinates() {
             [0.0_f64, scale.next_down()],
             [0.0_f64, (-scale).next_up()],
         ] {
-            assert!(locator.locate(point).unwrap() == relate::locate(point, &shape), "point {point:?}");
+            // Rounding at subnormal scale bends the ring through the origin,
+            // a polygon the locator never serves (`prepared.rs`).
+            if valid(&shape) {
+                assert!(locator.locate(point).unwrap() == engine_location(point, &shape), "point {point:?} scale {scale}");
+            }
         }
         if scale < f64::MAX {
             for y in [scale.next_up(), (-scale).next_down()] {
