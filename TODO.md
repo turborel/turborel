@@ -160,7 +160,10 @@ features.
   and REVOKE of USAGE on a registered XML Schema, which
   `catalog::xml_schemas::may_use` is to check; and the
   components of the permanently registered XML Schemas, so they validate
-  (XS's the Schema for Schemas).
+  (XS's the Schema for Schemas). Identity constraints compare every pair
+  of key-sequences, and a `.//` selector walks each target's subtree
+  again, so a document of many keys is validated in quadratic time or
+  worse: key-sequences want a hash or an order, as a unique index has.
 
 ### Full text
 
