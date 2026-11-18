@@ -42,7 +42,7 @@ const WGS84: &str = r#"GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",637813
 fn fixed() -> [(i32, String, String, &'static str); 5] {
     let grs80 = |name: &str, datum: &str| {
         format!(
-            r#"GEOGCS["{name}",DATUM["{datum}",SPHEROID["GRS 1980",6378137,298.257222101]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#
+            r#"GEOGCS["{name}",DATUM["{datum}",SPHEROID["GRS 1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#
         )
     };
     let mercator = format!(

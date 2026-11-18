@@ -59,6 +59,7 @@ mod sequences;
 mod server;
 mod shadow;
 mod spatial_planar;
+mod spatial_srs;
 mod spatial_types;
 mod sql2023;
 mod sqlmm_fulltext;
