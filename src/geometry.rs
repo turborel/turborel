@@ -19,6 +19,7 @@ mod reference;
 mod relate;
 mod robust;
 mod shape;
+mod solids;
 mod wkb;
 mod wkt;
 
@@ -31,6 +32,7 @@ pub use procedures::{CatalogProcedure, procedures};
 pub use reference::data_type_with_srid;
 pub(crate) use reference::fixed_srid;
 use shape::Shape;
+pub use solids::{BRepSolid, SOLID_FUNCTIONS, SolidFunction, TinFromTable, TinTable, table_functions};
 
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::spatial::{Bounds, DIMENSIONS};

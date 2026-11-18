@@ -16,6 +16,7 @@ use std::sync::Arc;
 use super::collections::CollectionFunction;
 use super::functions::GeometryFunction;
 use super::model::Kind;
+use super::solids::{SolidFunction, TinFromTable};
 use crate::error::{Result, SqlError, SqlState};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::value::{DataType, Value};
@@ -62,7 +63,7 @@ macro_rules! routine {
 }
 
 /// The table: of each type, the methods it declares.
-pub static METHODS: [Method; 29] = [
+pub static METHODS: [Method; 84] = [
     // [§5.1.1] ST_Geometry.
     original(Kind::Geometry, "ST_SRID", 0, routine!(GeometryFunction::Srid)),
     original(Kind::Geometry, "ST_SRID", 1, routine!(GeometryFunction::SetSrid)),
@@ -100,6 +101,70 @@ pub static METHODS: [Method; 29] = [
     // [§10.6.1] ST_MultiPolygon.
     overriding(Kind::MultiPolygon, "ST_GEOMETRIES", 0, routine!(CollectionFunction::Geometries(Kind::MultiPolygon))),
     overriding(Kind::MultiPolygon, "ST_GEOMETRIES", 1, routine!(CollectionFunction::Geometries(Kind::MultiPolygon))),
+    // [§5.1] ST_Geometry, in space.
+    original(Kind::Geometry, "ST_3DINTERSECTION", 1, routine!(SolidFunction::Intersection)),
+    original(Kind::Geometry, "ST_3DUNION", 1, routine!(SolidFunction::Union)),
+    original(Kind::Geometry, "ST_3DDIFFERENCE", 1, routine!(SolidFunction::Difference)),
+    original(Kind::Geometry, "ST_3DSYMDIFFERENCE", 1, routine!(SolidFunction::SymDifference)),
+    original(Kind::Geometry, "ST_3DDISTANCE", 1, routine!(SolidFunction::Distance)),
+    original(Kind::Geometry, "ST_3DDISTANCE", 2, routine!(SolidFunction::Distance)),
+    original(Kind::Geometry, "ST_3DEQUALS", 1, routine!(SolidFunction::Equals)),
+    original(Kind::Geometry, "ST_3DDISJOINT", 1, routine!(SolidFunction::Disjoint)),
+    original(Kind::Geometry, "ST_3DINTERSECTS", 1, routine!(SolidFunction::Intersects)),
+    original(Kind::Geometry, "ST_3DISSIMPLE", 0, routine!(SolidFunction::IsSimple)),
+    original(Kind::Geometry, "ST_3DBOUNDARY", 0, routine!(SolidFunction::Boundary)),
+    original(Kind::Geometry, "ST_3DLOCATEALONG", 1, routine!(SolidFunction::LocateAlong)),
+    original(Kind::Geometry, "ST_3DLOCATEBETWEEN", 2, routine!(SolidFunction::LocateBetween)),
+    // [§7.1] ST_Curve, in space.
+    original(Kind::Curve, "ST_3DLENGTH", 0, routine!(SolidFunction::Length)),
+    original(Kind::Curve, "ST_3DLENGTH", 1, routine!(SolidFunction::Length)),
+    original(Kind::Curve, "ST_3DISCLOSED", 0, routine!(SolidFunction::IsClosed)),
+    original(Kind::Curve, "ST_3DISRING", 0, routine!(SolidFunction::IsRing)),
+    original(Kind::Curve, "ST_3DDISTANCETOPT", 1, routine!(SolidFunction::DistanceToPt)),
+    original(Kind::Curve, "ST_3DDISTANCETOPT", 2, routine!(SolidFunction::DistanceToPt)),
+    original(Kind::Curve, "ST_3DPTATDISTANCE", 1, routine!(SolidFunction::PtAtDistance)),
+    original(Kind::Curve, "ST_3DPTATDISTANCE", 2, routine!(SolidFunction::PtAtDistance)),
+    // [§8.1] ST_Surface, in space.
+    original(Kind::Surface, "ST_3DAREA", 0, routine!(SolidFunction::Area)),
+    original(Kind::Surface, "ST_3DAREA", 1, routine!(SolidFunction::Area)),
+    original(Kind::Surface, "ST_3DPERIMETER", 0, routine!(SolidFunction::Perimeter)),
+    original(Kind::Surface, "ST_3DPERIMETER", 1, routine!(SolidFunction::Perimeter)),
+    original(Kind::Surface, "ST_3DCENTROID", 0, routine!(SolidFunction::Centroid)),
+    original(Kind::Surface, "ST_3DPOINTONSURF", 0, routine!(SolidFunction::PointOnSurf)),
+    original(Kind::Surface, "ST_3DISCLOSED", 0, routine!(SolidFunction::IsClosed)),
+    original(Kind::Surface, "ST_ISSHELL", 0, routine!(SolidFunction::IsShell)),
+    // [§8.4] ST_Triangle, in space.
+    original(Kind::Triangle, "ST_3DSLOPE", 0, routine!(SolidFunction::Slope)),
+    // [§8.6] ST_Tin, in space.
+    original(Kind::Tin, "ST_MAXSIDELENGTH", 0, routine!(SolidFunction::MaxSideLength)),
+    original(Kind::Tin, "ST_MAXSIDELENGTH", 2, routine!(SolidFunction::MaxSideLength)),
+    original(Kind::Tin, "ST_CLIP", 1, routine!(SolidFunction::Clip)),
+    // [§9.1] ST_Solid, in space.
+    original(Kind::Solid, "ST_3DSURFACEAREA", 0, routine!(SolidFunction::SurfaceArea)),
+    original(Kind::Solid, "ST_3DSURFACEAREA", 1, routine!(SolidFunction::SurfaceArea)),
+    original(Kind::Solid, "ST_3DVOLUME", 0, routine!(SolidFunction::Volume)),
+    original(Kind::Solid, "ST_3DVOLUME", 1, routine!(SolidFunction::Volume)),
+    original(Kind::Solid, "ST_3DCENTROID", 0, routine!(SolidFunction::Centroid)),
+    original(Kind::Solid, "ST_3DPOINTONSOLID", 0, routine!(SolidFunction::PointOnSolid)),
+    // [§9.2] ST_BRepSolid, in space.
+    original(Kind::BRepSolid, "ST_EXTERIORSHELL", 0, routine!(SolidFunction::ExteriorShell)),
+    original(Kind::BRepSolid, "ST_EXTERIORSHELL", 1, routine!(SolidFunction::ExteriorShell)),
+    original(Kind::BRepSolid, "ST_INTERIORSHELLS", 0, routine!(SolidFunction::InteriorShells)),
+    original(Kind::BRepSolid, "ST_INTERIORSHELLS", 1, routine!(SolidFunction::InteriorShells)),
+    original(Kind::BRepSolid, "ST_NUMINTSHELLS", 0, routine!(SolidFunction::NumIntShells)),
+    original(Kind::BRepSolid, "ST_INTERIORSHELLN", 1, routine!(SolidFunction::InteriorShellN)),
+    // [§10.3] ST_MultiCurve, in space.
+    original(Kind::MultiCurve, "ST_3DLENGTH", 0, routine!(SolidFunction::Length)),
+    original(Kind::MultiCurve, "ST_3DLENGTH", 1, routine!(SolidFunction::Length)),
+    original(Kind::MultiCurve, "ST_3DISCLOSED", 0, routine!(SolidFunction::IsClosed)),
+    // [§10.5] ST_MultiSurface, in space.
+    original(Kind::MultiSurface, "ST_3DAREA", 0, routine!(SolidFunction::Area)),
+    original(Kind::MultiSurface, "ST_3DAREA", 1, routine!(SolidFunction::Area)),
+    original(Kind::MultiSurface, "ST_3DPERIMETER", 0, routine!(SolidFunction::Perimeter)),
+    original(Kind::MultiSurface, "ST_3DPERIMETER", 1, routine!(SolidFunction::Perimeter)),
+    original(Kind::MultiSurface, "ST_3DCENTROID", 0, routine!(SolidFunction::Centroid)),
+    original(Kind::MultiSurface, "ST_3DPOINTONSURF", 0, routine!(SolidFunction::PointOnSurf)),
+    original(Kind::Tin, "ST_TINTABLE", 12, routine!(TinFromTable)),
 ];
 
 /// The methods `of`'s descriptor declares.

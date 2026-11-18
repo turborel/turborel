@@ -410,6 +410,57 @@ VALUES ST_DISTANCE(ST_POINT(-1E308, 0), ST_POINT(1E308, 0));
 turborel: SQLCODE -301 (SQLSTATE 22003): geometry distance exceeds the finite binary64 range
 ```
 
+## Routines in space
+
+The routines named ST_3D take z into account. ST_3DLENGTH, ST_3DAREA,
+ST_3DPERIMETER and ST_3DDISTANCE measure in space, in the linear unit
+of the value's spatial reference system, or in a unit of
+ST_UNITS_OF_MEASURE named as a last argument. ST_3DINTERSECTS,
+ST_3DDISJOINT and ST_3DEQUALS relate two values in space, and
+ST_3DINTERSECTION, ST_3DUNION, ST_3DDIFFERENCE and ST_3DSYMDIFFERENCE
+combine them, solids too. Both values must have z.
+
+A solid has ST_3DVOLUME, ST_3DSURFACEAREA, ST_3DCENTROID and
+ST_3DPOINTONSOLID. A B-rep solid has its exterior and interior shells,
+which ST_ISSHELL tests: a shell is a closed surface whose patches meet
+only along their edges. ST_BREPSOLID makes one of shells. A triangle
+has ST_3DSLOPE, its rise over its run. A TIN has ST_MAXSIDELENGTH,
+which can retriangulate it, and ST_CLIP, which keeps what lies within a
+polygon. `TABLE(ST_TINTABLE(tin))` lists a TIN's points, triangles and
+elements as rows, and `tin.ST_TINTABLE(table, columns..., length)`
+builds a TIN from such rows.
+
+The values here are written as well-known binary. The first line rises
+12 over a run of 5:
+
+```sql
+VALUES ST_3DLENGTH(ST_GEOMFROMWKB(X'01EA03000002000000000000000000000000000000000000000000000000000000000000000000084000000000000010400000000000002840'));
+VALUES ST_3DLENGTH(ST_GEOMFROMWKB(X'01EA03000002000000000000000000000000000000000000000000000000000000000000000000084000000000000010400000000000002840'), 'FOOT');
+VALUES ST_3DDISTANCE(ST_GEOMFROMWKB(X'01EA03000002000000000000000000000000000000000000000000000000000000000000000000084000000000000010400000000000002840'), ST_GEOMFROMWKB(X'01EA03000002000000000000000000000000000000000000000000000000001440000000000000104000000000000000000000000000001440'));
+VALUES ST_3DSLOPE(ST_GEOMFROMWKB(X'01F9030000000000000000000000000000000000000000000000000000000000000000F03F0000000000000000000000000000F03F0000000000000000000000000000F03F0000000000000000'));
+VALUES ST_3DUNION(ST_GEOMFROMWKB(X'01EA03000002000000000000000000000000000000000000000000000000000000000000000000084000000000000010400000000000002840'), ST_POINT(1, 2));
+```
+
+```
+
+--------------------------
+                    1.3E1
+(1 row)
+
+--------------------------
+       4.26509186351706E1
+(1 row)
+
+--------------------------
+     1.5811388300841898E0
+(1 row)
+
+--------------------------
+                      1E0
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF72): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.31 Description 3b] both geometries must be 3D
+```
+
 ## The rtree index method
 
 ```
@@ -576,6 +627,10 @@ OK
 | 2FF08 | -301 | CAST is given a value Table 4 does not convert, or a value is assigned to a type it is not of |
 | 2FF23 | -301 | WKB of a type is malformed |
 | 0A000 | -900 | Text or relationships of a value of a type beyond the seven, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), or an `rtree` index of a column of plain GEOMETRY |
+| 2FF02 | -301 | A 3D routine's argument is out of its range: a TIN's maximum side length not above 0, a vertical triangle's slope, a measure range reversed, an interior shell outside the exterior one, or a TIN table that does not exist |
+| 2FF03 | -301 | A TIN's maximum side length, or an array of shells or one of its elements, is null |
+| 2FF14 | -301 | A 3D measure names a unit ST_UNITS_OF_MEASURE does not list, or its value is of a geographic system |
+| 2FF72 | -301 | A 3D routine of two values is given one without z |
 | 23000 | -201 | ST_DEFINESRS, ST_DROPSRS or ST_REGISTERGEOMETRYCOLUMN would break a constraint of the Spatial Information Schema's tables |
 | TB916 | -916 | A stored value or index key is damaged, or of an unknown version |
 

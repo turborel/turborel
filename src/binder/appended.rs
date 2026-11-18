@@ -72,8 +72,11 @@ impl Binder<'_> {
     fn appended(&self, f: &dyn ScalarFunction, exprs: &[Expr], scope: Scope<'_>) -> Result<Option<(Expr, DataType)>> {
         let constants = exprs.iter().map(constant).collect::<Vec<_>>();
         let Some(appended) = f.appended_query(&constants) else { return Ok(None) };
-        let there =
-            |(auth, ident): &(String, String)| self.db.catalog.table(&QualifiedName { auth: auth.clone(), ident: ident.clone() }).is_some();
+        // A table of no schema is of the default one (`crate::binder::qualify`).
+        let auth_of = |auth: &String| if auth.is_empty() { self.schema.to_owned() } else { auth.clone() };
+        let there = |(auth, ident): &(String, String)| {
+            self.db.catalog.table(&QualifiedName { auth: auth_of(auth), ident: ident.clone() }).is_some()
+        };
         if !appended.tables.iter().all(there) {
             return Ok(None);
         }

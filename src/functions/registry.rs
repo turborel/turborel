@@ -90,7 +90,8 @@ impl Registry {
         let aggregates =
             standard.iter().chain(&truths).chain(&any_value).chain(&statistics).map(|f| (f.0.name().to_string(), f.clone())).collect();
         let procedures = crate::geometry::procedures().into_iter().map(|p| (p.name().to_owned(), p)).collect();
-        Registry { scalars, aggregates, standard, tables: HashMap::new(), procedures }
+        let tables = crate::geometry::table_functions().into_iter().map(|t| (t.name().to_owned(), t)).collect();
+        Registry { scalars, aggregates, standard, tables, procedures }
     }
 
     /// Adds a scalar function: of a name already a scalar function's, a
