@@ -16,8 +16,10 @@
 //! instruction and attribute are kept in one buffer of the tree.
 
 mod build;
+mod typed;
 
 pub use build::{Builder, Copying, ElementStart, Specified, copied_attribute, is_xml_id};
+pub use typed::{Annotation, Typing};
 
 use std::ops::Range;
 
@@ -148,6 +150,12 @@ struct Node {
     is_id: bool,
     /// Whether it is an IDREF or IDREFS [XQueryDM §5.6].
     is_idrefs: bool,
+    /// Whether it is nilled [XQueryDM §5.9], of an element.
+    nilled: bool,
+    /// Its type annotation, an index into the tree's annotations, or
+    /// `NONE` of a node no schema typed: `xdt:untyped` of an element,
+    /// `xdt:untypedAtomic` of an attribute [XQueryDM §6.2.3, §6.3.3].
+    annotation: u32,
 }
 
 /// A tree of nodes [XQueryDM §6]: what a parse, or a constructor, makes.
@@ -158,6 +166,8 @@ pub struct Tree {
     names: Vec<QName>,
     bindings: Vec<Binding>,
     text: String,
+    /// The type annotations of its nodes [XQueryDM §3.3.1], each once.
+    annotations: Vec<Annotation>,
 }
 
 /// An index of a tree's tables as a `usize`.
@@ -267,6 +277,26 @@ impl Tree {
     #[must_use]
     pub fn is_idrefs(&self, id: NodeId) -> bool {
         self.node(id).is_some_and(|n| n.is_idrefs)
+    }
+
+    /// Whether element `id` is nilled [XQueryDM §5.9].
+    #[must_use]
+    pub fn nilled(&self, id: NodeId) -> bool {
+        self.node(id).is_some_and(|n| n.nilled)
+    }
+
+    /// The type annotation of element or attribute `id` [XQueryDM §5.14],
+    /// none of one no schema typed: `xdt:untyped` of an element,
+    /// `xdt:untypedAtomic` of an attribute [XQueryDM §6.2.3, §6.3.3].
+    #[must_use]
+    pub fn annotation(&self, id: NodeId) -> Option<&Annotation> {
+        self.node(id).and_then(|n| self.annotations.get(wide(n.annotation)))
+    }
+
+    /// Whether any node of it is typed, as only a validation makes one.
+    #[must_use]
+    pub fn is_typed(&self) -> bool {
+        !self.annotations.is_empty()
     }
 
     /// The string value of `id` [XQueryDM §5.13]: of a document or element

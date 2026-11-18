@@ -3,7 +3,10 @@
 //! from in one pass (`index/xml.rs`). Its text is borrowed from the
 //! stored bytes, and only the names of the item read are held.
 
-use super::{ATOMIC, ATTRIBUTE, COMMENT, DOCUMENT, ELEMENT, END, FORMAT_VERSION, NODE, PROCESSING_INSTRUCTION, TEXT, WHAT, decode_names};
+use super::{
+    ATOMIC, ATTRIBUTE, COMMENT, DOCUMENT, ELEMENT, END, FORMAT_VERSION, NODE, PROCESSING_INSTRUCTION, TEXT, WHAT, decode_names,
+    skip_annotations,
+};
 use crate::bytes::Reader;
 use crate::error::Result;
 use crate::xml::tree::QName;
@@ -95,6 +98,7 @@ impl<'a> Events<'a> {
         match self.reader.u8()? {
             NODE => {
                 self.names = decode_names(&mut self.reader)?;
+                skip_annotations(&mut self.reader)?;
                 self.within = true;
                 Ok(Some(Event::Node))
             }
@@ -150,10 +154,12 @@ impl<'a> Events<'a> {
         std::str::from_utf8(bytes).map_err(|_| self.reader.corrupt("a string is not UTF-8"))
     }
 
-    /// An element's event after its tag: its name, its bindings passed
-    /// over, and its attributes.
+    /// An element's event after its tag: its name, its annotation, flags
+    /// and bindings passed over, and its attributes.
     fn element(&mut self) -> Result<Event<'a>> {
         let name = self.reader.u32()?;
+        self.reader.u32()?;
+        self.reader.u8()?;
         for _ in 0..self.reader.u32()? {
             if self.reader.u8()? != 0 {
                 self.reader.bytes()?;
@@ -167,11 +173,12 @@ impl<'a> Events<'a> {
         Ok(Event::Element { name, attributes })
     }
 
-    /// An attribute: its name's number and its value, its flags passed
-    /// over.
+    /// An attribute: its name's number and its value, its flags and
+    /// annotation passed over.
     fn attribute(&mut self) -> Result<(u32, &'a str)> {
         let name = self.reader.u32()?;
         self.reader.u8()?;
+        self.reader.u32()?;
         Ok((name, self.text()?))
     }
 }

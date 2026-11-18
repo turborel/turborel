@@ -6,7 +6,7 @@ use std::sync::Arc;
 use super::*;
 use crate::error::{Code, SqlState};
 
-mod structures;
+pub(in crate::xml::schema) mod structures;
 use crate::xml::{Atomic, Primitive};
 
 /// `base` restricted by `facets`, none fixed.

@@ -9,7 +9,7 @@ pub use copy::{Copying, copied_attribute, is_xml_id};
 
 use std::collections::HashMap;
 
-use super::{Binding, Kind, NONE, Node, QName, Tree};
+use super::{Annotation, Binding, Kind, NONE, Node, NodeId, QName, Tree};
 use crate::error::Result;
 use crate::xml::{MAX_NESTING, MAX_NODES, MAX_TEXT, beyond};
 
@@ -53,6 +53,8 @@ pub struct Builder {
     tree: Tree,
     open: Vec<Open>,
     interned: HashMap<QName, u32>,
+    /// The places of the annotations added so far.
+    annotated: HashMap<Annotation, u32>,
     /// The octets of the names interned and the bindings added so far.
     names_text: usize,
     /// How many nodes are open before any element is: one, the document
@@ -81,11 +83,14 @@ impl Builder {
             text: 0..0,
             is_id: false,
             is_idrefs: false,
+            nilled: false,
+            annotation: NONE,
         };
         Builder {
             tree: Tree { nodes: vec![root], ..Tree::default() },
             open: vec![Open { node: 0, last_child: NONE }],
             interned: HashMap::new(),
+            annotated: HashMap::new(),
             names_text: 0,
             base: 1,
         }
@@ -96,7 +101,7 @@ impl Builder {
     /// instruction node standing alone [XQueryDM §6.2.1, §6.3.1].
     #[must_use]
     pub fn parentless() -> Builder {
-        Builder { tree: Tree::default(), open: Vec::new(), interned: HashMap::new(), names_text: 0, base: 0 }
+        Builder { tree: Tree::default(), open: Vec::new(), interned: HashMap::new(), annotated: HashMap::new(), names_text: 0, base: 0 }
     }
 
     /// How many elements are open: how deep the node whose children are
@@ -166,6 +171,8 @@ impl Builder {
             text,
             is_id: false,
             is_idrefs: false,
+            nilled: false,
+            annotation: NONE,
         };
         self.tree.nodes.push(node);
         if let Some(parent) = open.filter(|_| kind != Kind::Attribute) {
@@ -311,6 +318,39 @@ impl Builder {
             n.is_id = attribute.is_id;
             n.is_idrefs = attribute.is_idrefs;
         }
+        Ok(())
+    }
+
+    /// The element open, whose children are being added, if one is.
+    #[must_use]
+    pub fn current(&self) -> Option<NodeId> {
+        self.open.get(self.base..).and_then(<[Open]>::last).map(|o| NodeId(o.node))
+    }
+
+    /// Element or attribute `id` annotated with `annotation` [XQueryDM
+    /// §3.3.1], and its nilled, is-id and is-idrefs properties set as
+    /// `flags` says [XQueryDM §6.2.4, §6.3.4].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 if the tree has no such node, or too many names.
+    pub fn annotate(&mut self, id: NodeId, annotation: &Annotation, (nilled, is_id, is_idrefs): (bool, bool, bool)) -> Result<()> {
+        let at = if let Some(&at) = self.annotated.get(annotation) {
+            at
+        } else {
+            let at = link(self.tree.annotations.len())?;
+            let octets = annotation.name.local.len().saturating_add(annotation.name.uri.as_ref().map_or(0, |u| u.len()));
+            self.text_grows(octets)?;
+            self.names_text = self.names_text.saturating_add(octets);
+            self.tree.annotations.push(annotation.clone());
+            self.annotated.insert(annotation.clone(), at);
+            at
+        };
+        let node = self.tree.nodes.get_mut(id.index()).ok_or_else(|| beyond("a node annotated is not in its tree"))?;
+        node.annotation = at;
+        node.nilled = nilled;
+        node.is_id = is_id;
+        node.is_idrefs = is_idrefs;
         Ok(())
     }
 

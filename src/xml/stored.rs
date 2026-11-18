@@ -7,14 +7,20 @@
 //! u8 version (1), u32 item count, then each item:
 //!   u8 0, a node: u32 name count, each name
 //!       u8 flags (1 prefix, 2 namespace URI), [str prefix], [str URI], str local,
+//!     u32 annotation count, each a type annotation
+//!       u32 name, u8 typing (0 xs:anySimpleType, 1 mixed, 2 empty,
+//!       3 element-only, 4 atomic, 5 list), [u8 atomic type, of 4 and 5],
 //!     then its events, to the end of its root:
 //!       u8 1 document                                  opens
-//!       u8 2 element  u32 name, u32 bindings, each u8 has prefix, [str prefix], str URI,
-//!                     u32 attributes, each u32 name, u8 flags (1 ID, 2 IDREF), str value
+//!       u8 2 element  u32 name, u32 annotation (0 none, else its number + 1),
+//!                     u8 flags (1 nilled, 2 ID, 4 IDREF),
+//!                     u32 bindings, each u8 has prefix, [str prefix], str URI,
+//!                     u32 attributes, each u32 name, u8 flags (1 ID, 2 IDREF),
+//!                     u32 annotation, str value
 //!                                                      opens
 //!       u8 3 end                                       closes
 //!       u8 4 text str | u8 5 comment str | u8 6 processing instruction u32 name, str
-//!       u8 7 attribute u32 name, u8 flags, str         a root alone
+//!       u8 7 attribute u32 name, u8 flags, u32 annotation, str  a root alone
 //!   u8 1, an atomic value: u8 type, str canonical lexical form, then of
 //!       an xs:QName or xs:NOTATION str namespace URI, empty of none; the
 //!       types 0 xs:string, 1 xdt:untypedAtomic, 2 xs:boolean,
@@ -23,6 +29,10 @@
 //!       11 xdt:dayTimeDuration, 12 xs:hexBinary, and the rest as
 //!       `ATOMIC_TYPES` numbers them
 //! ```
+//!
+//! A node's type annotation, nilled, is-id and is-idrefs properties are
+//! kept [XQueryDM §3.3]. The annotations were added to version 1 in place,
+//! as no database of an earlier layout is read (RULES.md D86).
 //!
 //! A node stored is copied, as storing a value copies it
 //! [ISO/IEC 9075-14:2006 draft §10.2 GR1b, §10.18]: its tree is its
@@ -35,7 +45,7 @@ pub use events::{Event, Events};
 
 use super::atomic::Primitive;
 use super::sequence::{Atomic, AtomicType, Item, Node, Sequence};
-use super::tree::{Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree, XML_PREFIX};
+use super::tree::{Annotation, Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree, Typing, XML_PREFIX};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 
@@ -73,6 +83,26 @@ const HAS_URI: u8 = 2;
 const IS_ID: u8 = 1;
 /// An attribute is an IDREF or IDREFS.
 const IS_IDREFS: u8 = 2;
+/// An element is nilled.
+const ELEMENT_NILLED: u8 = 1;
+/// An element is an ID.
+const ELEMENT_ID: u8 = 2;
+/// An element is an IDREF or IDREFS.
+const ELEMENT_IDREFS: u8 = 4;
+
+// Typings of annotations.
+/// `xs:anySimpleType`.
+const ANY_SIMPLE: u8 = 0;
+/// Mixed content.
+const MIXED: u8 = 1;
+/// Empty content.
+const EMPTY: u8 = 2;
+/// Element-only content.
+const ELEMENT_ONLY: u8 = 3;
+/// An atomic type, whose tag follows.
+const ATOMIC_TYPING: u8 = 4;
+/// A list of an atomic type, whose tag follows.
+const LIST_TYPING: u8 = 5;
 
 /// The atomic types, each stored as its place here, its tag, written
 /// beside it. The tags are part of the stored form, version 1: a type
@@ -158,11 +188,14 @@ pub fn encode(value: &Sequence) -> Vec<u8> {
     out
 }
 
-/// The names of a node's subtree, each once, numbered as written.
+/// The names of a node's subtree, each once, numbered as written, and its
+/// type annotations, each once, numbered from 1.
 #[derive(Default)]
 struct Names<'a> {
     list: Vec<&'a QName>,
     numbers: HashMap<&'a QName, u32>,
+    annotations: Vec<&'a Annotation>,
+    annotated: HashMap<&'a Annotation, u32>,
 }
 
 impl<'a> Names<'a> {
@@ -173,6 +206,31 @@ impl<'a> Names<'a> {
             self.list.push(name);
             next
         })
+    }
+
+    /// The number of the annotation of node `id` of `tree`, plus 1; 0 if
+    /// it has none.
+    fn annotation(&mut self, tree: &'a Tree, id: NodeId) -> u32 {
+        let Some(annotation) = tree.annotation(id) else { return 0 };
+        self.number(&annotation.name);
+        let next = count(self.annotations.len()).saturating_add(1);
+        *self.annotated.entry(annotation).or_insert_with(|| {
+            self.annotations.push(annotation);
+            next
+        })
+    }
+}
+
+/// The tag of `typing`, and of its atomic type if it has one.
+fn typing_tags(typing: Typing) -> (u8, Option<u8>) {
+    let tag = |t: AtomicType| ATOMIC_TYPES.iter().position(|&a| a == t).and_then(|p| u8::try_from(p).ok()).unwrap_or(0);
+    match typing {
+        Typing::AnySimple => (ANY_SIMPLE, None),
+        Typing::Mixed => (MIXED, None),
+        Typing::Empty => (EMPTY, None),
+        Typing::ElementOnly => (ELEMENT_ONLY, None),
+        Typing::Atomic(t) => (ATOMIC_TYPING, Some(tag(t))),
+        Typing::List(t) => (LIST_TYPING, Some(tag(t))),
     }
 }
 
@@ -199,6 +257,15 @@ fn encode_node(node: &Node, out: &mut Vec<u8>) {
             out.put_str(uri);
         }
         out.put_str(&name.local);
+    }
+    out.put_u32(count(names.annotations.len()));
+    for annotation in &names.annotations {
+        out.put_u32(names.numbers.get(&annotation.name).copied().unwrap_or(0));
+        let (typing, atomic) = typing_tags(annotation.typing);
+        out.put_u8(typing);
+        if let Some(atomic) = atomic {
+            out.put_u8(atomic);
+        }
     }
     out.extend(events);
 }
@@ -263,6 +330,9 @@ fn encode_event<'a>(tree: &'a Tree, id: NodeId, root: bool, names: &mut Names<'a
 fn encode_element<'a>(tree: &'a Tree, id: NodeId, root: bool, names: &mut Names<'a>, events: &mut Vec<u8>) {
     events.put_u8(ELEMENT);
     events.put_u32(tree.name(id).map_or(0, |n| names.number(n)));
+    events.put_u32(names.annotation(tree, id));
+    let flags = [(tree.nilled(id), ELEMENT_NILLED), (tree.is_id(id), ELEMENT_ID), (tree.is_idrefs(id), ELEMENT_IDREFS)];
+    events.put_u8(flags.iter().filter(|(on, _)| *on).fold(0, |all, (_, flag)| all | flag));
     let bindings: Vec<(Option<&str>, &str)> = if root && tree.parent(id).is_some() {
         tree.in_scope(id).into_iter().filter(|(p, _)| *p != Some(XML_PREFIX)).collect()
     } else {
@@ -286,6 +356,7 @@ fn encode_element<'a>(tree: &'a Tree, id: NodeId, root: bool, names: &mut Names<
 fn encode_attribute<'a>(tree: &'a Tree, id: NodeId, names: &mut Names<'a>, events: &mut Vec<u8>) {
     events.put_u32(tree.name(id).map_or(0, |n| names.number(n)));
     events.put_u8(if tree.is_id(id) { IS_ID } else { 0 } | if tree.is_idrefs(id) { IS_IDREFS } else { 0 });
+    events.put_u32(names.annotation(tree, id));
     events.put_str(tree.content(id));
 }
 
@@ -338,6 +409,8 @@ fn is_name(kind: AtomicType) -> bool {
 /// root.
 fn decode_node(reader: &mut Reader<'_>) -> Result<Tree> {
     let names = decode_names(reader)?;
+    let annotations = decode_annotations(reader, &names)?;
+    let names = Tables { names, annotations };
     let first = reader.u8()?;
     let document = first == DOCUMENT;
     let (mut builder, mut open) = if document { (Builder::document(), 1_usize) } else { (Builder::parentless(), 0) };
@@ -354,11 +427,11 @@ fn decode_node(reader: &mut Reader<'_>) -> Result<Tree> {
 
 /// The event of tag `tag` read into `builder`, `open` nodes open before
 /// it; how many are open after it.
-fn decode_event(reader: &mut Reader<'_>, names: &[QName], builder: &mut Builder, tag: u8, open: usize) -> Result<usize> {
+fn decode_event(reader: &mut Reader<'_>, names: &Tables, builder: &mut Builder, tag: u8, open: usize) -> Result<usize> {
     let built = match tag {
         ELEMENT => {
-            let start = decode_element(reader, names)?;
-            builder.start_element(start).map(|()| open.saturating_add(1))
+            let (start, typed) = decode_element(reader, names)?;
+            builder.start_element(start).and_then(|()| annotate(builder, &typed)).map(|()| open.saturating_add(1))
         }
         END => {
             if open == 0 {
@@ -377,13 +450,14 @@ fn decode_event(reader: &mut Reader<'_>, names: &[QName], builder: &mut Builder,
             builder.comment(&text).map(|()| open)
         }
         PROCESSING_INSTRUCTION => {
-            let target = name(reader, names)?;
+            let target = name(reader, &names.names)?;
             let text = reader.str()?;
             builder.processing_instruction(&target.local, &text).map(|()| open)
         }
         ATTRIBUTE => {
-            let attribute = decode_attribute(reader, names)?;
-            builder.attribute(&attribute).map(|()| open)
+            let (attribute, annotation) = decode_attribute(reader, names)?;
+            let typed = Typed { element: None, attributes: vec![(annotation, attribute.is_id, attribute.is_idrefs)] };
+            builder.attribute(&attribute).and_then(|()| annotate(builder, &typed)).map(|()| open)
         }
         _ => return Err(reader.corrupt(&format!("an event's tag is {tag}"))),
     };
@@ -409,26 +483,116 @@ fn name<'n>(reader: &mut Reader<'_>, names: &'n [QName]) -> Result<&'n QName> {
     usize::try_from(number).ok().and_then(|n| names.get(n)).ok_or_else(|| reader.corrupt(&format!("the name {number} is not numbered")))
 }
 
-/// An element's event read after its tag.
-fn decode_element(reader: &mut Reader<'_>, names: &[QName]) -> Result<ElementStart> {
-    let element = name(reader, names)?.clone();
+/// A node's tables: its names and its type annotations.
+struct Tables {
+    names: Vec<QName>,
+    annotations: Vec<Annotation>,
+}
+
+/// A node's type annotations read, their names numbered in `names`.
+fn decode_annotations(reader: &mut Reader<'_>, names: &[QName]) -> Result<Vec<Annotation>> {
+    let n = reader.u32()?;
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let type_name = name(reader, names)?.clone();
+        let tag = reader.u8()?;
+        let mut atomic = || {
+            let t = reader.u8()?;
+            ATOMIC_TYPES.get(usize::from(t)).copied().ok_or_else(|| reader.corrupt(&format!("an annotation's atomic type is {t}")))
+        };
+        let typing = match tag {
+            ANY_SIMPLE => Typing::AnySimple,
+            MIXED => Typing::Mixed,
+            EMPTY => Typing::Empty,
+            ELEMENT_ONLY => Typing::ElementOnly,
+            ATOMIC_TYPING => Typing::Atomic(atomic()?),
+            LIST_TYPING => Typing::List(atomic()?),
+            _ => return Err(reader.corrupt(&format!("an annotation's typing is {tag}"))),
+        };
+        out.push(Annotation { name: type_name, typing });
+    }
+    Ok(out)
+}
+
+/// A node's table of type annotations passed over, as a reader of its
+/// events alone does (`stored/events.rs`).
+///
+/// # Errors
+///
+/// SQLCODE -916 if it is cut short.
+fn skip_annotations(reader: &mut Reader<'_>) -> Result<()> {
+    for _ in 0..reader.u32()? {
+        reader.u32()?;
+        if matches!(reader.u8()?, ATOMIC_TYPING | LIST_TYPING) {
+            reader.u8()?;
+        }
+    }
+    Ok(())
+}
+
+/// The annotation numbered `number` plus 1, none of 0.
+fn annotation_of(reader: &mut Reader<'_>, tables: &Tables) -> Result<Option<Annotation>> {
+    let number = reader.u32()?;
+    let Some(index) = number.checked_sub(1) else { return Ok(None) };
+    let found = usize::try_from(index).ok().and_then(|i| tables.annotations.get(i));
+    found.cloned().map(Some).ok_or_else(|| reader.corrupt(&format!("the annotation {number} is not numbered")))
+}
+
+/// What an element or attribute event says of its nodes' types: the
+/// element's annotation and its nilled, is-id and is-idrefs properties,
+/// and each attribute's annotation, is-id and is-idrefs.
+struct Typed {
+    element: Option<(Option<Annotation>, (bool, bool, bool))>,
+    attributes: Vec<(Option<Annotation>, bool, bool)>,
+}
+
+/// The nodes just made annotated as `typed` says: the element open and
+/// its attributes, or an attribute standing alone, the root.
+fn annotate(builder: &mut Builder, typed: &Typed) -> Result<()> {
+    let element = if typed.element.is_some() { builder.current() } else { None };
+    if let (Some((Some(annotation), flags)), Some(at)) = (&typed.element, element) {
+        builder.annotate(at, annotation, *flags)?;
+    }
+    for (i, (annotation, is_id, is_idrefs)) in typed.attributes.iter().enumerate() {
+        let at = match element {
+            Some(e) => e.nth_attribute(i),
+            None => Some(NodeId::ROOT),
+        };
+        if let (Some(annotation), Some(at)) = (annotation, at) {
+            builder.annotate(at, annotation, (false, *is_id, *is_idrefs))?;
+        }
+    }
+    Ok(())
+}
+
+/// An element's event read after its tag, and what it says of types.
+fn decode_element(reader: &mut Reader<'_>, tables: &Tables) -> Result<(ElementStart, Typed)> {
+    let element = name(reader, &tables.names)?.clone();
+    let annotation = annotation_of(reader, tables)?;
+    let flags = reader.u8()?;
+    let element_flags = (flags & ELEMENT_NILLED != 0, flags & ELEMENT_ID != 0, flags & ELEMENT_IDREFS != 0);
     let mut bindings = Vec::new();
     for _ in 0..reader.u32()? {
         let prefix = if reader.u8()? != 0 { Some(reader.str()?.into()) } else { None };
         bindings.push(Binding { prefix, uri: reader.str()?.into() });
     }
     let mut attributes = Vec::new();
+    let mut typed = Typed { element: Some((annotation, element_flags)), attributes: Vec::new() };
     for _ in 0..reader.u32()? {
-        attributes.push(decode_attribute(reader, names)?);
+        let (attribute, attribute_annotation) = decode_attribute(reader, tables)?;
+        typed.attributes.push((attribute_annotation, attribute.is_id, attribute.is_idrefs));
+        attributes.push(attribute);
     }
-    Ok(ElementStart { name: element, bindings, attributes })
+    Ok((ElementStart { name: element, bindings, attributes }, typed))
 }
 
-/// An attribute read: its name, its flags and its value.
-fn decode_attribute(reader: &mut Reader<'_>, names: &[QName]) -> Result<Specified> {
-    let attribute = name(reader, names)?.clone();
+/// An attribute read: its name, its flags, its annotation and its value.
+fn decode_attribute(reader: &mut Reader<'_>, tables: &Tables) -> Result<(Specified, Option<Annotation>)> {
+    let attribute = name(reader, &tables.names)?.clone();
     let flags = reader.u8()?;
-    Ok(Specified { name: attribute, value: reader.str()?, is_id: flags & IS_ID != 0, is_idrefs: flags & IS_IDREFS != 0 })
+    let annotation = annotation_of(reader, tables)?;
+    let value = reader.str()?;
+    Ok((Specified { name: attribute, value, is_id: flags & IS_ID != 0, is_idrefs: flags & IS_IDREFS != 0 }, annotation))
 }
 
 mod events;

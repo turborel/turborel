@@ -1,0 +1,111 @@
+//! Mutations of XML Schema Part 1, Structures: the schema component
+//! constraints a schema is checked against, the assessment of an
+//! element, and the type annotations validation gives and storage keeps
+//! (RULES.md R-TEST-9, D86).
+
+use super::{Mutation, Package};
+
+/// Each mechanism of XML Schema structures broken alone, and the tests
+/// that fail.
+pub const XML_SCHEMA: [Mutation; 10] = [
+    Mutation {
+        name: "xml-schema-unique-particle-attribution",
+        package: Package::Core,
+        breaks: "two element particles of one name compete in a content model",
+        file: "src/xml/schema/automaton.rs",
+        original: "                    if seen.insert(name, label).is_some_and(|other| other != label) {",
+        replacement: "                    if false && seen.insert(name, label).is_some_and(|other| other != label) {",
+        integration: &[],
+        unit: &["xml::schema::tests::structures::unique_particle_attribution_is_checked"],
+    },
+    Mutation {
+        name: "xml-schema-occurrence-range",
+        package: Package::Core,
+        breaks: "a restricting particle may occur more often than its base",
+        file: "src/xml/schema/check/restrict.rs",
+        original: "    r.0 >= b.0 && b.1.is_none_or(|bm| r.1.is_some_and(|rm| rm <= bm))",
+        replacement: "    r.0 >= b.0",
+        integration: &[],
+        unit: &["xml::schema::tests::structures::a_restriction_wider_than_its_base_is_refused"],
+    },
+    Mutation {
+        name: "xml-schema-circular-derivation",
+        package: Package::Core,
+        breaks: "a type definition derives from itself",
+        file: "src/xml/schema/read/build.rs",
+        original: "            Some(State::Filling) => Err(invalid(\"[Schema1 §3.4.6 ct-props-correct.3]\", \"a type definition derives from itself\")),",
+        replacement: "            Some(State::Filling) => Ok(()),",
+        integration: &[],
+        unit: &["xml::schema::tests::structures::circular_definitions_are_refused"],
+    },
+    Mutation {
+        name: "xml-schema-wildcard-not-absent",
+        package: Package::Core,
+        breaks: "a wildcard of ##other allows names of no namespace",
+        file: "src/xml/schema/wildcard.rs",
+        original: "            NamespaceConstraint::Not(test) => ns.is_some() && test.as_deref() != ns,",
+        replacement: "            NamespaceConstraint::Not(test) => test.as_deref() != ns,",
+        integration: &[],
+        unit: &["xml::schema::tests::structures::compose::namespace_constraints_combine_as_the_text_says"],
+    },
+    Mutation {
+        name: "xml-schema-content-complete",
+        package: Package::Core,
+        breaks: "an element's content model ends before its required particles",
+        file: "src/xml/schema/assess/content.rs",
+        original: "                if !automaton.accepts(*state) {",
+        replacement: "                if false && !automaton.accepts(*state) {",
+        integration: &[],
+        unit: &["xml::schema::assess::tests::invalid_orders_name_the_rule_broken"],
+    },
+    Mutation {
+        name: "xml-schema-xsi-type-derived",
+        package: Package::Core,
+        breaks: "xsi:type names a type not derived from the declared one",
+        file: "src/xml/schema/assess/element.rs",
+        original: "                if !type_derives(self.schema, t, decl.type_def, blocked) {",
+        replacement: "                if false && !type_derives(self.schema, t, decl.type_def, blocked) {",
+        integration: &[],
+        unit: &["xml::schema::assess::tests::xsi_type_chooses_a_derived_type"],
+    },
+    Mutation {
+        name: "xml-schema-key-unique",
+        package: Package::Core,
+        breaks: "two members of a key share a key-sequence",
+        file: "src/xml/schema/assess/identity.rs",
+        original: "            unique(&qualified).then_some(()).ok_or_else(|| fail(\"4.2.2\", \"is not unique\").into())",
+        replacement: "            Ok(())",
+        integration: &[],
+        unit: &["xml::schema::assess::tests::identity_constraints_hold_in_documents"],
+    },
+    Mutation {
+        name: "xml-schema-id-once",
+        package: Package::Core,
+        breaks: "one ID is given to two elements",
+        file: "src/xml/schema/assess/identity.rs",
+        original: "        if let Some((id, _)) = self.ids.iter().find(|(_, n)| **n > 1) {",
+        replacement: "        if let Some((id, _)) = self.ids.iter().find(|(_, n)| **n > 2) {",
+        integration: &[],
+        unit: &["xml::schema::assess::tests::ids_and_idrefs"],
+    },
+    Mutation {
+        name: "xml-schema-fixed-attribute-use",
+        package: Package::Core,
+        breaks: "an attribute use's fixed value is not kept",
+        file: "src/xml/schema/assess/attributes.rs",
+        original: "        if let Some(fixed) = u.value.as_ref().filter(|v| v.kind == ValueKind::Fixed)\n            && !value.equal(&fixed.value)",
+        replacement: "        if let Some(fixed) = u.value.as_ref().filter(|v| v.kind == ValueKind::Fixed)\n            && false && !value.equal(&fixed.value)",
+        integration: &[],
+        unit: &["xml::schema::assess::tests::invalid_orders_name_the_rule_broken"],
+    },
+    Mutation {
+        name: "xml-schema-stored-annotations",
+        package: Package::Core,
+        breaks: "an element's type annotation is not stored",
+        file: "src/xml/stored.rs",
+        original: "    events.put_u32(tree.name(id).map_or(0, |n| names.number(n)));\n    events.put_u32(names.annotation(tree, id));",
+        replacement: "    events.put_u32(tree.name(id).map_or(0, |n| names.number(n)));\n    events.put_u32(0);",
+        integration: &[],
+        unit: &["xml::schema::assess::tests::annotations_are_stored_and_copied"],
+    },
+];

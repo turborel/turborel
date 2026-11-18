@@ -95,7 +95,7 @@ impl Node {
 /// `xdt:untypedAtomic` and the two durations (`xml/atomic/types.rs`). A
 /// value of a type an XML Schema derives from one is of the built-in type
 /// it is derived from, with the facets checked (`xml/schema.rs`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AtomicType {
     /// `xs:string`.
     String,

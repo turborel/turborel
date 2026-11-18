@@ -32,10 +32,12 @@
 //! nested declarations, derivation chains and references, each bounded by
 //! a named depth, and a schema past one is SQLCODE -900 (RULES.md D18).
 
+mod assess;
 mod automaton;
 mod builtin;
 mod check;
 mod component;
+mod determinism;
 mod facet;
 mod read;
 mod restrict;
@@ -46,6 +48,7 @@ mod xpath;
 #[cfg(test)]
 mod tests;
 
+pub use assess::{Failure, INVALID, Mode, NOT_A_DOCUMENT, NOT_A_NODE, UNDECLARED, validate};
 pub use automaton::{Automaton, MAX_POSITIONS, MAX_STATES, StateId};
 pub use check::{substitutable, type_derives};
 pub use component::{

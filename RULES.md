@@ -2919,13 +2919,16 @@ once as the statement is bound.
 
 A value's stored form (`xml::encode`, version 1) is binary and read in one
 pass, in document order, as Pal et al. store XML. Each node item has a
-table of its names, each once, then its nodes as events: document, element
-(with its bindings and attributes), end, text, comment and processing
-instruction; each atomic item its type's tag and its lexical form, and
-of a QName or NOTATION its namespace URI. Its
-fields are D30's. A node below the root of its tree is stored as a copy,
-an element declaring every binding in its scope. The XML indexes read
-it, below.
+table of its names, each once, and of its type annotations, each once,
+then its nodes as events: document, element (with its annotation, its
+nilled, is-id and is-idrefs properties, its bindings and attributes),
+end, text, comment and processing instruction; each atomic item its
+type's tag and its lexical form, and of a QName or NOTATION its
+namespace URI. Its fields are D30's. The annotations
+were added to version 1 in place, as formats stay at version 1 in alpha
+and no database of an earlier layout is read. A node below the root of
+its tree is stored as a copy, an element declaring every binding in its
+scope. The XML indexes read it, below.
 
 The XML type's values are `Value::Xml` (`value::XmlValue`), held in one
 of three forms: a sequence; a binary large object of the stored form, as a
@@ -3110,6 +3113,27 @@ finite, each SQLCODE -900 past it (D18):
 - `schema::MAX_POSITIONS`, 4,096: the particles of a content model once
   its occurrence ranges are unfolded.
 - `schema::MAX_STATES`, 16,384: the states of a content model's automaton.
+
+A node is validated (`schema::validate`) as XQuery's validate expression
+validates it, the way SQL/XML's XMLVALIDATE and IS VALID do: a new tree is
+built as the old one is walked in document order, elements on a stack of
+those open, each with its content model's state, so nothing recurses and
+the depth validated is the tree's. The first failure ends it, naming the
+validation rule broken, as any failure makes the validation root invalid.
+The new tree's elements and attributes carry their types' annotations
+(`xml::Annotation`), each kept once in a table of the tree, and the
+nilled, is-id and is-idrefs properties; a node's typed value is read from
+its string value as its annotation says, as the data model lets an
+implementation keeping string values do, so the tree holds no typed
+values beside its text. An element of simple content has one text node,
+its schema normalized value, before its comments and processing
+instructions; a default attribute or element value is added as text.
+Identity constraints and the ID/IDREF table are checked over the new tree
+once it is built, of a document node alone, as XQuery asks. A copy keeps
+the annotations, as construction mode preserve does. `schema::validate`
+returns a `Failure` naming the rule and XQuery's error code apart from
+turborel's own errors, so XMLVALIDATE raises SQLSTATE 2201R and XQuery's
+validate expression err:XQDY0027 from one result.
 
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation

@@ -89,8 +89,8 @@ fn nodes_below_a_root_are_stored_as_copies() {
 
 /// Verifies: [DESIGN] RULES.md D30, D86: bytes that are no stored form of
 /// version 1 are corruption, SQLCODE -916: another version, a field past
-/// the end, an unknown tag, a name not numbered, events that make no
-/// tree, or bytes after the last item.
+/// the end, an unknown tag, a name or annotation not numbered, an unknown
+/// typing, events that make no tree, or bytes after the last item.
 #[test]
 fn corrupt_bytes_are_refused() {
     let good = encode(&Sequence::document(parse("<a>t</a>", Syntax::Document, Whitespace::Preserve).unwrap()));
@@ -99,15 +99,19 @@ fn corrupt_bytes_are_refused() {
     assert!(corrupt(&[good.as_slice(), &[0]].concat()).contains(WHAT));
     assert!(corrupt(&[1, 1, 0, 0, 0, 9]).contains("an item's tag is 9"));
     assert!(corrupt(&[1, 1, 0, 0, 0, ATOMIC, 44]).contains("type is 44"));
-    let no_names = [1, 1, 0, 0, 0, NODE, 0, 0, 0, 0];
+    let no_names = [1, 1, 0, 0, 0, NODE, 0, 0, 0, 0, 0, 0, 0, 0];
     assert!(corrupt(&[&no_names[..], &[ELEMENT, 5, 0, 0, 0]].concat()).contains("the name 5 is not numbered"));
+    let typed = [1, 1, 0, 0, 0, NODE, 1, 0, 0, 0, 0, 1, 0, 0, 0, b'a', 0, 0, 0, 0];
+    assert!(corrupt(&[&typed[..], &[ELEMENT, 0, 0, 0, 0, 1, 0, 0, 0]].concat()).contains("the annotation 1 is not numbered"));
+    let bad_typing = [1, 1, 0, 0, 0, NODE, 1, 0, 0, 0, 0, 1, 0, 0, 0, b'a', 1, 0, 0, 0, 0, 0, 0, 0, 9];
+    assert!(corrupt(&bad_typing).contains("an annotation's typing is 9"));
     assert!(corrupt(&[&no_names[..], &[9]].concat()).contains("an event's tag is 9"));
     assert!(corrupt(&[&no_names[..], &[DOCUMENT, DOCUMENT]].concat()).contains("an event's tag is 1"));
     assert!(corrupt(&[&no_names[..], &[END]].concat()).contains("closes no node"));
-    let one_name = [1, 1, 0, 0, 0, NODE, 1, 0, 0, 0, 0, 1, 0, 0, 0, b'a'];
-    let attribute_in_document = [&one_name[..], &[DOCUMENT, ATTRIBUTE, 0, 0, 0, 0, 0, 0, 0, 0, 0, END]].concat();
+    let one_name = [1, 1, 0, 0, 0, NODE, 1, 0, 0, 0, 0, 1, 0, 0, 0, b'a', 0, 0, 0, 0];
+    let attribute_in_document = [&one_name[..], &[DOCUMENT, ATTRIBUTE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, END]].concat();
     assert!(corrupt(&attribute_in_document).contains("make no tree"));
-    let unclosed = [&one_name[..], &[ELEMENT, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]].concat();
+    let unclosed = [&one_name[..], &[ELEMENT, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]].concat();
     assert!(corrupt(&unclosed).contains(WHAT));
 }
 

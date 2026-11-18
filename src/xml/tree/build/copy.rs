@@ -87,7 +87,11 @@ impl Builder {
                 let name = tree.name(id).cloned().ok_or_else(|| beyond("an element has no name"))?;
                 let attributes = tree.attributes(id).map(|a| copied_attribute(tree, a, mode)).collect::<Result<Vec<_>>>()?;
                 let bindings = self.copied_bindings((tree, id), root, mode, &attributes);
-                self.start_element(ElementStart { name, bindings, attributes }).map(|()| true)
+                self.start_element(ElementStart { name, bindings, attributes })?;
+                if !mode.strip {
+                    self.copy_annotations(tree, id)?;
+                }
+                Ok(true)
             }
             Some(Kind::Text) => self.text(tree.content(id)).map(|()| false),
             Some(Kind::Comment) => self.comment(tree.content(id)).map(|()| false),
@@ -97,6 +101,24 @@ impl Builder {
             }
             Some(Kind::Attribute | Kind::Document) | None => Err(beyond("an attribute or document node is no node's child")),
         }
+    }
+
+    /// The annotations of element `id` of `tree` and of its attributes
+    /// given the element just started and its attributes, as construction
+    /// mode preserve keeps them [XQuery §3.7.1.3].
+    fn copy_annotations(&mut self, tree: &Tree, id: NodeId) -> Result<()> {
+        if !tree.is_typed() {
+            return Ok(());
+        }
+        let Some(element) = self.current() else { return Ok(()) };
+        let nodes = std::iter::once((id, element))
+            .chain(tree.attributes(id).enumerate().filter_map(|(i, a)| element.nth_attribute(i).map(|c| (a, c))));
+        for (source, copy) in nodes {
+            if let Some(annotation) = tree.annotation(source) {
+                self.annotate(copy, annotation, (tree.nilled(source), tree.is_id(source), tree.is_idrefs(source)))?;
+            }
+        }
+        Ok(())
     }
 
     /// The bindings a copy of element `id` declares [XQuery §3.7.1.3]: of
