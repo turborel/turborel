@@ -318,7 +318,7 @@ Don't open a public issue for a vulnerability. Report it privately, as
 
 ## License
 
-Turborel is under the BSD 2-Clause license in [LICENSE](LICENSE), and a
-contribution is made under that license. Contributors keep their copyright
-and own their changes. Whoever submits a change answers for all of it,
-however it was written.
+Turborel is under the BSD-2-Clause Plus Patent License in
+[LICENSE](LICENSE), and a contribution is made under that license.
+Contributors keep their copyright and own their changes. Whoever
+submits a change answers for all of it, however it was written.

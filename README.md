@@ -133,5 +133,5 @@ cargo xtask verify                     # every check a change must pass
 - [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md):
   contributing, and reporting an issue or a vulnerability.
 - [LICENSE](LICENSE) and [TRADEMARK.md](TRADEMARK.md): the code is
-  under the BSD 2-Clause License; the name Turborel and its logos are not,
-  and TRADEMARK.md says how they may be used.
+  under the BSD-2-Clause Plus Patent License; the name Turborel and its
+  logos are not, and TRADEMARK.md says how they may be used.

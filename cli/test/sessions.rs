@@ -273,7 +273,7 @@ fn a_typed_session_begins_with_a_banner() {
     assert_eq!(connection.server(), turborel::product());
     let port = server.address.port();
     let expected = format!(
-        "{}, the command-line client\nCopyright 2026, Turborel Inc.\nDistributed under the BSD 2-Clause License.\n\n\
+        "{}, the command-line client\nCopyright 2026, Turborel Inc.\nDistributed under the BSD-2-Clause Plus Patent License.\n\n\
          Connected to {} at 127.0.0.1:{port}, as X.\n",
         turborel::product(),
         turborel::product(),

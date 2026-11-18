@@ -89,7 +89,7 @@ then Enter), quits.
 ```
 turborel 0.0.0 (alpha), the command-line client
 Copyright 2026, Turborel Inc.
-Distributed under the BSD 2-Clause License.
+Distributed under the BSD-2-Clause Plus Patent License.
 
 Connected to turborel 0.0.0 (alpha) at 127.0.0.1:7422, as ANN.
 End each statement with a semicolon; end of input (Ctrl-D) quits.
