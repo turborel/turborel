@@ -302,9 +302,9 @@ TABLES has it, and COLUMNS has IS_UPDATABLE, YES of each column of a
 base table or an updatable view, NO of another. SCHEMATA has SQL_PATH,
 null, as no schema is defined with a PATH. KEY_COLUMN_USAGE has
 POSITION_IN_UNIQUE_CONSTRAINT: of a foreign key's column, the position,
-in the key it references, of the column it references, which its
-ORDINAL_POSITION is too, as SQL-92 has it; null of a UNIQUE or PRIMARY
-KEY constraint's. CHARACTER_SETS has CHARACTER_REPERTOIRE, SQL_TEXT, and
+in the key it references, of the column it references, its
+ORDINAL_POSITION being its own position in the foreign key; null of a
+UNIQUE or PRIMARY KEY constraint's. CHARACTER_SETS has CHARACTER_REPERTOIRE, SQL_TEXT, and
 TRANSLATIONS has TRANSLATION_SOURCE_CATALOG, _SCHEMA and _NAME, of no
 row.
 

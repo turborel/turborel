@@ -101,31 +101,28 @@ fn referenced<'c>(catalog: &'c dyn Catalog, fk: &ForeignKey) -> Option<(&'c Cons
     })
 }
 
-/// Each column of each UNIQUE, PRIMARY KEY and referential constraint, at
-/// its position in it, from 1; a referencing column at the position in the
-/// referenced unique constraint of the column it references \[Description
-/// 3\], which POSITION_IN_UNIQUE_CONSTRAINT shows too, null of a UNIQUE or
-/// PRIMARY KEY constraint's [ISO/IEC 9075-11:2006 draft §6.28 Description
-/// 4].
+/// [ISO/IEC 9075-11:2006 draft §6.28 Description 3, 4] Each column of each
+/// UNIQUE, PRIMARY KEY and referential constraint, at its position in it,
+/// from 1; of a referencing column, POSITION_IN_UNIQUE_CONSTRAINT the
+/// position in the referenced unique constraint of the column it
+/// references, null of a UNIQUE or PRIMARY KEY constraint's.
 fn key_columns(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
     for (t, c) in constraints(seen) {
-        let referential = matches!(c.kind, ConstraintKind::ForeignKey(_));
-        let positioned: Vec<(usize, usize)> = match &c.kind {
-            ConstraintKind::Unique { columns, .. } => columns.iter().enumerate().map(|(k, &at)| (at, k)).collect(),
+        let positioned: Vec<(usize, Option<usize>)> = match &c.kind {
+            ConstraintKind::Unique { columns, .. } => columns.iter().map(|&at| (at, None)).collect(),
             ConstraintKind::ForeignKey(fk) => {
                 let key = referenced(&*seen.state.catalog, fk).map_or(&[][..], |(_, columns)| columns);
                 let place = |j: usize, r: &usize| key.iter().position(|k| k == r).unwrap_or(j);
-                fk.columns.iter().zip(&fk.referenced).enumerate().map(|(j, (&at, r))| (at, place(j, r))).collect()
+                fk.columns.iter().zip(&fk.referenced).enumerate().map(|(j, (&at, r))| (at, Some(place(j, r)))).collect()
             }
             ConstraintKind::NotNull(_) | ConstraintKind::Check { .. } => Vec::new(),
         };
-        for (at, k) in positioned {
+        for (j, (at, unique)) in positioned.into_iter().enumerate() {
             let named = [ids(&catalog, &c.name), ids(&catalog, &t.name)].concat();
-            let position = number(k.saturating_add(1));
-            let unique = if referential { position.clone() } else { Value::Null };
-            rows.push([named, vec![column(t, at), position, unique]].concat());
+            let unique = unique.map_or(Value::Null, |k| number(k.saturating_add(1)));
+            rows.push([named, vec![column(t, at), number(j.saturating_add(1)), unique]].concat());
         }
     }
     rows

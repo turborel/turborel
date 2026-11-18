@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const INFORMATION: [Mutation; 12] = [
+pub const INFORMATION: [Mutation; 13] = [
     Mutation {
         name: "information-interval-type",
         package: Package::Core,
@@ -43,9 +43,22 @@ pub const INFORMATION: [Mutation; 12] = [
         package: Package::Core,
         breaks: "a UNIQUE or PRIMARY KEY column has a POSITION_IN_UNIQUE_CONSTRAINT",
         file: "src/system/definition/constraints.rs",
-        original: "let unique = if referential { position.clone() } else { Value::Null };",
-        replacement: "let unique = position.clone();",
+        original: "ConstraintKind::Unique { columns, .. } => columns.iter().map(|&at| (at, None)).collect(),",
+        replacement: "ConstraintKind::Unique { columns, .. } => columns.iter().enumerate().map(|(k, &at)| (at, Some(k))).collect(),",
         integration: &["information_columns::schema_path_key_positions_and_repertoire_6_28"],
+        unit: &[],
+    },
+    Mutation {
+        name: "information-ordinal-in-foreign-key",
+        package: Package::Core,
+        breaks: "a foreign key's column's ORDINAL_POSITION is that of the column it references, as SQL-92 had it",
+        file: "src/system/definition/constraints.rs",
+        original: "rows.push([named, vec![column(t, at), number(j.saturating_add(1)), unique]].concat());",
+        replacement: "rows.push([named, vec![column(t, at), if unique.is_null() { number(j.saturating_add(1)) } else { unique.clone() }, unique]].concat());",
+        integration: &[
+            "information_columns::schema_path_key_positions_and_repertoire_6_28",
+            "information_schema::constraints_are_described_21_2_13",
+        ],
         unit: &[],
     },
     Mutation {

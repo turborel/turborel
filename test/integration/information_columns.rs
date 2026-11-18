@@ -97,17 +97,22 @@ fn insertable_updatable_and_commit_action_6_50() {
 /// Verifies: [ISO/IEC 9075-11:2006 draft §6.41 Description 5b, §6.28
 /// Description 3, 4, §6.11 Description 2; ISO/IEC 9075-2:2023 §4.3.7 Table
 /// 1] SQL_PATH is null of a schema of no `<schema path specification>`;
-/// POSITION_IN_UNIQUE_CONSTRAINT is the position in the referenced key of
-/// the column each referencing column references, null of a key's own
-/// columns; the character set SQL_TEXT is of the repertoire SQL_TEXT.
+/// ORDINAL_POSITION is a column's position in its constraint, a foreign
+/// key's too, and POSITION_IN_UNIQUE_CONSTRAINT the position in the
+/// referenced key of the column each referencing column references, null
+/// of a key's own columns: of F (A, B) REFERENCES W (Y, X) over UNIQUE
+/// (X, Y), A is 1 and 2, B 2 and 1; the character set SQL_TEXT is of the
+/// repertoire SQL_TEXT.
 #[test]
 fn schema_path_key_positions_and_repertoire_6_28() {
     let db = described();
     let a = db.session("A");
     assert_eq!(query(&a, "SELECT SCHEMA_NAME, SQL_PATH FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = 'A'"), ["A,NULL"]);
+    a.run("CREATE TABLE W (X INTEGER NOT NULL, Y INTEGER NOT NULL, UNIQUE (X, Y))").unwrap();
+    a.run("CREATE TABLE F (A INTEGER, B INTEGER, FOREIGN KEY (A, B) REFERENCES W (Y, X))").unwrap();
     let keys = "SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, POSITION_IN_UNIQUE_CONSTRAINT \
                 FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = 'A' ORDER BY 1, 3";
-    assert_eq!(query(&a, keys), ["R,RK,1,1", "R,RI,2,2", "T,K,1,NULL", "T,I,2,NULL"]);
+    assert_eq!(query(&a, keys), ["F,A,1,2", "F,B,2,1", "R,RI,1,2", "R,RK,2,1", "T,K,1,NULL", "T,I,2,NULL", "W,X,1,NULL", "W,Y,2,NULL"]);
     let sets = "SELECT CHARACTER_SET_NAME, CHARACTER_REPERTOIRE FROM INFORMATION_SCHEMA.CHARACTER_SETS";
     assert_eq!(query(&a, sets), ["SQL_TEXT,SQL_TEXT"]);
 }

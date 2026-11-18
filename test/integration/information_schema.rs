@@ -133,8 +133,9 @@ fn views_and_what_they_use_are_described_21_2_8() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.2.13-§21.2.16, §21.2.23,
 /// §21.2.24, §11.4 SR9a]: the constraints of a user's schema, each of its
 /// type and deferral, NOT NULL among them as the CHECK it is; a key's
-/// columns in order, a foreign key's at the positions of the columns they
-/// reference; a referential constraint's unique constraint, match type and
+/// columns in order, a foreign key's too, each at the position in the key
+/// it references of the column it references [ISO/IEC 9075-11:2006 draft
+/// §6.28 Description 3, 4]; a referential constraint's unique constraint, match type and
 /// rules; a CHECK's condition, and the tables and columns each constraint
 /// uses.
 #[test]
@@ -154,8 +155,9 @@ fn constraints_are_described_21_2_13() {
             "P_PRIMARY1|PRIMARY KEY|P|NO|NO",
         ]
     );
-    let keys = "SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE ORDER BY 1, 3";
-    assert_eq!(seen(&s, keys), ["C_P|A|1", "C_P|B|2", "C_PRIMARY1|I|1", "P_PRIMARY1|K|1", "P_PRIMARY1|J|2"]);
+    let keys = "SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION, POSITION_IN_UNIQUE_CONSTRAINT \
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE ORDER BY 1, 3";
+    assert_eq!(seen(&s, keys), ["C_P|B|1|2", "C_P|A|2|1", "C_PRIMARY1|I|1|NULL", "P_PRIMARY1|K|1|NULL", "P_PRIMARY1|J|2|NULL"]);
     let referential = "SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, MATCH_OPTION, UPDATE_RULE, DELETE_RULE \
                        FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS";
     assert_eq!(seen(&s, referential), ["C_P|P_PRIMARY1|NONE|NO ACTION|CASCADE"]);
