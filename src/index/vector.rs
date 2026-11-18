@@ -16,17 +16,19 @@
 mod adapt;
 mod ask;
 mod column;
+pub(crate) mod hybrid;
 mod index;
 mod place;
 
 pub(crate) use adapt::{codec_quantizer, disk_quantizer, distance};
 pub(crate) use ask::Ask;
-pub(crate) use column::{Column, approximate_support, column_of, default_desc, plain, projection};
+pub(crate) use column::{Column, approximate_support, column_of, default_desc, entry_key, plain, projection};
 pub(crate) use index::{Engine, Held, VectorIndex, located};
 pub(crate) use place::Place;
 
 use super::{DISKANN_METHOD, HNSW_METHOD, IVF_METHOD};
 use crate::disk::buffer::{BufferPool, FileId};
+use crate::fulltext::rank::Rankings;
 
 /// Whether `method` names a vector index method: "diskann", "hnsw" or
 /// "ivf".
@@ -34,13 +36,17 @@ pub(crate) fn is_vector_method(method: &str) -> bool {
     [DISKANN_METHOD, HNSW_METHOD, IVF_METHOD].contains(&method)
 }
 
-/// The vector index methods, in the registered file `file` of `pool`.
-pub(crate) fn vector_methods(pool: &std::sync::Arc<BufferPool>, file: FileId) -> Vec<Box<dyn super::IndexMethod>> {
+/// The vector index methods, in the registered file `file` of `pool`, the
+/// inverted index of sparse vectors among them, and the hybrid method,
+/// its text parts naming their rankings among `rankings`.
+pub(crate) fn vector_methods(pool: &std::sync::Arc<BufferPool>, file: FileId, rankings: &Rankings) -> Vec<Box<dyn super::IndexMethod>> {
     let pool = || std::sync::Arc::clone(pool);
     vec![
         Box::new(super::DiskAnnMethod::new(pool(), file)),
         Box::new(super::HnswMethod::new(pool(), file)),
         Box::new(super::IvfMethod::new(pool(), file)),
+        Box::new(super::SparseMethod::new(pool(), file)),
+        Box::new(hybrid::HybridMethod::new(&pool(), file).with_rankings(std::sync::Arc::clone(rankings))),
     ]
 }
 

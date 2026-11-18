@@ -58,6 +58,7 @@ mod generated;
 mod greatest;
 mod grouping_sets;
 mod hierarchy;
+mod hybrid_search;
 pub use hierarchy::{family_in, member_plan};
 mod hypothetical;
 mod invariant;

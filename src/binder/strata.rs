@@ -162,6 +162,7 @@ impl<'w> Rules<'w> {
                 usize::from(named && self.names.contains(&t.table.ident.as_str()))
             }
             TableReference::Derived(d) => self.refs(&d.query.query, scope),
+            TableReference::Hybrid(_) => 0,
             TableReference::Unnest(u) => {
                 let mut n = 0_usize;
                 for v in &u.collections {
@@ -307,7 +308,7 @@ impl<'w> Rules<'w> {
     /// `place`.
     fn reference(&self, r: &'w TableReference, (place, scope): (Place, &mut Vec<&'w str>)) -> Checked {
         match r {
-            TableReference::Table(_) => Ok(()),
+            TableReference::Table(_) | TableReference::Hybrid(_) => Ok(()),
             TableReference::Derived(d) => {
                 let inner = if place == Place::Body { Place::Derived } else { Place::Elsewhere };
                 self.query(&d.query.query, (inner, scope))
@@ -503,7 +504,7 @@ fn any_query(q: &QueryExpression, pred: &dyn Fn(&QueryExpression) -> bool) -> bo
             let mut refs: Vec<&TableReference> = spec.table_expression.from.iter().collect();
             while let Some(r) = refs.pop() {
                 match r {
-                    TableReference::Table(_) => {}
+                    TableReference::Table(_) | TableReference::Hybrid(_) => {}
                     TableReference::Derived(d) => nested.push(&d.query.query),
                     TableReference::Unnest(u) => {
                         for v in &u.collections {
@@ -544,10 +545,12 @@ fn recognizes(q: &QueryExpression) -> bool {
     }
     let mut refs: Vec<&TableReference> = te.from.iter().collect();
     while let Some(r) = refs.pop() {
-        match r {
-            TableReference::Recognized(_) => return true,
-            TableReference::Joined(j) => refs.extend([&j.left, &j.right]),
-            TableReference::Table(_) | TableReference::Derived(_) | TableReference::Unnest(_) | TableReference::Polymorphic(_) => {}
+        // A table, a derived table, UNNEST, a PTF and HYBRID_SEARCH hold
+        // none of their own.
+        if let TableReference::Joined(j) = r {
+            refs.extend([&j.left, &j.right]);
+        } else if matches!(r, TableReference::Recognized(_)) {
+            return true;
         }
     }
     false

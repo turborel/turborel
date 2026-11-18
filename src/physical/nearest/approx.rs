@@ -81,20 +81,21 @@ pub(super) fn probe(target: SearchTarget, first: usize) -> Approximation {
     }
 }
 
-/// Of the approximate index `current` found before and `candidate`, the
-/// one a read takes: one of the call's metric, the index a hint names
-/// first (R13.4), else the first found.
+/// Of the approximate index `current` found before and `candidate`, each
+/// with the position of the column in its key, the one a read takes: one
+/// of the call's metric, the index a hint names first (R13.4), else the
+/// first found.
 pub(super) fn preferred(
-    current: Option<IndexDesc>,
-    (candidate, metric): (IndexDesc, Option<String>),
+    current: Option<(IndexDesc, usize)>,
+    (candidate, metric): ((IndexDesc, usize), Option<String>),
     (query, asked): (&NearestQuery, Option<SearchTarget>),
     hints: Option<&Hints>,
-) -> Option<IndexDesc> {
+) -> Option<(IndexDesc, usize)> {
     let matches = metric.as_deref().zip(query.metric.as_deref()).is_some_and(|(index, call)| same_metric(index, call));
     if asked.is_none() || !matches {
         return current;
     }
-    let named = hints.and_then(|h| h.index_of(&candidate.table.ident)).is_some_and(|i| i.eq_ignore_ascii_case(&candidate.name));
+    let named = hints.and_then(|h| h.index_of(&candidate.0.table.ident)).is_some_and(|i| i.eq_ignore_ascii_case(&candidate.0.name));
     if named || current.is_none() { Some(candidate) } else { current }
 }
 

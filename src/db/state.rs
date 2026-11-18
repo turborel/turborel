@@ -18,7 +18,10 @@ use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
-use crate::index::{BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, RTreeMethod};
+use crate::index::vector::hybrid::HybridMethod;
+use crate::index::{
+    BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, RTreeMethod, SparseMethod,
+};
 use crate::log::Log;
 use crate::optimizer::Optimizer;
 use crate::physical::CostModel;
@@ -234,8 +237,19 @@ impl State {
         let graph = DiskAnnMethod::sharing(Arc::clone(&st.pages));
         let layered = HnswMethod::sharing(Arc::clone(&st.pages));
         let lists = IvfMethod::sharing(Arc::clone(&st.pages));
-        let methods: Vec<Arc<dyn IndexMethod>> =
-            vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial), Arc::new(words), Arc::new(graph), Arc::new(layered), Arc::new(lists)];
+        let sparse = SparseMethod::sharing(Arc::clone(&st.pages));
+        let hybrid = HybridMethod::sharing(&st.pages).with_rankings(st.rankings.closure());
+        let methods: Vec<Arc<dyn IndexMethod>> = vec![
+            Arc::new(btree),
+            Arc::new(hash),
+            Arc::new(spatial),
+            Arc::new(words),
+            Arc::new(graph),
+            Arc::new(layered),
+            Arc::new(lists),
+            Arc::new(sparse),
+            Arc::new(hybrid),
+        ];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);
         }

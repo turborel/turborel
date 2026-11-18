@@ -14,6 +14,7 @@ use crate::ast::{
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
+mod hybrid_search;
 mod order_by;
 mod ordered;
 mod sets;
@@ -508,6 +509,9 @@ impl Parser {
         }
         if self.at_vector_search() {
             return self.vector_search();
+        }
+        if self.at_hybrid_search() {
+            return self.hybrid_search();
         }
         // [ISO/IEC 9075-2:2023 §7.6] <only spec>.
         let (table, only) = self.target_table()?;

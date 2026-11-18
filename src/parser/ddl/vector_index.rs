@@ -281,11 +281,14 @@ impl Parser {
 
     /// A `<vector index parameter>`: its words, where it begins, and its
     /// value.
-    fn vector_index_parameter(&mut self) -> Result<(String, usize, OptionValue)> {
+    pub(super) fn vector_index_parameter(&mut self) -> Result<(String, usize, OptionValue)> {
         let at = self.here();
         let mut name = self.option_word()?;
+        // A word before a comma, a right parenthesis or the end of a
+        // hybrid index's parameter string (`hybrid_index.rs`) is the value.
         while matches!(self.peek(), Tok::Identifier(_))
             && !matches!(self.peek_at(1), Tok::Delimiter(d) if *d == delim::COMMA || *d == delim::RIGHT_PAREN)
+            && !matches!(self.peek_at(1), Tok::End)
         {
             name = format!("{name} {}", self.option_word()?);
         }

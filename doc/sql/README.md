@@ -16,4 +16,5 @@ The language, element by element, and each statement on a reference page of its 
 - [Full-Text Search](08-fulltext.md)
 - [Full-Text Patterns](09-fulltext-patterns.md)
 - [Spatial Data](10-spatial.md)
+- [Hybrid Search](14-hybrid-search.md)
 - [Statements](statements/README.md)
