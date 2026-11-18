@@ -4,8 +4,9 @@
 //! crossing placed in the first column it may touch, a boundary cell's
 //! reference side inverted or shared by several rings, another polygon's
 //! hold ignored, the run and the rise near a point ignored, edges
-//! through the corners of its path misplaced, and the interval trees'
-//! work no longer counted toward building them.
+//! through the corners of its path misplaced, the interval trees' work no
+//! longer counted toward building them, and a cell number's floor left
+//! unchecked where subtracting the shift rounds.
 
 use super::{Mutation, Package};
 
@@ -19,7 +20,7 @@ const TIES: &str = "geometry::prepared::cells::tests::ties_on_a_points_path_are_
 const INVALID: &str = "geometry::prepared::cells::tests::invalid_topology_is_labelled_as_location_reads_it";
 
 /// Mechanisms of the certificates whose removal must fail their tests.
-pub const CELLS: [Mutation; 14] = [
+pub const CELLS: [Mutation; 15] = [
     Mutation {
         name: "cells-crossing-parity",
         package: Package::Core,
@@ -159,5 +160,15 @@ pub const CELLS: [Mutation; 14] = [
         replacement: "*self = self.saturating_add(0);",
         integration: &[],
         unit: &["geometry::tests::prepared::certificates_are_built_once_ray_work_repays_them"],
+    },
+    Mutation {
+        name: "grid-checked-floor",
+        package: Package::Core,
+        breaks: "a point just below a cell side at a negative coordinate is placed in the cell above",
+        file: "src/geometry/grid.rs",
+        original: "Some(if floor + SHIFT > scaled { floor - 1.0_f64 } else { floor })",
+        replacement: "Some(if floor + SHIFT > scaled { floor } else { floor })",
+        integration: &[],
+        unit: &["geometry::prepared::cells::tests::cells_are_found_exactly_below_negative_sides"],
     },
 ];

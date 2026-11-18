@@ -3104,7 +3104,9 @@ envelope gets a grid of square cells whose side is a power of two, about
 64 cells per edge and at most 1,024 along an axis, their bounds 2^-8 of
 a cell past multiples of the side so round coordinates rarely fall on
 one. Cell bounds and row centres are exact, and a point's cell is found
-by an exact multiplication. A cell an edge may touch is a boundary cell:
+by an exact multiplication and a floor checked against the cell's exact
+lower bound, as subtracting the shift from a negative coordinate can
+round. A cell an edge may touch is a boundary cell:
 an edge within one row's height, or a vertical one, is marked over its
 exact extent, and any other over each row band's computed extent widened
 by a doubled bound on that computation's error. The grid is swept a row

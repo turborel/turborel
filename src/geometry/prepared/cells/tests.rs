@@ -166,6 +166,45 @@ fn ties_on_a_points_path_are_placed_by_slope() {
     assert!(decided >= 1.0_f64, "decided only {decided}");
 }
 
+/// A polygon whose right side lies one unit in the last place left of a
+/// cell side at a negative coordinate, where subtracting the grid's shift
+/// rounds, with a zigzag left side; or the same with its axes swapped, so
+/// the side is its top.
+fn below_a_side(side: f64, swapped: bool) -> Shape {
+    let mut ring = vec![[side, -32.0_f64], [side, 32.0_f64]];
+    for k in 0..=32_u32 {
+        let x = if k.is_multiple_of(2) { -63.0_f64 } else { -62.0_f64 };
+        ring.push([x, 32.0_f64 - 2.0_f64 * f64::from(k)]);
+    }
+    ring.push([side, -32.0_f64]);
+    if swapped {
+        ring = ring.into_iter().map(|[x, y]| [y, x]).collect();
+    }
+    Shape::Polygon(vec![ring])
+}
+
+/// Verifies: [DESIGN] D85: a point's cell is found exactly where
+/// subtracting the grid's shift from a negative coordinate rounds: points
+/// on, just left of and just right of a side one unit in the last place
+/// below a cell's side, and the same across a top, are located as exact
+/// location locates them.
+#[test]
+fn cells_are_found_exactly_below_negative_sides() {
+    // -(1 - 2^-8 + 2^-53): its difference with 2^-8 is a tie that rounds
+    // to -1.
+    let side = -(0.996_093_75_f64 + f64::EPSILON / 2.0_f64);
+    for swapped in [false, true] {
+        let shape = below_a_side(side, swapped);
+        let mut extra = Vec::new();
+        for y in [-31.5_f64, -7.25_f64, 0.5_f64, 13.0_f64, 31.5_f64] {
+            for x in [side.next_down(), side, side.next_up()] {
+                extra.push(if swapped { [y, x] } else { [x, y] });
+            }
+        }
+        agree_at(&shape, 60, &extra);
+    }
+}
+
 /// Verifies: [DESIGN] D85: preparation never changes a result, even for
 /// topology the predicates require to be valid: a hole outside its shell
 /// and overlapping parts are labelled as exact location reads them.

@@ -24,8 +24,8 @@ const MAX_DOUBLINGS: u32 = 64;
 const LEAST_UNITS: f64 = 256.0;
 /// Below this side, half a side or a row centre could lose exactness.
 const SMALLEST_SIDE: f64 = 1e-280;
-/// Scaled coordinates stay below 2^44, so their units in the last place
-/// are at most 2^-8 and subtracting `SHIFT` from them is exact.
+/// Scaled coordinates stay below 2^44, so a cell number plus `SHIFT`, a
+/// cell's lower bound, is exact.
 const CELL_NUMBER_LIMIT: f64 = 17_592_186_044_416.0;
 /// Cell bounds sit 2^-8 of a cell past multiples of the side, so integer
 /// and other round coordinates rarely fall on a bound, where a closed cell
@@ -181,12 +181,16 @@ fn side_for(width: f64, height: f64, edges: usize, per_edge: u32) -> Option<f64>
 
 /// The number of the cell holding `x`, `floor(x / side - SHIFT)` for
 /// `inverse = 1 / side`, a power of two, if the product is exact and below
-/// the grid's limit, so the subtraction is exact too.
+/// the grid's limit. Subtracting `SHIFT` from a negative product rounds
+/// where its magnitude crosses a power of two, and can round up to an
+/// integer: the floor is then one too high, as the exact lower bound of
+/// its cell, above the product, shows.
 fn number(x: f64, inverse: f64) -> Option<f64> {
     let scaled = x * inverse;
     let underflow = scaled.abs() < f64::MIN_POSITIVE && x.abs() > 0.0_f64;
     let fits = scaled.abs() < CELL_NUMBER_LIMIT;
-    (!underflow && fits).then(|| (scaled - SHIFT).floor())
+    let floor = (!underflow && fits).then(|| (scaled - SHIFT).floor())?;
+    Some(if floor + SHIFT > scaled { floor - 1.0_f64 } else { floor })
 }
 
 /// A count as an exact binary64 number.
