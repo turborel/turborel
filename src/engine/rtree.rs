@@ -202,6 +202,23 @@ impl RTree {
         Nearest::candidates(self.clone(), query, domain, budget)
     }
 
+    /// Whether `query` and every entry lie within `domain`, as the
+    /// captured root's envelope and its unfinished split siblings show:
+    /// the certificate `nearest_candidates` takes, for a distance window.
+    /// Ancestors are enlarged before an entry is inserted, so it covers
+    /// every entry committed before the call.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors or malformed links.
+    pub(crate) fn within_domain(&self, query: Bounds, domain: Bounds) -> Result<bool> {
+        if !domain.contains(query) {
+            return Ok(false);
+        }
+        let envelope = nearest::root_envelope(self, self.root()?)?;
+        Ok(envelope.is_none_or(|bounds| domain.contains(bounds)))
+    }
+
     /// Streams intersecting pairs, pruning disjoint branches of both
     /// trees. Self-joins include both directions and each self-pair.
     /// Stable pairs appear once; concurrent changes are optional.

@@ -66,8 +66,14 @@ impl LrFunction {
         })
     }
 
-    /// The routine the values `values` choose.
+    /// The routine the values `values` choose. Null values alone choose
+    /// none of a name the function there was before shares: a null fits
+    /// any parameter, so it cannot tell the routines apart, and the call of
+    /// that function is null, as an index finding its rows assumes (D135).
     fn by_values<V: Borrow<Value>>(&self, values: &[V]) -> Option<Chosen> {
+        if self.fallback.is_some() && values.iter().all(|v| v.borrow().is_null()) {
+            return None;
+        }
         if let Some((last, given)) = values.split_last()
             && matches!(last.borrow(), Value::Array(_))
             && let Some(r) = self.routines.iter().find(|r| r.catalog && r.holds(given))

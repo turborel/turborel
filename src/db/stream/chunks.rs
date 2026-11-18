@@ -27,7 +27,7 @@ pub(super) fn eligible(mut plan: &Plan) -> bool {
         }
         plan = input;
     }
-    matches!(plan, Plan::IndexJoin { spatial: true, outer: false, .. })
+    matches!(plan, Plan::IndexJoin { spatial: true, outer: crate::physical::Preserved::Inner, .. })
 }
 
 pub(super) fn read(input: RowIter, budget: &Arc<MemoryBudget>, limit: usize, stop: Option<Arc<Stop>>) -> RowIter {

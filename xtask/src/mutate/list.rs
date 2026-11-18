@@ -55,6 +55,7 @@ mod rename;
 mod roles;
 mod routines;
 mod rtree;
+mod rtree_windows;
 mod savepoints;
 mod search_cycle;
 mod sequences;

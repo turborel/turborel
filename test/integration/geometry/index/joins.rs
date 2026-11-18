@@ -51,10 +51,12 @@ fn geometry_joins_refine_candidates_and_equal_products() {
     }
 }
 
-/// Verifies: [DESIGN] D15, D85: fixed but differing SRIDs, including an
-/// empty geometry, raise even when envelopes do not meet. An unconstrained
-/// reference and another raising conjunct prevent an indexed join; empty
-/// inputs still do not evaluate a relationship on a nonexistent pair.
+/// Verifies: [DESIGN] D15, D85, D135: fixed but differing SRIDs, including
+/// an empty geometry, raise even when envelopes do not meet. An outer
+/// column of another or no fixed SRID is still probed, each probe of
+/// another SRID reading every entry, so the error is raised; another
+/// raising conjunct prevents an indexed join; empty inputs still do not
+/// evaluate a relationship on a nonexistent pair.
 #[test]
 fn geometry_joins_preserve_reference_and_other_runtime_errors() {
     for reference in ["GEOMETRY", "GEOMETRY(0)"] {
@@ -62,11 +64,11 @@ fn geometry_joins_preserve_reference_and_other_runtime_errors() {
         let a = db.session("A");
         a.run(&format!("CREATE TABLE WINDOWS (ID INTEGER, G {reference})")).unwrap();
         let query = "SELECT P.ID FROM WINDOWS W JOIN SHAPES P ON ST_INTERSECTS(P.G, W.G) = 1";
-        let plan = a.physical_plan(query, &Params::new()).unwrap();
-        assert!(!plan.contains("IndexNestedLoop"), "{plan}");
         assert_eq!(rows(&a, query).unwrap(), Vec::<String>::new());
         for text in ["POINT (10000 10000)", "POINT EMPTY"] {
             a.run(&format!("INSERT INTO WINDOWS VALUES (1, ST_GEOMFROMTEXT('{text}'))")).unwrap();
+            let plan = a.physical_plan(query, &Params::new()).unwrap();
+            assert!(plan.contains("IndexNestedLoop") && !plan.contains("Adaptive"), "{plan}");
             assert_eq!(rows(&a, query).unwrap_err(), Code::Data);
             a.run("DELETE FROM WINDOWS").unwrap();
         }

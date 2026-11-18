@@ -17,6 +17,7 @@ pub mod planar;
 pub mod solids;
 pub mod srs;
 pub mod topology;
+pub(crate) mod window;
 
 /// The two coordinate axes of Cartesian spatial bounds.
 pub const DIMENSIONS: usize = 2;

@@ -8,10 +8,13 @@ use turborel::geometry::Geometry;
 use turborel::params::Params;
 use turborel::value::Value;
 
+mod distance;
 mod estimates;
 mod joins;
 mod nearest;
+mod outer;
 mod regions;
+mod widened;
 mod windows;
 
 fn populated() -> Database {

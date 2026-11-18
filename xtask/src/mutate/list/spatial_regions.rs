@@ -17,8 +17,8 @@ pub const SPATIAL_REGIONS: [Mutation; 7] = [
         package: Package::Core,
         breaks: "a geometry index names no region, so its reads are of the whole table",
         file: "src/index/rtree.rs",
-        original: "geometry::region(probe, self.srid?)",
-        replacement: "geometry::region(probe, self.srid?).and(None)",
+        original: "geometry::region(&self.tree, probe, self.srid?)",
+        replacement: "geometry::region(&self.tree, probe, self.srid?).and(None)",
         integration: &[
             OUTSIDE,
             "geometry::index::regions::geometry_moves_across_a_region_border_conflict",

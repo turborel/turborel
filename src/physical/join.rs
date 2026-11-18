@@ -308,6 +308,10 @@ impl PhysicalPlanner<'_> {
             let plan = LogicalPlan::Project { exprs: kept, input: Box::new(joined) };
             return self.build_node(&plan, want);
         }
+        // A spatial condition probes an R-tree instead (`indexed/spatial/outer.rs`).
+        if let Some(built) = self.spatial_outer_join((kind, cond), (left, right), want) {
+            return built;
+        }
         let width = left.width();
         let parted = Parted::of(cond, width);
         let both = self.shown.then(|| left.names().into_iter().chain(right.names()).collect::<Vec<String>>());

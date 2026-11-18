@@ -33,8 +33,8 @@ mod wkb;
 mod wkt;
 
 pub use collections::{COLLECTION_FUNCTIONS, CollectionFunction, MAX_GEOMETRY_ARRAY_ELEMENTS, element_kind, elements};
-pub(crate) use functions::functions;
 pub use functions::{FUNCTIONS, GeometryFunction};
+pub(crate) use functions::{functions, unit_scale};
 pub use kind::{GEOMETRY, Geometries, GeometryType, NAME, TYPES, data_type, data_type_of, kind_of, kinds, most_specific, of_data_type};
 pub use ordering::{EQUALITY, ORDERING_EQUALS, OrderingEquals};
 pub use procedures::{CatalogProcedure, procedures};
@@ -89,6 +89,11 @@ pub enum SpatialOperation {
     /// INTEGER 1 for an empty geometry and 0 otherwise, as
     /// [`Geometry::is_empty`]; a NULL argument returns NULL.
     IsEmpty,
+    /// ST_Relate, INTEGER 1 if the operands' intersection matrix matches
+    /// its third argument's pattern [ISO/IEC 13249-3:2016 §5.1.45]. Only a
+    /// pattern that requires an interior or boundary of each to meet is
+    /// true only of meeting operands, so an index reads the pattern too.
+    Relate,
 }
 
 impl SpatialOperation {
@@ -98,7 +103,7 @@ impl SpatialOperation {
     pub fn windowed(self) -> bool {
         match self {
             Self::Intersects | Self::Meets | Self::Equals => true,
-            Self::Distance | Self::IsEmpty => false,
+            Self::Distance | Self::IsEmpty | Self::Relate => false,
         }
     }
 }

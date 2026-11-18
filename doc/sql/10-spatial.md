@@ -1301,17 +1301,28 @@ turborel: SQLCODE -900 (SQLSTATE 0A000): the rtree index method needs GEOMETRY(s
 ```
 
 The planner uses the index where it costs less than reading the table,
-which these few rows may not, in three forms.
+which these few rows may not, in these forms.
 
 - A filter `ST_INTERSECTS(column, value) = 1`, or with the column second,
   where the value is a constant or a parameter.
   ST_CONTAINS, ST_WITHIN, ST_TOUCHES, ST_CROSSES, ST_OVERLAPS and
   ST_EQUALS do the same, as each holds only of values that meet. An
   empty value equals every empty row, so ST_EQUALS of one reads them all.
-- An inner join on `ST_INTERSECTS(a.column, b.column) = 1`, or one of
-  the other relationships, where both
-  columns are of the same SRID. Each row of one side probes the other's
-  index, and for a broad join an adaptive scan may read it once instead.
+  So does `ST_RELATE(column, value, pattern) = 1` of a constant pattern
+  asking an interior or boundary of one to meet one of the other's, as
+  `'T*F**F***'` does.
+- A filter `ST_DISTANCE(column, value) <= limit`, or `<`, or the limit
+  first, where the limit is a constant or a parameter. With a unit, as
+  `ST_DISTANCE(column, value, 'KILOMETRE')`, the unit is converted to the
+  column's as the statement is planned. The index reads the envelopes
+  within the limit of the value's.
+- A join on one of these, inner or LEFT, RIGHT or FULL outer, where the
+  join's geometry columns are of one SRID, or the other column has none
+  fixed. Each row of one side probes the other's index, and for a broad
+  inner join an adaptive scan may read it once instead. A row whose
+  geometry is NULL or empty, or that no row matches, keeps its place
+  with nulls, and a FULL join then reads the table for the rows no probe
+  matched.
 - `ORDER BY ST_DISTANCE(column, value) ASC NULLS LAST` with FETCH FIRST,
   OFFSET too, where the value is a constant or a parameter, which reads
   the nearest rows first.
@@ -1320,6 +1331,9 @@ which these few rows may not, in three forms.
 SELECT NAME FROM PLACES WHERE ST_INTERSECTS(SHAPE, ST_MAKEENVELOPE(0, 0, 3, 3)) = 1 ORDER BY ID;
 SELECT NAME, ST_DISTANCE(SHAPE, ST_POINT(12, 5)) AS DISTANCE FROM PLACES
     ORDER BY ST_DISTANCE(SHAPE, ST_POINT(12, 5)) ASC NULLS LAST, ID FETCH FIRST 2 ROWS ONLY;
+SELECT NAME FROM PLACES WHERE ST_DISTANCE(SHAPE, ST_POINT(12, 5), 'KILOMETRE') < 0.003 ORDER BY ID;
+SELECT P.NAME, F.NAME AS IN_FIELD FROM PLACES P LEFT JOIN PLACES F
+    ON ST_INTERSECTS(P.SHAPE, F.SHAPE) = 1 AND F.ID = 3 ORDER BY P.ID;
 ```
 
 ```
@@ -1333,20 +1347,42 @@ SELECT NAME, ST_DISTANCE(SHAPE, ST_POINT(12, 5)) AS DISTANCE FROM PLACES
  Field                |                      2E0
  Gate                 |                      2E0
 (2 rows)
+ NAME
+----------------------
+ Field
+ Gate
+(2 rows)
+ NAME                 | IN_FIELD
+----------------------+----------------------
+ Well                 | Field
+ Road                 | NULL
+ Field                | Field
+ Pond                 | NULL
+ Gate                 | Field
+ Lost                 | NULL
+ Unmapped             | NULL
+(7 rows)
 ```
+
+The Pond lies in the Field's hole, and the Gate on its edge.
 
 An envelope finds candidates, and each is checked against the visible
 row's exact geometry and the whole condition, so the rows are those a
-scan gives, with the same errors. A query value of another SRID still
-raises its error. ST_DISJOINT, distance comparisons in WHERE, outer
-joins, and nearest queries descending, NULLS FIRST, WITH TIES or PERCENT
-read the table. A filter that may raise an error keeps the index from
-skipping rows. [CREATE INDEX](statements/create-index.md) gives the
+scan gives, with the same errors. A query value of another SRID makes
+the index read every row, so its error is still raised, even of a value
+no envelope is near, and so does a tree whose distances may overflow. A
+join or filter whose other conjunct may raise an error keeps the index
+from skipping rows. ST_DISJOINT, ST_RELATE of a
+pattern that disjoint values may match, distance comparisons `>` or
+`>=`, and nearest queries descending, NULLS FIRST, WITH TIES or PERCENT
+read the table. [CREATE INDEX](statements/create-index.md) gives the
 index's syntax, and its numeric forms of X and Y columns.
 
 Under SERIALIZABLE, a read through the index counts as reading the rows
 whose envelopes meet the window it searched, not the whole table, and
-each probe of a join reads its own window. Another transaction that
+each probe of a join reads its own window. A distance's window is its
+value's envelope widened by the limit, and a FULL join also reads the
+whole table for the rows no probe matched. Another transaction that
 commits first a row added, removed or moved whose envelope, before or
 after, meets that window refuses this one's commit, SQLSTATE 40001. A
 row elsewhere does not. A NULL is in no window, and an empty geometry is

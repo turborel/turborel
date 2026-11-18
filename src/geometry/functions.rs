@@ -535,6 +535,18 @@ fn in_unit(measured: Value, subject: &Value, unit: &Value, systems: Option<&crat
     super::routines::length_in(*distance, (srid, systems), name).map(Value::Approx)
 }
 
+/// The named linear unit's length in the numbers of a value of SRID
+/// `srid`, by which ST_Distance's unit form scales a distance (`in_unit`):
+/// what a distance window divides its limit by (RULES.md D135).
+///
+/// # Errors
+///
+/// As the unit form raises: an unknown unit, or a system without a
+/// linear unit.
+pub(crate) fn unit_scale(srid: i32, systems: Option<&crate::catalog::SpatialCatalog>, unit: &str) -> Result<f64> {
+    super::routines::length_in(1.0_f64, (srid, systems), unit)
+}
+
 fn point(args: &[Value]) -> Result<Value> {
     let [x, y, rest @ ..] = args else { return Err(invalid("a point needs X and Y")) };
     let x = x.as_f64().ok_or_else(|| invalid("X must be numeric"))?;

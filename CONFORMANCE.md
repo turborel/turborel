@@ -2169,7 +2169,7 @@ when declared, with SQLCODE -103.
 | Methods | §4.2, 9075-2 §9.18 | A method table per type, with overriding. The collection types override ST_Geometries. `v.m()` binds by the declared type and runs by the most specific type. `(v AS T).m()` runs T's. |
 | SPECIFICTYPE | 9075-2 §6.15 | `v.SPECIFICTYPE` names the most specific type in INFORMATION_SCHEMA, the built-in types' schema. The function form SPECIFICTYPE(v) is not built. |
 | Collections | §10.1.3 to §10.1.5 | ST_NumGeometries, ST_GeometryN (01F01 out of range) and ST_Geometries, accessor and mutator. |
-| Relationships | §4.2.2, §5.1.43 to §5.1.54 | ST_Relate, ST_Equals, ST_Disjoint, ST_Intersects, ST_Touches, ST_Crosses, ST_Within, ST_Contains and ST_Overlaps, exact on binary64 (`src/spatial/planar`, RULES.md D126). An `rtree` index plans each as it plans ST_Intersects. |
+| Relationships | §4.2.2, §5.1.43 to §5.1.54 | ST_Relate, ST_Equals, ST_Disjoint, ST_Intersects, ST_Touches, ST_Crosses, ST_Within, ST_Contains and ST_Overlaps, exact on binary64 (`src/spatial/planar`, RULES.md D126). An `rtree` index plans each but ST_Disjoint as it plans ST_Intersects, and ST_Relate when its pattern is a constant asking an interior or boundary of each to meet (RULES.md D135). |
 | Set operations | §5.1.31 to §5.1.40, Tables 6 to 11 | ST_Intersection, ST_Union, ST_Difference and ST_SymDifference over mixed dimensions, typed by Tables 8 to 11 (`routines/results.rs`). |
 | Buffer, hull and boundary | §5.1.17, §5.1.29, §5.1.30 | ST_Buffer with and without a unit, ST_ConvexHull and ST_Boundary. |
 | Validity and simplicity | §5.1.8, §5.1.10, §7.1.8 | ST_IsValid, ST_IsSimple and ST_IsRing. |
@@ -2872,8 +2872,16 @@ Inner joins between two columns constrained to the same SRID can probe
 one geometry index for each outer row (`physical/indexed/spatial.rs`).
 Both table orders and column projections are considered; the complete ON
 condition rechecks each visible pair. Other raising conjuncts and raising
-inner filters prevent this path. Geometry outer joins and simultaneous
-traversal of two spatial indexes are not implemented.
+inner filters prevent this path. LEFT, RIGHT and FULL outer joins probe
+it too, keeping the rows no probe matched with nulls
+(`physical/indexed/spatial/outer.rs`, `exec/join/indexed/preserved.rs`).
+ST_Relate of a constant pattern asking the values to meet, and
+ST_Distance compared `<` or `<=` with a limit, in any unit that converts,
+read a window, the distance's widened by the limit
+(`index/rtree/geometry/within.rs`, RULES.md D135). A value of another
+SRID, or a tree whose distances may overflow, reads every entry, so the
+error is raised as a scan raises it. Simultaneous traversal of two
+spatial indexes is not implemented.
 Under SERIALIZABLE, a filter's search and each join probe record the
 envelope window they read, not the whole table, and a change conflicts
 when its old or new envelope meets one (`exec/read.rs`,
@@ -3683,6 +3691,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §14.1 SR2 default isolation level | READ COMMITTED, where the standard says SERIALIZABLE, following PostgreSQL. TRANSACTION.ISOLATION = SERIALIZABLE conforms. | `db/session.rs` |
 | §14.1 GR5 isolation level | SERIALIZABLE as itself. REPEATABLE READ as snapshot isolation. READ COMMITTED and READ UNCOMMITTED with a snapshot for each statement, kept while a cursor is open. Each as SERIALIZABLE on an engine that does not read below it. | `db/session.rs`, `txn.rs` |
 | §14.1 GR5, §4.28 what a SERIALIZABLE read through a spatial index reads | The rows whose geometries' envelopes, as the `rtree` index keys them, meet the window its search read, each join probe's own. A NULL is in no window and an empty geometry is at the origin. Past TRANSACTIONS.TRACKED_ROWS windows of a table, they merge into one rectangle of each column (RULES.md D134). | `storage/region.rs`, `exec/read.rs`, `engine/rows/mvcc/reads.rs` |
+| §14.1 GR5, §4.28 what a SERIALIZABLE distance read or outer join through a spatial index reads | A distance window's search reads its value's envelope widened by the limit, or the whole table where the tree cannot certify its distances finite. A FULL outer join's probes read their windows, and then the whole table, for the rows no probe matched (RULES.md D135). | `index/rtree/geometry/within.rs`, `exec/join/indexed/preserved.rs` |
 | §4.30 the initial default schema | The session's authorization identifier, for every statement the session binds | `db/session.rs` |
 | 2023 §14.10 GR4, IA234, the changes TRUNCATE TABLE disallows that are not significant | Any other transaction's write of the table until the truncating one ends, and any use of the table by a transaction or statement that began before it committed (SQLCODE -911) | `db/truncate.rs`, `txn/locks.rs` |
 | 2023 §14.12 GR4, IA234, the changes MERGE disallows that are not significant | As of UPDATE, DELETE and INSERT. The rows it changes, and under a coordinator's locks the tables it reads, are another transaction's to write only once it ends. | `db/merge.rs`, `txn/access.rs` |

@@ -159,6 +159,7 @@ verification approach DO-178C expects (§8).
 | D132 | Class 2FF is shared by the SQL/MM parts, each routine raising its own part's conditions |
 | D133 | A registered function's own word decides whether it is deterministic, and constraints call only deterministic ones |
 | D134 | A spatial read records the envelopes it read, merged into their hull past a bound |
+| D135 | Geometry windows serve relate, distance and outer joins, reading every entry where a scan would raise |
 
 ### The project
 
@@ -2777,7 +2778,8 @@ the complete ON condition rechecks each visible pair. Planning considers
 both table orders and column projections. A NULL outer geometry makes no
 probe; an empty geometry finds no pair. Each probe records its outer
 row's envelope as a serializable read region (D134). This is not a
-simultaneous traversal of two indexes. Geometry outer joins do not yet use this path.
+simultaneous traversal of two indexes. D135 extends this
+path to outer joins, relate patterns and distance limits.
 
 For an unordered spatial inner join, the executor can choose a single
 table scan instead of repeated probes (`exec/join/indexed/adaptive.rs`).
@@ -4375,6 +4377,60 @@ least and greatest value, every region may match them.
 Regions are kept in memory with the rest of a transaction's reads, so
 neither recovery nor replication sees them. A transaction open at a
 crash is undone and validates nothing.
+
+#### D135. Geometry windows serve relate, distance and outer joins, reading every entry where a scan would raise
+
+D85's envelope candidates serve three more forms, each through the same
+`Probe::Predicate` and the same recheck of the whole condition.
+
+`ST_RELATE(column, value, pattern) = 1` uses a window when the pattern is
+a constant that asks an interior or boundary of one value to meet one of
+the other's. That is a T, 0, 1 or 2 in a cell of the first two rows and
+columns [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.45]. Values whose
+envelopes are apart cannot match such a pattern. A pattern disjoint
+values may match is not windowed, and an invalid one reads every entry,
+so the call raises its error.
+
+`ST_DISTANCE(column, value [, unit]) <= limit`, or `<`, or with the
+limit first and `>=` or `>`, uses a window of the value's envelope
+widened by the limit. The limit is a constant, a parameter or, in a
+join, a column of the probing row. A unit is converted to the column's
+as the statement is planned, and one that does not convert keeps the
+index out of the plan. The probe's value is a ROW of the geometry, the
+limit and the unit's scale (`spatial/window.rs`). The radius is the
+limit over the scale with a relative slack, and an entry is kept unless
+its envelope's least distance to the value's exceeds it, so rounding
+never drops a match. A null or negative limit finds no entry, but only
+when the tree's root envelope and the value lie within the domain where
+every distance is finite, as the nearest search certifies
+(`engine/rtree/nearest.rs`). Otherwise every entry is read, so a
+distance that overflows raises 22003 as a scan's would.
+
+A value of another SRID, or of a table column with no fixed SRID, reads
+every entry, so the recheck raises the SRID error even for a value no
+envelope is near. A null geometry finds none, and an empty one finds
+none but under ST_Equals, as D85 says.
+
+LEFT, RIGHT and FULL outer joins on any of these probe the R-tree
+[ISO/IEC 9075:1992 §7.5 GR1 to GR5]. `Plan::IndexJoin` keeps a
+`Preserved` of inner, outer or both. A LEFT join probes the right
+operand's table. A RIGHT join is the LEFT join of its operands swapped,
+under a projection that restores the columns' order. A FULL join probes
+whichever way costs less, records the ids of the table rows its probes
+paired in a set charged to the memory budget (D38), and then reads the
+table for the rows no probe paired, which its own filter must keep.
+An outer row of a null or empty geometry, or that no candidate matches,
+keeps its row with nulls. Outer joins never take the adaptive scan or
+the no-raise proof of D15. Every other conjunct and the table's filter
+must be non-raising, so pruning drops only pairs the condition is not
+true of.
+
+ST_EQUALS and ST_POINT are also routines of linear referencing (D131).
+A call of null values alone cannot choose among those routines, so it is
+the geometry function's call and its value is null, as the index's
+omission of null rows assumes. EXPLAIN shows the outer joins as
+`LeftOuterIndexNestedLoop` and `FullOuterIndexNestedLoop`, and a
+distance window as `(ST_DISTANCE(column, value) * scale) <= limit`.
 
 ## 2. Project layout
 

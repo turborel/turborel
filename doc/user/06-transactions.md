@@ -132,6 +132,7 @@ by its key counts as itself. A read through an index counts as every row
 its condition could find, those added or changed to match since
 included. A read through an `rtree` index of a spatial relationship counts
 as the rows whose geometries' envelopes meet the window it searched, a
+distance's widened by its limit, a
 row moved into it or out of it included
 ([Spatial Data](../sql/10-spatial.md#the-rtree-index-method)). A scan of a
 whole table counts as every row. Past the table option

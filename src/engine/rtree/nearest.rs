@@ -183,7 +183,7 @@ impl Nearest {
 /// Ancestors enlarge before insertion and commit publication. A snapshot
 /// established before this read therefore has every retained visible
 /// entry inside this envelope, including a root split not yet posted.
-fn root_envelope(tree: &RTree, mut visit: Visit) -> Result<Option<Bounds>> {
+pub(super) fn root_envelope(tree: &RTree, mut visit: Visit) -> Result<Option<Bounds>> {
     let mut envelope = None;
     let mut visited = 0_u64;
     let mut limit = 0_u64;

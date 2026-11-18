@@ -254,7 +254,7 @@ impl Index for RTreeIndex {
     /// Of a geometry window, the window: its search reads no other entry.
     /// A numeric index's probes are comparisons, recorded as conditions.
     fn read_region(&self, probe: &Probe) -> Option<Vec<Bounds>> {
-        geometry::region(probe, self.srid?)
+        geometry::region(&self.tree, probe, self.srid?)
     }
     fn insert(&self, key: Key, row: RowId) -> Result<()> {
         self.tree.insert(self.bounds(&key)?, row)
