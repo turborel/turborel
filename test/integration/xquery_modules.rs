@@ -295,3 +295,117 @@ fn revoking_usage_abandons_what_imported_a_module_12_7() {
     assert_eq!(code(&b, "import module \"urn:notes\"; 1"), "err:XQST0059");
     assert_eq!(completed(&a, "REVOKE USAGE ON XQUERY MODULE NOTES_LIB FROM B RESTRICT"), "01006");
 }
+
+/// `CREATE VIEW name (S) AS VALUES` the string the query `query` gives.
+fn view(name: &str, query: &str) -> String {
+    format!("CREATE VIEW {name} (S) AS VALUES (XMLCAST(XMLQUERY({} RETURNING CONTENT NULL ON EMPTY) AS VARCHAR(100)))", quoted(query))
+}
+
+/// The query that shouts `v` by the module of urn:notes.
+const SHOUT_V: &str = "import module namespace n = \"urn:notes\"; n:shout(\"v\")";
+
+/// Verifies: [EXTENSION] RULES.md D106 [XQuery §4.11]: a view whose query
+/// imports a registered XQuery module keeps the module it imported as it
+/// was defined, not one of a lesser name registered later, and depends on
+/// it: DROP XQUERY MODULE RESTRICT is refused, CASCADE drops the view; a
+/// function's body likewise; and a module an XML Schema dropped with
+/// CASCADE takes, takes the view importing it.
+#[test]
+fn definitions_keep_and_depend_on_the_modules_they_import() {
+    let db = database();
+    let a = db.session("A");
+    a.run(&view("V", SHOUT_V)).unwrap();
+    a.commit().unwrap();
+    register(&a, "ALT", &NOTES.replace("\"!\"", "\"?\""));
+    assert_eq!(rows(&a, "SELECT S FROM V").unwrap(), ["V!"], "the module it imported, not the least name now");
+    assert_eq!(value(&a, SHOUT_V), "V?", "a statement imports the least name");
+    a.run("DROP XQUERY MODULE ALT RESTRICT").unwrap();
+    a.commit().unwrap();
+    assert_eq!(refused(&a, "DROP XQUERY MODULE NOTES_LIB RESTRICT").0, -103);
+    let function = format!(
+        "CREATE FUNCTION SHOUTED() RETURNS VARCHAR(100) CONTAINS SQL RETURN XMLCAST(XMLQUERY({} RETURNING CONTENT NULL ON EMPTY) AS VARCHAR(100))",
+        quoted(SHOUT_V)
+    );
+    a.run(&function).unwrap();
+    a.commit().unwrap();
+    assert_eq!(one(&a, "SHOUTED()"), "V!");
+    a.run("DROP VIEW V CASCADE").unwrap();
+    a.commit().unwrap();
+    assert_eq!(refused(&a, "DROP XQUERY MODULE NOTES_LIB RESTRICT").0, -103, "the function imports it");
+    a.run("DROP XQUERY MODULE NOTES_LIB CASCADE").unwrap();
+    a.commit().unwrap();
+    assert_eq!(refused(&a, "VALUES (SHOUTED())").0, -103, "dropped with it, so none of its name");
+}
+
+/// Verifies: [EXTENSION] RULES.md D106 [ISO/IEC 9075-2:2023 §12.7 GR12a,
+/// GR12q]: REVOKE USAGE ON XQUERY MODULE abandons a view of the grantee
+/// whose query imported the module: RESTRICT is refused, 2B000, and
+/// CASCADE drops it; a registered XML Schema dropped with CASCADE takes the
+/// module importing it and a view importing that module.
+#[test]
+fn what_imports_a_module_is_abandoned_with_it_12_7() {
+    let db = database();
+    let (a, b) = (db.session("A"), db.session("B"));
+    a.run("GRANT USAGE ON XQUERY MODULE NOTES_LIB TO B").unwrap();
+    a.commit().unwrap();
+    b.run(&view("BV", SHOUT_V)).unwrap();
+    b.commit().unwrap();
+    assert_eq!(refused(&a, "REVOKE USAGE ON XQUERY MODULE NOTES_LIB FROM B RESTRICT"), (-103, "2B000".to_owned()));
+    a.run("REVOKE USAGE ON XQUERY MODULE NOTES_LIB FROM B CASCADE").unwrap();
+    a.commit().unwrap();
+    assert_eq!(refused(&b, "SELECT S FROM BV").0, -103, "abandoned and dropped");
+    a.run(&format!("CREATE XML SCHEMA TYPES AS '{TYPES}'")).unwrap();
+    a.commit().unwrap();
+    register(&a, "TYPED", "module namespace k = \"urn:k\"; import schema namespace s = \"urn:s\"; declare function k:one() { 1 };");
+    a.run(&view("KV", "import module namespace k = \"urn:k\"; k:one()")).unwrap();
+    a.commit().unwrap();
+    assert_eq!(refused(&a, "DROP XML SCHEMA TYPES RESTRICT").0, -103);
+    a.run("DROP XML SCHEMA TYPES CASCADE").unwrap();
+    a.commit().unwrap();
+    assert_eq!(refused(&a, "SELECT S FROM KV").0, -103, "gone with the module");
+}
+
+/// Verifies: [EXTENSION] [DESIGN] RULES.md D25, D106: a view keeps the
+/// module it imported through a checkpoint and reopening, its horizon read
+/// back with it.
+#[test]
+fn a_view_keeps_its_modules_through_a_checkpoint() {
+    let scratch = Scratch::new("xquery-module-view");
+    let (fs, dir): (Arc<dyn FileSystem>, _) = (Arc::new(OsFileSystem), scratch.path("db"));
+    let first = Database::new();
+    first.open_files(&fs, &dir, &OpenOptions::default()).unwrap();
+    first.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
+    let a = first.session("A");
+    register(&a, "NOTES_LIB", NOTES);
+    a.run(&view("V", SHOUT_V)).unwrap();
+    a.commit().unwrap();
+    register(&a, "ALT", &NOTES.replace("\"!\"", "\"?\""));
+    first.checkpoint().unwrap();
+    first.close().unwrap();
+    let db = Database::new();
+    db.open_files(&fs, &dir, &OpenOptions::default()).unwrap();
+    let s = db.session("A");
+    assert_eq!(rows(&s, "SELECT S FROM V").unwrap(), ["V!"]);
+    assert_eq!(refused(&s, "DROP XQUERY MODULE NOTES_LIB RESTRICT").0, -103);
+    db.close().unwrap();
+    drop((db, a, first));
+}
+
+/// Verifies: [EXTENSION] RULES.md D106: a generated column whose
+/// expression imports a registered XQuery module keeps its table from
+/// losing it: DROP XQUERY MODULE is refused even with CASCADE, as no drop
+/// changes a column's values.
+#[test]
+fn a_generated_column_keeps_its_module() {
+    let db = database();
+    let a = db.session("A");
+    let generated = format!(
+        "CREATE TABLE G (K INTEGER, S VARCHAR(100) GENERATED ALWAYS AS (XMLCAST(XMLQUERY({} RETURNING CONTENT NULL ON EMPTY) AS VARCHAR(100))))",
+        quoted(SHOUT_V)
+    );
+    a.run(&generated).unwrap();
+    a.run("INSERT INTO G (K) VALUES (1)").unwrap();
+    a.commit().unwrap();
+    assert_eq!(rows(&a, "SELECT S FROM G").unwrap(), ["V!"]);
+    assert_eq!(refused(&a, "DROP XQUERY MODULE NOTES_LIB CASCADE").0, -103);
+}

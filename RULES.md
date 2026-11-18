@@ -4421,6 +4421,21 @@ each grant, of OBJECT_TYPE XQUERY MODULE, an extension of §21.4's list.
 No view of registered XQuery modules is added: Part 14 defines none, and
 USAGE_PRIVILEGES already names each module a user may import.
 
+A definition whose queries import a registered XQuery module keeps it,
+as it keeps the registered XML Schemas it indicates: the binder notes
+each module a main module imports (`Invoked::imported`), the
+definition's horizon keeps them (`catalog::Horizon::xquery_modules`,
+in the catalog as the rest of the horizon is), and, bound again, its
+queries import among those alone (`Horizon::kept`), never one of a
+lesser name registered later. A module it imports keeps what that
+imports itself. `State::xquery_module_dependents` reads the horizons,
+through the walk a registered XML Schema's dependents take
+(`State::horizons_naming`): the views, constraints, assertions, triggers
+and routines whose queries import a module dropped, or one that imports
+it, are dropped by CASCADE and refuse RESTRICT, and a REVOKE abandons
+them; a generated column's table refuses even CASCADE, as a column of a
+type of XMLSCHEMA does.
+
 Part 14 leaves how an XML Schema is registered to the implementation
 [ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an
 extension in the standard's notation:

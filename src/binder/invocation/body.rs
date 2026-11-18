@@ -257,9 +257,12 @@ fn within_body<T>(
     };
     let done = f(body_cx)?;
     // [ISO/IEC 9075-14:2006 draft §4.2.6] The registered XML Schemas the
-    // body indicates are its definition's, as it is bound with them.
+    // body indicates, and the XQuery modules it imports, are its
+    // definition's, as it is bound with them.
     if let Some(outer) = cx.invoked {
-        noted.take_xml_schemas().iter().for_each(|name| outer.indicated(name));
+        let indicated = noted.take_indicated();
+        indicated.xml_schemas.iter().for_each(|name| outer.indicated(name));
+        indicated.xquery_modules.iter().for_each(|name| outer.imported(name));
     }
     let invoked = noted.into_inner().split_off(depth.saturating_add(1));
     Ok((done, invoked))

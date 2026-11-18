@@ -12,7 +12,7 @@
 use super::super::super::State;
 use super::super::super::revoke::Abandoned;
 use crate::catalog::xml_schemas::xml_schemas_of;
-use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName};
+use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, SqlRoutineDesc};
 use crate::value::DataType;
 
 /// Whether `t` is, or holds, an XML type of XMLSCHEMA of one of the
@@ -56,15 +56,32 @@ impl State {
     pub(super) fn naming_xml_schemas(&self, gone: &[QualifiedName], within: &dyn Fn(&str) -> bool) -> Abandoned {
         let on = |h: &Horizon| h.xml_schemas.iter().any(|s| gone.contains(s));
         let of = |t: &DataType| names_any(t, gone);
+        let typed = |r: &SqlRoutineDesc| r.parameters.iter().any(|p| of(&p.data_type)) || r.returns.as_ref().is_some_and(of);
+        self.horizons_naming(&on, &typed, within)
+    }
+
+    /// The definitions of the schemas `within` takes whose horizons `on`
+    /// takes, as DROP ... CASCADE takes them: the views, constraints,
+    /// assertions, triggers and routines, and the routines `typed` takes,
+    /// with each routine that invokes such a routine, at any remove, and
+    /// what else invokes one [ISO/IEC 9075-2:2023 §11.62 GR1]. Generated
+    /// columns among them are in `columns`. The one walk of the horizons
+    /// of what a registered XML Schema or XQuery module dropped leaves.
+    pub(in crate::db) fn horizons_naming(
+        &self,
+        on: &dyn Fn(&Horizon) -> bool,
+        typed: &dyn Fn(&SqlRoutineDesc) -> bool,
+        within: &dyn Fn(&str) -> bool,
+    ) -> Abandoned {
         let routines: Vec<QualifiedName> = (self.catalog.routines().into_iter())
             .filter(|r| within(&r.specific.auth))
-            .filter(|r| on(&r.horizon) || r.parameters.iter().any(|p| of(&p.data_type)) || r.returns.as_ref().is_some_and(of))
+            .filter(|r| on(&r.horizon) || typed(r))
             .map(|r| r.specific.clone())
             .collect();
         let routines = self.invokers_of(&routines);
         let mut abandoned = if routines.is_empty() { Abandoned::default() } else { self.invoking(&routines) };
         abandoned.routines = routines;
-        self.indicating(&mut abandoned, &on, within);
+        self.indicating(&mut abandoned, on, within);
         abandoned
     }
 

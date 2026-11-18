@@ -7,7 +7,7 @@
 
 use std::cell::{Ref, RefCell, RefMut};
 
-use crate::catalog::QualifiedName;
+use crate::catalog::{Indicated, QualifiedName};
 
 /// The columns a query references, each as its table or view and column
 /// name, in the order referenced, once or more.
@@ -33,9 +33,10 @@ pub enum Counting {
 /// them, its subqueries' too.
 pub type Selected = RefCell<Vec<Vec<(QualifiedName, String)>>>;
 
-/// The specific names of the SQL-invoked routines a statement invokes; and
-/// the registered XML Schemas its `<XML valid according to what>`s and
-/// types of XMLSCHEMA indicate [ISO/IEC 9075-14:2006 draft §4.2.6], which a
+/// The specific names of the SQL-invoked routines a statement invokes; the
+/// registered XML Schemas its `<XML valid according to what>`s and types
+/// of XMLSCHEMA indicate [ISO/IEC 9075-14:2006 draft §4.2.6]; and the
+/// registered XQuery modules its queries import (RULES.md D106), which a
 /// definition binds as it is created, as it does its subject routines.
 #[derive(Debug, Default)]
 pub struct Invoked {
@@ -43,6 +44,9 @@ pub struct Invoked {
     routines: RefCell<Vec<QualifiedName>>,
     /// The registered XML Schemas' names, once or more.
     xml_schemas: RefCell<Vec<QualifiedName>>,
+    /// \[EXTENSION\] RULES.md D106 The registered XQuery modules' names
+    /// its queries import, once or more.
+    xquery_modules: RefCell<Vec<QualifiedName>>,
 }
 
 impl Invoked {
@@ -50,7 +54,7 @@ impl Invoked {
     /// Schema.
     #[must_use]
     pub fn new(routines: Vec<QualifiedName>) -> Invoked {
-        Invoked { routines: RefCell::new(routines), xml_schemas: RefCell::default() }
+        Invoked { routines: RefCell::new(routines), xml_schemas: RefCell::default(), xquery_modules: RefCell::default() }
     }
 
     /// The routines noted.
@@ -79,9 +83,15 @@ impl Invoked {
         self.xml_schemas.borrow_mut().push(name.clone());
     }
 
-    /// The registered XML Schemas noted, taken.
-    pub fn take_xml_schemas(&self) -> Vec<QualifiedName> {
-        self.xml_schemas.take()
+    /// \[EXTENSION\] Notes the registered XQuery module `name` imported
+    /// (RULES.md D106).
+    pub fn imported(&self, name: &QualifiedName) {
+        self.xquery_modules.borrow_mut().push(name.clone());
+    }
+
+    /// The registered XML Schemas and XQuery modules noted, taken.
+    pub fn take_indicated(&self) -> Indicated {
+        Indicated { xml_schemas: self.xml_schemas.take(), xquery_modules: self.xquery_modules.take() }
     }
 }
 

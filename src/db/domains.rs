@@ -57,7 +57,7 @@ fn copy_of(dc: &ConstraintDesc, table: &QualifiedName, column: &str) -> Constrai
         // [ISO/IEC 9075-2:2023 §4.35.2] of the domain constraint's subject
         // routines.
         ConstraintKind::Check { text, names, horizon, .. } => {
-            let horizon = Horizon { widths: Vec::new(), routines: horizon.routines.clone(), xml_schemas: horizon.xml_schemas.clone() };
+            let horizon = horizon.of_widths(Vec::new());
             ConstraintKind::Check { text: on_column(text, column), names: names.clone(), reads: Vec::new(), horizon }
         }
         other @ (ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_)) => other.clone(),

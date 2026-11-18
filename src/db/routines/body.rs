@@ -33,7 +33,7 @@ use crate::ast::{RoutineDefinition, SqlStatement};
 use crate::binder::{
     Context, Counting, DrawnFrom, Invoked, Uses, bind_function_body, definition_of, grantably_held, once_each, sql_statement,
 };
-use crate::catalog::{DataAccess, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of, routine_path, sole};
+use crate::catalog::{DataAccess, Indicated, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of, routine_path, sole};
 use crate::error::{Code, Result, SqlError};
 use crate::params::{Params, RoutineScope};
 use crate::value::Value;
@@ -45,8 +45,8 @@ pub(in crate::db) struct BodyBound {
     /// The specific names of the routines it invokes.
     pub(in crate::db) invokes: Vec<QualifiedName>,
     /// [ISO/IEC 9075-14:2006 draft §4.2.6] The registered XML Schemas it
-    /// indicates.
-    pub(in crate::db) indicates: Vec<QualifiedName>,
+    /// indicates, and the registered XQuery modules it imports.
+    pub(in crate::db) indicates: Indicated,
     /// The sequence generators it draws from, each once.
     pub(in crate::db) sequences: Vec<QualifiedName>,
     /// Whether its owner's EXECUTE on the routine is grantable [GR1].
@@ -212,7 +212,7 @@ impl State {
             self.bind_triggered(cx, stmt, (&owner, &params))?;
         }
         let reads = named(std::slice::from_ref(stmt), None, (&desc.schema, &TransitionNames::default()));
-        let indicates = invoked.take_xml_schemas();
+        let indicates = invoked.take_indicated();
         let invocations = invoked.into_inner();
         for r in invocations.iter().filter_map(|s| self.catalog.routine(s)) {
             access = if rank(r.access) > rank(access) { r.access } else { access };

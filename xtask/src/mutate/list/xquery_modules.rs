@@ -2,14 +2,14 @@
 //! finds, each module's own static context, a module analysed once into a
 //! query, the depth imports nest to, the static errors of library
 //! modules, the catalog's, and registered XQuery modules: their names,
-//! the modules they may import, what depends on them, and USAGE on
-//! them (RULES.md R-TEST-9, D106).
+//! the modules they may import, what depends on them, USAGE on them,
+//! and the modules a definition keeps (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of library modules and module imports broken alone, and
 /// the tests that fail.
-pub const XQUERY_MODULES: [Mutation; 19] = [
+pub const XQUERY_MODULES: [Mutation; 22] = [
     Mutation {
         name: "xquery-module-target-namespace",
         package: Package::Core,
@@ -204,6 +204,42 @@ pub const XQUERY_MODULES: [Mutation; 19] = [
         original: "    rows.extend(xquery_module_usage(seen));",
         replacement: "",
         integration: &["xquery_modules::usage_on_modules_is_granted_12_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-definition-noted",
+        package: Package::Core,
+        breaks: "a definition depends on no module its query imports",
+        file: "src/binder/xml/query.rs",
+        original: "                noted.imported(name);",
+        replacement: "                let _ = (noted, name);",
+        integration: &["xquery_modules::definitions_keep_and_depend_on_the_modules_they_import"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-definition-pinned",
+        package: Package::Core,
+        breaks: "a definition bound again imports the module of the least name now, not the one it kept",
+        file: "src/binder/xml/registered.rs",
+        original: "kept.contains(name)) && xquery_modules::may_use",
+        replacement: "kept.contains(name) || true) && xquery_modules::may_use",
+        integration: &[
+            "xquery_modules::definitions_keep_and_depend_on_the_modules_they_import",
+            "xquery_modules::a_view_keeps_its_modules_through_a_checkpoint",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-definitions-abandoned",
+        package: Package::Core,
+        breaks: "a view importing a module a revoke takes stays",
+        file: "src/db/definitions/xquery_modules.rs",
+        original: "self.horizons_naming(&|h: &Horizon| imports_any(h, gone), &|_| false, within);",
+        replacement: "self.horizons_naming(&|_: &Horizon| false, &|_| false, within);",
+        integration: &[
+            "xquery_modules::what_imports_a_module_is_abandoned_with_it_12_7",
+            "xquery_modules::definitions_keep_and_depend_on_the_modules_they_import",
+        ],
         unit: &[],
     },
 ];

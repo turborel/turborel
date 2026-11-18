@@ -30,7 +30,7 @@ impl State {
     ) -> Result<(Vec<QualifiedName>, Horizon)> {
         let invoked = Invoked::default();
         let (cond, probe) = self.on_value(domain, data_type, (text, names, horizon), Some(&invoked))?;
-        let seen = Horizon::default().invoking(invoked.take()).indicating(invoked.take_xml_schemas());
+        let seen = Horizon::default().invoking(invoked.take()).indicating(invoked.take_indicated());
         Ok((cond.tables().into_iter().filter(|t| *t != probe).collect(), seen))
     }
 
@@ -63,8 +63,7 @@ impl State {
         invoked: Option<&Invoked>,
     ) -> Result<(Cond, QualifiedName)> {
         let (staged, probe) = self.with_value(domain, data_type);
-        let seen =
-            Horizon { widths: vec![(probe.clone(), 1)], routines: horizon.routines.clone(), xml_schemas: horizon.xml_schemas.clone() };
+        let seen = horizon.of_widths(vec![(probe.clone(), 1)]);
         let on_probe = Referencing::of_value(&probe);
         let cond = staged.bind_check(&probe, (&on_column(text, VALUE_COLUMN), names, &seen), (None, &on_probe, invoked))?;
         Ok((cond, probe))
@@ -83,8 +82,7 @@ impl State {
         (text, names, horizon): (&str, &str, &Horizon),
     ) -> Result<Vec<(QualifiedName, String)>> {
         let (staged, probe) = self.with_value(&domain.name, domain.data_type.clone());
-        let seen =
-            Horizon { widths: vec![(probe.clone(), 1)], routines: horizon.routines.clone(), xml_schemas: horizon.xml_schemas.clone() };
+        let seen = horizon.of_widths(vec![(probe.clone(), 1)]);
         staged.value_uses(&probe, (&on_column(text, VALUE_COLUMN), names, &seen))
     }
 

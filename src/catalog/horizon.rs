@@ -1,6 +1,7 @@
 //! What a definition sees as it was defined (`Horizon`): the columns of
-//! the tables it reads, its subject routines and the registered XML
-//! Schemas it indicates, each bound again as it is used.
+//! the tables it reads, its subject routines, the registered XML Schemas
+//! it indicates and the registered XQuery modules its queries import, each
+//! bound again as it is used.
 
 use super::{Catalog, QualifiedName};
 
@@ -32,17 +33,38 @@ pub struct Horizon {
     /// `<XML valid according to what>`s indicated as it was defined, the
     /// ones they indicate whenever it is bound again; each once, in order.
     pub xml_schemas: Vec<QualifiedName>,
+    /// \[EXTENSION\] RULES.md D106 The registered XQuery modules its
+    /// queries imported as it was defined [XQuery §4.11], the ones they
+    /// import whenever it is bound again; each once, in order.
+    pub xquery_modules: Vec<QualifiedName>,
+}
+
+/// What a definition's binding notes it indicates and imports, for its
+/// horizon to keep: the registered XML Schemas [ISO/IEC 9075-14:2006 draft
+/// §4.2.6] and the registered XQuery modules (RULES.md D106).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Indicated {
+    /// The registered XML Schemas.
+    pub xml_schemas: Vec<QualifiedName>,
+    /// The registered XQuery modules.
+    pub xquery_modules: Vec<QualifiedName>,
 }
 
 /// No horizon at all: every table seen whole, every routine there is a
 /// candidate.
-pub static WHOLE: Horizon = Horizon { widths: Vec::new(), routines: None, xml_schemas: Vec::new() };
+pub static WHOLE: Horizon = Horizon { widths: Vec::new(), routines: None, xml_schemas: Vec::new(), xquery_modules: Vec::new() };
 
 impl Horizon {
     /// The degree of each base table of `tables` in `catalog` now.
     pub fn of(catalog: &dyn Catalog, tables: &[QualifiedName]) -> Horizon {
         let widths = tables.iter().filter_map(|t| catalog.table(t).map(|d| (t.clone(), d.columns.len()))).collect();
-        Horizon { widths, routines: None, xml_schemas: Vec::new() }
+        Horizon { widths, routines: None, xml_schemas: Vec::new(), xquery_modules: Vec::new() }
+    }
+
+    /// It, of the widths `widths` in place of its own.
+    #[must_use]
+    pub fn of_widths(&self, widths: Vec<(QualifiedName, usize)>) -> Horizon {
+        Horizon { widths, ..self.clone() }
     }
 
     /// It with `invoked`, the specific names of the routines its definition
@@ -55,14 +77,19 @@ impl Horizon {
         self
     }
 
-    /// It with `indicated`, the registered XML Schemas its definition's
-    /// `<XML valid according to what>`s indicate, once each [ISO/IEC
-    /// 9075-14:2006 draft §4.2.6].
+    /// It with `indicated`: the registered XML Schemas its definition's
+    /// `<XML valid according to what>`s indicate [ISO/IEC 9075-14:2006
+    /// draft §4.2.6], and the registered XQuery modules its queries
+    /// import, once each.
     #[must_use]
-    pub fn indicating(mut self, mut indicated: Vec<QualifiedName>) -> Horizon {
-        indicated.sort();
-        indicated.dedup();
-        self.xml_schemas = indicated;
+    pub fn indicating(mut self, indicated: Indicated) -> Horizon {
+        let Indicated { mut xml_schemas, mut xquery_modules } = indicated;
+        for names in [&mut xml_schemas, &mut xquery_modules] {
+            names.sort();
+            names.dedup();
+        }
+        self.xml_schemas = xml_schemas;
+        self.xquery_modules = xquery_modules;
         self
     }
 
@@ -78,6 +105,14 @@ impl Horizon {
         if self.routines.is_some() { &self.xml_schemas } else { &[] }
     }
 
+    /// What a definition kept to import and validate by: of a
+    /// definition's, the registered XML Schemas and XQuery modules it
+    /// noted as it was defined, which alone its queries may import as it is
+    /// bound again; none of a statement's, of which any may be.
+    pub fn kept(&self) -> Option<(&[QualifiedName], &[QualifiedName])> {
+        self.routines.is_some().then_some((self.xml_schemas.as_slice(), self.xquery_modules.as_slice()))
+    }
+
     /// How many columns of `table` are seen, if not all.
     pub fn width(&self, table: &QualifiedName) -> Option<usize> {
         self.widths.iter().find(|(t, _)| t == table).map(|(_, w)| *w)
@@ -88,6 +123,6 @@ impl Horizon {
     #[must_use]
     pub fn without(&self, table: &QualifiedName, at: usize) -> Horizon {
         let widths = self.widths.iter().map(|(t, w)| (t.clone(), if t == table && at < *w { w.saturating_sub(1) } else { *w })).collect();
-        Horizon { widths, routines: self.routines.clone(), xml_schemas: self.xml_schemas.clone() }
+        self.of_widths(widths)
     }
 }

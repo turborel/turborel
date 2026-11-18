@@ -22,7 +22,7 @@ use super::Defined;
 use crate::ast::XQueryModuleDefinition;
 use crate::binder::qualify;
 use crate::binder::{Registered, in_scope, registered};
-use crate::catalog::{QualifiedName, XQueryModuleDesc, owner_of, sole};
+use crate::catalog::{Horizon, QualifiedName, XQueryModuleDesc, owner_of, sole};
 use crate::error::{Result, SqlState};
 use crate::txn::LockMode;
 use crate::xquery::{Analysed, Environment, library_module};
@@ -132,13 +132,17 @@ impl State {
         Ok(dropped)
     }
 
-    /// What depends on the registered XQuery modules `gone`, of the
-    /// schemas `within` takes, abandoned: the registered XQuery modules
-    /// that import one, and those that import one of those, of any schema,
-    /// in `Abandoned::xquery_modules`; and the tables of a generated
+    /// What depends on the registered XQuery modules `gone`, abandoned:
+    /// the registered XQuery modules of the schemas `within` takes that
+    /// import one, and those that import one of those, of any schema, in
+    /// `Abandoned::xquery_modules`; and the views, constraints, assertions,
+    /// triggers and routines whose queries import one of them, of the
+    /// schemas `within` takes for those of `gone`, of any for the others,
+    /// as their horizons keep them (`catalog::Horizon::xquery_modules`),
+    /// with what invokes such a routine. Apart, the tables of a generated
     /// column whose query imports one, which nothing drops. The one place
-    /// what depends on one is found: for DROP, for a REVOKE of USAGE, and
-    /// for what a registered XML Schema dropped takes.
+    /// what depends on a module is found: for DROP, for a REVOKE of USAGE,
+    /// and for what a registered XML Schema dropped takes.
     pub(in crate::db) fn xquery_module_dependents(
         &self,
         gone: &[QualifiedName],
@@ -155,7 +159,13 @@ impl State {
             modules.extend(found);
             next = next.saturating_add(1);
         }
-        (Abandoned { xquery_modules: modules, ..Abandoned::default() }, Vec::new())
+        let mut abandoned = self.horizons_naming(&|h: &Horizon| imports_any(h, gone), &|_| false, within);
+        abandoned.absorb(self.horizons_naming(&|h: &Horizon| imports_any(h, &modules), &|_| false, &|_| true));
+        abandoned.xquery_modules = modules;
+        // A generated column is no definition a drop takes away alone: its
+        // table keeps it.
+        let typed = std::mem::take(&mut abandoned.columns).into_iter().map(|(table, _)| table).collect();
+        (abandoned, typed)
     }
 
     /// [ISO/IEC 9075:1992 §11.2 GR5] The registered XQuery modules of
@@ -204,4 +214,9 @@ impl State {
     pub(in crate::db) fn schema_xquery_modules(&self, auth: &str) -> Vec<QualifiedName> {
         self.catalog.xquery_modules().into_iter().filter(|d| d.name.auth == auth).map(|d| d.name.clone()).collect()
     }
+}
+
+/// Whether the definition of horizon `horizon` imported one of `modules`.
+fn imports_any(horizon: &Horizon, modules: &[QualifiedName]) -> bool {
+    horizon.xquery_modules.iter().any(|m| modules.contains(m))
 }

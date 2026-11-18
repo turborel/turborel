@@ -85,8 +85,9 @@ the revoke even with CASCADE (SQLSTATE 2B000).
 
 USAGE taken on a registered XQuery module abandons, as on a registered
 XML Schema, the grants the grantee made by the grant option it loses,
-and each registered XQuery module of a schema whose owner it leaves
-without USAGE that imported it. RESTRICT refuses the revoke (SQLSTATE
+and, of a schema whose owner it leaves without USAGE, each registered
+XQuery module that imported it and each view, constraint, assertion,
+trigger and routine whose query imported it. RESTRICT refuses the revoke (SQLSTATE
 2B000), and CASCADE drops them as DROP XQUERY MODULE with CASCADE does.
 
 A privilege named that its user had not granted the grantee is not

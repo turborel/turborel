@@ -117,6 +117,11 @@ impl Binder<'_> {
             for name in validated.chain(imported) {
                 noted.indicated(name);
             }
+            // [EXTENSION] RULES.md D106: the modules it imports itself; a
+            // module keeps those it imports.
+            for (name, _) in found.modules.iter().filter(|(_, m)| query.modules().contains(&m.name)) {
+                noted.imported(name);
+            }
         }
         Ok(Arc::new(query))
     }
@@ -125,13 +130,13 @@ impl Binder<'_> {
     /// the registered XQuery modules it may import [§10.20 SR2e] [XQuery
     /// §4.10, §4.11], implementation-defined (RULES.md D106): those the
     /// current user may use (`binder/xml/registered.rs`). A definition
-    /// notes the schemas its query validates by or imports as it is
-    /// created, so it depends on them (`Invoked::indicated`), and, bound
-    /// again, has those it noted alone, never one registered later
-    /// [ISO/IEC 9075-14:2006 draft §4.2.6].
+    /// notes the schemas its query validates by or imports, and the
+    /// modules it imports, as it is created, so it depends on them
+    /// (`Invoked::indicated`, `Invoked::imported`), and, bound again, has
+    /// those it noted alone, never one registered later [ISO/IEC
+    /// 9075-14:2006 draft §4.2.6].
     fn registered(&self) -> Registered {
-        let kept = self.horizon.routines.is_some().then_some((self.horizon.xml_schemas.as_slice(), &[][..]));
-        registered(&*self.db.catalog, self.who(), kept)
+        registered(&*self.db.catalog, self.who(), self.horizon.kept())
     }
 
     /// What evaluates `text` of the arguments `bound`, at the statement's

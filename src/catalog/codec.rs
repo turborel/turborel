@@ -131,7 +131,8 @@ fn flag(r: &mut Reader<'_>) -> Result<bool> {
     }
 }
 
-/// A horizon: each table's columns seen, its subject routines if fixed, its XML Schemas.
+/// A horizon: each table's columns seen, its subject routines if fixed,
+/// its XML Schemas and its XQuery modules.
 pub(super) fn put_horizon(out: &mut Vec<u8>, horizon: &Horizon) {
     put_all(out, horizon.widths.iter(), |out, (table, degree)| {
         put_name(out, table);
@@ -142,13 +143,15 @@ pub(super) fn put_horizon(out: &mut Vec<u8>, horizon: &Horizon) {
         put_all(out, routines.iter(), put_name);
     }
     put_all(out, horizon.xml_schemas.iter(), put_name);
+    put_all(out, horizon.xquery_modules.iter(), put_name);
 }
 
 /// What `put_horizon` wrote.
 pub(super) fn horizon(r: &mut Reader<'_>) -> Result<Horizon> {
     let widths = get_all(r, |r| Ok((qualified(r)?, position(r)?)))?;
     let routines = if flag(r)? { Some(get_all(r, qualified)?) } else { None };
-    Ok(Horizon { widths, routines, xml_schemas: get_all(r, qualified)? })
+    let xml_schemas = get_all(r, qualified)?;
+    Ok(Horizon { widths, routines, xml_schemas, xquery_modules: get_all(r, qualified)? })
 }
 
 /// The tag of `action`, and the action of a tag.

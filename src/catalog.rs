@@ -44,7 +44,7 @@ pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, Fore
 pub use domains::{DomainDesc, UsageDesc, usage_held};
 pub use embedding::{Embeddings, ModelDesc, ModelOption, PipelineDesc, TRIGGER_SUFFIXES};
 pub(crate) use embedding::{embeddings, put_embeddings};
-pub use horizon::{Horizon, WHOLE};
+pub use horizon::{Horizon, Indicated, WHOLE};
 pub use key_expressions::{EXPRESSION_PART, KeyExpression};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
