@@ -377,7 +377,7 @@ fn limits() -> [Definition; 4] {
         defined(
             ("SESSION.TIME_ZONE", Kind::Displacement, text("+00:00")),
             SESSION,
-            "The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +13:00 [ISO/IEC 9075:1992 §4.5.1]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.",
+            "The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +14:00 [ISO/IEC 9075-2:2023 §4.7.2]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.",
         ),
     ]
 }

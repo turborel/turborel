@@ -325,6 +325,18 @@ ZONE or not (RULES.md D54).
 | CASE, set operations | Of one datetime type | §9.3 SR3e |
 | Defaults | A datetime literal, of the defining session's displacement if it writes none, or a datetime value function | §5.3 SR18, §11.5 SR3a v, SR3c, GR1d |
 
+A time zone displacement is from -12:59 to +14:00. SQL-92 bounds it at
+-12:59 and +13:00 [§5.3 SR25, §16.5 GR1b]; ISO/IEC 9075-2:2023 leaves
+the least (IL061) and the greatest (IL062) implementation-defined, no
+greater than -12:00 and no less than +14:00 [ISO/IEC 9075-2:2023
+§4.7.2, §6.1 Table 13], so the newer text wins (RULES.md D32). A
+literal past them is SQLCODE -103 [ISO/IEC 9075-2:2023 §5.3 SR43];
+AT TIME ZONE, SET TIME ZONE and the setting SESSION.TIME_ZONE refuse
+one with SQLSTATE 22009 [ISO/IEC 9075-2:2023 §6.42 GR5b ii 2 A, §19.4
+GR1b, §6.1 GR8]; a CAST of a string, as of any string that is no
+datetime, with 22018. A displacement is stored, logged and sent as a
+number of minutes of 16 bits or more, so no format bounds it.
+
 **Intervals** [§4.5.2, §6.1, §10.1] are INTERVAL of a qualifier, year-month or
 day-time (RULES.md D54).
 
@@ -834,7 +846,7 @@ being of the target's type.
 
 Some readings fill gaps in the rules. A day of the year is read in the
 year the template gives, as it is written of it, where GR7a iv names the
-current year. A displacement is 22007 past -12:59 or +13:00, as any field
+current year. A displacement is 22007 past -12:59 or +14:00, as any field
 out of range is [GR12]. A digit of another script that `\p{Nd}` matches
 is no `<unsigned integer>`, so it is 22007 too. Templates are upper case,
 as §9.52 writes its key words, so `yyyy` is SQLCODE -103. A template is
@@ -3498,6 +3510,7 @@ topic. The Where column names the file that implements each.
 | Rule | Choice | Where |
 |---|---|---|
 | §6.1 SR26 the greatest `<time fractional seconds precision>` | 6, microseconds | `value/datetime.rs` |
+| 2023 §4.7.2, §6.1 Table 13, IL061 and IL062, the least and greatest time zone displacements | -12:59 and +14:00 | `value/datetime.rs` |
 | §4.5.1, §6.1 GR5, §16.5 GR1a an SQL-session's time zone displacement, and the one it begins with | The setting SESSION.TIME_ZONE, the database's, `+00:00` by default, or the session's own, which SET TIME ZONE sets. LOCAL takes the database's again (RULES.md D54). | `settings/builtin.rs`, `db/clock.rs`, `db/time_zone.rs` |
 | §10.1 SR3, SR4 the greatest `<interval leading field precision>` and `<interval fractional seconds precision>` | 9 and 6 | `value/interval.rs` |
 | §6.15 GR4, GR5 the leading precision of an interval computed | Of a sum or difference, one digit more than its operands' greatest, at most 9. Of a product or quotient, 9. A result past it raises 22015. | `value/interval/arith.rs`, `binder/interval.rs` |
