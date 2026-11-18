@@ -1,30 +1,17 @@
 # Trademark Policy
 
-Turborel's source code is licensed under the BSD 2-Clause License (see
-LICENSE). That license covers the code only. It grants no right to use
-the name "Turborel", its logos, or its other branding (together, "the
-marks"), which this policy governs.
+Turborel source code is licensed under the BSD 2-Clause License (see LICENSE), which covers code only and grants no rights to the "Turborel" name, logos, or branding (owned by Turborel Inc.).
 
 ## What you may do without asking
-
-- Say truthfully that your software uses, works with, or is based on
-  Turborel: "Built on Turborel", "a client for Turborel".
-- Refer to Turborel by name in articles, talks, books, courses and
-  reviews.
-- Distribute unmodified builds of an official Turborel release under
-  its name.
+- Accurately state that your software uses or is built on Turborel (e.g., "Built on Turborel").
+- Reference Turborel by name in articles, reviews, books, courses, and talks.
+- Distribute unmodified builds of official Turborel releases under its original name.
 
 ## What needs written permission
+- Distributing modified versions or forks under the Turborel name or any confusingly similar name (forks must use a distinct name that does not imply endorsement by Turborel Inc.).
+- Using the marks within product, service, company, domain, or package registry namespace names.
+- Using the marks or Turborel Inc.'s name for endorsement or promotion.
+- Using the project logos for anything other than linking back to Turborel.
 
-- Distributing a modified version, or a fork, under the name Turborel,
-  or under a name likely to be confused with it. A fork must take a
-  different name, and must not suggest that it is Turborel or is made or
-  endorsed by its authors.
-- Using the marks in the name of a product, service, company or domain.
-- Using the marks, or the authors' names, to promote or endorse a
-  product or service.
-- Using the logos, other than to link to the project.
-
-## Asking
-
-Write to hello@turborel.com.
+## Contact
+- Reach out to `hello@turborel.com` for permission inquiries.
