@@ -3,15 +3,16 @@
 //! atomic type and type name one of the in-scope schema types.
 
 use super::super::ast::{
-    AttributeTest, DocumentTest, ElementTest, ItemType, KindTest, NameOrWildcard, PiTest, QName as Lexical, SequenceType, SingleType,
+    AttributeTest, DocumentTest, ElementTest, Expr, ItemType, KindTest, Literal, NameOrWildcard, PiTest, QName as Lexical, SequenceType,
+    SingleType,
 };
-use super::super::error::{ErrorCode, error, not_yet};
-use super::super::plan::CastTarget;
+use super::super::error::{ErrorCode, error};
+use super::super::plan::{CastTarget, Op};
 use super::super::types::{AttributeKind, ElementKind, ItemKind, NodeKind, SchemaType, SeqType, XDT_NAMESPACE};
 use super::Analysis;
 use super::scope::{Unprefixed, display};
 use crate::error::Result;
-use crate::xml::{Primitive, QName, XS_NAMESPACE};
+use crate::xml::{Atomic, AtomicType, Primitive, QName, Version, XS_NAMESPACE, is_space, qname_parts};
 
 impl Analysis<'_> {
     /// `t` resolved [XQuery §2.5.3].
@@ -95,12 +96,54 @@ impl Analysis<'_> {
             .ok_or_else(|| error(ErrorCode::XPST0008, &format!("{name} is no type of the in-scope schema types [XQuery §2.5.4.3]")))
     }
 
-    /// The target of a cast, `t` [XQuery §3.12.3]: an atomic type of the
+    /// A cast or, if `castable`, a castable expression of `operand` to
+    /// `t` [XQuery §3.12.3, §3.12.4]: its target an atomic type of the
     /// in-scope schema types, not `xs:NOTATION` nor `xdt:anyAtomicType`
-    /// \[err:XPST0080\]; one of a value held here.
-    pub(super) fn cast_target(&self, t: &SingleType) -> Result<CastTarget> {
+    /// \[err:XPST0080\]; to `xs:QName`, of a string literal alone.
+    pub(super) fn cast_expr(&mut self, operand: &Expr, t: &SingleType, castable: bool) -> Result<Op> {
         let expanded = self.scope.name(&t.name, Unprefixed::Element)?;
-        Self::atomic_target(&expanded, t.optional)
+        let target = Self::atomic_target(&expanded, t.optional)?;
+        if target.to == AtomicType::QName {
+            return self.qname_cast(operand, castable);
+        }
+        let operand = Box::new(self.expr(operand)?);
+        Ok(if castable { Op::Castable(operand, target) } else { Op::Cast(operand, target) })
+    }
+
+    /// A cast, or if `castable` a castable expression, of `operand` to
+    /// `xs:QName` [XQuery §3.12.3, §3.12.4, §3.12.5] [XQueryFO §5.1,
+    /// §17.1.1]: of a string literal alone \[err:XPST0083\], evaluated as
+    /// the query is analysed. Castable is whether the cast succeeds.
+    ///
+    /// # Errors
+    ///
+    /// err:XPST0083 of an operand that is no string literal; of a cast,
+    /// err:FORG0001 of a literal that is no QName, err:FONS0004 of a
+    /// prefix the statically known namespaces do not bind.
+    pub(super) fn qname_cast(&self, operand: &Expr, castable: bool) -> Result<Op> {
+        let Expr::Literal(Literal::String(text)) = operand else {
+            let why = "a value cast to xs:QName is a string literal [XQuery §3.12.3, §3.12.5]";
+            return Err(error(ErrorCode::XPST0083, why));
+        };
+        let resolved = self.qname_of(text);
+        if castable {
+            return Ok(Op::Atomic(Atomic::new(AtomicType::Boolean, if resolved.is_ok() { "true" } else { "false" })));
+        }
+        resolved.map(Op::Atomic)
+    }
+
+    /// The `xs:QName` the literal `text` is [XQueryFO §5.1, §17.1.1]: its
+    /// whitespace collapsed, its prefix resolved by the statically known
+    /// namespaces, none by the default element/type namespace, the prefix
+    /// kept.
+    fn qname_of(&self, text: &str) -> Result<Atomic> {
+        let written = text.trim_matches(is_space);
+        let Some((prefix, local)) = qname_parts(Version::V11, written) else {
+            return Err(error(ErrorCode::FORG0001, &format!("'{written}' is no QName, so it is no xs:QName [XQueryFO §17.1.1]")));
+        };
+        let lexical = Lexical { prefix: prefix.map(str::to_owned), local: local.to_owned() };
+        let name = self.scope.expand(&lexical, Unprefixed::Element, ErrorCode::FONS0004)?;
+        Ok(Atomic::qname(name.uri.as_deref(), written))
     }
 
     /// As `cast_target`, of the expanded name `name`.
@@ -109,11 +152,8 @@ impl Analysis<'_> {
         match SchemaType::named(name.uri.as_deref(), &name.local) {
             Some(SchemaType::Atomic(to)) => match to.primitive() {
                 Primitive::Notation => Err(refused()),
-                // [XQuery §3.12.3] a QName is cast of a string literal
-                // alone, resolved in the static context, which turborel
-                // does not do yet.
-                Primitive::QName => Err(not_yet(&format!("a cast to {}", to.name()))),
-                Primitive::Untyped
+                Primitive::QName
+                | Primitive::Untyped
                 | Primitive::String
                 | Primitive::Boolean
                 | Primitive::Decimal

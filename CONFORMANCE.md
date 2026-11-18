@@ -1895,12 +1895,16 @@ EMPTY), X221 and X222 (XML passing mechanism BY VALUE and BY REF) and X300
 to X305 (XMLTable, its derived column list, ordinality column, column
 defaults, context item and variables) are claimed. X121 (XML parameters in
 external routines) is not, as turborel has no external routine. Every
-expression of XQuery 1.0 is evaluated but the casts to `xs:QName` and the
-validate expression's lax mode, valid XQuery not yet processed (SQLCODE
--900). Its Minimal Conformance [XQuery §5.1] is not claimed, as those
-are not. Every function of XQuery 1.0 Functions and Operators is built
-in, FULLY-NORMALIZED and substring matching by `UNICODE` and its
-tailorings excepted, as the rows below say. Of its optional
+expression of XQuery 1.0 is evaluated but the validate expression's lax
+mode, valid XQuery not yet processed (SQLCODE -900). Every function of
+XQuery 1.0 Functions and Operators is built in, FULLY-NORMALIZED and
+substring matching by `UNICODE` and its tailorings excepted, which the
+text leaves optional, as the rows below say. Its Minimal Conformance
+[XQuery §5.1] is not claimed: the validate expression is neither the
+Schema Validation Feature, as lax mode is not processed and no element
+is declared, nor refused with err:XQST0075 [§5.2.2]; and an element
+constructed in construction mode preserve is annotated `xdt:untyped`,
+not `xs:anyType` [§3.7.1.3]. Of its optional
 features the Full Axis Feature is supported, and Schema Import, Schema
 Validation, Static Typing, Module and Serialization are not [XQuery §5.2].
 
@@ -1995,6 +1999,7 @@ Validation, Static Typing, Module and Serialization are not [XQuery §5.2].
 | XQuery's dynamic context | XQuery Appendix C.2 | The current dateTime the statement's instant in the session's time zone, the implicit timezone the session's displacement; no available documents, so fn:doc fails with err:FODC0005 of any URI; no collection. |
 | XQuery's limits | XQuery Appendix D | Expressions nested 64 deep; operations and function calls nested 256 deep as a query is evaluated; a sequence of 1,048,576 items; the nodes one evaluation constructs 64 MiB; past them SQLCODE -900 (`xquery/eval.rs`). |
 | Order of nodes of two trees | XQuery §2.4.1 | By where each tree is held in memory, stable while a query runs, every node of a tree together (`xml/sequence.rs`). |
+| XQuery's warnings | XQuery §2.3.1, Appendix D | None is raised. |
 | Type annotations | XQuery §2.2.1, §3.7.1.3 | No node has another than `xdt:untyped` of an element and `xdt:untypedAtomic` of an attribute; under construction mode preserve a constructed element too, where XQuery annotates it `xs:anyType`, so an element test of a type name matches it as it would an untyped one. |
 | Copy-namespaces no-preserve | XQuery §3.7.1.3 | Each copied element declares the bindings its name and attributes' names use; one copied below another keeps too those its copied ancestors declare, as a tree holds bindings where they are declared. |
 | A prefix made for a constructed name | XQuery §3.7.4 | `ns1`, `ns2` and on, or the prefix taken followed by its next free number. |

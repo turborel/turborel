@@ -2974,8 +2974,10 @@ and §10.20 of Part 14, the namespaces the binder holds in scope among it,
 and resolves every name of the tree: each QName to an expanded QName,
 each variable to a slot of its frame or a global, each function call to a
 function of the prolog, a constructor function's cast, or a function of
-the library. A static error is raised there; no static typing is done, so
-a type error is raised as the query is evaluated. The library
+the library. A cast or constructor function to `xs:QName`, of a string
+literal alone, is evaluated there, its prefix resolved by the statically
+known namespaces. A static error is raised there; no static typing is
+done, so a type error is raised as the query is evaluated. The library
 (`xquery::Library`) is the built-in functions and those plug-ins
 register (`Database::register_xquery_function`), each an
 `XQueryFunction` of its expanded QName, parameter types and result type,

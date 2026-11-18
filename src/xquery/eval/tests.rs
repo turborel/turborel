@@ -175,7 +175,36 @@ fn sequence_types_and_casts() {
     assert_eq!(code_of("1 treat as xs:string"), "err:XPDY0050");
     assert_eq!(code_of("1 cast as xdt:anyAtomicType"), "err:XPST0080");
     assert_eq!(code_of("1 instance of xs:nosuchtype"), "err:XPST0051");
-    assert_eq!(error_of("'a:b' cast as xs:QName").code, Code::Unsupported);
+    assert_eq!(code_of("'a:b' cast as xs:QName"), "err:FONS0004");
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, GR3] [XQuery §3.12.3
+/// to §3.12.5] [XQueryFO §5.1, §17.1.1] a cast and the constructor
+/// function to `xs:QName` of a string literal, its whitespace collapsed,
+/// its prefix resolved by the statically known namespaces, none by the
+/// default element namespace, the prefix kept; castable whether the cast
+/// succeeds; an operand no string literal err:XPST0083, a prefix bound to
+/// none err:FONS0004, a literal no QName err:FORG0001.
+#[test]
+fn casts_to_qnames() {
+    let names = "declare namespace p = 'urn:p'; declare default element namespace 'urn:d'; ";
+    let q = |body: &str| run(&format!("{names}{body}"));
+    assert_eq!(q("namespace-uri-from-QName(' p:a ' cast as xs:QName), prefix-from-QName(xs:QName('p:a'))"), "urn:p p");
+    assert_eq!(q("namespace-uri-from-QName(xs:QName('a')), local-name-from-QName(xs:QName('a'))"), "urn:d a");
+    assert_eq!(q("xs:QName('p:a') eq QName('urn:p', 'q:a'), xs:QName('xml:lang') instance of xs:QName"), "true true");
+    assert_eq!(q("'p:a' castable as xs:QName, 'z:a' castable as xs:QName, '1a' castable as xs:QName"), "true false false");
+    assert_eq!(run("namespace-uri-from-QName(xs:QName('a')) eq ''"), "true");
+    for (query, expected) in [
+        ("xs:QName(('p:a'))", "err:XPST0083"),
+        ("let $s := 'a' return $s cast as xs:QName", "err:XPST0083"),
+        ("QName('urn:p', 'p:a') cast as xs:QName", "err:XPST0083"),
+        ("let $s := 'a' return $s castable as xs:QName", "err:XPST0083"),
+        ("xs:QName('z:a')", "err:FONS0004"),
+        ("'1a' cast as xs:QName", "err:FORG0001"),
+        ("xs:QName('a:b:c')", "err:FORG0001"),
+    ] {
+        assert_eq!(code_of(query), expected, "{query}");
+    }
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQueryFO §2.3, §2.4,

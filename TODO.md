@@ -147,7 +147,7 @@ features.
   Functions and Operators (`src/xquery/library.rs`). Left: the
   FULLY-NORMALIZED form of fn:normalize-unicode, and substring matching
   by UNICODE and its tailorings, which need collation units of more than
-  one character; casts to `xs:QName`;
+  one character;
   the validate expression's lax mode and schema imports, with XML Schema;
   the type annotation `xs:anyType` of an element constructed in
   construction mode preserve; and more of a query's shapes answered by

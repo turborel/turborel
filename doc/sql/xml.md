@@ -656,9 +656,29 @@ too. Static typing is not done, so a type error is found as the query is
 evaluated.
 
 These are not supported: schema imports and library modules (error
-`err:XQST0009` or `err:XQST0016`), the validate expression's lax mode
-(SQLCODE -900; strict mode finds no element declared, `err:XQDY0084`),
-and casts to `xs:QName`.
+`err:XQST0009` or `err:XQST0016`), and the validate expression's lax
+mode (SQLCODE -900; strict mode finds no element declared,
+`err:XQDY0084`).
+
+A cast to `xs:QName`, and its constructor function, takes a string
+literal alone, as `xs:QName("h:td")` or `"td" cast as xs:QName`; any
+other operand fails as the query is prepared, with `err:XPST0083`. The
+prefix is resolved by the query's namespaces, those of its prolog and
+of the XMLNAMESPACES in scope among them, a name with none by the
+default element namespace; a prefix bound to none fails with
+`err:FONS0004`.
+
+```sql
+WITH XMLNAMESPACES ('urn:shop' AS "s") SELECT XMLCAST(XMLQUERY('namespace-uri-from-QName(xs:QName("s:item"))' NULL ON EMPTY) AS VARCHAR(20)) FROM ORDERS2 WHERE ID = 1;
+SELECT XMLQUERY('xs:QName(concat("s", ":item"))' NULL ON EMPTY) FROM ORDERS2 WHERE ID = 1;
+```
+```
+
+----------------------
+ urn:shop
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XPST0083: a value cast to xs:QName is a string literal [XQuery §3.12.3, §3.12.5] [ISO/IEC 9075-14:2006 draft §6.18 GR3] (at character 7)
+```
 
 ### Functions
 

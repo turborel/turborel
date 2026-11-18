@@ -4,13 +4,14 @@
 //! effective boolean value, and its strings: positions, collations,
 //! normalization, escaping and XQuery 1.0's regular expressions; dates
 //! in the implicit time zone and their arithmetic, fn:deep-equal, the
-//! functions on sequences and their bounds; and the built-in functions
-//! and operators a query calls of it (RULES.md R-TEST-9, D86).
+//! functions on sequences and their bounds; the built-in functions and
+//! operators a query calls of it; and casts to `xs:QName` (RULES.md
+//! R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of the library broken alone, and the tests that fail.
-pub const XQUERY_FUNCTIONS: [Mutation; 25] = [
+pub const XQUERY_FUNCTIONS: [Mutation; 27] = [
     Mutation {
         name: "xquery-decimal-division-scale",
         package: Package::Core,
@@ -263,5 +264,25 @@ pub const XQUERY_FUNCTIONS: [Mutation; 25] = [
         replacement: "others.binary_search_by(|o| o.document_order(node)).is_err()",
         integration: &["xquery_functions_10_to_16::equality_and_node_sets_xqueryfo_15_2"],
         unit: &["xquery::library::node_sets::tests::node_set_examples"],
+    },
+    Mutation {
+        name: "xquery-qname-default-namespace",
+        package: Package::Core,
+        breaks: "a QName cast of no prefix is in no namespace, not the default element namespace",
+        file: "src/xquery/analyze/types.rs",
+        original: "self.scope.expand(&lexical, Unprefixed::Element, ErrorCode::FONS0004)",
+        replacement: "self.scope.expand(&lexical, Unprefixed::None, ErrorCode::FONS0004)",
+        integration: &["xquery_functions_10_to_16::casts_to_qnames_xquery_3_12"],
+        unit: &["xquery::eval::tests::casts_to_qnames"],
+    },
+    Mutation {
+        name: "xquery-qname-castable",
+        package: Package::Core,
+        breaks: "every string literal is castable as xs:QName",
+        file: "src/xquery/analyze/types.rs",
+        original: "if resolved.is_ok() { \"true\" } else { \"false\" }",
+        replacement: "\"true\"",
+        integration: &["xquery_functions_10_to_16::casts_to_qnames_xquery_3_12"],
+        unit: &["xquery::eval::tests::casts_to_qnames"],
     },
 ];

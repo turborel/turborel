@@ -36,8 +36,8 @@ impl Analysis<'_> {
             Expr::IntersectExcept(first, rest) => self.intersect_except(first, rest),
             Expr::InstanceOf(operand, t) => Ok(Op::InstanceOf(Box::new(self.expr(operand)?), self.sequence_type(t)?)),
             Expr::Treat(operand, t) => Ok(Op::Treat(Box::new(self.expr(operand)?), self.sequence_type(t)?)),
-            Expr::Castable(operand, t) => Ok(Op::Castable(Box::new(self.expr(operand)?), self.cast_target(t)?)),
-            Expr::Cast(operand, t) => Ok(Op::Cast(Box::new(self.expr(operand)?), self.cast_target(t)?)),
+            Expr::Castable(operand, t) => self.cast_expr(operand, t, true),
+            Expr::Cast(operand, t) => self.cast_expr(operand, t, false),
             Expr::Unary(signs, operand) => self.unary(signs, operand),
             Expr::Validate(mode, operand) => self.validate(*mode, operand),
             Expr::Extension(pragmas, operand) => self.extension(pragmas, operand.as_deref()),
@@ -160,8 +160,12 @@ impl Analysis<'_> {
             return Ok(Op::Call(Box::new(CallOp { callee: Callee::Declared(at), arguments: compiled })));
         }
         if Self::constructor(&expanded, arity) {
-            // [XQuery §3.12.5] T($arg) is ($arg cast as T?).
+            // [XQuery §3.12.5] T($arg) is ($arg cast as T?), of a QName
+            // ($arg cast as T) [XQueryFO §5.1].
             let target = Self::atomic_target(&expanded, true)?;
+            if let (Some(literal), AtomicType::QName) = (arguments.first(), target.to) {
+                return self.qname_cast(literal, false);
+            }
             let argument = compiled.pop().unwrap_or(Op::Empty);
             return Ok(Op::Cast(Box::new(argument), target));
         }

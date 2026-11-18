@@ -139,6 +139,32 @@ fn qnames_xqueryfo_11() {
     );
 }
 
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, GR3, §10.20 SR2]
+/// [XQuery §3.12.3 to §3.12.5] [XQueryFO §5.1, §17.1.1] a cast or
+/// constructor function to `xs:QName` of a string literal, its prefix
+/// bound by the prolog, by the SQL XMLNAMESPACES in scope or by the
+/// predeclared namespaces, none the default element namespace's; castable
+/// whether it succeeds; an operand no literal err:XPST0083, a prefix
+/// bound to none err:FONS0004.
+#[test]
+fn casts_to_qnames_xquery_3_12() {
+    let a = orders();
+    values(
+        &a,
+        &[
+            ("declare namespace q = \"urn:q\"; namespace-uri-from-QName(xs:QName(\"q:x\")), \"q:y\" cast as xs:QName", "urn:q q:y"),
+            (
+                "namespace-uri-from-QName(\"xs:int\" cast as xs:QName), \"p:x\" castable as xs:QName",
+                "http://www.w3.org/2001/XMLSchema false",
+            ),
+            ("declare default element namespace \"urn:d\"; namespace-uri-from-QName(xs:QName(\"x\"))", "urn:d"),
+        ],
+    );
+    let scoped = "WITH XMLNAMESPACES ('urn:s' AS \"s\", DEFAULT 'urn:e') SELECT XMLSERIALIZE(CONTENT XMLQUERY('namespace-uri-from-QName(xs:QName(\"s:x\")), namespace-uri-from-QName(xs:QName(\"x\"))' EMPTY ON EMPTY) AS VARCHAR(40)) FROM T WHERE K = 1";
+    assert_eq!(crate::common::rows(&a, scoped).unwrap(), ["urn:s urn:e"]);
+    codes(&a, &[("xs:QName(string(\"q:x\"))", "XPST0083"), ("xs:QName(\"q:x\")", "FONS0004"), ("\"1x\" cast as xs:QName", "FORG0001")]);
+}
+
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, GR3] [XQueryFO §12,
 /// §13] binary values equal by their octets, in either case; ordered they
 /// are not, err:XPTY0004.
