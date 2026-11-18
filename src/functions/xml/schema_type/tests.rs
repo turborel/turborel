@@ -85,8 +85,9 @@ fn datetimes_9_5() {
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §9.5 GR8l] an interval maps to
 /// its duration type restricted by its pattern: `-?P`, T before its
-/// first time field, its first field of its leading precision's digits,
-/// the others of two, the seconds SECS of its fractional precision's.
+/// first time field, its leading field of its leading precision's
+/// digits, seconds too, the others of two, the seconds' fraction of its
+/// fractional precision's digits, none of a precision of 0.
 #[test]
 fn intervals_9_5() {
     let cases = [
@@ -97,7 +98,8 @@ fn intervals_9_5() {
         (interval_of(Field::Day, Field::Second, 2, 6), "-?P\\p{Nd}{2}DT\\p{Nd}{2}H\\p{Nd}{2}M\\p{Nd}{2}.\\p{Nd}{6}S"),
         (interval_of(Field::Hour, Field::Minute, 3, 0), "-?PT\\p{Nd}{3}H\\p{Nd}{2}M"),
         (interval_of(Field::Minute, Field::Second, 2, 1), "-?PT\\p{Nd}{2}M\\p{Nd}{2}.\\p{Nd}{1}S"),
-        (interval_of(Field::Second, Field::Second, 4, 3), "-?PT\\p{Nd}{2}.\\p{Nd}{3}S"),
+        (interval_of(Field::Second, Field::Second, 4, 3), "-?PT\\p{Nd}{4}.\\p{Nd}{3}S"),
+        (interval_of(Field::Hour, Field::Second, 2, 0), "-?PT\\p{Nd}{2}H\\p{Nd}{2}M\\p{Nd}{2}S"),
     ];
     for (t, expected) in cases {
         assert_eq!(pattern(&t), expected, "{t}");

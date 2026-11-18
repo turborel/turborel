@@ -215,7 +215,7 @@ NUMERIC(6,1) no second digit of fraction.
 | BOOLEAN | `xs:boolean` |
 | DATE | `xs:date` of four digits of year and two of month and day |
 | TIME(p), TIMESTAMP(p) | `xs:time`, `xs:dateTime` of at most p digits of fraction, zeros ending it not counted; WITH TIME ZONE, with a time zone |
-| INTERVAL | `xdt:yearMonthDuration` or `xdt:dayTimeDuration`, each field written as XMLCAST writes it: the first of the leading precision's digits, the others of two, the seconds' fraction of the fractional precision's |
+| INTERVAL | `xdt:yearMonthDuration` or `xdt:dayTimeDuration`, each field written as XMLCAST writes it: the first of the leading precision's digits, the others of two, the seconds' fraction of the fractional precision's, none if it is 0: `PT1234.500S` for INTERVAL SECOND(4, 3), `PT01H02M03S` for INTERVAL HOUR TO SECOND(0) |
 
 A date or time with a time zone is moved to UTC for a type without one.
 A time or timestamp is checked as XMLCAST writes a value of its type, its

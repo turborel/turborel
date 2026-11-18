@@ -4,6 +4,9 @@
 //! `xs:simpleType` and `xs:complexType` definitions an XML Schema document
 //! holds.
 //!
+//! The facets of §9.5's restrictions are those of the types XMLCAST casts
+//! as (`functions/xml/schema_type.rs`), derived once for both.
+//!
 //! \[§9.5 GR8\] implementation-defined: no annotation is written, so ANN,
 //! ANNT, ANNL, ANNCS, ANNCO, ANNP, ANNS, ANNUP, ANNMIN and ANNMAX are each
 //! the zero-length string, and no type uses the namespace of `sqlxml`.
@@ -28,8 +31,10 @@
 use std::fmt::Write;
 
 use super::super::super::BinaryEncoding;
+use super::super::schema_type::xml_schema_facets;
 use super::Nulls;
 use super::composites::{array_name, complex, complex_type, multiset_name, parts_of, row_name};
+use super::documents::attribute;
 use crate::error::{Code, Result, SqlError};
 use crate::value::datetime::Field;
 use crate::value::interval::Qualifier;
@@ -37,7 +42,7 @@ use crate::value::lob::LobKind;
 use crate::value::types::MAX_TYPE_NESTING;
 use crate::value::xml::XmlType;
 use crate::value::{CharUnits, DataType, Spelled};
-use crate::xml::name_of_parts;
+use crate::xml::{Facet, WhiteSpace, name_of_parts};
 
 /// [§4.9 Table 2] The prefix and namespace of XQuery's data types,
 /// `xdt:yearMonthDuration` and `xdt:dayTimeDuration` among them.
@@ -57,15 +62,6 @@ const CHAR: &str = "CHAR";
 const VARCHAR: &str = "VARCHAR";
 /// [§9.4 GR2f] CHARACTER LARGE OBJECT's.
 const CLOB: &str = "CLOB";
-/// The radix of SQL's exact numbers' precision.
-const RADIX: i128 = 10;
-
-/// [§9.5 GR8d i] The greatest value an exact type of scale 0 and
-/// `precision` digits holds: its digits each 9.
-fn greatest(precision: u32) -> i128 {
-    RADIX.checked_pow(precision).map_or(i128::MAX, |p| p.saturating_sub(1))
-}
-
 /// What a column is declared of [§9.7 GR3]: a data type, or a domain.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Declared {
@@ -347,90 +343,39 @@ fn derived(name: &str, base: &DataType, catalog: &str) -> Result<Option<String>>
 const XML_CONTENT: &str = r#"<xs:sequence><xs:any minOccurs="0" maxOccurs="unbounded" processContents="skip"/></xs:sequence>"#;
 
 /// [§9.5 GR8a to GR8l] The `xs:restriction` of `t`, a predefined type
-/// other than XML, of no annotation; none if §9.5 maps no such type.
+/// other than XML, of no annotation: its base and facets, as XMLCAST's
+/// type has them (`functions/xml/schema_type.rs`); none if §9.5 maps no
+/// such type.
 fn restriction(t: &DataType, encoding: BinaryEncoding) -> Option<String> {
-    Some(match t {
-        DataType::Character { length, units } => characters(u64::from(*length), *units == CharUnits::Characters),
-        DataType::Varying { length, .. } => characters(u64::from(*length), false),
-        DataType::Lob { kind: LobKind::Character, length, .. } => characters(*length, false),
-        DataType::Lob { kind: LobKind::Binary, length, .. } => binary(*length, encoding),
-        DataType::Binary { length } | DataType::VarBinary { length } => binary(u64::from(*length), encoding),
-        DataType::Exact { precision, scale, spelled } => exact(*precision, *scale, *spelled),
-        // [GR8e viii] xs:float or xs:double itself, named [§9.6 GR6b iv].
-        DataType::Approximate { precision, .. } => {
-            let base = if *precision <= crate::value::REAL_PRECISION { "xs:float" } else { "xs:double" };
-            format!(r#"<xs:restriction base="{base}"/>"#)
-        }
-        DataType::Boolean => r#"<xs:restriction base="xs:boolean"/>"#.to_owned(),
-        DataType::Date => format!(r#"<xs:restriction base="xs:date"><xs:pattern value="{DATE_PATTERN}"/></xs:restriction>"#),
-        DataType::Time { precision, zoned } => moment("xs:time", TIME_PATTERN, *precision, *zoned),
-        DataType::Timestamp { precision, zoned } => moment("xs:dateTime", DATETIME_PATTERN, *precision, *zoned),
-        DataType::Interval(q) => super::durations::duration(*q),
-        DataType::DecFloat { .. }
-        | DataType::Array(_)
-        | DataType::Multiset(_)
-        | DataType::Row(_)
-        | DataType::Distinct(_)
-        | DataType::Structured(_)
-        | DataType::Reference(_)
-        | DataType::Xml(_)
-        | DataType::Extension(_) => return None,
-    })
-}
-
-/// [§9.5 GR8a, §9.6 GR5e] A character string of `most` characters:
-/// exactly so many, `xs:length`, of a CHARACTER of a length in characters,
-/// `exact`, as CSM is homomorphic; else at most, `xs:maxLength`.
-fn characters(most: u64, exact: bool) -> String {
-    let facet = if exact { "length" } else { "maxLength" };
-    format!(r#"<xs:restriction base="xs:string"><xs:{facet} value="{most}"/></xs:restriction>"#)
-}
-
-/// [§9.5 GR8b] A binary string of at most `most` octets, in hex or base64
-/// as `encoding` says.
-fn binary(most: u64, encoding: BinaryEncoding) -> String {
-    let base = match encoding {
-        BinaryEncoding::Hex => "hexBinary",
-        BinaryEncoding::Base64 => "base64Binary",
-    };
-    format!(r#"<xs:restriction base="xs:{base}"><xs:maxLength value="{most}"/></xs:restriction>"#)
-}
-
-/// [§9.5 GR8c, GR8d] An exact number: of INTEGER, SMALLINT or BIGINT,
-/// `xs:integer` between its least and greatest values \[GR8d iv\]; else
-/// `xs:decimal` of its precision and scale \[GR8c vi\].
-fn exact(precision: u32, scale: u32, spelled: Spelled) -> String {
-    match spelled {
-        Spelled::Integer | Spelled::Smallint | Spelled::Bigint => {
-            let most = greatest(precision);
-            let least = most.saturating_neg();
-            format!(
-                r#"<xs:restriction base="xs:integer"><xs:maxInclusive value="{most}"/><xs:minInclusive value="{least}"/></xs:restriction>"#
-            )
-        }
-        Spelled::Numeric | Spelled::Decimal | Spelled::Float | Spelled::Real | Spelled::DoublePrecision => format!(
-            r#"<xs:restriction base="xs:decimal"><xs:totalDigits value="{precision}"/><xs:fractionDigits value="{scale}"/></xs:restriction>"#
-        ),
+    let (base, facets) = xml_schema_facets(t, encoding)?;
+    let mut out = format!(r#"<xs:restriction base="{}""#, base.name());
+    if facets.is_empty() {
+        out.push_str("/>");
+        return Some(out);
     }
+    out.push('>');
+    for f in &facets {
+        // Writing to a String cannot fail.
+        let _ = write!(out, r#"<xs:{} value="{}"/>"#, f.kind(), attribute(&facet_value(f)));
+    }
+    out.push_str("</xs:restriction>");
+    Some(out)
 }
 
-/// [§9.5 GR8g ii] A date's pattern, which allows no time zone.
-const DATE_PATTERN: &str = r"\p{Nd}{4}-\p{Nd}{2}-\p{Nd}{2}";
-/// [§9.5 GR8h ii] A time's pattern, before its fraction.
-const TIME_PATTERN: &str = r"\p{Nd}{2}:\p{Nd}{2}:\p{Nd}{2}";
-/// [§9.5 GR8j ii] DATETIME, a timestamp's pattern before its fraction.
-const DATETIME_PATTERN: &str = r"\p{Nd}{4}-\p{Nd}{2}-\p{Nd}{2}T\p{Nd}{2}:\p{Nd}{2}:\p{Nd}{2}";
-/// [§9.5 GR8i ii, GR8k iii] TZ, a time zone displacement's pattern.
-const TZ_PATTERN: &str = r"(+|-)\p{Nd}{2}:\p{Nd}{2}";
-
-/// [§9.5 GR8h to GR8k] A time or a timestamp, its base `base` and its
-/// pattern `pattern`, then `.` and `precision` digits if it has a
-/// fraction, then TZ if `zoned`. The draft writes `.`, which an XML
-/// Schema pattern reads as any character.
-fn moment(base: &str, pattern: &str, precision: u32, zoned: bool) -> String {
-    let fraction = if precision > 0 { format!(r".\p{{Nd}}{{{precision}}}") } else { String::new() };
-    let zone = if zoned { TZ_PATTERN } else { "" };
-    format!(r#"<xs:restriction base="{base}"><xs:pattern value="{pattern}{fraction}{zone}"/></xs:restriction>"#)
+/// The value of `f` as its XML representation writes it [Schema2 §4.3].
+fn facet_value(f: &Facet) -> String {
+    match f {
+        Facet::Length(n) | Facet::MinLength(n) | Facet::MaxLength(n) | Facet::TotalDigits(n) | Facet::FractionDigits(n) => n.to_string(),
+        Facet::Pattern(v)
+        | Facet::Enumeration(v)
+        | Facet::MaxInclusive(v)
+        | Facet::MaxExclusive(v)
+        | Facet::MinExclusive(v)
+        | Facet::MinInclusive(v) => v.to_string(),
+        Facet::WhiteSpace(WhiteSpace::Preserve) => "preserve".to_owned(),
+        Facet::WhiteSpace(WhiteSpace::Replace) => "replace".to_owned(),
+        Facet::WhiteSpace(WhiteSpace::Collapse) => "collapse".to_owned(),
+    }
 }
 
 /// [§9.7] The XML Schema data types of `declared`, the collection of a

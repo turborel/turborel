@@ -1,7 +1,7 @@
 //! The mappings of SQL to XML and XML Schema [ISO/IEC 9075-14:2006 draft
 //! §9.4 to §9.17]: SQL data types and domains, each to its XML Name and
 //! to the XML Schema data type an XML Schema document defines of it
-//! (`map/types.rs`, `map/durations.rs`); and \[EXTENSION\] XMLMAP's
+//! (`map/types.rs`); and \[EXTENSION\] XMLMAP's
 //! functions (RULES.md D86), a table, a schema or the catalog mapped to an
 //! XML Schema document and to XML [§9.11, §9.14, §9.17]: each row written
 //! by a function of its values, the data of all the rows by a set
@@ -12,7 +12,6 @@
 mod composites;
 mod data;
 mod documents;
-mod durations;
 mod rows;
 mod types;
 

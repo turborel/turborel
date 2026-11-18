@@ -160,7 +160,8 @@ fn xml_values_that_cast_to_none_6_6() {
 /// is an XQuery error, SQLSTATE 10000: a CHARACTER's length, a CHARACTER
 /// VARYING's and a binary string's maxLength, a NUMERIC's digits, an
 /// INTEGER's bounds; an interval's pattern, of its leading precision's
-/// digits and two of each field after.
+/// digits, of seconds too, and two of each field after, the seconds of no
+/// fraction of a fractional seconds precision of 0.
 #[test]
 fn xml_values_cast_by_the_facets_6_6() {
     let db = database();
@@ -170,6 +171,8 @@ fn xml_values_cast_by_the_facets_6_6() {
         ("<a>99999</a>", "SMALLINT", "99999"),
         ("<a>P01Y02M</a>", "INTERVAL YEAR TO MONTH", "1-02"),
         ("<a>P03DT04H05M06.500000S</a>", "INTERVAL DAY TO SECOND", "3 04:05:06.500000"),
+        ("<a>PT1234.500S</a>", "INTERVAL SECOND(4, 3)", "1234.500"),
+        ("<a>PT01H02M03S</a>", "INTERVAL HOUR TO SECOND(0)", "1:02:03"),
     ];
     for (text, sql, expected) in taken {
         assert_eq!(from_xml(&a, text, sql), expected, "{text} AS {sql}");

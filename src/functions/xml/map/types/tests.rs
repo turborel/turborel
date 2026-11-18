@@ -154,7 +154,7 @@ fn datetime_and_interval_patterns_9_5() {
     );
     assert_eq!(
         restricted(DataType::Time { precision: 3, zoned: true }),
-        r#"<xs:restriction base="xs:time"><xs:pattern value="\p{Nd}{2}:\p{Nd}{2}:\p{Nd}{2}.\p{Nd}{3}(+|-)\p{Nd}{2}:\p{Nd}{2}"/></xs:restriction>"#
+        r#"<xs:restriction base="xs:time"><xs:pattern value="\p{Nd}{2}:\p{Nd}{2}:\p{Nd}{2}.\p{Nd}{3}(\+|-)\p{Nd}{2}:\p{Nd}{2}"/></xs:restriction>"#
     );
     assert_eq!(
         restricted(DataType::Timestamp { precision: 0, zoned: false }),

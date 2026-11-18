@@ -4,8 +4,8 @@
 //!
 //! \[DESIGN\] RULES.md D86: the implementation-defined choices of §9.5
 //! are those `functions/xml/cast.rs` states; a type's annotations
-//! [§9.5 GR8a vii and the like] are not made, as no XML Schema document
-//! is written. Two choices are new. \[GR8a ii\] The mapping of a character
+//! [§9.5 GR8a vii and the like] are not made, nor written in XMLMAP's
+//! XML Schema documents. Two choices are new. \[GR8a ii\] The mapping of a character
 //! set to Unicode, CSM, is the identity, as turborel's strings are
 //! Unicode, so it is homomorphic and MAXCSL is N: CHARACTER(n) has the
 //! length n; of a length in OCTETS a character string has the maxLength n,
@@ -13,6 +13,18 @@
 //! zone [GR8i ii, GR8k iii], printed `(+|-)`, is no regular expression,
 //! `+` being a metacharacter [Schema2 Appendix F \[10\]], so it is read as
 //! `(\+|-)`, a sign, which it names.
+//!
+//! The facets are derived once, by `xml_schema_facets`, for XMLCAST's
+//! type and for the text of the definitions an XML Schema document of
+//! XMLMAP holds (`functions/xml/map/types.rs`).
+//!
+//! Two readings make an interval's pattern \[GR8l\] describe what §9.8
+//! GR9h writes. Of a fractional seconds precision of 0, the seconds are
+//! written with no fraction \[GR9h vi, vii\], so SECS is `\p{Nd}{2}S`, as
+//! of a type of no seconds \[GR8l ii 2\], not `\p{Nd}{2}.\p{Nd}{0}S`. Of
+//! INTERVAL SECOND, the seconds are the leading field, of L digits \[GR9h
+//! vii 13\], so they are `\p{Nd}{PLIT}`, as each other leading field is,
+//! not `\p{Nd}{2}`.
 
 use std::fmt::Write;
 use std::sync::Arc;
@@ -36,7 +48,7 @@ const TZ: &str = "(\\+|-)\\p{Nd}{2}:\\p{Nd}{2}";
 /// pattern.
 const SIGNED: &str = "-?P";
 /// [§9.5 GR8l iii] The digits of each field of an interval's pattern but
-/// its first.
+/// its leading one.
 const FIELD_DIGITS: u8 = 2;
 /// [§9.5 GR8d i, ii] The digit each place of the greatest value of an
 /// exact numeric type of a precision is.
@@ -58,14 +70,17 @@ const NINE: char = '9';
 /// None of the types it maps, whose facets are valid; as `restrict` does
 /// otherwise.
 pub fn xml_schema_restriction(t: &DataType, encoding: BinaryEncoding) -> Result<Option<SimpleType>> {
-    let Some((base, facets)) = facets_of(t, encoding) else { return Ok(None) };
+    let Some((base, facets)) = xml_schema_facets(t, encoding) else { return Ok(None) };
     let specified: Vec<FacetSpec> = facets.into_iter().map(FacetSpec::new).collect();
     Ok(Some(SimpleType::restrict(&Arc::new(SimpleType::built_in(base)), &specified)?.named(&t.to_string())))
 }
 
-/// The base and the facets of the restriction §9.5 maps `t` to, of binary
-/// strings in `encoding`.
-fn facets_of(t: &DataType, encoding: BinaryEncoding) -> Option<(AtomicType, Vec<Facet>)> {
+/// [§9.5 GR8a to GR8l] The base and the facets of the restriction §9.5
+/// maps `t` to, as `xml_schema_restriction` says, of binary strings in
+/// `encoding` \[GR8b\]. None of a type §9.5 maps to no restriction of a
+/// built-in type.
+#[must_use]
+pub fn xml_schema_facets(t: &DataType, encoding: BinaryEncoding) -> Option<(AtomicType, Vec<Facet>)> {
     Some(match t.represented() {
         DataType::Character { length, units: CharUnits::Characters } => (AtomicType::String, vec![Facet::Length(u64::from(*length))]),
         DataType::Character { length, units: CharUnits::Octets } | DataType::Varying { length, .. } => {
@@ -111,35 +126,39 @@ fn clock(clock: &str, precision: u32, zoned: bool) -> String {
     format!("{clock}{fraction}{zone}")
 }
 
-/// [§9.5 GR8l ii, iii] The pattern of an interval of the qualifier `q`:
-/// `-?P`, T before its first field of hours, minutes or seconds, then
-/// each field, the first of P digits, its leading precision, the others
-/// of two; the seconds SECS, two digits, `.`, S digits, its fractional
-/// seconds precision, and S, whether first or not.
+/// [§9.5 GR8l ii, iii] The pattern of an interval of the qualifier `q`,
+/// read as the module says: `-?P`, then each field of `q` with its
+/// designator, T before the first of hours, minutes and seconds; the
+/// leading field of PLIT digits, its leading precision, the others of two;
+/// the seconds with a fraction of SLIT digits after `.` if the type has
+/// one.
 fn interval(q: Qualifier) -> String {
     let mut out = String::from(SIGNED);
-    let mut first = true;
     for field in q.fields() {
-        let (designator, time) = match field {
-            Field::Year => ('Y', false),
-            Field::Month => ('M', false),
-            Field::Day => ('D', false),
-            Field::Hour => ('H', true),
-            Field::Minute => ('M', true),
-            Field::Second => ('S', true),
-        };
-        if time && !out.contains('T') {
+        let timed = matches!(field, Field::Hour | Field::Minute | Field::Second);
+        if timed && !out.contains('T') {
             out.push('T');
         }
-        if field == Field::Second {
-            let _ = write!(out, "\\p{{Nd}}{{{FIELD_DIGITS}}}.\\p{{Nd}}{{{}}}S", q.fraction);
-        } else {
-            let digits = if first { q.leading } else { FIELD_DIGITS };
-            let _ = write!(out, "\\p{{Nd}}{{{digits}}}{designator}");
+        let digits = if field == q.start { q.leading } else { FIELD_DIGITS };
+        // Writing to a String cannot fail.
+        let _ = write!(out, "\\p{{Nd}}{{{digits}}}");
+        if field == Field::Second && q.fraction > 0 {
+            let _ = write!(out, ".\\p{{Nd}}{{{}}}", q.fraction);
         }
-        first = false;
+        out.push(designator(field));
     }
     out
+}
+
+/// The designator of `field` in a duration [Schema2 §3.2.6.1].
+fn designator(field: Field) -> char {
+    match field {
+        Field::Year => 'Y',
+        Field::Month | Field::Minute => 'M',
+        Field::Day => 'D',
+        Field::Hour => 'H',
+        Field::Second => 'S',
+    }
 }
 
 #[cfg(test)]

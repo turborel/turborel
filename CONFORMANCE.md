@@ -2004,11 +2004,12 @@ BINARY VARYING or an interval type [§9.4], though §9.5 maps each [GR8b,
 GR8l]. They are named as §9.4 names BLOB [GR3]: `BINARY_n`,
 `VARBINARY_n`, and `INTERVAL_` with the fields, the leading precision
 and, of SECOND, the fractional seconds precision, as
-`INTERVAL_DAY_TO_SECOND_2_6`. An interval type's pattern [§9.5 GR8l] is
-read so it describes what §9.8 GR9h writes: of no fractional seconds, the
-seconds have no fraction, and INTERVAL SECOND's are of its leading
-precision's digits. The `name` §9.5 GR8r writes on `xs:any` is left out,
-as `xs:any` takes none [Schema1 §3.10.2].
+`INTERVAL_DAY_TO_SECOND_2_6`. An interval type's pattern [§9.5 GR8l],
+XMLCAST's and XMLMAP's alike, is read so it describes what §9.8 GR9h
+writes: of no fractional seconds, the seconds have no fraction, and
+INTERVAL SECOND's are of its leading precision's digits. The `name`
+§9.5 GR8r writes on `xs:any` is left out, as `xs:any` takes none
+[Schema1 §3.10.2].
 
 The mappings of tables, schemas and catalogs are read so the XML Schema
 document each makes is one, and describes the data. XD's root [§9.11
