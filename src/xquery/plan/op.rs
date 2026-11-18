@@ -8,6 +8,7 @@ use super::super::ast::{Comparator, SetOp};
 use super::super::collation::Collator;
 use super::super::functions::XQueryFunction;
 use super::super::types::{NodeKind, SeqType};
+use crate::xml::schema::Mode;
 use crate::xml::{Atomic, AtomicType, Binding, Kind, QName};
 
 /// An operation [XQuery §3].
@@ -64,8 +65,8 @@ pub enum Op {
     Cast(Box<Op>, CastTarget),
     /// A function call [XQuery §3.1.5].
     Call(Box<CallOp>),
-    /// `validate`, strict [XQuery §3.13].
-    Validate(Box<Op>),
+    /// `validate` [XQuery §3.13]: its mode and its operand.
+    Validate(Mode, Box<Op>),
     /// A direct element constructor [XQuery §3.7.1].
     Element(Box<DirectElement>),
     /// A computed element constructor [XQuery §3.7.3.1].

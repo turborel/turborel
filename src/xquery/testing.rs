@@ -32,6 +32,7 @@ pub(super) fn compile_in(text: &str, variables: &[&str], library: &Library) -> R
         variables: variables.iter().map(|v| (*v).to_owned()).collect(),
         library,
         collations: &collations,
+        schemas: Vec::new(),
     };
     Query::compile(text, &env)
 }

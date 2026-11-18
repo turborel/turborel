@@ -15,8 +15,14 @@ use crate::xquery::{Collations, Environment, Library, Query};
 /// The evaluation of `text`, of a context item first if `context`.
 fn evaluation(text: &str, context: bool) -> Evaluation {
     let (library, collations) = (Library::builtin(), Collations::new());
-    let env =
-        Environment { namespaces: Vec::new(), default_element: None, variables: Vec::new(), library: &library, collations: &collations };
+    let env = Environment {
+        namespaces: Vec::new(),
+        default_element: None,
+        variables: Vec::new(),
+        library: &library,
+        collations: &collations,
+        schemas: Vec::new(),
+    };
     let query = Arc::new(Query::compile(text, &env).unwrap());
     let now = Moment::parse("2026-11-17T10:30:00Z", Shape::DateTime).unwrap().unwrap();
     Evaluation { query, context, one_node: false, now, timezone: 0 }

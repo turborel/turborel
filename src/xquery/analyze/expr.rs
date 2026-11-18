@@ -4,11 +4,12 @@
 //! in `analyze/construct.rs`.
 
 use super::super::ast::{AddOp, Comparison, Expr, Literal, MulOp, Pragma, QName as Lexical, Sign, ValidationMode};
-use super::super::error::{ErrorCode, error, not_yet};
+use super::super::error::{ErrorCode, error};
 use super::super::plan::{Arith, CallOp, Callee, CompareOp, Op};
 use super::Analysis;
 use super::scope::{Unprefixed, Var, display};
 use crate::error::Result;
+use crate::xml::schema::Mode;
 use crate::xml::{Atomic, AtomicType, cast};
 
 impl Analysis<'_> {
@@ -110,15 +111,13 @@ impl Analysis<'_> {
         Ok(Op::Unary(!minus.is_multiple_of(2), Box::new(self.expr(operand)?)))
     }
 
-    /// A validate expression [XQuery §3.13]: strict, its default mode, as
-    /// the in-scope element declarations are none; lax, valid XQuery not
-    /// processed yet, as the type annotations it gives are none turborel
-    /// holds.
+    /// A validate expression [XQuery §3.13]: of its mode, strict of none.
     fn validate(&mut self, mode: Option<ValidationMode>, operand: &Expr) -> Result<Op> {
-        if mode == Some(ValidationMode::Lax) {
-            return Err(not_yet("a validate expression of lax mode"));
-        }
-        Ok(Op::Validate(Box::new(self.expr(operand)?)))
+        let mode = match mode {
+            Some(ValidationMode::Lax) => Mode::Lax,
+            Some(ValidationMode::Strict) | None => Mode::Strict,
+        };
+        Ok(Op::Validate(mode, Box::new(self.expr(operand)?)))
     }
 
     /// An extension expression [XQuery §3.14]: each pragma's QName

@@ -47,7 +47,8 @@ behind it, and each can be replaced or added to.
   written in-house with no dependency, its modifiers shown in the
   Information Schema, XML indexes of its paths and values, and XML
   Schemas registered by CREATE XML SCHEMA, values validated by them with
-  XMLVALIDATE and IS VALID and kept in columns of their XMLSCHEMA types.
+  XMLVALIDATE, IS VALID and XQuery's validate and kept in columns of
+  their XMLSCHEMA types.
 - [Geospatial SQL](doc/data/spatial/README.md), with XY geometries, WKT/WKB,
   intersection filters and joins, planar distances and R-tree
   nearest-neighbour queries.

@@ -3,14 +3,15 @@
 //! element, and the type annotations validation gives and storage keeps;
 //! registered XML Schemas: their names, the documents they read, what
 //! depends on them, the permanent ones and how their documents are
-//! logged; and the XML types of XMLSCHEMA, XMLVALIDATE and IS VALID, and
-//! the typed values XQuery reads (RULES.md R-TEST-9, D86).
+//! logged; the XML types of XMLSCHEMA, XMLVALIDATE and IS VALID, and the
+//! typed values XQuery reads; and XQuery's validate expression (RULES.md
+//! R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 29] = [
+pub const XML_SCHEMA: [Mutation; 31] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -306,5 +307,25 @@ pub const XML_SCHEMA: [Mutation; 29] = [
         replacement: "        let on = |_: &Horizon| false;",
         integration: &["xml_schema_dependents::definitions_depend_on_what_they_name_4_2_6"],
         unit: &[],
+    },
+    Mutation {
+        name: "xquery-validate-in-scope-schema",
+        package: Package::Core,
+        breaks: "XQuery's validate finds no registered XML Schema in scope",
+        file: "src/xquery/eval/validate.rs",
+        original: "        self.plan.schemas.iter().find(|s| s.namespace == namespace)",
+        replacement: "        self.plan.schemas.iter().find(|s| s.namespace != namespace)",
+        integration: &["xml_validate_expression::strict_validation_types_its_result_3_13"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-validate-lax",
+        package: Package::Core,
+        breaks: "XQuery's validate lax validates strictly",
+        file: "src/xquery/analyze/expr.rs",
+        original: "            Some(ValidationMode::Lax) => Mode::Lax,",
+        replacement: "            Some(ValidationMode::Lax) => Mode::Strict,",
+        integration: &["xml_validate_expression::lax_validation_3_13"],
+        unit: &["xquery::eval::tests::constructors::validate"],
     },
 ];

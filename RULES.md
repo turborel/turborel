@@ -3190,6 +3190,20 @@ child of a document node alone, so they are not. turborel holds no
 components of the permanently registered XML Schemas, so one indicated,
 or chosen, validates nothing, SQLCODE -900.
 
+XQuery's validate expression, strict or lax, validates by
+`schema::validate` against the in-scope schema definitions, which Part 14
+makes an implementation-defined collection of registered XML Schemas the
+current user may use [ISO/IEC 9075-14:2006 draft §10.20 SR2e]: of each
+target namespace the one XMLVALIDATE's data-driven case chooses, chosen
+as the statement is bound and held by the compiled query
+(`xquery::InScopeSchema`), none permanently registered. Each is read
+alone, and the components of several make no one schema, so the effective
+schema of a validation [XQuery §3.13] is the one of the namespace of the
+element it validates, with what that one imports; of none, a schema of no
+components, by which strict validation is err:XQDY0084 and lax validation
+assesses the element by `xs:anyType`. A query names none of their
+components, as no schema is imported.
+
 Part 14 leaves how an XML Schema is registered to the implementation
 [ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an
 extension in the standard's notation:

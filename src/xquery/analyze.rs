@@ -28,8 +28,11 @@ use super::collation::{Collations, Collator};
 use super::error::{ErrorCode, error};
 use super::functions::{FN_NAMESPACE, Library};
 use super::plan::{Global, GlobalValue, Plan, Settings};
+use std::sync::Arc;
+
 use crate::error::Result;
 use crate::xml::QName;
+use crate::xml::schema::Schema;
 use scope::{Namespaces, PREDECLARED, Scope};
 
 /// \[DESIGN\] Implementation-defined [XQuery Appendix C.1]: the default
@@ -55,6 +58,28 @@ pub struct Environment<'a> {
     pub library: &'a Library,
     /// The collations of the database (RULES.md D60).
     pub collations: &'a Collations,
+    /// The in-scope schema definitions [§10.20 SR2e], as validate takes
+    /// them (`InScopeSchema`).
+    pub schemas: Vec<InScopeSchema>,
+}
+
+/// [ISO/IEC 9075-14:2006 draft §10.20 SR2e] A registered XML Schema the
+/// current user may use, among the in-scope schema definitions.
+///
+/// \[DESIGN\] Implementation-defined, RULES.md D86: of each target
+/// namespace, the one XMLVALIDATE's data-driven validation chooses, of the
+/// least name, chosen as the statement is bound; none permanently
+/// registered, as turborel holds no components of those to validate by. A
+/// validate expression takes, as its effective schema [XQuery §3.13], the
+/// one of the namespace of the element it validates, or none.
+#[derive(Debug, Clone)]
+pub struct InScopeSchema {
+    /// Its target namespace URI, the zero-length string of none.
+    pub namespace: String,
+    /// Its `<registered XML Schema name>`.
+    pub name: String,
+    /// Its schema, read.
+    pub schema: Arc<Schema>,
 }
 
 /// The analysis of a query: its static context as it is now.
@@ -97,7 +122,7 @@ pub fn compile(module: &Module, env: &Environment<'_>) -> Result<Plan> {
     let globals = analysis.passed();
     let (globals, functions) = analysis.declarations(&prolog.declarations, globals)?;
     let body = analysis.frame(&[], |a| a.expr(body))?.0;
-    Ok(Plan { body, globals, functions, settings: analysis.settings, collations: env.collations.clone() })
+    Ok(Plan { body, globals, functions, settings: analysis.settings, collations: env.collations.clone(), schemas: env.schemas.clone() })
 }
 
 impl<'e> Analysis<'e> {

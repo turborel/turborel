@@ -6,8 +6,8 @@
 //! predicates in `eval/path.rs`; the operators in `eval/arith.rs` and
 //! `eval/compare.rs`, which call the library's (`xquery::library::op`); the
 //! expressions that bind variables in `eval/flwor.rs`; sequence types,
-//! casts and function calls in `eval/types.rs` and `eval/call.rs`; and
-//! constructors in `eval/construct.rs`.
+//! casts and function calls in `eval/types.rs` and `eval/call.rs`;
+//! constructors in `eval/construct.rs`; and validate in `eval/validate.rs`.
 //!
 //! \[DESIGN\] RULES.md R-CF-6, D44, D86: the evaluation recurses as the
 //! plan nests and as functions call functions, one level each operation
@@ -25,6 +25,7 @@ mod flwor;
 mod path;
 mod sequence;
 mod types;
+mod validate;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -212,7 +213,7 @@ impl Evaluator<'_> {
             Op::Castable(operand, target) => self.castable(operand, *target, frame, focus),
             Op::Cast(operand, target) => self.cast(operand, *target, frame, focus),
             Op::Call(c) => self.call(c, frame, focus),
-            Op::Validate(operand) => self.validate(operand, frame, focus),
+            Op::Validate(mode, operand) => self.validate(*mode, operand, frame, focus),
             Op::Element(e) => self.direct_element(e, frame, focus),
             Op::ComputedElement(e) => self.computed_element(e, frame, focus),
             Op::Attribute(name, content) => self.computed_attribute(name, content.as_deref(), frame, focus),
@@ -253,7 +254,7 @@ impl Evaluator<'_> {
             | Op::Castable(..)
             | Op::Cast(..)
             | Op::Call(_)
-            | Op::Validate(_)
+            | Op::Validate(..)
             | Op::Element(_)
             | Op::ComputedElement(_)
             | Op::Attribute(..)
@@ -292,34 +293,6 @@ impl Evaluator<'_> {
     fn conditional(&self, parts: &[Op; 3], frame: &mut Frame, focus: &Focus) -> Result<Seq> {
         let [test, then, otherwise] = parts;
         if ebv(&self.eval(test, frame, focus)?)? { self.eval(then, frame, focus) } else { self.eval(otherwise, frame, focus) }
-    }
-
-    /// `validate` [XQuery §3.13], strict: its operand one document or
-    /// element node \[err:XQTY0030\], a document of one element among
-    /// comments and processing instructions \[err:XQDY0061\]; then, as no
-    /// element is declared in scope, err:XQDY0084.
-    fn validate(&self, operand: &Op, frame: &mut Frame, focus: &Focus) -> Result<Seq> {
-        let value = self.eval(operand, frame, focus)?;
-        let [Item::Node(node)] = value.as_slice() else {
-            return Err(error(ErrorCode::XQTY0030, "a validate expression's operand is one document or element node [XQuery §3.13]"));
-        };
-        let document = super::types::NodeKind::Document(Some(super::types::ElementKind { name: None, annotation: None, nillable: true }));
-        match node.kind() {
-            Some(crate::xml::Kind::Element) => {}
-            Some(crate::xml::Kind::Document) => {
-                if !document.matches(node) {
-                    let why = "a document validated has one element child among comments and processing instructions [XQuery §3.13]";
-                    return Err(error(ErrorCode::XQDY0061, why));
-                }
-            }
-            Some(
-                crate::xml::Kind::Attribute | crate::xml::Kind::Text | crate::xml::Kind::Comment | crate::xml::Kind::ProcessingInstruction,
-            )
-            | None => {
-                return Err(error(ErrorCode::XQTY0030, "a validate expression's operand is one document or element node [XQuery §3.13]"));
-            }
-        }
-        Err(error(ErrorCode::XQDY0084, "no top-level element declaration is in scope, as no schema is imported [XQuery §3.13]"))
     }
 }
 

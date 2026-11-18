@@ -34,6 +34,10 @@ impl ErrorCode {
     /// [XQuery Appendix F] A computed processing instruction's content
     /// holds "?>".
     pub const XQDY0026: ErrorCode = ErrorCode("XQDY0026");
+    /// [XQuery Appendix F] The validity property of the root element of a
+    /// validate expression's operand is not valid, nor notKnown in lax
+    /// mode.
+    pub const XQDY0027: ErrorCode = ErrorCode("XQDY0027");
     /// [XQuery Appendix F] A validate expression's operand is not one
     /// document or element node.
     pub const XQTY0030: ErrorCode = ErrorCode("XQTY0030");

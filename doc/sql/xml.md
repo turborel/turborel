@@ -9,7 +9,8 @@ of a value, XMLCAST casts SQL values to XML and back, and IS DOCUMENT and
 IS CONTENT test what a value is. XMLQUERY, XMLEXISTS and XMLTABLE query
 XML values with XQuery. XMLMAP maps a table, a schema or the catalog to
 XML and to an XML Schema document. XMLVALIDATE validates a value by a
-registered XML Schema, and IS VALID tests whether it is valid by one.
+registered XML Schema, IS VALID tests whether it is valid by one, and
+XQuery's validate expression validates nodes by them in a query.
 
 ## The type
 
@@ -661,15 +662,14 @@ Every expression of XQuery 1.0 is evaluated: paths on every axis, in
 document order, predicates, sequences and ranges, arithmetic and
 comparisons, FLWOR expressions with order by, quantified, conditional
 and typeswitch expressions, instance of, treat, cast and castable, direct
-and computed constructors, ordered and unordered expressions, and a
-prolog's namespaces, setters, variables and functions, recursive ones
-too. Static typing is not done, so a type error is found as the query is
-evaluated.
+and computed constructors, ordered and unordered expressions, validate
+expressions ([below](#the-validate-expression)), and a prolog's
+namespaces, setters, variables and functions, recursive ones too. Static
+typing is not done, so a type error is found as the query is evaluated.
 
 These are not supported: schema imports and library modules (error
-`err:XQST0009` or `err:XQST0016`), and the validate expression's lax
-mode (SQLCODE -900; strict mode finds no element declared,
-`err:XQDY0084`).
+`err:XQST0009` or `err:XQST0016`), so a query names no type or element
+of a registered XML Schema.
 
 A cast to `xs:QName`, and its constructor function, takes a string
 literal alone, as `xs:QName("h:td")` or `"td" cast as xs:QName`; any
@@ -1376,6 +1376,56 @@ turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.SIZED_CHECK1 of ANN.SIZED is 
  not valid
  unknown
 (3 rows)
+```
+
+## The validate expression
+
+```
+validate [ lax | strict ] { <expression> }
+```
+
+XQuery's validate expression, in a query of XMLQUERY, XMLEXISTS or
+XMLTABLE, validates one document or element node and gives a new one,
+of no parent, whose elements and attributes carry their types, as
+XMLVALIDATE's do. It validates by the registered XML Schemas the user may
+use, of each target namespace the one of the least name, chosen as the
+statement is prepared: the element validated, the node or a document
+node's element, is validated by the one of its namespace, with whatever
+that one imports. INFORMATION_SCHEMA.XS, XSI and SQLXML are none of
+them.
+
+strict, the default, needs a global declaration of the element. lax
+takes one if there is one, else gives the element the type `xs:anyType`,
+its attributes `xdt:untypedAtomic`, and validates each child element the
+same way. A document node's IDs and identity constraints are checked;
+an element node's are not. Each error is SQLSTATE 10000, the message
+naming XQuery's code:
+
+| Code | When |
+|---|---|
+| `err:XQTY0030` | The expression is not one document or element node |
+| `err:XQDY0061` | A document node's children are not one element among comments and processing instructions |
+| `err:XQDY0084` | strict, and no registered XML Schema in scope declares the element |
+| `err:XQDY0027` | The node is not valid |
+
+```sql
+VALUES (XMLCAST(XMLQUERY('data((validate { . })/size) + 1' PASSING BY REF XMLPARSE(DOCUMENT '<size>12</size>' PRESERVE WHITESPACE) RETURNING SEQUENCE EMPTY ON EMPTY) AS INTEGER));
+VALUES (XMLQUERY('validate { . }' PASSING BY REF XMLPARSE(DOCUMENT '<size>0</size>' PRESERVE WHITESPACE) RETURNING SEQUENCE EMPTY ON EMPTY));
+VALUES (XMLQUERY('validate { <note/> }' RETURNING SEQUENCE BY REF EMPTY ON EMPTY));
+VALUES (XMLSERIALIZE(CONTENT XMLQUERY('let $v := validate lax { <note>see <size>4</size></note> } return ($v instance of element(note, xs:anyType), data($v/size) instance of xs:positiveInteger)' RETURNING SEQUENCE BY REF EMPTY ON EMPTY) AS VARCHAR(20)));
+```
+
+```
+
+--------------
+           13
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XQDY0027: [Schema1 §3.3.4 cvc-type.3.1.3] '0' is no value of the element's type (against registered XML Schema ANN.SIZES) [ISO/IEC 9075-14:2006 draft §6.18 GR3]
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XQDY0084: [XQuery §3.13] note has no top-level element declaration (against registered XML Schema ANN.SIZES) [ISO/IEC 9075-14:2006 draft §6.18 GR3]
+
+----------------------
+ true true
+(1 row)
 ```
 
 ## Clients

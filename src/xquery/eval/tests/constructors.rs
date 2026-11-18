@@ -90,7 +90,10 @@ fn construction_and_copy_namespaces_modes() {
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQuery §3.13] a
 /// validate expression, strict, of no element declared in scope
 /// err:XQDY0084; its operand not one document or element node
-/// err:XQTY0030; a document of two elements err:XQDY0061.
+/// err:XQTY0030; a document of two elements err:XQDY0061. Lax, of no
+/// element declared, a new node annotated `xs:anyType`, its children too
+/// and its attributes `xdt:untypedAtomic` [XQuery §3.13 Note]; the same
+/// errors of an operand not one document or element node.
 #[test]
 fn validate() {
     assert_eq!(code_of("validate { <a/> }"), "err:XQDY0084");
@@ -98,6 +101,15 @@ fn validate() {
     assert_eq!(code_of("validate { 1 }"), "err:XQTY0030");
     assert_eq!(code_of("validate { document { <a/>, <b/> } }"), "err:XQDY0061");
     assert_eq!(code_of("validate { text {'a'} }"), "err:XQTY0030");
+    assert_eq!(run("validate lax { <a b='1'><c>2</c></a> }"), "<a b=\"1\"><c>2</c></a>");
+    assert_eq!(run("validate lax { <a/> } instance of element(a, xs:anyType)"), "true");
+    assert_eq!(run("validate lax { <a/> } instance of element(a, xdt:untyped)"), "false");
+    assert_eq!(run("let $a := <a/> return validate lax { $a } is $a"), "false");
+    assert_eq!(run("data((validate lax { <a><c>2</c></a> })/c) instance of xdt:untypedAtomic"), "true");
+    assert_eq!(run("data((validate lax { <a b='1'/> })/@b) instance of xdt:untypedAtomic"), "true");
+    assert_eq!(run("validate lax { document { <a/> } } instance of document-node(element(a))"), "true");
+    assert_eq!(code_of("validate lax { (<a/>, <b/>) }"), "err:XQTY0030");
+    assert_eq!(code_of("validate lax { document { <a/>, <b/> } }"), "err:XQDY0061");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, GR3] [XQuery §3.7.3.1,

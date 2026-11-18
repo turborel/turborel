@@ -19,7 +19,7 @@ use crate::value::types::{Field, MAX_ARRAY_CARDINALITY};
 use crate::value::xml::XmlType;
 use crate::value::{DataType, Value};
 use crate::xml::{Moment, Shape, Version, is_ncname};
-use crate::xquery::{Environment, Query};
+use crate::xquery::{Environment, InScopeSchema, Query};
 
 /// [§6.18 SR3] implementation-defined: the `<XML returning clause>` of an
 /// XMLQUERY that writes none, RETURNING CONTENT, as XMLDOCUMENT's.
@@ -90,8 +90,9 @@ impl Binder<'_> {
     }
 
     /// The query `text` analysed in the static context §10.20 makes \[SR2\]:
-    /// the namespaces declared in scope, the variables `names` passed, and
-    /// the database's functions and collations.
+    /// the namespaces declared in scope, the variables `names` passed, the
+    /// database's functions and collations, and the in-scope schema
+    /// definitions.
     fn xquery(&self, text: &str, names: &[String]) -> Result<Arc<Query>> {
         let (namespaces, default_element) = self.namespaces_in_scope();
         let env = Environment {
@@ -100,8 +101,19 @@ impl Binder<'_> {
             variables: names.to_vec(),
             library: &self.db.xquery_functions,
             collations: &self.db.collations,
+            schemas: self.schemas_in_scope(),
         };
         Query::compile(text, &env).map(Arc::new)
+    }
+
+    /// [§10.20 SR2e] The in-scope schema definitions, implementation-
+    /// defined (RULES.md D86): of each target namespace, the registered XML
+    /// Schema the current user may use that XMLVALIDATE's data-driven
+    /// validation chooses, chosen as the statement is bound; none
+    /// permanently registered, as turborel holds no components of those.
+    fn schemas_in_scope(&self) -> Vec<InScopeSchema> {
+        let held = self.candidates().into_iter().filter_map(|c| c.schema.map(|schema| (c.namespace, c.name, schema)));
+        held.map(|(namespace, name, schema)| InScopeSchema { namespace, name, schema }).collect()
     }
 
     /// What evaluates `text` of the arguments `bound`, at the statement's

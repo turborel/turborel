@@ -332,5 +332,6 @@ mod xml_storage;
 mod xml_table;
 mod xml_valid;
 mod xml_validate;
+mod xml_validate_expression;
 mod xquery_functions;
 mod xquery_functions_10_to_16;

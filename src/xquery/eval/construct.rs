@@ -78,7 +78,7 @@ impl Evaluator<'_> {
 
     /// The error if the trees constructed would hold more than
     /// `MAX_STORED` octets with `tree`; else `tree` counted.
-    fn constructed(&self, tree: &Tree) -> Result<()> {
+    pub(super) fn constructed(&self, tree: &Tree) -> Result<()> {
         let held = self.constructed.get().saturating_add(tree.held_bytes());
         if held > MAX_STORED {
             return Err(beyond(&format!("the nodes it constructs hold more than {MAX_STORED} octets")));

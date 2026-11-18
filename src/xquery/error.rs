@@ -150,12 +150,6 @@ pub(super) fn beyond(why: &str) -> SqlError {
     SqlError::new(Code::Unsupported, format!("[DESIGN] the XQuery evaluation is beyond turborel's limits: {why}"))
 }
 
-/// The error of valid XQuery turborel does not process yet, `what`
-/// (RULES.md D18): SQLCODE -900.
-pub(super) fn not_yet(what: &str) -> SqlError {
-    SqlError::new(Code::Unsupported, format!("[DESIGN] turborel does not process {what} yet"))
-}
-
 /// The error of a query nested deeper than `MAX_NESTING`, at `place`
 /// (RULES.md D18, R-CF-6).
 pub(super) fn too_deep(place: Place) -> SqlError {

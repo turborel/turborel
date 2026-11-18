@@ -18,6 +18,7 @@ pub use op::{
     OrderKey, Part, PathOp, PathStart, PiOp, QuantifiedOp, StaticNames, StepOp, StepTest, TypeswitchOp,
 };
 
+use super::analyze::InScopeSchema;
 use super::collation::{Collations, Collator};
 use super::functions::XQueryFunction;
 use super::types::SeqType;
@@ -36,6 +37,9 @@ pub struct Plan {
     pub(super) settings: Settings,
     /// The statically known collations: the database's [XQuery §2.1.1].
     pub(super) collations: Collations,
+    /// The in-scope schema definitions validate reads [ISO/IEC
+    /// 9075-14:2006 draft §10.20 SR2e].
+    pub(super) schemas: Vec<InScopeSchema>,
 }
 
 impl std::fmt::Debug for Plan {

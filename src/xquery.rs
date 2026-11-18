@@ -48,7 +48,7 @@ mod plan;
 mod testing;
 mod types;
 
-pub use analyze::{EMPTY_ORDER, Environment};
+pub use analyze::{EMPTY_ORDER, Environment, InScopeSchema};
 pub use ast::{AddOp, Flwor, GeneralComp, MulOp, NodeComp, PreserveMode, SetOp, Sign, ValueComp};
 pub use ast::{
     AttributeTest, AttributeValuePart, AxisStep, BoundarySpace, CaseClause, Comparator, Comparison, ComputedName, Construction,
